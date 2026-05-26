@@ -1,0 +1,93 @@
+## Globals
+
+### Prefix
+
+Names with these prefix refers to different module of the storage manager:
+
+- sm_ -- general storage manager module
+- smx_ -- transactional
+- sms_ -- session
+- smd_ -- storage
+
+
+### extern thread_local int sm_errno
+
+Stores the error number of the last error encountered in this thread.
+
+### extern thread_local char sm_errmsg[200]
+
+Stores a message describing the last error encountered in this thread.
+
+### enum smx_level_t
+
+SMX_READ_COMMITED
+SMX_REPEATABLE_READ
+SMX_SERIALIZABLE
+
+## Database API
+
+### bool sm_mkdb(const char* dbpath)
+
+Create a database rooted at dbpath. Returns true on success, false otherwise.
+
+### bool sm_rmdb(const char* dbpath)
+
+Delete the database rooted at dbpath. This call is destructive and
+cannot be undone. Returns true on success, false otherwise.
+
+## Session API
+
+### session_t* sms_connect(const char* dbpath)
+
+Connect to a database to start a new session.
+
+### bool sms_disconnect(session_t* session)
+
+Disconnect from the database. The session is released. Uncommitted
+transaction is forcibly aborted.
+
+## Transaction API
+
+### bool smx_begin(session_t* session, smx_level_t level)
+
+Begin a new transaction.
+
+### bool smx_prepare(session_t* session)
+
+### bool smx_commit(session_t* session)
+
+### bool smx_abort(session_t* session)
+
+### smx_savepoint_t* smx_savepoint(session_t* session)
+
+### bool smx_rollback(session_t* session, smx_savepoint_t* savepoint)
+
+## Schema API
+
+### bool sm_mkschema(session_t* session, const char* schema)
+
+### bool sm_rmschema(session_t* session, const char* schema)
+
+## Table API
+
+### bool sm_mktable(session_t* session, const char* schema, const char* table)
+
+### bool sm_rmtable(session_t* session, const char* schema, const char* table)
+
+## Update API
+
+### bool sm_insert(session_t session, const char* schema, const char* table,
+    	           const char* key, int klen,
+		   const char* data, int datalen)
+
+sm_update(session, schema, table, key, data)
+sm_delete(session, schema, table, key)
+
+
+## Read API
+
+ok = sm_read(session, schema, table, key, &data)
+scan = sm_scan(session, schema, table, skey, inclusive)
+ok = sm_scan_next(scan, &key, &data)
+sm_scan_end(scan)
+
