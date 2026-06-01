@@ -7,7 +7,7 @@ Names with these prefix refers to different module of the storage manager:
 - sm_ -- general storage manager module
 - smx_ -- transactional
 - sms_ -- session
-- smd_ -- storage
+- smr_ -- relations
 
 
 ### extern thread_local int sm_errno
@@ -62,21 +62,15 @@ Begin a new transaction.
 
 ### bool smx_rollback(session_t* session, smx_savepoint_t* savepoint)
 
-## Schema API
+## Rel API
 
-### bool sm_mkschema(session_t* session, const char* schema)
+### bool smr_mkrel(session_t* session, const char* relname);
 
-### bool sm_rmschema(session_t* session, const char* schema)
-
-## Table API
-
-### bool sm_mktable(session_t* session, const char* schema, const char* table)
-
-### bool sm_rmtable(session_t* session, const char* schema, const char* table)
+### bool smr_rmrel(session_t* session, const char* relname);
 
 ## Update API
 
-### bool sm_insert(session_t session, const char* schema, const char* table,
+### bool smr_insert(session_t session, const char* rel,
     	           const char* key, int klen,
 		   const char* data, int datalen)
 
