@@ -1,20 +1,25 @@
 ## Globals
 
+### Convention
+
+Functions return 0 on success, non-zero error number on failure.
+
 ### Prefix
 
 Names with these prefix refers to different module of the storage manager:
 
 - sm_ -- general storage manager module
+- sme -- error
 - smx_ -- transactional
 - sms_ -- session
 - smr_ -- relations
 
+### enum sme_errno_t
 
-### extern thread_local int sm_errno
+SME_PERMISSION
+SME_DISKFULL
 
-Stores the error number of the last error encountered in this thread.
-
-### extern thread_local char sm_errmsg[200]
+### extern thread_local char sme_errmsg[200]
 
 Stores a message describing the last error encountered in this thread.
 
@@ -26,57 +31,75 @@ SMX_SERIALIZABLE
 
 ## Database API
 
-### bool sm_mkdb(const char* dbpath)
+### int sm_mkdb(const char* dbpath)
 
-Create a database rooted at dbpath. Returns true on success, false otherwise.
+Create a database rooted at dbpath.
 
-### bool sm_rmdb(const char* dbpath)
+### int sm_rmdb(const char* dbpath)
 
 Delete the database rooted at dbpath. This call is destructive and
 cannot be undone. Returns true on success, false otherwise.
 
 ## Session API
 
-### session_t* sms_connect(const char* dbpath)
+### session_t* sms_attach(const char* dbpath)
 
 Connect to a database to start a new session.
 
-### bool sms_disconnect(session_t* session)
+### int sms_detach(session_t* session)
 
 Disconnect from the database. The session is released. Uncommitted
 transaction is forcibly aborted.
 
 ## Transaction API
 
-### bool smx_begin(session_t* session, smx_level_t level)
+### int smx_begin(session_t* session, smx_level_t level)
 
 Begin a new transaction.
 
-### bool smx_prepare(session_t* session)
+### int smx_prepare(session_t* session)
 
-### bool smx_commit(session_t* session)
+Prepare a transaction for commit.
 
-### bool smx_abort(session_t* session)
+### int smx_commit(session_t* session)
 
-### smx_savepoint_t* smx_savepoint(session_t* session)
+Commit a transaction.
 
-### bool smx_rollback(session_t* session, smx_savepoint_t* savepoint)
+### int smx_abort(session_t* session)
+
+Abort a transaction.
+
+### int smx_savepoint(session_t* session)
+
+Create a savepoint. The session could accomodate only one savepoint.
+
+### int smx_rollback(session_t* session)
+
+Rollback to a savepoint. If smx_savepoint() was never called
+before this, rollback to the point of smx_begin().
 
 ## Rel API
 
-### bool smr_mkrel(session_t* session, const char* relname);
+### int smr_mkrel(session_t* session, const char* relname);
 
-### bool smr_rmrel(session_t* session, const char* relname);
+Create a relation.
+
+### int smr_rmrel(session_t* session, const char* relname);
+
+Drop a relation.
 
 ## Update API
 
-### bool smr_insert(session_t session, const char* rel,
-    	           const char* key, int klen,
-		   const char* data, int datalen)
+int smr_insert(session_t* session, const char* relname,
+		const char* key, int klen,
+		const char* data, int datalen);
+		   
+int sm_delete(session_t* session, const char* relname,
+		const char* key, int klen);
 
-sm_update(session, schema, table, key, data)
-sm_delete(session, schema, table, key)
-
+int sm_update(session_t* session, const char* relname,
+		const char* key, int klen,
+		const char* data, int datalen);
 
 ## Read API
 
