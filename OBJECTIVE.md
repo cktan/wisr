@@ -27,7 +27,35 @@ full MVCC, for OLTP workloads.
   - data ops: `sm_insert` / `sm_update` / `sm_delete` / `sm_read` /
     `sm_scan` / `sm_scan_next` / `sm_scan_end`
 
-## Open questions
+## Decisions
 
-- Concurrency control strategy for serializable isolation (e.g.
-  optimistic/SSI vs. locking) is not yet decided.
+These were open; they are now settled and drive `DESIGN.md`.
+
+- **Concurrency control.** Snapshot isolation for all levels, with
+  serializable implemented as **SSI (optimistic)** — read/write
+  dependency tracking with SIREAD predicate locks and pivot detection.
+  No read locks; serialization failures surface as errors at commit.
+  Write-write conflicts are still prevented eagerly by in-memory row
+  locks (first-writer-wins).
+- **Uncommitted writes go eagerly into RocksDB**, stamped with the
+  writing transaction's id, and are made visible through a durable
+  commit-status table. This keeps transaction size unbounded by RAM,
+  at the cost of a status lookup on read and a garbage-collection pass
+  for versions left behind by aborts.
+- **`sm_prepare` is real two-phase commit.** Prepare durably persists
+  the prepared-transaction record (with a global transaction id), so a
+  prepared transaction survives a crash and can be committed or
+  aborted after restart by an external coordinator. Recovery must
+  restore prepared transactions and re-acquire their row locks.
+- **Deployment is a single process, multi-threaded.** All sessions in
+  a process share one open RocksDB instance; the transaction table,
+  lock manager, and SSI structures are ordinary in-process data
+  structures. This is what RocksDB's single-writer-process rule
+  effectively forces.
+
+## Notes
+
+- `API.txt` is a sketch. `DESIGN.md` proposes concrete C signatures
+  and flags where it must diverge — notably the read/scan calls, and
+  the extra 2PC entry points (`sm_prepare` taking a global id, plus
+  recovery of in-doubt transactions).
