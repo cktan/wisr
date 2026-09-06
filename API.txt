@@ -20,7 +20,7 @@ C++ type appears in the interface.
   return 1 to mean "no row", which is not an error.
 - Functions returning a pointer return **NULL on error**.
 - On any error return, the error code and message are
-  available from `sm_lasterrno()` / `sm_lasterr()`.
+  available from `sm_errno()` / `sm_errmsg()`.
 
 ### Errors
 
@@ -59,15 +59,15 @@ Values are explicit and stable. New codes are appended;
 existing values never change.
 
 ```c
-sm_errno_t  sm_lasterrno(void);
-const char* sm_lasterr(void);
+sm_errno_t  sm_errno(void);
+const char* sm_errmsg(void);
 ```
 
 Both report the last error raised **on the calling thread**.
 They are only meaningful immediately after a call that
 returned an error indication; a successful call leaves them
 untouched, so do not use them to test for success.
-`sm_lasterr()` returns a NUL-terminated string owned by the
+`sm_errmsg()` returns a NUL-terminated string owned by the
 library, valid until the next failing `sm_*` call on this
 thread. It is never NULL.
 
@@ -620,12 +620,23 @@ These changes were made against the previous `API.txt`.
 Each is a decision, not a detail, and `DESIGN.md` §10.3 and
 §12.1 should be reconciled with the ones marked (D).
 
-1. **`sm_errno_t` became reachable.** The old file declared
-   the enum but exposed no way to read it, only a message
-   string. Callers cannot implement the retry contract
-   without a machine-readable code. (D: replaces
-   `extern thread_local char sm_errmsg[200]`, which is also
-   a poor fit for a C ABI across a shared library.)
+1. **`sm_errno_t` became reachable, and both accessors are
+   now functions.** (D) The old file exposed no way to read
+   the code, only a message string, and callers cannot
+   implement the retry contract without a machine-readable
+   one. The names are unchanged, but `sm_errno` and
+   `sm_errmsg` are now calls rather than the old
+   `extern thread_local int` / `char[200]` globals.
+   Exported thread-local *data* is a poor fit for a C ABI:
+   it needs `__declspec(dllimport)` on the consumer side on
+   Windows, can fail to `dlopen` under the initial-exec TLS
+   model, freezes the 200-byte buffer size into the ABI, is
+   writable by the caller, and is unreachable through
+   `dlsym` and other FFI. A call also lets the message be
+   formatted only when someone asks for it, which matters
+   because serialization failures here are a normal
+   outcome rather than a rare one. glibc exposes `errno`
+   as a function for the same reasons.
 2. **Return convention repaired.** The old file promised
    0/-1 everywhere, then documented `sm_rmdb` as returning
    true/false, and had two calls that need three outcomes.
