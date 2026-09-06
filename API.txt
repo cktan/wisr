@@ -1,100 +1,668 @@
-# Storage Manager
+# Storage Manager — the `sm_*` C API
 
-### Convention
+This is the interface contract for the MVCC storage manager
+described in `DESIGN.md`. It is the specification of
+`include/sm.h`.
 
-- Functions return 0 on success, -1 otherwise.
+Everything here is a C ABI. The implementation is C++, but no
+C++ type appears in the interface.
 
-### enum sm_errno_t
+---
 
-SM_ERR_PERMISSION
-SM_ERR_DISKFULL
+## Conventions
 
-### extern thread_local char sm_errmsg[200]
+### Return values
 
-Stores a message describing the last error encountered in this thread.
+- Functions returning `int` return **0 on success** and
+  **-1 on error**, except where a positive return is
+  documented for that specific function. Exactly two
+  functions have one: `sm_read` and `sm_scan_next` both
+  return 1 to mean "no row", which is not an error.
+- Functions returning a pointer return **NULL on error**.
+- On any error return, the error code and message are
+  available from `sm_lasterrno()` / `sm_lasterr()`.
 
-### enum sm_xctlevel_t
+### Errors
 
-SM_XCT_READ_COMMITED
-SM_XCT_REPEATABLE_READ
-SM_XCT_SERIALIZABLE
+```c
+typedef enum {
+    SM_OK                = 0,
+
+    /* caller/programming errors */
+    SM_ERR_INVALID       = 1,   /* bad argument */
+    SM_ERR_NOTRANS       = 2,   /* op requires an active transaction */
+    SM_ERR_INTRANS       = 3,   /* op forbidden inside a transaction */
+    SM_ERR_PREPARED      = 4,   /* op forbidden on a prepared transaction */
+    SM_ERR_NOSAVEPOINT   = 5,   /* rollback with no savepoint set */
+
+    /* data errors */
+    SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
+    SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
+    SM_ERR_EXISTS        = 8,   /* database or relation already exists */
+    SM_ERR_INUSE         = 9,   /* database still attached in this process */
+
+    /* concurrency errors — RETRYABLE */
+    SM_ERR_CONFLICT      = 10,  /* write-write conflict */
+    SM_ERR_SERIALIZATION = 11,  /* SSI validation failure */
+    SM_ERR_DEADLOCK      = 12,  /* chosen as deadlock victim */
+
+    /* environment errors */
+    SM_ERR_CORRUPT       = 13,
+    SM_ERR_IO            = 14,
+    SM_ERR_NOMEM         = 15,
+    SM_ERR_DISKFULL      = 16,
+    SM_ERR_PERMISSION    = 17
+} sm_errno_t;
+```
+
+Values are explicit and stable. New codes are appended;
+existing values never change.
+
+```c
+sm_errno_t  sm_lasterrno(void);
+const char* sm_lasterr(void);
+```
+
+Both report the last error raised **on the calling thread**.
+They are only meaningful immediately after a call that
+returned an error indication; a successful call leaves them
+untouched, so do not use them to test for success.
+`sm_lasterr()` returns a NUL-terminated string owned by the
+library, valid until the next failing `sm_*` call on this
+thread. It is never NULL.
+
+#### Retryable errors
+
+`SM_ERR_CONFLICT`, `SM_ERR_SERIALIZATION`, and
+`SM_ERR_DEADLOCK` mean the transaction cannot proceed but
+the same work may succeed if attempted again. On any of
+them the transaction is **already aborted by the engine**:
+the caller must not call `sm_abort`, and must not issue
+further data operations. The correct response is to
+`sm_begin` a fresh transaction and redo the work.
+
+Under `SM_XCT_SERIALIZABLE` these are a normal outcome, not
+an exceptional one. A caller that cannot retry should not
+use that level.
+
+All other errors leave the transaction active and
+unchanged, and the caller decides whether to continue or
+abort.
+
+### Memory and lifetimes
+
+Byte strings passed *in* (`key`, `data`, `relname`,
+`dbpath`, `gid`) are read during the call and never
+retained. The caller may free or reuse them immediately
+afterwards.
+
+Byte strings handed *out* by `sm_read` and `sm_scan_next`
+point into engine-owned memory. They are **not**
+NUL-terminated and must not be freed. Their validity
+windows differ and are narrow:
+
+| Producer | Buffer stays valid until |
+| --- | --- |
+| `sm_read` | the next `sm_*` call on that **session** |
+| `sm_scan_next` | the next call on that **scan cursor** |
+
+A caller that needs a value beyond that window must copy it.
+Note in particular that an `sm_read` result is invalidated
+by a subsequent `sm_read`, `sm_insert`, `sm_commit`, or any
+other call on the same session — including one made on
+behalf of an unrelated part of the program.
+
+### Threading
+
+- A `sm_session_t` and its `sm_scan_t` cursors may be used
+  by **one thread at a time**. Concurrent use of a single
+  session from two threads is a caller error, not a
+  supported mode, and is not diagnosed.
+- Distinct sessions may be used concurrently from distinct
+  threads without external synchronization.
+- All sessions in a process attached to the same `dbpath`
+  share one underlying database instance. A given `dbpath`
+  may be open in **at most one process**; a second process
+  attaching to it fails with `SM_ERR_INUSE`.
+
+### Keys and values
+
+Keys and values are arbitrary byte strings and may contain
+embedded NUL bytes; every call that takes one also takes an
+explicit length. Keys are ordered **bytewise** (`memcmp`
+order), and that ordering is what `sm_scan` exposes. A
+zero-length key is legal. A zero-length value is legal and
+is distinct from a deleted key.
+
+Lengths are `size_t`. An individual key or value must not
+exceed `SM_MAX_KEYLEN` / `SM_MAX_DATALEN`; exceeding either
+fails with `SM_ERR_INVALID`.
+
+### Types
+
+```c
+typedef struct sm_session sm_session_t;   /* opaque */
+typedef struct sm_scan    sm_scan_t;      /* opaque */
+```
+
+### Isolation levels
+
+```c
+typedef enum {
+    SM_XCT_READ_COMMITTED  = 0,
+    SM_XCT_REPEATABLE_READ = 1,
+    SM_XCT_SERIALIZABLE    = 2
+} sm_xctlevel_t;
+```
+
+READ UNCOMMITTED is deliberately absent: under MVCC there
+is no state in which a caller could observe an uncommitted
+version, so the level has no meaning here.
+
+### Options
+
+```c
+typedef struct {
+    int         durability_sync;   /* default 1  */
+    int         group_commit_us;   /* default 200 */
+    int         deadlock_ms;       /* default 50 */
+    int         ssi_max_entries;   /* default 1<<20 */
+    long long   ts_lease;          /* default 1000000 */
+    const char* rocksdb_options;   /* option string, NULL = defaults */
+} sm_options_t;
+
+void sm_options_init(sm_options_t* opt);   /* fill with defaults */
+```
+
+`sm_options_init` must be called before setting any field,
+so that fields added in later versions keep their defaults.
+
+Passing NULL wherever an `sm_options_t*` is accepted means
+"all defaults".
+
+`durability_sync = 0` trades a bounded window of
+committed-transaction loss on power failure for throughput.
+The database remains crash-*consistent*; it is no longer
+crash-*durable*. It does not weaken isolation.
+
+---
+
+## Isolation and visibility semantics
+
+Three behaviours here are caller-visible and are not what a
+reader coming from another engine will assume. They are
+part of the contract.
+
+**1. A statement's snapshot depends on the level.** Under
+`SM_XCT_READ_COMMITTED`, every `sm_read` takes a fresh
+snapshot, and every `sm_scan` takes one snapshot that the
+cursor then holds for its whole life — so a single scan is
+internally consistent even though two scans in the same
+transaction may disagree. Under `SM_XCT_REPEATABLE_READ`
+and `SM_XCT_SERIALIZABLE`, one snapshot is taken at
+`sm_begin` and held to the end.
+
+**2. Writes can fail with `SM_ERR_CONFLICT` at every
+level, including READ COMMITTED.** If another transaction
+committed a change to the same key after this
+transaction's snapshot, the write is rejected. The engine
+does not silently re-read the newer row and apply the write
+to it; it reports the conflict and the caller retries. This
+differs from engines that restart the statement.
+
+**3. A scan does not observe writes made by its own
+transaction after the cursor was opened.** The cursor's
+view is fixed at `sm_scan` time. This is deliberate — it is
+Halloween protection, and it is what makes "scan a range and
+update every row in it" safe. Writes made *before* the
+cursor was opened are visible to it.
+
+`SM_XCT_REPEATABLE_READ` is snapshot isolation: no dirty
+reads, no lost updates, no non-repeatable reads, no
+phantoms — but write skew is possible. Callers that cannot
+tolerate write skew must use `SM_XCT_SERIALIZABLE`.
+
+DDL is transactional. `sm_mkrel` and `sm_rmrel` take effect
+at commit and roll back with the transaction.
+
+---
 
 ## Database API
 
-### int sm_mkdb(const char* dbpath)
+### int sm_mkdb(const char* dbpath, const sm_options_t* opt)
 
-Create a database rooted at dbpath.
+Create a database rooted at `dbpath`. The directory is
+created if it does not exist. The database is not opened;
+call `sm_attach` afterwards.
+
+Errors: `SM_ERR_EXISTS` (a database already exists there),
+`SM_ERR_PERMISSION`, `SM_ERR_DISKFULL`, `SM_ERR_IO`,
+`SM_ERR_INVALID`.
 
 ### int sm_rmdb(const char* dbpath)
 
-Delete the database rooted at dbpath. This call is destructive and
-cannot be undone. Returns true on success, false otherwise.
+Delete the database rooted at `dbpath`, including all its
+data. **This call is destructive and cannot be undone.**
+
+Fails if any session in this process is attached to
+`dbpath`. It cannot detect sessions in another process; the
+caller is responsible for ensuring the database is not in
+use elsewhere.
+
+Errors: `SM_ERR_INUSE`, `SM_ERR_NOTFOUND` (no database
+there), `SM_ERR_PERMISSION`, `SM_ERR_IO`.
+
+---
 
 ## Session API
 
-### session_t* sm_attach(const char* dbpath)
+### sm_session_t* sm_attach(const char* dbpath, const sm_options_t* opt)
 
-Connect to a database to start a new session.
+Open a database and start a new session on it. The database
+must already exist; `sm_attach` never creates one.
 
-### int sm_detach(session_t* session)
+The first session to attach to a `dbpath` in this process
+opens the database and its `opt` takes effect. Later
+sessions on the same path join the open instance, and their
+`opt` is ignored except for fields documented as
+per-session (currently none). Recovery — restoring prepared
+transactions and their locks — happens during that first
+attach.
 
-Disconnect from the database. The session is released. Uncommitted
-transaction is forcibly aborted.
+A new session has no active transaction.
+
+Returns NULL on error: `SM_ERR_NOTFOUND` (no database
+there), `SM_ERR_INUSE` (open in another process),
+`SM_ERR_CORRUPT`, `SM_ERR_PERMISSION`, `SM_ERR_NOMEM`,
+`SM_ERR_IO`.
+
+### int sm_detach(sm_session_t* session)
+
+Close the session and release it. Any open scan cursors are
+closed. An active transaction is forcibly aborted; a
+transaction that has been **prepared** is not — it stays
+in-doubt and awaits its coordinator (see the 2PC API).
+
+`session` is invalid after this call, whether it succeeded
+or not. Passing NULL is a no-op returning 0.
+
+Detaching the last session on a `dbpath` closes the
+underlying database.
+
+---
 
 ## Transaction API
 
-### int sm_begin(session_t* session, sm_xctlevel_t level)
+Exactly one transaction may be active on a session at a
+time. There is no nesting.
 
-Begin a new transaction.
+### int sm_begin(sm_session_t* session, sm_xctlevel_t level)
 
-### int sm_prepare(session_t* session)
+Begin a transaction at `level`, and take its snapshot if
+the level calls for one.
 
-Prepare a transaction for commit.
+Errors: `SM_ERR_INTRANS` (a transaction is already active),
+`SM_ERR_INVALID` (unknown level).
 
-### int sm_commit(session_t* session)
+### int sm_commit(sm_session_t* session)
 
-Commit a transaction.
+Commit the active transaction, making its writes durable
+and visible. Releases all locks, discards the savepoint,
+and closes any open scan cursors on this session.
 
-### int sm_abort(session_t* session)
+For a prepared transaction, this is the coordinator's
+commit decision and always succeeds — validation already
+happened at prepare time.
 
-Abort a transaction.
+On `SM_ERR_SERIALIZATION` the transaction has been aborted
+and its effects discarded; the caller retries. On any other
+error the transaction is also no longer active.
 
-### int sm_savepoint(session_t* session)
+Errors: `SM_ERR_SERIALIZATION` (retryable),
+`SM_ERR_NOTRANS`, `SM_ERR_DISKFULL`, `SM_ERR_IO`.
 
-Create a savepoint. The session could accomodate only one savepoint.
+### int sm_abort(sm_session_t* session)
 
-### int sm_rollback(session_t* session)
+Abort the active transaction, discarding all of its writes.
+Releases all locks, discards the savepoint, and closes any
+open scan cursors on this session.
 
-Rollback to a savepoint. If sm_savepoint() was never called
-before this, rollback to the point of sm_begin().
+Aborting a **prepared** transaction is legal and is the
+coordinator's abort decision.
+
+Must not be called after a retryable error, which already
+aborted the transaction.
+
+Errors: `SM_ERR_NOTRANS`.
+
+### int sm_savepoint(sm_session_t* session)
+
+Set a savepoint at the current point in the transaction.
+
+A transaction may hold **one** savepoint. Calling
+`sm_savepoint` again replaces the existing one; the earlier
+mark is gone and cannot be returned to. The savepoint is
+discarded at commit or abort.
+
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
+
+### int sm_rollback(sm_session_t* session)
+
+Undo every write made since the savepoint. The savepoint
+survives, so the same mark may be rolled back to more than
+once. Row locks acquired since the mark are released; locks
+held from before it are kept. The transaction remains
+active.
+
+Requires a savepoint. To be able to roll a transaction back
+to its start, call `sm_savepoint` immediately after
+`sm_begin`.
+
+**Rollback does not undo read tracking.** Under
+`SM_XCT_SERIALIZABLE`, reads performed and then rolled back
+still count towards serialization checking and can still
+cause `SM_ERR_SERIALIZATION` at commit. This is
+conservative and safe, never unsafe.
+
+Errors: `SM_ERR_NOSAVEPOINT`, `SM_ERR_NOTRANS`,
+`SM_ERR_PREPARED`.
+
+---
+
+## Two-phase commit API
+
+`sm_prepare` makes a transaction durable but not visible.
+Once prepared, a transaction survives a crash: it is
+restored at the next `sm_attach`, still holding its row
+locks, and waits for a coordinator decision. It cannot be
+told "no" by the engine.
+
+An abandoned prepared transaction blocks writers on its
+keys and prevents reclamation of space indefinitely. This
+is inherent to 2PC and is exposed here rather than hidden;
+`sm_abort_prepared` is the operator escape hatch.
+
+### int sm_prepare(sm_session_t* session, const char* gid)
+
+Prepare the active transaction for commit under the global
+transaction id `gid`, a NUL-terminated string of at most
+`SM_MAX_GID` bytes, unique among unresolved prepared
+transactions in this database.
+
+Runs serialization validation, then durably records the
+prepared state. On success the transaction is `PREPARED`:
+data operations, savepoints, and rollback are rejected with
+`SM_ERR_PREPARED`; only `sm_commit` and `sm_abort` are
+accepted. `sm_detach` leaves it in-doubt rather than
+aborting it.
+
+Errors: `SM_ERR_SERIALIZATION` (retryable; the transaction
+is aborted and *not* prepared), `SM_ERR_NOTRANS`,
+`SM_ERR_EXISTS` (`gid` already in use), `SM_ERR_INVALID`,
+`SM_ERR_DISKFULL`, `SM_ERR_IO`.
+
+### int sm_list_prepared(sm_session_t* session, sm_prepared_t** out, size_t* n)
+
+List the prepared transactions in this database that have
+not yet been resolved, including those restored from before
+a crash.
+
+```c
+typedef struct {
+    const char* gid;
+    long long   prepared_at;   /* wall-clock, seconds since epoch */
+} sm_prepared_t;
+```
+
+On success `*out` points to `*n` entries allocated by the
+library; release them with `sm_free_prepared`. `*n` may be
+0, in which case `*out` is NULL.
+
+This call does not require an active transaction and does
+not start one.
+
+Errors: `SM_ERR_NOMEM`, `SM_ERR_IO`.
+
+### void sm_free_prepared(sm_prepared_t* list, size_t n)
+
+Release a list returned by `sm_list_prepared`. Passing NULL
+is a no-op.
+
+### int sm_commit_prepared(sm_session_t* session, const char* gid)
+### int sm_abort_prepared(sm_session_t* session, const char* gid)
+
+Resolve a prepared transaction by global id, committing or
+discarding its writes and releasing its locks. Used by a
+coordinator, typically on a session other than the one that
+prepared it — in particular after a restart, when the
+original session no longer exists.
+
+Neither call requires an active transaction on `session`,
+and neither disturbs one if present.
+
+Errors: `SM_ERR_NOTFOUND` (no unresolved prepared
+transaction with that `gid`), `SM_ERR_DISKFULL`,
+`SM_ERR_IO`.
+
+---
 
 ## Rel API
 
-### int sm_mkrel(session_t* session, const char* relname);
+A relation is an ordered map from key to value. Relation
+names are NUL-terminated strings of at most `SM_MAX_RELNAME`
+bytes.
 
-Create a relation.
+### int sm_mkrel(sm_session_t* session, const char* relname)
 
-### int sm_rmrel(session_t* session, const char* relname);
+Create a relation. Transactional: visible to others only at
+commit, and undone by abort or by a rollback that spans it.
 
-Drop a relation.
+Errors: `SM_ERR_EXISTS`, `SM_ERR_NOTRANS`,
+`SM_ERR_CONFLICT` (retryable — concurrently created),
+`SM_ERR_INVALID`, `SM_ERR_PREPARED`.
+
+### int sm_rmrel(sm_session_t* session, const char* relname)
+
+Drop a relation and all of its rows. Transactional, as
+`sm_mkrel`.
+
+Space is not reclaimed at commit — transactions holding an
+older snapshot may still legitimately read the relation.
+Physical removal happens in the background once no snapshot
+can see it.
+
+Errors: `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`,
+`SM_ERR_CONFLICT` (retryable), `SM_ERR_PREPARED`.
+
+---
 
 ## Update API
 
-int sm_insert(session_t* session, const char* relname,
-		const char* key, int klen,
-		const char* data, int datalen);
-		   
-int sm_delete(session_t* session, const char* relname,
-		const char* key, int klen);
+All three require an active, non-prepared transaction, and
+all three can fail with `SM_ERR_CONFLICT` at every
+isolation level.
 
-int sm_update(session_t* session, const char* relname,
-		const char* key, int klen,
-		const char* data, int datalen);
+Each blocks while another active transaction holds a write
+lock on the same key, until that transaction ends. A
+blocked call can return `SM_ERR_DEADLOCK` if it is selected
+as the victim of a deadlock cycle.
+
+```c
+int sm_insert(sm_session_t* session, const char* relname,
+              const char* key, size_t klen,
+              const char* data, size_t datalen);
+
+int sm_update(sm_session_t* session, const char* relname,
+              const char* key, size_t klen,
+              const char* data, size_t datalen);
+
+int sm_delete(sm_session_t* session, const char* relname,
+              const char* key, size_t klen);
+```
+
+- `sm_insert` requires that the key not exist, and fails
+  with `SM_ERR_DUPKEY` if it does.
+- `sm_update` requires that the key exist, and fails with
+  `SM_ERR_NOTFOUND` if it does not. It replaces the value
+  entirely; there is no partial update.
+- `sm_delete` requires that the key exist, and fails with
+  `SM_ERR_NOTFOUND` if it does not.
+
+There is no upsert. A caller wanting one attempts
+`sm_insert` and falls back to `sm_update` on
+`SM_ERR_DUPKEY`.
+
+Errors for all three: `SM_ERR_CONFLICT` /
+`SM_ERR_DEADLOCK` (retryable), `SM_ERR_NOTFOUND` (relation
+or, for update/delete, key), `SM_ERR_DUPKEY` (insert),
+`SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`,
+`SM_ERR_DISKFULL`, `SM_ERR_IO`.
+
+---
 
 ## Read API
 
-ok = sm_read(session, schema, table, key, &data)
-scan = sm_scan(session, schema, table, skey, inclusive)
-ok = sm_scan_next(scan, &key, &data)
-sm_scan_end(scan)
+Reads never block and never take locks. They cannot return
+`SM_ERR_CONFLICT` or `SM_ERR_DEADLOCK`. Under
+`SM_XCT_SERIALIZABLE` a read is recorded, and may
+contribute to an `SM_ERR_SERIALIZATION` failure later, at
+commit.
 
+### int sm_read(sm_session_t* session, const char* relname, const char* key, size_t klen, const char** data, size_t* datalen)
+
+Read one key.
+
+Returns **0** if the key exists — `*data` and `*datalen`
+then describe the value, subject to the lifetime rules
+above. Returns **1** if the key does not exist, leaving
+`*data` NULL and `*datalen` 0; this is not an error and
+does not set the error state. Returns **-1** on error.
+
+Errors: `SM_ERR_NOTFOUND` (the *relation* does not exist —
+a missing key returns 1, not an error), `SM_ERR_NOTRANS`,
+`SM_ERR_PREPARED`, `SM_ERR_INVALID`, `SM_ERR_CORRUPT`,
+`SM_ERR_IO`.
+
+### sm_scan_t* sm_scan(sm_session_t* session, const char* relname, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive)
+
+Open a cursor over the keys of `relname` in ascending
+bytewise order, from `skey` to `ekey`.
+
+- `skey == NULL` starts at the first key; `sklen` and
+  `skey_inclusive` are then ignored.
+- `ekey == NULL` runs to the last key; `eklen` and
+  `ekey_inclusive` are then ignored.
+- The `*_inclusive` flags say whether a key exactly equal
+  to the bound is returned.
+- An empty range is legal and yields no rows.
+
+Both bounds are required (rather than only a start key)
+because under `SM_XCT_SERIALIZABLE` the range is the
+predicate that is tracked for conflicts. Scanning to the
+end of the relation and discarding rows in the caller
+records a far larger predicate and causes needless
+serialization failures.
+
+Scanning is **forward only**. Descending iteration is not
+supported.
+
+The cursor's view is fixed at this call (see "Isolation and
+visibility semantics", point 3). Its snapshot also pins
+storage reclamation, so a cursor left open indefinitely
+prevents space from being reclaimed; close cursors
+promptly.
+
+The cursor is owned by the session, must be used only from
+the thread using that session, and is invalidated by
+`sm_commit`, `sm_abort`, and `sm_detach`. Multiple cursors
+may be open on one session at once.
+
+Returns NULL on error: `SM_ERR_NOTFOUND` (no such
+relation), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+`SM_ERR_INVALID`, `SM_ERR_NOMEM`, `SM_ERR_IO`.
+
+### int sm_scan_next(sm_scan_t* scan, const char** key, size_t* klen, const char** data, size_t* datalen)
+
+Advance to the next row.
+
+Returns **0** if a row was produced — the four out-params
+then describe it, valid until the next call on this cursor.
+Returns **1** at end of range, leaving the out-params NULL
+and 0; this is not an error and does not set the error
+state. Returns **-1** on error.
+
+Once it has returned 1 or -1, further calls on the cursor
+return the same thing.
+
+Errors: `SM_ERR_CORRUPT`, `SM_ERR_IO`.
+
+### void sm_scan_end(sm_scan_t* scan)
+
+Close a cursor and release its resources, including the
+snapshot it was pinning. Passing NULL is a no-op.
+
+Under `SM_XCT_SERIALIZABLE`, this is where the range the
+cursor actually traversed is registered for conflict
+tracking. A cursor abandoned early registers the shorter
+range it really read, which is both correct and tighter
+than the requested range — so closing early is preferable
+to draining a scan whose rows are not needed.
+
+`scan` is invalid after this call. Closing a cursor never
+fails, which is why it returns nothing: a caller has no
+useful recovery from a failure to release resources.
+
+---
+
+## Divergences from the earlier sketch
+
+These changes were made against the previous `API.txt`.
+Each is a decision, not a detail, and `DESIGN.md` §10.3 and
+§12.1 should be reconciled with the ones marked (D).
+
+1. **`sm_errno_t` became reachable.** The old file declared
+   the enum but exposed no way to read it, only a message
+   string. Callers cannot implement the retry contract
+   without a machine-readable code. (D: replaces
+   `extern thread_local char sm_errmsg[200]`, which is also
+   a poor fit for a C ABI across a shared library.)
+2. **Return convention repaired.** The old file promised
+   0/-1 everywhere, then documented `sm_rmdb` as returning
+   true/false, and had two calls that need three outcomes.
+3. **`sm_read`/`sm_scan_next` use a tri-state return**
+   rather than `DESIGN.md`'s separate `int* found`. One
+   idiom for "no row" across both calls. (D)
+4. **The `schema` parameter is gone** from the read calls.
+   No such concept exists anywhere else in the API.
+5. **Lengths are `size_t`,** and every byte-string
+   parameter has one. The old `sm_read`/`sm_scan` had none
+   at all and could not carry binary keys or values. (D)
+6. **2PC entry points added** — `gid` on `sm_prepare`, plus
+   `sm_list_prepared` / `sm_free_prepared` /
+   `sm_commit_prepared` / `sm_abort_prepared`. Without
+   them a prepared transaction that survives a restart is
+   unreachable forever.
+7. **`sm_options_t` added.** `DESIGN.md` §12.2 specifies
+   configuration knobs, including one (`durability_sync`)
+   that changes the durability guarantee, and there was no
+   surface to set any of them.
+8. **`sm_rollback` now requires a savepoint** instead of
+   silently rolling back to `sm_begin` when none is set.
+   The old behaviour makes one call mean either "undo the
+   last few writes" or "undo everything" depending on
+   invisible state. `sm_savepoint` right after `sm_begin`
+   recovers the old capability explicitly. (D)
+9. **`sm_scan` gained an end key** (required for
+   serializable predicate tracking) and an inclusivity flag
+   for it.
+10. **`sm_scan_end` returns void.** A release call that can
+    fail gives the caller nothing to do about it. (D)
+11. **Types are `sm_`-prefixed and opaque** —
+    `sm_session_t`, `sm_scan_t` — rather than occupying the
+    global names `session_t` and `scan_t`.
+12. **Preconditions, error sets, lifetimes, threading, key
+    ordering, and the three surprising isolation
+    behaviours are now stated.** They were decided in
+    `DESIGN.md` but invisible to a caller reading only the
+    API.
+13. `SM_XCT_READ_COMMITED` → `SM_XCT_READ_COMMITTED`.
