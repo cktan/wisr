@@ -550,17 +550,37 @@ validation, so they were checked against each other — which is what
 makes the post-recovery state (§9.3) safe without replaying the SSI
 graph.
 
-### 8.5 API additions required by 2PC
+### 8.5 The 2PC API surface
 
-`API.txt` has `sm_prepare(session_t*)` with no global id and no way to
-resolve in-doubt transactions after a restart. The minimum additions:
+`API.txt` defines these five calls. What the design requires
+of each:
 
 ```c
-int  sm_prepare(session_t*, const char* gid);
-int  sm_list_prepared(session_t*, sm_prepared_t** out, int* n);
-int  sm_commit_prepared(session_t*, const char* gid);
-int  sm_abort_prepared (session_t*, const char* gid);
+int  sm_prepare(sm_session_t* session, const char* gid);
+int  sm_list_prepared(sm_session_t* session,
+                      sm_prepared_t** out, size_t* n);
+void sm_free_prepared(sm_prepared_t* list, size_t n);
+int  sm_commit_prepared(sm_session_t* session, const char* gid);
+int  sm_abort_prepared(sm_session_t* session, const char* gid);
 ```
+
+- `gid` is what makes a prepared transaction addressable once
+  the session that prepared it is gone. It goes into the
+  `PREPARED` status record (§8.4 step 2) and must be unique
+  among the unresolved prepared transactions of a database.
+- `sm_list_prepared` is the only way to discover the in-doubt
+  transactions that recovery restored (§9.3). Without it they
+  hold their row locks and pin `gc_watermark` indefinitely
+  with no way for an operator to name them. It requires no
+  active transaction, because a coordinator calls it on a
+  fresh session at startup.
+- `sm_commit_prepared` and `sm_abort_prepared` resolve by
+  `gid` on any session, which is the whole point: after a
+  restart the resolving session is never the preparing one.
+- `sm_prepare` can still fail with `SM_ERR_SERIALIZATION`,
+  leaving the transaction aborted rather than prepared.
+  Validation runs at prepare (§8.4), so this is the last
+  moment at which the engine is able to say no.
 
 ---
 
@@ -680,31 +700,44 @@ range.
 
 ### 10.3 API shape
 
-`API.txt` sketches reads in pseudo-code with a stale `schema`
-parameter. Proposed concrete signatures, consistent with the rest:
+`API.txt` is the interface contract. Its read-path signatures
+are repeated here because three of them encode decisions from
+this document rather than mere spelling:
 
 ```c
-/* Returns 0 on hit, -1 on error; *found says whether the key exists.
- * *data points into session-owned memory valid until the next call
- * on this session. */
-int  sm_read(session_t*, const char* relname,
-             const char* key, int klen,
-             const char** data, int* datalen, int* found);
+/* 0 = row, 1 = no such key, -1 = error. *data points into
+ * session-owned memory valid until the next call on the session. */
+int  sm_read(sm_session_t* session, const char* relname,
+             const char* key, size_t klen,
+             const char** data, size_t* datalen);
 
-scan_t* sm_scan(session_t*, const char* relname,
-                const char* skey, int sklen, int inclusive,
-                const char* ekey, int eklen);   /* ekey NULL = to end */
+sm_scan_t* sm_scan(sm_session_t* session, const char* relname,
+                   const char* skey, size_t sklen, int skey_inclusive,
+                   const char* ekey, size_t eklen, int ekey_inclusive);
 
-/* 0 = row returned, 1 = end of scan, -1 = error. Buffers valid until
- * the next sm_scan_next on the same cursor. */
-int  sm_scan_next(scan_t*, const char** key, int* klen,
-                  const char** data, int* datalen);
-int  sm_scan_end(scan_t*);
+/* 0 = row returned, 1 = end of range, -1 = error. Buffers valid
+ * until the next sm_scan_next on the same cursor. */
+int  sm_scan_next(sm_scan_t* scan, const char** key, size_t* klen,
+                  const char** data, size_t* datalen);
+void sm_scan_end(sm_scan_t* scan);
 ```
 
-The end-key parameter is added because without it a range predicate
-cannot be recorded for SSI, and every caller would otherwise scan and
-discard.
+- **Both range bounds are parameters.** Without an end key a
+  range predicate cannot be recorded for SSI (§7.1), and every
+  caller would otherwise scan and discard.
+- **"No row" is a tri-state return, not an out-param.**
+  `sm_read` returns 1 for a missing key and `sm_scan_next`
+  returns 1 at end of range; this replaces the earlier
+  `int* found`. Neither is an error, and neither disturbs the
+  error state, so a caller must distinguish 1 from -1 before
+  consulting `sm_errno()`.
+- **`sm_scan_end` returns void.** Releasing a cursor cannot
+  usefully fail. It is still where the range the cursor
+  actually traversed gets registered for conflict tracking
+  (§7.1), so a serializable transaction must call it — the
+  registered range is the part traversed, not the part
+  requested, which makes closing early both correct and
+  tighter than draining.
 
 ---
 
@@ -737,24 +770,48 @@ no session in this process holds the path open.
 
 ### 12.1 Error codes
 
-`API.txt` lists only `SM_ERR_PERMISSION` and `SM_ERR_DISKFULL`. The
-design needs at least:
+`API.txt` defines `sm_errno_t` with explicit, stable values.
+This section records only which codes the engine raises and
+where they come from:
 
 ```
 SM_ERR_CONFLICT        write-write conflict (§5.2)
 SM_ERR_SERIALIZATION   SSI validation failure (§7.3)
 SM_ERR_DEADLOCK        victim of deadlock detection (§5.1)
-SM_ERR_NOTFOUND        key or relation does not exist
-SM_ERR_DUPKEY          insert onto a live key
-SM_ERR_NOTRANS         data op outside a transaction
-SM_ERR_PREPARED        illegal op on a prepared transaction
-SM_ERR_CORRUPT         RocksDB integrity failure
+SM_ERR_NOTFOUND        relation or key does not exist
+SM_ERR_DUPKEY          insert onto a live key (§5)
+SM_ERR_NOSAVEPOINT     rollback with no savepoint set (§6.5)
+SM_ERR_NOTRANS         data op outside a transaction (§6.1)
+SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
+SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
+SM_ERR_EXISTS          database or relation already exists (§11)
+SM_ERR_INUSE           database still attached in this process
+SM_ERR_CORRUPT         RocksDB integrity failure (§9.4)
 SM_ERR_IO / SM_ERR_NOMEM / SM_ERR_PERMISSION / SM_ERR_DISKFULL
 ```
 
-`CONFLICT`, `SERIALIZATION`, and `DEADLOCK` are the three *retryable*
-errors — the caller is expected to abort and retry the transaction.
-That distinction should be part of the documented contract.
+`CONFLICT`, `SERIALIZATION`, and `DEADLOCK` are the three
+*retryable* errors. On all three the engine has **already
+aborted** the transaction (§6.6): the caller must not call
+`sm_abort`, and retries by beginning a fresh transaction.
+Under `SM_XCT_SERIALIZABLE` they are a normal outcome, not an
+exceptional one.
+
+The code and message are read with `sm_errno()` and
+`sm_errmsg()`, each reporting the last error on the calling
+thread. They are functions, not the thread-local globals of
+the original sketch; `API.txt` divergence 1 records why.
+Two consequences for the implementation:
+
+- A successful call leaves both untouched, so every path that
+  returns an error indication must set them before returning.
+  Nothing may rely on a stale value, and nothing may clear
+  them on success.
+- `sm_errmsg()` is never NULL and its result stays valid until
+  the next failing `sm_*` call on that thread, so the message
+  wants thread-local storage owned by the engine. Formatting
+  it lazily is worthwhile: under SSI a retry loop can raise
+  `SM_ERR_SERIALIZATION` constantly and never read the text.
 
 ### 12.2 Configuration knobs
 
