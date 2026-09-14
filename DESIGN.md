@@ -227,10 +227,13 @@ This is what lets a reader seek by `xid` and get commit order.
 The counter is volatile, so `CF:meta` holds `next_ts`, advanced in
 **leases**: the allocator persists `global_ts + LEASE` (e.g. 1M) and
 only re-persists when the counter reaches the persisted value. On
-startup, `global_ts` resumes at the persisted value — never below any
-id ever handed out. `recovery_watermark` is set to that same value,
-so every `xid` from before the crash is `< recovery_watermark` and
-rule 3.4/4 applies to it. Relids are allocated the same way.
+startup, `global_ts` resumes one past the persisted value — above
+any id ever handed out. `recovery_watermark` and `visible_ts` are
+set to the persisted value itself, so every `xid` from before the
+crash is `< recovery_watermark` and rule 3.4/4 applies to it, and
+every `xid` allocated after restart is `> visible_ts`, keeping
+§4.1's `xid > snapshot_ts`. The persisted value itself is never
+handed out. Relids are allocated the same way.
 
 ### 4.3 `visible_ts`: making snapshots correct
 
@@ -647,7 +650,7 @@ the status resolution rule.
 1. ListColumnFamilies, then open RocksDB with every CF
    (replays WAL → memtable state as of last sync).
 2. Read CF:meta → format version, persisted next_ts, next_relid.
-3. global_ts = next_ts;  recovery_watermark = next_ts;
+3. global_ts = next_ts + 1;  recovery_watermark = next_ts;
    visible_ts = next_ts.
 4. Scan CF:txn for records in state PREPARED.
    (COMMITTED / ABORTED records need no action.)
