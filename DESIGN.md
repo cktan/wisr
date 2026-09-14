@@ -613,6 +613,10 @@ The API has no read-only declaration, so a transaction is known
 to be read-only only when it commits with `T.xid == 0`. While it
 is active it stays fully tracked, safe snapshot or not: it may
 still write, and then it needs its read set as a possible pivot.
+Dropping the tracking early and failing a later write instead
+would fail every read-then-write transaction whose snapshot
+became safe, on an idle database at once, and again on every
+retry.
 The optimization applies from commit on. A transaction that
 commits with `T.xid == 0` releases its SIREAD locks as soon as
 its snapshot is safe, instead of holding them under §7.1's rule.
@@ -763,6 +767,16 @@ prepared transactions, oldest open scan)`. It never moves
 backwards: a new snapshot is `visible_ts`, which is at or above
 every snapshot already counted. One compaction filter factory
 serves all relation CFs.
+
+A read-committed transaction counts at its begin `snapshot_ts`
+for its whole life, between statements too, because §6.2 checks
+its writes against that snapshot. If the watermark passed it,
+the tombstone purge could remove a delete committed after
+`sm_begin`. A later insert of that key by the transaction would
+then pass the §5.2 check with an xid below the deleter's, and a
+repeated purge entry for the key would delete the committed
+insert. An idle open transaction therefore holds back GC, as in
+any MVCC engine.
 
 A `COMMITTED` record can be dropped once every surviving
 version of its transaction carries the stamp (rule §3.4/0). The
@@ -1358,12 +1372,18 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   §10.2).
   It can update a key it inserted and re-insert a key it
   deleted (§5), and `sm_rollback` with no savepoint fails with
-  `SM_ERR_NOSAVEPOINT`.
+  `SM_ERR_NOSAVEPOINT`. A key locked before a savepoint and
+  rewritten after it stays locked through `sm_rollback`, also
+  when the rewrite is of a different key sharing its lock entry
+  (§5.1).
 - **Read committed after a write.** A read-committed
   transaction that has already written reads a key committed by
   another transaction after its first write, and sees it
   (§10.1). Updating that key then fails with `SM_ERR_CONFLICT`
-  (§6.2).
+  (§6.2). A read-committed transaction left idle while another
+  deletes a key keeps that tombstone through a forced compaction
+  and purge, and its later insert of the key fails with
+  `SM_ERR_CONFLICT` (§8.3).
 - **Isolation.** The Jepsen/Adya anomaly catalogue as unit tests: dirty
   read, lost update, non-repeatable read, phantom, write skew (must
   pass at SERIALIZABLE, must be *observable* at RR — asserting the
@@ -1373,7 +1393,10 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   open (§10.2), an insert of a key the reader found missing, a
   point read past a concurrent writer's newer version (§10.1),
   a scan opened after a concurrent writer committed into its
-  range (§10.2), a scan left open at `sm_commit` (§8.2), and
+  range (§10.2), a scan closed right after yielding a key
+  followed by a concurrent write to that key (§7.1), a scan
+  past a key whose only versions are concurrent writers'
+  (§10.2), a scan left open at `sm_commit` (§8.2), and
   Fekete's read-only anomaly, which must fail while the
   read-only transaction's snapshot is unsafe (§7.4). A
   transaction that reads, outlives every concurrent writer so
@@ -1386,6 +1409,9 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   A dropped relation can be created again under its name, while
   a transaction with an older snapshot still reads the old one;
   `sm_rollback` past an `sm_rmrel` keeps the relation's CF.
+  A session that looked up a name before a committed drop and
+  recreate resolves the new relid in its next transaction
+  (§11).
 - **Crash.** A fault-injection harness that kills the process at every
   RocksDB write boundary during a workload, restarts, and checks that
   the surviving state is exactly one of the legal prefixes of the
@@ -1397,7 +1423,9 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   `SM_ERR_SERIALIZATION`; assert `sm_list_prepared` reports the
   original `prepared_at`. Prepare two read-only transactions
   under different gids, restart, and assert both are listed and
-  resolvable (§8.4).
+  resolvable (§8.4). Prepare a transaction that dropped a
+  relation, restart, commit it by gid, and assert the relation's
+  CF is removed once `gc_watermark` passes the commit (§3.2).
 - **GC.** Assert that a long-running reader's snapshot is never
   violated by the collector, and that space is actually reclaimed once
   it finishes. Force a compaction while a transaction is still
@@ -1411,7 +1439,9 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   versions stay in-flight and are not compacted away, and after
   reopen the transaction is committed or dead according to the
   WAL (§8.2). Sweep `CF:txn` after a compaction pass and assert
-  every committed row is still readable (§8.3).
+  every committed row is still readable (§8.3). Run a concurrent
+  workload with `commit_cache_entries = 1` and assert it reads
+  the same results as with a large cache (§3.4).
 - **Linearizability.** A concurrent random-op checker comparing the
   engine against a model, validating that observed histories are
   serializable at SERIALIZABLE and snapshot-isolated at RR.

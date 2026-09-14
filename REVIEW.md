@@ -57,11 +57,10 @@ committed `sm_rmrel` plus `sm_mkrel` of the same name, a
 transaction with an older snapshot must still resolve the old
 relid. `API.txt` says such snapshots "may still legitimately
 read the relation". Invalidating a shared cache at DDL commit
-would send that transaction to the new relation. A per-session
-cache is correct because a session's snapshots only move
-forward. How a session detects a newer catalog version is
-underspecified in §11, but that is a separate clarification,
-not this change.
+would send that transaction to the new relation. How a session
+detects a newer catalog version was later specified in §11: a
+cache hit is checked against the commit timestamp of the latest
+DDL, a fix from the `REVIEW2.md` pass.
 
 ### 3.2. Read-committed writes can break the version-chain invariant (§5, §6.2, §4.1) [WONT FIX]
 
