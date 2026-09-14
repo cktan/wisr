@@ -115,9 +115,28 @@ Notes on the encoding:
   (§6.5) instead of requiring an undo pre-image. Complemented so the
   latest write within a transaction sorts first.
 - `userkey` is stored raw and the two suffixes are fixed-width, so a
-  version key is parsed from the tail. No escaping needed, and the
-  bytewise order of `userkey` prefixes is exactly the user's
-  scan order.
+  version key is parsed from the tail. No escaping needed.
+- **Comparator.** Relation CFs use a custom comparator,
+  `wisr.version.v1`: compare the `userkey` parts (key minus the
+  12-byte tail) with `memcmp`, shorter-is-less on a tie, then
+  compare the tails with `memcmp`. RocksDB's default bytewise
+  comparator is wrong here. With it, a key's tail is compared
+  against the extra bytes of a longer userkey that begins with
+  it: the versions of `"a"` (`61 FF FF …`, since `~xid` of any
+  xid below 2^56 starts with `FF`) sort after those of `"ab"`
+  (`61 62 …`). Scans would return `"ab"` before `"a"`, and a
+  point read could stop early on a foreign key. With the custom
+  comparator, a key's versions are contiguous and userkeys
+  sort in `memcmp` order, which is the order `sm_scan` exposes.
+
+  Every key handed to RocksDB for a relation CF — writes, seek
+  targets, iterator bounds — carries the full 12-byte tail.
+  `FindShortestSeparator` and `FindShortSuccessor` are no-ops
+  (safe; index blocks are a little larger). RocksDB persists the
+  comparator name and refuses to open a CF with another, so the
+  name is part of the format: changing the ordering means a new
+  name and a rewrite. `CF:txn` and `CF:meta` keep the bytewise
+  comparator.
 
 Column family handles are held in a process-wide map
 `relid → handle`, shared by every session attached to the
@@ -717,6 +736,17 @@ at cursor creation. The RocksDB snapshot gives a stable physical
 view (unaffected by concurrent eager writes or compaction); the
 MVCC snapshot gives the logical view. Both are needed:
 
+```
+seek target          = skey | (skey_inclusive ? 00×12 : FF×12)
+iterate_upper_bound  = ekey | (ekey_inclusive ? FF×12 : 00×12)
+```
+
+The bounds carry a full tail because the comparator requires one
+(§3.1). No real version has an all-`00` or all-`FF` tail, since
+xid 0 means "no xid yet" and xid 2^64−1 is never reached, so
+these tails fall strictly before or after every version of the
+bound key.
+
 - Without the RocksDB snapshot, other sessions' eager writes would
   appear mid-iteration and have to be filtered out anyway, and the
   iterator's own consistency would depend on memtable flush timing.
@@ -875,7 +905,10 @@ Two consequences for the implementation:
 `ssi_max_entries`, `ts_lease`, plus pass-through RocksDB options
 (block cache size, write buffer size, compaction style). Bloom filters
 are worth enabling on relation CFs, and `CF:txn` benefits from a
-large block cache since it is small and hot.
+large block cache since it is small and hot. For relation CFs the
+prefix extractor strips the 12-byte tail, so the bloom key is the
+userkey; the comparator keeps each userkey's versions contiguous,
+which is what a prefix extractor requires.
 
 Relation CFs share one block cache and one `WriteBufferManager`,
 so total memtable memory is a single budget rather than
@@ -889,7 +922,7 @@ include/sm.h            public C API
 src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
 src/session.cc          attach/detach, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
-src/version.cc          key/value codec, visibility
+src/version.cc          key/value codec, version comparator, visibility
 src/access.cc           read / scan / insert / update / delete
 src/lockmgr.cc          row locks, waits-for graph, deadlock detector
 src/ssi.cc              SIREAD locks, rw-edges, validation
@@ -913,6 +946,10 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 
 ### 12.5 Testing
 
+- **Key order.** Codec tests with userkeys that are prefixes of
+  one another (`""`, `"a"`, `"a\x00"`, `"a\xFF"`, `"ab"`), each
+  with several versions: a scan returns them in `memcmp` order,
+  and a point read of each finds its own newest visible version.
 - **Isolation.** The Jepsen/Adya anomaly catalogue as unit tests: dirty
   read, lost update, non-repeatable read, phantom, write skew (must
   pass at SERIALIZABLE, must be *observable* at RR — asserting the
