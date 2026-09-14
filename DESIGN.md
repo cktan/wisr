@@ -243,7 +243,7 @@ Rather than maintaining an in-flight-transaction list per snapshot
 (Postgres-style), commits are **published in `commit_ts` order**:
 
 ```
-commit sequencer (ring of slots, indexed by commit_ts)
+commit sequencer (ring of slots, indexed by timestamp)
 
   ts:   ...  104     105     106     107     108  ...
         [done]  [done]  [ WAL ]  [done]  [ ... ]
@@ -253,8 +253,16 @@ commit sequencer (ring of slots, indexed by commit_ts)
                   until 106 lands
 ```
 
+- Every slot starts not-done, so the advancer can never pass a
+  value that has not been allocated yet.
 - A committing transaction claims `commit_ts`, writes its status
-  record (WAL-synced), then marks its slot done.
+  record (WAL-synced), then marks its slot done. If the write
+  fails, the slot is still marked done; the value simply goes
+  unused.
+- `global_ts` also produces xids (§4.1), and no commit ever lands
+  in an xid's slot. The allocator marks that slot done as it
+  hands out the xid, so only commits in progress can hold back
+  `visible_ts`.
 - A single lightweight advancer moves `visible_ts` forward over the
   contiguous run of done slots.
 - A snapshot is simply the current `visible_ts`. Everything with
