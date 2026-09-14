@@ -1,3 +1,4 @@
+
 # DESIGN — wisr storage manager
 
 A multi-version (MVCC) storage manager for OLTP, layered over RocksDB.
@@ -47,7 +48,7 @@ design forecloses them; §12 notes where they would attach.
 
 ```
         ┌──────────────────────────────────────────────────────┐
-        │  sm_* C API   (session, xct, rel, insert/read/scan)   │
+        │  sm_* C API   (session, xct, rel, insert/read/scan)  │
         └───────────────────────┬──────────────────────────────┘
                                 │
    ┌────────────┬───────────────┼───────────────┬──────────────┐
@@ -66,7 +67,7 @@ design forecloses them; §12 notes where they would attach.
                          │                        └────────┬─────────┘
                  ┌───────┴────────────────────────────────┴────────┐
                  │                  RocksDB                        │
-                 │  CF:data   CF:txn   CF:meta   WAL   compaction   │
+                 │  CF:rel.*  CF:txn   CF:meta   WAL   compaction  │
                  └─────────────────────────────────────────────────┘
 ```
 
@@ -78,13 +79,16 @@ volatile and reconstructible (§9).
 
 ## 3. Physical layout
 
-Three column families.
+One column family per relation, plus two fixed ones: `CF:txn`
+and `CF:meta`.
 
-### 3.1 `CF:data` — row versions
+### 3.1 `CF:rel.<relid>` — row versions
+
+Each relation's versions live in their own column family, named
+by `relid` in decimal (`rel.0` is the catalog, §11).
 
 ```
-key   = relid (8B, big-endian)
-      | userkey (variable)
+key   = userkey (variable)
       | ~xid   (8B, big-endian, bitwise complement)
       | ~seq   (4B, big-endian, bitwise complement)
 
@@ -96,12 +100,14 @@ value = flags   (1B)   bit0 = tombstone (this version is a delete)
 
 Notes on the encoding:
 
-- **`relid`** is a stable 64-bit id assigned by the catalog, not the
-  relation name. Renames and drop/recreate are cheap and a dropped
-  relation's bytes are one contiguous range.
+- **`relid`** is a stable 64-bit id assigned by the catalog, not
+  the relation name, and it names the column family. Renames and
+  drop/recreate are cheap, a relid is never reused (§4.2), and a
+  dropped relation is removed with one `DropColumnFamily`. The
+  key itself carries no relid; the column family is the relation.
 - **Complemented `xid`** makes versions of a key sort **newest
   first**. A point read becomes one `Seek` to
-  `relid|userkey|~snapshot_ts|0xFFFFFFFF`, which lands on the newest
+  `userkey|~snapshot_ts|0xFFFFFFFF`, which lands on the newest
   version whose `xid <= snapshot_ts` — usually the answer.
 - **`seq`** is a per-transaction write counter. It exists so that a
   transaction writing the same key twice creates two distinct
@@ -110,8 +116,15 @@ Notes on the encoding:
   latest write within a transaction sorts first.
 - `userkey` is stored raw and the two suffixes are fixed-width, so a
   version key is parsed from the tail. No escaping needed, and the
-  bytewise order of `relid|userkey` prefixes is exactly the user's
+  bytewise order of `userkey` prefixes is exactly the user's
   scan order.
+
+Column family handles are held in a process-wide map
+`relid → handle`, shared by every session attached to the
+database and guarded by a reader-writer lock, because relations
+are created and dropped concurrently with reads. A handle is
+reference-counted and destroyed only after its CF is dropped and
+the last user releases it.
 
 ### 3.2 `CF:txn` — commit status table
 
@@ -120,18 +133,22 @@ key   = xid (8B, big-endian)
 value = { state: PREPARED | COMMITTED | ABORTED,
           snapshot_ts, commit_ts,
           gid (global txn id string, 2PC only),
-          writeset: [ (relid, userkey) ... ]   (PREPARED only) }
+          writeset: [ (relid, userkey) ... ]   (PREPARED only),
+          created:  [ relid ... ]              (PREPARED only) }
 ```
 
 Only **writing** transactions ever get an entry, and only at
 prepare/commit/abort time — nothing is written at `sm_begin`. Absence
 of a record is meaningful (§3.4).
 
-The `writeset` is carried only in a `PREPARED` record, and only so
-that recovery can re-acquire the row locks a prepared transaction
-still holds. It is dropped when the record flips to COMMITTED. For a
-prepared transaction with a very large write set the list spills to
-additional keys `xid | chunkno` in the same CF.
+The `writeset` is carried only in a `PREPARED` record, and only
+so that recovery can re-acquire the row locks a prepared
+transaction still holds. `created` lists the relations the
+transaction made with `sm_mkrel`, so that recovery keeps their
+column families (§9.1). Both are dropped when the record flips
+to COMMITTED. For a prepared transaction with a very large write
+set the list spills to additional keys `xid | chunkno` in the
+same CF.
 
 ### 3.3 `CF:meta` — bootstrap state
 
@@ -149,11 +166,12 @@ Given a version's `xid`, a reader determines the writer's fate as:
 4. **No record, and `xid < recovery_watermark`** → the writer died
    before committing. Dead.
 
-Step 4 is what makes crash recovery free of any undo pass: a crashed
-transaction leaves versions in `CF:data` with no status record, and
-absence of a record for an id below the watermark *is* the abort.
-`recovery_watermark` is set at startup to the persisted timestamp
-high-water mark, so no live transaction can be misjudged (§4.2).
+Step 4 is what makes crash recovery free of any undo pass: a
+crashed transaction leaves versions in relation CFs with no
+status record, and absence of a record for an id below the
+watermark *is* the abort. `recovery_watermark` is set at startup
+to the persisted timestamp high-water mark, so no live
+transaction can be misjudged (§4.2).
 
 ---
 
@@ -254,7 +272,7 @@ sm_update(rel, k, v):
          abort with SM_ERR_CONFLICT
      if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
   4. if T.xid == 0: T.xid = global_ts++
-  5. db.Put(encode(relid, k, ~T.xid, ~T.seq++), encode(flags, v))
+  5. db.Put(cf(relid), encode(k, ~T.xid, ~T.seq++), encode(flags, v))
   6. T.undo.push(relid, k, seq)                         # for savepoint
   7. ssi.on_write(T, relid, k)                          # §7
 ```
@@ -336,17 +354,24 @@ Repeatable read plus SSI validation (§7).
 The API allows exactly one savepoint per session. It is a mark into the
 per-transaction **undo list** — an in-memory vector of
 `(relid, userkey, seq)` triples in write order, holding no payloads,
-so a large transaction costs bytes per write, not rows.
+so a large transaction costs bytes per write, not rows. Relations
+created by the transaction are tracked alongside it in
+`T.created`, a vector of relids in creation order.
 
 ```
 sm_savepoint():
     T.sp_mark   = T.undo.size()        # replaces any previous savepoint
     T.sp_locks  = T.locks.size()
+    T.sp_rels   = T.created.size()
 
 sm_rollback():
     m = (savepoint exists) ? T.sp_mark : 0          # else roll back to begin
     for e in reverse(T.undo[m..]):
-        db.Delete(encode(e.relid, e.key, ~T.xid, ~e.seq))
+        db.Delete(cf(e.relid), encode(e.key, ~T.xid, ~e.seq))
+    r = (savepoint exists) ? T.sp_rels : 0
+    for relid in reverse(T.created[r..]):
+        db.DropColumnFamily(cf(relid))              # §11
+    T.created.truncate(r)
     T.undo.truncate(m)
     T.seq_hwm = (m > 0) ? T.undo[m-1].seq : 0       # own-write visibility
     release locks acquired after the mark
@@ -368,8 +393,10 @@ before the savepoint, so no one observed our intent on it.
 
 `sm_abort` writes an `ABORTED` status record (not WAL-synced — it is a
 hint; absence of a record means the same thing after a crash),
-releases locks and SSI state, and returns. The versions stay in
-`CF:data` until GC (§8.3). Abort is O(1) in the write-set size.
+drops the column families of relations in `T.created` (no other
+transaction can see them), releases locks and SSI state, and
+returns. The versions stay in their relation CFs until GC (§8.3).
+Abort is O(1) in the write-set size.
 
 ---
 
@@ -513,11 +540,12 @@ commit cache and `CF:txn` are consulted mainly for the recent tail.
 prepared transactions, oldest open scan)`. A `CF:txn` record can be
 dropped once no version referencing it survives; conservatively,
 records with `commit_ts < gc_watermark` are dropped on a periodic
-sweep after a full compaction pass of `CF:data`.
+sweep after a full compaction pass of every relation CF. One
+compaction filter factory serves all relation CFs.
 
 Dropping a relation (`sm_rmrel`) marks it dropped in the catalog at
 commit; once `gc_watermark` passes that commit, a background task
-issues `DeleteRange` over the whole `relid` prefix.
+issues `DropColumnFamily` on the relation's CF.
 
 ### 8.4 Two-phase commit
 
@@ -526,19 +554,21 @@ issues `DeleteRange` over the whole `relid` prefix.
 ```
 sm_prepare(T, gid):
   1. if SERIALIZABLE: ssi.validate(T)         ← validation happens HERE
-  2. rec = {PREPARED, xid, gid, snapshot_ts, writeset = keys of T.undo}
+  2. rec = {PREPARED, xid, gid, snapshot_ts, writeset = keys of T.undo,
+            created = T.created}
   3. db.Write({CF:txn[T.xid] = rec}, sync = true)      ← always synced
   4. T.state = PREPARED;  locks and SSI state are RETAINED
 ```
 
-After a successful prepare the transaction is in-doubt: its versions
-sit in `CF:data`, its status record says `PREPARED`, and readers treat
-it as in-flight (invisible). It holds its row locks, and it pins
-`gc_watermark` at its `snapshot_ts`.
+After a successful prepare the transaction is in-doubt: its
+versions sit in relation CFs, its status record says `PREPARED`,
+and readers treat it as in-flight (invisible). It holds its row
+locks, and it pins `gc_watermark` at its `snapshot_ts`.
 
 The coordinator later calls commit or abort. Commit is §8.2 starting
 at step 2, overwriting the record (dropping the now-unneeded write
-set); abort writes `ABORTED` and releases.
+set); abort writes `ABORTED`, drops the CFs in `created`, and
+releases.
 
 **Why validate at prepare.** Once prepared, a transaction cannot be
 told "no". So the serialization check must have already passed, and it
@@ -593,7 +623,8 @@ the status resolution rule.
 ### 9.1 Startup
 
 ```
-1. Open RocksDB (replays WAL → memtable state as of last sync).
+1. ListColumnFamilies, then open RocksDB with every CF
+   (replays WAL → memtable state as of last sync).
 2. Read CF:meta → format version, persisted next_ts, next_relid.
 3. global_ts = next_ts;  recovery_watermark = next_ts;
    visible_ts = next_ts.
@@ -603,9 +634,19 @@ the status resolution rule.
       - register an entry in the active transaction table (in-doubt)
       - re-acquire an X row lock for every key in its writeset
       - pin gc_watermark at its snapshot_ts
-6. Start the GC / compaction filter, deadlock detector, commit advancer.
-7. Open for sessions.
+6. Orphan CF sweep: read the catalog (rel.0) and drop every
+   rel.<relid> CF that has neither a committed, not-dropped
+   catalog row nor an entry in a prepared record's `created`.
+7. Start the GC / compaction filter, deadlock detector, commit advancer.
+8. Open for sessions.
 ```
+
+Step 6 catches the column families that eager cleanup (§6.5,
+§6.6) never reached: a crash between `CreateColumnFamily` and
+commit, and a committed drop whose `DropColumnFamily` had not yet
+run. Creating a CF is durable in the RocksDB MANIFEST before
+`sm_mkrel` writes its catalog row, so a committed catalog row
+never lacks its CF.
 
 Step 3 is the whole of "abort recovery": every transaction that was
 running at the crash has `xid < recovery_watermark` and no status
@@ -620,6 +661,7 @@ independent of the size of the crashed transactions.
 | --- | --- |
 | ACTIVE (never wrote) | nothing to do |
 | ACTIVE with eager writes, no record | dead; versions dropped by GC |
+| ACTIVE that created a relation | dead; its CF dropped by the orphan sweep (§9.1 step 6) |
 | Wrote its COMMITTED record, WAL synced | committed, visible |
 | Was in `Write(sync)` when power cut | atomically all-or-nothing per RocksDB; if the record is not in the WAL, the transaction is dead |
 | PREPARED | restored in-doubt, locks re-acquired, awaits coordinator |
@@ -653,8 +695,9 @@ indistinguishable from the transaction never having committed.
 sm_read(session, rel, key, &val):
     relid = catalog.lookup(rel)
     snap  = (level == READ_COMMITTED) ? visible_ts : T.snapshot_ts
-    it.Seek(relid | key | ~snap | 0xFFFFFFFF)
-    while it.Valid() and it.key() has prefix (relid|key):
+    it = db.NewIterator(cf(relid))
+    it.Seek(key | ~snap | 0xFFFFFFFF)
+    while it.Valid() and userkey(it.key()) == key:
         v = decode(it)
         if visible(v, snap, T):                          # §4.4
             if SERIALIZABLE: ssi.on_read(T, relid, key, v)
@@ -668,10 +711,11 @@ transactions that are concurrent with this reader on this exact key.
 
 ### 10.2 Scan
 
-`sm_scan` opens a RocksDB iterator over `[relid|skey, relid+1)` on a
-**RocksDB snapshot** taken at cursor creation. The RocksDB snapshot
-gives a stable physical view (unaffected by concurrent eager writes or
-compaction); the MVCC snapshot gives the logical view. Both are needed:
+`sm_scan` opens a RocksDB iterator on the relation's CF, seeked
+to `skey` and bounded by `ekey`, on a **RocksDB snapshot** taken
+at cursor creation. The RocksDB snapshot gives a stable physical
+view (unaffected by concurrent eager writes or compaction); the
+MVCC snapshot gives the logical view. Both are needed:
 
 - Without the RocksDB snapshot, other sessions' eager writes would
   appear mid-iteration and have to be filtered out anyway, and the
@@ -688,7 +732,7 @@ versions:
 while iterator valid:
     uk = userkey(it.key())
     v  = first visible version in the run of versions for uk
-    seek past the run (Seek to relid|uk|0xFF..)      # or Next()-chase
+    seek past the run (Seek to uk|0xFF..)            # or Next()-chase
     if v exists and not tombstone: yield (uk, v.payload); return
 ```
 
@@ -743,7 +787,8 @@ void sm_scan_end(sm_scan_t* scan);
 
 ## 11. Catalog and DDL
 
-The catalog is relation `relid = 0`, an ordinary MVCC relation:
+The catalog is relation `relid = 0`, an ordinary MVCC relation in
+`CF:rel.0`:
 
 ```
 key = "R" | relname        →  { relid, created_ts, dropped (bool) }
@@ -756,13 +801,24 @@ Because it is an ordinary relation, DDL is transactional for free:
 caches `relname → relid` and invalidates the cache entry when it
 observes a catalog version newer than the cached one.
 
-`sm_rmrel` does **not** delete data at commit — a concurrent snapshot
-may still legitimately read the relation. Physical removal happens
-when `gc_watermark` passes the drop's `commit_ts` (§8.3).
+The column family is the one part of DDL that is not
+transactional: `CreateColumnFamily` and `DropColumnFamily` take
+effect immediately. `sm_mkrel` therefore creates the CF
+**eagerly**, before inserting the catalog row, so the creating
+transaction can write into the relation at once. Nobody else can
+reach the CF until the catalog row commits. If the transaction
+aborts or rolls back past the `sm_mkrel`, it drops the CF itself
+(§6.5, §6.6); if it crashes, the startup sweep drops it (§9.1).
 
-`sm_mkdb` creates the directory, the three column families, and the
-initial `CF:meta`. `sm_rmdb` is `rocksdb::DestroyDB` after verifying
-no session in this process holds the path open.
+`sm_rmrel` does **not** drop the CF at commit — a concurrent
+snapshot may still legitimately read the relation. Physical
+removal happens when `gc_watermark` passes the drop's
+`commit_ts` (§8.3).
+
+`sm_mkdb` creates the directory, `CF:txn`, `CF:meta` with its
+initial contents, and the catalog's `CF:rel.0`. `sm_rmdb` is
+`rocksdb::DestroyDB` after verifying no session in this process
+holds the path open.
 
 ---
 
@@ -818,23 +874,28 @@ Two consequences for the implementation:
 `durability_sync` (default on), `group_commit_us`, `deadlock_ms`,
 `ssi_max_entries`, `ts_lease`, plus pass-through RocksDB options
 (block cache size, write buffer size, compaction style). Bloom filters
-are worth enabling on `CF:data` prefixes, and `CF:txn` benefits from a
+are worth enabling on relation CFs, and `CF:txn` benefits from a
 large block cache since it is small and hot.
+
+Relation CFs share one block cache and one `WriteBufferManager`,
+so total memtable memory is a single budget rather than
+`write_buffer_size × relations`. `max_total_wal_size` bounds how
+long a rarely-written CF can hold old WAL files alive.
 
 ### 12.3 Source layout
 
 ```
 include/sm.h            public C API
-src/db.cc               mkdb/rmdb, open registry, CF setup
+src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
 src/session.cc          attach/detach, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
 src/version.cc          key/value codec, visibility
 src/access.cc           read / scan / insert / update / delete
 src/lockmgr.cc          row locks, waits-for graph, deadlock detector
 src/ssi.cc              SIREAD locks, rw-edges, validation
-src/catalog.cc          relation name/id mapping, DDL
+src/catalog.cc          relation name/id mapping, DDL, CF create/drop
 src/gc.cc               compaction filter, watermarks, drop-relation purge
-src/recover.cc          startup, prepared-transaction restore
+src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 ```
 
 ### 12.4 Build order
@@ -890,6 +951,13 @@ src/recover.cc          startup, prepared-transaction restore
   writes and aborts heavily without triggering compaction will hold
   dead versions. A periodic forced compaction over hot ranges is the
   operational answer.
+- **A column family per relation.** Buys instant physical drop,
+  per-relation tuning, and per-relation compaction stats. Costs:
+  every CF is opened at startup, so open time grows with the
+  number of relations; each CF carries its own memtable and LSM
+  metadata, so very many small relations need the shared memory
+  budget (§12.2); and CF create/drop is outside MVCC, which is
+  why `sm_mkrel` needs eager cleanup plus a recovery sweep (§11).
 - **One process.** Simplifies everything (no shared memory, no lock
   table in shm), and is what RocksDB wants. Multi-process or remote
   access means a server front-end (§1), not a change to this design.
