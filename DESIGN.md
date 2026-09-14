@@ -379,8 +379,10 @@ Step 3 rejects a write when the key was modified by a transaction that
 committed after our snapshot. Together with the row lock (which
 prevents the concurrent case), this is the standard snapshot-isolation
 write rule and it is what makes the §4.1 invariant hold. It applies at
-**all three isolation levels**, including read committed — with the
-caveat noted in §7.4.
+**all three isolation levels**, including read committed (§6.2).
+The caveat for the non-serializable levels is §7.4's: their
+writes still feed the SSI tracker, but they are never
+serialization victims themselves.
 
 ---
 
@@ -407,12 +409,27 @@ caveat noted in §7.4.
 
 ### 6.2 Read committed
 
-A fresh `snapshot_ts = visible_ts` is taken **at the start of each
-statement** (each `sm_read`, and each `sm_scan` — a scan keeps its
-snapshot for the life of the cursor, so one scan is internally
-consistent). Writes still obey §5.2, so a write can fail with
-`SM_ERR_CONFLICT` even here; the engine does not silently re-read the
-newer row (no Oracle-style restart), it reports the conflict.
+A fresh statement snapshot `snap = visible_ts` is taken **at the
+start of each read statement** (each `sm_read`, and each
+`sm_scan` — a scan keeps its snapshot for the life of the
+cursor, so one scan is internally consistent). It is a local of
+the statement; `T.snapshot_ts` is still the one taken at
+`sm_begin` and is never refreshed.
+
+Writes still obey §5.2, and they check against `T.snapshot_ts`,
+not the statement snapshot, so a write can fail with
+`SM_ERR_CONFLICT` even here — including on a row the transaction
+has just read, if that row was committed after `sm_begin`. The
+engine does not silently re-read the newer row (no Oracle-style
+restart), it reports the conflict. Checking against the begin
+snapshot is what keeps §4.1's invariant at this level: it is
+always below `T.xid`, whereas a statement snapshot taken after
+the first write can pass it. A read-committed transaction with
+`T.xid = 50` that updated a row committed at 70 against a
+statement snapshot of 75 would put a version `k|~50` that sorts
+*behind* the committed `xid 60` version: readers would return
+the older value, and GC would drop the newer commit as
+superseded.
 
 ### 6.3 Repeatable read
 
@@ -1277,13 +1294,17 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 - **Own writes.** At each isolation level, a transaction reads
   back a key it inserted, updated twice, and deleted; after
   `sm_rollback` to a savepoint it reads the pre-savepoint value.
+  A cursor opened before the rollback returns the same rows
+  whether or not the transaction writes again afterwards (§6.5,
+  §10.2).
   It can update a key it inserted and re-insert a key it
   deleted (§5), and `sm_rollback` with no savepoint fails with
   `SM_ERR_NOSAVEPOINT`.
 - **Read committed after a write.** A read-committed
   transaction that has already written reads a key committed by
   another transaction after its first write, and sees it
-  (§10.1).
+  (§10.1). Updating that key then fails with `SM_ERR_CONFLICT`
+  (§6.2).
 - **Isolation.** The Jepsen/Adya anomaly catalogue as unit tests: dirty
   read, lost update, non-repeatable read, phantom, write skew (must
   pass at SERIALIZABLE, must be *observable* at RR — asserting the
@@ -1292,7 +1313,16 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   handling: a phantom inserted while the reader's cursor is still
   open (§10.2), an insert of a key the reader found missing, a
   point read past a concurrent writer's newer version (§10.1),
-  and a scan left open at `sm_commit` (§8.2).
+  a scan opened after a concurrent writer committed into its
+  range (§10.2), a scan left open at `sm_commit` (§8.2), and
+  Fekete's read-only anomaly, which must fail while the
+  read-only transaction's snapshot is unsafe (§7.4). A
+  transaction whose snapshot became safe and then writes fails
+  with `SM_ERR_SERIALIZATION`. With a prepared pivot, the
+  partner is the one that fails (§7.3).
+- **DDL.** Concurrent `sm_mkrel` of different names both commit;
+  of the same name, the second fails with `SM_ERR_CONFLICT`
+  (§11).
 - **Crash.** A fault-injection harness that kills the process at every
   RocksDB write boundary during a workload, restarts, and checks that
   the surviving state is exactly one of the legal prefixes of the
@@ -1302,7 +1332,9 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   Replay the §8.4 write-skew history across a restart and assert
   that the post-restart transaction fails with
   `SM_ERR_SERIALIZATION`; assert `sm_list_prepared` reports the
-  original `prepared_at`.
+  original `prepared_at`. Prepare two read-only transactions
+  under different gids, restart, and assert both are listed and
+  resolvable (§8.4).
 - **GC.** Assert that a long-running reader's snapshot is never
   violated by the collector, and that space is actually reclaimed once
   it finishes. Force a compaction while a transaction is still
