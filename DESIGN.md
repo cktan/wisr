@@ -107,8 +107,10 @@ Notes on the encoding:
   key itself carries no relid; the column family is the relation.
 - **Complemented `xid`** makes versions of a key sort **newest
   first**. A point read becomes one `Seek` to
-  `userkey|~snapshot_ts|0xFFFFFFFF`, which lands on the newest
-  version whose `xid <= snapshot_ts` — usually the answer.
+  `userkey|~snapshot_ts|0x00000000`, which lands on the newest
+  version whose `xid <= snapshot_ts` — usually the answer. A
+  transaction that has written seeks from its own `xid` instead
+  (§10.1).
 - **`seq`** is a per-transaction write counter. It exists so that a
   transaction writing the same key twice creates two distinct
   versions, which is what makes savepoint rollback a pure delete
@@ -714,8 +716,9 @@ indistinguishable from the transaction never having committed.
 sm_read(session, rel, key, &val):
     relid = catalog.lookup(rel)
     snap  = (level == READ_COMMITTED) ? visible_ts : T.snapshot_ts
+    hi    = (T.xid != 0) ? T.xid : snap                  # own writes, §4.4
     it = db.NewIterator(cf(relid))
-    it.Seek(key | ~snap | 0xFFFFFFFF)
+    it.Seek(key | ~hi | 0x00000000)
     while it.Valid() and userkey(it.key()) == key:
         v = decode(it)
         if visible(v, snap, T):                          # §4.4
@@ -727,6 +730,15 @@ sm_read(session, rel, key, &val):
 
 The loop normally runs once. It iterates only past versions written by
 transactions that are concurrent with this reader on this exact key.
+
+The seek starts at `T.xid` once the transaction has one. Its own
+versions have `xid = T.xid > snap`, so a seek at `~snap` would
+land after them and a transaction could never read its own
+writes. A `~seq` of `0x00000000` places the seek before every
+own version of the key, newest first, and §4.4 picks the one
+allowed by `seq_hwm`. Versions from other transactions with
+`snap < xid < T.xid` are stepped past as in-flight or committed
+too late, which the loop already handles.
 
 ### 10.2 Scan
 
@@ -950,6 +962,9 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   one another (`""`, `"a"`, `"a\x00"`, `"a\xFF"`, `"ab"`), each
   with several versions: a scan returns them in `memcmp` order,
   and a point read of each finds its own newest visible version.
+- **Own writes.** At each isolation level, a transaction reads
+  back a key it inserted, updated twice, and deleted; after
+  `sm_rollback` to a savepoint it reads the pre-savepoint value.
 - **Isolation.** The Jepsen/Adya anomaly catalogue as unit tests: dirty
   read, lost update, non-repeatable read, phantom, write skew (must
   pass at SERIALIZABLE, must be *observable* at RR — asserting the
