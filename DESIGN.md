@@ -111,11 +111,12 @@ Notes on the encoding:
   version whose `xid <= snapshot_ts` — usually the answer. A
   transaction that has written seeks from the larger of its own
   `xid` and its snapshot instead (§10.1).
-- **`seq`** is a per-transaction write counter. It exists so that a
-  transaction writing the same key twice creates two distinct
-  versions, which is what makes savepoint rollback a pure delete
-  (§6.5) instead of requiring an undo pre-image. Complemented so the
-  latest write within a transaction sorts first.
+- **`seq`** is a per-transaction write counter, starting at 1.
+  It exists so that a transaction writing the same key twice
+  creates two distinct versions, which is what makes savepoint
+  rollback a pure delete (§6.5) instead of requiring an undo
+  pre-image. Complemented so the latest write within a
+  transaction sorts first.
 - `userkey` is stored raw and the two suffixes are fixed-width, so a
   version key is parsed from the tail. No escaping needed.
 - **Comparator.** Relation CFs use a custom comparator,
@@ -159,9 +160,10 @@ value = { state: PREPARED | COMMITTED | ABORTED,
           created:  [ relid ... ]              (PREPARED only) }
 ```
 
-Only **writing** transactions ever get an entry, and only at
-prepare/commit/abort time — nothing is written at `sm_begin`. Absence
-of a record is meaningful (§3.4).
+Only **writing** transactions ever get an entry, plus read-only
+ones that prepare (§8.4), and only at prepare/commit/abort time —
+nothing is written at `sm_begin`. Absence of a record is
+meaningful (§3.4).
 
 The `writeset` is carried only in a `PREPARED` record, and only
 so that recovery can re-acquire the row locks a prepared
@@ -170,10 +172,10 @@ transaction made with `sm_mkrel`, so that recovery keeps their
 column families (§9.1). `prepared_at` is the wall-clock time of
 `sm_prepare`, reported by `sm_list_prepared` (§8.5); it must be
 durable because the listing is mostly needed after a restart.
-All three are dropped when the record flips
-to COMMITTED. For a prepared transaction with a very large write
-set the list spills to additional keys `xid | chunkno` in the
-same CF.
+All three are dropped when the record flips to COMMITTED or
+ABORTED. For a prepared transaction with a very large write set
+the list spills to additional keys `xid | chunkno` in the same
+CF, deleted in the same batch as the flip.
 
 ### 3.3 `CF:meta` — bootstrap state
 
@@ -184,6 +186,12 @@ and relid allocators (§4.2).
 
 Given a version's `xid`, a reader determines the writer's fate as:
 
+0. The version's header carries a stamped `commit_ts` (flags
+   bit1, §3.1) → committed at that `commit_ts`. The stamp is
+   written only by the compaction filter, only for committed
+   versions (§8.3), so it is authoritative, and it must be
+   checked first: once the `CF:txn` record is swept, it is the
+   only evidence that the version committed.
 1. `xid` is in the in-memory **active transaction table** → still
    running or prepared; not visible (unless it is the reader's own).
 2. `xid` is in the in-memory **commit cache** → use its `commit_ts`.
@@ -193,11 +201,13 @@ Given a version's `xid`, a reader determines the writer's fate as:
 Step 4 is what makes crash recovery free of any undo pass: a
 crashed transaction leaves versions in relation CFs with no
 status record, and absence of a record *is* the abort. It holds
-at runtime too — a transaction whose commit status write failed
-(§4.3), or whose `ABORTED` hint was never written, leaves the
-same trace. The process is the only one attached to the
-database, so the active transaction table is exhaustive; two
-orderings keep a live transaction from being misjudged:
+at runtime too — a transaction whose `ABORTED` hint was never
+written leaves the same trace. A transaction whose *commit*
+status write failed does not: that record may still be durable,
+so the engine stops instead of judging it (§8.2). The process is
+the only one attached to the database, so the active transaction
+table is exhaustive; two orderings keep a live transaction from
+being misjudged:
 
 - A transaction enters the active table no later than its xid
   allocation, before its first version reaches RocksDB.
@@ -271,8 +281,9 @@ commit sequencer (ordered set of commit_ts in progress)
   above what the advancer saw.
 - A committing transaction claims `commit_ts`, writes its status
   record (WAL-synced), then marks it done, removing it from the
-  set. If the write fails, it is still marked done; the value
-  simply goes unused.
+  set. If the write fails, it is *not* marked done: the database
+  fails stop (§8.2), and `visible_ts` stays below that
+  `commit_ts` until restart.
 - `global_ts` also produces xids (§4.1), but xids never enter the
   set, so only commits in progress can hold back `visible_ts`.
 - A single lightweight advancer sets `visible_ts` to one below
@@ -303,7 +314,7 @@ Version `V` written by `xid`, read at `snapshot_ts` by transaction `T`:
 if V.xid == T.xid:                      # own write
     visible iff V.seq <= T.seq_hwm      # savepoint-aware, §6.5
 else:
-    resolve V.xid  →  commit_ts | dead | in-flight
+    resolve V (§3.4)  →  commit_ts | dead | in-flight
     visible iff resolved COMMITTED and commit_ts <= snapshot_ts
 ```
 
@@ -327,7 +338,8 @@ sm_update(rel, k, v):
              abort with SM_ERR_CONFLICT
      if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
   4. if T.xid == 0: T.xid = global_ts++
-  5. db.Put(cf(relid), encode(k, ~T.xid, ~T.seq++), encode(flags, v))
+  5. seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
+     db.Put(cf(relid), encode(k, ~T.xid, ~seq), encode(flags, v))
   6. T.undo.push(relid, k, seq)                         # for savepoint
   7. ssi.on_write(T, relid, k)                          # §7
 ```
@@ -439,6 +451,7 @@ sm_rollback():
     T.created.truncate(r)
     T.undo.truncate(m)
     T.seq_hwm = (m > 0) ? T.undo[m-1].seq : 0       # own-write visibility
+    T.seq     = T.seq_hwm + 1                        # live seqs stay a prefix
     release locks acquired after the mark
     ssi read set is NOT rolled back                  # conservative, correct
     transaction stays ACTIVE
@@ -447,9 +460,19 @@ sm_rollback():
 Rolling back is a delete of exactly the versions written since the
 mark. Nothing else can see them, so there is no visibility window to
 worry about, and `seq` guarantees a re-write of an already-written key
-did not clobber the pre-savepoint version. `seq_hwm` in the own-write
-visibility test (§4.4) means a rollback is correct even before the
-deletes are physically applied.
+did not clobber the pre-savepoint version.
+
+`seq_hwm` is the last `seq` still in effect: each write sets it,
+and a rollback lowers it to the mark. Rewinding `T.seq` with it
+keeps the own versions a transaction can see an exact prefix
+`1..seq_hwm` of its writes. Without the rewind, the next write
+would raise `seq_hwm` past the undone numbers and §4.4 would
+admit the undone versions again wherever they are still
+readable — in particular through a cursor opened before the
+rollback, whose RocksDB snapshot does not see the deletes. With
+the rewind, a later write reuses an undone number, and the
+deletes, applied before `sm_rollback` returns, have already
+removed the version that carried it.
 
 Releasing locks acquired after the mark is safe: the row was untouched
 before the savepoint, so no one observed our intent on it.
@@ -519,7 +542,10 @@ at commit of T:
 
 Concretely, the check runs at prepare/commit time and, for the case
 where the pivot is not the last to commit, eagerly when the edge is
-created (mark the pivot as doomed; it fails at its own commit). This
+created (mark the pivot as doomed; it fails at its own commit). A
+prepared pivot cannot be doomed — it has already been told "yes"
+— so when the pivot is prepared, the transaction whose new edge
+completed the structure is doomed instead (§8.4). This
 is conservative — some aborted transactions would in fact have been
 serializable — which is the accepted cost of SSI in exchange for never
 taking a read lock and never deadlocking on reads.
@@ -531,8 +557,25 @@ serialization failure. But a SERIALIZABLE transaction's correctness
 depends on seeing *writes by everyone*, including RR and RC ones, so
 the write path (§5, step 7) always calls into the SSI tracker.
 Read-only serializable transactions get the standard safe-snapshot
-optimization: if no concurrent transaction has an out-conflict, the
-read-only transaction can never be a pivot and its tracking is dropped.
+optimization (Ports & Grittner). A read-only transaction is never
+a pivot — it writes nothing, so nothing has an rw-edge into it —
+but it can be the *incoming* end of a dangerous structure,
+`T_ro ──rw──▶ T_pivot ──rw──▶ T_out` (Fekete's read-only
+anomaly), so its SIREAD locks matter until that is ruled out.
+Its snapshot is **safe**, and its tracking can be dropped, only
+once every read-write serializable transaction concurrent with
+the snapshot has finished and none of them committed with an
+out-conflict to a transaction that committed before the
+snapshot. If there are no such concurrent transactions at
+`sm_begin`, the snapshot is safe at once. If one of them does
+commit with such an out-conflict, the snapshot is unsafe and
+the transaction stays fully tracked to its end.
+
+The API has no read-only declaration, so "read-only" means "has
+not written yet" (`T.xid == 0`), and the rule is applied only
+while that holds. A transaction whose tracking was dropped and
+which then writes has lost the read set it would need as a
+pivot; its first write fails with `SM_ERR_SERIALIZATION`.
 
 ### 7.5 Memory
 
@@ -561,6 +604,7 @@ atomic and durable at commit: **the status record**.
 sm_commit(T):
   1. close T's open scan cursors               (§10.2)
      if SERIALIZABLE: ssi.validate(T)         → may SM_ERR_SERIALIZATION
+     if T.xid == 0: go to step 6               ← read-only: nothing to publish
   2. commit_ts = sequencer.claim()           ← global_ts++, joins the set
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
   4. db.Write(batch, sync = durability_sync)   ← group-committed
@@ -573,6 +617,30 @@ Step 1 closes cursors first, as `API.txt` requires of `sm_commit`
 and `sm_abort`: this releases their RocksDB snapshots, which pin
 `gc_watermark`, and narrows each cursor's SIREAD predicate to
 the range it actually traversed (§10.2) before validation runs.
+
+**A failed status write is fail-stop.** If step 4 returns an
+error, the record may or may not have reached the WAL — a sync
+can fail after the bytes are written — so the transaction's
+outcome is unknown until WAL replay decides it. The engine
+therefore does not resolve it as dead:
+
+- the transaction stays in the active table and its
+  `commit_ts` stays in the sequencer set, so its versions
+  remain in-flight to readers and to the compaction filter, and
+  no snapshot can include its `commit_ts`;
+- the database enters a failed state: further writes, commits,
+  prepares, and GC sweeps fail with `SM_ERR_IO`, while reads on
+  existing snapshots continue;
+- `sm_commit` returns `SM_ERR_IO`, meaning *outcome unknown*.
+  After the database is reopened, §3.4 resolves the transaction
+  from whatever the WAL holds.
+
+This matches RocksDB, which itself stops accepting writes after
+a WAL write or sync error.
+
+A read-only transaction (`T.xid == 0`) has no versions to
+publish and gets no status record (§3.2); it validates, releases,
+and returns without taking a `commit_ts`.
 
 Step 4 is **the commit point**. Before it, the data versions are
 already in RocksDB but resolve as in-flight or (after a crash) dead;
@@ -603,8 +671,9 @@ filter(version_key, value):
     if committed and commit_ts > gc_watermark → KEEP as-is
     if a newer version of the same userkey with
        commit_ts <= gc_watermark was already seen → DROP
-    if tombstone                         → KEEP, and queue
-                                           (relid, version_key) for purge
+    if tombstone                         → KEEP, stamp commit_ts, and
+                                           queue (relid, version_key)
+                                           for purge
     otherwise                            → KEEP, and stamp commit_ts
                                            into the header (hint bit)
 ```
@@ -646,11 +715,30 @@ versions answer visibility without a status lookup at all, so the
 commit cache and `CF:txn` are consulted mainly for the recent tail.
 
 `gc_watermark = min(snapshot_ts of active sessions, snapshot_ts of
-prepared transactions, oldest open scan)`. A `CF:txn` record can be
-dropped once no version referencing it survives; conservatively,
-records with `commit_ts < gc_watermark` are dropped on a periodic
-sweep after a full compaction pass of every relation CF. One
-compaction filter factory serves all relation CFs.
+prepared transactions, oldest open scan)`. It never moves
+backwards: a new snapshot is `visible_ts`, which is at or above
+every snapshot already counted. One compaction filter factory
+serves all relation CFs.
+
+A `COMMITTED` record can be dropped once every surviving
+version of its transaction carries the stamp (rule §3.4/0). The
+periodic sweep guarantees that:
+
+1. Record `W0 = gc_watermark`, then run a full compaction pass
+   over every relation CF, flushing memtables first.
+2. Every committed version with `commit_ts <= W0` was already
+   in RocksDB when the pass began, was visited by the filter
+   with `gc_watermark >= W0`, and so was dropped or stamped.
+3. Once the pass completes and every iterator created before
+   it began has been released — an older iterator can still
+   read pre-pass, unstamped copies — drop the `COMMITTED`
+   records with `commit_ts <= W0`.
+
+Using the watermark at the pass's *start* matters: a version
+with `W0 < commit_ts <= gc_watermark_now` may have been kept
+unstamped, and dropping its record would make it resolve as
+dead. `ABORTED` records are hints (§6.6) and can be dropped at
+any time, since rule §3.4/4 gives the same answer without them.
 
 Dropping a relation (`sm_rmrel`) marks it dropped in the catalog at
 commit; once `gc_watermark` passes that commit, a background task
@@ -662,12 +750,28 @@ issues `DropColumnFamily` on the relation's CF.
 
 ```
 sm_prepare(T, gid):
-  1. if SERIALIZABLE: ssi.validate(T)         ← validation happens HERE
+  1. close T's open scan cursors               (§8.2)
+     if SERIALIZABLE: ssi.validate(T)         ← validation happens HERE
+     if T.xid == 0: T.xid = global_ts++        ← read-only: key the record
   2. rec = {PREPARED, xid, gid, snapshot_ts, prepared_at = now(),
             writeset = keys of T.undo, created = T.created}
   3. db.Write({CF:txn[T.xid] = rec}, sync = true)      ← always synced
   4. T.state = PREPARED;  locks and SSI state are RETAINED
 ```
+
+Step 1 closes cursors for the reasons given in §8.2. No data
+operation is accepted after prepare, so an open cursor could
+never be used again, but it would pin `gc_watermark` for as long
+as the transaction stays in doubt. The coordinator's commit
+(§8.2 from step 2) therefore finds none left to close.
+
+A read-only transaction still needs a durable `PREPARED` record,
+because `API.txt` promises that a prepared transaction survives
+a crash and can be resolved by `gid` afterwards. Step 1 gives it
+an xid (entering the active table, §3.4) so that the record has
+a unique key; with `T.xid == 0`, every read-only prepare would
+overwrite the same `CF:txn[0]`. Its `writeset` is empty, so
+after restart it holds no locks.
 
 After a successful prepare the transaction is in-doubt: its
 versions sit in relation CFs, its status record says `PREPARED`,
@@ -930,6 +1034,12 @@ bound key.
 - A consequence: **a scan does not see the scanning transaction's own
   writes made after `sm_scan`**. This is deliberate — it is Halloween
   protection, and it makes "update every row I scan" safe.
+- The cursor also captures `T.seq_hwm` at `sm_scan` and applies
+  §4.4 with that value, not the live one. Its view of the
+  transaction's own writes is then fixed like the rest: a later
+  `sm_rollback` neither hides rows the cursor could already see
+  nor, after the rewind of §6.5, lets reused `seq` numbers
+  change what it returns.
 
 `sm_scan_next` walks version keys, and for each distinct `userkey`
 emits the first visible version and then skips the rest of that key's
@@ -939,23 +1049,39 @@ versions:
 while iterator valid:
     uk = userkey(it.key())
     v  = first visible version in the run of versions for uk
+    if SERIALIZABLE:
+        for each version u before v in the run:      # §7.2
+            if concurrent(u, snap): ssi.on_skip(T, u.xid)
     seek past the run (Seek to uk|0xFF..)            # or Next()-chase
     if v exists and not tombstone: yield (uk, v.payload); return
 ```
 
+A scan steps past concurrent writers' versions just as a point
+read does, and owes the same rw-edges (§10.1). The skipped
+versions matter most when they were committed between the
+reader's snapshot and `sm_scan`: their writers ran `on_write`
+before the range SIREAD existed, so the read side is the only
+place the edge can be created. They also feed the post-restart
+rule of §8.4.
+
 For SERIALIZABLE, `sm_scan` registers the whole requested range
 `[skey, ekey]` as a SIREAD predicate (§7.1) when it creates the
-cursor, and `sm_scan_end` shrinks it to the range actually
-covered, `[skey, last_key_examined]` (through `ekey` if the scan
-reached the end). Registering only at `sm_scan_end` would be
-wrong: a write into the range while the cursor is open is not
-in the cursor's RocksDB snapshot, so the reader never steps
-past it, and with no SIREAD yet the writer finds nothing to
-conflict with — the rw-edge would be missed entirely. Shrinking
-at the end is safe, because the reader never read past
-`last_key_examined`; edges already created for writes beyond it
-are merely conservative. If the cursor is abandoned early, the
-range kept is the shorter one actually read.
+cursor, **before** it takes the RocksDB snapshot, and
+`sm_scan_end` shrinks it to the range actually covered,
+`[skey, last_key_examined]` (through `ekey` if the scan reached
+the end). Registering only at `sm_scan_end` would be wrong: a
+write into the range while the cursor is open is not in the
+cursor's RocksDB snapshot, so the reader never steps past it,
+and with no SIREAD yet the writer finds nothing to conflict
+with — the rw-edge would be missed entirely. The order within
+`sm_scan` matters for the same reason, as in §10.1: a writer
+puts its version before calling `on_write`, so a version put
+after the snapshot is found by `on_write` only if the SIREAD
+already exists. Shrinking at the end is safe, because the
+reader never read past `last_key_examined`; edges already
+created for writes beyond it are merely conservative. If the
+cursor is abandoned early, the range kept is the shorter one
+actually read.
 
 ### 10.3 API shape
 
@@ -1006,8 +1132,13 @@ The catalog is relation `relid = 0`, an ordinary MVCC relation in
 
 ```
 key = "R" | relname        →  { relid, created_ts, dropped (bool) }
-key = "N"                  →  next relid hint (also mirrored in CF:meta)
 ```
+
+There is no next-relid row in the catalog. Relids come from the
+lease in `CF:meta` (§4.2); a catalog row updated by every
+`sm_mkrel` would make concurrent creates of *different*
+relations contend on one row lock and fail with
+`SM_ERR_CONFLICT`.
 
 Because it is an ordinary relation, DDL is transactional for free:
 `sm_mkrel` inserts a catalog row, `sm_rmrel` writes a version with
@@ -1181,7 +1312,11 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   versions. Stall one commit's WAL sync under concurrent load and
   assert allocation continues and `visible_ts` catches up (§4.3).
 - **Status resolution.** Fail a commit's status write and assert
-  the transaction's versions resolve as dead (§3.4).
+  the database fails stop: `sm_commit` returns `SM_ERR_IO`, the
+  versions stay in-flight and are not compacted away, and after
+  reopen the transaction is committed or dead according to the
+  WAL (§8.2). Sweep `CF:txn` after a compaction pass and assert
+  every committed row is still readable (§8.3).
 - **Linearizability.** A concurrent random-op checker comparing the
   engine against a model, validating that observed histories are
   serializable at SERIALIZABLE and snapshot-isolated at RR.
