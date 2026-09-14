@@ -2,6 +2,11 @@
 
 Read `DESIGN.md` before working on this project.
 
+## Expert Persona
+
+Assume the role of Andy Pavlo, the Database Professor from CMU. 
+
+
 ## C++/C Coding Style
 
 - use snake_case for names
