@@ -281,7 +281,11 @@ commit sequencer (ordered set of commit_ts in progress)
   handed out, so `visible_ts` never moves backwards.
 - The set holds at most one entry per session, so it needs no
   sizing and no backpressure: a stalled commit holds back
-  `visible_ts` but never blocks allocation.
+  `visible_ts` but never blocks allocation. A ring of slots
+  indexed by timestamp would not have that property: while one
+  slot waits on a slow WAL sync, every xid and `commit_ts`
+  allocated behind it needs a slot too, so the ring must either
+  wrap onto unpublished slots or block all allocation.
 - A snapshot is simply the current `visible_ts`. Everything with
   `commit_ts <= visible_ts` is durably committed and published.
 
@@ -615,7 +619,9 @@ and see an uncommitted write, and it would outlive an abort.
 
 A tombstone that every live snapshot sees is never "superseded",
 so the rules above would keep it forever — one record per
-deleted key. The filter cannot simply drop it: RocksDB picks
+deleted key. The filter cannot simply drop it, not even at the
+bottommost level (which `CompactionFilter::Context` does not
+report anyway): RocksDB picks
 compaction inputs by its own key, which is the full version key,
 so older versions of the same userkey may sit in an adjacent SST
 file or another subcompaction this filter never sees, and
@@ -685,8 +691,28 @@ validation, so they were checked against each other.
 that begins after restart. A restored in-doubt transaction has
 lost its SIREAD locks and conflict flags, which are volatile, so
 a new transaction can write a key the prepared one read and no
-edge appears. Recovery therefore marks each restored transaction
-`restored` (§9.1), and the tracker applies one extra rule:
+edge appears. Unchecked, that admits write skew:
+
+1. Before the crash, `T_prep` reads `A = a0`, writes `B = b1`,
+   and prepares. Only `B` is in its `writeset`.
+2. After restart, `T_prep` holds its lock on `B`, but its
+   SIREAD lock on `A` is gone.
+3. `T_new` reads `B`, skips `b1` as in-flight, and reads `b0`:
+   edge `T_new ──rw──▶ T_prep`.
+4. `T_new` writes `A = a1`. No SIREAD covers `A`, so the edge
+   `T_prep ──rw──▶ T_new` is never created, and `T_new`
+   commits.
+5. The coordinator commits `T_prep`. Each read what the other
+   overwrote — a cycle.
+
+Persisting SIREAD locks in the `PREPARED` record would not be
+enough alone, because the conflict flags are lost too (a
+restored transaction that already had an out-edge is a pivot
+the moment a new reader adds an in-edge), and it would make the
+record as large as the read set. PostgreSQL persists the locks
+and assumes both flags on recovery. wisr instead marks each
+restored transaction `restored` (§9.1), and the tracker applies
+one extra rule:
 
 ```
 T_reader skips a version written by a restored transaction (§7.2)
@@ -989,6 +1015,15 @@ Because it is an ordinary relation, DDL is transactional for free:
 caches `relname → relid` and invalidates the cache entry when it
 observes a catalog version newer than the cached one.
 
+The cache is per session, not shared by the process, because
+the mapping depends on the snapshot. After a committed
+`sm_rmrel` and `sm_mkrel` of the same name, a transaction with
+an older snapshot must still resolve the old relid, since it may
+still legitimately read the dropped relation. A shared cache
+invalidated at DDL commit would send it to the new one. A
+per-session cache is safe because a session's snapshots only
+move forward.
+
 The column family is the one part of DDL that is not
 transactional: `CreateColumnFamily` and `DropColumnFamily` take
 effect immediately. `sm_mkrel` therefore creates the CF
@@ -1111,19 +1146,42 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 - **Own writes.** At each isolation level, a transaction reads
   back a key it inserted, updated twice, and deleted; after
   `sm_rollback` to a savepoint it reads the pre-savepoint value.
+  It can update a key it inserted and re-insert a key it
+  deleted (§5), and `sm_rollback` with no savepoint fails with
+  `SM_ERR_NOSAVEPOINT`.
+- **Read committed after a write.** A read-committed
+  transaction that has already written reads a key committed by
+  another transaction after its first write, and sees it
+  (§10.1).
 - **Isolation.** The Jepsen/Adya anomaly catalogue as unit tests: dirty
   read, lost update, non-repeatable read, phantom, write skew (must
   pass at SERIALIZABLE, must be *observable* at RR — asserting the
   anomaly is present is as important as asserting it is absent).
+  At SERIALIZABLE, include the cases that need specific
+  handling: a phantom inserted while the reader's cursor is still
+  open (§10.2), an insert of a key the reader found missing, a
+  point read past a concurrent writer's newer version (§10.1),
+  and a scan left open at `sm_commit` (§8.2).
 - **Crash.** A fault-injection harness that kills the process at every
   RocksDB write boundary during a workload, restarts, and checks that
   the surviving state is exactly one of the legal prefixes of the
   commit order.
 - **2PC.** Kill between prepare and commit; verify the transaction is
   restored in-doubt, and that both resolutions produce the right state.
+  Replay the §8.4 write-skew history across a restart and assert
+  that the post-restart transaction fails with
+  `SM_ERR_SERIALIZATION`; assert `sm_list_prepared` reports the
+  original `prepared_at`.
 - **GC.** Assert that a long-running reader's snapshot is never
   violated by the collector, and that space is actually reclaimed once
-  it finishes.
+  it finishes. Force a compaction while a transaction is still
+  running and assert its versions stay invisible and unstamped,
+  and are dropped after it aborts (§8.3). Delete many keys and
+  assert their tombstones are purged without resurrecting older
+  versions. Stall one commit's WAL sync under concurrent load and
+  assert allocation continues and `visible_ts` catches up (§4.3).
+- **Status resolution.** Fail a commit's status write and assert
+  the transaction's versions resolve as dead (§3.4).
 - **Linearizability.** A concurrent random-op checker comparing the
   engine against a model, validating that observed histories are
   serializable at SERIALIZABLE and snapshot-isolated at RR.
