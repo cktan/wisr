@@ -157,7 +157,8 @@ value = { state: PREPARED | COMMITTED | ABORTED,
           gid (global txn id string, 2PC only),
           prepared_at: epoch seconds           (PREPARED only),
           writeset: [ (relid, userkey) ... ]   (PREPARED only),
-          created:  [ relid ... ]              (PREPARED only) }
+          created:  [ relid ... ]              (PREPARED only),
+          dropped:  [ relid ... ]              (PREPARED only) }
 ```
 
 Only **writing** transactions ever get an entry, plus read-only
@@ -169,13 +170,16 @@ The `writeset` is carried only in a `PREPARED` record, and only
 so that recovery can re-acquire the row locks a prepared
 transaction still holds. `created` lists the relations the
 transaction made with `sm_mkrel`, so that recovery keeps their
-column families (§9.1). `prepared_at` is the wall-clock time of
-`sm_prepare`, reported by `sm_list_prepared` (§8.5); it must be
-durable because the listing is mostly needed after a restart.
-All three are dropped when the record flips to COMMITTED or
-ABORTED. For a prepared transaction with a very large write set
-the list spills to additional keys `xid | chunkno` in the same
-CF, deleted in the same batch as the flip.
+column families (§9.1); `dropped` lists those it removed with
+`sm_rmrel`, so that a commit after restart still queues their
+column families for removal (§8.3). `prepared_at` is the
+wall-clock time of `sm_prepare`, reported by `sm_list_prepared`
+(§8.5); it must be durable because the listing is mostly needed
+after a restart. All four are dropped when the record flips to
+COMMITTED or ABORTED. For a prepared transaction with a very
+large write set the list spills to additional keys
+`xid | chunkno` in the same CF, deleted in the same batch as the
+flip.
 
 ### 3.3 `CF:meta` — bootstrap state
 
@@ -217,6 +221,12 @@ being misjudged:
   it in the active table finds it in the cache or `CF:txn`; a
   reader that still finds it there cannot hold a snapshot that
   includes its commit.
+
+The commit cache is bounded by `commit_cache_entries` and evicts
+the oldest `commit_ts` first. Eviction cannot change an answer:
+the status record was written before the insert, so a reader
+that misses the cache finds it in `CF:txn`, and the record is
+swept only once every version it covers is stamped (§8.3).
 
 ---
 
@@ -373,6 +383,11 @@ Locks are keyed by hash, so a collision makes two distinct keys share
 a lock entry — correct (it only over-serializes), and the entry stores
 the full key so the common case is exact.
 
+A transaction appends a lock entry to `T.locks` only when it
+first acquires it. Re-acquiring an entry it already holds, for
+the same key or a colliding one, appends nothing, so §6.5's
+rollback releases only entries first taken after the savepoint.
+
 ### 5.2 First-committer-wins
 
 Step 3 rejects a write when the key was modified by a transaction that
@@ -449,13 +464,15 @@ per-transaction **undo list** — an in-memory vector of
 `(relid, userkey, seq)` triples in write order, holding no payloads,
 so a large transaction costs bytes per write, not rows. Relations
 created by the transaction are tracked alongside it in
-`T.created`, a vector of relids in creation order.
+`T.created`, a vector of relids in creation order, and relations
+it dropped in `T.dropped`, likewise.
 
 ```
 sm_savepoint():
     T.sp_mark   = T.undo.size()        # replaces any previous savepoint
     T.sp_locks  = T.locks.size()
     T.sp_rels   = T.created.size()
+    T.sp_drops  = T.dropped.size()
 
 sm_rollback():
     if no savepoint: fail with SM_ERR_NOSAVEPOINT    # API.txt divergence 8
@@ -466,6 +483,7 @@ sm_rollback():
     for relid in reverse(T.created[r..]):
         db.DropColumnFamily(cf(relid))              # §11
     T.created.truncate(r)
+    T.dropped.truncate(T.sp_drops)                  # the undo restored their rows
     T.undo.truncate(m)
     T.seq_hwm = (m > 0) ? T.undo[m-1].seq : 0       # own-write visibility
     T.seq     = T.seq_hwm + 1                        # live seqs stay a prefix
@@ -516,13 +534,16 @@ dangerous structure.
 
 - **SIREAD locks.** Every read by a SERIALIZABLE transaction records
   what it read: a point read records `(relid, userkey)`, whether
-  or not a row was found; a scan records the requested range when
-  it opens and narrows it to the **range actually traversed**,
-  `(relid, [lo, hi))`, when it closes (§10.2). That range is the
-  predicate. Ranges are the phantom defence — a later insert
-  into that range conflicts even though the row did not exist at read
-  time. SIREAD locks survive the transaction's own commit; they are
-  dropped only when no active snapshot could still conflict with them.
+  or not a row was found; a scan records `(relid, range)` for the
+  requested range, bounds inclusive or exclusive as passed to
+  `sm_scan`, when it opens, and narrows it to the **range
+  actually traversed** when it closes (§10.2). The narrowed
+  range includes its upper end, the last key the scan examined.
+  That range is the predicate. Ranges are the phantom defence —
+  a later insert into that range conflicts even though the row
+  did not exist at read time. SIREAD locks survive the
+  transaction's own commit; they are dropped only when no active
+  snapshot could still conflict with them.
 - **Conflict flags.** Per transaction, `in_conflict` and
   `out_conflict` — "some transaction has an rw-edge into me" / "I have
   an rw-edge out to someone".
@@ -560,9 +581,10 @@ at commit of T:
 Concretely, the check runs at prepare/commit time and, for the case
 where the pivot is not the last to commit, eagerly when the edge is
 created (mark the pivot as doomed; it fails at its own commit). A
-prepared pivot cannot be doomed — it has already been told "yes"
-— so when the pivot is prepared, the transaction whose new edge
-completed the structure is doomed instead (§8.4). This
+pivot that has prepared or committed cannot be doomed — it has
+already been told "yes" — so then the running transaction whose
+new edge completed the structure is doomed instead, whether that
+edge points into the pivot or out of it (§8.4). This
 is conservative — some aborted transactions would in fact have been
 serializable — which is the accepted cost of SSI in exchange for never
 taking a read lock and never deadlocking on reads.
@@ -579,20 +601,23 @@ a pivot — it writes nothing, so nothing has an rw-edge into it —
 but it can be the *incoming* end of a dangerous structure,
 `T_ro ──rw──▶ T_pivot ──rw──▶ T_out` (Fekete's read-only
 anomaly), so its SIREAD locks matter until that is ruled out.
-Its snapshot is **safe**, and its tracking can be dropped, only
-once every read-write serializable transaction concurrent with
-the snapshot has finished and none of them committed with an
-out-conflict to a transaction that committed before the
-snapshot. If there are no such concurrent transactions at
-`sm_begin`, the snapshot is safe at once. If one of them does
-commit with such an out-conflict, the snapshot is unsafe and
-the transaction stays fully tracked to its end.
+Its snapshot is **safe** once every read-write serializable
+transaction concurrent with the snapshot has finished and none
+of them committed with an out-conflict to a transaction that
+committed before the snapshot. If there are no such concurrent
+transactions at `sm_begin`, the snapshot is safe at once. If one
+of them does commit with such an out-conflict, the snapshot is
+unsafe.
 
-The API has no read-only declaration, so "read-only" means "has
-not written yet" (`T.xid == 0`), and the rule is applied only
-while that holds. A transaction whose tracking was dropped and
-which then writes has lost the read set it would need as a
-pivot; its first write fails with `SM_ERR_SERIALIZATION`.
+The API has no read-only declaration, so a transaction is known
+to be read-only only when it commits with `T.xid == 0`. While it
+is active it stays fully tracked, safe snapshot or not: it may
+still write, and then it needs its read set as a possible pivot.
+The optimization applies from commit on. A transaction that
+commits with `T.xid == 0` releases its SIREAD locks as soon as
+its snapshot is safe, instead of holding them under §7.1's rule.
+Any pivot it could still reach began after its snapshot, too
+late to be concurrent with a `T_out` that committed before it.
 
 ### 7.5 Memory
 
@@ -626,8 +651,10 @@ sm_commit(T):
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
   4. db.Write(batch, sync = durability_sync)   ← group-committed
   5. commit_cache.insert(T.xid → commit_ts);  active_table.remove(T.xid)
+     if T wrote CF:rel.0: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
      sequencer.done(commit_ts);  advancer moves visible_ts      (§4.3)
   6. lockmgr.release(T);  ssi.on_commit(T)
+     queue (T.dropped, commit_ts) for CF removal     (§8.3)
 ```
 
 Step 1 closes cursors first, as `API.txt` requires of `sm_commit`
@@ -757,9 +784,12 @@ unstamped, and dropping its record would make it resolve as
 dead. `ABORTED` records are hints (§6.6) and can be dropped at
 any time, since rule §3.4/4 gives the same answer without them.
 
-Dropping a relation (`sm_rmrel`) marks it dropped in the catalog at
-commit; once `gc_watermark` passes that commit, a background task
-issues `DropColumnFamily` on the relation's CF.
+Dropping a relation (`sm_rmrel`) deletes its catalog row (§11).
+The tombstone carries no relid, so commit queues the relids in
+`T.dropped` with its `commit_ts`; once `gc_watermark` passes
+that commit, a background task issues `DropColumnFamily` on each
+relation's CF. The queue is volatile: an entry lost to a crash
+is caught by the startup sweep (§9.1 step 6).
 
 ### 8.4 Two-phase commit
 
@@ -771,7 +801,8 @@ sm_prepare(T, gid):
      if SERIALIZABLE: ssi.validate(T)         ← validation happens HERE
      if T.xid == 0: T.xid = global_ts++        ← read-only: key the record
   2. rec = {PREPARED, xid, gid, snapshot_ts, prepared_at = now(),
-            writeset = keys of T.undo, created = T.created}
+            writeset = keys of T.undo, created = T.created,
+            dropped = T.dropped}
   3. db.Write({CF:txn[T.xid] = rec}, sync = true)      ← always synced
   4. T.state = PREPARED;  locks and SSI state are RETAINED
 ```
@@ -909,12 +940,14 @@ the status resolution rule.
 5. For each prepared record:
       - register an entry in the active transaction table (in-doubt),
         marked restored so that readers skipping its versions
-        are doomed (§8.4)
+        are doomed (§8.4), with T.created and T.dropped from
+        the record
       - re-acquire an X row lock for every key in its writeset
       - pin gc_watermark at its snapshot_ts
 6. Orphan CF sweep: read the catalog (rel.0) and drop every
-   rel.<relid> CF that has neither a committed, not-dropped
-   catalog row nor an entry in a prepared record's `created`.
+   rel.<relid> CF that has neither a live catalog row naming
+   it (a name's newest committed version, not a tombstone) nor
+   an entry in a prepared record's `created`.
 7. Start the GC / compaction filter, deadlock detector, commit advancer.
 8. Open for sessions.
 ```
@@ -1066,8 +1099,9 @@ versions:
 while iterator valid:
     uk = userkey(it.key())
     v  = first visible version in the run of versions for uk
-    if SERIALIZABLE:
-        for each version u before v in the run:      # §7.2
+    if SERIALIZABLE:                                 # §7.2
+        for each version u before v in the run,
+                (every version in the run if v is absent):
             if concurrent(u, snap): ssi.on_skip(T, u.xid)
     seek past the run (Seek to uk|0xFF..)            # or Next()-chase
     if v exists and not tombstone: yield (uk, v.payload); return
@@ -1081,16 +1115,19 @@ before the range SIREAD existed, so the read side is the only
 place the edge can be created. They also feed the post-restart
 rule of §8.4.
 
-For SERIALIZABLE, `sm_scan` registers the whole requested range
-`[skey, ekey]` as a SIREAD predicate (§7.1) when it creates the
-cursor, **before** it takes the RocksDB snapshot, and
-`sm_scan_end` shrinks it to the range actually covered,
-`[skey, last_key_examined]` (through `ekey` if the scan reached
-the end). Registering only at `sm_scan_end` would be wrong: a
-write into the range while the cursor is open is not in the
-cursor's RocksDB snapshot, so the reader never steps past it,
-and with no SIREAD yet the writer finds nothing to conflict
-with — the rw-edge would be missed entirely. The order within
+For SERIALIZABLE, `sm_scan` registers the whole requested range,
+`skey` to `ekey` with their inclusive flags, as a SIREAD
+predicate (§7.1) when it creates the cursor, **before** it takes
+the RocksDB snapshot, and `sm_scan_end` shrinks it to the range
+actually covered: from `skey` through `last_key_examined`,
+inclusive (through `ekey`, with its flag, if the scan reached
+the end). `last_key_examined` is the last userkey whose run the
+cursor inspected, whether or not it yielded a row. Registering
+only at `sm_scan_end` would be wrong: a write into the range
+while the cursor is open is not in the cursor's RocksDB
+snapshot, so the reader never steps past it, and with no SIREAD
+yet the writer finds nothing to conflict with — the rw-edge
+would be missed entirely. The order within
 `sm_scan` matters for the same reason, as in §10.1: a writer
 puts its version before calling `on_write`, so a version put
 after the snapshot is found by `on_write` only if the SIREAD
@@ -1148,7 +1185,7 @@ The catalog is relation `relid = 0`, an ordinary MVCC relation in
 `CF:rel.0`:
 
 ```
-key = "R" | relname        →  { relid, created_ts, dropped (bool) }
+key = "R" | relname        →  { relid, created_ts }
 ```
 
 There is no next-relid row in the catalog. Relids come from the
@@ -1158,19 +1195,40 @@ relations contend on one row lock and fail with
 `SM_ERR_CONFLICT`.
 
 Because it is an ordinary relation, DDL is transactional for free:
-`sm_mkrel` inserts a catalog row, `sm_rmrel` writes a version with
-`dropped = true`, and both roll back with the transaction. A session
-caches `relname → relid` and invalidates the cache entry when it
-observes a catalog version newer than the cached one.
+`sm_mkrel` inserts a catalog row, `sm_rmrel` deletes it
+(recording the relid in `T.dropped`), and both roll back with
+the transaction. Both follow the §5 write path, reported in DDL
+terms: `sm_mkrel` of a live name fails with `SM_ERR_EXISTS`
+where an insert would report `SM_ERR_DUPKEY`, and `sm_rmrel` of
+a missing name fails with `SM_ERR_NOTFOUND`. A dropped name's
+newest version is a tombstone, so `sm_mkrel` can create it
+again.
 
-The cache is per session, not shared by the process, because
-the mapping depends on the snapshot. After a committed
-`sm_rmrel` and `sm_mkrel` of the same name, a transaction with
-an older snapshot must still resolve the old relid, since it may
-still legitimately read the dropped relation. A shared cache
-invalidated at DDL commit would send it to the new one. A
-per-session cache is safe because a session's snapshots only
-move forward.
+A session caches `relname → relid`, but the mapping depends on
+the snapshot. After a committed `sm_rmrel` and `sm_mkrel` of
+the same name, a transaction with an older snapshot must still
+resolve the old relid, since it may still legitimately read the
+dropped relation. A cache invalidated at DDL commit would send
+it to the new one, so the cache is checked by timestamp
+instead:
+
+- The process keeps `last_ddl_ts`, the largest `commit_ts` of
+  any committed transaction that wrote the catalog. Commit raises
+  it before publishing that `commit_ts` (§8.2 step 5), so a
+  snapshot that includes a DDL commit always sees it.
+- Each cache entry records the snapshot it was read at. A hit is
+  used only if `last_ddl_ts` is at or below both that snapshot
+  and the lookup's; then no DDL committed between the two, and
+  the mapping is the same at both. Otherwise the lookup reads
+  `CF:rel.0` and replaces the entry.
+- `sm_mkrel` and `sm_rmrel` evict their name's entry, and a
+  lookup that resolves to the transaction's own uncommitted
+  catalog version does not populate the cache.
+
+The comparison is against both snapshots because a session's
+snapshots do not only move forward: under read committed, a
+lookup at the begin snapshot `T.snapshot_ts` can follow one at a
+newer statement snapshot (§6.2).
 
 The column family is the one part of DDL that is not
 transactional: `CreateColumnFamily` and `DropColumnFamily` take
@@ -1243,8 +1301,9 @@ Two consequences for the implementation:
 ### 12.2 Configuration knobs
 
 `durability_sync` (default on), `group_commit_us`, `deadlock_ms`,
-`ssi_max_entries`, `ts_lease`, plus pass-through RocksDB options
-(block cache size, write buffer size, compaction style). Bloom filters
+`ssi_max_entries`, `commit_cache_entries`, `ts_lease`, plus
+pass-through RocksDB options (block cache size, write buffer
+size, compaction style). Bloom filters
 are worth enabling on relation CFs, and `CF:txn` benefits from a
 large block cache since it is small and hot. For relation CFs the
 prefix extractor strips the 12-byte tail, so the bloom key is the
@@ -1317,12 +1376,16 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   range (§10.2), a scan left open at `sm_commit` (§8.2), and
   Fekete's read-only anomaly, which must fail while the
   read-only transaction's snapshot is unsafe (§7.4). A
-  transaction whose snapshot became safe and then writes fails
-  with `SM_ERR_SERIALIZATION`. With a prepared pivot, the
-  partner is the one that fails (§7.3).
+  transaction that reads, outlives every concurrent writer so
+  that its snapshot is safe, and then writes commits, including
+  on an otherwise idle database (§7.4). With a prepared or
+  committed pivot, the partner is the one that fails (§7.3).
 - **DDL.** Concurrent `sm_mkrel` of different names both commit;
   of the same name, the second fails with `SM_ERR_CONFLICT`
-  (§11).
+  (§11). `sm_mkrel` of a live name fails with `SM_ERR_EXISTS`.
+  A dropped relation can be created again under its name, while
+  a transaction with an older snapshot still reads the old one;
+  `sm_rollback` past an `sm_rmrel` keeps the relation's CF.
 - **Crash.** A fault-injection harness that kills the process at every
   RocksDB write boundary during a workload, restarts, and checks that
   the surviving state is exactly one of the legal prefixes of the
