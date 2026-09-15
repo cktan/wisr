@@ -39,7 +39,7 @@ typedef enum {
     SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
     SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
     SM_ERR_EXISTS        = 8,   /* database or relation already exists */
-    SM_ERR_INUSE         = 9,   /* database still open in this process */
+    SM_ERR_INUSE         = 9,   /* database open, or homedir locked */
 
     /* concurrency errors — RETRYABLE */
     SM_ERR_CONFLICT      = 10,  /* write-write conflict */
@@ -107,8 +107,8 @@ longer active, whatever the result. `sm_prepare`: on
 ### Memory and lifetimes
 
 Byte strings passed *in* (`key`, `data`, `relname`,
-`dbpath`, `gid`) are read during the call and never
-retained. The caller may free or reuse them immediately
+`homedir`, `dbname`, `gid`) are read during the call and
+never retained. The caller may free or reuse them immediately
 afterwards.
 
 Byte strings handed *out* by `sm_read` and `sm_scan_next`
@@ -129,16 +129,20 @@ behalf of an unrelated part of the program.
 
 ### Threading
 
+- An `sm_env_t` may be used from any number of threads
+  concurrently.
 - A `sm_session_t` and its `sm_scan_t` cursors may be used
   by **one thread at a time**. Concurrent use of a single
   session from two threads is a caller error, not a
   supported mode, and is not diagnosed.
 - Distinct sessions may be used concurrently from distinct
   threads without external synchronization.
-- All sessions in a process opened on the same `dbpath`
-  share one underlying database instance. A given `dbpath`
-  may be open in **at most one process**; a second process
-  opening it fails with `SM_ERR_INUSE`.
+- A `homedir` may be used by **at most one process**, and
+  by at most one environment in it. `sm_init` takes a lock
+  on the directory, and a second `sm_init` on it fails with
+  `SM_ERR_INUSE`.
+- All sessions opened on the same database share one
+  underlying database instance.
 
 ### Keys and values
 
@@ -156,8 +160,9 @@ fails with `SM_ERR_INVALID`.
 ### Types
 
 ```c
-typedef struct sm_session sm_session_t;   /* opaque */
-typedef struct sm_scan    sm_scan_t;      /* opaque */
+typedef struct sm_env_t     sm_env_t;       /* opaque */
+typedef struct sm_session_t sm_session_t;   /* opaque */
+typedef struct sm_scan_t    sm_scan_t;      /* opaque */
 ```
 
 ### Isolation levels
@@ -177,14 +182,15 @@ version, so the level has no meaning here.
 ### Options
 
 ```c
-typedef struct {
+typedef struct sm_options_t sm_options_t;
+struct sm_options_t {
     int         durability_sync;   /* default 1  */
     int         group_commit_us;   /* default 200 */
     int         deadlock_ms;       /* default 50 */
     int         ssi_max_entries;   /* default 1<<20 */
     long long   ts_lease;          /* default 1000000 */
     const char* rocksdb_options;   /* option string, NULL = defaults */
-} sm_options_t;
+};
 
 void sm_options_init(sm_options_t* opt);   /* fill with defaults */
 ```
@@ -242,54 +248,102 @@ at commit and roll back with the transaction.
 
 ---
 
+## Environment API
+
+An environment is a process's handle on a home directory,
+`homedir`, under which its databases live. Every database
+and session call goes through one.
+
+### sm_env_t* sm_init(const char* homedir)
+
+Create an environment on `homedir`, which must be an
+existing directory. No database is opened.
+
+`sm_init` takes a pidlock on `homedir`, so that only one
+process uses the directory and the files under it. The
+lock is held until `sm_final` succeeds or the process
+exits. A lock left by a process that no longer exists,
+such as one that crashed, does not block a later
+`sm_init`.
+
+A process may create environments on different home
+directories, but only one on a given `homedir`.
+
+Returns NULL on error: `SM_ERR_INUSE` (`homedir` is locked
+by another process, or already has an environment in this
+one), `SM_ERR_NOTFOUND` (no such directory),
+`SM_ERR_PERMISSION`, `SM_ERR_NOMEM`, `SM_ERR_INVALID`.
+
+### int sm_final(sm_env_t* env)
+
+Release an environment.
+
+Fails with `SM_ERR_INUSE` if any session opened through
+`env` is still open; `env` then stays valid, and the caller
+closes the sessions and calls `sm_final` again. On success
+the pidlock on `homedir` is released and `env` is invalid.
+Passing NULL is a no-op returning 0.
+
+Errors: `SM_ERR_INUSE`.
+
+---
+
 ## Database API
 
-### int sm_mkdb(const char* dbpath, const sm_options_t* opt)
+A database name `dbname` is a single path component: a
+NUL-terminated string of at most `SM_MAX_DBNAME` bytes,
+not empty, not `.` or `..`, and containing no `/`. Any
+other name fails with `SM_ERR_INVALID`. The database lives
+in the directory `{homedir}/{dbname}`.
 
-Create a database rooted at `dbpath`. The directory is
-created if it does not exist. The database is not opened;
-call `sm_open` afterwards.
+### int sm_mkdb(sm_env_t* env, const char* dbname, const sm_options_t* opt)
+
+Create the database `dbname`. Its directory is created if
+it does not exist. The database is not opened; call
+`sm_open` afterwards.
 
 Errors: `SM_ERR_EXISTS` (a database already exists there),
 `SM_ERR_PERMISSION`, `SM_ERR_DISKFULL`, `SM_ERR_IO`,
 `SM_ERR_INVALID`.
 
-### int sm_rmdb(const char* dbpath)
+### int sm_rmdb(sm_env_t* env, const char* dbname)
 
-Delete the database rooted at `dbpath`, including all its
-data. **This call is destructive and cannot be undone.**
+Delete the database `dbname`, including all its data.
+**This call is destructive and cannot be undone.**
 
-Fails if any session in this process is open on
-`dbpath`. It cannot detect sessions in another process; the
-caller is responsible for ensuring the database is not in
-use elsewhere.
+Fails if any session is open on the database. The pidlock
+on `homedir` means no other process can be using it.
 
 Errors: `SM_ERR_INUSE`, `SM_ERR_NOTFOUND` (no database
-there), `SM_ERR_PERMISSION`, `SM_ERR_IO`.
+there), `SM_ERR_PERMISSION`, `SM_ERR_IO`,
+`SM_ERR_INVALID`.
 
 ---
 
 ## Session API
 
-### sm_session_t* sm_open(const char* dbpath, const sm_options_t* opt)
+### sm_session_t* sm_open(sm_env_t* env, const char* dbname, const sm_options_t* opt)
 
-Open a database and start a new session on it. The database
-must already exist; `sm_open` never creates one.
+Open the database `dbname` and start a new session on it.
+The database must already exist; `sm_open` never creates
+one.
 
-The first `sm_open` on a `dbpath` in this process
-opens the database and its `opt` takes effect. Later
-sessions on the same path join the open instance, and their
-`opt` is ignored except for fields documented as
-per-session (currently none). Recovery — restoring prepared
+The first `sm_open` on a database in this process opens
+the database and its `opt` takes effect. Later sessions on
+the same database join the open instance, and their `opt`
+is ignored except for fields documented as per-session
+(currently none). Recovery — restoring prepared
 transactions and their locks — happens during that first
 open.
 
-A new session has no active transaction.
+A new session has no active transaction. It belongs to
+`env`, which must not be released while the session is
+open.
 
 Returns NULL on error: `SM_ERR_NOTFOUND` (no database
-there), `SM_ERR_INUSE` (open in another process),
-`SM_ERR_CORRUPT`, `SM_ERR_PERMISSION`, `SM_ERR_NOMEM`,
-`SM_ERR_IO`.
+there), `SM_ERR_CORRUPT`, `SM_ERR_PERMISSION`,
+`SM_ERR_NOMEM`,
+`SM_ERR_IO`, `SM_ERR_INVALID`.
 
 ### int sm_close(sm_session_t* session)
 
@@ -301,7 +355,7 @@ in-doubt and awaits its coordinator (see the 2PC API).
 `session` is invalid after this call, whether it succeeded
 or not. Passing NULL is a no-op returning 0.
 
-Closing the last session on a `dbpath` closes the
+Closing the last session on a database closes the
 underlying database.
 
 ---
@@ -710,3 +764,17 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     `DESIGN.md` but invisible to a caller reading only the
     API.
 13. `SM_XCT_READ_COMMITED` → `SM_XCT_READ_COMMITTED`.
+14. **Databases are named within an environment.** (D)
+    `sm_init(homedir)` returns an `sm_env_t`, and
+    `sm_mkdb`, `sm_rmdb`, and `sm_open` take an env and a
+    single-component `dbname` instead of a `dbpath`. The
+    env is thread-safe and separate from the per-thread
+    session, so concurrent sessions keep working as
+    before. It gives the registry of open
+    databases an owner, and a place for resources shared
+    across databases. Restricting `dbname` to one path
+    component keeps `sm_rmdb` from destroying a directory
+    outside `homedir`. Process exclusion moves from each
+    database to `homedir`: `sm_init` takes a pidlock, so
+    `sm_open` no longer reports another process, and
+    `sm_rmdb` can see every session on its database.

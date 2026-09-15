@@ -34,10 +34,15 @@ design forecloses them.
 
 - A `session_t` is used by one thread at a time. Concurrent use of one
   session from two threads is a caller error, not a supported mode.
-- Multiple sessions in a process may open the same `dbpath`;
-  they share one RocksDB handle (RocksDB permits a single writer
-  process per directory, so this is enforced by a process-wide
-  registry).
+- A process reaches its databases through an environment
+  (`sm_env_t`) on a home directory; a database is the
+  directory `{homedir}/{dbname}`. `sm_init` takes a pidlock
+  on `homedir`, so one process, and one environment in it,
+  owns the directory and every database under it; a lock
+  left by a dead process does not block the next one.
+  Multiple sessions may open the same database; they share
+  one RocksDB handle, held in the environment's registry of
+  open databases.
 - Keys and values are arbitrary byte strings. Keys are ordered
   bytewise (`memcmp`), which is what `sm_scan` exposes.
 - Implementation language is C++ (RocksDB's native API), exposing a C
@@ -1307,10 +1312,13 @@ snapshot may still legitimately read the relation. Physical
 removal happens when `gc_watermark` passes the drop's
 `commit_ts` (§8.3).
 
-`sm_mkdb` creates the directory, `CF:txn`, `CF:meta` with its
-initial contents, and the catalog's `CF:rel.0`. `sm_rmdb` is
-`rocksdb::DestroyDB` after verifying no session in this process
-holds the path open.
+`sm_mkdb` creates the directory `{homedir}/{dbname}`, `CF:txn`,
+`CF:meta` with its initial contents, and the catalog's
+`CF:rel.0`. `sm_rmdb` is `rocksdb::DestroyDB` after verifying
+that no session holds the database open; the pidlock on
+`homedir` (§1) rules out sessions in other processes. Both
+reject a `dbname` that is not a single path component, so
+neither can reach a directory outside `homedir`.
 
 ---
 
@@ -1382,6 +1390,7 @@ long a rarely-written CF can hold old WAL files alive.
 
 ```
 include/sm.h            public C API
+src/env.cc              init/final, environment handle, homedir pidlock
 src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
 src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
