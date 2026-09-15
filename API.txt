@@ -39,7 +39,7 @@ typedef enum {
     SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
     SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
     SM_ERR_EXISTS        = 8,   /* database or relation already exists */
-    SM_ERR_INUSE         = 9,   /* database still attached in this process */
+    SM_ERR_INUSE         = 9,   /* database still open in this process */
 
     /* concurrency errors — RETRYABLE */
     SM_ERR_CONFLICT      = 10,  /* write-write conflict */
@@ -120,10 +120,10 @@ behalf of an unrelated part of the program.
   supported mode, and is not diagnosed.
 - Distinct sessions may be used concurrently from distinct
   threads without external synchronization.
-- All sessions in a process attached to the same `dbpath`
+- All sessions in a process opened on the same `dbpath`
   share one underlying database instance. A given `dbpath`
   may be open in **at most one process**; a second process
-  attaching to it fails with `SM_ERR_INUSE`.
+  opening it fails with `SM_ERR_INUSE`.
 
 ### Keys and values
 
@@ -233,7 +233,7 @@ at commit and roll back with the transaction.
 
 Create a database rooted at `dbpath`. The directory is
 created if it does not exist. The database is not opened;
-call `sm_attach` afterwards.
+call `sm_open` afterwards.
 
 Errors: `SM_ERR_EXISTS` (a database already exists there),
 `SM_ERR_PERMISSION`, `SM_ERR_DISKFULL`, `SM_ERR_IO`,
@@ -244,7 +244,7 @@ Errors: `SM_ERR_EXISTS` (a database already exists there),
 Delete the database rooted at `dbpath`, including all its
 data. **This call is destructive and cannot be undone.**
 
-Fails if any session in this process is attached to
+Fails if any session in this process is open on
 `dbpath`. It cannot detect sessions in another process; the
 caller is responsible for ensuring the database is not in
 use elsewhere.
@@ -256,18 +256,18 @@ there), `SM_ERR_PERMISSION`, `SM_ERR_IO`.
 
 ## Session API
 
-### sm_session_t* sm_attach(const char* dbpath, const sm_options_t* opt)
+### sm_session_t* sm_open(const char* dbpath, const sm_options_t* opt)
 
 Open a database and start a new session on it. The database
-must already exist; `sm_attach` never creates one.
+must already exist; `sm_open` never creates one.
 
-The first session to attach to a `dbpath` in this process
+The first `sm_open` on a `dbpath` in this process
 opens the database and its `opt` takes effect. Later
 sessions on the same path join the open instance, and their
 `opt` is ignored except for fields documented as
 per-session (currently none). Recovery — restoring prepared
 transactions and their locks — happens during that first
-attach.
+open.
 
 A new session has no active transaction.
 
@@ -276,7 +276,7 @@ there), `SM_ERR_INUSE` (open in another process),
 `SM_ERR_CORRUPT`, `SM_ERR_PERMISSION`, `SM_ERR_NOMEM`,
 `SM_ERR_IO`.
 
-### int sm_detach(sm_session_t* session)
+### int sm_close(sm_session_t* session)
 
 Close the session and release it. Any open scan cursors are
 closed. An active transaction is forcibly aborted; a
@@ -286,7 +286,7 @@ in-doubt and awaits its coordinator (see the 2PC API).
 `session` is invalid after this call, whether it succeeded
 or not. Passing NULL is a no-op returning 0.
 
-Detaching the last session on a `dbpath` closes the
+Closing the last session on a `dbpath` closes the
 underlying database.
 
 ---
@@ -373,7 +373,7 @@ Errors: `SM_ERR_NOSAVEPOINT`, `SM_ERR_NOTRANS`,
 
 `sm_prepare` makes a transaction durable but not visible.
 Once prepared, a transaction survives a crash: it is
-restored at the next `sm_attach`, still holding its row
+restored at the next `sm_open`, still holding its row
 locks, and waits for a coordinator decision. It cannot be
 told "no" by the engine.
 
@@ -393,7 +393,7 @@ Runs serialization validation, then durably records the
 prepared state. On success the transaction is `PREPARED`:
 data operations, savepoints, and rollback are rejected with
 `SM_ERR_PREPARED`; only `sm_commit` and `sm_abort` are
-accepted. `sm_detach` leaves it in-doubt rather than
+accepted. `sm_close` leaves it in-doubt rather than
 aborting it.
 
 Errors: `SM_ERR_SERIALIZATION` (retryable; the transaction
@@ -574,7 +574,7 @@ promptly.
 
 The cursor is owned by the session, must be used only from
 the thread using that session, and is invalidated by
-`sm_commit`, `sm_abort`, and `sm_detach`. Multiple cursors
+`sm_commit`, `sm_abort`, and `sm_close`. Multiple cursors
 may be open on one session at once.
 
 Returns NULL on error: `SM_ERR_NOTFOUND` (no such

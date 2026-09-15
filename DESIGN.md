@@ -34,9 +34,10 @@ design forecloses them; §12 notes where they would attach.
 
 - A `session_t` is used by one thread at a time. Concurrent use of one
   session from two threads is a caller error, not a supported mode.
-- Multiple sessions in a process may attach to the same `dbpath`; they
-  share one RocksDB handle (RocksDB permits a single writer process
-  per directory, so this is enforced by a process-wide registry).
+- Multiple sessions in a process may open the same `dbpath`;
+  they share one RocksDB handle (RocksDB permits a single writer
+  process per directory, so this is enforced by a process-wide
+  registry).
 - Keys and values are arbitrary byte strings. Keys are ordered
   bytewise (`memcmp`), which is what `sm_scan` exposes.
 - Implementation language is C++ (RocksDB's native API), exposing a C
@@ -142,7 +143,7 @@ Notes on the encoding:
   comparator.
 
 Column family handles are held in a process-wide map
-`relid → handle`, shared by every session attached to the
+`relid → handle`, shared by every session open on the
 database and guarded by a reader-writer lock, because relations
 are created and dropped concurrently with reads. A handle is
 reference-counted and destroyed only after its CF is dropped and
@@ -209,7 +210,7 @@ at runtime too — a transaction whose `ABORTED` hint was never
 written leaves the same trace. A transaction whose *commit*
 status write failed does not: that record may still be durable,
 so the engine stops instead of judging it (§8.2). The process is
-the only one attached to the database, so the active transaction
+the only one with the database open, so the active transaction
 table is exhaustive; two orderings keep a live transaction from
 being misjudged:
 
@@ -1284,7 +1285,7 @@ SM_ERR_NOTRANS         data op outside a transaction (§6.1)
 SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
 SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
 SM_ERR_EXISTS          database or relation already exists (§11)
-SM_ERR_INUSE           database still attached in this process
+SM_ERR_INUSE           database still open in this process
 SM_ERR_CORRUPT         RocksDB integrity failure (§9.4)
 SM_ERR_IO / SM_ERR_NOMEM / SM_ERR_PERMISSION / SM_ERR_DISKFULL
 ```
@@ -1334,7 +1335,7 @@ long a rarely-written CF can hold old WAL files alive.
 ```
 include/sm.h            public C API
 src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
-src/session.cc          attach/detach, per-session state and buffers
+src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
 src/version.cc          key/value codec, version comparator, visibility
 src/access.cc           read / scan / insert / update / delete
@@ -1348,7 +1349,7 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 ### 12.4 Build order
 
 1. Codec, catalog, single-threaded read/write with no concurrency —
-   `mkdb/attach/mkrel/insert/read/scan` under one transaction at a time.
+   `mkdb/open/mkrel/insert/read/scan` under one transaction at a time.
 2. Timestamps, commit sequencer, status table, snapshot visibility;
    RC and RR isolation. Crash tests begin here.
 3. Row locks, write-write conflict, deadlock detection.
