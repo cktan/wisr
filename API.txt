@@ -81,13 +81,27 @@ the caller must not call `sm_abort`, and must not issue
 further data operations. The correct response is to
 `sm_begin` a fresh transaction and redo the work.
 
+```c
+int sm_retryable(void);   /* 1 if sm_errno() is retryable, else 0 */
+```
+
+`sm_retryable` tests the last error on the calling thread,
+so like `sm_errno` it is only meaningful immediately after a
+call that returned an error indication. Callers should use
+it rather than comparing against the three codes: a
+retryable code added later is appended to the enum like any
+other, so the retryable codes are not guaranteed to stay
+contiguous.
+
 Under `SM_XCT_SERIALIZABLE` these are a normal outcome, not
 an exceptional one. A caller that cannot retry should not
 use that level.
 
 All other errors leave the transaction active and
 unchanged, and the caller decides whether to continue or
-abort.
+abort. The exception is `sm_commit`: once it is called on an
+active transaction, the transaction is no longer active,
+whatever the result.
 
 ### Memory and lifetimes
 
@@ -315,11 +329,19 @@ commit decision and always succeeds — validation already
 happened at prepare time.
 
 On `SM_ERR_SERIALIZATION` the transaction has been aborted
-and its effects discarded; the caller retries. On any other
-error the transaction is also no longer active.
+and its effects discarded; the caller retries.
+
+On `SM_ERR_IO` the outcome is **unknown**: the commit record
+may or may not have reached the log. **Do not retry
+blindly** — the work may already be committed. The database
+enters a failed state: further writes, commits, and
+prepares fail with `SM_ERR_IO`, while reads on existing
+snapshots continue. After the database is reopened, the
+transaction is committed or not according to what reached
+the log.
 
 Errors: `SM_ERR_SERIALIZATION` (retryable),
-`SM_ERR_NOTRANS`, `SM_ERR_DISKFULL`, `SM_ERR_IO`.
+`SM_ERR_NOTRANS`, `SM_ERR_IO` (outcome unknown).
 
 ### int sm_abort(sm_session_t* session)
 
