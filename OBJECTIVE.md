@@ -30,7 +30,7 @@ full MVCC, for OLTP workloads.
 
 ## API
 
-- The `sm_*` Storage Manager API (see `API.txt`) is the interface to
+- The `sm_*` Storage Manager API (see `API.md`) is the interface to
   this engine. It already sketches the primitives needed:
   - database lifecycle: `sm_mkdb` / `sm_rmdb`
   - sessions: `sm_open` / `sm_close`
@@ -69,7 +69,7 @@ These were open; they are now settled and drive `DESIGN.md`.
 
 ## Notes
 
-- `API.txt` is a sketch. `DESIGN.md` proposes concrete C signatures
+- `API.md` is a sketch. `DESIGN.md` proposes concrete C signatures
   and flags where it must diverge — notably the read/scan calls, and
   the extra 2PC entry points (`sm_prepare` taking a global id, plus
   recovery of in-doubt transactions).

@@ -481,7 +481,7 @@ sm_savepoint():
     T.sp_drops  = T.dropped.size()
 
 sm_rollback():
-    if no savepoint: fail with SM_ERR_NOSAVEPOINT    # API.txt divergence 8
+    if no savepoint: fail with SM_ERR_NOSAVEPOINT    # API.md divergence 8
     m = T.sp_mark
     for e in reverse(T.undo[m..]):
         db.Delete(cf(e.relid), encode(e.key, ~T.xid, ~e.seq))
@@ -667,7 +667,7 @@ sm_commit(T):
      queue (T.dropped, commit_ts) for CF removal     (§8.3)
 ```
 
-Step 1 closes cursors first, as `API.txt` requires of `sm_commit`
+Step 1 closes cursors first, as `API.md` requires of `sm_commit`
 and `sm_abort`: this releases their RocksDB snapshots, which pin
 `gc_watermark`, and narrows each cursor's SIREAD predicate to
 the range it actually traversed (§10.2) before validation runs.
@@ -834,7 +834,7 @@ as the transaction stays in doubt. The coordinator's commit
 (§8.2 from step 2) therefore finds none left to close.
 
 A read-only transaction still needs a durable `PREPARED` record,
-because `API.txt` promises that a prepared transaction survives
+because `API.md` promises that a prepared transaction survives
 a crash and can be resolved by `gid` afterwards. Step 1 gives it
 an xid (entering the active table, §3.4) so that the record has
 a unique key; with `T.xid == 0`, every read-only prepare would
@@ -931,7 +931,7 @@ only follows a crash.
 
 ### 8.5 The 2PC API surface
 
-`API.txt` defines these five calls. What the design requires
+`API.md` defines these five calls. What the design requires
 of each:
 
 ```c
@@ -1180,7 +1180,7 @@ actually read.
 
 ### 10.3 API shape
 
-`API.txt` is the interface contract. Its read-path signatures
+`API.md` is the interface contract. Its read-path signatures
 are repeated here because three of them encode decisions from
 this document rather than mere spelling:
 
@@ -1326,7 +1326,7 @@ neither can reach a directory outside `homedir`.
 
 ### 12.1 Error codes
 
-`API.txt` defines `sm_errno_t` with explicit, stable values.
+`API.md` defines `sm_errno_t` with explicit, stable values.
 This section records only which codes the engine raises and
 where they come from:
 
@@ -1356,7 +1356,7 @@ exceptional one.
 The code and message are read with `sm_errno()` and
 `sm_errmsg()`, each reporting the last error on the calling
 thread. They are functions, not the thread-local globals of
-the original sketch; `API.txt` divergence 1 records why.
+the original sketch; `API.md` divergence 1 records why.
 Two consequences for the implementation:
 
 - A successful call leaves both untouched, so every path that
