@@ -99,9 +99,10 @@ use that level.
 
 All other errors leave the transaction active and
 unchanged, and the caller decides whether to continue or
-abort. The exception is `sm_commit`: once it is called on an
-active transaction, the transaction is no longer active,
-whatever the result.
+abort. There are two exceptions. `sm_commit`: once it is
+called on an active transaction, the transaction is no
+longer active, whatever the result. `sm_prepare`: on
+`SM_ERR_IO` the transaction is no longer active (see there).
 
 ### Memory and lifetimes
 
@@ -418,10 +419,20 @@ data operations, savepoints, and rollback are rejected with
 accepted. `sm_close` leaves it in-doubt rather than
 aborting it.
 
+On `SM_ERR_IO` the outcome is **unknown**: the prepared
+record may or may not have reached the log. The transaction
+is no longer active on the session, and the database enters
+the same failed state as after `SM_ERR_IO` from `sm_commit`.
+After the database is reopened, the transaction is either
+listed by `sm_list_prepared` under `gid`, or it was never
+prepared and is aborted. A coordinator that got `SM_ERR_IO`
+checks the list; since the participant never voted yes,
+`sm_abort_prepared` is always a correct resolution.
+
 Errors: `SM_ERR_SERIALIZATION` (retryable; the transaction
 is aborted and *not* prepared), `SM_ERR_NOTRANS`,
 `SM_ERR_EXISTS` (`gid` already in use), `SM_ERR_INVALID`,
-`SM_ERR_DISKFULL`, `SM_ERR_IO`.
+`SM_ERR_IO` (outcome unknown).
 
 ### int sm_list_prepared(sm_session_t* session, sm_prepared_t** out, size_t* n)
 

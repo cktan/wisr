@@ -841,6 +841,27 @@ versions sit in relation CFs, its status record says `PREPARED`,
 and readers treat it as in-flight (invisible). It holds its row
 locks, and it pins `gc_watermark` at its `snapshot_ts`.
 
+**A failed prepare write is fail-stop**, for the reason §8.2
+gives for a failed commit write: if step 3 returns an error, the
+`PREPARED` record may still have reached the WAL, and §9.1 would
+then restore the transaction in doubt. The engine therefore does
+not treat it as aborted:
+
+- it stays in the active table with its locks and SSI state, so
+  its versions remain in-flight to readers and to the compaction
+  filter, and the column families in `T.created` are kept;
+- the database enters §8.2's failed state, so nothing can
+  resolve the transaction before the database is reopened;
+- `sm_prepare` returns `SM_ERR_IO`, meaning *outcome unknown*,
+  and the transaction is no longer active on its session.
+
+After reopen, WAL replay decides: either the record survived and
+the transaction is restored in doubt, listed by
+`sm_list_prepared` under its `gid`, or it has no record and is
+dead (§3.4). A coordinator that got `SM_ERR_IO` checks the list
+and resolves by `gid`. It never received a "yes" vote, so abort
+is always a correct decision.
+
 The coordinator later calls commit or abort. Commit is §8.2 starting
 at step 2, overwriting the record (dropping the now-unneeded write
 set); abort writes `ABORTED`, drops the CFs in `created`, and
@@ -1468,7 +1489,11 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   the database fails stop: `sm_commit` returns `SM_ERR_IO`, the
   versions stay in-flight and are not compacted away, and after
   reopen the transaction is committed or dead according to the
-  WAL (§8.2). Sweep `CF:txn` after a compaction pass and assert
+  WAL (§8.2). Fail a prepare's record write and assert
+  `sm_prepare` returns `SM_ERR_IO`, the versions stay in-flight,
+  and after reopen the transaction is either listed by
+  `sm_list_prepared` or dead, according to the WAL (§8.4).
+  Sweep `CF:txn` after a compaction pass and assert
   every committed row is still readable (§8.3). Run a concurrent
   workload with `commit_cache_entries = 1` and assert it reads
   the same results as with a large cache (§3.4).
