@@ -340,7 +340,7 @@ into RocksDB immediately, before commit.
 
 ```
 sm_update(rel, k, v):
-  1. relid  = catalog.lookup(rel)                       # MVCC read
+  1. relid  = catalog.lookup(rel)                       # MVCC read, §11
   2. lock   = lockmgr.acquire_x(relid, k, T)            # blocking, §5.1
   3. latest = newest own version of (relid, k) visible to T  # §4.4
      if latest is absent:
@@ -1020,7 +1020,7 @@ indistinguishable from the transaction never having committed.
 
 ```
 sm_read(session, rel, key, &val):
-    relid = catalog.lookup(rel)
+    relid = catalog.lookup(rel)                          # SIREAD too, §11
     snap  = (level == READ_COMMITTED) ? visible_ts : T.snapshot_ts
     hi    = max(T.xid, snap)                             # own writes, §4.4
     if SERIALIZABLE:
@@ -1245,6 +1245,33 @@ snapshots do not only move forward: under read committed, a
 lookup at the begin snapshot `T.snapshot_ts` can follow one at a
 newer statement snapshot (§6.2).
 
+Under SERIALIZABLE a lookup is also a read for SSI. The relid a
+name resolves to is something the transaction observed, and a
+concurrent `sm_rmrel` or `sm_mkrel` of that name writes the
+catalog key it depends on. Without an rw-edge for it, DDL admits
+write skew:
+
+```
+T1: sm_read(S, x)             T2: sm_read(R, k)    # looks up "R"
+T1: sm_rmrel(R)               T2: sm_update(S, x)
+```
+
+`T1 ──rw──▶ T2` comes from `x`; `T2 ──rw──▶ T1` exists only if
+T2's lookup counts as a read of `"R" | R`. So under SERIALIZABLE:
+
+- A lookup is a §10.1 point read of the catalog key: the SIREAD
+  lock on `"R" | relname` in `rel.0` is taken first, whether or
+  not the name is found, and versions of concurrent writers it
+  steps past run `on_skip`.
+- A cache hit does not stand in for that read. An in-flight
+  `sm_rmrel` has not raised `last_ddl_ts`, so a hit is valid by
+  the rule above, yet it steps past nothing, and the dropper's
+  `on_write` ran before any SIREAD existed: the edge is missed.
+  Each cache entry therefore also records the transaction that
+  read it from `rel.0`, and a serializable lookup uses a hit
+  only if that is the current transaction. Its SIREAD already
+  catches every later writer of the name.
+
 The column family is the one part of DDL that is not
 transactional: `CreateColumnFamily` and `DropColumnFamily` take
 effect immediately. `sm_mkrel` therefore creates the CF
@@ -1397,8 +1424,10 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   range (§10.2), a scan closed right after yielding a key
   followed by a concurrent write to that key (§7.1), a scan
   past a key whose only versions are concurrent writers'
-  (§10.2), a scan left open at `sm_commit` (§8.2), and
-  Fekete's read-only anomaly, which must fail while the
+  (§10.2), a scan left open at `sm_commit` (§8.2), write
+  skew through `sm_rmrel` of a relation the other transaction
+  reads, with the name already in both sessions' caches (§11),
+  and Fekete's read-only anomaly, which must fail while the
   read-only transaction's snapshot is unsafe (§7.4). A
   transaction that reads, outlives every concurrent writer so
   that its snapshot is safe, and then writes commits, including
