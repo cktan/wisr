@@ -28,7 +28,7 @@ collection of dead versions.
 **Not in scope (for now).** Secondary indexes, a query language,
 column types or schemas (values are opaque byte strings), replication,
 multi-process or remote access, and online backup. Nothing in the
-design forecloses them; §12 notes where they would attach.
+design forecloses them.
 
 **Assumptions.**
 

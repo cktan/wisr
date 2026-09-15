@@ -3,6 +3,20 @@
 Design and build a **storage manager** backed by RocksDB that supports
 full MVCC, for OLTP workloads.
 
+## Scope
+
+- This project adds only an **MVCC storage manager** on top of
+  RocksDB. Nothing above the storage manager is in scope.
+- Each relation is a **clustered index on a single primary
+  key**: the value is stored with its key, rows are ordered by
+  key, and the key is the only access path.
+- Keys are ordered **bytewise (`memcmp`)**; there is no custom
+  comparator. Callers encode composite or typed keys into byte
+  strings whose `memcmp` order is the order they want.
+- **Secondary indexes are not provided.** They can be built by
+  another layer on top of this one, for example as separate
+  relations maintained in the same transaction.
+
 ## Goals
 
 - Use RocksDB purely as a key-value storage engine underneath — all
