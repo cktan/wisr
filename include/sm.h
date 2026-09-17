@@ -14,6 +14,48 @@ extern "C" {
 #endif
 
 /*
+ * Error codes. Values are explicit and stable: new codes are
+ * appended, existing values never change.
+ */
+typedef enum {
+    SM_OK                = 0,
+
+    /* caller/programming errors */
+    SM_ERR_INVALID       = 1,   /* bad argument */
+    SM_ERR_NOTRANS       = 2,   /* op requires an active transaction */
+    SM_ERR_INTRANS       = 3,   /* op forbidden inside a transaction */
+    SM_ERR_PREPARED      = 4,   /* op forbidden on a prepared transaction */
+    SM_ERR_NOSAVEPOINT   = 5,   /* rollback with no savepoint set */
+
+    /* data errors */
+    SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
+    SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
+    SM_ERR_EXISTS        = 8,   /* home dir, database, or relation exists */
+    SM_ERR_INUSE         = 9,   /* database open, or homedir locked */
+
+    /* concurrency errors -- RETRYABLE */
+    SM_ERR_CONFLICT      = 10,  /* write-write conflict */
+    SM_ERR_SERIALIZATION = 11,  /* SSI validation failure */
+    SM_ERR_DEADLOCK      = 12,  /* chosen as deadlock victim */
+
+    /* environment errors */
+    SM_ERR_CORRUPT       = 13,
+    SM_ERR_IO            = 14,
+    SM_ERR_NOMEM         = 15,
+    SM_ERR_DISKFULL      = 16,
+    SM_ERR_PERMISSION    = 17,
+    SM_ERR_VERSION       = 18   /* home dir format not supported */
+} sm_errno_t;
+
+/*
+ * The last error raised on the calling thread. Meaningful
+ * only immediately after a call that returned an error
+ * indication: a successful call leaves it untouched, so it
+ * cannot be used to test for success.
+ */
+sm_errno_t sm_errno(void);
+
+/*
  * An environment: one process's handle on a home directory,
  * through which every database and session call goes.
  */
