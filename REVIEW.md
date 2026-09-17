@@ -1,7 +1,9 @@
 # Architectural Review: wisr Storage Manager
 
 Review of [DESIGN.md][des] against the requirements and
-decisions in [OBJECTIVE.md][obj].
+decisions in [OBJECTIVE.md][obj], incorporating the new
+PGDATA-style directory layout, environment lifecycle split,
+and [`sm_strlist_t`][strlist-type] API.
 
 Reviewer: Andy Pavlo (CMU Database Group)
 
@@ -19,19 +21,28 @@ two-phase commit (2PC), and Serializable Snapshot
 Isolation (SSI) without killing throughput requires deep
 discipline.
 
-Overall, [DESIGN.md][des] is an exceptionally thorough
-and mathematically sound design document. It follows
-every settled decision in [OBJECTIVE.md §Decisions][obj-dec]
-with precision. The version key encoding, the atomic
-commit sequencer, the status resolution rules, and the SSI
-conflict-tracking mechanics demonstrate a sophisticated
-grasp of transaction processing literature (Cahill,
-Fekete, Ports, Grittner, Adya).
+The latest revisions to [DESIGN.md][des] and [API.md][api]
+represent a major architectural maturation. Adopting a
+PostgreSQL-style data directory layout
+([DESIGN.md §3.5][des-35]), splitting environment
+initialization ([`sm_init`][sm-init]) from runtime
+attachment ([`sm_attach`][sm-attach] and
+[`sm_detach`][sm-detach]), mapping databases through a root
+RocksDB instance, and introducing [`sm_strlist_t`][strlist-type]
+elevates the system from a prototype sketch to a robust,
+industrial-strength database framework.
 
-However, there are several critical architectural
-hazards, RocksDB-specific pitfalls, and subtle
-transaction anomalies that must be addressed before
-writing production C++ code:
+The transaction processing design continues to adhere
+faithfully to [OBJECTIVE.md §Decisions][obj-dec]. The
+mathematical foundation—complemented version tails, the
+atomic publication sequencer, and optimistic SSI with
+pivot detection—is first-rate.
+
+However, while the storage and environment management
+layers have taken a giant leap forward, the core LSM
+transactional traps identified in the initial review remain
+active and must be resolved before implementing the storage
+engine internals:
 
 1. **The Compaction Truncation Dilemma:** Coupling
    `CF:txn` truncation to full database compaction
@@ -57,10 +68,49 @@ writing production C++ code:
 
 ## 2. Core Architectural Wins
 
-The following design decisions in [DESIGN.md][des] are
-exemplary:
+### 2.1 PostgreSQL-Style Home Directory & Root DB (§3.5)
+The new storage layout in [DESIGN.md §3.5][des-35] is a
+huge win:
+- `{homedir}/pidlock.pid`: Process exclusion (`postmaster.pid`).
+- `{homedir}/global/root`: Root database (`global/pg_database`).
+- `{homedir}/base/{dbid}`: Database directories (`base/{oid}`).
 
-### 2.1 Custom Version Comparator (`wisr.version.v1`)
+Decoupling caller `dbname` strings from filesystem paths
+stops directory traversal vulnerabilities (`"../"`) dead in
+their tracks, supports arbitrary 1..63 byte names matching
+Postgres `NAMEDATALEN - 1`, and makes database creation and
+deletion crash-consistent. Ordering operations such that
+`sm_mkdb` commits the name last and `sm_rmdb` deletes the name
+first guarantees that a crash leaves only unreferenced
+directories, which [`sm_attach`][sm-attach] sweeps cleanly
+at startup.
+
+### 2.2 Clean Lifecycle Split (`init` vs `attach` / `detach`)
+Separating one-time initialization ([`sm_init`][sm-init])
+from per-process connection ([`sm_attach`][sm-attach] and
+[`sm_detach`][sm-detach]) mirrors PostgreSQL's `initdb` vs
+postmaster startup. It eliminates the fragile "create on
+first use" behavior where a typo in a directory path quietly
+created an empty database home. Adding
+[`SM_ERR_VERSION`][err-version] ensures explicit format
+validation.
+
+### 2.3 Counted, Immutable Name Lists (`sm_strlist_t`)
+The design of [`sm_strlist_t`][strlist-type] in
+[PLAN.md][plan] and [`include/sm.h`][sm-h] is a model of C ABI
+hygiene:
+- Replaces unwieldy `char***` pointers with an opaque,
+  counted handle.
+- Single-allocation representation (`count` + pointers +
+  contiguous string buffer) released with one
+  [`sm_strlist_free`][strlist-free] call.
+- Safe semantics: out-of-bounds access returns `NULL` rather
+  than memory corruption, and empty lists return non-null
+  handles with `count = 0`.
+- Crucially, it holds no transaction or GC state, preventing
+  resource pinning.
+
+### 2.4 Custom Version Comparator (`wisr.version.v1`)
 In [DESIGN.md §3.1][des-31], the specification rightly
 rejects RocksDB's default bytewise comparator. Appending
 version tails under standard bytewise ordering causes
@@ -70,7 +120,7 @@ after `"ab"`). Creating `wisr.version.v1` to compare
 userkeys with `memcmp` separately from the 12-byte tail
 is mandatory for scan correctness.
 
-### 2.2 Complemented Suffixes (`~xid`, `~seq`)
+### 2.5 Complemented Suffixes (`~xid`, `~seq`)
 Encoding suffixes as big-endian bitwise complements
 ([DESIGN.md §3.1][des-31]) inverts RocksDB's ascending
 order, making newer versions sort first. A point read
@@ -78,7 +128,7 @@ seeking to `userkey | ~snap | 00000000` lands directly on
 the first version visible to the snapshot without reverse
 iteration ([DESIGN.md §10.1][des-101]).
 
-### 2.3 Single Monotonic Counter & Publication Sequencer
+### 2.6 Single Monotonic Counter & Publication Sequencer
 The commit sequencer in [DESIGN.md §4.3][des-43] avoids
 PostgreSQL-style per-snapshot active transaction lists.
 Because `visible_ts` tracks the contiguous prefix of
@@ -86,7 +136,7 @@ published commits, snapshots are simply 64-bit scalar
 integers, making visibility tests $O(1)$ integer
 comparisons ([DESIGN.md §4.4][des-44]).
 
-### 2.4 Restored Transaction Rule in SSI Crash Recovery
+### 2.7 Restored Transaction Rule in SSI Crash Recovery
 In [DESIGN.md §8.4][des-84], the design avoids logging
 unbounded SIREAD locks for prepared transactions. Tagging
 restored prepared transactions and dooming any concurrent
@@ -94,7 +144,7 @@ serializable reader that skips their versions completely
 closes post-restart write-skew anomalies with minimal
 recovery overhead.
 
-### 2.5 Eager Uncommitted Writes with $O(1)$ Abort
+### 2.8 Eager Uncommitted Writes with $O(1)$ Abort
 Streaming uncommitted versions directly into RocksDB
 memtables ([DESIGN.md §5][des-5]) ensures transactions
 are unbounded by RAM. Because absence of a status record
@@ -117,10 +167,10 @@ specifies that `COMMITTED` records can only be dropped
 once every surviving version has been stamped with
 `commit_ts` by the compaction filter. To achieve this,
 the design prescribes:
-> *"Record $W_0 = 	ext{gc\_watermark}$, then run a full
+> *"Record $W_0 = \text{gc\_watermark}$, then run a full
 > compaction pass over every relation CF, flushing
 > memtables first... drop the `COMMITTED` records with
-> $	ext{commit\_ts} \le W_0$."*
+> $\text{commit\_ts} \le W_0$."*
 
 #### Why This Breaks in Production
 1. **Excessive Write Amplification:** A full compaction
@@ -183,8 +233,8 @@ Reserve prefix bloom seek mode exclusively for
 
 #### The Problem
 In [DESIGN.md §8.3][des-83], when the compaction filter
-sees a tombstone with $	ext{commit\_ts} \le
-	ext{gc\_watermark}$, it queues the key for background
+sees a tombstone with $\text{commit\_ts} \le
+\text{gc\_watermark}$, it queues the key for background
 deletion:
 ```cpp
 db.DeleteRange(cf(relid), version_key, userkey | FF×12);
@@ -294,7 +344,7 @@ Family per relation (`CF:rel.<relid>`).
 
 #### Alternative
 Partitioning keys within a shared data CF:
-$$	ext{key} = 	ext{relid (8B)} \mid 	ext{userkey} \mid {\sim}	ext{xid} \mid {\sim}	ext{seq}$$
+$$\text{key} = \text{relid (8B)} \mid \text{userkey} \mid {\sim}\text{xid} \mid {\sim}\text{seq}$$
 This makes relation creation/drop pure MVCC operations,
 eliminates orphan CF sweeps, and scales to millions of
 tables.
@@ -337,6 +387,8 @@ components:
 | :--- | :---: | :--- |
 | **Primary Key Clustered Index** | **PASS** | Meets [OBJECTIVE.md §Scope][obj-scope]; `wisr.version.v1` handles keys cleanly. |
 | **MVCC on RocksDB** | **PASS** | Monotonic timestamps and complemented keys satisfy [OBJECTIVE.md §Goals][obj-goals]. |
+| **Environment & Root DB Lifecycle** | **PASS** | [DESIGN.md §3.5][des-35] PGDATA layout (`global/root`, `base/{dbid}`) clean & secure. |
+| **Name Listing (`sm_strlist_t`)** | **PASS** | [PLAN.md][plan] specifies an opaque, safe, counted C ABI representation. |
 | **Read Committed Level** | **WARN** | Functional, but first-committer-wins at `sm_begin` causes aborts. |
 | **Repeatable Read Level** | **PASS** | Snapshot isolation with first-committer-wins operates as intended. |
 | **Serializable Level (SSI)** | **PASS** | Full Cahill/Ports SSI implementation without read locks. |
@@ -349,36 +401,49 @@ components:
 
 ## 6. Conclusion
 
-[DESIGN.md][des] is a first-class, publishable systems
-architecture. Its mathematical formulations for version
-ordering, timestamp allocation, and optimistic dependency
-tracking are sound. Resolving the
-**compaction/status-resolution coupling**, mandating
-**`total_order_seek` on scans**, and invalidating **cursors
-across savepoint rollbacks** will ensure the wisr storage
-manager is production-grade, durable, and correct.
+The addition of the PostgreSQL-style directory layout, the
+root DB, and the [`sm_strlist_t`][strlist-type] abstraction
+substantially improves wisr's architecture, providing robust
+containment and clean lifecycle separation.
+
+The remaining challenges lie squarely in the LSM-MVCC
+engine: resolving the **compaction/status-resolution
+coupling**, mandating **`total_order_seek` on scans**, and
+invalidating **cursors across savepoint rollbacks**.
+Addressing these final issues will make wisr a truly
+bulletproof, production-grade storage manager.
 
 <!-- Reference Links -->
 [des]: file:///home/cktan/p/wisr/DESIGN.md
-[des-31]: file:///home/cktan/p/wisr/DESIGN.md#L128-L149
-[des-34]: file:///home/cktan/p/wisr/DESIGN.md#L195-L210
-[des-43]: file:///home/cktan/p/wisr/DESIGN.md#L277-L325
-[des-44]: file:///home/cktan/p/wisr/DESIGN.md#L326-L335
-[des-5]: file:///home/cktan/p/wisr/DESIGN.md#L346-L362
-[des-51]: file:///home/cktan/p/wisr/DESIGN.md#L376-L396
-[des-62]: file:///home/cktan/p/wisr/DESIGN.md#L431-L454
-[des-71]: file:///home/cktan/p/wisr/DESIGN.md#L541-L552
-[des-83]: file:///home/cktan/p/wisr/DESIGN.md#L711-L813
-[des-84]: file:///home/cktan/p/wisr/DESIGN.md#L883-L931
-[des-91]: file:///home/cktan/p/wisr/DESIGN.md#L974-L1010
-[des-101]: file:///home/cktan/p/wisr/DESIGN.md#L1048-L1067
-[des-102]: file:///home/cktan/p/wisr/DESIGN.md#L1103-L1180
-[des-122]: file:///home/cktan/p/wisr/DESIGN.md#L1379-L1383
+[des-31]: file:///home/cktan/p/wisr/DESIGN.md#L93-L157
+[des-34]: file:///home/cktan/p/wisr/DESIGN.md#L203-L244
+[des-35]: file:///home/cktan/p/wisr/DESIGN.md#L245-L315
+[des-43]: file:///home/cktan/p/wisr/DESIGN.md#L355-L403
+[des-44]: file:///home/cktan/p/wisr/DESIGN.md#L404-L413
+[des-5]: file:///home/cktan/p/wisr/DESIGN.md#L424-L440
+[des-51]: file:///home/cktan/p/wisr/DESIGN.md#L454-L474
+[des-62]: file:///home/cktan/p/wisr/DESIGN.md#L509-L532
+[des-71]: file:///home/cktan/p/wisr/DESIGN.md#L617-L630
+[des-83]: file:///home/cktan/p/wisr/DESIGN.md#L789-L891
+[des-84]: file:///home/cktan/p/wisr/DESIGN.md#L961-L1009
+[des-91]: file:///home/cktan/p/wisr/DESIGN.md#L1052-L1088
+[des-101]: file:///home/cktan/p/wisr/DESIGN.md#L1126-L1145
+[des-102]: file:///home/cktan/p/wisr/DESIGN.md#L1181-L1258
+[des-122]: file:///home/cktan/p/wisr/DESIGN.md#L1457-L1461
 [obj]: file:///home/cktan/p/wisr/OBJECTIVE.md
 [obj-scope]: file:///home/cktan/p/wisr/OBJECTIVE.md#L6-L19
 [obj-goals]: file:///home/cktan/p/wisr/OBJECTIVE.md#L20-L25
 [obj-dec]: file:///home/cktan/p/wisr/OBJECTIVE.md#L44-L69
-[err-conflict]: file:///home/cktan/p/wisr/API.md#L45
+[api]: file:///home/cktan/p/wisr/API.md
+[plan]: file:///home/cktan/p/wisr/PLAN.md
+[sm-h]: file:///home/cktan/p/wisr/include/sm.h
+[err-conflict]: file:///home/cktan/p/wisr/include/sm.h#L37
+[err-version]: file:///home/cktan/p/wisr/include/sm.h#L47
+[sm-init]: file:///home/cktan/p/wisr/include/sm.h#L73
+[sm-attach]: file:///home/cktan/p/wisr/include/sm.h#L83
+[sm-detach]: file:///home/cktan/p/wisr/include/sm.h#L93
+[strlist-type]: file:///home/cktan/p/wisr/include/sm.h#L108
+[strlist-free]: file:///home/cktan/p/wisr/include/sm.h#L120
 [sm-read]: file:///home/cktan/p/wisr/API.md#L618-L632
 [sm-scan]: file:///home/cktan/p/wisr/API.md#L633-L670
 [sm-scan-next]: file:///home/cktan/p/wisr/API.md#L671-L685
