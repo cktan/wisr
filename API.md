@@ -38,7 +38,7 @@ typedef enum {
     /* data errors */
     SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
     SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
-    SM_ERR_EXISTS        = 8,   /* database or relation already exists */
+    SM_ERR_EXISTS        = 8,   /* home dir, database, or relation exists */
     SM_ERR_INUSE         = 9,   /* database open, or homedir locked */
 
     /* concurrency errors — RETRYABLE */
@@ -51,7 +51,8 @@ typedef enum {
     SM_ERR_IO            = 14,
     SM_ERR_NOMEM         = 15,
     SM_ERR_DISKFULL      = 16,
-    SM_ERR_PERMISSION    = 17
+    SM_ERR_PERMISSION    = 17,
+    SM_ERR_VERSION       = 18   /* home dir format not supported */
 } sm_errno_t;
 ```
 
@@ -165,9 +166,9 @@ are NUL-terminated, and a key or value may contain NUL.
 - Distinct sessions may be used concurrently from distinct
   threads without external synchronization.
 - A `homedir` may be used by **at most one process**, and
-  by at most one environment in it. `sm_init` takes a lock
-  on `{homedir}/pidlock.pid`, and a second `sm_init` on it
-  fails with `SM_ERR_INUSE`.
+  by at most one environment in it. `sm_attach` takes a
+  lock on `{homedir}/pidlock.pid`, and a second `sm_attach`
+  on it fails with `SM_ERR_INUSE`.
 - All sessions opened on the same database share one
   underlying database instance.
 
@@ -282,42 +283,67 @@ An environment is a process's handle on a home directory,
 `homedir`, under which its databases live. Every database
 and session call goes through one.
 
-### sm_env_t* sm_init(const char* homedir)
-
-Create an environment on `homedir`, which must be an
-existing directory. No database is opened.
-
-`sm_init` takes a pidlock on the file
-`{homedir}/pidlock.pid`, so that only one process uses the
-directory and the files under it. The lock is held until
-`sm_final` succeeds or the process exits. A lock left by a
-process that no longer exists, such as one that crashed,
-does not block a later `sm_init`.
-
 A home directory is laid out like a PostgreSQL data
 directory: `pidlock.pid` beside `global`, which holds the
 root db, and `base`, which holds one directory per
-database. `sm_init` creates `global` and `base` if they are
-absent, opens the root db — which maps database names to
-storage — and destroys any directory under `base` the root
-db does not name, which is what a crash during `sm_mkdb` or
-`sm_rmdb` leaves behind.
+database. `sm_init` builds that structure once; `sm_attach`
+and `sm_detach` bracket each process's use of it. The split
+is PostgreSQL's, between `initdb` and starting a server.
 
-A process may create environments on different home
-directories, but only one on a given `homedir`.
+### int sm_init(const char* homedir)
+
+Make `homedir` a wisr home directory. It must already
+exist. Creates `global` and `base`, creates the root db in
+`global`, and records the format version in it.
+
+Call it once in a home directory's life, not once per
+process. It takes no lock and opens nothing: two processes
+racing on a fresh directory resolve themselves, because the
+first `mkdir` wins and the second fails with
+`SM_ERR_EXISTS`.
+
+Errors: `SM_ERR_EXISTS` (already a wisr home directory),
+`SM_ERR_NOTFOUND` (no such directory), `SM_ERR_PERMISSION`,
+`SM_ERR_IO`, `SM_ERR_DISKFULL`, `SM_ERR_INVALID`.
+
+### sm_env_t* sm_attach(const char* homedir)
+
+Create an environment on a home directory `sm_init` has
+already prepared. No database is opened.
+
+`sm_attach` takes a pidlock on the file
+`{homedir}/pidlock.pid`, so that only one process uses the
+directory and the files under it. The lock is held until
+`sm_detach` succeeds or the process exits. A lock left by a
+process that no longer exists, such as one that crashed,
+does not block a later `sm_attach`.
+
+It then opens the root db, checks the recorded format
+version, and destroys any directory under `base` the root
+db does not name — what a crash during `sm_mkdb` or
+`sm_rmdb` leaves behind. It creates nothing: a `homedir`
+that was never initialized is an error, not a new home
+directory, so a mistyped path fails instead of quietly
+becoming an empty one.
+
+A process may attach to different home directories, but
+only once to a given `homedir`.
 
 Returns NULL on error: `SM_ERR_INUSE` (`homedir` is locked
 by another process, or already has an environment in this
-one), `SM_ERR_NOTFOUND` (no such directory),
+one), `SM_ERR_NOTFOUND` (no such directory, or not a wisr
+home directory), `SM_ERR_VERSION` (written by an
+incompatible version), `SM_ERR_CORRUPT`,
 `SM_ERR_PERMISSION`, `SM_ERR_NOMEM`, `SM_ERR_INVALID`.
 
-### int sm_final(sm_env_t* env)
+### int sm_detach(sm_env_t* env)
 
-Release an environment.
+Release an environment. The home directory is left intact;
+this is the counterpart of `sm_attach`, not of `sm_init`.
 
 Fails with `SM_ERR_INUSE` if any session opened through
 `env` is still open; `env` then stays valid, and the caller
-closes the sessions and calls `sm_final` again. On success
+closes the sessions and calls `sm_detach` again. On success
 the pidlock on `homedir` is released and `env` is invalid.
 Passing NULL is a no-op returning 0.
 
@@ -838,7 +864,7 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     API.
 13. `SM_XCT_READ_COMMITED` → `SM_XCT_READ_COMMITTED`.
 14. **Databases are named within an environment.** (D)
-    `sm_init(homedir)` returns an `sm_env_t`, and
+    `sm_attach(homedir)` returns an `sm_env_t`, and
     `sm_mkdb`, `sm_rmdb`, and `sm_open` take an env and a
     single-component `dbname` instead of a `dbpath`. The
     env is thread-safe and separate from the per-thread
@@ -846,7 +872,7 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     before. It gives the registry of open
     databases an owner, and a place for resources shared
     across databases. Process exclusion moves from each
-    database to `homedir`: `sm_init` takes a pidlock, so
+    database to `homedir`: `sm_attach` takes a pidlock, so
     `sm_open` no longer reports another process, and
     `sm_rmdb` can see every session on its database.
 15. **A `dbname` is a name, not a path.** (D) The
@@ -870,3 +896,16 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     NUL-terminated, so a list carries names only — keys and
     values may contain NUL, and a call that returns those
     will need a counted-buffer type instead.
+17. **Preparing a home directory is separate from using
+    one.** (D) `sm_init` creates the structure once and
+    returns an `int`; `sm_attach` / `sm_detach` bracket a
+    process's use of it and replace `sm_final`. The old
+    `sm_init` did both, which forced it to create `global`
+    and `base` when absent — so it could not tell a
+    directory that is not a wisr home from one that is
+    brand new, and a mistyped path became an empty home
+    rather than an error. The split is `initdb` against
+    starting a server, it leaves `sm_attach` with no
+    creation path at all, and it gives the format version
+    somewhere to be written and checked
+    (`SM_ERR_VERSION`).

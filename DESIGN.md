@@ -35,11 +35,12 @@ design forecloses them.
 - A `session_t` is used by one thread at a time. Concurrent use of one
   session from two threads is a caller error, not a supported mode.
 - A process reaches its databases through an environment
-  (`sm_env_t`) on a home directory. `sm_init` takes a
-  pidlock on the file `{homedir}/pidlock.pid`, so one
-  process, and one environment in it, owns the directory
-  and every database under it; a lock left by a dead
-  process does not block the next one. A database is named
+  (`sm_env_t`) on a home directory. `sm_init` prepares a
+  home directory once; `sm_attach` takes a pidlock on the
+  file `{homedir}/pidlock.pid`, so one process, and one
+  environment in it, owns the directory and every database
+  under it; a lock left by a dead process does not block
+  the next one. A database is named
   by the caller but stored by number: the root db
   `{homedir}/global/root` maps `dbname` to a `dbid`, and
   the database is the directory `{homedir}/base/{dbid}`
@@ -266,6 +267,7 @@ rather than any one database in it.
 ```
 key = "D" | dbname        →  dbid (8B, big-endian)
 key = "M" | "next_dbid"   →  8B high-water mark
+key = "M" | "version"     →  home directory format version
 ```
 
 A database directory is named by its `dbid` in decimal, so
@@ -274,11 +276,17 @@ share: whatever a caller names a database, the name never
 reaches the filesystem, and `base` cannot collide with
 `global` or the lock file.
 
-The environment opens the root db in `sm_init`, under the
-pidlock, creating `base` and `global` if this is a home
-directory's first use. It closes the root db in `sm_final`.
-One process holds it, so it needs no concurrency control
-beyond a mutex; writes to it are synchronous.
+`sm_init` builds all of this once in a home directory's
+life: `base`, `global`, the root db, and the `"version"`
+key in it. It takes no lock, because `mkdir` settles a race
+by itself — the loser sees `EEXIST`. `sm_attach` then opens
+the root db under the pidlock and checks that version, and
+`sm_detach` closes it. Nothing creates a home directory
+implicitly, so `sm_attach` has no first-use branch and a
+mistyped path is an error rather than a new empty home.
+
+One process holds the root db, so it needs no concurrency
+control beyond a mutex; writes to it are synchronous.
 
 **The mapping is the truth.** A directory no `"D"` row
 points at is garbage, and the two operations are ordered so
@@ -292,7 +300,7 @@ that a crash can only ever leave that:
   `rocksdb::DestroyDB`.
 
 Neither can leave a name pointing at a directory that is
-missing or unbuilt. `sm_init` sweeps the other way: every
+missing or unbuilt. `sm_attach` sweeps the other way: every
 entry of `base` whose `dbid` is in no `"D"` row is
 destroyed, before any database is opened. A `dbid` is never
 reused, on the same reasoning as a `relid` (§4.2), so the
@@ -1414,8 +1422,9 @@ SM_ERR_NOSAVEPOINT     rollback with no savepoint set (§6.5)
 SM_ERR_NOTRANS         data op outside a transaction (§6.1)
 SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
 SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
-SM_ERR_EXISTS          database or relation already exists (§11)
+SM_ERR_EXISTS          home dir, database, or relation exists (§11)
 SM_ERR_INUSE           database still open in this process
+SM_ERR_VERSION         home directory format unsupported (§3.5)
 SM_ERR_CORRUPT         RocksDB integrity failure (§9.4)
 SM_ERR_IO / SM_ERR_NOMEM / SM_ERR_PERMISSION / SM_ERR_DISKFULL
 ```
@@ -1465,7 +1474,7 @@ long a rarely-written CF can hold old WAL files alive.
 ```
 include/sm.h            public C API
 src/strlist.cc          sm_strlist_t, the counted list of names
-src/env.cc              init/final, env handle, pidlock, root db, db sweep
+src/env.cc              init/attach/detach, pidlock, root db, db sweep
 src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
 src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
