@@ -294,11 +294,14 @@ directory and the files under it. The lock is held until
 process that no longer exists, such as one that crashed,
 does not block a later `sm_init`.
 
-`sm_init` also opens the environment's root db,
-`{homedir}/_root`, which maps database names to storage,
-and destroys any database directory the root db does not
-name — what a crash during `sm_mkdb` or `sm_rmdb` leaves
-behind.
+A home directory is laid out like a PostgreSQL data
+directory: `pidlock.pid` beside `global`, which holds the
+root db, and `base`, which holds one directory per
+database. `sm_init` creates `global` and `base` if they are
+absent, opens the root db — which maps database names to
+storage — and destroys any directory under `base` the root
+db does not name, which is what a crash during `sm_mkdb` or
+`sm_rmdb` leaves behind.
 
 A process may create environments on different home
 directories, but only one on a given `homedir`.
@@ -847,9 +850,10 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     `sm_open` no longer reports another process, and
     `sm_rmdb` can see every session on its database.
 15. **A `dbname` is a name, not a path.** (D) The
-    environment keeps a root db, `{homedir}/_root`,
+    environment keeps a root db, `{homedir}/global/root`,
     mapping each name to the number that names its
-    directory, so a `dbname` may be any 1..63 bytes —
+    directory under `{homedir}/base`, so a `dbname` may be
+    any 1..63 bytes —
     every name PostgreSQL allows. Restricting the
     spelling would have been simpler, but it would have
     made wisr reject database names a SQL layer above it

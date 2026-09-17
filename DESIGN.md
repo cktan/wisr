@@ -41,8 +41,9 @@ design forecloses them.
   and every database under it; a lock left by a dead
   process does not block the next one. A database is named
   by the caller but stored by number: the root db
-  `{homedir}/_root` maps `dbname` to a `dbid`, and the
-  database is the directory `{homedir}/{dbid}` (§3.5).
+  `{homedir}/global/root` maps `dbname` to a `dbid`, and
+  the database is the directory `{homedir}/base/{dbid}`
+  (§3.5).
   Multiple sessions may open the same database; they share
   one RocksDB handle, held in the environment's registry of
   open databases.
@@ -88,9 +89,11 @@ volatile and reconstructible (§9).
 
 ## 3. Physical layout
 
-A home directory holds the root db and one directory per
-database (§3.5). Within a database: one column family per
-relation, plus two fixed ones: `CF:txn` and `CF:meta`.
+A home directory is laid out like a PostgreSQL data
+directory: the root db in `global`, one directory per
+database under `base` (§3.5). Within a database: one
+column family per relation, plus two fixed ones: `CF:txn`
+and `CF:meta`.
 
 ### 3.1 `CF:rel.<relid>` — row versions
 
@@ -238,46 +241,59 @@ the status record was written before the insert, so a reader
 that misses the cache finds it in `CF:txn`, and the record is
 swept only once every version it covers is stamped (§8.3).
 
-### 3.5 `{homedir}/_root` — the database directory
+### 3.5 The home directory and the root db
+
+A home directory follows PostgreSQL's layout, one name per
+concept:
+
+```
+{homedir}/pidlock.pid      the environment's lock   (postmaster.pid)
+{homedir}/global/root      the root db              (global/pg_database)
+{homedir}/base/{dbid}/     one per database         (base/{oid})
+```
 
 A `dbname` is a caller's string, not a path component
 (`API.md`). The mapping from it to storage lives in the
-**root db**, `{homedir}/_root`: an ordinary RocksDB with
-the default column family, the bytewise comparator, and
-none of the machinery above. It is not an `sm_session_t`
-database, has no `CF:txn`, `CF:meta`, or catalog, and is
-unreachable through `sm_open`.
+**root db**, `{homedir}/global/root`: an ordinary RocksDB
+with the default column family, the bytewise comparator,
+and none of the machinery above. It is not an
+`sm_session_t` database, has no `CF:txn`, `CF:meta`, or
+catalog, and is unreachable through `sm_open`. It is the
+`pg_database` of this design, and it sits in `global` for
+the same reason: it describes the whole home directory
+rather than any one database in it.
 
 ```
 key = "D" | dbname        →  dbid (8B, big-endian)
 key = "M" | "next_dbid"   →  8B high-water mark
 ```
 
-A home directory therefore contains `pidlock.pid`, `_root`,
-and one directory `{homedir}/{dbid}` per database, named by
-`dbid` in decimal. Database directories match `[0-9]+` and
-the environment's own two entries do not, so the two name
-spaces cannot collide, whatever the caller names a
-database — including `_root`.
+A database directory is named by its `dbid` in decimal, so
+`base` holds nothing else and there is no name space to
+share: whatever a caller names a database, the name never
+reaches the filesystem, and `base` cannot collide with
+`global` or the lock file.
 
 The environment opens the root db in `sm_init`, under the
-pidlock, and closes it in `sm_final`. One process holds it,
-so it needs no concurrency control beyond a mutex; writes
-to it are synchronous.
+pidlock, creating `base` and `global` if this is a home
+directory's first use. It closes the root db in `sm_final`.
+One process holds it, so it needs no concurrency control
+beyond a mutex; writes to it are synchronous.
 
 **The mapping is the truth.** A directory no `"D"` row
 points at is garbage, and the two operations are ordered so
 that a crash can only ever leave that:
 
 - `sm_mkdb` bumps `next_dbid` durably, creates
-  `{homedir}/{dbid}` with its `CF:txn`, `CF:meta`, and
-  `CF:rel.0`, and only then commits `"D" | dbname → dbid`.
+  `{homedir}/base/{dbid}` with its `CF:txn`, `CF:meta`,
+  and `CF:rel.0`, and only then commits
+  `"D" | dbname → dbid`.
 - `sm_rmdb` deletes `"D" | dbname`, and only then runs
   `rocksdb::DestroyDB`.
 
 Neither can leave a name pointing at a directory that is
 missing or unbuilt. `sm_init` sweeps the other way: every
-`[0-9]+` directory whose `dbid` is in no `"D"` row is
+entry of `base` whose `dbid` is in no `"D"` row is
 destroyed, before any database is opened. A `dbid` is never
 reused, on the same reasoning as a `relid` (§4.2), so the
 sweep cannot mistake a live database for the remains of a
@@ -1368,7 +1384,7 @@ removal happens when `gc_watermark` passes the drop's
 `commit_ts` (§8.3).
 
 `sm_mkdb` allocates a `dbid`, creates the directory
-`{homedir}/{dbid}`, `CF:txn`, `CF:meta` with its initial
+`{homedir}/base/{dbid}`, `CF:txn`, `CF:meta` with its initial
 contents, and the catalog's `CF:rel.0`, and commits the
 name last. `sm_rmdb` drops the name first, then runs
 `rocksdb::DestroyDB`, after verifying that no session holds
