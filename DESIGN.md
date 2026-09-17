@@ -35,11 +35,14 @@ design forecloses them.
 - A `session_t` is used by one thread at a time. Concurrent use of one
   session from two threads is a caller error, not a supported mode.
 - A process reaches its databases through an environment
-  (`sm_env_t`) on a home directory; a database is the
-  directory `{homedir}/{dbname}`. `sm_init` takes a pidlock
-  on `homedir`, so one process, and one environment in it,
-  owns the directory and every database under it; a lock
-  left by a dead process does not block the next one.
+  (`sm_env_t`) on a home directory. `sm_init` takes a
+  pidlock on the file `{homedir}/pidlock.pid`, so one
+  process, and one environment in it, owns the directory
+  and every database under it; a lock left by a dead
+  process does not block the next one. A database is named
+  by the caller but stored by number: the root db
+  `{homedir}/_root` maps `dbname` to a `dbid`, and the
+  database is the directory `{homedir}/{dbid}` (§3.5).
   Multiple sessions may open the same database; they share
   one RocksDB handle, held in the environment's registry of
   open databases.
@@ -85,8 +88,9 @@ volatile and reconstructible (§9).
 
 ## 3. Physical layout
 
-One column family per relation, plus two fixed ones: `CF:txn`
-and `CF:meta`.
+A home directory holds the root db and one directory per
+database (§3.5). Within a database: one column family per
+relation, plus two fixed ones: `CF:txn` and `CF:meta`.
 
 ### 3.1 `CF:rel.<relid>` — row versions
 
@@ -233,6 +237,57 @@ the oldest `commit_ts` first. Eviction cannot change an answer:
 the status record was written before the insert, so a reader
 that misses the cache finds it in `CF:txn`, and the record is
 swept only once every version it covers is stamped (§8.3).
+
+### 3.5 `{homedir}/_root` — the database directory
+
+A `dbname` is a caller's string, not a path component
+(`API.md`). The mapping from it to storage lives in the
+**root db**, `{homedir}/_root`: an ordinary RocksDB with
+the default column family, the bytewise comparator, and
+none of the machinery above. It is not an `sm_session_t`
+database, has no `CF:txn`, `CF:meta`, or catalog, and is
+unreachable through `sm_open`.
+
+```
+key = "D" | dbname        →  dbid (8B, big-endian)
+key = "M" | "next_dbid"   →  8B high-water mark
+```
+
+A home directory therefore contains `pidlock.pid`, `_root`,
+and one directory `{homedir}/{dbid}` per database, named by
+`dbid` in decimal. Database directories match `[0-9]+` and
+the environment's own two entries do not, so the two name
+spaces cannot collide, whatever the caller names a
+database — including `_root`.
+
+The environment opens the root db in `sm_init`, under the
+pidlock, and closes it in `sm_final`. One process holds it,
+so it needs no concurrency control beyond a mutex; writes
+to it are synchronous.
+
+**The mapping is the truth.** A directory no `"D"` row
+points at is garbage, and the two operations are ordered so
+that a crash can only ever leave that:
+
+- `sm_mkdb` bumps `next_dbid` durably, creates
+  `{homedir}/{dbid}` with its `CF:txn`, `CF:meta`, and
+  `CF:rel.0`, and only then commits `"D" | dbname → dbid`.
+- `sm_rmdb` deletes `"D" | dbname`, and only then runs
+  `rocksdb::DestroyDB`.
+
+Neither can leave a name pointing at a directory that is
+missing or unbuilt. `sm_init` sweeps the other way: every
+`[0-9]+` directory whose `dbid` is in no `"D"` row is
+destroyed, before any database is opened. A `dbid` is never
+reused, on the same reasoning as a `relid` (§4.2), so the
+sweep cannot mistake a live database for the remains of a
+dead one.
+
+This is the §9.1 step 6 pattern one level up — eager
+cleanup on the happy path, a startup sweep for the crash
+path — and it is why a name never reaches the filesystem at
+either level: a relation is `CF:rel.<relid>`, a database is
+a directory named by `dbid`.
 
 ---
 
@@ -1312,13 +1367,16 @@ snapshot may still legitimately read the relation. Physical
 removal happens when `gc_watermark` passes the drop's
 `commit_ts` (§8.3).
 
-`sm_mkdb` creates the directory `{homedir}/{dbname}`, `CF:txn`,
-`CF:meta` with its initial contents, and the catalog's
-`CF:rel.0`. `sm_rmdb` is `rocksdb::DestroyDB` after verifying
-that no session holds the database open; the pidlock on
-`homedir` (§1) rules out sessions in other processes. Both
-reject a `dbname` that is not a single path component, so
-neither can reach a directory outside `homedir`.
+`sm_mkdb` allocates a `dbid`, creates the directory
+`{homedir}/{dbid}`, `CF:txn`, `CF:meta` with its initial
+contents, and the catalog's `CF:rel.0`, and commits the
+name last. `sm_rmdb` drops the name first, then runs
+`rocksdb::DestroyDB`, after verifying that no session holds
+the database open; the pidlock on `homedir` (§1) rules out
+sessions in other processes. §3.5 gives the ordering and
+the sweep that collects what a crash leaves behind. Neither
+call builds a path from `dbname`, so neither can be steered
+by one.
 
 ---
 
@@ -1390,7 +1448,8 @@ long a rarely-written CF can hold old WAL files alive.
 
 ```
 include/sm.h            public C API
-src/env.cc              init/final, environment handle, homedir pidlock
+src/strlist.cc          sm_strlist_t, the counted list of names
+src/env.cc              init/final, env handle, pidlock, root db, db sweep
 src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
 src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC

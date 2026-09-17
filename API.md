@@ -127,6 +127,33 @@ by a subsequent `sm_read`, `sm_insert`, `sm_commit`, or any
 other call on the same session — including one made on
 behalf of an unrelated part of the program.
 
+### String lists
+
+A call that returns several names returns an
+`sm_strlist_t`: a counted, immutable list.
+
+```c
+size_t      sm_strlist_count(const sm_strlist_t* sl);
+const char* sm_strlist_at(const sm_strlist_t* sl, size_t i);
+void        sm_strlist_free(sm_strlist_t* sl);
+```
+
+On success the out-param is never NULL; an empty result is
+a list whose count is 0. `sm_strlist_at` returns a
+NUL-terminated string owned by the list and valid until
+`sm_strlist_free`, or NULL for an index past the end. The
+caller releases the whole list with one call and frees no
+element on its own. The count travels inside the handle, so
+it cannot disagree with the array it describes.
+
+A list holds no engine state — no lock, no snapshot, no
+session reference — so one that is never freed leaks memory
+and nothing else. An `sm_scan_t` left open is a different
+matter; see `sm_scan_end`.
+
+A list carries names, never keys or values: its elements
+are NUL-terminated, and a key or value may contain NUL.
+
 ### Threading
 
 - An `sm_env_t` may be used from any number of threads
@@ -139,8 +166,8 @@ behalf of an unrelated part of the program.
   threads without external synchronization.
 - A `homedir` may be used by **at most one process**, and
   by at most one environment in it. `sm_init` takes a lock
-  on the directory, and a second `sm_init` on it fails with
-  `SM_ERR_INUSE`.
+  on `{homedir}/pidlock.pid`, and a second `sm_init` on it
+  fails with `SM_ERR_INUSE`.
 - All sessions opened on the same database share one
   underlying database instance.
 
@@ -163,6 +190,7 @@ fails with `SM_ERR_INVALID`.
 typedef struct sm_env_t     sm_env_t;       /* opaque */
 typedef struct sm_session_t sm_session_t;   /* opaque */
 typedef struct sm_scan_t    sm_scan_t;      /* opaque */
+typedef struct sm_strlist_t sm_strlist_t;   /* opaque */
 ```
 
 ### Isolation levels
@@ -259,12 +287,18 @@ and session call goes through one.
 Create an environment on `homedir`, which must be an
 existing directory. No database is opened.
 
-`sm_init` takes a pidlock on `homedir`, so that only one
-process uses the directory and the files under it. The
-lock is held until `sm_final` succeeds or the process
-exits. A lock left by a process that no longer exists,
-such as one that crashed, does not block a later
-`sm_init`.
+`sm_init` takes a pidlock on the file
+`{homedir}/pidlock.pid`, so that only one process uses the
+directory and the files under it. The lock is held until
+`sm_final` succeeds or the process exits. A lock left by a
+process that no longer exists, such as one that crashed,
+does not block a later `sm_init`.
+
+`sm_init` also opens the environment's root db,
+`{homedir}/_root`, which maps database names to storage,
+and destroys any database directory the root db does not
+name — what a crash during `sm_mkdb` or `sm_rmdb` leaves
+behind.
 
 A process may create environments on different home
 directories, but only one on a given `homedir`.
@@ -290,11 +324,32 @@ Errors: `SM_ERR_INUSE`.
 
 ## Database API
 
-A database name `dbname` is a single path component: a
-NUL-terminated string of at most `SM_MAX_DBNAME` bytes,
-not empty, not `.` or `..`, and containing no `/`. Any
-other name fails with `SM_ERR_INVALID`. The database lives
-in the directory `{homedir}/{dbname}`.
+A database name `dbname` is a NUL-terminated string of 1
+to `SM_MAX_DBNAME` bytes, otherwise unrestricted: any byte
+but NUL, in any position. `SM_MAX_DBNAME` is 63, matching
+PostgreSQL's `NAMEDATALEN - 1`, so every name PostgreSQL
+accepts for a database is a name wisr accepts. A name
+outside those bounds fails with `SM_ERR_INVALID`.
+
+A `dbname` is never a path. It is a key in the
+environment's root db, which maps it to the number naming
+the directory the database actually lives in (`DESIGN.md`
+§3.5). `sm_mkdb(env, "a/../b")` creates a database called
+`a/../b`, not a directory, and reaches nothing outside
+`homedir`.
+
+Two divergences from PostgreSQL, both deliberate:
+
+- **Names are compared bytewise and never folded.**
+  PostgreSQL lower-cases *unquoted* identifiers in its
+  parser; wisr has no parser, so `sm_mkdb(env, "Foo")` is
+  `CREATE DATABASE "Foo"`, and `Foo` and `foo` are two
+  databases. A SQL layer above wisr does its own folding.
+- **An over-long name is an error, not a truncation.**
+  PostgreSQL truncates at `NAMEDATALEN - 1` and emits a
+  `NOTICE`. A C API has no channel for a notice, and
+  silent truncation would silently merge two distinct
+  names into one database.
 
 ### int sm_mkdb(sm_env_t* env, const char* dbname, const sm_options_t* opt)
 
@@ -317,6 +372,21 @@ on `homedir` means no other process can be using it.
 Errors: `SM_ERR_INUSE`, `SM_ERR_NOTFOUND` (no database
 there), `SM_ERR_PERMISSION`, `SM_ERR_IO`,
 `SM_ERR_INVALID`.
+
+### int sm_lsdb(sm_env_t* env, sm_strlist_t** out)
+
+List the names of the databases in `homedir`, in bytewise
+order.
+
+On success `*out` is a list of names; release it with
+`sm_strlist_free`.
+
+A database directory is named by number, so the names
+exist only in the root db and this is the only way to
+enumerate them; reading `homedir` will not tell a caller
+what is there.
+
+Errors: `SM_ERR_NOMEM`, `SM_ERR_IO`.
 
 ---
 
@@ -772,9 +842,27 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     session, so concurrent sessions keep working as
     before. It gives the registry of open
     databases an owner, and a place for resources shared
-    across databases. Restricting `dbname` to one path
-    component keeps `sm_rmdb` from destroying a directory
-    outside `homedir`. Process exclusion moves from each
+    across databases. Process exclusion moves from each
     database to `homedir`: `sm_init` takes a pidlock, so
     `sm_open` no longer reports another process, and
     `sm_rmdb` can see every session on its database.
+15. **A `dbname` is a name, not a path.** (D) The
+    environment keeps a root db, `{homedir}/_root`,
+    mapping each name to the number that names its
+    directory, so a `dbname` may be any 1..63 bytes —
+    every name PostgreSQL allows. Restricting the
+    spelling would have been simpler, but it would have
+    made wisr reject database names a SQL layer above it
+    must accept. Containment no longer rests on the
+    spelling: no path is built from a `dbname` at all.
+    `sm_lsdb` comes with it, because the directory names
+    stop being readable.
+16. **A list of names is an `sm_strlist_t`.** (D) `sm_lsdb`
+    returns one counted, immutable handle rather than a
+    `char***` with a paired `size_t*`, and `sm_free_dbs` is
+    gone. The count travels with the array, so the two
+    cannot disagree; an index past the end returns NULL;
+    and one call releases the whole list. Elements are
+    NUL-terminated, so a list carries names only — keys and
+    values may contain NUL, and a call that returns those
+    will need a counted-buffer type instead.
