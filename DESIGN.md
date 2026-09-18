@@ -473,6 +473,33 @@ first acquires it. Re-acquiring an entry it already holds, for
 the same key or a colliding one, appends nothing, so §6.5's
 rollback releases only entries first taken after the savepoint.
 
+**Telling the victim.** The detector aborts the youngest
+transaction in the cycle, and that transaction need not
+be the one blocked on a condition variable — it may be
+running in its caller's thread, between `sm_*` calls,
+where there is nothing to wake. The victim therefore
+carries an atomic `doomed` field holding the reason. The
+detector stores it and signals the transaction's
+condition variable; a waiter wakes and returns the
+reason, while a running transaction finds it at the entry
+of its next `sm_*` call, which fails with
+`SM_ERR_DEADLOCK` and does nothing else. Every entry
+point checks `doomed` first, so a doomed transaction can
+only be aborted. The same field carries the doom flag
+that §8.4 sets on a serializable reader.
+
+**What a transaction holds in memory.** Row values stream
+to RocksDB, so a transaction is bounded by disk, but
+three structures are not: `T.locks` (one entry per
+distinct key written), `T.undo` (one `(relid, userkey,
+seq)` triple per write), and the SSI read set. All three
+are linear in the number of keys touched, with the
+userkey stored inline, so a transaction writing tens of
+millions of keys costs gigabytes. This is the price of
+O(1) abort and no undo pass, and it is a real limit on
+single-transaction size rather than a bug; §13 records
+it.
+
 ### 5.2 First-committer-wins
 
 Step 3 rejects a write when the key was modified by a transaction that
@@ -558,6 +585,7 @@ sm_savepoint():
     T.sp_locks  = T.locks.size()
     T.sp_rels   = T.created.size()
     T.sp_drops  = T.dropped.size()
+    T.sp_scans  = set of scan cursors open right now
 
 sm_rollback():
     if no savepoint: fail with SM_ERR_NOSAVEPOINT    # API.md divergence 8
@@ -572,6 +600,7 @@ sm_rollback():
     T.undo.truncate(m)
     T.seq_hwm = (m > 0) ? T.undo[m-1].seq : 0       # own-write visibility
     T.seq     = T.seq_hwm + 1                        # live seqs stay a prefix
+    close every open cursor not in T.sp_scans        # see below
     release locks acquired after the mark
     ssi read set is NOT rolled back                  # conservative, correct
     transaction stays ACTIVE
@@ -593,6 +622,25 @@ rollback, whose RocksDB snapshot does not see the deletes. With
 the rewind, a later write reuses an undone number, and the
 deletes, applied before `sm_rollback` returns, have already
 removed the version that carried it.
+
+**Cursors opened after the mark are closed.** A cursor
+holds a RocksDB snapshot and a `seq_hwm` frozen at
+`sm_scan` (§10.2), so the deletes a rollback issues are
+invisible to it and its captured `seq_hwm` still admits
+the undone versions. Left open it would yield rows the
+transaction itself undid. Since a cursor opened after the
+mark is one the rolled-back work created, closing it is
+both correct and what SQL callers expect: PostgreSQL
+closes cursors opened inside a subtransaction that
+aborts. Cursors open *before* the mark are untouched —
+they could never see the undone versions, because their
+snapshot predates the writes.
+
+This is why `sm_savepoint` records `T.sp_scans`. With one
+savepoint per session the set is small and the test is a
+lookup per open cursor. Closing releases each cursor's
+RocksDB snapshot, which also lets `gc_watermark` advance
+past an abandoned scan.
 
 Releasing locks acquired after the mark is safe: the row was untouched
 before the savepoint, so no one observed our intent on it.
@@ -632,6 +680,26 @@ dangerous structure.
 - **Conflict flags.** Per transaction, `in_conflict` and
   `out_conflict` — "some transaction has an rw-edge into me" / "I have
   an rw-edge out to someone".
+
+**How they are indexed.** Every write calls
+`ssi.on_write(T, relid, k)` (§5), which must find every
+SIREAD lock covering `k`. Point locks are a hash on
+`(relid, userkey)`, so that half is O(1). Ranges cannot
+be, and a linear walk of active predicates under a global
+lock would serialize the write path — the one place SSI
+must not cost anything when no reader is watching.
+
+Per relation, ranges are held in an **interval tree**
+keyed by the same `memcmp` order the comparator gives
+(§3.1), under a reader-writer lock: `sm_scan` inserts,
+`sm_scan_end` narrows, `on_write` queries. A stabbing
+query returns the predicates containing `k` in
+`O(log n + m)` for `m` matches. The structures are
+per-relation, so writes to different relations do not
+contend, and a relation no serializable reader has
+touched has an empty tree and costs one atomic load to
+skip — the common case for a workload with no
+serializable transactions.
 
 ### 7.2 Edges
 
@@ -843,6 +911,29 @@ volatile: an entry lost to a crash is queued again by the next
 compaction that meets the tombstone, and a repeated entry is
 harmless.
 
+One `DeleteRange` per deleted key is not free. Every range
+deletion is a range tombstone that
+`RangeDelAggregator` must consider on reads that overlap
+it, and RocksDB warns that accumulating them in the
+memtable degrades read performance. Two rules keep the
+count down:
+
+- The drainer sorts the queue and **coalesces adjacent
+  entries** into one `DeleteRange` per contiguous run of
+  userkeys, from the lowest key's `version_key` to the
+  highest key's `userkey | FF×12`. A bulk range delete is
+  the shape this API is meant for; one call per key is
+  not. Coalescing is safe because the span between two
+  purged keys holds only versions older than a purged
+  tombstone, which are themselves garbage.
+- The drainer flushes the memtable on its own cadence, so
+  range tombstones reach SST files and stop being
+  re-examined on every read.
+
+This path also forecloses one RocksDB option: `DeleteRange`
+returns `Status::NotSupported()` when a `row_cache` is
+configured, so relation CFs must not have one (§12.2).
+
 The stamping is why the header carries `commit_ts`: over time most
 versions answer visibility without a status lookup at all, so the
 commit cache and `CF:txn` are consulted mainly for the recent tail.
@@ -882,6 +973,31 @@ with `W0 < commit_ts <= gc_watermark_now` may have been kept
 unstamped, and dropping its record would make it resolve as
 dead. `ABORTED` records are hints (§6.6) and can be dropped at
 any time, since rule §3.4/4 gives the same answer without them.
+
+Step 2 rests on two RocksDB behaviours. Both are relied
+on, so both are stated here and asserted at startup rather
+than assumed:
+
+- **The pass must reach the bottommost level.** A cold SST
+  that no ordinary compaction has touched in weeks still
+  holds versions needing a stamp. `CompactRangeOptions::`
+  `bottommost_level_compaction` defaults to
+  `kIfHaveCompactionFilter`, which covers this only
+  because a compaction filter is installed. The sweep
+  passes `kForce` explicitly instead of inheriting a
+  default that a later change to the filter would
+  silently invalidate.
+- **The filter must see every version.** Compaction
+  filters ignore snapshots — `IgnoreSnapshots()` is fixed
+  at `true` — so an open reader cannot cause an entry to
+  be skipped and left unstamped.
+
+The pass is expensive: it rewrites L0 through L6 across
+every relation CF, and its cost grows with the number of
+relations as well as with data volume. It is therefore
+triggered by the size of `CF:txn` — the space the sweep
+would reclaim — and not by a timer, so a database that
+commits rarely never pays for it.
 
 Dropping a relation (`sm_rmrel`) deletes its catalog row (§11).
 The tombstone carries no relid, so commit queues the relids in
@@ -1198,6 +1314,45 @@ xid 0 means "no xid yet" and xid 2^64−1 is never reached, so
 these tails fall strictly before or after every version of the
 bound key.
 
+**Seek mode.** Relation CFs carry a prefix extractor
+(§12.2), and a RocksDB iterator on such a CF defaults to
+*prefix seek mode*: `ReadOptions::total_order_seek` is
+false, and the iterator is then allowed to return only
+keys sharing the seek key's prefix — here, only the
+versions of one userkey. A scan crosses userkeys, so it
+must opt out. Left at the default it stops at the first
+key boundary, and when `skey` itself is absent the bloom
+filter answers "no such prefix" and the very first
+`Valid()` is false: the scan returns nothing while
+thousands of keys above `skey` exist. `sm_scan` therefore
+sets
+
+```
+ro.auto_prefix_mode = true       # or total_order_seek
+```
+
+`auto_prefix_mode` is preferred to a blanket
+`total_order_seek` because `sm_scan` always sets
+`iterate_upper_bound`. RocksDB can then decide per seek:
+prefix mode, and the bloom filter with it, when the bound
+lies inside the seek key's prefix — the single-key range
+— and total order otherwise. The flaw documented on that
+option concerns userkeys shorter than a full-length
+prefix, which cannot arise here: the extractor is
+variable-length, so `SliceTransform::FullLengthEnabled`
+is false and the affected path is never taken.
+
+§10.1 keeps the default prefix mode. Its loop never
+leaves one userkey, which is what prefix mode is for, and
+the bloom filter earns its keep on a point read.
+
+**Bound lifetime.** `iterate_upper_bound` is a
+`rocksdb::Slice`, which borrows rather than copies, and
+the bound outlives the `sm_scan` call that set it.
+`sm_scan_t` owns the buffer holding `ekey | tail` for the
+life of the cursor, and the iterator is destroyed before
+that buffer is released.
+
 - Without the RocksDB snapshot, other sessions' eager writes would
   appear mid-iteration and have to be filtered out anyway, and the
   iterator's own consistency would depend on memtable flush timing.
@@ -1206,10 +1361,15 @@ bound key.
   protection, and it makes "update every row I scan" safe.
 - The cursor also captures `T.seq_hwm` at `sm_scan` and applies
   §4.4 with that value, not the live one. Its view of the
-  transaction's own writes is then fixed like the rest: a later
-  `sm_rollback` neither hides rows the cursor could already see
-  nor, after the rewind of §6.5, lets reused `seq` numbers
-  change what it returns.
+  transaction's own writes is then fixed like the rest. A
+  cursor opened after a savepoint does not survive an
+  `sm_rollback` to it: §6.5 closes it, precisely because a
+  frozen `seq_hwm` would otherwise go on admitting versions
+  the rollback undid. A cursor opened before the mark is
+  kept — its RocksDB snapshot predates every write the
+  rollback undoes, so it never saw them — and the `seq`
+  rewind of §6.5 stops a reused number from changing what it
+  returns.
 
 `sm_scan_next` walks version keys, and for each distinct `userkey`
 emits the first visible version and then skips the rest of that key's
@@ -1464,6 +1624,14 @@ prefix extractor strips the 12-byte tail, so the bloom key is the
 userkey; the comparator keeps each userkey's versions contiguous,
 which is what a prefix extractor requires.
 
+Configuring that extractor obliges every iterator on a
+relation CF to state its seek mode, because the RocksDB
+default is prefix seek and a scan that inherits it
+returns at most one userkey (§10.2). Relation CFs also
+get no `row_cache`: the tombstone purge uses
+`DeleteRange`, which returns `Status::NotSupported()`
+when one is configured (§8.3).
+
 Relation CFs share one block cache and one `WriteBufferManager`,
 so total memtable memory is a single budget rather than
 `write_buffer_size × relations`. `max_total_wal_size` bounds how
@@ -1509,15 +1677,30 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 - **Own writes.** At each isolation level, a transaction reads
   back a key it inserted, updated twice, and deleted; after
   `sm_rollback` to a savepoint it reads the pre-savepoint value.
-  A cursor opened before the rollback returns the same rows
-  whether or not the transaction writes again afterwards (§6.5,
-  §10.2).
+  A cursor opened *before* the savepoint survives the rollback
+  and returns the same rows whether or not the transaction
+  writes again afterwards; a cursor opened *after* it is closed
+  by the rollback, and a row written after the mark is never
+  yielded by any surviving cursor (§6.5, §10.2).
   It can update a key it inserted and re-insert a key it
   deleted (§5), and `sm_rollback` with no savepoint fails with
   `SM_ERR_NOSAVEPOINT`. A key locked before a savepoint and
   rewritten after it stays locked through `sm_rollback`, also
   when the rewrite is of a different key sharing its lock entry
   (§5.1).
+- **Deadlock.** Build a cycle in which the youngest transaction
+  is not the one blocked, and assert it learns it was chosen:
+  its next `sm_*` call fails with `SM_ERR_DEADLOCK` and changes
+  nothing, while the transaction that was blocked proceeds
+  (§5.1).
+- **Scan seek mode.** With the prefix extractor configured,
+  a scan from a `skey` that is absent from the database
+  returns every key above it in range, and a scan whose range
+  spans many userkeys returns all of them rather than stopping
+  at the first — the regression test for inheriting RocksDB's
+  default prefix seek mode (§10.2). Run it with enough keys to
+  push data out of the memtable, since the failure needs the
+  bloom filter to answer from an SST.
 - **Read committed after a write.** A read-committed
   transaction that has already written reads a key committed by
   another transaction after its first write, and sees it
@@ -1576,7 +1759,9 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   running and assert its versions stay invisible and unstamped,
   and are dropped after it aborts (§8.3). Delete many keys and
   assert their tombstones are purged without resurrecting older
-  versions. Stall one commit's WAL sync under concurrent load and
+  versions, and that a contiguous run of deleted keys costs one
+  coalesced `DeleteRange` rather than one per key (§8.3).
+  Stall one commit's WAL sync under concurrent load and
   assert allocation continues and `visible_ts` catches up (§4.3).
 - **Status resolution.** Fail a commit's status write and assert
   the database fails stop: `sm_commit` returns `SM_ERR_IO`, the
@@ -1622,6 +1807,75 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   metadata, so very many small relations need the shared memory
   budget (§12.2); and CF create/drop is outside MVCC, which is
   why `sm_mkrel` needs eager cleanup plus a recovery sweep (§11).
+  The target is **hundreds to low thousands of relations per
+  database**, which is where this trade pays. Past that, the
+  answer is not to tune it but to replace it: fold the relid
+  into the key as an 8-byte prefix in one shared CF, which
+  makes create and drop pure MVCC operations and removes the
+  recovery sweep, at the cost of losing the O(1) drop (it
+  becomes a `DeleteRange` over the relation) and all
+  per-relation tuning.
+- **A transaction's lock, undo, and read sets live in RAM.**
+  Row values stream to disk, but `T.locks`, `T.undo`, and the
+  SSI read set are linear in the keys touched (§5.1), so a
+  single transaction writing tens of millions of keys costs
+  gigabytes. Bulk loads want batching into many transactions.
 - **One process.** Simplifies everything (no shared memory, no lock
   table in shm), and is what RocksDB wants. Multi-process or remote
   access means a server front-end (§1), not a change to this design.
+
+---
+
+## Appendix A. Disposition of the architectural review
+
+A review of this document (Andy Pavlo, CMU) raised six
+risks and four details to pin down. Its valid items are
+folded into the sections above; this appendix records
+where each landed, and refutes the three assertions that
+did not survive checking against the RocksDB source, so
+that they are not raised again.
+
+### A.1 Assertions refuted
+
+1. **"Truncating `CF:txn` silently loses committed data in
+   cold SST files under rule §3.4/4."** No: §8.3 never
+   sweeps on a timer — it drops a `COMMITTED` record only
+   after a full pass has stamped every surviving version
+   and every pre-pass iterator has been released, using
+   the watermark from the pass's start, so an unstamped
+   version's record is never dropped.
+2. **"The filter should drop bottommost tombstones using
+   `CompactionFilter::Context::is_bottommost_level`."** No
+   such field exists — the struct carries
+   `is_full_compaction`, `is_manual_compaction`,
+   `input_start_level`, `column_family_id`, `reason`, and
+   `input_table_properties` — and the flag would not help
+   anyway, because compaction inputs are chosen by full
+   version key, so older versions of the same userkey can
+   sit in an SST the filter never sees (§8.3).
+3. **"The read-committed write-conflict divergence must be
+   highlighted in user documentation."** It already is:
+   §6.2 states it with its justification, and `API.md`
+   carries it as divergence 2.
+
+A fourth recommendation is recorded as unsafe rather than
+merely wrong: presuming that a version with
+`xid < min_uncompacted_xid` and no entry in an aborted set
+is committed would resurrect the versions of crashed
+transactions, which by construction leave no status record
+anywhere. That absence *is* the abort (§3.4), and it is
+what makes recovery free of an undo pass.
+
+### A.2 Items addressed
+
+| Review item | Where it landed |
+| :--- | :--- |
+| Scans inherit RocksDB's prefix seek mode and return at most one userkey | §10.2 seek mode, §12.2, §12.5 regression test |
+| Full-compaction cost of the `CF:txn` sweep, and its unstated RocksDB dependencies | §8.3 |
+| One `DeleteRange` per deleted key saturates the range-tombstone aggregator | §8.3 coalescing and flush cadence, §12.2 no `row_cache` |
+| Cursors opened after a savepoint outlive `sm_rollback` | §6.5, §10.2, `API.md`, §12.5 |
+| No index for matching a write against active range predicates | §7.1 per-relation interval tree |
+| `iterate_upper_bound` borrows its buffer | §10.2 bound lifetime |
+| A deadlock victim that is not blocked is never told | §5.1 `doomed` field, §12.5 |
+| Lock, undo, and read sets are unbounded in RAM | §5.1, §13 |
+| Column-family-per-relation scaling ceiling | §13: target is hundreds to low thousands, with the shared-CF layout named as the replacement past that |
