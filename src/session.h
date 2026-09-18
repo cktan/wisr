@@ -68,6 +68,19 @@ struct sm_session_t {
 
     wisr::ssi_node_t* ssi = nullptr; /* SERIALIZABLE only (§7) */
 
+    /*
+     * Two-phase commit (§8.4). sm_prepare moves the transaction
+     * out of the session into a database-owned sm_session_t
+     * with `prepared` set, registered under its gid; the
+     * preparing session keeps only prepared_gid, and has no
+     * transaction of its own until that gid is resolved.
+     */
+    std::string prepared_gid;
+    bool prepared = false;     /* this object is a prepared transaction */
+    long long prepared_at = 0; /* wall-clock seconds of sm_prepare */
+    bool restored = false;     /* rebuilt from its record at open (§9.1) */
+    bool limbo = false;        /* its prepare write failed (§8.4) */
+
     std::set<sm_scan_t*> scans; /* open cursors */
     uint64_t next_scan_id = 0;  /* hands out sm_scan_t::id */
     std::string readbuf;        /* what sm_read hands out */
@@ -177,8 +190,30 @@ int ssi_precommit(sm_session_t* session, uint64_t end_ts);
 /* Detach the session from its SSI node at transaction end. */
 void ssi_end(sm_session_t* session);
 
+/* A prepared transaction committed at end_ts (§8.4). */
+void ssi_prepared_committed(sm_session_t* session, uint64_t end_ts);
+
+/* A prepared transaction aborted: free its SSI state. */
+void ssi_prepared_aborted(sm_session_t* session);
+
+/* Record xid as a transaction restored in doubt (§8.4, §9.1). */
+void ssi_restore(wisr::db_t* db, uint64_t xid);
+
 /* Free SSI nodes no active transaction overlaps (§7.1). */
 void ssi_cleanup(wisr::db_t* db);
+
+/*
+ * Decode a PREPARED status record for xid into a new database-
+ * owned transaction object; false if it is not one.
+ */
+bool xct_decode_prepared(wisr::db_t* db, uint64_t xid, rocksdb::Slice val,
+                         sm_session_t** out);
+
+/*
+ * Restore every prepared transaction from CF:txn, then drop the
+ * relation CFs nothing needs (§9.1 steps 4-6). Returns 0 or -1.
+ */
+int recover(wisr::db_t* db);
 
 /* Fail with SM_ERR_IO if db has failed stop (§8.2). */
 int xct_check_writable(wisr::db_t* db);

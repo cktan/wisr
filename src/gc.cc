@@ -277,6 +277,13 @@ uint64_t db_take_snapshot(db_t* db)
     return ts;
 }
 
+/* Register snapshot_ts under snap_mu. */
+void db_register_snapshot(db_t* db, uint64_t snapshot_ts)
+{
+    std::lock_guard<std::mutex> guard(db->snap_mu);
+    db->snapshots.insert(snapshot_ts);
+}
+
 /* Remove one registration of snapshot_ts. */
 void db_release_snapshot(db_t* db, uint64_t snapshot_ts)
 {

@@ -9,6 +9,7 @@
 #include "codec.h"
 #include "env.h"
 #include "error.h"
+#include "session.h"
 #include "strlist.h"
 #include "version.h"
 
@@ -383,6 +384,12 @@ db_t* db_open(const std::string& path, const char* dbname,
     db->cache_entries = opt->commit_cache_entries;
     db->deadlock_ms = opt->deadlock_ms;
 
+    // Restore prepared transactions and sweep orphaned CFs
+    // before any session or compaction filter can look (§9.1).
+    if (recover(db.get()) != 0) {
+        return nullptr;
+    }
+
     // Everything the compaction filter reads is in place: let it
     // collect, and start the worker that purges and drops.
     db->gc_ready = true;
@@ -522,6 +529,12 @@ wisr::db_t::~db_t()
         delete n;
     }
     ssi_nodes.clear();
+    // Free the in-doubt transactions; their PREPARED records
+    // restore them at the next open.
+    for (auto& kv : prepared) {
+        delete kv.second;
+    }
+    prepared.clear();
     if (!rdb) {
         return;
     }

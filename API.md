@@ -609,6 +609,15 @@ data operations, savepoints, and rollback are rejected with
 accepted. `sm_close` leaves it in-doubt rather than
 aborting it.
 
+From prepare on, the transaction belongs to the database,
+not the session: any session may resolve it by `gid` with
+`sm_commit_prepared` or `sm_abort_prepared`. While it is
+unresolved, the preparing session's `sm_begin` fails with
+`SM_ERR_INTRANS`. Once any session has resolved it, the
+preparing session has no transaction: its `sm_commit` and
+`sm_abort` fail with `SM_ERR_NOTRANS`, and `sm_begin`
+succeeds.
+
 On `SM_ERR_IO` the outcome is **unknown**: the prepared
 record may or may not have reached the log. The transaction
 is no longer active on the session, and the database enters

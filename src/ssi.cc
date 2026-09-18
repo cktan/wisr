@@ -19,8 +19,12 @@
  * SM_ERR_SERIALIZATION at its commit (§7.3), so reads and writes
  * never fail for SSI. The rules are conservative: a pivot that
  * is not part of a real cycle, and both ends of a write skew,
- * can fail. Not yet: the read-only safe-snapshot early release
- * and the ssi_max_entries summary (§7.4, §7.5).
+ * can fail. A prepared transaction's node is marked committed at
+ * prepare, with no end until its commit. A transaction restored
+ * in doubt after a restart has no node at all: a reader stepping
+ * past its versions is doomed (§8.4). Not yet: the read-only
+ * safe-snapshot early release and the ssi_max_entries summary
+ * (§7.4, §7.5).
  */
 
 #include "codec.h"
@@ -166,6 +170,12 @@ void ssi_on_skip(sm_session_t* s, uint64_t writer_xid)
         return;
     }
     std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+    if (s->db->ssi_restored.count(writer_xid)) {
+        // A transaction restored in doubt lost its SIREAD entries
+        // and flags, so its edges out are unknowable (§8.4).
+        s->ssi->doomed = true;
+        return;
+    }
     auto it = s->db->ssi_by_xid.find(writer_xid);
     if (it == s->db->ssi_by_xid.end() || it->second == s->ssi) {
         return; // not a SERIALIZABLE writer, or ourselves
@@ -305,11 +315,57 @@ void ssi_end(sm_session_t* s)
     ssi_cleanup(s->db);
 }
 
+/*
+ * A prepared transaction committed at end_ts: its node, marked
+ * committed at prepare with no end yet, gets one; a restored
+ * transaction's entry records the commit_ts it must outlive.
+ */
+void ssi_prepared_committed(sm_session_t* s, uint64_t end_ts)
+{
+    std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+    if (s->ssi) {
+        s->ssi->end_ts = end_ts;
+    }
+    auto it = s->db->ssi_restored.find(s->xid);
+    if (it != s->db->ssi_restored.end()) {
+        it->second = end_ts;
+    }
+}
+
+/*
+ * A prepared transaction aborted: free its node, committed at
+ * prepare though it is, and forget it as restored. Its versions
+ * are dead, so no reader will step past them any more.
+ */
+void ssi_prepared_aborted(sm_session_t* s)
+{
+    std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+    if (s->ssi) {
+        free_node(s->db, s->ssi);
+        s->ssi = nullptr;
+    }
+    s->db->ssi_restored.erase(s->xid);
+}
+
+/* Record xid as restored in doubt (§9.1). */
+void ssi_restore(db_t* db, uint64_t xid)
+{
+    std::lock_guard<std::mutex> guard(db->ssi_mu);
+    db->ssi_restored[xid] = 0;
+}
+
 /* Free committed nodes no active transaction overlaps any more. */
 void ssi_cleanup(db_t* db)
 {
     uint64_t watermark = db_watermark(db);
     std::lock_guard<std::mutex> guard(db->ssi_mu);
+    for (auto it = db->ssi_restored.begin(); it != db->ssi_restored.end();) {
+        if (it->second != 0 && it->second <= watermark) {
+            it = db->ssi_restored.erase(it);
+        } else {
+            ++it;
+        }
+    }
     std::vector<ssi_node_t*> done;
     for (ssi_node_t* n : db->ssi_nodes) {
         if (n->committed && n->end_ts <= watermark) {

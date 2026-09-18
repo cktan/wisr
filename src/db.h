@@ -216,6 +216,26 @@ struct db_t {
     std::map<uint64_t, std::list<ssi_range_t>> ssi_ranges; /* by relid */
     std::unordered_map<uint64_t, ssi_node_t*> ssi_by_xid;
 
+    /*
+     * Restored prepared transactions, xid -> commit_ts (0 while
+     * in doubt), for §8.4's rule: a serializable reader that
+     * steps past one of their versions is doomed. An entry stays
+     * after commit until the watermark passes its commit_ts.
+     * Guarded by ssi_mu.
+     */
+    std::unordered_map<uint64_t, uint64_t> ssi_restored;
+
+    /*
+     * Prepared transactions by gid (§8.4, §8.5). Each value is a
+     * database-owned sm_session_t holding the transaction; a
+     * null value reserves a gid while sm_prepare runs.
+     */
+    std::mutex prepared_mu;
+    std::map<std::string, sm_session_t*> prepared;
+
+    /* Test hook, as test_before_commit, for the PREPARED record. */
+    std::function<rocksdb::Status()> test_before_prepare;
+
     /* Destroy the CF handles and close RocksDB. */
     ~db_t();
 };
@@ -274,6 +294,9 @@ void db_read_leave(db_t* db, uint64_t epoch);
 
 /* Take a transaction's begin snapshot and register it (§8.3). */
 uint64_t db_take_snapshot(db_t* db);
+
+/* Register a snapshot taken earlier, such as a restored one's. */
+void db_register_snapshot(db_t* db, uint64_t snapshot_ts);
 
 /* Unregister a snapshot taken by db_take_snapshot. */
 void db_release_snapshot(db_t* db, uint64_t snapshot_ts);

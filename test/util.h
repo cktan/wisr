@@ -76,6 +76,26 @@ class home_t
         REQUIRE(m_env);
     }
 
+    /* Detach, closing any open sessions, and release the pidlock. */
+    void detach()
+    {
+        REQUIRE(sm_detach(m_env, 1) == 0);
+        m_env = nullptr;
+    }
+
+    /* Attach again after detach(). */
+    void attach()
+    {
+        m_env = sm_attach(m_tmp.path());
+        REQUIRE_MESSAGE(m_env, sm_errmsg());
+    }
+
+    /* The home directory's path. */
+    const char* path() const
+    {
+        return m_tmp.path();
+    }
+
     /* The names of the entries under base/. */
     std::set<std::string> base_entries() const
     {

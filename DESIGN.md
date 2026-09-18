@@ -676,8 +676,10 @@ before the savepoint, so no one observed our intent on it.
 
 ### 6.6 Abort
 
-`sm_abort` writes an `ABORTED` status record (not WAL-synced — it is a
-hint; absence of a record means the same thing after a crash),
+`sm_abort` writes no status record: absence of a record already
+means aborted (§3.4), before and after a crash. Only aborting a
+*prepared* transaction writes `ABORTED`, to supersede its
+`PREPARED` record (§8.4). It
 drops the column families of relations in `T.created` (no other
 transaction can see them), closes the session's open scan cursors
 and their RocksDB snapshots, releases locks and SSI state, and
@@ -1114,6 +1116,18 @@ sm_prepare(T, gid):
   4. T.state = PREPARED;  locks and SSI state are RETAINED
 ```
 
+Step 4 moves the transaction out of its session into an object
+the database owns, registered under its `gid`: the transaction's
+state, its snapshot's place in `gc_watermark`, its SSI node, and
+its row locks, whose table entries are re-pointed at the new
+owner. The session keeps only the `gid`. Any session can then
+resolve the transaction, `sm_close` leaves it untouched, and
+recovery (§9.1 step 5) rebuilds exactly the same object from the
+`PREPARED` record, so a transaction prepared before a crash and
+one prepared in this process are handled alike. The record is a
+single `CF:txn` value however large the write set; the write set
+is stored as the lock keys the transaction holds.
+
 Step 1 closes cursors for the reasons given in §8.2. No data
 operation is accepted after prepare, so an open cursor could
 never be used again, but it would pin `gc_watermark` for as long
@@ -1157,7 +1171,12 @@ is always a correct decision.
 The coordinator later calls commit or abort. Commit is §8.2 starting
 at step 2, overwriting the record (dropping the now-unneeded write
 set); abort writes `ABORTED`, drops the CFs in `created`, and
-releases.
+releases. For a prepared transaction the `ABORTED` record is
+synced: it must supersede the `PREPARED` record durably, or a
+crash would restore the transaction in doubt again. An ordinary
+abort writes no record at all, since absence already means
+aborted (§3.4), and the `CF:txn` sweep (§8.3) deletes `ABORTED`
+records whenever it runs.
 
 **Why validate at prepare.** Once prepared, a transaction cannot be
 told "no". So the serialization check must have already passed, and it

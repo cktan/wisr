@@ -412,6 +412,14 @@ int sm_rollback(sm_session_t* session);
  * sm_open() still holding its row locks, and cannot be told
  * "no" by the engine.
  *
+ * From here on the transaction belongs to the database, not
+ * the session: any session may resolve it by gid, and
+ * sm_close() leaves it in doubt. While it is unresolved, the
+ * preparing session's sm_begin() fails with SM_ERR_INTRANS.
+ * Once any session has resolved it, the preparing session has
+ * no transaction: its sm_commit() and sm_abort() fail with
+ * SM_ERR_NOTRANS, and sm_begin() succeeds.
+ *
  * An abandoned prepared transaction blocks writers on its keys
  * and prevents reclamation indefinitely. That is inherent to
  * 2PC and is exposed rather than hidden;
