@@ -17,9 +17,12 @@
 #include <set>
 #include <shared_mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
+#include <rocksdb/compaction_filter.h>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 
@@ -114,6 +117,35 @@ struct db_t {
     /* Hands out sm_session_t::begin_seq. */
     std::atomic<uint64_t> begin_seq{0};
 
+    /*
+     * The begin snapshots of active transactions, whose minimum
+     * is gc_watermark (§8.3). Taking a snapshot and registering
+     * it happen under snap_mu, the mutex the watermark is read
+     * under, so no snapshot lands below a watermark in use.
+     */
+    std::mutex snap_mu;
+    std::multiset<uint64_t> snapshots;
+
+    /*
+     * Garbage collection (§8.3). The compaction filter runs only
+     * once gc_ready is set, after the handles above are valid.
+     * It cannot write, so it queues tombstones to purge; a
+     * committed sm_rmrel queues its relids to drop once the
+     * watermark passes its commit. The worker drains both.
+     */
+    std::atomic<bool> gc_ready{false};
+    std::mutex gc_mu;
+    std::condition_variable gc_cv;
+    bool gc_stopping = false;
+    struct purge_t {
+        uint64_t relid;
+        std::string key; /* the tombstone's version key */
+    };
+    std::vector<purge_t> purges;
+    std::multimap<uint64_t, uint64_t> drops; /* commit_ts -> relid */
+    std::thread gc_thread;
+    std::mutex gc_run_mu; /* one gc_run_once at a time */
+
     /* Destroy the CF handles and close RocksDB. */
     ~db_t();
 };
@@ -156,8 +188,46 @@ int db_drop_rel_cf(db_t* db, uint64_t relid);
 /* The column family name of relation relid: rel.<relid>. */
 std::string rel_cf_name(uint64_t relid);
 
-/* Options for a relation CF: comparator, prefix extractor, bloom. */
-rocksdb::ColumnFamilyOptions rel_cf_options();
+/*
+ * Options for a relation CF: comparator, prefix extractor,
+ * bloom filter, and -- when db is given -- the GC compaction
+ * filter for relid.
+ */
+rocksdb::ColumnFamilyOptions rel_cf_options(db_t* db = nullptr,
+                                            uint64_t relid = 0);
+
+/* Take a transaction's begin snapshot and register it (§8.3). */
+uint64_t db_take_snapshot(db_t* db);
+
+/* Unregister a snapshot taken by db_take_snapshot. */
+void db_release_snapshot(db_t* db, uint64_t snapshot_ts);
+
+/*
+ * gc_watermark (§8.3): the oldest registered snapshot, or
+ * visible_ts if none. It never moves backwards.
+ */
+uint64_t db_watermark(db_t* db);
+
+/* The GC compaction filter factory for relation relid. */
+std::shared_ptr<rocksdb::CompactionFilterFactory>
+gc_filter_factory(db_t* db, uint64_t relid);
+
+/* Start the GC worker thread. */
+void gc_start(db_t* db);
+
+/* Stop the GC worker thread and wait for it. */
+void gc_stop(db_t* db);
+
+/* Queue relids dropped by a transaction committed at commit_ts. */
+void gc_queue_drops(db_t* db, uint64_t commit_ts,
+                    const std::vector<uint64_t>& relids);
+
+/*
+ * Do the GC work that is due now: purge queued tombstones and
+ * drop relations whose drop the watermark has passed. The
+ * worker calls this; tests call it to run GC synchronously.
+ */
+void gc_run_once(db_t* db);
 
 /*
  * Apply opt->rocksdb_options, if any, on top of *out. Returns 0,

@@ -31,7 +31,9 @@ struct sm_session_t {
     uint32_t seq = 0;              /* last write's seq; the next is seq + 1 */
     uint32_t seq_hwm = 0;          /* own versions above this are invisible */
     std::vector<uint64_t> created; /* relids made by sm_mkrel */
-    uint64_t begin_seq = 0;        /* begin order; larger is younger */
+    std::vector<uint64_t> dropped; /* relids removed by sm_rmrel */
+    bool snapshot_registered = false; /* counted in gc_watermark */
+    uint64_t begin_seq = 0;           /* begin order; larger is younger */
 
     /*
      * The undo list (§6.5): every version written, in write
@@ -50,6 +52,7 @@ struct sm_session_t {
     size_t sp_undo = 0;      /* undo.size() at the mark */
     size_t sp_locks = 0;     /* locks.size() at the mark */
     size_t sp_created = 0;   /* created.size() at the mark */
+    size_t sp_dropped = 0;   /* dropped.size() at the mark */
     uint64_t sp_scan_id = 0; /* cursors with a larger id came later */
 
     /*
@@ -133,10 +136,19 @@ int xct_check_writable(wisr::db_t* db);
  */
 int xct_alloc_xid(sm_session_t* session);
 
+/* The fate of a version's writer (§3.4). */
+enum xct_state_t { XCT_DEAD, XCT_IN_FLIGHT, XCT_COMMITTED, XCT_ERROR };
+
+/*
+ * Resolve the writer of xid (§3.4), setting *commit_ts if it
+ * committed. XCT_ERROR sets the error. Callers check the stamp
+ * and their own xid first.
+ */
+xct_state_t xct_status(wisr::db_t* db, uint64_t xid, uint64_t* commit_ts);
+
 /*
  * Resolve the writer of xid (§3.4): 1 and *commit_ts if it
  * committed, 0 if it is in flight or dead, -1 on error.
- * Callers check the stamp and their own xid first.
  */
 int xct_resolve(wisr::db_t* db, uint64_t xid, uint64_t* commit_ts);
 

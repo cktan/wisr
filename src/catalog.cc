@@ -9,7 +9,7 @@
  *
  * No relname cache yet; every lookup reads CF:rel.0. A
  * committed sm_rmrel leaves its column family in place until
- * GC (build order step 5) removes it.
+ * the watermark passes the drop and GC removes it (§8.3).
  */
 
 #include "codec.h"
@@ -91,8 +91,12 @@ int rmrel(sm_session_t* s, const char* relname)
     }
     // Delete the catalog row; the column family stays until no
     // snapshot can still read the relation (§8.3).
-    return access_write(s, 0, WRITE_DELETE, catalog_key(relname),
-                        rocksdb::Slice());
+    if (access_write(s, 0, WRITE_DELETE, catalog_key(relname),
+                     rocksdb::Slice()) != 0) {
+        return -1;
+    }
+    s->dropped.push_back(relid);
+    return 0;
 }
 
 } // namespace

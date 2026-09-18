@@ -227,11 +227,16 @@ std::string rel_cf_name(uint64_t relid)
 /*
  * The comparator and prefix extractor are part of the format
  * (§3.1). The bloom filter keys on the userkey prefix; whole
- * version keys are never looked up, so no whole-key filter.
+ * version keys are never looked up, so no whole-key filter. No
+ * row_cache: DeleteRange, which the tombstone purge uses, is not
+ * supported with one (§8.3).
  */
-rocksdb::ColumnFamilyOptions rel_cf_options()
+rocksdb::ColumnFamilyOptions rel_cf_options(db_t* db, uint64_t relid)
 {
     rocksdb::ColumnFamilyOptions cfo;
+    if (db) {
+        cfo.compaction_filter_factory = gc_filter_factory(db, relid);
+    }
     cfo.comparator = version_comparator();
     cfo.prefix_extractor = version_prefix_extractor();
     rocksdb::BlockBasedTableOptions bbto;
@@ -257,6 +262,14 @@ int db_options(const sm_options_t* opt, rocksdb::DBOptions* out)
     }
     *out = parsed;
     return 0;
+}
+
+/* Parse "rel.<relid>"; false if name is not a relation CF's. */
+static bool parse_rel_cf_name(const std::string& name, uint64_t* relid)
+{
+    return name.compare(0, 4, "rel.") == 0 &&
+           sscanf(name.c_str() + 4, "%" SCNu64, relid) == 1 &&
+           rel_cf_name(*relid) == name;
 }
 
 /* Read an 8-byte CF:meta value; false if missing or malformed. */
@@ -304,15 +317,18 @@ db_t* db_open(const std::string& path, const char* dbname,
         set_status_error(s, path.c_str());
         return nullptr;
     }
-    std::vector<rocksdb::ColumnFamilyDescriptor> cfs;
-    for (const std::string& name : names) {
-        bool rel = name.compare(0, 4, "rel.") == 0;
-        cfs.emplace_back(name, rel ? rel_cf_options()
-                                   : rocksdb::ColumnFamilyOptions());
-    }
-
     std::unique_ptr<db_t> db(new db_t);
     db->name = dbname;
+    std::vector<rocksdb::ColumnFamilyDescriptor> cfs;
+    for (const std::string& name : names) {
+        uint64_t relid;
+        if (parse_rel_cf_name(name, &relid)) {
+            cfs.emplace_back(name, rel_cf_options(db.get(), relid));
+        } else {
+            cfs.emplace_back(name, rocksdb::ColumnFamilyOptions());
+        }
+    }
+
     std::vector<rocksdb::ColumnFamilyHandle*> handles;
     // Open RocksDB with every column family; this replays the WAL.
     s = rocksdb::DB::Open(dbo, path, cfs, &handles, &db->rdb);
@@ -330,9 +346,7 @@ db_t* db_open(const std::string& path, const char* dbname,
             db->cf_txn = handles[i];
         } else if (name == WISR_CF_META) {
             db->cf_meta = handles[i];
-        } else if (name.compare(0, 4, "rel.") == 0 &&
-                   sscanf(name.c_str() + 4, "%" SCNu64, &relid) == 1 &&
-                   rel_cf_name(relid) == name) {
+        } else if (parse_rel_cf_name(name, &relid)) {
             db->rels[relid] = handles[i];
         } else {
             db->rdb->DestroyColumnFamilyHandle(handles[i]);
@@ -368,6 +382,11 @@ db_t* db_open(const std::string& path, const char* dbname,
     db->relid_limit = next_relid + 1;
     db->cache_entries = opt->commit_cache_entries;
     db->deadlock_ms = opt->deadlock_ms;
+
+    // Everything the compaction filter reads is in place: let it
+    // collect, and start the worker that purges and drops.
+    db->gc_ready = true;
+    gc_start(db.get());
     return db.release();
 }
 
@@ -461,8 +480,8 @@ int db_create_rel_cf(db_t* db, uint64_t relid)
 {
     rocksdb::ColumnFamilyHandle* h = nullptr;
     // Create the relation's column family; this is not transactional.
-    rocksdb::Status s =
-        db->rdb->CreateColumnFamily(rel_cf_options(), rel_cf_name(relid), &h);
+    rocksdb::Status s = db->rdb->CreateColumnFamily(rel_cf_options(db, relid),
+                                                    rel_cf_name(relid), &h);
     if (!s.ok()) {
         return set_status_error(s, "create column family");
     }
@@ -494,9 +513,13 @@ int db_drop_rel_cf(db_t* db, uint64_t relid)
 /* Destroy every CF handle, then close RocksDB. */
 wisr::db_t::~db_t()
 {
+    // Stop the GC worker, then wait out running compactions,
+    // whose filters read the handles destroyed below.
+    gc_stop(this);
     if (!rdb) {
         return;
     }
+    rocksdb::CancelAllBackgroundWork(rdb, true);
     for (auto& kv : rels) {
         rdb->DestroyColumnFamilyHandle(kv.second);
     }

@@ -32,6 +32,7 @@ namespace
 
 /* CF:txn states (§3.2). */
 constexpr uint8_t txn_committed = 2;
+constexpr uint8_t txn_aborted = 3;
 
 /* Status record size: state, snapshot_ts, commit_ts. */
 constexpr size_t txn_record_size = 1 + 8 + 8;
@@ -69,14 +70,22 @@ void enter_cache(db_t* db, uint64_t xid, uint64_t commit_ts)
     }
 }
 
-/* Forget the transaction; the session has none afterwards. */
+/*
+ * Forget the transaction; the session has none afterwards. Its
+ * snapshot stops holding back gc_watermark.
+ */
 void reset(sm_session_t* s)
 {
+    if (s->snapshot_registered) {
+        db_release_snapshot(s->db, s->snapshot_ts);
+        s->snapshot_registered = false;
+    }
     s->active = false;
     s->xid = 0;
     s->seq = 0;
     s->seq_hwm = 0;
     s->created.clear();
+    s->dropped.clear();
     s->undo.clear();
     s->has_savepoint = false;
 }
@@ -120,6 +129,7 @@ int savepoint(sm_session_t* s)
     s->has_savepoint = true;
     s->sp_undo = s->undo.size();
     s->sp_created = s->created.size();
+    s->sp_dropped = s->dropped.size();
     s->sp_scan_id = s->next_scan_id;
     {
         std::lock_guard<std::mutex> guard(s->db->lock_mu);
@@ -174,6 +184,7 @@ int rollback(sm_session_t* s)
         db_drop_rel_cf(db, s->created[i]);
     }
     s->created.resize(s->sp_created);
+    s->dropped.resize(s->sp_dropped); // the undo restored their rows
 
     // Rewind seq with seq_hwm, so the own versions still in
     // effect are exactly seqs 1..seq_hwm (§6.5).
@@ -205,8 +216,11 @@ int begin(sm_session_t* s, sm_xctlevel_t level)
     s->level = level;
     s->begin_seq = ++s->db->begin_seq;
     s->doomed = 0;
-    // Take the snapshot: the current visible_ts (§4.1).
-    s->snapshot_ts = s->db->visible_ts.load();
+    // Take the snapshot: the current visible_ts (§4.1). Read
+    // committed also counts in the watermark at this one, for
+    // its whole life (§8.3).
+    s->snapshot_ts = db_take_snapshot(s->db);
+    s->snapshot_registered = true;
     s->active = true;
     return 0;
 }
@@ -263,8 +277,11 @@ int commit(sm_session_t* s)
     // the active table finds it in the cache or CF:txn (§3.4).
     enter_cache(db, xid, commit_ts);
     db_commit_done(db, commit_ts);
-    // Release the row locks only once the commit is visible.
+    // Release the row locks only once the commit is visible, and
+    // queue dropped relations for removal once no snapshot can
+    // see them (§8.3).
     lock_release_all(s);
+    gc_queue_drops(db, commit_ts, s->dropped);
     reset(s);
     return 0;
 }
@@ -351,38 +368,62 @@ int xct_alloc_xid(sm_session_t* s)
     return 0;
 }
 
-/* Active table, then commit cache, then CF:txn (§3.4 steps 1-4). */
-int xct_resolve(db_t* db, uint64_t xid, uint64_t* commit_ts)
+/*
+ * Active table, then commit cache, then CF:txn (§3.4 steps 1-4).
+ * A record in any state but COMMITTED or ABORTED -- PREPARED --
+ * is in flight, so a compaction filter running before recovery
+ * has rebuilt the active table still leaves it alone.
+ */
+xct_state_t xct_status(db_t* db, uint64_t xid, uint64_t* commit_ts)
 {
     {
         std::lock_guard<std::mutex> guard(db->txn_mu);
         if (db->active.count(xid)) {
-            return 0; // in flight
+            return XCT_IN_FLIGHT;
         }
         auto it = db->cache.find(xid);
         if (it != db->cache.end()) {
             *commit_ts = it->second;
-            return 1;
+            return XCT_COMMITTED;
         }
     }
     std::string val;
     rocksdb::Status s =
         db->rdb->Get(rocksdb::ReadOptions(), db->cf_txn, txn_key(xid), &val);
     if (s.IsNotFound()) {
-        return 0;
+        return XCT_DEAD;
     }
     if (!s.ok()) {
-        return set_status_error(s, "read CF:txn");
+        set_status_error(s, "read CF:txn");
+        return XCT_ERROR;
     }
     if (val.size() < txn_record_size) {
-        return set_error(SM_ERR_CORRUPT, "short status record for xid %llu",
-                         (unsigned long long)xid);
+        set_error(SM_ERR_CORRUPT, "short status record for xid %llu",
+                  (unsigned long long)xid);
+        return XCT_ERROR;
     }
-    if (static_cast<uint8_t>(val[0]) != txn_committed) {
+    switch (static_cast<uint8_t>(val[0])) {
+    case txn_committed:
+        *commit_ts = get_be64(val.data() + 9);
+        return XCT_COMMITTED;
+    case txn_aborted:
+        return XCT_DEAD;
+    default:
+        return XCT_IN_FLIGHT;
+    }
+}
+
+/* xct_status, folded to committed or not. */
+int xct_resolve(db_t* db, uint64_t xid, uint64_t* commit_ts)
+{
+    switch (xct_status(db, xid, commit_ts)) {
+    case XCT_COMMITTED:
+        return 1;
+    case XCT_ERROR:
+        return -1;
+    default:
         return 0;
     }
-    *commit_ts = get_be64(val.data() + 9);
-    return 1;
 }
 
 /* Close every open cursor of the session. */

@@ -945,23 +945,24 @@ compaction that meets the tombstone, and a repeated entry is
 harmless.
 
 One `DeleteRange` per deleted key is not free. Every range
-deletion is a range tombstone that
-`RangeDelAggregator` must consider on reads that overlap
-it, and RocksDB warns that accumulating them in the
-memtable degrades read performance. Two rules keep the
-count down:
+deletion is a range tombstone that `RangeDelAggregator` must
+consider on reads that overlap it, and RocksDB warns that
+accumulating them in the memtable degrades read performance.
+The drainer therefore flushes each relation CF it touched
+after a batch, so range tombstones reach SST files and stop
+being re-examined on every read.
 
-- The drainer sorts the queue and **coalesces adjacent
-  entries** into one `DeleteRange` per contiguous run of
-  userkeys, from the lowest key's `version_key` to the
-  highest key's `userkey | FF×12`. A bulk range delete is
-  the shape this API is meant for; one call per key is
-  not. Coalescing is safe because the span between two
-  purged keys holds only versions older than a purged
-  tombstone, which are themselves garbage.
-- The drainer flushes the memtable on its own cadence, so
-  range tombstones reach SST files and stop being
-  re-examined on every read.
+It does **not** merge adjacent keys into one range. A range
+from one purged key's tombstone to a later purged key's
+`userkey | FF×12` would also cover every version of any key
+between them — live rows the filter never saw, since they may
+sit in files outside the compaction — and every version of the
+later key newer than its tombstone, because a key's versions
+sort newest first. Deleting `k1` and `k3` would take a live
+`k2` and a re-inserted `k3` with them. Nothing short of
+locking the whole span could make the merge safe, so each key
+gets its own range, which by construction covers only that
+key's tombstone and older versions.
 
 This path also forecloses one RocksDB option: `DeleteRange`
 returns `Status::NotSupported()` when a `row_cache` is
@@ -972,10 +973,19 @@ versions answer visibility without a status lookup at all, so the
 commit cache and `CF:txn` are consulted mainly for the recent tail.
 
 `gc_watermark = min(snapshot_ts of active sessions, snapshot_ts of
-prepared transactions, oldest open scan)`. It never moves
+prepared transactions, oldest open scan)`. A cursor's snapshot is
+never older than its transaction's begin snapshot, so the
+transactions' begin snapshots suffice. Taking a snapshot and
+registering it happen under the mutex the watermark is read
+under, so no new snapshot can land below a watermark already in
+use. It never moves
 backwards: a new snapshot is `visible_ts`, which is at or above
-every snapshot already counted. One compaction filter factory
-serves all relation CFs.
+every snapshot already counted. Each relation CF has its own
+compaction filter factory, which knows the CF's relid for the
+purge queue. Compactions can start inside `DB::Open`, before
+the handles and the active table the filter reads exist, so
+until the database is fully open the factory hands out a
+filter that keeps everything.
 
 A read-committed transaction counts at its begin `snapshot_ts`
 for its whole life, between statements too, because §6.2 checks
@@ -1801,8 +1811,8 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   running and assert its versions stay invisible and unstamped,
   and are dropped after it aborts (§8.3). Delete many keys and
   assert their tombstones are purged without resurrecting older
-  versions, and that a contiguous run of deleted keys costs one
-  coalesced `DeleteRange` rather than one per key (§8.3).
+  versions, while live keys between them and a key re-inserted
+  after its delete survive the purge (§8.3).
   Stall one commit's WAL sync under concurrent load and
   assert allocation continues and `visible_ts` catches up (§4.3).
 - **Status resolution.** Fail a commit's status write and assert
