@@ -7,8 +7,6 @@
 
 #include "codec.h"
 
-#include <string.h>
-
 namespace wisr
 {
 

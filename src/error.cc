@@ -95,6 +95,20 @@ int set_status_error(const rocksdb::Status& s, const char* what)
     return set_error(e, "%s: %s", what, s.ToString().c_str());
 }
 
+/* Reject a NULL, empty, or over-long name. */
+int check_name(const char* name, size_t max, const char* what)
+{
+    if (!name) {
+        return set_error(SM_ERR_INVALID, "%s name is NULL", what);
+    }
+    size_t n = strnlen(name, max + 1);
+    if (n == 0 || n > max) {
+        return set_error(SM_ERR_INVALID, "%s name must be 1..%zu bytes", what,
+                         max);
+    }
+    return 0;
+}
+
 } // namespace wisr
 
 /* The last error raised on this thread. */

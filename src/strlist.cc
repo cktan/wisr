@@ -11,14 +11,14 @@
  * so a list is one malloc and one free, and every name sits
  * beside the pointer that names it.
  *
- * Construction is internal and deliberately not written yet.
- * The layout described here is the contract a producer must
- * build to, and these accessors are its only readers.
+ * strlist_make() is the only producer; the accessors below
+ * are the only readers.
  */
 
-#include "sm.h"
+#include "strlist.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 struct sm_strlist_t {
     size_t count;
@@ -33,6 +33,40 @@ static char* const* strlist_ptr(const sm_strlist_t* sl)
 {
     return reinterpret_cast<char* const*>(sl + 1);
 }
+
+/* The pointer array, writable, for strlist_make(). */
+static char** strlist_ptr_mut(sm_strlist_t* sl)
+{
+    return reinterpret_cast<char**>(sl + 1);
+}
+
+namespace wisr
+{
+
+/* Pack names into one allocation laid out as described above. */
+sm_strlist_t* strlist_make(const std::vector<std::string>& names)
+{
+    size_t bytes = sizeof(sm_strlist_t) + names.size() * sizeof(char*);
+    for (const std::string& n : names) {
+        bytes += n.size() + 1;
+    }
+    sm_strlist_t* sl = static_cast<sm_strlist_t*>(malloc(bytes));
+    if (!sl) {
+        return nullptr;
+    }
+    sl->count = names.size();
+    char** ptr = strlist_ptr_mut(sl);
+    char* tail = reinterpret_cast<char*>(ptr + names.size());
+    for (size_t i = 0; i < names.size(); i++) {
+        ptr[i] = tail;
+        memcpy(tail, names[i].data(), names[i].size());
+        tail[names[i].size()] = '\0';
+        tail += names[i].size() + 1;
+    }
+    return sl;
+}
+
+} // namespace wisr
 
 /* The number of names in the list. */
 size_t sm_strlist_count(const sm_strlist_t* sl)
