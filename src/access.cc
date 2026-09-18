@@ -2,7 +2,9 @@
  * access.cc -- sm_insert, sm_update, sm_delete, sm_read, and
  * the sm_scan cursor (DESIGN.md §4.4, §5, §10).
  *
- * Not yet: SIREAD tracking (build order step 6).
+ * Under SERIALIZABLE, reads leave SIREAD entries and report the
+ * concurrent versions they step past, and writes report the
+ * readers they invalidate (ssi.cc, §7).
  */
 
 #include "error.h"
@@ -62,6 +64,49 @@ int visible(db_t* db, const version_t& v, const view_t& view)
         }
     }
     return commit_ts <= view.snapshot_ts;
+}
+
+/*
+ * For SSI (§10.1): 1 if v, invisible to view, was written by a
+ * concurrent transaction -- one still in flight, or committed
+ * after the snapshot -- so the reader owes an rw-edge; 0 if not
+ * (its own, dead, or older); -1 on error.
+ */
+int concurrent_writer(db_t* db, const version_t& v, const view_t& view)
+{
+    if (view.xid != 0 && v.xid == view.xid) {
+        return 0;
+    }
+    if (v.flags & version_stamped) {
+        return v.commit_ts > view.snapshot_ts;
+    }
+    uint64_t commit_ts;
+    switch (xct_status(db, v.xid, &commit_ts)) {
+    case XCT_IN_FLIGHT:
+        return 1;
+    case XCT_COMMITTED:
+        return commit_ts > view.snapshot_ts;
+    case XCT_DEAD:
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+/* Step past an invisible version: under SSI, owe its writer an edge. */
+int skip_version(sm_session_t* s, const version_t& v, const view_t& view)
+{
+    if (!s->ssi) {
+        return 0;
+    }
+    int c = concurrent_writer(s->db, v, view);
+    if (c < 0) {
+        return -1;
+    }
+    if (c) {
+        ssi_on_skip(s, v.xid);
+    }
+    return 0;
 }
 
 /* The CF of relid; its absence after a catalog hit is corruption. */
@@ -235,6 +280,11 @@ sm_scan_t* scan(sm_session_t* s, const char* relname, const char* skey,
     c->snapshot_ts = view.snapshot_ts;
     c->xid = view.xid;
     c->seq_hwm = view.seq_hwm;
+    // Under SERIALIZABLE, register the requested range before
+    // the snapshot, so a write into it after the snapshot finds
+    // the SIREAD entry (§10.2).
+    ssi_range_open(c.get(), relid, skey, sklen, skey_inclusive, ekey, eklen,
+                   ekey_inclusive);
     // Count the cursor as a reader for its whole life (§8.3),
     // then take the RocksDB snapshot: its physical view (§10.2).
     c->epoch = db_read_enter(s->db);
@@ -280,6 +330,8 @@ int scan_next(sm_scan_t* c, const char** key, size_t* klen, const char** data,
         version_t v;
         version_decode_key(it->key(), &v);
         std::string uk = v.userkey.ToString();
+        c->examined = true;
+        c->last_examined = uk;
         bool found = false;
         bool live = false;
         // Walk the run of uk's versions, newest first: the first
@@ -307,6 +359,9 @@ int scan_next(sm_scan_t* c, const char** key, size_t* klen, const char** data,
                 if (live) {
                     c->data.assign(v.payload.data(), v.payload.size());
                 }
+            } else if (skip_version(c->session, v, view) != 0) {
+                c->state = -1;
+                return -1;
             }
         }
         if (live) {
@@ -339,13 +394,22 @@ int access_read(sm_session_t* s, uint64_t relid, const view_t& view,
     if (!cf) {
         return -1;
     }
+    // Under SERIALIZABLE, take the SIREAD entry before the
+    // iterator exists, so a write landing in between still finds
+    // it (§10.1).
+    ssi_on_read(s, relid, key);
     read_epoch_guard_t epoch(s->db);
     rocksdb::ReadOptions ro;
     ro.prefix_same_as_start = true;
     std::unique_ptr<rocksdb::Iterator> it(s->db->rdb->NewIterator(ro, cf));
-    // ~seq of 0 lands before every own version of the key.
+    // Seek to the newest version the reader could see; ~seq of 0
+    // lands before every own version of the key. Under SSI, start
+    // before every version instead: the newer ones are exactly
+    // the concurrent writers owed an edge.
     uint64_t hi = std::max(view.xid, view.snapshot_ts);
-    for (it->Seek(version_key(key, hi, UINT32_MAX)); it->Valid(); it->Next()) {
+    std::string target =
+        s->ssi ? version_bound(key, '\x00') : version_key(key, hi, UINT32_MAX);
+    for (it->Seek(target); it->Valid(); it->Next()) {
         version_t v;
         version_decode_key(it->key(), &v);
         if (v.userkey != key) {
@@ -364,6 +428,9 @@ int access_read(sm_session_t* s, uint64_t relid, const view_t& view,
             }
             out->assign(v.payload.data(), v.payload.size());
             return 0;
+        }
+        if (skip_version(s, v, view) != 0) {
+            return -1;
         }
     }
     if (!it->status().ok()) {
@@ -427,6 +494,9 @@ int access_write(sm_session_t* s, uint64_t relid, write_op_t op,
     s->seq = seq;
     s->seq_hwm = seq;
     s->undo.push_back({relid, key.ToString(), seq});
+    // After the put, look for readers the write invalidates; a
+    // reader arriving later steps past the version instead (§7.2).
+    ssi_on_write(s, relid, key);
     return 0;
 }
 
@@ -511,6 +581,7 @@ void sm_scan_end(sm_scan_t* scan)
         return;
     }
     db_t* db = scan->session->db;
+    ssi_range_close(scan); // narrow the SIREAD range to what was read
     scan->session->scans.erase(scan);
     scan->it.reset();
     db->rdb->ReleaseSnapshot(scan->snap);

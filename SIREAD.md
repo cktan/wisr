@@ -43,8 +43,9 @@ See `DESIGN.md` §7.1–7.3.
    T2 → T1.
 4. Each transaction now has an edge coming in and an edge going
    out; that transaction is called the *pivot*. Any cycle in the
-   serialization graph contains a pivot, so the engine aborts one
-   of them with `SM_ERR_SERIALIZATION`.
+   serialization graph contains a pivot, so the engine aborts it
+   at commit with `SM_ERR_SERIALIZATION`. Here both are pivots,
+   so both can fail (see "What wisr stores").
 
 ## The SSI graph
 
@@ -98,14 +99,18 @@ aborts.
     adds reader → writer.
   - A **reader** skips a version written by a concurrent
     transaction and adds reader → writer (`on_skip`, §10.1).
-- **Flags.** Each node has `in_conflict` and `out_conflict`.
-  Most checks need only these.
+- **Flags.** Each node has `in_conflict` and `out_conflict`,
+  and a `doomed` bit.
 
-The flags alone aren't enough. §7.3's second rule needs real
-edges: "T has an out-edge to some T' that already committed, and
-T' also has in+out conflicts". Dooming a pivot when an edge is
-created needs them too. So the tracker keeps edge targets, not
-just booleans, as PostgreSQL does.
+wisr keeps only the flags, following Cahill et al.'s original
+rules (`DESIGN.md` §7.3): an edge that would make an
+already-committed transaction a pivot dooms the running
+transaction completing it, and a transaction with both flags,
+or doomed, fails at commit. PostgreSQL also keeps edge targets,
+so it can check which end of a dangerous structure commits
+first and abort fewer transactions. That refinement is a
+possible later step; the flags alone are sound, just more
+conservative.
 
 In the on-call doctors example above, the graph is a two-node
 cycle:
@@ -116,8 +121,9 @@ T2 read alice, T1 wrote alice  →  T2 ──rw──▶ T1
 ```
 
 Each transaction has both an incoming and an outgoing edge, so
-each is a pivot. Whichever commits second fails with
-`SM_ERR_SERIALIZATION`.
+each is a pivot, and with flags alone both fail at commit with
+`SM_ERR_SERIALIZATION`. PostgreSQL's refinement would fail only
+the one committing second.
 
 The graph lives only in memory and isn't rebuilt at restart.
 That is why §8.4 has its `restored` rule: a prepared transaction
@@ -136,11 +142,14 @@ that skips one of its versions.
   source of an edge from a transaction that writes after it. The
   entries are dropped only when no active snapshot could still
   conflict with them.
-- **Only SERIALIZABLE transactions create them.** Writes at every
-  isolation level still check against them (§7.4).
-- **Read-only transactions free them early.** Once such a
+- **Only SERIALIZABLE transactions create them or check them.**
+  As in PostgreSQL, READ COMMITTED and REPEATABLE READ
+  transactions skip SSI entirely, so serializability holds
+  among SERIALIZABLE transactions only (§7.4).
+- **Read-only transactions could free them early.** Once such a
   transaction commits and its snapshot is proven *safe*, its
-  entries can go (the safe-snapshot rule in §7.4).
+  entries could go (the safe-snapshot rule in §7.4). Not
+  implemented yet: they are kept like any other.
 - **They don't survive a restart.** They are kept only in memory,
   which is why §8 has to handle prepared transactions losing
   their SIREAD entries after a crash.

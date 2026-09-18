@@ -12,6 +12,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <functional>
+#include <list>
 #include <map>
 #include <mutex>
 #include <set>
@@ -40,6 +41,35 @@
 
 namespace wisr
 {
+
+struct ssi_range_t;
+
+/*
+ * A SERIALIZABLE transaction in the SSI tracker (§7, Cahill et
+ * al. 2008). It outlives its transaction's commit, as its SIREAD
+ * entries must, and is freed once nothing concurrent remains.
+ */
+struct ssi_node_t {
+    uint64_t snapshot_ts = 0;
+    uint64_t xid = 0;                /* 0 while it has written nothing */
+    bool committed = false;          /* passed its commit check */
+    uint64_t end_ts = 0;             /* once committed: when it ended */
+    bool in_conflict = false;        /* some rw-edge points into it */
+    bool out_conflict = false;       /* it has an rw-edge out */
+    bool doomed = false;             /* must fail at its commit */
+    std::vector<std::string> points; /* its SIREAD point keys */
+    std::vector<std::pair<uint64_t, std::list<ssi_range_t>::iterator>>
+        ranges; /* its SIREAD ranges, by relid */
+};
+
+/* A range SIREAD entry: [lo, hi] with inclusive flags; empty = open. */
+struct ssi_range_t {
+    ssi_node_t* owner;
+    bool has_lo, lo_incl;
+    std::string lo;
+    bool has_hi, hi_incl;
+    std::string hi;
+};
 
 /*
  * One open database, shared by every session on it and held
@@ -171,6 +201,20 @@ struct db_t {
     uint64_t sweep_epoch = 0;
     std::atomic<uint64_t> gc_filter_errors{0};
     uint64_t txn_sweep_records = 1000000; /* CF:txn keys to trigger */
+
+    /*
+     * The SSI tracker (§7), for SERIALIZABLE transactions only:
+     * their nodes, SIREAD entries on points and ranges, and the
+     * map from a writer's xid to its node. One mutex covers all
+     * of it. A committed node stays until the GC watermark
+     * passes its end, when no transaction concurrent with it
+     * remains.
+     */
+    std::mutex ssi_mu;
+    std::set<ssi_node_t*> ssi_nodes;
+    std::unordered_map<std::string, std::vector<ssi_node_t*>> ssi_points;
+    std::map<uint64_t, std::list<ssi_range_t>> ssi_ranges; /* by relid */
+    std::unordered_map<uint64_t, ssi_node_t*> ssi_by_xid;
 
     /* Destroy the CF handles and close RocksDB. */
     ~db_t();

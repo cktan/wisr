@@ -369,6 +369,9 @@ void gc_run_once(db_t* db)
         db_drop_rel_cf(db, relid);
     }
 
+    // Free SSI nodes the watermark has passed (§7.1).
+    ssi_cleanup(db);
+
     // Finish a pending sweep, or start one once CF:txn is big.
     uint64_t records = 0;
     if (!db->sweep_pending &&

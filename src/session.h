@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include <atomic>
+#include <list>
 #include <memory>
 #include <set>
 #include <string>
@@ -65,6 +66,8 @@ struct sm_session_t {
     std::vector<std::string> locks;      /* held, in acquisition order */
     sm_session_t* waiting_for = nullptr; /* the holder blocking us */
 
+    wisr::ssi_node_t* ssi = nullptr; /* SERIALIZABLE only (§7) */
+
     std::set<sm_scan_t*> scans; /* open cursors */
     uint64_t next_scan_id = 0;  /* hands out sm_scan_t::id */
     std::string readbuf;        /* what sm_read hands out */
@@ -81,8 +84,15 @@ struct sm_scan_t {
     uint64_t snapshot_ts = 0; /* the logical view, fixed at open */
     uint64_t xid = 0;
     uint32_t seq_hwm = 0;
-    int state = 0;         /* 0 open, 1 at end, -1 failed */
-    std::string key, data; /* what sm_scan_next hands out */
+    int state = 0; /* 0 open, 1 at end, -1 failed */
+
+    /* The scan's SIREAD range and how far it read (§7.1). */
+    bool has_ssi_range = false;
+    uint64_t ssi_relid = 0;
+    std::list<wisr::ssi_range_t>::iterator ssi_range;
+    bool examined = false;     /* some userkey's run was inspected */
+    std::string last_examined; /* the last one */
+    std::string key, data;     /* what sm_scan_next hands out */
 };
 
 namespace wisr
@@ -133,6 +143,42 @@ void lock_release_from(sm_session_t* session, size_t n);
  * the CF:txn sweep (§8.3). Returns the number deleted, or -1.
  */
 int64_t xct_drop_committed_records(wisr::db_t* db, uint64_t w0);
+
+/* Give a SERIALIZABLE transaction its SSI node (§7). */
+void ssi_begin(sm_session_t* session);
+
+/* Map the transaction's new xid to its SSI node. */
+void ssi_on_xid(sm_session_t* session);
+
+/* Leave a SIREAD entry on (relid, key) (§7.1). */
+void ssi_on_read(sm_session_t* session, uint64_t relid, rocksdb::Slice key);
+
+/* A read stepped past a version of concurrent writer xid (§7.2). */
+void ssi_on_skip(sm_session_t* session, uint64_t writer_xid);
+
+/* A write of (relid, key): edges from its concurrent readers (§7.2). */
+void ssi_on_write(sm_session_t* session, uint64_t relid, rocksdb::Slice key);
+
+/* Register a scan's requested range as a SIREAD entry (§10.2). */
+void ssi_range_open(sm_scan_t* scan, uint64_t relid, const char* skey,
+                    size_t sklen, int skey_inclusive, const char* ekey,
+                    size_t eklen, int ekey_inclusive);
+
+/* Narrow a closing scan's range to what it traversed (§7.1). */
+void ssi_range_close(sm_scan_t* scan);
+
+/*
+ * The SSI commit check (§7.3) for a transaction ending at
+ * end_ts. Returns 0, or -1 if it must fail with
+ * SM_ERR_SERIALIZATION.
+ */
+int ssi_precommit(sm_session_t* session, uint64_t end_ts);
+
+/* Detach the session from its SSI node at transaction end. */
+void ssi_end(sm_session_t* session);
+
+/* Free SSI nodes no active transaction overlaps (§7.1). */
+void ssi_cleanup(wisr::db_t* db);
 
 /* Fail with SM_ERR_IO if db has failed stop (§8.2). */
 int xct_check_writable(wisr::db_t* db);

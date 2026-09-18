@@ -516,6 +516,12 @@ wisr::db_t::~db_t()
     // Stop the GC worker, then wait out running compactions,
     // whose filters read the handles destroyed below.
     gc_stop(this);
+    // Free the SSI nodes still kept for overlapping transactions;
+    // with the database closing, none can overlap any more.
+    for (ssi_node_t* n : ssi_nodes) {
+        delete n;
+    }
+    ssi_nodes.clear();
     if (!rdb) {
         return;
     }

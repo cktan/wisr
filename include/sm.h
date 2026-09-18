@@ -193,7 +193,7 @@ struct sm_options_t {
     int         durability_sync;       /* default 1 */
     int         group_commit_us;       /* default 200, unused */
     int         deadlock_ms;           /* default 50 */
-    int         ssi_max_entries;       /* default 1<<20 */
+    int         ssi_max_entries;       /* default 1<<20, unused */
     long long   ts_lease;              /* default 1000000 */
     const char* rocksdb_options;       /* option string, NULL = defaults */
     int         commit_cache_entries;  /* default 65536 */

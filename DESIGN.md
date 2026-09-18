@@ -718,17 +718,16 @@ be, and a linear walk of active predicates under a global
 lock would serialize the write path — the one place SSI
 must not cost anything when no reader is watching.
 
-Per relation, ranges are held in an **interval tree**
-keyed by the same `memcmp` order the comparator gives
-(§3.1), under a reader-writer lock: `sm_scan` inserts,
-`sm_scan_end` narrows, `on_write` queries. A stabbing
-query returns the predicates containing `k` in
-`O(log n + m)` for `m` matches. The structures are
-per-relation, so writes to different relations do not
-contend, and a relation no serializable reader has
-touched has an empty tree and costs one atomic load to
-skip — the common case for a workload with no
-serializable transactions.
+Per relation, ranges are held in a list in `memcmp` order
+of their bounds (§3.1): `sm_scan` inserts, `sm_scan_end`
+narrows, `on_write` scans the relation's list. One mutex
+covers the whole tracker. A relation no serializable
+reader has touched has no list, so the common case — a
+workload with no serializable transactions — pays one
+lookup. An **interval tree** per relation, answering the
+stabbing query in `O(log n + m)` for `m` matches, is the
+replacement once a benchmark shows many live ranges on
+one relation; it is not built yet.
 
 ### 7.2 Edges
 
@@ -747,38 +746,62 @@ T_reader reads k   →  if the version it skipped was written by a
 
 ### 7.3 The abort rule
 
-A cycle in the serialization graph always contains a transaction with
-**both** an incoming and an outgoing rw-edge (a *pivot*), where the
-outgoing edge's target commits first. So:
+A cycle in the serialization graph always contains a transaction
+with **both** an incoming and an outgoing rw-edge (a *pivot*).
+wisr applies the original rules of Cahill, Röhm and Fekete
+(SIGMOD 2008), which need only the two flags:
 
 ```
+edge R ──rw──▶ W, made by S (R or W, whichever is acting):
+    if the other end has committed and is a pivot on that side
+       (a committed W with out_conflict, or a committed R with
+        in_conflict):
+        doom S
+    else:
+        R.out_conflict = true;  W.in_conflict = true
+
 at commit of T:
-    if T.in_conflict and T.out_conflict:
+    if T is doomed, or T.in_conflict and T.out_conflict:
         abort T with SM_ERR_SERIALIZATION
-    if T has an out-edge to some T' that already committed
-       and T' also has in+out conflicts:
-        abort whichever is still running
 ```
 
-Concretely, the check runs at prepare/commit time and, for the case
-where the pivot is not the last to commit, eagerly when the edge is
-created (mark the pivot as doomed; it fails at its own commit). A
-pivot that has prepared or committed cannot be doomed — it has
-already been told "yes" — so then the running transaction whose
-new edge completed the structure is doomed instead, whether that
-edge points into the pivot or out of it (§8.4). This
-is conservative — some aborted transactions would in fact have been
-serializable — which is the accepted cost of SSI in exchange for never
-taking a read lock and never deadlocking on reads.
+A committed transaction cannot be told "no", so an edge that
+would make it a pivot dooms the running transaction completing
+the structure instead. Dooming never fails the call that made the
+edge: the transaction runs on and fails at its commit, so
+`sm_read`, `sm_scan_next`, and the write calls never return
+`SM_ERR_SERIALIZATION`. The commit check runs after the
+transaction claims its `commit_ts` and before its status record
+is written; a failure hands the `commit_ts` back to the sequencer
+unused. A prepared transaction (§8.4) counts as committed for
+these rules.
+
+The rules are conservative: a pivot that is not part of a real
+cycle fails, and in a plain write skew both transactions can end
+up pivots and both fail, where tracking edge targets and commit
+order (PostgreSQL's refinement, SIREAD.md) would fail only one.
+That is the accepted cost of never taking a read lock and never
+deadlocking on reads; the refinement is a later step if the
+false-abort rate matters.
 
 ### 7.4 Interaction with the other levels
 
-Only SERIALIZABLE transactions take SIREAD locks or are candidates for
-serialization failure. But a SERIALIZABLE transaction's correctness
-depends on seeing *writes by everyone*, including RR and RC ones, so
-the write path (§5, step 7) always calls into the SSI tracker.
-Read-only serializable transactions get the standard safe-snapshot
-optimization (Ports & Grittner). A read-only transaction is never
+Only SERIALIZABLE transactions take part in SSI, as in
+PostgreSQL: they take SIREAD locks, their reads and writes create
+edges, and they are the only candidates for serialization
+failure. Reads and writes at READ COMMITTED and REPEATABLE READ
+skip the tracker entirely, so serializability is guaranteed among
+SERIALIZABLE transactions only; write skew between a SERIALIZABLE
+transaction and a REPEATABLE READ one is not prevented. The write
+path's `ssi.on_write` (§5, step 7) therefore runs only for
+SERIALIZABLE writers.
+
+Read-only serializable transactions can get the standard
+safe-snapshot optimization (Ports & Grittner), described below;
+it is not implemented yet, and a committed read-only transaction
+keeps its SIREAD locks under §7.1's rule like any other.
+
+A read-only transaction is never
 a pivot — it writes nothing, so nothing has an rw-edge into it —
 but it can be the *incoming* end of a dangerous structure,
 `T_ro ──rw──▶ T_pivot ──rw──▶ T_out` (Fekete's read-only
@@ -807,13 +830,18 @@ late to be concurrent with a `T_out` that committed before it.
 
 ### 7.5 Memory
 
-The tracker holds SIREAD locks and conflict flags for transactions
-that have committed but might still conflict with a live one — bounded
-by the oldest active snapshot. Under a long-running reader this grows;
-the escape valve is the standard one: when the structure exceeds
-`ssi_max_entries`, summarize the oldest committed transactions into a
-coarse "something committed in this range" entry, which is safe
-(over-approximating conflicts) and costs extra false aborts.
+The tracker holds SIREAD locks and conflict flags for
+transactions that have committed but might still conflict with a
+live one — bounded by the oldest active snapshot. A committed
+transaction's node and locks go once `gc_watermark` passes its
+end: its `commit_ts`, or for a read-only one the `visible_ts`
+just after its commit. No transaction concurrent with it is then
+left. Under a long-running reader this grows; the escape valve is
+the standard one: when the structure exceeds `ssi_max_entries`,
+summarize the oldest committed transactions into a coarse
+"something committed in this range" entry, which is safe
+(over-approximating conflicts) and costs extra false aborts. It
+is not implemented yet; `ssi_max_entries` is accepted but unused.
 
 ---
 

@@ -112,6 +112,7 @@ void drop_created(sm_session_t* s)
 void discard(sm_session_t* s)
 {
     xct_end_scans(s);
+    ssi_end(s); // an aborted node constrains nobody: freed
     if (s->xid != 0) {
         leave_active(s->db, s->xid);
     }
@@ -222,6 +223,7 @@ int begin(sm_session_t* s, sm_xctlevel_t level)
     // its whole life (§8.3).
     s->snapshot_ts = db_take_snapshot(s->db);
     s->snapshot_registered = true;
+    ssi_begin(s);
     s->active = true;
     return 0;
 }
@@ -232,14 +234,22 @@ int commit(sm_session_t* s)
     if (xct_check_active(s) != 0) {
         return -1;
     }
-    // Close cursors first, releasing their snapshots (§8.2).
+    // Close cursors first, releasing their snapshots and
+    // narrowing their SIREAD ranges before validation (§8.2).
     xct_end_scans(s);
+    db_t* db = s->db;
     if (s->xid == 0) {
-        reset(s); // read-only: nothing to publish
+        // Read-only: nothing to publish. Under SSI it ended just
+        // after the current visible_ts (§7.3).
+        if (ssi_precommit(s, db->visible_ts.load() + 1) != 0) {
+            return xct_fail_retryable(s, SM_ERR_SERIALIZATION,
+                                      "not serializable");
+        }
+        ssi_end(s);
+        reset(s);
         return 0;
     }
 
-    db_t* db = s->db;
     uint64_t xid = s->xid;
     uint64_t commit_ts;
     if (xct_check_writable(db) != 0 ||
@@ -247,6 +257,12 @@ int commit(sm_session_t* s)
         // No record was written, so the transaction is dead.
         discard(s);
         return -1;
+    }
+    // Validate under SSI before the commit point; on failure give
+    // the commit_ts back to the sequencer unused (§7.3, §8.2).
+    if (ssi_precommit(s, commit_ts) != 0) {
+        db_commit_done(db, commit_ts);
+        return xct_fail_retryable(s, SM_ERR_SERIALIZATION, "not serializable");
     }
     std::string val;
     val.push_back(static_cast<char>(txn_committed));
@@ -283,6 +299,7 @@ int commit(sm_session_t* s)
     // see them (§8.3).
     lock_release_all(s);
     gc_queue_drops(db, commit_ts, s->dropped);
+    ssi_end(s); // the committed node stays while others overlap it
     reset(s);
     return 0;
 }
@@ -366,6 +383,9 @@ int xct_alloc_xid(sm_session_t* s)
         s->db->active.insert(xid);
     }
     s->xid = xid;
+    // Map the xid to the SSI node before any version carries it,
+    // so a reader that steps past one finds the writer (§7.2).
+    ssi_on_xid(s);
     return 0;
 }
 
