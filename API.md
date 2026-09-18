@@ -336,18 +336,37 @@ home directory), `SM_ERR_VERSION` (written by an
 incompatible version), `SM_ERR_CORRUPT`,
 `SM_ERR_PERMISSION`, `SM_ERR_NOMEM`, `SM_ERR_INVALID`.
 
-### int sm_detach(sm_env_t* env)
+### int sm_detach(sm_env_t* env, int force)
 
 Release an environment. The home directory is left intact;
 this is the counterpart of `sm_attach`, not of `sm_init`.
 
-Fails with `SM_ERR_INUSE` if any session opened through
-`env` is still open; `env` then stays valid, and the caller
-closes the sessions and calls `sm_detach` again. On success
-the pidlock on `homedir` is released and `env` is invalid.
-Passing NULL is a no-op returning 0.
+With `force` **0**, fails with `SM_ERR_INUSE` if any
+session opened through `env` is still open; `env` then
+stays valid, and the caller closes the sessions and calls
+`sm_detach` again.
 
-Errors: `SM_ERR_INUSE`.
+With `force` **non-zero**, those sessions are closed first,
+each exactly as `sm_close` would close it: cursors are
+closed and an active transaction is aborted, but a
+**prepared** transaction is left in doubt for its
+coordinator, to be found again by `sm_list_prepared` after
+the next `sm_open`. Their `sm_session_t` handles are
+invalid once `sm_detach` returns, so a forced detach is a
+shutdown path, not a way to reclaim an environment the
+caller means to keep using.
+
+`force` closes sessions; it does not preempt the threads
+using them. A session being closed while another thread is
+inside an `sm_*` call on it is the same caller error as any
+other concurrent use of one session from two threads, and
+is not diagnosed. Quiesce first, then force.
+
+On success the pidlock on `homedir` is released and `env`
+is invalid. Passing NULL is a no-op returning 0, whatever
+`force` says.
+
+Errors: `SM_ERR_INUSE` (only when `force` is 0).
 
 ---
 
@@ -916,3 +935,11 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     creation path at all, and it gives the format version
     somewhere to be written and checked
     (`SM_ERR_VERSION`).
+18. **`sm_detach` takes a `force` flag.** (D) Shutdown
+    otherwise has to walk the caller's own list of open
+    sessions and close each one before the environment can
+    go, which every caller writes identically and which a
+    caller winding down after an error may not be able to
+    do at all. `force` does not change what closing a
+    session means — `sm_close`'s rules apply unchanged, so
+    a prepared transaction still survives.

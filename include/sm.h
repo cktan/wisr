@@ -86,11 +86,20 @@ sm_env_t* sm_attach(const char* homedir);
  * Release an environment and its pidlock, leaving the home
  * directory intact. This undoes sm_attach(), not sm_init().
  *
- * Returns -1 with SM_ERR_INUSE if any session opened through
- * env is still open, and env stays valid. NULL is a no-op
+ * With force == 0, returns -1 with SM_ERR_INUSE if any
+ * session opened through env is still open, and env stays
+ * valid. With force != 0, those sessions are closed first,
+ * as sm_close() would: cursors are closed and active
+ * transactions are aborted, but a prepared transaction is
+ * left in doubt for its coordinator. Their sm_session_t
+ * handles are then invalid.
+ *
+ * force does not preempt other threads: the caller must
+ * know that none is inside an sm_* call on those sessions,
+ * as for any other concurrent use of one. NULL is a no-op
  * returning 0.
  */
-int sm_detach(sm_env_t* env);
+int sm_detach(sm_env_t* env, int force);
 
 /*
  * A counted, immutable list of names returned by a listing

@@ -285,6 +285,21 @@ the root db under the pidlock and checks that version, and
 implicitly, so `sm_attach` has no first-use branch and a
 mistyped path is an error rather than a new empty home.
 
+`sm_detach` refuses while sessions are open, because the
+pidlock is what makes "one process holds this home
+directory" true and dropping it under a live session would
+leave that session writing to a directory another process
+may attach to. Its `force` flag closes those sessions
+first, by the same path `sm_close` takes, so a caller
+winding down — especially after an error, when it may not
+be able to walk its own session list — has one call that
+always completes. Force changes nothing about what closing
+a session means: a prepared transaction stays in doubt and
+is found again by the recovery of the next `sm_open`
+(§9.1), because it is durable and owned by its
+coordinator, not by the process that happened to prepare
+it.
+
 One process holds the root db, so it needs no concurrency
 control beyond a mutex; writes to it are synchronous.
 
@@ -1739,6 +1754,15 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   A session that looked up a name before a committed drop and
   recreate resolves the new relid in its next transaction
   (§11).
+- **Environment lifetime.** `sm_detach` with `force` 0 and a
+  session open fails with `SM_ERR_INUSE` and leaves the env
+  usable; with `force` non-zero it succeeds, and a second
+  `sm_attach` on the same home directory then works, proving
+  the pidlock was released. A transaction left active in a
+  forced-closed session is aborted — its versions resolve
+  dead (§3.4) — while one left *prepared* survives: after
+  reattaching, `sm_list_prepared` still reports it with its
+  original `gid` and `prepared_at` (§8.5).
 - **Crash.** A fault-injection harness that kills the process at every
   RocksDB write boundary during a workload, restarts, and checks that
   the surviving state is exactly one of the legal prefixes of the
