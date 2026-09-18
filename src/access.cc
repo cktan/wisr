@@ -2,8 +2,8 @@
  * access.cc -- sm_insert, sm_update, sm_delete, sm_read, and
  * the sm_scan cursor (DESIGN.md §4.4, §5, §10).
  *
- * Build order step 1: no row locks and no write-write conflict
- * check (step 3), no SIREAD tracking (step 6).
+ * Not yet: row locks and the write-write conflict check (build
+ * order step 3), SIREAD tracking (step 6).
  */
 
 #include "error.h"
@@ -347,6 +347,9 @@ int access_write(sm_session_t* s, uint64_t relid, write_op_t op,
     if (!cf) {
         return -1;
     }
+    if (xct_check_writable(s->db) != 0) {
+        return -1;
+    }
     // Build order step 3 takes the row lock here, and rejects a
     // key committed after the snapshot (§5.2) below.
     int live = latest_live(s, cf, key);
@@ -363,7 +366,7 @@ int access_write(sm_session_t* s, uint64_t relid, write_op_t op,
         return set_error(SM_ERR_INVALID, "too many writes in one transaction");
     }
     // Allocate the xid at the first write (§4.1).
-    if (s->xid == 0 && db_alloc_ts(s->db, &s->xid) != 0) {
+    if (s->xid == 0 && xct_alloc_xid(s) != 0) {
         return -1;
     }
     uint32_t seq = s->seq + 1;

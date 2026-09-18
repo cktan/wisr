@@ -213,12 +213,13 @@ version, so the level has no meaning here.
 ```c
 typedef struct sm_options_t sm_options_t;
 struct sm_options_t {
-    int         durability_sync;   /* default 1  */
-    int         group_commit_us;   /* default 200 */
-    int         deadlock_ms;       /* default 50 */
-    int         ssi_max_entries;   /* default 1<<20 */
-    long long   ts_lease;          /* default 1000000 */
-    const char* rocksdb_options;   /* option string, NULL = defaults */
+    int         durability_sync;       /* default 1  */
+    int         group_commit_us;       /* default 200, unused */
+    int         deadlock_ms;           /* default 50 */
+    int         ssi_max_entries;       /* default 1<<20 */
+    long long   ts_lease;              /* default 1000000 */
+    const char* rocksdb_options;       /* option string, NULL = defaults */
+    int         commit_cache_entries;  /* default 65536 */
 };
 
 void sm_options_init(sm_options_t* opt);   /* fill with defaults */
@@ -234,6 +235,16 @@ Passing NULL wherever an `sm_options_t*` is accepted means
 committed-transaction loss on power failure for throughput.
 The database remains crash-*consistent*; it is no longer
 crash-*durable*. It does not weaken isolation.
+
+`group_commit_us` is accepted but currently unused:
+concurrent commits already share one synced WAL write
+through RocksDB's write group, which has no knob for
+waiting on followers.
+
+`commit_cache_entries` bounds the in-memory map from
+transaction id to commit timestamp that spares readers a
+status-table lookup (DESIGN.md §3.4). It must be at least
+1; a smaller cache costs lookups, never correctness.
 
 ---
 

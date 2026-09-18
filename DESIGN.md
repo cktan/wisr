@@ -872,8 +872,12 @@ after it, they resolve as committed. There is no window where a
 transaction is half-visible, and no redo or undo work for a data
 version is ever needed.
 
-Commits are group-committed: concurrent committers hand their batches
-to one leader that issues a single `Write(..., sync=true)`. `sync` is
+Commits are group-committed by RocksDB's own write group:
+concurrent `Write(..., sync=true)` calls queue behind one
+leader, which appends them to the WAL with a single sync.
+wisr adds no queue of its own, so `group_commit_us` is
+accepted but unused; RocksDB has no knob for waiting on
+followers. `sync` is
 configurable (`durability_sync=false` trades a bounded window of
 committed-transaction loss for throughput; the database is still
 crash-*consistent*, just not crash-*durable*).

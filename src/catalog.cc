@@ -7,9 +7,9 @@
  * transactional by going through the ordinary write path. The
  * design's created_ts field is left out: nothing reads it.
  *
- * Build order step 1: no relname cache; every lookup reads
- * CF:rel.0. A committed sm_rmrel leaves its column family in
- * place until GC (step 5) removes it.
+ * No relname cache yet; every lookup reads CF:rel.0. A
+ * committed sm_rmrel leaves its column family in place until
+ * GC (build order step 5) removes it.
  */
 
 #include "codec.h"
@@ -44,7 +44,7 @@ int mkrel(sm_session_t* s, const char* relname)
     if (r == 0) {
         return set_error(SM_ERR_EXISTS, "relation %s already exists", relname);
     }
-    if (db_alloc_relid(s->db, &relid) != 0) {
+    if (xct_check_writable(s->db) != 0 || db_alloc_relid(s->db, &relid) != 0) {
         return -1;
     }
 

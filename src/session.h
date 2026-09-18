@@ -67,9 +67,19 @@ int xct_check_active(sm_session_t* session);
 /* The view a statement starting now reads at (§6.2, §10.1). */
 view_t xct_view(sm_session_t* session);
 
+/* Fail with SM_ERR_IO if db has failed stop (§8.2). */
+int xct_check_writable(wisr::db_t* db);
+
+/*
+ * Give the session's transaction its xid (§4.1) and enter it
+ * into the active table. Returns 0 or -1.
+ */
+int xct_alloc_xid(sm_session_t* session);
+
 /*
  * Resolve the writer of xid (§3.4): 1 and *commit_ts if it
- * committed, 0 if not, -1 on error.
+ * committed, 0 if it is in flight or dead, -1 on error.
+ * Callers check the stamp and their own xid first.
  */
 int xct_resolve(wisr::db_t* db, uint64_t xid, uint64_t* commit_ts);
 

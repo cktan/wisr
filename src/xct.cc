@@ -2,11 +2,15 @@
  * xct.cc -- sm_begin, sm_commit, sm_abort, and the commit
  * status table CF:txn (DESIGN.md §3.2, §3.4, §6, §8.2).
  *
- * Build order step 1: one transaction at a time. There is no
- * commit sequencer, active-transaction table, or commit cache
- * yet (step 2), no row locks (step 3), and no savepoint or
- * prepare. A transaction that has not committed has no status
- * record, and absence of a record resolves as dead (§3.4).
+ * A transaction enters the active table when it allocates its
+ * xid and leaves it at commit or abort. Commit claims a
+ * commit_ts from the sequencer, writes the status record, moves
+ * the xid from the active table into the commit cache, and only
+ * then publishes (§8.2). Abort writes nothing: absence of a
+ * record resolves as dead (§3.4).
+ *
+ * Not yet: row locks (build order step 3), savepoints (4), and
+ * prepare (7).
  */
 
 #include "codec.h"
@@ -34,11 +38,28 @@ std::string txn_key(uint64_t xid)
     return k;
 }
 
-/* Raise visible_ts to at least ts; it never moves backwards. */
-void publish(db_t* db, uint64_t ts)
+/* Remove xid from the active table: its versions now resolve dead. */
+void leave_active(db_t* db, uint64_t xid)
 {
-    uint64_t cur = db->visible_ts.load();
-    while (cur < ts && !db->visible_ts.compare_exchange_weak(cur, ts)) {
+    std::lock_guard<std::mutex> guard(db->txn_mu);
+    db->active.erase(xid);
+}
+
+/*
+ * Move xid from the active table into the commit cache, evicting
+ * the oldest commit_ts if the cache is full. Eviction cannot
+ * change an answer: the status record was written first (§3.4).
+ */
+void enter_cache(db_t* db, uint64_t xid, uint64_t commit_ts)
+{
+    std::lock_guard<std::mutex> guard(db->txn_mu);
+    db->active.erase(xid);
+    db->cache[xid] = commit_ts;
+    db->cache_by_ts[commit_ts] = xid;
+    while (db->cache.size() > db->cache_entries) {
+        auto oldest = db->cache_by_ts.begin();
+        db->cache.erase(oldest->second);
+        db->cache_by_ts.erase(oldest);
     }
 }
 
@@ -100,9 +121,12 @@ int commit(sm_session_t* s)
     }
 
     db_t* db = s->db;
+    uint64_t xid = s->xid;
     uint64_t commit_ts;
-    if (db_alloc_ts(db, &commit_ts) != 0) {
+    if (xct_check_writable(db) != 0 ||
+        db_claim_commit_ts(db, &commit_ts) != 0) {
         // No record was written, so the transaction is dead.
+        leave_active(db, xid);
         drop_created(s);
         reset(s);
         return -1;
@@ -111,18 +135,30 @@ int commit(sm_session_t* s)
     val.push_back(static_cast<char>(txn_committed));
     put_be64(val, s->snapshot_ts);
     put_be64(val, commit_ts);
-    rocksdb::WriteOptions wo;
-    wo.sync = db->durability_sync != 0;
-    // Write the status record: the commit point (§8.2).
-    rocksdb::Status st = db->rdb->Put(wo, db->cf_txn, txn_key(s->xid), val);
+    rocksdb::Status st;
+    if (db->test_before_commit) {
+        st = db->test_before_commit(commit_ts);
+    }
+    if (st.ok()) {
+        rocksdb::WriteOptions wo;
+        wo.sync = db->durability_sync != 0;
+        // Write the status record: the commit point (§8.2).
+        st = db->rdb->Put(wo, db->cf_txn, txn_key(xid), val);
+    }
     reset(s);
     if (!st.ok()) {
-        // Outcome unknown: the record may have reached the WAL.
-        // The fail-stop state of §8.2 is build order step 2.
+        // Fail stop: the record may have reached the WAL, so the
+        // transaction stays in flight -- in the active table,
+        // its commit_ts holding back visible_ts -- until a
+        // reopen resolves it from the log (§8.2).
+        db->failed = true;
         return set_error(SM_ERR_IO, "write commit record (outcome unknown): %s",
                          st.ToString().c_str());
     }
-    publish(db, commit_ts);
+    // Resolve before publishing: a reader that misses the xid in
+    // the active table finds it in the cache or CF:txn (§3.4).
+    enter_cache(db, xid, commit_ts);
+    db_commit_done(db, commit_ts);
     return 0;
 }
 
@@ -133,8 +169,12 @@ int abort_xct(sm_session_t* s)
         return -1;
     }
     xct_end_scans(s);
-    // Discard the writes: with no status record they resolve
-    // dead (§3.4). Only the created column families need undoing.
+    // Discard the writes: once out of the active table, with no
+    // status record, they resolve dead (§3.4). Only the created
+    // column families need undoing.
+    if (s->xid != 0) {
+        leave_active(s->db, s->xid);
+    }
     drop_created(s);
     reset(s);
     return 0;
@@ -168,9 +208,46 @@ view_t xct_view(sm_session_t* s)
     return v;
 }
 
-/* Look up xid's status record in CF:txn. */
+/* Fail with SM_ERR_IO once the database has failed stop. */
+int xct_check_writable(db_t* db)
+{
+    if (db->failed) {
+        return set_error(SM_ERR_IO,
+                         "database %s failed a status write; reopen it",
+                         db->name.c_str());
+    }
+    return 0;
+}
+
+/* Allocate the xid and enter the active table, before any version. */
+int xct_alloc_xid(sm_session_t* s)
+{
+    uint64_t xid;
+    if (db_alloc_ts(s->db, &xid) != 0) {
+        return -1;
+    }
+    {
+        std::lock_guard<std::mutex> guard(s->db->txn_mu);
+        s->db->active.insert(xid);
+    }
+    s->xid = xid;
+    return 0;
+}
+
+/* Active table, then commit cache, then CF:txn (§3.4 steps 1-4). */
 int xct_resolve(db_t* db, uint64_t xid, uint64_t* commit_ts)
 {
+    {
+        std::lock_guard<std::mutex> guard(db->txn_mu);
+        if (db->active.count(xid)) {
+            return 0; // in flight
+        }
+        auto it = db->cache.find(xid);
+        if (it != db->cache.end()) {
+            *commit_ts = it->second;
+            return 1;
+        }
+    }
     std::string val;
     rocksdb::Status s =
         db->rdb->Get(rocksdb::ReadOptions(), db->cf_txn, txn_key(xid), &val);

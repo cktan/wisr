@@ -10,10 +10,14 @@
 #include <stdint.h>
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <shared_mutex>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
@@ -36,10 +40,6 @@ namespace wisr
 /*
  * One open database, shared by every session on it and held
  * in the environment's registry (DESIGN.md §1).
- *
- * Build order step 1: visible_ts simply follows the latest
- * commit_ts. The commit sequencer and active-transaction table
- * that make it correct under concurrent commits are step 2.
  */
 struct db_t {
     std::string name;
@@ -62,8 +62,41 @@ struct db_t {
     uint64_t next_relid = 0; /* next relid to hand out */
     uint64_t relid_limit = 0;
 
+    /*
+     * The commit sequencer (§4.3): commit_ts values claimed and
+     * not yet published. Guarded by alloc_mu, the mutex that
+     * hands out timestamps, so no commit_ts is ever outside both
+     * this set and the advancer's view of global_ts.
+     */
+    std::set<uint64_t> committing;
+
     /* Every commit_ts at or below this is published (§4.3). */
     std::atomic<uint64_t> visible_ts{0};
+
+    /*
+     * The active transaction table and the commit cache (§3.4),
+     * under one mutex so a committing xid moves from one to the
+     * other atomically. The cache evicts the oldest commit_ts.
+     */
+    std::mutex txn_mu;
+    std::unordered_set<uint64_t> active;          /* xids in flight */
+    std::unordered_map<uint64_t, uint64_t> cache; /* xid -> commit_ts */
+    std::map<uint64_t, uint64_t> cache_by_ts;     /* commit_ts -> xid */
+    size_t cache_entries = 0;
+
+    /*
+     * Set when a status write fails (§8.2): the outcome of that
+     * commit is unknown until a reopen, so writes, commits, and
+     * DDL fail with SM_ERR_IO from then on.
+     */
+    std::atomic<bool> failed{false};
+
+    /*
+     * Test hook: called after a commit claims its commit_ts and
+     * before it writes the status record. A non-OK status stands
+     * in for the write's failure. Empty outside tests.
+     */
+    std::function<rocksdb::Status(uint64_t commit_ts)> test_before_commit;
 
     /* Destroy the CF handles and close RocksDB. */
     ~db_t();
@@ -79,6 +112,18 @@ db_t* db_open(const std::string& path, const char* dbname,
 
 /* Allocate a timestamp from db's lease. Returns 0 or -1. */
 int db_alloc_ts(db_t* db, uint64_t* out);
+
+/*
+ * Claim a commit_ts: allocate it and enter it into the
+ * sequencer, under one lock (§4.3). Returns 0 or -1.
+ */
+int db_claim_commit_ts(db_t* db, uint64_t* out);
+
+/*
+ * Mark commit_ts done: leave the sequencer and advance
+ * visible_ts to one below the oldest commit still in progress.
+ */
+void db_commit_done(db_t* db, uint64_t commit_ts);
 
 /* Allocate a relid from db's lease. Returns 0 or -1. */
 int db_alloc_relid(db_t* db, uint64_t* out);

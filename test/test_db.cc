@@ -47,6 +47,7 @@ TEST_CASE("sm_options_init fills the documented defaults")
     CHECK(opt.ssi_max_entries == (1 << 20));
     CHECK(opt.ts_lease == 1000000);
     CHECK(opt.rocksdb_options == nullptr);
+    CHECK(opt.commit_cache_entries == 65536);
 }
 
 TEST_CASE("databases are listed in bytewise order and survive reattach")

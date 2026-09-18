@@ -281,6 +281,10 @@ db_t* db_open(const std::string& path, const char* dbname,
         sm_options_init(&defaults);
         opt = &defaults;
     }
+    if (opt->commit_cache_entries < 1) {
+        set_error(SM_ERR_INVALID, "commit_cache_entries must be at least 1");
+        return nullptr;
+    }
     if (opt->ts_lease <= 0) {
         set_error(SM_ERR_INVALID, "ts_lease must be positive");
         return nullptr;
@@ -358,18 +362,19 @@ db_t* db_open(const std::string& path, const char* dbname,
     db->visible_ts = next_ts;
     db->next_relid = next_relid + 1;
     db->relid_limit = next_relid + 1;
+    db->cache_entries = opt->commit_cache_entries;
     return db.release();
 }
 
 /*
- * Hand out *next from a lease. When the lease is used up,
- * persist a new limit before handing out any value under it,
- * so no value is handed out twice across a restart (§4.2).
+ * Hand out *next from a lease, with db->alloc_mu held. When the
+ * lease is used up, persist a new limit before handing out any
+ * value under it, so no value is handed out twice across a
+ * restart (§4.2).
  */
-static int alloc_leased(db_t* db, uint64_t* next, uint64_t* limit,
-                        const char* key, uint64_t* out)
+static int alloc_leased_locked(db_t* db, uint64_t* next, uint64_t* limit,
+                               const char* key, uint64_t* out)
 {
-    std::lock_guard<std::mutex> guard(db->alloc_mu);
     if (*next >= *limit) {
         uint64_t new_limit = *next + db->lease;
         std::string val;
@@ -387,11 +392,48 @@ static int alloc_leased(db_t* db, uint64_t* next, uint64_t* limit,
     return 0;
 }
 
+/* alloc_leased_locked under db->alloc_mu. */
+static int alloc_leased(db_t* db, uint64_t* next, uint64_t* limit,
+                        const char* key, uint64_t* out)
+{
+    std::lock_guard<std::mutex> guard(db->alloc_mu);
+    return alloc_leased_locked(db, next, limit, key, out);
+}
+
 /* Allocate a timestamp. */
 int db_alloc_ts(db_t* db, uint64_t* out)
 {
     return alloc_leased(db, &db->global_ts, &db->ts_limit, WISR_META_NEXT_TS,
                         out);
+}
+
+/* Allocate commit_ts and enter it into the sequencer atomically. */
+int db_claim_commit_ts(db_t* db, uint64_t* out)
+{
+    std::lock_guard<std::mutex> guard(db->alloc_mu);
+    if (alloc_leased_locked(db, &db->global_ts, &db->ts_limit,
+                            WISR_META_NEXT_TS, out) != 0) {
+        return -1;
+    }
+    db->committing.insert(*out);
+    return 0;
+}
+
+/*
+ * Leave the sequencer and advance visible_ts: one below the
+ * oldest commit in progress, or everything handed out so far if
+ * none is. New values are always above what was handed out, so
+ * visible_ts never moves backwards.
+ */
+void db_commit_done(db_t* db, uint64_t commit_ts)
+{
+    std::lock_guard<std::mutex> guard(db->alloc_mu);
+    db->committing.erase(commit_ts);
+    uint64_t v = db->committing.empty() ? db->global_ts - 1
+                                        : *db->committing.begin() - 1;
+    if (v > db->visible_ts.load()) {
+        db->visible_ts.store(v);
+    }
 }
 
 /* Allocate a relid. */
@@ -472,6 +514,7 @@ void sm_options_init(sm_options_t* opt)
     opt->ssi_max_entries = 1 << 20;
     opt->ts_lease = 1000000;
     opt->rocksdb_options = NULL;
+    opt->commit_cache_entries = 65536;
 }
 
 /* Create the database dbname. */
