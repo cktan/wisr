@@ -39,14 +39,18 @@ atomic publication sequencer, and optimistic SSI with
 pivot detection—is first-rate.
 
 However, while the storage and environment management
-layers have taken a giant leap forward, the core LSM
-transactional traps identified in the initial review remain
-active and must be resolved before implementing the storage
-engine internals:
+layers have taken a giant leap forward, several LSM
+transactional issues remain open and should be settled
+before implementing the storage engine internals. Items 1
+through 4 need work; items 5 and 6 are documented
+decisions, restated here so that they are chosen rather
+than inherited:
 
-1. **The Compaction Truncation Dilemma:** Coupling
-   `CF:txn` truncation to full database compaction
-   risks silent data loss on cold SST files under Rule 4.
+1. **Full-Compaction Cost for `CF:txn` Truncation:**
+   Coupling `CF:txn` truncation to a full compaction pass
+   over every relation CF is correct, but it is expensive
+   and it silently depends on two RocksDB behaviours that
+   §8.3 never states.
 2. **Prefix Bloom Filter Scan Failure:** Using prefix
    extractors without setting `total_order_seek = true`
    on range scans silently truncates or fails scans.
@@ -59,10 +63,12 @@ engine internals:
 5. **Non-Standard Read Committed Writes:** Checking
    writes against transaction-begin snapshots causes
    unexpected [`SM_ERR_CONFLICT`][err-conflict] aborts
-   under Read Committed.
+   under Read Committed. Already documented for callers;
+   a behavioural divergence, not a defect.
 6. **Column Family Scalability Ceiling:** A dedicated
    Column Family per relation imposes hard scaling
-   limits in RocksDB.
+   limits in RocksDB. An accepted trade-off; what is
+   missing is a stated relation-count target.
 
 ---
 
@@ -155,7 +161,7 @@ is $O(1)$, and crash recovery requires zero undo passes.
 
 ## 3. Critical Correctness & Performance Risks
 
-### 3.1 The "Full Compaction to Truncate CF:txn" Dilemma (§8.3 & §3.4)
+### 3.1 Full Compaction to Truncate `CF:txn` (§8.3 & §3.4)
 
 #### The Problem
 In [DESIGN.md §3.4][des-34], Status Resolution Rule 4
@@ -172,28 +178,65 @@ the design prescribes:
 > memtables first... drop the `COMMITTED` records with
 > $\text{commit\_ts} \le W_0$."*
 
-#### Why This Breaks in Production
-1. **Excessive Write Amplification:** A full compaction
-   pass calls `CompactRange(..., nullptr, nullptr)` across
-   all column families. On large databases (e.g. 500GB+),
-   this forces a complete rewrite of levels L0 through L6,
-   causing massive I/O storms and write stalls.
-2. **Catastrophic Data Loss on Cold SSTs:** RocksDB
-   compactions are localized. Cold SST files in lower
-   levels may not undergo compaction for weeks. If
-   `CF:txn` records are swept without a full compaction,
-   versions in cold SST files remain unstamped. When read,
-   Rule 4 will evaluate them as **DEAD**, silently losing
-   committed user data!
+#### The Protocol Itself Is Sound
+An earlier draft of this review argued that cold SST
+files escape the pass, leaving versions unstamped and
+resolving as DEAD under Rule 4. That was a misreading and
+is withdrawn. §8.3 does not sweep `CF:txn` on a timer: it
+sweeps only after the full pass has completed and every
+iterator older than the pass has been released, and it
+uses the watermark from the pass's *start* precisely so
+that a version kept unstamped cannot have its record
+dropped. The failure described was a violation of the
+protocol, not the protocol.
+
+Two RocksDB behaviours are load-bearing for that
+argument, and §8.3 assumes both without saying so:
+
+- `CompactRangeOptions::bottommost_level_compaction`
+  defaults to `kIfHaveCompactionFilter`, so the pass does
+  rewrite bottommost files — but only because wisr
+  installs a compaction filter. Anything that later makes
+  the filter conditional breaks the sweep silently.
+- `CompactionFilter::IgnoreSnapshots()` is fixed at
+  `true` (the overridable version is deprecated), so no
+  entry is skipped because an open snapshot covers it.
+  Every version in the compaction input is visited.
+
+#### What Remains a Real Cost
+**Excessive write amplification.** A full compaction pass
+calls `CompactRange(..., nullptr, nullptr)` across all
+column families. On large databases (e.g. 500GB+), this
+forces a complete rewrite of levels L0 through L6,
+causing I/O storms and write stalls — and its cost scales
+with the number of relation CFs (§3.6), not only with
+data volume.
 
 #### Recommendation
-Do not tie data visibility to periodic full compactions.
-- Maintain a compact, dense in-memory commit log (CLOG /
-  bitset) for status checks. At 100M transactions, a
-  2-bit status map takes only 25 MB of RAM.
-- Maintain a durable `min_uncompacted_xid` watermark. Any
-  version with `xid < min_uncompacted_xid` not explicitly
-  recorded in an aborted set is presumed committed.
+Keep the protocol. Make it cheaper, and make its
+dependencies explicit.
+- State both RocksDB dependencies above in §8.3, and pass
+  `bottommost_level_compaction` explicitly instead of
+  relying on the default.
+- Trigger the sweep on `CF:txn` growth rather than on a
+  fixed period, so a full rewrite is paid for only when
+  the space it reclaims justifies it.
+- A denser in-memory commit map (a CLOG or 2-bit status
+  bitset — 25 MB at 100M transactions) is worth sizing
+  up, but note that it is what the commit cache of rule
+  §3.4/2 already is. This is a capacity choice, not an
+  architectural one.
+
+One correction for the record: presuming that any version
+with `xid < min_uncompacted_xid` and no entry in an
+aborted set is committed — the fix an earlier draft
+proposed — is **unsafe**. A crashed transaction leaves
+versions with no status record anywhere, which is exactly
+what Rule 4 exploits to make recovery undo-free.
+Presuming them committed resurrects them unless recovery
+first writes an `ABORTED` record for every crashed `xid`,
+which reintroduces the undo pass the design set out to
+avoid.
 
 ---
 
@@ -225,7 +268,19 @@ rocksdb::ReadOptions ro;
 ro.total_order_seek = true; // Mandatory for multi-key range scans!
 ```
 Reserve prefix bloom seek mode exclusively for
-[`sm_read`][sm-read].
+[`sm_read`][sm-read], whose loop in
+[DESIGN.md §10.1][des-101] never leaves a single userkey
+and so is exactly the case prefix mode is for.
+
+`auto_prefix_mode = true` is the sharper instrument here.
+Because `sm_scan` always sets `iterate_upper_bound`,
+RocksDB can decide per seek: prefix mode when the bound
+lies within the seek key's prefix, total order otherwise.
+That keeps the bloom filter for single-key ranges. The
+flaw documented on that option concerns keys shorter than
+a full-length prefix, which cannot arise here — wisr's
+extractor is variable-length, so `FullLengthEnabled()` is
+false and the affected path is never taken.
 
 ---
 
@@ -244,23 +299,51 @@ tombstone because:
 > *"CompactionFilter::Context does not report [bottommost
 > level] anyway"*
 
-#### Why This Is Flawed
-1. **Incorrect API Assertion:** RocksDB's
-   `CompactionFilter::Context` struct has provided
-   `bool is_bottommost_level` since version 5.x.
-2. **Range Tombstone Saturation:** Issuing thousands of
-   single-key `DeleteRange` calls inserts thousands of
-   range tombstones into RocksDB. During reads, RocksDB's
-   `RangeDelAggregator` must search all overlapping range
-   tombstones, causing dramatic read amplification and CPU
-   overhead.
+#### The API Assertion Is Correct
+An earlier draft of this review claimed that
+`CompactionFilter::Context` has carried a
+`bool is_bottommost_level` since RocksDB 5.x. That is
+wrong and is withdrawn. The struct carries
+`is_full_compaction`, `is_manual_compaction`,
+`input_start_level`, `column_family_id`, `reason`, and
+`input_table_properties` — no bottommost flag. The
+identifier `is_bottommost_level` exists only on
+`rocksdb_compactionservice_jobinfo_t` in the C API, which
+is unrelated. DESIGN.md's parenthetical stands.
+
+The flag was never the design's real argument, either.
+§8.3 rests on the fact that RocksDB picks compaction
+inputs by full version key, so older versions of the same
+userkey may sit in an adjacent SST file or another
+subcompaction the filter never sees. "No older versions
+appear in this compaction" does not establish "no older
+versions exist", so dropping the tombstone in the filter
+would resurrect them even with a bottommost flag in hand.
+
+#### What Remains a Real Cost
+**Range tombstone saturation.** Issuing thousands of
+single-key `DeleteRange` calls inserts thousands of range
+tombstones. During reads, RocksDB's `RangeDelAggregator`
+must search all overlapping range tombstones, causing
+read amplification and CPU overhead. This is upstream's
+own warning, not a speculative one: `db.h` documents that
+"accumulating too many range tombstones in the memtable
+will degrade read performance", and recommends occasional
+manual flushes and `max_open_files = -1` to contain it.
 
 #### Recommendation
-Use `is_bottommost_level` inside the compaction filter.
-When a tombstone is at the bottommost level and no older
-versions exist in the compaction, drop it directly.
-Confine `DeleteRange` to bulk relation drops
-([`sm_rmrel`][sm-rmrel]).
+Keep the purge queue; reduce the number of tombstones it
+produces, and record its constraints.
+- Coalesce adjacent entries in the purge queue into a
+  single `DeleteRange` before issuing it. A bulk delete
+  over a key range is the shape `DeleteRange` is designed
+  for; one call per deleted key is not.
+- Give the purge task a flush cadence, per upstream's
+  first caveat, so range tombstones do not accumulate in
+  the memtable.
+- Note in §12.2 that this path forecloses `row_cache`:
+  `DeleteRange` returns `Status::NotSupported()` when a
+  row cache is configured.
 
 ---
 
@@ -274,28 +357,47 @@ In [DESIGN.md §10.2][des-102]:
 > rest: a later `sm_rollback` neither hides rows the cursor
 > could already see..."*
 
-#### The Semantic Bug
+#### The Consequence
 Consider this execution sequence:
 1. Transaction begins, creates savepoint via
    [`sm_savepoint`][sm-savepoint].
-2. Transaction inserts row `"k1"` (`seq = 2`).
+2. Transaction inserts row `"k1"` (`seq = 1`, the first
+   write of the transaction).
 3. Transaction opens scan cursor `C` via
    [`sm_scan`][sm-scan]. `C` captures RocksDB snapshot
-   $R_1$ and `seq_hwm = 2`.
+   $R_1$ and `seq_hwm = 1`.
 4. Transaction calls [`sm_rollback`][sm-rollback] to undo
    `"k1"`.
 5. Transaction calls [`sm_scan_next(C)`][sm-scan-next].
 
 Because $R_1$ was taken prior to rollback, `"k1"` is
 still in $R_1$. Because $C$ checks against its captured
-`seq_hwm = 2`, **cursor $C$ yields `"k1"` to the user,
+`seq_hwm = 1`, **cursor $C$ yields `"k1"` to the user,
 returning a row that the transaction itself explicitly
-rolled back!**
+rolled back.**
+
+This is a deliberate decision, not an oversight: the
+§10.2 text quoted above states the behaviour outright,
+and §6.5 reasons about this exact cursor when it explains
+why `T.seq` is rewound. The issue is that the decision
+looks accidental where it is visible to callers, and its
+cost has not been weighed against the alternative.
 
 #### Recommendation
-In line with SQL engines (such as PostgreSQL),
-[`sm_rollback`][sm-rollback] must close or invalidate all
-scan cursors opened after the savepoint mark.
+Two defensible positions; pick one explicitly.
+- **Follow PostgreSQL.** [`sm_rollback`][sm-rollback]
+  closes scan cursors opened after the savepoint mark.
+  With one savepoint per session this is cheap: record
+  the set of open cursors at `sm_savepoint` and close
+  everything not in it. This is what SQL callers expect.
+- **Keep the current semantics** as a fixed-cursor-view
+  rule consistent with the Halloween protection of §10.2.
+
+Either way, [`API.md`][api]'s `sm_rollback` contract must
+say what happens to open cursors. It currently documents
+the SIREAD read-tracking caveat and says nothing about
+cursors at all, so a caller cannot discover this
+behaviour from the interface.
 
 ---
 
@@ -320,11 +422,25 @@ In standard Read Committed (Postgres, Oracle, MySQL):
   Committed is effectively **Snapshot Isolation for
   writes** combined with **Read Committed for reads**.
 
-This design choice stems from the physical `~xid` key
-layout: an earlier allocated `xid` cannot write a version
-that sorts after a later committed `xid`. This behavioral
-difference must be clearly highlighted in user
-documentation.
+#### Already Documented — No Action Required
+The justification is stronger than "key layout
+aesthetics", and §6.2 states it: a read-committed
+transaction with `T.xid = 50` updating a row against a
+statement snapshot of 75 would place a version at `~50`
+that sorts *behind* an already-committed `xid 60`.
+Readers would return the older value and GC would drop
+the newer commit as superseded. Checking writes against
+the begin snapshot is what keeps §4.1's invariant at this
+level.
+
+The request an earlier draft made — that the divergence
+be highlighted in user documentation — is already met.
+[`API.md`][api] states it as divergence 2: "Writes can
+fail with `SM_ERR_CONFLICT` at every level, including
+READ COMMITTED", along with the note that the engine does
+not silently re-read and retry. This item is closed;
+it is recorded here only so the behaviour stays a
+conscious choice.
 
 ---
 
@@ -348,6 +464,29 @@ $$\text{key} = \text{relid (8B)} \mid \text{userkey} \mid {\sim}\text{xid} \mid 
 This makes relation creation/drop pure MVCC operations,
 eliminates orphan CF sweeps, and scales to millions of
 tables.
+
+#### But the Trade Is Already Recorded
+[DESIGN.md §13][des] lists a column family per relation
+as a known trade-off and enumerates these same costs:
+startup time growing with relation count, per-CF memtable
+and LSM metadata, and CF create/drop sitting outside
+MVCC. The alternative is not free either, and an earlier
+draft of this review did not price it:
+- `sm_rmrel` loses its O(1) `DropColumnFamily` and
+  becomes a `DeleteRange` over the relation's entire
+  keyspace — the same range-tombstone cost objected to in
+  §3.3 above.
+- Per-relation tuning, per-relation compaction statistics,
+  and the ability to give one relation a different
+  comparator or block cache all disappear.
+- Every key grows by 8 bytes, and the `wisr.version.v1`
+  comparator has to learn the prefix.
+
+This is therefore a scale-threshold decision rather than
+a defect. What the design is missing is a stated target:
+how many relations must one database hold? At hundreds,
+the current layout is the better trade. At tens of
+thousands, it is not.
 
 ---
 
@@ -389,12 +528,12 @@ components:
 | **MVCC on RocksDB** | **PASS** | Monotonic timestamps and complemented keys satisfy [OBJECTIVE.md §Goals][obj-goals]. |
 | **Environment & Root DB Lifecycle** | **PASS** | [DESIGN.md §3.5][des-35] PGDATA layout (`global/root`, `base/{dbid}`) clean & secure. |
 | **Name Listing (`sm_strlist_t`)** | **PASS** | [PLAN.md][plan] specifies an opaque, safe, counted C ABI representation. |
-| **Read Committed Level** | **WARN** | Functional, but first-committer-wins at `sm_begin` causes aborts. |
+| **Read Committed Level** | **PASS** | First-committer-wins at `sm_begin` causes aborts, but the divergence is documented (§3.5). |
 | **Repeatable Read Level** | **PASS** | Snapshot isolation with first-committer-wins operates as intended. |
 | **Serializable Level (SSI)** | **PASS** | Full Cahill/Ports SSI implementation without read locks. |
-| **Savepoint & Rollback** | **WARN** | Open cursors must be invalidated across savepoint rollback. |
+| **Savepoint & Rollback** | **WARN** | Cursor behaviour across savepoint rollback is decided but unstated in `API.md`. |
 | **Two-Phase Commit (2PC)** | **PASS** | Durable `PREPARED` records and post-restart SSI rule meet [OBJECTIVE.md §Decisions][obj-dec]. |
-| **Crash Recovery** | **WARN** | Status Rule 4 risks data loss without a persistent watermark or CLOG. |
+| **Crash Recovery** | **PASS** | Status Rule 4 plus the §8.3 sweep ordering is sound; the cost is a full compaction pass (§3.1). |
 | **Deployment Model** | **PASS** | Single-process multi-threading with pidlocks matches [OBJECTIVE.md §Decisions][obj-dec]. |
 
 ---
@@ -406,11 +545,25 @@ root DB, and the [`sm_strlist_t`][strlist-type] abstraction
 substantially improves wisr's architecture, providing robust
 containment and clean lifecycle separation.
 
-The remaining challenges lie squarely in the LSM-MVCC
-engine: resolving the **compaction/status-resolution
-coupling**, mandating **`total_order_seek` on scans**, and
-invalidating **cursors across savepoint rollbacks**.
-Addressing these final issues will make wisr a truly
+The remaining work lies squarely in the LSM-MVCC engine,
+and on re-examination it is narrower than this review
+first claimed. One live correctness bug stands:
+**`total_order_seek` (or `auto_prefix_mode`) must be set
+on scans**, or `sm_scan` returns nothing once a prefix
+extractor is configured. Beyond it are refinements rather
+than defects — bounding the cost of the `CF:txn` sweep
+(§3.1), coalescing tombstone purges (§3.3), and settling
+and documenting cursor behaviour across savepoint
+rollback (§3.4).
+
+Three claims in the earlier draft did not survive
+checking against the RocksDB source and have been
+withdrawn above: the cold-SST data loss under Rule 4
+(§3.1), the existence of
+`CompactionFilter::Context::is_bottommost_level` (§3.3),
+and the charge that the Read Committed divergence is
+undocumented (§3.5). In each case the design was right.
+Addressing what remains will make wisr a truly
 bulletproof, production-grade storage manager.
 
 <!-- Reference Links -->
