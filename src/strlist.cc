@@ -2,7 +2,7 @@
  * strlist.cc -- sm_strlist_t, the counted immutable list of
  * names returned by the library's listing calls.
  *
- * One allocation holds the whole list (PLAN.md §3):
+ * One allocation holds the whole list:
  *
  *   sm_strlist_t      the header, holding the count
  *   char* ptr[count]  one per name, pointing into the tail
