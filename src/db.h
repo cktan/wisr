@@ -9,8 +9,13 @@
 
 #include <stdint.h>
 
+#include <atomic>
+#include <map>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
 
+#include <rocksdb/db.h>
 #include <rocksdb/options.h>
 
 /* Database format version, stored in CF:meta. */
@@ -27,6 +32,65 @@
 
 namespace wisr
 {
+
+/*
+ * One open database, shared by every session on it and held
+ * in the environment's registry (DESIGN.md §1).
+ *
+ * Build order step 1: visible_ts simply follows the latest
+ * commit_ts. The commit sequencer and active-transaction table
+ * that make it correct under concurrent commits are step 2.
+ */
+struct db_t {
+    std::string name;
+    rocksdb::DB* rdb = nullptr;
+    rocksdb::ColumnFamilyHandle* cf_default = nullptr;
+    rocksdb::ColumnFamilyHandle* cf_txn = nullptr;
+    rocksdb::ColumnFamilyHandle* cf_meta = nullptr;
+    int durability_sync = 1;
+    int nsessions = 0; /* guarded by the env's mu */
+
+    /* relid -> column family handle, for every live relation CF. */
+    std::shared_mutex rel_mu;
+    std::map<uint64_t, rocksdb::ColumnFamilyHandle*> rels;
+
+    /* The ts and relid allocators and their leases (§4.2). */
+    std::mutex alloc_mu;
+    uint64_t lease = 0;
+    uint64_t global_ts = 0;  /* next ts to hand out */
+    uint64_t ts_limit = 0;   /* persisted; never handed out */
+    uint64_t next_relid = 0; /* next relid to hand out */
+    uint64_t relid_limit = 0;
+
+    /* Every commit_ts at or below this is published (§4.3). */
+    std::atomic<uint64_t> visible_ts{0};
+
+    /* Destroy the CF handles and close RocksDB. */
+    ~db_t();
+};
+
+/*
+ * Open database dbname at path with every column family it
+ * has, and load its allocators from CF:meta (DESIGN.md §9.1
+ * steps 1-3). Returns NULL with the error set.
+ */
+db_t* db_open(const std::string& path, const char* dbname,
+              const sm_options_t* opt);
+
+/* Allocate a timestamp from db's lease. Returns 0 or -1. */
+int db_alloc_ts(db_t* db, uint64_t* out);
+
+/* Allocate a relid from db's lease. Returns 0 or -1. */
+int db_alloc_relid(db_t* db, uint64_t* out);
+
+/* The CF handle of relid, or NULL if it has none. */
+rocksdb::ColumnFamilyHandle* db_rel_cf(db_t* db, uint64_t relid);
+
+/* Create the CF for relid and register it. Returns 0 or -1. */
+int db_create_rel_cf(db_t* db, uint64_t relid);
+
+/* Drop relid's CF and unregister it. Returns 0 or -1. */
+int db_drop_rel_cf(db_t* db, uint64_t relid);
 
 /* The column family name of relation relid: rel.<relid>. */
 std::string rel_cf_name(uint64_t relid);

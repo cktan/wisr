@@ -5,6 +5,7 @@
 
 #include "doctest.h"
 
+#include "codec.h"
 #include "version.h"
 
 #include <algorithm>
@@ -33,15 +34,28 @@ TEST_CASE("version values round-trip, stamped or not")
     // Verify flags, stamp, and payload decode as encoded.
     // 1. Decode an unstamped value with a payload.
     // 2. Decode a tombstone with no payload.
-    // 3. Reject an empty value and a truncated stamp.
+    // 3. Decode a stamped value: commit_ts, then the payload.
+    // 4. Reject an empty value and a truncated stamp.
+    // Decoded slices borrow the value, so each value is kept in a
+    // named string for as long as they are read.
     version_t v;
-    REQUIRE(version_decode_value(version_value(0, "hello"), &v));
+    std::string plain = version_value(0, "hello");
+    REQUIRE(version_decode_value(plain, &v));
     CHECK(v.flags == 0);
     CHECK(v.payload == rocksdb::Slice("hello"));
 
-    REQUIRE(version_decode_value(version_value(version_tombstone, ""), &v));
+    std::string tomb = version_value(version_tombstone, "");
+    REQUIRE(version_decode_value(tomb, &v));
     CHECK(v.flags == version_tombstone);
     CHECK(v.payload.empty());
+
+    std::string stamped(1, static_cast<char>(version_stamped));
+    put_be64(stamped, 12345);
+    stamped += "hi";
+    REQUIRE(version_decode_value(stamped, &v));
+    CHECK(v.flags == version_stamped);
+    CHECK(v.commit_ts == 12345);
+    CHECK(v.payload == rocksdb::Slice("hi"));
 
     CHECK_FALSE(version_decode_value("", &v));
     std::string bad(1, static_cast<char>(version_stamped));

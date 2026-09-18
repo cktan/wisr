@@ -9,10 +9,17 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <mutex>
+#include <set>
 #include <string>
 
 #include <rocksdb/db.h>
+
+namespace wisr
+{
+struct db_t;
+}
 
 /* Home directory format version, stored as "M" | "version". */
 #define WISR_HOME_VERSION 1
@@ -26,7 +33,13 @@ struct sm_env_t {
     std::string homedir;
     int lock_fd = -1;            /* holds the flock on pidlock.pid */
     rocksdb::DB* root = nullptr; /* {homedir}/global/root */
-    std::mutex mu;               /* serializes root db updates */
+    std::mutex mu;               /* guards the root db and the two sets below */
+
+    /* Open databases by name, shared by their sessions. */
+    std::map<std::string, wisr::db_t*> dbs;
+
+    /* Every open session, for sm_detach. */
+    std::set<sm_session_t*> sessions;
 
     /* Close the root db, then release the pidlock. */
     ~sm_env_t();

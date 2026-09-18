@@ -17,54 +17,6 @@
 namespace
 {
 
-/* A home directory, initialized and attached for one test. */
-class home_t
-{
-  public:
-    /* Initialize and attach a fresh home directory. */
-    home_t()
-    {
-        REQUIRE(sm_init(m_tmp.path()) == 0);
-        m_env = sm_attach(m_tmp.path());
-        REQUIRE(m_env);
-    }
-
-    /* Detach, then remove the directory. */
-    ~home_t()
-    {
-        sm_detach(m_env, 1);
-    }
-
-    /* The environment. */
-    sm_env_t* env() const
-    {
-        return m_env;
-    }
-
-    /* Detach and attach again, as a new process would. */
-    void reattach()
-    {
-        REQUIRE(sm_detach(m_env, 0) == 0);
-        m_env = sm_attach(m_tmp.path());
-        REQUIRE(m_env);
-    }
-
-    /* The names of the entries under base/. */
-    std::set<std::string> base_entries() const
-    {
-        std::set<std::string> out;
-        for (const auto& e : std::filesystem::directory_iterator(
-                 std::string(m_tmp.path()) + "/base")) {
-            out.insert(e.path().filename().string());
-        }
-        return out;
-    }
-
-  private:
-    tmpdir_t m_tmp;
-    sm_env_t* m_env = nullptr;
-};
-
 /* The databases sm_lsdb reports, in its order. */
 std::vector<std::string> lsdb(sm_env_t* env)
 {

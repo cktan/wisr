@@ -12,6 +12,9 @@
 #include "strlist.h"
 #include "version.h"
 
+#include <inttypes.h>
+#include <stdio.h>
+
 #include <memory>
 #include <new>
 #include <vector>
@@ -148,9 +151,10 @@ int rmdb(sm_env_t* env, const char* dbname)
         return -1;
     }
 
-    // Sessions do not exist yet (build order step 1, task 5
-    // adds them), so there is no open database to refuse on.
     std::lock_guard<std::mutex> guard(env->mu);
+    if (env->dbs.count(dbname)) {
+        return set_error(SM_ERR_INUSE, "database %s is open", dbname);
+    }
     std::string dkey = dbname_key(dbname);
     std::string val;
     rocksdb::Status s = env->root->Get(rocksdb::ReadOptions(), dkey, &val);
@@ -255,7 +259,209 @@ int db_options(const sm_options_t* opt, rocksdb::DBOptions* out)
     return 0;
 }
 
+/* Read an 8-byte CF:meta value; false if missing or malformed. */
+static bool read_meta(db_t* db, const char* key, uint64_t* out)
+{
+    std::string val;
+    rocksdb::Status s =
+        db->rdb->Get(rocksdb::ReadOptions(), db->cf_meta, key, &val);
+    if (!s.ok() || val.size() != 8) {
+        return false;
+    }
+    *out = get_be64(val.data());
+    return true;
+}
+
+/* Open every column family of the database and load CF:meta. */
+db_t* db_open(const std::string& path, const char* dbname,
+              const sm_options_t* opt)
+{
+    sm_options_t defaults;
+    if (!opt) {
+        sm_options_init(&defaults);
+        opt = &defaults;
+    }
+    if (opt->ts_lease <= 0) {
+        set_error(SM_ERR_INVALID, "ts_lease must be positive");
+        return nullptr;
+    }
+    rocksdb::DBOptions dbo;
+    if (db_options(opt, &dbo) != 0) {
+        return nullptr;
+    }
+
+    std::vector<std::string> names;
+    rocksdb::Status s = rocksdb::DB::ListColumnFamilies(dbo, path, &names);
+    if (!s.ok()) {
+        set_status_error(s, path.c_str());
+        return nullptr;
+    }
+    std::vector<rocksdb::ColumnFamilyDescriptor> cfs;
+    for (const std::string& name : names) {
+        bool rel = name.compare(0, 4, "rel.") == 0;
+        cfs.emplace_back(name, rel ? rel_cf_options()
+                                   : rocksdb::ColumnFamilyOptions());
+    }
+
+    std::unique_ptr<db_t> db(new db_t);
+    db->name = dbname;
+    std::vector<rocksdb::ColumnFamilyHandle*> handles;
+    // Open RocksDB with every column family; this replays the WAL.
+    s = rocksdb::DB::Open(dbo, path, cfs, &handles, &db->rdb);
+    if (!s.ok()) {
+        set_status_error(s, path.c_str());
+        return nullptr;
+    }
+    bool bad_name = false;
+    for (size_t i = 0; i < handles.size(); i++) {
+        const std::string& name = names[i];
+        uint64_t relid;
+        if (name == rocksdb::kDefaultColumnFamilyName) {
+            db->cf_default = handles[i];
+        } else if (name == WISR_CF_TXN) {
+            db->cf_txn = handles[i];
+        } else if (name == WISR_CF_META) {
+            db->cf_meta = handles[i];
+        } else if (name.compare(0, 4, "rel.") == 0 &&
+                   sscanf(name.c_str() + 4, "%" SCNu64, &relid) == 1 &&
+                   rel_cf_name(relid) == name) {
+            db->rels[relid] = handles[i];
+        } else {
+            db->rdb->DestroyColumnFamilyHandle(handles[i]);
+            bad_name = true;
+        }
+    }
+    if (bad_name || !db->cf_txn || !db->cf_meta || !db->rels.count(0)) {
+        set_error(SM_ERR_CORRUPT, "%s: unexpected column families", dbname);
+        return nullptr;
+    }
+
+    uint64_t version, next_ts, next_relid;
+    if (!read_meta(db.get(), WISR_META_VERSION, &version) ||
+        !read_meta(db.get(), WISR_META_NEXT_TS, &next_ts) ||
+        !read_meta(db.get(), WISR_META_NEXT_RELID, &next_relid)) {
+        set_error(SM_ERR_CORRUPT, "%s: CF:meta is incomplete", dbname);
+        return nullptr;
+    }
+    if (version != WISR_DB_VERSION) {
+        set_error(SM_ERR_VERSION, "%s: format version %llu, expected %d",
+                  dbname, (unsigned long long)version, WISR_DB_VERSION);
+        return nullptr;
+    }
+
+    // Resume the allocators one past their persisted leases, and
+    // publish everything below the ts lease (§4.2).
+    db->lease = opt->ts_lease;
+    db->durability_sync = opt->durability_sync;
+    db->global_ts = next_ts + 1;
+    db->ts_limit = next_ts + 1;
+    db->visible_ts = next_ts;
+    db->next_relid = next_relid + 1;
+    db->relid_limit = next_relid + 1;
+    return db.release();
+}
+
+/*
+ * Hand out *next from a lease. When the lease is used up,
+ * persist a new limit before handing out any value under it,
+ * so no value is handed out twice across a restart (§4.2).
+ */
+static int alloc_leased(db_t* db, uint64_t* next, uint64_t* limit,
+                        const char* key, uint64_t* out)
+{
+    std::lock_guard<std::mutex> guard(db->alloc_mu);
+    if (*next >= *limit) {
+        uint64_t new_limit = *next + db->lease;
+        std::string val;
+        put_be64(val, new_limit);
+        rocksdb::WriteOptions wo;
+        wo.sync = true;
+        // Persist the new lease.
+        rocksdb::Status s = db->rdb->Put(wo, db->cf_meta, key, val);
+        if (!s.ok()) {
+            return set_status_error(s, "persist lease");
+        }
+        *limit = new_limit;
+    }
+    *out = (*next)++;
+    return 0;
+}
+
+/* Allocate a timestamp. */
+int db_alloc_ts(db_t* db, uint64_t* out)
+{
+    return alloc_leased(db, &db->global_ts, &db->ts_limit, WISR_META_NEXT_TS,
+                        out);
+}
+
+/* Allocate a relid. */
+int db_alloc_relid(db_t* db, uint64_t* out)
+{
+    return alloc_leased(db, &db->next_relid, &db->relid_limit,
+                        WISR_META_NEXT_RELID, out);
+}
+
+/* Look up relid's CF handle under the shared lock. */
+rocksdb::ColumnFamilyHandle* db_rel_cf(db_t* db, uint64_t relid)
+{
+    std::shared_lock<std::shared_mutex> guard(db->rel_mu);
+    auto it = db->rels.find(relid);
+    return it == db->rels.end() ? nullptr : it->second;
+}
+
+/* Create rel.<relid> and register its handle. */
+int db_create_rel_cf(db_t* db, uint64_t relid)
+{
+    rocksdb::ColumnFamilyHandle* h = nullptr;
+    // Create the relation's column family; this is not transactional.
+    rocksdb::Status s =
+        db->rdb->CreateColumnFamily(rel_cf_options(), rel_cf_name(relid), &h);
+    if (!s.ok()) {
+        return set_status_error(s, "create column family");
+    }
+    std::unique_lock<std::shared_mutex> guard(db->rel_mu);
+    db->rels[relid] = h;
+    return 0;
+}
+
+/* Drop rel.<relid> and unregister its handle. */
+int db_drop_rel_cf(db_t* db, uint64_t relid)
+{
+    std::unique_lock<std::shared_mutex> guard(db->rel_mu);
+    auto it = db->rels.find(relid);
+    if (it == db->rels.end()) {
+        return 0;
+    }
+    // Drop the relation's column family.
+    rocksdb::Status s = db->rdb->DropColumnFamily(it->second);
+    db->rdb->DestroyColumnFamilyHandle(it->second);
+    db->rels.erase(it);
+    if (!s.ok()) {
+        return set_status_error(s, "drop column family");
+    }
+    return 0;
+}
+
 } // namespace wisr
+
+/* Destroy every CF handle, then close RocksDB. */
+wisr::db_t::~db_t()
+{
+    if (!rdb) {
+        return;
+    }
+    for (auto& kv : rels) {
+        rdb->DestroyColumnFamilyHandle(kv.second);
+    }
+    for (rocksdb::ColumnFamilyHandle* h : {cf_default, cf_txn, cf_meta}) {
+        if (h) {
+            rdb->DestroyColumnFamilyHandle(h);
+        }
+    }
+    // Close the database's RocksDB instance.
+    rdb->Close();
+    delete rdb;
+}
 
 /* Fill opt with the defaults documented in sm.h. */
 void sm_options_init(sm_options_t* opt)

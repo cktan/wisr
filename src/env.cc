@@ -307,13 +307,27 @@ sm_env_t* sm_attach(const char* homedir)
 }
 
 /*
- * Release an environment. Sessions do not exist yet (build
- * order step 1, task 5 adds them), so there is nothing for
- * force to close.
+ * Release an environment. With force, close its sessions
+ * first, each as sm_close would; without, refuse while any is
+ * open.
  */
 int sm_detach(sm_env_t* env, int force)
 {
-    (void)force;
+    if (!env) {
+        return 0;
+    }
+    std::set<sm_session_t*> sessions;
+    {
+        std::lock_guard<std::mutex> guard(env->mu);
+        if (!env->sessions.empty() && !force) {
+            return set_error(SM_ERR_INUSE, "%zu sessions are still open",
+                             env->sessions.size());
+        }
+        sessions = env->sessions;
+    }
+    for (sm_session_t* s : sessions) {
+        sm_close(s);
+    }
     // Close the root db and release the pidlock.
     delete env;
     return 0;
