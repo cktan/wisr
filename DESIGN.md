@@ -30,6 +30,14 @@ column types or schemas (values are opaque byte strings), replication,
 multi-process or remote access, and online backup. Nothing in the
 design forecloses them.
 
+**Phases.** Phase 1 is a solid MVCC storage manager: the API in
+`sm.h` and the design in this document, nothing more. Phase 2
+adds the API a secondary-index layer built on top of it needs.
+`SECINDEX.md` lists those gaps and proposes the functions that
+close them (`sm_lock`, a savepoint stack with `sm_forget`,
+`sm_stmt_begin`, descending scans, `sm_scan_seek`,
+`sm_lsrel`). None of them is part of phase 1.
+
 **Assumptions.**
 
 - A `session_t` is used by one thread at a time. Concurrent use of one
