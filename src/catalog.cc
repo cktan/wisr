@@ -58,6 +58,9 @@ int mkrel(sm_session_t* s, const char* relname)
     std::string val;
     put_be64(val, relid);
     if (access_write(s, 0, WRITE_INSERT, catalog_key(relname), val) != 0) {
+        if (!s->active) {
+            return -1; // retryable: the abort already dropped the CF
+        }
         bool dup = sm_errno() == SM_ERR_DUPKEY;
         s->created.pop_back();
         db_drop_rel_cf(s->db, relid);

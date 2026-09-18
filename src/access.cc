@@ -2,8 +2,7 @@
  * access.cc -- sm_insert, sm_update, sm_delete, sm_read, and
  * the sm_scan cursor (DESIGN.md §4.4, §5, §10).
  *
- * Not yet: row locks and the write-write conflict check (build
- * order step 3), SIREAD tracking (step 6).
+ * Not yet: SIREAD tracking (build order step 6).
  */
 
 #include "error.h"
@@ -53,15 +52,17 @@ rocksdb::ColumnFamilyHandle* rel_cf(db_t* db, uint64_t relid)
 }
 
 /*
- * Whether key currently exists for a write (§5 step 3): the
- * newest own version still visible to the transaction, else the
- * newest committed version, whatever its commit_ts. Returns 1
- * if that version is live, 0 if it is a tombstone or there is
- * none, -1 on error.
+ * The version a write checks against (§5 step 3): the newest
+ * own version still visible to the transaction, else the newest
+ * committed version, whatever its commit_ts. Sets *live to
+ * whether it exists and is not a tombstone, and *commit_ts to
+ * its commit_ts (0 for an own version or none). Returns 0 or -1.
  */
-int latest_live(sm_session_t* s, rocksdb::ColumnFamilyHandle* cf,
-                rocksdb::Slice key)
+int latest_version(sm_session_t* s, rocksdb::ColumnFamilyHandle* cf,
+                   rocksdb::Slice key, bool* live, uint64_t* commit_ts)
 {
+    *live = false;
+    *commit_ts = 0;
     rocksdb::ReadOptions ro;
     ro.prefix_same_as_start = true;
     std::unique_ptr<rocksdb::Iterator> it(s->db->rdb->NewIterator(ro, cf));
@@ -76,20 +77,23 @@ int latest_live(sm_session_t* s, rocksdb::ColumnFamilyHandle* cf,
         }
         if (s->xid != 0 && v.xid == s->xid) {
             if (v.seq <= s->seq_hwm) {
-                return !(v.flags & version_tombstone);
+                *live = !(v.flags & version_tombstone);
+                return 0;
             }
             continue;
         }
         int committed = 1;
+        uint64_t ts = v.commit_ts;
         if (!(v.flags & version_stamped)) {
-            uint64_t commit_ts;
-            committed = xct_resolve(s->db, v.xid, &commit_ts);
+            committed = xct_resolve(s->db, v.xid, &ts);
         }
         if (committed < 0) {
             return -1;
         }
         if (committed) {
-            return !(v.flags & version_tombstone);
+            *live = !(v.flags & version_tombstone);
+            *commit_ts = ts;
+            return 0;
         }
     }
     if (!it->status().ok()) {
@@ -350,11 +354,24 @@ int access_write(sm_session_t* s, uint64_t relid, write_op_t op,
     if (xct_check_writable(s->db) != 0) {
         return -1;
     }
-    // Build order step 3 takes the row lock here, and rejects a
-    // key committed after the snapshot (§5.2) below.
-    int live = latest_live(s, cf, key);
-    if (live < 0) {
+    // Take the row lock; this blocks while another transaction
+    // holds it, and fails if we are chosen as a deadlock victim.
+    if (lock_acquire(s, relid, key) != 0) {
+        return xct_fail_retryable(s, SM_ERR_DEADLOCK,
+                                  "chosen as a deadlock victim");
+    }
+    bool live;
+    uint64_t commit_ts;
+    if (latest_version(s, cf, key, &live, &commit_ts) != 0) {
         return -1;
+    }
+    // First-committer-wins (§5.2), at every level: the check is
+    // against the begin snapshot, even under read committed.
+    if (commit_ts > s->snapshot_ts) {
+        return xct_fail_retryable(
+            s, SM_ERR_CONFLICT,
+            "key was changed by a transaction that committed after "
+            "this one began");
     }
     if (op == WRITE_INSERT && live) {
         return set_error(SM_ERR_DUPKEY, "key already exists");

@@ -477,39 +477,42 @@ the commit record does (§8.2).
 
 ### 5.1 Row locks
 
-An in-memory sharded hash table, `(relid, hash(userkey))` → owner
-transaction + waiter queue. Exclusive only; readers never take one.
-Locks are released at commit/abort — strict, so no cascading aborts.
+An in-memory hash table, `(relid, userkey)` → owner
+transaction. Exclusive only; readers never take one. Locks
+are released at commit/abort — strict, so no cascading
+aborts. The key is exact, so two distinct keys never share
+an entry and never block or deadlock each other. One mutex
+covers the table and every waiter's waits-for pointer, which
+keeps a deadlock walk consistent; sharding it is a later
+optimization if a benchmark shows contention.
 
-A waiter blocks on a condition variable with a deadlock check: a
-background detector walks the waits-for graph every `deadlock_ms`
-(default 50ms) and aborts the **youngest** transaction in a cycle with
-`SM_ERR_DEADLOCK`. Cycles are only possible among writers, so the graph
-stays small.
-
-Locks are keyed by hash, so a collision makes two distinct keys share
-a lock entry — correct (it only over-serializes), and the entry stores
-the full key so the common case is exact.
+Deadlocks are found as PostgreSQL's `deadlock_timeout`
+finds them. A blocked writer sleeps `deadlock_ms` (default
+50ms), then walks the waits-for chain from itself. If the
+chain returns to it, the **youngest** transaction on the
+cycle — the last to begin — fails with `SM_ERR_DEADLOCK`.
+Short waits never pay for the walk, there is no detector
+thread, and cycles are only possible among writers, so the
+chain stays short.
 
 A transaction appends a lock entry to `T.locks` only when it
-first acquires it. Re-acquiring an entry it already holds, for
-the same key or a colliding one, appends nothing, so §6.5's
-rollback releases only entries first taken after the savepoint.
+first acquires it. Re-acquiring a key it already holds
+appends nothing, so §6.5's rollback releases only entries
+first taken after the savepoint.
 
-**Telling the victim.** The detector aborts the youngest
-transaction in the cycle, and that transaction need not
-be the one blocked on a condition variable — it may be
-running in its caller's thread, between `sm_*` calls,
-where there is nothing to wake. The victim therefore
-carries an atomic `doomed` field holding the reason. The
-detector stores it and signals the transaction's
-condition variable; a waiter wakes and returns the
-reason, while a running transaction finds it at the entry
-of its next `sm_*` call, which fails with
-`SM_ERR_DEADLOCK` and does nothing else. Every entry
-point checks `doomed` first, so a doomed transaction can
-only be aborted. The same field carries the doom flag
-that §8.4 sets on a serializable reader.
+**Telling the victim.** The victim need not be the waiter
+that found the cycle. It carries an atomic `doomed` field
+holding the reason: the finder stores it and wakes every
+waiter, and the victim — blocked elsewhere on the same
+cycle, since every member of a cycle is waiting — returns
+the reason from its own wait. A transaction that is doomed
+while running, between `sm_*` calls, where there is nothing
+to wake, finds the field at the entry of its next call,
+which fails with the reason and does nothing else. Every
+entry point checks `doomed` first, so a doomed transaction
+can only be aborted. Deadlock detection only ever dooms a
+waiter; the running case is for the doom flag that §8.4
+sets on a serializable reader.
 
 **What a transaction holds in memory.** Row values stream
 to RocksDB, so a transaction is bounded by disk, but
@@ -1211,7 +1214,7 @@ the status resolution rule.
    rel.<relid> CF that has neither a live catalog row naming
    it (a name's newest committed version, not a tombstone) nor
    an entry in a prepared record's `created`.
-7. Start the GC / compaction filter, deadlock detector, commit advancer.
+7. Start the GC / compaction filter and commit advancer.
 8. Open for sessions.
 ```
 
@@ -1675,7 +1678,7 @@ src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
 src/version.cc          key/value codec, version comparator, visibility
 src/access.cc           read / scan / insert / update / delete
-src/lockmgr.cc          row locks, waits-for graph, deadlock detector
+src/lockmgr.cc          row locks, waits-for graph, deadlock detection
 src/ssi.cc              SIREAD locks, rw-edges, validation
 src/catalog.cc          relation name/id mapping, DDL, CF create/drop
 src/gc.cc               compaction filter, watermarks, drop-relation purge
@@ -1712,14 +1715,14 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
   It can update a key it inserted and re-insert a key it
   deleted (§5), and `sm_rollback` with no savepoint fails with
   `SM_ERR_NOSAVEPOINT`. A key locked before a savepoint and
-  rewritten after it stays locked through `sm_rollback`, also
-  when the rewrite is of a different key sharing its lock entry
-  (§5.1).
-- **Deadlock.** Build a cycle in which the youngest transaction
-  is not the one blocked, and assert it learns it was chosen:
-  its next `sm_*` call fails with `SM_ERR_DEADLOCK` and changes
-  nothing, while the transaction that was blocked proceeds
-  (§5.1).
+  rewritten after it stays locked through `sm_rollback` (§5.1).
+- **Deadlock.** Build a two-transaction cycle in both orders:
+  the older waiter finds the cycle and the younger is the
+  victim, and the younger finds it and is itself the victim.
+  Either way the youngest fails with `SM_ERR_DEADLOCK` and the
+  other proceeds. Separately, doom a running transaction and
+  assert its next `sm_*` call fails with that reason and
+  changes nothing (§5.1).
 - **Scan seek mode.** With the prefix extractor configured,
   a scan from a `skey` that is absent from the database
   returns every key above it in range, and a scan whose range

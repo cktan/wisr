@@ -285,6 +285,10 @@ db_t* db_open(const std::string& path, const char* dbname,
         set_error(SM_ERR_INVALID, "commit_cache_entries must be at least 1");
         return nullptr;
     }
+    if (opt->deadlock_ms <= 0) {
+        set_error(SM_ERR_INVALID, "deadlock_ms must be positive");
+        return nullptr;
+    }
     if (opt->ts_lease <= 0) {
         set_error(SM_ERR_INVALID, "ts_lease must be positive");
         return nullptr;
@@ -363,6 +367,7 @@ db_t* db_open(const std::string& path, const char* dbname,
     db->next_relid = next_relid + 1;
     db->relid_limit = next_relid + 1;
     db->cache_entries = opt->commit_cache_entries;
+    db->deadlock_ms = opt->deadlock_ms;
     return db.release();
 }
 

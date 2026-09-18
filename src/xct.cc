@@ -9,8 +9,10 @@
  * then publishes (§8.2). Abort writes nothing: absence of a
  * record resolves as dead (§3.4).
  *
- * Not yet: row locks (build order step 3), savepoints (4), and
- * prepare (7).
+ * A retryable error (CONFLICT, DEADLOCK) aborts the transaction
+ * on the engine's side before it is reported (§12.1).
+ *
+ * Not yet: savepoints (build order step 4) and prepare (7).
  */
 
 #include "codec.h"
@@ -85,6 +87,23 @@ void drop_created(sm_session_t* s)
     }
 }
 
+/*
+ * End the transaction without committing (§6.6): close its
+ * cursors, take it out of the active table so its versions
+ * resolve dead, drop the relations it created, and release its
+ * locks.
+ */
+void discard(sm_session_t* s)
+{
+    xct_end_scans(s);
+    if (s->xid != 0) {
+        leave_active(s->db, s->xid);
+    }
+    drop_created(s);
+    lock_release_all(s);
+    reset(s);
+}
+
 /* sm_begin, minus the out-of-memory guard. */
 int begin(sm_session_t* s, sm_xctlevel_t level)
 {
@@ -101,6 +120,8 @@ int begin(sm_session_t* s, sm_xctlevel_t level)
     }
     reset(s);
     s->level = level;
+    s->begin_seq = ++s->db->begin_seq;
+    s->doomed = 0;
     // Take the snapshot: the current visible_ts (§4.1).
     s->snapshot_ts = s->db->visible_ts.load();
     s->active = true;
@@ -126,9 +147,7 @@ int commit(sm_session_t* s)
     if (xct_check_writable(db) != 0 ||
         db_claim_commit_ts(db, &commit_ts) != 0) {
         // No record was written, so the transaction is dead.
-        leave_active(db, xid);
-        drop_created(s);
-        reset(s);
+        discard(s);
         return -1;
     }
     std::string val;
@@ -145,13 +164,15 @@ int commit(sm_session_t* s)
         // Write the status record: the commit point (§8.2).
         st = db->rdb->Put(wo, db->cf_txn, txn_key(xid), val);
     }
-    reset(s);
     if (!st.ok()) {
         // Fail stop: the record may have reached the WAL, so the
         // transaction stays in flight -- in the active table,
         // its commit_ts holding back visible_ts -- until a
-        // reopen resolves it from the log (§8.2).
+        // reopen resolves it from the log (§8.2). Its locks go:
+        // the database refuses writes from now on anyway.
         db->failed = true;
+        lock_release_all(s);
+        reset(s);
         return set_error(SM_ERR_IO, "write commit record (outcome unknown): %s",
                          st.ToString().c_str());
     }
@@ -159,24 +180,25 @@ int commit(sm_session_t* s)
     // the active table finds it in the cache or CF:txn (§3.4).
     enter_cache(db, xid, commit_ts);
     db_commit_done(db, commit_ts);
+    // Release the row locks only once the commit is visible.
+    lock_release_all(s);
+    reset(s);
     return 0;
 }
 
-/* sm_abort, minus the out-of-memory guard. */
+/*
+ * sm_abort, minus the out-of-memory guard. It skips the doomed
+ * check: a doomed transaction can still be aborted (§5.1).
+ */
 int abort_xct(sm_session_t* s)
 {
-    if (xct_check_active(s) != 0) {
-        return -1;
+    if (!s) {
+        return set_error(SM_ERR_INVALID, "sm_abort: session is NULL");
     }
-    xct_end_scans(s);
-    // Discard the writes: once out of the active table, with no
-    // status record, they resolve dead (§3.4). Only the created
-    // column families need undoing.
-    if (s->xid != 0) {
-        leave_active(s->db, s->xid);
+    if (!s->active) {
+        return set_error(SM_ERR_NOTRANS, "no active transaction");
     }
-    drop_created(s);
-    reset(s);
+    discard(s);
     return 0;
 }
 
@@ -194,7 +216,19 @@ int xct_check_active(sm_session_t* s)
     if (!s->active) {
         return set_error(SM_ERR_NOTRANS, "no active transaction");
     }
+    // A doomed transaction fails here, before doing anything.
+    if (s->doomed) {
+        return xct_fail_retryable(s, SM_ERR_DEADLOCK,
+                                  "chosen as a deadlock victim");
+    }
     return 0;
+}
+
+/* Abort on the engine's side, then report the retryable error. */
+int xct_fail_retryable(sm_session_t* s, sm_errno_t e, const char* msg)
+{
+    discard(s);
+    return set_error(e, "%s; the transaction was aborted", msg);
 }
 
 /* Read committed takes a statement snapshot; the others reuse the begin one. */

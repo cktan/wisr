@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 
+#include <atomic>
 #include <memory>
 #include <set>
 #include <string>
@@ -30,6 +31,17 @@ struct sm_session_t {
     uint32_t seq = 0;              /* last write's seq; the next is seq + 1 */
     uint32_t seq_hwm = 0;          /* own versions above this are invisible */
     std::vector<uint64_t> created; /* relids made by sm_mkrel */
+    uint64_t begin_seq = 0;        /* begin order; larger is younger */
+
+    /*
+     * Why the transaction must fail at its next call (§5.1):
+     * SM_ERR_DEADLOCK once chosen as a deadlock victim, else 0.
+     */
+    std::atomic<int> doomed{0};
+
+    /* Row locks (§5.1); guarded by the database's lock_mu. */
+    std::vector<std::string> locks;      /* held, in acquisition order */
+    sm_session_t* waiting_for = nullptr; /* the holder blocking us */
 
     std::set<sm_scan_t*> scans; /* open cursors */
     std::string readbuf;        /* what sm_read hands out */
@@ -66,6 +78,24 @@ int xct_check_active(sm_session_t* session);
 
 /* The view a statement starting now reads at (§6.2, §10.1). */
 view_t xct_view(sm_session_t* session);
+
+/*
+ * Abort the active transaction on the engine's side, as for a
+ * retryable error, then record e with msg. Returns -1. The
+ * caller must not call sm_abort afterwards (sm.h).
+ */
+int xct_fail_retryable(sm_session_t* session, sm_errno_t e, const char* msg);
+
+/*
+ * Take the exclusive row lock on (relid, key) for the session's
+ * transaction, blocking while another holds it (§5.1). Returns
+ * 0, or -1 without an error set if the transaction was doomed
+ * while waiting; the caller then fails it with s->doomed.
+ */
+int lock_acquire(sm_session_t* session, uint64_t relid, rocksdb::Slice key);
+
+/* Release every row lock the session's transaction holds. */
+void lock_release_all(sm_session_t* session);
 
 /* Fail with SM_ERR_IO if db has failed stop (§8.2). */
 int xct_check_writable(wisr::db_t* db);

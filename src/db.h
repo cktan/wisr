@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -97,6 +98,21 @@ struct db_t {
      * in for the write's failure. Empty outside tests.
      */
     std::function<rocksdb::Status(uint64_t commit_ts)> test_before_commit;
+
+    /*
+     * Row locks (§5.1): lock key -> the session whose transaction
+     * holds it. One mutex covers the table and every session's
+     * waiting_for pointer, so a deadlock walk sees a consistent
+     * waits-for graph; shard it if a benchmark shows contention.
+     * Every release and every doom notifies lock_cv.
+     */
+    std::mutex lock_mu;
+    std::condition_variable lock_cv;
+    std::unordered_map<std::string, sm_session_t*> lock_owners;
+    int deadlock_ms = 50;
+
+    /* Hands out sm_session_t::begin_seq. */
+    std::atomic<uint64_t> begin_seq{0};
 
     /* Destroy the CF handles and close RocksDB. */
     ~db_t();
