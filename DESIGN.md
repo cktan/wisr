@@ -611,7 +611,7 @@ sm_savepoint():
     T.sp_locks  = T.locks.size()
     T.sp_rels   = T.created.size()
     T.sp_drops  = T.dropped.size()
-    T.sp_scans  = set of scan cursors open right now
+    T.sp_scan   = id of the latest cursor opened so far
 
 sm_rollback():
     if no savepoint: fail with SM_ERR_NOSAVEPOINT    # API.md divergence 8
@@ -626,7 +626,7 @@ sm_rollback():
     T.undo.truncate(m)
     T.seq_hwm = (m > 0) ? T.undo[m-1].seq : 0       # own-write visibility
     T.seq     = T.seq_hwm + 1                        # live seqs stay a prefix
-    close every open cursor not in T.sp_scans        # see below
+    close every open cursor with id > T.sp_scan      # see below
     release locks acquired after the mark
     ssi read set is NOT rolled back                  # conservative, correct
     transaction stays ACTIVE
@@ -662,11 +662,14 @@ aborts. Cursors open *before* the mark are untouched —
 they could never see the undone versions, because their
 snapshot predates the writes.
 
-This is why `sm_savepoint` records `T.sp_scans`. With one
-savepoint per session the set is small and the test is a
-lookup per open cursor. Closing releases each cursor's
-RocksDB snapshot, which also lets `gc_watermark` advance
-past an abandoned scan.
+This is why `sm_savepoint` records `T.sp_scan`. Each
+cursor gets an id from a per-session counter as it opens, so
+"opened after the mark" is one comparison per open cursor.
+Recording the set of open cursors instead would misjudge a
+cursor opened after the mark at the address of one closed
+before it. Closing releases each cursor's RocksDB snapshot,
+which also lets `gc_watermark` advance past an abandoned
+scan.
 
 Releasing locks acquired after the mark is safe: the row was untouched
 before the savepoint, so no one observed our intent on it.

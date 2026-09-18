@@ -34,6 +34,25 @@ struct sm_session_t {
     uint64_t begin_seq = 0;        /* begin order; larger is younger */
 
     /*
+     * The undo list (§6.5): every version written, in write
+     * order, as (relid, userkey, seq), so a rollback can delete
+     * exactly the versions written since the savepoint.
+     */
+    struct undo_t {
+        uint64_t relid;
+        std::string key;
+        uint32_t seq;
+    };
+    std::vector<undo_t> undo;
+
+    /* The one savepoint: positions to roll back to (§6.5). */
+    bool has_savepoint = false;
+    size_t sp_undo = 0;      /* undo.size() at the mark */
+    size_t sp_locks = 0;     /* locks.size() at the mark */
+    size_t sp_created = 0;   /* created.size() at the mark */
+    uint64_t sp_scan_id = 0; /* cursors with a larger id came later */
+
+    /*
      * Why the transaction must fail at its next call (§5.1):
      * SM_ERR_DEADLOCK once chosen as a deadlock victim, else 0.
      */
@@ -44,11 +63,13 @@ struct sm_session_t {
     sm_session_t* waiting_for = nullptr; /* the holder blocking us */
 
     std::set<sm_scan_t*> scans; /* open cursors */
+    uint64_t next_scan_id = 0;  /* hands out sm_scan_t::id */
     std::string readbuf;        /* what sm_read hands out */
 };
 
 struct sm_scan_t {
     sm_session_t* session = nullptr;
+    uint64_t id = 0; /* opening order within the session */
     const rocksdb::Snapshot* snap = nullptr; /* the physical view */
     std::unique_ptr<rocksdb::Iterator> it;
     std::string upper; /* owns iterate_upper_bound's bytes */
@@ -96,6 +117,12 @@ int lock_acquire(sm_session_t* session, uint64_t relid, rocksdb::Slice key);
 
 /* Release every row lock the session's transaction holds. */
 void lock_release_all(sm_session_t* session);
+
+/*
+ * Release the locks the session took after its first n, the
+ * ones a rollback to a savepoint gives back (§6.5).
+ */
+void lock_release_from(sm_session_t* session, size_t n);
 
 /* Fail with SM_ERR_IO if db has failed stop (§8.2). */
 int xct_check_writable(wisr::db_t* db);

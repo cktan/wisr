@@ -206,6 +206,7 @@ sm_scan_t* scan(sm_session_t* s, const char* relname, const char* skey,
 
     std::unique_ptr<sm_scan_t> c(new sm_scan_t);
     c->session = s;
+    c->id = ++s->next_scan_id;
     c->snapshot_ts = view.snapshot_ts;
     c->xid = view.xid;
     c->seq_hwm = view.seq_hwm;
@@ -397,6 +398,7 @@ int access_write(sm_session_t* s, uint64_t relid, write_op_t op,
     }
     s->seq = seq;
     s->seq_hwm = seq;
+    s->undo.push_back({relid, key.ToString(), seq});
     return 0;
 }
 

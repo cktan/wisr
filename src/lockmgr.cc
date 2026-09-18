@@ -104,16 +104,22 @@ int lock_acquire(sm_session_t* s, uint64_t relid, rocksdb::Slice key)
 /* Drop every lock the session holds and wake the waiters. */
 void lock_release_all(sm_session_t* s)
 {
+    lock_release_from(s, 0);
+}
+
+/* Drop the locks taken after the first n and wake the waiters. */
+void lock_release_from(sm_session_t* s, size_t n)
+{
     db_t* db = s->db;
     std::lock_guard<std::mutex> guard(db->lock_mu);
     s->waiting_for = nullptr;
-    if (s->locks.empty()) {
+    if (s->locks.size() <= n) {
         return;
     }
-    for (const std::string& k : s->locks) {
-        db->lock_owners.erase(k);
+    for (size_t i = n; i < s->locks.size(); i++) {
+        db->lock_owners.erase(s->locks[i]);
     }
-    s->locks.clear();
+    s->locks.resize(n);
     db->lock_cv.notify_all();
 }
 

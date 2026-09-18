@@ -12,14 +12,18 @@
  * A retryable error (CONFLICT, DEADLOCK) aborts the transaction
  * on the engine's side before it is reported (§12.1).
  *
- * Not yet: savepoints (build order step 4) and prepare (7).
+ * Not yet: prepare (build order step 7).
  */
 
 #include "codec.h"
 #include "error.h"
 #include "session.h"
+#include "version.h"
 
 #include <new>
+#include <vector>
+
+#include <rocksdb/write_batch.h>
 
 using namespace wisr;
 
@@ -73,6 +77,8 @@ void reset(sm_session_t* s)
     s->seq = 0;
     s->seq_hwm = 0;
     s->created.clear();
+    s->undo.clear();
+    s->has_savepoint = false;
 }
 
 /*
@@ -102,6 +108,83 @@ void discard(sm_session_t* s)
     drop_created(s);
     lock_release_all(s);
     reset(s);
+}
+
+/* sm_savepoint, minus the out-of-memory guard. */
+int savepoint(sm_session_t* s)
+{
+    if (xct_check_active(s) != 0) {
+        return -1;
+    }
+    // Mark the current positions; this replaces any earlier mark.
+    s->has_savepoint = true;
+    s->sp_undo = s->undo.size();
+    s->sp_created = s->created.size();
+    s->sp_scan_id = s->next_scan_id;
+    {
+        std::lock_guard<std::mutex> guard(s->db->lock_mu);
+        s->sp_locks = s->locks.size();
+    }
+    return 0;
+}
+
+/* sm_rollback, minus the out-of-memory guard. */
+int rollback(sm_session_t* s)
+{
+    if (xct_check_active(s) != 0) {
+        return -1;
+    }
+    if (!s->has_savepoint) {
+        return set_error(SM_ERR_NOSAVEPOINT, "no savepoint to roll back to");
+    }
+    db_t* db = s->db;
+
+    // Delete exactly the versions written since the mark, in one
+    // batch: if it fails, nothing changed and the transaction
+    // stays as it was.
+    rocksdb::WriteBatch batch;
+    for (size_t i = s->undo.size(); i-- > s->sp_undo;) {
+        const sm_session_t::undo_t& u = s->undo[i];
+        rocksdb::ColumnFamilyHandle* cf = db_rel_cf(db, u.relid);
+        if (cf) {
+            batch.Delete(cf, version_key(u.key, s->xid, u.seq));
+        }
+    }
+    if (batch.Count() > 0) {
+        rocksdb::Status st = db->rdb->Write(rocksdb::WriteOptions(), &batch);
+        if (!st.ok()) {
+            return set_status_error(st, "roll back to savepoint");
+        }
+    }
+
+    // Close the cursors opened after the mark: their snapshot
+    // and frozen seq_hwm would still admit the undone versions.
+    std::vector<sm_scan_t*> later;
+    for (sm_scan_t* c : s->scans) {
+        if (c->id > s->sp_scan_id) {
+            later.push_back(c);
+        }
+    }
+    for (sm_scan_t* c : later) {
+        sm_scan_end(c);
+    }
+
+    // Drop the relations created after the mark, newest first.
+    for (size_t i = s->created.size(); i-- > s->sp_created;) {
+        db_drop_rel_cf(db, s->created[i]);
+    }
+    s->created.resize(s->sp_created);
+
+    // Rewind seq with seq_hwm, so the own versions still in
+    // effect are exactly seqs 1..seq_hwm (§6.5).
+    s->undo.resize(s->sp_undo);
+    s->seq_hwm = s->undo.empty() ? 0 : s->undo.back().seq;
+    s->seq = s->seq_hwm;
+
+    // Give back the locks taken after the mark; nobody saw our
+    // intent on those rows.
+    lock_release_from(s, s->sp_locks);
+    return 0;
 }
 
 /* sm_begin, minus the out-of-memory guard. */
@@ -329,6 +412,26 @@ int sm_commit(sm_session_t* session)
         return commit(session);
     } catch (const std::bad_alloc&) {
         return set_error(SM_ERR_NOMEM, "sm_commit: out of memory");
+    }
+}
+
+/* Set the session's one savepoint. */
+int sm_savepoint(sm_session_t* session)
+{
+    try {
+        return savepoint(session);
+    } catch (const std::bad_alloc&) {
+        return set_error(SM_ERR_NOMEM, "sm_savepoint: out of memory");
+    }
+}
+
+/* Undo every write made since the savepoint. */
+int sm_rollback(sm_session_t* session)
+{
+    try {
+        return rollback(session);
+    } catch (const std::bad_alloc&) {
+        return set_error(SM_ERR_NOMEM, "sm_rollback: out of memory");
     }
 }
 
