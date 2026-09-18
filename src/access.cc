@@ -19,6 +19,30 @@ using namespace wisr;
 namespace
 {
 
+/*
+ * Holds a read epoch for one call: from before its iterator is
+ * opened until it is done resolving what it read, so the CF:txn
+ * sweep waits for it (§8.3).
+ */
+class read_epoch_guard_t
+{
+  public:
+    /* Enter the current read epoch. */
+    explicit read_epoch_guard_t(db_t* db) : m_db(db), m_epoch(db_read_enter(db))
+    {
+    }
+
+    /* Leave it. */
+    ~read_epoch_guard_t()
+    {
+        db_read_leave(m_db, m_epoch);
+    }
+
+  private:
+    db_t* m_db;
+    uint64_t m_epoch;
+};
+
 /* 1 if version v is visible at view, 0 if not, -1 on error (§4.4). */
 int visible(db_t* db, const version_t& v, const view_t& view)
 {
@@ -63,6 +87,7 @@ int latest_version(sm_session_t* s, rocksdb::ColumnFamilyHandle* cf,
 {
     *live = false;
     *commit_ts = 0;
+    read_epoch_guard_t epoch(s->db);
     rocksdb::ReadOptions ro;
     ro.prefix_same_as_start = true;
     std::unique_ptr<rocksdb::Iterator> it(s->db->rdb->NewIterator(ro, cf));
@@ -210,7 +235,9 @@ sm_scan_t* scan(sm_session_t* s, const char* relname, const char* skey,
     c->snapshot_ts = view.snapshot_ts;
     c->xid = view.xid;
     c->seq_hwm = view.seq_hwm;
-    // Take the RocksDB snapshot: the cursor's physical view (§10.2).
+    // Count the cursor as a reader for its whole life (§8.3),
+    // then take the RocksDB snapshot: its physical view (§10.2).
+    c->epoch = db_read_enter(s->db);
     c->snap = s->db->rdb->GetSnapshot();
 
     rocksdb::ReadOptions ro;
@@ -312,6 +339,7 @@ int access_read(sm_session_t* s, uint64_t relid, const view_t& view,
     if (!cf) {
         return -1;
     }
+    read_epoch_guard_t epoch(s->db);
     rocksdb::ReadOptions ro;
     ro.prefix_same_as_start = true;
     std::unique_ptr<rocksdb::Iterator> it(s->db->rdb->NewIterator(ro, cf));
@@ -482,8 +510,10 @@ void sm_scan_end(sm_scan_t* scan)
     if (!scan) {
         return;
     }
+    db_t* db = scan->session->db;
     scan->session->scans.erase(scan);
     scan->it.reset();
-    scan->session->db->rdb->ReleaseSnapshot(scan->snap);
+    db->rdb->ReleaseSnapshot(scan->snap);
+    db_read_leave(db, scan->epoch);
     delete scan;
 }

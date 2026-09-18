@@ -146,6 +146,32 @@ struct db_t {
     std::thread gc_thread;
     std::mutex gc_run_mu; /* one gc_run_once at a time */
 
+    /*
+     * Read epochs, for the CF:txn sweep (§8.3 step 3). Every
+     * reader -- a point read, a write's existence check, a
+     * cursor for its whole life -- is counted in the current
+     * epoch's slot from before it opens an iterator until it is
+     * done resolving what it read. The sweep flips the epoch
+     * after its compaction pass and deletes records only once
+     * the old slot drains: every reader that could still see a
+     * pre-pass, unstamped version has finished.
+     */
+    std::atomic<uint64_t> read_epoch{0};
+    std::atomic<int64_t> readers[2] = {};
+
+    /*
+     * The CF:txn sweep in progress: after its pass and epoch
+     * flip it waits, across GC runs, for the old epoch's readers
+     * before deleting COMMITTED records at or below sweep_w0.
+     * gc_filter_errors counts versions the filter kept unstamped
+     * out of doubt; a pass that saw any may not delete records.
+     */
+    bool sweep_pending = false;
+    uint64_t sweep_w0 = 0;
+    uint64_t sweep_epoch = 0;
+    std::atomic<uint64_t> gc_filter_errors{0};
+    uint64_t txn_sweep_records = 1000000; /* CF:txn keys to trigger */
+
     /* Destroy the CF handles and close RocksDB. */
     ~db_t();
 };
@@ -196,6 +222,12 @@ std::string rel_cf_name(uint64_t relid);
 rocksdb::ColumnFamilyOptions rel_cf_options(db_t* db = nullptr,
                                             uint64_t relid = 0);
 
+/* Enter the current read epoch; returns it for db_read_leave. */
+uint64_t db_read_enter(db_t* db);
+
+/* Leave the read epoch returned by db_read_enter. */
+void db_read_leave(db_t* db, uint64_t epoch);
+
 /* Take a transaction's begin snapshot and register it (§8.3). */
 uint64_t db_take_snapshot(db_t* db);
 
@@ -223,11 +255,22 @@ void gc_queue_drops(db_t* db, uint64_t commit_ts,
                     const std::vector<uint64_t>& relids);
 
 /*
- * Do the GC work that is due now: purge queued tombstones and
- * drop relations whose drop the watermark has passed. The
- * worker calls this; tests call it to run GC synchronously.
+ * Do the GC work that is due now: purge queued tombstones, drop
+ * relations whose drop the watermark has passed, and advance
+ * the CF:txn sweep once CF:txn has grown past its threshold.
+ * The worker calls this; tests call it to run GC synchronously.
  */
 void gc_run_once(db_t* db);
+
+/*
+ * Advance the CF:txn sweep (§8.3). With none pending and start
+ * set, run the compaction pass and flip the read epoch. With
+ * one pending, delete the swept COMMITTED records once the old
+ * epoch's readers are gone. Returns the number of records
+ * deleted when a sweep completes, 0 if one is still pending,
+ * and -1 if the pass failed or could not be trusted.
+ */
+int64_t gc_sweep_txn(db_t* db, bool start);
 
 /*
  * Apply opt->rocksdb_options, if any, on top of *out. Returns 0,

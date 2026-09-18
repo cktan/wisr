@@ -72,7 +72,8 @@ struct sm_session_t {
 
 struct sm_scan_t {
     sm_session_t* session = nullptr;
-    uint64_t id = 0; /* opening order within the session */
+    uint64_t id = 0;    /* opening order within the session */
+    uint64_t epoch = 0; /* read epoch held for the cursor's life */
     const rocksdb::Snapshot* snap = nullptr; /* the physical view */
     std::unique_ptr<rocksdb::Iterator> it;
     std::string upper; /* owns iterate_upper_bound's bytes */
@@ -126,6 +127,12 @@ void lock_release_all(sm_session_t* session);
  * ones a rollback to a savepoint gives back (§6.5).
  */
 void lock_release_from(sm_session_t* session, size_t n);
+
+/*
+ * Delete the COMMITTED status records with commit_ts <= w0, for
+ * the CF:txn sweep (§8.3). Returns the number deleted, or -1.
+ */
+int64_t xct_drop_committed_records(wisr::db_t* db, uint64_t w0);
 
 /* Fail with SM_ERR_IO if db has failed stop (§8.2). */
 int xct_check_writable(wisr::db_t* db);

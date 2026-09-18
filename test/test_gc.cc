@@ -34,11 +34,12 @@ struct raw_t {
 class gc_fixture_t
 {
   public:
-    /* Create "db" and "t". */
-    gc_fixture_t()
+    /* Create "db" and "t"; the first session opens "db" with opt. */
+    explicit gc_fixture_t(const sm_options_t* opt = nullptr)
     {
         REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
-        m_s = open();
+        m_s = sm_open(m_home.env(), "db", opt);
+        REQUIRE(m_s);
         REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
         REQUIRE(sm_mkrel(m_s, "t") == 0);
         REQUIRE(sm_commit(m_s) == 0);
@@ -91,6 +92,28 @@ class gc_fixture_t
             db()->rdb
                 ->CompactRange(opt, db_rel_cf(db(), relid), nullptr, nullptr)
                 .ok());
+    }
+
+    /* The number of records in CF:txn. */
+    size_t txn_records()
+    {
+        std::unique_ptr<rocksdb::Iterator> it(
+            db()->rdb->NewIterator(rocksdb::ReadOptions(), db()->cf_txn));
+        size_t n = 0;
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            n++;
+        }
+        REQUIRE(it->status().ok());
+        return n;
+    }
+
+    /* Close the session, reattach, and reopen "db" with opt. */
+    void reopen(const sm_options_t* opt)
+    {
+        REQUIRE(sm_close(m_s) == 0);
+        m_home.reattach();
+        m_s = sm_open(m_home.env(), "db", opt);
+        REQUIRE(m_s);
     }
 
     /* Every version stored in relid's CF, in order. */
@@ -330,4 +353,164 @@ TEST_CASE("a dropped relation's column family goes once no snapshot sees it")
     CHECK(db_rel_cf(f.db(), urelid) != nullptr);
     sm_close(s);
     sm_close(r);
+}
+
+namespace
+{
+
+/* Options with a one-entry commit cache, so CF:txn answers lookups. */
+sm_options_t tiny_cache()
+{
+    sm_options_t opt;
+    sm_options_init(&opt);
+    opt.commit_cache_entries = 1;
+    return opt;
+}
+
+/* The keys a full scan of "t" returns, through s. */
+std::vector<std::string> scan_keys(sm_session_t* s)
+{
+    sm_scan_t* c = sm_scan(s, "t", nullptr, 0, 0, nullptr, 0, 0);
+    REQUIRE_MESSAGE(c, sm_errmsg());
+    std::vector<std::string> out;
+    const char *k, *d;
+    size_t kl, dl;
+    while (sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+        out.emplace_back(k, kl);
+    }
+    sm_scan_end(c);
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("the CF:txn sweep deletes records only once every version is stamped")
+{
+    // Verify committed rows stay committed after their records go (§8.3).
+    // 1. Commit 30 transactions, one key each; CF:txn holds a
+    //    record per writing commit.
+    // 2. Sweep: the pass stamps every version, then the records
+    //    at or below the watermark are deleted.
+    // 3. Every key reads back, by point read and scan, now and
+    //    after reopening (no commit cache to help).
+    sm_options_t opt = tiny_cache();
+    gc_fixture_t f(&opt);
+    sm_session_t* s = f.s();
+    for (int i = 0; i < 30; i++) {
+        commit_put(s, "k" + std::to_string(100 + i), "v");
+    }
+    size_t before = f.txn_records();
+    CHECK(before >= 30);
+
+    CHECK(gc_sweep_txn(f.db(), true) == (int64_t)before);
+    CHECK(f.txn_records() == 0);
+    for (const raw_t& v : f.raw(f.relid())) {
+        CHECK((v.flags & version_stamped) != 0);
+    }
+
+    for (int pass = 0; pass < 2; pass++) {
+        CAPTURE(pass);
+        if (pass == 1) {
+            f.reopen(&opt);
+            s = f.s();
+        }
+        REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+        for (int i = 0; i < 30; i++) {
+            CHECK(get(s, "t", "k" + std::to_string(100 + i)) == "v");
+        }
+        CHECK(scan_keys(s).size() == 30);
+        REQUIRE(sm_commit(s) == 0);
+    }
+}
+
+TEST_CASE("a cursor opened before the sweep's pass holds back record deletion")
+{
+    // Verify the sweep waits out pre-pass readers (§8.3 step 3).
+    // 1. Commit 10 keys; open cursor C, which pins the unstamped,
+    //    pre-pass versions.
+    // 2. Start the sweep: the pass runs, but deletion waits on C,
+    //    so the call reports it pending and the records remain.
+    // 3. C still returns all 10 rows.
+    // 4. Close C; the next step of the sweep deletes the records.
+    sm_options_t opt = tiny_cache();
+    gc_fixture_t f(&opt);
+    sm_session_t* s = f.s();
+    sm_session_t* r = f.open();
+    for (int i = 0; i < 10; i++) {
+        commit_put(s, "k" + std::to_string(i), "v");
+    }
+    size_t before = f.txn_records();
+    REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+    sm_scan_t* c = sm_scan(r, "t", nullptr, 0, 0, nullptr, 0, 0);
+    REQUIRE(c);
+
+    CHECK(gc_sweep_txn(f.db(), true) == 0);
+    CHECK(f.txn_records() == before);
+    CHECK(gc_sweep_txn(f.db(), false) == 0); // still waiting on C
+
+    int n = 0;
+    const char *k, *d;
+    size_t kl, dl;
+    while (sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+        n++;
+    }
+    CHECK(n == 10);
+    sm_scan_end(c);
+    REQUIRE(sm_commit(r) == 0);
+
+    // The worker may finish the sweep first; either way it is done.
+    int64_t done = gc_sweep_txn(f.db(), false);
+    CHECK((done == (int64_t)before || done == 0));
+    CHECK(f.txn_records() == 0);
+    REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+    CHECK(scan_keys(r).size() == 10);
+    REQUIRE(sm_commit(r) == 0);
+    sm_close(r);
+}
+
+TEST_CASE("the sweep keeps records a live snapshot may still need")
+{
+    // Verify only records at or below the watermark are deleted.
+    // 1. Commit "a"; reader R begins; commit "b" and "c".
+    // 2. Sweep: the watermark is R's snapshot, so the records of
+    //    "b" and "c" (committed after it) stay; older ones go.
+    // 3. R sees only "a"; a new transaction sees all three.
+    sm_options_t opt = tiny_cache();
+    gc_fixture_t f(&opt);
+    sm_session_t* s = f.s();
+    sm_session_t* r = f.open();
+    commit_put(s, "a", "v");
+    REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+    commit_put(s, "b", "v");
+    commit_put(s, "c", "v");
+
+    CHECK(gc_sweep_txn(f.db(), true) > 0);
+    CHECK(f.txn_records() == 2);
+    CHECK(scan_keys(r) == std::vector<std::string>{"a"});
+    REQUIRE(sm_commit(r) == 0);
+    REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+    CHECK(scan_keys(r) == std::vector<std::string>{"a", "b", "c"});
+    REQUIRE(sm_commit(r) == 0);
+    sm_close(r);
+}
+
+TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold")
+{
+    // Verify the size trigger (§8.3: by CF:txn size, not by timer).
+    // 1. Lower the threshold to 5 records; commit 20 keys.
+    // 2. Run GC: CF:txn is swept down to nothing.
+    // 3. All 20 keys still read back.
+    sm_options_t opt = tiny_cache();
+    gc_fixture_t f(&opt);
+    sm_session_t* s = f.s();
+    f.db()->txn_sweep_records = 5;
+    for (int i = 0; i < 20; i++) {
+        commit_put(s, "k" + std::to_string(100 + i), "v");
+    }
+    CHECK(f.txn_records() >= 20);
+    gc_run_once(f.db());
+    CHECK(f.txn_records() == 0);
+    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    CHECK(scan_keys(s).size() == 20);
+    REQUIRE(sm_commit(s) == 0);
 }

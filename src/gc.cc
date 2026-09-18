@@ -9,8 +9,10 @@
  * What it cannot do itself -- range-delete a purged key, drop a
  * column family -- it leaves to one worker thread per database.
  *
- * Not yet: sweeping COMMITTED records out of CF:txn once every
- * version they cover is stamped (build order step 5b).
+ * Once CF:txn grows past a threshold, a sweep compacts every
+ * relation CF so each committed version is stamped, waits out
+ * readers that could still see an unstamped copy, and deletes
+ * the COMMITTED records it no longer needs.
  */
 
 #include "codec.h"
@@ -19,6 +21,7 @@
 #include "version.h"
 
 #include <chrono>
+#include <shared_mutex>
 
 using namespace wisr;
 
@@ -56,6 +59,7 @@ class gc_filter_t : public rocksdb::CompactionFilter
         version_t v;
         version_decode_key(key, &v);
         if (!version_decode_value(value, &v)) {
+            m_db->gc_filter_errors++;
             return false;
         }
         uint64_t commit_ts = v.commit_ts;
@@ -64,8 +68,10 @@ class gc_filter_t : public rocksdb::CompactionFilter
             case XCT_DEAD:
                 return true; // aborted or crashed
             case XCT_IN_FLIGHT:
-            case XCT_ERROR:
                 return false; // no commit_ts to stamp
+            case XCT_ERROR:
+                m_db->gc_filter_errors++; // unstamped out of doubt
+                return false;
             case XCT_COMMITTED:
                 break;
             }
@@ -172,6 +178,57 @@ void purge_one(db_t* db, const db_t::purge_t& p,
     // meets it queues it again.
 }
 
+/*
+ * The CF:txn sweep (§8.3), with gc_run_mu held. Phase one, from
+ * start: record W0, then run every relation CF through a forced,
+ * exclusive, bottommost compaction, so every committed version
+ * with commit_ts <= W0 is dropped or stamped; then flip the read
+ * epoch. Phase two, on a later call: once the old epoch has no
+ * readers, delete the COMMITTED records at or below W0.
+ */
+int64_t sweep_txn_locked(db_t* db, bool start)
+{
+    if (!db->sweep_pending) {
+        if (!start) {
+            return 0;
+        }
+        uint64_t w0 = db_watermark(db);
+        uint64_t errors = db->gc_filter_errors.load();
+        std::vector<rocksdb::ColumnFamilyHandle*> cfs;
+        {
+            std::shared_lock<std::shared_mutex> guard(db->rel_mu);
+            for (auto& kv : db->rels) {
+                cfs.push_back(kv.second);
+            }
+        }
+        rocksdb::CompactRangeOptions opt;
+        // Reach the bottommost level explicitly rather than by the
+        // default that happens to cover a filtered CF (§8.3).
+        opt.bottommost_level_compaction =
+            rocksdb::BottommostLevelCompaction::kForce;
+        opt.exclusive_manual_compaction = true;
+        for (rocksdb::ColumnFamilyHandle* cf : cfs) {
+            // Compact the whole relation, memtable first.
+            rocksdb::Status s =
+                db->rdb->CompactRange(opt, cf, nullptr, nullptr);
+            if (!s.ok()) {
+                return -1;
+            }
+        }
+        if (db->gc_filter_errors.load() != errors) {
+            return -1; // some version stayed unstamped: keep records
+        }
+        db->sweep_w0 = w0;
+        db->sweep_epoch = db->read_epoch.fetch_add(1);
+        db->sweep_pending = true;
+    }
+    if (db->readers[db->sweep_epoch & 1].load() != 0) {
+        return 0; // a pre-pass reader is still at work
+    }
+    db->sweep_pending = false;
+    return xct_drop_committed_records(db, db->sweep_w0);
+}
+
 /* The worker: run GC when woken, and at least once a second. */
 void gc_main(db_t* db)
 {
@@ -191,6 +248,25 @@ void gc_main(db_t* db)
 
 namespace wisr
 {
+
+/* Count ourselves in the current epoch, re-checking it after. */
+uint64_t db_read_enter(db_t* db)
+{
+    for (;;) {
+        uint64_t e = db->read_epoch.load();
+        db->readers[e & 1]++;
+        if (db->read_epoch.load() == e) {
+            return e;
+        }
+        db->readers[e & 1]--; // flipped under us: count in the new one
+    }
+}
+
+/* Leave the epoch we entered. */
+void db_read_leave(db_t* db, uint64_t epoch)
+{
+    db->readers[epoch & 1]--;
+}
 
 /* Read visible_ts and register it under snap_mu. */
 uint64_t db_take_snapshot(db_t* db)
@@ -292,6 +368,24 @@ void gc_run_once(db_t* db)
         // Drop the relation's column family: no snapshot sees it.
         db_drop_rel_cf(db, relid);
     }
+
+    // Finish a pending sweep, or start one once CF:txn is big.
+    uint64_t records = 0;
+    if (!db->sweep_pending &&
+        db->rdb->GetIntProperty(db->cf_txn, "rocksdb.estimate-num-keys",
+                                &records) &&
+        records > db->txn_sweep_records) {
+        sweep_txn_locked(db, true);
+    } else if (db->sweep_pending) {
+        sweep_txn_locked(db, false);
+    }
+}
+
+/* gc_sweep_txn under gc_run_mu, which serializes it with the drops. */
+int64_t gc_sweep_txn(db_t* db, bool start)
+{
+    std::lock_guard<std::mutex> run(db->gc_run_mu);
+    return sweep_txn_locked(db, start);
 }
 
 } // namespace wisr

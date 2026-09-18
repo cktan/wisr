@@ -20,6 +20,7 @@
 #include "session.h"
 #include "version.h"
 
+#include <memory>
 #include <new>
 #include <vector>
 
@@ -411,6 +412,32 @@ xct_state_t xct_status(db_t* db, uint64_t xid, uint64_t* commit_ts)
     default:
         return XCT_IN_FLIGHT;
     }
+}
+
+/* Scan CF:txn and delete, in one batch, the records the sweep covers. */
+int64_t xct_drop_committed_records(db_t* db, uint64_t w0)
+{
+    rocksdb::WriteBatch batch;
+    std::unique_ptr<rocksdb::Iterator> it(
+        db->rdb->NewIterator(rocksdb::ReadOptions(), db->cf_txn));
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        rocksdb::Slice v = it->value();
+        if (v.size() >= txn_record_size &&
+            static_cast<uint8_t>(v[0]) == txn_committed &&
+            get_be64(v.data() + 9) <= w0) {
+            batch.Delete(db->cf_txn, it->key());
+        }
+    }
+    if (!it->status().ok()) {
+        set_status_error(it->status(), "scan CF:txn");
+        return -1;
+    }
+    rocksdb::Status s = db->rdb->Write(rocksdb::WriteOptions(), &batch);
+    if (!s.ok()) {
+        set_status_error(s, "delete swept status records");
+        return -1;
+    }
+    return batch.Count();
 }
 
 /* xct_status, folded to committed or not. */

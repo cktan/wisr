@@ -1011,15 +1011,30 @@ periodic sweep guarantees that:
    read pre-pass, unstamped copies — drop the `COMMITTED`
    records with `commit_ts <= W0`.
 
+Step 3 is tracked with two read-epoch counters. Every reader
+— a point read, a write's existence check, and a cursor for
+its whole life — enters the current epoch's counter before
+it opens an iterator and leaves once it is done resolving
+what it read. After the pass the sweep flips the epoch; the
+records go once the old epoch's counter drains. Readers
+entering after the flip open their iterators on the pass's
+output and see only stamped versions. The wait is not done
+inline: the sweep is left pending and the GC worker finishes
+it on a later run, so a long-open cursor delays the sweep
+without stalling tombstone purges or relation drops.
+
+A pass during which the filter kept any version unstamped out
+of doubt — an undecodable value, a failed status lookup —
+deletes no records, since that version still needs its own.
+
 Using the watermark at the pass's *start* matters: a version
 with `W0 < commit_ts <= gc_watermark_now` may have been kept
 unstamped, and dropping its record would make it resolve as
 dead. `ABORTED` records are hints (§6.6) and can be dropped at
 any time, since rule §3.4/4 gives the same answer without them.
 
-Step 2 rests on two RocksDB behaviours. Both are relied
-on, so both are stated here and asserted at startup rather
-than assumed:
+Step 2 rests on two RocksDB behaviours, relied on and so
+stated here:
 
 - **The pass must reach the bottommost level.** A cold SST
   that no ordinary compaction has touched in weeks still
@@ -1032,15 +1047,21 @@ than assumed:
   silently invalidate.
 - **The filter must see every version.** Compaction
   filters ignore snapshots — `IgnoreSnapshots()` is fixed
-  at `true` — so an open reader cannot cause an entry to
-  be skipped and left unstamped.
+  at `true`, and the filter does not override it — so an
+  open reader cannot cause an entry to be skipped and left
+  unstamped. The pass also runs as an exclusive manual
+  compaction, so no automatic compaction that began under
+  an older watermark writes unstamped output alongside it.
 
 The pass is expensive: it rewrites L0 through L6 across
 every relation CF, and its cost grows with the number of
 relations as well as with data volume. It is therefore
 triggered by the size of `CF:txn` — the space the sweep
 would reclaim — and not by a timer, so a database that
-commits rarely never pays for it.
+commits rarely never pays for it. The GC worker checks
+RocksDB's estimated key count of `CF:txn` on each run and
+starts a sweep past an internal threshold of one million
+records.
 
 Dropping a relation (`sm_rmrel`) deletes its catalog row (§11).
 The tombstone carries no relid, so commit queues the relids in
