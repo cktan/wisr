@@ -140,7 +140,7 @@ TEST_CASE("recovery reports restored transactions and dropped orphans") {
   log_fixture_t f;
   sm_session_t *s = f.open();
   uint64_t orphan = 0;
-  REQUIRE(wisr::db_alloc_relid(s->db, &orphan) == 0);
+  REQUIRE(wisr::db_alloc_cfid(s->db, &orphan) == 0);
   REQUIRE(wisr::db_create_rel_cf(s->db, orphan) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   put(s, "t", "k", "v");

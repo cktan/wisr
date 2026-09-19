@@ -38,7 +38,7 @@
 /* CF:meta keys (DESIGN.md §3.3, §4.2). */
 #define WISR_META_VERSION "version"
 #define WISR_META_NEXT_TS "next_ts"
-#define WISR_META_NEXT_RELID "next_relid"
+#define WISR_META_NEXT_CFID "next_cfid"
 #define WISR_META_NEXT_SEQ "next_seq"
 
 namespace wisr {
@@ -60,7 +60,7 @@ struct ssi_node_t {
   bool doomed = false;             /* must fail at its commit */
   std::vector<std::string> points; /* its SIREAD point keys */
   std::vector<std::pair<uint64_t, std::list<ssi_range_t>::iterator>>
-      ranges; /* its SIREAD ranges, by relid */
+      ranges; /* its SIREAD ranges, by cfid */
 };
 
 /* A range SIREAD entry: [lo, hi] with inclusive flags; empty = open. */
@@ -85,17 +85,17 @@ struct db_t {
   int durability_sync = 1;
   int nsessions = 0; /* guarded by the env's mu */
 
-  /* relid -> column family handle, for every live relation CF. */
+  /* cfid -> column family handle, for every live relation CF. */
   std::shared_mutex rel_mu;
   std::map<uint64_t, rocksdb::ColumnFamilyHandle *> rels;
 
-  /* The ts and relid allocators and their leases (§4.2). */
+  /* The ts and cfid allocators and their leases (§4.2). */
   std::mutex alloc_mu;
   uint64_t lease = 0;
-  uint64_t global_ts = 0;  /* next ts to hand out */
-  uint64_t ts_limit = 0;   /* persisted; never handed out */
-  uint64_t next_relid = 0; /* next relid to hand out */
-  uint64_t relid_limit = 0;
+  uint64_t global_ts = 0; /* next ts to hand out */
+  uint64_t ts_limit = 0;  /* persisted; never handed out */
+  uint64_t next_cfid = 0; /* next cfid to hand out */
+  uint64_t cfid_limit = 0;
   uint64_t next_seq = 0; /* next sm_nextseq value to hand out */
   uint64_t seq_limit = 0;
 
@@ -172,7 +172,7 @@ struct db_t {
    * Garbage collection (§8.3). The compaction filter runs only
    * once gc_ready is set, after the handles above are valid.
    * It cannot write, so it queues tombstones to purge; a
-   * committed sm_rmrel queues its relids to drop once the
+   * committed sm_rmrel queues its cfids to drop once the
    * watermark passes its commit. The worker drains both.
    */
   std::atomic<bool> gc_ready{false};
@@ -180,11 +180,11 @@ struct db_t {
   std::condition_variable gc_cv;
   bool gc_stopping = false;
   struct purge_t {
-    uint64_t relid;
+    uint64_t cfid;
     std::string key; /* the tombstone's version key */
   };
   std::vector<purge_t> purges;
-  std::multimap<uint64_t, uint64_t> drops; /* commit_ts -> relid */
+  std::multimap<uint64_t, uint64_t> drops; /* commit_ts -> cfid */
   std::thread gc_thread;
   std::mutex gc_run_mu; /* one gc_run_once at a time */
 
@@ -225,7 +225,7 @@ struct db_t {
   std::mutex ssi_mu;
   std::set<ssi_node_t *> ssi_nodes;
   std::unordered_map<std::string, std::vector<ssi_node_t *>> ssi_points;
-  std::map<uint64_t, std::list<ssi_range_t>> ssi_ranges; /* by relid */
+  std::map<uint64_t, std::list<ssi_range_t>> ssi_ranges; /* by cfid */
   std::unordered_map<uint64_t, ssi_node_t *> ssi_by_xid;
 
   /*
@@ -275,31 +275,31 @@ int db_claim_commit_ts(db_t *db, uint64_t *out);
  */
 void db_commit_done(db_t *db, uint64_t commit_ts);
 
-/* Allocate a relid from db's lease. Returns 0 or -1. */
-int db_alloc_relid(db_t *db, uint64_t *out);
+/* Allocate a cfid from db's lease. Returns 0 or -1. */
+int db_alloc_cfid(db_t *db, uint64_t *out);
 
 /* Allocate an sm_nextseq value from db's lease. Returns 0 or -1. */
 int db_alloc_seq(db_t *db, uint64_t *out);
 
-/* The CF handle of relid, or NULL if it has none. */
-rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t relid);
+/* The CF handle of cfid, or NULL if it has none. */
+rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t cfid);
 
-/* Create the CF for relid and register it. Returns 0 or -1. */
-int db_create_rel_cf(db_t *db, uint64_t relid);
+/* Create the CF for cfid and register it. Returns 0 or -1. */
+int db_create_rel_cf(db_t *db, uint64_t cfid);
 
-/* Drop relid's CF and unregister it. Returns 0 or -1. */
-int db_drop_rel_cf(db_t *db, uint64_t relid);
+/* Drop cfid's CF and unregister it. Returns 0 or -1. */
+int db_drop_rel_cf(db_t *db, uint64_t cfid);
 
-/* The column family name of relation relid: rel.<relid>. */
-std::string rel_cf_name(uint64_t relid);
+/* The column family name of relation cfid: rel.<cfid>. */
+std::string rel_cf_name(uint64_t cfid);
 
 /*
  * Options for a relation CF: comparator, prefix extractor,
  * bloom filter, and -- when db is given -- the GC compaction
- * filter for relid.
+ * filter for cfid.
  */
 rocksdb::ColumnFamilyOptions rel_cf_options(db_t *db = nullptr,
-                                            uint64_t relid = 0);
+                                            uint64_t cfid = 0);
 
 /* Enter the current read epoch; returns it for db_read_leave. */
 uint64_t db_read_enter(db_t *db);
@@ -322,9 +322,9 @@ void db_release_snapshot(db_t *db, uint64_t snapshot_ts);
  */
 uint64_t db_watermark(db_t *db);
 
-/* The GC compaction filter factory for relation relid. */
+/* The GC compaction filter factory for relation cfid. */
 std::shared_ptr<rocksdb::CompactionFilterFactory>
-gc_filter_factory(db_t *db, uint64_t relid);
+gc_filter_factory(db_t *db, uint64_t cfid);
 
 /* Start the GC worker thread. */
 void gc_start(db_t *db);
@@ -332,9 +332,9 @@ void gc_start(db_t *db);
 /* Stop the GC worker thread and wait for it. */
 void gc_stop(db_t *db);
 
-/* Queue relids dropped by a transaction committed at commit_ts. */
+/* Queue cfids dropped by a transaction committed at commit_ts. */
 void gc_queue_drops(db_t *db, uint64_t commit_ts,
-                    const std::vector<uint64_t> &relids);
+                    const std::vector<uint64_t> &cfids);
 
 /*
  * Do the GC work that is due now: purge queued tombstones, drop

@@ -96,13 +96,13 @@ int skip_version(sm_session_t *s, const version_t &v, const view_t &view) {
   return 0;
 }
 
-/* The CF of relid; its absence after a catalog hit is corruption. */
-rocksdb::ColumnFamilyHandle *rel_cf(db_t *db, uint64_t relid) {
+/* The CF of cfid; its absence after a catalog hit is corruption. */
+rocksdb::ColumnFamilyHandle *rel_cf(db_t *db, uint64_t cfid) {
   // Look up the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, relid);
+  rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, cfid);
   // The catalog named it, so a missing CF is corruption.
   if (!cf) {
-    set_error(SM_ERR_CORRUPT, "relation {} has no column family", relid);
+    set_error(SM_ERR_CORRUPT, "relation {} has no column family", cfid);
   }
   return cf;
 }
@@ -191,17 +191,17 @@ int check_key(const char *key, size_t klen) {
 
 /*
  * Common entry checks for a data operation: a valid relation
- * name and key. Resolves relname at view into *relid.
+ * name and key. Resolves relname at view into *cfid.
  */
 int enter(sm_session_t *s, const view_t &view, const char *relname,
-          const char *key, size_t klen, uint64_t *relid) {
+          const char *key, size_t klen, uint64_t *cfid) {
   // Validate the relation name and the key.
   if (check_name(relname, SM_MAX_RELNAME, "relation") != 0 ||
       check_key(key, klen) != 0) {
     return -1;
   }
   // Resolve the relation at the view.
-  int r = catalog_lookup(s, view, relname, relid);
+  int r = catalog_lookup(s, view, relname, cfid);
   // Report an unknown relation.
   if (r == 1) {
     return set_error(SM_ERR_NOTFOUND, "relation {} does not exist", relname);
@@ -225,13 +225,13 @@ int write_row(sm_session_t *s, write_op_t op, const char *relname,
     return set_error(SM_ERR_INVALID, "value of {} bytes exceeds {}", datalen,
                      SM_MAX_DATALEN);
   }
-  uint64_t relid;
+  uint64_t cfid;
   // Validate and resolve at the current view.
-  if (enter(s, xct_view(s), relname, key, klen, &relid) != 0) {
+  if (enter(s, xct_view(s), relname, key, klen, &cfid) != 0) {
     return -1;
   }
   // Write the version.
-  return access_write(s, relid, op, rocksdb::Slice(key ? key : "", klen),
+  return access_write(s, cfid, op, rocksdb::Slice(key ? key : "", klen),
                       rocksdb::Slice(data ? data : "", datalen));
 }
 
@@ -251,13 +251,13 @@ int read_row(sm_session_t *s, const char *relname, const char *key, size_t klen,
   }
   // The view this statement reads at.
   view_t view = xct_view(s);
-  uint64_t relid;
+  uint64_t cfid;
   // Validate and resolve the relation.
-  if (enter(s, view, relname, key, klen, &relid) != 0) {
+  if (enter(s, view, relname, key, klen, &cfid) != 0) {
     return -1;
   }
   // Read the key into the session's buffer.
-  int r = access_read(s, relid, view, rocksdb::Slice(key ? key : "", klen),
+  int r = access_read(s, cfid, view, rocksdb::Slice(key ? key : "", klen),
                       &s->readbuf);
   // Found: hand out the session-owned bytes.
   if (r == 0) {
@@ -282,13 +282,13 @@ sm_scan_t *scan(sm_session_t *s, const char *relname, const char *skey,
   }
   // The view the cursor reads at, fixed from now on.
   view_t view = xct_view(s);
-  uint64_t relid;
+  uint64_t cfid;
   // Validate and resolve the relation.
-  if (enter(s, view, relname, "", 0, &relid) != 0) {
+  if (enter(s, view, relname, "", 0, &cfid) != 0) {
     return nullptr;
   }
   // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, cfid);
   if (!cf) {
     return nullptr;
   }
@@ -306,7 +306,7 @@ sm_scan_t *scan(sm_session_t *s, const char *relname, const char *skey,
   // Under SERIALIZABLE, register the requested range before
   // the snapshot, so a write into it after the snapshot finds
   // the SIREAD entry (§10.2).
-  ssi_range_open(c.get(), relid, skey, sklen, skey_inclusive, ekey, eklen,
+  ssi_range_open(c.get(), cfid, skey, sklen, skey_inclusive, ekey, eklen,
                  ekey_inclusive);
   // Count the cursor as a reader for its whole life (§8.3),
   // then take the RocksDB snapshot: its physical view (§10.2).
@@ -440,17 +440,17 @@ int scan_next(sm_scan_t *c, const char **key, size_t *klen, const char **data,
 namespace wisr {
 
 /* Seek to the newest version a reader at view could see (§10.1). */
-int access_read(sm_session_t *s, uint64_t relid, const view_t &view,
+int access_read(sm_session_t *s, uint64_t cfid, const view_t &view,
                 rocksdb::Slice key, std::string *out) {
   // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, cfid);
   if (!cf) {
     return -1;
   }
   // Under SERIALIZABLE, take the SIREAD entry before the
   // iterator exists, so a write landing in between still finds
   // it (§10.1).
-  ssi_on_read(s, relid, key);
+  ssi_on_read(s, cfid, key);
   // Hold a read epoch from before the iterator exists until we are
   // done resolving what it read: the CF:txn sweep waits for it.
   uint64_t epoch = db_read_enter(s->db);
@@ -509,10 +509,10 @@ int access_read(sm_session_t *s, uint64_t relid, const view_t &view,
 }
 
 /* Check existence, then put one new version (§5). */
-int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
+int access_write(sm_session_t *s, uint64_t cfid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data) {
   // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, cfid);
   if (!cf) {
     return -1;
   }
@@ -522,7 +522,7 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   }
   // Take the row lock; this blocks while another transaction
   // holds it, and fails if we are chosen as a deadlock victim.
-  if (lock_acquire(s, relid, key) != 0) {
+  if (lock_acquire(s, cfid, key) != 0) {
     return xct_fail_retryable(s, SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }
@@ -572,10 +572,10 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   s->seq = seq;
   s->seq_hwm = seq;
   // Record it for savepoint rollback.
-  s->undo.push_back({relid, key.ToString(), seq});
+  s->undo.push_back({cfid, key.ToString(), seq});
   // After the put, look for readers the write invalidates; a
   // reader arriving later steps past the version instead (§7.2).
-  ssi_on_write(s, relid, key);
+  ssi_on_write(s, cfid, key);
   return 0;
 }
 

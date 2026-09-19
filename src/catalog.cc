@@ -3,7 +3,7 @@
  * (DESIGN.md §11).
  *
  * The catalog is relation 0, an ordinary MVCC relation keyed
- * "R" | relname with the 8-byte relid as its value, so DDL is
+ * "R" | relname with the 8-byte cfid as its value, so DDL is
  * transactional by going through the ordinary write path. The
  * design's created_ts field is left out: nothing reads it.
  *
@@ -34,9 +34,9 @@ int mkrel(sm_session_t *s, const char *relname) {
       check_name(relname, SM_MAX_RELNAME, "relation") != 0) {
     return -1;
   }
-  uint64_t relid;
+  uint64_t cfid;
   // Resolve the name at the transaction's view.
-  int r = catalog_lookup(s, xct_view(s), relname, &relid);
+  int r = catalog_lookup(s, xct_view(s), relname, &cfid);
   // Fail on a lookup error.
   if (r < 0) {
     return -1;
@@ -45,22 +45,22 @@ int mkrel(sm_session_t *s, const char *relname) {
   if (r == 0) {
     return set_error(SM_ERR_EXISTS, "relation {} already exists", relname);
   }
-  // Refuse writes after fail-stop, then allocate a fresh relid.
-  if (xct_check_writable(s->db) != 0 || db_alloc_relid(s->db, &relid) != 0) {
+  // Refuse writes after fail-stop, then allocate a fresh cfid.
+  if (xct_check_writable(s->db) != 0 || db_alloc_cfid(s->db, &cfid) != 0) {
     return -1;
   }
 
   // Create the column family eagerly, before the catalog row,
   // so this transaction can write into it at once (§11).
-  if (db_create_rel_cf(s->db, relid) != 0) {
+  if (db_create_rel_cf(s->db, cfid) != 0) {
     return -1;
   }
   // Remember the CF, so abort or rollback drops it.
-  s->created.push_back(relid);
+  s->created.push_back(cfid);
 
-  // Encode the relid as the catalog row's value.
+  // Encode the cfid as the catalog row's value.
   std::string val;
-  put_be64(val, relid);
+  put_be64(val, cfid);
   // Insert the catalog row through the ordinary write path.
   if (access_write(s, 0, WRITE_INSERT, catalog_key(relname), val) != 0) {
     // A retryable error already aborted the transaction.
@@ -71,7 +71,7 @@ int mkrel(sm_session_t *s, const char *relname) {
     bool dup = sm_errno() == SM_ERR_DUPKEY;
     // Undo the eager CF creation.
     s->created.pop_back();
-    db_drop_rel_cf(s->db, relid);
+    db_drop_rel_cf(s->db, cfid);
     // Map a duplicate catalog key to SM_ERR_EXISTS.
     if (dup) {
       return set_error(SM_ERR_EXISTS, "relation {} already exists", relname);
@@ -88,9 +88,9 @@ int rmrel(sm_session_t *s, const char *relname) {
       check_name(relname, SM_MAX_RELNAME, "relation") != 0) {
     return -1;
   }
-  uint64_t relid;
+  uint64_t cfid;
   // Resolve the name at the transaction's view.
-  int r = catalog_lookup(s, xct_view(s), relname, &relid);
+  int r = catalog_lookup(s, xct_view(s), relname, &cfid);
   // Fail on a lookup error.
   if (r < 0) {
     return -1;
@@ -105,8 +105,8 @@ int rmrel(sm_session_t *s, const char *relname) {
                    rocksdb::Slice()) != 0) {
     return -1;
   }
-  // Remember the relid, so GC drops its CF after commit.
-  s->dropped.push_back(relid);
+  // Remember the cfid, so GC drops its CF after commit.
+  s->dropped.push_back(cfid);
   return 0;
 }
 
@@ -116,7 +116,7 @@ namespace wisr {
 
 /* A point read of the catalog row at view. */
 int catalog_lookup(sm_session_t *s, const view_t &view, const char *relname,
-                   uint64_t *relid) {
+                   uint64_t *cfid) {
   std::string val;
   // Read the catalog row at view.
   int r = access_read(s, 0, view, catalog_key(relname), &val);
@@ -128,8 +128,8 @@ int catalog_lookup(sm_session_t *s, const view_t &view, const char *relname,
   if (val.size() != 8) {
     return set_error(SM_ERR_CORRUPT, "bad catalog row for {}", relname);
   }
-  // Decode the relid.
-  *relid = get_be64(val.data());
+  // Decode the cfid.
+  *cfid = get_be64(val.data());
   return 0;
 }
 

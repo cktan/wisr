@@ -233,7 +233,7 @@ int rollback(sm_session_t *s) {
     // The next undo entry, newest first.
     const sm_session_t::undo_t &u = s->undo[i];
     // Find its relation's CF.
-    rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, u.relid);
+    rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, u.cfid);
     // Skip a CF already dropped.
     if (cf) {
       // Delete the exact version: key, our xid, its seq.
@@ -470,7 +470,7 @@ int abort_xct(sm_session_t *s) {
 /*
  * The PREPARED record (§3.2): state, snapshot_ts, a zero
  * commit_ts, then prepared_at, gid, the write set as lock keys,
- * and the relids created and dropped. One value, however large
+ * and the cfids created and dropped. One value, however large
  * the write set; RocksDB stores it as a blob.
  */
 std::string encode_prepared(const sm_session_t *g) {
@@ -493,11 +493,11 @@ std::string encode_prepared(const sm_session_t *g) {
     put_be32(v, static_cast<uint32_t>(k.size()));
     v.append(k);
   }
-  // The relids created, then those dropped, each counted.
+  // The cfids created, then those dropped, each counted.
   for (const std::vector<uint64_t> *rels : {&g->created, &g->dropped}) {
     put_be32(v, static_cast<uint32_t>(rels->size()));
-    for (uint64_t relid : *rels) {
-      put_be64(v, relid);
+    for (uint64_t cfid : *rels) {
+      put_be64(v, cfid);
     }
   }
   return v;
@@ -997,13 +997,13 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
     g->locks.emplace_back(p, len);
     p += len;
   }
-  // Read the relids created, then dropped.
+  // Read the cfids created, then dropped.
   for (std::vector<uint64_t> *rels : {&g->created, &g->dropped}) {
     // Check the count fits.
     if (!take32(&count) || (size_t)(end - p) < (size_t)count * 8) {
       return false;
     }
-    // Take each relid.
+    // Take each cfid.
     for (uint32_t i = 0; i < count; i++) {
       rels->push_back(get_be64(p));
       p += 8;
