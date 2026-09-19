@@ -9,7 +9,7 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -O2 -g
-CXXFLAGS += -std=c++17 -Wall -Wextra -Iinclude -Isrc -MMD -MP
+CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc -MMD -MP
 LDLIBS   += -lrocksdb -lpthread
 
 BUILD := build
