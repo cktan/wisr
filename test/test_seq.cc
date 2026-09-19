@@ -202,7 +202,7 @@ TEST_CASE("a stopped database hands out no sequence values") {
   seq_fixture_t f;
   sm_session_t *s = f.s();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(s, "t") == 0);
+  REQUIRE(sm_mkrel(s, 1) == 0);
   s->db->test_before_commit = [](uint64_t) {
     return rocksdb::Status::IOError("injected");
   };

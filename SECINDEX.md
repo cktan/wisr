@@ -109,9 +109,10 @@ Needed: `sm_scan_seek(scan, key, klen, inclusive)`.
   on update and delete, so each costs read, copy (the `sm_read`
   pointer dies on the next call), then write: two seeks and an
   allocation per row.
-- **No `sm_lsrel`.** The layer will keep its own catalog
-  relation regardless, but listing relations helps debugging
-  and cleanup.
+- **`sm_lsrel`.** Implemented in phase 1, with relations
+  named by caller-chosen `uint64_t` relids: the layer will keep
+  its own catalog relation regardless, but listing relations
+  helps debugging and cleanup.
 - **Key length.** `SM_MAX_KEYLEN` (4096) bounds `sk ‖ pk`
   together; encodings must be sized for it.
 - **No lock-without-write.** `SELECT … FOR UPDATE` through an
@@ -133,7 +134,7 @@ holding only `strlist.cc`, these are contract changes to
 
 ```c
 typedef enum { SM_LOCK_SHARED = 0, SM_LOCK_EXCLUSIVE = 1 } sm_lockmode_t;
-int sm_lock(sm_session_t* s, const char* relname,
+int sm_lock(sm_session_t* s, uint64_t relid,
             const char* key, size_t klen, sm_lockmode_t mode);
 ```
 
@@ -237,9 +238,9 @@ is safe, and one range per cursor.
 
 ### Gap 6: minor items
 
-- **`sm_lsrel`.** A scan of the `"R"` prefix in `rel.0`. It
-  needs an active transaction, since the answer depends on the
-  snapshot.
+- **`sm_lsrel`.** Done in phase 1: a scan of the `"R"` prefix
+  in `rel.0`, which needs an active transaction since the
+  answer depends on the snapshot (DESIGN.md §11).
 - **Batched read, old-image return.** Pure performance; leave
   them until profiling asks.
 

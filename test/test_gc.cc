@@ -29,18 +29,18 @@ struct raw_t {
   uint8_t flags;
 };
 
-/* A database "db" with relation "t", and GC helpers. */
+/* A database "db" with relation 1, and GC helpers. */
 class gc_fixture_t {
 public:
-  /* Create "db" and "t"; the first session opens "db" with opt. */
+  /* Create "db" and relation 1; the first session opens "db" with opt. */
   explicit gc_fixture_t(const sm_options_t *opt = nullptr) {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     m_s = sm_opendb(m_home.env(), "db", opt);
     REQUIRE(m_s);
     REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(m_s, "t") == 0);
+    REQUIRE(sm_mkrel(m_s, 1) == 0);
     REQUIRE(sm_commit(m_s) == 0);
-    m_relid = relid_of("t");
+    m_cfid = cfid_of(1);
   }
 
   /* The fixture's own session. */
@@ -56,25 +56,25 @@ public:
   /* The shared database object. */
   db_t *db() const { return m_s->db; }
 
-  /* The relid of "t". */
-  uint64_t relid() const { return m_relid; }
+  /* The cfid of relation 1. */
+  uint64_t cfid() const { return m_cfid; }
 
-  /* The relid name resolves to now, through the catalog. */
-  uint64_t relid_of(const char *name) {
-    uint64_t relid = 0;
+  /* The cfid relid resolves to now, through the catalog. */
+  uint64_t cfid_of(uint64_t relid) {
+    uint64_t cfid = 0;
     REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(catalog_lookup(m_s, xct_view(m_s), name, &relid) == 0);
+    REQUIRE(catalog_lookup(m_s, xct_view(m_s), relid, &cfid) == 0);
     REQUIRE(sm_commit(m_s) == 0);
-    return relid;
+    return cfid;
   }
 
-  /* Force a full compaction of relid's CF, through the filter. */
-  void compact(uint64_t relid) {
+  /* Force a full compaction of cfid's CF, through the filter. */
+  void compact(uint64_t cfid) {
     rocksdb::CompactRangeOptions opt;
     opt.bottommost_level_compaction =
         rocksdb::BottommostLevelCompaction::kForce;
     REQUIRE(
-        db()->rdb->CompactRange(opt, db_rel_cf(db(), relid), nullptr, nullptr)
+        db()->rdb->CompactRange(opt, db_rel_cf(db(), cfid), nullptr, nullptr)
             .ok());
   }
 
@@ -98,12 +98,12 @@ public:
     REQUIRE(m_s);
   }
 
-  /* Every version stored in relid's CF, in order. */
-  std::vector<raw_t> raw(uint64_t relid) {
+  /* Every version stored in cfid's CF, in order. */
+  std::vector<raw_t> raw(uint64_t cfid) {
     rocksdb::ReadOptions ro;
     ro.total_order_seek = true;
     std::unique_ptr<rocksdb::Iterator> it(
-        db()->rdb->NewIterator(ro, db_rel_cf(db(), relid)));
+        db()->rdb->NewIterator(ro, db_rel_cf(db(), cfid)));
     std::vector<raw_t> out;
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
       version_t v;
@@ -118,30 +118,29 @@ public:
 private:
   home_t m_home;
   sm_session_t *m_s = nullptr;
-  uint64_t m_relid = 0;
+  uint64_t m_cfid = 0;
 };
 
-/* Set key in "t" to val in one committed transaction. */
+/* Set key in relation 1 to val in one committed transaction. */
 void commit_set(sm_session_t *s, const std::string &key,
                 const std::string &val) {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_update(s, "t", key.data(), key.size(), val.data(), val.size()) ==
-          0);
+  REQUIRE(sm_update(s, 1, key.data(), key.size(), val.data(), val.size()) == 0);
   REQUIRE(sm_commit(s) == 0);
 }
 
-/* Insert key -> val into "t" in one committed transaction. */
+/* Insert key -> val into relation 1 in one committed transaction. */
 void commit_put(sm_session_t *s, const std::string &key,
                 const std::string &val) {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, "t", key, val);
+  put(s, 1, key, val);
   REQUIRE(sm_commit(s) == 0);
 }
 
-/* Delete key from "t" in one committed transaction. */
+/* Delete key from relation 1 in one committed transaction. */
 void commit_del(sm_session_t *s, const std::string &key) {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_delete(s, "t", key.data(), key.size()) == 0);
+  REQUIRE(sm_delete(s, 1, key.data(), key.size()) == 0);
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -159,14 +158,14 @@ TEST_CASE("a long-running reader keeps the versions it can see") {
   sm_session_t *r = f.open();
   commit_put(w, "k", "v0");
   REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(r, "t", "k") == "v0");
+  CHECK(get(r, 1, "k") == "v0");
   for (int i = 1; i <= 5; i++) {
     commit_set(w, "k", "v" + std::to_string(i));
   }
 
-  f.compact(f.relid());
-  CHECK(get(r, "t", "k") == "v0");
-  std::vector<raw_t> raw = f.raw(f.relid());
+  f.compact(f.cfid());
+  CHECK(get(r, 1, "k") == "v0");
+  std::vector<raw_t> raw = f.raw(f.cfid());
   REQUIRE(raw.size() == 6);
   for (size_t i = 0; i < 5; i++) {
     CHECK((raw[i].flags & version_stamped) == 0);
@@ -174,12 +173,12 @@ TEST_CASE("a long-running reader keeps the versions it can see") {
   CHECK((raw[5].flags & version_stamped) != 0);
   REQUIRE(sm_commit(r) == 0);
 
-  f.compact(f.relid());
-  raw = f.raw(f.relid());
+  f.compact(f.cfid());
+  raw = f.raw(f.cfid());
   REQUIRE(raw.size() == 1);
   CHECK((raw[0].flags & version_stamped) != 0);
   REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(r, "t", "k") == "v5");
+  CHECK(get(r, 1, "k") == "v5");
   REQUIRE(sm_commit(r) == 0);
   sm_closedb(w);
   sm_closedb(r);
@@ -195,20 +194,20 @@ TEST_CASE("a running transaction's versions survive compaction unstamped") {
   sm_session_t *t = f.open();
   sm_session_t *u = f.open();
   REQUIRE(sm_begin(t, SM_XCT_REPEATABLE_READ) == 0);
-  put(t, "t", "k", "v");
-  f.compact(f.relid());
+  put(t, 1, "k", "v");
+  f.compact(f.cfid());
 
-  std::vector<raw_t> raw = f.raw(f.relid());
+  std::vector<raw_t> raw = f.raw(f.cfid());
   REQUIRE(raw.size() == 1);
   CHECK((raw[0].flags & version_stamped) == 0);
   REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(u, "t", "k") == "<none>");
+  CHECK(get(u, 1, "k") == "<none>");
   REQUIRE(sm_commit(u) == 0);
-  CHECK(get(t, "t", "k") == "v");
+  CHECK(get(t, 1, "k") == "v");
 
   REQUIRE(sm_abort(t) == 0);
-  f.compact(f.relid());
-  CHECK(f.raw(f.relid()).empty());
+  f.compact(f.cfid());
+  CHECK(f.raw(f.cfid()).empty());
   sm_closedb(t);
   sm_closedb(u);
 }
@@ -228,37 +227,37 @@ TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i++) {
     snprintf(key, sizeof(key), "k%02d", i);
-    put(s, "t", key, "a");
+    put(s, 1, key, "a");
   }
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i++) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm_update(s, "t", key, 3, "b", 1) == 0);
+    REQUIRE(sm_update(s, 1, key, 3, "b", 1) == 0);
   }
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i += 2) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm_delete(s, "t", key, 3) == 0);
+    REQUIRE(sm_delete(s, 1, key, 3) == 0);
   }
   REQUIRE(sm_commit(s) == 0);
 
-  f.compact(f.relid());
+  f.compact(f.cfid());
   commit_put(s, "k04", "c");
   gc_run_once(f.db());
-  f.compact(f.relid());
+  f.compact(f.cfid());
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i++) {
     CAPTURE(i);
     snprintf(key, sizeof(key), "k%02d", i);
     std::string want = i == 4 ? "c" : i % 2 ? "b" : "<none>";
-    CHECK(get(s, "t", key) == want);
+    CHECK(get(s, 1, key) == want);
   }
   REQUIRE(sm_commit(s) == 0);
 
-  std::vector<raw_t> raw = f.raw(f.relid());
+  std::vector<raw_t> raw = f.raw(f.cfid());
   CHECK(raw.size() == 11); // ten odd keys and the new k04
   for (const raw_t &v : raw) {
     CHECK((v.flags & version_tombstone) == 0);
@@ -280,10 +279,10 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
   REQUIRE(sm_begin(t, SM_XCT_READ_COMMITTED) == 0);
   commit_del(u, "k");
 
-  f.compact(f.relid());
+  f.compact(f.cfid());
   gc_run_once(f.db());
-  f.compact(f.relid());
-  CHECK(sm_insert(t, "t", "k", 1, "t", 1) == -1);
+  f.compact(f.cfid());
+  CHECK(sm_insert(t, 1, "k", 1, "t", 1) == -1);
   CHECK(sm_errno() == SM_ERR_CONFLICT);
   sm_closedb(t);
   sm_closedb(u);
@@ -291,41 +290,41 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
 
 TEST_CASE("a dropped relation's column family goes once no snapshot sees it") {
   // Verify dropped-relation removal waits for the watermark.
-  // 1. Reader R begins and reads "t".
-  // 2. S drops "t" and commits; run GC: the CF stays, and R
-  //    still reads "t".
+  // 1. Reader R begins and reads relation 1.
+  // 2. S drops relation 1 and commits; run GC: the CF stays, and R
+  //    still reads relation 1.
   // 3. R ends; run GC: the CF is gone.
   // 4. A drop undone by rollback to a savepoint is never
-  //    queued: "u" survives GC.
+  //    queued: relation 2 survives GC.
   gc_fixture_t f;
   sm_session_t *s = f.open();
   sm_session_t *r = f.open();
   commit_put(s, "k", "v");
-  uint64_t relid = f.relid();
+  uint64_t cfid = f.cfid();
   REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(r, "t", "k") == "v");
+  CHECK(get(r, 1, "k") == "v");
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_rmrel(s, "t") == 0);
+  REQUIRE(sm_rmrel(s, 1) == 0);
   REQUIRE(sm_commit(s) == 0);
   gc_run_once(f.db());
-  CHECK(db_rel_cf(f.db(), relid) != nullptr);
-  CHECK(get(r, "t", "k") == "v");
+  CHECK(db_rel_cf(f.db(), cfid) != nullptr);
+  CHECK(get(r, 1, "k") == "v");
   REQUIRE(sm_commit(r) == 0);
   gc_run_once(f.db());
-  CHECK(db_rel_cf(f.db(), relid) == nullptr);
+  CHECK(db_rel_cf(f.db(), cfid) == nullptr);
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(s, "u") == 0);
+  REQUIRE(sm_mkrel(s, 2) == 0);
   REQUIRE(sm_commit(s) == 0);
-  uint64_t urelid = f.relid_of("u");
+  uint64_t ucfid = f.cfid_of(2);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm_savepoint(s) == 0);
-  REQUIRE(sm_rmrel(s, "u") == 0);
+  REQUIRE(sm_rmrel(s, 2) == 0);
   REQUIRE(sm_rollback(s) == 0);
   REQUIRE(sm_commit(s) == 0);
   gc_run_once(f.db());
-  CHECK(db_rel_cf(f.db(), urelid) != nullptr);
+  CHECK(db_rel_cf(f.db(), ucfid) != nullptr);
   sm_closedb(s);
   sm_closedb(r);
 }
@@ -340,9 +339,9 @@ sm_options_t tiny_cache() {
   return opt;
 }
 
-/* The keys a full scan of "t" returns, through s. */
+/* The keys a full scan of relation 1 returns, through s. */
 std::vector<std::string> scan_keys(sm_session_t *s) {
-  sm_scan_t *c = sm_scan(s, "t", nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE_MESSAGE(c, sm_errmsg());
   std::vector<std::string> out;
   const char *k, *d;
@@ -376,7 +375,7 @@ TEST_CASE(
 
   CHECK(gc_sweep_txn(f.db(), true) == (int64_t)before);
   CHECK(f.txn_records() == 0);
-  for (const raw_t &v : f.raw(f.relid())) {
+  for (const raw_t &v : f.raw(f.cfid())) {
     CHECK((v.flags & version_stamped) != 0);
   }
 
@@ -388,7 +387,7 @@ TEST_CASE(
     }
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
     for (int i = 0; i < 30; i++) {
-      CHECK(get(s, "t", "k" + std::to_string(100 + i)) == "v");
+      CHECK(get(s, 1, "k" + std::to_string(100 + i)) == "v");
     }
     CHECK(scan_keys(s).size() == 30);
     REQUIRE(sm_commit(s) == 0);
@@ -413,7 +412,7 @@ TEST_CASE(
   }
   size_t before = f.txn_records();
   REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
-  sm_scan_t *c = sm_scan(r, "t", nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(r, 1, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
 
   CHECK(gc_sweep_txn(f.db(), true) == 0);

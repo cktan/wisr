@@ -57,13 +57,12 @@ extern "C" {
 #define SM_MAX_KEYLEN  4096
 #define SM_MAX_DATALEN (64 * 1024 * 1024)
 #define SM_MAX_DBNAME  63
-#define SM_MAX_RELNAME 63
 #define SM_MAX_GID     200
 
 /*
  * The first value sm_nextseq() hands out in a new database.
  * Values below it are never generated, so a caller may define
- * them as constants of its own.
+ * them as constants of its own -- relids, for example.
  */
 #define SM_SEQ_FIRST   1000
 
@@ -556,16 +555,22 @@ int sm_abort_prepared(sm_session_t* session, const char* gid);
 
 /*
  * Create a relation: an ordered map from key to value, named
- * by a NUL-terminated string of at most SM_MAX_RELNAME bytes.
+ * by relid, a number the caller chooses. relid is either a
+ * constant of the caller's in 1..SM_SEQ_FIRST-1, or a value
+ * sm_nextseq() has handed out; 0 and any other value fail with
+ * SM_ERR_INVALID.
  *
  * Transactional -- visible to others only at commit, and
- * undone by abort or by a rollback that spans it.
+ * undone by abort or by a rollback that spans it. A relid
+ * dropped by sm_rmrel() may be created again at once; the new
+ * relation starts empty, while transactions whose snapshot
+ * predates the drop still see the old one.
  *
  * Errors: SM_ERR_EXISTS, SM_ERR_NOTRANS, SM_ERR_CONFLICT
  * (retryable -- concurrently created), SM_ERR_INVALID,
  * SM_ERR_PREPARED.
  */
-int sm_mkrel(sm_session_t* session, const char* relname);
+int sm_mkrel(sm_session_t* session, uint64_t relid);
 
 /*
  * Drop a relation and all of its rows. Transactional, as
@@ -577,9 +582,28 @@ int sm_mkrel(sm_session_t* session, const char* relname);
  * snapshot can see it.
  *
  * Errors: SM_ERR_NOTFOUND, SM_ERR_NOTRANS, SM_ERR_CONFLICT
- * (retryable), SM_ERR_PREPARED.
+ * (retryable), SM_ERR_INVALID (relid 0), SM_ERR_PREPARED.
  */
-int sm_rmrel(sm_session_t* session, const char* relname);
+int sm_rmrel(sm_session_t* session, uint64_t relid);
+
+/*
+ * List the relids of the relations the transaction sees, in
+ * ascending order. Reads the catalog like sm_scan(): at the
+ * transaction's snapshot, and under SERIALIZABLE the whole
+ * list is recorded as read, so a concurrent sm_mkrel() or
+ * sm_rmrel() is a conflict.
+ *
+ * On success *out points to *n relids allocated by the
+ * library; release them with sm_free_rels(). *n may be 0, in
+ * which case *out is NULL.
+ *
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID,
+ * SM_ERR_NOMEM, SM_ERR_CORRUPT, SM_ERR_IO.
+ */
+int sm_lsrel(sm_session_t* session, uint64_t** out, size_t* n);
+
+/* Release a list from sm_lsrel(). NULL is a no-op. */
+void sm_free_rels(uint64_t* list);
 
 /*
  * Write one row. All three calls require an active,
@@ -609,15 +633,15 @@ int sm_rmrel(sm_session_t* session, const char* relname);
  * update/delete), SM_ERR_DUPKEY (insert), SM_ERR_NOTRANS,
  * SM_ERR_PREPARED, SM_ERR_INVALID, SM_ERR_DISKFULL, SM_ERR_IO.
  */
-int sm_insert(sm_session_t* session, const char* relname,
+int sm_insert(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen,
               const char* data, size_t datalen);
 
-int sm_update(sm_session_t* session, const char* relname,
+int sm_update(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen,
               const char* data, size_t datalen);
 
-int sm_delete(sm_session_t* session, const char* relname,
+int sm_delete(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen);
 
 /*
@@ -642,12 +666,12 @@ int sm_delete(sm_session_t* session, const char* relname,
  * missing key returns 1), SM_ERR_NOTRANS, SM_ERR_PREPARED,
  * SM_ERR_INVALID, SM_ERR_CORRUPT, SM_ERR_IO.
  */
-int sm_read(sm_session_t* session, const char* relname,
+int sm_read(sm_session_t* session, uint64_t relid,
             const char* key, size_t klen,
             const char** data, size_t* datalen);
 
 /*
- * Open a cursor over the keys of relname in ascending bytewise
+ * Open a cursor over the keys of relid in ascending bytewise
  * order, from skey to ekey.
  *
  *   skey == NULL  starts at the first key; sklen and
@@ -686,7 +710,7 @@ int sm_read(sm_session_t* session, const char* relname,
  * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID,
  * SM_ERR_NOMEM, SM_ERR_IO.
  */
-sm_scan_t* sm_scan(sm_session_t* session, const char* relname,
+sm_scan_t* sm_scan(sm_session_t* session, uint64_t relid,
                    const char* skey, size_t sklen, int skey_inclusive,
                    const char* ekey, size_t eklen, int ekey_inclusive);
 

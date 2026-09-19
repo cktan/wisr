@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <vector>
 
 /* A fresh directory under the system temp dir, removed at scope exit. */
 class tmpdir_t {
@@ -94,7 +95,7 @@ private:
  * The value of key in rel as sess reads it, or "<none>" if the
  * key is absent. Fails the test on an error.
  */
-inline std::string get(sm_session_t *sess, const char *rel,
+inline std::string get(sm_session_t *sess, uint64_t rel,
                        const std::string &key) {
   const char *data = nullptr;
   size_t len = 0;
@@ -104,11 +105,21 @@ inline std::string get(sm_session_t *sess, const char *rel,
 }
 
 /* Insert key -> val into rel, failing the test on an error. */
-inline void put(sm_session_t *sess, const char *rel, const std::string &key,
+inline void put(sm_session_t *sess, uint64_t rel, const std::string &key,
                 const std::string &val) {
   REQUIRE_MESSAGE(
       sm_insert(sess, rel, key.data(), key.size(), val.data(), val.size()) == 0,
       sm_errmsg());
+}
+
+/* The relids sess's transaction sees, failing the test on an error. */
+inline std::vector<uint64_t> lsrel(sm_session_t *sess) {
+  uint64_t *list = nullptr;
+  size_t n = 0;
+  REQUIRE_MESSAGE(sm_lsrel(sess, &list, &n) == 0, sm_errmsg());
+  std::vector<uint64_t> out(list, list + n);
+  sm_free_rels(list);
+  return out;
 }
 
 #endif /* WISR_TEST_UTIL_H */

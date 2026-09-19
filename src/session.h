@@ -243,11 +243,11 @@ int xct_resolve(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
 void xct_end_scans(sm_session_t *session);
 
 /*
- * Resolve relname at view: 0 and *cfid if it names a live
+ * Resolve relid at view: 0 and *cfid if it names a live
  * relation, 1 if not, -1 on error.
  */
-int catalog_lookup(sm_session_t *session, const view_t &view,
-                   const char *relname, uint64_t *cfid);
+int catalog_lookup(sm_session_t *session, const view_t &view, uint64_t relid,
+                   uint64_t *cfid);
 
 /*
  * Point read of key in cfid at view: 0 and *out = payload if
@@ -255,6 +255,14 @@ int catalog_lookup(sm_session_t *session, const view_t &view,
  */
 int access_read(sm_session_t *session, uint64_t cfid, const view_t &view,
                 rocksdb::Slice key, std::string *out);
+
+/*
+ * Open a cursor over cfid at view, between the bounds as
+ * sm_scan() takes them. Returns NULL on error.
+ */
+sm_scan_t *access_scan(sm_session_t *session, uint64_t cfid, const view_t &view,
+                       const char *skey, size_t sklen, int skey_inclusive,
+                       const char *ekey, size_t eklen, int ekey_inclusive);
 
 /*
  * Write one version of key into cfid, checking that the key

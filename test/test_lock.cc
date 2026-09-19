@@ -18,17 +18,17 @@
 
 namespace {
 
-/* A database "db" with relation "t" holding "x" -> "0", "y" -> "0". */
+/* A database "db" with relation 1 holding "x" -> "0", "y" -> "0". */
 class lock_fixture_t {
 public:
-  /* Create "db", "t", and the two rows. */
+  /* Create "db", relation 1, and the two rows. */
   lock_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     sm_session_t *s = open();
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(s, "t") == 0);
-    put(s, "t", "x", "0");
-    put(s, "t", "y", "0");
+    REQUIRE(sm_mkrel(s, 1) == 0);
+    put(s, 1, "x", "0");
+    put(s, 1, "y", "0");
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_closedb(s) == 0);
   }
@@ -44,9 +44,9 @@ private:
   home_t m_home;
 };
 
-/* Set key in "t" to val; the result of sm_update. */
+/* Set key in relation 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, "t", key.data(), key.size(), val.data(), val.size());
+  return sm_update(s, 1, key.data(), key.size(), val.data(), val.size());
 }
 
 /* Give a blocking call time to reach its wait. */
@@ -113,7 +113,7 @@ TEST_CASE("a blocked writer proceeds when the holder aborts") {
   REQUIRE(sm_commit(b) == 0);
 
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(a, "t", "x") == "b");
+  CHECK(get(a, 1, "x") == "b");
   REQUIRE(sm_commit(a) == 0);
   sm_closedb(a);
   sm_closedb(b);
@@ -133,8 +133,8 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
     sm_session_t *b = f.open();
     REQUIRE(sm_begin(a, level) == 0);
     REQUIRE(sm_begin(b, level) == 0);
-    CHECK(get(a, "t", "x") == "0");
-    CHECK(get(b, "t", "x") == "0");
+    CHECK(get(a, 1, "x") == "0");
+    CHECK(get(b, 1, "x") == "0");
     REQUIRE(set(a, "x", "a") == 0);
     REQUIRE(sm_commit(a) == 0);
     CHECK(set(b, "x", "b") == -1);
@@ -161,8 +161,8 @@ TEST_CASE("read committed sees a newer commit but cannot overwrite it") {
   REQUIRE(set(u, "x", "u") == 0);
   REQUIRE(sm_commit(u) == 0);
 
-  CHECK(get(t, "t", "x") == "u");
-  CHECK(get(t, "t", "y") == "t");
+  CHECK(get(t, 1, "x") == "u");
+  CHECK(get(t, 1, "y") == "t");
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm_errno() == SM_ERR_CONFLICT);
   sm_closedb(t);
@@ -171,16 +171,16 @@ TEST_CASE("read committed sees a newer commit but cannot overwrite it") {
 
 TEST_CASE("a retryable error aborts the transaction and releases everything") {
   // Verify the engine-side abort on SM_ERR_CONFLICT (§12.1).
-  // 1. T creates relation "u", inserts into it, and locks "y".
+  // 1. T creates relation 2, inserts into it, and locks "y".
   // 2. U commits a change to "x"; T's update of "x" conflicts.
-  // 3. "u" is gone, and another session can lock "y" at once
-  //    and create "u" itself.
+  // 3. Relation 2 is gone, and another session can lock "y" at once
+  //    and create relation 2 itself.
   lock_fixture_t f;
   sm_session_t *t = f.open();
   sm_session_t *u = f.open();
   REQUIRE(sm_begin(t, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(t, "u") == 0);
-  put(t, "u", "k", "v");
+  REQUIRE(sm_mkrel(t, 2) == 0);
+  put(t, 2, "k", "v");
   REQUIRE(set(t, "y", "t") == 0);
   REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(set(u, "x", "u") == 0);
@@ -192,19 +192,19 @@ TEST_CASE("a retryable error aborts the transaction and releases everything") {
   CHECK(set(u, "y", "u") == 0); // would block if T still held it
   const char *d;
   size_t dl;
-  CHECK(sm_read(u, "u", "k", 1, &d, &dl) == -1);
+  CHECK(sm_read(u, 2, "k", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
-  CHECK(sm_mkrel(u, "u") == 0);
+  CHECK(sm_mkrel(u, 2) == 0);
   REQUIRE(sm_commit(u) == 0);
   sm_closedb(t);
   sm_closedb(u);
 }
 
-TEST_CASE("concurrent sm_mkrel: different names both commit, the same name "
+TEST_CASE("concurrent sm_mkrel: different relids both commit, the same relid "
           "conflicts") {
   // Verify DDL goes through the row locks (§11, §12.5 DDL).
-  // 1. A and B create "p" and "q"; both commit.
-  // 2. A creates "r"; B, in another thread, creates "r" and
+  // 1. A and B create relation 3 and relation 4; both commit.
+  // 2. A creates relation 5; B, in another thread, creates relation 5 and
   //    blocks on the catalog row.
   // 3. A commits; B fails with SM_ERR_CONFLICT.
   lock_fixture_t f;
@@ -212,18 +212,18 @@ TEST_CASE("concurrent sm_mkrel: different names both commit, the same name "
   sm_session_t *b = f.open();
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(a, "p") == 0);
-  REQUIRE(sm_mkrel(b, "q") == 0);
+  REQUIRE(sm_mkrel(a, 3) == 0);
+  REQUIRE(sm_mkrel(b, 4) == 0);
   REQUIRE(sm_commit(a) == 0);
   REQUIRE(sm_commit(b) == 0);
 
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(a, "r") == 0);
+  REQUIRE(sm_mkrel(a, 5) == 0);
   std::atomic<bool> returned{false};
   int rc = 0, err = 0;
   std::thread tb([&] {
-    rc = sm_mkrel(b, "r");
+    rc = sm_mkrel(b, 5);
     err = sm_errno();
     returned = true;
   });
@@ -293,12 +293,12 @@ TEST_CASE("a doomed transaction fails its next call and changes nothing") {
   t->doomed = SM_ERR_DEADLOCK;
   const char *d;
   size_t dl;
-  CHECK(sm_read(t, "t", "x", 1, &d, &dl) == -1);
+  CHECK(sm_read(t, 1, "x", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_DEADLOCK);
   CHECK(sm_retryable() == 1);
 
   REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(u, "t", "x") == "0");
+  CHECK(get(u, 1, "x") == "0");
   CHECK(set(u, "x", "u") == 0);
   REQUIRE(sm_commit(u) == 0);
   sm_closedb(t);
@@ -325,7 +325,7 @@ TEST_CASE("concurrent increments with retry never lose an update") {
           const char *d;
           size_t dl;
           int ok =
-              sm_begin(s, level) == 0 && sm_read(s, "t", "x", 1, &d, &dl) == 0;
+              sm_begin(s, level) == 0 && sm_read(s, 1, "x", 1, &d, &dl) == 0;
           if (ok) {
             std::string v = std::to_string(std::stoi(std::string(d, dl)) + 1);
             ok = set(s, "x", v) == 0 && sm_commit(s) == 0;
@@ -348,7 +348,7 @@ TEST_CASE("concurrent increments with retry never lose an update") {
     CHECK(errors == 0);
     sm_session_t *s = sessions[0];
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    CHECK(get(s, "t", "x") == "200");
+    CHECK(get(s, 1, "x") == "200");
     REQUIRE(sm_commit(s) == 0);
     MESSAGE("retries: " << retries.load());
     for (sm_session_t *x : sessions) {

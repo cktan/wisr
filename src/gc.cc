@@ -42,10 +42,11 @@ public:
   ~gc_filter_t() override {
     // Warn if any version was kept unstamped out of doubt.
     if (m_doubts > 0) {
-      log_msg(SM_LOG_WARN,
-              "database {}: compaction kept {} version(s) of relation "
-              "{} unstamped: undecodable value or unknown writer status",
-              m_db->name.c_str(), m_doubts, m_cfid);
+      log_msg(
+          SM_LOG_WARN,
+          "database {}: compaction kept {} version(s) in column "
+          "family rel.{} unstamped: undecodable value or unknown writer status",
+          m_db->name.c_str(), m_doubts, m_cfid);
     }
   }
 
@@ -200,7 +201,7 @@ void purge_one(db_t *db, const db_t::purge_t &p,
   }
   // On failure the tombstone stays; the next compaction that
   // meets it queues it again. Nobody waits on this, so log it.
-  log_msg(SM_LOG_ERROR, "database {}: purge in relation {} failed: {}",
+  log_msg(SM_LOG_ERROR, "database {}: purge in column family rel.{} failed: {}",
           db->name.c_str(), p.cfid, s.ToString().c_str());
 }
 

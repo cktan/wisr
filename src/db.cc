@@ -576,6 +576,13 @@ int db_alloc_seq(db_t *db, uint64_t *out) {
                       out);
 }
 
+/* Compare v with the sequence's next value under alloc_mu. */
+bool db_seq_issued(db_t *db, uint64_t v) {
+  // Hold alloc_mu while reading next_seq.
+  std::lock_guard<std::mutex> guard(db->alloc_mu);
+  return v < db->next_seq;
+}
+
 /* Look up cfid's CF handle under the shared lock. */
 rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t cfid) {
   // Hold rel_mu shared while reading the map.
@@ -621,7 +628,7 @@ int db_drop_rel_cf(db_t *db, uint64_t cfid) {
   // Report a failed drop; most callers cannot act on it, so log it.
   if (!s.ok()) {
     log_msg(SM_LOG_ERROR,
-            "database {}: dropping relation {}'s column family failed: {}",
+            "database {}: dropping column family rel.{} failed: {}",
             db->name.c_str(), cfid, s.ToString().c_str());
     return set_status_error(s, "drop column family");
   }

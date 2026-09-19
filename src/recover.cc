@@ -161,8 +161,7 @@ int sweep_orphan_cfs(db_t *db) {
     if (db_drop_rel_cf(db, cfid) != 0) {
       return -1;
     }
-    log_msg(SM_LOG_INFO,
-            "database {}: dropped orphaned column family of relation {}",
+    log_msg(SM_LOG_INFO, "database {}: dropped orphaned column family rel.{}",
             db->name.c_str(), cfid);
   }
   return 0;

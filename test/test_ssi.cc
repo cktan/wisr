@@ -18,17 +18,17 @@
 
 namespace {
 
-/* A database "db" with relation "t" and the given rows. */
+/* A database "db" with relation 1 and the given rows. */
 class ssi_fixture_t {
 public:
-  /* Create "db", "t", and each key -> "1". */
+  /* Create "db", relation 1, and each key -> "1". */
   explicit ssi_fixture_t(const std::vector<std::string> &keys) {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     sm_session_t *s = open();
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(s, "t") == 0);
+    REQUIRE(sm_mkrel(s, 1) == 0);
     for (const std::string &k : keys) {
-      put(s, "t", k, "1");
+      put(s, 1, k, "1");
     }
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_closedb(s) == 0);
@@ -45,20 +45,20 @@ private:
   home_t m_home;
 };
 
-/* Set key in "t" to val; the result of sm_update. */
+/* Set key in relation 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, "t", key.data(), key.size(), val.data(), val.size());
+  return sm_update(s, 1, key.data(), key.size(), val.data(), val.size());
 }
 
-/* Insert key -> val into "t"; the result of sm_insert. */
+/* Insert key -> val into relation 1; the result of sm_insert. */
 int ins(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_insert(s, "t", key.data(), key.size(), val.data(), val.size());
+  return sm_insert(s, 1, key.data(), key.size(), val.data(), val.size());
 }
 
-/* The number of rows a scan of [lo, hi] in "t" returns. */
+/* The number of rows a scan of [lo, hi] in relation 1 returns. */
 int count_range(sm_session_t *s, const std::string &lo, const std::string &hi) {
   sm_scan_t *c =
-      sm_scan(s, "t", lo.data(), lo.size(), 1, hi.data(), hi.size(), 1);
+      sm_scan(s, 1, lo.data(), lo.size(), 1, hi.data(), hi.size(), 1);
   REQUIRE_MESSAGE(c, sm_errmsg());
   int n = 0;
   const char *k, *d;
@@ -99,8 +99,8 @@ TEST_CASE(
     REQUIRE(sm_begin(t1, level) == 0);
     REQUIRE(sm_begin(t2, level) == 0);
     for (sm_session_t *s : {t1, t2}) {
-      CHECK(get(s, "t", "alice") == "1");
-      CHECK(get(s, "t", "bob") == "1");
+      CHECK(get(s, 1, "alice") == "1");
+      CHECK(get(s, 1, "bob") == "1");
     }
     REQUIRE(set(t1, "alice", "0") == 0);
     REQUIRE(set(t2, "bob", "0") == 0);
@@ -155,8 +155,8 @@ TEST_CASE("reading a missing key counts: inserting it later conflicts") {
   sm_session_t *t2 = f.open();
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t1, "t", "p") == "<none>");
-  CHECK(get(t2, "t", "q") == "<none>");
+  CHECK(get(t1, 1, "p") == "<none>");
+  CHECK(get(t2, 1, "q") == "<none>");
   REQUIRE(ins(t1, "q", "1") == 0);
   REQUIRE(ins(t2, "p", "1") == 0);
   bool c1 = try_commit(t1);
@@ -180,11 +180,11 @@ TEST_CASE(
   sm_session_t *t2 = f.open();
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t2, "t", "y") == "1");
+  CHECK(get(t2, 1, "y") == "1");
   REQUIRE(set(t2, "x", "2") == 0);
   REQUIRE(try_commit(t2));
 
-  CHECK(get(t1, "t", "x") == "1");
+  CHECK(get(t1, 1, "x") == "1");
   REQUIRE(set(t1, "y", "2") == 0);
   CHECK_FALSE(try_commit(t1));
   sm_closedb(t1);
@@ -206,8 +206,8 @@ TEST_CASE("an edge onto a committed pivot dooms the transaction making it") {
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t3, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t3, "t", "k") == "1");
-  CHECK(get(t2, "t", "y") == "1");
+  CHECK(get(t3, 1, "k") == "1");
+  CHECK(get(t2, 1, "y") == "1");
   REQUIRE(set(t2, "k", "2") == 0);
   REQUIRE(try_commit(t2));
 
@@ -230,13 +230,13 @@ TEST_CASE("a phantom inserted while the reader's cursor is open is caught") {
   sm_session_t *t2 = f.open();
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
-  sm_scan_t *c = sm_scan(t1, "t", "a", 1, 1, "z", 1, 1);
+  sm_scan_t *c = sm_scan(t1, 1, "a", 1, 1, "z", 1, 1);
   REQUIRE(c);
   const char *k, *d;
   size_t kl, dl;
   REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
 
-  CHECK(get(t2, "t", "q") == "1");
+  CHECK(get(t2, 1, "q") == "1");
   REQUIRE(ins(t2, "n", "1") == 0);
   REQUIRE(try_commit(t2));
 
@@ -265,7 +265,7 @@ TEST_CASE("a scan closed early covers only what it read") {
   sm_session_t *t2 = f.open();
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
-  sm_scan_t *c = sm_scan(t1, "t", "a", 1, 1, "z", 1, 1);
+  sm_scan_t *c = sm_scan(t1, 1, "a", 1, 1, "z", 1, 1);
   REQUIRE(c);
   const char *k, *d;
   size_t kl, dl;
@@ -273,7 +273,7 @@ TEST_CASE("a scan closed early covers only what it read") {
   CHECK(std::string(k, kl) == "b");
   sm_scanend(c);
 
-  CHECK(get(t2, "t", "q") == "1");
+  CHECK(get(t2, 1, "q") == "1");
   REQUIRE(set(t2, "y", "2") == 0);
   REQUIRE(set(t1, "q", "2") == 0);
   CHECK(try_commit(t1));
@@ -295,8 +295,8 @@ TEST_CASE("Fekete's read-only anomaly fails the pivot") {
   {
     sm_session_t *s = f.open();
     REQUIRE(sm_begin(s, SM_XCT_SERIALIZABLE) == 0);
-    put(s, "t", "x", "0");
-    put(s, "t", "y", "0");
+    put(s, 1, "x", "0");
+    put(s, 1, "y", "0");
     REQUIRE(sm_commit(s) == 0);
     sm_closedb(s);
   }
@@ -304,16 +304,16 @@ TEST_CASE("Fekete's read-only anomaly fails the pivot") {
   sm_session_t *t2 = f.open();
   sm_session_t *t3 = f.open();
   REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t2, "t", "y") == "0");
+  CHECK(get(t2, 1, "y") == "0");
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t1, "t", "x") == "0");
-  CHECK(get(t1, "t", "y") == "0");
+  CHECK(get(t1, 1, "x") == "0");
+  CHECK(get(t1, 1, "y") == "0");
   REQUIRE(set(t2, "y", "20") == 0);
   REQUIRE(try_commit(t2));
 
   REQUIRE(sm_begin(t3, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t3, "t", "x") == "0");
-  CHECK(get(t3, "t", "y") == "20");
+  CHECK(get(t3, 1, "x") == "0");
+  CHECK(get(t3, 1, "y") == "20");
   REQUIRE(try_commit(t3));
 
   REQUIRE(set(t1, "x", "-11") == 0);
@@ -334,7 +334,7 @@ TEST_CASE("a reader that outlives every concurrent writer can then write and "
   sm_session_t *t = f.open();
   sm_session_t *u = f.open();
   REQUIRE(sm_begin(t, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t, "t", "x") == "1");
+  CHECK(get(t, 1, "x") == "1");
   REQUIRE(sm_begin(u, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(set(u, "y", "2") == 0);
   REQUIRE(try_commit(u));
@@ -342,7 +342,7 @@ TEST_CASE("a reader that outlives every concurrent writer can then write and "
   CHECK(try_commit(t));
 
   REQUIRE(sm_begin(t, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t, "t", "x") == "2");
+  CHECK(get(t, 1, "x") == "2");
   CHECK(count_range(t, "a", "z") == 2);
   REQUIRE(set(t, "x", "3") == 0);
   CHECK(try_commit(t));
@@ -362,8 +362,8 @@ TEST_CASE("a REPEATABLE READ writer does not take part in SSI") {
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t2, SM_XCT_REPEATABLE_READ) == 0);
   for (sm_session_t *s : {t1, t2}) {
-    CHECK(get(s, "t", "alice") == "1");
-    CHECK(get(s, "t", "bob") == "1");
+    CHECK(get(s, 1, "alice") == "1");
+    CHECK(get(s, 1, "bob") == "1");
   }
   REQUIRE(set(t1, "alice", "0") == 0);
   REQUIRE(set(t2, "bob", "0") == 0);
@@ -382,7 +382,7 @@ TEST_CASE("SSI nodes are freed once no transaction overlaps them") {
   sm_session_t *s = f.open();
   for (int i = 0; i < 5; i++) {
     REQUIRE(sm_begin(s, SM_XCT_SERIALIZABLE) == 0);
-    CHECK(get(s, "t", "x") != "<none>");
+    CHECK(get(s, 1, "x") != "<none>");
     CHECK(count_range(s, "a", "z") == 2);
     REQUIRE(set(s, "y", std::to_string(i)) == 0);
     REQUIRE(sm_commit(s) == 0);
@@ -425,7 +425,7 @@ TEST_CASE("concurrent SERIALIZABLE doctors always leave someone on call") {
           errors++;
           return;
         }
-        sm_scan_t *c = sm_scan(s, "t", "d0", 2, 1, "d3", 2, 1);
+        sm_scan_t *c = sm_scan(s, 1, "d0", 2, 1, "d3", 2, 1);
         int on = 0;
         const char *k, *d;
         size_t kl, dl;
@@ -434,7 +434,7 @@ TEST_CASE("concurrent SERIALIZABLE doctors always leave someone on call") {
         }
         sm_scanend(c);
         const char *v = on >= 2 ? "0" : "1";
-        if (sm_update(s, "t", me.data(), me.size(), v, 1) == 0 &&
+        if (sm_update(s, 1, me.data(), me.size(), v, 1) == 0 &&
             sm_commit(s) == 0) {
           commits++;
         } else if (!sm_retryable()) {
@@ -454,7 +454,7 @@ TEST_CASE("concurrent SERIALIZABLE doctors always leave someone on call") {
       }
       int on = 0;
       for (int i = 0; i < 4; i++) {
-        on += get(s, "t", "d" + std::to_string(i)) == "1";
+        on += get(s, 1, "d" + std::to_string(i)) == "1";
       }
       if (on == 0) {
         violations++;
@@ -475,5 +475,46 @@ TEST_CASE("concurrent SERIALIZABLE doctors always leave someone on call") {
   MESSAGE("commits: " << commits.load());
   for (sm_session_t *s : sessions) {
     sm_closedb(s);
+  }
+}
+
+TEST_CASE("sm_lsrel under SERIALIZABLE conflicts with concurrent DDL") {
+  // Verify sm_lsrel records the catalog as read, so "create a
+  // relation unless another exists" is serializable.
+  // 1. T1 and T2 begin; each lists relation 1 alone.
+  // 2. T1 creates relation 2 and T2 relation 3.
+  // 3. Both try to commit. At SERIALIZABLE at most one does,
+  //    and a loser fails with SM_ERR_SERIALIZATION.
+  // 4. At REPEATABLE READ, the control, both commit.
+  for (sm_xctlevel_t level : {SM_XCT_SERIALIZABLE, SM_XCT_REPEATABLE_READ}) {
+    CAPTURE(level);
+    ssi_fixture_t f({});
+    sm_session_t *t1 = f.open();
+    sm_session_t *t2 = f.open();
+    REQUIRE(sm_begin(t1, level) == 0);
+    REQUIRE(sm_begin(t2, level) == 0);
+    CHECK(lsrel(t1) == std::vector<uint64_t>{1});
+    CHECK(lsrel(t2) == std::vector<uint64_t>{1});
+
+    REQUIRE(sm_mkrel(t1, 2) == 0);
+    REQUIRE(sm_mkrel(t2, 3) == 0);
+
+    int commits = 0;
+    int serialization = 0;
+    for (sm_session_t *s : {t1, t2}) {
+      if (sm_commit(s) == 0) {
+        commits++;
+      } else {
+        serialization += sm_errno() == SM_ERR_SERIALIZATION;
+      }
+    }
+    if (level == SM_XCT_SERIALIZABLE) {
+      CHECK(commits <= 1);
+      CHECK(serialization >= 1);
+    } else {
+      CHECK(commits == 2);
+    }
+    sm_closedb(t1);
+    sm_closedb(t2);
   }
 }

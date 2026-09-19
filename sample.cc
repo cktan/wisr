@@ -30,6 +30,12 @@
 
 namespace {
 
+/*
+ * book's relid. A fixed id below SM_SEQ_FIRST is the caller's
+ * to choose, so a program can name its tables by constant.
+ */
+constexpr uint64_t BOOK_RELID = 1;
+
 /* One row of book. */
 struct book_t {
   uint64_t id;
@@ -130,8 +136,8 @@ void upsert_book(sm_session_t *s, const book_t &b) {
   std::string key = encode_key(b.id);
   std::string val = encode_value(b);
   // Try the insert first.
-  if (sm_insert(s, "book", key.data(), key.size(), val.data(), val.size()) ==
-      0) {
+  if (sm_insert(s, BOOK_RELID, key.data(), key.size(), val.data(),
+                val.size()) == 0) {
     return;
   }
   // Any failure but a taken key is a real error.
@@ -139,8 +145,9 @@ void upsert_book(sm_session_t *s, const book_t &b) {
     check(-1, "sm_insert");
   }
   // The id exists: replace its value instead.
-  check(sm_update(s, "book", key.data(), key.size(), val.data(), val.size()),
-        "sm_update");
+  check(
+      sm_update(s, BOOK_RELID, key.data(), key.size(), val.data(), val.size()),
+      "sm_update");
 }
 
 } // namespace
@@ -175,7 +182,7 @@ int main(int argc, char **argv) {
 
   // Create the table in its own transaction; DDL is transactional.
   check(sm_begin(s, SM_XCT_REPEATABLE_READ), "sm_begin");
-  if (sm_mkrel(s, "book") == 0) {
+  if (sm_mkrel(s, BOOK_RELID) == 0) {
     check(sm_commit(s), "sm_commit");
   } else if (sm_errno() == SM_ERR_EXISTS) {
     // An earlier run created it; nothing to commit.
@@ -206,7 +213,7 @@ int main(int argc, char **argv) {
   std::string key = encode_key(3);
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm_read(s, "book", key.data(), key.size(), &data, &len);
+  int r = sm_read(s, BOOK_RELID, key.data(), key.size(), &data, &len);
   check(r, "sm_read");
   printf("\nread id 3:\n");
   // 1 means no such row, which is not an error.
@@ -224,7 +231,7 @@ int main(int argc, char **argv) {
 
   // Scan every row: NULL bounds mean from the first key to the last.
   printf("\nscan all books:\n");
-  sm_scan_t *c = sm_scan(s, "book", nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(s, BOOK_RELID, nullptr, 0, 0, nullptr, 0, 0);
   if (!c) {
     check(-1, "sm_scan");
   }

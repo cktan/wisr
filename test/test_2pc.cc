@@ -27,17 +27,17 @@
 
 namespace {
 
-/* A database "db" with relation "t" holding "a" -> "0", "b" -> "0". */
+/* A database "db" with relation 1 holding "a" -> "0", "b" -> "0". */
 class tpc_fixture_t {
 public:
-  /* Create "db", "t", and the rows. */
+  /* Create "db", relation 1, and the rows. */
   tpc_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     sm_session_t *s = open();
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(s, "t") == 0);
-    put(s, "t", "a", "0");
-    put(s, "t", "b", "0");
+    REQUIRE(sm_mkrel(s, 1) == 0);
+    put(s, 1, "a", "0");
+    put(s, 1, "b", "0");
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_closedb(s) == 0);
   }
@@ -62,9 +62,9 @@ private:
   home_t m_home;
 };
 
-/* Set key in "t" to val; the result of sm_update. */
+/* Set key in relation 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, "t", key.data(), key.size(), val.data(), val.size());
+  return sm_update(s, 1, key.data(), key.size(), val.data(), val.size());
 }
 
 /* The unresolved prepared transactions, as (gid, prepared_at). */
@@ -81,10 +81,10 @@ std::vector<std::pair<std::string, long long>> listed(sm_session_t *s) {
   return out;
 }
 
-/* The value of key in "t" at a fresh RR snapshot. */
+/* The value of key in relation 1 at a fresh RR snapshot. */
 std::string read_now(sm_session_t *s, const std::string &key) {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  std::string v = get(s, "t", key);
+  std::string v = get(s, 1, key);
   REQUIRE(sm_commit(s) == 0);
   return v;
 }
@@ -132,7 +132,7 @@ int prepare_child_main(const char *homedir) {
   sm_env_t *env = sm_attach(homedir);
   sm_session_t *s = env ? sm_opendb(env, "db", nullptr) : nullptr;
   if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
-      sm_insert(s, "t", "c", 1, "v", 1) != 0 || sm_prepare(s, "g-crash") != 0) {
+      sm_insert(s, 1, "c", 1, "v", 1) != 0 || sm_prepare(s, "g-crash") != 0) {
     return 2;
   }
   if (write(1, "r", 1) != 1) {
@@ -144,16 +144,16 @@ int prepare_child_main(const char *homedir) {
 }
 
 /*
- * Child: drop relation "u" and commit, then create "o" without
+ * Child: drop relation 2 and commit, then create relation 6 without
  * committing; report, then wait to be killed. Both leave a
  * relation CF that only the orphan sweep can remove.
  */
 int orphan_child_main(const char *homedir) {
   sm_env_t *env = sm_attach(homedir);
   sm_session_t *s = env ? sm_opendb(env, "db", nullptr) : nullptr;
-  if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 || sm_rmrel(s, "u") != 0 ||
+  if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 || sm_rmrel(s, 2) != 0 ||
       sm_commit(s) != 0 || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
-      sm_mkrel(s, "o") != 0) {
+      sm_mkrel(s, 6) != 0) {
     return 2;
   }
   if (write(1, "r", 1) != 1) {
@@ -220,7 +220,7 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
 
   const char *d;
   size_t dl;
-  CHECK(sm_read(s, "t", "a", 1, &d, &dl) == -1);
+  CHECK(sm_read(s, 1, "a", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
   CHECK(set(s, "b", "1") == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
@@ -228,7 +228,7 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm_errno() == SM_ERR_PREPARED);
   CHECK(sm_rollback(s) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
-  CHECK(sm_mkrel(s, "x") == -1);
+  CHECK(sm_mkrel(s, 7) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
   CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == -1);
   CHECK(sm_errno() == SM_ERR_INTRANS);
@@ -259,10 +259,10 @@ TEST_CASE("a prepare that fails validation releases its gid") {
   sm_session_t *t2 = f.open();
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t2, "t", "b") == "0");
+  CHECK(get(t2, 1, "b") == "0");
   REQUIRE(set(t2, "a", "1") == 0);
   REQUIRE(sm_commit(t2) == 0);
-  CHECK(get(t1, "t", "a") == "0");
+  CHECK(get(t1, 1, "a") == "0");
   REQUIRE(set(t1, "b", "1") == 0);
   CHECK(sm_prepare(t1, "g") == -1);
   CHECK(sm_errno() == SM_ERR_SERIALIZATION);
@@ -292,9 +292,9 @@ TEST_CASE("another session can resolve a prepared transaction by gid") {
   REQUIRE(sm_prepare(s, "g") == 0);
 
   REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(u, "t", "a") == "0");
+  CHECK(get(u, 1, "a") == "0");
   REQUIRE(sm_commit_prepared(u, "g") == 0);
-  CHECK(get(u, "t", "a") == "0"); // its snapshot predates the commit
+  CHECK(get(u, 1, "a") == "0"); // its snapshot predates the commit
   REQUIRE(sm_commit(u) == 0);
 
   CHECK(sm_commit(s) == -1);
@@ -408,7 +408,7 @@ TEST_CASE("read-only prepares survive a restart and resolve") {
   sm_session_t *s2 = f.open();
   for (auto p : {std::make_pair(s1, "r1"), std::make_pair(s2, "r2")}) {
     REQUIRE(sm_begin(p.first, SM_XCT_SERIALIZABLE) == 0);
-    CHECK(get(p.first, "t", "a") == "0");
+    CHECK(get(p.first, 1, "a") == "0");
     REQUIRE(sm_prepare(p.first, p.second) == 0);
   }
   f.restart();
@@ -425,32 +425,32 @@ TEST_CASE("read-only prepares survive a restart and resolve") {
 
 TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   // Verify T.dropped survives in the record (§3.2, §12.5).
-  // 1. Create "u"; prepare its drop as "gd"; restart.
-  // 2. Commit "gd" by gid; "u" is gone by name.
+  // 1. Create relation 2; prepare its drop as "gd"; restart.
+  // 2. Commit "gd" by gid; relation 2 is gone.
   // 3. With no snapshot left to see it, GC drops its CF.
   tpc_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(s, "u") == 0);
+  REQUIRE(sm_mkrel(s, 2) == 0);
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  uint64_t relid = 0;
-  REQUIRE(wisr::catalog_lookup(s, wisr::xct_view(s), "u", &relid) == 0);
-  REQUIRE(sm_rmrel(s, "u") == 0);
+  uint64_t cfid = 0;
+  REQUIRE(wisr::catalog_lookup(s, wisr::xct_view(s), 2, &cfid) == 0);
+  REQUIRE(sm_rmrel(s, 2) == 0);
   REQUIRE(sm_prepare(s, "gd") == 0);
   f.restart();
 
   sm_session_t *v = f.open();
-  CHECK(wisr::db_rel_cf(v->db, relid) != nullptr);
+  CHECK(wisr::db_rel_cf(v->db, cfid) != nullptr);
   REQUIRE(sm_commit_prepared(v, "gd") == 0);
   REQUIRE(sm_begin(v, SM_XCT_REPEATABLE_READ) == 0);
   const char *d;
   size_t dl;
-  CHECK(sm_read(v, "u", "k", 1, &d, &dl) == -1);
+  CHECK(sm_read(v, 2, "k", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
   REQUIRE(sm_commit(v) == 0);
   wisr::gc_run_once(v->db);
-  CHECK(wisr::db_rel_cf(v->db, relid) == nullptr);
+  CHECK(wisr::db_rel_cf(v->db, cfid) == nullptr);
   sm_closedb(v);
 }
 
@@ -464,14 +464,14 @@ TEST_CASE("write skew with a transaction restored in doubt is still caught") {
   tpc_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(s, "t", "a") == "0");
+  CHECK(get(s, 1, "a") == "0");
   REQUIRE(set(s, "b", "1") == 0);
   REQUIRE(sm_prepare(s, "gp") == 0);
   f.restart();
 
   sm_session_t *t = f.open();
   REQUIRE(sm_begin(t, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t, "t", "b") == "0");
+  CHECK(get(t, 1, "b") == "0");
   REQUIRE(set(t, "a", "1") == 0);
   CHECK(sm_commit(t) == -1);
   CHECK(sm_errno() == SM_ERR_SERIALIZATION);
@@ -506,18 +506,18 @@ TEST_CASE("a transaction prepared when the process is killed is restored") {
 
 TEST_CASE("startup drops relation CFs that nothing names") {
   // Verify the orphan CF sweep (§9.1 step 6).
-  // 1. Create "u" and commit. A child drops "u" and commits,
-  //    then creates "o" without committing, and is killed.
-  // 2. Reattach: neither "u" nor "o" exists by name, and the
-  //    only relation CFs left are the catalog's and "t"'s.
+  // 1. Create relation 2 and commit. A child drops relation 2 and commits,
+  //    then creates relation 6 without committing, and is killed.
+  // 2. Reattach: neither relation 2 nor relation 6 exists, and the
+  //    only relation CFs left are the catalog's and relation 1's.
   tpc_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(s, "u") == 0);
+  REQUIRE(sm_mkrel(s, 2) == 0);
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  uint64_t trelid = 0;
-  REQUIRE(wisr::catalog_lookup(s, wisr::xct_view(s), "t", &trelid) == 0);
+  uint64_t tcfid = 0;
+  REQUIRE(wisr::catalog_lookup(s, wisr::xct_view(s), 1, &tcfid) == 0);
   REQUIRE(sm_commit(s) == 0);
   f.home().detach();
 
@@ -531,12 +531,12 @@ TEST_CASE("startup drops relation CFs that nothing names") {
   for (auto &kv : v->db->rels) {
     rels.insert(kv.first);
   }
-  CHECK(rels == std::set<uint64_t>{0, trelid});
+  CHECK(rels == std::set<uint64_t>{0, tcfid});
   REQUIRE(sm_begin(v, SM_XCT_REPEATABLE_READ) == 0);
   const char *d;
   size_t dl;
-  CHECK(sm_read(v, "u", "k", 1, &d, &dl) == -1);
-  CHECK(sm_read(v, "o", "k", 1, &d, &dl) == -1);
+  CHECK(sm_read(v, 2, "k", 1, &d, &dl) == -1);
+  CHECK(sm_read(v, 6, "k", 1, &d, &dl) == -1);
   REQUIRE(sm_commit(v) == 0);
   sm_closedb(v);
 }

@@ -27,9 +27,9 @@ std::string crash_key(uint32_t i) {
   return buf;
 }
 
-/* The number of rows in relation "t", as s reads them. */
+/* The number of rows in relation 1, as s reads them. */
 uint32_t count_rows(sm_session_t *s) {
-  sm_scan_t *c = sm_scan(s, "t", nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0);
   if (!c) {
     return UINT32_MAX;
   }
@@ -80,8 +80,7 @@ int crash_child_main(const char *homedir) {
   for (uint32_t i = next;; i++) {
     std::string k = crash_key(i);
     if (sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
-        sm_insert(s, "t", k.data(), k.size(), "v", 1) != 0 ||
-        sm_commit(s) != 0) {
+        sm_insert(s, 1, k.data(), k.size(), "v", 1) != 0 || sm_commit(s) != 0) {
       return 5;
     }
     if (write(1, &i, sizeof(i)) != sizeof(i)) {
@@ -93,7 +92,7 @@ int crash_child_main(const char *homedir) {
 TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
           "included") {
   // Verify crash recovery against SIGKILL at arbitrary points.
-  // 1. Create database "db" with relation "t".
+  // 1. Create database "db" with relation 1.
   // 2. Each round, start a child that commits one key per
   //    transaction and reports each acknowledged commit.
   // 3. After a random number of acknowledgements, SIGKILL it
@@ -110,7 +109,7 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
     sm_session_t *s = sm_opendb(env, "db", nullptr);
     REQUIRE(s);
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(s, "t") == 0);
+    REQUIRE(sm_mkrel(s, 1) == 0);
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_detach(env, 1) == 0);
   }
@@ -161,7 +160,7 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
     CHECK(n <= acked + 1); // at most the one in flight at the kill
     for (uint32_t j = 0; j < n; j++) {
       std::string k = crash_key(j);
-      CHECK(get(s, "t", k) == "v");
+      CHECK(get(s, 1, k) == "v");
     }
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_detach(env, 1) == 0);

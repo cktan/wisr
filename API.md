@@ -107,8 +107,8 @@ longer active, whatever the result. `sm_prepare`: on
 
 ### Memory and lifetimes
 
-Byte strings passed *in* (`key`, `data`, `relname`,
-`homedir`, `dbname`, `gid`) are read during the call and
+Byte strings passed *in* (`key`, `data`, `homedir`,
+`dbname`, `gid`) are read during the call and
 never retained. The caller may free or reuse them immediately
 afterwards.
 
@@ -749,20 +749,31 @@ transaction with that `gid`), `SM_ERR_DISKFULL`,
 
 ## Rel API
 
-A relation is an ordered map from key to value. Relation
-names are NUL-terminated strings of at most `SM_MAX_RELNAME`
-bytes.
+A relation is an ordered map from key to value, named by a
+`uint64_t` relid the caller chooses. A relid is either a
+constant of the caller's in `1 .. SM_SEQ_FIRST - 1`, or a
+value `sm_nextseq` has handed out. Relid 0 is never a
+relation: every call given it fails with `SM_ERR_INVALID`.
 
-### int sm_mkrel(sm_session_t* session, const char* relname)
+### int sm_mkrel(sm_session_t* session, uint64_t relid)
 
 Create a relation. Transactional: visible to others only at
 commit, and undone by abort or by a rollback that spans it.
+
+A relid outside the two ranges above — 0, or a value at or
+above `SM_SEQ_FIRST` that `sm_nextseq` has not yet handed
+out — fails with `SM_ERR_INVALID`.
+
+A relid dropped by `sm_rmrel` may be created again at once,
+even in the same transaction. The new relation starts empty;
+a transaction whose snapshot predates the drop still sees
+the old one.
 
 Errors: `SM_ERR_EXISTS`, `SM_ERR_NOTRANS`,
 `SM_ERR_CONFLICT` (retryable — concurrently created),
 `SM_ERR_INVALID`, `SM_ERR_PREPARED`.
 
-### int sm_rmrel(sm_session_t* session, const char* relname)
+### int sm_rmrel(sm_session_t* session, uint64_t relid)
 
 Drop a relation and all of its rows. Transactional, as
 `sm_mkrel`.
@@ -773,7 +784,29 @@ Physical removal happens in the background once no snapshot
 can see it.
 
 Errors: `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`,
-`SM_ERR_CONFLICT` (retryable), `SM_ERR_PREPARED`.
+`SM_ERR_CONFLICT` (retryable), `SM_ERR_INVALID` (relid 0),
+`SM_ERR_PREPARED`.
+
+### int sm_lsrel(sm_session_t* session, uint64_t** out, size_t* n)
+
+List the relids of the relations the transaction sees, in
+ascending order. It reads the catalog as `sm_scan` reads a
+relation: at the transaction's snapshot, including its own
+uncommitted DDL. Under `SM_XCT_SERIALIZABLE` the whole list
+is recorded as read, so a concurrent `sm_mkrel` or
+`sm_rmrel` is a read-write conflict.
+
+On success `*out` points to `*n` relids allocated by the
+library; release them with `sm_free_rels`. `*n` may be 0, in
+which case `*out` is NULL.
+
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+`SM_ERR_INVALID`, `SM_ERR_NOMEM`, `SM_ERR_CORRUPT`,
+`SM_ERR_IO`.
+
+### void sm_free_rels(uint64_t* list)
+
+Release a list from `sm_lsrel`. NULL is a no-op.
 
 ---
 
@@ -789,15 +822,15 @@ blocked call can return `SM_ERR_DEADLOCK` if it is selected
 as the victim of a deadlock cycle.
 
 ```c
-int sm_insert(sm_session_t* session, const char* relname,
+int sm_insert(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen,
               const char* data, size_t datalen);
 
-int sm_update(sm_session_t* session, const char* relname,
+int sm_update(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen,
               const char* data, size_t datalen);
 
-int sm_delete(sm_session_t* session, const char* relname,
+int sm_delete(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen);
 ```
 
@@ -829,7 +862,7 @@ Reads never block and never take locks. They cannot return
 contribute to an `SM_ERR_SERIALIZATION` failure later, at
 commit.
 
-### int sm_read(sm_session_t* session, const char* relname, const char* key, size_t klen, const char** data, size_t* datalen)
+### int sm_read(sm_session_t* session, uint64_t relid, const char* key, size_t klen, const char** data, size_t* datalen)
 
 Read one key.
 
@@ -844,9 +877,9 @@ a missing key returns 1, not an error), `SM_ERR_NOTRANS`,
 `SM_ERR_PREPARED`, `SM_ERR_INVALID`, `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
-### sm_scan_t* sm_scan(sm_session_t* session, const char* relname, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive)
+### sm_scan_t* sm_scan(sm_session_t* session, uint64_t relid, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive)
 
-Open a cursor over the keys of `relname` in ascending
+Open a cursor over the keys of `relid` in ascending
 bytewise order, from `skey` to `ekey`.
 
 - `skey == NULL` starts at the first key; `sklen` and

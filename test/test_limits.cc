@@ -17,15 +17,15 @@
 
 namespace {
 
-/* A database "db" with relation "t", reopenable. */
+/* A database "db" with relation 1, reopenable. */
 class limits_fixture_t {
 public:
-  /* Create "db" and "t". */
+  /* Create "db" and relation 1. */
   limits_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     m_s = open();
     REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(m_s, "t") == 0);
+    REQUIRE(sm_mkrel(m_s, 1) == 0);
     REQUIRE(sm_commit(m_s) == 0);
   }
 
@@ -39,17 +39,17 @@ public:
     m_s = open();
   }
 
-  /* Force "t" through a full compaction, so its versions are stamped. */
+  /* Force relation 1 through a full compaction, so its versions are stamped. */
   void compact() {
     REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
-    uint64_t relid = 0;
-    REQUIRE(wisr::catalog_lookup(m_s, wisr::xct_view(m_s), "t", &relid) == 0);
+    uint64_t cfid = 0;
+    REQUIRE(wisr::catalog_lookup(m_s, wisr::xct_view(m_s), 1, &cfid) == 0);
     REQUIRE(sm_commit(m_s) == 0);
     rocksdb::CompactRangeOptions opt;
     opt.bottommost_level_compaction =
         rocksdb::BottommostLevelCompaction::kForce;
     REQUIRE(m_s->db->rdb
-                ->CompactRange(opt, wisr::db_rel_cf(m_s->db, relid), nullptr,
+                ->CompactRange(opt, wisr::db_rel_cf(m_s->db, cfid), nullptr,
                                nullptr)
                 .ok());
   }
@@ -75,9 +75,9 @@ std::string pattern(size_t n, unsigned seed) {
   return v;
 }
 
-/* Every (key, value) a full scan of "t" returns, through s. */
+/* Every (key, value) a full scan of relation 1 returns, through s. */
 std::vector<std::pair<std::string, std::string>> scan_all(sm_session_t *s) {
-  sm_scan_t *c = sm_scan(s, "t", nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE_MESSAGE(c, sm_errmsg());
   std::vector<std::pair<std::string, std::string>> rows;
   const char *k, *d;
@@ -105,18 +105,18 @@ TEST_CASE("keys of SM_MAX_KEYLEN bytes work in every call and survive reopen") {
   ka.back() = 'a';
   kb.back() = 'b';
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, "t", ka, "va");
-  put(s, "t", kb, "vb");
-  REQUIRE(sm_update(s, "t", ka.data(), ka.size(), "va2", 3) == 0);
+  put(s, 1, ka, "va");
+  put(s, 1, kb, "vb");
+  REQUIRE(sm_update(s, 1, ka.data(), ka.size(), "va2", 3) == 0);
   REQUIRE(sm_commit(s) == 0);
 
   f.reopen();
   s = f.s();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(s, "t", ka) == "va2");
-  CHECK(get(s, "t", kb) == "vb");
+  CHECK(get(s, 1, ka) == "va2");
+  CHECK(get(s, 1, kb) == "vb");
   sm_scan_t *c =
-      sm_scan(s, "t", ka.data(), ka.size(), 1, kb.data(), kb.size(), 1);
+      sm_scan(s, 1, ka.data(), ka.size(), 1, kb.data(), kb.size(), 1);
   REQUIRE_MESSAGE(c, sm_errmsg());
   const char *k, *d;
   size_t kl, dl;
@@ -127,12 +127,12 @@ TEST_CASE("keys of SM_MAX_KEYLEN bytes work in every call and survive reopen") {
   CHECK(std::string(k, kl) == kb);
   CHECK(sm_scannxt(c, &k, &kl, &d, &dl) == 1);
   sm_scanend(c);
-  REQUIRE(sm_delete(s, "t", ka.data(), ka.size()) == 0);
+  REQUIRE(sm_delete(s, 1, ka.data(), ka.size()) == 0);
   REQUIRE(sm_commit(s) == 0);
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(s, "t", ka) == "<none>");
-  CHECK(get(s, "t", kb) == "vb");
+  CHECK(get(s, 1, ka) == "<none>");
+  CHECK(get(s, 1, kb) == "vb");
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -149,23 +149,23 @@ TEST_CASE("a key one byte over SM_MAX_KEYLEN is rejected by every call") {
   const char *d;
   size_t dl;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, "t", "ok", "v");
-  CHECK(sm_insert(s, "t", over.data(), over.size(), "v", 1) == -1);
+  put(s, 1, "ok", "v");
+  CHECK(sm_insert(s, 1, over.data(), over.size(), "v", 1) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_update(s, "t", over.data(), over.size(), "v", 1) == -1);
+  CHECK(sm_update(s, 1, over.data(), over.size(), "v", 1) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_delete(s, "t", over.data(), over.size()) == -1);
+  CHECK(sm_delete(s, 1, over.data(), over.size()) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_read(s, "t", over.data(), over.size(), &d, &dl) == -1);
+  CHECK(sm_read(s, 1, over.data(), over.size(), &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_scan(s, "t", over.data(), over.size(), 1, nullptr, 0, 0) == nullptr);
+  CHECK(sm_scan(s, 1, over.data(), over.size(), 1, nullptr, 0, 0) == nullptr);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_scan(s, "t", nullptr, 0, 0, over.data(), over.size(), 1) == nullptr);
+  CHECK(sm_scan(s, 1, nullptr, 0, 0, over.data(), over.size(), 1) == nullptr);
   CHECK(sm_errno() == SM_ERR_INVALID);
   REQUIRE(sm_commit(s) == 0);
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(s, "t", "ok") == "v");
+  CHECK(get(s, 1, "ok") == "v");
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -180,24 +180,24 @@ TEST_CASE("values of SM_MAX_DATALEN bytes are stored and read back intact") {
   sm_session_t *s = f.s();
   std::string v1 = pattern(SM_MAX_DATALEN, 1);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, "t", "big", v1);
+  put(s, 1, "big", v1);
   REQUIRE(sm_commit(s) == 0);
 
   f.compact();
   f.reopen();
   s = f.s();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK((get(s, "t", "big") == v1)); // no 64 MiB dump on failure
+  CHECK((get(s, 1, "big") == v1)); // no 64 MiB dump on failure
   auto rows = scan_all(s);
   REQUIRE(rows.size() == 1);
   CHECK(rows[0].first == "big");
   CHECK((rows[0].second == v1));
 
   std::string v2 = pattern(SM_MAX_DATALEN, 2);
-  REQUIRE(sm_update(s, "t", "big", 3, v2.data(), v2.size()) == 0);
+  REQUIRE(sm_update(s, 1, "big", 3, v2.data(), v2.size()) == 0);
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK((get(s, "t", "big") == v2));
+  CHECK((get(s, 1, "big") == v2));
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -211,12 +211,12 @@ TEST_CASE("a value one byte over SM_MAX_DATALEN is rejected") {
   sm_session_t *s = f.s();
   std::string over(SM_MAX_DATALEN + 1, 'x');
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, "t", "k", "v");
-  CHECK(sm_insert(s, "t", "k2", 2, over.data(), over.size()) == -1);
+  put(s, 1, "k", "v");
+  CHECK(sm_insert(s, 1, "k2", 2, over.data(), over.size()) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_update(s, "t", "k", 1, over.data(), over.size()) == -1);
+  CHECK(sm_update(s, 1, "k", 1, over.data(), over.size()) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(get(s, "t", "k") == "v");
-  CHECK(get(s, "t", "k2") == "<none>");
+  CHECK(get(s, 1, "k") == "v");
+  CHECK(get(s, 1, "k2") == "<none>");
   REQUIRE(sm_commit(s) == 0);
 }

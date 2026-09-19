@@ -102,7 +102,7 @@ rocksdb::ColumnFamilyHandle *rel_cf(db_t *db, uint64_t cfid) {
   rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, cfid);
   // The catalog named it, so a missing CF is corruption.
   if (!cf) {
-    set_error(SM_ERR_CORRUPT, "relation {} has no column family", cfid);
+    set_error(SM_ERR_CORRUPT, "column family rel.{} is missing", cfid);
   }
   return cf;
 }
@@ -190,28 +190,31 @@ int check_key(const char *key, size_t klen) {
 }
 
 /*
- * Common entry checks for a data operation: a valid relation
- * name and key. Resolves relname at view into *cfid.
+ * Common entry checks for a data operation: a valid relid and
+ * key. Resolves relid at view into *cfid.
  */
-int enter(sm_session_t *s, const view_t &view, const char *relname,
-          const char *key, size_t klen, uint64_t *cfid) {
-  // Validate the relation name and the key.
-  if (check_name(relname, SM_MAX_RELNAME, "relation") != 0 ||
-      check_key(key, klen) != 0) {
+int enter(sm_session_t *s, const view_t &view, uint64_t relid, const char *key,
+          size_t klen, uint64_t *cfid) {
+  // Reject relid 0, which no relation has.
+  if (relid == 0) {
+    return set_error(SM_ERR_INVALID, "relid 0 is not a relation");
+  }
+  // Validate the key.
+  if (check_key(key, klen) != 0) {
     return -1;
   }
   // Resolve the relation at the view.
-  int r = catalog_lookup(s, view, relname, cfid);
+  int r = catalog_lookup(s, view, relid, cfid);
   // Report an unknown relation.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "relation {} does not exist", relname);
+    return set_error(SM_ERR_NOTFOUND, "relation {} does not exist", relid);
   }
   return r;
 }
 
 /* sm_insert / sm_update / sm_delete, minus the out-of-memory guard. */
-int write_row(sm_session_t *s, write_op_t op, const char *relname,
-              const char *key, size_t klen, const char *data, size_t datalen) {
+int write_row(sm_session_t *s, write_op_t op, uint64_t relid, const char *key,
+              size_t klen, const char *data, size_t datalen) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -227,7 +230,7 @@ int write_row(sm_session_t *s, write_op_t op, const char *relname,
   }
   uint64_t cfid;
   // Validate and resolve at the current view.
-  if (enter(s, xct_view(s), relname, key, klen, &cfid) != 0) {
+  if (enter(s, xct_view(s), relid, key, klen, &cfid) != 0) {
     return -1;
   }
   // Write the version.
@@ -236,7 +239,7 @@ int write_row(sm_session_t *s, write_op_t op, const char *relname,
 }
 
 /* sm_read, minus the out-of-memory guard. */
-int read_row(sm_session_t *s, const char *relname, const char *key, size_t klen,
+int read_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
              const char **data, size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
@@ -253,7 +256,7 @@ int read_row(sm_session_t *s, const char *relname, const char *key, size_t klen,
   view_t view = xct_view(s);
   uint64_t cfid;
   // Validate and resolve the relation.
-  if (enter(s, view, relname, key, klen, &cfid) != 0) {
+  if (enter(s, view, relid, key, klen, &cfid) != 0) {
     return -1;
   }
   // Read the key into the session's buffer.
@@ -268,9 +271,9 @@ int read_row(sm_session_t *s, const char *relname, const char *key, size_t klen,
 }
 
 /* sm_scan, minus the out-of-memory guard. */
-sm_scan_t *scan(sm_session_t *s, const char *relname, const char *skey,
-                size_t sklen, int skey_inclusive, const char *ekey,
-                size_t eklen, int ekey_inclusive) {
+sm_scan_t *scan(sm_session_t *s, uint64_t relid, const char *skey, size_t sklen,
+                int skey_inclusive, const char *ekey, size_t eklen,
+                int ekey_inclusive) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return nullptr;
@@ -284,10 +287,23 @@ sm_scan_t *scan(sm_session_t *s, const char *relname, const char *skey,
   view_t view = xct_view(s);
   uint64_t cfid;
   // Validate and resolve the relation.
-  if (enter(s, view, relname, "", 0, &cfid) != 0) {
+  if (enter(s, view, relid, "", 0, &cfid) != 0) {
     return nullptr;
   }
-  // Find the relation's CF.
+  // Open the cursor on the relation's column family.
+  return access_scan(s, cfid, view, skey, sklen, skey_inclusive, ekey, eklen,
+                     ekey_inclusive);
+}
+
+} // namespace
+
+namespace wisr {
+
+/* Open a cursor over cfid at view, between the given bounds. */
+sm_scan_t *access_scan(sm_session_t *s, uint64_t cfid, const view_t &view,
+                       const char *skey, size_t sklen, int skey_inclusive,
+                       const char *ekey, size_t eklen, int ekey_inclusive) {
+  // Find the column family.
   rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, cfid);
   if (!cf) {
     return nullptr;
@@ -342,6 +358,10 @@ sm_scan_t *scan(sm_session_t *s, const char *relname, const char *skey,
   s->scans.insert(c.get());
   return c.release();
 }
+
+} // namespace wisr
+
+namespace {
 
 /* sm_scannxt, minus the out-of-memory guard. */
 int scan_next(sm_scan_t *c, const char **key, size_t *klen, const char **data,
@@ -582,56 +602,56 @@ int access_write(sm_session_t *s, uint64_t cfid, write_op_t op,
 } // namespace wisr
 
 /* Insert a row; the key must not exist. */
-int sm_insert(sm_session_t *session, const char *relname, const char *key,
+int sm_insert(sm_session_t *session, uint64_t relid, const char *key,
               size_t klen, const char *data, size_t datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_INSERT, relname, key, klen, data, datalen);
+    return write_row(session, WRITE_INSERT, relid, key, klen, data, datalen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_insert: out of memory");
   }
 }
 
 /* Replace a row's value; the key must exist. */
-int sm_update(sm_session_t *session, const char *relname, const char *key,
+int sm_update(sm_session_t *session, uint64_t relid, const char *key,
               size_t klen, const char *data, size_t datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_UPDATE, relname, key, klen, data, datalen);
+    return write_row(session, WRITE_UPDATE, relid, key, klen, data, datalen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_update: out of memory");
   }
 }
 
 /* Delete a row; the key must exist. */
-int sm_delete(sm_session_t *session, const char *relname, const char *key,
+int sm_delete(sm_session_t *session, uint64_t relid, const char *key,
               size_t klen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_DELETE, relname, key, klen, nullptr, 0);
+    return write_row(session, WRITE_DELETE, relid, key, klen, nullptr, 0);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_delete: out of memory");
   }
 }
 
 /* Read one key. */
-int sm_read(sm_session_t *session, const char *relname, const char *key,
-            size_t klen, const char **data, size_t *datalen) {
+int sm_read(sm_session_t *session, uint64_t relid, const char *key, size_t klen,
+            const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return read_row(session, relname, key, klen, data, datalen);
+    return read_row(session, relid, key, klen, data, datalen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_read: out of memory");
   }
 }
 
 /* Open a cursor over a key range. */
-sm_scan_t *sm_scan(sm_session_t *session, const char *relname, const char *skey,
+sm_scan_t *sm_scan(sm_session_t *session, uint64_t relid, const char *skey,
                    size_t sklen, int skey_inclusive, const char *ekey,
                    size_t eklen, int ekey_inclusive) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return scan(session, relname, skey, sklen, skey_inclusive, ekey, eklen,
+    return scan(session, relid, skey, sklen, skey_inclusive, ekey, eklen,
                 ekey_inclusive);
   } catch (const std::bad_alloc &) {
     set_error(SM_ERR_NOMEM, "sm_scan: out of memory");

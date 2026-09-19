@@ -29,7 +29,7 @@
 #include <rocksdb/options.h>
 
 /* Database format version, stored in CF:meta. */
-#define WISR_DB_VERSION 1
+#define WISR_DB_VERSION 2
 
 /* Column family names. */
 #define WISR_CF_TXN "txn"
@@ -280,6 +280,9 @@ int db_alloc_cfid(db_t *db, uint64_t *out);
 
 /* Allocate an sm_nextseq value from db's lease. Returns 0 or -1. */
 int db_alloc_seq(db_t *db, uint64_t *out);
+
+/* True if v is below every sm_nextseq value yet to be handed out. */
+bool db_seq_issued(db_t *db, uint64_t v);
 
 /* The CF handle of cfid, or NULL if it has none. */
 rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t cfid);
