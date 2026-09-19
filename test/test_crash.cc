@@ -39,7 +39,7 @@ uint32_t count_rows(sm_session_t *s) {
   while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
-  sm_scan_end(c);
+  sm_scanend(c);
   return n;
 }
 

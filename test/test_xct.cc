@@ -193,7 +193,7 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
-  sm_scan_end(c);
+  sm_scanend(c);
   CHECK(n == 50);
   REQUIRE(sm_commit(a) == 0);
   sm_closedb(b);
@@ -257,7 +257,7 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
       while (c && sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
         keys.emplace_back(k, kl);
       }
-      sm_scan_end(c);
+      sm_scanend(c);
       sm_commit(s);
       // Keys sort as "<t>.<i>.a" then "<t>.<i>.b": pairs are adjacent.
       if (keys.size() % 2 != 0) {

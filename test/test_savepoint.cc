@@ -62,7 +62,7 @@ std::vector<std::string> keys_of(sm_scan_t *c) {
   while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     out.emplace_back(k, kl);
   }
-  sm_scan_end(c);
+  sm_scanend(c);
   return out;
 }
 

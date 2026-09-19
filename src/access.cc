@@ -667,7 +667,7 @@ int sm_scannxt(sm_scan_t *scan, const char **key, size_t *klen,
 }
 
 /* Close a cursor: the iterator first, then its snapshot. */
-void sm_scan_end(sm_scan_t *scan) {
+void sm_scanend(sm_scan_t *scan) {
   // Closing NULL is a no-op.
   if (!scan) {
     return;

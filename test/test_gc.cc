@@ -350,7 +350,7 @@ std::vector<std::string> scan_keys(sm_session_t *s) {
   while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     out.emplace_back(k, kl);
   }
-  sm_scan_end(c);
+  sm_scanend(c);
   return out;
 }
 
@@ -427,7 +427,7 @@ TEST_CASE(
     n++;
   }
   CHECK(n == 10);
-  sm_scan_end(c);
+  sm_scanend(c);
   REQUIRE(sm_commit(r) == 0);
 
   // The worker may finish the sweep first; either way it is done.

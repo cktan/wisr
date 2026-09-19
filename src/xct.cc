@@ -260,7 +260,7 @@ int rollback(sm_session_t *s) {
   }
   // Close each one.
   for (sm_scan_t *c : later) {
-    sm_scan_end(c);
+    sm_scanend(c);
   }
 
   // Drop the relations created after the mark, newest first.
@@ -1030,7 +1030,7 @@ int xct_resolve(db_t *db, uint64_t xid, uint64_t *commit_ts) {
 void xct_end_scans(sm_session_t *s) {
   // Close cursors until none is left.
   while (!s->scans.empty()) {
-    sm_scan_end(*s->scans.begin());
+    sm_scanend(*s->scans.begin());
   }
 }
 

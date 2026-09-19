@@ -693,7 +693,7 @@ int sm_scannxt(sm_scan_t* scan, const char** key, size_t* klen,
  * why it returns nothing: a caller has no useful recovery from
  * a failure to release resources.
  */
-void sm_scan_end(sm_scan_t* scan);
+void sm_scanend(sm_scan_t* scan);
 
 #ifdef __cplusplus
 }

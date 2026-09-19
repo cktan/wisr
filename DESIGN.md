@@ -729,7 +729,7 @@ lock would serialize the write path — the one place SSI
 must not cost anything when no reader is watching.
 
 Per relation, ranges are held in a list in `memcmp` order
-of their bounds (§3.1): `sm_scan` inserts, `sm_scan_end`
+of their bounds (§3.1): `sm_scan` inserts, `sm_scanend`
 narrows, `on_write` scans the relation's list. One mutex
 covers the whole tracker. A relation no serializable
 reader has touched has no list, so the common case — a
@@ -1517,12 +1517,12 @@ rule of §8.4.
 For SERIALIZABLE, `sm_scan` registers the whole requested range,
 `skey` to `ekey` with their inclusive flags, as a SIREAD
 predicate (§7.1) when it creates the cursor, **before** it takes
-the RocksDB snapshot, and `sm_scan_end` shrinks it to the range
+the RocksDB snapshot, and `sm_scanend` shrinks it to the range
 actually covered: from `skey` through `last_key_examined`,
 inclusive (through `ekey`, with its flag, if the scan reached
 the end). `last_key_examined` is the last userkey whose run the
 cursor inspected, whether or not it yielded a row. Registering
-only at `sm_scan_end` would be wrong: a write into the range
+only at `sm_scanend` would be wrong: a write into the range
 while the cursor is open is not in the cursor's RocksDB
 snapshot, so the reader never steps past it, and with no SIREAD
 yet the writer finds nothing to conflict with — the rw-edge
@@ -1557,7 +1557,7 @@ sm_scan_t* sm_scan(sm_session_t* session, const char* relname,
  * until the next sm_scannxt on the same cursor. */
 int  sm_scannxt(sm_scan_t* scan, const char** key, size_t* klen,
                 const char** data, size_t* datalen);
-void sm_scan_end(sm_scan_t* scan);
+void sm_scanend(sm_scan_t* scan);
 ```
 
 - **Both range bounds are parameters.** Without an end key a
@@ -1569,7 +1569,7 @@ void sm_scan_end(sm_scan_t* scan);
   `int* found`. Neither is an error, and neither disturbs the
   error state, so a caller must distinguish 1 from -1 before
   consulting `sm_errno()`.
-- **`sm_scan_end` returns void.** Releasing a cursor cannot
+- **`sm_scanend` returns void.** Releasing a cursor cannot
   usefully fail. It is still where the predicate registered
   at `sm_scan` is shrunk to the range the cursor actually
   traversed (§10.2), so the range kept is the part traversed,

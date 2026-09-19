@@ -139,7 +139,7 @@ TEST_CASE("every session call rejects a NULL session") {
               SM_ERR_INVALID);
 
   CHECK(sm_closedb(nullptr) == 0);
-  sm_scan_end(nullptr);
+  sm_scanend(nullptr);
   sm_free_prepared(nullptr, 0);
   sm_strlist_free(nullptr);
 }
@@ -174,7 +174,7 @@ TEST_CASE("every call taking a relation name validates it") {
   CHECK(get(s, max.c_str(), "k") == "v");
   sm_scan_t *c = sm_scan(s, max.c_str(), nullptr, 0, 0, nullptr, 0, 0);
   CHECK(c);
-  sm_scan_end(c);
+  sm_scanend(c);
   CHECK(sm_rmrel(s, max.c_str()) == 0);
   REQUIRE(sm_commit(s) == 0);
 }
@@ -260,7 +260,7 @@ TEST_CASE("out-parameters must not be NULL") {
   expect_fail(sm_scannxt(c, &k, &kl, &d, nullptr), SM_ERR_INVALID);
   REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "a");
-  sm_scan_end(c);
+  sm_scanend(c);
   REQUIRE(sm_commit(s) == 0);
 
   expect_fail(sm_list_prepared(s, nullptr, &n), SM_ERR_INVALID);

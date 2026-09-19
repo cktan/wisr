@@ -39,7 +39,7 @@ full MVCC, for OLTP workloads.
   - a single savepoint per session: `sm_savepoint` / `sm_rollback`
   - relations: `sm_mkrel` / `sm_rmrel`
   - data ops: `sm_insert` / `sm_update` / `sm_delete` / `sm_read` /
-    `sm_scan` / `sm_scannxt` / `sm_scan_end`
+    `sm_scan` / `sm_scannxt` / `sm_scanend`
 
 ## Decisions
 

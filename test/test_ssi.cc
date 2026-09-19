@@ -66,7 +66,7 @@ int count_range(sm_session_t *s, const std::string &lo, const std::string &hi) {
   while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
-  sm_scan_end(c);
+  sm_scanend(c);
   return n;
 }
 
@@ -246,7 +246,7 @@ TEST_CASE("a phantom inserted while the reader's cursor is open is caught") {
     rest++;
   }
   CHECK(rest == 1); // "q"
-  sm_scan_end(c);
+  sm_scanend(c);
   REQUIRE(set(t1, "q", "2") == 0);
   CHECK_FALSE(try_commit(t1));
   sm_closedb(t1);
@@ -271,7 +271,7 @@ TEST_CASE("a scan closed early covers only what it read") {
   size_t kl, dl;
   REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "b");
-  sm_scan_end(c);
+  sm_scanend(c);
 
   CHECK(get(t2, "t", "q") == "1");
   REQUIRE(set(t2, "y", "2") == 0);
@@ -432,7 +432,7 @@ TEST_CASE("concurrent SERIALIZABLE doctors always leave someone on call") {
         while (c && sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
           on += std::string(d, dl) == "1";
         }
-        sm_scan_end(c);
+        sm_scanend(c);
         const char *v = on >= 2 ? "0" : "1";
         if (sm_update(s, "t", me.data(), me.size(), v, 1) == 0 &&
             sm_commit(s) == 0) {

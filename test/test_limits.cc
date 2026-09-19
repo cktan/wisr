@@ -85,7 +85,7 @@ std::vector<std::pair<std::string, std::string>> scan_all(sm_session_t *s) {
   while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     rows.emplace_back(std::string(k, kl), std::string(d, dl));
   }
-  sm_scan_end(c);
+  sm_scanend(c);
   return rows;
 }
 
@@ -126,7 +126,7 @@ TEST_CASE("keys of SM_MAX_KEYLEN bytes work in every call and survive reopen") {
   REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == kb);
   CHECK(sm_scannxt(c, &k, &kl, &d, &dl) == 1);
-  sm_scan_end(c);
+  sm_scanend(c);
   REQUIRE(sm_delete(s, "t", ka.data(), ka.size()) == 0);
   REQUIRE(sm_commit(s) == 0);
 

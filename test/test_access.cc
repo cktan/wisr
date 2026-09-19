@@ -63,7 +63,7 @@ rows_t drain(sm_scan_t *c) {
   }
   CHECK(r == 1);
   CHECK(sm_scannxt(c, &k, &kl, &d, &dl) == 1);
-  sm_scan_end(c);
+  sm_scanend(c);
   return rows;
 }
 

@@ -150,7 +150,7 @@ it cannot disagree with the array it describes.
 A list holds no engine state — no lock, no snapshot, no
 session reference — so one that is never freed leaks memory
 and nothing else. An `sm_scan_t` left open is a different
-matter; see `sm_scan_end`.
+matter; see `sm_scanend`.
 
 A list carries names, never keys or values: its elements
 are NUL-terminated, and a key or value may contain NUL.
@@ -871,7 +871,7 @@ return the same thing.
 
 Errors: `SM_ERR_CORRUPT`, `SM_ERR_IO`.
 
-### void sm_scan_end(sm_scan_t* scan)
+### void sm_scanend(sm_scan_t* scan)
 
 Close a cursor and release its resources, including the
 snapshot it was pinning. Passing NULL is a no-op.
@@ -941,7 +941,7 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
 9. **`sm_scan` gained an end key** (required for
    serializable predicate tracking) and an inclusivity flag
    for it.
-10. **`sm_scan_end` returns void.** A release call that can
+10. **`sm_scanend` returns void.** A release call that can
     fail gives the caller nothing to do about it. (D)
 11. **Types are `sm_`-prefixed and opaque** —
     `sm_session_t`, `sm_scan_t` — rather than occupying the

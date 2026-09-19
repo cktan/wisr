@@ -246,7 +246,7 @@ int main(int argc, char **argv) {
   }
   check(r, "sm_scannxt");
   // Close the cursor, releasing its snapshot.
-  sm_scan_end(c);
+  sm_scanend(c);
   // A read-only transaction commits trivially.
   check(sm_commit(s), "sm_commit");
 
