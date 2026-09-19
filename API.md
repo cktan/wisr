@@ -517,6 +517,32 @@ there), `SM_ERR_CORRUPT`, `SM_ERR_PERMISSION`,
 `SM_ERR_NOMEM`,
 `SM_ERR_IO`, `SM_ERR_INVALID`.
 
+### int sm_nextseq(sm_session_t* session, uint64_t* out)
+
+Hand out the next value of the database's sequence in
+`*out`. Each database has one.
+
+```c
+#define SM_SEQ_FIRST 1000   /* the first value in a new database */
+```
+
+The sequence is persistent and strictly increasing: a value
+is handed out once and never again, across restarts too. It
+starts at `SM_SEQ_FIRST`, so values below that are never
+generated and a caller may define them as constants, such as
+fixed ids for its own catalog relations.
+
+It is not transactional, like a PostgreSQL sequence: it
+needs no active transaction, never blocks, and an abort does
+not give a value back. Values are unique but not dense: a
+crash skips the rest of a block reserved in advance (the
+`ts_lease` size), leaving a gap. Distinct sessions may call
+it concurrently.
+
+Errors: `SM_ERR_INVALID` (NULL `session` or `out`),
+`SM_ERR_IO` (the database has stopped, or persisting the
+next block failed), `SM_ERR_DISKFULL`.
+
 ### int sm_closedb(sm_session_t* session)
 
 Close the session and release it. Any open scan cursors are

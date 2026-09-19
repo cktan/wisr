@@ -382,7 +382,13 @@ value — above any id ever handed out. `visible_ts` is set to the
 persisted value itself, so every `xid` allocated after restart is
 `> visible_ts`, keeping §4.1's `xid > snapshot_ts`. The persisted
 value itself is never handed out. Relids are allocated the same
-way.
+way, and so is the caller's sequence, `sm_nextseq`, whose lease
+`next_seq` starts at 999 in a new database so that its first
+value is `SM_SEQ_FIRST` (1000). It is not transactional: a value
+is taken under the allocator's mutex, never given back, and a
+crash skips the rest of its lease. A database made before the
+sequence existed has no `next_seq` and starts it at
+`SM_SEQ_FIRST`.
 
 ### 4.3 `visible_ts`: making snapshots correct
 

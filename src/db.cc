@@ -81,6 +81,10 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
   batch.Put(handles[2], WISR_META_VERSION, version);
   batch.Put(handles[2], WISR_META_NEXT_TS, zero);
   batch.Put(handles[2], WISR_META_NEXT_RELID, zero);
+  // The sequence resumes one past its lease, at SM_SEQ_FIRST.
+  std::string seq;
+  put_be64(seq, SM_SEQ_FIRST - 1);
+  batch.Put(handles[2], WISR_META_NEXT_SEQ, seq);
   // Write the seed synced.
   rocksdb::WriteOptions wo;
   wo.sync = true;
@@ -455,6 +459,14 @@ db_t *db_open(const std::string &path, const char *dbname,
   // Resume relids the same way.
   db->next_relid = next_relid + 1;
   db->relid_limit = next_relid + 1;
+  // Resume the sequence the same way. A database made before it
+  // existed has no lease yet: start it at SM_SEQ_FIRST.
+  uint64_t next_seq;
+  if (!read_meta(db.get(), WISR_META_NEXT_SEQ, &next_seq)) {
+    next_seq = SM_SEQ_FIRST - 1;
+  }
+  db->next_seq = next_seq + 1;
+  db->seq_limit = next_seq + 1;
   // Size the commit cache.
   db->cache_entries = opt->commit_cache_entries;
   // Arm deadlock detection.
@@ -558,6 +570,12 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
 int db_alloc_relid(db_t *db, uint64_t *out) {
   return alloc_leased(db, &db->next_relid, &db->relid_limit,
                       WISR_META_NEXT_RELID, out);
+}
+
+/* Allocate a sequence value. */
+int db_alloc_seq(db_t *db, uint64_t *out) {
+  return alloc_leased(db, &db->next_seq, &db->seq_limit, WISR_META_NEXT_SEQ,
+                      out);
 }
 
 /* Look up relid's CF handle under the shared lock. */
@@ -698,4 +716,18 @@ int sm_lsdb(sm_env_t *env, sm_strlist_t **out) {
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_lsdb: out of memory");
   }
+}
+
+/* Hand out the database's next sequence value (sm.h). */
+int sm_nextseq(sm_session_t *session, uint64_t *out) {
+  // Require a session and somewhere to put the value.
+  if (!session || !out) {
+    return set_error(SM_ERR_INVALID, "sm_nextseq: NULL argument");
+  }
+  // A stopped database persists nothing, leases included.
+  if (xct_check_writable(session->db) != 0) {
+    return -1;
+  }
+  // Take the next value; a used-up lease is persisted first.
+  return db_alloc_seq(session->db, out);
 }

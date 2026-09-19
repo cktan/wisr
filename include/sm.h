@@ -38,6 +38,7 @@
 #define SM_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,6 +59,13 @@ extern "C" {
 #define SM_MAX_DBNAME  63
 #define SM_MAX_RELNAME 63
 #define SM_MAX_GID     200
+
+/*
+ * The first value sm_nextseq() hands out in a new database.
+ * Values below it are never generated, so a caller may define
+ * them as constants of its own.
+ */
+#define SM_SEQ_FIRST   1000
 
 /*
  * Error codes. Values are explicit and stable: new codes are
@@ -350,6 +358,26 @@ int sm_lsdb(sm_env_t* env, sm_strlist_t** out);
  */
 sm_session_t* sm_opendb(sm_env_t* env, const char* dbname,
                         const sm_options_t* opt);
+
+/*
+ * Hand out the next value of the database's sequence in *out.
+ *
+ * The sequence is persistent and strictly increasing: a value
+ * is handed out once, never again, including across restarts.
+ * It starts at SM_SEQ_FIRST in a new database, so values below
+ * that are free for the caller's own constants.
+ *
+ * It is not transactional, like a PostgreSQL sequence: it needs
+ * no active transaction, never blocks, and an abort does not
+ * give a value back. Values are unique but not dense: besides
+ * aborts, a crash skips the rest of a block reserved in advance,
+ * leaving a gap. Distinct sessions may call it concurrently.
+ *
+ * Errors: SM_ERR_INVALID (NULL session or out), SM_ERR_IO (the
+ * database has stopped, or persisting the next block failed),
+ * SM_ERR_DISKFULL.
+ */
+int sm_nextseq(sm_session_t* session, uint64_t* out);
 
 /*
  * Close a session. Open cursors are closed, and an active

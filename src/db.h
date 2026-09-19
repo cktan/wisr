@@ -39,6 +39,7 @@
 #define WISR_META_VERSION "version"
 #define WISR_META_NEXT_TS "next_ts"
 #define WISR_META_NEXT_RELID "next_relid"
+#define WISR_META_NEXT_SEQ "next_seq"
 
 namespace wisr {
 
@@ -95,6 +96,8 @@ struct db_t {
   uint64_t ts_limit = 0;   /* persisted; never handed out */
   uint64_t next_relid = 0; /* next relid to hand out */
   uint64_t relid_limit = 0;
+  uint64_t next_seq = 0; /* next sm_nextseq value to hand out */
+  uint64_t seq_limit = 0;
 
   /*
    * The commit sequencer (§4.3): commit_ts values claimed and
@@ -274,6 +277,9 @@ void db_commit_done(db_t *db, uint64_t commit_ts);
 
 /* Allocate a relid from db's lease. Returns 0 or -1. */
 int db_alloc_relid(db_t *db, uint64_t *out);
+
+/* Allocate an sm_nextseq value from db's lease. Returns 0 or -1. */
+int db_alloc_seq(db_t *db, uint64_t *out);
 
 /* The CF handle of relid, or NULL if it has none. */
 rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t relid);
