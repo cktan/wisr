@@ -44,11 +44,11 @@ close them (`sm_lock`, a savepoint stack with `sm_forget`,
   session from two threads is a caller error, not a supported mode.
 - A process reaches its databases through an environment
   (`sm_env_t`) on a home directory. `sm_init` prepares a
-  home directory once; `sm_attach` takes a pidlock on the
-  file `{homedir}/pidlock.pid`, so one process, and one
-  environment in it, owns the directory and every database
-  under it; a lock left by a dead process does not block
-  the next one. A database is named
+  home directory once; `sm_attach` gives one process, and
+  one environment in it, the directory and every database
+  under it. The library does not enforce that: keeping to
+  one attached process is the caller's job (§3.5). A
+  database is named
   by the caller but stored by number: the root db
   `{homedir}/global/root` maps `dbname` to a `dbid`, and
   the database is the directory `{homedir}/base/{dbid}`
@@ -256,7 +256,6 @@ A home directory follows PostgreSQL's layout, one name per
 concept:
 
 ```
-{homedir}/pidlock.pid      the environment's lock   (postmaster.pid)
 {homedir}/global/root      the root db              (global/pg_database)
 {homedir}/base/{dbid}/     one per database         (base/{oid})
 ```
@@ -282,22 +281,31 @@ A database directory is named by its `dbid` in decimal, so
 `base` holds nothing else and there is no name space to
 share: whatever a caller names a database, the name never
 reaches the filesystem, and `base` cannot collide with
-`global` or the lock file.
+`global`.
 
 `sm_init` builds all of this once in a home directory's
 life: `base`, `global`, the root db, and the `"version"`
 key in it. It takes no lock, because `mkdir` settles a race
 by itself — the loser sees `EEXIST`. `sm_attach` then opens
-the root db under the pidlock and checks that version, and
-`sm_detach` closes it. Nothing creates a home directory
+the root db and checks that version, and `sm_detach` closes
+it. Nothing creates a home directory
 implicitly, so `sm_attach` has no first-use branch and a
 mistyped path is an error rather than a new empty home.
 
-`sm_detach` refuses while sessions are open, because the
-pidlock is what makes "one process holds this home
-directory" true and dropping it under a live session would
-leave that session writing to a directory another process
-may attach to. Its `force` flag closes those sessions
+**One process per home directory is the caller's rule.**
+The library takes no lock of its own: a caller that runs
+several processes serializes their use of a home directory
+itself. RocksDB still locks each database directory it
+opens, the root db included, so a second attach usually
+fails there, but only per database; the work that spans the
+home directory — the sweep of `base` at attach, `sm_mkdb`
+choosing a `dbid`, `sm_rmdb` checking for open sessions —
+assumes it is alone, and a second process breaks it.
+
+`sm_detach` refuses while sessions are open: after it
+returns the caller may hand the home directory to another
+process, which must not find this one's sessions still
+writing to it. Its `force` flag closes those sessions
 first, by the same path `sm_close` takes, so a caller
 winding down — especially after an error, when it may not
 be able to walk its own session list — has one call that
@@ -1663,15 +1671,15 @@ removal happens when `gc_watermark` passes the drop's
 `commit_ts` (§8.3).
 
 `sm_mkdb` allocates a `dbid`, creates the directory
-`{homedir}/base/{dbid}`, `CF:txn`, `CF:meta` with its initial
-contents, and the catalog's `CF:rel.0`, and commits the
-name last. `sm_rmdb` drops the name first, then runs
+`{homedir}/base/{dbid}`, `CF:txn`, `CF:meta` with its
+initial contents, and the catalog's `CF:rel.0`, and commits
+the name last. `sm_rmdb` drops the name first, then runs
 `rocksdb::DestroyDB`, after verifying that no session holds
-the database open; the pidlock on `homedir` (§1) rules out
-sessions in other processes. §3.5 gives the ordering and
-the sweep that collects what a crash leaves behind. Neither
-call builds a path from `dbname`, so neither can be steered
-by one.
+the database open; sessions in other processes are ruled out
+by the caller's one-process rule (§3.5). §3.5 gives the
+ordering and the sweep that collects what a crash leaves
+behind. Neither call builds a path from `dbname`, so neither
+can be steered by one.
 
 ---
 
@@ -1753,7 +1761,7 @@ long a rarely-written CF can hold old WAL files alive.
 ```
 include/sm.h            public C API
 src/strlist.cc          sm_strlist_t, the counted list of names
-src/env.cc              init/attach/detach, pidlock, root db, db sweep
+src/env.cc              init/attach/detach, root db, db sweep
 src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
 src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
@@ -1853,8 +1861,8 @@ src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 - **Environment lifetime.** `sm_detach` with `force` 0 and a
   session open fails with `SM_ERR_INUSE` and leaves the env
   usable; with `force` non-zero it succeeds, and a second
-  `sm_attach` on the same home directory then works, proving
-  the pidlock was released. A transaction left active in a
+  `sm_attach` on the same home directory then works. A
+  transaction left active in a
   forced-closed session is aborted — its versions resolve
   dead (§3.4) — while one left *prepared* survives: after
   reattaching, `sm_list_prepared` still reports it with its

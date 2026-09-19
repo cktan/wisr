@@ -1,7 +1,14 @@
 /*
  * env.cc -- sm_init, sm_attach, sm_detach: the home directory,
- * its pidlock, its root db, and the sweep of unnamed database
- * directories (DESIGN.md §3.5).
+ * its root db, and the sweep of unnamed database directories
+ * (DESIGN.md §3.5).
+ *
+ * At most one process, and one environment in it, may attach a
+ * home directory at a time. The library does not enforce this:
+ * serializing processes is the caller's job. A second attach
+ * usually fails anyway, on RocksDB's own lock of the root db,
+ * but the directory-level work here -- the sweep, sm_mkdb,
+ * sm_rmdb -- relies on the rule and is unsafe without it.
  */
 
 #include "env.h"
@@ -11,12 +18,8 @@
 
 #include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <stdio.h>
 #include <string.h>
-#include <sys/file.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include <filesystem>
 #include <memory>
@@ -48,12 +51,6 @@ std::string base_dir(const std::string& homedir)
 std::string root_path(const std::string& homedir)
 {
     return global_dir(homedir) + "/root";
-}
-
-/* {homedir}/pidlock.pid */
-std::string pidlock_path(const std::string& homedir)
-{
-    return homedir + "/pidlock.pid";
 }
 
 /* Check that homedir names an existing directory. */
@@ -163,38 +160,6 @@ sm_env_t* attach(const char* homedir)
     std::unique_ptr<sm_env_t> env(new sm_env_t);
     env->homedir = homedir;
 
-    // Take the pidlock. flock() is released by the kernel when
-    // its holder exits, so a crashed process leaves no lock.
-    std::string lockpath = pidlock_path(env->homedir);
-    // Open, creating if needed, the pidlock file.
-    int fd = open(lockpath.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    // Fail if it cannot be opened.
-    if (fd < 0) {
-        set_errno_error(errno, lockpath.c_str());
-        return nullptr;
-    }
-    // Take the lock without waiting: one environment per homedir.
-    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
-        // Keep errno across close().
-        int err = errno;
-        // Give up the file we could not lock.
-        close(fd);
-        // Held by someone else: the home directory is in use.
-        if (err == EWOULDBLOCK) {
-            set_error(SM_ERR_INUSE, "%s: home directory is in use", homedir);
-        } else {
-            set_errno_error(err, lockpath.c_str());
-        }
-        return nullptr;
-    }
-    // Hold the lock for the environment's lifetime.
-    env->lock_fd = fd;
-    // Record our pid in the lock file, for operators.
-    if (ftruncate(fd, 0) != 0 || dprintf(fd, "%d\n", (int)getpid()) < 0) {
-        set_errno_error(errno, lockpath.c_str());
-        return nullptr;
-    }
-
     // Open the root db. It must exist: attach creates nothing.
     std::string rootpath = root_path(env->homedir);
     struct stat st;
@@ -238,17 +203,13 @@ sm_env_t* attach(const char* homedir)
 
 } // namespace
 
-/* Close the root db, then release the pidlock by closing its fd. */
+/* Close the root db. */
 sm_env_t::~sm_env_t()
 {
     // Close the root db, if it was opened.
     if (root) {
         root->Close();
         delete root;
-    }
-    // Release the pidlock by closing its fd.
-    if (lock_fd >= 0) {
-        close(lock_fd);
     }
 }
 
@@ -386,7 +347,7 @@ int sm_detach(sm_env_t* env, int force)
     for (sm_session_t* s : sessions) {
         sm_close(s);
     }
-    // Close the root db and release the pidlock.
+    // Close the root db and free the environment.
     delete env;
     return 0;
 }

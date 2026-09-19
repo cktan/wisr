@@ -39,7 +39,7 @@ typedef enum {
     SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
     SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
     SM_ERR_EXISTS        = 8,   /* home dir, database, or relation exists */
-    SM_ERR_INUSE         = 9,   /* database open, or homedir locked */
+    SM_ERR_INUSE         = 9,   /* database or sessions still open */
 
     /* concurrency errors — RETRYABLE */
     SM_ERR_CONFLICT      = 10,  /* write-write conflict */
@@ -166,9 +166,13 @@ are NUL-terminated, and a key or value may contain NUL.
 - Distinct sessions may be used concurrently from distinct
   threads without external synchronization.
 - A `homedir` may be used by **at most one process**, and
-  by at most one environment in it. `sm_attach` takes a
-  lock on `{homedir}/pidlock.pid`, and a second `sm_attach`
-  on it fails with `SM_ERR_INUSE`.
+  by at most one environment in it. The library does not
+  enforce this: serializing processes is the caller's job,
+  and violating it is a caller error. A second `sm_attach`
+  usually fails inside RocksDB, which locks each database it
+  opens, but nothing guarantees it, and `sm_attach`,
+  `sm_mkdb`, and `sm_rmdb` assume they are alone in the home
+  directory.
 - All sessions opened on the same database share one
   underlying database instance.
 
@@ -295,11 +299,11 @@ An environment is a process's handle on a home directory,
 and session call goes through one.
 
 A home directory is laid out like a PostgreSQL data
-directory: `pidlock.pid` beside `global`, which holds the
-root db, and `base`, which holds one directory per
-database. `sm_init` builds that structure once; `sm_attach`
-and `sm_detach` bracket each process's use of it. The split
-is PostgreSQL's, between `initdb` and starting a server.
+directory: `global`, which holds the root db, and `base`,
+which holds one directory per database. `sm_init` builds
+that structure once; `sm_attach` and `sm_detach` bracket
+each process's use of it. The split is PostgreSQL's, between
+`initdb` and starting a server.
 
 ### int sm_init(const char* homedir)
 
@@ -322,14 +326,11 @@ Errors: `SM_ERR_EXISTS` (already a wisr home directory),
 Create an environment on a home directory `sm_init` has
 already prepared. No database is opened.
 
-`sm_attach` takes a pidlock on the file
-`{homedir}/pidlock.pid`, so that only one process uses the
-directory and the files under it. The lock is held until
-`sm_detach` succeeds or the process exits. A lock left by a
-process that no longer exists, such as one that crashed,
-does not block a later `sm_attach`.
+The caller must ensure that no other environment, in this
+process or another, has `homedir` attached; the library
+takes no lock of its own (see "Threading").
 
-It then opens the root db, checks the recorded format
+`sm_attach` opens the root db, checks the recorded format
 version, and destroys any directory under `base` the root
 db does not name — what a crash during `sm_mkdb` or
 `sm_rmdb` leaves behind. It creates nothing: a `homedir`
@@ -340,11 +341,9 @@ becoming an empty one.
 A process may attach to different home directories, but
 only once to a given `homedir`.
 
-Returns NULL on error: `SM_ERR_INUSE` (`homedir` is locked
-by another process, or already has an environment in this
-one), `SM_ERR_NOTFOUND` (no such directory, or not a wisr
-home directory), `SM_ERR_VERSION` (written by an
-incompatible version), `SM_ERR_CORRUPT`,
+Returns NULL on error: `SM_ERR_NOTFOUND` (no such directory,
+or not a wisr home directory), `SM_ERR_VERSION` (written by
+an incompatible version), `SM_ERR_CORRUPT`,
 `SM_ERR_PERMISSION`, `SM_ERR_NOMEM`, `SM_ERR_INVALID`.
 
 ### int sm_detach(sm_env_t* env, int force)
@@ -373,8 +372,8 @@ inside an `sm_*` call on it is the same caller error as any
 other concurrent use of one session from two threads, and
 is not diagnosed. Quiesce first, then force.
 
-On success the pidlock on `homedir` is released and `env`
-is invalid. Passing NULL is a no-op returning 0, whatever
+On success `env` is invalid, and another process may
+attach `homedir`. Passing NULL is a no-op returning 0, whatever
 `force` says.
 
 Errors: `SM_ERR_INUSE` (only when `force` is 0).
@@ -425,8 +424,9 @@ Errors: `SM_ERR_EXISTS` (a database already exists there),
 Delete the database `dbname`, including all its data.
 **This call is destructive and cannot be undone.**
 
-Fails if any session is open on the database. The pidlock
-on `homedir` means no other process can be using it.
+Fails if any session in this environment is open on the
+database. No other process can be using it, provided the
+caller keeps to one attached process per `homedir`.
 
 Errors: `SM_ERR_INUSE`, `SM_ERR_NOTFOUND` (no database
 there), `SM_ERR_PERMISSION`, `SM_ERR_IO`,
@@ -917,10 +917,9 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     session, so concurrent sessions keep working as
     before. It gives the registry of open
     databases an owner, and a place for resources shared
-    across databases. Process exclusion moves from each
-    database to `homedir`: `sm_attach` takes a pidlock, so
-    `sm_open` no longer reports another process, and
-    `sm_rmdb` can see every session on its database.
+    across databases. Process exclusion is the caller's:
+    one process attaches a `homedir`, so `sm_rmdb` can see
+    every session on its database.
 15. **A `dbname` is a name, not a path.** (D) The
     environment keeps a root db, `{homedir}/global/root`,
     mapping each name to the number that names its

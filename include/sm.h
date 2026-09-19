@@ -25,6 +25,14 @@
  * threads is a caller error and is not diagnosed. Distinct
  * sessions may be used concurrently without external
  * synchronization.
+ *
+ * Processes: at most one process, and one environment in it,
+ * may attach a given home directory at a time. The library
+ * does not enforce this; serializing processes is the
+ * caller's job. Violating it is a caller error: a second
+ * attach usually fails inside RocksDB, but nothing guarantees
+ * it, and sm_attach(), sm_mkdb(), and sm_rmdb() assume they
+ * are alone in the home directory.
  */
 #ifndef SM_H
 #define SM_H
@@ -69,7 +77,7 @@ typedef enum {
     SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
     SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
     SM_ERR_EXISTS        = 8,   /* home dir, database, or relation exists */
-    SM_ERR_INUSE         = 9,   /* database open, or homedir locked */
+    SM_ERR_INUSE         = 9,   /* database or sessions still open */
 
     /* concurrency errors -- RETRYABLE */
     SM_ERR_CONFLICT      = 10,  /* write-write conflict */
@@ -218,8 +226,9 @@ int sm_init(const char* homedir);
 
 /*
  * Create an environment on a home directory sm_init() has
- * already prepared, taking the pidlock on it for as long as
- * the environment lives. Opens no database.
+ * already prepared. Opens no database. The caller must ensure
+ * no other environment, in this process or another, has the
+ * home directory attached (see "Processes" above).
  *
  * Creates nothing: a homedir that was never initialized is an
  * error, not a new home directory. Returns NULL on error.
@@ -227,8 +236,9 @@ int sm_init(const char* homedir);
 sm_env_t* sm_attach(const char* homedir);
 
 /*
- * Release an environment and its pidlock, leaving the home
- * directory intact. This undoes sm_attach(), not sm_init().
+ * Release an environment, leaving the home directory intact.
+ * This undoes sm_attach(), not sm_init(); afterwards another
+ * process may attach the home directory.
  *
  * With force == 0, returns -1 with SM_ERR_INUSE if any
  * session opened through env is still open, and env stays
@@ -266,8 +276,9 @@ int sm_mkdb(sm_env_t* env, const char* dbname, const sm_options_t* opt);
  * Delete the database dbname and all of its data. THIS IS
  * DESTRUCTIVE AND CANNOT BE UNDONE.
  *
- * Fails with SM_ERR_INUSE if any session is open on it. The
- * pidlock on homedir means no other process can be using it.
+ * Fails with SM_ERR_INUSE if any session in this environment
+ * is open on it. No other process can be using it, provided
+ * the caller keeps to one attached process (see "Processes").
  *
  * Errors: SM_ERR_INUSE, SM_ERR_NOTFOUND, SM_ERR_PERMISSION,
  * SM_ERR_IO, SM_ERR_INVALID.

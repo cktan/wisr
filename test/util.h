@@ -76,7 +76,7 @@ class home_t
         REQUIRE(m_env);
     }
 
-    /* Detach, closing any open sessions, and release the pidlock. */
+    /* Detach, closing any open sessions, so another process may attach. */
     void detach()
     {
         REQUIRE(sm_detach(m_env, 1) == 0);

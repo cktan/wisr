@@ -31,7 +31,6 @@ struct db_t;
 
 struct sm_env_t {
     std::string homedir;
-    int lock_fd = -1;            /* holds the flock on pidlock.pid */
     rocksdb::DB* root = nullptr; /* {homedir}/global/root */
     std::mutex mu;               /* guards the root db and the two sets below */
 
@@ -41,7 +40,7 @@ struct sm_env_t {
     /* Every open session, for sm_detach. */
     std::set<sm_session_t*> sessions;
 
-    /* Close the root db, then release the pidlock. */
+    /* Close the root db. */
     ~sm_env_t();
 };
 
