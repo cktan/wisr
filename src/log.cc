@@ -5,13 +5,13 @@
  * One mutex guards the hook and serializes calls to it, so a
  * hook may be replaced at any time and never runs twice at
  * once. An atomic flag lets log_msg skip formatting entirely
- * when no hook is installed, the common case.
+ * when no hook is installed, the common case. Messages are
+ * formatted with std::format into a stack buffer.
  */
 
 #include "log.h"
 
-#include <stdarg.h>
-#include <stdio.h>
+#include "error.h"
 
 #include <atomic>
 #include <mutex>
@@ -30,21 +30,17 @@ std::atomic<bool> g_log_on{false};
 
 namespace wisr {
 
+/* Whether a hook is installed. */
+bool log_enabled() { return g_log_on.load(std::memory_order_relaxed); }
+
 /* Format into a local buffer, then call the hook under its mutex. */
-void log_msg(sm_loglevel_t level, const char *fmt, ...) {
-  // No hook: format nothing.
-  if (!g_log_on.load(std::memory_order_relaxed)) {
-    return;
-  }
+void log_v(sm_loglevel_t level, std::string_view fmt, std::format_args args) {
   char buf[1024];
-  va_list ap;
-  // Format the message.
-  va_start(ap, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, ap);
-  va_end(ap);
+  // Format the message, cut short if it does not fit.
+  format_into(buf, sizeof(buf), fmt, args);
   // Call the hook one at a time, under its mutex.
   std::lock_guard<std::mutex> guard(g_log_mu);
-  // The hook may have been removed since the check above.
+  // The hook may have been removed since the caller checked.
   if (g_log_fn) {
     g_log_fn(g_log_arg, level, buf);
   }

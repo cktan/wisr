@@ -299,13 +299,13 @@ int begin(sm_session_t *s, sm_xctlevel_t level) {
   // Refuse while this session's prepared transaction is in doubt.
   if (pending_prepared(s)) {
     return set_error(SM_ERR_INTRANS,
-                     "the session's transaction is prepared as %s",
+                     "the session's transaction is prepared as {}",
                      s->prepared_gid.c_str());
   }
   // Reject an unknown isolation level.
   if (level != SM_XCT_READ_COMMITTED && level != SM_XCT_REPEATABLE_READ &&
       level != SM_XCT_SERIALIZABLE) {
-    return set_error(SM_ERR_INVALID, "unknown isolation level %d", (int)level);
+    return set_error(SM_ERR_INVALID, "unknown isolation level {}", (int)level);
   }
   // Clear any state of an earlier transaction.
   reset(s);
@@ -416,14 +416,14 @@ int finish_commit(sm_session_t *s, uint64_t commit_ts) {
     // the database refuses writes from now on anyway.
     db->failed = true;
     log_msg(SM_LOG_ERROR,
-            "database %s: commit record write failed, database stopped "
-            "until reopened: %s",
+            "database {}: commit record write failed, database stopped "
+            "until reopened: {}",
             db->name.c_str(), st.ToString().c_str());
     // Release the locks: writes are refused from now on.
     lock_release_all(s);
     // Forget the transaction.
     reset(s);
-    return set_error(SM_ERR_IO, "write commit record (outcome unknown): %s",
+    return set_error(SM_ERR_IO, "write commit record (outcome unknown): {}",
                      st.ToString().c_str());
   }
   // Resolve before publishing: a reader that misses the xid in
@@ -570,7 +570,7 @@ int prepare(sm_session_t *s, const char *gid) {
     std::lock_guard<std::mutex> guard(db->prepared_mu);
     // Refuse a gid already in use.
     if (db->prepared.count(gid)) {
-      return set_error(SM_ERR_EXISTS, "gid %s is already in use", gid);
+      return set_error(SM_ERR_EXISTS, "gid {} is already in use", gid);
     }
     // Reserve it with a null entry.
     db->prepared[gid] = nullptr;
@@ -626,10 +626,10 @@ int prepare(sm_session_t *s, const char *gid) {
     db->failed = true;
     g->limbo = true;
     log_msg(SM_LOG_ERROR,
-            "database %s: prepare record write for %s failed, database "
-            "stopped until reopened: %s",
+            "database {}: prepare record write for {} failed, database "
+            "stopped until reopened: {}",
             db->name.c_str(), gid, st.ToString().c_str());
-    return set_error(SM_ERR_IO, "write prepare record (outcome unknown): %s",
+    return set_error(SM_ERR_IO, "write prepare record (outcome unknown): {}",
                      st.ToString().c_str());
   }
   // The session remembers only the gid.
@@ -676,10 +676,10 @@ int abort_prepared_txn(sm_session_t *g) {
   if (!st.ok()) {
     db->failed = true;
     log_msg(SM_LOG_ERROR,
-            "database %s: abort record write for %s failed, database "
-            "stopped until reopened: %s",
+            "database {}: abort record write for {} failed, database "
+            "stopped until reopened: {}",
             db->name.c_str(), g->prepared_gid.c_str(), st.ToString().c_str());
-    return set_error(SM_ERR_IO, "write abort record: %s",
+    return set_error(SM_ERR_IO, "write abort record: {}",
                      st.ToString().c_str());
   }
   // Free its SSI node and restored entry.
@@ -704,7 +704,7 @@ int resolve(db_t *db, const std::string &gid, bool commit_it) {
     auto it = db->prepared.find(gid);
     // Unknown, still being prepared, or in limbo: nothing to do.
     if (it == db->prepared.end() || !it->second || it->second->limbo) {
-      return set_error(SM_ERR_NOTFOUND, "no unresolved prepared transaction %s",
+      return set_error(SM_ERR_NOTFOUND, "no unresolved prepared transaction {}",
                        gid.c_str());
     }
     // Take the transaction.
@@ -788,7 +788,7 @@ int xct_check_active(sm_session_t *s) {
   if (!s->active) {
     // A prepared one in doubt: data calls are refused.
     if (pending_prepared(s)) {
-      return set_error(SM_ERR_PREPARED, "the transaction is prepared as %s",
+      return set_error(SM_ERR_PREPARED, "the transaction is prepared as {}",
                        s->prepared_gid.c_str());
     }
     return set_error(SM_ERR_NOTRANS, "no active transaction");
@@ -805,7 +805,7 @@ int xct_check_active(sm_session_t *s) {
 int xct_fail_retryable(sm_session_t *s, sm_errno_t e, const char *msg) {
   // Abort the transaction on the engine's side.
   discard(s);
-  return set_error(e, "%s; the transaction was aborted", msg);
+  return set_error(e, "{}; the transaction was aborted", msg);
 }
 
 /* Read committed takes a statement snapshot; the others reuse the begin one. */
@@ -824,7 +824,7 @@ view_t xct_view(sm_session_t *s) {
 int xct_check_writable(db_t *db) {
   // Refuse writes once a status write has failed.
   if (db->failed) {
-    return set_error(SM_ERR_IO, "database %s failed a status write; reopen it",
+    return set_error(SM_ERR_IO, "database {} failed a status write; reopen it",
                      db->name.c_str());
   }
   return 0;
@@ -887,8 +887,7 @@ xct_state_t xct_status(db_t *db, uint64_t xid, uint64_t *commit_ts) {
   }
   // Reject a record too short to hold its state.
   if (val.size() < txn_record_size) {
-    set_error(SM_ERR_CORRUPT, "short status record for xid %llu",
-              (unsigned long long)xid);
+    set_error(SM_ERR_CORRUPT, "short status record for xid {}", xid);
     return XCT_ERROR;
   }
   // Decide by the record's state.

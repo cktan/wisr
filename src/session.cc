@@ -34,7 +34,7 @@ db_t *find_or_open(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
                      std::string(WISR_ROOT_DBNAME_PREFIX) + dbname, &val);
   // Fail if no database has this name.
   if (s.IsNotFound()) {
-    set_error(SM_ERR_NOTFOUND, "database %s does not exist", dbname);
+    set_error(SM_ERR_NOTFOUND, "database {} does not exist", dbname);
     return nullptr;
   }
   // Fail on any other root db error.
@@ -44,7 +44,7 @@ db_t *find_or_open(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   }
   // Reject a malformed dbid.
   if (val.size() != 8) {
-    set_error(SM_ERR_CORRUPT, "bad dbid for database %s", dbname);
+    set_error(SM_ERR_CORRUPT, "bad dbid for database {}", dbname);
     return nullptr;
   }
   // Open the database: its first session in this process.

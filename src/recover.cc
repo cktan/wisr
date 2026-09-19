@@ -67,7 +67,7 @@ int restore_prepared(db_t *db) {
     db->prepared[g->prepared_gid] = g;
     // Tell the operator: it holds locks until a coordinator acts.
     log_msg(SM_LOG_INFO,
-            "database %s: restored prepared transaction %s in doubt",
+            "database {}: restored prepared transaction {} in doubt",
             db->name.c_str(), g->prepared_gid.c_str());
   }
   // Fail if the scan of CF:txn failed.
@@ -162,8 +162,8 @@ int sweep_orphan_cfs(db_t *db) {
       return -1;
     }
     log_msg(SM_LOG_INFO,
-            "database %s: dropped orphaned column family of relation %llu",
-            db->name.c_str(), (unsigned long long)relid);
+            "database {}: dropped orphaned column family of relation {}",
+            db->name.c_str(), relid);
   }
   return 0;
 }

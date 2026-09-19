@@ -61,7 +61,7 @@ int check_homedir(const char *homedir) {
   }
   // It must be a directory.
   if (!S_ISDIR(st.st_mode)) {
-    return set_error(SM_ERR_INVALID, "%s: not a directory", homedir);
+    return set_error(SM_ERR_INVALID, "{}: not a directory", homedir);
   }
   return 0;
 }
@@ -101,7 +101,7 @@ int sweep_base(sm_env_t *env) {
        it->Next()) {
     // Reject a malformed dbid.
     if (it->value().size() != 8) {
-      return set_error(SM_ERR_CORRUPT, "%s: bad dbid for database %s",
+      return set_error(SM_ERR_CORRUPT, "{}: bad dbid for database {}",
                        root_path(env->homedir).c_str(),
                        it->key().ToString().c_str() + 1);
     }
@@ -137,7 +137,7 @@ int sweep_base(sm_env_t *env) {
     if (env_destroy_db_dir(path) != 0) {
       return -1;
     }
-    log_msg(SM_LOG_INFO, "destroyed unnamed database directory %s",
+    log_msg(SM_LOG_INFO, "destroyed unnamed database directory {}",
             path.c_str());
   }
   return 0;
@@ -158,7 +158,7 @@ sm_env_t *attach(const char *homedir) {
   struct stat st;
   // Refuse a directory sm_init never prepared.
   if (stat(rootpath.c_str(), &st) != 0) {
-    set_error(SM_ERR_NOTFOUND, "%s: not a wisr home directory", homedir);
+    set_error(SM_ERR_NOTFOUND, "{}: not a wisr home directory", homedir);
     return nullptr;
   }
   rocksdb::Options opt;
@@ -175,14 +175,14 @@ sm_env_t *attach(const char *homedir) {
   s = env->root->Get(rocksdb::ReadOptions(), WISR_ROOT_VERSION, &version);
   // Reject a home directory without one.
   if (!s.ok() || version.size() != 8) {
-    set_error(SM_ERR_CORRUPT, "%s: no format version", rootpath.c_str());
+    set_error(SM_ERR_CORRUPT, "{}: no format version", rootpath.c_str());
     return nullptr;
   }
   uint64_t v = get_be64(version.data());
   // Reject a format this build does not understand.
   if (v != WISR_HOME_VERSION) {
-    set_error(SM_ERR_VERSION, "%s: format version %llu, expected %d", homedir,
-              (unsigned long long)v, WISR_HOME_VERSION);
+    set_error(SM_ERR_VERSION, "{}: format version {}, expected {}", homedir, v,
+              WISR_HOME_VERSION);
     return nullptr;
   }
 
@@ -248,7 +248,7 @@ int sm_init(const char *homedir) {
     if (mkdir(global.c_str(), 0700) != 0) {
       // global/ already exists: this is already a home directory.
       if (errno == EEXIST) {
-        return set_error(SM_ERR_EXISTS, "%s: already a wisr home directory",
+        return set_error(SM_ERR_EXISTS, "{}: already a wisr home directory",
                          homedir);
       }
       return set_errno_error(errno, global.c_str());
@@ -323,7 +323,7 @@ int sm_detach(sm_env_t *env, int force) {
     std::lock_guard<std::mutex> guard(env->mu);
     // Refuse while sessions are open, unless forced.
     if (!env->sessions.empty() && !force) {
-      return set_error(SM_ERR_INUSE, "%zu sessions are still open",
+      return set_error(SM_ERR_INUSE, "{} sessions are still open",
                        env->sessions.size());
     }
     // Copy the sessions to close outside the mutex.

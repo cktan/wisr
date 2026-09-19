@@ -43,7 +43,7 @@ int mkrel(sm_session_t *s, const char *relname) {
   }
   // Refuse a name that is already live.
   if (r == 0) {
-    return set_error(SM_ERR_EXISTS, "relation %s already exists", relname);
+    return set_error(SM_ERR_EXISTS, "relation {} already exists", relname);
   }
   // Refuse writes after fail-stop, then allocate a fresh relid.
   if (xct_check_writable(s->db) != 0 || db_alloc_relid(s->db, &relid) != 0) {
@@ -74,7 +74,7 @@ int mkrel(sm_session_t *s, const char *relname) {
     db_drop_rel_cf(s->db, relid);
     // Map a duplicate catalog key to SM_ERR_EXISTS.
     if (dup) {
-      return set_error(SM_ERR_EXISTS, "relation %s already exists", relname);
+      return set_error(SM_ERR_EXISTS, "relation {} already exists", relname);
     }
     return -1;
   }
@@ -97,7 +97,7 @@ int rmrel(sm_session_t *s, const char *relname) {
   }
   // Refuse a name that is not live.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "relation %s does not exist", relname);
+    return set_error(SM_ERR_NOTFOUND, "relation {} does not exist", relname);
   }
   // Delete the catalog row; the column family stays until no
   // snapshot can still read the relation (§8.3).
@@ -126,7 +126,7 @@ int catalog_lookup(sm_session_t *s, const view_t &view, const char *relname,
   }
   // Reject a malformed catalog row.
   if (val.size() != 8) {
-    return set_error(SM_ERR_CORRUPT, "bad catalog row for %s", relname);
+    return set_error(SM_ERR_CORRUPT, "bad catalog row for {}", relname);
   }
   // Decode the relid.
   *relid = get_be64(val.data());

@@ -11,13 +11,34 @@
 
 #include "sm.h"
 
+#include <stddef.h>
+
+#include <format>
+#include <string_view>
+
 #include <rocksdb/status.h>
 
 namespace wisr {
 
-/* Record e with a printf-style message. Returns -1. */
-int set_error(sm_errno_t e, const char *fmt, ...)
-    __attribute__((format(printf, 2, 3)));
+/*
+ * Format fmt with args into buf, a buffer of size bytes, cutting
+ * the message short if it does not fit; always NUL-terminates.
+ * Allocates nothing. Returns the length written.
+ */
+size_t format_into(char *buf, size_t size, std::string_view fmt,
+                   std::format_args args);
+
+/* Record e with a message formatted from fmt and args. Returns -1. */
+int set_error_v(sm_errno_t e, std::string_view fmt, std::format_args args);
+
+/*
+ * Record e with a std::format message, whose format string is
+ * checked against its arguments at compile time. Returns -1.
+ */
+template <typename... Args>
+int set_error(sm_errno_t e, std::format_string<Args...> fmt, Args &&...args) {
+  return set_error_v(e, fmt.get(), std::make_format_args(args...));
+}
 
 /* Record an errno value from a system call on what. Returns -1. */
 int set_errno_error(int err, const char *what);

@@ -115,7 +115,7 @@ int mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   rocksdb::Status s = env->root->Get(rocksdb::ReadOptions(), dkey, &val);
   // Refuse a name already taken.
   if (s.ok()) {
-    return set_error(SM_ERR_EXISTS, "database %s already exists", dbname);
+    return set_error(SM_ERR_EXISTS, "database {} already exists", dbname);
   }
   // Fail on any other root db error.
   if (!s.IsNotFound()) {
@@ -177,7 +177,7 @@ int rmdb(sm_env_t *env, const char *dbname) {
   std::lock_guard<std::mutex> guard(env->mu);
   // Refuse while any session has the database open.
   if (env->dbs.count(dbname)) {
-    return set_error(SM_ERR_INUSE, "database %s is open", dbname);
+    return set_error(SM_ERR_INUSE, "database {} is open", dbname);
   }
   // Look the name up in the root db.
   std::string dkey = dbname_key(dbname);
@@ -185,7 +185,7 @@ int rmdb(sm_env_t *env, const char *dbname) {
   rocksdb::Status s = env->root->Get(rocksdb::ReadOptions(), dkey, &val);
   // Refuse a name that does not exist.
   if (s.IsNotFound()) {
-    return set_error(SM_ERR_NOTFOUND, "database %s does not exist", dbname);
+    return set_error(SM_ERR_NOTFOUND, "database {} does not exist", dbname);
   }
   // Fail on any other root db error.
   if (!s.ok()) {
@@ -193,7 +193,7 @@ int rmdb(sm_env_t *env, const char *dbname) {
   }
   // Reject a malformed dbid.
   if (val.size() != 8) {
-    return set_error(SM_ERR_CORRUPT, "bad dbid for database %s", dbname);
+    return set_error(SM_ERR_CORRUPT, "bad dbid for database {}", dbname);
   }
   // Decode the dbid.
   uint64_t dbid = get_be64(val.data());
@@ -304,7 +304,7 @@ int db_options(const sm_options_t *opt, rocksdb::DBOptions *out) {
       rocksdb::GetDBOptionsFromString(cfg, *out, opt->rocksdb_options, &parsed);
   // Reject an unparsable string.
   if (!s.ok()) {
-    return set_error(SM_ERR_INVALID, "rocksdb_options: %s",
+    return set_error(SM_ERR_INVALID, "rocksdb_options: {}",
                      s.ToString().c_str());
   }
   // Adopt the parsed options.
@@ -422,7 +422,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   }
   // Require the fixed CFs and the catalog.
   if (bad_name || !db->cf_txn || !db->cf_meta || !db->rels.count(0)) {
-    set_error(SM_ERR_CORRUPT, "%s: unexpected column families", dbname);
+    set_error(SM_ERR_CORRUPT, "{}: unexpected column families", dbname);
     return nullptr;
   }
 
@@ -431,13 +431,13 @@ db_t *db_open(const std::string &path, const char *dbname,
   if (!read_meta(db.get(), WISR_META_VERSION, &version) ||
       !read_meta(db.get(), WISR_META_NEXT_TS, &next_ts) ||
       !read_meta(db.get(), WISR_META_NEXT_RELID, &next_relid)) {
-    set_error(SM_ERR_CORRUPT, "%s: CF:meta is incomplete", dbname);
+    set_error(SM_ERR_CORRUPT, "{}: CF:meta is incomplete", dbname);
     return nullptr;
   }
   // Reject a format this build does not understand.
   if (version != WISR_DB_VERSION) {
-    set_error(SM_ERR_VERSION, "%s: format version %llu, expected %d", dbname,
-              (unsigned long long)version, WISR_DB_VERSION);
+    set_error(SM_ERR_VERSION, "{}: format version {}, expected {}", dbname,
+              version, WISR_DB_VERSION);
     return nullptr;
   }
 
@@ -603,8 +603,8 @@ int db_drop_rel_cf(db_t *db, uint64_t relid) {
   // Report a failed drop; most callers cannot act on it, so log it.
   if (!s.ok()) {
     log_msg(SM_LOG_ERROR,
-            "database %s: dropping relation %llu's column family failed: %s",
-            db->name.c_str(), (unsigned long long)relid, s.ToString().c_str());
+            "database {}: dropping relation {}'s column family failed: {}",
+            db->name.c_str(), relid, s.ToString().c_str());
     return set_status_error(s, "drop column family");
   }
   return 0;

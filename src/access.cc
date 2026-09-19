@@ -120,8 +120,7 @@ rocksdb::ColumnFamilyHandle *rel_cf(db_t *db, uint64_t relid) {
   rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, relid);
   // The catalog named it, so a missing CF is corruption.
   if (!cf) {
-    set_error(SM_ERR_CORRUPT, "relation %llu has no column family",
-              (unsigned long long)relid);
+    set_error(SM_ERR_CORRUPT, "relation {} has no column family", relid);
   }
   return cf;
 }
@@ -200,7 +199,7 @@ int check_key(const char *key, size_t klen) {
   }
   // Reject a key over the limit.
   if (klen > SM_MAX_KEYLEN) {
-    return set_error(SM_ERR_INVALID, "key of %zu bytes exceeds %d", klen,
+    return set_error(SM_ERR_INVALID, "key of {} bytes exceeds {}", klen,
                      SM_MAX_KEYLEN);
   }
   return 0;
@@ -221,7 +220,7 @@ int enter(sm_session_t *s, const view_t &view, const char *relname,
   int r = catalog_lookup(s, view, relname, relid);
   // Report an unknown relation.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "relation %s does not exist", relname);
+    return set_error(SM_ERR_NOTFOUND, "relation {} does not exist", relname);
   }
   return r;
 }
@@ -239,7 +238,7 @@ int write_row(sm_session_t *s, write_op_t op, const char *relname,
   }
   // Reject a value over the limit.
   if (datalen > SM_MAX_DATALEN) {
-    return set_error(SM_ERR_INVALID, "value of %zu bytes exceeds %d", datalen,
+    return set_error(SM_ERR_INVALID, "value of {} bytes exceeds {}", datalen,
                      SM_MAX_DATALEN);
   }
   uint64_t relid;

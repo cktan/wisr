@@ -43,10 +43,9 @@ public:
     // Warn if any version was kept unstamped out of doubt.
     if (m_doubts > 0) {
       log_msg(SM_LOG_WARN,
-              "database %s: compaction kept %llu version(s) of relation "
-              "%llu unstamped: undecodable value or unknown writer status",
-              m_db->name.c_str(), (unsigned long long)m_doubts,
-              (unsigned long long)m_relid);
+              "database {}: compaction kept {} version(s) of relation "
+              "{} unstamped: undecodable value or unknown writer status",
+              m_db->name.c_str(), m_doubts, m_relid);
     }
   }
 
@@ -201,8 +200,8 @@ void purge_one(db_t *db, const db_t::purge_t &p,
   }
   // On failure the tombstone stays; the next compaction that
   // meets it queues it again. Nobody waits on this, so log it.
-  log_msg(SM_LOG_ERROR, "database %s: purge in relation %llu failed: %s",
-          db->name.c_str(), (unsigned long long)p.relid, s.ToString().c_str());
+  log_msg(SM_LOG_ERROR, "database {}: purge in relation {} failed: {}",
+          db->name.c_str(), p.relid, s.ToString().c_str());
 }
 
 /*
@@ -249,7 +248,7 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
       // A failed compaction leaves versions unstamped.
       if (!s.ok()) {
         log_msg(SM_LOG_ERROR,
-                "database %s: CF:txn sweep abandoned: compaction failed: %s",
+                "database {}: CF:txn sweep abandoned: compaction failed: {}",
                 db->name.c_str(), s.ToString().c_str());
         return -1;
       }
@@ -257,7 +256,7 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
     // Any filter doubt during the pass forbids deleting records.
     if (db->gc_filter_errors.load() != errors) {
       log_msg(SM_LOG_WARN,
-              "database %s: CF:txn sweep abandoned: some versions stayed "
+              "database {}: CF:txn sweep abandoned: some versions stayed "
               "unstamped, so their status records are kept",
               db->name.c_str());
       return -1; // some version stayed unstamped: keep records
@@ -279,11 +278,11 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
   int64_t n = xct_drop_committed_records(db, db->sweep_w0);
   // Report the outcome: nobody waits on a background sweep.
   if (n < 0) {
-    log_msg(SM_LOG_ERROR, "database %s: CF:txn sweep failed: %s",
+    log_msg(SM_LOG_ERROR, "database {}: CF:txn sweep failed: {}",
             db->name.c_str(), sm_errmsg());
   } else {
-    log_msg(SM_LOG_INFO, "database %s: CF:txn sweep deleted %lld record(s)",
-            db->name.c_str(), (long long)n);
+    log_msg(SM_LOG_INFO, "database {}: CF:txn sweep deleted {} record(s)",
+            db->name.c_str(), n);
   }
   return n;
 }
@@ -314,9 +313,9 @@ void warn_stuck(db_t *db) {
   // Log outside snap_mu.
   for (auto &st : stuck) {
     log_msg(SM_LOG_WARN,
-            "database %s: a transaction with snapshot %llu has held back "
-            "garbage collection for %llds",
-            db->name.c_str(), (unsigned long long)st.first, st.second);
+            "database {}: a transaction with snapshot {} has held back "
+            "garbage collection for {}s",
+            db->name.c_str(), st.first, st.second);
   }
 }
 
@@ -499,7 +498,7 @@ void gc_run_once(db_t *db) {
     rocksdb::Status s = db->rdb->Flush(rocksdb::FlushOptions(), cf);
     // A failed flush only costs reads; nobody waits, so log it.
     if (!s.ok()) {
-      log_msg(SM_LOG_ERROR, "database %s: flush after purge failed: %s",
+      log_msg(SM_LOG_ERROR, "database {}: flush after purge failed: {}",
               db->name.c_str(), s.ToString().c_str());
     }
   }
