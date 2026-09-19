@@ -1,5 +1,5 @@
 /*
- * test_session.cc -- sm_open, sm_close, the open-database
+ * test_session.cc -- sm_opendb, sm_closedb, the open-database
  * registry, and the transaction state machine.
  */
 
@@ -8,17 +8,17 @@
 
 #include "sm.h"
 
-TEST_CASE("sm_open requires an existing database") {
+TEST_CASE("sm_opendb requires an existing database") {
   // Verify open never creates a database.
   // 1. Open a name that was never created; expect SM_ERR_NOTFOUND.
   // 2. Create it; open now succeeds.
   home_t home;
-  CHECK(sm_open(home.env(), "db", nullptr) == nullptr);
+  CHECK(sm_opendb(home.env(), "db", nullptr) == nullptr);
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
   REQUIRE(sm_mkdb(home.env(), "db", nullptr) == 0);
-  sm_session_t *s = sm_open(home.env(), "db", nullptr);
+  sm_session_t *s = sm_opendb(home.env(), "db", nullptr);
   CHECK(s);
-  CHECK(sm_close(s) == 0);
+  CHECK(sm_closedb(s) == 0);
 }
 
 TEST_CASE("an open database cannot be removed, and detach honors force") {
@@ -33,21 +33,21 @@ TEST_CASE("an open database cannot be removed, and detach honors force") {
   sm_env_t *env = sm_attach(tmp.path());
   REQUIRE(env);
   REQUIRE(sm_mkdb(env, "db", nullptr) == 0);
-  sm_session_t *a = sm_open(env, "db", nullptr);
-  sm_session_t *b = sm_open(env, "db", nullptr);
+  sm_session_t *a = sm_opendb(env, "db", nullptr);
+  sm_session_t *b = sm_opendb(env, "db", nullptr);
   REQUIRE(a);
   REQUIRE(b);
 
   CHECK(sm_rmdb(env, "db") == -1);
   CHECK(sm_errno() == SM_ERR_INUSE);
-  CHECK(sm_close(a) == 0);
+  CHECK(sm_closedb(a) == 0);
   CHECK(sm_rmdb(env, "db") == -1);
   CHECK(sm_errno() == SM_ERR_INUSE);
-  CHECK(sm_close(b) == 0);
+  CHECK(sm_closedb(b) == 0);
   CHECK(sm_rmdb(env, "db") == 0);
 
   REQUIRE(sm_mkdb(env, "db", nullptr) == 0);
-  sm_session_t *c = sm_open(env, "db", nullptr);
+  sm_session_t *c = sm_opendb(env, "db", nullptr);
   REQUIRE(c);
   REQUIRE(sm_begin(c, SM_XCT_REPEATABLE_READ) == 0);
   CHECK(sm_detach(env, 0) == -1);
@@ -64,7 +64,7 @@ TEST_CASE("the transaction state machine rejects out-of-order calls") {
   // 4. After commit, the session can begin again.
   home_t home;
   REQUIRE(sm_mkdb(home.env(), "db", nullptr) == 0);
-  sm_session_t *s = sm_open(home.env(), "db", nullptr);
+  sm_session_t *s = sm_opendb(home.env(), "db", nullptr);
   REQUIRE(s);
 
   CHECK(sm_commit(s) == -1);
@@ -85,5 +85,5 @@ TEST_CASE("the transaction state machine rejects out-of-order calls") {
   CHECK(sm_errno() == SM_ERR_INTRANS);
   CHECK(sm_commit(s) == 0);
   CHECK(sm_begin(s, SM_XCT_READ_COMMITTED) == 0);
-  CHECK(sm_close(s) == 0);
+  CHECK(sm_closedb(s) == 0);
 }

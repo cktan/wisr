@@ -29,12 +29,12 @@ public:
     REQUIRE(sm_mkrel(s, "t") == 0);
     put(s, "t", "a", "0");
     REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_close(s) == 0);
+    REQUIRE(sm_closedb(s) == 0);
   }
 
   /* A new session on "db". */
   sm_session_t *open() const {
-    sm_session_t *s = sm_open(m_home.env(), "db", nullptr);
+    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -114,7 +114,7 @@ TEST_CASE("rollback restores the values as of the savepoint, at every level") {
     CHECK(get(s, "t", "c") == "<none>");
     CHECK(get(s, "t", "d") == "4");
     REQUIRE(sm_commit(s) == 0);
-    sm_close(s);
+    sm_closedb(s);
   }
 }
 
@@ -157,7 +157,7 @@ TEST_CASE("rollback needs a savepoint, and a savepoint lives only in its "
   CHECK(get(s, "t", "a") == "0");
   CHECK(get(s, "t", "b") == "<none>");
   REQUIRE(sm_commit(s) == 0);
-  sm_close(s);
+  sm_closedb(s);
 }
 
 TEST_CASE(
@@ -189,7 +189,7 @@ TEST_CASE(
   CHECK(keys_of(sm_scan(s, "t", nullptr, 0, 0, nullptr, 0, 0)) ==
         std::vector<std::string>{"a", "b", "d"});
   REQUIRE(sm_commit(s) == 0);
-  sm_close(s);
+  sm_closedb(s);
 }
 
 TEST_CASE(
@@ -226,8 +226,8 @@ TEST_CASE(
   tu.join();
   CHECK(rc == -1);
   CHECK(err == SM_ERR_CONFLICT);
-  sm_close(t);
-  sm_close(u);
+  sm_closedb(t);
+  sm_closedb(u);
 }
 
 TEST_CASE("rollback undoes sm_mkrel and sm_rmrel made after the mark") {
@@ -260,5 +260,5 @@ TEST_CASE("rollback undoes sm_mkrel and sm_rmrel made after the mark") {
   }
   REQUIRE(sm_mkrel(s, "q") == 0); // the name is free again
   REQUIRE(sm_commit(s) == 0);
-  sm_close(s);
+  sm_closedb(s);
 }

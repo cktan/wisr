@@ -33,7 +33,7 @@ full MVCC, for OLTP workloads.
 - The `sm_*` Storage Manager API (see `API.md`) is the interface to
   this engine. It already sketches the primitives needed:
   - database lifecycle: `sm_mkdb` / `sm_rmdb`
-  - sessions: `sm_open` / `sm_close`
+  - sessions: `sm_opendb` / `sm_closedb`
   - transactions: `sm_begin` (with `sm_xctlevel_t`) / `sm_prepare` /
     `sm_commit` / `sm_abort`
   - a single savepoint per session: `sm_savepoint` / `sm_rollback`

@@ -30,12 +30,12 @@ public:
     put(s, "t", "x", "0");
     put(s, "t", "y", "0");
     REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_close(s) == 0);
+    REQUIRE(sm_closedb(s) == 0);
   }
 
   /* A new session on "db". */
   sm_session_t *open() const {
-    sm_session_t *s = sm_open(m_home.env(), "db", nullptr);
+    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -83,8 +83,8 @@ TEST_CASE("a writer blocks on a held row lock, then conflicts if the holder "
   CHECK(err == SM_ERR_CONFLICT);
   CHECK(sm_abort(b) == -1);
   CHECK(sm_errno() == SM_ERR_NOTRANS);
-  sm_close(a);
-  sm_close(b);
+  sm_closedb(a);
+  sm_closedb(b);
 }
 
 TEST_CASE("a blocked writer proceeds when the holder aborts") {
@@ -115,8 +115,8 @@ TEST_CASE("a blocked writer proceeds when the holder aborts") {
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
   CHECK(get(a, "t", "x") == "b");
   REQUIRE(sm_commit(a) == 0);
-  sm_close(a);
-  sm_close(b);
+  sm_closedb(a);
+  sm_closedb(b);
 }
 
 TEST_CASE("first-committer-wins prevents lost updates at every level") {
@@ -140,8 +140,8 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
     CHECK(set(b, "x", "b") == -1);
     CHECK(sm_errno() == SM_ERR_CONFLICT);
     CHECK(sm_retryable() == 1);
-    sm_close(a);
-    sm_close(b);
+    sm_closedb(a);
+    sm_closedb(b);
   }
 }
 
@@ -165,8 +165,8 @@ TEST_CASE("read committed sees a newer commit but cannot overwrite it") {
   CHECK(get(t, "t", "y") == "t");
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm_errno() == SM_ERR_CONFLICT);
-  sm_close(t);
-  sm_close(u);
+  sm_closedb(t);
+  sm_closedb(u);
 }
 
 TEST_CASE("a retryable error aborts the transaction and releases everything") {
@@ -196,8 +196,8 @@ TEST_CASE("a retryable error aborts the transaction and releases everything") {
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
   CHECK(sm_mkrel(u, "u") == 0);
   REQUIRE(sm_commit(u) == 0);
-  sm_close(t);
-  sm_close(u);
+  sm_closedb(t);
+  sm_closedb(u);
 }
 
 TEST_CASE("concurrent sm_mkrel: different names both commit, the same name "
@@ -233,8 +233,8 @@ TEST_CASE("concurrent sm_mkrel: different names both commit, the same name "
   tb.join();
   CHECK(rc == -1);
   CHECK(err == SM_ERR_CONFLICT);
-  sm_close(a);
-  sm_close(b);
+  sm_closedb(a);
+  sm_closedb(b);
 }
 
 TEST_CASE("the youngest transaction in a deadlock cycle is the victim") {
@@ -274,8 +274,8 @@ TEST_CASE("the youngest transaction in a deadlock cycle is the victim") {
     CHECK(rca == 0);
     REQUIRE(sm_commit(a) == 0);
     CHECK(sm_abort(b) == -1); // already aborted by the engine
-    sm_close(a);
-    sm_close(b);
+    sm_closedb(a);
+    sm_closedb(b);
   }
 }
 
@@ -301,8 +301,8 @@ TEST_CASE("a doomed transaction fails its next call and changes nothing") {
   CHECK(get(u, "t", "x") == "0");
   CHECK(set(u, "x", "u") == 0);
   REQUIRE(sm_commit(u) == 0);
-  sm_close(t);
-  sm_close(u);
+  sm_closedb(t);
+  sm_closedb(u);
 }
 
 TEST_CASE("concurrent increments with retry never lose an update") {
@@ -352,7 +352,7 @@ TEST_CASE("concurrent increments with retry never lose an update") {
     REQUIRE(sm_commit(s) == 0);
     MESSAGE("retries: " << retries.load());
     for (sm_session_t *x : sessions) {
-      sm_close(x);
+      sm_closedb(x);
     }
   }
 }

@@ -1,5 +1,5 @@
 /*
- * session.cc -- sm_open and sm_close, and the environment's
+ * session.cc -- sm_opendb and sm_closedb, and the environment's
  * registry of open databases (DESIGN.md §1).
  */
 
@@ -56,12 +56,12 @@ db_t *find_or_open(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   return db;
 }
 
-/* sm_open, minus the out-of-memory guard. */
+/* sm_opendb, minus the out-of-memory guard. */
 sm_session_t *open_session(sm_env_t *env, const char *dbname,
                            const sm_options_t *opt) {
   // Reject a NULL environment.
   if (!env) {
-    set_error(SM_ERR_INVALID, "sm_open: env is NULL");
+    set_error(SM_ERR_INVALID, "sm_opendb: env is NULL");
     return nullptr;
   }
   // Validate the database name.
@@ -91,13 +91,13 @@ sm_session_t *open_session(sm_env_t *env, const char *dbname,
 } // namespace
 
 /* Open dbname and start a session on it. */
-sm_session_t *sm_open(sm_env_t *env, const char *dbname,
-                      const sm_options_t *opt) {
+sm_session_t *sm_opendb(sm_env_t *env, const char *dbname,
+                        const sm_options_t *opt) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return open_session(env, dbname, opt);
   } catch (const std::bad_alloc &) {
-    set_error(SM_ERR_NOMEM, "sm_open: out of memory");
+    set_error(SM_ERR_NOMEM, "sm_opendb: out of memory");
     return nullptr;
   }
 }
@@ -106,7 +106,7 @@ sm_session_t *sm_open(sm_env_t *env, const char *dbname,
  * Close a session: its cursors, then its active transaction.
  * The last session on a database closes the database.
  */
-int sm_close(sm_session_t *session) {
+int sm_closedb(sm_session_t *session) {
   // Closing NULL is a no-op.
   if (!session) {
     return 0;

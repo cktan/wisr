@@ -69,7 +69,7 @@ int crash_child_main(const char *homedir) {
   if (!env) {
     return 2;
   }
-  sm_session_t *s = sm_open(env, "db", nullptr);
+  sm_session_t *s = sm_opendb(env, "db", nullptr);
   if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0) {
     return 3;
   }
@@ -107,7 +107,7 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
     sm_env_t *env = sm_attach(tmp.path());
     REQUIRE(env);
     REQUIRE(sm_mkdb(env, "db", nullptr) == 0);
-    sm_session_t *s = sm_open(env, "db", nullptr);
+    sm_session_t *s = sm_opendb(env, "db", nullptr);
     REQUIRE(s);
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
     REQUIRE(sm_mkrel(s, "t") == 0);
@@ -153,7 +153,7 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
 
     sm_env_t *env = sm_attach(tmp.path());
     REQUIRE_MESSAGE(env, sm_errmsg());
-    sm_session_t *s = sm_open(env, "db", nullptr);
+    sm_session_t *s = sm_opendb(env, "db", nullptr);
     REQUIRE_MESSAGE(s, sm_errmsg());
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
     uint32_t n = count_rows(s);

@@ -309,7 +309,7 @@ sm_env_t *sm_attach(const char *homedir) {
 
 /*
  * Release an environment. With force, close its sessions
- * first, each as sm_close would; without, refuse while any is
+ * first, each as sm_closedb would; without, refuse while any is
  * open.
  */
 int sm_detach(sm_env_t *env, int force) {
@@ -329,9 +329,9 @@ int sm_detach(sm_env_t *env, int force) {
     // Copy the sessions to close outside the mutex.
     sessions = env->sessions;
   }
-  // Close each session, as sm_close would.
+  // Close each session, as sm_closedb would.
   for (sm_session_t *s : sessions) {
-    sm_close(s);
+    sm_closedb(s);
   }
   // Close the root db and free the environment.
   delete env;

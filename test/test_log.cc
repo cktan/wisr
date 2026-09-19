@@ -74,12 +74,12 @@ public:
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
     REQUIRE(sm_mkrel(s, "t") == 0);
     REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_close(s) == 0);
+    REQUIRE(sm_closedb(s) == 0);
   }
 
   /* A new session on "db". */
   sm_session_t *open() const {
-    sm_session_t *s = sm_open(m_home.env(), "db", nullptr);
+    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE_MESSAGE(s, sm_errmsg());
     return s;
   }
@@ -155,7 +155,7 @@ TEST_CASE("recovery reports restored transactions and dropped orphans") {
                     1,
                 cap.all());
   REQUIRE(sm_abort_prepared(v, "g-log") == 0);
-  sm_close(v);
+  sm_closedb(v);
 }
 
 TEST_CASE("a failed status write is reported as the database stopping") {
@@ -173,7 +173,7 @@ TEST_CASE("a failed status write is reported as the database stopping") {
   CHECK(sm_commit(s) == -1);
   s->db->test_before_commit = nullptr;
   CHECK_MESSAGE(cap.count(SM_LOG_ERROR, "stopped") == 1, cap.all());
-  sm_close(s);
+  sm_closedb(s);
 }
 
 TEST_CASE("a CF:txn sweep reports what it deleted") {
@@ -188,7 +188,7 @@ TEST_CASE("a CF:txn sweep reports what it deleted") {
   log_capture_t cap;
   CHECK(wisr::gc_sweep_txn(s->db, true) > 0);
   CHECK_MESSAGE(cap.count(SM_LOG_INFO, "sweep deleted") == 1, cap.all());
-  sm_close(s);
+  sm_closedb(s);
 }
 
 TEST_CASE("versions the filter cannot judge are reported per compaction") {
@@ -220,7 +220,7 @@ TEST_CASE("versions the filter cannot judge are reported per compaction") {
 
   CHECK(wisr::gc_sweep_txn(s->db, true) == -1);
   CHECK_MESSAGE(cap.count(SM_LOG_WARN, "sweep abandoned") == 1, cap.all());
-  sm_close(s);
+  sm_closedb(s);
 }
 
 TEST_CASE("a snapshot holding back GC too long is reported once") {
@@ -242,5 +242,5 @@ TEST_CASE("a snapshot holding back GC too long is reported once") {
   REQUIRE(sm_commit(t) == 0);
   wisr::gc_run_once(t->db);
   CHECK(cap.count(SM_LOG_WARN, "held back") == 1);
-  sm_close(t);
+  sm_closedb(t);
 }

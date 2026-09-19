@@ -25,7 +25,7 @@ public:
   /* Create "db" and "t"; the first session opens "db" with opt. */
   explicit xct_fixture_t(const sm_options_t *opt = nullptr) {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
-    m_first = sm_open(m_home.env(), "db", opt);
+    m_first = sm_opendb(m_home.env(), "db", opt);
     REQUIRE(m_first);
     REQUIRE(sm_begin(m_first, SM_XCT_REPEATABLE_READ) == 0);
     REQUIRE(sm_mkrel(m_first, "t") == 0);
@@ -37,7 +37,7 @@ public:
 
   /* Another session on "db". */
   sm_session_t *open() const {
-    sm_session_t *s = sm_open(m_home.env(), "db", nullptr);
+    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -105,8 +105,8 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   CHECK(get(c, "t", "a") == "v");
   CHECK(get(c, "t", "b") == "v");
   REQUIRE(sm_commit(c) == 0);
-  sm_close(b);
-  sm_close(c);
+  sm_closedb(b);
+  sm_closedb(c);
 }
 
 TEST_CASE("a failed status write fails the database stop") {
@@ -145,16 +145,16 @@ TEST_CASE("a failed status write fails the database stop") {
   CHECK(sm_errno() == SM_ERR_IO);
   REQUIRE(sm_commit(a) == 0); // read-only: nothing to publish
 
-  REQUIRE(sm_close(a) == 0);
-  REQUIRE(sm_close(b) == 0);
-  sm_session_t *s = sm_open(f.home().env(), "db", nullptr);
+  REQUIRE(sm_closedb(a) == 0);
+  REQUIRE(sm_closedb(b) == 0);
+  sm_session_t *s = sm_opendb(f.home().env(), "db", nullptr);
   REQUIRE(s);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   CHECK(get(s, "t", "old") == "v");
   CHECK(get(s, "t", "x") == "<none>");
   put(s, "t", "y", "v");
   REQUIRE(sm_commit(s) == 0);
-  REQUIRE(sm_close(s) == 0);
+  REQUIRE(sm_closedb(s) == 0);
 }
 
 TEST_CASE("a one-entry commit cache gives the same answers") {
@@ -196,11 +196,11 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   sm_scan_end(c);
   CHECK(n == 50);
   REQUIRE(sm_commit(a) == 0);
-  sm_close(b);
+  sm_closedb(b);
 
   opt.commit_cache_entries = 0;
   REQUIRE(sm_mkdb(f.home().env(), "db2", nullptr) == 0);
-  CHECK(sm_open(f.home().env(), "db2", &opt) == nullptr);
+  CHECK(sm_opendb(f.home().env(), "db2", &opt) == nullptr);
   CHECK(sm_errno() == SM_ERR_INVALID);
 }
 
@@ -289,6 +289,6 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
   CHECK(last == size_t(2 * writers * per_writer));
   MESSAGE("reader scans: " << scans);
   for (sm_session_t *s : sessions) {
-    sm_close(s);
+    sm_closedb(s);
   }
 }

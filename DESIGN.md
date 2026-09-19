@@ -266,7 +266,7 @@ A `dbname` is a caller's string, not a path component
 with the default column family, the bytewise comparator,
 and none of the machinery above. It is not an
 `sm_session_t` database, has no `CF:txn`, `CF:meta`, or
-catalog, and is unreachable through `sm_open`. It is the
+catalog, and is unreachable through `sm_opendb`. It is the
 `pg_database` of this design, and it sits in `global` for
 the same reason: it describes the whole home directory
 rather than any one database in it.
@@ -306,12 +306,12 @@ assumes it is alone, and a second process breaks it.
 returns the caller may hand the home directory to another
 process, which must not find this one's sessions still
 writing to it. Its `force` flag closes those sessions
-first, by the same path `sm_close` takes, so a caller
+first, by the same path `sm_closedb` takes, so a caller
 winding down — especially after an error, when it may not
 be able to walk its own session list — has one call that
 always completes. Force changes nothing about what closing
 a session means: a prepared transaction stays in doubt and
-is found again by the recovery of the next `sm_open`
+is found again by the recovery of the next `sm_opendb`
 (§9.1), because it is durable and owned by its
 coordinator, not by the process that happened to prepare
 it.
@@ -1129,7 +1129,7 @@ the database owns, registered under its `gid`: the transaction's
 state, its snapshot's place in `gc_watermark`, its SSI node, and
 its row locks, whose table entries are re-pointed at the new
 owner. The session keeps only the `gid`. Any session can then
-resolve the transaction, `sm_close` leaves it untouched, and
+resolve the transaction, `sm_closedb` leaves it untouched, and
 recovery (§9.1 step 5) rebuilds exactly the same object from the
 `PREPARED` record, so a transaction prepared before a crash and
 one prepared in this process are handled alike. The record is a

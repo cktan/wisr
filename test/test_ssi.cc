@@ -31,12 +31,12 @@ public:
       put(s, "t", k, "1");
     }
     REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_close(s) == 0);
+    REQUIRE(sm_closedb(s) == 0);
   }
 
   /* A new session on "db". */
   sm_session_t *open() const {
-    sm_session_t *s = sm_open(m_home.env(), "db", nullptr);
+    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -111,8 +111,8 @@ TEST_CASE(
     } else {
       CHECK((c1 && c2));
     }
-    sm_close(t1);
-    sm_close(t2);
+    sm_closedb(t1);
+    sm_closedb(t2);
   }
 }
 
@@ -140,8 +140,8 @@ TEST_CASE("write skew through phantoms fails at SERIALIZABLE") {
     } else {
       CHECK((c1 && c2));
     }
-    sm_close(t1);
-    sm_close(t2);
+    sm_closedb(t1);
+    sm_closedb(t2);
   }
 }
 
@@ -162,8 +162,8 @@ TEST_CASE("reading a missing key counts: inserting it later conflicts") {
   bool c1 = try_commit(t1);
   bool c2 = try_commit(t2);
   CHECK_FALSE((c1 && c2));
-  sm_close(t1);
-  sm_close(t2);
+  sm_closedb(t1);
+  sm_closedb(t2);
 }
 
 TEST_CASE(
@@ -187,8 +187,8 @@ TEST_CASE(
   CHECK(get(t1, "t", "x") == "1");
   REQUIRE(set(t1, "y", "2") == 0);
   CHECK_FALSE(try_commit(t1));
-  sm_close(t1);
-  sm_close(t2);
+  sm_closedb(t1);
+  sm_closedb(t2);
 }
 
 TEST_CASE("an edge onto a committed pivot dooms the transaction making it") {
@@ -213,9 +213,9 @@ TEST_CASE("an edge onto a committed pivot dooms the transaction making it") {
 
   REQUIRE(set(t1, "y", "2") == 0);
   CHECK_FALSE(try_commit(t1));
-  sm_close(t1);
-  sm_close(t2);
-  sm_close(t3);
+  sm_closedb(t1);
+  sm_closedb(t2);
+  sm_closedb(t3);
 }
 
 TEST_CASE("a phantom inserted while the reader's cursor is open is caught") {
@@ -249,8 +249,8 @@ TEST_CASE("a phantom inserted while the reader's cursor is open is caught") {
   sm_scan_end(c);
   REQUIRE(set(t1, "q", "2") == 0);
   CHECK_FALSE(try_commit(t1));
-  sm_close(t1);
-  sm_close(t2);
+  sm_closedb(t1);
+  sm_closedb(t2);
 }
 
 TEST_CASE("a scan closed early covers only what it read") {
@@ -278,8 +278,8 @@ TEST_CASE("a scan closed early covers only what it read") {
   REQUIRE(set(t1, "q", "2") == 0);
   CHECK(try_commit(t1));
   CHECK(try_commit(t2));
-  sm_close(t1);
-  sm_close(t2);
+  sm_closedb(t1);
+  sm_closedb(t2);
 }
 
 TEST_CASE("Fekete's read-only anomaly fails the pivot") {
@@ -298,7 +298,7 @@ TEST_CASE("Fekete's read-only anomaly fails the pivot") {
     put(s, "t", "x", "0");
     put(s, "t", "y", "0");
     REQUIRE(sm_commit(s) == 0);
-    sm_close(s);
+    sm_closedb(s);
   }
   sm_session_t *t1 = f.open();
   sm_session_t *t2 = f.open();
@@ -318,9 +318,9 @@ TEST_CASE("Fekete's read-only anomaly fails the pivot") {
 
   REQUIRE(set(t1, "x", "-11") == 0);
   CHECK_FALSE(try_commit(t1));
-  sm_close(t1);
-  sm_close(t2);
-  sm_close(t3);
+  sm_closedb(t1);
+  sm_closedb(t2);
+  sm_closedb(t3);
 }
 
 TEST_CASE("a reader that outlives every concurrent writer can then write and "
@@ -346,8 +346,8 @@ TEST_CASE("a reader that outlives every concurrent writer can then write and "
   CHECK(count_range(t, "a", "z") == 2);
   REQUIRE(set(t, "x", "3") == 0);
   CHECK(try_commit(t));
-  sm_close(t);
-  sm_close(u);
+  sm_closedb(t);
+  sm_closedb(u);
 }
 
 TEST_CASE("a REPEATABLE READ writer does not take part in SSI") {
@@ -369,8 +369,8 @@ TEST_CASE("a REPEATABLE READ writer does not take part in SSI") {
   REQUIRE(set(t2, "bob", "0") == 0);
   CHECK(try_commit(t1));
   CHECK(try_commit(t2));
-  sm_close(t1);
-  sm_close(t2);
+  sm_closedb(t1);
+  sm_closedb(t2);
 }
 
 TEST_CASE("SSI nodes are freed once no transaction overlaps them") {
@@ -397,7 +397,7 @@ TEST_CASE("SSI nodes are freed once no transaction overlaps them") {
       CHECK(kv.second.empty());
     }
   }
-  sm_close(s);
+  sm_closedb(s);
 }
 
 TEST_CASE("concurrent SERIALIZABLE doctors always leave someone on call") {
@@ -474,6 +474,6 @@ TEST_CASE("concurrent SERIALIZABLE doctors always leave someone on call") {
   CHECK(commits > 0);
   MESSAGE("commits: " << commits.load());
   for (sm_session_t *s : sessions) {
-    sm_close(s);
+    sm_closedb(s);
   }
 }

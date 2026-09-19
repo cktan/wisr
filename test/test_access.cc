@@ -22,7 +22,7 @@ public:
   /* Create "db" and open a session on it. */
   db_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
-    m_session = sm_open(m_home.env(), "db", nullptr);
+    m_session = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE(m_session);
   }
 
@@ -31,16 +31,16 @@ public:
 
   /* Another session on the same database. */
   sm_session_t *open_other() const {
-    sm_session_t *s = sm_open(m_home.env(), "db", nullptr);
+    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
 
   /* Close the session, reattach, and reopen "db". */
   void reopen() {
-    REQUIRE(sm_close(m_session) == 0);
+    REQUIRE(sm_closedb(m_session) == 0);
     m_home.reattach();
-    m_session = sm_open(m_home.env(), "db", nullptr);
+    m_session = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE(m_session);
   }
 
@@ -230,8 +230,8 @@ TEST_CASE("repeatable read keeps its snapshot; read committed does not") {
   CHECK(scan_all(b, "t") == rows_t{{"k", "v"}});
   REQUIRE(sm_commit(a) == 0);
   REQUIRE(sm_commit(b) == 0);
-  sm_close(b);
-  sm_close(c);
+  sm_closedb(b);
+  sm_closedb(c);
 }
 
 TEST_CASE("a scan returns userkeys in memcmp order within its bounds") {

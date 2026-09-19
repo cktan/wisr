@@ -217,7 +217,7 @@ typedef enum {
 } sm_xctlevel_t;
 
 /*
- * Database options, taken by sm_mkdb() and by the sm_open()
+ * Database options, taken by sm_mkdb() and by the sm_opendb()
  * that first opens a database. NULL means all defaults.
  *
  * durability_sync = 0 trades a bounded window of committed-
@@ -278,7 +278,7 @@ sm_env_t* sm_attach(const char* homedir);
  * With force == 0, returns -1 with SM_ERR_INUSE if any
  * session opened through env is still open, and env stays
  * valid. With force != 0, those sessions are closed first,
- * as sm_close() would: cursors are closed and active
+ * as sm_closedb() would: cursors are closed and active
  * transactions are aborted, but a prepared transaction is
  * left in doubt for its coordinator. Their sm_session_t
  * handles are then invalid.
@@ -291,7 +291,7 @@ sm_env_t* sm_attach(const char* homedir);
 int sm_detach(sm_env_t* env, int force);
 
 /*
- * Create the database dbname. It is not opened; call sm_open()
+ * Create the database dbname. It is not opened; call sm_opendb()
  * afterwards.
  *
  * A dbname is a name, never a path: it is a key in the
@@ -336,7 +336,7 @@ int sm_lsdb(sm_env_t* env, sm_strlist_t** out);
  * Open the database dbname and start a session on it. The
  * database must already exist; this never creates one.
  *
- * The first sm_open() on a database in this process opens it
+ * The first sm_opendb() on a database in this process opens it
  * and its opt takes effect; later sessions join the open
  * instance and their opt is ignored. Recovery -- restoring
  * prepared transactions and their locks -- happens during that
@@ -348,8 +348,8 @@ int sm_lsdb(sm_env_t* env, sm_strlist_t** out);
  * Returns NULL on error: SM_ERR_NOTFOUND, SM_ERR_CORRUPT,
  * SM_ERR_PERMISSION, SM_ERR_NOMEM, SM_ERR_IO, SM_ERR_INVALID.
  */
-sm_session_t* sm_open(sm_env_t* env, const char* dbname,
-                      const sm_options_t* opt);
+sm_session_t* sm_opendb(sm_env_t* env, const char* dbname,
+                        const sm_options_t* opt);
 
 /*
  * Close a session. Open cursors are closed, and an active
@@ -360,7 +360,7 @@ sm_session_t* sm_open(sm_env_t* env, const char* dbname,
  * not. Passing NULL is a no-op returning 0. Closing the last
  * session on a database closes the database.
  */
-int sm_close(sm_session_t* session);
+int sm_closedb(sm_session_t* session);
 
 /*
  * Begin a transaction at level, taking its snapshot if the
@@ -455,12 +455,12 @@ int sm_rollback(sm_session_t* session);
  * operations, savepoints, and rollback are rejected with
  * SM_ERR_PREPARED, and only sm_commit() and sm_abort() are
  * accepted. It survives a crash, is restored at the next
- * sm_open() still holding its row locks, and cannot be told
+ * sm_opendb() still holding its row locks, and cannot be told
  * "no" by the engine.
  *
  * From here on the transaction belongs to the database, not
  * the session: any session may resolve it by gid, and
- * sm_close() leaves it in doubt. While it is unresolved, the
+ * sm_closedb() leaves it in doubt. While it is unresolved, the
  * preparing session's sm_begin() fails with SM_ERR_INTRANS.
  * Once any session has resolved it, the preparing session has
  * no transaction: its sm_commit() and sm_abort() fail with
@@ -650,7 +650,7 @@ int sm_read(sm_session_t* session, const char* relname,
  *
  * The cursor is owned by the session, must be used only from
  * the thread using that session, and is invalidated by
- * sm_commit(), sm_abort(), sm_close(), and an sm_rollback()
+ * sm_commit(), sm_abort(), sm_closedb(), and an sm_rollback()
  * to a savepoint older than it. Multiple cursors may be open
  * on one session at once.
  *

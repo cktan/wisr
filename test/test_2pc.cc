@@ -39,12 +39,12 @@ public:
     put(s, "t", "a", "0");
     put(s, "t", "b", "0");
     REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_close(s) == 0);
+    REQUIRE(sm_closedb(s) == 0);
   }
 
   /* A new session on "db". */
   sm_session_t *open() const {
-    sm_session_t *s = sm_open(m_home.env(), "db", nullptr);
+    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE_MESSAGE(s, sm_errmsg());
     return s;
   }
@@ -130,7 +130,7 @@ void kill_after_report(pid_t pid, int fd) {
  */
 int prepare_child_main(const char *homedir) {
   sm_env_t *env = sm_attach(homedir);
-  sm_session_t *s = env ? sm_open(env, "db", nullptr) : nullptr;
+  sm_session_t *s = env ? sm_opendb(env, "db", nullptr) : nullptr;
   if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
       sm_insert(s, "t", "c", 1, "v", 1) != 0 || sm_prepare(s, "g-crash") != 0) {
     return 2;
@@ -150,7 +150,7 @@ int prepare_child_main(const char *homedir) {
  */
 int orphan_child_main(const char *homedir) {
   sm_env_t *env = sm_attach(homedir);
-  sm_session_t *s = env ? sm_open(env, "db", nullptr) : nullptr;
+  sm_session_t *s = env ? sm_opendb(env, "db", nullptr) : nullptr;
   if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 || sm_rmrel(s, "u") != 0 ||
       sm_commit(s) != 0 || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
       sm_mkrel(s, "o") != 0) {
@@ -192,8 +192,8 @@ TEST_CASE("prepare, then commit or abort on the preparing session") {
   REQUIRE(sm_abort(s) == 0);
   CHECK(read_now(r, "b") == "0");
   CHECK(listed(r).empty());
-  sm_close(s);
-  sm_close(r);
+  sm_closedb(s);
+  sm_closedb(r);
 }
 
 TEST_CASE("a prepared transaction accepts only commit and abort") {
@@ -241,8 +241,8 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm_commit_prepared(u, "nope") == -1);
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
   REQUIRE(sm_commit(s) == 0);
-  sm_close(s);
-  sm_close(u);
+  sm_closedb(s);
+  sm_closedb(u);
 }
 
 TEST_CASE("another session can resolve a prepared transaction by gid") {
@@ -268,8 +268,8 @@ TEST_CASE("another session can resolve a prepared transaction by gid") {
   CHECK(sm_commit(s) == -1);
   CHECK(sm_errno() == SM_ERR_NOTRANS);
   CHECK(read_now(s, "a") == "1");
-  sm_close(s);
-  sm_close(u);
+  sm_closedb(s);
+  sm_closedb(u);
 }
 
 TEST_CASE("a prepared transaction keeps its locks after its session closes") {
@@ -285,7 +285,7 @@ TEST_CASE("a prepared transaction keeps its locks after its session closes") {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm_prepare(s, "g") == 0);
-  REQUIRE(sm_close(s) == 0);
+  REQUIRE(sm_closedb(s) == 0);
 
   sm_session_t *u = f.open();
   sm_session_t *v = f.open();
@@ -310,8 +310,8 @@ TEST_CASE("a prepared transaction keeps its locks after its session closes") {
   CHECK(rc == -1);
   CHECK(err == SM_ERR_CONFLICT);
   CHECK(read_now(v, "a") == "1");
-  sm_close(u);
-  sm_close(v);
+  sm_closedb(u);
+  sm_closedb(v);
 }
 
 TEST_CASE(
@@ -364,7 +364,7 @@ TEST_CASE(
   CHECK(listed(w).empty());
   CHECK(read_now(w, "a") == "1");
   CHECK(read_now(w, "b") == "0");
-  sm_close(w);
+  sm_closedb(w);
 }
 
 TEST_CASE("read-only prepares survive a restart and resolve") {
@@ -388,7 +388,7 @@ TEST_CASE("read-only prepares survive a restart and resolve") {
   CHECK(sm_commit_prepared(v, "r1") == 0);
   CHECK(sm_abort_prepared(v, "r2") == 0);
   CHECK(listed(v).empty());
-  sm_close(v);
+  sm_closedb(v);
 }
 
 TEST_CASE("a prepared drop commits after a restart and its CF goes") {
@@ -419,7 +419,7 @@ TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   REQUIRE(sm_commit(v) == 0);
   wisr::gc_run_once(v->db);
   CHECK(wisr::db_rel_cf(v->db, relid) == nullptr);
-  sm_close(v);
+  sm_closedb(v);
 }
 
 TEST_CASE("write skew with a transaction restored in doubt is still caught") {
@@ -446,7 +446,7 @@ TEST_CASE("write skew with a transaction restored in doubt is still caught") {
   REQUIRE(sm_commit_prepared(t, "gp") == 0);
   CHECK(read_now(t, "b") == "1");
   CHECK(read_now(t, "a") == "0");
-  sm_close(t);
+  sm_closedb(t);
 }
 
 TEST_CASE("a transaction prepared when the process is killed is restored") {
@@ -469,7 +469,7 @@ TEST_CASE("a transaction prepared when the process is killed is restored") {
   CHECK(read_now(v, "c") == "<none>");
   REQUIRE(sm_commit_prepared(v, "g-crash") == 0);
   CHECK(read_now(v, "c") == "v");
-  sm_close(v);
+  sm_closedb(v);
 }
 
 TEST_CASE("startup drops relation CFs that nothing names") {
@@ -506,7 +506,7 @@ TEST_CASE("startup drops relation CFs that nothing names") {
   CHECK(sm_read(v, "u", "k", 1, &d, &dl) == -1);
   CHECK(sm_read(v, "o", "k", 1, &d, &dl) == -1);
   REQUIRE(sm_commit(v) == 0);
-  sm_close(v);
+  sm_closedb(v);
 }
 
 TEST_CASE("a failed prepare write fails the database stop") {
@@ -538,5 +538,5 @@ TEST_CASE("a failed prepare write fails the database stop") {
   sm_session_t *v = f.open();
   CHECK(listed(v).empty());
   CHECK(read_now(v, "a") == "0");
-  sm_close(v);
+  sm_closedb(v);
 }

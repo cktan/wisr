@@ -400,11 +400,11 @@ stays valid, and the caller closes the sessions and calls
 `sm_detach` again.
 
 With `force` **non-zero**, those sessions are closed first,
-each exactly as `sm_close` would close it: cursors are
+each exactly as `sm_closedb` would close it: cursors are
 closed and an active transaction is aborted, but a
 **prepared** transaction is left in doubt for its
 coordinator, to be found again by `sm_list_prepared` after
-the next `sm_open`. Their `sm_session_t` handles are
+the next `sm_opendb`. Their `sm_session_t` handles are
 invalid once `sm_detach` returns, so a forced detach is a
 shutdown path, not a way to reclaim an environment the
 caller means to keep using.
@@ -456,7 +456,7 @@ Two divergences from PostgreSQL, both deliberate:
 
 Create the database `dbname`. Its directory is created if
 it does not exist. The database is not opened; call
-`sm_open` afterwards.
+`sm_opendb` afterwards.
 
 Errors: `SM_ERR_EXISTS` (a database already exists there),
 `SM_ERR_PERMISSION`, `SM_ERR_DISKFULL`, `SM_ERR_IO`,
@@ -494,13 +494,13 @@ Errors: `SM_ERR_NOMEM`, `SM_ERR_IO`.
 
 ## Session API
 
-### sm_session_t* sm_open(sm_env_t* env, const char* dbname, const sm_options_t* opt)
+### sm_session_t* sm_opendb(sm_env_t* env, const char* dbname, const sm_options_t* opt)
 
 Open the database `dbname` and start a new session on it.
-The database must already exist; `sm_open` never creates
+The database must already exist; `sm_opendb` never creates
 one.
 
-The first `sm_open` on a database in this process opens
+The first `sm_opendb` on a database in this process opens
 the database and its `opt` takes effect. Later sessions on
 the same database join the open instance, and their `opt`
 is ignored except for fields documented as per-session
@@ -517,7 +517,7 @@ there), `SM_ERR_CORRUPT`, `SM_ERR_PERMISSION`,
 `SM_ERR_NOMEM`,
 `SM_ERR_IO`, `SM_ERR_INVALID`.
 
-### int sm_close(sm_session_t* session)
+### int sm_closedb(sm_session_t* session)
 
 Close the session and release it. Any open scan cursors are
 closed. An active transaction is forcibly aborted; a
@@ -629,7 +629,7 @@ Errors: `SM_ERR_NOSAVEPOINT`, `SM_ERR_NOTRANS`,
 
 `sm_prepare` makes a transaction durable but not visible.
 Once prepared, a transaction survives a crash: it is
-restored at the next `sm_open`, still holding its row
+restored at the next `sm_opendb`, still holding its row
 locks, and waits for a coordinator decision. It cannot be
 told "no" by the engine.
 
@@ -649,7 +649,7 @@ Runs serialization validation, then durably records the
 prepared state. On success the transaction is `PREPARED`:
 data operations, savepoints, and rollback are rejected with
 `SM_ERR_PREPARED`; only `sm_commit` and `sm_abort` are
-accepted. `sm_close` leaves it in-doubt rather than
+accepted. `sm_closedb` leaves it in-doubt rather than
 aborting it.
 
 From prepare on, the transaction belongs to the database,
@@ -849,7 +849,7 @@ promptly.
 
 The cursor is owned by the session, must be used only from
 the thread using that session, and is invalidated by
-`sm_commit`, `sm_abort`, and `sm_close`. Multiple cursors
+`sm_commit`, `sm_abort`, and `sm_closedb`. Multiple cursors
 may be open on one session at once.
 
 Returns NULL on error: `SM_ERR_NOTFOUND` (no such
@@ -954,7 +954,7 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
 13. `SM_XCT_READ_COMMITED` → `SM_XCT_READ_COMMITTED`.
 14. **Databases are named within an environment.** (D)
     `sm_attach(homedir)` returns an `sm_env_t`, and
-    `sm_mkdb`, `sm_rmdb`, and `sm_open` take an env and a
+    `sm_mkdb`, `sm_rmdb`, and `sm_opendb` take an env and a
     single-component `dbname` instead of a `dbpath`. The
     env is thread-safe and separate from the per-thread
     session, so concurrent sessions keep working as
@@ -1003,5 +1003,5 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     go, which every caller writes identically and which a
     caller winding down after an error may not be able to
     do at all. `force` does not change what closing a
-    session means — `sm_close`'s rules apply unchanged, so
+    session means — `sm_closedb`'s rules apply unchanged, so
     a prepared transaction still survives.

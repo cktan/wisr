@@ -35,7 +35,7 @@ public:
   /* Create "db" and "t"; the first session opens "db" with opt. */
   explicit gc_fixture_t(const sm_options_t *opt = nullptr) {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
-    m_s = sm_open(m_home.env(), "db", opt);
+    m_s = sm_opendb(m_home.env(), "db", opt);
     REQUIRE(m_s);
     REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
     REQUIRE(sm_mkrel(m_s, "t") == 0);
@@ -48,7 +48,7 @@ public:
 
   /* A new session on "db". */
   sm_session_t *open() const {
-    sm_session_t *s = sm_open(m_home.env(), "db", nullptr);
+    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -92,9 +92,9 @@ public:
 
   /* Close the session, reattach, and reopen "db" with opt. */
   void reopen(const sm_options_t *opt) {
-    REQUIRE(sm_close(m_s) == 0);
+    REQUIRE(sm_closedb(m_s) == 0);
     m_home.reattach();
-    m_s = sm_open(m_home.env(), "db", opt);
+    m_s = sm_opendb(m_home.env(), "db", opt);
     REQUIRE(m_s);
   }
 
@@ -181,8 +181,8 @@ TEST_CASE("a long-running reader keeps the versions it can see") {
   REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
   CHECK(get(r, "t", "k") == "v5");
   REQUIRE(sm_commit(r) == 0);
-  sm_close(w);
-  sm_close(r);
+  sm_closedb(w);
+  sm_closedb(r);
 }
 
 TEST_CASE("a running transaction's versions survive compaction unstamped") {
@@ -209,8 +209,8 @@ TEST_CASE("a running transaction's versions survive compaction unstamped") {
   REQUIRE(sm_abort(t) == 0);
   f.compact(f.relid());
   CHECK(f.raw(f.relid()).empty());
-  sm_close(t);
-  sm_close(u);
+  sm_closedb(t);
+  sm_closedb(u);
 }
 
 TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
@@ -263,7 +263,7 @@ TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
   for (const raw_t &v : raw) {
     CHECK((v.flags & version_tombstone) == 0);
   }
-  sm_close(s);
+  sm_closedb(s);
 }
 
 TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
@@ -285,8 +285,8 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
   f.compact(f.relid());
   CHECK(sm_insert(t, "t", "k", 1, "t", 1) == -1);
   CHECK(sm_errno() == SM_ERR_CONFLICT);
-  sm_close(t);
-  sm_close(u);
+  sm_closedb(t);
+  sm_closedb(u);
 }
 
 TEST_CASE("a dropped relation's column family goes once no snapshot sees it") {
@@ -326,8 +326,8 @@ TEST_CASE("a dropped relation's column family goes once no snapshot sees it") {
   REQUIRE(sm_commit(s) == 0);
   gc_run_once(f.db());
   CHECK(db_rel_cf(f.db(), urelid) != nullptr);
-  sm_close(s);
-  sm_close(r);
+  sm_closedb(s);
+  sm_closedb(r);
 }
 
 namespace {
@@ -437,7 +437,7 @@ TEST_CASE(
   REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
   CHECK(scan_keys(r).size() == 10);
   REQUIRE(sm_commit(r) == 0);
-  sm_close(r);
+  sm_closedb(r);
 }
 
 TEST_CASE("the sweep keeps records a live snapshot may still need") {
@@ -462,7 +462,7 @@ TEST_CASE("the sweep keeps records a live snapshot may still need") {
   REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
   CHECK(scan_keys(r) == std::vector<std::string>{"a", "b", "c"});
   REQUIRE(sm_commit(r) == 0);
-  sm_close(r);
+  sm_closedb(r);
 }
 
 TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold") {
