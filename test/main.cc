@@ -15,23 +15,22 @@
 #include <string.h>
 
 /* The crash test's child workload; never returns. */
-int crash_child_main(const char* homedir);
+int crash_child_main(const char *homedir);
 
 /* test_2pc.cc's child workloads: they report, then wait to be killed. */
-int prepare_child_main(const char* homedir);
-int orphan_child_main(const char* homedir);
+int prepare_child_main(const char *homedir);
+int orphan_child_main(const char *homedir);
 
 /* Run a child workload if asked to, else the tests. */
-int main(int argc, char** argv)
-{
-    if (argc == 3 && strcmp(argv[1], "--crash-child") == 0) {
-        return crash_child_main(argv[2]);
-    }
-    if (argc == 3 && strcmp(argv[1], "--prepare-child") == 0) {
-        return prepare_child_main(argv[2]);
-    }
-    if (argc == 3 && strcmp(argv[1], "--orphan-child") == 0) {
-        return orphan_child_main(argv[2]);
-    }
-    return doctest::Context(argc, argv).run();
+int main(int argc, char **argv) {
+  if (argc == 3 && strcmp(argv[1], "--crash-child") == 0) {
+    return crash_child_main(argv[2]);
+  }
+  if (argc == 3 && strcmp(argv[1], "--prepare-child") == 0) {
+    return prepare_child_main(argv[2]);
+  }
+  if (argc == 3 && strcmp(argv[1], "--orphan-child") == 0) {
+    return orphan_child_main(argv[2]);
+  }
+  return doctest::Context(argc, argv).run();
 }
