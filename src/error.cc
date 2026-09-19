@@ -32,9 +32,11 @@ namespace wisr
 int set_error(sm_errno_t e, const char* fmt, ...)
 {
     va_list ap;
+    // Format the message into the thread-local buffer.
     va_start(ap, fmt);
     vsnprintf(t_errmsg, sizeof(t_errmsg), fmt, ap);
     va_end(ap);
+    // Record the error code.
     t_errno = e;
     return -1;
 }
@@ -43,6 +45,7 @@ int set_error(sm_errno_t e, const char* fmt, ...)
 int set_errno_error(int err, const char* what)
 {
     sm_errno_t e;
+    // Classify the errno.
     switch (err) {
     case ENOENT:
         e = SM_ERR_NOTFOUND;
@@ -70,6 +73,7 @@ int set_errno_error(int err, const char* what)
         e = SM_ERR_IO;
         break;
     }
+    // Record the code with the call and the system's message.
     return set_error(e, "%s: %s", what, strerror(err));
 }
 
@@ -80,6 +84,7 @@ int set_errno_error(int err, const char* what)
  */
 int set_status_error(const rocksdb::Status& s, const char* what)
 {
+    // Default to SM_ERR_IO, then refine by the status's kind.
     sm_errno_t e = SM_ERR_IO;
     if (s.IsNoSpace()) {
         e = SM_ERR_DISKFULL;
@@ -92,16 +97,20 @@ int set_status_error(const rocksdb::Status& s, const char* what)
     } else if (s.IsInvalidArgument() || s.IsNotSupported()) {
         e = SM_ERR_INVALID;
     }
+    // Record the code with the call and RocksDB's message.
     return set_error(e, "%s: %s", what, s.ToString().c_str());
 }
 
 /* Reject a NULL, empty, or over-long name. */
 int check_name(const char* name, size_t max, const char* what)
 {
+    // Reject a NULL name.
     if (!name) {
         return set_error(SM_ERR_INVALID, "%s name is NULL", what);
     }
+    // Measure it, stopping just past the limit.
     size_t n = strnlen(name, max + 1);
+    // Reject an empty or over-long name.
     if (n == 0 || n > max) {
         return set_error(SM_ERR_INVALID, "%s name must be 1..%zu bytes", what,
                          max);
@@ -126,6 +135,7 @@ const char* sm_errmsg(void)
 /* 1 if the last error on this thread is retryable, else 0. */
 int sm_retryable(void)
 {
+    // Only these three errors leave the work retryable.
     return t_errno == SM_ERR_CONFLICT || t_errno == SM_ERR_SERIALIZATION ||
            t_errno == SM_ERR_DEADLOCK;
 }

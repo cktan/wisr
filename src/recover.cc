@@ -31,31 +31,43 @@ namespace
  */
 int restore_prepared(db_t* db)
 {
+    // Walk every status record in CF:txn.
     std::unique_ptr<rocksdb::Iterator> it(
         db->rdb->NewIterator(rocksdb::ReadOptions(), db->cf_txn));
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        // Skip anything that is not an 8-byte xid key.
         if (it->key().size() != 8) {
             continue;
         }
+        // Decode the xid.
         uint64_t xid = get_be64(it->key().data());
         sm_session_t* g = nullptr;
+        // Rebuild a PREPARED record; skip every other state.
         if (!xct_decode_prepared(db, xid, it->value(), &g)) {
             continue; // not a PREPARED record
         }
+        // Mark it restored, for §8.4's SSI rule.
         g->restored = true;
+        // Give it a begin order, for deadlock victim choice.
         g->begin_seq = ++db->begin_seq;
         {
+            // Put it back in the active table: its versions stay in flight.
             std::lock_guard<std::mutex> guard(db->txn_mu);
             db->active.insert(xid);
         }
+        // Re-acquire the row locks of its write set.
         for (const std::string& k : g->locks) {
             db->lock_owners[k] = g;
         }
+        // Pin the GC watermark at its snapshot.
         db_register_snapshot(db, g->snapshot_ts);
         g->snapshot_registered = true;
+        // Record it as restored for SSI.
         ssi_restore(db, xid);
+        // Register it under its gid for listing and resolution.
         db->prepared[g->prepared_gid] = g;
     }
+    // Fail if the scan of CF:txn failed.
     if (!it->status().ok()) {
         return set_status_error(it->status(), "scan CF:txn");
     }
@@ -69,37 +81,48 @@ int restore_prepared(db_t* db)
  */
 int live_relids(db_t* db, std::set<uint64_t>* live)
 {
+    // Scan the catalog in total order, across every userkey.
     rocksdb::ReadOptions ro;
     ro.total_order_seek = true;
     std::unique_ptr<rocksdb::Iterator> it(
         db->rdb->NewIterator(ro, db->rels.at(0)));
+    // Track the key whose newest committed version is decided.
     std::string decided; // userkey whose newest committed version was seen
     bool have = false;
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
         version_t v;
+        // Decode the version's userkey and xid.
         version_decode_key(it->key(), &v);
+        // Skip older versions of a key already decided.
         if (have && v.userkey == rocksdb::Slice(decided)) {
             continue;
         }
+        // Reject a malformed catalog version.
         if (!version_decode_value(it->value(), &v)) {
             return set_error(SM_ERR_CORRUPT, "malformed catalog version");
         }
         uint64_t commit_ts;
+        // Resolve an unstamped version's writer.
         if (!(v.flags & version_stamped)) {
             xct_state_t st = xct_status(db, v.xid, &commit_ts);
+            // Fail on a status lookup error.
             if (st == XCT_ERROR) {
                 return -1;
             }
+            // Skip versions in flight or dead.
             if (st != XCT_COMMITTED) {
                 continue;
             }
         }
+        // This is the key's newest committed version.
         decided = v.userkey.ToString();
         have = true;
+        // A live row names a relid to keep.
         if (!(v.flags & version_tombstone) && v.payload.size() == 8) {
             live->insert(get_be64(v.payload.data()));
         }
     }
+    // Fail if the catalog scan failed.
     if (!it->status().ok()) {
         return set_status_error(it->status(), "scan catalog");
     }
@@ -114,19 +137,24 @@ int live_relids(db_t* db, std::set<uint64_t>* live)
  */
 int sweep_orphan_cfs(db_t* db)
 {
+    // Always keep the catalog's own CF.
     std::set<uint64_t> keep{0};
+    // Keep every relid a live catalog row names.
     if (live_relids(db, &keep) != 0) {
         return -1;
     }
+    // Keep every CF a prepared transaction created.
     for (auto& kv : db->prepared) {
         keep.insert(kv.second->created.begin(), kv.second->created.end());
     }
     std::vector<uint64_t> orphans;
+    // Collect the relation CFs nothing names.
     for (auto& kv : db->rels) {
         if (!keep.count(kv.first)) {
             orphans.push_back(kv.first);
         }
     }
+    // Drop each orphan.
     for (uint64_t relid : orphans) {
         // Drop an orphaned relation column family.
         if (db_drop_rel_cf(db, relid) != 0) {
@@ -144,9 +172,11 @@ namespace wisr
 /* Restore prepared transactions, then sweep orphaned CFs. */
 int recover(db_t* db)
 {
+    // Restore prepared transactions first: the sweep needs them.
     if (restore_prepared(db) != 0) {
         return -1;
     }
+    // Then drop orphaned relation CFs.
     return sweep_orphan_cfs(db);
 }
 

@@ -29,8 +29,11 @@ namespace
 std::string lock_key(uint64_t relid, rocksdb::Slice key)
 {
     std::string k;
+    // Reserve room for the relid prefix and the key.
     k.reserve(8 + key.size());
+    // Prefix the relid, so equal keys in different relations differ.
     put_be64(k, relid);
+    // Append the userkey.
     k.append(key.data(), key.size());
     return k;
 }
@@ -46,15 +49,21 @@ void check_deadlock(db_t* db, sm_session_t* s)
 {
     std::set<sm_session_t*> seen;
     sm_session_t* victim = s;
+    // Follow each blocked transaction to the holder it waits on.
     for (sm_session_t* cur = s->waiting_for; cur; cur = cur->waiting_for) {
+        // Back at s: the chain is a cycle through s.
         if (cur == s) {
+            // Doom the youngest member as the victim.
             victim->doomed = SM_ERR_DEADLOCK;
+            // Wake every waiter so the victim sees its doom.
             db->lock_cv.notify_all();
             return;
         }
+        // Stop at a cycle that does not pass through s.
         if (!seen.insert(cur).second) {
             return;
         }
+        // Track the youngest member seen so far.
         if (cur->begin_seq > victim->begin_seq) {
             victim = cur;
         }
@@ -70,31 +79,46 @@ namespace wisr
 int lock_acquire(sm_session_t* s, uint64_t relid, rocksdb::Slice key)
 {
     db_t* db = s->db;
+    // Build the lock table key.
     std::string k = lock_key(relid, key);
+    // Hold lock_mu for the table and the waits-for pointers.
     std::unique_lock<std::mutex> guard(db->lock_mu);
+    // Time the first deadlock check.
     auto deadline = std::chrono::steady_clock::now() +
                     std::chrono::milliseconds(db->deadlock_ms);
     for (;;) {
+        // A doomed transaction stops waiting and fails.
         if (s->doomed) {
+            // Clear its wait edge before leaving.
             s->waiting_for = nullptr;
             return -1;
         }
+        // Look up the lock's current holder.
         auto it = db->lock_owners.find(k);
+        // Free: take it.
         if (it == db->lock_owners.end()) {
+            // Record us as the owner.
             db->lock_owners.emplace(k, s);
+            // Remember the lock for release at commit or abort.
             s->locks.push_back(std::move(k));
+            // We no longer wait on anyone.
             s->waiting_for = nullptr;
             return 0;
         }
+        // Already ours: re-acquiring changes nothing.
         if (it->second == s) {
+            // We no longer wait on anyone.
             s->waiting_for = nullptr;
             return 0; // already ours: nothing new to record
         }
+        // Record the wait edge for deadlock detection.
         s->waiting_for = it->second;
         // Wait for a release; after deadlock_ms, look for a cycle.
         if (db->lock_cv.wait_until(guard, deadline) ==
             std::cv_status::timeout) {
+            // Timed out: look for a cycle through us.
             check_deadlock(db, s);
+            // Re-arm the timer for the next check.
             deadline = std::chrono::steady_clock::now() +
                        std::chrono::milliseconds(db->deadlock_ms);
         }
@@ -104,6 +128,7 @@ int lock_acquire(sm_session_t* s, uint64_t relid, rocksdb::Slice key)
 /* Drop every lock the session holds and wake the waiters. */
 void lock_release_all(sm_session_t* s)
 {
+    // Release everything, from the first lock on.
     lock_release_from(s, 0);
 }
 
@@ -111,15 +136,21 @@ void lock_release_all(sm_session_t* s)
 void lock_release_from(sm_session_t* s, size_t n)
 {
     db_t* db = s->db;
+    // Hold lock_mu while editing the table.
     std::lock_guard<std::mutex> guard(db->lock_mu);
+    // We no longer wait on anyone.
     s->waiting_for = nullptr;
+    // Nothing past n to release.
     if (s->locks.size() <= n) {
         return;
     }
+    // Drop ownership of every lock past the first n.
     for (size_t i = n; i < s->locks.size(); i++) {
         db->lock_owners.erase(s->locks[i]);
     }
+    // Forget them in the session's list.
     s->locks.resize(n);
+    // Wake the waiters to retry.
     db->lock_cv.notify_all();
 }
 

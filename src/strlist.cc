@@ -46,21 +46,31 @@ namespace wisr
 /* Pack names into one allocation laid out as described above. */
 sm_strlist_t* strlist_make(const std::vector<std::string>& names)
 {
+    // Size the header, the pointer array, and every name with its NUL.
     size_t bytes = sizeof(sm_strlist_t) + names.size() * sizeof(char*);
     for (const std::string& n : names) {
         bytes += n.size() + 1;
     }
+    // Allocate the whole list as one block.
     sm_strlist_t* sl = static_cast<sm_strlist_t*>(malloc(bytes));
+    // Fail if the allocation failed.
     if (!sl) {
         return nullptr;
     }
+    // Record the count in the header.
     sl->count = names.size();
+    // Locate the pointer array and the byte tail after it.
     char** ptr = strlist_ptr_mut(sl);
     char* tail = reinterpret_cast<char*>(ptr + names.size());
+    // Copy each name into the tail and point its slot at it.
     for (size_t i = 0; i < names.size(); i++) {
+        // Point this name's slot at its place in the tail.
         ptr[i] = tail;
+        // Copy the name's bytes.
         memcpy(tail, names[i].data(), names[i].size());
+        // NUL-terminate the copy.
         tail[names[i].size()] = '\0';
+        // Advance the tail past it.
         tail += names[i].size() + 1;
     }
     return sl;
@@ -77,6 +87,7 @@ size_t sm_strlist_count(const sm_strlist_t* sl)
 /* Name i, or NULL if i is past the end. */
 const char* sm_strlist_at(const sm_strlist_t* sl, size_t i)
 {
+    // Reject an index past the end.
     if (i >= sl->count) {
         return NULL;
     }
@@ -86,5 +97,6 @@ const char* sm_strlist_at(const sm_strlist_t* sl, size_t i)
 /* Release a list: one free, since it is one allocation. */
 void sm_strlist_free(sm_strlist_t* sl)
 {
+    // Release the whole list with one free.
     free(sl);
 }

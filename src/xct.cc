@@ -58,9 +58,12 @@ int resolve(db_t* db, const std::string& gid, bool commit_it);
  */
 int resolve_own(sm_session_t* s, bool commit_it)
 {
+    // Take the gid; the session no longer refers to it.
     std::string gid = s->prepared_gid;
     s->prepared_gid.clear();
+    // Resolve the transaction by gid.
     if (resolve(s->db, gid, commit_it) != 0) {
+        // Resolved elsewhere first: the session simply has none.
         if (sm_errno() == SM_ERR_NOTFOUND) {
             return set_error(SM_ERR_NOTRANS, "no active transaction");
         }
@@ -76,13 +79,17 @@ int resolve_own(sm_session_t* s, bool commit_it)
  */
 bool pending_prepared(sm_session_t* s)
 {
+    // No prepared transaction on this session.
     if (s->prepared_gid.empty()) {
         return false;
     }
+    // Hold prepared_mu while reading the registry.
     std::lock_guard<std::mutex> guard(s->db->prepared_mu);
+    // Still registered: still in doubt.
     if (s->db->prepared.count(s->prepared_gid)) {
         return true;
     }
+    // Resolved elsewhere: forget the gid.
     s->prepared_gid.clear();
     return false;
 }
@@ -91,6 +98,7 @@ bool pending_prepared(sm_session_t* s)
 std::string txn_key(uint64_t xid)
 {
     std::string k;
+    // The xid, big-endian, so records sort by xid.
     put_be64(k, xid);
     return k;
 }
@@ -98,7 +106,9 @@ std::string txn_key(uint64_t xid)
 /* Remove xid from the active table: its versions now resolve dead. */
 void leave_active(db_t* db, uint64_t xid)
 {
+    // Hold txn_mu while editing the active table.
     std::lock_guard<std::mutex> guard(db->txn_mu);
+    // Its versions now resolve through CF:txn, or as dead.
     db->active.erase(xid);
 }
 
@@ -109,12 +119,19 @@ void leave_active(db_t* db, uint64_t xid)
  */
 void enter_cache(db_t* db, uint64_t xid, uint64_t commit_ts)
 {
+    // Hold txn_mu, so the xid moves atomically.
     std::lock_guard<std::mutex> guard(db->txn_mu);
+    // No longer in flight.
     db->active.erase(xid);
+    // Cache its commit_ts by xid.
     db->cache[xid] = commit_ts;
+    // Index it by commit_ts, for eviction.
     db->cache_by_ts[commit_ts] = xid;
+    // Evict the oldest commit_ts while over capacity.
     while (db->cache.size() > db->cache_entries) {
+        // The oldest commit_ts.
         auto oldest = db->cache_by_ts.begin();
+        // Drop it from both maps.
         db->cache.erase(oldest->second);
         db->cache_by_ts.erase(oldest);
     }
@@ -126,10 +143,13 @@ void enter_cache(db_t* db, uint64_t xid, uint64_t commit_ts)
  */
 void reset(sm_session_t* s)
 {
+    // Stop holding back the GC watermark.
     if (s->snapshot_registered) {
+        // Unregister the snapshot.
         db_release_snapshot(s->db, s->snapshot_ts);
         s->snapshot_registered = false;
     }
+    // No active transaction, and none of its state.
     s->active = false;
     s->xid = 0;
     s->seq = 0;
@@ -137,6 +157,7 @@ void reset(sm_session_t* s)
     s->created.clear();
     s->dropped.clear();
     s->undo.clear();
+    // The savepoint ends with the transaction.
     s->has_savepoint = false;
 }
 
@@ -147,6 +168,7 @@ void reset(sm_session_t* s)
  */
 void drop_created(sm_session_t* s)
 {
+    // Drop each created CF, newest first.
     for (auto it = s->created.rbegin(); it != s->created.rend(); ++it) {
         db_drop_rel_cf(s->db, *it);
     }
@@ -160,19 +182,25 @@ void drop_created(sm_session_t* s)
  */
 void discard(sm_session_t* s)
 {
+    // Close the transaction's cursors.
     xct_end_scans(s);
     ssi_end(s); // an aborted node constrains nobody: freed
+    // Take a writer out of the active table: its versions die.
     if (s->xid != 0) {
         leave_active(s->db, s->xid);
     }
+    // Drop the relations it created.
     drop_created(s);
+    // Release its row locks.
     lock_release_all(s);
+    // Forget the transaction.
     reset(s);
 }
 
 /* sm_savepoint, minus the out-of-memory guard. */
 int savepoint(sm_session_t* s)
 {
+    // Require an active, non-prepared transaction.
     if (xct_check_active(s) != 0) {
         return -1;
     }
@@ -183,7 +211,9 @@ int savepoint(sm_session_t* s)
     s->sp_dropped = s->dropped.size();
     s->sp_scan_id = s->next_scan_id;
     {
+        // Hold lock_mu while reading the lock list.
         std::lock_guard<std::mutex> guard(s->db->lock_mu);
+        // Mark the lock list.
         s->sp_locks = s->locks.size();
     }
     return 0;
@@ -192,27 +222,37 @@ int savepoint(sm_session_t* s)
 /* sm_rollback, minus the out-of-memory guard. */
 int rollback(sm_session_t* s)
 {
+    // Require an active, non-prepared transaction.
     if (xct_check_active(s) != 0) {
         return -1;
     }
+    // Require a savepoint.
     if (!s->has_savepoint) {
         return set_error(SM_ERR_NOSAVEPOINT, "no savepoint to roll back to");
     }
+    // The shared database object.
     db_t* db = s->db;
 
     // Delete exactly the versions written since the mark, in one
     // batch: if it fails, nothing changed and the transaction
     // stays as it was.
     rocksdb::WriteBatch batch;
+    // Queue a delete for each version written after the mark.
     for (size_t i = s->undo.size(); i-- > s->sp_undo;) {
+        // The next undo entry, newest first.
         const sm_session_t::undo_t& u = s->undo[i];
+        // Find its relation's CF.
         rocksdb::ColumnFamilyHandle* cf = db_rel_cf(db, u.relid);
+        // Skip a CF already dropped.
         if (cf) {
+            // Delete the exact version: key, our xid, its seq.
             batch.Delete(cf, version_key(u.key, s->xid, u.seq));
         }
     }
+    // Apply the deletes, if any, in one write.
     if (batch.Count() > 0) {
         rocksdb::Status st = db->rdb->Write(rocksdb::WriteOptions(), &batch);
+        // Fail with the transaction unchanged.
         if (!st.ok()) {
             return set_status_error(st, "roll back to savepoint");
         }
@@ -221,26 +261,33 @@ int rollback(sm_session_t* s)
     // Close the cursors opened after the mark: their snapshot
     // and frozen seq_hwm would still admit the undone versions.
     std::vector<sm_scan_t*> later;
+    // Walk the open cursors.
     for (sm_scan_t* c : s->scans) {
+        // Opened after the mark.
         if (c->id > s->sp_scan_id) {
             later.push_back(c);
         }
     }
+    // Close each one.
     for (sm_scan_t* c : later) {
         sm_scan_end(c);
     }
 
     // Drop the relations created after the mark, newest first.
     for (size_t i = s->created.size(); i-- > s->sp_created;) {
+        // Drop the CF.
         db_drop_rel_cf(db, s->created[i]);
     }
+    // Forget those relations.
     s->created.resize(s->sp_created);
     s->dropped.resize(s->sp_dropped); // the undo restored their rows
 
     // Rewind seq with seq_hwm, so the own versions still in
     // effect are exactly seqs 1..seq_hwm (§6.5).
     s->undo.resize(s->sp_undo);
+    // The last write still in effect.
     s->seq_hwm = s->undo.empty() ? 0 : s->undo.back().seq;
+    // The next write reuses the undone seqs.
     s->seq = s->seq_hwm;
 
     // Give back the locks taken after the mark; nobody saw our
@@ -252,32 +299,43 @@ int rollback(sm_session_t* s)
 /* sm_begin, minus the out-of-memory guard. */
 int begin(sm_session_t* s, sm_xctlevel_t level)
 {
+    // Reject a NULL session.
     if (!s) {
         return set_error(SM_ERR_INVALID, "sm_begin: session is NULL");
     }
+    // Refuse a second transaction.
     if (s->active) {
         return set_error(SM_ERR_INTRANS, "a transaction is already active");
     }
+    // Refuse while this session's prepared transaction is in doubt.
     if (pending_prepared(s)) {
         return set_error(SM_ERR_INTRANS,
                          "the session's transaction is prepared as %s",
                          s->prepared_gid.c_str());
     }
+    // Reject an unknown isolation level.
     if (level != SM_XCT_READ_COMMITTED && level != SM_XCT_REPEATABLE_READ &&
         level != SM_XCT_SERIALIZABLE) {
         return set_error(SM_ERR_INVALID, "unknown isolation level %d",
                          (int)level);
     }
+    // Clear any state of an earlier transaction.
     reset(s);
+    // Record the level.
     s->level = level;
+    // Record begin order, for deadlock victim choice.
     s->begin_seq = ++s->db->begin_seq;
+    // A new transaction starts undoomed.
     s->doomed = 0;
     // Take the snapshot: the current visible_ts (§4.1). Read
     // committed also counts in the watermark at this one, for
     // its whole life (§8.3).
     s->snapshot_ts = db_take_snapshot(s->db);
+    // The snapshot now counts in the watermark.
     s->snapshot_registered = true;
+    // Give a SERIALIZABLE transaction its SSI node.
     ssi_begin(s);
+    // The transaction is active.
     s->active = true;
     return 0;
 }
@@ -285,30 +343,38 @@ int begin(sm_session_t* s, sm_xctlevel_t level)
 /* sm_commit, minus the out-of-memory guard. */
 int commit(sm_session_t* s)
 {
+    // A prepared transaction on this session: resolve it by gid.
     if (s && !s->active && pending_prepared(s)) {
         // The coordinator's commit decision, on the preparing session.
         return resolve_own(s, true);
     }
+    // Require an active, non-prepared transaction.
     if (xct_check_active(s) != 0) {
         return -1;
     }
     // Close cursors first, releasing their snapshots and
     // narrowing their SIREAD ranges before validation (§8.2).
     xct_end_scans(s);
+    // The shared database object.
     db_t* db = s->db;
+    // No xid: the transaction never wrote.
     if (s->xid == 0) {
         // Read-only: nothing to publish. Under SSI it ended just
         // after the current visible_ts (§7.3).
         if (ssi_precommit(s, db->visible_ts.load() + 1) != 0) {
+            // Not serializable: fail, and the engine aborts it.
             return xct_fail_retryable(s, SM_ERR_SERIALIZATION,
                                       "not serializable");
         }
+        // Keep the committed SSI node for its overlaps.
         ssi_end(s);
+        // Forget the transaction.
         reset(s);
         return 0;
     }
 
     uint64_t commit_ts;
+    // Refuse after fail-stop, else claim commit_ts from the sequencer.
     if (xct_check_writable(db) != 0 ||
         db_claim_commit_ts(db, &commit_ts) != 0) {
         // No record was written, so the transaction is dead.
@@ -318,9 +384,11 @@ int commit(sm_session_t* s)
     // Validate under SSI before the commit point; on failure give
     // the commit_ts back to the sequencer unused (§7.3, §8.2).
     if (ssi_precommit(s, commit_ts) != 0) {
+        // Hand the commit_ts back to the sequencer unused.
         db_commit_done(db, commit_ts);
         return xct_fail_retryable(s, SM_ERR_SERIALIZATION, "not serializable");
     }
+    // Write the record, publish, and release.
     return finish_commit(s, commit_ts);
 }
 
@@ -334,21 +402,28 @@ int commit(sm_session_t* s)
 int finish_commit(sm_session_t* s, uint64_t commit_ts)
 {
     db_t* db = s->db;
+    // Keep the xid past reset.
     uint64_t xid = s->xid;
+    // Build the COMMITTED record: state, snapshot, commit_ts.
     std::string val;
     val.push_back(static_cast<char>(txn_committed));
     put_be64(val, s->snapshot_ts);
     put_be64(val, commit_ts);
+    // No error unless the hook or the write says so.
     rocksdb::Status st;
+    // Let a test stall or fail the status write.
     if (db->test_before_commit) {
         st = db->test_before_commit(commit_ts);
     }
+    // Write the record unless the hook failed it.
     if (st.ok()) {
+        // Sync it, unless durability was traded away.
         rocksdb::WriteOptions wo;
         wo.sync = db->durability_sync != 0;
         // Write the status record: the commit point (§8.2).
         st = db->rdb->Put(wo, db->cf_txn, txn_key(xid), val);
     }
+    // The record's fate is unknown.
     if (!st.ok()) {
         // Fail stop: the record may have reached the WAL, so the
         // transaction stays in flight -- in the active table,
@@ -356,7 +431,9 @@ int finish_commit(sm_session_t* s, uint64_t commit_ts)
         // reopen resolves it from the log (§8.2). Its locks go:
         // the database refuses writes from now on anyway.
         db->failed = true;
+        // Release the locks: writes are refused from now on.
         lock_release_all(s);
+        // Forget the transaction.
         reset(s);
         return set_error(SM_ERR_IO, "write commit record (outcome unknown): %s",
                          st.ToString().c_str());
@@ -364,13 +441,16 @@ int finish_commit(sm_session_t* s, uint64_t commit_ts)
     // Resolve before publishing: a reader that misses the xid in
     // the active table finds it in the cache or CF:txn (§3.4).
     enter_cache(db, xid, commit_ts);
+    // Publish: advance visible_ts past this commit.
     db_commit_done(db, commit_ts);
     // Release the row locks only once the commit is visible, and
     // queue dropped relations for removal once no snapshot can
     // see them (§8.3).
     lock_release_all(s);
+    // Queue its dropped relations for GC.
     gc_queue_drops(db, commit_ts, s->dropped);
     ssi_end(s); // the committed node stays while others overlap it
+    // Forget the transaction.
     reset(s);
     return 0;
 }
@@ -382,15 +462,19 @@ int finish_commit(sm_session_t* s, uint64_t commit_ts)
  */
 int abort_xct(sm_session_t* s)
 {
+    // Reject a NULL session.
     if (!s) {
         return set_error(SM_ERR_INVALID, "sm_abort: session is NULL");
     }
+    // No active transaction of its own.
     if (!s->active) {
+        // Its prepared transaction: abort it by gid.
         if (pending_prepared(s)) {
             return resolve_own(s, false);
         }
         return set_error(SM_ERR_NOTRANS, "no active transaction");
     }
+    // Abort: discard every trace.
     discard(s);
     return 0;
 }
@@ -403,18 +487,26 @@ int abort_xct(sm_session_t* s)
  */
 std::string encode_prepared(const sm_session_t* g)
 {
+    // Build the PREPARED record.
     std::string v;
+    // The state byte.
     v.push_back(static_cast<char>(txn_prepared));
+    // The snapshot, for the GC watermark after a restart.
     put_be64(v, g->snapshot_ts);
+    // No commit_ts yet.
     put_be64(v, 0);
+    // When it was prepared.
     put_be64(v, static_cast<uint64_t>(g->prepared_at));
+    // The gid, length-prefixed.
     put_be32(v, static_cast<uint32_t>(g->prepared_gid.size()));
     v.append(g->prepared_gid);
+    // The write set: every lock key, length-prefixed.
     put_be32(v, static_cast<uint32_t>(g->locks.size()));
     for (const std::string& k : g->locks) {
         put_be32(v, static_cast<uint32_t>(k.size()));
         v.append(k);
     }
+    // The relids created, then those dropped, each counted.
     for (const std::vector<uint64_t>* rels : {&g->created, &g->dropped}) {
         put_be32(v, static_cast<uint32_t>(rels->size()));
         for (uint64_t relid : *rels) {
@@ -432,7 +524,9 @@ std::string encode_prepared(const sm_session_t* g)
  */
 sm_session_t* detach_prepared(sm_session_t* s, const std::string& gid)
 {
+    // Allocate the database-owned transaction object.
     sm_session_t* g = new sm_session_t;
+    // Copy the transaction's identity and state.
     g->db = s->db;
     g->active = true;
     g->prepared = true;
@@ -444,20 +538,28 @@ sm_session_t* detach_prepared(sm_session_t* s, const std::string& gid)
     g->created = s->created;
     g->dropped = s->dropped;
     g->begin_seq = s->begin_seq;
+    // Name it by gid.
     g->prepared_gid = gid;
+    // Stamp the wall-clock time of the prepare.
     g->prepared_at = static_cast<long long>(time(nullptr));
+    // Move the snapshot registration over.
     g->snapshot_registered = s->snapshot_registered;
     s->snapshot_registered = false;
+    // Move the SSI node over.
     g->ssi = s->ssi;
     s->ssi = nullptr;
     {
+        // Hold lock_mu while re-pointing the lock table.
         std::lock_guard<std::mutex> guard(s->db->lock_mu);
+        // Hand every held lock to the new owner.
         for (const std::string& k : s->locks) {
             s->db->lock_owners[k] = g;
         }
+        // Move the lock list.
         g->locks.swap(s->locks);
         s->db->lock_cv.notify_all(); // waiters re-read their owner
     }
+    // Leave the session with no transaction.
     reset(s);
     return g;
 }
@@ -465,24 +567,31 @@ sm_session_t* detach_prepared(sm_session_t* s, const std::string& gid)
 /* sm_prepare, minus the out-of-memory guard. */
 int prepare(sm_session_t* s, const char* gid)
 {
+    // Require an active, non-prepared transaction.
     if (xct_check_active(s) != 0) {
         return -1;
     }
+    // Validate the gid.
     if (check_name(gid, SM_MAX_GID, "gid") != 0) {
         return -1;
     }
     db_t* db = s->db;
+    // Refuse after fail-stop.
     if (xct_check_writable(db) != 0) {
         return -1;
     }
     // Reserve the gid: unique among unresolved prepared ones.
     {
+        // Hold prepared_mu while reserving.
         std::lock_guard<std::mutex> guard(db->prepared_mu);
+        // Refuse a gid already in use.
         if (db->prepared.count(gid)) {
             return set_error(SM_ERR_EXISTS, "gid %s is already in use", gid);
         }
+        // Reserve it with a null entry.
         db->prepared[gid] = nullptr;
     }
+    // Undo the reservation on failure.
     auto unreserve = [&] {
         std::lock_guard<std::mutex> guard(db->prepared_mu);
         db->prepared.erase(gid);
@@ -491,30 +600,41 @@ int prepare(sm_session_t* s, const char* gid)
     // Close cursors, then validate: the last moment the engine
     // may still say no (§8.4). A passed node counts as committed.
     xct_end_scans(s);
+    // Validate; a passed node counts as committed.
     if (ssi_precommit(s, UINT64_MAX) != 0) {
+        // Release the gid: not prepared.
         unreserve();
         return xct_fail_retryable(s, SM_ERR_SERIALIZATION, "not serializable");
     }
     // A read-only transaction needs an xid to key its record.
     if (s->xid == 0 && xct_alloc_xid(s) != 0) {
+        // Release the gid: not prepared.
         unreserve();
         return -1;
     }
 
+    // Move the transaction out of the session.
     sm_session_t* g = detach_prepared(s, gid);
+    // Encode its PREPARED record.
     std::string val = encode_prepared(g);
+    // No error unless the hook or the write says so.
     rocksdb::Status st;
+    // Let a test fail the prepare write.
     if (db->test_before_prepare) {
         st = db->test_before_prepare();
     }
+    // Write the record unless the hook failed it.
     if (st.ok()) {
         rocksdb::WriteOptions wo;
         wo.sync = true; // a prepare is always synced (§8.4)
         // Write the PREPARED record: the vote of yes.
         st = db->rdb->Put(wo, db->cf_txn, txn_key(g->xid), val);
     }
+    // Hold prepared_mu while registering.
     std::lock_guard<std::mutex> guard(db->prepared_mu);
+    // Register the transaction under its gid.
     db->prepared[gid] = g;
+    // The record's fate is unknown.
     if (!st.ok()) {
         // Fail stop: the record may be in the WAL, so the
         // transaction stays in flight, unlisted and unresolvable,
@@ -525,6 +645,7 @@ int prepare(sm_session_t* s, const char* gid)
                          "write prepare record (outcome unknown): %s",
                          st.ToString().c_str());
     }
+    // The session remembers only the gid.
     s->prepared_gid = gid;
     return 0;
 }
@@ -533,12 +654,14 @@ int prepare(sm_session_t* s, const char* gid)
 int commit_prepared_txn(sm_session_t* g)
 {
     uint64_t commit_ts;
+    // Refuse after fail-stop, else claim commit_ts.
     if (xct_check_writable(g->db) != 0 ||
         db_claim_commit_ts(g->db, &commit_ts) != 0) {
         return -1;
     }
     // Validated at prepare: the node only learns its end.
     ssi_prepared_committed(g, commit_ts);
+    // Write COMMITTED over PREPARED, publish, and release.
     return finish_commit(g, commit_ts);
 }
 
@@ -550,23 +673,29 @@ int commit_prepared_txn(sm_session_t* g)
 int abort_prepared_txn(sm_session_t* g)
 {
     db_t* db = g->db;
+    // Refuse after fail-stop.
     if (xct_check_writable(db) != 0) {
         return -1;
     }
+    // Build the ABORTED record.
     std::string val;
     val.push_back(static_cast<char>(txn_aborted));
     put_be64(val, g->snapshot_ts);
     put_be64(val, 0);
+    // Sync it, so the PREPARED record cannot come back.
     rocksdb::WriteOptions wo;
     wo.sync = true;
     // Write the ABORTED record: the coordinator's decision.
     rocksdb::Status st = db->rdb->Put(wo, db->cf_txn, txn_key(g->xid), val);
+    // The record's fate is unknown: fail stop.
     if (!st.ok()) {
         db->failed = true;
         return set_error(SM_ERR_IO, "write abort record: %s",
                          st.ToString().c_str());
     }
+    // Free its SSI node and restored entry.
     ssi_prepared_aborted(g);
+    // Discard it as an ordinary abort would.
     discard(g);
     return 0;
 }
@@ -581,22 +710,30 @@ int resolve(db_t* db, const std::string& gid, bool commit_it)
 {
     sm_session_t* g = nullptr;
     {
+        // Hold prepared_mu while taking it from the registry.
         std::lock_guard<std::mutex> guard(db->prepared_mu);
+        // Find the gid.
         auto it = db->prepared.find(gid);
+        // Unknown, still being prepared, or in limbo: nothing to do.
         if (it == db->prepared.end() || !it->second || it->second->limbo) {
             return set_error(SM_ERR_NOTFOUND,
                              "no unresolved prepared transaction %s",
                              gid.c_str());
         }
+        // Take the transaction.
         g = it->second;
+        // Unregister it, so a concurrent resolver finds nothing.
         db->prepared.erase(it);
     }
+    // Commit or abort it.
     int rc = commit_it ? commit_prepared_txn(g) : abort_prepared_txn(g);
+    // Still unresolved after a failure: put it back.
     if (rc != 0 && g->active) {
         std::lock_guard<std::mutex> guard(db->prepared_mu);
         db->prepared[gid] = g;
         return rc;
     }
+    // Resolved: free its object.
     delete g;
     return rc;
 }
@@ -604,36 +741,48 @@ int resolve(db_t* db, const std::string& gid, bool commit_it)
 /* sm_list_prepared, minus the out-of-memory guard. */
 int list_prepared(sm_session_t* s, sm_prepared_t** out, size_t* n)
 {
+    // Require every argument.
     if (!s || !out || !n) {
         return set_error(SM_ERR_INVALID, "sm_list_prepared: NULL argument");
     }
+    // Collect the listable transactions.
     std::vector<std::pair<std::string, long long>> rows;
     {
+        // Hold prepared_mu while reading the registry.
         std::lock_guard<std::mutex> guard(s->db->prepared_mu);
         for (auto& kv : s->db->prepared) {
+            // Skip reservations and transactions in limbo.
             if (kv.second && !kv.second->limbo) {
                 rows.emplace_back(kv.first, kv.second->prepared_at);
             }
         }
     }
+    // Report none until the list is built.
     *out = nullptr;
     *n = 0;
+    // Nothing to list: no allocation.
     if (rows.empty()) {
         return 0;
     }
+    // Allocate the array.
     sm_prepared_t* list =
         static_cast<sm_prepared_t*>(calloc(rows.size(), sizeof(*list)));
+    // Fail if it could not be allocated.
     if (!list) {
         return set_error(SM_ERR_NOMEM, "sm_list_prepared: out of memory");
     }
+    // Fill in each entry.
     for (size_t i = 0; i < rows.size(); i++) {
+        // Copy the gid; the list owns it.
         list[i].gid = strdup(rows[i].first.c_str());
         list[i].prepared_at = rows[i].second;
+        // Free what was built if a copy failed.
         if (!list[i].gid) {
             sm_free_prepared(list, i);
             return set_error(SM_ERR_NOMEM, "sm_list_prepared: out of memory");
         }
     }
+    // Hand the list to the caller.
     *out = list;
     *n = rows.size();
     return 0;
@@ -647,10 +796,13 @@ namespace wisr
 /* NOTRANS unless a transaction is active. */
 int xct_check_active(sm_session_t* s)
 {
+    // Reject a NULL session.
     if (!s) {
         return set_error(SM_ERR_INVALID, "session is NULL");
     }
+    // No active transaction of its own.
     if (!s->active) {
+        // A prepared one in doubt: data calls are refused.
         if (pending_prepared(s)) {
             return set_error(SM_ERR_PREPARED,
                              "the transaction is prepared as %s",
@@ -669,6 +821,7 @@ int xct_check_active(sm_session_t* s)
 /* Abort on the engine's side, then report the retryable error. */
 int xct_fail_retryable(sm_session_t* s, sm_errno_t e, const char* msg)
 {
+    // Abort the transaction on the engine's side.
     discard(s);
     return set_error(e, "%s; the transaction was aborted", msg);
 }
@@ -677,8 +830,10 @@ int xct_fail_retryable(sm_session_t* s, sm_errno_t e, const char* msg)
 view_t xct_view(sm_session_t* s)
 {
     view_t v;
+    // RC takes a fresh snapshot per statement; RR and SER keep theirs.
     v.snapshot_ts = s->level == SM_XCT_READ_COMMITTED ? s->db->visible_ts.load()
                                                       : s->snapshot_ts;
+    // Its own writes, up to the last still in effect.
     v.xid = s->xid;
     v.seq_hwm = s->seq_hwm;
     return v;
@@ -687,6 +842,7 @@ view_t xct_view(sm_session_t* s)
 /* Fail with SM_ERR_IO once the database has failed stop. */
 int xct_check_writable(db_t* db)
 {
+    // Refuse writes once a status write has failed.
     if (db->failed) {
         return set_error(SM_ERR_IO,
                          "database %s failed a status write; reopen it",
@@ -699,13 +855,17 @@ int xct_check_writable(db_t* db)
 int xct_alloc_xid(sm_session_t* s)
 {
     uint64_t xid;
+    // Allocate the xid from the timestamp counter.
     if (db_alloc_ts(s->db, &xid) != 0) {
         return -1;
     }
     {
+        // Hold txn_mu while entering the active table.
         std::lock_guard<std::mutex> guard(s->db->txn_mu);
+        // In flight from now on, before any version exists.
         s->db->active.insert(xid);
     }
+    // Record the xid.
     s->xid = xid;
     // Map the xid to the SSI node before any version carries it,
     // so a reader that steps past one finds the writer (§7.2).
@@ -722,10 +882,13 @@ int xct_alloc_xid(sm_session_t* s)
 xct_state_t xct_status(db_t* db, uint64_t xid, uint64_t* commit_ts)
 {
     {
+        // Hold txn_mu while checking the active table and cache.
         std::lock_guard<std::mutex> guard(db->txn_mu);
+        // Still in flight, or prepared.
         if (db->active.count(xid)) {
             return XCT_IN_FLIGHT;
         }
+        // Committed recently: the cache has its commit_ts.
         auto it = db->cache.find(xid);
         if (it != db->cache.end()) {
             *commit_ts = it->second;
@@ -733,20 +896,25 @@ xct_state_t xct_status(db_t* db, uint64_t xid, uint64_t* commit_ts)
         }
     }
     std::string val;
+    // Look up the status record.
     rocksdb::Status s =
         db->rdb->Get(rocksdb::ReadOptions(), db->cf_txn, txn_key(xid), &val);
+    // No record: it never committed.
     if (s.IsNotFound()) {
         return XCT_DEAD;
     }
+    // Fail on a read error.
     if (!s.ok()) {
         set_status_error(s, "read CF:txn");
         return XCT_ERROR;
     }
+    // Reject a record too short to hold its state.
     if (val.size() < txn_record_size) {
         set_error(SM_ERR_CORRUPT, "short status record for xid %llu",
                   (unsigned long long)xid);
         return XCT_ERROR;
     }
+    // Decide by the record's state.
     switch (static_cast<uint8_t>(val[0])) {
     case txn_committed:
         *commit_ts = get_be64(val.data() + 9);
@@ -761,24 +929,33 @@ xct_state_t xct_status(db_t* db, uint64_t xid, uint64_t* commit_ts)
 /* Scan CF:txn and delete, in one batch, the records the sweep covers. */
 int64_t xct_drop_committed_records(db_t* db, uint64_t w0)
 {
+    // Collect the deletes into one batch.
     rocksdb::WriteBatch batch;
+    // Scan every status record.
     std::unique_ptr<rocksdb::Iterator> it(
         db->rdb->NewIterator(rocksdb::ReadOptions(), db->cf_txn));
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        // Each record's value.
         rocksdb::Slice v = it->value();
+        // Its state byte.
         uint8_t state = v.empty() ? 0 : static_cast<uint8_t>(v[0]);
+        // ABORTED records always go; COMMITTED ones at or below W0.
         bool swept = state == txn_aborted ||
                      (state == txn_committed && v.size() >= txn_record_size &&
                       get_be64(v.data() + 9) <= w0);
+        // Delete a swept record.
         if (swept) {
             batch.Delete(db->cf_txn, it->key());
         }
     }
+    // Fail if the scan failed.
     if (!it->status().ok()) {
         set_status_error(it->status(), "scan CF:txn");
         return -1;
     }
+    // Apply the deletes in one write.
     rocksdb::Status s = db->rdb->Write(rocksdb::WriteOptions(), &batch);
+    // Fail if they did not apply.
     if (!s.ok()) {
         set_status_error(s, "delete swept status records");
         return -1;
@@ -793,20 +970,28 @@ int64_t xct_drop_committed_records(db_t* db, uint64_t w0)
 bool xct_decode_prepared(db_t* db, uint64_t xid, rocksdb::Slice val,
                          sm_session_t** out)
 {
+    // Reject anything but a PREPARED record long enough to decode.
     if (val.size() < txn_record_size + 8 + 4 ||
         static_cast<uint8_t>(val[0]) != txn_prepared) {
         return false;
     }
+    // Allocate the database-owned transaction object.
     std::unique_ptr<sm_session_t> g(new sm_session_t);
+    // An active, prepared transaction of this database.
     g->db = db;
     g->active = true;
     g->prepared = true;
+    // Its xid is the record's key.
     g->xid = xid;
+    // Its snapshot, for the GC watermark.
     g->snapshot_ts = get_be64(val.data() + 1);
+    // Walk the record's variable part.
     const char* p = val.data() + txn_record_size;
     const char* end = val.data() + val.size();
+    // When it was prepared.
     g->prepared_at = static_cast<long long>(get_be64(p));
     p += 8;
+    // Read a 4-byte count, checking bounds.
     auto take32 = [&](uint32_t* x) {
         if (end - p < 4) {
             return false;
@@ -816,30 +1001,40 @@ bool xct_decode_prepared(db_t* db, uint64_t xid, rocksdb::Slice val,
         return true;
     };
     uint32_t len, count;
+    // Read the gid's length and check it fits.
     if (!take32(&len) || (size_t)(end - p) < len) {
         return false;
     }
+    // Take the gid.
     g->prepared_gid.assign(p, len);
     p += len;
+    // Read the write set's size.
     if (!take32(&count)) {
         return false;
     }
+    // Read each lock key.
     for (uint32_t i = 0; i < count; i++) {
+        // Check each key's length fits.
         if (!take32(&len) || (size_t)(end - p) < len) {
             return false;
         }
+        // Take the lock key.
         g->locks.emplace_back(p, len);
         p += len;
     }
+    // Read the relids created, then dropped.
     for (std::vector<uint64_t>* rels : {&g->created, &g->dropped}) {
+        // Check the count fits.
         if (!take32(&count) || (size_t)(end - p) < (size_t)count * 8) {
             return false;
         }
+        // Take each relid.
         for (uint32_t i = 0; i < count; i++) {
             rels->push_back(get_be64(p));
             p += 8;
         }
     }
+    // Hand the object to the caller.
     *out = g.release();
     return true;
 }
@@ -847,6 +1042,7 @@ bool xct_decode_prepared(db_t* db, uint64_t xid, rocksdb::Slice val,
 /* xct_status, folded to committed or not. */
 int xct_resolve(db_t* db, uint64_t xid, uint64_t* commit_ts)
 {
+    // Fold the three-way status into committed or not.
     switch (xct_status(db, xid, commit_ts)) {
     case XCT_COMMITTED:
         return 1;
@@ -860,6 +1056,7 @@ int xct_resolve(db_t* db, uint64_t xid, uint64_t* commit_ts)
 /* Close every open cursor of the session. */
 void xct_end_scans(sm_session_t* s)
 {
+    // Close cursors until none is left.
     while (!s->scans.empty()) {
         sm_scan_end(*s->scans.begin());
     }
@@ -870,6 +1067,7 @@ void xct_end_scans(sm_session_t* s)
 /* Begin a transaction at level. */
 int sm_begin(sm_session_t* session, sm_xctlevel_t level)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
         return begin(session, level);
     } catch (const std::bad_alloc&) {
@@ -880,6 +1078,7 @@ int sm_begin(sm_session_t* session, sm_xctlevel_t level)
 /* Commit the active transaction. */
 int sm_commit(sm_session_t* session)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
         return commit(session);
     } catch (const std::bad_alloc&) {
@@ -890,6 +1089,7 @@ int sm_commit(sm_session_t* session)
 /* Set the session's one savepoint. */
 int sm_savepoint(sm_session_t* session)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
         return savepoint(session);
     } catch (const std::bad_alloc&) {
@@ -900,6 +1100,7 @@ int sm_savepoint(sm_session_t* session)
 /* Undo every write made since the savepoint. */
 int sm_rollback(sm_session_t* session)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
         return rollback(session);
     } catch (const std::bad_alloc&) {
@@ -910,6 +1111,7 @@ int sm_rollback(sm_session_t* session)
 /* Prepare the active transaction under gid. */
 int sm_prepare(sm_session_t* session, const char* gid)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
         return prepare(session, gid);
     } catch (const std::bad_alloc&) {
@@ -920,6 +1122,7 @@ int sm_prepare(sm_session_t* session, const char* gid)
 /* List the unresolved prepared transactions. */
 int sm_list_prepared(sm_session_t* session, sm_prepared_t** out, size_t* n)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
         return list_prepared(session, out, n);
     } catch (const std::bad_alloc&) {
@@ -930,22 +1133,28 @@ int sm_list_prepared(sm_session_t* session, sm_prepared_t** out, size_t* n)
 /* Release a list from sm_list_prepared: each gid, then the array. */
 void sm_free_prepared(sm_prepared_t* list, size_t n)
 {
+    // Releasing NULL is a no-op.
     if (!list) {
         return;
     }
+    // Free each gid.
     for (size_t i = 0; i < n; i++) {
         free(const_cast<char*>(list[i].gid));
     }
+    // Free the array.
     free(list);
 }
 
 /* Commit a prepared transaction by gid, from any session. */
 int sm_commit_prepared(sm_session_t* session, const char* gid)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
+        // Require a session and a valid gid.
         if (!session || check_name(gid, SM_MAX_GID, "gid") != 0) {
             return session ? -1 : set_error(SM_ERR_INVALID, "session is NULL");
         }
+        // Commit it by gid.
         return resolve(session->db, gid, true);
     } catch (const std::bad_alloc&) {
         return set_error(SM_ERR_NOMEM, "sm_commit_prepared: out of memory");
@@ -955,10 +1164,13 @@ int sm_commit_prepared(sm_session_t* session, const char* gid)
 /* Abort a prepared transaction by gid, from any session. */
 int sm_abort_prepared(sm_session_t* session, const char* gid)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
+        // Require a session and a valid gid.
         if (!session || check_name(gid, SM_MAX_GID, "gid") != 0) {
             return session ? -1 : set_error(SM_ERR_INVALID, "session is NULL");
         }
+        // Abort it by gid.
         return resolve(session->db, gid, false);
     } catch (const std::bad_alloc&) {
         return set_error(SM_ERR_NOMEM, "sm_abort_prepared: out of memory");
@@ -968,6 +1180,7 @@ int sm_abort_prepared(sm_session_t* session, const char* gid)
 /* Abort the active transaction. */
 int sm_abort(sm_session_t* session)
 {
+    // Report an allocation failure as SM_ERR_NOMEM.
     try {
         return abort_xct(session);
     } catch (const std::bad_alloc&) {
