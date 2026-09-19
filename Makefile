@@ -1,6 +1,6 @@
 # wisr -- build the storage manager library and its tests.
 #
-#   make -j4          libwisr.a and the test binary
+#   make -j4          libwisr.a, the test binary, and the sample
 #   make test         build, then run every test
 #   make format       clang-format src/ and test/ in place
 #   make clean        remove build/
@@ -21,19 +21,27 @@ TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 
 LIB      := $(BUILD)/libwisr.a
 TEST_BIN := $(BUILD)/test_wisr
+SAMPLE   := $(BUILD)/sample
 
-FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h)
+FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h) sample.cc
 FORMAT_FILES := $(filter-out test/doctest.h,$(FORMAT_FILES))
 
 .PHONY: all test format clean
 
-all: $(LIB) $(TEST_BIN)
+all: $(LIB) $(TEST_BIN) $(SAMPLE)
 
 $(LIB): $(LIB_OBJS)
 	$(AR) rcs $@ $^
 
 $(TEST_BIN): $(TEST_OBJS) $(LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(LDLIBS)
+
+$(SAMPLE): $(BUILD)/sample.o $(LIB)
+	$(CXX) $(CXXFLAGS) -o $@ $(BUILD)/sample.o $(LIB) $(LDLIBS)
+
+$(BUILD)/sample.o: sample.cc
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(BUILD)/src/%.o: src/%.cc
 	@mkdir -p $(dir $@)
@@ -52,4 +60,4 @@ format:
 clean:
 	rm -rf $(BUILD)
 
--include $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d)
+-include $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(BUILD)/sample.d
