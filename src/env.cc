@@ -15,6 +15,7 @@
 
 #include "codec.h"
 #include "error.h"
+#include "log.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -136,6 +137,8 @@ int sweep_base(sm_env_t *env) {
     if (env_destroy_db_dir(path) != 0) {
       return -1;
     }
+    log_msg(SM_LOG_INFO, "destroyed unnamed database directory %s",
+            path.c_str());
   }
   return 0;
 }

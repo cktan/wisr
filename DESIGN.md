@@ -1756,6 +1756,20 @@ so total memtable memory is a single budget rather than
 `write_buffer_size × relations`. `max_total_wal_size` bounds how
 long a rarely-written CF can hold old WAL files alive.
 
+**Logging.** wisr writes no log of its own; a host installs a
+process-wide hook with `sm_set_log` (`API.md`). The engine
+reports through it only what no caller can learn from a
+return value: failures on the GC thread, entering the failed
+state (§8.2), versions the compaction filter kept out of
+doubt, a CF:txn sweep abandoned or completed (§8.3), a
+snapshot pinning `gc_watermark` for over a minute, and what
+recovery and `sm_attach` restore or clean up (§3.5, §9.1).
+The stuck-snapshot check runs on each GC pass: each
+registered snapshot records when it was taken, and one older
+than the threshold is reported once. That is the operator's
+signal for the classic MVCC trap, an idle transaction or a
+forgotten cursor holding back reclamation.
+
 ### 12.3 Source layout
 
 ```
@@ -1772,6 +1786,7 @@ src/ssi.cc              SIREAD locks, rw-edges, validation
 src/catalog.cc          relation name/id mapping, DDL, CF create/drop
 src/gc.cc               compaction filter, watermarks, drop-relation purge
 src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
+src/log.cc              the sm_set_log hook the engine reports through
 ```
 
 ### 12.4 Build order

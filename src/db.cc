@@ -9,6 +9,7 @@
 #include "codec.h"
 #include "env.h"
 #include "error.h"
+#include "log.h"
 #include "session.h"
 #include "strlist.h"
 #include "version.h"
@@ -599,8 +600,11 @@ int db_drop_rel_cf(db_t *db, uint64_t relid) {
   db->rdb->DestroyColumnFamilyHandle(it->second);
   // Unregister it.
   db->rels.erase(it);
-  // Report a failed drop.
+  // Report a failed drop; most callers cannot act on it, so log it.
   if (!s.ok()) {
+    log_msg(SM_LOG_ERROR,
+            "database %s: dropping relation %llu's column family failed: %s",
+            db->name.c_str(), (unsigned long long)relid, s.ToString().c_str());
     return set_status_error(s, "drop column family");
   }
   return 0;

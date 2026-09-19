@@ -130,6 +130,41 @@ const char* sm_errmsg(void);
 int sm_retryable(void);
 
 /*
+ * Log levels for the hook below.
+ */
+typedef enum {
+    SM_LOG_ERROR = 0,   /* something failed and nobody was told */
+    SM_LOG_WARN  = 1,   /* something needs an operator's attention */
+    SM_LOG_INFO  = 2    /* a notable event, such as recovery */
+} sm_loglevel_t;
+
+/*
+ * A log hook: receives level and a NUL-terminated message
+ * valid only for the duration of the call, plus the arg given
+ * to sm_set_log().
+ */
+typedef void (*sm_log_fn)(void* arg, sm_loglevel_t level, const char* msg);
+
+/*
+ * Install fn as the process-wide log hook, replacing any
+ * previous one; NULL removes it. With no hook, wisr formats
+ * and reports nothing.
+ *
+ * The library never writes a log of its own. The hook hears
+ * only what no caller would otherwise learn: failures in
+ * wisr's background GC, a database entering its failed state,
+ * versions the compaction filter could not judge, a snapshot
+ * holding back garbage collection for over a minute, and what
+ * sm_attach() and recovery clean up or restore. Errors a call
+ * returns are not logged; its caller already has them.
+ *
+ * fn may be called from any thread, wisr's own included, one
+ * call at a time. It must not call back into wisr: calls are
+ * made with a library lock held.
+ */
+void sm_set_log(sm_log_fn fn, void* arg);
+
+/*
  * An environment: one process's handle on a home directory,
  * through which every database and session call goes.
  */

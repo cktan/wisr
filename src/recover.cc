@@ -11,6 +11,7 @@
 
 #include "codec.h"
 #include "error.h"
+#include "log.h"
 #include "session.h"
 #include "version.h"
 
@@ -64,6 +65,10 @@ int restore_prepared(db_t *db) {
     ssi_restore(db, xid);
     // Register it under its gid for listing and resolution.
     db->prepared[g->prepared_gid] = g;
+    // Tell the operator: it holds locks until a coordinator acts.
+    log_msg(SM_LOG_INFO,
+            "database %s: restored prepared transaction %s in doubt",
+            db->name.c_str(), g->prepared_gid.c_str());
   }
   // Fail if the scan of CF:txn failed.
   if (!it->status().ok()) {
@@ -156,6 +161,9 @@ int sweep_orphan_cfs(db_t *db) {
     if (db_drop_rel_cf(db, relid) != 0) {
       return -1;
     }
+    log_msg(SM_LOG_INFO,
+            "database %s: dropped orphaned column family of relation %llu",
+            db->name.c_str(), (unsigned long long)relid);
   }
   return 0;
 }

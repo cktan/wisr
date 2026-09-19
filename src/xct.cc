@@ -21,6 +21,7 @@
 
 #include "codec.h"
 #include "error.h"
+#include "log.h"
 #include "session.h"
 #include "version.h"
 
@@ -414,6 +415,10 @@ int finish_commit(sm_session_t *s, uint64_t commit_ts) {
     // reopen resolves it from the log (§8.2). Its locks go:
     // the database refuses writes from now on anyway.
     db->failed = true;
+    log_msg(SM_LOG_ERROR,
+            "database %s: commit record write failed, database stopped "
+            "until reopened: %s",
+            db->name.c_str(), st.ToString().c_str());
     // Release the locks: writes are refused from now on.
     lock_release_all(s);
     // Forget the transaction.
@@ -620,6 +625,10 @@ int prepare(sm_session_t *s, const char *gid) {
     // until a reopen decides (§8.4).
     db->failed = true;
     g->limbo = true;
+    log_msg(SM_LOG_ERROR,
+            "database %s: prepare record write for %s failed, database "
+            "stopped until reopened: %s",
+            db->name.c_str(), gid, st.ToString().c_str());
     return set_error(SM_ERR_IO, "write prepare record (outcome unknown): %s",
                      st.ToString().c_str());
   }
@@ -666,6 +675,10 @@ int abort_prepared_txn(sm_session_t *g) {
   // The record's fate is unknown: fail stop.
   if (!st.ok()) {
     db->failed = true;
+    log_msg(SM_LOG_ERROR,
+            "database %s: abort record write for %s failed, database "
+            "stopped until reopened: %s",
+            db->name.c_str(), g->prepared_gid.c_str(), st.ToString().c_str());
     return set_error(SM_ERR_IO, "write abort record: %s",
                      st.ToString().c_str());
   }

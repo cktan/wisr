@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <list>
@@ -154,6 +155,15 @@ struct db_t {
    */
   std::mutex snap_mu;
   std::multiset<uint64_t> snapshots;
+
+  /*
+   * When each registered snapshot was taken, and those already
+   * warned about, for the warning about a snapshot holding back
+   * GC for over stuck_warn_secs. Guarded by snap_mu.
+   */
+  std::multimap<uint64_t, std::chrono::steady_clock::time_point> snap_since;
+  std::set<uint64_t> snap_warned;
+  int stuck_warn_secs = 60;
 
   /*
    * Garbage collection (§8.3). The compaction filter runs only

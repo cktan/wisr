@@ -17,6 +17,7 @@
 
 #include "codec.h"
 #include "db.h"
+#include "log.h"
 #include "session.h"
 #include "version.h"
 
@@ -37,6 +38,18 @@ public:
   gc_filter_t(db_t *db, uint64_t relid, uint64_t watermark)
       : m_db(db), m_relid(relid), m_watermark(watermark) {}
 
+  /* Report, once per compaction, the versions it could not judge. */
+  ~gc_filter_t() override {
+    // Warn if any version was kept unstamped out of doubt.
+    if (m_doubts > 0) {
+      log_msg(SM_LOG_WARN,
+              "database %s: compaction kept %llu version(s) of relation "
+              "%llu unstamped: undecodable value or unknown writer status",
+              m_db->name.c_str(), (unsigned long long)m_doubts,
+              (unsigned long long)m_relid);
+    }
+  }
+
   /* The filter's name, for RocksDB's logs. */
   const char *Name() const override { return "wisr.gc.v1"; }
 
@@ -55,6 +68,7 @@ public:
     if (!version_decode_value(value, &v)) {
       // Count the doubt: a sweep may not trust this pass.
       m_db->gc_filter_errors++;
+      m_doubts++;
       return false;
     }
     // Take the stamp, if the version has one.
@@ -70,6 +84,7 @@ public:
       case XCT_ERROR:
         // Count the doubt: a sweep may not trust this pass.
         m_db->gc_filter_errors++; // unstamped out of doubt
+        m_doubts++;
         return false;
       case XCT_COMMITTED:
         break;
@@ -121,6 +136,7 @@ private:
   uint64_t m_watermark;
   mutable std::string m_newest_key; /* newest version <= watermark seen */
   mutable bool m_have_newest = false;
+  mutable uint64_t m_doubts = 0; /* versions kept out of doubt */
 };
 
 /* A filter that keeps everything, for compactions before GC is ready. */
@@ -181,9 +197,12 @@ void purge_one(db_t *db, const db_t::purge_t &p,
   // Remember the CF, to flush its range tombstones.
   if (s.ok()) {
     touched->insert(cf);
+    return;
   }
   // On failure the tombstone stays; the next compaction that
-  // meets it queues it again.
+  // meets it queues it again. Nobody waits on this, so log it.
+  log_msg(SM_LOG_ERROR, "database %s: purge in relation %llu failed: %s",
+          db->name.c_str(), (unsigned long long)p.relid, s.ToString().c_str());
 }
 
 /*
@@ -229,11 +248,18 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
       rocksdb::Status s = db->rdb->CompactRange(opt, cf, nullptr, nullptr);
       // A failed compaction leaves versions unstamped.
       if (!s.ok()) {
+        log_msg(SM_LOG_ERROR,
+                "database %s: CF:txn sweep abandoned: compaction failed: %s",
+                db->name.c_str(), s.ToString().c_str());
         return -1;
       }
     }
     // Any filter doubt during the pass forbids deleting records.
     if (db->gc_filter_errors.load() != errors) {
+      log_msg(SM_LOG_WARN,
+              "database %s: CF:txn sweep abandoned: some versions stayed "
+              "unstamped, so their status records are kept",
+              db->name.c_str());
       return -1; // some version stayed unstamped: keep records
     }
     // The pass succeeded: remember W0.
@@ -250,7 +276,48 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
   // The old epoch drained: the sweep completes now.
   db->sweep_pending = false;
   // Delete the records every version has outgrown.
-  return xct_drop_committed_records(db, db->sweep_w0);
+  int64_t n = xct_drop_committed_records(db, db->sweep_w0);
+  // Report the outcome: nobody waits on a background sweep.
+  if (n < 0) {
+    log_msg(SM_LOG_ERROR, "database %s: CF:txn sweep failed: %s",
+            db->name.c_str(), sm_errmsg());
+  } else {
+    log_msg(SM_LOG_INFO, "database %s: CF:txn sweep deleted %lld record(s)",
+            db->name.c_str(), (long long)n);
+  }
+  return n;
+}
+
+/*
+ * Warn, once per snapshot, about a snapshot that has held back
+ * garbage collection for over stuck_warn_secs: an idle
+ * transaction, a forgotten cursor, or a transaction in doubt.
+ */
+void warn_stuck(db_t *db) {
+  auto now = std::chrono::steady_clock::now();
+  std::vector<std::pair<uint64_t, long long>> stuck;
+  {
+    // Hold snap_mu while reading the snapshots' ages.
+    std::lock_guard<std::mutex> guard(db->snap_mu);
+    // Find snapshots past the threshold not yet warned about.
+    for (auto &kv : db->snap_since) {
+      long long age =
+          std::chrono::duration_cast<std::chrono::seconds>(now - kv.second)
+              .count();
+      if (age >= db->stuck_warn_secs && !db->snap_warned.count(kv.first)) {
+        // Warn once per snapshot.
+        db->snap_warned.insert(kv.first);
+        stuck.emplace_back(kv.first, age);
+      }
+    }
+  }
+  // Log outside snap_mu.
+  for (auto &st : stuck) {
+    log_msg(SM_LOG_WARN,
+            "database %s: a transaction with snapshot %llu has held back "
+            "garbage collection for %llds",
+            db->name.c_str(), (unsigned long long)st.first, st.second);
+  }
 }
 
 /* The worker: run GC when woken, and at least once a second. */
@@ -307,6 +374,8 @@ uint64_t db_take_snapshot(db_t *db) {
   uint64_t ts = db->visible_ts.load();
   // Register it for the watermark.
   db->snapshots.insert(ts);
+  // Note when, for the stuck-snapshot warning.
+  db->snap_since.emplace(ts, std::chrono::steady_clock::now());
   return ts;
 }
 
@@ -316,6 +385,8 @@ void db_register_snapshot(db_t *db, uint64_t snapshot_ts) {
   std::lock_guard<std::mutex> guard(db->snap_mu);
   // Register the snapshot for the watermark.
   db->snapshots.insert(snapshot_ts);
+  // Note when, for the stuck-snapshot warning.
+  db->snap_since.emplace(snapshot_ts, std::chrono::steady_clock::now());
 }
 
 /* Remove one registration of snapshot_ts. */
@@ -327,6 +398,15 @@ void db_release_snapshot(db_t *db, uint64_t snapshot_ts) {
   // Remove it, if present.
   if (it != db->snapshots.end()) {
     db->snapshots.erase(it);
+  }
+  // Forget when it was taken.
+  auto since = db->snap_since.find(snapshot_ts);
+  if (since != db->snap_since.end()) {
+    db->snap_since.erase(since);
+  }
+  // With the last snapshot at this ts gone, a new one may warn again.
+  if (!db->snapshots.count(snapshot_ts)) {
+    db->snap_warned.erase(snapshot_ts);
   }
 }
 
@@ -416,7 +496,12 @@ void gc_run_once(db_t *db) {
   // Flush the range tombstones into SST files, so reads stop
   // re-examining them in the memtable (§8.3).
   for (rocksdb::ColumnFamilyHandle *cf : touched) {
-    db->rdb->Flush(rocksdb::FlushOptions(), cf);
+    rocksdb::Status s = db->rdb->Flush(rocksdb::FlushOptions(), cf);
+    // A failed flush only costs reads; nobody waits, so log it.
+    if (!s.ok()) {
+      log_msg(SM_LOG_ERROR, "database %s: flush after purge failed: %s",
+              db->name.c_str(), s.ToString().c_str());
+    }
   }
 
   // Drop each relation no snapshot can see.
@@ -427,6 +512,9 @@ void gc_run_once(db_t *db) {
 
   // Free SSI nodes the watermark has passed (§7.1).
   ssi_cleanup(db);
+
+  // Warn about snapshots holding back GC for too long.
+  warn_stuck(db);
 
   // Finish a pending sweep, or start one once CF:txn is big.
   uint64_t records = 0;

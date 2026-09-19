@@ -250,6 +250,49 @@ transaction id to commit timestamp that spares readers a
 status-table lookup (DESIGN.md §3.4). It must be at least
 1; a smaller cache costs lookups, never correctness.
 
+### Logging
+
+```c
+typedef enum {
+    SM_LOG_ERROR = 0,   /* something failed and nobody was told */
+    SM_LOG_WARN  = 1,   /* something needs an operator's attention */
+    SM_LOG_INFO  = 2    /* a notable event, such as recovery */
+} sm_loglevel_t;
+
+typedef void (*sm_log_fn)(void* arg, sm_loglevel_t level, const char* msg);
+
+void sm_set_log(sm_log_fn fn, void* arg);   /* NULL removes it */
+```
+
+wisr never writes a log of its own. `sm_set_log` installs a
+process-wide hook, in the manner of SQLite's
+`SQLITE_CONFIG_LOG`, so the host can route wisr's messages
+into its own logging. With no hook installed, nothing is
+formatted or reported.
+
+The hook hears only what no caller would otherwise learn.
+Errors a call returns are not logged: its caller already
+has them.
+
+| Level | Event |
+| --- | --- |
+| `SM_LOG_ERROR` | a background GC step failed: a tombstone purge, a flush, a column family drop, or a `CF:txn` sweep |
+| `SM_LOG_ERROR` | a status record write failed, and the database stopped until reopened |
+| `SM_LOG_WARN` | the compaction filter kept versions unstamped because it could not judge them; once per compaction |
+| `SM_LOG_WARN` | a `CF:txn` sweep was abandoned rather than delete records still needed |
+| `SM_LOG_WARN` | one snapshot has held back garbage collection for over 60 seconds; once per snapshot |
+| `SM_LOG_INFO` | `sm_attach` destroyed an unnamed database directory |
+| `SM_LOG_INFO` | recovery restored a prepared transaction in doubt, or dropped an orphaned column family |
+| `SM_LOG_INFO` | a `CF:txn` sweep deleted status records |
+
+The hook may be called from any thread, including wisr's own
+GC thread, but never twice at once. `msg` is valid only for
+the duration of the call. The hook must not call back into
+wisr, because it runs with a library lock held.
+
+RocksDB still writes its own `LOG` files in each database
+directory; `rocksdb_options` controls those for a database.
+
 ---
 
 ## Isolation and visibility semantics
