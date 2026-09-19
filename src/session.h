@@ -105,7 +105,7 @@ struct sm_scan_t {
   std::list<wisr::ssi_range_t>::iterator ssi_range;
   bool examined = false;     /* some userkey's run was inspected */
   std::string last_examined; /* the last one */
-  std::string key, data;     /* what sm_scan_next hands out */
+  std::string key, data;     /* what sm_scannxt hands out */
 };
 
 namespace wisr {

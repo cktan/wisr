@@ -231,7 +231,7 @@ int main(int argc, char **argv) {
   const char *k = nullptr;
   size_t klen = 0;
   // 0 is a row, 1 the end of the range, -1 an error.
-  while ((r = sm_scan_next(c, &k, &klen, &data, &len)) == 0) {
+  while ((r = sm_scannxt(c, &k, &klen, &data, &len)) == 0) {
     // Check the key's size before decoding it.
     if (klen != 8) {
       fprintf(stderr, "malformed key\n");
@@ -244,7 +244,7 @@ int main(int argc, char **argv) {
     }
     print_book(b);
   }
-  check(r, "sm_scan_next");
+  check(r, "sm_scannxt");
   // Close the cursor, releasing its snapshot.
   sm_scan_end(c);
   // A read-only transaction commits trivially.

@@ -7,7 +7,7 @@
  * Conventions that hold throughout:
  *
  *   - A function returning int returns 0 on success and -1 on
- *     error. Exactly two, sm_read() and sm_scan_next(), also
+ *     error. Exactly two, sm_read() and sm_scannxt(), also
  *     return 1 to mean "no row", which is not an error.
  *   - A function returning a pointer returns NULL on error.
  *   - On any error return, sm_errno() and sm_errmsg() describe
@@ -17,7 +17,7 @@
  *     retained; the caller may free them immediately after.
  *   - Byte strings handed out point into engine-owned memory,
  *     are not NUL-terminated, and must not be freed. See
- *     sm_read() and sm_scan_next() for their validity windows.
+ *     sm_read() and sm_scannxt() for their validity windows.
  *
  * Threading: an sm_env_t may be used from any number of threads
  * at once. An sm_session_t and its cursors may be used by one
@@ -675,8 +675,8 @@ sm_scan_t* sm_scan(sm_session_t* session, const char* relname,
  *
  * Errors: SM_ERR_CORRUPT, SM_ERR_IO.
  */
-int sm_scan_next(sm_scan_t* scan, const char** key, size_t* klen,
-                 const char** data, size_t* datalen);
+int sm_scannxt(sm_scan_t* scan, const char** key, size_t* klen,
+               const char** data, size_t* datalen);
 
 /*
  * Close a cursor and release its resources, including the

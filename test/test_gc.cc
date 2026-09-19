@@ -347,7 +347,7 @@ std::vector<std::string> scan_keys(sm_session_t *s) {
   std::vector<std::string> out;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     out.emplace_back(k, kl);
   }
   sm_scan_end(c);
@@ -423,7 +423,7 @@ TEST_CASE(
   int n = 0;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
   CHECK(n == 10);

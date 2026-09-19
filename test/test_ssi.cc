@@ -63,7 +63,7 @@ int count_range(sm_session_t *s, const std::string &lo, const std::string &hi) {
   int n = 0;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
   sm_scan_end(c);
@@ -234,14 +234,14 @@ TEST_CASE("a phantom inserted while the reader's cursor is open is caught") {
   REQUIRE(c);
   const char *k, *d;
   size_t kl, dl;
-  REQUIRE(sm_scan_next(c, &k, &kl, &d, &dl) == 0);
+  REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
 
   CHECK(get(t2, "t", "q") == "1");
   REQUIRE(ins(t2, "n", "1") == 0);
   REQUIRE(try_commit(t2));
 
   int rest = 0;
-  while (sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     CHECK(std::string(k, kl) != "n");
     rest++;
   }
@@ -269,7 +269,7 @@ TEST_CASE("a scan closed early covers only what it read") {
   REQUIRE(c);
   const char *k, *d;
   size_t kl, dl;
-  REQUIRE(sm_scan_next(c, &k, &kl, &d, &dl) == 0);
+  REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "b");
   sm_scan_end(c);
 
@@ -429,7 +429,7 @@ TEST_CASE("concurrent SERIALIZABLE doctors always leave someone on call") {
         int on = 0;
         const char *k, *d;
         size_t kl, dl;
-        while (c && sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+        while (c && sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
           on += std::string(d, dl) == "1";
         }
         sm_scan_end(c);

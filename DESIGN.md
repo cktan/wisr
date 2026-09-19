@@ -779,7 +779,7 @@ A committed transaction cannot be told "no", so an edge that
 would make it a pivot dooms the running transaction completing
 the structure instead. Dooming never fails the call that made the
 edge: the transaction runs on and fails at its commit, so
-`sm_read`, `sm_scan_next`, and the write calls never return
+`sm_read`, `sm_scannxt`, and the write calls never return
 `SM_ERR_SERIALIZATION`. The commit check runs after the
 transaction claims its `commit_ts` and before its status record
 is written; a failure hands the `commit_ts` back to the sequencer
@@ -1490,7 +1490,7 @@ that buffer is released.
   rewind of §6.5 stops a reused number from changing what it
   returns.
 
-`sm_scan_next` walks version keys, and for each distinct `userkey`
+`sm_scannxt` walks version keys, and for each distinct `userkey`
 emits the first visible version and then skips the rest of that key's
 versions:
 
@@ -1554,9 +1554,9 @@ sm_scan_t* sm_scan(sm_session_t* session, const char* relname,
                    const char* ekey, size_t eklen, int ekey_inclusive);
 
 /* 0 = row returned, 1 = end of range, -1 = error. Buffers valid
- * until the next sm_scan_next on the same cursor. */
-int  sm_scan_next(sm_scan_t* scan, const char** key, size_t* klen,
-                  const char** data, size_t* datalen);
+ * until the next sm_scannxt on the same cursor. */
+int  sm_scannxt(sm_scan_t* scan, const char** key, size_t* klen,
+                const char** data, size_t* datalen);
 void sm_scan_end(sm_scan_t* scan);
 ```
 
@@ -1564,7 +1564,7 @@ void sm_scan_end(sm_scan_t* scan);
   range predicate cannot be recorded for SSI (§7.1), and every
   caller would otherwise scan and discard.
 - **"No row" is a tri-state return, not an out-param.**
-  `sm_read` returns 1 for a missing key and `sm_scan_next`
+  `sm_read` returns 1 for a missing key and `sm_scannxt`
   returns 1 at end of range; this replaces the earlier
   `int* found`. Neither is an error, and neither disturbs the
   error state, so a caller must distinguish 1 from -1 before

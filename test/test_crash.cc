@@ -36,7 +36,7 @@ uint32_t count_rows(sm_session_t *s) {
   uint32_t n = 0;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
   sm_scan_end(c);

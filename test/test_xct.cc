@@ -190,7 +190,7 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   int n = 0;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
   sm_scan_end(c);
@@ -254,7 +254,7 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
       std::vector<std::string> keys;
       const char *k, *d;
       size_t kl, dl;
-      while (c && sm_scan_next(c, &k, &kl, &d, &dl) == 0) {
+      while (c && sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
         keys.emplace_back(k, kl);
       }
       sm_scan_end(c);

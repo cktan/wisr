@@ -359,12 +359,12 @@ sm_scan_t *scan(sm_session_t *s, const char *relname, const char *skey,
   return c.release();
 }
 
-/* sm_scan_next, minus the out-of-memory guard. */
+/* sm_scannxt, minus the out-of-memory guard. */
 int scan_next(sm_scan_t *c, const char **key, size_t *klen, const char **data,
               size_t *datalen) {
   // Require every out-parameter.
   if (!c || !key || !klen || !data || !datalen) {
-    return set_error(SM_ERR_INVALID, "sm_scan_next: NULL argument");
+    return set_error(SM_ERR_INVALID, "sm_scannxt: NULL argument");
   }
   // Report no row until one is found.
   *key = *data = nullptr;
@@ -654,15 +654,15 @@ sm_scan_t *sm_scan(sm_session_t *session, const char *relname, const char *skey,
 }
 
 /* Advance a cursor to its next row. */
-int sm_scan_next(sm_scan_t *scan, const char **key, size_t *klen,
-                 const char **data, size_t *datalen) {
+int sm_scannxt(sm_scan_t *scan, const char **key, size_t *klen,
+               const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return scan_next(scan, key, klen, data, datalen);
   } catch (const std::bad_alloc &) {
     // The cursor is unusable after this.
     scan->state = -1;
-    return set_error(SM_ERR_NOMEM, "sm_scan_next: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm_scannxt: out of memory");
   }
 }
 

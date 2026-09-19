@@ -58,11 +58,11 @@ rows_t drain(sm_scan_t *c) {
   const char *k, *d;
   size_t kl, dl;
   int r;
-  while ((r = sm_scan_next(c, &k, &kl, &d, &dl)) == 0) {
+  while ((r = sm_scannxt(c, &k, &kl, &d, &dl)) == 0) {
     rows.emplace_back(std::string(k, kl), std::string(d, dl));
   }
   CHECK(r == 1);
-  CHECK(sm_scan_next(c, &k, &kl, &d, &dl) == 1);
+  CHECK(sm_scannxt(c, &k, &kl, &d, &dl) == 1);
   sm_scan_end(c);
   return rows;
 }

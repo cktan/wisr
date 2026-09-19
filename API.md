@@ -16,7 +16,7 @@ C++ type appears in the interface.
 - Functions returning `int` return **0 on success** and
   **-1 on error**, except where a positive return is
   documented for that specific function. Exactly two
-  functions have one: `sm_read` and `sm_scan_next` both
+  functions have one: `sm_read` and `sm_scannxt` both
   return 1 to mean "no row", which is not an error.
 - Functions returning a pointer return **NULL on error**.
 - On any error return, the error code and message are
@@ -112,7 +112,7 @@ Byte strings passed *in* (`key`, `data`, `relname`,
 never retained. The caller may free or reuse them immediately
 afterwards.
 
-Byte strings handed *out* by `sm_read` and `sm_scan_next`
+Byte strings handed *out* by `sm_read` and `sm_scannxt`
 point into engine-owned memory. They are **not**
 NUL-terminated and must not be freed. Their validity
 windows differ and are narrow:
@@ -120,7 +120,7 @@ windows differ and are narrow:
 | Producer | Buffer stays valid until |
 | --- | --- |
 | `sm_read` | the next `sm_*` call on that **session** |
-| `sm_scan_next` | the next call on that **scan cursor** |
+| `sm_scannxt` | the next call on that **scan cursor** |
 
 A caller that needs a value beyond that window must copy it.
 Note in particular that an `sm_read` result is invalidated
@@ -856,7 +856,7 @@ Returns NULL on error: `SM_ERR_NOTFOUND` (no such
 relation), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_INVALID`, `SM_ERR_NOMEM`, `SM_ERR_IO`.
 
-### int sm_scan_next(sm_scan_t* scan, const char** key, size_t* klen, const char** data, size_t* datalen)
+### int sm_scannxt(sm_scan_t* scan, const char** key, size_t* klen, const char** data, size_t* datalen)
 
 Advance to the next row.
 
@@ -915,7 +915,7 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
 2. **Return convention repaired.** The old file promised
    0/-1 everywhere, then documented `sm_rmdb` as returning
    true/false, and had two calls that need three outcomes.
-3. **`sm_read`/`sm_scan_next` use a tri-state return**
+3. **`sm_read`/`sm_scannxt` use a tri-state return**
    rather than `DESIGN.md`'s separate `int* found`. One
    idiom for "no row" across both calls. (D)
 4. **The `schema` parameter is gone** from the read calls.
