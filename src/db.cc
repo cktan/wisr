@@ -7,6 +7,7 @@
 #include "db.h"
 
 #include "codec.h"
+#include "defer.h"
 #include "env.h"
 #include "error.h"
 #include "log.h"
@@ -60,6 +61,15 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
   if (!s.ok()) {
     return set_status_error(s, path.c_str());
   }
+  // On the way out, destroy the handles, then close the database:
+  // sm_mkdb leaves it unopened.
+  defer {
+    for (rocksdb::ColumnFamilyHandle *h : handles) {
+      db->DestroyColumnFamilyHandle(h);
+    }
+    db->Close();
+    delete db;
+  };
 
   // Seed CF:meta: format version and the allocators' leases. A
   // persisted lease of 0 resumes both allocators at 1 (§4.2),
@@ -76,14 +86,6 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
   wo.sync = true;
   // Write the batch.
   s = db->Write(wo, &batch);
-
-  // Destroy the handles before closing.
-  for (rocksdb::ColumnFamilyHandle *h : handles) {
-    db->DestroyColumnFamilyHandle(h);
-  }
-  // Close the database: sm_mkdb leaves it unopened.
-  db->Close();
-  delete db;
   // Fail if the seed did not make it.
   if (!s.ok()) {
     return set_status_error(s, path.c_str());

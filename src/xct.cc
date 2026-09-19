@@ -20,6 +20,7 @@
  */
 
 #include "codec.h"
+#include "defer.h"
 #include "error.h"
 #include "log.h"
 #include "session.h"
@@ -575,28 +576,28 @@ int prepare(sm_session_t *s, const char *gid) {
     // Reserve it with a null entry.
     db->prepared[gid] = nullptr;
   }
-  // Undo the reservation on failure.
-  auto unreserve = [&] {
+  // Release the reservation if the prepare fails before the
+  // transaction is detached; dismissed once it is.
+  scope_guard_t unreserve([&] {
     std::lock_guard<std::mutex> guard(db->prepared_mu);
     db->prepared.erase(gid);
-  };
+  });
 
   // Close cursors, then validate: the last moment the engine
   // may still say no (§8.4). A passed node counts as committed.
   xct_end_scans(s);
   // Validate; a passed node counts as committed.
   if (ssi_precommit(s, UINT64_MAX) != 0) {
-    // Release the gid: not prepared.
-    unreserve();
     return xct_fail_retryable(s, SM_ERR_SERIALIZATION, "not serializable");
   }
   // A read-only transaction needs an xid to key its record.
   if (s->xid == 0 && xct_alloc_xid(s) != 0) {
-    // Release the gid: not prepared.
-    unreserve();
     return -1;
   }
 
+  // From here the entry is replaced, whether the write succeeds or
+  // fails stop: keep the reservation.
+  unreserve.dismiss();
   // Move the transaction out of the session.
   sm_session_t *g = detach_prepared(s, gid);
   // Encode its PREPARED record.

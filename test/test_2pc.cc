@@ -245,6 +245,38 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   sm_closedb(u);
 }
 
+TEST_CASE("a prepare that fails validation releases its gid") {
+  // Verify the gid reservation is undone on a failed prepare.
+  // 1. T1 and T2 (SERIALIZABLE) begin. T2 reads "b", updates
+  //    "a", and commits.
+  // 2. T1 reads "a", stepping past T2's version, and updates
+  //    "b", which T2 read: T1 is doomed (§7.3).
+  // 3. T1's prepare under "g" fails with SM_ERR_SERIALIZATION,
+  //    and "g" is not listed.
+  // 4. A new transaction prepares and commits under "g".
+  tpc_fixture_t f;
+  sm_session_t *t1 = f.open();
+  sm_session_t *t2 = f.open();
+  REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
+  REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
+  CHECK(get(t2, "t", "b") == "0");
+  REQUIRE(set(t2, "a", "1") == 0);
+  REQUIRE(sm_commit(t2) == 0);
+  CHECK(get(t1, "t", "a") == "0");
+  REQUIRE(set(t1, "b", "1") == 0);
+  CHECK(sm_prepare(t1, "g") == -1);
+  CHECK(sm_errno() == SM_ERR_SERIALIZATION);
+  CHECK(listed(t2).empty());
+
+  REQUIRE(sm_begin(t1, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(set(t1, "b", "2") == 0);
+  REQUIRE(sm_prepare(t1, "g") == 0);
+  REQUIRE(sm_commit(t1) == 0);
+  CHECK(read_now(t2, "b") == "2");
+  sm_closedb(t1);
+  sm_closedb(t2);
+}
+
 TEST_CASE("another session can resolve a prepared transaction by gid") {
   // Verify resolution from any session (§8.5) and what the
   // preparing session sees afterwards.

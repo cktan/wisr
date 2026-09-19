@@ -7,6 +7,7 @@
  * readers they invalidate (ssi.cc, §7).
  */
 
+#include "defer.h"
 #include "error.h"
 #include "session.h"
 #include "version.h"
@@ -19,25 +20,6 @@
 using namespace wisr;
 
 namespace {
-
-/*
- * Holds a read epoch for one call: from before its iterator is
- * opened until it is done resolving what it read, so the CF:txn
- * sweep waits for it (§8.3).
- */
-class read_epoch_guard_t {
-public:
-  /* Enter the current read epoch. */
-  explicit read_epoch_guard_t(db_t *db)
-      : m_db(db), m_epoch(db_read_enter(db)) {}
-
-  /* Leave it. */
-  ~read_epoch_guard_t() { db_read_leave(m_db, m_epoch); }
-
-private:
-  db_t *m_db;
-  uint64_t m_epoch;
-};
 
 /* 1 if version v is visible at view, 0 if not, -1 on error (§4.4). */
 int visible(db_t *db, const version_t &v, const view_t &view) {
@@ -137,8 +119,10 @@ int latest_version(sm_session_t *s, rocksdb::ColumnFamilyHandle *cf,
   // Assume no version until one is found.
   *live = false;
   *commit_ts = 0;
-  // Keep the CF:txn sweep waiting while we resolve versions.
-  read_epoch_guard_t epoch(s->db);
+  // Hold a read epoch from before the iterator exists until we are
+  // done resolving what it read: the CF:txn sweep waits for it.
+  uint64_t epoch = db_read_enter(s->db);
+  defer { db_read_leave(s->db, epoch); };
   // Stay within this userkey's versions.
   rocksdb::ReadOptions ro;
   ro.prefix_same_as_start = true;
@@ -467,8 +451,10 @@ int access_read(sm_session_t *s, uint64_t relid, const view_t &view,
   // iterator exists, so a write landing in between still finds
   // it (§10.1).
   ssi_on_read(s, relid, key);
-  // Keep the CF:txn sweep waiting while we resolve versions.
-  read_epoch_guard_t epoch(s->db);
+  // Hold a read epoch from before the iterator exists until we are
+  // done resolving what it read: the CF:txn sweep waits for it.
+  uint64_t epoch = db_read_enter(s->db);
+  defer { db_read_leave(s->db, epoch); };
   // Stay within this userkey's versions.
   rocksdb::ReadOptions ro;
   ro.prefix_same_as_start = true;

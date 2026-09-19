@@ -14,6 +14,7 @@
 #include "env.h"
 
 #include "codec.h"
+#include "defer.h"
 #include "error.h"
 #include "log.h"
 
@@ -113,23 +114,25 @@ int sweep_base(sm_env_t *env) {
     return set_status_error(it->status(), "scan root db");
   }
 
-  // List the entries under base/.
-  std::string base = base_dir(env->homedir);
-  DIR *dir = opendir(base.c_str());
-  // Fail if base/ cannot be opened.
-  if (!dir) {
-    return set_errno_error(errno, base.c_str());
-  }
   std::vector<std::string> orphans;
-  // Collect numbered directories that no name points at.
-  while (struct dirent *de = readdir(dir)) {
-    uint64_t dbid;
-    if (parse_dbid(de->d_name, &dbid) && !live.count(dbid)) {
-      orphans.push_back(env_db_path(env, dbid));
+  {
+    // List the entries under base/.
+    std::string base = base_dir(env->homedir);
+    DIR *dir = opendir(base.c_str());
+    // Fail if base/ cannot be opened.
+    if (!dir) {
+      return set_errno_error(errno, base.c_str());
+    }
+    // Close base/ when done reading it, before destroying anything.
+    defer { closedir(dir); };
+    // Collect numbered directories that no name points at.
+    while (struct dirent *de = readdir(dir)) {
+      uint64_t dbid;
+      if (parse_dbid(de->d_name, &dbid) && !live.count(dbid)) {
+        orphans.push_back(env_db_path(env, dbid));
+      }
     }
   }
-  // Done reading base/.
-  closedir(dir);
 
   // Destroy each orphan.
   for (const std::string &path : orphans) {
@@ -271,6 +274,11 @@ int sm_init(const char *homedir) {
     if (!s.ok()) {
       return set_status_error(s, rootpath.c_str());
     }
+    // Close the root db on the way out: sm_init opens nothing for later.
+    defer {
+      root->Close();
+      delete root;
+    };
     // Encode the format version and the first dbid.
     std::string version, next_dbid;
     put_be64(version, WISR_HOME_VERSION);
@@ -283,9 +291,6 @@ int sm_init(const char *homedir) {
     wo.sync = true;
     // Write the batch.
     s = root->Write(wo, &batch);
-    // Close the root db: sm_init opens nothing for later.
-    root->Close();
-    delete root;
     // Fail if the batch did not make it.
     if (!s.ok()) {
       return set_status_error(s, rootpath.c_str());
