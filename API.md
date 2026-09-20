@@ -108,7 +108,7 @@ longer active, whatever the result. `sm_prepare`: on
 ### Memory and lifetimes
 
 Byte strings passed *in* (`key`, `data`, `homedir`,
-`dbname`, `gid`) are read during the call and
+`dbname`, `gid`, a sequence `name`) are read during the call and
 never retained. The caller may free or reuse them immediately
 afterwards.
 
@@ -330,8 +330,9 @@ reads, no lost updates, no non-repeatable reads, no
 phantoms — but write skew is possible. Callers that cannot
 tolerate write skew must use `SM_XCT_SERIALIZABLE`.
 
-DDL is transactional. `sm_mkrel` and `sm_rmrel` take effect
-at commit and roll back with the transaction.
+DDL is transactional. `sm_mkrel`, `sm_rmrel`, `sm_mkseq`,
+and `sm_rmseq` take effect at commit and roll back with the
+transaction. The values `sm_nextseq` hands out do not.
 
 ---
 
@@ -516,32 +517,6 @@ Returns NULL on error: `SM_ERR_NOTFOUND` (no database
 there), `SM_ERR_CORRUPT`, `SM_ERR_PERMISSION`,
 `SM_ERR_NOMEM`,
 `SM_ERR_IO`, `SM_ERR_INVALID`.
-
-### int sm_nextseq(sm_session_t* session, uint64_t* out)
-
-Hand out the next value of the database's sequence in
-`*out`. Each database has one.
-
-```c
-#define SM_SEQ_FIRST 1000   /* the first value in a new database */
-```
-
-The sequence is persistent and strictly increasing: a value
-is handed out once and never again, across restarts too. It
-starts at `SM_SEQ_FIRST`, so values below that are never
-generated and a caller may define them as constants, such as
-fixed ids for its own catalog relations.
-
-It is not transactional, like a PostgreSQL sequence: it
-needs no active transaction, never blocks, and an abort does
-not give a value back. Values are unique but not dense: a
-crash skips the rest of a block reserved in advance (the
-`ts_lease` size), leaving a gap. Distinct sessions may call
-it concurrently.
-
-Errors: `SM_ERR_INVALID` (NULL `session` or `out`),
-`SM_ERR_IO` (the database has stopped, or persisting the
-next block failed), `SM_ERR_DISKFULL`.
 
 ### int sm_closedb(sm_session_t* session)
 
@@ -750,28 +725,27 @@ transaction with that `gid`), `SM_ERR_DISKFULL`,
 ## Rel API
 
 A relation is an ordered map from key to value, named by a
-`uint64_t` relid the caller chooses. A relid is either a
-constant of the caller's in `1 .. SM_SEQ_FIRST - 1`, or a
-value `sm_nextseq` has handed out. Relid 0 is never a
-relation: every call given it fails with `SM_ERR_INVALID`.
+`uint64_t` relid that the library allocates. Relid 0 is the
+catalog's own slot, never a relation: every call given it
+fails with `SM_ERR_INVALID`.
 
-### int sm_mkrel(sm_session_t* session, uint64_t relid)
+### int sm_mkrel(sm_session_t* session, uint64_t* relid)
 
-Create a relation. Transactional: visible to others only at
-commit, and undone by abort or by a rollback that spans it.
+Create a relation and hand out its relid in `*relid`.
+Transactional: visible to others only at commit, and undone
+by abort or by a rollback that spans it. A relid from a
+transaction that aborts is simply never used.
 
-A relid outside the two ranges above — 0, or a value at or
-above `SM_SEQ_FIRST` that `sm_nextseq` has not yet handed
-out — fails with `SM_ERR_INVALID`.
+A relid is never reused, so it never names two relations,
+and one dropped by `sm_rmrel` never comes back. Relids rise
+in creation order, so the lowest one `sm_lsrel` lists is the
+first relation the database ever had — which is how a
+program finds its own catalog relation again after a
+restart.
 
-A relid dropped by `sm_rmrel` may be created again at once,
-even in the same transaction. The new relation starts empty;
-a transaction whose snapshot predates the drop still sees
-the old one.
-
-Errors: `SM_ERR_EXISTS`, `SM_ERR_NOTRANS`,
-`SM_ERR_CONFLICT` (retryable — concurrently created),
-`SM_ERR_INVALID`, `SM_ERR_PREPARED`.
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_CONFLICT` (retryable),
+`SM_ERR_INVALID` (NULL `relid`), `SM_ERR_PREPARED`,
+`SM_ERR_DISKFULL`, `SM_ERR_IO`.
 
 ### int sm_rmrel(sm_session_t* session, uint64_t relid)
 
@@ -786,6 +760,10 @@ can see it.
 Errors: `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`,
 `SM_ERR_CONFLICT` (retryable), `SM_ERR_INVALID` (relid 0),
 `SM_ERR_PREPARED`.
+
+A relation dropped and committed stays readable by a
+transaction whose snapshot predates the drop, through the
+same relid.
 
 ### int sm_lsrel(sm_session_t* session, uint64_t** out, size_t* n)
 
@@ -807,6 +785,59 @@ Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 ### void sm_free_rels(uint64_t* list)
 
 Release a list from `sm_lsrel`. NULL is a no-op.
+
+---
+
+## Sequence API
+
+A sequence name is a NUL-terminated string of 1 to
+`SM_MAX_SEQNAME` (63) bytes, otherwise unrestricted, like a
+database name. A name outside those bounds fails with
+`SM_ERR_INVALID`.
+
+A sequence is a named counter belonging to a database. It
+hands out `start`, `start + increment`, `start + 2 *
+increment`, and so on, and it is the way a caller gets ids
+of its own — row ids, index ids, anything that must be
+unique across restarts.
+
+```c
+int sm_mkseq(sm_session_t* session, const char* name,
+             uint64_t start, uint64_t increment);
+int sm_rmseq(sm_session_t* session, const char* name);
+int sm_nextseq(sm_session_t* session, const char* name,
+               uint64_t* out);
+```
+
+`sm_mkseq` and `sm_rmseq` are transactional, like `sm_mkrel`
+and `sm_rmrel`: they need an active transaction, take effect
+at commit, and roll back with it. The name is a
+NUL-terminated string of at most `SM_MAX_SEQNAME` bytes, and
+`increment` must not be 0. A name used again after a drop is
+a new sequence, starting at its own `start`.
+
+The **values** are not transactional, like a PostgreSQL
+sequence: `sm_nextseq` needs no active transaction, never
+blocks, and an abort does not give a value back. Values are
+unique but not dense: besides aborts, a crash skips the rest
+of a block reserved in advance (the `ts_lease` size),
+leaving a gap. Distinct sessions may call it concurrently.
+
+Inside a transaction, `sm_nextseq` sees that transaction's
+snapshot, so a sequence it created itself is usable before
+it commits. When the next value would pass `UINT64_MAX`, the
+sequence is exhausted and every further call fails with
+`SM_ERR_INVALID`.
+
+Errors for `sm_mkseq`: `SM_ERR_EXISTS`, `SM_ERR_NOTRANS`,
+`SM_ERR_CONFLICT` (retryable), `SM_ERR_INVALID`,
+`SM_ERR_PREPARED`, `SM_ERR_DISKFULL`, `SM_ERR_IO`. For
+`sm_rmseq`: `SM_ERR_NOTFOUND` and the same otherwise. For
+`sm_nextseq`: `SM_ERR_NOTFOUND` (no such sequence),
+`SM_ERR_INVALID` (NULL argument, bad name, or exhausted),
+`SM_ERR_PREPARED`, `SM_ERR_CORRUPT`, `SM_ERR_IO` (the
+database has stopped, or persisting the next block failed),
+`SM_ERR_DISKFULL`.
 
 ---
 

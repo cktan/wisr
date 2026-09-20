@@ -73,18 +73,14 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
 
   // Seed CF:meta: format version and the allocators' leases. A
   // persisted lease of 0 resumes both allocators at 1 (§4.2),
-  // so cfid 0 stays the catalog's.
+  // so relid 0 stays the catalog's.
   std::string version, zero;
   put_be64(version, WISR_DB_VERSION);
   put_be64(zero, 0);
   rocksdb::WriteBatch batch;
   batch.Put(handles[2], WISR_META_VERSION, version);
   batch.Put(handles[2], WISR_META_NEXT_TS, zero);
-  batch.Put(handles[2], WISR_META_NEXT_CFID, zero);
-  // The sequence resumes one past its lease, at SM_SEQ_FIRST.
-  std::string seq;
-  put_be64(seq, SM_SEQ_FIRST - 1);
-  batch.Put(handles[2], WISR_META_NEXT_SEQ, seq);
+  batch.Put(handles[2], WISR_META_NEXT_OBJID, zero);
   // Write the seed synced.
   rocksdb::WriteOptions wo;
   wo.sync = true;
@@ -263,8 +259,10 @@ int lsdb(sm_env_t *env, sm_strlist_t **out) {
 
 namespace wisr {
 
-/* rel.<cfid>, in decimal. */
-std::string rel_cf_name(uint64_t cfid) { return "rel." + std::to_string(cfid); }
+/* rel.<relid>, in decimal. */
+std::string rel_cf_name(uint64_t relid) {
+  return "rel." + std::to_string(relid);
+}
 
 /*
  * The comparator and prefix extractor are part of the format
@@ -273,12 +271,12 @@ std::string rel_cf_name(uint64_t cfid) { return "rel." + std::to_string(cfid); }
  * row_cache: DeleteRange, which the tombstone purge uses, is not
  * supported with one (§8.3).
  */
-rocksdb::ColumnFamilyOptions rel_cf_options(db_t *db, uint64_t cfid) {
+rocksdb::ColumnFamilyOptions rel_cf_options(db_t *db, uint64_t relid) {
   // Start from default CF options.
   rocksdb::ColumnFamilyOptions cfo;
   // Attach the GC filter when opening a real database.
   if (db) {
-    cfo.compaction_filter_factory = gc_filter_factory(db, cfid);
+    cfo.compaction_filter_factory = gc_filter_factory(db, relid);
   }
   // Order versions by the wisr.version.v1 comparator.
   cfo.comparator = version_comparator();
@@ -316,16 +314,20 @@ int db_options(const sm_options_t *opt, rocksdb::DBOptions *out) {
   return 0;
 }
 
-/* Parse "rel.<cfid>"; false if name is not a relation CF's. */
-static bool parse_rel_cf_name(const std::string &name, uint64_t *cfid) {
+/* Parse "rel.<relid>"; false if name is not a relation CF's. */
+static bool parse_rel_cf_name(const std::string &name, uint64_t *relid) {
   // Require the "rel." prefix, a number, and a canonical spelling.
   return name.compare(0, 4, "rel.") == 0 &&
-         sscanf(name.c_str() + 4, "%" SCNu64, cfid) == 1 &&
-         rel_cf_name(*cfid) == name;
+         sscanf(name.c_str() + 4, "%" SCNu64, relid) == 1 &&
+         rel_cf_name(*relid) == name;
 }
 
-/* Read an 8-byte CF:meta value; false if missing or malformed. */
-static bool read_meta(db_t *db, const char *key, uint64_t *out) {
+/*
+ * Read an 8-byte CF:meta value; false if missing or malformed.
+ * The key is a slice, because a sequence's lease key carries an
+ * 8-byte id whose bytes include NUL.
+ */
+static bool read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
   std::string val;
   // Read the key from CF:meta.
   rocksdb::Status s =
@@ -383,10 +385,10 @@ db_t *db_open(const std::string &path, const char *dbname,
   std::vector<rocksdb::ColumnFamilyDescriptor> cfs;
   // Give each relation CF its options, GC filter included.
   for (const std::string &name : names) {
-    uint64_t cfid;
+    uint64_t relid;
     // A relation CF: comparator, prefix extractor, GC filter.
-    if (parse_rel_cf_name(name, &cfid)) {
-      cfs.emplace_back(name, rel_cf_options(db.get(), cfid));
+    if (parse_rel_cf_name(name, &relid)) {
+      cfs.emplace_back(name, rel_cf_options(db.get(), relid));
     } else {
       // A fixed CF: default options.
       cfs.emplace_back(name, rocksdb::ColumnFamilyOptions());
@@ -405,7 +407,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   // Sort each handle into its slot by name.
   for (size_t i = 0; i < handles.size(); i++) {
     const std::string &name = names[i];
-    uint64_t cfid;
+    uint64_t relid;
     // The default CF, unused but always present.
     if (name == rocksdb::kDefaultColumnFamilyName) {
       db->cf_default = handles[i];
@@ -416,8 +418,8 @@ db_t *db_open(const std::string &path, const char *dbname,
     } else if (name == WISR_CF_META) {
       db->cf_meta = handles[i];
       // A relation's CF.
-    } else if (parse_rel_cf_name(name, &cfid)) {
-      db->rels[cfid] = handles[i];
+    } else if (parse_rel_cf_name(name, &relid)) {
+      db->rels[relid] = handles[i];
     } else {
       // Unknown CF: release its handle and fail the open.
       db->rdb->DestroyColumnFamilyHandle(handles[i]);
@@ -430,11 +432,11 @@ db_t *db_open(const std::string &path, const char *dbname,
     return nullptr;
   }
 
-  uint64_t version, next_ts, next_cfid;
+  uint64_t version, next_ts, next_objid;
   // Read the format version and both leases.
   if (!read_meta(db.get(), WISR_META_VERSION, &version) ||
       !read_meta(db.get(), WISR_META_NEXT_TS, &next_ts) ||
-      !read_meta(db.get(), WISR_META_NEXT_CFID, &next_cfid)) {
+      !read_meta(db.get(), WISR_META_NEXT_OBJID, &next_objid)) {
     set_error(SM_ERR_CORRUPT, "{}: CF:meta is incomplete", dbname);
     return nullptr;
   }
@@ -454,17 +456,9 @@ db_t *db_open(const std::string &path, const char *dbname,
   db->ts_limit = next_ts + 1;
   // Everything below the lease is published.
   db->visible_ts = next_ts;
-  // Resume cfids the same way.
-  db->next_cfid = next_cfid + 1;
-  db->cfid_limit = next_cfid + 1;
-  // Resume the sequence the same way. A database made before it
-  // existed has no lease yet: start it at SM_SEQ_FIRST.
-  uint64_t next_seq;
-  if (!read_meta(db.get(), WISR_META_NEXT_SEQ, &next_seq)) {
-    next_seq = SM_SEQ_FIRST - 1;
-  }
-  db->next_seq = next_seq + 1;
-  db->seq_limit = next_seq + 1;
+  // Resume object ids the same way.
+  db->next_objid = next_objid + 1;
+  db->objid_limit = next_objid + 1;
   // Size the commit cache.
   db->cache_entries = opt->commit_cache_entries;
   // Arm deadlock detection.
@@ -564,40 +558,106 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
   }
 }
 
-/* Allocate a cfid. */
-int db_alloc_cfid(db_t *db, uint64_t *out) {
-  return alloc_leased(db, &db->next_cfid, &db->cfid_limit, WISR_META_NEXT_CFID,
-                      out);
+/* Allocate an object id: a relid or a seqid. */
+int db_alloc_objid(db_t *db, uint64_t *out) {
+  return alloc_leased(db, &db->next_objid, &db->objid_limit,
+                      WISR_META_NEXT_OBJID, out);
 }
 
-/* Allocate a sequence value. */
-int db_alloc_seq(db_t *db, uint64_t *out) {
-  return alloc_leased(db, &db->next_seq, &db->seq_limit, WISR_META_NEXT_SEQ,
-                      out);
+/* The CF:meta key holding sequence seqid's lease. */
+static std::string seq_meta_key(uint64_t seqid) {
+  std::string key(WISR_META_SEQ_PREFIX);
+  put_be64(key, seqid);
+  return key;
 }
 
-/* Compare v with the sequence's next value under alloc_mu. */
-bool db_seq_issued(db_t *db, uint64_t v) {
-  // Hold alloc_mu while reading next_seq.
+/* Hand out seqid's next value, persisting a new lease first if needed. */
+int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
+                uint64_t *out) {
+  // Hold alloc_mu, which guards every lease.
   std::lock_guard<std::mutex> guard(db->alloc_mu);
-  return v < db->next_seq;
+  auto it = db->seqs.find(seqid);
+  // First use in this process: recover the sequence's state.
+  if (it == db->seqs.end()) {
+    db_t::seq_state_t st;
+    st.increment = increment;
+    uint64_t limit;
+    // A persisted lease means values were handed out before, so
+    // resume above it; the rest of that block is skipped, as a
+    // crash skips one.
+    st.next = read_meta(db, seq_meta_key(seqid), &limit) ? limit : start;
+    st.limit = st.next;
+    it = db->seqs.emplace(seqid, st).first;
+  }
+  db_t::seq_state_t &st = it->second;
+  // Refuse a sequence whose last value is already handed out.
+  if (st.exhausted) {
+    return set_error(SM_ERR_INVALID, "sequence is exhausted");
+  }
+  // Lease used up: persist a new limit before handing out more.
+  if (st.next >= st.limit) {
+    // Extend by a whole block, stopping at the largest value.
+    uint64_t room = (UINT64_MAX - st.next) / st.increment;
+    uint64_t blocks = room < db->lease ? room : db->lease;
+    uint64_t new_limit = st.next + blocks * st.increment;
+    // No room left for a whole step: this block is the last one.
+    if (new_limit == st.next) {
+      new_limit = UINT64_MAX;
+    }
+    std::string val;
+    put_be64(val, new_limit);
+    // The lease must be durable before any value under it.
+    rocksdb::WriteOptions wo;
+    wo.sync = true;
+    // Persist the new lease.
+    rocksdb::Status s = db->rdb->Put(wo, db->cf_meta, seq_meta_key(seqid), val);
+    // Fail if the new lease did not persist.
+    if (!s.ok()) {
+      return set_status_error(s, "persist sequence lease");
+    }
+    st.limit = new_limit;
+  }
+  // Hand out the next value.
+  *out = st.next;
+  // Stop here if another step would wrap.
+  if (st.next > UINT64_MAX - st.increment) {
+    st.exhausted = true;
+  } else {
+    st.next += st.increment;
+  }
+  return 0;
 }
 
-/* Look up cfid's CF handle under the shared lock. */
-rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t cfid) {
+/* Drop seqid's in-memory state and its persisted lease. */
+void db_forget_seq(db_t *db, uint64_t seqid) {
+  // Hold alloc_mu while dropping the state.
+  std::lock_guard<std::mutex> guard(db->alloc_mu);
+  db->seqs.erase(seqid);
+  // Delete the lease; nobody waits on this, so log a failure.
+  rocksdb::Status s = db->rdb->Delete(rocksdb::WriteOptions(), db->cf_meta,
+                                      seq_meta_key(seqid));
+  if (!s.ok()) {
+    log_msg(SM_LOG_ERROR,
+            "database {}: deleting sequence {}'s lease failed: {}",
+            db->name.c_str(), seqid, s.ToString().c_str());
+  }
+}
+
+/* Look up relid's CF handle under the shared lock. */
+rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t relid) {
   // Hold rel_mu shared while reading the map.
   std::shared_lock<std::shared_mutex> guard(db->rel_mu);
-  // Look up cfid's handle.
-  auto it = db->rels.find(cfid);
+  // Look up relid's handle.
+  auto it = db->rels.find(relid);
   return it == db->rels.end() ? nullptr : it->second;
 }
 
-/* Create rel.<cfid> and register its handle. */
-int db_create_rel_cf(db_t *db, uint64_t cfid) {
+/* Create rel.<relid> and register its handle. */
+int db_create_rel_cf(db_t *db, uint64_t relid) {
   rocksdb::ColumnFamilyHandle *h = nullptr;
   // Create the relation's column family; this is not transactional.
-  rocksdb::Status s = db->rdb->CreateColumnFamily(rel_cf_options(db, cfid),
-                                                  rel_cf_name(cfid), &h);
+  rocksdb::Status s = db->rdb->CreateColumnFamily(rel_cf_options(db, relid),
+                                                  rel_cf_name(relid), &h);
   // Fail if RocksDB could not create it.
   if (!s.ok()) {
     return set_status_error(s, "create column family");
@@ -605,16 +665,16 @@ int db_create_rel_cf(db_t *db, uint64_t cfid) {
   // Hold rel_mu exclusively while registering it.
   std::unique_lock<std::shared_mutex> guard(db->rel_mu);
   // Register the handle.
-  db->rels[cfid] = h;
+  db->rels[relid] = h;
   return 0;
 }
 
-/* Drop rel.<cfid> and unregister its handle. */
-int db_drop_rel_cf(db_t *db, uint64_t cfid) {
+/* Drop rel.<relid> and unregister its handle. */
+int db_drop_rel_cf(db_t *db, uint64_t relid) {
   // Hold rel_mu exclusively while dropping.
   std::unique_lock<std::shared_mutex> guard(db->rel_mu);
-  // Look up cfid's handle.
-  auto it = db->rels.find(cfid);
+  // Look up relid's handle.
+  auto it = db->rels.find(relid);
   // Already gone: nothing to do.
   if (it == db->rels.end()) {
     return 0;
@@ -629,7 +689,7 @@ int db_drop_rel_cf(db_t *db, uint64_t cfid) {
   if (!s.ok()) {
     log_msg(SM_LOG_ERROR,
             "database {}: dropping column family rel.{} failed: {}",
-            db->name.c_str(), cfid, s.ToString().c_str());
+            db->name.c_str(), relid, s.ToString().c_str());
     return set_status_error(s, "drop column family");
   }
   return 0;
@@ -721,18 +781,4 @@ int sm_lsdb(sm_env_t *env, sm_strlist_t **out) {
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_lsdb: out of memory");
   }
-}
-
-/* Hand out the database's next sequence value (sm.h). */
-int sm_nextseq(sm_session_t *session, uint64_t *out) {
-  // Require a session and somewhere to put the value.
-  if (!session || !out) {
-    return set_error(SM_ERR_INVALID, "sm_nextseq: NULL argument");
-  }
-  // A stopped database persists nothing, leases included.
-  if (xct_check_writable(session->db) != 0) {
-    return -1;
-  }
-  // Take the next value; a used-up lease is persisted first.
-  return db_alloc_seq(session->db, out);
 }

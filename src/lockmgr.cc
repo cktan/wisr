@@ -2,7 +2,7 @@
  * lockmgr.cc -- exclusive row locks and deadlock detection
  * (DESIGN.md §5.1).
  *
- * A lock is keyed exactly by (cfid, userkey) and owned by the
+ * A lock is keyed exactly by (relid, userkey) and owned by the
  * session whose transaction took it; it is held until that
  * transaction commits or aborts. Readers never lock.
  *
@@ -24,13 +24,13 @@ using namespace wisr;
 
 namespace {
 
-/* The lock table key of (cfid, userkey). */
-std::string lock_key(uint64_t cfid, rocksdb::Slice key) {
+/* The lock table key of (relid, userkey). */
+std::string lock_key(uint64_t relid, rocksdb::Slice key) {
   std::string k;
-  // Reserve room for the cfid prefix and the key.
+  // Reserve room for the relid prefix and the key.
   k.reserve(8 + key.size());
-  // Prefix the cfid, so equal keys in different relations differ.
-  put_be64(k, cfid);
+  // Prefix the relid, so equal keys in different relations differ.
+  put_be64(k, relid);
   // Append the userkey.
   k.append(key.data(), key.size());
   return k;
@@ -71,11 +71,11 @@ void check_deadlock(db_t *db, sm_session_t *s) {
 
 namespace wisr {
 
-/* Block until (cfid, key) is free or ours, checking for deadlock. */
-int lock_acquire(sm_session_t *s, uint64_t cfid, rocksdb::Slice key) {
+/* Block until (relid, key) is free or ours, checking for deadlock. */
+int lock_acquire(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
   db_t *db = s->db;
   // Build the lock table key.
-  std::string k = lock_key(cfid, key);
+  std::string k = lock_key(relid, key);
   // Hold lock_mu for the table and the waits-for pointers.
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // Time the first deadlock check.

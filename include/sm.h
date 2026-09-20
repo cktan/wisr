@@ -57,14 +57,8 @@ extern "C" {
 #define SM_MAX_KEYLEN  4096
 #define SM_MAX_DATALEN (64 * 1024 * 1024)
 #define SM_MAX_DBNAME  63
+#define SM_MAX_SEQNAME 63
 #define SM_MAX_GID     200
-
-/*
- * The first value sm_nextseq() hands out in a new database.
- * Values below it are never generated, so a caller may define
- * them as constants of its own -- relids, for example.
- */
-#define SM_SEQ_FIRST   1000
 
 /*
  * Error codes. Values are explicit and stable: new codes are
@@ -359,24 +353,58 @@ sm_session_t* sm_opendb(sm_env_t* env, const char* dbname,
                         const sm_options_t* opt);
 
 /*
- * Hand out the next value of the database's sequence in *out.
+ * Create a sequence: a named counter that hands out start,
+ * start + increment, start + 2 * increment, and so on. The
+ * name is a NUL-terminated string of at most SM_MAX_SEQNAME
+ * bytes, and increment must not be 0.
+ *
+ * Creating and dropping a sequence is transactional, like
+ * sm_mkrel() -- but the values it hands out are not; see
+ * sm_nextseq(). A name dropped by sm_rmseq() may be used
+ * again: the new sequence starts at its own start, keeping
+ * nothing from the old one.
+ *
+ * Errors: SM_ERR_EXISTS, SM_ERR_NOTRANS, SM_ERR_CONFLICT
+ * (retryable -- concurrently created), SM_ERR_INVALID,
+ * SM_ERR_PREPARED, SM_ERR_DISKFULL, SM_ERR_IO.
+ */
+int sm_mkseq(sm_session_t* session, const char* name,
+             uint64_t start, uint64_t increment);
+
+/*
+ * Drop a sequence. Transactional, as sm_mkseq().
+ *
+ * Errors: SM_ERR_NOTFOUND, SM_ERR_NOTRANS, SM_ERR_CONFLICT
+ * (retryable), SM_ERR_INVALID, SM_ERR_PREPARED.
+ */
+int sm_rmseq(sm_session_t* session, const char* name);
+
+/*
+ * Hand out the sequence's next value in *out.
  *
  * The sequence is persistent and strictly increasing: a value
  * is handed out once, never again, including across restarts.
- * It starts at SM_SEQ_FIRST in a new database, so values below
- * that are free for the caller's own constants.
  *
- * It is not transactional, like a PostgreSQL sequence: it needs
- * no active transaction, never blocks, and an abort does not
- * give a value back. Values are unique but not dense: besides
- * aborts, a crash skips the rest of a block reserved in advance,
- * leaving a gap. Distinct sessions may call it concurrently.
+ * It is not transactional, like a PostgreSQL sequence: it
+ * needs no active transaction, never blocks, and an abort does
+ * not give a value back. Values follow the increment but are
+ * not dense: besides aborts, a crash skips the rest of a block
+ * reserved in advance, leaving a gap. Distinct sessions may
+ * call it concurrently.
  *
- * Errors: SM_ERR_INVALID (NULL session or out), SM_ERR_IO (the
- * database has stopped, or persisting the next block failed),
+ * Inside a transaction it reads the sequence at that
+ * transaction's snapshot, so one created by the transaction
+ * itself can be used at once. A sequence whose last value has
+ * been handed out -- the next one would exceed UINT64_MAX --
+ * fails with SM_ERR_INVALID.
+ *
+ * Errors: SM_ERR_NOTFOUND (no such sequence), SM_ERR_INVALID,
+ * SM_ERR_PREPARED, SM_ERR_CORRUPT, SM_ERR_IO (the database has
+ * stopped, or persisting the next block failed),
  * SM_ERR_DISKFULL.
  */
-int sm_nextseq(sm_session_t* session, uint64_t* out);
+int sm_nextseq(sm_session_t* session, const char* name,
+               uint64_t* out);
 
 /*
  * Close a session. Open cursors are closed, and an active
@@ -554,23 +582,24 @@ int sm_commit_prepared(sm_session_t* session, const char* gid);
 int sm_abort_prepared(sm_session_t* session, const char* gid);
 
 /*
- * Create a relation: an ordered map from key to value, named
- * by relid, a number the caller chooses. relid is either a
- * constant of the caller's in 1..SM_SEQ_FIRST-1, or a value
- * sm_nextseq() has handed out; 0 and any other value fail with
- * SM_ERR_INVALID.
+ * Create a relation -- an ordered map from key to value -- and
+ * hand out its relid in *relid. The library allocates it; a
+ * relid is never reused, so it never names two relations, and
+ * one dropped by sm_rmrel() never comes back.
+ *
+ * Relids rise in creation order, so the lowest one sm_lsrel()
+ * lists is the first relation the database ever had: a program
+ * can find its own catalog relation again that way.
  *
  * Transactional -- visible to others only at commit, and
- * undone by abort or by a rollback that spans it. A relid
- * dropped by sm_rmrel() may be created again at once; the new
- * relation starts empty, while transactions whose snapshot
- * predates the drop still see the old one.
+ * undone by abort or by a rollback that spans it. A relid from
+ * a transaction that aborts is simply never used.
  *
- * Errors: SM_ERR_EXISTS, SM_ERR_NOTRANS, SM_ERR_CONFLICT
- * (retryable -- concurrently created), SM_ERR_INVALID,
- * SM_ERR_PREPARED.
+ * Errors: SM_ERR_NOTRANS, SM_ERR_CONFLICT (retryable),
+ * SM_ERR_INVALID, SM_ERR_PREPARED, SM_ERR_DISKFULL,
+ * SM_ERR_IO.
  */
-int sm_mkrel(sm_session_t* session, uint64_t relid);
+int sm_mkrel(sm_session_t* session, uint64_t* relid);
 
 /*
  * Drop a relation and all of its rows. Transactional, as

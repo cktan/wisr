@@ -15,8 +15,10 @@
  *
  * The program may be run again on the same home directory:
  * the database is created unless it exists, the table unless
- * sm_lsrel lists it, and rows are upserted -- inserted, or
- * updated if the id is taken.
+ * sm_lsrel already lists one -- the library hands out relids,
+ * so the table is found again by listing, not by a constant --
+ * and rows are upserted: inserted, or updated if the id is
+ * taken.
  */
 
 #include "sm.h"
@@ -30,12 +32,6 @@
 #include <string>
 
 namespace {
-
-/*
- * book's relid. A fixed id below SM_SEQ_FIRST is the caller's
- * to choose, so a program can name its tables by constant.
- */
-constexpr uint64_t BOOK_RELID = 1;
 
 /* One row of book. */
 struct book_t {
@@ -133,12 +129,11 @@ void print_book(const book_t &b) {
  * Insert b, or update it if its id is already taken: wisr has
  * no upsert, so try the insert and fall back on SM_ERR_DUPKEY.
  */
-void upsert_book(sm_session_t *s, const book_t &b) {
+void upsert_book(sm_session_t *s, uint64_t rel, const book_t &b) {
   std::string key = encode_key(b.id);
   std::string val = encode_value(b);
   // Try the insert first.
-  if (sm_insert(s, BOOK_RELID, key.data(), key.size(), val.data(),
-                val.size()) == 0) {
+  if (sm_insert(s, rel, key.data(), key.size(), val.data(), val.size()) == 0) {
     return;
   }
   // Any failure but a taken key is a real error.
@@ -146,9 +141,8 @@ void upsert_book(sm_session_t *s, const book_t &b) {
     check(-1, "sm_insert");
   }
   // The id exists: replace its value instead.
-  check(
-      sm_update(s, BOOK_RELID, key.data(), key.size(), val.data(), val.size()),
-      "sm_update");
+  check(sm_update(s, rel, key.data(), key.size(), val.data(), val.size()),
+        "sm_update");
 }
 
 } // namespace
@@ -187,18 +181,20 @@ int main(int argc, char **argv) {
   uint64_t *rels = nullptr;
   size_t nrels = 0;
   check(sm_lsrel(s, &rels, &nrels), "sm_lsrel");
-  bool have_book = false;
+  // The library allocates relids, so an earlier run's book is
+  // found again as the lowest relid listed: the first relation
+  // this database ever had.
+  uint64_t book = nrels > 0 ? rels[0] : 0;
   printf("relations:");
   for (size_t i = 0; i < nrels; i++) {
     printf(" %llu", (unsigned long long)rels[i]);
-    have_book = have_book || rels[i] == BOOK_RELID;
   }
   printf("%s\n", nrels == 0 ? " (none)" : "");
   // The list is the library's; release it.
   sm_free_rels(rels);
-  if (!have_book) {
-    check(sm_mkrel(s, BOOK_RELID), "sm_mkrel");
-    printf("created book (relid %llu)\n", (unsigned long long)BOOK_RELID);
+  if (book == 0) {
+    check(sm_mkrel(s, &book), "sm_mkrel");
+    printf("created book (relid %llu)\n", (unsigned long long)book);
   }
   check(sm_commit(s), "sm_commit");
 
@@ -212,7 +208,7 @@ int main(int argc, char **argv) {
   };
   check(sm_begin(s, SM_XCT_REPEATABLE_READ), "sm_begin");
   for (const book_t &b : books) {
-    upsert_book(s, b);
+    upsert_book(s, book, b);
   }
   check(sm_commit(s), "sm_commit");
   printf("inserted %zu books\n", sizeof(books) / sizeof(books[0]));
@@ -224,7 +220,7 @@ int main(int argc, char **argv) {
   std::string key = encode_key(3);
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm_read(s, BOOK_RELID, key.data(), key.size(), &data, &len);
+  int r = sm_read(s, book, key.data(), key.size(), &data, &len);
   check(r, "sm_read");
   printf("\nread id 3:\n");
   // 1 means no such row, which is not an error.
@@ -242,7 +238,7 @@ int main(int argc, char **argv) {
 
   // Scan every row: NULL bounds mean from the first key to the last.
   printf("\nscan all books:\n");
-  sm_scan_t *c = sm_scan(s, BOOK_RELID, nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(s, book, nullptr, 0, 0, nullptr, 0, 0);
   if (!c) {
     check(-1, "sm_scan");
   }

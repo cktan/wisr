@@ -13,16 +13,19 @@
 
 namespace {
 
-/* A database "db" with relation 1 and one row, "a" -> "1". */
+/* The fixture's relation, set when the fixture is created. */
+uint64_t g_rel = 0;
+
+/* A database "db" with one relation and one row, "a" -> "1". */
 class args_fixture_t {
 public:
-  /* Create "db", relation 1, and the row. */
+  /* Create "db", the relation, and the row. */
   args_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     m_s = open();
     REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(m_s, 1) == 0);
-    put(m_s, 1, "a", "1");
+    g_rel = mkrel(m_s);
+    put(m_s, g_rel, "a", "1");
     REQUIRE(sm_commit(m_s) == 0);
   }
 
@@ -129,16 +132,21 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm_list_prepared(nullptr, &list, &n), SM_ERR_INVALID);
   expect_fail(sm_commit_prepared(nullptr, "g"), SM_ERR_INVALID);
   expect_fail(sm_abort_prepared(nullptr, "g"), SM_ERR_INVALID);
-  expect_fail(sm_mkrel(nullptr, 1), SM_ERR_INVALID);
-  expect_fail(sm_rmrel(nullptr, 1), SM_ERR_INVALID);
-  expect_fail(sm_insert(nullptr, 1, "k", 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_update(nullptr, 1, "k", 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_delete(nullptr, 1, "k", 1), SM_ERR_INVALID);
-  expect_fail(sm_read(nullptr, 1, "k", 1, &d, &dl), SM_ERR_INVALID);
-  expect_null(sm_scan(nullptr, 1, nullptr, 0, 0, nullptr, 0, 0),
+  uint64_t relid;
+  expect_fail(sm_mkrel(nullptr, &relid), SM_ERR_INVALID);
+  expect_fail(sm_rmrel(nullptr, g_rel), SM_ERR_INVALID);
+  expect_fail(sm_insert(nullptr, g_rel, "k", 1, "v", 1), SM_ERR_INVALID);
+  expect_fail(sm_update(nullptr, g_rel, "k", 1, "v", 1), SM_ERR_INVALID);
+  expect_fail(sm_delete(nullptr, g_rel, "k", 1), SM_ERR_INVALID);
+  expect_fail(sm_read(nullptr, g_rel, "k", 1, &d, &dl), SM_ERR_INVALID);
+  expect_null(sm_scan(nullptr, g_rel, nullptr, 0, 0, nullptr, 0, 0),
               SM_ERR_INVALID);
   uint64_t *rels;
   expect_fail(sm_lsrel(nullptr, &rels, &n), SM_ERR_INVALID);
+  uint64_t v;
+  expect_fail(sm_mkseq(nullptr, "s", 1, 1), SM_ERR_INVALID);
+  expect_fail(sm_rmseq(nullptr, "s"), SM_ERR_INVALID);
+  expect_fail(sm_nextseq(nullptr, "s", &v), SM_ERR_INVALID);
 
   CHECK(sm_closedb(nullptr) == 0);
   sm_scanend(nullptr);
@@ -149,17 +157,18 @@ TEST_CASE("every session call rejects a NULL session") {
 
 TEST_CASE("relid 0 is rejected by every call taking a relid") {
   // Verify no call treats relid 0 -- the catalog's slot -- as a
-  // relation.
-  // 1. sm_mkrel, sm_rmrel, sm_insert, sm_update, sm_delete,
-  //    sm_read, and sm_scan with relid 0 fail with
-  //    SM_ERR_INVALID.
-  // 2. The transaction is undisturbed: relation 1 still reads.
+  // relation, and that sm_mkrel needs somewhere to put its
+  // relid.
+  // 1. sm_rmrel, sm_insert, sm_update, sm_delete, sm_read, and
+  //    sm_scan with relid 0 fail with SM_ERR_INVALID, as does
+  //    sm_mkrel with a NULL out-parameter.
+  // 2. The transaction is undisturbed: the relation still reads.
   args_fixture_t f;
   sm_session_t *s = f.s();
   const char *d;
   size_t dl;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  expect_fail(sm_mkrel(s, 0), SM_ERR_INVALID);
+  expect_fail(sm_mkrel(s, nullptr), SM_ERR_INVALID);
   expect_fail(sm_rmrel(s, 0), SM_ERR_INVALID);
   expect_fail(sm_insert(s, 0, "k", 1, "v", 1), SM_ERR_INVALID);
   expect_fail(sm_update(s, 0, "k", 1, "v", 1), SM_ERR_INVALID);
@@ -167,37 +176,34 @@ TEST_CASE("relid 0 is rejected by every call taking a relid") {
   expect_fail(sm_read(s, 0, "k", 1, &d, &dl), SM_ERR_INVALID);
   expect_null(sm_scan(s, 0, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_INVALID);
 
-  CHECK(get(s, 1, "a") == "1");
+  CHECK(get(s, g_rel, "a") == "1");
   REQUIRE(sm_commit(s) == 0);
 }
 
-TEST_CASE("sm_mkrel takes a constant below SM_SEQ_FIRST or an issued value") {
-  // Verify which relids sm_mkrel accepts.
-  // 1. SM_SEQ_FIRST - 1, the largest caller constant, works.
-  // 2. SM_SEQ_FIRST and UINT64_MAX, not yet handed out by
-  //    sm_nextseq, fail with SM_ERR_INVALID.
-  // 3. Take v from sm_nextseq: sm_mkrel(v) works, and v + 1,
-  //    still not handed out, fails with SM_ERR_INVALID.
-  // 4. Both new relations take a row and commit.
+TEST_CASE("sm_mkrel hands out a fresh relid every time") {
+  // Verify relids rise and are never reused (DESIGN.md §11).
+  // 1. Three relations in one transaction get three ascending
+  //    relids, all above the fixture's.
+  // 2. Dropping one and creating another gives a relid above
+  //    every one handed out so far.
+  // 3. Each new relation is usable at once and commits.
   args_fixture_t f;
   sm_session_t *s = f.s();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(sm_mkrel(s, SM_SEQ_FIRST - 1) == 0);
+  uint64_t a = mkrel(s), b = mkrel(s), c = mkrel(s);
+  CHECK(g_rel < a);
+  CHECK(a < b);
+  CHECK(b < c);
 
-  expect_fail(sm_mkrel(s, SM_SEQ_FIRST), SM_ERR_INVALID);
-  expect_fail(sm_mkrel(s, UINT64_MAX), SM_ERR_INVALID);
+  REQUIRE(sm_rmrel(s, b) == 0);
+  CHECK(mkrel(s) > c);
 
-  uint64_t v = 0;
-  REQUIRE(sm_nextseq(s, &v) == 0);
-  CHECK(sm_mkrel(s, v) == 0);
-  expect_fail(sm_mkrel(s, v + 1), SM_ERR_INVALID);
-
-  put(s, SM_SEQ_FIRST - 1, "k", "c");
-  put(s, v, "k", "s");
+  put(s, a, "k", "va");
+  put(s, c, "k", "vc");
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(s, SM_SEQ_FIRST - 1, "k") == "c");
-  CHECK(get(s, v, "k") == "s");
+  CHECK(get(s, a, "k") == "va");
+  CHECK(get(s, c, "k") == "vc");
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -219,9 +225,9 @@ TEST_CASE("unknown relations fail with SM_ERR_NOTFOUND") {
   expect_fail(sm_read(s, 999, "k", 1, &d, &dl), SM_ERR_NOTFOUND);
   expect_null(sm_scan(s, 999, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_NOTFOUND);
 
-  REQUIRE(sm_rmrel(s, 1) == 0);
-  expect_fail(sm_read(s, 1, "a", 1, &d, &dl), SM_ERR_NOTFOUND);
-  expect_fail(sm_insert(s, 1, "k", 1, "v", 1), SM_ERR_NOTFOUND);
+  REQUIRE(sm_rmrel(s, g_rel) == 0);
+  expect_fail(sm_read(s, g_rel, "a", 1, &d, &dl), SM_ERR_NOTFOUND);
+  expect_fail(sm_insert(s, g_rel, "k", 1, "v", 1), SM_ERR_NOTFOUND);
   REQUIRE(sm_abort(s) == 0);
 }
 
@@ -239,18 +245,18 @@ TEST_CASE("keys and values: NULL only with length 0") {
   const char *d;
   size_t dl;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  expect_fail(sm_insert(s, 1, nullptr, 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_update(s, 1, nullptr, 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_delete(s, 1, nullptr, 1), SM_ERR_INVALID);
-  expect_fail(sm_read(s, 1, nullptr, 1, &d, &dl), SM_ERR_INVALID);
-  expect_fail(sm_insert(s, 1, "k", 1, nullptr, 1), SM_ERR_INVALID);
-  expect_fail(sm_update(s, 1, "a", 1, nullptr, 1), SM_ERR_INVALID);
-  CHECK(get(s, 1, "a") == "1");
+  expect_fail(sm_insert(s, g_rel, nullptr, 1, "v", 1), SM_ERR_INVALID);
+  expect_fail(sm_update(s, g_rel, nullptr, 1, "v", 1), SM_ERR_INVALID);
+  expect_fail(sm_delete(s, g_rel, nullptr, 1), SM_ERR_INVALID);
+  expect_fail(sm_read(s, g_rel, nullptr, 1, &d, &dl), SM_ERR_INVALID);
+  expect_fail(sm_insert(s, g_rel, "k", 1, nullptr, 1), SM_ERR_INVALID);
+  expect_fail(sm_update(s, g_rel, "a", 1, nullptr, 1), SM_ERR_INVALID);
+  CHECK(get(s, g_rel, "a") == "1");
 
-  REQUIRE(sm_insert(s, 1, nullptr, 0, "empty-key", 9) == 0);
-  CHECK(get(s, 1, "") == "empty-key");
-  REQUIRE(sm_insert(s, 1, "e", 1, nullptr, 0) == 0);
-  CHECK(get(s, 1, "e") == "");
+  REQUIRE(sm_insert(s, g_rel, nullptr, 0, "empty-key", 9) == 0);
+  CHECK(get(s, g_rel, "") == "empty-key");
+  REQUIRE(sm_insert(s, g_rel, "e", 1, nullptr, 0) == 0);
+  CHECK(get(s, g_rel, "e") == "");
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -269,10 +275,10 @@ TEST_CASE("out-parameters must not be NULL") {
   sm_prepared_t *list;
   size_t n;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  expect_fail(sm_read(s, 1, "a", 1, nullptr, &dl), SM_ERR_INVALID);
-  expect_fail(sm_read(s, 1, "a", 1, &d, nullptr), SM_ERR_INVALID);
+  expect_fail(sm_read(s, g_rel, "a", 1, nullptr, &dl), SM_ERR_INVALID);
+  expect_fail(sm_read(s, g_rel, "a", 1, &d, nullptr), SM_ERR_INVALID);
 
-  sm_scan_t *c = sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   expect_fail(sm_scannxt(nullptr, &k, &kl, &d, &dl), SM_ERR_INVALID);
   expect_fail(sm_scannxt(c, nullptr, &kl, &d, &dl), SM_ERR_INVALID);
@@ -317,44 +323,73 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm_savepoint(s), SM_ERR_NOTRANS);
   expect_fail(sm_rollback(s), SM_ERR_NOTRANS);
   expect_fail(sm_prepare(s, "g"), SM_ERR_NOTRANS);
-  expect_fail(sm_mkrel(s, 2), SM_ERR_NOTRANS);
-  expect_fail(sm_rmrel(s, 1), SM_ERR_NOTRANS);
-  expect_fail(sm_insert(s, 1, "k", 1, "v", 1), SM_ERR_NOTRANS);
-  expect_fail(sm_update(s, 1, "a", 1, "v", 1), SM_ERR_NOTRANS);
-  expect_fail(sm_delete(s, 1, "a", 1), SM_ERR_NOTRANS);
-  expect_fail(sm_read(s, 1, "a", 1, &d, &dl), SM_ERR_NOTRANS);
-  expect_null(sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_NOTRANS);
+  uint64_t relid;
+  expect_fail(sm_mkrel(s, &relid), SM_ERR_NOTRANS);
+  expect_fail(sm_mkseq(s, "s", 1, 1), SM_ERR_NOTRANS);
+  expect_fail(sm_rmseq(s, "s"), SM_ERR_NOTRANS);
+  expect_fail(sm_rmrel(s, g_rel), SM_ERR_NOTRANS);
+  expect_fail(sm_insert(s, g_rel, "k", 1, "v", 1), SM_ERR_NOTRANS);
+  expect_fail(sm_update(s, g_rel, "a", 1, "v", 1), SM_ERR_NOTRANS);
+  expect_fail(sm_delete(s, g_rel, "a", 1), SM_ERR_NOTRANS);
+  expect_fail(sm_read(s, g_rel, "a", 1, &d, &dl), SM_ERR_NOTRANS);
+  expect_null(sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_NOTRANS);
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(s, 1, "a") == "1");
+  CHECK(get(s, g_rel, "a") == "1");
   REQUIRE(sm_commit(s) == 0);
 }
 
 TEST_CASE("a rejected call leaves the transaction active and unchanged") {
   // Verify sm.h's promise: a non-retryable error changes nothing.
   // 1. Write "b", then provoke SM_ERR_INVALID, SM_ERR_NOTFOUND,
-  //    SM_ERR_DUPKEY, and SM_ERR_EXISTS.
+  //    and SM_ERR_DUPKEY.
   // 2. The transaction is still active: "b" reads back, a further
   //    write succeeds, and the commit makes both durable.
   args_fixture_t f;
   sm_session_t *s = f.s();
   std::string over(SM_MAX_KEYLEN + 1, 'k');
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, 1, "b", "2");
-  expect_fail(sm_insert(s, 1, over.data(), over.size(), "v", 1),
+  put(s, g_rel, "b", "2");
+  expect_fail(sm_insert(s, g_rel, over.data(), over.size(), "v", 1),
               SM_ERR_INVALID);
-  expect_fail(sm_update(s, 1, "missing", 7, "v", 1), SM_ERR_NOTFOUND);
-  expect_fail(sm_insert(s, 1, "a", 1, "v", 1), SM_ERR_DUPKEY);
-  expect_fail(sm_mkrel(s, 1), SM_ERR_EXISTS);
-  CHECK(get(s, 1, "b") == "2");
-  put(s, 1, "c", "3");
+  expect_fail(sm_update(s, g_rel, "missing", 7, "v", 1), SM_ERR_NOTFOUND);
+  expect_fail(sm_insert(s, g_rel, "a", 1, "v", 1), SM_ERR_DUPKEY);
+  CHECK(get(s, g_rel, "b") == "2");
+  put(s, g_rel, "c", "3");
   REQUIRE(sm_commit(s) == 0);
 
   sm_session_t *v = f.open();
   REQUIRE(sm_begin(v, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(v, 1, "a") == "1");
-  CHECK(get(v, 1, "b") == "2");
-  CHECK(get(v, 1, "c") == "3");
+  CHECK(get(v, g_rel, "a") == "1");
+  CHECK(get(v, g_rel, "b") == "2");
+  CHECK(get(v, g_rel, "c") == "3");
   REQUIRE(sm_commit(v) == 0);
   sm_closedb(v);
+}
+
+TEST_CASE("every sequence call validates its name") {
+  // Verify sequence names: NULL, "", and SM_MAX_SEQNAME + 1
+  // bytes fail with SM_ERR_INVALID; SM_MAX_SEQNAME bytes work.
+  // 1. Each bad name is rejected by sm_mkseq, sm_rmseq, and
+  //    sm_nextseq.
+  // 2. A sequence named with exactly SM_MAX_SEQNAME bytes can
+  //    be created, drawn from, and dropped.
+  args_fixture_t f;
+  sm_session_t *s = f.s();
+  std::string over(SM_MAX_SEQNAME + 1, 's');
+  uint64_t v = 0;
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  for (const char *name : {(const char *)nullptr, "", over.c_str()}) {
+    CAPTURE(name ? name : "(null)");
+    expect_fail(sm_mkseq(s, name, 1, 1), SM_ERR_INVALID);
+    expect_fail(sm_rmseq(s, name), SM_ERR_INVALID);
+    expect_fail(sm_nextseq(s, name, &v), SM_ERR_INVALID);
+  }
+
+  std::string max(SM_MAX_SEQNAME, 's');
+  REQUIRE(sm_mkseq(s, max.c_str(), 7, 2) == 0);
+  REQUIRE(sm_nextseq(s, max.c_str(), &v) == 0);
+  CHECK(v == 7);
+  CHECK(sm_rmseq(s, max.c_str()) == 0);
+  REQUIRE(sm_commit(s) == 0);
 }

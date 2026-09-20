@@ -36,13 +36,13 @@ using namespace wisr;
 
 namespace {
 
-/* The SIREAD point key of (cfid, userkey). */
-std::string point_key(uint64_t cfid, rocksdb::Slice key) {
+/* The SIREAD point key of (relid, userkey). */
+std::string point_key(uint64_t relid, rocksdb::Slice key) {
   std::string k;
-  // Reserve room for the cfid prefix and the key.
+  // Reserve room for the relid prefix and the key.
   k.reserve(8 + key.size());
-  // Prefix the cfid, so equal keys in different relations differ.
-  put_be64(k, cfid);
+  // Prefix the relid, so equal keys in different relations differ.
+  put_be64(k, relid);
   // Append the userkey.
   k.append(key.data(), key.size());
   return k;
@@ -171,14 +171,14 @@ void ssi_on_xid(sm_session_t *s) {
   s->db->ssi_by_xid[s->xid] = s->ssi;
 }
 
-/* Leave a SIREAD entry on (cfid, key), found or not (§7.1). */
-void ssi_on_read(sm_session_t *s, uint64_t cfid, rocksdb::Slice key) {
+/* Leave a SIREAD entry on (relid, key), found or not (§7.1). */
+void ssi_on_read(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
   // Non-SERIALIZABLE readers leave no entry.
   if (!s->ssi) {
     return;
   }
   // Build the point key.
-  std::string k = point_key(cfid, key);
+  std::string k = point_key(relid, key);
   // Hold ssi_mu while updating the index.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
   // Find or create the key's reader list.
@@ -216,8 +216,8 @@ void ssi_on_skip(sm_session_t *s, uint64_t writer_xid) {
   add_edge(s->ssi, it->second, s->ssi);
 }
 
-/* A write of (cfid, key): an edge from every concurrent reader of it. */
-void ssi_on_write(sm_session_t *s, uint64_t cfid, rocksdb::Slice key) {
+/* A write of (relid, key): an edge from every concurrent reader of it. */
+void ssi_on_write(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
   // Non-SERIALIZABLE writers take no part.
   if (!s->ssi) {
     return;
@@ -229,13 +229,13 @@ void ssi_on_write(sm_session_t *s, uint64_t cfid, rocksdb::Slice key) {
   // Gather every reader whose entry covers the key.
   std::vector<ssi_node_t *> readers;
   // Point entries on exactly this key.
-  auto pit = db->ssi_points.find(point_key(cfid, key));
+  auto pit = db->ssi_points.find(point_key(relid, key));
   // Found: take its readers.
   if (pit != db->ssi_points.end()) {
     readers = pit->second;
   }
   // Range entries of this relation.
-  auto rit = db->ssi_ranges.find(cfid);
+  auto rit = db->ssi_ranges.find(relid);
   // Found: check each range.
   if (rit != db->ssi_ranges.end()) {
     for (const ssi_range_t &r : rit->second) {
@@ -256,9 +256,9 @@ void ssi_on_write(sm_session_t *s, uint64_t cfid, rocksdb::Slice key) {
 }
 
 /* Register a scan's requested range, before its snapshot (§10.2). */
-void ssi_range_open(sm_scan_t *c, uint64_t cfid, const char *skey, size_t sklen,
-                    int skey_inclusive, const char *ekey, size_t eklen,
-                    int ekey_inclusive) {
+void ssi_range_open(sm_scan_t *c, uint64_t relid, const char *skey,
+                    size_t sklen, int skey_inclusive, const char *ekey,
+                    size_t eklen, int ekey_inclusive) {
   sm_session_t *s = c->session;
   // Non-SERIALIZABLE scans leave no range.
   if (!s->ssi) {
@@ -285,15 +285,15 @@ void ssi_range_open(sm_scan_t *c, uint64_t cfid, const char *skey, size_t sklen,
   // Hold ssi_mu while registering the range.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
   // Find or create the relation's range list.
-  std::list<ssi_range_t> &list = s->db->ssi_ranges[cfid];
+  std::list<ssi_range_t> &list = s->db->ssi_ranges[relid];
   // Append the range; the cursor keeps its position.
   c->ssi_range = list.insert(list.end(), std::move(r));
   // Remember where the range lives, for narrowing.
-  c->ssi_cfid = cfid;
+  c->ssi_relid = relid;
   // The cursor now owns a range.
   c->has_ssi_range = true;
   // Remember the range on the node, for freeing.
-  s->ssi->ranges.emplace_back(cfid, c->ssi_range);
+  s->ssi->ranges.emplace_back(relid, c->ssi_range);
 }
 
 /*
@@ -335,7 +335,7 @@ void ssi_range_close(sm_scan_t *c) {
     }
   }
   // Drop it from the relation's index.
-  s->db->ssi_ranges[c->ssi_cfid].erase(c->ssi_range);
+  s->db->ssi_ranges[c->ssi_relid].erase(c->ssi_range);
   // The cursor no longer owns a range.
   c->has_ssi_range = false;
 }

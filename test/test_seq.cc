@@ -1,7 +1,7 @@
 /*
- * test_seq.cc -- sm_nextseq: a persistent, strictly increasing,
- * non-transactional per-database sequence starting at
- * SM_SEQ_FIRST.
+ * test_seq.cc -- named sequences: sm_mkseq and sm_rmseq are
+ * transactional, while the values sm_nextseq hands out are
+ * persistent, strictly increasing, and not.
  */
 
 #include "doctest.h"
@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -58,10 +59,35 @@ private:
   sm_session_t *m_s = nullptr;
 };
 
-/* The next value, failing the test on an error. */
-uint64_t next(sm_session_t *s) {
+/* The number of sequence leases in the database's CF:meta. */
+int meta_seq_keys(sm_session_t *s) {
+  std::unique_ptr<rocksdb::Iterator> it(
+      s->db->rdb->NewIterator(rocksdb::ReadOptions(), s->db->cf_meta));
+  int n = 0;
+  for (it->Seek(WISR_META_SEQ_PREFIX); it->Valid(); it->Next()) {
+    if (!it->key().starts_with(WISR_META_SEQ_PREFIX)) {
+      break;
+    }
+    n++;
+  }
+  return n;
+}
+
+/* The sequence every test uses unless it makes its own. */
+const char *const SEQ = "s";
+
+/* Create a sequence in its own committed transaction. */
+void commit_mkseq(sm_session_t *s, const char *name, uint64_t start,
+                  uint64_t increment) {
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE_MESSAGE(sm_mkseq(s, name, start, increment) == 0, sm_errmsg());
+  REQUIRE(sm_commit(s) == 0);
+}
+
+/* The next value of name, failing the test on an error. */
+uint64_t next(sm_session_t *s, const char *name = SEQ) {
   uint64_t v = 0;
-  REQUIRE_MESSAGE(sm_nextseq(s, &v) == 0, sm_errmsg());
+  REQUIRE_MESSAGE(sm_nextseq(s, name, &v) == 0, sm_errmsg());
   return v;
 }
 
@@ -79,60 +105,155 @@ int seq_child_main(const char *homedir) {
   }
   for (;;) {
     uint64_t v;
-    if (sm_nextseq(s, &v) != 0 || write(1, &v, sizeof(v)) != sizeof(v)) {
+    if (sm_nextseq(s, "s", &v) != 0 || write(1, &v, sizeof(v)) != sizeof(v)) {
       return 3;
     }
   }
 }
 
-TEST_CASE("the sequence starts at SM_SEQ_FIRST and strictly increases") {
-  // Verify the basic contract.
-  // 1. The first value in a new database is SM_SEQ_FIRST.
-  // 2. Each later value is greater, with or without an active
+TEST_CASE("a sequence starts at its start and steps by its increment") {
+  // Verify the basic contract, and that sequences are separate.
+  // 1. The first value of a sequence is its start; each later
+  //    value is one increment higher, with or without an active
   //    transaction.
+  // 2. A second sequence keeps its own position.
   // 3. NULL arguments fail with SM_ERR_INVALID.
   seq_fixture_t f;
   sm_session_t *s = f.s();
+  commit_mkseq(s, SEQ, 1000, 1);
+  commit_mkseq(s, "by7", 5, 7);
   uint64_t v = next(s);
-  CHECK(v == SM_SEQ_FIRST);
+  CHECK(v == 1000);
   for (int i = 0; i < 100; i++) {
     uint64_t w = next(s);
-    CHECK(w > v);
+    CHECK(w == v + 1);
     v = w;
   }
+  CHECK(next(s, "by7") == 5);
+  CHECK(next(s, "by7") == 12);
+  CHECK(next(s, "by7") == 19);
+  CHECK(next(s) == v + 1);
+
   REQUIRE(sm_begin(s, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(next(s) > v);
+  CHECK(next(s) == v + 2);
   REQUIRE(sm_commit(s) == 0);
   uint64_t out;
-  CHECK(sm_nextseq(nullptr, &out) == -1);
+  CHECK(sm_nextseq(nullptr, SEQ, &out) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_nextseq(s, nullptr) == -1);
+  CHECK(sm_nextseq(s, SEQ, nullptr) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  CHECK(sm_nextseq(s, nullptr, &out) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+}
+
+TEST_CASE("sm_mkseq and sm_rmseq are transactional; the values are not") {
+  // Verify the split: the definition follows the transaction,
+  // the position does not.
+  // 1. A sequence created but not committed is usable at once
+  //    by its own transaction, and gone after an abort.
+  // 2. Created and committed, it is usable by another session.
+  // 3. Dropped and committed, sm_nextseq fails with
+  //    SM_ERR_NOTFOUND; created again under the same name, it
+  //    starts over at its start.
+  // 4. sm_mkseq of a live name fails with SM_ERR_EXISTS,
+  //    sm_rmseq of an unknown one with SM_ERR_NOTFOUND, and
+  //    increment 0 with SM_ERR_INVALID.
+  seq_fixture_t f;
+  sm_session_t *s = f.s();
+  sm_session_t *o = f.open();
+  uint64_t v = 0;
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_mkseq(s, SEQ, 100, 1) == 0);
+  CHECK(next(s) == 100);
+  CHECK(sm_nextseq(o, SEQ, &v) == -1); // not committed yet
+  CHECK(sm_errno() == SM_ERR_NOTFOUND);
+  REQUIRE(sm_abort(s) == 0);
+  CHECK(sm_nextseq(s, SEQ, &v) == -1);
+  CHECK(sm_errno() == SM_ERR_NOTFOUND);
+
+  commit_mkseq(s, SEQ, 100, 1);
+  CHECK(next(o) == 100);
+  CHECK(next(s) == 101);
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_mkseq(s, SEQ, 1, 1) == -1);
+  CHECK(sm_errno() == SM_ERR_EXISTS);
+  CHECK(sm_rmseq(s, "nope") == -1);
+  CHECK(sm_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm_mkseq(s, "zero", 1, 0) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  REQUIRE(sm_rmseq(s, SEQ) == 0);
+  REQUIRE(sm_commit(s) == 0);
+  CHECK(sm_nextseq(s, SEQ, &v) == -1);
+  CHECK(sm_errno() == SM_ERR_NOTFOUND);
+
+  commit_mkseq(s, SEQ, 100, 1);
+  CHECK(next(s) == 100); // a new sequence, starting over
+  sm_closedb(o);
+}
+
+TEST_CASE("dropping a sequence deletes its lease from CF:meta") {
+  // Verify the commit-time cleanup of a dropped sequence.
+  // 1. Draw a value, which persists a lease keyed by seqid.
+  // 2. Drop the sequence and commit: the lease is gone, so
+  //    CF:meta keeps nothing for it.
+  seq_fixture_t f;
+  sm_session_t *s = f.s();
+  commit_mkseq(s, SEQ, 1000, 1);
+  CHECK(next(s) == 1000);
+  CHECK(meta_seq_keys(s) == 1);
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_rmseq(s, SEQ) == 0);
+  CHECK(meta_seq_keys(s) == 1); // not until it commits
+  REQUIRE(sm_commit(s) == 0);
+  CHECK(meta_seq_keys(s) == 0);
+}
+
+TEST_CASE("a sequence hands out its last value, then fails") {
+  // Verify the end of the range, where a step would wrap.
+  // 1. A sequence starting two steps below UINT64_MAX hands
+  //    out both values.
+  // 2. The next call fails with SM_ERR_INVALID, and keeps
+  //    failing.
+  seq_fixture_t f;
+  sm_session_t *s = f.s();
+  commit_mkseq(s, "end", UINT64_MAX - 1, 1);
+  CHECK(next(s, "end") == UINT64_MAX - 1);
+  CHECK(next(s, "end") == UINT64_MAX);
+  uint64_t v = 0;
+  CHECK(sm_nextseq(s, "end", &v) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  CHECK(sm_nextseq(s, "end", &v) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
 }
 
 TEST_CASE("an abort does not give a sequence value back") {
-  // Verify the sequence is not transactional.
+  // Verify the values are not transactional.
   // 1. Take a value inside a transaction, then abort it.
   // 2. The next value is still greater.
   seq_fixture_t f;
   sm_session_t *s = f.s();
+  commit_mkseq(s, SEQ, 1000, 1);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   uint64_t v = next(s);
   REQUIRE(sm_abort(s) == 0);
   CHECK(next(s) > v);
 }
 
-TEST_CASE("each database has its own sequence") {
-  // Verify the sequence is per database.
-  // 1. Two databases both start at SM_SEQ_FIRST.
+TEST_CASE("sequences of the same name in two databases are separate") {
+  // Verify a sequence belongs to its database.
+  // 1. Both databases have a sequence "s" starting at 1000.
   // 2. Taking values from one does not advance the other.
   seq_fixture_t f;
   REQUIRE(sm_mkdb(f.home().env(), "db2", nullptr) == 0);
   sm_session_t *t = sm_opendb(f.home().env(), "db2", nullptr);
   REQUIRE(t);
-  CHECK(next(f.s()) == SM_SEQ_FIRST);
-  CHECK(next(f.s()) == SM_SEQ_FIRST + 1);
-  CHECK(next(t) == SM_SEQ_FIRST);
+  commit_mkseq(f.s(), SEQ, 1000, 1);
+  commit_mkseq(t, SEQ, 1000, 1);
+  CHECK(next(f.s()) == 1000);
+  CHECK(next(f.s()) == 1001);
+  CHECK(next(t) == 1000);
   sm_closedb(t);
 }
 
@@ -145,6 +266,7 @@ TEST_CASE("the sequence survives reopening, across many leases") {
   sm_options_init(&opt);
   opt.ts_lease = 3;
   seq_fixture_t f(&opt);
+  commit_mkseq(f.s(), SEQ, 1000, 1);
   uint64_t last = 0;
   for (int round = 0; round < 5; round++) {
     CAPTURE(round);
@@ -162,6 +284,7 @@ TEST_CASE("concurrent sessions never receive the same value") {
   // 1. Four threads, each on its own session, take 2000 values.
   // 2. Each thread's values increase, and all 8000 are distinct.
   seq_fixture_t f;
+  commit_mkseq(f.s(), SEQ, 1000, 1);
   std::vector<sm_session_t *> sessions;
   for (int t = 0; t < 4; t++) {
     sessions.push_back(f.open());
@@ -175,7 +298,7 @@ TEST_CASE("concurrent sessions never receive the same value") {
       std::vector<uint64_t> mine;
       for (int i = 0; i < 2000; i++) {
         uint64_t v = 0;
-        sm_nextseq(s, &v);
+        sm_nextseq(s, SEQ, &v);
         mine.push_back(v);
       }
       std::lock_guard<std::mutex> guard(mu);
@@ -201,33 +324,18 @@ TEST_CASE("a stopped database hands out no sequence values") {
   // 2. sm_nextseq then fails with SM_ERR_IO.
   seq_fixture_t f;
   sm_session_t *s = f.s();
+  commit_mkseq(s, SEQ, 1000, 1);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(s, 1) == 0);
+  uint64_t relid = 0;
+  REQUIRE(sm_mkrel(s, &relid) == 0);
   s->db->test_before_commit = [](uint64_t) {
     return rocksdb::Status::IOError("injected");
   };
   CHECK(sm_commit(s) == -1);
   s->db->test_before_commit = nullptr;
   uint64_t v;
-  CHECK(sm_nextseq(s, &v) == -1);
+  CHECK(sm_nextseq(s, SEQ, &v) == -1);
   CHECK(sm_errno() == SM_ERR_IO);
-}
-
-TEST_CASE(
-    "a database made before the sequence existed starts it at SM_SEQ_FIRST") {
-  // Verify older databases, whose CF:meta has no sequence lease.
-  // 1. Delete the lease from CF:meta, as in a database made
-  //    before sm_nextseq, and reopen.
-  // 2. The first value is SM_SEQ_FIRST, and the next is greater.
-  seq_fixture_t f;
-  REQUIRE(f.s()
-              ->db->rdb
-              ->Delete(rocksdb::WriteOptions(), f.s()->db->cf_meta,
-                       WISR_META_NEXT_SEQ)
-              .ok());
-  f.reopen();
-  CHECK(next(f.s()) == SM_SEQ_FIRST);
-  CHECK(next(f.s()) == SM_SEQ_FIRST + 1);
 }
 
 TEST_CASE("values handed out before a kill are never handed out again") {
@@ -237,6 +345,7 @@ TEST_CASE("values handed out before a kill are never handed out again") {
   // 2. Reattach: the next value is greater than every value the
   //    child reported.
   seq_fixture_t f;
+  commit_mkseq(f.s(), SEQ, 1000, 1);
   REQUIRE(sm_closedb(f.s()) == 0);
   f.home().detach();
   int fds[2];

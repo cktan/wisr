@@ -18,16 +18,19 @@
 
 namespace {
 
-/* A database "db" with relation 1 holding "a" -> "0". */
+/* The fixture's relation, set when the fixture is created. */
+uint64_t g_rel = 0;
+
+/* A database "db" with one relation holding "a" -> "0". */
 class sp_fixture_t {
 public:
-  /* Create "db", relation 1, and the row. */
+  /* Create "db", the relation, and the row. */
   sp_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     sm_session_t *s = open();
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(s, 1) == 0);
-    put(s, 1, "a", "0");
+    g_rel = mkrel(s);
+    put(s, g_rel, "a", "0");
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_closedb(s) == 0);
   }
@@ -45,12 +48,12 @@ private:
 
 /* Set key in relation 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, 1, key.data(), key.size(), val.data(), val.size());
+  return sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size());
 }
 
 /* Delete key from relation 1; the result of sm_delete. */
 int del(sm_session_t *s, const std::string &key) {
-  return sm_delete(s, 1, key.data(), key.size());
+  return sm_delete(s, g_rel, key.data(), key.size());
 }
 
 /* Drain a cursor into its keys and close it. */
@@ -85,34 +88,34 @@ TEST_CASE("rollback restores the values as of the savepoint, at every level") {
     sm_session_t *s = f.open();
     REQUIRE(sm_begin(s, level) == 0);
     REQUIRE(set(s, "a", "1") == 0);
-    put(s, 1, "b", "1");
+    put(s, g_rel, "b", "1");
     REQUIRE(sm_savepoint(s) == 0);
 
     REQUIRE(set(s, "a", "2") == 0);
     REQUIRE(set(s, "a", "3") == 0);
     REQUIRE(del(s, "b") == 0);
-    put(s, 1, "c", "2");
-    put(s, 1, "b", "2");
-    CHECK(get(s, 1, "a") == "3");
+    put(s, g_rel, "c", "2");
+    put(s, g_rel, "b", "2");
+    CHECK(get(s, g_rel, "a") == "3");
 
     for (int round = 0; round < 2; round++) {
       CAPTURE(round);
       REQUIRE(sm_rollback(s) == 0);
-      CHECK(get(s, 1, "a") == "1");
-      CHECK(get(s, 1, "b") == "1");
-      CHECK(get(s, 1, "c") == "<none>");
-      CHECK(keys_of(sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0)) ==
+      CHECK(get(s, g_rel, "a") == "1");
+      CHECK(get(s, g_rel, "b") == "1");
+      CHECK(get(s, g_rel, "c") == "<none>");
+      CHECK(keys_of(sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0)) ==
             std::vector<std::string>{"a", "b"});
     }
 
     REQUIRE(set(s, "a", "4") == 0);
-    put(s, 1, "d", "4");
+    put(s, g_rel, "d", "4");
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    CHECK(get(s, 1, "a") == "4");
-    CHECK(get(s, 1, "b") == "1");
-    CHECK(get(s, 1, "c") == "<none>");
-    CHECK(get(s, 1, "d") == "4");
+    CHECK(get(s, g_rel, "a") == "4");
+    CHECK(get(s, g_rel, "b") == "1");
+    CHECK(get(s, g_rel, "c") == "<none>");
+    CHECK(get(s, g_rel, "d") == "4");
     REQUIRE(sm_commit(s) == 0);
     sm_closedb(s);
   }
@@ -146,16 +149,16 @@ TEST_CASE("rollback needs a savepoint, and a savepoint lives only in its "
   REQUIRE(sm_savepoint(s) == 0);
   REQUIRE(set(s, "a", "2") == 0);
   REQUIRE(sm_rollback(s) == 0);
-  CHECK(get(s, 1, "a") == "1");
+  CHECK(get(s, g_rel, "a") == "1");
   REQUIRE(sm_abort(s) == 0);
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm_savepoint(s) == 0);
   REQUIRE(set(s, "a", "1") == 0);
-  put(s, 1, "b", "1");
+  put(s, g_rel, "b", "1");
   REQUIRE(sm_rollback(s) == 0);
-  CHECK(get(s, 1, "a") == "0");
-  CHECK(get(s, 1, "b") == "<none>");
+  CHECK(get(s, g_rel, "a") == "0");
+  CHECK(get(s, g_rel, "b") == "<none>");
   REQUIRE(sm_commit(s) == 0);
   sm_closedb(s);
 }
@@ -172,21 +175,21 @@ TEST_CASE(
   sp_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, 1, "b", "1");
-  sm_scan_t *c1 = sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0);
+  put(s, g_rel, "b", "1");
+  sm_scan_t *c1 = sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c1);
   REQUIRE(sm_savepoint(s) == 0);
-  put(s, 1, "c", "2");
-  sm_scan_t *c2 = sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0);
+  put(s, g_rel, "c", "2");
+  sm_scan_t *c2 = sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c2);
   CHECK(s->scans.size() == 2);
 
   REQUIRE(sm_rollback(s) == 0);
   CHECK(s->scans.size() == 1);
   CHECK(s->scans.count(c1) == 1);
-  put(s, 1, "d", "3");
+  put(s, g_rel, "d", "3");
   CHECK(keys_of(c1) == std::vector<std::string>{"a", "b"});
-  CHECK(keys_of(sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0)) ==
+  CHECK(keys_of(sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0)) ==
         std::vector<std::string>{"a", "b", "d"});
   REQUIRE(sm_commit(s) == 0);
   sm_closedb(s);
@@ -209,10 +212,10 @@ TEST_CASE(
   REQUIRE(set(t, "a", "1") == 0);
   REQUIRE(sm_savepoint(t) == 0);
   REQUIRE(set(t, "a", "2") == 0);
-  put(t, 1, "b", "t");
+  put(t, g_rel, "b", "t");
   REQUIRE(sm_rollback(t) == 0);
 
-  put(u, 1, "b", "u");
+  put(u, g_rel, "b", "u");
   std::atomic<bool> returned{false};
   int rc = 0, err = 0;
   std::thread tu([&] {
@@ -232,34 +235,34 @@ TEST_CASE(
 
 TEST_CASE("rollback undoes sm_mkrel and sm_rmrel made after the mark") {
   // Verify DDL follows the savepoint (§6.5, §11).
-  // 1. Create relation 3 before the mark; set the savepoint.
-  // 2. Create relation 4 and write to it; drop relation 1.
-  // 3. Roll back: relation 3 exists, relation 4 does not, relation 1 is back
-  // with
-  //    its rows.
-  // 4. Commit; a new transaction sees the same.
+  // 1. Create relation P before the mark; set the savepoint.
+  // 2. Create relation Q and write to it; drop the fixture's.
+  // 3. Roll back: P exists, Q does not, and the fixture's
+  //    relation is back with its rows.
+  // 4. Commit; a new transaction sees the same. A later
+  //    sm_mkrel hands out a relid of its own.
   sp_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_mkrel(s, 3) == 0);
+  uint64_t p = mkrel(s);
   REQUIRE(sm_savepoint(s) == 0);
-  REQUIRE(sm_mkrel(s, 4) == 0);
-  put(s, 4, "k", "v");
-  REQUIRE(sm_rmrel(s, 1) == 0);
+  uint64_t q = mkrel(s);
+  put(s, q, "k", "v");
+  REQUIRE(sm_rmrel(s, g_rel) == 0);
   REQUIRE(sm_rollback(s) == 0);
 
   for (int pass = 0; pass < 2; pass++) {
     CAPTURE(pass);
     const char *d;
     size_t dl;
-    CHECK(sm_read(s, 3, "k", 1, &d, &dl) == 1);
-    CHECK(sm_read(s, 4, "k", 1, &d, &dl) == -1);
+    CHECK(sm_read(s, p, "k", 1, &d, &dl) == 1);
+    CHECK(sm_read(s, q, "k", 1, &d, &dl) == -1);
     CHECK(sm_errno() == SM_ERR_NOTFOUND);
-    CHECK(get(s, 1, "a") == "0");
+    CHECK(get(s, g_rel, "a") == "0");
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   }
-  REQUIRE(sm_mkrel(s, 4) == 0); // the name is free again
+  CHECK(mkrel(s) > q); // a fresh relid, never q again
   REQUIRE(sm_commit(s) == 0);
   sm_closedb(s);
 }

@@ -34,9 +34,9 @@ namespace {
  */
 class gc_filter_t : public rocksdb::CompactionFilter {
 public:
-  /* A filter for cfid, judging against watermark. */
-  gc_filter_t(db_t *db, uint64_t cfid, uint64_t watermark)
-      : m_db(db), m_cfid(cfid), m_watermark(watermark) {}
+  /* A filter for relid, judging against watermark. */
+  gc_filter_t(db_t *db, uint64_t relid, uint64_t watermark)
+      : m_db(db), m_relid(relid), m_watermark(watermark) {}
 
   /* Report, once per compaction, the versions it could not judge. */
   ~gc_filter_t() override {
@@ -46,7 +46,7 @@ public:
           SM_LOG_WARN,
           "database {}: compaction kept {} version(s) in column "
           "family rel.{} unstamped: undecodable value or unknown writer status",
-          m_db->name.c_str(), m_doubts, m_cfid);
+          m_db->name.c_str(), m_doubts, m_relid);
     }
   }
 
@@ -110,7 +110,7 @@ public:
       // resurrect older versions outside this compaction.
       std::lock_guard<std::mutex> guard(m_db->gc_mu);
       // Queue the tombstone's key for the purge worker.
-      m_db->purges.push_back({m_cfid, key.ToString()});
+      m_db->purges.push_back({m_relid, key.ToString()});
       // Wake the worker.
       m_db->gc_cv.notify_one();
     }
@@ -132,7 +132,7 @@ public:
 
 private:
   db_t *m_db;
-  uint64_t m_cfid;
+  uint64_t m_relid;
   uint64_t m_watermark;
   mutable std::string m_newest_key; /* newest version <= watermark seen */
   mutable bool m_have_newest = false;
@@ -149,8 +149,8 @@ public:
 /* Creates gc_filter_t for one relation CF. */
 class gc_factory_t : public rocksdb::CompactionFilterFactory {
 public:
-  /* A factory for cfid's CF in db. */
-  gc_factory_t(db_t *db, uint64_t cfid) : m_db(db), m_cfid(cfid) {}
+  /* A factory for relid's CF in db. */
+  gc_factory_t(db_t *db, uint64_t relid) : m_db(db), m_relid(relid) {}
 
   /* The factory's name, for RocksDB's logs. */
   const char *Name() const override { return "wisr.gc_factory.v1"; }
@@ -167,12 +167,12 @@ public:
       return std::make_unique<keep_all_filter_t>();
     }
     // Judge against the watermark as of this compaction's start.
-    return std::make_unique<gc_filter_t>(m_db, m_cfid, db_watermark(m_db));
+    return std::make_unique<gc_filter_t>(m_db, m_relid, db_watermark(m_db));
   }
 
 private:
   db_t *m_db;
-  uint64_t m_cfid;
+  uint64_t m_relid;
 };
 
 /*
@@ -184,7 +184,7 @@ private:
 void purge_one(db_t *db, const db_t::purge_t &p,
                std::set<rocksdb::ColumnFamilyHandle *> *touched) {
   // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, p.cfid);
+  rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, p.relid);
   // Skip a relation already dropped.
   if (!cf) {
     return; // the relation's CF is already gone
@@ -202,7 +202,7 @@ void purge_one(db_t *db, const db_t::purge_t &p,
   // On failure the tombstone stays; the next compaction that
   // meets it queues it again. Nobody waits on this, so log it.
   log_msg(SM_LOG_ERROR, "database {}: purge in column family rel.{} failed: {}",
-          db->name.c_str(), p.cfid, s.ToString().c_str());
+          db->name.c_str(), p.relid, s.ToString().c_str());
 }
 
 /*
@@ -418,11 +418,11 @@ uint64_t db_watermark(db_t *db) {
   return db->snapshots.empty() ? db->visible_ts.load() : *db->snapshots.begin();
 }
 
-/* The GC compaction filter factory for cfid. */
+/* The GC compaction filter factory for relid. */
 std::shared_ptr<rocksdb::CompactionFilterFactory>
-gc_filter_factory(db_t *db, uint64_t cfid) {
+gc_filter_factory(db_t *db, uint64_t relid) {
   // Create a factory bound to the database and relation.
-  return std::make_shared<gc_factory_t>(db, cfid);
+  return std::make_shared<gc_factory_t>(db, relid);
 }
 
 /* Start the worker thread. */
@@ -447,18 +447,18 @@ void gc_stop(db_t *db) {
   }
 }
 
-/* Queue cfids to drop once the watermark passes commit_ts. */
+/* Queue relids to drop once the watermark passes commit_ts. */
 void gc_queue_drops(db_t *db, uint64_t commit_ts,
-                    const std::vector<uint64_t> &cfids) {
+                    const std::vector<uint64_t> &relids) {
   // Nothing dropped, nothing to queue.
-  if (cfids.empty()) {
+  if (relids.empty()) {
     return;
   }
   // Hold gc_mu while queueing.
   std::lock_guard<std::mutex> guard(db->gc_mu);
-  // Queue each cfid under the drop's commit_ts.
-  for (uint64_t cfid : cfids) {
-    db->drops.emplace(commit_ts, cfid);
+  // Queue each relid under the drop's commit_ts.
+  for (uint64_t relid : relids) {
+    db->drops.emplace(commit_ts, relid);
   }
   // Wake the worker.
   db->gc_cv.notify_one();
@@ -505,9 +505,9 @@ void gc_run_once(db_t *db) {
   }
 
   // Drop each relation no snapshot can see.
-  for (uint64_t cfid : drops) {
+  for (uint64_t relid : drops) {
     // Drop the relation's column family: no snapshot sees it.
-    db_drop_rel_cf(db, cfid);
+    db_drop_rel_cf(db, relid);
   }
 
   // Free SSI nodes the watermark has passed (§7.1).

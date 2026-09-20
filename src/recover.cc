@@ -78,11 +78,11 @@ int restore_prepared(db_t *db) {
 }
 
 /*
- * The cfids the catalog names now: for each catalog key, its
+ * The relids the catalog names now: for each catalog key, its
  * newest committed version, if that is not a tombstone. Versions
  * of restored prepared transactions are in flight and skipped.
  */
-int live_cfids(db_t *db, std::set<uint64_t> *live) {
+int live_relids(db_t *db, std::set<uint64_t> *live) {
   // Scan the catalog in total order, across every userkey.
   rocksdb::ReadOptions ro;
   ro.total_order_seek = true;
@@ -119,9 +119,9 @@ int live_cfids(db_t *db, std::set<uint64_t> *live) {
     // This is the key's newest committed version.
     decided = v.userkey.ToString();
     have = true;
-    // A live row names a cfid to keep.
-    if (!(v.flags & version_tombstone) && v.payload.size() == 8) {
-      live->insert(get_be64(v.payload.data()));
+    // A live row's key names a relid to keep: "R" | be64(relid).
+    if (!(v.flags & version_tombstone) && v.userkey.size() == 9) {
+      live->insert(get_be64(v.userkey.data() + 1));
     }
   }
   // Fail if the catalog scan failed.
@@ -140,8 +140,8 @@ int live_cfids(db_t *db, std::set<uint64_t> *live) {
 int sweep_orphan_cfs(db_t *db) {
   // Always keep the catalog's own CF.
   std::set<uint64_t> keep{0};
-  // Keep every cfid a live catalog row names.
-  if (live_cfids(db, &keep) != 0) {
+  // Keep every relid a live catalog row names.
+  if (live_relids(db, &keep) != 0) {
     return -1;
   }
   // Keep every CF a prepared transaction created.
@@ -156,13 +156,13 @@ int sweep_orphan_cfs(db_t *db) {
     }
   }
   // Drop each orphan.
-  for (uint64_t cfid : orphans) {
+  for (uint64_t relid : orphans) {
     // Drop an orphaned relation column family.
-    if (db_drop_rel_cf(db, cfid) != 0) {
+    if (db_drop_rel_cf(db, relid) != 0) {
       return -1;
     }
     log_msg(SM_LOG_INFO, "database {}: dropped orphaned column family rel.{}",
-            db->name.c_str(), cfid);
+            db->name.c_str(), relid);
   }
   return 0;
 }

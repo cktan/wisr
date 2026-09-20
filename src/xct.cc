@@ -151,6 +151,7 @@ void reset(sm_session_t *s) {
   s->seq_hwm = 0;
   s->created.clear();
   s->dropped.clear();
+  s->dropped_seqs.clear();
   s->undo.clear();
   // The savepoint ends with the transaction.
   s->has_savepoint = false;
@@ -201,6 +202,7 @@ int savepoint(sm_session_t *s) {
   s->sp_undo = s->undo.size();
   s->sp_created = s->created.size();
   s->sp_dropped = s->dropped.size();
+  s->sp_dropped_seqs = s->dropped_seqs.size();
   s->sp_scan_id = s->next_scan_id;
   {
     // Hold lock_mu while reading the lock list.
@@ -233,7 +235,7 @@ int rollback(sm_session_t *s) {
     // The next undo entry, newest first.
     const sm_session_t::undo_t &u = s->undo[i];
     // Find its relation's CF.
-    rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, u.cfid);
+    rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, u.relid);
     // Skip a CF already dropped.
     if (cf) {
       // Delete the exact version: key, our xid, its seq.
@@ -271,7 +273,8 @@ int rollback(sm_session_t *s) {
   }
   // Forget those relations.
   s->created.resize(s->sp_created);
-  s->dropped.resize(s->sp_dropped); // the undo restored their rows
+  s->dropped.resize(s->sp_dropped);           // the undo restored their rows
+  s->dropped_seqs.resize(s->sp_dropped_seqs); // and their sequences
 
   // Rewind seq with seq_hwm, so the own versions still in
   // effect are exactly seqs 1..seq_hwm (§6.5).
@@ -438,6 +441,11 @@ int finish_commit(sm_session_t *s, uint64_t commit_ts) {
   lock_release_all(s);
   // Queue its dropped relations for GC.
   gc_queue_drops(db, commit_ts, s->dropped);
+  // Drop each dropped sequence's lease; nothing reads it now
+  // that its catalog row is gone.
+  for (uint64_t seqid : s->dropped_seqs) {
+    db_forget_seq(db, seqid);
+  }
   ssi_end(s); // the committed node stays while others overlap it
   // Forget the transaction.
   reset(s);
@@ -470,7 +478,7 @@ int abort_xct(sm_session_t *s) {
 /*
  * The PREPARED record (§3.2): state, snapshot_ts, a zero
  * commit_ts, then prepared_at, gid, the write set as lock keys,
- * and the cfids created and dropped. One value, however large
+ * and the relids created and dropped. One value, however large
  * the write set; RocksDB stores it as a blob.
  */
 std::string encode_prepared(const sm_session_t *g) {
@@ -493,11 +501,11 @@ std::string encode_prepared(const sm_session_t *g) {
     put_be32(v, static_cast<uint32_t>(k.size()));
     v.append(k);
   }
-  // The cfids created, then those dropped, each counted.
+  // The relids created, then those dropped, each counted.
   for (const std::vector<uint64_t> *rels : {&g->created, &g->dropped}) {
     put_be32(v, static_cast<uint32_t>(rels->size()));
-    for (uint64_t cfid : *rels) {
-      put_be64(v, cfid);
+    for (uint64_t relid : *rels) {
+      put_be64(v, relid);
     }
   }
   return v;
@@ -997,13 +1005,13 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
     g->locks.emplace_back(p, len);
     p += len;
   }
-  // Read the cfids created, then dropped.
+  // Read the relids created, then dropped.
   for (std::vector<uint64_t> *rels : {&g->created, &g->dropped}) {
     // Check the count fits.
     if (!take32(&count) || (size_t)(end - p) < (size_t)count * 8) {
       return false;
     }
-    // Take each cfid.
+    // Take each relid.
     for (uint32_t i = 0; i < count; i++) {
       rels->push_back(get_be64(p));
       p += 8;

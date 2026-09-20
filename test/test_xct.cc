@@ -28,9 +28,12 @@ public:
     m_first = sm_opendb(m_home.env(), "db", opt);
     REQUIRE(m_first);
     REQUIRE(sm_begin(m_first, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_mkrel(m_first, 1) == 0);
+    m_rel = mkrel(m_first);
     REQUIRE(sm_commit(m_first) == 0);
   }
+
+  /* The relation's relid. */
+  uint64_t rel() const { return m_rel; }
 
   /* The session the fixture opened. */
   sm_session_t *first() const { return m_first; }
@@ -51,12 +54,13 @@ public:
 private:
   home_t m_home;
   sm_session_t *m_first = nullptr;
+  uint64_t m_rel = 0;
 };
 
-/* Insert key -> "v" into relation 1 in one committed transaction. */
-int commit_one(sm_session_t *s, const std::string &key) {
+/* Insert key -> "v" into rel in one committed transaction. */
+int commit_one(sm_session_t *s, uint64_t rel, const std::string &key) {
   if (sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
-      sm_insert(s, 1, key.data(), key.size(), "v", 1) != 0) {
+      sm_insert(s, rel, key.data(), key.size(), "v", 1) != 0) {
     return -1;
   }
   return sm_commit(s);
@@ -88,13 +92,13 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
     return rocksdb::Status::OK();
   };
 
-  std::thread ta([&] { CHECK(commit_one(a, "a") == 0); });
+  std::thread ta([&] { CHECK(commit_one(a, f.rel(), "a") == 0); });
   entered.get_future().wait();
-  REQUIRE(commit_one(b, "b") == 0);
+  REQUIRE(commit_one(b, f.rel(), "b") == 0);
 
   REQUIRE(sm_begin(c, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(c, 1, "a") == "<none>");
-  CHECK(get(c, 1, "b") == "<none>");
+  CHECK(get(c, f.rel(), "a") == "<none>");
+  CHECK(get(c, f.rel(), "b") == "<none>");
   REQUIRE(sm_commit(c) == 0);
 
   release.set_value();
@@ -102,8 +106,8 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   f.db()->test_before_commit = nullptr;
 
   REQUIRE(sm_begin(c, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(c, 1, "a") == "v");
-  CHECK(get(c, 1, "b") == "v");
+  CHECK(get(c, f.rel(), "a") == "v");
+  CHECK(get(c, f.rel(), "b") == "v");
   REQUIRE(sm_commit(c) == 0);
   sm_closedb(b);
   sm_closedb(c);
@@ -122,26 +126,27 @@ TEST_CASE("a failed status write fails the database stop") {
   xct_fixture_t f;
   sm_session_t *a = f.first();
   sm_session_t *b = f.open();
-  REQUIRE(commit_one(a, "old") == 0);
+  REQUIRE(commit_one(a, f.rel(), "old") == 0);
   REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(b, 1, "old") == "v");
+  CHECK(get(b, f.rel(), "old") == "v");
 
   f.db()->test_before_commit = [](uint64_t) {
     return rocksdb::Status::IOError("injected");
   };
-  CHECK(commit_one(a, "x") == -1);
+  CHECK(commit_one(a, f.rel(), "x") == -1);
   CHECK(sm_errno() == SM_ERR_IO);
   f.db()->test_before_commit = nullptr;
 
-  CHECK(get(b, 1, "old") == "v");
+  CHECK(get(b, f.rel(), "old") == "v");
   REQUIRE(sm_commit(b) == 0);
 
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(a, 1, "old") == "v");
-  CHECK(get(a, 1, "x") == "<none>");
-  CHECK(sm_insert(a, 1, "y", 1, "v", 1) == -1);
+  CHECK(get(a, f.rel(), "old") == "v");
+  CHECK(get(a, f.rel(), "x") == "<none>");
+  CHECK(sm_insert(a, f.rel(), "y", 1, "v", 1) == -1);
   CHECK(sm_errno() == SM_ERR_IO);
-  CHECK(sm_mkrel(a, 2) == -1);
+  uint64_t newrel = 0;
+  CHECK(sm_mkrel(a, &newrel) == -1);
   CHECK(sm_errno() == SM_ERR_IO);
   REQUIRE(sm_commit(a) == 0); // read-only: nothing to publish
 
@@ -150,9 +155,9 @@ TEST_CASE("a failed status write fails the database stop") {
   sm_session_t *s = sm_opendb(f.home().env(), "db", nullptr);
   REQUIRE(s);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(s, 1, "old") == "v");
-  CHECK(get(s, 1, "x") == "<none>");
-  put(s, 1, "y", "v");
+  CHECK(get(s, f.rel(), "old") == "v");
+  CHECK(get(s, f.rel(), "x") == "<none>");
+  put(s, f.rel(), "y", "v");
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_closedb(s) == 0);
 }
@@ -174,18 +179,18 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
 
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 50; i++) {
-    REQUIRE(commit_one(b, "k" + std::to_string(100 + i)) == 0);
+    REQUIRE(commit_one(b, f.rel(), "k" + std::to_string(100 + i)) == 0);
     CHECK(f.db()->cache.size() <= 1);
   }
-  CHECK(get(a, 1, "k100") == "<none>");
-  CHECK(get(a, 1, "k149") == "<none>");
+  CHECK(get(a, f.rel(), "k100") == "<none>");
+  CHECK(get(a, f.rel(), "k149") == "<none>");
   REQUIRE(sm_commit(a) == 0);
 
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 50; i++) {
-    CHECK(get(a, 1, "k" + std::to_string(100 + i)) == "v");
+    CHECK(get(a, f.rel(), "k" + std::to_string(100 + i)) == "v");
   }
-  sm_scan_t *c = sm_scan(a, 1, nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(a, f.rel(), nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   int n = 0;
   const char *k, *d;
@@ -228,10 +233,10 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
       for (int i = 0; i < per_writer; i++) {
         std::string base = std::to_string(t) + "." + std::to_string(i);
         if (sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
-            sm_insert(s, 1, (base + ".a").data(), base.size() + 2, "v", 1) !=
-                0 ||
-            sm_insert(s, 1, (base + ".b").data(), base.size() + 2, "v", 1) !=
-                0 ||
+            sm_insert(s, f.rel(), (base + ".a").data(), base.size() + 2, "v",
+                      1) != 0 ||
+            sm_insert(s, f.rel(), (base + ".b").data(), base.size() + 2, "v",
+                      1) != 0 ||
             sm_commit(s) != 0) {
           failures++;
         }
@@ -250,7 +255,7 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
         failures++;
         return;
       }
-      sm_scan_t *c = sm_scan(s, 1, nullptr, 0, 0, nullptr, 0, 0);
+      sm_scan_t *c = sm_scan(s, f.rel(), nullptr, 0, 0, nullptr, 0, 0);
       std::vector<std::string> keys;
       const char *k, *d;
       size_t kl, dl;

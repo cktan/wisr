@@ -37,7 +37,7 @@ adds the API a secondary-index layer built on top of it needs.
 close them (`sm_lock`, a savepoint stack with `sm_forget`,
 `sm_stmt_begin`, descending scans, `sm_scan_seek`). None of
 them is part of phase 1, except `sm_lsrel`, which came with
-naming relations by caller-chosen relids (§11).
+naming relations by relid (§11).
 
 **Assumptions.**
 
@@ -105,10 +105,10 @@ database under `base` (§3.5). Within a database: one
 column family per relation, plus two fixed ones: `CF:txn`
 and `CF:meta`.
 
-### 3.1 `CF:rel.<cfid>` — row versions
+### 3.1 `CF:rel.<relid>` — row versions
 
 Each relation's versions live in their own column family, named
-by `cfid` in decimal (`rel.0` is the catalog, §11).
+by `relid` in decimal (`rel.0` is the catalog, §11).
 
 ```
 key   = userkey (variable)
@@ -123,12 +123,12 @@ value = flags   (1B)   bit0 = tombstone (this version is a delete)
 
 Notes on the encoding:
 
-- **`cfid`** is a stable 64-bit id assigned by the storage
-  manager, not the caller's `relid`, and it names the column
-  family. Every `sm_mkrel` takes a fresh one, so drop/recreate
-  of a relid is cheap, a cfid is never reused (§4.2), and a
-  dropped relation is removed with one `DropColumnFamily`. The
-  key itself carries no cfid; the column family is the relation.
+- **`relid`** is a 64-bit id the storage manager allocates at
+  `sm_mkrel` and hands to the caller. It names the column
+  family, `rel.<relid>`. A relid is never reused (§4.2), so it
+  never names two relations, and a dropped relation is removed
+  with one `DropColumnFamily`. The key itself carries no relid;
+  the column family is the relation.
 - **Complemented `xid`** makes versions of a key sort **newest
   first**. A point read becomes one `Seek` to
   `userkey|~snapshot_ts|0x00000000`, which lands on the newest
@@ -166,7 +166,7 @@ Notes on the encoding:
   comparator.
 
 Column family handles are held in a process-wide map
-`cfid → handle`, shared by every session open on the
+`relid → handle`, shared by every session open on the
 database and guarded by a reader-writer lock, because relations
 are created and dropped concurrently with reads. A handle is
 reference-counted and destroyed only after its CF is dropped and
@@ -180,9 +180,9 @@ value = { state: PREPARED | COMMITTED | ABORTED,
           snapshot_ts, commit_ts,
           gid (global txn id string, 2PC only),
           prepared_at: epoch seconds           (PREPARED only),
-          writeset: [ (cfid, userkey) ... ]   (PREPARED only),
-          created:  [ cfid ... ]              (PREPARED only),
-          dropped:  [ cfid ... ]              (PREPARED only) }
+          writeset: [ (relid, userkey) ... ]   (PREPARED only),
+          created:  [ relid ... ]              (PREPARED only),
+          dropped:  [ relid ... ]              (PREPARED only) }
 ```
 
 Only **writing** transactions ever get an entry, plus read-only
@@ -207,8 +207,9 @@ flip.
 
 ### 3.3 `CF:meta` — bootstrap state
 
-Format version, and the durable high-water marks for the timestamp
-and cfid allocators (§4.2).
+Format version, the durable high-water marks for the timestamp
+and object-id allocators (§4.2), and one lease per sequence in
+use, keyed `"seq." | be64(seqid)` (§11).
 
 ### 3.4 The status resolution rule
 
@@ -336,14 +337,14 @@ Neither can leave a name pointing at a directory that is
 missing or unbuilt. `sm_attach` sweeps the other way: every
 entry of `base` whose `dbid` is in no `"D"` row is
 destroyed, before any database is opened. A `dbid` is never
-reused, on the same reasoning as a `cfid` (§4.2), so the
+reused, on the same reasoning as a `relid` (§4.2), so the
 sweep cannot mistake a live database for the remains of a
 dead one.
 
 This is the §9.1 step 6 pattern one level up — eager
 cleanup on the happy path, a startup sweep for the crash
 path — and it is why a name never reaches the filesystem at
-either level: a relation is `CF:rel.<cfid>`, a database is
+either level: a relation is `CF:rel.<relid>`, a database is
 a directory named by `dbid`.
 
 ---
@@ -383,14 +384,17 @@ value. On startup, `global_ts` resumes one past the persisted
 value — above any id ever handed out. `visible_ts` is set to the
 persisted value itself, so every `xid` allocated after restart is
 `> visible_ts`, keeping §4.1's `xid > snapshot_ts`. The persisted
-value itself is never handed out. Cfids are allocated the same
-way, and so is the caller's sequence, `sm_nextseq`, whose lease
-`next_seq` starts at 999 in a new database so that its first
-value is `SM_SEQ_FIRST` (1000). It is not transactional: a value
-is taken under the allocator's mutex, never given back, and a
-crash skips the rest of its lease. A database made before the
-sequence existed has no `next_seq` and starts it at
-`SM_SEQ_FIRST`.
+value itself is never handed out. Object ids — relids and
+seqids, from one allocator `next_objid`, so the two never
+collide — are allocated the same way.
+
+A named sequence (§11) has a lease of its own, `"seq." |
+be64(seqid)`, holding the first value **not** covered by the
+lease. It is the same scheme with the sequence's increment as
+its step, and it is not transactional: a value is taken under
+the allocator's mutex, never given back, and a crash skips the
+rest of the lease. A sequence with no lease row yet has handed
+out nothing, so it starts at its `start`.
 
 ### 4.3 `visible_ts`: making snapshots correct
 
@@ -463,19 +467,19 @@ into RocksDB immediately, before commit.
 
 ```
 sm_update(relid, k, v):
-  1. cfid   = catalog.lookup(relid)                    # MVCC read, §11
-  2. lock   = lockmgr.acquire_x(cfid, k, T)            # blocking, §5.1
-  3. latest = newest own version of (cfid, k) visible to T  # §4.4
+  1. catalog.lookup(relid)                             # MVCC read, §11
+  2. lock   = lockmgr.acquire_x(relid, k, T)            # blocking, §5.1
+  3. latest = newest own version of (relid, k) visible to T  # §4.4
      if latest is absent:
-         latest = newest committed version of (cfid, k)
+         latest = newest committed version of (relid, k)
          if latest.commit_ts > T.snapshot_ts:           # §5.2
              abort with SM_ERR_CONFLICT
      if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
   4. if T.xid == 0: T.xid = global_ts++
   5. seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
-     db.Put(cf(cfid), encode(k, ~T.xid, ~seq), encode(flags, v))
-  6. T.undo.push(cfid, k, seq)                         # for savepoint
-  7. ssi.on_write(T, cfid, k)                          # §7
+     db.Put(cf(relid), encode(k, ~T.xid, ~seq), encode(flags, v))
+  6. T.undo.push(relid, k, seq)                         # for savepoint
+  7. ssi.on_write(T, relid, k)                          # §7
 ```
 
 Step 3 consults the transaction's own writes first, so a key it
@@ -493,7 +497,7 @@ the commit record does (§8.2).
 
 ### 5.1 Row locks
 
-An in-memory hash table, `(cfid, userkey)` → owner
+An in-memory hash table, `(relid, userkey)` → owner
 transaction. Exclusive only; readers never take one. Locks
 are released at commit/abort — strict, so no cascading
 aborts. The key is exact, so two distinct keys never share
@@ -533,7 +537,7 @@ sets on a serializable reader.
 **What a transaction holds in memory.** Row values stream
 to RocksDB, so a transaction is bounded by disk, but
 three structures are not: `T.locks` (one entry per
-distinct key written), `T.undo` (one `(cfid, userkey,
+distinct key written), `T.undo` (one `(relid, userkey,
 seq)` triple per write), and the SSI read set. All three
 are linear in the number of keys touched, with the
 userkey stored inline, so a transaction writing tens of
@@ -615,10 +619,10 @@ Repeatable read plus SSI validation (§7).
 
 The API allows exactly one savepoint per session. It is a mark into the
 per-transaction **undo list** — an in-memory vector of
-`(cfid, userkey, seq)` triples in write order, holding no payloads,
+`(relid, userkey, seq)` triples in write order, holding no payloads,
 so a large transaction costs bytes per write, not rows. Relations
 created by the transaction are tracked alongside it in
-`T.created`, a vector of cfids in creation order, and relations
+`T.created`, a vector of relids in creation order, and relations
 it dropped in `T.dropped`, likewise.
 
 ```
@@ -633,10 +637,10 @@ sm_rollback():
     if no savepoint: fail with SM_ERR_NOSAVEPOINT    # API.md divergence 8
     m = T.sp_mark
     for e in reverse(T.undo[m..]):
-        db.Delete(cf(e.cfid), encode(e.key, ~T.xid, ~e.seq))
+        db.Delete(cf(e.relid), encode(e.key, ~T.xid, ~e.seq))
     r = T.sp_rels
-    for cfid in reverse(T.created[r..]):
-        db.DropColumnFamily(cf(cfid))              # §11
+    for relid in reverse(T.created[r..]):
+        db.DropColumnFamily(cf(relid))              # §11
     T.created.truncate(r)
     T.dropped.truncate(T.sp_drops)                  # the undo restored their rows
     T.undo.truncate(m)
@@ -713,8 +717,8 @@ dangerous structure.
 ### 7.1 What is tracked
 
 - **SIREAD locks.** Every read by a SERIALIZABLE transaction records
-  what it read: a point read records `(cfid, userkey)`, whether
-  or not a row was found; a scan records `(cfid, range)` for the
+  what it read: a point read records `(relid, userkey)`, whether
+  or not a row was found; a scan records `(relid, range)` for the
   requested range, bounds inclusive or exclusive as passed to
   `sm_scan`, when it opens, and narrows it to the **range
   actually traversed** when it closes (§10.2). The narrowed
@@ -729,9 +733,9 @@ dangerous structure.
   an rw-edge out to someone".
 
 **How they are indexed.** Every write calls
-`ssi.on_write(T, cfid, k)` (§5), which must find every
+`ssi.on_write(T, relid, k)` (§5), which must find every
 SIREAD lock covering `k`. Point locks are a hash on
-`(cfid, userkey)`, so that half is O(1). Ranges cannot
+`(relid, userkey)`, so that half is O(1). Ranges cannot
 be, and a linear walk of active predicates under a global
 lock would serialize the write path — the one place SSI
 must not cost anything when no reader is watching.
@@ -952,7 +956,7 @@ filter(version_key, value):
     if a newer version of the same userkey with
        commit_ts <= gc_watermark was already seen → DROP
     if tombstone                         → KEEP, stamp commit_ts, and
-                                           queue (cfid, version_key)
+                                           queue (relid, version_key)
                                            for purge
     otherwise                            → KEEP, and stamp commit_ts
                                            into the header (hint bit)
@@ -978,7 +982,7 @@ dropping the tombstone would resurrect them. Instead a
 background task drains the purge queue with
 
 ```
-db.DeleteRange(cf(cfid), version_key, userkey | FF×12)
+db.DeleteRange(cf(relid), version_key, userkey | FF×12)
 ```
 
 which covers the tombstone and every older version of the key
@@ -1027,7 +1031,7 @@ under, so no new snapshot can land below a watermark already in
 use. It never moves
 backwards: a new snapshot is `visible_ts`, which is at or above
 every snapshot already counted. Each relation CF has its own
-compaction filter factory, which knows the CF's cfid for the
+compaction filter factory, which knows the CF's relid for the
 purge queue. Compactions can start inside `DB::Open`, before
 the handles and the active table the filter reads exist, so
 until the database is fully open the factory hands out a
@@ -1110,7 +1114,7 @@ starts a sweep past an internal threshold of one million
 records.
 
 Dropping a relation (`sm_rmrel`) deletes its catalog row (§11).
-The tombstone carries no cfid, so commit queues the cfids in
+The tombstone carries no relid, so commit queues the relids in
 `T.dropped` with its `commit_ts`; once `gc_watermark` passes
 that commit, a background task issues `DropColumnFamily` on each
 relation's CF. The queue is volatile: an entry lost to a crash
@@ -1308,7 +1312,7 @@ the status resolution rule.
       - re-acquire an X row lock for every key in its writeset
       - pin gc_watermark at its snapshot_ts
 6. Orphan CF sweep: read the catalog (rel.0) and drop every
-   rel.<cfid> CF that has neither a live catalog row naming
+   rel.<relid> CF that has neither a live catalog row naming
    it (a name's newest committed version, not a tombstone) nor
    an entry in a prepared record's `created`.
 7. Start the GC / compaction filter and commit advancer.
@@ -1368,12 +1372,12 @@ indistinguishable from the transaction never having committed.
 
 ```
 sm_read(session, relid, key, &val):
-    cfid  = catalog.lookup(relid)                        # SIREAD too, §11
+    catalog.lookup(relid)                                # SIREAD too, §11
     snap  = (level == READ_COMMITTED) ? visible_ts : T.snapshot_ts
     hi    = max(T.xid, snap)                             # own writes, §4.4
     if SERIALIZABLE:
-        ssi.on_read(T, cfid, key)                       # SIREAD, §7.1
-    it = db.NewIterator(cf(cfid))
+        ssi.on_read(T, relid, key)                       # SIREAD, §7.1
+    it = db.NewIterator(cf(relid))
     if SERIALIZABLE:
         it.Seek(key | 00×12)                             # every version
     else:
@@ -1588,38 +1592,38 @@ void sm_scanend(sm_scan_t* scan);
 
 ## 11. Catalog and DDL
 
-A relation is named by a `uint64_t` relid that the caller
-chooses; there are no relation names. The catalog maps it to
-the `cfid` of the column family holding the rows. The catalog
-is itself `cfid = 0`, an ordinary MVCC relation in `CF:rel.0`:
+A relation is named by a `uint64_t` relid, which `sm_mkrel`
+allocates and hands back; there are no relation names. The
+relid names the relation's column family, `CF:rel.<relid>`, so
+resolving one costs no indirection. The catalog is itself
+`relid = 0`, an ordinary MVCC relation in `CF:rel.0` holding a
+row per relation and a row per sequence:
 
 ```
-key = "R" | be64(relid)    →  { cfid, created_ts }
+key = "R" | be64(relid)    →  { }                         (relation)
+key = "S" | name           →  { seqid, start, increment }  (sequence)
 ```
+
+A relation's row carries nothing: that the row exists at a
+snapshot is what makes the relation exist there. The design's
+`created_ts` field is left out, since nothing reads it.
 
 Big-endian relids make the catalog's key order numeric, so
 `sm_lsrel` is one scan of the `"R"` prefix and returns relids
-in ascending order.
+in ascending order. Relids are handed out in creation order, so
+the lowest one listed is the first relation the database ever
+had: that is how a layer finds its own catalog relation again
+after a restart, having nothing else to go on.
 
-A relid is valid if it is a caller constant in
-`1 .. SM_SEQ_FIRST - 1` or a value `sm_nextseq` has handed out
-(below the sequence's in-memory next value). Anything else,
-including 0, fails with `SM_ERR_INVALID`. Constants suit a
-layer's own fixed relations; `sm_nextseq` gives a layer that
-creates relations on the fly an id no one else holds, without
-keeping a counter of its own. Checking against the sequence
-catches a relid made up by hand in the sequence's range, which
-a later `sm_nextseq` would hand out again.
+A relid is never reused, so it never names two relations. That
+is what makes a drop safe: after `sm_rmrel` commits, the
+relation's CF stays until the watermark passes the drop (§8.3),
+and an older snapshot goes on reading it through the same relid
+while newer ones find no catalog row. A relid the caller could
+choose would have to be refused until GC had dropped the old
+CF, or else name two relations at once.
 
-Relid and cfid are kept apart so that a relid can be dropped
-and created again at once. Each `sm_mkrel` allocates a fresh
-cfid, so a transaction whose snapshot predates the drop
-resolves the relid to the old CF and still reads the old rows,
-while newer ones resolve it to the new, empty CF. Were the
-relid the cfid, the recreate would have to wait until GC
-dropped the old CF.
-
-There is no next-cfid row in the catalog. Cfids come from the
+There is no next-relid row in the catalog. Relids come from the
 lease in `CF:meta` (§4.2); a catalog row updated by every
 `sm_mkrel` would make concurrent creates of *different*
 relations contend on one row lock and fail with
@@ -1627,7 +1631,7 @@ relations contend on one row lock and fail with
 
 Because it is an ordinary relation, DDL is transactional for free:
 `sm_mkrel` inserts a catalog row, `sm_rmrel` deletes it
-(recording the cfid in `T.dropped`), and both roll back with
+(recording the relid in `T.dropped`), and both roll back with
 the transaction. Both follow the §5 write path, reported in DDL
 terms: `sm_mkrel` of a live relid fails with `SM_ERR_EXISTS`
 where an insert would report `SM_ERR_DUPKEY`, and `sm_rmrel` of
@@ -1640,14 +1644,12 @@ so under SERIALIZABLE it registers the whole range as read: a
 concurrent `sm_mkrel` or `sm_rmrel` of any relid is an
 rw-conflict with it.
 
-A session may cache `relid → cfid` (not yet implemented: every
-lookup reads `CF:rel.0`), but the mapping depends on the
-snapshot. After a committed `sm_rmrel` and `sm_mkrel` of the
-same relid, a transaction with an older snapshot must still
-resolve the old cfid, since it may still legitimately read the
-dropped relation. A cache invalidated at DDL commit would send
-it to the new one, so the cache is checked by timestamp
-instead:
+A session may cache which relids are live (not yet implemented:
+every lookup reads `CF:rel.0`), but the answer depends on the
+snapshot. After a committed `sm_rmrel`, a transaction with an
+older snapshot must still find the relation, since it may still
+legitimately read it. A cache invalidated at DDL commit would
+hide it, so the cache is checked by timestamp instead:
 
 - The process keeps `last_ddl_ts`, the largest `commit_ts` of
   any committed transaction that wrote the catalog. Commit raises
@@ -1656,7 +1658,7 @@ instead:
 - Each cache entry records the snapshot it was read at. A hit is
   used only if `last_ddl_ts` is at or below both that snapshot
   and the lookup's; then no DDL committed between the two, and
-  the mapping is the same at both. Otherwise the lookup reads
+  the answer is the same at both. Otherwise the lookup reads
   `CF:rel.0` and replaces the entry.
 - `sm_mkrel` and `sm_rmrel` evict their relid's entry, and a
   lookup that resolves to the transaction's own uncommitted
@@ -1667,9 +1669,9 @@ snapshots do not only move forward: under read committed, a
 lookup at the begin snapshot `T.snapshot_ts` can follow one at a
 newer statement snapshot (§6.2).
 
-Under SERIALIZABLE a lookup is also a read for SSI. The cfid a
-relid resolves to is something the transaction observed, and a
-concurrent `sm_rmrel` or `sm_mkrel` of that relid writes the
+Under SERIALIZABLE a lookup is also a read for SSI. That a
+relid names a live relation is something the transaction
+observed, and a concurrent `sm_rmrel` of that relid writes the
 catalog key it depends on. Without an rw-edge for it, DDL admits
 write skew:
 
@@ -1694,6 +1696,43 @@ SERIALIZABLE:
   read it from `rel.0`, and a serializable lookup uses a hit
   only if that is the current transaction. Its SIREAD already
   catches every later writer of the relid.
+
+### 11.1 Sequences
+
+A sequence is a catalog row of its own, keyed `"S" | name`, so
+`sm_mkseq` and `sm_rmseq` are transactional exactly as
+`sm_mkrel` is, down to the row lock that makes two concurrent
+creates of one name conflict. The row holds
+`{ seqid, start, increment }`, and the `seqid` comes from the
+same object-id allocator as a relid (§4.2), so a name created
+again after a drop names a different sequence.
+
+What the row does **not** hold is the sequence's position. The
+values are not transactional — `sm_nextseq` takes no locks,
+never blocks, and an abort gives nothing back — so keeping them
+in an MVCC row would be wrong twice over: the row's writer
+would lock the sequence for the rest of its transaction, and a
+rollback would hand the same values out again. The position
+lives in `CF:meta` instead, under a lease keyed by `seqid`
+(§4.2), where nothing is undone. The `seqid` keys it rather
+than the name, so a sequence created again under an old name
+starts at its own `start` rather than resuming the old one's
+lease.
+
+`sm_nextseq` reads the definition at the transaction's view
+when there is one, so a sequence a transaction has just created
+is usable before it commits, and at `visible_ts` when there is
+none. The last value is the largest one at or below
+`UINT64_MAX`; a further call fails with `SM_ERR_INVALID` rather
+than wrapping onto values already handed out.
+
+A committed `sm_rmseq` deletes the sequence's lease, best
+effort: nothing reads it once the catalog row is gone, and a
+lease left behind by a crash, an abort after `sm_nextseq`, or a
+prepared transaction's drop is garbage rather than a hazard,
+since the name's next incarnation has a new `seqid`.
+
+### 11.2 Column families
 
 The column family is the one part of DDL that is not
 transactional: `CreateColumnFamily` and `DropColumnFamily` take
@@ -1815,14 +1854,15 @@ forgotten cursor holding back reclamation.
 include/sm.h            public C API
 src/strlist.cc          sm_strlist_t, the counted list of names
 src/env.cc              init/attach/detach, root db, db sweep
-src/db.cc               mkdb/rmdb, open registry, CF setup, cfid→CF map
+src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
 src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
 src/version.cc          key/value codec, version comparator, visibility
 src/access.cc           read / scan / insert / update / delete
 src/lockmgr.cc          row locks, waits-for graph, deadlock detection
 src/ssi.cc              SIREAD locks, rw-edges, validation
-src/catalog.cc          relid→cfid mapping, DDL, sm_lsrel, CF create/drop
+src/catalog.cc          relation catalog: DDL, sm_lsrel, CF create/drop
+src/seq.cc              named sequences: sm_mkseq, sm_rmseq, sm_nextseq
 src/gc.cc               compaction filter, watermarks, drop-relation purge
 src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 src/log.cc              the sm_set_log hook the engine reports through
@@ -1903,17 +1943,24 @@ src/log.cc              the sm_set_log hook the engine reports through
   that its snapshot is safe, and then writes commits, including
   on an otherwise idle database (§7.4). With a prepared or
   committed pivot, the partner is the one that fails (§7.3).
-- **DDL.** Concurrent `sm_mkrel` of different relids both
-  commit; of the same relid, the second fails with
-  `SM_ERR_CONFLICT` (§11). `sm_mkrel` of a live relid fails
-  with `SM_ERR_EXISTS`.
-  A dropped relid can be created again at once, even in the
-  same transaction, while a transaction with an older snapshot
-  still reads the old relation; `sm_rollback` past an
-  `sm_rmrel` keeps the relation's CF. `sm_mkrel` accepts only
-  a relid in `1 .. SM_SEQ_FIRST - 1` or one `sm_nextseq`
-  handed out. Under SERIALIZABLE, `sm_lsrel` followed by
-  concurrent creates is a conflict (§11).
+- **DDL.** Concurrent `sm_mkrel` calls both commit, each
+  writing a catalog row of its own; concurrent `sm_rmrel` of
+  the same relation blocks, and the second fails with
+  `SM_ERR_CONFLICT` (§11). Every `sm_mkrel` hands out a higher
+  relid than the last, and a dropped relation stays readable at
+  an older snapshot; `sm_rollback` past an `sm_rmrel` keeps the
+  relation's CF, and past an `sm_mkrel` drops it. Under
+  SERIALIZABLE, `sm_lsrel` followed by concurrent creates is a
+  conflict (§11).
+- **Sequences.** `sm_mkseq` and `sm_rmseq` follow commit,
+  abort, and rollback like any other DDL, while the values
+  `sm_nextseq` hands out do not: an abort gives none back. A
+  sequence is usable by its own transaction before it commits,
+  its values step by its increment, it resumes above its lease
+  after a restart or a kill, concurrent sessions never get the
+  same value, a name created again after a drop starts over,
+  and a sequence at `UINT64_MAX` hands out its last value and
+  then fails (§11).
 - **Environment lifetime.** `sm_detach` with `force` 0 and a
   session open fails with `SM_ERR_INUSE` and leaves the env
   usable; with `force` non-zero it succeeds, and a second
@@ -1993,7 +2040,7 @@ src/log.cc              the sm_set_log hook the engine reports through
   why `sm_mkrel` needs eager cleanup plus a recovery sweep (§11).
   The target is **hundreds to low thousands of relations per
   database**, which is where this trade pays. Past that, the
-  answer is not to tune it but to replace it: fold the cfid
+  answer is not to tune it but to replace it: fold the relid
   into the key as an 8-byte prefix in one shared CF, which
   makes create and drop pure MVCC operations and removes the
   recovery sweep, at the cost of losing the O(1) drop (it

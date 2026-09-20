@@ -37,7 +37,8 @@ full MVCC, for OLTP workloads.
   - transactions: `sm_begin` (with `sm_xctlevel_t`) / `sm_prepare` /
     `sm_commit` / `sm_abort`
   - a single savepoint per session: `sm_savepoint` / `sm_rollback`
-  - relations: `sm_mkrel` / `sm_rmrel`
+  - relations: `sm_mkrel` / `sm_rmrel` / `sm_lsrel`
+  - sequences: `sm_mkseq` / `sm_rmseq` / `sm_nextseq`
   - data ops: `sm_insert` / `sm_update` / `sm_delete` / `sm_read` /
     `sm_scan` / `sm_scannxt` / `sm_scanend`
 

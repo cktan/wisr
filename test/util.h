@@ -112,6 +112,13 @@ inline void put(sm_session_t *sess, uint64_t rel, const std::string &key,
       sm_errmsg());
 }
 
+/* Create a relation and return its relid, failing the test on an error. */
+inline uint64_t mkrel(sm_session_t *sess) {
+  uint64_t relid = 0;
+  REQUIRE_MESSAGE(sm_mkrel(sess, &relid) == 0, sm_errmsg());
+  return relid;
+}
+
 /* The relids sess's transaction sees, failing the test on an error. */
 inline std::vector<uint64_t> lsrel(sm_session_t *sess) {
   uint64_t *list = nullptr;

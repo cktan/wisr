@@ -1,14 +1,17 @@
 /*
- * catalog.cc -- relation ids: lookup, sm_mkrel, sm_rmrel,
+ * catalog.cc -- relations: lookup, sm_mkrel, sm_rmrel,
  * sm_lsrel (DESIGN.md §11).
  *
- * The catalog is cfid 0, an ordinary MVCC relation keyed
- * "R" | be64(relid) with the 8-byte cfid as its value, so DDL
- * is transactional by going through the ordinary write path.
- * Each sm_mkrel takes a fresh cfid, so a relid dropped and
- * created again names a new column family at once, while
- * older snapshots still read the old one. The design's
- * created_ts field is left out: nothing reads it.
+ * The catalog is relid 0, an ordinary MVCC relation keyed
+ * "R" | be64(relid) with an empty value, so DDL is
+ * transactional by going through the ordinary write path. The
+ * row records that the relation exists; the relid itself names
+ * the column family, CF:rel.<relid>. The design's created_ts
+ * field is left out: nothing reads it.
+ *
+ * sm_mkrel allocates the relid from the lease in CF:meta
+ * (§4.2), so a relid is never reused and never names two
+ * relations.
  *
  * No relid cache yet; every lookup reads CF:rel.0. A
  * committed sm_rmrel leaves its column family in place until
@@ -37,74 +40,44 @@ std::string catalog_key(uint64_t relid) {
   return key;
 }
 
-/*
- * Check that relid may name a relation: not 0, and either a
- * caller's constant below SM_SEQ_FIRST or a value sm_nextseq
- * has handed out.
- */
-int check_relid(sm_session_t *s, uint64_t relid) {
-  // Reject relid 0, which no relation has.
-  if (relid == 0) {
-    return set_error(SM_ERR_INVALID, "relid 0 is not a relation");
-  }
-  // Reject a sequence value not yet handed out.
-  if (relid >= SM_SEQ_FIRST && !db_seq_issued(s->db, relid)) {
-    return set_error(SM_ERR_INVALID,
-                     "relid {} was not handed out by sm_nextseq", relid);
-  }
-  return 0;
-}
-
 /* sm_mkrel, minus the out-of-memory guard. */
-int mkrel(sm_session_t *s, uint64_t relid) {
-  // Require an active, non-prepared transaction and a valid relid.
-  if (xct_check_active(s) != 0 || check_relid(s, relid) != 0) {
+int mkrel(sm_session_t *s, uint64_t *out) {
+  // Require the out-parameter.
+  if (!out) {
+    return set_error(SM_ERR_INVALID, "sm_mkrel: relid is NULL");
+  }
+  // Require an active, non-prepared transaction.
+  if (xct_check_active(s) != 0) {
     return -1;
   }
-  uint64_t cfid;
-  // Resolve the relid at the transaction's view.
-  int r = catalog_lookup(s, xct_view(s), relid, &cfid);
-  // Fail on a lookup error.
-  if (r < 0) {
-    return -1;
-  }
-  // Refuse a relid that is already live.
-  if (r == 0) {
-    return set_error(SM_ERR_EXISTS, "relation {} already exists", relid);
-  }
-  // Refuse writes after fail-stop, then allocate a fresh cfid.
-  if (xct_check_writable(s->db) != 0 || db_alloc_cfid(s->db, &cfid) != 0) {
+  uint64_t relid;
+  // Refuse writes after fail-stop, then allocate the relid.
+  if (xct_check_writable(s->db) != 0 || db_alloc_objid(s->db, &relid) != 0) {
     return -1;
   }
 
   // Create the column family eagerly, before the catalog row,
   // so this transaction can write into it at once (§11).
-  if (db_create_rel_cf(s->db, cfid) != 0) {
+  if (db_create_rel_cf(s->db, relid) != 0) {
     return -1;
   }
   // Remember the CF, so abort or rollback drops it.
-  s->created.push_back(cfid);
+  s->created.push_back(relid);
 
-  // Encode the cfid as the catalog row's value.
-  std::string val;
-  put_be64(val, cfid);
-  // Insert the catalog row through the ordinary write path.
-  if (access_write(s, 0, WRITE_INSERT, catalog_key(relid), val) != 0) {
+  // Insert the catalog row through the ordinary write path. The
+  // relid is fresh, so no other transaction can be writing it.
+  if (access_write(s, 0, WRITE_INSERT, catalog_key(relid), rocksdb::Slice()) !=
+      0) {
     // A retryable error already aborted the transaction.
     if (!s->active) {
       return -1; // retryable: the abort already dropped the CF
     }
-    // Report a concurrent same-relid insert as SM_ERR_EXISTS.
-    bool dup = sm_errno() == SM_ERR_DUPKEY;
     // Undo the eager CF creation.
     s->created.pop_back();
-    db_drop_rel_cf(s->db, cfid);
-    // Map a duplicate catalog key to SM_ERR_EXISTS.
-    if (dup) {
-      return set_error(SM_ERR_EXISTS, "relation {} already exists", relid);
-    }
+    db_drop_rel_cf(s->db, relid);
     return -1;
   }
+  *out = relid;
   return 0;
 }
 
@@ -114,13 +87,12 @@ int rmrel(sm_session_t *s, uint64_t relid) {
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Reject relid 0, which no relation has.
+  // Reject relid 0, the catalog's own slot.
   if (relid == 0) {
     return set_error(SM_ERR_INVALID, "relid 0 is not a relation");
   }
-  uint64_t cfid;
   // Resolve the relid at the transaction's view.
-  int r = catalog_lookup(s, xct_view(s), relid, &cfid);
+  int r = catalog_lookup(s, xct_view(s), relid);
   // Fail on a lookup error.
   if (r < 0) {
     return -1;
@@ -135,8 +107,8 @@ int rmrel(sm_session_t *s, uint64_t relid) {
       0) {
     return -1;
   }
-  // Remember the cfid, so GC drops its CF after commit.
-  s->dropped.push_back(cfid);
+  // Remember the relid, so GC drops its CF after commit.
+  s->dropped.push_back(relid);
   return 0;
 }
 
@@ -199,28 +171,16 @@ int lsrel(sm_session_t *s, uint64_t **out, size_t *n) {
 namespace wisr {
 
 /* A point read of the catalog row at view. */
-int catalog_lookup(sm_session_t *s, const view_t &view, uint64_t relid,
-                   uint64_t *cfid) {
+int catalog_lookup(sm_session_t *s, const view_t &view, uint64_t relid) {
   std::string val;
-  // Read the catalog row at view.
-  int r = access_read(s, 0, view, catalog_key(relid), &val);
-  // Pass through "not found" and errors.
-  if (r != 0) {
-    return r;
-  }
-  // Reject a malformed catalog row.
-  if (val.size() != 8) {
-    return set_error(SM_ERR_CORRUPT, "bad catalog row for relation {}", relid);
-  }
-  // Decode the cfid.
-  *cfid = get_be64(val.data());
-  return 0;
+  // Read the catalog row at view: 0 if the relation is live.
+  return access_read(s, 0, view, catalog_key(relid), &val);
 }
 
 } // namespace wisr
 
-/* Create a relation. */
-int sm_mkrel(sm_session_t *session, uint64_t relid) {
+/* Create a relation and hand out its relid. */
+int sm_mkrel(sm_session_t *session, uint64_t *relid) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return mkrel(session, relid);

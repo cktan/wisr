@@ -109,10 +109,11 @@ Needed: `sm_scan_seek(scan, key, klen, inclusive)`.
   on update and delete, so each costs read, copy (the `sm_read`
   pointer dies on the next call), then write: two seeks and an
   allocation per row.
-- **`sm_lsrel`.** Implemented in phase 1, with relations
-  named by caller-chosen `uint64_t` relids: the layer will keep
-  its own catalog relation regardless, but listing relations
-  helps debugging and cleanup.
+- **`sm_lsrel`.** Implemented in phase 1, where a relation is
+  named by a `uint64_t` relid that `sm_mkrel` hands out: the
+  layer will keep its own catalog relation regardless, but
+  listing relations helps debugging and cleanup, and the lowest
+  relid listed is how the layer finds that catalog again.
 - **Key length.** `SM_MAX_KEYLEN` (4096) bounds `sk ‖ pk`
   together; encodings must be sized for it.
 - **No lock-without-write.** `SELECT … FOR UPDATE` through an
