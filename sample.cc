@@ -14,8 +14,9 @@
  *           length followed by its bytes
  *
  * The program may be run again on the same home directory:
- * each setup step accepts "already exists", and rows are
- * upserted -- inserted, or updated if the id is taken.
+ * the database is created unless it exists, the table unless
+ * sm_lsrel lists it, and rows are upserted -- inserted, or
+ * updated if the id is taken.
  */
 
 #include "sm.h"
@@ -180,16 +181,26 @@ int main(int argc, char **argv) {
     check(-1, "sm_opendb");
   }
 
-  // Create the table in its own transaction; DDL is transactional.
+  // List the tables, and create book in the same transaction
+  // unless it is listed; DDL is transactional.
   check(sm_begin(s, SM_XCT_REPEATABLE_READ), "sm_begin");
-  if (sm_mkrel(s, BOOK_RELID) == 0) {
-    check(sm_commit(s), "sm_commit");
-  } else if (sm_errno() == SM_ERR_EXISTS) {
-    // An earlier run created it; nothing to commit.
-    check(sm_abort(s), "sm_abort");
-  } else {
-    check(-1, "sm_mkrel");
+  uint64_t *rels = nullptr;
+  size_t nrels = 0;
+  check(sm_lsrel(s, &rels, &nrels), "sm_lsrel");
+  bool have_book = false;
+  printf("relations:");
+  for (size_t i = 0; i < nrels; i++) {
+    printf(" %llu", (unsigned long long)rels[i]);
+    have_book = have_book || rels[i] == BOOK_RELID;
   }
+  printf("%s\n", nrels == 0 ? " (none)" : "");
+  // The list is the library's; release it.
+  sm_free_rels(rels);
+  if (!have_book) {
+    check(sm_mkrel(s, BOOK_RELID), "sm_mkrel");
+    printf("created book (relid %llu)\n", (unsigned long long)BOOK_RELID);
+  }
+  check(sm_commit(s), "sm_commit");
 
   // Insert a few books in one transaction, then commit them.
   const book_t books[] = {
