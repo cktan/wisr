@@ -270,7 +270,7 @@ amplification.
 The reason is in `sm1/SECINDEX.md` gap 4, and it is not
 "RocksDB cannot iterate backwards" — it can, with `Prev()`.
 It is that sm1 stores a key's versions newest-first
-(`key | ~xid | ~seq`), so a backward scan meets the *oldest*
+(`key | ~wts | ~seq`), so a backward scan meets the *oldest*
 version of each key first and must walk to the start of that
 key's run before it can pick the visible one; it needs
 `SeekForPrev` to cooperate with the prefix-seek setup; and the
@@ -311,10 +311,9 @@ correctness. What it means:
 
 ## 5a. The second conflict: READ COMMITTED writes
 
-`sm1/DESIGN.md` §6.2 settled that a write at READ COMMITTED
-fails with `SM_ERR_CONFLICT` when the row was committed after
-the transaction began. PostgreSQL's default level does not
-fail. The second of two concurrent
+`sm1` first settled that a write at READ COMMITTED fails with
+`SM_ERR_CONFLICT` when the row was committed after the
+transaction began. PostgreSQL's default level does not fail. The second of two concurrent
 `UPDATE t SET x = x + 1 WHERE id = 1` waits for the first,
 re-reads the newest version of the row, re-checks the `WHERE`
 clause and applies its change. Workloads written for
@@ -322,9 +321,13 @@ PostgreSQL rely on that — a shared counter, a hot account row
 — so a fork that fails them is not PostgreSQL at its default
 level.
 
-Decided: at READ COMMITTED the write proceeds instead of
-failing. The change is to sm1, so its design, its open
-problems and its tests are in `sm1/DESIGN.md` §6.2.
+Decided and built: at READ COMMITTED the write waits for the
+row lock and then proceeds instead of failing. The change is to
+sm1: a refused write, `SM_ERR_UPDATED`, is followed by
+`sm_read_latest` and then the write, and versions are keyed by a
+write timestamp so their order stays commit order. The design is
+`sm1/DESIGN.md` §5.4 and §6.2, and its tests are scenarios
+`f01`–`f10` and `e06`.
 
 ---
 
@@ -397,10 +400,10 @@ Stated so none of it is repeated as fact:
   decision). The plans lost, such as `MAX()` through an
   index, are expected from how the planner works, but were
   not confirmed against its source or measured.
-- **The size of the sm1 version-ordering change** (§5a's
-  decision). Not estimated, and the candidate ordering in
-  `sm1/DESIGN.md` §6.2 has not been checked against GC, the
-  comparator or SSI.
+- **The READ COMMITTED write protocol under a race detector**
+  (§5a). It is built and tested against GC and compaction, and
+  `e06` loses no increment, but a `-fsanitize=thread` run was
+  inconclusive (`sm1/DESIGN.md` §13).
 - **The effort figures in §4** are calibrated judgment against
   the precedents, not measurements. Treat the ordering as
   sound and the absolute numbers as loose.

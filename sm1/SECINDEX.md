@@ -363,7 +363,7 @@ and never use RC at all.
 
 No proposal. `OBJECTIVE.md` settles this one against a
 direction flag, and the engine cost is part of why: versions
-of a key are stored newest first (`key|~xid|~seq`), so a
+of a key are stored newest first (`key|~wts|~seq`), so a
 backward scan meets the oldest version first and must walk to
 the start of each key's run before picking the visible one; it
 needs `SeekForPrev` to work with the §10.2 prefix-seek setup;
