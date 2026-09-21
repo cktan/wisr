@@ -62,7 +62,9 @@ These were open; they are now settled and drive `DESIGN.md`.
   dependency tracking with SIREAD predicate locks and pivot detection.
   No read locks; serialization failures surface as errors at commit.
   Write-write conflicts are still prevented eagerly by in-memory row
-  locks (first-writer-wins).
+  locks (first-writer-wins). At read committed this is being
+  relaxed: a write that meets a newer commit waits and then
+  proceeds instead of failing (`DESIGN.md` §6.2).
 - **Uncommitted writes go eagerly into RocksDB**, stamped with the
   writing transaction's id, and are made visible through a durable
   commit-status table. This keeps transaction size unbounded by RAM,

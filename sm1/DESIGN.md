@@ -686,6 +686,50 @@ statement snapshot of 75 would put a version `k|~50` that sorts
 the older value, and GC would drop the newer commit as
 superseded.
 
+**Decision: the write proceeds (not yet implemented).** The
+rule above — a read committed write fails against a row
+committed after `sm_begin` — is reversed, because the
+PostgreSQL target needs it: at its default level PostgreSQL
+waits for the first writer, re-reads the row and re-checks the
+`WHERE` clause, and workloads rely on that (`PART3.md` §5a).
+At READ COMMITTED, a write that meets a row committed after
+the begin snapshot waits for the row lock and then goes ahead
+against the newest committed version. REPEATABLE READ and
+SERIALIZABLE keep §5.2 as it is. Until the items below are
+designed and built, the text above and §3.1, §4.1 and §5.2
+remain the design of record.
+
+Open, none of it designed yet:
+
+- **Version order must follow commit order without relying on
+  `xid`.** Versions are ordered by `xid`, and §4.1 depends on
+  `xid > snapshot_ts`. A read committed writer that passes a
+  newer commit can have a smaller `xid` than the version it
+  follows, so its version sorts behind it — the example
+  above. One candidate, not evaluated: key each version by a
+  timestamp taken after the row lock is acquired. That
+  timestamp exceeds the `commit_ts` of every earlier writer of
+  the key, because a writer takes its `commit_ts` before it
+  releases the lock, so key order is commit order; the `xid`
+  moves into the value header for status resolution.
+- **The caller re-evaluates the row.** Proceeding is not
+  enough: the `WHERE` clause and the new values must be
+  computed from the newest version, as PostgreSQL's executor
+  does after a lock wait. So the write has to hand the newest
+  version back and be retried with it; a new return code is
+  the likely shape, and `API.md` changes with it.
+- **Documents:** §3.1, §4.1, §5.2 and this section, `API.md`,
+  and the scenario table in `mvcc/MVCC.md`.
+- **MVCC tests come with the change.** The isolation rules are
+  executed as scenarios on every build (`mvcc/MVCC.md`), so
+  this change adds scenarios for the new behavior rather than
+  only editing the old ones. At least: two read committed
+  sessions updating one row, where the second waits and then
+  applies its change; the same pair at repeatable read and
+  serializable, which still fail with `SM_ERR_CONFLICT`; and
+  the ordering example above, a writer with a small `xid`
+  passing a newer commit, checked by a later read and by GC.
+
 ### 6.3 Repeatable read
 
 One `snapshot_ts` taken at `sm_begin`, held to the end. This is

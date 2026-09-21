@@ -112,6 +112,11 @@ design:
   (`PART3.md` §2), so the boundary is a function call and the
   shape is no longer forced. Whether sm2 keeps it, for filter
   pushdown and fewer calls per scan, is open.
+- **READ COMMITTED writes wait, then proceed.** PostgreSQL's
+  default level does not fail a concurrent update of the same
+  row, so sm1's first-committer-wins rule is relaxed there
+  (`sm1/DESIGN.md` §6.2). It needs a new version ordering in
+  sm1 and a row re-check in the executor.
 - **One commit point.** The catalog lives in sm2, in memory
   and written through to sm1, so a DDL statement and the data
   it changes commit in one sm1 transaction, and recovery is

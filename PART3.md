@@ -309,6 +309,25 @@ correctness. What it means:
 
 ---
 
+## 5a. The second conflict: READ COMMITTED writes
+
+`sm1/DESIGN.md` §6.2 settled that a write at READ COMMITTED
+fails with `SM_ERR_CONFLICT` when the row was committed after
+the transaction began. PostgreSQL's default level does not
+fail. The second of two concurrent
+`UPDATE t SET x = x + 1 WHERE id = 1` waits for the first,
+re-reads the newest version of the row, re-checks the `WHERE`
+clause and applies its change. Workloads written for
+PostgreSQL rely on that — a shared counter, a hot account row
+— so a fork that fails them is not PostgreSQL at its default
+level.
+
+Decided: at READ COMMITTED the write proceeds instead of
+failing. The change is to sm1, so its design, its open
+problems and its tests are in `sm1/DESIGN.md` §6.2.
+
+---
+
 ## 6. What this forces on sm2, now
 
 These are the decisions constrained by the PG target. They are
@@ -378,6 +397,10 @@ Stated so none of it is repeated as fact:
   decision). The plans lost, such as `MAX()` through an
   index, are expected from how the planner works, but were
   not confirmed against its source or measured.
+- **The size of the sm1 version-ordering change** (§5a's
+  decision). Not estimated, and the candidate ordering in
+  `sm1/DESIGN.md` §6.2 has not been checked against GC, the
+  comparator or SSI.
 - **The effort figures in §4** are calibrated judgment against
   the precedents, not measurements. Treat the ordering as
   sound and the absolute numbers as loose.
