@@ -237,6 +237,33 @@ int write_row(sm_session_t *s, write_op_t op, uint64_t relid, const char *key,
                       rocksdb::Slice(data ? data : "", datalen));
 }
 
+/* sm_lock, minus the out-of-memory guard. */
+int lock_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
+             sm_lockmode_t mode) {
+  // Require an active, non-prepared transaction.
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  // Reject a mode that is neither shared nor exclusive.
+  if (mode != SM_LOCK_SHARED && mode != SM_LOCK_EXCLUSIVE) {
+    return set_error(SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
+  }
+  // Validate the relid and key at the current view.
+  if (enter(s, xct_view(s), relid, key, klen) != 0) {
+    return -1;
+  }
+  // Take the lock, blocking while a conflicting holder has it.
+  if (lock_acquire(s, relid, rocksdb::Slice(key ? key : "", klen),
+                   mode == SM_LOCK_EXCLUSIVE) != 0) {
+    return xct_fail_retryable(s, SM_ERR_DEADLOCK,
+                              "chosen as a deadlock victim");
+  }
+  // Now that the lock is held, run §5.2's check, so what the
+  // caller reads next under this lock is current: a version
+  // committed after this transaction began fails the call.
+  return access_check_current(s, relid, rocksdb::Slice(key ? key : "", klen));
+}
+
 /* sm_read, minus the out-of-memory guard. */
 int read_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
              const char **data, size_t *datalen) {
@@ -539,7 +566,7 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   }
   // Take the row lock; this blocks while another transaction
   // holds it, and fails if we are chosen as a deadlock victim.
-  if (lock_acquire(s, relid, key) != 0) {
+  if (lock_acquire(s, relid, key, true) != 0) {
     return xct_fail_retryable(s, SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }
@@ -596,7 +623,45 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   return 0;
 }
 
+/*
+ * §5.2's check on its own, for sm_lock: fail if a version of
+ * key committed after this transaction's begin snapshot. The
+ * caller holds the lock, so no one can add one behind us.
+ */
+int access_check_current(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
+  // Find the relation's CF.
+  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  if (!cf) {
+    return -1;
+  }
+  bool live;
+  uint64_t commit_ts;
+  // Find the newest committed version of the key.
+  if (latest_version(s, cf, key, &live, &commit_ts) != 0) {
+    return -1;
+  }
+  // Committed after we began: what we would read is stale.
+  if (commit_ts > s->snapshot_ts) {
+    return xct_fail_retryable(
+        s, SM_ERR_CONFLICT,
+        "key was changed by a transaction that committed after "
+        "this one began");
+  }
+  return 0;
+}
+
 } // namespace wisr
+
+/* Take a row lock without writing the row. */
+int sm_lock(sm_session_t *session, uint64_t relid, const char *key, size_t klen,
+            sm_lockmode_t mode) {
+  // Report an allocation failure as SM_ERR_NOMEM.
+  try {
+    return lock_row(session, relid, key, klen, mode);
+  } catch (const std::bad_alloc &) {
+    return set_error(SM_ERR_NOMEM, "sm_lock: out of memory");
+  }
+}
 
 /* Insert a row; the key must not exist. */
 int sm_insert(sm_session_t *session, uint64_t relid, const char *key,

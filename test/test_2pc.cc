@@ -266,6 +266,8 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm_errno() == SM_ERR_PREPARED);
   CHECK(sm_forget(s, 1) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
+  CHECK(sm_lock(s, g_rel, "a", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_errno() == SM_ERR_PREPARED);
   uint64_t fresh = 0;
   CHECK(sm_mkrel(s, &fresh) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
@@ -381,6 +383,43 @@ TEST_CASE("a prepared transaction keeps its locks after its session closes") {
   CHECK(rc == -1);
   CHECK(err == SM_ERR_CONFLICT);
   CHECK(read_now(v, "a") == "1");
+  sm_closedb(u);
+  sm_closedb(v);
+}
+
+TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
+  // Verify sm_lock's shared locks reach the PREPARED record and
+  // come back with it (§8.4, §9.1).
+  // 1. S locks "b" shared, writes "a", and prepares "g".
+  // 2. Restart the environment, so "g" is rebuilt from its record.
+  // 3. A writer of "b" blocks on the restored shared lock, and
+  //    a second shared lock on "b" is granted at once.
+  // 4. Aborting "g" by gid frees "b"; the blocked write completes.
+  tpc_fixture_t f;
+  sm_session_t *s = f.open();
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_lock(s, g_rel, "b", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(set(s, "a", "1") == 0);
+  REQUIRE(sm_prepare(s, "g") == 0);
+  f.restart();
+
+  sm_session_t *u = f.open();
+  sm_session_t *v = f.open();
+  REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_lock(u, g_rel, "b", 1, SM_LOCK_SHARED) == 0);
+
+  std::atomic<bool> returned{false};
+  int rc = -2;
+  std::thread tu([&] {
+    rc = set(u, "b", "u");
+    returned = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  CHECK_FALSE(returned);
+  REQUIRE(sm_abort_prepared(v, "g") == 0);
+  tu.join();
+  CHECK(rc == 0);
+  REQUIRE(sm_commit(u) == 0);
   sm_closedb(u);
   sm_closedb(v);
 }

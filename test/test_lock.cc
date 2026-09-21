@@ -361,3 +361,315 @@ TEST_CASE("concurrent increments with retry never lose an update") {
     }
   }
 }
+
+TEST_CASE("shared locks coexist; an exclusive one waits for all of them") {
+  // Verify S/S compatibility and S/X conflict (DESIGN.md §5.1).
+  // 1. A and B both lock "x" shared; neither blocks.
+  // 2. C, in another thread, locks "x" exclusive and blocks.
+  // 3. A commits; C still blocks, because B holds it too.
+  // 4. B commits; C gets the lock and commits.
+  lock_fixture_t f;
+  sm_session_t *a = f.open();
+  sm_session_t *b = f.open();
+  sm_session_t *c = f.open();
+  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_begin(c, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(sm_lock(b, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+
+  std::atomic<bool> returned{false};
+  int rc = -2;
+  std::thread tc([&] {
+    rc = sm_lock(c, g_rel, "x", 1, SM_LOCK_EXCLUSIVE);
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+  REQUIRE(sm_commit(a) == 0);
+  settle();
+  CHECK_FALSE(returned);
+  REQUIRE(sm_commit(b) == 0);
+  tc.join();
+  CHECK(rc == 0);
+  REQUIRE(sm_commit(c) == 0);
+  sm_closedb(a);
+  sm_closedb(b);
+  sm_closedb(c);
+}
+
+TEST_CASE("a shared lock blocks a writer, and a writer blocks a shared lock") {
+  // Verify the lock sm_lock takes is the one writes take.
+  // 1. A locks "x" shared; B's update of "x" blocks until A ends.
+  // 2. A updates "y", taking it exclusive; B's shared lock on
+  //    "y" blocks until A ends.
+  lock_fixture_t f;
+  sm_session_t *a = f.open();
+  sm_session_t *b = f.open();
+  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+
+  std::atomic<bool> returned{false};
+  int rc = -2;
+  std::thread tb([&] {
+    rc = set(b, "x", "b");
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+  REQUIRE(sm_abort(a) == 0);
+  tb.join();
+  CHECK(rc == 0);
+  REQUIRE(sm_abort(b) == 0);
+
+  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(set(a, "y", "a") == 0);
+  returned = false;
+  rc = -2;
+  std::thread tb2([&] {
+    rc = sm_lock(b, g_rel, "y", 1, SM_LOCK_SHARED);
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+  REQUIRE(sm_abort(a) == 0);
+  tb2.join();
+  CHECK(rc == 0);
+  REQUIRE(sm_abort(b) == 0);
+  sm_closedb(a);
+  sm_closedb(b);
+}
+
+TEST_CASE("a shared holder upgrades by writing, once the others are gone") {
+  // Verify the S -> X upgrade (DESIGN.md §5.1).
+  // 1. A and B hold "x" shared.
+  // 2. A writes "x": the upgrade blocks on B.
+  // 3. B commits without touching "x"; A's write completes.
+  // 4. A holds "x" exclusive afterwards, so C's shared lock
+  //    blocks; when A commits, C's snapshot is stale and the
+  //    lock fails with SM_ERR_CONFLICT (§5.2).
+  lock_fixture_t f;
+  sm_session_t *a = f.open();
+  sm_session_t *b = f.open();
+  sm_session_t *c = f.open();
+  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(sm_lock(b, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+
+  std::atomic<bool> returned{false};
+  int rc = -2;
+  std::thread ta([&] {
+    rc = set(a, "x", "a");
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+  REQUIRE(sm_commit(b) == 0);
+  ta.join();
+  CHECK(rc == 0);
+
+  REQUIRE(sm_begin(c, SM_XCT_REPEATABLE_READ) == 0);
+  std::atomic<bool> c_returned{false};
+  int rc_c = -2, err_c = 0;
+  std::thread tc([&] {
+    rc_c = sm_lock(c, g_rel, "x", 1, SM_LOCK_SHARED);
+    err_c = sm_errno();
+    c_returned = true;
+  });
+  settle();
+  CHECK_FALSE(c_returned);
+  REQUIRE(sm_commit(a) == 0);
+  tc.join();
+  CHECK(rc_c == -1);
+  CHECK(err_c == SM_ERR_CONFLICT);
+  sm_closedb(a);
+  sm_closedb(b);
+  sm_closedb(c);
+}
+
+TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
+  // Verify the cycle a shared lock makes possible (DESIGN.md §5.1).
+  // 1. A (older) and B (younger) both hold "x" shared.
+  // 2. Both try to write "x"; each waits for the other.
+  // 3. The younger, B, is doomed with SM_ERR_DEADLOCK, and A
+  //    completes its write.
+  lock_fixture_t f;
+  sm_session_t *a = f.open();
+  sm_session_t *b = f.open();
+  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(sm_lock(b, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+
+  int rc_a = -2, rc_b = -2, err_b = 0;
+  std::thread ta([&] { rc_a = set(a, "x", "a"); });
+  std::thread tb([&] {
+    rc_b = set(b, "x", "b");
+    err_b = sm_errno();
+  });
+  ta.join();
+  tb.join();
+  CHECK(rc_a == 0);
+  CHECK(rc_b == -1);
+  CHECK(err_b == SM_ERR_DEADLOCK);
+  REQUIRE(sm_commit(a) == 0);
+  sm_closedb(a);
+  sm_closedb(b);
+}
+
+TEST_CASE("sm_lock fails with CONFLICT on a row committed after the snapshot") {
+  // Verify §5.2's check runs once the lock is held, so what the
+  // caller reads under it is current.
+  // 1. A begins and takes its snapshot.
+  // 2. B updates "x" and commits.
+  // 3. A's sm_lock on "x" fails with SM_ERR_CONFLICT, in either
+  //    mode, and its transaction is aborted.
+  for (sm_lockmode_t mode : {SM_LOCK_SHARED, SM_LOCK_EXCLUSIVE}) {
+    CAPTURE(mode);
+    lock_fixture_t f;
+    sm_session_t *a = f.open();
+    sm_session_t *b = f.open();
+    REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
+    CHECK(get(a, g_rel, "x") == "0");
+
+    REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(set(b, "x", "b") == 0);
+    REQUIRE(sm_commit(b) == 0);
+
+    CHECK(sm_lock(a, g_rel, "x", 1, mode) == -1);
+    CHECK(sm_errno() == SM_ERR_CONFLICT);
+    CHECK(sm_retryable() == 1);
+    CHECK(sm_abort(a) == -1);
+    CHECK(sm_errno() == SM_ERR_NOTRANS);
+    sm_closedb(a);
+    sm_closedb(b);
+  }
+}
+
+TEST_CASE("sm_lock follows the savepoint rules, and never downgrades") {
+  // Verify §6.5's lock rule for explicit locks.
+  // 1. A locks "x" shared, marks, then locks "y" shared and
+  //    upgrades "x" by writing it.
+  // 2. A rolls back to the mark: "y" is free, "x" is still held
+  //    exclusive.
+  // 3. B can lock "y" at once, but blocks on "x" until A ends.
+  lock_fixture_t f;
+  sm_session_t *a = f.open();
+  sm_session_t *b = f.open();
+  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(sm_savepoint(a) == 1);
+  REQUIRE(sm_lock(a, g_rel, "y", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(set(a, "x", "a") == 0);
+  REQUIRE(sm_rollback(a, 1) == 0);
+
+  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_lock(b, g_rel, "y", 1, SM_LOCK_SHARED) == 0);
+
+  std::atomic<bool> returned{false};
+  int rc = -2;
+  std::thread tb([&] {
+    rc = sm_lock(b, g_rel, "x", 1, SM_LOCK_SHARED);
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+  REQUIRE(sm_abort(a) == 0);
+  tb.join();
+  CHECK(rc == 0);
+  REQUIRE(sm_abort(b) == 0);
+  sm_closedb(a);
+  sm_closedb(b);
+}
+
+TEST_CASE("the index-build protocol blocks writers, then makes them retry") {
+  // Verify SECINDEX.md gap 1's protocol end to end: a builder
+  // cannot miss a concurrent writer's rows.
+  // 1. A catalog relation holds a schema row saying "no index".
+  // 2. Writer W takes it shared, reads it, writes a base row,
+  //    and commits.
+  // 3. Builder B takes it exclusive by updating it. Writer X,
+  //    beginning after B, blocks on the shared lock, so no
+  //    writer can run while B scans the base relation.
+  // 4. B sees W's row, publishes the index, and commits.
+  // 5. X's shared lock then fails with SM_ERR_CONFLICT, because
+  //    the schema row changed after its snapshot; on retry it
+  //    reads the new schema and maintains the index.
+  lock_fixture_t f;
+  sm_session_t *w = f.open();
+  sm_session_t *b = f.open();
+  sm_session_t *x = f.open();
+
+  // The layer's catalog: one schema row per base relation.
+  REQUIRE(sm_begin(w, SM_XCT_REPEATABLE_READ) == 0);
+  uint64_t cat = mkrel(w);
+  put(w, cat, "S", "noindex");
+  REQUIRE(sm_commit(w) == 0);
+
+  // A writer reads the schema under a shared lock, then writes.
+  REQUIRE(sm_begin(w, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm_lock(w, cat, "S", 1, SM_LOCK_SHARED) == 0);
+  CHECK(get(w, cat, "S") == "noindex");
+  put(w, g_rel, "w-row", "1");
+  REQUIRE(sm_commit(w) == 0);
+
+  // The builder takes the schema row exclusive.
+  REQUIRE(sm_begin(b, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm_update(b, cat, "S", 1, "indexed", 7) == 0);
+
+  // A writer arriving now waits for the build to finish.
+  REQUIRE(sm_begin(x, SM_XCT_READ_COMMITTED) == 0);
+  std::atomic<bool> returned{false};
+  int rc = -2, err = 0;
+  std::thread tx([&] {
+    rc = sm_lock(x, cat, "S", 1, SM_LOCK_SHARED);
+    err = sm_errno();
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+
+  // The builder's scan sees the committed writer's row.
+  CHECK(get(b, g_rel, "w-row") == "1");
+  REQUIRE(sm_commit(b) == 0);
+
+  // The blocked writer is stale, and must retry.
+  tx.join();
+  CHECK(rc == -1);
+  CHECK(err == SM_ERR_CONFLICT);
+  REQUIRE(sm_begin(x, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm_lock(x, cat, "S", 1, SM_LOCK_SHARED) == 0);
+  CHECK(get(x, cat, "S") == "indexed");
+  REQUIRE(sm_commit(x) == 0);
+  sm_closedb(w);
+  sm_closedb(b);
+  sm_closedb(x);
+}
+
+TEST_CASE("sm_lock rejects bad arguments and needs a transaction") {
+  // Verify the call's contract.
+  // 1. A NULL session, an unknown mode, and relid 0 are
+  //    SM_ERR_INVALID; an unknown relation is SM_ERR_NOTFOUND.
+  // 2. Without a transaction it fails with SM_ERR_NOTRANS.
+  // 3. A key that does not exist is lockable.
+  lock_fixture_t f;
+  sm_session_t *s = f.open();
+  CHECK(sm_lock(nullptr, g_rel, "x", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  CHECK(sm_lock(s, g_rel, "x", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_errno() == SM_ERR_NOTRANS);
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_lock(s, g_rel, "x", 1, (sm_lockmode_t)7) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  CHECK(sm_lock(s, 0, "x", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  CHECK(sm_lock(s, g_rel + 999, "x", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm_lock(s, g_rel, "absent", 6, SM_LOCK_EXCLUSIVE) == 0);
+  REQUIRE(sm_commit(s) == 0);
+  sm_closedb(s);
+}

@@ -80,8 +80,17 @@ struct sm_session_t {
   std::atomic<int> doomed{0};
 
   /* Row locks (§5.1); guarded by the database's lock_mu. */
-  std::vector<std::string> locks;      /* held, in acquisition order */
-  sm_session_t *waiting_for = nullptr; /* the holder blocking us */
+  struct lockref_t {
+    std::string key;        /* the lock table key */
+    bool exclusive = false; /* the mode held now, after upgrades */
+  };
+  std::vector<lockref_t> locks; /* held, in acquisition order */
+  /*
+   * The holders blocking us, empty when we are not waiting. A
+   * shared lock has many, so the waits-for graph branches and
+   * §5.1's cycle search walks it rather than a chain.
+   */
+  std::vector<sm_session_t *> waiting_for;
 
   wisr::ssi_node_t *ssi = nullptr; /* SERIALIZABLE only (§7) */
 
@@ -158,12 +167,25 @@ view_t xct_read_view(sm_session_t *session);
 int xct_fail_retryable(sm_session_t *session, sm_errno_t e, const char *msg);
 
 /*
- * Take the exclusive row lock on (relid, key) for the session's
- * transaction, blocking while another holds it (§5.1). Returns
- * 0, or -1 without an error set if the transaction was doomed
+ * Take the row lock on (relid, key) for the session's
+ * transaction in the given mode, blocking while another holds
+ * it in a conflicting one (§5.1). A transaction already
+ * holding it shared and asking exclusive upgrades. Returns 0,
+ * or -1 without an error set if the transaction was doomed
  * while waiting; the caller then fails it with s->doomed.
  */
-int lock_acquire(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+int lock_acquire(sm_session_t *session, uint64_t relid, rocksdb::Slice key,
+                 bool exclusive);
+
+/* §5.2's first-committer-wins check alone, for sm_lock. */
+int access_check_current(sm_session_t *session, uint64_t relid,
+                         rocksdb::Slice key);
+
+/* Move every lock s holds to g, the prepared object (§8.4). */
+void lock_transfer(db_t *db, sm_session_t *s, sm_session_t *g);
+
+/* Put a restored transaction's locks back in the table (§9.1). */
+void lock_restore(db_t *db, sm_session_t *g);
 
 /* Release every row lock the session's transaction holds. */
 void lock_release_all(sm_session_t *session);

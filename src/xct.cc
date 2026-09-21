@@ -419,6 +419,9 @@ int commit(sm_session_t *s) {
     }
     // Keep the committed SSI node for its overlaps.
     ssi_end(s);
+    // Release its row locks: a transaction that never wrote can
+    // still hold them, through sm_lock (§5.1).
+    lock_release_all(s);
     // Forget the transaction.
     reset(s);
     return 0;
@@ -556,11 +559,13 @@ std::string encode_prepared(const sm_session_t *g) {
   // The gid, length-prefixed.
   put_be32(v, static_cast<uint32_t>(g->prepared_gid.size()));
   v.append(g->prepared_gid);
-  // The write set: every lock key, length-prefixed.
+  // The lock set: every lock key, length-prefixed, each
+  // followed by the mode byte it is held in (§8.4).
   put_be32(v, static_cast<uint32_t>(g->locks.size()));
-  for (const std::string &k : g->locks) {
-    put_be32(v, static_cast<uint32_t>(k.size()));
-    v.append(k);
+  for (const sm_session_t::lockref_t &l : g->locks) {
+    put_be32(v, static_cast<uint32_t>(l.key.size()));
+    v.append(l.key);
+    v.push_back(l.exclusive ? 1 : 0);
   }
   // The relids created, then those dropped, each counted.
   for (const std::vector<uint64_t> *rels : {&g->created, &g->dropped}) {
@@ -603,16 +608,14 @@ sm_session_t *detach_prepared(sm_session_t *s, const std::string &gid) {
   // Move the SSI node over.
   g->ssi = s->ssi;
   s->ssi = nullptr;
+  // Hand every held lock, in its mode, to the new owner.
+  lock_transfer(s->db, s, g);
   {
-    // Hold lock_mu while re-pointing the lock table.
+    // Hold lock_mu while moving the list the table points into.
     std::lock_guard<std::mutex> guard(s->db->lock_mu);
-    // Hand every held lock to the new owner.
-    for (const std::string &k : s->locks) {
-      s->db->lock_owners[k] = g;
-    }
     // Move the lock list.
     g->locks.swap(s->locks);
-    s->db->lock_cv.notify_all(); // waiters re-read their owner
+    s->db->lock_cv.notify_all(); // waiters re-read their holders
   }
   // Leave the session with no transaction.
   reset(s);
@@ -1083,8 +1086,15 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
       return false;
     }
     // Take the lock key.
-    g->locks.emplace_back(p, len);
+    sm_session_t::lockref_t l;
+    l.key.assign(p, len);
     p += len;
+    // Take the mode byte that follows it.
+    if (end - p < 1) {
+      return false;
+    }
+    l.exclusive = *p++ != 0;
+    g->locks.push_back(std::move(l));
   }
   // Read the relids created, then dropped.
   for (std::vector<uint64_t> *rels : {&g->created, &g->dropped}) {

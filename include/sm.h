@@ -467,6 +467,54 @@ int sm_commit(sm_session_t* session);
 int sm_abort(sm_session_t* session);
 
 /*
+ * The mode of a row lock taken by sm_lock().
+ *
+ *   SM_LOCK_SHARED     others may hold it shared, none may
+ *                      write the row
+ *   SM_LOCK_EXCLUSIVE  no one else may hold it in any mode
+ */
+typedef enum {
+  SM_LOCK_SHARED = 0,
+  SM_LOCK_EXCLUSIVE = 1
+} sm_lockmode_t;
+
+/*
+ * Lock a row without writing it: SQL's SELECT ... FOR SHARE
+ * and FOR UPDATE. The key need not exist.
+ *
+ * The call BLOCKS while another transaction holds the lock in
+ * a conflicting mode, exactly as a write does, and it can fail
+ * with SM_ERR_DEADLOCK for the same reason. A transaction that
+ * already holds the row shared and asks for it exclusive --
+ * including by writing the row -- upgrades, waiting for the
+ * other shared holders to finish; two transactions upgrading
+ * the same row deadlock, and the younger one is the victim.
+ *
+ * Once the lock is held the call runs the same check a write
+ * does: if another transaction committed a version of this key
+ * after this transaction's snapshot, it fails with
+ * SM_ERR_CONFLICT. So a successful sm_lock means what the
+ * caller reads next under that lock is current, which is what
+ * makes "lock, then read, then act" safe.
+ *
+ * The lock is held to the end of the transaction, or until an
+ * sm_rollback() past the point it was taken. An upgrade is
+ * never undone by a rollback: the row stays locked in the
+ * stronger mode until the transaction ends.
+ *
+ * A transaction holding shared locks may be prepared; the
+ * locks survive in the prepared transaction and are restored
+ * after a crash, so nothing may write those rows until a
+ * coordinator resolves it.
+ *
+ * Errors: SM_ERR_CONFLICT / SM_ERR_DEADLOCK (retryable),
+ * SM_ERR_NOTFOUND (relation), SM_ERR_NOTRANS, SM_ERR_PREPARED,
+ * SM_ERR_INVALID.
+ */
+int sm_lock(sm_session_t* session, uint64_t relid,
+            const char* key, size_t klen, sm_lockmode_t mode);
+
+/*
  * Begin a statement: read committed then reads every row of
  * this statement at ONE snapshot, instead of taking a fresh
  * one per call.

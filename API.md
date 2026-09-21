@@ -620,6 +620,51 @@ still arrive on a row this statement has just read.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
+### int sm_lock(sm_session_t* session, uint64_t relid, const char* key, size_t klen, sm_lockmode_t mode)
+
+```c
+typedef enum {
+    SM_LOCK_SHARED    = 0,
+    SM_LOCK_EXCLUSIVE = 1
+} sm_lockmode_t;
+```
+
+Lock a row without writing it: SQL's `SELECT ... FOR SHARE`
+and `FOR UPDATE`. The key need not exist.
+
+`SM_LOCK_SHARED` lets other transactions hold the same row
+shared but stops any of them writing it.
+`SM_LOCK_EXCLUSIVE` excludes every other holder.
+
+The call **blocks** while another transaction holds the row
+in a conflicting mode, exactly as a write does, and can fail
+with `SM_ERR_DEADLOCK` for the same reason. A transaction
+holding the row shared and asking for it exclusive — including
+by writing it — **upgrades**, waiting for the other shared
+holders to finish. Two transactions upgrading the same row
+deadlock, and the younger is the victim.
+
+Once the lock is held, the call runs the same check a write
+runs: if another transaction committed a version of this key
+after this transaction's snapshot, it fails with
+`SM_ERR_CONFLICT`. A successful `sm_lock` therefore means what
+the caller reads next under that lock is current, which is
+what makes "lock, then read, then act" safe.
+
+The lock is held to the end of the transaction, or until an
+`sm_rollback` past the point it was taken. An upgrade is never
+undone by a rollback: the row stays locked in the stronger
+mode until the transaction ends.
+
+A transaction holding shared locks may be prepared. They
+survive in the prepared transaction and are restored after a
+crash, so nothing may write those rows until a coordinator
+resolves it.
+
+Errors: `SM_ERR_CONFLICT` / `SM_ERR_DEADLOCK` (retryable),
+`SM_ERR_NOTFOUND` (no such relation), `SM_ERR_NOTRANS`,
+`SM_ERR_PREPARED`, `SM_ERR_INVALID`.
+
 ### int sm_savepoint(sm_session_t* session)
 
 Set a savepoint at the current point in the transaction
@@ -953,7 +998,8 @@ or, for update/delete, key), `SM_ERR_DUPKEY` (insert),
 
 ## Read API
 
-Reads never block and never take locks. They cannot return
+Reads never block and never take locks; `sm_lock` is how a
+caller takes one deliberately. They cannot return
 `SM_ERR_CONFLICT` or `SM_ERR_DEADLOCK`. Under
 `SM_XCT_SERIALIZABLE` a read is recorded, and may
 contribute to an `SM_ERR_SERIALIZATION` failure later, at
@@ -1173,3 +1219,11 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     returns a depth, `sm_rollback` takes one, and
     `sm_forget` is `RELEASE SAVEPOINT`. `SECINDEX.md` gap 2
     is the case that asked for it.
+
+20. **`sm_lock` added.** (D) Locking a row without writing it
+    is how a layer does `SELECT ... FOR UPDATE`, and its
+    shared mode is what lets a secondary-index builder wait
+    out the writers that cannot yet know the index exists.
+    `SECINDEX.md` gap 1 is the case that asked for it; it was
+    the only gap there that made correct behaviour impossible
+    rather than merely awkward.

@@ -28,7 +28,7 @@ abort cover both.
 
 ## Gaps, in order of severity
 
-### 1. Online index build on a populated relation
+### 1. Online index build on a populated relation — CLOSED
 
 The builder scans the base relation, fills the index, and
 commits a row in the layer's index catalog. A concurrent
@@ -48,13 +48,21 @@ transactions. Neither is expressible here:
 - No primitive waits for "all transactions begun before now"
   to finish, and no snapshot or commit timestamp is exposed.
 
-Needed: one of `sm_lock_rel(session, rel, SHARED|EXCLUSIVE)`,
-shared-mode key locks, or a wait-for-older-transactions-to-drain
-primitive. The last is the smallest addition and suffices for
-a CIC-style multi-phase build.
+`sm_lock` closes it with shared-mode key locks. The protocol
+below is implemented and tested end to end: a builder holding
+the schema row exclusive blocks new writers and waits out the
+ones in flight, so its scan cannot miss their rows, and each
+blocked writer then fails its conflict check, retries, and
+reads the new schema.
 
-This is the only gap that makes correct behaviour impossible
+This was the only gap that made correct behaviour impossible
 rather than merely awkward or slow.
+
+The drain primitive was the alternative — smaller, needing no
+shared locks — but it wants a CIC-style multi-phase build in
+the layer and still admits false duplicates for a unique
+index. `sm_lock` was chosen because it also gives
+lock-without-write, which gap 6 wanted anyway.
 
 ### 2. A single savepoint — CLOSED
 
@@ -130,19 +138,19 @@ Needed: `sm_scan_seek(scan, key, klen, inclusive)`.
 
 ## Summary
 
-Gap 1 blocks correctness and is the one that remains. Gap 5
-decides whether the indexes are fast. Gaps 2 and 3 are closed:
-the savepoint stack with `sm_forget`, and `sm_stmt_begin`, are
-both in `sm.h`. Gap 4 is not open either: forward-only
-scanning is a settled decision, and the layer works around it
-with inverted-byte relations.
+Gap 5, cursor reposition, is the one that remains, and it
+decides whether the indexes are fast rather than whether they
+are correct. Gaps 1, 2 and 3 are closed: `sm_lock`, the
+savepoint stack with `sm_forget`, and `sm_stmt_begin` are all
+in `sm.h`. Gap 4 is not open either: forward-only scanning is
+a settled decision, and the layer works around it with
+inverted-byte relations.
 
 ## Closing the gaps
 
-Proposals, except gaps 2 and 3, which are done. The rest are
-not in `sm.h`: they are contract changes to `sm.h`, `API.md`,
-and `DESIGN.md`, and each now costs an implementation in
-`src/` and tests as well.
+Proposals, except gaps 1, 2 and 3, which are done. What is
+left is a contract change to `sm.h`, `API.md`, and
+`DESIGN.md`, plus an implementation in `src/` and tests.
 
 ### The whole roster
 
@@ -150,7 +158,7 @@ Every signature the gaps ask for, in one place. The sections
 after this one explain each.
 
 ```c
-/* gap 1: online index build, and lock-without-write */
+/* gap 1: online index build, and lock-without-write -- IMPLEMENTED */
 typedef enum { SM_LOCK_SHARED = 0, SM_LOCK_EXCLUSIVE = 1 } sm_lockmode_t;
 
 int sm_lock(sm_session_t* session, uint64_t relid,
@@ -185,13 +193,13 @@ int sm_delete(sm_session_t* session, uint64_t relid,
 ```
 
 Gap 4 needs no function: it is closed. Gap 6's
-lock-without-write is `sm_lock` again, and its `sm_lsrel` is
-already in phase 1.
+lock-without-write is `sm_lock` again, which is now in, and
+its `sm_lsrel` was already in phase 1.
 
-**How firm each one is.** The gap 2 trio and `sm_stmt_begin`
-are settled: they are in `sm.h` and `API.md`. Gaps 1 and 5 are
-quoted from the sections below, and the gap 6 pair is sketched
-here for the first time -- that gap defers both until
+**How firm each one is.** `sm_lock`, the gap 2 trio and
+`sm_stmt_begin` are settled: they are in `sm.h` and `API.md`.
+Gap 5 is quoted from its section below, and the gap 6 pair is
+sketched here for the first time -- that gap defers both until
 profiling asks, so neither signature is settled.
 
 **Three are breaking changes**, not additions: `sm_rollback`
@@ -206,13 +214,23 @@ call on the session -- which is the copy the layer is trying
 to avoid in the first place. Settle the lifetime before the
 signature.
 
-### Gap 1 (and lock-without-write): `sm_lock`
+### Gap 1 (and lock-without-write): `sm_lock` — DONE
 
 ```c
 typedef enum { SM_LOCK_SHARED = 0, SM_LOCK_EXCLUSIVE = 1 } sm_lockmode_t;
 int sm_lock(sm_session_t* s, uint64_t relid,
             const char* key, size_t klen, sm_lockmode_t mode);
 ```
+
+Implemented as proposed (DESIGN.md §5.1). What it cost, since
+the estimate below was written as a guess: the lock table now
+holds a mode and a holder list per key; the waits-for edges
+became a graph and deadlock detection a depth-first search
+with a visited set; a shared holder that writes its key
+upgrades in place; the `PREPARED` record carries a mode byte
+per lock key, which bumped the database format to version 4;
+and the read-only commit path had to start releasing locks,
+since a transaction with no writes can now hold them.
 
 PostgreSQL's `SELECT FOR SHARE` / `FOR UPDATE`. The call blocks
 on a conflicting holder. Once the lock is held it runs the
@@ -239,19 +257,21 @@ row per base relation, `"S"|rel`.
   conflict check (the schema row committed after their
   snapshot), retry, and see the new index.
 
-**Tradeoffs.**
+**Tradeoffs, as they turned out.**
 
 - Writers are blocked for the whole build, as with
   PostgreSQL's plain `CREATE INDEX`, not `CONCURRENTLY`.
-- Shared locks change the lock design. The lock table goes
-  from exclusive-only to S/X with holder sets. Deadlocks can
-  form through shared locks, including S→X upgrades, so
-  §5.1's "cycles are only possible among writers" no longer
-  holds. A prepared transaction must record its S locks for
-  recovery to restore (§8.4, §9.1).
+- Shared locks changed the lock design, as expected. The lock
+  table went from exclusive-only to S/X with holder lists,
+  deadlocks can now form through shared locks and S→X
+  upgrades, so §5.1's "cycles are only possible among
+  writers" no longer holds, and a prepared transaction
+  records each lock's mode for recovery to restore (§8.4,
+  §9.1).
 - The schema row is a hot key: every writer on the relation
-  locks it, so its lock-table shard mutex is contended.
-  Readers never touch it.
+  locks it, so its lock-table mutex is contended. Readers
+  never touch it. The table is still one mutex, not sharded,
+  so this is the first place a benchmark will point at.
 - The non-blocking alternative needs a wait-for-older-
   transactions primitive plus a CIC-style protocol. It admits
   stale entries when a writer's `sm_delete` of a not-yet-built
@@ -359,7 +379,7 @@ is safe, and one range per cursor.
 
 ### Order
 
-Gaps 2 and 3 are done. `sm_lock` next (gap 1 and
-lock-without-write), then the rest as needed. One at a time:
-update `sm.h`, `API.md`, and `DESIGN.md`, implement it in
-`src/` with tests, then review.
+Gaps 1, 2 and 3 are done, and gap 4 will not be. What is left
+is `sm_scan_seek` (gap 5) and gap 6's two performance items,
+each when something asks for it: update `sm.h`, `API.md`, and
+`DESIGN.md`, implement it in `src/` with tests, then review.

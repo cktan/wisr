@@ -54,10 +54,9 @@ int restore_prepared(db_t *db) {
       std::lock_guard<std::mutex> guard(db->txn_mu);
       db->active.insert(xid);
     }
-    // Re-acquire the row locks of its write set.
-    for (const std::string &k : g->locks) {
-      db->lock_owners[k] = g;
-    }
+    // Re-acquire the row locks of its write set, each in the
+    // mode the record carries.
+    lock_restore(db, g);
     // Pin the GC watermark at its snapshot.
     db_register_snapshot(db, g->snapshot_ts);
     g->snapshot_registered = true;

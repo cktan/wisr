@@ -40,13 +40,14 @@ relation with inverted key bytes and scanning it forward.
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
 `sm.h` and the design in this document, nothing more. Phase 2
 adds the API a secondary-index layer built on top of it needs.
-`SECINDEX.md` lists those gaps and proposes the functions that
-close them (`sm_lock`, `sm_scan_seek`). Three are already in:
-`sm_lsrel`, which came with naming relations by relid (§11);
-`sm_stmt_begin`, which closed the gap in read-committed
-statement snapshots (§6.2); and the savepoint stack with
-`sm_forget` (§6.5). Descending scans are the one gap it lists
-that will not be closed at all.
+`SECINDEX.md` lists those gaps; only `sm_scan_seek` is still
+open. In already are `sm_lsrel`, which came with naming
+relations by relid (§11); `sm_stmt_begin`, which closed the
+gap in read-committed statement snapshots (§6.2); the
+savepoint stack with `sm_forget` (§6.5); and `sm_lock`, whose
+shared mode makes a safe index build possible (§5.1).
+Descending scans are the one gap it lists that will not be
+closed at all.
 
 **Assumptions.**
 
@@ -506,23 +507,46 @@ the commit record does (§8.2).
 
 ### 5.1 Row locks
 
-An in-memory hash table, `(relid, userkey)` → owner
-transaction. Exclusive only; readers never take one. Locks
-are released at commit/abort — strict, so no cascading
-aborts. The key is exact, so two distinct keys never share
-an entry and never block or deadlock each other. One mutex
-covers the table and every waiter's waits-for pointer, which
-keeps a deadlock walk consistent; sharding it is a later
-optimization if a benchmark shows contention.
+An in-memory hash table, `(relid, userkey)` → the
+transactions holding it. A lock is held **shared** by any
+number of them or **exclusive** by one; the compatibility
+table is the usual one, S/S being the only pair that
+coexists. A write takes it exclusive, `sm_lock` takes either,
+and a plain read still takes none. Locks are released at
+commit/abort — strict, so no cascading aborts. The key is
+exact, so two distinct keys never share an entry and never
+block or deadlock each other. One mutex covers the table and
+every waiter's waits-for list, which keeps a deadlock walk
+consistent; sharding it is a later optimization if a
+benchmark shows contention.
+
+**Upgrades.** A transaction holding a key shared and asking
+for it exclusive — including by writing it — upgrades: it
+waits for the other shared holders to go, then flips the
+entry, without ever releasing what it holds. An upgrade is
+what makes two transactions on ONE key deadlock, which
+exclusive-only locking could not do.
+
+**A read-only transaction can hold locks.** Before `sm_lock`,
+a transaction with no `xid` held nothing, and the read-only
+commit path skipped lock release for that reason. It no
+longer can.
 
 Deadlocks are found as PostgreSQL's `deadlock_timeout`
-finds them. A blocked writer sleeps `deadlock_ms` (default
-50ms), then walks the waits-for chain from itself. If the
-chain returns to it, the **youngest** transaction on the
-cycle — the last to begin — fails with `SM_ERR_DEADLOCK`.
-Short waits never pay for the walk, there is no detector
-thread, and cycles are only possible among writers, so the
-chain stays short.
+finds them. A blocked transaction sleeps `deadlock_ms`
+(default 50ms), then searches the waits-for graph from
+itself. If it can reach itself, the **youngest** transaction
+on that cycle — the last to begin — fails with
+`SM_ERR_DEADLOCK`. Short waits never pay for the search and
+there is no detector thread.
+
+The waits-for edges form a **graph, not a chain**: a waiter
+blocked on a shared lock waits on every holder at once, so
+the search is a depth-first walk with a visited set, and the
+path it is on supplies the cycle to pick a victim from. This
+is the cost of shared mode. Before it, only writers could
+wait, each on exactly one holder, and following the single
+pointer was enough.
 
 A transaction appends a lock entry to `T.locks` only when it
 first acquires it. Re-acquiring a key it already holds
@@ -1197,8 +1221,8 @@ sm_prepare(T, gid):
      if SERIALIZABLE: ssi.validate(T)         ← validation happens HERE
      if T.xid == 0: T.xid = global_ts++        ← read-only: key the record
   2. rec = {PREPARED, xid, gid, snapshot_ts, prepared_at = now(),
-            writeset = keys of T.undo, created = T.created,
-            dropped = T.dropped}
+            lockset = (key, mode) of every lock T holds,
+            created = T.created, dropped = T.dropped}
   3. db.Write({CF:txn[T.xid] = rec}, sync = true)      ← always synced
   4. T.state = PREPARED;  locks and SSI state are RETAINED
 ```
@@ -1213,7 +1237,10 @@ recovery (§9.1 step 5) rebuilds exactly the same object from the
 `PREPARED` record, so a transaction prepared before a crash and
 one prepared in this process are handled alike. The record is a
 single `CF:txn` value however large the write set; the write set
-is stored as the lock keys the transaction holds.
+is stored as the lock keys the transaction holds, each with the
+mode it is held in, so a shared lock taken by `sm_lock` is
+restored as shared. Database format version 4 added that mode
+byte.
 
 Step 1 closes cursors for the reasons given in §8.2. No data
 operation is accepted after prepare, so an open cursor could
@@ -1221,13 +1248,19 @@ never be used again, but it would pin `gc_watermark` for as long
 as the transaction stays in doubt. The coordinator's commit
 (§8.2 from step 2) therefore finds none left to close.
 
+A read-only transaction is not necessarily lock-free: `sm_lock`
+gives one locks without writing, and those go into the record
+and are restored like any other. What makes it read-only is the
+empty set of versions, not an empty lock set.
+
 A read-only transaction still needs a durable `PREPARED` record,
 because `API.md` promises that a prepared transaction survives
 a crash and can be resolved by `gid` afterwards. Step 1 gives it
 an xid (entering the active table, §3.4) so that the record has
 a unique key; with `T.xid == 0`, every read-only prepare would
-overwrite the same `CF:txn[0]`. Its `writeset` is empty, so
-after restart it holds no locks.
+overwrite the same `CF:txn[0]`. Its `lockset` holds whatever
+`sm_lock` took and nothing more, so a transaction that only
+read holds nothing after a restart.
 
 After a successful prepare the transaction is in-doubt: its
 versions sit in relation CFs, its status record says `PREPARED`,
@@ -1950,7 +1983,8 @@ example/                small programs against the public API
    `mkdb/open/mkrel/insert/read/scan` under one transaction at a time.
 2. Timestamps, commit sequencer, status table, snapshot visibility;
    RC and RR isolation. Crash tests begin here.
-3. Row locks, write-write conflict, deadlock detection.
+3. Row locks (shared and exclusive), write-write conflict,
+   deadlock detection.
 4. Savepoints.
 5. GC / compaction filter (until this exists, the database only grows —
    fine for correctness tests, not for a benchmark).
@@ -1991,6 +2025,19 @@ bullets below cover the rest of the engine.
   writes and releases no locks, and the depth it frees is
   handed out again by the next `sm_savepoint`. Pushing past
   `SM_MAX_SAVEPOINTS` fails with `SM_ERR_INVALID` (§6.5).
+- **Shared locks.** Two transactions hold one key shared at
+  once; an exclusive request waits for both. A shared holder
+  writing the key upgrades once the others go, and two
+  upgraders on one key deadlock with the younger one the
+  victim. `sm_lock` runs §5.2's check under the lock, so it
+  fails with `SM_ERR_CONFLICT` on a key committed after the
+  caller's snapshot. A savepoint rollback releases an explicit
+  lock first taken after the mark but never downgrades an
+  upgrade. The whole index-build protocol runs end to end: a
+  builder taking the schema row exclusive blocks a writer,
+  sees the row an earlier writer committed, and the blocked
+  writer then fails, retries, and reads the new schema
+  (§5.1, `SECINDEX.md` gap 1).
 - **Deadlock.** Build a two-transaction cycle in both orders:
   the older waiter finds the cycle and the younger is the
   victim, and the younger finds it and is itself the victim.
