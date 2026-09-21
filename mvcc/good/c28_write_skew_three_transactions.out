@@ -1,0 +1,83 @@
+# c28 -- write skew around a cycle of three.
+#
+# c02's skew has two transactions and one edge each way. Here
+# the cycle is T1 --rw--> T2 --rw--> T3 --rw--> T1: each
+# transaction reads the row its neighbour is about to write,
+# and writes the row its other neighbour has read. No two of
+# them conflict directly, so every row lock is free and
+# nothing blocks; the schedule is serial in no order at all.
+# Snapshot isolation allows it, and the mixed pairings do
+# too, because a transaction that is not SERIALIZABLE neither
+# records its reads nor answers for its writes. Only S/S
+# closes the cycle, and then at least one of the three must
+# fail.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 read R2 -> 0
+@3 T2 read R2 -> 0
+@3 T2 read R3 -> 0
+@4 T3 read R3 -> 0
+@4 T3 read R1 -> 0
+@5 T1 write R1 t1 -> ok
+@6 T2 write R2 t2 -> ok
+@7 T3 write R3 t3 -> ok
+@8 T1 commit? -> recorded
+@8 T2 commit? -> recorded
+@8 T3 commit? -> recorded
+@9 check committed T1 T2 T3 -> satisfied
+== pairing RR/S == T1=RR T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 read R2 -> 0
+@3 T2 read R2 -> 0
+@3 T2 read R3 -> 0
+@4 T3 read R3 -> 0
+@4 T3 read R1 -> 0
+@5 T1 write R1 t1 -> ok
+@6 T2 write R2 t2 -> ok
+@7 T3 write R3 t3 -> ok
+@8 T1 commit? -> recorded
+@8 T2 commit? -> recorded
+@8 T3 commit? -> recorded
+@9 check committed T1 T2 T3 -> satisfied
+== pairing S/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 read R2 -> 0
+@3 T2 read R2 -> 0
+@3 T2 read R3 -> 0
+@4 T3 read R3 -> 0
+@4 T3 read R1 -> 0
+@5 T1 write R1 t1 -> ok
+@6 T2 write R2 t2 -> ok
+@7 T3 write R3 t3 -> ok
+@8 T1 commit? -> recorded
+@8 T2 commit? -> recorded
+@8 T3 commit? -> recorded
+@9 check committed T1 T2 T3 -> satisfied
+== pairing S/S == T1=SER T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 read R2 -> 0
+@3 T2 read R2 -> 0
+@3 T2 read R3 -> 0
+@4 T3 read R3 -> 0
+@4 T3 read R1 -> 0
+@5 T1 write R1 t1 -> ok
+@6 T2 write R2 t2 -> ok
+@7 T3 write R3 t3 -> ok
+@8 T1 commit? -> recorded
+@8 T2 commit? -> recorded
+@8 T3 commit? -> recorded
+@9 check not-all-committed T1 T2 T3 -> satisfied

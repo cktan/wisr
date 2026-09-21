@@ -1,0 +1,52 @@
+# b22 -- a delete waiting on a live writer that commits.
+#
+# b05 has a delete meet a delete that has already committed,
+# so it fails at once. Here the first delete is still open,
+# which is the other half: a delete takes the same exclusive
+# row lock a write does, so the second one waits rather than
+# reading through. When the holder commits, the waiter is
+# judged by first-committer-wins and fails retryably -- the
+# row it meant to delete is gone, but it is not told
+# notfound, because the honest answer is that it lost a race.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 delete R1 -> ok
+@3 T2 delete R1 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 delete R1 blocks -> conflict (resumed)
+@5 check last T2 conflict -> satisfied
+@6 check committed T1 -> satisfied
+@7 check row R1 - -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 delete R1 -> ok
+@3 T2 delete R1 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 delete R1 blocks -> conflict (resumed)
+@5 check last T2 conflict -> satisfied
+@6 check committed T1 -> satisfied
+@7 check row R1 - -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 delete R1 -> ok
+@3 T2 delete R1 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 delete R1 blocks -> conflict (resumed)
+@5 check last T2 conflict -> satisfied
+@6 check committed T1 -> satisfied
+@7 check row R1 - -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 delete R1 -> ok
+@3 T2 delete R1 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 delete R1 blocks -> conflict (resumed)
+@5 check last T2 conflict -> satisfied
+@6 check committed T1 -> satisfied
+@7 check row R1 - -> satisfied

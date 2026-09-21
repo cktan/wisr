@@ -233,6 +233,11 @@ SSI.
 | b17 | `T1: i(R2)` ‖ `T2: i(R2)` ‖ `T1: a` | BLOCK → OK | same | same | `in/b17_insert_blocks_abort.t` |
 | b18 | `T2: i(R2) i(R3) c` ‖ `T1: w(R2)`, `T3: d(R3)` (both absent at their snapshots) | CONFLICT | CONFLICT | CONFLICT | `in/b18_write_after_concurrent_insert.t` |
 | b19 | `T1: w(R1)` ‖ `T2: w(R1)`, `T3: w(R1)` ‖ `T1: c` | BLOCK → CONFLICT, both waiters | same | same | `in/b19_multi_waiter_lock_queue.t` |
+| b20 | `T2: w(R2)` ‖ `T2: w(R1)` blocked ‖ `T1: w(R2)` closes the cycle | DEADLOCK for the waiting T2, T1 proceeds | same | same | `in/b20_deadlock_reverse_victim.t` |
+| b21 | `T1: w(R1) w(R2)` ‖ `T2: w(R2) w(R3)` ‖ `T3: w(R3) w(R1)` | DEADLOCK for T3, then the queue drains | same | same | `in/b21_deadlock_three_transactions.t` |
+| b22 | `T1: d(R1)` ‖ `T2: d(R1)` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b22_delete_blocks_commit.t` |
+| b23 | `T1: d(R1)` ‖ `T2: w(R1)` ‖ `T1: a` | BLOCK → OK | same | same | `in/b23_delete_blocks_abort.t` |
+| b24 | `T1: i(R2)` ‖ `T2: w(R2)` ‖ `T1: a` | BLOCK → NOTFOUND | same | same | `in/b24_insert_update_blocks_abort.t` |
 
 Three distinctions this family pins down, because getting
 them wrong would be invisible in ordinary use:
@@ -244,10 +249,18 @@ them wrong would be invisible in ordinary use:
 - **CONFLICT, not DUPKEY** (b06 vs b12): the row is absent
   in the loser's snapshot, so the failure is about
   concurrency, and is retryable.
-- **Blocked, then judged** (b09, b10, b11, b17, b19):
-  waiting is not the answer, only the wait. What decides is
-  what the holder did — commit or abort — and every waiter
-  in the queue is judged on its own.
+- **Blocked, then judged** (b09, b10, b11, b17, b19, b22,
+  b23, b24): waiting is not the answer, only the wait. What
+  decides is what the holder did — commit or abort — and
+  every waiter in the queue is judged on its own. An aborted
+  holder can even change which error the waiter gets: b23's
+  waiter finds its row and succeeds, b24's finds the
+  uncommitted insert undone and gets NOTFOUND.
+- **The victim need not be the transaction that noticed**
+  (b16, b20, b21): b16 dooms the transaction whose own step
+  closes the cycle, b20 dooms one that is already blocked
+  and must be woken to hear it, and b21's cycle of three is
+  longer than a single waits-for hop.
 - **A wait that cannot end** (b16): two writers holding what
   the other wants would wait forever, so the engine picks
   the youngest and fails it. This is the one write-write
@@ -298,6 +311,8 @@ that costs.
 | c24 | `T1: scan, stop at R1, close` ‖ `T2: w(R1) r(R2)` ‖ `T1: w(R2)` | both commit | both commit | ≤ 1 commits | `in/c24_write_inside_examined_range.t` |
 | c25 | `T1: cursor over P, closed unread` ‖ `T2: w(R1 in P) r(R2)` ‖ `T1: w(R2)` | OK | OK | OK | `in/c25_cursor_closed_unread.t` |
 | c26 | c06 with `T3: a` in place of `T3: c` | all commit | all commit | T2 (pivot) fails anyway | `in/c26_pivot_successor_aborts.t` |
+| c27 | c06 with `T1: a` in place of `T1: c` | all commit | all commit | T2 (pivot) fails anyway | `in/c27_pivot_predecessor_aborts.t` |
+| c28 | `T1: r(R1,R2) w(R1)` ‖ `T2: r(R2,R3) w(R2)` ‖ `T3: r(R3,R1) w(R3)` | all commit | all commit | at least one fails | `in/c28_write_skew_three_transactions.t` |
 
 Half of this family — c01, c08 through c12, c14, c15, c19,
 c20, c25 — exists to bound the other half. A level that failed
@@ -351,9 +366,9 @@ of the above is within-process concurrency.
 transactions on one row, the write-write matrix is every
 ordered pair from {update, delete, insert} where the loser's
 operation is legal in its own snapshot — b01 through b07
-and b18, plus the blocked variants b09 to b11 and b17, the
-queue of waiters b19, the cycle of waiters b16, and the two
-non-conflict answers b12 and b13. For read-write, it is
+and b18, plus the blocked variants b09 to b11, b17 and b22
+to b24, the queue of waiters b19, the cycles of waiters b16,
+b20 and b21, and the two non-conflict answers b12 and b13. For read-write, it is
 every way one transaction can read (point read of a present
 row, point read of an absent row, scan of a range, open
 cursor, cursor closed early) crossed with every way another
@@ -364,10 +379,10 @@ fail.
 **It is not a model check.** Each scenario is one schedule,
 chosen because it is the one that distinguishes the levels.
 Interleavings other than the ones written here are not
-explored, and the six blocking scenarios (b09 to b11, b16,
-b17, b19) and two stress scenarios (e02, e03) are the only
-places where real concurrency, rather than a scripted order,
-is involved.
+explored, and the twelve blocking scenarios (b09 to b11,
+b16, b17, b19 to b24) and two stress scenarios (e02, e03)
+are the only places where real concurrency, rather than a
+scripted order, is involved.
 
 **It assumes a single relation and a single process.**
 Crash recovery, two-phase commit, garbage collection and the

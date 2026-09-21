@@ -1,0 +1,57 @@
+# b23 -- a delete waiting on a live writer that aborts.
+#
+# b22 with the holder aborting. An aborted delete is no
+# delete, so the waiter finds the row exactly as its snapshot
+# has it and succeeds, the way b10's waiting update and b17's
+# waiting insert do. The row is gone only because the second
+# delete removed it.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 delete R1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 abort -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 delete R1 -> ok
+@7 T2 commit -> ok
+@8 check committed T2 -> satisfied
+@9 check row R1 - -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 delete R1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 abort -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 delete R1 -> ok
+@7 T2 commit -> ok
+@8 check committed T2 -> satisfied
+@9 check row R1 - -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 delete R1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 abort -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 delete R1 -> ok
+@7 T2 commit -> ok
+@8 check committed T2 -> satisfied
+@9 check row R1 - -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 delete R1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 abort -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 delete R1 -> ok
+@7 T2 commit -> ok
+@8 check committed T2 -> satisfied
+@9 check row R1 - -> satisfied

@@ -1,0 +1,68 @@
+# c27 -- the transaction pointing at a pivot aborts.
+#
+# The mirror of c26. Same chain, T1 --rw--> T2 --rw--> T3,
+# but this time the predecessor T1 aborts instead of the
+# successor T3. An aborted T1 cannot be part of a cycle
+# either, so T2 is again a false positive, and again nothing
+# withdraws the flag: wisr records that T2 has an incoming
+# edge, not who it came from, so T1 leaving takes nothing
+# with it. c26 pays for the same rule from the other end.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R2 -> 0
+@4 T2 write R1 t2 -> ok
+@5 T3 write R2 t3 -> ok
+@6 T1 abort -> ok
+@7 T2 commit? -> recorded
+@8 T3 commit -> ok
+@9 check committed T2 T3 -> satisfied
+@10 check row R1 t2 -> satisfied
+@11 check row R2 t3 -> satisfied
+== pairing RR/S == T1=RR T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R2 -> 0
+@4 T2 write R1 t2 -> ok
+@5 T3 write R2 t3 -> ok
+@6 T1 abort -> ok
+@7 T2 commit? -> recorded
+@8 T3 commit -> ok
+@9 check committed T2 T3 -> satisfied
+@10 check row R1 t2 -> satisfied
+@11 check row R2 t3 -> satisfied
+== pairing S/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R2 -> 0
+@4 T2 write R1 t2 -> ok
+@5 T3 write R2 t3 -> ok
+@6 T1 abort -> ok
+@7 T2 commit? -> recorded
+@8 T3 commit -> ok
+@9 check committed T2 T3 -> satisfied
+@10 check row R1 t2 -> satisfied
+@11 check row R2 t3 -> satisfied
+== pairing S/S == T1=SER T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R2 -> 0
+@4 T2 write R1 t2 -> ok
+@5 T3 write R2 t3 -> ok
+@6 T1 abort -> ok
+@7 T2 commit? -> recorded
+@8 T3 commit -> ok
+@9 check failed T2 -> satisfied
+@9 check committed T3 -> satisfied
+@10 check row R1 0 -> satisfied
+@11 check row R2 t3 -> satisfied
