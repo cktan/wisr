@@ -105,12 +105,13 @@ design:
   (`sm2/DESIGN.md` §6). This is why `sm_rmrel`'s O(1) column
   family drop is not what a `DROP TABLE` costs at sm2 — that
   trade is made explicitly there, not assumed here.
-- **Batch-shaped API at sm2, row-shaped at sm1.** sm1 is an
-  in-process library; a PostgreSQL backend is a separate
-  process per connection (`PART3.md` §2). If sm1 and sm2 end
-  up behind an IPC boundary, sm2's calls already take and
-  return sets of rows, so the boundary does not force a
-  redesign later.
+- **Batch-shaped API at sm2, row-shaped at sm1.** sm2's calls
+  take and return sets of rows (`sm2/OBJECTIVE.md`). That was
+  forced by an IPC boundary between a PostgreSQL backend
+  process and sm1; the fork now moves PostgreSQL to threads
+  (`PART3.md` §2), so the boundary is a function call and the
+  shape is no longer forced. Whether sm2 keeps it, for filter
+  pushdown and fewer calls per scan, is open.
 - **No backward scans, at any level, ever.** Settled in
   `sm1/OBJECTIVE.md` and inherited by every index sm2
   builds. A caller that needs descending order keeps a

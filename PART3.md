@@ -75,6 +75,32 @@ batch-shaped from the start, and it is why the batched read
 left unbuilt in `sm1/SECINDEX.md` gap 6 stops being an
 unproven optimization and becomes a requirement.
 
+**Decision: the fork is threaded.** The project does not put
+sm1 behind IPC (option 1). It changes PostgreSQL itself from
+a process per connection to a thread per connection — option
+3, done in the fork instead of waited for. sm1 and sm2 are
+then linked into the one server process, every backend thread
+shares sm1's transaction table, lock manager and SSI graph as
+sm1 already assumes, and RocksDB's one-writer-process rule is
+met by construction.
+
+What this changes above:
+
+- The boundary between the executor and sm2 is a function
+  call, not an RPC. A per-row interface is no longer
+  unsalvageable, so the batch-shaped API is no longer forced
+  by this section. Whether to keep it for other reasons —
+  filter pushdown, fewer calls per scan — is open.
+- YugabyteDB stays the precedent for §4's replacement of the
+  storage and transaction layers, but no longer for the
+  process layout.
+- The fork will be changed substantially: PostgreSQL's
+  backend-local state, such as global variables, memory
+  contexts, error handling and signals, has to become
+  thread-safe. §4's effort figures do not include that, and
+  it makes tracking upstream releases harder than the version
+  lag §4 already counts as a liability.
+
 ---
 
 ## 3. Why the table access method path does not work here
@@ -260,7 +286,7 @@ reflected in `sm2/OBJECTIVE.md` and `sm2/DESIGN.md`.
 | --- | --- |
 | **Record format cheap to turn into a PG tuple** | the executor works in tuple slots; a bespoke encoding pays a conversion per row, in both directions, across an IPC boundary |
 | **Row identity is the primary key** | already chosen; it is `ybctid` by another name, and it is the only identity that fits an index-organized store without a surrogate allocator |
-| **Batch-shaped API** | §2: the engine must be out of process, so a per-row interface is unsalvageable |
+| **Batch-shaped API** | was forced by §2's out-of-process engine; with a threaded fork it is no longer forced, and is open |
 | **Key encoder takes a collation** | PG's text order is `strcoll`/ICU, not memcmp; the encoder needs `(type, collation, direction, nulls-order)` per column or half of SQL's `ORDER BY` is unrepresentable |
 | **Collated keys store the sort key *and* the original** | the collation transform is lossy and irreversible; this is what YugabyteDB does, and it costs storing the value twice |
 | **Collation version recorded per relation** | sort keys are not stable across collation library versions; PostgreSQL has had index corruption from exactly this, which is what `pg_collation.collversion` exists for |
@@ -311,6 +337,9 @@ Stated so none of it is repeated as fact:
 - **RocksDB's approximate-statistics accuracy** for planner
   purposes. Not measured, and §6's statistics row depends on
   it.
+- **The cost of converting PostgreSQL to threads** (§2's
+  decision). Not estimated, and not in §4's figures, which
+  assume the process model stays.
 - **The effort figures in §4** are calibrated judgment against
   the precedents, not measurements. Treat the ordering as
   sound and the absolute numbers as loose.

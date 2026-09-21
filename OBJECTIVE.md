@@ -36,14 +36,14 @@ and it is the rule this document exists to state once, for
 the whole stack, instead of per level.
 
 **Not in scope, at any level, yet.** A query language, a
-planner, an executor, multi-process deployment. `PART3.md`
-§2 explains why multi-process is the hard blocker for the
-PostgreSQL target, not a phase-1 omission: sm1 keeps its
-transaction table, lock manager and SSI graph in one
-process's memory, and RocksDB permits one writer process.
-Getting past that is a separate, later decision — an IPC
-layer, most likely — and nothing in sm1 or sm2's design
-forecloses it.
+planner, an executor, multi-process deployment. sm1 keeps
+its transaction table, lock manager and SSI graph in one
+process's memory, and RocksDB permits one writer process, so
+`PART3.md` §2 makes multi-process the hard blocker for the
+PostgreSQL target, not a phase-1 omission. The answer is to
+change the target, not sm1: the PostgreSQL fork moves from a
+process per connection to a thread per connection, so every
+backend shares sm1's process.
 
 ## The PostgreSQL subset
 
@@ -56,6 +56,12 @@ partitioning, TOAST, online DDL, row-level security, logical
 decoding and the libpq wire protocol are in; the extensible
 type and index machinery — JSON, arrays, GiST, GIN, and the
 C extension ABI — is out.
+
+The target is a fork of PostgreSQL, not an extension, and the
+fork will be changed substantially: besides swapping the
+storage and transaction layers, it moves from a process per
+connection to a thread per connection so that sm1 is linked
+into it (`PART3.md` §2).
 
 ## Goals
 
@@ -79,9 +85,8 @@ These are settled; they bind every level below.
 
 - **Language is C++,** exposing a C ABI at each level's
   public surface (`sm1/include/sm.h` today; `sm2`'s
-  equivalent when it has one). A C ABI is what makes the
-  "separate process, IPC" escape from `PART3.md` §2 possible
-  later without a rewrite.
+  equivalent when it has one). A C ABI is what lets
+  PostgreSQL's C code call the stack directly.
 - **RocksDB is a key-value store, nothing more.** No level
   may treat it as anything but ordered, durable,
   crash-atomic storage. Every notion of row version,
@@ -90,10 +95,11 @@ These are settled; they bind every level below.
   `sm2`. `README.md` states this rule for readers; it is
   repeated here because it is the one rule a change at
   either level must never cross.
-- **One process, many threads, for now.** Forced by
-  RocksDB's single-writer-process rule and accepted for the
-  reasons in `sm1/OBJECTIVE.md`. Revisiting it is a project
-  of its own, argued in `PART3.md` §2 before it is started.
+- **One process, many threads.** Forced by RocksDB's
+  single-writer-process rule and accepted for the reasons in
+  `sm1/OBJECTIVE.md`. The PostgreSQL fork adapts to it, by
+  moving to a thread per connection, rather than the stack
+  moving behind IPC (`PART3.md` §2).
 - **Each level ships its own `OBJECTIVE.md` and
   `DESIGN.md`.** This document and `DESIGN.md` at the top
   level cover only what spans levels: the stack's shape, its
