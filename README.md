@@ -27,6 +27,10 @@ top-level one only delegates.
 
 ## Where to read
 
+- `OBJECTIVE.md` — what wisr as a whole is for, and the
+  decisions that span every level
+- `DESIGN.md` — how the levels fit together: the stack, the
+  build, and the decisions that cross level boundaries
 - `sm1/OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/DESIGN.md` — how level 1 works; the design of record
