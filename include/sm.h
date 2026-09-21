@@ -869,6 +869,37 @@ int sm_scannxt(sm_scan_t* scan, const char** key, size_t* klen,
                const char** data, size_t* datalen);
 
 /*
+ * Move an open cursor to key, so the next sm_scannxt()
+ * returns from there. This is how a caller probes a relation
+ * repeatedly -- an index nested-loop join, an IN-list, a skip
+ * scan -- without closing and reopening a cursor per probe.
+ *
+ * inclusive says whether a row at key itself is returned.
+ *
+ * The cursor keeps its snapshot and its view, so a reposition
+ * does NOT see writes made since sm_scan(), and it keeps its
+ * bounds: it returns rows only from the range sm_scan() was
+ * given.
+ *
+ * Seeking moves FORWARD ONLY. A key before the last one the
+ * cursor read fails with SM_ERR_INVALID, as does a key below
+ * the scan's start key. A key past the scan's end key is
+ * allowed and leaves the cursor at its end, where sm_scannxt()
+ * returns 1.
+ *
+ * Under SM_XCT_SERIALIZABLE the keys skipped over still count
+ * as read: the cursor's predicate covers its start key through
+ * the furthest key it reached, gaps included. That is an
+ * over-approximation, so it can only cause a serialization
+ * failure that was not strictly necessary, never miss one.
+ *
+ * Errors: SM_ERR_INVALID (a backward seek, a key below the
+ * start key, or a cursor that already failed).
+ */
+int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
+                 int inclusive);
+
+/*
  * Close a cursor and release its resources, including the
  * snapshot it was pinning. Passing NULL is a no-op.
  *

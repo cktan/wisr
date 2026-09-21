@@ -1076,6 +1076,35 @@ return the same thing.
 
 Errors: `SM_ERR_CORRUPT`, `SM_ERR_IO`.
 
+### int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen, int inclusive)
+
+Move an open cursor to `key`, so the next `sm_scannxt`
+returns from there. This is how a caller probes a relation
+repeatedly — an index nested-loop join, an IN-list, a skip
+scan — without closing and reopening a cursor per probe.
+
+`inclusive` says whether a row at `key` itself is returned.
+
+The cursor keeps its snapshot and its view, so a reposition
+does **not** see writes made since `sm_scan`, and it keeps
+its bounds: it returns rows only from the range `sm_scan`
+was given.
+
+Seeking moves **forward only**. A key before the last one
+the cursor read fails with `SM_ERR_INVALID`, as does a key
+below the scan's start key. A key past the scan's end key
+is allowed and leaves the cursor at its end, where
+`sm_scannxt` returns 1.
+
+Under `SM_XCT_SERIALIZABLE` the keys skipped over still
+count as read: the cursor's predicate covers its start key
+through the furthest key it reached, gaps included. That is
+an over-approximation, so it can only cause a serialization
+failure that was not strictly necessary, never miss one.
+
+Errors: `SM_ERR_INVALID` (a backward seek, a key below the
+start key, or a cursor that already failed).
+
 ### void sm_scanend(sm_scan_t* scan)
 
 Close a cursor and release its resources, including the
@@ -1227,3 +1256,9 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     `SECINDEX.md` gap 1 is the case that asked for it; it was
     the only gap there that made correct behaviour impossible
     rather than merely awkward.
+
+21. **`sm_scan_seek` added.** (D) Repositioning a cursor is
+    what an index nested-loop join, an IN-list, and a skip
+    scan all need; without it each probe closes and reopens
+    a cursor, and under READ COMMITTED every reopen takes a
+    new snapshot as well. `SECINDEX.md` gap 5.

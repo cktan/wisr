@@ -466,6 +466,163 @@ TEST_CASE("a scan from an absent key crosses many userkeys in SSTs") {
   REQUIRE(sm_commit(s) == 0);
 }
 
+TEST_CASE("sm_scan_seek repositions a cursor without reopening it") {
+  // Verify the reposition keeps bounds, view and order (§10.2).
+  // 1. Scan k1..k9 and read one row.
+  // 2. Seek to k5 inclusive: the next rows start at k5.
+  // 3. Seek to k7 exclusive: the next row is k8.
+  // 4. Seek past the end key: the cursor reports end, and
+  //    stays at end afterwards.
+  db_fixture_t f;
+  sm_session_t *s = f.session();
+  uint64_t rel = mkrel_committed(s);
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  for (int i = 1; i <= 9; i++) {
+    std::string k = "k" + std::to_string(i);
+    put(s, rel, k, std::to_string(i));
+  }
+  REQUIRE(sm_commit(s) == 0);
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  sm_scan_t *c = sm_scan(s, rel, "k1", 2, 1, "k9", 2, 1);
+  REQUIRE(c);
+  const char *k, *d;
+  size_t kl, dl;
+  REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
+  CHECK(std::string(k, kl) == "k1");
+
+  REQUIRE(sm_scan_seek(c, "k5", 2, 1) == 0);
+  REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
+  CHECK(std::string(k, kl) == "k5");
+  CHECK(std::string(d, dl) == "5");
+
+  REQUIRE(sm_scan_seek(c, "k7", 2, 0) == 0);
+  REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
+  CHECK(std::string(k, kl) == "k8");
+
+  REQUIRE(sm_scan_seek(c, "k99", 3, 1) == 0);
+  CHECK(sm_scannxt(c, &k, &kl, &d, &dl) == 1);
+  REQUIRE(sm_scan_seek(c, "k99", 3, 1) == 0);
+  CHECK(sm_scannxt(c, &k, &kl, &d, &dl) == 1);
+  sm_scanend(c);
+  REQUIRE(sm_commit(s) == 0);
+}
+
+TEST_CASE("sm_scan_seek refuses to move backwards or out of range") {
+  // Verify the forward-only rule and the bounds check (§10.2).
+  // 1. Open a cursor over k3..k7 and read k3.
+  // 2. A seek to k2, below the start key, fails.
+  // 3. A seek back to k3 after reading k5 fails.
+  // 4. Re-reading the key just read is allowed, since the
+  //    cursor has not passed it.
+  // 5. A NULL cursor and an oversized key are rejected.
+  db_fixture_t f;
+  sm_session_t *s = f.session();
+  uint64_t rel = mkrel_committed(s);
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  for (int i = 1; i <= 9; i++) {
+    std::string k = "k" + std::to_string(i);
+    put(s, rel, k, std::to_string(i));
+  }
+  REQUIRE(sm_commit(s) == 0);
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  sm_scan_t *c = sm_scan(s, rel, "k3", 2, 1, "k7", 2, 1);
+  REQUIRE(c);
+  const char *k, *d;
+  size_t kl, dl;
+  REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
+  CHECK(std::string(k, kl) == "k3");
+
+  CHECK(sm_scan_seek(c, "k2", 2, 1) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+
+  REQUIRE(sm_scan_seek(c, "k5", 2, 1) == 0);
+  REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
+  CHECK(std::string(k, kl) == "k5");
+  CHECK(sm_scan_seek(c, "k3", 2, 1) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+
+  REQUIRE(sm_scan_seek(c, "k5", 2, 1) == 0);
+  REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
+  CHECK(std::string(k, kl) == "k5");
+
+  CHECK(sm_scan_seek(nullptr, "k5", 2, 1) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  std::string huge(SM_MAX_KEYLEN + 1, 'z');
+  CHECK(sm_scan_seek(c, huge.data(), huge.size(), 1) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  sm_scanend(c);
+  REQUIRE(sm_commit(s) == 0);
+}
+
+TEST_CASE("keys skipped by sm_scan_seek still count as read under SSI") {
+  // Verify the predicate covers the gap a seek jumps over
+  // (§7.1): an over-approximation, never a missed conflict.
+  // 1. T1, SERIALIZABLE, opens a cursor over k1..k9 and reads
+  //    k1. T2 reads "own", which only T1 writes, and writes
+  //    k5; T1 writes "own". That is a write skew, but it
+  //    closes into a cycle only if k5 is inside T1's predicate.
+  // 2. Control: T1 stops after k1, so its predicate ends at k1,
+  //    k5 is outside it, and both transactions commit.
+  // 3. With a seek from k1 to k8, k5 falls in the skipped gap
+  //    and is covered all the same, so the cycle forms and a
+  //    commit fails with SM_ERR_SERIALIZATION.
+  db_fixture_t f;
+  sm_session_t *s = f.session();
+  sm_session_t *t2 = f.open_other();
+  uint64_t rel = mkrel_committed(s);
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  for (int i = 1; i <= 9; i++) {
+    std::string k = "k" + std::to_string(i);
+    put(s, rel, k, std::to_string(i));
+  }
+  put(s, rel, "own", "0");
+  REQUIRE(sm_commit(s) == 0);
+
+  // Run the write skew, seeking over k5 or stopping short of
+  // it; true if either transaction was a serialization victim.
+  auto skew = [&](bool seek_past_k5) {
+    REQUIRE(sm_begin(s, SM_XCT_SERIALIZABLE) == 0);
+    sm_scan_t *c = sm_scan(s, rel, "k1", 2, 1, "k9", 2, 1);
+    REQUIRE(c);
+    const char *k, *d;
+    size_t kl, dl;
+    REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
+    CHECK(std::string(k, kl) == "k1");
+    if (seek_past_k5) {
+      REQUIRE(sm_scan_seek(c, "k8", 2, 1) == 0);
+      REQUIRE(sm_scannxt(c, &k, &kl, &d, &dl) == 0);
+      CHECK(std::string(k, kl) == "k8");
+    }
+    sm_scanend(c);
+
+    REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
+    CHECK(get(t2, rel, "own") != "<none>");
+    REQUIRE(sm_update(s, rel, "own", 3, "t1", 2) == 0);
+    REQUIRE(sm_update(t2, rel, "k5", 2, "t2", 2) == 0);
+
+    int rc2 = sm_commit(t2);
+    int err2 = sm_errno();
+    int rc1 = sm_commit(s);
+    int err1 = sm_errno();
+    // Every failure here is a serialization failure.
+    if (rc2 == -1) {
+      CHECK(err2 == SM_ERR_SERIALIZATION);
+    }
+    if (rc1 == -1) {
+      CHECK(err1 == SM_ERR_SERIALIZATION);
+    }
+    return rc1 == -1 || rc2 == -1;
+  };
+
+  // A cursor that stopped at k1 never covered k5.
+  CHECK_FALSE(skew(false));
+  // Seeking over k5 still counts it as read.
+  CHECK(skew(true));
+  sm_closedb(t2);
+}
+
 TEST_CASE("oversized keys and values are rejected") {
   // Verify the documented limits.
   // 1. A key of SM_MAX_KEYLEN bytes is accepted; one byte more

@@ -110,13 +110,17 @@ serves only that direction, so a column wanted both ways costs
 two relations, and the cost of that is now the layer's to
 carry.
 
-### 5. No cursor reposition
+### 5. No cursor reposition — CLOSED
 
-Index nested-loop joins, IN-lists, and skip scans must close
-and reopen a cursor per probe. Under RC every reopen also takes
-a new snapshot, which compounds gap 3.
+Index nested-loop joins, IN-lists, and skip scans had to close
+and reopen a cursor per probe. Under RC every reopen also took
+a new snapshot, which compounded gap 3.
 
-Needed: `sm_scan_seek(scan, key, klen, inclusive)`.
+`sm_scan_seek(scan, key, klen, inclusive)` moves an open
+cursor forward, keeping its iterator, its snapshot and its
+bounds. With gap 3's `sm_stmt_begin` the pair covers the whole
+complaint: one cursor per statement, one snapshot per
+statement.
 
 ### 6. Minor: performance and ergonomics
 
@@ -138,19 +142,20 @@ Needed: `sm_scan_seek(scan, key, klen, inclusive)`.
 
 ## Summary
 
-Gap 5, cursor reposition, is the one that remains, and it
-decides whether the indexes are fast rather than whether they
-are correct. Gaps 1, 2 and 3 are closed: `sm_lock`, the
-savepoint stack with `sm_forget`, and `sm_stmt_begin` are all
-in `sm.h`. Gap 4 is not open either: forward-only scanning is
-a settled decision, and the layer works around it with
-inverted-byte relations.
+Every gap is settled. Gaps 1, 2, 3 and 5 are closed:
+`sm_lock`, the savepoint stack with `sm_forget`,
+`sm_stmt_begin` and `sm_scan_seek` are all in `sm.h`. Gap 4
+will not be closed: forward-only scanning is a decision, and
+the layer works around it with inverted-byte relations. What
+is left is gap 6's two performance items, which nothing has
+asked for yet.
 
 ## Closing the gaps
 
-Proposals, except gaps 1, 2 and 3, which are done. What is
-left is a contract change to `sm.h`, `API.md`, and
-`DESIGN.md`, plus an implementation in `src/` and tests.
+What each gap became. Gaps 1, 2, 3 and 5 are implemented in
+`sm.h`, `API.md`, `DESIGN.md` and `src/`, with tests. Gap 4
+is a decision against. Gap 6's two performance items are the
+only proposals still on paper.
 
 ### The whole roster
 
@@ -172,7 +177,7 @@ int sm_forget(sm_session_t* session, int depth);    /* forget that mark and deep
 /* gap 3: RC statement snapshots -- IMPLEMENTED */
 int sm_stmt_begin(sm_session_t* session);
 
-/* gap 5: cursor reposition */
+/* gap 5: cursor reposition -- IMPLEMENTED */
 int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
                  int inclusive);
 
@@ -196,11 +201,11 @@ Gap 4 needs no function: it is closed. Gap 6's
 lock-without-write is `sm_lock` again, which is now in, and
 its `sm_lsrel` was already in phase 1.
 
-**How firm each one is.** `sm_lock`, the gap 2 trio and
-`sm_stmt_begin` are settled: they are in `sm.h` and `API.md`.
-Gap 5 is quoted from its section below, and the gap 6 pair is
-sketched here for the first time -- that gap defers both until
-profiling asks, so neither signature is settled.
+**How firm each one is.** Everything but the gap 6 pair is
+settled: `sm_lock`, the gap 2 trio, `sm_stmt_begin` and
+`sm_scan_seek` are all in `sm.h` and `API.md`. The gap 6 pair
+is sketched here and nowhere else -- that gap defers both
+until profiling asks, so neither signature is settled.
 
 **Three are breaking changes**, not additions: `sm_rollback`
 gained a parameter, and `sm_update` and `sm_delete` would gain
@@ -356,17 +361,37 @@ examined up to `ekey`, inverting the bookkeeping in §10.2. A
 layer wanting descending order builds an inverted-byte
 relation instead.
 
-### Gap 5: cursor reposition
+### Gap 5: cursor reposition — DONE
 
 ```c
 int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
                  int inclusive);
 ```
 
-Forward only. It reuses the iterator and the snapshot. For SSI
-it registers the whole range from the start to the current
-position, skipped part included: an over-approximation, which
-is safe, and one range per cursor.
+Implemented as proposed (DESIGN.md §10.2). Forward only: it
+reuses the iterator and the snapshot, and for SSI the range
+runs from the start to the furthest position reached, skipped
+part included — an over-approximation, which is safe, and one
+range per cursor.
+
+Two refusals the proposal did not spell out, both forced by
+that range bookkeeping:
+
+- **A target below `skey` fails.** The iterator carries an
+  upper bound but no lower one, so a seek under `skey` would
+  return rows outside the predicate the cursor registered.
+- **A cursor at its end is not revived.** §7.1 counts a scan
+  that reached the end as having read its whole range;
+  repositioning it and closing it later would narrow that
+  range to the last key examined, recording less than was
+  read.
+
+Backward seeking was considered, for probes that do not
+arrive in key order. It needs `last_examined` to become a
+high-water mark and a flag for a cursor that once hit the
+end, or the predicate silently shrinks. Forward-only costs
+the layer a sort of its probe keys, which a batched index
+join does anyway.
 
 ### Gap 6: minor items
 
@@ -379,7 +404,7 @@ is safe, and one range per cursor.
 
 ### Order
 
-Gaps 1, 2 and 3 are done, and gap 4 will not be. What is left
-is `sm_scan_seek` (gap 5) and gap 6's two performance items,
-each when something asks for it: update `sm.h`, `API.md`, and
-`DESIGN.md`, implement it in `src/` with tests, then review.
+Gaps 1, 2, 3 and 5 are done, and gap 4 will not be. Gap 6's
+two performance items are what remains, each when profiling
+asks for it: update `sm.h`, `API.md`, and `DESIGN.md`,
+implement it in `src/` with tests, then review.

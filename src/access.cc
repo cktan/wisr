@@ -371,9 +371,11 @@ sm_scan_t *access_scan(sm_session_t *s, uint64_t relid, const view_t &view,
   c->it.reset(s->db->rdb->NewIterator(ro, cf));
   // Position at skey, or at the start.
   if (skey) {
+    // Build the start bound; sm_scan_seek compares against it.
+    c->lower = version_bound(rocksdb::Slice(skey, sklen),
+                             skey_inclusive ? '\x00' : '\xff');
     // Seek to skey, past it if exclusive.
-    c->it->Seek(version_bound(rocksdb::Slice(skey, sklen),
-                              skey_inclusive ? '\x00' : '\xff'));
+    c->it->Seek(c->lower);
   } else {
     // No lower bound: start at the first key.
     c->it->SeekToFirst();
@@ -386,6 +388,48 @@ sm_scan_t *access_scan(sm_session_t *s, uint64_t relid, const view_t &view,
 } // namespace wisr
 
 namespace {
+
+/* sm_scan_seek, minus the out-of-memory guard. */
+int scan_seek(sm_scan_t *c, const char *key, size_t klen, int inclusive) {
+  // Reject a NULL cursor.
+  if (!c) {
+    return set_error(SM_ERR_INVALID, "sm_scan_seek: scan is NULL");
+  }
+  // Validate the target key.
+  if (check_key(key, klen) != 0) {
+    return -1;
+  }
+  // A failed cursor stays failed.
+  if (c->state == -1) {
+    return set_error(SM_ERR_INVALID, "the cursor failed and cannot be reused");
+  }
+  rocksdb::Slice target(key ? key : "", klen);
+  // Refuse a target before the last key examined: the cursor
+  // moves forward only, and its SIREAD range is narrowed to
+  // the last key it reached (§7.1, §10.2).
+  if (c->examined && target.compare(rocksdb::Slice(c->last_examined)) < 0) {
+    return set_error(SM_ERR_INVALID,
+                     "sm_scan_seek moves forward only; the cursor has "
+                     "already read past that key");
+  }
+  // Build the seek bound, past the target if exclusive.
+  std::string bound = version_bound(target, inclusive ? '\x00' : '\xff');
+  // Refuse a target below the range the cursor registered.
+  if (bound < c->lower) {
+    return set_error(SM_ERR_INVALID,
+                     "sm_scan_seek target is below the scan's start key");
+  }
+  // A cursor at its end stays there: every forward target is
+  // past the end too, and keeping state lets ssi_range_close
+  // still count the whole range as read (§7.1).
+  if (c->state == 1) {
+    return 0;
+  }
+  // Reposition, keeping the iterator, its snapshot, and its
+  // upper bound.
+  c->it->Seek(bound);
+  return 0;
+}
 
 /* sm_scannxt, minus the out-of-memory guard. */
 int scan_next(sm_scan_t *c, const char **key, size_t *klen, const char **data,
@@ -651,6 +695,16 @@ int access_check_current(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
 }
 
 } // namespace wisr
+
+/* Move an open cursor to key, forward only. */
+int sm_scan_seek(sm_scan_t *scan, const char *key, size_t klen, int inclusive) {
+  // Report an allocation failure as SM_ERR_NOMEM.
+  try {
+    return scan_seek(scan, key, klen, inclusive);
+  } catch (const std::bad_alloc &) {
+    return set_error(SM_ERR_NOMEM, "sm_scan_seek: out of memory");
+  }
+}
 
 /* Take a row lock without writing the row. */
 int sm_lock(sm_session_t *session, uint64_t relid, const char *key, size_t klen,

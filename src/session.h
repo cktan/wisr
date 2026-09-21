@@ -120,6 +120,14 @@ struct sm_scan_t {
   std::unique_ptr<rocksdb::Iterator> it;
   std::string upper; /* owns iterate_upper_bound's bytes */
   rocksdb::Slice upper_slice;
+  /*
+   * The seek bound skey was positioned with, empty when the
+   * scan has no lower bound. sm_scan_seek refuses a target
+   * below it: the iterator carries no lower bound, so a seek
+   * under it would leave the range the cursor registered
+   * (§10.2).
+   */
+  std::string lower;
   uint64_t snapshot_ts = 0; /* the logical view, fixed at open */
   uint64_t xid = 0;
   uint32_t seq_hwm = 0;

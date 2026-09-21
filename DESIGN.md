@@ -40,14 +40,15 @@ relation with inverted key bytes and scanning it forward.
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
 `sm.h` and the design in this document, nothing more. Phase 2
 adds the API a secondary-index layer built on top of it needs.
-`SECINDEX.md` lists those gaps; only `sm_scan_seek` is still
-open. In already are `sm_lsrel`, which came with naming
-relations by relid (§11); `sm_stmt_begin`, which closed the
-gap in read-committed statement snapshots (§6.2); the
-savepoint stack with `sm_forget` (§6.5); and `sm_lock`, whose
-shared mode makes a safe index build possible (§5.1).
-Descending scans are the one gap it lists that will not be
-closed at all.
+Every gap `SECINDEX.md` lists is now closed or decided:
+`sm_lsrel`, which came with naming relations by relid (§11);
+`sm_stmt_begin`, for read-committed statement snapshots
+(§6.2); the savepoint stack with `sm_forget` (§6.5);
+`sm_lock`, whose shared mode makes a safe index build
+possible (§5.1); and `sm_scan_seek`, which repositions a
+cursor instead of reopening it (§10.2). Descending scans are
+the one gap it lists that will not be closed at all. What
+remains there is performance work, not contract.
 
 **Assumptions.**
 
@@ -814,7 +815,12 @@ dangerous structure.
   `sm_scan`, when it opens, and narrows it to the **range
   actually traversed** when it closes (§10.2). The narrowed
   range includes its upper end, the last key the scan examined.
-  That range is the predicate. Ranges are the phantom defence —
+  A cursor moved on with `sm_scan_seek` keeps the keys it
+  skipped inside that range: the predicate runs from the
+  start key to the furthest key reached, gaps included. It
+  over-approximates what was read, which can only cost a
+  serialization failure that was not strictly necessary,
+  never miss one. That range is the predicate. Ranges are the phantom defence —
   a later insert into that range conflicts even though the row
   did not exist at read time. SIREAD locks survive the
   transaction's own commit; they are dropped only when no active
@@ -1582,6 +1588,30 @@ the bloom filter earns its keep on a point read.
 (§1), so no `SeekForPrev` path exists and `auto_prefix_mode`
 is never asked to serve one.
 
+**Reposition.** `sm_scan_seek` re-seeks the same iterator,
+keeping its RocksDB snapshot, its MVCC view, and its upper
+bound, so a probe loop — an index nested-loop join, an
+IN-list, a skip scan — costs one cursor instead of one per
+probe. It moves **forward only**, and refuses two targets:
+
+- one before the last key examined, since the SIREAD range
+  is narrowed to that key (§7.1) and moving back would
+  record less than was read;
+- one below `skey`. The iterator carries `iterate_upper_bound`
+  but no lower bound — the start is a `Seek`, not a bound —
+  so a seek under `skey` would return rows outside the range
+  the cursor registered as its predicate. The cursor keeps
+  the start bound it was positioned with, and compares
+  against it.
+
+A target past `ekey` is allowed: the upper bound leaves the
+iterator invalid and the cursor reports its end. A cursor
+already at its end stays there, rather than being repositioned
+and revived, because §7.1 treats a scan that reached the end
+as having read its whole range; reviving it and closing it
+later would narrow that range to the last key examined, which
+is less than it read.
+
 **Bound lifetime.** `iterate_upper_bound` is a
 `rocksdb::Slice`, which borrows rather than copies, and
 the bound outlives the `sm_scan` call that set it.
@@ -2025,6 +2055,13 @@ bullets below cover the rest of the engine.
   writes and releases no locks, and the depth it frees is
   handed out again by the next `sm_savepoint`. Pushing past
   `SM_MAX_SAVEPOINTS` fails with `SM_ERR_INVALID` (§6.5).
+- **Cursor reposition.** A cursor seeks forward over rows and
+  resumes there, with the bounds and view it opened with;
+  seeking backwards, or below the start key, fails. Under
+  SERIALIZABLE, a write skew whose only second edge runs
+  through the keys a seek skipped is still caught, and a
+  control that never seeks — so the predicate ends at the
+  first key — commits instead (§7.1, §10.2).
 - **Shared locks.** Two transactions hold one key shared at
   once; an exclusive request waits for both. A shared holder
   writing the key upgrades once the others go, and two

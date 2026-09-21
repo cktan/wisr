@@ -47,6 +47,7 @@ full MVCC, for OLTP workloads.
     `sm_forget`
   - statement boundaries: `sm_stmt_begin`
   - row locks without writing: `sm_lock`
+  - cursor reposition: `sm_scan_seek`
   - relations: `sm_mkrel` / `sm_rmrel` / `sm_lsrel`
   - sequences: `sm_mkseq` / `sm_rmseq` / `sm_nextseq`
   - data ops: `sm_insert` / `sm_update` / `sm_delete` / `sm_read` /
