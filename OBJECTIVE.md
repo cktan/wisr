@@ -1,11 +1,13 @@
 # OBJECTIVE — wisr
 
 Build a storage stack for OLTP that could, eventually, sit
-under PostgreSQL in place of its own storage and transaction
-layers. That target is argued in full in `PART3.md`; it is
-not a dependency of anything below, but it shapes the
-decisions at every level, because a design that could not
-host it would be wasted work at this project's scale.
+under a subset of PostgreSQL — the essential parts, not full
+compatibility — in place of its own storage and transaction
+layers. `FEATURELIST.md` says which parts; `PART3.md` argues
+what the target costs. Neither is a dependency of anything
+below, but they shape the decisions at every level, because a
+design that could not host the subset would be wasted work at
+this project's scale.
 
 "wisr" is Wisconsin storage on rocks: a stack of storage
 levels, each one built on the level below it, in the
@@ -42,6 +44,18 @@ process's memory, and RocksDB permits one writer process.
 Getting past that is a separate, later decision — an IPC
 layer, most likely — and nothing in sm1 or sm2's design
 forecloses it.
+
+## The PostgreSQL subset
+
+`FEATURELIST.md` is the source of truth: a checkbox per
+PostgreSQL feature, decided once. This document does not
+repeat it, because a copy would drift. The shape of it, as
+of this writing: scalar types and enums, B-tree indexes with
+partial and expression forms, keys and foreign keys,
+partitioning, TOAST, online DDL, row-level security, logical
+decoding and the libpq wire protocol are in; the extensible
+type and index machinery — JSON, arrays, GiST, GIN, and the
+C extension ABI — is out.
 
 ## Goals
 
@@ -91,6 +105,7 @@ These are settled; they bind every level below.
 
 - `sm1/OBJECTIVE.md`, `sm2/OBJECTIVE.md` — what each level
   is for, and the decisions that settled its own design.
+- `FEATURELIST.md` — which PostgreSQL features wisr supports.
 - `PART3.md` — the PostgreSQL target in full, including the
   parts of it that are not yet verified.
 - `DESIGN.md` (this directory) — how the stack fits

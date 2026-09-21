@@ -38,6 +38,7 @@ top-level one only delegates.
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
   scenarios that are executed on every build
 - `sm2/OBJECTIVE.md` — what level 2 is for
+- `FEATURELIST.md` — which PostgreSQL features wisr supports
 - `PART3.md` — what it would take to put PostgreSQL on this
   stack, and what that target forces on level 2's design
 
