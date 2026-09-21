@@ -106,7 +106,7 @@ Two changes make it possible, and the plan keeps them apart:
 | 1 | Key versions by a write timestamp; `xid` moves to the value | settled |
 | 2 | sm1 enforces the read-latest step; the caller does not pass a flag | settled |
 | 3 | The format version is bumped; databases written before it are refused | assumed, not confirmed |
-| 4 | The first cut allocates the timestamp under `alloc_mu`; the mutex is measured before it is removed (step 2) | assumed, not confirmed |
+| 4 | `global_ts` is atomic: `xid` and `wts` are a bare `fetch_add`; only `commit_ts` and lease renewal take `alloc_mu` (step 2) | settled |
 | 5 | An insert at READ COMMITTED goes ahead against the newest committed version, with no re-check | assumed, see step 4 |
 | 6 | `sm_lock` at READ COMMITTED no longer fails with `SM_ERR_CONFLICT` | assumed, see step 4 |
 | 7 | Names: `SM_ERR_UPDATED` and `sm_read_latest` | provisional |
@@ -200,32 +200,31 @@ keeps `xid` and does not change).
   the key's versions sort in commit order.
 - The full suite passes with no expectation changed.
 
-## Step 2. Measure the per-write allocation
+## Step 2. Make the per-write allocation lock-free
 
-`db_alloc_ts` takes `alloc_mu`, which is also the commit
-sequencer's mutex, so every write now takes a global mutex.
+Done. `db_alloc_ts` was taking `alloc_mu`, the commit
+sequencer's mutex, so every write took a global mutex.
+`global_ts` and `ts_limit` are now atomics:
 
-- Take the baseline from step 0 and a measurement from step 1,
-  with many sessions writing different keys.
-- Measure two costs, not one. The first is contention: `alloc_mu`
-  also guards `db_claim_commit_ts` and `db_commit_done`, so a
-  high write rate competes with the commit path.
-- The second is lease renewal. `db_alloc_ts` used to run once
-  per writing transaction, for its `xid`; it now runs on every
-  row write, so the `WISR_META_NEXT_TS` lease runs out orders of
-  magnitude sooner. Each renewal is a synchronous RocksDB `Put`
-  to `CF:meta` inside `alloc_leased_locked`, under `alloc_mu`,
-  and it stalls every allocation on every thread. Count the
-  renewals per second. If they matter, enlarge the lease (say
-  to 10M), or give `wts` its own batch lease if `alloc_mu` stays.
-- If the cost is small, leave it and record the numbers. If it
-  is not, `global_ts` becomes atomic and `db_claim_commit_ts`
-  keeps the set insert atomic with the allocation another way.
-  That is its own change, with its own review, because §4.3's
-  argument that `visible_ts` never passes a commit in progress
-  depends on how claim and advance share the mutex.
+- `db_alloc_ts` is a bare `fetch_add`. Only a value at or past
+  `ts_limit` takes `alloc_mu`, to renew the lease with a
+  synchronous `Put` to `CF:meta` (`cover_ts_locked`); the value
+  is handed out only after the lease covers it, and a failed
+  renewal only burns it.
+- `db_claim_commit_ts` still takes `alloc_mu`, so its
+  `fetch_add` and its insert into `committing` are one step to
+  the advancer, and `db_commit_done` reads `global_ts` under
+  it. §4.3's argument stands, because `xid` and `wts` never
+  enter the set (DESIGN.md §4.3).
+- Every row write now takes a timestamp, so the lease
+  (`ts_lease`, default 1M) is used up faster than when only a
+  transaction's first write took one, and each renewal is a
+  synchronous `Put` that stalls allocation while it runs.
 
-**Verify:** the numbers are in this file, and the decision.
+**Verify:** the suite passes. Still to do: a write-throughput
+benchmark, to take numbers against the step 0 commit and to
+count lease renewals per second; enlarge the default
+`ts_lease` if they matter.
 
 ## Step 3. Tests first
 

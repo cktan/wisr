@@ -69,16 +69,16 @@ public:
 
 } // namespace
 
-/* Build userkey | ~xid | ~seq. */
-std::string version_key(rocksdb::Slice userkey, uint64_t xid, uint32_t seq) {
+/* Build userkey | ~wts | ~seq. */
+std::string version_key(rocksdb::Slice userkey, uint64_t wts, uint32_t seq) {
   std::string k;
   // Reserve room for the userkey and the 12-byte tail.
   k.reserve(userkey.size() + version_tail_size);
   // Copy the userkey.
   k.append(userkey.data(), userkey.size());
-  // Complement xid, so newer versions sort first.
-  put_be64(k, ~xid);
-  // Complement seq, so later writes of one xid sort first.
+  // Complement wts, so newer versions sort first.
+  put_be64(k, ~wts);
+  // Complement seq, so later writes of one wts sort first.
   put_be32(k, ~seq);
   return k;
 }
@@ -103,31 +103,33 @@ rocksdb::Slice version_userkey(rocksdb::Slice key) {
   return rocksdb::Slice(key.data(), n);
 }
 
-/* Decode userkey, xid, and seq from a version key. */
+/* Decode userkey, wts, and seq from a version key. */
 void version_decode_key(rocksdb::Slice key, version_t *v) {
   // Split off the userkey.
   v->userkey = version_userkey(key);
   // Locate the tail after it.
   const char *tail = key.data() + v->userkey.size();
-  // Undo the complement of xid.
-  v->xid = ~get_be64(tail);
+  // Undo the complement of wts.
+  v->wts = ~get_be64(tail);
   // Undo the complement of seq.
   v->seq = ~get_be32(tail + 8);
 }
 
-/* Build flags | payload. */
-std::string version_value(uint8_t flags, rocksdb::Slice payload) {
+/* Build flags | xid | payload. */
+std::string version_value(uint8_t flags, uint64_t xid, rocksdb::Slice payload) {
   std::string val;
-  // Reserve room for the flags byte and the payload.
-  val.reserve(1 + payload.size());
+  // Reserve room for the flags byte, the xid, and the payload.
+  val.reserve(1 + 8 + payload.size());
   // Write the flags byte.
   val.push_back(static_cast<char>(flags));
+  // Write the writer's xid.
+  put_be64(val, xid);
   // Append the payload.
   val.append(payload.data(), payload.size());
   return val;
 }
 
-/* Decode flags, the optional commit_ts stamp, and the payload. */
+/* Decode flags, the xid or the commit_ts stamp, and the payload. */
 bool version_decode_value(rocksdb::Slice value, version_t *v) {
   // Reject a value too short to hold its flags.
   if (value.empty()) {
@@ -136,18 +138,20 @@ bool version_decode_value(rocksdb::Slice value, version_t *v) {
   // Read the flags byte.
   v->flags = static_cast<uint8_t>(value[0]);
   value.remove_prefix(1);
-  // No stamp until the flags say so.
+  // Neither the xid nor the stamp until the flags say which.
+  v->xid = 0;
   v->commit_ts = 0;
-  // A stamped version carries its commit_ts next.
-  if (v->flags & version_stamped) {
-    // Reject a stamp cut short.
-    if (value.size() < 8) {
-      return false;
-    }
-    // Read the stamp.
-    v->commit_ts = get_be64(value.data());
-    value.remove_prefix(8);
+  // Reject a header cut short.
+  if (value.size() < 8) {
+    return false;
   }
+  // A stamped version carries its commit_ts, an unstamped one its xid.
+  if (v->flags & version_stamped) {
+    v->commit_ts = get_be64(value.data());
+  } else {
+    v->xid = get_be64(value.data());
+  }
+  value.remove_prefix(8);
   // The rest is the payload.
   v->payload = value;
   return true;

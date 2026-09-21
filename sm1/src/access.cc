@@ -13,6 +13,7 @@
 #include "version.h"
 
 #include <algorithm>
+#include <cassert>
 #include <new>
 
 #include <rocksdb/options.h>
@@ -28,8 +29,8 @@ int visible(db_t *db, const version_t &v, const view_t &view) {
     return v.seq <= view.seq_hwm; // own write, savepoint-aware
   }
   // Written after our snapshot, so committed after it too.
-  if (v.xid > view.snapshot_ts) {
-    return 0; // commit_ts > xid > snapshot
+  if (v.wts > view.snapshot_ts) {
+    return 0; // commit_ts > wts > snapshot
   }
   // Find when the writer committed.
   uint64_t commit_ts;
@@ -136,7 +137,7 @@ int latest_version(sm_session_t *s, rocksdb::ColumnFamilyHandle *cf,
   // Walk every version of the key, newest first.
   for (it->Seek(version_bound(key, '\x00')); it->Valid(); it->Next()) {
     version_t v;
-    // Decode the version's userkey, xid, and seq.
+    // Decode the version's userkey, wts, and seq.
     version_decode_key(it->key(), &v);
     // Past the last version of this key.
     if (v.userkey != key) {
@@ -496,7 +497,7 @@ int scan_next(sm_scan_t *c, const char **key, size_t *klen, const char **data,
     // Walk the run of uk's versions, newest first: the first
     // visible one decides, the rest are stepped past.
     for (; it->Valid(); it->Next()) {
-      // Decode this version's userkey, xid, and seq.
+      // Decode this version's userkey, wts, and seq.
       version_decode_key(it->key(), &v);
       // Past the last version of this key.
       if (v.userkey != rocksdb::Slice(uk)) {
@@ -583,13 +584,13 @@ int access_read(sm_session_t *s, uint64_t relid, const view_t &view,
   // lands before every own version of the key. Under SSI, start
   // before every version instead: the newer ones are exactly
   // the concurrent writers owed an edge.
-  uint64_t hi = std::max(view.xid, view.snapshot_ts);
+  uint64_t hi = std::max(s->wts_hi, view.snapshot_ts);
   std::string target =
       s->ssi ? version_bound(key, '\x00') : version_key(key, hi, UINT32_MAX);
   // Walk the key's versions, newest first.
   for (it->Seek(target); it->Valid(); it->Next()) {
     version_t v;
-    // Decode the version's userkey, xid, and seq.
+    // Decode the version's userkey, wts, and seq.
     version_decode_key(it->key(), &v);
     // Past the last version of this key.
     if (v.userkey != key) {
@@ -680,10 +681,19 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   uint32_t seq = s->seq + 1;
   // A delete writes a tombstone version.
   uint8_t flags = op == WRITE_DELETE ? version_tombstone : 0;
+  // Allocate the write timestamp now that the lock is held, so it
+  // sorts after every committed version of the key (§4.1).
+  uint64_t wts;
+  if (db_alloc_ts(s->db, &wts) != 0) {
+    return -1;
+  }
+  // The previous writer took its commit_ts before releasing the lock.
+  assert(commit_ts < wts);
   // Put the version eagerly; it is not synced (§5 step 5).
   rocksdb::Status st = s->db->rdb->Put(
-      rocksdb::WriteOptions(), cf, version_key(key, s->xid, seq),
-      version_value(flags, op == WRITE_DELETE ? rocksdb::Slice() : data));
+      rocksdb::WriteOptions(), cf, version_key(key, wts, seq),
+      version_value(flags, s->xid,
+                    op == WRITE_DELETE ? rocksdb::Slice() : data));
   // Fail if the put failed.
   if (!st.ok()) {
     return set_status_error(st, "write version");
@@ -691,8 +701,10 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   // Advance seq, and make the write visible to ourselves.
   s->seq = seq;
   s->seq_hwm = seq;
+  // The seek bound of our own reads must cover this version.
+  s->wts_hi = wts;
   // Record it for savepoint rollback.
-  s->undo.push_back({relid, key.ToString(), seq});
+  s->undo.push_back({relid, key.ToString(), wts, seq});
   // After the put, look for readers the write invalidates; a
   // reader arriving later steps past the version instead (§7.2).
   ssi_on_write(s, relid, key);

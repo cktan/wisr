@@ -463,8 +463,15 @@ commit sequencer (ordered set of commit_ts in progress)
   set. If the write fails, it is *not* marked done: the database
   fails stop (§8.2), and `visible_ts` stays below that
   `commit_ts` until restart.
-- `global_ts` also produces xids (§4.1), but xids never enter the
-  set, so only commits in progress can hold back `visible_ts`.
+- `global_ts` is an atomic. An xid or a write timestamp (`wts`)
+  is a bare `fetch_add` with no mutex; only a lease renewal
+  takes `alloc_mu`. Those values never enter the set, so only
+  commits in progress can hold back `visible_ts`, and the
+  advancer passing one of them is harmless: no status is
+  published for it, and a version it keys resolves through
+  its writer's status like any other. Only `commit_ts` needs
+  the mutex, so that its `fetch_add` and its insert into the
+  set are one step to the advancer.
 - A single lightweight advancer sets `visible_ts` to one below
   the smallest value in the set, or to `global_ts - 1` when the
   set is empty. New values are always above everything already

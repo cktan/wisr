@@ -30,7 +30,7 @@
 
 /* Database format version, stored in CF:meta. Version 4 added
  * the mode byte on each lock key of a PREPARED record (§8.4). */
-#define WISR_DB_VERSION 4
+#define WISR_DB_VERSION 5
 
 /* Column family names. */
 #define WISR_CF_TXN "txn"
@@ -95,9 +95,15 @@ struct db_t {
   /* The ts and object-id allocators and their leases (§4.2). */
   std::mutex alloc_mu;
   uint64_t lease = 0;
-  uint64_t global_ts = 0;  /* next ts to hand out */
-  uint64_t ts_limit = 0;   /* persisted; never handed out */
-  uint64_t next_objid = 0; /* next relid or seqid to hand out */
+  /*
+   * The timestamp counter. Values are taken with fetch_add and
+   * no lock, except a commit_ts, which is taken under alloc_mu
+   * with its insert into committing (§4.3). ts_limit is written
+   * only under alloc_mu.
+   */
+  std::atomic<uint64_t> global_ts{0}; /* next ts to hand out */
+  std::atomic<uint64_t> ts_limit{0};  /* persisted; never handed out */
+  uint64_t next_objid = 0;            /* next relid or seqid to hand out */
   uint64_t objid_limit = 0;
 
   /*
@@ -279,7 +285,7 @@ struct db_t {
 db_t *db_open(const std::string &path, const char *dbname,
               const sm_options_t *opt);
 
-/* Allocate a timestamp from db's lease. Returns 0 or -1. */
+/* Allocate a timestamp: lock-free within the lease. Returns 0 or -1. */
 int db_alloc_ts(db_t *db, uint64_t *out);
 
 /*

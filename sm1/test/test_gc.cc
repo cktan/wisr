@@ -27,6 +27,7 @@ struct raw_t {
   std::string key;
   uint64_t xid;
   uint8_t flags;
+  uint64_t wts;
 };
 
 /* The fixture's relation, set when the fixture is created. */
@@ -102,7 +103,7 @@ public:
       version_t v;
       version_decode_key(it->key(), &v);
       REQUIRE(version_decode_value(it->value(), &v));
-      out.push_back({v.userkey.ToString(), v.xid, v.flags});
+      out.push_back({v.userkey.ToString(), v.xid, v.flags, v.wts});
     }
     REQUIRE(it->status().ok());
     return out;
@@ -139,6 +140,45 @@ void commit_del(sm_session_t *s, const std::string &key) {
 }
 
 } // namespace
+
+TEST_CASE("a key's versions are stored in commit order, by write timestamp") {
+  // Verify each version's wts is taken after its writer's xid, and that
+  // versions of one key sort newest commit first, even when a writer's xid
+  // predates the commits of the writers before it.
+  // 1. Commit "k" = v0 and "j" = x.
+  // 2. Session L begins and writes "j", so its xid is early.
+  // 3. Commit "k" = v1 and "k" = v2, then commit L.
+  // 4. Confirm "k" has three versions whose wts strictly descend.
+  // 5. Confirm every unstamped version's wts is above its xid.
+  gc_fixture_t f;
+  sm_session_t *w = f.open();
+  sm_session_t *l = f.open();
+  commit_put(w, "k", "v0");
+  commit_put(w, "j", "x");
+  REQUIRE(sm_begin(l, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_update(l, g_rel, "j", 1, "y", 1, nullptr, nullptr) == 0);
+  commit_set(w, "k", "v1");
+  commit_set(w, "k", "v2");
+  REQUIRE(sm_commit(l) == 0);
+  REQUIRE(sm_begin(w, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(get(w, g_rel, "k") == "v2");
+  REQUIRE(sm_commit(w) == 0);
+
+  std::vector<raw_t> raw = f.raw(g_rel);
+  std::vector<uint64_t> k_wts;
+  for (const raw_t &v : raw) {
+    if (v.key == "k") {
+      k_wts.push_back(v.wts);
+    }
+    if ((v.flags & version_stamped) == 0) {
+      CHECK(v.wts > v.xid);
+    }
+  }
+  REQUIRE(k_wts.size() == 3);
+  CHECK(k_wts[0] > k_wts[1]);
+  CHECK(k_wts[1] > k_wts[2]);
+  sm_closedb(w);
+}
 
 TEST_CASE("a long-running reader keeps the versions it can see") {
   // Verify the watermark protects a live snapshot, then lets go.

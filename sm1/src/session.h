@@ -31,6 +31,7 @@ struct sm_session_t {
   uint64_t xid = 0;              /* 0 until the first write (§4.1) */
   uint32_t seq = 0;              /* last write's seq; the next is seq + 1 */
   uint32_t seq_hwm = 0;          /* own versions above this are invisible */
+  uint64_t wts_hi = 0;           /* largest wts written; bounds own seeks */
   std::vector<uint64_t> created; /* relids made by sm_mkrel */
   std::vector<uint64_t> dropped; /* relids removed by sm_rmrel */
   std::vector<uint64_t> dropped_seqs; /* seqids removed by sm_rmseq */
@@ -49,12 +50,13 @@ struct sm_session_t {
 
   /*
    * The undo list (§6.5): every version written, in write
-   * order, as (relid, userkey, seq), so a rollback can delete
+   * order, as (relid, userkey, wts, seq), so a rollback can delete
    * exactly the versions written since the savepoint.
    */
   struct undo_t {
     uint64_t relid;
     std::string key;
+    uint64_t wts;
     uint32_t seq;
   };
   std::vector<undo_t> undo;

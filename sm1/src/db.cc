@@ -484,23 +484,31 @@ db_t *db_open(const std::string &path, const char *dbname,
  * value under it, so no value is handed out twice across a
  * restart (§4.2).
  */
+static int persist_lease(db_t *db, const char *key, uint64_t new_limit) {
+  // Encode it.
+  std::string val;
+  put_be64(val, new_limit);
+  // The lease must be durable before any value under it.
+  rocksdb::WriteOptions wo;
+  wo.sync = true;
+  // Persist the new lease.
+  rocksdb::Status s = db->rdb->Put(wo, db->cf_meta, key, val);
+  // Fail if the new lease did not persist.
+  if (!s.ok()) {
+    return set_status_error(s, "persist lease");
+  }
+  return 0;
+}
+
 static int alloc_leased_locked(db_t *db, uint64_t *next, uint64_t *limit,
                                const char *key, uint64_t *out) {
   // Lease used up: persist a new limit first.
   if (*next >= *limit) {
     // Extend the lease from here.
     uint64_t new_limit = *next + db->lease;
-    // Encode it.
-    std::string val;
-    put_be64(val, new_limit);
-    // The lease must be durable before any value under it.
-    rocksdb::WriteOptions wo;
-    wo.sync = true;
     // Persist the new lease.
-    rocksdb::Status s = db->rdb->Put(wo, db->cf_meta, key, val);
-    // Fail if the new lease did not persist.
-    if (!s.ok()) {
-      return set_status_error(s, "persist lease");
+    if (persist_lease(db, key, new_limit) != 0) {
+      return -1;
     }
     // Adopt the new limit.
     *limit = new_limit;
@@ -518,23 +526,56 @@ static int alloc_leased(db_t *db, uint64_t *next, uint64_t *limit,
   return alloc_leased_locked(db, next, limit, key, out);
 }
 
-/* Allocate a timestamp. */
+/*
+ * Make sure the persisted lease covers timestamp n, with alloc_mu
+ * held. A value the lease does not cover is never handed out, so a
+ * failure only burns n.
+ */
+static int cover_ts_locked(db_t *db, uint64_t n) {
+  // Another thread may have extended the lease while we waited.
+  if (n < db->ts_limit.load()) {
+    return 0;
+  }
+  // Extend the lease from n.
+  uint64_t new_limit = n + db->lease;
+  // Persist the new lease before n is handed out.
+  if (persist_lease(db, WISR_META_NEXT_TS, new_limit) != 0) {
+    return -1;
+  }
+  // Adopt the new limit.
+  db->ts_limit.store(new_limit);
+  return 0;
+}
+
+/* Allocate a timestamp: a lock-free fetch_add, but for a lease renewal. */
 int db_alloc_ts(db_t *db, uint64_t *out) {
-  return alloc_leased(db, &db->global_ts, &db->ts_limit, WISR_META_NEXT_TS,
-                      out);
+  // Take the next value.
+  uint64_t n = db->global_ts.fetch_add(1);
+  // Past the persisted lease: renew it under alloc_mu first.
+  if (n >= db->ts_limit.load()) {
+    // Hold alloc_mu around the lease write.
+    std::lock_guard<std::mutex> guard(db->alloc_mu);
+    if (cover_ts_locked(db, n) != 0) {
+      return -1;
+    }
+  }
+  *out = n;
+  return 0;
 }
 
 /* Allocate commit_ts and enter it into the sequencer atomically. */
 int db_claim_commit_ts(db_t *db, uint64_t *out) {
   // Hold alloc_mu, the sequencer's mutex too.
   std::lock_guard<std::mutex> guard(db->alloc_mu);
-  // Allocate commit_ts from the lease.
-  if (alloc_leased_locked(db, &db->global_ts, &db->ts_limit, WISR_META_NEXT_TS,
-                          out) != 0) {
+  // Take the next value.
+  uint64_t n = db->global_ts.fetch_add(1);
+  // Cover it with the persisted lease.
+  if (cover_ts_locked(db, n) != 0) {
     return -1;
   }
+  *out = n;
   // Enter it into the sequencer's set in progress.
-  db->committing.insert(*out);
+  db->committing.insert(n);
   return 0;
 }
 
@@ -550,8 +591,8 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
   // This commit is no longer in progress.
   db->committing.erase(commit_ts);
   // Publish up to just below the oldest commit still in progress.
-  uint64_t v =
-      db->committing.empty() ? db->global_ts - 1 : *db->committing.begin() - 1;
+  uint64_t v = db->committing.empty() ? db->global_ts.load() - 1
+                                      : *db->committing.begin() - 1;
   // Never move visible_ts backwards.
   if (v > db->visible_ts.load()) {
     db->visible_ts.store(v);

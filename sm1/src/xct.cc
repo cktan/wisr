@@ -149,6 +149,7 @@ void reset(sm_session_t *s) {
   s->xid = 0;
   s->seq = 0;
   s->seq_hwm = 0;
+  s->wts_hi = 0;
   s->created.clear();
   s->dropped.clear();
   s->dropped_seqs.clear();
@@ -296,8 +297,8 @@ int rollback(sm_session_t *s, int depth) {
     rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, u.relid);
     // Skip a CF already dropped.
     if (cf) {
-      // Delete the exact version: key, our xid, its seq.
-      batch.Delete(cf, version_key(u.key, s->xid, u.seq));
+      // Delete the exact version: key, its wts, its seq.
+      batch.Delete(cf, version_key(u.key, u.wts, u.seq));
     }
   }
   // Apply the deletes, if any, in one write.
