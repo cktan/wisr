@@ -1,7 +1,9 @@
 # PLAN — sm1: READ COMMITTED writes proceed
 
-**Status: proposed. Nothing here is started; this plan waits
-for a go-ahead.**
+**Status: implemented (steps 0 to 6). Suite: 125 unit tests, 92
+scenarios, 4 stress tests. Still open: the write-throughput
+benchmark of step 2, and a thread-sanitizer run of step 5 that
+is not conclusive (see step 5).**
 
 `DESIGN.md` §6.2 records the decision: at READ COMMITTED, a
 write that meets a row committed after the transaction's begin
@@ -336,8 +338,17 @@ full exchange, with compaction running. The check is the sum:
 every increment lands exactly once, so no update is lost and
 none is applied twice.
 
-**Verify:** the sum is exact over many runs, and the run is
-clean under a thread sanitizer if the build has one.
+**Done** as `mvcc/e06_rc_contention_stress.cc`: four threads,
+three counters, a compaction thread running throughout. The sum
+was exact in every run tried (about 100 of the 160 increments
+took the `updated` path). The build has no sanitizer target. A
+one-off `-fsanitize=thread` build reports 44 races. The two I
+read sit on heap buffers handed between threads through
+RocksDB, which is not instrumented, and the existing `e03`
+reports one too; the other 42 were not read. Treat it as
+inconclusive rather than clean.
+
+**Verify:** the sum is exact over many runs.
 
 ## Step 6. Documents
 

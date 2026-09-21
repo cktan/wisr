@@ -1,0 +1,30 @@
+# f08 -- READ COMMITTED: three sessions in turn on one hot row.
+#
+# All three begin before any commit. T2 queues behind T1; T3
+# queues behind T2 once T2 holds the lock. Each in turn wakes
+# with `updated`, reads the newest version, writes, and
+# commits, so the counter ends at the last writer's value.
+
+
+== pairing RR/RR == T1=RC T2=RC T3=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 write R1 1 -> ok
+@3 T2 write R1 2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 2 blocks -> updated (resumed)
+@5 check last T2 updated -> satisfied
+@6 T3 write R1 3 blocks -> blocked
+@7 T2 readlatest R1 -> 1
+@7 check last T2 1 -> satisfied
+@8 T2 write R1 2 -> ok
+@9 T2 commit -> ok
+@6 T3 write R1 3 blocks -> updated (resumed)
+@10 check last T3 updated -> satisfied
+@11 T3 readlatest R1 -> 2
+@11 check last T3 2 -> satisfied
+@12 T3 write R1 3 -> ok
+@13 T3 commit -> ok
+@14 check committed T1 T2 T3 -> satisfied
+@14 check row R1 3 -> satisfied

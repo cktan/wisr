@@ -52,7 +52,10 @@ typedef enum {
     SM_ERR_NOMEM         = 15,
     SM_ERR_DISKFULL      = 16,
     SM_ERR_PERMISSION    = 17,
-    SM_ERR_VERSION       = 18   /* home dir format not supported */
+    SM_ERR_VERSION       = 18,  /* home dir format not supported */
+
+    /* NOT retryable, and not an abort */
+    SM_ERR_UPDATED       = 19   /* newer commit; sm_read_latest, then retry */
 } sm_errno_t;
 ```
 
@@ -314,13 +317,21 @@ A read-committed caller whose statement spans several calls
 brackets it with `sm_stmt_begin`, which makes those calls
 share one snapshot.
 
-**2. Writes can fail with `SM_ERR_CONFLICT` at every
-level, including READ COMMITTED.** If another transaction
-committed a change to the same key after this
-transaction's snapshot, the write is rejected. The engine
-does not silently re-read the newer row and apply the write
-to it; it reports the conflict and the caller retries. This
-differs from engines that restart the statement.
+**2. Writes can fail if the row changed after the
+transaction's snapshot.** If another transaction committed a
+change to the same key after this transaction's snapshot, the
+write is rejected. At `SM_XCT_REPEATABLE_READ` and
+`SM_XCT_SERIALIZABLE` it fails with `SM_ERR_CONFLICT`, the
+transaction is aborted, and the caller retries. At
+`SM_XCT_READ_COMMITTED` an update or delete fails with
+`SM_ERR_UPDATED`, which does not abort: the transaction stays
+active and keeps the row lock. The caller calls
+`sm_read_latest`, re-evaluates the row, and writes again, as
+PostgreSQL's executor does at its default level. The engine
+never applies the write to the newer row on its own: a write
+that skips the re-read is refused again. An insert at
+READ COMMITTED needs none of this; it is judged against the
+newest committed version.
 
 **3. A scan does not observe writes made by its own
 transaction after the cursor was opened.** The cursor's
@@ -614,9 +625,10 @@ its life; there is no returning to a snapshot per call. Under
 is accepted and does nothing, since the whole transaction
 already reads at one snapshot.
 
-Writes are unaffected: they still check for conflicts against
-the snapshot taken by `sm_begin`, so `SM_ERR_CONFLICT` can
-still arrive on a row this statement has just read.
+Writes are unaffected: they still check for a newer commit
+against the snapshot taken by `sm_begin`, so
+`SM_ERR_UPDATED` can still arrive on a row this statement
+has just read; `sm_read_latest` then gives the newest version.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
@@ -649,7 +661,10 @@ runs: if another transaction committed a version of this key
 after this transaction's snapshot, it fails with
 `SM_ERR_CONFLICT`. A successful `sm_lock` therefore means what
 the caller reads next under that lock is current, which is
-what makes "lock, then read, then act" safe.
+what makes "lock, then read, then act" safe. At
+`SM_XCT_READ_COMMITTED` the call does not fail on a newer
+commit; the caller reads the row with `sm_read_latest`, which
+returns the newest committed version.
 
 The lock is held to the end of the transaction, or until an
 `sm_rollback` past the point it was taken. An upgrade is never
@@ -661,9 +676,10 @@ survive in the prepared transaction and are restored after a
 crash, so nothing may write those rows until a coordinator
 resolves it.
 
-Errors: `SM_ERR_CONFLICT` / `SM_ERR_DEADLOCK` (retryable),
-`SM_ERR_NOTFOUND` (no such relation), `SM_ERR_NOTRANS`,
-`SM_ERR_PREPARED`, `SM_ERR_INVALID`.
+Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
+`SM_ERR_DEADLOCK` (retryable), `SM_ERR_NOTFOUND` (no such
+relation), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+`SM_ERR_INVALID`.
 
 ### int sm_savepoint(sm_session_t* session)
 
@@ -954,9 +970,12 @@ database has stopped, or persisting the next block failed),
 
 ## Update API
 
-All three require an active, non-prepared transaction, and
-all three can fail with `SM_ERR_CONFLICT` at every
-isolation level.
+All three require an active, non-prepared transaction. All
+three can fail with `SM_ERR_CONFLICT` at REPEATABLE READ and
+SERIALIZABLE, and `sm_update` and `sm_delete` with
+`SM_ERR_UPDATED` at READ COMMITTED, when another transaction
+committed a change to the same key after this transaction's
+snapshot.
 
 Each blocks while another active transaction holds a write
 lock on the same key, until that transaction ends. A
@@ -1006,7 +1025,9 @@ failure, and for a zero-length old value, `*old` may be
 NULL.
 
 Errors for all three: `SM_ERR_CONFLICT` /
-`SM_ERR_DEADLOCK` (retryable), `SM_ERR_NOTFOUND` (relation
+`SM_ERR_DEADLOCK` (retryable), `SM_ERR_UPDATED` (READ
+COMMITTED; not retryable, the transaction stays active; call
+`sm_read_latest`, then write again), `SM_ERR_NOTFOUND` (relation
 or, for update/delete, key), `SM_ERR_DUPKEY` (insert),
 `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`,
 `SM_ERR_DISKFULL`, `SM_ERR_IO`.
@@ -1035,6 +1056,41 @@ does not set the error state. Returns **-1** on error.
 Errors: `SM_ERR_NOTFOUND` (the *relation* does not exist —
 a missing key returns 1, not an error), `SM_ERR_NOTRANS`,
 `SM_ERR_PREPARED`, `SM_ERR_INVALID`, `SM_ERR_CORRUPT`,
+`SM_ERR_IO`.
+
+### int sm_read_latest(sm_session_t* session, uint64_t relid, const char* key, size_t klen, const char** data, size_t* datalen)
+
+Read the newest committed version of one key, ignoring the
+snapshot. Returns as `sm_read` does: **0** found, **1** no
+such key (or deleted), **-1** on error.
+
+It exists for `SM_XCT_READ_COMMITTED`, and needs a row lock
+the transaction already holds on the key: the one a write that
+failed with `SM_ERR_UPDATED` left behind, or one taken with
+`sm_lock`. The lock is what keeps the version from changing
+before commit. At any other level, or with no lock held, it
+fails with `SM_ERR_INVALID`.
+
+Under an exclusive lock the call also lets the next write of
+this key go ahead, once. Under a shared lock it reads but
+lets nothing through, since a shared holder cannot write
+without upgrading. The write clears the permission, so a
+second write after a savepoint rollback needs a fresh read.
+
+Typical use, for `UPDATE ... WHERE`:
+
+```c
+rc = sm_update(s, rel, key, klen, newval, len, NULL, NULL);
+if (rc != 0 && sm_errno() == SM_ERR_UPDATED) {
+    sm_read_latest(s, rel, key, klen, &data, &n);
+    /* re-check the WHERE clause; recompute newval from data */
+    rc = sm_update(s, rel, key, klen, newval, len, NULL, NULL);
+}
+```
+
+Errors: `SM_ERR_NOTFOUND` (the *relation* does not exist),
+`SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`
+(not READ COMMITTED, or no lock held), `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
 ### sm_scan_t* sm_scan(sm_session_t* session, uint64_t relid, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive)

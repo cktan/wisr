@@ -85,8 +85,10 @@ struct sm_session_t {
   struct lockref_t {
     std::string key;        /* the lock table key */
     bool exclusive = false; /* the mode held now, after upgrades */
+    bool latest = false;    /* read_latest done: the write may go ahead */
   };
   std::vector<lockref_t> locks; /* held, in acquisition order */
+  size_t latest_marks = 0;      /* locks with latest set; 0 skips scans */
   /*
    * The holders blocking us, empty when we are not waiting. A
    * shared lock has many, so the waits-for graph branches and
@@ -190,6 +192,22 @@ int lock_acquire(sm_session_t *session, uint64_t relid, rocksdb::Slice key,
 /* §5.2's first-committer-wins check alone, for sm_lock. */
 int access_check_current(sm_session_t *session, uint64_t relid,
                          rocksdb::Slice key);
+
+/*
+ * The mode the session holds (relid, key) in: 0 none, 1 shared,
+ * 2 exclusive. Reads only the session's own lock list.
+ */
+int lock_mode_held(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+
+/* Mark the exclusive lock on (relid, key): a write may go ahead. */
+void lock_set_latest(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+
+/* Whether (relid, key)'s lock carries the mark. */
+bool lock_has_latest(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+
+/* Clear the mark on (relid, key)'s lock, after a write used it. */
+void lock_clear_latest(sm_session_t *session, uint64_t relid,
+                       rocksdb::Slice key);
 
 /* Move every lock s holds to g, the prepared object (§8.4). */
 void lock_transfer(db_t *db, sm_session_t *s, sm_session_t *g);

@@ -290,6 +290,11 @@ int lock_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
     return xct_fail_retryable(s, SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }
+  // Read committed does not fail here: the caller reads the
+  // row with sm_read_latest instead.
+  if (s->level == SM_XCT_READ_COMMITTED) {
+    return 0;
+  }
   // Now that the lock is held, run §5.2's check, so what the
   // caller reads next under this lock is current: a version
   // committed after this transaction began fails the call.
@@ -325,6 +330,60 @@ int read_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
     *datalen = s->readbuf.size();
   }
   return r;
+}
+
+/* sm_read_latest, minus the out-of-memory guard. */
+int read_latest_row(sm_session_t *s, uint64_t relid, const char *key,
+                    size_t klen, const char **data, size_t *datalen) {
+  // Require the out-parameters.
+  if (!data || !datalen) {
+    return set_error(SM_ERR_INVALID, "sm_read_latest: data or datalen is NULL");
+  }
+  // Report no row until one is found.
+  *data = nullptr;
+  *datalen = 0;
+  // Require an active, non-prepared transaction.
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  // Only read committed has a snapshot to look past.
+  if (s->level != SM_XCT_READ_COMMITTED) {
+    return set_error(SM_ERR_INVALID, "sm_read_latest requires READ COMMITTED");
+  }
+  // Validate the relid and key.
+  if (enter(s, xct_view(s), relid, key, klen) != 0) {
+    return -1;
+  }
+  rocksdb::Slice k(key ? key : "", klen);
+  // The lock is what keeps the newest version from changing.
+  int mode = lock_mode_held(s, relid, k);
+  if (mode == 0) {
+    return set_error(SM_ERR_INVALID,
+                     "sm_read_latest requires a lock held on the key");
+  }
+  // Find the relation's CF.
+  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  if (!cf) {
+    return -1;
+  }
+  bool live;
+  uint64_t commit_ts;
+  // Read the newest version, ignoring the snapshot.
+  if (latest_version(s, cf, k, &live, &commit_ts, &s->readbuf) != 0) {
+    return -1;
+  }
+  // An exclusive holder may now write.
+  if (mode == 2) {
+    lock_set_latest(s, relid, k);
+  }
+  // Absent, or deleted.
+  if (!live) {
+    return 1;
+  }
+  // Hand out the session-owned bytes.
+  *data = s->readbuf.data();
+  *datalen = s->readbuf.size();
+  return 0;
 }
 
 /* sm_scan, minus the out-of-memory guard. */
@@ -653,13 +712,23 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   if (latest_version(s, cf, key, &live, &commit_ts, old) != 0) {
     return -1;
   }
-  // First-committer-wins (§5.2), at every level: the check is
-  // against the begin snapshot, even under read committed.
+  // Something committed after we began (§5.2).
   if (commit_ts > s->snapshot_ts) {
-    return xct_fail_retryable(
-        s, SM_ERR_CONFLICT,
-        "key was changed by a transaction that committed after "
-        "this one began");
+    // Read committed: an insert goes ahead against the newest
+    // version; an update or delete must have read it first.
+    if (s->level == SM_XCT_READ_COMMITTED) {
+      if (op != WRITE_INSERT && !lock_has_latest(s, relid, key)) {
+        return set_error(SM_ERR_UPDATED,
+                         "key was changed by a transaction that committed "
+                         "after this one began; sm_read_latest it first");
+      }
+    } else {
+      // First-committer-wins, aborting the loser.
+      return xct_fail_retryable(
+          s, SM_ERR_CONFLICT,
+          "key was changed by a transaction that committed after "
+          "this one began");
+    }
   }
   // An insert needs the key absent.
   if (op == WRITE_INSERT && live) {
@@ -703,6 +772,8 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   s->seq_hwm = seq;
   // The seek bound of our own reads must cover this version.
   s->wts_hi = wts;
+  // The write used the re-read; the next needs its own.
+  lock_clear_latest(s, relid, key);
   // Record it for savepoint rollback.
   s->undo.push_back({relid, key.ToString(), wts, seq});
   // After the put, look for readers the write invalidates; a
@@ -806,6 +877,17 @@ int sm_read(sm_session_t *session, uint64_t relid, const char *key, size_t klen,
     return read_row(session, relid, key, klen, data, datalen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_read: out of memory");
+  }
+}
+
+/* Read the newest committed version of a key. */
+int sm_read_latest(sm_session_t *session, uint64_t relid, const char *key,
+                   size_t klen, const char **data, size_t *datalen) {
+  // Report an allocation failure as SM_ERR_NOMEM.
+  try {
+    return read_latest_row(session, relid, key, klen, data, datalen);
+  } catch (const std::bad_alloc &) {
+    return set_error(SM_ERR_NOMEM, "sm_read_latest: out of memory");
   }
 }
 

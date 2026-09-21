@@ -183,6 +183,7 @@ can be read at a glance. Several steps may share a time.
 | `lock` | `<row> <shared\|exclusive>` | `ok`, or an error name |
 | `seek` | `<cursor> <key>` | `ok`, or an error name |
 | `stmt` | — | `ok`: starts a statement, for `rc` |
+| `readlatest` | `<row>` | the newest committed value, or `-`; at `rc`, under a lock the session holds |
 | `lookup` | `<row>` | the value in the SECOND relation, or `-` |
 | `rmrel` | — | `ok`: drops the second relation |
 | `mkrel` | — | `ok`: creates a relation, whose relid is not printed |
@@ -190,7 +191,7 @@ can be read at a glance. Several steps may share a time.
 
 Error names are symbolic, never numbers or messages:
 `conflict`, `serialization`, `dupkey`, `notfound`, `notrans`,
-`deadlock`, `prepared`, `invalid`.
+`deadlock`, `prepared`, `invalid`, `updated`.
 
 **`commit?`** is for a commit whose outcome may differ from
 run to run -- at S+S either side of a write skew may be the

@@ -92,7 +92,10 @@ typedef enum {
     SM_ERR_NOMEM         = 15,
     SM_ERR_DISKFULL      = 16,
     SM_ERR_PERMISSION    = 17,
-    SM_ERR_VERSION       = 18   /* home dir format not supported */
+    SM_ERR_VERSION       = 18,  /* home dir format not supported */
+
+    /* Not an abort: the transaction stays active (PLAN.md step 4). */
+    SM_ERR_UPDATED       = 19   /* newer commit; sm_read_latest, then retry */
 } sm_errno_t;
 
 /*
@@ -515,6 +518,21 @@ int sm_lock(sm_session_t* session, uint64_t relid,
             const char* key, size_t klen, sm_lockmode_t mode);
 
 /*
+ * Read the newest committed version of a key, ignoring the
+ * snapshot, under a row lock this transaction already holds.
+ * Returns as sm_read() does: 0 found, 1 no such key. At read
+ * committed only. Under an exclusive lock it also lets the next
+ * write of the key through, after SM_ERR_UPDATED (PLAN.md step
+ * 4).
+ *
+ * Errors: SM_ERR_INVALID (not read committed, or no lock held),
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_NOTFOUND (relation).
+ */
+int sm_read_latest(sm_session_t* session, uint64_t relid,
+                   const char* key, size_t klen,
+                   const char** data, size_t* datalen);
+
+/*
  * Begin a statement: read committed then reads every row of
  * this statement at ONE snapshot, instead of taking a fresh
  * one per call.
@@ -742,10 +760,14 @@ void sm_free_rels(uint64_t* list);
 
 /*
  * Write one row. All three calls require an active,
- * non-prepared transaction, and all three can fail with
- * SM_ERR_CONFLICT at every isolation level -- including READ
- * COMMITTED -- when another transaction committed a change to
- * the same key after this transaction's snapshot.
+ * non-prepared transaction. When another transaction committed
+ * a change to the same key after this transaction's snapshot,
+ * all three fail with SM_ERR_CONFLICT at REPEATABLE READ and
+ * SERIALIZABLE, aborting the transaction. At READ COMMITTED
+ * sm_update and sm_delete fail with SM_ERR_UPDATED instead,
+ * which does not abort: call sm_read_latest, then write again.
+ * An sm_insert there is judged against the newest committed
+ * version.
  *
  * Each blocks while another active transaction holds the write
  * lock on the key, until that transaction ends, and a blocked

@@ -161,8 +161,13 @@ this one needs; every gap it found is now closed in sm1.
   3. the builder scans the base relation — its snapshot is taken
      after the lock, so it sees every committed row — fills the
      index, and commits;
-  4. blocked writers then fail their conflict check, retry, and
-     read the new schema.
+  4. blocked writers then get the shared lock and read the new
+     schema. At READ COMMITTED their `sm_lock` no longer fails
+     on the newer commit; they read the schema row with
+     `sm_read_latest`. It is the schema-row lock that keeps
+     them out while the build runs, not a conflict check. At
+     the higher levels `sm_lock` still fails with a conflict,
+     and the writer retries.
   `sm1/mvcc/in/` has this end to end as a scenario.
 - Partial, expression and INCLUDE indexes mean maintenance takes
   a predicate and an expression evaluator, not a column list.

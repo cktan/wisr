@@ -45,9 +45,10 @@ the youngest transaction on it fails with
 writer compares the row's newest committed version against
 its own snapshot. If that version committed after the
 snapshot, the write fails with `SM_ERR_CONFLICT`, which is
-retryable and aborts the transaction. This applies at every
-isolation level, to every pair of writes — update, delete,
-and insert alike.
+retryable and aborts the transaction. This applies at
+REPEATABLE READ and SERIALIZABLE, to every pair of writes —
+update, delete, and insert alike. READ COMMITTED does not
+abort the loser: family F.
 
 **SIREAD and rw-edges (SERIALIZABLE only).** A SERIALIZABLE
 transaction records what it read: a point read records the
@@ -93,6 +94,7 @@ otherwise. **P** is a predicate: the key range of a scan.
 |---|---|
 | `OK` | the call succeeds; for `c`, the transaction commits |
 | `CONFLICT` | `SM_ERR_CONFLICT` at the write: first-committer-wins. Retryable, and it aborts the transaction |
+| `UPDATED` | `SM_ERR_UPDATED` at a READ COMMITTED write: the row changed after the transaction began. Not retryable, and the transaction stays active; `readlatest` reads the newest version |
 | `SERIALIZATION` | `SM_ERR_SERIALIZATION` at commit: the dangerous structure. Retryable |
 | `BLOCK` | the call waits on a row lock until the holder ends |
 | `DEADLOCK` | `SM_ERR_DEADLOCK` at the write: the transaction was the youngest on a cycle of waits. Retryable, and it aborts the transaction |
@@ -211,9 +213,10 @@ is family C.
 ## 5. Family B — write-write conflicts
 
 Two transactions writing one row. Detection here is
-level-independent: the row lock and first-committer-wins run
-at every level, so the RR, RR+S and S+S columns agree
-throughout. This is the part of the design that needs no
+level-independent between REPEATABLE READ and SERIALIZABLE:
+the row lock and first-committer-wins run at both, so the RR,
+RR+S and S+S columns agree throughout. READ COMMITTED has its
+own family, F. This is the part of the design that needs no
 SSI.
 
 | # | History | RR | RR+S | S+S | File |
@@ -349,12 +352,34 @@ these scenarios are the ones that would catch it.
 | e03 | Four contending RR threads see `CONFLICT` / `DEADLOCK` and **never** `SERIALIZATION`; no update is lost | RR | `e03_rr_contention_stress.cc` |
 | e04 | `sm_lsrel` and `sm_mkrel` follow the same predicate rules as rows | all | `in/e04_catalog_predicate.t` |
 | e05 | Four RR transactions that each read everything and write one row all commit | RR | `in/e05_rr_many_readers_writers.t` |
+| e06 | Four READ COMMITTED threads incrementing three hot counters through the `updated` / `readlatest` exchange, with compaction running, lose no increment | RC | `e06_rc_contention_stress.cc` |
 
 e02 and e03 are the pair that states the trade in one line:
 the same contention that SERIALIZABLE resolves by failing
 and retrying transactions (e02), REPEATABLE READ resolves by
 letting them all through (e03, e05) — and c02 to c07 are the
 price of that.
+
+## 7a. Family F — READ COMMITTED writes proceed
+
+Every script here pins its sessions with `rc`, since `pairings
+all` runs only RR and SERIALIZABLE. A write that meets a row
+committed after the transaction began fails with `updated`,
+which does not abort; the caller reads the newest version with
+`readlatest` and goes on (`PLAN.md`).
+
+| # | Schedule | Outcome | File |
+|---|---|---|---|
+| f01 | `T1: w(R1)` ‖ `T2: w(R1)` ‖ `T1: c` | BLOCK → UPDATED, readlatest 1, write, both commit | `in/f01_lost_update_avoided.t` |
+| f02 | as f01, T2's `WHERE` clause fails on the newest version | UPDATED, readlatest 1, T2 writes nothing | `in/f02_predicate_no_longer_holds.t` |
+| f03 | `T1: d(R1) c` while T2 waits to write | UPDATED, readlatest reports absent | `in/f03_row_deleted_meanwhile.t` |
+| f04 | T2 writes again without readlatest; `T3: w(R1)` queued | UPDATED again, T2 still active and holding the lock | `in/f04_write_without_the_reread.t` |
+| f05 | `T1: d(R1) c` while T2 waits to insert R1 | BLOCK → OK, no readlatest | `in/f05_insert_after_concurrent_delete.t` |
+| f06 | the f01 timeline at RR and SERIALIZABLE | BLOCK → CONFLICT, T2 aborted | `in/f06_higher_levels_unchanged.t` |
+| f07 | T1 writes R2, T2 commits R1, T1 writes past it | later reader sees the last commit | `in/f07_version_order.t` |
+| f08 | `T1`, `T2`, `T3` in turn on R1 | each wakes with UPDATED, reads, writes; R1 ends at the last | `in/f08_chained_contention.t` |
+| f09 | `T1: w(R1) c` ‖ `T2: d(R1)` | UPDATED, readlatest 1, delete skipped | `in/f09_delete_meets_concurrent_update.t` |
+| f10 | savepoint, failed write, readlatest, rollback | a lock taken after the savepoint drops its mark; one taken before keeps it | `in/f10_savepoint_rollback_around_readlatest.t` |
 
 ## 8. What wisr does not detect, by design
 

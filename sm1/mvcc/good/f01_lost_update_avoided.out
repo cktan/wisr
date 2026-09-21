@@ -1,0 +1,23 @@
+# f01 -- READ COMMITTED: the lost update is avoided, not aborted.
+#
+# Two read committed sessions each set the hot row R1. T2 waits
+# for T1's row lock. When T1 commits, T2's write meets a row
+# that changed after T2 began: it fails with `updated`, which
+# does not abort. T2 reads the newest version with readlatest
+# and writes; nothing T1 did is lost.
+
+
+== pairing RR/RR == T1=RC T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 1 -> ok
+@3 T2 write R1 2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 2 blocks -> updated (resumed)
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> 1
+@6 check last T2 1 -> satisfied
+@7 T2 write R1 2 -> ok
+@8 T2 commit -> ok
+@9 check committed T1 T2 -> satisfied
+@9 check row R1 2 -> satisfied

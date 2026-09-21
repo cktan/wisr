@@ -49,6 +49,8 @@ std::string error_name() {
     return "prepared";
   case SM_ERR_INVALID:
     return "invalid";
+  case SM_ERR_UPDATED:
+    return "updated";
   default:
     return std::string("error:") + sm_errmsg();
   }
@@ -113,6 +115,18 @@ std::string execute(worker_t *w, const item_t &it) {
     const char *data = nullptr;
     size_t len = 0;
     int rc = sm_read(w->sess, w->rel, a[0].data(), a[0].size(), &data, &len);
+    if (rc < 0) {
+      return error_name();
+    }
+    return rc == 1 ? "-" : std::string(data, len);
+  }
+  if (it.verb == "readlatest") {
+    // readlatest <row>: the newest committed version of a row
+    // this transaction holds locked, past its snapshot.
+    const char *data = nullptr;
+    size_t len = 0;
+    int rc =
+        sm_read_latest(w->sess, w->rel, a[0].data(), a[0].size(), &data, &len);
     if (rc < 0) {
       return error_name();
     }

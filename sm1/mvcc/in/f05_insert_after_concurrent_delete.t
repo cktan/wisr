@@ -1,0 +1,21 @@
+# f05 -- READ COMMITTED: an insert goes ahead after a delete.
+#
+# T1 deletes R1 and commits while T2 waits to insert it. An
+# insert has no predicate to re-evaluate, so T2 is judged
+# against the newest committed version, which is absent, and
+# succeeds without a readlatest.
+
+pairings rr
+session T1 rc
+session T2 rc
+seed R1 0
+
+@1 T1 begin
+@1 T2 begin
+@2 T1 delete R1
+@3 T2 insert R1 2 blocks
+@4 T1 commit
+@5 check last T2 ok
+@6 T2 commit
+@7 check committed T1 T2
+@7 check row R1 2

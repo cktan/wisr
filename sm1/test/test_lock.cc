@@ -69,8 +69,9 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
   // Verify a write loses to a commit made after its snapshot.
   // 1. A and B begin and both read "x".
   // 2. A updates "x" and commits.
-  // 3. B's update of "x" fails at once with SM_ERR_CONFLICT,
-  //    at read committed as well as repeatable read.
+  // 3. B's update of "x" fails at once. At repeatable read and
+  //    serializable that is SM_ERR_CONFLICT, retryable; at read
+  //    committed it is SM_ERR_UPDATED, which is not (PLAN.md).
   for (sm_xctlevel_t level :
        {SM_XCT_READ_COMMITTED, SM_XCT_REPEATABLE_READ, SM_XCT_SERIALIZABLE}) {
     CAPTURE(level);
@@ -84,20 +85,22 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
     REQUIRE(set(a, "x", "a") == 0);
     REQUIRE(sm_commit(a) == 0);
     CHECK(set(b, "x", "b") == -1);
-    CHECK(sm_errno() == SM_ERR_CONFLICT);
-    CHECK(sm_retryable() == 1);
+    bool rc = level == SM_XCT_READ_COMMITTED;
+    CHECK(sm_errno() == (rc ? SM_ERR_UPDATED : SM_ERR_CONFLICT));
+    CHECK(sm_retryable() == (rc ? 0 : 1));
     sm_closedb(a);
     sm_closedb(b);
   }
 }
 
-TEST_CASE("read committed sees a newer commit but cannot overwrite it") {
-  // Verify §6.2: RC reads at a statement snapshot, writes check the begin
-  // one.
+TEST_CASE("read committed sees a newer commit and re-reads it to overwrite") {
+  // Verify §6.2: RC reads at a statement snapshot; a write over a newer
+  // commit needs sm_read_latest first.
   // 1. T (read committed) writes "y", so it has an xid.
   // 2. U commits a new value of "x".
   // 3. T reads "x" and sees U's value (§10.1).
-  // 4. T's update of "x" fails with SM_ERR_CONFLICT.
+  // 4. T's update of "x" fails with SM_ERR_UPDATED, and T stays active.
+  // 5. After sm_read_latest of "x", the update goes ahead.
   lock_fixture_t f;
   sm_session_t *t = f.open();
   sm_session_t *u = f.open();
@@ -110,7 +113,13 @@ TEST_CASE("read committed sees a newer commit but cannot overwrite it") {
   CHECK(get(t, g_rel, "x") == "u");
   CHECK(get(t, g_rel, "y") == "t");
   CHECK(set(t, "x", "t") == -1);
-  CHECK(sm_errno() == SM_ERR_CONFLICT);
+  CHECK(sm_errno() == SM_ERR_UPDATED);
+  const char *d = nullptr;
+  size_t dl = 0;
+  REQUIRE(sm_read_latest(t, g_rel, "x", 1, &d, &dl) == 0);
+  CHECK(std::string(d, dl) == "u");
+  CHECK(set(t, "x", "t") == 0);
+  REQUIRE(sm_commit(t) == 0);
   sm_closedb(t);
   sm_closedb(u);
 }
@@ -198,7 +207,10 @@ TEST_CASE("concurrent increments with retry never lose an update") {
   // Verify lost-update freedom under contention, at RC and RR.
   // 1. Four threads each add 1 to "x" fifty times, reading,
   //    then updating, and retrying on any retryable error.
-  // 2. The final value is exactly 200.
+  // 2. The final value is exactly 200. At read committed a write
+  //    that fails with SM_ERR_UPDATED re-reads the newest value
+  //    with sm_read_latest and writes it plus one; it needs no
+  //    retry.
   for (sm_xctlevel_t level : {SM_XCT_READ_COMMITTED, SM_XCT_REPEATABLE_READ}) {
     CAPTURE(level);
     lock_fixture_t f;
@@ -217,7 +229,14 @@ TEST_CASE("concurrent increments with retry never lose an update") {
                    sm_read(s, g_rel, "x", 1, &d, &dl) == 0;
           if (ok) {
             std::string v = std::to_string(std::stoi(std::string(d, dl)) + 1);
-            ok = set(s, "x", v) == 0 && sm_commit(s) == 0;
+            ok = set(s, "x", v) == 0;
+            // Read committed: re-read the newest value, add one again.
+            if (!ok && sm_errno() == SM_ERR_UPDATED) {
+              ok = sm_read_latest(s, g_rel, "x", 1, &d, &dl) == 0;
+              v = std::to_string(std::stoi(std::string(d, dl)) + 1);
+              ok = ok && set(s, "x", v) == 0;
+            }
+            ok = ok && sm_commit(s) == 0;
           }
           if (ok) {
             i++;
@@ -305,7 +324,8 @@ TEST_CASE("sm_lock fails with CONFLICT on a row committed after the snapshot") {
   }
 }
 
-TEST_CASE("the index-build protocol blocks writers, then makes them retry") {
+TEST_CASE(
+    "the index-build protocol blocks writers, then shows them the new schema") {
   // Verify SECINDEX.md gap 1's protocol end to end: a builder
   // cannot miss a concurrent writer's rows.
   // 1. A catalog relation holds a schema row saying "no index".
@@ -315,9 +335,10 @@ TEST_CASE("the index-build protocol blocks writers, then makes them retry") {
   //    beginning after B, blocks on the shared lock, so no
   //    writer can run while B scans the base relation.
   // 4. B sees W's row, publishes the index, and commits.
-  // 5. X's shared lock then fails with SM_ERR_CONFLICT, because
-  //    the schema row changed after its snapshot; on retry it
-  //    reads the new schema and maintains the index.
+  // 5. X's shared lock is then granted at read committed, with no
+  //    error; sm_read_latest gives it the new schema, so it
+  //    maintains the index. The schema-row lock is what kept X
+  //    out, not a conflict check.
   lock_fixture_t f;
   sm_session_t *w = f.open();
   sm_session_t *b = f.open();
@@ -356,13 +377,13 @@ TEST_CASE("the index-build protocol blocks writers, then makes them retry") {
   CHECK(get(b, g_rel, "w-row") == "1");
   REQUIRE(sm_commit(b) == 0);
 
-  // The blocked writer is stale, and must retry.
+  // The blocked writer gets the lock, and reads the new schema.
   tx.join();
-  CHECK(rc == -1);
-  CHECK(err == SM_ERR_CONFLICT);
-  REQUIRE(sm_begin(x, SM_XCT_READ_COMMITTED) == 0);
-  REQUIRE(sm_lock(x, cat, "S", 1, SM_LOCK_SHARED) == 0);
-  CHECK(get(x, cat, "S") == "indexed");
+  CHECK(rc == 0);
+  const char *sd = nullptr;
+  size_t sdl = 0;
+  REQUIRE(sm_read_latest(x, cat, "S", 1, &sd, &sdl) == 0);
+  CHECK(std::string(sd, sdl) == "indexed");
   REQUIRE(sm_commit(x) == 0);
   sm_closedb(w);
   sm_closedb(b);

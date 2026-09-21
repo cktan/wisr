@@ -124,41 +124,45 @@ by `relid` in decimal (`rel.0` is the catalog, §11).
 
 ```
 key   = userkey (variable)
-      | ~xid   (8B, big-endian, bitwise complement)
+      | ~wts   (8B, big-endian, bitwise complement)
       | ~seq   (4B, big-endian, bitwise complement)
 
 value = flags   (1B)   bit0 = tombstone (this version is a delete)
                        bit1 = commit_ts is stamped in this header
-      | commit_ts (8B) valid only if flags bit1; a hint, see §8.3
+      | xid      (8B) the writer, while unstamped (flags bit1 clear)
+        commit_ts (8B) in its place once stamped; a hint, see §8.3
       | payload  (variable, absent for a tombstone)
 ```
 
 What a tuple looks like, then: there is no "row" object on
 disk, only a chain of versions, one RocksDB key-value pair
 each. Take the row `"acct42"`, written by the transaction
-with `xid` 50 as its first write (`seq` 1), then updated by
-`xid` 60, and committed at 70 and 80. The figure shows what
-sits in `CF:rel.<relid>`, in key order, newest first:
+with `xid` 50 as its first write (`seq` 1, write timestamp
+`wts` 51), then updated by `xid` 60 (`wts` 61), and committed
+at 70 and 80. The figure shows what sits in `CF:rel.<relid>`,
+in key order, newest first:
 
 ```
 key                                          value
 -------------------------------------------  ---------------------
-userkey        ~xid              ~seq        flags  commit_ts  payload
-61 63 63 74    FFFFFFFFFFFFFFC3  FFFFFFFE    02     0000...50  "bal=9"
-34 32          (xid 60)          (seq 1)            (80)
-61 63 63 74    FFFFFFFFFFFFFFCD  FFFFFFFE    00                "bal=7"
-34 32          (xid 50)          (seq 1)     unstamped: the writer
+userkey        ~wts              ~seq        flags  commit_ts  payload
+61 63 63 74    FFFFFFFFFFFFFFC2  FFFFFFFE    02     0000...50  "bal=9"
+34 32          (wts 61)          (seq 1)            (80)
+61 63 63 74    FFFFFFFFFFFFFFCC  FFFFFFFE    00     0000...32  "bal=7"
+34 32          (wts 51)          (seq 1)            (xid 50)
+                                             unstamped: the writer
                                              has not been swept by
-                                             compaction yet, so
-                                             its status is looked
-                                             up in CF:txn (§3.4)
+                                             compaction yet, so its
+                                             status is looked up in
+                                             CF:txn (§3.4)
 ```
 
-The `xid`-60 version is stamped because compaction has already
-visited it and copied the commit timestamp in as a hint (§8.3);
-the `xid`-50 version has not been visited. A delete looks the
-same with `flags = 01` and no payload. RocksDB adds its own
-8-byte sequence-and-type trailer after our key inside its
+The `wts`-61 version is stamped because compaction has already
+visited it and copied the commit timestamp in as a hint (§8.3),
+replacing its `xid`; the `wts`-51 version has not been visited,
+so it still carries the `xid` that names its writer. A delete
+looks the same with `flags = 01` and no payload. RocksDB adds its
+own 8-byte sequence-and-type trailer after our key inside its
 files. It is RocksDB's business, invisible to the comparator
 below, and unrelated to our `seq`.
 
@@ -170,12 +174,16 @@ Notes on the encoding:
   never names two relations, and a dropped relation is removed
   with one `DropColumnFamily`. The key itself carries no relid;
   the column family is the relation.
-- **Complemented `xid`** makes versions of a key sort **newest
-  first**. A point read becomes one `Seek` to
-  `userkey|~snapshot_ts|0x00000000`, which lands on the newest
-  version whose `xid <= snapshot_ts` — usually the answer. A
-  transaction that has written seeks from the larger of its own
-  `xid` and its snapshot instead (§10.1).
+- **`wts`**, the write timestamp, is taken from the one counter
+  (§4.1) after the writer holds the row lock, so a key's
+  versions are in commit order by construction. Complemented,
+  it makes versions of a key sort **newest first**. A point
+  read becomes one `Seek` to `userkey|~snapshot_ts|0x00000000`,
+  which lands on the newest version whose `wts <= snapshot_ts`
+  — usually the answer. A transaction that has written seeks
+  from the larger of its own newest `wts` and its snapshot
+  instead (§10.1). The writer's `xid` is not in the key; it is
+  in the value, for status resolution (§3.4).
 - **`seq`** is a per-transaction write counter, starting at 1.
   It exists so that a transaction writing the same key twice
   creates two distinct versions, which is what makes savepoint
@@ -190,8 +198,8 @@ Notes on the encoding:
   compare the tails with `memcmp`. RocksDB's default bytewise
   comparator is wrong here. With it, a key's tail is compared
   against the extra bytes of a longer userkey that begins with
-  it: the versions of `"a"` (`61 FF FF …`, since `~xid` of any
-  xid below 2^56 starts with `FF`) sort after those of `"ab"`
+  it: the versions of `"a"` (`61 FF FF …`, since `~wts` of any
+  wts below 2^56 starts with `FF`) sort after those of `"ab"`
   (`61 62 …`). Scans would return `"ab"` before `"a"`, and a
   point read could stop early on a foreign key. With the custom
   comparator, a key's versions are contiguous and userkeys
@@ -403,18 +411,31 @@ Read-only transactions never allocate one.
   It does *not* burn a counter value.
 - The first write in a transaction allocates `xid = global_ts++`.
   Because `snapshot_ts <= visible_ts < xid`, always `xid > snapshot_ts`.
-- Commit allocates `commit_ts = global_ts++`, so `commit_ts > xid`.
+- Every write allocates a **write timestamp** `wts = global_ts++`
+  after it holds the row lock (§5), and keys its version by it
+  (§3.1). Commit allocates `commit_ts = global_ts++`, so
+  `commit_ts > wts` for every write of the transaction, and
+  `commit_ts > xid`.
 
 **Invariant (version chain order).** For one key, committed versions in
-descending `xid` order are also in descending `commit_ts` order.
+descending `wts` order are also in descending `commit_ts` order.
 
-*Why.* Two transactions that both write key `k` cannot overlap: the row
-lock (§5) serializes them, and the later one aborts if the earlier
-committed after its snapshot. So if `T2` committed a version of `k`
-after `T1` did, `T2`'s snapshot was taken at or after `T1.commit_ts`,
-hence `T2.xid > T2.snapshot_ts >= T1.commit_ts > T1.xid`. ∎
+*Why.* Two transactions that both write key `k` are serialized by
+the row lock (§5), and a writer takes its `commit_ts` before it
+releases it. If `T2` committed a version of `k` after `T1` did,
+`T2` acquired the lock after `T1` released it, so `T2.wts >
+T1.commit_ts > T1.wts`. ∎
 
-This is what lets a reader seek by `xid` and get commit order.
+The argument uses no snapshot, so it holds at every level,
+including READ COMMITTED writes that pass a newer commit (§5.4).
+This is what lets a reader seek by `wts` and get commit order.
+Ordering by `xid`, fixed at the first write, would not: a
+transaction whose `xid` predates another's commit can write the
+same key after it (§6.2).
+
+`global_ts` is an atomic. An `xid` or a `wts` is a bare
+`fetch_add` (§4.3); only `commit_ts`, and a lease renewal, take a
+mutex.
 
 ### 4.2 Surviving restart
 
@@ -494,11 +515,14 @@ and there is no per-snapshot transaction list to copy or search.
 
 ### 4.4 Visibility test
 
-Version `V` written by `xid`, read at `snapshot_ts` by transaction `T`:
+Version `V`, keyed by `wts` and written by `xid` (in its value
+while unstamped), read at `snapshot_ts` by transaction `T`:
 
 ```
 if V.xid == T.xid:                      # own write
     visible iff V.seq <= T.seq_hwm      # savepoint-aware, §6.5
+elif V.wts > snapshot_ts:               # written after the snapshot,
+    invisible                           # so committed after it too
 else:
     resolve V (§3.4)  →  commit_ts | dead | in-flight
     visible iff resolved COMMITTED and commit_ts <= snapshot_ts
@@ -520,14 +544,18 @@ sm_update(relid, k, v):
   3. latest = newest own version of (relid, k) visible to T  # §4.4
      if latest is absent:
          latest = newest committed version of (relid, k)
-         if latest.commit_ts > T.snapshot_ts:           # §5.2
-             abort with SM_ERR_CONFLICT
+         if latest.commit_ts > T.snapshot_ts:
+             RR, SER: abort with SM_ERR_CONFLICT        # §5.2
+             RC: SM_ERR_UPDATED, unless T.lock(k).latest
+                 (an insert: no check)                   # §5.4
      if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
      if old wanted: copy latest's payload into the session buffer  # §5.3
   4. if T.xid == 0: T.xid = global_ts++
-  5. seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
-     db.Put(cf(relid), encode(k, ~T.xid, ~seq), encode(flags, v))
-  6. T.undo.push(relid, k, seq)                         # for savepoint
+  5. wts = global_ts++                                  # after the lock, §4.1
+     seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
+     db.Put(cf(relid), encode(k, ~wts, ~seq), encode(flags, T.xid, v))
+     T.lock(k).latest = false                          # §5.4
+  6. T.undo.push(relid, k, wts, seq)                    # for savepoint
   7. ssi.on_write(T, relid, k)                          # §7
 ```
 
@@ -632,7 +660,7 @@ sets on a serializable reader.
 to RocksDB, so a transaction is bounded by disk, but
 three structures are not: `T.locks` (one entry per
 distinct key written), `T.undo` (one `(relid, userkey,
-seq)` triple per write), and the SSI read set. All three
+wts, seq)` tuple per write), and the SSI read set. All three
 are linear in the number of keys touched, with the
 userkey stored inline, so a transaction writing tens of
 millions of keys costs gigabytes. This is the price of
@@ -642,14 +670,65 @@ it.
 
 ### 5.2 First-committer-wins
 
-Step 3 rejects a write when the key was modified by a transaction that
-committed after our snapshot. Together with the row lock (which
-prevents the concurrent case), this is the standard snapshot-isolation
-write rule and it is what makes the §4.1 invariant hold. It applies at
-**all three isolation levels**, including read committed (§6.2).
-The caveat for the non-serializable levels is §7.4's: their
-writes still feed the SSI tracker, but they are never
-serialization victims themselves.
+Step 3 rejects a write when the key was modified by a transaction
+that committed after our snapshot. Together with the row lock
+(which prevents the concurrent case), this is the standard
+snapshot-isolation write rule and it is what makes the §4.1
+invariant hold. It applies at **repeatable read and
+serializable**. Read committed does not abort the loser: it fails
+the write with `SM_ERR_UPDATED` and lets it go ahead once the
+caller has re-read the row (§5.4). The caveat for the
+non-serializable levels is §7.4's: their writes still feed the
+SSI tracker, but they are never serialization victims themselves.
+
+### 5.4 Read committed: write, re-read, write
+
+At READ COMMITTED an update or delete that meets a row committed
+after `sm_begin` waits for the row lock, as every write does, and
+then is refused with `SM_ERR_UPDATED`. That is not an abort: the
+transaction stays active, keeps the lock, and `sm_retryable()` is
+0. The caller calls `sm_read_latest`, which returns the newest
+committed version of the row ignoring the snapshot, re-evaluates
+its `WHERE` clause and new values from it, and only then repeats
+the write. This is what PostgreSQL's executor does at its default
+level after a lock wait, and workloads written for it rely on it
+(`PART3.md` §5a).
+
+The re-read is enforced, not requested. `sm_read_latest` marks
+the lock entry, and the write's step 3 lets the write through
+only on a marked lock. A caller cannot skip the exchange and lose
+a predicate: writing again without the read is refused again.
+
+- **The mark** is one bit on the session's own lock list
+  (`sm_session_t::lockref_t`), not on the shared lock table, so
+  neither call takes `lock_mu`: only the exclusive holder reads
+  or sets it. The lock is held from the refused write on, so the
+  newest committed version cannot change between the read and the
+  write. - **A successful write clears the mark.** Left set, a
+  write after a savepoint rollback, or much later in a long
+  transaction, would slip past the check without a fresh read. -
+  **A rollback to a savepoint** releases the locks taken after it
+  (§6.5), and their marks with them; a lock taken before the
+  savepoint keeps its mark. - **`sm_read_latest`** requires READ
+  COMMITTED and a lock this transaction holds on the key, taken
+  by the refused write or by `sm_lock`; otherwise
+  `SM_ERR_INVALID`. Under a shared lock it reads but sets no
+  mark, since a shared holder cannot write without upgrading. A
+  caller that waited in `sm_lock(SHARED)` (a writer reading a
+  schema row, §5 of `sm2/DESIGN.md`) uses it to see what
+  committed while it waited. - **An insert** has no predicate to
+  re-evaluate, so it is judged against the newest committed
+  version (`SM_ERR_DUPKEY` if live) with no check, as
+  PostgreSQL's unique check does. - **`sm_lock`** at READ
+  COMMITTED no longer fails with `SM_ERR_CONFLICT`. At the higher
+  levels it is unchanged. - REPEATABLE READ, SERIALIZABLE, SSI
+  (READ COMMITTED takes no part, §7.4), 2PC and the GC watermark
+  are unchanged: a read committed transaction already pins its
+  begin snapshot, and the newest committed version is never
+  collected.
+
+Version order needs no help from any of this: the write that goes
+ahead takes a `wts` after the lock, so it sorts first (§4.1).
 
 ---
 
@@ -707,64 +786,26 @@ transaction registers its *begin* snapshot for its whole life
 `gc_watermark` is already held below anything a pinned
 statement can read.
 
-Writes still obey §5.2, and they check against `T.snapshot_ts`,
-not the statement snapshot, so a write can fail with
-`SM_ERR_CONFLICT` even here — including on a row the transaction
-has just read, if that row was committed after `sm_begin`. The
-engine does not silently re-read the newer row (no Oracle-style
-restart), it reports the conflict. Checking against the begin
-snapshot is what keeps §4.1's invariant at this level: it is
-always below `T.xid`, whereas a statement snapshot taken after
-the first write can pass it. A read-committed transaction with
-`T.xid = 50` that updated a row committed at 70 against a
-statement snapshot of 75 would put a version `k|~50` that sorts
-*behind* the committed `xid 60` version: readers would return
-the older value, and GC would drop the newer commit as
-superseded.
+Writes check against `T.snapshot_ts`, not the statement snapshot.
+A write that meets a row committed after `sm_begin` does not
+abort, as it does at the higher levels (§5.2): it waits for the
+row lock, is refused with `SM_ERR_UPDATED`, and goes ahead
+against the newest committed version once the caller has read it
+with `sm_read_latest` (§5.4). PostgreSQL does the same at its
+default level, and workloads rely on it (`PART3.md` §5a).
+REPEATABLE READ and SERIALIZABLE keep §5.2 as it is.
 
-**Decision: the write proceeds (not yet implemented).** The
-rule above — a read committed write fails against a row
-committed after `sm_begin` — is reversed, because the
-PostgreSQL target needs it: at its default level PostgreSQL
-waits for the first writer, re-reads the row and re-checks the
-`WHERE` clause, and workloads rely on that (`PART3.md` §5a).
-At READ COMMITTED, a write that meets a row committed after
-the begin snapshot waits for the row lock and then goes ahead
-against the newest committed version. REPEATABLE READ and
-SERIALIZABLE keep §5.2 as it is. Until the items below are
-designed and built, the text above and §3.1, §4.1 and §5.2
-remain the design of record.
+What makes that safe is that a version's key is its `wts`, taken
+after the row lock, and not the writer's `xid` (§3.1, §4.1).
+Keyed by `xid`, a read committed transaction with `T.xid = 50`
+that updated a row committed at 70 would put a version `k|~50`
+that sorts *behind* the committed `xid 60` version: readers would
+return the older value, and GC would drop the newer commit as
+superseded. Keyed by a `wts` of 75, the version sorts first, and
+GC drops the older one.
 
-Open, none of it designed yet:
-
-- **Version order must follow commit order without relying on
-  `xid`.** Versions are ordered by `xid`, and §4.1 depends on
-  `xid > snapshot_ts`. A read committed writer that passes a
-  newer commit can have a smaller `xid` than the version it
-  follows, so its version sorts behind it — the example
-  above. One candidate, not evaluated: key each version by a
-  timestamp taken after the row lock is acquired. That
-  timestamp exceeds the `commit_ts` of every earlier writer of
-  the key, because a writer takes its `commit_ts` before it
-  releases the lock, so key order is commit order; the `xid`
-  moves into the value header for status resolution.
-- **The caller re-evaluates the row.** Proceeding is not
-  enough: the `WHERE` clause and the new values must be
-  computed from the newest version, as PostgreSQL's executor
-  does after a lock wait. So the write has to hand the newest
-  version back and be retried with it; a new return code is
-  the likely shape, and `API.md` changes with it.
-- **Documents:** §3.1, §4.1, §5.2 and this section, `API.md`,
-  and the scenario table in `mvcc/MVCC.md`.
-- **MVCC tests come with the change.** The isolation rules are
-  executed as scenarios on every build (`mvcc/MVCC.md`), so
-  this change adds scenarios for the new behavior rather than
-  only editing the old ones. At least: two read committed
-  sessions updating one row, where the second waits and then
-  applies its change; the same pair at repeatable read and
-  serializable, which still fail with `SM_ERR_CONFLICT`; and
-  the ordering example above, a writer with a small `xid`
-  passing a newer commit, checked by a later read and by GC.
+The scenarios `f01`–`f10` in `mvcc/MVCC.md` execute these rules
+on every build, and `e06` runs them under load with compaction.
 
 ### 6.3 Repeatable read
 
@@ -780,8 +821,8 @@ Repeatable read plus SSI validation (§7).
 ### 6.5 Savepoints
 
 A savepoint is a mark into the per-transaction **undo
-list** — an in-memory vector of `(relid, userkey, seq)`
-triples in write order, holding no payloads, so a large
+list** — an in-memory vector of `(relid, userkey, wts, seq)`
+tuples in write order, holding no payloads, so a large
 transaction costs bytes per write, not rows. Relations
 created by the transaction are tracked alongside it in
 `T.created`, a vector of relids in creation order, and
@@ -1187,7 +1228,7 @@ db.DeleteRange(cf(relid), version_key, userkey | FF×12)
 ```
 
 which covers the tombstone and every older version of the key
-at every level. Any later write to the key has a larger `xid`,
+at every level. Any later write to the key has a larger `wts`,
 sorts before the tombstone, and survives. A range deletion does
 not affect RocksDB snapshots taken before it, and RocksDB drops
 the range tombstone itself at the bottommost level. The queue is
@@ -1242,11 +1283,10 @@ A read-committed transaction counts at its begin `snapshot_ts`
 for its whole life, between statements too, because §6.2 checks
 its writes against that snapshot. If the watermark passed it,
 the tombstone purge could remove a delete committed after
-`sm_begin`. A later insert of that key by the transaction would
-then pass the §5.2 check with an xid below the deleter's, and a
-repeated purge entry for the key would delete the committed
-insert. An idle open transaction therefore holds back GC, as in
-any MVCC engine.
+`sm_begin`, and a later write of that key by the transaction
+would no longer meet a commit after its snapshot: §5.4's check
+would pass without the re-read. An idle open transaction
+therefore holds back GC, as in any MVCC engine.
 
 A `COMMITTED` record can be dropped once every surviving
 version of its transaction carries the stamp (rule §3.4/0). The
@@ -1622,7 +1662,7 @@ Under SERIALIZABLE two things differ, both for §7.2:
   after the iterator's implicit snapshot but before the lock
   exists, where neither side would see the other.
 - The seek starts at `key | 00×12`, before every version of the
-  key, instead of at `~hi`. Versions with `xid > hi` sort before
+  key, instead of at `~hi`. Versions with `wts > hi` sort before
   the `~hi` seek target, and they are exactly the concurrent
   writers (in-flight, or committed after `snap`) that owe an
   rw-edge; seeking past them would miss it. `concurrent(v, snap)`
@@ -1630,19 +1670,20 @@ Under SERIALIZABLE two things differ, both for §7.2:
   in-flight or as committed with `commit_ts > snap`. The extra
   steps are only over those versions, which are rare.
 
-Otherwise the seek starts at `max(T.xid, snap)`. Under
-repeatable read, a transaction's own versions have
-`xid = T.xid > snap`, so a seek at `~snap` would land after them
+Otherwise the seek starts at `max(T.wts_hi, snap)`, where
+`wts_hi` is the largest `wts` the transaction has written.
+Under repeatable read, a transaction's own versions have
+`wts > snap`, so a seek at `~snap` would land after them
 and a transaction could never read its own writes. Under read
 committed, `snap` is refreshed per statement and can pass
-`T.xid`; a seek at `~T.xid` would then land after versions
-committed with `T.xid < xid <= snap`, which read committed must
-see. Taking the larger of the two covers both. A `~seq` of
+`T.wts_hi`; a seek at `~T.wts_hi` would then land after versions
+committed with `T.wts_hi < wts <= snap`, which read committed
+must see. Taking the larger of the two covers both. A `~seq` of
 `0x00000000` places the seek before every own version of the
 key, newest first, and §4.4 picks the one allowed by `seq_hwm`.
-Versions from other transactions with `snap < xid < T.xid` are
-stepped past as in-flight or committed too late, which the loop
-already handles.
+Versions from other transactions with `snap < wts <= T.wts_hi`
+are stepped past as in-flight or committed too late, which the
+loop already handles.
 
 ### 10.2 Scan
 
@@ -2018,6 +2059,8 @@ where they come from:
 
 ```
 SM_ERR_CONFLICT        write-write conflict (§5.2)
+SM_ERR_UPDATED         read committed write past a newer commit (§5.4);
+                       not an abort
 SM_ERR_SERIALIZATION   SSI validation failure (§7.3)
 SM_ERR_DEADLOCK        victim of deadlock detection (§5.1)
 SM_ERR_NOTFOUND        relation or key does not exist
@@ -2185,10 +2228,12 @@ bullets below cover the rest of the engine.
   once; an exclusive request waits for both. A shared holder
   writing the key upgrades once the others go, and two
   upgraders on one key deadlock with the younger one the
-  victim. `sm_lock` runs §5.2's check under the lock, so it
-  fails with `SM_ERR_CONFLICT` on a key committed after the
-  caller's snapshot. A savepoint rollback releases an explicit
-  lock first taken after the mark but never downgrades an
+  victim. At REPEATABLE READ and above `sm_lock` runs §5.2's
+  check under the lock, so it fails with `SM_ERR_CONFLICT` on a
+  key committed after the caller's snapshot; at read committed
+  it does not fail, and the caller reads the row with
+  `sm_read_latest` (§5.4). A savepoint rollback releases an
+  explicit lock first taken after the mark but never downgrades an
   upgrade. The whole index-build protocol runs end to end: a
   builder taking the schema row exclusive blocks a writer,
   sees the row an earlier writer committed, and the blocked
@@ -2212,11 +2257,10 @@ bullets below cover the rest of the engine.
 - **Read committed after a write.** A read-committed
   transaction that has already written reads a key committed by
   another transaction after its first write, and sees it
-  (§10.1). Updating that key then fails with `SM_ERR_CONFLICT`
-  (§6.2). A read-committed transaction left idle while another
-  deletes a key keeps that tombstone through a forced compaction
-  and purge, and its later insert of the key fails with
-  `SM_ERR_CONFLICT` (§8.3).
+  (§10.1). Updating that key then fails with `SM_ERR_UPDATED`,
+  and goes ahead after `sm_read_latest` (§5.4). A read-committed
+  transaction left idle while another deletes a key keeps that
+  tombstone through a forced compaction and purge (§8.3).
 - **Isolation.** The Jepsen/Adya anomaly catalogue as unit tests: dirty
   read, lost update, non-repeatable read, phantom, write skew (must
   pass at SERIALIZABLE, must be *observable* at RR — asserting the

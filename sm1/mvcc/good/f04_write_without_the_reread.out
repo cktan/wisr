@@ -1,0 +1,27 @@
+# f04 -- READ COMMITTED: a write cannot skip the re-read.
+#
+# T2's write is refused with `updated`. Trying again without
+# readlatest is refused again: sm1 does not let the caller lose
+# the predicate. The refusal is not an abort: T2 is still
+# active and still holds the row lock, so T3 stays queued behind
+# it until T2 ends.
+
+
+== pairing RR/RR == T1=RC T2=RC T3=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 1 -> ok
+@3 T2 write R1 2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 2 blocks -> updated (resumed)
+@5 check last T2 updated -> satisfied
+@6 T3 begin -> ok
+@7 T3 write R1 3 blocks -> blocked
+@8 T2 write R1 2 -> updated
+@8 check last T2 updated -> satisfied
+@9 T2 abort -> ok
+@7 T3 write R1 3 blocks -> ok (resumed)
+@10 check last T3 ok -> satisfied
+@11 T3 commit -> ok
+@12 check committed T1 T3 -> satisfied
+@12 check row R1 3 -> satisfied

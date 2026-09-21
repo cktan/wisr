@@ -180,6 +180,45 @@ TEST_CASE("a key's versions are stored in commit order, by write timestamp") {
   sm_closedb(w);
 }
 
+TEST_CASE("a read committed write past a newer commit survives compaction") {
+  // Verify the newer commit is not dropped as superseded (§6.2, f07).
+  // 1. Commit "k" = v0 and "j" = x.
+  // 2. L (read committed) begins and writes "j", so its xid is early.
+  // 3. Commit "k" = v1 from another session.
+  // 4. L's write of "k" fails with SM_ERR_UPDATED; it reads the
+  //    latest, writes v2 and commits.
+  // 5. Compact; "k" reads v2 and only v2 is left.
+  gc_fixture_t f;
+  sm_session_t *w = f.open();
+  sm_session_t *l = f.open();
+  commit_put(w, "k", "v0");
+  commit_put(w, "j", "x");
+  REQUIRE(sm_begin(l, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm_update(l, g_rel, "j", 1, "y", 1, nullptr, nullptr) == 0);
+  commit_set(w, "k", "v1");
+  CHECK(sm_update(l, g_rel, "k", 1, "v2", 2, nullptr, nullptr) == -1);
+  CHECK(sm_errno() == SM_ERR_UPDATED);
+  const char *data = nullptr;
+  size_t len = 0;
+  REQUIRE(sm_read_latest(l, g_rel, "k", 1, &data, &len) == 0);
+  CHECK(std::string(data, len) == "v1");
+  REQUIRE(sm_update(l, g_rel, "k", 1, "v2", 2, nullptr, nullptr) == 0);
+  REQUIRE(sm_commit(l) == 0);
+
+  f.compact(g_rel);
+  REQUIRE(sm_begin(w, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(get(w, g_rel, "k") == "v2");
+  REQUIRE(sm_commit(w) == 0);
+  size_t k_versions = 0;
+  for (const raw_t &v : f.raw(g_rel)) {
+    if (v.key == "k") {
+      k_versions++;
+    }
+  }
+  CHECK(k_versions == 1);
+  sm_closedb(w);
+}
+
 TEST_CASE("a long-running reader keeps the versions it can see") {
   // Verify the watermark protects a live snapshot, then lets go.
   // 1. Commit "k" = v0; reader R begins and reads v0.
@@ -304,8 +343,8 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
   // 1. T begins at read committed and stays idle.
   // 2. U deletes "k" and commits.
   // 3. Compact and run GC: the tombstone must survive.
-  // 4. T's insert of "k" fails with SM_ERR_CONFLICT, as it
-  //    would have without any GC.
+  // 4. The tombstone is still stored, and T's insert of "k",
+  //    judged against the newest committed version, goes ahead.
   gc_fixture_t f;
   sm_session_t *t = f.open();
   sm_session_t *u = f.open();
@@ -316,8 +355,13 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
   f.compact(g_rel);
   gc_run_once(f.db());
   f.compact(g_rel);
-  CHECK(sm_insert(t, g_rel, "k", 1, "t", 1) == -1);
-  CHECK(sm_errno() == SM_ERR_CONFLICT);
+  bool tombstone = false;
+  for (const raw_t &v : f.raw(g_rel)) {
+    tombstone |= v.key == "k" && (v.flags & version_tombstone) != 0;
+  }
+  CHECK(tombstone);
+  CHECK(sm_insert(t, g_rel, "k", 1, "t", 1) == 0);
+  REQUIRE(sm_commit(t) == 0);
   sm_closedb(t);
   sm_closedb(u);
 }
