@@ -11,6 +11,79 @@ newest committed version, instead of failing with
 level does this, and its workloads rely on it. This file is the
 order of work, and the argument for that order.
 
+## The scenario
+
+**A. A hot row at PostgreSQL's default level.** Two sessions,
+both at READ COMMITTED, each add one to a counter row `R1`
+that holds 0. A shared counter, a hot account balance, a
+`next_order_id`: the commonest write pattern in OLTP.
+
+```
+T1 begin                      T2 begin
+T1 UPDATE R1 SET n = n + 1
+                              T2 UPDATE R1 SET n = n + 1
+                                (T1 holds the row lock: waits)
+T1 commit                     (R1 = 1)
+                              T2 wakes: R1 changed after T2 began
+```
+
+| | T2's update | R1 afterwards |
+| --- | --- | --- |
+| PostgreSQL | re-reads R1 (1), re-checks the `WHERE` clause, writes 2 | 2 |
+| sm1 today | fails with `SM_ERR_CONFLICT`, and T2 is aborted | 1, until T2 retries |
+| this plan | fails with `SM_ERR_UPDATED`; T2 calls `sm_read_latest`, sees 1, re-checks, writes 2 | 2 |
+
+A client written for PostgreSQL sees no error here and has no
+retry loop, so sm1 as it stands cannot back it.
+
+The variant matters as much. If the statement is
+`UPDATE R1 SET n = 1 WHERE n = 0` — claim this row once — T2's
+re-check must fail, and T2 must write nothing. Writing blindly
+against the newest version would change a row that no longer
+qualifies. So letting the write through is not enough: the
+caller has to look at the newest version first, and sm1 has to
+make it.
+
+**B. What goes wrong underneath if the write simply proceeds.**
+Suppose sm1 stopped failing and let T1's write through, and
+nothing else changed. T1 has already written something else
+(`R2`), so it already has an `xid`. The numbers are timestamps
+from the one counter.
+
+```
+ 10  R1 = 0 committed (seed)
+ 20  T1 begins at READ COMMITTED (snapshot 20)
+ 50  T1 writes R2                  T1's xid is 50
+ 55  T2 begins
+ 60  T2 writes R1 = 1              T2's xid is 60
+ 70  T2 commits                    commit_ts 70
+ 75  T1 updates R1 = 2             version key R1|~50
+ 80  T1 commits                    commit_ts 80
+ 85  a reader begins (snapshot 85) and reads R1
+```
+
+R1's versions sort by `xid`, newest first: `R1|~60` (value 1,
+committed at 70), then `R1|~50` (value 2, committed at 80). T1
+committed last, so the answer is 2. The reader seeks to the
+newest version by `xid`, finds `~60`, sees it is visible
+(70 <= 85), and returns 1. Worse, when compaction reaches R1 its
+rule — a newer version already seen, with `commit_ts` at or
+below the watermark, means drop — sees `~60` first and deletes
+`~50`. T1's committed update is gone for good, and no reader
+ever sees it.
+
+With this plan T1's write is keyed by a timestamp taken after
+it holds the lock, say 75, so `R1|~75` sorts first: the reader
+returns 2, and compaction keeps `~75` and drops `~60` as the
+superseded one.
+
+A is what the user sees, and it needs the protocol. B is what
+breaks if only A's protocol is built, and it needs the
+ordering. Step 3's `f01`, `f02` and `f07` are these scenarios
+written as tests.
+
+## The two changes
+
 Two changes make it possible, and the plan keeps them apart:
 
 1. **Order versions by write timestamp, not by `xid`.** Today a
