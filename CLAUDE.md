@@ -1,6 +1,12 @@
 ## Before Starting Any Work
 
-Read `DESIGN.md` before working on this project.
+Read `README.md` for the layout of the levels, then the
+`DESIGN.md` of the level you are working in — `sm1/DESIGN.md`
+for the MVCC storage manager, `sm2/DESIGN.md` for records and
+indexes.
+
+Paths written inside a level's documents are relative to that
+level: `src/db.cc` in `sm1/DESIGN.md` means `sm1/src/db.cc`.
 
 ## Expert Persona
 
@@ -52,6 +58,8 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 - **Git Merges:** Always merge branches using `git merge --squash`.
 
 - **Building:** Always use `make -j4` (never plain `make`).
+  Run it in the level you are changing (`cd sm1 && make -j4`,
+  or `make -C sm1 -j4`); the top-level Makefile only delegates.
 
 - **Code Formatting:** Always run `make format` before committing.
 
