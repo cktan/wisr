@@ -133,6 +133,35 @@ value = flags   (1B)   bit0 = tombstone (this version is a delete)
       | payload  (variable, absent for a tombstone)
 ```
 
+What a tuple looks like, then: there is no "row" object on
+disk, only a chain of versions, one RocksDB key-value pair
+each. Take the row `"acct42"`, written by the transaction
+with `xid` 50 as its first write (`seq` 1), then updated by
+`xid` 60, and committed at 70 and 80. The figure shows what
+sits in `CF:rel.<relid>`, in key order, newest first:
+
+```
+key                                          value
+-------------------------------------------  ---------------------
+userkey        ~xid              ~seq        flags  commit_ts  payload
+61 63 63 74    FFFFFFFFFFFFFFC3  FFFFFFFE    02     0000...50  "bal=9"
+34 32          (xid 60)          (seq 1)            (80)
+61 63 63 74    FFFFFFFFFFFFFFCD  FFFFFFFE    00                "bal=7"
+34 32          (xid 50)          (seq 1)     unstamped: the writer
+                                             has not been swept by
+                                             compaction yet, so
+                                             its status is looked
+                                             up in CF:txn (§3.4)
+```
+
+The `xid`-60 version is stamped because compaction has already
+visited it and copied the commit timestamp in as a hint (§8.3);
+the `xid`-50 version has not been visited. A delete looks the
+same with `flags = 01` and no payload. RocksDB adds its own
+8-byte sequence-and-type trailer after our key inside its
+files. It is RocksDB's business, invisible to the comparator
+below, and unrelated to our `seq`.
+
 Notes on the encoding:
 
 - **`relid`** is a 64-bit id the storage manager allocates at
