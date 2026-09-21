@@ -33,17 +33,19 @@ primary key as the only access path below sm2.
 
 ## 1. Data types
 
-- [ ] int / float / numeric / decimal
-- [ ] text / varchar
-- [ ] bool
-- [ ] timestamp / date / time
-- [ ] UUID
-- [ ] bytea
+- [x] int / float / numeric 
+- [ ] decimal
+- [x] numeric (this is a new implementation of decimal ala arrow)
+- [x] text / varchar
+- [x] bool
+- [x] timestamp / date / time
+- [x] UUID
+- [x] bytea
 - [ ] JSON / JSONB
       — needs its own storage, and typically GIN indexing
 - [ ] arrays (any element type)
       — needs its own encoding
-- [ ] enums
+- [x] enums
 - [ ] range types (int4range, tsrange, ...)
       — usually paired with GiST and exclusion constraints
 - [ ] composite types
@@ -59,7 +61,7 @@ primary key as the only access path below sm2.
 
 ## 2. Index access methods
 
-- [ ] B-tree
+- [x] B-tree
       — already assumed; this is the clustered PK today
 - [ ] Hash
 - [ ] GiST
@@ -70,15 +72,15 @@ primary key as the only access path below sm2.
 - [ ] BRIN
       — cheap, block-range, for huge append-mostly tables
 - [ ] covering / INCLUDE indexes
-- [ ] partial indexes
+- [x] partial indexes
       — sm2's predicate scan interface already assumes this
-- [ ] expression indexes
+- [x] expression indexes
       — needs an expression evaluator
 
 ## 3. Constraints
 
-- [ ] PRIMARY KEY / UNIQUE / NOT NULL
-- [ ] FOREIGN KEY, with CASCADE / RESTRICT / SET NULL
+- [x] PRIMARY KEY / UNIQUE / NOT NULL
+- [x] FOREIGN KEY, with CASCADE / RESTRICT / SET NULL
       — sm2/PLAN.md already names this as future work, via
         sm_lock(SHARED) on the parent row
 - [ ] CHECK
@@ -90,13 +92,13 @@ primary key as the only access path below sm2.
 
 ## 4. Table storage features
 
-- [ ] partitioning (range / list / hash)
+- [x] partitioning (range / list / hash)
 - [ ] table inheritance (legacy)
-- [ ] TOAST (large values stored out of line)
+- [x] TOAST (large values stored out of line)
       — sm2/DESIGN.md §3 already plans chunking large values
         out of line
-- [ ] generated / computed columns
-- [ ] temporary tables
+- [x] generated / computed columns
+- [x] temporary tables
 - [ ] unlogged tables
 - [ ] materialized views
       — storage and refresh only; no query semantics needed
@@ -114,21 +116,21 @@ primary key as the only access path below sm2.
       — already closed, sm2/DESIGN.md §5
 - [x] online ADD COLUMN
       — already assumed, via a schema-version stamp per row
-- [ ] other online ALTER (type change, drop column)
+- [x] other online ALTER (type change, drop column)
       — not yet decided
 
 ## 7. Replication / backup / ops
 
 - [ ] streaming (physical) replication
       — already out of scope, sm1/DESIGN.md
-- [ ] logical replication / CDC decoding
+- [x] logical replication / CDC decoding
 - [ ] point-in-time recovery / continuous archiving
       — already out of scope ("online backup")
-- [ ] row-level security
+- [x] row-level security
 
 ## 8. Ecosystem axis (PART3.md §7's open question)
 
-- [ ] wire protocol (libpq)
+- [x] wire protocol (libpq)
       — only needed for drop-in client compatibility
 - [ ] C extension ABI
       — only needed to run existing PostgreSQL extensions
