@@ -71,7 +71,7 @@ primary key as the only access path below sm2.
 - [ ] SP-GiST
 - [ ] BRIN
       — cheap, block-range, for huge append-mostly tables
-- [ ] covering / INCLUDE indexes
+- [x] covering / INCLUDE indexes
 - [x] partial indexes
       — sm2's predicate scan interface already assumes this
 - [x] expression indexes
