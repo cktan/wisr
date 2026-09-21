@@ -59,6 +59,7 @@ extern "C" {
 #define SM_MAX_DBNAME  63
 #define SM_MAX_SEQNAME 63
 #define SM_MAX_GID     200
+#define SM_MAX_SAVEPOINTS 256
 
 /*
  * Error codes. Values are explicit and stable: new codes are
@@ -466,21 +467,62 @@ int sm_commit(sm_session_t* session);
 int sm_abort(sm_session_t* session);
 
 /*
- * Set a savepoint at the current point in the transaction.
+ * Begin a statement: read committed then reads every row of
+ * this statement at ONE snapshot, instead of taking a fresh
+ * one per call.
  *
- * A transaction holds ONE savepoint: calling this again
- * replaces it, and the earlier mark cannot be returned to. The
- * savepoint is discarded at commit or abort.
+ * Without it, each sm_read() and each sm_scan() under
+ * SM_XCT_READ_COMMITTED takes its own snapshot, so a caller
+ * whose statement spans several calls -- an index lookup, say,
+ * being one scan plus N reads -- sees N+1 committed states and
+ * can return a mixture that never existed.
  *
- * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ * The snapshot is taken by the first read after this call, not
+ * by this call, so a statement may lock or wait first and
+ * still see everything committed by the time it reads. The
+ * statement runs until the next sm_stmt_begin(), which starts
+ * another, or until the transaction ends.
+ *
+ * Once called, the transaction reads this way for the rest of
+ * its life; there is no going back to a snapshot per call.
+ * Under SM_XCT_REPEATABLE_READ and SM_XCT_SERIALIZABLE the
+ * call is accepted and does nothing, the whole transaction
+ * already reading at one snapshot.
+ *
+ * Writes are unaffected: they still check for conflicts
+ * against the snapshot taken by sm_begin(), so an
+ * SM_ERR_CONFLICT can still arrive on a row this statement
+ * has just read.
+ *
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID.
+ */
+int sm_stmt_begin(sm_session_t* session);
+
+/*
+ * Set a savepoint at the current point in the transaction and
+ * return its DEPTH: 1 for the first, 2 for one set inside it,
+ * and so on. Savepoints nest; a transaction may hold up to
+ * SM_MAX_SAVEPOINTS of them, and they are all discarded at
+ * commit or abort.
+ *
+ * A depth is reused once the mark holding it is gone, so a
+ * depth from a savepoint already rolled past or forgotten may
+ * name a DIFFERENT mark later. Callers that keep savepoints by
+ * name must drop a name when its mark goes.
+ *
+ * Returns the depth (>= 1), or -1 on error.
+ *
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID
+ * (the stack is full).
  */
 int sm_savepoint(sm_session_t* session);
 
 /*
- * Undo every write made since the savepoint. The savepoint
- * survives, so the same mark may be rolled back to more than
- * once. Locks taken since the mark are released, locks held
- * from before it are kept, and the transaction stays active.
+ * Undo every write made since the savepoint at depth. That
+ * savepoint survives, so the same mark may be rolled back to
+ * more than once, and the savepoints set inside it are gone.
+ * Locks taken since the mark are released, locks held from
+ * before it are kept, and the transaction stays active.
  *
  * Scan cursors opened AFTER the savepoint are closed, and
  * their sm_scan_t handles must not be used again; one opened
@@ -488,16 +530,32 @@ int sm_savepoint(sm_session_t* session);
  * is fixed when it is created, so a later one would otherwise
  * go on returning rows this call just undid.
  *
- * Requires a savepoint. To roll a transaction back to its
- * start, call sm_savepoint() immediately after sm_begin().
+ * Requires a savepoint at that depth. To roll a transaction
+ * back to its start, call sm_savepoint() immediately after
+ * sm_begin() and roll back to the depth it returned.
  *
  * Rollback does NOT undo read tracking: under SERIALIZABLE,
  * reads performed and then rolled back still count towards
  * serialization checking. Conservative, never unsafe.
  *
- * Errors: SM_ERR_NOSAVEPOINT, SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ * Errors: SM_ERR_NOSAVEPOINT (no savepoint at that depth),
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED.
  */
-int sm_rollback(sm_session_t* session);
+int sm_rollback(sm_session_t* session, int depth);
+
+/*
+ * Forget the savepoint at depth and every savepoint set inside
+ * it, so none of them can be rolled back to again. SQL's
+ * RELEASE SAVEPOINT.
+ *
+ * The writes made since the mark stay, and so do the locks
+ * taken since it: they now belong to the enclosing savepoint,
+ * or to the transaction if there is none.
+ *
+ * Errors: SM_ERR_NOSAVEPOINT (no savepoint at that depth),
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ */
+int sm_forget(sm_session_t* session, int depth);
 
 /*
  * Prepare the active transaction for commit under the global
@@ -711,7 +769,10 @@ int sm_read(sm_session_t* session, uint64_t relid,
  * The *_inclusive flags say whether a key exactly equal to the
  * bound is returned. An empty range is legal and yields no
  * rows. Scanning is FORWARD ONLY; descending iteration is not
- * supported.
+ * supported, and is not a planned addition -- no index serves
+ * a backward scan (see OBJECTIVE.md). A caller that needs
+ * descending order keeps a second relation with inverted key
+ * bytes and scans that one forward.
  *
  * Both bounds are taken, rather than a start key alone,
  * because under SERIALIZABLE the range is the predicate

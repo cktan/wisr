@@ -312,9 +312,9 @@ TEST_CASE("a dropped relation's column family goes once no snapshot sees it") {
   uint64_t urelid = mkrel(s);
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_savepoint(s) == 0);
+  REQUIRE(sm_savepoint(s) == 1);
   REQUIRE(sm_rmrel(s, urelid) == 0);
-  REQUIRE(sm_rollback(s) == 0);
+  REQUIRE(sm_rollback(s, 1) == 0);
   REQUIRE(sm_commit(s) == 0);
   gc_run_once(f.db());
   CHECK(db_rel_cf(f.db(), urelid) != nullptr);

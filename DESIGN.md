@@ -22,7 +22,7 @@ This document is the design of record. It follows the decisions in
 
 **In scope.** Relations as ordered key→value maps; MVCC reads and
 scans; read-committed / repeatable-read / serializable transactions;
-one savepoint per session; two-phase commit; crash recovery; garbage
+nested savepoints; two-phase commit; crash recovery; garbage
 collection of dead versions.
 
 **Not in scope (for now).** Secondary indexes, a query language,
@@ -30,14 +30,23 @@ column types or schemas (values are opaque byte strings), replication,
 multi-process or remote access, and online backup. Nothing in the
 design forecloses them.
 
+**Not in scope, ever.** Backward scans. Iteration is forward
+only, in ascending bytewise key order, and no index serves a
+backward scan — not the clustered primary key here, and not a
+secondary index a layer above builds out of relations
+(`OBJECTIVE.md`). Descending order is had by keeping a second
+relation with inverted key bytes and scanning it forward.
+
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
 `sm.h` and the design in this document, nothing more. Phase 2
 adds the API a secondary-index layer built on top of it needs.
 `SECINDEX.md` lists those gaps and proposes the functions that
-close them (`sm_lock`, a savepoint stack with `sm_forget`,
-`sm_stmt_begin`, descending scans, `sm_scan_seek`). None of
-them is part of phase 1, except `sm_lsrel`, which came with
-naming relations by relid (§11).
+close them (`sm_lock`, `sm_scan_seek`). Three are already in:
+`sm_lsrel`, which came with naming relations by relid (§11);
+`sm_stmt_begin`, which closed the gap in read-committed
+statement snapshots (§6.2); and the savepoint stack with
+`sm_forget` (§6.5). Descending scans are the one gap it lists
+that will not be closed at all.
 
 **Assumptions.**
 
@@ -568,7 +577,7 @@ serialization victims themselves.
                    │  snapshot_ts = visible_ts
                    ▼
               ┌─────────┐   first write: xid = global_ts++
-              │ ACTIVE  │◄──── sm_savepoint / sm_rollback
+              │ ACTIVE  │◄──── sm_savepoint / sm_rollback / sm_forget
               └────┬────┘
         sm_prepare │        │ sm_commit
                    ▼        ▼
@@ -588,6 +597,30 @@ start of each read statement** (each `sm_read`, and each
 cursor, so one scan is internally consistent). It is a local of
 the statement; `T.snapshot_ts` is still the one taken at
 `sm_begin` and is never refreshed.
+
+**Statement boundaries.** A caller whose statement spans
+several calls — an index lookup is one scan plus N reads —
+would see N+1 states under that rule and could return a
+mixture of them that never existed. `sm_stmt_begin` sets a
+boundary: from the first read after it, every RC read in the
+session uses that one snapshot, until the next boundary or
+the end of the transaction. The session state is
+`T.stmt_pinned` (the boundary has been used, for the rest of
+the transaction) and `T.stmt_snapshot_ts` once taken.
+
+The snapshot is taken by the statement's first **read**, not
+by the boundary call and not by a write, so a statement may
+block — on a row lock, or on the `sm_lock` a secondary-index
+layer would use — and still read everything committed while
+it waited. `xct_read_view` takes it; `xct_view`, which the
+write path uses to validate a relid and key, only reads it
+once taken.
+
+The GC watermark needs nothing extra. A read-committed
+transaction registers its *begin* snapshot for its whole life
+(§8.3), and a statement snapshot is at or above it, so
+`gc_watermark` is already held below anything a pinned
+statement can read.
 
 Writes still obey §5.2, and they check against `T.snapshot_ts`,
 not the statement snapshot, so a write can fail with
@@ -617,40 +650,74 @@ Repeatable read plus SSI validation (§7).
 
 ### 6.5 Savepoints
 
-The API allows exactly one savepoint per session. It is a mark into the
-per-transaction **undo list** — an in-memory vector of
-`(relid, userkey, seq)` triples in write order, holding no payloads,
-so a large transaction costs bytes per write, not rows. Relations
+A savepoint is a mark into the per-transaction **undo
+list** — an in-memory vector of `(relid, userkey, seq)`
+triples in write order, holding no payloads, so a large
+transaction costs bytes per write, not rows. Relations
 created by the transaction are tracked alongside it in
-`T.created`, a vector of relids in creation order, and relations
-it dropped in `T.dropped`, likewise.
+`T.created`, a vector of relids in creation order, and
+relations it dropped in `T.dropped`, likewise.
+
+Savepoints **nest**. `T.savepoints` is a stack of marks in
+push order, so `T.savepoints[d-1]` is the mark at depth `d`,
+and a transaction holds at most `SM_MAX_SAVEPOINTS` (256) of
+them. The cap turns runaway nesting into an error instead of
+unbounded growth; nothing in the design needs that
+particular value.
+
+A depth is **reused** once the mark holding it is gone, so a
+depth kept from a savepoint already rolled past or forgotten
+can name a different mark later. The alternative was an id
+per mark, never reused, which would make a stale reference
+an error rather than a silent hit on the wrong mark. Depth
+was chosen because SQL already obliges the layer above to
+drop a savepoint name when its mark goes — `RELEASE`, and
+rollback to an outer mark — so a correct caller cannot form
+a stale depth. `API.md` states the hazard.
 
 ```
-sm_savepoint():
-    T.sp_mark   = T.undo.size()        # replaces any previous savepoint
-    T.sp_locks  = T.locks.size()
-    T.sp_rels   = T.created.size()
-    T.sp_drops  = T.dropped.size()
-    T.sp_scan   = id of the latest cursor opened so far
+sm_savepoint():                        # returns the new depth
+    if len(T.savepoints) == SM_MAX_SAVEPOINTS:
+        fail with SM_ERR_INVALID
+    push onto T.savepoints:
+        mark.undo    = T.undo.size()
+        mark.locks   = T.locks.size()
+        mark.rels    = T.created.size()
+        mark.drops   = T.dropped.size()
+        mark.scan_id = id of the latest cursor opened so far
+    return len(T.savepoints)
 
-sm_rollback():
-    if no savepoint: fail with SM_ERR_NOSAVEPOINT    # API.md divergence 8
-    m = T.sp_mark
+sm_forget(depth):                      # SQL's RELEASE SAVEPOINT
+    if no mark at depth: fail with SM_ERR_NOSAVEPOINT
+    T.savepoints.truncate(depth - 1)   # that mark and those inside it
+    # writes stay; locks stay, now held for the enclosing mark
+
+sm_rollback(depth):
+    if no mark at depth: fail with SM_ERR_NOSAVEPOINT # API.md divergence 8
+    m = T.savepoints[depth-1].undo
     for e in reverse(T.undo[m..]):
         db.Delete(cf(e.relid), encode(e.key, ~T.xid, ~e.seq))
-    r = T.sp_rels
+    r = T.savepoints[depth-1].rels
     for relid in reverse(T.created[r..]):
         db.DropColumnFamily(cf(relid))              # §11
     T.created.truncate(r)
-    T.dropped.truncate(T.sp_drops)                  # the undo restored their rows
+    T.dropped.truncate(mark.drops)                  # the undo restored their rows
     T.undo.truncate(m)
     T.seq_hwm = (m > 0) ? T.undo[m-1].seq : 0       # own-write visibility
     T.seq     = T.seq_hwm + 1                        # live seqs stay a prefix
-    close every open cursor with id > T.sp_scan      # see below
+    close every open cursor with id > mark.scan_id   # see below
     release locks acquired after the mark
+    T.savepoints.truncate(depth)     # the mark stays; inner ones go
     ssi read set is NOT rolled back                  # conservative, correct
     transaction stays ACTIVE
 ```
+
+Rolling back to depth `d` keeps the mark at `d`, so the same
+mark can be rolled back to again, and drops the marks inside
+it, which covered work that no longer exists. `sm_forget`
+drops marks without touching the work or the locks: a lock
+taken inside a forgotten mark is still held, belonging now to
+the enclosing mark, or to the transaction when there is none.
 
 Rolling back is a delete of exactly the versions written since the
 mark. Nothing else can see them, so there is no visibility window to
@@ -682,7 +749,7 @@ aborts. Cursors open *before* the mark are untouched —
 they could never see the undone versions, because their
 snapshot predates the writes.
 
-This is why `sm_savepoint` records `T.sp_scan`. Each
+This is why each mark records `scan_id`. Each
 cursor gets an id from a per-session counter as it opens, so
 "opened after the mark" is one comparison per open cursor.
 Recording the set of open cursors instead would misjudge a
@@ -1477,6 +1544,11 @@ is false and the affected path is never taken.
 leaves one userkey, which is what prefix mode is for, and
 the bloom filter earns its keep on a point read.
 
+**Direction.** The iterator is only ever stepped with
+`Next()`. Backward scans are not supported and will not be
+(§1), so no `SeekForPrev` path exists and `auto_prefix_mode`
+is never asked to serve one.
+
 **Bound lifetime.** `iterate_upper_bound` is a
 `rocksdb::Slice`, which borrows rather than copies, and
 the bound outlives the `sm_scan` call that set it.
@@ -1775,7 +1847,7 @@ SM_ERR_SERIALIZATION   SSI validation failure (§7.3)
 SM_ERR_DEADLOCK        victim of deadlock detection (§5.1)
 SM_ERR_NOTFOUND        relation or key does not exist
 SM_ERR_DUPKEY          insert onto a live key (§5)
-SM_ERR_NOSAVEPOINT     rollback with no savepoint set (§6.5)
+SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
 SM_ERR_NOTRANS         data op outside a transaction (§6.1)
 SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
 SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
@@ -1908,9 +1980,17 @@ bullets below cover the rest of the engine.
   by the rollback, and a row written after the mark is never
   yielded by any surviving cursor (§6.5, §10.2).
   It can update a key it inserted and re-insert a key it
-  deleted (§5), and `sm_rollback` with no savepoint fails with
-  `SM_ERR_NOSAVEPOINT`. A key locked before a savepoint and
-  rewritten after it stays locked through `sm_rollback` (§5.1).
+  deleted (§5), and `sm_rollback` to a depth the stack does
+  not hold fails with `SM_ERR_NOSAVEPOINT`. A key locked
+  before a savepoint and rewritten after it stays locked
+  through `sm_rollback` (§5.1).
+- **Nested savepoints.** Three marks deep: a rollback to the
+  middle one undoes the writes after it, keeps those before
+  it, and drops the mark inside it, while the middle mark
+  survives for a second rollback. `sm_forget` keeps the
+  writes and releases no locks, and the depth it frees is
+  handed out again by the next `sm_savepoint`. Pushing past
+  `SM_MAX_SAVEPOINTS` fails with `SM_ERR_INVALID` (§6.5).
 - **Deadlock.** Build a two-transaction cycle in both orders:
   the older waiter finds the cycle and the younger is the
   victim, and the younger finds it and is itself the victim.

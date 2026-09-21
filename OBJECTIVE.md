@@ -16,6 +16,13 @@ full MVCC, for OLTP workloads.
 - **Secondary indexes are not provided.** They can be built by
   another layer on top of this one, for example as separate
   relations maintained in the same transaction.
+- **Backward scans are not supported.** Iteration is forward
+  only, in ascending bytewise key order. This holds for every
+  index: the clustered primary key here, and any secondary
+  index a layer above builds out of relations. It is a
+  permanent decision, not a phase-1 limitation. A caller that
+  needs descending order keeps a second relation whose key
+  bytes are inverted, and scans that one forward.
 
 ## Goals
 
@@ -36,7 +43,8 @@ full MVCC, for OLTP workloads.
   - sessions: `sm_opendb` / `sm_closedb`
   - transactions: `sm_begin` (with `sm_xctlevel_t`) / `sm_prepare` /
     `sm_commit` / `sm_abort`
-  - a single savepoint per session: `sm_savepoint` / `sm_rollback`
+  - nested savepoints: `sm_savepoint` / `sm_rollback` /
+    `sm_forget`
   - relations: `sm_mkrel` / `sm_rmrel` / `sm_lsrel`
   - sequences: `sm_mkseq` / `sm_rmseq` / `sm_nextseq`
   - data ops: `sm_insert` / `sm_update` / `sm_delete` / `sm_read` /

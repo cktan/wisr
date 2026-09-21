@@ -153,8 +153,12 @@ void reset(sm_session_t *s) {
   s->dropped.clear();
   s->dropped_seqs.clear();
   s->undo.clear();
-  // The savepoint ends with the transaction.
-  s->has_savepoint = false;
+  // The savepoints end with the transaction.
+  s->savepoints.clear();
+  // So does the statement snapshot (§6.2).
+  s->stmt_pinned = false;
+  s->stmt_taken = false;
+  s->stmt_snapshot_ts = 0;
 }
 
 /*
@@ -191,38 +195,92 @@ void discard(sm_session_t *s) {
   reset(s);
 }
 
+/* sm_stmt_begin, minus the out-of-memory guard. */
+int stmt_begin(sm_session_t *s) {
+  // Require an active, non-prepared transaction.
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  // Turn statement snapshots on, and end any statement running.
+  s->stmt_pinned = true;
+  // The next read takes the new statement's snapshot (§6.2).
+  s->stmt_taken = false;
+  s->stmt_snapshot_ts = 0;
+  return 0;
+}
+/*
+ * The mark at depth, or NULL with the error set. Depth counts
+ * from 1 at the outermost savepoint (§6.5).
+ */
+sm_session_t::mark_t *mark_at(sm_session_t *s, int depth) {
+  // Reject a depth outside the stack.
+  if (depth < 1 || static_cast<size_t>(depth) > s->savepoints.size()) {
+    set_error(SM_ERR_NOSAVEPOINT,
+              "no savepoint at depth {}; the stack holds {}", depth,
+              s->savepoints.size());
+    return nullptr;
+  }
+  return &s->savepoints[depth - 1];
+}
+
 /* sm_savepoint, minus the out-of-memory guard. */
 int savepoint(sm_session_t *s) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Mark the current positions; this replaces any earlier mark.
-  s->has_savepoint = true;
-  s->sp_undo = s->undo.size();
-  s->sp_created = s->created.size();
-  s->sp_dropped = s->dropped.size();
-  s->sp_dropped_seqs = s->dropped_seqs.size();
-  s->sp_scan_id = s->next_scan_id;
+  // Refuse to nest deeper than the limit.
+  if (s->savepoints.size() >= SM_MAX_SAVEPOINTS) {
+    return set_error(SM_ERR_INVALID, "savepoint stack is full at {}",
+                     SM_MAX_SAVEPOINTS);
+  }
+  // Mark the current positions; the mark goes on top.
+  sm_session_t::mark_t m;
+  m.undo = s->undo.size();
+  m.created = s->created.size();
+  m.dropped = s->dropped.size();
+  m.dropped_seqs = s->dropped_seqs.size();
+  m.scan_id = s->next_scan_id;
   {
     // Hold lock_mu while reading the lock list.
     std::lock_guard<std::mutex> guard(s->db->lock_mu);
     // Mark the lock list.
-    s->sp_locks = s->locks.size();
+    m.locks = s->locks.size();
   }
-  return 0;
+  s->savepoints.push_back(m);
+  // The new mark's depth.
+  return static_cast<int>(s->savepoints.size());
 }
 
-/* sm_rollback, minus the out-of-memory guard. */
-int rollback(sm_session_t *s) {
+/* sm_forget, minus the out-of-memory guard. */
+int forget(sm_session_t *s, int depth) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Require a savepoint.
-  if (!s->has_savepoint) {
-    return set_error(SM_ERR_NOSAVEPOINT, "no savepoint to roll back to");
+  // Require a mark at that depth.
+  if (!mark_at(s, depth)) {
+    return -1;
   }
+  // Drop it and every mark inside it; the writes stay, and so
+  // do the locks (§6.5).
+  s->savepoints.resize(static_cast<size_t>(depth) - 1);
+  return 0;
+}
+
+/* sm_rollback, minus the out-of-memory guard. */
+int rollback(sm_session_t *s, int depth) {
+  // Require an active, non-prepared transaction.
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  // Require a mark at that depth.
+  sm_session_t::mark_t *mp = mark_at(s, depth);
+  if (!mp) {
+    return -1;
+  }
+  // Copy it: the stack is truncated before it is used below.
+  const sm_session_t::mark_t m = *mp;
   // The shared database object.
   db_t *db = s->db;
 
@@ -231,7 +289,7 @@ int rollback(sm_session_t *s) {
   // stays as it was.
   rocksdb::WriteBatch batch;
   // Queue a delete for each version written after the mark.
-  for (size_t i = s->undo.size(); i-- > s->sp_undo;) {
+  for (size_t i = s->undo.size(); i-- > m.undo;) {
     // The next undo entry, newest first.
     const sm_session_t::undo_t &u = s->undo[i];
     // Find its relation's CF.
@@ -257,7 +315,7 @@ int rollback(sm_session_t *s) {
   // Walk the open cursors.
   for (sm_scan_t *c : s->scans) {
     // Opened after the mark.
-    if (c->id > s->sp_scan_id) {
+    if (c->id > m.scan_id) {
       later.push_back(c);
     }
   }
@@ -267,18 +325,18 @@ int rollback(sm_session_t *s) {
   }
 
   // Drop the relations created after the mark, newest first.
-  for (size_t i = s->created.size(); i-- > s->sp_created;) {
+  for (size_t i = s->created.size(); i-- > m.created;) {
     // Drop the CF.
     db_drop_rel_cf(db, s->created[i]);
   }
   // Forget those relations.
-  s->created.resize(s->sp_created);
-  s->dropped.resize(s->sp_dropped);           // the undo restored their rows
-  s->dropped_seqs.resize(s->sp_dropped_seqs); // and their sequences
+  s->created.resize(m.created);
+  s->dropped.resize(m.dropped);           // the undo restored their rows
+  s->dropped_seqs.resize(m.dropped_seqs); // and their sequences
 
   // Rewind seq with seq_hwm, so the own versions still in
   // effect are exactly seqs 1..seq_hwm (§6.5).
-  s->undo.resize(s->sp_undo);
+  s->undo.resize(m.undo);
   // The last write still in effect.
   s->seq_hwm = s->undo.empty() ? 0 : s->undo.back().seq;
   // The next write reuses the undone seqs.
@@ -286,7 +344,10 @@ int rollback(sm_session_t *s) {
 
   // Give back the locks taken after the mark; nobody saw our
   // intent on those rows.
-  lock_release_from(s, s->sp_locks);
+  lock_release_from(s, m.locks);
+  // The mark survives, so it can be rolled back to again; the
+  // marks set inside it are gone with the work they covered.
+  s->savepoints.resize(static_cast<size_t>(depth));
   return 0;
 }
 
@@ -823,10 +884,30 @@ view_t xct_view(sm_session_t *s) {
   // RC takes a fresh snapshot per statement; RR and SER keep theirs.
   v.snapshot_ts = s->level == SM_XCT_READ_COMMITTED ? s->db->visible_ts.load()
                                                     : s->snapshot_ts;
+  // Once a statement has its snapshot, RC reads at that one.
+  if (s->level == SM_XCT_READ_COMMITTED && s->stmt_taken) {
+    v.snapshot_ts = s->stmt_snapshot_ts;
+  }
   // Its own writes, up to the last still in effect.
   v.xid = s->xid;
   v.seq_hwm = s->seq_hwm;
   return v;
+}
+
+/*
+ * The view a read runs at, taking the statement's snapshot if
+ * the statement has not read yet (§6.2). Only reads take it:
+ * a write consults its view to validate the relid and key, and
+ * pinning there would hold a statement's later reads at a
+ * snapshot from before the write waited for its row lock.
+ */
+view_t xct_read_view(sm_session_t *s) {
+  // A statement running without its snapshot: this read takes it.
+  if (s->level == SM_XCT_READ_COMMITTED && s->stmt_pinned && !s->stmt_taken) {
+    s->stmt_snapshot_ts = s->db->visible_ts.load();
+    s->stmt_taken = true;
+  }
+  return xct_view(s);
 }
 
 /* Fail with SM_ERR_IO once the database has failed stop. */
@@ -1065,6 +1146,16 @@ int sm_commit(sm_session_t *session) {
   }
 }
 
+/* Read the rest of this statement at one snapshot. */
+int sm_stmt_begin(sm_session_t *session) {
+  // Report an allocation failure as SM_ERR_NOMEM.
+  try {
+    return stmt_begin(session);
+  } catch (const std::bad_alloc &) {
+    return set_error(SM_ERR_NOMEM, "sm_stmt_begin: out of memory");
+  }
+}
+
 /* Set the session's one savepoint. */
 int sm_savepoint(sm_session_t *session) {
   // Report an allocation failure as SM_ERR_NOMEM.
@@ -1075,13 +1166,23 @@ int sm_savepoint(sm_session_t *session) {
   }
 }
 
-/* Undo every write made since the savepoint. */
-int sm_rollback(sm_session_t *session) {
+/* Undo every write made since the savepoint at depth. */
+int sm_rollback(sm_session_t *session, int depth) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return rollback(session);
+    return rollback(session, depth);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_rollback: out of memory");
+  }
+}
+
+/* Forget the savepoint at depth, and those inside it. */
+int sm_forget(sm_session_t *session, int depth) {
+  // Report an allocation failure as SM_ERR_NOMEM.
+  try {
+    return forget(session, depth);
+  } catch (const std::bad_alloc &) {
+    return set_error(SM_ERR_NOMEM, "sm_forget: out of memory");
   }
 }
 

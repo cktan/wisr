@@ -236,6 +236,117 @@ TEST_CASE("repeatable read keeps its snapshot; read committed does not") {
   sm_closedb(c);
 }
 
+TEST_CASE("sm_stmt_begin gives read committed one snapshot per statement") {
+  // Verify a statement spanning several calls sees one committed
+  // state, the anomaly SECINDEX.md gap 3 describes.
+  // 1. Two rows each hold 50; an RC session begins a statement
+  //    and reads the first.
+  // 2. Another session moves 30 from the first row to the
+  //    second and commits, mid-statement.
+  // 3. The second read still sees 50, so the statement totals
+  //    100, not 130.
+  // 4. The next sm_stmt_begin starts a new statement, which
+  //    sees the transfer.
+  db_fixture_t f;
+  sm_session_t *s = f.session();
+  uint64_t rel = mkrel_committed(s);
+  sm_session_t *other = f.open_other();
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  put(s, rel, "a", "50");
+  put(s, rel, "b", "50");
+  REQUIRE(sm_commit(s) == 0);
+
+  REQUIRE(sm_begin(s, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm_stmt_begin(s) == 0);
+  CHECK(get(s, rel, "a") == "50");
+
+  REQUIRE(sm_begin(other, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm_update(other, rel, "a", 1, "20", 2) == 0);
+  REQUIRE(sm_update(other, rel, "b", 1, "80", 2) == 0);
+  REQUIRE(sm_commit(other) == 0);
+
+  CHECK(get(s, rel, "b") == "50");
+  CHECK(scan_all(s, rel) == rows_t{{"a", "50"}, {"b", "50"}});
+
+  REQUIRE(sm_stmt_begin(s) == 0);
+  CHECK(get(s, rel, "a") == "20");
+  CHECK(get(s, rel, "b") == "80");
+  REQUIRE(sm_commit(s) == 0);
+  sm_closedb(other);
+}
+
+TEST_CASE("the statement snapshot is taken by the first read, not the call") {
+  // Verify a statement that waits before reading still sees what
+  // committed while it waited (SECINDEX.md gap 1's build protocol).
+  // 1. An RC session begins a statement and does not read.
+  // 2. Another session commits a row.
+  // 3. The first read of the statement sees it.
+  // 4. A write does not take the snapshot: after a new
+  //    statement writes, a commit by another session is still
+  //    visible to that statement's first read.
+  // 5. A commit clears the pin: a fresh RC transaction that
+  //    never calls sm_stmt_begin still reads per call.
+  db_fixture_t f;
+  sm_session_t *s = f.session();
+  uint64_t rel = mkrel_committed(s);
+  sm_session_t *other = f.open_other();
+
+  REQUIRE(sm_begin(s, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm_stmt_begin(s) == 0);
+
+  REQUIRE(sm_begin(other, SM_XCT_READ_COMMITTED) == 0);
+  put(other, rel, "k", "v");
+  REQUIRE(sm_commit(other) == 0);
+
+  CHECK(get(s, rel, "k") == "v");
+
+  REQUIRE(sm_stmt_begin(s) == 0);
+  put(s, rel, "mine", "1");
+  REQUIRE(sm_begin(other, SM_XCT_READ_COMMITTED) == 0);
+  put(other, rel, "late", "v");
+  REQUIRE(sm_commit(other) == 0);
+  CHECK(get(s, rel, "late") == "v");
+  REQUIRE(sm_commit(s) == 0);
+
+  REQUIRE(sm_begin(s, SM_XCT_READ_COMMITTED) == 0);
+  CHECK(get(s, rel, "k") == "v");
+  REQUIRE(sm_begin(other, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm_update(other, rel, "k", 1, "w", 1) == 0);
+  REQUIRE(sm_commit(other) == 0);
+  CHECK(get(s, rel, "k") == "w");
+  REQUIRE(sm_commit(s) == 0);
+  sm_closedb(other);
+}
+
+TEST_CASE("sm_stmt_begin needs a transaction and does nothing above RC") {
+  // Verify the call's contract at the other levels and outside a
+  // transaction.
+  // 1. Without a transaction it fails with SM_ERR_NOTRANS.
+  // 2. Under REPEATABLE READ it succeeds and changes nothing:
+  //    the transaction still reads at its begin snapshot.
+  db_fixture_t f;
+  sm_session_t *s = f.session();
+  uint64_t rel = mkrel_committed(s);
+  sm_session_t *other = f.open_other();
+
+  CHECK(sm_stmt_begin(s) == -1);
+  CHECK(sm_errno() == SM_ERR_NOTRANS);
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm_stmt_begin(s) == 0);
+  CHECK(get(s, rel, "k") == "<none>");
+
+  REQUIRE(sm_begin(other, SM_XCT_READ_COMMITTED) == 0);
+  put(other, rel, "k", "v");
+  REQUIRE(sm_commit(other) == 0);
+
+  REQUIRE(sm_stmt_begin(s) == 0);
+  CHECK(get(s, rel, "k") == "<none>");
+  REQUIRE(sm_commit(s) == 0);
+  sm_closedb(other);
+}
+
 TEST_CASE("a scan returns userkeys in memcmp order within its bounds") {
   // Verify key order and bound handling (DESIGN.md §12.5 key order).
   // 1. Insert keys that prefix one another, each updated so it

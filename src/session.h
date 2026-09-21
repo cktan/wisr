@@ -38,6 +38,16 @@ struct sm_session_t {
   uint64_t begin_seq = 0;             /* begin order; larger is younger */
 
   /*
+   * The statement snapshot under read committed (§6.2). Off
+   * until sm_stmt_begin, which turns it on for the rest of the
+   * transaction; the snapshot itself is taken by the first
+   * read of each statement, not by the boundary call.
+   */
+  bool stmt_pinned = false; /* sm_stmt_begin was called */
+  bool stmt_taken = false;  /* stmt_snapshot_ts is the one to use */
+  uint64_t stmt_snapshot_ts = 0;
+
+  /*
    * The undo list (§6.5): every version written, in write
    * order, as (relid, userkey, seq), so a rollback can delete
    * exactly the versions written since the savepoint.
@@ -49,14 +59,19 @@ struct sm_session_t {
   };
   std::vector<undo_t> undo;
 
-  /* The one savepoint: positions to roll back to (§6.5). */
-  bool has_savepoint = false;
-  size_t sp_undo = 0;         /* undo.size() at the mark */
-  size_t sp_locks = 0;        /* locks.size() at the mark */
-  size_t sp_created = 0;      /* created.size() at the mark */
-  size_t sp_dropped = 0;      /* dropped.size() at the mark */
-  size_t sp_dropped_seqs = 0; /* dropped_seqs.size() at the mark */
-  uint64_t sp_scan_id = 0;    /* cursors with a larger id came later */
+  /*
+   * The savepoint stack (§6.5): one mark per savepoint, in
+   * push order, so savepoints[d - 1] is the mark at depth d.
+   */
+  struct mark_t {
+    size_t undo = 0;         /* undo.size() at the mark */
+    size_t locks = 0;        /* locks.size() at the mark */
+    size_t created = 0;      /* created.size() at the mark */
+    size_t dropped = 0;      /* dropped.size() at the mark */
+    size_t dropped_seqs = 0; /* dropped_seqs.size() at the mark */
+    uint64_t scan_id = 0;    /* cursors with a larger id came later */
+  };
+  std::vector<mark_t> savepoints;
 
   /*
    * Why the transaction must fail at its next call (§5.1):
@@ -127,6 +142,13 @@ int xct_check_active(sm_session_t *session);
 
 /* The view a statement starting now reads at (§6.2, §10.1). */
 view_t xct_view(sm_session_t *session);
+
+/*
+ * The same, for sm_read and sm_scan: under a statement
+ * boundary it also TAKES the statement's snapshot, if this is
+ * the statement's first read (§6.2).
+ */
+view_t xct_read_view(sm_session_t *session);
 
 /*
  * Abort the active transaction on the engine's side, as for a

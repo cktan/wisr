@@ -33,7 +33,7 @@ typedef enum {
     SM_ERR_NOTRANS       = 2,   /* op requires an active transaction */
     SM_ERR_INTRANS       = 3,   /* op forbidden inside a transaction */
     SM_ERR_PREPARED      = 4,   /* op forbidden on a prepared transaction */
-    SM_ERR_NOSAVEPOINT   = 5,   /* rollback with no savepoint set */
+    SM_ERR_NOSAVEPOINT   = 5,   /* no savepoint at the given depth */
 
     /* data errors */
     SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
@@ -310,6 +310,10 @@ transaction may disagree. Under `SM_XCT_REPEATABLE_READ`
 and `SM_XCT_SERIALIZABLE`, one snapshot is taken at
 `sm_begin` and held to the end.
 
+A read-committed caller whose statement spans several calls
+brackets it with `sm_stmt_begin`, which makes those calls
+share one snapshot.
+
 **2. Writes can fail with `SM_ERR_CONFLICT` at every
 level, including READ COMMITTED.** If another transaction
 committed a change to the same key after this
@@ -549,7 +553,7 @@ Errors: `SM_ERR_INTRANS` (a transaction is already active),
 ### int sm_commit(sm_session_t* session)
 
 Commit the active transaction, making its writes durable
-and visible. Releases all locks, discards the savepoint,
+and visible. Releases all locks, discards the savepoints,
 and closes any open scan cursors on this session.
 
 For a prepared transaction, this is the coordinator's
@@ -574,7 +578,7 @@ Errors: `SM_ERR_SERIALIZATION` (retryable),
 ### int sm_abort(sm_session_t* session)
 
 Abort the active transaction, discarding all of its writes.
-Releases all locks, discards the savepoint, and closes any
+Releases all locks, discards the savepoints, and closes any
 open scan cursors on this session.
 
 Aborting a **prepared** transaction is legal and is the
@@ -585,24 +589,68 @@ aborted the transaction.
 
 Errors: `SM_ERR_NOTRANS`.
 
+### int sm_stmt_begin(sm_session_t* session)
+
+Begin a statement. Under `SM_XCT_READ_COMMITTED` every row
+the statement reads then comes from **one** snapshot,
+instead of a fresh one per call.
+
+Without it, each `sm_read` and each `sm_scan` takes its own
+snapshot, so a caller whose statement spans several calls —
+an index lookup is one scan plus N reads — sees N+1
+committed states and can return a mixture of them that never
+existed at any instant.
+
+The snapshot is taken by the statement's first **read**, not
+by this call and not by a write. A statement may therefore
+lock, wait, or write first and still read everything
+committed up to the moment it starts reading. The statement
+runs until the next `sm_stmt_begin`, which starts another, or
+until the transaction ends.
+
+Once called, the transaction reads this way for the rest of
+its life; there is no returning to a snapshot per call. Under
+`SM_XCT_REPEATABLE_READ` and `SM_XCT_SERIALIZABLE` the call
+is accepted and does nothing, since the whole transaction
+already reads at one snapshot.
+
+Writes are unaffected: they still check for conflicts against
+the snapshot taken by `sm_begin`, so `SM_ERR_CONFLICT` can
+still arrive on a row this statement has just read.
+
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
+
 ### int sm_savepoint(sm_session_t* session)
 
-Set a savepoint at the current point in the transaction.
+Set a savepoint at the current point in the transaction
+and return its **depth**: 1 for the first, 2 for one set
+inside it, and so on.
 
-A transaction may hold **one** savepoint. Calling
-`sm_savepoint` again replaces the existing one; the earlier
-mark is gone and cannot be returned to. The savepoint is
+Savepoints nest. A transaction may hold up to
+`SM_MAX_SAVEPOINTS` (256) of them, and they are all
 discarded at commit or abort.
 
-Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
+**A depth is reused.** Once the mark holding a depth is
+gone — rolled past, or released by `sm_forget` — the next
+`sm_savepoint` hands that depth out again, and it then
+names a different mark. A caller that keeps savepoints by
+name must drop a name as soon as its mark goes, exactly as
+SQL requires of `RELEASE` and of rollback to an outer
+savepoint. The engine cannot tell a stale depth from a
+current one.
 
-### int sm_rollback(sm_session_t* session)
+Returns the depth (>= 1), or -1 on error.
 
-Undo every write made since the savepoint. The savepoint
-survives, so the same mark may be rolled back to more than
-once. Row locks acquired since the mark are released; locks
-held from before it are kept. The transaction remains
-active.
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+`SM_ERR_INVALID` (the stack is full).
+
+### int sm_rollback(sm_session_t* session, int depth)
+
+Undo every write made since the savepoint at `depth`. That
+savepoint survives, so the same mark may be rolled back to
+more than once; the savepoints set inside it are gone. Row
+locks acquired since the mark are released; locks held from
+before it are kept. The transaction remains active.
 
 **Scan cursors opened after the savepoint are closed**,
 and their `sm_scan_t` handles must not be used again; a
@@ -611,9 +659,10 @@ its position. A cursor's view is fixed when it is
 created, so one opened after the mark would otherwise go
 on returning rows this call just undid.
 
-Requires a savepoint. To be able to roll a transaction back
-to its start, call `sm_savepoint` immediately after
-`sm_begin`.
+Requires a savepoint at that depth. To be able to roll a
+transaction back to its start, call `sm_savepoint`
+immediately after `sm_begin` and keep the depth it
+returned.
 
 **Rollback does not undo read tracking.** Under
 `SM_XCT_SERIALIZABLE`, reads performed and then rolled back
@@ -621,8 +670,25 @@ still count towards serialization checking and can still
 cause `SM_ERR_SERIALIZATION` at commit. This is
 conservative and safe, never unsafe.
 
-Errors: `SM_ERR_NOSAVEPOINT`, `SM_ERR_NOTRANS`,
-`SM_ERR_PREPARED`.
+Errors: `SM_ERR_NOSAVEPOINT` (no savepoint at that depth),
+`SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
+
+### int sm_forget(sm_session_t* session, int depth)
+
+Forget the savepoint at `depth` and every savepoint set
+inside it, so none of them can be rolled back to again.
+This is SQL's `RELEASE SAVEPOINT`.
+
+The writes made since the mark stay, and so do the row
+locks taken since it: they now belong to the enclosing
+savepoint, or to the transaction when there is none.
+
+A layer that brackets each of its statements with a
+savepoint releases it this way at the end of the statement,
+so the stack does not grow with the transaction.
+
+Errors: `SM_ERR_NOSAVEPOINT` (no savepoint at that depth),
+`SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
 
 ---
 
@@ -929,7 +995,10 @@ records a far larger predicate and causes needless
 serialization failures.
 
 Scanning is **forward only**. Descending iteration is not
-supported.
+supported, and is not a planned addition: no index serves a
+backward scan (`OBJECTIVE.md`). A caller that needs
+descending order keeps a second relation with inverted key
+bytes and scans that one forward.
 
 The cursor's view is fixed at this call (see "Isolation and
 visibility semantics", point 3). Its snapshot also pins
@@ -1022,7 +1091,8 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
    configuration knobs, including one (`durability_sync`)
    that changes the durability guarantee, and there was no
    surface to set any of them.
-8. **`sm_rollback` now requires a savepoint** instead of
+8. **`sm_rollback` takes the depth of the savepoint to
+   undo to**, and requires a savepoint there instead of
    silently rolling back to `sm_begin` when none is set.
    The old behaviour makes one call mean either "undo the
    last few writes" or "undo everything" depending on
@@ -1095,3 +1165,11 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     do at all. `force` does not change what closing a
     session means — `sm_closedb`'s rules apply unchanged, so
     a prepared transaction still survives.
+19. **Savepoints nest, and `sm_forget` releases one.** (D)
+    The sketch gave a session one savepoint. A layer that
+    wraps each of its own statements in a savepoint cannot
+    then offer SQL savepoints to its caller, since the two
+    uses collide on the single mark. `sm_savepoint` now
+    returns a depth, `sm_rollback` takes one, and
+    `sm_forget` is `RELEASE SAVEPOINT`. `SECINDEX.md` gap 2
+    is the case that asked for it.

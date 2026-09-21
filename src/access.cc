@@ -252,7 +252,7 @@ int read_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
     return -1;
   }
   // The view this statement reads at.
-  view_t view = xct_view(s);
+  view_t view = xct_read_view(s);
   // Validate the relid and key.
   if (enter(s, view, relid, key, klen) != 0) {
     return -1;
@@ -282,7 +282,7 @@ sm_scan_t *scan(sm_session_t *s, uint64_t relid, const char *skey, size_t sklen,
     return nullptr;
   }
   // The view the cursor reads at, fixed from now on.
-  view_t view = xct_view(s);
+  view_t view = xct_read_view(s);
   // Validate the relid.
   if (enter(s, view, relid, "", 0) != 0) {
     return nullptr;

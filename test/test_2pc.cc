@@ -262,7 +262,9 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm_errno() == SM_ERR_PREPARED);
   CHECK(sm_savepoint(s) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
-  CHECK(sm_rollback(s) == -1);
+  CHECK(sm_rollback(s, 1) == -1);
+  CHECK(sm_errno() == SM_ERR_PREPARED);
+  CHECK(sm_forget(s, 1) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
   uint64_t fresh = 0;
   CHECK(sm_mkrel(s, &fresh) == -1);

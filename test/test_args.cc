@@ -127,7 +127,8 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm_commit(nullptr), SM_ERR_INVALID);
   expect_fail(sm_abort(nullptr), SM_ERR_INVALID);
   expect_fail(sm_savepoint(nullptr), SM_ERR_INVALID);
-  expect_fail(sm_rollback(nullptr), SM_ERR_INVALID);
+  expect_fail(sm_rollback(nullptr, 1), SM_ERR_INVALID);
+  expect_fail(sm_forget(nullptr, 1), SM_ERR_INVALID);
   expect_fail(sm_prepare(nullptr, "g"), SM_ERR_INVALID);
   expect_fail(sm_list_prepared(nullptr, &list, &n), SM_ERR_INVALID);
   expect_fail(sm_commit_prepared(nullptr, "g"), SM_ERR_INVALID);
@@ -321,7 +322,8 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm_commit(s), SM_ERR_NOTRANS);
   expect_fail(sm_abort(s), SM_ERR_NOTRANS);
   expect_fail(sm_savepoint(s), SM_ERR_NOTRANS);
-  expect_fail(sm_rollback(s), SM_ERR_NOTRANS);
+  expect_fail(sm_rollback(s, 1), SM_ERR_NOTRANS);
+  expect_fail(sm_forget(s, 1), SM_ERR_NOTRANS);
   expect_fail(sm_prepare(s, "g"), SM_ERR_NOTRANS);
   uint64_t relid;
   expect_fail(sm_mkrel(s, &relid), SM_ERR_NOTRANS);

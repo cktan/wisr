@@ -56,42 +56,51 @@ a CIC-style multi-phase build.
 This is the only gap that makes correct behaviour impossible
 rather than merely awkward or slow.
 
-### 2. A single savepoint
+### 2. A single savepoint — CLOSED
 
 Index maintenance turns one logical row write into several
 physical writes. The layer needs a savepoint per statement so
 that a unique violation on the third row of a multi-row insert
 rolls back the statement's partial writes. With one savepoint
-per transaction (`sm_savepoint` replaces the previous mark),
-the statement savepoint clobbers any user-level SAVEPOINT.
-Manual compensation works but leaves a tombstone version per
-undone write.
+per transaction, that statement savepoint clobbered any
+user-level SAVEPOINT. Manual compensation worked but left a
+tombstone version per undone write.
 
-Needed: nested savepoints, or at least a statement-level
-savepoint distinct from the user's.
+Savepoints now nest: `sm_savepoint` returns a depth,
+`sm_rollback` takes one, and `sm_forget` is `RELEASE
+SAVEPOINT`. The layer pushes a mark at the start of each
+statement and forgets it at the end, above whatever savepoints
+its own caller holds.
 
-### 3. No statement snapshot across calls under READ COMMITTED
+### 3. No statement snapshot across calls under READ COMMITTED — CLOSED
 
-Under RC each `sm_read` and each `sm_scan` takes a fresh
+Under RC each `sm_read` and each `sm_scan` took a fresh
 statement snapshot (§6.2). An index lookup is one scan plus N
-base reads, so it sees N+1 snapshots. The layer must recheck
-its predicate against each fetched base row, and a single
-statement in the layer, spanning many `sm_*` calls, cannot see
-one consistent snapshot.
+base reads, so it saw N+1 snapshots, and a single statement in
+the layer, spanning many `sm_*` calls, could return a mixture
+of committed states that never existed at any instant.
 
-Needed: explicit statement boundaries, e.g.
-`sm_stmt_begin(session)` pinning the RC snapshot until the next
-boundary.
+`sm_stmt_begin(session)` closes it: from the first read after
+that call, every RC read in the session uses one snapshot,
+until the next boundary or the end of the transaction. The
+layer still rechecks its predicate against each fetched base
+row — an index entry and its base row are now read at the same
+snapshot, but the layer's own concurrent writes and a
+transaction's own uncommitted changes still make the recheck
+worth keeping.
 
-### 4. Forward-only scans
+### 4. Forward-only scans — settled, will not change
 
 `MAX()`, `ORDER BY … DESC`, and "greatest key ≤ x" (floor
-lookup, e.g. the latest version at or before time t) all need
-a backward scan. Storing an index with inverted bytes gives
-descending order but then serves only that direction, and
-finding the maximum key means scanning the whole range.
+lookup, e.g. the latest version at or before time t) would all
+be served by a backward scan. `OBJECTIVE.md` rules one out
+permanently: no index serves a backward scan, so this is a
+constraint the layer is built on, not a gap awaiting a fix.
 
-Needed: a direction flag on `sm_scan`.
+The layer's recourse is an index with inverted key bytes. It
+serves only that direction, so a column wanted both ways costs
+two relations, and the cost of that is now the layer's to
+carry.
 
 ### 5. No cursor reposition
 
@@ -121,15 +130,81 @@ Needed: `sm_scan_seek(scan, key, klen, inclusive)`.
 
 ## Summary
 
-Gap 1 blocks correctness. Gaps 2 and 3 are required for sound
-statement semantics once an index layer exists. Gaps 4 and 5
-decide whether the indexes are fast.
+Gap 1 blocks correctness and is the one that remains. Gap 5
+decides whether the indexes are fast. Gaps 2 and 3 are closed:
+the savepoint stack with `sm_forget`, and `sm_stmt_begin`, are
+both in `sm.h`. Gap 4 is not open either: forward-only
+scanning is a settled decision, and the layer works around it
+with inverted-byte relations.
 
 ## Closing the gaps
 
-Proposals only. Nothing below is in `sm.h` yet; with `src/`
-holding only `strlist.cc`, these are contract changes to
-`sm.h`, `API.md`, and `DESIGN.md`, cheapest to make now.
+Proposals, except gaps 2 and 3, which are done. The rest are
+not in `sm.h`: they are contract changes to `sm.h`, `API.md`,
+and `DESIGN.md`, and each now costs an implementation in
+`src/` and tests as well.
+
+### The whole roster
+
+Every signature the gaps ask for, in one place. The sections
+after this one explain each.
+
+```c
+/* gap 1: online index build, and lock-without-write */
+typedef enum { SM_LOCK_SHARED = 0, SM_LOCK_EXCLUSIVE = 1 } sm_lockmode_t;
+
+int sm_lock(sm_session_t* session, uint64_t relid,
+            const char* key, size_t klen, sm_lockmode_t mode);
+
+/* gap 2: savepoint stack -- IMPLEMENTED */
+int sm_savepoint(sm_session_t* session);            /* push; returns depth >= 1, or -1 */
+int sm_rollback(sm_session_t* session, int depth);  /* undo to that mark; keeps it, drops deeper */
+int sm_forget(sm_session_t* session, int depth);    /* forget that mark and deeper ones */
+
+/* gap 3: RC statement snapshots -- IMPLEMENTED */
+int sm_stmt_begin(sm_session_t* session);
+
+/* gap 5: cursor reposition */
+int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
+                 int inclusive);
+
+/* gap 6: batched read -- the missing MultiGet equivalent */
+int sm_mread(sm_session_t* session, uint64_t relid, size_t n,
+             const char* const* key, const size_t* klen,
+             const char** data, size_t* datalen, int* found);
+
+/* gap 6: old-image return -- extra out-params on the existing writes */
+int sm_update(sm_session_t* session, uint64_t relid,
+              const char* key, size_t klen,
+              const char* data, size_t datalen,
+              const char** old, size_t* oldlen);
+
+int sm_delete(sm_session_t* session, uint64_t relid,
+              const char* key, size_t klen,
+              const char** old, size_t* oldlen);
+```
+
+Gap 4 needs no function: it is closed. Gap 6's
+lock-without-write is `sm_lock` again, and its `sm_lsrel` is
+already in phase 1.
+
+**How firm each one is.** The gap 2 trio and `sm_stmt_begin`
+are settled: they are in `sm.h` and `API.md`. Gaps 1 and 5 are
+quoted from the sections below, and the gap 6 pair is sketched
+here for the first time -- that gap defers both until
+profiling asks, so neither signature is settled.
+
+**Three are breaking changes**, not additions: `sm_rollback`
+gained a parameter, and `sm_update` and `sm_delete` would gain
+two each.
+
+**The old-image lifetime is unsettled.** That return cannot be
+a new function; it has to alter `sm_update` and `sm_delete`
+themselves. An `*old` pointing into session memory would
+inherit `sm_read`'s validity window -- dead at the next `sm_*`
+call on the session -- which is the copy the layer is trying
+to avoid in the first place. Settle the lifetime before the
+signature.
 
 ### Gap 1 (and lock-without-write): `sm_lock`
 
@@ -184,7 +259,7 @@ row per base relation, `"S"|rel`.
   readers recheck the base row, false duplicates for a unique
   one. Deferred until blocking builds hurt.
 
-### Gap 2: a savepoint stack
+### Gap 2: a savepoint stack — DONE
 
 ```c
 int sm_savepoint(sm_session_t* s);           /* push; returns depth >= 1, or -1 */
@@ -192,38 +267,74 @@ int sm_rollback(sm_session_t* s, int depth); /* undo to that mark; keeps it, dro
 int sm_forget(sm_session_t* s, int depth);   /* forget that mark and deeper ones */
 ```
 
-§6.5 already records positions in `T.undo`, `T.created`, and
-`T.locks`; a savepoint is a saved set of those positions, and
-many savepoints are a stack of them. The layer pushes one at
-the start of each statement and forgets it at the end, above
-any user savepoints. `sm_forget` releases no locks; it only
-stops `sm_rollback` from returning to the mark.
+Implemented as proposed (DESIGN.md §6.5). §6.5 already
+recorded positions in `T.undo`, `T.created`, and `T.locks`; a
+savepoint is a saved set of those positions, and the stack is
+a vector of them. `sm_forget` releases no locks; it only stops
+`sm_rollback` from returning to the mark, and a lock taken
+inside a forgotten mark is then held for the enclosing one.
 
-**Tradeoff.** This breaks the current "one savepoint, calling
-again replaces it" contract. SQL-style named savepoints can be
-built on it in the layer.
+**It broke the old contract**, as expected: `sm_rollback`
+takes a depth now, and "calling `sm_savepoint` again replaces
+the mark" is gone. SQL-style named savepoints are built on it
+in the layer.
 
-### Gap 3: RC statement snapshots
+**A depth is reused** once its mark is gone, so a stale depth
+names a different mark rather than failing. An id per mark,
+never reused, would have caught that; depth won because SQL
+already obliges the layer to drop a name when its mark goes,
+so a correct caller cannot form a stale depth. The hazard is
+stated in `sm.h` and `API.md`.
 
-- **Cheap option.** The layer requires REPEATABLE READ or
-  SERIALIZABLE and never uses RC. No engine change.
-- **Real fix.** `sm_stmt_begin(session)`: between two such
-  calls, every RC read uses one pinned snapshot. Without it,
-  RC keeps taking a snapshot per call. Writes still check the
-  begin snapshot, so §6.2's invariant is unaffected.
+**The stack is capped** at `SM_MAX_SAVEPOINTS` (256), so
+runaway nesting is an `SM_ERR_INVALID` rather than unbounded
+growth. A layer that forgets each statement's mark never
+approaches it.
 
-Start with the cheap option; add `sm_stmt_begin` when RC is
-needed.
+### Gap 3: RC statement snapshots — DONE
 
-### Gap 4: backward scans
+`sm_stmt_begin(session)` is implemented (DESIGN.md §6.2). Two
+decisions in it are worth knowing, because they are what the
+layer relies on.
 
-A flags argument on `sm_scan`, e.g. `SM_SCAN_DESC`. Versions
+**The snapshot is taken by the statement's first read**, not
+by the boundary call and not by a write. A statement may
+therefore lock, wait, or write first and still read everything
+committed while it waited — which is what gap 1's index-build
+protocol needs, since it locks the schema row and only then
+scans. Taking it eagerly at the boundary call would have been
+simpler to reason about, but it would have pinned a pre-lock
+snapshot and the builder would have missed the commits it
+waited out.
+
+**There is no `sm_stmt_end`.** The next `sm_stmt_begin` ends
+the last statement, and the transaction ends the last of all.
+The cost is that a transaction which uses the call once reads
+that way for the rest of its life, with no way back to a
+snapshot per call; the gain is one call instead of a pair to
+keep balanced across rollback and prepare.
+
+Writes still check the begin snapshot, so §6.2's invariant is
+unaffected, and the GC watermark needed no change: an RC
+transaction already registers its begin snapshot for its whole
+life, which sits at or below any statement snapshot.
+
+The cheap option remains available and needs no engine
+support: a layer can require REPEATABLE READ or SERIALIZABLE
+and never use RC at all.
+
+### Gap 4: backward scans — closed as won't-do
+
+No proposal. `OBJECTIVE.md` settles this one against a
+direction flag, and the engine cost is part of why: versions
 of a key are stored newest first (`key|~xid|~seq`), so a
 backward scan meets the oldest version first and must walk to
-the start of the key's run before picking the visible one. It
-also needs `SeekForPrev` to work with the §10.2 prefix-seek
-setup. For SSI, the traversed range runs from the last key
-examined up to `ekey`.
+the start of each key's run before picking the visible one; it
+needs `SeekForPrev` to work with the §10.2 prefix-seek setup;
+and for SSI the traversed range would run from the last key
+examined up to `ekey`, inverting the bookkeeping in §10.2. A
+layer wanting descending order builds an inverted-byte
+relation instead.
 
 ### Gap 5: cursor reposition
 
@@ -243,10 +354,12 @@ is safe, and one range per cursor.
   in `rel.0`, which needs an active transaction since the
   answer depends on the snapshot (DESIGN.md §11).
 - **Batched read, old-image return.** Pure performance; leave
-  them until profiling asks.
+  them until profiling asks. Signatures sketched in the roster
+  above, with the lifetime question the old image raises.
 
 ### Order
 
-`sm_lock` first (gap 1 and lock-without-write), then the
-savepoint stack, then the rest as needed. One at a time:
-update `sm.h`, `API.md`, and `DESIGN.md`, then review.
+Gaps 2 and 3 are done. `sm_lock` next (gap 1 and
+lock-without-write), then the rest as needed. One at a time:
+update `sm.h`, `API.md`, and `DESIGN.md`, implement it in
+`src/` with tests, then review.
