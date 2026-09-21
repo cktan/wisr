@@ -125,7 +125,7 @@ seed R2 0
 @5 T2 write R2 t2
 @6 T1 commit?
 @7 T2 commit?
-@8 check at-most-one-committed T1 T2 when v+v
+@8 check at-most-one-committed T1 T2 when s+s
 ```
 
 ### 2.1 Directives
@@ -134,10 +134,10 @@ Directives set the run up. They are not echoed.
 
 | Directive | Meaning |
 |---|---|
-| `pairings all` | run the script once per pairing: RR/RR, RR/V, V/RR, V/V (the default) |
+| `pairings all` | run the script once per pairing: RR/RR, RR/S, S/RR, S/S (the default) |
 | `pairings rr` | only RR/RR |
-| `pairings rr+v` | only the two mixed pairings |
-| `pairings v+v` | only V/V |
+| `pairings rr+s` | only the two mixed pairings |
+| `pairings s+s` | only S/S |
 | `session <name>` | declare a session; its level comes from the pairing |
 | `session <name> rr` | declare a session pinned to REPEATABLE READ |
 | `session <name> ser` | declare a session pinned to SERIALIZABLE |
@@ -184,7 +184,7 @@ Error names are symbolic, never numbers or messages:
 `deadlock`, `prepared`, `invalid`.
 
 **`commit?`** is for a commit whose outcome may differ from
-run to run -- at V+V either side of a write skew may be the
+run to run -- at S+S either side of a write skew may be the
 one doomed. It records the result for the checks below and
 prints only `recorded`, so the transcript stays stable. A
 commit whose outcome is forced uses plain `commit` and prints
@@ -198,16 +198,16 @@ finishes immediately fails with `DID NOT BLOCK`; an unmarked
 step that never finishes fails with `HUNG`, after a minute.
 
 **`when <group>`** limits a step to some pairings: `rr`,
-`rr+v`, `v+v`, or `all`. It is how a scenario states an
+`rr+s`, `s+s`, or `all`. It is how a scenario states an
 outcome that differs by level, as `c06` does:
 
 ```
 @9 check committed T1 T2 T3 when rr
-@9 check failed T2 when v+v
+@9 check failed T2 when s+s
 ```
 
 Both modifiers may appear together, in either order:
-`... blocks when v+v`.
+`... blocks when s+s`.
 
 ### 2.3 Checks
 
@@ -281,7 +281,7 @@ resumed, and the step between the two is what released it.
 @5 T2 scan R1 R3 -> {R1, R2}
 @6 T2 commit -> ok
 @7 check rows -> {R1=0, R3=t1}
-== pairing RR/V == T1=RR T2=SER
+== pairing RR/S == T1=RR T2=SER
 ...
 ```
 

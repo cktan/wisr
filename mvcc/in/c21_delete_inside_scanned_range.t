@@ -20,5 +20,5 @@ seed R5 0
 @6 T1 commit?
 @7 T2 commit?
 @8 check committed T1 T2 when rr
-@8 check committed T1 T2 when rr+v
-@8 check at-most-one-committed T1 T2 when v+v
+@8 check committed T1 T2 when rr+s
+@8 check at-most-one-committed T1 T2 when s+s

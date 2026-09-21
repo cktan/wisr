@@ -350,8 +350,8 @@ private:
       return SM_XCT_SERIALIZABLE;
     }
     // The first session takes T1's level; the rest take T2's.
-    bool ser = index == 0 ? (m_pairing == PAIR_V_RR || m_pairing == PAIR_V_V)
-                          : (m_pairing == PAIR_RR_V || m_pairing == PAIR_V_V);
+    bool ser = index == 0 ? (m_pairing == PAIR_S_RR || m_pairing == PAIR_S_S)
+                          : (m_pairing == PAIR_RR_S || m_pairing == PAIR_S_S);
     return ser ? SM_XCT_SERIALIZABLE : SM_XCT_REPEATABLE_READ;
   }
 
@@ -555,7 +555,7 @@ int script_run(const script_t &script, int block_ms, std::string *out) {
     text << script.items[first].text << "\n";
     first++;
   }
-  for (pairing_t p : {PAIR_RR_RR, PAIR_RR_V, PAIR_V_RR, PAIR_V_V}) {
+  for (pairing_t p : {PAIR_RR_RR, PAIR_RR_S, PAIR_S_RR, PAIR_S_S}) {
     // The script may ask for one group of pairings only.
     if (!pairing_selected(p, script.pairings)) {
       continue;

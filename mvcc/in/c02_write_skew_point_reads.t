@@ -1,10 +1,10 @@
 # c02 -- write skew over two rows read by point read.
 #
 # Each transaction writes a row the other read, so
-# T1 --rw--> T2 and T2 --rw--> T1: a cycle. At V+V they cannot
+# T1 --rw--> T2 and T2 --rw--> T1: a cycle. At S+S they cannot
 # both commit; at RR, and in a mixed pair where only one side
 # is tracked, both do. The commits are written "commit?"
-# because at V+V either side may be the one doomed.
+# because at S+S either side may be the one doomed.
 
 pairings all
 session T1
@@ -23,5 +23,5 @@ seed R2 0
 @6 T1 commit?
 @7 T2 commit?
 @8 check committed T1 T2 when rr
-@8 check committed T1 T2 when rr+v
-@8 check at-most-one-committed T1 T2 when v+v
+@8 check committed T1 T2 when rr+s
+@8 check at-most-one-committed T1 T2 when s+s

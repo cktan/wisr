@@ -5,7 +5,7 @@
 # 12; T1's deposit of 20 commits; T3 reads and sees 20 and 0 --
 # a state no serial order produces once T2 commits its
 # penalty-priced withdrawal. T3 only reads, and is still a full
-# participant: at V+V not all three may commit.
+# participant: at S+S not all three may commit.
 
 pairings all
 session T1
@@ -27,6 +27,6 @@ seed R2 0
 @9 T2 write R2 -12
 @10 T2 commit?
 @11 check committed T1 T2 T3 when rr
-@11 check committed T1 T2 T3 when rr+v
-@11 check not-all-committed T1 T2 T3 when v+v
+@11 check committed T1 T2 T3 when rr+s
+@11 check not-all-committed T1 T2 T3 when s+s
 @12 check row R2 -12 when rr

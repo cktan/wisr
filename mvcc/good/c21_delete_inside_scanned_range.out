@@ -15,7 +15,7 @@
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check committed T1 T2 -> satisfied
-== pairing RR/V == T1=RR T2=SER
+== pairing RR/S == T1=RR T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 scan R1 R3 -> {R1, R2}
@@ -25,7 +25,7 @@
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check committed T1 T2 -> satisfied
-== pairing V/RR == T1=SER T2=RR
+== pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 scan R1 R3 -> {R1, R2}
@@ -35,7 +35,7 @@
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check committed T1 T2 -> satisfied
-== pairing V/V == T1=SER T2=SER
+== pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 scan R1 R3 -> {R1, R2}

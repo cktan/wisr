@@ -16,7 +16,7 @@
 @5 T2 commit -> ok
 @6 check committed T1 T2 -> satisfied
 @7 check rows -> {R1=t1, R2=t2, R4=t1}
-== pairing RR/V == T1=RR T2=SER
+== pairing RR/S == T1=RR T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 write R1 t1 -> ok
@@ -28,7 +28,7 @@
 @5 T2 commit -> ok
 @6 check committed T1 T2 -> satisfied
 @7 check rows -> {R1=t1, R2=t2, R4=t1}
-== pairing V/RR == T1=SER T2=RR
+== pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 write R1 t1 -> ok
@@ -40,7 +40,7 @@
 @5 T2 commit -> ok
 @6 check committed T1 T2 -> satisfied
 @7 check rows -> {R1=t1, R2=t2, R4=t1}
-== pairing V/V == T1=SER T2=SER
+== pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 write R1 t1 -> ok

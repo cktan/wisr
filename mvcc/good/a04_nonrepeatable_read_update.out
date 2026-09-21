@@ -2,7 +2,7 @@
 #
 # T1 reads R1, T2 updates it and commits, T1 reads again. The
 # second read must give the first read's value. T1 only reads,
-# so it commits even at V+V: one rw-edge out of T1 is not a
+# so it commits even at S+S: one rw-edge out of T1 is not a
 # dangerous structure.
 
 
@@ -16,7 +16,7 @@
 @7 T1 commit -> ok
 @8 check committed T1 T2 -> satisfied
 @8 check row R1 t2 -> satisfied
-== pairing RR/V == T1=RR T2=SER
+== pairing RR/S == T1=RR T2=SER
 @1 T1 begin -> ok
 @2 T1 read R1 -> 0
 @3 T2 begin -> ok
@@ -26,7 +26,7 @@
 @7 T1 commit -> ok
 @8 check committed T1 T2 -> satisfied
 @8 check row R1 t2 -> satisfied
-== pairing V/RR == T1=SER T2=RR
+== pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @2 T1 read R1 -> 0
 @3 T2 begin -> ok
@@ -36,7 +36,7 @@
 @7 T1 commit -> ok
 @8 check committed T1 T2 -> satisfied
 @8 check row R1 t2 -> satisfied
-== pairing V/V == T1=SER T2=SER
+== pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @2 T1 read R1 -> 0
 @3 T2 begin -> ok

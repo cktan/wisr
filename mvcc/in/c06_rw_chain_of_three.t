@@ -2,7 +2,7 @@
 #
 #   T1 --rw--> T2 --rw--> T3, and T3 commits first.
 #
-# T2 is the pivot. T3 takes T2's level, so V+V means all three
+# T2 is the pivot. T3 takes T2's level, so S+S means all three
 # are SERIALIZABLE and T2 must fail. In either mixed pairing
 # one link of the chain is an untracked REPEATABLE READ read,
 # so nothing fails.
@@ -25,9 +25,9 @@ seed R2 0
 @7 T2 commit
 @8 T1 commit
 @9 check committed T1 T2 T3 when rr
-@9 check committed T1 T2 T3 when rr+v
-@9 check failed T2 when v+v
-@9 check committed T1 T3 when v+v
+@9 check committed T1 T2 T3 when rr+s
+@9 check failed T2 when s+s
+@9 check committed T1 T3 when s+s
 @10 check row R1 t2 when rr
-@10 check row R1 0 when v+v
+@10 check row R1 0 when s+s
 @11 check row R2 t3

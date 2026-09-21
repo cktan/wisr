@@ -16,16 +16,16 @@
 
 /* The isolation level of each session in one run of a script. */
 enum pairing_t {
-  PAIR_RR_RR, /* T1 REPEATABLE READ,  T2 SERIALIZABLE    */
-  PAIR_RR_V,  /* T1 REPEATABLE READ,  T2 SERIALIZABLE    */
-  PAIR_V_RR,  /* T1 SERIALIZABLE,     T2 REPEATABLE READ */
-  PAIR_V_V    /* T1 SERIALIZABLE,     T2 SERIALIZABLE    */
+  PAIR_RR_RR, /* T1 REPEATABLE READ,  T2 REPEATABLE READ */
+  PAIR_RR_S,  /* T1 REPEATABLE READ,  T2 SERIALIZABLE    */
+  PAIR_S_RR,  /* T1 SERIALIZABLE,     T2 REPEATABLE READ */
+  PAIR_S_S    /* T1 SERIALIZABLE,     T2 SERIALIZABLE    */
 };
 
 /* The banner name of a pairing, as the transcript prints it. */
 const char *pairing_label(pairing_t p);
 
-/* The pairing group a "when" filter names: rr, rr+v, v+v, all. */
+/* The pairing group a "when" filter names: rr, rr+s, s+s, all. */
 bool pairing_selected(pairing_t p, const std::string &filter);
 
 /* What an item in a script is. */

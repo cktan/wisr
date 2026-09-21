@@ -1,5 +1,5 @@
 /*
- * e02 -- the invariant holds under contention at V+V.
+ * e02 -- the invariant holds under contention at S+S.
  *
  * Four rows are "doctors", each on call ("1"). Four threads,
  * one per row, repeatedly: scan the four rows, go off call if

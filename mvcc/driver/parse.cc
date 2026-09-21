@@ -116,7 +116,7 @@ bool take_when(std::vector<std::string> *arg, std::string *when) {
   }
   *when = (*arg)[n - 1];
   arg->resize(n - 2);
-  return *when == "rr" || *when == "rr+v" || *when == "v+v" || *when == "all";
+  return *when == "rr" || *when == "rr+s" || *when == "s+s" || *when == "all";
 }
 
 } // namespace
@@ -126,12 +126,12 @@ const char *pairing_label(pairing_t p) {
   switch (p) {
   case PAIR_RR_RR:
     return "RR/RR";
-  case PAIR_RR_V:
-    return "RR/V";
-  case PAIR_V_RR:
-    return "V/RR";
+  case PAIR_RR_S:
+    return "RR/S";
+  case PAIR_S_RR:
+    return "S/RR";
   default:
-    return "V/V";
+    return "S/S";
   }
 }
 
@@ -143,10 +143,10 @@ bool pairing_selected(pairing_t p, const std::string &filter) {
   if (filter == "rr") {
     return p == PAIR_RR_RR;
   }
-  if (filter == "rr+v") {
-    return p == PAIR_RR_V || p == PAIR_V_RR;
+  if (filter == "rr+s") {
+    return p == PAIR_RR_S || p == PAIR_S_RR;
   }
-  return p == PAIR_V_V; /* "v+v" */
+  return p == PAIR_S_S; /* "s+s" */
 }
 
 /* Parse the script at path (DRIVER.md §2). */
@@ -175,8 +175,8 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
     // Directives describe the run and are not echoed.
     if (w[0] == "pairings") {
       if (w.size() != 2 ||
-          !(w[1] == "all" || w[1] == "rr" || w[1] == "rr+v" || w[1] == "v+v")) {
-        *err = where(path, lineno, "pairings takes all, rr, rr+v, or v+v");
+          !(w[1] == "all" || w[1] == "rr" || w[1] == "rr+s" || w[1] == "s+s")) {
+        *err = where(path, lineno, "pairings takes all, rr, rr+s, or s+s");
         return false;
       }
       out->pairings = w[1];
@@ -235,7 +235,7 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
     }
     // A trailing "when <group>" limits the step to some pairings.
     if (!take_when(&it.arg, &it.when)) {
-      *err = where(path, lineno, "when takes rr, rr+v, v+v, or all");
+      *err = where(path, lineno, "when takes rr, rr+s, s+s, or all");
       return false;
     }
     // "blocks" may also precede "when", as in "... blocks when rr".

@@ -24,5 +24,5 @@ seed R3 0
 @10 T1 write R3 t1
 @11 T1 commit
 @12 check committed T1 when rr
-@12 check committed T1 when rr+v
-@12 check failed T1 when v+v
+@12 check committed T1 when rr+s
+@12 check failed T1 when s+s

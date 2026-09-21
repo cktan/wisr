@@ -20,7 +20,7 @@
 @9 T3 read R1 -> t1
 @9 T3 read R2 -> t1
 @10 T3 commit -> ok
-== pairing RR/V == T1=RR T2=SER T3=RR
+== pairing RR/S == T1=RR T2=SER T3=RR
 @1 T1 begin -> ok
 @2 T1 write R1 t1 -> ok
 @2 T1 insert R2 t1 -> ok
@@ -35,7 +35,7 @@
 @9 T3 read R1 -> t1
 @9 T3 read R2 -> t1
 @10 T3 commit -> ok
-== pairing V/RR == T1=SER T2=RR T3=RR
+== pairing S/RR == T1=SER T2=RR T3=RR
 @1 T1 begin -> ok
 @2 T1 write R1 t1 -> ok
 @2 T1 insert R2 t1 -> ok
@@ -50,7 +50,7 @@
 @9 T3 read R1 -> t1
 @9 T3 read R2 -> t1
 @10 T3 commit -> ok
-== pairing V/V == T1=SER T2=SER T3=RR
+== pairing S/S == T1=SER T2=SER T3=RR
 @1 T1 begin -> ok
 @2 T1 write R1 t1 -> ok
 @2 T1 insert R2 t1 -> ok

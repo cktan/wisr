@@ -12,8 +12,8 @@
  * Every scenario runs in each pairing of isolation levels:
  *
  *   RR    both transactions REPEATABLE READ
- *   RR+V  one of each, in both orders (P_RR_V and P_V_RR)
- *   V+V   both SERIALIZABLE
+ *   RR+S  one of each, in both orders (P_RR_S and P_S_RR)
+ *   S+S   both SERIALIZABLE
  *
  * A scenario's expected outcome is stated per pairing, because
  * that is the whole question these tests answer: which
@@ -43,38 +43,38 @@
 /* The isolation level of each transaction in a scenario. */
 enum pairing_t {
   P_RR_RR, /* T1 REPEATABLE READ,  T2 REPEATABLE READ */
-  P_RR_V,  /* T1 REPEATABLE READ,  T2 SERIALIZABLE    */
-  P_V_RR,  /* T1 SERIALIZABLE,     T2 REPEATABLE READ */
-  P_V_V    /* T1 SERIALIZABLE,     T2 SERIALIZABLE    */
+  P_RR_S,  /* T1 REPEATABLE READ,  T2 SERIALIZABLE    */
+  P_S_RR,  /* T1 SERIALIZABLE,     T2 REPEATABLE READ */
+  P_S_S    /* T1 SERIALIZABLE,     T2 SERIALIZABLE    */
 };
 
 /* Every pairing, for the loop each scenario opens with. */
 #define MVCC_PAIRINGS                                                          \
-  { P_RR_RR, P_RR_V, P_V_RR, P_V_V }
+  { P_RR_RR, P_RR_S, P_S_RR, P_S_S }
 
 /* Name the pairing in the failure output of everything below. */
 #define PAIRING(p) INFO("pairing: " << pairing_name(p))
 
 /* The pairings in which SSI tracks both transactions. */
-inline bool both_serializable(pairing_t p) { return p == P_V_V; }
+inline bool both_serializable(pairing_t p) { return p == P_S_S; }
 
 /* The name MVCC.md and the test output use for a pairing. */
 inline std::string pairing_name(pairing_t p) {
   switch (p) {
   case P_RR_RR:
     return "RR: T1=RR, T2=RR";
-  case P_RR_V:
-    return "RR+V: T1=RR, T2=SERIALIZABLE";
-  case P_V_RR:
-    return "RR+V: T1=SERIALIZABLE, T2=RR";
+  case P_RR_S:
+    return "RR+S: T1=RR, T2=SERIALIZABLE";
+  case P_S_RR:
+    return "RR+S: T1=SERIALIZABLE, T2=RR";
   default:
-    return "V+V: T1=SERIALIZABLE, T2=SERIALIZABLE";
+    return "S+S: T1=SERIALIZABLE, T2=SERIALIZABLE";
   }
 }
 
 /* The level transaction n runs at in pairing p. T3 follows T2. */
 inline sm_xctlevel_t level_of(pairing_t p, int n) {
-  bool ser = n == 1 ? (p == P_V_RR || p == P_V_V) : (p == P_RR_V || p == P_V_V);
+  bool ser = n == 1 ? (p == P_S_RR || p == P_S_S) : (p == P_RR_S || p == P_S_S);
   return ser ? SM_XCT_SERIALIZABLE : SM_XCT_REPEATABLE_READ;
 }
 

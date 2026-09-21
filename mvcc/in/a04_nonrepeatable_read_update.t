@@ -2,7 +2,7 @@
 #
 # T1 reads R1, T2 updates it and commits, T1 reads again. The
 # second read must give the first read's value. T1 only reads,
-# so it commits even at V+V: one rw-edge out of T1 is not a
+# so it commits even at S+S: one rw-edge out of T1 is not a
 # dangerous structure.
 
 pairings all

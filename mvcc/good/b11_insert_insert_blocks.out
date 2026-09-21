@@ -14,7 +14,7 @@
 @3 T2 insert R2 t2 blocks -> conflict (resumed)
 @5 check last T2 conflict -> satisfied
 @6 check row R2 t1 -> satisfied
-== pairing RR/V == T1=RR T2=SER
+== pairing RR/S == T1=RR T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 insert R2 t1 -> ok
@@ -23,7 +23,7 @@
 @3 T2 insert R2 t2 blocks -> conflict (resumed)
 @5 check last T2 conflict -> satisfied
 @6 check row R2 t1 -> satisfied
-== pairing V/RR == T1=SER T2=RR
+== pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 insert R2 t1 -> ok
@@ -32,7 +32,7 @@
 @3 T2 insert R2 t2 blocks -> conflict (resumed)
 @5 check last T2 conflict -> satisfied
 @6 check row R2 t1 -> satisfied
-== pairing V/V == T1=SER T2=SER
+== pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
 @2 T1 insert R2 t1 -> ok

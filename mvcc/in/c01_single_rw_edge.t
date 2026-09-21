@@ -2,7 +2,7 @@
 #
 # T1 reads R1, T2 writes it and commits: T1 --rw--> T2, and
 # nothing points back. T1 then writes a row nobody read. This
-# must commit at every pairing, V+V included: SSI fails a
+# must commit at every pairing, S+S included: SSI fails a
 # transaction only for two adjacent edges with the far one
 # committing first.
 

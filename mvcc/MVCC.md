@@ -102,12 +102,12 @@ and a mixed pair therefore behaves like neither pure case:
 | Pairing | T1 | T2 (and T3) |
 |---|---|---|
 | **RR** | REPEATABLE READ | REPEATABLE READ |
-| **RR+V** | REPEATABLE READ | SERIALIZABLE |
-| **RR+V** (mirror) | SERIALIZABLE | REPEATABLE READ |
-| **V+V** | SERIALIZABLE | SERIALIZABLE |
+| **RR+S** | REPEATABLE READ | SERIALIZABLE |
+| **RR+S** (mirror) | SERIALIZABLE | REPEATABLE READ |
+| **S+S** | SERIALIZABLE | SERIALIZABLE |
 
 A scenario's table below gives one column per pairing group;
-the two mirrors of RR+V always agree, and each scenario file
+the two mirrors of RR+S always agree, and each scenario file
 runs both.
 
 ## 3. How a scenario is written and run
@@ -162,7 +162,7 @@ build/driver mvcc/in/c02_write_skew_point_reads.t
 Comments in a script are echoed into the transcript, so the
 expected output says what it is proving and not only what
 happened. Where an outcome may differ from run to run -- at
-V+V either side of a write skew may be the one doomed -- the
+S+S either side of a write skew may be the one doomed -- the
 script writes `commit?`, which records the result without
 printing it, and states what must hold with a `check`.
 
@@ -180,7 +180,7 @@ these; the question is only which version each read returns.
 The answers are identical at every pairing, because
 visibility is a function of the snapshot alone.
 
-| # | History | RR | RR+V | V+V | File |
+| # | History | RR | RR+S | S+S | File |
 |---|---|---|---|---|---|
 | a01 | `T1: w(R1)` ‖ `T2: r(R1)` | old value | old value | old value | `in/a01_dirty_read_update.t` |
 | a02 | `T1: i(R3) d(R2)` ‖ `T2: s(P)` | unchanged | unchanged | unchanged | `in/a02_dirty_read_scan.t` |
@@ -204,11 +204,11 @@ is family C.
 
 Two transactions writing one row. Detection here is
 level-independent: the row lock and first-committer-wins run
-at every level, so the RR, RR+V and V+V columns agree
+at every level, so the RR, RR+S and S+S columns agree
 throughout. This is the part of the design that needs no
 SSI.
 
-| # | History | RR | RR+V | V+V | File |
+| # | History | RR | RR+S | S+S | File |
 |---|---|---|---|---|---|
 | b01 | `T1: r(R1)` ‖ `T2: w(R1) c` ‖ `T1: w(R1)` | CONFLICT | CONFLICT | CONFLICT | `in/b01_lost_update.t` |
 | b02 | `T1: (snapshot)` ‖ `T2: w(R1) c` ‖ `T1: w(R1)` | CONFLICT | CONFLICT | CONFLICT | `in/b02_blind_write_write.t` |
@@ -245,10 +245,10 @@ Two transactions where one writes something the other read.
 This is the only family where the pairings disagree, and it
 is the reason SERIALIZABLE exists.
 
-The **RR** and **RR+V** columns are the same throughout, and
+The **RR** and **RR+S** columns are the same throughout, and
 that is not an accident: an rw-edge is recorded only when the
 *reader* is SERIALIZABLE, and the structure needs two
-adjacent edges. In RR+V one of the two transactions is not
+adjacent edges. In RR+S one of the two transactions is not
 tracked, so at most one of the two edges exists, and one edge
 is never a cycle. **A mixed pair is therefore exactly as
 permissive as RR.** A caller who wants serializability must
@@ -256,7 +256,7 @@ run *every* transaction in the group at SERIALIZABLE;
 nothing enforces that, and c02 in its mixed pairings is what
 that costs.
 
-| # | History | RR | RR+V | V+V | File |
+| # | History | RR | RR+S | S+S | File |
 |---|---|---|---|---|---|
 | c01 | `T1: r(R1)` ‖ `T2: w(R1) c` ‖ `T1: w(R2) c` | OK | OK | OK | `in/c01_single_rw_edge.t` |
 | c02 | `T1: r(R1) r(R2) w(R1)` ‖ `T2: r(R1) r(R2) w(R2)` | both commit | both commit | ≤ 1 commits | `in/c02_write_skew_point_reads.t` |
@@ -289,8 +289,8 @@ these scenarios are the ones that would catch it.
 
 | # | What it asserts | Level | File |
 |---|---|---|---|
-| e01 | SSI state (nodes, SIREAD entries, ranges) is released once no transaction overlaps it | V | `e01_ssi_node_lifetime.cc` |
-| e02 | Four contending SERIALIZABLE threads enforcing "at least one on call" never break the invariant; a checker thread never sees it broken | V+V | `e02_serializable_invariant_stress.cc` |
+| e01 | SSI state (nodes, SIREAD entries, ranges) is released once no transaction overlaps it | S | `e01_ssi_node_lifetime.cc` |
+| e02 | Four contending SERIALIZABLE threads enforcing "at least one on call" never break the invariant; a checker thread never sees it broken | S+S | `e02_serializable_invariant_stress.cc` |
 | e03 | Four contending RR threads see `CONFLICT` / `DEADLOCK` and **never** `SERIALIZATION`; no update is lost | RR | `e03_rr_contention_stress.cc` |
 | e04 | `sm_lsrel` and `sm_mkrel` follow the same predicate rules as rows | all | `in/e04_catalog_predicate.t` |
 | e05 | Four RR transactions that each read everything and write one row all commit | RR | `in/e05_rr_many_readers_writers.t` |
