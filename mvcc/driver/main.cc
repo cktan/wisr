@@ -1,6 +1,6 @@
 /*
  * main.cc -- the driver: run one scenario script and print its
- * transcript (mvcc/PLAN.md).
+ * transcript (mvcc/DRIVER.md).
  *
  *   driver [--block-ms N] script.t
  *

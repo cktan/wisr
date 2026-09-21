@@ -1,5 +1,5 @@
 /*
- * parse.cc -- turning a script into items (PLAN.md §3).
+ * parse.cc -- turning a script into items (DRIVER.md §2).
  *
  * The grammar is one line long: a line is blank, a comment, a
  * directive, or a step. Anything else is an error, because a
@@ -48,6 +48,64 @@ bool declared(const script_t &s, const std::string &name) {
 }
 
 /*
+ * The verbs a step may use, with the number of arguments each
+ * takes. A verb the driver does not know, or one given the
+ * wrong number of arguments, is a broken script: catching it
+ * here keeps it out of a transcript, where it would look like
+ * a result.
+ */
+struct verb_t {
+  const char *name;
+  size_t min_args;
+  size_t max_args;
+};
+
+const verb_t STEP_VERBS[] = {
+    {"begin", 0, 0}, {"commit", 0, 0}, {"commit?", 0, 0}, {"abort", 0, 0},
+    {"read", 1, 1},  {"write", 2, 2},  {"insert", 2, 2},  {"delete", 1, 1},
+    {"scan", 2, 4},  {"open", 3, 3},   {"next", 1, 1},    {"close", 1, 1},
+    {"mkrel", 0, 0}, {"lsrel", 0, 0},
+};
+
+const verb_t CHECK_VERBS[] = {
+    {"rows", 0, 0},
+    {"row", 2, 2},
+    {"committed", 1, 8},
+    {"failed", 1, 8},
+    {"exactly-one-committed", 2, 8},
+    {"at-most-one-committed", 2, 8},
+    {"not-all-committed", 2, 8},
+    {"last", 2, 2},
+};
+
+/*
+ * Check a verb and its argument count against the table.
+ * Returns an empty string if it is well formed.
+ */
+std::string check_verb(const item_t &it, const verb_t *table, size_t n,
+                       const char *what) {
+  for (size_t i = 0; i < n; i++) {
+    if (it.verb != table[i].name) {
+      continue;
+    }
+    if (it.arg.size() < table[i].min_args ||
+        it.arg.size() > table[i].max_args) {
+      return std::string(what) + " " + it.verb + " takes " +
+             std::to_string(table[i].min_args) + " to " +
+             std::to_string(table[i].max_args) + " arguments, given " +
+             std::to_string(it.arg.size());
+    }
+    // scan takes its bounds, and optionally "limit <n>".
+    if (it.verb == "scan" && it.arg.size() != 2 &&
+        (it.arg.size() != 4 || it.arg[2] != "limit")) {
+      return "scan takes <lo> <hi> or <lo> <hi> limit <n>";
+    }
+    return "";
+  }
+  return std::string("unknown ") + what + ": " + it.verb;
+}
+
+/*
  * Pull a trailing "when <filter>" off a step's arguments.
  * Returns false if the filter names no known pairing group.
  */
@@ -91,7 +149,7 @@ bool pairing_selected(pairing_t p, const std::string &filter) {
   return p == PAIR_V_V; /* "v+v" */
 }
 
-/* Parse the script at path (PLAN.md §3). */
+/* Parse the script at path (DRIVER.md §2). */
 bool script_parse(const std::string &path, script_t *out, std::string *err) {
   std::ifstream in(path);
   // Report a script that is not there rather than running none.
@@ -184,6 +242,18 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
     if (!it.arg.empty() && it.arg.back() == "blocks") {
       it.expect_block = true;
       it.arg.pop_back();
+    }
+    // Reject a verb the driver does not know, or one given the
+    // wrong arguments, before it can reach a transcript.
+    std::string bad =
+        it.kind == ITEM_CHECK
+            ? check_verb(it, CHECK_VERBS,
+                         sizeof(CHECK_VERBS) / sizeof(CHECK_VERBS[0]), "check")
+            : check_verb(it, STEP_VERBS,
+                         sizeof(STEP_VERBS) / sizeof(STEP_VERBS[0]), "verb");
+    if (!bad.empty()) {
+      *err = where(path, lineno, bad);
+      return false;
     }
     out->items.push_back(it);
   }

@@ -4,7 +4,7 @@
  * A script is a list of items in file order: comments, blank
  * lines, and steps. Directives (pairings, session, seed) are
  * consumed while parsing and describe the run rather than
- * appearing in it. PLAN.md §3 is the language reference.
+ * appearing in it. DRIVER.md §2 is the language reference.
  */
 #ifndef WISR_DRIVER_H
 #define WISR_DRIVER_H

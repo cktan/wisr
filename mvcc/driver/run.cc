@@ -1,5 +1,5 @@
 /*
- * run.cc -- running a parsed script (PLAN.md §4, §5).
+ * run.cc -- running a parsed script (DRIVER.md §2.4, §4).
  *
  * Each session gets a thread, because a step may block on a
  * row lock and the driver must carry on with the next step
@@ -30,7 +30,7 @@
 
 namespace {
 
-/* The symbolic name of the current error (PLAN.md §4). */
+/* The symbolic name of the current error (DRIVER.md §4). */
 std::string error_name() {
   switch (sm_errno()) {
   case SM_ERR_CONFLICT:
@@ -99,7 +99,7 @@ std::string execute(worker_t *w, const item_t &it) {
     bool ok = sm_commit(w->sess) == 0;
     w->commit_state = ok ? 1 : -1;
     // "commit?" hides an outcome that may differ run to run;
-    // a check states what must hold instead (PLAN.md §4).
+    // a check states what must hold instead (DRIVER.md §2.2).
     if (it.verb == "commit?") {
       return "recorded";
     }
@@ -544,7 +544,7 @@ private:
 
 } // namespace
 
-/* Run script once per selected pairing (PLAN.md §4). */
+/* Run script once per selected pairing (DRIVER.md §2.1). */
 int script_run(const script_t &script, int block_ms, std::string *out) {
   std::ostringstream text;
   int failures = 0;

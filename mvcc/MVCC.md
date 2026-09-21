@@ -115,8 +115,9 @@ runs both.
 Each scenario is a script in `in/`, written as a timeline.
 The driver runs it once per pairing and prints a transcript;
 `good/` holds the transcript each script must produce, and
-`make test` diffs the two. `PLAN.md` is the language
-reference; `in/b09_dirty_write_blocks_commit.t` reads:
+`make test` diffs the two. `DRIVER.md` is the reference for
+the command and the language;
+`in/b09_dirty_write_blocks_commit.t` reads:
 
 ```
 @1 T1 begin
@@ -166,7 +167,11 @@ script writes `commit?`, which records the result without
 printing it, and states what must hold with a `check`.
 
 Three scenarios are not timelines and stay in C++, built into
-`build/mvcc_tests`: `e01`, `e02` and `e03` below.
+`build/mvcc_tests`: `e01` reaches into the database object to
+prove SSI state is released, and `e02` and `e03` run four
+threads for fifty rounds each, with retries. Everything else
+-- families A, B and C, the blocking scenarios included --
+is a script.
 
 ## 4. Family A — visibility
 
@@ -350,6 +355,17 @@ a dropped relation's rows — the scenarios live there.
 
 **Every claim in the tables above is executed.** If a table
 cell and the engine disagree, `make test` fails. A cell with
-no test file behind it does not exist in this document, and
-a scenario file with no row in the tables would be an
-omission worth fixing.
+no scenario behind it does not exist in this document, and a
+scenario with no row in the tables would be an omission worth
+fixing.
+
+**The scenarios were checked against a broken engine, not
+only a working one.** A suite that asserts nothing passes
+just as quietly as one that asserts everything, so three
+deliberate breakages were run against it: removing the SIREAD
+record a point read leaves fails 14 scenarios; removing the
+first-committer-wins check fails 11; breaking snapshot
+visibility fails 5 of the 6 it should. Those counts are worth
+re-measuring after a change to the engine's concurrency
+control -- if a breakage stops failing, a scenario has
+stopped asserting.
