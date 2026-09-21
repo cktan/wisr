@@ -110,10 +110,15 @@ Two changes make it possible, and the plan keeps them apart:
 | 5 | An insert at READ COMMITTED goes ahead against the newest committed version, with no re-check | assumed, see step 4 |
 | 6 | `sm_lock` at READ COMMITTED no longer fails with `SM_ERR_CONFLICT` | assumed, see step 4 |
 | 7 | Names: `SM_ERR_UPDATED` and `sm_read_latest` | provisional |
+| 8 | The read-latest mark lives in the session's lock list, not the shared lock table, and a successful write clears it | assumed, see step 4 |
+| 9 | `sm_read_latest` is allowed under a shared lock too, and sets no mark there | assumed, see step 4 |
 
 ## Step 0. Verify the starting state
 
 - `git status` is clean, and the branch is `main`.
+- The RocksDB development headers are installed
+  (`librocksdb-dev`); without `rocksdb/db.h` the build cannot
+  run.
 - `make -C sm1 -j4 test`, output saved to a log. Record the
   number of unit tests and of scenarios, so later steps can be
   compared against them.
@@ -202,6 +207,17 @@ sequencer's mutex, so every write now takes a global mutex.
 
 - Take the baseline from step 0 and a measurement from step 1,
   with many sessions writing different keys.
+- Measure two costs, not one. The first is contention: `alloc_mu`
+  also guards `db_claim_commit_ts` and `db_commit_done`, so a
+  high write rate competes with the commit path.
+- The second is lease renewal. `db_alloc_ts` used to run once
+  per writing transaction, for its `xid`; it now runs on every
+  row write, so the `WISR_META_NEXT_TS` lease runs out orders of
+  magnitude sooner. Each renewal is a synchronous RocksDB `Put`
+  to `CF:meta` inside `alloc_leased_locked`, under `alloc_mu`,
+  and it stalls every allocation on every thread. Count the
+  renewals per second. If they matter, enlarge the lease (say
+  to 10M), or give `wts` its own batch lease if `alloc_mu` stays.
 - If the cost is small, leave it and record the numbers. If it
   is not, `global_ts` becomes atomic and `db_claim_commit_ts`
   keeps the set insert atomic with the allocation another way.
@@ -232,6 +248,10 @@ runs only RR and SERIALIZABLE. New series `f`:
 | f06 repeatable read and serializable unchanged | the same timeline still ends in `conflict`, aborting the loser |
 | f07 version order | a writer whose `xid` predates a newer commit writes past it; a later read returns the writer's value, and after compaction the newer commit is not dropped as superseded |
 
+| f08 chained contention | three RC sessions queue on one hot counter; each in turn wakes with `updated`, calls `readlatest`, writes and commits, so the counter ends at three |
+| f09 delete meets a concurrent update | the first session commits `n = 1`; the second's `DELETE WHERE n = 0` gets `updated`, `readlatest` shows `n = 1`, and the delete is skipped |
+| f10 savepoint rollback around `readlatest` | a session takes a savepoint, its update fails with `updated`, it calls `readlatest`, then rolls back to the savepoint; the mark and the lock state are what step 4 says they are |
+
 f07 is the §6.2 example, and the one that fails on today's
 ordering. It needs a way to force compaction; `test_gc.cc`
 already does.
@@ -249,12 +269,21 @@ expected reason, and only they fail.
   `sm_retryable()` is 0.
 - **`sm_read_latest`.** Takes the same arguments as `sm_read`
   and returns as it does (0 found, 1 no such key). It requires
-  READ COMMITTED and an exclusive lock this transaction already
-  holds on the key, taken by the failed write or by
-  `sm_lock`; otherwise `SM_ERR_INVALID`. It returns the newest
-  committed version, ignoring the snapshot, and marks the lock
-  entry. Because the lock is held, that version cannot change
-  before commit.
+  READ COMMITTED and a lock this transaction already holds on
+  the key, taken by the failed write or by `sm_lock`;
+  otherwise `SM_ERR_INVALID`. It returns the newest committed
+  version, ignoring the snapshot. Because the lock is held, that
+  version cannot change before commit.
+  - Under an **exclusive** lock it also sets the mark that lets
+    the write through.
+  - Under a **shared** lock it sets no mark, since a shared
+    holder cannot write without upgrading. It is allowed
+    because `sm_lock` no longer fails at READ COMMITTED: a
+    caller that waited for `SHARED` (a writer locking a schema
+    row, `SELECT FOR SHARE`) must be able to see the row that
+    committed while it waited, and `sm_read` may still return
+    the pre-lock version if the statement snapshot was already
+    pinned.
 - **The write.** With the mark set, the check in `access_write`
   passes and the write applies to the newest version. The old
   row `sm_update` hands back (§5.3) is that version's image.
@@ -270,8 +299,20 @@ expected reason, and only they fail.
   read committed transaction already pins its begin snapshot,
   and the newest committed version is never collected).
 
-The lock entry gains one bit per holder, in `lockmgr.cc`; it is
-released with the lock.
+**The mark.** One bit per held lock, kept in the session's lock
+list (`sm_session_t::lockref_t`, `session.h`), not in the shared
+`db_t::lock_ent_t`. Only the exclusive holder reads or sets it,
+so `access_write` and `sm_read_latest` need not take
+`db->lock_mu`. It goes away with the lock.
+
+- A successful write **clears** it. Left set, a later write to
+  the key, after a savepoint rollback or much later in a long
+  transaction, would slip past the conflict check without a
+  fresh read.
+- A rollback to a savepoint taken after `sm_read_latest` and
+  before the write leaves the mark set, since the lock is still
+  held. If the lock was acquired after the savepoint, rolling
+  back releases it, and the mark with it. f10 covers both.
 
 **Existing tests that encode the old rule at READ COMMITTED,**
 found by grep and to be read before they are changed:
