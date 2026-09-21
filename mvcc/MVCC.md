@@ -36,7 +36,10 @@ nobody. It cannot fail with a conflict.
 on its row for the rest of the transaction, so a second
 writer of the same row waits, rather than producing a
 version nobody asked for. This is what makes a dirty write
-impossible.
+impossible. Two writers that wait on each other's rows
+would wait forever, so the engine breaks the cycle itself:
+the youngest transaction on it fails with
+`SM_ERR_DEADLOCK`, and the others go on.
 
 **First-committer-wins.** Once the lock is granted, the
 writer compares the row's newest committed version against
@@ -92,6 +95,7 @@ otherwise. **P** is a predicate: the key range of a scan.
 | `CONFLICT` | `SM_ERR_CONFLICT` at the write: first-committer-wins. Retryable, and it aborts the transaction |
 | `SERIALIZATION` | `SM_ERR_SERIALIZATION` at commit: the dangerous structure. Retryable |
 | `BLOCK` | the call waits on a row lock until the holder ends |
+| `DEADLOCK` | `SM_ERR_DEADLOCK` at the write: the transaction was the youngest on a cycle of waits. Retryable, and it aborts the transaction |
 | `DUPKEY` | `SM_ERR_DUPKEY`: the row exists in this transaction's own snapshot. Not retryable |
 | `NOTFOUND` | `SM_ERR_NOTFOUND`: the row does not exist in this transaction's own snapshot. Not retryable |
 
@@ -225,19 +229,29 @@ SSI.
 | b13 | `T1: w(R2)`, `T1: d(R2)`, R2 never existed | NOTFOUND | NOTFOUND | NOTFOUND | `in/b13_missing_row.t` |
 | b14 | `T1: w(R1) w(R2)` ‖ `T2: w(R3) c` ‖ `T1: w(R3)` | CONFLICT, R1/R2 discarded | same | same | `in/b14_conflict_discards_the_loser.t` |
 | b15 | `T1: r(R1) c` ‖ `T2: w(R1) c` | OK | OK | OK | `in/b15_write_after_reader_commits.t` |
+| b16 | `T1: w(R1) w(R2)` ‖ `T2: w(R2) w(R1)` | DEADLOCK for T2, T1 commits | same | same | `in/b16_deadlock.t` |
+| b17 | `T1: i(R2)` ‖ `T2: i(R2)` ‖ `T1: a` | BLOCK → OK | same | same | `in/b17_insert_blocks_abort.t` |
+| b18 | `T2: i(R2) i(R3) c` ‖ `T1: w(R2)`, `T3: d(R3)` (both absent at their snapshots) | CONFLICT | CONFLICT | CONFLICT | `in/b18_write_after_concurrent_insert.t` |
+| b19 | `T1: w(R1)` ‖ `T2: w(R1)`, `T3: w(R1)` ‖ `T1: c` | BLOCK → CONFLICT, both waiters | same | same | `in/b19_multi_waiter_lock_queue.t` |
 
 Three distinctions this family pins down, because getting
 them wrong would be invisible in ordinary use:
 
-- **CONFLICT, not NOTFOUND** (b03, b05): the row exists in
-  the loser's snapshot. Reporting "no such row" would tell
-  the caller a falsehood and lose the retry.
+- **CONFLICT, not NOTFOUND** (b03, b05, b18): the row
+  exists in the loser's snapshot, or was created after it.
+  Reporting "no such row" would tell the caller a falsehood
+  and lose the retry.
 - **CONFLICT, not DUPKEY** (b06 vs b12): the row is absent
   in the loser's snapshot, so the failure is about
   concurrency, and is retryable.
-- **Blocked, then judged** (b09, b10, b11): waiting is not
-  the answer, only the wait. What decides is what the holder
-  did — commit or abort.
+- **Blocked, then judged** (b09, b10, b11, b17, b19):
+  waiting is not the answer, only the wait. What decides is
+  what the holder did — commit or abort — and every waiter
+  in the queue is judged on its own.
+- **A wait that cannot end** (b16): two writers holding what
+  the other wants would wait forever, so the engine picks
+  the youngest and fails it. This is the one write-write
+  outcome no amount of patience produces.
 
 ## 6. Family C — read-write conflicts
 
@@ -279,9 +293,14 @@ that costs.
 | c19 | `T1: r(R1)` ‖ `T2: w(R2) c` ‖ `T1: w(R1) c` | OK | OK | OK | `in/c19_safe_snapshot.t` |
 | c20 | three concurrent readers, then one writes | OK | OK | OK | `in/c20_concurrent_readers.t` |
 | c21 | `T1: s(P) w(R5)` ‖ `T2: r(R5) d(R1 in P)` | both commit | both commit | ≤ 1 commits | `in/c21_delete_inside_scanned_range.t` |
+| c22 | `T1: s(P) w(R1)` ‖ `T2: s(P) w(R2)`, both rows in P | both commit | both commit | ≤ 1 commits | `in/c22_write_skew_predicate_update.t` |
+| c23 | `T2: r(R2) w(R1) c` ‖ `T1: s(P over R1) w(R2) c` | OK | OK | T1 fails | `in/c23_scan_past_committed_writer.t` |
+| c24 | `T1: scan, stop at R1, close` ‖ `T2: w(R1) r(R2)` ‖ `T1: w(R2)` | both commit | both commit | ≤ 1 commits | `in/c24_write_inside_examined_range.t` |
+| c25 | `T1: cursor over P, closed unread` ‖ `T2: w(R1 in P) r(R2)` ‖ `T1: w(R2)` | OK | OK | OK | `in/c25_cursor_closed_unread.t` |
+| c26 | c06 with `T3: a` in place of `T3: c` | all commit | all commit | T2 (pivot) fails anyway | `in/c26_pivot_successor_aborts.t` |
 
 Half of this family — c01, c08 through c12, c14, c15, c19,
-c20 — exists to bound the other half. A level that failed
+c20, c25 — exists to bound the other half. A level that failed
 every transaction would satisfy c02 to c07 and be useless;
 these scenarios are the ones that would catch it.
 
@@ -331,21 +350,24 @@ of the above is within-process concurrency.
 **The enumeration is complete over these axes.** For two
 transactions on one row, the write-write matrix is every
 ordered pair from {update, delete, insert} where the loser's
-operation is legal in its own snapshot — b01 through b07,
-plus the blocked variants b09 to b11 and the two
+operation is legal in its own snapshot — b01 through b07
+and b18, plus the blocked variants b09 to b11 and b17, the
+queue of waiters b19, the cycle of waiters b16, and the two
 non-conflict answers b12 and b13. For read-write, it is
 every way one transaction can read (point read of a present
 row, point read of an absent row, scan of a range, open
-cursor) crossed with every way another can write into that
-read (update, insert, delete) — c02 to c06, c16 to c18, c21
-— plus the shapes that must not fail.
+cursor, cursor closed early) crossed with every way another
+can write into that read (update, insert, delete) — c02 to
+c06, c16 to c18, c21 to c24 — plus the shapes that must not
+fail.
 
 **It is not a model check.** Each scenario is one schedule,
 chosen because it is the one that distinguishes the levels.
 Interleavings other than the ones written here are not
-explored, and the three threaded scenarios (b09 to b11) and
-two stress scenarios (e02, e03) are the only places where
-real concurrency, rather than a scripted order, is involved.
+explored, and the six blocking scenarios (b09 to b11, b16,
+b17, b19) and two stress scenarios (e02, e03) are the only
+places where real concurrency, rather than a scripted order,
+is involved.
 
 **It assumes a single relation and a single process.**
 Crash recovery, two-phase commit, garbage collection and the

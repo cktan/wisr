@@ -1,0 +1,52 @@
+# c23 -- a scan that steps past a newer version.
+#
+# c16 with a range scan in place of the point read. T2's write
+# of R1 commits before T1's scan even opens its range, so no
+# edge can come from the range: the only way for T1 to learn
+# of T2 is by stepping past its version mid-scan, which is
+# T1 --rw--> T2. T1's write of R2, which T2 read, closes the
+# structure onto a committed pivot, and T1 is the one doomed.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T2 read R2 -> 0
+@3 T2 write R1 t2 -> ok
+@4 T2 commit -> ok
+@5 T1 scan R1 R3 -> {R1, R2}
+@6 T1 write R2 t1 -> ok
+@7 T1 commit -> ok
+@8 check committed T1 -> satisfied
+@9 check row R2 t1 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T2 read R2 -> 0
+@3 T2 write R1 t2 -> ok
+@4 T2 commit -> ok
+@5 T1 scan R1 R3 -> {R1, R2}
+@6 T1 write R2 t1 -> ok
+@7 T1 commit -> ok
+@8 check committed T1 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T2 read R2 -> 0
+@3 T2 write R1 t2 -> ok
+@4 T2 commit -> ok
+@5 T1 scan R1 R3 -> {R1, R2}
+@6 T1 write R2 t1 -> ok
+@7 T1 commit -> ok
+@8 check committed T1 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T2 read R2 -> 0
+@3 T2 write R1 t2 -> ok
+@4 T2 commit -> ok
+@5 T1 scan R1 R3 -> {R1, R2}
+@6 T1 write R2 t1 -> ok
+@7 T1 commit -> serialization
+@8 check failed T1 -> satisfied
+@9 check row R2 0 -> satisfied

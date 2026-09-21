@@ -1,0 +1,61 @@
+# b19 -- two writers waiting on one row lock.
+#
+# b09 has a single waiter; here both T2 and T3 queue behind
+# T1. Releasing the lock must wake every waiter and judge each
+# one on its own: both took their snapshots before T1
+# committed, so both lose first-committer-wins rather than one
+# of them inheriting the other's verdict.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T3 write R1 t3 blocks -> blocked
+@5 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> conflict (resumed)
+@4 T3 write R1 t3 blocks -> conflict (resumed)
+@6 check last T2 conflict -> satisfied
+@7 check last T3 conflict -> satisfied
+@8 check row R1 t1 -> satisfied
+== pairing RR/S == T1=RR T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T3 write R1 t3 blocks -> blocked
+@5 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> conflict (resumed)
+@4 T3 write R1 t3 blocks -> conflict (resumed)
+@6 check last T2 conflict -> satisfied
+@7 check last T3 conflict -> satisfied
+@8 check row R1 t1 -> satisfied
+== pairing S/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T3 write R1 t3 blocks -> blocked
+@5 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> conflict (resumed)
+@4 T3 write R1 t3 blocks -> conflict (resumed)
+@6 check last T2 conflict -> satisfied
+@7 check last T3 conflict -> satisfied
+@8 check row R1 t1 -> satisfied
+== pairing S/S == T1=SER T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T3 write R1 t3 blocks -> blocked
+@5 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> conflict (resumed)
+@4 T3 write R1 t3 blocks -> conflict (resumed)
+@6 check last T2 conflict -> satisfied
+@7 check last T3 conflict -> satisfied
+@8 check row R1 t1 -> satisfied
