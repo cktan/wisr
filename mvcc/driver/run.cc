@@ -188,6 +188,27 @@ std::string execute(worker_t *w, const item_t &it) {
     w->cursors.erase(it2);
     return "ok";
   }
+  if (it.verb == "savepoint") {
+    int depth = sm_savepoint(w->sess);
+    // The depth is the mark's name, so print it: a script
+    // rolls back to the number this step reported.
+    return depth < 0 ? error_name() : std::to_string(depth);
+  }
+  if (it.verb == "rollback") {
+    // rollback <depth>: undo to that mark, keeping it.
+    return sm_rollback(w->sess, atoi(a[0].c_str())) == 0 ? "ok" : error_name();
+  }
+  if (it.verb == "lock") {
+    // lock <row> <shared|exclusive>: take the row lock
+    // without writing the row.
+    if (a[1] != "shared" && a[1] != "exclusive") {
+      return "ERROR: lock mode must be shared or exclusive, not " + a[1];
+    }
+    sm_lockmode_t mode = a[1] == "shared" ? SM_LOCK_SHARED : SM_LOCK_EXCLUSIVE;
+    return sm_lock(w->sess, w->rel, a[0].data(), a[0].size(), mode) == 0
+               ? "ok"
+               : error_name();
+  }
   if (it.verb == "mkrel") {
     uint64_t relid = 0;
     // The relid itself is generated, so it is not printed.

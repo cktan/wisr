@@ -1,0 +1,82 @@
+# b27 -- shared against exclusive, in both directions.
+#
+# A shared lock stops a write, and an exclusive lock stops a
+# shared request: the mode is a property of the lock, not of
+# who asks. T1 holds R1 shared and T2's write waits. T3 holds
+# R2 exclusive and T1's shared request waits. Each waiter is
+# released by its holder ending, and the two chains are
+# independent -- T1 is a holder and a waiter at once.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T3 lock R2 exclusive -> ok
+@5 T1 lock R2 shared blocks -> blocked
+@6 T3 abort -> ok
+@5 T1 lock R2 shared blocks -> ok (resumed)
+@7 check last T1 ok -> satisfied
+@8 T1 abort -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@9 check last T2 ok -> satisfied
+@10 T2 commit -> ok
+@11 check committed T2 -> satisfied
+@12 check row R1 t2 -> satisfied
+@12 check row R2 0 -> satisfied
+== pairing RR/S == T1=RR T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T3 lock R2 exclusive -> ok
+@5 T1 lock R2 shared blocks -> blocked
+@6 T3 abort -> ok
+@5 T1 lock R2 shared blocks -> ok (resumed)
+@7 check last T1 ok -> satisfied
+@8 T1 abort -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@9 check last T2 ok -> satisfied
+@10 T2 commit -> ok
+@11 check committed T2 -> satisfied
+@12 check row R1 t2 -> satisfied
+@12 check row R2 0 -> satisfied
+== pairing S/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T3 lock R2 exclusive -> ok
+@5 T1 lock R2 shared blocks -> blocked
+@6 T3 abort -> ok
+@5 T1 lock R2 shared blocks -> ok (resumed)
+@7 check last T1 ok -> satisfied
+@8 T1 abort -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@9 check last T2 ok -> satisfied
+@10 T2 commit -> ok
+@11 check committed T2 -> satisfied
+@12 check row R1 t2 -> satisfied
+@12 check row R2 0 -> satisfied
+== pairing S/S == T1=SER T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T3 lock R2 exclusive -> ok
+@5 T1 lock R2 shared blocks -> blocked
+@6 T3 abort -> ok
+@5 T1 lock R2 shared blocks -> ok (resumed)
+@7 check last T1 ok -> satisfied
+@8 T1 abort -> ok
+@3 T2 write R1 t2 blocks -> ok (resumed)
+@9 check last T2 ok -> satisfied
+@10 T2 commit -> ok
+@11 check committed T2 -> satisfied
+@12 check row R1 t2 -> satisfied
+@12 check row R2 0 -> satisfied

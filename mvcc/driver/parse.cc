@@ -61,10 +61,11 @@ struct verb_t {
 };
 
 const verb_t STEP_VERBS[] = {
-    {"begin", 0, 0}, {"commit", 0, 0}, {"commit?", 0, 0}, {"abort", 0, 0},
-    {"read", 1, 1},  {"write", 2, 2},  {"insert", 2, 2},  {"delete", 1, 1},
-    {"scan", 2, 4},  {"open", 3, 3},   {"next", 1, 1},    {"close", 1, 1},
-    {"mkrel", 0, 0}, {"lsrel", 0, 0},
+    {"begin", 0, 0}, {"commit", 0, 0}, {"commit?", 0, 0},   {"abort", 0, 0},
+    {"read", 1, 1},  {"write", 2, 2},  {"insert", 2, 2},    {"delete", 1, 1},
+    {"scan", 2, 4},  {"open", 3, 3},   {"next", 1, 1},      {"close", 1, 1},
+    {"mkrel", 0, 0}, {"lsrel", 0, 0},  {"savepoint", 0, 0}, {"rollback", 1, 1},
+    {"lock", 2, 2},
 };
 
 const verb_t CHECK_VERBS[] = {

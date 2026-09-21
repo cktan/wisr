@@ -238,6 +238,11 @@ SSI.
 | b22 | `T1: d(R1)` ‖ `T2: d(R1)` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b22_delete_blocks_commit.t` |
 | b23 | `T1: d(R1)` ‖ `T2: w(R1)` ‖ `T1: a` | BLOCK → OK | same | same | `in/b23_delete_blocks_abort.t` |
 | b24 | `T1: i(R2)` ‖ `T2: w(R2)` ‖ `T1: a` | BLOCK → NOTFOUND | same | same | `in/b24_insert_update_blocks_abort.t` |
+| b25 | `T1: w(R1) sp w(R2)` ‖ `T2: w(R2)` ‖ `T1: rollback` | BLOCK → OK on R2, R1 still locked | same | same | `in/b25_savepoint_releases_lock.t` |
+| b26 | `T1: lock-s(R1)`, `T2: lock-s(R1)` ‖ `T3: w(R1)` | both share, T3 BLOCKs for both | same | same | `in/b26_shared_locks_coexist.t` |
+| b27 | `T1: lock-s(R1)` ‖ `T2: w(R1)`; `T3: lock-x(R2)` ‖ `T1: lock-s(R2)` | BLOCK both ways → OK | same | same | `in/b27_lock_blocks_both_ways.t` |
+| b28 | `T1: lock-s(R1)`, `T2: lock-s(R1)` ‖ both `w(R1)` | DEADLOCK for T2, T1 upgrades | same | same | `in/b28_lock_upgrade_deadlock.t` |
+| b29 | `T1: r(R1)`, `T3: (snapshot)` ‖ `T2: w(R1) c` ‖ `T1: lock-s(R1)`, `T3: lock-x(R1)` | CONFLICT both modes | same | same | `in/b29_lock_of_committed_row.t` |
 
 Three distinctions this family pins down, because getting
 them wrong would be invisible in ordinary use:
@@ -257,10 +262,16 @@ them wrong would be invisible in ordinary use:
   waiter finds its row and succeeds, b24's finds the
   uncommitted insert undone and gets NOTFOUND.
 - **The victim need not be the transaction that noticed**
-  (b16, b20, b21): b16 dooms the transaction whose own step
-  closes the cycle, b20 dooms one that is already blocked
-  and must be woken to hear it, and b21's cycle of three is
-  longer than a single waits-for hop.
+  (b16, b20, b21, b28): b16 dooms the transaction whose own
+  step closes the cycle, b20 dooms one that is already
+  blocked and must be woken to hear it, b21's cycle of three
+  is longer than a single waits-for hop, and b28's cycle sits
+  on one row, which only a shared lock makes possible.
+- **A lock is a lock, whoever takes it** (b26 to b29):
+  `sm_lock` shares the row locks writes take, so a shared
+  holder stops a writer, a writer stops a shared request, and
+  a lock taken over a row committed since the snapshot fails
+  with CONFLICT rather than handing back something stale.
 - **A wait that cannot end** (b16): two writers holding what
   the other wants would wait forever, so the engine picks
   the youngest and fails it. This is the one write-write
@@ -313,6 +324,7 @@ that costs.
 | c26 | c06 with `T3: a` in place of `T3: c` | all commit | all commit | T2 (pivot) fails anyway | `in/c26_pivot_successor_aborts.t` |
 | c27 | c06 with `T1: a` in place of `T1: c` | all commit | all commit | T2 (pivot) fails anyway | `in/c27_pivot_predecessor_aborts.t` |
 | c28 | `T1: r(R1,R2) w(R1)` ‖ `T2: r(R2,R3) w(R2)` ‖ `T3: r(R3,R1) w(R3)` | all commit | all commit | at least one fails | `in/c28_write_skew_three_transactions.t` |
+| c29 | c02 with T1's read taken before a savepoint it rolls back to | all commit | all commit | at most one commits | `in/c29_rollback_keeps_read_set.t` |
 
 Half of this family — c01, c08 through c12, c14, c15, c19,
 c20, c25 — exists to bound the other half. A level that failed
@@ -368,7 +380,9 @@ ordered pair from {update, delete, insert} where the loser's
 operation is legal in its own snapshot — b01 through b07
 and b18, plus the blocked variants b09 to b11, b17 and b22
 to b24, the queue of waiters b19, the cycles of waiters b16,
-b20 and b21, and the two non-conflict answers b12 and b13. For read-write, it is
+b20, b21 and b28, and the two non-conflict answers b12 and
+b13. Explicit locking crosses the same matrix in b26 to b29,
+and b25 covers the locks a savepoint gives back. For read-write, it is
 every way one transaction can read (point read of a present
 row, point read of an absent row, scan of a range, open
 cursor, cursor closed early) crossed with every way another
@@ -379,8 +393,8 @@ fail.
 **It is not a model check.** Each scenario is one schedule,
 chosen because it is the one that distinguishes the levels.
 Interleavings other than the ones written here are not
-explored, and the twelve blocking scenarios (b09 to b11,
-b16, b17, b19 to b24) and two stress scenarios (e02, e03)
+explored, and the seventeen blocking scenarios (b09 to b11,
+b16, b17, b19 to b29) and two stress scenarios (e02, e03)
 are the only places where real concurrency, rather than a
 scripted order, is involved.
 

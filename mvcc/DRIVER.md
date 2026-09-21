@@ -176,6 +176,9 @@ can be read at a glance. Several steps may share a time.
 | `open` | `<cursor> <lo> <hi>` | `ok`: a cursor that outlives the step |
 | `next` | `<cursor>` | `<key>=<value>`, or `end` |
 | `close` | `<cursor>` | `ok` |
+| `savepoint` | — | the new mark's depth: `1`, `2`, … |
+| `rollback` | `<depth>` | `ok`, or an error name |
+| `lock` | `<row> <shared\|exclusive>` | `ok`, or an error name |
 | `mkrel` | — | `ok`: creates a relation, whose relid is not printed |
 | `lsrel` | — | `<n> relations` |
 
@@ -189,6 +192,20 @@ one doomed. It records the result for the checks below and
 prints only `recorded`, so the transcript stays stable. A
 commit whose outcome is forced uses plain `commit` and prints
 it.
+
+**`savepoint`** prints the depth it made rather than `ok`,
+because the depth is the mark's name: a later `rollback` names
+the number this step reported. Marks nest, so a second
+`savepoint` prints `2`, and rolling back to a depth keeps that
+mark and drops the ones inside it.
+
+**`lock`** takes the row lock without writing the row, in
+either mode. Shared holders coexist; anything else waits, so a
+`lock` step takes `blocks` like a write does. A transaction
+already holding the row shared and asking for it exclusive
+upgrades, which is how two transactions deadlock on one row
+(`b28`). Once held, the lock is checked against the
+transaction's snapshot, so `lock` can also answer `conflict`.
 
 **`blocks`** says the step must wait on a row lock. Only a
 step marked this way may be reported blocked; every other

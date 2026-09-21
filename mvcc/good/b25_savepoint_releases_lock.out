@@ -1,0 +1,78 @@
+# b25 -- a rollback gives back the locks taken after the mark.
+#
+# T1 locks R1, marks, then locks R2 by writing it, and T2
+# queues on R2. Rolling back to the mark undoes that write, so
+# the lock has nothing left to protect and T2 goes through at
+# once -- no one ever saw T1's intent on R2. R1 was locked
+# before the mark and stays locked: the rollback is to a
+# point, not a release of everything.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T1 savepoint -> 1
+@4 T1 write R2 t1 -> ok
+@5 T2 write R2 t2 blocks -> blocked
+@6 T1 rollback 1 -> ok
+@5 T2 write R2 t2 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 write R1 t2 blocks -> blocked
+@9 T1 commit -> ok
+@8 T2 write R1 t2 blocks -> conflict (resumed)
+@10 check last T2 conflict -> satisfied
+@11 check committed T1 -> satisfied
+@12 check row R1 t1 -> satisfied
+@12 check row R2 0 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T1 savepoint -> 1
+@4 T1 write R2 t1 -> ok
+@5 T2 write R2 t2 blocks -> blocked
+@6 T1 rollback 1 -> ok
+@5 T2 write R2 t2 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 write R1 t2 blocks -> blocked
+@9 T1 commit -> ok
+@8 T2 write R1 t2 blocks -> conflict (resumed)
+@10 check last T2 conflict -> satisfied
+@11 check committed T1 -> satisfied
+@12 check row R1 t1 -> satisfied
+@12 check row R2 0 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T1 savepoint -> 1
+@4 T1 write R2 t1 -> ok
+@5 T2 write R2 t2 blocks -> blocked
+@6 T1 rollback 1 -> ok
+@5 T2 write R2 t2 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 write R1 t2 blocks -> blocked
+@9 T1 commit -> ok
+@8 T2 write R1 t2 blocks -> conflict (resumed)
+@10 check last T2 conflict -> satisfied
+@11 check committed T1 -> satisfied
+@12 check row R1 t1 -> satisfied
+@12 check row R2 0 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T1 savepoint -> 1
+@4 T1 write R2 t1 -> ok
+@5 T2 write R2 t2 blocks -> blocked
+@6 T1 rollback 1 -> ok
+@5 T2 write R2 t2 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 write R1 t2 blocks -> blocked
+@9 T1 commit -> ok
+@8 T2 write R1 t2 blocks -> conflict (resumed)
+@10 check last T2 conflict -> satisfied
+@11 check committed T1 -> satisfied
+@12 check row R1 t1 -> satisfied
+@12 check row R2 0 -> satisfied

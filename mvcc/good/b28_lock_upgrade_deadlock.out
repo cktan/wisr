@@ -1,0 +1,64 @@
+# b28 -- two shared holders that both want to write.
+#
+# b16 needs two rows to make a cycle, because an exclusive
+# lock is held by one transaction and the second waits for
+# the first. A shared lock has many holders, so one row is
+# enough: T1 and T2 both hold R1, both ask to upgrade, and
+# each is waiting for the other to let go of the very lock it
+# holds. This is what every SELECT ... FOR SHARE followed by
+# an UPDATE risks, and the engine breaks it the same way --
+# the younger, T2, is the victim, and T1's upgrade completes.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 lock R1 shared -> ok
+@4 T1 write R1 t1 blocks -> blocked
+@5 T2 write R1 t2 -> deadlock
+@4 T1 write R1 t1 blocks -> ok (resumed)
+@6 check last T2 deadlock -> satisfied
+@7 check last T1 ok -> satisfied
+@8 T1 commit -> ok
+@9 check committed T1 -> satisfied
+@10 check row R1 t1 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 lock R1 shared -> ok
+@4 T1 write R1 t1 blocks -> blocked
+@5 T2 write R1 t2 -> deadlock
+@4 T1 write R1 t1 blocks -> ok (resumed)
+@6 check last T2 deadlock -> satisfied
+@7 check last T1 ok -> satisfied
+@8 T1 commit -> ok
+@9 check committed T1 -> satisfied
+@10 check row R1 t1 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 lock R1 shared -> ok
+@4 T1 write R1 t1 blocks -> blocked
+@5 T2 write R1 t2 -> deadlock
+@4 T1 write R1 t1 blocks -> ok (resumed)
+@6 check last T2 deadlock -> satisfied
+@7 check last T1 ok -> satisfied
+@8 T1 commit -> ok
+@9 check committed T1 -> satisfied
+@10 check row R1 t1 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 lock R1 shared -> ok
+@4 T1 write R1 t1 blocks -> blocked
+@5 T2 write R1 t2 -> deadlock
+@4 T1 write R1 t1 blocks -> ok (resumed)
+@6 check last T2 deadlock -> satisfied
+@7 check last T1 ok -> satisfied
+@8 T1 commit -> ok
+@9 check committed T1 -> satisfied
+@10 check row R1 t1 -> satisfied

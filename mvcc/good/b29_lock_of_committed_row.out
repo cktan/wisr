@@ -1,0 +1,58 @@
+# b29 -- locking a row that changed after the snapshot.
+#
+# A lock is only worth taking if what the caller reads under
+# it is current, so sm_lock runs first-committer-wins once the
+# lock is held: a row committed after the transaction began
+# fails the call rather than handing back a stale row under a
+# lock that suggests otherwise. It is the b01 answer for a
+# call that writes nothing, and it holds in both modes.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 lock R1 shared -> conflict
+@7 check last T1 conflict -> satisfied
+@8 T3 lock R1 exclusive -> conflict
+@9 check last T3 conflict -> satisfied
+@10 check row R1 t2 -> satisfied
+== pairing RR/S == T1=RR T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 lock R1 shared -> conflict
+@7 check last T1 conflict -> satisfied
+@8 T3 lock R1 exclusive -> conflict
+@9 check last T3 conflict -> satisfied
+@10 check row R1 t2 -> satisfied
+== pairing S/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 lock R1 shared -> conflict
+@7 check last T1 conflict -> satisfied
+@8 T3 lock R1 exclusive -> conflict
+@9 check last T3 conflict -> satisfied
+@10 check row R1 t2 -> satisfied
+== pairing S/S == T1=SER T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 lock R1 shared -> conflict
+@7 check last T1 conflict -> satisfied
+@8 T3 lock R1 exclusive -> conflict
+@9 check last T3 conflict -> satisfied
+@10 check row R1 t2 -> satisfied

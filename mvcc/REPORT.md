@@ -2,7 +2,8 @@
 
 This is what an audit of wisr's scenario testing infrastructure
 in `mvcc/` left standing: three behaviours that look wrong at
-first reading and are not, and five driver capability gaps.
+first reading and are not, and five driver capability gaps,
+two of which are now closed.
 
 **Status (2026-09-21).** Gaps 1 to 8 are closed, each with a
 script and a transcript in `good/`; `MVCC.md` documents what
@@ -10,12 +11,17 @@ every script pins. The defects the audit found in the scripts
 themselves — checks that named the wrong pairing group, and
 assertions left to the transcript diff — are fixed. The six
 scenario gaps section 8 listed are closed too, as seven
-scripts, `b20` to `b24` and `c27`, `c28`. The suite is 67
-scripts and `make test` is green.
+scripts, `b20` to `b24` and `c27`, `c28`. Gaps 9 and 11
+followed, as three new verbs and six more scripts, `b25` to
+`b29` and `c29`. The suite is 73 scripts and `make test` is
+green.
 
-Gaps 9 to 13 are driver capability gaps: engine features
-implemented in `include/sm.h` and `src/` that the driver cannot
-yet express. They are what is left.
+Gaps 9 and 11 are closed: the driver has `savepoint`,
+`rollback` and `lock`, and six scripts use them. Gaps 10, 12
+and 13 remain — engine features the driver still cannot
+express. Gap 10 is the expensive one, because it is a change
+to the grammar rather than a verb: relations would have to
+become nameable in every verb that touches a row.
 
 ---
 
@@ -83,7 +89,7 @@ are recorded so the next reader does not re-open them.
 
 ---
 
-## 3. Gap 9, open: `savepoint` and `rollback` in the driver
+## 3. Gap 9 — CLOSED: `savepoint` and `rollback` in the driver
 
 **In the engine.** `sm_savepoint` and `sm_rollback`
 (`include/sm.h`) mark the undo list and unwind to it:
@@ -108,12 +114,23 @@ verb, so no scenario can reach any of it. Two consequences:
   transaction — conservative, and the reason rollback cannot
   launder a serialization failure — has no coverage at all.
 
-**What it costs.** Two entries in `STEP_VERBS`
+**What it cost.** Two entries in `STEP_VERBS`
 (`driver/parse.cc`) and two cases in the step dispatch
-(`driver/run.cc`), both taking no arguments, then the
-scripts: a B-family one for the lock release, and a C-family
-one for the retained read set. It is a driver change first,
-which is why no script closes it.
+(`driver/run.cc`), then the two scripts it predicted:
+`b25_savepoint_releases_lock.t` for the locks a rollback
+gives back, and `c29_rollback_keeps_read_set.t` for the read
+set it keeps.
+
+One correction to the estimate: `rollback` takes an argument
+now. Savepoints nest, so `savepoint` prints the depth it made
+rather than `ok`, and `rollback <depth>` names the mark. The
+`sm_forget` half of the stack has no verb yet; nothing needed
+one, and it is the same shape when something does.
+
+`c29` is the claim that had no coverage anywhere: a read
+taken before a savepoint still constrains the transaction
+after a rollback past it. Were it otherwise, both sides of
+that write skew would commit at S/S.
 
 ---
 
@@ -172,7 +189,7 @@ and fail under `s+s`.
 
 ---
 
-## 5. Gap 11, open: explicit row locking (`sm_lock`) in the driver
+## 5. Gap 11 — CLOSED: explicit row locking (`sm_lock`) in the driver
 
 **In the engine.** `sm_lock` (`include/sm.h`, `src/lockmgr.cc`)
 takes a row lock in `SM_LOCK_SHARED` or `SM_LOCK_EXCLUSIVE` mode
@@ -184,17 +201,24 @@ lock is held, `access_check_current` validates that the key was
 not committed after the transaction's begin snapshot, failing
 with `SM_ERR_CONFLICT` otherwise.
 
-**The gap.** The driver has no `lock` verb. Concurrency of
-explicit locking, shared-mode coexistence, single-row upgrade
-deadlocks, and conflict detection on non-writing locks have
-no scenario coverage.
+**What it cost.** A `lock <row> <shared|exclusive>` verb in
+`driver/parse.cc` and `driver/run.cc`, then the four
+scenarios it listed, one each:
 
-**What it costs.** A `lock <row> <shared|exclusive>` verb in
-`driver/parse.cc` and `driver/run.cc`. Then scenarios for:
-* Shared lock coexistence (multiple transactions lock shared without blocking).
-* Shared blocking exclusive, and exclusive blocking shared.
-* Single-row upgrade deadlock (two shared holders write or upgrade R1).
-* Lock conflict on concurrently committed rows.
+* `b26_shared_locks_coexist.t` — two shared holders, and a
+  writer that waits for the last of them.
+* `b27_lock_blocks_both_ways.t` — shared stops a writer,
+  exclusive stops a shared request, in one timeline where a
+  transaction is holder and waiter at once.
+* `b28_lock_upgrade_deadlock.t` — a deadlock cycle on ONE
+  row, which exclusive-only locking cannot produce.
+* `b29_lock_of_committed_row.t` — first-committer-wins under
+  the lock, in both modes.
+
+The C++ tests in `test/test_lock.cc` that these mirror keep
+their assertions about error codes and argument handling;
+what the scripts retire is the thread-and-sleep timeline
+around them.
 
 ---
 
