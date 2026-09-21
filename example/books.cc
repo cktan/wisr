@@ -1,9 +1,9 @@
 /*
- * sample.cc -- a small tour of the wisr API: create a table
+ * books.cc -- a small tour of the wisr API: create a table
  * book(id, title, author), insert a few rows and commit, then
  * read one row back and scan them all.
  *
- *   make -j4 && build/sample [homedir]
+ *   make -j4 && build/example/books [homedir]
  *
  * wisr stores ordered key -> value maps, so the table is laid
  * out by hand:
@@ -149,7 +149,7 @@ void upsert_book(sm_session_t *s, uint64_t rel, const book_t &b) {
 
 /* Create book, fill it, then read one row and scan them all. */
 int main(int argc, char **argv) {
-  const char *homedir = argc > 1 ? argv[1] : "sample-home";
+  const char *homedir = argc > 1 ? argv[1] : "books-home";
 
   // Make the home directory; sm_init requires it to exist.
   if (mkdir(homedir, 0700) != 0 && errno != EEXIST) {
