@@ -1,0 +1,46 @@
+# c09 -- reads and writes that do not meet.
+#
+# Neither transaction writes a row the other read, so there is
+# no edge in either direction.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R3 -> 0
+@4 T1 write R2 t1 -> ok
+@5 T2 write R4 t2 -> ok
+@6 T1 commit -> ok
+@7 T2 commit -> ok
+@8 check committed T1 T2 -> satisfied
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R3 -> 0
+@4 T1 write R2 t1 -> ok
+@5 T2 write R4 t2 -> ok
+@6 T1 commit -> ok
+@7 T2 commit -> ok
+@8 check committed T1 T2 -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R3 -> 0
+@4 T1 write R2 t1 -> ok
+@5 T2 write R4 t2 -> ok
+@6 T1 commit -> ok
+@7 T2 commit -> ok
+@8 check committed T1 T2 -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R3 -> 0
+@4 T1 write R2 t1 -> ok
+@5 T2 write R4 t2 -> ok
+@6 T1 commit -> ok
+@7 T2 commit -> ok
+@8 check committed T1 T2 -> satisfied

@@ -1,0 +1,56 @@
+# c11 -- a cursor closed early covers only what it read.
+#
+# T1 stops its scan at R1 and closes the cursor, so the
+# predicate shrinks to the part traversed and T2's insert past
+# that point creates no edge back. Only T2 --rw--> T1 remains,
+# and one edge is not a cycle.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 open C R1 R5 -> ok
+@3 T1 next C -> R1=0
+@4 T1 close C -> ok
+@5 T2 insert R4 t2 -> ok
+@6 T2 read R2 -> 0
+@7 T1 write R2 t1 -> ok
+@8 T1 commit -> ok
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 open C R1 R5 -> ok
+@3 T1 next C -> R1=0
+@4 T1 close C -> ok
+@5 T2 insert R4 t2 -> ok
+@6 T2 read R2 -> 0
+@7 T1 write R2 t1 -> ok
+@8 T1 commit -> ok
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 open C R1 R5 -> ok
+@3 T1 next C -> R1=0
+@4 T1 close C -> ok
+@5 T2 insert R4 t2 -> ok
+@6 T2 read R2 -> 0
+@7 T1 write R2 t1 -> ok
+@8 T1 commit -> ok
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 open C R1 R5 -> ok
+@3 T1 next C -> R1=0
+@4 T1 close C -> ok
+@5 T2 insert R4 t2 -> ok
+@6 T2 read R2 -> 0
+@7 T1 write R2 t1 -> ok
+@8 T1 commit -> ok
+@9 T2 commit -> ok
+@10 check committed T1 T2 -> satisfied

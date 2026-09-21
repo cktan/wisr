@@ -110,18 +110,63 @@ A scenario's table below gives one column per pairing group;
 the two mirrors of RR+V always agree, and each scenario file
 runs both.
 
-## 3. Running the scenarios
+## 3. How a scenario is written and run
+
+Each scenario is a script in `in/`, written as a timeline.
+The driver runs it once per pairing and prints a transcript;
+`good/` holds the transcript each script must produce, and
+`make test` diffs the two. `PLAN.md` is the language
+reference; `in/b09_dirty_write_blocks_commit.t` reads:
 
 ```
-make test                       # the whole suite, mvcc included
-build/mvcc_tests                # every scenario
-build/mvcc_tests -tc="c0*"      # one family
-build/mvcc_tests -ltc           # list them
+@1 T1 begin
+@1 T2 begin
+@2 T1 write R1 t1
+@3 T2 write R1 t2 blocks
+@4 T1 commit
+@5 check last T2 conflict
+@6 check row R1 t1
 ```
 
-Each file holds exactly one `TEST_CASE`, named for its
-scenario id, and opens with the history in the notation
-above. A failure prints the pairing it failed in.
+and produces, for each pairing:
+
+```
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 write R1 t2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 t2 blocks -> conflict (resumed)
+@5 check last T2 conflict -> satisfied
+@6 check row R1 t1 -> satisfied
+```
+
+A blocked step is printed where it blocked and again where it
+resumed, so the transcript reads causally: the line between
+the two is the step that released the lock. Blocking is
+claimed by the script rather than measured by the driver --
+the trailing `blocks` -- so a slow machine cannot turn an
+ordinary step into a "blocked" one and change the
+transcript.
+
+```
+make test                     # everything, scenarios included
+make scenarios                # just the scripts, with diffs
+make accept                   # take the current transcripts as
+                              #   expected -- a deliberate act,
+                              #   never run by make test
+build/driver mvcc/in/c02_write_skew_point_reads.t
+```
+
+Comments in a script are echoed into the transcript, so the
+expected output says what it is proving and not only what
+happened. Where an outcome may differ from run to run -- at
+V+V either side of a write skew may be the one doomed -- the
+script writes `commit?`, which records the result without
+printing it, and states what must hold with a `check`.
+
+Three scenarios are not timelines and stay in C++, built into
+`build/mvcc_tests`: `e01`, `e02` and `e03` below.
 
 ## 4. Family A — visibility
 
@@ -132,19 +177,19 @@ visibility is a function of the snapshot alone.
 
 | # | History | RR | RR+V | V+V | File |
 |---|---|---|---|---|---|
-| a01 | `T1: w(R1)` ‖ `T2: r(R1)` | old value | old value | old value | `a01_dirty_read_update.cc` |
-| a02 | `T1: i(R3) d(R2)` ‖ `T2: s(P)` | unchanged | unchanged | unchanged | `a02_dirty_read_scan.cc` |
-| a03 | `T1: w(R1) d(R2) i(R3) a` ‖ `T2: r/w the same rows` | all OK | all OK | all OK | `a03_aborted_writes.cc` |
-| a04 | `T1: r(R1)` ‖ `T2: w(R1) c` ‖ `T1: r(R1)` | same value | same value | same value | `a04_nonrepeatable_read_update.cc` |
-| a05 | `T1: r(R1)` ‖ `T2: d(R1) c` ‖ `T1: r(R1), s(P)` | still there | still there | still there | `a05_nonrepeatable_read_delete.cc` |
-| a06 | `T1: s(P)` ‖ `T2: i(R2) c` ‖ `T1: s(P)` | no phantom | no phantom | no phantom | `a06_phantom_insert.cc` |
-| a07 | `T1: s(P)` ‖ `T2: d(R2) c` ‖ `T1: s(P)` | unchanged | unchanged | unchanged | `a07_phantom_delete.cc` |
-| a08 | `T1: i(R3) w(R1) d(R2)` then `T1: r/s` | own writes | own writes | own writes | `a08_own_writes.cc` |
-| a09 | `T1: open cursor, w(each row), i(R4)` | cursor stable | cursor stable | cursor stable | `a09_cursor_stability.cc` |
-| a10 | `T1: d(R1) i(R1) c` ‖ older `T2: r(R1)` | old value | old value | old value | `a10_resurrected_row.cc` |
-| a11 | `T1: r(R2) -> -` ‖ `T2: i(R2) c` ‖ `T1: r(R2)` | `-` | `-` | `-` | `a11_read_of_later_insert.cc` |
-| a12 | `T1: w(R1) i(R2)` ‖ `T2` before `c`, `T3` after | T2 no, T3 yes | same | same | `a12_commit_boundary.cc` |
-| a13 | `T1: s(all)` ‖ ten committed transactions ‖ `T1: s(all)` | unchanged | unchanged | unchanged | `a13_long_reader.cc` |
+| a01 | `T1: w(R1)` ‖ `T2: r(R1)` | old value | old value | old value | `in/a01_dirty_read_update.t` |
+| a02 | `T1: i(R3) d(R2)` ‖ `T2: s(P)` | unchanged | unchanged | unchanged | `in/a02_dirty_read_scan.t` |
+| a03 | `T1: w(R1) d(R2) i(R3) a` ‖ `T2: r/w the same rows` | all OK | all OK | all OK | `in/a03_aborted_writes.t` |
+| a04 | `T1: r(R1)` ‖ `T2: w(R1) c` ‖ `T1: r(R1)` | same value | same value | same value | `in/a04_nonrepeatable_read_update.t` |
+| a05 | `T1: r(R1)` ‖ `T2: d(R1) c` ‖ `T1: r(R1), s(P)` | still there | still there | still there | `in/a05_nonrepeatable_read_delete.t` |
+| a06 | `T1: s(P)` ‖ `T2: i(R2) c` ‖ `T1: s(P)` | no phantom | no phantom | no phantom | `in/a06_phantom_insert.t` |
+| a07 | `T1: s(P)` ‖ `T2: d(R2) c` ‖ `T1: s(P)` | unchanged | unchanged | unchanged | `in/a07_phantom_delete.t` |
+| a08 | `T1: i(R3) w(R1) d(R2)` then `T1: r/s` | own writes | own writes | own writes | `in/a08_own_writes.t` |
+| a09 | `T1: open cursor, w(each row), i(R4)` | cursor stable | cursor stable | cursor stable | `in/a09_cursor_stability.t` |
+| a10 | `T1: d(R1) i(R1) c` ‖ older `T2: r(R1)` | old value | old value | old value | `in/a10_resurrected_row.t` |
+| a11 | `T1: r(R2) -> -` ‖ `T2: i(R2) c` ‖ `T1: r(R2)` | `-` | `-` | `-` | `in/a11_read_of_later_insert.t` |
+| a12 | `T1: w(R1) i(R2)` ‖ `T2` before `c`, `T3` after | T2 no, T3 yes | same | same | `in/a12_commit_boundary.t` |
+| a13 | `T1: s(all)` ‖ ten committed transactions ‖ `T1: s(all)` | unchanged | unchanged | unchanged | `in/a13_long_reader.t` |
 
 Note what a06 does **not** say: T1 may not go on to *write*
 on the strength of that scan and still be serializable. That
@@ -160,21 +205,21 @@ SSI.
 
 | # | History | RR | RR+V | V+V | File |
 |---|---|---|---|---|---|
-| b01 | `T1: r(R1)` ‖ `T2: w(R1) c` ‖ `T1: w(R1)` | CONFLICT | CONFLICT | CONFLICT | `b01_lost_update.cc` |
-| b02 | `T1: (snapshot)` ‖ `T2: w(R1) c` ‖ `T1: w(R1)` | CONFLICT | CONFLICT | CONFLICT | `b02_blind_write_write.cc` |
-| b03 | `T2: d(R1) c` ‖ `T1: w(R1)` | CONFLICT | CONFLICT | CONFLICT | `b03_update_after_delete.cc` |
-| b04 | `T2: w(R1) c` ‖ `T1: d(R1)` | CONFLICT | CONFLICT | CONFLICT | `b04_delete_after_update.cc` |
-| b05 | `T2: d(R1) c` ‖ `T1: d(R1)` | CONFLICT | CONFLICT | CONFLICT | `b05_delete_after_delete.cc` |
-| b06 | `T2: i(R2) c` ‖ `T1: i(R2)` (absent at T1's snapshot) | CONFLICT | CONFLICT | CONFLICT | `b06_insert_after_insert.cc` |
-| b07 | `T2: d(R1) c` ‖ `T1: i(R1)` (present at T1's snapshot) | CONFLICT | CONFLICT | CONFLICT | `b07_insert_after_delete.cc` |
-| b08 | `T1: w(R1) d(R3) i(R4)` ‖ `T2: w(R2) d(R5)` | OK | OK | OK | `b08_writes_to_different_rows.cc` |
-| b09 | `T1: w(R1)` ‖ `T2: w(R1)` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `b09_dirty_write_blocks_commit.cc` |
-| b10 | `T1: w(R1)` ‖ `T2: w(R1)` ‖ `T1: a` | BLOCK → OK | same | same | `b10_dirty_write_blocks_abort.cc` |
-| b11 | `T1: i(R2)` ‖ `T2: i(R2)` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `b11_insert_insert_blocks.cc` |
-| b12 | `T1: i(R1)`, R1 committed long ago | DUPKEY | DUPKEY | DUPKEY | `b12_duplicate_key.cc` |
-| b13 | `T1: w(R2)`, `T1: d(R2)`, R2 never existed | NOTFOUND | NOTFOUND | NOTFOUND | `b13_missing_row.cc` |
-| b14 | `T1: w(R1) w(R2)` ‖ `T2: w(R3) c` ‖ `T1: w(R3)` | CONFLICT, R1/R2 discarded | same | same | `b14_conflict_discards_the_loser.cc` |
-| b15 | `T1: r(R1) c` ‖ `T2: w(R1) c` | OK | OK | OK | `b15_write_after_reader_commits.cc` |
+| b01 | `T1: r(R1)` ‖ `T2: w(R1) c` ‖ `T1: w(R1)` | CONFLICT | CONFLICT | CONFLICT | `in/b01_lost_update.t` |
+| b02 | `T1: (snapshot)` ‖ `T2: w(R1) c` ‖ `T1: w(R1)` | CONFLICT | CONFLICT | CONFLICT | `in/b02_blind_write_write.t` |
+| b03 | `T2: d(R1) c` ‖ `T1: w(R1)` | CONFLICT | CONFLICT | CONFLICT | `in/b03_update_after_delete.t` |
+| b04 | `T2: w(R1) c` ‖ `T1: d(R1)` | CONFLICT | CONFLICT | CONFLICT | `in/b04_delete_after_update.t` |
+| b05 | `T2: d(R1) c` ‖ `T1: d(R1)` | CONFLICT | CONFLICT | CONFLICT | `in/b05_delete_after_delete.t` |
+| b06 | `T2: i(R2) c` ‖ `T1: i(R2)` (absent at T1's snapshot) | CONFLICT | CONFLICT | CONFLICT | `in/b06_insert_after_insert.t` |
+| b07 | `T2: d(R1) c` ‖ `T1: i(R1)` (present at T1's snapshot) | CONFLICT | CONFLICT | CONFLICT | `in/b07_insert_after_delete.t` |
+| b08 | `T1: w(R1) d(R3) i(R4)` ‖ `T2: w(R2) d(R5)` | OK | OK | OK | `in/b08_writes_to_different_rows.t` |
+| b09 | `T1: w(R1)` ‖ `T2: w(R1)` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b09_dirty_write_blocks_commit.t` |
+| b10 | `T1: w(R1)` ‖ `T2: w(R1)` ‖ `T1: a` | BLOCK → OK | same | same | `in/b10_dirty_write_blocks_abort.t` |
+| b11 | `T1: i(R2)` ‖ `T2: i(R2)` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b11_insert_insert_blocks.t` |
+| b12 | `T1: i(R1)`, R1 committed long ago | DUPKEY | DUPKEY | DUPKEY | `in/b12_duplicate_key.t` |
+| b13 | `T1: w(R2)`, `T1: d(R2)`, R2 never existed | NOTFOUND | NOTFOUND | NOTFOUND | `in/b13_missing_row.t` |
+| b14 | `T1: w(R1) w(R2)` ‖ `T2: w(R3) c` ‖ `T1: w(R3)` | CONFLICT, R1/R2 discarded | same | same | `in/b14_conflict_discards_the_loser.t` |
+| b15 | `T1: r(R1) c` ‖ `T2: w(R1) c` | OK | OK | OK | `in/b15_write_after_reader_commits.t` |
 
 Three distinctions this family pins down, because getting
 them wrong would be invisible in ordinary use:
@@ -208,27 +253,27 @@ that costs.
 
 | # | History | RR | RR+V | V+V | File |
 |---|---|---|---|---|---|
-| c01 | `T1: r(R1)` ‖ `T2: w(R1) c` ‖ `T1: w(R2) c` | OK | OK | OK | `c01_single_rw_edge.cc` |
-| c02 | `T1: r(R1) r(R2) w(R1)` ‖ `T2: r(R1) r(R2) w(R2)` | both commit | both commit | ≤ 1 commits | `c02_write_skew_point_reads.cc` |
-| c03 | `T1: s(P) i(R1)` ‖ `T2: s(P) i(R2)` | both commit | both commit | ≤ 1 commits | `c03_write_skew_predicate_insert.cc` |
-| c04 | `T1: s(P) d(R1)` ‖ `T2: s(P) d(R2)` | both commit | both commit | ≤ 1 commits | `c04_write_skew_predicate_delete.cc` |
-| c05 | `T1: r(R2) i(R1)` ‖ `T2: r(R1) i(R2)` | both commit | both commit | ≤ 1 commits | `c05_read_absent_then_insert.cc` |
-| c06 | `T1: r(R1)` ‖ `T2: r(R2) w(R1)` ‖ `T3: w(R2) c` ‖ `T2: c` | all commit | all commit | T2 (pivot) fails | `c06_rw_chain_of_three.cc` |
-| c07 | Fekete: `T2: r(R1) r(R2)` ‖ `T1: w(R1) c` ‖ `T3: r(R1) r(R2) c` ‖ `T2: w(R2) c` | all commit, anomaly visible | all commit | not all commit | `c07_read_only_anomaly.cc` |
-| c08 | `T1: s(R1..R2)` ‖ `T2: i(R4) r(R3)` ‖ `T1: w(R3)` | OK | OK | OK | `c08_insert_outside_predicate.cc` |
-| c09 | `T1: r(R1) w(R2)` ‖ `T2: r(R3) w(R4)` | OK | OK | OK | `c09_disjoint_read_and_write.cc` |
-| c10 | `T1: r(R1) w(R2) c` then `T2: r(R2) w(R1) c` | OK | OK | OK | `c10_reader_commits_first.cc` |
-| c11 | `T1: scan, stop at R1, close` ‖ `T2: i(R4) r(R2)` ‖ `T1: w(R2)` | OK | OK | OK | `c11_cursor_closed_early.cc` |
-| c12 | `T1: r(R1) r(R2)` ‖ `T2: w(R1) c` ‖ `T1: r(R1) c` | OK | OK | OK | `c12_read_only_after_writers.cc` |
-| c13 | c02, asking *where* the failure appears | OK | OK | at `c`, retry then OK | `c13_failure_arrives_at_commit.cc` |
-| c14 | `T1: w(R1)` ‖ `T2: w(R2)`, no reads at all | OK | OK | OK | `c14_blind_writes_only.cc` |
-| c15 | `T1: s(P) w(R1) i(R3)` — its own range | OK | OK | OK | `c15_scan_then_write_own_range.cc` |
-| c16 | `T2: r(R2) w(R1) c` ‖ `T1: r(R1) w(R2) c` | OK | OK | T1 fails | `c16_read_past_committed_writer.cc` |
-| c17 | `T3: r(R1)` ‖ `T2: r(R2) w(R1) c` ‖ `T1: w(R2) c` | OK | OK | T1 fails | `c17_edge_onto_committed_pivot.cc` |
-| c18 | `T1: cursor open over P` ‖ `T2: r(R3) i(R2 in P) c` ‖ `T1: w(R3) c` | OK | OK | T1 fails | `c18_phantom_while_cursor_open.cc` |
-| c19 | `T1: r(R1)` ‖ `T2: w(R2) c` ‖ `T1: w(R1) c` | OK | OK | OK | `c19_safe_snapshot.cc` |
-| c20 | three concurrent readers, then one writes | OK | OK | OK | `c20_concurrent_readers.cc` |
-| c21 | `T1: s(P) w(R5)` ‖ `T2: r(R5) d(R1 in P)` | both commit | both commit | ≤ 1 commits | `c21_delete_inside_scanned_range.cc` |
+| c01 | `T1: r(R1)` ‖ `T2: w(R1) c` ‖ `T1: w(R2) c` | OK | OK | OK | `in/c01_single_rw_edge.t` |
+| c02 | `T1: r(R1) r(R2) w(R1)` ‖ `T2: r(R1) r(R2) w(R2)` | both commit | both commit | ≤ 1 commits | `in/c02_write_skew_point_reads.t` |
+| c03 | `T1: s(P) i(R1)` ‖ `T2: s(P) i(R2)` | both commit | both commit | ≤ 1 commits | `in/c03_write_skew_predicate_insert.t` |
+| c04 | `T1: s(P) d(R1)` ‖ `T2: s(P) d(R2)` | both commit | both commit | ≤ 1 commits | `in/c04_write_skew_predicate_delete.t` |
+| c05 | `T1: r(R2) i(R1)` ‖ `T2: r(R1) i(R2)` | both commit | both commit | ≤ 1 commits | `in/c05_read_absent_then_insert.t` |
+| c06 | `T1: r(R1)` ‖ `T2: r(R2) w(R1)` ‖ `T3: w(R2) c` ‖ `T2: c` | all commit | all commit | T2 (pivot) fails | `in/c06_rw_chain_of_three.t` |
+| c07 | Fekete: `T2: r(R1) r(R2)` ‖ `T1: w(R1) c` ‖ `T3: r(R1) r(R2) c` ‖ `T2: w(R2) c` | all commit, anomaly visible | all commit | not all commit | `in/c07_read_only_anomaly.t` |
+| c08 | `T1: s(R1..R2)` ‖ `T2: i(R4) r(R3)` ‖ `T1: w(R3)` | OK | OK | OK | `in/c08_insert_outside_predicate.t` |
+| c09 | `T1: r(R1) w(R2)` ‖ `T2: r(R3) w(R4)` | OK | OK | OK | `in/c09_disjoint_read_and_write.t` |
+| c10 | `T1: r(R1) w(R2) c` then `T2: r(R2) w(R1) c` | OK | OK | OK | `in/c10_reader_commits_first.t` |
+| c11 | `T1: scan, stop at R1, close` ‖ `T2: i(R4) r(R2)` ‖ `T1: w(R2)` | OK | OK | OK | `in/c11_cursor_closed_early.t` |
+| c12 | `T1: r(R1) r(R2)` ‖ `T2: w(R1) c` ‖ `T1: r(R1) c` | OK | OK | OK | `in/c12_read_only_after_writers.t` |
+| c13 | c02, asking *where* the failure appears | OK | OK | at `c`, retry then OK | `in/c13_failure_arrives_at_commit.t` |
+| c14 | `T1: w(R1)` ‖ `T2: w(R2)`, no reads at all | OK | OK | OK | `in/c14_blind_writes_only.t` |
+| c15 | `T1: s(P) w(R1) i(R3)` — its own range | OK | OK | OK | `in/c15_scan_then_write_own_range.t` |
+| c16 | `T2: r(R2) w(R1) c` ‖ `T1: r(R1) w(R2) c` | OK | OK | T1 fails | `in/c16_read_past_committed_writer.t` |
+| c17 | `T3: r(R1)` ‖ `T2: r(R2) w(R1) c` ‖ `T1: w(R2) c` | OK | OK | T1 fails | `in/c17_edge_onto_committed_pivot.t` |
+| c18 | `T1: cursor open over P` ‖ `T2: r(R3) i(R2 in P) c` ‖ `T1: w(R3) c` | OK | OK | T1 fails | `in/c18_phantom_while_cursor_open.t` |
+| c19 | `T1: r(R1)` ‖ `T2: w(R2) c` ‖ `T1: w(R1) c` | OK | OK | OK | `in/c19_safe_snapshot.t` |
+| c20 | three concurrent readers, then one writes | OK | OK | OK | `in/c20_concurrent_readers.t` |
+| c21 | `T1: s(P) w(R5)` ‖ `T2: r(R5) d(R1 in P)` | both commit | both commit | ≤ 1 commits | `in/c21_delete_inside_scanned_range.t` |
 
 Half of this family — c01, c08 through c12, c14, c15, c19,
 c20 — exists to bound the other half. A level that failed
@@ -242,8 +287,8 @@ these scenarios are the ones that would catch it.
 | e01 | SSI state (nodes, SIREAD entries, ranges) is released once no transaction overlaps it | V | `e01_ssi_node_lifetime.cc` |
 | e02 | Four contending SERIALIZABLE threads enforcing "at least one on call" never break the invariant; a checker thread never sees it broken | V+V | `e02_serializable_invariant_stress.cc` |
 | e03 | Four contending RR threads see `CONFLICT` / `DEADLOCK` and **never** `SERIALIZATION`; no update is lost | RR | `e03_rr_contention_stress.cc` |
-| e04 | `sm_lsrel` and `sm_mkrel` follow the same predicate rules as rows | all | `e04_catalog_predicate.cc` |
-| e05 | Four RR transactions that each read everything and write one row all commit | RR | `e05_rr_many_readers_writers.cc` |
+| e04 | `sm_lsrel` and `sm_mkrel` follow the same predicate rules as rows | all | `in/e04_catalog_predicate.t` |
+| e05 | Four RR transactions that each read everything and write one row all commit | RR | `in/e05_rr_many_readers_writers.t` |
 
 e02 and e03 are the pair that states the trade in one line:
 the same contention that SERIALIZABLE resolves by failing

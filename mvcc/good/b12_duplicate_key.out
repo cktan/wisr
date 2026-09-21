@@ -1,0 +1,35 @@
+# b12 -- inserting a row that existed before the snapshot.
+#
+# Nothing changed after T1's snapshot, so this is not a
+# conflict and not retryable: it is the ordinary "the key is
+# taken". The transaction stays active and carries on.
+
+
+== pairing RR/RR == T1=RR
+@1 T1 begin -> ok
+@2 T1 insert R1 t1 -> dupkey
+@3 check last T1 dupkey -> satisfied
+@4 T1 write R1 t1 -> ok
+@5 T1 commit -> ok
+@6 check row R1 t1 -> satisfied
+== pairing RR/V == T1=RR
+@1 T1 begin -> ok
+@2 T1 insert R1 t1 -> dupkey
+@3 check last T1 dupkey -> satisfied
+@4 T1 write R1 t1 -> ok
+@5 T1 commit -> ok
+@6 check row R1 t1 -> satisfied
+== pairing V/RR == T1=SER
+@1 T1 begin -> ok
+@2 T1 insert R1 t1 -> dupkey
+@3 check last T1 dupkey -> satisfied
+@4 T1 write R1 t1 -> ok
+@5 T1 commit -> ok
+@6 check row R1 t1 -> satisfied
+== pairing V/V == T1=SER
+@1 T1 begin -> ok
+@2 T1 insert R1 t1 -> dupkey
+@3 check last T1 dupkey -> satisfied
+@4 T1 write R1 t1 -> ok
+@5 T1 commit -> ok
+@6 check row R1 t1 -> satisfied

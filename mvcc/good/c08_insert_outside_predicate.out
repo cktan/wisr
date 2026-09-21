@@ -1,0 +1,51 @@
+# c08 -- an insert outside the scanned range is no conflict.
+#
+# T2's insert lands past T1's predicate, so there is no edge
+# from T1; T1's write of a row T2 read gives one edge only. A
+# level that failed here would be tracking ranges too coarsely.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R2 -> {R1}
+@3 T2 insert R4 t2 -> ok
+@4 T2 read R3 -> 0
+@5 T1 write R3 t1 -> ok
+@6 T1 commit -> ok
+@7 T2 commit -> ok
+@8 check committed T1 T2 -> satisfied
+@9 check rows -> {R1=0, R3=t1, R4=t2}
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R2 -> {R1}
+@3 T2 insert R4 t2 -> ok
+@4 T2 read R3 -> 0
+@5 T1 write R3 t1 -> ok
+@6 T1 commit -> ok
+@7 T2 commit -> ok
+@8 check committed T1 T2 -> satisfied
+@9 check rows -> {R1=0, R3=t1, R4=t2}
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R2 -> {R1}
+@3 T2 insert R4 t2 -> ok
+@4 T2 read R3 -> 0
+@5 T1 write R3 t1 -> ok
+@6 T1 commit -> ok
+@7 T2 commit -> ok
+@8 check committed T1 T2 -> satisfied
+@9 check rows -> {R1=0, R3=t1, R4=t2}
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R2 -> {R1}
+@3 T2 insert R4 t2 -> ok
+@4 T2 read R3 -> 0
+@5 T1 write R3 t1 -> ok
+@6 T1 commit -> ok
+@7 T2 commit -> ok
+@8 check committed T1 T2 -> satisfied
+@9 check rows -> {R1=0, R3=t1, R4=t2}

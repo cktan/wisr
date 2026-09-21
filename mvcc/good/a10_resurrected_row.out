@@ -1,0 +1,55 @@
+# a10 -- a row deleted and inserted again.
+#
+# The tombstone and the new version both sit under R1. T2,
+# whose snapshot predates the commit, must resolve to the old
+# value, and exactly once in a scan.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T2 begin -> ok
+@2 T2 read R1 -> 0
+@3 T1 begin -> ok
+@4 T1 delete R1 -> ok
+@4 T1 insert R1 new -> ok
+@5 T1 read R1 -> new
+@6 T1 commit -> ok
+@7 T2 read R1 -> 0
+@7 T2 scan R1 R2 -> {R1}
+@8 T2 commit -> ok
+@9 check rows -> {R1=new}
+== pairing RR/V == T1=RR T2=SER
+@1 T2 begin -> ok
+@2 T2 read R1 -> 0
+@3 T1 begin -> ok
+@4 T1 delete R1 -> ok
+@4 T1 insert R1 new -> ok
+@5 T1 read R1 -> new
+@6 T1 commit -> ok
+@7 T2 read R1 -> 0
+@7 T2 scan R1 R2 -> {R1}
+@8 T2 commit -> ok
+@9 check rows -> {R1=new}
+== pairing V/RR == T1=SER T2=RR
+@1 T2 begin -> ok
+@2 T2 read R1 -> 0
+@3 T1 begin -> ok
+@4 T1 delete R1 -> ok
+@4 T1 insert R1 new -> ok
+@5 T1 read R1 -> new
+@6 T1 commit -> ok
+@7 T2 read R1 -> 0
+@7 T2 scan R1 R2 -> {R1}
+@8 T2 commit -> ok
+@9 check rows -> {R1=new}
+== pairing V/V == T1=SER T2=SER
+@1 T2 begin -> ok
+@2 T2 read R1 -> 0
+@3 T1 begin -> ok
+@4 T1 delete R1 -> ok
+@4 T1 insert R1 new -> ok
+@5 T1 read R1 -> new
+@6 T1 commit -> ok
+@7 T2 read R1 -> 0
+@7 T2 scan R1 R2 -> {R1}
+@8 T2 commit -> ok
+@9 check rows -> {R1=new}

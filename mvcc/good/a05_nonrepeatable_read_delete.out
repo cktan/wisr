@@ -1,0 +1,46 @@
+# a05 -- read-write-read with a delete.
+#
+# A row deleted after T1's snapshot stays visible to T1,
+# through both the point read and the scan.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 read R1 -> 0
+@6 T1 scan R1 R2 -> {R1}
+@7 T1 commit -> ok
+@8 check row R1 - -> satisfied
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 read R1 -> 0
+@6 T1 scan R1 R2 -> {R1}
+@7 T1 commit -> ok
+@8 check row R1 - -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 read R1 -> 0
+@6 T1 scan R1 R2 -> {R1}
+@7 T1 commit -> ok
+@8 check row R1 - -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 read R1 -> 0
+@6 T1 scan R1 R2 -> {R1}
+@7 T1 commit -> ok
+@8 check row R1 - -> satisfied

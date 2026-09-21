@@ -1,0 +1,47 @@
+# c21 -- a delete inside a scanned range makes the same edge an
+# insert does.
+#
+# T1 scans the range and writes R5; T2 reads R5 and deletes a
+# row inside T1's range. The edges run both ways.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2}
+@3 T2 read R5 -> 0
+@4 T2 delete R1 -> ok
+@5 T1 write R5 t1 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2}
+@3 T2 read R5 -> 0
+@4 T2 delete R1 -> ok
+@5 T1 write R5 t1 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2}
+@3 T2 read R5 -> 0
+@4 T2 delete R1 -> ok
+@5 T1 write R5 t1 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2}
+@3 T2 read R5 -> 0
+@4 T2 delete R1 -> ok
+@5 T1 write R5 t1 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check at-most-one-committed T1 T2 -> satisfied

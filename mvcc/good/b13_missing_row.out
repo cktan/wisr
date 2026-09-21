@@ -1,0 +1,43 @@
+# b13 -- updating or deleting a row that never existed.
+#
+# Not retryable, and the transaction stays active. Compare b03
+# and b05, where the row existed in the snapshot and was
+# removed by someone else: those are conflicts.
+
+
+== pairing RR/RR == T1=RR
+@1 T1 begin -> ok
+@2 T1 write R2 t1 -> notfound
+@3 check last T1 notfound -> satisfied
+@4 T1 delete R2 -> notfound
+@5 check last T1 notfound -> satisfied
+@6 T1 insert R2 t1 -> ok
+@7 T1 commit -> ok
+@8 check row R2 t1 -> satisfied
+== pairing RR/V == T1=RR
+@1 T1 begin -> ok
+@2 T1 write R2 t1 -> notfound
+@3 check last T1 notfound -> satisfied
+@4 T1 delete R2 -> notfound
+@5 check last T1 notfound -> satisfied
+@6 T1 insert R2 t1 -> ok
+@7 T1 commit -> ok
+@8 check row R2 t1 -> satisfied
+== pairing V/RR == T1=SER
+@1 T1 begin -> ok
+@2 T1 write R2 t1 -> notfound
+@3 check last T1 notfound -> satisfied
+@4 T1 delete R2 -> notfound
+@5 check last T1 notfound -> satisfied
+@6 T1 insert R2 t1 -> ok
+@7 T1 commit -> ok
+@8 check row R2 t1 -> satisfied
+== pairing V/V == T1=SER
+@1 T1 begin -> ok
+@2 T1 write R2 t1 -> notfound
+@3 check last T1 notfound -> satisfied
+@4 T1 delete R2 -> notfound
+@5 check last T1 notfound -> satisfied
+@6 T1 insert R2 t1 -> ok
+@7 T1 commit -> ok
+@8 check row R2 t1 -> satisfied

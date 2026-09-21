@@ -1,0 +1,43 @@
+# b06 -- an insert over a committed insert of the same row.
+#
+# R2 is absent in T1's snapshot, so from T1's point of view
+# this is not a duplicate key but a row that changed after the
+# snapshot: conflict, and retryable. Compare b12.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@2 T1 read R2 -> -
+@3 T2 begin -> ok
+@4 T2 insert R2 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 insert R2 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R2 t2 -> satisfied
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@2 T1 read R2 -> -
+@3 T2 begin -> ok
+@4 T2 insert R2 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 insert R2 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R2 t2 -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@2 T1 read R2 -> -
+@3 T2 begin -> ok
+@4 T2 insert R2 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 insert R2 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R2 t2 -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@2 T1 read R2 -> -
+@3 T2 begin -> ok
+@4 T2 insert R2 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 insert R2 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R2 t2 -> satisfied

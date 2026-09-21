@@ -1,0 +1,47 @@
+# a01 -- dirty read of an update.
+#
+# T1 updates R1 but does not commit. T2 must not see the new
+# value, before or after T1 commits: T2's snapshot was taken
+# first either way.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 read R1 -> 0
+@4 T1 commit -> ok
+@5 T2 read R1 -> 0
+@6 T2 commit -> ok
+@7 check row R1 t1 -> satisfied
+@7 check rows -> {R1=t1}
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 read R1 -> 0
+@4 T1 commit -> ok
+@5 T2 read R1 -> 0
+@6 T2 commit -> ok
+@7 check row R1 t1 -> satisfied
+@7 check rows -> {R1=t1}
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 read R1 -> 0
+@4 T1 commit -> ok
+@5 T2 read R1 -> 0
+@6 T2 commit -> ok
+@7 check row R1 t1 -> satisfied
+@7 check rows -> {R1=t1}
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 read R1 -> 0
+@4 T1 commit -> ok
+@5 T2 read R1 -> 0
+@6 T2 commit -> ok
+@7 check row R1 t1 -> satisfied
+@7 check rows -> {R1=t1}

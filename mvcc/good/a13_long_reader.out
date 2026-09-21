@@ -1,0 +1,87 @@
+# a13 -- a snapshot survives a series of commits.
+#
+# T1 scans once at the start; after each of T2's committed
+# transactions the same scan must give the same answer. A
+# snapshot is a fixed view, not a moving one.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@2 T1 scan R1 R5 -> {R1, R2}
+@3 T2 begin -> ok
+@4 T2 insert R3 t2 -> ok
+@4 T2 write R2 1 -> ok
+@5 T2 commit -> ok
+@6 T1 scan R1 R5 -> {R1, R2}
+@7 T2 begin -> ok
+@8 T2 insert R4 t2 -> ok
+@8 T2 write R2 2 -> ok
+@9 T2 commit -> ok
+@10 T1 scan R1 R5 -> {R1, R2}
+@11 T2 begin -> ok
+@12 T2 delete R1 -> ok
+@12 T2 write R2 3 -> ok
+@13 T2 commit -> ok
+@14 T1 scan R1 R5 -> {R1, R2}
+@15 T1 commit -> ok
+@16 check rows -> {R2=3, R3=t2, R4=t2}
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@2 T1 scan R1 R5 -> {R1, R2}
+@3 T2 begin -> ok
+@4 T2 insert R3 t2 -> ok
+@4 T2 write R2 1 -> ok
+@5 T2 commit -> ok
+@6 T1 scan R1 R5 -> {R1, R2}
+@7 T2 begin -> ok
+@8 T2 insert R4 t2 -> ok
+@8 T2 write R2 2 -> ok
+@9 T2 commit -> ok
+@10 T1 scan R1 R5 -> {R1, R2}
+@11 T2 begin -> ok
+@12 T2 delete R1 -> ok
+@12 T2 write R2 3 -> ok
+@13 T2 commit -> ok
+@14 T1 scan R1 R5 -> {R1, R2}
+@15 T1 commit -> ok
+@16 check rows -> {R2=3, R3=t2, R4=t2}
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@2 T1 scan R1 R5 -> {R1, R2}
+@3 T2 begin -> ok
+@4 T2 insert R3 t2 -> ok
+@4 T2 write R2 1 -> ok
+@5 T2 commit -> ok
+@6 T1 scan R1 R5 -> {R1, R2}
+@7 T2 begin -> ok
+@8 T2 insert R4 t2 -> ok
+@8 T2 write R2 2 -> ok
+@9 T2 commit -> ok
+@10 T1 scan R1 R5 -> {R1, R2}
+@11 T2 begin -> ok
+@12 T2 delete R1 -> ok
+@12 T2 write R2 3 -> ok
+@13 T2 commit -> ok
+@14 T1 scan R1 R5 -> {R1, R2}
+@15 T1 commit -> ok
+@16 check rows -> {R2=3, R3=t2, R4=t2}
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@2 T1 scan R1 R5 -> {R1, R2}
+@3 T2 begin -> ok
+@4 T2 insert R3 t2 -> ok
+@4 T2 write R2 1 -> ok
+@5 T2 commit -> ok
+@6 T1 scan R1 R5 -> {R1, R2}
+@7 T2 begin -> ok
+@8 T2 insert R4 t2 -> ok
+@8 T2 write R2 2 -> ok
+@9 T2 commit -> ok
+@10 T1 scan R1 R5 -> {R1, R2}
+@11 T2 begin -> ok
+@12 T2 delete R1 -> ok
+@12 T2 write R2 3 -> ok
+@13 T2 commit -> ok
+@14 T1 scan R1 R5 -> {R1, R2}
+@15 T1 commit -> ok
+@16 check rows -> {R2=3, R3=t2, R4=t2}

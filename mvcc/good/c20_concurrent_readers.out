@@ -1,0 +1,75 @@
+# c20 -- readers do not block or conflict with each other.
+#
+# Reads take no locks, and an SIREAD is not a lock: it never
+# blocks and never fails a reader. Afterwards one of them
+# writes, to show the reads left nothing behind.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 scan R1 R2 -> {R1, R2}
+@3 T2 read R1 -> 0
+@3 T2 scan R1 R2 -> {R1, R2}
+@4 T3 read R1 -> 0
+@4 T3 scan R1 R2 -> {R1, R2}
+@5 T1 commit -> ok
+@5 T2 commit -> ok
+@5 T3 commit -> ok
+@6 T1 begin -> ok
+@7 T1 write R1 t1 -> ok
+@8 T1 commit -> ok
+@9 check committed T1 T2 T3 -> satisfied
+== pairing RR/V == T1=RR T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 scan R1 R2 -> {R1, R2}
+@3 T2 read R1 -> 0
+@3 T2 scan R1 R2 -> {R1, R2}
+@4 T3 read R1 -> 0
+@4 T3 scan R1 R2 -> {R1, R2}
+@5 T1 commit -> ok
+@5 T2 commit -> ok
+@5 T3 commit -> ok
+@6 T1 begin -> ok
+@7 T1 write R1 t1 -> ok
+@8 T1 commit -> ok
+@9 check committed T1 T2 T3 -> satisfied
+== pairing V/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 scan R1 R2 -> {R1, R2}
+@3 T2 read R1 -> 0
+@3 T2 scan R1 R2 -> {R1, R2}
+@4 T3 read R1 -> 0
+@4 T3 scan R1 R2 -> {R1, R2}
+@5 T1 commit -> ok
+@5 T2 commit -> ok
+@5 T3 commit -> ok
+@6 T1 begin -> ok
+@7 T1 write R1 t1 -> ok
+@8 T1 commit -> ok
+@9 check committed T1 T2 T3 -> satisfied
+== pairing V/V == T1=SER T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 scan R1 R2 -> {R1, R2}
+@3 T2 read R1 -> 0
+@3 T2 scan R1 R2 -> {R1, R2}
+@4 T3 read R1 -> 0
+@4 T3 scan R1 R2 -> {R1, R2}
+@5 T1 commit -> ok
+@5 T2 commit -> ok
+@5 T3 commit -> ok
+@6 T1 begin -> ok
+@7 T1 write R1 t1 -> ok
+@8 T1 commit -> ok
+@9 check committed T1 T2 T3 -> satisfied

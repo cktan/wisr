@@ -1,0 +1,43 @@
+# b07 -- an insert over a committed delete.
+#
+# T1 would be inserting a row its own snapshot says exists, and
+# the row changed after that snapshot. The conflict is reported
+# before the "already exists" rule is reached.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 insert R1 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 insert R1 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 insert R1 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 insert R1 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied

@@ -1,0 +1,42 @@
+# a07 -- no phantom from a delete.
+#
+# A row deleted after T1's snapshot stays in T1's range for the
+# whole transaction.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2, R3}
+@3 T2 begin -> ok
+@4 T2 delete R2 -> ok
+@5 T2 commit -> ok
+@6 T1 scan R1 R3 -> {R1, R2, R3}
+@7 T1 commit -> ok
+@8 check rows -> {R1=0, R3=0}
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2, R3}
+@3 T2 begin -> ok
+@4 T2 delete R2 -> ok
+@5 T2 commit -> ok
+@6 T1 scan R1 R3 -> {R1, R2, R3}
+@7 T1 commit -> ok
+@8 check rows -> {R1=0, R3=0}
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2, R3}
+@3 T2 begin -> ok
+@4 T2 delete R2 -> ok
+@5 T2 commit -> ok
+@6 T1 scan R1 R3 -> {R1, R2, R3}
+@7 T1 commit -> ok
+@8 check rows -> {R1=0, R3=0}
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2, R3}
+@3 T2 begin -> ok
+@4 T2 delete R2 -> ok
+@5 T2 commit -> ok
+@6 T1 scan R1 R3 -> {R1, R2, R3}
+@7 T1 commit -> ok
+@8 check rows -> {R1=0, R3=0}

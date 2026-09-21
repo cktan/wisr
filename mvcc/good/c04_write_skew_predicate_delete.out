@@ -1,0 +1,49 @@
+# c04 -- write skew over a predicate, resolved by deletes.
+#
+# "Remove one, as long as one remains", run twice, emptying the
+# set. At RR the invariant breaks and both commit; the stress
+# scenario e02 shows SERIALIZABLE holding the same invariant
+# under load.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2}
+@3 T2 scan R1 R3 -> {R1, R2}
+@4 T1 delete R1 -> ok
+@5 T2 delete R2 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+@9 check rows -> {}
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2}
+@3 T2 scan R1 R3 -> {R1, R2}
+@4 T1 delete R1 -> ok
+@5 T2 delete R2 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2}
+@3 T2 scan R1 R3 -> {R1, R2}
+@4 T1 delete R1 -> ok
+@5 T2 delete R2 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {R1, R2}
+@3 T2 scan R1 R3 -> {R1, R2}
+@4 T1 delete R1 -> ok
+@5 T2 delete R2 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check at-most-one-committed T1 T2 -> satisfied

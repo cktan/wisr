@@ -1,0 +1,47 @@
+# c12 -- a read-only transaction alongside a writer.
+#
+# T1 --rw--> T2 is the only edge, and T1 writes nothing, so
+# nobody can have an edge into T1. A read-only transaction that
+# failed here would make SERIALIZABLE reporting unusable.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 read R2 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 read R1 -> 0
+@7 T1 commit -> ok
+@8 check committed T1 T2 -> satisfied
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 read R2 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 read R1 -> 0
+@7 T1 commit -> ok
+@8 check committed T1 T2 -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 read R2 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 read R1 -> 0
+@7 T1 commit -> ok
+@8 check committed T1 T2 -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@2 T1 read R2 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 t2 -> ok
+@5 T2 commit -> ok
+@6 T1 read R1 -> 0
+@7 T1 commit -> ok
+@8 check committed T1 T2 -> satisfied

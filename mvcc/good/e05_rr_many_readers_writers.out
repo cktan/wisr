@@ -1,0 +1,28 @@
+# e05 -- many RR transactions reading everything and writing
+# one row apiece.
+#
+# Every pair of them has read-write edges in both directions,
+# which is exactly the shape SERIALIZABLE refuses. At
+# REPEATABLE READ all four must commit: this is the cost RR
+# declines to pay, and the reason a caller picks it.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR T4=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@1 T3 begin -> ok
+@1 T4 begin -> ok
+@2 T1 scan R1 R4 -> {R1, R2, R3, R4}
+@2 T2 scan R1 R4 -> {R1, R2, R3, R4}
+@2 T3 scan R1 R4 -> {R1, R2, R3, R4}
+@2 T4 scan R1 R4 -> {R1, R2, R3, R4}
+@3 T1 write R1 t1 -> ok
+@3 T1 commit -> ok
+@4 T2 write R2 t2 -> ok
+@4 T2 commit -> ok
+@5 T3 write R3 t3 -> ok
+@5 T3 commit -> ok
+@6 T4 write R4 t4 -> ok
+@6 T4 commit -> ok
+@7 check committed T1 T2 T3 T4 -> satisfied
+@8 check rows -> {R1=t1, R2=t2, R3=t3, R4=t4}

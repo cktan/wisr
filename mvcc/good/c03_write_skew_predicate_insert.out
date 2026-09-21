@@ -1,0 +1,47 @@
+# c03 -- write skew over a predicate, resolved by inserts.
+#
+# "Insert it if nobody else has", run twice: each insert
+# falsifies the other's scan.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {}
+@3 T2 scan R1 R3 -> {}
+@4 T1 insert R1 t1 -> ok
+@5 T2 insert R2 t2 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+@9 check rows -> {R1=t1, R2=t2}
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {}
+@3 T2 scan R1 R3 -> {}
+@4 T1 insert R1 t1 -> ok
+@5 T2 insert R2 t2 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {}
+@3 T2 scan R1 R3 -> {}
+@4 T1 insert R1 t1 -> ok
+@5 T2 insert R2 t2 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R3 -> {}
+@3 T2 scan R1 R3 -> {}
+@4 T1 insert R1 t1 -> ok
+@5 T2 insert R2 t2 -> ok
+@6 T1 commit? -> recorded
+@7 T2 commit? -> recorded
+@8 check at-most-one-committed T1 T2 -> satisfied

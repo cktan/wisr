@@ -1,0 +1,42 @@
+# b03 -- an update over a committed delete.
+#
+# The row still exists in T1's snapshot, so the answer must be
+# the retryable conflict, not the "no such row" of b13.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 write R1 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
+== pairing RR/V == T1=RR T2=SER
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 write R1 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
+== pairing V/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 write R1 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
+== pairing V/V == T1=SER T2=SER
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 delete R1 -> ok
+@5 T2 commit -> ok
+@6 T1 write R1 t1 -> conflict
+@7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
