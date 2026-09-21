@@ -116,12 +116,72 @@ before anything is written to disk:
   `sk ‖ pk` together. Collation sort keys can be several times
   the length of their source text. Truncate and recheck, hash
   and recheck, or reject?
+
+  *Suggested answer: reject for the primary key, truncate and
+  recheck for a secondary index, never hash.* The primary key is
+  the row's identity and the base relation's key, so it must be
+  exact: an encoded primary key over a fixed limit is refused
+  when the row is written, which is what PostgreSQL does for an
+  oversize btree entry (its limit is roughly 2.7KB, from memory,
+  not checked against the source). A secondary index can do
+  better, because the original value is stored beside the sort
+  key anyway. Truncating a sort key keeps the order as a
+  coarsening: if `a <= b` then `trunc(a) <= trunc(b)`, so a
+  range scan on the truncated keys returns a superset, and the
+  recheck against the stored original removes the extras. Two
+  costs come with it. An entry is flagged when its key was cut,
+  because the index can no longer promise order among entries
+  that share a prefix, and a unique check must compare originals
+  over the prefix range rather than trust key equality. A hash
+  is out, because it keeps equality but destroys order, and an
+  index that cannot serve a range or an `ORDER BY` is not worth
+  having. The budget for the sort key is `4096` less the length
+  of the encoded primary key, so the primary key limit should
+  leave most of it.
+
 - **Collation stability.** A sort key is only valid for the
   collation library version that produced it. The version is
   recorded per relation, as `pg_collation.collversion` exists to
   do for PostgreSQL (`PART3.md` §6). What remains open is what
   sm2 does when the recorded version and the library's differ:
   refuse the index, or rebuild it?
+
+  *Suggested answer: pin the library so it rarely differs, and
+  refuse on a mismatch, with an explicit rebuild.* Link a
+  specific ICU version into the server instead of using whatever
+  the operating system has, so a mismatch happens only when the
+  operator upgrades on purpose. When it does happen, compare the
+  recorded version at open. Refuse to use, and refuse to write
+  to, any index or collated primary key built under the old
+  version, with a message that says why. PostgreSQL only warns
+  and carries on, but continuing to write sort keys from a new
+  version into an old index corrupts it further, and a unique
+  index quietly stops being unique. Rebuilding a secondary index
+  is an online build (`DESIGN.md` §5). A collated primary key is
+  harder, because the table is clustered on it, so the rebuild
+  rewrites the table; that is why the refusal has to be the
+  default and the rebuild a command someone chooses to run.
+
 - **Non-deterministic collations.** Equal keys are not
   byte-equal under them, which is what unique indexes rest on.
   Support or refuse?
+
+  *Suggested answer: refuse at first, and design so that
+  accepting them later needs no format change.* Under a
+  non-deterministic collation two different strings can compare
+  equal, and the sort key is the same for both, so a unique
+  check on the sort key gives the right answer. What gets hard
+  is everywhere else equality is used: hashing for joins and
+  grouping, and the rule that a deterministic collation breaks
+  ties bytewise while a non-deterministic one does not.
+  PostgreSQL has supported them only since version 12 (from
+  memory, not checked) and they are rare, so the first version
+  rejects a non-deterministic collation when a
+  column or index is created, with a clear error, and never
+  silently. The collation carries a `deterministic` flag in the
+  catalog from the start, chosen when the column is created and
+  never changed. A deterministic collation's key is the sort key
+  followed by the original bytes as a tie-break; a
+  non-deterministic one's is the sort key alone. Because the flag
+  is per column, a later release can accept the second kind
+  without touching data already on disk.
