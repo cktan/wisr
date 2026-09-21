@@ -1,6 +1,14 @@
 /*
  * test_lock.cc -- row locks, first-committer-wins, retryable
  * errors, and deadlock detection (DESIGN.md §5, §6.2, §12.1).
+ *
+ * The timelines two sessions play out against each other live
+ * in mvcc/in/ as scenario scripts, where blocking is one word
+ * rather than a thread and a sleep. What stays here is what a
+ * script cannot say: error codes and argument handling, engine
+ * state a script cannot see, contention run under load, and
+ * the index-build protocol, which needs a write to a second
+ * relation the driver's language has no verb for.
  */
 
 #include "doctest.h"
@@ -11,7 +19,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -57,71 +64,6 @@ int set(sm_session_t *s, const std::string &key, const std::string &val) {
 void settle() { std::this_thread::sleep_for(std::chrono::milliseconds(150)); }
 
 } // namespace
-
-TEST_CASE("a writer blocks on a held row lock, then conflicts if the holder "
-          "commits") {
-  // Verify blocking and first-committer-wins after the wait.
-  // 1. A updates "x" and holds its lock.
-  // 2. B, in another thread, updates "x" and blocks.
-  // 3. A commits; B's update fails with SM_ERR_CONFLICT, and
-  //    B's transaction is already aborted (sm_abort: NOTRANS).
-  lock_fixture_t f;
-  sm_session_t *a = f.open();
-  sm_session_t *b = f.open();
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(set(a, "x", "a") == 0);
-
-  std::atomic<bool> returned{false};
-  int rc = 0, err = 0;
-  std::thread tb([&] {
-    rc = set(b, "x", "b");
-    err = sm_errno();
-    returned = true;
-  });
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_commit(a) == 0);
-  tb.join();
-  CHECK(rc == -1);
-  CHECK(err == SM_ERR_CONFLICT);
-  CHECK(sm_abort(b) == -1);
-  CHECK(sm_errno() == SM_ERR_NOTRANS);
-  sm_closedb(a);
-  sm_closedb(b);
-}
-
-TEST_CASE("a blocked writer proceeds when the holder aborts") {
-  // Verify an aborted holder leaves no conflict behind.
-  // 1. A updates "x"; B blocks updating "x".
-  // 2. A aborts; B's update succeeds and B commits.
-  // 3. A new transaction reads B's value.
-  lock_fixture_t f;
-  sm_session_t *a = f.open();
-  sm_session_t *b = f.open();
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(set(a, "x", "a") == 0);
-
-  std::atomic<bool> returned{false};
-  int rc = -2;
-  std::thread tb([&] {
-    rc = set(b, "x", "b");
-    returned = true;
-  });
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_abort(a) == 0);
-  tb.join();
-  CHECK(rc == 0);
-  REQUIRE(sm_commit(b) == 0);
-
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(a, g_rel, "x") == "b");
-  REQUIRE(sm_commit(a) == 0);
-  sm_closedb(a);
-  sm_closedb(b);
-}
 
 TEST_CASE("first-committer-wins prevents lost updates at every level") {
   // Verify a write loses to a commit made after its snapshot.
@@ -204,14 +146,14 @@ TEST_CASE("a retryable error aborts the transaction and releases everything") {
   sm_closedb(u);
 }
 
-TEST_CASE("concurrent DDL: separate relations commit, the same relid "
-          "conflicts") {
-  // Verify DDL goes through the row locks (§11, §12.5 DDL).
-  // 1. A and B each create a relation; both commit, since each
-  //    writes a catalog row of its own.
-  // 2. A drops A's relation; B, in another thread, drops the
-  //    same relation and blocks on its catalog row.
-  // 3. A commits; B fails with SM_ERR_CONFLICT.
+TEST_CASE("concurrent sm_mkrel hands out a relid of its own to each") {
+  // Verify two transactions creating relations do not collide;
+  // the relids themselves are what no scenario script can see.
+  // 1. A and B each create a relation in their own transaction.
+  // 2. The relids differ, and both commit, since each writes a
+  //    catalog row of its own.
+  // The blocked half -- two transactions dropping ONE relation
+  // -- is mvcc/in/b32_concurrent_drop_of_one_relation.t.
   lock_fixture_t f;
   sm_session_t *a = f.open();
   sm_session_t *b = f.open();
@@ -222,67 +164,8 @@ TEST_CASE("concurrent DDL: separate relations commit, the same relid "
   CHECK(arel != brel);
   REQUIRE(sm_commit(a) == 0);
   REQUIRE(sm_commit(b) == 0);
-
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_rmrel(a, arel) == 0);
-  std::atomic<bool> returned{false};
-  int rc = 0, err = 0;
-  std::thread tb([&] {
-    rc = sm_rmrel(b, arel);
-    err = sm_errno();
-    returned = true;
-  });
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_commit(a) == 0);
-  tb.join();
-  CHECK(rc == -1);
-  CHECK(err == SM_ERR_CONFLICT);
   sm_closedb(a);
   sm_closedb(b);
-}
-
-TEST_CASE("the youngest transaction in a deadlock cycle is the victim") {
-  // Verify deadlock detection picks the youngest, whoever detects.
-  // 1. A begins, then B (younger). A locks "x", B locks "y".
-  // 2. Each then requests the other's row, in both orders:
-  //    older-blocks-first (A detects, B is the victim) and
-  //    younger-blocks-first (B detects and is the victim).
-  // 3. B's blocked update fails with SM_ERR_DEADLOCK; A's
-  //    proceeds and A commits.
-  for (bool older_first : {true, false}) {
-    CAPTURE(older_first);
-    lock_fixture_t f;
-    sm_session_t *a = f.open();
-    sm_session_t *b = f.open();
-    REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE(set(a, "x", "a") == 0);
-    REQUIRE(set(b, "y", "b") == 0);
-
-    int rca = -2, rcb = -2, errb = 0;
-    auto run_a = [&] { rca = set(a, "y", "a"); };
-    auto run_b = [&] {
-      rcb = set(b, "x", "b");
-      errb = sm_errno();
-    };
-    std::thread first(older_first ? std::function<void()>(run_a)
-                                  : std::function<void()>(run_b));
-    settle();
-    std::thread second(older_first ? std::function<void()>(run_b)
-                                   : std::function<void()>(run_a));
-    first.join();
-    second.join();
-
-    CHECK(rcb == -1);
-    CHECK(errb == SM_ERR_DEADLOCK);
-    CHECK(rca == 0);
-    REQUIRE(sm_commit(a) == 0);
-    CHECK(sm_abort(b) == -1); // already aborted by the engine
-    sm_closedb(a);
-    sm_closedb(b);
-  }
 }
 
 TEST_CASE("a doomed transaction fails its next call and changes nothing") {
@@ -363,134 +246,6 @@ TEST_CASE("concurrent increments with retry never lose an update") {
   }
 }
 
-TEST_CASE("shared locks coexist; an exclusive one waits for all of them") {
-  // Verify S/S compatibility and S/X conflict (DESIGN.md §5.1).
-  // 1. A and B both lock "x" shared; neither blocks.
-  // 2. C, in another thread, locks "x" exclusive and blocks.
-  // 3. A commits; C still blocks, because B holds it too.
-  // 4. B commits; C gets the lock and commits.
-  lock_fixture_t f;
-  sm_session_t *a = f.open();
-  sm_session_t *b = f.open();
-  sm_session_t *c = f.open();
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_begin(c, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
-  REQUIRE(sm_lock(b, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
-
-  std::atomic<bool> returned{false};
-  int rc = -2;
-  std::thread tc([&] {
-    rc = sm_lock(c, g_rel, "x", 1, SM_LOCK_EXCLUSIVE);
-    returned = true;
-  });
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_commit(a) == 0);
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_commit(b) == 0);
-  tc.join();
-  CHECK(rc == 0);
-  REQUIRE(sm_commit(c) == 0);
-  sm_closedb(a);
-  sm_closedb(b);
-  sm_closedb(c);
-}
-
-TEST_CASE("a shared lock blocks a writer, and a writer blocks a shared lock") {
-  // Verify the lock sm_lock takes is the one writes take.
-  // 1. A locks "x" shared; B's update of "x" blocks until A ends.
-  // 2. A updates "y", taking it exclusive; B's shared lock on
-  //    "y" blocks until A ends.
-  lock_fixture_t f;
-  sm_session_t *a = f.open();
-  sm_session_t *b = f.open();
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
-
-  std::atomic<bool> returned{false};
-  int rc = -2;
-  std::thread tb([&] {
-    rc = set(b, "x", "b");
-    returned = true;
-  });
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_abort(a) == 0);
-  tb.join();
-  CHECK(rc == 0);
-  REQUIRE(sm_abort(b) == 0);
-
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(set(a, "y", "a") == 0);
-  returned = false;
-  rc = -2;
-  std::thread tb2([&] {
-    rc = sm_lock(b, g_rel, "y", 1, SM_LOCK_SHARED);
-    returned = true;
-  });
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_abort(a) == 0);
-  tb2.join();
-  CHECK(rc == 0);
-  REQUIRE(sm_abort(b) == 0);
-  sm_closedb(a);
-  sm_closedb(b);
-}
-
-TEST_CASE("a shared holder upgrades by writing, once the others are gone") {
-  // Verify the S -> X upgrade (DESIGN.md §5.1).
-  // 1. A and B hold "x" shared.
-  // 2. A writes "x": the upgrade blocks on B.
-  // 3. B commits without touching "x"; A's write completes.
-  // 4. A holds "x" exclusive afterwards, so C's shared lock
-  //    blocks; when A commits, C's snapshot is stale and the
-  //    lock fails with SM_ERR_CONFLICT (§5.2).
-  lock_fixture_t f;
-  sm_session_t *a = f.open();
-  sm_session_t *b = f.open();
-  sm_session_t *c = f.open();
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
-  REQUIRE(sm_lock(b, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
-
-  std::atomic<bool> returned{false};
-  int rc = -2;
-  std::thread ta([&] {
-    rc = set(a, "x", "a");
-    returned = true;
-  });
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_commit(b) == 0);
-  ta.join();
-  CHECK(rc == 0);
-
-  REQUIRE(sm_begin(c, SM_XCT_REPEATABLE_READ) == 0);
-  std::atomic<bool> c_returned{false};
-  int rc_c = -2, err_c = 0;
-  std::thread tc([&] {
-    rc_c = sm_lock(c, g_rel, "x", 1, SM_LOCK_SHARED);
-    err_c = sm_errno();
-    c_returned = true;
-  });
-  settle();
-  CHECK_FALSE(c_returned);
-  REQUIRE(sm_commit(a) == 0);
-  tc.join();
-  CHECK(rc_c == -1);
-  CHECK(err_c == SM_ERR_CONFLICT);
-  sm_closedb(a);
-  sm_closedb(b);
-  sm_closedb(c);
-}
-
 TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
   // Verify the cycle a shared lock makes possible (DESIGN.md §5.1).
   // 1. A (older) and B (younger) both hold "x" shared.
@@ -548,42 +303,6 @@ TEST_CASE("sm_lock fails with CONFLICT on a row committed after the snapshot") {
     sm_closedb(a);
     sm_closedb(b);
   }
-}
-
-TEST_CASE("sm_lock follows the savepoint rules, and never downgrades") {
-  // Verify §6.5's lock rule for explicit locks.
-  // 1. A locks "x" shared, marks, then locks "y" shared and
-  //    upgrades "x" by writing it.
-  // 2. A rolls back to the mark: "y" is free, "x" is still held
-  //    exclusive.
-  // 3. B can lock "y" at once, but blocks on "x" until A ends.
-  lock_fixture_t f;
-  sm_session_t *a = f.open();
-  sm_session_t *b = f.open();
-  REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
-  REQUIRE(sm_savepoint(a) == 1);
-  REQUIRE(sm_lock(a, g_rel, "y", 1, SM_LOCK_SHARED) == 0);
-  REQUIRE(set(a, "x", "a") == 0);
-  REQUIRE(sm_rollback(a, 1) == 0);
-
-  REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(sm_lock(b, g_rel, "y", 1, SM_LOCK_SHARED) == 0);
-
-  std::atomic<bool> returned{false};
-  int rc = -2;
-  std::thread tb([&] {
-    rc = sm_lock(b, g_rel, "x", 1, SM_LOCK_SHARED);
-    returned = true;
-  });
-  settle();
-  CHECK_FALSE(returned);
-  REQUIRE(sm_abort(a) == 0);
-  tb.join();
-  CHECK(rc == 0);
-  REQUIRE(sm_abort(b) == 0);
-  sm_closedb(a);
-  sm_closedb(b);
 }
 
 TEST_CASE("the index-build protocol blocks writers, then makes them retry") {

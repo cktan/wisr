@@ -1,0 +1,70 @@
+# b30 -- an upgrade that waits for a holder to commit.
+#
+# b28 breaks a pair of upgrades by dooming one of them; here
+# only T1 upgrades, so there is no cycle and nothing to break.
+# It simply waits, and T2 committing -- having written nothing,
+# so there is no first-committer-wins verdict to inherit --
+# lets the write through. The lock is exclusive afterwards,
+# which is what T3 finds.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 lock R1 shared -> ok
+@4 T1 write R1 t1 blocks -> blocked
+@5 T2 commit -> ok
+@4 T1 write R1 t1 blocks -> ok (resumed)
+@6 check last T1 ok -> satisfied
+@7 T3 begin -> ok
+@8 T3 lock R1 shared blocks -> blocked
+@9 T1 commit -> ok
+@8 T3 lock R1 shared blocks -> conflict (resumed)
+@10 check last T3 conflict -> satisfied
+@11 check row R1 t1 -> satisfied
+== pairing RR/S == T1=RR T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 lock R1 shared -> ok
+@4 T1 write R1 t1 blocks -> blocked
+@5 T2 commit -> ok
+@4 T1 write R1 t1 blocks -> ok (resumed)
+@6 check last T1 ok -> satisfied
+@7 T3 begin -> ok
+@8 T3 lock R1 shared blocks -> blocked
+@9 T1 commit -> ok
+@8 T3 lock R1 shared blocks -> conflict (resumed)
+@10 check last T3 conflict -> satisfied
+@11 check row R1 t1 -> satisfied
+== pairing S/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 lock R1 shared -> ok
+@4 T1 write R1 t1 blocks -> blocked
+@5 T2 commit -> ok
+@4 T1 write R1 t1 blocks -> ok (resumed)
+@6 check last T1 ok -> satisfied
+@7 T3 begin -> ok
+@8 T3 lock R1 shared blocks -> blocked
+@9 T1 commit -> ok
+@8 T3 lock R1 shared blocks -> conflict (resumed)
+@10 check last T3 conflict -> satisfied
+@11 check row R1 t1 -> satisfied
+== pairing S/S == T1=SER T2=SER T3=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T2 lock R1 shared -> ok
+@4 T1 write R1 t1 blocks -> blocked
+@5 T2 commit -> ok
+@4 T1 write R1 t1 blocks -> ok (resumed)
+@6 check last T1 ok -> satisfied
+@7 T3 begin -> ok
+@8 T3 lock R1 shared blocks -> blocked
+@9 T1 commit -> ok
+@8 T3 lock R1 shared blocks -> conflict (resumed)
+@10 check last T3 conflict -> satisfied
+@11 check row R1 t1 -> satisfied

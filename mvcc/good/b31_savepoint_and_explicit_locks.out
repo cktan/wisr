@@ -1,0 +1,80 @@
+# b31 -- what a rollback does to locks sm_lock took.
+#
+# b25 makes the point for locks a write took; these are taken
+# outright. R2 was locked after the mark, so the rollback
+# gives it back. R1 was locked before the mark and then
+# upgraded after it, and the upgrade is NOT undone: a
+# transaction that has held a row exclusive keeps it that way
+# to the end. T2's shared lock on R1 is what tells the two
+# apart -- it would be granted against a shared holder and is
+# not.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T1 savepoint -> 1
+@4 T1 lock R2 shared -> ok
+@5 T1 write R1 t1 -> ok
+@6 T1 rollback 1 -> ok
+@7 T2 begin -> ok
+@8 T2 lock R2 shared -> ok
+@9 check last T2 ok -> satisfied
+@10 T2 lock R1 shared blocks -> blocked
+@11 T1 abort -> ok
+@10 T2 lock R1 shared blocks -> ok (resumed)
+@12 check last T2 ok -> satisfied
+@13 T2 commit -> ok
+@14 check row R1 0 -> satisfied
+@14 check row R2 0 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T1 savepoint -> 1
+@4 T1 lock R2 shared -> ok
+@5 T1 write R1 t1 -> ok
+@6 T1 rollback 1 -> ok
+@7 T2 begin -> ok
+@8 T2 lock R2 shared -> ok
+@9 check last T2 ok -> satisfied
+@10 T2 lock R1 shared blocks -> blocked
+@11 T1 abort -> ok
+@10 T2 lock R1 shared blocks -> ok (resumed)
+@12 check last T2 ok -> satisfied
+@13 T2 commit -> ok
+@14 check row R1 0 -> satisfied
+@14 check row R2 0 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T1 savepoint -> 1
+@4 T1 lock R2 shared -> ok
+@5 T1 write R1 t1 -> ok
+@6 T1 rollback 1 -> ok
+@7 T2 begin -> ok
+@8 T2 lock R2 shared -> ok
+@9 check last T2 ok -> satisfied
+@10 T2 lock R1 shared blocks -> blocked
+@11 T1 abort -> ok
+@10 T2 lock R1 shared blocks -> ok (resumed)
+@12 check last T2 ok -> satisfied
+@13 T2 commit -> ok
+@14 check row R1 0 -> satisfied
+@14 check row R2 0 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@2 T1 lock R1 shared -> ok
+@3 T1 savepoint -> 1
+@4 T1 lock R2 shared -> ok
+@5 T1 write R1 t1 -> ok
+@6 T1 rollback 1 -> ok
+@7 T2 begin -> ok
+@8 T2 lock R2 shared -> ok
+@9 check last T2 ok -> satisfied
+@10 T2 lock R1 shared blocks -> blocked
+@11 T1 abort -> ok
+@10 T2 lock R1 shared blocks -> ok (resumed)
+@12 check last T2 ok -> satisfied
+@13 T2 commit -> ok
+@14 check row R1 0 -> satisfied
+@14 check row R2 0 -> satisfied

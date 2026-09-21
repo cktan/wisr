@@ -247,6 +247,9 @@ SSI.
 | b27 | `T1: lock-s(R1)` ‖ `T2: w(R1)`; `T3: lock-x(R2)` ‖ `T1: lock-s(R2)` | BLOCK both ways → OK | same | same | `in/b27_lock_blocks_both_ways.t` |
 | b28 | `T1: lock-s(R1)`, `T2: lock-s(R1)` ‖ both `w(R1)` | DEADLOCK for T2, T1 upgrades | same | same | `in/b28_lock_upgrade_deadlock.t` |
 | b29 | `T1: r(R1)`, `T3: (snapshot)` ‖ `T2: w(R1) c` ‖ `T1: lock-s(R1)`, `T3: lock-x(R1)` | CONFLICT both modes | same | same | `in/b29_lock_of_committed_row.t` |
+| b30 | `T1: lock-s(R1)`, `T2: lock-s(R1)` ‖ `T1: w(R1)` ‖ `T2: c` | BLOCK → OK, then exclusive | same | same | `in/b30_upgrade_after_holder_commits.t` |
+| b31 | `T1: lock-s(R1) sp lock-s(R2) w(R1)` ‖ `T1: rollback` | R2 freed, R1 still exclusive | same | same | `in/b31_savepoint_and_explicit_locks.t` |
+| b32 | `T1: rmrel` ‖ `T2: rmrel` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b32_concurrent_drop_of_one_relation.t` |
 
 Three distinctions this family pins down, because getting
 them wrong would be invisible in ordinary use:
@@ -400,10 +403,16 @@ c24, c30, c31 — plus the shapes that must not fail.
 **It is not a model check.** Each scenario is one schedule,
 chosen because it is the one that distinguishes the levels.
 Interleavings other than the ones written here are not
-explored, and the seventeen blocking scenarios (b09 to b11,
-b16, b17, b19 to b29) and two stress scenarios (e02, e03)
+explored, and the twenty blocking scenarios (b09 to b11,
+b16, b17, b19 to b32) and two stress scenarios (e02, e03)
 are the only places where real concurrency, rather than a
-scripted order, is involved.
+scripted order, is involved. They are also where it belongs:
+`test/test_lock.cc` and `test/test_savepoint.cc` used to
+play the same timelines out with threads and sleeps, and
+keep only what a script cannot say — error codes, argument
+handling, engine state, contention under load, and the
+index-build protocol, which needs a write to a second
+relation the language has no verb for.
 
 **Read committed is covered by two scenarios, not a
 pairing.** a15 and a16 declare `session <name> rc` and run
