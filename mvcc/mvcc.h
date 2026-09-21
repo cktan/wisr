@@ -1,0 +1,290 @@
+/*
+ * mvcc.h -- the vocabulary every scenario in mvcc/ is written
+ * in. MVCC.md describes the model; this header is its
+ * executable form.
+ *
+ * Transactions are T1, T2, T3 and are addressed by number.
+ * Rows are R1, R2, R3, plus R4 and R5 where a scenario needs
+ * keys outside the predicate it scans. A scenario names the
+ * rows it seeds and then drives each transaction call by call,
+ * so the interleaving is exactly what the file says.
+ *
+ * Every scenario runs in each pairing of isolation levels:
+ *
+ *   RR    both transactions REPEATABLE READ
+ *   RR+V  one of each, in both orders (P_RR_V and P_V_RR)
+ *   V+V   both SERIALIZABLE
+ *
+ * A scenario's expected outcome is stated per pairing, because
+ * that is the whole question these tests answer: which
+ * conflicts each level detects, and which it lets through.
+ */
+#ifndef WISR_MVCC_H
+#define WISR_MVCC_H
+
+#include "doctest.h"
+
+#include "sm.h"
+
+#include <stdlib.h>
+
+#include <filesystem>
+#include <string>
+#include <utility>
+#include <vector>
+
+/* The rows a scenario may seed and address. */
+#define R1 "r1"
+#define R2 "r2"
+#define R3 "r3"
+#define R4 "r4"
+#define R5 "r5"
+
+/* The isolation level of each transaction in a scenario. */
+enum pairing_t {
+  P_RR_RR, /* T1 REPEATABLE READ,  T2 REPEATABLE READ */
+  P_RR_V,  /* T1 REPEATABLE READ,  T2 SERIALIZABLE    */
+  P_V_RR,  /* T1 SERIALIZABLE,     T2 REPEATABLE READ */
+  P_V_V    /* T1 SERIALIZABLE,     T2 SERIALIZABLE    */
+};
+
+/* Every pairing, for the loop each scenario opens with. */
+#define MVCC_PAIRINGS                                                          \
+  { P_RR_RR, P_RR_V, P_V_RR, P_V_V }
+
+/* Name the pairing in the failure output of everything below. */
+#define PAIRING(p) INFO("pairing: " << pairing_name(p))
+
+/* The pairings in which SSI tracks both transactions. */
+inline bool both_serializable(pairing_t p) { return p == P_V_V; }
+
+/* The name MVCC.md and the test output use for a pairing. */
+inline std::string pairing_name(pairing_t p) {
+  switch (p) {
+  case P_RR_RR:
+    return "RR: T1=RR, T2=RR";
+  case P_RR_V:
+    return "RR+V: T1=RR, T2=SERIALIZABLE";
+  case P_V_RR:
+    return "RR+V: T1=SERIALIZABLE, T2=RR";
+  default:
+    return "V+V: T1=SERIALIZABLE, T2=SERIALIZABLE";
+  }
+}
+
+/* The level transaction n runs at in pairing p. T3 follows T2. */
+inline sm_xctlevel_t level_of(pairing_t p, int n) {
+  bool ser = n == 1 ? (p == P_V_RR || p == P_V_V) : (p == P_RR_V || p == P_V_V);
+  return ser ? SM_XCT_SERIALIZABLE : SM_XCT_REPEATABLE_READ;
+}
+
+/* A fresh directory under the system temp dir, removed at scope exit. */
+class mvcc_tmpdir_t {
+public:
+  /* Create the directory. */
+  mvcc_tmpdir_t() {
+    std::string tmpl =
+        (std::filesystem::temp_directory_path() / "wisr-mvcc-XXXXXX").string();
+    m_path = mkdtemp(tmpl.data());
+  }
+
+  /* Remove the directory and everything in it. */
+  ~mvcc_tmpdir_t() {
+    std::error_code ec;
+    std::filesystem::remove_all(m_path, ec);
+  }
+
+  /* The directory's path. */
+  const char *path() const { return m_path.c_str(); }
+
+private:
+  std::string m_path;
+};
+
+/*
+ * One scenario run: a database holding one relation, seeded
+ * with rows, and up to three transactions driven by number.
+ */
+class scenario_t {
+public:
+  /* Create the database and seed the rows, each row -> "0". */
+  explicit scenario_t(const std::vector<std::string> &rows = {}) {
+    REQUIRE(sm_init(m_tmp.path()) == 0);
+    m_env = sm_attach(m_tmp.path());
+    REQUIRE(m_env);
+    REQUIRE(sm_mkdb(m_env, "db", nullptr) == 0);
+    sm_session_t *s = session(1);
+    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    REQUIRE_MESSAGE(sm_mkrel(s, &m_rel) == 0, sm_errmsg());
+    // Seed each row in the transaction that creates the relation.
+    for (const std::string &row : rows) {
+      REQUIRE(sm_insert(s, m_rel, row.data(), row.size(), "0", 1) == 0);
+    }
+    REQUIRE(sm_commit(s) == 0);
+  }
+
+  /* Close the sessions and detach. */
+  ~scenario_t() {
+    for (sm_session_t *s : m_sessions) {
+      sm_closedb(s);
+    }
+    sm_detach(m_env, 1);
+  }
+
+  /* Transaction n's session, opened on first use. */
+  sm_session_t *session(int n) {
+    while (static_cast<int>(m_sessions.size()) < n) {
+      sm_session_t *s = sm_opendb(m_env, "db", nullptr);
+      REQUIRE_MESSAGE(s, sm_errmsg());
+      m_sessions.push_back(s);
+    }
+    return m_sessions[n - 1];
+  }
+
+  /* The relation every operation below works on. */
+  uint64_t rel() const { return m_rel; }
+
+  /* Begin T<n> at the level pairing p gives it. */
+  void begin(int n, pairing_t p) {
+    REQUIRE_MESSAGE(sm_begin(session(n), level_of(p, n == 3 ? 2 : n)) == 0,
+                    sm_errmsg());
+  }
+
+  /* Begin T<n> at an explicit level. */
+  void begin_at(int n, sm_xctlevel_t level) {
+    REQUIRE_MESSAGE(sm_begin(session(n), level) == 0, sm_errmsg());
+  }
+
+  /* r(row): the value T<n> reads, or "-" if no row is visible. */
+  std::string r(int n, const std::string &row) {
+    const char *data = nullptr;
+    size_t len = 0;
+    int rc = sm_read(session(n), m_rel, row.data(), row.size(), &data, &len);
+    REQUIRE_MESSAGE(rc >= 0, sm_errmsg());
+    return rc == 1 ? "-" : std::string(data, len);
+  }
+
+  /* w(row): T<n> updates row; the result of sm_update. */
+  int w(int n, const std::string &row, const std::string &val) {
+    return sm_update(session(n), m_rel, row.data(), row.size(), val.data(),
+                     val.size());
+  }
+
+  /* i(row): T<n> inserts row; the result of sm_insert. */
+  int i(int n, const std::string &row, const std::string &val) {
+    return sm_insert(session(n), m_rel, row.data(), row.size(), val.data(),
+                     val.size());
+  }
+
+  /* d(row): T<n> deletes row; the result of sm_delete. */
+  int d(int n, const std::string &row) {
+    return sm_delete(session(n), m_rel, row.data(), row.size());
+  }
+
+  /* s(lo, hi): the keys T<n> sees in the closed range [lo, hi]. */
+  std::vector<std::string> s(int n, const std::string &lo,
+                             const std::string &hi) {
+    sm_scan_t *c = sm_scan(session(n), m_rel, lo.data(), lo.size(), 1,
+                           hi.data(), hi.size(), 1);
+    REQUIRE_MESSAGE(c, sm_errmsg());
+    std::vector<std::string> keys;
+    const char *k, *d;
+    size_t kl, dl;
+    while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
+      keys.emplace_back(k, kl);
+    }
+    sm_scanend(c);
+    return keys;
+  }
+
+  /* s(lo, hi) as (key, value) pairs. */
+  std::vector<std::pair<std::string, std::string>>
+  srows(int n, const std::string &lo, const std::string &hi) {
+    sm_scan_t *c = sm_scan(session(n), m_rel, lo.data(), lo.size(), 1,
+                           hi.data(), hi.size(), 1);
+    REQUIRE_MESSAGE(c, sm_errmsg());
+    std::vector<std::pair<std::string, std::string>> rows;
+    const char *k, *d;
+    size_t kl, dl;
+    while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
+      rows.emplace_back(std::string(k, kl), std::string(d, dl));
+    }
+    sm_scanend(c);
+    return rows;
+  }
+
+  /*
+   * c: commit T<n>, reporting whether it committed. A failure
+   * must be SM_ERR_SERIALIZATION -- the only commit-time
+   * failure the design allows (DESIGN.md §7.3) -- and must be
+   * retryable.
+   */
+  bool c(int n) {
+    if (sm_commit(session(n)) == 0) {
+      return true;
+    }
+    CHECK(sm_errno() == SM_ERR_SERIALIZATION);
+    CHECK(sm_retryable());
+    return false;
+  }
+
+  /* a: abort T<n>. */
+  void a(int n) { REQUIRE(sm_abort(session(n)) == 0); }
+
+  /* The rows a fresh REPEATABLE READ transaction sees. */
+  std::vector<std::pair<std::string, std::string>> final_rows() {
+    sm_session_t *s = session(static_cast<int>(m_sessions.size()) + 1);
+    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    sm_scan_t *cur = sm_scan(s, m_rel, nullptr, 0, 0, nullptr, 0, 0);
+    REQUIRE_MESSAGE(cur, sm_errmsg());
+    std::vector<std::pair<std::string, std::string>> rows;
+    const char *k, *d;
+    size_t kl, dl;
+    while (sm_scannxt(cur, &k, &kl, &d, &dl) == 0) {
+      rows.emplace_back(std::string(k, kl), std::string(d, dl));
+    }
+    sm_scanend(cur);
+    REQUIRE(sm_commit(s) == 0);
+    return rows;
+  }
+
+  /* The keys a fresh REPEATABLE READ transaction sees. */
+  std::vector<std::string> final_keys() {
+    std::vector<std::string> keys;
+    for (const auto &kv : final_rows()) {
+      keys.push_back(kv.first);
+    }
+    return keys;
+  }
+
+  /* The value of row as a fresh transaction reads it. */
+  std::string final_value(const std::string &row) {
+    for (const auto &kv : final_rows()) {
+      if (kv.first == row) {
+        return kv.second;
+      }
+    }
+    return "-";
+  }
+
+private:
+  mvcc_tmpdir_t m_tmp;
+  sm_env_t *m_env = nullptr;
+  std::vector<sm_session_t *> m_sessions;
+  uint64_t m_rel = 0;
+};
+
+/* Expect rc to be -1 with error e, the way a scenario states it. */
+inline void fails(int rc, sm_errno_t e) {
+  CHECK(rc == -1);
+  CHECK(sm_errno() == e);
+}
+
+/* Expect rc to be -1 with SM_ERR_CONFLICT, which is retryable. */
+inline void conflicts(int rc) {
+  CHECK(rc == -1);
+  CHECK(sm_errno() == SM_ERR_CONFLICT);
+  CHECK(sm_retryable());
+}
+
+#endif /* WISR_MVCC_H */

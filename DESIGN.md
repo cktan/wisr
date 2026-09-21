@@ -1866,6 +1866,10 @@ src/seq.cc              named sequences: sm_mkseq, sm_rmseq, sm_nextseq
 src/gc.cc               compaction filter, watermarks, drop-relation purge
 src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 src/log.cc              the sm_set_log hook the engine reports through
+test/                   the engine's tests: API, limits, locks, GC,
+                        2PC, crash, sequences, logging
+mvcc/                   isolation: MVCC.md and one file per scenario
+example/                small programs against the public API
 ```
 
 ### 12.4 Build order
@@ -1882,6 +1886,14 @@ src/log.cc              the sm_set_log hook the engine reports through
 7. 2PC and prepared-transaction recovery.
 
 ### 12.5 Testing
+
+Isolation has a document of its own: `mvcc/MVCC.md` states
+the rules of §5 to §7 as a table of scenarios -- every
+write-write pair, every read-write shape -- with the outcome
+each one has at REPEATABLE READ, at a mixed pair of levels,
+and at SERIALIZABLE. One file per scenario in `mvcc/` runs
+it in all of those pairings, and `make test` runs them. The
+bullets below cover the rest of the engine.
 
 - **Key order.** Codec tests with userkeys that are prefixes of
   one another (`""`, `"a"`, `"a\x00"`, `"a\xFF"`, `"ab"`), each

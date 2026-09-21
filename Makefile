@@ -1,6 +1,6 @@
 # wisr -- build the storage manager library and its tests.
 #
-#   make -j4          libwisr.a, the test binary, and the examples
+#   make -j4          libwisr.a, the test binaries, and the examples
 #   make test         build, then run every test and every example
 #   make dist         install libwisr.a and sm.h under PREFIX
 #   make format       clang-format src/, test/, and example/ in place
@@ -46,17 +46,21 @@ LIB_SRCS  := $(wildcard src/*.cc)
 LIB_OBJS  := $(LIB_SRCS:src/%.cc=$(BUILD)/src/%.o)
 TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
+MVCC_SRCS := $(wildcard mvcc/*.cc)
+MVCC_OBJS := $(MVCC_SRCS:mvcc/%.cc=$(BUILD)/mvcc/%.o)
 EX_SRCS   := $(wildcard example/*.cc)
 EX_OBJS   := $(EX_SRCS:example/%.cc=$(BUILD)/example/%.o)
 EX_BINS   := $(EX_SRCS:example/%.cc=$(BUILD)/example/%)
 
-LIB      := $(BUILD)/libwisr.a
-TEST_BIN := $(BUILD)/test_wisr
+LIB       := $(BUILD)/libwisr.a
+TEST_BIN  := $(BUILD)/test_wisr
+MVCC_BIN  := $(BUILD)/mvcc_tests
 
 # Where an example puts its home directory when make runs it.
 EX_HOME := $(BUILD)/example-home
 
-FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h example/*.cc)
+FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h mvcc/*.cc \
+                          mvcc/*.h example/*.cc)
 FORMAT_FILES := $(filter-out test/doctest.h,$(FORMAT_FILES))
 
 .PHONY: all test dist format clean
@@ -64,13 +68,21 @@ FORMAT_FILES := $(filter-out test/doctest.h,$(FORMAT_FILES))
 # Keep the example objects: make deletes chained intermediates.
 .SECONDARY: $(EX_OBJS)
 
-all: $(LIB) $(TEST_BIN) $(EX_BINS)
+all: $(LIB) $(TEST_BIN) $(MVCC_BIN) $(EX_BINS)
 
 $(LIB): $(LIB_OBJS)
 	$(AR) rcs $@ $^
 
 $(TEST_BIN): $(TEST_OBJS) $(LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(LDLIBS)
+
+$(MVCC_BIN): $(MVCC_OBJS) $(LIB)
+	$(CXX) $(CXXFLAGS) -o $@ $(MVCC_OBJS) $(LIB) $(LDLIBS)
+
+# The scenario files take doctest.h from test/.
+$(BUILD)/mvcc/%.o: mvcc/%.cc $(FLAGS_FILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -Itest -Imvcc -c -o $@ $<
 
 $(BUILD)/example/%: $(BUILD)/example/%.o $(LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB) $(LDLIBS)
@@ -91,6 +103,7 @@ $(BUILD)/test/%.o: test/%.cc $(FLAGS_FILE)
 # so that a run never inherits an older format version.
 test: all
 	$(TEST_BIN)
+	$(MVCC_BIN)
 	@mkdir -p $(EX_HOME)
 	@for ex in $(EX_BINS); do \
 	  home=$(EX_HOME)/$$(basename $$ex); \
@@ -111,4 +124,5 @@ format:
 clean:
 	rm -rf $(BUILD)
 
--include $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(EX_OBJS:.o=.d)
+-include $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(MVCC_OBJS:.o=.d) \
+        $(EX_OBJS:.o=.d)
