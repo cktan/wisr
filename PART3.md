@@ -313,7 +313,8 @@ correctness. What it means:
 
 `sm1` first settled that a write at READ COMMITTED fails with
 `SM_ERR_CONFLICT` when the row was committed after the
-transaction began. PostgreSQL's default level does not fail. The second of two concurrent
+transaction began. PostgreSQL's default level does not fail.
+The second of two concurrent
 `UPDATE t SET x = x + 1 WHERE id = 1` waits for the first,
 re-reads the newest version of the row, re-checks the `WHERE`
 clause and applies its change. Workloads written for
