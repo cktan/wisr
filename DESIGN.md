@@ -112,6 +112,10 @@ design:
   (`PART3.md` §2), so the boundary is a function call and the
   shape is no longer forced. Whether sm2 keeps it, for filter
   pushdown and fewer calls per scan, is open.
+- **One commit point.** The catalog lives in sm2, in memory
+  and written through to sm1, so a DDL statement and the data
+  it changes commit in one sm1 transaction, and recovery is
+  RocksDB's alone (`PART3.md` §4, `sm2/DESIGN.md` §4).
 - **No backward scans, at any level, ever.** Settled in
   `sm1/OBJECTIVE.md` and inherited by every index sm2
   builds. A caller that needs descending order keeps a

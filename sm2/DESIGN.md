@@ -92,9 +92,48 @@ versions, stored in sm2's own relations and written in the same
 sm1 transaction as the DDL that changes them — which is what
 makes DDL transactional for free.
 
-Needs a cache with transactional invalidation. This is the usual
-place such a design goes wrong: a cached definition that outlives
-the transaction that changed it.
+**Decision: the catalog is held in memory.** It is loaded from
+sm1 at startup; a change is made in memory and written through
+to sm1, which is used for persistence only. It replaces
+PostgreSQL's heap catalogs (`PART3.md` §4), so sm1's status
+record is the one commit point.
+
+**Decision: schema changes are lock-based, as in PostgreSQL.**
+The catalog is not versioned, and an old snapshot does not see
+an old definition. PostgreSQL's catalogs are MVCC heap tables,
+but it does not give a transaction the old schema either: it
+keeps DDL and users of a table apart with table locks, so a
+transaction that first touches a table after a DDL commits sees
+the new definition, alongside its old data snapshot. sm2 does
+the same with sm1's row locks:
+
+- every transaction that reads or writes a table takes
+  `sm_lock(SHARED)` on that table's schema row, held to the end
+  of the transaction, before it reads the definition;
+- DDL takes the schema row exclusive by updating it, which
+  waits out the transactions in flight and blocks new ones
+  until it commits — the protocol §5 already uses for online
+  index builds, applied to all DDL;
+- so once a transaction holds the shared lock, the definition
+  in memory cannot change under it. A catalog served from
+  memory must take this lock, or DDL has nothing to wait on.
+
+Deadlocks between DDL and DML are found by sm1's detector like
+any other.
+
+Making memory authoritative moves the hard part; it does not
+remove it. A definition that outlives the transaction that
+changed it is the usual place such a design goes wrong. Open:
+
+- **Privacy until commit.** A DDL change must be invisible to
+  other transactions until it commits, and undone on abort and
+  on savepoint rollback. The shape expected is a
+  per-transaction overlay, written to sm1 inside the DDL's own
+  transaction and published to the shared catalog only after
+  the commit, in the order sm1 uses for its commit cache
+  (`sm1/DESIGN.md` §3.4).
+- **Size and startup.** Load time and memory for a schema
+  with many partitions.
 
 ---
 

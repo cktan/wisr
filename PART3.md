@@ -205,21 +205,29 @@ sm1's GC.
 What still has to be solved either way:
 
 - **WAL, replication, PITR, logical decoding.** All three read
-  PostgreSQL's WAL. With the data in RocksDB's WAL, crash
-  recovery becomes two independent replays with no shared LSN
-  — catalog and data can diverge at a crash — and physical
+  PostgreSQL's WAL. With the data in RocksDB's WAL, physical
   replication, `pg_basebackup` and PITR stop working. Logical
   decoding is possible only through a custom WAL resource
   manager, which means writing full row images into PG's WAL as
   well, paying for durability twice. Rebuilding replication at
   the storage tier is a subsystem in its own right; it is what
   YugabyteDB did, with Raft.
-- **Catalogs stay on heap.** PostgreSQL hardwires it: the
-  relation cache asserts that catalog relations use heap, and
-  sequences are hardwired to heap too — so sm1's sequences
-  would go unused. A PG-on-sm2 system is a hybrid, with
-  catalogs on heap under PG's MVCC and user data in sm2, and
-  the DDL-atomicity problem lives exactly on that seam.
+- **Catalogs move into sm2.** PostgreSQL hardwires catalogs
+  and sequences to heap — the relation cache asserts it — so
+  the fork rewrites that seam rather than living with a
+  hybrid, where DDL atomicity would sit exactly on the seam.
+  The catalog is held in memory, loaded from sm1 at startup,
+  with changes made in memory and written through to sm1 for
+  persistence only. sm1's status record is then the one
+  commit point: recovery is RocksDB's alone, DDL shares its
+  transaction with the data, and sm1's sequences are used.
+  Logical decoding can be fed from sm1 instead of a second
+  copy in PostgreSQL's WAL, but sm1 has no commit-ordered
+  change feed yet. The threaded fork (§2) makes one shared
+  in-memory catalog coherent without cross-process
+  invalidation. The cost is the code that reads the
+  catalogs — the relation cache, syscache and system-table
+  scans — and the open questions in `sm2/DESIGN.md` §4.
 - **Statistics.** The planner is being kept, so it needs
   `reltuples`, `relpages`, histograms and correlations, and
   `ANALYZE` needs a sampling path.
@@ -340,6 +348,8 @@ Stated so none of it is repeated as fact:
 - **The cost of converting PostgreSQL to threads** (§2's
   decision). Not estimated, and not in §4's figures, which
   assume the process model stays.
+- **The size of the catalog rewrite** (§4's decision). Not
+  estimated.
 - **The effort figures in §4** are calibrated judgment against
   the precedents, not measurements. Treat the ordering as
   sound and the absolute numbers as loose.

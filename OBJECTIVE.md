@@ -100,6 +100,12 @@ These are settled; they bind every level below.
   `sm1/OBJECTIVE.md`. The PostgreSQL fork adapts to it, by
   moving to a thread per connection, rather than the stack
   moving behind IPC (`PART3.md` §2).
+- **The catalog is sm2's, held in memory.** PostgreSQL's
+  heap catalogs are replaced, not kept beside sm2
+  (`PART3.md` §4), so sm1's status record is the one commit
+  point. The catalog is loaded into memory at startup and
+  written through to sm1 for persistence
+  (`sm2/DESIGN.md` §4).
 - **Each level ships its own `OBJECTIVE.md` and
   `DESIGN.md`.** This document and `DESIGN.md` at the top
   level cover only what spans levels: the stack's shape, its
