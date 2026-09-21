@@ -283,6 +283,30 @@ genuinely the target, this decision has to be re-opened**, and
 it is much cheaper to re-open now than after sm2 has built
 mirror relations into its index design.
 
+**Decision: the ban stands; the planner is made not to ask.**
+sm1 stays forward-only, and there are no mirror relations. The
+fork's planner is changed so that an index scan in the
+backward direction costs infinity and is never chosen. A
+forward path always exists, so this loses plans, not
+correctness. What it means:
+
+- `ORDER BY x DESC LIMIT n` on an ordered index becomes a
+  top-N sort over a forward scan, not an early-terminating
+  index scan. The same goes for a merge join that wants the
+  descending order.
+- PostgreSQL answers `MAX()` with a backward index scan, so it
+  is expected to lose that plan too; `MIN()` keeps its
+  forward one.
+- The infinite cost is on the direction of the scan, not on
+  how the index is declared. An index declared with DESC
+  columns is still scanned forward, over inverted key bytes
+  (`sm2/DESIGN.md` §2).
+- Index paths are not the only place a backward scan is
+  assumed. `ExecSupportsBackwardScan` returns true for a
+  sequential scan unconditionally, so it is changed to return
+  false always — every table is an sm2 table — which makes the
+  planner put a Materialize node under a scrollable cursor.
+
 ---
 
 ## 6. What this forces on sm2, now
@@ -311,8 +335,8 @@ become a dependency.
 ## 7. Recommended sequencing
 
 1. **Build sm2 standalone**, to `sm2/PLAN.md`.
-2. **Re-open the backward scan decision** (§5) before sm2's
-   index design hardens around mirror relations.
+2. **Backward scans are settled** (§5): the ban stands, and
+   the planner is changed not to ask for one.
 3. **Spike the fork early, and throw it away.** A prototype
    that runs `SELECT` and `INSERT` on one table through sm2,
    built to find which of §2's and §4's walls bites first —
@@ -350,6 +374,10 @@ Stated so none of it is repeated as fact:
   assume the process model stays.
 - **The size of the catalog rewrite** (§4's decision). Not
   estimated.
+- **What the planner change costs in practice** (§5's
+  decision). The plans lost, such as `MAX()` through an
+  index, are expected from how the planner works, but were
+  not confirmed against its source or measured.
 - **The effort figures in §4** are calibrated judgment against
   the precedents, not measurements. Treat the ordering as
   sound and the absolute numbers as loose.

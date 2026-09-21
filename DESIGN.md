@@ -118,9 +118,9 @@ design:
   RocksDB's alone (`PART3.md` §4, `sm2/DESIGN.md` §4).
 - **No backward scans, at any level, ever.** Settled in
   `sm1/OBJECTIVE.md` and inherited by every index sm2
-  builds. A caller that needs descending order keeps a
-  second relation with inverted key bytes and scans it
-  forward.
+  builds. The fork's planner is changed never to ask for a
+  backward scan (`PART3.md` §5); descending order comes from
+  inverted key bytes, scanned forward.
 
 ---
 

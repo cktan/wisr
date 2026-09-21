@@ -76,6 +76,11 @@ These are settled and drive `DESIGN.md`.
   and partitions passes that easily, so sm2 maps many logical
   tables and indexes onto few sm1 relations by prefixing its own
   object id into the key.
+- **Descending order is inverted bytes, scanned forward.** sm1
+  does not scan backwards, and the fork's planner is changed
+  never to ask it to (`PART3.md` §5). So a descending column
+  is the ascending encoding with its bytes inverted, and there
+  are no mirror relations.
 
 ## Open questions
 
@@ -86,11 +91,6 @@ before anything is written to disk:
   `sk ‖ pk` together. Collation sort keys can be several times
   the length of their source text. Truncate and recheck, hash
   and recheck, or reject?
-- **Descending order.** sm1 does not scan backwards, by a
-  settled decision, so a descending index is a second relation
-  with inverted key bytes. `PART3.md` §5 argues that decision
-  has to be revisited if PostgreSQL is the target. Until it is,
-  what does sm2 do?
 - **Collation stability.** A sort key is only valid for the
   collation library version that produced it. What does sm2
   record, and what does it do when the version changes?
