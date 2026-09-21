@@ -71,7 +71,7 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
   // 2. A updates "x" and commits.
   // 3. B's update of "x" fails at once. At repeatable read and
   //    serializable that is SM_ERR_CONFLICT, retryable; at read
-  //    committed it is SM_ERR_UPDATED, which is not (PLAN.md).
+  //    committed it is SM_ERR_UPDATED, which is not (DESIGN.md §5.4).
   for (sm_xctlevel_t level :
        {SM_XCT_READ_COMMITTED, SM_XCT_REPEATABLE_READ, SM_XCT_SERIALIZABLE}) {
     CAPTURE(level);

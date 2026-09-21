@@ -366,7 +366,7 @@ Every script here pins its sessions with `rc`, since `pairings
 all` runs only RR and SERIALIZABLE. A write that meets a row
 committed after the transaction began fails with `updated`,
 which does not abort; the caller reads the newest version with
-`readlatest` and goes on (`PLAN.md`).
+`readlatest` and goes on (`DESIGN.md` §5.4).
 
 | # | Schedule | Outcome | File |
 |---|---|---|---|

@@ -694,6 +694,24 @@ the write. This is what PostgreSQL's executor does at its default
 level after a lock wait, and workloads written for it rely on it
 (`PART3.md` §5a).
 
+The commonest case is a hot row, a shared counter or a
+`next_order_id`. Two read committed sessions each add one to `R1`,
+which holds 0; T1 updates it and T2 waits for T1's row lock:
+
+| | T2's update, after T1 commits | R1 |
+| --- | --- | --- |
+| PostgreSQL | re-reads R1 (1), re-checks `WHERE`, writes 2 | 2 |
+| before §5.4 | fails with `SM_ERR_CONFLICT`, T2 aborted | 1, until T2 retries |
+| §5.4 | `SM_ERR_UPDATED`; T2 reads the latest (1), re-checks, writes 2 | 2 |
+
+A client written for PostgreSQL has no retry loop, so it could not
+run on the old rule. The variant is `UPDATE R1 SET n = 1 WHERE
+n = 0`, claiming the row once: T2's re-check must fail and T2 must
+write nothing, so letting the write through is not enough. The
+caller has to look at the newest version first, and sm1 makes it.
+The executor's side of the exchange belongs to the PostgreSQL
+fork, not to sm1.
+
 The re-read is enforced, not requested. `sm_read_latest` marks
 the lock entry, and the write's step 3 lets the write through
 only on a marked lock. A caller cannot skip the exchange and lose
@@ -2390,6 +2408,21 @@ bullets below cover the rest of the engine.
   SSI read set are linear in the keys touched (§5.1), so a
   single transaction writing tens of millions of keys costs
   gigabytes. Bulk loads want batching into many transactions.
+- **Every write takes a timestamp.** A version is keyed by a `wts`
+  taken after its row lock (§4.1), so the counter is used once per
+  row written and not once per transaction, and its lease (§4.2,
+  `ts_lease`) runs out sooner; each renewal is a synchronous
+  `Put`. `global_ts` is an atomic so the common case takes no
+  mutex, but no throughput benchmark has been run, so neither
+  cost is measured. A larger `ts_lease` is the first lever.
+- **The format changed.** Keying versions by `wts` and moving the
+  `xid` into the value bumped `WISR_DB_VERSION` to 5. A database
+  written before it is refused, not migrated.
+- **The READ COMMITTED protocol is unproven under a race
+  detector.** `e06` shows no lost increment, but a
+  `-fsanitize=thread` build reports races, mostly through
+  RocksDB, which is not instrumented; only some were read, and
+  the existing `e03` reports one too. Treat it as inconclusive.
 - **One process.** Simplifies everything (no shared memory, no lock
   table in shm), and is what RocksDB wants. Multi-process or remote
   access means a server front-end (§1), not a change to this design.

@@ -1,7 +1,7 @@
 /*
  * test_read_latest.cc -- sm_read_latest and SM_ERR_UPDATED: the
  * argument rules and the engine state a scenario script cannot
- * see (PLAN.md step 4). The timelines themselves are the f
+ * see (DESIGN.md §5.4). The timelines themselves are the f
  * scripts in mvcc/in/.
  */
 
