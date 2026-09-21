@@ -67,7 +67,8 @@ private:
 
 /* Set key in relation 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size());
+  return sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size(),
+                   nullptr, nullptr);
 }
 
 /* The unresolved prepared transactions, as (gid, prepared_at). */

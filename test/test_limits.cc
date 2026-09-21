@@ -109,7 +109,8 @@ TEST_CASE("keys of SM_MAX_KEYLEN bytes work in every call and survive reopen") {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   put(s, f.rel(), ka, "va");
   put(s, f.rel(), kb, "vb");
-  REQUIRE(sm_update(s, f.rel(), ka.data(), ka.size(), "va2", 3) == 0);
+  REQUIRE(sm_update(s, f.rel(), ka.data(), ka.size(), "va2", 3, nullptr,
+                    nullptr) == 0);
   REQUIRE(sm_commit(s) == 0);
 
   f.reopen();
@@ -129,7 +130,7 @@ TEST_CASE("keys of SM_MAX_KEYLEN bytes work in every call and survive reopen") {
   CHECK(std::string(k, kl) == kb);
   CHECK(sm_scannxt(c, &k, &kl, &d, &dl) == 1);
   sm_scanend(c);
-  REQUIRE(sm_delete(s, f.rel(), ka.data(), ka.size()) == 0);
+  REQUIRE(sm_delete(s, f.rel(), ka.data(), ka.size(), nullptr, nullptr) == 0);
   REQUIRE(sm_commit(s) == 0);
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
@@ -154,9 +155,11 @@ TEST_CASE("a key one byte over SM_MAX_KEYLEN is rejected by every call") {
   put(s, f.rel(), "ok", "v");
   CHECK(sm_insert(s, f.rel(), over.data(), over.size(), "v", 1) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_update(s, f.rel(), over.data(), over.size(), "v", 1) == -1);
+  CHECK(sm_update(s, f.rel(), over.data(), over.size(), "v", 1, nullptr,
+                  nullptr) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_delete(s, f.rel(), over.data(), over.size()) == -1);
+  CHECK(sm_delete(s, f.rel(), over.data(), over.size(), nullptr, nullptr) ==
+        -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
   CHECK(sm_read(s, f.rel(), over.data(), over.size(), &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
@@ -198,7 +201,8 @@ TEST_CASE("values of SM_MAX_DATALEN bytes are stored and read back intact") {
   CHECK((rows[0].second == v1));
 
   std::string v2 = pattern(SM_MAX_DATALEN, 2);
-  REQUIRE(sm_update(s, f.rel(), "big", 3, v2.data(), v2.size()) == 0);
+  REQUIRE(sm_update(s, f.rel(), "big", 3, v2.data(), v2.size(), nullptr,
+                    nullptr) == 0);
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   CHECK((get(s, f.rel(), "big") == v2));
@@ -218,7 +222,8 @@ TEST_CASE("a value one byte over SM_MAX_DATALEN is rejected") {
   put(s, f.rel(), "k", "v");
   CHECK(sm_insert(s, f.rel(), "k2", 2, over.data(), over.size()) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_update(s, f.rel(), "k", 1, over.data(), over.size()) == -1);
+  CHECK(sm_update(s, f.rel(), "k", 1, over.data(), over.size(), nullptr,
+                  nullptr) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
   CHECK(get(s, f.rel(), "k") == "v");
   CHECK(get(s, f.rel(), "k2") == "<none>");

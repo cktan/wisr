@@ -53,7 +53,8 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
         }
         sm_scanend(c);
         const char *v = on >= 2 ? "0" : "1";
-        if (sm_update(sess, s.rel(), me.data(), me.size(), v, 1) == 0 &&
+        if (sm_update(sess, s.rel(), me.data(), me.size(), v, 1, nullptr,
+                      nullptr) == 0 &&
             sm_commit(sess) == 0) {
           commits++;
         } else if (!sm_retryable()) {

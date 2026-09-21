@@ -118,8 +118,8 @@ private:
 void commit_set(sm_session_t *s, const std::string &key,
                 const std::string &val) {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size()) ==
-          0);
+  REQUIRE(sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size(),
+                    nullptr, nullptr) == 0);
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -134,7 +134,7 @@ void commit_put(sm_session_t *s, const std::string &key,
 /* Delete key from relation 1 in one committed transaction. */
 void commit_del(sm_session_t *s, const std::string &key) {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_delete(s, g_rel, key.data(), key.size()) == 0);
+  REQUIRE(sm_delete(s, g_rel, key.data(), key.size(), nullptr, nullptr) == 0);
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -227,13 +227,13 @@ TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i++) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm_update(s, g_rel, key, 3, "b", 1) == 0);
+    REQUIRE(sm_update(s, g_rel, key, 3, "b", 1, nullptr, nullptr) == 0);
   }
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i += 2) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm_delete(s, g_rel, key, 3) == 0);
+    REQUIRE(sm_delete(s, g_rel, key, 3, nullptr, nullptr) == 0);
   }
   REQUIRE(sm_commit(s) == 0);
 

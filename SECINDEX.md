@@ -124,12 +124,23 @@ statement.
 
 ### 6. Minor: performance and ergonomics
 
-- **No batched read.** Index-then-base costs N separate seeks;
-  there is no MultiGet equivalent.
-- **No old-image return.** Index maintenance needs the old row
-  on update and delete, so each costs read, copy (the `sm_read`
-  pointer dies on the next call), then write: two seeks and an
-  allocation per row.
+- **No batched read.** Index-then-base costs N separate seeks.
+  The MultiGet framing was wrong: a read here is an iterator
+  seek across a key's version run (§10.1), not a point `Get`,
+  so RocksDB's MultiGet does not apply. What a batched call
+  would actually save is per-key iterator construction and
+  read-epoch bookkeeping, plus seeking in sorted order. Left
+  unbuilt until a benchmark shows that setup dominating a
+  probe loop; it also needs an ownership model for N values,
+  since the session has one read buffer.
+- **No old-image return — CLOSED.** `sm_update` and
+  `sm_delete` now return the row they replaced through
+  out-parameters, NULL to skip. The claim that it cost two
+  seeks was right about the layer and wrong about the engine:
+  the write already seeks to the deciding version and decodes
+  its value to check the key exists, so returning it costs a
+  copy. The `sm_read` lifetime rule applies to it, and it is
+  the same buffer.
 - **`sm_lsrel`.** Implemented in phase 1, where a relation is
   named by a `uint64_t` relid that `sm_mkrel` hands out: the
   layer will keep its own catalog relation regardless, but
@@ -144,18 +155,19 @@ statement.
 
 Every gap is settled. Gaps 1, 2, 3 and 5 are closed:
 `sm_lock`, the savepoint stack with `sm_forget`,
-`sm_stmt_begin` and `sm_scan_seek` are all in `sm.h`. Gap 4
-will not be closed: forward-only scanning is a decision, and
-the layer works around it with inverted-byte relations. What
-is left is gap 6's two performance items, which nothing has
-asked for yet.
+`sm_stmt_begin` and `sm_scan_seek` are all in `sm.h`, as is
+gap 6's old-image return. Gap 4 will not be closed:
+forward-only scanning is a decision, and the layer works
+around it with inverted-byte relations. The batched read is
+the one item left on paper, and it needs a benchmark rather
+than an argument.
 
 ## Closing the gaps
 
-What each gap became. Gaps 1, 2, 3 and 5 are implemented in
-`sm.h`, `API.md`, `DESIGN.md` and `src/`, with tests. Gap 4
-is a decision against. Gap 6's two performance items are the
-only proposals still on paper.
+What each gap became. Gaps 1, 2, 3, 5 and the old-image half
+of gap 6 are implemented in `sm.h`, `API.md`, `DESIGN.md` and
+`src/`, with tests. Gap 4 is a decision against, and so, for
+now, is the batched read.
 
 ### The whole roster
 
@@ -181,12 +193,12 @@ int sm_stmt_begin(sm_session_t* session);
 int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
                  int inclusive);
 
-/* gap 6: batched read -- the missing MultiGet equivalent */
+/* gap 6: batched read -- NOT BUILT; see the gap for why */
 int sm_mread(sm_session_t* session, uint64_t relid, size_t n,
              const char* const* key, const size_t* klen,
              const char** data, size_t* datalen, int* found);
 
-/* gap 6: old-image return -- extra out-params on the existing writes */
+/* gap 6: old-image return -- IMPLEMENTED */
 int sm_update(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen,
               const char* data, size_t datalen,
@@ -201,23 +213,22 @@ Gap 4 needs no function: it is closed. Gap 6's
 lock-without-write is `sm_lock` again, which is now in, and
 its `sm_lsrel` was already in phase 1.
 
-**How firm each one is.** Everything but the gap 6 pair is
-settled: `sm_lock`, the gap 2 trio, `sm_stmt_begin` and
-`sm_scan_seek` are all in `sm.h` and `API.md`. The gap 6 pair
-is sketched here and nowhere else -- that gap defers both
-until profiling asks, so neither signature is settled.
+**How firm each one is.** Everything but `sm_mread` is
+settled and in `sm.h` and `API.md`. `sm_mread` is sketched
+here and nowhere else: that half of gap 6 waits on a
+benchmark, so its signature is a guess, in particular how N
+values would be owned.
 
-**Three are breaking changes**, not additions: `sm_rollback`
-gained a parameter, and `sm_update` and `sm_delete` would gain
-two each.
+**Three were breaking changes**, not additions: `sm_rollback`
+gained a parameter, and `sm_update` and `sm_delete` gained two
+each.
 
-**The old-image lifetime is unsettled.** That return cannot be
-a new function; it has to alter `sm_update` and `sm_delete`
-themselves. An `*old` pointing into session memory would
-inherit `sm_read`'s validity window -- dead at the next `sm_*`
-call on the session -- which is the copy the layer is trying
-to avoid in the first place. Settle the lifetime before the
-signature.
+**The old-image lifetime is settled** the way the question
+framed it: `*old` points into session memory and dies at the
+next `sm_*` call, `sm_read`'s window, because it is
+`sm_read`'s buffer. The layer copies only what must outlive
+that call, and index maintenance usually does not -- it
+derives the old entries and is done.
 
 ### Gap 1 (and lock-without-write): `sm_lock` — DONE
 
@@ -398,13 +409,23 @@ join does anyway.
 - **`sm_lsrel`.** Done in phase 1: a scan of the `"R"` prefix
   in `rel.0`, which needs an active transaction since the
   answer depends on the snapshot (DESIGN.md §11).
-- **Batched read, old-image return.** Pure performance; leave
-  them until profiling asks. Signatures sketched in the roster
-  above, with the lifetime question the old image raises.
+- **Old-image return — DONE.** Out-parameters on `sm_update`
+  and `sm_delete`, NULL to skip, filled from the version the
+  write already decoded (DESIGN.md §5.3). The lifetime
+  question is answered by reusing `sm_read`'s buffer and its
+  rule: valid until the next `sm_*` call on the session,
+  either call invalidating what the other returned. Both
+  signatures changed, and every caller with them.
+- **Batched read — left unbuilt, with reasons.** See the gap
+  above: MultiGet does not apply to version runs, the real
+  saving is per-key iterator setup, and N values need an
+  ownership model the session's single buffer does not
+  provide. Reopen it with a benchmark, not an argument.
 
 ### Order
 
-Gaps 1, 2, 3 and 5 are done, and gap 4 will not be. Gap 6's
-two performance items are what remains, each when profiling
-asks for it: update `sm.h`, `API.md`, and `DESIGN.md`,
-implement it in `src/` with tests, then review.
+Gaps 1, 2, 3, 5 and gap 6's old-image return are done; gap 4
+will not be. The batched read is what remains, and it waits
+on a benchmark. When one asks for it: update `sm.h`,
+`API.md`, and `DESIGN.md`, implement it in `src/` with tests,
+then review.

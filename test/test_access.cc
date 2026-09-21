@@ -150,15 +150,15 @@ TEST_CASE("a transaction reads its own inserts, updates, and deletes") {
     CHECK(sm_insert(s, rel, "k", 1, "x", 1) == -1);
     CHECK(sm_errno() == SM_ERR_DUPKEY);
 
-    REQUIRE(sm_update(s, rel, "k", 1, "v2", 2) == 0);
-    REQUIRE(sm_update(s, rel, "k", 1, "v3", 2) == 0);
+    REQUIRE(sm_update(s, rel, "k", 1, "v2", 2, nullptr, nullptr) == 0);
+    REQUIRE(sm_update(s, rel, "k", 1, "v3", 2, nullptr, nullptr) == 0);
     CHECK(get(s, rel, "k") == "v3");
 
-    REQUIRE(sm_delete(s, rel, "k", 1) == 0);
+    REQUIRE(sm_delete(s, rel, "k", 1, nullptr, nullptr) == 0);
     CHECK(get(s, rel, "k") == "<none>");
-    CHECK(sm_update(s, rel, "k", 1, "x", 1) == -1);
+    CHECK(sm_update(s, rel, "k", 1, "x", 1, nullptr, nullptr) == -1);
     CHECK(sm_errno() == SM_ERR_NOTFOUND);
-    CHECK(sm_delete(s, rel, "k", 1) == -1);
+    CHECK(sm_delete(s, rel, "k", 1, nullptr, nullptr) == -1);
     CHECK(sm_errno() == SM_ERR_NOTFOUND);
 
     put(s, rel, "k", "v4");
@@ -188,7 +188,7 @@ TEST_CASE("commit persists writes across reattach; abort discards them") {
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   put(s, rel, "b", "aborted");
-  REQUIRE(sm_update(s, rel, "a", 1, "aborted", 7) == 0);
+  REQUIRE(sm_update(s, rel, "a", 1, "aborted", 7, nullptr, nullptr) == 0);
   REQUIRE(sm_abort(s) == 0);
 
   for (int pass = 0; pass < 2; pass++) {
@@ -262,8 +262,8 @@ TEST_CASE("sm_stmt_begin gives read committed one snapshot per statement") {
   CHECK(get(s, rel, "a") == "50");
 
   REQUIRE(sm_begin(other, SM_XCT_READ_COMMITTED) == 0);
-  REQUIRE(sm_update(other, rel, "a", 1, "20", 2) == 0);
-  REQUIRE(sm_update(other, rel, "b", 1, "80", 2) == 0);
+  REQUIRE(sm_update(other, rel, "a", 1, "20", 2, nullptr, nullptr) == 0);
+  REQUIRE(sm_update(other, rel, "b", 1, "80", 2, nullptr, nullptr) == 0);
   REQUIRE(sm_commit(other) == 0);
 
   CHECK(get(s, rel, "b") == "50");
@@ -312,7 +312,7 @@ TEST_CASE("the statement snapshot is taken by the first read, not the call") {
   REQUIRE(sm_begin(s, SM_XCT_READ_COMMITTED) == 0);
   CHECK(get(s, rel, "k") == "v");
   REQUIRE(sm_begin(other, SM_XCT_READ_COMMITTED) == 0);
-  REQUIRE(sm_update(other, rel, "k", 1, "w", 1) == 0);
+  REQUIRE(sm_update(other, rel, "k", 1, "w", 1, nullptr, nullptr) == 0);
   REQUIRE(sm_commit(other) == 0);
   CHECK(get(s, rel, "k") == "w");
   REQUIRE(sm_commit(s) == 0);
@@ -367,7 +367,8 @@ TEST_CASE("a scan returns userkeys in memcmp order within its bounds") {
       if (round == 0) {
         put(s, rel, k, v);
       } else {
-        REQUIRE(sm_update(s, rel, k.data(), k.size(), v.data(), v.size()) == 0);
+        REQUIRE(sm_update(s, rel, k.data(), k.size(), v.data(), v.size(),
+                          nullptr, nullptr) == 0);
       }
     }
     REQUIRE(sm_commit(s) == 0);
@@ -410,7 +411,7 @@ TEST_CASE("a cursor does not see writes made after it opened") {
   sm_scan_t *c = sm_scan(s, rel, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   put(s, rel, "c", "3");
-  REQUIRE(sm_update(s, rel, "a", 1, "9", 1) == 0);
+  REQUIRE(sm_update(s, rel, "a", 1, "9", 1, nullptr, nullptr) == 0);
   CHECK(drain(c) == rows_t{{"a", "1"}, {"b", "2"}});
   CHECK(scan_all(s, rel) == rows_t{{"a", "9"}, {"b", "2"}, {"c", "3"}});
   REQUIRE(sm_commit(s) == 0);
@@ -599,8 +600,8 @@ TEST_CASE("keys skipped by sm_scan_seek still count as read under SSI") {
 
     REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
     CHECK(get(t2, rel, "own") != "<none>");
-    REQUIRE(sm_update(s, rel, "own", 3, "t1", 2) == 0);
-    REQUIRE(sm_update(t2, rel, "k5", 2, "t2", 2) == 0);
+    REQUIRE(sm_update(s, rel, "own", 3, "t1", 2, nullptr, nullptr) == 0);
+    REQUIRE(sm_update(t2, rel, "k5", 2, "t2", 2, nullptr, nullptr) == 0);
 
     int rc2 = sm_commit(t2);
     int err2 = sm_errno();
@@ -621,6 +622,82 @@ TEST_CASE("keys skipped by sm_scan_seek still count as read under SSI") {
   // Seeking over k5 still counts it as read.
   CHECK(skew(true));
   sm_closedb(t2);
+}
+
+TEST_CASE("sm_update and sm_delete hand back the row they replaced") {
+  // Verify the old-image return (SECINDEX.md gap 6).
+  // 1. Update a row: the old value is the one committed before.
+  // 2. Update it again: the old value is this transaction's own
+  //    previous write, not the committed one.
+  // 3. Delete it: the old value is the last one written.
+  // 4. An empty old value is reported with length 0.
+  // 5. A failed write returns no old row, and passing one
+  //    out-parameter without the other is SM_ERR_INVALID.
+  db_fixture_t f;
+  sm_session_t *s = f.session();
+  uint64_t rel = mkrel_committed(s);
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  put(s, rel, "k", "v0");
+  put(s, rel, "empty", "");
+  REQUIRE(sm_commit(s) == 0);
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  const char *old = nullptr;
+  size_t oldlen = 0;
+  REQUIRE(sm_update(s, rel, "k", 1, "v1", 2, &old, &oldlen) == 0);
+  CHECK(std::string(old, oldlen) == "v0");
+
+  REQUIRE(sm_update(s, rel, "k", 1, "v2", 2, &old, &oldlen) == 0);
+  CHECK(std::string(old, oldlen) == "v1");
+
+  REQUIRE(sm_delete(s, rel, "k", 1, &old, &oldlen) == 0);
+  CHECK(std::string(old, oldlen) == "v2");
+
+  REQUIRE(sm_update(s, rel, "empty", 5, "now", 3, &old, &oldlen) == 0);
+  CHECK(oldlen == 0);
+
+  // The key is gone, so this fails and reports no old row.
+  old = (const char *)1;
+  oldlen = 99;
+  CHECK(sm_update(s, rel, "k", 1, "v3", 2, &old, &oldlen) == -1);
+  CHECK(sm_errno() == SM_ERR_NOTFOUND);
+  CHECK(old == nullptr);
+  CHECK(oldlen == 0);
+
+  CHECK(sm_update(s, rel, "empty", 5, "x", 1, &old, nullptr) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  CHECK(sm_delete(s, rel, "empty", 5, nullptr, &oldlen) == -1);
+  CHECK(sm_errno() == SM_ERR_INVALID);
+  REQUIRE(sm_commit(s) == 0);
+}
+
+TEST_CASE("the old row shares sm_read's buffer and its lifetime") {
+  // Verify the documented lifetime of the old image.
+  // 1. Update a row, keeping the old value's pointer.
+  // 2. A read on the same session overwrites it, so the caller
+  //    must copy what it wants to keep.
+  db_fixture_t f;
+  sm_session_t *s = f.session();
+  uint64_t rel = mkrel_committed(s);
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  put(s, rel, "k", "old");
+  put(s, rel, "other", "other-value");
+  REQUIRE(sm_commit(s) == 0);
+
+  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  const char *old = nullptr;
+  size_t oldlen = 0;
+  REQUIRE(sm_update(s, rel, "k", 1, "new", 3, &old, &oldlen) == 0);
+  std::string copied(old, oldlen);
+  CHECK(copied == "old");
+
+  const char *d;
+  size_t dl;
+  REQUIRE(sm_read(s, rel, "other", 5, &d, &dl) == 0);
+  CHECK(std::string(d, dl) == "other-value");
+  // The copy still holds what the update returned.
+  CHECK(copied == "old");
+  REQUIRE(sm_commit(s) == 0);
 }
 
 TEST_CASE("oversized keys and values are rejected") {

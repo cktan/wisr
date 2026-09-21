@@ -167,7 +167,7 @@ public:
   /* w(row): T<n> updates row; the result of sm_update. */
   int w(int n, const std::string &row, const std::string &val) {
     return sm_update(session(n), m_rel, row.data(), row.size(), val.data(),
-                     val.size());
+                     val.size(), nullptr, nullptr);
   }
 
   /* i(row): T<n> inserts row; the result of sm_insert. */
@@ -178,7 +178,8 @@ public:
 
   /* d(row): T<n> deletes row; the result of sm_delete. */
   int d(int n, const std::string &row) {
-    return sm_delete(session(n), m_rel, row.data(), row.size());
+    return sm_delete(session(n), m_rel, row.data(), row.size(), nullptr,
+                     nullptr);
   }
 
   /* s(lo, hi): the keys T<n> sees in the closed range [lo, hi]. */

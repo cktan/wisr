@@ -120,13 +120,14 @@ std::string execute(worker_t *w, const item_t &it) {
   if (it.verb == "write" || it.verb == "insert") {
     int rc = it.verb == "write"
                  ? sm_update(w->sess, w->rel, a[0].data(), a[0].size(),
-                             a[1].data(), a[1].size())
+                             a[1].data(), a[1].size(), nullptr, nullptr)
                  : sm_insert(w->sess, w->rel, a[0].data(), a[0].size(),
                              a[1].data(), a[1].size());
     return rc == 0 ? "ok" : error_name();
   }
   if (it.verb == "delete") {
-    return sm_delete(w->sess, w->rel, a[0].data(), a[0].size()) == 0
+    return sm_delete(w->sess, w->rel, a[0].data(), a[0].size(), nullptr,
+                     nullptr) == 0
                ? "ok"
                : error_name();
   }

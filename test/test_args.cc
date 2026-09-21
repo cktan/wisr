@@ -138,8 +138,10 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm_mkrel(nullptr, &relid), SM_ERR_INVALID);
   expect_fail(sm_rmrel(nullptr, g_rel), SM_ERR_INVALID);
   expect_fail(sm_insert(nullptr, g_rel, "k", 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_update(nullptr, g_rel, "k", 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_delete(nullptr, g_rel, "k", 1), SM_ERR_INVALID);
+  expect_fail(sm_update(nullptr, g_rel, "k", 1, "v", 1, nullptr, nullptr),
+              SM_ERR_INVALID);
+  expect_fail(sm_delete(nullptr, g_rel, "k", 1, nullptr, nullptr),
+              SM_ERR_INVALID);
   expect_fail(sm_read(nullptr, g_rel, "k", 1, &d, &dl), SM_ERR_INVALID);
   expect_null(sm_scan(nullptr, g_rel, nullptr, 0, 0, nullptr, 0, 0),
               SM_ERR_INVALID);
@@ -173,8 +175,9 @@ TEST_CASE("relid 0 is rejected by every call taking a relid") {
   expect_fail(sm_mkrel(s, nullptr), SM_ERR_INVALID);
   expect_fail(sm_rmrel(s, 0), SM_ERR_INVALID);
   expect_fail(sm_insert(s, 0, "k", 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_update(s, 0, "k", 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_delete(s, 0, "k", 1), SM_ERR_INVALID);
+  expect_fail(sm_update(s, 0, "k", 1, "v", 1, nullptr, nullptr),
+              SM_ERR_INVALID);
+  expect_fail(sm_delete(s, 0, "k", 1, nullptr, nullptr), SM_ERR_INVALID);
   expect_fail(sm_read(s, 0, "k", 1, &d, &dl), SM_ERR_INVALID);
   expect_null(sm_scan(s, 0, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_INVALID);
 
@@ -222,8 +225,9 @@ TEST_CASE("unknown relations fail with SM_ERR_NOTFOUND") {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   expect_fail(sm_rmrel(s, 999), SM_ERR_NOTFOUND);
   expect_fail(sm_insert(s, 999, "k", 1, "v", 1), SM_ERR_NOTFOUND);
-  expect_fail(sm_update(s, 999, "k", 1, "v", 1), SM_ERR_NOTFOUND);
-  expect_fail(sm_delete(s, 999, "k", 1), SM_ERR_NOTFOUND);
+  expect_fail(sm_update(s, 999, "k", 1, "v", 1, nullptr, nullptr),
+              SM_ERR_NOTFOUND);
+  expect_fail(sm_delete(s, 999, "k", 1, nullptr, nullptr), SM_ERR_NOTFOUND);
   expect_fail(sm_read(s, 999, "k", 1, &d, &dl), SM_ERR_NOTFOUND);
   expect_null(sm_scan(s, 999, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_NOTFOUND);
 
@@ -248,11 +252,14 @@ TEST_CASE("keys and values: NULL only with length 0") {
   size_t dl;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
   expect_fail(sm_insert(s, g_rel, nullptr, 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_update(s, g_rel, nullptr, 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_delete(s, g_rel, nullptr, 1), SM_ERR_INVALID);
+  expect_fail(sm_update(s, g_rel, nullptr, 1, "v", 1, nullptr, nullptr),
+              SM_ERR_INVALID);
+  expect_fail(sm_delete(s, g_rel, nullptr, 1, nullptr, nullptr),
+              SM_ERR_INVALID);
   expect_fail(sm_read(s, g_rel, nullptr, 1, &d, &dl), SM_ERR_INVALID);
   expect_fail(sm_insert(s, g_rel, "k", 1, nullptr, 1), SM_ERR_INVALID);
-  expect_fail(sm_update(s, g_rel, "a", 1, nullptr, 1), SM_ERR_INVALID);
+  expect_fail(sm_update(s, g_rel, "a", 1, nullptr, 1, nullptr, nullptr),
+              SM_ERR_INVALID);
   CHECK(get(s, g_rel, "a") == "1");
 
   REQUIRE(sm_insert(s, g_rel, nullptr, 0, "empty-key", 9) == 0);
@@ -333,8 +340,9 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm_rmseq(s, "s"), SM_ERR_NOTRANS);
   expect_fail(sm_rmrel(s, g_rel), SM_ERR_NOTRANS);
   expect_fail(sm_insert(s, g_rel, "k", 1, "v", 1), SM_ERR_NOTRANS);
-  expect_fail(sm_update(s, g_rel, "a", 1, "v", 1), SM_ERR_NOTRANS);
-  expect_fail(sm_delete(s, g_rel, "a", 1), SM_ERR_NOTRANS);
+  expect_fail(sm_update(s, g_rel, "a", 1, "v", 1, nullptr, nullptr),
+              SM_ERR_NOTRANS);
+  expect_fail(sm_delete(s, g_rel, "a", 1, nullptr, nullptr), SM_ERR_NOTRANS);
   expect_fail(sm_read(s, g_rel, "a", 1, &d, &dl), SM_ERR_NOTRANS);
   expect_null(sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_NOTRANS);
 
@@ -356,7 +364,8 @@ TEST_CASE("a rejected call leaves the transaction active and unchanged") {
   put(s, g_rel, "b", "2");
   expect_fail(sm_insert(s, g_rel, over.data(), over.size(), "v", 1),
               SM_ERR_INVALID);
-  expect_fail(sm_update(s, g_rel, "missing", 7, "v", 1), SM_ERR_NOTFOUND);
+  expect_fail(sm_update(s, g_rel, "missing", 7, "v", 1, nullptr, nullptr),
+              SM_ERR_NOTFOUND);
   expect_fail(sm_insert(s, g_rel, "a", 1, "v", 1), SM_ERR_DUPKEY);
   CHECK(get(s, g_rel, "b") == "2");
   put(s, g_rel, "c", "3");

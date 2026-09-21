@@ -970,10 +970,12 @@ int sm_insert(sm_session_t* session, uint64_t relid,
 
 int sm_update(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen,
-              const char* data, size_t datalen);
+              const char* data, size_t datalen,
+              const char** old, size_t* oldlen);
 
 int sm_delete(sm_session_t* session, uint64_t relid,
-              const char* key, size_t klen);
+              const char* key, size_t klen,
+              const char** old, size_t* oldlen);
 ```
 
 - `sm_insert` requires that the key not exist, and fails
@@ -987,6 +989,21 @@ int sm_delete(sm_session_t* session, uint64_t relid,
 There is no upsert. A caller wanting one attempts
 `sm_insert` and falls back to `sm_update` on
 `SM_ERR_DUPKEY`.
+
+**The old row.** `sm_update` and `sm_delete` return the row
+they replaced through `old` / `oldlen`. A caller maintaining
+secondary indexes needs it, to remove the entries the old
+value produced; pass NULL for both to skip it. They are a
+pair, and one without the other is `SM_ERR_INVALID`. The
+write already reads that row to check the key exists, so
+asking for it costs a copy, not another seek.
+
+`*old` points into session-owned memory and is valid only
+until the next `sm_*` call on this session — the same rule
+as `sm_read`, and the same buffer, so either call
+invalidates what the other returned. Copy it to keep it. On
+failure, and for a zero-length old value, `*old` may be
+NULL.
 
 Errors for all three: `SM_ERR_CONFLICT` /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_NOTFOUND` (relation
@@ -1262,3 +1279,9 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
     scan all need; without it each probe closes and reopens
     a cursor, and under READ COMMITTED every reopen takes a
     new snapshot as well. `SECINDEX.md` gap 5.
+
+22. **`sm_update` and `sm_delete` return the row they
+    replaced.** (D) The write already reads it to check the
+    key exists, so a layer maintaining secondary indexes
+    would otherwise pay a second seek and a copy for
+    something the engine had in hand. `SECINDEX.md` gap 6.

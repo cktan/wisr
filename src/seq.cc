@@ -94,7 +94,7 @@ int mkseq(sm_session_t *s, const char *name, uint64_t start,
   put_be64(val, start);
   put_be64(val, increment);
   // Insert the catalog row through the ordinary write path.
-  if (access_write(s, 0, WRITE_INSERT, seq_key(name), val) != 0) {
+  if (access_write(s, 0, WRITE_INSERT, seq_key(name), val, nullptr) != 0) {
     // Report a concurrent same-name insert as SM_ERR_EXISTS.
     if (s->active && sm_errno() == SM_ERR_DUPKEY) {
       return set_error(SM_ERR_EXISTS, "sequence {} already exists", name);
@@ -123,7 +123,8 @@ int rmseq(sm_session_t *s, const char *name) {
     return set_error(SM_ERR_NOTFOUND, "sequence {} does not exist", name);
   }
   // Delete the catalog row.
-  if (access_write(s, 0, WRITE_DELETE, seq_key(name), rocksdb::Slice()) != 0) {
+  if (access_write(s, 0, WRITE_DELETE, seq_key(name), rocksdb::Slice(),
+                   nullptr) != 0) {
     return -1;
   }
   // Remember the seqid, so commit drops its lease.

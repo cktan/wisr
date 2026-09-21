@@ -763,6 +763,20 @@ void sm_free_rels(uint64_t* list);
  * A zero-length key is legal. A zero-length value is legal and
  * is distinct from a deleted key.
  *
+ * THE OLD ROW. sm_update() and sm_delete() return the row they
+ * replaced through old / oldlen, which a caller maintaining
+ * secondary indexes needs in order to remove the entries the
+ * old value produced. Pass NULL for both to skip it; they are
+ * a pair, and giving one without the other is SM_ERR_INVALID.
+ * The write already reads that row to check the key exists, so
+ * asking for it costs a copy, not another seek.
+ *
+ * *old points into session-owned memory and is valid only
+ * until the next sm_* call on this session -- the same rule as
+ * sm_read(), and the same buffer, so either call invalidates
+ * what the other handed out. Copy it to keep it. On failure,
+ * and for a zero-length old value, *old may be NULL.
+ *
  * Errors for all three: SM_ERR_CONFLICT / SM_ERR_DEADLOCK
  * (retryable), SM_ERR_NOTFOUND (relation, or key for
  * update/delete), SM_ERR_DUPKEY (insert), SM_ERR_NOTRANS,
@@ -774,10 +788,12 @@ int sm_insert(sm_session_t* session, uint64_t relid,
 
 int sm_update(sm_session_t* session, uint64_t relid,
               const char* key, size_t klen,
-              const char* data, size_t datalen);
+              const char* data, size_t datalen,
+              const char** old, size_t* oldlen);
 
 int sm_delete(sm_session_t* session, uint64_t relid,
-              const char* key, size_t klen);
+              const char* key, size_t klen,
+              const char** old, size_t* oldlen);
 
 /*
  * Read one key.

@@ -49,7 +49,8 @@ private:
 
 /* Set key in relation 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size());
+  return sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size(),
+                   nullptr, nullptr);
 }
 
 /* Give a blocking call time to reach its wait. */
@@ -618,7 +619,7 @@ TEST_CASE("the index-build protocol blocks writers, then makes them retry") {
 
   // The builder takes the schema row exclusive.
   REQUIRE(sm_begin(b, SM_XCT_READ_COMMITTED) == 0);
-  REQUIRE(sm_update(b, cat, "S", 1, "indexed", 7) == 0);
+  REQUIRE(sm_update(b, cat, "S", 1, "indexed", 7, nullptr, nullptr) == 0);
 
   // A writer arriving now waits for the build to finish.
   REQUIRE(sm_begin(x, SM_XCT_READ_COMMITTED) == 0);

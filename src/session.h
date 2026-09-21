@@ -320,11 +320,13 @@ sm_scan_t *access_scan(sm_session_t *session, uint64_t relid,
 
 /*
  * Write one version of key into relid, checking that the key
- * exists (update, delete) or does not (insert). Returns 0, or
- * -1 with SM_ERR_DUPKEY / SM_ERR_NOTFOUND / another error.
+ * exists (update, delete) or does not (insert). With old
+ * non-NULL, it is filled with the row the write replaces, which
+ * the existence check has already decoded. Returns 0, or -1
+ * with SM_ERR_DUPKEY / SM_ERR_NOTFOUND / another error.
  */
 int access_write(sm_session_t *session, uint64_t relid, write_op_t op,
-                 rocksdb::Slice key, rocksdb::Slice data);
+                 rocksdb::Slice key, rocksdb::Slice data, std::string *old);
 
 } // namespace wisr
 

@@ -115,10 +115,15 @@ rocksdb::ColumnFamilyHandle *rel_cf(db_t *db, uint64_t relid) {
  * its commit_ts (0 for an own version or none). Returns 0 or -1.
  */
 int latest_version(sm_session_t *s, rocksdb::ColumnFamilyHandle *cf,
-                   rocksdb::Slice key, bool *live, uint64_t *commit_ts) {
+                   rocksdb::Slice key, bool *live, uint64_t *commit_ts,
+                   std::string *value) {
   // Assume no version until one is found.
   *live = false;
   *commit_ts = 0;
+  // No row to hand back yet.
+  if (value) {
+    value->clear();
+  }
   // Hold a read epoch from before the iterator exists until we are
   // done resolving what it read: the CF:txn sweep waits for it.
   uint64_t epoch = db_read_enter(s->db);
@@ -146,6 +151,10 @@ int latest_version(sm_session_t *s, rocksdb::ColumnFamilyHandle *cf,
       // Still in effect: it is the latest.
       if (v.seq <= s->seq_hwm) {
         *live = !(v.flags & version_tombstone);
+        // Hand back what it holds, for the old image.
+        if (value && *live) {
+          value->assign(v.payload.data(), v.payload.size());
+        }
         return 0;
       }
       continue;
@@ -165,6 +174,10 @@ int latest_version(sm_session_t *s, rocksdb::ColumnFamilyHandle *cf,
     if (committed) {
       *live = !(v.flags & version_tombstone);
       *commit_ts = ts;
+      // Hand back what it holds, for the old image.
+      if (value && *live) {
+        value->assign(v.payload.data(), v.payload.size());
+      }
       return 0;
     }
   }
@@ -214,7 +227,18 @@ int enter(sm_session_t *s, const view_t &view, uint64_t relid, const char *key,
 
 /* sm_insert / sm_update / sm_delete, minus the out-of-memory guard. */
 int write_row(sm_session_t *s, write_op_t op, uint64_t relid, const char *key,
-              size_t klen, const char *data, size_t datalen) {
+              size_t klen, const char *data, size_t datalen, const char **old,
+              size_t *oldlen) {
+  // The out-parameters come as a pair; check before either is
+  // written to.
+  if ((old != nullptr) != (oldlen != nullptr)) {
+    return set_error(SM_ERR_INVALID, "old and oldlen must both be given");
+  }
+  // Report no old row until the write finds one.
+  if (old) {
+    *old = nullptr;
+    *oldlen = 0;
+  }
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -232,9 +256,16 @@ int write_row(sm_session_t *s, write_op_t op, uint64_t relid, const char *key,
   if (enter(s, xct_view(s), relid, key, klen) != 0) {
     return -1;
   }
-  // Write the version.
-  return access_write(s, relid, op, rocksdb::Slice(key ? key : "", klen),
-                      rocksdb::Slice(data ? data : "", datalen));
+  // Write the version, keeping the row it replaces when asked.
+  int r = access_write(s, relid, op, rocksdb::Slice(key ? key : "", klen),
+                       rocksdb::Slice(data ? data : "", datalen),
+                       old ? &s->readbuf : nullptr);
+  // Hand out the session-owned bytes of the old row.
+  if (r == 0 && old) {
+    *old = s->readbuf.data();
+    *oldlen = s->readbuf.size();
+  }
+  return r;
 }
 
 /* sm_lock, minus the out-of-memory guard. */
@@ -598,7 +629,7 @@ int access_read(sm_session_t *s, uint64_t relid, const view_t &view,
 
 /* Check existence, then put one new version (§5). */
 int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
-                 rocksdb::Slice key, rocksdb::Slice data) {
+                 rocksdb::Slice key, rocksdb::Slice data, std::string *old) {
   // Find the relation's CF.
   rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
   if (!cf) {
@@ -616,8 +647,9 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   }
   bool live;
   uint64_t commit_ts;
-  // Find the version this write checks against.
-  if (latest_version(s, cf, key, &live, &commit_ts) != 0) {
+  // Find the version this write checks against, keeping its
+  // value when the caller asked for the old image.
+  if (latest_version(s, cf, key, &live, &commit_ts, old) != 0) {
     return -1;
   }
   // First-committer-wins (§5.2), at every level: the check is
@@ -681,7 +713,7 @@ int access_check_current(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
   bool live;
   uint64_t commit_ts;
   // Find the newest committed version of the key.
-  if (latest_version(s, cf, key, &live, &commit_ts) != 0) {
+  if (latest_version(s, cf, key, &live, &commit_ts, nullptr) != 0) {
     return -1;
   }
   // Committed after we began: what we would read is stale.
@@ -722,7 +754,8 @@ int sm_insert(sm_session_t *session, uint64_t relid, const char *key,
               size_t klen, const char *data, size_t datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_INSERT, relid, key, klen, data, datalen);
+    return write_row(session, WRITE_INSERT, relid, key, klen, data, datalen,
+                     nullptr, nullptr);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_insert: out of memory");
   }
@@ -730,10 +763,12 @@ int sm_insert(sm_session_t *session, uint64_t relid, const char *key,
 
 /* Replace a row's value; the key must exist. */
 int sm_update(sm_session_t *session, uint64_t relid, const char *key,
-              size_t klen, const char *data, size_t datalen) {
+              size_t klen, const char *data, size_t datalen, const char **old,
+              size_t *oldlen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_UPDATE, relid, key, klen, data, datalen);
+    return write_row(session, WRITE_UPDATE, relid, key, klen, data, datalen,
+                     old, oldlen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_update: out of memory");
   }
@@ -741,10 +776,11 @@ int sm_update(sm_session_t *session, uint64_t relid, const char *key,
 
 /* Delete a row; the key must exist. */
 int sm_delete(sm_session_t *session, uint64_t relid, const char *key,
-              size_t klen) {
+              size_t klen, const char **old, size_t *oldlen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_DELETE, relid, key, klen, nullptr, 0);
+    return write_row(session, WRITE_DELETE, relid, key, klen, nullptr, 0, old,
+                     oldlen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_delete: out of memory");
   }

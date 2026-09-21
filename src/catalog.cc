@@ -66,8 +66,8 @@ int mkrel(sm_session_t *s, uint64_t *out) {
 
   // Insert the catalog row through the ordinary write path. The
   // relid is fresh, so no other transaction can be writing it.
-  if (access_write(s, 0, WRITE_INSERT, catalog_key(relid), rocksdb::Slice()) !=
-      0) {
+  if (access_write(s, 0, WRITE_INSERT, catalog_key(relid), rocksdb::Slice(),
+                   nullptr) != 0) {
     // A retryable error already aborted the transaction.
     if (!s->active) {
       return -1; // retryable: the abort already dropped the CF
@@ -103,8 +103,8 @@ int rmrel(sm_session_t *s, uint64_t relid) {
   }
   // Delete the catalog row; the column family stays until no
   // snapshot can still read the relation (§8.3).
-  if (access_write(s, 0, WRITE_DELETE, catalog_key(relid), rocksdb::Slice()) !=
-      0) {
+  if (access_write(s, 0, WRITE_DELETE, catalog_key(relid), rocksdb::Slice(),
+                   nullptr) != 0) {
     return -1;
   }
   // Remember the relid, so GC drops its CF after commit.

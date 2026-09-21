@@ -45,10 +45,11 @@ Every gap `SECINDEX.md` lists is now closed or decided:
 `sm_stmt_begin`, for read-committed statement snapshots
 (§6.2); the savepoint stack with `sm_forget` (§6.5);
 `sm_lock`, whose shared mode makes a safe index build
-possible (§5.1); and `sm_scan_seek`, which repositions a
-cursor instead of reopening it (§10.2). Descending scans are
-the one gap it lists that will not be closed at all. What
-remains there is performance work, not contract.
+possible (§5.1); `sm_scan_seek`, which repositions a cursor
+instead of reopening it (§10.2); and the old row returned by
+`sm_update` and `sm_delete` (§5.3). Descending scans are the
+one gap it lists that will not be closed at all, and a
+batched read is left until a benchmark asks for it.
 
 **Assumptions.**
 
@@ -486,6 +487,7 @@ sm_update(relid, k, v):
          if latest.commit_ts > T.snapshot_ts:           # §5.2
              abort with SM_ERR_CONFLICT
      if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
+     if old wanted: copy latest's payload into the session buffer  # §5.3
   4. if T.xid == 0: T.xid = global_ts++
   5. seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
      db.Put(cf(relid), encode(k, ~T.xid, ~seq), encode(flags, v))
@@ -505,6 +507,28 @@ never been written.
 Step 5 is an ordinary RocksDB `Put` into the memtable, WAL-logged but
 **not synced** — an uncommitted write does not need durability, only
 the commit record does (§8.2).
+
+### 5.3 The old row
+
+`sm_update` and `sm_delete` hand back the row they replace,
+through out-parameters a caller may pass as NULL. It costs
+nothing to produce: step 3 already seeks to the deciding
+version and decodes its value to learn whether the key
+exists, and until now threw the payload away. A layer
+maintaining secondary indexes needs that value — the old
+entries to delete are computed from it — and without this it
+paid a whole `sm_read`, an iterator and a seek of its own,
+for something the write had in hand.
+
+The bytes go in the session's read buffer, the one `sm_read`
+uses, so either call invalidates what the other returned.
+Sharing it is deliberate: one buffer per session, one rule to
+state, and a caller that needs the value to outlive the next
+call copies it, exactly as it must after `sm_read`.
+
+The value is only produced for a live version. A write that
+fails — `SM_ERR_NOTFOUND` on a missing key, a conflict, a
+deadlock — reports no old row.
 
 ### 5.1 Row locks
 
@@ -2055,6 +2079,13 @@ bullets below cover the rest of the engine.
   writes and releases no locks, and the depth it frees is
   handed out again by the next `sm_savepoint`. Pushing past
   `SM_MAX_SAVEPOINTS` fails with `SM_ERR_INVALID` (§6.5).
+- **The old row.** An update returns the committed value it
+  replaced, then its own previous value on a second update,
+  and a delete returns the last value written. An empty old
+  value comes back with length 0, a failed write reports
+  none, and one out-parameter without the other is
+  `SM_ERR_INVALID`. A read on the same session overwrites
+  the buffer the old row was handed out in (§5.3).
 - **Cursor reposition.** A cursor seeks forward over rows and
   resumes there, with the bounds and view it opened with;
   seeking backwards, or below the start key, fails. Under

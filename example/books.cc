@@ -141,7 +141,8 @@ void upsert_book(sm_session_t *s, uint64_t rel, const book_t &b) {
     check(-1, "sm_insert");
   }
   // The id exists: replace its value instead.
-  check(sm_update(s, rel, key.data(), key.size(), val.data(), val.size()),
+  check(sm_update(s, rel, key.data(), key.size(), val.data(), val.size(),
+                  nullptr, nullptr),
         "sm_update");
 }
 
