@@ -3,7 +3,7 @@
 This is what an audit of wisr's scenario testing infrastructure
 in `mvcc/` left standing: three behaviours that look wrong at
 first reading and are not, and five driver capability gaps,
-two of which are now closed.
+four of which are now closed.
 
 **Status (2026-09-21).** Gaps 1 to 8 are closed, each with a
 script and a transcript in `good/`; `MVCC.md` documents what
@@ -13,15 +13,16 @@ assertions left to the transcript diff — are fixed. The six
 scenario gaps section 8 listed are closed too, as seven
 scripts, `b20` to `b24` and `c27`, `c28`. Gaps 9 and 11
 followed, as three new verbs and six more scripts, `b25` to
-`b29` and `c29`. The suite is 73 scripts and `make test` is
-green.
+`b29` and `c29`; then gaps 12 and 13, as two more verbs, the
+`rc` level, and `a14` to `a16` and `c30`. The suite is 77
+scripts and `make test` is green.
 
-Gaps 9 and 11 are closed: the driver has `savepoint`,
-`rollback` and `lock`, and six scripts use them. Gaps 10, 12
-and 13 remain — engine features the driver still cannot
-express. Gap 10 is the expensive one, because it is a change
-to the grammar rather than a verb: relations would have to
-become nameable in every verb that touches a row.
+Gaps 9, 11, 12 and 13 are closed: the driver has
+`savepoint`, `rollback`, `lock`, `seek` and `stmt`, plus the
+`rc` level, and ten scripts use them. Gap 10 alone remains,
+and it is the expensive one, because it is a change to the
+grammar rather than a verb: relations would have to become
+nameable in every verb that touches a row.
 
 ---
 
@@ -39,15 +40,16 @@ isolation levels:
 
 The suite is in four families:
 
-* **A — visibility (`a01`–`a13`).** Dirty reads,
+* **A — visibility (`a01`–`a16`).** Dirty reads,
   non-repeatable reads, phantoms, cursor stability, own
-  writes, resurrected rows, commit boundaries.
-* **B — write-write conflicts (`b01`–`b24`).** Row locks,
+  writes, resurrected rows, commit boundaries, cursor
+  seeking, and read committed's statement boundaries.
+* **B — write-write conflicts (`b01`–`b29`).** Row locks,
   first-committer-wins, blocking and the `blocks` protocol,
   deadlock detection, and retryable against non-retryable
   errors (`SM_ERR_CONFLICT`, `SM_ERR_DEADLOCK`,
   `SM_ERR_DUPKEY`, `SM_ERR_NOTFOUND`).
-* **C — read-write conflicts (`c01`–`c28`).** Cahill's SSI:
+* **C — read-write conflicts (`c01`–`c30`).** Cahill's SSI:
   SIREAD locks, rw-antidependency edges, pivots, false-abort
   bounds, point reads, predicate ranges, early cursor close.
 * **E — invariants and housekeeping (`e01`–`e05`).** SSI
@@ -222,38 +224,54 @@ around them.
 
 ---
 
-## 6. Gap 12, open: cursor seeking (`sm_scan_seek`) and SSI gaps
+## 6. Gap 12 — CLOSED: cursor seeking (`sm_scan_seek`)
 
 **In the engine.** `sm_scan_seek` (`include/sm.h`, `src/access.cc`)
 repositions an open scan forward within its bounds. Under
 `SM_XCT_SERIALIZABLE`, keys skipped over still count as read:
 the predicate covers start through the furthest key reached.
 
-**The gap.** The driver has no `seek` verb. The over-approximation
-rule (that keys skipped during a seek trigger serialization
-conflicts if concurrently modified) is untested in scenarios.
+**What it cost.** A `seek <cursor> <key>` verb in
+`driver/parse.cc` and `driver/run.cc`, and the two scripts it
+named:
 
-**What it costs.** A `seek <cursor> <key>` verb in `driver/parse.cc`
-and `driver/run.cc`, plus:
-* An A-family test for forward positioning without seeing new writes.
-* A C-family test verifying that concurrent writes into skipped keys
-  still generate rw-edges and trigger serialization failure at commit.
+* `a14_cursor_seek_forward.t` — the cursor skips rows, keeps
+  the view it opened with, and refuses to go backwards.
+* `c30_seek_skips_inside_predicate.t` — a write into the gap
+  a seek jumped over still makes the edge, so the cycle is
+  caught. `c11` is the contrast: a write past the last key
+  examined is outside the narrowed predicate and let through.
+
+The verb seeks inclusively. An exclusive seek has no scenario
+asking for it, so the verb takes no mode; `test/` covers that
+argument.
 
 ---
 
-## 7. Gap 13, open: Read Committed level and statement boundaries
+## 7. Gap 13 — CLOSED: Read Committed level and statement boundaries
 
 **In the engine.** `SM_XCT_READ_COMMITTED` takes a fresh snapshot
 per statement. `sm_stmt_begin` (`include/sm.h`, `src/xct.cc`)
 pins that snapshot across multiple calls within one statement.
 
-**The gap.** The driver only parses `rr` and `ser`. The ANSI SQL
-anomalies that define Read Committed (non-repeatable reads and
-phantoms permitted between statements) and statement boundary
-stability across calls have no declarative scenario scripts.
+**What it cost.** `session <name> rc` and a `stmt` verb, and
+two scripts:
 
-**What it costs.** Allowing `session <name> rc`, an optional RC
-pairing, and a `stmt_begin` verb.
+* `a15_read_committed_statements.t` — the non-repeatable read
+  and the phantom that define the level, with a repeatable
+  read session taking the same steps beside it and seeing
+  neither.
+* `a16_statement_boundary.t` — `stmt` pins the snapshot until
+  the next one, and the snapshot is taken by the statement's
+  first read rather than by the boundary call.
+
+**No RC pairing.** The pairings exist to say what changes
+between repeatable read and serializable; read committed is
+never tracked by SSI (§7.4), so a third axis would multiply
+every script's run time to say "same" four more times. The
+two scripts declare the level instead, as `e05` does, and
+run once. That is a deliberate narrowing of what the report
+asked for.
 
 ---
 

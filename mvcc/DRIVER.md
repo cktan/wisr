@@ -139,6 +139,7 @@ Directives set the run up. They are not echoed.
 | `pairings rr+s` | only the two mixed pairings |
 | `pairings s+s` | only S/S |
 | `session <name>` | declare a session; its level comes from the pairing |
+| `session <name> rc` | declare a session pinned to READ COMMITTED |
 | `session <name> rr` | declare a session pinned to REPEATABLE READ |
 | `session <name> ser` | declare a session pinned to SERIALIZABLE |
 | `seed <row> <value>` | create the row, committed, before the scenario starts |
@@ -179,6 +180,8 @@ can be read at a glance. Several steps may share a time.
 | `savepoint` | — | the new mark's depth: `1`, `2`, … |
 | `rollback` | `<depth>` | `ok`, or an error name |
 | `lock` | `<row> <shared\|exclusive>` | `ok`, or an error name |
+| `seek` | `<cursor> <key>` | `ok`, or an error name |
+| `stmt` | — | `ok`: starts a statement, for `rc` |
 | `mkrel` | — | `ok`: creates a relation, whose relid is not printed |
 | `lsrel` | — | `<n> relations` |
 
@@ -206,6 +209,21 @@ already holding the row shared and asking for it exclusive
 upgrades, which is how two transactions deadlock on one row
 (`b28`). Once held, the lock is checked against the
 transaction's snapshot, so `lock` can also answer `conflict`.
+
+**`seek`** moves an open cursor forward to a key, that key
+included, keeping the snapshot and bounds it opened with. It
+moves one way only: a key before the last one the cursor
+returned, or below the scan's start key, answers `invalid`
+(`a14`). The keys it jumps over still count as read under
+SERIALIZABLE, which is what `c30` pins.
+
+**`stmt`** starts a statement. It matters only at READ
+COMMITTED, where every read after it uses one snapshot until
+the next `stmt`; above that level the transaction already has
+one snapshot and the step is accepted and does nothing. There
+is no pairing for READ COMMITTED: a script that wants it
+declares `session <name> rc`, as `a15` and `a16` do, because
+the level is the scenario rather than one axis of it.
 
 **`blocks`** says the step must wait on a row lock. Only a
 step marked this way may be reported blocked; every other

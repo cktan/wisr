@@ -1,0 +1,35 @@
+# a16 -- a statement boundary pins read committed's snapshot.
+#
+# a15's fresh snapshot per call is what a caller wants between
+# statements and not within one: a statement that spans
+# several calls -- an index lookup is a scan and then a read
+# per row -- would otherwise see a different committed state
+# in each, and could return a mixture that never existed.
+# sm_stmt_begin says where a statement starts, and every read
+# after it uses one snapshot. The boundary is not the call
+# itself: the snapshot is taken by the first read after it, so
+# a statement may wait before it reads and still see
+# everything committed by the time it does.
+
+
+== pairing RR/RR == T1=RC W=RR
+@1 T1 begin -> ok
+@2 T1 stmt -> ok
+@3 W begin -> ok
+@4 W write R1 v2 -> ok
+@4 W insert R2 new -> ok
+@5 W commit -> ok
+@6 T1 scan R1 R9 -> {R1, R2}
+@6 T1 read R1 -> v2
+@7 check last T1 v2 -> satisfied
+@7 W begin -> ok
+@8 W write R1 v3 -> ok
+@9 W commit -> ok
+@10 T1 scan R1 R9 -> {R1, R2}
+@10 T1 read R1 -> v2
+@11 check last T1 v2 -> satisfied
+@12 T1 stmt -> ok
+@13 T1 read R1 -> v3
+@14 check last T1 v3 -> satisfied
+@15 T1 commit -> ok
+@16 check row R1 v3 -> satisfied

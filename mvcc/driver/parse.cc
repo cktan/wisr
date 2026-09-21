@@ -65,7 +65,7 @@ const verb_t STEP_VERBS[] = {
     {"read", 1, 1},  {"write", 2, 2},  {"insert", 2, 2},    {"delete", 1, 1},
     {"scan", 2, 4},  {"open", 3, 3},   {"next", 1, 1},      {"close", 1, 1},
     {"mkrel", 0, 0}, {"lsrel", 0, 0},  {"savepoint", 0, 0}, {"rollback", 1, 1},
-    {"lock", 2, 2},
+    {"lock", 2, 2},  {"seek", 2, 2},   {"stmt", 0, 0},
 };
 
 const verb_t CHECK_VERBS[] = {
@@ -192,8 +192,9 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
       session_decl_t d;
       d.name = w[1];
       d.level = w.size() == 3 ? w[2] : "";
-      if (!d.level.empty() && d.level != "rr" && d.level != "ser") {
-        *err = where(path, lineno, "a session's level is rr or ser");
+      if (!d.level.empty() && d.level != "rr" && d.level != "ser" &&
+          d.level != "rc") {
+        *err = where(path, lineno, "a session's level is rc, rr, or ser");
         return false;
       }
       out->sessions.push_back(d);

@@ -1,0 +1,33 @@
+# a15 -- read committed sees a commit between statements; the
+# levels above it do not.
+#
+# The suite's other scripts run at repeatable read and above,
+# where one snapshot serves the whole transaction. Read
+# committed takes a fresh one per call, which is the level's
+# definition rather than a defect: a non-repeatable read and a
+# phantom are both permitted between statements, and both
+# appear here. T2 runs beside it at repeatable read with the
+# same steps and sees neither, which is what makes the
+# difference the level's and not the timing's.
+
+
+== pairing RR/RR == T1=RC T2=RR W=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 scan R1 R9 -> {R1}
+@2 T1 read R1 -> 0
+@3 check last T1 0 -> satisfied
+@3 W begin -> ok
+@4 W write R1 v2 -> ok
+@4 W insert R2 new -> ok
+@5 W commit -> ok
+@6 T1 scan R1 R9 -> {R1, R2}
+@6 T1 read R1 -> v2
+@7 check last T1 v2 -> satisfied
+@8 T2 scan R1 R9 -> {R1}
+@8 T2 read R1 -> 0
+@9 check last T2 0 -> satisfied
+@10 T1 commit -> ok
+@10 T2 commit -> ok
+@11 check row R1 v2 -> satisfied
+@11 check row R2 new -> satisfied

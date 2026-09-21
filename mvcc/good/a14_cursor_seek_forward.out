@@ -1,0 +1,71 @@
+# a14 -- a cursor moved forward keeps the view it opened with.
+#
+# A reposition is not a reopen. T1 opens a cursor, reads one
+# row, then seeks past two more to R5, and the rows it skipped
+# are simply not returned -- no error, no rewind. What it does
+# return is still the state at open: a value written after the
+# cursor existed does not show, exactly as a09 has it for
+# stepping. Seeking backwards is refused, so a cursor only
+# ever moves one way through its range.
+
+
+== pairing RR/RR == T1=RR
+@1 T1 begin -> ok
+@2 T1 open C R1 R9 -> ok
+@3 T1 next C -> R1=1
+@4 T1 write R5 later -> ok
+@4 T1 write R7 later -> ok
+@5 T1 seek C R5 -> ok
+@6 T1 next C -> R5=5
+@7 T1 seek C R1 -> invalid
+@8 check last T1 invalid -> satisfied
+@9 T1 next C -> R7=7
+@10 T1 close C -> ok
+@11 T1 commit -> ok
+@12 check row R5 later -> satisfied
+@12 check row R7 later -> satisfied
+== pairing RR/S == T1=RR
+@1 T1 begin -> ok
+@2 T1 open C R1 R9 -> ok
+@3 T1 next C -> R1=1
+@4 T1 write R5 later -> ok
+@4 T1 write R7 later -> ok
+@5 T1 seek C R5 -> ok
+@6 T1 next C -> R5=5
+@7 T1 seek C R1 -> invalid
+@8 check last T1 invalid -> satisfied
+@9 T1 next C -> R7=7
+@10 T1 close C -> ok
+@11 T1 commit -> ok
+@12 check row R5 later -> satisfied
+@12 check row R7 later -> satisfied
+== pairing S/RR == T1=SER
+@1 T1 begin -> ok
+@2 T1 open C R1 R9 -> ok
+@3 T1 next C -> R1=1
+@4 T1 write R5 later -> ok
+@4 T1 write R7 later -> ok
+@5 T1 seek C R5 -> ok
+@6 T1 next C -> R5=5
+@7 T1 seek C R1 -> invalid
+@8 check last T1 invalid -> satisfied
+@9 T1 next C -> R7=7
+@10 T1 close C -> ok
+@11 T1 commit -> ok
+@12 check row R5 later -> satisfied
+@12 check row R7 later -> satisfied
+== pairing S/S == T1=SER
+@1 T1 begin -> ok
+@2 T1 open C R1 R9 -> ok
+@3 T1 next C -> R1=1
+@4 T1 write R5 later -> ok
+@4 T1 write R7 later -> ok
+@5 T1 seek C R5 -> ok
+@6 T1 next C -> R5=5
+@7 T1 seek C R1 -> invalid
+@8 check last T1 invalid -> satisfied
+@9 T1 next C -> R7=7
+@10 T1 close C -> ok
+@11 T1 commit -> ok
+@12 check row R5 later -> satisfied
+@12 check row R7 later -> satisfied

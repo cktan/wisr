@@ -1,0 +1,70 @@
+# c30 -- the keys a seek jumps over are still read.
+#
+# c11 has a cursor stop early, and the narrowing lets a write
+# past the last key it examined through. A seek is the other
+# shape: T1 reaches R8, so R8 is the last key examined, and
+# everything below it is inside the predicate whether the
+# cursor looked at it or not. T2 writes R5, which T1 skipped
+# entirely, and the edge forms all the same. That is an
+# over-approximation and it is the safe direction -- a
+# predicate that tracked only the keys actually returned would
+# miss this write, and with T2 --rw--> T1 the cycle would go
+# undetected.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 open C R1 R9 -> ok
+@3 T1 next C -> R1=1
+@4 T1 seek C R8 -> ok
+@5 T1 next C -> R8=8
+@6 T1 close C -> ok
+@7 T2 write R5 t2 -> ok
+@8 T2 read R2 -> 2
+@9 T1 write R2 t1 -> ok
+@10 T1 commit? -> recorded
+@10 T2 commit? -> recorded
+@11 check committed T1 T2 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 open C R1 R9 -> ok
+@3 T1 next C -> R1=1
+@4 T1 seek C R8 -> ok
+@5 T1 next C -> R8=8
+@6 T1 close C -> ok
+@7 T2 write R5 t2 -> ok
+@8 T2 read R2 -> 2
+@9 T1 write R2 t1 -> ok
+@10 T1 commit? -> recorded
+@10 T2 commit? -> recorded
+@11 check committed T1 T2 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 open C R1 R9 -> ok
+@3 T1 next C -> R1=1
+@4 T1 seek C R8 -> ok
+@5 T1 next C -> R8=8
+@6 T1 close C -> ok
+@7 T2 write R5 t2 -> ok
+@8 T2 read R2 -> 2
+@9 T1 write R2 t1 -> ok
+@10 T1 commit? -> recorded
+@10 T2 commit? -> recorded
+@11 check committed T1 T2 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 open C R1 R9 -> ok
+@3 T1 next C -> R1=1
+@4 T1 seek C R8 -> ok
+@5 T1 next C -> R8=8
+@6 T1 close C -> ok
+@7 T2 write R5 t2 -> ok
+@8 T2 read R2 -> 2
+@9 T1 write R2 t1 -> ok
+@10 T1 commit? -> recorded
+@10 T2 commit? -> recorded
+@11 check at-most-one-committed T1 T2 -> satisfied

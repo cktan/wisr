@@ -188,6 +188,22 @@ std::string execute(worker_t *w, const item_t &it) {
     w->cursors.erase(it2);
     return "ok";
   }
+  if (it.verb == "seek") {
+    // seek <cursor> <key>: move an open cursor forward, the
+    // key itself included.
+    auto c = w->cursors.find(a[0]);
+    if (c == w->cursors.end()) {
+      return "ERROR: no such cursor " + a[0];
+    }
+    return sm_scan_seek(c->second, a[1].data(), a[1].size(), 1) == 0
+               ? "ok"
+               : error_name();
+  }
+  if (it.verb == "stmt") {
+    // Start a statement: read committed then reads at one
+    // snapshot until the next one.
+    return sm_stmt_begin(w->sess) == 0 ? "ok" : error_name();
+  }
   if (it.verb == "savepoint") {
     int depth = sm_savepoint(w->sess);
     // The depth is the mark's name, so print it: a script
@@ -323,7 +339,9 @@ public:
     m_out << "== pairing " << pairing_label(m_pairing) << " ==";
     for (const std::unique_ptr<worker_t> &w : m_workers) {
       m_out << " " << w->name << "="
-            << (w->level == SM_XCT_SERIALIZABLE ? "SER" : "RR");
+            << (w->level == SM_XCT_SERIALIZABLE     ? "SER"
+                : w->level == SM_XCT_READ_COMMITTED ? "RC"
+                                                    : "RR");
     }
     m_out << "\n";
 
@@ -365,6 +383,9 @@ private:
   /* The level a session runs at in this pairing. */
   sm_xctlevel_t level_for(const session_decl_t &d, size_t index) const {
     // An explicit level in the script wins over the pairing.
+    if (d.level == "rc") {
+      return SM_XCT_READ_COMMITTED;
+    }
     if (d.level == "rr") {
       return SM_XCT_REPEATABLE_READ;
     }
