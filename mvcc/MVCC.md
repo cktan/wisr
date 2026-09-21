@@ -202,6 +202,7 @@ visibility is a function of the snapshot alone.
 | a14 | `T1: open C, next, seek(R5), next`, own writes in between | skips, and keeps the open view | same | same | `in/a14_cursor_seek_forward.t` |
 | a15 | `T1 (RC): r(R1) s(P)` ‖ `W: w(R1) i(R2) c` ‖ `T1: r(R1) s(P)`, and T2 at RR alongside | RC sees both, RR neither | — | — | `in/a15_read_committed_statements.t` |
 | a16 | `T1 (RC): stmt r(R1)` ‖ `W: w(R1) c` ‖ `T1: r(R1)` ‖ `T1: stmt r(R1)` | pinned until the next `stmt` | — | — | `in/a16_statement_boundary.t` |
+| a17 | `T1: lookup(R1)` ‖ `T2: rmrel c` ‖ `T1: lookup(R1)`, then a fresh T3 | T1 reads on, T3 gets NOTFOUND | same | same | `in/a17_read_of_dropped_relation.t` |
 
 Note what a06 does **not** say: T1 may not go on to *write*
 on the strength of that scan and still be serializable. That
@@ -329,6 +330,7 @@ that costs.
 | c28 | `T1: r(R1,R2) w(R1)` ‖ `T2: r(R2,R3) w(R2)` ‖ `T3: r(R3,R1) w(R3)` | all commit | all commit | at least one fails | `in/c28_write_skew_three_transactions.t` |
 | c29 | c02 with T1's read taken before a savepoint it rolls back to | all commit | all commit | at most one commits | `in/c29_rollback_keeps_read_set.t` |
 | c30 | `T1: open C, next, seek past R5, next, close` ‖ `T2: w(R5) r(R2)` ‖ `T1: w(R2)` | all commit | all commit | at most one commits | `in/c30_seek_skips_inside_predicate.t` |
+| c31 | `T1: r(R1) rmrel` ‖ `T2: lookup(R1) w(R1)` | all commit | all commit | at most one commits | `in/c31_write_skew_across_a_drop.t` |
 
 Half of this family — c01, c08 through c12, c14, c15, c19,
 c20, c25 — exists to bound the other half. A level that failed
@@ -389,10 +391,11 @@ b13. Explicit locking crosses the same matrix in b26 to b29,
 and b25 covers the locks a savepoint gives back. For read-write, it is
 every way one transaction can read (point read of a present
 row, point read of an absent row, scan of a range, open
-cursor, cursor closed early, cursor moved on by a seek)
-crossed with every way another can write into that read
-(update, insert, delete) — c02 to c06, c16 to c18, c21 to
-c24, c30 — plus the shapes that must not fail.
+cursor, cursor closed early, cursor moved on by a seek, a
+relid resolved in the catalog) crossed with every way
+another can write into that read (update, insert, delete,
+and a relation dropped) — c02 to c06, c16 to c18, c21 to
+c24, c30, c31 — plus the shapes that must not fail.
 
 **It is not a model check.** Each scenario is one schedule,
 chosen because it is the one that distinguishes the levels.
@@ -412,11 +415,14 @@ snapshot per statement between `stmt` boundaries — not its
 interaction with SSI, which §7.4 settles by making
 non-serializable transactions untracked.
 
-**It assumes a single relation and a single process.**
-Crash recovery, two-phase commit, garbage collection and the
-API surface are covered by `test/`, not here. Where those
+**It assumes two relations and a single process.** Rows
+live in the first; the second exists to be dropped and
+looked up, which is all a17 and c31 need of it. Crash
+recovery, two-phase commit, garbage collection and the API
+surface are covered by `test/`, not here. Where those
 interact with visibility — a prepared transaction's writes,
-a dropped relation's rows — the scenarios live there.
+the reclamation a dropped relation waits for — the scenarios
+live there.
 
 **Every claim in the tables above is executed.** If a table
 cell and the engine disagree, `make test` fails. A cell with

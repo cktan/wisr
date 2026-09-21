@@ -1,0 +1,68 @@
+# a17 -- an older snapshot goes on reading a dropped relation.
+#
+# A drop is not a deletion of the rows: a transaction whose
+# snapshot predates the commit must still find the relation
+# and everything in it, so the column family outlives the drop
+# and goes only when no snapshot can reach it. T1 takes its
+# snapshot, T2 drops the second relation and commits, and T1
+# reads it afterwards exactly as before. A transaction that
+# begins after the commit gets notfound instead, which is what
+# tells the two apart.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@2 T1 lookup R1 -> 0
+@3 T2 begin -> ok
+@4 T2 rmrel -> ok
+@5 T2 commit -> ok
+@6 T1 lookup R1 -> 0
+@7 check last T1 0 -> satisfied
+@8 T1 commit -> ok
+@9 T3 begin -> ok
+@10 T3 lookup R1 -> notfound
+@11 check last T3 notfound -> satisfied
+@12 T3 abort -> ok
+@13 check row R1 0 -> satisfied
+== pairing RR/S == T1=RR T2=SER T3=SER
+@1 T1 begin -> ok
+@2 T1 lookup R1 -> 0
+@3 T2 begin -> ok
+@4 T2 rmrel -> ok
+@5 T2 commit -> ok
+@6 T1 lookup R1 -> 0
+@7 check last T1 0 -> satisfied
+@8 T1 commit -> ok
+@9 T3 begin -> ok
+@10 T3 lookup R1 -> notfound
+@11 check last T3 notfound -> satisfied
+@12 T3 abort -> ok
+@13 check row R1 0 -> satisfied
+== pairing S/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@2 T1 lookup R1 -> 0
+@3 T2 begin -> ok
+@4 T2 rmrel -> ok
+@5 T2 commit -> ok
+@6 T1 lookup R1 -> 0
+@7 check last T1 0 -> satisfied
+@8 T1 commit -> ok
+@9 T3 begin -> ok
+@10 T3 lookup R1 -> notfound
+@11 check last T3 notfound -> satisfied
+@12 T3 abort -> ok
+@13 check row R1 0 -> satisfied
+== pairing S/S == T1=SER T2=SER T3=SER
+@1 T1 begin -> ok
+@2 T1 lookup R1 -> 0
+@3 T2 begin -> ok
+@4 T2 rmrel -> ok
+@5 T2 commit -> ok
+@6 T1 lookup R1 -> 0
+@7 check last T1 0 -> satisfied
+@8 T1 commit -> ok
+@9 T3 begin -> ok
+@10 T3 lookup R1 -> notfound
+@11 check last T3 notfound -> satisfied
+@12 T3 abort -> ok
+@13 check row R1 0 -> satisfied

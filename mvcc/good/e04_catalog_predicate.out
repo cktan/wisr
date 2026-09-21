@@ -9,8 +9,8 @@
 == pairing RR/RR == T1=RR T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 lsrel -> 1 relations
-@3 T2 lsrel -> 1 relations
+@2 T1 lsrel -> 2 relations
+@3 T2 lsrel -> 2 relations
 @4 T1 mkrel -> ok
 @5 T2 mkrel -> ok
 @6 T1 commit? -> recorded
@@ -19,8 +19,8 @@
 == pairing RR/S == T1=RR T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 lsrel -> 1 relations
-@3 T2 lsrel -> 1 relations
+@2 T1 lsrel -> 2 relations
+@3 T2 lsrel -> 2 relations
 @4 T1 mkrel -> ok
 @5 T2 mkrel -> ok
 @6 T1 commit? -> recorded
@@ -29,8 +29,8 @@
 == pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 lsrel -> 1 relations
-@3 T2 lsrel -> 1 relations
+@2 T1 lsrel -> 2 relations
+@3 T2 lsrel -> 2 relations
 @4 T1 mkrel -> ok
 @5 T2 mkrel -> ok
 @6 T1 commit? -> recorded
@@ -39,8 +39,8 @@
 == pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 lsrel -> 1 relations
-@3 T2 lsrel -> 1 relations
+@2 T1 lsrel -> 2 relations
+@3 T2 lsrel -> 2 relations
 @4 T1 mkrel -> ok
 @5 T2 mkrel -> ok
 @6 T1 commit? -> recorded

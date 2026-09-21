@@ -149,8 +149,9 @@ takes T1's level; every other session takes T2's. A session
 declared with an explicit level keeps it in every pairing --
 useful when a scenario is about one level only, as `e05` is.
 
-Every script runs against a fresh database with one relation,
-so nothing leaks between scripts or between pairings.
+Every script runs against a fresh database with two
+relations, both holding the seeded rows, so nothing leaks
+between scripts or between pairings.
 
 ### 2.2 Steps
 
@@ -182,6 +183,8 @@ can be read at a glance. Several steps may share a time.
 | `lock` | `<row> <shared\|exclusive>` | `ok`, or an error name |
 | `seek` | `<cursor> <key>` | `ok`, or an error name |
 | `stmt` | — | `ok`: starts a statement, for `rc` |
+| `lookup` | `<row>` | the value in the SECOND relation, or `-` |
+| `rmrel` | — | `ok`: drops the second relation |
 | `mkrel` | — | `ok`: creates a relation, whose relid is not printed |
 | `lsrel` | — | `<n> relations` |
 
@@ -224,6 +227,24 @@ one snapshot and the step is accepted and does nothing. There
 is no pairing for READ COMMITTED: a script that wants it
 declares `session <name> rc`, as `a15` and `a16` do, because
 the level is the scenario rather than one axis of it.
+
+**Two relations.** Every run creates a second relation
+holding the same seeded rows as the first. Every verb above
+works in the first one; `lookup` and `rmrel` are the only ways
+to reach the second, and they exist so that a script can drop
+a relation while reading another — `a17` for the older
+snapshot that goes on reading a dropped relation, `c31` for
+§11's write skew, where the only thing joining two
+transactions is that one resolved the relation the other
+dropped. `lookup` reads a row like `read` does; what the
+scenario is usually after is the relid resolution it takes on
+the way, which is a tracked catalog read.
+
+The ceiling is deliberate: there are two relations, not n, and
+they cannot be named or made mid-script. Relations became
+reachable at all without giving every verb a relation operand,
+which is what naming them would have cost. A scenario needing
+a third relation needs the grammar change this avoided.
 
 **`blocks`** says the step must wait on a row lock. Only a
 step marked this way may be reported blocked; every other

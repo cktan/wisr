@@ -3,7 +3,7 @@
 This is what an audit of wisr's scenario testing infrastructure
 in `mvcc/` left standing: three behaviours that look wrong at
 first reading and are not, and five driver capability gaps,
-four of which are now closed.
+all of which are now closed.
 
 **Status (2026-09-21).** Gaps 1 to 8 are closed, each with a
 script and a transcript in `good/`; `MVCC.md` documents what
@@ -14,15 +14,16 @@ scenario gaps section 8 listed are closed too, as seven
 scripts, `b20` to `b24` and `c27`, `c28`. Gaps 9 and 11
 followed, as three new verbs and six more scripts, `b25` to
 `b29` and `c29`; then gaps 12 and 13, as two more verbs, the
-`rc` level, and `a14` to `a16` and `c30`. The suite is 77
-scripts and `make test` is green.
+`rc` level, and `a14` to `a16` and `c30`; then gap 10, as a
+second relation reached by two more verbs, `a17` and `c31`.
+The suite is 79 scripts and `make test` is green.
 
-Gaps 9, 11, 12 and 13 are closed: the driver has
-`savepoint`, `rollback`, `lock`, `seek` and `stmt`, plus the
-`rc` level, and ten scripts use them. Gap 10 alone remains,
-and it is the expensive one, because it is a change to the
-grammar rather than a verb: relations would have to become
-nameable in every verb that touches a row.
+All five driver gaps are closed. The driver has
+`savepoint`, `rollback`, `lock`, `seek`, `stmt`, `lookup`
+and `rmrel`, plus the `rc` level and a second relation, and
+twelve scripts use them. Gap 10 was taken in a narrower
+shape than proposed — two relations rather than nameable
+ones — which §4 records along with what that forecloses.
 
 ---
 
@@ -40,16 +41,17 @@ isolation levels:
 
 The suite is in four families:
 
-* **A — visibility (`a01`–`a16`).** Dirty reads,
+* **A — visibility (`a01`–`a17`).** Dirty reads,
   non-repeatable reads, phantoms, cursor stability, own
   writes, resurrected rows, commit boundaries, cursor
-  seeking, and read committed's statement boundaries.
+  seeking, read committed's statement boundaries, and a
+  dropped relation an older snapshot still reads.
 * **B — write-write conflicts (`b01`–`b29`).** Row locks,
   first-committer-wins, blocking and the `blocks` protocol,
   deadlock detection, and retryable against non-retryable
   errors (`SM_ERR_CONFLICT`, `SM_ERR_DEADLOCK`,
   `SM_ERR_DUPKEY`, `SM_ERR_NOTFOUND`).
-* **C — read-write conflicts (`c01`–`c30`).** Cahill's SSI:
+* **C — read-write conflicts (`c01`–`c31`).** Cahill's SSI:
   SIREAD locks, rw-antidependency edges, pivots, false-abort
   bounds, point reads, predicate ranges, early cursor close.
 * **E — invariants and housekeeping (`e01`–`e05`).** SSI
@@ -136,7 +138,7 @@ that write skew would commit at S/S.
 
 ---
 
-## 4. Gap 10, open: a read of a relation against a drop of it
+## 4. Gap 10 — CLOSED: a read of a relation against a drop of it
 
 **In the engine.** `sm_rmrel` is transactional, and it does
 not reclaim space at commit: a transaction holding an older
@@ -178,16 +180,39 @@ alone read one while another drops it. `e04` covers the
 neighbouring case — `lsrel` against `mkrel`, the catalog as
 a predicate — and there is no point-lookup mirror of it.
 
-**What it costs.** More than gap 9. An `rmrel` verb is the
-small part; the shape needs a row read in one relation and a
-drop of another, so relations must become nameable. That is
-a name on `mkrel`, and an optional relation argument on
-`read`, `scan` and the write verbs, defaulting to the
-implicit relation so that no existing script changes. Then
-two scenarios: an A-family one for the older snapshot that
-goes on reading a dropped relation, and a C-family one for
-the §11 write skew, which must commit under `rr` and `rr+s`
-and fail under `s+s`.
+**What it cost, and the narrower shape taken.** Naming
+relations was the expensive route: a name on `mkrel` and an
+optional relation argument on `read`, `scan` and every write
+verb — an operand on eight verbs, for two scenarios. Instead
+every run now creates a **second relation** holding the same
+seeded rows, reachable only by two verbs:
+
+* `rmrel` — drop it.
+* `lookup <row>` — read a row of it, which resolves its
+  relid on the way, and that resolution is the tracked
+  catalog read the scenario is really about.
+
+Two scripts, as predicted:
+
+* `a17_read_of_dropped_relation.t` — a snapshot older than
+  the drop reads the relation and its rows unchanged, while
+  a transaction begun after it gets `notfound`. That is the
+  only place the suite states §11's rule that a drop is not
+  a deletion.
+* `c31_write_skew_across_a_drop.t` — §11's write skew.
+  Removing T2's `lookup` leaves one edge and both commit, so
+  the detection is the catalog SIREAD and nothing else; that
+  control was run before the script was accepted.
+
+**The ceiling is real.** There are two relations, never
+three, and they cannot be named or made mid-script. A
+scenario wanting more needs the grammar change this avoided.
+Nothing in `MVCC.md`'s families looks like it will.
+
+**One transcript moved.** `e04` counts relations with
+`lsrel`, so its output went from "1 relations" to "2". The
+scenario is unchanged and its checks still pass; only the
+count differs.
 
 ---
 

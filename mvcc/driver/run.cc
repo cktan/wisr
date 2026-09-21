@@ -60,6 +60,7 @@ struct worker_t {
   sm_xctlevel_t level = SM_XCT_REPEATABLE_READ;
   sm_session_t *sess = nullptr;
   uint64_t rel = 0;
+  uint64_t rel2 = 0; /* the second relation, for rmrel/lookup */
 
   std::thread thread;
   std::mutex mu;
@@ -225,6 +226,23 @@ std::string execute(worker_t *w, const item_t &it) {
                ? "ok"
                : error_name();
   }
+  if (it.verb == "lookup") {
+    // lookup <row>: read a row of the SECOND relation. What
+    // the scenario is usually after is the relid resolution
+    // this takes, which is a tracked catalog read (§11).
+    const char *data = nullptr;
+    size_t len = 0;
+    int rc = sm_read(w->sess, w->rel2, a[0].data(), a[0].size(), &data, &len);
+    if (rc < 0) {
+      return error_name();
+    }
+    return rc == 1 ? "-" : std::string(data, len);
+  }
+  if (it.verb == "rmrel") {
+    // Drop the second relation; the first one every other verb
+    // works in is never dropped.
+    return sm_rmrel(w->sess, w->rel2) == 0 ? "ok" : error_name();
+  }
   if (it.verb == "mkrel") {
     uint64_t relid = 0;
     // The relid itself is generated, so it is not printed.
@@ -284,14 +302,21 @@ public:
     if (!m_ok) {
       return;
     }
-    // The driver's own session creates the relation and seeds it.
+    // The driver's own session creates the relations and seeds
+    // them. There are two: the one every row verb works in,
+    // and a second holding the same rows, which exists to be
+    // dropped and looked up (DRIVER.md §5).
     m_checker = sm_opendb(m_env, "db", nullptr);
     m_ok = m_checker && sm_begin(m_checker, SM_XCT_REPEATABLE_READ) == 0 &&
-           sm_mkrel(m_checker, &m_rel) == 0;
+           sm_mkrel(m_checker, &m_rel) == 0 &&
+           sm_mkrel(m_checker, &m_rel2) == 0;
     for (const auto &kv : m_script.seeds) {
-      m_ok =
-          m_ok && sm_insert(m_checker, m_rel, kv.first.data(), kv.first.size(),
-                            kv.second.data(), kv.second.size()) == 0;
+      // The same rows in both, so a script can read either.
+      for (uint64_t rel : {m_rel, m_rel2}) {
+        m_ok =
+            m_ok && sm_insert(m_checker, rel, kv.first.data(), kv.first.size(),
+                              kv.second.data(), kv.second.size()) == 0;
+      }
     }
     m_ok = m_ok && sm_commit(m_checker) == 0;
 
@@ -306,6 +331,7 @@ public:
       w.level = level_for(d, i);
       w.sess = sm_opendb(m_env, "db", nullptr);
       w.rel = m_rel;
+      w.rel2 = m_rel2;
       m_ok = m_ok && w.sess != nullptr;
       w.thread = std::thread(worker_main, &w);
     }
@@ -580,6 +606,7 @@ private:
   sm_env_t *m_env = nullptr;
   sm_session_t *m_checker = nullptr;
   uint64_t m_rel = 0;
+  uint64_t m_rel2 = 0;
   std::vector<std::unique_ptr<worker_t>> m_workers;
   bool m_ok = false;
   int m_failures = 0;
