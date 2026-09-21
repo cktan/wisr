@@ -1241,6 +1241,14 @@ that commit, a background task issues `DropColumnFamily` on each
 relation's CF. The queue is volatile: an entry lost to a crash
 is caught by the startup sweep (§9.1 step 6).
 
+Because collection rides on compaction, it inherits
+compaction's costs, and the question of moving that work to
+another machine is a real one. RocksDB supports it, but this
+filter reads the active table, the watermark and `CF:txn`, and
+writes the purge queue, so it is not a pure function of the
+bytes it sees and cannot be shipped as it stands. `RCOMPACT.md`
+assesses what it would take.
+
 ### 8.4 Two-phase commit
 
 `sm_prepare` makes the transaction durable but not visible.
