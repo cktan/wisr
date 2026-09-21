@@ -17,4 +17,7 @@ seed R3 0
 @5 T2 commit
 @6 T1 scan R1 R3
 @7 T1 commit
+@8 check row R1 0
+@8 check row R2 -
+@8 check row R3 0
 @8 check rows

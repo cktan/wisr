@@ -23,6 +23,7 @@ seed R2 0
 @6 T1 commit?
 @7 T2 commit?
 @8 check committed T1 T2 when rr
+@8 check committed T1 T2 when rr+s
 @8 check at-most-one-committed T1 T2 when s+s
 @9 T1 begin
 @10 T1 write R1 t1

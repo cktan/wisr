@@ -25,4 +25,8 @@ seed R3 0
 @10 T1 close C
 @11 T1 scan R1 R4
 @12 T1 commit
+@13 check row R1 t1
+@13 check row R2 t1
+@13 check row R3 t1
+@13 check row R4 t1
 @13 check rows

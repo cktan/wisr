@@ -30,3 +30,4 @@ seed R2 0
 @11 check committed T1 T2 T3 when rr+s
 @11 check not-all-committed T1 T2 T3 when s+s
 @12 check row R2 -12 when rr
+@12 check row R2 -12 when rr+s

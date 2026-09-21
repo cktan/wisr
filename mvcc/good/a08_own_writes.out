@@ -20,6 +20,9 @@
 @7 T1 read R3 -> -
 @7 T1 scan R1 R3 -> {R1}
 @8 T1 commit -> ok
+@9 check row R1 t1 -> satisfied
+@9 check row R2 - -> satisfied
+@9 check row R3 - -> satisfied
 @9 check rows -> {R1=t1}
 == pairing RR/S == T1=RR
 @1 T1 begin -> ok
@@ -36,6 +39,9 @@
 @7 T1 read R3 -> -
 @7 T1 scan R1 R3 -> {R1}
 @8 T1 commit -> ok
+@9 check row R1 t1 -> satisfied
+@9 check row R2 - -> satisfied
+@9 check row R3 - -> satisfied
 @9 check rows -> {R1=t1}
 == pairing S/RR == T1=SER
 @1 T1 begin -> ok
@@ -52,6 +58,9 @@
 @7 T1 read R3 -> -
 @7 T1 scan R1 R3 -> {R1}
 @8 T1 commit -> ok
+@9 check row R1 t1 -> satisfied
+@9 check row R2 - -> satisfied
+@9 check row R3 - -> satisfied
 @9 check rows -> {R1=t1}
 == pairing S/S == T1=SER
 @1 T1 begin -> ok
@@ -68,4 +77,7 @@
 @7 T1 read R3 -> -
 @7 T1 scan R1 R3 -> {R1}
 @8 T1 commit -> ok
+@9 check row R1 t1 -> satisfied
+@9 check row R2 - -> satisfied
+@9 check row R3 - -> satisfied
 @9 check rows -> {R1=t1}

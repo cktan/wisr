@@ -38,6 +38,7 @@
 @5 T2 write R2 t2 -> ok
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
 @9 T1 begin -> ok
 @10 T1 write R1 t1 -> ok
 @11 T1 commit -> ok
@@ -57,6 +58,7 @@
 @5 T2 write R2 t2 -> ok
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
+@8 check committed T1 T2 -> satisfied
 @9 T1 begin -> ok
 @10 T1 write R1 t1 -> ok
 @11 T1 commit -> ok

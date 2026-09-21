@@ -28,4 +28,8 @@ seed R2 0
 @13 T2 commit
 @14 T1 scan R1 R5
 @15 T1 commit
+@16 check row R1 -
+@16 check row R2 3
+@16 check row R3 t2
+@16 check row R4 t2
 @16 check rows

@@ -21,6 +21,10 @@
 @10 T1 close C -> ok
 @11 T1 scan R1 R4 -> {R1, R2, R3, R4}
 @12 T1 commit -> ok
+@13 check row R1 t1 -> satisfied
+@13 check row R2 t1 -> satisfied
+@13 check row R3 t1 -> satisfied
+@13 check row R4 t1 -> satisfied
 @13 check rows -> {R1=t1, R2=t1, R3=t1, R4=t1}
 == pairing RR/S == T1=RR
 @1 T1 begin -> ok
@@ -36,6 +40,10 @@
 @10 T1 close C -> ok
 @11 T1 scan R1 R4 -> {R1, R2, R3, R4}
 @12 T1 commit -> ok
+@13 check row R1 t1 -> satisfied
+@13 check row R2 t1 -> satisfied
+@13 check row R3 t1 -> satisfied
+@13 check row R4 t1 -> satisfied
 @13 check rows -> {R1=t1, R2=t1, R3=t1, R4=t1}
 == pairing S/RR == T1=SER
 @1 T1 begin -> ok
@@ -51,6 +59,10 @@
 @10 T1 close C -> ok
 @11 T1 scan R1 R4 -> {R1, R2, R3, R4}
 @12 T1 commit -> ok
+@13 check row R1 t1 -> satisfied
+@13 check row R2 t1 -> satisfied
+@13 check row R3 t1 -> satisfied
+@13 check row R4 t1 -> satisfied
 @13 check rows -> {R1=t1, R2=t1, R3=t1, R4=t1}
 == pairing S/S == T1=SER
 @1 T1 begin -> ok
@@ -66,4 +78,8 @@
 @10 T1 close C -> ok
 @11 T1 scan R1 R4 -> {R1, R2, R3, R4}
 @12 T1 commit -> ok
+@13 check row R1 t1 -> satisfied
+@13 check row R2 t1 -> satisfied
+@13 check row R3 t1 -> satisfied
+@13 check row R4 t1 -> satisfied
 @13 check rows -> {R1=t1, R2=t1, R3=t1, R4=t1}

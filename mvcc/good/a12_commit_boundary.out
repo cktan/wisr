@@ -11,57 +11,93 @@
 @2 T1 insert R2 t1 -> ok
 @3 T2 begin -> ok
 @4 T2 read R1 -> 0
+@4 check last T2 0 -> satisfied
 @4 T2 read R2 -> -
+@4 check last T2 - -> satisfied
 @5 T1 commit -> ok
 @6 T2 read R1 -> 0
+@6 check last T2 0 -> satisfied
 @6 T2 read R2 -> -
+@6 check last T2 - -> satisfied
 @7 T2 commit -> ok
 @8 T3 begin -> ok
 @9 T3 read R1 -> t1
+@9 check last T3 t1 -> satisfied
 @9 T3 read R2 -> t1
+@9 check last T3 t1 -> satisfied
 @10 T3 commit -> ok
+@11 check committed T1 T2 T3 -> satisfied
+@11 check row R1 t1 -> satisfied
+@11 check row R2 t1 -> satisfied
 == pairing RR/S == T1=RR T2=SER T3=RR
 @1 T1 begin -> ok
 @2 T1 write R1 t1 -> ok
 @2 T1 insert R2 t1 -> ok
 @3 T2 begin -> ok
 @4 T2 read R1 -> 0
+@4 check last T2 0 -> satisfied
 @4 T2 read R2 -> -
+@4 check last T2 - -> satisfied
 @5 T1 commit -> ok
 @6 T2 read R1 -> 0
+@6 check last T2 0 -> satisfied
 @6 T2 read R2 -> -
+@6 check last T2 - -> satisfied
 @7 T2 commit -> ok
 @8 T3 begin -> ok
 @9 T3 read R1 -> t1
+@9 check last T3 t1 -> satisfied
 @9 T3 read R2 -> t1
+@9 check last T3 t1 -> satisfied
 @10 T3 commit -> ok
+@11 check committed T1 T2 T3 -> satisfied
+@11 check row R1 t1 -> satisfied
+@11 check row R2 t1 -> satisfied
 == pairing S/RR == T1=SER T2=RR T3=RR
 @1 T1 begin -> ok
 @2 T1 write R1 t1 -> ok
 @2 T1 insert R2 t1 -> ok
 @3 T2 begin -> ok
 @4 T2 read R1 -> 0
+@4 check last T2 0 -> satisfied
 @4 T2 read R2 -> -
+@4 check last T2 - -> satisfied
 @5 T1 commit -> ok
 @6 T2 read R1 -> 0
+@6 check last T2 0 -> satisfied
 @6 T2 read R2 -> -
+@6 check last T2 - -> satisfied
 @7 T2 commit -> ok
 @8 T3 begin -> ok
 @9 T3 read R1 -> t1
+@9 check last T3 t1 -> satisfied
 @9 T3 read R2 -> t1
+@9 check last T3 t1 -> satisfied
 @10 T3 commit -> ok
+@11 check committed T1 T2 T3 -> satisfied
+@11 check row R1 t1 -> satisfied
+@11 check row R2 t1 -> satisfied
 == pairing S/S == T1=SER T2=SER T3=RR
 @1 T1 begin -> ok
 @2 T1 write R1 t1 -> ok
 @2 T1 insert R2 t1 -> ok
 @3 T2 begin -> ok
 @4 T2 read R1 -> 0
+@4 check last T2 0 -> satisfied
 @4 T2 read R2 -> -
+@4 check last T2 - -> satisfied
 @5 T1 commit -> ok
 @6 T2 read R1 -> 0
+@6 check last T2 0 -> satisfied
 @6 T2 read R2 -> -
+@6 check last T2 - -> satisfied
 @7 T2 commit -> ok
 @8 T3 begin -> ok
 @9 T3 read R1 -> t1
+@9 check last T3 t1 -> satisfied
 @9 T3 read R2 -> t1
+@9 check last T3 t1 -> satisfied
 @10 T3 commit -> ok
+@11 check committed T1 T2 T3 -> satisfied
+@11 check row R1 t1 -> satisfied
+@11 check row R2 t1 -> satisfied

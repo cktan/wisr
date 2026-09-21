@@ -16,3 +16,4 @@ seed R1 0
 @5 T2 commit
 @6 T1 delete R1
 @7 check last T1 conflict
+@8 check row R1 -

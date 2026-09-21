@@ -23,4 +23,7 @@ seed R2 0
 @6 T2 delete R2
 @6 T2 insert R3 t2
 @7 T2 commit
+@8 check row R1 t2
+@8 check row R2 -
+@8 check row R3 t2
 @8 check rows

@@ -29,5 +29,6 @@ seed R2 0
 @9 check failed T2 when s+s
 @9 check committed T1 when s+s
 @10 check row R1 t2 when rr
+@10 check row R1 t2 when rr+s
 @10 check row R1 0 when s+s
 @11 check row R2 0

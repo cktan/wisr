@@ -13,6 +13,7 @@
 @5 T2 commit -> ok
 @6 T1 delete R1 -> conflict
 @7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
 == pairing RR/S == T1=RR T2=SER
 @1 T1 begin -> ok
 @2 T1 read R1 -> 0
@@ -21,6 +22,7 @@
 @5 T2 commit -> ok
 @6 T1 delete R1 -> conflict
 @7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
 == pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @2 T1 read R1 -> 0
@@ -29,6 +31,7 @@
 @5 T2 commit -> ok
 @6 T1 delete R1 -> conflict
 @7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
 == pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @2 T1 read R1 -> 0
@@ -37,3 +40,4 @@
 @5 T2 commit -> ok
 @6 T1 delete R1 -> conflict
 @7 check last T1 conflict -> satisfied
+@8 check row R1 - -> satisfied
