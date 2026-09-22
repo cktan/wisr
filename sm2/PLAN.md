@@ -2,8 +2,9 @@
 
 The order of work, and why it is this order. `OBJECTIVE.md`
 says what sm2 is for; `DESIGN.md` is where each step's
-argument goes before its code does. `sm3/PLAN.md` picks up
-where this one stops.
+argument goes before its code does; `QUESTIONS.md` is what
+still has to be answered before any of it can be written, step
+by step. `sm3/PLAN.md` picks up where this one stops.
 
 The principle: **the two on-disk formats come first and get
 the most scrutiny.** A key encoding and a tuple layout are

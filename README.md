@@ -44,6 +44,8 @@ top-level one only delegates.
   encodings, and the tuple relation
 - `sm2/TYPE.md` — every type, one by one: native
   representation, order, and key bytes
+- `sm2/QUESTIONS.md` — what has to be decided before sm2 can
+  be written, and what is already settled
 - `sm3/OBJECTIVE.md` — what level 3 is for
 - `sm3/DESIGN.md` — the catalog, secondary indexes, predicate
   scans and statistics
