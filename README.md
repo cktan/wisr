@@ -7,12 +7,14 @@ built on the level below it.
 | --- | --- | --- |
 | 0 | — | RocksDB: an ordered, durable, crash-atomic key-value store |
 | 1 | `sm1/` | the MVCC storage manager: relations, transactions, isolation, locks, 2PC, recovery |
-| 2 | `sm2/` | records and indexes: types, a record format, a catalog, secondary indexes |
+| 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, a relation of tuples |
+| 3 | `sm3/` | schema and indexes: a catalog, secondary indexes, predicate scans, statistics |
 
 Level 0 is used only as a place to put bytes. Every notion of
 *row version*, *transaction*, *isolation* and *visibility* is
-implemented in level 1, and every notion of *column*, *type*,
-*row* and *index* belongs to level 2.
+implemented in level 1, every notion of *column*, *type* and
+*row* belongs to level 2, and every notion of *table*,
+*index* and *predicate* belongs to level 3.
 
 ## Building
 
@@ -38,8 +40,15 @@ top-level one only delegates.
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
   scenarios that are executed on every build
 - `sm2/OBJECTIVE.md` — what level 2 is for
+- `sm2/DESIGN.md` — the type system, the two on-disk
+  encodings, and the tuple relation
+- `sm2/TYPE.md` — every type, one by one: native
+  representation, order, and key bytes
+- `sm3/OBJECTIVE.md` — what level 3 is for
+- `sm3/DESIGN.md` — the catalog, secondary indexes, predicate
+  scans and statistics
 - `FEATURELIST.md` — which PostgreSQL features wisr supports
-- `PART3.md` — what it would take to put PostgreSQL on this
+- `PART4.md` — what it would take to put PostgreSQL on this
   stack, and what that target forces on level 2's design
 
 Paths inside a level's documents are relative to that level, so

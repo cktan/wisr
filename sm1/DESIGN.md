@@ -692,7 +692,7 @@ committed version of the row ignoring the snapshot, re-evaluates
 its `WHERE` clause and new values from it, and only then repeats
 the write. This is what PostgreSQL's executor does at its default
 level after a lock wait, and workloads written for it rely on it
-(`PART3.md` §5a).
+(`PART4.md` §5a).
 
 The commonest case is a hot row, a shared counter or a
 `next_order_id`. Two read committed sessions each add one to `R1`,
@@ -733,7 +733,7 @@ a predicate: writing again without the read is refused again.
   `SM_ERR_INVALID`. Under a shared lock it reads but sets no
   mark, since a shared holder cannot write without upgrading. A
   caller that waited in `sm_lock(SHARED)` (a writer reading a
-  schema row, §5 of `sm2/DESIGN.md`) uses it to see what
+  schema row, §3 of `sm3/DESIGN.md`) uses it to see what
   committed while it waited. - **An insert** has no predicate to
   re-evaluate, so it is judged against the newest committed
   version (`SM_ERR_DUPKEY` if live) with no check, as
@@ -810,7 +810,7 @@ abort, as it does at the higher levels (§5.2): it waits for the
 row lock, is refused with `SM_ERR_UPDATED`, and goes ahead
 against the newest committed version once the caller has read it
 with `sm_read_latest` (§5.4). PostgreSQL does the same at its
-default level, and workloads rely on it (`PART3.md` §5a).
+default level, and workloads rely on it (`PART4.md` §5a).
 REPEATABLE READ and SERIALIZABLE keep §5.2 as it is.
 
 What makes that safe is that a version's key is its `wts`, taken

@@ -11,7 +11,7 @@ should support. Leave a box unchecked for everything it
 should not. Add a line under any item if the decision needs
 a reason attached — a reason written down here is worth more
 later than the box itself. Once this file stops changing,
-its decisions move into `OBJECTIVE.md` and `PART3.md`, and
+its decisions move into `OBJECTIVE.md` and `PART4.md`, and
 this file either stays as the working list or is retired.
 
 Scope note: `OBJECTIVE.md` already excludes a query
@@ -22,7 +22,7 @@ wisr, not by wisr, so they are left out of this list except
 where they force something onto storage. What is listed here
 is the part wisr itself must decide to support: types, index
 access methods, constraints, table storage features, and the
-ecosystem axis PART3.md §7 raises but does not settle.
+ecosystem axis PART4.md §7 raises but does not settle.
 
 **Already settled by sm1 — not on this list.** RC / RR /
 SERIALIZABLE isolation with SSI, two-phase commit, nested
@@ -73,7 +73,7 @@ primary key as the only access path below sm2.
       — cheap, block-range, for huge append-mostly tables
 - [x] covering / INCLUDE indexes
 - [x] partial indexes
-      — sm2's predicate scan interface already assumes this
+      — sm3's predicate scan interface already assumes this
 - [x] expression indexes
       — needs an expression evaluator
 
@@ -81,7 +81,7 @@ primary key as the only access path below sm2.
 
 - [x] PRIMARY KEY / UNIQUE / NOT NULL
 - [x] FOREIGN KEY, with CASCADE / RESTRICT / SET NULL
-      — sm2/PLAN.md already names this as future work, via
+      — sm3/PLAN.md already names this as future work, via
         sm_lock(SHARED) on the parent row
 - [x] CHECK
       — needs an expression evaluator
@@ -94,8 +94,8 @@ primary key as the only access path below sm2.
 
 - [x] partitioning (range / list / hash)
 - [ ] table inheritance (legacy)
-- [x] TOAST (large values stored out of line)
-      — sm2/DESIGN.md §3 already plans chunking large values
+- [x] TOAST (large datums stored out of line)
+      — sm2/DESIGN.md §4 already plans chunking large datums
         out of line
 - [x] generated / computed columns
 - [x] temporary tables
@@ -113,7 +113,7 @@ primary key as the only access path below sm2.
 ## 6. Concurrency / online DDL
 
 - [x] online index build
-      — already closed, sm2/DESIGN.md §5
+      — already closed, sm3/DESIGN.md §3
 - [x] online ADD COLUMN
       — already assumed, via a schema-version stamp per row
 - [x] other online ALTER (type change, drop column)
@@ -128,7 +128,7 @@ primary key as the only access path below sm2.
       — already out of scope ("online backup")
 - [x] row-level security
 
-## 8. Ecosystem axis (PART3.md §7's open question)
+## 8. Ecosystem axis (PART4.md §7's open question)
 
 - [x] wire protocol (libpq)
       — only needed for drop-in client compatibility

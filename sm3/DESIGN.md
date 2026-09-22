@@ -1,0 +1,284 @@
+# DESIGN — sm3, schema and indexes
+
+The level that turns sm2's tuples into a schema. sm2 gives it
+typed rows in a clustered relation; sm3 gives those relations
+names, definitions, secondary indexes, predicates and
+statistics. This document is the design of record; it follows
+the decisions in `OBJECTIVE.md`:
+
+| Decision | Choice |
+| --- | --- |
+| Catalog | in memory, written through to sm2, lock-based DDL |
+| Index entry | `encode(index columns) ‖ encode(pk)` → empty or INCLUDE columns |
+| Encoder | sm2's, called with the same per-column arguments |
+| Relation mapping | many sm3 objects multiplexed onto few sm1 relations, via sm2's key prefix |
+| API shape | open: batch-oriented (sets of rows, filters pushed down) was forced by an IPC boundary, which the threaded fork removes (§1) |
+| PostgreSQL | a target that shapes decisions, never a build dependency |
+
+**Status: nothing here is implemented**, and neither is sm2.
+This file exists so the protocols are argued before they are
+written. Unlike sm2's two formats, almost nothing here is
+permanent on disk — the catalog's own layout is the exception
+— so the scrutiny goes to the concurrency instead.
+`PLAN.md` has the order of work. The PostgreSQL target
+(`PART4.md`) shapes these decisions but is never a build
+dependency: sm3 must build and be tested without a PostgreSQL
+source tree.
+
+---
+
+## 1. What sm2 and sm1 provide
+
+sm3 is written against sm2's tuple relation, and against
+`sm1/include/sm.h` for the one thing sm2 has nothing to add
+to: locking.
+
+**Deployment: one process, one thread per session.** The
+PostgreSQL fork is threaded (`PART4.md` §2), not process per
+connection, so sm1, sm2 and sm3 are linked into the one server
+process and every backend thread shares sm1's transaction
+table, lock manager and SSI graph. A session is used by one
+thread at a time (`sm1/API.md`). The boundary between the
+executor and sm3 is a function call, not an RPC, so a per-row
+interface is no longer ruled out. Whether sm3 keeps a
+batch-shaped API anyway, for filter pushdown and fewer calls
+per scan, is open (§5), and nothing below depends on the
+answer.
+
+| the stack gives sm3 | and the constraint it brings |
+| --- | --- |
+| sm2's tuples in a clustered relation | the base row's identity is its primary key; an index entry points at a key, never at a location |
+| sm2's key encoder | index keys and primary keys sort by the same rules, because they are the same code (`sm2/DESIGN.md` §3) |
+| sm2's opaque key prefix | many sm3 objects fit in one sm1 relation (§4) |
+| `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own |
+| `SM_ERR_DUPKEY` from `rel_insert` | a duplicate primary key needs no separate existence check; a *unique index* still does (§3) |
+| `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
+| transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
+| `sm_lock(SHARED\|EXCLUSIVE)` | the DDL and online index build protocol (§2, §3) |
+| nested savepoints | a statement can be undone without losing the transaction |
+| forward scans | probe loops cost one cursor, not one per probe |
+| `SM_MAX_KEYLEN` 4096 | an index entry's `sk ‖ pk` must fit 4096 bytes together, prefix included (`sm2/OBJECTIVE.md`) |
+| no backward scan, ever | a descending column is stored with inverted bytes and scanned forward, in the same index; there are no mirror relations, and the fork's planner never asks for a backward scan (§5, §7) |
+| one column family per relation, hundreds to low thousands | sm3 must multiplex (§4) |
+
+---
+
+## 2. Catalog
+
+*To be written.* Tables, indexes, columns, types, collations
+and schema versions, stored in sm3's own sm2 relations and
+written in the same sm1 transaction as the DDL that changes
+them — which is what makes DDL transactional for free. It is
+also where a collation's recorded version lives
+(`sm2/DESIGN.md` §3), and where a tuple's schema version
+stamp (`sm2/DESIGN.md` §4) resolves to an actual schema.
+
+**Decision: the catalog is held in memory.** It is loaded at
+startup; a change is made in memory and written through to
+sm2, which is used for persistence only. It replaces
+PostgreSQL's heap catalogs (`PART4.md` §4), so sm1's status
+tuple is the one commit point.
+
+**Decision: schema changes are lock-based, as in PostgreSQL.**
+The catalog is not versioned, and an old snapshot does not see
+an old definition. PostgreSQL's catalogs are MVCC heap tables,
+but it does not give a transaction the old schema either: it
+keeps DDL and users of a table apart with table locks, so a
+transaction that first touches a table after a DDL commits sees
+the new definition, alongside its old data snapshot. sm3 does
+the same with sm1's row locks:
+
+- every transaction that reads or writes a table takes
+  `sm_lock(SHARED)` on that table's schema row, held to the end
+  of the transaction, before it reads the definition;
+- DDL takes the schema row exclusive by updating it, which
+  waits out the transactions in flight and blocks new ones
+  until it commits — the protocol §3 already uses for online
+  index builds, applied to all DDL;
+- so once a transaction holds the shared lock, the definition
+  in memory cannot change under it. A catalog served from
+  memory must take this lock, or DDL has nothing to wait on.
+  At READ COMMITTED sm1's `sm_lock` no longer fails when the
+  schema row committed after the transaction began, so the
+  lock alone is what protects the reader, and the in-memory
+  definition, not a read of the schema row, is what it uses.
+
+Deadlocks between DDL and DML are found by sm1's detector like
+any other.
+
+PostgreSQL hardwires its catalogs and sequences to heap, so the
+fork rewrites that seam instead of living with a hybrid, where
+DDL atomicity would sit exactly on the seam. sm1's sequences are
+used. Because the fork is threaded, one shared in-memory catalog
+is coherent without cross-process invalidation. What it costs is
+the code that reads the catalogs: the relation cache, syscache
+and system-table scans. Logical decoding could be fed from sm1
+instead of a second copy in PostgreSQL's WAL, but sm1 has no
+commit-ordered change feed yet, and physical replication and PITR
+over PostgreSQL's WAL do not apply to data held in RocksDB
+(`PART4.md` §4).
+
+Making memory authoritative moves the hard part; it does not
+remove it. A definition that outlives the transaction that
+changed it is the usual place such a design goes wrong. Open:
+
+- **Privacy until commit.** A DDL change must be invisible to
+  other transactions until it commits, and undone on abort and
+  on savepoint rollback. The shape expected is a
+  per-transaction overlay, written to sm2 inside the DDL's own
+  transaction and published to the shared catalog only after
+  the commit, in the order sm1 uses for its commit cache
+  (`sm1/DESIGN.md` §3.4).
+- **Size and startup.** Load time and memory for a schema
+  with many partitions.
+
+---
+
+## 3. Secondary indexes
+
+*To be written.* The shape is already argued in
+`sm1/SECINDEX.md`, which was an assessment of what a layer
+above sm1 needs; every gap it found is now closed in sm1.
+
+- **Entry:** `encode(sk) ‖ encode(pk)` → empty, or the INCLUDE
+  columns, built with sm2's encoder (`sm2/DESIGN.md` §3). The
+  pk suffix makes every entry unique, so a non-unique index
+  needs no further disambiguation.
+- **Unique indexes:** the uniqueness unit is the key *without*
+  the pk suffix, so it is a separate existence check under
+  `sm_lock(EXCLUSIVE)` rather than a property of the KV key. At
+  READ COMMITTED the check reads the newest version, not the
+  snapshot: a statement snapshot can predate a duplicate that
+  committed while the lock was awaited, and the lock is what
+  keeps the newest version stable.
+- **Maintenance:** on update and delete, the old image from
+  `rel_update` / `rel_delete` gives the old index entries to
+  remove — as a tuple, so sm3 reads the indexed columns out
+  of it without decoding bytes itself.
+- **Read committed writes.** An update or delete that meets a
+  row committed after the transaction began fails with
+  `SM_ERR_UPDATED` (`sm1/DESIGN.md` §5.4). It does not abort and
+  it is not retryable, so sm3 must not treat it as an error to
+  surface. sm2 does not resolve it, because the resolution
+  needs a filter (`sm2/DESIGN.md` §5): sm3 calls
+  `rel_read_latest` on the base row, re-checks the statement's
+  filter against that image, and repeats the write only if the
+  row still qualifies, or skips it. The old image the retried
+  write hands back is the newest version's, so the index
+  entries removed are the ones that are actually there. An
+  insert has no filter and needs none of this. sm1 refuses a
+  write repeated without the read, so an executor cannot
+  forget it.
+- **Online build on a populated relation**, from
+  `sm1/SECINDEX.md` gap 1, the protocol `sm_lock` exists for:
+  1. every writer takes `sm_lock(SHARED)` on the table's schema
+     row and reads it, so what it maintains is current;
+  2. the builder takes the schema row **exclusive** by updating
+     it, which waits out the writers in flight and blocks new
+     ones;
+  3. the builder scans the base relation — its snapshot is taken
+     after the lock, so it sees every committed row — fills the
+     index, and commits;
+  4. blocked writers then get the shared lock and read the new
+     schema. At READ COMMITTED their `sm_lock` no longer fails
+     on the newer commit; they read the schema row with
+     `rel_read_latest`. It is the schema-row lock that keeps
+     them out while the build runs, not a conflict check. At
+     the higher levels `sm_lock` still fails with a conflict,
+     and the writer retries.
+  `sm1/test/test_lock.cc` has this end to end.
+- Partial, expression and INCLUDE indexes mean maintenance takes
+  a predicate and an expression evaluator, not a column list.
+
+---
+
+## 4. Object mapping
+
+*To be written.* sm1 gives each relation a column family and
+targets hundreds to low thousands of them; a SQL schema with
+partitions and indexes passes that easily. So an sm3 object id
+is a key prefix inside a shared sm1 relation, and the number of
+sm1 relations is a tuning decision rather than a function of the
+schema.
+
+sm2 has the hook for this already: a `rel` is opened with an
+opaque key prefix that sm2 prepends and strips and otherwise
+ignores (`sm2/DESIGN.md` §5). An sm3 table or index is one
+`rel` over a shared sm1 relation with its object id as that
+prefix. sm2 never learns what a table is, and sm3 never
+encodes a key itself.
+
+This interacts with `sm_rmrel`: dropping an sm3 table is then a
+range delete inside a shared relation, not sm1's O(1) column
+family drop. The trade has to be made explicitly.
+
+---
+
+## 5. Scan by predicate
+
+*To be written.* A predicate goes in, a key range comes out of
+it, and the residual filter is evaluated below the API instead
+of returning rows for a caller to discard.
+
+- Deriving the range from the predicate is the whole point:
+  the columns of the index, in order, matched against the
+  predicate's conjuncts, giving a start key, an end key, and
+  whatever is left over as a residual.
+- The residual is evaluated against the tuple, per column
+  (`sm2/DESIGN.md` §5), so a filter on one column of a wide
+  row does not decode the row.
+- Forward only, at every level (§1). An `ORDER BY x DESC` that
+  an index could have served backwards is a top-N sort over a
+  forward scan instead (§7).
+
+Open: **the API shape.** Sets of rows in and out was forced by
+an IPC boundary that the threaded fork removes (§1). Filter
+pushdown and fewer calls per scan are reasons to keep it
+anyway, and the choice belongs here, at the level that has the
+filters — sm2 is tuple-at-a-time either way.
+
+---
+
+## 6. Statistics
+
+*To be written.* Statistics are not optional, because the
+planner is kept. It needs `reltuples`, `relpages`, histograms and
+correlations, and `ANALYZE` needs a sampling path: row counts,
+sizes, and a sampling primitive from sm1. For an index-organized
+table the primary key's correlation is 1.0 by construction,
+which is worth reporting rather than measuring. How accurate
+RocksDB's approximate statistics are for this purpose has not
+been measured, and this section depends on it.
+
+---
+
+## 7. Known trade-offs
+
+*To be filled in as the design settles, in the manner of
+`sm1/DESIGN.md` §13 — the costs this design accepts, written
+down where the next reader will find them.*
+
+Accepted so far, from the PostgreSQL target (`PART4.md`):
+
+- **Plans lost to the backward-scan ban.** An index-ordered
+  `ORDER BY x DESC LIMIT n` and a merge join that wants
+  descending order become a top-N sort over a forward scan, not
+  an early-terminating index scan. `MAX()`, which PostgreSQL
+  answers with a backward index scan, is expected to lose that
+  plan; `MIN()` keeps its forward one. Scrollable cursors get a
+  Materialize node, because `ExecSupportsBackwardScan` is
+  changed to return false for every table. These lose plans, not
+  correctness, and the size of the loss is expected from how the
+  planner works but has not been measured.
+- **Relations are multiplexed.** DROP TABLE is a range delete
+  inside a shared relation, not sm1's O(1) drop (§4).
+- **The catalog is not versioned.** A transaction gets the
+  newest definition and its own data snapshot, which is what
+  PostgreSQL does, and the price is that DDL blocks DML on the
+  same table rather than passing it (§2).
+- **The version lag is permanent.** The fork replaces the
+  storage and transaction layers and makes PostgreSQL thread
+  safe, so tracking upstream releases is harder than the version
+  lag it already counts as a liability.
+- **Not unblocked by sm3:** replication, PITR and logical
+  decoding over PostgreSQL's WAL (§2).

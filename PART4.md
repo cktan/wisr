@@ -1,7 +1,7 @@
 # PostgreSQL on this stack
 
-What it would take to run PostgreSQL over sm1 and sm2, and
-what that target forces on sm2's design.
+What it would take to run PostgreSQL over this stack, and
+what that target forces on sm2's and sm3's design.
 
 The claims about PostgreSQL below were checked against the
 PostgreSQL documentation and source, and against the public
@@ -53,12 +53,12 @@ same RocksDB. So:
 
 The options, ranked:
 
-1. **A separate server process, with IPC.** sm1 and sm2 run as
-   one multi-threaded server; each backend holds a session to
-   it. This is exactly YugabyteDB's shape — a PG backend per
-   session talking to a multi-threaded C++ storage tier through
-   an RPC layer, with a shared-memory fast path added later.
-   It preserves sm1's threading model untouched.
+1. **A separate server process, with IPC.** sm1, sm2 and sm3
+   run as one multi-threaded server; each backend holds a
+   session to it. This is exactly YugabyteDB's shape — a PG
+   backend per session talking to a multi-threaded C++ storage
+   tier through an RPC layer, with a shared-memory fast path
+   added later. It preserves sm1's threading model untouched.
 2. **Move sm1's shared state into PG shared memory.** Rewrites
    the transaction table, lock manager, SSI structures and
    deadlock detector as fixed-size shared-memory structures —
@@ -68,29 +68,32 @@ The options, ranked:
    far as could be determined. Not a plannable option.
 
 Option 1 is the only viable one, and it has a consequence that
-reaches all the way back into sm2's API: **every call across
-that boundary is an RPC.** A per-row interface will not
-survive it. This is why `sm2/OBJECTIVE.md` makes the API
-batch-shaped from the start, and it is why the batched read
-left unbuilt in `sm1/SECINDEX.md` gap 6 stops being an
-unproven optimization and becomes a requirement.
+reaches all the way back into the stack's topmost API: **every
+call across that boundary is an RPC.** A per-row interface will
+not survive it. This is why the API above was made batch-shaped
+from the start — a decision that now belongs to sm3, the level
+with the filters (`sm3/OBJECTIVE.md`) — and it is why the
+batched read left unbuilt in `sm1/SECINDEX.md` gap 6 stops
+being an unproven optimization and becomes a requirement.
 
 **Decision: the fork is threaded.** The project does not put
 sm1 behind IPC (option 1). It changes PostgreSQL itself from
 a process per connection to a thread per connection — option
-3, done in the fork instead of waited for. sm1 and sm2 are
-then linked into the one server process, every backend thread
+3, done in the fork instead of waited for. sm1, sm2 and sm3
+are then linked into the one server process, every backend thread
 shares sm1's transaction table, lock manager and SSI graph as
 sm1 already assumes, and RocksDB's one-writer-process rule is
 met by construction.
 
 What this changes above:
 
-- The boundary between the executor and sm2 is a function
+- The boundary between the executor and sm3 is a function
   call, not an RPC. A per-row interface is no longer
   unsalvageable, so the batch-shaped API is no longer forced
   by this section. Whether to keep it for other reasons —
-  filter pushdown, fewer calls per scan — is open.
+  filter pushdown, fewer calls per scan — is open, and is
+  sm3's to settle (`sm3/DESIGN.md` §5); sm2 is
+  tuple-at-a-time either way.
 - YugabyteDB stays the precedent for §4's replacement of the
   storage and transaction layers, but no longer for the
   process layout.
@@ -212,12 +215,12 @@ What still has to be solved either way:
   well, paying for durability twice. Rebuilding replication at
   the storage tier is a subsystem in its own right; it is what
   YugabyteDB did, with Raft.
-- **Catalogs move into sm2.** PostgreSQL hardwires catalogs
+- **Catalogs move into sm3.** PostgreSQL hardwires catalogs
   and sequences to heap — the relation cache asserts it — so
   the fork rewrites that seam rather than living with a
   hybrid, where DDL atomicity would sit exactly on the seam.
-  The catalog is held in memory, loaded from sm1 at startup,
-  with changes made in memory and written through to sm1 for
+  The catalog is held in memory, loaded at startup, with
+  changes made in memory and written through to sm2 for
   persistence only. sm1's status record is then the one
   commit point: recovery is RocksDB's alone, DDL shares its
   transaction with the data, and sm1's sequences are used.
@@ -227,7 +230,7 @@ What still has to be solved either way:
   in-memory catalog coherent without cross-process
   invalidation. The cost is the code that reads the
   catalogs — the relation cache, syscache and system-table
-  scans — and the open questions in `sm2/DESIGN.md` §4.
+  scans — and the open questions in `sm3/DESIGN.md` §2.
 - **Statistics.** The planner is being kept, so it needs
   `reltuples`, `relpages`, histograms and correlations, and
   `ANALYZE` needs a sampling path.
@@ -280,7 +283,7 @@ last key examined, inverts.
 That is a real cost, but it is an implementation cost in sm1,
 not a property of the storage below it. **If PostgreSQL is
 genuinely the target, this decision has to be re-opened**, and
-it is much cheaper to re-open now than after sm2 has built
+it is much cheaper to re-open now than after sm3 has built
 mirror relations into its index design.
 
 **Decision: the ban stands; the planner is made not to ask.**
@@ -300,11 +303,11 @@ correctness. What it means:
 - The infinite cost is on the direction of the scan, not on
   how the index is declared. An index declared with DESC
   columns is still scanned forward, over inverted key bytes
-  (`sm2/DESIGN.md` §2).
+  (`sm2/DESIGN.md` §3).
 - Index paths are not the only place a backward scan is
   assumed. `ExecSupportsBackwardScan` returns true for a
   sequential scan unconditionally, so it is changed to return
-  false always — every table is an sm2 table — which makes the
+  false always — every table is an sm3 table — which makes the
   planner put a Materialize node under a scrollable cursor.
 
 ---
@@ -332,38 +335,40 @@ write timestamp so their order stays commit order. The design is
 
 ---
 
-## 6. What this forces on sm2, now
+## 6. What this forces on sm2 and sm3, now
 
 These are the decisions constrained by the PG target. They are
-reflected in `sm2/OBJECTIVE.md` and `sm2/DESIGN.md`.
+reflected in each level's own `OBJECTIVE.md` and `DESIGN.md`;
+the level column says which.
 
-| Forced | Why |
-| --- | --- |
-| **Record format cheap to turn into a PG tuple** | the executor works in tuple slots; a bespoke encoding pays a conversion per row, in both directions, across an IPC boundary |
-| **Row identity is the primary key** | already chosen; it is `ybctid` by another name, and it is the only identity that fits an index-organized store without a surrogate allocator |
-| **Batch-shaped API** | was forced by §2's out-of-process engine; with a threaded fork it is no longer forced, and is open |
-| **Key encoder takes a collation** | PG's text order is `strcoll`/ICU, not memcmp; the encoder needs `(type, collation, direction, nulls-order)` per column or half of SQL's `ORDER BY` is unrepresentable |
-| **Collated keys store the sort key *and* the original** | the collation transform is lossy and irreversible; this is what YugabyteDB does, and it costs storing the value twice |
-| **Collation version recorded per relation** | sort keys are not stable across collation library versions; PostgreSQL has had index corruption from exactly this, which is what `pg_collation.collversion` exists for |
-| **Statistics are not optional** | the planner is being kept |
-| **Relations multiplexed onto few column families** | sm1 targets hundreds to low thousands of relations; a schema with partitions and indexes passes that easily, and this limit will bind before most of the others |
+| Forced | Level | Why |
+| --- | --- | --- |
+| **Tuple format cheap to turn into a PG tuple** | sm2 | the executor works in tuple slots; a bespoke encoding pays a conversion per row, in both directions, across an IPC boundary |
+| **Row identity is the primary key** | sm2 | already chosen; it is `ybctid` by another name, and it is the only identity that fits an index-organized store without a surrogate allocator |
+| **Key encoder takes a collation** | sm2 | PG's text order is `strcoll`/ICU, not memcmp; the encoder needs `(type, collation, direction, nulls-order)` per column or half of SQL's `ORDER BY` is unrepresentable |
+| **Collated keys store the sort key *and* the original** | sm2 | the collation transform is lossy and irreversible; this is what YugabyteDB does, and it costs storing the datum twice |
+| **Batch-shaped API** | sm3 | was forced by §2's out-of-process engine; with a threaded fork it is no longer forced, and is open |
+| **Collation version recorded with the schema** | sm3 | sort keys are not stable across collation library versions; PostgreSQL has had index corruption from exactly this, which is what `pg_collation.collversion` exists for |
+| **Statistics are not optional** | sm3 | the planner is being kept |
+| **Relations multiplexed onto few column families** | sm3 | sm1 targets hundreds to low thousands of relations; a schema with partitions and indexes passes that easily, and this limit will bind before most of the others |
 
-And one that is not forced but is strongly advised: **sm2 must
-build and be testable without a PostgreSQL source tree.**
-Everything above shapes sm2's decisions; none of it should
-become a dependency.
+And one that is not forced but is strongly advised: **sm2 and
+sm3 must build and be testable without a PostgreSQL source
+tree.** Everything above shapes their decisions; none of it
+should become a dependency.
 
 ---
 
 ## 7. Recommended sequencing
 
-1. **Build sm2 standalone**, to `sm2/PLAN.md`.
+1. **Build sm2, then sm3, standalone**, to `sm2/PLAN.md` and
+   `sm3/PLAN.md`.
 2. **Backward scans are settled** (§5): the ban stands, and
    the planner is changed not to ask for one.
 3. **Spike the fork early, and throw it away.** A prototype
-   that runs `SELECT` and `INSERT` on one table through sm2,
+   that runs `SELECT` and `INSERT` on one table through sm3,
    built to find which of §2's and §4's walls bites first —
-   not to be kept. The formats in `sm2/PLAN.md` steps 1 and 2
+   not to be kept. The formats in `sm2/PLAN.md` steps 2 and 3
    are permanent once data exists; the spike is how to learn
    what they must carry *before* that happens.
 4. Only then decide whether the full program is worth its

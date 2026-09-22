@@ -1,112 +1,132 @@
 # PLAN — sm2
 
-The order of work, and why it is this order. `OBJECTIVE.md` says
-what sm2 is for; `DESIGN.md` is where each step's argument goes
-before its code does.
+The order of work, and why it is this order. `OBJECTIVE.md`
+says what sm2 is for; `DESIGN.md` is where each step's
+argument goes before its code does. `sm3/PLAN.md` picks up
+where this one stops.
 
-The principle: **the two on-disk formats come first and get the
-most scrutiny.** A key encoding and a record layout are
+The principle: **the two on-disk formats come first and get
+the most scrutiny.** A key encoding and a tuple layout are
 permanent the moment any data exists, and neither can be fixed
-later by a patch. Everything else in sm2 is code that can be
-rewritten.
+later by a patch. Everything else in sm2 — and everything in
+sm3 — is code that can be rewritten.
 
-## 1. Key encoding
+## 1. Types
 
-The foundation. sm1 orders keys bytewise only, so every ordered
-thing sm2 does rests on this.
+The vocabulary the two formats are written in, so it comes
+before them.
+
+- The first set: boolean, the integer widths, `float4`,
+  `float8`, numeric, `text` / `varchar` / `bytea`, `date`,
+  `time`, `timestamp`, `timestamptz`, `interval`, `uuid` —
+  each one spelled out in `TYPE.md` §3.
+- **The ADT table first** (`DESIGN.md` §2.3): one descriptor
+  of function pointers per type, so that every step after
+  this one adds a descriptor instead of a `switch`.
+- PostgreSQL's representation per type (`DESIGN.md` §2.1),
+  little-endian, with variable-length datums carrying the
+  payload alone.
+- Numeric as Arrow's decimal (`DESIGN.md` §2.2), and interval
+  as PG's three components (`DESIGN.md` §2.4).
+- A stable on-disk type code per type, assigned once.
+- Null and collation as properties of a column, not of a type.
+- Decide the two numeric open questions in `OBJECTIVE.md`
+  first — bare `numeric`, and NaN and infinity — because the
+  second of them changes what bytes mean.
+
+**Verify:** for every type, a datum round trips through the
+in-memory representation, and the type's own comparison
+function agrees with hand-written expectations at the
+boundaries (min, max, zero, negative zero, NaN, empty
+string). For every type but numeric, a datum's bytes equal
+what PostgreSQL stores for the same datum — a table of
+fixtures taken from PG, which is the only way "the
+representation is PostgreSQL's" is a claim rather than an
+intention.
+
+## 2. Key encoding
+
+The foundation. sm1 orders keys bytewise only, so every
+ordered thing above rests on this, including sm3's indexes.
 
 - Order-preserving encodings per type: integers (sign-flipped
   big-endian), floats (IEEE-754 total order), decimals,
   timestamps, text (collation sort key).
-- Multi-column keys, ascending and descending per column, nulls
-  first or last.
+- Multi-column keys, ascending and descending per column,
+  nulls first or last.
 - Decide the open questions in `OBJECTIVE.md` first: over-long
   keys against `SM_MAX_KEYLEN`, collation version stability,
   non-deterministic collations.
 
 **Verify:** property-based tests, not examples. For every type
 and every column order, `encode(a) < encode(b)` iff `a < b`,
-over generated values including the boundaries (min, max, zero,
+over generated datums including the boundaries (min, max, zero,
 negative zero, NaN, empty string, the longest legal key). Round
 trip where the encoding is reversible, and prove the documented
-loss where it is not.
+loss where it is not. Interval gets two properties of its own
+(`DESIGN.md` §3): the key round trips, and its order refines
+PostgreSQL's — never contradicting it where PG is decisive,
+and separating the datums PG calls equal.
 
-## 2. Record format
+## 3. Tuple format, and the tuple codec
 
+Its own API, with its own header, built before the relation
+that calls it (`DESIGN.md` §4).
+
+- `tuple_encode` and `tuple_decode`, the latter by ordinal so
+  one column costs one column.
 - Null bitmap, fixed/variable split, alignment.
 - Schema version per row, so `ADD COLUMN` is O(1) and a dropped
   column does not shift the ones after it.
-- Chunking for large values, below sm1's 64MB ceiling.
+- Chunking for large datums, below sm1's 64MB ceiling.
 
 **Verify:** a row written under schema version N reads correctly
 under N+1, N+2 and after a column drop; the golden-bytes test
-that a record written today still decodes tomorrow.
+that a tuple written today still decodes tomorrow. All of it
+in a unit test with no database in it — the codec touches sm1
+nowhere, which is half the reason it is a separate API.
 
-## 3. Catalog
+## 4. The tuple relation
 
-- Tables, indexes, columns, types, schema versions, in sm2's own
-  sm1 relations.
-- A cache with transactional invalidation.
+The three above, joined to sm1.
 
-**Verify:** DDL rolls back with its transaction, including the
-cache; two sessions doing concurrent DDL behave as sm1's
-isolation says they must.
+- `rel_insert`, `rel_read`, `rel_update`, `rel_delete`,
+  `rel_read_latest`, `rel_scan`, `rel_scan_seek`, over the
+  codec of step 3 rather than a second copy of it.
+- The key prefix sm3 multiplexes with, opaque to sm2.
+- Errors from sm1 passed through, not translated —
+  `SM_ERR_DUPKEY` and `SM_ERR_UPDATED` in particular.
+- Per-column decoding, so a reader that wants one column does
+  not pay for the row.
 
-## 4. Object mapping
-
-- sm2 object id as a key prefix, many objects per sm1 relation.
-- Decide what `DROP TABLE` costs once a table is a key range
-  rather than a column family.
-
-**Verify:** a schema far past sm1's "low thousands of relations"
-target opens, and a dropped table's space is reclaimed.
-
-## 5. Indexes
-
-- Unique and non-unique entries, maintenance from the old image,
-  `SM_ERR_DUPKEY` for uniqueness.
-- The online build protocol from `DESIGN.md` §5.
-- Partial, expression and INCLUDE indexes.
-
-**Verify:** the index and the base relation never disagree,
-under concurrency, at every isolation level — the property that
-matters most here. The online build must not miss a row written
-by a transaction that was in flight when it started; `sm1`'s
-scenario suite has that shape already and sm2's version of it
-belongs in the same style.
-
-## 6. Scan interface
-
-- A predicate in, a key range derived, the residual filter
-  evaluated below the API.
-- Batch-shaped: sets of rows in and out (`OBJECTIVE.md`).
-
-**Verify:** the rows returned match a brute-force scan-and-filter
-over the same data, for generated predicates.
-
-## 7. Statistics, constraints, bulk load
-
-- Row counts, sizes, sampling.
-- Foreign keys via `sm_lock(SHARED)` on the parent row.
-- A bulk path that batches within sm1's RAM bound.
+**Verify:** for generated schemas and rows, what goes in comes
+back out, under every isolation level; the old image returned
+by an update or a delete is the tuple that was there; a
+savepoint rollback leaves no sm2 state behind, because there
+is none to leave; two `rel`s over the same sm1 relation with
+different prefixes never see each other's rows.
 
 ---
 
 ## Testing
 
-sm1's two-layer arrangement is worth copying, because it earned
-its keep: C++ tests for contract and single-session mechanics,
-and a declarative scenario suite for anything where two sessions
-interleave. sm2's concurrency questions — an index build against
-a concurrent writer, DDL against DML — are exactly the second
-kind, and `sm1/mvcc/DRIVER.md` explains why that language exists.
+sm1's two-layer arrangement is worth copying, because it
+earned its keep: C++ tests for contract and single-session
+mechanics, and a declarative scenario suite for anything where
+two sessions interleave. Most of sm2 is the first kind — a
+codec is tested by property, not by interleaving — and the
+concurrency questions that need the second kind mostly arrive
+with sm3 (`sm3/PLAN.md`).
 
 Whether sm2 gets its own driver or extends sm1's is a decision
 for the first scenario that needs it, not before.
 
 ## What is deliberately not here
 
+- No catalog, no secondary index, no predicate scan, no
+  statistics, and no mapping of many tables onto one relation.
+  All of it is `sm3/PLAN.md`.
 - No SQL, no planner, no executor.
-- No PostgreSQL dependency. `PART3.md` explains what the PG
+- No PostgreSQL dependency. `PART4.md` explains what the PG
   target forces on the decisions above; none of it requires a
   PostgreSQL source tree to build or test sm2.

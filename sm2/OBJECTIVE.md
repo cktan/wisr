@@ -1,116 +1,209 @@
 # OBJECTIVE — sm2
 
 Build the level that turns sm1's ordered byte strings into
-**rows**: typed columns, a record format, a catalog, and
-secondary indexes.
+**tuples**: typed columns, the two encodings those types get
+on disk, and a relation whose rows are tuples rather than raw
+bytes.
 
 sm1 stops exactly where this begins. `sm1/OBJECTIVE.md` says
-its values are "opaque byte strings", its keys are ordered
-"bytewise (`memcmp`)" with the encoding left to the caller, and
-that "secondary indexes are not provided — they can be built by
-another layer on top of this one". sm2 is that layer, and this
+its values are "opaque byte strings" and its keys are ordered
+"bytewise (`memcmp`)" with the encoding left to the caller.
+sm2 is the caller that supplies that encoding, and this
 document is what it is for.
+
+sm2 stops well short of a schema. A catalog, secondary
+indexes, predicate scans and statistics are sm3's, built on
+sm2 the way sm2 is built on sm1 (`sm3/OBJECTIVE.md`).
 
 ## Scope
 
-- **Types and a record format.** Columns with types, nulls, and
-  a layout that survives schema change without rewriting the
-  table.
+- **Types.** A fixed set of column types, each with an
+  in-memory datum, a key encoding and a tuple encoding, and a
+  stable on-disk type code.
 - **Key encoding.** Order-preserving encodings that turn typed
-  column values into byte strings whose `memcmp` order is the
+  datums into byte strings whose `memcmp` order is the
   intended order, including multi-column keys, ascending and
-  descending columns, and null ordering.
-- **A catalog.** Table and index definitions, column types and
-  schema versions, held in memory and persisted through sm1
-  relations in the same transactions as the data. It also
-  replaces PostgreSQL's heap catalogs and sequences, which the
-  fork can no longer keep on heap (`PART3.md` §4).
-- **Secondary indexes.** Unique and non-unique, maintained
-  transactionally with the base row, built online on a populated
-  relation.
-- **A scan interface** that takes a predicate and derives the
-  key range from it, rather than returning rows to be discarded
-  above.
-- **Statistics** good enough for a cost-based planner above.
-  They are not optional: the planner is kept, so it needs row
-  counts, sizes, histograms and correlations, and `ANALYZE`
-  needs a sampling path.
+  descending columns, null ordering, and collated text.
+- **A tuple format, and a tuple codec API of its own.**
+  Columns with types and nulls, in a layout that survives
+  schema change without rewriting the table — encoded and
+  decoded through a component with its own header, built and
+  tested before the relation that uses it.
+- **A tuple relation.** sm1's relation with the types put
+  back: tuples in, tuples out, encoded and decoded by sm2,
+  inside the caller's sm1 transaction.
 
 ## Not in scope
 
-- A query language, a planner, or an executor. sm2 answers
-  questions about rows; it does not decide which questions to
-  ask.
+- **A catalog.** sm2 is handed a schema; it does not persist
+  one, look one up, or know what a table is. That is sm3's,
+  and so is DDL and the locking that makes it safe.
+- **Secondary indexes.** sm2 gives sm3 what index maintenance
+  needs — the encoder, and the old image as a tuple — and
+  maintains no index itself.
+- **Predicates, scans by predicate, and statistics.** sm2 has
+  no filter and counts nothing. Both are sm3's.
+- **Mapping many tables onto few relations.** An sm2 relation
+  is one sm1 relation. sm2 offers an opaque key prefix so sm3
+  can multiplex above it; the multiplexing is not sm2's.
+- A query language, a planner, or an executor.
 - Anything sm1 already does: transactions, isolation, locking,
   durability, recovery, garbage collection. sm2 calls them; it
   does not reimplement them.
-- Replication, point-in-time recovery, and logical decoding.
-  They read PostgreSQL's WAL, which does not carry data held in
-  RocksDB (`PART3.md` §4); rebuilding them is a subsystem of its
-  own, at the storage tier.
 - A PostgreSQL dependency. sm2 must be useful and testable on
   its own, and buildable without a PostgreSQL source tree. The
-  PG target shapes sm2's *decisions* (see `PART3.md` at the top
-  level), never its *build*.
+  PG target shapes sm2's *decisions* (see `PART4.md` at the
+  top level), never its *build*.
 
 ## Decisions
 
 These are settled and drive `DESIGN.md`.
 
-- **Row identity is the primary key.** The base relation is
-  clustered on the primary key, as sm1 relations already are,
-  and a secondary index entry is `encode(index columns) ‖
-  encode(pk)`. A lookup is an index scan followed by a base
-  read. There is no surrogate row id and no indirection layer.
-  This matches sm1's model exactly, and it is what YugabyteDB
-  does (`ybctid` is the encoded primary key).
-- **The eventual consumer is a forked PostgreSQL**, keeping its
-  parser, planner and executor and replacing its storage and
-  transaction layers. The fork is **threaded**, a thread per
-  connection instead of a process (`PART3.md` §2), so sm1 and
-  sm2 are linked into the one server process and every backend
-  thread shares sm1's transaction table, lock manager and SSI
-  graph. sm2 is therefore built to be *friendly*
-  to that target — a record format that is cheap to turn into a
-  PostgreSQL tuple, a key encoder that takes a collation, and
-  statistics a planner can use — without taking a dependency on
-  it.
-- **Batch-shaped API: open.** It was decided because a
-  PostgreSQL backend was a separate process per connection that
-  could not link sm1, and behind an IPC boundary a per-row API
-  is unsalvageable. The fork is now threaded, so the boundary
-  between the executor and sm2 is a function call and the shape
-  is no longer forced (`PART3.md` §2). Whether sm2 keeps sets of
-  rows in and out for other reasons, filter pushdown and fewer
-  calls per scan, is decided in `DESIGN.md`. Nothing else here
-  depends on the answer.
-- **Relations are multiplexed.** sm1 gives each relation its own
-  RocksDB column family and targets "hundreds to low thousands
-  of relations per database" (`sm1/DESIGN.md` §13). A PostgreSQL
-  schema of a few hundred tables with indexes, TOAST relations
-  and partitions passes that easily, so sm2 maps many logical
-  tables and indexes onto few sm1 relations by prefixing its own
-  object id into the key.
+- **Row identity is the primary key.** The relation is
+  clustered on the primary key, as sm1 relations already are.
+  There is no surrogate row id and no indirection layer. This
+  matches sm1's model exactly, and it is what YugabyteDB does
+  (`ybctid` is the encoded primary key).
+- **Every column is in the tuple, key columns included.**
+  The encoded key is an ordering device, not storage: a key
+  column is written twice, encoded in the key and native in
+  the tuple, and the tuple is what a read returns. It costs
+  the duplicate; it buys a tuple that is complete on its
+  own, a tuple codec that never learns what a key column is,
+  and the next decision (`DESIGN.md` §5).
+- **A key must be injective, not reversible.** Distinct
+  datums get distinct keys, because a key is the row's
+  identity. A key need not decode back to its datum, because
+  the tuple holds it — so a lossy encoding is allowed where
+  it is order-preserving and made injective by a tie-break,
+  and `key_decode` is an optimization for sm3's index-only
+  scans rather than a correctness requirement
+  (`DESIGN.md` §3).
+- **A datum's representation is PostgreSQL's**, type by
+  type: the same widths, epochs, units and struct layouts,
+  so that crossing into a tuple slot copies the column bytes
+  instead of translating them. Two places need sm2 to be
+  stricter than PostgreSQL is — the byte order, fixed
+  little-endian, and variable-length datums, which carry the
+  payload alone and leave framing to the tuple
+  (`DESIGN.md` §2.1).
+- **Except numeric, which is Arrow's decimal**: a fixed-width
+  two's-complement integer with the scale in the schema, 128
+  bits to 38 digits of precision and 256 to 76. It buys a
+  numeric key encoding that is just an integer's, and a
+  fixed-width numeric column; it costs PG's unbounded
+  precision, PG's NaN and infinity, and a per-datum
+  conversion for this one type (`DESIGN.md` §2.2).
+- **A type is an ADT, in PostgreSQL's shape** — one
+  descriptor of function pointers per type, as `pg_type` is,
+  with `key_encode` added because sm1 compares with `memcmp`
+  and a PG btree never needed one. Adding a type is adding a
+  descriptor, not editing a `switch` in three places
+  (`DESIGN.md` §2.3).
+- **Interval keeps PostgreSQL's three components**, months, days
+  and microseconds apart, because they are not convertible.
+  Its order is PG's flattened 128-bit datum, which is not
+  injective, so its *key* appends the months and days behind
+  that datum to restore identity — a total order that refines
+  PostgreSQL's rather than contradicting it
+  (`DESIGN.md` §2.4, §3).
+- **The tuple codec is a separate API.** It holds the
+  permanent on-disk format, it has two callers (the tuple
+  relation, and sm3's INCLUDE columns), and it is the only
+  part of sm2 that touches no database — so it is built and
+  tested on its own (`DESIGN.md` §4).
+- **One encoder, two callers.** The key encoder is sm2's, and
+  sm3 builds its index entries — `encode(sk) ‖ encode(pk)` —
+  from the same function with the same per-column arguments.
+  Two encoders that have to agree is a bug waiting to be
+  written.
+- **sm2 is a codec, not a state machine.** Every durable
+  effect is an sm1 call inside the caller's transaction, and
+  sm2 keeps no state across calls. Abort and savepoint
+  rollback therefore cost sm2 nothing.
+- **The eventual consumer is a forked PostgreSQL**, keeping
+  its parser, planner and executor and replacing its storage
+  and transaction layers. The fork is **threaded**, a thread
+  per connection instead of a process (`PART4.md` §2), so sm1,
+  sm2 and sm3 are linked into the one server process and every
+  backend thread shares sm1's transaction table, lock manager
+  and SSI graph. sm2 is therefore built to be *friendly* to
+  that target — a tuple format that is cheap to turn into a
+  PostgreSQL tuple, and a key encoder that takes a collation —
+  without taking a dependency on it.
+- **One tuple at a time.** The IPC boundary that once forced
+  a batch-shaped API is gone with the threaded fork
+  (`PART4.md` §2), so the call above sm2 is an ordinary
+  function call. Whether a batched form earns its keep for
+  filter pushdown is a question for the level that has filters
+  (`sm3/OBJECTIVE.md`), and nothing in sm2 depends on the
+  answer.
 - **Descending order is inverted bytes, scanned forward.** sm1
   does not scan backwards, and the fork's planner is changed
-  never to ask it to (`PART3.md` §5). So a descending column
+  never to ask it to (`PART4.md` §5). So a descending column
   is the ascending encoding with its bytes inverted, and there
   are no mirror relations.
-- **Writes at READ COMMITTED follow sm1's protocol.** A write
-  that meets a row committed after the transaction began is
-  refused with `SM_ERR_UPDATED`; sm2 reads the newest version
-  with `sm_read_latest`, re-checks the statement's filter, and
-  only then repeats the write (`PART3.md` §5a,
-  `sm1/DESIGN.md` §5.4). Index entries are computed from that
-  newest image.
-- **Collated keys store the sort key and the original.** The
-  collation transform is lossy and irreversible, so the value is
-  stored twice, as YugabyteDB does (`PART3.md` §6).
+- **Writes at READ COMMITTED follow sm1's protocol, and sm2
+  does not resolve them.** A write that meets a row committed
+  after the transaction began is refused with `SM_ERR_UPDATED`
+  (`sm1/DESIGN.md` §5.4). Resolving it means re-checking the
+  statement's filter against the newest image, and filters are
+  sm3's; sm2 surfaces the error and provides
+  `rel_read_latest`.
+- **Collated keys store the sort key and the original.** Not
+  to recover the datum — the tuple does that — but because
+  a deterministic collation can give two distinct strings one
+  sort key, and PostgreSQL keeps them as two datums. Without
+  the tie-break the two would share a key and become one row
+  (`PART4.md` §6, `DESIGN.md` §3).
 
 ## Open questions
 
 Named here so they are decided deliberately, in `DESIGN.md`,
-before anything is written to disk:
+before anything is written to disk. All three are questions
+about the encoding, which is why they are sm2's and not sm3's,
+even though it is sm3's indexes that feel them most.
+
+- **Bare `numeric`.** Arrow's decimal takes its scale from
+  the schema; PostgreSQL allows `numeric` with no typmod at
+  all, where each datum carries its own weight and display
+  scale. A bare `numeric` column has no Arrow representation.
+  Refuse it, pick a default, or keep a second variable-width
+  representation for it?
+
+  *Suggested answer: refuse a bare `numeric` at column
+  creation, and say why.* The alternatives are worse in a way
+  that lasts. A default `(38, s)` silently truncates datums a
+  user believed were exact, which is the failure mode numeric
+  exists to prevent. A second variable-width representation
+  means two numerics on disk with two key encodings and two
+  comparison paths, which is most of what §2.2 was avoiding.
+  Refusing is loud, happens at DDL rather than at insert, and
+  leaves the door open: a later release can add the
+  variable-width form under a distinct type code without
+  touching data already written. PostgreSQL programs that
+  declare `numeric(p,s)` — which is most schemas that care —
+  are unaffected.
+
+- **numeric NaN and infinity.** PG's numeric has both; an
+  Arrow decimal is an integer and has neither. Refuse them,
+  or reserve values?
+
+  *Suggested answer: reserve the two extreme magnitudes as
+  sentinels, and decide it now rather than later.* Reserve
+  the most negative representable integer for `-Infinity`,
+  the most positive for `+Infinity`, and the next value in
+  from the most negative for `NaN`; shrink the declared
+  precision's usable range by nothing, since a precision of
+  38 digits does not reach the 128-bit limit anyway. The
+  ordering then falls out of the same integer key encoding
+  with the sentinels at the ends, which is where PG puts
+  infinities, and NaN sorts first or last by the rule §3
+  already has to state for `float8`. This has to be decided
+  before any data exists, because retrofitting a sentinel
+  into a format changes the meaning of bytes already
+  written — unlike bare `numeric` above, which a new type
+  code can add later.
 
 - **Over-long keys.** `SM_MAX_KEYLEN` is 4096 and bounds
   `sk ‖ pk` together. Collation sort keys can be several times
@@ -119,12 +212,12 @@ before anything is written to disk:
 
   *Suggested answer: reject for the primary key, truncate and
   recheck for a secondary index, never hash.* The primary key is
-  the row's identity and the base relation's key, so it must be
+  the row's identity and the relation's key, so it must be
   exact: an encoded primary key over a fixed limit is refused
   when the row is written, which is what PostgreSQL does for an
   oversize btree entry (its limit is roughly 2.7KB, from memory,
   not checked against the source). A secondary index can do
-  better, because the original value is stored beside the sort
+  better, because the original datum is stored beside the sort
   key anyway. Truncating a sort key keeps the order as a
   coarsening: if `a <= b` then `trunc(a) <= trunc(b)`, so a
   range scan on the truncated keys returns a superset, and the
@@ -141,10 +234,10 @@ before anything is written to disk:
 
 - **Collation stability.** A sort key is only valid for the
   collation library version that produced it. The version is
-  recorded per relation, as `pg_collation.collversion` exists to
-  do for PostgreSQL (`PART3.md` §6). What remains open is what
-  sm2 does when the recorded version and the library's differ:
-  refuse the index, or rebuild it?
+  recorded with the schema, as `pg_collation.collversion`
+  exists to do for PostgreSQL (`PART4.md` §6). What remains
+  open is what happens when the recorded version and the
+  library's differ: refuse, or rebuild?
 
   *Suggested answer: pin the library so it rarely differs, and
   refuse on a mismatch, with an explicit rebuild.* Link a
@@ -157,10 +250,10 @@ before anything is written to disk:
   and carries on, but continuing to write sort keys from a new
   version into an old index corrupts it further, and a unique
   index quietly stops being unique. Rebuilding a secondary index
-  is an online build (`DESIGN.md` §5). A collated primary key is
-  harder, because the table is clustered on it, so the rebuild
-  rewrites the table; that is why the refusal has to be the
-  default and the rebuild a command someone chooses to run.
+  is an online build (`sm3/DESIGN.md` §3). A collated primary key
+  is harder, because the relation is clustered on it, so the
+  rebuild rewrites the table; that is why the refusal has to be
+  the default and the rebuild a command someone chooses to run.
 
 - **Non-deterministic collations.** Equal keys are not
   byte-equal under them, which is what unique indexes rest on.
@@ -179,7 +272,7 @@ before anything is written to disk:
   rejects a non-deterministic collation when a
   column or index is created, with a clear error, and never
   silently. The collation carries a `deterministic` flag in the
-  catalog from the start, chosen when the column is created and
+  schema from the start, chosen when the column is created and
   never changed. A deterministic collation's key is the sort key
   followed by the original bytes as a tie-break; a
   non-deterministic one's is the sort key alone. Because the flag
