@@ -82,6 +82,19 @@ nothing below depends on the answer.
   exactly that (`pg_collation.collversion` exists for it), so the
   collation **version is recorded per relation** (§4) and a
   mismatch is detected, not trusted.
+- Choosing the comparison: `memcmp` in sm1 always. Never
+  `strcoll`: it is slow per comparison, needs NUL-terminated
+  input (keys may contain `\0`), reads process-global locale
+  state, and is a comparator, which sm1 does not have. For
+  locale order, run `strxfrm` once **in the encoder** and let
+  sm1 `memcmp` the result. If no locale order is needed, use
+  the UTF-8 bytes (codepoint order) and skip the transform.
+- `strxfrm` caveats: it cannot carry an embedded `\0`; its
+  output is roughly 2-4x the input, which counts against
+  `SM_MAX_KEYLEN`; use `strxfrm_l` with an explicit `locale_t`
+  rather than `setlocale`; glibc collation is unstable across
+  versions, so if stable keys are needed pin ICU and use
+  `ucol_getSortKey`.
 - The ban on backward scans stands, and the planner is changed
   not to ask for one (`PART3.md` §5). A DESC column is therefore
   the inverted encoding scanned forward, and an index-ordered
