@@ -9,6 +9,7 @@ built on the level below it.
 | 1 | `sm1/` | the MVCC storage manager: stores, transactions, isolation, locks, 2PC, recovery |
 | 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, a relation of tuples |
 | 3 | `sm3/` | schema and indexes: a catalog, secondary indexes, predicate scans, statistics |
+| top | `include/`, `src/` | the C API over the stack, the only one, for PostgreSQL to call |
 
 Level 0 is used only as a place to put bytes. Every notion of
 *row version*, *transaction*, *isolation* and *visibility* is
@@ -25,7 +26,8 @@ make -C sm1     build level 1 alone
 ```
 
 Each level has a Makefile of its own with the real targets; the
-top-level one only delegates.
+top-level one delegates to them, and builds the C wrapper in
+the root's `include/` and `src/`, which belongs to no level.
 
 ## Where to read
 
@@ -36,7 +38,8 @@ top-level one only delegates.
 - `sm1/OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
-- `sm1/API.md` — the `sm1_*` C API, call by call
+- `sm1/API.md` — sm1's API, call by call: a C API today,
+  to become C++ (`OBJECTIVE.md`)
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
   scenarios that are executed on every build
 - `sm2/OBJECTIVE.md` — what level 2 is for

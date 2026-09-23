@@ -86,11 +86,27 @@ into it (`PART4.md` §2).
 
 These are settled; they bind every level below.
 
-- **Language is C++,** exposing a C ABI at each level's
-  public surface (`sm1/include/sm1.h` today; `sm2`'s and
-  `sm3`'s equivalents when they have one). A C ABI is what
-  lets
-  PostgreSQL's C code call the stack directly.
+- **Language is C++, and so is every level's interface.**
+  `sm1`, `sm2` and `sm3` each expose a C++ interface in a
+  namespace of their own (`sm1::`, `sm2::`, `sm3::`). Only
+  the top level — `include/` and `src/` at the root — wraps
+  the stack in a C API, because only PostgreSQL's C code
+  needs one, and it calls the stack nowhere else. Three
+  rules keep a C++ interface as safe as the C one it
+  replaces:
+  - *No exception crosses a level boundary.* Errors travel
+    as one error type shared by every level — a `Status` in
+    RocksDB's style or an `expected<T, error_t>`, still to
+    be chosen. The C wrapper catches everything: a
+    PostgreSQL `longjmp` across C++ frames, or a C++
+    exception through PostgreSQL's C frames, is undefined
+    behaviour.
+  - *A public header is opaque.* It declares handles, not
+    layouts — no private members and no RocksDB type — so a
+    caller cannot come to depend on a level's internals.
+  - *The error taxonomy is kept.* A retryable error still
+    means the engine has already aborted the transaction,
+    and sm1's `UPDATED` still means it has not.
 - **RocksDB is a key-value store, nothing more.** No level
   may treat it as anything but ordered, durable,
   crash-atomic storage. Every notion of row version,

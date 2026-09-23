@@ -7,6 +7,14 @@ described in `SM1_DESIGN.md`. It is the specification of
 Everything here is a C ABI. The implementation is C++, but no
 C++ type appears in the interface.
 
+**This is changing.** `OBJECTIVE.md` now gives each level a
+C++ interface, with a C API only at the top level, and sm1 is
+converted before sm2 starts. Until then this document
+describes the C API as built. The conversion drops what
+exists only because C has no owning list: `sm1_strlist_t`
+and its accessors, and the `malloc`'d arrays handed out by
+`sm1_lsstore` and `sm1_list_prepared`.
+
 ---
 
 ## Conventions

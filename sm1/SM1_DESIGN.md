@@ -72,7 +72,9 @@ batched read is left until a benchmark asks for it.
 - Keys and values are arbitrary byte strings. Keys are ordered
   bytewise (`memcmp`), which is what `sm1_scan` exposes.
 - Implementation language is C++ (RocksDB's native API), exposing a C
-  ABI for the `sm1_*` surface.
+  ABI for the `sm1_*` surface — to be replaced by a C++
+  interface, with the C API moving to the top level
+  (`OBJECTIVE.md` at the top level).
 
 ---
 

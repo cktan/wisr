@@ -80,10 +80,12 @@ touched (`sm1/SM1_DESIGN.md` §13). → `SM2_DESIGN.md` §4
 do the symbols take?**
 `SM2_DESIGN.md` uses bare `rel_insert` and `tuple_encode`, which
 will share one binary with sm1 and sm3.
-*Suggested: `sm2/include/sm2.h`, with every exported symbol
-prefixed `sm2_` — `sm2_rel_insert`, `sm2_tuple_encode` — and
-the documents keep the short names for readability, saying so
-once.* → `SM2_DESIGN.md` §5
+*Suggested: `sm2/include/sm2.h`, a C++ header with
+everything in namespace `sm2` — `sm2::rel_insert`,
+`sm2::tuple_encode` — and the documents keep the short names
+for readability, saying so once.* A prefix is no longer
+needed: only the top level exposes C (`OBJECTIVE.md` at the
+top level). → `SM2_DESIGN.md` §5
 
 **5.2 [ASSUMABLE] Who owns a decoded datum's memory?**
 sm1's rule is that handed-out byte strings point into

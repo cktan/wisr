@@ -59,7 +59,8 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 
 - **Building:** Always use `make -j4` (never plain `make`).
   Run it in the level you are changing (`cd sm1 && make -j4`,
-  or `make -C sm1 -j4`); the top-level Makefile only delegates.
+  or `make -C sm1 -j4`); the top-level Makefile delegates to
+  the levels, and builds only the C wrapper itself.
 
 - **Code Formatting:** Always run `make format` before committing.
 

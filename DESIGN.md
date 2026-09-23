@@ -11,18 +11,26 @@ format, sm3's catalog — are argued in that level's own
 ## 1. The stack
 
 ```
-        ┌──────────────────────────────────────────────┐
+                      PostgreSQL (C)
+                             │  include/ — the one C API
+        ┌────────────────────┴─────────────────────────┐
+        │  top level  the C wrapper                    │
+        │  sessions · transactions · 2PC → sm1 ·       │
+        │  tables and indexes → sm3                    │
+        └────────────────────┬─────────────────────────┘
+                             │  sm3::
+        ┌────────────────────┴─────────────────────────┐
         │  sm3/  schema and indexes                    │
         │  catalog · secondary indexes ·               │
         │  scan-by-predicate · statistics              │
         └────────────────────┬─────────────────────────┘
-                             │  sm2's tuple relation
+                             │  sm2::  the tuple relation
         ┌────────────────────┴─────────────────────────┐
-        │  sm2/  types and tuples                     │
+        │  sm2/  types and tuples                      │
         │  type system · key encoding ·                │
-        │  tuple format · relation of tuples         │
+        │  tuple format · relation of tuples           │
         └────────────────────┬─────────────────────────┘
-                             │  sm1/include/sm1.h
+                             │  sm1::
         ┌────────────────────┴─────────────────────────┐
         │  sm1/  MVCC storage manager                  │
         │  relations · transactions · isolation ·      │
@@ -36,8 +44,8 @@ format, sm3's catalog — are argued in that level's own
 ```
 
 sm2 is a client of sm1, nothing more: it holds no RocksDB
-handle of its own and reaches storage only through `sm1_*`
-calls. sm3 stands in the same relation to sm2 — it never
+handle of its own and reaches storage only through sm1's
+interface. sm3 stands in the same relation to sm2 — it never
 encodes a key or decodes a tuple itself — with one
 deliberate exception: `sm1_lock`, which sm2 has nothing to
 add to and which sm3's DDL and index-build protocols are
@@ -46,12 +54,22 @@ level's `OBJECTIVE.md` can promise it is "useful and
 testable on its own" — the whole lower stack is one
 dependency.
 
+The top level is not a level: it adds no notion of its own,
+only a C signature over the levels' C++ interfaces, and it
+is the one place an exception is caught and a PostgreSQL
+error path is safe to take (`OBJECTIVE.md`). It is also the
+one caller that skips a level: it calls sm1 directly for
+sessions, transactions, savepoints and 2PC, which neither sm2
+nor sm3 has anything to add to, and sm3 for everything else.
+Below it, each level still talks only to the one beneath.
+
 ---
 
 ## 2. Build
 
-The top-level `Makefile` only delegates; each level has a
-real one.
+Each level has a real `Makefile`; the top-level one
+delegates to them, and builds the one thing that belongs to
+no level — the C wrapper in the root's `include/` and `src/`.
 
 ```
 make            build every level
@@ -73,6 +91,7 @@ there, nowhere else.
 | sm1 | built and tested; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | designed, not yet implemented — every open section of `sm2/SM2_DESIGN.md` is marked "to be written"; `sm2/PLAN.md` has the build order |
 | sm3 | designed, not yet implemented — the same, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md`; it cannot start before sm2's two formats are settled |
+| top level | not yet written — the C wrapper waits for the levels it wraps; until then sm1's C API in `sm1/include/sm1.h` is the only C surface, and it is replaced by a C++ interface before sm2 starts |
 
 sm1 was built first and alone, on purpose: it is usable
 without sm2 (an MVCC key-value store is a complete product
@@ -114,9 +133,9 @@ Decisions that constrain more than one level, gathered here
 so a change to one level does not silently violate another's
 design:
 
-- **The `sm1_*` C API is the only channel between sm1 and
-  sm2.** sm2 may not read RocksDB directly, and may not
-  depend on sm1's internals — the `SECINDEX.md`-style gap
+- **sm1's interface is the only channel into sm1.** Nothing
+  above it may read RocksDB directly or depend on sm1's
+  internals — the `SECINDEX.md`-style gap
   analysis in `sm1/` is how a missing primitive gets added
   to sm1's surface instead of worked around from outside it.
 - **One encoder, one tuple format, two callers.** The key
