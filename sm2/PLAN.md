@@ -12,6 +12,28 @@ permanent the moment any data exists, and neither can be fixed
 later by a patch. Everything else in sm2 — and everything in
 sm3 — is code that can be rewritten.
 
+## Source layout
+
+sm2 mirrors sm1: nothing about its build deserves novelty.
+
+```
+sm2/
+  Makefile      the same targets as sm1's; sm2 joins LEVELS
+  include/      the public header (`QUESTIONS.md` 5.1)
+  src/type/     steps 1 and 2: the ADT table, each type's
+                representation, and its key encoding
+  src/tuple/    step 3: the tuple codec
+  src/rel/      step 4: the tuple relation
+  test/         doctest, as in sm1
+```
+
+The key encoding lives in `src/type`, not in a directory of
+its own: `key_encode` is one of a type's ADT functions
+(`SM2_DESIGN.md` §2.3), so a type's representation and its
+key sit side by side, and a multi-column key is composed from
+them. Dependencies run one way — `rel` calls `tuple`, `tuple`
+calls `type` — and only `src/rel` includes `sm1/include/sm.h`.
+
 ## 1. Types
 
 The vocabulary the two formats are written in, so it comes

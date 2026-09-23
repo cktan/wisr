@@ -16,8 +16,9 @@ Two kinds of entry, and the difference matters:
 Ordered by the step of `PLAN.md` each one blocks. Sections 1
 to 3 — the suggested answers in `OBJECTIVE.md`, types, and key
 encoding — are answered and have moved into `SM2_DESIGN.md`,
-`TYPE.md` and `sm3/SM3_DESIGN.md`; the numbering of what remains
-is kept so that a question's number never changes.
+`TYPE.md` and `sm3/SM3_DESIGN.md`, and 6.1, the build, into
+`PLAN.md`; the numbering of what remains is kept so that a
+question's number never changes.
 
 ---
 
@@ -138,14 +139,6 @@ returns it, so the sequence is used in one place.*
 
 ## 6. Mechanics — blocks the first line of code
 
-**6.1 [BLOCKING] What is sm2's build?**
-sm2 has no Makefile, and the top-level `LEVELS` does not list
-it.
-*Suggested: mirror sm1 exactly — `include/`, `src/`, `test/`,
-a Makefile with the same targets, `sm2` added to `LEVELS`, and
-doctest for the tests.* Nothing here deserves novelty.
-→ `PLAN.md`
-
 **6.2 [BLOCKING] What generates the property-based tests?**
 `PLAN.md` steps 1 and 2 call for properties over generated
 values, and sm1 has no such library.
@@ -210,3 +203,5 @@ Settled, and listed so nobody reopens them by accident:
   `SM2_DESIGN.md` §5, `sm3/SM3_DESIGN.md` §3.
 - That NULLs are distinct in a unique index —
   `sm3/SM3_DESIGN.md` §3.
+- sm2's build and source layout — `PLAN.md`, "Source
+  layout".
