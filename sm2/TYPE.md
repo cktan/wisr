@@ -85,7 +85,7 @@ null marker and before any inversion.
 | `int8` | 4 | two's complement, LE | 8 | sign-flipped, BE | 8 |
 | `float4` | 5 | IEEE-754 binary32, LE | 4 | total order, BE | 4 |
 | `float8` | 6 | IEEE-754 binary64, LE | 8 | total order, BE | 8 |
-| `numeric` | 7 | Arrow decimal, two's complement, LE | 16 or 32 | sign-flipped, BE | 16 or 32 |
+| `number` | 7 | Arrow decimal, two's complement, LE | 16 or 32 | sign-flipped, BE | 16 or 32 |
 | `text` | 8 | payload bytes | var | collation sort key ‖ escaped original | var |
 | `varchar` | 9 | payload bytes | var | as `text` | var |
 | `bytea` | 10 | payload bytes | var | escaped bytes | var |
@@ -96,9 +96,9 @@ null marker and before any inversion.
 | `interval` | 15 | `{time int64, day int32, month int32}` | 16 | `span` ‖ months ‖ days | 24 |
 | `uuid` | 16 | the 16 bytes | 16 | the same 16 bytes | 16 |
 
-Codes are illustrative until the first release; what matters
-is that they are assigned once and never reused
-(`DESIGN.md` §2).
+The codes are frozen: assigned once, never reused or
+renumbered (`DESIGN.md` §2, `QUESTIONS.md` 2.1). Codes 64–127
+are reserved for types added later; 0 is never a type code.
 
 ### 3.1 bool
 
@@ -168,7 +168,7 @@ Verified: the resulting order agrees with PostgreSQL's
 comparison on every pair drawn from `±Infinity`, `±0.0`, NaN,
 the subnormal and huge boundaries, and random datums.
 
-### 3.4 numeric
+### 3.4 number
 
 Native is Arrow's decimal (`DESIGN.md` §2.2): a two's
 complement integer, little-endian, 16 bytes for a declared
@@ -184,9 +184,10 @@ schema fixes the scale per column, so the encoder never
 rescales. Comparing two columns of different scale is a cast,
 above sm2.
 
-Open, in `OBJECTIVE.md`, and both affect this section: what a
-bare `numeric` with no declared precision does, and whether
-NaN and infinity get reserved sentinel values.
+Decided in `OBJECTIVE.md`: a bare `number` is
+`number(38, 10)`, `number(p)` is `number(p, 0)`, and NaN and
+infinity are refused on insert, so no value is reserved as a
+sentinel.
 
 ### 3.5 text, varchar
 
@@ -223,6 +224,11 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
   (`sm3/DESIGN.md` §2); a mismatch is refused, not trusted.
 - A non-deterministic collation is refused at column creation
   in the first version (`OBJECTIVE.md`).
+- `text` (8) and `varchar` (9) share every byte and keep
+  separate codes only so a round trip never rewrites a
+  column's declared type. The `varchar(n)` limit is a
+  constraint, enforced by sm3; sm2's codec stores what it is
+  given (`QUESTIONS.md` 2.3).
 
 ### 3.6 bytea
 

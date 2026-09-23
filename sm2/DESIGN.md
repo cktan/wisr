@@ -14,7 +14,7 @@ decisions in `OBJECTIVE.md`:
 | Decision | Choice |
 | --- | --- |
 | Types | a fixed set, each an ADT in `pg_type`'s shape, each with a stable on-disk type code |
-| Representation | PostgreSQL's, type by type, little-endian — except numeric, which is Arrow's decimal |
+| Representation | PostgreSQL's, type by type, little-endian — except `number`, which is Arrow's decimal |
 | Key encoding | order-preserving per type; descending is the inverted encoding |
 | Tuple format | null bitmap, fixed/variable split, a schema version stamp per row |
 | Tuple codec | an API of its own, with its own header and its own tests |
@@ -83,7 +83,7 @@ is what you read while writing code.
 
 - The set is fixed and chosen from what the PostgreSQL target
   needs first: boolean, the integer widths, `float4` and
-  `float8`, numeric, `text` / `varchar` / `bytea`, `date`,
+  `float8`, `number`, `text` / `varchar` / `bytea`, `date`,
   `time`, `timestamp`, `timestamptz`, `interval`, `uuid`.
   Arrays, composites, ranges and user-defined types are not in
   the first set; the format must leave room to add them
@@ -111,7 +111,7 @@ is what you read while writing code.
 ### 2.1 The representation is PostgreSQL's
 
 **Decision: a datum's bytes are what PostgreSQL makes them,
-type by type, with numeric the one exception.** Not a format
+type by type, with `number` the one exception.** Not a format
 of our own that happens to hold the same information — the
 same widths, the same epochs, the same units, the same struct
 layouts.
@@ -129,7 +129,7 @@ bytes themselves are copied, not converted.
 | `bool` | 0 or 1 | 1 |
 | `int2` / `int4` / `int8` | two's complement | 2 / 4 / 8 |
 | `float4` / `float8` | IEEE-754 | 4 / 8 |
-| `numeric` | **Arrow's**, not PG's — see §2.2 | 16 or 32 |
+| `number` | **Arrow's**, not PG's — see §2.2 | 16 or 32 |
 | `date` | days since 2000-01-01 | 4 |
 | `time` | microseconds since midnight | 8 |
 | `timestamp` / `timestamptz` | microseconds since 2000-01-01 00:00:00, UTC for `timestamptz` | 8 |
@@ -157,9 +157,9 @@ Two places need sm2 to be more precise than PostgreSQL is:
   framing is the tuple's business (§4) — sm2 has its own, and
   its own out-of-line chunking, which is not TOAST.
 
-### 2.2 Except numeric, which is Arrow's decimal
+### 2.2 Except number, which is Arrow's decimal
 
-**Decision: numeric is Arrow's fixed-width decimal.** PG's
+**Decision: `number` is Arrow's fixed-width decimal.** PG's
 numeric is a varlena of base-10000 digits with a weight and a
 display scale, effectively unbounded in length. Arrow's is a
 two's-complement integer of fixed width with the scale held in
@@ -187,16 +187,18 @@ later:
 - **There is no NaN and no infinity.** PG's numeric has had
   NaN throughout and `Infinity` since version 14 (from memory,
   not checked against the source); an Arrow decimal is an
-  integer and has neither.
+  integer and has neither, so sm2 refuses them on insert.
 - **The scale must be declared.** Arrow puts `(precision,
   scale)` in the schema; PG allows a bare `numeric` where
-  every datum carries its own. A bare `numeric` column has no
-  Arrow equivalent.
+  every datum carries its own. A bare `number` column has no
+  Arrow equivalent, so it defaults to `number(38, 10)`, which
+  can round a datum its user believed exact.
 - **It is the one type that is converted** at the executor
   boundary, in both directions, while §2.1 makes every other
   type a copy.
 
-The last two are open questions in `OBJECTIVE.md`.
+The NaN refusal and the bare `number` default are decided in
+`OBJECTIVE.md`.
 
 ### 2.3 A type is an ADT, in PostgreSQL's shape
 
@@ -211,7 +213,7 @@ struct per type:
 | Entry | What it is | PG's |
 | --- | --- | --- |
 | `in` / `out` | text form, parsed and printed | `typinput` / `typoutput` |
-| `recv` / `send` | binary form over the wire | `typreceive` / `typsend` |
+| `recv` / `send` | binary form over the wire — **deferred**: the slots exist in v1, unfilled, as sm2 has no wire protocol (`QUESTIONS.md` 2.5) | `typreceive` / `typsend` |
 | `cmp` | the type's own total order (§2) | the btree opclass support function |
 | `hash` | for grouping and hash joins | the hash opclass support function |
 | `key_encode` | the order-preserving, injective byte string (§3) | *no equivalent* |
@@ -254,10 +256,10 @@ injective**: `'1 mon'` and `'30 days'` both flatten to
 Equal keys are exactly what a primary key cannot have, so §3
 says what an interval key is.
 
-Open: the earlier question of how to represent numeric is
+Open: the earlier question of how to represent `number` is
 settled by §2.2, and whether `interval` is in the first set is
-settled here — it is. What remains open is bare `numeric` and
-numeric's NaN, both in `OBJECTIVE.md`.
+settled here — it is. Bare `number` and `number`'s NaN are
+decided in `OBJECTIVE.md`.
 
 ---
 
@@ -302,7 +304,7 @@ all have to satisfy are here.
   orders them bytewise and keeps them as two datums, so a
   key that stopped at the sort key would merge two rows into
   one. The tuple holds the datum regardless (§5).
-- **numeric** needs nothing bespoke, because §2.2 made it a
+- **number** needs nothing bespoke, because §2.2 made it a
   fixed-width two's-complement integer: flip the sign bit,
   write the bytes big-endian, and it is an integer's key.
   Two datums only compare at a common scale, and the schema
@@ -389,9 +391,12 @@ secondary index entry is `encode(sk) ‖ encode(pk)`
 same per-column arguments. It is one encoder with two callers,
 not two encoders that have to agree.
 
-Open: over-long keys against `SM_MAX_KEYLEN`, collation
-version stability, and non-deterministic collations — see
-`OBJECTIVE.md`.
+Decided in `OBJECTIVE.md`: an over-long primary key refuses
+the row and an over-long secondary key is truncated and
+rechecked, never hashed; ICU is pinned and a version mismatch
+is refused until an explicit rebuild; non-deterministic
+collations are refused, with the `deterministic` flag carried
+from the start.
 
 ---
 
@@ -574,12 +579,12 @@ Accepted so far:
   executor boundary per tuple, not per datum: the framing is
   rebuilt, the column bytes are copied. The threaded fork
   removed the IPC boundary but not this (`PART4.md` §2).
-- **numeric is the exception, and pays for it.** It is
+- **number is the exception, and pays for it.** It is
   Arrow's decimal, not PostgreSQL's (§2.2), so it is the one
   type converted datum by datum, it caps at 38 or 76 digits
   where PG allows 1000, and it has no NaN and no infinity.
-  Bought in exchange for a numeric key encoding that is an
-  integer's, and a fixed-width numeric column.
+  Bought in exchange for a `number` key encoding that is
+  an integer's, and a fixed-width `number` column.
 - **Little-endian is in the format.** §2.1 fixes the byte
   order that PostgreSQL leaves native, so a big-endian host
   byte-swaps on every datum where others `memcpy`.

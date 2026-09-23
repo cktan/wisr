@@ -28,23 +28,23 @@ or a no, one at a time.**
 
 | # | Question | Suggested | Changes disk? |
 | --- | --- | --- | --- |
-| 1.1 | Bare `numeric`, with no declared precision | refuse it at column creation | no — a later type code can add it |
-| 1.2 | numeric NaN and ±Infinity | reserve the extreme magnitudes as sentinels | **yes** |
+| 1.1 | Bare `number`, with no declared precision | refuse it at column creation | no — a later type code can add it |
+| 1.2 | `number` NaN and ±Infinity | reserve the extreme magnitudes as sentinels | **yes** |
 | 1.3 | Over-long keys against `SM_MAX_KEYLEN` | reject for a primary key, truncate and recheck for a secondary index, never hash | **yes** |
 | 1.4 | Collation version drift | pin ICU, refuse on mismatch, rebuild by command | **yes** — the recorded version |
 | 1.5 | Non-deterministic collations | refuse in v1; carry the flag from the start | **yes** — the tie-break rule |
 
 1.2 is the one that cannot wait. Retrofitting a sentinel
-changes the meaning of numerics already written, so it is
-decided before the first `numeric` is stored or not at all.
+changes the meaning of `number`s already written, so it is
+decided before the first `number` is stored or not at all.
 
 ### Answers
 
-Recorded here as given; `OBJECTIVE.md`, `DESIGN.md` and
-`TYPE.md` are not yet updated to match.
+Recorded here as given, and carried into `OBJECTIVE.md`,
+`DESIGN.md` §2.2 and §3, and `TYPE.md` §3.4.
 
 **1.1 — No, take a default instead (2026-09-22).** A bare
-`numeric` is accepted and stored as `numeric(38, 10)`: 28
+`number` is accepted and stored as `number(38, 10)`: 28
 integer digits and 10 fractional. A datum with more than 10
 fractional digits is rounded to 10, as PostgreSQL rounds for a
 declared `numeric(p,s)`. A datum whose integer part needs more
@@ -52,7 +52,7 @@ than 28 digits is an error. This overrides the suggestion to
 refuse at column creation. 2.4 renames the type `NUMBER`; this
 default is what a bare `NUMBER` means.
 
-**1.2 — No, refuse them (2026-09-22).** A numeric NaN,
+**1.2 — No, refuse them (2026-09-22).** A `number` NaN,
 `+Infinity` or `-Infinity` is rejected on insert with a clear
 error; no sentinel is reserved. The door stays open anyway: a
 precision of 38 digits never reaches the 128-bit extremes, so
@@ -135,8 +135,9 @@ and `send` deferred, with the slots left in the descriptor.*
 
 ### Answers
 
-Recorded here as given; `TYPE.md`, `DESIGN.md` and
-`FEATURELIST.md` are not yet updated to match.
+Recorded here as given, and carried into `TYPE.md` §3,
+`DESIGN.md` §2.3 and `FEATURELIST.md`; the `number` rename
+runs through every sm2 document.
 
 **2.1 — Yes (2026-09-22).** The codes in `TYPE.md` §3 are
 frozen as they stand, `bool` = 1 through `uuid` = 16, and are
@@ -374,7 +375,7 @@ Settled, and listed so nobody reopens them by accident:
 
 - What the types are, and that their representation is
   PostgreSQL's — `DESIGN.md` §2.1, `TYPE.md` §3.
-- That numeric is Arrow's decimal, and why — `DESIGN.md` §2.2.
+- That `number` is Arrow's decimal, and why — `DESIGN.md` §2.2.
 - That a type is an ADT in `pg_type`'s shape — `DESIGN.md`
   §2.3.
 - That interval keeps three components, and how its key

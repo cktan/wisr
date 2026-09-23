@@ -18,7 +18,7 @@ The vocabulary the two formats are written in, so it comes
 before them.
 
 - The first set: boolean, the integer widths, `float4`,
-  `float8`, numeric, `text` / `varchar` / `bytea`, `date`,
+  `float8`, `number`, `text` / `varchar` / `bytea`, `date`,
   `time`, `timestamp`, `timestamptz`, `interval`, `uuid` —
   each one spelled out in `TYPE.md` §3.
 - **The ADT table first** (`DESIGN.md` §2.3): one descriptor
@@ -27,19 +27,19 @@ before them.
 - PostgreSQL's representation per type (`DESIGN.md` §2.1),
   little-endian, with variable-length datums carrying the
   payload alone.
-- Numeric as Arrow's decimal (`DESIGN.md` §2.2), and interval
+- `number` as Arrow's decimal (`DESIGN.md` §2.2), and interval
   as PG's three components (`DESIGN.md` §2.4).
 - A stable on-disk type code per type, assigned once.
 - Null and collation as properties of a column, not of a type.
-- Decide the two numeric open questions in `OBJECTIVE.md`
-  first — bare `numeric`, and NaN and infinity — because the
-  second of them changes what bytes mean.
+- The two `number` questions in `OBJECTIVE.md` — bare
+  `number`, and NaN and infinity — are decided; the codec
+  implements those answers.
 
 **Verify:** for every type, a datum round trips through the
 in-memory representation, and the type's own comparison
 function agrees with hand-written expectations at the
 boundaries (min, max, zero, negative zero, NaN, empty
-string). For every type but numeric, a datum's bytes equal
+string). For every type but `number`, a datum's bytes equal
 what PostgreSQL stores for the same datum — a table of
 fixtures taken from PG, which is the only way "the
 representation is PostgreSQL's" is a claim rather than an
@@ -51,13 +51,15 @@ The foundation. sm1 orders keys bytewise only, so every
 ordered thing above rests on this, including sm3's indexes.
 
 - Order-preserving encodings per type: integers (sign-flipped
-  big-endian), floats (IEEE-754 total order), decimals,
+  big-endian), floats (IEEE-754 total order), `number`,
   timestamps, text (collation sort key).
 - Multi-column keys, ascending and descending per column,
   nulls first or last.
-- Decide the open questions in `OBJECTIVE.md` first: over-long
-  keys against `SM_MAX_KEYLEN`, collation version stability,
-  non-deterministic collations.
+- The three key questions in `OBJECTIVE.md` are decided; the
+  encoder implements them: refuse an over-long primary key,
+  truncate and flag an over-long secondary key, refuse a
+  mismatched collation version, and carry the `deterministic`
+  flag while refusing non-deterministic collations.
 
 **Verify:** property-based tests, not examples. For every type
 and every column order, `encode(a) < encode(b)` iff `a < b`,

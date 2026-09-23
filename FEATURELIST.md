@@ -33,9 +33,9 @@ primary key as the only access path below sm2.
 
 ## 1. Data types
 
-- [x] int / float / numeric 
-- [ ] decimal
-- [x] numeric (this is a new implementation of decimal ala arrow)
+- [x] int / float / number
+- [x] number (this is a new implementation of decimal ala arrow;
+  `NUMERIC` and `DECIMAL` are not supported)
 - [x] text / varchar
 - [x] bool
 - [x] timestamp / date / time
@@ -46,6 +46,8 @@ primary key as the only access path below sm2.
 - [ ] arrays (any element type)
       — needs its own encoding
 - [x] enums
+      — sm3's, not an sm2 type: `int4` on disk, labels
+        in sm3's catalog (sm2/QUESTIONS.md 2.2)
 - [ ] range types (int4range, tsrange, ...)
       — usually paired with GiST and exclusion constraints
 - [ ] composite types

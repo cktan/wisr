@@ -87,11 +87,11 @@ These are settled and drive `DESIGN.md`.
   little-endian, and variable-length datums, which carry the
   payload alone and leave framing to the tuple
   (`DESIGN.md` §2.1).
-- **Except numeric, which is Arrow's decimal**: a fixed-width
+- **Except `number`, which is Arrow's decimal**: a fixed-width
   two's-complement integer with the scale in the schema, 128
   bits to 38 digits of precision and 256 to 76. It buys a
-  numeric key encoding that is just an integer's, and a
-  fixed-width numeric column; it costs PG's unbounded
+  `number` key encoding that is just an integer's, and a
+  fixed-width `number` column; it costs PG's unbounded
   precision, PG's NaN and infinity, and a per-datum
   conversion for this one type (`DESIGN.md` §2.2).
 - **A type is an ADT, in PostgreSQL's shape** — one
@@ -157,98 +157,92 @@ These are settled and drive `DESIGN.md`.
   the tie-break the two would share a key and become one row
   (`PART4.md` §6, `DESIGN.md` §3).
 
-## Open questions
+## Decided questions
 
-Named here so they are decided deliberately, in `DESIGN.md`,
-before anything is written to disk. All three are questions
-about the encoding, which is why they are sm2's and not sm3's,
-even though it is sm3's indexes that feel them most.
+Five questions about the encoding, decided in `QUESTIONS.md`
+§1 before anything is written to disk. They are sm2's and not
+sm3's because they are about the encoding, even though it is
+sm3's indexes that feel them most.
 
-- **Bare `numeric`.** Arrow's decimal takes its scale from
+- **Bare `number`.** Arrow's decimal takes its scale from
   the schema; PostgreSQL allows `numeric` with no typmod at
   all, where each datum carries its own weight and display
-  scale. A bare `numeric` column has no Arrow representation.
+  scale. A bare `number` column has no Arrow representation.
   Refuse it, pick a default, or keep a second variable-width
   representation for it?
 
-  *Suggested answer: refuse a bare `numeric` at column
-  creation, and say why.* The alternatives are worse in a way
-  that lasts. A default `(38, s)` silently truncates datums a
-  user believed were exact, which is the failure mode numeric
-  exists to prevent. A second variable-width representation
-  means two numerics on disk with two key encodings and two
+  *Decided: a default of `number(38, 10)`* (`QUESTIONS.md`
+  1.1). A bare `number` has 28 integer digits and 10
+  fractional. A datum with more fractional digits is rounded
+  to 10, as PostgreSQL rounds for a declared typmod; one whose
+  integer part needs more than 28 digits is an error.
+  `number(p)` means `number(p, 0)`. The cost is accepted
+  knowingly: a datum a user believed exact can lose digits
+  past the tenth fractional place without an error. A second
+  variable-width representation is rejected, because it means
+  two `number`s on disk with two key encodings and two
   comparison paths, which is most of what §2.2 was avoiding.
-  Refusing is loud, happens at DDL rather than at insert, and
-  leaves the door open: a later release can add the
-  variable-width form under a distinct type code without
-  touching data already written. PostgreSQL programs that
-  declare `numeric(p,s)` — which is most schemas that care —
-  are unaffected.
+  PostgreSQL's `NUMERIC` and `DECIMAL` are not accepted at all
+  (`QUESTIONS.md` 2.4), so a schema ported from PostgreSQL
+  declares `number(p, s)` in their place.
 
-- **numeric NaN and infinity.** PG's numeric has both; an
+- **`number` NaN and infinity.** PG's numeric has both; an
   Arrow decimal is an integer and has neither. Refuse them,
   or reserve values?
 
-  *Suggested answer: reserve the two extreme magnitudes as
-  sentinels, and decide it now rather than later.* Reserve
-  the most negative representable integer for `-Infinity`,
-  the most positive for `+Infinity`, and the next value in
-  from the most negative for `NaN`; shrink the declared
-  precision's usable range by nothing, since a precision of
-  38 digits does not reach the 128-bit limit anyway. The
-  ordering then falls out of the same integer key encoding
-  with the sentinels at the ends, which is where PG puts
-  infinities, and NaN sorts first or last by the rule §3
-  already has to state for `float8`. This has to be decided
-  before any data exists, because retrofitting a sentinel
-  into a format changes the meaning of bytes already
-  written — unlike bare `numeric` above, which a new type
-  code can add later.
+  *Decided: refuse them* (`QUESTIONS.md` 1.2). A NaN or an
+  infinity is rejected on insert with a clear error, and no
+  value is reserved as a sentinel. The door stays open: a
+  precision of 38 digits does not reach the 128-bit limit, nor
+  76 the 256-bit one, so the extreme integers are never
+  written and could still be reserved later without changing
+  the meaning of stored bytes — provided the codec keeps
+  rejecting any value outside the declared precision.
 
 - **Over-long keys.** `SM_MAX_KEYLEN` is 4096 and bounds
   `sk ‖ pk` together. Collation sort keys can be several times
   the length of their source text. Truncate and recheck, hash
   and recheck, or reject?
 
-  *Suggested answer: reject for the primary key, truncate and
-  recheck for a secondary index, never hash.* The primary key is
-  the row's identity and the relation's key, so it must be
-  exact: an encoded primary key over a fixed limit is refused
-  when the row is written, which is what PostgreSQL does for an
-  oversize btree entry (its limit is roughly 2.7KB, from memory,
-  not checked against the source). A secondary index can do
-  better, because the original datum is stored beside the sort
+  *Decided: reject for the primary key, truncate and recheck for
+  a secondary index, never hash* (`QUESTIONS.md` 1.3). The
+  primary key is the row's identity and the relation's key, so it
+  must be exact: an encoded primary key over a fixed limit is
+  refused when the row is written, which is what PostgreSQL does
+  for an oversize btree entry (its limit is roughly 2.7KB, from
+  memory, not checked against the source). A secondary index can
+  do better, because the original datum is stored beside the sort
   key anyway. Truncating a sort key keeps the order as a
-  coarsening: if `a <= b` then `trunc(a) <= trunc(b)`, so a
-  range scan on the truncated keys returns a superset, and the
-  recheck against the stored original removes the extras. Two
-  costs come with it. An entry is flagged when its key was cut,
-  because the index can no longer promise order among entries
-  that share a prefix, and a unique check must compare originals
-  over the prefix range rather than trust key equality. A hash
-  is out, because it keeps equality but destroys order, and an
-  index that cannot serve a range or an `ORDER BY` is not worth
-  having. The budget for the sort key is `4096` less the length
-  of the encoded primary key, so the primary key limit should
-  leave most of it.
+  coarsening: if `a <= b` then `trunc(a) <= trunc(b)`, so a range
+  scan on the truncated keys returns a superset, and the recheck
+  against the stored original removes the extras. Two costs come
+  with it. An entry is flagged when its key was cut, because the
+  index can no longer promise order among entries that share a
+  prefix, and a unique check must compare originals over the
+  prefix range rather than trust key equality, treating NULLs as
+  distinct (`QUESTIONS.md` 3.5). A hash is out, because it keeps
+  equality but destroys order, and an index that cannot serve a
+  range or an `ORDER BY` is not worth having. The budget for the
+  sort key is `4096` less the length of the encoded primary key,
+  so the primary key limit should leave most of it.
 
 - **Collation stability.** A sort key is only valid for the
   collation library version that produced it. The version is
-  recorded with the schema, as `pg_collation.collversion`
-  exists to do for PostgreSQL (`PART4.md` §6). What remains
-  open is what happens when the recorded version and the
-  library's differ: refuse, or rebuild?
+  recorded with the schema, as `pg_collation.collversion` exists
+  to do for PostgreSQL (`PART4.md` §6). The question was what
+  happens when the recorded version and the library's differ:
+  refuse, or rebuild?
 
-  *Suggested answer: pin the library so it rarely differs, and
-  refuse on a mismatch, with an explicit rebuild.* Link a
-  specific ICU version into the server instead of using whatever
-  the operating system has, so a mismatch happens only when the
-  operator upgrades on purpose. When it does happen, compare the
-  recorded version at open. Refuse to use, and refuse to write
-  to, any index or collated primary key built under the old
-  version, with a message that says why. PostgreSQL only warns
-  and carries on, but continuing to write sort keys from a new
-  version into an old index corrupts it further, and a unique
+  *Decided: pin the library so it rarely differs, and refuse on a
+  mismatch, with an explicit rebuild* (`QUESTIONS.md` 1.4). Link
+  a specific ICU version into the server instead of using
+  whatever the operating system has, so a mismatch happens only
+  when the operator upgrades on purpose. When it does happen,
+  compare the recorded version at open. Refuse to use, and refuse
+  to write to, any index or collated primary key built under the
+  old version, with a message that says why. PostgreSQL only
+  warns and carries on, but continuing to write sort keys from a
+  new version into an old index corrupts it further, and a unique
   index quietly stops being unique. Rebuilding a secondary index
   is an online build (`sm3/DESIGN.md` §3). A collated primary key
   is harder, because the relation is clustered on it, so the
@@ -259,22 +253,22 @@ even though it is sm3's indexes that feel them most.
   byte-equal under them, which is what unique indexes rest on.
   Support or refuse?
 
-  *Suggested answer: refuse at first, and design so that
-  accepting them later needs no format change.* Under a
+  *Decided: refuse at first, and design so that accepting them
+  later needs no format change* (`QUESTIONS.md` 1.5). Under a
   non-deterministic collation two different strings can compare
-  equal, and the sort key is the same for both, so a unique
-  check on the sort key gives the right answer. What gets hard
-  is everywhere else equality is used: hashing for joins and
+  equal, and the sort key is the same for both, so a unique check
+  on the sort key gives the right answer. What gets hard is
+  everywhere else equality is used: hashing for joins and
   grouping, and the rule that a deterministic collation breaks
   ties bytewise while a non-deterministic one does not.
   PostgreSQL has supported them only since version 12 (from
   memory, not checked) and they are rare, so the first version
-  rejects a non-deterministic collation when a
-  column or index is created, with a clear error, and never
-  silently. The collation carries a `deterministic` flag in the
-  schema from the start, chosen when the column is created and
-  never changed. A deterministic collation's key is the sort key
-  followed by the original bytes as a tie-break; a
-  non-deterministic one's is the sort key alone. Because the flag
-  is per column, a later release can accept the second kind
-  without touching data already on disk.
+  rejects a non-deterministic collation when a column or index is
+  created, with a clear error, and never silently. The collation
+  carries a `deterministic` flag in the schema from the start,
+  chosen when the column is created and never changed. A
+  deterministic collation's key is the sort key followed by the
+  original bytes as a tie-break; a non-deterministic one's is the
+  sort key alone. Because the flag is per column, a later release
+  can accept the second kind without touching data already on
+  disk.
