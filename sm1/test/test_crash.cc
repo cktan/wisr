@@ -12,6 +12,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -39,7 +40,7 @@ uint64_t first_store(sm_session_t *s) {
     return 0;
   }
   uint64_t store = list[0];
-  sm_free_stores(list);
+  free(list);
   return store;
 }
 

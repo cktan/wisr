@@ -7,6 +7,7 @@
 
 #include "sm.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <filesystem>
@@ -25,7 +26,7 @@ std::vector<std::string> lsdb(sm_env_t *env) {
     out.push_back(sm_strlist_at(sl, i));
   }
   CHECK(sm_strlist_at(sl, sm_strlist_count(sl)) == nullptr);
-  sm_strlist_free(sl);
+  free(sl);
   return out;
 }
 

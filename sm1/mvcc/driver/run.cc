@@ -268,7 +268,7 @@ std::string execute(worker_t *w, const item_t &it) {
     if (sm_lsstore(w->sess, &list, &n) != 0) {
       return error_name();
     }
-    sm_free_stores(list);
+    free(list);
     return std::to_string(n) + " stores";
   }
   return "ERROR: unknown verb " + it.verb;

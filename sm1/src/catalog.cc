@@ -208,6 +208,3 @@ int sm_lsstore(sm_session_t *session, uint64_t **out, size_t *n) {
     return set_error(SM_ERR_NOMEM, "sm_lsstore: out of memory");
   }
 }
-
-/* Release a list from sm_lsstore(). */
-void sm_free_stores(uint64_t *list) { free(list); }

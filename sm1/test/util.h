@@ -125,7 +125,7 @@ inline std::vector<uint64_t> lsstore(sm_session_t *sess) {
   size_t n = 0;
   REQUIRE_MESSAGE(sm_lsstore(sess, &list, &n) == 0, sm_errmsg());
   std::vector<uint64_t> out(list, list + n);
-  sm_free_stores(list);
+  free(list);
   return out;
 }
 

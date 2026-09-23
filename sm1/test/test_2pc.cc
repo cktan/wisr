@@ -13,6 +13,7 @@
 #include "sm.h"
 
 #include <signal.h>
+#include <stdlib.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -139,7 +140,7 @@ uint64_t first_store(sm_session_t *s) {
     return 0;
   }
   uint64_t store = list[0];
-  sm_free_stores(list);
+  free(list);
   return store;
 }
 
@@ -187,7 +188,7 @@ int orphan_child_main(const char *homedir) {
     return 2;
   }
   uint64_t newest = list[n - 1];
-  sm_free_stores(list);
+  free(list);
   uint64_t fresh = 0;
   if (sm_rmstore(s, newest) != 0 || sm_commit(s) != 0 ||
       sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 || sm_mkstore(s, &fresh) != 0) {

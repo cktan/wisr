@@ -155,8 +155,6 @@ TEST_CASE("every session call rejects a NULL session") {
   CHECK(sm_closedb(nullptr) == 0);
   sm_scanend(nullptr);
   sm_free_prepared(nullptr, 0);
-  sm_free_stores(nullptr);
-  sm_strlist_free(nullptr);
 }
 
 TEST_CASE("storeid 0 is rejected by every call taking a storeid") {

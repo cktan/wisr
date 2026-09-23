@@ -193,7 +193,7 @@ int main(int argc, char **argv) {
   }
   printf("%s\n", nstores == 0 ? " (none)" : "");
   // The list is the library's; release it.
-  sm_free_stores(stores);
+  free(stores);
   if (book == 0) {
     check(sm_mkstore(s, &book), "sm_mkstore");
     printf("created book (storeid %llu)\n", (unsigned long long)book);

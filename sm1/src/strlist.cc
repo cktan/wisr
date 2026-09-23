@@ -9,7 +9,8 @@
  *   char  bytes[]     the names, each NUL-terminated
  *
  * so a list is one malloc and one free, and every name sits
- * beside the pointer that names it.
+ * beside the pointer that names it. The caller releases a list
+ * with free() itself; the library has no release call.
  *
  * strlist_make() is the only producer; the accessors below
  * are the only readers.
@@ -84,10 +85,4 @@ const char *sm_strlist_at(const sm_strlist_t *sl, size_t i) {
     return NULL;
   }
   return strlist_ptr(sl)[i];
-}
-
-/* Release a list: one free, since it is one allocation. */
-void sm_strlist_free(sm_strlist_t *sl) {
-  // Release the whole list with one free.
-  free(sl);
 }

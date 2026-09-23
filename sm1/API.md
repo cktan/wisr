@@ -139,16 +139,15 @@ A call that returns several names returns an
 ```c
 size_t      sm_strlist_count(const sm_strlist_t* sl);
 const char* sm_strlist_at(const sm_strlist_t* sl, size_t i);
-void        sm_strlist_free(sm_strlist_t* sl);
 ```
 
-On success the out-param is never NULL; an empty result is
-a list whose count is 0. `sm_strlist_at` returns a
-NUL-terminated string owned by the list and valid until
-`sm_strlist_free`, or NULL for an index past the end. The
-caller releases the whole list with one call and frees no
-element on its own. The count travels inside the handle, so
-it cannot disagree with the array it describes.
+On success the out-param is never NULL; an empty result is a list
+whose count is 0. `sm_strlist_at` returns a NUL-terminated string
+owned by the list and valid until the list is freed, or NULL for
+an index past the end. The list is one `malloc` block: the caller
+releases the whole list with one `free()` and frees no element on
+its own. The count travels inside the handle, so it cannot
+disagree with the array it describes.
 
 A list holds no engine state — no lock, no snapshot, no
 session reference — so one that is never freed leaks memory
@@ -497,7 +496,7 @@ List the names of the databases in `homedir`, in bytewise
 order.
 
 On success `*out` is a list of names; release it with
-`sm_strlist_free`.
+`free()`.
 
 A database directory is named by number, so the names
 exist only in the root db and this is the only way to
@@ -901,17 +900,13 @@ uncommitted DDL. Under `SM_XCT_SERIALIZABLE` the whole list
 is recorded as read, so a concurrent `sm_mkstore` or
 `sm_rmstore` is a read-write conflict.
 
-On success `*out` points to `*n` storeids allocated by the
-library; release them with `sm_free_stores`. `*n` may be 0, in
-which case `*out` is NULL.
+On success `*out` points to `*n` storeids in one `malloc`
+block; release it with `free()`. `*n` may be 0, in which case
+`*out` is NULL.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_INVALID`, `SM_ERR_NOMEM`, `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
-
-### void sm_free_stores(uint64_t* list)
-
-Release a list from `sm_lsstore`. NULL is a no-op.
 
 ---
 

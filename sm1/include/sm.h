@@ -183,8 +183,9 @@ typedef struct sm_scan_t sm_scan_t;
 
 /*
  * A counted, immutable list of names returned by a listing
- * call. Elements are NUL-terminated and owned by the list;
- * release the whole list with sm_strlist_free().
+ * call. Elements are NUL-terminated and owned by the list.
+ * The list is one malloc() block; release the whole list with
+ * one free().
  *
  * A list holds no engine state -- no lock, no snapshot, no
  * session reference -- so failing to free one leaks memory
@@ -201,12 +202,9 @@ size_t sm_strlist_count(const sm_strlist_t* sl);
 
 /*
  * Name i, NUL-terminated and owned by the list, or NULL if
- * i is past the end. Valid until sm_strlist_free().
+ * i is past the end. Valid until the list is freed.
  */
 const char* sm_strlist_at(const sm_strlist_t* sl, size_t i);
-
-/* Release a list. Passing NULL is a no-op. */
-void sm_strlist_free(sm_strlist_t* sl);
 
 /*
  * Isolation levels.
@@ -327,7 +325,7 @@ int sm_rmdb(sm_env_t* env, const char* dbname);
 
 /*
  * List the databases in homedir, in bytewise order. On success
- * *out is a list to release with sm_strlist_free().
+ * *out is a list to release with free().
  *
  * A database directory is named by number, so the names live
  * only in the root db: reading homedir will not tell a caller
@@ -746,17 +744,14 @@ int sm_rmstore(sm_session_t* session, uint64_t storeid);
  * list is recorded as read, so a concurrent sm_mkstore() or
  * sm_rmstore() is a conflict.
  *
- * On success *out points to *n storeids allocated by the
- * library; release them with sm_free_stores(). *n may be 0, in
- * which case *out is NULL.
+ * On success *out points to *n storeids in one malloc()
+ * block; release it with free(). *n may be 0, in which case
+ * *out is NULL.
  *
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID,
  * SM_ERR_NOMEM, SM_ERR_CORRUPT, SM_ERR_IO.
  */
 int sm_lsstore(sm_session_t* session, uint64_t** out, size_t* n);
-
-/* Release a list from sm_lsstore(). NULL is a no-op. */
-void sm_free_stores(uint64_t* list);
 
 /*
  * Write one row. All three calls require an active,
