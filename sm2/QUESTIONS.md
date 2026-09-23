@@ -49,7 +49,8 @@ integer digits and 10 fractional. A datum with more than 10
 fractional digits is rounded to 10, as PostgreSQL rounds for a
 declared `numeric(p,s)`. A datum whose integer part needs more
 than 28 digits is an error. This overrides the suggestion to
-refuse at column creation.
+refuse at column creation. 2.4 renames the type `NUMBER`; this
+default is what a bare `NUMBER` means.
 
 **1.2 — No, refuse them (2026-09-22).** A numeric NaN,
 `+Infinity` or `-Infinity` is rejected on insert with a clear
@@ -131,6 +132,45 @@ parser and no wire protocol.
 golden-bytes fixture needs to write a value as text; `recv`
 and `send` deferred, with the slots left in the descriptor.*
 → `DESIGN.md` §2.3
+
+### Answers
+
+Recorded here as given; `TYPE.md`, `DESIGN.md` and
+`FEATURELIST.md` are not yet updated to match.
+
+**2.1 — Yes (2026-09-22).** The codes in `TYPE.md` §3 are
+frozen as they stand, `bool` = 1 through `uuid` = 16, and are
+never reused. Codes 64–127 are a documented reserved gap for
+types added later.
+
+**2.2 — Yes, out of sm2 (2026-09-22).** `enum` is not an sm2
+type. sm2 stores it as `int4`; sm3's catalog holds the labels
+and the mapping. `FEATURELIST.md` is to say enums are sm3's.
+One consequence for sm3: an index on an enum sorts by the
+`int4`, so sm3 must assign values in declared order, or
+accept that an index orders by value rather than by label.
+
+**2.3 — Yes (2026-09-22).** `text` (8) and `varchar` (9) keep
+separate codes, so a round trip never rewrites a column's
+declared type. The `varchar(n)` length limit is a constraint
+and is enforced by sm3, not by sm2's codec.
+
+**2.4 — Yes, both widths, and the type is renamed `NUMBER`
+(2026-09-22).** One type code (7) covers both widths, chosen
+by declared precision: up to 38 digits is 16 bytes, 39 to 76
+is 32 bytes. The type is `NUMBER(p, s)`, not `numeric`, so it
+is not mistaken for PostgreSQL's: `NUMERIC` and `DECIMAL` are
+not supported. `NUMBER(p)` means `NUMBER(p, 0)`. A bare
+`NUMBER` is 1.1's default, `NUMBER(38, 10)`, with 1.1's
+rounding and overflow rules; 1.2's refusal of NaN and
+infinities applies to `NUMBER` as well. Every document that
+says `numeric` — `TYPE.md` §3.4, `DESIGN.md` §2.2,
+`OBJECTIVE.md` — is to say `NUMBER`.
+
+**2.5 — Yes (2026-09-22).** v1 implements `in` and `out`,
+because every test and golden-bytes fixture writes values as
+text. `recv` and `send` are deferred, with their slots left in
+the type descriptor.
 
 ---
 
