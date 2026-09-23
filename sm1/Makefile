@@ -3,7 +3,6 @@
 #   make -j4          libwisr.a, the test binaries, and the examples
 #   make test         build, then run every test, script, and example
 #   make accept       take the scenario transcripts as expected
-#   make dist         install libwisr.a and sm1.h under PREFIX
 #   make format       clang-format src/, test/, and example/ in place
 #   make clean        remove build/
 #
@@ -30,9 +29,6 @@ CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc -MMD -MP
 LDLIBS   += -lrocksdb -lpthread
 
 BUILD := build
-
-# Where make dist installs the library and its header.
-PREFIX ?= $(HOME)/.local
 
 # The compiler and flags every object is built with. Rewriting
 # the file when they change makes it newer than the objects, so
@@ -73,7 +69,7 @@ FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h mvcc/*.cc \
                           example/*.cc)
 FORMAT_FILES := $(filter-out test/doctest.h,$(FORMAT_FILES))
 
-.PHONY: all test scenarios accept dist format clean
+.PHONY: all test scenarios accept format clean
 
 # Keep the example objects: make deletes chained intermediates.
 .SECONDARY: $(EX_OBJS)
@@ -158,12 +154,6 @@ accept: $(DRIVER)
 	  cp $(SCRIPT_OUT)/$$b.out $(SCRIPT_GOOD)/$$b.out; \
 	done
 	@echo "accepted $(words $(SCRIPTS)) transcripts into $(SCRIPT_GOOD)"
-
-# Install what is built now: a DEBUG build installs that one.
-dist: $(LIB)
-	@mkdir -p $(PREFIX)/lib $(PREFIX)/include
-	install -m 644 $(LIB) $(PREFIX)/lib/
-	install -m 644 include/sm1.h $(PREFIX)/include/
 
 format:
 	clang-format -i $(FORMAT_FILES)
