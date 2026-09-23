@@ -229,6 +229,51 @@ flags when it builds the key, so no decode is needed. If 1.3
 truncates secondary keys, the recheck of originals on a cut
 key follows the same rule. → `sm3/DESIGN.md` §3
 
+### Answers
+
+Recorded here as given; `TYPE.md`, `DESIGN.md` and
+`sm3/DESIGN.md` are not yet updated to match.
+
+**3.1 — Yes, always emit (2026-09-22).** Every key column
+carries its null marker byte, `NOT NULL` or not, primary key
+columns included. The key layout never depends on
+nullability, so `SET` or `DROP NOT NULL` never rewrites a key.
+This reverses what `TYPE.md` §2 says.
+
+**3.2 — Yes, as written (2026-09-22).** Inside a
+variable-length key datum, `0x00` is written `0x00 0xFF`, and
+`0x00 0x00` terminates it (`TYPE.md` §3.6).
+
+**3.3 — Yes, always emit (2026-09-22).** Every
+variable-length key column gets its terminator, including the
+last one. The encoder never needs to know which column is
+last.
+
+**3.4 — No: one sm1 relation per table, with a 2-byte prefix
+(2026-09-22).** This replaces the suggestion and reverses
+`sm3/DESIGN.md` §4. Each PG table gets its own sm1 relation,
+holding its rows, all its indexes and its out-of-line chunks,
+so `DROP TABLE` is one `sm_rmrel` that takes everything with
+it. The prefix picks the object inside that relation: exactly
+2 bytes, big-endian, value set by sm3 — `0x0000` for the
+table's rows, `0xFFFF` for its chunks, and `0x0001`–`0xFFFE`
+for its indexes. Index prefixes are allocated in increasing
+order and never reused, so a dropped index's leftover versions
+can never be read as another index's, and no GC-horizon rule
+is needed. `DROP INDEX` is a range delete over its prefix.
+Every key spends 2 bytes of `SM_MAX_KEYLEN` on the prefix,
+leaving 4094; sm2 validates the total. Accepted for v1: the
+number of tables, partitions included, is bounded by how many
+relations sm1 handles. This settles where 4.2's chunks live.
+
+**3.5 — Yes, distinct, with no opt-in (2026-09-22).** The
+encoding is unchanged. In a unique index, NULLs are always
+distinct in v1: sm3 skips the uniqueness check for any entry
+with a NULL key column, and 1.3's recheck of originals on a
+cut key follows the same rule. `NULLS NOT DISTINCT` is refused
+at `CREATE INDEX` with a clear error. Adding it later is a
+flag in sm3's catalog and changes no bytes on disk.
+
 ---
 
 ## 4. Tuple format — blocks `PLAN.md` step 3
