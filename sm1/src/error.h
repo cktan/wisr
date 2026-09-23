@@ -1,15 +1,15 @@
 /*
  * error.h -- setting the calling thread's error state.
  *
- * Every function here records an error for sm_errno() and
- * sm_errmsg() and returns -1, so an API entry point can write
+ * Every function here records an error for sm1_errno() and
+ * sm1_errmsg() and returns -1, so an API entry point can write
  * `return set_error(...)`. Nothing here clears the state: a
- * successful call leaves it untouched (sm.h).
+ * successful call leaves it untouched (sm1.h).
  */
 #ifndef WISR_ERROR_H
 #define WISR_ERROR_H
 
-#include "sm.h"
+#include "sm1.h"
 
 #include <stddef.h>
 
@@ -29,14 +29,14 @@ size_t format_into(char *buf, size_t size, std::string_view fmt,
                    std::format_args args);
 
 /* Record e with a message formatted from fmt and args. Returns -1. */
-int set_error_v(sm_errno_t e, std::string_view fmt, std::format_args args);
+int set_error_v(sm1_errno_t e, std::string_view fmt, std::format_args args);
 
 /*
  * Record e with a std::format message, whose format string is
  * checked against its arguments at compile time. Returns -1.
  */
 template <typename... Args>
-int set_error(sm_errno_t e, std::format_string<Args...> fmt, Args &&...args) {
+int set_error(sm1_errno_t e, std::format_string<Args...> fmt, Args &&...args) {
   return set_error_v(e, fmt.get(), std::make_format_args(args...));
 }
 
@@ -48,7 +48,7 @@ int set_status_error(const rocksdb::Status &s, const char *what);
 
 /*
  * Check that name is a NUL-terminated string of 1..max bytes.
- * Returns 0, or -1 with SM_ERR_INVALID; what names the kind of
+ * Returns 0, or -1 with SM1_ERR_INVALID; what names the kind of
  * name in the message ("database", "store").
  */
 int check_name(const char *name, size_t max, const char *what);

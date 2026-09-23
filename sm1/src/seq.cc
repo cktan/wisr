@@ -1,5 +1,5 @@
 /*
- * seq.cc -- named sequences: sm_mkseq, sm_rmseq, sm_nextseq
+ * seq.cc -- named sequences: sm1_mkseq, sm1_rmseq, sm1_nextseq
  * (SM1_DESIGN.md §11).
  *
  * A sequence's definition is a catalog row, keyed "S" | name in
@@ -9,7 +9,7 @@
  * come from, so a name reused after a drop names a new
  * sequence that starts over.
  *
- * The sequence's position is NOT in that row: sm_nextseq takes
+ * The sequence's position is NOT in that row: sm1_nextseq takes
  * no locks, never blocks, and is not undone by an abort, so its
  * state lives in CF:meta under a lease (§4.2), outside MVCC.
  */
@@ -39,7 +39,7 @@ std::string seq_key(const char *name) { return std::string("S") + name; }
  * Look name up at view: 0 and *def if it names a live sequence,
  * 1 if not, -1 on error.
  */
-int seq_lookup(sm_session_t *s, const view_t &view, const char *name,
+int seq_lookup(sm1_session_t *s, const view_t &view, const char *name,
                seqdef_t *def) {
   std::string val;
   // Read the catalog row at view.
@@ -50,7 +50,7 @@ int seq_lookup(sm_session_t *s, const view_t &view, const char *name,
   }
   // Reject a malformed catalog row.
   if (val.size() != 24) {
-    return set_error(SM_ERR_CORRUPT, "bad catalog row for sequence {}", name);
+    return set_error(SM1_ERR_CORRUPT, "bad catalog row for sequence {}", name);
   }
   // Decode the definition.
   def->seqid = get_be64(val.data());
@@ -59,17 +59,17 @@ int seq_lookup(sm_session_t *s, const view_t &view, const char *name,
   return 0;
 }
 
-/* sm_mkseq, minus the out-of-memory guard. */
-int mkseq(sm_session_t *s, const char *name, uint64_t start,
+/* sm1_mkseq, minus the out-of-memory guard. */
+int mkseq(sm1_session_t *s, const char *name, uint64_t start,
           uint64_t increment) {
   // Require an active, non-prepared transaction and a valid name.
   if (xct_check_active(s) != 0 ||
-      check_name(name, SM_MAX_SEQNAME, "sequence") != 0) {
+      check_name(name, SM1_MAX_SEQNAME, "sequence") != 0) {
     return -1;
   }
   // A sequence that never advances is a mistake, not a feature.
   if (increment == 0) {
-    return set_error(SM_ERR_INVALID, "sequence increment is 0");
+    return set_error(SM1_ERR_INVALID, "sequence increment is 0");
   }
   seqdef_t def;
   // Resolve the name at the transaction's view.
@@ -80,7 +80,7 @@ int mkseq(sm_session_t *s, const char *name, uint64_t start,
   }
   // Refuse a name that is already live.
   if (r == 0) {
-    return set_error(SM_ERR_EXISTS, "sequence {} already exists", name);
+    return set_error(SM1_ERR_EXISTS, "sequence {} already exists", name);
   }
   // Refuse writes after fail-stop, then allocate the seqid.
   if (xct_check_writable(s->db) != 0 ||
@@ -95,20 +95,20 @@ int mkseq(sm_session_t *s, const char *name, uint64_t start,
   put_be64(val, increment);
   // Insert the catalog row through the ordinary write path.
   if (access_write(s, 0, WRITE_INSERT, seq_key(name), val, nullptr) != 0) {
-    // Report a concurrent same-name insert as SM_ERR_EXISTS.
-    if (s->active && sm_errno() == SM_ERR_DUPKEY) {
-      return set_error(SM_ERR_EXISTS, "sequence {} already exists", name);
+    // Report a concurrent same-name insert as SM1_ERR_EXISTS.
+    if (s->active && sm1_errno() == SM1_ERR_DUPKEY) {
+      return set_error(SM1_ERR_EXISTS, "sequence {} already exists", name);
     }
     return -1;
   }
   return 0;
 }
 
-/* sm_rmseq, minus the out-of-memory guard. */
-int rmseq(sm_session_t *s, const char *name) {
+/* sm1_rmseq, minus the out-of-memory guard. */
+int rmseq(sm1_session_t *s, const char *name) {
   // Require an active, non-prepared transaction and a valid name.
   if (xct_check_active(s) != 0 ||
-      check_name(name, SM_MAX_SEQNAME, "sequence") != 0) {
+      check_name(name, SM1_MAX_SEQNAME, "sequence") != 0) {
     return -1;
   }
   seqdef_t def;
@@ -120,7 +120,7 @@ int rmseq(sm_session_t *s, const char *name) {
   }
   // Refuse a name that is not live.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "sequence {} does not exist", name);
+    return set_error(SM1_ERR_NOTFOUND, "sequence {} does not exist", name);
   }
   // Delete the catalog row.
   if (access_write(s, 0, WRITE_DELETE, seq_key(name), rocksdb::Slice(),
@@ -132,18 +132,18 @@ int rmseq(sm_session_t *s, const char *name) {
   return 0;
 }
 
-/* sm_nextseq, minus the out-of-memory guard. */
-int nextseq(sm_session_t *s, const char *name, uint64_t *out) {
+/* sm1_nextseq, minus the out-of-memory guard. */
+int nextseq(sm1_session_t *s, const char *name, uint64_t *out) {
   // Require somewhere to put the value and a valid name.
   if (!out) {
-    return set_error(SM_ERR_INVALID, "sm_nextseq: out is NULL");
+    return set_error(SM1_ERR_INVALID, "sm1_nextseq: out is NULL");
   }
-  if (check_name(name, SM_MAX_SEQNAME, "sequence") != 0) {
+  if (check_name(name, SM1_MAX_SEQNAME, "sequence") != 0) {
     return -1;
   }
   // A session holding a prepared transaction does nothing else.
   if (!s->active && !s->prepared_gid.empty()) {
-    return set_error(SM_ERR_PREPARED, "the transaction is prepared as {}",
+    return set_error(SM1_ERR_PREPARED, "the transaction is prepared as {}",
                      s->prepared_gid.c_str());
   }
   // A stopped database persists nothing, leases included.
@@ -163,7 +163,7 @@ int nextseq(sm_session_t *s, const char *name, uint64_t *out) {
   }
   // Report an unknown sequence.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "sequence {} does not exist", name);
+    return set_error(SM1_ERR_NOTFOUND, "sequence {} does not exist", name);
   }
   // Take the next value; a used-up lease is persisted first.
   return db_next_seq(s->db, def.seqid, def.start, def.increment, out);
@@ -172,44 +172,44 @@ int nextseq(sm_session_t *s, const char *name, uint64_t *out) {
 } // namespace
 
 /* Create a sequence. */
-int sm_mkseq(sm_session_t *session, const char *name, uint64_t start,
-             uint64_t increment) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_mkseq(sm1_session_t *session, const char *name, uint64_t start,
+              uint64_t increment) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     // Require a session, which xct_check_active cannot check.
     if (!session) {
-      return set_error(SM_ERR_INVALID, "sm_mkseq: session is NULL");
+      return set_error(SM1_ERR_INVALID, "sm1_mkseq: session is NULL");
     }
     return mkseq(session, name, start, increment);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_mkseq: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_mkseq: out of memory");
   }
 }
 
 /* Drop a sequence. */
-int sm_rmseq(sm_session_t *session, const char *name) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_rmseq(sm1_session_t *session, const char *name) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     // Require a session, which xct_check_active cannot check.
     if (!session) {
-      return set_error(SM_ERR_INVALID, "sm_rmseq: session is NULL");
+      return set_error(SM1_ERR_INVALID, "sm1_rmseq: session is NULL");
     }
     return rmseq(session, name);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_rmseq: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_rmseq: out of memory");
   }
 }
 
 /* Hand out a sequence's next value. */
-int sm_nextseq(sm_session_t *session, const char *name, uint64_t *out) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_nextseq(sm1_session_t *session, const char *name, uint64_t *out) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
-    // Require a session; sm_nextseq needs no transaction.
+    // Require a session; sm1_nextseq needs no transaction.
     if (!session) {
-      return set_error(SM_ERR_INVALID, "sm_nextseq: session is NULL");
+      return set_error(SM1_ERR_INVALID, "sm1_nextseq: session is NULL");
     }
     return nextseq(session, name, out);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_nextseq: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_nextseq: out of memory");
   }
 }

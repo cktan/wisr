@@ -37,21 +37,21 @@ full MVCC, for OLTP workloads.
 
 ## API
 
-- The `sm_*` Storage Manager API (see `API.md`) is the interface to
-  this engine. It already sketches the primitives needed:
-  - database lifecycle: `sm_mkdb` / `sm_rmdb`
-  - sessions: `sm_opendb` / `sm_closedb`
-  - transactions: `sm_begin` (with `sm_xctlevel_t`) / `sm_prepare` /
-    `sm_commit` / `sm_abort`
-  - nested savepoints: `sm_savepoint` / `sm_rollback` /
-    `sm_forget`
-  - statement boundaries: `sm_stmt_begin`
-  - row locks without writing: `sm_lock`
-  - cursor reposition: `sm_scan_seek`
-  - stores: `sm_mkstore` / `sm_rmstore` / `sm_lsstore`
-  - sequences: `sm_mkseq` / `sm_rmseq` / `sm_nextseq`
-  - data ops: `sm_insert` / `sm_update` / `sm_delete` / `sm_read` /
-    `sm_scan` / `sm_scannxt` / `sm_scanend`
+- The `sm1_*` Storage Manager API (see `API.md`) is the interface
+  to this engine. It already sketches the primitives needed:
+  - database lifecycle: `sm1_mkdb` / `sm1_rmdb`
+  - sessions: `sm1_opendb` / `sm1_closedb`
+  - transactions: `sm1_begin` (with `sm1_xctlevel_t`) /
+    `sm1_prepare` / `sm1_commit` / `sm1_abort`
+  - nested savepoints: `sm1_savepoint` / `sm1_rollback` /
+    `sm1_forget`
+  - statement boundaries: `sm1_stmt_begin`
+  - row locks without writing: `sm1_lock`
+  - cursor reposition: `sm1_scan_seek`
+  - stores: `sm1_mkstore` / `sm1_rmstore` / `sm1_lsstore`
+  - sequences: `sm1_mkseq` / `sm1_rmseq` / `sm1_nextseq`
+  - data ops: `sm1_insert` / `sm1_update` / `sm1_delete` /
+    `sm1_read` / `sm1_scan` / `sm1_scannxt` / `sm1_scanend`
 
 ## Decisions
 
@@ -70,11 +70,12 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
   commit-status table. This keeps transaction size unbounded by RAM,
   at the cost of a status lookup on read and a garbage-collection pass
   for versions left behind by aborts.
-- **`sm_prepare` is real two-phase commit.** Prepare durably persists
-  the prepared-transaction record (with a global transaction id), so a
-  prepared transaction survives a crash and can be committed or
-  aborted after restart by an external coordinator. Recovery must
-  restore prepared transactions and re-acquire their row locks.
+- **`sm1_prepare` is real two-phase commit.** Prepare durably
+  persists the prepared-transaction record (with a global
+  transaction id), so a prepared transaction survives a crash and
+  can be committed or aborted after restart by an external
+  coordinator. Recovery must restore prepared transactions and
+  re-acquire their row locks.
 - **Deployment is a single process, multi-threaded.** All sessions in
   a process share one open RocksDB instance; the transaction table,
   lock manager, and SSI structures are ordinary in-process data
@@ -85,5 +86,5 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
 
 - `API.md` is a sketch. `SM1_DESIGN.md` proposes concrete C
   signatures and flags where it must diverge — notably the
-  read/scan calls, and the extra 2PC entry points (`sm_prepare`
+  read/scan calls, and the extra 2PC entry points (`sm1_prepare`
   taking a global id, plus recovery of in-doubt transactions).

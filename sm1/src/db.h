@@ -5,7 +5,7 @@
 #ifndef WISR_DB_H
 #define WISR_DB_H
 
-#include "sm.h"
+#include "sm1.h"
 
 #include <stdint.h>
 
@@ -110,7 +110,7 @@ struct db_t {
 
   /*
    * A sequence in use, by seqid (§11). The state is built on
-   * the first sm_nextseq and kept until the database closes;
+   * the first sm1_nextseq and kept until the database closes;
    * it is guarded by alloc_mu, like the leases above.
    */
   struct seq_state_t {
@@ -146,7 +146,7 @@ struct db_t {
   /*
    * Set when a status write fails (§8.2): the outcome of that
    * commit is unknown until a reopen, so writes, commits, and
-   * DDL fail with SM_ERR_IO from then on.
+   * DDL fail with SM1_ERR_IO from then on.
    */
   std::atomic<bool> failed{false};
 
@@ -166,15 +166,15 @@ struct db_t {
    * Every release and every doom notifies lock_cv.
    */
   struct lock_ent_t {
-    bool exclusive = false;              /* holders is then one */
-    std::vector<sm_session_t *> holders; /* never empty */
+    bool exclusive = false;               /* holders is then one */
+    std::vector<sm1_session_t *> holders; /* never empty */
   };
   std::mutex lock_mu;
   std::condition_variable lock_cv;
   std::unordered_map<std::string, lock_ent_t> lock_table;
   int deadlock_ms = 50;
 
-  /* Hands out sm_session_t::begin_seq. */
+  /* Hands out sm1_session_t::begin_seq. */
   std::atomic<uint64_t> begin_seq{0};
 
   /*
@@ -199,7 +199,7 @@ struct db_t {
    * Garbage collection (§8.3). The compaction filter runs only
    * once gc_ready is set, after the handles above are valid.
    * It cannot write, so it queues tombstones to purge; a
-   * committed sm_rmstore queues its storeids to drop once the
+   * committed sm1_rmstore queues its storeids to drop once the
    * watermark passes its commit. The worker drains both.
    */
   std::atomic<bool> gc_ready{false};
@@ -266,11 +266,11 @@ struct db_t {
 
   /*
    * Prepared transactions by gid (§8.4, §8.5). Each value is a
-   * database-owned sm_session_t holding the transaction; a
-   * null value reserves a gid while sm_prepare runs.
+   * database-owned sm1_session_t holding the transaction; a
+   * null value reserves a gid while sm1_prepare runs.
    */
   std::mutex prepared_mu;
-  std::map<std::string, sm_session_t *> prepared;
+  std::map<std::string, sm1_session_t *> prepared;
 
   /* Test hook, as test_before_commit, for the PREPARED record. */
   std::function<rocksdb::Status()> test_before_prepare;
@@ -285,7 +285,7 @@ struct db_t {
  * steps 1-3). Returns NULL with the error set.
  */
 db_t *db_open(const std::string &path, const char *dbname,
-              const sm_options_t *opt);
+              const sm1_options_t *opt);
 
 /* Allocate a timestamp: lock-free within the lease. Returns 0 or -1. */
 int db_alloc_ts(db_t *db, uint64_t *out);
@@ -392,9 +392,9 @@ int64_t gc_sweep_txn(db_t *db, bool start);
 
 /*
  * Apply opt->rocksdb_options, if any, on top of *out. Returns 0,
- * or -1 with SM_ERR_INVALID if the string does not parse.
+ * or -1 with SM1_ERR_INVALID if the string does not parse.
  */
-int db_options(const sm_options_t *opt, rocksdb::DBOptions *out);
+int db_options(const sm1_options_t *opt, rocksdb::DBOptions *out);
 
 } // namespace wisr
 

@@ -1,5 +1,5 @@
 /*
- * log.cc -- the process-wide log hook (sm_set_log) and the
+ * log.cc -- the process-wide log hook (sm1_set_log) and the
  * helper the engine reports through.
  *
  * One mutex guards the hook and serializes calls to it, so a
@@ -20,7 +20,7 @@ namespace {
 
 /* The hook, its argument, and the mutex guarding both. */
 std::mutex g_log_mu;
-sm_log_fn g_log_fn = nullptr;
+sm1_log_fn g_log_fn = nullptr;
 void *g_log_arg = nullptr;
 
 /* Whether a hook is set; read without the mutex. */
@@ -34,7 +34,7 @@ namespace wisr {
 bool log_enabled() { return g_log_on.load(std::memory_order_relaxed); }
 
 /* Format into a local buffer, then call the hook under its mutex. */
-void log_v(sm_loglevel_t level, std::string_view fmt, std::format_args args) {
+void log_v(sm1_loglevel_t level, std::string_view fmt, std::format_args args) {
   char buf[1024];
   // Format the message, cut short if it does not fit.
   format_into(buf, sizeof(buf), fmt, args);
@@ -49,7 +49,7 @@ void log_v(sm_loglevel_t level, std::string_view fmt, std::format_args args) {
 } // namespace wisr
 
 /* Install or remove the process-wide log hook. */
-void sm_set_log(sm_log_fn fn, void *arg) {
+void sm1_set_log(sm1_log_fn fn, void *arg) {
   // Swap the hook under its mutex, so no call sees half of it.
   std::lock_guard<std::mutex> guard(g_log_mu);
   g_log_fn = fn;

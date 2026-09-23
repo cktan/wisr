@@ -44,7 +44,7 @@ See `SM1_DESIGN.md` §7.1–7.3.
 4. Each transaction now has an edge coming in and an edge going
    out; that transaction is called the *pivot*. Any cycle in the
    serialization graph contains a pivot, so the engine aborts it
-   at commit with `SM_ERR_SERIALIZATION`. Here both are pivots,
+   at commit with `SM1_ERR_SERIALIZATION`. Here both are pivots,
    so both can fail (see "What wisr stores").
 
 ## The SSI graph
@@ -122,7 +122,7 @@ T2 read alice, T1 wrote alice  →  T2 ──rw──▶ T1
 
 Each transaction has both an incoming and an outgoing edge, so
 each is a pivot, and with flags alone both fail at commit with
-`SM_ERR_SERIALIZATION`. PostgreSQL's refinement would fail only
+`SM1_ERR_SERIALIZATION`. PostgreSQL's refinement would fail only
 the one committing second.
 
 The graph lives only in memory and isn't rebuilt at restart.

@@ -1,7 +1,7 @@
 # e04 -- the catalog is read under the same rules.
 #
-# sm_lsstore is a scan of the catalog store, so each
-# transaction's sm_mkstore lands in the other's predicate. This
+# sm1_lsstore is a scan of the catalog store, so each
+# transaction's sm1_mkstore lands in the other's predicate. This
 # is c03 with stores instead of rows, and it must behave the
 # same way.
 

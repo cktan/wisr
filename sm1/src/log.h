@@ -1,10 +1,10 @@
 /*
- * log.h -- reporting through the caller's log hook (sm_set_log).
+ * log.h -- reporting through the caller's log hook (sm1_set_log).
  */
 #ifndef WISR_LOG_H
 #define WISR_LOG_H
 
-#include "sm.h"
+#include "sm1.h"
 
 #include <format>
 #include <string_view>
@@ -15,7 +15,7 @@ namespace wisr {
 bool log_enabled();
 
 /* Format fmt with args and hand the message to the log hook. */
-void log_v(sm_loglevel_t level, std::string_view fmt, std::format_args args);
+void log_v(sm1_loglevel_t level, std::string_view fmt, std::format_args args);
 
 /*
  * Format a std::format message, checked at compile time, and
@@ -23,7 +23,7 @@ void log_v(sm_loglevel_t level, std::string_view fmt, std::format_args args);
  * costs one atomic load and formats nothing.
  */
 template <typename... Args>
-void log_msg(sm_loglevel_t level, std::format_string<Args...> fmt,
+void log_msg(sm1_loglevel_t level, std::format_string<Args...> fmt,
              Args &&...args) {
   // No hook: format nothing.
   if (!log_enabled()) {

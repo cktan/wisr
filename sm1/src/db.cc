@@ -1,5 +1,5 @@
 /*
- * db.cc -- sm_options_init, sm_mkdb, sm_rmdb, sm_lsdb, and the
+ * db.cc -- sm1_options_init, sm1_mkdb, sm1_rmdb, sm1_lsdb, and the
  * column family layout every database shares (SM1_DESIGN.md §3,
  * §3.5, §11).
  */
@@ -62,7 +62,7 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
     return set_status_error(s, path.c_str());
   }
   // On the way out, destroy the handles, then close the database:
-  // sm_mkdb leaves it unopened.
+  // sm1_mkdb leaves it unopened.
   defer {
     for (rocksdb::ColumnFamilyHandle *h : handles) {
       db->DestroyColumnFamilyHandle(h);
@@ -93,14 +93,14 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
   return 0;
 }
 
-/* sm_mkdb, minus the out-of-memory guard. */
-int mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
+/* sm1_mkdb, minus the out-of-memory guard. */
+int mkdb(sm1_env_t *env, const char *dbname, const sm1_options_t *opt) {
   // Reject a NULL environment.
   if (!env) {
-    return set_error(SM_ERR_INVALID, "sm_mkdb: env is NULL");
+    return set_error(SM1_ERR_INVALID, "sm1_mkdb: env is NULL");
   }
   // Validate the database name.
-  if (check_name(dbname, SM_MAX_DBNAME, "database") != 0) {
+  if (check_name(dbname, SM1_MAX_DBNAME, "database") != 0) {
     return -1;
   }
   // Parse the pass-through RocksDB options.
@@ -117,7 +117,7 @@ int mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   rocksdb::Status s = env->root->Get(rocksdb::ReadOptions(), dkey, &val);
   // Refuse a name already taken.
   if (s.ok()) {
-    return set_error(SM_ERR_EXISTS, "database {} already exists", dbname);
+    return set_error(SM1_ERR_EXISTS, "database {} already exists", dbname);
   }
   // Fail on any other root db error.
   if (!s.IsNotFound()) {
@@ -129,7 +129,7 @@ int mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   s = env->root->Get(rocksdb::ReadOptions(), WISR_ROOT_NEXT_DBID, &val);
   // Fail if the root db has no usable next_dbid.
   if (!s.ok() || val.size() != 8) {
-    return set_error(SM_ERR_CORRUPT, "root db has no next_dbid");
+    return set_error(SM1_ERR_CORRUPT, "root db has no next_dbid");
   }
   // Take the next dbid.
   uint64_t dbid = get_be64(val.data());
@@ -146,7 +146,7 @@ int mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   }
 
   // Build the database. On failure its directory is unnamed,
-  // and the next sm_attach sweeps it.
+  // and the next sm1_attach sweeps it.
   if (create_db(env_db_path(env, dbid), dbo) != 0) {
     return -1;
   }
@@ -164,14 +164,14 @@ int mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   return 0;
 }
 
-/* sm_rmdb, minus the out-of-memory guard. */
-int rmdb(sm_env_t *env, const char *dbname) {
+/* sm1_rmdb, minus the out-of-memory guard. */
+int rmdb(sm1_env_t *env, const char *dbname) {
   // Reject a NULL environment.
   if (!env) {
-    return set_error(SM_ERR_INVALID, "sm_rmdb: env is NULL");
+    return set_error(SM1_ERR_INVALID, "sm1_rmdb: env is NULL");
   }
   // Validate the database name.
-  if (check_name(dbname, SM_MAX_DBNAME, "database") != 0) {
+  if (check_name(dbname, SM1_MAX_DBNAME, "database") != 0) {
     return -1;
   }
 
@@ -179,7 +179,7 @@ int rmdb(sm_env_t *env, const char *dbname) {
   std::lock_guard<std::mutex> guard(env->mu);
   // Refuse while any session has the database open.
   if (env->dbs.count(dbname)) {
-    return set_error(SM_ERR_INUSE, "database {} is open", dbname);
+    return set_error(SM1_ERR_INUSE, "database {} is open", dbname);
   }
   // Look the name up in the root db.
   std::string dkey = dbname_key(dbname);
@@ -187,7 +187,7 @@ int rmdb(sm_env_t *env, const char *dbname) {
   rocksdb::Status s = env->root->Get(rocksdb::ReadOptions(), dkey, &val);
   // Refuse a name that does not exist.
   if (s.IsNotFound()) {
-    return set_error(SM_ERR_NOTFOUND, "database {} does not exist", dbname);
+    return set_error(SM1_ERR_NOTFOUND, "database {} does not exist", dbname);
   }
   // Fail on any other root db error.
   if (!s.ok()) {
@@ -195,7 +195,7 @@ int rmdb(sm_env_t *env, const char *dbname) {
   }
   // Reject a malformed dbid.
   if (val.size() != 8) {
-    return set_error(SM_ERR_CORRUPT, "bad dbid for database {}", dbname);
+    return set_error(SM1_ERR_CORRUPT, "bad dbid for database {}", dbname);
   }
   // Decode the dbid.
   uint64_t dbid = get_be64(val.data());
@@ -211,16 +211,16 @@ int rmdb(sm_env_t *env, const char *dbname) {
   }
 
   // Destroy the directory. If this fails the database is
-  // already gone by name, and the next sm_attach sweeps the
+  // already gone by name, and the next sm1_attach sweeps the
   // directory; the error still reports that it is left.
   return env_destroy_db_dir(env_db_path(env, dbid));
 }
 
-/* sm_lsdb, minus the out-of-memory guard. */
-int lsdb(sm_env_t *env, sm_strlist_t **out) {
+/* sm1_lsdb, minus the out-of-memory guard. */
+int lsdb(sm1_env_t *env, sm1_strlist_t **out) {
   // Reject NULL arguments.
   if (!env || !out) {
-    return set_error(SM_ERR_INVALID, "sm_lsdb: env or out is NULL");
+    return set_error(SM1_ERR_INVALID, "sm1_lsdb: env or out is NULL");
   }
   // Collect every database name.
   std::vector<std::string> names;
@@ -245,10 +245,10 @@ int lsdb(sm_env_t *env, sm_strlist_t **out) {
     }
   }
   // Pack the names into one list.
-  sm_strlist_t *sl = strlist_make(names);
+  sm1_strlist_t *sl = strlist_make(names);
   // Fail if it could not be allocated.
   if (!sl) {
-    return set_error(SM_ERR_NOMEM, "sm_lsdb: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_lsdb: out of memory");
   }
   // Hand the list to the caller.
   *out = sl;
@@ -294,7 +294,7 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
 }
 
 /* Parse the pass-through RocksDB option string onto *out. */
-int db_options(const sm_options_t *opt, rocksdb::DBOptions *out) {
+int db_options(const sm1_options_t *opt, rocksdb::DBOptions *out) {
   // No option string: keep the defaults.
   if (!opt || !opt->rocksdb_options) {
     return 0;
@@ -306,7 +306,7 @@ int db_options(const sm_options_t *opt, rocksdb::DBOptions *out) {
       rocksdb::GetDBOptionsFromString(cfg, *out, opt->rocksdb_options, &parsed);
   // Reject an unparsable string.
   if (!s.ok()) {
-    return set_error(SM_ERR_INVALID, "rocksdb_options: {}",
+    return set_error(SM1_ERR_INVALID, "rocksdb_options: {}",
                      s.ToString().c_str());
   }
   // Adopt the parsed options.
@@ -343,26 +343,26 @@ static bool read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
 
 /* Open every column family of the database and load CF:meta. */
 db_t *db_open(const std::string &path, const char *dbname,
-              const sm_options_t *opt) {
-  sm_options_t defaults;
+              const sm1_options_t *opt) {
+  sm1_options_t defaults;
   // No options: use the defaults.
   if (!opt) {
-    sm_options_init(&defaults);
+    sm1_options_init(&defaults);
     opt = &defaults;
   }
   // Reject an empty commit cache.
   if (opt->commit_cache_entries < 1) {
-    set_error(SM_ERR_INVALID, "commit_cache_entries must be at least 1");
+    set_error(SM1_ERR_INVALID, "commit_cache_entries must be at least 1");
     return nullptr;
   }
   // Reject a non-positive deadlock timeout.
   if (opt->deadlock_ms <= 0) {
-    set_error(SM_ERR_INVALID, "deadlock_ms must be positive");
+    set_error(SM1_ERR_INVALID, "deadlock_ms must be positive");
     return nullptr;
   }
   // Reject a non-positive timestamp lease.
   if (opt->ts_lease <= 0) {
-    set_error(SM_ERR_INVALID, "ts_lease must be positive");
+    set_error(SM1_ERR_INVALID, "ts_lease must be positive");
     return nullptr;
   }
   rocksdb::DBOptions dbo;
@@ -428,7 +428,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   }
   // Require the fixed CFs and the catalog.
   if (bad_name || !db->cf_txn || !db->cf_meta || !db->stores.count(0)) {
-    set_error(SM_ERR_CORRUPT, "{}: unexpected column families", dbname);
+    set_error(SM1_ERR_CORRUPT, "{}: unexpected column families", dbname);
     return nullptr;
   }
 
@@ -437,12 +437,12 @@ db_t *db_open(const std::string &path, const char *dbname,
   if (!read_meta(db.get(), WISR_META_VERSION, &version) ||
       !read_meta(db.get(), WISR_META_NEXT_TS, &next_ts) ||
       !read_meta(db.get(), WISR_META_NEXT_OBJID, &next_objid)) {
-    set_error(SM_ERR_CORRUPT, "{}: CF:meta is incomplete", dbname);
+    set_error(SM1_ERR_CORRUPT, "{}: CF:meta is incomplete", dbname);
     return nullptr;
   }
   // Reject a format this build does not understand.
   if (version != WISR_DB_VERSION) {
-    set_error(SM_ERR_VERSION, "{}: format version {}, expected {}", dbname,
+    set_error(SM1_ERR_VERSION, "{}: format version {}, expected {}", dbname,
               version, WISR_DB_VERSION);
     return nullptr;
   }
@@ -633,7 +633,7 @@ int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
   db_t::seq_state_t &st = it->second;
   // Refuse a sequence whose last value is already handed out.
   if (st.exhausted) {
-    return set_error(SM_ERR_INVALID, "sequence is exhausted");
+    return set_error(SM1_ERR_INVALID, "sequence is exhausted");
   }
   // Lease used up: persist a new limit before handing out more.
   if (st.next >= st.limit) {
@@ -678,7 +678,7 @@ void db_forget_seq(db_t *db, uint64_t seqid) {
   rocksdb::Status s = db->rdb->Delete(rocksdb::WriteOptions(), db->cf_meta,
                                       seq_meta_key(seqid));
   if (!s.ok()) {
-    log_msg(SM_LOG_ERROR,
+    log_msg(SM1_LOG_ERROR,
             "database {}: deleting sequence {}'s lease failed: {}",
             db->name.c_str(), seqid, s.ToString().c_str());
   }
@@ -728,7 +728,7 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
   db->stores.erase(it);
   // Report a failed drop; most callers cannot act on it, so log it.
   if (!s.ok()) {
-    log_msg(SM_LOG_ERROR,
+    log_msg(SM1_LOG_ERROR,
             "database {}: dropping column family store.{} failed: {}",
             db->name.c_str(), storeid, s.ToString().c_str());
     return set_status_error(s, "drop column family");
@@ -776,8 +776,8 @@ wisr::db_t::~db_t() {
   delete rdb;
 }
 
-/* Fill opt with the defaults documented in sm.h. */
-void sm_options_init(sm_options_t *opt) {
+/* Fill opt with the defaults documented in sm1.h. */
+void sm1_options_init(sm1_options_t *opt) {
   // Sync every commit record.
   opt->durability_sync = 1;
   // Accepted, unused.
@@ -795,31 +795,31 @@ void sm_options_init(sm_options_t *opt) {
 }
 
 /* Create the database dbname. */
-int sm_mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_mkdb(sm1_env_t *env, const char *dbname, const sm1_options_t *opt) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     return mkdb(env, dbname, opt);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_mkdb: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_mkdb: out of memory");
   }
 }
 
 /* Delete the database dbname and all of its data. */
-int sm_rmdb(sm_env_t *env, const char *dbname) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_rmdb(sm1_env_t *env, const char *dbname) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     return rmdb(env, dbname);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_rmdb: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_rmdb: out of memory");
   }
 }
 
 /* List the databases in the home directory, in bytewise order. */
-int sm_lsdb(sm_env_t *env, sm_strlist_t **out) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_lsdb(sm1_env_t *env, sm1_strlist_t **out) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     return lsdb(env, out);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_lsdb: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_lsdb: out of memory");
   }
 }

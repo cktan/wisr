@@ -7,7 +7,7 @@
 #include "doctest.h"
 #include "util.h"
 
-#include "sm.h"
+#include "sm1.h"
 
 #include <signal.h>
 #include <stdint.h>
@@ -33,10 +33,10 @@ std::string crash_key(uint32_t i) {
  * lowest storeid listed, which is the first store created.
  * Returns 0 if there is none.
  */
-uint64_t first_store(sm_session_t *s) {
+uint64_t first_store(sm1_session_t *s) {
   uint64_t *list = nullptr;
   size_t n = 0;
-  if (sm_lsstore(s, &list, &n) != 0 || n == 0) {
+  if (sm1_lsstore(s, &list, &n) != 0 || n == 0) {
     return 0;
   }
   uint64_t store = list[0];
@@ -45,18 +45,18 @@ uint64_t first_store(sm_session_t *s) {
 }
 
 /* The number of rows in store, as s reads them. */
-uint32_t count_rows(sm_session_t *s, uint64_t store) {
-  sm_scan_t *c = sm_scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
+uint32_t count_rows(sm1_session_t *s, uint64_t store) {
+  sm1_scan_t *c = sm1_scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
   if (!c) {
     return UINT32_MAX;
   }
   uint32_t n = 0;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
+  while (sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
-  sm_scanend(c);
+  sm1_scanend(c);
   return n;
 }
 
@@ -82,25 +82,25 @@ bool read_full(int fd, void *buf, size_t n) {
  * index to stdout. Runs until killed.
  */
 int crash_child_main(const char *homedir) {
-  sm_env_t *env = sm_attach(homedir);
+  sm1_env_t *env = sm1_attach(homedir);
   if (!env) {
     return 2;
   }
-  sm_session_t *s = sm_opendb(env, "db", nullptr);
-  if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0) {
+  sm1_session_t *s = sm1_opendb(env, "db", nullptr);
+  if (!s || sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0) {
     return 3;
   }
   // Find the store, then leave the transaction that read it.
   uint64_t store = first_store(s);
   uint32_t next = store ? count_rows(s, store) : UINT32_MAX;
-  if (next == UINT32_MAX || sm_commit(s) != 0) {
+  if (next == UINT32_MAX || sm1_commit(s) != 0) {
     return 4;
   }
   for (uint32_t i = next;; i++) {
     std::string k = crash_key(i);
-    if (sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
-        sm_insert(s, store, k.data(), k.size(), "v", 1) != 0 ||
-        sm_commit(s) != 0) {
+    if (sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0 ||
+        sm1_insert(s, store, k.data(), k.size(), "v", 1) != 0 ||
+        sm1_commit(s) != 0) {
       return 5;
     }
     if (write(1, &i, sizeof(i)) != sizeof(i)) {
@@ -121,17 +121,17 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
   //    for some n covering every acknowledged commit.
   // 5. Repeat, each child continuing where recovery left off.
   tmpdir_t tmp;
-  REQUIRE(sm_init(tmp.path()) == 0);
+  REQUIRE(sm1_init(tmp.path()) == 0);
   {
-    sm_env_t *env = sm_attach(tmp.path());
+    sm1_env_t *env = sm1_attach(tmp.path());
     REQUIRE(env);
-    REQUIRE(sm_mkdb(env, "db", nullptr) == 0);
-    sm_session_t *s = sm_opendb(env, "db", nullptr);
+    REQUIRE(sm1_mkdb(env, "db", nullptr) == 0);
+    sm1_session_t *s = sm1_opendb(env, "db", nullptr);
     REQUIRE(s);
-    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
     mkstore(s);
-    REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_detach(env, 1) == 0);
+    REQUIRE(sm1_commit(s) == 0);
+    REQUIRE(sm1_detach(env, 1) == 0);
   }
 
   std::mt19937 rng(20260918);
@@ -170,11 +170,11 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
     }
     close(fds[0]);
 
-    sm_env_t *env = sm_attach(tmp.path());
-    REQUIRE_MESSAGE(env, sm_errmsg());
-    sm_session_t *s = sm_opendb(env, "db", nullptr);
-    REQUIRE_MESSAGE(s, sm_errmsg());
-    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    sm1_env_t *env = sm1_attach(tmp.path());
+    REQUIRE_MESSAGE(env, sm1_errmsg());
+    sm1_session_t *s = sm1_opendb(env, "db", nullptr);
+    REQUIRE_MESSAGE(s, sm1_errmsg());
+    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
     uint64_t store = first_store(s);
     REQUIRE(store != 0);
     uint32_t n = count_rows(s, store);
@@ -184,8 +184,8 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
       std::string k = crash_key(j);
       CHECK(get(s, store, k) == "v");
     }
-    REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_detach(env, 1) == 0);
+    REQUIRE(sm1_commit(s) == 0);
+    REQUIRE(sm1_detach(env, 1) == 0);
     acked = n;
   }
 }

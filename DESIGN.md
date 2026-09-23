@@ -22,7 +22,7 @@ format, sm3's catalog — are argued in that level's own
         │  type system · key encoding ·                │
         │  tuple format · relation of tuples         │
         └────────────────────┬─────────────────────────┘
-                             │  sm1/include/sm.h
+                             │  sm1/include/sm1.h
         ┌────────────────────┴─────────────────────────┐
         │  sm1/  MVCC storage manager                  │
         │  relations · transactions · isolation ·      │
@@ -36,10 +36,10 @@ format, sm3's catalog — are argued in that level's own
 ```
 
 sm2 is a client of sm1, nothing more: it holds no RocksDB
-handle of its own and reaches storage only through `sm_*`
+handle of its own and reaches storage only through `sm1_*`
 calls. sm3 stands in the same relation to sm2 — it never
 encodes a key or decodes a tuple itself — with one
-deliberate exception: `sm_lock`, which sm2 has nothing to
+deliberate exception: `sm1_lock`, which sm2 has nothing to
 add to and which sm3's DDL and index-build protocols are
 built on (`sm3/SM3_DESIGN.md` §2). That boundary is why each
 level's `OBJECTIVE.md` can promise it is "useful and
@@ -114,7 +114,7 @@ Decisions that constrain more than one level, gathered here
 so a change to one level does not silently violate another's
 design:
 
-- **The `sm_*` C API is the only channel between sm1 and
+- **The `sm1_*` C API is the only channel between sm1 and
   sm2.** sm2 may not read RocksDB directly, and may not
   depend on sm1's internals — the `SECINDEX.md`-style gap
   analysis in `sm1/` is how a missing primitive gets added
@@ -127,7 +127,7 @@ design:
   to agree bytewise is a corruption bug waiting to be
   written, so there is only one.
 - **sm3 reaches sm1 for locks, and for nothing else.** sm2
-  has nothing to add to `sm_lock`, and sm3's DDL and
+  has nothing to add to `sm1_lock`, and sm3's DDL and
   index-build protocols rest on it (`sm3/SM3_DESIGN.md` §2), so
   that one call is the sanctioned exception to sm3 speaking
   only to sm2. Every other sm1 facility sm3 needs arrives
@@ -150,14 +150,14 @@ design:
   `0x0001`–`0xFFFE` for indexes, `0xFFFF` for TOAST. sm3
   chooses the prefix; sm2 prepends and strips it and never
   interprets it (`sm2/SM2_DESIGN.md` §5), so sm2 never learns
-  what a table is. `DROP TABLE` is one `sm_rmstore`, sm1's O(1)
+  what a table is. `DROP TABLE` is one `sm1_rmstore`, sm1's O(1)
   column family drop; `DROP INDEX` is a range delete over its
   prefix, and index prefixes are never reused. The cost is
   that tables, partitions included, are bounded by the
   hundreds to low thousands of stores sm1 handles
   (`sm1/SM1_DESIGN.md` §13); accepted for v1 (`sm3/SM3_DESIGN.md`
   §4).
-- **The key budget is shared.** `SM_MAX_KEYLEN` (4096) bounds
+- **The key budget is shared.** `SM1_MAX_KEYLEN` (4096) bounds
   prefix, index columns and `rowno` together. sm2's encoder
   enforces it: an over-long primary key refuses the row, and an
   over-long index key is truncated, flagged and rechecked
@@ -201,7 +201,7 @@ design:
   it changes commit in one sm1 transaction, and recovery is
   RocksDB's alone (`PART4.md` §4, `sm3/SM3_DESIGN.md` §2).
 - **READ COMMITTED writes are resolved at sm3, not sm2.**
-  `SM_ERR_UPDATED` is answered by re-checking the
+  `SM1_ERR_UPDATED` is answered by re-checking the
   statement's filter against the newest image, and filters
   exist only at sm3. sm2 surfaces the error and offers
   `rel_read_latest`; sm3 does the re-check

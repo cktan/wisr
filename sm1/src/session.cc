@@ -1,5 +1,5 @@
 /*
- * session.cc -- sm_opendb and sm_closedb, and the environment's
+ * session.cc -- sm1_opendb and sm1_closedb, and the environment's
  * registry of open databases (SM1_DESIGN.md §1).
  */
 
@@ -20,7 +20,8 @@ namespace {
  * Find dbname in the registry, or open it and register it.
  * Called with env->mu held. Returns NULL with the error set.
  */
-db_t *find_or_open(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
+db_t *find_or_open(sm1_env_t *env, const char *dbname,
+                   const sm1_options_t *opt) {
   // Look for the database among those already open.
   auto it = env->dbs.find(dbname);
   // Reuse an open database: later sessions join it.
@@ -34,7 +35,7 @@ db_t *find_or_open(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
                      std::string(WISR_ROOT_DBNAME_PREFIX) + dbname, &val);
   // Fail if no database has this name.
   if (s.IsNotFound()) {
-    set_error(SM_ERR_NOTFOUND, "database {} does not exist", dbname);
+    set_error(SM1_ERR_NOTFOUND, "database {} does not exist", dbname);
     return nullptr;
   }
   // Fail on any other root db error.
@@ -44,7 +45,7 @@ db_t *find_or_open(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   }
   // Reject a malformed dbid.
   if (val.size() != 8) {
-    set_error(SM_ERR_CORRUPT, "bad dbid for database {}", dbname);
+    set_error(SM1_ERR_CORRUPT, "bad dbid for database {}", dbname);
     return nullptr;
   }
   // Open the database: its first session in this process.
@@ -56,20 +57,20 @@ db_t *find_or_open(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   return db;
 }
 
-/* sm_opendb, minus the out-of-memory guard. */
-sm_session_t *open_session(sm_env_t *env, const char *dbname,
-                           const sm_options_t *opt) {
+/* sm1_opendb, minus the out-of-memory guard. */
+sm1_session_t *open_session(sm1_env_t *env, const char *dbname,
+                            const sm1_options_t *opt) {
   // Reject a NULL environment.
   if (!env) {
-    set_error(SM_ERR_INVALID, "sm_opendb: env is NULL");
+    set_error(SM1_ERR_INVALID, "sm1_opendb: env is NULL");
     return nullptr;
   }
   // Validate the database name.
-  if (check_name(dbname, SM_MAX_DBNAME, "database") != 0) {
+  if (check_name(dbname, SM1_MAX_DBNAME, "database") != 0) {
     return nullptr;
   }
   // Allocate the session before taking the lock.
-  std::unique_ptr<sm_session_t> s(new sm_session_t);
+  std::unique_ptr<sm1_session_t> s(new sm1_session_t);
   // Hold the env mutex while touching the registries.
   std::lock_guard<std::mutex> guard(env->mu);
   // Find the open database, or open it.
@@ -83,7 +84,7 @@ sm_session_t *open_session(sm_env_t *env, const char *dbname,
   s->db = db;
   // Count the session against the database.
   db->nsessions++;
-  // Register the session for sm_detach.
+  // Register the session for sm1_detach.
   env->sessions.insert(s.get());
   return s.release();
 }
@@ -91,13 +92,13 @@ sm_session_t *open_session(sm_env_t *env, const char *dbname,
 } // namespace
 
 /* Open dbname and start a session on it. */
-sm_session_t *sm_opendb(sm_env_t *env, const char *dbname,
-                        const sm_options_t *opt) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+sm1_session_t *sm1_opendb(sm1_env_t *env, const char *dbname,
+                          const sm1_options_t *opt) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     return open_session(env, dbname, opt);
   } catch (const std::bad_alloc &) {
-    set_error(SM_ERR_NOMEM, "sm_opendb: out of memory");
+    set_error(SM1_ERR_NOMEM, "sm1_opendb: out of memory");
     return nullptr;
   }
 }
@@ -106,7 +107,7 @@ sm_session_t *sm_opendb(sm_env_t *env, const char *dbname,
  * Close a session: its cursors, then its active transaction.
  * The last session on a database closes the database.
  */
-int sm_closedb(sm_session_t *session) {
+int sm1_closedb(sm1_session_t *session) {
   // Closing NULL is a no-op.
   if (!session) {
     return 0;
@@ -115,10 +116,10 @@ int sm_closedb(sm_session_t *session) {
   xct_end_scans(session);
   // Abort an active transaction; a prepared one stays in doubt.
   if (session->active) {
-    sm_abort(session);
+    sm1_abort(session);
   }
   // Keep what is needed after the session is freed.
-  sm_env_t *env = session->env;
+  sm1_env_t *env = session->env;
   db_t *db = session->db;
   {
     // Hold the env mutex while updating the registries.

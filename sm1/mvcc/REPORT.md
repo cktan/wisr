@@ -49,8 +49,8 @@ The suite is in four families:
 * **B — write-write conflicts (`b01`–`b29`).** Row locks,
   first-committer-wins, blocking and the `blocks` protocol,
   deadlock detection, and retryable against non-retryable
-  errors (`SM_ERR_CONFLICT`, `SM_ERR_DEADLOCK`,
-  `SM_ERR_DUPKEY`, `SM_ERR_NOTFOUND`).
+  errors (`SM1_ERR_CONFLICT`, `SM1_ERR_DEADLOCK`,
+  `SM1_ERR_DUPKEY`, `SM1_ERR_NOTFOUND`).
 * **C — read-write conflicts (`c01`–`c31`).** Cahill's SSI:
   SIREAD locks, rw-antidependency edges, pivots, false-abort
   bounds, point reads, predicate ranges, early cursor close.
@@ -77,8 +77,8 @@ are recorded so the next reader does not re-open them.
 
 2. **`c17` leaves T3 open on purpose.** T3 reads R1 to make
    an edge into T2 and never ends. `~run_t()` in
-   `driver/run.cc` calls `sm_closedb` on every session, and
-   `sm_closedb` aborts an active transaction
+   `driver/run.cc` calls `sm1_closedb` on every session, and
+   `sm1_closedb` aborts an active transaction
    (`src/session.cc`), so the script is clean as written. An
    explicit `@8 T3 abort` would only make the lifetime
    visible to a reader.
@@ -95,8 +95,8 @@ are recorded so the next reader does not re-open them.
 
 ## 3. Gap 9 — CLOSED: `savepoint` and `rollback` in the driver
 
-**In the engine.** `sm_savepoint` and `sm_rollback`
-(`include/sm.h`) mark the undo list and unwind to it:
+**In the engine.** `sm1_savepoint` and `sm1_rollback`
+(`include/sm1.h`) mark the undo list and unwind to it:
 versions written after the mark are deleted, `seq_hwm` is
 rewound, cursors opened after the mark are closed, locks
 taken after the mark are released, and the SSI read set is
@@ -128,7 +128,7 @@ set it keeps.
 One correction to the estimate: `rollback` takes an argument
 now. Savepoints nest, so `savepoint` prints the depth it made
 rather than `ok`, and `rollback <depth>` names the mark. The
-`sm_forget` half of the stack has no verb yet; nothing needed
+`sm1_forget` half of the stack has no verb yet; nothing needed
 one, and it is the same shape when something does.
 
 `c29` is the claim that had no coverage anywhere: a read
@@ -140,33 +140,33 @@ that write skew would commit at S/S.
 
 ## 4. Gap 10 — CLOSED: a read of a store against a drop of it
 
-**In the engine.** `sm_rmstore` is transactional, and it does
+**In the engine.** `sm1_rmstore` is transactional, and it does
 not reclaim space at commit: a transaction holding an older
 snapshot must still find the store and read its rows, and
 the CF survives until `gc_watermark` passes the drop
-(`include/sm.h`, `SM1_DESIGN.md` §11 and §8.3). Under
+(`include/sm1.h`, `SM1_DESIGN.md` §11 and §8.3). Under
 SERIALIZABLE more is claimed: resolving a storeid is a point
 read of the catalog key `"R" | be64(storeid)` in `store.0`, taken
-whether or not the storeid is found, so a concurrent `sm_rmstore`
-of that storeid is an rw-edge. That one is built —
+whether or not the storeid is found, so a concurrent
+`sm1_rmstore` of that storeid is an rw-edge. That one is built —
 `catalog_lookup()` in `src/catalog.cc` reads through
 `access_read(s, 0, ...)`, which takes the SIREAD — and
 `SM1_DESIGN.md` §11 gives the write skew it exists to stop:
 
 ```
-T1: sm_read(S, x)             T2: sm_read(R, k)    # looks up R
-T1: sm_rmstore(R)             T2: sm_update(S, x)
+T1: sm1_read(S, x)             T2: sm1_read(R, k)    # looks up R
+T1: sm1_rmstore(R)             T2: sm1_update(S, x)
 ```
 
 **What is covered.** `test/test_access.cc` takes DDL through
 commit and abort in one session. `test/test_lock.cc` pairs a
-drop against a *drop* — blocked, then `SM_ERR_CONFLICT`.
+drop against a *drop* — blocked, then `SM1_ERR_CONFLICT`.
 `test/test_gc.cc` has the older snapshot reading a dropped
 store's rows, at REPEATABLE READ, incidentally, as a
 watermark test.
 
 **The gap.** No test anywhere pairs SERIALIZABLE with
-`sm_rmstore`, so both halves are asserted by the design and
+`sm1_rmstore`, so both halves are asserted by the design and
 checked by nothing: the catalog SIREAD a lookup takes, and
 the write skew it is there to stop. (§11's lookup cache is
 the third rule in that paragraph and needs nothing yet: it
@@ -216,17 +216,17 @@ count differs.
 
 ---
 
-## 5. Gap 11 — CLOSED: explicit row locking (`sm_lock`) in the driver
+## 5. Gap 11 — CLOSED: explicit row locking (`sm1_lock`) in the driver
 
-**In the engine.** `sm_lock` (`include/sm.h`, `src/lockmgr.cc`)
-takes a row lock in `SM_LOCK_SHARED` or `SM_LOCK_EXCLUSIVE` mode
-without writing: SQL's `SELECT ... FOR SHARE` and `FOR UPDATE`.
-Multiple shared holders coexist; exclusive requests block.
-Upgrading from shared to exclusive waits for other shared holders;
-two transactions upgrading the same key deadlock. After the
-lock is held, `access_check_current` validates that the key was
-not committed after the transaction's begin snapshot, failing
-with `SM_ERR_CONFLICT` otherwise.
+**In the engine.** `sm1_lock` (`include/sm1.h`, `src/lockmgr.cc`)
+takes a row lock in `SM1_LOCK_SHARED` or `SM1_LOCK_EXCLUSIVE`
+mode without writing: SQL's `SELECT ... FOR SHARE` and `FOR
+UPDATE`. Multiple shared holders coexist; exclusive requests
+block. Upgrading from shared to exclusive waits for other shared
+holders; two transactions upgrading the same key deadlock. After
+the lock is held, `access_check_current` validates that the key
+was not committed after the transaction's begin snapshot, failing
+with `SM1_ERR_CONFLICT` otherwise.
 
 **What it cost.** A `lock <row> <shared|exclusive>` verb in
 `driver/parse.cc` and `driver/run.cc`, then the four
@@ -249,12 +249,13 @@ around them.
 
 ---
 
-## 6. Gap 12 — CLOSED: cursor seeking (`sm_scan_seek`)
+## 6. Gap 12 — CLOSED: cursor seeking (`sm1_scan_seek`)
 
-**In the engine.** `sm_scan_seek` (`include/sm.h`, `src/access.cc`)
-repositions an open scan forward within its bounds. Under
-`SM_XCT_SERIALIZABLE`, keys skipped over still count as read:
-the predicate covers start through the furthest key reached.
+**In the engine.** `sm1_scan_seek` (`include/sm1.h`,
+`src/access.cc`) repositions an open scan forward within its
+bounds. Under `SM1_XCT_SERIALIZABLE`, keys skipped over still
+count as read: the predicate covers start through the furthest
+key reached.
 
 **What it cost.** A `seek <cursor> <key>` verb in
 `driver/parse.cc` and `driver/run.cc`, and the two scripts it
@@ -275,9 +276,10 @@ argument.
 
 ## 7. Gap 13 — CLOSED: Read Committed level and statement boundaries
 
-**In the engine.** `SM_XCT_READ_COMMITTED` takes a fresh snapshot
-per statement. `sm_stmt_begin` (`include/sm.h`, `src/xct.cc`)
-pins that snapshot across multiple calls within one statement.
+**In the engine.** `SM1_XCT_READ_COMMITTED` takes a fresh
+snapshot per statement. `sm1_stmt_begin` (`include/sm1.h`,
+`src/xct.cc`) pins that snapshot across multiple calls within one
+statement.
 
 **What it cost.** `session <name> rc` and a `stmt` verb, and
 two scripts:

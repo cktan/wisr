@@ -5,7 +5,7 @@
 #ifndef WISR_ENV_H
 #define WISR_ENV_H
 
-#include "sm.h"
+#include "sm1.h"
 
 #include <stdint.h>
 
@@ -28,7 +28,7 @@ struct db_t;
 #define WISR_ROOT_NEXT_DBID "Mnext_dbid"
 #define WISR_ROOT_VERSION "Mversion"
 
-struct sm_env_t {
+struct sm1_env_t {
   std::string homedir;
   rocksdb::DB *root = nullptr; /* {homedir}/global/root */
   std::mutex mu;               /* guards the root db and the two sets below */
@@ -36,17 +36,17 @@ struct sm_env_t {
   /* Open databases by name, shared by their sessions. */
   std::map<std::string, wisr::db_t *> dbs;
 
-  /* Every open session, for sm_detach. */
-  std::set<sm_session_t *> sessions;
+  /* Every open session, for sm1_detach. */
+  std::set<sm1_session_t *> sessions;
 
   /* Close the root db. */
-  ~sm_env_t();
+  ~sm1_env_t();
 };
 
 namespace wisr {
 
 /* The directory of database dbid: {homedir}/base/{dbid}. */
-std::string env_db_path(const sm_env_t *env, uint64_t dbid);
+std::string env_db_path(const sm1_env_t *env, uint64_t dbid);
 
 /*
  * Remove a database directory: DestroyDB for RocksDB's files,

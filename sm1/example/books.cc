@@ -15,13 +15,13 @@
  *
  * The program may be run again on the same home directory:
  * the database is created unless it exists, the table unless
- * sm_lsstore already lists one -- the library hands out storeids,
+ * sm1_lsstore already lists one -- the library hands out storeids,
  * so the table is found again by listing, not by a constant --
  * and rows are upserted: inserted, or updated if the id is
  * taken.
  */
 
-#include "sm.h"
+#include "sm1.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -42,9 +42,9 @@ struct book_t {
 
 /* Exit with wisr's error message if rc reports a failure. */
 void check(int rc, const char *what) {
-  // Any negative return is an error; sm_errmsg() says which.
+  // Any negative return is an error; sm1_errmsg() says which.
   if (rc < 0) {
-    fprintf(stderr, "%s: %s (error %d)\n", what, sm_errmsg(), sm_errno());
+    fprintf(stderr, "%s: %s (error %d)\n", what, sm1_errmsg(), sm1_errno());
     exit(1);
   }
 }
@@ -127,24 +127,24 @@ void print_book(const book_t &b) {
 
 /*
  * Insert b, or update it if its id is already taken: wisr has
- * no upsert, so try the insert and fall back on SM_ERR_DUPKEY.
+ * no upsert, so try the insert and fall back on SM1_ERR_DUPKEY.
  */
-void upsert_book(sm_session_t *s, uint64_t store, const book_t &b) {
+void upsert_book(sm1_session_t *s, uint64_t store, const book_t &b) {
   std::string key = encode_key(b.id);
   std::string val = encode_value(b);
   // Try the insert first.
-  if (sm_insert(s, store, key.data(), key.size(), val.data(), val.size()) ==
+  if (sm1_insert(s, store, key.data(), key.size(), val.data(), val.size()) ==
       0) {
     return;
   }
   // Any failure but a taken key is a real error.
-  if (sm_errno() != SM_ERR_DUPKEY) {
-    check(-1, "sm_insert");
+  if (sm1_errno() != SM1_ERR_DUPKEY) {
+    check(-1, "sm1_insert");
   }
   // The id exists: replace its value instead.
-  check(sm_update(s, store, key.data(), key.size(), val.data(), val.size(),
-                  nullptr, nullptr),
-        "sm_update");
+  check(sm1_update(s, store, key.data(), key.size(), val.data(), val.size(),
+                   nullptr, nullptr),
+        "sm1_update");
 }
 
 } // namespace
@@ -153,36 +153,36 @@ void upsert_book(sm_session_t *s, uint64_t store, const book_t &b) {
 int main(int argc, char **argv) {
   const char *homedir = argc > 1 ? argv[1] : "books-home";
 
-  // Make the home directory; sm_init requires it to exist.
+  // Make the home directory; sm1_init requires it to exist.
   if (mkdir(homedir, 0700) != 0 && errno != EEXIST) {
     perror(homedir);
     return 1;
   }
   // Prepare it as a wisr home directory, once in its life.
-  if (sm_init(homedir) != 0 && sm_errno() != SM_ERR_EXISTS) {
-    check(-1, "sm_init");
+  if (sm1_init(homedir) != 0 && sm1_errno() != SM1_ERR_EXISTS) {
+    check(-1, "sm1_init");
   }
   // Attach: this process now owns the home directory.
-  sm_env_t *env = sm_attach(homedir);
+  sm1_env_t *env = sm1_attach(homedir);
   if (!env) {
-    check(-1, "sm_attach");
+    check(-1, "sm1_attach");
   }
   // Create the database, unless an earlier run did.
-  if (sm_mkdb(env, "library", nullptr) != 0 && sm_errno() != SM_ERR_EXISTS) {
-    check(-1, "sm_mkdb");
+  if (sm1_mkdb(env, "library", nullptr) != 0 && sm1_errno() != SM1_ERR_EXISTS) {
+    check(-1, "sm1_mkdb");
   }
   // Open a session on it.
-  sm_session_t *s = sm_opendb(env, "library", nullptr);
+  sm1_session_t *s = sm1_opendb(env, "library", nullptr);
   if (!s) {
-    check(-1, "sm_opendb");
+    check(-1, "sm1_opendb");
   }
 
   // List the tables, and create book in the same transaction
   // unless it is listed; DDL is transactional.
-  check(sm_begin(s, SM_XCT_REPEATABLE_READ), "sm_begin");
+  check(sm1_begin(s, SM1_XCT_REPEATABLE_READ), "sm1_begin");
   uint64_t *stores = nullptr;
   size_t nstores = 0;
-  check(sm_lsstore(s, &stores, &nstores), "sm_lsstore");
+  check(sm1_lsstore(s, &stores, &nstores), "sm1_lsstore");
   // The library allocates storeids, so an earlier run's book is
   // found again as the lowest storeid listed: the first store
   // this database ever had.
@@ -195,10 +195,10 @@ int main(int argc, char **argv) {
   // The list is the library's; release it.
   free(stores);
   if (book == 0) {
-    check(sm_mkstore(s, &book), "sm_mkstore");
+    check(sm1_mkstore(s, &book), "sm1_mkstore");
     printf("created book (storeid %llu)\n", (unsigned long long)book);
   }
-  check(sm_commit(s), "sm_commit");
+  check(sm1_commit(s), "sm1_commit");
 
   // Insert a few books in one transaction, then commit them.
   const book_t books[] = {
@@ -208,22 +208,22 @@ int main(int argc, char **argv) {
       {3, "Serializable Isolation for Snapshot Databases", "Michael Cahill"},
       {4, "Architecture of a Database System", "Joseph Hellerstein"},
   };
-  check(sm_begin(s, SM_XCT_REPEATABLE_READ), "sm_begin");
+  check(sm1_begin(s, SM1_XCT_REPEATABLE_READ), "sm1_begin");
   for (const book_t &b : books) {
     upsert_book(s, book, b);
   }
-  check(sm_commit(s), "sm_commit");
+  check(sm1_commit(s), "sm1_commit");
   printf("inserted %zu books\n", sizeof(books) / sizeof(books[0]));
 
   // Read and scan in one transaction: both see the same snapshot.
-  check(sm_begin(s, SM_XCT_REPEATABLE_READ), "sm_begin");
+  check(sm1_begin(s, SM1_XCT_REPEATABLE_READ), "sm1_begin");
 
   // Read one row by its key.
   std::string key = encode_key(3);
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm_read(s, book, key.data(), key.size(), &data, &len);
-  check(r, "sm_read");
+  int r = sm1_read(s, book, key.data(), key.size(), &data, &len);
+  check(r, "sm1_read");
   printf("\nread id 3:\n");
   // 1 means no such row, which is not an error.
   if (r == 1) {
@@ -240,14 +240,14 @@ int main(int argc, char **argv) {
 
   // Scan every row: NULL bounds mean from the first key to the last.
   printf("\nscan all books:\n");
-  sm_scan_t *c = sm_scan(s, book, nullptr, 0, 0, nullptr, 0, 0);
+  sm1_scan_t *c = sm1_scan(s, book, nullptr, 0, 0, nullptr, 0, 0);
   if (!c) {
-    check(-1, "sm_scan");
+    check(-1, "sm1_scan");
   }
   const char *k = nullptr;
   size_t klen = 0;
   // 0 is a row, 1 the end of the range, -1 an error.
-  while ((r = sm_scannxt(c, &k, &klen, &data, &len)) == 0) {
+  while ((r = sm1_scannxt(c, &k, &klen, &data, &len)) == 0) {
     // Check the key's size before decoding it.
     if (klen != 8) {
       fprintf(stderr, "malformed key\n");
@@ -260,14 +260,14 @@ int main(int argc, char **argv) {
     }
     print_book(b);
   }
-  check(r, "sm_scannxt");
+  check(r, "sm1_scannxt");
   // Close the cursor, releasing its snapshot.
-  sm_scanend(c);
+  sm1_scanend(c);
   // A read-only transaction commits trivially.
-  check(sm_commit(s), "sm_commit");
+  check(sm1_commit(s), "sm1_commit");
 
   // Close the session, then detach from the home directory.
-  check(sm_closedb(s), "sm_closedb");
-  check(sm_detach(env, 0), "sm_detach");
+  check(sm1_closedb(s), "sm1_closedb");
+  check(sm1_detach(env, 0), "sm1_detach");
   return 0;
 }

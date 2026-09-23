@@ -40,7 +40,7 @@ int restore_prepared(db_t *db) {
     }
     // Decode the xid.
     uint64_t xid = get_be64(it->key().data());
-    sm_session_t *g = nullptr;
+    sm1_session_t *g = nullptr;
     // Rebuild a PREPARED record; skip every other state.
     if (!xct_decode_prepared(db, xid, it->value(), &g)) {
       continue; // not a PREPARED record
@@ -65,7 +65,7 @@ int restore_prepared(db_t *db) {
     // Register it under its gid for listing and resolution.
     db->prepared[g->prepared_gid] = g;
     // Tell the operator: it holds locks until a coordinator acts.
-    log_msg(SM_LOG_INFO,
+    log_msg(SM1_LOG_INFO,
             "database {}: restored prepared transaction {} in doubt",
             db->name.c_str(), g->prepared_gid.c_str());
   }
@@ -100,7 +100,7 @@ int live_storeids(db_t *db, std::set<uint64_t> *live) {
     }
     // Reject a malformed catalog version.
     if (!version_decode_value(it->value(), &v)) {
-      return set_error(SM_ERR_CORRUPT, "malformed catalog version");
+      return set_error(SM1_ERR_CORRUPT, "malformed catalog version");
     }
     uint64_t commit_ts;
     // Resolve an unstamped version's writer.
@@ -133,7 +133,7 @@ int live_storeids(db_t *db, std::set<uint64_t> *live) {
 /*
  * Drop every store CF that neither the catalog nor a prepared
  * transaction's created list names (§9.1 step 6): a crash inside
- * an uncommitted sm_mkstore, or a committed sm_rmstore whose CF GC
+ * an uncommitted sm1_mkstore, or a committed sm1_rmstore whose CF GC
  * had not yet dropped.
  */
 int sweep_orphan_cfs(db_t *db) {
@@ -160,7 +160,8 @@ int sweep_orphan_cfs(db_t *db) {
     if (db_drop_store_cf(db, storeid) != 0) {
       return -1;
     }
-    log_msg(SM_LOG_INFO, "database {}: dropped orphaned column family store.{}",
+    log_msg(SM1_LOG_INFO,
+            "database {}: dropped orphaned column family store.{}",
             db->name.c_str(), storeid);
   }
   return 0;

@@ -13,7 +13,7 @@ This document is the design of record. It follows the decisions in
 | --- | --- |
 | Isolation mechanism | Snapshot isolation everywhere; SERIALIZABLE via SSI (optimistic) |
 | Uncommitted writes | Written eagerly into RocksDB, resolved via a commit-status table |
-| `sm_prepare` | Real 2PC with a durable prepare record |
+| `sm1_prepare` | Real 2PC with a durable prepare record |
 | Deployment | One process, many threads, one shared RocksDB instance |
 
 ---
@@ -38,16 +38,16 @@ secondary index a layer above builds out of stores
 store with inverted key bytes and scanning it forward.
 
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
-`sm.h` and the design in this document, nothing more. Phase 2
+`sm1.h` and the design in this document, nothing more. Phase 2
 adds the API a secondary-index layer built on top of it needs.
 Every gap `SECINDEX.md` lists is now closed or decided:
-`sm_lsstore`, which came with naming stores by storeid (§11);
-`sm_stmt_begin`, for read-committed statement snapshots
-(§6.2); the savepoint stack with `sm_forget` (§6.5);
-`sm_lock`, whose shared mode makes a safe index build
-possible (§5.1); `sm_scan_seek`, which repositions a cursor
+`sm1_lsstore`, which came with naming stores by storeid (§11);
+`sm1_stmt_begin`, for read-committed statement snapshots
+(§6.2); the savepoint stack with `sm1_forget` (§6.5);
+`sm1_lock`, whose shared mode makes a safe index build
+possible (§5.1); `sm1_scan_seek`, which repositions a cursor
 instead of reopening it (§10.2); and the old row returned by
-`sm_update` and `sm_delete` (§5.3). Descending scans are the
+`sm1_update` and `sm1_delete` (§5.3). Descending scans are the
 one gap it lists that will not be closed at all, and a
 batched read is left until a benchmark asks for it.
 
@@ -56,8 +56,8 @@ batched read is left until a benchmark asks for it.
 - A `session_t` is used by one thread at a time. Concurrent use of one
   session from two threads is a caller error, not a supported mode.
 - A process reaches its databases through an environment
-  (`sm_env_t`) on a home directory. `sm_init` prepares a
-  home directory once; `sm_attach` gives one process, and
+  (`sm1_env_t`) on a home directory. `sm1_init` prepares a
+  home directory once; `sm1_attach` gives one process, and
   one environment in it, the directory and every database
   under it. The library does not enforce that: keeping to
   one attached process is the caller's job (§3.5). A
@@ -70,9 +70,9 @@ batched read is left until a benchmark asks for it.
   one RocksDB handle, held in the environment's registry of
   open databases.
 - Keys and values are arbitrary byte strings. Keys are ordered
-  bytewise (`memcmp`), which is what `sm_scan` exposes.
+  bytewise (`memcmp`), which is what `sm1_scan` exposes.
 - Implementation language is C++ (RocksDB's native API), exposing a C
-  ABI for the `sm_*` surface.
+  ABI for the `sm1_*` surface.
 
 ---
 
@@ -80,7 +80,7 @@ batched read is left until a benchmark asks for it.
 
 ```
         ┌──────────────────────────────────────────────────────┐
-        │  sm_* C API   (session, xct, store, insert/read/scan)│
+        │  sm1_* C API  (session, xct, store, insert/read/scan)│
         └───────────────────────┬──────────────────────────────┘
                                 │
    ┌────────────┬───────────────┼───────────────┬──────────────┐
@@ -169,7 +169,7 @@ below, and unrelated to our `seq`.
 Notes on the encoding:
 
 - **`storeid`** is a 64-bit id the storage manager allocates at
-  `sm_mkstore` and hands to the caller. It names the column
+  `sm1_mkstore` and hands to the caller. It names the column
   family, `store.<storeid>`. A storeid is never reused (§4.2), so
   it never names two stores, and a dropped store is removed with
   one `DropColumnFamily`. The key itself carries no storeid; the
@@ -203,7 +203,7 @@ Notes on the encoding:
   (`61 62 …`). Scans would return `"ab"` before `"a"`, and a
   point read could stop early on a foreign key. With the custom
   comparator, a key's versions are contiguous and userkeys
-  sort in `memcmp` order, which is the order `sm_scan` exposes.
+  sort in `memcmp` order, which is the order `sm1_scan` exposes.
 
   Every key handed to RocksDB for a store CF — writes, seek
   targets, iterator bounds — carries the full 12-byte tail.
@@ -236,17 +236,17 @@ value = { state: PREPARED | COMMITTED | ABORTED,
 
 Only **writing** transactions ever get an entry, plus read-only
 ones that prepare (§8.4), and only at prepare/commit/abort time —
-nothing is written at `sm_begin`. Absence of a record is
+nothing is written at `sm1_begin`. Absence of a record is
 meaningful (§3.4).
 
 The `writeset` is carried only in a `PREPARED` record, and only
 so that recovery can re-acquire the row locks a prepared
 transaction still holds. `created` lists the stores the
-transaction made with `sm_mkstore`, so that recovery keeps their
+transaction made with `sm1_mkstore`, so that recovery keeps their
 column families (§9.1); `dropped` lists those it removed with
-`sm_rmstore`, so that a commit after restart still queues their
+`sm1_rmstore`, so that a commit after restart still queues their
 column families for removal (§8.3). `prepared_at` is the
-wall-clock time of `sm_prepare`, reported by `sm_list_prepared`
+wall-clock time of `sm1_prepare`, reported by `sm1_list_prepared`
 (§8.5); it must be durable because the listing is mostly needed
 after a restart. All four are dropped when the record flips to
 COMMITTED or ABORTED. For a prepared transaction with a very
@@ -317,8 +317,8 @@ A `dbname` is a caller's string, not a path component
 **root db**, `{homedir}/global/root`: an ordinary RocksDB
 with the default column family, the bytewise comparator,
 and none of the machinery above. It is not an
-`sm_session_t` database, has no `CF:txn`, `CF:meta`, or
-catalog, and is unreachable through `sm_opendb`. It is the
+`sm1_session_t` database, has no `CF:txn`, `CF:meta`, or
+catalog, and is unreachable through `sm1_opendb`. It is the
 `pg_database` of this design, and it sits in `global` for
 the same reason: it describes the whole home directory
 rather than any one database in it.
@@ -335,13 +335,13 @@ share: whatever a caller names a database, the name never
 reaches the filesystem, and `base` cannot collide with
 `global`.
 
-`sm_init` builds all of this once in a home directory's
+`sm1_init` builds all of this once in a home directory's
 life: `base`, `global`, the root db, and the `"version"`
 key in it. It takes no lock, because `mkdir` settles a race
-by itself — the loser sees `EEXIST`. `sm_attach` then opens
-the root db and checks that version, and `sm_detach` closes
+by itself — the loser sees `EEXIST`. `sm1_attach` then opens
+the root db and checks that version, and `sm1_detach` closes
 it. Nothing creates a home directory
-implicitly, so `sm_attach` has no first-use branch and a
+implicitly, so `sm1_attach` has no first-use branch and a
 mistyped path is an error rather than a new empty home.
 
 **One process per home directory is the caller's rule.**
@@ -350,20 +350,20 @@ several processes serializes their use of a home directory
 itself. RocksDB still locks each database directory it
 opens, the root db included, so a second attach usually
 fails there, but only per database; the work that spans the
-home directory — the sweep of `base` at attach, `sm_mkdb`
-choosing a `dbid`, `sm_rmdb` checking for open sessions —
+home directory — the sweep of `base` at attach, `sm1_mkdb`
+choosing a `dbid`, `sm1_rmdb` checking for open sessions —
 assumes it is alone, and a second process breaks it.
 
-`sm_detach` refuses while sessions are open: after it
+`sm1_detach` refuses while sessions are open: after it
 returns the caller may hand the home directory to another
 process, which must not find this one's sessions still
 writing to it. Its `force` flag closes those sessions
-first, by the same path `sm_closedb` takes, so a caller
+first, by the same path `sm1_closedb` takes, so a caller
 winding down — especially after an error, when it may not
 be able to walk its own session list — has one call that
 always completes. Force changes nothing about what closing
 a session means: a prepared transaction stays in doubt and
-is found again by the recovery of the next `sm_opendb`
+is found again by the recovery of the next `sm1_opendb`
 (§9.1), because it is durable and owned by its
 coordinator, not by the process that happened to prepare
 it.
@@ -375,15 +375,15 @@ control beyond a mutex; writes to it are synchronous.
 points at is garbage, and the two operations are ordered so
 that a crash can only ever leave that:
 
-- `sm_mkdb` bumps `next_dbid` durably, creates
+- `sm1_mkdb` bumps `next_dbid` durably, creates
   `{homedir}/base/{dbid}` with its `CF:txn`, `CF:meta`,
   and `CF:store.0`, and only then commits
   `"D" | dbname → dbid`.
-- `sm_rmdb` deletes `"D" | dbname`, and only then runs
+- `sm1_rmdb` deletes `"D" | dbname`, and only then runs
   `rocksdb::DestroyDB`.
 
 Neither can leave a name pointing at a directory that is
-missing or unbuilt. `sm_attach` sweeps the other way: every
+missing or unbuilt. `sm1_attach` sweeps the other way: every
 entry of `base` whose `dbid` is in no `"D"` row is
 destroyed, before any database is opened. A `dbid` is never
 reused, on the same reasoning as a `storeid` (§4.2), so the
@@ -407,8 +407,8 @@ A single monotonically increasing 64-bit atomic counter,
 transaction's **id is its first-write timestamp**: `xid == start_ts`.
 Read-only transactions never allocate one.
 
-- `sm_begin` takes a **snapshot**: `snapshot_ts = visible_ts` (§4.3).
-  It does *not* burn a counter value.
+- `sm1_begin` takes a **snapshot**: `snapshot_ts = visible_ts`
+  (§4.3). It does *not* burn a counter value.
 - The first write in a transaction allocates `xid = global_ts++`.
   Because `snapshot_ts <= visible_ts < xid`, always `xid > snapshot_ts`.
 - Every write allocates a **write timestamp** `wts = global_ts++`
@@ -534,21 +534,21 @@ A tombstone that is visible means *the key does not exist*.
 
 ## 5. Write path and write-write conflicts
 
-Writes are eager: `sm_insert`/`sm_update`/`sm_delete` put a version
-into RocksDB immediately, before commit.
+Writes are eager: `sm1_insert`/`sm1_update`/`sm1_delete` put a
+version into RocksDB immediately, before commit.
 
 ```
-sm_update(storeid, k, v):
+sm1_update(storeid, k, v):
   1. catalog.lookup(storeid)                           # MVCC read, §11
   2. lock   = lockmgr.acquire_x(storeid, k, T)          # blocking, §5.1
   3. latest = newest own version of (storeid, k) visible to T  # §4.4
      if latest is absent:
          latest = newest committed version of (storeid, k)
          if latest.commit_ts > T.snapshot_ts:
-             RR, SER: abort with SM_ERR_CONFLICT        # §5.2
-             RC: SM_ERR_UPDATED, unless T.lock(k).latest
+             RR, SER: abort with SM1_ERR_CONFLICT        # §5.2
+             RC: SM1_ERR_UPDATED, unless T.lock(k).latest
                  (an insert: no check)                   # §5.4
-     if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
+     if latest is absent or tombstone: SM1_ERR_NOTFOUND  # (insert: DUPKEY)
      if old wanted: copy latest's payload into the session buffer  # §5.3
   4. if T.xid == 0: T.xid = global_ts++
   5. wts = global_ts++                                  # after the lock, §4.1
@@ -564,7 +564,7 @@ inserted can be updated and a key it deleted can be re-inserted.
 An own version still visible under `seq_hwm` means the row lock
 has been held since that write, so no other transaction can have
 committed `k` in between and the conflict check is skipped. Own
-versions undone by `sm_rollback` are invisible (§6.5), and the
+versions undone by `sm1_rollback` are invisible (§6.5), and the
 check falls through to the committed version as if they had
 never been written.
 
@@ -574,24 +574,24 @@ the commit record does (§8.2).
 
 ### 5.3 The old row
 
-`sm_update` and `sm_delete` hand back the row they replace,
+`sm1_update` and `sm1_delete` hand back the row they replace,
 through out-parameters a caller may pass as NULL. It costs
 nothing to produce: step 3 already seeks to the deciding
 version and decodes its value to learn whether the key
 exists, and until now threw the payload away. A layer
 maintaining secondary indexes needs that value — the old
 entries to delete are computed from it — and without this it
-paid a whole `sm_read`, an iterator and a seek of its own,
+paid a whole `sm1_read`, an iterator and a seek of its own,
 for something the write had in hand.
 
-The bytes go in the session's read buffer, the one `sm_read`
+The bytes go in the session's read buffer, the one `sm1_read`
 uses, so either call invalidates what the other returned.
 Sharing it is deliberate: one buffer per session, one rule to
 state, and a caller that needs the value to outlive the next
-call copies it, exactly as it must after `sm_read`.
+call copies it, exactly as it must after `sm1_read`.
 
 The value is only produced for a live version. A write that
-fails — `SM_ERR_NOTFOUND` on a missing key, a conflict, a
+fails — `SM1_ERR_NOTFOUND` on a missing key, a conflict, a
 deadlock — reports no old row.
 
 ### 5.1 Row locks
@@ -600,7 +600,7 @@ An in-memory hash table, `(storeid, userkey)` → the
 transactions holding it. A lock is held **shared** by any
 number of them or **exclusive** by one; the compatibility
 table is the usual one, S/S being the only pair that
-coexists. A write takes it exclusive, `sm_lock` takes either,
+coexists. A write takes it exclusive, `sm1_lock` takes either,
 and a plain read still takes none. Locks are released at
 commit/abort — strict, so no cascading aborts. The key is
 exact, so two distinct keys never share an entry and never
@@ -616,7 +616,7 @@ entry, without ever releasing what it holds. An upgrade is
 what makes two transactions on ONE key deadlock, which
 exclusive-only locking could not do.
 
-**A read-only transaction can hold locks.** Before `sm_lock`,
+**A read-only transaction can hold locks.** Before `sm1_lock`,
 a transaction with no `xid` held nothing, and the read-only
 commit path skipped lock release for that reason. It no
 longer can.
@@ -626,7 +626,7 @@ finds them. A blocked transaction sleeps `deadlock_ms`
 (default 50ms), then searches the waits-for graph from
 itself. If it can reach itself, the **youngest** transaction
 on that cycle — the last to begin — fails with
-`SM_ERR_DEADLOCK`. Short waits never pay for the search and
+`SM1_ERR_DEADLOCK`. Short waits never pay for the search and
 there is no detector thread.
 
 The waits-for edges form a **graph, not a chain**: a waiter
@@ -648,7 +648,7 @@ holding the reason: the finder stores it and wakes every
 waiter, and the victim — blocked elsewhere on the same
 cycle, since every member of a cycle is waiting — returns
 the reason from its own wait. A transaction that is doomed
-while running, between `sm_*` calls, where there is nothing
+while running, between `sm1_*` calls, where there is nothing
 to wake, finds the field at the entry of its next call,
 which fails with the reason and does nothing else. Every
 entry point checks `doomed` first, so a doomed transaction
@@ -676,7 +676,7 @@ that committed after our snapshot. Together with the row lock
 snapshot-isolation write rule and it is what makes the §4.1
 invariant hold. It applies at **repeatable read and
 serializable**. Read committed does not abort the loser: it fails
-the write with `SM_ERR_UPDATED` and lets it go ahead once the
+the write with `SM1_ERR_UPDATED` and lets it go ahead once the
 caller has re-read the row (§5.4). The caveat for the
 non-serializable levels is §7.4's: their writes still feed the
 SSI tracker, but they are never serialization victims themselves.
@@ -684,10 +684,11 @@ SSI tracker, but they are never serialization victims themselves.
 ### 5.4 Read committed: write, re-read, write
 
 At READ COMMITTED an update or delete that meets a row committed
-after `sm_begin` waits for the row lock, as every write does, and
-then is refused with `SM_ERR_UPDATED`. That is not an abort: the
-transaction stays active, keeps the lock, and `sm_retryable()` is
-0. The caller calls `sm_read_latest`, which returns the newest
+after `sm1_begin` waits for the row lock, as every write does,
+and then is refused with `SM1_ERR_UPDATED`. That is not an abort:
+the transaction stays active, keeps the lock, and
+`sm1_retryable()` is
+0. The caller calls `sm1_read_latest`, which returns the newest
 committed version of the row ignoring the snapshot, re-evaluates
 its `WHERE` clause and new values from it, and only then repeats
 the write. This is what PostgreSQL's executor does at its default
@@ -701,8 +702,8 @@ which holds 0; T1 updates it and T2 waits for T1's row lock:
 | | T2's update, after T1 commits | R1 |
 | --- | --- | --- |
 | PostgreSQL | re-reads R1 (1), re-checks `WHERE`, writes 2 | 2 |
-| before §5.4 | fails with `SM_ERR_CONFLICT`, T2 aborted | 1, until T2 retries |
-| §5.4 | `SM_ERR_UPDATED`; T2 reads the latest (1), re-checks, writes 2 | 2 |
+| before §5.4 | fails with `SM1_ERR_CONFLICT`, T2 aborted | 1, until T2 retries |
+| §5.4 | `SM1_ERR_UPDATED`; T2 reads the latest (1), re-checks, writes 2 | 2 |
 
 A client written for PostgreSQL has no retry loop, so it could not
 run on the old rule. The variant is `UPDATE R1 SET n = 1 WHERE
@@ -712,13 +713,13 @@ caller has to look at the newest version first, and sm1 makes it.
 The executor's side of the exchange belongs to the PostgreSQL
 fork, not to sm1.
 
-The re-read is enforced, not requested. `sm_read_latest` marks
+The re-read is enforced, not requested. `sm1_read_latest` marks
 the lock entry, and the write's step 3 lets the write through
 only on a marked lock. A caller cannot skip the exchange and lose
 a predicate: writing again without the read is refused again.
 
 - **The mark** is one bit on the session's own lock list
-  (`sm_session_t::lockref_t`), not on the shared lock table, so
+  (`sm1_session_t::lockref_t`), not on the shared lock table, so
   neither call takes `lock_mu`: only the exclusive holder reads
   or sets it. The lock is held from the refused write on, so the
   newest committed version cannot change between the read and the
@@ -727,23 +728,23 @@ a predicate: writing again without the read is refused again.
   transaction, would slip past the check without a fresh read. -
   **A rollback to a savepoint** releases the locks taken after it
   (§6.5), and their marks with them; a lock taken before the
-  savepoint keeps its mark. - **`sm_read_latest`** requires READ
+  savepoint keeps its mark. - **`sm1_read_latest`** requires READ
   COMMITTED and a lock this transaction holds on the key, taken
-  by the refused write or by `sm_lock`; otherwise
-  `SM_ERR_INVALID`. Under a shared lock it reads but sets no
+  by the refused write or by `sm1_lock`; otherwise
+  `SM1_ERR_INVALID`. Under a shared lock it reads but sets no
   mark, since a shared holder cannot write without upgrading. A
-  caller that waited in `sm_lock(SHARED)` (a writer reading a
+  caller that waited in `sm1_lock(SHARED)` (a writer reading a
   schema row, §3 of `sm3/SM3_DESIGN.md`) uses it to see what
   committed while it waited. - **An insert** has no predicate to
   re-evaluate, so it is judged against the newest committed
-  version (`SM_ERR_DUPKEY` if live) with no check, as
-  PostgreSQL's unique check does. - **`sm_lock`** at READ
-  COMMITTED no longer fails with `SM_ERR_CONFLICT`. At the higher
-  levels it is unchanged. - REPEATABLE READ, SERIALIZABLE, SSI
-  (READ COMMITTED takes no part, §7.4), 2PC and the GC watermark
-  are unchanged: a read committed transaction already pins its
-  begin snapshot, and the newest committed version is never
-  collected.
+  version (`SM1_ERR_DUPKEY` if live) with no check, as
+  PostgreSQL's unique check does. - **`sm1_lock`** at READ
+  COMMITTED no longer fails with `SM1_ERR_CONFLICT`. At the
+  higher levels it is unchanged. - REPEATABLE READ, SERIALIZABLE,
+  SSI (READ COMMITTED takes no part, §7.4), 2PC and the GC
+  watermark are unchanged: a read committed transaction already
+  pins its begin snapshot, and the newest committed version is
+  never collected.
 
 Version order needs no help from any of this: the write that goes
 ahead takes a `wts` after the lock, so it sorts first (§4.1).
@@ -755,35 +756,35 @@ ahead takes a `wts` after the lock, so it sorts first (§4.1).
 ### 6.1 Lifecycle
 
 ```
-                sm_begin
+                sm1_begin
                    │  snapshot_ts = visible_ts
                    ▼
               ┌─────────┐   first write: xid = global_ts++
-              │ ACTIVE  │◄──── sm_savepoint / sm_rollback / sm_forget
+              │ ACTIVE  │◄──── sm1_savepoint / sm1_rollback / sm1_forget
               └────┬────┘
-        sm_prepare │        │ sm_commit
+       sm1_prepare │        │ sm1_commit
                    ▼        ▼
             ┌──────────┐  (validate → commit_ts → status record
             │ PREPARED │   → WAL sync → publish → release)
             └────┬─────┘
-   sm_commit /   │
-   sm_abort      ▼
+   sm1_commit /  │
+   sm1_abort     ▼
             COMMITTED / ABORTED
 ```
 
 ### 6.2 Read committed
 
 A fresh statement snapshot `snap = visible_ts` is taken **at the
-start of each read statement** (each `sm_read`, and each
-`sm_scan` — a scan keeps its snapshot for the life of the
+start of each read statement** (each `sm1_read`, and each
+`sm1_scan` — a scan keeps its snapshot for the life of the
 cursor, so one scan is internally consistent). It is a local of
 the statement; `T.snapshot_ts` is still the one taken at
-`sm_begin` and is never refreshed.
+`sm1_begin` and is never refreshed.
 
 **Statement boundaries.** A caller whose statement spans
 several calls — an index lookup is one scan plus N reads —
 would see N+1 states under that rule and could return a
-mixture of them that never existed. `sm_stmt_begin` sets a
+mixture of them that never existed. `sm1_stmt_begin` sets a
 boundary: from the first read after it, every RC read in the
 session uses that one snapshot, until the next boundary or
 the end of the transaction. The session state is
@@ -792,7 +793,7 @@ the transaction) and `T.stmt_snapshot_ts` once taken.
 
 The snapshot is taken by the statement's first **read**, not
 by the boundary call and not by a write, so a statement may
-block — on a row lock, or on the `sm_lock` a secondary-index
+block — on a row lock, or on the `sm1_lock` a secondary-index
 layer would use — and still read everything committed while
 it waited. `xct_read_view` takes it; `xct_view`, which the
 write path uses to validate a storeid and key, only reads it
@@ -805,11 +806,11 @@ transaction registers its *begin* snapshot for its whole life
 statement can read.
 
 Writes check against `T.snapshot_ts`, not the statement snapshot.
-A write that meets a row committed after `sm_begin` does not
+A write that meets a row committed after `sm1_begin` does not
 abort, as it does at the higher levels (§5.2): it waits for the
-row lock, is refused with `SM_ERR_UPDATED`, and goes ahead
+row lock, is refused with `SM1_ERR_UPDATED`, and goes ahead
 against the newest committed version once the caller has read it
-with `sm_read_latest` (§5.4). PostgreSQL does the same at its
+with `sm1_read_latest` (§5.4). PostgreSQL does the same at its
 default level, and workloads rely on it (`PART4.md` §5a).
 REPEATABLE READ and SERIALIZABLE keep §5.2 as it is.
 
@@ -827,10 +828,10 @@ on every build, and `e06` runs them under load with compaction.
 
 ### 6.3 Repeatable read
 
-One `snapshot_ts` taken at `sm_begin`, held to the end. This is
+One `snapshot_ts` taken at `sm1_begin`, held to the end. This is
 snapshot isolation: no lost updates, no non-repeatable reads, no
 phantoms — but write skew is possible. That is the standard SI/RR
-trade and it is what `SM_XCT_REPEATABLE_READ` means here.
+trade and it is what `SM1_XCT_REPEATABLE_READ` means here.
 
 ### 6.4 Serializable
 
@@ -848,7 +849,7 @@ stores it dropped in `T.dropped`, likewise.
 
 Savepoints **nest**. `T.savepoints` is a stack of marks in
 push order, so `T.savepoints[d-1]` is the mark at depth `d`,
-and a transaction holds at most `SM_MAX_SAVEPOINTS` (256) of
+and a transaction holds at most `SM1_MAX_SAVEPOINTS` (256) of
 them. The cap turns runaway nesting into an error instead of
 unbounded growth; nothing in the design needs that
 particular value.
@@ -864,9 +865,9 @@ rollback to an outer mark — so a correct caller cannot form
 a stale depth. `API.md` states the hazard.
 
 ```
-sm_savepoint():                        # returns the new depth
-    if len(T.savepoints) == SM_MAX_SAVEPOINTS:
-        fail with SM_ERR_INVALID
+sm1_savepoint():                        # returns the new depth
+    if len(T.savepoints) == SM1_MAX_SAVEPOINTS:
+        fail with SM1_ERR_INVALID
     push onto T.savepoints:
         mark.undo    = T.undo.size()
         mark.locks   = T.locks.size()
@@ -875,13 +876,13 @@ sm_savepoint():                        # returns the new depth
         mark.scan_id = id of the latest cursor opened so far
     return len(T.savepoints)
 
-sm_forget(depth):                      # SQL's RELEASE SAVEPOINT
-    if no mark at depth: fail with SM_ERR_NOSAVEPOINT
+sm1_forget(depth):                      # SQL's RELEASE SAVEPOINT
+    if no mark at depth: fail with SM1_ERR_NOSAVEPOINT
     T.savepoints.truncate(depth - 1)   # that mark and those inside it
     # writes stay; locks stay, now held for the enclosing mark
 
-sm_rollback(depth):
-    if no mark at depth: fail with SM_ERR_NOSAVEPOINT # API.md divergence 8
+sm1_rollback(depth):
+    if no mark at depth: fail with SM1_ERR_NOSAVEPOINT # API.md divergence 8
     m = T.savepoints[depth-1].undo
     for e in reverse(T.undo[m..]):
         db.Delete(cf(e.storeid), encode(e.key, ~T.xid, ~e.seq))
@@ -902,7 +903,7 @@ sm_rollback(depth):
 
 Rolling back to depth `d` keeps the mark at `d`, so the same
 mark can be rolled back to again, and drops the marks inside
-it, which covered work that no longer exists. `sm_forget`
+it, which covered work that no longer exists. `sm1_forget`
 drops marks without touching the work or the locks: a lock
 taken inside a forgotten mark is still held, belonging now to
 the enclosing mark, or to the transaction when there is none.
@@ -921,12 +922,12 @@ admit the undone versions again wherever they are still
 readable — in particular through a cursor opened before the
 rollback, whose RocksDB snapshot does not see the deletes. With
 the rewind, a later write reuses an undone number, and the
-deletes, applied before `sm_rollback` returns, have already
+deletes, applied before `sm1_rollback` returns, have already
 removed the version that carried it.
 
 **Cursors opened after the mark are closed.** A cursor
 holds a RocksDB snapshot and a `seq_hwm` frozen at
-`sm_scan` (§10.2), so the deletes a rollback issues are
+`sm1_scan` (§10.2), so the deletes a rollback issues are
 invisible to it and its captured `seq_hwm` still admits
 the undone versions. Left open it would yield rows the
 transaction itself undid. Since a cursor opened after the
@@ -951,7 +952,7 @@ before the savepoint, so no one observed our intent on it.
 
 ### 6.6 Abort
 
-`sm_abort` writes no status record: absence of a record already
+`sm1_abort` writes no status record: absence of a record already
 means aborted (§3.4), before and after a crash. Only aborting a
 *prepared* transaction writes `ABORTED`, to supersede its
 `PREPARED` record (§8.4). It
@@ -975,20 +976,20 @@ dangerous structure.
   records what it read: a point read records
   `(storeid, userkey)`, whether or not a row was found; a scan
   records `(storeid, range)` for the requested range, bounds
-  inclusive or exclusive as passed to `sm_scan`, when it opens,
+  inclusive or exclusive as passed to `sm1_scan`, when it opens,
   and narrows it to the **range actually traversed** when it
   closes (§10.2). The narrowed range includes its upper end, the
   last key the scan examined. A cursor moved on with
-  `sm_scan_seek` keeps the keys it skipped inside that range: the
-  predicate runs from the start key to the furthest key reached,
-  gaps included. It over-approximates what was read, which can
-  only cost a serialization failure that was not strictly
-  necessary, never miss one. That range is the predicate. Ranges
-  are the phantom defence — a later insert into that range
-  conflicts even though the row did not exist at read time.
-  SIREAD locks survive the transaction's own commit; they are
-  dropped only when no active snapshot could still conflict with
-  them.
+  `sm1_scan_seek` keeps the keys it skipped inside that range:
+  the predicate runs from the start key to the furthest key
+  reached, gaps included. It over-approximates what was read,
+  which can only cost a serialization failure that was not
+  strictly necessary, never miss one. That range is the
+  predicate. Ranges are the phantom defence — a later insert into
+  that range conflicts even though the row did not exist at read
+  time. SIREAD locks survive the transaction's own commit; they
+  are dropped only when no active snapshot could still conflict
+  with them.
 - **Conflict flags.** Per transaction, `in_conflict` and
   `out_conflict` — "some transaction has an rw-edge into me" / "I have
   an rw-edge out to someone".
@@ -1002,7 +1003,7 @@ lock would serialize the write path — the one place SSI
 must not cost anything when no reader is watching.
 
 Per store, ranges are held in a list in `memcmp` order
-of their bounds (§3.1): `sm_scan` inserts, `sm_scanend`
+of their bounds (§3.1): `sm1_scan` inserts, `sm1_scanend`
 narrows, `on_write` scans the store's list. One mutex
 covers the whole tracker. A store no serializable
 reader has touched has no list, so the common case — a
@@ -1045,15 +1046,15 @@ edge R ──rw──▶ W, made by S (R or W, whichever is acting):
 
 at commit of T:
     if T is doomed, or T.in_conflict and T.out_conflict:
-        abort T with SM_ERR_SERIALIZATION
+        abort T with SM1_ERR_SERIALIZATION
 ```
 
 A committed transaction cannot be told "no", so an edge that
 would make it a pivot dooms the running transaction completing
 the structure instead. Dooming never fails the call that made the
 edge: the transaction runs on and fails at its commit, so
-`sm_read`, `sm_scannxt`, and the write calls never return
-`SM_ERR_SERIALIZATION`. The commit check runs after the
+`sm1_read`, `sm1_scannxt`, and the write calls never return
+`SM1_ERR_SERIALIZATION`. The commit check runs after the
 transaction claims its `commit_ts` and before its status record
 is written; a failure hands the `commit_ts` back to the sequencer
 unused. A prepared transaction (§8.4) counts as committed for
@@ -1093,7 +1094,7 @@ Its snapshot is **safe** once every read-write serializable
 transaction concurrent with the snapshot has finished and none
 of them committed with an out-conflict to a transaction that
 committed before the snapshot. If there are no such concurrent
-transactions at `sm_begin`, the snapshot is safe at once. If one
+transactions at `sm1_begin`, the snapshot is safe at once. If one
 of them does commit with such an out-conflict, the snapshot is
 unsafe.
 
@@ -1140,9 +1141,9 @@ atomic and durable at commit: **the status record**.
 ### 8.2 Single-node commit
 
 ```
-sm_commit(T):
+sm1_commit(T):
   1. close T's open scan cursors               (§10.2)
-     if SERIALIZABLE: ssi.validate(T)         → may SM_ERR_SERIALIZATION
+     if SERIALIZABLE: ssi.validate(T)         → may SM1_ERR_SERIALIZATION
      if T.xid == 0: go to step 6               ← read-only: nothing to publish
   2. commit_ts = sequencer.claim()           ← global_ts++, joins the set
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
@@ -1154,8 +1155,8 @@ sm_commit(T):
      queue (T.dropped, commit_ts) for CF removal     (§8.3)
 ```
 
-Step 1 closes cursors first, as `API.md` requires of `sm_commit`
-and `sm_abort`: this releases their RocksDB snapshots, which pin
+Step 1 closes cursors first, as `API.md` requires of `sm1_commit`
+and `sm1_abort`: this releases their RocksDB snapshots, which pin
 `gc_watermark`, and narrows each cursor's SIREAD predicate to
 the range it actually traversed (§10.2) before validation runs.
 
@@ -1170,9 +1171,9 @@ therefore does not resolve it as dead:
   remain in-flight to readers and to the compaction filter, and
   no snapshot can include its `commit_ts`;
 - the database enters a failed state: further writes, commits,
-  prepares, and GC sweeps fail with `SM_ERR_IO`, while reads on
+  prepares, and GC sweeps fail with `SM1_ERR_IO`, while reads on
   existing snapshots continue;
-- `sm_commit` returns `SM_ERR_IO`, meaning *outcome unknown*.
+- `sm1_commit` returns `SM1_ERR_IO`, meaning *outcome unknown*.
   After the database is reopened, §3.4 resolves the transaction
   from whatever the WAL holds.
 
@@ -1302,7 +1303,7 @@ A read-committed transaction counts at its begin `snapshot_ts`
 for its whole life, between statements too, because §6.2 checks
 its writes against that snapshot. If the watermark passed it,
 the tombstone purge could remove a delete committed after
-`sm_begin`, and a later write of that key by the transaction
+`sm1_begin`, and a later write of that key by the transaction
 would no longer meet a commit after its snapshot: §5.4's check
 would pass without the re-read. An idle open transaction
 therefore holds back GC, as in any MVCC engine.
@@ -1373,7 +1374,7 @@ RocksDB's estimated key count of `CF:txn` on each run and
 starts a sweep past an internal threshold of one million
 records.
 
-Dropping a store (`sm_rmstore`) deletes its catalog row (§11).
+Dropping a store (`sm1_rmstore`) deletes its catalog row (§11).
 The tombstone carries no storeid, so commit queues the storeids
 in `T.dropped` with its `commit_ts`; once `gc_watermark` passes
 that commit, a background task issues `DropColumnFamily` on each
@@ -1390,10 +1391,10 @@ assesses what it would take.
 
 ### 8.4 Two-phase commit
 
-`sm_prepare` makes the transaction durable but not visible.
+`sm1_prepare` makes the transaction durable but not visible.
 
 ```
-sm_prepare(T, gid):
+sm1_prepare(T, gid):
   1. close T's open scan cursors               (§8.2)
      if SERIALIZABLE: ssi.validate(T)         ← validation happens HERE
      if T.xid == 0: T.xid = global_ts++        ← read-only: key the record
@@ -1409,13 +1410,13 @@ the database owns, registered under its `gid`: the transaction's
 state, its snapshot's place in `gc_watermark`, its SSI node, and
 its row locks, whose table entries are re-pointed at the new
 owner. The session keeps only the `gid`. Any session can then
-resolve the transaction, `sm_closedb` leaves it untouched, and
+resolve the transaction, `sm1_closedb` leaves it untouched, and
 recovery (§9.1 step 5) rebuilds exactly the same object from the
 `PREPARED` record, so a transaction prepared before a crash and
 one prepared in this process are handled alike. The record is a
 single `CF:txn` value however large the write set; the write set
 is stored as the lock keys the transaction holds, each with the
-mode it is held in, so a shared lock taken by `sm_lock` is
+mode it is held in, so a shared lock taken by `sm1_lock` is
 restored as shared. Database format version 4 added that mode
 byte.
 
@@ -1425,7 +1426,7 @@ never be used again, but it would pin `gc_watermark` for as long
 as the transaction stays in doubt. The coordinator's commit
 (§8.2 from step 2) therefore finds none left to close.
 
-A read-only transaction is not necessarily lock-free: `sm_lock`
+A read-only transaction is not necessarily lock-free: `sm1_lock`
 gives one locks without writing, and those go into the record
 and are restored like any other. What makes it read-only is the
 empty set of versions, not an empty lock set.
@@ -1436,7 +1437,7 @@ a crash and can be resolved by `gid` afterwards. Step 1 gives it
 an xid (entering the active table, §3.4) so that the record has
 a unique key; with `T.xid == 0`, every read-only prepare would
 overwrite the same `CF:txn[0]`. Its `lockset` holds whatever
-`sm_lock` took and nothing more, so a transaction that only
+`sm1_lock` took and nothing more, so a transaction that only
 read holds nothing after a restart.
 
 After a successful prepare the transaction is in-doubt: its
@@ -1455,13 +1456,13 @@ not treat it as aborted:
   filter, and the column families in `T.created` are kept;
 - the database enters §8.2's failed state, so nothing can
   resolve the transaction before the database is reopened;
-- `sm_prepare` returns `SM_ERR_IO`, meaning *outcome unknown*,
+- `sm1_prepare` returns `SM1_ERR_IO`, meaning *outcome unknown*,
   and the transaction is no longer active on its session.
 
 After reopen, WAL replay decides: either the record survived and
 the transaction is restored in doubt, listed by
-`sm_list_prepared` under its `gid`, or it has no record and is
-dead (§3.4). A coordinator that got `SM_ERR_IO` checks the list
+`sm1_list_prepared` under its `gid`, or it has no record and is
+dead (§3.4). A coordinator that got `SM1_ERR_IO` checks the list
 and resolves by `gid`. It never received a "yes" vote, so abort
 is always a correct decision.
 
@@ -1513,7 +1514,7 @@ one extra rule:
 ```
 T_reader skips a version written by a restored transaction (§7.2)
     →  doom T_reader; it fails at prepare/commit with
-       SM_ERR_SERIALIZATION
+       SM1_ERR_SERIALIZATION
 ```
 
 This is enough without replaying the SSI graph. Nothing written
@@ -1538,28 +1539,28 @@ only follows a crash.
 of each:
 
 ```c
-int  sm_prepare(sm_session_t* session, const char* gid);
-int  sm_list_prepared(sm_session_t* session,
-                      sm_prepared_t** out, size_t* n);
-void sm_free_prepared(sm_prepared_t* list, size_t n);
-int  sm_commit_prepared(sm_session_t* session, const char* gid);
-int  sm_abort_prepared(sm_session_t* session, const char* gid);
+int  sm1_prepare(sm1_session_t* session, const char* gid);
+int  sm1_list_prepared(sm1_session_t* session,
+                       sm1_prepared_t** out, size_t* n);
+void sm1_free_prepared(sm1_prepared_t* list, size_t n);
+int  sm1_commit_prepared(sm1_session_t* session, const char* gid);
+int  sm1_abort_prepared(sm1_session_t* session, const char* gid);
 ```
 
 - `gid` is what makes a prepared transaction addressable once
   the session that prepared it is gone. It goes into the
   `PREPARED` status record (§8.4 step 2) and must be unique
   among the unresolved prepared transactions of a database.
-- `sm_list_prepared` is the only way to discover the in-doubt
+- `sm1_list_prepared` is the only way to discover the in-doubt
   transactions that recovery restored (§9.3). Without it they
   hold their row locks and pin `gc_watermark` indefinitely
   with no way for an operator to name them. It requires no
   active transaction, because a coordinator calls it on a
   fresh session at startup.
-- `sm_commit_prepared` and `sm_abort_prepared` resolve by
+- `sm1_commit_prepared` and `sm1_abort_prepared` resolve by
   `gid` on any session, which is the whole point: after a
   restart the resolving session is never the preparing one.
-- `sm_prepare` can still fail with `SM_ERR_SERIALIZATION`,
+- `sm1_prepare` can still fail with `SM1_ERR_SERIALIZATION`,
   leaving the transaction aborted rather than prepared.
   Validation runs at prepare (§8.4), so this is the last
   moment at which the engine is able to say no.
@@ -1600,7 +1601,7 @@ Step 6 catches the column families that eager cleanup (§6.5,
 §6.6) never reached: a crash between `CreateColumnFamily` and
 commit, and a committed drop whose `DropColumnFamily` had not yet
 run. Creating a CF is durable in the RocksDB MANIFEST before
-`sm_mkstore` writes its catalog row, so a committed catalog row
+`sm1_mkstore` writes its catalog row, so a committed catalog row
 never lacks its CF.
 
 There is no "abort recovery" step: every transaction that was
@@ -1626,20 +1627,21 @@ crashed transactions.
 ### 9.3 In-doubt transactions
 
 A restored prepared transaction blocks writers on its keys (it holds
-locks) and pins GC. `sm_list_prepared` exposes them by `gid` so the
-coordinator can finish them. An operator escape hatch
-(`sm_abort_prepared`) is required, because an abandoned prepared
+locks) and pins GC. `sm1_list_prepared` exposes them by `gid` so
+the coordinator can finish them. An operator escape hatch
+(`sm1_abort_prepared`) is required, because an abandoned prepared
 transaction otherwise blocks GC forever; this is the same operational
 hazard as in any 2PC system and is exposed, not hidden.
 
 ### 9.4 Torn or corrupt state
 
 RocksDB checksums every block and WAL record. A checksum failure is
-surfaced as `SM_ERR_CORRUPT` at open; the design does not attempt
-repair beyond RocksDB's own WAL truncation of a torn tail record —
-which is safe here precisely because a torn tail can only lose commit
-records at the very end of the log, and losing a commit record is
-indistinguishable from the transaction never having committed.
+surfaced as `SM1_ERR_CORRUPT` at open; the design does not
+attempt repair beyond RocksDB's own WAL truncation of a torn tail
+record — which is safe here precisely because a torn tail can
+only lose commit records at the very end of the log, and losing a
+commit record is indistinguishable from the transaction never
+having committed.
 
 ---
 
@@ -1648,7 +1650,7 @@ indistinguishable from the transaction never having committed.
 ### 10.1 Point read
 
 ```
-sm_read(session, storeid, key, &val):
+sm1_read(session, storeid, key, &val):
     catalog.lookup(storeid)                              # SIREAD too, §11
     snap  = (level == READ_COMMITTED) ? visible_ts : T.snapshot_ts
     hi    = max(T.xid, snap)                             # own writes, §4.4
@@ -1706,7 +1708,7 @@ loop already handles.
 
 ### 10.2 Scan
 
-`sm_scan` opens a RocksDB iterator on the store's CF, seeked
+`sm1_scan` opens a RocksDB iterator on the store's CF, seeked
 to `skey` and bounded by `ekey`, on a **RocksDB snapshot** taken
 at cursor creation. The RocksDB snapshot gives a stable physical
 view (unaffected by concurrent eager writes or compaction); the
@@ -1733,7 +1735,7 @@ must opt out. Left at the default it stops at the first
 key boundary, and when `skey` itself is absent the bloom
 filter answers "no such prefix" and the very first
 `Valid()` is false: the scan returns nothing while
-thousands of keys above `skey` exist. `sm_scan` therefore
+thousands of keys above `skey` exist. `sm1_scan` therefore
 sets
 
 ```
@@ -1741,7 +1743,7 @@ ro.auto_prefix_mode = true       # or total_order_seek
 ```
 
 `auto_prefix_mode` is preferred to a blanket
-`total_order_seek` because `sm_scan` always sets
+`total_order_seek` because `sm1_scan` always sets
 `iterate_upper_bound`. RocksDB can then decide per seek:
 prefix mode, and the bloom filter with it, when the bound
 lies inside the seek key's prefix — the single-key range
@@ -1760,7 +1762,7 @@ the bloom filter earns its keep on a point read.
 (§1), so no `SeekForPrev` path exists and `auto_prefix_mode`
 is never asked to serve one.
 
-**Reposition.** `sm_scan_seek` re-seeks the same iterator,
+**Reposition.** `sm1_scan_seek` re-seeks the same iterator,
 keeping its RocksDB snapshot, its MVCC view, and its upper
 bound, so a probe loop — an index nested-loop join, an
 IN-list, a skip scan — costs one cursor instead of one per
@@ -1786,8 +1788,8 @@ is less than it read.
 
 **Bound lifetime.** `iterate_upper_bound` is a
 `rocksdb::Slice`, which borrows rather than copies, and
-the bound outlives the `sm_scan` call that set it.
-`sm_scan_t` owns the buffer holding `ekey | tail` for the
+the bound outlives the `sm1_scan` call that set it.
+`sm1_scan_t` owns the buffer holding `ekey | tail` for the
 life of the cursor, and the iterator is destroyed before
 that buffer is released.
 
@@ -1795,13 +1797,14 @@ that buffer is released.
   appear mid-iteration and have to be filtered out anyway, and the
   iterator's own consistency would depend on memtable flush timing.
 - A consequence: **a scan does not see the scanning transaction's own
-  writes made after `sm_scan`**. This is deliberate — it is Halloween
-  protection, and it makes "update every row I scan" safe.
-- The cursor also captures `T.seq_hwm` at `sm_scan` and applies
+  writes made after `sm1_scan`**. This is deliberate — it is
+  Halloween protection, and it makes "update every row I scan"
+  safe.
+- The cursor also captures `T.seq_hwm` at `sm1_scan` and applies
   §4.4 with that value, not the live one. Its view of the
   transaction's own writes is then fixed like the rest. A
   cursor opened after a savepoint does not survive an
-  `sm_rollback` to it: §6.5 closes it, precisely because a
+  `sm1_rollback` to it: §6.5 closes it, precisely because a
   frozen `seq_hwm` would otherwise go on admitting versions
   the rollback undid. A cursor opened before the mark is
   kept — its RocksDB snapshot predates every write the
@@ -1809,7 +1812,7 @@ that buffer is released.
   rewind of §6.5 stops a reused number from changing what it
   returns.
 
-`sm_scannxt` walks version keys, and for each distinct `userkey`
+`sm1_scannxt` walks version keys, and for each distinct `userkey`
 emits the first visible version and then skips the rest of that key's
 versions:
 
@@ -1828,25 +1831,25 @@ while iterator valid:
 A scan steps past concurrent writers' versions just as a point
 read does, and owes the same rw-edges (§10.1). The skipped
 versions matter most when they were committed between the
-reader's snapshot and `sm_scan`: their writers ran `on_write`
+reader's snapshot and `sm1_scan`: their writers ran `on_write`
 before the range SIREAD existed, so the read side is the only
 place the edge can be created. They also feed the post-restart
 rule of §8.4.
 
-For SERIALIZABLE, `sm_scan` registers the whole requested range,
+For SERIALIZABLE, `sm1_scan` registers the whole requested range,
 `skey` to `ekey` with their inclusive flags, as a SIREAD
 predicate (§7.1) when it creates the cursor, **before** it takes
-the RocksDB snapshot, and `sm_scanend` shrinks it to the range
+the RocksDB snapshot, and `sm1_scanend` shrinks it to the range
 actually covered: from `skey` through `last_key_examined`,
 inclusive (through `ekey`, with its flag, if the scan reached
 the end). `last_key_examined` is the last userkey whose run the
 cursor inspected, whether or not it yielded a row. Registering
-only at `sm_scanend` would be wrong: a write into the range
+only at `sm1_scanend` would be wrong: a write into the range
 while the cursor is open is not in the cursor's RocksDB
 snapshot, so the reader never steps past it, and with no SIREAD
 yet the writer finds nothing to conflict with — the rw-edge
 would be missed entirely. The order within
-`sm_scan` matters for the same reason, as in §10.1: a writer
+`sm1_scan` matters for the same reason, as in §10.1: a writer
 puts its version before calling `on_write`, so a version put
 after the snapshot is found by `on_write` only if the SIREAD
 already exists. Shrinking at the end is safe, because the
@@ -1864,33 +1867,33 @@ this document rather than mere spelling:
 ```c
 /* 0 = row, 1 = no such key, -1 = error. *data points into
  * session-owned memory valid until the next call on the session. */
-int  sm_read(sm_session_t* session, uint64_t storeid,
-             const char* key, size_t klen,
-             const char** data, size_t* datalen);
+int  sm1_read(sm1_session_t* session, uint64_t storeid,
+              const char* key, size_t klen,
+              const char** data, size_t* datalen);
 
-sm_scan_t* sm_scan(sm_session_t* session, uint64_t storeid,
-                   const char* skey, size_t sklen, int skey_inclusive,
-                   const char* ekey, size_t eklen, int ekey_inclusive);
+sm1_scan_t* sm1_scan(sm1_session_t* session, uint64_t storeid,
+                     const char* skey, size_t sklen, int skey_inclusive,
+                     const char* ekey, size_t eklen, int ekey_inclusive);
 
 /* 0 = row returned, 1 = end of range, -1 = error. Buffers valid
- * until the next sm_scannxt on the same cursor. */
-int  sm_scannxt(sm_scan_t* scan, const char** key, size_t* klen,
-                const char** data, size_t* datalen);
-void sm_scanend(sm_scan_t* scan);
+ * until the next sm1_scannxt on the same cursor. */
+int  sm1_scannxt(sm1_scan_t* scan, const char** key, size_t* klen,
+                 const char** data, size_t* datalen);
+void sm1_scanend(sm1_scan_t* scan);
 ```
 
 - **Both range bounds are parameters.** Without an end key a
   range predicate cannot be recorded for SSI (§7.1), and every
   caller would otherwise scan and discard.
 - **"No row" is a tri-state return, not an out-param.**
-  `sm_read` returns 1 for a missing key and `sm_scannxt`
+  `sm1_read` returns 1 for a missing key and `sm1_scannxt`
   returns 1 at end of range; this replaces the earlier
   `int* found`. Neither is an error, and neither disturbs the
   error state, so a caller must distinguish 1 from -1 before
-  consulting `sm_errno()`.
-- **`sm_scanend` returns void.** Releasing a cursor cannot
+  consulting `sm1_errno()`.
+- **`sm1_scanend` returns void.** Releasing a cursor cannot
   usefully fail. It is still where the predicate registered
-  at `sm_scan` is shrunk to the range the cursor actually
+  at `sm1_scan` is shrunk to the range the cursor actually
   traversed (§10.2), so the range kept is the part traversed,
   not the part requested, which makes closing early both
   correct and tighter than draining.
@@ -1899,7 +1902,7 @@ void sm_scanend(sm_scan_t* scan);
 
 ## 11. Catalog and DDL
 
-A store is named by a `uint64_t` storeid, which `sm_mkstore`
+A store is named by a `uint64_t` storeid, which `sm1_mkstore`
 allocates and hands back; there are no store names. The
 storeid names the store's column family, `CF:store.<storeid>`, so
 resolving one costs no indirection. The catalog is itself
@@ -1916,14 +1919,14 @@ snapshot is what makes the store exist there. The design's
 `created_ts` field is left out, since nothing reads it.
 
 Big-endian storeids make the catalog's key order numeric, so
-`sm_lsstore` is one scan of the `"R"` prefix and returns storeids
-in ascending order. Storeids are handed out in creation order, so
-the lowest one listed is the first store the database ever
-had: that is how a layer finds its own catalog store again
+`sm1_lsstore` is one scan of the `"R"` prefix and returns
+storeids in ascending order. Storeids are handed out in creation
+order, so the lowest one listed is the first store the database
+ever had: that is how a layer finds its own catalog store again
 after a restart, having nothing else to go on.
 
 A storeid is never reused, so it never names two stores. That
-is what makes a drop safe: after `sm_rmstore` commits, the
+is what makes a drop safe: after `sm1_rmstore` commits, the
 store's CF stays until the watermark passes the drop (§8.3),
 and an older snapshot goes on reading it through the same storeid
 while newer ones find no catalog row. A storeid the caller could
@@ -1932,27 +1935,27 @@ CF, or else name two stores at once.
 
 There is no next-storeid row in the catalog. Storeids come from
 the lease in `CF:meta` (§4.2); a catalog row updated by every
-`sm_mkstore` would make concurrent creates of *different* stores
-contend on one row lock and fail with `SM_ERR_CONFLICT`.
+`sm1_mkstore` would make concurrent creates of *different* stores
+contend on one row lock and fail with `SM1_ERR_CONFLICT`.
 
 Because it is an ordinary store, DDL is transactional for free:
-`sm_mkstore` inserts a catalog row, `sm_rmstore` deletes it
+`sm1_mkstore` inserts a catalog row, `sm1_rmstore` deletes it
 (recording the storeid in `T.dropped`), and both roll back with
 the transaction. Both follow the §5 write path, reported in DDL
-terms: `sm_mkstore` of a live storeid fails with `SM_ERR_EXISTS`
-where an insert would report `SM_ERR_DUPKEY`, and `sm_rmstore` of
-a missing storeid fails with `SM_ERR_NOTFOUND`. A dropped
-storeid's newest version is a tombstone, so `sm_mkstore` can
-create it again.
+terms: `sm1_mkstore` of a live storeid fails with
+`SM1_ERR_EXISTS` where an insert would report `SM1_ERR_DUPKEY`,
+and `sm1_rmstore` of a missing storeid fails with
+`SM1_ERR_NOTFOUND`. A dropped storeid's newest version is a
+tombstone, so `sm1_mkstore` can create it again.
 
-`sm_lsstore` is a §10.2 scan of the catalog over `["R", "S")`,
+`sm1_lsstore` is a §10.2 scan of the catalog over `["R", "S")`,
 so under SERIALIZABLE it registers the whole range as read: a
-concurrent `sm_mkstore` or `sm_rmstore` of any storeid is an
+concurrent `sm1_mkstore` or `sm1_rmstore` of any storeid is an
 rw-conflict with it.
 
 A session may cache which storeids are live (not yet implemented:
 every lookup reads `CF:store.0`), but the answer depends on the
-snapshot. After a committed `sm_rmstore`, a transaction with an
+snapshot. After a committed `sm1_rmstore`, a transaction with an
 older snapshot must still find the store, since it may still
 legitimately read it. A cache invalidated at DDL commit would
 hide it, so the cache is checked by timestamp instead:
@@ -1966,8 +1969,8 @@ hide it, so the cache is checked by timestamp instead:
   and the lookup's; then no DDL committed between the two, and
   the answer is the same at both. Otherwise the lookup reads
   `CF:store.0` and replaces the entry.
-- `sm_mkstore` and `sm_rmstore` evict their storeid's entry, and
-  a lookup that resolves to the transaction's own uncommitted
+- `sm1_mkstore` and `sm1_rmstore` evict their storeid's entry,
+  and a lookup that resolves to the transaction's own uncommitted
   catalog version does not populate the cache.
 
 The comparison is against both snapshots because a session's
@@ -1977,13 +1980,13 @@ newer statement snapshot (§6.2).
 
 Under SERIALIZABLE a lookup is also a read for SSI. That a
 storeid names a live store is something the transaction observed,
-and a concurrent `sm_rmstore` of that storeid writes the catalog
+and a concurrent `sm1_rmstore` of that storeid writes the catalog
 key it depends on. Without an rw-edge for it, DDL admits write
 skew:
 
 ```
-T1: sm_read(S, x)             T2: sm_read(R, k)    # looks up R
-T1: sm_rmstore(R)             T2: sm_update(S, x)
+T1: sm1_read(S, x)             T2: sm1_read(R, k)    # looks up R
+T1: sm1_rmstore(R)             T2: sm1_update(S, x)
 ```
 
 `T1 ──rw──▶ T2` comes from `x`; `T2 ──rw──▶ T1` exists only if
@@ -1995,8 +1998,8 @@ SERIALIZABLE:
   whether or not the storeid is found, and versions of
   concurrent writers it steps past run `on_skip`.
 - A cache hit does not stand in for that read. An in-flight
-  `sm_rmstore` has not raised `last_ddl_ts`, so a hit is valid by
-  the rule above, yet it steps past nothing, and the dropper's
+  `sm1_rmstore` has not raised `last_ddl_ts`, so a hit is valid
+  by the rule above, yet it steps past nothing, and the dropper's
   `on_write` ran before any SIREAD existed: the edge is missed.
   Each cache entry therefore also records the transaction that
   read it from `store.0`, and a serializable lookup uses a hit
@@ -2006,15 +2009,15 @@ SERIALIZABLE:
 ### 11.1 Sequences
 
 A sequence is a catalog row of its own, keyed `"S" | name`, so
-`sm_mkseq` and `sm_rmseq` are transactional exactly as
-`sm_mkstore` is, down to the row lock that makes two concurrent
+`sm1_mkseq` and `sm1_rmseq` are transactional exactly as
+`sm1_mkstore` is, down to the row lock that makes two concurrent
 creates of one name conflict. The row holds
 `{ seqid, start, increment }`, and the `seqid` comes from the
 same object-id allocator as a storeid (§4.2), so a name created
 again after a drop names a different sequence.
 
 What the row does **not** hold is the sequence's position. The
-values are not transactional — `sm_nextseq` takes no locks,
+values are not transactional — `sm1_nextseq` takes no locks,
 never blocks, and an abort gives nothing back — so keeping them
 in an MVCC row would be wrong twice over: the row's writer
 would lock the sequence for the rest of its transaction, and a
@@ -2025,16 +2028,16 @@ than the name, so a sequence created again under an old name
 starts at its own `start` rather than resuming the old one's
 lease.
 
-`sm_nextseq` reads the definition at the transaction's view
+`sm1_nextseq` reads the definition at the transaction's view
 when there is one, so a sequence a transaction has just created
 is usable before it commits, and at `visible_ts` when there is
 none. The last value is the largest one at or below
-`UINT64_MAX`; a further call fails with `SM_ERR_INVALID` rather
+`UINT64_MAX`; a further call fails with `SM1_ERR_INVALID` rather
 than wrapping onto values already handed out.
 
-A committed `sm_rmseq` deletes the sequence's lease, best
+A committed `sm1_rmseq` deletes the sequence's lease, best
 effort: nothing reads it once the catalog row is gone, and a
-lease left behind by a crash, an abort after `sm_nextseq`, or a
+lease left behind by a crash, an abort after `sm1_nextseq`, or a
 prepared transaction's drop is garbage rather than a hazard,
 since the name's next incarnation has a new `seqid`.
 
@@ -2042,23 +2045,23 @@ since the name's next incarnation has a new `seqid`.
 
 The column family is the one part of DDL that is not
 transactional: `CreateColumnFamily` and `DropColumnFamily` take
-effect immediately. `sm_mkstore` therefore creates the CF
+effect immediately. `sm1_mkstore` therefore creates the CF
 **eagerly**, before inserting the catalog row, so the creating
 transaction can write into the store at once. Nobody else can
 reach the CF until the catalog row commits. If the transaction
-aborts or rolls back past the `sm_mkstore`, it drops the CF
+aborts or rolls back past the `sm1_mkstore`, it drops the CF
 itself (§6.5, §6.6); if it crashes, the startup sweep drops it
 (§9.1).
 
-`sm_rmstore` does **not** drop the CF at commit — a concurrent
+`sm1_rmstore` does **not** drop the CF at commit — a concurrent
 snapshot may still legitimately read the store. Physical
 removal happens when `gc_watermark` passes the drop's
 `commit_ts` (§8.3).
 
-`sm_mkdb` allocates a `dbid`, creates the directory
+`sm1_mkdb` allocates a `dbid`, creates the directory
 `{homedir}/base/{dbid}`, `CF:txn`, `CF:meta` with its
 initial contents, and the catalog's `CF:store.0`, and commits
-the name last. `sm_rmdb` drops the name first, then runs
+the name last. `sm1_rmdb` drops the name first, then runs
 `rocksdb::DestroyDB`, after verifying that no session holds
 the database open; sessions in other processes are ruled out
 by the caller's one-process rule (§3.5). §3.5 gives the
@@ -2072,38 +2075,38 @@ can be steered by one.
 
 ### 12.1 Error codes
 
-`API.md` defines `sm_errno_t` with explicit, stable values.
+`API.md` defines `sm1_errno_t` with explicit, stable values.
 This section records only which codes the engine raises and
 where they come from:
 
 ```
-SM_ERR_CONFLICT        write-write conflict (§5.2)
-SM_ERR_UPDATED         read committed write past a newer commit (§5.4);
+SM1_ERR_CONFLICT        write-write conflict (§5.2)
+SM1_ERR_UPDATED         read committed write past a newer commit (§5.4);
                        not an abort
-SM_ERR_SERIALIZATION   SSI validation failure (§7.3)
-SM_ERR_DEADLOCK        victim of deadlock detection (§5.1)
-SM_ERR_NOTFOUND        store or key does not exist
-SM_ERR_DUPKEY          insert onto a live key (§5)
-SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
-SM_ERR_NOTRANS         data op outside a transaction (§6.1)
-SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
-SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
-SM_ERR_EXISTS          home dir, database, or store exists (§11)
-SM_ERR_INUSE           database still open in this process
-SM_ERR_VERSION         home directory format unsupported (§3.5)
-SM_ERR_CORRUPT         RocksDB integrity failure (§9.4)
-SM_ERR_IO / SM_ERR_NOMEM / SM_ERR_PERMISSION / SM_ERR_DISKFULL
+SM1_ERR_SERIALIZATION   SSI validation failure (§7.3)
+SM1_ERR_DEADLOCK        victim of deadlock detection (§5.1)
+SM1_ERR_NOTFOUND        store or key does not exist
+SM1_ERR_DUPKEY          insert onto a live key (§5)
+SM1_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
+SM1_ERR_NOTRANS         data op outside a transaction (§6.1)
+SM1_ERR_INTRANS         op forbidden inside a transaction (§6.1)
+SM1_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
+SM1_ERR_EXISTS          home dir, database, or store exists (§11)
+SM1_ERR_INUSE           database still open in this process
+SM1_ERR_VERSION         home directory format unsupported (§3.5)
+SM1_ERR_CORRUPT         RocksDB integrity failure (§9.4)
+SM1_ERR_IO / SM1_ERR_NOMEM / SM1_ERR_PERMISSION / SM1_ERR_DISKFULL
 ```
 
 `CONFLICT`, `SERIALIZATION`, and `DEADLOCK` are the three
 *retryable* errors. On all three the engine has **already
 aborted** the transaction (§6.6): the caller must not call
-`sm_abort`, and retries by beginning a fresh transaction.
-Under `SM_XCT_SERIALIZABLE` they are a normal outcome, not an
+`sm1_abort`, and retries by beginning a fresh transaction.
+Under `SM1_XCT_SERIALIZABLE` they are a normal outcome, not an
 exceptional one.
 
-The code and message are read with `sm_errno()` and
-`sm_errmsg()`, each reporting the last error on the calling
+The code and message are read with `sm1_errno()` and
+`sm1_errmsg()`, each reporting the last error on the calling
 thread. They are functions, not the thread-local globals of
 the original sketch; `API.md` divergence 1 records why.
 Two consequences for the implementation:
@@ -2112,11 +2115,11 @@ Two consequences for the implementation:
   returns an error indication must set them before returning.
   Nothing may rely on a stale value, and nothing may clear
   them on success.
-- `sm_errmsg()` is never NULL and its result stays valid until
-  the next failing `sm_*` call on that thread, so the message
+- `sm1_errmsg()` is never NULL and its result stays valid until
+  the next failing `sm1_*` call on that thread, so the message
   wants thread-local storage owned by the engine. Formatting
   it lazily is worthwhile: under SSI a retry loop can raise
-  `SM_ERR_SERIALIZATION` constantly and never read the text.
+  `SM1_ERR_SERIALIZATION` constantly and never read the text.
 
 ### 12.2 Configuration knobs
 
@@ -2144,13 +2147,13 @@ so total memtable memory is a single budget rather than
 long a rarely-written CF can hold old WAL files alive.
 
 **Logging.** wisr writes no log of its own; a host installs a
-process-wide hook with `sm_set_log` (`API.md`). The engine
+process-wide hook with `sm1_set_log` (`API.md`). The engine
 reports through it only what no caller can learn from a
 return value: failures on the GC thread, entering the failed
 state (§8.2), versions the compaction filter kept out of
 doubt, a CF:txn sweep abandoned or completed (§8.3), a
 snapshot pinning `gc_watermark` for over a minute, and what
-recovery and `sm_attach` restore or clean up (§3.5, §9.1).
+recovery and `sm1_attach` restore or clean up (§3.5, §9.1).
 The stuck-snapshot check runs on each GC pass: each
 registered snapshot records when it was taken, and one older
 than the threshold is reported once. That is the operator's
@@ -2160,8 +2163,8 @@ forgotten cursor holding back reclamation.
 ### 12.3 Source layout
 
 ```
-include/sm.h            public C API
-src/strlist.cc          sm_strlist_t, the counted list of names
+include/sm1.h           public C API
+src/strlist.cc          sm1_strlist_t, the counted list of names
 src/env.cc              init/attach/detach, root db, db sweep
 src/db.cc               mkdb/rmdb, open registry, CF setup, storeid→CF map
 src/session.cc          open/close, per-session state and buffers
@@ -2170,11 +2173,11 @@ src/version.cc          key/value codec, version comparator, visibility
 src/access.cc           read / scan / insert / update / delete
 src/lockmgr.cc          row locks, waits-for graph, deadlock detection
 src/ssi.cc              SIREAD locks, rw-edges, validation
-src/catalog.cc          store catalog: DDL, sm_lsstore, CF create/drop
-src/seq.cc              named sequences: sm_mkseq, sm_rmseq, sm_nextseq
+src/catalog.cc          store catalog: DDL, sm1_lsstore, CF create/drop
+src/seq.cc              named sequences: sm1_mkseq, sm1_rmseq, sm1_nextseq
 src/gc.cc               compaction filter, watermarks, drop-store purge
 src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
-src/log.cc              the sm_set_log hook the engine reports through
+src/log.cc              the sm1_set_log hook the engine reports through
 test/                   the engine's tests: API, limits, locks, GC,
                         2PC, crash, sequences, logging
 mvcc/                   isolation: MVCC.md and one file per scenario
@@ -2211,30 +2214,30 @@ bullets below cover the rest of the engine.
   and a point read of each finds its own newest visible version.
 - **Own writes.** At each isolation level, a transaction reads
   back a key it inserted, updated twice, and deleted; after
-  `sm_rollback` to a savepoint it reads the pre-savepoint value.
+  `sm1_rollback` to a savepoint it reads the pre-savepoint value.
   A cursor opened *before* the savepoint survives the rollback
   and returns the same rows whether or not the transaction
   writes again afterwards; a cursor opened *after* it is closed
   by the rollback, and a row written after the mark is never
   yielded by any surviving cursor (§6.5, §10.2).
   It can update a key it inserted and re-insert a key it
-  deleted (§5), and `sm_rollback` to a depth the stack does
-  not hold fails with `SM_ERR_NOSAVEPOINT`. A key locked
+  deleted (§5), and `sm1_rollback` to a depth the stack does
+  not hold fails with `SM1_ERR_NOSAVEPOINT`. A key locked
   before a savepoint and rewritten after it stays locked
-  through `sm_rollback` (§5.1).
+  through `sm1_rollback` (§5.1).
 - **Nested savepoints.** Three marks deep: a rollback to the
   middle one undoes the writes after it, keeps those before
   it, and drops the mark inside it, while the middle mark
-  survives for a second rollback. `sm_forget` keeps the
+  survives for a second rollback. `sm1_forget` keeps the
   writes and releases no locks, and the depth it frees is
-  handed out again by the next `sm_savepoint`. Pushing past
-  `SM_MAX_SAVEPOINTS` fails with `SM_ERR_INVALID` (§6.5).
+  handed out again by the next `sm1_savepoint`. Pushing past
+  `SM1_MAX_SAVEPOINTS` fails with `SM1_ERR_INVALID` (§6.5).
 - **The old row.** An update returns the committed value it
   replaced, then its own previous value on a second update,
   and a delete returns the last value written. An empty old
   value comes back with length 0, a failed write reports
   none, and one out-parameter without the other is
-  `SM_ERR_INVALID`. A read on the same session overwrites
+  `SM1_ERR_INVALID`. A read on the same session overwrites
   the buffer the old row was handed out in (§5.3).
 - **Cursor reposition.** A cursor seeks forward over rows and
   resumes there, with the bounds and view it opened with;
@@ -2247,11 +2250,11 @@ bullets below cover the rest of the engine.
   once; an exclusive request waits for both. A shared holder
   writing the key upgrades once the others go, and two
   upgraders on one key deadlock with the younger one the
-  victim. At REPEATABLE READ and above `sm_lock` runs §5.2's
-  check under the lock, so it fails with `SM_ERR_CONFLICT` on a
+  victim. At REPEATABLE READ and above `sm1_lock` runs §5.2's
+  check under the lock, so it fails with `SM1_ERR_CONFLICT` on a
   key committed after the caller's snapshot; at read committed
   it does not fail, and the caller reads the row with
-  `sm_read_latest` (§5.4). A savepoint rollback releases an
+  `sm1_read_latest` (§5.4). A savepoint rollback releases an
   explicit lock first taken after the mark but never downgrades an
   upgrade. The whole index-build protocol runs end to end: a
   builder taking the schema row exclusive blocks a writer,
@@ -2261,9 +2264,9 @@ bullets below cover the rest of the engine.
 - **Deadlock.** Build a two-transaction cycle in both orders:
   the older waiter finds the cycle and the younger is the
   victim, and the younger finds it and is itself the victim.
-  Either way the youngest fails with `SM_ERR_DEADLOCK` and the
+  Either way the youngest fails with `SM1_ERR_DEADLOCK` and the
   other proceeds. Separately, doom a running transaction and
-  assert its next `sm_*` call fails with that reason and
+  assert its next `sm1_*` call fails with that reason and
   changes nothing (§5.1).
 - **Scan seek mode.** With the prefix extractor configured,
   a scan from a `skey` that is absent from the database
@@ -2276,8 +2279,8 @@ bullets below cover the rest of the engine.
 - **Read committed after a write.** A read-committed
   transaction that has already written reads a key committed by
   another transaction after its first write, and sees it
-  (§10.1). Updating that key then fails with `SM_ERR_UPDATED`,
-  and goes ahead after `sm_read_latest` (§5.4). A read-committed
+  (§10.1). Updating that key then fails with `SM1_ERR_UPDATED`,
+  and goes ahead after `sm1_read_latest` (§5.4). A read-committed
   transaction left idle while another deletes a key keeps that
   tombstone through a forced compaction and purge (§8.3).
 - **Isolation.** The Jepsen/Adya anomaly catalogue as unit tests: dirty
@@ -2292,8 +2295,8 @@ bullets below cover the rest of the engine.
   range (§10.2), a scan closed right after yielding a key
   followed by a concurrent write to that key (§7.1), a scan
   past a key whose only versions are concurrent writers'
-  (§10.2), a scan left open at `sm_commit` (§8.2), write
-  skew through `sm_rmstore` of a store the other transaction
+  (§10.2), a scan left open at `sm1_commit` (§8.2), write
+  skew through `sm1_rmstore` of a store the other transaction
   reads, with the storeid already in both sessions' caches (§11),
   and Fekete's read-only anomaly, which must fail while the
   read-only transaction's snapshot is unsafe (§7.4). A
@@ -2301,32 +2304,32 @@ bullets below cover the rest of the engine.
   that its snapshot is safe, and then writes commits, including
   on an otherwise idle database (§7.4). With a prepared or
   committed pivot, the partner is the one that fails (§7.3).
-- **DDL.** Concurrent `sm_mkstore` calls both commit, each
-  writing a catalog row of its own; concurrent `sm_rmstore` of
+- **DDL.** Concurrent `sm1_mkstore` calls both commit, each
+  writing a catalog row of its own; concurrent `sm1_rmstore` of
   the same store blocks, and the second fails with
-  `SM_ERR_CONFLICT` (§11). Every `sm_mkstore` hands out a higher
-  storeid than the last, and a dropped store stays readable at
-  an older snapshot; `sm_rollback` past an `sm_rmstore` keeps the
-  store's CF, and past an `sm_mkstore` drops it. Under
-  SERIALIZABLE, `sm_lsstore` followed by concurrent creates is a
-  conflict (§11).
-- **Sequences.** `sm_mkseq` and `sm_rmseq` follow commit,
+  `SM1_ERR_CONFLICT` (§11). Every `sm1_mkstore` hands out a
+  higher storeid than the last, and a dropped store stays
+  readable at an older snapshot; `sm1_rollback` past an
+  `sm1_rmstore` keeps the store's CF, and past an `sm1_mkstore`
+  drops it. Under SERIALIZABLE, `sm1_lsstore` followed by
+  concurrent creates is a conflict (§11).
+- **Sequences.** `sm1_mkseq` and `sm1_rmseq` follow commit,
   abort, and rollback like any other DDL, while the values
-  `sm_nextseq` hands out do not: an abort gives none back. A
+  `sm1_nextseq` hands out do not: an abort gives none back. A
   sequence is usable by its own transaction before it commits,
   its values step by its increment, it resumes above its lease
   after a restart or a kill, concurrent sessions never get the
   same value, a name created again after a drop starts over,
   and a sequence at `UINT64_MAX` hands out its last value and
   then fails (§11).
-- **Environment lifetime.** `sm_detach` with `force` 0 and a
-  session open fails with `SM_ERR_INUSE` and leaves the env
+- **Environment lifetime.** `sm1_detach` with `force` 0 and a
+  session open fails with `SM1_ERR_INUSE` and leaves the env
   usable; with `force` non-zero it succeeds, and a second
-  `sm_attach` on the same home directory then works. A
+  `sm1_attach` on the same home directory then works. A
   transaction left active in a
   forced-closed session is aborted — its versions resolve
   dead (§3.4) — while one left *prepared* survives: after
-  reattaching, `sm_list_prepared` still reports it with its
+  reattaching, `sm1_list_prepared` still reports it with its
   original `gid` and `prepared_at` (§8.5).
 - **Crash.** A fault-injection harness that kills the process at every
   RocksDB write boundary during a workload, restarts, and checks that
@@ -2336,7 +2339,7 @@ bullets below cover the rest of the engine.
   restored in-doubt, and that both resolutions produce the right state.
   Replay the §8.4 write-skew history across a restart and assert
   that the post-restart transaction fails with
-  `SM_ERR_SERIALIZATION`; assert `sm_list_prepared` reports the
+  `SM1_ERR_SERIALIZATION`; assert `sm1_list_prepared` reports the
   original `prepared_at`. Prepare two read-only transactions
   under different gids, restart, and assert both are listed and
   resolvable (§8.4). Prepare a transaction that dropped a
@@ -2353,13 +2356,13 @@ bullets below cover the rest of the engine.
   Stall one commit's WAL sync under concurrent load and
   assert allocation continues and `visible_ts` catches up (§4.3).
 - **Status resolution.** Fail a commit's status write and assert
-  the database fails stop: `sm_commit` returns `SM_ERR_IO`, the
+  the database fails stop: `sm1_commit` returns `SM1_ERR_IO`, the
   versions stay in-flight and are not compacted away, and after
   reopen the transaction is committed or dead according to the
   WAL (§8.2). Fail a prepare's record write and assert
-  `sm_prepare` returns `SM_ERR_IO`, the versions stay in-flight,
-  and after reopen the transaction is either listed by
-  `sm_list_prepared` or dead, according to the WAL (§8.4).
+  `sm1_prepare` returns `SM1_ERR_IO`, the versions stay
+  in-flight, and after reopen the transaction is either listed by
+  `sm1_list_prepared` or dead, according to the WAL (§8.4).
   Sweep `CF:txn` after a compaction pass and assert
   every committed row is still readable (§8.3). Run a concurrent
   workload with `commit_cache_entries = 1` and assert it reads
@@ -2394,7 +2397,7 @@ bullets below cover the rest of the engine.
   CF is opened at startup, so open time grows with the number of
   stores; each CF carries its own memtable and LSM metadata, so
   very many small stores need the shared memory budget (§12.2);
-  and CF create/drop is outside MVCC, which is why `sm_mkstore`
+  and CF create/drop is outside MVCC, which is why `sm1_mkstore`
   needs eager cleanup plus a recovery sweep (§11). The target is
   **hundreds to low thousands of stores per database**, which is
   where this trade pays. Past that, the answer is not to tune it
@@ -2476,7 +2479,7 @@ what makes recovery free of an undo pass.
 | Scans inherit RocksDB's prefix seek mode and return at most one userkey | §10.2 seek mode, §12.2, §12.5 regression test |
 | Full-compaction cost of the `CF:txn` sweep, and its unstated RocksDB dependencies | §8.3 |
 | One `DeleteRange` per deleted key saturates the range-tombstone aggregator | §8.3 coalescing and flush cadence, §12.2 no `row_cache` |
-| Cursors opened after a savepoint outlive `sm_rollback` | §6.5, §10.2, `API.md`, §12.5 |
+| Cursors opened after a savepoint outlive `sm1_rollback` | §6.5, §10.2, `API.md`, §12.5 |
 | No index for matching a write against active range predicates | §7.1 per-store interval tree |
 | `iterate_upper_bound` borrows its buffer | §10.2 bound lifetime |
 | A deadlock victim that is not blocked is never told | §5.1 `doomed` field, §12.5 |

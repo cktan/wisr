@@ -151,7 +151,7 @@ These are settled and drive `SM2_DESIGN.md`.
   are no mirror relations.
 - **Writes at READ COMMITTED follow sm1's protocol, and sm2
   does not resolve them.** A write that meets a row committed
-  after the transaction began is refused with `SM_ERR_UPDATED`
+  after the transaction began is refused with `SM1_ERR_UPDATED`
   (`sm1/SM1_DESIGN.md` §5.4). Resolving it means re-checking the
   statement's filter against the newest image, and filters are
   sm3's; sm2 surfaces the error and provides
@@ -204,10 +204,10 @@ sm3's indexes that feel them most.
   the meaning of stored bytes — provided the codec keeps
   rejecting any value outside the declared precision.
 
-- **Over-long keys.** `SM_MAX_KEYLEN` is 4096 and bounds an index
-  entry's whole key. Collation sort keys can be several times the
-  length of their source text. Truncate and recheck, hash and
-  recheck, or reject?
+- **Over-long keys.** `SM1_MAX_KEYLEN` is 4096 and bounds an
+  index entry's whole key. Collation sort keys can be several
+  times the length of their source text. Truncate and recheck,
+  hash and recheck, or reject?
 
   *Decided: reject for the primary key, truncate and recheck for
   a secondary index, never hash* (`SM2_DESIGN.md` §3.2). The

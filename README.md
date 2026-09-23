@@ -36,7 +36,7 @@ top-level one only delegates.
 - `sm1/OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
-- `sm1/API.md` — the `sm_*` C API, call by call
+- `sm1/API.md` — the `sm1_*` C API, call by call
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
   scenarios that are executed on every build
 - `sm2/OBJECTIVE.md` — what level 2 is for

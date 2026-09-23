@@ -4,7 +4,7 @@
  *
  * Four threads each add 1 to a hot counter, forty rounds each,
  * choosing among three, through the whole exchange: read, then
- * update; on `updated`, sm_read_latest and update again. A
+ * update; on `updated`, sm1_read_latest and update again. A
  * compaction thread runs meanwhile, so versions are stamped and
  * dropped under the writers' feet. The sum of the counters must
  * be exactly the number of increments (f01, f08, f07 under
@@ -30,7 +30,7 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
   std::atomic<bool> stop{false};
 
   // A compaction thread forces the filter to stamp and drop.
-  sm_session_t *csess = s.session(5);
+  sm1_session_t *csess = s.session(5);
   std::thread compactor([&] {
     rocksdb::CompactRangeOptions opt;
     opt.bottommost_level_compaction =
@@ -46,38 +46,38 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
 
   std::vector<std::thread> threads;
   for (int i = 0; i < 4; i++) {
-    sm_session_t *sess = s.session(1 + i);
+    sm1_session_t *sess = s.session(1 + i);
     threads.emplace_back([&, sess, i] {
       for (int round = 0; round < 40; round++) {
         const char *row = rows[(round + i) % 3];
         // Read the counter, then add one.
-        if (sm_begin(sess, SM_XCT_READ_COMMITTED) != 0) {
+        if (sm1_begin(sess, SM1_XCT_READ_COMMITTED) != 0) {
           failures++;
           return;
         }
         const char *data = nullptr;
         size_t len = 0;
-        if (sm_read(sess, s.store(), row, 2, &data, &len) != 0) {
+        if (sm1_read(sess, s.store(), row, 2, &data, &len) != 0) {
           failures++;
           return;
         }
         std::string next =
             std::to_string(std::stoi(std::string(data, len)) + 1);
-        int rc = sm_update(sess, s.store(), row, 2, next.data(), next.size(),
-                           nullptr, nullptr);
+        int rc = sm1_update(sess, s.store(), row, 2, next.data(), next.size(),
+                            nullptr, nullptr);
         // The counter moved: read the newest value, add one to that.
-        if (rc != 0 && sm_errno() == SM_ERR_UPDATED) {
+        if (rc != 0 && sm1_errno() == SM1_ERR_UPDATED) {
           updated++;
-          if (sm_read_latest(sess, s.store(), row, 2, &data, &len) != 0) {
+          if (sm1_read_latest(sess, s.store(), row, 2, &data, &len) != 0) {
             failures++;
             return;
           }
           next = std::to_string(std::stoi(std::string(data, len)) + 1);
-          rc = sm_update(sess, s.store(), row, 2, next.data(), next.size(),
-                         nullptr, nullptr);
+          rc = sm1_update(sess, s.store(), row, 2, next.data(), next.size(),
+                          nullptr, nullptr);
         }
         // Only a deadlock may be retried, and no row order here makes one.
-        if (rc != 0 || sm_commit(sess) != 0) {
+        if (rc != 0 || sm1_commit(sess) != 0) {
           failures++;
           return;
         }

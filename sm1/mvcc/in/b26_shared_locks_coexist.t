@@ -1,7 +1,7 @@
 # b26 -- two shared locks on one row, and a writer behind
 # them.
 #
-# The first mode of sm_lock. A shared lock is not a write, so
+# The first mode of sm1_lock. A shared lock is not a write, so
 # two transactions may hold one row at once and neither waits;
 # what it excludes is writing. T3's write therefore queues
 # behind both, and one holder leaving is not enough -- the

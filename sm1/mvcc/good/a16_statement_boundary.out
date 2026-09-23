@@ -5,7 +5,7 @@
 # several calls -- an index lookup is a scan and then a read
 # per row -- would otherwise see a different committed state
 # in each, and could return a mixture that never existed.
-# sm_stmt_begin says where a statement starts, and every read
+# sm1_stmt_begin says where a statement starts, and every read
 # after it uses one snapshot. The boundary is not the call
 # itself: the snapshot is taken by the first read after it, so
 # a statement may wait before it reads and still see

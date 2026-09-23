@@ -1,5 +1,5 @@
 /*
- * test_savepoint.cc -- sm_savepoint and sm_rollback (SM1_DESIGN.md
+ * test_savepoint.cc -- sm1_savepoint and sm1_rollback (SM1_DESIGN.md
  * §6.5, §12.5 "Own writes").
  *
  * The lock rule these calls obey is a timeline between two
@@ -13,7 +13,7 @@
 #include "util.h"
 
 #include "session.h"
-#include "sm.h"
+#include "sm1.h"
 
 #include <string>
 #include <utility>
@@ -29,18 +29,18 @@ class sp_fixture_t {
 public:
   /* Create "db", the store, and the row. */
   sp_fixture_t() {
-    REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
-    sm_session_t *s = open();
-    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
+    sm1_session_t *s = open();
+    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
     g_store = mkstore(s);
     put(s, g_store, "a", "0");
-    REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_closedb(s) == 0);
+    REQUIRE(sm1_commit(s) == 0);
+    REQUIRE(sm1_closedb(s) == 0);
   }
 
   /* A new session on "db". */
-  sm_session_t *open() const {
-    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
+  sm1_session_t *open() const {
+    sm1_session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -49,27 +49,27 @@ private:
   home_t m_home;
 };
 
-/* Set key in store 1 to val; the result of sm_update. */
-int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
-                   nullptr, nullptr);
+/* Set key in store 1 to val; the result of sm1_update. */
+int set(sm1_session_t *s, const std::string &key, const std::string &val) {
+  return sm1_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
+                    nullptr, nullptr);
 }
 
-/* Delete key from store 1; the result of sm_delete. */
-int del(sm_session_t *s, const std::string &key) {
-  return sm_delete(s, g_store, key.data(), key.size(), nullptr, nullptr);
+/* Delete key from store 1; the result of sm1_delete. */
+int del(sm1_session_t *s, const std::string &key) {
+  return sm1_delete(s, g_store, key.data(), key.size(), nullptr, nullptr);
 }
 
 /* Drain a cursor into its keys and close it. */
-std::vector<std::string> keys_of(sm_scan_t *c) {
-  REQUIRE_MESSAGE(c, sm_errmsg());
+std::vector<std::string> keys_of(sm1_scan_t *c) {
+  REQUIRE_MESSAGE(c, sm1_errmsg());
   std::vector<std::string> out;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
+  while (sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
     out.emplace_back(k, kl);
   }
-  sm_scanend(c);
+  sm1_scanend(c);
   return out;
 }
 
@@ -85,15 +85,15 @@ TEST_CASE("rollback restores the values as of the savepoint, at every level") {
   // 5. Roll back again to the same mark; still the same.
   // 6. Write after the rollback and commit; a new transaction
   //    sees the post-rollback writes and nothing undone.
-  for (sm_xctlevel_t level :
-       {SM_XCT_READ_COMMITTED, SM_XCT_REPEATABLE_READ, SM_XCT_SERIALIZABLE}) {
+  for (sm1_xctlevel_t level : {SM1_XCT_READ_COMMITTED, SM1_XCT_REPEATABLE_READ,
+                               SM1_XCT_SERIALIZABLE}) {
     CAPTURE(level);
     sp_fixture_t f;
-    sm_session_t *s = f.open();
-    REQUIRE(sm_begin(s, level) == 0);
+    sm1_session_t *s = f.open();
+    REQUIRE(sm1_begin(s, level) == 0);
     REQUIRE(set(s, "a", "1") == 0);
     put(s, g_store, "b", "1");
-    REQUIRE(sm_savepoint(s) == 1);
+    REQUIRE(sm1_savepoint(s) == 1);
 
     REQUIRE(set(s, "a", "2") == 0);
     REQUIRE(set(s, "a", "3") == 0);
@@ -104,70 +104,70 @@ TEST_CASE("rollback restores the values as of the savepoint, at every level") {
 
     for (int round = 0; round < 2; round++) {
       CAPTURE(round);
-      REQUIRE(sm_rollback(s, 1) == 0);
+      REQUIRE(sm1_rollback(s, 1) == 0);
       CHECK(get(s, g_store, "a") == "1");
       CHECK(get(s, g_store, "b") == "1");
       CHECK(get(s, g_store, "c") == "<none>");
-      CHECK(keys_of(sm_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
+      CHECK(keys_of(sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
             std::vector<std::string>{"a", "b"});
     }
 
     REQUIRE(set(s, "a", "4") == 0);
     put(s, g_store, "d", "4");
-    REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_commit(s) == 0);
+    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
     CHECK(get(s, g_store, "a") == "4");
     CHECK(get(s, g_store, "b") == "1");
     CHECK(get(s, g_store, "c") == "<none>");
     CHECK(get(s, g_store, "d") == "4");
-    REQUIRE(sm_commit(s) == 0);
-    sm_closedb(s);
+    REQUIRE(sm1_commit(s) == 0);
+    sm1_closedb(s);
   }
 }
 
 TEST_CASE("rollback needs a savepoint, and a savepoint lives only in its "
           "transaction") {
-  // Verify SM_ERR_NOSAVEPOINT and the savepoint's lifetime.
-  // 1. Rollback without a savepoint fails with SM_ERR_NOSAVEPOINT.
+  // Verify SM1_ERR_NOSAVEPOINT and the savepoint's lifetime.
+  // 1. Rollback without a savepoint fails with SM1_ERR_NOSAVEPOINT.
   // 2. Savepoint, commit; in the next transaction rollback
   //    fails again: commit discarded the savepoint.
   // 3. A depth outside the stack fails the same way.
   // 4. Savepoint right after begin rolls back to the start.
   sp_fixture_t f;
-  sm_session_t *s = f.open();
-  CHECK(sm_savepoint(s) == -1);
-  CHECK(sm_errno() == SM_ERR_NOTRANS);
+  sm1_session_t *s = f.open();
+  CHECK(sm1_savepoint(s) == -1);
+  CHECK(sm1_errno() == SM1_ERR_NOTRANS);
 
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(sm_rollback(s, 1) == -1);
-  CHECK(sm_errno() == SM_ERR_NOSAVEPOINT);
-  REQUIRE(sm_savepoint(s) == 1);
-  REQUIRE(sm_commit(s) == 0);
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(sm_rollback(s, 1) == -1);
-  CHECK(sm_errno() == SM_ERR_NOSAVEPOINT);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm1_rollback(s, 1) == -1);
+  CHECK(sm1_errno() == SM1_ERR_NOSAVEPOINT);
+  REQUIRE(sm1_savepoint(s) == 1);
+  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm1_rollback(s, 1) == -1);
+  CHECK(sm1_errno() == SM1_ERR_NOSAVEPOINT);
 
-  REQUIRE(sm_savepoint(s) == 1);
+  REQUIRE(sm1_savepoint(s) == 1);
   REQUIRE(set(s, "a", "1") == 0);
-  CHECK(sm_rollback(s, 2) == -1);
-  CHECK(sm_errno() == SM_ERR_NOSAVEPOINT);
-  CHECK(sm_rollback(s, 0) == -1);
-  CHECK(sm_errno() == SM_ERR_NOSAVEPOINT);
-  CHECK(sm_forget(s, 2) == -1);
-  CHECK(sm_errno() == SM_ERR_NOSAVEPOINT);
-  REQUIRE(sm_rollback(s, 1) == 0);
+  CHECK(sm1_rollback(s, 2) == -1);
+  CHECK(sm1_errno() == SM1_ERR_NOSAVEPOINT);
+  CHECK(sm1_rollback(s, 0) == -1);
+  CHECK(sm1_errno() == SM1_ERR_NOSAVEPOINT);
+  CHECK(sm1_forget(s, 2) == -1);
+  CHECK(sm1_errno() == SM1_ERR_NOSAVEPOINT);
+  REQUIRE(sm1_rollback(s, 1) == 0);
   CHECK(get(s, g_store, "a") == "0");
-  REQUIRE(sm_abort(s) == 0);
+  REQUIRE(sm1_abort(s) == 0);
 
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_savepoint(s) == 1);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_savepoint(s) == 1);
   REQUIRE(set(s, "a", "1") == 0);
   put(s, g_store, "b", "1");
-  REQUIRE(sm_rollback(s, 1) == 0);
+  REQUIRE(sm1_rollback(s, 1) == 0);
   CHECK(get(s, g_store, "a") == "0");
   CHECK(get(s, g_store, "b") == "<none>");
-  REQUIRE(sm_commit(s) == 0);
-  sm_closedb(s);
+  REQUIRE(sm1_commit(s) == 0);
+  sm1_closedb(s);
 }
 
 TEST_CASE("savepoints nest, and rolling back to one drops those inside it") {
@@ -180,38 +180,38 @@ TEST_CASE("savepoints nest, and rolling back to one drops those inside it") {
   //    to it work; a fresh push lands at depth 3 again.
   // 4. Rolling back to depth 1 undoes the lot.
   sp_fixture_t f;
-  sm_session_t *s = f.open();
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  sm1_session_t *s = f.open();
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   REQUIRE(set(s, "a", "1") == 0);
-  REQUIRE(sm_savepoint(s) == 1);
+  REQUIRE(sm1_savepoint(s) == 1);
   REQUIRE(set(s, "a", "2") == 0);
-  REQUIRE(sm_savepoint(s) == 2);
+  REQUIRE(sm1_savepoint(s) == 2);
   REQUIRE(set(s, "a", "3") == 0);
-  REQUIRE(sm_savepoint(s) == 3);
+  REQUIRE(sm1_savepoint(s) == 3);
   REQUIRE(set(s, "a", "4") == 0);
   put(s, g_store, "b", "4");
 
-  REQUIRE(sm_rollback(s, 2) == 0);
+  REQUIRE(sm1_rollback(s, 2) == 0);
   CHECK(get(s, g_store, "a") == "2");
   CHECK(get(s, g_store, "b") == "<none>");
-  CHECK(sm_rollback(s, 3) == -1);
-  CHECK(sm_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1_rollback(s, 3) == -1);
+  CHECK(sm1_errno() == SM1_ERR_NOSAVEPOINT);
 
   REQUIRE(set(s, "a", "5") == 0);
-  REQUIRE(sm_rollback(s, 2) == 0);
+  REQUIRE(sm1_rollback(s, 2) == 0);
   CHECK(get(s, g_store, "a") == "2");
-  REQUIRE(sm_savepoint(s) == 3);
+  REQUIRE(sm1_savepoint(s) == 3);
 
-  REQUIRE(sm_rollback(s, 1) == 0);
+  REQUIRE(sm1_rollback(s, 1) == 0);
   CHECK(get(s, g_store, "a") == "1");
-  REQUIRE(sm_commit(s) == 0);
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(get(s, g_store, "a") == "1");
-  REQUIRE(sm_commit(s) == 0);
-  sm_closedb(s);
+  REQUIRE(sm1_commit(s) == 0);
+  sm1_closedb(s);
 }
 
-TEST_CASE("sm_forget drops a mark and those inside it, keeping the writes") {
+TEST_CASE("sm1_forget drops a mark and those inside it, keeping the writes") {
   // Verify RELEASE SAVEPOINT semantics and the depth reuse it causes.
   // 1. Push two savepoints with a write after each.
   // 2. Forget depth 2: both writes stay, and depth 2 can no
@@ -220,47 +220,47 @@ TEST_CASE("sm_forget drops a mark and those inside it, keeping the writes") {
   //    now names a different mark -- the documented hazard.
   // 4. Rolling back to depth 1 still undoes everything after it.
   sp_fixture_t f;
-  sm_session_t *s = f.open();
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_savepoint(s) == 1);
+  sm1_session_t *s = f.open();
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_savepoint(s) == 1);
   REQUIRE(set(s, "a", "1") == 0);
-  REQUIRE(sm_savepoint(s) == 2);
+  REQUIRE(sm1_savepoint(s) == 2);
   REQUIRE(set(s, "a", "2") == 0);
 
-  REQUIRE(sm_forget(s, 2) == 0);
+  REQUIRE(sm1_forget(s, 2) == 0);
   CHECK(get(s, g_store, "a") == "2");
-  CHECK(sm_rollback(s, 2) == -1);
-  CHECK(sm_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1_rollback(s, 2) == -1);
+  CHECK(sm1_errno() == SM1_ERR_NOSAVEPOINT);
 
-  REQUIRE(sm_savepoint(s) == 2);
+  REQUIRE(sm1_savepoint(s) == 2);
   REQUIRE(set(s, "a", "3") == 0);
-  REQUIRE(sm_rollback(s, 2) == 0);
+  REQUIRE(sm1_rollback(s, 2) == 0);
   CHECK(get(s, g_store, "a") == "2");
 
-  REQUIRE(sm_rollback(s, 1) == 0);
+  REQUIRE(sm1_rollback(s, 1) == 0);
   CHECK(get(s, g_store, "a") == "0");
-  REQUIRE(sm_commit(s) == 0);
-  sm_closedb(s);
+  REQUIRE(sm1_commit(s) == 0);
+  sm1_closedb(s);
 }
 
 TEST_CASE("the savepoint stack is bounded, and forgetting makes room") {
-  // Verify SM_MAX_SAVEPOINTS.
-  // 1. Push SM_MAX_SAVEPOINTS savepoints; each returns its depth.
-  // 2. The next push fails with SM_ERR_INVALID.
+  // Verify SM1_MAX_SAVEPOINTS.
+  // 1. Push SM1_MAX_SAVEPOINTS savepoints; each returns its depth.
+  // 2. The next push fails with SM1_ERR_INVALID.
   // 3. Forgetting the innermost mark makes room for one more.
   sp_fixture_t f;
-  sm_session_t *s = f.open();
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  for (int depth = 1; depth <= SM_MAX_SAVEPOINTS; depth++) {
-    REQUIRE(sm_savepoint(s) == depth);
+  sm1_session_t *s = f.open();
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  for (int depth = 1; depth <= SM1_MAX_SAVEPOINTS; depth++) {
+    REQUIRE(sm1_savepoint(s) == depth);
   }
-  CHECK(sm_savepoint(s) == -1);
-  CHECK(sm_errno() == SM_ERR_INVALID);
+  CHECK(sm1_savepoint(s) == -1);
+  CHECK(sm1_errno() == SM1_ERR_INVALID);
 
-  REQUIRE(sm_forget(s, SM_MAX_SAVEPOINTS) == 0);
-  CHECK(sm_savepoint(s) == SM_MAX_SAVEPOINTS);
-  REQUIRE(sm_abort(s) == 0);
-  sm_closedb(s);
+  REQUIRE(sm1_forget(s, SM1_MAX_SAVEPOINTS) == 0);
+  CHECK(sm1_savepoint(s) == SM1_MAX_SAVEPOINTS);
+  REQUIRE(sm1_abort(s) == 0);
+  sm1_closedb(s);
 }
 
 TEST_CASE(
@@ -273,58 +273,58 @@ TEST_CASE(
   // 5. C1 returns exactly "a" and "b": no row written after
   //    the mark, and nothing written after C1 opened.
   sp_fixture_t f;
-  sm_session_t *s = f.open();
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  sm1_session_t *s = f.open();
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   put(s, g_store, "b", "1");
-  sm_scan_t *c1 = sm_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
+  sm1_scan_t *c1 = sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c1);
-  REQUIRE(sm_savepoint(s) == 1);
+  REQUIRE(sm1_savepoint(s) == 1);
   put(s, g_store, "c", "2");
-  sm_scan_t *c2 = sm_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
+  sm1_scan_t *c2 = sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c2);
   CHECK(s->scans.size() == 2);
 
-  REQUIRE(sm_rollback(s, 1) == 0);
+  REQUIRE(sm1_rollback(s, 1) == 0);
   CHECK(s->scans.size() == 1);
   CHECK(s->scans.count(c1) == 1);
   put(s, g_store, "d", "3");
   CHECK(keys_of(c1) == std::vector<std::string>{"a", "b"});
-  CHECK(keys_of(sm_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
+  CHECK(keys_of(sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
         std::vector<std::string>{"a", "b", "d"});
-  REQUIRE(sm_commit(s) == 0);
-  sm_closedb(s);
+  REQUIRE(sm1_commit(s) == 0);
+  sm1_closedb(s);
 }
 
-TEST_CASE("rollback undoes sm_mkstore and sm_rmstore made after the mark") {
+TEST_CASE("rollback undoes sm1_mkstore and sm1_rmstore made after the mark") {
   // Verify DDL follows the savepoint (§6.5, §11).
   // 1. Create store P before the mark; set the savepoint.
   // 2. Create store Q and write to it; drop the fixture's.
   // 3. Roll back: P exists, Q does not, and the fixture's
   //    store is back with its rows.
   // 4. Commit; a new transaction sees the same. A later
-  //    sm_mkstore hands out a storeid of its own.
+  //    sm1_mkstore hands out a storeid of its own.
   sp_fixture_t f;
-  sm_session_t *s = f.open();
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  sm1_session_t *s = f.open();
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   uint64_t p = mkstore(s);
-  REQUIRE(sm_savepoint(s) == 1);
+  REQUIRE(sm1_savepoint(s) == 1);
   uint64_t q = mkstore(s);
   put(s, q, "k", "v");
-  REQUIRE(sm_rmstore(s, g_store) == 0);
-  REQUIRE(sm_rollback(s, 1) == 0);
+  REQUIRE(sm1_rmstore(s, g_store) == 0);
+  REQUIRE(sm1_rollback(s, 1) == 0);
 
   for (int pass = 0; pass < 2; pass++) {
     CAPTURE(pass);
     const char *d;
     size_t dl;
-    CHECK(sm_read(s, p, "k", 1, &d, &dl) == 1);
-    CHECK(sm_read(s, q, "k", 1, &d, &dl) == -1);
-    CHECK(sm_errno() == SM_ERR_NOTFOUND);
+    CHECK(sm1_read(s, p, "k", 1, &d, &dl) == 1);
+    CHECK(sm1_read(s, q, "k", 1, &d, &dl) == -1);
+    CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
     CHECK(get(s, g_store, "a") == "0");
-    REQUIRE(sm_commit(s) == 0);
-    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_commit(s) == 0);
+    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   }
   CHECK(mkstore(s) > q); // a fresh storeid, never q again
-  REQUIRE(sm_commit(s) == 0);
-  sm_closedb(s);
+  REQUIRE(sm1_commit(s) == 0);
+  sm1_closedb(s);
 }

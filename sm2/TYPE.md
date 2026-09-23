@@ -67,7 +67,7 @@ unambiguous no encoded datum may be a prefix of another, so
 every variable-length encoding is made prefix-free by §3's
 escaping rule. Fixed-width encodings are prefix-free already.
 
-**Length.** `SM_MAX_KEYLEN` is 4096 and bounds the whole
+**Length.** `SM1_MAX_KEYLEN` is 4096 and bounds the whole
 concatenation, the 2-byte object prefix included. What
 happens when a key does not fit is in `SM2_DESIGN.md` §3.2:
 refused for a primary key, truncated and rechecked for a
@@ -213,7 +213,7 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
   output carries no embedded `0x00`, which is what lets the
   `0x00 0x00` separator above sit between it and the
   tie-break. Budget 2-4x the input length against
-  `SM_MAX_KEYLEN`.
+  `SM1_MAX_KEYLEN`.
 - The original follows as a **tie-break**, escaped by §3.6's
   rule. It is there for injectivity, not recoverability: a
   deterministic collation can give two distinct strings the

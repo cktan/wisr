@@ -3,7 +3,7 @@
 #   make -j4          libwisr.a, the test binaries, and the examples
 #   make test         build, then run every test, script, and example
 #   make accept       take the scenario transcripts as expected
-#   make dist         install libwisr.a and sm.h under PREFIX
+#   make dist         install libwisr.a and sm1.h under PREFIX
 #   make format       clang-format src/, test/, and example/ in place
 #   make clean        remove build/
 #
@@ -15,7 +15,7 @@
 # CXX, or CXXFLAGS) rebuilds everything rather than linking
 # objects compiled with the old ones.
 #
-# include/sm.h is aligned by hand and is not formatted.
+# include/sm1.h is aligned by hand and is not formatted.
 
 # DEBUG set and non-empty: optimize lightly and keep the symbols.
 ifdef DEBUG
@@ -163,7 +163,7 @@ accept: $(DRIVER)
 dist: $(LIB)
 	@mkdir -p $(PREFIX)/lib $(PREFIX)/include
 	install -m 644 $(LIB) $(PREFIX)/lib/
-	install -m 644 include/sm.h $(PREFIX)/include/
+	install -m 644 include/sm1.h $(PREFIX)/include/
 
 format:
 	clang-format -i $(FORMAT_FILES)

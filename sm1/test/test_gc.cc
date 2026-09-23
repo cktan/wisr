@@ -9,7 +9,7 @@
 
 #include "db.h"
 #include "session.h"
-#include "sm.h"
+#include "sm1.h"
 #include "version.h"
 
 #include <stdio.h>
@@ -37,21 +37,21 @@ uint64_t g_store = 0;
 class gc_fixture_t {
 public:
   /* Create "db" and the store; the first session opens "db" with opt. */
-  explicit gc_fixture_t(const sm_options_t *opt = nullptr) {
-    REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
-    m_s = sm_opendb(m_home.env(), "db", opt);
+  explicit gc_fixture_t(const sm1_options_t *opt = nullptr) {
+    REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
+    m_s = sm1_opendb(m_home.env(), "db", opt);
     REQUIRE(m_s);
-    REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(m_s, SM1_XCT_REPEATABLE_READ) == 0);
     m_storeid = g_store = mkstore(m_s);
-    REQUIRE(sm_commit(m_s) == 0);
+    REQUIRE(sm1_commit(m_s) == 0);
   }
 
   /* The fixture's own session. */
-  sm_session_t *s() const { return m_s; }
+  sm1_session_t *s() const { return m_s; }
 
   /* A new session on "db". */
-  sm_session_t *open() const {
-    sm_session_t *s = sm_opendb(m_home.env(), "db", nullptr);
+  sm1_session_t *open() const {
+    sm1_session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -86,10 +86,10 @@ public:
   }
 
   /* Close the session, reattach, and reopen "db" with opt. */
-  void reopen(const sm_options_t *opt) {
-    REQUIRE(sm_closedb(m_s) == 0);
+  void reopen(const sm1_options_t *opt) {
+    REQUIRE(sm1_closedb(m_s) == 0);
     m_home.reattach();
-    m_s = sm_opendb(m_home.env(), "db", opt);
+    m_s = sm1_opendb(m_home.env(), "db", opt);
     REQUIRE(m_s);
   }
 
@@ -112,32 +112,33 @@ public:
 
 private:
   home_t m_home;
-  sm_session_t *m_s = nullptr;
+  sm1_session_t *m_s = nullptr;
   uint64_t m_storeid = 0;
 };
 
 /* Set key in store 1 to val in one committed transaction. */
-void commit_set(sm_session_t *s, const std::string &key,
+void commit_set(sm1_session_t *s, const std::string &key,
                 const std::string &val) {
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
-                    nullptr, nullptr) == 0);
-  REQUIRE(sm_commit(s) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
+                     nullptr, nullptr) == 0);
+  REQUIRE(sm1_commit(s) == 0);
 }
 
 /* Insert key -> val into store 1 in one committed transaction. */
-void commit_put(sm_session_t *s, const std::string &key,
+void commit_put(sm1_session_t *s, const std::string &key,
                 const std::string &val) {
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   put(s, g_store, key, val);
-  REQUIRE(sm_commit(s) == 0);
+  REQUIRE(sm1_commit(s) == 0);
 }
 
 /* Delete key from store 1 in one committed transaction. */
-void commit_del(sm_session_t *s, const std::string &key) {
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_delete(s, g_store, key.data(), key.size(), nullptr, nullptr) == 0);
-  REQUIRE(sm_commit(s) == 0);
+void commit_del(sm1_session_t *s, const std::string &key) {
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_delete(s, g_store, key.data(), key.size(), nullptr, nullptr) ==
+          0);
+  REQUIRE(sm1_commit(s) == 0);
 }
 
 } // namespace
@@ -152,18 +153,18 @@ TEST_CASE("a key's versions are stored in commit order, by write timestamp") {
   // 4. Confirm "k" has three versions whose wts strictly descend.
   // 5. Confirm every unstamped version's wts is above its xid.
   gc_fixture_t f;
-  sm_session_t *w = f.open();
-  sm_session_t *l = f.open();
+  sm1_session_t *w = f.open();
+  sm1_session_t *l = f.open();
   commit_put(w, "k", "v0");
   commit_put(w, "j", "x");
-  REQUIRE(sm_begin(l, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
+  REQUIRE(sm1_begin(l, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
   commit_set(w, "k", "v1");
   commit_set(w, "k", "v2");
-  REQUIRE(sm_commit(l) == 0);
-  REQUIRE(sm_begin(w, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_commit(l) == 0);
+  REQUIRE(sm1_begin(w, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(get(w, g_store, "k") == "v2");
-  REQUIRE(sm_commit(w) == 0);
+  REQUIRE(sm1_commit(w) == 0);
 
   std::vector<raw_t> raw = f.raw(g_store);
   std::vector<uint64_t> k_wts;
@@ -178,7 +179,7 @@ TEST_CASE("a key's versions are stored in commit order, by write timestamp") {
   REQUIRE(k_wts.size() == 3);
   CHECK(k_wts[0] > k_wts[1]);
   CHECK(k_wts[1] > k_wts[2]);
-  sm_closedb(w);
+  sm1_closedb(w);
 }
 
 TEST_CASE("a read committed write past a newer commit survives compaction") {
@@ -186,30 +187,30 @@ TEST_CASE("a read committed write past a newer commit survives compaction") {
   // 1. Commit "k" = v0 and "j" = x.
   // 2. L (read committed) begins and writes "j", so its xid is early.
   // 3. Commit "k" = v1 from another session.
-  // 4. L's write of "k" fails with SM_ERR_UPDATED; it reads the
+  // 4. L's write of "k" fails with SM1_ERR_UPDATED; it reads the
   //    latest, writes v2 and commits.
   // 5. Compact; "k" reads v2 and only v2 is left.
   gc_fixture_t f;
-  sm_session_t *w = f.open();
-  sm_session_t *l = f.open();
+  sm1_session_t *w = f.open();
+  sm1_session_t *l = f.open();
   commit_put(w, "k", "v0");
   commit_put(w, "j", "x");
-  REQUIRE(sm_begin(l, SM_XCT_READ_COMMITTED) == 0);
-  REQUIRE(sm_update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
+  REQUIRE(sm1_begin(l, SM1_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm1_update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
   commit_set(w, "k", "v1");
-  CHECK(sm_update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == -1);
-  CHECK(sm_errno() == SM_ERR_UPDATED);
+  CHECK(sm1_update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == -1);
+  CHECK(sm1_errno() == SM1_ERR_UPDATED);
   const char *data = nullptr;
   size_t len = 0;
-  REQUIRE(sm_read_latest(l, g_store, "k", 1, &data, &len) == 0);
+  REQUIRE(sm1_read_latest(l, g_store, "k", 1, &data, &len) == 0);
   CHECK(std::string(data, len) == "v1");
-  REQUIRE(sm_update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == 0);
-  REQUIRE(sm_commit(l) == 0);
+  REQUIRE(sm1_update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == 0);
+  REQUIRE(sm1_commit(l) == 0);
 
   f.compact(g_store);
-  REQUIRE(sm_begin(w, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(w, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(get(w, g_store, "k") == "v2");
-  REQUIRE(sm_commit(w) == 0);
+  REQUIRE(sm1_commit(w) == 0);
   size_t k_versions = 0;
   for (const raw_t &v : f.raw(g_store)) {
     if (v.key == "k") {
@@ -217,7 +218,7 @@ TEST_CASE("a read committed write past a newer commit survives compaction") {
     }
   }
   CHECK(k_versions == 1);
-  sm_closedb(w);
+  sm1_closedb(w);
 }
 
 TEST_CASE("a long-running reader keeps the versions it can see") {
@@ -228,10 +229,10 @@ TEST_CASE("a long-running reader keeps the versions it can see") {
   //    one R sees (v0) is stamped, the newer five are not.
   // 4. R ends; compact again: only v5 remains, stamped.
   gc_fixture_t f;
-  sm_session_t *w = f.open();
-  sm_session_t *r = f.open();
+  sm1_session_t *w = f.open();
+  sm1_session_t *r = f.open();
   commit_put(w, "k", "v0");
-  REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(r, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(get(r, g_store, "k") == "v0");
   for (int i = 1; i <= 5; i++) {
     commit_set(w, "k", "v" + std::to_string(i));
@@ -245,17 +246,17 @@ TEST_CASE("a long-running reader keeps the versions it can see") {
     CHECK((raw[i].flags & version_stamped) == 0);
   }
   CHECK((raw[5].flags & version_stamped) != 0);
-  REQUIRE(sm_commit(r) == 0);
+  REQUIRE(sm1_commit(r) == 0);
 
   f.compact(g_store);
   raw = f.raw(g_store);
   REQUIRE(raw.size() == 1);
   CHECK((raw[0].flags & version_stamped) != 0);
-  REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(r, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(get(r, g_store, "k") == "v5");
-  REQUIRE(sm_commit(r) == 0);
-  sm_closedb(w);
-  sm_closedb(r);
+  REQUIRE(sm1_commit(r) == 0);
+  sm1_closedb(w);
+  sm1_closedb(r);
 }
 
 TEST_CASE("a running transaction's versions survive compaction unstamped") {
@@ -265,25 +266,25 @@ TEST_CASE("a running transaction's versions survive compaction unstamped") {
   //    does not see it; T still reads it.
   // 3. T aborts; compact again: the version is gone.
   gc_fixture_t f;
-  sm_session_t *t = f.open();
-  sm_session_t *u = f.open();
-  REQUIRE(sm_begin(t, SM_XCT_REPEATABLE_READ) == 0);
+  sm1_session_t *t = f.open();
+  sm1_session_t *u = f.open();
+  REQUIRE(sm1_begin(t, SM1_XCT_REPEATABLE_READ) == 0);
   put(t, g_store, "k", "v");
   f.compact(g_store);
 
   std::vector<raw_t> raw = f.raw(g_store);
   REQUIRE(raw.size() == 1);
   CHECK((raw[0].flags & version_stamped) == 0);
-  REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(get(u, g_store, "k") == "<none>");
-  REQUIRE(sm_commit(u) == 0);
+  REQUIRE(sm1_commit(u) == 0);
   CHECK(get(t, g_store, "k") == "v");
 
-  REQUIRE(sm_abort(t) == 0);
+  REQUIRE(sm1_abort(t) == 0);
   f.compact(g_store);
   CHECK(f.raw(g_store).empty());
-  sm_closedb(t);
-  sm_closedb(u);
+  sm1_closedb(t);
+  sm1_closedb(u);
 }
 
 TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
@@ -296,47 +297,47 @@ TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
   // 5. Every odd key and the new k04 remain; the other even
   //    keys are gone from reads and from storage entirely.
   gc_fixture_t f;
-  sm_session_t *s = f.open();
+  sm1_session_t *s = f.open();
   char key[8];
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i++) {
     snprintf(key, sizeof(key), "k%02d", i);
     put(s, g_store, key, "a");
   }
-  REQUIRE(sm_commit(s) == 0);
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i++) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm_update(s, g_store, key, 3, "b", 1, nullptr, nullptr) == 0);
+    REQUIRE(sm1_update(s, g_store, key, 3, "b", 1, nullptr, nullptr) == 0);
   }
-  REQUIRE(sm_commit(s) == 0);
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i += 2) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm_delete(s, g_store, key, 3, nullptr, nullptr) == 0);
+    REQUIRE(sm1_delete(s, g_store, key, 3, nullptr, nullptr) == 0);
   }
-  REQUIRE(sm_commit(s) == 0);
+  REQUIRE(sm1_commit(s) == 0);
 
   f.compact(g_store);
   commit_put(s, "k04", "c");
   gc_run_once(f.db());
   f.compact(g_store);
 
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   for (int i = 0; i < 20; i++) {
     CAPTURE(i);
     snprintf(key, sizeof(key), "k%02d", i);
     std::string want = i == 4 ? "c" : i % 2 ? "b" : "<none>";
     CHECK(get(s, g_store, key) == want);
   }
-  REQUIRE(sm_commit(s) == 0);
+  REQUIRE(sm1_commit(s) == 0);
 
   std::vector<raw_t> raw = f.raw(g_store);
   CHECK(raw.size() == 11); // ten odd keys and the new k04
   for (const raw_t &v : raw) {
     CHECK((v.flags & version_tombstone) == 0);
   }
-  sm_closedb(s);
+  sm1_closedb(s);
 }
 
 TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
@@ -347,10 +348,10 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
   // 4. The tombstone is still stored, and T's insert of "k",
   //    judged against the newest committed version, goes ahead.
   gc_fixture_t f;
-  sm_session_t *t = f.open();
-  sm_session_t *u = f.open();
+  sm1_session_t *t = f.open();
+  sm1_session_t *u = f.open();
   commit_put(u, "k", "v");
-  REQUIRE(sm_begin(t, SM_XCT_READ_COMMITTED) == 0);
+  REQUIRE(sm1_begin(t, SM1_XCT_READ_COMMITTED) == 0);
   commit_del(u, "k");
 
   f.compact(g_store);
@@ -361,10 +362,10 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
     tombstone |= v.key == "k" && (v.flags & version_tombstone) != 0;
   }
   CHECK(tombstone);
-  CHECK(sm_insert(t, g_store, "k", 1, "t", 1) == 0);
-  REQUIRE(sm_commit(t) == 0);
-  sm_closedb(t);
-  sm_closedb(u);
+  CHECK(sm1_insert(t, g_store, "k", 1, "t", 1) == 0);
+  REQUIRE(sm1_commit(t) == 0);
+  sm1_closedb(t);
+  sm1_closedb(u);
 }
 
 TEST_CASE("a dropped store's column family goes once no snapshot sees it") {
@@ -376,58 +377,58 @@ TEST_CASE("a dropped store's column family goes once no snapshot sees it") {
   // 4. A drop undone by rollback to a savepoint is never
   //    queued: the second store survives GC.
   gc_fixture_t f;
-  sm_session_t *s = f.open();
-  sm_session_t *r = f.open();
+  sm1_session_t *s = f.open();
+  sm1_session_t *r = f.open();
   commit_put(s, "k", "v");
   uint64_t storeid = g_store;
-  REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(r, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(get(r, g_store, "k") == "v");
 
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_rmstore(s, g_store) == 0);
-  REQUIRE(sm_commit(s) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_rmstore(s, g_store) == 0);
+  REQUIRE(sm1_commit(s) == 0);
   gc_run_once(f.db());
   CHECK(db_store_cf(f.db(), storeid) != nullptr);
   CHECK(get(r, g_store, "k") == "v");
-  REQUIRE(sm_commit(r) == 0);
+  REQUIRE(sm1_commit(r) == 0);
   gc_run_once(f.db());
   CHECK(db_store_cf(f.db(), storeid) == nullptr);
 
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   uint64_t ustoreid = mkstore(s);
-  REQUIRE(sm_commit(s) == 0);
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_savepoint(s) == 1);
-  REQUIRE(sm_rmstore(s, ustoreid) == 0);
-  REQUIRE(sm_rollback(s, 1) == 0);
-  REQUIRE(sm_commit(s) == 0);
+  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_savepoint(s) == 1);
+  REQUIRE(sm1_rmstore(s, ustoreid) == 0);
+  REQUIRE(sm1_rollback(s, 1) == 0);
+  REQUIRE(sm1_commit(s) == 0);
   gc_run_once(f.db());
   CHECK(db_store_cf(f.db(), ustoreid) != nullptr);
-  sm_closedb(s);
-  sm_closedb(r);
+  sm1_closedb(s);
+  sm1_closedb(r);
 }
 
 namespace {
 
 /* Options with a one-entry commit cache, so CF:txn answers lookups. */
-sm_options_t tiny_cache() {
-  sm_options_t opt;
-  sm_options_init(&opt);
+sm1_options_t tiny_cache() {
+  sm1_options_t opt;
+  sm1_options_init(&opt);
   opt.commit_cache_entries = 1;
   return opt;
 }
 
 /* The keys a full scan of store 1 returns, through s. */
-std::vector<std::string> scan_keys(sm_session_t *s) {
-  sm_scan_t *c = sm_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
-  REQUIRE_MESSAGE(c, sm_errmsg());
+std::vector<std::string> scan_keys(sm1_session_t *s) {
+  sm1_scan_t *c = sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
+  REQUIRE_MESSAGE(c, sm1_errmsg());
   std::vector<std::string> out;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
+  while (sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
     out.emplace_back(k, kl);
   }
-  sm_scanend(c);
+  sm1_scanend(c);
   return out;
 }
 
@@ -442,9 +443,9 @@ TEST_CASE(
   //    at or below the watermark are deleted.
   // 3. Every key reads back, by point read and scan, now and
   //    after reopening (no commit cache to help).
-  sm_options_t opt = tiny_cache();
+  sm1_options_t opt = tiny_cache();
   gc_fixture_t f(&opt);
-  sm_session_t *s = f.s();
+  sm1_session_t *s = f.s();
   for (int i = 0; i < 30; i++) {
     commit_put(s, "k" + std::to_string(100 + i), "v");
   }
@@ -463,12 +464,12 @@ TEST_CASE(
       f.reopen(&opt);
       s = f.s();
     }
-    REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
     for (int i = 0; i < 30; i++) {
       CHECK(get(s, g_store, "k" + std::to_string(100 + i)) == "v");
     }
     CHECK(scan_keys(s).size() == 30);
-    REQUIRE(sm_commit(s) == 0);
+    REQUIRE(sm1_commit(s) == 0);
   }
 }
 
@@ -481,16 +482,16 @@ TEST_CASE(
   //    so the call reports it pending and the records remain.
   // 3. C still returns all 10 rows.
   // 4. Close C; the next step of the sweep deletes the records.
-  sm_options_t opt = tiny_cache();
+  sm1_options_t opt = tiny_cache();
   gc_fixture_t f(&opt);
-  sm_session_t *s = f.s();
-  sm_session_t *r = f.open();
+  sm1_session_t *s = f.s();
+  sm1_session_t *r = f.open();
   for (int i = 0; i < 10; i++) {
     commit_put(s, "k" + std::to_string(i), "v");
   }
   size_t before = f.txn_records();
-  REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
-  sm_scan_t *c = sm_scan(r, g_store, nullptr, 0, 0, nullptr, 0, 0);
+  REQUIRE(sm1_begin(r, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1_scan_t *c = sm1_scan(r, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
 
   CHECK(gc_sweep_txn(f.db(), true) == 0);
@@ -500,21 +501,21 @@ TEST_CASE(
   int n = 0;
   const char *k, *d;
   size_t kl, dl;
-  while (sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
+  while (sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
   CHECK(n == 10);
-  sm_scanend(c);
-  REQUIRE(sm_commit(r) == 0);
+  sm1_scanend(c);
+  REQUIRE(sm1_commit(r) == 0);
 
   // The worker may finish the sweep first; either way it is done.
   int64_t done = gc_sweep_txn(f.db(), false);
   CHECK((done == (int64_t)before || done == 0));
   CHECK(f.txn_records() == 0);
-  REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(r, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(scan_keys(r).size() == 10);
-  REQUIRE(sm_commit(r) == 0);
-  sm_closedb(r);
+  REQUIRE(sm1_commit(r) == 0);
+  sm1_closedb(r);
 }
 
 TEST_CASE("the sweep keeps records a live snapshot may still need") {
@@ -523,23 +524,23 @@ TEST_CASE("the sweep keeps records a live snapshot may still need") {
   // 2. Sweep: the watermark is R's snapshot, so the records of
   //    "b" and "c" (committed after it) stay; older ones go.
   // 3. R sees only "a"; a new transaction sees all three.
-  sm_options_t opt = tiny_cache();
+  sm1_options_t opt = tiny_cache();
   gc_fixture_t f(&opt);
-  sm_session_t *s = f.s();
-  sm_session_t *r = f.open();
+  sm1_session_t *s = f.s();
+  sm1_session_t *r = f.open();
   commit_put(s, "a", "v");
-  REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(r, SM1_XCT_REPEATABLE_READ) == 0);
   commit_put(s, "b", "v");
   commit_put(s, "c", "v");
 
   CHECK(gc_sweep_txn(f.db(), true) > 0);
   CHECK(f.txn_records() == 2);
   CHECK(scan_keys(r) == std::vector<std::string>{"a"});
-  REQUIRE(sm_commit(r) == 0);
-  REQUIRE(sm_begin(r, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_commit(r) == 0);
+  REQUIRE(sm1_begin(r, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(scan_keys(r) == std::vector<std::string>{"a", "b", "c"});
-  REQUIRE(sm_commit(r) == 0);
-  sm_closedb(r);
+  REQUIRE(sm1_commit(r) == 0);
+  sm1_closedb(r);
 }
 
 TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold") {
@@ -547,9 +548,9 @@ TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold") {
   // 1. Lower the threshold to 5 records; commit 20 keys.
   // 2. Run GC: CF:txn is swept down to nothing.
   // 3. All 20 keys still read back.
-  sm_options_t opt = tiny_cache();
+  sm1_options_t opt = tiny_cache();
   gc_fixture_t f(&opt);
-  sm_session_t *s = f.s();
+  sm1_session_t *s = f.s();
   f.db()->txn_sweep_records = 5;
   for (int i = 0; i < 20; i++) {
     commit_put(s, "k" + std::to_string(100 + i), "v");
@@ -557,7 +558,7 @@ TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold") {
   CHECK(f.txn_records() >= 20);
   gc_run_once(f.db());
   CHECK(f.txn_records() == 0);
-  REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(scan_keys(s).size() == 20);
-  REQUIRE(sm_commit(s) == 0);
+  REQUIRE(sm1_commit(s) == 0);
 }

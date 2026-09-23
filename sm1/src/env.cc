@@ -1,5 +1,5 @@
 /*
- * env.cc -- sm_init, sm_attach, sm_detach: the home directory,
+ * env.cc -- sm1_init, sm1_attach, sm1_detach: the home directory,
  * its root db, and the sweep of unnamed database directories
  * (SM1_DESIGN.md §3.5).
  *
@@ -7,8 +7,8 @@
  * home directory at a time. The library does not enforce this:
  * serializing processes is the caller's job. A second attach
  * usually fails anyway, on RocksDB's own lock of the root db,
- * but the directory-level work here -- the sweep, sm_mkdb,
- * sm_rmdb -- relies on the rule and is unsafe without it.
+ * but the directory-level work here -- the sweep, sm1_mkdb,
+ * sm1_rmdb -- relies on the rule and is unsafe without it.
  */
 
 #include "env.h"
@@ -53,7 +53,7 @@ std::string root_path(const std::string &homedir) {
 int check_homedir(const char *homedir) {
   // Reject a NULL or empty path.
   if (!homedir || !*homedir) {
-    return set_error(SM_ERR_INVALID, "homedir is NULL or empty");
+    return set_error(SM1_ERR_INVALID, "homedir is NULL or empty");
   }
   struct stat st;
   // The path must exist.
@@ -62,7 +62,7 @@ int check_homedir(const char *homedir) {
   }
   // It must be a directory.
   if (!S_ISDIR(st.st_mode)) {
-    return set_error(SM_ERR_INVALID, "{}: not a directory", homedir);
+    return set_error(SM1_ERR_INVALID, "{}: not a directory", homedir);
   }
   return 0;
 }
@@ -89,10 +89,10 @@ bool parse_dbid(const char *name, uint64_t *dbid) {
 
 /*
  * Destroy every directory under base/ that no "D" row in the
- * root db names: the remains of a crashed sm_mkdb or sm_rmdb.
+ * root db names: the remains of a crashed sm1_mkdb or sm1_rmdb.
  * Entries that are not dbids are left alone.
  */
-int sweep_base(sm_env_t *env) {
+int sweep_base(sm1_env_t *env) {
   std::set<uint64_t> live;
   // Collect every dbid the root db names.
   std::unique_ptr<rocksdb::Iterator> it(
@@ -102,7 +102,7 @@ int sweep_base(sm_env_t *env) {
        it->Next()) {
     // Reject a malformed dbid.
     if (it->value().size() != 8) {
-      return set_error(SM_ERR_CORRUPT, "{}: bad dbid for database {}",
+      return set_error(SM1_ERR_CORRUPT, "{}: bad dbid for database {}",
                        root_path(env->homedir).c_str(),
                        it->key().ToString().c_str() + 1);
     }
@@ -140,28 +140,28 @@ int sweep_base(sm_env_t *env) {
     if (env_destroy_db_dir(path) != 0) {
       return -1;
     }
-    log_msg(SM_LOG_INFO, "destroyed unnamed database directory {}",
+    log_msg(SM1_LOG_INFO, "destroyed unnamed database directory {}",
             path.c_str());
   }
   return 0;
 }
 
-/* sm_attach, minus the out-of-memory guard. */
-sm_env_t *attach(const char *homedir) {
+/* sm1_attach, minus the out-of-memory guard. */
+sm1_env_t *attach(const char *homedir) {
   // Validate the home directory path.
   if (check_homedir(homedir) != 0) {
     return nullptr;
   }
   // Allocate the environment.
-  std::unique_ptr<sm_env_t> env(new sm_env_t);
+  std::unique_ptr<sm1_env_t> env(new sm1_env_t);
   env->homedir = homedir;
 
   // Open the root db. It must exist: attach creates nothing.
   std::string rootpath = root_path(env->homedir);
   struct stat st;
-  // Refuse a directory sm_init never prepared.
+  // Refuse a directory sm1_init never prepared.
   if (stat(rootpath.c_str(), &st) != 0) {
-    set_error(SM_ERR_NOTFOUND, "{}: not a wisr home directory", homedir);
+    set_error(SM1_ERR_NOTFOUND, "{}: not a wisr home directory", homedir);
     return nullptr;
   }
   rocksdb::Options opt;
@@ -178,13 +178,13 @@ sm_env_t *attach(const char *homedir) {
   s = env->root->Get(rocksdb::ReadOptions(), WISR_ROOT_VERSION, &version);
   // Reject a home directory without one.
   if (!s.ok() || version.size() != 8) {
-    set_error(SM_ERR_CORRUPT, "{}: no format version", rootpath.c_str());
+    set_error(SM1_ERR_CORRUPT, "{}: no format version", rootpath.c_str());
     return nullptr;
   }
   uint64_t v = get_be64(version.data());
   // Reject a format this build does not understand.
   if (v != WISR_HOME_VERSION) {
-    set_error(SM_ERR_VERSION, "{}: format version {}, expected {}", homedir, v,
+    set_error(SM1_ERR_VERSION, "{}: format version {}, expected {}", homedir, v,
               WISR_HOME_VERSION);
     return nullptr;
   }
@@ -200,7 +200,7 @@ sm_env_t *attach(const char *homedir) {
 } // namespace
 
 /* Close the root db. */
-sm_env_t::~sm_env_t() {
+sm1_env_t::~sm1_env_t() {
   // Close the root db, if it was opened.
   if (root) {
     root->Close();
@@ -211,7 +211,7 @@ sm_env_t::~sm_env_t() {
 namespace wisr {
 
 /* The directory of database dbid. */
-std::string env_db_path(const sm_env_t *env, uint64_t dbid) {
+std::string env_db_path(const sm1_env_t *env, uint64_t dbid) {
   return base_dir(env->homedir) + "/" + std::to_string(dbid);
 }
 
@@ -236,8 +236,8 @@ int env_destroy_db_dir(const std::string &path) {
 } // namespace wisr
 
 /* Make homedir a wisr home directory: global/, base/, root db. */
-int sm_init(const char *homedir) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_init(const char *homedir) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     // Validate the home directory path.
     if (check_homedir(homedir) != 0) {
@@ -247,11 +247,11 @@ int sm_init(const char *homedir) {
     std::string base = base_dir(homedir);
 
     // Create global/ first: this mkdir settles a race between
-    // two sm_init calls, since the loser sees EEXIST.
+    // two sm1_init calls, since the loser sees EEXIST.
     if (mkdir(global.c_str(), 0700) != 0) {
       // global/ already exists: this is already a home directory.
       if (errno == EEXIST) {
-        return set_error(SM_ERR_EXISTS, "{}: already a wisr home directory",
+        return set_error(SM1_ERR_EXISTS, "{}: already a wisr home directory",
                          homedir);
       }
       return set_errno_error(errno, global.c_str());
@@ -274,7 +274,7 @@ int sm_init(const char *homedir) {
     if (!s.ok()) {
       return set_status_error(s, rootpath.c_str());
     }
-    // Close the root db on the way out: sm_init opens nothing for later.
+    // Close the root db on the way out: sm1_init opens nothing for later.
     defer {
       root->Close();
       delete root;
@@ -297,46 +297,46 @@ int sm_init(const char *homedir) {
     }
     return 0;
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_init: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_init: out of memory");
   }
 }
 
 /* Create an environment on an initialized home directory. */
-sm_env_t *sm_attach(const char *homedir) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+sm1_env_t *sm1_attach(const char *homedir) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     return attach(homedir);
   } catch (const std::bad_alloc &) {
-    set_error(SM_ERR_NOMEM, "sm_attach: out of memory");
+    set_error(SM1_ERR_NOMEM, "sm1_attach: out of memory");
     return nullptr;
   }
 }
 
 /*
  * Release an environment. With force, close its sessions
- * first, each as sm_closedb would; without, refuse while any is
+ * first, each as sm1_closedb would; without, refuse while any is
  * open.
  */
-int sm_detach(sm_env_t *env, int force) {
+int sm1_detach(sm1_env_t *env, int force) {
   // Detaching NULL is a no-op.
   if (!env) {
     return 0;
   }
-  std::set<sm_session_t *> sessions;
+  std::set<sm1_session_t *> sessions;
   {
     // Hold the env mutex while reading the session set.
     std::lock_guard<std::mutex> guard(env->mu);
     // Refuse while sessions are open, unless forced.
     if (!env->sessions.empty() && !force) {
-      return set_error(SM_ERR_INUSE, "{} sessions are still open",
+      return set_error(SM1_ERR_INUSE, "{} sessions are still open",
                        env->sessions.size());
     }
     // Copy the sessions to close outside the mutex.
     sessions = env->sessions;
   }
-  // Close each session, as sm_closedb would.
-  for (sm_session_t *s : sessions) {
-    sm_closedb(s);
+  // Close each session, as sm1_closedb would.
+  for (sm1_session_t *s : sessions) {
+    sm1_closedb(s);
   }
   // Close the root db and free the environment.
   delete env;

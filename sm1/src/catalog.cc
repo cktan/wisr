@@ -1,6 +1,6 @@
 /*
- * catalog.cc -- stores: lookup, sm_mkstore, sm_rmstore,
- * sm_lsstore (SM1_DESIGN.md §11).
+ * catalog.cc -- stores: lookup, sm1_mkstore, sm1_rmstore,
+ * sm1_lsstore (SM1_DESIGN.md §11).
  *
  * The catalog is storeid 0, an ordinary MVCC store keyed
  * "R" | be64(storeid) with an empty value, so DDL is
@@ -9,12 +9,12 @@
  * the column family, CF:store.<storeid>. The design's created_ts
  * field is left out: nothing reads it.
  *
- * sm_mkstore allocates the storeid from the lease in CF:meta
+ * sm1_mkstore allocates the storeid from the lease in CF:meta
  * (§4.2), so a storeid is never reused and never names two
  * stores.
  *
  * No storeid cache yet; every lookup reads CF:store.0. A
- * committed sm_rmstore leaves its column family in place until
+ * committed sm1_rmstore leaves its column family in place until
  * the watermark passes the drop and GC removes it (§8.3).
  */
 
@@ -40,11 +40,11 @@ std::string catalog_key(uint64_t storeid) {
   return key;
 }
 
-/* sm_mkstore, minus the out-of-memory guard. */
-int mkstore(sm_session_t *s, uint64_t *out) {
+/* sm1_mkstore, minus the out-of-memory guard. */
+int mkstore(sm1_session_t *s, uint64_t *out) {
   // Require the out-parameter.
   if (!out) {
-    return set_error(SM_ERR_INVALID, "sm_mkstore: storeid is NULL");
+    return set_error(SM1_ERR_INVALID, "sm1_mkstore: storeid is NULL");
   }
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
@@ -81,15 +81,15 @@ int mkstore(sm_session_t *s, uint64_t *out) {
   return 0;
 }
 
-/* sm_rmstore, minus the out-of-memory guard. */
-int rmstore(sm_session_t *s, uint64_t storeid) {
+/* sm1_rmstore, minus the out-of-memory guard. */
+int rmstore(sm1_session_t *s, uint64_t storeid) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
   }
   // Reject storeid 0, the catalog's own slot.
   if (storeid == 0) {
-    return set_error(SM_ERR_INVALID, "storeid 0 is not a store");
+    return set_error(SM1_ERR_INVALID, "storeid 0 is not a store");
   }
   // Resolve the storeid at the transaction's view.
   int r = catalog_lookup(s, xct_view(s), storeid);
@@ -99,7 +99,7 @@ int rmstore(sm_session_t *s, uint64_t storeid) {
   }
   // Refuse a storeid that is not live.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "store {} does not exist", storeid);
+    return set_error(SM1_ERR_NOTFOUND, "store {} does not exist", storeid);
   }
   // Delete the catalog row; the column family stays until no
   // snapshot can still read the store (§8.3).
@@ -112,11 +112,11 @@ int rmstore(sm_session_t *s, uint64_t storeid) {
   return 0;
 }
 
-/* sm_lsstore, minus the out-of-memory guard. */
-int lsstore(sm_session_t *s, uint64_t **out, size_t *n) {
+/* sm1_lsstore, minus the out-of-memory guard. */
+int lsstore(sm1_session_t *s, uint64_t **out, size_t *n) {
   // Require the out-parameters.
   if (!out || !n) {
-    return set_error(SM_ERR_INVALID, "sm_lsstore: out or n is NULL");
+    return set_error(SM1_ERR_INVALID, "sm1_lsstore: out or n is NULL");
   }
   // Report an empty list until one is built.
   *out = nullptr;
@@ -127,22 +127,22 @@ int lsstore(sm_session_t *s, uint64_t **out, size_t *n) {
   }
   // Scan every catalog row, "R" up to but excluding "S"; under
   // SERIALIZABLE this records the whole catalog as read.
-  sm_scan_t *c = access_scan(s, 0, xct_view(s), "R", 1, 1, "S", 1, 0);
+  sm1_scan_t *c = access_scan(s, 0, xct_view(s), "R", 1, 1, "S", 1, 0);
   if (!c) {
     return -1;
   }
   // Close the cursor however the scan ends.
-  defer { sm_scanend(c); };
+  defer { sm1_scanend(c); };
 
   std::vector<uint64_t> ids;
   const char *key, *data;
   size_t klen, datalen;
   int r;
   // Collect the storeid of each live catalog row, in order.
-  while ((r = sm_scannxt(c, &key, &klen, &data, &datalen)) == 0) {
+  while ((r = sm1_scannxt(c, &key, &klen, &data, &datalen)) == 0) {
     // Reject a malformed catalog key.
     if (klen != 9) {
-      return set_error(SM_ERR_CORRUPT, "bad catalog key of {} bytes", klen);
+      return set_error(SM1_ERR_CORRUPT, "bad catalog key of {} bytes", klen);
     }
     ids.push_back(get_be64(key + 1));
   }
@@ -158,7 +158,7 @@ int lsstore(sm_session_t *s, uint64_t **out, size_t *n) {
   uint64_t *list =
       static_cast<uint64_t *>(malloc(ids.size() * sizeof(uint64_t)));
   if (!list) {
-    return set_error(SM_ERR_NOMEM, "sm_lsstore: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_lsstore: out of memory");
   }
   memcpy(list, ids.data(), ids.size() * sizeof(uint64_t));
   *out = list;
@@ -171,7 +171,7 @@ int lsstore(sm_session_t *s, uint64_t **out, size_t *n) {
 namespace wisr {
 
 /* A point read of the catalog row at view. */
-int catalog_lookup(sm_session_t *s, const view_t &view, uint64_t storeid) {
+int catalog_lookup(sm1_session_t *s, const view_t &view, uint64_t storeid) {
   std::string val;
   // Read the catalog row at view: 0 if the store is live.
   return access_read(s, 0, view, catalog_key(storeid), &val);
@@ -180,31 +180,31 @@ int catalog_lookup(sm_session_t *s, const view_t &view, uint64_t storeid) {
 } // namespace wisr
 
 /* Create a store and hand out its storeid. */
-int sm_mkstore(sm_session_t *session, uint64_t *storeid) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_mkstore(sm1_session_t *session, uint64_t *storeid) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     return mkstore(session, storeid);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_mkstore: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_mkstore: out of memory");
   }
 }
 
 /* Drop a store and all of its rows. */
-int sm_rmstore(sm_session_t *session, uint64_t storeid) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_rmstore(sm1_session_t *session, uint64_t storeid) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     return rmstore(session, storeid);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_rmstore: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_rmstore: out of memory");
   }
 }
 
 /* List the stores visible to the transaction. */
-int sm_lsstore(sm_session_t *session, uint64_t **out, size_t *n) {
-  // Report an allocation failure as SM_ERR_NOMEM.
+int sm1_lsstore(sm1_session_t *session, uint64_t **out, size_t *n) {
+  // Report an allocation failure as SM1_ERR_NOMEM.
   try {
     return lsstore(session, out, n);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_lsstore: out of memory");
+    return set_error(SM1_ERR_NOMEM, "sm1_lsstore: out of memory");
   }
 }

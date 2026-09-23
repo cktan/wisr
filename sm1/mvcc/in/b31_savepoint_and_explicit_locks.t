@@ -1,4 +1,4 @@
-# b31 -- what a rollback does to locks sm_lock took.
+# b31 -- what a rollback does to locks sm1_lock took.
 #
 # b25 makes the point for locks a write took; these are taken
 # outright. R2 was locked after the mark, so the rollback

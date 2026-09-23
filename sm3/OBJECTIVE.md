@@ -43,8 +43,8 @@ document is what it is for.
   ask.
 - Anything sm1 already does: transactions, isolation, locking,
   durability, recovery, garbage collection. sm3 reaches them
-  through sm2's session, or directly through `sm1/include/sm.h`
-  where sm2 has nothing to add — `sm_lock` is the case that
+  through sm2's session, or directly through `sm1/include/sm1.h`
+  where sm2 has nothing to add — `sm1_lock` is the case that
   matters.
 - Replication, point-in-time recovery, and logical decoding.
   They read PostgreSQL's WAL, which does not carry data held
@@ -93,7 +93,7 @@ These are settled and drive `SM3_DESIGN.md`.
   invalidation.
 - **Writes at READ COMMITTED follow sm1's protocol.** A write
   that meets a row committed after the transaction began is
-  refused with `SM_ERR_UPDATED`; sm2 surfaces the error
+  refused with `SM1_ERR_UPDATED`; sm2 surfaces the error
   without resolving it, so sm3 reads the newest image with
   `rel_read_latest`, re-checks the statement's filter, and
   only then repeats the write (`PART4.md` §5a,

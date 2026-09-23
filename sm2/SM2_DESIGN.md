@@ -38,7 +38,7 @@ before data exists (`PART4.md` §7).
 
 ## 1. What sm1 provides, and what it costs
 
-sm2 is written against the API in `sm1/include/sm.h`. The
+sm2 is written against the API in `sm1/include/sm1.h`. The
 parts that matter at this level, and the constraints that come
 with them.
 
@@ -56,19 +56,19 @@ nothing that an IPC boundary would have made it cost.
 | stores as ordered key→value maps, clustered on the key | keys are ordered **bytewise only**; there is no comparator to install (`sm1/OBJECTIVE.md`) — so order has to be built into the encoding (§3) |
 | opaque values of arbitrary bytes | the tuple layout is sm2's alone; sm1 never looks inside one (§4) |
 | transactions at RC / RR / SERIALIZABLE | sm2 opens none of its own; every `rel` call runs inside the caller's transaction (§5) |
-| `sm_update` / `sm_delete` returning the **old image** | `rel_update` / `rel_delete` can hand back the old *tuple*, which is what index maintenance above needs |
-| `SM_ERR_DUPKEY` from `sm_insert` | a unique index keyed without `rowno` gets its uniqueness from sm1 for free — the primary key index among them (§5, `sm3/SM3_DESIGN.md` §3) |
-| `SM_ERR_UPDATED` and `sm_read_latest` at READ COMMITTED | sm2 surfaces the error and offers `rel_read_latest`; it cannot resolve it, because the re-check needs a filter and filters are sm3's (§5) |
+| `sm1_update` / `sm1_delete` returning the **old image** | `rel_update` / `rel_delete` can hand back the old *tuple*, which is what index maintenance above needs |
+| `SM1_ERR_DUPKEY` from `sm1_insert` | a unique index keyed without `rowno` gets its uniqueness from sm1 for free — the primary key index among them (§5, `sm3/SM3_DESIGN.md` §3) |
+| `SM1_ERR_UPDATED` and `sm1_read_latest` at READ COMMITTED | sm2 surfaces the error and offers `rel_read_latest`; it cannot resolve it, because the re-check needs a filter and filters are sm3's (§5) |
 | nested savepoints | a statement can be undone without losing the transaction, and sm2 holds no state that has to be undone with it |
-| forward scans with `sm_scan_seek` | probe loops cost one cursor, not one per probe |
-| `SM_MAX_KEYLEN` 4096, `SM_MAX_DATALEN` 64MB | an encoded index key must fit 4096 bytes, prefix included; a datum above the TOAST threshold is stored out of line (§4) |
+| forward scans with `sm1_scan_seek` | probe loops cost one cursor, not one per probe |
+| `SM1_MAX_KEYLEN` 4096, `SM1_MAX_DATALEN` 64MB | an encoded index key must fit 4096 bytes, prefix included; a datum above the TOAST threshold is stored out of line (§4) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward; there are no mirror relations, and the fork's planner never asks for a backward scan (§3) |
 
 sm1 keeps one column family per store and handles hundreds
 to low thousands of them. sm3 gives each table one sm1
 store, holding the table's rows, its indexes and its
 TOAST data, told apart by the 2-byte object prefix in
-§5. A `DROP TABLE` is then one `sm_rmstore`, sm1's O(1) column
+§5. A `DROP TABLE` is then one `sm1_rmstore`, sm1's O(1) column
 family drop. The price is that the number of tables,
 partitions included, is bounded by how many stores sm1
 handles; that is accepted for v1 (§7).
@@ -419,7 +419,7 @@ all have to satisfy are here.
   embedded `0x00`, which is what makes the `0x00`-terminated
   framing in `TYPE.md` §2 safe to wrap around a sort key; it
   runs roughly 2-4x the length of its input, which is spent
-  against `SM_MAX_KEYLEN` and is the arithmetic behind the
+  against `SM1_MAX_KEYLEN` and is the arithmetic behind the
   over-long-key rule in §3.2; it must be called
   as `strxfrm_l` with an explicit `locale_t` rather than
   through `setlocale`; and glibc's collation is not stable
@@ -465,7 +465,7 @@ decisions behind them are here.
 
 ### 3.2 Over-long keys
 
-`SM_MAX_KEYLEN` is 4096 and bounds the whole key: the 2-byte
+`SM1_MAX_KEYLEN` is 4096 and bounds the whole key: the 2-byte
 object prefix (§5), then the encoded index columns, then the
 8-byte `rowno` where the entry carries one. A row's key is the
 prefix and `rowno` alone, so only index keys can be long.
@@ -632,7 +632,7 @@ things:
   garbage collection is needed. `DROP INDEX` is a range delete
   over its prefix. The prefix is fixed-width, so no object's
   prefix can be the start of another's. It spends 2 of
-  `SM_MAX_KEYLEN`'s 4096 bytes, and sm2 checks the whole key
+  `SM1_MAX_KEYLEN`'s 4096 bytes, and sm2 checks the whole key
   against the limit (§3.2);
 - an **sm1 session**, which is where the transaction lives.
 
@@ -672,11 +672,11 @@ The operations, and what each one is over:
 
 | sm2 | what it adds | over |
 | --- | --- | --- |
-| `rel_insert` | writes a tuple under a new `rowno` and returns the `rowno` | `sm_nextseq`, `sm_insert` |
-| `rel_read` | reads a row by `rowno` and decodes it into a tuple | `sm_read` |
-| `rel_update`, `rel_delete` | by `rowno`; hands back the old image as a **tuple**, not bytes | `sm_update`, `sm_delete` |
-| `rel_read_latest` | the newest committed image, decoded | `sm_read_latest` |
-| `rel_scan`, `rel_scan_seek` | tuples in `rowno` order, forward only | `sm_scan`, `sm_scan_seek` |
+| `rel_insert` | writes a tuple under a new `rowno` and returns the `rowno` | `sm1_nextseq`, `sm1_insert` |
+| `rel_read` | reads a row by `rowno` and decodes it into a tuple | `sm1_read` |
+| `rel_update`, `rel_delete` | by `rowno`; hands back the old image as a **tuple**, not bytes | `sm1_update`, `sm1_delete` |
+| `rel_read_latest` | the newest committed image, decoded | `sm1_read_latest` |
+| `rel_scan`, `rel_scan_seek` | tuples in `rowno` order, forward only | `sm1_scan`, `sm1_scan_seek` |
 
 How sm3 writes and scans index entries through sm2 — keyed by
 encoded columns rather than by `rowno` — and who draws the
@@ -690,7 +690,7 @@ The rules it must satisfy:
   undo. This is what makes savepoints and abort cost sm2
   nothing at all.
 - **Errors pass through; they are not translated.**
-  `SM_ERR_UPDATED` in particular is not retried here. The
+  `SM1_ERR_UPDATED` in particular is not retried here. The
   retry needs the statement's filter re-checked against the
   newest image (`sm1/SM1_DESIGN.md` §5.4), and filters live above
   sm2; `rel_read_latest` is what sm2 provides so sm3 can do it
@@ -743,7 +743,7 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
   `rowno`; the primary key is one of sm3's indexes, and its
   uniqueness is sm3's (§5).
 - **Predicates.** sm2 has no filter, and therefore cannot
-  resolve `SM_ERR_UPDATED` or derive a key range from a
+  resolve `SM1_ERR_UPDATED` or derive a key range from a
   `WHERE` clause.
 - **Statistics.** sm2 counts nothing.
 

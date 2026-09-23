@@ -28,7 +28,7 @@ The stack, as a whole:
 
 Each level speaks only to the level directly below it,
 through that level's own API — `sm1` through RocksDB's,
-`sm2` through `sm1/include/sm.h`, `sm3` through sm2's tuple
+`sm2` through `sm1/include/sm1.h`, `sm3` through sm2's tuple
 relation. A notion that belongs to
 level N is never reimplemented at level N+1, and level N+1's
 internals are never reached into from level N-1. This is the
@@ -87,7 +87,7 @@ into it (`PART4.md` §2).
 These are settled; they bind every level below.
 
 - **Language is C++,** exposing a C ABI at each level's
-  public surface (`sm1/include/sm.h` today; `sm2`'s and
+  public surface (`sm1/include/sm1.h` today; `sm2`'s and
   `sm3`'s equivalents when they have one). A C ABI is what
   lets
   PostgreSQL's C code call the stack directly.

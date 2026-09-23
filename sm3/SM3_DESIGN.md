@@ -30,7 +30,7 @@ source tree.
 ## 1. What sm2 and sm1 provide
 
 sm3 is written against sm2's tuple relation, and against
-`sm1/include/sm.h` for the one thing sm2 has nothing to add
+`sm1/include/sm1.h` for the one thing sm2 has nothing to add
 to: locking.
 
 **Deployment: one process, one thread per session.** The
@@ -51,13 +51,13 @@ answer.
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
 | sm2's 2-byte object prefix | a table's rows, indexes and TOAST data share its one sm1 store (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own |
-| `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
-| `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
+| `SM1_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
+| `SM1_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
-| `sm_lock(SHARED\|EXCLUSIVE)` | the DDL and online index build protocol (§2, §3) |
+| `sm1_lock(SHARED\|EXCLUSIVE)` | the DDL and online index build protocol (§2, §3) |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
-| `SM_MAX_KEYLEN` 4096 | an index entry's key must fit 4094 bytes after the prefix, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
+| `SM1_MAX_KEYLEN` 4096 | an index entry's key must fit 4094 bytes after the prefix, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward, in the same index; there are no mirror relations, and the fork's planner never asks for a backward scan (§5, §7) |
 | one column family per store, hundreds to low thousands | tables, partitions included, are bounded by it (§4) |
 
@@ -89,7 +89,7 @@ the new definition, alongside its old data snapshot. sm3 does
 the same with sm1's row locks:
 
 - every transaction that reads or writes a table takes
-  `sm_lock(SHARED)` on that table's schema row, held to the end
+  `sm1_lock(SHARED)` on that table's schema row, held to the end
   of the transaction, before it reads the definition;
 - DDL takes the schema row exclusive by updating it, which
   waits out the transactions in flight and blocks new ones
@@ -98,7 +98,7 @@ the same with sm1's row locks:
 - so once a transaction holds the shared lock, the definition
   in memory cannot change under it. A catalog served from
   memory must take this lock, or DDL has nothing to wait on.
-  At READ COMMITTED sm1's `sm_lock` no longer fails when the
+  At READ COMMITTED sm1's `sm1_lock` no longer fails when the
   schema row committed after the transaction began, so the
   lock alone is what protects the reader, and the in-memory
   definition, not a read of the schema row, is what it uses.
@@ -152,12 +152,12 @@ above sm1 needs; every gap it found is now closed in sm1.
 - **Unique indexes are keyed without `rowno`:**
   `encode(sk)` → `rowno` and the INCLUDE columns. The KV key
   is then the uniqueness unit, so sm1's insert refuses a
-  duplicate with `SM_ERR_DUPKEY` and its write-write conflict
+  duplicate with `SM1_ERR_DUPKEY` and its write-write conflict
   handles two sessions inserting the same key at once; no
   separate existence check is needed. The primary key index
   is keyed this way. Two kinds of entry in a unique index
   still carry the suffix, and still need the existence check
-  under `sm_lock(EXCLUSIVE)`: one with a NULL key column, and
+  under `sm1_lock(EXCLUSIVE)`: one with a NULL key column, and
   one whose key was cut (below). At READ COMMITTED that check
   reads the newest version, not the snapshot: a statement
   snapshot can predate a duplicate that committed while the
@@ -183,7 +183,7 @@ above sm1 needs; every gap it found is now closed in sm1.
   of it without decoding bytes itself.
 - **Read committed writes.** An update or delete that meets a
   row committed after the transaction began fails with
-  `SM_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort
+  `SM1_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort
   and it is not retryable, so sm3 must not treat it as an error
   to surface. sm2 does not resolve it, because the resolution
   needs a filter (`sm2/SM2_DESIGN.md` §5): sm3 calls
@@ -196,8 +196,8 @@ above sm1 needs; every gap it found is now closed in sm1.
   write repeated without the read, so an executor cannot
   forget it.
 - **Online build on a populated relation**, from
-  `sm1/SECINDEX.md` gap 1, the protocol `sm_lock` exists for:
-  1. every writer takes `sm_lock(SHARED)` on the table's schema
+  `sm1/SECINDEX.md` gap 1, the protocol `sm1_lock` exists for:
+  1. every writer takes `sm1_lock(SHARED)` on the table's schema
      row and reads it, so what it maintains is current;
   2. the builder takes the schema row **exclusive** by updating
      it, which waits out the writers in flight and blocks new
@@ -206,11 +206,11 @@ above sm1 needs; every gap it found is now closed in sm1.
      after the lock, so it sees every committed row — fills the
      index, and commits;
   4. blocked writers then get the shared lock and read the new
-     schema. At READ COMMITTED their `sm_lock` no longer fails
+     schema. At READ COMMITTED their `sm1_lock` no longer fails
      on the newer commit; they read the schema row with
      `rel_read_latest`. It is the schema-row lock that keeps
      them out while the build runs, not a conflict check. At
-     the higher levels `sm_lock` still fails with a conflict,
+     the higher levels `sm1_lock` still fails with a conflict,
      and the writer retries.
   `sm1/test/test_lock.cc` has this end to end.
 - Partial, expression and INCLUDE indexes mean maintenance takes
@@ -237,7 +237,7 @@ with its prefix; sm2 prepends and strips it and otherwise
 ignores it. sm2 never learns what a table is, and sm3 never
 encodes a key itself.
 
-- **`DROP TABLE` is one `sm_rmstore`**, sm1's O(1) column family
+- **`DROP TABLE` is one `sm1_rmstore`**, sm1's O(1) column family
   drop, and takes the indexes and TOAST data with it.
 - **`DROP INDEX` is a range delete** over the index's prefix.
 - **Index prefixes are allocated in increasing order and never

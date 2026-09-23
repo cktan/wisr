@@ -71,7 +71,7 @@ over the same data, for generated predicates.
 ## 5. Statistics, constraints, bulk load
 
 - Row counts, sizes, sampling.
-- Foreign keys via `sm_lock(SHARED)` on the parent row.
+- Foreign keys via `sm1_lock(SHARED)` on the parent row.
 - A bulk path that batches within sm1's RAM bound.
 
 ---

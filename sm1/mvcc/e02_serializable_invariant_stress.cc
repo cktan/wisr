@@ -25,7 +25,7 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
   const char *const DOCS[] = {"d0", "d1", "d2", "d3"};
   scenario_t s({DOCS[0], DOCS[1], DOCS[2], DOCS[3]});
   // Every doctor starts on call.
-  s.begin_at(1, SM_XCT_REPEATABLE_READ);
+  s.begin_at(1, SM1_XCT_REPEATABLE_READ);
   for (const char *d : DOCS) {
     REQUIRE(s.w(1, d, "1") == 0);
   }
@@ -35,41 +35,41 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
   std::atomic<int> errors{0}, violations{0}, commits{0};
   std::vector<std::thread> threads;
   for (int i = 0; i < 4; i++) {
-    sm_session_t *sess = s.session(2 + i);
+    sm1_session_t *sess = s.session(2 + i);
     threads.emplace_back([&, i, sess] {
       std::string me = DOCS[i];
       for (int round = 0; round < 50; round++) {
-        if (sm_begin(sess, SM_XCT_SERIALIZABLE) != 0) {
+        if (sm1_begin(sess, SM1_XCT_SERIALIZABLE) != 0) {
           errors++;
           return;
         }
         // Count the doctors on call in this snapshot.
-        sm_scan_t *c = sm_scan(sess, s.store(), DOCS[0], 2, 1, DOCS[3], 2, 1);
+        sm1_scan_t *c = sm1_scan(sess, s.store(), DOCS[0], 2, 1, DOCS[3], 2, 1);
         int on = 0;
         const char *k, *d;
         size_t kl, dl;
-        while (c && sm_scannxt(c, &k, &kl, &d, &dl) == 0) {
+        while (c && sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
           on += std::string(d, dl) == "1";
         }
-        sm_scanend(c);
+        sm1_scanend(c);
         const char *v = on >= 2 ? "0" : "1";
-        if (sm_update(sess, s.store(), me.data(), me.size(), v, 1, nullptr,
-                      nullptr) == 0 &&
-            sm_commit(sess) == 0) {
+        if (sm1_update(sess, s.store(), me.data(), me.size(), v, 1, nullptr,
+                       nullptr) == 0 &&
+            sm1_commit(sess) == 0) {
           commits++;
-        } else if (!sm_retryable()) {
+        } else if (!sm1_retryable()) {
           errors++;
-          sm_abort(sess);
+          sm1_abort(sess);
           return;
         }
       }
     });
   }
   // The checker reads committed states only.
-  sm_session_t *check = s.session(6);
+  sm1_session_t *check = s.session(6);
   std::thread checker([&] {
     while (!stop) {
-      if (sm_begin(check, SM_XCT_SERIALIZABLE) != 0) {
+      if (sm1_begin(check, SM1_XCT_SERIALIZABLE) != 0) {
         errors++;
         return;
       }
@@ -77,14 +77,14 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
       for (const char *d : DOCS) {
         const char *data = nullptr;
         size_t len = 0;
-        if (sm_read(check, s.store(), d, 2, &data, &len) == 0) {
+        if (sm1_read(check, s.store(), d, 2, &data, &len) == 0) {
           on += std::string(data, len) == "1";
         }
       }
       if (on == 0) {
         violations++;
       }
-      if (sm_commit(check) != 0 && !sm_retryable()) {
+      if (sm1_commit(check) != 0 && !sm1_retryable()) {
         errors++;
       }
     }

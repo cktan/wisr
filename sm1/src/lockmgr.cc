@@ -4,7 +4,7 @@
  *
  * A lock is keyed exactly by (storeid, userkey) and held by the
  * sessions whose transactions took it: SHARED by any number of
- * them, EXCLUSIVE by one. Writes take it exclusive, sm_lock
+ * them, EXCLUSIVE by one. Writes take it exclusive, sm1_lock
  * takes either, and a plain read still takes none. It is held
  * until the transaction commits or aborts.
  *
@@ -44,13 +44,13 @@ std::string lock_key(uint64_t storeid, rocksdb::Slice key) {
  * Remove s from the holders of k, dropping the entry once the
  * last holder goes. The caller holds lock_mu.
  */
-void lock_drop_holder(db_t *db, const std::string &k, sm_session_t *s) {
+void lock_drop_holder(db_t *db, const std::string &k, sm1_session_t *s) {
   auto it = db->lock_table.find(k);
   // Gone already: a rollback may have released it.
   if (it == db->lock_table.end()) {
     return;
   }
-  std::vector<sm_session_t *> &holders = it->second.holders;
+  std::vector<sm1_session_t *> &holders = it->second.holders;
   // Drop us from the holder list.
   for (size_t i = 0; i < holders.size(); i++) {
     if (holders[i] == s) {
@@ -69,8 +69,8 @@ void lock_drop_holder(db_t *db, const std::string &k, sm_session_t *s) {
  * list is the session's own, so no lock_mu is taken. Newest
  * first: the lock in question was likely just taken.
  */
-sm_session_t::lockref_t *find_lockref(sm_session_t *s, uint64_t storeid,
-                                      rocksdb::Slice key) {
+sm1_session_t::lockref_t *find_lockref(sm1_session_t *s, uint64_t storeid,
+                                       rocksdb::Slice key) {
   std::string k = lock_key(storeid, key);
   for (size_t i = s->locks.size(); i-- > 0;) {
     if (s->locks[i].key == k) {
@@ -86,7 +86,7 @@ sm_session_t::lockref_t *find_lockref(sm_session_t *s, uint64_t storeid,
  * upgrade scans; the common write, which holds nothing on the
  * key yet, appends instead.
  */
-void note_upgrade(sm_session_t *s, const std::string &k) {
+void note_upgrade(sm1_session_t *s, const std::string &k) {
   // Newest first: a key just upgraded was likely just taken.
   for (size_t i = s->locks.size(); i-- > 0;) {
     if (s->locks[i].key == k) {
@@ -102,11 +102,11 @@ void note_upgrade(sm_session_t *s, const std::string &k) {
  * cur, so a hit has the whole cycle to choose a victim from.
  * Returns true once a cycle through s is found.
  */
-bool find_cycle(sm_session_t *s, sm_session_t *cur,
-                std::set<sm_session_t *> *seen,
-                std::vector<sm_session_t *> *path) {
+bool find_cycle(sm1_session_t *s, sm1_session_t *cur,
+                std::set<sm1_session_t *> *seen,
+                std::vector<sm1_session_t *> *path) {
   // Follow every holder this transaction waits on.
-  for (sm_session_t *next : cur->waiting_for) {
+  for (sm1_session_t *next : cur->waiting_for) {
     // Back at s: path holds the rest of the cycle.
     if (next == s) {
       return true;
@@ -133,23 +133,23 @@ bool find_cycle(sm_session_t *s, sm_session_t *cur,
  * a cycle that does not pass through s, is not s's to resolve:
  * the members of that other cycle run their own check.
  */
-void check_deadlock(db_t *db, sm_session_t *s) {
-  std::set<sm_session_t *> seen;
-  std::vector<sm_session_t *> path;
+void check_deadlock(db_t *db, sm1_session_t *s) {
+  std::set<sm1_session_t *> seen;
+  std::vector<sm1_session_t *> path;
   // No cycle through us: nothing to resolve here.
   if (!find_cycle(s, s, &seen, &path)) {
     return;
   }
   // The youngest transaction on the cycle is the victim.
-  sm_session_t *victim = s;
-  for (sm_session_t *m : path) {
+  sm1_session_t *victim = s;
+  for (sm1_session_t *m : path) {
     // Younger: began later.
     if (m->begin_seq > victim->begin_seq) {
       victim = m;
     }
   }
   // Doom it.
-  victim->doomed = SM_ERR_DEADLOCK;
+  victim->doomed = SM1_ERR_DEADLOCK;
   // Wake every waiter so the victim sees its doom.
   db->lock_cv.notify_all();
 }
@@ -159,7 +159,7 @@ void check_deadlock(db_t *db, sm_session_t *s) {
 namespace wisr {
 
 /* Block until (storeid, key) is ours in mode, checking for deadlock. */
-int lock_acquire(sm_session_t *s, uint64_t storeid, rocksdb::Slice key,
+int lock_acquire(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key,
                  bool exclusive) {
   db_t *db = s->db;
   // Build the lock table key.
@@ -193,7 +193,7 @@ int lock_acquire(sm_session_t *s, uint64_t storeid, rocksdb::Slice key,
     db_t::lock_ent_t &ent = it->second;
     // Are we already a holder?
     bool ours = false;
-    for (sm_session_t *h : ent.holders) {
+    for (sm1_session_t *h : ent.holders) {
       if (h == s) {
         ours = true;
         break;
@@ -224,7 +224,7 @@ int lock_acquire(sm_session_t *s, uint64_t storeid, rocksdb::Slice key,
     // upgrade waits on the other shared holders, which is how
     // two upgraders on one key form a cycle.
     s->waiting_for.clear();
-    for (sm_session_t *h : ent.holders) {
+    for (sm1_session_t *h : ent.holders) {
       if (h != s) {
         s->waiting_for.push_back(h);
       }
@@ -241,15 +241,15 @@ int lock_acquire(sm_session_t *s, uint64_t storeid, rocksdb::Slice key,
 }
 
 /* Move every lock s holds to g, which takes its place. */
-void lock_transfer(db_t *db, sm_session_t *s, sm_session_t *g) {
+void lock_transfer(db_t *db, sm1_session_t *s, sm1_session_t *g) {
   // Hold lock_mu while editing the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-point each entry's holder list at g.
-  for (const sm_session_t::lockref_t &l : s->locks) {
+  for (const sm1_session_t::lockref_t &l : s->locks) {
     auto it = db->lock_table.find(l.key);
     // Replace s with g among the holders.
     if (it != db->lock_table.end()) {
-      for (sm_session_t *&h : it->second.holders) {
+      for (sm1_session_t *&h : it->second.holders) {
         if (h == s) {
           h = g;
         }
@@ -259,11 +259,11 @@ void lock_transfer(db_t *db, sm_session_t *s, sm_session_t *g) {
 }
 
 /* Put a restored transaction's locks back in the table (§9.1). */
-void lock_restore(db_t *db, sm_session_t *g) {
+void lock_restore(db_t *db, sm1_session_t *g) {
   // Hold lock_mu while editing the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-take each lock in the mode the record carries.
-  for (const sm_session_t::lockref_t &l : g->locks) {
+  for (const sm1_session_t::lockref_t &l : g->locks) {
     db_t::lock_ent_t &ent = db->lock_table[l.key];
     // An exclusive lock is the only one its entry can hold.
     ent.exclusive = l.exclusive;
@@ -272,8 +272,8 @@ void lock_restore(db_t *db, sm_session_t *g) {
 }
 
 /* The mode the session holds (storeid, key) in: 0, 1 shared, 2 exclusive. */
-int lock_mode_held(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
-  sm_session_t::lockref_t *l = find_lockref(s, storeid, key);
+int lock_mode_held(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key) {
+  sm1_session_t::lockref_t *l = find_lockref(s, storeid, key);
   // Not held.
   if (!l) {
     return 0;
@@ -282,8 +282,8 @@ int lock_mode_held(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
 }
 
 /* Mark (storeid, key)'s exclusive lock: the next write may go ahead. */
-void lock_set_latest(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
-  sm_session_t::lockref_t *l = find_lockref(s, storeid, key);
+void lock_set_latest(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key) {
+  sm1_session_t::lockref_t *l = find_lockref(s, storeid, key);
   // Count a mark once.
   if (l && !l->latest) {
     l->latest = true;
@@ -292,22 +292,22 @@ void lock_set_latest(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
 }
 
 /* Whether (storeid, key)'s lock carries the mark. */
-bool lock_has_latest(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
+bool lock_has_latest(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key) {
   // No mark anywhere: skip the scan.
   if (s->latest_marks == 0) {
     return false;
   }
-  sm_session_t::lockref_t *l = find_lockref(s, storeid, key);
+  sm1_session_t::lockref_t *l = find_lockref(s, storeid, key);
   return l && l->latest;
 }
 
 /* Clear the mark on (storeid, key)'s lock, after a write used it. */
-void lock_clear_latest(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
+void lock_clear_latest(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key) {
   // No mark anywhere: skip the scan, so a plain write pays nothing.
   if (s->latest_marks == 0) {
     return;
   }
-  sm_session_t::lockref_t *l = find_lockref(s, storeid, key);
+  sm1_session_t::lockref_t *l = find_lockref(s, storeid, key);
   if (l && l->latest) {
     l->latest = false;
     s->latest_marks--;
@@ -315,13 +315,13 @@ void lock_clear_latest(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
 }
 
 /* Drop every lock the session holds and wake the waiters. */
-void lock_release_all(sm_session_t *s) {
+void lock_release_all(sm1_session_t *s) {
   // Release everything, from the first lock on.
   lock_release_from(s, 0);
 }
 
 /* Drop the locks taken after the first n and wake the waiters. */
-void lock_release_from(sm_session_t *s, size_t n) {
+void lock_release_from(sm1_session_t *s, size_t n) {
   db_t *db = s->db;
   // Hold lock_mu while editing the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);

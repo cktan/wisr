@@ -21,9 +21,9 @@
 
 TEST_CASE("e01: SSI state is freed once no transaction overlaps it") {
   scenario_t s({R1, R2});
-  sm_session_t *t = s.session(1);
+  sm1_session_t *t = s.session(1);
   for (int round = 0; round < 5; round++) {
-    s.begin_at(1, SM_XCT_SERIALIZABLE);
+    s.begin_at(1, SM1_XCT_SERIALIZABLE);
     CHECK(s.r(1, R1) == "0");
     CHECK(s.s(1, R1, R2).size() == 2);
     REQUIRE(s.w(1, R2, std::to_string(round)) == 0);

@@ -6,7 +6,7 @@
 
 #include "doctest.h"
 
-#include "sm.h"
+#include "sm1.h"
 
 #include <stdlib.h>
 
@@ -43,34 +43,34 @@ class home_t {
 public:
   /* Initialize and attach a fresh home directory. */
   home_t() {
-    REQUIRE(sm_init(m_tmp.path()) == 0);
-    m_env = sm_attach(m_tmp.path());
+    REQUIRE(sm1_init(m_tmp.path()) == 0);
+    m_env = sm1_attach(m_tmp.path());
     REQUIRE(m_env);
   }
 
   /* Detach, then remove the directory. */
-  ~home_t() { sm_detach(m_env, 1); }
+  ~home_t() { sm1_detach(m_env, 1); }
 
   /* The environment. */
-  sm_env_t *env() const { return m_env; }
+  sm1_env_t *env() const { return m_env; }
 
   /* Detach and attach again, as a new process would. */
   void reattach() {
-    REQUIRE(sm_detach(m_env, 0) == 0);
-    m_env = sm_attach(m_tmp.path());
+    REQUIRE(sm1_detach(m_env, 0) == 0);
+    m_env = sm1_attach(m_tmp.path());
     REQUIRE(m_env);
   }
 
   /* Detach, closing any open sessions, so another process may attach. */
   void detach() {
-    REQUIRE(sm_detach(m_env, 1) == 0);
+    REQUIRE(sm1_detach(m_env, 1) == 0);
     m_env = nullptr;
   }
 
   /* Attach again after detach(). */
   void attach() {
-    m_env = sm_attach(m_tmp.path());
-    REQUIRE_MESSAGE(m_env, sm_errmsg());
+    m_env = sm1_attach(m_tmp.path());
+    REQUIRE_MESSAGE(m_env, sm1_errmsg());
   }
 
   /* The home directory's path. */
@@ -88,42 +88,42 @@ public:
 
 private:
   tmpdir_t m_tmp;
-  sm_env_t *m_env = nullptr;
+  sm1_env_t *m_env = nullptr;
 };
 
 /*
  * The value of key in store as sess reads it, or "<none>" if the
  * key is absent. Fails the test on an error.
  */
-inline std::string get(sm_session_t *sess, uint64_t store,
+inline std::string get(sm1_session_t *sess, uint64_t store,
                        const std::string &key) {
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm_read(sess, store, key.data(), key.size(), &data, &len);
-  REQUIRE_MESSAGE(r >= 0, sm_errmsg());
+  int r = sm1_read(sess, store, key.data(), key.size(), &data, &len);
+  REQUIRE_MESSAGE(r >= 0, sm1_errmsg());
   return r == 1 ? "<none>" : std::string(data, len);
 }
 
 /* Insert key -> val into store, failing the test on an error. */
-inline void put(sm_session_t *sess, uint64_t store, const std::string &key,
+inline void put(sm1_session_t *sess, uint64_t store, const std::string &key,
                 const std::string &val) {
-  REQUIRE_MESSAGE(sm_insert(sess, store, key.data(), key.size(), val.data(),
-                            val.size()) == 0,
-                  sm_errmsg());
+  REQUIRE_MESSAGE(sm1_insert(sess, store, key.data(), key.size(), val.data(),
+                             val.size()) == 0,
+                  sm1_errmsg());
 }
 
 /* Create a store and return its storeid, failing the test on an error. */
-inline uint64_t mkstore(sm_session_t *sess) {
+inline uint64_t mkstore(sm1_session_t *sess) {
   uint64_t storeid = 0;
-  REQUIRE_MESSAGE(sm_mkstore(sess, &storeid) == 0, sm_errmsg());
+  REQUIRE_MESSAGE(sm1_mkstore(sess, &storeid) == 0, sm1_errmsg());
   return storeid;
 }
 
 /* The storeids sess's transaction sees, failing the test on an error. */
-inline std::vector<uint64_t> lsstore(sm_session_t *sess) {
+inline std::vector<uint64_t> lsstore(sm1_session_t *sess) {
   uint64_t *list = nullptr;
   size_t n = 0;
-  REQUIRE_MESSAGE(sm_lsstore(sess, &list, &n) == 0, sm_errmsg());
+  REQUIRE_MESSAGE(sm1_lsstore(sess, &list, &n) == 0, sm1_errmsg());
   std::vector<uint64_t> out(list, list + n);
   free(list);
   return out;

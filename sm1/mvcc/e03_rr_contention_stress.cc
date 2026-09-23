@@ -6,7 +6,7 @@
  * value and writing it back, retrying on failure. At
  * REPEATABLE READ the only retryable failures are the
  * write-write conflict and the deadlock victim: a caller
- * choosing RR never has to handle SM_ERR_SERIALIZATION.
+ * choosing RR never has to handle SM1_ERR_SERIALIZATION.
  *
  * The total must be exactly 200, which is first-committer-wins
  * (b01) holding under load: no update is lost.
@@ -24,38 +24,38 @@ TEST_CASE("e03: RR contention gives CONFLICT, never SERIALIZATION") {
   std::atomic<int> serialization{0}, other{0}, retries{0};
   std::vector<std::thread> threads;
   for (int i = 0; i < 4; i++) {
-    sm_session_t *sess = s.session(1 + i);
+    sm1_session_t *sess = s.session(1 + i);
     threads.emplace_back([&, sess] {
       for (int round = 0; round < 50; round++) {
         for (;;) {
-          if (sm_begin(sess, SM_XCT_REPEATABLE_READ) != 0) {
+          if (sm1_begin(sess, SM1_XCT_REPEATABLE_READ) != 0) {
             other++;
             return;
           }
           const char *data = nullptr;
           size_t len = 0;
-          int rc = sm_read(sess, s.store(), R1, 2, &data, &len);
+          int rc = sm1_read(sess, s.store(), R1, 2, &data, &len);
           if (rc != 0) {
             other++;
             return;
           }
           std::string next =
               std::to_string(std::stoi(std::string(data, len)) + 1);
-          rc = sm_update(sess, s.store(), R1, 2, next.data(), next.size(),
-                         nullptr, nullptr);
-          if (rc == 0 && sm_commit(sess) == 0) {
+          rc = sm1_update(sess, s.store(), R1, 2, next.data(), next.size(),
+                          nullptr, nullptr);
+          if (rc == 0 && sm1_commit(sess) == 0) {
             break;
           }
           // Classify the failure, then retry the whole step.
-          if (sm_errno() == SM_ERR_SERIALIZATION) {
+          if (sm1_errno() == SM1_ERR_SERIALIZATION) {
             serialization++;
-          } else if (sm_errno() != SM_ERR_CONFLICT &&
-                     sm_errno() != SM_ERR_DEADLOCK) {
+          } else if (sm1_errno() != SM1_ERR_CONFLICT &&
+                     sm1_errno() != SM1_ERR_DEADLOCK) {
             other++;
           }
           retries++;
           if (rc == 0) {
-            sm_abort(sess); // the commit failed, not the write
+            sm1_abort(sess); // the commit failed, not the write
           }
         }
       }

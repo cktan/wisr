@@ -1,6 +1,6 @@
-# SECINDEX — building secondary indexes on sm.h
+# SECINDEX — building secondary indexes on sm1.h
 
-An assessment of what the `sm_*` API (`include/sm.h`) lacks
+An assessment of what the `sm1_*` API (`include/sm1.h`) lacks
 for a layer that maintains secondary indexes on top of it.
 OBJECTIVE.md leaves secondary indexes to such a layer: "separate
 stores maintained in the same transaction".
@@ -12,19 +12,19 @@ index, `encode(sk) ‖ pk → ""` for a non-unique one. The layer
 writes base and index rows in one transaction, so commit and
 abort cover both.
 
-- **Unique enforcement.** `sm_insert` on the index store
-  gives `SM_ERR_DUPKEY`; a concurrent inserter of the same key
-  blocks on the row lock and then fails with `SM_ERR_CONFLICT`
+- **Unique enforcement.** `sm1_insert` on the index store
+  gives `SM1_ERR_DUPKEY`; a concurrent inserter of the same key
+  blocks on the row lock and then fails with `SM1_ERR_CONFLICT`
   (§5.1, §5.2).
 - **Halloween protection.** A cursor's view is fixed at open,
   so updating the indexed column while scanning the index does
   not revisit moved entries (§10.2).
-- **Scan index, then fetch base.** `sm_read` does not
+- **Scan index, then fetch base.** `sm1_read` does not
   invalidate a cursor's output, which lives until the next call
   on that cursor.
 - **Compensation.** A non-retryable error leaves the
   transaction active and unchanged, so a base insert followed
-  by an index `SM_ERR_DUPKEY` can be undone by hand.
+  by an index `SM1_ERR_DUPKEY` can be undone by hand.
 
 ## Gaps, in order of severity
 
@@ -48,7 +48,7 @@ transactions. Neither is expressible here:
 - No primitive waits for "all transactions begun before now"
   to finish, and no snapshot or commit timestamp is exposed.
 
-`sm_lock` closes it with shared-mode key locks. The protocol
+`sm1_lock` closes it with shared-mode key locks. The protocol
 below is implemented and tested end to end: a builder holding
 the schema row exclusive blocks new writers and waits out the
 ones in flight, so its scan cannot miss their rows, and each
@@ -61,7 +61,7 @@ rather than merely awkward or slow.
 The drain primitive was the alternative — smaller, needing no
 shared locks — but it wants a CIC-style multi-phase build in
 the layer and still admits false duplicates for a unique
-index. `sm_lock` was chosen because it also gives
+index. `sm1_lock` was chosen because it also gives
 lock-without-write, which gap 6 wanted anyway.
 
 ### 2. A single savepoint — CLOSED
@@ -74,21 +74,21 @@ per transaction, that statement savepoint clobbered any
 user-level SAVEPOINT. Manual compensation worked but left a
 tombstone version per undone write.
 
-Savepoints now nest: `sm_savepoint` returns a depth,
-`sm_rollback` takes one, and `sm_forget` is `RELEASE
+Savepoints now nest: `sm1_savepoint` returns a depth,
+`sm1_rollback` takes one, and `sm1_forget` is `RELEASE
 SAVEPOINT`. The layer pushes a mark at the start of each
 statement and forgets it at the end, above whatever savepoints
 its own caller holds.
 
 ### 3. No statement snapshot across calls under READ COMMITTED — CLOSED
 
-Under RC each `sm_read` and each `sm_scan` took a fresh
+Under RC each `sm1_read` and each `sm1_scan` took a fresh
 statement snapshot (§6.2). An index lookup is one scan plus N
 base reads, so it saw N+1 snapshots, and a single statement in
-the layer, spanning many `sm_*` calls, could return a mixture
+the layer, spanning many `sm1_*` calls, could return a mixture
 of committed states that never existed at any instant.
 
-`sm_stmt_begin(session)` closes it: from the first read after
+`sm1_stmt_begin(session)` closes it: from the first read after
 that call, every RC read in the session uses one snapshot,
 until the next boundary or the end of the transaction. The
 layer still rechecks its predicate against each fetched base
@@ -116,9 +116,9 @@ Index nested-loop joins, IN-lists, and skip scans had to close
 and reopen a cursor per probe. Under RC every reopen also took
 a new snapshot, which compounded gap 3.
 
-`sm_scan_seek(scan, key, klen, inclusive)` moves an open
+`sm1_scan_seek(scan, key, klen, inclusive)` moves an open
 cursor forward, keeping its iterator, its snapshot and its
-bounds. With gap 3's `sm_stmt_begin` the pair covers the whole
+bounds. With gap 3's `sm1_stmt_begin` the pair covers the whole
 complaint: one cursor per statement, one snapshot per
 statement.
 
@@ -133,20 +133,20 @@ statement.
   unbuilt until a benchmark shows that setup dominating a
   probe loop; it also needs an ownership model for N values,
   since the session has one read buffer.
-- **No old-image return — CLOSED.** `sm_update` and
-  `sm_delete` now return the row they replaced through
+- **No old-image return — CLOSED.** `sm1_update` and
+  `sm1_delete` now return the row they replaced through
   out-parameters, NULL to skip. The claim that it cost two
   seeks was right about the layer and wrong about the engine:
   the write already seeks to the deciding version and decodes
   its value to check the key exists, so returning it costs a
-  copy. The `sm_read` lifetime rule applies to it, and it is
+  copy. The `sm1_read` lifetime rule applies to it, and it is
   the same buffer.
-- **`sm_lsstore`.** Implemented in phase 1, where a store is
-  named by a `uint64_t` storeid that `sm_mkstore` hands out: the
+- **`sm1_lsstore`.** Implemented in phase 1, where a store is
+  named by a `uint64_t` storeid that `sm1_mkstore` hands out: the
   layer will keep its own catalog store regardless, but
   listing stores helps debugging and cleanup, and the lowest
   storeid listed is how the layer finds that catalog again.
-- **Key length.** `SM_MAX_KEYLEN` (4096) bounds `sk ‖ pk`
+- **Key length.** `SM1_MAX_KEYLEN` (4096) bounds `sk ‖ pk`
   together; encodings must be sized for it.
 - **No lock-without-write.** `SELECT … FOR UPDATE` through an
   index has to write a dummy version to lock the base row.
@@ -154,8 +154,8 @@ statement.
 ## Summary
 
 Every gap is settled. Gaps 1, 2, 3 and 5 are closed:
-`sm_lock`, the savepoint stack with `sm_forget`,
-`sm_stmt_begin` and `sm_scan_seek` are all in `sm.h`, as is
+`sm1_lock`, the savepoint stack with `sm1_forget`,
+`sm1_stmt_begin` and `sm1_scan_seek` are all in `sm1.h`, as is
 gap 6's old-image return. Gap 4 will not be closed:
 forward-only scanning is a decision, and the layer works
 around it with inverted-byte stores. The batched read is
@@ -165,8 +165,8 @@ than an argument.
 ## Closing the gaps
 
 What each gap became. Gaps 1, 2, 3, 5 and the old-image half
-of gap 6 are implemented in `sm.h`, `API.md`, `SM1_DESIGN.md` and
-`src/`, with tests. Gap 4 is a decision against, and so, for
+of gap 6 are implemented in `sm1.h`, `API.md`, `SM1_DESIGN.md`
+and `src/`, with tests. Gap 4 is a decision against, and so, for
 now, is the batched read.
 
 ### The whole roster
@@ -176,66 +176,66 @@ after this one explain each.
 
 ```c
 /* gap 1: online index build, and lock-without-write -- IMPLEMENTED */
-typedef enum { SM_LOCK_SHARED = 0, SM_LOCK_EXCLUSIVE = 1 } sm_lockmode_t;
+typedef enum { SM1_LOCK_SHARED = 0, SM1_LOCK_EXCLUSIVE = 1 } sm1_lockmode_t;
 
-int sm_lock(sm_session_t* session, uint64_t storeid,
-            const char* key, size_t klen, sm_lockmode_t mode);
+int sm1_lock(sm1_session_t* session, uint64_t storeid,
+             const char* key, size_t klen, sm1_lockmode_t mode);
 
 /* gap 2: savepoint stack -- IMPLEMENTED */
-int sm_savepoint(sm_session_t* session);            /* push; returns depth >= 1, or -1 */
-int sm_rollback(sm_session_t* session, int depth);  /* undo to that mark; keeps it, drops deeper */
-int sm_forget(sm_session_t* session, int depth);    /* forget that mark and deeper ones */
+int sm1_savepoint(sm1_session_t* session);            /* push; returns depth >= 1, or -1 */
+int sm1_rollback(sm1_session_t* session, int depth);  /* undo to that mark; keeps it, drops deeper */
+int sm1_forget(sm1_session_t* session, int depth);    /* forget that mark and deeper ones */
 
 /* gap 3: RC statement snapshots -- IMPLEMENTED */
-int sm_stmt_begin(sm_session_t* session);
+int sm1_stmt_begin(sm1_session_t* session);
 
 /* gap 5: cursor reposition -- IMPLEMENTED */
-int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
-                 int inclusive);
+int sm1_scan_seek(sm1_scan_t* scan, const char* key, size_t klen,
+                  int inclusive);
 
 /* gap 6: batched read -- NOT BUILT; see the gap for why */
-int sm_mread(sm_session_t* session, uint64_t storeid, size_t n,
-             const char* const* key, const size_t* klen,
-             const char** data, size_t* datalen, int* found);
+int sm1_mread(sm1_session_t* session, uint64_t storeid, size_t n,
+              const char* const* key, const size_t* klen,
+              const char** data, size_t* datalen, int* found);
 
 /* gap 6: old-image return -- IMPLEMENTED */
-int sm_update(sm_session_t* session, uint64_t storeid,
-              const char* key, size_t klen,
-              const char* data, size_t datalen,
-              const char** old, size_t* oldlen);
+int sm1_update(sm1_session_t* session, uint64_t storeid,
+               const char* key, size_t klen,
+               const char* data, size_t datalen,
+               const char** old, size_t* oldlen);
 
-int sm_delete(sm_session_t* session, uint64_t storeid,
-              const char* key, size_t klen,
-              const char** old, size_t* oldlen);
+int sm1_delete(sm1_session_t* session, uint64_t storeid,
+               const char* key, size_t klen,
+               const char** old, size_t* oldlen);
 ```
 
 Gap 4 needs no function: it is closed. Gap 6's
-lock-without-write is `sm_lock` again, which is now in, and
-its `sm_lsstore` was already in phase 1.
+lock-without-write is `sm1_lock` again, which is now in, and
+its `sm1_lsstore` was already in phase 1.
 
-**How firm each one is.** Everything but `sm_mread` is
-settled and in `sm.h` and `API.md`. `sm_mread` is sketched
+**How firm each one is.** Everything but `sm1_mread` is
+settled and in `sm1.h` and `API.md`. `sm1_mread` is sketched
 here and nowhere else: that half of gap 6 waits on a
 benchmark, so its signature is a guess, in particular how N
 values would be owned.
 
-**Three were breaking changes**, not additions: `sm_rollback`
-gained a parameter, and `sm_update` and `sm_delete` gained two
+**Three were breaking changes**, not additions: `sm1_rollback`
+gained a parameter, and `sm1_update` and `sm1_delete` gained two
 each.
 
 **The old-image lifetime is settled** the way the question
 framed it: `*old` points into session memory and dies at the
-next `sm_*` call, `sm_read`'s window, because it is
-`sm_read`'s buffer. The layer copies only what must outlive
+next `sm1_*` call, `sm1_read`'s window, because it is
+`sm1_read`'s buffer. The layer copies only what must outlive
 that call, and index maintenance usually does not -- it
 derives the old entries and is done.
 
-### Gap 1 (and lock-without-write): `sm_lock` — DONE
+### Gap 1 (and lock-without-write): `sm1_lock` — DONE
 
 ```c
-typedef enum { SM_LOCK_SHARED = 0, SM_LOCK_EXCLUSIVE = 1 } sm_lockmode_t;
-int sm_lock(sm_session_t* s, uint64_t storeid,
-            const char* key, size_t klen, sm_lockmode_t mode);
+typedef enum { SM1_LOCK_SHARED = 0, SM1_LOCK_EXCLUSIVE = 1 } sm1_lockmode_t;
+int sm1_lock(sm1_session_t* s, uint64_t storeid,
+             const char* key, size_t klen, sm1_lockmode_t mode);
 ```
 
 Implemented as proposed (SM1_DESIGN.md §5.1). What it cost, since
@@ -252,17 +252,17 @@ PostgreSQL's `SELECT FOR SHARE` / `FOR UPDATE`. The call blocks
 on a conflicting holder. Once the lock is held it runs the
 §5.2 first-committer-wins check: a committed version of the key
 newer than `T.snapshot_ts` fails the call with
-`SM_ERR_CONFLICT`. The lock is held to end of transaction and
-is released by an `sm_rollback` past it.
+`SM1_ERR_CONFLICT`. The lock is held to end of transaction and
+is released by an `sm1_rollback` past it.
 
 **Index-build protocol.** The layer's catalog keeps one schema
 row per base store, `"S"|store`.
 
-- **Every writer** calls `sm_lock(catalog, "S"|store, SHARED)`,
+- **Every writer** calls `sm1_lock(catalog, "S"|store, SHARED)`,
   then reads the row to learn which indexes to maintain. The
   conflict check guarantees what it reads is current.
 - **The builder** begins in READ COMMITTED and:
-  1. Calls `sm_update` on the schema row. This takes the
+  1. Calls `sm1_update` on the schema row. This takes the
      exclusive lock, waiting out in-flight writers and
      blocking new ones.
   2. Scans the base store. Under RC the scan's snapshot is
@@ -290,7 +290,7 @@ row per base store, `"S"|store`.
   so this is the first place a benchmark will point at.
 - The non-blocking alternative needs a wait-for-older-
   transactions primitive plus a CIC-style protocol. It admits
-  stale entries when a writer's `sm_delete` of a not-yet-built
+  stale entries when a writer's `sm1_delete` of a not-yet-built
   entry gets `NOTFOUND`: harmless for a non-unique index whose
   readers recheck the base row, false duplicates for a unique
   one. Deferred until blocking builds hurt.
@@ -298,20 +298,20 @@ row per base store, `"S"|store`.
 ### Gap 2: a savepoint stack — DONE
 
 ```c
-int sm_savepoint(sm_session_t* s);           /* push; returns depth >= 1, or -1 */
-int sm_rollback(sm_session_t* s, int depth); /* undo to that mark; keeps it, drops deeper marks */
-int sm_forget(sm_session_t* s, int depth);   /* forget that mark and deeper ones */
+int sm1_savepoint(sm1_session_t* s);           /* push; returns depth >= 1, or -1 */
+int sm1_rollback(sm1_session_t* s, int depth); /* undo to that mark; keeps it, drops deeper marks */
+int sm1_forget(sm1_session_t* s, int depth);   /* forget that mark and deeper ones */
 ```
 
 Implemented as proposed (SM1_DESIGN.md §6.5). §6.5 already
 recorded positions in `T.undo`, `T.created`, and `T.locks`; a
 savepoint is a saved set of those positions, and the stack is
-a vector of them. `sm_forget` releases no locks; it only stops
-`sm_rollback` from returning to the mark, and a lock taken
+a vector of them. `sm1_forget` releases no locks; it only stops
+`sm1_rollback` from returning to the mark, and a lock taken
 inside a forgotten mark is then held for the enclosing one.
 
-**It broke the old contract**, as expected: `sm_rollback`
-takes a depth now, and "calling `sm_savepoint` again replaces
+**It broke the old contract**, as expected: `sm1_rollback`
+takes a depth now, and "calling `sm1_savepoint` again replaces
 the mark" is gone. SQL-style named savepoints are built on it
 in the layer.
 
@@ -320,17 +320,17 @@ names a different mark rather than failing. An id per mark,
 never reused, would have caught that; depth won because SQL
 already obliges the layer to drop a name when its mark goes,
 so a correct caller cannot form a stale depth. The hazard is
-stated in `sm.h` and `API.md`.
+stated in `sm1.h` and `API.md`.
 
-**The stack is capped** at `SM_MAX_SAVEPOINTS` (256), so
-runaway nesting is an `SM_ERR_INVALID` rather than unbounded
+**The stack is capped** at `SM1_MAX_SAVEPOINTS` (256), so
+runaway nesting is an `SM1_ERR_INVALID` rather than unbounded
 growth. A layer that forgets each statement's mark never
 approaches it.
 
 ### Gap 3: RC statement snapshots — DONE
 
-`sm_stmt_begin(session)` is implemented (SM1_DESIGN.md §6.2). Two
-decisions in it are worth knowing, because they are what the
+`sm1_stmt_begin(session)` is implemented (SM1_DESIGN.md §6.2).
+Two decisions in it are worth knowing, because they are what the
 layer relies on.
 
 **The snapshot is taken by the statement's first read**, not
@@ -343,7 +343,7 @@ simpler to reason about, but it would have pinned a pre-lock
 snapshot and the builder would have missed the commits it
 waited out.
 
-**There is no `sm_stmt_end`.** The next `sm_stmt_begin` ends
+**There is no `sm1_stmt_end`.** The next `sm1_stmt_begin` ends
 the last statement, and the transaction ends the last of all.
 The cost is that a transaction which uses the call once reads
 that way for the rest of its life, with no way back to a
@@ -375,8 +375,8 @@ store instead.
 ### Gap 5: cursor reposition — DONE
 
 ```c
-int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
-                 int inclusive);
+int sm1_scan_seek(sm1_scan_t* scan, const char* key, size_t klen,
+                  int inclusive);
 ```
 
 Implemented as proposed (SM1_DESIGN.md §10.2). Forward only: it
@@ -406,14 +406,14 @@ join does anyway.
 
 ### Gap 6: minor items
 
-- **`sm_lsstore`.** Done in phase 1: a scan of the `"R"` prefix
+- **`sm1_lsstore`.** Done in phase 1: a scan of the `"R"` prefix
   in `store.0`, which needs an active transaction since the
   answer depends on the snapshot (SM1_DESIGN.md §11).
-- **Old-image return — DONE.** Out-parameters on `sm_update`
-  and `sm_delete`, NULL to skip, filled from the version the
+- **Old-image return — DONE.** Out-parameters on `sm1_update`
+  and `sm1_delete`, NULL to skip, filled from the version the
   write already decoded (SM1_DESIGN.md §5.3). The lifetime
-  question is answered by reusing `sm_read`'s buffer and its
-  rule: valid until the next `sm_*` call on the session,
+  question is answered by reusing `sm1_read`'s buffer and its
+  rule: valid until the next `sm1_*` call on the session,
   either call invalidating what the other returned. Both
   signatures changed, and every caller with them.
 - **Batched read — left unbuilt, with reasons.** See the gap
@@ -426,6 +426,6 @@ join does anyway.
 
 Gaps 1, 2, 3, 5 and gap 6's old-image return are done; gap 4
 will not be. The batched read is what remains, and it waits
-on a benchmark. When one asks for it: update `sm.h`,
+on a benchmark. When one asks for it: update `sm1.h`,
 `API.md`, and `SM1_DESIGN.md`, implement it in `src/` with tests,
 then review.

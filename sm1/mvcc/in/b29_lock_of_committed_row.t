@@ -1,7 +1,7 @@
 # b29 -- locking a row that changed after the snapshot.
 #
 # A lock is only worth taking if what the caller reads under
-# it is current, so sm_lock runs first-committer-wins once the
+# it is current, so sm1_lock runs first-committer-wins once the
 # lock is held: a row committed after the transaction began
 # fails the call rather than handing back a stale row under a
 # lock that suggests otherwise. It is the b01 answer for a
