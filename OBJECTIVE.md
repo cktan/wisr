@@ -110,9 +110,9 @@ These are settled; they bind every level below.
   (`PART4.md` §4), so sm1's status record is the one commit
   point. The catalog is loaded into memory at startup and
   written through to sm2 for persistence
-  (`sm3/DESIGN.md` §2).
+  (`sm3/SM3_DESIGN.md` §2).
 - **Each level ships its own `OBJECTIVE.md` and
-  `DESIGN.md`.** This document and `DESIGN.md` at the top
+  `SMn_DESIGN.md`.** This document and `DESIGN.md` at the top
   level cover only what spans levels: the stack's shape, its
   build, and its cross-level decisions. Anything specific to
   one level's internals belongs in that level's own

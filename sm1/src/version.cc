@@ -1,6 +1,6 @@
 /*
  * version.cc -- the row-version codec, the wisr.version.v1
- * comparator, and the userkey prefix extractor (DESIGN.md §3.1).
+ * comparator, and the userkey prefix extractor (SM1_DESIGN.md §3.1).
  */
 
 #include "version.h"
@@ -15,7 +15,7 @@ namespace {
  * Compare userkeys with memcmp, shorter first on a tie, then
  * the tails with memcmp. The default bytewise comparator would
  * compare one key's tail against a longer key's extra bytes
- * (DESIGN.md §3.1).
+ * (SM1_DESIGN.md §3.1).
  */
 class version_comparator_t : public rocksdb::Comparator {
 public:

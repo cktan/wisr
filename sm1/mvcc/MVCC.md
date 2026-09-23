@@ -15,7 +15,7 @@ operations on a row, every read-write shape known to produce
 an anomaly under snapshot isolation, and, for each one, the
 answer at every level pairing.
 
-`DESIGN.md` §5 to §7 defines the mechanisms; `SIREAD.md`
+`SM1_DESIGN.md` §5 to §7 defines the mechanisms; `SIREAD.md`
 explains the serializable theory they implement. This
 document is about behaviour: given a history, which calls
 fail and which commit.
@@ -366,7 +366,7 @@ Every script here pins its sessions with `rc`, since `pairings
 all` runs only RR and SERIALIZABLE. A write that meets a row
 committed after the transaction began fails with `updated`,
 which does not abort; the caller reads the newest version with
-`readlatest` and goes on (`DESIGN.md` §5.4).
+`readlatest` and goes on (`SM1_DESIGN.md` §5.4).
 
 | # | Schedule | Outcome | File |
 |---|---|---|---|
@@ -403,7 +403,7 @@ At every level, wisr **does not** detect:
   each other (a08, a09, c15).
 
 It also does not detect anything across **processes**: one
-process attaches a home directory (`DESIGN.md` §3.5), so all
+process attaches a home directory (`SM1_DESIGN.md` §3.5), so all
 of the above is within-process concurrency.
 
 ## 9. What this coverage is, and what it is not

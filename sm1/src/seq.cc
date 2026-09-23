@@ -1,6 +1,6 @@
 /*
  * seq.cc -- named sequences: sm_mkseq, sm_rmseq, sm_nextseq
- * (DESIGN.md §11).
+ * (SM1_DESIGN.md §11).
  *
  * A sequence's definition is a catalog row, keyed "S" | name in
  * CF:store.0 and holding { seqid, start, increment }, so creating

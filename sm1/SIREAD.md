@@ -33,7 +33,7 @@ other one *wrote*.
 
 ## How SIREAD catches it
 
-See `DESIGN.md` §7.1–7.3.
+See `SM1_DESIGN.md` §7.1–7.3.
 
 1. T1's reads leave SIREAD entries on `alice` and `bob`, and so
    do T2's.
@@ -72,12 +72,12 @@ A history is serializable exactly when this graph has no cycle.
 ### Why SSI only tracks rw edges
 
 Under snapshot isolation the ww and wr edges are already under
-control. Row locks plus first-committer-wins (`DESIGN.md` §5.2)
-keep concurrent writers of the same key apart, and a snapshot
-never sees uncommitted data. The only edges that can close a
-cycle are **rw** edges between concurrent transactions. Fekete
-et al. (2005) proved that every cycle under SI contains two
-consecutive rw edges:
+control. Row locks plus first-committer-wins (`SM1_DESIGN.md`
+§5.2) keep concurrent writers of the same key apart, and a
+snapshot never sees uncommitted data. The only edges that can
+close a cycle are **rw** edges between concurrent transactions.
+Fekete et al. (2005) proved that every cycle under SI contains
+two consecutive rw edges:
 
 ```
 T_in ──rw──▶ T_pivot ──rw──▶ T_out
@@ -103,7 +103,7 @@ aborts.
   and a `doomed` bit.
 
 wisr keeps only the flags, following Cahill et al.'s original
-rules (`DESIGN.md` §7.3): an edge that would make an
+rules (`SM1_DESIGN.md` §7.3): an edge that would make an
 already-committed transaction a pivot dooms the running
 transaction completing it, and a transaction with both flags,
 or doomed, fails at commit. PostgreSQL also keeps edge targets,

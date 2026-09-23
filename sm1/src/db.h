@@ -1,6 +1,6 @@
 /*
  * db.h -- the layout of one database directory: its column
- * families, their options, and CF:meta's keys (DESIGN.md §3).
+ * families, their options, and CF:meta's keys (SM1_DESIGN.md §3).
  */
 #ifndef WISR_DB_H
 #define WISR_DB_H
@@ -38,7 +38,7 @@
 #define WISR_CF_TXN "txn"
 #define WISR_CF_META "meta"
 
-/* CF:meta keys (DESIGN.md §3.3, §4.2). */
+/* CF:meta keys (SM1_DESIGN.md §3.3, §4.2). */
 #define WISR_META_VERSION "version"
 #define WISR_META_NEXT_TS "next_ts"
 #define WISR_META_NEXT_OBJID "next_objid"
@@ -79,7 +79,7 @@ struct ssi_range_t {
 
 /*
  * One open database, shared by every session on it and held
- * in the environment's registry (DESIGN.md §1).
+ * in the environment's registry (SM1_DESIGN.md §1).
  */
 struct db_t {
   std::string name;
@@ -281,7 +281,7 @@ struct db_t {
 
 /*
  * Open database dbname at path with every column family it
- * has, and load its allocators from CF:meta (DESIGN.md §9.1
+ * has, and load its allocators from CF:meta (SM1_DESIGN.md §9.1
  * steps 1-3). Returns NULL with the error set.
  */
 db_t *db_open(const std::string &path, const char *dbname,

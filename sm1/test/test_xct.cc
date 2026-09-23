@@ -1,6 +1,6 @@
 /*
  * test_xct.cc -- the commit sequencer, the active-transaction
- * table and commit cache, and the fail-stop state (DESIGN.md
+ * table and commit cache, and the fail-stop state (SM1_DESIGN.md
  * §3.4, §4.3, §8.2).
  */
 

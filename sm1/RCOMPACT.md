@@ -2,7 +2,7 @@
 
 Garbage collection in wisr rides on RocksDB compaction: the
 filter in `src/gc.cc` judges every version a compaction passes
-over, and §8.3 of `DESIGN.md` is the argument for why that is
+over, and §8.3 of `SM1_DESIGN.md` is the argument for why that is
 where the work belongs. Compaction is also the most expensive
 background work the engine does.
 

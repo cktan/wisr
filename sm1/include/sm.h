@@ -1,7 +1,7 @@
 /*
  * sm.h -- the wisr storage manager's public C API.
  *
- * API.md is the interface contract; DESIGN.md is the design
+ * API.md is the interface contract; SM1_DESIGN.md is the design
  * behind it.
  *
  * Conventions that hold throughout:
@@ -94,7 +94,7 @@ typedef enum {
     SM_ERR_PERMISSION    = 17,
     SM_ERR_VERSION       = 18,  /* home dir format not supported */
 
-    /* Not an abort: the transaction stays active (DESIGN.md §5.4). */
+    /* Not an abort: the transaction stays active (SM1_DESIGN.md §5.4). */
     SM_ERR_UPDATED       = 19   /* newer commit; sm_read_latest, then retry */
 } sm_errno_t;
 
@@ -520,7 +520,7 @@ int sm_lock(sm_session_t* session, uint64_t storeid,
  * snapshot, under a row lock this transaction already holds.
  * Returns as sm_read() does: 0 found, 1 no such key. At read
  * committed only. Under an exclusive lock it also lets the next
- * write of the key through, after SM_ERR_UPDATED (DESIGN.md
+ * write of the key through, after SM_ERR_UPDATED (SM1_DESIGN.md
  * §5.4).
  *
  * Errors: SM_ERR_INVALID (not read committed, or no lock held),

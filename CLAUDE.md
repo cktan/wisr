@@ -1,12 +1,12 @@
 ## Before Starting Any Work
 
-Read `README.md` for the layout of the levels, then the
-`DESIGN.md` of the level you are working in — `sm1/DESIGN.md`
-for the MVCC storage manager, `sm2/DESIGN.md` for types and
-tuples, `sm3/DESIGN.md` for schema and indexes.
+Read `README.md` for the layout of the levels, then the design
+document of the level you are working in — `sm1/SM1_DESIGN.md`
+for the MVCC storage manager, `sm2/SM2_DESIGN.md` for types
+and tuples, `sm3/SM3_DESIGN.md` for schema and indexes.
 
 Paths written inside a level's documents are relative to that
-level: `src/db.cc` in `sm1/DESIGN.md` means `sm1/src/db.cc`.
+level: `src/db.cc` in `sm1/SM1_DESIGN.md` means `sm1/src/db.cc`.
 
 ## Expert Persona
 

@@ -1,6 +1,6 @@
 /*
  * version.h -- the row-version codec and the store column
- * families' comparator and prefix extractor (DESIGN.md §3.1).
+ * families' comparator and prefix extractor (SM1_DESIGN.md §3.1).
  *
  *   key   = userkey | ~wts (8B BE) | ~seq (4B BE)
  *   value = flags (1B) | xid (8B, unstamped) or commit_ts (8B,

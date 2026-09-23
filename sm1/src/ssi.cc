@@ -1,5 +1,5 @@
 /*
- * ssi.cc -- serializable snapshot isolation (DESIGN.md §7),
+ * ssi.cc -- serializable snapshot isolation (SM1_DESIGN.md §7),
  * after Cahill, Röhm and Fekete, "Serializable Isolation for
  * Snapshot Databases" (SIGMOD 2008).
  *

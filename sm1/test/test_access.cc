@@ -348,7 +348,7 @@ TEST_CASE("sm_stmt_begin needs a transaction and does nothing above RC") {
 }
 
 TEST_CASE("a scan returns userkeys in memcmp order within its bounds") {
-  // Verify key order and bound handling (DESIGN.md §12.5 key order).
+  // Verify key order and bound handling (SM1_DESIGN.md §12.5 key order).
   // 1. Insert keys that prefix one another, each updated so it
   //    has several versions.
   // 2. A full scan returns each key once, newest value, in
@@ -397,7 +397,7 @@ TEST_CASE("a scan returns userkeys in memcmp order within its bounds") {
 }
 
 TEST_CASE("a cursor does not see writes made after it opened") {
-  // Verify Halloween protection (DESIGN.md §10.2).
+  // Verify Halloween protection (SM1_DESIGN.md §10.2).
   // 1. Insert "a" and "b", then open a cursor.
   // 2. Insert "c" and update "a" in the same transaction.
   // 3. The cursor returns exactly the rows as of its opening.

@@ -1,6 +1,6 @@
 /*
  * access.cc -- sm_insert, sm_update, sm_delete, sm_read, and
- * the sm_scan cursor (DESIGN.md §4.4, §5, §10).
+ * the sm_scan cursor (SM1_DESIGN.md §4.4, §5, §10).
  *
  * Under SERIALIZABLE, reads leave SIREAD entries and report the
  * concurrent versions they step past, and writes report the

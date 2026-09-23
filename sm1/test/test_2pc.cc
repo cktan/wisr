@@ -2,7 +2,7 @@
  * test_2pc.cc -- two-phase commit and recovery: sm_prepare,
  * resolution by gid, in-doubt transactions across a restart, the
  * restored-transaction SSI rule, and the orphan CF sweep
- * (DESIGN.md §8.4, §8.5, §9, §12.5 "2PC").
+ * (SM1_DESIGN.md §8.4, §8.5, §9, §12.5 "2PC").
  */
 
 #include "doctest.h"

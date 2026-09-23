@@ -1,6 +1,6 @@
 /*
  * session.cc -- sm_opendb and sm_closedb, and the environment's
- * registry of open databases (DESIGN.md §1).
+ * registry of open databases (SM1_DESIGN.md §1).
  */
 
 #include "session.h"

@@ -1,5 +1,5 @@
 /*
- * test_savepoint.cc -- sm_savepoint and sm_rollback (DESIGN.md
+ * test_savepoint.cc -- sm_savepoint and sm_rollback (SM1_DESIGN.md
  * §6.5, §12.5 "Own writes").
  *
  * The lock rule these calls obey is a timeline between two

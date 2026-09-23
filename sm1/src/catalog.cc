@@ -1,6 +1,6 @@
 /*
  * catalog.cc -- stores: lookup, sm_mkstore, sm_rmstore,
- * sm_lsstore (DESIGN.md §11).
+ * sm_lsstore (SM1_DESIGN.md §11).
  *
  * The catalog is storeid 0, an ordinary MVCC store keyed
  * "R" | be64(storeid) with an empty value, so DDL is

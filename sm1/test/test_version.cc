@@ -1,6 +1,6 @@
 /*
  * test_version.cc -- the version codec and the wisr.version.v1
- * comparator (DESIGN.md §3.1).
+ * comparator (SM1_DESIGN.md §3.1).
  */
 
 #include "doctest.h"

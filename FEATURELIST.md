@@ -47,7 +47,7 @@ ordered key as the only access path below sm2.
       — needs its own encoding
 - [x] enums
       — sm3's, not an sm2 type: `int4` on disk, labels
-        in sm3's catalog (sm2/DESIGN.md §2)
+        in sm3's catalog (sm2/SM2_DESIGN.md §2)
 - [ ] range types (int4range, tsrange, ...)
       — usually paired with GiST and exclusion constraints
 - [ ] composite types
@@ -65,7 +65,7 @@ ordered key as the only access path below sm2.
 
 - [x] B-tree
       — already assumed; the primary key is a B-tree index
-        over the heap (sm2/DESIGN.md §5)
+        over the heap (sm2/SM2_DESIGN.md §5)
 - [ ] Hash
 - [ ] GiST
       — needed for range / geometric / exclusion
@@ -99,7 +99,7 @@ ordered key as the only access path below sm2.
 - [ ] table inheritance (legacy)
 - [x] TOAST (large datums stored out of line)
       — sm2's own TOAST, in its own format, in the table's
-        sm1 store (sm2/DESIGN.md §4)
+        sm1 store (sm2/SM2_DESIGN.md §4)
 - [x] generated / computed columns
 - [x] temporary tables
 - [ ] unlogged tables
@@ -116,7 +116,7 @@ ordered key as the only access path below sm2.
 ## 6. Concurrency / online DDL
 
 - [x] online index build
-      — already closed, sm3/DESIGN.md §3
+      — already closed, sm3/SM3_DESIGN.md §3
 - [x] online ADD COLUMN
       — already assumed, via a schema-version stamp per row
 - [x] other online ALTER (type change, drop column)
@@ -125,7 +125,7 @@ ordered key as the only access path below sm2.
 ## 7. Replication / backup / ops
 
 - [ ] streaming (physical) replication
-      — already out of scope, sm1/DESIGN.md
+      — already out of scope, sm1/SM1_DESIGN.md
 - [x] logical replication / CDC decoding
 - [ ] point-in-time recovery / continuous archiving
       — already out of scope ("online backup")

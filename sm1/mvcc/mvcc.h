@@ -217,7 +217,7 @@ public:
   /*
    * c: commit T<n>, reporting whether it committed. A failure
    * must be SM_ERR_SERIALIZATION -- the only commit-time
-   * failure the design allows (DESIGN.md §7.3) -- and must be
+   * failure the design allows (SM1_DESIGN.md §7.3) -- and must be
    * retryable.
    */
   bool c(int n) {

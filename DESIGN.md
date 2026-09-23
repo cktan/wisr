@@ -4,7 +4,7 @@ How the stack in `OBJECTIVE.md` fits together: the levels,
 the build, and the decisions that cross level boundaries.
 Each level's own mechanics — sm1's MVCC, sm2's tuple
 format, sm3's catalog — are argued in that level's own
-`DESIGN.md`; this document does not repeat them.
+`SMn_DESIGN.md`; this document does not repeat them.
 
 ---
 
@@ -41,7 +41,7 @@ calls. sm3 stands in the same relation to sm2 — it never
 encodes a key or decodes a tuple itself — with one
 deliberate exception: `sm_lock`, which sm2 has nothing to
 add to and which sm3's DDL and index-build protocols are
-built on (`sm3/DESIGN.md` §2). That boundary is why each
+built on (`sm3/SM3_DESIGN.md` §2). That boundary is why each
 level's `OBJECTIVE.md` can promise it is "useful and
 testable on its own" — the whole lower stack is one
 dependency.
@@ -70,9 +70,9 @@ there, nowhere else.
 
 | Level | Status |
 | --- | --- |
-| sm1 | built and tested; the design of record is `sm1/DESIGN.md` |
-| sm2 | designed, not yet implemented — every open section of `sm2/DESIGN.md` is marked "to be written"; `sm2/PLAN.md` has the build order |
-| sm3 | designed, not yet implemented — the same, in `sm3/DESIGN.md` and `sm3/PLAN.md`; it cannot start before sm2's two formats are settled |
+| sm1 | built and tested; the design of record is `sm1/SM1_DESIGN.md` |
+| sm2 | designed, not yet implemented — every open section of `sm2/SM2_DESIGN.md` is marked "to be written"; `sm2/PLAN.md` has the build order |
+| sm3 | designed, not yet implemented — the same, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md`; it cannot start before sm2's two formats are settled |
 
 sm1 was built first and alone, on purpose: it is usable
 without sm2 (an MVCC key-value store is a complete product
@@ -121,23 +121,23 @@ design:
   to sm1's surface instead of worked around from outside it.
 - **One encoder, one tuple format, two callers.** The key
   encoding and the tuple layout are sm2's alone
-  (`sm2/DESIGN.md` §3, §4), and sm3 builds its index entries
+  (`sm2/SM2_DESIGN.md` §3, §4), and sm3 builds its index entries
   — `encode(sk) ‖ rowno` — by calling sm2's encoder
   with the same per-column arguments. Two encoders that have
   to agree bytewise is a corruption bug waiting to be
   written, so there is only one.
 - **sm3 reaches sm1 for locks, and for nothing else.** sm2
   has nothing to add to `sm_lock`, and sm3's DDL and
-  index-build protocols rest on it (`sm3/DESIGN.md` §2), so
+  index-build protocols rest on it (`sm3/SM3_DESIGN.md` §2), so
   that one call is the sanctioned exception to sm3 speaking
   only to sm2. Every other sm1 facility sm3 needs arrives
   through sm2's tuple relation.
 - **A table is a heap keyed by `rowno`, and the primary key
   is an index.** A row's key is an unsigned 64-bit `rowno`
   from a per-table sm1 sequence, never reused and unchanged by
-  `UPDATE` (`sm2/DESIGN.md` §5). Every index, the primary
+  `UPDATE` (`sm2/SM2_DESIGN.md` §5). Every index, the primary
   key's included, is sm3's and points at `rowno`
-  (`sm3/DESIGN.md` §3). The fork redefines `ctid` as a
+  (`sm3/SM3_DESIGN.md` §3). The fork redefines `ctid` as a
   `uint64_t`, so `rowno` is `ctid` — a core patch to
   PostgreSQL's 6-byte `ItemPointerData` (`PART4.md` §3). This
   matches the heap PostgreSQL's planner and executor assume,
@@ -149,39 +149,39 @@ design:
   told apart by a 2-byte object prefix: `0x0000` for rows,
   `0x0001`–`0xFFFE` for indexes, `0xFFFF` for TOAST. sm3
   chooses the prefix; sm2 prepends and strips it and never
-  interprets it (`sm2/DESIGN.md` §5), so sm2 never learns what
-  a table is. `DROP TABLE` is one `sm_rmstore`, sm1's O(1)
+  interprets it (`sm2/SM2_DESIGN.md` §5), so sm2 never learns
+  what a table is. `DROP TABLE` is one `sm_rmstore`, sm1's O(1)
   column family drop; `DROP INDEX` is a range delete over its
   prefix, and index prefixes are never reused. The cost is
   that tables, partitions included, are bounded by the
   hundreds to low thousands of stores sm1 handles
-  (`sm1/DESIGN.md` §13); accepted for v1 (`sm3/DESIGN.md`
+  (`sm1/SM1_DESIGN.md` §13); accepted for v1 (`sm3/SM3_DESIGN.md`
   §4).
 - **The key budget is shared.** `SM_MAX_KEYLEN` (4096) bounds
   prefix, index columns and `rowno` together. sm2's encoder
   enforces it: an over-long primary key refuses the row, and an
   over-long index key is truncated, flagged and rechecked
-  against the tuple, never hashed (`sm2/DESIGN.md` §3.2). sm3
+  against the tuple, never hashed (`sm2/SM2_DESIGN.md` §3.2). sm3
   owns the recheck and the unique check that follow from a cut
-  key (`sm3/DESIGN.md` §3).
+  key (`sm3/SM3_DESIGN.md` §3).
 - **Unique checks are sm3's, and NULLs are distinct in them.**
   Two NULLs encode to the same bytes, so the encoding cannot
   say they differ; sm3's unique check skips any entry with a
   NULL key column, as SQL requires by default. `NULLS NOT
   DISTINCT` is refused at `CREATE INDEX` in v1; adding it
   later is a catalog flag and changes no bytes on disk
-  (`sm3/DESIGN.md` §3).
+  (`sm3/SM3_DESIGN.md` §3).
 - **Collation versions are pinned, recorded and enforced across
   the stack.** A specific ICU is linked into the server; sm3
   records each collation's version with the schema
-  (`sm3/DESIGN.md` §2); sm2 refuses to read or write an index
+  (`sm3/SM3_DESIGN.md` §2); sm2 refuses to read or write an index
   built under another version, the primary key's included, until
-  an explicit online rebuild (`sm2/DESIGN.md` §3.3).
+  an explicit online rebuild (`sm2/SM2_DESIGN.md` §3.3).
   Non-deterministic collations are refused in v1.
 - **Constraints and labels are sm3's; sm2 stores what it is
   given.** The `varchar(n)` length limit is enforced by sm3,
   and an enum is `int4` to sm2 with its labels in sm3's
-  catalog (`sm2/DESIGN.md` §2).
+  catalog (`sm2/SM2_DESIGN.md` §2).
 - **Batch-shaped API: a question for sm3, not sm2.** Sets of
   rows in and out was forced by an IPC boundary between a
   PostgreSQL backend process and sm1; the fork now moves
@@ -190,22 +190,22 @@ design:
   tuple-at-a-time (`sm2/OBJECTIVE.md`); whether sm3 batches
   above it, for filter pushdown and fewer calls per scan, is
   open and belongs where the filters are
-  (`sm3/DESIGN.md` §5).
+  (`sm3/SM3_DESIGN.md` §5).
 - **READ COMMITTED writes wait, then proceed.** PostgreSQL's
   default level does not fail a concurrent update of the same
   row, so sm1's first-committer-wins rule is relaxed there
-  (`sm1/DESIGN.md` §6.2). It needs a new version ordering in
+  (`sm1/SM1_DESIGN.md` §6.2). It needs a new version ordering in
   sm1 and a row re-check in the executor.
 - **One commit point.** The catalog lives in sm3, in memory
   and written through to sm2, so a DDL statement and the data
   it changes commit in one sm1 transaction, and recovery is
-  RocksDB's alone (`PART4.md` §4, `sm3/DESIGN.md` §2).
+  RocksDB's alone (`PART4.md` §4, `sm3/SM3_DESIGN.md` §2).
 - **READ COMMITTED writes are resolved at sm3, not sm2.**
   `SM_ERR_UPDATED` is answered by re-checking the
   statement's filter against the newest image, and filters
   exist only at sm3. sm2 surfaces the error and offers
   `rel_read_latest`; sm3 does the re-check
-  (`sm3/DESIGN.md` §3).
+  (`sm3/SM3_DESIGN.md` §3).
 - **No backward scans, at any level, ever.** Settled in
   `sm1/OBJECTIVE.md`, built into sm2's encoding and
   inherited by every index sm3 builds. The fork's planner is
@@ -217,8 +217,8 @@ design:
 
 ## 6. What this document is not
 
-It is not a substitute for `sm1/DESIGN.md`,
-`sm2/DESIGN.md` or `sm3/DESIGN.md` — read those for how a
+It is not a substitute for `sm1/SM1_DESIGN.md`,
+`sm2/SM2_DESIGN.md` or `sm3/SM3_DESIGN.md` — read those for how a
 level works. It is
 not a restatement of `PART4.md` — read that for the
 PostgreSQL target in full. It exists so a reader can see the

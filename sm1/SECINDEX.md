@@ -165,7 +165,7 @@ than an argument.
 ## Closing the gaps
 
 What each gap became. Gaps 1, 2, 3, 5 and the old-image half
-of gap 6 are implemented in `sm.h`, `API.md`, `DESIGN.md` and
+of gap 6 are implemented in `sm.h`, `API.md`, `SM1_DESIGN.md` and
 `src/`, with tests. Gap 4 is a decision against, and so, for
 now, is the batched read.
 
@@ -238,7 +238,7 @@ int sm_lock(sm_session_t* s, uint64_t storeid,
             const char* key, size_t klen, sm_lockmode_t mode);
 ```
 
-Implemented as proposed (DESIGN.md §5.1). What it cost, since
+Implemented as proposed (SM1_DESIGN.md §5.1). What it cost, since
 the estimate below was written as a guess: the lock table now
 holds a mode and a holder list per key; the waits-for edges
 became a graph and deadlock detection a depth-first search
@@ -303,7 +303,7 @@ int sm_rollback(sm_session_t* s, int depth); /* undo to that mark; keeps it, dro
 int sm_forget(sm_session_t* s, int depth);   /* forget that mark and deeper ones */
 ```
 
-Implemented as proposed (DESIGN.md §6.5). §6.5 already
+Implemented as proposed (SM1_DESIGN.md §6.5). §6.5 already
 recorded positions in `T.undo`, `T.created`, and `T.locks`; a
 savepoint is a saved set of those positions, and the stack is
 a vector of them. `sm_forget` releases no locks; it only stops
@@ -329,7 +329,7 @@ approaches it.
 
 ### Gap 3: RC statement snapshots — DONE
 
-`sm_stmt_begin(session)` is implemented (DESIGN.md §6.2). Two
+`sm_stmt_begin(session)` is implemented (SM1_DESIGN.md §6.2). Two
 decisions in it are worth knowing, because they are what the
 layer relies on.
 
@@ -379,7 +379,7 @@ int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
                  int inclusive);
 ```
 
-Implemented as proposed (DESIGN.md §10.2). Forward only: it
+Implemented as proposed (SM1_DESIGN.md §10.2). Forward only: it
 reuses the iterator and the snapshot, and for SSI the range
 runs from the start to the furthest position reached, skipped
 part included — an over-approximation, which is safe, and one
@@ -408,10 +408,10 @@ join does anyway.
 
 - **`sm_lsstore`.** Done in phase 1: a scan of the `"R"` prefix
   in `store.0`, which needs an active transaction since the
-  answer depends on the snapshot (DESIGN.md §11).
+  answer depends on the snapshot (SM1_DESIGN.md §11).
 - **Old-image return — DONE.** Out-parameters on `sm_update`
   and `sm_delete`, NULL to skip, filled from the version the
-  write already decoded (DESIGN.md §5.3). The lifetime
+  write already decoded (SM1_DESIGN.md §5.3). The lifetime
   question is answered by reusing `sm_read`'s buffer and its
   rule: valid until the next `sm_*` call on the session,
   either call invalidating what the other returned. Both
@@ -427,5 +427,5 @@ join does anyway.
 Gaps 1, 2, 3, 5 and gap 6's old-image return are done; gap 4
 will not be. The batched read is what remains, and it waits
 on a benchmark. When one asks for it: update `sm.h`,
-`API.md`, and `DESIGN.md`, implement it in `src/` with tests,
+`API.md`, and `SM1_DESIGN.md`, implement it in `src/` with tests,
 then review.

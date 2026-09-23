@@ -1,6 +1,6 @@
 /*
  * db.cc -- sm_options_init, sm_mkdb, sm_rmdb, sm_lsdb, and the
- * column family layout every database shares (DESIGN.md §3,
+ * column family layout every database shares (SM1_DESIGN.md §3,
  * §3.5, §11).
  */
 

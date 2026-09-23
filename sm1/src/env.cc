@@ -1,7 +1,7 @@
 /*
  * env.cc -- sm_init, sm_attach, sm_detach: the home directory,
  * its root db, and the sweep of unnamed database directories
- * (DESIGN.md §3.5).
+ * (SM1_DESIGN.md §3.5).
  *
  * At most one process, and one environment in it, may attach a
  * home directory at a time. The library does not enforce this:

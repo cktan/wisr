@@ -1,7 +1,7 @@
 /*
  * test_crash.cc -- kill a committing process with SIGKILL and
  * check that recovery leaves exactly a prefix of its commits,
- * including every commit it acknowledged (DESIGN.md §9, §12.5).
+ * including every commit it acknowledged (SM1_DESIGN.md §9, §12.5).
  */
 
 #include "doctest.h"

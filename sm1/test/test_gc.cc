@@ -1,7 +1,7 @@
 /*
  * test_gc.cc -- garbage collection: the watermark, the
  * compaction filter, tombstone purge, and dropped stores
- * (DESIGN.md §8.3, §12.5 "GC").
+ * (SM1_DESIGN.md §8.3, §12.5 "GC").
  */
 
 #include "doctest.h"

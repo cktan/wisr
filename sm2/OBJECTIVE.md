@@ -58,17 +58,17 @@ sm2 the way sm2 is built on sm1 (`sm3/OBJECTIVE.md`).
 
 ## Decisions
 
-These are settled and drive `DESIGN.md`.
+These are settled and drive `SM2_DESIGN.md`.
 
 - **Row identity is `rowno`, and the table is a heap.** A row
   is keyed by an unsigned 64-bit `rowno` from a per-table sm1
   sequence, never reused and kept across updates; the primary
   key is an index over it, as in PostgreSQL. The fork
   redefines `ctid` as a `uint64_t`, so `rowno` is `ctid`
-  (`DESIGN.md` §5). This reverses an earlier choice to cluster
-  the table on its primary key, as YugabyteDB does: a heap is
-  what PostgreSQL's planner and executor assume, it serves a
-  table with no primary key, and a primary key change no
+  (`SM2_DESIGN.md` §5). This reverses an earlier choice to
+  cluster the table on its primary key, as YugabyteDB does: a
+  heap is what PostgreSQL's planner and executor assume, it
+  serves a table with no primary key, and a primary key change no
   longer rewrites every index. It costs a second read on a
   primary key lookup and locality on a primary key range
   scan.
@@ -77,14 +77,14 @@ These are settled and drive `DESIGN.md`.
   written twice, encoded in the index and native in the
   tuple, and the tuple is what a read returns. It costs the
   duplicate; it buys a tuple that is complete on its own and
-  the next decision (`DESIGN.md` §5).
+  the next decision (`SM2_DESIGN.md` §5).
 - **A key must be injective, not reversible.** Distinct datums
   get distinct keys, because unique indexes are enforced on key
   bytes. A key need not decode back to its datum, because the
   tuple holds it — so a lossy encoding is allowed where it is
   order-preserving and made injective by a tie-break, and
   `key_decode` is an optimization for sm3's index-only scans
-  rather than a correctness requirement (`DESIGN.md` §3).
+  rather than a correctness requirement (`SM2_DESIGN.md` §3).
 - **A datum's representation is PostgreSQL's**, type by
   type: the same widths, epochs, units and struct layouts,
   so that crossing into a tuple slot copies the column bytes
@@ -92,32 +92,32 @@ These are settled and drive `DESIGN.md`.
   stricter than PostgreSQL is — the byte order, fixed
   little-endian, and variable-length datums, which carry the
   payload alone and leave framing to the tuple
-  (`DESIGN.md` §2.1).
+  (`SM2_DESIGN.md` §2.1).
 - **Except `number`, which is Arrow's decimal**: a fixed-width
   two's-complement integer with the scale in the schema, 128
   bits to 38 digits of precision and 256 to 76. It buys a
   `number` key encoding that is just an integer's, and a
   fixed-width `number` column; it costs PG's unbounded
   precision, PG's NaN and infinity, and a per-datum
-  conversion for this one type (`DESIGN.md` §2.2).
+  conversion for this one type (`SM2_DESIGN.md` §2.2).
 - **A type is an ADT, in PostgreSQL's shape** — one
   descriptor of function pointers per type, as `pg_type` is,
   with `key_encode` added because sm1 compares with `memcmp`
   and a PG btree never needed one. Adding a type is adding a
   descriptor, not editing a `switch` in three places
-  (`DESIGN.md` §2.3).
+  (`SM2_DESIGN.md` §2.3).
 - **Interval keeps PostgreSQL's three components**, months, days
   and microseconds apart, because they are not convertible.
   Its order is PG's flattened 128-bit datum, which is not
   injective, so its *key* appends the months and days behind
   that datum to restore identity — a total order that refines
   PostgreSQL's rather than contradicting it
-  (`DESIGN.md` §2.4, §3).
+  (`SM2_DESIGN.md` §2.4, §3).
 - **The tuple codec is a separate API.** It holds the
   permanent on-disk format, it has two callers (the tuple
   relation, and sm3's INCLUDE columns), and it is the only
   part of sm2 that touches no database — so it is built and
-  tested on its own (`DESIGN.md` §4).
+  tested on its own (`SM2_DESIGN.md` §4).
 - **One encoder, two callers.** The key encoder is sm2's, and
   sm3 builds its index entries — `encode(sk) ‖ rowno` —
   from the same function with the same per-column arguments.
@@ -152,7 +152,7 @@ These are settled and drive `DESIGN.md`.
 - **Writes at READ COMMITTED follow sm1's protocol, and sm2
   does not resolve them.** A write that meets a row committed
   after the transaction began is refused with `SM_ERR_UPDATED`
-  (`sm1/DESIGN.md` §5.4). Resolving it means re-checking the
+  (`sm1/SM1_DESIGN.md` §5.4). Resolving it means re-checking the
   statement's filter against the newest image, and filters are
   sm3's; sm2 surfaces the error and provides
   `rel_read_latest`.
@@ -161,11 +161,11 @@ These are settled and drive `DESIGN.md`.
   a deterministic collation can give two distinct strings one
   sort key, and PostgreSQL keeps them as two datums. Without
   the tie-break the two would share a key and become one row
-  (`PART4.md` §6, `DESIGN.md` §3).
+  (`PART4.md` §6, `SM2_DESIGN.md` §3).
 
 ## Decided questions
 
-Five questions about the encoding, decided in `DESIGN.md`
+Five questions about the encoding, decided in `SM2_DESIGN.md`
 before anything is written to disk. They are sm2's and not
 sm3's because they are about the encoding, even though it is
 sm3's indexes that feel them most.
@@ -177,25 +177,25 @@ sm3's indexes that feel them most.
   Refuse it, pick a default, or keep a second variable-width
   representation for it?
 
-  *Decided: a default of `number(38, 10)`* (`DESIGN.md` §2.2). A
-  bare `number` has 28 integer digits and 10 fractional. A datum
-  with more fractional digits is rounded to 10, as PostgreSQL
-  rounds for a declared typmod; one whose integer part needs more
-  than 28 digits is an error. `number(p)` means `number(p, 0)`.
-  The cost is accepted knowingly: a datum a user believed exact
-  can lose digits past the tenth fractional place without an
-  error. A second variable-width representation is rejected,
-  because it means two `number`s on disk with two key encodings
-  and two comparison paths, which is most of what §2.2 was
-  avoiding. PostgreSQL's `NUMERIC` and `DECIMAL` are not accepted
-  at all (`DESIGN.md` §2.2), so a schema ported from PostgreSQL
-  declares `number(p, s)` in their place.
+  *Decided: a default of `number(38, 10)`* (`SM2_DESIGN.md`
+  §2.2). A bare `number` has 28 integer digits and 10 fractional.
+  A datum with more fractional digits is rounded to 10, as
+  PostgreSQL rounds for a declared typmod; one whose integer part
+  needs more than 28 digits is an error. `number(p)` means
+  `number(p, 0)`. The cost is accepted knowingly: a datum a user
+  believed exact can lose digits past the tenth fractional place
+  without an error. A second variable-width representation is
+  rejected, because it means two `number`s on disk with two key
+  encodings and two comparison paths, which is most of what §2.2
+  was avoiding. PostgreSQL's `NUMERIC` and `DECIMAL` are not
+  accepted at all (`SM2_DESIGN.md` §2.2), so a schema ported from
+  PostgreSQL declares `number(p, s)` in their place.
 
 - **`number` NaN and infinity.** PG's numeric has both; an
   Arrow decimal is an integer and has neither. Refuse them,
   or reserve values?
 
-  *Decided: refuse them* (`DESIGN.md` §2.2). A NaN or an
+  *Decided: refuse them* (`SM2_DESIGN.md` §2.2). A NaN or an
   infinity is rejected on insert with a clear error, and no
   value is reserved as a sentinel. The door stays open: a
   precision of 38 digits does not reach the 128-bit limit, nor
@@ -210,13 +210,13 @@ sm3's indexes that feel them most.
   recheck, or reject?
 
   *Decided: reject for the primary key, truncate and recheck for
-  a secondary index, never hash* (`DESIGN.md` §3.2). The primary
-  key index enforces uniqueness on exact key bytes, so it must be
-  exact: an encoded primary key over a fixed limit is refused
-  when the row is written, which is what PostgreSQL does for an
-  oversize btree entry (its limit is roughly 2.7KB, from memory,
-  not checked against the source). A secondary index can do
-  better, because the original datum is stored beside the sort
+  a secondary index, never hash* (`SM2_DESIGN.md` §3.2). The
+  primary key index enforces uniqueness on exact key bytes, so it
+  must be exact: an encoded primary key over a fixed limit is
+  refused when the row is written, which is what PostgreSQL does
+  for an oversize btree entry (its limit is roughly 2.7KB, from
+  memory, not checked against the source). A secondary index can
+  do better, because the original datum is stored beside the sort
   key anyway. Truncating a sort key keeps the order as a
   coarsening: if `a <= b` then `trunc(a) <= trunc(b)`, so a range
   scan on the truncated keys returns a superset, and the recheck
@@ -225,11 +225,11 @@ sm3's indexes that feel them most.
   index can no longer promise order among entries that share a
   prefix, and a unique check must compare originals over the
   prefix range rather than trust key equality, treating NULLs as
-  distinct (`sm3/DESIGN.md` §3). A hash is out, because it keeps
-  equality but destroys order, and an index that cannot serve a
-  range or an `ORDER BY` is not worth having. The budget for an
-  index key is `4094` after the prefix, less 8 for `rowno` where
-  the entry carries one.
+  distinct (`sm3/SM3_DESIGN.md` §3). A hash is out, because it
+  keeps equality but destroys order, and an index that cannot
+  serve a range or an `ORDER BY` is not worth having. The budget
+  for an index key is `4094` after the prefix, less 8 for `rowno`
+  where the entry carries one.
 
 - **Collation stability.** A sort key is only valid for the
   collation library version that produced it. The version is
@@ -239,27 +239,27 @@ sm3's indexes that feel them most.
   refuse, or rebuild?
 
   *Decided: pin the library so it rarely differs, and refuse on a
-  mismatch, with an explicit rebuild* (`DESIGN.md` §3.3). Link a
-  specific ICU version into the server instead of using whatever
-  the operating system has, so a mismatch happens only when the
-  operator upgrades on purpose. When it does happen, compare the
-  recorded version at open. Refuse to use, and refuse to write
-  to, any index built under the old version, the primary key
-  index included, with a message that says why. PostgreSQL only
-  warns and carries on, but continuing to write sort keys from a
-  new version into an old index corrupts it further, and a unique
-  index quietly stops being unique. Rebuilding any index, the
-  primary key's included, is an online build (`sm3/DESIGN.md`
-  §3); the table is keyed by `rowno` and never needs rewriting.
-  The refusal is still the default and the rebuild a command
-  someone chooses to run.
+  mismatch, with an explicit rebuild* (`SM2_DESIGN.md` §3.3).
+  Link a specific ICU version into the server instead of using
+  whatever the operating system has, so a mismatch happens only
+  when the operator upgrades on purpose. When it does happen,
+  compare the recorded version at open. Refuse to use, and refuse
+  to write to, any index built under the old version, the primary
+  key index included, with a message that says why. PostgreSQL
+  only warns and carries on, but continuing to write sort keys
+  from a new version into an old index corrupts it further, and a
+  unique index quietly stops being unique. Rebuilding any index,
+  the primary key's included, is an online build
+  (`sm3/SM3_DESIGN.md` §3); the table is keyed by `rowno` and
+  never needs rewriting. The refusal is still the default and the
+  rebuild a command someone chooses to run.
 
 - **Non-deterministic collations.** Equal keys are not
   byte-equal under them, which is what unique indexes rest on.
   Support or refuse?
 
   *Decided: refuse at first, and design so that accepting them
-  later needs no format change* (`DESIGN.md` §3.3). Under a
+  later needs no format change* (`SM2_DESIGN.md` §3.3). Under a
   non-deterministic collation two different strings can compare
   equal, and the sort key is the same for both, so a unique check
   on the sort key gives the right answer. What gets hard is

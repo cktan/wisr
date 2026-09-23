@@ -1,5 +1,5 @@
 /*
- * gc.cc -- garbage collection of dead versions (DESIGN.md §8.3):
+ * gc.cc -- garbage collection of dead versions (SM1_DESIGN.md §8.3):
  * gc_watermark, the compaction filter, tombstone purge, and the
  * removal of dropped stores' column families.
  *

@@ -1,6 +1,6 @@
 /*
  * env.h -- the environment: one process's handle on a home
- * directory (DESIGN.md §3.5).
+ * directory (SM1_DESIGN.md §3.5).
  */
 #ifndef WISR_ENV_H
 #define WISR_ENV_H
@@ -23,7 +23,7 @@ struct db_t;
 /* Home directory format version, stored as "M" | "version". */
 #define WISR_HOME_VERSION 1
 
-/* Root db keys (DESIGN.md §3.5). */
+/* Root db keys (SM1_DESIGN.md §3.5). */
 #define WISR_ROOT_DBNAME_PREFIX "D"
 #define WISR_ROOT_NEXT_DBID "Mnext_dbid"
 #define WISR_ROOT_VERSION "Mversion"

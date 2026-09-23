@@ -1,7 +1,7 @@
 # PLAN — sm3
 
 The order of work, and why it is this order. `OBJECTIVE.md`
-says what sm3 is for; `DESIGN.md` is where each step's
+says what sm3 is for; `SM3_DESIGN.md` is where each step's
 argument goes before its code does. It starts where
 `sm2/PLAN.md` stops: sm2's types, encodings and tuple
 relation exist before anything here does.
@@ -20,7 +20,7 @@ first.
 - Tables, indexes, columns, types, collations, schema
   versions, in sm3's own sm2 relations.
 - In memory, written through to sm2, loaded at startup.
-- The schema-row lock protocol of `DESIGN.md` §2, which is
+- The schema-row lock protocol of `SM3_DESIGN.md` §2, which is
   what makes an in-memory catalog safe.
 - Decide the open question there: how a DDL change stays
   private until it commits.
@@ -48,7 +48,7 @@ reclaimed.
   maintenance from the old image sm2 hands back.
 - The READ COMMITTED re-check: `rel_read_latest`, the filter
   again, then the write.
-- The online build protocol from `DESIGN.md` §3.
+- The online build protocol from `SM3_DESIGN.md` §3.
 - Partial, expression and INCLUDE indexes.
 
 **Verify:** the index and the base relation never disagree,
@@ -63,7 +63,7 @@ belongs in the same style.
 - A predicate in, a key range derived, the residual filter
   evaluated below the API.
 - Decide the API shape: tuple at a time, as sm2 is, or sets
-  of rows for pushdown (`DESIGN.md` §5).
+  of rows for pushdown (`SM3_DESIGN.md` §5).
 
 **Verify:** the rows returned match a brute-force scan-and-filter
 over the same data, for generated predicates.

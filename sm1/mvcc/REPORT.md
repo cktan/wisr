@@ -72,7 +72,7 @@ are recorded so the next reader does not re-open them.
    flags per transaction, not edge targets, so in a symmetric
    cycle both sides become pivots and `ssi_precommit()` fails
    whichever reaches commit with both flags set — one or
-   both, depending on the interleaving. `DESIGN.md` §7.3 says
+   both, depending on the interleaving. `SM1_DESIGN.md` §7.3 says
    the same. At most one is the sound assertion.
 
 2. **`c17` leaves T3 open on purpose.** T3 reads R1 to make
@@ -88,7 +88,7 @@ are recorded so the next reader does not re-open them.
    rather than a missed detection: `ssi_on_write()` returns
    at once for a writer that is not SERIALIZABLE, so no edge
    forms into T1 and the cycle never closes. Mixed pairings
-   degrade to snapshot isolation by design (`DESIGN.md`
+   degrade to snapshot isolation by design (`SM1_DESIGN.md`
    §7.4).
 
 ---
@@ -100,7 +100,7 @@ are recorded so the next reader does not re-open them.
 versions written after the mark are deleted, `seq_hwm` is
 rewound, cursors opened after the mark are closed, locks
 taken after the mark are released, and the SSI read set is
-deliberately **not** rolled back (`DESIGN.md` §6.5).
+deliberately **not** rolled back (`SM1_DESIGN.md` §6.5).
 
 **The gap.** The driver has no `savepoint` or `rollback`
 verb, so no scenario can reach any of it. Two consequences:
@@ -144,14 +144,14 @@ that write skew would commit at S/S.
 not reclaim space at commit: a transaction holding an older
 snapshot must still find the store and read its rows, and
 the CF survives until `gc_watermark` passes the drop
-(`include/sm.h`, `DESIGN.md` §11 and §8.3). Under
+(`include/sm.h`, `SM1_DESIGN.md` §11 and §8.3). Under
 SERIALIZABLE more is claimed: resolving a storeid is a point
 read of the catalog key `"R" | be64(storeid)` in `store.0`, taken
 whether or not the storeid is found, so a concurrent `sm_rmstore`
 of that storeid is an rw-edge. That one is built —
 `catalog_lookup()` in `src/catalog.cc` reads through
 `access_read(s, 0, ...)`, which takes the SIREAD — and
-`DESIGN.md` §11 gives the write skew it exists to stop:
+`SM1_DESIGN.md` §11 gives the write skew it exists to stop:
 
 ```
 T1: sm_read(S, x)             T2: sm_read(R, k)    # looks up R
@@ -304,7 +304,7 @@ asked for.
 
 Six gaps needing no driver change, now seven scripts. Each
 was checked against the suite before it was written, and each
-transcript was read against what `DESIGN.md` claims before it
+transcript was read against what `SM1_DESIGN.md` claims before it
 was accepted.
 
 1. **`b20_deadlock_reverse_victim.t`** — asynchronous victim

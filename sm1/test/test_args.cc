@@ -184,7 +184,7 @@ TEST_CASE("storeid 0 is rejected by every call taking a storeid") {
 }
 
 TEST_CASE("sm_mkstore hands out a fresh storeid every time") {
-  // Verify storeids rise and are never reused (DESIGN.md §11).
+  // Verify storeids rise and are never reused (SM1_DESIGN.md §11).
   // 1. Three stores in one transaction get three ascending
   //    storeids, all above the fixture's.
   // 2. Dropping one and creating another gives a storeid above

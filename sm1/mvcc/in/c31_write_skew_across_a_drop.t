@@ -1,6 +1,6 @@
 # c31 -- write skew where one side's read is a storeid lookup.
 #
-# DESIGN.md §11's argument for tracking catalog reads. T1
+# SM1_DESIGN.md §11's argument for tracking catalog reads. T1
 # reads R1 and drops the second store; T2 resolves that
 # store to read a row from it, then writes R1. Neither
 # touches a row the other touches: the only thing joining them

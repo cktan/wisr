@@ -55,7 +55,7 @@ full MVCC, for OLTP workloads.
 
 ## Decisions
 
-These were open; they are now settled and drive `DESIGN.md`.
+These were open; they are now settled and drive `SM1_DESIGN.md`.
 
 - **Concurrency control.** Snapshot isolation for all levels, with
   serializable implemented as **SSI (optimistic)** — read/write
@@ -64,7 +64,7 @@ These were open; they are now settled and drive `DESIGN.md`.
   Write-write conflicts are still prevented eagerly by in-memory row
   locks (first-writer-wins). At read committed this is being
   relaxed: a write that meets a newer commit waits and then
-  proceeds instead of failing (`DESIGN.md` §6.2).
+  proceeds instead of failing (`SM1_DESIGN.md` §6.2).
 - **Uncommitted writes go eagerly into RocksDB**, stamped with the
   writing transaction's id, and are made visible through a durable
   commit-status table. This keeps transaction size unbounded by RAM,
@@ -83,7 +83,7 @@ These were open; they are now settled and drive `DESIGN.md`.
 
 ## Notes
 
-- `API.md` is a sketch. `DESIGN.md` proposes concrete C signatures
-  and flags where it must diverge — notably the read/scan calls, and
-  the extra 2PC entry points (`sm_prepare` taking a global id, plus
-  recovery of in-doubt transactions).
+- `API.md` is a sketch. `SM1_DESIGN.md` proposes concrete C
+  signatures and flags where it must diverge — notably the
+  read/scan calls, and the extra 2PC entry points (`sm_prepare`
+  taking a global id, plus recovery of in-doubt transactions).

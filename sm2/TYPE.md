@@ -2,7 +2,7 @@
 
 The reference for every type sm2 supports: how its datum is
 represented, how it is ordered, and what its key bytes are.
-`DESIGN.md` §2 argues *why* these choices; this file is the
+`SM2_DESIGN.md` §2 argues *why* these choices; this file is the
 table you look things up in while writing code.
 
 **Status: nothing here is implemented.** These are the
@@ -20,8 +20,8 @@ mechanical:
 
 | Form | Where it is used | What it is |
 | --- | --- | --- |
-| **native** | in a tuple, always | PostgreSQL's own representation of the datum (`DESIGN.md` §2.1) |
-| **key** | only when the datum is a key, or part of one | `key_encode(datum)` — a byte string whose `memcmp` order is the type's order (`DESIGN.md` §3) |
+| **native** | in a tuple, always | PostgreSQL's own representation of the datum (`SM2_DESIGN.md` §2.1) |
+| **key** | only when the datum is a key, or part of one | `key_encode(datum)` — a byte string whose `memcmp` order is the type's order (`SM2_DESIGN.md` §3) |
 
 A tuple stores native datums and nothing else. A key column
 is *also* encoded into the sm1 key, so it appears twice: once
@@ -53,12 +53,12 @@ in §3 produces.
 `0x00` for null, `0x01` for non-null when nulls sort first;
 `0x01` and `0x02` when they sort last. A `NOT NULL` column
 carries the marker too, so a nullability change never
-rewrites a key (`DESIGN.md` §3.1). No type needs a reserved
+rewrites a key (`SM2_DESIGN.md` §3.1). No type needs a reserved
 value to mean absent.
 
 **Direction.** A `DESC` column is the ascending encoding with
 every byte inverted, marker included, because sm1 will not
-scan backwards (`DESIGN.md` §1). Inversion is applied last,
+scan backwards (`SM2_DESIGN.md` §1). Inversion is applied last,
 to the finished per-column bytes.
 
 **Concatenation.** A multi-column key is the per-column keys
@@ -69,7 +69,7 @@ escaping rule. Fixed-width encodings are prefix-free already.
 
 **Length.** `SM_MAX_KEYLEN` is 4096 and bounds the whole
 concatenation, the 2-byte object prefix included. What
-happens when a key does not fit is in `DESIGN.md` §3.2:
+happens when a key does not fit is in `SM2_DESIGN.md` §3.2:
 refused for a primary key, truncated and rechecked for a
 secondary index.
 
@@ -100,7 +100,7 @@ null marker and before any inversion.
 | `uuid` | 16 | the 16 bytes | 16 | the same 16 bytes | 16 |
 
 The codes are frozen: assigned once, never reused or
-renumbered (`DESIGN.md` §2). Codes 64–127 are reserved for
+renumbered (`SM2_DESIGN.md` §2). Codes 64–127 are reserved for
 types added later; 0 is never a type code.
 
 ### 3.1 bool
@@ -111,7 +111,7 @@ PostgreSQL's order.
 
 ### 3.2 int2, int4, int8
 
-Native is two's complement, little-endian (`DESIGN.md` §2.1).
+Native is two's complement, little-endian (`SM2_DESIGN.md` §2.1).
 
 The key flips the sign bit and writes big-endian:
 
@@ -173,7 +173,7 @@ the subnormal and huge boundaries, and random datums.
 
 ### 3.4 number
 
-Native is Arrow's decimal (`DESIGN.md` §2.2): a two's
+Native is Arrow's decimal (`SM2_DESIGN.md` §2.2): a two's
 complement integer, little-endian, 16 bytes for a declared
 precision up to 38 and 32 bytes up to 76, with `(precision,
 scale)` held in the schema rather than in the datum.
@@ -187,7 +187,7 @@ schema fixes the scale per column, so the encoder never
 rescales. Comparing two columns of different scale is a cast,
 above sm2.
 
-Decided in `DESIGN.md` §2.2: a bare `number` is
+Decided in `SM2_DESIGN.md` §2.2: a bare `number` is
 `number(38, 10)`, `number(p)` is `number(p, 0)`, and NaN and
 infinity are refused on insert, so no value is reserved as a
 sentinel.
@@ -195,7 +195,7 @@ sentinel.
 ### 3.5 text, varchar
 
 Native is the payload bytes alone — no varlena header, no
-1-byte short form, no PostgreSQL TOAST pointer (`DESIGN.md`
+1-byte short form, no PostgreSQL TOAST pointer (`SM2_DESIGN.md`
 §2.1).
 Length lives in the tuple's framing.
 
@@ -209,7 +209,7 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
 - `sortkey` is the collation's transform, run **once here in
   the encoder** — `strxfrm_l`, or ICU's `ucol_getSortKey` —
   never `strcoll` at compare time, because sm1 compares with
-  `memcmp` and takes no comparator (`DESIGN.md` §3). Its
+  `memcmp` and takes no comparator (`SM2_DESIGN.md` §3). Its
   output carries no embedded `0x00`, which is what lets the
   `0x00 0x00` separator above sit between it and the
   tie-break. Budget 2-4x the input length against
@@ -225,14 +225,14 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
   the tie-break is dropped. Worth special-casing: it is the
   common case in practice and it halves the key.
 - The collation's version is recorded with the schema
-  (`sm3/DESIGN.md` §2); a mismatch is refused, not trusted.
+  (`sm3/SM3_DESIGN.md` §2); a mismatch is refused, not trusted.
 - A non-deterministic collation is refused at column creation
-  in the first version (`DESIGN.md` §3.3).
+  in the first version (`SM2_DESIGN.md` §3.3).
 - `text` (8) and `varchar` (9) share every byte and keep
   separate codes only so a round trip never rewrites a
   column's declared type. The `varchar(n)` limit is a
   constraint, enforced by sm3; sm2's codec stores what it is
-  given (`DESIGN.md` §2).
+  given (`SM2_DESIGN.md` §2).
 
 ### 3.6 bytea
 
@@ -291,7 +291,7 @@ Native is PostgreSQL's struct, 16 bytes:
 The three components are kept apart because they are not
 convertible: a month is 28 to 31 days, a day is 23, 24 or 25
 hours across a daylight-saving boundary. So `'1 mon'` and
-`'30 days'` are different datums (`DESIGN.md` §2.4).
+`'30 days'` are different datums (`SM2_DESIGN.md` §2.4).
 
 That leaves interval with no natural total order.
 PostgreSQL's order comes from flattening the three components
@@ -342,7 +342,7 @@ unchanged: fixed width, prefix-free, nothing to transform.
 ## 4. What is not here yet
 
 Not in the first set, and the format leaves room for each
-without disturbing what is already written (`DESIGN.md` §2):
+without disturbing what is already written (`SM2_DESIGN.md` §2):
 arrays, composites, ranges, domains, enums, JSON and JSONB,
 the network and geometric types, `money`, `xml`, and bit
 strings. `FEATURELIST.md`, at the top level, tracks which of

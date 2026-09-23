@@ -57,7 +57,7 @@ document is what it is for.
 
 ## Decisions
 
-These are settled and drive `DESIGN.md`.
+These are settled and drive `SM3_DESIGN.md`.
 
 - **An index entry is `encode(sk) ‖ rowno`**, mapping to
   empty or to the INCLUDE columns; a unique index drops the
@@ -75,14 +75,14 @@ These are settled and drive `DESIGN.md`.
 - **Schema changes are lock-based, as in PostgreSQL.** The
   catalog is not versioned; a transaction is kept away from a
   concurrent DDL with sm1's row locks on the schema row, not
-  given an old definition (`DESIGN.md` §2).
+  given an old definition (`SM3_DESIGN.md` §2).
 - **One sm1 store per table.** A table's rows, its
   indexes and its TOAST data share one sm1 store,
   told apart by sm2's 2-byte object prefix, so `DROP TABLE` is
   sm1's O(1) column family drop. sm1 targets "hundreds to low
-  thousands of stores per database" (`sm1/DESIGN.md` §13),
+  thousands of stores per database" (`sm1/SM1_DESIGN.md` §13),
   so tables, partitions included, are bounded by that;
-  accepted for v1 (`DESIGN.md` §4).
+  accepted for v1 (`SM3_DESIGN.md` §4).
 - **The eventual consumer is a forked PostgreSQL**, keeping
   its parser, planner and executor and replacing its storage
   and transaction layers. The fork is **threaded**
@@ -97,7 +97,7 @@ These are settled and drive `DESIGN.md`.
   without resolving it, so sm3 reads the newest image with
   `rel_read_latest`, re-checks the statement's filter, and
   only then repeats the write (`PART4.md` §5a,
-  `sm1/DESIGN.md` §5.4). Index entries are computed from that
+  `sm1/SM1_DESIGN.md` §5.4). Index entries are computed from that
   newest image.
 
 ## Open questions
@@ -109,13 +109,14 @@ These are settled and drive `DESIGN.md`.
   between the executor and sm3 is a function call and the
   shape is no longer forced (`PART4.md` §2). Whether sm3 keeps
   sets of rows in and out for other reasons — filter pushdown
-  and fewer calls per scan — is decided in `DESIGN.md` §5. sm2
-  is tuple-at-a-time either way, and nothing below depends on
+  and fewer calls per scan — is decided in `SM3_DESIGN.md` §5.
+  sm2 is tuple-at-a-time either way, and nothing below depends on
   the answer.
 - **Privacy of a catalog change until commit.** A DDL change
   must be invisible to other transactions until it commits,
   and undone on abort and on savepoint rollback, while the
-  catalog it changes is shared and in memory (`DESIGN.md` §2).
+  catalog it changes is shared and in memory
+  (`SM3_DESIGN.md` §2).
 - **How good RocksDB's approximate statistics are** for
   `reltuples` and `relpages`. It has not been measured, and
-  `DESIGN.md` §6 depends on the answer.
+  `SM3_DESIGN.md` §6 depends on the answer.

@@ -1,6 +1,6 @@
 /*
  * recover.cc -- what opening a database does beyond RocksDB's
- * own WAL replay (DESIGN.md §9.1 steps 4-6): restore prepared
+ * own WAL replay (SM1_DESIGN.md §9.1 steps 4-6): restore prepared
  * transactions in doubt, and drop orphaned store CFs.
  *
  * There is no redo or undo pass. A transaction running at the

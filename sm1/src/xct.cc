@@ -1,6 +1,6 @@
 /*
  * xct.cc -- sm_begin, sm_commit, sm_abort, and the commit
- * status table CF:txn (DESIGN.md §3.2, §3.4, §6, §8.2).
+ * status table CF:txn (SM1_DESIGN.md §3.2, §3.4, §6, §8.2).
  *
  * A transaction enters the active table when it allocates its
  * xid and leaves it at commit or abort. Commit claims a

@@ -1,7 +1,7 @@
 # PLAN — sm2
 
 The order of work, and why it is this order. `OBJECTIVE.md`
-says what sm2 is for; `DESIGN.md` is where each step's
+says what sm2 is for; `SM2_DESIGN.md` is where each step's
 argument goes before its code does; `QUESTIONS.md` is what
 still has to be answered before any of it can be written, step
 by step. `sm3/PLAN.md` picks up where this one stops.
@@ -21,17 +21,17 @@ before them.
   `float8`, `number`, `text` / `varchar` / `bytea`, `date`,
   `time`, `timestamp`, `timestamptz`, `interval`, `uuid` —
   each one spelled out in `TYPE.md` §3.
-- **The ADT table first** (`DESIGN.md` §2.3): one descriptor
+- **The ADT table first** (`SM2_DESIGN.md` §2.3): one descriptor
   of function pointers per type, so that every step after
   this one adds a descriptor instead of a `switch`.
-- PostgreSQL's representation per type (`DESIGN.md` §2.1),
+- PostgreSQL's representation per type (`SM2_DESIGN.md` §2.1),
   little-endian, with variable-length datums carrying the
   payload alone.
-- `number` as Arrow's decimal (`DESIGN.md` §2.2), and interval
-  as PG's three components (`DESIGN.md` §2.4).
+- `number` as Arrow's decimal (`SM2_DESIGN.md` §2.2), and
+  interval as PG's three components (`SM2_DESIGN.md` §2.4).
 - A stable on-disk type code per type, assigned once.
 - Null and collation as properties of a column, not of a type.
-- The `number` rules in `DESIGN.md` §2.2: only
+- The `number` rules in `SM2_DESIGN.md` §2.2: only
   `number(p, s)`, a bare `number` is `number(38, 10)`, and NaN
   and infinity are refused.
 
@@ -55,7 +55,7 @@ ordered thing above rests on this, including sm3's indexes.
   timestamps, text (collation sort key).
 - Multi-column keys, ascending and descending per column,
   nulls first or last.
-- The key rules in `DESIGN.md` §3.1–§3.3: a null marker on
+- The key rules in `SM2_DESIGN.md` §3.1–§3.3: a null marker on
   every column, refuse an over-long primary key,
   truncate and flag an over-long secondary key, refuse a
   mismatched collation version, and carry the `deterministic`
@@ -67,14 +67,14 @@ over generated datums including the boundaries (min, max, zero,
 negative zero, NaN, empty string, the longest legal key). Round
 trip where the encoding is reversible, and prove the documented
 loss where it is not. Interval gets two properties of its own
-(`DESIGN.md` §3): the key round trips, and its order refines
+(`SM2_DESIGN.md` §3): the key round trips, and its order refines
 PostgreSQL's — never contradicting it where PG is decisive,
 and separating the datums PG calls equal.
 
 ## 3. Tuple format, and the tuple codec
 
 Its own API, with its own header, built before the relation
-that calls it (`DESIGN.md` §4).
+that calls it (`SM2_DESIGN.md` §4).
 
 - `tuple_encode` and `tuple_decode`, the latter by ordinal so
   one column costs one column.
@@ -97,9 +97,9 @@ The three above, joined to sm1.
   `rel_read_latest`, `rel_scan`, `rel_scan_seek`, over the
   codec of step 3 rather than a second copy of it.
 - The 2-byte object prefix, chosen by sm3, opaque to sm2
-  (`DESIGN.md` §5).
+  (`SM2_DESIGN.md` §5).
 - Rows keyed by `rowno`, an unsigned 64-bit number from the
-  table's sm1 sequence, kept across updates (`DESIGN.md` §5).
+  table's sm1 sequence, kept across updates (`SM2_DESIGN.md` §5).
 - Errors from sm1 passed through, not translated —
   `SM_ERR_UPDATED` in particular.
 - Per-column decoding, so a reader that wants one column does

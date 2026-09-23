@@ -1,7 +1,7 @@
 # Storage Manager — the `sm_*` C API
 
 This is the interface contract for the MVCC storage manager
-described in `DESIGN.md`. It is the specification of
+described in `SM1_DESIGN.md`. It is the specification of
 `include/sm.h`.
 
 Everything here is a C ABI. The implementation is C++, but no
@@ -249,7 +249,7 @@ waiting on followers.
 
 `commit_cache_entries` bounds the in-memory map from
 transaction id to commit timestamp that spares readers a
-status-table lookup (DESIGN.md §3.4). It must be at least
+status-table lookup (SM1_DESIGN.md §3.4). It must be at least
 1; a smaller cache costs lookups, never correctness.
 
 ### Logging
@@ -449,7 +449,7 @@ outside those bounds fails with `SM_ERR_INVALID`.
 
 A `dbname` is never a path. It is a key in the
 environment's root db, which maps it to the number naming
-the directory the database actually lives in (`DESIGN.md`
+the directory the database actually lives in (`SM1_DESIGN.md`
 §3.5). `sm_mkdb(env, "a/../b")` creates a database called
 `a/../b`, not a directory, and reaches nothing outside
 `homedir`.
@@ -1194,7 +1194,7 @@ useful recovery from a failure to release resources.
 ## Divergences from the earlier sketch
 
 These changes were made against the previous `API.txt`.
-Each is a decision, not a detail, and `DESIGN.md` §10.3 and
+Each is a decision, not a detail, and `SM1_DESIGN.md` §10.3 and
 §12.1 should be reconciled with the ones marked (D).
 
 1. **`sm_errno_t` became reachable, and both accessors are
@@ -1218,7 +1218,7 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
    0/-1 everywhere, then documented `sm_rmdb` as returning
    true/false, and had two calls that need three outcomes.
 3. **`sm_read`/`sm_scannxt` use a tri-state return**
-   rather than `DESIGN.md`'s separate `int* found`. One
+   rather than `SM1_DESIGN.md`'s separate `int* found`. One
    idiom for "no row" across both calls. (D)
 4. **The `schema` parameter is gone** from the read calls.
    No such concept exists anywhere else in the API.
@@ -1230,7 +1230,7 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
    `sm_commit_prepared` / `sm_abort_prepared`. Without
    them a prepared transaction that survives a restart is
    unreachable forever.
-7. **`sm_options_t` added.** `DESIGN.md` §12.2 specifies
+7. **`sm_options_t` added.** `SM1_DESIGN.md` §12.2 specifies
    configuration knobs, including one (`durability_sync`)
    that changes the durability guarantee, and there was no
    surface to set any of them.
@@ -1252,7 +1252,7 @@ Each is a decision, not a detail, and `DESIGN.md` §10.3 and
 12. **Preconditions, error sets, lifetimes, threading, key
     ordering, and the three surprising isolation
     behaviours are now stated.** They were decided in
-    `DESIGN.md` but invisible to a caller reading only the
+    `SM1_DESIGN.md` but invisible to a caller reading only the
     API.
 13. `SM_XCT_READ_COMMITED` → `SM_XCT_READ_COMMITTED`.
 14. **Databases are named within an environment.** (D)

@@ -733,7 +733,7 @@ a predicate: writing again without the read is refused again.
   `SM_ERR_INVALID`. Under a shared lock it reads but sets no
   mark, since a shared holder cannot write without upgrading. A
   caller that waited in `sm_lock(SHARED)` (a writer reading a
-  schema row, §3 of `sm3/DESIGN.md`) uses it to see what
+  schema row, §3 of `sm3/SM3_DESIGN.md`) uses it to see what
   committed while it waited. - **An insert** has no predicate to
   re-evaluate, so it is judged against the newest committed
   version (`SM_ERR_DUPKEY` if live) with no check, as

@@ -48,7 +48,7 @@ answer.
 | the stack gives sm3 | and the constraint it brings |
 | --- | --- |
 | sm2's tuples in a heap keyed by `rowno` | a row's identity is its `rowno`, which never changes; every index, the primary key's included, points at it |
-| sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/DESIGN.md` §3) |
+| sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
 | sm2's 2-byte object prefix | a table's rows, indexes and TOAST data share its one sm1 store (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own |
 | `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
@@ -57,7 +57,7 @@ answer.
 | `sm_lock(SHARED\|EXCLUSIVE)` | the DDL and online index build protocol (§2, §3) |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
-| `SM_MAX_KEYLEN` 4096 | an index entry's key must fit 4094 bytes after the prefix, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/DESIGN.md` §3.2) |
+| `SM_MAX_KEYLEN` 4096 | an index entry's key must fit 4094 bytes after the prefix, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward, in the same index; there are no mirror relations, and the fork's planner never asks for a backward scan (§5, §7) |
 | one column family per store, hundreds to low thousands | tables, partitions included, are bounded by it (§4) |
 
@@ -70,8 +70,8 @@ and schema versions, stored in sm3's own sm2 relations and
 written in the same sm1 transaction as the DDL that changes
 them — which is what makes DDL transactional for free. It is
 also where a collation's recorded version lives
-(`sm2/DESIGN.md` §3), and where a tuple's schema version
-stamp (`sm2/DESIGN.md` §4) resolves to an actual schema.
+(`sm2/SM2_DESIGN.md` §3), and where a tuple's schema version
+stamp (`sm2/SM2_DESIGN.md` §4) resolves to an actual schema.
 
 **Decision: the catalog is held in memory.** It is loaded at
 startup; a change is made in memory and written through to
@@ -128,7 +128,7 @@ changed it is the usual place such a design goes wrong. Open:
   per-transaction overlay, written to sm2 inside the DDL's own
   transaction and published to the shared catalog only after
   the commit, in the order sm1 uses for its commit cache
-  (`sm1/DESIGN.md` §3.4).
+  (`sm1/SM1_DESIGN.md` §3.4).
 - **Size and startup.** Load time and memory for a schema
   with many partitions.
 
@@ -141,11 +141,11 @@ changed it is the usual place such a design goes wrong. Open:
 above sm1 needs; every gap it found is now closed in sm1.
 
 - **The primary key is an index.** The table is a heap keyed
-  by `rowno` (`sm2/DESIGN.md` §5), and the primary key is a
+  by `rowno` (`sm2/SM2_DESIGN.md` §5), and the primary key is a
   unique index over it, built and maintained like any other.
   A table may have none.
 - **Entry:** `encode(sk) ‖ rowno` → empty, or the INCLUDE
-  columns, built with sm2's encoder (`sm2/DESIGN.md` §3). The
+  columns, built with sm2's encoder (`sm2/SM2_DESIGN.md` §3). The
   `rowno` suffix makes every entry unique, so a non-unique
   index needs no further disambiguation, and it is 8 bytes
   whatever the primary key is.
@@ -171,9 +171,9 @@ above sm1 needs; every gap it found is now closed in sm1.
   refused at `CREATE INDEX` in v1; adding it later is a catalog
   flag and changes no bytes on disk.
 - **A truncated key is rechecked.** sm2 cuts an over-long
-  index key to fit and flags the entry (`sm2/DESIGN.md` §3.2).
-  A scan rechecks flagged entries against the base row, and a
-  unique check on a cut key compares originals over the
+  index key to fit and flags the entry (`sm2/SM2_DESIGN.md`
+  §3.2). A scan rechecks flagged entries against the base row,
+  and a unique check on a cut key compares originals over the
   prefix range, with NULLs distinct as above.
 - **Maintenance:** an update keeps the row's `rowno`, so only
   the indexes whose columns changed are touched — a primary key
@@ -183,10 +183,10 @@ above sm1 needs; every gap it found is now closed in sm1.
   of it without decoding bytes itself.
 - **Read committed writes.** An update or delete that meets a
   row committed after the transaction began fails with
-  `SM_ERR_UPDATED` (`sm1/DESIGN.md` §5.4). It does not abort and
-  it is not retryable, so sm3 must not treat it as an error to
-  surface. sm2 does not resolve it, because the resolution
-  needs a filter (`sm2/DESIGN.md` §5): sm3 calls
+  `SM_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort
+  and it is not retryable, so sm3 must not treat it as an error
+  to surface. sm2 does not resolve it, because the resolution
+  needs a filter (`sm2/SM2_DESIGN.md` §5): sm3 calls
   `rel_read_latest` on the base row, re-checks the statement's
   filter against that image, and repeats the write only if the
   row still qualifies, or skips it. The old image the retried
@@ -223,7 +223,7 @@ above sm1 needs; every gap it found is now closed in sm1.
 **Decision: one sm1 store per table.** A table's rows, all
 its secondary indexes and its TOAST data live in one
 sm1 store, told apart by sm2's 2-byte object prefix
-(`sm2/DESIGN.md` §5):
+(`sm2/SM2_DESIGN.md` §5):
 
 | Prefix | Object |
 | --- | --- |
@@ -268,7 +268,7 @@ of returning rows for a caller to discard.
   predicate's conjuncts, giving a start key, an end key, and
   whatever is left over as a residual.
 - The residual is evaluated against the tuple, per column
-  (`sm2/DESIGN.md` §5), so a filter on one column of a wide
+  (`sm2/SM2_DESIGN.md` §5), so a filter on one column of a wide
   row does not decode the row.
 - Forward only, at every level (§1). An `ORDER BY x DESC` that
   an index could have served backwards is a top-N sort over a
@@ -299,7 +299,7 @@ been measured, and this section depends on it.
 ## 7. Known trade-offs
 
 *To be filled in as the design settles, in the manner of
-`sm1/DESIGN.md` §13 — the costs this design accepts, written
+`sm1/SM1_DESIGN.md` §13 — the costs this design accepts, written
 down where the next reader will find them.*
 
 Accepted so far, from the PostgreSQL target (`PART4.md`):

@@ -1,6 +1,6 @@
 /*
  * test_lock.cc -- row locks, first-committer-wins, retryable
- * errors, and deadlock detection (DESIGN.md §5, §6.2, §12.1).
+ * errors, and deadlock detection (SM1_DESIGN.md §5, §6.2, §12.1).
  *
  * The timelines two sessions play out against each other live
  * in mvcc/in/ as scenario scripts, where blocking is one word
@@ -71,7 +71,7 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
   // 2. A updates "x" and commits.
   // 3. B's update of "x" fails at once. At repeatable read and
   //    serializable that is SM_ERR_CONFLICT, retryable; at read
-  //    committed it is SM_ERR_UPDATED, which is not (DESIGN.md §5.4).
+  //    committed it is SM_ERR_UPDATED, which is not (SM1_DESIGN.md §5.4).
   for (sm_xctlevel_t level :
        {SM_XCT_READ_COMMITTED, SM_XCT_REPEATABLE_READ, SM_XCT_SERIALIZABLE}) {
     CAPTURE(level);
@@ -266,7 +266,7 @@ TEST_CASE("concurrent increments with retry never lose an update") {
 }
 
 TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
-  // Verify the cycle a shared lock makes possible (DESIGN.md §5.1).
+  // Verify the cycle a shared lock makes possible (SM1_DESIGN.md §5.1).
   // 1. A (older) and B (younger) both hold "x" shared.
   // 2. Both try to write "x"; each waits for the other.
   // 3. The younger, B, is doomed with SM_ERR_DEADLOCK, and A

@@ -4,7 +4,7 @@
  * Five SERIALIZABLE transactions read, scan, write, and
  * commit, one after another. With none of them still active,
  * a GC run must leave no node, no SIREAD entry, and no range
- * behind (DESIGN.md §7.1): tracking that never released its
+ * behind (SM1_DESIGN.md §7.1): tracking that never released its
  * state would grow without bound on a busy database.
  *
  * This scenario reaches into the database object, so it is the

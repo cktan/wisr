@@ -92,7 +92,7 @@ What this changes above:
   unsalvageable, so the batch-shaped API is no longer forced
   by this section. Whether to keep it for other reasons —
   filter pushdown, fewer calls per scan — is open, and is
-  sm3's to settle (`sm3/DESIGN.md` §5); sm2 is
+  sm3's to settle (`sm3/SM3_DESIGN.md` §5); sm2 is
   tuple-at-a-time either way.
 - YugabyteDB stays the precedent for §4's replacement of the
   storage and transaction layers, but no longer for the
@@ -133,7 +133,7 @@ by bitmap scans, BRIN, `CLUSTER`, `ANALYZE`'s block sampling,
 `relpages` in the cost model, and the user-visible `ctid`. sm1
 has no TID. sm2 now keys every row by a 64-bit `rowno` from an
 sm1 sequence, which is crash-safe and never reused, and the
-primary key is an index over it (`sm2/DESIGN.md` §5) — but a
+primary key is an index over it (`sm2/SM2_DESIGN.md` §5) — but a
 64-bit `rowno` does not fit a 6-byte TID, so the fork redefines
 `ctid` as a `uint64_t` rather than fitting `rowno` into the
 table AM's shape.
@@ -232,7 +232,7 @@ What still has to be solved either way:
   in-memory catalog coherent without cross-process
   invalidation. The cost is the code that reads the
   catalogs — the relation cache, syscache and system-table
-  scans — and the open questions in `sm3/DESIGN.md` §2.
+  scans — and the open questions in `sm3/SM3_DESIGN.md` §2.
 - **Statistics.** The planner is being kept, so it needs
   `reltuples`, `relpages`, histograms and correlations, and
   `ANALYZE` needs a sampling path.
@@ -305,7 +305,7 @@ correctness. What it means:
 - The infinite cost is on the direction of the scan, not on
   how the index is declared. An index declared with DESC
   columns is still scanned forward, over inverted key bytes
-  (`sm2/DESIGN.md` §3).
+  (`sm2/SM2_DESIGN.md` §3).
 - Index paths are not the only place a backward scan is
   assumed. `ExecSupportsBackwardScan` returns true for a
   sequential scan unconditionally, so it is changed to return
@@ -332,7 +332,7 @@ row lock and then proceeds instead of failing. The change is to
 sm1: a refused write, `SM_ERR_UPDATED`, is followed by
 `sm_read_latest` and then the write, and versions are keyed by a
 write timestamp so their order stays commit order. The design is
-`sm1/DESIGN.md` §5.4 and §6.2, and its tests are scenarios
+`sm1/SM1_DESIGN.md` §5.4 and §6.2, and its tests are scenarios
 `f01`–`f10` and `e06`.
 
 ---
@@ -340,8 +340,8 @@ write timestamp so their order stays commit order. The design is
 ## 6. What this forces on sm2 and sm3, now
 
 These are the decisions constrained by the PG target. They are
-reflected in each level's own `OBJECTIVE.md` and `DESIGN.md`;
-the level column says which.
+reflected in each level's own `OBJECTIVE.md` and
+`SMn_DESIGN.md`; the level column says which.
 
 | Forced | Level | Why |
 | --- | --- | --- |
@@ -411,7 +411,7 @@ Stated so none of it is repeated as fact:
 - **The READ COMMITTED write protocol under a race detector**
   (§5a). It is built and tested against GC and compaction, and
   `e06` loses no increment, but a `-fsanitize=thread` run was
-  inconclusive (`sm1/DESIGN.md` §13).
+  inconclusive (`sm1/SM1_DESIGN.md` §13).
 - **The effort figures in §4** are calibrated judgment against
   the precedents, not measurements. Treat the ordering as
   sound and the absolute numbers as loose.

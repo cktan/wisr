@@ -1,6 +1,6 @@
 /*
  * lockmgr.cc -- shared and exclusive row locks and deadlock
- * detection (DESIGN.md §5.1).
+ * detection (SM1_DESIGN.md §5.1).
  *
  * A lock is keyed exactly by (storeid, userkey) and held by the
  * sessions whose transactions took it: SHARED by any number of

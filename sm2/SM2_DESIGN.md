@@ -6,7 +6,7 @@ two on-disk **encodings** those types get, and a **relation
 whose rows are tuples** instead of raw bytes. Everything a
 schema needs above that — a catalog, secondary indexes,
 predicate scans, statistics — belongs to sm3 and is argued in
-`sm3/DESIGN.md`.
+`sm3/SM3_DESIGN.md`.
 
 This document is the design of record; it follows the
 decisions in `OBJECTIVE.md`:
@@ -20,7 +20,7 @@ decisions in `OBJECTIVE.md`:
 | Tuple codec | an API of its own, with its own header and its own tests |
 | Row identity | `rowno`, a 64-bit number from a per-table sequence; the table is a heap and the primary key is an index (§5) |
 | `rel` | one sm1 store, keys encoded and tuples decoded by sm2 |
-| API shape | one tuple at a time; batching belongs where filters do (`sm3/DESIGN.md`) |
+| API shape | one tuple at a time; batching belongs where filters do (`sm3/SM3_DESIGN.md`) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
 **Status: nothing here is implemented.** This file exists so
@@ -57,7 +57,7 @@ nothing that an IPC boundary would have made it cost.
 | opaque values of arbitrary bytes | the tuple layout is sm2's alone; sm1 never looks inside one (§4) |
 | transactions at RC / RR / SERIALIZABLE | sm2 opens none of its own; every `rel` call runs inside the caller's transaction (§5) |
 | `sm_update` / `sm_delete` returning the **old image** | `rel_update` / `rel_delete` can hand back the old *tuple*, which is what index maintenance above needs |
-| `SM_ERR_DUPKEY` from `sm_insert` | a unique index keyed without `rowno` gets its uniqueness from sm1 for free — the primary key index among them (§5, `sm3/DESIGN.md` §3) |
+| `SM_ERR_DUPKEY` from `sm_insert` | a unique index keyed without `rowno` gets its uniqueness from sm1 for free — the primary key index among them (§5, `sm3/SM3_DESIGN.md` §3) |
 | `SM_ERR_UPDATED` and `sm_read_latest` at READ COMMITTED | sm2 surfaces the error and offers `rel_read_latest`; it cannot resolve it, because the re-check needs a filter and filters are sm3's (§5) |
 | nested savepoints | a statement can be undone without losing the transaction, and sm2 holds no state that has to be undone with it |
 | forward scans with `sm_scan_seek` | probe loops cost one cursor, not one per probe |
@@ -401,7 +401,7 @@ all have to satisfy are here.
   corruption from exactly that (`pg_collation.collversion`
   exists for it), so the collation **version is recorded with
   the schema** and a mismatch is detected, not trusted. Where
-  that is persisted, once schemas are, is `sm3/DESIGN.md` §2.
+  that is persisted, once schemas are, is `sm3/SM3_DESIGN.md` §2.
 - **The comparison is `memcmp`, always.** sm1 has no
   comparator to install (§1), so the order has to be in the
   bytes before sm1 ever sees them. `strcoll` is never called
@@ -429,11 +429,11 @@ all have to satisfy are here.
   not to ask for one (`PART4.md` §5). A DESC column is
   therefore the inverted encoding scanned forward, and an
   index-ordered `ORDER BY x DESC LIMIT n` becomes a top-N sort
-  over a forward scan (`sm3/DESIGN.md` §7).
+  over a forward scan (`sm3/SM3_DESIGN.md` §7).
 
 This encoder is sm2's, but sm3 is its other caller: a
 secondary index entry is `encode(sk) ‖ rowno`
-(`sm3/DESIGN.md` §3), built from the same function with the
+(`sm3/SM3_DESIGN.md` §3), built from the same function with the
 same per-column arguments. It is one encoder with two callers,
 not two encoders that have to agree.
 
@@ -459,7 +459,7 @@ decisions behind them are here.
   ordering, or a wider alphabet.
 - **The last column keeps its terminator.** Dropping it would
   save two bytes, but sm3 appends `rowno` to most index
-  entries and not to others (`sm3/DESIGN.md` §3), so which
+  entries and not to others (`sm3/SM3_DESIGN.md` §3), so which
   column is last is not something the encoder can see. The
   rule has no condition in it.
 
@@ -474,7 +474,7 @@ text, so the limit is reachable.
 
 - **An over-long primary key refuses the row.** The primary
   key index enforces uniqueness on exact key bytes
-  (`sm3/DESIGN.md` §3), so its key must be exact. PostgreSQL
+  (`sm3/SM3_DESIGN.md` §3), so its key must be exact. PostgreSQL
   likewise refuses an oversize btree entry.
 - **An over-long secondary index key is truncated, flagged and
   rechecked.** Truncation keeps order as a coarsening — if
@@ -504,7 +504,7 @@ primary key's length, because an index entry points at
   purpose. glibc's collation is not stable across versions,
   which is why it is not the source of sort keys.
 - **A version mismatch is refused.** The version is recorded
-  with the schema (`sm3/DESIGN.md` §2) and compared at open.
+  with the schema (`sm3/SM3_DESIGN.md` §2) and compared at open.
   Every index built under another version, the primary key
   index included, refuses reads and writes, with a message
   saying why.
@@ -513,7 +513,7 @@ primary key's length, because an index entry points at
   index quietly stops being unique.
 - **Rebuilding is a command someone chooses to run.** Any
   index, the primary key index included, is rebuilt online
-  (`sm3/DESIGN.md` §3). The table itself never needs it: rows
+  (`sm3/SM3_DESIGN.md` §3). The table itself never needs it: rows
   are keyed by `rowno`, which no collation touches. Refusal is
   still the default rather than an automatic rebuild, because
   a rebuild of a large index is work an operator should
@@ -552,7 +552,7 @@ Three reasons to split it out rather than let it live inside
   not tests that reach it through a relation, a session and a
   transaction.
 - **It has two callers already.** sm3 stores INCLUDE columns
-  in its index entries (`sm3/DESIGN.md` §3) and decodes them
+  in its index entries (`sm3/SM3_DESIGN.md` §3) and decodes them
   with this same codec, without a base relation in sight.
 - **It is the only part of sm2 that does not touch sm1.** A
   codec with no database under it is testable in a unit test
@@ -578,7 +578,7 @@ own TOAST pointer rather than PostgreSQL's (§2.1).
   an old row is read under its own layout and the missing
   column comes from its default. The stamp is a number; what
   it resolves to is a schema, which sm2 is handed (§5) and
-  sm3 persists (`sm3/DESIGN.md` §2).
+  sm3 persists (`sm3/SM3_DESIGN.md` §2).
 - Tolerance for dropped columns, since the column at a given
   position may no longer exist.
 - **Cheap to turn into a PostgreSQL tuple.** The executor
@@ -589,7 +589,7 @@ own TOAST pointer rather than PostgreSQL's (§2.1).
   of line as chunks, with a TOAST pointer left in the tuple.
   sm1 permits a 64MB value, but a transaction's undo, lock and
   read sets are linear in the keys it touches
-  (`sm1/DESIGN.md` §13), and very large datums hurt LSM
+  (`sm1/SM1_DESIGN.md` §13), and very large datums hurt LSM
   compaction, so the threshold is well below sm1's ceiling.
   The TOAST data lives in the table's own sm1 store, under
   the object prefix `0xFFFF` (§5), so writing a row and its
@@ -618,7 +618,7 @@ things:
   key it reads. sm3 chooses the value and sm2 never interprets
   it, so sm2 never learns what a table is. It exists because
   one sm1 store holds one table and everything that belongs
-  to it (`sm3/DESIGN.md` §4):
+  to it (`sm3/SM3_DESIGN.md` §4):
 
   | Prefix | Object |
   | --- | --- |
@@ -651,7 +651,7 @@ is `0x0000 ‖ rowno`:
   gives a new TID to every non-HOT update and must insert into
   every index; this does not.
 - **The primary key is an index like any other**, sm3's to
-  build and maintain (`sm3/DESIGN.md` §3), keyed by the
+  build and maintain (`sm3/SM3_DESIGN.md` §3), keyed by the
   encoded key columns and mapping to `rowno`. A table without
   a primary key needs nothing extra: every table is a heap.
 - **`rowno` is PostgreSQL's `ctid`.** The fork redefines
@@ -692,9 +692,9 @@ The rules it must satisfy:
 - **Errors pass through; they are not translated.**
   `SM_ERR_UPDATED` in particular is not retried here. The
   retry needs the statement's filter re-checked against the
-  newest image (`sm1/DESIGN.md` §5.4), and filters live above
+  newest image (`sm1/SM1_DESIGN.md` §5.4), and filters live above
   sm2; `rel_read_latest` is what sm2 provides so sm3 can do it
-  (`sm3/DESIGN.md` §3).
+  (`sm3/SM3_DESIGN.md` §3).
 - **Every column is in the tuple.** An encoded key — the
   primary key index's or any other's — is an ordering device,
   not storage, so an indexed column is written twice: encoded
@@ -721,7 +721,7 @@ under a live `rel` is what makes the answer matter; and
 whether the tuple-at-a-time shape above is enough, or a
 batched form earns its keep once there are predicates to push
 down, which is a question for the level that has them
-(`sm3/DESIGN.md` §5).
+(`sm3/SM3_DESIGN.md` §5).
 
 ---
 
@@ -752,7 +752,7 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
 ## 7. Known trade-offs
 
 *To be filled in as the design settles, in the manner of
-`sm1/DESIGN.md` §13 — the costs this design accepts, written
+`sm1/SM1_DESIGN.md` §13 — the costs this design accepts, written
 down where the next reader will find them.*
 
 Accepted so far:
