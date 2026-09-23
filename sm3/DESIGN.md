@@ -11,7 +11,7 @@ the decisions in `OBJECTIVE.md`:
 | Catalog | in memory, written through to sm2, lock-based DDL |
 | Index entry | `encode(index columns) ‖ encode(pk)` → empty or INCLUDE columns |
 | Encoder | sm2's, called with the same per-column arguments |
-| Relation mapping | many sm3 objects multiplexed onto few sm1 relations, via sm2's key prefix |
+| Relation mapping | one sm1 relation per table, holding its rows, indexes and TOAST data, told apart by sm2's 2-byte object prefix |
 | API shape | open: batch-oriented (sets of rows, filters pushed down) was forced by an IPC boundary, which the threaded fork removes (§1) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
@@ -49,7 +49,7 @@ answer.
 | --- | --- |
 | sm2's tuples in a clustered relation | the base row's identity is its primary key; an index entry points at a key, never at a location |
 | sm2's key encoder | index keys and primary keys sort by the same rules, because they are the same code (`sm2/DESIGN.md` §3) |
-| sm2's opaque key prefix | many sm3 objects fit in one sm1 relation (§4) |
+| sm2's 2-byte object prefix | a table's rows, indexes and TOAST data share its one sm1 relation (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own |
 | `SM_ERR_DUPKEY` from `rel_insert` | a duplicate primary key needs no separate existence check; a *unique index* still does (§3) |
 | `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
@@ -57,9 +57,9 @@ answer.
 | `sm_lock(SHARED\|EXCLUSIVE)` | the DDL and online index build protocol (§2, §3) |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
-| `SM_MAX_KEYLEN` 4096 | an index entry's `sk ‖ pk` must fit 4096 bytes together, prefix included (`sm2/OBJECTIVE.md`) |
+| `SM_MAX_KEYLEN` 4096 | an index entry's `sk ‖ pk` must fit 4094 bytes after the prefix; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/DESIGN.md` §3.2) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward, in the same index; there are no mirror relations, and the fork's planner never asks for a backward scan (§5, §7) |
-| one column family per relation, hundreds to low thousands | sm3 must multiplex (§4) |
+| one column family per relation, hundreds to low thousands | tables, partitions included, are bounded by it (§4) |
 
 ---
 
@@ -151,6 +151,16 @@ above sm1 needs; every gap it found is now closed in sm1.
   snapshot: a statement snapshot can predate a duplicate that
   committed while the lock was awaited, and the lock is what
   keeps the newest version stable.
+- **NULLs are distinct in a unique index.** Two NULLs encode
+  to the same bytes, so the check skips any entry with a NULL
+  key column, as SQL requires by default. `NULLS NOT
+  DISTINCT` is refused at `CREATE INDEX` in v1; adding it
+  later is a catalog flag and changes no bytes on disk.
+- **A truncated key is rechecked.** sm2 cuts an over-long
+  index key to fit and flags the entry (`sm2/DESIGN.md` §3.2).
+  A scan rechecks flagged entries against the base row, and a
+  unique check on a cut key compares originals over the
+  prefix range, with NULLs distinct as above.
 - **Maintenance:** on update and delete, the old image from
   `rel_update` / `rel_delete` gives the old index entries to
   remove — as a tuple, so sm3 reads the indexed columns out
@@ -194,24 +204,41 @@ above sm1 needs; every gap it found is now closed in sm1.
 
 ## 4. Object mapping
 
-*To be written.* sm1 gives each relation a column family and
-targets hundreds to low thousands of them; a SQL schema with
-partitions and indexes passes that easily. So an sm3 object id
-is a key prefix inside a shared sm1 relation, and the number of
-sm1 relations is a tuning decision rather than a function of the
-schema.
+**Decision: one sm1 relation per table.** A table's rows, all
+its secondary indexes and its TOAST data live in one
+sm1 relation, told apart by sm2's 2-byte object prefix
+(`sm2/DESIGN.md` §5):
 
-sm2 has the hook for this already: a `rel` is opened with an
-opaque key prefix that sm2 prepends and strips and otherwise
-ignores (`sm2/DESIGN.md` §5). An sm3 table or index is one
-`rel` over a shared sm1 relation with its object id as that
-prefix. sm2 never learns what a table is, and sm3 never
+| Prefix | Object |
+| --- | --- |
+| `0x0000` | the table's rows |
+| `0x0001`–`0xFFFE` | its indexes, one prefix each |
+| `0xFFFF` | its TOAST data |
+
+sm3 chooses the prefixes and records them in the catalog. An
+sm3 table or index is one `rel` over the table's sm1 relation
+with its prefix; sm2 prepends and strips it and otherwise
+ignores it. sm2 never learns what a table is, and sm3 never
 encodes a key itself.
 
-This interacts with `sm_rmrel`: dropping an sm3 table is then a
-range delete inside a shared relation, not sm1's O(1) column
-family drop. The trade has to be made explicitly.
+- **`DROP TABLE` is one `sm_rmrel`**, sm1's O(1) column family
+  drop, and takes the indexes and TOAST data with it.
+- **`DROP INDEX` is a range delete** over the index's prefix.
+- **Index prefixes are allocated in increasing order and never
+  reused.** A dropped index's versions linger until sm1's
+  garbage collection passes them; never reusing a prefix means
+  no later index can read them as its own, with no rule tied
+  to the GC horizon. 65,534 index creations per table,
+  rebuilds included, is the ceiling.
+- **The cost: tables are bounded by sm1's relation count.**
+  sm1 targets hundreds to low thousands of relations, and
+  every table, each partition included, takes one. Accepted
+  for v1; raising that ceiling is sm1's problem if it bites.
 
+The alternative was many tables per sm1 relation, with a wider
+object id as the prefix, which makes the relation count a
+tuning decision. It was rejected for v1 because `DROP TABLE`
+becomes a range delete instead of sm1's O(1) drop.
 ---
 
 ## 5. Scan by predicate
@@ -270,8 +297,11 @@ Accepted so far, from the PostgreSQL target (`PART4.md`):
   changed to return false for every table. These lose plans, not
   correctness, and the size of the loss is expected from how the
   planner works but has not been measured.
-- **Relations are multiplexed.** DROP TABLE is a range delete
-  inside a shared relation, not sm1's O(1) drop (§4).
+- **Tables are bounded by sm1's relation count.** One sm1
+  relation per table makes `DROP TABLE` sm1's O(1) drop, and
+  caps tables, partitions included, at the hundreds to low
+  thousands of relations sm1 handles (§4). `DROP INDEX` is a
+  range delete inside the table's relation.
 - **The catalog is not versioned.** A transaction gets the
   newest definition and its own data snapshot, which is what
   PostgreSQL does, and the price is that DDL blocks DML on the

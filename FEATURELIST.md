@@ -47,7 +47,7 @@ primary key as the only access path below sm2.
       — needs its own encoding
 - [x] enums
       — sm3's, not an sm2 type: `int4` on disk, labels
-        in sm3's catalog (sm2/QUESTIONS.md 2.2)
+        in sm3's catalog (sm2/DESIGN.md §2)
 - [ ] range types (int4range, tsrange, ...)
       — usually paired with GiST and exclusion constraints
 - [ ] composite types
@@ -97,8 +97,8 @@ primary key as the only access path below sm2.
 - [x] partitioning (range / list / hash)
 - [ ] table inheritance (legacy)
 - [x] TOAST (large datums stored out of line)
-      — sm2/DESIGN.md §4 already plans chunking large datums
-        out of line
+      — sm2's own TOAST, in its own format, in the table's
+        sm1 relation (sm2/DESIGN.md §4)
 - [x] generated / computed columns
 - [x] temporary tables
 - [ ] unlogged tables

@@ -8,9 +8,9 @@ predicate, and the statistics a planner above needs.
 sm2 stops exactly where this begins. `sm2/OBJECTIVE.md` says
 sm2 is "handed a schema", that it "maintains no index", that
 it "has no filter and counts nothing", and that an sm2
-relation is one sm1 relation with an opaque key prefix
-reserved for a level that wants to multiplex. sm3 is that
-level, and this document is what it is for.
+relation is one sm1 relation with an opaque object prefix
+reserved for the level above. sm3 is that level, and this
+document is what it is for.
 
 ## Scope
 
@@ -76,13 +76,13 @@ These are settled and drive `DESIGN.md`.
   catalog is not versioned; a transaction is kept away from a
   concurrent DDL with sm1's row locks on the schema row, not
   given an old definition (`DESIGN.md` §2).
-- **Relations are multiplexed.** sm1 gives each relation its
-  own RocksDB column family and targets "hundreds to low
-  thousands of relations per database" (`sm1/DESIGN.md` §13).
-  A PostgreSQL schema of a few hundred tables with indexes,
-  TOAST relations and partitions passes that easily, so sm3
-  maps many logical tables and indexes onto few sm1 relations
-  by prefixing its own object id into the key.
+- **One sm1 relation per table.** A table's rows, its
+  indexes and its TOAST data share one sm1 relation,
+  told apart by sm2's 2-byte object prefix, so `DROP TABLE` is
+  sm1's O(1) column family drop. sm1 targets "hundreds to low
+  thousands of relations per database" (`sm1/DESIGN.md` §13),
+  so tables, partitions included, are bounded by that;
+  accepted for v1 (`DESIGN.md` §4).
 - **The eventual consumer is a forked PostgreSQL**, keeping
   its parser, planner and executor and replacing its storage
   and transaction layers. The fork is **threaded**

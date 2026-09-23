@@ -13,266 +13,11 @@ Two kinds of entry, and the difference matters:
   answer is recorded in the document named at the end of the
   entry.
 
-Ordered by the step of `PLAN.md` each one blocks. §1 is first
-because it is the only section where the documents already
-contain an answer that nobody has agreed to.
-
----
-
-## 1. Ratify the five suggested answers
-
-`OBJECTIVE.md` carries five open questions with a *suggested*
-answer written under each. A suggestion is not a decision, and
-four of the five change what goes on disk. **These need a yes
-or a no, one at a time.**
-
-| # | Question | Suggested | Changes disk? |
-| --- | --- | --- | --- |
-| 1.1 | Bare `number`, with no declared precision | refuse it at column creation | no — a later type code can add it |
-| 1.2 | `number` NaN and ±Infinity | reserve the extreme magnitudes as sentinels | **yes** |
-| 1.3 | Over-long keys against `SM_MAX_KEYLEN` | reject for a primary key, truncate and recheck for a secondary index, never hash | **yes** |
-| 1.4 | Collation version drift | pin ICU, refuse on mismatch, rebuild by command | **yes** — the recorded version |
-| 1.5 | Non-deterministic collations | refuse in v1; carry the flag from the start | **yes** — the tie-break rule |
-
-1.2 is the one that cannot wait. Retrofitting a sentinel
-changes the meaning of `number`s already written, so it is
-decided before the first `number` is stored or not at all.
-
-### Answers
-
-Recorded here as given, and carried into `OBJECTIVE.md`,
-`DESIGN.md` §2.2 and §3, and `TYPE.md` §3.4.
-
-**1.1 — No, take a default instead (2026-09-22).** A bare
-`number` is accepted and stored as `number(38, 10)`: 28
-integer digits and 10 fractional. A datum with more than 10
-fractional digits is rounded to 10, as PostgreSQL rounds for a
-declared `numeric(p,s)`. A datum whose integer part needs more
-than 28 digits is an error. This overrides the suggestion to
-refuse at column creation. 2.4 renames the type `NUMBER`; this
-default is what a bare `NUMBER` means.
-
-**1.2 — No, refuse them (2026-09-22).** A `number` NaN,
-`+Infinity` or `-Infinity` is rejected on insert with a clear
-error; no sentinel is reserved. The door stays open anyway: a
-precision of 38 digits never reaches the 128-bit extremes, so
-those integers are never written and could still be reserved
-later without changing the meaning of stored bytes, provided
-the codec keeps rejecting any value outside the declared
-precision.
-
-**1.3 — Yes (2026-09-22).** An encoded primary key over
-`SM_MAX_KEYLEN` refuses the row. A secondary index key over
-the limit has its sort key truncated to fit, the entry is
-flagged as cut, and a scan rechecks against the stored
-original; a unique check on a cut key compares originals over
-the prefix range, following 3.5's rule for NULLs. Keys are
-never hashed.
-
-**1.4 — Yes (2026-09-22).** A specific ICU version is linked
-into the server, so drift happens only on a deliberate
-upgrade. The collation version is recorded with the schema
-and compared at open. On a mismatch, every index and collated
-primary key built under the old version refuses reads and
-writes, with a message saying why. Rebuilding is an explicit
-command: an online build for a secondary index, a table
-rewrite for a collated primary key.
-
-**1.5 — Yes (2026-09-22).** A non-deterministic collation is
-rejected with a clear error when a column or index is
-created. The schema carries a per-column `deterministic` flag
-from the start, set at creation and never changed. A
-deterministic collation's key is the sort key followed by the
-original bytes as a tie-break; a non-deterministic one's is
-the sort key alone. A later release can accept the second kind
-without a format change.
-
----
-
-## 2. Types — blocks `PLAN.md` step 1
-
-**2.1 [BLOCKING] Are the type codes assigned now?**
-`TYPE.md` §3 gives each type a code and calls the numbering
-illustrative. The codes go in the schema and are never reused,
-so they are permanent from the first tuple written.
-*Suggested: freeze the numbering in `TYPE.md` §3 as it stands,
-and leave a documented gap (say 64–127) for types added
-later.* → `TYPE.md`
-
-**2.2 [BLOCKING] Is `enum` in the first set?**
-`FEATURELIST.md` §1, at the top level, marks enums supported;
-`DESIGN.md` §2 does not list them. One of the two is wrong.
-*Suggested: out of sm2's first set.* An enum's values live in
-the catalog, which is sm3's, so the type cannot be closed over
-inside sm2. It is `int4` on disk with sm3 holding the labels —
-which is PostgreSQL's arrangement too. → `DESIGN.md` §2,
-`FEATURELIST.md`
-
-**2.3 [ASSUMABLE] Why are `text` and `varchar` separate codes,
-and who enforces `varchar(n)`?**
-`TYPE.md` §3 gives them codes 8 and 9 with identical
-representations.
-*Suggested: keep both codes, because PostgreSQL distinguishes
-them and a round trip through sm2 should not silently rewrite
-a column's declared type; enforce the length limit in sm3,
-with the constraints, not in the codec.* → `TYPE.md` §3.5
-
-**2.4 [BLOCKING] Decimal128 only in v1, or 128 and 256?**
-Supporting only 128 caps precision at 38 digits. Supporting
-both means two widths for one type code, which the schema has
-to carry.
-*Suggested: both from the start, chosen by the declared
-precision.* Adding the 256-bit width later would mean a second
-type code for what users call one type. → `TYPE.md` §3.4
-
-**2.5 [ASSUMABLE] Does v1 need `in`/`out`/`recv`/`send`?**
-The ADT table in `DESIGN.md` §2.3 lists them, but sm2 has no
-parser and no wire protocol.
-*Suggested: `in`/`out` yes, because every test and every
-golden-bytes fixture needs to write a value as text; `recv`
-and `send` deferred, with the slots left in the descriptor.*
-→ `DESIGN.md` §2.3
-
-### Answers
-
-Recorded here as given, and carried into `TYPE.md` §3,
-`DESIGN.md` §2.3 and `FEATURELIST.md`; the `number` rename
-runs through every sm2 document.
-
-**2.1 — Yes (2026-09-22).** The codes in `TYPE.md` §3 are
-frozen as they stand, `bool` = 1 through `uuid` = 16, and are
-never reused. Codes 64–127 are a documented reserved gap for
-types added later.
-
-**2.2 — Yes, out of sm2 (2026-09-22).** `enum` is not an sm2
-type. sm2 stores it as `int4`; sm3's catalog holds the labels
-and the mapping. `FEATURELIST.md` is to say enums are sm3's.
-One consequence for sm3: an index on an enum sorts by the
-`int4`, so sm3 must assign values in declared order, or
-accept that an index orders by value rather than by label.
-
-**2.3 — Yes (2026-09-22).** `text` (8) and `varchar` (9) keep
-separate codes, so a round trip never rewrites a column's
-declared type. The `varchar(n)` length limit is a constraint
-and is enforced by sm3, not by sm2's codec.
-
-**2.4 — Yes, both widths, and the type is renamed `NUMBER`
-(2026-09-22).** One type code (7) covers both widths, chosen
-by declared precision: up to 38 digits is 16 bytes, 39 to 76
-is 32 bytes. The type is `NUMBER(p, s)`, not `numeric`, so it
-is not mistaken for PostgreSQL's: `NUMERIC` and `DECIMAL` are
-not supported. `NUMBER(p)` means `NUMBER(p, 0)`. A bare
-`NUMBER` is 1.1's default, `NUMBER(38, 10)`, with 1.1's
-rounding and overflow rules; 1.2's refusal of NaN and
-infinities applies to `NUMBER` as well. Every document that
-says `numeric` — `TYPE.md` §3.4, `DESIGN.md` §2.2,
-`OBJECTIVE.md` — is to say `NUMBER`.
-
-**2.5 — Yes (2026-09-22).** v1 implements `in` and `out`,
-because every test and golden-bytes fixture writes values as
-text. `recv` and `send` are deferred, with their slots left in
-the type descriptor.
-
----
-
-## 3. Key encoding — blocks `PLAN.md` step 2
-
-**3.1 [BLOCKING] Does a `NOT NULL` column skip its null marker
-byte?**
-`TYPE.md` §2 says it does, which saves a byte per column per
-key. The cost is that the key layout depends on nullability,
-so `ALTER COLUMN ... DROP NOT NULL` rewrites every key in the
-table and every index over it.
-*Suggested: always emit the marker, even for `NOT NULL`.* The
-byte is cheap, and a schema change that silently rewrites a
-whole table is the kind of surprise this level exists to
-avoid. This reverses what `TYPE.md` §2 currently says.
-→ `TYPE.md` §2
-
-**3.2 [ASSUMABLE] Confirm the escape scheme.**
-`TYPE.md` §3.6 proposes `0x00` → `0x00 0xFF` with `0x00 0x00`
-as terminator, verified order-preserving and prefix-free.
-*Suggested: as written.* It is what CockroachDB and
-FoundationDB use, and the alternatives cost either a length
-prefix, which breaks ordering, or a wider alphabet.
-→ `TYPE.md` §3.6
-
-**3.3 [ASSUMABLE] Does the final column of a key still get its
-terminator?**
-Dropping it on the last column saves two bytes.
-*Suggested: always emit it.* sm3 appends the primary key to
-every index entry (`sm3/DESIGN.md` §3), so "last" is not a
-property the encoder can see, and a conditional rule is a bug
-waiting for the first covering index. → `TYPE.md` §2
-
-**3.4 [BLOCKING] How wide is sm3's key prefix, and who spends
-the `SM_MAX_KEYLEN` budget?**
-`DESIGN.md` §5 gives `rel` an opaque prefix and `TYPE.md` §2
-says the 4096 bound covers it. Nothing says how big it is, so
-nothing can compute the budget left for a sort key.
-*Suggested: a fixed 8 bytes, big-endian, set by sm3; sm2
-validates the total and reports the remaining budget through
-the API so sm3 never has to guess it.* → `DESIGN.md` §5,
-`sm3/DESIGN.md` §4
-
-**3.5 [ASSUMABLE] Are NULLs distinct in a unique index?**
-A NULL key column encodes as its marker byte alone
-(`TYPE.md` §2), so two NULLs are byte-equal. sm3's unique
-check compares `sk` bytes without the pk suffix
-(`sm3/DESIGN.md` §3), and so would reject a second NULL. SQL
-says NULLs are distinct by default; PostgreSQL 15 added
-`NULLS NOT DISTINCT` as an opt-in (from memory, not checked).
-*Suggested: the encoding stays as it is, and sm3 skips the
-uniqueness check for any entry with a NULL key column, unless
-the index is declared `NULLS NOT DISTINCT`.* sm3 has the null
-flags when it builds the key, so no decode is needed. If 1.3
-truncates secondary keys, the recheck of originals on a cut
-key follows the same rule. → `sm3/DESIGN.md` §3
-
-### Answers
-
-Recorded here as given; `TYPE.md`, `DESIGN.md` and
-`sm3/DESIGN.md` are not yet updated to match.
-
-**3.1 — Yes, always emit (2026-09-22).** Every key column
-carries its null marker byte, `NOT NULL` or not, primary key
-columns included. The key layout never depends on
-nullability, so `SET` or `DROP NOT NULL` never rewrites a key.
-This reverses what `TYPE.md` §2 says.
-
-**3.2 — Yes, as written (2026-09-22).** Inside a
-variable-length key datum, `0x00` is written `0x00 0xFF`, and
-`0x00 0x00` terminates it (`TYPE.md` §3.6).
-
-**3.3 — Yes, always emit (2026-09-22).** Every
-variable-length key column gets its terminator, including the
-last one. The encoder never needs to know which column is
-last.
-
-**3.4 — No: one sm1 relation per table, with a 2-byte prefix
-(2026-09-22).** This replaces the suggestion and reverses
-`sm3/DESIGN.md` §4. Each PG table gets its own sm1 relation,
-holding its rows, all its indexes and its out-of-line chunks,
-so `DROP TABLE` is one `sm_rmrel` that takes everything with
-it. The prefix picks the object inside that relation: exactly
-2 bytes, big-endian, value set by sm3 — `0x0000` for the
-table's rows, `0xFFFF` for its chunks, and `0x0001`–`0xFFFE`
-for its indexes. Index prefixes are allocated in increasing
-order and never reused, so a dropped index's leftover versions
-can never be read as another index's, and no GC-horizon rule
-is needed. `DROP INDEX` is a range delete over its prefix.
-Every key spends 2 bytes of `SM_MAX_KEYLEN` on the prefix,
-leaving 4094; sm2 validates the total. Accepted for v1: the
-number of tables, partitions included, is bounded by how many
-relations sm1 handles. This settles where 4.2's chunks live.
-
-**3.5 — Yes, distinct, with no opt-in (2026-09-22).** The
-encoding is unchanged. In a unique index, NULLs are always
-distinct in v1: sm3 skips the uniqueness check for any entry
-with a NULL key column, and 1.3's recheck of originals on a
-cut key follows the same rule. `NULLS NOT DISTINCT` is refused
-at `CREATE INDEX` with a clear error. Adding it later is a
-flag in sm3's catalog and changes no bytes on disk.
+Ordered by the step of `PLAN.md` each one blocks. Sections 1
+to 3 — the suggested answers in `OBJECTIVE.md`, types, and key
+encoding — are answered and have moved into `DESIGN.md`,
+`TYPE.md` and `sm3/DESIGN.md`; the numbering of what remains
+is kept so that a question's number never changes.
 
 ---
 
@@ -298,21 +43,16 @@ stamp.* This also decides who may garbage-collect an old
 version: sm3, once a rewrite proves no tuple still carries it.
 → `DESIGN.md` §4 and §5
 
-**4.2 [BLOCKING] Where do out-of-line chunks live, and what
-are their keys?**
-`DESIGN.md` §4 says large datums are chunked out of line above
-a threshold, and stops there. Chunks need keys, and the only
-key space in an sm2 relation is the primary key space, which
-they would collide with.
-*Suggested: chunks live in the same sm1 relation, under the
-`rel`'s prefix with a reserved discriminator byte that sorts
-above every primary key, keyed by
-`prefix ‖ 0xFF ‖ chunk_id ‖ seq`.* One relation keeps the
-write atomic with the row for free, the discriminator keeps
-chunks out of every table scan's range, and `chunk_id` comes
-from an sm1 sequence. The alternative — a second sm1 relation
-— costs a relation per table and fights the multiplexing sm3
-does in `sm3/DESIGN.md` §4. → `DESIGN.md` §4
+**4.2 [BLOCKING] What are TOAST keys?**
+Where TOAST data lives is settled: in the table's own sm1
+relation, under the object prefix `0xFFFF` (`DESIGN.md` §4,
+§5). What follows the prefix is not.
+*Suggested: `0xFFFF ‖ chunk_id ‖ chunk_seq`, PostgreSQL's
+names, with `chunk_id` an 8-byte big-endian value from an sm1
+sequence and `chunk_seq` a 4-byte big-endian chunk number.*
+The tuple's TOAST pointer carries the `chunk_id`; `chunk_seq`
+keeps a datum's chunks contiguous and in order, so reading one
+back is one forward scan. → `DESIGN.md` §4
 
 **4.3 [BLOCKING] Are datums aligned inside the tuple, or
 packed?**
@@ -325,7 +65,7 @@ PostgreSQL does.* Packing saves a few bytes per tuple and
 gives them back on every read, and the conversion story in
 §2.1 is the reason this level exists. → `DESIGN.md` §4
 
-**4.4 [ASSUMABLE] What is the chunking threshold?**
+**4.4 [ASSUMABLE] What is the TOAST threshold?**
 *Suggested: start at 2KB, make it a per-relation setting with
 that default, and measure before defending the number.* sm1
 allows 64MB, but undo, lock and read sets are linear in keys
@@ -435,3 +175,16 @@ Settled, and listed so nobody reopens them by accident:
   `OBJECTIVE.md`, `sm3/DESIGN.md` §5.
 - That the catalog, indexes, predicates and statistics are not
   sm2's — `DESIGN.md` §6.
+- The type codes, `enum` as sm3's, and `text` / `varchar` —
+  `DESIGN.md` §2.
+- `number(p, s)` only: its widths, its bare default, and the
+  refusal of NaN — `DESIGN.md` §2.2.
+- That `in` / `out` are filled in v1 and `recv` / `send` wait —
+  `DESIGN.md` §2.3.
+- Null markers, escaping and terminators — `DESIGN.md` §3.1.
+- Over-long keys — `DESIGN.md` §3.2.
+- Collation version and determinism — `DESIGN.md` §3.3.
+- One sm1 relation per table and the 2-byte object prefix —
+  `DESIGN.md` §5, `sm3/DESIGN.md` §4.
+- That NULLs are distinct in a unique index —
+  `sm3/DESIGN.md` §3.

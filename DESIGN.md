@@ -132,16 +132,44 @@ design:
   that one call is the sanctioned exception to sm3 speaking
   only to sm2. Every other sm1 facility sm3 needs arrives
   through sm2's tuple relation.
-- **Object multiplexing.** sm1 targets hundreds to low
-  thousands of relations (`sm1/DESIGN.md` §13); sm3 maps
-  many logical tables and indexes onto few sm1 relations by
-  prefixing its own object id into the key
-  (`sm3/DESIGN.md` §4). sm2 provides the hook — a `rel` is
-  opened with an opaque prefix it prepends and strips and
-  never interprets (`sm2/DESIGN.md` §5) — without learning
-  what a table is. This is why `sm_rmrel`'s O(1) column
-  family drop is not what a `DROP TABLE` costs at sm3 — that
-  trade is made explicitly there, not assumed here.
+- **One sm1 relation per table.** A table's rows, all its
+  indexes and its TOAST data share one sm1 relation,
+  told apart by a 2-byte object prefix: `0x0000` for rows,
+  `0x0001`–`0xFFFE` for indexes, `0xFFFF` for TOAST. sm3
+  chooses the prefix; sm2 prepends and strips it and never
+  interprets it (`sm2/DESIGN.md` §5), so sm2 never learns what
+  a table is. `DROP TABLE` is one `sm_rmrel`, sm1's O(1)
+  column family drop; `DROP INDEX` is a range delete over its
+  prefix, and index prefixes are never reused. The cost is
+  that tables, partitions included, are bounded by the
+  hundreds to low thousands of relations sm1 handles
+  (`sm1/DESIGN.md` §13); accepted for v1 (`sm3/DESIGN.md`
+  §4).
+- **The key budget is shared.** `SM_MAX_KEYLEN` (4096) bounds
+  prefix, sort key and primary key together. sm2's encoder
+  enforces it: an over-long primary key refuses the row, and an
+  over-long index key is truncated, flagged and rechecked
+  against the tuple, never hashed (`sm2/DESIGN.md` §3.2). sm3
+  owns the recheck and the unique check that follow from a cut
+  key (`sm3/DESIGN.md` §3).
+- **Unique checks are sm3's, and NULLs are distinct in them.**
+  Two NULLs encode to the same bytes, so the encoding cannot
+  say they differ; sm3's unique check skips any entry with a
+  NULL key column, as SQL requires by default. `NULLS NOT
+  DISTINCT` is refused at `CREATE INDEX` in v1; adding it
+  later is a catalog flag and changes no bytes on disk
+  (`sm3/DESIGN.md` §3).
+- **Collation versions are pinned, recorded and enforced
+  across the stack.** A specific ICU is linked into the
+  server; sm3 records each collation's version with the schema
+  (`sm3/DESIGN.md` §2); sm2 refuses to read or write an index or
+  collated primary key built under another version, until an
+  explicit rebuild (`sm2/DESIGN.md` §3.3). Non-deterministic
+  collations are refused in v1.
+- **Constraints and labels are sm3's; sm2 stores what it is
+  given.** The `varchar(n)` length limit is enforced by sm3,
+  and an enum is `int4` to sm2 with its labels in sm3's
+  catalog (`sm2/DESIGN.md` §2).
 - **Batch-shaped API: a question for sm3, not sm2.** Sets of
   rows in and out was forced by an IPC boundary between a
   PostgreSQL backend process and sm1; the fork now moves

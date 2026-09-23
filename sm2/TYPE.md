@@ -48,11 +48,12 @@ Three rules follow, and they apply to every type below.
 Applied in this order, around whatever the per-type encoding
 in §3 produces.
 
-**Null.** A nullable column's key is preceded by one marker
-byte: `0x00` for null, `0x01` for non-null when nulls sort
-first; `0x01` and `0x02` when they sort last. A `NOT NULL`
-column has no marker byte and pays nothing. No type needs a
-reserved value to mean absent.
+**Null.** Every column's key is preceded by one marker byte:
+`0x00` for null, `0x01` for non-null when nulls sort first;
+`0x01` and `0x02` when they sort last. A `NOT NULL` column
+carries the marker too, so a nullability change never
+rewrites a key (`DESIGN.md` §3.1). No type needs a reserved
+value to mean absent.
 
 **Direction.** A `DESC` column is the ascending encoding with
 every byte inverted, marker included, because sm1 will not
@@ -66,9 +67,10 @@ every variable-length encoding is made prefix-free by §3's
 escaping rule. Fixed-width encodings are prefix-free already.
 
 **Length.** `SM_MAX_KEYLEN` is 4096 and bounds the whole
-concatenation, prefix and all. What happens when a key does
-not fit is in `OBJECTIVE.md`: refused for a primary key,
-truncated and rechecked for a secondary index.
+concatenation, the 2-byte object prefix included. What
+happens when a key does not fit is in `DESIGN.md` §3.2:
+refused for a primary key, truncated and rechecked for a
+secondary index.
 
 ---
 
@@ -97,8 +99,8 @@ null marker and before any inversion.
 | `uuid` | 16 | the 16 bytes | 16 | the same 16 bytes | 16 |
 
 The codes are frozen: assigned once, never reused or
-renumbered (`DESIGN.md` §2, `QUESTIONS.md` 2.1). Codes 64–127
-are reserved for types added later; 0 is never a type code.
+renumbered (`DESIGN.md` §2). Codes 64–127 are reserved for
+types added later; 0 is never a type code.
 
 ### 3.1 bool
 
@@ -184,7 +186,7 @@ schema fixes the scale per column, so the encoder never
 rescales. Comparing two columns of different scale is a cast,
 above sm2.
 
-Decided in `OBJECTIVE.md`: a bare `number` is
+Decided in `DESIGN.md` §2.2: a bare `number` is
 `number(38, 10)`, `number(p)` is `number(p, 0)`, and NaN and
 infinity are refused on insert, so no value is reserved as a
 sentinel.
@@ -192,7 +194,8 @@ sentinel.
 ### 3.5 text, varchar
 
 Native is the payload bytes alone — no varlena header, no
-1-byte short form, no TOAST pointer (`DESIGN.md` §2.1).
+1-byte short form, no PostgreSQL TOAST pointer (`DESIGN.md`
+§2.1).
 Length lives in the tuple's framing.
 
 The key depends on the column's collation, which is a
@@ -223,12 +226,12 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
 - The collation's version is recorded with the schema
   (`sm3/DESIGN.md` §2); a mismatch is refused, not trusted.
 - A non-deterministic collation is refused at column creation
-  in the first version (`OBJECTIVE.md`).
+  in the first version (`DESIGN.md` §3.3).
 - `text` (8) and `varchar` (9) share every byte and keep
   separate codes only so a round trip never rewrites a
   column's declared type. The `varchar(n)` limit is a
   constraint, enforced by sm3; sm2's codec stores what it is
-  given (`QUESTIONS.md` 2.3).
+  given (`DESIGN.md` §2).
 
 ### 3.6 bytea
 

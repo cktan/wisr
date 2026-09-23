@@ -61,14 +61,17 @@ nothing that an IPC boundary would have made it cost.
 | `SM_ERR_UPDATED` and `sm_read_latest` at READ COMMITTED | sm2 surfaces the error and offers `rel_read_latest`; it cannot resolve it, because the re-check needs a filter and filters are sm3's (§5) |
 | nested savepoints | a statement can be undone without losing the transaction, and sm2 holds no state that has to be undone with it |
 | forward scans with `sm_scan_seek` | probe loops cost one cursor, not one per probe |
-| `SM_MAX_KEYLEN` 4096, `SM_MAX_DATALEN` 64MB | an encoded primary key must fit 4096 bytes, prefix included; a tuple above the chunking threshold is split (§4) |
+| `SM_MAX_KEYLEN` 4096, `SM_MAX_DATALEN` 64MB | an encoded primary key must fit 4096 bytes, prefix included; a datum above the TOAST threshold is stored out of line (§4) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward; there are no mirror relations, and the fork's planner never asks for a backward scan (§3) |
 
-One thing sm1 gives that sm2 deliberately does not use: the
-one-column-family-per-relation model and its limit of hundreds
-to low thousands of relations. An sm2 `rel` is exactly one sm1
-relation. Fitting a whole SQL schema into that budget is sm3's
-problem, and sm3 solves it with the key prefix in §5.
+sm1 keeps one column family per relation and handles hundreds
+to low thousands of them. sm3 gives each table one sm1
+relation, holding the table's rows, its indexes and its
+TOAST data, told apart by the 2-byte object prefix in
+§5. A `DROP TABLE` is then one `sm_rmrel`, sm1's O(1) column
+family drop. The price is that the number of tables,
+partitions included, is bounded by how many relations sm1
+handles; that is accepted for v1 (§7).
 
 ---
 
@@ -88,13 +91,27 @@ is what you read while writing code.
   Arrays, composites, ranges and user-defined types are not in
   the first set; the format must leave room to add them
   without changing what is already on disk.
+- **`enum` is not an sm2 type.** Its labels live in the
+  catalog, which is sm3's, so the type cannot be closed over
+  inside sm2. sm2 stores an enum as `int4` and sm3 holds the
+  label mapping, which is PostgreSQL's arrangement too. An
+  index on an enum orders by the `int4`, so sm3 assigns values
+  in declared order if label order is what an index should
+  give.
+- **`text` and `varchar` are separate types with identical
+  bytes.** They keep two codes so a round trip through sm2
+  never rewrites a column's declared type. The `varchar(n)`
+  length limit is a constraint, and constraints are sm3's;
+  sm2's codec stores what it is given.
 - A type is three things together: an in-memory datum, an
   order-preserving key encoding (§3), and a tuple encoding
   (§4). A type is not added until it has all three.
 - Every type has a **small stable code that goes on disk**, in
-  the schema rather than in each row. Codes are assigned once
-  and never reused, so a type removed from the set does not
-  free its number.
+  the schema rather than in each row. The codes in `TYPE.md`
+  §3 are frozen as they stand, `bool` = 1 through `uuid` = 16:
+  assigned once, never renumbered and never reused, so a type
+  removed from the set does not free its number. Codes 64–127
+  are reserved for types added later, and 0 is never a code.
 - **Null is a property of the column, not of the type.** It is
   carried by the tuple's null bitmap (§4) and by a null
   marker in the key encoding (§3), so no type needs a reserved
@@ -154,8 +171,8 @@ Two places need sm2 to be more precise than PostgreSQL is:
 - **Variable-length datums.** `text`, `varchar` and `bytea`
   carry the payload only. The varlena header, the 1-byte short
   form and the TOAST pointer are PostgreSQL's framing, and
-  framing is the tuple's business (§4) — sm2 has its own, and
-  its own out-of-line chunking, which is not TOAST.
+  framing is the tuple's business (§4) — sm2 has its own
+  framing, and its own TOAST in its own format.
 
 ### 2.2 Except number, which is Arrow's decimal
 
@@ -197,8 +214,35 @@ later:
   boundary, in both directions, while §2.1 makes every other
   type a copy.
 
-The NaN refusal and the bare `number` default are decided in
-`OBJECTIVE.md`.
+What a column may declare, and what a datum may hold:
+
+- **Only `number(p, s)`.** The type is named `number`, not
+  `numeric`, so it is not mistaken for PostgreSQL's: SQL's
+  `NUMERIC` and `DECIMAL` are not accepted, and a schema
+  ported from PostgreSQL declares `number(p, s)` in their
+  place.
+- **One type code, two widths**, chosen by declared precision:
+  16 bytes up to 38 digits, 32 bytes from 39 to 76. Adding
+  the wider form later would have meant a second code for
+  what users call one type.
+- **`number(p)` is `number(p, 0)`**, as in PostgreSQL.
+- **A bare `number` is `number(38, 10)`**: 28 integer digits
+  and 10 fractional. A datum with more fractional digits is
+  rounded to 10, as PostgreSQL rounds for a declared typmod;
+  one whose integer part needs more than 28 digits is an
+  error. Refusing a bare `number` was the alternative; the
+  default was chosen over it, and its cost is in §7. A second,
+  variable-width representation was rejected outright: two
+  `number`s on disk means two key encodings and two
+  comparison paths, which is most of what this section
+  avoids.
+- **NaN and infinities are refused** on insert with a clear
+  error, and no value is reserved as a sentinel. That door is
+  not closed: 38 digits do not reach the 128-bit limit, nor 76
+  the 256-bit one, so the extreme integers are never written
+  and could still be reserved later without changing what
+  stored bytes mean — provided the codec keeps refusing every
+  value outside the declared precision.
 
 ### 2.3 A type is an ADT, in PostgreSQL's shape
 
@@ -213,7 +257,7 @@ struct per type:
 | Entry | What it is | PG's |
 | --- | --- | --- |
 | `in` / `out` | text form, parsed and printed | `typinput` / `typoutput` |
-| `recv` / `send` | binary form over the wire — **deferred**: the slots exist in v1, unfilled, as sm2 has no wire protocol (`QUESTIONS.md` 2.5) | `typreceive` / `typsend` |
+| `recv` / `send` | binary form over the wire — **deferred**: the slots exist in v1, unfilled, as sm2 has no wire protocol | `typreceive` / `typsend` |
 | `cmp` | the type's own total order (§2) | the btree opclass support function |
 | `hash` | for grouping and hash joins | the hash opclass support function |
 | `key_encode` | the order-preserving, injective byte string (§3) | *no equivalent* |
@@ -225,6 +269,10 @@ PostgreSQL, and the reason is structural: a PG btree holds
 datums and calls `cmp`, so it never needs a byte string that
 sorts correctly on its own. sm1 compares with `memcmp` and
 nothing else (§1), so sm2 does.
+
+v1 fills `in` and `out`, because every test and every
+golden-bytes fixture writes its values as text. `recv` and
+`send` wait for a wire protocol, which sm2 does not have.
 
 What this buys is that adding a type is adding a descriptor.
 The alternative — a `switch` in the key encoder, another in
@@ -256,10 +304,8 @@ injective**: `'1 mon'` and `'30 days'` both flatten to
 Equal keys are exactly what a primary key cannot have, so §3
 says what an interval key is.
 
-Open: the earlier question of how to represent `number` is
-settled by §2.2, and whether `interval` is in the first set is
-settled here — it is. Bare `number` and `number`'s NaN are
-decided in `OBJECTIVE.md`.
+Whether `interval` is in the first set is settled here: it
+is.
 
 ---
 
@@ -288,8 +334,8 @@ all have to satisfy are here.
   datums **equal**, they may share a key — that is agreement
   with PG, not a collision; `-0.0` and `0.0` are the case.
   And where a key is deliberately **not** injective, the
-  truncated secondary-index key of `OBJECTIVE.md`, the entry
-  is flagged and rechecked against the base row, which is a
+  truncated secondary-index key of §3.2, the entry is
+  flagged and rechecked against the base row, which is a
   documented exception rather than a silent one.
 - Multi-column keys concatenate without ambiguity: no encoded
   datum may be a prefix of another that should sort after it.
@@ -373,12 +419,11 @@ all have to satisfy are here.
   framing in `TYPE.md` §2 safe to wrap around a sort key; it
   runs roughly 2-4x the length of its input, which is spent
   against `SM_MAX_KEYLEN` and is the arithmetic behind the
-  over-long-key question in `OBJECTIVE.md`; it must be called
+  over-long-key rule in §3.2; it must be called
   as `strxfrm_l` with an explicit `locale_t` rather than
   through `setlocale`; and glibc's collation is not stable
   across versions, so a stable key means pinning ICU and
-  using `ucol_getSortKey` — which is what the
-  collation-stability answer in `OBJECTIVE.md` settles on.
+  using `ucol_getSortKey` — which is what §3.3 settles on.
 - The ban on backward scans stands, and the planner is changed
   not to ask for one (`PART4.md` §5). A DESC column is
   therefore the inverted encoding scanned forward, and an
@@ -391,12 +436,91 @@ secondary index entry is `encode(sk) ‖ encode(pk)`
 same per-column arguments. It is one encoder with two callers,
 not two encoders that have to agree.
 
-Decided in `OBJECTIVE.md`: an over-long primary key refuses
-the row and an over-long secondary key is truncated and
-rechecked, never hashed; ICU is pinned and a version mismatch
-is refused until an explicit rebuild; non-deterministic
-collations are refused, with the `deterministic` flag carried
-from the start.
+### 3.1 Framing: null markers and terminators
+
+The byte-level rules are in `TYPE.md` §2 and §3.6; the
+decisions behind them are here.
+
+- **Every key column carries a null marker byte, `NOT NULL`
+  or not**, primary key columns included. Skipping it for a
+  `NOT NULL` column would save a byte per column per key, but
+  it would make the key layout depend on nullability, so
+  `SET` or `DROP NOT NULL` on a key column would rewrite every
+  key in the table and every index over it. The byte is
+  cheap; a schema change that silently rewrites a table is
+  not.
+- **Variable-length datums are escaped and terminated**:
+  inside the datum `0x00` is written `0x00 0xFF`, and
+  `0x00 0x00` ends it. That keeps the encoding
+  order-preserving and prefix-free, which §3's concatenation
+  rule needs. It is the scheme CockroachDB and FoundationDB
+  use; the alternatives cost a length prefix, which breaks
+  ordering, or a wider alphabet.
+- **The last column keeps its terminator.** Dropping it would
+  save two bytes, but sm3 appends the primary key to every
+  index entry (`sm3/DESIGN.md` §3), so which column is last is
+  not something the encoder can see. The rule has no
+  condition in it.
+
+### 3.2 Over-long keys
+
+`SM_MAX_KEYLEN` is 4096 and bounds the whole key: the 2-byte
+object prefix (§5), then `sk ‖ pk` for an index entry or `pk`
+for a row. Collation sort keys run several times the length
+of their text, so the limit is reachable.
+
+- **An over-long primary key refuses the row.** The primary
+  key is the row's identity and the relation's key, so it must
+  be exact. PostgreSQL likewise refuses an oversize btree
+  entry.
+- **An over-long secondary index key is truncated, flagged and
+  rechecked.** Truncation keeps order as a coarsening — if
+  `a <= b` then `trunc(a) <= trunc(b)` — so a range scan over
+  truncated keys returns a superset, and a recheck against
+  the original, which the tuple holds, removes the extras. The
+  entry is flagged as cut, because the index can no longer
+  promise order among entries that share the prefix. A unique
+  check on a cut key compares originals over the prefix range
+  rather than trusting key equality, and treats NULLs as
+  distinct, as every unique check does (`DESIGN.md` §5 at the
+  top level).
+- **A key is never hashed.** A hash keeps equality and
+  destroys order, and an index that cannot serve a range or an
+  `ORDER BY` is not worth having.
+
+The sort key's budget is 4094 less the encoded primary key,
+so primary keys should leave most of it.
+
+### 3.3 Collation version and determinism
+
+- **ICU is pinned.** A specific ICU version is linked into the
+  server rather than whatever the operating system has, so the
+  collation version changes only when an operator upgrades on
+  purpose. glibc's collation is not stable across versions,
+  which is why it is not the source of sort keys.
+- **A version mismatch is refused.** The version is recorded
+  with the schema (`sm3/DESIGN.md` §2) and compared at open.
+  Every index and collated primary key built under another
+  version refuses reads and writes, with a message saying why.
+  PostgreSQL only warns and carries on, but writing new sort
+  keys into an old index corrupts it further, and a unique
+  index quietly stops being unique.
+- **Rebuilding is a command someone chooses to run.** A
+  secondary index is rebuilt online (`sm3/DESIGN.md` §3). A
+  collated primary key is harder: the relation is clustered on
+  it, so the rebuild rewrites the table, which is why refusal
+  is the default and not an automatic rebuild.
+- **Non-deterministic collations are refused** when a column
+  or index is created, with a clear error. Under one, two
+  different strings compare equal, and hashing, grouping and
+  the bytewise tie-break all have to change with it.
+- **The `deterministic` flag is carried from the start**,
+  per column, set at creation and never changed. A
+  deterministic collation's key is the sort key followed by
+  the original bytes as a tie-break; a non-deterministic
+  one's would be the sort key alone. Because the flag is
+  already in the schema, a later release can accept the
+  second kind without touching data on disk.
 
 ---
 
@@ -431,10 +555,11 @@ fixes what each column's bytes are, and stops there. The
 tuple around them — the null bitmap, the fixed/variable
 split, the alignment, the schema version stamp, the offsets —
 owes `HeapTupleHeader` nothing and is designed here on its own
-merits. This is also where sm2's out-of-line chunking lives,
-which is not TOAST: a `text` datum in an sm2 tuple is payload
-bytes with its length in the framing, with no varlena header
-and no TOAST pointer (§2.1).
+merits. This is also where sm2's TOAST lives, in sm2's own
+format rather than PostgreSQL's: a `text` datum in an sm2
+tuple is payload bytes with its length in the framing, with
+no varlena header, and a TOASTed datum is replaced by sm2's
+own TOAST pointer rather than PostgreSQL's (§2.1).
 
 *To be written.* The rules the format itself must satisfy:
 
@@ -452,11 +577,17 @@ and no TOAST pointer (§2.1).
   works in tuple slots, so a bespoke encoding pays a
   conversion on every row, in both directions. The threaded
   fork removes the IPC boundary, not the conversion.
-- Large datums are **chunked out of line** above a threshold.
+- Large datums are **TOASTed** above a threshold: stored out
+  of line as chunks, with a TOAST pointer left in the tuple.
   sm1 permits a 64MB value, but a transaction's undo, lock and
   read sets are linear in the keys it touches
   (`sm1/DESIGN.md` §13), and very large datums hurt LSM
   compaction, so the threshold is well below sm1's ceiling.
+  The TOAST data lives in the table's own sm1 relation, under
+  the object prefix `0xFFFF` (§5), so writing a row and its
+  TOAST data is one atomic sm1 write, no chunk ever falls
+  inside a scan of the rows or of an index, and `DROP TABLE`
+  takes the TOAST data with it.
 
 ---
 
@@ -474,11 +605,27 @@ things:
 - a **schema** — the ordered columns, their types and
   collations, which prefix of them is the primary key, and per
   key column its direction and null ordering;
-- a **key prefix**, opaque to sm2, prepended to every key it
-  writes and stripped from every key it reads. sm2 has no use
-  of its own for it. It exists so sm3 can multiplex many
-  logical tables onto one sm2 relation (`sm3/DESIGN.md` §4)
-  without sm2 having to know what a table is;
+- an **object prefix** of exactly 2 bytes, big-endian,
+  prepended to every key sm2 writes and stripped from every
+  key it reads. sm3 chooses the value and sm2 never interprets
+  it, so sm2 never learns what a table is. It exists because
+  one sm1 relation holds one table and everything that belongs
+  to it (`sm3/DESIGN.md` §4):
+
+  | Prefix | Object |
+  | --- | --- |
+  | `0x0000` | the table's rows |
+  | `0x0001`–`0xFFFE` | its indexes, one prefix each |
+  | `0xFFFF` | its TOAST data (§4) |
+
+  Index prefixes are allocated in increasing order and never
+  reused, so a dropped index's leftover versions can never be
+  read as another index's entries, and no rule tied to sm1's
+  garbage collection is needed. `DROP INDEX` is a range delete
+  over its prefix. The prefix is fixed-width, so no object's
+  prefix can be the start of another's. It spends 2 of
+  `SM_MAX_KEYLEN`'s 4096 bytes, and sm2 checks the whole key
+  against the limit (§3.2);
 - an **sm1 session**, which is where the transaction lives.
 
 The operations, and what each one is over:
@@ -555,8 +702,9 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
 - **Secondary indexes.** sm2 maintains no index. It gives sm3
   the two things index maintenance needs: the encoder (§3) and
   the old image as a tuple (§5).
-- **Object mapping.** Many logical tables in one sm1 relation
-  is sm3's, through sm2's key prefix (§5).
+- **Object mapping.** Which sm1 relation holds a table, and
+  which prefix each of its indexes gets, is sm3's; sm2 only
+  prepends and strips the prefix (§5).
 - **Predicates.** sm2 has no filter, and therefore cannot
   resolve `SM_ERR_UPDATED` or derive a key range from a
   `WHERE` clause.
@@ -610,3 +758,15 @@ Accepted so far:
 - **The type set is closed at the format.** New types are
   cheap, but only while the type code and the tuple layout
   leave room for them; that room is spent once.
+- **A bare `number` can round.** It defaults to
+  `number(38, 10)` (§2.2), so a datum a user believed exact
+  loses digits past the tenth fractional place, with no error.
+  Refusing a bare `number` would have been louder; the default
+  was chosen for compatibility.
+- **Every key column pays a null marker byte**, `NOT NULL`
+  ones included (§3.1). It buys a key layout that no
+  nullability change can rewrite.
+- **Tables are bounded by sm1's relation count.** One sm1
+  relation per table (§5) makes `DROP TABLE` O(1), and caps
+  tables, partitions included, at the hundreds to low
+  thousands of relations sm1 handles. Accepted for v1.

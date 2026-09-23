@@ -43,9 +43,10 @@ sm2 the way sm2 is built on sm1 (`sm3/OBJECTIVE.md`).
   maintains no index itself.
 - **Predicates, scans by predicate, and statistics.** sm2 has
   no filter and counts nothing. Both are sm3's.
-- **Mapping many tables onto few relations.** An sm2 relation
-  is one sm1 relation. sm2 offers an opaque key prefix so sm3
-  can multiplex above it; the multiplexing is not sm2's.
+- **Mapping tables onto relations.** An sm2 relation is one sm1
+  relation. sm2 prepends a 2-byte object prefix chosen by sm3, so
+  a table's rows, indexes and TOAST data can share one sm1
+  relation; which prefix means what is sm3's.
 - A query language, a planner, or an executor.
 - Anything sm1 already does: transactions, isolation, locking,
   durability, recovery, garbage collection. sm2 calls them; it
@@ -159,8 +160,8 @@ These are settled and drive `DESIGN.md`.
 
 ## Decided questions
 
-Five questions about the encoding, decided in `QUESTIONS.md`
-§1 before anything is written to disk. They are sm2's and not
+Five questions about the encoding, decided in `DESIGN.md`
+before anything is written to disk. They are sm2's and not
 sm3's because they are about the encoding, even though it is
 sm3's indexes that feel them most.
 
@@ -171,26 +172,25 @@ sm3's indexes that feel them most.
   Refuse it, pick a default, or keep a second variable-width
   representation for it?
 
-  *Decided: a default of `number(38, 10)`* (`QUESTIONS.md`
-  1.1). A bare `number` has 28 integer digits and 10
-  fractional. A datum with more fractional digits is rounded
-  to 10, as PostgreSQL rounds for a declared typmod; one whose
-  integer part needs more than 28 digits is an error.
-  `number(p)` means `number(p, 0)`. The cost is accepted
-  knowingly: a datum a user believed exact can lose digits
-  past the tenth fractional place without an error. A second
-  variable-width representation is rejected, because it means
-  two `number`s on disk with two key encodings and two
-  comparison paths, which is most of what §2.2 was avoiding.
-  PostgreSQL's `NUMERIC` and `DECIMAL` are not accepted at all
-  (`QUESTIONS.md` 2.4), so a schema ported from PostgreSQL
+  *Decided: a default of `number(38, 10)`* (`DESIGN.md` §2.2). A
+  bare `number` has 28 integer digits and 10 fractional. A datum
+  with more fractional digits is rounded to 10, as PostgreSQL
+  rounds for a declared typmod; one whose integer part needs more
+  than 28 digits is an error. `number(p)` means `number(p, 0)`.
+  The cost is accepted knowingly: a datum a user believed exact
+  can lose digits past the tenth fractional place without an
+  error. A second variable-width representation is rejected,
+  because it means two `number`s on disk with two key encodings
+  and two comparison paths, which is most of what §2.2 was
+  avoiding. PostgreSQL's `NUMERIC` and `DECIMAL` are not accepted
+  at all (`DESIGN.md` §2.2), so a schema ported from PostgreSQL
   declares `number(p, s)` in their place.
 
 - **`number` NaN and infinity.** PG's numeric has both; an
   Arrow decimal is an integer and has neither. Refuse them,
   or reserve values?
 
-  *Decided: refuse them* (`QUESTIONS.md` 1.2). A NaN or an
+  *Decided: refuse them* (`DESIGN.md` §2.2). A NaN or an
   infinity is rejected on insert with a clear error, and no
   value is reserved as a sentinel. The door stays open: a
   precision of 38 digits does not reach the 128-bit limit, nor
@@ -205,7 +205,7 @@ sm3's indexes that feel them most.
   and recheck, or reject?
 
   *Decided: reject for the primary key, truncate and recheck for
-  a secondary index, never hash* (`QUESTIONS.md` 1.3). The
+  a secondary index, never hash* (`DESIGN.md` §3.2). The
   primary key is the row's identity and the relation's key, so it
   must be exact: an encoded primary key over a fixed limit is
   refused when the row is written, which is what PostgreSQL does
@@ -220,7 +220,7 @@ sm3's indexes that feel them most.
   index can no longer promise order among entries that share a
   prefix, and a unique check must compare originals over the
   prefix range rather than trust key equality, treating NULLs as
-  distinct (`QUESTIONS.md` 3.5). A hash is out, because it keeps
+  distinct (`sm3/DESIGN.md` §3). A hash is out, because it keeps
   equality but destroys order, and an index that cannot serve a
   range or an `ORDER BY` is not worth having. The budget for the
   sort key is `4096` less the length of the encoded primary key,
@@ -234,7 +234,7 @@ sm3's indexes that feel them most.
   refuse, or rebuild?
 
   *Decided: pin the library so it rarely differs, and refuse on a
-  mismatch, with an explicit rebuild* (`QUESTIONS.md` 1.4). Link
+  mismatch, with an explicit rebuild* (`DESIGN.md` §3.3). Link
   a specific ICU version into the server instead of using
   whatever the operating system has, so a mismatch happens only
   when the operator upgrades on purpose. When it does happen,
@@ -254,7 +254,7 @@ sm3's indexes that feel them most.
   Support or refuse?
 
   *Decided: refuse at first, and design so that accepting them
-  later needs no format change* (`QUESTIONS.md` 1.5). Under a
+  later needs no format change* (`DESIGN.md` §3.3). Under a
   non-deterministic collation two different strings can compare
   equal, and the sort key is the same for both, so a unique check
   on the sort key gives the right answer. What gets hard is

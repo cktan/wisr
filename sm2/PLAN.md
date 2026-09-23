@@ -31,9 +31,9 @@ before them.
   as PG's three components (`DESIGN.md` §2.4).
 - A stable on-disk type code per type, assigned once.
 - Null and collation as properties of a column, not of a type.
-- The two `number` questions in `OBJECTIVE.md` — bare
-  `number`, and NaN and infinity — are decided; the codec
-  implements those answers.
+- The `number` rules in `DESIGN.md` §2.2: only
+  `number(p, s)`, a bare `number` is `number(38, 10)`, and NaN
+  and infinity are refused.
 
 **Verify:** for every type, a datum round trips through the
 in-memory representation, and the type's own comparison
@@ -55,8 +55,8 @@ ordered thing above rests on this, including sm3's indexes.
   timestamps, text (collation sort key).
 - Multi-column keys, ascending and descending per column,
   nulls first or last.
-- The three key questions in `OBJECTIVE.md` are decided; the
-  encoder implements them: refuse an over-long primary key,
+- The key rules in `DESIGN.md` §3.1–§3.3: a null marker on
+  every column, refuse an over-long primary key,
   truncate and flag an over-long secondary key, refuse a
   mismatched collation version, and carry the `deterministic`
   flag while refusing non-deterministic collations.
@@ -81,7 +81,7 @@ that calls it (`DESIGN.md` §4).
 - Null bitmap, fixed/variable split, alignment.
 - Schema version per row, so `ADD COLUMN` is O(1) and a dropped
   column does not shift the ones after it.
-- Chunking for large datums, below sm1's 64MB ceiling.
+- TOAST for large datums, below sm1's 64MB ceiling.
 
 **Verify:** a row written under schema version N reads correctly
 under N+1, N+2 and after a column drop; the golden-bytes test
@@ -96,7 +96,8 @@ The three above, joined to sm1.
 - `rel_insert`, `rel_read`, `rel_update`, `rel_delete`,
   `rel_read_latest`, `rel_scan`, `rel_scan_seek`, over the
   codec of step 3 rather than a second copy of it.
-- The key prefix sm3 multiplexes with, opaque to sm2.
+- The 2-byte object prefix, chosen by sm3, opaque to sm2
+  (`DESIGN.md` §5).
 - Errors from sm1 passed through, not translated —
   `SM_ERR_DUPKEY` and `SM_ERR_UPDATED` in particular.
 - Per-column decoding, so a reader that wants one column does
@@ -127,7 +128,7 @@ for the first scenario that needs it, not before.
 ## What is deliberately not here
 
 - No catalog, no secondary index, no predicate scan, no
-  statistics, and no mapping of many tables onto one relation.
+  statistics, and no choice of which prefix means what.
   All of it is `sm3/PLAN.md`.
 - No SQL, no planner, no executor.
 - No PostgreSQL dependency. `PART4.md` explains what the PG
