@@ -38,7 +38,7 @@ std::string dbname_key(const char *dbname) {
 
 /*
  * Create a database at path: the directory, CF:txn, CF:meta
- * with its initial contents, and the catalog CF:rel.0.
+ * with its initial contents, and the catalog CF:store.0.
  */
 int create_db(const std::string &path, rocksdb::DBOptions dbo) {
   // Create the directory and every column family, fresh only.
@@ -51,7 +51,7 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
       {rocksdb::kDefaultColumnFamilyName, rocksdb::ColumnFamilyOptions()},
       {WISR_CF_TXN, rocksdb::ColumnFamilyOptions()},
       {WISR_CF_META, rocksdb::ColumnFamilyOptions()},
-      {rel_cf_name(0), rel_cf_options()},
+      {store_cf_name(0), store_cf_options()},
   };
   std::vector<rocksdb::ColumnFamilyHandle *> handles;
   rocksdb::DB *db = nullptr;
@@ -73,7 +73,7 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
 
   // Seed CF:meta: format version and the allocators' leases. A
   // persisted lease of 0 resumes both allocators at 1 (§4.2),
-  // so relid 0 stays the catalog's.
+  // so storeid 0 stays the catalog's.
   std::string version, zero;
   put_be64(version, WISR_DB_VERSION);
   put_be64(zero, 0);
@@ -259,9 +259,9 @@ int lsdb(sm_env_t *env, sm_strlist_t **out) {
 
 namespace wisr {
 
-/* rel.<relid>, in decimal. */
-std::string rel_cf_name(uint64_t relid) {
-  return "rel." + std::to_string(relid);
+/* store.<storeid>, in decimal. */
+std::string store_cf_name(uint64_t storeid) {
+  return "store." + std::to_string(storeid);
 }
 
 /*
@@ -271,12 +271,12 @@ std::string rel_cf_name(uint64_t relid) {
  * row_cache: DeleteRange, which the tombstone purge uses, is not
  * supported with one (§8.3).
  */
-rocksdb::ColumnFamilyOptions rel_cf_options(db_t *db, uint64_t relid) {
+rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   // Start from default CF options.
   rocksdb::ColumnFamilyOptions cfo;
   // Attach the GC filter when opening a real database.
   if (db) {
-    cfo.compaction_filter_factory = gc_filter_factory(db, relid);
+    cfo.compaction_filter_factory = gc_filter_factory(db, storeid);
   }
   // Order versions by the wisr.version.v1 comparator.
   cfo.comparator = version_comparator();
@@ -314,12 +314,12 @@ int db_options(const sm_options_t *opt, rocksdb::DBOptions *out) {
   return 0;
 }
 
-/* Parse "rel.<relid>"; false if name is not a relation CF's. */
-static bool parse_rel_cf_name(const std::string &name, uint64_t *relid) {
-  // Require the "rel." prefix, a number, and a canonical spelling.
-  return name.compare(0, 4, "rel.") == 0 &&
-         sscanf(name.c_str() + 4, "%" SCNu64, relid) == 1 &&
-         rel_cf_name(*relid) == name;
+/* Parse "store.<storeid>"; false if name is not a store CF's. */
+static bool parse_store_cf_name(const std::string &name, uint64_t *storeid) {
+  // Require the "store." prefix, a number, and a canonical spelling.
+  return name.compare(0, 6, "store.") == 0 &&
+         sscanf(name.c_str() + 6, "%" SCNu64, storeid) == 1 &&
+         store_cf_name(*storeid) == name;
 }
 
 /*
@@ -383,12 +383,12 @@ db_t *db_open(const std::string &path, const char *dbname,
   std::unique_ptr<db_t> db(new db_t);
   db->name = dbname;
   std::vector<rocksdb::ColumnFamilyDescriptor> cfs;
-  // Give each relation CF its options, GC filter included.
+  // Give each store CF its options, GC filter included.
   for (const std::string &name : names) {
-    uint64_t relid;
-    // A relation CF: comparator, prefix extractor, GC filter.
-    if (parse_rel_cf_name(name, &relid)) {
-      cfs.emplace_back(name, rel_cf_options(db.get(), relid));
+    uint64_t storeid;
+    // A store CF: comparator, prefix extractor, GC filter.
+    if (parse_store_cf_name(name, &storeid)) {
+      cfs.emplace_back(name, store_cf_options(db.get(), storeid));
     } else {
       // A fixed CF: default options.
       cfs.emplace_back(name, rocksdb::ColumnFamilyOptions());
@@ -407,7 +407,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   // Sort each handle into its slot by name.
   for (size_t i = 0; i < handles.size(); i++) {
     const std::string &name = names[i];
-    uint64_t relid;
+    uint64_t storeid;
     // The default CF, unused but always present.
     if (name == rocksdb::kDefaultColumnFamilyName) {
       db->cf_default = handles[i];
@@ -417,9 +417,9 @@ db_t *db_open(const std::string &path, const char *dbname,
       // The bootstrap state.
     } else if (name == WISR_CF_META) {
       db->cf_meta = handles[i];
-      // A relation's CF.
-    } else if (parse_rel_cf_name(name, &relid)) {
-      db->rels[relid] = handles[i];
+      // A store's CF.
+    } else if (parse_store_cf_name(name, &storeid)) {
+      db->stores[storeid] = handles[i];
     } else {
       // Unknown CF: release its handle and fail the open.
       db->rdb->DestroyColumnFamilyHandle(handles[i]);
@@ -427,7 +427,7 @@ db_t *db_open(const std::string &path, const char *dbname,
     }
   }
   // Require the fixed CFs and the catalog.
-  if (bad_name || !db->cf_txn || !db->cf_meta || !db->rels.count(0)) {
+  if (bad_name || !db->cf_txn || !db->cf_meta || !db->stores.count(0)) {
     set_error(SM_ERR_CORRUPT, "{}: unexpected column families", dbname);
     return nullptr;
   }
@@ -599,7 +599,7 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
   }
 }
 
-/* Allocate an object id: a relid or a seqid. */
+/* Allocate an object id: a storeid or a seqid. */
 int db_alloc_objid(db_t *db, uint64_t *out) {
   return alloc_leased(db, &db->next_objid, &db->objid_limit,
                       WISR_META_NEXT_OBJID, out);
@@ -684,53 +684,53 @@ void db_forget_seq(db_t *db, uint64_t seqid) {
   }
 }
 
-/* Look up relid's CF handle under the shared lock. */
-rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t relid) {
-  // Hold rel_mu shared while reading the map.
-  std::shared_lock<std::shared_mutex> guard(db->rel_mu);
-  // Look up relid's handle.
-  auto it = db->rels.find(relid);
-  return it == db->rels.end() ? nullptr : it->second;
+/* Look up storeid's CF handle under the shared lock. */
+rocksdb::ColumnFamilyHandle *db_store_cf(db_t *db, uint64_t storeid) {
+  // Hold store_mu shared while reading the map.
+  std::shared_lock<std::shared_mutex> guard(db->store_mu);
+  // Look up storeid's handle.
+  auto it = db->stores.find(storeid);
+  return it == db->stores.end() ? nullptr : it->second;
 }
 
-/* Create rel.<relid> and register its handle. */
-int db_create_rel_cf(db_t *db, uint64_t relid) {
+/* Create store.<storeid> and register its handle. */
+int db_create_store_cf(db_t *db, uint64_t storeid) {
   rocksdb::ColumnFamilyHandle *h = nullptr;
-  // Create the relation's column family; this is not transactional.
-  rocksdb::Status s = db->rdb->CreateColumnFamily(rel_cf_options(db, relid),
-                                                  rel_cf_name(relid), &h);
+  // Create the store's column family; this is not transactional.
+  rocksdb::Status s = db->rdb->CreateColumnFamily(store_cf_options(db, storeid),
+                                                  store_cf_name(storeid), &h);
   // Fail if RocksDB could not create it.
   if (!s.ok()) {
     return set_status_error(s, "create column family");
   }
-  // Hold rel_mu exclusively while registering it.
-  std::unique_lock<std::shared_mutex> guard(db->rel_mu);
+  // Hold store_mu exclusively while registering it.
+  std::unique_lock<std::shared_mutex> guard(db->store_mu);
   // Register the handle.
-  db->rels[relid] = h;
+  db->stores[storeid] = h;
   return 0;
 }
 
-/* Drop rel.<relid> and unregister its handle. */
-int db_drop_rel_cf(db_t *db, uint64_t relid) {
-  // Hold rel_mu exclusively while dropping.
-  std::unique_lock<std::shared_mutex> guard(db->rel_mu);
-  // Look up relid's handle.
-  auto it = db->rels.find(relid);
+/* Drop store.<storeid> and unregister its handle. */
+int db_drop_store_cf(db_t *db, uint64_t storeid) {
+  // Hold store_mu exclusively while dropping.
+  std::unique_lock<std::shared_mutex> guard(db->store_mu);
+  // Look up storeid's handle.
+  auto it = db->stores.find(storeid);
   // Already gone: nothing to do.
-  if (it == db->rels.end()) {
+  if (it == db->stores.end()) {
     return 0;
   }
-  // Drop the relation's column family.
+  // Drop the store's column family.
   rocksdb::Status s = db->rdb->DropColumnFamily(it->second);
   // Release the handle either way.
   db->rdb->DestroyColumnFamilyHandle(it->second);
   // Unregister it.
-  db->rels.erase(it);
+  db->stores.erase(it);
   // Report a failed drop; most callers cannot act on it, so log it.
   if (!s.ok()) {
     log_msg(SM_LOG_ERROR,
-            "database {}: dropping column family rel.{} failed: {}",
-            db->name.c_str(), relid, s.ToString().c_str());
+            "database {}: dropping column family store.{} failed: {}",
+            db->name.c_str(), storeid, s.ToString().c_str());
     return set_status_error(s, "drop column family");
   }
   return 0;
@@ -761,8 +761,8 @@ wisr::db_t::~db_t() {
   }
   // Wait out running compactions, whose filters read the handles.
   rocksdb::CancelAllBackgroundWork(rdb, true);
-  // Destroy every relation CF handle.
-  for (auto &kv : rels) {
+  // Destroy every store CF handle.
+  for (auto &kv : stores) {
     rdb->DestroyColumnFamilyHandle(kv.second);
   }
   // Destroy the fixed CF handles.

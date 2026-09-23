@@ -1,11 +1,11 @@
-# b32 -- two transactions dropping the same relation.
+# b32 -- two transactions dropping the same store.
 #
-# A drop is a write of the catalog row naming the relation, so
+# A drop is a write of the catalog row naming the store, so
 # it takes that row's lock and is judged like any other write.
-# T2 waits on T1 rather than dropping a relation twice, and
-# once T1 commits it loses first-committer-wins: the relation
+# T2 waits on T1 rather than dropping a store twice, and
+# once T1 commits it loses first-committer-wins: the store
 # is gone, but T2 is told it lost a race, not that the
-# relation never existed. b05 is the same answer for a row.
+# store never existed. b05 is the same answer for a row.
 
 pairings all
 session T1
@@ -14,8 +14,8 @@ seed R1 0
 
 @1 T1 begin
 @1 T2 begin
-@2 T1 rmrel
-@3 T2 rmrel blocks
+@2 T1 rmstore
+@3 T2 rmstore blocks
 @4 T1 commit
 @5 check last T2 conflict
 @6 T2 begin

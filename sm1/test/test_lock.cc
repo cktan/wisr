@@ -8,7 +8,7 @@
  * script cannot say: error codes and argument handling, engine
  * state a script cannot see, contention run under load, and
  * the index-build protocol, which needs a write to a second
- * relation the driver's language has no verb for.
+ * store the driver's language has no verb for.
  */
 
 #include "doctest.h"
@@ -25,20 +25,20 @@
 
 namespace {
 
-/* The fixture's relation, set when the fixture is created. */
-uint64_t g_rel = 0;
+/* The fixture's store, set when the fixture is created. */
+uint64_t g_store = 0;
 
-/* A database "db" with one relation holding "x" -> "0", "y" -> "0". */
+/* A database "db" with one store holding "x" -> "0", "y" -> "0". */
 class lock_fixture_t {
 public:
-  /* Create "db", the relation, and the two rows. */
+  /* Create "db", the store, and the two rows. */
   lock_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     sm_session_t *s = open();
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    g_rel = mkrel(s);
-    put(s, g_rel, "x", "0");
-    put(s, g_rel, "y", "0");
+    g_store = mkstore(s);
+    put(s, g_store, "x", "0");
+    put(s, g_store, "y", "0");
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_closedb(s) == 0);
   }
@@ -54,9 +54,9 @@ private:
   home_t m_home;
 };
 
-/* Set key in relation 1 to val; the result of sm_update. */
+/* Set key in store 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size(),
+  return sm_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
                    nullptr, nullptr);
 }
 
@@ -80,8 +80,8 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
     sm_session_t *b = f.open();
     REQUIRE(sm_begin(a, level) == 0);
     REQUIRE(sm_begin(b, level) == 0);
-    CHECK(get(a, g_rel, "x") == "0");
-    CHECK(get(b, g_rel, "x") == "0");
+    CHECK(get(a, g_store, "x") == "0");
+    CHECK(get(b, g_store, "x") == "0");
     REQUIRE(set(a, "x", "a") == 0);
     REQUIRE(sm_commit(a) == 0);
     CHECK(set(b, "x", "b") == -1);
@@ -110,13 +110,13 @@ TEST_CASE("read committed sees a newer commit and re-reads it to overwrite") {
   REQUIRE(set(u, "x", "u") == 0);
   REQUIRE(sm_commit(u) == 0);
 
-  CHECK(get(t, g_rel, "x") == "u");
-  CHECK(get(t, g_rel, "y") == "t");
+  CHECK(get(t, g_store, "x") == "u");
+  CHECK(get(t, g_store, "y") == "t");
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm_errno() == SM_ERR_UPDATED);
   const char *d = nullptr;
   size_t dl = 0;
-  REQUIRE(sm_read_latest(t, g_rel, "x", 1, &d, &dl) == 0);
+  REQUIRE(sm_read_latest(t, g_store, "x", 1, &d, &dl) == 0);
   CHECK(std::string(d, dl) == "u");
   CHECK(set(t, "x", "t") == 0);
   REQUIRE(sm_commit(t) == 0);
@@ -126,16 +126,16 @@ TEST_CASE("read committed sees a newer commit and re-reads it to overwrite") {
 
 TEST_CASE("a retryable error aborts the transaction and releases everything") {
   // Verify the engine-side abort on SM_ERR_CONFLICT (§12.1).
-  // 1. T creates a relation, inserts into it, and locks "y".
+  // 1. T creates a store, inserts into it, and locks "y".
   // 2. U commits a change to "x"; T's update of "x" conflicts.
-  // 3. T's relation is gone, and another session can lock "y"
-  //    at once and create a relation itself.
+  // 3. T's store is gone, and another session can lock "y"
+  //    at once and create a store itself.
   lock_fixture_t f;
   sm_session_t *t = f.open();
   sm_session_t *u = f.open();
   REQUIRE(sm_begin(t, SM_XCT_REPEATABLE_READ) == 0);
-  uint64_t trel = mkrel(t);
-  put(t, trel, "k", "v");
+  uint64_t tstore = mkstore(t);
+  put(t, tstore, "k", "v");
   REQUIRE(set(t, "y", "t") == 0);
   REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(set(u, "x", "u") == 0);
@@ -147,30 +147,30 @@ TEST_CASE("a retryable error aborts the transaction and releases everything") {
   CHECK(set(u, "y", "u") == 0); // would block if T still held it
   const char *d;
   size_t dl;
-  CHECK(sm_read(u, trel, "k", 1, &d, &dl) == -1);
+  CHECK(sm_read(u, tstore, "k", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
-  CHECK(mkrel(u) > trel);
+  CHECK(mkstore(u) > tstore);
   REQUIRE(sm_commit(u) == 0);
   sm_closedb(t);
   sm_closedb(u);
 }
 
-TEST_CASE("concurrent sm_mkrel hands out a relid of its own to each") {
-  // Verify two transactions creating relations do not collide;
-  // the relids themselves are what no scenario script can see.
-  // 1. A and B each create a relation in their own transaction.
-  // 2. The relids differ, and both commit, since each writes a
+TEST_CASE("concurrent sm_mkstore hands out a storeid of its own to each") {
+  // Verify two transactions creating stores do not collide;
+  // the storeids themselves are what no scenario script can see.
+  // 1. A and B each create a store in their own transaction.
+  // 2. The storeids differ, and both commit, since each writes a
   //    catalog row of its own.
-  // The blocked half -- two transactions dropping ONE relation
+  // The blocked half -- two transactions dropping ONE store
   // -- is mvcc/in/b32_concurrent_drop_of_one_relation.t.
   lock_fixture_t f;
   sm_session_t *a = f.open();
   sm_session_t *b = f.open();
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  uint64_t arel = mkrel(a);
-  uint64_t brel = mkrel(b);
-  CHECK(arel != brel);
+  uint64_t astore = mkstore(a);
+  uint64_t bstore = mkstore(b);
+  CHECK(astore != bstore);
   REQUIRE(sm_commit(a) == 0);
   REQUIRE(sm_commit(b) == 0);
   sm_closedb(a);
@@ -191,12 +191,12 @@ TEST_CASE("a doomed transaction fails its next call and changes nothing") {
   t->doomed = SM_ERR_DEADLOCK;
   const char *d;
   size_t dl;
-  CHECK(sm_read(t, g_rel, "x", 1, &d, &dl) == -1);
+  CHECK(sm_read(t, g_store, "x", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_DEADLOCK);
   CHECK(sm_retryable() == 1);
 
   REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(u, g_rel, "x") == "0");
+  CHECK(get(u, g_store, "x") == "0");
   CHECK(set(u, "x", "u") == 0);
   REQUIRE(sm_commit(u) == 0);
   sm_closedb(t);
@@ -226,13 +226,13 @@ TEST_CASE("concurrent increments with retry never lose an update") {
           const char *d;
           size_t dl;
           int ok = sm_begin(s, level) == 0 &&
-                   sm_read(s, g_rel, "x", 1, &d, &dl) == 0;
+                   sm_read(s, g_store, "x", 1, &d, &dl) == 0;
           if (ok) {
             std::string v = std::to_string(std::stoi(std::string(d, dl)) + 1);
             ok = set(s, "x", v) == 0;
             // Read committed: re-read the newest value, add one again.
             if (!ok && sm_errno() == SM_ERR_UPDATED) {
-              ok = sm_read_latest(s, g_rel, "x", 1, &d, &dl) == 0;
+              ok = sm_read_latest(s, g_store, "x", 1, &d, &dl) == 0;
               v = std::to_string(std::stoi(std::string(d, dl)) + 1);
               ok = ok && set(s, "x", v) == 0;
             }
@@ -256,7 +256,7 @@ TEST_CASE("concurrent increments with retry never lose an update") {
     CHECK(errors == 0);
     sm_session_t *s = sessions[0];
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    CHECK(get(s, g_rel, "x") == "200");
+    CHECK(get(s, g_store, "x") == "200");
     REQUIRE(sm_commit(s) == 0);
     MESSAGE("retries: " << retries.load());
     for (sm_session_t *x : sessions) {
@@ -276,8 +276,8 @@ TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
   sm_session_t *b = f.open();
   REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_lock(a, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
-  REQUIRE(sm_lock(b, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(sm_lock(a, g_store, "x", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(sm_lock(b, g_store, "x", 1, SM_LOCK_SHARED) == 0);
 
   int rc_a = -2, rc_b = -2, err_b = 0;
   std::thread ta([&] { rc_a = set(a, "x", "a"); });
@@ -308,13 +308,13 @@ TEST_CASE("sm_lock fails with CONFLICT on a row committed after the snapshot") {
     sm_session_t *a = f.open();
     sm_session_t *b = f.open();
     REQUIRE(sm_begin(a, SM_XCT_REPEATABLE_READ) == 0);
-    CHECK(get(a, g_rel, "x") == "0");
+    CHECK(get(a, g_store, "x") == "0");
 
     REQUIRE(sm_begin(b, SM_XCT_REPEATABLE_READ) == 0);
     REQUIRE(set(b, "x", "b") == 0);
     REQUIRE(sm_commit(b) == 0);
 
-    CHECK(sm_lock(a, g_rel, "x", 1, mode) == -1);
+    CHECK(sm_lock(a, g_store, "x", 1, mode) == -1);
     CHECK(sm_errno() == SM_ERR_CONFLICT);
     CHECK(sm_retryable() == 1);
     CHECK(sm_abort(a) == -1);
@@ -328,12 +328,12 @@ TEST_CASE(
     "the index-build protocol blocks writers, then shows them the new schema") {
   // Verify SECINDEX.md gap 1's protocol end to end: a builder
   // cannot miss a concurrent writer's rows.
-  // 1. A catalog relation holds a schema row saying "no index".
+  // 1. A catalog store holds a schema row saying "no index".
   // 2. Writer W takes it shared, reads it, writes a base row,
   //    and commits.
   // 3. Builder B takes it exclusive by updating it. Writer X,
   //    beginning after B, blocks on the shared lock, so no
-  //    writer can run while B scans the base relation.
+  //    writer can run while B scans the base store.
   // 4. B sees W's row, publishes the index, and commits.
   // 5. X's shared lock is then granted at read committed, with no
   //    error; sm_read_latest gives it the new schema, so it
@@ -344,9 +344,9 @@ TEST_CASE(
   sm_session_t *b = f.open();
   sm_session_t *x = f.open();
 
-  // The layer's catalog: one schema row per base relation.
+  // The layer's catalog: one schema row per base store.
   REQUIRE(sm_begin(w, SM_XCT_REPEATABLE_READ) == 0);
-  uint64_t cat = mkrel(w);
+  uint64_t cat = mkstore(w);
   put(w, cat, "S", "noindex");
   REQUIRE(sm_commit(w) == 0);
 
@@ -354,7 +354,7 @@ TEST_CASE(
   REQUIRE(sm_begin(w, SM_XCT_READ_COMMITTED) == 0);
   REQUIRE(sm_lock(w, cat, "S", 1, SM_LOCK_SHARED) == 0);
   CHECK(get(w, cat, "S") == "noindex");
-  put(w, g_rel, "w-row", "1");
+  put(w, g_store, "w-row", "1");
   REQUIRE(sm_commit(w) == 0);
 
   // The builder takes the schema row exclusive.
@@ -374,7 +374,7 @@ TEST_CASE(
   CHECK_FALSE(returned);
 
   // The builder's scan sees the committed writer's row.
-  CHECK(get(b, g_rel, "w-row") == "1");
+  CHECK(get(b, g_store, "w-row") == "1");
   REQUIRE(sm_commit(b) == 0);
 
   // The blocked writer gets the lock, and reads the new schema.
@@ -392,25 +392,25 @@ TEST_CASE(
 
 TEST_CASE("sm_lock rejects bad arguments and needs a transaction") {
   // Verify the call's contract.
-  // 1. A NULL session, an unknown mode, and relid 0 are
-  //    SM_ERR_INVALID; an unknown relation is SM_ERR_NOTFOUND.
+  // 1. A NULL session, an unknown mode, and storeid 0 are
+  //    SM_ERR_INVALID; an unknown store is SM_ERR_NOTFOUND.
   // 2. Without a transaction it fails with SM_ERR_NOTRANS.
   // 3. A key that does not exist is lockable.
   lock_fixture_t f;
   sm_session_t *s = f.open();
-  CHECK(sm_lock(nullptr, g_rel, "x", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_lock(nullptr, g_store, "x", 1, SM_LOCK_SHARED) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_lock(s, g_rel, "x", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_lock(s, g_store, "x", 1, SM_LOCK_SHARED) == -1);
   CHECK(sm_errno() == SM_ERR_NOTRANS);
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(sm_lock(s, g_rel, "x", 1, (sm_lockmode_t)7) == -1);
+  CHECK(sm_lock(s, g_store, "x", 1, (sm_lockmode_t)7) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
   CHECK(sm_lock(s, 0, "x", 1, SM_LOCK_SHARED) == -1);
   CHECK(sm_errno() == SM_ERR_INVALID);
-  CHECK(sm_lock(s, g_rel + 999, "x", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_lock(s, g_store + 999, "x", 1, SM_LOCK_SHARED) == -1);
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
-  CHECK(sm_lock(s, g_rel, "absent", 6, SM_LOCK_EXCLUSIVE) == 0);
+  CHECK(sm_lock(s, g_store, "absent", 6, SM_LOCK_EXCLUSIVE) == 0);
   REQUIRE(sm_commit(s) == 0);
   sm_closedb(s);
 }

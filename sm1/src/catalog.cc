@@ -1,20 +1,20 @@
 /*
- * catalog.cc -- relations: lookup, sm_mkrel, sm_rmrel,
- * sm_lsrel (DESIGN.md §11).
+ * catalog.cc -- stores: lookup, sm_mkstore, sm_rmstore,
+ * sm_lsstore (DESIGN.md §11).
  *
- * The catalog is relid 0, an ordinary MVCC relation keyed
- * "R" | be64(relid) with an empty value, so DDL is
+ * The catalog is storeid 0, an ordinary MVCC store keyed
+ * "R" | be64(storeid) with an empty value, so DDL is
  * transactional by going through the ordinary write path. The
- * row records that the relation exists; the relid itself names
- * the column family, CF:rel.<relid>. The design's created_ts
+ * row records that the store exists; the storeid itself names
+ * the column family, CF:store.<storeid>. The design's created_ts
  * field is left out: nothing reads it.
  *
- * sm_mkrel allocates the relid from the lease in CF:meta
- * (§4.2), so a relid is never reused and never names two
- * relations.
+ * sm_mkstore allocates the storeid from the lease in CF:meta
+ * (§4.2), so a storeid is never reused and never names two
+ * stores.
  *
- * No relid cache yet; every lookup reads CF:rel.0. A
- * committed sm_rmrel leaves its column family in place until
+ * No storeid cache yet; every lookup reads CF:store.0. A
+ * committed sm_rmstore leaves its column family in place until
  * the watermark passes the drop and GC removes it (§8.3).
  */
 
@@ -33,40 +33,40 @@ using namespace wisr;
 
 namespace {
 
-/* The catalog key of relid: "R" | be64(relid). */
-std::string catalog_key(uint64_t relid) {
+/* The catalog key of storeid: "R" | be64(storeid). */
+std::string catalog_key(uint64_t storeid) {
   std::string key("R");
-  put_be64(key, relid);
+  put_be64(key, storeid);
   return key;
 }
 
-/* sm_mkrel, minus the out-of-memory guard. */
-int mkrel(sm_session_t *s, uint64_t *out) {
+/* sm_mkstore, minus the out-of-memory guard. */
+int mkstore(sm_session_t *s, uint64_t *out) {
   // Require the out-parameter.
   if (!out) {
-    return set_error(SM_ERR_INVALID, "sm_mkrel: relid is NULL");
+    return set_error(SM_ERR_INVALID, "sm_mkstore: storeid is NULL");
   }
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  uint64_t relid;
-  // Refuse writes after fail-stop, then allocate the relid.
-  if (xct_check_writable(s->db) != 0 || db_alloc_objid(s->db, &relid) != 0) {
+  uint64_t storeid;
+  // Refuse writes after fail-stop, then allocate the storeid.
+  if (xct_check_writable(s->db) != 0 || db_alloc_objid(s->db, &storeid) != 0) {
     return -1;
   }
 
   // Create the column family eagerly, before the catalog row,
   // so this transaction can write into it at once (§11).
-  if (db_create_rel_cf(s->db, relid) != 0) {
+  if (db_create_store_cf(s->db, storeid) != 0) {
     return -1;
   }
   // Remember the CF, so abort or rollback drops it.
-  s->created.push_back(relid);
+  s->created.push_back(storeid);
 
   // Insert the catalog row through the ordinary write path. The
-  // relid is fresh, so no other transaction can be writing it.
-  if (access_write(s, 0, WRITE_INSERT, catalog_key(relid), rocksdb::Slice(),
+  // storeid is fresh, so no other transaction can be writing it.
+  if (access_write(s, 0, WRITE_INSERT, catalog_key(storeid), rocksdb::Slice(),
                    nullptr) != 0) {
     // A retryable error already aborted the transaction.
     if (!s->active) {
@@ -74,49 +74,49 @@ int mkrel(sm_session_t *s, uint64_t *out) {
     }
     // Undo the eager CF creation.
     s->created.pop_back();
-    db_drop_rel_cf(s->db, relid);
+    db_drop_store_cf(s->db, storeid);
     return -1;
   }
-  *out = relid;
+  *out = storeid;
   return 0;
 }
 
-/* sm_rmrel, minus the out-of-memory guard. */
-int rmrel(sm_session_t *s, uint64_t relid) {
+/* sm_rmstore, minus the out-of-memory guard. */
+int rmstore(sm_session_t *s, uint64_t storeid) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Reject relid 0, the catalog's own slot.
-  if (relid == 0) {
-    return set_error(SM_ERR_INVALID, "relid 0 is not a relation");
+  // Reject storeid 0, the catalog's own slot.
+  if (storeid == 0) {
+    return set_error(SM_ERR_INVALID, "storeid 0 is not a store");
   }
-  // Resolve the relid at the transaction's view.
-  int r = catalog_lookup(s, xct_view(s), relid);
+  // Resolve the storeid at the transaction's view.
+  int r = catalog_lookup(s, xct_view(s), storeid);
   // Fail on a lookup error.
   if (r < 0) {
     return -1;
   }
-  // Refuse a relid that is not live.
+  // Refuse a storeid that is not live.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "relation {} does not exist", relid);
+    return set_error(SM_ERR_NOTFOUND, "store {} does not exist", storeid);
   }
   // Delete the catalog row; the column family stays until no
-  // snapshot can still read the relation (§8.3).
-  if (access_write(s, 0, WRITE_DELETE, catalog_key(relid), rocksdb::Slice(),
+  // snapshot can still read the store (§8.3).
+  if (access_write(s, 0, WRITE_DELETE, catalog_key(storeid), rocksdb::Slice(),
                    nullptr) != 0) {
     return -1;
   }
-  // Remember the relid, so GC drops its CF after commit.
-  s->dropped.push_back(relid);
+  // Remember the storeid, so GC drops its CF after commit.
+  s->dropped.push_back(storeid);
   return 0;
 }
 
-/* sm_lsrel, minus the out-of-memory guard. */
-int lsrel(sm_session_t *s, uint64_t **out, size_t *n) {
+/* sm_lsstore, minus the out-of-memory guard. */
+int lsstore(sm_session_t *s, uint64_t **out, size_t *n) {
   // Require the out-parameters.
   if (!out || !n) {
-    return set_error(SM_ERR_INVALID, "sm_lsrel: out or n is NULL");
+    return set_error(SM_ERR_INVALID, "sm_lsstore: out or n is NULL");
   }
   // Report an empty list until one is built.
   *out = nullptr;
@@ -138,7 +138,7 @@ int lsrel(sm_session_t *s, uint64_t **out, size_t *n) {
   const char *key, *data;
   size_t klen, datalen;
   int r;
-  // Collect the relid of each live catalog row, in order.
+  // Collect the storeid of each live catalog row, in order.
   while ((r = sm_scannxt(c, &key, &klen, &data, &datalen)) == 0) {
     // Reject a malformed catalog key.
     if (klen != 9) {
@@ -158,7 +158,7 @@ int lsrel(sm_session_t *s, uint64_t **out, size_t *n) {
   uint64_t *list =
       static_cast<uint64_t *>(malloc(ids.size() * sizeof(uint64_t)));
   if (!list) {
-    return set_error(SM_ERR_NOMEM, "sm_lsrel: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm_lsstore: out of memory");
   }
   memcpy(list, ids.data(), ids.size() * sizeof(uint64_t));
   *out = list;
@@ -171,43 +171,43 @@ int lsrel(sm_session_t *s, uint64_t **out, size_t *n) {
 namespace wisr {
 
 /* A point read of the catalog row at view. */
-int catalog_lookup(sm_session_t *s, const view_t &view, uint64_t relid) {
+int catalog_lookup(sm_session_t *s, const view_t &view, uint64_t storeid) {
   std::string val;
-  // Read the catalog row at view: 0 if the relation is live.
-  return access_read(s, 0, view, catalog_key(relid), &val);
+  // Read the catalog row at view: 0 if the store is live.
+  return access_read(s, 0, view, catalog_key(storeid), &val);
 }
 
 } // namespace wisr
 
-/* Create a relation and hand out its relid. */
-int sm_mkrel(sm_session_t *session, uint64_t *relid) {
+/* Create a store and hand out its storeid. */
+int sm_mkstore(sm_session_t *session, uint64_t *storeid) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return mkrel(session, relid);
+    return mkstore(session, storeid);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_mkrel: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm_mkstore: out of memory");
   }
 }
 
-/* Drop a relation and all of its rows. */
-int sm_rmrel(sm_session_t *session, uint64_t relid) {
+/* Drop a store and all of its rows. */
+int sm_rmstore(sm_session_t *session, uint64_t storeid) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return rmrel(session, relid);
+    return rmstore(session, storeid);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_rmrel: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm_rmstore: out of memory");
   }
 }
 
-/* List the relations visible to the transaction. */
-int sm_lsrel(sm_session_t *session, uint64_t **out, size_t *n) {
+/* List the stores visible to the transaction. */
+int sm_lsstore(sm_session_t *session, uint64_t **out, size_t *n) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return lsrel(session, out, n);
+    return lsstore(session, out, n);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm_lsrel: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm_lsstore: out of memory");
   }
 }
 
-/* Release a list from sm_lsrel(). */
-void sm_free_rels(uint64_t *list) { free(list); }
+/* Release a list from sm_lsstore(). */
+void sm_free_stores(uint64_t *list) { free(list); }

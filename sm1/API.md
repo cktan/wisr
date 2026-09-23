@@ -36,9 +36,9 @@ typedef enum {
     SM_ERR_NOSAVEPOINT   = 5,   /* no savepoint at the given depth */
 
     /* data errors */
-    SM_ERR_NOTFOUND      = 6,   /* relation or key does not exist */
+    SM_ERR_NOTFOUND      = 6,   /* store or key does not exist */
     SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
-    SM_ERR_EXISTS        = 8,   /* home dir, database, or relation exists */
+    SM_ERR_EXISTS        = 8,   /* home dir, database, or store exists */
     SM_ERR_INUSE         = 9,   /* database or sessions still open */
 
     /* concurrency errors — RETRYABLE */
@@ -345,7 +345,7 @@ reads, no lost updates, no non-repeatable reads, no
 phantoms — but write skew is possible. Callers that cannot
 tolerate write skew must use `SM_XCT_SERIALIZABLE`.
 
-DDL is transactional. `sm_mkrel`, `sm_rmrel`, `sm_mkseq`,
+DDL is transactional. `sm_mkstore`, `sm_rmstore`, `sm_mkseq`,
 and `sm_rmseq` take effect at commit and roll back with the
 transaction. The values `sm_nextseq` hands out do not.
 
@@ -632,7 +632,7 @@ has just read; `sm_read_latest` then gives the newest version.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
-### int sm_lock(sm_session_t* session, uint64_t relid, const char* key, size_t klen, sm_lockmode_t mode)
+### int sm_lock(sm_session_t* session, uint64_t storeid, const char* key, size_t klen, sm_lockmode_t mode)
 
 ```c
 typedef enum {
@@ -678,7 +678,7 @@ resolves it.
 
 Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_NOTFOUND` (no such
-relation), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+store), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_INVALID`.
 
 ### int sm_savepoint(sm_session_t* session)
@@ -851,67 +851,67 @@ transaction with that `gid`), `SM_ERR_DISKFULL`,
 
 ## Rel API
 
-A relation is an ordered map from key to value, named by a
-`uint64_t` relid that the library allocates. Relid 0 is the
-catalog's own slot, never a relation: every call given it
+A store is an ordered map from key to value, named by a
+`uint64_t` storeid that the library allocates. Relid 0 is the
+catalog's own slot, never a store: every call given it
 fails with `SM_ERR_INVALID`.
 
-### int sm_mkrel(sm_session_t* session, uint64_t* relid)
+### int sm_mkstore(sm_session_t* session, uint64_t* storeid)
 
-Create a relation and hand out its relid in `*relid`.
+Create a store and hand out its storeid in `*storeid`.
 Transactional: visible to others only at commit, and undone
-by abort or by a rollback that spans it. A relid from a
+by abort or by a rollback that spans it. A storeid from a
 transaction that aborts is simply never used.
 
-A relid is never reused, so it never names two relations,
-and one dropped by `sm_rmrel` never comes back. Relids rise
-in creation order, so the lowest one `sm_lsrel` lists is the
-first relation the database ever had — which is how a
-program finds its own catalog relation again after a
+A storeid is never reused, so it never names two stores,
+and one dropped by `sm_rmstore` never comes back. Storeids rise
+in creation order, so the lowest one `sm_lsstore` lists is the
+first store the database ever had — which is how a
+program finds its own catalog store again after a
 restart.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_CONFLICT` (retryable),
-`SM_ERR_INVALID` (NULL `relid`), `SM_ERR_PREPARED`,
+`SM_ERR_INVALID` (NULL `storeid`), `SM_ERR_PREPARED`,
 `SM_ERR_DISKFULL`, `SM_ERR_IO`.
 
-### int sm_rmrel(sm_session_t* session, uint64_t relid)
+### int sm_rmstore(sm_session_t* session, uint64_t storeid)
 
-Drop a relation and all of its rows. Transactional, as
-`sm_mkrel`.
+Drop a store and all of its rows. Transactional, as
+`sm_mkstore`.
 
 Space is not reclaimed at commit — transactions holding an
-older snapshot may still legitimately read the relation.
+older snapshot may still legitimately read the store.
 Physical removal happens in the background once no snapshot
 can see it.
 
 Errors: `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`,
-`SM_ERR_CONFLICT` (retryable), `SM_ERR_INVALID` (relid 0),
+`SM_ERR_CONFLICT` (retryable), `SM_ERR_INVALID` (storeid 0),
 `SM_ERR_PREPARED`.
 
-A relation dropped and committed stays readable by a
+A store dropped and committed stays readable by a
 transaction whose snapshot predates the drop, through the
-same relid.
+same storeid.
 
-### int sm_lsrel(sm_session_t* session, uint64_t** out, size_t* n)
+### int sm_lsstore(sm_session_t* session, uint64_t** out, size_t* n)
 
-List the relids of the relations the transaction sees, in
+List the storeids of the stores the transaction sees, in
 ascending order. It reads the catalog as `sm_scan` reads a
-relation: at the transaction's snapshot, including its own
+store: at the transaction's snapshot, including its own
 uncommitted DDL. Under `SM_XCT_SERIALIZABLE` the whole list
-is recorded as read, so a concurrent `sm_mkrel` or
-`sm_rmrel` is a read-write conflict.
+is recorded as read, so a concurrent `sm_mkstore` or
+`sm_rmstore` is a read-write conflict.
 
-On success `*out` points to `*n` relids allocated by the
-library; release them with `sm_free_rels`. `*n` may be 0, in
+On success `*out` points to `*n` storeids allocated by the
+library; release them with `sm_free_stores`. `*n` may be 0, in
 which case `*out` is NULL.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_INVALID`, `SM_ERR_NOMEM`, `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
-### void sm_free_rels(uint64_t* list)
+### void sm_free_stores(uint64_t* list)
 
-Release a list from `sm_lsrel`. NULL is a no-op.
+Release a list from `sm_lsstore`. NULL is a no-op.
 
 ---
 
@@ -936,8 +936,8 @@ int sm_nextseq(sm_session_t* session, const char* name,
                uint64_t* out);
 ```
 
-`sm_mkseq` and `sm_rmseq` are transactional, like `sm_mkrel`
-and `sm_rmrel`: they need an active transaction, take effect
+`sm_mkseq` and `sm_rmseq` are transactional, like `sm_mkstore`
+and `sm_rmstore`: they need an active transaction, take effect
 at commit, and roll back with it. The name is a
 NUL-terminated string of at most `SM_MAX_SEQNAME` bytes, and
 `increment` must not be 0. A name used again after a drop is
@@ -983,16 +983,16 @@ blocked call can return `SM_ERR_DEADLOCK` if it is selected
 as the victim of a deadlock cycle.
 
 ```c
-int sm_insert(sm_session_t* session, uint64_t relid,
+int sm_insert(sm_session_t* session, uint64_t storeid,
               const char* key, size_t klen,
               const char* data, size_t datalen);
 
-int sm_update(sm_session_t* session, uint64_t relid,
+int sm_update(sm_session_t* session, uint64_t storeid,
               const char* key, size_t klen,
               const char* data, size_t datalen,
               const char** old, size_t* oldlen);
 
-int sm_delete(sm_session_t* session, uint64_t relid,
+int sm_delete(sm_session_t* session, uint64_t storeid,
               const char* key, size_t klen,
               const char** old, size_t* oldlen);
 ```
@@ -1027,7 +1027,7 @@ NULL.
 Errors for all three: `SM_ERR_CONFLICT` /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_UPDATED` (READ
 COMMITTED; not retryable, the transaction stays active; call
-`sm_read_latest`, then write again), `SM_ERR_NOTFOUND` (relation
+`sm_read_latest`, then write again), `SM_ERR_NOTFOUND` (store
 or, for update/delete, key), `SM_ERR_DUPKEY` (insert),
 `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`,
 `SM_ERR_DISKFULL`, `SM_ERR_IO`.
@@ -1043,7 +1043,7 @@ caller takes one deliberately. They cannot return
 contribute to an `SM_ERR_SERIALIZATION` failure later, at
 commit.
 
-### int sm_read(sm_session_t* session, uint64_t relid, const char* key, size_t klen, const char** data, size_t* datalen)
+### int sm_read(sm_session_t* session, uint64_t storeid, const char* key, size_t klen, const char** data, size_t* datalen)
 
 Read one key.
 
@@ -1053,12 +1053,12 @@ above. Returns **1** if the key does not exist, leaving
 `*data` NULL and `*datalen` 0; this is not an error and
 does not set the error state. Returns **-1** on error.
 
-Errors: `SM_ERR_NOTFOUND` (the *relation* does not exist —
+Errors: `SM_ERR_NOTFOUND` (the *store* does not exist —
 a missing key returns 1, not an error), `SM_ERR_NOTRANS`,
 `SM_ERR_PREPARED`, `SM_ERR_INVALID`, `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
-### int sm_read_latest(sm_session_t* session, uint64_t relid, const char* key, size_t klen, const char** data, size_t* datalen)
+### int sm_read_latest(sm_session_t* session, uint64_t storeid, const char* key, size_t klen, const char** data, size_t* datalen)
 
 Read the newest committed version of one key, ignoring the
 snapshot. Returns as `sm_read` does: **0** found, **1** no
@@ -1080,22 +1080,22 @@ second write after a savepoint rollback needs a fresh read.
 Typical use, for `UPDATE ... WHERE`:
 
 ```c
-rc = sm_update(s, rel, key, klen, newval, len, NULL, NULL);
+rc = sm_update(s, store, key, klen, newval, len, NULL, NULL);
 if (rc != 0 && sm_errno() == SM_ERR_UPDATED) {
-    sm_read_latest(s, rel, key, klen, &data, &n);
+    sm_read_latest(s, store, key, klen, &data, &n);
     /* re-check the WHERE clause; recompute newval from data */
-    rc = sm_update(s, rel, key, klen, newval, len, NULL, NULL);
+    rc = sm_update(s, store, key, klen, newval, len, NULL, NULL);
 }
 ```
 
-Errors: `SM_ERR_NOTFOUND` (the *relation* does not exist),
+Errors: `SM_ERR_NOTFOUND` (the *store* does not exist),
 `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`
 (not READ COMMITTED, or no lock held), `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
-### sm_scan_t* sm_scan(sm_session_t* session, uint64_t relid, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive)
+### sm_scan_t* sm_scan(sm_session_t* session, uint64_t storeid, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive)
 
-Open a cursor over the keys of `relid` in ascending
+Open a cursor over the keys of `storeid` in ascending
 bytewise order, from `skey` to `ekey`.
 
 - `skey == NULL` starts at the first key; `sklen` and
@@ -1109,14 +1109,14 @@ bytewise order, from `skey` to `ekey`.
 Both bounds are required (rather than only a start key)
 because under `SM_XCT_SERIALIZABLE` the range is the
 predicate that is tracked for conflicts. Scanning to the
-end of the relation and discarding rows in the caller
+end of the store and discarding rows in the caller
 records a far larger predicate and causes needless
 serialization failures.
 
 Scanning is **forward only**. Descending iteration is not
 supported, and is not a planned addition: no index serves a
 backward scan (`OBJECTIVE.md`). A caller that needs
-descending order keeps a second relation with inverted key
+descending order keeps a second store with inverted key
 bytes and scans that one forward.
 
 The cursor's view is fixed at this call (see "Isolation and
@@ -1131,7 +1131,7 @@ the thread using that session, and is invalidated by
 may be open on one session at once.
 
 Returns NULL on error: `SM_ERR_NOTFOUND` (no such
-relation), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+store), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_INVALID`, `SM_ERR_NOMEM`, `SM_ERR_IO`.
 
 ### int sm_scannxt(sm_scan_t* scan, const char** key, size_t* klen, const char** data, size_t* datalen)
@@ -1152,7 +1152,7 @@ Errors: `SM_ERR_CORRUPT`, `SM_ERR_IO`.
 ### int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen, int inclusive)
 
 Move an open cursor to `key`, so the next `sm_scannxt`
-returns from there. This is how a caller probes a relation
+returns from there. This is how a caller probes a store
 repeatedly — an index nested-loop join, an IN-list, a skip
 scan — without closing and reopening a cursor per probe.
 

@@ -19,7 +19,7 @@ decisions in `OBJECTIVE.md`:
 | Tuple format | null bitmap, fixed/variable split, a schema version stamp per row |
 | Tuple codec | an API of its own, with its own header and its own tests |
 | Row identity | `rowno`, a 64-bit number from a per-table sequence; the table is a heap and the primary key is an index (§5) |
-| `rel` | one sm1 relation, keys encoded and tuples decoded by sm2 |
+| `rel` | one sm1 store, keys encoded and tuples decoded by sm2 |
 | API shape | one tuple at a time; batching belongs where filters do (`sm3/DESIGN.md`) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
@@ -53,7 +53,7 @@ nothing that an IPC boundary would have made it cost.
 
 | sm1 gives sm2 | and the constraint it brings |
 | --- | --- |
-| relations as ordered key→value maps, clustered on the key | keys are ordered **bytewise only**; there is no comparator to install (`sm1/OBJECTIVE.md`) — so order has to be built into the encoding (§3) |
+| stores as ordered key→value maps, clustered on the key | keys are ordered **bytewise only**; there is no comparator to install (`sm1/OBJECTIVE.md`) — so order has to be built into the encoding (§3) |
 | opaque values of arbitrary bytes | the tuple layout is sm2's alone; sm1 never looks inside one (§4) |
 | transactions at RC / RR / SERIALIZABLE | sm2 opens none of its own; every `rel` call runs inside the caller's transaction (§5) |
 | `sm_update` / `sm_delete` returning the **old image** | `rel_update` / `rel_delete` can hand back the old *tuple*, which is what index maintenance above needs |
@@ -64,13 +64,13 @@ nothing that an IPC boundary would have made it cost.
 | `SM_MAX_KEYLEN` 4096, `SM_MAX_DATALEN` 64MB | an encoded index key must fit 4096 bytes, prefix included; a datum above the TOAST threshold is stored out of line (§4) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward; there are no mirror relations, and the fork's planner never asks for a backward scan (§3) |
 
-sm1 keeps one column family per relation and handles hundreds
+sm1 keeps one column family per store and handles hundreds
 to low thousands of them. sm3 gives each table one sm1
-relation, holding the table's rows, its indexes and its
+store, holding the table's rows, its indexes and its
 TOAST data, told apart by the 2-byte object prefix in
-§5. A `DROP TABLE` is then one `sm_rmrel`, sm1's O(1) column
+§5. A `DROP TABLE` is then one `sm_rmstore`, sm1's O(1) column
 family drop. The price is that the number of tables,
-partitions included, is bounded by how many relations sm1
+partitions included, is bounded by how many stores sm1
 handles; that is accepted for v1 (§7).
 
 ---
@@ -591,7 +591,7 @@ own TOAST pointer rather than PostgreSQL's (§2.1).
   read sets are linear in the keys it touches
   (`sm1/DESIGN.md` §13), and very large datums hurt LSM
   compaction, so the threshold is well below sm1's ceiling.
-  The TOAST data lives in the table's own sm1 relation, under
+  The TOAST data lives in the table's own sm1 store, under
   the object prefix `0xFFFF` (§5), so writing a row and its
   TOAST data is one atomic sm1 write, no chunk ever falls
   inside a scan of the rows or of an index, and `DROP TABLE`
@@ -601,13 +601,13 @@ own TOAST pointer rather than PostgreSQL's (§2.1).
 
 ## 5. The tuple relation
 
-*To be written.* sm1's relation is an ordered map of byte
-string to byte string. sm2's is that relation with the types
+*To be written.* sm1's store is an ordered map of byte
+string to byte string. sm2's is that store with the types
 put back: a row goes in as a tuple and comes out as a tuple,
 and §3 and §4 happen inside. It is the whole of sm2's API
 surface; §2 to §4 are what it is built out of.
 
-A `rel` is opened over exactly one sm1 relation, with three
+A `rel` is opened over exactly one sm1 store, with three
 things:
 
 - a **schema** — the ordered columns, their types and
@@ -617,7 +617,7 @@ things:
   prepended to every key sm2 writes and stripped from every
   key it reads. sm3 chooses the value and sm2 never interprets
   it, so sm2 never learns what a table is. It exists because
-  one sm1 relation holds one table and everything that belongs
+  one sm1 store holds one table and everything that belongs
   to it (`sm3/DESIGN.md` §4):
 
   | Prefix | Object |
@@ -736,7 +736,7 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
 - **Secondary indexes.** sm2 maintains no index. It gives sm3
   the two things index maintenance needs: the encoder (§3) and
   the old image as a tuple (§5).
-- **Object mapping.** Which sm1 relation holds a table, and
+- **Object mapping.** Which sm1 store holds a table, and
   which prefix each of its indexes gets, is sm3's; sm2 only
   prepends and strips the prefix (§5).
 - **The primary key.** sm2's table is a heap keyed by
@@ -784,7 +784,7 @@ Accepted so far:
 - **A primary key lookup is two reads.** The primary key index
   gives `rowno`, and the row is a second read (§5). A table
   clustered on its primary key would answer in one. Both keys
-  are in the same sm1 relation, and PostgreSQL pays the same
+  are in the same sm1 store, and PostgreSQL pays the same
   price, which its planner already costs.
 - **A primary key range scan loses locality.** Rows are in
   `rowno` order, roughly insertion order, so a range over the
@@ -816,7 +816,7 @@ Accepted so far:
 - **Every key column pays a null marker byte**, `NOT NULL`
   ones included (§3.1). It buys a key layout that no
   nullability change can rewrite.
-- **Tables are bounded by sm1's relation count.** One sm1
-  relation per table (§5) makes `DROP TABLE` O(1), and caps
+- **Tables are bounded by sm1's store count.** One sm1
+  store per table (§5) makes `DROP TABLE` O(1), and caps
   tables, partitions included, at the hundreds to low
-  thousands of relations sm1 handles. Accepted for v1.
+  thousands of stores sm1 handles. Accepted for v1.

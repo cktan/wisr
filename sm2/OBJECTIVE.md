@@ -29,7 +29,7 @@ sm2 the way sm2 is built on sm1 (`sm3/OBJECTIVE.md`).
   schema change without rewriting the table — encoded and
   decoded through a component with its own header, built and
   tested before the relation that uses it.
-- **A tuple relation.** sm1's relation with the types put
+- **A tuple relation.** sm1's store with the types put
   back: tuples in, tuples out, encoded and decoded by sm2,
   inside the caller's sm1 transaction.
 
@@ -43,10 +43,10 @@ sm2 the way sm2 is built on sm1 (`sm3/OBJECTIVE.md`).
   maintains no index itself.
 - **Predicates, scans by predicate, and statistics.** sm2 has
   no filter and counts nothing. Both are sm3's.
-- **Mapping tables onto relations.** An sm2 relation is one sm1
-  relation. sm2 prepends a 2-byte object prefix chosen by sm3, so
+- **Mapping tables onto stores.** An sm2 relation is one sm1
+  store. sm2 prepends a 2-byte object prefix chosen by sm3, so
   a table's rows, indexes and TOAST data can share one sm1
-  relation; which prefix means what is sm3's.
+  store; which prefix means what is sm3's.
 - A query language, a planner, or an executor.
 - Anything sm1 already does: transactions, isolation, locking,
   durability, recovery, garbage collection. sm2 calls them; it

@@ -97,13 +97,13 @@ int skip_version(sm_session_t *s, const version_t &v, const view_t &view) {
   return 0;
 }
 
-/* The CF of relid; its absence after a catalog hit is corruption. */
-rocksdb::ColumnFamilyHandle *rel_cf(db_t *db, uint64_t relid) {
-  // Look up the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, relid);
+/* The CF of storeid; its absence after a catalog hit is corruption. */
+rocksdb::ColumnFamilyHandle *store_cf(db_t *db, uint64_t storeid) {
+  // Look up the store's CF.
+  rocksdb::ColumnFamilyHandle *cf = db_store_cf(db, storeid);
   // The catalog named it, so a missing CF is corruption.
   if (!cf) {
-    set_error(SM_ERR_CORRUPT, "column family rel.{} is missing", relid);
+    set_error(SM_ERR_CORRUPT, "column family store.{} is missing", storeid);
   }
   return cf;
 }
@@ -132,7 +132,7 @@ int latest_version(sm_session_t *s, rocksdb::ColumnFamilyHandle *cf,
   // Stay within this userkey's versions.
   rocksdb::ReadOptions ro;
   ro.prefix_same_as_start = true;
-  // Open an iterator on the relation.
+  // Open an iterator on the store.
   std::unique_ptr<rocksdb::Iterator> it(s->db->rdb->NewIterator(ro, cf));
   // Walk every version of the key, newest first.
   for (it->Seek(version_bound(key, '\x00')); it->Valid(); it->Next()) {
@@ -205,29 +205,29 @@ int check_key(const char *key, size_t klen) {
 
 /*
  * Common entry checks for a data operation: a valid key, and a
- * relid that names a live relation at view.
+ * storeid that names a live store at view.
  */
-int enter(sm_session_t *s, const view_t &view, uint64_t relid, const char *key,
-          size_t klen) {
-  // Reject relid 0, which no relation has.
-  if (relid == 0) {
-    return set_error(SM_ERR_INVALID, "relid 0 is not a relation");
+int enter(sm_session_t *s, const view_t &view, uint64_t storeid,
+          const char *key, size_t klen) {
+  // Reject storeid 0, which no store has.
+  if (storeid == 0) {
+    return set_error(SM_ERR_INVALID, "storeid 0 is not a store");
   }
   // Validate the key.
   if (check_key(key, klen) != 0) {
     return -1;
   }
-  // Look the relation up at the view.
-  int r = catalog_lookup(s, view, relid);
-  // Report an unknown relation.
+  // Look the store up at the view.
+  int r = catalog_lookup(s, view, storeid);
+  // Report an unknown store.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "relation {} does not exist", relid);
+    return set_error(SM_ERR_NOTFOUND, "store {} does not exist", storeid);
   }
   return r;
 }
 
 /* sm_insert / sm_update / sm_delete, minus the out-of-memory guard. */
-int write_row(sm_session_t *s, write_op_t op, uint64_t relid, const char *key,
+int write_row(sm_session_t *s, write_op_t op, uint64_t storeid, const char *key,
               size_t klen, const char *data, size_t datalen, const char **old,
               size_t *oldlen) {
   // The out-parameters come as a pair; check before either is
@@ -253,12 +253,12 @@ int write_row(sm_session_t *s, write_op_t op, uint64_t relid, const char *key,
     return set_error(SM_ERR_INVALID, "value of {} bytes exceeds {}", datalen,
                      SM_MAX_DATALEN);
   }
-  // Validate the relid and key at the current view.
-  if (enter(s, xct_view(s), relid, key, klen) != 0) {
+  // Validate the storeid and key at the current view.
+  if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
   }
   // Write the version, keeping the row it replaces when asked.
-  int r = access_write(s, relid, op, rocksdb::Slice(key ? key : "", klen),
+  int r = access_write(s, storeid, op, rocksdb::Slice(key ? key : "", klen),
                        rocksdb::Slice(data ? data : "", datalen),
                        old ? &s->readbuf : nullptr);
   // Hand out the session-owned bytes of the old row.
@@ -270,7 +270,7 @@ int write_row(sm_session_t *s, write_op_t op, uint64_t relid, const char *key,
 }
 
 /* sm_lock, minus the out-of-memory guard. */
-int lock_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
+int lock_row(sm_session_t *s, uint64_t storeid, const char *key, size_t klen,
              sm_lockmode_t mode) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
@@ -280,12 +280,12 @@ int lock_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
   if (mode != SM_LOCK_SHARED && mode != SM_LOCK_EXCLUSIVE) {
     return set_error(SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
   }
-  // Validate the relid and key at the current view.
-  if (enter(s, xct_view(s), relid, key, klen) != 0) {
+  // Validate the storeid and key at the current view.
+  if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
   }
   // Take the lock, blocking while a conflicting holder has it.
-  if (lock_acquire(s, relid, rocksdb::Slice(key ? key : "", klen),
+  if (lock_acquire(s, storeid, rocksdb::Slice(key ? key : "", klen),
                    mode == SM_LOCK_EXCLUSIVE) != 0) {
     return xct_fail_retryable(s, SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
@@ -298,11 +298,11 @@ int lock_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
   // Now that the lock is held, run §5.2's check, so what the
   // caller reads next under this lock is current: a version
   // committed after this transaction began fails the call.
-  return access_check_current(s, relid, rocksdb::Slice(key ? key : "", klen));
+  return access_check_current(s, storeid, rocksdb::Slice(key ? key : "", klen));
 }
 
 /* sm_read, minus the out-of-memory guard. */
-int read_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
+int read_row(sm_session_t *s, uint64_t storeid, const char *key, size_t klen,
              const char **data, size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
@@ -317,12 +317,12 @@ int read_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
   }
   // The view this statement reads at.
   view_t view = xct_read_view(s);
-  // Validate the relid and key.
-  if (enter(s, view, relid, key, klen) != 0) {
+  // Validate the storeid and key.
+  if (enter(s, view, storeid, key, klen) != 0) {
     return -1;
   }
   // Read the key into the session's buffer.
-  int r = access_read(s, relid, view, rocksdb::Slice(key ? key : "", klen),
+  int r = access_read(s, storeid, view, rocksdb::Slice(key ? key : "", klen),
                       &s->readbuf);
   // Found: hand out the session-owned bytes.
   if (r == 0) {
@@ -333,7 +333,7 @@ int read_row(sm_session_t *s, uint64_t relid, const char *key, size_t klen,
 }
 
 /* sm_read_latest, minus the out-of-memory guard. */
-int read_latest_row(sm_session_t *s, uint64_t relid, const char *key,
+int read_latest_row(sm_session_t *s, uint64_t storeid, const char *key,
                     size_t klen, const char **data, size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
@@ -350,19 +350,19 @@ int read_latest_row(sm_session_t *s, uint64_t relid, const char *key,
   if (s->level != SM_XCT_READ_COMMITTED) {
     return set_error(SM_ERR_INVALID, "sm_read_latest requires READ COMMITTED");
   }
-  // Validate the relid and key.
-  if (enter(s, xct_view(s), relid, key, klen) != 0) {
+  // Validate the storeid and key.
+  if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
   }
   rocksdb::Slice k(key ? key : "", klen);
   // The lock is what keeps the newest version from changing.
-  int mode = lock_mode_held(s, relid, k);
+  int mode = lock_mode_held(s, storeid, k);
   if (mode == 0) {
     return set_error(SM_ERR_INVALID,
                      "sm_read_latest requires a lock held on the key");
   }
-  // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  // Find the store's CF.
+  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
   if (!cf) {
     return -1;
   }
@@ -374,7 +374,7 @@ int read_latest_row(sm_session_t *s, uint64_t relid, const char *key,
   }
   // An exclusive holder may now write.
   if (mode == 2) {
-    lock_set_latest(s, relid, k);
+    lock_set_latest(s, storeid, k);
   }
   // Absent, or deleted.
   if (!live) {
@@ -387,9 +387,9 @@ int read_latest_row(sm_session_t *s, uint64_t relid, const char *key,
 }
 
 /* sm_scan, minus the out-of-memory guard. */
-sm_scan_t *scan(sm_session_t *s, uint64_t relid, const char *skey, size_t sklen,
-                int skey_inclusive, const char *ekey, size_t eklen,
-                int ekey_inclusive) {
+sm_scan_t *scan(sm_session_t *s, uint64_t storeid, const char *skey,
+                size_t sklen, int skey_inclusive, const char *ekey,
+                size_t eklen, int ekey_inclusive) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return nullptr;
@@ -401,12 +401,12 @@ sm_scan_t *scan(sm_session_t *s, uint64_t relid, const char *skey, size_t sklen,
   }
   // The view the cursor reads at, fixed from now on.
   view_t view = xct_read_view(s);
-  // Validate the relid.
-  if (enter(s, view, relid, "", 0) != 0) {
+  // Validate the storeid.
+  if (enter(s, view, storeid, "", 0) != 0) {
     return nullptr;
   }
-  // Open the cursor on the relation's column family.
-  return access_scan(s, relid, view, skey, sklen, skey_inclusive, ekey, eklen,
+  // Open the cursor on the store's column family.
+  return access_scan(s, storeid, view, skey, sklen, skey_inclusive, ekey, eklen,
                      ekey_inclusive);
 }
 
@@ -414,12 +414,12 @@ sm_scan_t *scan(sm_session_t *s, uint64_t relid, const char *skey, size_t sklen,
 
 namespace wisr {
 
-/* Open a cursor over relid at view, between the given bounds. */
-sm_scan_t *access_scan(sm_session_t *s, uint64_t relid, const view_t &view,
+/* Open a cursor over storeid at view, between the given bounds. */
+sm_scan_t *access_scan(sm_session_t *s, uint64_t storeid, const view_t &view,
                        const char *skey, size_t sklen, int skey_inclusive,
                        const char *ekey, size_t eklen, int ekey_inclusive) {
   // Find the column family.
-  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
   if (!cf) {
     return nullptr;
   }
@@ -437,7 +437,7 @@ sm_scan_t *access_scan(sm_session_t *s, uint64_t relid, const view_t &view,
   // Under SERIALIZABLE, register the requested range before
   // the snapshot, so a write into it after the snapshot finds
   // the SIREAD entry (§10.2).
-  ssi_range_open(c.get(), relid, skey, sklen, skey_inclusive, ekey, eklen,
+  ssi_range_open(c.get(), storeid, skey, sklen, skey_inclusive, ekey, eklen,
                  ekey_inclusive);
   // Count the cursor as a reader for its whole life (§8.3),
   // then take the RocksDB snapshot: its physical view (§10.2).
@@ -619,17 +619,17 @@ int scan_next(sm_scan_t *c, const char **key, size_t *klen, const char **data,
 namespace wisr {
 
 /* Seek to the newest version a reader at view could see (§10.1). */
-int access_read(sm_session_t *s, uint64_t relid, const view_t &view,
+int access_read(sm_session_t *s, uint64_t storeid, const view_t &view,
                 rocksdb::Slice key, std::string *out) {
-  // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  // Find the store's CF.
+  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
   if (!cf) {
     return -1;
   }
   // Under SERIALIZABLE, take the SIREAD entry before the
   // iterator exists, so a write landing in between still finds
   // it (§10.1).
-  ssi_on_read(s, relid, key);
+  ssi_on_read(s, storeid, key);
   // Hold a read epoch from before the iterator exists until we are
   // done resolving what it read: the CF:txn sweep waits for it.
   uint64_t epoch = db_read_enter(s->db);
@@ -637,7 +637,7 @@ int access_read(sm_session_t *s, uint64_t relid, const view_t &view,
   // Stay within this userkey's versions.
   rocksdb::ReadOptions ro;
   ro.prefix_same_as_start = true;
-  // Open an iterator on the relation.
+  // Open an iterator on the store.
   std::unique_ptr<rocksdb::Iterator> it(s->db->rdb->NewIterator(ro, cf));
   // Seek to the newest version the reader could see; ~seq of 0
   // lands before every own version of the key. Under SSI, start
@@ -688,10 +688,10 @@ int access_read(sm_session_t *s, uint64_t relid, const view_t &view,
 }
 
 /* Check existence, then put one new version (§5). */
-int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
+int access_write(sm_session_t *s, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, std::string *old) {
-  // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+  // Find the store's CF.
+  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
   if (!cf) {
     return -1;
   }
@@ -701,7 +701,7 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   }
   // Take the row lock; this blocks while another transaction
   // holds it, and fails if we are chosen as a deadlock victim.
-  if (lock_acquire(s, relid, key, true) != 0) {
+  if (lock_acquire(s, storeid, key, true) != 0) {
     return xct_fail_retryable(s, SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }
@@ -717,7 +717,7 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
     // Read committed: an insert goes ahead against the newest
     // version; an update or delete must have read it first.
     if (s->level == SM_XCT_READ_COMMITTED) {
-      if (op != WRITE_INSERT && !lock_has_latest(s, relid, key)) {
+      if (op != WRITE_INSERT && !lock_has_latest(s, storeid, key)) {
         return set_error(SM_ERR_UPDATED,
                          "key was changed by a transaction that committed "
                          "after this one began; sm_read_latest it first");
@@ -773,12 +773,12 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
   // The seek bound of our own reads must cover this version.
   s->wts_hi = wts;
   // The write used the re-read; the next needs its own.
-  lock_clear_latest(s, relid, key);
+  lock_clear_latest(s, storeid, key);
   // Record it for savepoint rollback.
-  s->undo.push_back({relid, key.ToString(), wts, seq});
+  s->undo.push_back({storeid, key.ToString(), wts, seq});
   // After the put, look for readers the write invalidates; a
   // reader arriving later steps past the version instead (§7.2).
-  ssi_on_write(s, relid, key);
+  ssi_on_write(s, storeid, key);
   return 0;
 }
 
@@ -787,9 +787,10 @@ int access_write(sm_session_t *s, uint64_t relid, write_op_t op,
  * key committed after this transaction's begin snapshot. The
  * caller holds the lock, so no one can add one behind us.
  */
-int access_check_current(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
-  // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = rel_cf(s->db, relid);
+int access_check_current(sm_session_t *s, uint64_t storeid,
+                         rocksdb::Slice key) {
+  // Find the store's CF.
+  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
   if (!cf) {
     return -1;
   }
@@ -822,22 +823,22 @@ int sm_scan_seek(sm_scan_t *scan, const char *key, size_t klen, int inclusive) {
 }
 
 /* Take a row lock without writing the row. */
-int sm_lock(sm_session_t *session, uint64_t relid, const char *key, size_t klen,
-            sm_lockmode_t mode) {
+int sm_lock(sm_session_t *session, uint64_t storeid, const char *key,
+            size_t klen, sm_lockmode_t mode) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return lock_row(session, relid, key, klen, mode);
+    return lock_row(session, storeid, key, klen, mode);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_lock: out of memory");
   }
 }
 
 /* Insert a row; the key must not exist. */
-int sm_insert(sm_session_t *session, uint64_t relid, const char *key,
+int sm_insert(sm_session_t *session, uint64_t storeid, const char *key,
               size_t klen, const char *data, size_t datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_INSERT, relid, key, klen, data, datalen,
+    return write_row(session, WRITE_INSERT, storeid, key, klen, data, datalen,
                      nullptr, nullptr);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_insert: out of memory");
@@ -845,12 +846,12 @@ int sm_insert(sm_session_t *session, uint64_t relid, const char *key,
 }
 
 /* Replace a row's value; the key must exist. */
-int sm_update(sm_session_t *session, uint64_t relid, const char *key,
+int sm_update(sm_session_t *session, uint64_t storeid, const char *key,
               size_t klen, const char *data, size_t datalen, const char **old,
               size_t *oldlen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_UPDATE, relid, key, klen, data, datalen,
+    return write_row(session, WRITE_UPDATE, storeid, key, klen, data, datalen,
                      old, oldlen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_update: out of memory");
@@ -858,11 +859,11 @@ int sm_update(sm_session_t *session, uint64_t relid, const char *key,
 }
 
 /* Delete a row; the key must exist. */
-int sm_delete(sm_session_t *session, uint64_t relid, const char *key,
+int sm_delete(sm_session_t *session, uint64_t storeid, const char *key,
               size_t klen, const char **old, size_t *oldlen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return write_row(session, WRITE_DELETE, relid, key, klen, nullptr, 0, old,
+    return write_row(session, WRITE_DELETE, storeid, key, klen, nullptr, 0, old,
                      oldlen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_delete: out of memory");
@@ -870,34 +871,34 @@ int sm_delete(sm_session_t *session, uint64_t relid, const char *key,
 }
 
 /* Read one key. */
-int sm_read(sm_session_t *session, uint64_t relid, const char *key, size_t klen,
-            const char **data, size_t *datalen) {
+int sm_read(sm_session_t *session, uint64_t storeid, const char *key,
+            size_t klen, const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return read_row(session, relid, key, klen, data, datalen);
+    return read_row(session, storeid, key, klen, data, datalen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_read: out of memory");
   }
 }
 
 /* Read the newest committed version of a key. */
-int sm_read_latest(sm_session_t *session, uint64_t relid, const char *key,
+int sm_read_latest(sm_session_t *session, uint64_t storeid, const char *key,
                    size_t klen, const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return read_latest_row(session, relid, key, klen, data, datalen);
+    return read_latest_row(session, storeid, key, klen, data, datalen);
   } catch (const std::bad_alloc &) {
     return set_error(SM_ERR_NOMEM, "sm_read_latest: out of memory");
   }
 }
 
 /* Open a cursor over a key range. */
-sm_scan_t *sm_scan(sm_session_t *session, uint64_t relid, const char *skey,
+sm_scan_t *sm_scan(sm_session_t *session, uint64_t storeid, const char *skey,
                    size_t sklen, int skey_inclusive, const char *ekey,
                    size_t eklen, int ekey_inclusive) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return scan(session, relid, skey, sklen, skey_inclusive, ekey, eklen,
+    return scan(session, storeid, skey, sklen, skey_inclusive, ekey, eklen,
                 ekey_inclusive);
   } catch (const std::bad_alloc &) {
     set_error(SM_ERR_NOMEM, "sm_scan: out of memory");

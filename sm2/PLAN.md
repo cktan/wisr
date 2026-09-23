@@ -110,7 +110,7 @@ back out, under every isolation level; the old image returned
 by an update or a delete is the tuple that was there; a
 savepoint rollback leaves no sm2 state behind, because there
 is none to leave; an update keeps its `rowno`; two `rel`s over
-the same sm1 relation with different prefixes never see each
+the same sm1 store with different prefixes never see each
 other's rows.
 
 ---

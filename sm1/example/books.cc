@@ -15,7 +15,7 @@
  *
  * The program may be run again on the same home directory:
  * the database is created unless it exists, the table unless
- * sm_lsrel already lists one -- the library hands out relids,
+ * sm_lsstore already lists one -- the library hands out storeids,
  * so the table is found again by listing, not by a constant --
  * and rows are upserted: inserted, or updated if the id is
  * taken.
@@ -129,11 +129,12 @@ void print_book(const book_t &b) {
  * Insert b, or update it if its id is already taken: wisr has
  * no upsert, so try the insert and fall back on SM_ERR_DUPKEY.
  */
-void upsert_book(sm_session_t *s, uint64_t rel, const book_t &b) {
+void upsert_book(sm_session_t *s, uint64_t store, const book_t &b) {
   std::string key = encode_key(b.id);
   std::string val = encode_value(b);
   // Try the insert first.
-  if (sm_insert(s, rel, key.data(), key.size(), val.data(), val.size()) == 0) {
+  if (sm_insert(s, store, key.data(), key.size(), val.data(), val.size()) ==
+      0) {
     return;
   }
   // Any failure but a taken key is a real error.
@@ -141,7 +142,7 @@ void upsert_book(sm_session_t *s, uint64_t rel, const book_t &b) {
     check(-1, "sm_insert");
   }
   // The id exists: replace its value instead.
-  check(sm_update(s, rel, key.data(), key.size(), val.data(), val.size(),
+  check(sm_update(s, store, key.data(), key.size(), val.data(), val.size(),
                   nullptr, nullptr),
         "sm_update");
 }
@@ -179,23 +180,23 @@ int main(int argc, char **argv) {
   // List the tables, and create book in the same transaction
   // unless it is listed; DDL is transactional.
   check(sm_begin(s, SM_XCT_REPEATABLE_READ), "sm_begin");
-  uint64_t *rels = nullptr;
-  size_t nrels = 0;
-  check(sm_lsrel(s, &rels, &nrels), "sm_lsrel");
-  // The library allocates relids, so an earlier run's book is
-  // found again as the lowest relid listed: the first relation
+  uint64_t *stores = nullptr;
+  size_t nstores = 0;
+  check(sm_lsstore(s, &stores, &nstores), "sm_lsstore");
+  // The library allocates storeids, so an earlier run's book is
+  // found again as the lowest storeid listed: the first store
   // this database ever had.
-  uint64_t book = nrels > 0 ? rels[0] : 0;
-  printf("relations:");
-  for (size_t i = 0; i < nrels; i++) {
-    printf(" %llu", (unsigned long long)rels[i]);
+  uint64_t book = nstores > 0 ? stores[0] : 0;
+  printf("stores:");
+  for (size_t i = 0; i < nstores; i++) {
+    printf(" %llu", (unsigned long long)stores[i]);
   }
-  printf("%s\n", nrels == 0 ? " (none)" : "");
+  printf("%s\n", nstores == 0 ? " (none)" : "");
   // The list is the library's; release it.
-  sm_free_rels(rels);
+  sm_free_stores(stores);
   if (book == 0) {
-    check(sm_mkrel(s, &book), "sm_mkrel");
-    printf("created book (relid %llu)\n", (unsigned long long)book);
+    check(sm_mkstore(s, &book), "sm_mkstore");
+    printf("created book (storeid %llu)\n", (unsigned long long)book);
   }
   check(sm_commit(s), "sm_commit");
 

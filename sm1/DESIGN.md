@@ -20,7 +20,7 @@ This document is the design of record. It follows the decisions in
 
 ## 1. Scope and non-goals
 
-**In scope.** Relations as ordered key→value maps; MVCC reads and
+**In scope.** Stores as ordered key→value maps; MVCC reads and
 scans; read-committed / repeatable-read / serializable transactions;
 nested savepoints; two-phase commit; crash recovery; garbage
 collection of dead versions.
@@ -33,15 +33,15 @@ design forecloses them.
 **Not in scope, ever.** Backward scans. Iteration is forward
 only, in ascending bytewise key order, and no index serves a
 backward scan — not the clustered primary key here, and not a
-secondary index a layer above builds out of relations
+secondary index a layer above builds out of stores
 (`OBJECTIVE.md`). Descending order is had by keeping a second
-relation with inverted key bytes and scanning it forward.
+store with inverted key bytes and scanning it forward.
 
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
 `sm.h` and the design in this document, nothing more. Phase 2
 adds the API a secondary-index layer built on top of it needs.
 Every gap `SECINDEX.md` lists is now closed or decided:
-`sm_lsrel`, which came with naming relations by relid (§11);
+`sm_lsstore`, which came with naming stores by storeid (§11);
 `sm_stmt_begin`, for read-committed statement snapshots
 (§6.2); the savepoint stack with `sm_forget` (§6.5);
 `sm_lock`, whose shared mode makes a safe index build
@@ -80,14 +80,14 @@ batched read is left until a benchmark asks for it.
 
 ```
         ┌──────────────────────────────────────────────────────┐
-        │  sm_* C API   (session, xct, rel, insert/read/scan)  │
+        │  sm_* C API   (session, xct, store, insert/read/scan)│
         └───────────────────────┬──────────────────────────────┘
                                 │
    ┌────────────┬───────────────┼───────────────┬──────────────┐
    │            │               │               │              │
 ┌──┴──────┐ ┌───┴──────┐ ┌──────┴──────┐ ┌──────┴─────┐ ┌──────┴─────┐
 │ Catalog │ │ Access   │ │ Transaction │ │ Lock mgr   │ │ SSI        │
-│ (relid  │ │ methods  │ │ manager     │ │ (row X     │ │ tracker    │
+│ (storeid│ │ methods  │ │ manager     │ │ (row X     │ │ tracker    │
 │ lookup) │ │ read /   │ │ ts, status, │ │  locks,    │ │ (SIREAD,   │
 │         │ │ scan /   │ │ commit seq, │ │  deadlock  │ │  rw-edges, │
 │         │ │ write    │ │ 2PC         │ │  detect)   │ │  pivots)   │
@@ -99,7 +99,7 @@ batched read is left until a benchmark asks for it.
                          │                        └────────┬─────────┘
                  ┌───────┴────────────────────────────────┴────────┐
                  │                  RocksDB                        │
-                 │  CF:rel.*  CF:txn   CF:meta   WAL   compaction  │
+                 │  CF:store.*  CF:txn   CF:meta   WAL   compaction│
                  └─────────────────────────────────────────────────┘
 ```
 
@@ -114,13 +114,13 @@ volatile and reconstructible (§9).
 A home directory is laid out like a PostgreSQL data
 directory: the root db in `global`, one directory per
 database under `base` (§3.5). Within a database: one
-column family per relation, plus two fixed ones: `CF:txn`
+column family per store, plus two fixed ones: `CF:txn`
 and `CF:meta`.
 
-### 3.1 `CF:rel.<relid>` — row versions
+### 3.1 `CF:store.<storeid>` — row versions
 
-Each relation's versions live in their own column family, named
-by `relid` in decimal (`rel.0` is the catalog, §11).
+Each store's versions live in their own column family, named
+by `storeid` in decimal (`store.0` is the catalog, §11).
 
 ```
 key   = userkey (variable)
@@ -139,7 +139,7 @@ disk, only a chain of versions, one RocksDB key-value pair
 each. Take the row `"acct42"`, written by the transaction
 with `xid` 50 as its first write (`seq` 1, write timestamp
 `wts` 51), then updated by `xid` 60 (`wts` 61), and committed
-at 70 and 80. The figure shows what sits in `CF:rel.<relid>`,
+at 70 and 80. The figure shows what sits in `CF:store.<storeid>`,
 in key order, newest first:
 
 ```
@@ -168,12 +168,12 @@ below, and unrelated to our `seq`.
 
 Notes on the encoding:
 
-- **`relid`** is a 64-bit id the storage manager allocates at
-  `sm_mkrel` and hands to the caller. It names the column
-  family, `rel.<relid>`. A relid is never reused (§4.2), so it
-  never names two relations, and a dropped relation is removed
-  with one `DropColumnFamily`. The key itself carries no relid;
-  the column family is the relation.
+- **`storeid`** is a 64-bit id the storage manager allocates at
+  `sm_mkstore` and hands to the caller. It names the column
+  family, `store.<storeid>`. A storeid is never reused (§4.2), so
+  it never names two stores, and a dropped store is removed with
+  one `DropColumnFamily`. The key itself carries no storeid; the
+  column family is the store.
 - **`wts`**, the write timestamp, is taken from the one counter
   (§4.1) after the writer holds the row lock, so a key's
   versions are in commit order by construction. Complemented,
@@ -192,7 +192,7 @@ Notes on the encoding:
   transaction sorts first.
 - `userkey` is stored raw and the two suffixes are fixed-width, so a
   version key is parsed from the tail. No escaping needed.
-- **Comparator.** Relation CFs use a custom comparator,
+- **Comparator.** Store CFs use a custom comparator,
   `wisr.version.v1`: compare the `userkey` parts (key minus the
   12-byte tail) with `memcmp`, shorter-is-less on a tie, then
   compare the tails with `memcmp`. RocksDB's default bytewise
@@ -205,7 +205,7 @@ Notes on the encoding:
   comparator, a key's versions are contiguous and userkeys
   sort in `memcmp` order, which is the order `sm_scan` exposes.
 
-  Every key handed to RocksDB for a relation CF — writes, seek
+  Every key handed to RocksDB for a store CF — writes, seek
   targets, iterator bounds — carries the full 12-byte tail.
   `FindShortestSeparator` and `FindShortSuccessor` are no-ops
   (safe; index blocks are a little larger). RocksDB persists the
@@ -215,8 +215,8 @@ Notes on the encoding:
   comparator.
 
 Column family handles are held in a process-wide map
-`relid → handle`, shared by every session open on the
-database and guarded by a reader-writer lock, because relations
+`storeid → handle`, shared by every session open on the
+database and guarded by a reader-writer lock, because stores
 are created and dropped concurrently with reads. A handle is
 reference-counted and destroyed only after its CF is dropped and
 the last user releases it.
@@ -229,9 +229,9 @@ value = { state: PREPARED | COMMITTED | ABORTED,
           snapshot_ts, commit_ts,
           gid (global txn id string, 2PC only),
           prepared_at: epoch seconds           (PREPARED only),
-          writeset: [ (relid, userkey) ... ]   (PREPARED only),
-          created:  [ relid ... ]              (PREPARED only),
-          dropped:  [ relid ... ]              (PREPARED only) }
+          writeset: [ (storeid, userkey) ... ]   (PREPARED only),
+          created:  [ storeid ... ]            (PREPARED only),
+          dropped:  [ storeid ... ]            (PREPARED only) }
 ```
 
 Only **writing** transactions ever get an entry, plus read-only
@@ -241,10 +241,10 @@ meaningful (§3.4).
 
 The `writeset` is carried only in a `PREPARED` record, and only
 so that recovery can re-acquire the row locks a prepared
-transaction still holds. `created` lists the relations the
-transaction made with `sm_mkrel`, so that recovery keeps their
+transaction still holds. `created` lists the stores the
+transaction made with `sm_mkstore`, so that recovery keeps their
 column families (§9.1); `dropped` lists those it removed with
-`sm_rmrel`, so that a commit after restart still queues their
+`sm_rmstore`, so that a commit after restart still queues their
 column families for removal (§8.3). `prepared_at` is the
 wall-clock time of `sm_prepare`, reported by `sm_list_prepared`
 (§8.5); it must be durable because the listing is mostly needed
@@ -277,7 +277,7 @@ Given a version's `xid`, a reader determines the writer's fate as:
 4. **None of the above** → the writer never committed. Dead.
 
 Step 4 is what makes crash recovery free of any undo pass: a
-crashed transaction leaves versions in relation CFs with no
+crashed transaction leaves versions in store CFs with no
 status record, and absence of a record *is* the abort. It holds
 at runtime too — a transaction whose `ABORTED` hint was never
 written leaves the same trace. A transaction whose *commit*
@@ -377,7 +377,7 @@ that a crash can only ever leave that:
 
 - `sm_mkdb` bumps `next_dbid` durably, creates
   `{homedir}/base/{dbid}` with its `CF:txn`, `CF:meta`,
-  and `CF:rel.0`, and only then commits
+  and `CF:store.0`, and only then commits
   `"D" | dbname → dbid`.
 - `sm_rmdb` deletes `"D" | dbname`, and only then runs
   `rocksdb::DestroyDB`.
@@ -386,14 +386,14 @@ Neither can leave a name pointing at a directory that is
 missing or unbuilt. `sm_attach` sweeps the other way: every
 entry of `base` whose `dbid` is in no `"D"` row is
 destroyed, before any database is opened. A `dbid` is never
-reused, on the same reasoning as a `relid` (§4.2), so the
+reused, on the same reasoning as a `storeid` (§4.2), so the
 sweep cannot mistake a live database for the remains of a
 dead one.
 
 This is the §9.1 step 6 pattern one level up — eager
 cleanup on the happy path, a startup sweep for the crash
 path — and it is why a name never reaches the filesystem at
-either level: a relation is `CF:rel.<relid>`, a database is
+either level: a store is `CF:store.<storeid>`, a database is
 a directory named by `dbid`.
 
 ---
@@ -446,7 +446,7 @@ value. On startup, `global_ts` resumes one past the persisted
 value — above any id ever handed out. `visible_ts` is set to the
 persisted value itself, so every `xid` allocated after restart is
 `> visible_ts`, keeping §4.1's `xid > snapshot_ts`. The persisted
-value itself is never handed out. Object ids — relids and
+value itself is never handed out. Object ids — storeids and
 seqids, from one allocator `next_objid`, so the two never
 collide — are allocated the same way.
 
@@ -538,12 +538,12 @@ Writes are eager: `sm_insert`/`sm_update`/`sm_delete` put a version
 into RocksDB immediately, before commit.
 
 ```
-sm_update(relid, k, v):
-  1. catalog.lookup(relid)                             # MVCC read, §11
-  2. lock   = lockmgr.acquire_x(relid, k, T)            # blocking, §5.1
-  3. latest = newest own version of (relid, k) visible to T  # §4.4
+sm_update(storeid, k, v):
+  1. catalog.lookup(storeid)                           # MVCC read, §11
+  2. lock   = lockmgr.acquire_x(storeid, k, T)          # blocking, §5.1
+  3. latest = newest own version of (storeid, k) visible to T  # §4.4
      if latest is absent:
-         latest = newest committed version of (relid, k)
+         latest = newest committed version of (storeid, k)
          if latest.commit_ts > T.snapshot_ts:
              RR, SER: abort with SM_ERR_CONFLICT        # §5.2
              RC: SM_ERR_UPDATED, unless T.lock(k).latest
@@ -553,10 +553,10 @@ sm_update(relid, k, v):
   4. if T.xid == 0: T.xid = global_ts++
   5. wts = global_ts++                                  # after the lock, §4.1
      seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
-     db.Put(cf(relid), encode(k, ~wts, ~seq), encode(flags, T.xid, v))
+     db.Put(cf(storeid), encode(k, ~wts, ~seq), encode(flags, T.xid, v))
      T.lock(k).latest = false                          # §5.4
-  6. T.undo.push(relid, k, wts, seq)                    # for savepoint
-  7. ssi.on_write(T, relid, k)                          # §7
+  6. T.undo.push(storeid, k, wts, seq)                  # for savepoint
+  7. ssi.on_write(T, storeid, k)                        # §7
 ```
 
 Step 3 consults the transaction's own writes first, so a key it
@@ -596,7 +596,7 @@ deadlock — reports no old row.
 
 ### 5.1 Row locks
 
-An in-memory hash table, `(relid, userkey)` → the
+An in-memory hash table, `(storeid, userkey)` → the
 transactions holding it. A lock is held **shared** by any
 number of them or **exclusive** by one; the compatibility
 table is the usual one, S/S being the only pair that
@@ -659,7 +659,7 @@ sets on a serializable reader.
 **What a transaction holds in memory.** Row values stream
 to RocksDB, so a transaction is bounded by disk, but
 three structures are not: `T.locks` (one entry per
-distinct key written), `T.undo` (one `(relid, userkey,
+distinct key written), `T.undo` (one `(storeid, userkey,
 wts, seq)` tuple per write), and the SSI read set. All three
 are linear in the number of keys touched, with the
 userkey stored inline, so a transaction writing tens of
@@ -795,7 +795,7 @@ by the boundary call and not by a write, so a statement may
 block — on a row lock, or on the `sm_lock` a secondary-index
 layer would use — and still read everything committed while
 it waited. `xct_read_view` takes it; `xct_view`, which the
-write path uses to validate a relid and key, only reads it
+write path uses to validate a storeid and key, only reads it
 once taken.
 
 The GC watermark needs nothing extra. A read-committed
@@ -839,12 +839,12 @@ Repeatable read plus SSI validation (§7).
 ### 6.5 Savepoints
 
 A savepoint is a mark into the per-transaction **undo
-list** — an in-memory vector of `(relid, userkey, wts, seq)`
+list** — an in-memory vector of `(storeid, userkey, wts, seq)`
 tuples in write order, holding no payloads, so a large
-transaction costs bytes per write, not rows. Relations
+transaction costs bytes per write, not rows. Stores
 created by the transaction are tracked alongside it in
-`T.created`, a vector of relids in creation order, and
-relations it dropped in `T.dropped`, likewise.
+`T.created`, a vector of storeids in creation order, and
+stores it dropped in `T.dropped`, likewise.
 
 Savepoints **nest**. `T.savepoints` is a stack of marks in
 push order, so `T.savepoints[d-1]` is the mark at depth `d`,
@@ -870,7 +870,7 @@ sm_savepoint():                        # returns the new depth
     push onto T.savepoints:
         mark.undo    = T.undo.size()
         mark.locks   = T.locks.size()
-        mark.rels    = T.created.size()
+        mark.stores  = T.created.size()
         mark.drops   = T.dropped.size()
         mark.scan_id = id of the latest cursor opened so far
     return len(T.savepoints)
@@ -884,10 +884,10 @@ sm_rollback(depth):
     if no mark at depth: fail with SM_ERR_NOSAVEPOINT # API.md divergence 8
     m = T.savepoints[depth-1].undo
     for e in reverse(T.undo[m..]):
-        db.Delete(cf(e.relid), encode(e.key, ~T.xid, ~e.seq))
-    r = T.savepoints[depth-1].rels
-    for relid in reverse(T.created[r..]):
-        db.DropColumnFamily(cf(relid))              # §11
+        db.Delete(cf(e.storeid), encode(e.key, ~T.xid, ~e.seq))
+    r = T.savepoints[depth-1].stores
+    for storeid in reverse(T.created[r..]):
+        db.DropColumnFamily(cf(storeid))            # §11
     T.created.truncate(r)
     T.dropped.truncate(mark.drops)                  # the undo restored their rows
     T.undo.truncate(m)
@@ -955,10 +955,10 @@ before the savepoint, so no one observed our intent on it.
 means aborted (§3.4), before and after a crash. Only aborting a
 *prepared* transaction writes `ABORTED`, to supersede its
 `PREPARED` record (§8.4). It
-drops the column families of relations in `T.created` (no other
+drops the column families of stores in `T.created` (no other
 transaction can see them), closes the session's open scan cursors
 and their RocksDB snapshots, releases locks and SSI state, and
-returns. The versions stay in their relation CFs until GC (§8.3).
+returns. The versions stay in their store CFs until GC (§8.3).
 Abort is O(1) in the write-set size.
 
 ---
@@ -971,45 +971,46 @@ dangerous structure.
 
 ### 7.1 What is tracked
 
-- **SIREAD locks.** Every read by a SERIALIZABLE transaction records
-  what it read: a point read records `(relid, userkey)`, whether
-  or not a row was found; a scan records `(relid, range)` for the
-  requested range, bounds inclusive or exclusive as passed to
-  `sm_scan`, when it opens, and narrows it to the **range
-  actually traversed** when it closes (§10.2). The narrowed
-  range includes its upper end, the last key the scan examined.
-  A cursor moved on with `sm_scan_seek` keeps the keys it
-  skipped inside that range: the predicate runs from the
-  start key to the furthest key reached, gaps included. It
-  over-approximates what was read, which can only cost a
-  serialization failure that was not strictly necessary,
-  never miss one. That range is the predicate. Ranges are the phantom defence —
-  a later insert into that range conflicts even though the row
-  did not exist at read time. SIREAD locks survive the
-  transaction's own commit; they are dropped only when no active
-  snapshot could still conflict with them.
+- **SIREAD locks.** Every read by a SERIALIZABLE transaction
+  records what it read: a point read records
+  `(storeid, userkey)`, whether or not a row was found; a scan
+  records `(storeid, range)` for the requested range, bounds
+  inclusive or exclusive as passed to `sm_scan`, when it opens,
+  and narrows it to the **range actually traversed** when it
+  closes (§10.2). The narrowed range includes its upper end, the
+  last key the scan examined. A cursor moved on with
+  `sm_scan_seek` keeps the keys it skipped inside that range: the
+  predicate runs from the start key to the furthest key reached,
+  gaps included. It over-approximates what was read, which can
+  only cost a serialization failure that was not strictly
+  necessary, never miss one. That range is the predicate. Ranges
+  are the phantom defence — a later insert into that range
+  conflicts even though the row did not exist at read time.
+  SIREAD locks survive the transaction's own commit; they are
+  dropped only when no active snapshot could still conflict with
+  them.
 - **Conflict flags.** Per transaction, `in_conflict` and
   `out_conflict` — "some transaction has an rw-edge into me" / "I have
   an rw-edge out to someone".
 
 **How they are indexed.** Every write calls
-`ssi.on_write(T, relid, k)` (§5), which must find every
+`ssi.on_write(T, storeid, k)` (§5), which must find every
 SIREAD lock covering `k`. Point locks are a hash on
-`(relid, userkey)`, so that half is O(1). Ranges cannot
+`(storeid, userkey)`, so that half is O(1). Ranges cannot
 be, and a linear walk of active predicates under a global
 lock would serialize the write path — the one place SSI
 must not cost anything when no reader is watching.
 
-Per relation, ranges are held in a list in `memcmp` order
+Per store, ranges are held in a list in `memcmp` order
 of their bounds (§3.1): `sm_scan` inserts, `sm_scanend`
-narrows, `on_write` scans the relation's list. One mutex
-covers the whole tracker. A relation no serializable
+narrows, `on_write` scans the store's list. One mutex
+covers the whole tracker. A store no serializable
 reader has touched has no list, so the common case — a
 workload with no serializable transactions — pays one
-lookup. An **interval tree** per relation, answering the
+lookup. An **interval tree** per store, answering the
 stabbing query in `O(log n + m)` for `m` matches, is the
 replacement once a benchmark shows many live ranges on
-one relation; it is not built yet.
+one store; it is not built yet.
 
 ### 7.2 Edges
 
@@ -1147,7 +1148,7 @@ sm_commit(T):
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
   4. db.Write(batch, sync = durability_sync)   ← group-committed
   5. commit_cache.insert(T.xid → commit_ts);  active_table.remove(T.xid)
-     if T wrote CF:rel.0: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
+     if T wrote CF:store.0: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
      sequencer.done(commit_ts);  advancer moves visible_ts      (§4.3)
   6. lockmgr.release(T);  ssi.on_commit(T)
      queue (T.dropped, commit_ts) for CF removal     (§8.3)
@@ -1216,7 +1217,7 @@ filter(version_key, value):
     if a newer version of the same userkey with
        commit_ts <= gc_watermark was already seen → DROP
     if tombstone                         → KEEP, stamp commit_ts, and
-                                           queue (relid, version_key)
+                                           queue (storeid, version_key)
                                            for purge
     otherwise                            → KEEP, and stamp commit_ts
                                            into the header (hint bit)
@@ -1242,7 +1243,7 @@ dropping the tombstone would resurrect them. Instead a
 background task drains the purge queue with
 
 ```
-db.DeleteRange(cf(relid), version_key, userkey | FF×12)
+db.DeleteRange(cf(storeid), version_key, userkey | FF×12)
 ```
 
 which covers the tombstone and every older version of the key
@@ -1258,7 +1259,7 @@ One `DeleteRange` per deleted key is not free. Every range
 deletion is a range tombstone that `RangeDelAggregator` must
 consider on reads that overlap it, and RocksDB warns that
 accumulating them in the memtable degrades read performance.
-The drainer therefore flushes each relation CF it touched
+The drainer therefore flushes each store CF it touched
 after a batch, so range tombstones reach SST files and stop
 being re-examined on every read.
 
@@ -1276,7 +1277,7 @@ key's tombstone and older versions.
 
 This path also forecloses one RocksDB option: `DeleteRange`
 returns `Status::NotSupported()` when a `row_cache` is
-configured, so relation CFs must not have one (§12.2).
+configured, so store CFs must not have one (§12.2).
 
 The stamping is why the header carries `commit_ts`: over time most
 versions answer visibility without a status lookup at all, so the
@@ -1290,8 +1291,8 @@ registering it happen under the mutex the watermark is read
 under, so no new snapshot can land below a watermark already in
 use. It never moves
 backwards: a new snapshot is `visible_ts`, which is at or above
-every snapshot already counted. Each relation CF has its own
-compaction filter factory, which knows the CF's relid for the
+every snapshot already counted. Each store CF has its own
+compaction filter factory, which knows the CF's storeid for the
 purge queue. Compactions can start inside `DB::Open`, before
 the handles and the active table the filter reads exist, so
 until the database is fully open the factory hands out a
@@ -1311,7 +1312,7 @@ version of its transaction carries the stamp (rule §3.4/0). The
 periodic sweep guarantees that:
 
 1. Record `W0 = gc_watermark`, then run a full compaction pass
-   over every relation CF, flushing memtables first.
+   over every store CF, flushing memtables first.
 2. Every committed version with `commit_ts <= W0` was already
    in RocksDB when the pass began, was visited by the filter
    with `gc_watermark >= W0`, and so was dropped or stamped.
@@ -1330,7 +1331,7 @@ entering after the flip open their iterators on the pass's
 output and see only stamped versions. The wait is not done
 inline: the sweep is left pending and the GC worker finishes
 it on a later run, so a long-open cursor delays the sweep
-without stalling tombstone purges or relation drops.
+without stalling tombstone purges or store drops.
 
 A pass during which the filter kept any version unstamped out
 of doubt — an undecodable value, a failed status lookup —
@@ -1363,8 +1364,8 @@ stated here:
   an older watermark writes unstamped output alongside it.
 
 The pass is expensive: it rewrites L0 through L6 across
-every relation CF, and its cost grows with the number of
-relations as well as with data volume. It is therefore
+every store CF, and its cost grows with the number of
+stores as well as with data volume. It is therefore
 triggered by the size of `CF:txn` — the space the sweep
 would reclaim — and not by a timer, so a database that
 commits rarely never pays for it. The GC worker checks
@@ -1372,12 +1373,12 @@ RocksDB's estimated key count of `CF:txn` on each run and
 starts a sweep past an internal threshold of one million
 records.
 
-Dropping a relation (`sm_rmrel`) deletes its catalog row (§11).
-The tombstone carries no relid, so commit queues the relids in
-`T.dropped` with its `commit_ts`; once `gc_watermark` passes
+Dropping a store (`sm_rmstore`) deletes its catalog row (§11).
+The tombstone carries no storeid, so commit queues the storeids
+in `T.dropped` with its `commit_ts`; once `gc_watermark` passes
 that commit, a background task issues `DropColumnFamily` on each
-relation's CF. The queue is volatile: an entry lost to a crash
-is caught by the startup sweep (§9.1 step 6).
+store's CF. The queue is volatile: an entry lost to a crash is
+caught by the startup sweep (§9.1 step 6).
 
 Because collection rides on compaction, it inherits
 compaction's costs, and the question of moving that work to
@@ -1439,7 +1440,7 @@ overwrite the same `CF:txn[0]`. Its `lockset` holds whatever
 read holds nothing after a restart.
 
 After a successful prepare the transaction is in-doubt: its
-versions sit in relation CFs, its status record says `PREPARED`,
+versions sit in store CFs, its status record says `PREPARED`,
 and readers treat it as in-flight (invisible). It holds its row
 locks, and it pins `gc_watermark` at its `snapshot_ts`.
 
@@ -1587,8 +1588,8 @@ the status resolution rule.
         the record
       - re-acquire an X row lock for every key in its writeset
       - pin gc_watermark at its snapshot_ts
-6. Orphan CF sweep: read the catalog (rel.0) and drop every
-   rel.<relid> CF that has neither a live catalog row naming
+6. Orphan CF sweep: read the catalog (store.0) and drop every
+   store.<storeid> CF that has neither a live catalog row naming
    it (a name's newest committed version, not a tombstone) nor
    an entry in a prepared record's `created`.
 7. Start the GC / compaction filter and commit advancer.
@@ -1599,7 +1600,7 @@ Step 6 catches the column families that eager cleanup (§6.5,
 §6.6) never reached: a crash between `CreateColumnFamily` and
 commit, and a committed drop whose `DropColumnFamily` had not yet
 run. Creating a CF is durable in the RocksDB MANIFEST before
-`sm_mkrel` writes its catalog row, so a committed catalog row
+`sm_mkstore` writes its catalog row, so a committed catalog row
 never lacks its CF.
 
 There is no "abort recovery" step: every transaction that was
@@ -1616,7 +1617,7 @@ crashed transactions.
 | --- | --- |
 | ACTIVE (never wrote) | nothing to do |
 | ACTIVE with eager writes, no record | dead; versions dropped by GC |
-| ACTIVE that created a relation | dead; its CF dropped by the orphan sweep (§9.1 step 6) |
+| ACTIVE that created a store | dead; its CF dropped by the orphan sweep (§9.1 step 6) |
 | Wrote its COMMITTED record, WAL synced | committed, visible |
 | Was in `Write(sync)` when power cut | atomically all-or-nothing per RocksDB; if the record is not in the WAL, the transaction is dead |
 | PREPARED | restored in-doubt, locks re-acquired, awaits coordinator |
@@ -1647,13 +1648,13 @@ indistinguishable from the transaction never having committed.
 ### 10.1 Point read
 
 ```
-sm_read(session, relid, key, &val):
-    catalog.lookup(relid)                                # SIREAD too, §11
+sm_read(session, storeid, key, &val):
+    catalog.lookup(storeid)                              # SIREAD too, §11
     snap  = (level == READ_COMMITTED) ? visible_ts : T.snapshot_ts
     hi    = max(T.xid, snap)                             # own writes, §4.4
     if SERIALIZABLE:
-        ssi.on_read(T, relid, key)                       # SIREAD, §7.1
-    it = db.NewIterator(cf(relid))
+        ssi.on_read(T, storeid, key)                     # SIREAD, §7.1
+    it = db.NewIterator(cf(storeid))
     if SERIALIZABLE:
         it.Seek(key | 00×12)                             # every version
     else:
@@ -1705,7 +1706,7 @@ loop already handles.
 
 ### 10.2 Scan
 
-`sm_scan` opens a RocksDB iterator on the relation's CF, seeked
+`sm_scan` opens a RocksDB iterator on the store's CF, seeked
 to `skey` and bounded by `ekey`, on a **RocksDB snapshot** taken
 at cursor creation. The RocksDB snapshot gives a stable physical
 view (unaffected by concurrent eager writes or compaction); the
@@ -1722,7 +1723,7 @@ xid 0 means "no xid yet" and xid 2^64−1 is never reached, so
 these tails fall strictly before or after every version of the
 bound key.
 
-**Seek mode.** Relation CFs carry a prefix extractor
+**Seek mode.** Store CFs carry a prefix extractor
 (§12.2), and a RocksDB iterator on such a CF defaults to
 *prefix seek mode*: `ReadOptions::total_order_seek` is
 false, and the iterator is then allowed to return only
@@ -1863,11 +1864,11 @@ this document rather than mere spelling:
 ```c
 /* 0 = row, 1 = no such key, -1 = error. *data points into
  * session-owned memory valid until the next call on the session. */
-int  sm_read(sm_session_t* session, uint64_t relid,
+int  sm_read(sm_session_t* session, uint64_t storeid,
              const char* key, size_t klen,
              const char** data, size_t* datalen);
 
-sm_scan_t* sm_scan(sm_session_t* session, uint64_t relid,
+sm_scan_t* sm_scan(sm_session_t* session, uint64_t storeid,
                    const char* skey, size_t sklen, int skey_inclusive,
                    const char* ekey, size_t eklen, int ekey_inclusive);
 
@@ -1898,62 +1899,61 @@ void sm_scanend(sm_scan_t* scan);
 
 ## 11. Catalog and DDL
 
-A relation is named by a `uint64_t` relid, which `sm_mkrel`
-allocates and hands back; there are no relation names. The
-relid names the relation's column family, `CF:rel.<relid>`, so
+A store is named by a `uint64_t` storeid, which `sm_mkstore`
+allocates and hands back; there are no store names. The
+storeid names the store's column family, `CF:store.<storeid>`, so
 resolving one costs no indirection. The catalog is itself
-`relid = 0`, an ordinary MVCC relation in `CF:rel.0` holding a
-row per relation and a row per sequence:
+`storeid = 0`, an ordinary MVCC store in `CF:store.0` holding a
+row per store and a row per sequence:
 
 ```
-key = "R" | be64(relid)    →  { }                         (relation)
+key = "R" | be64(storeid)    →  { }                         (store)
 key = "S" | name           →  { seqid, start, increment }  (sequence)
 ```
 
-A relation's row carries nothing: that the row exists at a
-snapshot is what makes the relation exist there. The design's
+A store's row carries nothing: that the row exists at a
+snapshot is what makes the store exist there. The design's
 `created_ts` field is left out, since nothing reads it.
 
-Big-endian relids make the catalog's key order numeric, so
-`sm_lsrel` is one scan of the `"R"` prefix and returns relids
-in ascending order. Relids are handed out in creation order, so
-the lowest one listed is the first relation the database ever
-had: that is how a layer finds its own catalog relation again
+Big-endian storeids make the catalog's key order numeric, so
+`sm_lsstore` is one scan of the `"R"` prefix and returns storeids
+in ascending order. Storeids are handed out in creation order, so
+the lowest one listed is the first store the database ever
+had: that is how a layer finds its own catalog store again
 after a restart, having nothing else to go on.
 
-A relid is never reused, so it never names two relations. That
-is what makes a drop safe: after `sm_rmrel` commits, the
-relation's CF stays until the watermark passes the drop (§8.3),
-and an older snapshot goes on reading it through the same relid
-while newer ones find no catalog row. A relid the caller could
+A storeid is never reused, so it never names two stores. That
+is what makes a drop safe: after `sm_rmstore` commits, the
+store's CF stays until the watermark passes the drop (§8.3),
+and an older snapshot goes on reading it through the same storeid
+while newer ones find no catalog row. A storeid the caller could
 choose would have to be refused until GC had dropped the old
-CF, or else name two relations at once.
+CF, or else name two stores at once.
 
-There is no next-relid row in the catalog. Relids come from the
-lease in `CF:meta` (§4.2); a catalog row updated by every
-`sm_mkrel` would make concurrent creates of *different*
-relations contend on one row lock and fail with
-`SM_ERR_CONFLICT`.
+There is no next-storeid row in the catalog. Storeids come from
+the lease in `CF:meta` (§4.2); a catalog row updated by every
+`sm_mkstore` would make concurrent creates of *different* stores
+contend on one row lock and fail with `SM_ERR_CONFLICT`.
 
-Because it is an ordinary relation, DDL is transactional for free:
-`sm_mkrel` inserts a catalog row, `sm_rmrel` deletes it
-(recording the relid in `T.dropped`), and both roll back with
+Because it is an ordinary store, DDL is transactional for free:
+`sm_mkstore` inserts a catalog row, `sm_rmstore` deletes it
+(recording the storeid in `T.dropped`), and both roll back with
 the transaction. Both follow the §5 write path, reported in DDL
-terms: `sm_mkrel` of a live relid fails with `SM_ERR_EXISTS`
-where an insert would report `SM_ERR_DUPKEY`, and `sm_rmrel` of
-a missing relid fails with `SM_ERR_NOTFOUND`. A dropped relid's
-newest version is a tombstone, so `sm_mkrel` can create it
-again.
+terms: `sm_mkstore` of a live storeid fails with `SM_ERR_EXISTS`
+where an insert would report `SM_ERR_DUPKEY`, and `sm_rmstore` of
+a missing storeid fails with `SM_ERR_NOTFOUND`. A dropped
+storeid's newest version is a tombstone, so `sm_mkstore` can
+create it again.
 
-`sm_lsrel` is a §10.2 scan of the catalog over `["R", "S")`,
+`sm_lsstore` is a §10.2 scan of the catalog over `["R", "S")`,
 so under SERIALIZABLE it registers the whole range as read: a
-concurrent `sm_mkrel` or `sm_rmrel` of any relid is an
+concurrent `sm_mkstore` or `sm_rmstore` of any storeid is an
 rw-conflict with it.
 
-A session may cache which relids are live (not yet implemented:
-every lookup reads `CF:rel.0`), but the answer depends on the
-snapshot. After a committed `sm_rmrel`, a transaction with an
-older snapshot must still find the relation, since it may still
+A session may cache which storeids are live (not yet implemented:
+every lookup reads `CF:store.0`), but the answer depends on the
+snapshot. After a committed `sm_rmstore`, a transaction with an
+older snapshot must still find the store, since it may still
 legitimately read it. A cache invalidated at DDL commit would
 hide it, so the cache is checked by timestamp instead:
 
@@ -1965,9 +1965,9 @@ hide it, so the cache is checked by timestamp instead:
   used only if `last_ddl_ts` is at or below both that snapshot
   and the lookup's; then no DDL committed between the two, and
   the answer is the same at both. Otherwise the lookup reads
-  `CF:rel.0` and replaces the entry.
-- `sm_mkrel` and `sm_rmrel` evict their relid's entry, and a
-  lookup that resolves to the transaction's own uncommitted
+  `CF:store.0` and replaces the entry.
+- `sm_mkstore` and `sm_rmstore` evict their storeid's entry, and
+  a lookup that resolves to the transaction's own uncommitted
   catalog version does not populate the cache.
 
 The comparison is against both snapshots because a session's
@@ -1976,14 +1976,14 @@ lookup at the begin snapshot `T.snapshot_ts` can follow one at a
 newer statement snapshot (§6.2).
 
 Under SERIALIZABLE a lookup is also a read for SSI. That a
-relid names a live relation is something the transaction
-observed, and a concurrent `sm_rmrel` of that relid writes the
-catalog key it depends on. Without an rw-edge for it, DDL admits
-write skew:
+storeid names a live store is something the transaction observed,
+and a concurrent `sm_rmstore` of that storeid writes the catalog
+key it depends on. Without an rw-edge for it, DDL admits write
+skew:
 
 ```
 T1: sm_read(S, x)             T2: sm_read(R, k)    # looks up R
-T1: sm_rmrel(R)               T2: sm_update(S, x)
+T1: sm_rmstore(R)             T2: sm_update(S, x)
 ```
 
 `T1 ──rw──▶ T2` comes from `x`; `T2 ──rw──▶ T1` exists only if
@@ -1991,26 +1991,26 @@ T2's lookup counts as a read of `"R" | be64(R)`. So under
 SERIALIZABLE:
 
 - A lookup is a §10.1 point read of the catalog key: the SIREAD
-  lock on `"R" | be64(relid)` in `rel.0` is taken first,
-  whether or not the relid is found, and versions of
+  lock on `"R" | be64(storeid)` in `store.0` is taken first,
+  whether or not the storeid is found, and versions of
   concurrent writers it steps past run `on_skip`.
 - A cache hit does not stand in for that read. An in-flight
-  `sm_rmrel` has not raised `last_ddl_ts`, so a hit is valid by
+  `sm_rmstore` has not raised `last_ddl_ts`, so a hit is valid by
   the rule above, yet it steps past nothing, and the dropper's
   `on_write` ran before any SIREAD existed: the edge is missed.
   Each cache entry therefore also records the transaction that
-  read it from `rel.0`, and a serializable lookup uses a hit
+  read it from `store.0`, and a serializable lookup uses a hit
   only if that is the current transaction. Its SIREAD already
-  catches every later writer of the relid.
+  catches every later writer of the storeid.
 
 ### 11.1 Sequences
 
 A sequence is a catalog row of its own, keyed `"S" | name`, so
 `sm_mkseq` and `sm_rmseq` are transactional exactly as
-`sm_mkrel` is, down to the row lock that makes two concurrent
+`sm_mkstore` is, down to the row lock that makes two concurrent
 creates of one name conflict. The row holds
 `{ seqid, start, increment }`, and the `seqid` comes from the
-same object-id allocator as a relid (§4.2), so a name created
+same object-id allocator as a storeid (§4.2), so a name created
 again after a drop names a different sequence.
 
 What the row does **not** hold is the sequence's position. The
@@ -2042,21 +2042,22 @@ since the name's next incarnation has a new `seqid`.
 
 The column family is the one part of DDL that is not
 transactional: `CreateColumnFamily` and `DropColumnFamily` take
-effect immediately. `sm_mkrel` therefore creates the CF
+effect immediately. `sm_mkstore` therefore creates the CF
 **eagerly**, before inserting the catalog row, so the creating
-transaction can write into the relation at once. Nobody else can
+transaction can write into the store at once. Nobody else can
 reach the CF until the catalog row commits. If the transaction
-aborts or rolls back past the `sm_mkrel`, it drops the CF itself
-(§6.5, §6.6); if it crashes, the startup sweep drops it (§9.1).
+aborts or rolls back past the `sm_mkstore`, it drops the CF
+itself (§6.5, §6.6); if it crashes, the startup sweep drops it
+(§9.1).
 
-`sm_rmrel` does **not** drop the CF at commit — a concurrent
-snapshot may still legitimately read the relation. Physical
+`sm_rmstore` does **not** drop the CF at commit — a concurrent
+snapshot may still legitimately read the store. Physical
 removal happens when `gc_watermark` passes the drop's
 `commit_ts` (§8.3).
 
 `sm_mkdb` allocates a `dbid`, creates the directory
 `{homedir}/base/{dbid}`, `CF:txn`, `CF:meta` with its
-initial contents, and the catalog's `CF:rel.0`, and commits
+initial contents, and the catalog's `CF:store.0`, and commits
 the name last. `sm_rmdb` drops the name first, then runs
 `rocksdb::DestroyDB`, after verifying that no session holds
 the database open; sessions in other processes are ruled out
@@ -2081,13 +2082,13 @@ SM_ERR_UPDATED         read committed write past a newer commit (§5.4);
                        not an abort
 SM_ERR_SERIALIZATION   SSI validation failure (§7.3)
 SM_ERR_DEADLOCK        victim of deadlock detection (§5.1)
-SM_ERR_NOTFOUND        relation or key does not exist
+SM_ERR_NOTFOUND        store or key does not exist
 SM_ERR_DUPKEY          insert onto a live key (§5)
 SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
 SM_ERR_NOTRANS         data op outside a transaction (§6.1)
 SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
 SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
-SM_ERR_EXISTS          home dir, database, or relation exists (§11)
+SM_ERR_EXISTS          home dir, database, or store exists (§11)
 SM_ERR_INUSE           database still open in this process
 SM_ERR_VERSION         home directory format unsupported (§3.5)
 SM_ERR_CORRUPT         RocksDB integrity failure (§9.4)
@@ -2123,23 +2124,23 @@ Two consequences for the implementation:
 `ssi_max_entries`, `commit_cache_entries`, `ts_lease`, plus
 pass-through RocksDB options (block cache size, write buffer
 size, compaction style). Bloom filters
-are worth enabling on relation CFs, and `CF:txn` benefits from a
-large block cache since it is small and hot. For relation CFs the
+are worth enabling on store CFs, and `CF:txn` benefits from a
+large block cache since it is small and hot. For store CFs the
 prefix extractor strips the 12-byte tail, so the bloom key is the
 userkey; the comparator keeps each userkey's versions contiguous,
 which is what a prefix extractor requires.
 
 Configuring that extractor obliges every iterator on a
-relation CF to state its seek mode, because the RocksDB
+store CF to state its seek mode, because the RocksDB
 default is prefix seek and a scan that inherits it
-returns at most one userkey (§10.2). Relation CFs also
+returns at most one userkey (§10.2). Store CFs also
 get no `row_cache`: the tombstone purge uses
 `DeleteRange`, which returns `Status::NotSupported()`
 when one is configured (§8.3).
 
-Relation CFs share one block cache and one `WriteBufferManager`,
+Store CFs share one block cache and one `WriteBufferManager`,
 so total memtable memory is a single budget rather than
-`write_buffer_size × relations`. `max_total_wal_size` bounds how
+`write_buffer_size × stores`. `max_total_wal_size` bounds how
 long a rarely-written CF can hold old WAL files alive.
 
 **Logging.** wisr writes no log of its own; a host installs a
@@ -2162,16 +2163,16 @@ forgotten cursor holding back reclamation.
 include/sm.h            public C API
 src/strlist.cc          sm_strlist_t, the counted list of names
 src/env.cc              init/attach/detach, root db, db sweep
-src/db.cc               mkdb/rmdb, open registry, CF setup, relid→CF map
+src/db.cc               mkdb/rmdb, open registry, CF setup, storeid→CF map
 src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
 src/version.cc          key/value codec, version comparator, visibility
 src/access.cc           read / scan / insert / update / delete
 src/lockmgr.cc          row locks, waits-for graph, deadlock detection
 src/ssi.cc              SIREAD locks, rw-edges, validation
-src/catalog.cc          relation catalog: DDL, sm_lsrel, CF create/drop
+src/catalog.cc          store catalog: DDL, sm_lsstore, CF create/drop
 src/seq.cc              named sequences: sm_mkseq, sm_rmseq, sm_nextseq
-src/gc.cc               compaction filter, watermarks, drop-relation purge
+src/gc.cc               compaction filter, watermarks, drop-store purge
 src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 src/log.cc              the sm_set_log hook the engine reports through
 test/                   the engine's tests: API, limits, locks, GC,
@@ -2183,7 +2184,7 @@ example/                small programs against the public API
 ### 12.4 Build order
 
 1. Codec, catalog, single-threaded read/write with no concurrency —
-   `mkdb/open/mkrel/insert/read/scan` under one transaction at a time.
+   `mkdb/open/mkstore/insert/read/scan` under one transaction at a time.
 2. Timestamps, commit sequencer, status table, snapshot visibility;
    RC and RR isolation. Crash tests begin here.
 3. Row locks (shared and exclusive), write-write conflict,
@@ -2292,22 +2293,22 @@ bullets below cover the rest of the engine.
   followed by a concurrent write to that key (§7.1), a scan
   past a key whose only versions are concurrent writers'
   (§10.2), a scan left open at `sm_commit` (§8.2), write
-  skew through `sm_rmrel` of a relation the other transaction
-  reads, with the relid already in both sessions' caches (§11),
+  skew through `sm_rmstore` of a store the other transaction
+  reads, with the storeid already in both sessions' caches (§11),
   and Fekete's read-only anomaly, which must fail while the
   read-only transaction's snapshot is unsafe (§7.4). A
   transaction that reads, outlives every concurrent writer so
   that its snapshot is safe, and then writes commits, including
   on an otherwise idle database (§7.4). With a prepared or
   committed pivot, the partner is the one that fails (§7.3).
-- **DDL.** Concurrent `sm_mkrel` calls both commit, each
-  writing a catalog row of its own; concurrent `sm_rmrel` of
-  the same relation blocks, and the second fails with
-  `SM_ERR_CONFLICT` (§11). Every `sm_mkrel` hands out a higher
-  relid than the last, and a dropped relation stays readable at
-  an older snapshot; `sm_rollback` past an `sm_rmrel` keeps the
-  relation's CF, and past an `sm_mkrel` drops it. Under
-  SERIALIZABLE, `sm_lsrel` followed by concurrent creates is a
+- **DDL.** Concurrent `sm_mkstore` calls both commit, each
+  writing a catalog row of its own; concurrent `sm_rmstore` of
+  the same store blocks, and the second fails with
+  `SM_ERR_CONFLICT` (§11). Every `sm_mkstore` hands out a higher
+  storeid than the last, and a dropped store stays readable at
+  an older snapshot; `sm_rollback` past an `sm_rmstore` keeps the
+  store's CF, and past an `sm_mkstore` drops it. Under
+  SERIALIZABLE, `sm_lsstore` followed by concurrent creates is a
   conflict (§11).
 - **Sequences.** `sm_mkseq` and `sm_rmseq` follow commit,
   abort, and rollback like any other DDL, while the values
@@ -2339,7 +2340,7 @@ bullets below cover the rest of the engine.
   original `prepared_at`. Prepare two read-only transactions
   under different gids, restart, and assert both are listed and
   resolvable (§8.4). Prepare a transaction that dropped a
-  relation, restart, commit it by gid, and assert the relation's
+  store, restart, commit it by gid, and assert the store's
   CF is removed once `gc_watermark` passes the commit (§3.2).
 - **GC.** Assert that a long-running reader's snapshot is never
   violated by the collector, and that space is actually reclaimed once
@@ -2388,21 +2389,20 @@ bullets below cover the rest of the engine.
   writes and aborts heavily without triggering compaction will hold
   dead versions. A periodic forced compaction over hot ranges is the
   operational answer.
-- **A column family per relation.** Buys instant physical drop,
-  per-relation tuning, and per-relation compaction stats. Costs:
-  every CF is opened at startup, so open time grows with the
-  number of relations; each CF carries its own memtable and LSM
-  metadata, so very many small relations need the shared memory
-  budget (§12.2); and CF create/drop is outside MVCC, which is
-  why `sm_mkrel` needs eager cleanup plus a recovery sweep (§11).
-  The target is **hundreds to low thousands of relations per
-  database**, which is where this trade pays. Past that, the
-  answer is not to tune it but to replace it: fold the relid
-  into the key as an 8-byte prefix in one shared CF, which
-  makes create and drop pure MVCC operations and removes the
-  recovery sweep, at the cost of losing the O(1) drop (it
-  becomes a `DeleteRange` over the relation) and all
-  per-relation tuning.
+- **A column family per store.** Buys instant physical drop,
+  per-store tuning, and per-store compaction stats. Costs: every
+  CF is opened at startup, so open time grows with the number of
+  stores; each CF carries its own memtable and LSM metadata, so
+  very many small stores need the shared memory budget (§12.2);
+  and CF create/drop is outside MVCC, which is why `sm_mkstore`
+  needs eager cleanup plus a recovery sweep (§11). The target is
+  **hundreds to low thousands of stores per database**, which is
+  where this trade pays. Past that, the answer is not to tune it
+  but to replace it: fold the storeid into the key as an 8-byte
+  prefix in one shared CF, which makes create and drop pure MVCC
+  operations and removes the recovery sweep, at the cost of
+  losing the O(1) drop (it becomes a `DeleteRange` over the
+  store) and all per-store tuning.
 - **A transaction's lock, undo, and read sets live in RAM.**
   Row values stream to disk, but `T.locks`, `T.undo`, and the
   SSI read set are linear in the keys touched (§5.1), so a
@@ -2477,8 +2477,8 @@ what makes recovery free of an undo pass.
 | Full-compaction cost of the `CF:txn` sweep, and its unstated RocksDB dependencies | §8.3 |
 | One `DeleteRange` per deleted key saturates the range-tombstone aggregator | §8.3 coalescing and flush cadence, §12.2 no `row_cache` |
 | Cursors opened after a savepoint outlive `sm_rollback` | §6.5, §10.2, `API.md`, §12.5 |
-| No index for matching a write against active range predicates | §7.1 per-relation interval tree |
+| No index for matching a write against active range predicates | §7.1 per-store interval tree |
 | `iterate_upper_bound` borrows its buffer | §10.2 bound lifetime |
 | A deadlock victim that is not blocked is never told | §5.1 `doomed` field, §12.5 |
 | Lock, undo, and read sets are unbounded in RAM | §5.1, §13 |
-| Column-family-per-relation scaling ceiling | §13: target is hundreds to low thousands, with the shared-CF layout named as the replacement past that |
+| Column-family-per-store scaling ceiling | §13: target is hundreds to low thousands, with the shared-CF layout named as the replacement past that |

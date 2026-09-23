@@ -1,5 +1,5 @@
 /*
- * version.h -- the row-version codec and the relation column
+ * version.h -- the row-version codec and the store column
  * families' comparator and prefix extractor (DESIGN.md §3.1).
  *
  *   key   = userkey | ~wts (8B BE) | ~seq (4B BE)

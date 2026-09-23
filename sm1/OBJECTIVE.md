@@ -7,7 +7,7 @@ full MVCC, for OLTP workloads.
 
 - This project adds only an **MVCC storage manager** on top of
   RocksDB. Nothing above the storage manager is in scope.
-- Each relation is a **clustered index on a single primary
+- Each store is a **clustered index on a single primary
   key**: the value is stored with its key, rows are ordered by
   key, and the key is the only access path.
 - Keys are ordered **bytewise (`memcmp`)**; there is no custom
@@ -15,13 +15,13 @@ full MVCC, for OLTP workloads.
   strings whose `memcmp` order is the order they want.
 - **Secondary indexes are not provided.** They can be built by
   another layer on top of this one, for example as separate
-  relations maintained in the same transaction.
+  stores maintained in the same transaction.
 - **Backward scans are not supported.** Iteration is forward
   only, in ascending bytewise key order. This holds for every
   index: the clustered primary key here, and any secondary
-  index a layer above builds out of relations. It is a
+  index a layer above builds out of stores. It is a
   permanent decision, not a phase-1 limitation. A caller that
-  needs descending order keeps a second relation whose key
+  needs descending order keeps a second store whose key
   bytes are inverted, and scans that one forward.
 
 ## Goals
@@ -48,7 +48,7 @@ full MVCC, for OLTP workloads.
   - statement boundaries: `sm_stmt_begin`
   - row locks without writing: `sm_lock`
   - cursor reposition: `sm_scan_seek`
-  - relations: `sm_mkrel` / `sm_rmrel` / `sm_lsrel`
+  - stores: `sm_mkstore` / `sm_rmstore` / `sm_lsstore`
   - sequences: `sm_mkseq` / `sm_rmseq` / `sm_nextseq`
   - data ops: `sm_insert` / `sm_update` / `sm_delete` / `sm_read` /
     `sm_scan` / `sm_scannxt` / `sm_scanend`

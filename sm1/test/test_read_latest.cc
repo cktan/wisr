@@ -14,20 +14,20 @@
 
 namespace {
 
-/* The fixture's relation, set when the fixture is created. */
-uint64_t g_rel = 0;
+/* The fixture's store, set when the fixture is created. */
+uint64_t g_store = 0;
 
-/* A database "db" with one relation holding "x" -> "0", "y" -> "0". */
+/* A database "db" with one store holding "x" -> "0", "y" -> "0". */
 class latest_fixture_t {
 public:
-  /* Create "db", the relation, and the two rows. */
+  /* Create "db", the store, and the two rows. */
   latest_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     sm_session_t *s = open();
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    g_rel = mkrel(s);
-    put(s, g_rel, "x", "0");
-    put(s, g_rel, "y", "0");
+    g_store = mkstore(s);
+    put(s, g_store, "x", "0");
+    put(s, g_store, "y", "0");
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_closedb(s) == 0);
   }
@@ -43,9 +43,9 @@ private:
   home_t m_home;
 };
 
-/* Set key in relation 1 to val; the result of sm_update. */
+/* Set key in store 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size(),
+  return sm_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
                    nullptr, nullptr);
 }
 
@@ -53,7 +53,7 @@ int set(sm_session_t *s, const std::string &key, const std::string &val) {
 std::string latest(sm_session_t *s, const std::string &key) {
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm_read_latest(s, g_rel, key.data(), key.size(), &data, &len);
+  int r = sm_read_latest(s, g_store, key.data(), key.size(), &data, &len);
   if (r < 0) {
     return "<error>";
   }
@@ -82,7 +82,7 @@ TEST_CASE(
   sm_session_t *t = f.open();
 
   REQUIRE(sm_begin(t, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_lock(t, g_rel, "x", 1, SM_LOCK_EXCLUSIVE) == 0);
+  REQUIRE(sm_lock(t, g_store, "x", 1, SM_LOCK_EXCLUSIVE) == 0);
   CHECK(latest(t, "x") == "<error>");
   CHECK(sm_errno() == SM_ERR_INVALID);
   REQUIRE(sm_abort(t) == 0);
@@ -90,7 +90,7 @@ TEST_CASE(
   REQUIRE(sm_begin(t, SM_XCT_READ_COMMITTED) == 0);
   CHECK(latest(t, "x") == "<error>");
   CHECK(sm_errno() == SM_ERR_INVALID);
-  REQUIRE(sm_lock(t, g_rel, "x", 1, SM_LOCK_EXCLUSIVE) == 0);
+  REQUIRE(sm_lock(t, g_store, "x", 1, SM_LOCK_EXCLUSIVE) == 0);
   CHECK(latest(t, "x") == "0");
   REQUIRE(sm_commit(t) == 0);
   sm_closedb(t);
@@ -126,7 +126,7 @@ TEST_CASE("a successful write consumes the mark") {
   sm_session_t *t = f.open();
   REQUIRE(sm_begin(t, SM_XCT_READ_COMMITTED) == 0);
   commit_from_other(f, "x", "u");
-  REQUIRE(sm_lock(t, g_rel, "x", 1, SM_LOCK_EXCLUSIVE) == 0);
+  REQUIRE(sm_lock(t, g_store, "x", 1, SM_LOCK_EXCLUSIVE) == 0);
 
   REQUIRE(sm_savepoint(t) == 1);
   CHECK(latest(t, "x") == "u");
@@ -149,7 +149,7 @@ TEST_CASE("under a shared lock sm_read_latest reads but sets no mark") {
   REQUIRE(sm_begin(t, SM_XCT_READ_COMMITTED) == 0);
   commit_from_other(f, "x", "u");
 
-  REQUIRE(sm_lock(t, g_rel, "x", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(sm_lock(t, g_store, "x", 1, SM_LOCK_SHARED) == 0);
   CHECK(latest(t, "x") == "u");
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm_errno() == SM_ERR_UPDATED);

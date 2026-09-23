@@ -61,8 +61,8 @@ struct worker_t {
   std::string name;
   sm_xctlevel_t level = SM_XCT_REPEATABLE_READ;
   sm_session_t *sess = nullptr;
-  uint64_t rel = 0;
-  uint64_t rel2 = 0; /* the second relation, for rmrel/lookup */
+  uint64_t store = 0;
+  uint64_t rel2 = 0; /* the second store, for rmstore/lookup */
 
   std::thread thread;
   std::mutex mu;
@@ -114,7 +114,7 @@ std::string execute(worker_t *w, const item_t &it) {
   if (it.verb == "read") {
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm_read(w->sess, w->rel, a[0].data(), a[0].size(), &data, &len);
+    int rc = sm_read(w->sess, w->store, a[0].data(), a[0].size(), &data, &len);
     if (rc < 0) {
       return error_name();
     }
@@ -125,8 +125,8 @@ std::string execute(worker_t *w, const item_t &it) {
     // this transaction holds locked, past its snapshot.
     const char *data = nullptr;
     size_t len = 0;
-    int rc =
-        sm_read_latest(w->sess, w->rel, a[0].data(), a[0].size(), &data, &len);
+    int rc = sm_read_latest(w->sess, w->store, a[0].data(), a[0].size(), &data,
+                            &len);
     if (rc < 0) {
       return error_name();
     }
@@ -134,14 +134,14 @@ std::string execute(worker_t *w, const item_t &it) {
   }
   if (it.verb == "write" || it.verb == "insert") {
     int rc = it.verb == "write"
-                 ? sm_update(w->sess, w->rel, a[0].data(), a[0].size(),
+                 ? sm_update(w->sess, w->store, a[0].data(), a[0].size(),
                              a[1].data(), a[1].size(), nullptr, nullptr)
-                 : sm_insert(w->sess, w->rel, a[0].data(), a[0].size(),
+                 : sm_insert(w->sess, w->store, a[0].data(), a[0].size(),
                              a[1].data(), a[1].size());
     return rc == 0 ? "ok" : error_name();
   }
   if (it.verb == "delete") {
-    return sm_delete(w->sess, w->rel, a[0].data(), a[0].size(), nullptr,
+    return sm_delete(w->sess, w->store, a[0].data(), a[0].size(), nullptr,
                      nullptr) == 0
                ? "ok"
                : error_name();
@@ -152,7 +152,7 @@ std::string execute(worker_t *w, const item_t &it) {
     if (a.size() == 4 && a[2] == "limit") {
       limit = strtol(a[3].c_str(), nullptr, 10);
     }
-    sm_scan_t *c = sm_scan(w->sess, w->rel, a[0].data(), a[0].size(), 1,
+    sm_scan_t *c = sm_scan(w->sess, w->store, a[0].data(), a[0].size(), 1,
                            a[1].data(), a[1].size(), 1);
     if (!c) {
       return error_name();
@@ -171,7 +171,7 @@ std::string execute(worker_t *w, const item_t &it) {
   }
   if (it.verb == "open") {
     // open <name> <lo> <hi>: a cursor that outlives this step.
-    sm_scan_t *c = sm_scan(w->sess, w->rel, a[1].data(), a[1].size(), 1,
+    sm_scan_t *c = sm_scan(w->sess, w->store, a[1].data(), a[1].size(), 1,
                            a[2].data(), a[2].size(), 1);
     if (!c) {
       return error_name();
@@ -236,13 +236,13 @@ std::string execute(worker_t *w, const item_t &it) {
       return "ERROR: lock mode must be shared or exclusive, not " + a[1];
     }
     sm_lockmode_t mode = a[1] == "shared" ? SM_LOCK_SHARED : SM_LOCK_EXCLUSIVE;
-    return sm_lock(w->sess, w->rel, a[0].data(), a[0].size(), mode) == 0
+    return sm_lock(w->sess, w->store, a[0].data(), a[0].size(), mode) == 0
                ? "ok"
                : error_name();
   }
   if (it.verb == "lookup") {
-    // lookup <row>: read a row of the SECOND relation. What
-    // the scenario is usually after is the relid resolution
+    // lookup <row>: read a row of the SECOND store. What
+    // the scenario is usually after is the storeid resolution
     // this takes, which is a tracked catalog read (§11).
     const char *data = nullptr;
     size_t len = 0;
@@ -252,24 +252,24 @@ std::string execute(worker_t *w, const item_t &it) {
     }
     return rc == 1 ? "-" : std::string(data, len);
   }
-  if (it.verb == "rmrel") {
-    // Drop the second relation; the first one every other verb
+  if (it.verb == "rmstore") {
+    // Drop the second store; the first one every other verb
     // works in is never dropped.
-    return sm_rmrel(w->sess, w->rel2) == 0 ? "ok" : error_name();
+    return sm_rmstore(w->sess, w->rel2) == 0 ? "ok" : error_name();
   }
-  if (it.verb == "mkrel") {
-    uint64_t relid = 0;
-    // The relid itself is generated, so it is not printed.
-    return sm_mkrel(w->sess, &relid) == 0 ? "ok" : error_name();
+  if (it.verb == "mkstore") {
+    uint64_t storeid = 0;
+    // The storeid itself is generated, so it is not printed.
+    return sm_mkstore(w->sess, &storeid) == 0 ? "ok" : error_name();
   }
-  if (it.verb == "lsrel") {
+  if (it.verb == "lsstore") {
     uint64_t *list = nullptr;
     size_t n = 0;
-    if (sm_lsrel(w->sess, &list, &n) != 0) {
+    if (sm_lsstore(w->sess, &list, &n) != 0) {
       return error_name();
     }
-    sm_free_rels(list);
-    return std::to_string(n) + " relations";
+    sm_free_stores(list);
+    return std::to_string(n) + " stores";
   }
   return "ERROR: unknown verb " + it.verb;
 }
@@ -316,20 +316,20 @@ public:
     if (!m_ok) {
       return;
     }
-    // The driver's own session creates the relations and seeds
+    // The driver's own session creates the stores and seeds
     // them. There are two: the one every row verb works in,
     // and a second holding the same rows, which exists to be
     // dropped and looked up (DRIVER.md §5).
     m_checker = sm_opendb(m_env, "db", nullptr);
     m_ok = m_checker && sm_begin(m_checker, SM_XCT_REPEATABLE_READ) == 0 &&
-           sm_mkrel(m_checker, &m_rel) == 0 &&
-           sm_mkrel(m_checker, &m_rel2) == 0;
+           sm_mkstore(m_checker, &m_store) == 0 &&
+           sm_mkstore(m_checker, &m_rel2) == 0;
     for (const auto &kv : m_script.seeds) {
       // The same rows in both, so a script can read either.
-      for (uint64_t rel : {m_rel, m_rel2}) {
-        m_ok =
-            m_ok && sm_insert(m_checker, rel, kv.first.data(), kv.first.size(),
-                              kv.second.data(), kv.second.size()) == 0;
+      for (uint64_t store : {m_store, m_rel2}) {
+        m_ok = m_ok &&
+               sm_insert(m_checker, store, kv.first.data(), kv.first.size(),
+                         kv.second.data(), kv.second.size()) == 0;
       }
     }
     m_ok = m_ok && sm_commit(m_checker) == 0;
@@ -344,7 +344,7 @@ public:
       w.name = d.name;
       w.level = level_for(d, i);
       w.sess = sm_opendb(m_env, "db", nullptr);
-      w.rel = m_rel;
+      w.store = m_store;
       w.rel2 = m_rel2;
       m_ok = m_ok && w.sess != nullptr;
       w.thread = std::thread(worker_main, &w);
@@ -519,7 +519,7 @@ private:
     if (sm_begin(m_checker, SM_XCT_REPEATABLE_READ) != 0) {
       return error_name();
     }
-    sm_scan_t *c = sm_scan(m_checker, m_rel, nullptr, 0, 0, nullptr, 0, 0);
+    sm_scan_t *c = sm_scan(m_checker, m_store, nullptr, 0, 0, nullptr, 0, 0);
     out << "{";
     const char *k, *d;
     size_t kl, dl;
@@ -541,7 +541,7 @@ private:
     }
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm_read(m_checker, m_rel, row.data(), row.size(), &data, &len);
+    int rc = sm_read(m_checker, m_store, row.data(), row.size(), &data, &len);
     std::string v = rc == 0 ? std::string(data, len) : "-";
     sm_commit(m_checker);
     return v;
@@ -619,7 +619,7 @@ private:
   std::string m_home;
   sm_env_t *m_env = nullptr;
   sm_session_t *m_checker = nullptr;
-  uint64_t m_rel = 0;
+  uint64_t m_store = 0;
   uint64_t m_rel2 = 0;
   std::vector<std::unique_ptr<worker_t>> m_workers;
   bool m_ok = false;

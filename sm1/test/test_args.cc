@@ -13,19 +13,19 @@
 
 namespace {
 
-/* The fixture's relation, set when the fixture is created. */
-uint64_t g_rel = 0;
+/* The fixture's store, set when the fixture is created. */
+uint64_t g_store = 0;
 
-/* A database "db" with one relation and one row, "a" -> "1". */
+/* A database "db" with one store and one row, "a" -> "1". */
 class args_fixture_t {
 public:
-  /* Create "db", the relation, and the row. */
+  /* Create "db", the store, and the row. */
   args_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     m_s = open();
     REQUIRE(sm_begin(m_s, SM_XCT_REPEATABLE_READ) == 0);
-    g_rel = mkrel(m_s);
-    put(m_s, g_rel, "a", "1");
+    g_store = mkstore(m_s);
+    put(m_s, g_store, "a", "1");
     REQUIRE(sm_commit(m_s) == 0);
   }
 
@@ -134,19 +134,19 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm_list_prepared(nullptr, &list, &n), SM_ERR_INVALID);
   expect_fail(sm_commit_prepared(nullptr, "g"), SM_ERR_INVALID);
   expect_fail(sm_abort_prepared(nullptr, "g"), SM_ERR_INVALID);
-  uint64_t relid;
-  expect_fail(sm_mkrel(nullptr, &relid), SM_ERR_INVALID);
-  expect_fail(sm_rmrel(nullptr, g_rel), SM_ERR_INVALID);
-  expect_fail(sm_insert(nullptr, g_rel, "k", 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_update(nullptr, g_rel, "k", 1, "v", 1, nullptr, nullptr),
+  uint64_t storeid;
+  expect_fail(sm_mkstore(nullptr, &storeid), SM_ERR_INVALID);
+  expect_fail(sm_rmstore(nullptr, g_store), SM_ERR_INVALID);
+  expect_fail(sm_insert(nullptr, g_store, "k", 1, "v", 1), SM_ERR_INVALID);
+  expect_fail(sm_update(nullptr, g_store, "k", 1, "v", 1, nullptr, nullptr),
               SM_ERR_INVALID);
-  expect_fail(sm_delete(nullptr, g_rel, "k", 1, nullptr, nullptr),
+  expect_fail(sm_delete(nullptr, g_store, "k", 1, nullptr, nullptr),
               SM_ERR_INVALID);
-  expect_fail(sm_read(nullptr, g_rel, "k", 1, &d, &dl), SM_ERR_INVALID);
-  expect_null(sm_scan(nullptr, g_rel, nullptr, 0, 0, nullptr, 0, 0),
+  expect_fail(sm_read(nullptr, g_store, "k", 1, &d, &dl), SM_ERR_INVALID);
+  expect_null(sm_scan(nullptr, g_store, nullptr, 0, 0, nullptr, 0, 0),
               SM_ERR_INVALID);
-  uint64_t *rels;
-  expect_fail(sm_lsrel(nullptr, &rels, &n), SM_ERR_INVALID);
+  uint64_t *stores;
+  expect_fail(sm_lsstore(nullptr, &stores, &n), SM_ERR_INVALID);
   uint64_t v;
   expect_fail(sm_mkseq(nullptr, "s", 1, 1), SM_ERR_INVALID);
   expect_fail(sm_rmseq(nullptr, "s"), SM_ERR_INVALID);
@@ -155,25 +155,25 @@ TEST_CASE("every session call rejects a NULL session") {
   CHECK(sm_closedb(nullptr) == 0);
   sm_scanend(nullptr);
   sm_free_prepared(nullptr, 0);
-  sm_free_rels(nullptr);
+  sm_free_stores(nullptr);
   sm_strlist_free(nullptr);
 }
 
-TEST_CASE("relid 0 is rejected by every call taking a relid") {
-  // Verify no call treats relid 0 -- the catalog's slot -- as a
-  // relation, and that sm_mkrel needs somewhere to put its
-  // relid.
-  // 1. sm_rmrel, sm_insert, sm_update, sm_delete, sm_read, and
-  //    sm_scan with relid 0 fail with SM_ERR_INVALID, as does
-  //    sm_mkrel with a NULL out-parameter.
-  // 2. The transaction is undisturbed: the relation still reads.
+TEST_CASE("storeid 0 is rejected by every call taking a storeid") {
+  // Verify no call treats storeid 0 -- the catalog's slot -- as a
+  // store, and that sm_mkstore needs somewhere to put its
+  // storeid.
+  // 1. sm_rmstore, sm_insert, sm_update, sm_delete, sm_read, and
+  //    sm_scan with storeid 0 fail with SM_ERR_INVALID, as does
+  //    sm_mkstore with a NULL out-parameter.
+  // 2. The transaction is undisturbed: the store still reads.
   args_fixture_t f;
   sm_session_t *s = f.s();
   const char *d;
   size_t dl;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  expect_fail(sm_mkrel(s, nullptr), SM_ERR_INVALID);
-  expect_fail(sm_rmrel(s, 0), SM_ERR_INVALID);
+  expect_fail(sm_mkstore(s, nullptr), SM_ERR_INVALID);
+  expect_fail(sm_rmstore(s, 0), SM_ERR_INVALID);
   expect_fail(sm_insert(s, 0, "k", 1, "v", 1), SM_ERR_INVALID);
   expect_fail(sm_update(s, 0, "k", 1, "v", 1, nullptr, nullptr),
               SM_ERR_INVALID);
@@ -181,27 +181,27 @@ TEST_CASE("relid 0 is rejected by every call taking a relid") {
   expect_fail(sm_read(s, 0, "k", 1, &d, &dl), SM_ERR_INVALID);
   expect_null(sm_scan(s, 0, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_INVALID);
 
-  CHECK(get(s, g_rel, "a") == "1");
+  CHECK(get(s, g_store, "a") == "1");
   REQUIRE(sm_commit(s) == 0);
 }
 
-TEST_CASE("sm_mkrel hands out a fresh relid every time") {
-  // Verify relids rise and are never reused (DESIGN.md §11).
-  // 1. Three relations in one transaction get three ascending
-  //    relids, all above the fixture's.
-  // 2. Dropping one and creating another gives a relid above
+TEST_CASE("sm_mkstore hands out a fresh storeid every time") {
+  // Verify storeids rise and are never reused (DESIGN.md §11).
+  // 1. Three stores in one transaction get three ascending
+  //    storeids, all above the fixture's.
+  // 2. Dropping one and creating another gives a storeid above
   //    every one handed out so far.
-  // 3. Each new relation is usable at once and commits.
+  // 3. Each new store is usable at once and commits.
   args_fixture_t f;
   sm_session_t *s = f.s();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  uint64_t a = mkrel(s), b = mkrel(s), c = mkrel(s);
-  CHECK(g_rel < a);
+  uint64_t a = mkstore(s), b = mkstore(s), c = mkstore(s);
+  CHECK(g_store < a);
   CHECK(a < b);
   CHECK(b < c);
 
-  REQUIRE(sm_rmrel(s, b) == 0);
-  CHECK(mkrel(s) > c);
+  REQUIRE(sm_rmstore(s, b) == 0);
+  CHECK(mkstore(s) > c);
 
   put(s, a, "k", "va");
   put(s, c, "k", "vc");
@@ -212,18 +212,18 @@ TEST_CASE("sm_mkrel hands out a fresh relid every time") {
   REQUIRE(sm_commit(s) == 0);
 }
 
-TEST_CASE("unknown relations fail with SM_ERR_NOTFOUND") {
-  // Verify every data call on a relation that does not exist.
-  // 1. sm_rmrel, sm_insert, sm_update, sm_delete, sm_read, and
-  //    sm_scan on relation 999 fail with SM_ERR_NOTFOUND.
-  // 2. A relation dropped earlier in the same transaction is
+TEST_CASE("unknown stores fail with SM_ERR_NOTFOUND") {
+  // Verify every data call on a store that does not exist.
+  // 1. sm_rmstore, sm_insert, sm_update, sm_delete, sm_read, and
+  //    sm_scan on store 999 fail with SM_ERR_NOTFOUND.
+  // 2. A store dropped earlier in the same transaction is
   //    unknown to that transaction's later calls.
   args_fixture_t f;
   sm_session_t *s = f.s();
   const char *d;
   size_t dl;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  expect_fail(sm_rmrel(s, 999), SM_ERR_NOTFOUND);
+  expect_fail(sm_rmstore(s, 999), SM_ERR_NOTFOUND);
   expect_fail(sm_insert(s, 999, "k", 1, "v", 1), SM_ERR_NOTFOUND);
   expect_fail(sm_update(s, 999, "k", 1, "v", 1, nullptr, nullptr),
               SM_ERR_NOTFOUND);
@@ -231,9 +231,9 @@ TEST_CASE("unknown relations fail with SM_ERR_NOTFOUND") {
   expect_fail(sm_read(s, 999, "k", 1, &d, &dl), SM_ERR_NOTFOUND);
   expect_null(sm_scan(s, 999, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_NOTFOUND);
 
-  REQUIRE(sm_rmrel(s, g_rel) == 0);
-  expect_fail(sm_read(s, g_rel, "a", 1, &d, &dl), SM_ERR_NOTFOUND);
-  expect_fail(sm_insert(s, g_rel, "k", 1, "v", 1), SM_ERR_NOTFOUND);
+  REQUIRE(sm_rmstore(s, g_store) == 0);
+  expect_fail(sm_read(s, g_store, "a", 1, &d, &dl), SM_ERR_NOTFOUND);
+  expect_fail(sm_insert(s, g_store, "k", 1, "v", 1), SM_ERR_NOTFOUND);
   REQUIRE(sm_abort(s) == 0);
 }
 
@@ -251,21 +251,21 @@ TEST_CASE("keys and values: NULL only with length 0") {
   const char *d;
   size_t dl;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  expect_fail(sm_insert(s, g_rel, nullptr, 1, "v", 1), SM_ERR_INVALID);
-  expect_fail(sm_update(s, g_rel, nullptr, 1, "v", 1, nullptr, nullptr),
+  expect_fail(sm_insert(s, g_store, nullptr, 1, "v", 1), SM_ERR_INVALID);
+  expect_fail(sm_update(s, g_store, nullptr, 1, "v", 1, nullptr, nullptr),
               SM_ERR_INVALID);
-  expect_fail(sm_delete(s, g_rel, nullptr, 1, nullptr, nullptr),
+  expect_fail(sm_delete(s, g_store, nullptr, 1, nullptr, nullptr),
               SM_ERR_INVALID);
-  expect_fail(sm_read(s, g_rel, nullptr, 1, &d, &dl), SM_ERR_INVALID);
-  expect_fail(sm_insert(s, g_rel, "k", 1, nullptr, 1), SM_ERR_INVALID);
-  expect_fail(sm_update(s, g_rel, "a", 1, nullptr, 1, nullptr, nullptr),
+  expect_fail(sm_read(s, g_store, nullptr, 1, &d, &dl), SM_ERR_INVALID);
+  expect_fail(sm_insert(s, g_store, "k", 1, nullptr, 1), SM_ERR_INVALID);
+  expect_fail(sm_update(s, g_store, "a", 1, nullptr, 1, nullptr, nullptr),
               SM_ERR_INVALID);
-  CHECK(get(s, g_rel, "a") == "1");
+  CHECK(get(s, g_store, "a") == "1");
 
-  REQUIRE(sm_insert(s, g_rel, nullptr, 0, "empty-key", 9) == 0);
-  CHECK(get(s, g_rel, "") == "empty-key");
-  REQUIRE(sm_insert(s, g_rel, "e", 1, nullptr, 0) == 0);
-  CHECK(get(s, g_rel, "e") == "");
+  REQUIRE(sm_insert(s, g_store, nullptr, 0, "empty-key", 9) == 0);
+  CHECK(get(s, g_store, "") == "empty-key");
+  REQUIRE(sm_insert(s, g_store, "e", 1, nullptr, 0) == 0);
+  CHECK(get(s, g_store, "e") == "");
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -284,10 +284,10 @@ TEST_CASE("out-parameters must not be NULL") {
   sm_prepared_t *list;
   size_t n;
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  expect_fail(sm_read(s, g_rel, "a", 1, nullptr, &dl), SM_ERR_INVALID);
-  expect_fail(sm_read(s, g_rel, "a", 1, &d, nullptr), SM_ERR_INVALID);
+  expect_fail(sm_read(s, g_store, "a", 1, nullptr, &dl), SM_ERR_INVALID);
+  expect_fail(sm_read(s, g_store, "a", 1, &d, nullptr), SM_ERR_INVALID);
 
-  sm_scan_t *c = sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0);
+  sm_scan_t *c = sm_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   expect_fail(sm_scannxt(nullptr, &k, &kl, &d, &dl), SM_ERR_INVALID);
   expect_fail(sm_scannxt(c, nullptr, &kl, &d, &dl), SM_ERR_INVALID);
@@ -334,20 +334,21 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm_forget(s, 1), SM_ERR_NOTRANS);
   expect_fail(sm_lock(s, 1, "k", 1, SM_LOCK_SHARED), SM_ERR_NOTRANS);
   expect_fail(sm_prepare(s, "g"), SM_ERR_NOTRANS);
-  uint64_t relid;
-  expect_fail(sm_mkrel(s, &relid), SM_ERR_NOTRANS);
+  uint64_t storeid;
+  expect_fail(sm_mkstore(s, &storeid), SM_ERR_NOTRANS);
   expect_fail(sm_mkseq(s, "s", 1, 1), SM_ERR_NOTRANS);
   expect_fail(sm_rmseq(s, "s"), SM_ERR_NOTRANS);
-  expect_fail(sm_rmrel(s, g_rel), SM_ERR_NOTRANS);
-  expect_fail(sm_insert(s, g_rel, "k", 1, "v", 1), SM_ERR_NOTRANS);
-  expect_fail(sm_update(s, g_rel, "a", 1, "v", 1, nullptr, nullptr),
+  expect_fail(sm_rmstore(s, g_store), SM_ERR_NOTRANS);
+  expect_fail(sm_insert(s, g_store, "k", 1, "v", 1), SM_ERR_NOTRANS);
+  expect_fail(sm_update(s, g_store, "a", 1, "v", 1, nullptr, nullptr),
               SM_ERR_NOTRANS);
-  expect_fail(sm_delete(s, g_rel, "a", 1, nullptr, nullptr), SM_ERR_NOTRANS);
-  expect_fail(sm_read(s, g_rel, "a", 1, &d, &dl), SM_ERR_NOTRANS);
-  expect_null(sm_scan(s, g_rel, nullptr, 0, 0, nullptr, 0, 0), SM_ERR_NOTRANS);
+  expect_fail(sm_delete(s, g_store, "a", 1, nullptr, nullptr), SM_ERR_NOTRANS);
+  expect_fail(sm_read(s, g_store, "a", 1, &d, &dl), SM_ERR_NOTRANS);
+  expect_null(sm_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0),
+              SM_ERR_NOTRANS);
 
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(s, g_rel, "a") == "1");
+  CHECK(get(s, g_store, "a") == "1");
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -361,21 +362,21 @@ TEST_CASE("a rejected call leaves the transaction active and unchanged") {
   sm_session_t *s = f.s();
   std::string over(SM_MAX_KEYLEN + 1, 'k');
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, g_rel, "b", "2");
-  expect_fail(sm_insert(s, g_rel, over.data(), over.size(), "v", 1),
+  put(s, g_store, "b", "2");
+  expect_fail(sm_insert(s, g_store, over.data(), over.size(), "v", 1),
               SM_ERR_INVALID);
-  expect_fail(sm_update(s, g_rel, "missing", 7, "v", 1, nullptr, nullptr),
+  expect_fail(sm_update(s, g_store, "missing", 7, "v", 1, nullptr, nullptr),
               SM_ERR_NOTFOUND);
-  expect_fail(sm_insert(s, g_rel, "a", 1, "v", 1), SM_ERR_DUPKEY);
-  CHECK(get(s, g_rel, "b") == "2");
-  put(s, g_rel, "c", "3");
+  expect_fail(sm_insert(s, g_store, "a", 1, "v", 1), SM_ERR_DUPKEY);
+  CHECK(get(s, g_store, "b") == "2");
+  put(s, g_store, "c", "3");
   REQUIRE(sm_commit(s) == 0);
 
   sm_session_t *v = f.open();
   REQUIRE(sm_begin(v, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(v, g_rel, "a") == "1");
-  CHECK(get(v, g_rel, "b") == "2");
-  CHECK(get(v, g_rel, "c") == "3");
+  CHECK(get(v, g_store, "a") == "1");
+  CHECK(get(v, g_store, "b") == "2");
+  CHECK(get(v, g_store, "c") == "3");
   REQUIRE(sm_commit(v) == 0);
   sm_closedb(v);
 }

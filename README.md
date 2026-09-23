@@ -6,7 +6,7 @@ built on the level below it.
 | Level | Where | What it is |
 | --- | --- | --- |
 | 0 | — | RocksDB: an ordered, durable, crash-atomic key-value store |
-| 1 | `sm1/` | the MVCC storage manager: relations, transactions, isolation, locks, 2PC, recovery |
+| 1 | `sm1/` | the MVCC storage manager: stores, transactions, isolation, locks, 2PC, recovery |
 | 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, a relation of tuples |
 | 3 | `sm3/` | schema and indexes: a catalog, secondary indexes, predicate scans, statistics |
 

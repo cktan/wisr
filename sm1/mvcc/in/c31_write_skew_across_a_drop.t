@@ -1,10 +1,10 @@
-# c31 -- write skew where one side's read is a relid lookup.
+# c31 -- write skew where one side's read is a storeid lookup.
 #
 # DESIGN.md §11's argument for tracking catalog reads. T1
-# reads R1 and drops the second relation; T2 resolves that
-# relation to read a row from it, then writes R1. Neither
+# reads R1 and drops the second store; T2 resolves that
+# store to read a row from it, then writes R1. Neither
 # touches a row the other touches: the only thing joining them
-# is that T2 looked up the relation T1 dropped. A relid
+# is that T2 looked up the store T1 dropped. A storeid
 # resolution is an ordinary point read of the catalog, SIREAD
 # and all, so the edge T2 --rw--> T1 forms, and with T1 --rw-->
 # T2 from T1's read of R1 the cycle closes. Were the lookup
@@ -21,7 +21,7 @@ seed R1 0
 @1 T2 begin
 @2 T1 read R1
 @3 T2 lookup R1
-@4 T1 rmrel
+@4 T1 rmstore
 @5 T2 write R1 t2
 @6 T1 commit?
 @6 T2 commit?

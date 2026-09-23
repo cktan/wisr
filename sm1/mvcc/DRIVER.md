@@ -150,7 +150,7 @@ declared with an explicit level keeps it in every pairing --
 useful when a scenario is about one level only, as `e05` is.
 
 Every script runs against a fresh database with two
-relations, both holding the seeded rows, so nothing leaks
+stores, both holding the seeded rows, so nothing leaks
 between scripts or between pairings.
 
 ### 2.2 Steps
@@ -184,10 +184,10 @@ can be read at a glance. Several steps may share a time.
 | `seek` | `<cursor> <key>` | `ok`, or an error name |
 | `stmt` | — | `ok`: starts a statement, for `rc` |
 | `readlatest` | `<row>` | the newest committed value, or `-`; at `rc`, under a lock the session holds |
-| `lookup` | `<row>` | the value in the SECOND relation, or `-` |
-| `rmrel` | — | `ok`: drops the second relation |
-| `mkrel` | — | `ok`: creates a relation, whose relid is not printed |
-| `lsrel` | — | `<n> relations` |
+| `lookup` | `<row>` | the value in the SECOND store, or `-` |
+| `rmstore` | — | `ok`: drops the second store |
+| `mkstore` | — | `ok`: creates a store, whose storeid is not printed |
+| `lsstore` | — | `<n> stores` |
 
 Error names are symbolic, never numbers or messages:
 `conflict`, `serialization`, `dupkey`, `notfound`, `notrans`,
@@ -229,23 +229,23 @@ is no pairing for READ COMMITTED: a script that wants it
 declares `session <name> rc`, as `a15` and `a16` do, because
 the level is the scenario rather than one axis of it.
 
-**Two relations.** Every run creates a second relation
+**Two stores.** Every run creates a second store
 holding the same seeded rows as the first. Every verb above
-works in the first one; `lookup` and `rmrel` are the only ways
+works in the first one; `lookup` and `rmstore` are the only ways
 to reach the second, and they exist so that a script can drop
-a relation while reading another — `a17` for the older
-snapshot that goes on reading a dropped relation, `c31` for
+a store while reading another — `a17` for the older
+snapshot that goes on reading a dropped store, `c31` for
 §11's write skew, where the only thing joining two
-transactions is that one resolved the relation the other
+transactions is that one resolved the store the other
 dropped. `lookup` reads a row like `read` does; what the
-scenario is usually after is the relid resolution it takes on
+scenario is usually after is the storeid resolution it takes on
 the way, which is a tracked catalog read.
 
-The ceiling is deliberate: there are two relations, not n, and
-they cannot be named or made mid-script. Relations became
-reachable at all without giving every verb a relation operand,
+The ceiling is deliberate: there are two stores, not n, and
+they cannot be named or made mid-script. Stores became
+reachable at all without giving every verb a store operand,
 which is what naming them would have cost. A scenario needing
-a third relation needs the grammar change this avoided.
+a third store needs the grammar change this avoided.
 
 **`blocks`** says the step must wait on a row lock. Only a
 step marked this way may be reported blocked; every other
@@ -370,8 +370,8 @@ exit 1:
 ## 4. What keeps a transcript stable
 
 The driver prints nothing the engine generates: no
-timestamps, transaction ids, relids, durations or paths. Rows
-are named by the script, the relation is implicit, and errors
+timestamps, transaction ids, storeids, durations or paths. Rows
+are named by the script, the store is implicit, and errors
 print as names. Blocking is claimed rather than measured, and
 an outcome that may vary is hidden behind `commit?` and
 stated by a check.
@@ -383,7 +383,7 @@ noise.
 
 ## 5. Limits
 
-- **One relation per script**, created by the driver. Rows
+- **One store per script**, created by the driver. Rows
   are keys in it, and their values are opaque single words.
 - **No expressions, variables, or control flow.** A scenario
   that needs them belongs in C++ beside `e01` to `e03`.

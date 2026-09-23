@@ -15,14 +15,14 @@ scripts, `b20` to `b24` and `c27`, `c28`. Gaps 9 and 11
 followed, as three new verbs and six more scripts, `b25` to
 `b29` and `c29`; then gaps 12 and 13, as two more verbs, the
 `rc` level, and `a14` to `a16` and `c30`; then gap 10, as a
-second relation reached by two more verbs, `a17` and `c31`.
+second store reached by two more verbs, `a17` and `c31`.
 The suite is 79 scripts and `make test` is green.
 
 All five driver gaps are closed. The driver has
 `savepoint`, `rollback`, `lock`, `seek`, `stmt`, `lookup`
-and `rmrel`, plus the `rc` level and a second relation, and
+and `rmstore`, plus the `rc` level and a second store, and
 twelve scripts use them. Gap 10 was taken in a narrower
-shape than proposed — two relations rather than nameable
+shape than proposed — two stores rather than nameable
 ones — which §4 records along with what that forecloses.
 
 ---
@@ -45,7 +45,7 @@ The suite is in four families:
   non-repeatable reads, phantoms, cursor stability, own
   writes, resurrected rows, commit boundaries, cursor
   seeking, read committed's statement boundaries, and a
-  dropped relation an older snapshot still reads.
+  dropped store an older snapshot still reads.
 * **B — write-write conflicts (`b01`–`b29`).** Row locks,
   first-committer-wins, blocking and the `blocks` protocol,
   deadlock detection, and retryable against non-retryable
@@ -138,64 +138,64 @@ that write skew would commit at S/S.
 
 ---
 
-## 4. Gap 10 — CLOSED: a read of a relation against a drop of it
+## 4. Gap 10 — CLOSED: a read of a store against a drop of it
 
-**In the engine.** `sm_rmrel` is transactional, and it does
+**In the engine.** `sm_rmstore` is transactional, and it does
 not reclaim space at commit: a transaction holding an older
-snapshot must still find the relation and read its rows, and
+snapshot must still find the store and read its rows, and
 the CF survives until `gc_watermark` passes the drop
 (`include/sm.h`, `DESIGN.md` §11 and §8.3). Under
-SERIALIZABLE more is claimed: resolving a relid is a point
-read of the catalog key `"R" | be64(relid)` in `rel.0`, taken
-whether or not the relid is found, so a concurrent `sm_rmrel`
-of that relid is an rw-edge. That one is built —
+SERIALIZABLE more is claimed: resolving a storeid is a point
+read of the catalog key `"R" | be64(storeid)` in `store.0`, taken
+whether or not the storeid is found, so a concurrent `sm_rmstore`
+of that storeid is an rw-edge. That one is built —
 `catalog_lookup()` in `src/catalog.cc` reads through
 `access_read(s, 0, ...)`, which takes the SIREAD — and
 `DESIGN.md` §11 gives the write skew it exists to stop:
 
 ```
 T1: sm_read(S, x)             T2: sm_read(R, k)    # looks up R
-T1: sm_rmrel(R)               T2: sm_update(S, x)
+T1: sm_rmstore(R)             T2: sm_update(S, x)
 ```
 
 **What is covered.** `test/test_access.cc` takes DDL through
 commit and abort in one session. `test/test_lock.cc` pairs a
 drop against a *drop* — blocked, then `SM_ERR_CONFLICT`.
 `test/test_gc.cc` has the older snapshot reading a dropped
-relation's rows, at REPEATABLE READ, incidentally, as a
+store's rows, at REPEATABLE READ, incidentally, as a
 watermark test.
 
 **The gap.** No test anywhere pairs SERIALIZABLE with
-`sm_rmrel`, so both halves are asserted by the design and
+`sm_rmstore`, so both halves are asserted by the design and
 checked by nothing: the catalog SIREAD a lookup takes, and
 the write skew it is there to stop. (§11's lookup cache is
 the third rule in that paragraph and needs nothing yet: it
-is not implemented, and every lookup reads `CF:rel.0`.)
+is not implemented, and every lookup reads `CF:store.0`.)
 
-The scenario suite cannot reach any of it either. `rmrel` is
-not a verb, `mkrel` does not print the relid it made, and
-rows live in the single relation the driver creates
-(`DRIVER.md` §5), so no script can drop a relation, let
+The scenario suite cannot reach any of it either. `rmstore` is
+not a verb, `mkstore` does not print the storeid it made, and
+rows live in the single store the driver creates
+(`DRIVER.md` §5), so no script can drop a store, let
 alone read one while another drops it. `e04` covers the
-neighbouring case — `lsrel` against `mkrel`, the catalog as
+neighbouring case — `lsstore` against `mkstore`, the catalog as
 a predicate — and there is no point-lookup mirror of it.
 
 **What it cost, and the narrower shape taken.** Naming
-relations was the expensive route: a name on `mkrel` and an
-optional relation argument on `read`, `scan` and every write
+stores was the expensive route: a name on `mkstore` and an
+optional store argument on `read`, `scan` and every write
 verb — an operand on eight verbs, for two scenarios. Instead
-every run now creates a **second relation** holding the same
+every run now creates a **second store** holding the same
 seeded rows, reachable only by two verbs:
 
-* `rmrel` — drop it.
+* `rmstore` — drop it.
 * `lookup <row>` — read a row of it, which resolves its
-  relid on the way, and that resolution is the tracked
+  storeid on the way, and that resolution is the tracked
   catalog read the scenario is really about.
 
 Two scripts, as predicted:
 
 * `a17_read_of_dropped_relation.t` — a snapshot older than
-  the drop reads the relation and its rows unchanged, while
+  the drop reads the store and its rows unchanged, while
   a transaction begun after it gets `notfound`. That is the
   only place the suite states §11's rule that a drop is not
   a deletion.
@@ -204,13 +204,13 @@ Two scripts, as predicted:
   the detection is the catalog SIREAD and nothing else; that
   control was run before the script was accepted.
 
-**The ceiling is real.** There are two relations, never
+**The ceiling is real.** There are two stores, never
 three, and they cannot be named or made mid-script. A
 scenario wanting more needs the grammar change this avoided.
 Nothing in `MVCC.md`'s families looks like it will.
 
-**One transcript moved.** `e04` counts relations with
-`lsrel`, so its output went from "1 relations" to "2". The
+**One transcript moved.** `e04` counts stores with
+`lsstore`, so its output went from "1 stores" to "2". The
 scenario is unchanged and its checks still pass; only the
 count differs.
 

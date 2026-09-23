@@ -1,6 +1,6 @@
 # b08 -- writes to different rows never conflict.
 #
-# The check is per row, not per relation: two transactions
+# The check is per row, not per store: two transactions
 # writing disjoint rows are independent, whatever their levels.
 
 

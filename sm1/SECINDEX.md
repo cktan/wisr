@@ -3,16 +3,16 @@
 An assessment of what the `sm_*` API (`include/sm.h`) lacks
 for a layer that maintains secondary indexes on top of it.
 OBJECTIVE.md leaves secondary indexes to such a layer: "separate
-relations maintained in the same transaction".
+stores maintained in the same transaction".
 
 ## The pattern, and what already works
 
-A secondary index is its own relation: `sk → pk` for a unique
+A secondary index is its own store: `sk → pk` for a unique
 index, `encode(sk) ‖ pk → ""` for a non-unique one. The layer
 writes base and index rows in one transaction, so commit and
 abort cover both.
 
-- **Unique enforcement.** `sm_insert` on the index relation
+- **Unique enforcement.** `sm_insert` on the index store
   gives `SM_ERR_DUPKEY`; a concurrent inserter of the same key
   blocks on the row lock and then fails with `SM_ERR_CONFLICT`
   (§5.1, §5.2).
@@ -28,19 +28,19 @@ abort cover both.
 
 ## Gaps, in order of severity
 
-### 1. Online index build on a populated relation — CLOSED
+### 1. Online index build on a populated store — CLOSED
 
-The builder scans the base relation, fills the index, and
+The builder scans the base store, fills the index, and
 commits a row in the layer's index catalog. A concurrent
 writer whose snapshot predates that commit does not know the
-index exists: it modifies the base relation and writes no
+index exists: it modifies the base store and writes no
 index entry. PostgreSQL prevents this with a ShareLock on the
 table, or with CREATE INDEX CONCURRENTLY, which waits out older
 transactions. Neither is expressible here:
 
 - Row locks are exclusive only (§5.1). There is no shared or
-  intent mode, and a per-relation "schema row" that every
-  writer writes would serialize all writers on that relation.
+  intent mode, and a per-store "schema row" that every
+  writer writes would serialize all writers on that store.
 - SSI covers this only if every writer is SERIALIZABLE. RC and
   RR transactions take no SIREAD locks and are never
   serialization victims (§7.4), so the writer → builder
@@ -107,7 +107,7 @@ constraint the layer is built on, not a gap awaiting a fix.
 
 The layer's recourse is an index with inverted key bytes. It
 serves only that direction, so a column wanted both ways costs
-two relations, and the cost of that is now the layer's to
+two stores, and the cost of that is now the layer's to
 carry.
 
 ### 5. No cursor reposition — CLOSED
@@ -141,11 +141,11 @@ statement.
   its value to check the key exists, so returning it costs a
   copy. The `sm_read` lifetime rule applies to it, and it is
   the same buffer.
-- **`sm_lsrel`.** Implemented in phase 1, where a relation is
-  named by a `uint64_t` relid that `sm_mkrel` hands out: the
-  layer will keep its own catalog relation regardless, but
-  listing relations helps debugging and cleanup, and the lowest
-  relid listed is how the layer finds that catalog again.
+- **`sm_lsstore`.** Implemented in phase 1, where a store is
+  named by a `uint64_t` storeid that `sm_mkstore` hands out: the
+  layer will keep its own catalog store regardless, but
+  listing stores helps debugging and cleanup, and the lowest
+  storeid listed is how the layer finds that catalog again.
 - **Key length.** `SM_MAX_KEYLEN` (4096) bounds `sk ‖ pk`
   together; encodings must be sized for it.
 - **No lock-without-write.** `SELECT … FOR UPDATE` through an
@@ -158,7 +158,7 @@ Every gap is settled. Gaps 1, 2, 3 and 5 are closed:
 `sm_stmt_begin` and `sm_scan_seek` are all in `sm.h`, as is
 gap 6's old-image return. Gap 4 will not be closed:
 forward-only scanning is a decision, and the layer works
-around it with inverted-byte relations. The batched read is
+around it with inverted-byte stores. The batched read is
 the one item left on paper, and it needs a benchmark rather
 than an argument.
 
@@ -178,7 +178,7 @@ after this one explain each.
 /* gap 1: online index build, and lock-without-write -- IMPLEMENTED */
 typedef enum { SM_LOCK_SHARED = 0, SM_LOCK_EXCLUSIVE = 1 } sm_lockmode_t;
 
-int sm_lock(sm_session_t* session, uint64_t relid,
+int sm_lock(sm_session_t* session, uint64_t storeid,
             const char* key, size_t klen, sm_lockmode_t mode);
 
 /* gap 2: savepoint stack -- IMPLEMENTED */
@@ -194,24 +194,24 @@ int sm_scan_seek(sm_scan_t* scan, const char* key, size_t klen,
                  int inclusive);
 
 /* gap 6: batched read -- NOT BUILT; see the gap for why */
-int sm_mread(sm_session_t* session, uint64_t relid, size_t n,
+int sm_mread(sm_session_t* session, uint64_t storeid, size_t n,
              const char* const* key, const size_t* klen,
              const char** data, size_t* datalen, int* found);
 
 /* gap 6: old-image return -- IMPLEMENTED */
-int sm_update(sm_session_t* session, uint64_t relid,
+int sm_update(sm_session_t* session, uint64_t storeid,
               const char* key, size_t klen,
               const char* data, size_t datalen,
               const char** old, size_t* oldlen);
 
-int sm_delete(sm_session_t* session, uint64_t relid,
+int sm_delete(sm_session_t* session, uint64_t storeid,
               const char* key, size_t klen,
               const char** old, size_t* oldlen);
 ```
 
 Gap 4 needs no function: it is closed. Gap 6's
 lock-without-write is `sm_lock` again, which is now in, and
-its `sm_lsrel` was already in phase 1.
+its `sm_lsstore` was already in phase 1.
 
 **How firm each one is.** Everything but `sm_mread` is
 settled and in `sm.h` and `API.md`. `sm_mread` is sketched
@@ -234,7 +234,7 @@ derives the old entries and is done.
 
 ```c
 typedef enum { SM_LOCK_SHARED = 0, SM_LOCK_EXCLUSIVE = 1 } sm_lockmode_t;
-int sm_lock(sm_session_t* s, uint64_t relid,
+int sm_lock(sm_session_t* s, uint64_t storeid,
             const char* key, size_t klen, sm_lockmode_t mode);
 ```
 
@@ -256,16 +256,16 @@ newer than `T.snapshot_ts` fails the call with
 is released by an `sm_rollback` past it.
 
 **Index-build protocol.** The layer's catalog keeps one schema
-row per base relation, `"S"|rel`.
+row per base store, `"S"|store`.
 
-- **Every writer** calls `sm_lock(catalog, "S"|rel, SHARED)`,
+- **Every writer** calls `sm_lock(catalog, "S"|store, SHARED)`,
   then reads the row to learn which indexes to maintain. The
   conflict check guarantees what it reads is current.
 - **The builder** begins in READ COMMITTED and:
   1. Calls `sm_update` on the schema row. This takes the
      exclusive lock, waiting out in-flight writers and
      blocking new ones.
-  2. Scans the base relation. Under RC the scan's snapshot is
+  2. Scans the base store. Under RC the scan's snapshot is
      taken now, after the lock, so it sees every committed
      row.
   3. Fills the index and commits.
@@ -284,7 +284,7 @@ row per base relation, `"S"|rel`.
   writers" no longer holds, and a prepared transaction
   records each lock's mode for recovery to restore (§8.4,
   §9.1).
-- The schema row is a hot key: every writer on the relation
+- The schema row is a hot key: every writer on the store
   locks it, so its lock-table mutex is contended. Readers
   never touch it. The table is still one mutex, not sharded,
   so this is the first place a benchmark will point at.
@@ -370,7 +370,7 @@ needs `SeekForPrev` to work with the §10.2 prefix-seek setup;
 and for SSI the traversed range would run from the last key
 examined up to `ekey`, inverting the bookkeeping in §10.2. A
 layer wanting descending order builds an inverted-byte
-relation instead.
+store instead.
 
 ### Gap 5: cursor reposition — DONE
 
@@ -406,8 +406,8 @@ join does anyway.
 
 ### Gap 6: minor items
 
-- **`sm_lsrel`.** Done in phase 1: a scan of the `"R"` prefix
-  in `rel.0`, which needs an active transaction since the
+- **`sm_lsstore`.** Done in phase 1: a scan of the `"R"` prefix
+  in `store.0`, which needs an active transaction since the
   answer depends on the snapshot (DESIGN.md §11).
 - **Old-image return — DONE.** Out-parameters on `sm_update`
   and `sm_delete`, NULL to skip, filled from the version the

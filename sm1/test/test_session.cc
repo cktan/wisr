@@ -71,8 +71,8 @@ TEST_CASE("the transaction state machine rejects out-of-order calls") {
   CHECK(sm_errno() == SM_ERR_NOTRANS);
   CHECK(sm_abort(s) == -1);
   CHECK(sm_errno() == SM_ERR_NOTRANS);
-  uint64_t relid = 0;
-  CHECK(sm_mkrel(s, &relid) == -1);
+  uint64_t storeid = 0;
+  CHECK(sm_mkstore(s, &storeid) == -1);
   CHECK(sm_errno() == SM_ERR_NOTRANS);
   const char *data;
   size_t len;

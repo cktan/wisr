@@ -75,7 +75,7 @@ So a job can carry its own answers:
    awkward requirement that a worker read a *moving* `CF:txn`
    consistently.
 2. **Freeze the watermark into the job.** It is already a
-   constructor argument (`gc_filter_t(db, relid, watermark)`),
+   constructor argument (`gc_filter_t(db, storeid, watermark)`),
    so this is nearly free.
 3. **Return the side effects rather than performing them.**
    The queued tombstone purges and the doubt count become part
@@ -92,7 +92,7 @@ today, only amortized.
 
 **The `CF:txn` sweep, which is the pass you would most want to
 offload.** §8.3's sweep is a forced full compaction across
-every relation column family, and its correctness rests on
+every store column family, and its correctness rests on
 state a worker does not have: the watermark recorded at the
 pass's *start*, the two read-epoch counters that decide when
 the records may go, and the "did any version stay unstamped"

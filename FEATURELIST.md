@@ -99,7 +99,7 @@ ordered key as the only access path below sm2.
 - [ ] table inheritance (legacy)
 - [x] TOAST (large datums stored out of line)
       — sm2's own TOAST, in its own format, in the table's
-        sm1 relation (sm2/DESIGN.md §4)
+        sm1 store (sm2/DESIGN.md §4)
 - [x] generated / computed columns
 - [x] temporary tables
 - [ ] unlogged tables

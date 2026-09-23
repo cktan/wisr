@@ -170,14 +170,14 @@ void reset(sm_session_t *s) {
 void drop_created(sm_session_t *s) {
   // Drop each created CF, newest first.
   for (auto it = s->created.rbegin(); it != s->created.rend(); ++it) {
-    db_drop_rel_cf(s->db, *it);
+    db_drop_store_cf(s->db, *it);
   }
 }
 
 /*
  * End the transaction without committing (§6.6): close its
  * cursors, take it out of the active table so its versions
- * resolve dead, drop the relations it created, and release its
+ * resolve dead, drop the stores it created, and release its
  * locks.
  */
 void discard(sm_session_t *s) {
@@ -188,7 +188,7 @@ void discard(sm_session_t *s) {
   if (s->xid != 0) {
     leave_active(s->db, s->xid);
   }
-  // Drop the relations it created.
+  // Drop the stores it created.
   drop_created(s);
   // Release its row locks.
   lock_release_all(s);
@@ -293,8 +293,8 @@ int rollback(sm_session_t *s, int depth) {
   for (size_t i = s->undo.size(); i-- > m.undo;) {
     // The next undo entry, newest first.
     const sm_session_t::undo_t &u = s->undo[i];
-    // Find its relation's CF.
-    rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, u.relid);
+    // Find its store's CF.
+    rocksdb::ColumnFamilyHandle *cf = db_store_cf(db, u.storeid);
     // Skip a CF already dropped.
     if (cf) {
       // Delete the exact version: key, its wts, its seq.
@@ -325,12 +325,12 @@ int rollback(sm_session_t *s, int depth) {
     sm_scanend(c);
   }
 
-  // Drop the relations created after the mark, newest first.
+  // Drop the stores created after the mark, newest first.
   for (size_t i = s->created.size(); i-- > m.created;) {
     // Drop the CF.
-    db_drop_rel_cf(db, s->created[i]);
+    db_drop_store_cf(db, s->created[i]);
   }
-  // Forget those relations.
+  // Forget those stores.
   s->created.resize(m.created);
   s->dropped.resize(m.dropped);           // the undo restored their rows
   s->dropped_seqs.resize(m.dropped_seqs); // and their sequences
@@ -501,10 +501,10 @@ int finish_commit(sm_session_t *s, uint64_t commit_ts) {
   // Publish: advance visible_ts past this commit.
   db_commit_done(db, commit_ts);
   // Release the row locks only once the commit is visible, and
-  // queue dropped relations for removal once no snapshot can
+  // queue dropped stores for removal once no snapshot can
   // see them (§8.3).
   lock_release_all(s);
-  // Queue its dropped relations for GC.
+  // Queue its dropped stores for GC.
   gc_queue_drops(db, commit_ts, s->dropped);
   // Drop each dropped sequence's lease; nothing reads it now
   // that its catalog row is gone.
@@ -543,7 +543,7 @@ int abort_xct(sm_session_t *s) {
 /*
  * The PREPARED record (§3.2): state, snapshot_ts, a zero
  * commit_ts, then prepared_at, gid, the write set as lock keys,
- * and the relids created and dropped. One value, however large
+ * and the storeids created and dropped. One value, however large
  * the write set; RocksDB stores it as a blob.
  */
 std::string encode_prepared(const sm_session_t *g) {
@@ -568,11 +568,11 @@ std::string encode_prepared(const sm_session_t *g) {
     v.append(l.key);
     v.push_back(l.exclusive ? 1 : 0);
   }
-  // The relids created, then those dropped, each counted.
-  for (const std::vector<uint64_t> *rels : {&g->created, &g->dropped}) {
-    put_be32(v, static_cast<uint32_t>(rels->size()));
-    for (uint64_t relid : *rels) {
-      put_be64(v, relid);
+  // The storeids created, then those dropped, each counted.
+  for (const std::vector<uint64_t> *stores : {&g->created, &g->dropped}) {
+    put_be32(v, static_cast<uint32_t>(stores->size()));
+    for (uint64_t storeid : *stores) {
+      put_be64(v, storeid);
     }
   }
   return v;
@@ -901,7 +901,7 @@ view_t xct_view(sm_session_t *s) {
 /*
  * The view a read runs at, taking the statement's snapshot if
  * the statement has not read yet (§6.2). Only reads take it:
- * a write consults its view to validate the relid and key, and
+ * a write consults its view to validate the storeid and key, and
  * pinning there would hold a statement's later reads at a
  * snapshot from before the write waited for its row lock.
  */
@@ -1097,15 +1097,15 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
     l.exclusive = *p++ != 0;
     g->locks.push_back(std::move(l));
   }
-  // Read the relids created, then dropped.
-  for (std::vector<uint64_t> *rels : {&g->created, &g->dropped}) {
+  // Read the storeids created, then dropped.
+  for (std::vector<uint64_t> *stores : {&g->created, &g->dropped}) {
     // Check the count fits.
     if (!take32(&count) || (size_t)(end - p) < (size_t)count * 8) {
       return false;
     }
-    // Take each relid.
+    // Take each storeid.
     for (uint32_t i = 0; i < count; i++) {
-      rels->push_back(get_be64(p));
+      stores->push_back(get_be64(p));
       p += 8;
     }
   }

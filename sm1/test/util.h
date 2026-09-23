@@ -92,40 +92,40 @@ private:
 };
 
 /*
- * The value of key in rel as sess reads it, or "<none>" if the
+ * The value of key in store as sess reads it, or "<none>" if the
  * key is absent. Fails the test on an error.
  */
-inline std::string get(sm_session_t *sess, uint64_t rel,
+inline std::string get(sm_session_t *sess, uint64_t store,
                        const std::string &key) {
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm_read(sess, rel, key.data(), key.size(), &data, &len);
+  int r = sm_read(sess, store, key.data(), key.size(), &data, &len);
   REQUIRE_MESSAGE(r >= 0, sm_errmsg());
   return r == 1 ? "<none>" : std::string(data, len);
 }
 
-/* Insert key -> val into rel, failing the test on an error. */
-inline void put(sm_session_t *sess, uint64_t rel, const std::string &key,
+/* Insert key -> val into store, failing the test on an error. */
+inline void put(sm_session_t *sess, uint64_t store, const std::string &key,
                 const std::string &val) {
-  REQUIRE_MESSAGE(
-      sm_insert(sess, rel, key.data(), key.size(), val.data(), val.size()) == 0,
-      sm_errmsg());
+  REQUIRE_MESSAGE(sm_insert(sess, store, key.data(), key.size(), val.data(),
+                            val.size()) == 0,
+                  sm_errmsg());
 }
 
-/* Create a relation and return its relid, failing the test on an error. */
-inline uint64_t mkrel(sm_session_t *sess) {
-  uint64_t relid = 0;
-  REQUIRE_MESSAGE(sm_mkrel(sess, &relid) == 0, sm_errmsg());
-  return relid;
+/* Create a store and return its storeid, failing the test on an error. */
+inline uint64_t mkstore(sm_session_t *sess) {
+  uint64_t storeid = 0;
+  REQUIRE_MESSAGE(sm_mkstore(sess, &storeid) == 0, sm_errmsg());
+  return storeid;
 }
 
-/* The relids sess's transaction sees, failing the test on an error. */
-inline std::vector<uint64_t> lsrel(sm_session_t *sess) {
+/* The storeids sess's transaction sees, failing the test on an error. */
+inline std::vector<uint64_t> lsstore(sm_session_t *sess) {
   uint64_t *list = nullptr;
   size_t n = 0;
-  REQUIRE_MESSAGE(sm_lsrel(sess, &list, &n) == 0, sm_errmsg());
+  REQUIRE_MESSAGE(sm_lsstore(sess, &list, &n) == 0, sm_errmsg());
   std::vector<uint64_t> out(list, list + n);
-  sm_free_rels(list);
+  sm_free_stores(list);
   return out;
 }
 

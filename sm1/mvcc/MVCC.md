@@ -204,7 +204,7 @@ visibility is a function of the snapshot alone.
 | a14 | `T1: open C, next, seek(R5), next`, own writes in between | skips, and keeps the open view | same | same | `in/a14_cursor_seek_forward.t` |
 | a15 | `T1 (RC): r(R1) s(P)` ‖ `W: w(R1) i(R2) c` ‖ `T1: r(R1) s(P)`, and T2 at RR alongside | RC sees both, RR neither | — | — | `in/a15_read_committed_statements.t` |
 | a16 | `T1 (RC): stmt r(R1)` ‖ `W: w(R1) c` ‖ `T1: r(R1)` ‖ `T1: stmt r(R1)` | pinned until the next `stmt` | — | — | `in/a16_statement_boundary.t` |
-| a17 | `T1: lookup(R1)` ‖ `T2: rmrel c` ‖ `T1: lookup(R1)`, then a fresh T3 | T1 reads on, T3 gets NOTFOUND | same | same | `in/a17_read_of_dropped_relation.t` |
+| a17 | `T1: lookup(R1)` ‖ `T2: rmstore c` ‖ `T1: lookup(R1)`, then a fresh T3 | T1 reads on, T3 gets NOTFOUND | same | same | `in/a17_read_of_dropped_relation.t` |
 
 Note what a06 does **not** say: T1 may not go on to *write*
 on the strength of that scan and still be serializable. That
@@ -252,7 +252,7 @@ SSI.
 | b29 | `T1: r(R1)`, `T3: (snapshot)` ‖ `T2: w(R1) c` ‖ `T1: lock-s(R1)`, `T3: lock-x(R1)` | CONFLICT both modes | same | same | `in/b29_lock_of_committed_row.t` |
 | b30 | `T1: lock-s(R1)`, `T2: lock-s(R1)` ‖ `T1: w(R1)` ‖ `T2: c` | BLOCK → OK, then exclusive | same | same | `in/b30_upgrade_after_holder_commits.t` |
 | b31 | `T1: lock-s(R1) sp lock-s(R2) w(R1)` ‖ `T1: rollback` | R2 freed, R1 still exclusive | same | same | `in/b31_savepoint_and_explicit_locks.t` |
-| b32 | `T1: rmrel` ‖ `T2: rmrel` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b32_concurrent_drop_of_one_relation.t` |
+| b32 | `T1: rmstore` ‖ `T2: rmstore` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b32_concurrent_drop_of_one_relation.t` |
 
 Three distinctions this family pins down, because getting
 them wrong would be invisible in ordinary use:
@@ -336,7 +336,7 @@ that costs.
 | c28 | `T1: r(R1,R2) w(R1)` ‖ `T2: r(R2,R3) w(R2)` ‖ `T3: r(R3,R1) w(R3)` | all commit | all commit | at least one fails | `in/c28_write_skew_three_transactions.t` |
 | c29 | c02 with T1's read taken before a savepoint it rolls back to | all commit | all commit | at most one commits | `in/c29_rollback_keeps_read_set.t` |
 | c30 | `T1: open C, next, seek past R5, next, close` ‖ `T2: w(R5) r(R2)` ‖ `T1: w(R2)` | all commit | all commit | at most one commits | `in/c30_seek_skips_inside_predicate.t` |
-| c31 | `T1: r(R1) rmrel` ‖ `T2: lookup(R1) w(R1)` | all commit | all commit | at most one commits | `in/c31_write_skew_across_a_drop.t` |
+| c31 | `T1: r(R1) rmstore` ‖ `T2: lookup(R1) w(R1)` | all commit | all commit | at most one commits | `in/c31_write_skew_across_a_drop.t` |
 
 Half of this family — c01, c08 through c12, c14, c15, c19,
 c20, c25 — exists to bound the other half. A level that failed
@@ -350,7 +350,7 @@ these scenarios are the ones that would catch it.
 | e01 | SSI state (nodes, SIREAD entries, ranges) is released once no transaction overlaps it | S | `e01_ssi_node_lifetime.cc` |
 | e02 | Four contending SERIALIZABLE threads enforcing "at least one on call" never break the invariant; a checker thread never sees it broken | S+S | `e02_serializable_invariant_stress.cc` |
 | e03 | Four contending RR threads see `CONFLICT` / `DEADLOCK` and **never** `SERIALIZATION`; no update is lost | RR | `e03_rr_contention_stress.cc` |
-| e04 | `sm_lsrel` and `sm_mkrel` follow the same predicate rules as rows | all | `in/e04_catalog_predicate.t` |
+| e04 | `sm_lsstore` and `sm_mkstore` follow the same predicate rules as rows | all | `in/e04_catalog_predicate.t` |
 | e05 | Four RR transactions that each read everything and write one row all commit | RR | `in/e05_rr_many_readers_writers.t` |
 | e06 | Four READ COMMITTED threads incrementing three hot counters through the `updated` / `readlatest` exchange, with compaction running, lose no increment | RC | `e06_rc_contention_stress.cc` |
 
@@ -398,7 +398,7 @@ At every level, wisr **does not** detect:
 - **Read-read** anything. Readers neither block nor conflict
   (c20).
 - **Writes to different rows.** Conflict detection is per
-  row, never per relation or per range (b08, c09).
+  row, never per store or per range (b08, c09).
 - **A transaction's own** reads and writes conflicting with
   each other (a08, a09, c15).
 
@@ -420,9 +420,9 @@ and b25 covers the locks a savepoint gives back. For read-write, it is
 every way one transaction can read (point read of a present
 row, point read of an absent row, scan of a range, open
 cursor, cursor closed early, cursor moved on by a seek, a
-relid resolved in the catalog) crossed with every way
+storeid resolved in the catalog) crossed with every way
 another can write into that read (update, insert, delete,
-and a relation dropped) — c02 to c06, c16 to c18, c21 to
+and a store dropped) — c02 to c06, c16 to c18, c21 to
 c24, c30, c31 — plus the shapes that must not fail.
 
 **It is not a model check.** Each scenario is one schedule,
@@ -437,7 +437,7 @@ play the same timelines out with threads and sleeps, and
 keep only what a script cannot say — error codes, argument
 handling, engine state, contention under load, and the
 index-build protocol, which needs a write to a second
-relation the language has no verb for.
+store the language has no verb for.
 
 **Read committed is covered by two scenarios, not a
 pairing.** a15 and a16 declare `session <name> rc` and run
@@ -449,13 +449,13 @@ snapshot per statement between `stmt` boundaries — not its
 interaction with SSI, which §7.4 settles by making
 non-serializable transactions untracked.
 
-**It assumes two relations and a single process.** Rows
+**It assumes two stores and a single process.** Rows
 live in the first; the second exists to be dropped and
 looked up, which is all a17 and c31 need of it. Crash
 recovery, two-phase commit, garbage collection and the API
 surface are covered by `test/`, not here. Where those
 interact with visibility — a prepared transaction's writes,
-the reclamation a dropped relation waits for — the scenarios
+the reclamation a dropped store waits for — the scenarios
 live there.
 
 **Every claim in the tables above is executed.** If a table

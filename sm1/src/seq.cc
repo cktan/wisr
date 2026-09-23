@@ -3,9 +3,9 @@
  * (DESIGN.md §11).
  *
  * A sequence's definition is a catalog row, keyed "S" | name in
- * CF:rel.0 and holding { seqid, start, increment }, so creating
+ * CF:store.0 and holding { seqid, start, increment }, so creating
  * and dropping one is transactional like any other DDL. Its
- * seqid comes from the object-id lease, the same one relids
+ * seqid comes from the object-id lease, the same one storeids
  * come from, so a name reused after a drop names a new
  * sequence that starts over.
  *

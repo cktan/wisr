@@ -29,8 +29,10 @@
 #include <rocksdb/options.h>
 
 /* Database format version, stored in CF:meta. Version 4 added
- * the mode byte on each lock key of a PREPARED record (§8.4). */
-#define WISR_DB_VERSION 5
+ * the mode byte on each lock key of a PREPARED record (§8.4);
+ * version 6 renamed each store's column family from rel.<id>
+ * to store.<id>. */
+#define WISR_DB_VERSION 6
 
 /* Column family names. */
 #define WISR_CF_TXN "txn"
@@ -63,7 +65,7 @@ struct ssi_node_t {
   bool doomed = false;             /* must fail at its commit */
   std::vector<std::string> points; /* its SIREAD point keys */
   std::vector<std::pair<uint64_t, std::list<ssi_range_t>::iterator>>
-      ranges; /* its SIREAD ranges, by relid */
+      ranges; /* its SIREAD ranges, by storeid */
 };
 
 /* A range SIREAD entry: [lo, hi] with inclusive flags; empty = open. */
@@ -88,9 +90,9 @@ struct db_t {
   int durability_sync = 1;
   int nsessions = 0; /* guarded by the env's mu */
 
-  /* relid -> column family handle, for every live relation CF. */
-  std::shared_mutex rel_mu;
-  std::map<uint64_t, rocksdb::ColumnFamilyHandle *> rels;
+  /* storeid -> column family handle, for every live store CF. */
+  std::shared_mutex store_mu;
+  std::map<uint64_t, rocksdb::ColumnFamilyHandle *> stores;
 
   /* The ts and object-id allocators and their leases (§4.2). */
   std::mutex alloc_mu;
@@ -103,7 +105,7 @@ struct db_t {
    */
   std::atomic<uint64_t> global_ts{0}; /* next ts to hand out */
   std::atomic<uint64_t> ts_limit{0};  /* persisted; never handed out */
-  uint64_t next_objid = 0;            /* next relid or seqid to hand out */
+  uint64_t next_objid = 0;            /* next storeid or seqid to hand out */
   uint64_t objid_limit = 0;
 
   /*
@@ -197,7 +199,7 @@ struct db_t {
    * Garbage collection (§8.3). The compaction filter runs only
    * once gc_ready is set, after the handles above are valid.
    * It cannot write, so it queues tombstones to purge; a
-   * committed sm_rmrel queues its relids to drop once the
+   * committed sm_rmstore queues its storeids to drop once the
    * watermark passes its commit. The worker drains both.
    */
   std::atomic<bool> gc_ready{false};
@@ -205,11 +207,11 @@ struct db_t {
   std::condition_variable gc_cv;
   bool gc_stopping = false;
   struct purge_t {
-    uint64_t relid;
+    uint64_t storeid;
     std::string key; /* the tombstone's version key */
   };
   std::vector<purge_t> purges;
-  std::multimap<uint64_t, uint64_t> drops; /* commit_ts -> relid */
+  std::multimap<uint64_t, uint64_t> drops; /* commit_ts -> storeid */
   std::thread gc_thread;
   std::mutex gc_run_mu; /* one gc_run_once at a time */
 
@@ -250,7 +252,7 @@ struct db_t {
   std::mutex ssi_mu;
   std::set<ssi_node_t *> ssi_nodes;
   std::unordered_map<std::string, std::vector<ssi_node_t *>> ssi_points;
-  std::map<uint64_t, std::list<ssi_range_t>> ssi_ranges; /* by relid */
+  std::map<uint64_t, std::list<ssi_range_t>> ssi_ranges; /* by storeid */
   std::unordered_map<uint64_t, ssi_node_t *> ssi_by_xid;
 
   /*
@@ -300,7 +302,7 @@ int db_claim_commit_ts(db_t *db, uint64_t *out);
  */
 void db_commit_done(db_t *db, uint64_t commit_ts);
 
-/* Allocate an object id -- a relid or a seqid. Returns 0 or -1. */
+/* Allocate an object id -- a storeid or a seqid. Returns 0 or -1. */
 int db_alloc_objid(db_t *db, uint64_t *out);
 
 /*
@@ -315,25 +317,25 @@ int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
 /* Forget sequence seqid and delete its lease from CF:meta. */
 void db_forget_seq(db_t *db, uint64_t seqid);
 
-/* The CF handle of relid, or NULL if it has none. */
-rocksdb::ColumnFamilyHandle *db_rel_cf(db_t *db, uint64_t relid);
+/* The CF handle of storeid, or NULL if it has none. */
+rocksdb::ColumnFamilyHandle *db_store_cf(db_t *db, uint64_t storeid);
 
-/* Create the CF for relid and register it. Returns 0 or -1. */
-int db_create_rel_cf(db_t *db, uint64_t relid);
+/* Create the CF for storeid and register it. Returns 0 or -1. */
+int db_create_store_cf(db_t *db, uint64_t storeid);
 
-/* Drop relid's CF and unregister it. Returns 0 or -1. */
-int db_drop_rel_cf(db_t *db, uint64_t relid);
+/* Drop storeid's CF and unregister it. Returns 0 or -1. */
+int db_drop_store_cf(db_t *db, uint64_t storeid);
 
-/* The column family name of relation relid: rel.<relid>. */
-std::string rel_cf_name(uint64_t relid);
+/* The column family name of store storeid: store.<storeid>. */
+std::string store_cf_name(uint64_t storeid);
 
 /*
- * Options for a relation CF: comparator, prefix extractor,
+ * Options for a store CF: comparator, prefix extractor,
  * bloom filter, and -- when db is given -- the GC compaction
- * filter for relid.
+ * filter for storeid.
  */
-rocksdb::ColumnFamilyOptions rel_cf_options(db_t *db = nullptr,
-                                            uint64_t relid = 0);
+rocksdb::ColumnFamilyOptions store_cf_options(db_t *db = nullptr,
+                                              uint64_t storeid = 0);
 
 /* Enter the current read epoch; returns it for db_read_leave. */
 uint64_t db_read_enter(db_t *db);
@@ -356,9 +358,9 @@ void db_release_snapshot(db_t *db, uint64_t snapshot_ts);
  */
 uint64_t db_watermark(db_t *db);
 
-/* The GC compaction filter factory for relation relid. */
+/* The GC compaction filter factory for store storeid. */
 std::shared_ptr<rocksdb::CompactionFilterFactory>
-gc_filter_factory(db_t *db, uint64_t relid);
+gc_filter_factory(db_t *db, uint64_t storeid);
 
 /* Start the GC worker thread. */
 void gc_start(db_t *db);
@@ -366,13 +368,13 @@ void gc_start(db_t *db);
 /* Stop the GC worker thread and wait for it. */
 void gc_stop(db_t *db);
 
-/* Queue relids dropped by a transaction committed at commit_ts. */
+/* Queue storeids dropped by a transaction committed at commit_ts. */
 void gc_queue_drops(db_t *db, uint64_t commit_ts,
-                    const std::vector<uint64_t> &relids);
+                    const std::vector<uint64_t> &storeids);
 
 /*
  * Do the GC work that is due now: purge queued tombstones, drop
- * relations whose drop the watermark has passed, and advance
+ * stores whose drop the watermark has passed, and advance
  * the CF:txn sweep once CF:txn has grown past its threshold.
  * The worker calls this; tests call it to run GC synchronously.
  */

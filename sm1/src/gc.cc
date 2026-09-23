@@ -1,16 +1,16 @@
 /*
  * gc.cc -- garbage collection of dead versions (DESIGN.md §8.3):
  * gc_watermark, the compaction filter, tombstone purge, and the
- * removal of dropped relations' column families.
+ * removal of dropped stores' column families.
  *
- * The filter sees each relation CF's versions during ordinary
+ * The filter sees each store CF's versions during ordinary
  * compaction, newest first within a userkey, and applies §8.3's
  * rules against the watermark taken when the compaction starts.
  * What it cannot do itself -- range-delete a purged key, drop a
  * column family -- it leaves to one worker thread per database.
  *
  * Once CF:txn grows past a threshold, a sweep compacts every
- * relation CF so each committed version is stamped, waits out
+ * store CF so each committed version is stamped, waits out
  * readers that could still see an unstamped copy, and deletes
  * the COMMITTED records it no longer needs.
  */
@@ -34,19 +34,19 @@ namespace {
  */
 class gc_filter_t : public rocksdb::CompactionFilter {
 public:
-  /* A filter for relid, judging against watermark. */
-  gc_filter_t(db_t *db, uint64_t relid, uint64_t watermark)
-      : m_db(db), m_relid(relid), m_watermark(watermark) {}
+  /* A filter for storeid, judging against watermark. */
+  gc_filter_t(db_t *db, uint64_t storeid, uint64_t watermark)
+      : m_db(db), m_storeid(storeid), m_watermark(watermark) {}
 
   /* Report, once per compaction, the versions it could not judge. */
   ~gc_filter_t() override {
     // Warn if any version was kept unstamped out of doubt.
     if (m_doubts > 0) {
-      log_msg(
-          SM_LOG_WARN,
-          "database {}: compaction kept {} version(s) in column "
-          "family rel.{} unstamped: undecodable value or unknown writer status",
-          m_db->name.c_str(), m_doubts, m_relid);
+      log_msg(SM_LOG_WARN,
+              "database {}: compaction kept {} version(s) in column "
+              "family store.{} unstamped: undecodable value or unknown writer "
+              "status",
+              m_db->name.c_str(), m_doubts, m_storeid);
     }
   }
 
@@ -110,7 +110,7 @@ public:
       // resurrect older versions outside this compaction.
       std::lock_guard<std::mutex> guard(m_db->gc_mu);
       // Queue the tombstone's key for the purge worker.
-      m_db->purges.push_back({m_relid, key.ToString()});
+      m_db->purges.push_back({m_storeid, key.ToString()});
       // Wake the worker.
       m_db->gc_cv.notify_one();
     }
@@ -132,7 +132,7 @@ public:
 
 private:
   db_t *m_db;
-  uint64_t m_relid;
+  uint64_t m_storeid;
   uint64_t m_watermark;
   mutable std::string m_newest_key; /* newest version <= watermark seen */
   mutable bool m_have_newest = false;
@@ -146,11 +146,11 @@ public:
   const char *Name() const override { return "wisr.keep_all"; }
 };
 
-/* Creates gc_filter_t for one relation CF. */
+/* Creates gc_filter_t for one store CF. */
 class gc_factory_t : public rocksdb::CompactionFilterFactory {
 public:
-  /* A factory for relid's CF in db. */
-  gc_factory_t(db_t *db, uint64_t relid) : m_db(db), m_relid(relid) {}
+  /* A factory for storeid's CF in db. */
+  gc_factory_t(db_t *db, uint64_t storeid) : m_db(db), m_storeid(storeid) {}
 
   /* The factory's name, for RocksDB's logs. */
   const char *Name() const override { return "wisr.gc_factory.v1"; }
@@ -167,12 +167,12 @@ public:
       return std::make_unique<keep_all_filter_t>();
     }
     // Judge against the watermark as of this compaction's start.
-    return std::make_unique<gc_filter_t>(m_db, m_relid, db_watermark(m_db));
+    return std::make_unique<gc_filter_t>(m_db, m_storeid, db_watermark(m_db));
   }
 
 private:
   db_t *m_db;
-  uint64_t m_relid;
+  uint64_t m_storeid;
 };
 
 /*
@@ -183,11 +183,11 @@ private:
  */
 void purge_one(db_t *db, const db_t::purge_t &p,
                std::set<rocksdb::ColumnFamilyHandle *> *touched) {
-  // Find the relation's CF.
-  rocksdb::ColumnFamilyHandle *cf = db_rel_cf(db, p.relid);
-  // Skip a relation already dropped.
+  // Find the store's CF.
+  rocksdb::ColumnFamilyHandle *cf = db_store_cf(db, p.storeid);
+  // Skip a store already dropped.
   if (!cf) {
-    return; // the relation's CF is already gone
+    return; // the store's CF is already gone
   }
   // End the range just past the key's oldest version.
   std::string end = version_bound(version_userkey(p.key), '\xff');
@@ -201,13 +201,14 @@ void purge_one(db_t *db, const db_t::purge_t &p,
   }
   // On failure the tombstone stays; the next compaction that
   // meets it queues it again. Nobody waits on this, so log it.
-  log_msg(SM_LOG_ERROR, "database {}: purge in column family rel.{} failed: {}",
-          db->name.c_str(), p.relid, s.ToString().c_str());
+  log_msg(SM_LOG_ERROR,
+          "database {}: purge in column family store.{} failed: {}",
+          db->name.c_str(), p.storeid, s.ToString().c_str());
 }
 
 /*
  * The CF:txn sweep (§8.3), with gc_run_mu held. Phase one, from
- * start: record W0, then run every relation CF through a forced,
+ * start: record W0, then run every store CF through a forced,
  * exclusive, bottommost compaction, so every committed version
  * with commit_ts <= W0 is dropped or stamped; then flip the read
  * epoch. Phase two, on a later call: once the old epoch has no
@@ -224,13 +225,13 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
     uint64_t w0 = db_watermark(db);
     // Remember the filter's error count before the pass.
     uint64_t errors = db->gc_filter_errors.load();
-    // Collect every relation CF.
+    // Collect every store CF.
     std::vector<rocksdb::ColumnFamilyHandle *> cfs;
     {
-      // Hold rel_mu while reading the CF map.
-      std::shared_lock<std::shared_mutex> guard(db->rel_mu);
-      // Take each relation's handle.
-      for (auto &kv : db->rels) {
+      // Hold store_mu while reading the CF map.
+      std::shared_lock<std::shared_mutex> guard(db->store_mu);
+      // Take each store's handle.
+      for (auto &kv : db->stores) {
         cfs.push_back(kv.second);
       }
     }
@@ -242,9 +243,9 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
         rocksdb::BottommostLevelCompaction::kForce;
     // Keep automatic compactions from running alongside.
     opt.exclusive_manual_compaction = true;
-    // Run every relation through the filter.
+    // Run every store through the filter.
     for (rocksdb::ColumnFamilyHandle *cf : cfs) {
-      // Compact the whole relation, memtable first.
+      // Compact the whole store, memtable first.
       rocksdb::Status s = db->rdb->CompactRange(opt, cf, nullptr, nullptr);
       // A failed compaction leaves versions unstamped.
       if (!s.ok()) {
@@ -418,11 +419,11 @@ uint64_t db_watermark(db_t *db) {
   return db->snapshots.empty() ? db->visible_ts.load() : *db->snapshots.begin();
 }
 
-/* The GC compaction filter factory for relid. */
+/* The GC compaction filter factory for storeid. */
 std::shared_ptr<rocksdb::CompactionFilterFactory>
-gc_filter_factory(db_t *db, uint64_t relid) {
-  // Create a factory bound to the database and relation.
-  return std::make_shared<gc_factory_t>(db, relid);
+gc_filter_factory(db_t *db, uint64_t storeid) {
+  // Create a factory bound to the database and store.
+  return std::make_shared<gc_factory_t>(db, storeid);
 }
 
 /* Start the worker thread. */
@@ -447,24 +448,24 @@ void gc_stop(db_t *db) {
   }
 }
 
-/* Queue relids to drop once the watermark passes commit_ts. */
+/* Queue storeids to drop once the watermark passes commit_ts. */
 void gc_queue_drops(db_t *db, uint64_t commit_ts,
-                    const std::vector<uint64_t> &relids) {
+                    const std::vector<uint64_t> &storeids) {
   // Nothing dropped, nothing to queue.
-  if (relids.empty()) {
+  if (storeids.empty()) {
     return;
   }
   // Hold gc_mu while queueing.
   std::lock_guard<std::mutex> guard(db->gc_mu);
-  // Queue each relid under the drop's commit_ts.
-  for (uint64_t relid : relids) {
-    db->drops.emplace(commit_ts, relid);
+  // Queue each storeid under the drop's commit_ts.
+  for (uint64_t storeid : storeids) {
+    db->drops.emplace(commit_ts, storeid);
   }
   // Wake the worker.
   db->gc_cv.notify_one();
 }
 
-/* Purge queued tombstones, then drop relations no snapshot can see. */
+/* Purge queued tombstones, then drop stores no snapshot can see. */
 void gc_run_once(db_t *db) {
   // One GC run at a time.
   std::lock_guard<std::mutex> run(db->gc_run_mu);
@@ -486,7 +487,7 @@ void gc_run_once(db_t *db) {
     db->drops.erase(db->drops.begin(), end);
   }
 
-  // Purge first: a key queued from a relation about to be
+  // Purge first: a key queued from a store about to be
   // dropped is simply skipped once its CF is gone.
   std::set<rocksdb::ColumnFamilyHandle *> touched;
   // Purge each queued key.
@@ -504,10 +505,10 @@ void gc_run_once(db_t *db) {
     }
   }
 
-  // Drop each relation no snapshot can see.
-  for (uint64_t relid : drops) {
-    // Drop the relation's column family: no snapshot sees it.
-    db_drop_rel_cf(db, relid);
+  // Drop each store no snapshot can see.
+  for (uint64_t storeid : drops) {
+    // Drop the store's column family: no snapshot sees it.
+    db_drop_store_cf(db, storeid);
   }
 
   // Free SSI nodes the watermark has passed (§7.1).

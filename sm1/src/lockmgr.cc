@@ -2,7 +2,7 @@
  * lockmgr.cc -- shared and exclusive row locks and deadlock
  * detection (DESIGN.md §5.1).
  *
- * A lock is keyed exactly by (relid, userkey) and held by the
+ * A lock is keyed exactly by (storeid, userkey) and held by the
  * sessions whose transactions took it: SHARED by any number of
  * them, EXCLUSIVE by one. Writes take it exclusive, sm_lock
  * takes either, and a plain read still takes none. It is held
@@ -28,13 +28,13 @@ using namespace wisr;
 
 namespace {
 
-/* The lock table key of (relid, userkey). */
-std::string lock_key(uint64_t relid, rocksdb::Slice key) {
+/* The lock table key of (storeid, userkey). */
+std::string lock_key(uint64_t storeid, rocksdb::Slice key) {
   std::string k;
-  // Reserve room for the relid prefix and the key.
+  // Reserve room for the storeid prefix and the key.
   k.reserve(8 + key.size());
-  // Prefix the relid, so equal keys in different relations differ.
-  put_be64(k, relid);
+  // Prefix the storeid, so equal keys in different stores differ.
+  put_be64(k, storeid);
   // Append the userkey.
   k.append(key.data(), key.size());
   return k;
@@ -65,13 +65,13 @@ void lock_drop_holder(db_t *db, const std::string &k, sm_session_t *s) {
 }
 
 /*
- * The session's lock list entry for (relid, key), or null. The
+ * The session's lock list entry for (storeid, key), or null. The
  * list is the session's own, so no lock_mu is taken. Newest
  * first: the lock in question was likely just taken.
  */
-sm_session_t::lockref_t *find_lockref(sm_session_t *s, uint64_t relid,
+sm_session_t::lockref_t *find_lockref(sm_session_t *s, uint64_t storeid,
                                       rocksdb::Slice key) {
-  std::string k = lock_key(relid, key);
+  std::string k = lock_key(storeid, key);
   for (size_t i = s->locks.size(); i-- > 0;) {
     if (s->locks[i].key == k) {
       return &s->locks[i];
@@ -158,12 +158,12 @@ void check_deadlock(db_t *db, sm_session_t *s) {
 
 namespace wisr {
 
-/* Block until (relid, key) is ours in mode, checking for deadlock. */
-int lock_acquire(sm_session_t *s, uint64_t relid, rocksdb::Slice key,
+/* Block until (storeid, key) is ours in mode, checking for deadlock. */
+int lock_acquire(sm_session_t *s, uint64_t storeid, rocksdb::Slice key,
                  bool exclusive) {
   db_t *db = s->db;
   // Build the lock table key.
-  std::string k = lock_key(relid, key);
+  std::string k = lock_key(storeid, key);
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // Time the first deadlock check.
@@ -271,9 +271,9 @@ void lock_restore(db_t *db, sm_session_t *g) {
   }
 }
 
-/* The mode the session holds (relid, key) in: 0, 1 shared, 2 exclusive. */
-int lock_mode_held(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
-  sm_session_t::lockref_t *l = find_lockref(s, relid, key);
+/* The mode the session holds (storeid, key) in: 0, 1 shared, 2 exclusive. */
+int lock_mode_held(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
+  sm_session_t::lockref_t *l = find_lockref(s, storeid, key);
   // Not held.
   if (!l) {
     return 0;
@@ -281,9 +281,9 @@ int lock_mode_held(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
   return l->exclusive ? 2 : 1;
 }
 
-/* Mark (relid, key)'s exclusive lock: the next write may go ahead. */
-void lock_set_latest(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
-  sm_session_t::lockref_t *l = find_lockref(s, relid, key);
+/* Mark (storeid, key)'s exclusive lock: the next write may go ahead. */
+void lock_set_latest(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
+  sm_session_t::lockref_t *l = find_lockref(s, storeid, key);
   // Count a mark once.
   if (l && !l->latest) {
     l->latest = true;
@@ -291,23 +291,23 @@ void lock_set_latest(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
   }
 }
 
-/* Whether (relid, key)'s lock carries the mark. */
-bool lock_has_latest(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
+/* Whether (storeid, key)'s lock carries the mark. */
+bool lock_has_latest(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
   // No mark anywhere: skip the scan.
   if (s->latest_marks == 0) {
     return false;
   }
-  sm_session_t::lockref_t *l = find_lockref(s, relid, key);
+  sm_session_t::lockref_t *l = find_lockref(s, storeid, key);
   return l && l->latest;
 }
 
-/* Clear the mark on (relid, key)'s lock, after a write used it. */
-void lock_clear_latest(sm_session_t *s, uint64_t relid, rocksdb::Slice key) {
+/* Clear the mark on (storeid, key)'s lock, after a write used it. */
+void lock_clear_latest(sm_session_t *s, uint64_t storeid, rocksdb::Slice key) {
   // No mark anywhere: skip the scan, so a plain write pays nothing.
   if (s->latest_marks == 0) {
     return;
   }
-  sm_session_t::lockref_t *l = find_lockref(s, relid, key);
+  sm_session_t::lockref_t *l = find_lockref(s, storeid, key);
   if (l && l->latest) {
     l->latest = false;
     s->latest_marks--;

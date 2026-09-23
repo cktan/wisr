@@ -49,7 +49,7 @@ int set_status_error(const rocksdb::Status &s, const char *what);
 /*
  * Check that name is a NUL-terminated string of 1..max bytes.
  * Returns 0, or -1 with SM_ERR_INVALID; what names the kind of
- * name in the message ("database", "relation").
+ * name in the message ("database", "store").
  */
 int check_name(const char *name, size_t max, const char *what);
 

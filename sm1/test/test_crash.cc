@@ -28,24 +28,24 @@ std::string crash_key(uint32_t i) {
 }
 
 /*
- * The database's one relation, as s's transaction sees it: the
- * lowest relid listed, which is the first relation created.
+ * The database's one store, as s's transaction sees it: the
+ * lowest storeid listed, which is the first store created.
  * Returns 0 if there is none.
  */
-uint64_t first_rel(sm_session_t *s) {
+uint64_t first_store(sm_session_t *s) {
   uint64_t *list = nullptr;
   size_t n = 0;
-  if (sm_lsrel(s, &list, &n) != 0 || n == 0) {
+  if (sm_lsstore(s, &list, &n) != 0 || n == 0) {
     return 0;
   }
-  uint64_t rel = list[0];
-  sm_free_rels(list);
-  return rel;
+  uint64_t store = list[0];
+  sm_free_stores(list);
+  return store;
 }
 
-/* The number of rows in rel, as s reads them. */
-uint32_t count_rows(sm_session_t *s, uint64_t rel) {
-  sm_scan_t *c = sm_scan(s, rel, nullptr, 0, 0, nullptr, 0, 0);
+/* The number of rows in store, as s reads them. */
+uint32_t count_rows(sm_session_t *s, uint64_t store) {
+  sm_scan_t *c = sm_scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
   if (!c) {
     return UINT32_MAX;
   }
@@ -89,16 +89,16 @@ int crash_child_main(const char *homedir) {
   if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0) {
     return 3;
   }
-  // Find the relation, then leave the transaction that read it.
-  uint64_t rel = first_rel(s);
-  uint32_t next = rel ? count_rows(s, rel) : UINT32_MAX;
+  // Find the store, then leave the transaction that read it.
+  uint64_t store = first_store(s);
+  uint32_t next = store ? count_rows(s, store) : UINT32_MAX;
   if (next == UINT32_MAX || sm_commit(s) != 0) {
     return 4;
   }
   for (uint32_t i = next;; i++) {
     std::string k = crash_key(i);
     if (sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 ||
-        sm_insert(s, rel, k.data(), k.size(), "v", 1) != 0 ||
+        sm_insert(s, store, k.data(), k.size(), "v", 1) != 0 ||
         sm_commit(s) != 0) {
       return 5;
     }
@@ -111,7 +111,7 @@ int crash_child_main(const char *homedir) {
 TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
           "included") {
   // Verify crash recovery against SIGKILL at arbitrary points.
-  // 1. Create database "db" with relation 1.
+  // 1. Create database "db" with store 1.
   // 2. Each round, start a child that commits one key per
   //    transaction and reports each acknowledged commit.
   // 3. After a random number of acknowledgements, SIGKILL it
@@ -128,7 +128,7 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
     sm_session_t *s = sm_opendb(env, "db", nullptr);
     REQUIRE(s);
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    mkrel(s);
+    mkstore(s);
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_detach(env, 1) == 0);
   }
@@ -174,14 +174,14 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
     sm_session_t *s = sm_opendb(env, "db", nullptr);
     REQUIRE_MESSAGE(s, sm_errmsg());
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    uint64_t rel = first_rel(s);
-    REQUIRE(rel != 0);
-    uint32_t n = count_rows(s, rel);
+    uint64_t store = first_store(s);
+    REQUIRE(store != 0);
+    uint32_t n = count_rows(s, store);
     CHECK(n >= acked);
     CHECK(n <= acked + 1); // at most the one in flight at the kill
     for (uint32_t j = 0; j < n; j++) {
       std::string k = crash_key(j);
-      CHECK(get(s, rel, k) == "v");
+      CHECK(get(s, store, k) == "v");
     }
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_detach(env, 1) == 0);

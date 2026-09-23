@@ -32,8 +32,8 @@ struct sm_session_t {
   uint32_t seq = 0;              /* last write's seq; the next is seq + 1 */
   uint32_t seq_hwm = 0;          /* own versions above this are invisible */
   uint64_t wts_hi = 0;           /* largest wts written; bounds own seeks */
-  std::vector<uint64_t> created; /* relids made by sm_mkrel */
-  std::vector<uint64_t> dropped; /* relids removed by sm_rmrel */
+  std::vector<uint64_t> created; /* storeids made by sm_mkstore */
+  std::vector<uint64_t> dropped; /* storeids removed by sm_rmstore */
   std::vector<uint64_t> dropped_seqs; /* seqids removed by sm_rmseq */
   bool snapshot_registered = false;   /* counted in gc_watermark */
   uint64_t begin_seq = 0;             /* begin order; larger is younger */
@@ -50,11 +50,11 @@ struct sm_session_t {
 
   /*
    * The undo list (§6.5): every version written, in write
-   * order, as (relid, userkey, wts, seq), so a rollback can delete
+   * order, as (storeid, userkey, wts, seq), so a rollback can delete
    * exactly the versions written since the savepoint.
    */
   struct undo_t {
-    uint64_t relid;
+    uint64_t storeid;
     std::string key;
     uint64_t wts;
     uint32_t seq;
@@ -139,7 +139,7 @@ struct sm_scan_t {
 
   /* The scan's SIREAD range and how far it read (§7.1). */
   bool has_ssi_range = false;
-  uint64_t ssi_relid = 0;
+  uint64_t ssi_storeid = 0;
   std::list<wisr::ssi_range_t>::iterator ssi_range;
   bool examined = false;     /* some userkey's run was inspected */
   std::string last_examined; /* the last one */
@@ -179,34 +179,36 @@ view_t xct_read_view(sm_session_t *session);
 int xct_fail_retryable(sm_session_t *session, sm_errno_t e, const char *msg);
 
 /*
- * Take the row lock on (relid, key) for the session's
+ * Take the row lock on (storeid, key) for the session's
  * transaction in the given mode, blocking while another holds
  * it in a conflicting one (§5.1). A transaction already
  * holding it shared and asking exclusive upgrades. Returns 0,
  * or -1 without an error set if the transaction was doomed
  * while waiting; the caller then fails it with s->doomed.
  */
-int lock_acquire(sm_session_t *session, uint64_t relid, rocksdb::Slice key,
+int lock_acquire(sm_session_t *session, uint64_t storeid, rocksdb::Slice key,
                  bool exclusive);
 
 /* §5.2's first-committer-wins check alone, for sm_lock. */
-int access_check_current(sm_session_t *session, uint64_t relid,
+int access_check_current(sm_session_t *session, uint64_t storeid,
                          rocksdb::Slice key);
 
 /*
- * The mode the session holds (relid, key) in: 0 none, 1 shared,
+ * The mode the session holds (storeid, key) in: 0 none, 1 shared,
  * 2 exclusive. Reads only the session's own lock list.
  */
-int lock_mode_held(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+int lock_mode_held(sm_session_t *session, uint64_t storeid, rocksdb::Slice key);
 
-/* Mark the exclusive lock on (relid, key): a write may go ahead. */
-void lock_set_latest(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+/* Mark the exclusive lock on (storeid, key): a write may go ahead. */
+void lock_set_latest(sm_session_t *session, uint64_t storeid,
+                     rocksdb::Slice key);
 
-/* Whether (relid, key)'s lock carries the mark. */
-bool lock_has_latest(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+/* Whether (storeid, key)'s lock carries the mark. */
+bool lock_has_latest(sm_session_t *session, uint64_t storeid,
+                     rocksdb::Slice key);
 
-/* Clear the mark on (relid, key)'s lock, after a write used it. */
-void lock_clear_latest(sm_session_t *session, uint64_t relid,
+/* Clear the mark on (storeid, key)'s lock, after a write used it. */
+void lock_clear_latest(sm_session_t *session, uint64_t storeid,
                        rocksdb::Slice key);
 
 /* Move every lock s holds to g, the prepared object (§8.4). */
@@ -236,17 +238,17 @@ void ssi_begin(sm_session_t *session);
 /* Map the transaction's new xid to its SSI node. */
 void ssi_on_xid(sm_session_t *session);
 
-/* Leave a SIREAD entry on (relid, key) (§7.1). */
-void ssi_on_read(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+/* Leave a SIREAD entry on (storeid, key) (§7.1). */
+void ssi_on_read(sm_session_t *session, uint64_t storeid, rocksdb::Slice key);
 
 /* A read stepped past a version of concurrent writer xid (§7.2). */
 void ssi_on_skip(sm_session_t *session, uint64_t writer_xid);
 
-/* A write of (relid, key): edges from its concurrent readers (§7.2). */
-void ssi_on_write(sm_session_t *session, uint64_t relid, rocksdb::Slice key);
+/* A write of (storeid, key): edges from its concurrent readers (§7.2). */
+void ssi_on_write(sm_session_t *session, uint64_t storeid, rocksdb::Slice key);
 
 /* Register a scan's requested range as a SIREAD entry (§10.2). */
-void ssi_range_open(sm_scan_t *scan, uint64_t relid, const char *skey,
+void ssi_range_open(sm_scan_t *scan, uint64_t storeid, const char *skey,
                     size_t sklen, int skey_inclusive, const char *ekey,
                     size_t eklen, int ekey_inclusive);
 
@@ -284,7 +286,7 @@ bool xct_decode_prepared(wisr::db_t *db, uint64_t xid, rocksdb::Slice val,
 
 /*
  * Restore every prepared transaction from CF:txn, then drop the
- * relation CFs nothing needs (§9.1 steps 4-6). Returns 0 or -1.
+ * store CFs nothing needs (§9.1 steps 4-6). Returns 0 or -1.
  */
 int recover(wisr::db_t *db);
 
@@ -317,35 +319,35 @@ int xct_resolve(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
 void xct_end_scans(sm_session_t *session);
 
 /*
- * Look relid up at view: 0 if it names a live relation, 1 if
+ * Look storeid up at view: 0 if it names a live store, 1 if
  * not, -1 on error.
  */
-int catalog_lookup(sm_session_t *session, const view_t &view, uint64_t relid);
+int catalog_lookup(sm_session_t *session, const view_t &view, uint64_t storeid);
 
 /*
- * Point read of key in relid at view: 0 and *out = payload if
+ * Point read of key in storeid at view: 0 and *out = payload if
  * a live version is visible, 1 if none, -1 on error.
  */
-int access_read(sm_session_t *session, uint64_t relid, const view_t &view,
+int access_read(sm_session_t *session, uint64_t storeid, const view_t &view,
                 rocksdb::Slice key, std::string *out);
 
 /*
- * Open a cursor over relid at view, between the bounds as
+ * Open a cursor over storeid at view, between the bounds as
  * sm_scan() takes them. Returns NULL on error.
  */
-sm_scan_t *access_scan(sm_session_t *session, uint64_t relid,
+sm_scan_t *access_scan(sm_session_t *session, uint64_t storeid,
                        const view_t &view, const char *skey, size_t sklen,
                        int skey_inclusive, const char *ekey, size_t eklen,
                        int ekey_inclusive);
 
 /*
- * Write one version of key into relid, checking that the key
+ * Write one version of key into storeid, checking that the key
  * exists (update, delete) or does not (insert). With old
  * non-NULL, it is filled with the row the write replaces, which
  * the existence check has already decoded. Returns 0, or -1
  * with SM_ERR_DUPKEY / SM_ERR_NOTFOUND / another error.
  */
-int access_write(sm_session_t *session, uint64_t relid, write_op_t op,
+int access_write(sm_session_t *session, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, std::string *old);
 
 } // namespace wisr

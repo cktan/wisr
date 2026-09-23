@@ -1,48 +1,48 @@
 # e04 -- the catalog is read under the same rules.
 #
-# sm_lsrel is a scan of the catalog relation, so each
-# transaction's sm_mkrel lands in the other's predicate. This
-# is c03 with relations instead of rows, and it must behave the
+# sm_lsstore is a scan of the catalog store, so each
+# transaction's sm_mkstore lands in the other's predicate. This
+# is c03 with stores instead of rows, and it must behave the
 # same way.
 
 
 == pairing RR/RR == T1=RR T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 lsrel -> 2 relations
-@3 T2 lsrel -> 2 relations
-@4 T1 mkrel -> ok
-@5 T2 mkrel -> ok
+@2 T1 lsstore -> 2 stores
+@3 T2 lsstore -> 2 stores
+@4 T1 mkstore -> ok
+@5 T2 mkstore -> ok
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check committed T1 T2 -> satisfied
 == pairing RR/S == T1=RR T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 lsrel -> 2 relations
-@3 T2 lsrel -> 2 relations
-@4 T1 mkrel -> ok
-@5 T2 mkrel -> ok
+@2 T1 lsstore -> 2 stores
+@3 T2 lsstore -> 2 stores
+@4 T1 mkstore -> ok
+@5 T2 mkstore -> ok
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check committed T1 T2 -> satisfied
 == pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 lsrel -> 2 relations
-@3 T2 lsrel -> 2 relations
-@4 T1 mkrel -> ok
-@5 T2 mkrel -> ok
+@2 T1 lsstore -> 2 stores
+@3 T2 lsstore -> 2 stores
+@4 T1 mkstore -> ok
+@5 T2 mkstore -> ok
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check committed T1 T2 -> satisfied
 == pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 lsrel -> 2 relations
-@3 T2 lsrel -> 2 relations
-@4 T1 mkrel -> ok
-@5 T2 mkrel -> ok
+@2 T1 lsstore -> 2 stores
+@3 T2 lsstore -> 2 stores
+@4 T1 mkstore -> ok
+@5 T2 mkstore -> ok
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check at-most-one-committed T1 T2 -> satisfied

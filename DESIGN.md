@@ -144,17 +144,17 @@ design:
   serves tables without a primary key, and keeps a primary
   key change from rewriting every index; a primary key lookup
   costs two reads.
-- **One sm1 relation per table.** A table's rows, all its
-  indexes and its TOAST data share one sm1 relation,
+- **One sm1 store per table.** A table's rows, all its
+  indexes and its TOAST data share one sm1 store,
   told apart by a 2-byte object prefix: `0x0000` for rows,
   `0x0001`–`0xFFFE` for indexes, `0xFFFF` for TOAST. sm3
   chooses the prefix; sm2 prepends and strips it and never
   interprets it (`sm2/DESIGN.md` §5), so sm2 never learns what
-  a table is. `DROP TABLE` is one `sm_rmrel`, sm1's O(1)
+  a table is. `DROP TABLE` is one `sm_rmstore`, sm1's O(1)
   column family drop; `DROP INDEX` is a range delete over its
   prefix, and index prefixes are never reused. The cost is
   that tables, partitions included, are bounded by the
-  hundreds to low thousands of relations sm1 handles
+  hundreds to low thousands of stores sm1 handles
   (`sm1/DESIGN.md` §13); accepted for v1 (`sm3/DESIGN.md`
   §4).
 - **The key budget is shared.** `SM_MAX_KEYLEN` (4096) bounds

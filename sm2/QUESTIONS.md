@@ -45,7 +45,7 @@ version: sm3, once a rewrite proves no tuple still carries it.
 
 **4.2 [BLOCKING] What are TOAST keys?**
 Where TOAST data lives is settled: in the table's own sm1
-relation, under the object prefix `0xFFFF` (`DESIGN.md` §4,
+store, under the object prefix `0xFFFF` (`DESIGN.md` §4,
 §5). What follows the prefix is not.
 *Suggested: `0xFFFF ‖ chunk_id ‖ chunk_seq`, PostgreSQL's
 names, with `chunk_id` an 8-byte big-endian value from an sm1
@@ -126,7 +126,7 @@ and sm3 may only reach sm1 through sm2, so sm2 needs a way to
 write, delete and scan them. Separately, someone calls
 `sm_nextseq` for each new row.
 *Suggested: two kinds of `rel`, opened over the same sm1
-relation with different prefixes: a **heap `rel`**, keyed by
+store with different prefixes: a **heap `rel`**, keyed by
 `rowno`, and an **index `rel`**, keyed by the encoded columns
 it is opened with, whose value is a tuple (the `rowno` and the
 INCLUDE columns). `rel_insert` on a heap `rel` draws the
@@ -202,7 +202,7 @@ Settled, and listed so nobody reopens them by accident:
 - Null markers, escaping and terminators — `DESIGN.md` §3.1.
 - Over-long keys — `DESIGN.md` §3.2.
 - Collation version and determinism — `DESIGN.md` §3.3.
-- One sm1 relation per table and the 2-byte object prefix —
+- One sm1 store per table and the 2-byte object prefix —
   `DESIGN.md` §5, `sm3/DESIGN.md` §4.
 - That the table is a heap keyed by a 64-bit `rowno`, the
   primary key is an index, and `rowno` is `ctid` —

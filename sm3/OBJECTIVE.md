@@ -8,7 +8,7 @@ predicate, and the statistics a planner above needs.
 sm2 stops exactly where this begins. `sm2/OBJECTIVE.md` says
 sm2 is "handed a schema", that it "maintains no index", that
 it "has no filter and counts nothing", and that an sm2
-relation is one sm1 relation with an opaque object prefix
+relation is one sm1 store with an opaque object prefix
 reserved for the level above. sm3 is that level, and this
 document is what it is for.
 
@@ -23,7 +23,7 @@ document is what it is for.
   transactionally with the base row, built online on a
   populated relation.
 - **Object mapping.** Many logical tables and indexes onto few
-  sm1 relations, through the key prefix sm2 offers.
+  sm1 stores, through the key prefix sm2 offers.
 - **A scan interface** that takes a predicate and derives the
   key range from it, rather than returning rows to be
   discarded above.
@@ -76,11 +76,11 @@ These are settled and drive `DESIGN.md`.
   catalog is not versioned; a transaction is kept away from a
   concurrent DDL with sm1's row locks on the schema row, not
   given an old definition (`DESIGN.md` §2).
-- **One sm1 relation per table.** A table's rows, its
-  indexes and its TOAST data share one sm1 relation,
+- **One sm1 store per table.** A table's rows, its
+  indexes and its TOAST data share one sm1 store,
   told apart by sm2's 2-byte object prefix, so `DROP TABLE` is
   sm1's O(1) column family drop. sm1 targets "hundreds to low
-  thousands of relations per database" (`sm1/DESIGN.md` §13),
+  thousands of stores per database" (`sm1/DESIGN.md` §13),
   so tables, partitions included, are bounded by that;
   accepted for v1 (`DESIGN.md` §4).
 - **The eventual consumer is a forked PostgreSQL**, keeping

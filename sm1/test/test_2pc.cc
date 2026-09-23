@@ -27,20 +27,20 @@
 
 namespace {
 
-/* The fixture's relation, set when the fixture is created. */
-uint64_t g_rel = 0;
+/* The fixture's store, set when the fixture is created. */
+uint64_t g_store = 0;
 
-/* A database "db" with one relation holding "a" -> "0", "b" -> "0". */
+/* A database "db" with one store holding "a" -> "0", "b" -> "0". */
 class tpc_fixture_t {
 public:
-  /* Create "db", the relation, and the rows. */
+  /* Create "db", the store, and the rows. */
   tpc_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     sm_session_t *s = open();
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    g_rel = mkrel(s);
-    put(s, g_rel, "a", "0");
-    put(s, g_rel, "b", "0");
+    g_store = mkstore(s);
+    put(s, g_store, "a", "0");
+    put(s, g_store, "b", "0");
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_closedb(s) == 0);
   }
@@ -65,9 +65,9 @@ private:
   home_t m_home;
 };
 
-/* Set key in relation 1 to val; the result of sm_update. */
+/* Set key in store 1 to val; the result of sm_update. */
 int set(sm_session_t *s, const std::string &key, const std::string &val) {
-  return sm_update(s, g_rel, key.data(), key.size(), val.data(), val.size(),
+  return sm_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
                    nullptr, nullptr);
 }
 
@@ -85,10 +85,10 @@ std::vector<std::pair<std::string, long long>> listed(sm_session_t *s) {
   return out;
 }
 
-/* The value of key in relation 1 at a fresh RR snapshot. */
+/* The value of key in store 1 at a fresh RR snapshot. */
 std::string read_now(sm_session_t *s, const std::string &key) {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  std::string v = get(s, g_rel, key);
+  std::string v = get(s, g_store, key);
   REQUIRE(sm_commit(s) == 0);
   return v;
 }
@@ -127,20 +127,20 @@ void kill_after_report(pid_t pid, int fd) {
 }
 
 /*
- * The lowest relid s's transaction lists -- the fixture's
- * relation -- or 0 if the database has none. A child process
- * finds the relation this way, having none of the parent's
+ * The lowest storeid s's transaction lists -- the fixture's
+ * store -- or 0 if the database has none. A child process
+ * finds the store this way, having none of the parent's
  * state.
  */
-uint64_t first_rel(sm_session_t *s) {
+uint64_t first_store(sm_session_t *s) {
   uint64_t *list = nullptr;
   size_t n = 0;
-  if (sm_lsrel(s, &list, &n) != 0 || n == 0) {
+  if (sm_lsstore(s, &list, &n) != 0 || n == 0) {
     return 0;
   }
-  uint64_t rel = list[0];
-  sm_free_rels(list);
-  return rel;
+  uint64_t store = list[0];
+  sm_free_stores(list);
+  return store;
 }
 
 } // namespace
@@ -155,9 +155,9 @@ int prepare_child_main(const char *homedir) {
   if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0) {
     return 2;
   }
-  // Find the relation, then write into it and prepare.
-  uint64_t rel = first_rel(s);
-  if (rel == 0 || sm_insert(s, rel, "c", 1, "v", 1) != 0 ||
+  // Find the store, then write into it and prepare.
+  uint64_t store = first_store(s);
+  if (store == 0 || sm_insert(s, store, "c", 1, "v", 1) != 0 ||
       sm_prepare(s, "g-crash") != 0) {
     return 2;
   }
@@ -170,9 +170,9 @@ int prepare_child_main(const char *homedir) {
 }
 
 /*
- * Child: drop the newest relation and commit, then create one
+ * Child: drop the newest store and commit, then create one
  * without committing; report, then wait to be killed. Both
- * leave a relation CF that only the orphan sweep can remove.
+ * leave a store CF that only the orphan sweep can remove.
  */
 int orphan_child_main(const char *homedir) {
   sm_env_t *env = sm_attach(homedir);
@@ -180,17 +180,17 @@ int orphan_child_main(const char *homedir) {
   if (!s || sm_begin(s, SM_XCT_REPEATABLE_READ) != 0) {
     return 2;
   }
-  // The newest relation is the last one sm_lsrel lists.
+  // The newest store is the last one sm_lsstore lists.
   uint64_t *list = nullptr;
   size_t n = 0;
-  if (sm_lsrel(s, &list, &n) != 0 || n < 2) {
+  if (sm_lsstore(s, &list, &n) != 0 || n < 2) {
     return 2;
   }
   uint64_t newest = list[n - 1];
-  sm_free_rels(list);
+  sm_free_stores(list);
   uint64_t fresh = 0;
-  if (sm_rmrel(s, newest) != 0 || sm_commit(s) != 0 ||
-      sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 || sm_mkrel(s, &fresh) != 0) {
+  if (sm_rmstore(s, newest) != 0 || sm_commit(s) != 0 ||
+      sm_begin(s, SM_XCT_REPEATABLE_READ) != 0 || sm_mkstore(s, &fresh) != 0) {
     return 2;
   }
   if (write(1, "r", 1) != 1) {
@@ -257,7 +257,7 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
 
   const char *d;
   size_t dl;
-  CHECK(sm_read(s, g_rel, "a", 1, &d, &dl) == -1);
+  CHECK(sm_read(s, g_store, "a", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
   CHECK(set(s, "b", "1") == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
@@ -267,10 +267,10 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm_errno() == SM_ERR_PREPARED);
   CHECK(sm_forget(s, 1) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
-  CHECK(sm_lock(s, g_rel, "a", 1, SM_LOCK_SHARED) == -1);
+  CHECK(sm_lock(s, g_store, "a", 1, SM_LOCK_SHARED) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
   uint64_t fresh = 0;
-  CHECK(sm_mkrel(s, &fresh) == -1);
+  CHECK(sm_mkstore(s, &fresh) == -1);
   CHECK(sm_errno() == SM_ERR_PREPARED);
   CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == -1);
   CHECK(sm_errno() == SM_ERR_INTRANS);
@@ -301,10 +301,10 @@ TEST_CASE("a prepare that fails validation releases its gid") {
   sm_session_t *t2 = f.open();
   REQUIRE(sm_begin(t1, SM_XCT_SERIALIZABLE) == 0);
   REQUIRE(sm_begin(t2, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t2, g_rel, "b") == "0");
+  CHECK(get(t2, g_store, "b") == "0");
   REQUIRE(set(t2, "a", "1") == 0);
   REQUIRE(sm_commit(t2) == 0);
-  CHECK(get(t1, g_rel, "a") == "0");
+  CHECK(get(t1, g_store, "a") == "0");
   REQUIRE(set(t1, "b", "1") == 0);
   CHECK(sm_prepare(t1, "g") == -1);
   CHECK(sm_errno() == SM_ERR_SERIALIZATION);
@@ -334,9 +334,9 @@ TEST_CASE("another session can resolve a prepared transaction by gid") {
   REQUIRE(sm_prepare(s, "g") == 0);
 
   REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(get(u, g_rel, "a") == "0");
+  CHECK(get(u, g_store, "a") == "0");
   REQUIRE(sm_commit_prepared(u, "g") == 0);
-  CHECK(get(u, g_rel, "a") == "0"); // its snapshot predates the commit
+  CHECK(get(u, g_store, "a") == "0"); // its snapshot predates the commit
   REQUIRE(sm_commit(u) == 0);
 
   CHECK(sm_commit(s) == -1);
@@ -399,7 +399,7 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   tpc_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_lock(s, g_rel, "b", 1, SM_LOCK_SHARED) == 0);
+  REQUIRE(sm_lock(s, g_store, "b", 1, SM_LOCK_SHARED) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm_prepare(s, "g") == 0);
   f.restart();
@@ -407,7 +407,7 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   sm_session_t *u = f.open();
   sm_session_t *v = f.open();
   REQUIRE(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
-  CHECK(sm_lock(u, g_rel, "b", 1, SM_LOCK_SHARED) == 0);
+  CHECK(sm_lock(u, g_store, "b", 1, SM_LOCK_SHARED) == 0);
 
   std::atomic<bool> returned{false};
   int rc = -2;
@@ -487,7 +487,7 @@ TEST_CASE("read-only prepares survive a restart and resolve") {
   sm_session_t *s2 = f.open();
   for (auto p : {std::make_pair(s1, "r1"), std::make_pair(s2, "r2")}) {
     REQUIRE(sm_begin(p.first, SM_XCT_SERIALIZABLE) == 0);
-    CHECK(get(p.first, g_rel, "a") == "0");
+    CHECK(get(p.first, g_store, "a") == "0");
     REQUIRE(sm_prepare(p.first, p.second) == 0);
   }
   f.restart();
@@ -504,31 +504,31 @@ TEST_CASE("read-only prepares survive a restart and resolve") {
 
 TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   // Verify T.dropped survives in the record (§3.2, §12.5).
-  // 1. Create a second relation; prepare its drop as "gd";
+  // 1. Create a second store; prepare its drop as "gd";
   //    restart.
-  // 2. Commit "gd" by gid; the relation is gone.
+  // 2. Commit "gd" by gid; the store is gone.
   // 3. With no snapshot left to see it, GC drops its CF.
   tpc_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  uint64_t relid = mkrel(s);
+  uint64_t storeid = mkstore(s);
   REQUIRE(sm_commit(s) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm_rmrel(s, relid) == 0);
+  REQUIRE(sm_rmstore(s, storeid) == 0);
   REQUIRE(sm_prepare(s, "gd") == 0);
   f.restart();
 
   sm_session_t *v = f.open();
-  CHECK(wisr::db_rel_cf(v->db, relid) != nullptr);
+  CHECK(wisr::db_store_cf(v->db, storeid) != nullptr);
   REQUIRE(sm_commit_prepared(v, "gd") == 0);
   REQUIRE(sm_begin(v, SM_XCT_REPEATABLE_READ) == 0);
   const char *d;
   size_t dl;
-  CHECK(sm_read(v, relid, "k", 1, &d, &dl) == -1);
+  CHECK(sm_read(v, storeid, "k", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
   REQUIRE(sm_commit(v) == 0);
   wisr::gc_run_once(v->db);
-  CHECK(wisr::db_rel_cf(v->db, relid) == nullptr);
+  CHECK(wisr::db_store_cf(v->db, storeid) == nullptr);
   sm_closedb(v);
 }
 
@@ -542,14 +542,14 @@ TEST_CASE("write skew with a transaction restored in doubt is still caught") {
   tpc_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(s, g_rel, "a") == "0");
+  CHECK(get(s, g_store, "a") == "0");
   REQUIRE(set(s, "b", "1") == 0);
   REQUIRE(sm_prepare(s, "gp") == 0);
   f.restart();
 
   sm_session_t *t = f.open();
   REQUIRE(sm_begin(t, SM_XCT_SERIALIZABLE) == 0);
-  CHECK(get(t, g_rel, "b") == "0");
+  CHECK(get(t, g_store, "b") == "0");
   REQUIRE(set(t, "a", "1") == 0);
   CHECK(sm_commit(t) == -1);
   CHECK(sm_errno() == SM_ERR_SERIALIZATION);
@@ -582,17 +582,17 @@ TEST_CASE("a transaction prepared when the process is killed is restored") {
   sm_closedb(v);
 }
 
-TEST_CASE("startup drops relation CFs that nothing names") {
+TEST_CASE("startup drops store CFs that nothing names") {
   // Verify the orphan CF sweep (§9.1 step 6).
-  // 1. Create a second relation and commit. A child drops it
+  // 1. Create a second store and commit. A child drops it
   //    and commits, then creates one without committing, and
   //    is killed.
-  // 2. Reattach: the dropped relation is gone, and the only
-  //    relation CFs left are the catalog's and the fixture's.
+  // 2. Reattach: the dropped store is gone, and the only
+  //    store CFs left are the catalog's and the fixture's.
   tpc_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  uint64_t relid = mkrel(s);
+  uint64_t storeid = mkstore(s);
   REQUIRE(sm_commit(s) == 0);
   f.home().detach();
 
@@ -602,15 +602,15 @@ TEST_CASE("startup drops relation CFs that nothing names") {
   f.home().attach();
 
   sm_session_t *v = f.open();
-  std::set<uint64_t> rels;
-  for (auto &kv : v->db->rels) {
-    rels.insert(kv.first);
+  std::set<uint64_t> stores;
+  for (auto &kv : v->db->stores) {
+    stores.insert(kv.first);
   }
-  CHECK(rels == std::set<uint64_t>{0, g_rel});
+  CHECK(stores == std::set<uint64_t>{0, g_store});
   REQUIRE(sm_begin(v, SM_XCT_REPEATABLE_READ) == 0);
   const char *d;
   size_t dl;
-  CHECK(sm_read(v, relid, "k", 1, &d, &dl) == -1);
+  CHECK(sm_read(v, storeid, "k", 1, &d, &dl) == -1);
   CHECK(sm_errno() == SM_ERR_NOTFOUND);
   REQUIRE(sm_commit(v) == 0);
   sm_closedb(v);

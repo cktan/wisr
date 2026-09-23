@@ -37,7 +37,7 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
         rocksdb::BottommostLevelCompaction::kForce;
     while (!stop) {
       wisr::db_t *db = csess->db;
-      rocksdb::ColumnFamilyHandle *cf = wisr::db_rel_cf(db, s.rel());
+      rocksdb::ColumnFamilyHandle *cf = wisr::db_store_cf(db, s.store());
       if (cf) {
         db->rdb->CompactRange(opt, cf, nullptr, nullptr);
       }
@@ -57,23 +57,23 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
         }
         const char *data = nullptr;
         size_t len = 0;
-        if (sm_read(sess, s.rel(), row, 2, &data, &len) != 0) {
+        if (sm_read(sess, s.store(), row, 2, &data, &len) != 0) {
           failures++;
           return;
         }
         std::string next =
             std::to_string(std::stoi(std::string(data, len)) + 1);
-        int rc = sm_update(sess, s.rel(), row, 2, next.data(), next.size(),
+        int rc = sm_update(sess, s.store(), row, 2, next.data(), next.size(),
                            nullptr, nullptr);
         // The counter moved: read the newest value, add one to that.
         if (rc != 0 && sm_errno() == SM_ERR_UPDATED) {
           updated++;
-          if (sm_read_latest(sess, s.rel(), row, 2, &data, &len) != 0) {
+          if (sm_read_latest(sess, s.store(), row, 2, &data, &len) != 0) {
             failures++;
             return;
           }
           next = std::to_string(std::stoi(std::string(data, len)) + 1);
-          rc = sm_update(sess, s.rel(), row, 2, next.data(), next.size(),
+          rc = sm_update(sess, s.store(), row, 2, next.data(), next.size(),
                          nullptr, nullptr);
         }
         // Only a deadlock may be retried, and no row order here makes one.

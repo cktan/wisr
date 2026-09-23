@@ -1,20 +1,20 @@
-# b32 -- two transactions dropping the same relation.
+# b32 -- two transactions dropping the same store.
 #
-# A drop is a write of the catalog row naming the relation, so
+# A drop is a write of the catalog row naming the store, so
 # it takes that row's lock and is judged like any other write.
-# T2 waits on T1 rather than dropping a relation twice, and
-# once T1 commits it loses first-committer-wins: the relation
+# T2 waits on T1 rather than dropping a store twice, and
+# once T1 commits it loses first-committer-wins: the store
 # is gone, but T2 is told it lost a race, not that the
-# relation never existed. b05 is the same answer for a row.
+# store never existed. b05 is the same answer for a row.
 
 
 == pairing RR/RR == T1=RR T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 rmrel -> ok
-@3 T2 rmrel blocks -> blocked
+@2 T1 rmstore -> ok
+@3 T2 rmstore blocks -> blocked
 @4 T1 commit -> ok
-@3 T2 rmrel blocks -> conflict (resumed)
+@3 T2 rmstore blocks -> conflict (resumed)
 @5 check last T2 conflict -> satisfied
 @6 T2 begin -> ok
 @7 T2 lookup R1 -> notfound
@@ -23,10 +23,10 @@
 == pairing RR/S == T1=RR T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 rmrel -> ok
-@3 T2 rmrel blocks -> blocked
+@2 T1 rmstore -> ok
+@3 T2 rmstore blocks -> blocked
 @4 T1 commit -> ok
-@3 T2 rmrel blocks -> conflict (resumed)
+@3 T2 rmstore blocks -> conflict (resumed)
 @5 check last T2 conflict -> satisfied
 @6 T2 begin -> ok
 @7 T2 lookup R1 -> notfound
@@ -35,10 +35,10 @@
 == pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 rmrel -> ok
-@3 T2 rmrel blocks -> blocked
+@2 T1 rmstore -> ok
+@3 T2 rmstore blocks -> blocked
 @4 T1 commit -> ok
-@3 T2 rmrel blocks -> conflict (resumed)
+@3 T2 rmstore blocks -> conflict (resumed)
 @5 check last T2 conflict -> satisfied
 @6 T2 begin -> ok
 @7 T2 lookup R1 -> notfound
@@ -47,10 +47,10 @@
 == pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok
-@2 T1 rmrel -> ok
-@3 T2 rmrel blocks -> blocked
+@2 T1 rmstore -> ok
+@3 T2 rmstore blocks -> blocked
 @4 T1 commit -> ok
-@3 T2 rmrel blocks -> conflict (resumed)
+@3 T2 rmstore blocks -> conflict (resumed)
 @5 check last T2 conflict -> satisfied
 @6 T2 begin -> ok
 @7 T2 lookup R1 -> notfound

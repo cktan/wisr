@@ -44,7 +44,7 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
           return;
         }
         // Count the doctors on call in this snapshot.
-        sm_scan_t *c = sm_scan(sess, s.rel(), DOCS[0], 2, 1, DOCS[3], 2, 1);
+        sm_scan_t *c = sm_scan(sess, s.store(), DOCS[0], 2, 1, DOCS[3], 2, 1);
         int on = 0;
         const char *k, *d;
         size_t kl, dl;
@@ -53,7 +53,7 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
         }
         sm_scanend(c);
         const char *v = on >= 2 ? "0" : "1";
-        if (sm_update(sess, s.rel(), me.data(), me.size(), v, 1, nullptr,
+        if (sm_update(sess, s.store(), me.data(), me.size(), v, 1, nullptr,
                       nullptr) == 0 &&
             sm_commit(sess) == 0) {
           commits++;
@@ -77,7 +77,7 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
       for (const char *d : DOCS) {
         const char *data = nullptr;
         size_t len = 0;
-        if (sm_read(check, s.rel(), d, 2, &data, &len) == 0) {
+        if (sm_read(check, s.store(), d, 2, &data, &len) == 0) {
           on += std::string(data, len) == "1";
         }
       }

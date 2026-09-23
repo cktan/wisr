@@ -1,7 +1,7 @@
 /*
  * recover.cc -- what opening a database does beyond RocksDB's
  * own WAL replay (DESIGN.md §9.1 steps 4-6): restore prepared
- * transactions in doubt, and drop orphaned relation CFs.
+ * transactions in doubt, and drop orphaned store CFs.
  *
  * There is no redo or undo pass. A transaction running at the
  * crash has no status record and is absent from the fresh
@@ -77,16 +77,16 @@ int restore_prepared(db_t *db) {
 }
 
 /*
- * The relids the catalog names now: for each catalog key, its
+ * The storeids the catalog names now: for each catalog key, its
  * newest committed version, if that is not a tombstone. Versions
  * of restored prepared transactions are in flight and skipped.
  */
-int live_relids(db_t *db, std::set<uint64_t> *live) {
+int live_storeids(db_t *db, std::set<uint64_t> *live) {
   // Scan the catalog in total order, across every userkey.
   rocksdb::ReadOptions ro;
   ro.total_order_seek = true;
   std::unique_ptr<rocksdb::Iterator> it(
-      db->rdb->NewIterator(ro, db->rels.at(0)));
+      db->rdb->NewIterator(ro, db->stores.at(0)));
   // Track the key whose newest committed version is decided.
   std::string decided; // userkey whose newest committed version was seen
   bool have = false;
@@ -118,7 +118,7 @@ int live_relids(db_t *db, std::set<uint64_t> *live) {
     // This is the key's newest committed version.
     decided = v.userkey.ToString();
     have = true;
-    // A live row's key names a relid to keep: "R" | be64(relid).
+    // A live row's key names a storeid to keep: "R" | be64(storeid).
     if (!(v.flags & version_tombstone) && v.userkey.size() == 9) {
       live->insert(get_be64(v.userkey.data() + 1));
     }
@@ -131,16 +131,16 @@ int live_relids(db_t *db, std::set<uint64_t> *live) {
 }
 
 /*
- * Drop every relation CF that neither the catalog nor a prepared
+ * Drop every store CF that neither the catalog nor a prepared
  * transaction's created list names (§9.1 step 6): a crash inside
- * an uncommitted sm_mkrel, or a committed sm_rmrel whose CF GC
+ * an uncommitted sm_mkstore, or a committed sm_rmstore whose CF GC
  * had not yet dropped.
  */
 int sweep_orphan_cfs(db_t *db) {
   // Always keep the catalog's own CF.
   std::set<uint64_t> keep{0};
-  // Keep every relid a live catalog row names.
-  if (live_relids(db, &keep) != 0) {
+  // Keep every storeid a live catalog row names.
+  if (live_storeids(db, &keep) != 0) {
     return -1;
   }
   // Keep every CF a prepared transaction created.
@@ -148,20 +148,20 @@ int sweep_orphan_cfs(db_t *db) {
     keep.insert(kv.second->created.begin(), kv.second->created.end());
   }
   std::vector<uint64_t> orphans;
-  // Collect the relation CFs nothing names.
-  for (auto &kv : db->rels) {
+  // Collect the store CFs nothing names.
+  for (auto &kv : db->stores) {
     if (!keep.count(kv.first)) {
       orphans.push_back(kv.first);
     }
   }
   // Drop each orphan.
-  for (uint64_t relid : orphans) {
-    // Drop an orphaned relation column family.
-    if (db_drop_rel_cf(db, relid) != 0) {
+  for (uint64_t storeid : orphans) {
+    // Drop an orphaned store column family.
+    if (db_drop_store_cf(db, storeid) != 0) {
       return -1;
     }
-    log_msg(SM_LOG_INFO, "database {}: dropped orphaned column family rel.{}",
-            db->name.c_str(), relid);
+    log_msg(SM_LOG_INFO, "database {}: dropped orphaned column family store.{}",
+            db->name.c_str(), storeid);
   }
   return 0;
 }
@@ -176,7 +176,7 @@ int recover(db_t *db) {
   if (restore_prepared(db) != 0) {
     return -1;
   }
-  // Then drop orphaned relation CFs.
+  // Then drop orphaned store CFs.
   return sweep_orphan_cfs(db);
 }
 

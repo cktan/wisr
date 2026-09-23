@@ -64,21 +64,21 @@ private:
   std::vector<std::pair<sm_loglevel_t, std::string>> m_msgs;
 };
 
-/* A database "db" with relation 1, reopenable. */
+/* A database "db" with store 1, reopenable. */
 class log_fixture_t {
 public:
-  /* Create "db" and relation 1. */
+  /* Create "db" and store 1. */
   log_fixture_t() {
     REQUIRE(sm_mkdb(m_home.env(), "db", nullptr) == 0);
     sm_session_t *s = open();
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    m_rel = mkrel(s);
+    m_store = mkstore(s);
     REQUIRE(sm_commit(s) == 0);
     REQUIRE(sm_closedb(s) == 0);
   }
 
-  /* The relation's relid. */
-  uint64_t rel() const { return m_rel; }
+  /* The store's storeid. */
+  uint64_t store() const { return m_store; }
 
   /* A new session on "db". */
   sm_session_t *open() const {
@@ -92,13 +92,13 @@ public:
 
 private:
   home_t m_home;
-  uint64_t m_rel = 0;
+  uint64_t m_store = 0;
 };
 
-/* Insert key -> "v" into rel in one committed transaction. */
-void commit_put(sm_session_t *s, uint64_t rel, const std::string &key) {
+/* Insert key -> "v" into store in one committed transaction. */
+void commit_put(sm_session_t *s, uint64_t store, const std::string &key) {
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, rel, key, "v");
+  put(s, store, key, "v");
   REQUIRE(sm_commit(s) == 0);
 }
 
@@ -137,17 +137,17 @@ TEST_CASE("with no hook nothing is reported, and a hook can be replaced") {
 
 TEST_CASE("recovery reports restored transactions and dropped orphans") {
   // Verify §9.1's recovery events reach the hook.
-  // 1. Prepare "g-log"; create a relation CF no catalog row
-  //    names, as a crash inside sm_mkrel would leave.
+  // 1. Prepare "g-log"; create a store CF no catalog row
+  //    names, as a crash inside sm_mkstore would leave.
   // 2. Restart: an INFO message names "g-log" as restored, and
   //    one reports the orphaned CF dropped.
   log_fixture_t f;
   sm_session_t *s = f.open();
   uint64_t orphan = 0;
   REQUIRE(wisr::db_alloc_objid(s->db, &orphan) == 0);
-  REQUIRE(wisr::db_create_rel_cf(s->db, orphan) == 0);
+  REQUIRE(wisr::db_create_store_cf(s->db, orphan) == 0);
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, f.rel(), "k", "v");
+  put(s, f.store(), "k", "v");
   REQUIRE(sm_prepare(s, "g-log") == 0);
 
   log_capture_t cap;
@@ -155,7 +155,7 @@ TEST_CASE("recovery reports restored transactions and dropped orphans") {
   f.home().attach();
   sm_session_t *v = f.open();
   CHECK_MESSAGE(cap.count(SM_LOG_INFO, "g-log") == 1, cap.all());
-  CHECK_MESSAGE(cap.count(SM_LOG_INFO, "rel." + std::to_string(orphan)) == 1,
+  CHECK_MESSAGE(cap.count(SM_LOG_INFO, "store." + std::to_string(orphan)) == 1,
                 cap.all());
   REQUIRE(sm_abort_prepared(v, "g-log") == 0);
   sm_closedb(v);
@@ -172,7 +172,7 @@ TEST_CASE("a failed status write is reported as the database stopping") {
     return rocksdb::Status::IOError("injected");
   };
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  put(s, f.rel(), "k", "v");
+  put(s, f.store(), "k", "v");
   CHECK(sm_commit(s) == -1);
   s->db->test_before_commit = nullptr;
   CHECK_MESSAGE(cap.count(SM_LOG_ERROR, "stopped") == 1, cap.all());
@@ -186,7 +186,7 @@ TEST_CASE("a CF:txn sweep reports what it deleted") {
   log_fixture_t f;
   sm_session_t *s = f.open();
   for (int i = 0; i < 3; i++) {
-    commit_put(s, f.rel(), "k" + std::to_string(i));
+    commit_put(s, f.store(), "k" + std::to_string(i));
   }
   log_capture_t cap;
   CHECK(wisr::gc_sweep_txn(s->db, true) > 0);
@@ -196,7 +196,7 @@ TEST_CASE("a CF:txn sweep reports what it deleted") {
 
 TEST_CASE("versions the filter cannot judge are reported per compaction") {
   // Verify the filter's doubts, and the sweep refusing to trust them.
-  // 1. Plant a version with an undecodable (empty) value in relation 1.
+  // 1. Plant a version with an undecodable (empty) value in store 1.
   // 2. Compact: each compaction job that meets it reports it
   //    once, as one version -- a summary, not a line per version.
   // 3. A sweep's pass meets it again and is abandoned, with a
@@ -204,7 +204,7 @@ TEST_CASE("versions the filter cannot judge are reported per compaction") {
   log_fixture_t f;
   sm_session_t *s = f.open();
   REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-  rocksdb::ColumnFamilyHandle *cf = wisr::db_rel_cf(s->db, f.rel());
+  rocksdb::ColumnFamilyHandle *cf = wisr::db_store_cf(s->db, f.store());
   REQUIRE(s->db->rdb
               ->Put(rocksdb::WriteOptions(), cf, wisr::version_key("bad", 1, 1),
                     rocksdb::Slice())

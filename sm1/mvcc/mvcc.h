@@ -102,7 +102,7 @@ private:
 };
 
 /*
- * One scenario run: a database holding one relation, seeded
+ * One scenario run: a database holding one store, seeded
  * with rows, and up to three transactions driven by number.
  */
 class scenario_t {
@@ -115,10 +115,10 @@ public:
     REQUIRE(sm_mkdb(m_env, "db", nullptr) == 0);
     sm_session_t *s = session(1);
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    REQUIRE_MESSAGE(sm_mkrel(s, &m_rel) == 0, sm_errmsg());
-    // Seed each row in the transaction that creates the relation.
+    REQUIRE_MESSAGE(sm_mkstore(s, &m_store) == 0, sm_errmsg());
+    // Seed each row in the transaction that creates the store.
     for (const std::string &row : rows) {
-      REQUIRE(sm_insert(s, m_rel, row.data(), row.size(), "0", 1) == 0);
+      REQUIRE(sm_insert(s, m_store, row.data(), row.size(), "0", 1) == 0);
     }
     REQUIRE(sm_commit(s) == 0);
   }
@@ -141,8 +141,8 @@ public:
     return m_sessions[n - 1];
   }
 
-  /* The relation every operation below works on. */
-  uint64_t rel() const { return m_rel; }
+  /* The store every operation below works on. */
+  uint64_t store() const { return m_store; }
 
   /* Begin T<n> at the level pairing p gives it. */
   void begin(int n, pairing_t p) {
@@ -159,33 +159,33 @@ public:
   std::string r(int n, const std::string &row) {
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm_read(session(n), m_rel, row.data(), row.size(), &data, &len);
+    int rc = sm_read(session(n), m_store, row.data(), row.size(), &data, &len);
     REQUIRE_MESSAGE(rc >= 0, sm_errmsg());
     return rc == 1 ? "-" : std::string(data, len);
   }
 
   /* w(row): T<n> updates row; the result of sm_update. */
   int w(int n, const std::string &row, const std::string &val) {
-    return sm_update(session(n), m_rel, row.data(), row.size(), val.data(),
+    return sm_update(session(n), m_store, row.data(), row.size(), val.data(),
                      val.size(), nullptr, nullptr);
   }
 
   /* i(row): T<n> inserts row; the result of sm_insert. */
   int i(int n, const std::string &row, const std::string &val) {
-    return sm_insert(session(n), m_rel, row.data(), row.size(), val.data(),
+    return sm_insert(session(n), m_store, row.data(), row.size(), val.data(),
                      val.size());
   }
 
   /* d(row): T<n> deletes row; the result of sm_delete. */
   int d(int n, const std::string &row) {
-    return sm_delete(session(n), m_rel, row.data(), row.size(), nullptr,
+    return sm_delete(session(n), m_store, row.data(), row.size(), nullptr,
                      nullptr);
   }
 
   /* s(lo, hi): the keys T<n> sees in the closed range [lo, hi]. */
   std::vector<std::string> s(int n, const std::string &lo,
                              const std::string &hi) {
-    sm_scan_t *c = sm_scan(session(n), m_rel, lo.data(), lo.size(), 1,
+    sm_scan_t *c = sm_scan(session(n), m_store, lo.data(), lo.size(), 1,
                            hi.data(), hi.size(), 1);
     REQUIRE_MESSAGE(c, sm_errmsg());
     std::vector<std::string> keys;
@@ -201,7 +201,7 @@ public:
   /* s(lo, hi) as (key, value) pairs. */
   std::vector<std::pair<std::string, std::string>>
   srows(int n, const std::string &lo, const std::string &hi) {
-    sm_scan_t *c = sm_scan(session(n), m_rel, lo.data(), lo.size(), 1,
+    sm_scan_t *c = sm_scan(session(n), m_store, lo.data(), lo.size(), 1,
                            hi.data(), hi.size(), 1);
     REQUIRE_MESSAGE(c, sm_errmsg());
     std::vector<std::pair<std::string, std::string>> rows;
@@ -236,7 +236,7 @@ public:
   std::vector<std::pair<std::string, std::string>> final_rows() {
     sm_session_t *s = session(static_cast<int>(m_sessions.size()) + 1);
     REQUIRE(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
-    sm_scan_t *cur = sm_scan(s, m_rel, nullptr, 0, 0, nullptr, 0, 0);
+    sm_scan_t *cur = sm_scan(s, m_store, nullptr, 0, 0, nullptr, 0, 0);
     REQUIRE_MESSAGE(cur, sm_errmsg());
     std::vector<std::pair<std::string, std::string>> rows;
     const char *k, *d;
@@ -272,7 +272,7 @@ private:
   mvcc_tmpdir_t m_tmp;
   sm_env_t *m_env = nullptr;
   std::vector<sm_session_t *> m_sessions;
-  uint64_t m_rel = 0;
+  uint64_t m_store = 0;
 };
 
 /* Expect rc to be -1 with error e, the way a scenario states it. */

@@ -33,12 +33,12 @@ doing concurrent DDL behave as sm1's isolation says they must.
 ## 2. Object mapping
 
 - An sm3 object id as sm2's key prefix, many objects per sm1
-  relation.
+  store.
 - Decide what `DROP TABLE` costs once a table is a key range
   rather than a column family.
 
 **Verify:** a schema far past sm1's "low thousands of
-relations" target opens; two objects sharing an sm1 relation
+stores" target opens; two objects sharing an sm1 store
 never see each other's rows; a dropped table's space is
 reclaimed.
 
