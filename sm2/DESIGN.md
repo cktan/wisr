@@ -18,7 +18,7 @@ decisions in `OBJECTIVE.md`:
 | Key encoding | order-preserving per type; descending is the inverted encoding |
 | Tuple format | null bitmap, fixed/variable split, a schema version stamp per row |
 | Tuple codec | an API of its own, with its own header and its own tests |
-| Row identity | the primary key, clustered, as sm1 relations already are |
+| Row identity | `rowno`, a 64-bit number from a per-table sequence; the table is a heap and the primary key is an index (§5) |
 | `rel` | one sm1 relation, keys encoded and tuples decoded by sm2 |
 | API shape | one tuple at a time; batching belongs where filters do (`sm3/DESIGN.md`) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
@@ -57,11 +57,11 @@ nothing that an IPC boundary would have made it cost.
 | opaque values of arbitrary bytes | the tuple layout is sm2's alone; sm1 never looks inside one (§4) |
 | transactions at RC / RR / SERIALIZABLE | sm2 opens none of its own; every `rel` call runs inside the caller's transaction (§5) |
 | `sm_update` / `sm_delete` returning the **old image** | `rel_update` / `rel_delete` can hand back the old *tuple*, which is what index maintenance above needs |
-| `SM_ERR_DUPKEY` from `sm_insert` | a duplicate primary key needs no existence check; the error passes straight through |
+| `SM_ERR_DUPKEY` from `sm_insert` | a unique index keyed without `rowno` gets its uniqueness from sm1 for free — the primary key index among them (§5, `sm3/DESIGN.md` §3) |
 | `SM_ERR_UPDATED` and `sm_read_latest` at READ COMMITTED | sm2 surfaces the error and offers `rel_read_latest`; it cannot resolve it, because the re-check needs a filter and filters are sm3's (§5) |
 | nested savepoints | a statement can be undone without losing the transaction, and sm2 holds no state that has to be undone with it |
 | forward scans with `sm_scan_seek` | probe loops cost one cursor, not one per probe |
-| `SM_MAX_KEYLEN` 4096, `SM_MAX_DATALEN` 64MB | an encoded primary key must fit 4096 bytes, prefix included; a datum above the TOAST threshold is stored out of line (§4) |
+| `SM_MAX_KEYLEN` 4096, `SM_MAX_DATALEN` 64MB | an encoded index key must fit 4096 bytes, prefix included; a datum above the TOAST threshold is stored out of line (§4) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward; there are no mirror relations, and the fork's planner never asks for a backward scan (§3) |
 
 sm1 keeps one column family per relation and handles hundreds
@@ -319,9 +319,10 @@ all have to satisfy are here.
 - `encode(a) < encode(b)` bytewise **iff** `a < b` in the
   type's own order, for every supported type.
 - **Injective, not reversible.** Distinct datums must get
-  distinct keys, because a key is the row's identity: two
-  rows that collide are one row, and a unique constraint
-  that cannot tell them apart is not a constraint. But the
+  distinct keys, because a unique index — the primary key's
+  among them — is enforced on key bytes: two datums that
+  collide are one entry, and a unique constraint that cannot
+  tell them apart is not a constraint. But the
   key does *not* have to be decodable back into the datum —
   §5 keeps every column in the tuple, so the tuple is what
   a read returns and the key never has to give a datum back.
@@ -431,7 +432,7 @@ all have to satisfy are here.
   over a forward scan (`sm3/DESIGN.md` §7).
 
 This encoder is sm2's, but sm3 is its other caller: a
-secondary index entry is `encode(sk) ‖ encode(pk)`
+secondary index entry is `encode(sk) ‖ rowno`
 (`sm3/DESIGN.md` §3), built from the same function with the
 same per-column arguments. It is one encoder with two callers,
 not two encoders that have to agree.
@@ -457,22 +458,24 @@ decisions behind them are here.
   use; the alternatives cost a length prefix, which breaks
   ordering, or a wider alphabet.
 - **The last column keeps its terminator.** Dropping it would
-  save two bytes, but sm3 appends the primary key to every
-  index entry (`sm3/DESIGN.md` §3), so which column is last is
-  not something the encoder can see. The rule has no
-  condition in it.
+  save two bytes, but sm3 appends `rowno` to most index
+  entries and not to others (`sm3/DESIGN.md` §3), so which
+  column is last is not something the encoder can see. The
+  rule has no condition in it.
 
 ### 3.2 Over-long keys
 
 `SM_MAX_KEYLEN` is 4096 and bounds the whole key: the 2-byte
-object prefix (§5), then `sk ‖ pk` for an index entry or `pk`
-for a row. Collation sort keys run several times the length
-of their text, so the limit is reachable.
+object prefix (§5), then the encoded index columns, then the
+8-byte `rowno` where the entry carries one. A row's key is the
+prefix and `rowno` alone, so only index keys can be long.
+Collation sort keys run several times the length of their
+text, so the limit is reachable.
 
 - **An over-long primary key refuses the row.** The primary
-  key is the row's identity and the relation's key, so it must
-  be exact. PostgreSQL likewise refuses an oversize btree
-  entry.
+  key index enforces uniqueness on exact key bytes
+  (`sm3/DESIGN.md` §3), so its key must be exact. PostgreSQL
+  likewise refuses an oversize btree entry.
 - **An over-long secondary index key is truncated, flagged and
   rechecked.** Truncation keeps order as a coarsening — if
   `a <= b` then `trunc(a) <= trunc(b)` — so a range scan over
@@ -488,8 +491,10 @@ of their text, so the limit is reachable.
   destroys order, and an index that cannot serve a range or an
   `ORDER BY` is not worth having.
 
-The sort key's budget is 4094 less the encoded primary key,
-so primary keys should leave most of it.
+The index columns' budget is 4094 bytes, less 8 for `rowno`
+where the entry carries one. It no longer depends on the
+primary key's length, because an index entry points at
+`rowno`, not at the primary key.
 
 ### 3.3 Collation version and determinism
 
@@ -500,16 +505,19 @@ so primary keys should leave most of it.
   which is why it is not the source of sort keys.
 - **A version mismatch is refused.** The version is recorded
   with the schema (`sm3/DESIGN.md` §2) and compared at open.
-  Every index and collated primary key built under another
-  version refuses reads and writes, with a message saying why.
+  Every index built under another version, the primary key
+  index included, refuses reads and writes, with a message
+  saying why.
   PostgreSQL only warns and carries on, but writing new sort
   keys into an old index corrupts it further, and a unique
   index quietly stops being unique.
-- **Rebuilding is a command someone chooses to run.** A
-  secondary index is rebuilt online (`sm3/DESIGN.md` §3). A
-  collated primary key is harder: the relation is clustered on
-  it, so the rebuild rewrites the table, which is why refusal
-  is the default and not an automatic rebuild.
+- **Rebuilding is a command someone chooses to run.** Any
+  index, the primary key index included, is rebuilt online
+  (`sm3/DESIGN.md` §3). The table itself never needs it: rows
+  are keyed by `rowno`, which no collation touches. Refusal is
+  still the default rather than an automatic rebuild, because
+  a rebuild of a large index is work an operator should
+  schedule.
 - **Non-deterministic collations are refused** when a column
   or index is created, with a clear error. Under one, two
   different strings compare equal, and hashing, grouping and
@@ -603,8 +611,8 @@ A `rel` is opened over exactly one sm1 relation, with three
 things:
 
 - a **schema** — the ordered columns, their types and
-  collations, which prefix of them is the primary key, and per
-  key column its direction and null ordering;
+  collations, and per key column its direction and null
+  ordering;
 - an **object prefix** of exactly 2 bytes, big-endian,
   prepended to every key sm2 writes and stripped from every
   key it reads. sm3 chooses the value and sm2 never interprets
@@ -614,7 +622,7 @@ things:
 
   | Prefix | Object |
   | --- | --- |
-  | `0x0000` | the table's rows |
+  | `0x0000` | the table's rows, keyed by `rowno` |
   | `0x0001`–`0xFFFE` | its indexes, one prefix each |
   | `0xFFFF` | its TOAST data (§4) |
 
@@ -628,15 +636,51 @@ things:
   against the limit (§3.2);
 - an **sm1 session**, which is where the transaction lives.
 
+**Decision: the table is a heap keyed by `rowno`, and the
+primary key is an index**, as in PostgreSQL. A row's sm1 key
+is `0x0000 ‖ rowno`:
+
+- **`rowno` is an unsigned 64-bit number**, written as 8
+  bytes big-endian, drawn from an sm1 sequence that belongs to
+  the table (`sm1/API.md`, the sequence API). It is never
+  reused, survives a crash, and may have gaps. The whole 64-bit
+  range is usable.
+- **An update keeps its `rowno`.** sm1 writes the new version
+  under the same key, so a row's identity never changes and an
+  index entry that points at it stays valid. PostgreSQL's heap
+  gives a new TID to every non-HOT update and must insert into
+  every index; this does not.
+- **The primary key is an index like any other**, sm3's to
+  build and maintain (`sm3/DESIGN.md` §3), keyed by the
+  encoded key columns and mapping to `rowno`. A table without
+  a primary key needs nothing extra: every table is a heap.
+- **`rowno` is PostgreSQL's `ctid`.** The fork redefines
+  `ctid` as a `uint64_t` rather than PostgreSQL's 6-byte
+  `ItemPointerData` (`PART4.md` §3), so every `rowno` is a
+  valid `ctid`. It differs from PostgreSQL's in one way: it
+  names the row, not the row version, so it does not change
+  on `UPDATE`.
+
+Why a heap and not a table clustered on its primary key:
+PostgreSQL's planner and executor assume a heap with every
+index secondary, a table may have no primary key at all,
+changing a primary key must not rewrite every index, and a
+fixed 8-byte `rowno` is a smaller index suffix than an
+encoded primary key. The costs are in §7.
+
 The operations, and what each one is over:
 
 | sm2 | what it adds | over |
 | --- | --- | --- |
-| `rel_insert` | encodes the key columns, writes the rest as a tuple | `sm_insert`; `SM_ERR_DUPKEY` passes through |
-| `rel_read` | decodes sm1's byte string into a tuple | `sm_read` |
-| `rel_update`, `rel_delete` | hands back the old image as a **tuple**, not bytes | `sm_update`, `sm_delete` |
+| `rel_insert` | writes a tuple under a new `rowno` and returns the `rowno` | `sm_nextseq`, `sm_insert` |
+| `rel_read` | reads a row by `rowno` and decodes it into a tuple | `sm_read` |
+| `rel_update`, `rel_delete` | by `rowno`; hands back the old image as a **tuple**, not bytes | `sm_update`, `sm_delete` |
 | `rel_read_latest` | the newest committed image, decoded | `sm_read_latest` |
-| `rel_scan`, `rel_scan_seek` | tuples in key order, forward only | `sm_scan`, `sm_scan_seek` |
+| `rel_scan`, `rel_scan_seek` | tuples in `rowno` order, forward only | `sm_scan`, `sm_scan_seek` |
+
+How sm3 writes and scans index entries through sm2 — keyed by
+encoded columns rather than by `rowno` — and who draws the
+`rowno` from the sequence are open (`QUESTIONS.md` 5.6).
 
 The rules it must satisfy:
 
@@ -651,24 +695,14 @@ The rules it must satisfy:
   newest image (`sm1/DESIGN.md` §5.4), and filters live above
   sm2; `rel_read_latest` is what sm2 provides so sm3 can do it
   (`sm3/DESIGN.md` §3).
-- **Every column is in the tuple, key columns included.**
-  The encoded key is not the storage of tuple for anything;
-  it is an ordering device that happens to be unique. A key
-  column is therefore written twice — encoded in the sm1 key,
-  native in the tuple — and the tuple is what a read
-  returns.
-
-  The alternative, leaving key columns out of the tuple and
-  reconstructing them from the key, saves the duplicate but
-  costs more than it saves. It makes `key_encode` reversible
-  by obligation, for every type, forever — which is a hard
-  constraint to hold over collation sort keys, truncated
-  keys and any future lossy encoding. It makes decoding a row
-  a stitch of two sources instead of one call, so the tuple
-  codec (§4) would need to know which ordinals are key
-  columns and the `rel` layer would need to splice them back
-  in on every read and every scan. Uniformity is worth the
-  bytes; the cost is named in §7.
+- **Every column is in the tuple.** An encoded key — the
+  primary key index's or any other's — is an ordering device,
+  not storage, so an indexed column is written twice: encoded
+  in the index, native in the tuple. The tuple is what a read
+  returns, and `key_encode` never has to be reversible, which
+  is a hard promise to keep over collation sort keys,
+  truncated keys and any future lossy encoding. The cost is
+  named in §7.
 - **Decoding is per column, not per row.** Reading one column
   of a wide tuple must not cost the whole tuple, or a
   predicate above sm2 pays for every column it does not look
@@ -705,6 +739,9 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
 - **Object mapping.** Which sm1 relation holds a table, and
   which prefix each of its indexes gets, is sm3's; sm2 only
   prepends and strips the prefix (§5).
+- **The primary key.** sm2's table is a heap keyed by
+  `rowno`; the primary key is one of sm3's indexes, and its
+  uniqueness is sm3's (§5).
 - **Predicates.** sm2 has no filter, and therefore cannot
   resolve `SM_ERR_UPDATED` or derive a key range from a
   `WHERE` clause.
@@ -736,20 +773,33 @@ Accepted so far:
 - **Little-endian is in the format.** §2.1 fixes the byte
   order that PostgreSQL leaves native, so a big-endian host
   byte-swaps on every datum where others `memcpy`.
-- **Key columns are stored twice**, encoded in the sm1 key
-  and native in the tuple (§5). A table whose columns are
-  all primary key pays for its data twice, and the loss is
-  worst exactly where the row is narrow. It buys a tuple
-  that is complete on its own, a tuple codec that never
-  learns what a key column is, and a `key_encode` that is
-  allowed to be lossy. CockroachDB and YugabyteDB make the
-  other choice and reconstruct key columns from the key.
-- **A collated text key column is stored three ways**: the
-  sort key and the tie-break original in the key (§3), and
-  the datum in the tuple. The tie-break is not optional —
-  without it two distinct strings can share one key — so
-  this is the price of collated text as a primary key, and
-  it is a reason to prefer a surrogate key for one.
+- **Indexed columns are stored twice**, encoded in the index
+  and native in the tuple (§5), the primary key's included, as
+  in PostgreSQL. It buys a tuple that is complete on its own
+  and a `key_encode` that is allowed to be lossy.
+- **A collated text index column is stored three ways**: the
+  sort key and the tie-break original in the index key (§3),
+  and the datum in the tuple. The tie-break is not optional —
+  without it two distinct strings can share one key.
+- **A primary key lookup is two reads.** The primary key index
+  gives `rowno`, and the row is a second read (§5). A table
+  clustered on its primary key would answer in one. Both keys
+  are in the same sm1 relation, and PostgreSQL pays the same
+  price, which its planner already costs.
+- **A primary key range scan loses locality.** Rows are in
+  `rowno` order, roughly insertion order, so a range over the
+  primary key reads rows scattered across the heap.
+  PostgreSQL has the same property; InnoDB and SQL Server
+  cluster to avoid it.
+- **Every insert writes the row and its primary key entry**,
+  two sm1 keys where a clustered table writes one, plus one
+  per other index as before.
+- **`ctid` is redefined.** Exposing `rowno` as `ctid` means
+  widening PostgreSQL's 6-byte `ItemPointerData` to 64 bits in
+  the fork, which reaches index tuples, heap tuple headers and
+  TID bitmaps (`PART4.md` §3). And since `rowno` names a row,
+  not a version, code that expects `ctid` to change on
+  `UPDATE` sees it stay put.
 - **Descending order costs an encoding, not a structure.**
   Inverted bytes scanned forward means no mirror relation and
   no second copy, but it also means a column's direction is

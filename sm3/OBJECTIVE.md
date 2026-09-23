@@ -59,15 +59,15 @@ document is what it is for.
 
 These are settled and drive `DESIGN.md`.
 
-- **A secondary index entry is `encode(sk) ‖ encode(pk)`**,
-  mapping to empty or to the INCLUDE columns. The primary key
-  suffix makes every entry unique, so a non-unique index needs
-  no further disambiguation. A lookup is an index scan
-  followed by a base read; there is no surrogate row id and no
-  indirection layer.
+- **An index entry is `encode(sk) ‖ rowno`**, mapping to
+  empty or to the INCLUDE columns; a unique index drops the
+  suffix and maps to `rowno`. The table is a heap keyed by
+  `rowno` and the primary key is one of these indexes, as in
+  PostgreSQL (`sm2/OBJECTIVE.md`). A lookup is an index scan
+  followed by a read by `rowno`.
 - **sm2's encoder is the only encoder.** sm3 builds index keys
-  from the same function, with the same per-column arguments,
-  that sm2 uses for primary keys (`sm2/OBJECTIVE.md`).
+  from the same function, with the same per-column arguments
+  (`sm2/OBJECTIVE.md`).
 - **The catalog is held in memory** and written through to sm2
   for persistence. It replaces PostgreSQL's heap catalogs
   (`PART4.md` §4), so sm1's status record is the one commit

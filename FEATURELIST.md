@@ -26,8 +26,8 @@ ecosystem axis PART4.md §7 raises but does not settle.
 
 **Already settled by sm1 — not on this list.** RC / RR /
 SERIALIZABLE isolation with SSI, two-phase commit, nested
-savepoints, deadlock detection, sequences, and the clustered
-primary key as the only access path below sm2.
+savepoints, deadlock detection, sequences, and a single
+ordered key as the only access path below sm2.
 
 ---
 
@@ -64,7 +64,8 @@ primary key as the only access path below sm2.
 ## 2. Index access methods
 
 - [x] B-tree
-      — already assumed; this is the clustered PK today
+      — already assumed; the primary key is a B-tree index
+        over the heap (sm2/DESIGN.md §5)
 - [ ] Hash
 - [ ] GiST
       — needed for range / geometric / exclusion

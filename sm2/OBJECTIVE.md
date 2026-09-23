@@ -60,26 +60,31 @@ sm2 the way sm2 is built on sm1 (`sm3/OBJECTIVE.md`).
 
 These are settled and drive `DESIGN.md`.
 
-- **Row identity is the primary key.** The relation is
-  clustered on the primary key, as sm1 relations already are.
-  There is no surrogate row id and no indirection layer. This
-  matches sm1's model exactly, and it is what YugabyteDB does
-  (`ybctid` is the encoded primary key).
-- **Every column is in the tuple, key columns included.**
-  The encoded key is an ordering device, not storage: a key
-  column is written twice, encoded in the key and native in
-  the tuple, and the tuple is what a read returns. It costs
-  the duplicate; it buys a tuple that is complete on its
-  own, a tuple codec that never learns what a key column is,
-  and the next decision (`DESIGN.md` §5).
-- **A key must be injective, not reversible.** Distinct
-  datums get distinct keys, because a key is the row's
-  identity. A key need not decode back to its datum, because
-  the tuple holds it — so a lossy encoding is allowed where
-  it is order-preserving and made injective by a tie-break,
-  and `key_decode` is an optimization for sm3's index-only
-  scans rather than a correctness requirement
-  (`DESIGN.md` §3).
+- **Row identity is `rowno`, and the table is a heap.** A row
+  is keyed by an unsigned 64-bit `rowno` from a per-table sm1
+  sequence, never reused and kept across updates; the primary
+  key is an index over it, as in PostgreSQL. The fork
+  redefines `ctid` as a `uint64_t`, so `rowno` is `ctid`
+  (`DESIGN.md` §5). This reverses an earlier choice to cluster
+  the table on its primary key, as YugabyteDB does: a heap is
+  what PostgreSQL's planner and executor assume, it serves a
+  table with no primary key, and a primary key change no
+  longer rewrites every index. It costs a second read on a
+  primary key lookup and locality on a primary key range
+  scan.
+- **Every column is in the tuple.** An encoded index key is
+  an ordering device, not storage: an indexed column is
+  written twice, encoded in the index and native in the
+  tuple, and the tuple is what a read returns. It costs the
+  duplicate; it buys a tuple that is complete on its own and
+  the next decision (`DESIGN.md` §5).
+- **A key must be injective, not reversible.** Distinct datums
+  get distinct keys, because unique indexes are enforced on key
+  bytes. A key need not decode back to its datum, because the
+  tuple holds it — so a lossy encoding is allowed where it is
+  order-preserving and made injective by a tie-break, and
+  `key_decode` is an optimization for sm3's index-only scans
+  rather than a correctness requirement (`DESIGN.md` §3).
 - **A datum's representation is PostgreSQL's**, type by
   type: the same widths, epochs, units and struct layouts,
   so that crossing into a tuple slot copies the column bytes
@@ -114,7 +119,7 @@ These are settled and drive `DESIGN.md`.
   part of sm2 that touches no database — so it is built and
   tested on its own (`DESIGN.md` §4).
 - **One encoder, two callers.** The key encoder is sm2's, and
-  sm3 builds its index entries — `encode(sk) ‖ encode(pk)` —
+  sm3 builds its index entries — `encode(sk) ‖ rowno` —
   from the same function with the same per-column arguments.
   Two encoders that have to agree is a bug waiting to be
   written.
@@ -199,19 +204,19 @@ sm3's indexes that feel them most.
   the meaning of stored bytes — provided the codec keeps
   rejecting any value outside the declared precision.
 
-- **Over-long keys.** `SM_MAX_KEYLEN` is 4096 and bounds
-  `sk ‖ pk` together. Collation sort keys can be several times
-  the length of their source text. Truncate and recheck, hash
-  and recheck, or reject?
+- **Over-long keys.** `SM_MAX_KEYLEN` is 4096 and bounds an index
+  entry's whole key. Collation sort keys can be several times the
+  length of their source text. Truncate and recheck, hash and
+  recheck, or reject?
 
   *Decided: reject for the primary key, truncate and recheck for
-  a secondary index, never hash* (`DESIGN.md` §3.2). The
-  primary key is the row's identity and the relation's key, so it
-  must be exact: an encoded primary key over a fixed limit is
-  refused when the row is written, which is what PostgreSQL does
-  for an oversize btree entry (its limit is roughly 2.7KB, from
-  memory, not checked against the source). A secondary index can
-  do better, because the original datum is stored beside the sort
+  a secondary index, never hash* (`DESIGN.md` §3.2). The primary
+  key index enforces uniqueness on exact key bytes, so it must be
+  exact: an encoded primary key over a fixed limit is refused
+  when the row is written, which is what PostgreSQL does for an
+  oversize btree entry (its limit is roughly 2.7KB, from memory,
+  not checked against the source). A secondary index can do
+  better, because the original datum is stored beside the sort
   key anyway. Truncating a sort key keeps the order as a
   coarsening: if `a <= b` then `trunc(a) <= trunc(b)`, so a range
   scan on the truncated keys returns a superset, and the recheck
@@ -222,9 +227,9 @@ sm3's indexes that feel them most.
   prefix range rather than trust key equality, treating NULLs as
   distinct (`sm3/DESIGN.md` §3). A hash is out, because it keeps
   equality but destroys order, and an index that cannot serve a
-  range or an `ORDER BY` is not worth having. The budget for the
-  sort key is `4096` less the length of the encoded primary key,
-  so the primary key limit should leave most of it.
+  range or an `ORDER BY` is not worth having. The budget for an
+  index key is `4094` after the prefix, less 8 for `rowno` where
+  the entry carries one.
 
 - **Collation stability.** A sort key is only valid for the
   collation library version that produced it. The version is
@@ -234,20 +239,20 @@ sm3's indexes that feel them most.
   refuse, or rebuild?
 
   *Decided: pin the library so it rarely differs, and refuse on a
-  mismatch, with an explicit rebuild* (`DESIGN.md` §3.3). Link
-  a specific ICU version into the server instead of using
-  whatever the operating system has, so a mismatch happens only
-  when the operator upgrades on purpose. When it does happen,
-  compare the recorded version at open. Refuse to use, and refuse
-  to write to, any index or collated primary key built under the
-  old version, with a message that says why. PostgreSQL only
+  mismatch, with an explicit rebuild* (`DESIGN.md` §3.3). Link a
+  specific ICU version into the server instead of using whatever
+  the operating system has, so a mismatch happens only when the
+  operator upgrades on purpose. When it does happen, compare the
+  recorded version at open. Refuse to use, and refuse to write
+  to, any index built under the old version, the primary key
+  index included, with a message that says why. PostgreSQL only
   warns and carries on, but continuing to write sort keys from a
   new version into an old index corrupts it further, and a unique
-  index quietly stops being unique. Rebuilding a secondary index
-  is an online build (`sm3/DESIGN.md` §3). A collated primary key
-  is harder, because the relation is clustered on it, so the
-  rebuild rewrites the table; that is why the refusal has to be
-  the default and the rebuild a command someone chooses to run.
+  index quietly stops being unique. Rebuilding any index, the
+  primary key's included, is an online build (`sm3/DESIGN.md`
+  §3); the table is keyed by `rowno` and never needs rewriting.
+  The refusal is still the default and the rebuild a command
+  someone chooses to run.
 
 - **Non-deterministic collations.** Equal keys are not
   byte-equal under them, which is what unique indexes rest on.

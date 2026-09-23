@@ -131,10 +131,12 @@ that suggests: the offset is effectively 11 bits, giving
 roughly 2^43 rows per relation, and block locality is assumed
 by bitmap scans, BRIN, `CLUSTER`, `ANALYZE`'s block sampling,
 `relpages` in the cost model, and the user-visible `ctid`. sm1
-rows are identified by a variable-length primary key. There is
-no TID, and inventing a dense 48-bit surrogate means a
-crash-safe never-reusing allocator plus a surrogate→key map —
-an extra index hop on every fetch.
+has no TID. sm2 now keys every row by a 64-bit `rowno` from an
+sm1 sequence, which is crash-safe and never reused, and the
+primary key is an index over it (`sm2/DESIGN.md` §5) — but a
+64-bit `rowno` does not fit a 6-byte TID, so the fork redefines
+`ctid` as a `uint64_t` rather than fitting `rowno` into the
+table AM's shape.
 
 **PostgreSQL's MVCC would have to be the authority, which
 deletes sm1's.** A table AM is handed PG's transaction ids and
@@ -344,7 +346,7 @@ the level column says which.
 | Forced | Level | Why |
 | --- | --- | --- |
 | **Tuple format cheap to turn into a PG tuple** | sm2 | the executor works in tuple slots; a bespoke encoding pays a conversion per row, in both directions, across an IPC boundary |
-| **Row identity is the primary key** | sm2 | already chosen; it is `ybctid` by another name, and it is the only identity that fits an index-organized store without a surrogate allocator |
+| **Row identity is `rowno`; the table is a heap** | sm2 | the planner and executor assume a heap with every index secondary, and tables may have no primary key; `rowno` is a 64-bit number from an sm1 sequence, and the fork redefines `ctid` as a `uint64_t` to carry it |
 | **Key encoder takes a collation** | sm2 | PG's text order is `strcoll`/ICU, not memcmp; the encoder needs `(type, collation, direction, nulls-order)` per column or half of SQL's `ORDER BY` is unrepresentable |
 | **Collated keys store the sort key *and* the original** | sm2 | the collation transform is lossy and irreversible; this is what YugabyteDB does, and it costs storing the datum twice |
 | **Batch-shaped API** | sm3 | was forced by §2's out-of-process engine; with a threaded fork it is no longer forced, and is open |

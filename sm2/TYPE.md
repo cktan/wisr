@@ -31,9 +31,10 @@ what a read returns; the key exists to order and to identify.
 Three rules follow, and they apply to every type below.
 
 - **`key_encode` is injective.** Distinct datums get distinct
-  keys. A key is the row's identity, so two datums that share
-  a key are one row, and a unique constraint that cannot tell
-  them apart is not a constraint.
+  keys. A unique index, the primary key's included, is
+  enforced on key bytes, so two datums that share a key are
+  one entry, and a unique constraint that cannot tell them
+  apart is not a constraint.
 - **`key_encode` need not be reversible.** The tuple holds
   the datum, so nothing depends on getting it back out of the
   key. `key_decode` is provided where an inverse exists, for

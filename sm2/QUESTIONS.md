@@ -116,6 +116,24 @@ the question becomes whether `rel` copies the registry.
 changing it (`sm3/DESIGN.md` §2) — which it must do anyway.*
 → `DESIGN.md` §5
 
+**5.6 [BLOCKING] How does sm3 write index entries through
+sm2, and who draws `rowno`?**
+The table is now a heap keyed by `rowno` (`DESIGN.md` §5), so
+`rel` reads and writes rows by `rowno`. Index entries are keyed
+by encoded columns instead — `encode(sk) ‖ rowno`, or
+`encode(sk)` alone for a unique index (`sm3/DESIGN.md` §3) —
+and sm3 may only reach sm1 through sm2, so sm2 needs a way to
+write, delete and scan them. Separately, someone calls
+`sm_nextseq` for each new row.
+*Suggested: two kinds of `rel`, opened over the same sm1
+relation with different prefixes: a **heap `rel`**, keyed by
+`rowno`, and an **index `rel`**, keyed by the encoded columns
+it is opened with, whose value is a tuple (the `rowno` and the
+INCLUDE columns). `rel_insert` on a heap `rel` draws the
+`rowno` from the table's sequence, named in the schema, and
+returns it, so the sequence is used in one place.*
+→ `DESIGN.md` §5
+
 ---
 
 ## 6. Mechanics — blocks the first line of code
@@ -186,5 +204,8 @@ Settled, and listed so nobody reopens them by accident:
 - Collation version and determinism — `DESIGN.md` §3.3.
 - One sm1 relation per table and the 2-byte object prefix —
   `DESIGN.md` §5, `sm3/DESIGN.md` §4.
+- That the table is a heap keyed by a 64-bit `rowno`, the
+  primary key is an index, and `rowno` is `ctid` —
+  `DESIGN.md` §5, `sm3/DESIGN.md` §3.
 - That NULLs are distinct in a unique index —
   `sm3/DESIGN.md` §3.

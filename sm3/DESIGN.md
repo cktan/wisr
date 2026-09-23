@@ -1,15 +1,15 @@
 # DESIGN — sm3, schema and indexes
 
 The level that turns sm2's tuples into a schema. sm2 gives it
-typed rows in a clustered relation; sm3 gives those relations
-names, definitions, secondary indexes, predicates and
-statistics. This document is the design of record; it follows
-the decisions in `OBJECTIVE.md`:
+typed rows in a heap keyed by `rowno`; sm3 gives those relations
+names, definitions, indexes — the primary key's among them —
+predicates and statistics. This document is the design of record;
+it follows the decisions in `OBJECTIVE.md`:
 
 | Decision | Choice |
 | --- | --- |
 | Catalog | in memory, written through to sm2, lock-based DDL |
-| Index entry | `encode(index columns) ‖ encode(pk)` → empty or INCLUDE columns |
+| Index entry | `encode(index columns) ‖ rowno` → INCLUDE columns; a unique index's entry drops the `rowno` suffix and maps to it instead |
 | Encoder | sm2's, called with the same per-column arguments |
 | Relation mapping | one sm1 relation per table, holding its rows, indexes and TOAST data, told apart by sm2's 2-byte object prefix |
 | API shape | open: batch-oriented (sets of rows, filters pushed down) was forced by an IPC boundary, which the threaded fork removes (§1) |
@@ -47,17 +47,17 @@ answer.
 
 | the stack gives sm3 | and the constraint it brings |
 | --- | --- |
-| sm2's tuples in a clustered relation | the base row's identity is its primary key; an index entry points at a key, never at a location |
-| sm2's key encoder | index keys and primary keys sort by the same rules, because they are the same code (`sm2/DESIGN.md` §3) |
+| sm2's tuples in a heap keyed by `rowno` | a row's identity is its `rowno`, which never changes; every index, the primary key's included, points at it |
+| sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/DESIGN.md` §3) |
 | sm2's 2-byte object prefix | a table's rows, indexes and TOAST data share its one sm1 relation (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own |
-| `SM_ERR_DUPKEY` from `rel_insert` | a duplicate primary key needs no separate existence check; a *unique index* still does (§3) |
+| `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
 | `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
 | `sm_lock(SHARED\|EXCLUSIVE)` | the DDL and online index build protocol (§2, §3) |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
-| `SM_MAX_KEYLEN` 4096 | an index entry's `sk ‖ pk` must fit 4094 bytes after the prefix; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/DESIGN.md` §3.2) |
+| `SM_MAX_KEYLEN` 4096 | an index entry's key must fit 4094 bytes after the prefix, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/DESIGN.md` §3.2) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward, in the same index; there are no mirror relations, and the fork's planner never asks for a backward scan (§5, §7) |
 | one column family per relation, hundreds to low thousands | tables, partitions included, are bounded by it (§4) |
 
@@ -134,34 +134,50 @@ changed it is the usual place such a design goes wrong. Open:
 
 ---
 
-## 3. Secondary indexes
+## 3. Indexes
 
 *To be written.* The shape is already argued in
 `sm1/SECINDEX.md`, which was an assessment of what a layer
 above sm1 needs; every gap it found is now closed in sm1.
 
-- **Entry:** `encode(sk) ‖ encode(pk)` → empty, or the INCLUDE
+- **The primary key is an index.** The table is a heap keyed
+  by `rowno` (`sm2/DESIGN.md` §5), and the primary key is a
+  unique index over it, built and maintained like any other.
+  A table may have none.
+- **Entry:** `encode(sk) ‖ rowno` → empty, or the INCLUDE
   columns, built with sm2's encoder (`sm2/DESIGN.md` §3). The
-  pk suffix makes every entry unique, so a non-unique index
-  needs no further disambiguation.
-- **Unique indexes:** the uniqueness unit is the key *without*
-  the pk suffix, so it is a separate existence check under
-  `sm_lock(EXCLUSIVE)` rather than a property of the KV key. At
-  READ COMMITTED the check reads the newest version, not the
-  snapshot: a statement snapshot can predate a duplicate that
-  committed while the lock was awaited, and the lock is what
-  keeps the newest version stable.
-- **NULLs are distinct in a unique index.** Two NULLs encode
-  to the same bytes, so the check skips any entry with a NULL
-  key column, as SQL requires by default. `NULLS NOT
-  DISTINCT` is refused at `CREATE INDEX` in v1; adding it
-  later is a catalog flag and changes no bytes on disk.
+  `rowno` suffix makes every entry unique, so a non-unique
+  index needs no further disambiguation, and it is 8 bytes
+  whatever the primary key is.
+- **Unique indexes are keyed without `rowno`:**
+  `encode(sk)` → `rowno` and the INCLUDE columns. The KV key
+  is then the uniqueness unit, so sm1's insert refuses a
+  duplicate with `SM_ERR_DUPKEY` and its write-write conflict
+  handles two sessions inserting the same key at once; no
+  separate existence check is needed. The primary key index
+  is keyed this way. Two kinds of entry in a unique index
+  still carry the suffix, and still need the existence check
+  under `sm_lock(EXCLUSIVE)`: one with a NULL key column, and
+  one whose key was cut (below). At READ COMMITTED that check
+  reads the newest version, not the snapshot: a statement
+  snapshot can predate a duplicate that committed while the
+  lock was awaited, and the lock is what keeps the newest
+  version stable.
+- **NULLs are distinct in a unique index.** Two NULLs encode to
+  the same bytes, so an entry with a NULL key column carries the
+  `rowno` suffix and skips the uniqueness check, as SQL requires
+  by default. A primary key column is never NULL, so the primary
+  key index never has such an entry. `NULLS NOT DISTINCT` is
+  refused at `CREATE INDEX` in v1; adding it later is a catalog
+  flag and changes no bytes on disk.
 - **A truncated key is rechecked.** sm2 cuts an over-long
   index key to fit and flags the entry (`sm2/DESIGN.md` §3.2).
   A scan rechecks flagged entries against the base row, and a
   unique check on a cut key compares originals over the
   prefix range, with NULLs distinct as above.
-- **Maintenance:** on update and delete, the old image from
+- **Maintenance:** an update keeps the row's `rowno`, so only
+  the indexes whose columns changed are touched — a primary key
+  change included. On update and delete, the old image from
   `rel_update` / `rel_delete` gives the old index entries to
   remove — as a tuple, so sm3 reads the indexed columns out
   of it without decoding bytes itself.
@@ -268,12 +284,13 @@ filters — sm2 is tuple-at-a-time either way.
 
 ## 6. Statistics
 
-*To be written.* Statistics are not optional, because the
-planner is kept. It needs `reltuples`, `relpages`, histograms and
+*To be written.* Statistics are not optional, because the planner
+is kept. It needs `reltuples`, `relpages`, histograms and
 correlations, and `ANALYZE` needs a sampling path: row counts,
-sizes, and a sampling primitive from sm1. For an index-organized
-table the primary key's correlation is 1.0 by construction,
-which is worth reporting rather than measuring. How accurate
+sizes, and a sampling primitive from sm1. For a heap keyed by
+`rowno`, correlation is measured as in PostgreSQL: `rowno` is
+roughly insertion order, so a column that grows with insertion
+correlates, and the primary key usually does. How accurate
 RocksDB's approximate statistics are for this purpose has not
 been measured, and this section depends on it.
 

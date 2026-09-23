@@ -122,7 +122,7 @@ design:
 - **One encoder, one tuple format, two callers.** The key
   encoding and the tuple layout are sm2's alone
   (`sm2/DESIGN.md` §3, §4), and sm3 builds its index entries
-  — `encode(sk) ‖ encode(pk)` — by calling sm2's encoder
+  — `encode(sk) ‖ rowno` — by calling sm2's encoder
   with the same per-column arguments. Two encoders that have
   to agree bytewise is a corruption bug waiting to be
   written, so there is only one.
@@ -132,6 +132,18 @@ design:
   that one call is the sanctioned exception to sm3 speaking
   only to sm2. Every other sm1 facility sm3 needs arrives
   through sm2's tuple relation.
+- **A table is a heap keyed by `rowno`, and the primary key
+  is an index.** A row's key is an unsigned 64-bit `rowno`
+  from a per-table sm1 sequence, never reused and unchanged by
+  `UPDATE` (`sm2/DESIGN.md` §5). Every index, the primary
+  key's included, is sm3's and points at `rowno`
+  (`sm3/DESIGN.md` §3). The fork redefines `ctid` as a
+  `uint64_t`, so `rowno` is `ctid` — a core patch to
+  PostgreSQL's 6-byte `ItemPointerData` (`PART4.md` §3). This
+  matches the heap PostgreSQL's planner and executor assume,
+  serves tables without a primary key, and keeps a primary
+  key change from rewriting every index; a primary key lookup
+  costs two reads.
 - **One sm1 relation per table.** A table's rows, all its
   indexes and its TOAST data share one sm1 relation,
   told apart by a 2-byte object prefix: `0x0000` for rows,
@@ -146,7 +158,7 @@ design:
   (`sm1/DESIGN.md` §13); accepted for v1 (`sm3/DESIGN.md`
   §4).
 - **The key budget is shared.** `SM_MAX_KEYLEN` (4096) bounds
-  prefix, sort key and primary key together. sm2's encoder
+  prefix, index columns and `rowno` together. sm2's encoder
   enforces it: an over-long primary key refuses the row, and an
   over-long index key is truncated, flagged and rechecked
   against the tuple, never hashed (`sm2/DESIGN.md` §3.2). sm3
@@ -159,13 +171,13 @@ design:
   DISTINCT` is refused at `CREATE INDEX` in v1; adding it
   later is a catalog flag and changes no bytes on disk
   (`sm3/DESIGN.md` §3).
-- **Collation versions are pinned, recorded and enforced
-  across the stack.** A specific ICU is linked into the
-  server; sm3 records each collation's version with the schema
-  (`sm3/DESIGN.md` §2); sm2 refuses to read or write an index or
-  collated primary key built under another version, until an
-  explicit rebuild (`sm2/DESIGN.md` §3.3). Non-deterministic
-  collations are refused in v1.
+- **Collation versions are pinned, recorded and enforced across
+  the stack.** A specific ICU is linked into the server; sm3
+  records each collation's version with the schema
+  (`sm3/DESIGN.md` §2); sm2 refuses to read or write an index
+  built under another version, the primary key's included, until
+  an explicit online rebuild (`sm2/DESIGN.md` §3.3).
+  Non-deterministic collations are refused in v1.
 - **Constraints and labels are sm3's; sm2 stores what it is
   given.** The `varchar(n)` length limit is enforced by sm3,
   and an enum is `int4` to sm2 with its labels in sm3's

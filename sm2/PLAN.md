@@ -98,8 +98,10 @@ The three above, joined to sm1.
   codec of step 3 rather than a second copy of it.
 - The 2-byte object prefix, chosen by sm3, opaque to sm2
   (`DESIGN.md` §5).
+- Rows keyed by `rowno`, an unsigned 64-bit number from the
+  table's sm1 sequence, kept across updates (`DESIGN.md` §5).
 - Errors from sm1 passed through, not translated —
-  `SM_ERR_DUPKEY` and `SM_ERR_UPDATED` in particular.
+  `SM_ERR_UPDATED` in particular.
 - Per-column decoding, so a reader that wants one column does
   not pay for the row.
 
@@ -107,8 +109,9 @@ The three above, joined to sm1.
 back out, under every isolation level; the old image returned
 by an update or a delete is the tuple that was there; a
 savepoint rollback leaves no sm2 state behind, because there
-is none to leave; two `rel`s over the same sm1 relation with
-different prefixes never see each other's rows.
+is none to leave; an update keeps its `rowno`; two `rel`s over
+the same sm1 relation with different prefixes never see each
+other's rows.
 
 ---
 
