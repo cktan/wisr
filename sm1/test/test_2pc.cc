@@ -20,7 +20,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <new>
 #include <set>
 #include <string>
 #include <thread>
@@ -145,35 +144,7 @@ uint64_t first_store(sm1_session_t *s) {
   return store;
 }
 
-/*
- * How many more allocations on this thread succeed before
- * operator new starts failing: -1 for no limit, 0 to fail every
- * one from now on.
- */
-thread_local long t_alloc_budget = -1;
-
 } // namespace
-
-/*
- * The test binary's global operator new: plain malloc, except that
- * it throws std::bad_alloc once the calling thread's
- * t_alloc_budget is spent, so a test can make any allocation in a
- * stretch of engine code, and every one after it, fail.
- */
-void *operator new(std::size_t n) {
-  // Fail once the budget is spent; otherwise spend from it.
-  if (t_alloc_budget == 0) {
-    throw std::bad_alloc();
-  }
-  if (t_alloc_budget > 0) {
-    t_alloc_budget--;
-  }
-  // Otherwise allocate as the library would.
-  if (void *p = malloc(n ? n : 1)) {
-    return p;
-  }
-  throw std::bad_alloc();
-}
 
 /*
  * Child: insert "c" and prepare it as "g-crash", report, then
@@ -479,6 +450,62 @@ TEST_CASE("a resolve that fails and runs out of memory keeps the transaction") {
   CHECK(read_now(u, "a") == "1");
   sm1_closedb(s);
   sm1_closedb(u);
+}
+
+TEST_CASE("a commit by gid that runs out of memory before its record frees its "
+          "commit_ts") {
+  // Verify every allocation failure between claiming a commit_ts
+  // and writing the COMMITTED record of a prepared transaction
+  // hands the commit_ts back and leaves it resolvable (§8.5).
+  // 1. S reads "b" and updates "a" at SERIALIZABLE, and prepares.
+  // 2. For n = 0, 1, 2, ...: every allocation from the n-th on
+  //    fails while U commits it by gid, up to the status write.
+  // 3. The commit fails with NOMEM; the transaction is still
+  //    listed; V commits a key, and a fresh snapshot sees it, so
+  //    no stranded commit_ts holds visible_ts back.
+  // 4. Once n passes every allocation, the commit succeeds, and a
+  //    fresh snapshot reads S's update.
+  tpc_fixture_t f;
+  sm1_session_t *s = f.open();
+  sm1_session_t *u = f.open();
+  sm1_session_t *v = f.open();
+  const std::string gid = "g-" + std::string(60, 'x');
+  REQUIRE(sm1_begin(s, SM1_XCT_SERIALIZABLE) == 0);
+  CHECK(get(s, g_store, "b") == "0");
+  REQUIRE(set(s, "a", "1") == 0);
+  REQUIRE(sm1_prepare(s, gid.c_str()) == 0);
+  s->db->test_before_commit = [](uint64_t) {
+    t_alloc_budget = -1;
+    return rocksdb::Status::OK();
+  };
+
+  long n = 0;
+  for (;; n++) {
+    REQUIRE(n < 10000);
+    t_alloc_budget = n;
+    int rc = sm1_commit_prepared(u, gid.c_str());
+    t_alloc_budget = -1;
+    if (rc == 0) {
+      break;
+    }
+    INFO("allocation ", n, " failed");
+    CHECK(sm1_errno() == SM1_ERR_NOMEM);
+    auto l = listed(u);
+    REQUIRE(l.size() == 1);
+    CHECK(l[0].first == gid);
+    std::string key = "p" + std::to_string(n);
+    REQUIRE(sm1_begin(v, SM1_XCT_REPEATABLE_READ) == 0);
+    put(v, g_store, key, "v");
+    REQUIRE(sm1_commit(v) == 0);
+    REQUIRE(read_now(v, key) == "v");
+  }
+  s->db->test_before_commit = nullptr;
+  CHECK(n > 0);
+
+  CHECK(read_now(u, "a") == "1");
+  sm1_closedb(s);
+  sm1_closedb(u);
+  sm1_closedb(v);
 }
 
 TEST_CASE("another session can resolve a prepared transaction by gid") {

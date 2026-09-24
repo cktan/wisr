@@ -129,4 +129,12 @@ inline std::vector<uint64_t> lsstore(sm1_session_t *sess) {
   return out;
 }
 
+/*
+ * How many more allocations on this thread succeed before the test
+ * binary's operator new (main.cc) starts throwing std::bad_alloc:
+ * -1 for no limit, 0 to fail every one from now on, n to fail
+ * from the (n+1)th on.
+ */
+extern thread_local long t_alloc_budget;
+
 #endif /* WISR_TEST_UTIL_H */

@@ -452,7 +452,16 @@ int commit(sm1_session_t *s) {
   }
   // Validate under SSI before the commit point; on failure give
   // the commit_ts back to the sequencer unused (§7.3, §8.2).
-  if (ssi_precommit(s, commit_ts) != 0) {
+  int valid;
+  try {
+    valid = ssi_precommit(s, commit_ts);
+  } catch (const std::bad_alloc &) {
+    // Out of memory before the record: hand the commit_ts back,
+    // or it would hold visible_ts back for good (§4.3).
+    db_commit_done(db, commit_ts);
+    throw;
+  }
+  if (valid != 0) {
     // Hand the commit_ts back to the sequencer unused.
     db_commit_done(db, commit_ts);
     return xct_fail_retryable(s, SM1_ERR_SERIALIZATION, "not serializable");
@@ -472,11 +481,19 @@ int finish_commit(sm1_session_t *s, uint64_t commit_ts) {
   db_t *db = s->db;
   // Keep the xid past reset.
   uint64_t xid = s->xid;
-  // Build the COMMITTED record: state, snapshot, commit_ts.
-  std::string val;
-  val.push_back(static_cast<char>(txn_committed));
-  put_be64(val, s->snapshot_ts);
-  put_be64(val, commit_ts);
+  // Build the COMMITTED record -- state, snapshot, commit_ts --
+  // and its key on the stack: between the claimed commit_ts and
+  // the write nothing may allocate, or a bad_alloc would strand
+  // the commit_ts and hold visible_ts back for good (§4.3).
+  char val[txn_record_size];
+  val[0] = static_cast<char>(txn_committed);
+  uint64_t be = to_be64(s->snapshot_ts);
+  memcpy(val + 1, &be, sizeof(be));
+  be = to_be64(commit_ts);
+  memcpy(val + 1 + sizeof(be), &be, sizeof(be));
+  char key[sizeof(uint64_t)];
+  be = to_be64(xid);
+  memcpy(key, &be, sizeof(be));
   // No error unless the hook or the write says so.
   rocksdb::Status st;
   // Let a test stall or fail the status write.
@@ -500,7 +517,8 @@ int finish_commit(sm1_session_t *s, uint64_t commit_ts) {
     // test_before_commit, then check that fail-stop and a reopen
     // both work.
     // Write the status record: the commit point (§8.2).
-    st = db->rdb->Put(wo, db->cf_txn, txn_key(xid), val);
+    st = db->rdb->Put(wo, db->cf_txn, rocksdb::Slice(key, sizeof(key)),
+                      rocksdb::Slice(val, sizeof(val)));
   }
   // The record's fate is unknown.
   if (!st.ok()) {
@@ -822,8 +840,15 @@ int commit_prepared_txn(sm1_session_t *g) {
       db_claim_commit_ts(g->db, &commit_ts) != 0) {
     return -1;
   }
-  // Validated at prepare: the node only learns its end.
-  ssi_prepared_committed(g, commit_ts);
+  try {
+    // Validated at prepare: the node only learns its end.
+    ssi_prepared_committed(g, commit_ts);
+  } catch (const std::bad_alloc &) {
+    // Out of memory before the record: hand the commit_ts back,
+    // or it would hold visible_ts back for good (§4.3).
+    db_commit_done(g->db, commit_ts);
+    throw;
+  }
   // Write COMMITTED over PREPARED, publish, and release.
   return finish_commit(g, commit_ts);
 }

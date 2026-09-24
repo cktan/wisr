@@ -145,6 +145,57 @@ TEST_CASE("running out of memory after the commit point still commits") {
   sm1_closedb(b);
 }
 
+TEST_CASE(
+    "a commit that runs out of memory before its record frees its commit_ts") {
+  // Verify every allocation failure between claiming a commit_ts
+  // and writing the status record hands the commit_ts back, so
+  // later commits still become visible (§4.3, §8.2).
+  // 1. For n = 0, 1, 2, ...: A reads "x" and inserts a key at
+  //    SERIALIZABLE, and every allocation from the n-th on fails,
+  //    from the start of sm1_commit up to the status write.
+  // 2. The commit fails with NOMEM, and A aborts its transaction.
+  // 3. B commits a key of its own, and a fresh snapshot sees it:
+  //    no stranded commit_ts is holding visible_ts back.
+  // 4. Once n passes every allocation, A's commit succeeds, and a
+  //    fresh snapshot sees A's key.
+  xct_fixture_t f;
+  sm1_session_t *a = f.first();
+  sm1_session_t *b = f.open();
+  f.db()->test_before_commit = [](uint64_t) {
+    t_alloc_budget = -1;
+    return rocksdb::Status::OK();
+  };
+
+  long n = 0;
+  for (;; n++) {
+    REQUIRE(n < 10000);
+    REQUIRE(sm1_begin(a, SM1_XCT_SERIALIZABLE) == 0);
+    CHECK(get(a, f.store(), "x") == "<none>");
+    REQUIRE(sm1_insert(a, f.store(), "a", 1, "v", 1) == 0);
+    t_alloc_budget = n;
+    int rc = sm1_commit(a);
+    t_alloc_budget = -1;
+    if (rc == 0) {
+      break;
+    }
+    INFO("allocation ", n, " failed");
+    CHECK(sm1_errno() == SM1_ERR_NOMEM);
+    REQUIRE_MESSAGE(sm1_abort(a) == 0, sm1_errmsg());
+    std::string key = "b" + std::to_string(n);
+    REQUIRE(commit_one(b, f.store(), key) == 0);
+    REQUIRE(sm1_begin(b, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(get(b, f.store(), key) == "v");
+    REQUIRE(sm1_commit(b) == 0);
+  }
+  f.db()->test_before_commit = nullptr;
+  CHECK(n > 0);
+
+  REQUIRE(sm1_begin(b, SM1_XCT_REPEATABLE_READ) == 0);
+  CHECK(get(b, f.store(), "a") == "v");
+  REQUIRE(sm1_commit(b) == 0);
+  sm1_closedb(b);
+}
+
 TEST_CASE("a failed status write fails the database stop") {
   // Verify the §8.2 fail-stop state and recovery by reopening.
   // 1. Session B begins and reads committed "old".
