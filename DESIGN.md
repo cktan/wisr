@@ -49,7 +49,7 @@ handle of its own and reaches storage only through sm1's
 interface. sm3 is built on sm2 — it never encodes a key or
 decodes a tuple itself — and may also call sm1's interface
 directly, for whatever sm2 has nothing to add to: above all
-`sm1_lock`, which sm3's DDL and index-build protocols are
+`sm1::lock`, which sm3's DDL and index-build protocols are
 built on (`sm3/SM3_DESIGN.md` §2). That boundary is why each
 level's `OBJECTIVE.md` can promise it is "useful and
 testable on its own" — the whole lower stack is one
@@ -100,10 +100,10 @@ rule is that nothing turns them off.
 
 | Level | Status |
 | --- | --- |
-| sm1 | built and tested; the design of record is `sm1/SM1_DESIGN.md` |
+| sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | designed, not yet implemented — every open section of `sm2/SM2_DESIGN.md` is marked "to be written"; `sm2/PLAN.md` has the build order |
 | sm3 | designed, not yet implemented — the same, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md`; it cannot start before sm2's two formats are settled |
-| top level | not yet written — the C wrapper waits for the levels it wraps; until then sm1's C API in `sm1/include/sm1.h` is the only C surface, and it is replaced by a C++ interface before sm2 starts |
+| top level | not yet written — the C wrapper waits for the levels it wraps; until it exists the stack has no C surface |
 
 sm1 was built first and alone, on purpose: it is usable
 without sm2 (an MVCC key-value store is a complete product
@@ -181,14 +181,12 @@ design:
   -1, so a failing path is `return sm1::seterr(...);`. The caller
   formats the message, which keeps a template and `<format>` out
   of sm1's public header; reporting out of memory passes a
-  literal. It lands with sm1's conversion to C++, since a
-  `std::string_view` cannot appear in a C header. An error
-  carries a code and a message and nothing else: whether it is
-  retryable is a function of the code, which `sm1::retryable()`
-  computes; the message stays allocation-free, in the fixed
-  thread-local buffer, so reporting out of memory cannot itself
-  fail; and no SQLSTATE is stored, since the fork's glue chooses
-  it (below).
+  literal. An error carries a code and a message and nothing
+  else: whether it is retryable is a function of the code, which
+  `sm1::retryable()` computes; the message stays allocation-free,
+  in the fixed thread-local buffer, so reporting out of memory
+  cannot itself fail; and no SQLSTATE is stored, since the fork's
+  glue chooses it (below).
 - **Two more calls sit beside `sm1::errnum()` and
   `sm1::errmsg()`.** `void sm1::reseterr()` clears the calling
   thread's state back to what a thread starts with — `SM_OK` and
@@ -200,12 +198,9 @@ design:
   `"OK"`. The string is static and never NULL. With one errno
   namespace every level's codes are named here, so a new code is
   not finished until it has its name. The scenario driver keeps
-  its own short names, so no transcript changes, and neither call
-  needs C++, so both can land in today's C header first, as
-  `sm1_reseterr()` and `sm1_errname()`, and move into the
-  namespace with the other calls.
+  its own short names, so no transcript changes.
 - **Only "no row" is a positive return; every other outcome is
-  -1.** A read and `sm1_scannxt` return 1 for "no row". `DUPKEY`
+  -1.** A read and `sm1::scannxt` return 1 for "no row". `DUPKEY`
   on insert, `NOTFOUND` on update or delete, and `UPDATED` are -1
   with the code in `sm1::errnum()`, like any failure, and a
   caller that treats one of them as an ordinary outcome reads the
@@ -213,15 +208,13 @@ design:
   nothing, so there is no performance reason to split outcomes
   from errors; it also keeps `sm1/API.md`, the tests and the
   scenario transcripts' error names as they are.
-- **Out-parameters take one shape at every level.** A
-  required output is a reference (`uint64_t& storeid`). An
-  optional output stays a pointer, `nullptr` meaning "not
-  wanted" — the old image from an update or a delete. A list
-  is a `std::vector<T>&`, which is where `sm1_strlist_t` and
-  the `malloc`'d arrays of `sm1_lsstore` and
-  `sm1_list_prepared` go. Bytes that point into engine memory
-  are a `std::string_view&`, valid until the next call on the
-  session, as today.
+- **Out-parameters take one shape at every level.** A required
+  output is a reference (`uint64_t& storeid`). An optional output
+  stays a pointer, `nullptr` meaning "not wanted" — the old image
+  from an update or a delete. A list is a `std::vector<T>&`,
+  which replaced sm1's C string list and `malloc`'d arrays. Bytes
+  that point into engine memory are a `std::string_view&`, valid
+  until the next call on the session, as today.
 - **The C wrapper keeps the convention; the fork's glue
   calls `ereport`.** The wrapper's `sm_*` calls return 0 or
   -1 and leave the code and message in the same thread-local
@@ -276,7 +269,7 @@ design:
   from sm1's own code, or from inside RocksDB before it touched
   anything. So every `bad_alloc` is treated as fatal, and only a
   fresh open's WAL replay recovers — reliably, and with every
-  committed transaction. `sm1_attach` installs a new-handler,
+  committed transaction. `sm1::attach` installs a new-handler,
   unless the host process already has one, that runs when an
   allocation fails, before anything is thrown: it reports
   `*** FATAL ***` on stderr and through the log hook, then
@@ -289,40 +282,39 @@ design:
   leave it unreliable, and sm1 does not guard against that.
 - **Exceptions cross the levels; only the top level catches.** An
   exception may pass from sm1 through sm2 and sm3 unchanged, and
-  no level catches at its own entry points; sm1's entry-point
-  `try` blocks go with its conversion to C++. The C wrapper is
-  the one catch, since it is the only place a C caller can be
-  reached. It catches everything: `std::bad_alloc` becomes
-  `NOMEM` — possible only under a host's own new-handler (above)
-  — anything else a code of its own that means a bug, and if the
-  call involves a session the wrapper aborts that session's
-  transaction before returning -1. Aborting is the right recovery
-  because sm1's abort works only in memory — it leaves the active
-  table, which kills the transaction's versions without writing a
-  status record, and releases its cursors, SSI node, created
-  stores and locks — so it scarcely allocates, and it returns
-  whatever a half-done call touched to a known state; every sm1
-  mutex is held by an RAII guard, so unwinding releases it. Four
-  conditions come with it. Nothing may throw after a commit or
-  prepare point: once the status or `PREPARED` record is written,
-  an abort would kill in memory versions the WAL says are
-  committed, so that tail reserves what it needs beforehand and
-  is `noexcept`, or goes fail-stop as a failed commit write
-  already does. sm2 and sm3 must stay consistent when unwound
-  mid-call, so the abort undoes what a half-done call changed —
-  above all in sm3's in-memory catalog. After `NOMEM`, as after a
-  retryable code, the engine has already aborted, so the glue
-  does not continue the transaction; `NOMEM` is not retryable.
-  And an exception on the GC thread or inside a RocksDB callback
-  never reaches the wrapper, so those boundaries keep catch-alls
-  of their own (next). Exceptions stay enabled in every build
-  (§2).
+  no level catches at its own entry points; sm1's entry points
+  catch nothing. The C wrapper is the one catch, since it is the
+  only place a C caller can be reached. It catches everything:
+  `std::bad_alloc` becomes `NOMEM` — possible only under a host's
+  own new-handler (above) — anything else a code of its own that
+  means a bug, and if the call involves a session the wrapper
+  aborts that session's transaction before returning -1. Aborting
+  is the right recovery because sm1's abort works only in memory
+  — it leaves the active table, which kills the transaction's
+  versions without writing a status record, and releases its
+  cursors, SSI node, created stores and locks — so it scarcely
+  allocates, and it returns whatever a half-done call touched to
+  a known state; every sm1 mutex is held by an RAII guard, so
+  unwinding releases it. Four conditions come with it. Nothing
+  may throw after a commit or prepare point: once the status or
+  `PREPARED` record is written, an abort would kill in memory
+  versions the WAL says are committed, so that tail reserves what
+  it needs beforehand and is `noexcept`, or goes fail-stop as a
+  failed commit write already does. sm2 and sm3 must stay
+  consistent when unwound mid-call, so the abort undoes what a
+  half-done call changed — above all in sm3's in-memory catalog.
+  After `NOMEM`, as after a retryable code, the engine has
+  already aborted, so the glue does not continue the transaction;
+  `NOMEM` is not retryable. And an exception on the GC thread or
+  inside a RocksDB callback never reaches the wrapper, so those
+  boundaries keep catch-alls of their own (next). Exceptions stay
+  enabled in every build (§2).
 - **The foreign boundaries catch for themselves.** The
   RocksDB callbacks — the compaction filter, the comparator,
   the prefix extractor — and the GC thread have no caller to
   return -1 to. Every callback and thread entry is
   `noexcept`, with a catch-all that reports through the
-  `sm1_set_log` hook. The compaction filter keeps the version
+  `sm1::set_log` hook. The compaction filter keeps the version
   on error, so a failure can never delete data; the GC thread
   logs and tries again on its next cycle. The comparator and
   the prefix extractor are pure `memcmp` and byte slicing:
@@ -339,7 +331,7 @@ design:
 - **sm3 may call sm1 as well as sm2.** sm3 is built on sm2's
   tuple relation and never encodes a key or decodes a tuple
   itself, but it may call sm1's interface directly for
-  anything sm2 has nothing to add to — `sm1_lock` above all,
+  anything sm2 has nothing to add to — `sm1::lock` above all,
   which sm3's DDL and index-build protocols rest on
   (`sm3/SM3_DESIGN.md` §2). sm2 still calls only sm1, and
   nothing calls upward.
@@ -361,14 +353,14 @@ design:
   `0x0001`–`0xFFFE` for indexes, `0xFFFF` for TOAST. sm3
   chooses the prefix; sm2 prepends and strips it and never
   interprets it (`sm2/SM2_DESIGN.md` §5), so sm2 never learns
-  what a table is. `DROP TABLE` is one `sm1_rmstore`, sm1's O(1)
+  what a table is. `DROP TABLE` is one `sm1::rmstore`, sm1's O(1)
   column family drop; `DROP INDEX` is a range delete over its
   prefix, and index prefixes are never reused. The cost is
   that tables, partitions included, are bounded by the
   hundreds to low thousands of stores sm1 handles
   (`sm1/SM1_DESIGN.md` §13); accepted for v1 (`sm3/SM3_DESIGN.md`
   §4).
-- **The key budget is shared.** `SM1_MAX_KEYLEN` (4096) bounds
+- **The key budget is shared.** `sm1::max_keylen` (4096) bounds
   prefix, index columns and `rowno` together. sm2's encoder
   enforces it: an over-long primary key refuses the row, and an
   over-long index key is truncated, flagged and rechecked
