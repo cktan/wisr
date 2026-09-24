@@ -79,8 +79,7 @@ make -C sm1     build level 1 alone
 ```
 
 `LEVELS` in the top-level `Makefile` lists which levels have
-a Makefile to delegate to; `sm2` and `sm3` join it when they
-have one. Adding a level to the stack means adding its name
+a Makefile to delegate to; `sm3` joins it when it has one. Adding a level to the stack means adding its name
 there, nowhere else.
 
 **Never compile with `-fno-exceptions`,** at any level or in the

@@ -1265,9 +1265,18 @@ One `DeleteRange` per deleted key is not free. Every range
 deletion is a range tombstone that `RangeDelAggregator` must
 consider on reads that overlap it, and RocksDB warns that
 accumulating them in the memtable degrades read performance.
-The drainer therefore flushes each store CF it touched
-after a batch, so range tombstones reach SST files and stop
-being re-examined on every read.
+So a store CF's memtable is flushed once it holds
+`store_max_range_deletions` (1,000) range tombstones:
+RocksDB's `memtable_max_range_deletions`, set on every store
+CF (§12.2), schedules the flush itself, and the range
+tombstones reach SST files and stop being re-examined on
+every read. The drainer does not flush after each batch. It
+runs at least once a second, so a delete-heavy workload would
+flush every store it touched about once a second, however few
+range tombstones it had written — dozens of tiny level-0
+files a minute, which keep level-0 compaction busy and can
+stall writes — and the flush, which waits, would hold the
+rest of the GC run behind it.
 
 It does **not** merge adjacent keys into one range. A range
 from one purged key's tombstone to a later purged key's
@@ -2144,7 +2153,11 @@ default is prefix seek and a scan that inherits it
 returns at most one userkey (§10.2). Store CFs also
 get no `row_cache`: the tombstone purge uses
 `DeleteRange`, which returns `Status::NotSupported()`
-when one is configured (§8.3).
+when one is configured (§8.3). And each sets
+`memtable_max_range_deletions` to
+`store_max_range_deletions`, so its memtable is flushed once
+the purge's range tombstones pile up in it (§8.3); the option
+needs RocksDB 8.9 or later.
 
 Store CFs share one block cache and one `WriteBufferManager`,
 so total memtable memory is a single budget rather than
@@ -2492,7 +2505,7 @@ what makes recovery free of an undo pass.
 | :--- | :--- |
 | Scans inherit RocksDB's prefix seek mode and return at most one userkey | §10.2 seek mode, §12.2, §12.5 regression test |
 | Full-compaction cost of the `CF:txn` sweep, and its unstated RocksDB dependencies | §8.3 |
-| One `DeleteRange` per deleted key saturates the range-tombstone aggregator | §8.3 coalescing and flush cadence, §12.2 no `row_cache` |
+| One `DeleteRange` per deleted key saturates the range-tombstone aggregator | §8.3 no coalescing, flushed by count; §12.2 no `row_cache`, `memtable_max_range_deletions` |
 | Cursors opened after a savepoint outlive `sm1::rollback` | §6.5, §10.2, `API.md`, §12.5 |
 | No index for matching a write against active range predicates | §7.1 per-store interval tree |
 | `iterate_upper_bound` borrows its buffer | §10.2 bound lifetime |

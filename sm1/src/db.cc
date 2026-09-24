@@ -264,7 +264,9 @@ std::string store_cf_name(uint64_t storeid) {
  * (§3.1). The bloom filter keys on the userkey prefix; whole
  * version keys are never looked up, so no whole-key filter. No
  * row_cache: DeleteRange, which the tombstone purge uses, is not
- * supported with one (§8.3).
+ * supported with one; and a memtable holding
+ * store_max_range_deletions of the purge's range tombstones is
+ * flushed, so reads stop re-examining them (§8.3).
  */
 rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   // Start from default CF options.
@@ -285,6 +287,8 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   bbto.whole_key_filtering = false;
   // Install the table factory.
   cfo.table_factory.reset(rocksdb::NewBlockBasedTableFactory(bbto));
+  // Flush once the purge's range tombstones pile up (§8.3).
+  cfo.memtable_max_range_deletions = store_max_range_deletions;
   return cfo;
 }
 

@@ -186,8 +186,7 @@ private:
  * before the tombstone and survive. One range per key -- never
  * across keys, which would take other keys' rows with it.
  */
-void purge_one(db_t *db, const db_t::purge_t &p,
-               std::set<rocksdb::ColumnFamilyHandle *> *touched) {
+void purge_one(db_t *db, const db_t::purge_t &p) {
   // Find the store's CF.
   rocksdb::ColumnFamilyHandle *cf = db_store_cf(db, p.storeid);
   // Skip a store already dropped.
@@ -199,9 +198,9 @@ void purge_one(db_t *db, const db_t::purge_t &p,
   // Delete the tombstone and every older version of the key.
   rocksdb::Status s =
       db->rdb->DeleteRange(rocksdb::WriteOptions(), cf, p.key, end);
-  // Remember the CF, to flush its range tombstones.
+  // Done: RocksDB flushes the memtable once range tombstones
+  // pile up in it (store_max_range_deletions).
   if (s.ok()) {
-    touched->insert(cf);
     return;
   }
   // On failure the tombstone stays; the next compaction that
@@ -497,21 +496,8 @@ void gc_run_once(db_t *db) {
 
   // Purge first: a key queued from a store about to be
   // dropped is simply skipped once its CF is gone.
-  std::set<rocksdb::ColumnFamilyHandle *> touched;
-  // Purge each queued key.
   for (const db_t::purge_t &p : purges) {
-    purge_one(db, p, &touched);
-  }
-  // Flush the range tombstones into SST files, so reads stop
-  // re-examining them in the memtable (§8.3).
-  for (rocksdb::ColumnFamilyHandle *cf : touched) {
-    rocksdb::Status s = db->rdb->Flush(rocksdb::FlushOptions(), cf);
-    // A failed flush only costs reads; nobody waits, so log it.
-    if (!s.ok()) {
-      log_msg(sm1::loglevel_t::error,
-              "database {}: flush after purge failed: {}", db->name.c_str(),
-              s.ToString().c_str());
-    }
+    purge_one(db, p);
   }
 
   // Drop each store no snapshot can see.

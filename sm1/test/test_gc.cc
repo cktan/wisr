@@ -14,8 +14,11 @@
 
 #include <stdio.h>
 
+#include <chrono>
+
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace wisr;
@@ -335,6 +338,68 @@ TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
     CHECK((v.flags & version_tombstone) == 0);
   }
   sm1::closedb(s);
+}
+
+namespace {
+
+/*
+ * Commit n keys, delete them all, and compact: the compaction
+ * queues n tombstones for the purge.
+ */
+void queue_purges(gc_fixture_t &f, int n) {
+  sm1::session_t *s = f.s();
+  char key[16];
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  for (int i = 0; i < n; i++) {
+    snprintf(key, sizeof(key), "k%06d", i);
+    put(s, g_store, key, "v");
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  for (int i = 0; i < n; i++) {
+    snprintf(key, sizeof(key), "k%06d", i);
+    REQUIRE(sm1::erase(s, g_store, key) == 0);
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  f.compact(g_store);
+}
+
+/* The number of level-0 SST files in the store's CF. */
+uint64_t l0_files(gc_fixture_t &f) {
+  std::string v;
+  REQUIRE(f.db()->rdb->GetProperty(db_store_cf(f.db(), g_store),
+                                   "rocksdb.num-files-at-level0", &v));
+  return std::stoull(v);
+}
+
+} // namespace
+
+TEST_CASE("the purge's range tombstones are flushed by count, not per run") {
+  // Verify GC leaves flushing to RocksDB's range-deletion limit
+  // (§8.3, store_max_range_deletions).
+  // 1. Queue a few purges and run GC: no flush, so level 0 stays
+  //    empty after the compaction.
+  // 2. Queue more purges than the limit and run GC: RocksDB
+  //    flushes the memtable by itself, and a level-0 file appears.
+  // 3. The purged keys read as gone.
+  gc_fixture_t f;
+  queue_purges(f, 10);
+  REQUIRE(l0_files(f) == 0);
+  gc_run_once(f.db());
+  CHECK(l0_files(f) == 0);
+
+  queue_purges(f, store_max_range_deletions + 10);
+  REQUIRE(l0_files(f) == 0);
+  gc_run_once(f.db());
+  // The flush runs in the background; give it a few seconds.
+  for (int i = 0; i < 500 && l0_files(f) == 0; i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  CHECK(l0_files(f) >= 1);
+
+  REQUIRE(sm1::begin(f.s(), sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(f.s(), g_store, "k000000") == "<none>");
+  REQUIRE(sm1::commit(f.s()) == 0);
 }
 
 TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {

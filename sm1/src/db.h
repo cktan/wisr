@@ -344,9 +344,16 @@ int db_drop_store_cf(db_t *db, uint64_t storeid);
 std::string store_cf_name(uint64_t storeid);
 
 /*
+ * How many range tombstones a store CF's memtable holds before
+ * RocksDB flushes it: the tombstone purge's DeleteRanges cost
+ * every overlapping read while they sit there (§8.3).
+ */
+constexpr uint32_t store_max_range_deletions = 1000;
+
+/*
  * Options for a store CF: comparator, prefix extractor,
- * bloom filter, and -- when db is given -- the GC compaction
- * filter for storeid.
+ * bloom filter, range-tombstone flush limit, and -- when db is
+ * given -- the GC compaction filter for storeid.
  */
 rocksdb::ColumnFamilyOptions store_cf_options(db_t *db = nullptr,
                                               uint64_t storeid = 0);
