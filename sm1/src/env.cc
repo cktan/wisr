@@ -270,74 +270,69 @@ int env_destroy_db_dir(const std::string &path) {
 
 /* Make homedir a wisr home directory: global/, base/, root db. */
 int sm1::init(std::string_view homedir_arg) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Take the name as a C string, as the engine uses it.
-    std::string homedir_str;
-    if (copy_name(homedir_arg, "home directory", homedir_str) != 0) {
-      return -1;
-    }
-    const char *homedir = homedir_str.c_str();
-    // Validate the home directory path.
-    if (check_homedir(homedir) != 0) {
-      return -1;
-    }
-    std::string global = global_dir(homedir);
-    std::string base = base_dir(homedir);
-
-    // Create global/ first: this mkdir settles a race between
-    // two sm1::init calls, since the loser sees EEXIST.
-    if (mkdir(global.c_str(), 0700) != 0) {
-      // global/ already exists: this is already a home directory.
-      if (errno == EEXIST) {
-        return set_error(sm1::SM_ERR_EXISTS,
-                         "{}: already a wisr home directory", homedir);
-      }
-      return set_errno_error(errno, global.c_str());
-    }
-    // Create base/, for the database directories.
-    if (mkdir(base.c_str(), 0700) != 0) {
-      return set_errno_error(errno, base.c_str());
-    }
-
-    // Create the root db and record the format version.
-    std::string rootpath = root_path(homedir);
-    // Create the root db, failing if one is already there.
-    rocksdb::Options opt;
-    opt.create_if_missing = true;
-    opt.error_if_exists = true;
-    rocksdb::DB *root = nullptr;
-    // Open it, creating it.
-    rocksdb::Status s = rocksdb::DB::Open(opt, rootpath, &root);
-    // Fail if it cannot be created.
-    if (!s.ok()) {
-      return set_status_error(s, rootpath.c_str());
-    }
-    // Close the root db on the way out: sm1::init opens nothing for later.
-    defer {
-      root->Close();
-      delete root;
-    };
-    // Encode the format version and the first dbid.
-    std::string version, next_dbid;
-    put_be64(version, WISR_HOME_VERSION);
-    put_be64(next_dbid, 1);
-    // Record both in one synced batch.
-    rocksdb::WriteBatch batch;
-    batch.Put(WISR_ROOT_VERSION, version);
-    batch.Put(WISR_ROOT_NEXT_DBID, next_dbid);
-    rocksdb::WriteOptions wo;
-    wo.sync = true;
-    // Write the batch.
-    s = root->Write(wo, &batch);
-    // Fail if the batch did not make it.
-    if (!s.ok()) {
-      return set_status_error(s, rootpath.c_str());
-    }
-    return 0;
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_init: out of memory");
+  // Take the name as a C string, as the engine uses it.
+  std::string homedir_str;
+  if (copy_name(homedir_arg, "home directory", homedir_str) != 0) {
+    return -1;
   }
+  const char *homedir = homedir_str.c_str();
+  // Validate the home directory path.
+  if (check_homedir(homedir) != 0) {
+    return -1;
+  }
+  std::string global = global_dir(homedir);
+  std::string base = base_dir(homedir);
+
+  // Create global/ first: this mkdir settles a race between
+  // two sm1::init calls, since the loser sees EEXIST.
+  if (mkdir(global.c_str(), 0700) != 0) {
+    // global/ already exists: this is already a home directory.
+    if (errno == EEXIST) {
+      return set_error(sm1::SM_ERR_EXISTS, "{}: already a wisr home directory",
+                       homedir);
+    }
+    return set_errno_error(errno, global.c_str());
+  }
+  // Create base/, for the database directories.
+  if (mkdir(base.c_str(), 0700) != 0) {
+    return set_errno_error(errno, base.c_str());
+  }
+
+  // Create the root db and record the format version.
+  std::string rootpath = root_path(homedir);
+  // Create the root db, failing if one is already there.
+  rocksdb::Options opt;
+  opt.create_if_missing = true;
+  opt.error_if_exists = true;
+  rocksdb::DB *root = nullptr;
+  // Open it, creating it.
+  rocksdb::Status s = rocksdb::DB::Open(opt, rootpath, &root);
+  // Fail if it cannot be created.
+  if (!s.ok()) {
+    return set_status_error(s, rootpath.c_str());
+  }
+  // Close the root db on the way out: sm1::init opens nothing for later.
+  defer {
+    root->Close();
+    delete root;
+  };
+  // Encode the format version and the first dbid.
+  std::string version, next_dbid;
+  put_be64(version, WISR_HOME_VERSION);
+  put_be64(next_dbid, 1);
+  // Record both in one synced batch.
+  rocksdb::WriteBatch batch;
+  batch.Put(WISR_ROOT_VERSION, version);
+  batch.Put(WISR_ROOT_NEXT_DBID, next_dbid);
+  rocksdb::WriteOptions wo;
+  wo.sync = true;
+  // Write the batch.
+  s = root->Write(wo, &batch);
+  // Fail if the batch did not make it.
+  if (!s.ok()) {
+    return set_status_error(s, rootpath.c_str());
+  }
+  return 0;
 }
 
 /* Create an environment on an initialized home directory. */
@@ -347,24 +342,19 @@ int sm1::attach(std::string_view homedir_arg, sm1::env_t *&out) {
   if (!std::get_new_handler()) {
     std::set_new_handler(oom_handler);
   }
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Take the name as a C string, as the engine uses it.
-    std::string homedir_str;
-    if (copy_name(homedir_arg, "home directory", homedir_str) != 0) {
-      return -1;
-    }
-    const char *homedir = homedir_str.c_str();
-    // Attach, handing the environment back only on success.
-    sm1::env_t *env = ::attach(homedir);
-    if (!env) {
-      return -1;
-    }
-    out = env;
-    return 0;
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_attach: out of memory");
+  // Take the name as a C string, as the engine uses it.
+  std::string homedir_str;
+  if (copy_name(homedir_arg, "home directory", homedir_str) != 0) {
+    return -1;
   }
+  const char *homedir = homedir_str.c_str();
+  // Attach, handing the environment back only on success.
+  sm1::env_t *env = ::attach(homedir);
+  if (!env) {
+    return -1;
+  }
+  out = env;
+  return 0;
 }
 
 /*

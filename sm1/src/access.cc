@@ -819,134 +819,92 @@ int access_check_current(sm1::session_t *s, uint64_t storeid,
 
 /* Move an open cursor to key, forward only. */
 int sm1::scan_seek(sm1::scan_t *scan, std::string_view key, int inclusive) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::scan_seek(scan, key.data(), key.size(), inclusive);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_scan_seek: out of memory");
-  }
+  return ::scan_seek(scan, key.data(), key.size(), inclusive);
 }
 
 /* Take a row lock without writing the row. */
 int sm1::lock(sm1::session_t *session, uint64_t storeid, std::string_view key,
               sm1::lockmode_t mode) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return lock_row(session, storeid, key.data(), key.size(), mode);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_lock: out of memory");
-  }
+  return lock_row(session, storeid, key.data(), key.size(), mode);
 }
 
 /* Insert a row; the key must not exist. */
 int sm1::insert(sm1::session_t *session, uint64_t storeid, std::string_view key,
                 std::string_view data) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return write_row(session, WRITE_INSERT, storeid, key.data(), key.size(),
-                     data.data(), data.size(), nullptr, nullptr);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_insert: out of memory");
-  }
+  return write_row(session, WRITE_INSERT, storeid, key.data(), key.size(),
+                   data.data(), data.size(), nullptr, nullptr);
 }
 
 /* Replace a row's value; the key must exist. */
 int sm1::update(sm1::session_t *session, uint64_t storeid, std::string_view key,
                 std::string_view data, std::string_view *old) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Ask for the old row only if the caller wants it.
-    const char *o = nullptr;
-    size_t olen = 0;
-    int rc = write_row(session, WRITE_UPDATE, storeid, key.data(), key.size(),
-                       data.data(), data.size(), old ? &o : nullptr,
-                       old ? &olen : nullptr);
-    // Hand it back: the old row, or empty on failure.
-    if (old) {
-      *old = std::string_view(o, olen);
-    }
-    return rc;
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_update: out of memory");
+  // Ask for the old row only if the caller wants it.
+  const char *o = nullptr;
+  size_t olen = 0;
+  int rc = write_row(session, WRITE_UPDATE, storeid, key.data(), key.size(),
+                     data.data(), data.size(), old ? &o : nullptr,
+                     old ? &olen : nullptr);
+  // Hand it back: the old row, or empty on failure.
+  if (old) {
+    *old = std::string_view(o, olen);
   }
+  return rc;
 }
 
 /* Delete a row; the key must exist. */
 int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
                std::string_view *old) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Ask for the old row only if the caller wants it.
-    const char *o = nullptr;
-    size_t olen = 0;
-    int rc = write_row(session, WRITE_DELETE, storeid, key.data(), key.size(),
-                       nullptr, 0, old ? &o : nullptr, old ? &olen : nullptr);
-    // Hand it back: the old row, or empty on failure.
-    if (old) {
-      *old = std::string_view(o, olen);
-    }
-    return rc;
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_delete: out of memory");
+  // Ask for the old row only if the caller wants it.
+  const char *o = nullptr;
+  size_t olen = 0;
+  int rc = write_row(session, WRITE_DELETE, storeid, key.data(), key.size(),
+                     nullptr, 0, old ? &o : nullptr, old ? &olen : nullptr);
+  // Hand it back: the old row, or empty on failure.
+  if (old) {
+    *old = std::string_view(o, olen);
   }
+  return rc;
 }
 
 /* Read one key. */
 int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
               std::string_view &data) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    const char *d = nullptr;
-    size_t dlen = 0;
-    int rc = read_row(session, storeid, key.data(), key.size(), &d, &dlen);
-    // Hand back the value: empty for none (1) and on failure.
-    data = std::string_view(d, dlen);
-    return rc;
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_read: out of memory");
-  }
+  const char *d = nullptr;
+  size_t dlen = 0;
+  int rc = read_row(session, storeid, key.data(), key.size(), &d, &dlen);
+  // Hand back the value: empty for none (1) and on failure.
+  data = std::string_view(d, dlen);
+  return rc;
 }
 
 /* Read the newest committed version of a key. */
 int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
                      std::string_view key, std::string_view &data) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    const char *d = nullptr;
-    size_t dlen = 0;
-    int rc =
-        read_latest_row(session, storeid, key.data(), key.size(), &d, &dlen);
-    // Hand back the value: empty for none (1) and on failure.
-    data = std::string_view(d, dlen);
-    return rc;
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_read_latest: out of memory");
-  }
+  const char *d = nullptr;
+  size_t dlen = 0;
+  int rc = read_latest_row(session, storeid, key.data(), key.size(), &d, &dlen);
+  // Hand back the value: empty for none (1) and on failure.
+  data = std::string_view(d, dlen);
+  return rc;
 }
 
 /* Open a cursor over a key range. */
 int sm1::scan(sm1::session_t *session, uint64_t storeid, const char *skey,
               size_t sklen, int skey_inclusive, const char *ekey, size_t eklen,
               int ekey_inclusive, sm1::scan_t *&out) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Open the cursor, handing it back only on success.
-    sm1::scan_t *c = ::scan(session, storeid, skey, sklen, skey_inclusive, ekey,
-                            eklen, ekey_inclusive);
-    if (!c) {
-      return -1;
-    }
-    out = c;
-    return 0;
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_scan: out of memory");
+  // Open the cursor, handing it back only on success.
+  sm1::scan_t *c = ::scan(session, storeid, skey, sklen, skey_inclusive, ekey,
+                          eklen, ekey_inclusive);
+  if (!c) {
+    return -1;
   }
+  out = c;
+  return 0;
 }
 
 /* Advance a cursor to its next row. */
 int sm1::scannxt(sm1::scan_t *scan, std::string_view &key,
                  std::string_view &data) {
-  // Report an allocation failure as SM_ERR_NOMEM.
   try {
     const char *k = nullptr, *d = nullptr;
     size_t klen = 0, dlen = 0;
@@ -956,9 +914,10 @@ int sm1::scannxt(sm1::scan_t *scan, std::string_view &key,
     data = std::string_view(d, dlen);
     return rc;
   } catch (const std::bad_alloc &) {
-    // The cursor is unusable after this.
+    // The cursor may be half-advanced: mark it unusable, then let
+    // the exception go on to the caller.
     scan->state = -1;
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_scannxt: out of memory");
+    throw;
   }
 }
 

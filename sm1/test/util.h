@@ -159,4 +159,23 @@ inline std::vector<uint64_t> lsstore(sm1::session_t *sess) {
  */
 extern thread_local long t_alloc_budget;
 
+/*
+ * Run f, a call into sm1 made with t_alloc_budget armed, as the top
+ * level's C wrapper would: a std::bad_alloc it lets escape becomes -1,
+ * with threw set. The budget is disarmed on both paths, and in the
+ * handler before anything else, since reporting a failure allocates.
+ */
+template <typename F> int catch_oom(F f, bool &threw) {
+  threw = false;
+  try {
+    int rc = f();
+    t_alloc_budget = -1;
+    return rc;
+  } catch (const std::bad_alloc &) {
+    t_alloc_budget = -1;
+    threw = true;
+    return -1;
+  }
+}
+
 #endif /* WISR_TEST_UTIL_H */

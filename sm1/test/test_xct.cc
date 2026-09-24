@@ -153,7 +153,8 @@ TEST_CASE(
   // 1. For n = 0, 1, 2, ...: A reads "x" and inserts a key at
   //    SERIALIZABLE, and every allocation from the n-th on fails,
   //    from the start of sm1::commit up to the status write.
-  // 2. The commit fails with NOMEM, and A aborts its transaction.
+  // 2. sm1::commit throws std::bad_alloc, and A aborts its
+  //    transaction.
   // 3. B commits a key of its own, and a fresh snapshot sees it:
   //    no stranded commit_ts is holding visible_ts back.
   // 4. Once n passes every allocation, A's commit succeeds, and a
@@ -172,14 +173,14 @@ TEST_CASE(
     REQUIRE(sm1::begin(a, sm1::xctlevel_t::serializable) == 0);
     CHECK(get(a, f.store(), "x") == "<none>");
     REQUIRE(sm1::insert(a, f.store(), "a", "v") == 0);
+    bool threw;
     t_alloc_budget = n;
-    int rc = sm1::commit(a);
-    t_alloc_budget = -1;
+    int rc = catch_oom([&] { return sm1::commit(a); }, threw);
     if (rc == 0) {
       break;
     }
     INFO("allocation ", n, " failed");
-    CHECK(sm1::errnum() == sm1::SM_ERR_NOMEM);
+    CHECK(threw);
     REQUIRE_MESSAGE(sm1::abort(a) == 0, sm1::errmsg());
     std::string key = "b" + std::to_string(n);
     REQUIRE(commit_one(b, f.store(), key) == 0);

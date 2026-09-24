@@ -351,8 +351,8 @@ TEST_CASE("a prepare that runs out of memory before its record is undone") {
   // 1. For n = 0, 1, 2, ...: S updates "a", and every allocation
   //    from the n-th on fails, from the start of sm1::prepare up to
   //    the PREPARED write.
-  // 2. sm1::prepare fails with NOMEM, and S can still abort its
-  //    transaction, which it would not have were it lost.
+  // 2. sm1::prepare throws std::bad_alloc, and S can still abort
+  //    its transaction, which it would not have were it lost.
   // 3. Nothing is listed as prepared, and U updates "a" at once:
   //    no lock was stranded. The next round reuses the gid, so a
   //    stranded reservation would fail it.
@@ -372,14 +372,14 @@ TEST_CASE("a prepare that runs out of memory before its record is undone") {
     REQUIRE(n < 10000);
     REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     REQUIRE(set(s, "a", "1") == 0);
+    bool threw;
     t_alloc_budget = n;
-    int rc = sm1::prepare(s, gid.c_str());
-    t_alloc_budget = -1;
+    int rc = catch_oom([&] { return sm1::prepare(s, gid.c_str()); }, threw);
     if (rc == 0) {
       break;
     }
     INFO("allocation ", n, " failed");
-    CHECK(sm1::errnum() == sm1::SM_ERR_NOMEM);
+    CHECK(threw);
     REQUIRE_MESSAGE(sm1::abort(s) == 0, sm1::errmsg());
     CHECK(listed(u).empty());
     REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
@@ -404,8 +404,9 @@ TEST_CASE("a resolve that fails and runs out of memory keeps the transaction") {
   // 3. For n = 0, 1, 2, ...: every allocation from the n-th on
   //    fails while U commits it by gid; the commit fails, and the
   //    transaction is still listed under its gid.
-  // 4. Stop once the failure is the database's (IO), not NOMEM:
-  //    every allocation on the way has then been failed.
+  // 4. Stop once the commit fails without throwing, with the
+  //    database's IO error: every allocation on the way has then
+  //    been failed.
   // 5. Clear the failure; U commits it by gid and reads S's update.
   tpc_fixture_t f;
   sm1::session_t *s = f.open();
@@ -419,16 +420,17 @@ TEST_CASE("a resolve that fails and runs out of memory keeps the transaction") {
   long n = 0;
   for (;; n++) {
     REQUIRE(n < 10000);
+    bool threw;
     t_alloc_budget = n;
-    int rc = sm1::commit_prepared(u, gid.c_str());
-    t_alloc_budget = -1;
+    int rc =
+        catch_oom([&] { return sm1::commit_prepared(u, gid.c_str()); }, threw);
     INFO("allocation ", n, " failed");
     REQUIRE(rc == -1);
     sm1::errnum_t e = sm1::errnum();
     auto l = listed(u);
     REQUIRE(l.size() == 1);
     CHECK(l[0].first == gid);
-    if (e != sm1::SM_ERR_NOMEM) {
+    if (!threw) {
       CHECK(e == sm1::SM_ERR_IO);
       break;
     }
@@ -450,7 +452,7 @@ TEST_CASE("a commit by gid that runs out of memory before its record frees its "
   // 1. S reads "b" and updates "a" at SERIALIZABLE, and prepares.
   // 2. For n = 0, 1, 2, ...: every allocation from the n-th on
   //    fails while U commits it by gid, up to the status write.
-  // 3. The commit fails with NOMEM; the transaction is still
+  // 3. The commit throws std::bad_alloc; the transaction is still
   //    listed; V commits a key, and a fresh snapshot sees it, so
   //    no stranded commit_ts holds visible_ts back.
   // 4. Once n passes every allocation, the commit succeeds, and a
@@ -472,14 +474,15 @@ TEST_CASE("a commit by gid that runs out of memory before its record frees its "
   long n = 0;
   for (;; n++) {
     REQUIRE(n < 10000);
+    bool threw;
     t_alloc_budget = n;
-    int rc = sm1::commit_prepared(u, gid.c_str());
-    t_alloc_budget = -1;
+    int rc =
+        catch_oom([&] { return sm1::commit_prepared(u, gid.c_str()); }, threw);
     if (rc == 0) {
       break;
     }
     INFO("allocation ", n, " failed");
-    CHECK(sm1::errnum() == sm1::SM_ERR_NOMEM);
+    CHECK(threw);
     auto l = listed(u);
     REQUIRE(l.size() == 1);
     CHECK(l[0].first == gid);

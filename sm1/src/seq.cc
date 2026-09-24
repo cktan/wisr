@@ -175,61 +175,46 @@ int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
 /* Create a sequence. */
 int sm1::mkseq(sm1::session_t *session, std::string_view name_arg,
                uint64_t start, uint64_t increment) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Take the name as a C string, as the engine uses it.
-    std::string name_str;
-    if (copy_name(name_arg, "sequence", name_str) != 0) {
-      return -1;
-    }
-    const char *name = name_str.c_str();
-    // Require a session, which xct_check_active cannot check.
-    if (!session) {
-      return set_error(sm1::SM_ERR_INVALID, "sm1_mkseq: session is NULL");
-    }
-    return ::mkseq(session, name, start, increment);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_mkseq: out of memory");
+  // Take the name as a C string, as the engine uses it.
+  std::string name_str;
+  if (copy_name(name_arg, "sequence", name_str) != 0) {
+    return -1;
   }
+  const char *name = name_str.c_str();
+  // Require a session, which xct_check_active cannot check.
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_mkseq: session is NULL");
+  }
+  return ::mkseq(session, name, start, increment);
 }
 
 /* Drop a sequence. */
 int sm1::rmseq(sm1::session_t *session, std::string_view name_arg) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Take the name as a C string, as the engine uses it.
-    std::string name_str;
-    if (copy_name(name_arg, "sequence", name_str) != 0) {
-      return -1;
-    }
-    const char *name = name_str.c_str();
-    // Require a session, which xct_check_active cannot check.
-    if (!session) {
-      return set_error(sm1::SM_ERR_INVALID, "sm1_rmseq: session is NULL");
-    }
-    return ::rmseq(session, name);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_rmseq: out of memory");
+  // Take the name as a C string, as the engine uses it.
+  std::string name_str;
+  if (copy_name(name_arg, "sequence", name_str) != 0) {
+    return -1;
   }
+  const char *name = name_str.c_str();
+  // Require a session, which xct_check_active cannot check.
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_rmseq: session is NULL");
+  }
+  return ::rmseq(session, name);
 }
 
 /* Hand out a sequence's next value. */
 int sm1::nextseq(sm1::session_t *session, std::string_view name_arg,
                  uint64_t &out) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Take the name as a C string, as the engine uses it.
-    std::string name_str;
-    if (copy_name(name_arg, "sequence", name_str) != 0) {
-      return -1;
-    }
-    const char *name = name_str.c_str();
-    // Require a session; sm1::nextseq needs no transaction.
-    if (!session) {
-      return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: session is NULL");
-    }
-    return ::nextseq(session, name, &out);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_nextseq: out of memory");
+  // Take the name as a C string, as the engine uses it.
+  std::string name_str;
+  if (copy_name(name_arg, "sequence", name_str) != 0) {
+    return -1;
   }
+  const char *name = name_str.c_str();
+  // Require a session; sm1::nextseq needs no transaction.
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: session is NULL");
+  }
+  return ::nextseq(session, name, &out);
 }

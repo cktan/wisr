@@ -160,30 +160,15 @@ int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
 
 /* Create a store and hand out its storeid. */
 int sm1::mkstore(sm1::session_t *session, uint64_t &storeid) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::mkstore(session, &storeid);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_mkstore: out of memory");
-  }
+  return ::mkstore(session, &storeid);
 }
 
 /* Drop a store and all of its rows. */
 int sm1::rmstore(sm1::session_t *session, uint64_t storeid) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::rmstore(session, storeid);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_rmstore: out of memory");
-  }
+  return ::rmstore(session, storeid);
 }
 
 /* List the stores visible to the transaction. */
 int sm1::lsstore(sm1::session_t *session, std::vector<uint64_t> &out) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::lsstore(session, out);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_lsstore: out of memory");
-  }
+  return ::lsstore(session, out);
 }

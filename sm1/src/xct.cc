@@ -1263,139 +1263,76 @@ void xct_end_scans(sm1::session_t *s) {
 
 /* Begin a transaction at level. */
 int sm1::begin(sm1::session_t *session, sm1::xctlevel_t level) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::begin(session, level);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_begin: out of memory");
-  }
+  return ::begin(session, level);
 }
 
 /* Commit the active transaction. */
-int sm1::commit(sm1::session_t *session) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::commit(session);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_commit: out of memory");
-  }
-}
+int sm1::commit(sm1::session_t *session) { return ::commit(session); }
 
 /* Read the rest of this statement at one snapshot. */
-int sm1::stmt_begin(sm1::session_t *session) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::stmt_begin(session);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_stmt_begin: out of memory");
-  }
-}
+int sm1::stmt_begin(sm1::session_t *session) { return ::stmt_begin(session); }
 
 /* Set the session's one savepoint. */
-int sm1::savepoint(sm1::session_t *session) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::savepoint(session);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_savepoint: out of memory");
-  }
-}
+int sm1::savepoint(sm1::session_t *session) { return ::savepoint(session); }
 
 /* Undo every write made since the savepoint at depth. */
 int sm1::rollback(sm1::session_t *session, int depth) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::rollback(session, depth);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_rollback: out of memory");
-  }
+  return ::rollback(session, depth);
 }
 
 /* Forget the savepoint at depth, and those inside it. */
 int sm1::forget(sm1::session_t *session, int depth) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::forget(session, depth);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_forget: out of memory");
-  }
+  return ::forget(session, depth);
 }
 
 /* Prepare the active transaction under gid. */
 int sm1::prepare(sm1::session_t *session, std::string_view gid_arg) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Take the name as a C string, as the engine uses it.
-    std::string gid_str;
-    if (copy_name(gid_arg, "gid", gid_str) != 0) {
-      return -1;
-    }
-    const char *gid = gid_str.c_str();
-    return ::prepare(session, gid);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_prepare: out of memory");
+  // Take the name as a C string, as the engine uses it.
+  std::string gid_str;
+  if (copy_name(gid_arg, "gid", gid_str) != 0) {
+    return -1;
   }
+  const char *gid = gid_str.c_str();
+  return ::prepare(session, gid);
 }
 
 /* List the unresolved prepared transactions. */
 int sm1::list_prepared(sm1::session_t *session,
                        std::vector<sm1::prepared_t> &out) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return ::list_prepared(session, out);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_list_prepared: out of memory");
-  }
+  return ::list_prepared(session, out);
 }
 
 /* Commit a prepared transaction by gid, from any session. */
 int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Take the name as a C string, as the engine uses it.
-    std::string gid_str;
-    if (copy_name(gid_arg, "gid", gid_str) != 0) {
-      return -1;
-    }
-    const char *gid = gid_str.c_str();
-    // Require a session and a valid gid.
-    if (!session || check_name(gid, sm1::max_gid, "gid") != 0) {
-      return session ? -1 : set_error(sm1::SM_ERR_INVALID, "session is NULL");
-    }
-    // Commit it by gid.
-    return resolve(session->db, gid, true);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_commit_prepared: out of memory");
+  // Take the name as a C string, as the engine uses it.
+  std::string gid_str;
+  if (copy_name(gid_arg, "gid", gid_str) != 0) {
+    return -1;
   }
+  const char *gid = gid_str.c_str();
+  // Require a session and a valid gid.
+  if (!session || check_name(gid, sm1::max_gid, "gid") != 0) {
+    return session ? -1 : set_error(sm1::SM_ERR_INVALID, "session is NULL");
+  }
+  // Commit it by gid.
+  return resolve(session->db, gid, true);
 }
 
 /* Abort a prepared transaction by gid, from any session. */
 int sm1::abort_prepared(sm1::session_t *session, std::string_view gid_arg) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    // Take the name as a C string, as the engine uses it.
-    std::string gid_str;
-    if (copy_name(gid_arg, "gid", gid_str) != 0) {
-      return -1;
-    }
-    const char *gid = gid_str.c_str();
-    // Require a session and a valid gid.
-    if (!session || check_name(gid, sm1::max_gid, "gid") != 0) {
-      return session ? -1 : set_error(sm1::SM_ERR_INVALID, "session is NULL");
-    }
-    // Abort it by gid.
-    return resolve(session->db, gid, false);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_abort_prepared: out of memory");
+  // Take the name as a C string, as the engine uses it.
+  std::string gid_str;
+  if (copy_name(gid_arg, "gid", gid_str) != 0) {
+    return -1;
   }
+  const char *gid = gid_str.c_str();
+  // Require a session and a valid gid.
+  if (!session || check_name(gid, sm1::max_gid, "gid") != 0) {
+    return session ? -1 : set_error(sm1::SM_ERR_INVALID, "session is NULL");
+  }
+  // Abort it by gid.
+  return resolve(session->db, gid, false);
 }
 
 /* Abort the active transaction. */
-int sm1::abort(sm1::session_t *session) {
-  // Report an allocation failure as SM_ERR_NOMEM.
-  try {
-    return abort_xct(session);
-  } catch (const std::bad_alloc &) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_abort: out of memory");
-  }
-}
+int sm1::abort(sm1::session_t *session) { return abort_xct(session); }
