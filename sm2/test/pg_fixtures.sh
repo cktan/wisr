@@ -18,8 +18,9 @@ set -euo pipefail
 export PGHOST=${PGHOST:-$HOME/pg18}
 export PGPORT=${PGPORT:-5418}
 export PGUSER=${PGUSER:-postgres}
-# The canonical text: ISO dates, timestamptz in UTC (sm2.h).
-export PGOPTIONS="-c DateStyle=ISO -c TimeZone=UTC"
+# The canonical text: ISO dates, timestamptz in UTC, ISO 8601
+# intervals (sm2.h).
+export PGOPTIONS="-c DateStyle=ISO -c TimeZone=UTC -c IntervalStyle=iso_8601"
 PSQL=${PSQL:-$HOME/pg18/bin/psql}
 DB=wisr_fixtures
 
@@ -66,6 +67,30 @@ TYPES+=(
   "12|time|'00:00:00', '24:00:00', '23:59:59.999999', '00:00:00.000001', '12:34:56.5', '12:00:00.1', '01:02:03.04'"
   "13|timestamp|'-infinity', 'infinity', '2000-01-01 00:00:00', '1999-12-31 23:59:59.999999', '1970-01-01 00:00:00', '2024-02-29 12:34:56.789', '0001-01-01 00:00:00', '0001-12-31 23:59:59 BC', '4713-11-24 00:00:00 BC', '4714-11-24 00:00:00 BC', '294276-12-31 23:59:59.999999'"
   "14|timestamptz|'-infinity', 'infinity', '2000-01-01 00:00:00+00', '1999-12-31 23:59:59.999999+00', '1970-01-01 00:00:00+00', '2024-02-29 12:34:56.789+00', '0001-01-01 00:00:00+00', '0001-12-31 23:59:59+00 BC', '4713-11-24 00:00:00+00 BC', '4714-11-24 00:00:00+00 BC', '294276-12-31 23:59:59.999999+00'"
+)
+
+# random_intervals: 500 seeded random intervals as SQL literals
+# in PostgreSQL's verbose input form, so the ISO 8601 text in the
+# header is PostgreSQL's own printing: half small, half anywhere
+# in the components' ranges.
+random_intervals() {
+  python3 - <<'PY'
+import random
+rng = random.Random(20260924)
+out = []
+for i in range(500):
+    if i % 2 == 0:
+        m, d = rng.randint(-1200, 1200), rng.randint(-1000, 1000)
+        h, us = rng.randint(-100000, 100000), rng.randint(-3599999999, 3599999999)
+    else:
+        m, d = rng.randint(-2**31 + 1, 2**31 - 1), rng.randint(-2**31 + 1, 2**31 - 1)
+        h, us = rng.randint(-2562047787, 2562047787), rng.randint(-3599999999, 3599999999)
+    out.append("'%d months %d days %d hours %d microseconds'" % (m, d, h, us))
+print(", ".join(out))
+PY
+}
+TYPES+=(
+  "15|interval|'infinity', '-infinity', 'PT0S', '1 mon', '30 days', '1 year 2 months 3 days 04:05:06.789', 'PT-0.5S', 'P-1Y2M', '-1 day +02:00', '-00:00:01.000001', 'P178956970Y7M', 'P-178956970Y-8M', 'P2147483647D', 'P-2147483648D', 'PT2562047788H54.775807S', 'PT-2562047788H-54.775808S', 'P178956970Y7M2147483647DT2562047788H54.775806S', $(random_intervals)"
 )
 
 # Seeded random values PostgreSQL itself makes, 500 per type: half

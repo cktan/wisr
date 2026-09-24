@@ -77,6 +77,7 @@ extern const type_t type_date;        /* code 11 */
 extern const type_t type_time;        /* code 12 */
 extern const type_t type_timestamp;   /* code 13 */
 extern const type_t type_timestamptz; /* code 14 */
+extern const type_t type_interval;    /* code 15 */
 
 /* The type with this code, or nullptr if there is none. */
 const type_t* type_by_code(uint8_t code);

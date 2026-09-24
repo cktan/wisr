@@ -293,11 +293,10 @@ The consequence lands on §3: **interval has no natural total
 order**, and a key encoding needs one. PostgreSQL supplies an
 order by flattening — `interval_cmp_value` reduces the three
 components to a single microsecond count at 30 days to the month
-and 24 hours to the day, computed in 128 bits (the function's
-name and shape are from memory, not checked against the
-source; the 128 bits are arithmetically necessary — over the
-full `int32`/`int64` component ranges the count reaches about
-5.8e21, well past `int64`). That order is deliberately **not
+and 24 hours to the day, computed in 128 bits (checked against
+PostgreSQL 18's source; the 128 bits are arithmetically
+necessary — over the full `int32`/`int64` component ranges the
+count reaches about 5.8e21, well past `int64`). That order is deliberately **not
 injective**: `'1 mon'` and `'30 days'` both flatten to
 2592000000000, and PG's btree calls them equal.
 

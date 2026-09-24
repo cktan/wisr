@@ -322,6 +322,19 @@ convertible: a month is 28 to 31 days, a day is 23, 24 or 25
 hours across a daylight-saving boundary. So `'1 mon'` and
 `'30 days'` are different datums (`SM2_DESIGN.md` §2.4).
 
+All three components at their maximum is `infinity`, all at
+their minimum `-infinity`, as in PostgreSQL 17 and later; every
+other 16 bytes is a finite interval. The text is PostgreSQL's
+under IntervalStyle iso_8601 — `P1Y2M3DT4H5M6.5S`, `PT0S` for
+zero — each field signed on its own, and the seconds carrying
+one sign for their fraction too (`PT-0.5S`). Months print as
+years and months of one sign, so `P-1Y2M` is stored as -10
+months and printed `P-10M`. The typmod is PostgreSQL's: a field
+range and a precision. PostgreSQL zeroes the fields below the
+range's last one and rounds the seconds to the precision, and
+sm2 accepts only text they would leave unchanged, as for
+`time(p)` (§3.8).
+
 That leaves interval with no natural total order.
 PostgreSQL's order comes from flattening the three components
 into one microsecond count at 30 days to the month and 24

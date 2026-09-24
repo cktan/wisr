@@ -147,9 +147,9 @@ template <typename F> void check_float_type(const sm2::type_t &t) {
 
 TEST_CASE("each type is found by its frozen code, and only by it") {
   // Verify the registry and each descriptor's fixed properties.
-  // 1. Codes 1 to 6 and 11 to 14 find bool, the integers, the
-  //    floats, date, time, timestamp and timestamptz, whose name,
-  //    width, by-value flag and alignment are PostgreSQL's.
+  // 1. Codes 1 to 6 and 11 to 15 find bool, the integers, the
+  //    floats, date, time, the timestamps and interval, whose
+  //    name, width, by-value flag and alignment are PostgreSQL's.
   // 2. The slots not filled yet are null.
   // 3. Code 0, which is never a type, and codes not assigned yet
   //    find nothing.
@@ -157,12 +157,14 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     uint8_t code;
     const char *name;
     int16_t len;
+    bool byval;
     uint8_t align;
-  } want[] = {{1, "bool", 1, 1},       {2, "int2", 2, 2},
-              {3, "int4", 4, 4},       {4, "int8", 8, 8},
-              {5, "float4", 4, 4},     {6, "float8", 8, 8},
-              {11, "date", 4, 4},      {12, "time", 8, 8},
-              {13, "timestamp", 8, 8}, {14, "timestamptz", 8, 8}};
+  } want[] = {{1, "bool", 1, true, 1},       {2, "int2", 2, true, 2},
+              {3, "int4", 4, true, 4},       {4, "int8", 8, true, 8},
+              {5, "float4", 4, true, 4},     {6, "float8", 8, true, 8},
+              {11, "date", 4, true, 4},      {12, "time", 8, true, 8},
+              {13, "timestamp", 8, true, 8}, {14, "timestamptz", 8, true, 8},
+              {15, "interval", 16, false, 8}};
   for (auto &w : want) {
     CAPTURE(w.name);
     const sm2::type_t *t = sm2::type_by_code(w.code);
@@ -170,7 +172,7 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     CHECK(t->code == w.code);
     CHECK(std::string(t->name) == w.name);
     CHECK(t->len == w.len);
-    CHECK(t->byval);
+    CHECK(t->byval == w.byval);
     CHECK(t->align == w.align);
     CHECK(t->in);
     CHECK(t->out);
@@ -461,6 +463,188 @@ TEST_CASE("a precision typmod bounds the fraction digits a text carries") {
     for (int32_t typmod : {-2, 7, 1000}) {
       CAPTURE(typmod);
       CHECK(c.t->in(c.whole, typmod, datum) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    }
+  }
+}
+
+namespace {
+
+/* An interval datum from its components. */
+std::string interval_datum(int64_t time, int32_t day, int32_t month) {
+  return le_bytes(time) + le_bytes(day) + le_bytes(month);
+}
+
+/* PostgreSQL's interval order, flattened at 30 days to the month. */
+__int128 interval_span(int64_t time, int32_t day, int32_t month) {
+  return static_cast<__int128>(time) +
+         static_cast<__int128>(int64_t{month} * 30 + day) * 86400000000LL;
+}
+
+/* An interval typmod: a field range and a precision. */
+int32_t interval_typmod(int range, int precision) {
+  return (range << 16) | precision;
+}
+
+} // namespace
+
+TEST_CASE("every interval datum round trips, ordered as PostgreSQL orders") {
+  // Verify interval by property, from test_seed().
+  // 1. Every datum -- the infinities, the components' extremes,
+  //    small components and any 16 bytes at all -- prints and
+  //    reads back to itself.
+  // 2. cmp agrees with PostgreSQL's flattened order.
+  // 3. '1 mon' and '30 days' are distinct datums that cmp calls
+  //    equal, as PostgreSQL does.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  using i32 = std::numeric_limits<int32_t>;
+  using i64 = std::numeric_limits<int64_t>;
+  struct parts_t {
+    int64_t time;
+    int32_t day, month;
+  };
+  std::vector<parts_t> values = {{i64::max(), i32::max(), i32::max()},
+                                 {i64::min(), i32::min(), i32::min()},
+                                 {0, 0, 0},
+                                 {i64::max(), 0, 0},
+                                 {i64::min(), 0, 0},
+                                 {0, i32::max(), i32::min()},
+                                 {i64::max() - 1, i32::max(), i32::max()},
+                                 {-500000, 0, 0},
+                                 {1, -1, 1}};
+  for (int i = 0; i < property_runs; i++) {
+    if (i % 2) {
+      values.push_back({gen_int<int64_t>(rng), gen_int<int32_t>(rng),
+                        gen_int<int32_t>(rng)});
+    } else {
+      values.push_back({static_cast<int64_t>(rng() % 7200000001) - 3600000000,
+                        static_cast<int32_t>(rng() % 61) - 30,
+                        static_cast<int32_t>(rng() % 49) - 24});
+    }
+  }
+  const sm2::type_t &t = sm2::type_interval;
+  for (const parts_t &v : values) {
+    std::string datum = interval_datum(v.time, v.day, v.month), text, back;
+    REQUIRE(t.out(datum, -1, text) == 0);
+    CAPTURE(text);
+    REQUIRE(t.in(text, -1, back) == 0);
+    CHECK(back == datum);
+  }
+  for (size_t i = 0; i + 1 < values.size(); i++) {
+    const parts_t &x = values[i], &y = values[i + 1];
+    __int128 sx = interval_span(x.time, x.day, x.month);
+    __int128 sy = interval_span(y.time, y.day, y.month);
+    CHECK(sign(t.cmp(interval_datum(x.time, x.day, x.month),
+                     interval_datum(y.time, y.day, y.month), -1)) ==
+          (sx > sy) - (sx < sy));
+  }
+  std::string mon, days;
+  REQUIRE(t.in("P1M", -1, mon) == 0);
+  REQUIRE(t.in("P30D", -1, days) == 0);
+  CHECK(mon != days);
+  CHECK(t.cmp(mon, days, -1) == 0);
+}
+
+TEST_CASE("only PostgreSQL's ISO 8601 text is interval input") {
+  // Verify in refuses what PostgreSQL does not print under
+  // IntervalStyle iso_8601.
+  // 1. Other styles, lower case, and empty or zero spellings but
+  //    PT0S.
+  // 2. Fields out of order, repeated, or that PostgreSQL would
+  //    carry: 12 months, 60 minutes, a year and month of opposite
+  //    signs.
+  // 3. Seconds with trailing zeros or seven digits, a sign
+  //    written as plus, and weeks.
+  // 4. Components beyond their fields' ranges.
+  for (std::string_view text : {"",
+                                "P",
+                                "PT",
+                                "P0D",
+                                "PT-0S",
+                                "0",
+                                "1 mon",
+                                "@ 1 mon",
+                                "p1d",
+                                "P1d",
+                                "INFINITY",
+                                "+infinity",
+                                "P1D1M",
+                                "P1M1Y",
+                                "P1Y1Y",
+                                "PT1S1M",
+                                "P1Y12M",
+                                "PT1H60M",
+                                "PT60S",
+                                "P1Y-2M",
+                                "PT1.50S",
+                                "PT1.1234567S",
+                                "P+1D",
+                                "P1W",
+                                "P1DT",
+                                "PT.5S",
+                                "P1.5D",
+                                "PT1.5H",
+                                "P178956970Y8M",
+                                "P2147483648D",
+                                "PT2562047788H54.775808S",
+                                "P1D "}) {
+    CAPTURE(text);
+    expect_bad_input(sm2::type_interval, text);
+  }
+}
+
+TEST_CASE("an interval typmod keeps only what it would not change") {
+  // Verify interval(p) and the field ranges, as PostgreSQL's
+  // AdjustIntervalForTypmod applies them.
+  // 1. YEAR accepts whole years only.
+  // 2. HOUR and DAY TO MINUTE refuse what lies below their last
+  //    field.
+  // 3. DAY TO SECOND(3) accepts three fraction digits, not four.
+  // 4. A typmod with no precision takes six digits.
+  // 5. The infinities pass any valid typmod.
+  // 6. An unknown range, a precision past 6 and a typmod below -1
+  //    are SM_ERR_INVALID, even for infinity.
+  const sm2::type_t &t = sm2::type_interval;
+  const int year = 1 << 2, month = 1 << 1, day = 1 << 3, hour = 1 << 10,
+            minute = 1 << 11, second = 1 << 12, full = 0xFFFF;
+  struct {
+    int32_t typmod;
+    const char *text;
+    int rc;
+  } cases[] = {
+      {interval_typmod(year, full), "P2Y", 0},
+      {interval_typmod(year, full), "P2Y1M", -1},
+      {interval_typmod(year, full), "P2Y1D", -1},
+      {interval_typmod(year | month, full), "P2Y1M", 0},
+      {interval_typmod(year | month, full), "P2Y1MT1H", -1},
+      {interval_typmod(hour, full), "P1DT2H", 0},
+      {interval_typmod(hour, full), "PT2H1M", -1},
+      {interval_typmod(day | hour | minute, full), "P1DT2H3M", 0},
+      {interval_typmod(day | hour | minute, full), "PT3M1S", -1},
+      {interval_typmod(day | hour | minute | second, 3), "P1DT1.123S", 0},
+      {interval_typmod(day | hour | minute | second, 3), "P1DT1.1234S", -1},
+      {interval_typmod(0x7FFF, full), "PT1.123456S", 0},
+      {interval_typmod(0x7FFF, 0), "PT1S", 0},
+      {interval_typmod(0x7FFF, 0), "PT1.5S", -1},
+      {interval_typmod(year, full), "infinity", 0},
+      {interval_typmod(hour, 0), "-infinity", 0},
+  };
+  for (auto &c : cases) {
+    CAPTURE(c.typmod);
+    CAPTURE(c.text);
+    std::string datum;
+    CHECK(t.in(c.text, c.typmod, datum) == c.rc);
+    if (c.rc != 0) {
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    }
+  }
+  for (int32_t typmod :
+       {interval_typmod(0x1234, full), interval_typmod(0x7FFF, 7), -2}) {
+    CAPTURE(typmod);
+    std::string datum;
+    for (const char *text : {"PT1S", "infinity"}) {
+      CHECK(t.in(text, typmod, datum) == -1);
       CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
     }
   }
