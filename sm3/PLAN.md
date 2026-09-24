@@ -1,6 +1,6 @@
 # PLAN — sm3
 
-The order of work, and why it is this order. `OBJECTIVE.md`
+The order of work, and why it is this order. `SM3_OBJECTIVE.md`
 says what sm3 is for; `SM3_DESIGN.md` is where each step's
 argument goes before its code does. It starts where
 `sm2/PLAN.md` stops: sm2's types, encodings and tuple

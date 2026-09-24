@@ -72,7 +72,7 @@ reaches all the way back into the stack's topmost API: **every
 call across that boundary is an RPC.** A per-row interface will
 not survive it. This is why the API above was made batch-shaped
 from the start — a decision that now belongs to sm3, the level
-with the filters (`sm3/OBJECTIVE.md`) — and it is why the
+with the filters (`sm3/SM3_OBJECTIVE.md`) — and it is why the
 batched read left unbuilt in `sm1/SECINDEX.md` gap 6 stops
 being an unproven optimization and becomes a requirement.
 
@@ -249,7 +249,7 @@ approach.
 
 ## 5. The one conflict with a decision already made
 
-`sm1/OBJECTIVE.md` settles that backward scans are never
+`sm1/SM1_OBJECTIVE.md` settles that backward scans are never
 supported. PostgreSQL does not let an engine opt out:
 
 - `ExecSupportsBackwardScan` returns true **unconditionally**
@@ -340,7 +340,7 @@ write timestamp so their order stays commit order. The design is
 ## 6. What this forces on sm2 and sm3, now
 
 These are the decisions constrained by the PG target. They are
-reflected in each level's own `OBJECTIVE.md` and
+reflected in each level's own `SMn_OBJECTIVE.md` and
 `SMn_DESIGN.md`; the level column says which.
 
 | Forced | Level | Why |

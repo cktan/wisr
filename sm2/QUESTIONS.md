@@ -14,8 +14,8 @@ Two kinds of entry, and the difference matters:
   entry.
 
 Ordered by the step of `PLAN.md` each one blocks. Sections 1
-to 3 — the suggested answers in `OBJECTIVE.md`, types, and key
-encoding — are answered and have moved into `SM2_DESIGN.md`,
+to 3 — the suggested answers in `SM2_OBJECTIVE.md`, types, and
+key encoding — are answered and have moved into `SM2_DESIGN.md`,
 `TYPE.md` and `sm3/SM3_DESIGN.md`, and 6.1, the build, into
 `PLAN.md`; the numbering of what remains is kept so that a
 question's number never changes.
@@ -109,7 +109,7 @@ second mechanism, with sm2's codes in a reserved range, so one
 The tuple has a null bitmap, so it *can*.
 *Suggested: no.* Constraints are sm3's, and a codec that
 rejects data is a codec with a policy in it. sm2 stores what
-it is given. → `SM2_DESIGN.md` §5, `OBJECTIVE.md`
+it is given. → `SM2_DESIGN.md` §5, `SM2_OBJECTIVE.md`
 
 **5.5 [ASSUMABLE] Does a `rel` copy its schema or borrow it?**
 Already open in `SM2_DESIGN.md` §5, and 4.1 changes its shape:
@@ -125,8 +125,10 @@ The table is now a heap keyed by `rowno` (`SM2_DESIGN.md` §5), so
 `rel` reads and writes rows by `rowno`. Index entries are keyed
 by encoded columns instead — `encode(sk) ‖ rowno`, or
 `encode(sk)` alone for a unique index (`sm3/SM3_DESIGN.md` §3) —
-and sm3 may only reach sm1 through sm2, so sm2 needs a way to
-write, delete and scan them. Separately, someone calls
+and though sm3 may call sm1 directly (`DESIGN.md` §5 at the
+top level), sm2 alone prepends and strips the 2-byte object
+prefix, and sm3 never encodes a key itself, so sm2 needs a
+way to write, delete and scan them. Separately, someone calls
 `sm1_nextseq` for each new row.
 *Suggested: two kinds of `rel`, opened over the same sm1
 store with different prefixes: a **heap `rel`**, keyed by
@@ -152,7 +154,7 @@ new dependency.* → `PLAN.md`
 `PLAN.md` step 1 pins every representation to "a fixture taken
 from a running PostgreSQL", which is what makes `SM2_DESIGN.md`
 §2.1 a claim rather than an intention. That needs a PostgreSQL
-somewhere, and `OBJECTIVE.md` forbids a build dependency on
+somewhere, and `SM2_OBJECTIVE.md` forbids a build dependency on
 one.
 *Suggested: generate the fixtures once, by hand, on a
 developer's machine; check the resulting table into
@@ -186,7 +188,7 @@ Settled, and listed so nobody reopens them by accident:
   once in the encoder — `SM2_DESIGN.md` §3.
 - That the tuple codec is an API of its own — `SM2_DESIGN.md` §4.
 - That sm2 is tuple-at-a-time; batching is sm3's question —
-  `OBJECTIVE.md`, `sm3/SM3_DESIGN.md` §5.
+  `SM2_OBJECTIVE.md`, `sm3/SM3_DESIGN.md` §5.
 - That the catalog, indexes, predicates and statistics are not
   sm2's — `SM2_DESIGN.md` §6.
 - The type codes, `enum` as sm3's, and `text` / `varchar` —

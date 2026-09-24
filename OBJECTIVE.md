@@ -26,13 +26,16 @@ The stack, as a whole:
 | 2 | `sm2/` — types and tuples | column, type, row |
 | 3 | `sm3/` — schema and indexes | table, index, predicate, statistic |
 
-Each level speaks only to the level directly below it,
-through that level's own API — `sm1` through RocksDB's,
-`sm2` through `sm1/include/sm1.h`, `sm3` through sm2's tuple
-relation. A notion that belongs to
-level N is never reimplemented at level N+1, and level N+1's
+Each level is built on the level directly below it, through
+that level's own interface — `sm1` on RocksDB's API, `sm2` on
+sm1's, `sm3` on sm2's tuple relation. Two callers may also
+reach further down: `sm3` calls sm1's interface as well as
+sm2's, and the top level calls sm1 for sessions,
+transactions, savepoints and 2PC and sm3 for everything else
+(`DESIGN.md` §1). Nothing calls upward. A notion that belongs
+to level N is never reimplemented at level N+1, and level N+1's
 internals are never reached into from level N-1. This is the
-discipline that lets `sm2/OBJECTIVE.md` say "anything sm1
+discipline that lets `sm2/SM2_OBJECTIVE.md` say "anything sm1
 already does ... sm2 calls it; it does not reimplement it",
 and it is the rule this document exists to state once, for
 the whole stack, instead of per level.
@@ -91,16 +94,19 @@ These are settled; they bind every level below.
   namespace of their own (`sm1::`, `sm2::`, `sm3::`). Only
   the top level — `include/` and `src/` at the root — wraps
   the stack in a C API, because only PostgreSQL's C code
-  needs one, and it calls the stack nowhere else. Three
+  needs one, and it calls the stack nowhere else. Four
   rules keep a C++ interface as safe as the C one it
   replaces:
-  - *No exception crosses a level boundary.* Errors travel
-    as one error type shared by every level — a `Status` in
-    RocksDB's style or an `expected<T, error_t>`, still to
-    be chosen. The C wrapper catches everything: a
-    PostgreSQL `longjmp` across C++ frames, or a C++
-    exception through PostgreSQL's C frames, is undefined
-    behaviour.
+  - *Every level reports failure as sm1 does.* A call
+    returns 0 or -1, and the code and message are read from
+    the thread-local `sm1_errno()` and `sm1_errmsg()` — one
+    errno namespace for the whole stack, every code defined
+    in `sm1/include/sm1.h` (`DESIGN.md` §5).
+  - *Only the top level catches.* An exception may pass
+    through sm1, sm2 and sm3 unchanged; the C wrapper catches
+    everything, because a PostgreSQL `longjmp` across C++
+    frames, or a C++ exception through PostgreSQL's C frames,
+    is undefined behaviour (`DESIGN.md` §5).
   - *A public header is opaque.* It declares handles, not
     layouts — no private members and no RocksDB type — so a
     caller cannot come to depend on a level's internals.
@@ -118,7 +124,7 @@ These are settled; they bind every level below.
   either level must never cross.
 - **One process, many threads.** Forced by RocksDB's
   single-writer-process rule and accepted for the reasons in
-  `sm1/OBJECTIVE.md`. The PostgreSQL fork adapts to it, by
+  `sm1/SM1_OBJECTIVE.md`. The PostgreSQL fork adapts to it, by
   moving to a thread per connection, rather than the stack
   moving behind IPC (`PART4.md` §2).
 - **The catalog is sm3's, held in memory.** PostgreSQL's
@@ -127,7 +133,7 @@ These are settled; they bind every level below.
   point. The catalog is loaded into memory at startup and
   written through to sm2 for persistence
   (`sm3/SM3_DESIGN.md` §2).
-- **Each level ships its own `OBJECTIVE.md` and
+- **Each level ships its own `SMn_OBJECTIVE.md` and
   `SMn_DESIGN.md`.** This document and `DESIGN.md` at the top
   level cover only what spans levels: the stack's shape, its
   build, and its cross-level decisions. Anything specific to
@@ -136,8 +142,8 @@ These are settled; they bind every level below.
 
 ## Where to read next
 
-- `sm1/OBJECTIVE.md`, `sm2/OBJECTIVE.md`,
-  `sm3/OBJECTIVE.md` — what each level is for, and the
+- `sm1/SM1_OBJECTIVE.md`, `sm2/SM2_OBJECTIVE.md`,
+  `sm3/SM3_OBJECTIVE.md` — what each level is for, and the
   decisions that settled its own design.
 - `FEATURELIST.md` — which PostgreSQL features wisr supports.
 - `PART4.md` — the PostgreSQL target in full, including the

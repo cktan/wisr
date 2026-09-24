@@ -7,7 +7,8 @@ described in `SM1_DESIGN.md`. It is the specification of
 Everything here is a C ABI. The implementation is C++, but no
 C++ type appears in the interface.
 
-**This is changing.** `OBJECTIVE.md` now gives each level a
+**This is changing.** The top-level `OBJECTIVE.md` now gives
+each level a
 C++ interface, with a C API only at the top level, and sm1 is
 converted before sm2 starts. Until then this document
 describes the C API as built. The conversion drops what
@@ -1118,7 +1119,7 @@ serialization failures.
 
 Scanning is **forward only**. Descending iteration is not
 supported, and is not a planned addition: no index serves a
-backward scan (`OBJECTIVE.md`). A caller that needs
+backward scan (`SM1_OBJECTIVE.md`). A caller that needs
 descending order keeps a second store with inverted key
 bytes and scans that one forward.
 

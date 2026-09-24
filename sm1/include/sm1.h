@@ -851,7 +851,7 @@ int sm1_read(sm1_session_t* session, uint64_t storeid,
  * bound is returned. An empty range is legal and yields no
  * rows. Scanning is FORWARD ONLY; descending iteration is not
  * supported, and is not a planned addition -- no index serves
- * a backward scan (see OBJECTIVE.md). A caller that needs
+ * a backward scan (see SM1_OBJECTIVE.md). A caller that needs
  * descending order keeps a second store with inverted key
  * bytes and scans that one forward.
  *

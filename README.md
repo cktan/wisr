@@ -35,21 +35,21 @@ the root's `include/` and `src/`, which belongs to no level.
   decisions that span every level
 - `DESIGN.md` — how the levels fit together: the stack, the
   build, and the decisions that cross level boundaries
-- `sm1/OBJECTIVE.md` — what level 1 is for, and the decisions
+- `sm1/SM1_OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
 - `sm1/API.md` — sm1's API, call by call: a C API today,
   to become C++ (`OBJECTIVE.md`)
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
   scenarios that are executed on every build
-- `sm2/OBJECTIVE.md` — what level 2 is for
+- `sm2/SM2_OBJECTIVE.md` — what level 2 is for
 - `sm2/SM2_DESIGN.md` — the type system, the two on-disk
   encodings, and the tuple relation
 - `sm2/TYPE.md` — every type, one by one: native
   representation, order, and key bytes
 - `sm2/QUESTIONS.md` — what has to be decided before sm2 can
   be written, and what is already settled
-- `sm3/OBJECTIVE.md` — what level 3 is for
+- `sm3/SM3_OBJECTIVE.md` — what level 3 is for
 - `sm3/SM3_DESIGN.md` — the catalog, secondary indexes, predicate
   scans and statistics
 - `FEATURELIST.md` — which PostgreSQL features wisr supports

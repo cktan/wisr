@@ -118,7 +118,7 @@ No work here should start before that number exists.
 Remote compaction distributes a **stateless computation over
 immutable inputs**. That is a different problem from letting
 several processes use one database, which is what
-`OBJECTIVE.md`'s single-process decision rules out and what
+`SM1_OBJECTIVE.md`'s single-process decision rules out and what
 `../PART4.md` §2 shows to be the hard blocker for PostgreSQL.
 
 So unlike almost every other distribution question about this

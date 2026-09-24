@@ -7,7 +7,7 @@ store; every notion of *row version*, *transaction*, *isolation*, and
 *visibility* is implemented here.
 
 This document is the design of record. It follows the decisions in
-`OBJECTIVE.md`:
+`SM1_OBJECTIVE.md`:
 
 | Decision | Choice |
 | --- | --- |
@@ -34,7 +34,7 @@ design forecloses them.
 only, in ascending bytewise key order, and no index serves a
 backward scan — not the clustered primary key here, and not a
 secondary index a layer above builds out of stores
-(`OBJECTIVE.md`). Descending order is had by keeping a second
+(`SM1_OBJECTIVE.md`). Descending order is had by keeping a second
 store with inverted key bytes and scanning it forward.
 
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in

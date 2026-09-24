@@ -5,7 +5,7 @@ Build the level that turns sm1's ordered byte strings into
 on disk, and a relation whose rows are tuples rather than raw
 bytes.
 
-sm1 stops exactly where this begins. `sm1/OBJECTIVE.md` says
+sm1 stops exactly where this begins. `sm1/SM1_OBJECTIVE.md` says
 its values are "opaque byte strings" and its keys are ordered
 "bytewise (`memcmp`)" with the encoding left to the caller.
 sm2 is the caller that supplies that encoding, and this
@@ -13,7 +13,7 @@ document is what it is for.
 
 sm2 stops well short of a schema. A catalog, secondary
 indexes, predicate scans and statistics are sm3's, built on
-sm2 the way sm2 is built on sm1 (`sm3/OBJECTIVE.md`).
+sm2 the way sm2 is built on sm1 (`sm3/SM3_OBJECTIVE.md`).
 
 ## Scope
 
@@ -142,7 +142,7 @@ These are settled and drive `SM2_DESIGN.md`.
   (`PART4.md` §2), so the call above sm2 is an ordinary
   function call. Whether a batched form earns its keep for
   filter pushdown is a question for the level that has filters
-  (`sm3/OBJECTIVE.md`), and nothing in sm2 depends on the
+  (`sm3/SM3_OBJECTIVE.md`), and nothing in sm2 depends on the
   answer.
 - **Descending order is inverted bytes, scanned forward.** sm1
   does not scan backwards, and the fork's planner is changed

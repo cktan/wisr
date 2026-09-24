@@ -1,6 +1,6 @@
 # PLAN — sm2
 
-The order of work, and why it is this order. `OBJECTIVE.md`
+The order of work, and why it is this order. `SM2_OBJECTIVE.md`
 says what sm2 is for; `SM2_DESIGN.md` is where each step's
 argument goes before its code does; `QUESTIONS.md` is what
 still has to be answered before any of it can be written, step

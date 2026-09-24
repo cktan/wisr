@@ -9,7 +9,7 @@ predicate scans, statistics — belongs to sm3 and is argued in
 `sm3/SM3_DESIGN.md`.
 
 This document is the design of record; it follows the
-decisions in `OBJECTIVE.md`:
+decisions in `SM2_OBJECTIVE.md`:
 
 | Decision | Choice |
 | --- | --- |
@@ -53,7 +53,7 @@ nothing that an IPC boundary would have made it cost.
 
 | sm1 gives sm2 | and the constraint it brings |
 | --- | --- |
-| stores as ordered key→value maps, clustered on the key | keys are ordered **bytewise only**; there is no comparator to install (`sm1/OBJECTIVE.md`) — so order has to be built into the encoding (§3) |
+| stores as ordered key→value maps, clustered on the key | keys are ordered **bytewise only**; there is no comparator to install (`sm1/SM1_OBJECTIVE.md`) — so order has to be built into the encoding (§3) |
 | opaque values of arbitrary bytes | the tuple layout is sm2's alone; sm1 never looks inside one (§4) |
 | transactions at RC / RR / SERIALIZABLE | sm2 opens none of its own; every `rel` call runs inside the caller's transaction (§5) |
 | `sm1_update` / `sm1_delete` returning the **old image** | `rel_update` / `rel_delete` can hand back the old *tuple*, which is what index maintenance above needs |

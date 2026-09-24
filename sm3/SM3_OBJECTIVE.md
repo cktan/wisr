@@ -5,7 +5,7 @@ catalog of tables and indexes, secondary indexes maintained
 transactionally with the base row, scans driven by a
 predicate, and the statistics a planner above needs.
 
-sm2 stops exactly where this begins. `sm2/OBJECTIVE.md` says
+sm2 stops exactly where this begins. `sm2/SM2_OBJECTIVE.md` says
 sm2 is "handed a schema", that it "maintains no index", that
 it "has no filter and counts nothing", and that an sm2
 relation is one sm1 store with an opaque object prefix
@@ -63,11 +63,11 @@ These are settled and drive `SM3_DESIGN.md`.
   empty or to the INCLUDE columns; a unique index drops the
   suffix and maps to `rowno`. The table is a heap keyed by
   `rowno` and the primary key is one of these indexes, as in
-  PostgreSQL (`sm2/OBJECTIVE.md`). A lookup is an index scan
+  PostgreSQL (`sm2/SM2_OBJECTIVE.md`). A lookup is an index scan
   followed by a read by `rowno`.
 - **sm2's encoder is the only encoder.** sm3 builds index keys
   from the same function, with the same per-column arguments
-  (`sm2/OBJECTIVE.md`).
+  (`sm2/SM2_OBJECTIVE.md`).
 - **The catalog is held in memory** and written through to sm2
   for persistence. It replaces PostgreSQL's heap catalogs
   (`PART4.md` §4), so sm1's status record is the one commit

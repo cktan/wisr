@@ -2,8 +2,8 @@
 
 An assessment of what the `sm1_*` API (`include/sm1.h`) lacks
 for a layer that maintains secondary indexes on top of it.
-OBJECTIVE.md leaves secondary indexes to such a layer: "separate
-stores maintained in the same transaction".
+SM1_OBJECTIVE.md leaves secondary indexes to such a layer:
+"separate stores maintained in the same transaction".
 
 ## The pattern, and what already works
 
@@ -101,7 +101,7 @@ worth keeping.
 
 `MAX()`, `ORDER BY … DESC`, and "greatest key ≤ x" (floor
 lookup, e.g. the latest version at or before time t) would all
-be served by a backward scan. `OBJECTIVE.md` rules one out
+be served by a backward scan. `SM1_OBJECTIVE.md` rules one out
 permanently: no index serves a backward scan, so this is a
 constraint the layer is built on, not a gap awaiting a fix.
 
@@ -361,7 +361,7 @@ and never use RC at all.
 
 ### Gap 4: backward scans — closed as won't-do
 
-No proposal. `OBJECTIVE.md` settles this one against a
+No proposal. `SM1_OBJECTIVE.md` settles this one against a
 direction flag, and the engine cost is part of why: versions
 of a key are stored newest first (`key|~wts|~seq`), so a
 backward scan meets the oldest version first and must walk to

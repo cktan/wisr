@@ -4,7 +4,7 @@ The level that turns sm2's tuples into a schema. sm2 gives it
 typed rows in a heap keyed by `rowno`; sm3 gives those relations
 names, definitions, indexes — the primary key's among them —
 predicates and statistics. This document is the design of record;
-it follows the decisions in `OBJECTIVE.md`:
+it follows the decisions in `SM3_OBJECTIVE.md`:
 
 | Decision | Choice |
 | --- | --- |

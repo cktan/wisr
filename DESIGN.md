@@ -25,6 +25,7 @@ format, sm3's catalog — are argued in that level's own
         │  scan-by-predicate · statistics              │
         └────────────────────┬─────────────────────────┘
                              │  sm2::  the tuple relation
+                             │         (sm3 also calls sm1::)
         ┌────────────────────┴─────────────────────────┐
         │  sm2/  types and tuples                      │
         │  type system · key encoding ·                │
@@ -45,10 +46,10 @@ format, sm3's catalog — are argued in that level's own
 
 sm2 is a client of sm1, nothing more: it holds no RocksDB
 handle of its own and reaches storage only through sm1's
-interface. sm3 stands in the same relation to sm2 — it never
-encodes a key or decodes a tuple itself — with one
-deliberate exception: `sm1_lock`, which sm2 has nothing to
-add to and which sm3's DDL and index-build protocols are
+interface. sm3 is built on sm2 — it never encodes a key or
+decodes a tuple itself — and may also call sm1's interface
+directly, for whatever sm2 has nothing to add to: above all
+`sm1_lock`, which sm3's DDL and index-build protocols are
 built on (`sm3/SM3_DESIGN.md` §2). That boundary is why each
 level's `OBJECTIVE.md` can promise it is "useful and
 testable on its own" — the whole lower stack is one
@@ -57,11 +58,11 @@ dependency.
 The top level is not a level: it adds no notion of its own,
 only a C signature over the levels' C++ interfaces, and it
 is the one place an exception is caught and a PostgreSQL
-error path is safe to take (`OBJECTIVE.md`). It is also the
-one caller that skips a level: it calls sm1 directly for
-sessions, transactions, savepoints and 2PC, which neither sm2
-nor sm3 has anything to add to, and sm3 for everything else.
-Below it, each level still talks only to the one beneath.
+error path is safe to take (`OBJECTIVE.md`). Like sm3, it
+may skip a level: it calls sm1 directly for sessions,
+transactions, savepoints and 2PC, which neither sm2 nor sm3
+has anything to add to, and sm3 for everything else. sm2
+calls only sm1, and nothing calls upward.
 
 ---
 
@@ -81,6 +82,19 @@ make -C sm1     build level 1 alone
 a Makefile to delegate to; `sm2` and `sm3` join it when they
 have one. Adding a level to the stack means adding its name
 there, nowhere else.
+
+**Never compile with `-fno-exceptions`,** at any level or in
+the C wrapper. An exception may unwind through sm1, sm2 and
+sm3 to the wrapper's catch-all (§5). The wrapper needs `try`
+and `catch`, which the flag forbids. Each level needs the
+cleanup code that runs destructors during unwinding, which
+the flag omits — without it an RAII lock
+guard never releases its mutex, or the process terminates.
+Nor does the flag stop anything being thrown: the standard
+library throws `std::bad_alloc` from its own compiled code,
+so out of memory would become a crash instead of an error.
+GCC enables exceptions for C++ by default; this rule is that
+nothing turns them off.
 
 ---
 
@@ -138,6 +152,141 @@ design:
   internals — the `SECINDEX.md`-style gap
   analysis in `sm1/` is how a missing primitive gets added
   to sm1's surface instead of worked around from outside it.
+- **Every level reports failure the way sm1 does.** A call on a
+  level's C++ interface returns a plain `int` — 0 on success, -1
+  on failure — and the code and message are read afterwards from
+  the thread-local `sm1_errno()` and `sm1_errmsg()`. There is no
+  status type and no `std::expected`, so the build stays at
+  `-std=c++20`. A result comes back through an out-parameter.
+  This keeps sm1's allocation-free message and per-thread state,
+  and the C wrapper passes the convention through unchanged; the
+  price is that nothing stops a caller ignoring a -1. It is one
+  errno namespace for the whole stack: sm2 and sm3 report through
+  the same thread-local state, and every error code any level
+  uses is defined in `sm1/include/sm1.h`, so sm1's header lists
+  codes only an upper level produces and the C wrapper maps one
+  enum. An upper level records an error with
+  `int sm1_seterr(sm1_errno_t code, std::string_view msg)`,
+  exported by sm1: it copies the message into the fixed
+  thread-local buffer, cut short if it does not fit, and returns
+  -1, so a failing path is `return sm1_seterr(...);`. The caller
+  formats the message, which keeps a template and `<format>` out
+  of sm1's public header; reporting out of memory passes a
+  literal. It lands with sm1's conversion to C++, since a
+  `std::string_view` cannot appear in a C header. What an error
+  carries beyond that is still open (`ERROR.md`).
+- **Two more calls sit beside `sm1_errno()` and
+  `sm1_errmsg()`.** `void sm1_reseterr()` clears the calling
+  thread's state back to what a thread starts with — `SM1_OK`
+  and the message "no error". A successful call leaves the
+  state untouched, so this is the one way to start a
+  sequence of calls from a known state. `const char*
+  sm1_errname()` names the current code: the enumerator
+  without its `SM1_` prefix, so `SM1_ERR_UPDATED` gives
+  `"ERR_UPDATED"` and `SM1_OK` gives `"OK"`. The string is
+  static and never NULL. With one errno namespace every
+  level's codes are named here, so a new code is not finished
+  until it has its name. The scenario driver keeps its own
+  short names, so no transcript changes, and neither call
+  needs C++: both can land in today's C header.
+- **Only "no row" is a positive return; every other outcome
+  is -1.** A read and `sm1_scannxt` return 1 for "no row".
+  `DUPKEY` on insert, `NOTFOUND` on update or delete, and
+  `UPDATED` are -1 with the code in `sm1_errno()`, like any
+  failure, and a caller that treats one of them as an
+  ordinary outcome reads the code. Under an `int` and a
+  thread-local, reading it costs nothing, so there is no
+  performance reason to split outcomes from errors; it also
+  keeps `sm1/API.md`, the tests and the scenario transcripts'
+  error names as they are.
+- **Out-parameters take one shape at every level.** A
+  required output is a reference (`uint64_t& storeid`). An
+  optional output stays a pointer, `nullptr` meaning "not
+  wanted" — the old image from an update or a delete. A list
+  is a `std::vector<T>&`, which is where `sm1_strlist_t` and
+  the `malloc`'d arrays of `sm1_lsstore` and
+  `sm1_list_prepared` go. Bytes that point into engine memory
+  are a `std::string_view&`, valid until the next call on the
+  session, as today.
+- **The C wrapper keeps the convention; the fork's glue
+  calls `ereport`.** The wrapper's `sm_*` calls return 0 or
+  -1 and leave the code and message in the same thread-local
+  state. Inside a PostgreSQL backend a failure never travels
+  back up as a return value — the access method callbacks
+  return `void` or "got a row", and the executor has no
+  error path — so the fork's C glue turns a -1 into
+  `ereport(ERROR, ...)`, which aborts the transaction,
+  releases what the statement held and sends the client an
+  `ErrorResponse`. The wrapper never calls `ereport` itself:
+  it is C++, and the `longjmp` would skip its destructors.
+  So the wrapper catches everything and returns -1, control
+  comes back to the glue with no C++ frame on the stack, and
+  only then does the glue report. Not every -1 is reported:
+  `UPDATED` under read committed sends the executor to
+  re-check the row, and after a retryable code the engine
+  has already aborted, so the wrapper must accept an abort
+  of a transaction already gone. The glue therefore switches
+  on the code first, and that switch is where the SQLSTATE
+  is chosen, from PostgreSQL's own `utils/errcodes.h`. No
+  SQLSTATE lives in the stack: it is a SQL notion, sm1 is
+  meant to be useful without PostgreSQL, and some mappings
+  depend on context only the glue has — `DUPKEY` is
+  `unique_violation` from a unique index but a bug from a
+  fresh `rowno`. The glue's mapping starts from:
+
+  | Code | SQLSTATE | PostgreSQL name |
+  | --- | --- | --- |
+  | `CONFLICT`, `SERIALIZATION` | `40001` | `serialization_failure` |
+  | `DEADLOCK` | `40P01` | `deadlock_detected` |
+  | `DUPKEY` (from a unique index) | `23505` | `unique_violation` |
+  | `NOMEM` | `53200` | `out_of_memory` |
+  | `DISKFULL` | `53100` | `disk_full` |
+  | `IO`, `PERMISSION` | `58030` | `io_error` |
+  | `CORRUPT` | `XX001` | `data_corrupted` |
+  | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
+- **Exceptions cross the levels; only the top level catches.**
+  An exception — `std::bad_alloc` or any other — may pass
+  from sm1 through sm2 and sm3 unchanged, and no level
+  catches at its own entry points; sm1's entry-point `try`
+  blocks go with its conversion to C++. The C wrapper is the
+  one catch, since it is the only place a C caller can be
+  reached. It catches everything: `std::bad_alloc` becomes
+  `NOMEM`, anything else a code of its own that means a bug,
+  and if the call involves a session the wrapper aborts that
+  session's transaction before returning -1. Aborting is the
+  right recovery because sm1's abort works only in memory —
+  it leaves the active table, which kills the transaction's
+  versions without writing a status record, and releases its
+  cursors, SSI node, created stores and locks — so it
+  scarcely allocates, and it returns whatever a half-done
+  call touched to a known state; every sm1 mutex is held by
+  an RAII guard, so unwinding releases it. Four conditions
+  come with it. Nothing may throw after a commit or prepare
+  point: once the status or `PREPARED` record is written, an
+  abort would kill in memory versions the WAL says are
+  committed, so that tail reserves what it needs beforehand
+  and is `noexcept`, or goes fail-stop as a failed commit
+  write already does. sm2 and sm3 must stay consistent when
+  unwound mid-call, so the abort undoes what a half-done call
+  changed — above all in sm3's in-memory catalog. After
+  `NOMEM`, as after a retryable code, the engine has already
+  aborted, so the glue does not continue the transaction;
+  `NOMEM` is not retryable. And an exception on the GC thread
+  or inside a RocksDB callback never reaches the wrapper, so
+  those boundaries keep catch-alls of their own (next).
+  Exceptions stay enabled in every build (§2).
+- **The foreign boundaries catch for themselves.** The
+  RocksDB callbacks — the compaction filter, the comparator,
+  the prefix extractor — and the GC thread have no caller to
+  return -1 to. Every callback and thread entry is
+  `noexcept`, with a catch-all that reports through the
+  `sm1_set_log` hook. The compaction filter keeps the version
+  on error, so a failure can never delete data; the GC thread
+  logs and tries again on its next cycle. The comparator and
+  the prefix extractor are pure `memcmp` and byte slicing:
+  they are marked `noexcept` to say so, and need no
+  catch-all.
+
 - **One encoder, one tuple format, two callers.** The key
   encoding and the tuple layout are sm2's alone
   (`sm2/SM2_DESIGN.md` §3, §4), and sm3 builds its index entries
@@ -145,12 +294,13 @@ design:
   with the same per-column arguments. Two encoders that have
   to agree bytewise is a corruption bug waiting to be
   written, so there is only one.
-- **sm3 reaches sm1 for locks, and for nothing else.** sm2
-  has nothing to add to `sm1_lock`, and sm3's DDL and
-  index-build protocols rest on it (`sm3/SM3_DESIGN.md` §2), so
-  that one call is the sanctioned exception to sm3 speaking
-  only to sm2. Every other sm1 facility sm3 needs arrives
-  through sm2's tuple relation.
+- **sm3 may call sm1 as well as sm2.** sm3 is built on sm2's
+  tuple relation and never encodes a key or decodes a tuple
+  itself, but it may call sm1's interface directly for
+  anything sm2 has nothing to add to — `sm1_lock` above all,
+  which sm3's DDL and index-build protocols rest on
+  (`sm3/SM3_DESIGN.md` §2). sm2 still calls only sm1, and
+  nothing calls upward.
 - **A table is a heap keyed by `rowno`, and the primary key
   is an index.** A row's key is an unsigned 64-bit `rowno`
   from a per-table sm1 sequence, never reused and unchanged by
@@ -206,7 +356,7 @@ design:
   PostgreSQL backend process and sm1; the fork now moves
   PostgreSQL to threads (`PART4.md` §2), so the boundary is
   a function call and the shape is no longer forced. sm2 is
-  tuple-at-a-time (`sm2/OBJECTIVE.md`); whether sm3 batches
+  tuple-at-a-time (`sm2/SM2_OBJECTIVE.md`); whether sm3 batches
   above it, for filter pushdown and fewer calls per scan, is
   open and belongs where the filters are
   (`sm3/SM3_DESIGN.md` §5).
@@ -226,7 +376,7 @@ design:
   `rel_read_latest`; sm3 does the re-check
   (`sm3/SM3_DESIGN.md` §3).
 - **No backward scans, at any level, ever.** Settled in
-  `sm1/OBJECTIVE.md`, built into sm2's encoding and
+  `sm1/SM1_OBJECTIVE.md`, built into sm2's encoding and
   inherited by every index sm3 builds. The fork's planner is
   changed never to ask for a backward scan (`PART4.md` §5);
   descending order comes from inverted key bytes, scanned
