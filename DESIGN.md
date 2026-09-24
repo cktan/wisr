@@ -155,50 +155,66 @@ design:
 - **Every level reports failure the way sm1 does.** A call on a
   level's C++ interface returns a plain `int` — 0 on success, -1
   on failure — and the code and message are read afterwards from
-  the thread-local `sm1_errno()` and `sm1_errmsg()`. There is no
-  status type and no `std::expected`, so the build stays at
-  `-std=c++20`. A result comes back through an out-parameter.
-  This keeps sm1's allocation-free message and per-thread state,
-  and the C wrapper passes the convention through unchanged; the
-  price is that nothing stops a caller ignoring a -1. It is one
-  errno namespace for the whole stack: sm2 and sm3 report through
-  the same thread-local state, and every error code any level
-  uses is defined in `sm1/include/sm1.h`, so sm1's header lists
-  codes only an upper level produces and the C wrapper maps one
-  enum. An upper level records an error with
-  `int sm1_seterr(sm1_errno_t code, std::string_view msg)`,
+  the thread-local `sm1::errnum()` and `sm1::errmsg()`. Every
+  error call lives in `namespace sm1`; the code accessor is
+  `errnum`, not `errno`, because `errno` is a macro. The codes
+  are `SM_ERR_*` and `SM_OK`, values of the enum `sm1::errnum_t`
+  — the stack's codes, not sm1's alone, which is why they carry
+  no `1`. There is no status type and no `std::expected`, so the
+  build stays at `-std=c++20`. A result comes back through an
+  out-parameter. This keeps sm1's allocation-free message and
+  per-thread state, and the C wrapper passes the convention
+  through unchanged; the price is that nothing stops a caller
+  ignoring a -1. It is one errno namespace for the whole stack:
+  sm2 and sm3 report through the same thread-local state, and
+  every error code any level uses is defined in
+  `sm1/include/sm1.h`, so sm1's header lists codes only an upper
+  level produces and the C wrapper maps one enum. The enum is
+  append only: a number is never reused or renumbered, a retired
+  code stays with a note, and codes are grouped by the level that
+  produces them under a comment naming it, with no reserved
+  numeric ranges — a number matters once PostgreSQL sees it
+  through the C wrapper, and this is the rule `sm2/TYPE.md`
+  already applies to type codes. An upper level records an error
+  with
+  `int sm1::seterr(sm1::errnum_t code, std::string_view msg)`,
   exported by sm1: it copies the message into the fixed
   thread-local buffer, cut short if it does not fit, and returns
-  -1, so a failing path is `return sm1_seterr(...);`. The caller
+  -1, so a failing path is `return sm1::seterr(...);`. The caller
   formats the message, which keeps a template and `<format>` out
   of sm1's public header; reporting out of memory passes a
   literal. It lands with sm1's conversion to C++, since a
-  `std::string_view` cannot appear in a C header. What an error
-  carries beyond that is still open (`ERROR.md`).
-- **Two more calls sit beside `sm1_errno()` and
-  `sm1_errmsg()`.** `void sm1_reseterr()` clears the calling
-  thread's state back to what a thread starts with — `SM1_OK`
-  and the message "no error". A successful call leaves the
-  state untouched, so this is the one way to start a
-  sequence of calls from a known state. `const char*
-  sm1_errname()` names the current code: the enumerator
-  without its `SM1_` prefix, so `SM1_ERR_UPDATED` gives
-  `"ERR_UPDATED"` and `SM1_OK` gives `"OK"`. The string is
-  static and never NULL. With one errno namespace every
-  level's codes are named here, so a new code is not finished
-  until it has its name. The scenario driver keeps its own
-  short names, so no transcript changes, and neither call
-  needs C++: both can land in today's C header.
-- **Only "no row" is a positive return; every other outcome
-  is -1.** A read and `sm1_scannxt` return 1 for "no row".
-  `DUPKEY` on insert, `NOTFOUND` on update or delete, and
-  `UPDATED` are -1 with the code in `sm1_errno()`, like any
-  failure, and a caller that treats one of them as an
-  ordinary outcome reads the code. Under an `int` and a
-  thread-local, reading it costs nothing, so there is no
-  performance reason to split outcomes from errors; it also
-  keeps `sm1/API.md`, the tests and the scenario transcripts'
-  error names as they are.
+  `std::string_view` cannot appear in a C header. An error
+  carries a code and a message and nothing else: whether it is
+  retryable is a function of the code, which `sm1::retryable()`
+  computes; the message stays allocation-free, in the fixed
+  thread-local buffer, so reporting out of memory cannot itself
+  fail; and no SQLSTATE is stored, since the fork's glue chooses
+  it (below).
+- **Two more calls sit beside `sm1::errnum()` and
+  `sm1::errmsg()`.** `void sm1::reseterr()` clears the calling
+  thread's state back to what a thread starts with — `SM_OK` and
+  the message "no error". A successful call leaves the state
+  untouched, so this is the one way to start a sequence of calls
+  from a known state. `const char* sm1::errname()` names the
+  current code: the enumerator without its `SM_` prefix, so
+  `SM_ERR_UPDATED` gives `"ERR_UPDATED"` and `SM_OK` gives
+  `"OK"`. The string is static and never NULL. With one errno
+  namespace every level's codes are named here, so a new code is
+  not finished until it has its name. The scenario driver keeps
+  its own short names, so no transcript changes, and neither call
+  needs C++, so both can land in today's C header first, as
+  `sm1_reseterr()` and `sm1_errname()`, and move into the
+  namespace with the other calls.
+- **Only "no row" is a positive return; every other outcome is
+  -1.** A read and `sm1_scannxt` return 1 for "no row". `DUPKEY`
+  on insert, `NOTFOUND` on update or delete, and `UPDATED` are -1
+  with the code in `sm1::errnum()`, like any failure, and a
+  caller that treats one of them as an ordinary outcome reads the
+  code. Under an `int` and a thread-local, reading it costs
+  nothing, so there is no performance reason to split outcomes
+  from errors; it also keeps `sm1/API.md`, the tests and the
+  scenario transcripts' error names as they are.
 - **Out-parameters take one shape at every level.** A
   required output is a reference (`uint64_t& storeid`). An
   optional output stays a pointer, `nullptr` meaning "not
@@ -370,11 +386,10 @@ design:
   it changes commit in one sm1 transaction, and recovery is
   RocksDB's alone (`PART4.md` §4, `sm3/SM3_DESIGN.md` §2).
 - **READ COMMITTED writes are resolved at sm3, not sm2.**
-  `SM1_ERR_UPDATED` is answered by re-checking the
-  statement's filter against the newest image, and filters
-  exist only at sm3. sm2 surfaces the error and offers
-  `rel_read_latest`; sm3 does the re-check
-  (`sm3/SM3_DESIGN.md` §3).
+  `SM_ERR_UPDATED` is answered by re-checking the statement's
+  filter against the newest image, and filters exist only at sm3.
+  sm2 surfaces the error and offers `rel_read_latest`; sm3 does
+  the re-check (`sm3/SM3_DESIGN.md` §3).
 - **No backward scans, at any level, ever.** Settled in
   `sm1/SM1_OBJECTIVE.md`, built into sm2's encoding and
   inherited by every index sm3 builds. The fork's planner is
