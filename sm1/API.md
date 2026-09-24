@@ -886,10 +886,10 @@ transaction with that `gid`), `SM_ERR_DISKFULL`,
 
 ---
 
-## Rel API
+## Store API
 
 A store is an ordered map from key to value, named by a
-`uint64_t` storeid that the library allocates. Relid 0 is the
+`uint64_t` storeid that the library allocates. Storeid 0 is the
 catalog's own slot, never a store: every call given it
 fails with `SM_ERR_INVALID`.
 

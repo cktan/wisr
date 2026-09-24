@@ -62,7 +62,7 @@ struct worker_t {
   sm1::xctlevel_t level = sm1::xctlevel_t::repeatable_read;
   sm1::session_t *sess = nullptr;
   uint64_t store = 0;
-  uint64_t rel2 = 0; /* the second store, for rmstore/lookup */
+  uint64_t store2 = 0; /* the second store, for rmstore/lookup */
 
   std::thread thread;
   std::mutex mu;
@@ -232,7 +232,7 @@ std::string execute(worker_t *w, const item_t &it) {
     // the scenario is usually after is the storeid resolution
     // this takes, which is a tracked catalog read (§11).
     std::string_view data;
-    int rc = sm1::read(w->sess, w->rel2, a[0], data);
+    int rc = sm1::read(w->sess, w->store2, a[0], data);
     if (rc < 0) {
       return error_name();
     }
@@ -241,7 +241,7 @@ std::string execute(worker_t *w, const item_t &it) {
   if (it.verb == "rmstore") {
     // Drop the second store; the first one every other verb
     // works in is never dropped.
-    return sm1::rmstore(w->sess, w->rel2) == 0 ? "ok" : error_name();
+    return sm1::rmstore(w->sess, w->store2) == 0 ? "ok" : error_name();
   }
   if (it.verb == "mkstore") {
     uint64_t storeid = 0;
@@ -308,10 +308,10 @@ public:
     m_ok = m_checker &&
            sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) == 0 &&
            sm1::mkstore(m_checker, m_store) == 0 &&
-           sm1::mkstore(m_checker, m_rel2) == 0;
+           sm1::mkstore(m_checker, m_store2) == 0;
     for (const auto &kv : m_script.seeds) {
       // The same rows in both, so a script can read either.
-      for (uint64_t store : {m_store, m_rel2}) {
+      for (uint64_t store : {m_store, m_store2}) {
         m_ok = m_ok && sm1::insert(m_checker, store, kv.first, kv.second) == 0;
       }
     }
@@ -328,7 +328,7 @@ public:
       w.level = level_for(d, i);
       sm1::opendb(m_env, "db", w.sess);
       w.store = m_store;
-      w.rel2 = m_rel2;
+      w.store2 = m_store2;
       m_ok = m_ok && w.sess != nullptr;
       w.thread = std::thread(worker_main, &w);
     }
@@ -602,7 +602,7 @@ private:
   sm1::env_t *m_env = nullptr;
   sm1::session_t *m_checker = nullptr;
   uint64_t m_store = 0;
-  uint64_t m_rel2 = 0;
+  uint64_t m_store2 = 0;
   std::vector<std::unique_ptr<worker_t>> m_workers;
   bool m_ok = false;
   int m_failures = 0;
