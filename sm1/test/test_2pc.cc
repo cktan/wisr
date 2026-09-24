@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <new>
 #include <set>
 #include <string>
 #include <thread>
@@ -144,7 +145,28 @@ uint64_t first_store(sm1_session_t *s) {
   return store;
 }
 
+/* While set, operator new fails on this thread. */
+thread_local bool t_fail_alloc = false;
+
 } // namespace
+
+/*
+ * The test binary's global operator new: plain malloc, except that
+ * it throws std::bad_alloc while t_fail_alloc is set on the calling
+ * thread, so a test can make every allocation in a stretch of
+ * engine code fail.
+ */
+void *operator new(std::size_t n) {
+  // Fail on demand.
+  if (t_fail_alloc) {
+    throw std::bad_alloc();
+  }
+  // Otherwise allocate as the library would.
+  if (void *p = malloc(n ? n : 1)) {
+    return p;
+  }
+  throw std::bad_alloc();
+}
 
 /*
  * Child: insert "c" and prepare it as "g-crash", report, then
@@ -319,6 +341,39 @@ TEST_CASE("a prepare that fails validation releases its gid") {
   CHECK(read_now(t2, "b") == "2");
   sm1_closedb(t1);
   sm1_closedb(t2);
+}
+
+TEST_CASE("nothing allocates once the PREPARED record is written") {
+  // Verify a prepare whose record is written stands, even when
+  // memory runs out right after the write (§8.4).
+  // 1. S updates "a" and prepares it under a gid too long for a
+  //    short string, so copying it would allocate.
+  // 2. From just after the PREPARED record is written until
+  //    sm1_prepare returns, every allocation on S's thread fails:
+  //    sm1_prepare still returns 0.
+  // 3. The transaction is listed under its gid, and U commits it
+  //    by gid.
+  // 4. A fresh snapshot reads S's update.
+  tpc_fixture_t f;
+  sm1_session_t *s = f.open();
+  sm1_session_t *u = f.open();
+  const std::string gid = "g-" + std::string(60, 'x');
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(set(s, "a", "1") == 0);
+
+  s->db->test_after_prepare = [] { t_fail_alloc = true; };
+  int rc = sm1_prepare(s, gid.c_str());
+  t_fail_alloc = false;
+  s->db->test_after_prepare = nullptr;
+  CHECK_MESSAGE(rc == 0, sm1_errmsg());
+
+  auto l = listed(u);
+  REQUIRE(l.size() == 1);
+  CHECK(l[0].first == gid);
+  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1_errmsg());
+  CHECK(read_now(u, "a") == "1");
+  sm1_closedb(s);
+  sm1_closedb(u);
 }
 
 TEST_CASE("another session can resolve a prepared transaction by gid") {

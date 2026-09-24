@@ -283,6 +283,12 @@ struct db_t {
   /* Test hook, as test_before_commit, for the PREPARED record. */
   std::function<rocksdb::Status()> test_before_prepare;
 
+  /*
+   * Test hook: called right after the PREPARED record is written,
+   * on the preparing thread. Empty outside tests.
+   */
+  std::function<void()> test_after_prepare;
+
   /* Destroy the CF handles and close RocksDB. */
   ~db_t();
 };

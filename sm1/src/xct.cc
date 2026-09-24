@@ -674,6 +674,19 @@ sm1_session_t *detach_prepared(sm1_session_t *s, const std::string &gid) {
   return g;
 }
 
+/*
+ * Register g under gid, which prepare reserved: the entry exists,
+ * so this finds it rather than inserting, and allocates nothing.
+ * It runs after the PREPARED record is written (§8.4).
+ */
+void register_prepared(db_t *db, sm1_session_t *g,
+                       const std::string &gid) noexcept {
+  // Hold prepared_mu while registering.
+  std::lock_guard<std::mutex> guard(db->prepared_mu);
+  // Fill in the reservation.
+  db->prepared.find(gid)->second = g;
+}
+
 /* sm1_prepare, minus the out-of-memory guard. */
 int prepare(sm1_session_t *s, const char *gid) {
   // Require an active, non-prepared transaction.
@@ -719,11 +732,14 @@ int prepare(sm1_session_t *s, const char *gid) {
     return -1;
   }
 
+  // Own the gid now: nothing after the record is written may
+  // allocate, since the prepare stands whatever happens then.
+  std::string key(gid);
   // From here the entry is replaced, whether the write succeeds or
   // fails stop: keep the reservation.
   unreserve.dismiss();
   // Move the transaction out of the session.
-  sm1_session_t *g = detach_prepared(s, gid);
+  sm1_session_t *g = detach_prepared(s, key);
   // Encode its PREPARED record.
   std::string val = encode_prepared(g);
   // No error unless the hook or the write says so.
@@ -738,18 +754,24 @@ int prepare(sm1_session_t *s, const char *gid) {
     wo.sync = true; // a prepare is always synced (§8.4)
     // Write the PREPARED record: the vote of yes.
     st = db->rdb->Put(wo, db->cf_txn, txn_key(g->xid), val);
+    // Let a test act just past the prepare point.
+    if (st.ok() && db->test_after_prepare) {
+      db->test_after_prepare();
+    }
   }
-  // Hold prepared_mu while registering.
-  std::lock_guard<std::mutex> guard(db->prepared_mu);
+  // The record's fate is unknown: mark it before registering, so
+  // no resolver ever sees it resolvable.
+  if (!st.ok()) {
+    db->failed = true;
+    g->limbo = true;
+  }
   // Register the transaction under its gid.
-  db->prepared[gid] = g;
+  register_prepared(db, g, key);
   // The record's fate is unknown.
   if (!st.ok()) {
     // Fail stop: the record may be in the WAL, so the
     // transaction stays in flight, unlisted and unresolvable,
     // until a reopen decides (§8.4).
-    db->failed = true;
-    g->limbo = true;
     log_msg(SM1_LOG_ERROR,
             "database {}: prepare record write for {} failed, database "
             "stopped until reopened: {}",
@@ -757,8 +779,8 @@ int prepare(sm1_session_t *s, const char *gid) {
     return set_error(SM1_ERR_IO, "write prepare record (outcome unknown): {}",
                      st.ToString().c_str());
   }
-  // The session remembers only the gid.
-  s->prepared_gid = gid;
+  // The session remembers only the gid; a move cannot allocate.
+  s->prepared_gid = std::move(key);
   return 0;
 }
 
