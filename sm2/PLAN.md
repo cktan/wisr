@@ -33,7 +33,10 @@ its own: `key_encode` is one of a type's ADT functions
 (`SM2_DESIGN.md` §2.3), so a type's representation and its
 key sit side by side, and a multi-column key is composed from
 them. Dependencies run one way — `rel` calls `tuple`, `tuple`
-calls `type` — and only `src/rel` includes `sm1/include/sm1.h`.
+calls `type` — and only `src/rel` calls sm1's storage
+functions. Every directory may include `sm1/include/sm1.h`
+all the same, since sm2 reports its failures through sm1's
+error state (`SM2_DESIGN.md` §5); `src/type` does already.
 
 ## 1. Types
 
