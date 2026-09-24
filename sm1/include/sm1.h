@@ -270,6 +270,12 @@ int sm1_init(const char* homedir);
  *
  * Creates nothing: a homedir that was never initialized is an
  * error, not a new home directory. Returns NULL on error.
+ *
+ * Unless the process already has one, installs a new-handler
+ * (std::set_new_handler) that makes running out of memory fatal:
+ * it reports "*** FATAL ***" on stderr and to the log hook, then
+ * aborts. A bad_alloc from inside RocksDB leaves it unreliable,
+ * and only a fresh open's WAL replay recovers safely.
  */
 sm1_env_t* sm1_attach(const char* homedir);
 

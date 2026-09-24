@@ -83,18 +83,16 @@ a Makefile to delegate to; `sm2` and `sm3` join it when they
 have one. Adding a level to the stack means adding its name
 there, nowhere else.
 
-**Never compile with `-fno-exceptions`,** at any level or in
-the C wrapper. An exception may unwind through sm1, sm2 and
-sm3 to the wrapper's catch-all (§5). The wrapper needs `try`
-and `catch`, which the flag forbids. Each level needs the
-cleanup code that runs destructors during unwinding, which
-the flag omits — without it an RAII lock
-guard never releases its mutex, or the process terminates.
-Nor does the flag stop anything being thrown: the standard
-library throws `std::bad_alloc` from its own compiled code,
-so out of memory would become a crash instead of an error.
-GCC enables exceptions for C++ by default; this rule is that
-nothing turns them off.
+**Never compile with `-fno-exceptions`,** at any level or in the
+C wrapper. An exception may unwind through sm1, sm2 and sm3 to
+the wrapper's catch-all (§5). The wrapper needs `try` and
+`catch`, which the flag forbids. Each level needs the cleanup
+code that runs destructors during unwinding, which the flag omits
+— without it an RAII lock guard never releases its mutex, or the
+process terminates. Nor does the flag stop anything being thrown:
+the standard library throws from its own compiled code whatever
+the flag says. GCC enables exceptions for C++ by default; this
+rule is that nothing turns them off.
 
 ---
 
@@ -260,37 +258,65 @@ design:
   | `IO`, `PERMISSION` | `58030` | `io_error` |
   | `CORRUPT` | `XX001` | `data_corrupted` |
   | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
-- **Exceptions cross the levels; only the top level catches.**
-  An exception — `std::bad_alloc` or any other — may pass
-  from sm1 through sm2 and sm3 unchanged, and no level
-  catches at its own entry points; sm1's entry-point `try`
-  blocks go with its conversion to C++. The C wrapper is the
-  one catch, since it is the only place a C caller can be
+- **Running out of memory is fatal to the process, because
+  `std::bad_alloc` can be thrown from inside RocksDB.** RocksDB
+  allocates as it works — a write builds a batch, joins a write
+  group, appends to the WAL, inserts into the memtable — and when
+  an allocation fails, `operator new` throws through RocksDB's
+  own frames. RocksDB reports its errors through `Status` and is
+  not written to be unwound through: it keeps parts of its state
+  consistent by explicit steps, not RAII, and an exception skips
+  them. In a test that failed each allocation inside the status
+  record's write in turn, the write's outcome was unknown — the
+  record had reached the WAL or not, depending on where the
+  exception came from — every later write to that database hung,
+  and closing it could crash. No caller can repair that in
+  process, and none can tell such a `bad_alloc` from a harmless
+  one: an exception from inside RocksDB looks the same as one
+  from sm1's own code, or from inside RocksDB before it touched
+  anything. So every `bad_alloc` is treated as fatal, and only a
+  fresh open's WAL replay recovers — reliably, and with every
+  committed transaction. `sm1_attach` installs a new-handler,
+  unless the host process already has one, that runs when an
+  allocation fails, before anything is thrown: it reports
+  `*** FATAL ***` on stderr and through the log hook, then
+  aborts, so `operator new` never throws `std::bad_alloc`. It
+  should be very rare: on a default Linux system an allocation
+  seldom fails, since the kernel's OOM killer ends the process
+  first; it takes a hard memory limit to get here. A host with
+  its own handler keeps its own policy, and with it the risk: if
+  that handler throws, a `bad_alloc` from inside RocksDB can
+  leave it unreliable, and sm1 does not guard against that.
+- **Exceptions cross the levels; only the top level catches.** An
+  exception may pass from sm1 through sm2 and sm3 unchanged, and
+  no level catches at its own entry points; sm1's entry-point
+  `try` blocks go with its conversion to C++. The C wrapper is
+  the one catch, since it is the only place a C caller can be
   reached. It catches everything: `std::bad_alloc` becomes
-  `NOMEM`, anything else a code of its own that means a bug,
-  and if the call involves a session the wrapper aborts that
-  session's transaction before returning -1. Aborting is the
-  right recovery because sm1's abort works only in memory —
-  it leaves the active table, which kills the transaction's
-  versions without writing a status record, and releases its
-  cursors, SSI node, created stores and locks — so it
-  scarcely allocates, and it returns whatever a half-done
-  call touched to a known state; every sm1 mutex is held by
-  an RAII guard, so unwinding releases it. Four conditions
-  come with it. Nothing may throw after a commit or prepare
-  point: once the status or `PREPARED` record is written, an
-  abort would kill in memory versions the WAL says are
-  committed, so that tail reserves what it needs beforehand
-  and is `noexcept`, or goes fail-stop as a failed commit
-  write already does. sm2 and sm3 must stay consistent when
-  unwound mid-call, so the abort undoes what a half-done call
-  changed — above all in sm3's in-memory catalog. After
-  `NOMEM`, as after a retryable code, the engine has already
-  aborted, so the glue does not continue the transaction;
-  `NOMEM` is not retryable. And an exception on the GC thread
-  or inside a RocksDB callback never reaches the wrapper, so
-  those boundaries keep catch-alls of their own (next).
-  Exceptions stay enabled in every build (§2).
+  `NOMEM` — possible only under a host's own new-handler (above)
+  — anything else a code of its own that means a bug, and if the
+  call involves a session the wrapper aborts that session's
+  transaction before returning -1. Aborting is the right recovery
+  because sm1's abort works only in memory — it leaves the active
+  table, which kills the transaction's versions without writing a
+  status record, and releases its cursors, SSI node, created
+  stores and locks — so it scarcely allocates, and it returns
+  whatever a half-done call touched to a known state; every sm1
+  mutex is held by an RAII guard, so unwinding releases it. Four
+  conditions come with it. Nothing may throw after a commit or
+  prepare point: once the status or `PREPARED` record is written,
+  an abort would kill in memory versions the WAL says are
+  committed, so that tail reserves what it needs beforehand and
+  is `noexcept`, or goes fail-stop as a failed commit write
+  already does. sm2 and sm3 must stay consistent when unwound
+  mid-call, so the abort undoes what a half-done call changed —
+  above all in sm3's in-memory catalog. After `NOMEM`, as after a
+  retryable code, the engine has already aborted, so the glue
+  does not continue the transaction; `NOMEM` is not retryable.
+  And an exception on the GC thread or inside a RocksDB callback
+  never reaches the wrapper, so those boundaries keep catch-alls
+  of their own (next). Exceptions stay enabled in every build
+  (§2).
 - **The foreign boundaries catch for themselves.** The
   RocksDB callbacks — the compaction filter, the comparator,
   the prefix extractor — and the GC thread have no caller to

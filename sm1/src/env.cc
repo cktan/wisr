@@ -20,6 +20,8 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -144,6 +146,37 @@ int sweep_base(sm1_env_t *env) {
             path.c_str());
   }
   return 0;
+}
+
+/*
+ * The new-handler sm1_attach installs: running out of memory is
+ * fatal to the process (the top-level DESIGN.md §5).
+ *
+ * It should be very rare: on a default Linux system an allocation
+ * seldom fails, since the kernel's OOM killer ends the process
+ * first; it takes a hard memory limit to get here. But when it
+ * does, a std::bad_alloc thrown from inside RocksDB leaves RocksDB
+ * unreliable -- later writes hang, closing can crash, and a
+ * record's fate is unknown -- and no caller can tell that case
+ * from a harmless one. Called before operator new would throw, it
+ * says so loudly, on stderr as well as the log hook, and aborts,
+ * so the next open's WAL replay recovers every committed
+ * transaction. Formatting allocates nothing.
+ */
+[[noreturn]] void oom_handler() {
+  char msg[256];
+  format_into(msg, sizeof(msg),
+              "*** FATAL *** out of memory: the process is aborting. Reopen "
+              "the databases: WAL replay recovers every committed "
+              "transaction.",
+              std::make_format_args());
+  // Tell stderr, whatever the log hook does.
+  fprintf(stderr, "%s\n", msg);
+  fflush(stderr);
+  // Tell the log hook.
+  log_msg(SM1_LOG_ERROR, "{}", msg);
+  // Abort the process.
+  abort();
 }
 
 /* sm1_attach, minus the out-of-memory guard. */
@@ -303,6 +336,11 @@ int sm1_init(const char *homedir) {
 
 /* Create an environment on an initialized home directory. */
 sm1_env_t *sm1_attach(const char *homedir) {
+  // Make running out of memory fatal, unless the host process
+  // already has an out-of-memory policy of its own.
+  if (!std::get_new_handler()) {
+    std::set_new_handler(oom_handler);
+  }
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return attach(homedir);

@@ -408,6 +408,14 @@ becoming an empty one.
 A process may attach to different home directories, but
 only once to a given `homedir`.
 
+Unless the process already has one, `sm1_attach` installs a
+new-handler (`std::set_new_handler`) that makes running out
+of memory fatal: it reports `*** FATAL ***` on stderr and to
+the log hook, then aborts. A `std::bad_alloc` thrown from
+inside RocksDB leaves it unreliable, and only a fresh open's
+WAL replay recovers safely (`DESIGN.md` §5 at the top level).
+A process that installs its own handler first keeps it.
+
 Returns NULL on error: `SM_ERR_NOTFOUND` (no such directory,
 or not a wisr home directory), `SM_ERR_VERSION` (written by
 an incompatible version), `SM_ERR_CORRUPT`,

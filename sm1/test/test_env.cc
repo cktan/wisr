@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 
 #include <filesystem>
+#include <new>
 #include <string>
 
 #include <rocksdb/db.h>
@@ -38,6 +39,34 @@ TEST_CASE("sm1_init refuses a missing, non-directory, or empty homedir") {
   CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_init("") == -1);
   CHECK(sm1_errno() == SM_ERR_INVALID);
+}
+
+namespace {
+
+/* A host process's own out-of-memory policy, for the test below. */
+void host_oom_handler() { throw std::bad_alloc(); }
+
+} // namespace
+
+TEST_CASE(
+    "sm1_attach makes running out of memory fatal, unless the host decided") {
+  // Verify sm1_attach installs its out-of-memory handler only
+  // when the process has none (the top-level DESIGN.md §5).
+  // 1. With no new-handler set, attaching installs one.
+  // 2. With the host's own handler set, attaching keeps it.
+  // 3. Restore the handler the test binary had.
+  std::new_handler saved = std::get_new_handler();
+  std::set_new_handler(nullptr);
+  {
+    home_t home;
+    CHECK(std::get_new_handler() != nullptr);
+  }
+  std::set_new_handler(host_oom_handler);
+  {
+    home_t home;
+    CHECK(std::get_new_handler() == host_oom_handler);
+  }
+  std::set_new_handler(saved);
 }
 
 TEST_CASE("sm1_init runs once per home directory") {
