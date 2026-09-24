@@ -434,6 +434,53 @@ TEST_CASE("a prepare that runs out of memory before its record is undone") {
   sm1_closedb(u);
 }
 
+TEST_CASE("a resolve that fails and runs out of memory keeps the transaction") {
+  // Verify a prepared transaction whose resolution fails stays
+  // registered and resolvable by gid, whichever allocation on the
+  // way fails too (§8.5).
+  // 1. S updates "a" and prepares it.
+  // 2. Mark the database failed, so any resolution fails.
+  // 3. For n = 0, 1, 2, ...: every allocation from the n-th on
+  //    fails while U commits it by gid; the commit fails, and the
+  //    transaction is still listed under its gid.
+  // 4. Stop once the failure is the database's (IO), not NOMEM:
+  //    every allocation on the way has then been failed.
+  // 5. Clear the failure; U commits it by gid and reads S's update.
+  tpc_fixture_t f;
+  sm1_session_t *s = f.open();
+  sm1_session_t *u = f.open();
+  const std::string gid = "g-" + std::string(60, 'x');
+  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(set(s, "a", "1") == 0);
+  REQUIRE(sm1_prepare(s, gid.c_str()) == 0);
+
+  s->db->failed = true;
+  long n = 0;
+  for (;; n++) {
+    REQUIRE(n < 10000);
+    t_alloc_budget = n;
+    int rc = sm1_commit_prepared(u, gid.c_str());
+    t_alloc_budget = -1;
+    INFO("allocation ", n, " failed");
+    REQUIRE(rc == -1);
+    sm1_errno_t e = sm1_errno();
+    auto l = listed(u);
+    REQUIRE(l.size() == 1);
+    CHECK(l[0].first == gid);
+    if (e != SM1_ERR_NOMEM) {
+      CHECK(e == SM1_ERR_IO);
+      break;
+    }
+  }
+  s->db->failed = false;
+  CHECK(n > 0);
+
+  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1_errmsg());
+  CHECK(read_now(u, "a") == "1");
+  sm1_closedb(s);
+  sm1_closedb(u);
+}
+
 TEST_CASE("another session can resolve a prepared transaction by gid") {
   // Verify resolution from any session (§8.5) and what the
   // preparing session sees afterwards.

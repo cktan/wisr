@@ -867,10 +867,39 @@ int abort_prepared_txn(sm1_session_t *g) {
 }
 
 /*
- * Resolve the prepared transaction gid (§8.5): take it out of
- * the registry, so a concurrent resolver finds nothing, commit
- * or abort it, and free its object. On a failure that leaves it
- * unresolved it goes back into the registry.
+ * End a resolution of g under gid: put g back in the entry resolve
+ * held for it if it is still unresolved, else drop the entry and
+ * free g. The entry is still there, so this allocates nothing.
+ */
+void unhold_prepared(db_t *db, const std::string &gid,
+                     sm1_session_t *g) noexcept {
+  // Still in doubt after a failure: it stays registered.
+  bool keep = g->active;
+  {
+    // Hold prepared_mu while editing the registry.
+    std::lock_guard<std::mutex> guard(db->prepared_mu);
+    // The held entry: only its resolver removes it.
+    auto it = db->prepared.find(gid);
+    if (keep) {
+      // Put it back.
+      it->second = g;
+    } else {
+      // Resolved: the gid is free again.
+      db->prepared.erase(it);
+    }
+  }
+  // Resolved: free its object.
+  if (!keep) {
+    delete g;
+  }
+}
+
+/*
+ * Resolve the prepared transaction gid (§8.5): hold its entry
+ * null, so a concurrent resolver finds nothing and no prepare can
+ * take the gid, commit or abort it, then put it back or drop it.
+ * Holding the entry rather than erasing it is what lets a failed
+ * resolution put the transaction back without allocating.
  */
 int resolve(db_t *db, const std::string &gid, bool commit_it) {
   sm1_session_t *g = nullptr;
@@ -879,26 +908,27 @@ int resolve(db_t *db, const std::string &gid, bool commit_it) {
     std::lock_guard<std::mutex> guard(db->prepared_mu);
     // Find the gid.
     auto it = db->prepared.find(gid);
-    // Unknown, still being prepared, or in limbo: nothing to do.
+    // Unknown, still being prepared or resolved, or in limbo:
+    // nothing to do.
     if (it == db->prepared.end() || !it->second || it->second->limbo) {
       return set_error(SM1_ERR_NOTFOUND,
                        "no unresolved prepared transaction {}", gid.c_str());
     }
-    // Take the transaction.
+    // Take the transaction, holding its entry null.
     g = it->second;
-    // Unregister it, so a concurrent resolver finds nothing.
-    db->prepared.erase(it);
+    it->second = nullptr;
   }
-  // Commit or abort it.
-  int rc = commit_it ? commit_prepared_txn(g) : abort_prepared_txn(g);
-  // Still unresolved after a failure: put it back.
-  if (rc != 0 && g->active) {
-    std::lock_guard<std::mutex> guard(db->prepared_mu);
-    db->prepared[gid] = g;
-    return rc;
+  int rc;
+  try {
+    // Commit or abort it.
+    rc = commit_it ? commit_prepared_txn(g) : abort_prepared_txn(g);
+  } catch (const std::bad_alloc &) {
+    // Out of memory midway: end the resolution, then report it.
+    unhold_prepared(db, gid, g);
+    throw;
   }
-  // Resolved: free its object.
-  delete g;
+  // Put it back if still unresolved; otherwise drop and free it.
+  unhold_prepared(db, gid, g);
   return rc;
 }
 
