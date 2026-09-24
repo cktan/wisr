@@ -93,7 +93,7 @@ engine-owned memory, are not NUL-terminated, must not be
 freed, and have a stated validity window.
 *Suggested: the same rule, with the window being "until the
 next call on this `rel`", which is what sm1 does for
-`sm1_read`.* A codec that allocates per datum will dominate the
+`sm1::read`.* A codec that allocates per datum will dominate the
 profile of every scan. → `SM2_DESIGN.md` §5
 
 **5.3 [ASSUMABLE] Does sm2 get its own error space?**
@@ -101,9 +101,9 @@ profile of every scan. → `SM2_DESIGN.md` §5
 but sm2 has failures of its own: a key over the limit, a datum
 that does not match its column's type, an unknown schema
 version, a corrupt tuple.
-*Suggested: extend sm1's `sm1_errno()` rather than invent a
+*Suggested: extend sm1's `sm1::errnum()` rather than invent a
 second mechanism, with sm2's codes in a reserved range, so one
-`sm1_errmsg()` serves the whole stack.* → `SM2_DESIGN.md` §5
+`sm1::errmsg()` serves the whole stack.* → `SM2_DESIGN.md` §5
 
 **5.4 [ASSUMABLE] Does sm2 enforce `NOT NULL`?**
 The tuple has a null bitmap, so it *can*.
@@ -129,7 +129,7 @@ and though sm3 may call sm1 directly (`DESIGN.md` §5 at the
 top level), sm2 alone prepends and strips the 2-byte object
 prefix, and sm3 never encodes a key itself, so sm2 needs a
 way to write, delete and scan them. Separately, someone calls
-`sm1_nextseq` for each new row.
+`sm1::nextseq` for each new row.
 *Suggested: two kinds of `rel`, opened over the same sm1
 store with different prefixes: a **heap `rel`**, keyed by
 `rowno`, and an **index `rel`**, keyed by the encoded columns

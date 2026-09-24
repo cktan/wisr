@@ -204,7 +204,7 @@ sm3's indexes that feel them most.
   the meaning of stored bytes — provided the codec keeps
   rejecting any value outside the declared precision.
 
-- **Over-long keys.** `SM1_MAX_KEYLEN` is 4096 and bounds an
+- **Over-long keys.** `sm1::max_keylen` is 4096 and bounds an
   index entry's whole key. Collation sort keys can be several
   times the length of their source text. Truncate and recheck,
   hash and recheck, or reject?

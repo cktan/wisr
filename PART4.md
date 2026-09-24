@@ -27,10 +27,10 @@ of the hard semantic work already done:
 | --- | --- |
 | RC / RR / SERIALIZABLE, RR being snapshot isolation | identical; PG's RR is also SI |
 | SSI with SIREAD predicate locks and pivot detection | the same Cahill algorithm PG uses (`sm1/SIREAD.md` tracks PG's refinement) |
-| `sm1_stmt_begin` pinning the RC snapshot for a statement | PG takes a snapshot per statement at RC |
+| `sm1::stmt_begin` pinning the RC snapshot for a statement | PG takes a snapshot per statement at RC |
 | nested savepoints as a depth stack | subtransactions |
-| `sm1_prepare(gid)`, `SM1_MAX_GID` = 200 | 2PC, `GIDSIZE` |
-| `SM1_MAX_DBNAME` = 63 | `NAMEDATALEN - 1` |
+| `sm1::prepare(gid)`, `sm1::max_gid` = 200 | 2PC, `GIDSIZE` |
+| `sm1::max_dbname` = 63 | `NAMEDATALEN - 1` |
 | deadlock found on a timeout, then a waits-for search, youngest victim | `deadlock_timeout`, same shape |
 | home directory layout | modelled on PG's data directory |
 
@@ -330,9 +330,9 @@ level.
 Decided and built: at READ COMMITTED the write waits for the
 row lock and then proceeds instead of failing. The change is to
 sm1: a refused write, `SM_ERR_UPDATED`, is followed by
-`sm1_read_latest` and then the write, and versions are keyed by a
-write timestamp so their order stays commit order. The design is
-`sm1/SM1_DESIGN.md` §5.4 and §6.2, and its tests are scenarios
+`sm1::read_latest` and then the write, and versions are keyed by
+a write timestamp so their order stays commit order. The design
+is `sm1/SM1_DESIGN.md` §5.4 and §6.2, and its tests are scenarios
 `f01`–`f10` and `e06`.
 
 ---

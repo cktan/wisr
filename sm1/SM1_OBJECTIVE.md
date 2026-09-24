@@ -37,21 +37,21 @@ full MVCC, for OLTP workloads.
 
 ## API
 
-- The `sm1_*` Storage Manager API (see `API.md`) is the interface
+- The `sm1::` Storage Manager API (see `API.md`) is the interface
   to this engine. It already sketches the primitives needed:
-  - database lifecycle: `sm1_mkdb` / `sm1_rmdb`
-  - sessions: `sm1_opendb` / `sm1_closedb`
-  - transactions: `sm1_begin` (with `sm1_xctlevel_t`) /
-    `sm1_prepare` / `sm1_commit` / `sm1_abort`
-  - nested savepoints: `sm1_savepoint` / `sm1_rollback` /
-    `sm1_forget`
-  - statement boundaries: `sm1_stmt_begin`
-  - row locks without writing: `sm1_lock`
-  - cursor reposition: `sm1_scan_seek`
-  - stores: `sm1_mkstore` / `sm1_rmstore` / `sm1_lsstore`
-  - sequences: `sm1_mkseq` / `sm1_rmseq` / `sm1_nextseq`
-  - data ops: `sm1_insert` / `sm1_update` / `sm1_delete` /
-    `sm1_read` / `sm1_scan` / `sm1_scannxt` / `sm1_scanend`
+  - database lifecycle: `sm1::mkdb` / `sm1::rmdb`
+  - sessions: `sm1::opendb` / `sm1::closedb`
+  - transactions: `sm1::begin` (with `sm1::xctlevel_t`) /
+    `sm1::prepare` / `sm1::commit` / `sm1::abort`
+  - nested savepoints: `sm1::savepoint` / `sm1::rollback` /
+    `sm1::forget`
+  - statement boundaries: `sm1::stmt_begin`
+  - row locks without writing: `sm1::lock`
+  - cursor reposition: `sm1::scan_seek`
+  - stores: `sm1::mkstore` / `sm1::rmstore` / `sm1::lsstore`
+  - sequences: `sm1::mkseq` / `sm1::rmseq` / `sm1::nextseq`
+  - data ops: `sm1::insert` / `sm1::update` / `sm1::erase` /
+    `sm1::read` / `sm1::scan` / `sm1::scannxt` / `sm1::scanend`
 
 ## Decisions
 
@@ -70,7 +70,7 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
   commit-status table. This keeps transaction size unbounded by RAM,
   at the cost of a status lookup on read and a garbage-collection pass
   for versions left behind by aborts.
-- **`sm1_prepare` is real two-phase commit.** Prepare durably
+- **`sm1::prepare` is real two-phase commit.** Prepare durably
   persists the prepared-transaction record (with a global
   transaction id), so a prepared transaction survives a crash and
   can be committed or aborted after restart by an external
@@ -86,5 +86,5 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
 
 - `API.md` is a sketch. `SM1_DESIGN.md` proposes concrete C
   signatures and flags where it must diverge — notably the
-  read/scan calls, and the extra 2PC entry points (`sm1_prepare`
+  read/scan calls, and the extra 2PC entry points (`sm1::prepare`
   taking a global id, plus recovery of in-doubt transactions).

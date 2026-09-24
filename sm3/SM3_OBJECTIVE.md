@@ -44,7 +44,7 @@ document is what it is for.
 - Anything sm1 already does: transactions, isolation, locking,
   durability, recovery, garbage collection. sm3 reaches them
   through sm2's session, or directly through `sm1/include/sm1.h`
-  where sm2 has nothing to add — `sm1_lock` is the case that
+  where sm2 has nothing to add — `sm1::lock` is the case that
   matters.
 - Replication, point-in-time recovery, and logical decoding.
   They read PostgreSQL's WAL, which does not carry data held

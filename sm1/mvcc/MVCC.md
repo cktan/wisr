@@ -71,8 +71,8 @@ failure does not prove a cycle existed, but no cycle escapes.
 
 | Level | Promise |
 |---|---|
-| `SM1_XCT_REPEATABLE_READ` | Snapshot isolation: no dirty read, no dirty write, no non-repeatable read, no phantom within the snapshot, no lost update. Write skew and the read-only anomaly are allowed. Never fails with `SM_ERR_SERIALIZATION`. |
-| `SM1_XCT_SERIALIZABLE` | Everything above, plus: every committed set of transactions is equivalent to some serial order. Pays for it with `SM_ERR_SERIALIZATION` failures at commit. |
+| `sm1::xctlevel_t::repeatable_read` | Snapshot isolation: no dirty read, no dirty write, no non-repeatable read, no phantom within the snapshot, no lost update. Write skew and the read-only anomaly are allowed. Never fails with `SM_ERR_SERIALIZATION`. |
+| `sm1::xctlevel_t::serializable` | Everything above, plus: every committed set of transactions is equivalent to some serial order. Pays for it with `SM_ERR_SERIALIZATION` failures at commit. |
 
 ## 2. Notation
 
@@ -278,7 +278,7 @@ them wrong would be invisible in ordinary use:
   is longer than a single waits-for hop, and b28's cycle sits
   on one row, which only a shared lock makes possible.
 - **A lock is a lock, whoever takes it** (b26 to b29):
-  `sm1_lock` shares the row locks writes take, so a shared
+  `sm1::lock` shares the row locks writes take, so a shared
   holder stops a writer, a writer stops a shared request, and
   a lock taken over a row committed since the snapshot fails
   with CONFLICT rather than handing back something stale.
@@ -350,7 +350,7 @@ these scenarios are the ones that would catch it.
 | e01 | SSI state (nodes, SIREAD entries, ranges) is released once no transaction overlaps it | S | `e01_ssi_node_lifetime.cc` |
 | e02 | Four contending SERIALIZABLE threads enforcing "at least one on call" never break the invariant; a checker thread never sees it broken | S+S | `e02_serializable_invariant_stress.cc` |
 | e03 | Four contending RR threads see `CONFLICT` / `DEADLOCK` and **never** `SERIALIZATION`; no update is lost | RR | `e03_rr_contention_stress.cc` |
-| e04 | `sm1_lsstore` and `sm1_mkstore` follow the same predicate rules as rows | all | `in/e04_catalog_predicate.t` |
+| e04 | `sm1::lsstore` and `sm1::mkstore` follow the same predicate rules as rows | all | `in/e04_catalog_predicate.t` |
 | e05 | Four RR transactions that each read everything and write one row all commit | RR | `in/e05_rr_many_readers_writers.t` |
 | e06 | Four READ COMMITTED threads incrementing three hot counters through the `updated` / `readlatest` exchange, with compaction running, lose no increment | RC | `e06_rc_contention_stress.cc` |
 
