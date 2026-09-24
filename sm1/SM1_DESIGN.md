@@ -1388,6 +1388,60 @@ RocksDB's estimated key count of `CF:txn` on each run and
 starts a sweep past an internal threshold of one million
 records.
 
+**Open question: the pass under a production load.** Nothing
+here is decided or implemented. As built, the pass has three
+costs beyond its I/O:
+
+- **It stalls writes.** `exclusive_manual_compaction` means
+  "no other compaction will run at the same time", across
+  the whole database. While the pass works through the
+  stores, a busy store gets no automatic compaction, so its
+  level-0 files pile up to RocksDB's slowdown and then its
+  stop trigger, and writes stall.
+- **It trades badly.** One million `CF:txn` records are tens
+  of megabytes; to reclaim them the pass rewrites every
+  store, which may be terabytes.
+- **It blocks the GC worker.** `CompactRange` runs inside
+  `gc_run_once` and waits, so tombstone purges, store drops
+  and the stuck-snapshot warnings wait behind the whole pass.
+  Only the wait for pre-pass readers is off the worker.
+
+Two fixes that come up do not work. Letting ordinary
+compaction do the stamping is unsound: it never promises to
+visit every file, so no record could ever be dropped, and
+dropping one anyway is A.1's first refuted assertion.
+Compacting one key range at a time can be made sound — fix
+`W0` once for the cycle, and make each range's compaction
+exclusive and bottommost — and it shortens each exclusive
+window, but it is still a rewrite of every store, spread out.
+
+The options:
+
+- **(a) Trim the pass.** Trigger on `CF:txn`'s size relative
+  to the stores' data rather than a fixed count, and run the
+  pass off the GC worker. Contained, but the exclusive stall
+  and the full rewrite remain.
+- **(b) Compact only files that need it.** A RocksDB
+  `TablePropertiesCollector` on every store CF records, per
+  SST, whether it holds unstamped versions and of which
+  xids, and marks such a file for compaction
+  (`NeedCompact()`), so RocksDB's own background compaction
+  rewrites it and the filter stamps it. The sweep flushes the
+  memtables, then reads the live files' properties, and drops
+  the records at or below `W0` once no live file holds an
+  unstamped version of a transaction committed at or below
+  `W0`; the read-epoch wait stays as it is. The argument that
+  would make it sound: the filter never removes a stamp, so a
+  compaction whose inputs hold no such version outputs none,
+  and files created after the check are made from files it
+  saw. A fully stamped cold file is never rewritten and
+  nothing runs exclusively. Still to settle: what the property
+  holds — a count, an xid range, or the xids themselves — and
+  writing the argument down as carefully as step 2's.
+
+(b) is the fix; (a) is what to do first if the stall bites
+before (b) is built.
+
 Dropping a store (`sm1::rmstore`) deletes its catalog row (§11).
 The tombstone carries no storeid, so commit queues the storeids
 in `T.dropped` with its `commit_ts`; once `gc_watermark` passes
@@ -2504,7 +2558,7 @@ what makes recovery free of an undo pass.
 | Review item | Where it landed |
 | :--- | :--- |
 | Scans inherit RocksDB's prefix seek mode and return at most one userkey | §10.2 seek mode, §12.2, §12.5 regression test |
-| Full-compaction cost of the `CF:txn` sweep, and its unstated RocksDB dependencies | §8.3 |
+| Full-compaction cost of the `CF:txn` sweep, and its unstated RocksDB dependencies | §8.3; the cost under load is an open question there |
 | One `DeleteRange` per deleted key saturates the range-tombstone aggregator | §8.3 no coalescing, flushed by count; §12.2 no `row_cache`, `memtable_max_range_deletions` |
 | Cursors opened after a savepoint outlive `sm1::rollback` | §6.5, §10.2, `API.md`, §12.5 |
 | No index for matching a write against active range predicates | §7.1 per-store interval tree |
