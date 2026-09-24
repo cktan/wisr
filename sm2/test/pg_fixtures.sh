@@ -93,6 +93,10 @@ TYPES+=(
   "15|interval|'infinity', '-infinity', 'PT0S', '1 mon', '30 days', '1 year 2 months 3 days 04:05:06.789', 'PT-0.5S', 'P-1Y2M', '-1 day +02:00', '-00:00:01.000001', 'P178956970Y7M', 'P-178956970Y-8M', 'P2147483647D', 'P-2147483648D', 'PT2562047788H54.775807S', 'PT-2562047788H-54.775808S', 'P178956970Y7M2147483647DT2562047788H54.775806S', $(random_intervals)"
 )
 
+TYPES+=(
+  "16|uuid|'00000000-0000-0000-0000-000000000000', 'ffffffff-ffff-ffff-ffff-ffffffffffff', '01234567-89ab-cdef-0123-456789abcdef', '{A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11}', '80000000-0000-0000-0000-000000000001'"
+)
+
 # Seeded random values PostgreSQL itself makes, 500 per type: half
 # within a few thousand years of 2000, half anywhere in range.
 us="' microseconds')::interval"
@@ -101,6 +105,7 @@ declare -A RANDOM_ROWS=(
             THEN floor(random() * 4903090) - 2451545
             ELSE floor(random() * 2147483493) - 2451545 END::int
           FROM generate_series(1, 500) g"
+  [uuid]="SELECT md5(random()::text)::uuid FROM generate_series(1, 500)"
   [time]="SELECT TIME '00:00' + (floor(random() * 86400000000)::bigint || $us
           FROM generate_series(1, 500)"
   [timestamp]="SELECT TIMESTAMP '2000-01-01' + (CASE WHEN g % 2 = 0
@@ -151,7 +156,7 @@ for t in "${TYPES[@]}"; do
   # Then the random ones, if the type has any.
   if [[ -n "${RANDOM_ROWS[$name]:-}" ]]; then
     q -c "SELECT setseed(0.20260924)" \
-      -c "INSERT INTO fx_$name ${RANDOM_ROWS[$name]}"
+      -c "INSERT INTO fx_$name ${RANDOM_ROWS[$name]}" >/dev/null
   fi
   # Pair each row's text with its tuple's data bytes. The column
   # itself, not c::text, so that the text is the type's output

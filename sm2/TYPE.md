@@ -379,6 +379,13 @@ Native is the 16 bytes. PostgreSQL orders `uuid` by
 `memcmp` over exactly those bytes, so the key is the bytes
 unchanged: fixed width, prefix-free, nothing to transform.
 
+The bytes are in the uuid's own order, not swapped to
+little-endian: a uuid is a byte string, not an integer. The
+text is PostgreSQL's `uuid_out`, lower-case hex in groups of 8,
+4, 4, 4 and 12 joined by hyphens. PostgreSQL also reads upper
+case, braces and missing hyphens, but never prints them, so sm2
+refuses them.
+
 ---
 
 ## 4. What is not here yet

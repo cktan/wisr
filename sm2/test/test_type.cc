@@ -147,9 +147,10 @@ template <typename F> void check_float_type(const sm2::type_t &t) {
 
 TEST_CASE("each type is found by its frozen code, and only by it") {
   // Verify the registry and each descriptor's fixed properties.
-  // 1. Codes 1 to 6 and 11 to 15 find bool, the integers, the
-  //    floats, date, time, the timestamps and interval, whose
-  //    name, width, by-value flag and alignment are PostgreSQL's.
+  // 1. Codes 1 to 6 and 11 to 16 find bool, the integers, the
+  //    floats, date, time, the timestamps, interval and uuid,
+  //    whose name, width, by-value flag and alignment are
+  //    PostgreSQL's.
   // 2. The slots not filled yet are null.
   // 3. Code 0, which is never a type, and codes not assigned yet
   //    find nothing.
@@ -159,12 +160,12 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     int16_t len;
     bool byval;
     uint8_t align;
-  } want[] = {{1, "bool", 1, true, 1},       {2, "int2", 2, true, 2},
-              {3, "int4", 4, true, 4},       {4, "int8", 8, true, 8},
-              {5, "float4", 4, true, 4},     {6, "float8", 8, true, 8},
-              {11, "date", 4, true, 4},      {12, "time", 8, true, 8},
-              {13, "timestamp", 8, true, 8}, {14, "timestamptz", 8, true, 8},
-              {15, "interval", 16, false, 8}};
+  } want[] = {{1, "bool", 1, true, 1},        {2, "int2", 2, true, 2},
+              {3, "int4", 4, true, 4},        {4, "int8", 8, true, 8},
+              {5, "float4", 4, true, 4},      {6, "float8", 8, true, 8},
+              {11, "date", 4, true, 4},       {12, "time", 8, true, 8},
+              {13, "timestamp", 8, true, 8},  {14, "timestamptz", 8, true, 8},
+              {15, "interval", 16, false, 8}, {16, "uuid", 16, false, 1}};
   for (auto &w : want) {
     CAPTURE(w.name);
     const sm2::type_t *t = sm2::type_by_code(w.code);
@@ -647,5 +648,49 @@ TEST_CASE("an interval typmod keeps only what it would not change") {
       CHECK(t.in(text, typmod, datum) == -1);
       CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
     }
+  }
+}
+
+TEST_CASE("a uuid is its 16 bytes, ordered bytewise") {
+  // Verify uuid by property, from test_seed().
+  // 1. All-zero, all-one and random datums print and read back
+  //    to themselves.
+  // 2. cmp is memcmp's order, the high bit included.
+  // 3. in refuses what uuid_out never prints: upper case, braces,
+  //    no or misplaced hyphens, a wrong length, non-hex digits.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  const sm2::type_t &t = sm2::type_uuid;
+  std::vector<std::string> values = {std::string(16, '\0'),
+                                     std::string(16, '\xff')};
+  for (int i = 0; i < property_runs; i++) {
+    std::string v = le_bytes(rng()) + le_bytes(rng());
+    if (i % 4 == 0) {
+      v.replace(8, 8, values[i % 2 == 0].substr(0, 8));
+    }
+    values.push_back(v);
+  }
+  for (const std::string &v : values) {
+    std::string text, back;
+    REQUIRE(t.out(v, -1, text) == 0);
+    CAPTURE(text);
+    REQUIRE(t.in(text, -1, back) == 0);
+    CHECK(back == v);
+  }
+  for (size_t i = 0; i + 1 < values.size(); i++) {
+    int want = sign(memcmp(values[i].data(), values[i + 1].data(), 16));
+    CHECK(sign(t.cmp(values[i], values[i + 1], -1)) == want);
+  }
+  for (std::string_view text : {"", "A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11",
+                                "{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}",
+                                "a0eebc999c0b4ef8bb6d6bb9bd380a11",
+                                "a0eebc99-9c0b4ef8-bb6d-6bb9bd380a11",
+                                "a0eebc9-99c0b-4ef8-bb6d-6bb9bd380a11",
+                                "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1",
+                                "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a111",
+                                "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1g",
+                                " a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"}) {
+    CAPTURE(text);
+    expect_bad_input(t, text);
   }
 }

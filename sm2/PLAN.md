@@ -185,7 +185,8 @@ The date and time types add 500 seeded random values each,
 made by PostgreSQL itself, half within a few thousand years of
 2000 and half anywhere in range. `interval` adds 500 seeded
 random ones, spelled in PostgreSQL's verbose input form so
-that the ISO 8601 text is PostgreSQL's own printing. The floats add 2,500 seeded
+that the ISO 8601 text is PostgreSQL's own printing, and
+`uuid` 500 made from seeded `random()` through `md5`. The floats add 2,500 seeded
 random values each, since
 PostgreSQL's float text is not always the shortest decimal:
 2,000 random finite bit patterns and 500 integers just past
