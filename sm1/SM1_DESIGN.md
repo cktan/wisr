@@ -2169,6 +2169,9 @@ forgotten cursor holding back reclamation.
 
 ```
 include/sm1.h           public C++ API, namespace sm1
+include/sm1_codec.h     fixed-width big-endian integers
+include/sm1_defer.h     defer blocks and scope guards
+include/sm1_format.h    std::format into a fixed buffer, allocating nothing
 src/env.cc              init/attach/detach, root db, db sweep
 src/db.cc               mkdb/rmdb, open registry, CF setup, storeid→CF map
 src/session.cc          open/close, per-session state and buffers
@@ -2182,11 +2185,17 @@ src/seq.cc              named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq
 src/gc.cc               compaction filter, watermarks, drop-store purge
 src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
 src/log.cc              the sm1::set_log hook the engine reports through
+src/format.cc           sm1::format_into
 test/                   the engine's tests: API, limits, locks, GC,
                         2PC, crash, sequences, logging
 mvcc/                   isolation: MVCC.md and one file per scenario
 example/                small programs against the public API
 ```
+
+General C and C++ utilities — anything not specific to the
+engine — live in `include/` as `sm1_*.h`, in `namespace sm1`,
+where the levels above can use them too. `src/` holds only the
+engine.
 
 ### 12.4 Build order
 

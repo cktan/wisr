@@ -5,9 +5,9 @@
 
 #include "session.h"
 
-#include "codec.h"
 #include "env.h"
 #include "error.h"
+#include "sm1_codec.h"
 
 #include <memory>
 #include <new>
@@ -49,7 +49,7 @@ db_t *find_or_open(sm1::env_t *env, const char *dbname,
     return nullptr;
   }
   // Open the database: its first session in this process.
-  db_t *db = db_open(env_db_path(env, get_be64(val.data())), dbname, opt);
+  db_t *db = db_open(env_db_path(env, sm1::get_be64(val.data())), dbname, opt);
   // Register the newly opened database.
   if (db) {
     env->dbs[dbname] = db;

@@ -13,10 +13,10 @@
 
 #include "env.h"
 
-#include "codec.h"
-#include "defer.h"
 #include "error.h"
 #include "log.h"
+#include "sm1_codec.h"
+#include "sm1_defer.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -109,7 +109,7 @@ int sweep_base(sm1::env_t *env) {
                        it->key().ToString().c_str() + 1);
     }
     // This dbid is live.
-    live.insert(get_be64(it->value().data()));
+    live.insert(sm1::get_be64(it->value().data()));
   }
   // Fail if the root db scan failed.
   if (!it->status().ok()) {
@@ -165,11 +165,12 @@ int sweep_base(sm1::env_t *env) {
  */
 [[noreturn]] void oom_handler() {
   char msg[256];
-  format_into(msg, sizeof(msg),
-              "*** FATAL *** out of memory: the process is aborting. Reopen "
-              "the databases: WAL replay recovers every committed "
-              "transaction.",
-              std::make_format_args());
+  sm1::format_into(
+      msg, sizeof(msg),
+      "*** FATAL *** out of memory: the process is aborting. Reopen "
+      "the databases: WAL replay recovers every committed "
+      "transaction.",
+      std::make_format_args());
   // Tell stderr, whatever the log hook does.
   fprintf(stderr, "%s\n", msg);
   fflush(stderr);
@@ -214,7 +215,7 @@ sm1::env_t *attach(const char *homedir) {
     set_error(sm1::SM_ERR_CORRUPT, "{}: no format version", rootpath.c_str());
     return nullptr;
   }
-  uint64_t v = get_be64(version.data());
+  uint64_t v = sm1::get_be64(version.data());
   // Reject a format this build does not understand.
   if (v != WISR_HOME_VERSION) {
     set_error(sm1::SM_ERR_VERSION, "{}: format version {}, expected {}",
@@ -318,8 +319,8 @@ int sm1::init(std::string_view homedir_arg) {
   };
   // Encode the format version and the first dbid.
   std::string version, next_dbid;
-  put_be64(version, WISR_HOME_VERSION);
-  put_be64(next_dbid, 1);
+  sm1::put_be64(version, WISR_HOME_VERSION);
+  sm1::put_be64(next_dbid, 1);
   // Record both in one synced batch.
   rocksdb::WriteBatch batch;
   batch.Put(WISR_ROOT_VERSION, version);

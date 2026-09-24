@@ -66,7 +66,7 @@ SCRIPT_GOOD := mvcc/good
 
 FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h mvcc/*.cc \
                           mvcc/*.h mvcc/driver/*.cc mvcc/driver/*.h \
-                          example/*.cc)
+                          example/*.cc include/sm1_*.h)
 FORMAT_FILES := $(filter-out test/doctest.h,$(FORMAT_FILES))
 
 .PHONY: all test scenarios accept format clean

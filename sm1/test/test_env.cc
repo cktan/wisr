@@ -6,9 +6,9 @@
 #include "doctest.h"
 #include "util.h"
 
-#include "codec.h"
 #include "env.h"
 #include "sm1.h"
+#include "sm1_codec.h"
 
 #include <string.h>
 #include <sys/stat.h>
@@ -127,7 +127,7 @@ TEST_CASE("sm1_attach rejects an unknown format version") {
     std::string rootpath = std::string(tmp.path()) + "/global/root";
     REQUIRE(rocksdb::DB::Open(rocksdb::Options(), rootpath, &root).ok());
     std::string v;
-    wisr::put_be64(v, 99);
+    sm1::put_be64(v, 99);
     REQUIRE(root->Put(rocksdb::WriteOptions(), WISR_ROOT_VERSION, v).ok());
     delete root;
   }

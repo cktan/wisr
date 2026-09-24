@@ -7,9 +7,9 @@
  * readers they invalidate (ssi.cc, §7).
  */
 
-#include "defer.h"
 #include "error.h"
 #include "session.h"
+#include "sm1_defer.h"
 #include "version.h"
 
 #include <algorithm>

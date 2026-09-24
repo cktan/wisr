@@ -19,11 +19,11 @@
  * record (§8.4, §9.1).
  */
 
-#include "codec.h"
-#include "defer.h"
 #include "error.h"
 #include "log.h"
 #include "session.h"
+#include "sm1_codec.h"
+#include "sm1_defer.h"
 #include "version.h"
 
 #include <stdlib.h>
@@ -99,7 +99,7 @@ bool pending_prepared(sm1::session_t *s) {
 std::string txn_key(uint64_t xid) {
   std::string k;
   // The xid, big-endian, so records sort by xid.
-  put_be64(k, xid);
+  sm1::put_be64(k, xid);
   return k;
 }
 
@@ -490,12 +490,12 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
   // the commit_ts and hold visible_ts back for good (§4.3).
   char val[txn_record_size];
   val[0] = static_cast<char>(txn_committed);
-  uint64_t be = to_be64(s->snapshot_ts);
+  uint64_t be = sm1::to_be64(s->snapshot_ts);
   memcpy(val + 1, &be, sizeof(be));
-  be = to_be64(commit_ts);
+  be = sm1::to_be64(commit_ts);
   memcpy(val + 1 + sizeof(be), &be, sizeof(be));
   char key[sizeof(uint64_t)];
-  be = to_be64(xid);
+  be = sm1::to_be64(xid);
   memcpy(key, &be, sizeof(be));
   // No error unless the hook or the write says so.
   rocksdb::Status st;
@@ -627,27 +627,27 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
   // The state byte.
   v.push_back(static_cast<char>(txn_prepared));
   // The snapshot, for the GC watermark after a restart.
-  put_be64(v, t->snapshot_ts);
+  sm1::put_be64(v, t->snapshot_ts);
   // No commit_ts yet.
-  put_be64(v, 0);
+  sm1::put_be64(v, 0);
   // When it was prepared.
-  put_be64(v, static_cast<uint64_t>(prepared_at));
+  sm1::put_be64(v, static_cast<uint64_t>(prepared_at));
   // The gid, length-prefixed.
-  put_be32(v, static_cast<uint32_t>(gid.size()));
+  sm1::put_be32(v, static_cast<uint32_t>(gid.size()));
   v.append(gid);
   // The lock set: every lock key, length-prefixed, each
   // followed by the mode byte it is held in (§8.4).
-  put_be32(v, static_cast<uint32_t>(t->locks.size()));
+  sm1::put_be32(v, static_cast<uint32_t>(t->locks.size()));
   for (const sm1::session_t::lockref_t &l : t->locks) {
-    put_be32(v, static_cast<uint32_t>(l.key.size()));
+    sm1::put_be32(v, static_cast<uint32_t>(l.key.size()));
     v.append(l.key);
     v.push_back(l.exclusive ? 1 : 0);
   }
   // The storeids created, then those dropped, each counted.
   for (const std::vector<uint64_t> *stores : {&t->created, &t->dropped}) {
-    put_be32(v, static_cast<uint32_t>(stores->size()));
+    sm1::put_be32(v, static_cast<uint32_t>(stores->size()));
     for (uint64_t storeid : *stores) {
-      put_be64(v, storeid);
+      sm1::put_be64(v, storeid);
     }
   }
   return v;
@@ -750,7 +750,7 @@ int prepare(sm1::session_t *s, const char *gid) {
   }
   // Release the reservation if the prepare fails before the
   // transaction is detached; dismissed once it is.
-  scope_guard_t unreserve([&] {
+  sm1::scope_guard_t unreserve([&] {
     std::lock_guard<std::mutex> guard(db->prepared_mu);
     db->prepared.erase(key);
   });
@@ -855,8 +855,8 @@ int abort_prepared_txn(sm1::session_t *g) {
   // Build the ABORTED record.
   std::string val;
   val.push_back(static_cast<char>(txn_aborted));
-  put_be64(val, g->snapshot_ts);
-  put_be64(val, 0);
+  sm1::put_be64(val, g->snapshot_ts);
+  sm1::put_be64(val, 0);
   // Sync it, so the PREPARED record cannot come back.
   rocksdb::WriteOptions wo;
   wo.sync = true;
@@ -1111,7 +1111,7 @@ xct_state_t xct_status(db_t *db, uint64_t xid, uint64_t *commit_ts) {
   // Decide by the record's state.
   switch (static_cast<uint8_t>(val[0])) {
   case txn_committed:
-    *commit_ts = get_be64(val.data() + 9);
+    *commit_ts = sm1::get_be64(val.data() + 9);
     return XCT_COMMITTED;
   case txn_aborted:
     return XCT_DEAD;
@@ -1135,7 +1135,7 @@ int64_t xct_drop_committed_records(db_t *db, uint64_t w0) {
     // ABORTED records always go; COMMITTED ones at or below W0.
     bool swept = state == txn_aborted ||
                  (state == txn_committed && v.size() >= txn_record_size &&
-                  get_be64(v.data() + 9) <= w0);
+                  sm1::get_be64(v.data() + 9) <= w0);
     // Delete a swept record.
     if (swept) {
       batch.Delete(db->cf_txn, it->key());
@@ -1176,19 +1176,19 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
   // Its xid is the record's key.
   g->xid = xid;
   // Its snapshot, for the GC watermark.
-  g->snapshot_ts = get_be64(val.data() + 1);
+  g->snapshot_ts = sm1::get_be64(val.data() + 1);
   // Walk the record's variable part.
   const char *p = val.data() + txn_record_size;
   const char *end = val.data() + val.size();
   // When it was prepared.
-  g->prepared_at = static_cast<long long>(get_be64(p));
+  g->prepared_at = static_cast<long long>(sm1::get_be64(p));
   p += 8;
   // Read a 4-byte count, checking bounds.
   auto take32 = [&](uint32_t *x) {
     if (end - p < 4) {
       return false;
     }
-    *x = get_be32(p);
+    *x = sm1::get_be32(p);
     p += 4;
     return true;
   };
@@ -1229,7 +1229,7 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
     }
     // Take each storeid.
     for (uint32_t i = 0; i < count; i++) {
-      stores->push_back(get_be64(p));
+      stores->push_back(sm1::get_be64(p));
       p += 8;
     }
   }

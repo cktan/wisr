@@ -9,10 +9,10 @@
  * versions.
  */
 
-#include "codec.h"
 #include "error.h"
 #include "log.h"
 #include "session.h"
+#include "sm1_codec.h"
 #include "version.h"
 
 #include <memory>
@@ -39,7 +39,7 @@ int restore_prepared(db_t *db) {
       continue;
     }
     // Decode the xid.
-    uint64_t xid = get_be64(it->key().data());
+    uint64_t xid = sm1::get_be64(it->key().data());
     sm1::session_t *g = nullptr;
     // Rebuild a PREPARED record; skip every other state.
     if (!xct_decode_prepared(db, xid, it->value(), &g)) {
@@ -120,7 +120,7 @@ int live_storeids(db_t *db, std::set<uint64_t> *live) {
     have = true;
     // A live row's key names a storeid to keep: "R" | be64(storeid).
     if (!(v.flags & version_tombstone) && v.userkey.size() == 9) {
-      live->insert(get_be64(v.userkey.data() + 1));
+      live->insert(sm1::get_be64(v.userkey.data() + 1));
     }
   }
   // Fail if the catalog scan failed.

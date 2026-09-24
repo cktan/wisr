@@ -18,8 +18,8 @@
  * once, so the search walks a graph, not a chain.
  */
 
-#include "codec.h"
 #include "session.h"
+#include "sm1_codec.h"
 
 #include <chrono>
 #include <set>
@@ -34,7 +34,7 @@ std::string lock_key(uint64_t storeid, rocksdb::Slice key) {
   // Reserve room for the storeid prefix and the key.
   k.reserve(8 + key.size());
   // Prefix the storeid, so equal keys in different stores differ.
-  put_be64(k, storeid);
+  sm1::put_be64(k, storeid);
   // Append the userkey.
   k.append(key.data(), key.size());
   return k;

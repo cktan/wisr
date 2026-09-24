@@ -10,6 +10,7 @@
 #define WISR_ERROR_H
 
 #include "sm1.h"
+#include "sm1_format.h"
 
 #include <stddef.h>
 
@@ -20,14 +21,6 @@
 #include <rocksdb/status.h>
 
 namespace wisr {
-
-/*
- * Format fmt with args into buf, a buffer of size bytes, cutting
- * the message short if it does not fit; always NUL-terminates.
- * Allocates nothing. Returns the length written.
- */
-size_t format_into(char *buf, size_t size, std::string_view fmt,
-                   std::format_args args);
 
 /* Record e with a message formatted from fmt and args. Returns -1. */
 int set_error_v(sm1::errnum_t e, std::string_view fmt, std::format_args args);

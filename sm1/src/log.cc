@@ -37,7 +37,7 @@ bool log_enabled() { return g_log_on.load(std::memory_order_relaxed); }
 void log_v(sm1::loglevel_t level, std::string_view fmt, std::format_args args) {
   char buf[1024];
   // Format the message, cut short if it does not fit.
-  format_into(buf, sizeof(buf), fmt, args);
+  sm1::format_into(buf, sizeof(buf), fmt, args);
   // Call the hook one at a time, under its mutex.
   std::lock_guard<std::mutex> guard(g_log_mu);
   // The hook may have been removed since the caller checked.
