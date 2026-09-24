@@ -10,6 +10,7 @@
 #include "env.h"
 #include "sm1.h"
 
+#include <string.h>
 #include <sys/stat.h>
 
 #include <filesystem>
@@ -26,19 +27,19 @@ TEST_CASE("sm1_init refuses a missing, non-directory, or empty homedir") {
   tmpdir_t tmp;
   std::string missing = std::string(tmp.path()) + "/nope";
   CHECK(sm1_init(missing.c_str()) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   std::string file = std::string(tmp.path()) + "/file";
   FILE *f = fopen(file.c_str(), "w");
   REQUIRE(f);
   fclose(f);
   CHECK(sm1_init(file.c_str()) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
   CHECK(sm1_init(nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_init("") == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
 namespace {
@@ -76,7 +77,7 @@ TEST_CASE("sm1_init runs once per home directory") {
   tmpdir_t tmp;
   REQUIRE(sm1_init(tmp.path()) == 0);
   CHECK(sm1_init(tmp.path()) == -1);
-  CHECK(sm1_errno() == SM_ERR_EXISTS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
 }
 
 TEST_CASE("sm1_attach requires an initialized home directory") {
@@ -85,7 +86,7 @@ TEST_CASE("sm1_attach requires an initialized home directory") {
   // 2. Confirm no global/ was created as a side effect.
   tmpdir_t tmp;
   CHECK(sm1_attach(tmp.path()) == nullptr);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK_FALSE(std::filesystem::exists(std::string(tmp.path()) + "/global"));
 }
 
@@ -130,7 +131,7 @@ TEST_CASE("sm1_attach rejects an unknown format version") {
     delete root;
   }
   CHECK(sm1_attach(tmp.path()) == nullptr);
-  CHECK(sm1_errno() == SM_ERR_VERSION);
+  CHECK(sm1::errnum() == sm1::SM_ERR_VERSION);
 }
 
 TEST_CASE("sm1_attach sweeps database directories no name points at") {
@@ -155,15 +156,51 @@ TEST_CASE("sm1_attach sweeps database directories no name points at") {
 }
 
 TEST_CASE("a successful call leaves the error state untouched") {
-  // Verify success does not clear sm1_errno or sm1_errmsg.
+  // Verify success does not clear sm1::errnum or sm1::errmsg.
   // 1. Provoke SM_ERR_INVALID and save the message.
   // 2. Make a successful call.
   // 3. Confirm the code and message are unchanged.
   tmpdir_t tmp;
   CHECK(sm1_init(nullptr) == -1);
-  std::string msg = sm1_errmsg();
+  std::string msg = sm1::errmsg();
   REQUIRE(sm1_init(tmp.path()) == 0);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
-  CHECK(msg == sm1_errmsg());
-  CHECK(sm1_retryable() == 0);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(msg == sm1::errmsg());
+  CHECK(sm1::retryable() == 0);
+}
+
+TEST_CASE("seterr, reseterr and errname drive the thread's error state") {
+  // Verify an upper level can record, clear and name an error
+  // through sm1's one errno namespace (the top-level DESIGN.md §5).
+  // 1. seterr records a code and message and returns -1; errname
+  //    names the code without its SM_ prefix, and retryable
+  //    follows the code.
+  // 2. A message longer than the buffer is cut short, and stays
+  //    NUL-terminated.
+  // 3. Every code from SM_ERR_INVALID to SM_ERR_UPDATED has a name.
+  // 4. reseterr restores SM_OK, "no error", and the name "OK".
+  CHECK(sm1::seterr(sm1::SM_ERR_UPDATED, "newer commit") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
+  CHECK(std::string(sm1::errmsg()) == "newer commit");
+  CHECK(std::string(sm1::errname()) == "ERR_UPDATED");
+  CHECK(sm1::retryable() == 0);
+  CHECK(sm1::seterr(sm1::SM_ERR_DEADLOCK, "victim") == -1);
+  CHECK(std::string(sm1::errname()) == "ERR_DEADLOCK");
+  CHECK(sm1::retryable() == 1);
+
+  const std::string big(100000, 'x');
+  sm1::seterr(sm1::SM_ERR_IO, big);
+  size_t n = strlen(sm1::errmsg());
+  CHECK(n > 0);
+  CHECK(n < big.size());
+
+  for (int c = sm1::SM_ERR_INVALID; c <= sm1::SM_ERR_UPDATED; c++) {
+    sm1::seterr(static_cast<sm1::errnum_t>(c), "x");
+    CHECK(std::string(sm1::errname()).rfind("ERR_", 0) == 0);
+  }
+
+  sm1::reseterr();
+  CHECK(sm1::errnum() == sm1::SM_OK);
+  CHECK(std::string(sm1::errmsg()) == "no error");
+  CHECK(std::string(sm1::errname()) == "OK");
 }

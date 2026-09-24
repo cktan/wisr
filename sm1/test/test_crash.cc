@@ -171,9 +171,9 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
     close(fds[0]);
 
     sm1_env_t *env = sm1_attach(tmp.path());
-    REQUIRE_MESSAGE(env, sm1_errmsg());
+    REQUIRE_MESSAGE(env, sm1::errmsg());
     sm1_session_t *s = sm1_opendb(env, "db", nullptr);
-    REQUIRE_MESSAGE(s, sm1_errmsg());
+    REQUIRE_MESSAGE(s, sm1::errmsg());
     REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
     uint64_t store = first_store(s);
     REQUIRE(store != 0);

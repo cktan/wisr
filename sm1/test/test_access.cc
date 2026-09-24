@@ -53,7 +53,7 @@ using rows_t = std::vector<std::pair<std::string, std::string>>;
 
 /* Drain a cursor into (key, value) pairs and close it. */
 rows_t drain(sm1_scan_t *c) {
-  REQUIRE_MESSAGE(c, sm1_errmsg());
+  REQUIRE_MESSAGE(c, sm1::errmsg());
   rows_t rows;
   const char *k, *d;
   size_t kl, dl;
@@ -103,7 +103,7 @@ TEST_CASE("sm1_mkstore and sm1_rmstore are transactional") {
   const char *d;
   size_t dl;
   CHECK(sm1_read(s, gone, "k", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   uint64_t store = mkstore(s);
   CHECK(store != gone);
   put(s, store, "k", "v");
@@ -120,7 +120,7 @@ TEST_CASE("sm1_mkstore and sm1_rmstore are transactional") {
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_rmstore(s, store) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   uint64_t fresh = mkstore(s);
   CHECK(fresh > store);
   CHECK(get(s, fresh, "k") == "<none>");
@@ -148,7 +148,7 @@ TEST_CASE("a transaction reads its own inserts, updates, and deletes") {
     put(s, store, "k", "v1");
     CHECK(get(s, store, "k") == "v1");
     CHECK(sm1_insert(s, store, "k", 1, "x", 1) == -1);
-    CHECK(sm1_errno() == SM_ERR_DUPKEY);
+    CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
 
     REQUIRE(sm1_update(s, store, "k", 1, "v2", 2, nullptr, nullptr) == 0);
     REQUIRE(sm1_update(s, store, "k", 1, "v3", 2, nullptr, nullptr) == 0);
@@ -157,9 +157,9 @@ TEST_CASE("a transaction reads its own inserts, updates, and deletes") {
     REQUIRE(sm1_delete(s, store, "k", 1, nullptr, nullptr) == 0);
     CHECK(get(s, store, "k") == "<none>");
     CHECK(sm1_update(s, store, "k", 1, "x", 1, nullptr, nullptr) == -1);
-    CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
     CHECK(sm1_delete(s, store, "k", 1, nullptr, nullptr) == -1);
-    CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
     put(s, store, "k", "v4");
     CHECK(get(s, store, "k") == "v4");
@@ -331,7 +331,7 @@ TEST_CASE("sm1_stmt_begin needs a transaction and does nothing above RC") {
   sm1_session_t *other = f.open_other();
 
   CHECK(sm1_stmt_begin(s) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm1_stmt_begin(s) == 0);
@@ -536,23 +536,23 @@ TEST_CASE("sm1_scan_seek refuses to move backwards or out of range") {
   CHECK(std::string(k, kl) == "k3");
 
   CHECK(sm1_scan_seek(c, "k2", 2, 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
   REQUIRE(sm1_scan_seek(c, "k5", 2, 1) == 0);
   REQUIRE(sm1_scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k5");
   CHECK(sm1_scan_seek(c, "k3", 2, 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
   REQUIRE(sm1_scan_seek(c, "k5", 2, 1) == 0);
   REQUIRE(sm1_scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k5");
 
   CHECK(sm1_scan_seek(nullptr, "k5", 2, 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::string huge(SM1_MAX_KEYLEN + 1, 'z');
   CHECK(sm1_scan_seek(c, huge.data(), huge.size(), 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm1_scanend(c);
   REQUIRE(sm1_commit(s) == 0);
 }
@@ -604,15 +604,15 @@ TEST_CASE("keys skipped by sm1_scan_seek still count as read under SSI") {
     REQUIRE(sm1_update(t2, store, "k5", 2, "t2", 2, nullptr, nullptr) == 0);
 
     int rc2 = sm1_commit(t2);
-    int err2 = sm1_errno();
+    int err2 = sm1::errnum();
     int rc1 = sm1_commit(s);
-    int err1 = sm1_errno();
+    int err1 = sm1::errnum();
     // Every failure here is a serialization failure.
     if (rc2 == -1) {
-      CHECK(err2 == SM_ERR_SERIALIZATION);
+      CHECK(err2 == sm1::SM_ERR_SERIALIZATION);
     }
     if (rc1 == -1) {
-      CHECK(err1 == SM_ERR_SERIALIZATION);
+      CHECK(err1 == sm1::SM_ERR_SERIALIZATION);
     }
     return rc1 == -1 || rc2 == -1;
   };
@@ -660,14 +660,14 @@ TEST_CASE("sm1_update and sm1_delete hand back the row they replaced") {
   old = (const char *)1;
   oldlen = 99;
   CHECK(sm1_update(s, store, "k", 1, "v3", 2, &old, &oldlen) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(old == nullptr);
   CHECK(oldlen == 0);
 
   CHECK(sm1_update(s, store, "empty", 5, "x", 1, &old, nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_delete(s, store, "empty", 5, nullptr, &oldlen) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1_commit(s) == 0);
 }
 
@@ -714,13 +714,13 @@ TEST_CASE("oversized keys and values are rejected") {
   CHECK(get(s, store, max) == "v");
   std::string over(SM1_MAX_KEYLEN + 1, 'k');
   CHECK(sm1_insert(s, store, over.data(), over.size(), "v", 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   const char *d;
   size_t dl;
   CHECK(sm1_read(s, store, over.data(), over.size(), &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_insert(s, 999, "k", 1, "v", 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1_commit(s) == 0);
 }
 
@@ -762,7 +762,7 @@ TEST_CASE("a dropped store stays readable at an older snapshot") {
   const char *d;
   size_t dl;
   CHECK(sm1_read(r, old, "k", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(get(r, store, "k") == "new");
   CHECK(scan_all(r, store) == rows_t{{"k", "new"}});
   REQUIRE(sm1_commit(r) == 0);
@@ -810,5 +810,5 @@ TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   sm1_closedb(o);
 
   CHECK(sm1_lsstore(t, &list, &n) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 }

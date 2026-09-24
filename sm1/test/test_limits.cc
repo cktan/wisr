@@ -58,7 +58,7 @@ private:
   /* A new session on "db". */
   sm1_session_t *open() const {
     sm1_session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
-    REQUIRE_MESSAGE(s, sm1_errmsg());
+    REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
 
@@ -80,7 +80,7 @@ std::string pattern(size_t n, unsigned seed) {
 std::vector<std::pair<std::string, std::string>> scan_all(sm1_session_t *s,
                                                           uint64_t store) {
   sm1_scan_t *c = sm1_scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
-  REQUIRE_MESSAGE(c, sm1_errmsg());
+  REQUIRE_MESSAGE(c, sm1::errmsg());
   std::vector<std::pair<std::string, std::string>> rows;
   const char *k, *d;
   size_t kl, dl;
@@ -121,7 +121,7 @@ TEST_CASE(
   CHECK(get(s, f.store(), kb) == "vb");
   sm1_scan_t *c =
       sm1_scan(s, f.store(), ka.data(), ka.size(), 1, kb.data(), kb.size(), 1);
-  REQUIRE_MESSAGE(c, sm1_errmsg());
+  REQUIRE_MESSAGE(c, sm1::errmsg());
   const char *k, *d;
   size_t kl, dl;
   REQUIRE(sm1_scannxt(c, &k, &kl, &d, &dl) == 0);
@@ -156,21 +156,21 @@ TEST_CASE("a key one byte over SM1_MAX_KEYLEN is rejected by every call") {
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   put(s, f.store(), "ok", "v");
   CHECK(sm1_insert(s, f.store(), over.data(), over.size(), "v", 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_update(s, f.store(), over.data(), over.size(), "v", 1, nullptr,
                    nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_delete(s, f.store(), over.data(), over.size(), nullptr, nullptr) ==
         -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_read(s, f.store(), over.data(), over.size(), &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_scan(s, f.store(), over.data(), over.size(), 1, nullptr, 0, 0) ==
         nullptr);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_scan(s, f.store(), nullptr, 0, 0, over.data(), over.size(), 1) ==
         nullptr);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1_commit(s) == 0);
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
@@ -223,10 +223,10 @@ TEST_CASE("a value one byte over SM1_MAX_DATALEN is rejected") {
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   put(s, f.store(), "k", "v");
   CHECK(sm1_insert(s, f.store(), "k2", 2, over.data(), over.size()) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_update(s, f.store(), "k", 1, over.data(), over.size(), nullptr,
                    nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(get(s, f.store(), "k") == "v");
   CHECK(get(s, f.store(), "k2") == "<none>");
   REQUIRE(sm1_commit(s) == 0);

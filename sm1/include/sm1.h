@@ -13,7 +13,7 @@
  *     error. Exactly two, sm1_read() and sm1_scannxt(), also
  *     return 1 to mean "no row", which is not an error.
  *   - A function returning a pointer returns NULL on error.
- *   - On any error return, sm1_errno() and sm1_errmsg() describe
+ *   - On any error return, sm1::errnum() and sm1::errmsg() describe
  *     it. A successful call leaves both untouched, so neither
  *     can be used to test for success.
  *   - Byte strings passed in are read during the call and never
@@ -42,6 +42,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 /*
  * Limits. A key or value beyond its bound, or a name outside
@@ -60,11 +61,14 @@
 #define SM1_MAX_GID     200
 #define SM1_MAX_SAVEPOINTS 256
 
+namespace sm1 {
+
 /*
- * Error codes. Values are explicit and stable: new codes are
- * appended, existing values never change.
+ * Error codes, one namespace for the whole stack: every level's
+ * codes are defined here. Values are explicit and stable: new
+ * codes are appended, existing values never change.
  */
-typedef enum {
+enum errnum_t {
     SM_OK                = 0,
 
     /* caller/programming errors */
@@ -95,7 +99,7 @@ typedef enum {
 
     /* Not an abort: the transaction stays active (SM1_DESIGN.md §5.4). */
     SM_ERR_UPDATED       = 19   /* newer commit; sm1_read_latest, then retry */
-} sm1_errno_t;
+};
 
 /*
  * The last error raised on the calling thread. Meaningful
@@ -103,14 +107,14 @@ typedef enum {
  * indication: a successful call leaves it untouched, so it
  * cannot be used to test for success.
  */
-sm1_errno_t sm1_errno(void);
+errnum_t errnum();
 
 /*
  * The message for that error: NUL-terminated, owned by the
- * library, never NULL, and valid until the next failing sm1_*
- * call on this thread.
+ * library, never NULL, and valid until the next failing call on
+ * this thread.
  */
-const char* sm1_errmsg(void);
+const char* errmsg();
 
 /*
  * 1 if the last error on this thread is retryable, else 0.
@@ -131,7 +135,32 @@ const char* sm1_errmsg(void);
  * the transaction is never still active, and sm1_prepare() on
  * SM_ERR_IO.
  */
-int sm1_retryable(void);
+int retryable();
+
+/*
+ * Record code and a copy of msg as the calling thread's error.
+ * Any level of the stack reports through it. msg is cut short if
+ * it does not fit the message buffer. Returns -1, so a failing
+ * path is one line: return sm1::seterr(sm1::SM_ERR_..., "...");
+ */
+int seterr(errnum_t code, std::string_view msg);
+
+/*
+ * Clear the calling thread's error back to what a thread starts
+ * with: SM_OK, and the message "no error". A successful call
+ * leaves the state untouched, so this is the one way to start
+ * a sequence of calls from a known state.
+ */
+void reseterr();
+
+/*
+ * The name of the current error code, without its SM_ prefix:
+ * "ERR_UPDATED" for SM_ERR_UPDATED, "OK" for SM_OK. Static and
+ * never NULL.
+ */
+const char* errname();
+
+} // namespace sm1
 
 /*
  * Log levels for the hook below.

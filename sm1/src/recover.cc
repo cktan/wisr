@@ -100,7 +100,7 @@ int live_storeids(db_t *db, std::set<uint64_t> *live) {
     }
     // Reject a malformed catalog version.
     if (!version_decode_value(it->value(), &v)) {
-      return set_error(SM_ERR_CORRUPT, "malformed catalog version");
+      return set_error(sm1::SM_ERR_CORRUPT, "malformed catalog version");
     }
     uint64_t commit_ts;
     // Resolve an unstamped version's writer.

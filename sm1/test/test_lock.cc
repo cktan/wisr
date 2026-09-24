@@ -86,8 +86,8 @@ TEST_CASE("first-committer-wins prevents lost updates at every level") {
     REQUIRE(sm1_commit(a) == 0);
     CHECK(set(b, "x", "b") == -1);
     bool rc = level == SM1_XCT_READ_COMMITTED;
-    CHECK(sm1_errno() == (rc ? SM_ERR_UPDATED : SM_ERR_CONFLICT));
-    CHECK(sm1_retryable() == (rc ? 0 : 1));
+    CHECK(sm1::errnum() == (rc ? sm1::SM_ERR_UPDATED : sm1::SM_ERR_CONFLICT));
+    CHECK(sm1::retryable() == (rc ? 0 : 1));
     sm1_closedb(a);
     sm1_closedb(b);
   }
@@ -113,7 +113,7 @@ TEST_CASE("read committed sees a newer commit and re-reads it to overwrite") {
   CHECK(get(t, g_store, "x") == "u");
   CHECK(get(t, g_store, "y") == "t");
   CHECK(set(t, "x", "t") == -1);
-  CHECK(sm1_errno() == SM_ERR_UPDATED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   const char *d = nullptr;
   size_t dl = 0;
   REQUIRE(sm1_read_latest(t, g_store, "x", 1, &d, &dl) == 0);
@@ -141,14 +141,14 @@ TEST_CASE("a retryable error aborts the transaction and releases everything") {
   REQUIRE(set(u, "x", "u") == 0);
   REQUIRE(sm1_commit(u) == 0);
   CHECK(set(t, "x", "t") == -1);
-  CHECK(sm1_errno() == SM_ERR_CONFLICT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
 
   REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(set(u, "y", "u") == 0); // would block if T still held it
   const char *d;
   size_t dl;
   CHECK(sm1_read(u, tstore, "k", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(mkstore(u) > tstore);
   REQUIRE(sm1_commit(u) == 0);
   sm1_closedb(t);
@@ -188,12 +188,12 @@ TEST_CASE("a doomed transaction fails its next call and changes nothing") {
   sm1_session_t *u = f.open();
   REQUIRE(sm1_begin(t, SM1_XCT_REPEATABLE_READ) == 0);
   REQUIRE(set(t, "x", "t") == 0);
-  t->doomed = SM_ERR_DEADLOCK;
+  t->doomed = sm1::SM_ERR_DEADLOCK;
   const char *d;
   size_t dl;
   CHECK(sm1_read(t, g_store, "x", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_DEADLOCK);
-  CHECK(sm1_retryable() == 1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DEADLOCK);
+  CHECK(sm1::retryable() == 1);
 
   REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(get(u, g_store, "x") == "0");
@@ -232,7 +232,7 @@ TEST_CASE("concurrent increments with retry never lose an update") {
             std::string v = std::to_string(std::stoi(std::string(d, dl)) + 1);
             ok = set(s, "x", v) == 0;
             // Read committed: re-read the newest value, add one again.
-            if (!ok && sm1_errno() == SM_ERR_UPDATED) {
+            if (!ok && sm1::errnum() == sm1::SM_ERR_UPDATED) {
               ok = sm1_read_latest(s, g_store, "x", 1, &d, &dl) == 0;
               v = std::to_string(std::stoi(std::string(d, dl)) + 1);
               ok = ok && set(s, "x", v) == 0;
@@ -241,7 +241,7 @@ TEST_CASE("concurrent increments with retry never lose an update") {
           }
           if (ok) {
             i++;
-          } else if (sm1_retryable()) {
+          } else if (sm1::retryable()) {
             retries++;
           } else {
             errors++;
@@ -284,13 +284,13 @@ TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
   std::thread ta([&] { rc_a = set(a, "x", "a"); });
   std::thread tb([&] {
     rc_b = set(b, "x", "b");
-    err_b = sm1_errno();
+    err_b = sm1::errnum();
   });
   ta.join();
   tb.join();
   CHECK(rc_a == 0);
   CHECK(rc_b == -1);
-  CHECK(err_b == SM_ERR_DEADLOCK);
+  CHECK(err_b == sm1::SM_ERR_DEADLOCK);
   REQUIRE(sm1_commit(a) == 0);
   sm1_closedb(a);
   sm1_closedb(b);
@@ -317,10 +317,10 @@ TEST_CASE(
     REQUIRE(sm1_commit(b) == 0);
 
     CHECK(sm1_lock(a, g_store, "x", 1, mode) == -1);
-    CHECK(sm1_errno() == SM_ERR_CONFLICT);
-    CHECK(sm1_retryable() == 1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+    CHECK(sm1::retryable() == 1);
     CHECK(sm1_abort(a) == -1);
-    CHECK(sm1_errno() == SM_ERR_NOTRANS);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
     sm1_closedb(a);
     sm1_closedb(b);
   }
@@ -369,7 +369,7 @@ TEST_CASE(
   int rc = -2, err = 0;
   std::thread tx([&] {
     rc = sm1_lock(x, cat, "S", 1, SM1_LOCK_SHARED);
-    err = sm1_errno();
+    err = sm1::errnum();
     returned = true;
   });
   settle();
@@ -401,17 +401,17 @@ TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
   lock_fixture_t f;
   sm1_session_t *s = f.open();
   CHECK(sm1_lock(nullptr, g_store, "x", 1, SM1_LOCK_SHARED) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_lock(s, g_store, "x", 1, SM1_LOCK_SHARED) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_lock(s, g_store, "x", 1, (sm1_lockmode_t)7) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_lock(s, 0, "x", 1, SM1_LOCK_SHARED) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_lock(s, g_store + 999, "x", 1, SM1_LOCK_SHARED) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(sm1_lock(s, g_store, "absent", 6, SM1_LOCK_EXCLUSIVE) == 0);
   REQUIRE(sm1_commit(s) == 0);
   sm1_closedb(s);

@@ -132,7 +132,7 @@ TEST_CASE("running out of memory after the commit point still commits") {
   REQUIRE(sm1_insert(a, store, "k", 1, "v", 1) == 0);
 
   f.db()->test_cache_insert = [] { throw std::bad_alloc(); };
-  CHECK_MESSAGE(sm1_commit(a) == 0, sm1_errmsg());
+  CHECK_MESSAGE(sm1_commit(a) == 0, sm1::errmsg());
   f.db()->test_cache_insert = nullptr;
 
   REQUIRE(sm1_begin(a, SM1_XCT_REPEATABLE_READ) == 0);
@@ -179,8 +179,8 @@ TEST_CASE(
       break;
     }
     INFO("allocation ", n, " failed");
-    CHECK(sm1_errno() == SM_ERR_NOMEM);
-    REQUIRE_MESSAGE(sm1_abort(a) == 0, sm1_errmsg());
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOMEM);
+    REQUIRE_MESSAGE(sm1_abort(a) == 0, sm1::errmsg());
     std::string key = "b" + std::to_string(n);
     REQUIRE(commit_one(b, f.store(), key) == 0);
     REQUIRE(sm1_begin(b, SM1_XCT_REPEATABLE_READ) == 0);
@@ -217,7 +217,7 @@ TEST_CASE("a failed status write fails the database stop") {
     return rocksdb::Status::IOError("injected");
   };
   CHECK(commit_one(a, f.store(), "x") == -1);
-  CHECK(sm1_errno() == SM_ERR_IO);
+  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   f.db()->test_before_commit = nullptr;
 
   CHECK(get(b, f.store(), "old") == "v");
@@ -227,10 +227,10 @@ TEST_CASE("a failed status write fails the database stop") {
   CHECK(get(a, f.store(), "old") == "v");
   CHECK(get(a, f.store(), "x") == "<none>");
   CHECK(sm1_insert(a, f.store(), "y", 1, "v", 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_IO);
+  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   uint64_t newstore = 0;
   CHECK(sm1_mkstore(a, &newstore) == -1);
-  CHECK(sm1_errno() == SM_ERR_IO);
+  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   REQUIRE(sm1_commit(a) == 0); // read-only: nothing to publish
 
   REQUIRE(sm1_closedb(a) == 0);
@@ -289,7 +289,7 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   opt.commit_cache_entries = 0;
   REQUIRE(sm1_mkdb(f.home().env(), "db2", nullptr) == 0);
   CHECK(sm1_opendb(f.home().env(), "db2", &opt) == nullptr);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
 TEST_CASE("concurrent commits become visible atomically and monotonically") {

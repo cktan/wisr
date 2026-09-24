@@ -14,7 +14,7 @@ TEST_CASE("sm1_opendb requires an existing database") {
   // 2. Create it; open now succeeds.
   home_t home;
   CHECK(sm1_opendb(home.env(), "db", nullptr) == nullptr);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
   sm1_session_t *s = sm1_opendb(home.env(), "db", nullptr);
   CHECK(s);
@@ -39,10 +39,10 @@ TEST_CASE("an open database cannot be removed, and detach honors force") {
   REQUIRE(b);
 
   CHECK(sm1_rmdb(env, "db") == -1);
-  CHECK(sm1_errno() == SM_ERR_INUSE);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
   CHECK(sm1_closedb(a) == 0);
   CHECK(sm1_rmdb(env, "db") == -1);
-  CHECK(sm1_errno() == SM_ERR_INUSE);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
   CHECK(sm1_closedb(b) == 0);
   CHECK(sm1_rmdb(env, "db") == 0);
 
@@ -51,7 +51,7 @@ TEST_CASE("an open database cannot be removed, and detach honors force") {
   REQUIRE(c);
   REQUIRE(sm1_begin(c, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_detach(env, 0) == -1);
-  CHECK(sm1_errno() == SM_ERR_INUSE);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
   CHECK(sm1_detach(env, 1) == 0);
 }
 
@@ -68,22 +68,22 @@ TEST_CASE("the transaction state machine rejects out-of-order calls") {
   REQUIRE(s);
 
   CHECK(sm1_commit(s) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
   CHECK(sm1_abort(s) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
   uint64_t storeid = 0;
   CHECK(sm1_mkstore(s, &storeid) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
   const char *data;
   size_t len;
   CHECK(sm1_read(s, 1, "k", 1, &data, &len) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
   CHECK(sm1_begin(s, (sm1_xctlevel_t)7) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1_begin(s, SM1_XCT_SERIALIZABLE) == 0);
   CHECK(sm1_begin(s, SM1_XCT_READ_COMMITTED) == -1);
-  CHECK(sm1_errno() == SM_ERR_INTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INTRANS);
   CHECK(sm1_commit(s) == 0);
   CHECK(sm1_begin(s, SM1_XCT_READ_COMMITTED) == 0);
   CHECK(sm1_closedb(s) == 0);

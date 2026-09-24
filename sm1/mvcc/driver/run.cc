@@ -32,27 +32,27 @@ namespace {
 
 /* The symbolic name of the current error (DRIVER.md §4). */
 std::string error_name() {
-  switch (sm1_errno()) {
-  case SM_ERR_CONFLICT:
+  switch (sm1::errnum()) {
+  case sm1::SM_ERR_CONFLICT:
     return "conflict";
-  case SM_ERR_SERIALIZATION:
+  case sm1::SM_ERR_SERIALIZATION:
     return "serialization";
-  case SM_ERR_DUPKEY:
+  case sm1::SM_ERR_DUPKEY:
     return "dupkey";
-  case SM_ERR_NOTFOUND:
+  case sm1::SM_ERR_NOTFOUND:
     return "notfound";
-  case SM_ERR_NOTRANS:
+  case sm1::SM_ERR_NOTRANS:
     return "notrans";
-  case SM_ERR_DEADLOCK:
+  case sm1::SM_ERR_DEADLOCK:
     return "deadlock";
-  case SM_ERR_PREPARED:
+  case sm1::SM_ERR_PREPARED:
     return "prepared";
-  case SM_ERR_INVALID:
+  case sm1::SM_ERR_INVALID:
     return "invalid";
-  case SM_ERR_UPDATED:
+  case sm1::SM_ERR_UPDATED:
     return "updated";
   default:
-    return std::string("error:") + sm1_errmsg();
+    return std::string("error:") + sm1::errmsg();
   }
 }
 

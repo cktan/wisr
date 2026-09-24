@@ -83,7 +83,7 @@ public:
   /* A new session on "db". */
   sm1_session_t *open() const {
     sm1_session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
-    REQUIRE_MESSAGE(s, sm1_errmsg());
+    REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
 

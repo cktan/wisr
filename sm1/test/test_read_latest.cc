@@ -84,12 +84,12 @@ TEST_CASE(
   REQUIRE(sm1_begin(t, SM1_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm1_lock(t, g_store, "x", 1, SM1_LOCK_EXCLUSIVE) == 0);
   CHECK(latest(t, "x") == "<error>");
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1_abort(t) == 0);
 
   REQUIRE(sm1_begin(t, SM1_XCT_READ_COMMITTED) == 0);
   CHECK(latest(t, "x") == "<error>");
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1_lock(t, g_store, "x", 1, SM1_LOCK_EXCLUSIVE) == 0);
   CHECK(latest(t, "x") == "0");
   REQUIRE(sm1_commit(t) == 0);
@@ -107,8 +107,8 @@ TEST_CASE("SM_ERR_UPDATED is not retryable and leaves the transaction active") {
   commit_from_other(f, "x", "u");
 
   CHECK(set(t, "x", "t") == -1);
-  CHECK(sm1_errno() == SM_ERR_UPDATED);
-  CHECK(sm1_retryable() == 0);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
+  CHECK(sm1::retryable() == 0);
   CHECK(latest(t, "x") == "u");
   CHECK(set(t, "x", "t") == 0);
   REQUIRE(sm1_commit(t) == 0);
@@ -133,7 +133,7 @@ TEST_CASE("a successful write consumes the mark") {
   CHECK(set(t, "x", "t") == 0);
   REQUIRE(sm1_rollback(t, 1) == 0);
   CHECK(set(t, "x", "t") == -1);
-  CHECK(sm1_errno() == SM_ERR_UPDATED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   REQUIRE(sm1_abort(t) == 0);
   sm1_closedb(t);
 }
@@ -152,7 +152,7 @@ TEST_CASE("under a shared lock sm1_read_latest reads but sets no mark") {
   REQUIRE(sm1_lock(t, g_store, "x", 1, SM1_LOCK_SHARED) == 0);
   CHECK(latest(t, "x") == "u");
   CHECK(set(t, "x", "t") == -1);
-  CHECK(sm1_errno() == SM_ERR_UPDATED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   REQUIRE(sm1_abort(t) == 0);
   sm1_closedb(t);
 }

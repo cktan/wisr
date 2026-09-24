@@ -57,7 +57,7 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
                        nullptr) == 0 &&
             sm1_commit(sess) == 0) {
           commits++;
-        } else if (!sm1_retryable()) {
+        } else if (!sm1::retryable()) {
           errors++;
           sm1_abort(sess);
           return;
@@ -84,7 +84,7 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
       if (on == 0) {
         violations++;
       }
-      if (sm1_commit(check) != 0 && !sm1_retryable()) {
+      if (sm1_commit(check) != 0 && !sm1::retryable()) {
         errors++;
       }
     }

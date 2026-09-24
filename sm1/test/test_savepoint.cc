@@ -62,7 +62,7 @@ int del(sm1_session_t *s, const std::string &key) {
 
 /* Drain a cursor into its keys and close it. */
 std::vector<std::string> keys_of(sm1_scan_t *c) {
-  REQUIRE_MESSAGE(c, sm1_errmsg());
+  REQUIRE_MESSAGE(c, sm1::errmsg());
   std::vector<std::string> out;
   const char *k, *d;
   size_t kl, dl;
@@ -136,25 +136,25 @@ TEST_CASE("rollback needs a savepoint, and a savepoint lives only in its "
   sp_fixture_t f;
   sm1_session_t *s = f.open();
   CHECK(sm1_savepoint(s) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_rollback(s, 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOSAVEPOINT);
   REQUIRE(sm1_savepoint(s) == 1);
   REQUIRE(sm1_commit(s) == 0);
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_rollback(s, 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOSAVEPOINT);
 
   REQUIRE(sm1_savepoint(s) == 1);
   REQUIRE(set(s, "a", "1") == 0);
   CHECK(sm1_rollback(s, 2) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOSAVEPOINT);
   CHECK(sm1_rollback(s, 0) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOSAVEPOINT);
   CHECK(sm1_forget(s, 2) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOSAVEPOINT);
   REQUIRE(sm1_rollback(s, 1) == 0);
   CHECK(get(s, g_store, "a") == "0");
   REQUIRE(sm1_abort(s) == 0);
@@ -195,7 +195,7 @@ TEST_CASE("savepoints nest, and rolling back to one drops those inside it") {
   CHECK(get(s, g_store, "a") == "2");
   CHECK(get(s, g_store, "b") == "<none>");
   CHECK(sm1_rollback(s, 3) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOSAVEPOINT);
 
   REQUIRE(set(s, "a", "5") == 0);
   REQUIRE(sm1_rollback(s, 2) == 0);
@@ -230,7 +230,7 @@ TEST_CASE("sm1_forget drops a mark and those inside it, keeping the writes") {
   REQUIRE(sm1_forget(s, 2) == 0);
   CHECK(get(s, g_store, "a") == "2");
   CHECK(sm1_rollback(s, 2) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOSAVEPOINT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOSAVEPOINT);
 
   REQUIRE(sm1_savepoint(s) == 2);
   REQUIRE(set(s, "a", "3") == 0);
@@ -255,7 +255,7 @@ TEST_CASE("the savepoint stack is bounded, and forgetting makes room") {
     REQUIRE(sm1_savepoint(s) == depth);
   }
   CHECK(sm1_savepoint(s) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
   REQUIRE(sm1_forget(s, SM1_MAX_SAVEPOINTS) == 0);
   CHECK(sm1_savepoint(s) == SM1_MAX_SAVEPOINTS);
@@ -319,7 +319,7 @@ TEST_CASE("rollback undoes sm1_mkstore and sm1_rmstore made after the mark") {
     size_t dl;
     CHECK(sm1_read(s, p, "k", 1, &d, &dl) == 1);
     CHECK(sm1_read(s, q, "k", 1, &d, &dl) == -1);
-    CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
     CHECK(get(s, g_store, "a") == "0");
     REQUIRE(sm1_commit(s) == 0);
     REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);

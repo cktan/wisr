@@ -115,7 +115,7 @@ public:
     REQUIRE(sm1_mkdb(m_env, "db", nullptr) == 0);
     sm1_session_t *s = session(1);
     REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
-    REQUIRE_MESSAGE(sm1_mkstore(s, &m_store) == 0, sm1_errmsg());
+    REQUIRE_MESSAGE(sm1_mkstore(s, &m_store) == 0, sm1::errmsg());
     // Seed each row in the transaction that creates the store.
     for (const std::string &row : rows) {
       REQUIRE(sm1_insert(s, m_store, row.data(), row.size(), "0", 1) == 0);
@@ -135,7 +135,7 @@ public:
   sm1_session_t *session(int n) {
     while (static_cast<int>(m_sessions.size()) < n) {
       sm1_session_t *s = sm1_opendb(m_env, "db", nullptr);
-      REQUIRE_MESSAGE(s, sm1_errmsg());
+      REQUIRE_MESSAGE(s, sm1::errmsg());
       m_sessions.push_back(s);
     }
     return m_sessions[n - 1];
@@ -147,12 +147,12 @@ public:
   /* Begin T<n> at the level pairing p gives it. */
   void begin(int n, pairing_t p) {
     REQUIRE_MESSAGE(sm1_begin(session(n), level_of(p, n == 3 ? 2 : n)) == 0,
-                    sm1_errmsg());
+                    sm1::errmsg());
   }
 
   /* Begin T<n> at an explicit level. */
   void begin_at(int n, sm1_xctlevel_t level) {
-    REQUIRE_MESSAGE(sm1_begin(session(n), level) == 0, sm1_errmsg());
+    REQUIRE_MESSAGE(sm1_begin(session(n), level) == 0, sm1::errmsg());
   }
 
   /* r(row): the value T<n> reads, or "-" if no row is visible. */
@@ -160,7 +160,7 @@ public:
     const char *data = nullptr;
     size_t len = 0;
     int rc = sm1_read(session(n), m_store, row.data(), row.size(), &data, &len);
-    REQUIRE_MESSAGE(rc >= 0, sm1_errmsg());
+    REQUIRE_MESSAGE(rc >= 0, sm1::errmsg());
     return rc == 1 ? "-" : std::string(data, len);
   }
 
@@ -187,7 +187,7 @@ public:
                              const std::string &hi) {
     sm1_scan_t *c = sm1_scan(session(n), m_store, lo.data(), lo.size(), 1,
                              hi.data(), hi.size(), 1);
-    REQUIRE_MESSAGE(c, sm1_errmsg());
+    REQUIRE_MESSAGE(c, sm1::errmsg());
     std::vector<std::string> keys;
     const char *k, *d;
     size_t kl, dl;
@@ -203,7 +203,7 @@ public:
   srows(int n, const std::string &lo, const std::string &hi) {
     sm1_scan_t *c = sm1_scan(session(n), m_store, lo.data(), lo.size(), 1,
                              hi.data(), hi.size(), 1);
-    REQUIRE_MESSAGE(c, sm1_errmsg());
+    REQUIRE_MESSAGE(c, sm1::errmsg());
     std::vector<std::pair<std::string, std::string>> rows;
     const char *k, *d;
     size_t kl, dl;
@@ -224,8 +224,8 @@ public:
     if (sm1_commit(session(n)) == 0) {
       return true;
     }
-    CHECK(sm1_errno() == SM_ERR_SERIALIZATION);
-    CHECK(sm1_retryable());
+    CHECK(sm1::errnum() == sm1::SM_ERR_SERIALIZATION);
+    CHECK(sm1::retryable());
     return false;
   }
 
@@ -237,7 +237,7 @@ public:
     sm1_session_t *s = session(static_cast<int>(m_sessions.size()) + 1);
     REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
     sm1_scan_t *cur = sm1_scan(s, m_store, nullptr, 0, 0, nullptr, 0, 0);
-    REQUIRE_MESSAGE(cur, sm1_errmsg());
+    REQUIRE_MESSAGE(cur, sm1::errmsg());
     std::vector<std::pair<std::string, std::string>> rows;
     const char *k, *d;
     size_t kl, dl;
@@ -276,16 +276,16 @@ private:
 };
 
 /* Expect rc to be -1 with error e, the way a scenario states it. */
-inline void fails(int rc, sm1_errno_t e) {
+inline void fails(int rc, sm1::errnum_t e) {
   CHECK(rc == -1);
-  CHECK(sm1_errno() == e);
+  CHECK(sm1::errnum() == e);
 }
 
 /* Expect rc to be -1 with SM_ERR_CONFLICT, which is retryable. */
 inline void conflicts(int rc) {
   CHECK(rc == -1);
-  CHECK(sm1_errno() == SM_ERR_CONFLICT);
-  CHECK(sm1_retryable());
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+  CHECK(sm1::retryable());
 }
 
 #endif /* WISR_MVCC_H */

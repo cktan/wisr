@@ -281,7 +281,7 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
   // Report the outcome: nobody waits on a background sweep.
   if (n < 0) {
     log_msg(SM1_LOG_ERROR, "database {}: CF:txn sweep failed: {}",
-            db->name.c_str(), sm1_errmsg());
+            db->name.c_str(), sm1::errmsg());
   } else {
     log_msg(SM1_LOG_INFO, "database {}: CF:txn sweep deleted {} record(s)",
             db->name.c_str(), n);

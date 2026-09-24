@@ -49,7 +49,7 @@ public:
   /* A new session on "db". */
   sm1_session_t *open() const {
     sm1_session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
-    REQUIRE_MESSAGE(s, sm1_errmsg());
+    REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
 
@@ -247,43 +247,43 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   sm1_session_t *s = f.open();
   sm1_session_t *u = f.open();
   CHECK(sm1_prepare(s, "g") == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_prepare(s, "") == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::string long_gid(SM1_MAX_GID + 1, 'g');
   CHECK(sm1_prepare(s, long_gid.c_str()) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1_prepare(s, "g") == 0);
 
   const char *d;
   size_t dl;
   CHECK(sm1_read(s, g_store, "a", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_PREPARED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(set(s, "b", "1") == -1);
-  CHECK(sm1_errno() == SM_ERR_PREPARED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1_savepoint(s) == -1);
-  CHECK(sm1_errno() == SM_ERR_PREPARED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1_rollback(s, 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_PREPARED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1_forget(s, 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_PREPARED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1_lock(s, g_store, "a", 1, SM1_LOCK_SHARED) == -1);
-  CHECK(sm1_errno() == SM_ERR_PREPARED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   uint64_t fresh = 0;
   CHECK(sm1_mkstore(s, &fresh) == -1);
-  CHECK(sm1_errno() == SM_ERR_PREPARED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == -1);
-  CHECK(sm1_errno() == SM_ERR_INTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INTRANS);
 
   REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
   REQUIRE(set(u, "b", "1") == 0);
   CHECK(sm1_prepare(u, "g") == -1);
-  CHECK(sm1_errno() == SM_ERR_EXISTS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
   REQUIRE(sm1_abort(u) == 0);
   CHECK(sm1_commit_prepared(u, "nope") == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1_commit(s) == 0);
   sm1_closedb(s);
   sm1_closedb(u);
@@ -309,7 +309,7 @@ TEST_CASE("a prepare that fails validation releases its gid") {
   CHECK(get(t1, g_store, "a") == "0");
   REQUIRE(set(t1, "b", "1") == 0);
   CHECK(sm1_prepare(t1, "g") == -1);
-  CHECK(sm1_errno() == SM_ERR_SERIALIZATION);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SERIALIZATION);
   CHECK(listed(t2).empty());
 
   REQUIRE(sm1_begin(t1, SM1_XCT_REPEATABLE_READ) == 0);
@@ -343,12 +343,12 @@ TEST_CASE("nothing allocates once the PREPARED record is written") {
   int rc = sm1_prepare(s, gid.c_str());
   t_alloc_budget = -1;
   s->db->test_after_prepare = nullptr;
-  CHECK_MESSAGE(rc == 0, sm1_errmsg());
+  CHECK_MESSAGE(rc == 0, sm1::errmsg());
 
   auto l = listed(u);
   REQUIRE(l.size() == 1);
   CHECK(l[0].first == gid);
-  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1_errmsg());
+  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1::errmsg());
   CHECK(read_now(u, "a") == "1");
   sm1_closedb(s);
   sm1_closedb(u);
@@ -389,8 +389,8 @@ TEST_CASE("a prepare that runs out of memory before its record is undone") {
       break;
     }
     INFO("allocation ", n, " failed");
-    CHECK(sm1_errno() == SM_ERR_NOMEM);
-    REQUIRE_MESSAGE(sm1_abort(s) == 0, sm1_errmsg());
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOMEM);
+    REQUIRE_MESSAGE(sm1_abort(s) == 0, sm1::errmsg());
     CHECK(listed(u).empty());
     REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
     CHECK(set(u, "a", "2") == 0);
@@ -399,7 +399,7 @@ TEST_CASE("a prepare that runs out of memory before its record is undone") {
   s->db->test_before_prepare = nullptr;
   CHECK(n > 0);
 
-  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1_errmsg());
+  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1::errmsg());
   CHECK(read_now(u, "a") == "1");
   sm1_closedb(s);
   sm1_closedb(u);
@@ -434,19 +434,19 @@ TEST_CASE("a resolve that fails and runs out of memory keeps the transaction") {
     t_alloc_budget = -1;
     INFO("allocation ", n, " failed");
     REQUIRE(rc == -1);
-    sm1_errno_t e = sm1_errno();
+    sm1::errnum_t e = sm1::errnum();
     auto l = listed(u);
     REQUIRE(l.size() == 1);
     CHECK(l[0].first == gid);
-    if (e != SM_ERR_NOMEM) {
-      CHECK(e == SM_ERR_IO);
+    if (e != sm1::SM_ERR_NOMEM) {
+      CHECK(e == sm1::SM_ERR_IO);
       break;
     }
   }
   s->db->failed = false;
   CHECK(n > 0);
 
-  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1_errmsg());
+  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1::errmsg());
   CHECK(read_now(u, "a") == "1");
   sm1_closedb(s);
   sm1_closedb(u);
@@ -489,7 +489,7 @@ TEST_CASE("a commit by gid that runs out of memory before its record frees its "
       break;
     }
     INFO("allocation ", n, " failed");
-    CHECK(sm1_errno() == SM_ERR_NOMEM);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOMEM);
     auto l = listed(u);
     REQUIRE(l.size() == 1);
     CHECK(l[0].first == gid);
@@ -529,7 +529,7 @@ TEST_CASE("another session can resolve a prepared transaction by gid") {
   REQUIRE(sm1_commit(u) == 0);
 
   CHECK(sm1_commit(s) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTRANS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
   CHECK(read_now(s, "a") == "1");
   sm1_closedb(s);
   sm1_closedb(u);
@@ -563,7 +563,7 @@ TEST_CASE("a prepared transaction keeps its locks after its session closes") {
   int rc = 0, err = 0;
   std::thread tu([&] {
     rc = set(u, "a", "u");
-    err = sm1_errno();
+    err = sm1::errnum();
     returned = true;
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
@@ -571,7 +571,7 @@ TEST_CASE("a prepared transaction keeps its locks after its session closes") {
   REQUIRE(sm1_commit_prepared(v, "g") == 0);
   tu.join();
   CHECK(rc == -1);
-  CHECK(err == SM_ERR_CONFLICT);
+  CHECK(err == sm1::SM_ERR_CONFLICT);
   CHECK(read_now(v, "a") == "1");
   sm1_closedb(u);
   sm1_closedb(v);
@@ -646,7 +646,7 @@ TEST_CASE(
   int rc = 0, err = 0;
   std::thread tu([&] {
     rc = set(u, "a", "u");
-    err = sm1_errno();
+    err = sm1::errnum();
     returned = true;
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
@@ -654,7 +654,7 @@ TEST_CASE(
   REQUIRE(sm1_commit_prepared(v, "gc") == 0);
   tu.join();
   CHECK(rc == -1);
-  CHECK(err == SM_ERR_CONFLICT);
+  CHECK(err == sm1::SM_ERR_CONFLICT);
   REQUIRE(sm1_abort_prepared(v, "ga") == 0);
   CHECK(read_now(v, "a") == "1");
   CHECK(read_now(v, "b") == "0");
@@ -714,7 +714,7 @@ TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   const char *d;
   size_t dl;
   CHECK(sm1_read(v, storeid, "k", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1_commit(v) == 0);
   wisr::gc_run_once(v->db);
   CHECK(wisr::db_store_cf(v->db, storeid) == nullptr);
@@ -741,7 +741,7 @@ TEST_CASE("write skew with a transaction restored in doubt is still caught") {
   CHECK(get(t, g_store, "b") == "0");
   REQUIRE(set(t, "a", "1") == 0);
   CHECK(sm1_commit(t) == -1);
-  CHECK(sm1_errno() == SM_ERR_SERIALIZATION);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SERIALIZATION);
   REQUIRE(sm1_commit_prepared(t, "gp") == 0);
   CHECK(read_now(t, "b") == "1");
   CHECK(read_now(t, "a") == "0");
@@ -800,7 +800,7 @@ TEST_CASE("startup drops store CFs that nothing names") {
   const char *d;
   size_t dl;
   CHECK(sm1_read(v, storeid, "k", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1_commit(v) == 0);
   sm1_closedb(v);
 }
@@ -820,14 +820,14 @@ TEST_CASE("a failed prepare write fails the database stop") {
     return rocksdb::Status::IOError("injected");
   };
   CHECK(sm1_prepare(s, "gx") == -1);
-  CHECK(sm1_errno() == SM_ERR_IO);
+  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   s->db->test_before_prepare = nullptr;
   CHECK(listed(s).empty());
   CHECK(sm1_commit_prepared(s, "gx") == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(set(s, "b", "1") == -1);
-  CHECK(sm1_errno() == SM_ERR_IO);
+  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   REQUIRE(sm1_commit(s) == 0);
 
   f.restart();

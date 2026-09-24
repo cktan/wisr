@@ -42,9 +42,9 @@ struct book_t {
 
 /* Exit with wisr's error message if rc reports a failure. */
 void check(int rc, const char *what) {
-  // Any negative return is an error; sm1_errmsg() says which.
+  // Any negative return is an error; sm1::errmsg() says which.
   if (rc < 0) {
-    fprintf(stderr, "%s: %s (error %d)\n", what, sm1_errmsg(), sm1_errno());
+    fprintf(stderr, "%s: %s (error %d)\n", what, sm1::errmsg(), sm1::errnum());
     exit(1);
   }
 }
@@ -138,7 +138,7 @@ void upsert_book(sm1_session_t *s, uint64_t store, const book_t &b) {
     return;
   }
   // Any failure but a taken key is a real error.
-  if (sm1_errno() != SM_ERR_DUPKEY) {
+  if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
     check(-1, "sm1_insert");
   }
   // The id exists: replace its value instead.
@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   // Prepare it as a wisr home directory, once in its life.
-  if (sm1_init(homedir) != 0 && sm1_errno() != SM_ERR_EXISTS) {
+  if (sm1_init(homedir) != 0 && sm1::errnum() != sm1::SM_ERR_EXISTS) {
     check(-1, "sm1_init");
   }
   // Attach: this process now owns the home directory.
@@ -168,7 +168,8 @@ int main(int argc, char **argv) {
     check(-1, "sm1_attach");
   }
   // Create the database, unless an earlier run did.
-  if (sm1_mkdb(env, "library", nullptr) != 0 && sm1_errno() != SM_ERR_EXISTS) {
+  if (sm1_mkdb(env, "library", nullptr) != 0 &&
+      sm1::errnum() != sm1::SM_ERR_EXISTS) {
     check(-1, "sm1_mkdb");
   }
   // Open a session on it.

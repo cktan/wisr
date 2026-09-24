@@ -199,7 +199,7 @@ TEST_CASE("a read committed write past a newer commit survives compaction") {
   REQUIRE(sm1_update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
   commit_set(w, "k", "v1");
   CHECK(sm1_update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_UPDATED);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   const char *data = nullptr;
   size_t len = 0;
   REQUIRE(sm1_read_latest(l, g_store, "k", 1, &data, &len) == 0);
@@ -421,7 +421,7 @@ sm1_options_t tiny_cache() {
 /* The keys a full scan of store 1 returns, through s. */
 std::vector<std::string> scan_keys(sm1_session_t *s) {
   sm1_scan_t *c = sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
-  REQUIRE_MESSAGE(c, sm1_errmsg());
+  REQUIRE_MESSAGE(c, sm1::errmsg());
   std::vector<std::string> out;
   const char *k, *d;
   size_t kl, dl;

@@ -1,8 +1,8 @@
 /*
  * error.h -- setting the calling thread's error state.
  *
- * Every function here records an error for sm1_errno() and
- * sm1_errmsg() and returns -1, so an API entry point can write
+ * Every function here records an error for sm1::errnum() and
+ * sm1::errmsg() and returns -1, so an API entry point can write
  * `return set_error(...)`. Nothing here clears the state: a
  * successful call leaves it untouched (sm1.h).
  */
@@ -29,14 +29,15 @@ size_t format_into(char *buf, size_t size, std::string_view fmt,
                    std::format_args args);
 
 /* Record e with a message formatted from fmt and args. Returns -1. */
-int set_error_v(sm1_errno_t e, std::string_view fmt, std::format_args args);
+int set_error_v(sm1::errnum_t e, std::string_view fmt, std::format_args args);
 
 /*
  * Record e with a std::format message, whose format string is
  * checked against its arguments at compile time. Returns -1.
  */
 template <typename... Args>
-int set_error(sm1_errno_t e, std::format_string<Args...> fmt, Args &&...args) {
+int set_error(sm1::errnum_t e, std::format_string<Args...> fmt,
+              Args &&...args) {
   return set_error_v(e, fmt.get(), std::make_format_args(args...));
 }
 

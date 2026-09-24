@@ -70,7 +70,7 @@ public:
   /* Attach again after detach(). */
   void attach() {
     m_env = sm1_attach(m_tmp.path());
-    REQUIRE_MESSAGE(m_env, sm1_errmsg());
+    REQUIRE_MESSAGE(m_env, sm1::errmsg());
   }
 
   /* The home directory's path. */
@@ -100,7 +100,7 @@ inline std::string get(sm1_session_t *sess, uint64_t store,
   const char *data = nullptr;
   size_t len = 0;
   int r = sm1_read(sess, store, key.data(), key.size(), &data, &len);
-  REQUIRE_MESSAGE(r >= 0, sm1_errmsg());
+  REQUIRE_MESSAGE(r >= 0, sm1::errmsg());
   return r == 1 ? "<none>" : std::string(data, len);
 }
 
@@ -109,13 +109,13 @@ inline void put(sm1_session_t *sess, uint64_t store, const std::string &key,
                 const std::string &val) {
   REQUIRE_MESSAGE(sm1_insert(sess, store, key.data(), key.size(), val.data(),
                              val.size()) == 0,
-                  sm1_errmsg());
+                  sm1::errmsg());
 }
 
 /* Create a store and return its storeid, failing the test on an error. */
 inline uint64_t mkstore(sm1_session_t *sess) {
   uint64_t storeid = 0;
-  REQUIRE_MESSAGE(sm1_mkstore(sess, &storeid) == 0, sm1_errmsg());
+  REQUIRE_MESSAGE(sm1_mkstore(sess, &storeid) == 0, sm1::errmsg());
   return storeid;
 }
 
@@ -123,7 +123,7 @@ inline uint64_t mkstore(sm1_session_t *sess) {
 inline std::vector<uint64_t> lsstore(sm1_session_t *sess) {
   uint64_t *list = nullptr;
   size_t n = 0;
-  REQUIRE_MESSAGE(sm1_lsstore(sess, &list, &n) == 0, sm1_errmsg());
+  REQUIRE_MESSAGE(sm1_lsstore(sess, &list, &n) == 0, sm1::errmsg());
   std::vector<uint64_t> out(list, list + n);
   free(list);
   return out;

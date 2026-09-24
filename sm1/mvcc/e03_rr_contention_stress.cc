@@ -47,10 +47,10 @@ TEST_CASE("e03: RR contention gives CONFLICT, never SERIALIZATION") {
             break;
           }
           // Classify the failure, then retry the whole step.
-          if (sm1_errno() == SM_ERR_SERIALIZATION) {
+          if (sm1::errnum() == sm1::SM_ERR_SERIALIZATION) {
             serialization++;
-          } else if (sm1_errno() != SM_ERR_CONFLICT &&
-                     sm1_errno() != SM_ERR_DEADLOCK) {
+          } else if (sm1::errnum() != sm1::SM_ERR_CONFLICT &&
+                     sm1::errnum() != sm1::SM_ERR_DEADLOCK) {
             other++;
           }
           retries++;

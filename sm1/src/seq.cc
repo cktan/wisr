@@ -50,7 +50,8 @@ int seq_lookup(sm1_session_t *s, const view_t &view, const char *name,
   }
   // Reject a malformed catalog row.
   if (val.size() != 24) {
-    return set_error(SM_ERR_CORRUPT, "bad catalog row for sequence {}", name);
+    return set_error(sm1::SM_ERR_CORRUPT, "bad catalog row for sequence {}",
+                     name);
   }
   // Decode the definition.
   def->seqid = get_be64(val.data());
@@ -69,7 +70,7 @@ int mkseq(sm1_session_t *s, const char *name, uint64_t start,
   }
   // A sequence that never advances is a mistake, not a feature.
   if (increment == 0) {
-    return set_error(SM_ERR_INVALID, "sequence increment is 0");
+    return set_error(sm1::SM_ERR_INVALID, "sequence increment is 0");
   }
   seqdef_t def;
   // Resolve the name at the transaction's view.
@@ -80,7 +81,7 @@ int mkseq(sm1_session_t *s, const char *name, uint64_t start,
   }
   // Refuse a name that is already live.
   if (r == 0) {
-    return set_error(SM_ERR_EXISTS, "sequence {} already exists", name);
+    return set_error(sm1::SM_ERR_EXISTS, "sequence {} already exists", name);
   }
   // Refuse writes after fail-stop, then allocate the seqid.
   if (xct_check_writable(s->db) != 0 ||
@@ -96,8 +97,8 @@ int mkseq(sm1_session_t *s, const char *name, uint64_t start,
   // Insert the catalog row through the ordinary write path.
   if (access_write(s, 0, WRITE_INSERT, seq_key(name), val, nullptr) != 0) {
     // Report a concurrent same-name insert as SM_ERR_EXISTS.
-    if (s->active && sm1_errno() == SM_ERR_DUPKEY) {
-      return set_error(SM_ERR_EXISTS, "sequence {} already exists", name);
+    if (s->active && sm1::errnum() == sm1::SM_ERR_DUPKEY) {
+      return set_error(sm1::SM_ERR_EXISTS, "sequence {} already exists", name);
     }
     return -1;
   }
@@ -120,7 +121,7 @@ int rmseq(sm1_session_t *s, const char *name) {
   }
   // Refuse a name that is not live.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "sequence {} does not exist", name);
+    return set_error(sm1::SM_ERR_NOTFOUND, "sequence {} does not exist", name);
   }
   // Delete the catalog row.
   if (access_write(s, 0, WRITE_DELETE, seq_key(name), rocksdb::Slice(),
@@ -136,14 +137,14 @@ int rmseq(sm1_session_t *s, const char *name) {
 int nextseq(sm1_session_t *s, const char *name, uint64_t *out) {
   // Require somewhere to put the value and a valid name.
   if (!out) {
-    return set_error(SM_ERR_INVALID, "sm1_nextseq: out is NULL");
+    return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: out is NULL");
   }
   if (check_name(name, SM1_MAX_SEQNAME, "sequence") != 0) {
     return -1;
   }
   // A session holding a prepared transaction does nothing else.
   if (!s->active && !s->prepared_gid.empty()) {
-    return set_error(SM_ERR_PREPARED, "the transaction is prepared as {}",
+    return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
                      s->prepared_gid.c_str());
   }
   // A stopped database persists nothing, leases included.
@@ -163,7 +164,7 @@ int nextseq(sm1_session_t *s, const char *name, uint64_t *out) {
   }
   // Report an unknown sequence.
   if (r == 1) {
-    return set_error(SM_ERR_NOTFOUND, "sequence {} does not exist", name);
+    return set_error(sm1::SM_ERR_NOTFOUND, "sequence {} does not exist", name);
   }
   // Take the next value; a used-up lease is persisted first.
   return db_next_seq(s->db, def.seqid, def.start, def.increment, out);
@@ -178,11 +179,11 @@ int sm1_mkseq(sm1_session_t *session, const char *name, uint64_t start,
   try {
     // Require a session, which xct_check_active cannot check.
     if (!session) {
-      return set_error(SM_ERR_INVALID, "sm1_mkseq: session is NULL");
+      return set_error(sm1::SM_ERR_INVALID, "sm1_mkseq: session is NULL");
     }
     return mkseq(session, name, start, increment);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm1_mkseq: out of memory");
+    return set_error(sm1::SM_ERR_NOMEM, "sm1_mkseq: out of memory");
   }
 }
 
@@ -192,11 +193,11 @@ int sm1_rmseq(sm1_session_t *session, const char *name) {
   try {
     // Require a session, which xct_check_active cannot check.
     if (!session) {
-      return set_error(SM_ERR_INVALID, "sm1_rmseq: session is NULL");
+      return set_error(sm1::SM_ERR_INVALID, "sm1_rmseq: session is NULL");
     }
     return rmseq(session, name);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm1_rmseq: out of memory");
+    return set_error(sm1::SM_ERR_NOMEM, "sm1_rmseq: out of memory");
   }
 }
 
@@ -206,10 +207,10 @@ int sm1_nextseq(sm1_session_t *session, const char *name, uint64_t *out) {
   try {
     // Require a session; sm1_nextseq needs no transaction.
     if (!session) {
-      return set_error(SM_ERR_INVALID, "sm1_nextseq: session is NULL");
+      return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: session is NULL");
     }
     return nextseq(session, name, out);
   } catch (const std::bad_alloc &) {
-    return set_error(SM_ERR_NOMEM, "sm1_nextseq: out of memory");
+    return set_error(sm1::SM_ERR_NOMEM, "sm1_nextseq: out of memory");
   }
 }

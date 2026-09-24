@@ -176,7 +176,8 @@ view_t xct_read_view(sm1_session_t *session);
  * retryable error, then record e with msg. Returns -1. The
  * caller must not call sm1_abort afterwards (sm1.h).
  */
-int xct_fail_retryable(sm1_session_t *session, sm1_errno_t e, const char *msg);
+int xct_fail_retryable(sm1_session_t *session, sm1::errnum_t e,
+                       const char *msg);
 
 /*
  * Take the row lock on (storeid, key) for the session's

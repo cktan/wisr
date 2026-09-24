@@ -42,7 +42,7 @@ public:
   /* A new session on "db". */
   sm1_session_t *open() const {
     sm1_session_t *s = sm1_opendb(m_home.env(), "db", m_opt);
-    REQUIRE_MESSAGE(s, sm1_errmsg());
+    REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
 
@@ -80,14 +80,14 @@ const char *const SEQ = "s";
 void commit_mkseq(sm1_session_t *s, const char *name, uint64_t start,
                   uint64_t increment) {
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
-  REQUIRE_MESSAGE(sm1_mkseq(s, name, start, increment) == 0, sm1_errmsg());
+  REQUIRE_MESSAGE(sm1_mkseq(s, name, start, increment) == 0, sm1::errmsg());
   REQUIRE(sm1_commit(s) == 0);
 }
 
 /* The next value of name, failing the test on an error. */
 uint64_t next(sm1_session_t *s, const char *name = SEQ) {
   uint64_t v = 0;
-  REQUIRE_MESSAGE(sm1_nextseq(s, name, &v) == 0, sm1_errmsg());
+  REQUIRE_MESSAGE(sm1_nextseq(s, name, &v) == 0, sm1::errmsg());
   return v;
 }
 
@@ -139,11 +139,11 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   REQUIRE(sm1_commit(s) == 0);
   uint64_t out;
   CHECK(sm1_nextseq(nullptr, SEQ, &out) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_nextseq(s, SEQ, nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_nextseq(s, nullptr, &out) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
 TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
@@ -166,10 +166,10 @@ TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
   REQUIRE(sm1_mkseq(s, SEQ, 100, 1) == 0);
   CHECK(next(s) == 100);
   CHECK(sm1_nextseq(o, SEQ, &v) == -1); // not committed yet
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1_abort(s) == 0);
   CHECK(sm1_nextseq(s, SEQ, &v) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   commit_mkseq(s, SEQ, 100, 1);
   CHECK(next(o) == 100);
@@ -177,15 +177,15 @@ TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_mkseq(s, SEQ, 1, 1) == -1);
-  CHECK(sm1_errno() == SM_ERR_EXISTS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
   CHECK(sm1_rmseq(s, "nope") == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(sm1_mkseq(s, "zero", 1, 0) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1_rmseq(s, SEQ) == 0);
   REQUIRE(sm1_commit(s) == 0);
   CHECK(sm1_nextseq(s, SEQ, &v) == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   commit_mkseq(s, SEQ, 100, 1);
   CHECK(next(s) == 100); // a new sequence, starting over
@@ -223,9 +223,9 @@ TEST_CASE("a sequence hands out its last value, then fails") {
   CHECK(next(s, "end") == UINT64_MAX);
   uint64_t v = 0;
   CHECK(sm1_nextseq(s, "end", &v) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_nextseq(s, "end", &v) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
 TEST_CASE("an abort does not give a sequence value back") {
@@ -335,7 +335,7 @@ TEST_CASE("a stopped database hands out no sequence values") {
   s->db->test_before_commit = nullptr;
   uint64_t v;
   CHECK(sm1_nextseq(s, SEQ, &v) == -1);
-  CHECK(sm1_errno() == SM_ERR_IO);
+  CHECK(sm1::errnum() == sm1::SM_ERR_IO);
 }
 
 TEST_CASE("values handed out before a kill are never handed out again") {

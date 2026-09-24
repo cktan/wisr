@@ -76,17 +76,17 @@ TEST_CASE("sm1_mkdb rejects a duplicate or badly sized name") {
   home_t home;
   REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
   CHECK(sm1_mkdb(home.env(), "db", nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_EXISTS);
+  CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
 
   std::string max(SM1_MAX_DBNAME, 'x');
   CHECK(sm1_mkdb(home.env(), max.c_str(), nullptr) == 0);
   std::string over(SM1_MAX_DBNAME + 1, 'x');
   CHECK(sm1_mkdb(home.env(), over.c_str(), nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_mkdb(home.env(), "", nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_mkdb(home.env(), nullptr, nullptr) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
 TEST_CASE("sm1_mkdb rejects a malformed rocksdb_options string") {
@@ -99,7 +99,7 @@ TEST_CASE("sm1_mkdb rejects a malformed rocksdb_options string") {
   sm1_options_init(&opt);
   opt.rocksdb_options = "no_such_option=1";
   CHECK(sm1_mkdb(home.env(), "db", &opt) == -1);
-  CHECK(sm1_errno() == SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(lsdb(home.env()).empty());
   CHECK(home.base_entries().empty());
 
@@ -119,7 +119,7 @@ TEST_CASE("sm1_rmdb removes the name and the directory, never reusing a dbid") {
   CHECK(home.base_entries().empty());
 
   CHECK(sm1_rmdb(home.env(), "db") == -1);
-  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
   CHECK(home.base_entries() == std::set<std::string>{"2"});
