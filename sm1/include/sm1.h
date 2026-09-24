@@ -1,5 +1,8 @@
 /*
- * sm1.h -- the wisr storage manager's public C API.
+ * sm1.h -- the wisr storage manager's public C++ API. It is
+ * being converted from C: the names and signatures below are
+ * still the C ones, and move into namespace sm1 stage by stage
+ * (SM1_DESIGN.md, and DESIGN.md section 5 at the top level).
  *
  * API.md is the interface contract; SM1_DESIGN.md is the design
  * behind it.
@@ -37,12 +40,8 @@
 #ifndef SM1_H
 #define SM1_H
 
-#include <stddef.h>
-#include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <cstddef>
+#include <cstdint>
 
 /*
  * Limits. A key or value beyond its bound, or a name outside
@@ -954,9 +953,5 @@ int sm1_scan_seek(sm1_scan_t* scan, const char* key, size_t klen,
  * a failure to release resources.
  */
 void sm1_scanend(sm1_scan_t* scan);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* SM1_H */
