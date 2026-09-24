@@ -117,7 +117,7 @@ public:
     REQUIRE_MESSAGE(sm1::mkstore(s, &m_store) == 0, sm1::errmsg());
     // Seed each row in the transaction that creates the store.
     for (const std::string &row : rows) {
-      REQUIRE(sm1::insert(s, m_store, row.data(), row.size(), "0", 1) == 0);
+      REQUIRE(sm1::insert(s, m_store, row, "0") == 0);
     }
     REQUIRE(sm1::commit(s) == 0);
   }
@@ -158,28 +158,24 @@ public:
   std::string r(int n, const std::string &row) {
     const char *data = nullptr;
     size_t len = 0;
-    int rc =
-        sm1::read(session(n), m_store, row.data(), row.size(), &data, &len);
+    int rc = sm1::read(session(n), m_store, row, &data, &len);
     REQUIRE_MESSAGE(rc >= 0, sm1::errmsg());
     return rc == 1 ? "-" : std::string(data, len);
   }
 
   /* w(row): T<n> updates row; the result of sm1::update. */
   int w(int n, const std::string &row, const std::string &val) {
-    return sm1::update(session(n), m_store, row.data(), row.size(), val.data(),
-                       val.size(), nullptr, nullptr);
+    return sm1::update(session(n), m_store, row, val, nullptr, nullptr);
   }
 
   /* i(row): T<n> inserts row; the result of sm1::insert. */
   int i(int n, const std::string &row, const std::string &val) {
-    return sm1::insert(session(n), m_store, row.data(), row.size(), val.data(),
-                       val.size());
+    return sm1::insert(session(n), m_store, row, val);
   }
 
   /* d(row): T<n> deletes row; the result of sm1::erase. */
   int d(int n, const std::string &row) {
-    return sm1::erase(session(n), m_store, row.data(), row.size(), nullptr,
-                      nullptr);
+    return sm1::erase(session(n), m_store, row, nullptr, nullptr);
   }
 
   /* s(lo, hi): the keys T<n> sees in the closed range [lo, hi]. */

@@ -76,7 +76,7 @@ TEST_CASE("the transaction state machine rejects out-of-order calls") {
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
   const char *data;
   size_t len;
-  CHECK(sm1::read(s, 1, "k", 1, &data, &len) == -1);
+  CHECK(sm1::read(s, 1, "k", &data, &len) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
   CHECK(sm1::begin(s, (sm1::xctlevel_t)7) == -1);

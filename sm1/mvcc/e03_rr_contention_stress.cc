@@ -34,14 +34,15 @@ TEST_CASE("e03: RR contention gives CONFLICT, never SERIALIZATION") {
           }
           const char *data = nullptr;
           size_t len = 0;
-          int rc = sm1::read(sess, s.store(), R1, 2, &data, &len);
+          int rc =
+              sm1::read(sess, s.store(), std::string_view(R1, 2), &data, &len);
           if (rc != 0) {
             other++;
             return;
           }
           std::string next =
               std::to_string(std::stoi(std::string(data, len)) + 1);
-          rc = sm1::update(sess, s.store(), R1, 2, next.data(), next.size(),
+          rc = sm1::update(sess, s.store(), std::string_view(R1, 2), next,
                            nullptr, nullptr);
           if (rc == 0 && sm1::commit(sess) == 0) {
             break;

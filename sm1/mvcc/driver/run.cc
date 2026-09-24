@@ -114,8 +114,7 @@ std::string execute(worker_t *w, const item_t &it) {
   if (it.verb == "read") {
     const char *data = nullptr;
     size_t len = 0;
-    int rc =
-        sm1::read(w->sess, w->store, a[0].data(), a[0].size(), &data, &len);
+    int rc = sm1::read(w->sess, w->store, a[0], &data, &len);
     if (rc < 0) {
       return error_name();
     }
@@ -126,8 +125,7 @@ std::string execute(worker_t *w, const item_t &it) {
     // this transaction holds locked, past its snapshot.
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm1::read_latest(w->sess, w->store, a[0].data(), a[0].size(),
-                              &data, &len);
+    int rc = sm1::read_latest(w->sess, w->store, a[0], &data, &len);
     if (rc < 0) {
       return error_name();
     }
@@ -135,15 +133,12 @@ std::string execute(worker_t *w, const item_t &it) {
   }
   if (it.verb == "write" || it.verb == "insert") {
     int rc = it.verb == "write"
-                 ? sm1::update(w->sess, w->store, a[0].data(), a[0].size(),
-                               a[1].data(), a[1].size(), nullptr, nullptr)
-                 : sm1::insert(w->sess, w->store, a[0].data(), a[0].size(),
-                               a[1].data(), a[1].size());
+                 ? sm1::update(w->sess, w->store, a[0], a[1], nullptr, nullptr)
+                 : sm1::insert(w->sess, w->store, a[0], a[1]);
     return rc == 0 ? "ok" : error_name();
   }
   if (it.verb == "delete") {
-    return sm1::erase(w->sess, w->store, a[0].data(), a[0].size(), nullptr,
-                      nullptr) == 0
+    return sm1::erase(w->sess, w->store, a[0], nullptr, nullptr) == 0
                ? "ok"
                : error_name();
   }
@@ -211,9 +206,7 @@ std::string execute(worker_t *w, const item_t &it) {
     if (c == w->cursors.end()) {
       return "ERROR: no such cursor " + a[0];
     }
-    return sm1::scan_seek(c->second, a[1].data(), a[1].size(), 1) == 0
-               ? "ok"
-               : error_name();
+    return sm1::scan_seek(c->second, a[1], 1) == 0 ? "ok" : error_name();
   }
   if (it.verb == "stmt") {
     // Start a statement: read committed then reads at one
@@ -239,9 +232,7 @@ std::string execute(worker_t *w, const item_t &it) {
     }
     sm1::lockmode_t mode =
         a[1] == "shared" ? sm1::lockmode_t::shared : sm1::lockmode_t::exclusive;
-    return sm1::lock(w->sess, w->store, a[0].data(), a[0].size(), mode) == 0
-               ? "ok"
-               : error_name();
+    return sm1::lock(w->sess, w->store, a[0], mode) == 0 ? "ok" : error_name();
   }
   if (it.verb == "lookup") {
     // lookup <row>: read a row of the SECOND store. What
@@ -249,7 +240,7 @@ std::string execute(worker_t *w, const item_t &it) {
     // this takes, which is a tracked catalog read (§11).
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm1::read(w->sess, w->rel2, a[0].data(), a[0].size(), &data, &len);
+    int rc = sm1::read(w->sess, w->rel2, a[0], &data, &len);
     if (rc < 0) {
       return error_name();
     }
@@ -331,9 +322,7 @@ public:
     for (const auto &kv : m_script.seeds) {
       // The same rows in both, so a script can read either.
       for (uint64_t store : {m_store, m_rel2}) {
-        m_ok = m_ok &&
-               sm1::insert(m_checker, store, kv.first.data(), kv.first.size(),
-                           kv.second.data(), kv.second.size()) == 0;
+        m_ok = m_ok && sm1::insert(m_checker, store, kv.first, kv.second) == 0;
       }
     }
     m_ok = m_ok && sm1::commit(m_checker) == 0;
@@ -547,7 +536,7 @@ private:
     }
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm1::read(m_checker, m_store, row.data(), row.size(), &data, &len);
+    int rc = sm1::read(m_checker, m_store, row, &data, &len);
     std::string v = rc == 0 ? std::string(data, len) : "-";
     sm1::commit(m_checker);
     return v;

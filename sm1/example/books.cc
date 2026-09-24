@@ -133,8 +133,7 @@ void upsert_book(sm1::session_t *s, uint64_t store, const book_t &b) {
   std::string key = encode_key(b.id);
   std::string val = encode_value(b);
   // Try the insert first.
-  if (sm1::insert(s, store, key.data(), key.size(), val.data(), val.size()) ==
-      0) {
+  if (sm1::insert(s, store, key, val) == 0) {
     return;
   }
   // Any failure but a taken key is a real error.
@@ -142,9 +141,7 @@ void upsert_book(sm1::session_t *s, uint64_t store, const book_t &b) {
     check(-1, "sm1_insert");
   }
   // The id exists: replace its value instead.
-  check(sm1::update(s, store, key.data(), key.size(), val.data(), val.size(),
-                    nullptr, nullptr),
-        "sm1_update");
+  check(sm1::update(s, store, key, val, nullptr, nullptr), "sm1_update");
 }
 
 } // namespace
@@ -223,7 +220,7 @@ int main(int argc, char **argv) {
   std::string key = encode_key(3);
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm1::read(s, book, key.data(), key.size(), &data, &len);
+  int r = sm1::read(s, book, key, &data, &len);
   check(r, "sm1_read");
   printf("\nread id 3:\n");
   // 1 means no such row, which is not an error.

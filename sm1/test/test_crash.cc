@@ -99,8 +99,7 @@ int crash_child_main(const char *homedir) {
   for (uint32_t i = next;; i++) {
     std::string k = crash_key(i);
     if (sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
-        sm1::insert(s, store, k.data(), k.size(), "v", 1) != 0 ||
-        sm1::commit(s) != 0) {
+        sm1::insert(s, store, k, "v") != 0 || sm1::commit(s) != 0) {
       return 5;
     }
     if (write(1, &i, sizeof(i)) != sizeof(i)) {

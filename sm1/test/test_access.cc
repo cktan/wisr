@@ -102,7 +102,7 @@ TEST_CASE("sm1_mkstore and sm1_rmstore are transactional") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   const char *d;
   size_t dl;
-  CHECK(sm1::read(s, gone, "k", 1, &d, &dl) == -1);
+  CHECK(sm1::read(s, gone, "k", &d, &dl) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   uint64_t store = mkstore(s);
   CHECK(store != gone);
@@ -148,18 +148,18 @@ TEST_CASE("a transaction reads its own inserts, updates, and deletes") {
 
     put(s, store, "k", "v1");
     CHECK(get(s, store, "k") == "v1");
-    CHECK(sm1::insert(s, store, "k", 1, "x", 1) == -1);
+    CHECK(sm1::insert(s, store, "k", "x") == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
 
-    REQUIRE(sm1::update(s, store, "k", 1, "v2", 2, nullptr, nullptr) == 0);
-    REQUIRE(sm1::update(s, store, "k", 1, "v3", 2, nullptr, nullptr) == 0);
+    REQUIRE(sm1::update(s, store, "k", "v2", nullptr, nullptr) == 0);
+    REQUIRE(sm1::update(s, store, "k", "v3", nullptr, nullptr) == 0);
     CHECK(get(s, store, "k") == "v3");
 
-    REQUIRE(sm1::erase(s, store, "k", 1, nullptr, nullptr) == 0);
+    REQUIRE(sm1::erase(s, store, "k", nullptr, nullptr) == 0);
     CHECK(get(s, store, "k") == "<none>");
-    CHECK(sm1::update(s, store, "k", 1, "x", 1, nullptr, nullptr) == -1);
+    CHECK(sm1::update(s, store, "k", "x", nullptr, nullptr) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-    CHECK(sm1::erase(s, store, "k", 1, nullptr, nullptr) == -1);
+    CHECK(sm1::erase(s, store, "k", nullptr, nullptr) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
     put(s, store, "k", "v4");
@@ -189,7 +189,7 @@ TEST_CASE("commit persists writes across reattach; abort discards them") {
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, store, "b", "aborted");
-  REQUIRE(sm1::update(s, store, "a", 1, "aborted", 7, nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(s, store, "a", "aborted", nullptr, nullptr) == 0);
   REQUIRE(sm1::abort(s) == 0);
 
   for (int pass = 0; pass < 2; pass++) {
@@ -263,8 +263,8 @@ TEST_CASE("sm1_stmt_begin gives read committed one snapshot per statement") {
   CHECK(get(s, store, "a") == "50");
 
   REQUIRE(sm1::begin(other, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::update(other, store, "a", 1, "20", 2, nullptr, nullptr) == 0);
-  REQUIRE(sm1::update(other, store, "b", 1, "80", 2, nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(other, store, "a", "20", nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(other, store, "b", "80", nullptr, nullptr) == 0);
   REQUIRE(sm1::commit(other) == 0);
 
   CHECK(get(s, store, "b") == "50");
@@ -313,7 +313,7 @@ TEST_CASE("the statement snapshot is taken by the first read, not the call") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   CHECK(get(s, store, "k") == "v");
   REQUIRE(sm1::begin(other, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::update(other, store, "k", 1, "w", 1, nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(other, store, "k", "w", nullptr, nullptr) == 0);
   REQUIRE(sm1::commit(other) == 0);
   CHECK(get(s, store, "k") == "w");
   REQUIRE(sm1::commit(s) == 0);
@@ -368,8 +368,7 @@ TEST_CASE("a scan returns userkeys in memcmp order within its bounds") {
       if (round == 0) {
         put(s, store, k, v);
       } else {
-        REQUIRE(sm1::update(s, store, k.data(), k.size(), v.data(), v.size(),
-                            nullptr, nullptr) == 0);
+        REQUIRE(sm1::update(s, store, k, v, nullptr, nullptr) == 0);
       }
     }
     REQUIRE(sm1::commit(s) == 0);
@@ -412,7 +411,7 @@ TEST_CASE("a cursor does not see writes made after it opened") {
   sm1::scan_t *c = scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   put(s, store, "c", "3");
-  REQUIRE(sm1::update(s, store, "a", 1, "9", 1, nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(s, store, "a", "9", nullptr, nullptr) == 0);
   CHECK(drain(c) == rows_t{{"a", "1"}, {"b", "2"}});
   CHECK(scan_all(s, store) == rows_t{{"a", "9"}, {"b", "2"}, {"c", "3"}});
   REQUIRE(sm1::commit(s) == 0);
@@ -493,18 +492,18 @@ TEST_CASE("sm1_scan_seek repositions a cursor without reopening it") {
   REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k1");
 
-  REQUIRE(sm1::scan_seek(c, "k5", 2, 1) == 0);
+  REQUIRE(sm1::scan_seek(c, "k5", 1) == 0);
   REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k5");
   CHECK(std::string(d, dl) == "5");
 
-  REQUIRE(sm1::scan_seek(c, "k7", 2, 0) == 0);
+  REQUIRE(sm1::scan_seek(c, "k7", 0) == 0);
   REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k8");
 
-  REQUIRE(sm1::scan_seek(c, "k99", 3, 1) == 0);
+  REQUIRE(sm1::scan_seek(c, "k99", 1) == 0);
   CHECK(sm1::scannxt(c, &k, &kl, &d, &dl) == 1);
-  REQUIRE(sm1::scan_seek(c, "k99", 3, 1) == 0);
+  REQUIRE(sm1::scan_seek(c, "k99", 1) == 0);
   CHECK(sm1::scannxt(c, &k, &kl, &d, &dl) == 1);
   sm1::scanend(c);
   REQUIRE(sm1::commit(s) == 0);
@@ -536,23 +535,23 @@ TEST_CASE("sm1_scan_seek refuses to move backwards or out of range") {
   REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k3");
 
-  CHECK(sm1::scan_seek(c, "k2", 2, 1) == -1);
+  CHECK(sm1::scan_seek(c, "k2", 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
-  REQUIRE(sm1::scan_seek(c, "k5", 2, 1) == 0);
+  REQUIRE(sm1::scan_seek(c, "k5", 1) == 0);
   REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k5");
-  CHECK(sm1::scan_seek(c, "k3", 2, 1) == -1);
+  CHECK(sm1::scan_seek(c, "k3", 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
-  REQUIRE(sm1::scan_seek(c, "k5", 2, 1) == 0);
+  REQUIRE(sm1::scan_seek(c, "k5", 1) == 0);
   REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k5");
 
-  CHECK(sm1::scan_seek(nullptr, "k5", 2, 1) == -1);
+  CHECK(sm1::scan_seek(nullptr, "k5", 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::string huge(sm1::max_keylen + 1, 'z');
-  CHECK(sm1::scan_seek(c, huge.data(), huge.size(), 1) == -1);
+  CHECK(sm1::scan_seek(c, huge, 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm1::scanend(c);
   REQUIRE(sm1::commit(s) == 0);
@@ -593,7 +592,7 @@ TEST_CASE("keys skipped by sm1_scan_seek still count as read under SSI") {
     REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
     CHECK(std::string(k, kl) == "k1");
     if (seek_past_k5) {
-      REQUIRE(sm1::scan_seek(c, "k8", 2, 1) == 0);
+      REQUIRE(sm1::scan_seek(c, "k8", 1) == 0);
       REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
       CHECK(std::string(k, kl) == "k8");
     }
@@ -601,8 +600,8 @@ TEST_CASE("keys skipped by sm1_scan_seek still count as read under SSI") {
 
     REQUIRE(sm1::begin(t2, sm1::xctlevel_t::serializable) == 0);
     CHECK(get(t2, store, "own") != "<none>");
-    REQUIRE(sm1::update(s, store, "own", 3, "t1", 2, nullptr, nullptr) == 0);
-    REQUIRE(sm1::update(t2, store, "k5", 2, "t2", 2, nullptr, nullptr) == 0);
+    REQUIRE(sm1::update(s, store, "own", "t1", nullptr, nullptr) == 0);
+    REQUIRE(sm1::update(t2, store, "k5", "t2", nullptr, nullptr) == 0);
 
     int rc2 = sm1::commit(t2);
     int err2 = sm1::errnum();
@@ -645,29 +644,29 @@ TEST_CASE("sm1_update and sm1_delete hand back the row they replaced") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   const char *old = nullptr;
   size_t oldlen = 0;
-  REQUIRE(sm1::update(s, store, "k", 1, "v1", 2, &old, &oldlen) == 0);
+  REQUIRE(sm1::update(s, store, "k", "v1", &old, &oldlen) == 0);
   CHECK(std::string(old, oldlen) == "v0");
 
-  REQUIRE(sm1::update(s, store, "k", 1, "v2", 2, &old, &oldlen) == 0);
+  REQUIRE(sm1::update(s, store, "k", "v2", &old, &oldlen) == 0);
   CHECK(std::string(old, oldlen) == "v1");
 
-  REQUIRE(sm1::erase(s, store, "k", 1, &old, &oldlen) == 0);
+  REQUIRE(sm1::erase(s, store, "k", &old, &oldlen) == 0);
   CHECK(std::string(old, oldlen) == "v2");
 
-  REQUIRE(sm1::update(s, store, "empty", 5, "now", 3, &old, &oldlen) == 0);
+  REQUIRE(sm1::update(s, store, "empty", "now", &old, &oldlen) == 0);
   CHECK(oldlen == 0);
 
   // The key is gone, so this fails and reports no old row.
   old = (const char *)1;
   oldlen = 99;
-  CHECK(sm1::update(s, store, "k", 1, "v3", 2, &old, &oldlen) == -1);
+  CHECK(sm1::update(s, store, "k", "v3", &old, &oldlen) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(old == nullptr);
   CHECK(oldlen == 0);
 
-  CHECK(sm1::update(s, store, "empty", 5, "x", 1, &old, nullptr) == -1);
+  CHECK(sm1::update(s, store, "empty", "x", &old, nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::erase(s, store, "empty", 5, nullptr, &oldlen) == -1);
+  CHECK(sm1::erase(s, store, "empty", nullptr, &oldlen) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1::commit(s) == 0);
 }
@@ -688,13 +687,13 @@ TEST_CASE("the old row shares sm1_read's buffer and its lifetime") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   const char *old = nullptr;
   size_t oldlen = 0;
-  REQUIRE(sm1::update(s, store, "k", 1, "new", 3, &old, &oldlen) == 0);
+  REQUIRE(sm1::update(s, store, "k", "new", &old, &oldlen) == 0);
   std::string copied(old, oldlen);
   CHECK(copied == "old");
 
   const char *d;
   size_t dl;
-  REQUIRE(sm1::read(s, store, "other", 5, &d, &dl) == 0);
+  REQUIRE(sm1::read(s, store, "other", &d, &dl) == 0);
   CHECK(std::string(d, dl) == "other-value");
   // The copy still holds what the update returned.
   CHECK(copied == "old");
@@ -714,13 +713,13 @@ TEST_CASE("oversized keys and values are rejected") {
   put(s, store, max, "v");
   CHECK(get(s, store, max) == "v");
   std::string over(sm1::max_keylen + 1, 'k');
-  CHECK(sm1::insert(s, store, over.data(), over.size(), "v", 1) == -1);
+  CHECK(sm1::insert(s, store, over, "v") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   const char *d;
   size_t dl;
-  CHECK(sm1::read(s, store, over.data(), over.size(), &d, &dl) == -1);
+  CHECK(sm1::read(s, store, over, &d, &dl) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::insert(s, 999, "k", 1, "v", 1) == -1);
+  CHECK(sm1::insert(s, 999, "k", "v") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(s) == 0);
 }
@@ -762,7 +761,7 @@ TEST_CASE("a dropped store stays readable at an older snapshot") {
   REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
   const char *d;
   size_t dl;
-  CHECK(sm1::read(r, old, "k", 1, &d, &dl) == -1);
+  CHECK(sm1::read(r, old, "k", &d, &dl) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(get(r, store, "k") == "new");
   CHECK(scan_all(r, store) == rows_t{{"k", "new"}});

@@ -549,7 +549,7 @@ enum class lockmode_t {
  * SM_ERR_INVALID.
  */
 int lock(session_t* session, uint64_t storeid,
-         const char* key, size_t klen, lockmode_t mode);
+         std::string_view key, lockmode_t mode);
 
 /*
  * Read the newest committed version of a key, ignoring the
@@ -563,7 +563,7 @@ int lock(session_t* session, uint64_t storeid,
  * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_NOTFOUND (store).
  */
 int read_latest(session_t* session, uint64_t storeid,
-                const char* key, size_t klen,
+                std::string_view key,
                 const char** data, size_t* datalen);
 
 /*
@@ -836,16 +836,14 @@ int lsstore(session_t* session, uint64_t** out, size_t* n);
  * SM_ERR_PREPARED, SM_ERR_INVALID, SM_ERR_DISKFULL, SM_ERR_IO.
  */
 int insert(session_t* session, uint64_t storeid,
-           const char* key, size_t klen,
-           const char* data, size_t datalen);
+           std::string_view key, std::string_view data);
 
 int update(session_t* session, uint64_t storeid,
-           const char* key, size_t klen,
-           const char* data, size_t datalen,
+           std::string_view key, std::string_view data,
            const char** old, size_t* oldlen);
 
 int erase(session_t* session, uint64_t storeid,
-          const char* key, size_t klen,
+          std::string_view key,
           const char** old, size_t* oldlen);
 
 /*
@@ -871,7 +869,7 @@ int erase(session_t* session, uint64_t storeid,
  * SM_ERR_INVALID, SM_ERR_CORRUPT, SM_ERR_IO.
  */
 int read(session_t* session, uint64_t storeid,
-         const char* key, size_t klen,
+         std::string_view key,
          const char** data, size_t* datalen);
 
 /*
@@ -966,8 +964,7 @@ int scannxt(scan_t* scan, const char** key, size_t* klen,
  * Errors: SM_ERR_INVALID (a backward seek, a key below the
  * start key, or a cursor that already failed).
  */
-int scan_seek(scan_t* scan, const char* key, size_t klen,
-              int inclusive);
+int scan_seek(scan_t* scan, std::string_view key, int inclusive);
 
 /*
  * Close a cursor and release its resources, including the

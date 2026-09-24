@@ -56,8 +56,7 @@ private:
 
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1::update(s, g_store, key.data(), key.size(), val.data(), val.size(),
-                     nullptr, nullptr);
+  return sm1::update(s, g_store, key, val, nullptr, nullptr);
 }
 
 /* Give a blocking call time to reach its wait. */
@@ -117,7 +116,7 @@ TEST_CASE("read committed sees a newer commit and re-reads it to overwrite") {
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   const char *d = nullptr;
   size_t dl = 0;
-  REQUIRE(sm1::read_latest(t, g_store, "x", 1, &d, &dl) == 0);
+  REQUIRE(sm1::read_latest(t, g_store, "x", &d, &dl) == 0);
   CHECK(std::string(d, dl) == "u");
   CHECK(set(t, "x", "t") == 0);
   REQUIRE(sm1::commit(t) == 0);
@@ -148,7 +147,7 @@ TEST_CASE("a retryable error aborts the transaction and releases everything") {
   CHECK(set(u, "y", "u") == 0); // would block if T still held it
   const char *d;
   size_t dl;
-  CHECK(sm1::read(u, tstore, "k", 1, &d, &dl) == -1);
+  CHECK(sm1::read(u, tstore, "k", &d, &dl) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(mkstore(u) > tstore);
   REQUIRE(sm1::commit(u) == 0);
@@ -192,7 +191,7 @@ TEST_CASE("a doomed transaction fails its next call and changes nothing") {
   t->doomed = sm1::SM_ERR_DEADLOCK;
   const char *d;
   size_t dl;
-  CHECK(sm1::read(t, g_store, "x", 1, &d, &dl) == -1);
+  CHECK(sm1::read(t, g_store, "x", &d, &dl) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DEADLOCK);
   CHECK(sm1::retryable() == 1);
 
@@ -228,13 +227,13 @@ TEST_CASE("concurrent increments with retry never lose an update") {
           const char *d;
           size_t dl;
           int ok = sm1::begin(s, level) == 0 &&
-                   sm1::read(s, g_store, "x", 1, &d, &dl) == 0;
+                   sm1::read(s, g_store, "x", &d, &dl) == 0;
           if (ok) {
             std::string v = std::to_string(std::stoi(std::string(d, dl)) + 1);
             ok = set(s, "x", v) == 0;
             // Read committed: re-read the newest value, add one again.
             if (!ok && sm1::errnum() == sm1::SM_ERR_UPDATED) {
-              ok = sm1::read_latest(s, g_store, "x", 1, &d, &dl) == 0;
+              ok = sm1::read_latest(s, g_store, "x", &d, &dl) == 0;
               v = std::to_string(std::stoi(std::string(d, dl)) + 1);
               ok = ok && set(s, "x", v) == 0;
             }
@@ -278,8 +277,8 @@ TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
   sm1::session_t *b = f.open();
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(a, g_store, "x", 1, sm1::lockmode_t::shared) == 0);
-  REQUIRE(sm1::lock(b, g_store, "x", 1, sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(a, g_store, "x", sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(b, g_store, "x", sm1::lockmode_t::shared) == 0);
 
   int rc_a = -2, rc_b = -2, err_b = 0;
   std::thread ta([&] { rc_a = set(a, "x", "a"); });
@@ -318,7 +317,7 @@ TEST_CASE(
     REQUIRE(set(b, "x", "b") == 0);
     REQUIRE(sm1::commit(b) == 0);
 
-    CHECK(sm1::lock(a, g_store, "x", 1, mode) == -1);
+    CHECK(sm1::lock(a, g_store, "x", mode) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
     CHECK(sm1::retryable() == 1);
     CHECK(sm1::abort(a) == -1);
@@ -356,21 +355,21 @@ TEST_CASE(
 
   // A writer reads the schema under a shared lock, then writes.
   REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(w, cat, "S", 1, sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(w, cat, "S", sm1::lockmode_t::shared) == 0);
   CHECK(get(w, cat, "S") == "noindex");
   put(w, g_store, "w-row", "1");
   REQUIRE(sm1::commit(w) == 0);
 
   // The builder takes the schema row exclusive.
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::update(b, cat, "S", 1, "indexed", 7, nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(b, cat, "S", "indexed", nullptr, nullptr) == 0);
 
   // A writer arriving now waits for the build to finish.
   REQUIRE(sm1::begin(x, sm1::xctlevel_t::read_committed) == 0);
   std::atomic<bool> returned{false};
   int rc = -2, err = 0;
   std::thread tx([&] {
-    rc = sm1::lock(x, cat, "S", 1, sm1::lockmode_t::shared);
+    rc = sm1::lock(x, cat, "S", sm1::lockmode_t::shared);
     err = sm1::errnum();
     returned = true;
   });
@@ -386,7 +385,7 @@ TEST_CASE(
   CHECK(rc == 0);
   const char *sd = nullptr;
   size_t sdl = 0;
-  REQUIRE(sm1::read_latest(x, cat, "S", 1, &sd, &sdl) == 0);
+  REQUIRE(sm1::read_latest(x, cat, "S", &sd, &sdl) == 0);
   CHECK(std::string(sd, sdl) == "indexed");
   REQUIRE(sm1::commit(x) == 0);
   sm1::closedb(w);
@@ -402,19 +401,19 @@ TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
   // 3. A key that does not exist is lockable.
   lock_fixture_t f;
   sm1::session_t *s = f.open();
-  CHECK(sm1::lock(nullptr, g_store, "x", 1, sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(nullptr, g_store, "x", sm1::lockmode_t::shared) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, g_store, "x", 1, sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(s, g_store, "x", sm1::lockmode_t::shared) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(s, g_store, "x", 1, (sm1::lockmode_t)7) == -1);
+  CHECK(sm1::lock(s, g_store, "x", (sm1::lockmode_t)7) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, 0, "x", 1, sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(s, 0, "x", sm1::lockmode_t::shared) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, g_store + 999, "x", 1, sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(s, g_store + 999, "x", sm1::lockmode_t::shared) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm1::lock(s, g_store, "absent", 6, sm1::lockmode_t::exclusive) == 0);
+  CHECK(sm1::lock(s, g_store, "absent", sm1::lockmode_t::exclusive) == 0);
   REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
 }

@@ -54,7 +54,7 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
         }
         sm1::scanend(c);
         const char *v = on >= 2 ? "0" : "1";
-        if (sm1::update(sess, s.store(), me.data(), me.size(), v, 1, nullptr,
+        if (sm1::update(sess, s.store(), me, std::string_view(v, 1), nullptr,
                         nullptr) == 0 &&
             sm1::commit(sess) == 0) {
           commits++;
@@ -78,7 +78,8 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
       for (const char *d : DOCS) {
         const char *data = nullptr;
         size_t len = 0;
-        if (sm1::read(check, s.store(), d, 2, &data, &len) == 0) {
+        if (sm1::read(check, s.store(), std::string_view(d, 2), &data, &len) ==
+            0) {
           on += std::string(data, len) == "1";
         }
       }

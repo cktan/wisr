@@ -51,13 +51,12 @@ private:
 
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1::update(s, g_store, key.data(), key.size(), val.data(), val.size(),
-                     nullptr, nullptr);
+  return sm1::update(s, g_store, key, val, nullptr, nullptr);
 }
 
 /* Delete key from store 1; the result of sm1::erase. */
 int del(sm1::session_t *s, const std::string &key) {
-  return sm1::erase(s, g_store, key.data(), key.size(), nullptr, nullptr);
+  return sm1::erase(s, g_store, key, nullptr, nullptr);
 }
 
 /* Drain a cursor into its keys and close it. */
@@ -318,8 +317,8 @@ TEST_CASE("rollback undoes sm1_mkstore and sm1_rmstore made after the mark") {
     CAPTURE(pass);
     const char *d;
     size_t dl;
-    CHECK(sm1::read(s, p, "k", 1, &d, &dl) == 1);
-    CHECK(sm1::read(s, q, "k", 1, &d, &dl) == -1);
+    CHECK(sm1::read(s, p, "k", &d, &dl) == 1);
+    CHECK(sm1::read(s, q, "k", &d, &dl) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
     CHECK(get(s, g_store, "a") == "0");
     REQUIRE(sm1::commit(s) == 0);

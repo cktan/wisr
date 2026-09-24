@@ -131,7 +131,7 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm1::savepoint(nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rollback(nullptr, 1), sm1::SM_ERR_INVALID);
   expect_fail(sm1::forget(nullptr, 1), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::lock(nullptr, 1, "k", 1, sm1::lockmode_t::shared),
+  expect_fail(sm1::lock(nullptr, 1, "k", sm1::lockmode_t::shared),
               sm1::SM_ERR_INVALID);
   expect_fail(sm1::prepare(nullptr, "g"), sm1::SM_ERR_INVALID);
   expect_fail(sm1::list_prepared(nullptr, &list, &n), sm1::SM_ERR_INVALID);
@@ -140,14 +140,12 @@ TEST_CASE("every session call rejects a NULL session") {
   uint64_t storeid;
   expect_fail(sm1::mkstore(nullptr, &storeid), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rmstore(nullptr, g_store), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::insert(nullptr, g_store, "k", 1, "v", 1),
+  expect_fail(sm1::insert(nullptr, g_store, "k", "v"), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::update(nullptr, g_store, "k", "v", nullptr, nullptr),
               sm1::SM_ERR_INVALID);
-  expect_fail(sm1::update(nullptr, g_store, "k", 1, "v", 1, nullptr, nullptr),
+  expect_fail(sm1::erase(nullptr, g_store, "k", nullptr, nullptr),
               sm1::SM_ERR_INVALID);
-  expect_fail(sm1::erase(nullptr, g_store, "k", 1, nullptr, nullptr),
-              sm1::SM_ERR_INVALID);
-  expect_fail(sm1::read(nullptr, g_store, "k", 1, &d, &dl),
-              sm1::SM_ERR_INVALID);
+  expect_fail(sm1::read(nullptr, g_store, "k", &d, &dl), sm1::SM_ERR_INVALID);
   expect_null(scan(nullptr, g_store, nullptr, 0, 0, nullptr, 0, 0),
               sm1::SM_ERR_INVALID);
   uint64_t *stores;
@@ -177,11 +175,11 @@ TEST_CASE("storeid 0 is rejected by every call taking a storeid") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   expect_fail(sm1::mkstore(s, nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rmstore(s, 0), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::insert(s, 0, "k", 1, "v", 1), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::update(s, 0, "k", 1, "v", 1, nullptr, nullptr),
+  expect_fail(sm1::insert(s, 0, "k", "v"), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::update(s, 0, "k", "v", nullptr, nullptr),
               sm1::SM_ERR_INVALID);
-  expect_fail(sm1::erase(s, 0, "k", 1, nullptr, nullptr), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::read(s, 0, "k", 1, &d, &dl), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::erase(s, 0, "k", nullptr, nullptr), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::read(s, 0, "k", &d, &dl), sm1::SM_ERR_INVALID);
   expect_null(scan(s, 0, nullptr, 0, 0, nullptr, 0, 0), sm1::SM_ERR_INVALID);
 
   CHECK(get(s, g_store, "a") == "1");
@@ -227,48 +225,30 @@ TEST_CASE("unknown stores fail with SM_ERR_NOTFOUND") {
   size_t dl;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   expect_fail(sm1::rmstore(s, 999), sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::insert(s, 999, "k", 1, "v", 1), sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::update(s, 999, "k", 1, "v", 1, nullptr, nullptr),
+  expect_fail(sm1::insert(s, 999, "k", "v"), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::update(s, 999, "k", "v", nullptr, nullptr),
               sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::erase(s, 999, "k", 1, nullptr, nullptr),
-              sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::read(s, 999, "k", 1, &d, &dl), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::erase(s, 999, "k", nullptr, nullptr), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::read(s, 999, "k", &d, &dl), sm1::SM_ERR_NOTFOUND);
   expect_null(scan(s, 999, nullptr, 0, 0, nullptr, 0, 0), sm1::SM_ERR_NOTFOUND);
 
   REQUIRE(sm1::rmstore(s, g_store) == 0);
-  expect_fail(sm1::read(s, g_store, "a", 1, &d, &dl), sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::insert(s, g_store, "k", 1, "v", 1), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::read(s, g_store, "a", &d, &dl), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::insert(s, g_store, "k", "v"), sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::abort(s) == 0);
 }
 
-TEST_CASE("keys and values: NULL only with length 0") {
-  // Verify NULL key and data pointers.
-  // 1. A NULL key with a nonzero length fails with
-  //    SM_ERR_INVALID in insert, update, delete, read, and as a
-  //    scan bound given a length (a NULL bound means none).
-  // 2. A NULL value with a nonzero length fails with
-  //    SM_ERR_INVALID in insert and update.
-  // 3. NULL with length 0 is the empty key or the empty value,
-  //    and works.
+TEST_CASE("keys and values: an empty string_view is the empty key or value") {
+  // Verify empty inputs: a default string_view, whose data() is
+  // null, is the empty key or the empty value, and works.
+  // 1. An empty key inserts and reads back.
+  // 2. An empty value inserts and reads back as "".
   args_fixture_t f;
   sm1::session_t *s = f.s();
-  const char *d;
-  size_t dl;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  expect_fail(sm1::insert(s, g_store, nullptr, 1, "v", 1), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::update(s, g_store, nullptr, 1, "v", 1, nullptr, nullptr),
-              sm1::SM_ERR_INVALID);
-  expect_fail(sm1::erase(s, g_store, nullptr, 1, nullptr, nullptr),
-              sm1::SM_ERR_INVALID);
-  expect_fail(sm1::read(s, g_store, nullptr, 1, &d, &dl), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::insert(s, g_store, "k", 1, nullptr, 1), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::update(s, g_store, "a", 1, nullptr, 1, nullptr, nullptr),
-              sm1::SM_ERR_INVALID);
-  CHECK(get(s, g_store, "a") == "1");
-
-  REQUIRE(sm1::insert(s, g_store, nullptr, 0, "empty-key", 9) == 0);
+  REQUIRE(sm1::insert(s, g_store, std::string_view(), "empty-key") == 0);
   CHECK(get(s, g_store, "") == "empty-key");
-  REQUIRE(sm1::insert(s, g_store, "e", 1, nullptr, 0) == 0);
+  REQUIRE(sm1::insert(s, g_store, "e", std::string_view()) == 0);
   CHECK(get(s, g_store, "e") == "");
   REQUIRE(sm1::commit(s) == 0);
 }
@@ -288,8 +268,8 @@ TEST_CASE("out-parameters must not be NULL") {
   sm1::prepared_t *list;
   size_t n;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  expect_fail(sm1::read(s, g_store, "a", 1, nullptr, &dl), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::read(s, g_store, "a", 1, &d, nullptr), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::read(s, g_store, "a", nullptr, &dl), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::read(s, g_store, "a", &d, nullptr), sm1::SM_ERR_INVALID);
 
   sm1::scan_t *c = scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
@@ -338,7 +318,7 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm1::savepoint(s), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::rollback(s, 1), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::forget(s, 1), sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::lock(s, 1, "k", 1, sm1::lockmode_t::shared),
+  expect_fail(sm1::lock(s, 1, "k", sm1::lockmode_t::shared),
               sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::prepare(s, "g"), sm1::SM_ERR_NOTRANS);
   uint64_t storeid;
@@ -346,12 +326,12 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm1::mkseq(s, "s", 1, 1), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::rmseq(s, "s"), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::rmstore(s, g_store), sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::insert(s, g_store, "k", 1, "v", 1), sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::update(s, g_store, "a", 1, "v", 1, nullptr, nullptr),
+  expect_fail(sm1::insert(s, g_store, "k", "v"), sm1::SM_ERR_NOTRANS);
+  expect_fail(sm1::update(s, g_store, "a", "v", nullptr, nullptr),
               sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::erase(s, g_store, "a", 1, nullptr, nullptr),
+  expect_fail(sm1::erase(s, g_store, "a", nullptr, nullptr),
               sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::read(s, g_store, "a", 1, &d, &dl), sm1::SM_ERR_NOTRANS);
+  expect_fail(sm1::read(s, g_store, "a", &d, &dl), sm1::SM_ERR_NOTRANS);
   expect_null(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0),
               sm1::SM_ERR_NOTRANS);
 
@@ -371,11 +351,10 @@ TEST_CASE("a rejected call leaves the transaction active and unchanged") {
   std::string over(sm1::max_keylen + 1, 'k');
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, g_store, "b", "2");
-  expect_fail(sm1::insert(s, g_store, over.data(), over.size(), "v", 1),
-              sm1::SM_ERR_INVALID);
-  expect_fail(sm1::update(s, g_store, "missing", 7, "v", 1, nullptr, nullptr),
+  expect_fail(sm1::insert(s, g_store, over, "v"), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::update(s, g_store, "missing", "v", nullptr, nullptr),
               sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::insert(s, g_store, "a", 1, "v", 1), sm1::SM_ERR_DUPKEY);
+  expect_fail(sm1::insert(s, g_store, "a", "v"), sm1::SM_ERR_DUPKEY);
   CHECK(get(s, g_store, "b") == "2");
   put(s, g_store, "c", "3");
   REQUIRE(sm1::commit(s) == 0);

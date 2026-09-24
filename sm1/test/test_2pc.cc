@@ -68,8 +68,7 @@ private:
 
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1::update(s, g_store, key.data(), key.size(), val.data(), val.size(),
-                     nullptr, nullptr);
+  return sm1::update(s, g_store, key, val, nullptr, nullptr);
 }
 
 /* The unresolved prepared transactions, as (gid, prepared_at). */
@@ -158,7 +157,7 @@ int prepare_child_main(const char *homedir) {
   }
   // Find the store, then write into it and prepare.
   uint64_t store = first_store(s);
-  if (store == 0 || sm1::insert(s, store, "c", 1, "v", 1) != 0 ||
+  if (store == 0 || sm1::insert(s, store, "c", "v") != 0 ||
       sm1::prepare(s, "g-crash") != 0) {
     return 2;
   }
@@ -259,7 +258,7 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
 
   const char *d;
   size_t dl;
-  CHECK(sm1::read(s, g_store, "a", 1, &d, &dl) == -1);
+  CHECK(sm1::read(s, g_store, "a", &d, &dl) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(set(s, "b", "1") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
@@ -269,7 +268,7 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1::forget(s, 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
-  CHECK(sm1::lock(s, g_store, "a", 1, sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(s, g_store, "a", sm1::lockmode_t::shared) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   uint64_t fresh = 0;
   CHECK(sm1::mkstore(s, &fresh) == -1);
@@ -588,7 +587,7 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   tpc_fixture_t f;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(s, g_store, "b", 1, sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(s, g_store, "b", sm1::lockmode_t::shared) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
   f.restart();
@@ -596,7 +595,7 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   sm1::session_t *u = f.open();
   sm1::session_t *v = f.open();
   REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(u, g_store, "b", 1, sm1::lockmode_t::shared) == 0);
+  CHECK(sm1::lock(u, g_store, "b", sm1::lockmode_t::shared) == 0);
 
   std::atomic<bool> returned{false};
   int rc = -2;
@@ -713,7 +712,7 @@ TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
   const char *d;
   size_t dl;
-  CHECK(sm1::read(v, storeid, "k", 1, &d, &dl) == -1);
+  CHECK(sm1::read(v, storeid, "k", &d, &dl) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(v) == 0);
   wisr::gc_run_once(v->db);
@@ -799,7 +798,7 @@ TEST_CASE("startup drops store CFs that nothing names") {
   REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
   const char *d;
   size_t dl;
-  CHECK(sm1::read(v, storeid, "k", 1, &d, &dl) == -1);
+  CHECK(sm1::read(v, storeid, "k", &d, &dl) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(v) == 0);
   sm1::closedb(v);

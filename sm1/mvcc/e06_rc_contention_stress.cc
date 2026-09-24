@@ -57,23 +57,25 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
         }
         const char *data = nullptr;
         size_t len = 0;
-        if (sm1::read(sess, s.store(), row, 2, &data, &len) != 0) {
+        if (sm1::read(sess, s.store(), std::string_view(row, 2), &data, &len) !=
+            0) {
           failures++;
           return;
         }
         std::string next =
             std::to_string(std::stoi(std::string(data, len)) + 1);
-        int rc = sm1::update(sess, s.store(), row, 2, next.data(), next.size(),
+        int rc = sm1::update(sess, s.store(), std::string_view(row, 2), next,
                              nullptr, nullptr);
         // The counter moved: read the newest value, add one to that.
         if (rc != 0 && sm1::errnum() == sm1::SM_ERR_UPDATED) {
           updated++;
-          if (sm1::read_latest(sess, s.store(), row, 2, &data, &len) != 0) {
+          if (sm1::read_latest(sess, s.store(), std::string_view(row, 2), &data,
+                               &len) != 0) {
             failures++;
             return;
           }
           next = std::to_string(std::stoi(std::string(data, len)) + 1);
-          rc = sm1::update(sess, s.store(), row, 2, next.data(), next.size(),
+          rc = sm1::update(sess, s.store(), std::string_view(row, 2), next,
                            nullptr, nullptr);
         }
         // Only a deadlock may be retried, and no row order here makes one.

@@ -45,15 +45,14 @@ private:
 
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1::update(s, g_store, key.data(), key.size(), val.data(), val.size(),
-                     nullptr, nullptr);
+  return sm1::update(s, g_store, key, val, nullptr, nullptr);
 }
 
 /* sm1::read_latest of key: "<none>" if absent; -1 as "<error>". */
 std::string latest(sm1::session_t *s, const std::string &key) {
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm1::read_latest(s, g_store, key.data(), key.size(), &data, &len);
+  int r = sm1::read_latest(s, g_store, key, &data, &len);
   if (r < 0) {
     return "<error>";
   }
@@ -82,7 +81,7 @@ TEST_CASE(
   sm1::session_t *t = f.open();
 
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
+  REQUIRE(sm1::lock(t, g_store, "x", sm1::lockmode_t::exclusive) == 0);
   CHECK(latest(t, "x") == "<error>");
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1::abort(t) == 0);
@@ -90,7 +89,7 @@ TEST_CASE(
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   CHECK(latest(t, "x") == "<error>");
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm1::lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
+  REQUIRE(sm1::lock(t, g_store, "x", sm1::lockmode_t::exclusive) == 0);
   CHECK(latest(t, "x") == "0");
   REQUIRE(sm1::commit(t) == 0);
   sm1::closedb(t);
@@ -126,7 +125,7 @@ TEST_CASE("a successful write consumes the mark") {
   sm1::session_t *t = f.open();
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   commit_from_other(f, "x", "u");
-  REQUIRE(sm1::lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
+  REQUIRE(sm1::lock(t, g_store, "x", sm1::lockmode_t::exclusive) == 0);
 
   REQUIRE(sm1::savepoint(t) == 1);
   CHECK(latest(t, "x") == "u");
@@ -149,7 +148,7 @@ TEST_CASE("under a shared lock sm1_read_latest reads but sets no mark") {
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   commit_from_other(f, "x", "u");
 
-  REQUIRE(sm1::lock(t, g_store, "x", 1, sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(t, g_store, "x", sm1::lockmode_t::shared) == 0);
   CHECK(latest(t, "x") == "u");
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);

@@ -61,7 +61,7 @@ private:
 /* Insert key -> "v" into store in one committed transaction. */
 int commit_one(sm1::session_t *s, uint64_t store, const std::string &key) {
   if (sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
-      sm1::insert(s, store, key.data(), key.size(), "v", 1) != 0) {
+      sm1::insert(s, store, key, "v") != 0) {
     return -1;
   }
   return sm1::commit(s);
@@ -129,7 +129,7 @@ TEST_CASE("running out of memory after the commit point still commits") {
   sm1::session_t *b = f.open();
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t store = mkstore(a);
-  REQUIRE(sm1::insert(a, store, "k", 1, "v", 1) == 0);
+  REQUIRE(sm1::insert(a, store, "k", "v") == 0);
 
   f.db()->test_cache_insert = [] { throw std::bad_alloc(); };
   CHECK_MESSAGE(sm1::commit(a) == 0, sm1::errmsg());
@@ -140,7 +140,7 @@ TEST_CASE("running out of memory after the commit point still commits") {
 
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(b, store, "k") == "v");
-  CHECK(sm1::update(b, store, "k", 1, "w", 1, nullptr, nullptr) == 0);
+  CHECK(sm1::update(b, store, "k", "w", nullptr, nullptr) == 0);
   REQUIRE(sm1::commit(b) == 0);
   sm1::closedb(b);
 }
@@ -171,7 +171,7 @@ TEST_CASE(
     REQUIRE(n < 10000);
     REQUIRE(sm1::begin(a, sm1::xctlevel_t::serializable) == 0);
     CHECK(get(a, f.store(), "x") == "<none>");
-    REQUIRE(sm1::insert(a, f.store(), "a", 1, "v", 1) == 0);
+    REQUIRE(sm1::insert(a, f.store(), "a", "v") == 0);
     t_alloc_budget = n;
     int rc = sm1::commit(a);
     t_alloc_budget = -1;
@@ -226,7 +226,7 @@ TEST_CASE("a failed status write fails the database stop") {
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(a, f.store(), "old") == "v");
   CHECK(get(a, f.store(), "x") == "<none>");
-  CHECK(sm1::insert(a, f.store(), "y", 1, "v", 1) == -1);
+  CHECK(sm1::insert(a, f.store(), "y", "v") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   uint64_t newstore = 0;
   CHECK(sm1::mkstore(a, &newstore) == -1);
@@ -315,10 +315,12 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
       for (int i = 0; i < per_writer; i++) {
         std::string base = std::to_string(t) + "." + std::to_string(i);
         if (sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
-            sm1::insert(s, f.store(), (base + ".a").data(), base.size() + 2,
-                        "v", 1) != 0 ||
-            sm1::insert(s, f.store(), (base + ".b").data(), base.size() + 2,
-                        "v", 1) != 0 ||
+            sm1::insert(s, f.store(),
+                        std::string_view((base + ".a").data(), base.size() + 2),
+                        "v") != 0 ||
+            sm1::insert(s, f.store(),
+                        std::string_view((base + ".b").data(), base.size() + 2),
+                        "v") != 0 ||
             sm1::commit(s) != 0) {
           failures++;
         }
