@@ -36,7 +36,7 @@ struct sm1::env_t {
   /* Open databases by name, shared by their sessions. */
   std::map<std::string, wisr::db_t *> dbs;
 
-  /* Every open session, for sm1_detach. */
+  /* Every open session, for sm1::detach. */
   std::set<sm1::session_t *> sessions;
 
   /* Close the root db. */

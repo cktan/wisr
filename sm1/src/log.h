@@ -1,5 +1,5 @@
 /*
- * log.h -- reporting through the caller's log hook (sm1_set_log).
+ * log.h -- reporting through the caller's log hook (sm1::set_log).
  */
 #ifndef WISR_LOG_H
 #define WISR_LOG_H

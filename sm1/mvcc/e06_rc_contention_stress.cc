@@ -4,7 +4,7 @@
  *
  * Four threads each add 1 to a hot counter, forty rounds each,
  * choosing among three, through the whole exchange: read, then
- * update; on `updated`, sm1_read_latest and update again. A
+ * update; on `updated`, sm1::read_latest and update again. A
  * compaction thread runs meanwhile, so versions are stamped and
  * dropped under the writers' feet. The sum of the counters must
  * be exactly the number of increments (f01, f08, f07 under
@@ -51,33 +51,33 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
       for (int round = 0; round < 40; round++) {
         const char *row = rows[(round + i) % 3];
         // Read the counter, then add one.
-        if (sm1_begin(sess, sm1::xctlevel_t::read_committed) != 0) {
+        if (sm1::begin(sess, sm1::xctlevel_t::read_committed) != 0) {
           failures++;
           return;
         }
         const char *data = nullptr;
         size_t len = 0;
-        if (sm1_read(sess, s.store(), row, 2, &data, &len) != 0) {
+        if (sm1::read(sess, s.store(), row, 2, &data, &len) != 0) {
           failures++;
           return;
         }
         std::string next =
             std::to_string(std::stoi(std::string(data, len)) + 1);
-        int rc = sm1_update(sess, s.store(), row, 2, next.data(), next.size(),
-                            nullptr, nullptr);
+        int rc = sm1::update(sess, s.store(), row, 2, next.data(), next.size(),
+                             nullptr, nullptr);
         // The counter moved: read the newest value, add one to that.
         if (rc != 0 && sm1::errnum() == sm1::SM_ERR_UPDATED) {
           updated++;
-          if (sm1_read_latest(sess, s.store(), row, 2, &data, &len) != 0) {
+          if (sm1::read_latest(sess, s.store(), row, 2, &data, &len) != 0) {
             failures++;
             return;
           }
           next = std::to_string(std::stoi(std::string(data, len)) + 1);
-          rc = sm1_update(sess, s.store(), row, 2, next.data(), next.size(),
-                          nullptr, nullptr);
+          rc = sm1::update(sess, s.store(), row, 2, next.data(), next.size(),
+                           nullptr, nullptr);
         }
         // Only a deadlock may be retried, and no row order here makes one.
-        if (rc != 0 || sm1_commit(sess) != 0) {
+        if (rc != 0 || sm1::commit(sess) != 0) {
           failures++;
           return;
         }

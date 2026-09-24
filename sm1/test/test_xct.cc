@@ -25,12 +25,12 @@ class xct_fixture_t {
 public:
   /* Create "db" and store 1; the first session opens "db" with opt. */
   explicit xct_fixture_t(const sm1::options_t *opt = nullptr) {
-    REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
-    m_first = sm1_opendb(m_home.env(), "db", opt);
+    REQUIRE(sm1::mkdb(m_home.env(), "db", nullptr) == 0);
+    m_first = opendb(m_home.env(), "db", opt);
     REQUIRE(m_first);
-    REQUIRE(sm1_begin(m_first, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::begin(m_first, sm1::xctlevel_t::repeatable_read) == 0);
     m_store = mkstore(m_first);
-    REQUIRE(sm1_commit(m_first) == 0);
+    REQUIRE(sm1::commit(m_first) == 0);
   }
 
   /* The store's storeid. */
@@ -41,7 +41,7 @@ public:
 
   /* Another session on "db". */
   sm1::session_t *open() const {
-    sm1::session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
+    sm1::session_t *s = opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -60,11 +60,11 @@ private:
 
 /* Insert key -> "v" into store in one committed transaction. */
 int commit_one(sm1::session_t *s, uint64_t store, const std::string &key) {
-  if (sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
-      sm1_insert(s, store, key.data(), key.size(), "v", 1) != 0) {
+  if (sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
+      sm1::insert(s, store, key.data(), key.size(), "v", 1) != 0) {
     return -1;
   }
-  return sm1_commit(s);
+  return sm1::commit(s);
 }
 
 } // namespace
@@ -97,21 +97,21 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   entered.get_future().wait();
   REQUIRE(commit_one(b, f.store(), "b") == 0);
 
-  REQUIRE(sm1_begin(c, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(c, f.store(), "a") == "<none>");
   CHECK(get(c, f.store(), "b") == "<none>");
-  REQUIRE(sm1_commit(c) == 0);
+  REQUIRE(sm1::commit(c) == 0);
 
   release.set_value();
   ta.join();
   f.db()->test_before_commit = nullptr;
 
-  REQUIRE(sm1_begin(c, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(c, f.store(), "a") == "v");
   CHECK(get(c, f.store(), "b") == "v");
-  REQUIRE(sm1_commit(c) == 0);
-  sm1_closedb(b);
-  sm1_closedb(c);
+  REQUIRE(sm1::commit(c) == 0);
+  sm1::closedb(b);
+  sm1::closedb(c);
 }
 
 TEST_CASE("running out of memory after the commit point still commits") {
@@ -119,7 +119,7 @@ TEST_CASE("running out of memory after the commit point still commits") {
   // success, even if what follows it cannot allocate (§8.2).
   // 1. Session A creates a store and inserts "k" into it.
   // 2. Make the commit cache insert throw std::bad_alloc, then
-  //    commit: sm1_commit returns 0, since the record is written.
+  //    commit: sm1::commit returns 0, since the record is written.
   // 3. A is left with no transaction: a new one begins on it.
   // 4. Session B sees "k" in the new store, so visible_ts moved
   //    past the commit and the store was not dropped.
@@ -127,22 +127,22 @@ TEST_CASE("running out of memory after the commit point still commits") {
   xct_fixture_t f;
   sm1::session_t *a = f.first();
   sm1::session_t *b = f.open();
-  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t store = mkstore(a);
-  REQUIRE(sm1_insert(a, store, "k", 1, "v", 1) == 0);
+  REQUIRE(sm1::insert(a, store, "k", 1, "v", 1) == 0);
 
   f.db()->test_cache_insert = [] { throw std::bad_alloc(); };
-  CHECK_MESSAGE(sm1_commit(a) == 0, sm1::errmsg());
+  CHECK_MESSAGE(sm1::commit(a) == 0, sm1::errmsg());
   f.db()->test_cache_insert = nullptr;
 
-  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_commit(a) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::commit(a) == 0);
 
-  REQUIRE(sm1_begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(b, store, "k") == "v");
-  CHECK(sm1_update(b, store, "k", 1, "w", 1, nullptr, nullptr) == 0);
-  REQUIRE(sm1_commit(b) == 0);
-  sm1_closedb(b);
+  CHECK(sm1::update(b, store, "k", 1, "w", 1, nullptr, nullptr) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(b);
 }
 
 TEST_CASE(
@@ -152,7 +152,7 @@ TEST_CASE(
   // later commits still become visible (§4.3, §8.2).
   // 1. For n = 0, 1, 2, ...: A reads "x" and inserts a key at
   //    SERIALIZABLE, and every allocation from the n-th on fails,
-  //    from the start of sm1_commit up to the status write.
+  //    from the start of sm1::commit up to the status write.
   // 2. The commit fails with NOMEM, and A aborts its transaction.
   // 3. B commits a key of its own, and a fresh snapshot sees it:
   //    no stranded commit_ts is holding visible_ts back.
@@ -169,48 +169,48 @@ TEST_CASE(
   long n = 0;
   for (;; n++) {
     REQUIRE(n < 10000);
-    REQUIRE(sm1_begin(a, sm1::xctlevel_t::serializable) == 0);
+    REQUIRE(sm1::begin(a, sm1::xctlevel_t::serializable) == 0);
     CHECK(get(a, f.store(), "x") == "<none>");
-    REQUIRE(sm1_insert(a, f.store(), "a", 1, "v", 1) == 0);
+    REQUIRE(sm1::insert(a, f.store(), "a", 1, "v", 1) == 0);
     t_alloc_budget = n;
-    int rc = sm1_commit(a);
+    int rc = sm1::commit(a);
     t_alloc_budget = -1;
     if (rc == 0) {
       break;
     }
     INFO("allocation ", n, " failed");
     CHECK(sm1::errnum() == sm1::SM_ERR_NOMEM);
-    REQUIRE_MESSAGE(sm1_abort(a) == 0, sm1::errmsg());
+    REQUIRE_MESSAGE(sm1::abort(a) == 0, sm1::errmsg());
     std::string key = "b" + std::to_string(n);
     REQUIRE(commit_one(b, f.store(), key) == 0);
-    REQUIRE(sm1_begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
     REQUIRE(get(b, f.store(), key) == "v");
-    REQUIRE(sm1_commit(b) == 0);
+    REQUIRE(sm1::commit(b) == 0);
   }
   f.db()->test_before_commit = nullptr;
   CHECK(n > 0);
 
-  REQUIRE(sm1_begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(b, f.store(), "a") == "v");
-  REQUIRE(sm1_commit(b) == 0);
-  sm1_closedb(b);
+  REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(b);
 }
 
 TEST_CASE("a failed status write fails the database stop") {
   // Verify the §8.2 fail-stop state and recovery by reopening.
   // 1. Session B begins and reads committed "old".
   // 2. Session A inserts "x"; its status write fails, and
-  //    sm1_commit returns SM_ERR_IO.
+  //    sm1::commit returns SM_ERR_IO.
   // 3. B's existing snapshot still reads "old".
   // 4. A new transaction can begin, read, and commit with no
-  //    writes, but insert and sm1_mkstore fail with SM_ERR_IO.
+  //    writes, but insert and sm1::mkstore fail with SM_ERR_IO.
   // 5. Close every session and reopen: "x" never committed,
   //    and writes work again.
   xct_fixture_t f;
   sm1::session_t *a = f.first();
   sm1::session_t *b = f.open();
   REQUIRE(commit_one(a, f.store(), "old") == 0);
-  REQUIRE(sm1_begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(b, f.store(), "old") == "v");
 
   f.db()->test_before_commit = [](uint64_t) {
@@ -221,28 +221,28 @@ TEST_CASE("a failed status write fails the database stop") {
   f.db()->test_before_commit = nullptr;
 
   CHECK(get(b, f.store(), "old") == "v");
-  REQUIRE(sm1_commit(b) == 0);
+  REQUIRE(sm1::commit(b) == 0);
 
-  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(a, f.store(), "old") == "v");
   CHECK(get(a, f.store(), "x") == "<none>");
-  CHECK(sm1_insert(a, f.store(), "y", 1, "v", 1) == -1);
+  CHECK(sm1::insert(a, f.store(), "y", 1, "v", 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   uint64_t newstore = 0;
-  CHECK(sm1_mkstore(a, &newstore) == -1);
+  CHECK(sm1::mkstore(a, &newstore) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);
-  REQUIRE(sm1_commit(a) == 0); // read-only: nothing to publish
+  REQUIRE(sm1::commit(a) == 0); // read-only: nothing to publish
 
-  REQUIRE(sm1_closedb(a) == 0);
-  REQUIRE(sm1_closedb(b) == 0);
-  sm1::session_t *s = sm1_opendb(f.home().env(), "db", nullptr);
+  REQUIRE(sm1::closedb(a) == 0);
+  REQUIRE(sm1::closedb(b) == 0);
+  sm1::session_t *s = opendb(f.home().env(), "db", nullptr);
   REQUIRE(s);
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(s, f.store(), "old") == "v");
   CHECK(get(s, f.store(), "x") == "<none>");
   put(s, f.store(), "y", "v");
-  REQUIRE(sm1_commit(s) == 0);
-  REQUIRE(sm1_closedb(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
 }
 
 TEST_CASE("a one-entry commit cache gives the same answers") {
@@ -259,35 +259,35 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   sm1::session_t *a = f.first();
   sm1::session_t *b = f.open();
 
-  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 50; i++) {
     REQUIRE(commit_one(b, f.store(), "k" + std::to_string(100 + i)) == 0);
     CHECK(f.db()->cache.size() <= 1);
   }
   CHECK(get(a, f.store(), "k100") == "<none>");
   CHECK(get(a, f.store(), "k149") == "<none>");
-  REQUIRE(sm1_commit(a) == 0);
+  REQUIRE(sm1::commit(a) == 0);
 
-  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 50; i++) {
     CHECK(get(a, f.store(), "k" + std::to_string(100 + i)) == "v");
   }
-  sm1::scan_t *c = sm1_scan(a, f.store(), nullptr, 0, 0, nullptr, 0, 0);
+  sm1::scan_t *c = scan(a, f.store(), nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   int n = 0;
   const char *k, *d;
   size_t kl, dl;
-  while (sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
+  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
-  sm1_scanend(c);
+  sm1::scanend(c);
   CHECK(n == 50);
-  REQUIRE(sm1_commit(a) == 0);
-  sm1_closedb(b);
+  REQUIRE(sm1::commit(a) == 0);
+  sm1::closedb(b);
 
   opt.commit_cache_entries = 0;
-  REQUIRE(sm1_mkdb(f.home().env(), "db2", nullptr) == 0);
-  CHECK(sm1_opendb(f.home().env(), "db2", &opt) == nullptr);
+  REQUIRE(sm1::mkdb(f.home().env(), "db2", nullptr) == 0);
+  CHECK(opendb(f.home().env(), "db2", &opt) == nullptr);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -314,12 +314,12 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
       sm1::session_t *s = sessions[t];
       for (int i = 0; i < per_writer; i++) {
         std::string base = std::to_string(t) + "." + std::to_string(i);
-        if (sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
-            sm1_insert(s, f.store(), (base + ".a").data(), base.size() + 2, "v",
-                       1) != 0 ||
-            sm1_insert(s, f.store(), (base + ".b").data(), base.size() + 2, "v",
-                       1) != 0 ||
-            sm1_commit(s) != 0) {
+        if (sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
+            sm1::insert(s, f.store(), (base + ".a").data(), base.size() + 2,
+                        "v", 1) != 0 ||
+            sm1::insert(s, f.store(), (base + ".b").data(), base.size() + 2,
+                        "v", 1) != 0 ||
+            sm1::commit(s) != 0) {
           failures++;
         }
       }
@@ -333,19 +333,19 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
     bool final_pass = false;
     while (!final_pass) {
       final_pass = done;
-      if (sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
+      if (sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
         failures++;
         return;
       }
-      sm1::scan_t *c = sm1_scan(s, f.store(), nullptr, 0, 0, nullptr, 0, 0);
+      sm1::scan_t *c = scan(s, f.store(), nullptr, 0, 0, nullptr, 0, 0);
       std::vector<std::string> keys;
       const char *k, *d;
       size_t kl, dl;
-      while (c && sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
+      while (c && sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
         keys.emplace_back(k, kl);
       }
-      sm1_scanend(c);
-      sm1_commit(s);
+      sm1::scanend(c);
+      sm1::commit(s);
       // Keys sort as "<t>.<i>.a" then "<t>.<i>.b": pairs are adjacent.
       if (keys.size() % 2 != 0) {
         torn++;
@@ -376,6 +376,6 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
   CHECK(last == size_t(2 * writers * per_writer));
   MESSAGE("reader scans: " << scans);
   for (sm1::session_t *s : sessions) {
-    sm1_closedb(s);
+    sm1::closedb(s);
   }
 }

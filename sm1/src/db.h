@@ -110,7 +110,7 @@ struct db_t {
 
   /*
    * A sequence in use, by seqid (§11). The state is built on
-   * the first sm1_nextseq and kept until the database closes;
+   * the first sm1::nextseq and kept until the database closes;
    * it is guarded by alloc_mu, like the leases above.
    */
   struct seq_state_t {
@@ -207,7 +207,7 @@ struct db_t {
    * Garbage collection (§8.3). The compaction filter runs only
    * once gc_ready is set, after the handles above are valid.
    * It cannot write, so it queues tombstones to purge; a
-   * committed sm1_rmstore queues its storeids to drop once the
+   * committed sm1::rmstore queues its storeids to drop once the
    * watermark passes its commit. The worker drains both.
    */
   std::atomic<bool> gc_ready{false};
@@ -275,7 +275,7 @@ struct db_t {
   /*
    * Prepared transactions by gid (§8.4, §8.5). Each value is a
    * database-owned sm1::session_t holding the transaction; a
-   * null value reserves a gid while sm1_prepare runs.
+   * null value reserves a gid while sm1::prepare runs.
    */
   std::mutex prepared_mu;
   std::map<std::string, sm1::session_t *> prepared;

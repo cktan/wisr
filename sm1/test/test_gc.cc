@@ -38,12 +38,12 @@ class gc_fixture_t {
 public:
   /* Create "db" and the store; the first session opens "db" with opt. */
   explicit gc_fixture_t(const sm1::options_t *opt = nullptr) {
-    REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
-    m_s = sm1_opendb(m_home.env(), "db", opt);
+    REQUIRE(sm1::mkdb(m_home.env(), "db", nullptr) == 0);
+    m_s = opendb(m_home.env(), "db", opt);
     REQUIRE(m_s);
-    REQUIRE(sm1_begin(m_s, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::begin(m_s, sm1::xctlevel_t::repeatable_read) == 0);
     m_storeid = g_store = mkstore(m_s);
-    REQUIRE(sm1_commit(m_s) == 0);
+    REQUIRE(sm1::commit(m_s) == 0);
   }
 
   /* The fixture's own session. */
@@ -51,7 +51,7 @@ public:
 
   /* A new session on "db". */
   sm1::session_t *open() const {
-    sm1::session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
+    sm1::session_t *s = opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -87,9 +87,9 @@ public:
 
   /* Close the session, reattach, and reopen "db" with opt. */
   void reopen(const sm1::options_t *opt) {
-    REQUIRE(sm1_closedb(m_s) == 0);
+    REQUIRE(sm1::closedb(m_s) == 0);
     m_home.reattach();
-    m_s = sm1_opendb(m_home.env(), "db", opt);
+    m_s = opendb(m_home.env(), "db", opt);
     REQUIRE(m_s);
   }
 
@@ -119,26 +119,26 @@ private:
 /* Set key in store 1 to val in one committed transaction. */
 void commit_set(sm1::session_t *s, const std::string &key,
                 const std::string &val) {
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
-                     nullptr, nullptr) == 0);
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::update(s, g_store, key.data(), key.size(), val.data(),
+                      val.size(), nullptr, nullptr) == 0);
+  REQUIRE(sm1::commit(s) == 0);
 }
 
 /* Insert key -> val into store 1 in one committed transaction. */
 void commit_put(sm1::session_t *s, const std::string &key,
                 const std::string &val) {
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, g_store, key, val);
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
 }
 
 /* Delete key from store 1 in one committed transaction. */
 void commit_del(sm1::session_t *s, const std::string &key) {
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_delete(s, g_store, key.data(), key.size(), nullptr, nullptr) ==
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::erase(s, g_store, key.data(), key.size(), nullptr, nullptr) ==
           0);
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
 }
 
 } // namespace
@@ -157,14 +157,14 @@ TEST_CASE("a key's versions are stored in commit order, by write timestamp") {
   sm1::session_t *l = f.open();
   commit_put(w, "k", "v0");
   commit_put(w, "j", "x");
-  REQUIRE(sm1_begin(l, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
+  REQUIRE(sm1::begin(l, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
   commit_set(w, "k", "v1");
   commit_set(w, "k", "v2");
-  REQUIRE(sm1_commit(l) == 0);
-  REQUIRE(sm1_begin(w, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::commit(l) == 0);
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(w, g_store, "k") == "v2");
-  REQUIRE(sm1_commit(w) == 0);
+  REQUIRE(sm1::commit(w) == 0);
 
   std::vector<raw_t> raw = f.raw(g_store);
   std::vector<uint64_t> k_wts;
@@ -179,7 +179,7 @@ TEST_CASE("a key's versions are stored in commit order, by write timestamp") {
   REQUIRE(k_wts.size() == 3);
   CHECK(k_wts[0] > k_wts[1]);
   CHECK(k_wts[1] > k_wts[2]);
-  sm1_closedb(w);
+  sm1::closedb(w);
 }
 
 TEST_CASE("a read committed write past a newer commit survives compaction") {
@@ -195,22 +195,22 @@ TEST_CASE("a read committed write past a newer commit survives compaction") {
   sm1::session_t *l = f.open();
   commit_put(w, "k", "v0");
   commit_put(w, "j", "x");
-  REQUIRE(sm1_begin(l, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1_update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
+  REQUIRE(sm1::begin(l, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
   commit_set(w, "k", "v1");
-  CHECK(sm1_update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == -1);
+  CHECK(sm1::update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   const char *data = nullptr;
   size_t len = 0;
-  REQUIRE(sm1_read_latest(l, g_store, "k", 1, &data, &len) == 0);
+  REQUIRE(sm1::read_latest(l, g_store, "k", 1, &data, &len) == 0);
   CHECK(std::string(data, len) == "v1");
-  REQUIRE(sm1_update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == 0);
-  REQUIRE(sm1_commit(l) == 0);
+  REQUIRE(sm1::update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == 0);
+  REQUIRE(sm1::commit(l) == 0);
 
   f.compact(g_store);
-  REQUIRE(sm1_begin(w, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(w, g_store, "k") == "v2");
-  REQUIRE(sm1_commit(w) == 0);
+  REQUIRE(sm1::commit(w) == 0);
   size_t k_versions = 0;
   for (const raw_t &v : f.raw(g_store)) {
     if (v.key == "k") {
@@ -218,7 +218,7 @@ TEST_CASE("a read committed write past a newer commit survives compaction") {
     }
   }
   CHECK(k_versions == 1);
-  sm1_closedb(w);
+  sm1::closedb(w);
 }
 
 TEST_CASE("a long-running reader keeps the versions it can see") {
@@ -232,7 +232,7 @@ TEST_CASE("a long-running reader keeps the versions it can see") {
   sm1::session_t *w = f.open();
   sm1::session_t *r = f.open();
   commit_put(w, "k", "v0");
-  REQUIRE(sm1_begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(r, g_store, "k") == "v0");
   for (int i = 1; i <= 5; i++) {
     commit_set(w, "k", "v" + std::to_string(i));
@@ -246,17 +246,17 @@ TEST_CASE("a long-running reader keeps the versions it can see") {
     CHECK((raw[i].flags & version_stamped) == 0);
   }
   CHECK((raw[5].flags & version_stamped) != 0);
-  REQUIRE(sm1_commit(r) == 0);
+  REQUIRE(sm1::commit(r) == 0);
 
   f.compact(g_store);
   raw = f.raw(g_store);
   REQUIRE(raw.size() == 1);
   CHECK((raw[0].flags & version_stamped) != 0);
-  REQUIRE(sm1_begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(r, g_store, "k") == "v5");
-  REQUIRE(sm1_commit(r) == 0);
-  sm1_closedb(w);
-  sm1_closedb(r);
+  REQUIRE(sm1::commit(r) == 0);
+  sm1::closedb(w);
+  sm1::closedb(r);
 }
 
 TEST_CASE("a running transaction's versions survive compaction unstamped") {
@@ -268,23 +268,23 @@ TEST_CASE("a running transaction's versions survive compaction unstamped") {
   gc_fixture_t f;
   sm1::session_t *t = f.open();
   sm1::session_t *u = f.open();
-  REQUIRE(sm1_begin(t, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::repeatable_read) == 0);
   put(t, g_store, "k", "v");
   f.compact(g_store);
 
   std::vector<raw_t> raw = f.raw(g_store);
   REQUIRE(raw.size() == 1);
   CHECK((raw[0].flags & version_stamped) == 0);
-  REQUIRE(sm1_begin(u, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(u, g_store, "k") == "<none>");
-  REQUIRE(sm1_commit(u) == 0);
+  REQUIRE(sm1::commit(u) == 0);
   CHECK(get(t, g_store, "k") == "v");
 
-  REQUIRE(sm1_abort(t) == 0);
+  REQUIRE(sm1::abort(t) == 0);
   f.compact(g_store);
   CHECK(f.raw(g_store).empty());
-  sm1_closedb(t);
-  sm1_closedb(u);
+  sm1::closedb(t);
+  sm1::closedb(u);
 }
 
 TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
@@ -299,45 +299,45 @@ TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
   gc_fixture_t f;
   sm1::session_t *s = f.open();
   char key[8];
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 20; i++) {
     snprintf(key, sizeof(key), "k%02d", i);
     put(s, g_store, key, "a");
   }
-  REQUIRE(sm1_commit(s) == 0);
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 20; i++) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm1_update(s, g_store, key, 3, "b", 1, nullptr, nullptr) == 0);
+    REQUIRE(sm1::update(s, g_store, key, 3, "b", 1, nullptr, nullptr) == 0);
   }
-  REQUIRE(sm1_commit(s) == 0);
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 20; i += 2) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm1_delete(s, g_store, key, 3, nullptr, nullptr) == 0);
+    REQUIRE(sm1::erase(s, g_store, key, 3, nullptr, nullptr) == 0);
   }
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
 
   f.compact(g_store);
   commit_put(s, "k04", "c");
   gc_run_once(f.db());
   f.compact(g_store);
 
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 20; i++) {
     CAPTURE(i);
     snprintf(key, sizeof(key), "k%02d", i);
     std::string want = i == 4 ? "c" : i % 2 ? "b" : "<none>";
     CHECK(get(s, g_store, key) == want);
   }
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
 
   std::vector<raw_t> raw = f.raw(g_store);
   CHECK(raw.size() == 11); // ten odd keys and the new k04
   for (const raw_t &v : raw) {
     CHECK((v.flags & version_tombstone) == 0);
   }
-  sm1_closedb(s);
+  sm1::closedb(s);
 }
 
 TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
@@ -351,7 +351,7 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
   sm1::session_t *t = f.open();
   sm1::session_t *u = f.open();
   commit_put(u, "k", "v");
-  REQUIRE(sm1_begin(t, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   commit_del(u, "k");
 
   f.compact(g_store);
@@ -362,10 +362,10 @@ TEST_CASE("an idle read-committed transaction holds back the tombstone purge") {
     tombstone |= v.key == "k" && (v.flags & version_tombstone) != 0;
   }
   CHECK(tombstone);
-  CHECK(sm1_insert(t, g_store, "k", 1, "t", 1) == 0);
-  REQUIRE(sm1_commit(t) == 0);
-  sm1_closedb(t);
-  sm1_closedb(u);
+  CHECK(sm1::insert(t, g_store, "k", 1, "t", 1) == 0);
+  REQUIRE(sm1::commit(t) == 0);
+  sm1::closedb(t);
+  sm1::closedb(u);
 }
 
 TEST_CASE("a dropped store's column family goes once no snapshot sees it") {
@@ -381,31 +381,31 @@ TEST_CASE("a dropped store's column family goes once no snapshot sees it") {
   sm1::session_t *r = f.open();
   commit_put(s, "k", "v");
   uint64_t storeid = g_store;
-  REQUIRE(sm1_begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(r, g_store, "k") == "v");
 
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_rmstore(s, g_store) == 0);
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::rmstore(s, g_store) == 0);
+  REQUIRE(sm1::commit(s) == 0);
   gc_run_once(f.db());
   CHECK(db_store_cf(f.db(), storeid) != nullptr);
   CHECK(get(r, g_store, "k") == "v");
-  REQUIRE(sm1_commit(r) == 0);
+  REQUIRE(sm1::commit(r) == 0);
   gc_run_once(f.db());
   CHECK(db_store_cf(f.db(), storeid) == nullptr);
 
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t ustoreid = mkstore(s);
-  REQUIRE(sm1_commit(s) == 0);
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_savepoint(s) == 1);
-  REQUIRE(sm1_rmstore(s, ustoreid) == 0);
-  REQUIRE(sm1_rollback(s, 1) == 0);
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  REQUIRE(sm1::rmstore(s, ustoreid) == 0);
+  REQUIRE(sm1::rollback(s, 1) == 0);
+  REQUIRE(sm1::commit(s) == 0);
   gc_run_once(f.db());
   CHECK(db_store_cf(f.db(), ustoreid) != nullptr);
-  sm1_closedb(s);
-  sm1_closedb(r);
+  sm1::closedb(s);
+  sm1::closedb(r);
 }
 
 namespace {
@@ -419,15 +419,15 @@ sm1::options_t tiny_cache() {
 
 /* The keys a full scan of store 1 returns, through s. */
 std::vector<std::string> scan_keys(sm1::session_t *s) {
-  sm1::scan_t *c = sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
+  sm1::scan_t *c = scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE_MESSAGE(c, sm1::errmsg());
   std::vector<std::string> out;
   const char *k, *d;
   size_t kl, dl;
-  while (sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
+  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
     out.emplace_back(k, kl);
   }
-  sm1_scanend(c);
+  sm1::scanend(c);
   return out;
 }
 
@@ -463,12 +463,12 @@ TEST_CASE(
       f.reopen(&opt);
       s = f.s();
     }
-    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     for (int i = 0; i < 30; i++) {
       CHECK(get(s, g_store, "k" + std::to_string(100 + i)) == "v");
     }
     CHECK(scan_keys(s).size() == 30);
-    REQUIRE(sm1_commit(s) == 0);
+    REQUIRE(sm1::commit(s) == 0);
   }
 }
 
@@ -489,8 +489,8 @@ TEST_CASE(
     commit_put(s, "k" + std::to_string(i), "v");
   }
   size_t before = f.txn_records();
-  REQUIRE(sm1_begin(r, sm1::xctlevel_t::repeatable_read) == 0);
-  sm1::scan_t *c = sm1_scan(r, g_store, nullptr, 0, 0, nullptr, 0, 0);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  sm1::scan_t *c = scan(r, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
 
   CHECK(gc_sweep_txn(f.db(), true) == 0);
@@ -500,21 +500,21 @@ TEST_CASE(
   int n = 0;
   const char *k, *d;
   size_t kl, dl;
-  while (sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
+  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
     n++;
   }
   CHECK(n == 10);
-  sm1_scanend(c);
-  REQUIRE(sm1_commit(r) == 0);
+  sm1::scanend(c);
+  REQUIRE(sm1::commit(r) == 0);
 
   // The worker may finish the sweep first; either way it is done.
   int64_t done = gc_sweep_txn(f.db(), false);
   CHECK((done == (int64_t)before || done == 0));
   CHECK(f.txn_records() == 0);
-  REQUIRE(sm1_begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(scan_keys(r).size() == 10);
-  REQUIRE(sm1_commit(r) == 0);
-  sm1_closedb(r);
+  REQUIRE(sm1::commit(r) == 0);
+  sm1::closedb(r);
 }
 
 TEST_CASE("the sweep keeps records a live snapshot may still need") {
@@ -528,18 +528,18 @@ TEST_CASE("the sweep keeps records a live snapshot may still need") {
   sm1::session_t *s = f.s();
   sm1::session_t *r = f.open();
   commit_put(s, "a", "v");
-  REQUIRE(sm1_begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
   commit_put(s, "b", "v");
   commit_put(s, "c", "v");
 
   CHECK(gc_sweep_txn(f.db(), true) > 0);
   CHECK(f.txn_records() == 2);
   CHECK(scan_keys(r) == std::vector<std::string>{"a"});
-  REQUIRE(sm1_commit(r) == 0);
-  REQUIRE(sm1_begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::commit(r) == 0);
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(scan_keys(r) == std::vector<std::string>{"a", "b", "c"});
-  REQUIRE(sm1_commit(r) == 0);
-  sm1_closedb(r);
+  REQUIRE(sm1::commit(r) == 0);
+  sm1::closedb(r);
 }
 
 TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold") {
@@ -557,7 +557,7 @@ TEST_CASE("the GC run sweeps CF:txn once it grows past its threshold") {
   CHECK(f.txn_records() >= 20);
   gc_run_once(f.db());
   CHECK(f.txn_records() == 0);
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(scan_keys(s).size() == 20);
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
 }

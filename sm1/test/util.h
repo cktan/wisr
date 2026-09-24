@@ -38,38 +38,65 @@ private:
   std::string m_path;
 };
 
+/*
+ * sm1::attach, handing back the environment, or nullptr with the
+ * error set: the shape tests check it in.
+ */
+inline sm1::env_t *attach(const char *homedir) {
+  sm1::env_t *env = nullptr;
+  attach(homedir, env);
+  return env;
+}
+
+/* sm1::opendb, handing back the session, or nullptr with the error set. */
+inline sm1::session_t *opendb(sm1::env_t *env, const char *dbname,
+                              const sm1::options_t *opt = nullptr) {
+  sm1::session_t *s = nullptr;
+  opendb(env, dbname, s, opt);
+  return s;
+}
+
+/* sm1::scan, handing back the cursor, or nullptr with the error set. */
+inline sm1::scan_t *scan(sm1::session_t *s, uint64_t storeid, const char *skey,
+                         size_t sklen, int skey_inclusive, const char *ekey,
+                         size_t eklen, int ekey_inclusive) {
+  sm1::scan_t *c = nullptr;
+  scan(s, storeid, skey, sklen, skey_inclusive, ekey, eklen, ekey_inclusive, c);
+  return c;
+}
+
 /* A home directory, initialized and attached for one test. */
 class home_t {
 public:
   /* Initialize and attach a fresh home directory. */
   home_t() {
-    REQUIRE(sm1_init(m_tmp.path()) == 0);
-    m_env = sm1_attach(m_tmp.path());
+    REQUIRE(sm1::init(m_tmp.path()) == 0);
+    m_env = ::attach(m_tmp.path());
     REQUIRE(m_env);
   }
 
   /* Detach, then remove the directory. */
-  ~home_t() { sm1_detach(m_env, 1); }
+  ~home_t() { sm1::detach(m_env, 1); }
 
   /* The environment. */
   sm1::env_t *env() const { return m_env; }
 
   /* Detach and attach again, as a new process would. */
   void reattach() {
-    REQUIRE(sm1_detach(m_env, 0) == 0);
-    m_env = sm1_attach(m_tmp.path());
+    REQUIRE(sm1::detach(m_env, 0) == 0);
+    m_env = ::attach(m_tmp.path());
     REQUIRE(m_env);
   }
 
   /* Detach, closing any open sessions, so another process may attach. */
   void detach() {
-    REQUIRE(sm1_detach(m_env, 1) == 0);
+    REQUIRE(sm1::detach(m_env, 1) == 0);
     m_env = nullptr;
   }
 
   /* Attach again after detach(). */
   void attach() {
-    m_env = sm1_attach(m_tmp.path());
+    m_env = ::attach(m_tmp.path());
     REQUIRE_MESSAGE(m_env, sm1::errmsg());
   }
 
@@ -99,7 +126,7 @@ inline std::string get(sm1::session_t *sess, uint64_t store,
                        const std::string &key) {
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm1_read(sess, store, key.data(), key.size(), &data, &len);
+  int r = sm1::read(sess, store, key.data(), key.size(), &data, &len);
   REQUIRE_MESSAGE(r >= 0, sm1::errmsg());
   return r == 1 ? "<none>" : std::string(data, len);
 }
@@ -107,15 +134,15 @@ inline std::string get(sm1::session_t *sess, uint64_t store,
 /* Insert key -> val into store, failing the test on an error. */
 inline void put(sm1::session_t *sess, uint64_t store, const std::string &key,
                 const std::string &val) {
-  REQUIRE_MESSAGE(sm1_insert(sess, store, key.data(), key.size(), val.data(),
-                             val.size()) == 0,
+  REQUIRE_MESSAGE(sm1::insert(sess, store, key.data(), key.size(), val.data(),
+                              val.size()) == 0,
                   sm1::errmsg());
 }
 
 /* Create a store and return its storeid, failing the test on an error. */
 inline uint64_t mkstore(sm1::session_t *sess) {
   uint64_t storeid = 0;
-  REQUIRE_MESSAGE(sm1_mkstore(sess, &storeid) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm1::mkstore(sess, &storeid) == 0, sm1::errmsg());
   return storeid;
 }
 
@@ -123,7 +150,7 @@ inline uint64_t mkstore(sm1::session_t *sess) {
 inline std::vector<uint64_t> lsstore(sm1::session_t *sess) {
   uint64_t *list = nullptr;
   size_t n = 0;
-  REQUIRE_MESSAGE(sm1_lsstore(sess, &list, &n) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm1::lsstore(sess, &list, &n) == 0, sm1::errmsg());
   std::vector<uint64_t> out(list, list + n);
   free(list);
   return out;

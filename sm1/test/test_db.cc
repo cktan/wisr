@@ -1,5 +1,5 @@
 /*
- * test_db.cc -- sm1_mkdb, sm1_rmdb, sm1_lsdb, and sm1::options_t.
+ * test_db.cc -- sm1::mkdb, sm1::rmdb, sm1::lsdb, and sm1::options_t.
  */
 
 #include "doctest.h"
@@ -16,15 +16,15 @@
 
 namespace {
 
-/* The databases sm1_lsdb reports, in its order. */
+/* The databases sm1::lsdb reports, in its order. */
 std::vector<std::string> lsdb(sm1::env_t *env) {
-  sm1_strlist_t *sl = nullptr;
-  REQUIRE(sm1_lsdb(env, &sl) == 0);
+  sm1::strlist_t *sl = nullptr;
+  REQUIRE(sm1::lsdb(env, &sl) == 0);
   std::vector<std::string> out;
-  for (size_t i = 0; i < sm1_strlist_count(sl); i++) {
-    out.push_back(sm1_strlist_at(sl, i));
+  for (size_t i = 0; i < sm1::strlist_count(sl); i++) {
+    out.push_back(sm1::strlist_at(sl, i));
   }
-  CHECK(sm1_strlist_at(sl, sm1_strlist_count(sl)) == nullptr);
+  CHECK(sm1::strlist_at(sl, sm1::strlist_count(sl)) == nullptr);
   free(sl);
   return out;
 }
@@ -53,9 +53,9 @@ TEST_CASE("databases are listed in bytewise order and survive reattach") {
   // 4. Confirm base/ holds only numbered directories.
   home_t home;
   CHECK(lsdb(home.env()).empty());
-  REQUIRE(sm1_mkdb(home.env(), "foo", nullptr) == 0);
-  REQUIRE(sm1_mkdb(home.env(), "Foo", nullptr) == 0);
-  REQUIRE(sm1_mkdb(home.env(), "a/../b", nullptr) == 0);
+  REQUIRE(sm1::mkdb(home.env(), "foo", nullptr) == 0);
+  REQUIRE(sm1::mkdb(home.env(), "Foo", nullptr) == 0);
+  REQUIRE(sm1::mkdb(home.env(), "a/../b", nullptr) == 0);
   std::vector<std::string> want = {"Foo", "a/../b", "foo"};
   CHECK(lsdb(home.env()) == want);
 
@@ -71,18 +71,18 @@ TEST_CASE("sm1_mkdb rejects a duplicate or badly sized name") {
   // 3. Names of sm1::max_dbname + 1 bytes, "", and NULL fail
   //    with SM_ERR_INVALID.
   home_t home;
-  REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
-  CHECK(sm1_mkdb(home.env(), "db", nullptr) == -1);
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  CHECK(sm1::mkdb(home.env(), "db", nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
 
   std::string max(sm1::max_dbname, 'x');
-  CHECK(sm1_mkdb(home.env(), max.c_str(), nullptr) == 0);
+  CHECK(sm1::mkdb(home.env(), max.c_str(), nullptr) == 0);
   std::string over(sm1::max_dbname + 1, 'x');
-  CHECK(sm1_mkdb(home.env(), over.c_str(), nullptr) == -1);
+  CHECK(sm1::mkdb(home.env(), over.c_str(), nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1_mkdb(home.env(), "", nullptr) == -1);
+  CHECK(sm1::mkdb(home.env(), "", nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1_mkdb(home.env(), nullptr, nullptr) == -1);
+  CHECK(sm1::mkdb(home.env(), nullptr, nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -94,13 +94,13 @@ TEST_CASE("sm1_mkdb rejects a malformed rocksdb_options string") {
   home_t home;
   sm1::options_t opt;
   opt.rocksdb_options = "no_such_option=1";
-  CHECK(sm1_mkdb(home.env(), "db", &opt) == -1);
+  CHECK(sm1::mkdb(home.env(), "db", &opt) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(lsdb(home.env()).empty());
   CHECK(home.base_entries().empty());
 
   opt.rocksdb_options = "max_open_files=100";
-  CHECK(sm1_mkdb(home.env(), "db", &opt) == 0);
+  CHECK(sm1::mkdb(home.env(), "db", &opt) == 0);
 }
 
 TEST_CASE("sm1_rmdb removes the name and the directory, never reusing a dbid") {
@@ -109,14 +109,14 @@ TEST_CASE("sm1_rmdb removes the name and the directory, never reusing a dbid") {
   // 2. Removing it again fails with SM_ERR_NOTFOUND.
   // 3. Create "db" again; it gets a new dbid (directory 2).
   home_t home;
-  REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
-  REQUIRE(sm1_rmdb(home.env(), "db") == 0);
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  REQUIRE(sm1::rmdb(home.env(), "db") == 0);
   CHECK(lsdb(home.env()).empty());
   CHECK(home.base_entries().empty());
 
-  CHECK(sm1_rmdb(home.env(), "db") == -1);
+  CHECK(sm1::rmdb(home.env(), "db") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
-  REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
   CHECK(home.base_entries() == std::set<std::string>{"2"});
 }

@@ -1,5 +1,5 @@
 /*
- * session.cc -- sm1_opendb and sm1_closedb, and the environment's
+ * session.cc -- sm1::opendb and sm1::closedb, and the environment's
  * registry of open databases (SM1_DESIGN.md §1).
  */
 
@@ -57,7 +57,7 @@ db_t *find_or_open(sm1::env_t *env, const char *dbname,
   return db;
 }
 
-/* sm1_opendb, minus the out-of-memory guard. */
+/* sm1::opendb, minus the out-of-memory guard. */
 sm1::session_t *open_session(sm1::env_t *env, const char *dbname,
                              const sm1::options_t *opt) {
   // Reject a NULL environment.
@@ -84,7 +84,7 @@ sm1::session_t *open_session(sm1::env_t *env, const char *dbname,
   s->db = db;
   // Count the session against the database.
   db->nsessions++;
-  // Register the session for sm1_detach.
+  // Register the session for sm1::detach.
   env->sessions.insert(s.get());
   return s.release();
 }
@@ -92,14 +92,19 @@ sm1::session_t *open_session(sm1::env_t *env, const char *dbname,
 } // namespace
 
 /* Open dbname and start a session on it. */
-sm1::session_t *sm1_opendb(sm1::env_t *env, const char *dbname,
-                           const sm1::options_t *opt) {
+int sm1::opendb(sm1::env_t *env, const char *dbname, sm1::session_t *&out,
+                const sm1::options_t *opt) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return open_session(env, dbname, opt);
+    // Open the session, handing it back only on success.
+    sm1::session_t *s = open_session(env, dbname, opt);
+    if (!s) {
+      return -1;
+    }
+    out = s;
+    return 0;
   } catch (const std::bad_alloc &) {
-    set_error(sm1::SM_ERR_NOMEM, "sm1_opendb: out of memory");
-    return nullptr;
+    return set_error(sm1::SM_ERR_NOMEM, "sm1_opendb: out of memory");
   }
 }
 
@@ -107,7 +112,7 @@ sm1::session_t *sm1_opendb(sm1::env_t *env, const char *dbname,
  * Close a session: its cursors, then its active transaction.
  * The last session on a database closes the database.
  */
-int sm1_closedb(sm1::session_t *session) {
+int sm1::closedb(sm1::session_t *session) {
   // Closing NULL is a no-op.
   if (!session) {
     return 0;
@@ -116,7 +121,7 @@ int sm1_closedb(sm1::session_t *session) {
   xct_end_scans(session);
   // Abort an active transaction; a prepared one stays in doubt.
   if (session->active) {
-    sm1_abort(session);
+    sm1::abort(session);
   }
   // Keep what is needed after the session is freed.
   sm1::env_t *env = session->env;

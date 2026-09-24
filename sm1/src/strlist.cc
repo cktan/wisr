@@ -1,10 +1,10 @@
 /*
- * strlist.cc -- sm1_strlist_t, the counted immutable list of
+ * strlist.cc -- sm1::strlist_t, the counted immutable list of
  * names returned by the library's listing calls.
  *
  * One allocation holds the whole list:
  *
- *   sm1_strlist_t     the header, holding the count
+ *   sm1::strlist_t     the header, holding the count
  *   char* ptr[count]  one per name, pointing into the tail
  *   char  bytes[]     the names, each NUL-terminated
  *
@@ -21,7 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct sm1_strlist_t {
+struct sm1::strlist_t {
   size_t count;
   /* char* ptr[count], then char bytes[] -- see above. */
 };
@@ -30,26 +30,26 @@ struct sm1_strlist_t {
  * The pointer array that follows the header. The header is
  * one size_t, so the array is already aligned for char*.
  */
-static char *const *strlist_ptr(const sm1_strlist_t *sl) {
+static char *const *strlist_ptr(const sm1::strlist_t *sl) {
   return reinterpret_cast<char *const *>(sl + 1);
 }
 
 /* The pointer array, writable, for strlist_make(). */
-static char **strlist_ptr_mut(sm1_strlist_t *sl) {
+static char **strlist_ptr_mut(sm1::strlist_t *sl) {
   return reinterpret_cast<char **>(sl + 1);
 }
 
 namespace wisr {
 
 /* Pack names into one allocation laid out as described above. */
-sm1_strlist_t *strlist_make(const std::vector<std::string> &names) {
+sm1::strlist_t *strlist_make(const std::vector<std::string> &names) {
   // Size the header, the pointer array, and every name with its NUL.
-  size_t bytes = sizeof(sm1_strlist_t) + names.size() * sizeof(char *);
+  size_t bytes = sizeof(sm1::strlist_t) + names.size() * sizeof(char *);
   for (const std::string &n : names) {
     bytes += n.size() + 1;
   }
   // Allocate the whole list as one block.
-  sm1_strlist_t *sl = static_cast<sm1_strlist_t *>(malloc(bytes));
+  sm1::strlist_t *sl = static_cast<sm1::strlist_t *>(malloc(bytes));
   // Fail if the allocation failed.
   if (!sl) {
     return nullptr;
@@ -76,10 +76,10 @@ sm1_strlist_t *strlist_make(const std::vector<std::string> &names) {
 } // namespace wisr
 
 /* The number of names in the list. */
-size_t sm1_strlist_count(const sm1_strlist_t *sl) { return sl->count; }
+size_t sm1::strlist_count(const sm1::strlist_t *sl) { return sl->count; }
 
 /* Name i, or NULL if i is past the end. */
-const char *sm1_strlist_at(const sm1_strlist_t *sl, size_t i) {
+const char *sm1::strlist_at(const sm1::strlist_t *sl, size_t i) {
   // Reject an index past the end.
   if (i >= sl->count) {
     return NULL;

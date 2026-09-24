@@ -28,22 +28,22 @@ TEST_CASE("e03: RR contention gives CONFLICT, never SERIALIZATION") {
     threads.emplace_back([&, sess] {
       for (int round = 0; round < 50; round++) {
         for (;;) {
-          if (sm1_begin(sess, sm1::xctlevel_t::repeatable_read) != 0) {
+          if (sm1::begin(sess, sm1::xctlevel_t::repeatable_read) != 0) {
             other++;
             return;
           }
           const char *data = nullptr;
           size_t len = 0;
-          int rc = sm1_read(sess, s.store(), R1, 2, &data, &len);
+          int rc = sm1::read(sess, s.store(), R1, 2, &data, &len);
           if (rc != 0) {
             other++;
             return;
           }
           std::string next =
               std::to_string(std::stoi(std::string(data, len)) + 1);
-          rc = sm1_update(sess, s.store(), R1, 2, next.data(), next.size(),
-                          nullptr, nullptr);
-          if (rc == 0 && sm1_commit(sess) == 0) {
+          rc = sm1::update(sess, s.store(), R1, 2, next.data(), next.size(),
+                           nullptr, nullptr);
+          if (rc == 0 && sm1::commit(sess) == 0) {
             break;
           }
           // Classify the failure, then retry the whole step.
@@ -55,7 +55,7 @@ TEST_CASE("e03: RR contention gives CONFLICT, never SERIALIZATION") {
           }
           retries++;
           if (rc == 0) {
-            sm1_abort(sess); // the commit failed, not the write
+            sm1::abort(sess); // the commit failed, not the write
           }
         }
       }

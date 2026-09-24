@@ -32,19 +32,19 @@ struct sm1::session_t {
   uint32_t seq = 0;              /* last write's seq; the next is seq + 1 */
   uint32_t seq_hwm = 0;          /* own versions above this are invisible */
   uint64_t wts_hi = 0;           /* largest wts written; bounds own seeks */
-  std::vector<uint64_t> created; /* storeids made by sm1_mkstore */
-  std::vector<uint64_t> dropped; /* storeids removed by sm1_rmstore */
-  std::vector<uint64_t> dropped_seqs; /* seqids removed by sm1_rmseq */
+  std::vector<uint64_t> created; /* storeids made by sm1::mkstore */
+  std::vector<uint64_t> dropped; /* storeids removed by sm1::rmstore */
+  std::vector<uint64_t> dropped_seqs; /* seqids removed by sm1::rmseq */
   bool snapshot_registered = false;   /* counted in gc_watermark */
   uint64_t begin_seq = 0;             /* begin order; larger is younger */
 
   /*
    * The statement snapshot under read committed (§6.2). Off
-   * until sm1_stmt_begin, which turns it on for the rest of the
+   * until sm1::stmt_begin, which turns it on for the rest of the
    * transaction; the snapshot itself is taken by the first
    * read of each statement, not by the boundary call.
    */
-  bool stmt_pinned = false; /* sm1_stmt_begin was called */
+  bool stmt_pinned = false; /* sm1::stmt_begin was called */
   bool stmt_taken = false;  /* stmt_snapshot_ts is the one to use */
   uint64_t stmt_snapshot_ts = 0;
 
@@ -99,7 +99,7 @@ struct sm1::session_t {
   wisr::ssi_node_t *ssi = nullptr; /* SERIALIZABLE only (§7) */
 
   /*
-   * Two-phase commit (§8.4). sm1_prepare moves the transaction
+   * Two-phase commit (§8.4). sm1::prepare moves the transaction
    * out of the session into a database-owned sm1::session_t
    * with `prepared` set, registered under its gid; the
    * preparing session keeps only prepared_gid, and has no
@@ -107,13 +107,13 @@ struct sm1::session_t {
    */
   std::string prepared_gid;
   bool prepared = false;     /* this object is a prepared transaction */
-  long long prepared_at = 0; /* wall-clock seconds of sm1_prepare */
+  long long prepared_at = 0; /* wall-clock seconds of sm1::prepare */
   bool restored = false;     /* rebuilt from its record at open (§9.1) */
   bool limbo = false;        /* its prepare write failed (§8.4) */
 
   std::set<sm1::scan_t *> scans; /* open cursors */
   uint64_t next_scan_id = 0;     /* hands out sm1::scan_t::id */
-  std::string readbuf;           /* what sm1_read hands out */
+  std::string readbuf;           /* what sm1::read hands out */
 };
 
 struct sm1::scan_t {
@@ -126,7 +126,7 @@ struct sm1::scan_t {
   rocksdb::Slice upper_slice;
   /*
    * The seek bound skey was positioned with, empty when the
-   * scan has no lower bound. sm1_scan_seek refuses a target
+   * scan has no lower bound. sm1::scan_seek refuses a target
    * below it: the iterator carries no lower bound, so a seek
    * under it would leave the range the cursor registered
    * (§10.2).
@@ -143,7 +143,7 @@ struct sm1::scan_t {
   std::list<wisr::ssi_range_t>::iterator ssi_range;
   bool examined = false;     /* some userkey's run was inspected */
   std::string last_examined; /* the last one */
-  std::string key, data;     /* what sm1_scannxt hands out */
+  std::string key, data;     /* what sm1::scannxt hands out */
 };
 
 namespace wisr {
@@ -165,7 +165,7 @@ int xct_check_active(sm1::session_t *session);
 view_t xct_view(sm1::session_t *session);
 
 /*
- * The same, for sm1_read and sm1_scan: under a statement
+ * The same, for sm1::read and sm1::scan: under a statement
  * boundary it also TAKES the statement's snapshot, if this is
  * the statement's first read (§6.2).
  */
@@ -174,7 +174,7 @@ view_t xct_read_view(sm1::session_t *session);
 /*
  * Abort the active transaction on the engine's side, as for a
  * retryable error, then record e with msg. Returns -1. The
- * caller must not call sm1_abort afterwards (sm1.h).
+ * caller must not call sm1::abort afterwards (sm1.h).
  */
 int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
                        const char *msg);
@@ -190,7 +190,7 @@ int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
 int lock_acquire(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
                  bool exclusive);
 
-/* §5.2's first-committer-wins check alone, for sm1_lock. */
+/* §5.2's first-committer-wins check alone, for sm1::lock. */
 int access_check_current(sm1::session_t *session, uint64_t storeid,
                          rocksdb::Slice key);
 
@@ -337,7 +337,7 @@ int access_read(sm1::session_t *session, uint64_t storeid, const view_t &view,
 
 /*
  * Open a cursor over storeid at view, between the bounds as
- * sm1_scan() takes them. Returns NULL on error.
+ * sm1::scan() takes them. Returns NULL on error.
  */
 sm1::scan_t *access_scan(sm1::session_t *session, uint64_t storeid,
                          const view_t &view, const char *skey, size_t sklen,

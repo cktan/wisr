@@ -4,7 +4,7 @@
  *
  * A lock is keyed exactly by (storeid, userkey) and held by the
  * sessions whose transactions took it: SHARED by any number of
- * them, EXCLUSIVE by one. Writes take it exclusive, sm1_lock
+ * them, EXCLUSIVE by one. Writes take it exclusive, sm1::lock
  * takes either, and a plain read still takes none. It is held
  * until the transaction commits or aborts.
  *

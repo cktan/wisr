@@ -1,5 +1,5 @@
 /*
- * env.cc -- sm1_init, sm1_attach, sm1_detach: the home directory,
+ * env.cc -- sm1::init, sm1::attach, sm1::detach: the home directory,
  * its root db, and the sweep of unnamed database directories
  * (SM1_DESIGN.md §3.5).
  *
@@ -7,8 +7,8 @@
  * home directory at a time. The library does not enforce this:
  * serializing processes is the caller's job. A second attach
  * usually fails anyway, on RocksDB's own lock of the root db,
- * but the directory-level work here -- the sweep, sm1_mkdb,
- * sm1_rmdb -- relies on the rule and is unsafe without it.
+ * but the directory-level work here -- the sweep, sm1::mkdb,
+ * sm1::rmdb -- relies on the rule and is unsafe without it.
  */
 
 #include "env.h"
@@ -91,7 +91,7 @@ bool parse_dbid(const char *name, uint64_t *dbid) {
 
 /*
  * Destroy every directory under base/ that no "D" row in the
- * root db names: the remains of a crashed sm1_mkdb or sm1_rmdb.
+ * root db names: the remains of a crashed sm1::mkdb or sm1::rmdb.
  * Entries that are not dbids are left alone.
  */
 int sweep_base(sm1::env_t *env) {
@@ -149,7 +149,7 @@ int sweep_base(sm1::env_t *env) {
 }
 
 /*
- * The new-handler sm1_attach installs: running out of memory is
+ * The new-handler sm1::attach installs: running out of memory is
  * fatal to the process (the top-level DESIGN.md §5).
  *
  * It should be very rare: on a default Linux system an allocation
@@ -179,7 +179,7 @@ int sweep_base(sm1::env_t *env) {
   abort();
 }
 
-/* sm1_attach, minus the out-of-memory guard. */
+/* sm1::attach, minus the out-of-memory guard. */
 sm1::env_t *attach(const char *homedir) {
   // Validate the home directory path.
   if (check_homedir(homedir) != 0) {
@@ -192,7 +192,7 @@ sm1::env_t *attach(const char *homedir) {
   // Open the root db. It must exist: attach creates nothing.
   std::string rootpath = root_path(env->homedir);
   struct stat st;
-  // Refuse a directory sm1_init never prepared.
+  // Refuse a directory sm1::init never prepared.
   if (stat(rootpath.c_str(), &st) != 0) {
     set_error(sm1::SM_ERR_NOTFOUND, "{}: not a wisr home directory", homedir);
     return nullptr;
@@ -269,7 +269,7 @@ int env_destroy_db_dir(const std::string &path) {
 } // namespace wisr
 
 /* Make homedir a wisr home directory: global/, base/, root db. */
-int sm1_init(const char *homedir) {
+int sm1::init(const char *homedir) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     // Validate the home directory path.
@@ -280,7 +280,7 @@ int sm1_init(const char *homedir) {
     std::string base = base_dir(homedir);
 
     // Create global/ first: this mkdir settles a race between
-    // two sm1_init calls, since the loser sees EEXIST.
+    // two sm1::init calls, since the loser sees EEXIST.
     if (mkdir(global.c_str(), 0700) != 0) {
       // global/ already exists: this is already a home directory.
       if (errno == EEXIST) {
@@ -307,7 +307,7 @@ int sm1_init(const char *homedir) {
     if (!s.ok()) {
       return set_status_error(s, rootpath.c_str());
     }
-    // Close the root db on the way out: sm1_init opens nothing for later.
+    // Close the root db on the way out: sm1::init opens nothing for later.
     defer {
       root->Close();
       delete root;
@@ -335,7 +335,7 @@ int sm1_init(const char *homedir) {
 }
 
 /* Create an environment on an initialized home directory. */
-sm1::env_t *sm1_attach(const char *homedir) {
+int sm1::attach(const char *homedir, sm1::env_t *&out) {
   // Make running out of memory fatal, unless the host process
   // already has an out-of-memory policy of its own.
   if (!std::get_new_handler()) {
@@ -343,19 +343,24 @@ sm1::env_t *sm1_attach(const char *homedir) {
   }
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return attach(homedir);
+    // Attach, handing the environment back only on success.
+    sm1::env_t *env = ::attach(homedir);
+    if (!env) {
+      return -1;
+    }
+    out = env;
+    return 0;
   } catch (const std::bad_alloc &) {
-    set_error(sm1::SM_ERR_NOMEM, "sm1_attach: out of memory");
-    return nullptr;
+    return set_error(sm1::SM_ERR_NOMEM, "sm1_attach: out of memory");
   }
 }
 
 /*
  * Release an environment. With force, close its sessions
- * first, each as sm1_closedb would; without, refuse while any is
+ * first, each as sm1::closedb would; without, refuse while any is
  * open.
  */
-int sm1_detach(sm1::env_t *env, int force) {
+int sm1::detach(sm1::env_t *env, int force) {
   // Detaching NULL is a no-op.
   if (!env) {
     return 0;
@@ -372,9 +377,9 @@ int sm1_detach(sm1::env_t *env, int force) {
     // Copy the sessions to close outside the mutex.
     sessions = env->sessions;
   }
-  // Close each session, as sm1_closedb would.
+  // Close each session, as sm1::closedb would.
   for (sm1::session_t *s : sessions) {
-    sm1_closedb(s);
+    sm1::closedb(s);
   }
   // Close the root db and free the environment.
   delete env;

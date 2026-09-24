@@ -1,5 +1,5 @@
 /*
- * test_log.cc -- the process-wide log hook (sm1_set_log) and the
+ * test_log.cc -- the process-wide log hook (sm1::set_log) and the
  * events wisr reports through it: what no caller would
  * otherwise learn.
  */
@@ -27,10 +27,10 @@ namespace {
 class log_capture_t {
 public:
   /* Install the capturing hook. */
-  log_capture_t() { sm1_set_log(hook, this); }
+  log_capture_t() { sm1::set_log(hook, this); }
 
   /* Remove it. */
-  ~log_capture_t() { sm1_set_log(nullptr, nullptr); }
+  ~log_capture_t() { sm1::set_log(nullptr, nullptr); }
 
   /* How many messages at level contain needle. */
   size_t count(sm1::loglevel_t level, const std::string &needle) {
@@ -69,12 +69,12 @@ class log_fixture_t {
 public:
   /* Create "db" and store 1. */
   log_fixture_t() {
-    REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
+    REQUIRE(sm1::mkdb(m_home.env(), "db", nullptr) == 0);
     sm1::session_t *s = open();
-    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     m_store = mkstore(s);
-    REQUIRE(sm1_commit(s) == 0);
-    REQUIRE(sm1_closedb(s) == 0);
+    REQUIRE(sm1::commit(s) == 0);
+    REQUIRE(sm1::closedb(s) == 0);
   }
 
   /* The store's storeid. */
@@ -82,7 +82,7 @@ public:
 
   /* A new session on "db". */
   sm1::session_t *open() const {
-    sm1::session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
+    sm1::session_t *s = opendb(m_home.env(), "db", nullptr);
     REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
@@ -97,9 +97,9 @@ private:
 
 /* Insert key -> "v" into store in one committed transaction. */
 void commit_put(sm1::session_t *s, uint64_t store, const std::string &key) {
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, store, key, "v");
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
 }
 
 } // namespace
@@ -110,13 +110,13 @@ TEST_CASE("with no hook nothing is reported, and a hook can be replaced") {
   // 2. Capture B replaces A: B sees the next one, A does not.
   // 3. After B is removed, a third event reaches neither.
   tmpdir_t tmp;
-  REQUIRE(sm1_init(tmp.path()) == 0);
+  REQUIRE(sm1::init(tmp.path()) == 0);
   std::string base = std::string(tmp.path()) + "/base";
   auto sweep_once = [&](const char *dbid) {
     REQUIRE(mkdir((base + "/" + dbid).c_str(), 0700) == 0);
-    sm1::env_t *env = sm1_attach(tmp.path());
+    sm1::env_t *env = attach(tmp.path());
     REQUIRE(env);
-    REQUIRE(sm1_detach(env, 0) == 0);
+    REQUIRE(sm1::detach(env, 0) == 0);
   };
   size_t a_before;
   {
@@ -138,7 +138,7 @@ TEST_CASE("with no hook nothing is reported, and a hook can be replaced") {
 TEST_CASE("recovery reports restored transactions and dropped orphans") {
   // Verify §9.1's recovery events reach the hook.
   // 1. Prepare "g-log"; create a store CF no catalog row
-  //    names, as a crash inside sm1_mkstore would leave.
+  //    names, as a crash inside sm1::mkstore would leave.
   // 2. Restart: an INFO message names "g-log" as restored, and
   //    one reports the orphaned CF dropped.
   log_fixture_t f;
@@ -146,9 +146,9 @@ TEST_CASE("recovery reports restored transactions and dropped orphans") {
   uint64_t orphan = 0;
   REQUIRE(wisr::db_alloc_objid(s->db, &orphan) == 0);
   REQUIRE(wisr::db_create_store_cf(s->db, orphan) == 0);
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, f.store(), "k", "v");
-  REQUIRE(sm1_prepare(s, "g-log") == 0);
+  REQUIRE(sm1::prepare(s, "g-log") == 0);
 
   log_capture_t cap;
   f.home().detach();
@@ -158,8 +158,8 @@ TEST_CASE("recovery reports restored transactions and dropped orphans") {
   CHECK_MESSAGE(
       cap.count(sm1::loglevel_t::info, "store." + std::to_string(orphan)) == 1,
       cap.all());
-  REQUIRE(sm1_abort_prepared(v, "g-log") == 0);
-  sm1_closedb(v);
+  REQUIRE(sm1::abort_prepared(v, "g-log") == 0);
+  sm1::closedb(v);
 }
 
 TEST_CASE("a failed status write is reported as the database stopping") {
@@ -172,12 +172,12 @@ TEST_CASE("a failed status write is reported as the database stopping") {
   s->db->test_before_commit = [](uint64_t) {
     return rocksdb::Status::IOError("injected");
   };
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, f.store(), "k", "v");
-  CHECK(sm1_commit(s) == -1);
+  CHECK(sm1::commit(s) == -1);
   s->db->test_before_commit = nullptr;
   CHECK_MESSAGE(cap.count(sm1::loglevel_t::error, "stopped") == 1, cap.all());
-  sm1_closedb(s);
+  sm1::closedb(s);
 }
 
 TEST_CASE("a CF:txn sweep reports what it deleted") {
@@ -193,7 +193,7 @@ TEST_CASE("a CF:txn sweep reports what it deleted") {
   CHECK(wisr::gc_sweep_txn(s->db, true) > 0);
   CHECK_MESSAGE(cap.count(sm1::loglevel_t::info, "sweep deleted") == 1,
                 cap.all());
-  sm1_closedb(s);
+  sm1::closedb(s);
 }
 
 TEST_CASE("versions the filter cannot judge are reported per compaction") {
@@ -205,7 +205,7 @@ TEST_CASE("versions the filter cannot judge are reported per compaction") {
   //    WARN saying the status records are kept.
   log_fixture_t f;
   sm1::session_t *s = f.open();
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   rocksdb::ColumnFamilyHandle *cf = wisr::db_store_cf(s->db, f.store());
   REQUIRE(s->db->rdb
               ->Put(rocksdb::WriteOptions(), cf, wisr::version_key("bad", 1, 1),
@@ -223,7 +223,7 @@ TEST_CASE("versions the filter cannot judge are reported per compaction") {
   CHECK(wisr::gc_sweep_txn(s->db, true) == -1);
   CHECK_MESSAGE(cap.count(sm1::loglevel_t::warn, "sweep abandoned") == 1,
                 cap.all());
-  sm1_closedb(s);
+  sm1::closedb(s);
 }
 
 TEST_CASE("a snapshot holding back GC too long is reported once") {
@@ -237,13 +237,13 @@ TEST_CASE("a snapshot holding back GC too long is reported once") {
   sm1::session_t *t = f.open();
   t->db->stuck_warn_secs = 1;
   log_capture_t cap;
-  REQUIRE(sm1_begin(t, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::repeatable_read) == 0);
   std::this_thread::sleep_for(std::chrono::milliseconds(1200));
   wisr::gc_run_once(t->db);
   wisr::gc_run_once(t->db);
   CHECK_MESSAGE(cap.count(sm1::loglevel_t::warn, "held back") == 1, cap.all());
-  REQUIRE(sm1_commit(t) == 0);
+  REQUIRE(sm1::commit(t) == 0);
   wisr::gc_run_once(t->db);
   CHECK(cap.count(sm1::loglevel_t::warn, "held back") == 1);
-  sm1_closedb(t);
+  sm1::closedb(t);
 }

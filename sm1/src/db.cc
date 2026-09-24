@@ -1,5 +1,5 @@
 /*
- * db.cc -- sm1_mkdb, sm1_rmdb, sm1_lsdb, and the
+ * db.cc -- sm1::mkdb, sm1::rmdb, sm1::lsdb, and the
  * column family layout every database shares (SM1_DESIGN.md §3,
  * §3.5, §11).
  */
@@ -62,7 +62,7 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
     return set_status_error(s, path.c_str());
   }
   // On the way out, destroy the handles, then close the database:
-  // sm1_mkdb leaves it unopened.
+  // sm1::mkdb leaves it unopened.
   defer {
     for (rocksdb::ColumnFamilyHandle *h : handles) {
       db->DestroyColumnFamilyHandle(h);
@@ -93,7 +93,7 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
   return 0;
 }
 
-/* sm1_mkdb, minus the out-of-memory guard. */
+/* sm1::mkdb, minus the out-of-memory guard. */
 int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   // Reject a NULL environment.
   if (!env) {
@@ -146,7 +146,7 @@ int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   }
 
   // Build the database. On failure its directory is unnamed,
-  // and the next sm1_attach sweeps it.
+  // and the next sm1::attach sweeps it.
   if (create_db(env_db_path(env, dbid), dbo) != 0) {
     return -1;
   }
@@ -164,7 +164,7 @@ int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   return 0;
 }
 
-/* sm1_rmdb, minus the out-of-memory guard. */
+/* sm1::rmdb, minus the out-of-memory guard. */
 int rmdb(sm1::env_t *env, const char *dbname) {
   // Reject a NULL environment.
   if (!env) {
@@ -212,13 +212,13 @@ int rmdb(sm1::env_t *env, const char *dbname) {
   }
 
   // Destroy the directory. If this fails the database is
-  // already gone by name, and the next sm1_attach sweeps the
+  // already gone by name, and the next sm1::attach sweeps the
   // directory; the error still reports that it is left.
   return env_destroy_db_dir(env_db_path(env, dbid));
 }
 
-/* sm1_lsdb, minus the out-of-memory guard. */
-int lsdb(sm1::env_t *env, sm1_strlist_t **out) {
+/* sm1::lsdb, minus the out-of-memory guard. */
+int lsdb(sm1::env_t *env, sm1::strlist_t **out) {
   // Reject NULL arguments.
   if (!env || !out) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_lsdb: env or out is NULL");
@@ -246,7 +246,7 @@ int lsdb(sm1::env_t *env, sm1_strlist_t **out) {
     }
   }
   // Pack the names into one list.
-  sm1_strlist_t *sl = strlist_make(names);
+  sm1::strlist_t *sl = strlist_make(names);
   // Fail if it could not be allocated.
   if (!sl) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_lsdb: out of memory");
@@ -777,30 +777,30 @@ wisr::db_t::~db_t() {
 }
 
 /* Create the database dbname. */
-int sm1_mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
+int sm1::mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return mkdb(env, dbname, opt);
+    return ::mkdb(env, dbname, opt);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_mkdb: out of memory");
   }
 }
 
 /* Delete the database dbname and all of its data. */
-int sm1_rmdb(sm1::env_t *env, const char *dbname) {
+int sm1::rmdb(sm1::env_t *env, const char *dbname) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return rmdb(env, dbname);
+    return ::rmdb(env, dbname);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_rmdb: out of memory");
   }
 }
 
 /* List the databases in the home directory, in bytewise order. */
-int sm1_lsdb(sm1::env_t *env, sm1_strlist_t **out) {
+int sm1::lsdb(sm1::env_t *env, sm1::strlist_t **out) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return lsdb(env, out);
+    return ::lsdb(env, out);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_lsdb: out of memory");
   }

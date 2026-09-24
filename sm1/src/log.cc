@@ -1,5 +1,5 @@
 /*
- * log.cc -- the process-wide log hook (sm1_set_log) and the
+ * log.cc -- the process-wide log hook (sm1::set_log) and the
  * helper the engine reports through.
  *
  * One mutex guards the hook and serializes calls to it, so a
@@ -49,7 +49,7 @@ void log_v(sm1::loglevel_t level, std::string_view fmt, std::format_args args) {
 } // namespace wisr
 
 /* Install or remove the process-wide log hook. */
-void sm1_set_log(sm1::log_fn fn, void *arg) {
+void sm1::set_log(sm1::log_fn fn, void *arg) {
   // Swap the hook under its mutex, so no call sees half of it.
   std::lock_guard<std::mutex> guard(g_log_mu);
   g_log_fn = fn;

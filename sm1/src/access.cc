@@ -1,6 +1,6 @@
 /*
- * access.cc -- sm1_insert, sm1_update, sm1_delete, sm1_read, and
- * the sm1_scan cursor (SM1_DESIGN.md §4.4, §5, §10).
+ * access.cc -- sm1::insert, sm1::update, sm1::erase, sm1::read, and
+ * the sm1::scan cursor (SM1_DESIGN.md §4.4, §5, §10).
  *
  * Under SERIALIZABLE, reads leave SIREAD entries and report the
  * concurrent versions they step past, and writes report the
@@ -227,7 +227,7 @@ int enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
   return r;
 }
 
-/* sm1_insert / sm1_update / sm1_delete, minus the out-of-memory guard. */
+/* sm1::insert / sm1::update / sm1::erase, minus the out-of-memory guard. */
 int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
               const char *key, size_t klen, const char *data, size_t datalen,
               const char **old, size_t *oldlen) {
@@ -270,7 +270,7 @@ int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
   return r;
 }
 
-/* sm1_lock, minus the out-of-memory guard. */
+/* sm1::lock, minus the out-of-memory guard. */
 int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
              sm1::lockmode_t mode) {
   // Require an active, non-prepared transaction.
@@ -292,7 +292,7 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
                               "chosen as a deadlock victim");
   }
   // Read committed does not fail here: the caller reads the
-  // row with sm1_read_latest instead.
+  // row with sm1::read_latest instead.
   if (s->level == sm1::xctlevel_t::read_committed) {
     return 0;
   }
@@ -302,7 +302,7 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   return access_check_current(s, storeid, rocksdb::Slice(key ? key : "", klen));
 }
 
-/* sm1_read, minus the out-of-memory guard. */
+/* sm1::read, minus the out-of-memory guard. */
 int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
              const char **data, size_t *datalen) {
   // Require the out-parameters.
@@ -333,7 +333,7 @@ int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   return r;
 }
 
-/* sm1_read_latest, minus the out-of-memory guard. */
+/* sm1::read_latest, minus the out-of-memory guard. */
 int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
                     size_t klen, const char **data, size_t *datalen) {
   // Require the out-parameters.
@@ -389,7 +389,7 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   return 0;
 }
 
-/* sm1_scan, minus the out-of-memory guard. */
+/* sm1::scan, minus the out-of-memory guard. */
 sm1::scan_t *scan(sm1::session_t *s, uint64_t storeid, const char *skey,
                   size_t sklen, int skey_inclusive, const char *ekey,
                   size_t eklen, int ekey_inclusive) {
@@ -466,7 +466,7 @@ sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
   c->it.reset(s->db->rdb->NewIterator(ro, cf));
   // Position at skey, or at the start.
   if (skey) {
-    // Build the start bound; sm1_scan_seek compares against it.
+    // Build the start bound; sm1::scan_seek compares against it.
     c->lower = version_bound(rocksdb::Slice(skey, sklen),
                              skey_inclusive ? '\x00' : '\xff');
     // Seek to skey, past it if exclusive.
@@ -484,7 +484,7 @@ sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
 
 namespace {
 
-/* sm1_scan_seek, minus the out-of-memory guard. */
+/* sm1::scan_seek, minus the out-of-memory guard. */
 int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
   // Reject a NULL cursor.
   if (!c) {
@@ -527,7 +527,7 @@ int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
   return 0;
 }
 
-/* sm1_scannxt, minus the out-of-memory guard. */
+/* sm1::scannxt, minus the out-of-memory guard. */
 int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
               size_t *datalen) {
   // Require every out-parameter.
@@ -541,7 +541,7 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
   if (c->state != 0) {
     return c->state;
   }
-  // The view frozen at sm1_scan.
+  // The view frozen at sm1::scan.
   db_t *db = c->session->db;
   view_t view = {c->snapshot_ts, c->xid, c->seq_hwm};
   rocksdb::Iterator *it = c->it.get();
@@ -788,7 +788,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
 }
 
 /*
- * §5.2's check on its own, for sm1_lock: fail if a version of
+ * §5.2's check on its own, for sm1::lock: fail if a version of
  * key committed after this transaction's begin snapshot. The
  * caller holds the lock, so no one can add one behind us.
  */
@@ -818,19 +818,19 @@ int access_check_current(sm1::session_t *s, uint64_t storeid,
 } // namespace wisr
 
 /* Move an open cursor to key, forward only. */
-int sm1_scan_seek(sm1::scan_t *scan, const char *key, size_t klen,
-                  int inclusive) {
+int sm1::scan_seek(sm1::scan_t *scan, const char *key, size_t klen,
+                   int inclusive) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return scan_seek(scan, key, klen, inclusive);
+    return ::scan_seek(scan, key, klen, inclusive);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_scan_seek: out of memory");
   }
 }
 
 /* Take a row lock without writing the row. */
-int sm1_lock(sm1::session_t *session, uint64_t storeid, const char *key,
-             size_t klen, sm1::lockmode_t mode) {
+int sm1::lock(sm1::session_t *session, uint64_t storeid, const char *key,
+              size_t klen, sm1::lockmode_t mode) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return lock_row(session, storeid, key, klen, mode);
@@ -840,8 +840,8 @@ int sm1_lock(sm1::session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Insert a row; the key must not exist. */
-int sm1_insert(sm1::session_t *session, uint64_t storeid, const char *key,
-               size_t klen, const char *data, size_t datalen) {
+int sm1::insert(sm1::session_t *session, uint64_t storeid, const char *key,
+                size_t klen, const char *data, size_t datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return write_row(session, WRITE_INSERT, storeid, key, klen, data, datalen,
@@ -852,9 +852,9 @@ int sm1_insert(sm1::session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Replace a row's value; the key must exist. */
-int sm1_update(sm1::session_t *session, uint64_t storeid, const char *key,
-               size_t klen, const char *data, size_t datalen, const char **old,
-               size_t *oldlen) {
+int sm1::update(sm1::session_t *session, uint64_t storeid, const char *key,
+                size_t klen, const char *data, size_t datalen, const char **old,
+                size_t *oldlen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return write_row(session, WRITE_UPDATE, storeid, key, klen, data, datalen,
@@ -865,7 +865,7 @@ int sm1_update(sm1::session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Delete a row; the key must exist. */
-int sm1_delete(sm1::session_t *session, uint64_t storeid, const char *key,
+int sm1::erase(sm1::session_t *session, uint64_t storeid, const char *key,
                size_t klen, const char **old, size_t *oldlen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
@@ -877,8 +877,8 @@ int sm1_delete(sm1::session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Read one key. */
-int sm1_read(sm1::session_t *session, uint64_t storeid, const char *key,
-             size_t klen, const char **data, size_t *datalen) {
+int sm1::read(sm1::session_t *session, uint64_t storeid, const char *key,
+              size_t klen, const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return read_row(session, storeid, key, klen, data, datalen);
@@ -888,8 +888,8 @@ int sm1_read(sm1::session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Read the newest committed version of a key. */
-int sm1_read_latest(sm1::session_t *session, uint64_t storeid, const char *key,
-                    size_t klen, const char **data, size_t *datalen) {
+int sm1::read_latest(sm1::session_t *session, uint64_t storeid, const char *key,
+                     size_t klen, const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return read_latest_row(session, storeid, key, klen, data, datalen);
@@ -899,22 +899,27 @@ int sm1_read_latest(sm1::session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Open a cursor over a key range. */
-sm1::scan_t *sm1_scan(sm1::session_t *session, uint64_t storeid,
-                      const char *skey, size_t sklen, int skey_inclusive,
-                      const char *ekey, size_t eklen, int ekey_inclusive) {
+int sm1::scan(sm1::session_t *session, uint64_t storeid, const char *skey,
+              size_t sklen, int skey_inclusive, const char *ekey, size_t eklen,
+              int ekey_inclusive, sm1::scan_t *&out) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return scan(session, storeid, skey, sklen, skey_inclusive, ekey, eklen,
-                ekey_inclusive);
+    // Open the cursor, handing it back only on success.
+    sm1::scan_t *c = ::scan(session, storeid, skey, sklen, skey_inclusive, ekey,
+                            eklen, ekey_inclusive);
+    if (!c) {
+      return -1;
+    }
+    out = c;
+    return 0;
   } catch (const std::bad_alloc &) {
-    set_error(sm1::SM_ERR_NOMEM, "sm1_scan: out of memory");
-    return nullptr;
+    return set_error(sm1::SM_ERR_NOMEM, "sm1_scan: out of memory");
   }
 }
 
 /* Advance a cursor to its next row. */
-int sm1_scannxt(sm1::scan_t *scan, const char **key, size_t *klen,
-                const char **data, size_t *datalen) {
+int sm1::scannxt(sm1::scan_t *scan, const char **key, size_t *klen,
+                 const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return scan_next(scan, key, klen, data, datalen);
@@ -926,7 +931,7 @@ int sm1_scannxt(sm1::scan_t *scan, const char **key, size_t *klen,
 }
 
 /* Close a cursor: the iterator first, then its snapshot. */
-void sm1_scanend(sm1::scan_t *scan) {
+void sm1::scanend(sm1::scan_t *scan) {
   // Closing NULL is a no-op.
   if (!scan) {
     return;

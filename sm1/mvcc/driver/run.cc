@@ -96,10 +96,10 @@ std::string step_text(const item_t &it) {
 std::string execute(worker_t *w, const item_t &it) {
   const std::vector<std::string> &a = it.arg;
   if (it.verb == "begin") {
-    return sm1_begin(w->sess, w->level) == 0 ? "ok" : error_name();
+    return sm1::begin(w->sess, w->level) == 0 ? "ok" : error_name();
   }
   if (it.verb == "commit" || it.verb == "commit?") {
-    bool ok = sm1_commit(w->sess) == 0;
+    bool ok = sm1::commit(w->sess) == 0;
     w->commit_state = ok ? 1 : -1;
     // "commit?" hides an outcome that may differ run to run;
     // a check states what must hold instead (DRIVER.md §2.2).
@@ -109,12 +109,13 @@ std::string execute(worker_t *w, const item_t &it) {
     return ok ? "ok" : error_name();
   }
   if (it.verb == "abort") {
-    return sm1_abort(w->sess) == 0 ? "ok" : error_name();
+    return sm1::abort(w->sess) == 0 ? "ok" : error_name();
   }
   if (it.verb == "read") {
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm1_read(w->sess, w->store, a[0].data(), a[0].size(), &data, &len);
+    int rc =
+        sm1::read(w->sess, w->store, a[0].data(), a[0].size(), &data, &len);
     if (rc < 0) {
       return error_name();
     }
@@ -125,8 +126,8 @@ std::string execute(worker_t *w, const item_t &it) {
     // this transaction holds locked, past its snapshot.
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm1_read_latest(w->sess, w->store, a[0].data(), a[0].size(), &data,
-                             &len);
+    int rc = sm1::read_latest(w->sess, w->store, a[0].data(), a[0].size(),
+                              &data, &len);
     if (rc < 0) {
       return error_name();
     }
@@ -134,14 +135,14 @@ std::string execute(worker_t *w, const item_t &it) {
   }
   if (it.verb == "write" || it.verb == "insert") {
     int rc = it.verb == "write"
-                 ? sm1_update(w->sess, w->store, a[0].data(), a[0].size(),
-                              a[1].data(), a[1].size(), nullptr, nullptr)
-                 : sm1_insert(w->sess, w->store, a[0].data(), a[0].size(),
-                              a[1].data(), a[1].size());
+                 ? sm1::update(w->sess, w->store, a[0].data(), a[0].size(),
+                               a[1].data(), a[1].size(), nullptr, nullptr)
+                 : sm1::insert(w->sess, w->store, a[0].data(), a[0].size(),
+                               a[1].data(), a[1].size());
     return rc == 0 ? "ok" : error_name();
   }
   if (it.verb == "delete") {
-    return sm1_delete(w->sess, w->store, a[0].data(), a[0].size(), nullptr,
+    return sm1::erase(w->sess, w->store, a[0].data(), a[0].size(), nullptr,
                       nullptr) == 0
                ? "ok"
                : error_name();
@@ -152,9 +153,9 @@ std::string execute(worker_t *w, const item_t &it) {
     if (a.size() == 4 && a[2] == "limit") {
       limit = strtol(a[3].c_str(), nullptr, 10);
     }
-    sm1::scan_t *c = sm1_scan(w->sess, w->store, a[0].data(), a[0].size(), 1,
-                              a[1].data(), a[1].size(), 1);
-    if (!c) {
+    sm1::scan_t *c = nullptr;
+    if (sm1::scan(w->sess, w->store, a[0].data(), a[0].size(), 1, a[1].data(),
+                  a[1].size(), 1, c) != 0) {
       return error_name();
     }
     std::ostringstream out;
@@ -162,18 +163,18 @@ std::string execute(worker_t *w, const item_t &it) {
     const char *k, *d;
     size_t kl, dl;
     long n = 0;
-    while ((limit < 0 || n < limit) && sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
+    while ((limit < 0 || n < limit) && sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
       out << (n++ ? ", " : "") << std::string(k, kl);
     }
     out << "}";
-    sm1_scanend(c);
+    sm1::scanend(c);
     return out.str();
   }
   if (it.verb == "open") {
     // open <name> <lo> <hi>: a cursor that outlives this step.
-    sm1::scan_t *c = sm1_scan(w->sess, w->store, a[1].data(), a[1].size(), 1,
-                              a[2].data(), a[2].size(), 1);
-    if (!c) {
+    sm1::scan_t *c = nullptr;
+    if (sm1::scan(w->sess, w->store, a[1].data(), a[1].size(), 1, a[2].data(),
+                  a[2].size(), 1, c) != 0) {
       return error_name();
     }
     w->cursors[a[0]] = c;
@@ -187,7 +188,7 @@ std::string execute(worker_t *w, const item_t &it) {
     }
     const char *k, *d;
     size_t kl, dl;
-    int rc = sm1_scannxt(it2->second, &k, &kl, &d, &dl);
+    int rc = sm1::scannxt(it2->second, &k, &kl, &d, &dl);
     if (rc < 0) {
       return error_name();
     }
@@ -199,7 +200,7 @@ std::string execute(worker_t *w, const item_t &it) {
     if (it2 == w->cursors.end()) {
       return "ERROR: no cursor " + a[0];
     }
-    sm1_scanend(it2->second);
+    sm1::scanend(it2->second);
     w->cursors.erase(it2);
     return "ok";
   }
@@ -210,24 +211,25 @@ std::string execute(worker_t *w, const item_t &it) {
     if (c == w->cursors.end()) {
       return "ERROR: no such cursor " + a[0];
     }
-    return sm1_scan_seek(c->second, a[1].data(), a[1].size(), 1) == 0
+    return sm1::scan_seek(c->second, a[1].data(), a[1].size(), 1) == 0
                ? "ok"
                : error_name();
   }
   if (it.verb == "stmt") {
     // Start a statement: read committed then reads at one
     // snapshot until the next one.
-    return sm1_stmt_begin(w->sess) == 0 ? "ok" : error_name();
+    return sm1::stmt_begin(w->sess) == 0 ? "ok" : error_name();
   }
   if (it.verb == "savepoint") {
-    int depth = sm1_savepoint(w->sess);
+    int depth = sm1::savepoint(w->sess);
     // The depth is the mark's name, so print it: a script
     // rolls back to the number this step reported.
     return depth < 0 ? error_name() : std::to_string(depth);
   }
   if (it.verb == "rollback") {
     // rollback <depth>: undo to that mark, keeping it.
-    return sm1_rollback(w->sess, atoi(a[0].c_str())) == 0 ? "ok" : error_name();
+    return sm1::rollback(w->sess, atoi(a[0].c_str())) == 0 ? "ok"
+                                                           : error_name();
   }
   if (it.verb == "lock") {
     // lock <row> <shared|exclusive>: take the row lock
@@ -237,7 +239,7 @@ std::string execute(worker_t *w, const item_t &it) {
     }
     sm1::lockmode_t mode =
         a[1] == "shared" ? sm1::lockmode_t::shared : sm1::lockmode_t::exclusive;
-    return sm1_lock(w->sess, w->store, a[0].data(), a[0].size(), mode) == 0
+    return sm1::lock(w->sess, w->store, a[0].data(), a[0].size(), mode) == 0
                ? "ok"
                : error_name();
   }
@@ -247,7 +249,7 @@ std::string execute(worker_t *w, const item_t &it) {
     // this takes, which is a tracked catalog read (§11).
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm1_read(w->sess, w->rel2, a[0].data(), a[0].size(), &data, &len);
+    int rc = sm1::read(w->sess, w->rel2, a[0].data(), a[0].size(), &data, &len);
     if (rc < 0) {
       return error_name();
     }
@@ -256,17 +258,17 @@ std::string execute(worker_t *w, const item_t &it) {
   if (it.verb == "rmstore") {
     // Drop the second store; the first one every other verb
     // works in is never dropped.
-    return sm1_rmstore(w->sess, w->rel2) == 0 ? "ok" : error_name();
+    return sm1::rmstore(w->sess, w->rel2) == 0 ? "ok" : error_name();
   }
   if (it.verb == "mkstore") {
     uint64_t storeid = 0;
     // The storeid itself is generated, so it is not printed.
-    return sm1_mkstore(w->sess, &storeid) == 0 ? "ok" : error_name();
+    return sm1::mkstore(w->sess, &storeid) == 0 ? "ok" : error_name();
   }
   if (it.verb == "lsstore") {
     uint64_t *list = nullptr;
     size_t n = 0;
-    if (sm1_lsstore(w->sess, &list, &n) != 0) {
+    if (sm1::lsstore(w->sess, &list, &n) != 0) {
       return error_name();
     }
     free(list);
@@ -311,9 +313,9 @@ public:
         (std::filesystem::temp_directory_path() / "wisr-driver-XXXXXX")
             .string();
     m_home = mkdtemp(tmpl.data());
-    m_ok = sm1_init(m_home.c_str()) == 0;
-    m_env = m_ok ? sm1_attach(m_home.c_str()) : nullptr;
-    m_ok = m_ok && m_env && sm1_mkdb(m_env, "db", nullptr) == 0;
+    m_ok = sm1::init(m_home.c_str()) == 0;
+    m_ok = m_ok && sm1::attach(m_home.c_str(), m_env) == 0;
+    m_ok = m_ok && m_env && sm1::mkdb(m_env, "db", nullptr) == 0;
     if (!m_ok) {
       return;
     }
@@ -321,20 +323,20 @@ public:
     // them. There are two: the one every row verb works in,
     // and a second holding the same rows, which exists to be
     // dropped and looked up (DRIVER.md §5).
-    m_checker = sm1_opendb(m_env, "db", nullptr);
+    sm1::opendb(m_env, "db", m_checker);
     m_ok = m_checker &&
-           sm1_begin(m_checker, sm1::xctlevel_t::repeatable_read) == 0 &&
-           sm1_mkstore(m_checker, &m_store) == 0 &&
-           sm1_mkstore(m_checker, &m_rel2) == 0;
+           sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) == 0 &&
+           sm1::mkstore(m_checker, &m_store) == 0 &&
+           sm1::mkstore(m_checker, &m_rel2) == 0;
     for (const auto &kv : m_script.seeds) {
       // The same rows in both, so a script can read either.
       for (uint64_t store : {m_store, m_rel2}) {
         m_ok = m_ok &&
-               sm1_insert(m_checker, store, kv.first.data(), kv.first.size(),
-                          kv.second.data(), kv.second.size()) == 0;
+               sm1::insert(m_checker, store, kv.first.data(), kv.first.size(),
+                           kv.second.data(), kv.second.size()) == 0;
       }
     }
-    m_ok = m_ok && sm1_commit(m_checker) == 0;
+    m_ok = m_ok && sm1::commit(m_checker) == 0;
 
     // One session, and one thread, per declared session. A
     // worker holds a mutex and a thread, so it is held by
@@ -345,7 +347,7 @@ public:
       const session_decl_t &d = m_script.sessions[i];
       w.name = d.name;
       w.level = level_for(d, i);
-      w.sess = sm1_opendb(m_env, "db", nullptr);
+      sm1::opendb(m_env, "db", w.sess);
       w.store = m_store;
       w.rel2 = m_rel2;
       m_ok = m_ok && w.sess != nullptr;
@@ -365,10 +367,10 @@ public:
       if (w.thread.joinable()) {
         w.thread.join();
       }
-      sm1_closedb(w.sess);
+      sm1::closedb(w.sess);
     }
-    sm1_closedb(m_checker);
-    sm1_detach(m_env, 1);
+    sm1::closedb(m_checker);
+    sm1::detach(m_env, 1);
     std::error_code ec;
     std::filesystem::remove_all(m_home, ec);
   }
@@ -519,34 +521,35 @@ private:
   /* The rows a fresh transaction sees, as "{r1=0, r2=t2}". */
   std::string rows() {
     std::ostringstream out;
-    if (sm1_begin(m_checker, sm1::xctlevel_t::repeatable_read) != 0) {
+    if (sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) != 0) {
       return error_name();
     }
-    sm1::scan_t *c = sm1_scan(m_checker, m_store, nullptr, 0, 0, nullptr, 0, 0);
+    sm1::scan_t *c = nullptr;
+    sm1::scan(m_checker, m_store, nullptr, 0, 0, nullptr, 0, 0, c);
     out << "{";
     const char *k, *d;
     size_t kl, dl;
     int n = 0;
-    while (c && sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
+    while (c && sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
       out << (n++ ? ", " : "") << std::string(k, kl) << "="
           << std::string(d, dl);
     }
     out << "}";
-    sm1_scanend(c);
-    sm1_commit(m_checker);
+    sm1::scanend(c);
+    sm1::commit(m_checker);
     return out.str();
   }
 
   /* The value of a row as a fresh transaction reads it. */
   std::string value(const std::string &row) {
-    if (sm1_begin(m_checker, sm1::xctlevel_t::repeatable_read) != 0) {
+    if (sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) != 0) {
       return error_name();
     }
     const char *data = nullptr;
     size_t len = 0;
-    int rc = sm1_read(m_checker, m_store, row.data(), row.size(), &data, &len);
+    int rc = sm1::read(m_checker, m_store, row.data(), row.size(), &data, &len);
     std::string v = rc == 0 ? std::string(data, len) : "-";
-    sm1_commit(m_checker);
+    sm1::commit(m_checker);
     return v;
   }
 

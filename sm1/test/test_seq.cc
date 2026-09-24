@@ -1,6 +1,6 @@
 /*
- * test_seq.cc -- named sequences: sm1_mkseq and sm1_rmseq are
- * transactional, while the values sm1_nextseq hands out are
+ * test_seq.cc -- named sequences: sm1::mkseq and sm1::rmseq are
+ * transactional, while the values sm1::nextseq hands out are
  * persistent, strictly increasing, and not.
  */
 
@@ -29,7 +29,7 @@ class seq_fixture_t {
 public:
   /* Create "db" and open it with opt. */
   explicit seq_fixture_t(const sm1::options_t *opt = nullptr) : m_opt(opt) {
-    REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
+    REQUIRE(sm1::mkdb(m_home.env(), "db", nullptr) == 0);
     m_s = open();
   }
 
@@ -41,14 +41,14 @@ public:
 
   /* A new session on "db". */
   sm1::session_t *open() const {
-    sm1::session_t *s = sm1_opendb(m_home.env(), "db", m_opt);
+    sm1::session_t *s = opendb(m_home.env(), "db", m_opt);
     REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
 
   /* Close the session, reattach, and reopen "db". */
   void reopen() {
-    REQUIRE(sm1_closedb(m_s) == 0);
+    REQUIRE(sm1::closedb(m_s) == 0);
     m_home.reattach();
     m_s = open();
   }
@@ -79,15 +79,15 @@ const char *const SEQ = "s";
 /* Create a sequence in its own committed transaction. */
 void commit_mkseq(sm1::session_t *s, const char *name, uint64_t start,
                   uint64_t increment) {
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE_MESSAGE(sm1_mkseq(s, name, start, increment) == 0, sm1::errmsg());
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE_MESSAGE(sm1::mkseq(s, name, start, increment) == 0, sm1::errmsg());
+  REQUIRE(sm1::commit(s) == 0);
 }
 
 /* The next value of name, failing the test on an error. */
 uint64_t next(sm1::session_t *s, const char *name = SEQ) {
   uint64_t v = 0;
-  REQUIRE_MESSAGE(sm1_nextseq(s, name, &v) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm1::nextseq(s, name, &v) == 0, sm1::errmsg());
   return v;
 }
 
@@ -95,17 +95,17 @@ uint64_t next(sm1::session_t *s, const char *name = SEQ) {
 
 /*
  * Child: hand out values forever, writing each to stdout after
- * sm1_nextseq returns it.
+ * sm1::nextseq returns it.
  */
 int seq_child_main(const char *homedir) {
-  sm1::env_t *env = sm1_attach(homedir);
-  sm1::session_t *s = env ? sm1_opendb(env, "db", nullptr) : nullptr;
+  sm1::env_t *env = attach(homedir);
+  sm1::session_t *s = env ? opendb(env, "db", nullptr) : nullptr;
   if (!s) {
     return 2;
   }
   for (;;) {
     uint64_t v;
-    if (sm1_nextseq(s, "s", &v) != 0 || write(1, &v, sizeof(v)) != sizeof(v)) {
+    if (sm1::nextseq(s, "s", &v) != 0 || write(1, &v, sizeof(v)) != sizeof(v)) {
       return 3;
     }
   }
@@ -134,15 +134,15 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   CHECK(next(s, "by7") == 19);
   CHECK(next(s) == v + 1);
 
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::serializable) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::serializable) == 0);
   CHECK(next(s) == v + 2);
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
   uint64_t out;
-  CHECK(sm1_nextseq(nullptr, SEQ, &out) == -1);
+  CHECK(sm1::nextseq(nullptr, SEQ, &out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1_nextseq(s, SEQ, nullptr) == -1);
+  CHECK(sm1::nextseq(s, SEQ, nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1_nextseq(s, nullptr, &out) == -1);
+  CHECK(sm1::nextseq(s, nullptr, &out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -152,44 +152,44 @@ TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
   // 1. A sequence created but not committed is usable at once
   //    by its own transaction, and gone after an abort.
   // 2. Created and committed, it is usable by another session.
-  // 3. Dropped and committed, sm1_nextseq fails with
+  // 3. Dropped and committed, sm1::nextseq fails with
   //    SM_ERR_NOTFOUND; created again under the same name, it
   //    starts over at its start.
-  // 4. sm1_mkseq of a live name fails with SM_ERR_EXISTS,
-  //    sm1_rmseq of an unknown one with SM_ERR_NOTFOUND, and
+  // 4. sm1::mkseq of a live name fails with SM_ERR_EXISTS,
+  //    sm1::rmseq of an unknown one with SM_ERR_NOTFOUND, and
   //    increment 0 with SM_ERR_INVALID.
   seq_fixture_t f;
   sm1::session_t *s = f.s();
   sm1::session_t *o = f.open();
   uint64_t v = 0;
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_mkseq(s, SEQ, 100, 1) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::mkseq(s, SEQ, 100, 1) == 0);
   CHECK(next(s) == 100);
-  CHECK(sm1_nextseq(o, SEQ, &v) == -1); // not committed yet
+  CHECK(sm1::nextseq(o, SEQ, &v) == -1); // not committed yet
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  REQUIRE(sm1_abort(s) == 0);
-  CHECK(sm1_nextseq(s, SEQ, &v) == -1);
+  REQUIRE(sm1::abort(s) == 0);
+  CHECK(sm1::nextseq(s, SEQ, &v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   commit_mkseq(s, SEQ, 100, 1);
   CHECK(next(o) == 100);
   CHECK(next(s) == 101);
 
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1_mkseq(s, SEQ, 1, 1) == -1);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(sm1::mkseq(s, SEQ, 1, 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
-  CHECK(sm1_rmseq(s, "nope") == -1);
+  CHECK(sm1::rmseq(s, "nope") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm1_mkseq(s, "zero", 1, 0) == -1);
+  CHECK(sm1::mkseq(s, "zero", 1, 0) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm1_rmseq(s, SEQ) == 0);
-  REQUIRE(sm1_commit(s) == 0);
-  CHECK(sm1_nextseq(s, SEQ, &v) == -1);
+  REQUIRE(sm1::rmseq(s, SEQ) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(sm1::nextseq(s, SEQ, &v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   commit_mkseq(s, SEQ, 100, 1);
   CHECK(next(s) == 100); // a new sequence, starting over
-  sm1_closedb(o);
+  sm1::closedb(o);
 }
 
 TEST_CASE("dropping a sequence deletes its lease from CF:meta") {
@@ -203,10 +203,10 @@ TEST_CASE("dropping a sequence deletes its lease from CF:meta") {
   CHECK(next(s) == 1000);
   CHECK(meta_seq_keys(s) == 1);
 
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_rmseq(s, SEQ) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::rmseq(s, SEQ) == 0);
   CHECK(meta_seq_keys(s) == 1); // not until it commits
-  REQUIRE(sm1_commit(s) == 0);
+  REQUIRE(sm1::commit(s) == 0);
   CHECK(meta_seq_keys(s) == 0);
 }
 
@@ -222,9 +222,9 @@ TEST_CASE("a sequence hands out its last value, then fails") {
   CHECK(next(s, "end") == UINT64_MAX - 1);
   CHECK(next(s, "end") == UINT64_MAX);
   uint64_t v = 0;
-  CHECK(sm1_nextseq(s, "end", &v) == -1);
+  CHECK(sm1::nextseq(s, "end", &v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1_nextseq(s, "end", &v) == -1);
+  CHECK(sm1::nextseq(s, "end", &v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -235,9 +235,9 @@ TEST_CASE("an abort does not give a sequence value back") {
   seq_fixture_t f;
   sm1::session_t *s = f.s();
   commit_mkseq(s, SEQ, 1000, 1);
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t v = next(s);
-  REQUIRE(sm1_abort(s) == 0);
+  REQUIRE(sm1::abort(s) == 0);
   CHECK(next(s) > v);
 }
 
@@ -246,15 +246,15 @@ TEST_CASE("sequences of the same name in two databases are separate") {
   // 1. Both databases have a sequence "s" starting at 1000.
   // 2. Taking values from one does not advance the other.
   seq_fixture_t f;
-  REQUIRE(sm1_mkdb(f.home().env(), "db2", nullptr) == 0);
-  sm1::session_t *t = sm1_opendb(f.home().env(), "db2", nullptr);
+  REQUIRE(sm1::mkdb(f.home().env(), "db2", nullptr) == 0);
+  sm1::session_t *t = opendb(f.home().env(), "db2", nullptr);
   REQUIRE(t);
   commit_mkseq(f.s(), SEQ, 1000, 1);
   commit_mkseq(t, SEQ, 1000, 1);
   CHECK(next(f.s()) == 1000);
   CHECK(next(f.s()) == 1001);
   CHECK(next(t) == 1000);
-  sm1_closedb(t);
+  sm1::closedb(t);
 }
 
 TEST_CASE("the sequence survives reopening, across many leases") {
@@ -297,7 +297,7 @@ TEST_CASE("concurrent sessions never receive the same value") {
       std::vector<uint64_t> mine;
       for (int i = 0; i < 2000; i++) {
         uint64_t v = 0;
-        sm1_nextseq(s, SEQ, &v);
+        sm1::nextseq(s, SEQ, &v);
         mine.push_back(v);
       }
       std::lock_guard<std::mutex> guard(mu);
@@ -313,27 +313,27 @@ TEST_CASE("concurrent sessions never receive the same value") {
   CHECK(out_of_order == 0);
   CHECK(all.size() == 8000);
   for (sm1::session_t *s : sessions) {
-    sm1_closedb(s);
+    sm1::closedb(s);
   }
 }
 
 TEST_CASE("a stopped database hands out no sequence values") {
   // Verify the failed state (§8.2) covers the sequence.
   // 1. Make a commit's status write fail.
-  // 2. sm1_nextseq then fails with SM_ERR_IO.
+  // 2. sm1::nextseq then fails with SM_ERR_IO.
   seq_fixture_t f;
   sm1::session_t *s = f.s();
   commit_mkseq(s, SEQ, 1000, 1);
-  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t storeid = 0;
-  REQUIRE(sm1_mkstore(s, &storeid) == 0);
+  REQUIRE(sm1::mkstore(s, &storeid) == 0);
   s->db->test_before_commit = [](uint64_t) {
     return rocksdb::Status::IOError("injected");
   };
-  CHECK(sm1_commit(s) == -1);
+  CHECK(sm1::commit(s) == -1);
   s->db->test_before_commit = nullptr;
   uint64_t v;
-  CHECK(sm1_nextseq(s, SEQ, &v) == -1);
+  CHECK(sm1::nextseq(s, SEQ, &v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);
 }
 
@@ -345,7 +345,7 @@ TEST_CASE("values handed out before a kill are never handed out again") {
   //    child reported.
   seq_fixture_t f;
   commit_mkseq(f.s(), SEQ, 1000, 1);
-  REQUIRE(sm1_closedb(f.s()) == 0);
+  REQUIRE(sm1::closedb(f.s()) == 0);
   f.home().detach();
   int fds[2];
   REQUIRE(pipe(fds) == 0);
@@ -379,5 +379,5 @@ TEST_CASE("values handed out before a kill are never handed out again") {
   f.home().attach();
   sm1::session_t *s = f.open();
   CHECK(next(s) > highest);
-  sm1_closedb(s);
+  sm1::closedb(s);
 }

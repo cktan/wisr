@@ -39,28 +39,28 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
     threads.emplace_back([&, i, sess] {
       std::string me = DOCS[i];
       for (int round = 0; round < 50; round++) {
-        if (sm1_begin(sess, sm1::xctlevel_t::serializable) != 0) {
+        if (sm1::begin(sess, sm1::xctlevel_t::serializable) != 0) {
           errors++;
           return;
         }
         // Count the doctors on call in this snapshot.
-        sm1::scan_t *c =
-            sm1_scan(sess, s.store(), DOCS[0], 2, 1, DOCS[3], 2, 1);
+        sm1::scan_t *c = nullptr;
+        sm1::scan(sess, s.store(), DOCS[0], 2, 1, DOCS[3], 2, 1, c);
         int on = 0;
         const char *k, *d;
         size_t kl, dl;
-        while (c && sm1_scannxt(c, &k, &kl, &d, &dl) == 0) {
+        while (c && sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
           on += std::string(d, dl) == "1";
         }
-        sm1_scanend(c);
+        sm1::scanend(c);
         const char *v = on >= 2 ? "0" : "1";
-        if (sm1_update(sess, s.store(), me.data(), me.size(), v, 1, nullptr,
-                       nullptr) == 0 &&
-            sm1_commit(sess) == 0) {
+        if (sm1::update(sess, s.store(), me.data(), me.size(), v, 1, nullptr,
+                        nullptr) == 0 &&
+            sm1::commit(sess) == 0) {
           commits++;
         } else if (!sm1::retryable()) {
           errors++;
-          sm1_abort(sess);
+          sm1::abort(sess);
           return;
         }
       }
@@ -70,7 +70,7 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
   sm1::session_t *check = s.session(6);
   std::thread checker([&] {
     while (!stop) {
-      if (sm1_begin(check, sm1::xctlevel_t::serializable) != 0) {
+      if (sm1::begin(check, sm1::xctlevel_t::serializable) != 0) {
         errors++;
         return;
       }
@@ -78,14 +78,14 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
       for (const char *d : DOCS) {
         const char *data = nullptr;
         size_t len = 0;
-        if (sm1_read(check, s.store(), d, 2, &data, &len) == 0) {
+        if (sm1::read(check, s.store(), d, 2, &data, &len) == 0) {
           on += std::string(data, len) == "1";
         }
       }
       if (on == 0) {
         violations++;
       }
-      if (sm1_commit(check) != 0 && !sm1::retryable()) {
+      if (sm1::commit(check) != 0 && !sm1::retryable()) {
         errors++;
       }
     }

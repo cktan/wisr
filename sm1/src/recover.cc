@@ -133,7 +133,7 @@ int live_storeids(db_t *db, std::set<uint64_t> *live) {
 /*
  * Drop every store CF that neither the catalog nor a prepared
  * transaction's created list names (§9.1 step 6): a crash inside
- * an uncommitted sm1_mkstore, or a committed sm1_rmstore whose CF GC
+ * an uncommitted sm1::mkstore, or a committed sm1::rmstore whose CF GC
  * had not yet dropped.
  */
 int sweep_orphan_cfs(db_t *db) {

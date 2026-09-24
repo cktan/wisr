@@ -1,5 +1,5 @@
 /*
- * test_read_latest.cc -- sm1_read_latest and SM_ERR_UPDATED: the
+ * test_read_latest.cc -- sm1::read_latest and SM_ERR_UPDATED: the
  * argument rules and the engine state a scenario script cannot
  * see (SM1_DESIGN.md §5.4). The timelines themselves are the f
  * scripts in mvcc/in/.
@@ -22,19 +22,19 @@ class latest_fixture_t {
 public:
   /* Create "db", the store, and the two rows. */
   latest_fixture_t() {
-    REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
+    REQUIRE(sm1::mkdb(m_home.env(), "db", nullptr) == 0);
     sm1::session_t *s = open();
-    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     g_store = mkstore(s);
     put(s, g_store, "x", "0");
     put(s, g_store, "y", "0");
-    REQUIRE(sm1_commit(s) == 0);
-    REQUIRE(sm1_closedb(s) == 0);
+    REQUIRE(sm1::commit(s) == 0);
+    REQUIRE(sm1::closedb(s) == 0);
   }
 
   /* A new session on "db". */
   sm1::session_t *open() const {
-    sm1::session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
+    sm1::session_t *s = opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -43,17 +43,17 @@ private:
   home_t m_home;
 };
 
-/* Set key in store 1 to val; the result of sm1_update. */
+/* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
-                    nullptr, nullptr);
+  return sm1::update(s, g_store, key.data(), key.size(), val.data(), val.size(),
+                     nullptr, nullptr);
 }
 
-/* sm1_read_latest of key: "<none>" if absent; -1 as "<error>". */
+/* sm1::read_latest of key: "<none>" if absent; -1 as "<error>". */
 std::string latest(sm1::session_t *s, const std::string &key) {
   const char *data = nullptr;
   size_t len = 0;
-  int r = sm1_read_latest(s, g_store, key.data(), key.size(), &data, &len);
+  int r = sm1::read_latest(s, g_store, key.data(), key.size(), &data, &len);
   if (r < 0) {
     return "<error>";
   }
@@ -64,36 +64,36 @@ std::string latest(sm1::session_t *s, const std::string &key) {
 void commit_from_other(latest_fixture_t &f, const std::string &key,
                        const std::string &val) {
   sm1::session_t *u = f.open();
-  REQUIRE(sm1_begin(u, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(u, key, val) == 0);
-  REQUIRE(sm1_commit(u) == 0);
-  REQUIRE(sm1_closedb(u) == 0);
+  REQUIRE(sm1::commit(u) == 0);
+  REQUIRE(sm1::closedb(u) == 0);
 }
 
 } // namespace
 
 TEST_CASE(
     "sm1_read_latest needs read committed and a lock this transaction holds") {
-  // Verify the argument rules of sm1_read_latest.
+  // Verify the argument rules of sm1::read_latest.
   // 1. At repeatable read, with the lock held: SM_ERR_INVALID.
   // 2. At read committed, with no lock held: SM_ERR_INVALID.
   // 3. At read committed under an exclusive lock: it reads.
   latest_fixture_t f;
   sm1::session_t *t = f.open();
 
-  REQUIRE(sm1_begin(t, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1_lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
   CHECK(latest(t, "x") == "<error>");
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm1_abort(t) == 0);
+  REQUIRE(sm1::abort(t) == 0);
 
-  REQUIRE(sm1_begin(t, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   CHECK(latest(t, "x") == "<error>");
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm1_lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
+  REQUIRE(sm1::lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
   CHECK(latest(t, "x") == "0");
-  REQUIRE(sm1_commit(t) == 0);
-  sm1_closedb(t);
+  REQUIRE(sm1::commit(t) == 0);
+  sm1::closedb(t);
 }
 
 TEST_CASE("SM_ERR_UPDATED is not retryable and leaves the transaction active") {
@@ -103,7 +103,7 @@ TEST_CASE("SM_ERR_UPDATED is not retryable and leaves the transaction active") {
   // 3. T is still active: it reads the newest "x", writes, commits.
   latest_fixture_t f;
   sm1::session_t *t = f.open();
-  REQUIRE(sm1_begin(t, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   commit_from_other(f, "x", "u");
 
   CHECK(set(t, "x", "t") == -1);
@@ -111,8 +111,8 @@ TEST_CASE("SM_ERR_UPDATED is not retryable and leaves the transaction active") {
   CHECK(sm1::retryable() == 0);
   CHECK(latest(t, "x") == "u");
   CHECK(set(t, "x", "t") == 0);
-  REQUIRE(sm1_commit(t) == 0);
-  sm1_closedb(t);
+  REQUIRE(sm1::commit(t) == 0);
+  sm1::closedb(t);
 }
 
 TEST_CASE("a successful write consumes the mark") {
@@ -124,35 +124,35 @@ TEST_CASE("a successful write consumes the mark") {
   // 4. T's next write of "x" fails with SM_ERR_UPDATED again.
   latest_fixture_t f;
   sm1::session_t *t = f.open();
-  REQUIRE(sm1_begin(t, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   commit_from_other(f, "x", "u");
-  REQUIRE(sm1_lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
+  REQUIRE(sm1::lock(t, g_store, "x", 1, sm1::lockmode_t::exclusive) == 0);
 
-  REQUIRE(sm1_savepoint(t) == 1);
+  REQUIRE(sm1::savepoint(t) == 1);
   CHECK(latest(t, "x") == "u");
   CHECK(set(t, "x", "t") == 0);
-  REQUIRE(sm1_rollback(t, 1) == 0);
+  REQUIRE(sm1::rollback(t, 1) == 0);
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
-  REQUIRE(sm1_abort(t) == 0);
-  sm1_closedb(t);
+  REQUIRE(sm1::abort(t) == 0);
+  sm1::closedb(t);
 }
 
 TEST_CASE("under a shared lock sm1_read_latest reads but sets no mark") {
   // Verify a shared holder sees the newest row but cannot write.
   // 1. T (read committed) takes a shared lock on "x"; a commit
   //    to "x" landed after T began.
-  // 2. sm1_read_latest returns the newest value.
+  // 2. sm1::read_latest returns the newest value.
   // 3. T's update, an upgrade, still fails with SM_ERR_UPDATED.
   latest_fixture_t f;
   sm1::session_t *t = f.open();
-  REQUIRE(sm1_begin(t, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
   commit_from_other(f, "x", "u");
 
-  REQUIRE(sm1_lock(t, g_store, "x", 1, sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(t, g_store, "x", 1, sm1::lockmode_t::shared) == 0);
   CHECK(latest(t, "x") == "u");
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
-  REQUIRE(sm1_abort(t) == 0);
-  sm1_closedb(t);
+  REQUIRE(sm1::abort(t) == 0);
+  sm1::closedb(t);
 }
