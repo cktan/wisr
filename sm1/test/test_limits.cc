@@ -82,10 +82,9 @@ std::vector<std::pair<std::string, std::string>> scan_all(sm1::session_t *s,
   sm1::scan_t *c = scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE_MESSAGE(c, sm1::errmsg());
   std::vector<std::pair<std::string, std::string>> rows;
-  const char *k, *d;
-  size_t kl, dl;
-  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-    rows.emplace_back(std::string(k, kl), std::string(d, dl));
+  std::string_view k, d;
+  while (sm1::scannxt(c, k, d) == 0) {
+    rows.emplace_back(std::string(k), std::string(d));
   }
   sm1::scanend(c);
   return rows;
@@ -110,7 +109,7 @@ TEST_CASE(
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, f.store(), ka, "va");
   put(s, f.store(), kb, "vb");
-  REQUIRE(sm1::update(s, f.store(), ka, "va2", nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(s, f.store(), ka, "va2") == 0);
   REQUIRE(sm1::commit(s) == 0);
 
   f.reopen();
@@ -121,16 +120,15 @@ TEST_CASE(
   sm1::scan_t *c =
       scan(s, f.store(), ka.data(), ka.size(), 1, kb.data(), kb.size(), 1);
   REQUIRE_MESSAGE(c, sm1::errmsg());
-  const char *k, *d;
-  size_t kl, dl;
-  REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
-  CHECK(std::string(k, kl) == ka);
-  CHECK(std::string(d, dl) == "va2");
-  REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
-  CHECK(std::string(k, kl) == kb);
-  CHECK(sm1::scannxt(c, &k, &kl, &d, &dl) == 1);
+  std::string_view k, d;
+  REQUIRE(sm1::scannxt(c, k, d) == 0);
+  CHECK(std::string(k) == ka);
+  CHECK(std::string(d) == "va2");
+  REQUIRE(sm1::scannxt(c, k, d) == 0);
+  CHECK(std::string(k) == kb);
+  CHECK(sm1::scannxt(c, k, d) == 1);
   sm1::scanend(c);
-  REQUIRE(sm1::erase(s, f.store(), ka, nullptr, nullptr) == 0);
+  REQUIRE(sm1::erase(s, f.store(), ka) == 0);
   REQUIRE(sm1::commit(s) == 0);
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
@@ -149,17 +147,16 @@ TEST_CASE("a key one byte over sm1::max_keylen is rejected by every call") {
   limits_fixture_t f;
   sm1::session_t *s = f.s();
   std::string over(sm1::max_keylen + 1, 'k');
-  const char *d;
-  size_t dl;
+  std::string_view d;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, f.store(), "ok", "v");
   CHECK(sm1::insert(s, f.store(), over, "v") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::update(s, f.store(), over, "v", nullptr, nullptr) == -1);
+  CHECK(sm1::update(s, f.store(), over, "v") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::erase(s, f.store(), over, nullptr, nullptr) == -1);
+  CHECK(sm1::erase(s, f.store(), over) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::read(s, f.store(), over, &d, &dl) == -1);
+  CHECK(sm1::read(s, f.store(), over, d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(scan(s, f.store(), over.data(), over.size(), 1, nullptr, 0, 0) ==
         nullptr);
@@ -199,7 +196,7 @@ TEST_CASE("values of sm1::max_datalen bytes are stored and read back intact") {
   CHECK((rows[0].second == v1));
 
   std::string v2 = pattern(sm1::max_datalen, 2);
-  REQUIRE(sm1::update(s, f.store(), "big", v2, nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(s, f.store(), "big", v2) == 0);
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK((get(s, f.store(), "big") == v2));
@@ -219,7 +216,7 @@ TEST_CASE("a value one byte over sm1::max_datalen is rejected") {
   put(s, f.store(), "k", "v");
   CHECK(sm1::insert(s, f.store(), "k2", over) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::update(s, f.store(), "k", over, nullptr, nullptr) == -1);
+  CHECK(sm1::update(s, f.store(), "k", over) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(get(s, f.store(), "k") == "v");
   CHECK(get(s, f.store(), "k2") == "<none>");

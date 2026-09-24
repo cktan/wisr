@@ -120,7 +120,7 @@ private:
 void commit_set(sm1::session_t *s, const std::string &key,
                 const std::string &val) {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::update(s, g_store, key, val, nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(s, g_store, key, val) == 0);
   REQUIRE(sm1::commit(s) == 0);
 }
 
@@ -135,7 +135,7 @@ void commit_put(sm1::session_t *s, const std::string &key,
 /* Delete key from store 1 in one committed transaction. */
 void commit_del(sm1::session_t *s, const std::string &key) {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::erase(s, g_store, key, nullptr, nullptr) == 0);
+  REQUIRE(sm1::erase(s, g_store, key) == 0);
   REQUIRE(sm1::commit(s) == 0);
 }
 
@@ -156,7 +156,7 @@ TEST_CASE("a key's versions are stored in commit order, by write timestamp") {
   commit_put(w, "k", "v0");
   commit_put(w, "j", "x");
   REQUIRE(sm1::begin(l, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::update(l, g_store, "j", "y", nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(l, g_store, "j", "y") == 0);
   commit_set(w, "k", "v1");
   commit_set(w, "k", "v2");
   REQUIRE(sm1::commit(l) == 0);
@@ -194,15 +194,14 @@ TEST_CASE("a read committed write past a newer commit survives compaction") {
   commit_put(w, "k", "v0");
   commit_put(w, "j", "x");
   REQUIRE(sm1::begin(l, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::update(l, g_store, "j", "y", nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(l, g_store, "j", "y") == 0);
   commit_set(w, "k", "v1");
-  CHECK(sm1::update(l, g_store, "k", "v2", nullptr, nullptr) == -1);
+  CHECK(sm1::update(l, g_store, "k", "v2") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
-  const char *data = nullptr;
-  size_t len = 0;
-  REQUIRE(sm1::read_latest(l, g_store, "k", &data, &len) == 0);
-  CHECK(std::string(data, len) == "v1");
-  REQUIRE(sm1::update(l, g_store, "k", "v2", nullptr, nullptr) == 0);
+  std::string_view data;
+  REQUIRE(sm1::read_latest(l, g_store, "k", data) == 0);
+  CHECK(std::string(data) == "v1");
+  REQUIRE(sm1::update(l, g_store, "k", "v2") == 0);
   REQUIRE(sm1::commit(l) == 0);
 
   f.compact(g_store);
@@ -306,15 +305,13 @@ TEST_CASE("tombstones are purged per key, sparing neighbors and re-inserts") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 20; i++) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm1::update(s, g_store, std::string_view(key, 3), "b", nullptr,
-                        nullptr) == 0);
+    REQUIRE(sm1::update(s, g_store, std::string_view(key, 3), "b") == 0);
   }
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 20; i += 2) {
     snprintf(key, sizeof(key), "k%02d", i);
-    REQUIRE(sm1::erase(s, g_store, std::string_view(key, 3), nullptr,
-                       nullptr) == 0);
+    REQUIRE(sm1::erase(s, g_store, std::string_view(key, 3)) == 0);
   }
   REQUIRE(sm1::commit(s) == 0);
 
@@ -422,10 +419,9 @@ std::vector<std::string> scan_keys(sm1::session_t *s) {
   sm1::scan_t *c = scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE_MESSAGE(c, sm1::errmsg());
   std::vector<std::string> out;
-  const char *k, *d;
-  size_t kl, dl;
-  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-    out.emplace_back(k, kl);
+  std::string_view k, d;
+  while (sm1::scannxt(c, k, d) == 0) {
+    out.emplace_back(k);
   }
   sm1::scanend(c);
   return out;
@@ -498,9 +494,8 @@ TEST_CASE(
   CHECK(gc_sweep_txn(f.db(), false) == 0); // still waiting on C
 
   int n = 0;
-  const char *k, *d;
-  size_t kl, dl;
-  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
+  std::string_view k, d;
+  while (sm1::scannxt(c, k, d) == 0) {
     n++;
   }
   CHECK(n == 10);

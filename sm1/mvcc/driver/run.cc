@@ -112,35 +112,30 @@ std::string execute(worker_t *w, const item_t &it) {
     return sm1::abort(w->sess) == 0 ? "ok" : error_name();
   }
   if (it.verb == "read") {
-    const char *data = nullptr;
-    size_t len = 0;
-    int rc = sm1::read(w->sess, w->store, a[0], &data, &len);
+    std::string_view data;
+    int rc = sm1::read(w->sess, w->store, a[0], data);
     if (rc < 0) {
       return error_name();
     }
-    return rc == 1 ? "-" : std::string(data, len);
+    return rc == 1 ? "-" : std::string(data);
   }
   if (it.verb == "readlatest") {
     // readlatest <row>: the newest committed version of a row
     // this transaction holds locked, past its snapshot.
-    const char *data = nullptr;
-    size_t len = 0;
-    int rc = sm1::read_latest(w->sess, w->store, a[0], &data, &len);
+    std::string_view data;
+    int rc = sm1::read_latest(w->sess, w->store, a[0], data);
     if (rc < 0) {
       return error_name();
     }
-    return rc == 1 ? "-" : std::string(data, len);
+    return rc == 1 ? "-" : std::string(data);
   }
   if (it.verb == "write" || it.verb == "insert") {
-    int rc = it.verb == "write"
-                 ? sm1::update(w->sess, w->store, a[0], a[1], nullptr, nullptr)
-                 : sm1::insert(w->sess, w->store, a[0], a[1]);
+    int rc = it.verb == "write" ? sm1::update(w->sess, w->store, a[0], a[1])
+                                : sm1::insert(w->sess, w->store, a[0], a[1]);
     return rc == 0 ? "ok" : error_name();
   }
   if (it.verb == "delete") {
-    return sm1::erase(w->sess, w->store, a[0], nullptr, nullptr) == 0
-               ? "ok"
-               : error_name();
+    return sm1::erase(w->sess, w->store, a[0]) == 0 ? "ok" : error_name();
   }
   if (it.verb == "scan") {
     // scan <lo> <hi> [limit <n>]: take n rows, then close.
@@ -155,11 +150,10 @@ std::string execute(worker_t *w, const item_t &it) {
     }
     std::ostringstream out;
     out << "{";
-    const char *k, *d;
-    size_t kl, dl;
+    std::string_view k, d;
     long n = 0;
-    while ((limit < 0 || n < limit) && sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-      out << (n++ ? ", " : "") << std::string(k, kl);
+    while ((limit < 0 || n < limit) && sm1::scannxt(c, k, d) == 0) {
+      out << (n++ ? ", " : "") << std::string(k);
     }
     out << "}";
     sm1::scanend(c);
@@ -181,13 +175,12 @@ std::string execute(worker_t *w, const item_t &it) {
     if (it2 == w->cursors.end()) {
       return "ERROR: no cursor " + a[0];
     }
-    const char *k, *d;
-    size_t kl, dl;
-    int rc = sm1::scannxt(it2->second, &k, &kl, &d, &dl);
+    std::string_view k, d;
+    int rc = sm1::scannxt(it2->second, k, d);
     if (rc < 0) {
       return error_name();
     }
-    return rc == 1 ? "end" : std::string(k, kl) + "=" + std::string(d, dl);
+    return rc == 1 ? "end" : std::string(k) + "=" + std::string(d);
   }
   if (it.verb == "close") {
     // close <name>: release the cursor and its predicate.
@@ -238,13 +231,12 @@ std::string execute(worker_t *w, const item_t &it) {
     // lookup <row>: read a row of the SECOND store. What
     // the scenario is usually after is the storeid resolution
     // this takes, which is a tracked catalog read (§11).
-    const char *data = nullptr;
-    size_t len = 0;
-    int rc = sm1::read(w->sess, w->rel2, a[0], &data, &len);
+    std::string_view data;
+    int rc = sm1::read(w->sess, w->rel2, a[0], data);
     if (rc < 0) {
       return error_name();
     }
-    return rc == 1 ? "-" : std::string(data, len);
+    return rc == 1 ? "-" : std::string(data);
   }
   if (it.verb == "rmstore") {
     // Drop the second store; the first one every other verb
@@ -254,7 +246,7 @@ std::string execute(worker_t *w, const item_t &it) {
   if (it.verb == "mkstore") {
     uint64_t storeid = 0;
     // The storeid itself is generated, so it is not printed.
-    return sm1::mkstore(w->sess, &storeid) == 0 ? "ok" : error_name();
+    return sm1::mkstore(w->sess, storeid) == 0 ? "ok" : error_name();
   }
   if (it.verb == "lsstore") {
     uint64_t *list = nullptr;
@@ -317,8 +309,8 @@ public:
     sm1::opendb(m_env, "db", m_checker);
     m_ok = m_checker &&
            sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) == 0 &&
-           sm1::mkstore(m_checker, &m_store) == 0 &&
-           sm1::mkstore(m_checker, &m_rel2) == 0;
+           sm1::mkstore(m_checker, m_store) == 0 &&
+           sm1::mkstore(m_checker, m_rel2) == 0;
     for (const auto &kv : m_script.seeds) {
       // The same rows in both, so a script can read either.
       for (uint64_t store : {m_store, m_rel2}) {
@@ -516,12 +508,10 @@ private:
     sm1::scan_t *c = nullptr;
     sm1::scan(m_checker, m_store, nullptr, 0, 0, nullptr, 0, 0, c);
     out << "{";
-    const char *k, *d;
-    size_t kl, dl;
+    std::string_view k, d;
     int n = 0;
-    while (c && sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-      out << (n++ ? ", " : "") << std::string(k, kl) << "="
-          << std::string(d, dl);
+    while (c && sm1::scannxt(c, k, d) == 0) {
+      out << (n++ ? ", " : "") << std::string(k) << "=" << std::string(d);
     }
     out << "}";
     sm1::scanend(c);
@@ -534,10 +524,9 @@ private:
     if (sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) != 0) {
       return error_name();
     }
-    const char *data = nullptr;
-    size_t len = 0;
-    int rc = sm1::read(m_checker, m_store, row, &data, &len);
-    std::string v = rc == 0 ? std::string(data, len) : "-";
+    std::string_view data;
+    int rc = sm1::read(m_checker, m_store, row, data);
+    std::string v = rc == 0 ? std::string(data) : "-";
     sm1::commit(m_checker);
     return v;
   }

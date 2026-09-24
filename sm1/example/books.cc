@@ -141,7 +141,7 @@ void upsert_book(sm1::session_t *s, uint64_t store, const book_t &b) {
     check(-1, "sm1_insert");
   }
   // The id exists: replace its value instead.
-  check(sm1::update(s, store, key, val, nullptr, nullptr), "sm1_update");
+  check(sm1::update(s, store, key, val), "sm1_update");
 }
 
 } // namespace
@@ -193,7 +193,7 @@ int main(int argc, char **argv) {
   // The list is the library's; release it.
   free(stores);
   if (book == 0) {
-    check(sm1::mkstore(s, &book), "sm1_mkstore");
+    check(sm1::mkstore(s, book), "sm1_mkstore");
     printf("created book (storeid %llu)\n", (unsigned long long)book);
   }
   check(sm1::commit(s), "sm1_commit");
@@ -218,9 +218,8 @@ int main(int argc, char **argv) {
 
   // Read one row by its key.
   std::string key = encode_key(3);
-  const char *data = nullptr;
-  size_t len = 0;
-  int r = sm1::read(s, book, key, &data, &len);
+  std::string_view data;
+  int r = sm1::read(s, book, key, data);
   check(r, "sm1_read");
   printf("\nread id 3:\n");
   // 1 means no such row, which is not an error.
@@ -229,7 +228,7 @@ int main(int argc, char **argv) {
   } else {
     // data points into the session; decode it before the next call.
     book_t b{3, "", ""};
-    if (!decode_value(data, len, &b)) {
+    if (!decode_value(data.data(), data.size(), &b)) {
       fprintf(stderr, "id 3: malformed row\n");
       return 1;
     }
@@ -242,17 +241,16 @@ int main(int argc, char **argv) {
   if (sm1::scan(s, book, nullptr, 0, 0, nullptr, 0, 0, c) != 0) {
     check(-1, "sm1_scan");
   }
-  const char *k = nullptr;
-  size_t klen = 0;
+  std::string_view k;
   // 0 is a row, 1 the end of the range, -1 an error.
-  while ((r = sm1::scannxt(c, &k, &klen, &data, &len)) == 0) {
+  while ((r = sm1::scannxt(c, k, data)) == 0) {
     // Check the key's size before decoding it.
-    if (klen != 8) {
+    if (k.size() != 8) {
       fprintf(stderr, "malformed key\n");
       return 1;
     }
-    book_t b{decode_key(k), "", ""};
-    if (!decode_value(data, len, &b)) {
+    book_t b{decode_key(k.data()), "", ""};
+    if (!decode_value(data.data(), data.size(), &b)) {
       fprintf(stderr, "malformed row\n");
       return 1;
     }

@@ -51,9 +51,8 @@ uint32_t count_rows(sm1::session_t *s, uint64_t store) {
     return UINT32_MAX;
   }
   uint32_t n = 0;
-  const char *k, *d;
-  size_t kl, dl;
-  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
+  std::string_view k, d;
+  while (sm1::scannxt(c, k, d) == 0) {
     n++;
   }
   sm1::scanend(c);

@@ -135,17 +135,16 @@ int lsstore(sm1::session_t *s, uint64_t **out, size_t *n) {
   defer { sm1::scanend(c); };
 
   std::vector<uint64_t> ids;
-  const char *key, *data;
-  size_t klen, datalen;
+  std::string_view key, data;
   int r;
   // Collect the storeid of each live catalog row, in order.
-  while ((r = sm1::scannxt(c, &key, &klen, &data, &datalen)) == 0) {
+  while ((r = sm1::scannxt(c, key, data)) == 0) {
     // Reject a malformed catalog key.
-    if (klen != 9) {
+    if (key.size() != 9) {
       return set_error(sm1::SM_ERR_CORRUPT, "bad catalog key of {} bytes",
-                       klen);
+                       key.size());
     }
-    ids.push_back(get_be64(key + 1));
+    ids.push_back(get_be64(key.data() + 1));
   }
   // Fail on a scan error.
   if (r < 0) {
@@ -181,10 +180,10 @@ int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
 } // namespace wisr
 
 /* Create a store and hand out its storeid. */
-int sm1::mkstore(sm1::session_t *session, uint64_t *storeid) {
+int sm1::mkstore(sm1::session_t *session, uint64_t &storeid) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return ::mkstore(session, storeid);
+    return ::mkstore(session, &storeid);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_mkstore: out of memory");
   }

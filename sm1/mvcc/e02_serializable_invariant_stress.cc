@@ -47,15 +47,13 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
         sm1::scan_t *c = nullptr;
         sm1::scan(sess, s.store(), DOCS[0], 2, 1, DOCS[3], 2, 1, c);
         int on = 0;
-        const char *k, *d;
-        size_t kl, dl;
-        while (c && sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-          on += std::string(d, dl) == "1";
+        std::string_view k, d;
+        while (c && sm1::scannxt(c, k, d) == 0) {
+          on += std::string(d) == "1";
         }
         sm1::scanend(c);
         const char *v = on >= 2 ? "0" : "1";
-        if (sm1::update(sess, s.store(), me, std::string_view(v, 1), nullptr,
-                        nullptr) == 0 &&
+        if (sm1::update(sess, s.store(), me, std::string_view(v, 1)) == 0 &&
             sm1::commit(sess) == 0) {
           commits++;
         } else if (!sm1::retryable()) {
@@ -76,11 +74,9 @@ TEST_CASE("e02: SERIALIZABLE keeps the invariant under contention") {
       }
       int on = 0;
       for (const char *d : DOCS) {
-        const char *data = nullptr;
-        size_t len = 0;
-        if (sm1::read(check, s.store(), std::string_view(d, 2), &data, &len) ==
-            0) {
-          on += std::string(data, len) == "1";
+        std::string_view data;
+        if (sm1::read(check, s.store(), std::string_view(d, 2), data) == 0) {
+          on += std::string(data) == "1";
         }
       }
       if (on == 0) {

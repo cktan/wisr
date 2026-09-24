@@ -103,7 +103,7 @@ enum errnum_t {
     SM_ERR_VERSION       = 18,  /* home dir format not supported */
 
     /* Not an abort: the transaction stays active (SM1_DESIGN.md §5.4). */
-    SM_ERR_UPDATED       = 19   /* newer commit; sm1_read_latest, then retry */
+    SM_ERR_UPDATED       = 19   /* newer commit; sm1::read_latest, then retry */
 };
 
 /*
@@ -417,7 +417,7 @@ int mkseq(session_t* session, std::string_view name,
 int rmseq(session_t* session, std::string_view name);
 
 /*
- * Hand out the sequence's next value in *out.
+ * Hand out the sequence's next value in out.
  *
  * The sequence is persistent and strictly increasing: a value
  * is handed out once, never again, including across restarts.
@@ -441,7 +441,7 @@ int rmseq(session_t* session, std::string_view name);
  * SM_ERR_DISKFULL.
  */
 int nextseq(session_t* session, std::string_view name,
-            uint64_t* out);
+            uint64_t& out);
 
 /*
  * Close a session. Open cursors are closed, and an active
@@ -563,8 +563,7 @@ int lock(session_t* session, uint64_t storeid,
  * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_NOTFOUND (store).
  */
 int read_latest(session_t* session, uint64_t storeid,
-                std::string_view key,
-                const char** data, size_t* datalen);
+                std::string_view key, std::string_view& data);
 
 /*
  * Begin a statement: read committed then reads every row of
@@ -741,7 +740,7 @@ int abort_prepared(session_t* session, std::string_view gid);
 
 /*
  * Create a store -- an ordered map from key to value -- and
- * hand out its storeid in *storeid. The library allocates it; a
+ * hand out its storeid in storeid. The library allocates it; a
  * storeid is never reused, so it never names two stores, and
  * one dropped by sm1::rmstore() never comes back.
  *
@@ -757,7 +756,7 @@ int abort_prepared(session_t* session, std::string_view gid);
  * SM_ERR_INVALID, SM_ERR_PREPARED, SM_ERR_DISKFULL,
  * SM_ERR_IO.
  */
-int mkstore(session_t* session, uint64_t* storeid);
+int mkstore(session_t* session, uint64_t& storeid);
 
 /*
  * Drop a store and all of its rows. Transactional, as
@@ -817,18 +816,16 @@ int lsstore(session_t* session, uint64_t** out, size_t* n);
  * is distinct from a deleted key.
  *
  * THE OLD ROW. sm1::update() and sm1::erase() return the row they
- * replaced through old / oldlen, which a caller maintaining
- * secondary indexes needs in order to remove the entries the
- * old value produced. Pass NULL for both to skip it; they are
- * a pair, and giving one without the other is SM_ERR_INVALID.
- * The write already reads that row to check the key exists, so
+ * replaced through old, which a caller maintaining secondary
+ * indexes needs in order to remove the entries the old value
+ * produced. Leave it nullptr, the default, to skip it. The
+ * write already reads that row to check the key exists, so
  * asking for it costs a copy, not another seek.
  *
- * *old points into session-owned memory and is valid only
- * until the next sm1_* call on this session -- the same rule as
- * sm1::read(), and the same buffer, so either call invalidates
- * what the other handed out. Copy it to keep it. On failure,
- * and for a zero-length old value, *old may be NULL.
+ * *old views session-owned memory and is valid only until the
+ * next call on this session -- the same rule as sm1::read(), and
+ * the same buffer, so either call invalidates what the other
+ * handed out. Copy it to keep it. On failure *old is empty.
  *
  * Errors for all three: SM_ERR_CONFLICT / SM_ERR_DEADLOCK
  * (retryable), SM_ERR_NOTFOUND (store, or key for
@@ -840,22 +837,21 @@ int insert(session_t* session, uint64_t storeid,
 
 int update(session_t* session, uint64_t storeid,
            std::string_view key, std::string_view data,
-           const char** old, size_t* oldlen);
+           std::string_view* old = nullptr);
 
 int erase(session_t* session, uint64_t storeid,
-          std::string_view key,
-          const char** old, size_t* oldlen);
+          std::string_view key, std::string_view* old = nullptr);
 
 /*
  * Read one key.
  *
- * Returns 0 if the key exists, and *data / *datalen then
- * describe the value. Returns 1 if it does not, leaving *data
- * NULL and *datalen 0; this is not an error and does not set
- * the error state. Returns -1 on error.
+ * Returns 0 if the key exists, and data then views the value.
+ * Returns 1 if it does not, leaving data empty; this is not an
+ * error and does not set the error state. Returns -1 on error,
+ * also leaving data empty.
  *
- * *data points into session-owned memory and is valid only
- * until the next sm1_* call on this session -- including an
+ * data views session-owned memory and is valid only until the
+ * next call on this session -- including an
  * sm1::read(), sm1::insert(), or sm1::commit() made on behalf of an
  * unrelated part of the program. Copy it to keep it.
  *
@@ -869,8 +865,7 @@ int erase(session_t* session, uint64_t storeid,
  * SM_ERR_INVALID, SM_ERR_CORRUPT, SM_ERR_IO.
  */
 int read(session_t* session, uint64_t storeid,
-         std::string_view key,
-         const char** data, size_t* datalen);
+         std::string_view key, std::string_view& data);
 
 /*
  * Open a cursor over the keys of storeid in ascending bytewise
@@ -923,18 +918,18 @@ int scan(session_t* session, uint64_t storeid,
 /*
  * Advance to the next row.
  *
- * Returns 0 if a row was produced, and the four out-params
- * then describe it, valid until the next call on THIS CURSOR.
- * Returns 1 at end of range, leaving the out-params NULL and
- * 0; this is not an error and does not set the error state.
- * Returns -1 on error.
+ * Returns 0 if a row was produced, and key and data then view
+ * it, valid until the next call on THIS CURSOR. Returns 1 at
+ * end of range, leaving both empty; this is not an error and
+ * does not set the error state. Returns -1 on error, also
+ * leaving both empty.
  *
  * Once it has returned 1 or -1, further calls return the same.
  *
  * Errors: SM_ERR_CORRUPT, SM_ERR_IO.
  */
-int scannxt(scan_t* scan, const char** key, size_t* klen,
-            const char** data, size_t* datalen);
+int scannxt(scan_t* scan, std::string_view& key,
+            std::string_view& data);
 
 /*
  * Move an open cursor to key, so the next sm1::scannxt()

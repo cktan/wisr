@@ -215,7 +215,7 @@ int sm1::rmseq(sm1::session_t *session, std::string_view name_arg) {
 
 /* Hand out a sequence's next value. */
 int sm1::nextseq(sm1::session_t *session, std::string_view name_arg,
-                 uint64_t *out) {
+                 uint64_t &out) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     // Take the name as a C string, as the engine uses it.
@@ -228,7 +228,7 @@ int sm1::nextseq(sm1::session_t *session, std::string_view name_arg,
     if (!session) {
       return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: session is NULL");
     }
-    return ::nextseq(session, name, out);
+    return ::nextseq(session, name, &out);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_nextseq: out of memory");
   }

@@ -45,18 +45,17 @@ private:
 
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1::update(s, g_store, key, val, nullptr, nullptr);
+  return sm1::update(s, g_store, key, val);
 }
 
 /* sm1::read_latest of key: "<none>" if absent; -1 as "<error>". */
 std::string latest(sm1::session_t *s, const std::string &key) {
-  const char *data = nullptr;
-  size_t len = 0;
-  int r = sm1::read_latest(s, g_store, key, &data, &len);
+  std::string_view data;
+  int r = sm1::read_latest(s, g_store, key, data);
   if (r < 0) {
     return "<error>";
   }
-  return r == 1 ? "<none>" : std::string(data, len);
+  return r == 1 ? "<none>" : std::string(data);
 }
 
 /* Commit a new value of key from a fresh repeatable read session. */

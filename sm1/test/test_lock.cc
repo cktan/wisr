@@ -56,7 +56,7 @@ private:
 
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1::update(s, g_store, key, val, nullptr, nullptr);
+  return sm1::update(s, g_store, key, val);
 }
 
 /* Give a blocking call time to reach its wait. */
@@ -114,10 +114,9 @@ TEST_CASE("read committed sees a newer commit and re-reads it to overwrite") {
   CHECK(get(t, g_store, "y") == "t");
   CHECK(set(t, "x", "t") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
-  const char *d = nullptr;
-  size_t dl = 0;
-  REQUIRE(sm1::read_latest(t, g_store, "x", &d, &dl) == 0);
-  CHECK(std::string(d, dl) == "u");
+  std::string_view d;
+  REQUIRE(sm1::read_latest(t, g_store, "x", d) == 0);
+  CHECK(std::string(d) == "u");
   CHECK(set(t, "x", "t") == 0);
   REQUIRE(sm1::commit(t) == 0);
   sm1::closedb(t);
@@ -145,9 +144,8 @@ TEST_CASE("a retryable error aborts the transaction and releases everything") {
 
   REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(set(u, "y", "u") == 0); // would block if T still held it
-  const char *d;
-  size_t dl;
-  CHECK(sm1::read(u, tstore, "k", &d, &dl) == -1);
+  std::string_view d;
+  CHECK(sm1::read(u, tstore, "k", d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(mkstore(u) > tstore);
   REQUIRE(sm1::commit(u) == 0);
@@ -189,9 +187,8 @@ TEST_CASE("a doomed transaction fails its next call and changes nothing") {
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(t, "x", "t") == 0);
   t->doomed = sm1::SM_ERR_DEADLOCK;
-  const char *d;
-  size_t dl;
-  CHECK(sm1::read(t, g_store, "x", &d, &dl) == -1);
+  std::string_view d;
+  CHECK(sm1::read(t, g_store, "x", d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DEADLOCK);
   CHECK(sm1::retryable() == 1);
 
@@ -224,17 +221,16 @@ TEST_CASE("concurrent increments with retry never lose an update") {
     for (sm1::session_t *s : sessions) {
       threads.emplace_back([&, s] {
         for (int i = 0; i < 50;) {
-          const char *d;
-          size_t dl;
-          int ok = sm1::begin(s, level) == 0 &&
-                   sm1::read(s, g_store, "x", &d, &dl) == 0;
+          std::string_view d;
+          int ok =
+              sm1::begin(s, level) == 0 && sm1::read(s, g_store, "x", d) == 0;
           if (ok) {
-            std::string v = std::to_string(std::stoi(std::string(d, dl)) + 1);
+            std::string v = std::to_string(std::stoi(std::string(d)) + 1);
             ok = set(s, "x", v) == 0;
             // Read committed: re-read the newest value, add one again.
             if (!ok && sm1::errnum() == sm1::SM_ERR_UPDATED) {
-              ok = sm1::read_latest(s, g_store, "x", &d, &dl) == 0;
-              v = std::to_string(std::stoi(std::string(d, dl)) + 1);
+              ok = sm1::read_latest(s, g_store, "x", d) == 0;
+              v = std::to_string(std::stoi(std::string(d)) + 1);
               ok = ok && set(s, "x", v) == 0;
             }
             ok = ok && sm1::commit(s) == 0;
@@ -362,7 +358,7 @@ TEST_CASE(
 
   // The builder takes the schema row exclusive.
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::update(b, cat, "S", "indexed", nullptr, nullptr) == 0);
+  REQUIRE(sm1::update(b, cat, "S", "indexed") == 0);
 
   // A writer arriving now waits for the build to finish.
   REQUIRE(sm1::begin(x, sm1::xctlevel_t::read_committed) == 0);
@@ -383,10 +379,9 @@ TEST_CASE(
   // The blocked writer gets the lock, and reads the new schema.
   tx.join();
   CHECK(rc == 0);
-  const char *sd = nullptr;
-  size_t sdl = 0;
-  REQUIRE(sm1::read_latest(x, cat, "S", &sd, &sdl) == 0);
-  CHECK(std::string(sd, sdl) == "indexed");
+  std::string_view sd;
+  REQUIRE(sm1::read_latest(x, cat, "S", sd) == 0);
+  CHECK(std::string(sd) == "indexed");
   REQUIRE(sm1::commit(x) == 0);
   sm1::closedb(w);
   sm1::closedb(b);

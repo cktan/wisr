@@ -68,7 +68,7 @@ private:
 
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1::update(s, g_store, key, val, nullptr, nullptr);
+  return sm1::update(s, g_store, key, val);
 }
 
 /* The unresolved prepared transactions, as (gid, prepared_at). */
@@ -191,7 +191,7 @@ int orphan_child_main(const char *homedir) {
   uint64_t fresh = 0;
   if (sm1::rmstore(s, newest) != 0 || sm1::commit(s) != 0 ||
       sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
-      sm1::mkstore(s, &fresh) != 0) {
+      sm1::mkstore(s, fresh) != 0) {
     return 2;
   }
   if (write(1, "r", 1) != 1) {
@@ -256,9 +256,8 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
 
-  const char *d;
-  size_t dl;
-  CHECK(sm1::read(s, g_store, "a", &d, &dl) == -1);
+  std::string_view d;
+  CHECK(sm1::read(s, g_store, "a", d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(set(s, "b", "1") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
@@ -271,7 +270,7 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm1::lock(s, g_store, "a", sm1::lockmode_t::shared) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   uint64_t fresh = 0;
-  CHECK(sm1::mkstore(s, &fresh) == -1);
+  CHECK(sm1::mkstore(s, fresh) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INTRANS);
@@ -710,9 +709,8 @@ TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   CHECK(wisr::db_store_cf(v->db, storeid) != nullptr);
   REQUIRE(sm1::commit_prepared(v, "gd") == 0);
   REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
-  const char *d;
-  size_t dl;
-  CHECK(sm1::read(v, storeid, "k", &d, &dl) == -1);
+  std::string_view d;
+  CHECK(sm1::read(v, storeid, "k", d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(v) == 0);
   wisr::gc_run_once(v->db);
@@ -796,9 +794,8 @@ TEST_CASE("startup drops store CFs that nothing names") {
   }
   CHECK(stores == std::set<uint64_t>{0, g_store});
   REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
-  const char *d;
-  size_t dl;
-  CHECK(sm1::read(v, storeid, "k", &d, &dl) == -1);
+  std::string_view d;
+  CHECK(sm1::read(v, storeid, "k", d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(v) == 0);
   sm1::closedb(v);

@@ -51,22 +51,21 @@ private:
 
 /* Set key in store 1 to val; the result of sm1::update. */
 int set(sm1::session_t *s, const std::string &key, const std::string &val) {
-  return sm1::update(s, g_store, key, val, nullptr, nullptr);
+  return sm1::update(s, g_store, key, val);
 }
 
 /* Delete key from store 1; the result of sm1::erase. */
 int del(sm1::session_t *s, const std::string &key) {
-  return sm1::erase(s, g_store, key, nullptr, nullptr);
+  return sm1::erase(s, g_store, key);
 }
 
 /* Drain a cursor into its keys and close it. */
 std::vector<std::string> keys_of(sm1::scan_t *c) {
   REQUIRE_MESSAGE(c, sm1::errmsg());
   std::vector<std::string> out;
-  const char *k, *d;
-  size_t kl, dl;
-  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-    out.emplace_back(k, kl);
+  std::string_view k, d;
+  while (sm1::scannxt(c, k, d) == 0) {
+    out.emplace_back(k);
   }
   sm1::scanend(c);
   return out;
@@ -315,10 +314,9 @@ TEST_CASE("rollback undoes sm1_mkstore and sm1_rmstore made after the mark") {
 
   for (int pass = 0; pass < 2; pass++) {
     CAPTURE(pass);
-    const char *d;
-    size_t dl;
-    CHECK(sm1::read(s, p, "k", &d, &dl) == 1);
-    CHECK(sm1::read(s, q, "k", &d, &dl) == -1);
+    std::string_view d;
+    CHECK(sm1::read(s, p, "k", d) == 1);
+    CHECK(sm1::read(s, q, "k", d) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
     CHECK(get(s, g_store, "a") == "0");
     REQUIRE(sm1::commit(s) == 0);

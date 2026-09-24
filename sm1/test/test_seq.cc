@@ -87,7 +87,7 @@ void commit_mkseq(sm1::session_t *s, const char *name, uint64_t start,
 /* The next value of name, failing the test on an error. */
 uint64_t next(sm1::session_t *s, const char *name = SEQ) {
   uint64_t v = 0;
-  REQUIRE_MESSAGE(sm1::nextseq(s, name, &v) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm1::nextseq(s, name, v) == 0, sm1::errmsg());
   return v;
 }
 
@@ -105,7 +105,7 @@ int seq_child_main(const char *homedir) {
   }
   for (;;) {
     uint64_t v;
-    if (sm1::nextseq(s, "s", &v) != 0 || write(1, &v, sizeof(v)) != sizeof(v)) {
+    if (sm1::nextseq(s, "s", v) != 0 || write(1, &v, sizeof(v)) != sizeof(v)) {
       return 3;
     }
   }
@@ -138,11 +138,9 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   CHECK(next(s) == v + 2);
   REQUIRE(sm1::commit(s) == 0);
   uint64_t out;
-  CHECK(sm1::nextseq(nullptr, SEQ, &out) == -1);
+  CHECK(sm1::nextseq(nullptr, SEQ, out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::nextseq(s, SEQ, nullptr) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::nextseq(s, std::string_view("s\0q", 3), &out) == -1);
+  CHECK(sm1::nextseq(s, std::string_view("s\0q", 3), out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -165,10 +163,10 @@ TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::mkseq(s, SEQ, 100, 1) == 0);
   CHECK(next(s) == 100);
-  CHECK(sm1::nextseq(o, SEQ, &v) == -1); // not committed yet
+  CHECK(sm1::nextseq(o, SEQ, v) == -1); // not committed yet
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::abort(s) == 0);
-  CHECK(sm1::nextseq(s, SEQ, &v) == -1);
+  CHECK(sm1::nextseq(s, SEQ, v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   commit_mkseq(s, SEQ, 100, 1);
@@ -184,7 +182,7 @@ TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1::rmseq(s, SEQ) == 0);
   REQUIRE(sm1::commit(s) == 0);
-  CHECK(sm1::nextseq(s, SEQ, &v) == -1);
+  CHECK(sm1::nextseq(s, SEQ, v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   commit_mkseq(s, SEQ, 100, 1);
@@ -222,9 +220,9 @@ TEST_CASE("a sequence hands out its last value, then fails") {
   CHECK(next(s, "end") == UINT64_MAX - 1);
   CHECK(next(s, "end") == UINT64_MAX);
   uint64_t v = 0;
-  CHECK(sm1::nextseq(s, "end", &v) == -1);
+  CHECK(sm1::nextseq(s, "end", v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::nextseq(s, "end", &v) == -1);
+  CHECK(sm1::nextseq(s, "end", v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -297,7 +295,7 @@ TEST_CASE("concurrent sessions never receive the same value") {
       std::vector<uint64_t> mine;
       for (int i = 0; i < 2000; i++) {
         uint64_t v = 0;
-        sm1::nextseq(s, SEQ, &v);
+        sm1::nextseq(s, SEQ, v);
         mine.push_back(v);
       }
       std::lock_guard<std::mutex> guard(mu);
@@ -326,14 +324,14 @@ TEST_CASE("a stopped database hands out no sequence values") {
   commit_mkseq(s, SEQ, 1000, 1);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t storeid = 0;
-  REQUIRE(sm1::mkstore(s, &storeid) == 0);
+  REQUIRE(sm1::mkstore(s, storeid) == 0);
   s->db->test_before_commit = [](uint64_t) {
     return rocksdb::Status::IOError("injected");
   };
   CHECK(sm1::commit(s) == -1);
   s->db->test_before_commit = nullptr;
   uint64_t v;
-  CHECK(sm1::nextseq(s, SEQ, &v) == -1);
+  CHECK(sm1::nextseq(s, SEQ, v) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);
 }
 

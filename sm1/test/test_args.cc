@@ -120,8 +120,7 @@ TEST_CASE("every session call rejects a NULL session") {
   // 1. Each call taking a session, given NULL, fails with
   //    SM_ERR_INVALID (or returns NULL with it).
   // 2. The release calls accept NULL as a no-op.
-  const char *d;
-  size_t dl;
+  std::string_view d;
   sm1::prepared_t *list;
   size_t n;
   expect_fail(sm1::begin(nullptr, sm1::xctlevel_t::repeatable_read),
@@ -138,14 +137,12 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm1::commit_prepared(nullptr, "g"), sm1::SM_ERR_INVALID);
   expect_fail(sm1::abort_prepared(nullptr, "g"), sm1::SM_ERR_INVALID);
   uint64_t storeid;
-  expect_fail(sm1::mkstore(nullptr, &storeid), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::mkstore(nullptr, storeid), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rmstore(nullptr, g_store), sm1::SM_ERR_INVALID);
   expect_fail(sm1::insert(nullptr, g_store, "k", "v"), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::update(nullptr, g_store, "k", "v", nullptr, nullptr),
-              sm1::SM_ERR_INVALID);
-  expect_fail(sm1::erase(nullptr, g_store, "k", nullptr, nullptr),
-              sm1::SM_ERR_INVALID);
-  expect_fail(sm1::read(nullptr, g_store, "k", &d, &dl), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::update(nullptr, g_store, "k", "v"), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::erase(nullptr, g_store, "k"), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::read(nullptr, g_store, "k", d), sm1::SM_ERR_INVALID);
   expect_null(scan(nullptr, g_store, nullptr, 0, 0, nullptr, 0, 0),
               sm1::SM_ERR_INVALID);
   uint64_t *stores;
@@ -153,7 +150,7 @@ TEST_CASE("every session call rejects a NULL session") {
   uint64_t v;
   expect_fail(sm1::mkseq(nullptr, "s", 1, 1), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rmseq(nullptr, "s"), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::nextseq(nullptr, "s", &v), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::nextseq(nullptr, "s", v), sm1::SM_ERR_INVALID);
 
   CHECK(sm1::closedb(nullptr) == 0);
   sm1::scanend(nullptr);
@@ -170,16 +167,13 @@ TEST_CASE("storeid 0 is rejected by every call taking a storeid") {
   // 2. The transaction is undisturbed: the store still reads.
   args_fixture_t f;
   sm1::session_t *s = f.s();
-  const char *d;
-  size_t dl;
+  std::string_view d;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  expect_fail(sm1::mkstore(s, nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rmstore(s, 0), sm1::SM_ERR_INVALID);
   expect_fail(sm1::insert(s, 0, "k", "v"), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::update(s, 0, "k", "v", nullptr, nullptr),
-              sm1::SM_ERR_INVALID);
-  expect_fail(sm1::erase(s, 0, "k", nullptr, nullptr), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::read(s, 0, "k", &d, &dl), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::update(s, 0, "k", "v"), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::erase(s, 0, "k"), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::read(s, 0, "k", d), sm1::SM_ERR_INVALID);
   expect_null(scan(s, 0, nullptr, 0, 0, nullptr, 0, 0), sm1::SM_ERR_INVALID);
 
   CHECK(get(s, g_store, "a") == "1");
@@ -221,19 +215,17 @@ TEST_CASE("unknown stores fail with SM_ERR_NOTFOUND") {
   //    unknown to that transaction's later calls.
   args_fixture_t f;
   sm1::session_t *s = f.s();
-  const char *d;
-  size_t dl;
+  std::string_view d;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   expect_fail(sm1::rmstore(s, 999), sm1::SM_ERR_NOTFOUND);
   expect_fail(sm1::insert(s, 999, "k", "v"), sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::update(s, 999, "k", "v", nullptr, nullptr),
-              sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::erase(s, 999, "k", nullptr, nullptr), sm1::SM_ERR_NOTFOUND);
-  expect_fail(sm1::read(s, 999, "k", &d, &dl), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::update(s, 999, "k", "v"), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::erase(s, 999, "k"), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::read(s, 999, "k", d), sm1::SM_ERR_NOTFOUND);
   expect_null(scan(s, 999, nullptr, 0, 0, nullptr, 0, 0), sm1::SM_ERR_NOTFOUND);
 
   REQUIRE(sm1::rmstore(s, g_store) == 0);
-  expect_fail(sm1::read(s, g_store, "a", &d, &dl), sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::read(s, g_store, "a", d), sm1::SM_ERR_NOTFOUND);
   expect_fail(sm1::insert(s, g_store, "k", "v"), sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::abort(s) == 0);
 }
@@ -253,33 +245,24 @@ TEST_CASE("keys and values: an empty string_view is the empty key or value") {
   REQUIRE(sm1::commit(s) == 0);
 }
 
-TEST_CASE("out-parameters must not be NULL") {
-  // Verify calls that hand results back through pointers.
-  // 1. sm1::read with a NULL data or datalen fails with
-  //    SM_ERR_INVALID.
-  // 2. sm1::scannxt with a NULL cursor or any NULL out-parameter
-  //    fails with SM_ERR_INVALID and leaves the cursor usable.
-  // 3. sm1::list_prepared with a NULL out or n fails with
+TEST_CASE("a NULL cursor or list out-parameter is refused") {
+  // Verify the out-parameters that can still be NULL.
+  // 1. sm1::scannxt with a NULL cursor fails with SM_ERR_INVALID,
+  //    and a real cursor is usable afterwards.
+  // 2. sm1::list_prepared with a NULL out or n fails with
   //    SM_ERR_INVALID.
   args_fixture_t f;
   sm1::session_t *s = f.s();
-  const char *k, *d;
-  size_t kl, dl;
+  std::string_view k, d;
   sm1::prepared_t *list;
   size_t n;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  expect_fail(sm1::read(s, g_store, "a", nullptr, &dl), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::read(s, g_store, "a", &d, nullptr), sm1::SM_ERR_INVALID);
 
   sm1::scan_t *c = scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
-  expect_fail(sm1::scannxt(nullptr, &k, &kl, &d, &dl), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::scannxt(c, nullptr, &kl, &d, &dl), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::scannxt(c, &k, nullptr, &d, &dl), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::scannxt(c, &k, &kl, nullptr, &dl), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::scannxt(c, &k, &kl, &d, nullptr), sm1::SM_ERR_INVALID);
-  REQUIRE(sm1::scannxt(c, &k, &kl, &d, &dl) == 0);
-  CHECK(std::string(k, kl) == "a");
+  expect_fail(sm1::scannxt(nullptr, k, d), sm1::SM_ERR_INVALID);
+  REQUIRE(sm1::scannxt(c, k, d) == 0);
+  CHECK(std::string(k) == "a");
   sm1::scanend(c);
   REQUIRE(sm1::commit(s) == 0);
 
@@ -311,8 +294,7 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   // 2. The committed row is unchanged afterwards.
   args_fixture_t f;
   sm1::session_t *s = f.s();
-  const char *d;
-  size_t dl;
+  std::string_view d;
   expect_fail(sm1::commit(s), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::abort(s), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::savepoint(s), sm1::SM_ERR_NOTRANS);
@@ -322,16 +304,14 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
               sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::prepare(s, "g"), sm1::SM_ERR_NOTRANS);
   uint64_t storeid;
-  expect_fail(sm1::mkstore(s, &storeid), sm1::SM_ERR_NOTRANS);
+  expect_fail(sm1::mkstore(s, storeid), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::mkseq(s, "s", 1, 1), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::rmseq(s, "s"), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::rmstore(s, g_store), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::insert(s, g_store, "k", "v"), sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::update(s, g_store, "a", "v", nullptr, nullptr),
-              sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::erase(s, g_store, "a", nullptr, nullptr),
-              sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::read(s, g_store, "a", &d, &dl), sm1::SM_ERR_NOTRANS);
+  expect_fail(sm1::update(s, g_store, "a", "v"), sm1::SM_ERR_NOTRANS);
+  expect_fail(sm1::erase(s, g_store, "a"), sm1::SM_ERR_NOTRANS);
+  expect_fail(sm1::read(s, g_store, "a", d), sm1::SM_ERR_NOTRANS);
   expect_null(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0),
               sm1::SM_ERR_NOTRANS);
 
@@ -352,8 +332,7 @@ TEST_CASE("a rejected call leaves the transaction active and unchanged") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, g_store, "b", "2");
   expect_fail(sm1::insert(s, g_store, over, "v"), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::update(s, g_store, "missing", "v", nullptr, nullptr),
-              sm1::SM_ERR_NOTFOUND);
+  expect_fail(sm1::update(s, g_store, "missing", "v"), sm1::SM_ERR_NOTFOUND);
   expect_fail(sm1::insert(s, g_store, "a", "v"), sm1::SM_ERR_DUPKEY);
   CHECK(get(s, g_store, "b") == "2");
   put(s, g_store, "c", "3");
@@ -386,12 +365,12 @@ TEST_CASE("every sequence call validates its name") {
     CAPTURE(std::string(name));
     expect_fail(sm1::mkseq(s, name, 1, 1), sm1::SM_ERR_INVALID);
     expect_fail(sm1::rmseq(s, name), sm1::SM_ERR_INVALID);
-    expect_fail(sm1::nextseq(s, name, &v), sm1::SM_ERR_INVALID);
+    expect_fail(sm1::nextseq(s, name, v), sm1::SM_ERR_INVALID);
   }
 
   std::string max(sm1::max_seqname, 's');
   REQUIRE(sm1::mkseq(s, max.c_str(), 7, 2) == 0);
-  REQUIRE(sm1::nextseq(s, max.c_str(), &v) == 0);
+  REQUIRE(sm1::nextseq(s, max.c_str(), v) == 0);
   CHECK(v == 7);
   CHECK(sm1::rmseq(s, max.c_str()) == 0);
   REQUIRE(sm1::commit(s) == 0);

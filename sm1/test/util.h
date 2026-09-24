@@ -125,11 +125,10 @@ private:
  */
 inline std::string get(sm1::session_t *sess, uint64_t store,
                        const std::string &key) {
-  const char *data = nullptr;
-  size_t len = 0;
-  int r = sm1::read(sess, store, key, &data, &len);
+  std::string_view data;
+  int r = sm1::read(sess, store, key, data);
   REQUIRE_MESSAGE(r >= 0, sm1::errmsg());
-  return r == 1 ? "<none>" : std::string(data, len);
+  return r == 1 ? "<none>" : std::string(data);
 }
 
 /* Insert key -> val into store, failing the test on an error. */
@@ -141,7 +140,7 @@ inline void put(sm1::session_t *sess, uint64_t store, const std::string &key,
 /* Create a store and return its storeid, failing the test on an error. */
 inline uint64_t mkstore(sm1::session_t *sess) {
   uint64_t storeid = 0;
-  REQUIRE_MESSAGE(sm1::mkstore(sess, &storeid) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm1::mkstore(sess, storeid) == 0, sm1::errmsg());
   return storeid;
 }
 

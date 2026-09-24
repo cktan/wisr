@@ -140,7 +140,7 @@ TEST_CASE("running out of memory after the commit point still commits") {
 
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(b, store, "k") == "v");
-  CHECK(sm1::update(b, store, "k", "w", nullptr, nullptr) == 0);
+  CHECK(sm1::update(b, store, "k", "w") == 0);
   REQUIRE(sm1::commit(b) == 0);
   sm1::closedb(b);
 }
@@ -229,7 +229,7 @@ TEST_CASE("a failed status write fails the database stop") {
   CHECK(sm1::insert(a, f.store(), "y", "v") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   uint64_t newstore = 0;
-  CHECK(sm1::mkstore(a, &newstore) == -1);
+  CHECK(sm1::mkstore(a, newstore) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   REQUIRE(sm1::commit(a) == 0); // read-only: nothing to publish
 
@@ -275,9 +275,8 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   sm1::scan_t *c = scan(a, f.store(), nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   int n = 0;
-  const char *k, *d;
-  size_t kl, dl;
-  while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
+  std::string_view k, d;
+  while (sm1::scannxt(c, k, d) == 0) {
     n++;
   }
   sm1::scanend(c);
@@ -341,10 +340,9 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
       }
       sm1::scan_t *c = scan(s, f.store(), nullptr, 0, 0, nullptr, 0, 0);
       std::vector<std::string> keys;
-      const char *k, *d;
-      size_t kl, dl;
-      while (c && sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-        keys.emplace_back(k, kl);
+      std::string_view k, d;
+      while (c && sm1::scannxt(c, k, d) == 0) {
+        keys.emplace_back(k);
       }
       sm1::scanend(c);
       sm1::commit(s);

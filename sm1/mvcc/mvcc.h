@@ -114,7 +114,7 @@ public:
     REQUIRE(sm1::mkdb(m_env, "db", nullptr) == 0);
     sm1::session_t *s = session(1);
     REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-    REQUIRE_MESSAGE(sm1::mkstore(s, &m_store) == 0, sm1::errmsg());
+    REQUIRE_MESSAGE(sm1::mkstore(s, m_store) == 0, sm1::errmsg());
     // Seed each row in the transaction that creates the store.
     for (const std::string &row : rows) {
       REQUIRE(sm1::insert(s, m_store, row, "0") == 0);
@@ -156,16 +156,15 @@ public:
 
   /* r(row): the value T<n> reads, or "-" if no row is visible. */
   std::string r(int n, const std::string &row) {
-    const char *data = nullptr;
-    size_t len = 0;
-    int rc = sm1::read(session(n), m_store, row, &data, &len);
+    std::string_view data;
+    int rc = sm1::read(session(n), m_store, row, data);
     REQUIRE_MESSAGE(rc >= 0, sm1::errmsg());
-    return rc == 1 ? "-" : std::string(data, len);
+    return rc == 1 ? "-" : std::string(data);
   }
 
   /* w(row): T<n> updates row; the result of sm1::update. */
   int w(int n, const std::string &row, const std::string &val) {
-    return sm1::update(session(n), m_store, row, val, nullptr, nullptr);
+    return sm1::update(session(n), m_store, row, val);
   }
 
   /* i(row): T<n> inserts row; the result of sm1::insert. */
@@ -175,7 +174,7 @@ public:
 
   /* d(row): T<n> deletes row; the result of sm1::erase. */
   int d(int n, const std::string &row) {
-    return sm1::erase(session(n), m_store, row, nullptr, nullptr);
+    return sm1::erase(session(n), m_store, row);
   }
 
   /* s(lo, hi): the keys T<n> sees in the closed range [lo, hi]. */
@@ -186,10 +185,9 @@ public:
                               hi.data(), hi.size(), 1, c) == 0,
                     sm1::errmsg());
     std::vector<std::string> keys;
-    const char *k, *d;
-    size_t kl, dl;
-    while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-      keys.emplace_back(k, kl);
+    std::string_view k, d;
+    while (sm1::scannxt(c, k, d) == 0) {
+      keys.emplace_back(k);
     }
     sm1::scanend(c);
     return keys;
@@ -203,10 +201,9 @@ public:
                               hi.data(), hi.size(), 1, c) == 0,
                     sm1::errmsg());
     std::vector<std::pair<std::string, std::string>> rows;
-    const char *k, *d;
-    size_t kl, dl;
-    while (sm1::scannxt(c, &k, &kl, &d, &dl) == 0) {
-      rows.emplace_back(std::string(k, kl), std::string(d, dl));
+    std::string_view k, d;
+    while (sm1::scannxt(c, k, d) == 0) {
+      rows.emplace_back(std::string(k), std::string(d));
     }
     sm1::scanend(c);
     return rows;
@@ -239,10 +236,9 @@ public:
                         0,
                     sm1::errmsg());
     std::vector<std::pair<std::string, std::string>> rows;
-    const char *k, *d;
-    size_t kl, dl;
-    while (sm1::scannxt(cur, &k, &kl, &d, &dl) == 0) {
-      rows.emplace_back(std::string(k, kl), std::string(d, dl));
+    std::string_view k, d;
+    while (sm1::scannxt(cur, k, d) == 0) {
+      rows.emplace_back(std::string(k), std::string(d));
     }
     sm1::scanend(cur);
     REQUIRE(sm1::commit(s) == 0);
