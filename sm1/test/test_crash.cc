@@ -33,7 +33,7 @@ std::string crash_key(uint32_t i) {
  * lowest storeid listed, which is the first store created.
  * Returns 0 if there is none.
  */
-uint64_t first_store(sm1_session_t *s) {
+uint64_t first_store(sm1::session_t *s) {
   uint64_t *list = nullptr;
   size_t n = 0;
   if (sm1_lsstore(s, &list, &n) != 0 || n == 0) {
@@ -45,8 +45,8 @@ uint64_t first_store(sm1_session_t *s) {
 }
 
 /* The number of rows in store, as s reads them. */
-uint32_t count_rows(sm1_session_t *s, uint64_t store) {
-  sm1_scan_t *c = sm1_scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
+uint32_t count_rows(sm1::session_t *s, uint64_t store) {
+  sm1::scan_t *c = sm1_scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
   if (!c) {
     return UINT32_MAX;
   }
@@ -82,12 +82,12 @@ bool read_full(int fd, void *buf, size_t n) {
  * index to stdout. Runs until killed.
  */
 int crash_child_main(const char *homedir) {
-  sm1_env_t *env = sm1_attach(homedir);
+  sm1::env_t *env = sm1_attach(homedir);
   if (!env) {
     return 2;
   }
-  sm1_session_t *s = sm1_opendb(env, "db", nullptr);
-  if (!s || sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0) {
+  sm1::session_t *s = sm1_opendb(env, "db", nullptr);
+  if (!s || sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
     return 3;
   }
   // Find the store, then leave the transaction that read it.
@@ -98,7 +98,7 @@ int crash_child_main(const char *homedir) {
   }
   for (uint32_t i = next;; i++) {
     std::string k = crash_key(i);
-    if (sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0 ||
+    if (sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
         sm1_insert(s, store, k.data(), k.size(), "v", 1) != 0 ||
         sm1_commit(s) != 0) {
       return 5;
@@ -123,12 +123,12 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
   tmpdir_t tmp;
   REQUIRE(sm1_init(tmp.path()) == 0);
   {
-    sm1_env_t *env = sm1_attach(tmp.path());
+    sm1::env_t *env = sm1_attach(tmp.path());
     REQUIRE(env);
     REQUIRE(sm1_mkdb(env, "db", nullptr) == 0);
-    sm1_session_t *s = sm1_opendb(env, "db", nullptr);
+    sm1::session_t *s = sm1_opendb(env, "db", nullptr);
     REQUIRE(s);
-    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     mkstore(s);
     REQUIRE(sm1_commit(s) == 0);
     REQUIRE(sm1_detach(env, 1) == 0);
@@ -170,11 +170,11 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
     }
     close(fds[0]);
 
-    sm1_env_t *env = sm1_attach(tmp.path());
+    sm1::env_t *env = sm1_attach(tmp.path());
     REQUIRE_MESSAGE(env, sm1::errmsg());
-    sm1_session_t *s = sm1_opendb(env, "db", nullptr);
+    sm1::session_t *s = sm1_opendb(env, "db", nullptr);
     REQUIRE_MESSAGE(s, sm1::errmsg());
-    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     uint64_t store = first_store(s);
     REQUIRE(store != 0);
     uint32_t n = count_rows(s, store);

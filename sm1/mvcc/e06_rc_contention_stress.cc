@@ -30,7 +30,7 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
   std::atomic<bool> stop{false};
 
   // A compaction thread forces the filter to stamp and drop.
-  sm1_session_t *csess = s.session(5);
+  sm1::session_t *csess = s.session(5);
   std::thread compactor([&] {
     rocksdb::CompactRangeOptions opt;
     opt.bottommost_level_compaction =
@@ -46,12 +46,12 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
 
   std::vector<std::thread> threads;
   for (int i = 0; i < 4; i++) {
-    sm1_session_t *sess = s.session(1 + i);
+    sm1::session_t *sess = s.session(1 + i);
     threads.emplace_back([&, sess, i] {
       for (int round = 0; round < 40; round++) {
         const char *row = rows[(round + i) % 3];
         // Read the counter, then add one.
-        if (sm1_begin(sess, SM1_XCT_READ_COMMITTED) != 0) {
+        if (sm1_begin(sess, sm1::xctlevel_t::read_committed) != 0) {
           failures++;
           return;
         }

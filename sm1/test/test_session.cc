@@ -16,7 +16,7 @@ TEST_CASE("sm1_opendb requires an existing database") {
   CHECK(sm1_opendb(home.env(), "db", nullptr) == nullptr);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
-  sm1_session_t *s = sm1_opendb(home.env(), "db", nullptr);
+  sm1::session_t *s = sm1_opendb(home.env(), "db", nullptr);
   CHECK(s);
   CHECK(sm1_closedb(s) == 0);
 }
@@ -30,11 +30,11 @@ TEST_CASE("an open database cannot be removed, and detach honors force") {
   //    SM_ERR_INUSE, and sm1_detach(env, 1) succeeds.
   tmpdir_t tmp;
   REQUIRE(sm1_init(tmp.path()) == 0);
-  sm1_env_t *env = sm1_attach(tmp.path());
+  sm1::env_t *env = sm1_attach(tmp.path());
   REQUIRE(env);
   REQUIRE(sm1_mkdb(env, "db", nullptr) == 0);
-  sm1_session_t *a = sm1_opendb(env, "db", nullptr);
-  sm1_session_t *b = sm1_opendb(env, "db", nullptr);
+  sm1::session_t *a = sm1_opendb(env, "db", nullptr);
+  sm1::session_t *b = sm1_opendb(env, "db", nullptr);
   REQUIRE(a);
   REQUIRE(b);
 
@@ -47,9 +47,9 @@ TEST_CASE("an open database cannot be removed, and detach honors force") {
   CHECK(sm1_rmdb(env, "db") == 0);
 
   REQUIRE(sm1_mkdb(env, "db", nullptr) == 0);
-  sm1_session_t *c = sm1_opendb(env, "db", nullptr);
+  sm1::session_t *c = sm1_opendb(env, "db", nullptr);
   REQUIRE(c);
-  REQUIRE(sm1_begin(c, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(c, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(sm1_detach(env, 0) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
   CHECK(sm1_detach(env, 1) == 0);
@@ -64,7 +64,7 @@ TEST_CASE("the transaction state machine rejects out-of-order calls") {
   // 4. After commit, the session can begin again.
   home_t home;
   REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
-  sm1_session_t *s = sm1_opendb(home.env(), "db", nullptr);
+  sm1::session_t *s = sm1_opendb(home.env(), "db", nullptr);
   REQUIRE(s);
 
   CHECK(sm1_commit(s) == -1);
@@ -79,12 +79,12 @@ TEST_CASE("the transaction state machine rejects out-of-order calls") {
   CHECK(sm1_read(s, 1, "k", 1, &data, &len) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
-  CHECK(sm1_begin(s, (sm1_xctlevel_t)7) == -1);
+  CHECK(sm1_begin(s, (sm1::xctlevel_t)7) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm1_begin(s, SM1_XCT_SERIALIZABLE) == 0);
-  CHECK(sm1_begin(s, SM1_XCT_READ_COMMITTED) == -1);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::serializable) == 0);
+  CHECK(sm1_begin(s, sm1::xctlevel_t::read_committed) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INTRANS);
   CHECK(sm1_commit(s) == 0);
-  CHECK(sm1_begin(s, SM1_XCT_READ_COMMITTED) == 0);
+  CHECK(sm1_begin(s, sm1::xctlevel_t::read_committed) == 0);
   CHECK(sm1_closedb(s) == 0);
 }

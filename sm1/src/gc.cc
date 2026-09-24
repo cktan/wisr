@@ -42,7 +42,7 @@ public:
   ~gc_filter_t() override {
     // Warn if any version was kept unstamped out of doubt.
     if (m_doubts > 0) {
-      log_msg(SM1_LOG_WARN,
+      log_msg(sm1::loglevel_t::warn,
               "database {}: compaction kept {} version(s) in column "
               "family store.{} unstamped: undecodable value or unknown writer "
               "status",
@@ -201,7 +201,7 @@ void purge_one(db_t *db, const db_t::purge_t &p,
   }
   // On failure the tombstone stays; the next compaction that
   // meets it queues it again. Nobody waits on this, so log it.
-  log_msg(SM1_LOG_ERROR,
+  log_msg(sm1::loglevel_t::error,
           "database {}: purge in column family store.{} failed: {}",
           db->name.c_str(), p.storeid, s.ToString().c_str());
 }
@@ -249,7 +249,7 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
       rocksdb::Status s = db->rdb->CompactRange(opt, cf, nullptr, nullptr);
       // A failed compaction leaves versions unstamped.
       if (!s.ok()) {
-        log_msg(SM1_LOG_ERROR,
+        log_msg(sm1::loglevel_t::error,
                 "database {}: CF:txn sweep abandoned: compaction failed: {}",
                 db->name.c_str(), s.ToString().c_str());
         return -1;
@@ -257,7 +257,7 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
     }
     // Any filter doubt during the pass forbids deleting records.
     if (db->gc_filter_errors.load() != errors) {
-      log_msg(SM1_LOG_WARN,
+      log_msg(sm1::loglevel_t::warn,
               "database {}: CF:txn sweep abandoned: some versions stayed "
               "unstamped, so their status records are kept",
               db->name.c_str());
@@ -280,11 +280,12 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
   int64_t n = xct_drop_committed_records(db, db->sweep_w0);
   // Report the outcome: nobody waits on a background sweep.
   if (n < 0) {
-    log_msg(SM1_LOG_ERROR, "database {}: CF:txn sweep failed: {}",
+    log_msg(sm1::loglevel_t::error, "database {}: CF:txn sweep failed: {}",
             db->name.c_str(), sm1::errmsg());
   } else {
-    log_msg(SM1_LOG_INFO, "database {}: CF:txn sweep deleted {} record(s)",
-            db->name.c_str(), n);
+    log_msg(sm1::loglevel_t::info,
+            "database {}: CF:txn sweep deleted {} record(s)", db->name.c_str(),
+            n);
   }
   return n;
 }
@@ -314,7 +315,7 @@ void warn_stuck(db_t *db) {
   }
   // Log outside snap_mu.
   for (auto &st : stuck) {
-    log_msg(SM1_LOG_WARN,
+    log_msg(sm1::loglevel_t::warn,
             "database {}: a transaction with snapshot {} has held back "
             "garbage collection for {}s",
             db->name.c_str(), st.first, st.second);
@@ -500,8 +501,9 @@ void gc_run_once(db_t *db) {
     rocksdb::Status s = db->rdb->Flush(rocksdb::FlushOptions(), cf);
     // A failed flush only costs reads; nobody waits, so log it.
     if (!s.ok()) {
-      log_msg(SM1_LOG_ERROR, "database {}: flush after purge failed: {}",
-              db->name.c_str(), s.ToString().c_str());
+      log_msg(sm1::loglevel_t::error,
+              "database {}: flush after purge failed: {}", db->name.c_str(),
+              s.ToString().c_str());
     }
   }
 

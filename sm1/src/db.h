@@ -174,15 +174,15 @@ struct db_t {
    * Every release and every doom notifies lock_cv.
    */
   struct lock_ent_t {
-    bool exclusive = false;               /* holders is then one */
-    std::vector<sm1_session_t *> holders; /* never empty */
+    bool exclusive = false;                /* holders is then one */
+    std::vector<sm1::session_t *> holders; /* never empty */
   };
   std::mutex lock_mu;
   std::condition_variable lock_cv;
   std::unordered_map<std::string, lock_ent_t> lock_table;
   int deadlock_ms = 50;
 
-  /* Hands out sm1_session_t::begin_seq. */
+  /* Hands out sm1::session_t::begin_seq. */
   std::atomic<uint64_t> begin_seq{0};
 
   /*
@@ -274,11 +274,11 @@ struct db_t {
 
   /*
    * Prepared transactions by gid (§8.4, §8.5). Each value is a
-   * database-owned sm1_session_t holding the transaction; a
+   * database-owned sm1::session_t holding the transaction; a
    * null value reserves a gid while sm1_prepare runs.
    */
   std::mutex prepared_mu;
-  std::map<std::string, sm1_session_t *> prepared;
+  std::map<std::string, sm1::session_t *> prepared;
 
   /* Test hook, as test_before_commit, for the PREPARED record. */
   std::function<rocksdb::Status()> test_before_prepare;
@@ -299,7 +299,7 @@ struct db_t {
  * steps 1-3). Returns NULL with the error set.
  */
 db_t *db_open(const std::string &path, const char *dbname,
-              const sm1_options_t *opt);
+              const sm1::options_t *opt);
 
 /* Allocate a timestamp: lock-free within the lease. Returns 0 or -1. */
 int db_alloc_ts(db_t *db, uint64_t *out);
@@ -408,7 +408,7 @@ int64_t gc_sweep_txn(db_t *db, bool start);
  * Apply opt->rocksdb_options, if any, on top of *out. Returns 0,
  * or -1 with SM_ERR_INVALID if the string does not parse.
  */
-int db_options(const sm1_options_t *opt, rocksdb::DBOptions *out);
+int db_options(const sm1::options_t *opt, rocksdb::DBOptions *out);
 
 } // namespace wisr
 

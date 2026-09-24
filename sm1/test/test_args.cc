@@ -23,28 +23,28 @@ public:
   args_fixture_t() {
     REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
     m_s = open();
-    REQUIRE(sm1_begin(m_s, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(m_s, sm1::xctlevel_t::repeatable_read) == 0);
     g_store = mkstore(m_s);
     put(m_s, g_store, "a", "1");
     REQUIRE(sm1_commit(m_s) == 0);
   }
 
   /* The fixture's session. */
-  sm1_session_t *s() const { return m_s; }
+  sm1::session_t *s() const { return m_s; }
 
   /* The environment. */
-  sm1_env_t *env() const { return m_home.env(); }
+  sm1::env_t *env() const { return m_home.env(); }
 
   /* A new session on "db". */
-  sm1_session_t *open() const {
-    sm1_session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
+  sm1::session_t *open() const {
+    sm1::session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
     REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
 
 private:
   home_t m_home;
-  sm1_session_t *m_s = nullptr;
+  sm1::session_t *m_s = nullptr;
 };
 
 /* Expect rc to be -1 with error e. */
@@ -79,7 +79,7 @@ TEST_CASE("environment and database calls reject NULL and bad names") {
   expect_fail(sm1_lsdb(f.env(), nullptr), sm1::SM_ERR_INVALID);
   expect_null(sm1_opendb(nullptr, "db", nullptr), sm1::SM_ERR_INVALID);
 
-  std::string over(SM1_MAX_DBNAME + 1, 'd');
+  std::string over(sm1::max_dbname + 1, 'd');
   for (const char *name : {(const char *)nullptr, "", over.c_str()}) {
     CAPTURE(name ? name : "(null)");
     expect_fail(sm1_rmdb(f.env(), name), sm1::SM_ERR_INVALID);
@@ -98,8 +98,7 @@ TEST_CASE("sm1_opendb rejects invalid options when it first opens a database") {
     CAPTURE(bad);
     std::string name = "o" + std::to_string(bad);
     REQUIRE(sm1_mkdb(f.env(), name.c_str(), nullptr) == 0);
-    sm1_options_t opt;
-    sm1_options_init(&opt);
+    sm1::options_t opt;
     if (bad == 0) {
       opt.deadlock_ms = 0;
     } else if (bad == 1) {
@@ -108,7 +107,7 @@ TEST_CASE("sm1_opendb rejects invalid options when it first opens a database") {
       opt.rocksdb_options = "not_an_option=1";
     }
     expect_null(sm1_opendb(f.env(), name.c_str(), &opt), sm1::SM_ERR_INVALID);
-    sm1_session_t *s = sm1_opendb(f.env(), name.c_str(), nullptr);
+    sm1::session_t *s = sm1_opendb(f.env(), name.c_str(), nullptr);
     CHECK(s);
     sm1_closedb(s);
   }
@@ -121,15 +120,16 @@ TEST_CASE("every session call rejects a NULL session") {
   // 2. The release calls accept NULL as a no-op.
   const char *d;
   size_t dl;
-  sm1_prepared_t *list;
+  sm1::prepared_t *list;
   size_t n;
-  expect_fail(sm1_begin(nullptr, SM1_XCT_REPEATABLE_READ), sm1::SM_ERR_INVALID);
+  expect_fail(sm1_begin(nullptr, sm1::xctlevel_t::repeatable_read),
+              sm1::SM_ERR_INVALID);
   expect_fail(sm1_commit(nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1_abort(nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1_savepoint(nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1_rollback(nullptr, 1), sm1::SM_ERR_INVALID);
   expect_fail(sm1_forget(nullptr, 1), sm1::SM_ERR_INVALID);
-  expect_fail(sm1_lock(nullptr, 1, "k", 1, SM1_LOCK_SHARED),
+  expect_fail(sm1_lock(nullptr, 1, "k", 1, sm1::lockmode_t::shared),
               sm1::SM_ERR_INVALID);
   expect_fail(sm1_prepare(nullptr, "g"), sm1::SM_ERR_INVALID);
   expect_fail(sm1_list_prepared(nullptr, &list, &n), sm1::SM_ERR_INVALID);
@@ -168,10 +168,10 @@ TEST_CASE("storeid 0 is rejected by every call taking a storeid") {
   //    sm1_mkstore with a NULL out-parameter.
   // 2. The transaction is undisturbed: the store still reads.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
+  sm1::session_t *s = f.s();
   const char *d;
   size_t dl;
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   expect_fail(sm1_mkstore(s, nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1_rmstore(s, 0), sm1::SM_ERR_INVALID);
   expect_fail(sm1_insert(s, 0, "k", 1, "v", 1), sm1::SM_ERR_INVALID);
@@ -194,8 +194,8 @@ TEST_CASE("sm1_mkstore hands out a fresh storeid every time") {
   //    every one handed out so far.
   // 3. Each new store is usable at once and commits.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *s = f.s();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t a = mkstore(s), b = mkstore(s), c = mkstore(s);
   CHECK(g_store < a);
   CHECK(a < b);
@@ -207,7 +207,7 @@ TEST_CASE("sm1_mkstore hands out a fresh storeid every time") {
   put(s, a, "k", "va");
   put(s, c, "k", "vc");
   REQUIRE(sm1_commit(s) == 0);
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(s, a, "k") == "va");
   CHECK(get(s, c, "k") == "vc");
   REQUIRE(sm1_commit(s) == 0);
@@ -220,10 +220,10 @@ TEST_CASE("unknown stores fail with SM_ERR_NOTFOUND") {
   // 2. A store dropped earlier in the same transaction is
   //    unknown to that transaction's later calls.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
+  sm1::session_t *s = f.s();
   const char *d;
   size_t dl;
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   expect_fail(sm1_rmstore(s, 999), sm1::SM_ERR_NOTFOUND);
   expect_fail(sm1_insert(s, 999, "k", 1, "v", 1), sm1::SM_ERR_NOTFOUND);
   expect_fail(sm1_update(s, 999, "k", 1, "v", 1, nullptr, nullptr),
@@ -250,10 +250,10 @@ TEST_CASE("keys and values: NULL only with length 0") {
   // 3. NULL with length 0 is the empty key or the empty value,
   //    and works.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
+  sm1::session_t *s = f.s();
   const char *d;
   size_t dl;
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   expect_fail(sm1_insert(s, g_store, nullptr, 1, "v", 1), sm1::SM_ERR_INVALID);
   expect_fail(sm1_update(s, g_store, nullptr, 1, "v", 1, nullptr, nullptr),
               sm1::SM_ERR_INVALID);
@@ -281,16 +281,16 @@ TEST_CASE("out-parameters must not be NULL") {
   // 3. sm1_list_prepared with a NULL out or n fails with
   //    SM_ERR_INVALID.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
+  sm1::session_t *s = f.s();
   const char *k, *d;
   size_t kl, dl;
-  sm1_prepared_t *list;
+  sm1::prepared_t *list;
   size_t n;
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   expect_fail(sm1_read(s, g_store, "a", 1, nullptr, &dl), sm1::SM_ERR_INVALID);
   expect_fail(sm1_read(s, g_store, "a", 1, &d, nullptr), sm1::SM_ERR_INVALID);
 
-  sm1_scan_t *c = sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
+  sm1::scan_t *c = sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   expect_fail(sm1_scannxt(nullptr, &k, &kl, &d, &dl), sm1::SM_ERR_INVALID);
   expect_fail(sm1_scannxt(c, nullptr, &kl, &d, &dl), sm1::SM_ERR_INVALID);
@@ -311,8 +311,8 @@ TEST_CASE("resolving by gid validates the gid") {
   // empty, and over-long gids with SM_ERR_INVALID, and report a
   // well-formed but unknown gid as SM_ERR_NOTFOUND.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
-  std::string over(SM1_MAX_GID + 1, 'g');
+  sm1::session_t *s = f.s();
+  std::string over(sm1::max_gid + 1, 'g');
   for (const char *gid : {(const char *)nullptr, "", over.c_str()}) {
     CAPTURE(gid ? gid : "(null)");
     expect_fail(sm1_commit_prepared(s, gid), sm1::SM_ERR_INVALID);
@@ -327,7 +327,7 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   // 1. With none active, each fails with SM_ERR_NOTRANS.
   // 2. The committed row is unchanged afterwards.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
+  sm1::session_t *s = f.s();
   const char *d;
   size_t dl;
   expect_fail(sm1_commit(s), sm1::SM_ERR_NOTRANS);
@@ -335,7 +335,8 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm1_savepoint(s), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1_rollback(s, 1), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1_forget(s, 1), sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1_lock(s, 1, "k", 1, SM1_LOCK_SHARED), sm1::SM_ERR_NOTRANS);
+  expect_fail(sm1_lock(s, 1, "k", 1, sm1::lockmode_t::shared),
+              sm1::SM_ERR_NOTRANS);
   expect_fail(sm1_prepare(s, "g"), sm1::SM_ERR_NOTRANS);
   uint64_t storeid;
   expect_fail(sm1_mkstore(s, &storeid), sm1::SM_ERR_NOTRANS);
@@ -351,7 +352,7 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_null(sm1_scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0),
               sm1::SM_ERR_NOTRANS);
 
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(s, g_store, "a") == "1");
   REQUIRE(sm1_commit(s) == 0);
 }
@@ -363,9 +364,9 @@ TEST_CASE("a rejected call leaves the transaction active and unchanged") {
   // 2. The transaction is still active: "b" reads back, a further
   //    write succeeds, and the commit makes both durable.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
-  std::string over(SM1_MAX_KEYLEN + 1, 'k');
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *s = f.s();
+  std::string over(sm1::max_keylen + 1, 'k');
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   put(s, g_store, "b", "2");
   expect_fail(sm1_insert(s, g_store, over.data(), over.size(), "v", 1),
               sm1::SM_ERR_INVALID);
@@ -376,8 +377,8 @@ TEST_CASE("a rejected call leaves the transaction active and unchanged") {
   put(s, g_store, "c", "3");
   REQUIRE(sm1_commit(s) == 0);
 
-  sm1_session_t *v = f.open();
-  REQUIRE(sm1_begin(v, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *v = f.open();
+  REQUIRE(sm1_begin(v, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(v, g_store, "a") == "1");
   CHECK(get(v, g_store, "b") == "2");
   CHECK(get(v, g_store, "c") == "3");
@@ -386,17 +387,17 @@ TEST_CASE("a rejected call leaves the transaction active and unchanged") {
 }
 
 TEST_CASE("every sequence call validates its name") {
-  // Verify sequence names: NULL, "", and SM1_MAX_SEQNAME + 1
-  // bytes fail with SM_ERR_INVALID; SM1_MAX_SEQNAME bytes work.
+  // Verify sequence names: NULL, "", and sm1::max_seqname + 1
+  // bytes fail with SM_ERR_INVALID; sm1::max_seqname bytes work.
   // 1. Each bad name is rejected by sm1_mkseq, sm1_rmseq, and
   //    sm1_nextseq.
-  // 2. A sequence named with exactly SM1_MAX_SEQNAME bytes can
+  // 2. A sequence named with exactly sm1::max_seqname bytes can
   //    be created, drawn from, and dropped.
   args_fixture_t f;
-  sm1_session_t *s = f.s();
-  std::string over(SM1_MAX_SEQNAME + 1, 's');
+  sm1::session_t *s = f.s();
+  std::string over(sm1::max_seqname + 1, 's');
   uint64_t v = 0;
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   for (const char *name : {(const char *)nullptr, "", over.c_str()}) {
     CAPTURE(name ? name : "(null)");
     expect_fail(sm1_mkseq(s, name, 1, 1), sm1::SM_ERR_INVALID);
@@ -404,7 +405,7 @@ TEST_CASE("every sequence call validates its name") {
     expect_fail(sm1_nextseq(s, name, &v), sm1::SM_ERR_INVALID);
   }
 
-  std::string max(SM1_MAX_SEQNAME, 's');
+  std::string max(sm1::max_seqname, 's');
   REQUIRE(sm1_mkseq(s, max.c_str(), 7, 2) == 0);
   REQUIRE(sm1_nextseq(s, max.c_str(), &v) == 0);
   CHECK(v == 7);

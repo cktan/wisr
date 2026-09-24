@@ -41,7 +41,7 @@ std::string catalog_key(uint64_t storeid) {
 }
 
 /* sm1_mkstore, minus the out-of-memory guard. */
-int mkstore(sm1_session_t *s, uint64_t *out) {
+int mkstore(sm1::session_t *s, uint64_t *out) {
   // Require the out-parameter.
   if (!out) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_mkstore: storeid is NULL");
@@ -82,7 +82,7 @@ int mkstore(sm1_session_t *s, uint64_t *out) {
 }
 
 /* sm1_rmstore, minus the out-of-memory guard. */
-int rmstore(sm1_session_t *s, uint64_t storeid) {
+int rmstore(sm1::session_t *s, uint64_t storeid) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -113,7 +113,7 @@ int rmstore(sm1_session_t *s, uint64_t storeid) {
 }
 
 /* sm1_lsstore, minus the out-of-memory guard. */
-int lsstore(sm1_session_t *s, uint64_t **out, size_t *n) {
+int lsstore(sm1::session_t *s, uint64_t **out, size_t *n) {
   // Require the out-parameters.
   if (!out || !n) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_lsstore: out or n is NULL");
@@ -127,7 +127,7 @@ int lsstore(sm1_session_t *s, uint64_t **out, size_t *n) {
   }
   // Scan every catalog row, "R" up to but excluding "S"; under
   // SERIALIZABLE this records the whole catalog as read.
-  sm1_scan_t *c = access_scan(s, 0, xct_view(s), "R", 1, 1, "S", 1, 0);
+  sm1::scan_t *c = access_scan(s, 0, xct_view(s), "R", 1, 1, "S", 1, 0);
   if (!c) {
     return -1;
   }
@@ -172,7 +172,7 @@ int lsstore(sm1_session_t *s, uint64_t **out, size_t *n) {
 namespace wisr {
 
 /* A point read of the catalog row at view. */
-int catalog_lookup(sm1_session_t *s, const view_t &view, uint64_t storeid) {
+int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
   std::string val;
   // Read the catalog row at view: 0 if the store is live.
   return access_read(s, 0, view, catalog_key(storeid), &val);
@@ -181,7 +181,7 @@ int catalog_lookup(sm1_session_t *s, const view_t &view, uint64_t storeid) {
 } // namespace wisr
 
 /* Create a store and hand out its storeid. */
-int sm1_mkstore(sm1_session_t *session, uint64_t *storeid) {
+int sm1_mkstore(sm1::session_t *session, uint64_t *storeid) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return mkstore(session, storeid);
@@ -191,7 +191,7 @@ int sm1_mkstore(sm1_session_t *session, uint64_t *storeid) {
 }
 
 /* Drop a store and all of its rows. */
-int sm1_rmstore(sm1_session_t *session, uint64_t storeid) {
+int sm1_rmstore(sm1::session_t *session, uint64_t storeid) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return rmstore(session, storeid);
@@ -201,7 +201,7 @@ int sm1_rmstore(sm1_session_t *session, uint64_t storeid) {
 }
 
 /* List the stores visible to the transaction. */
-int sm1_lsstore(sm1_session_t *session, uint64_t **out, size_t *n) {
+int sm1_lsstore(sm1::session_t *session, uint64_t **out, size_t *n) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return lsstore(session, out, n);

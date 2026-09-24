@@ -39,7 +39,7 @@ std::string seq_key(const char *name) { return std::string("S") + name; }
  * Look name up at view: 0 and *def if it names a live sequence,
  * 1 if not, -1 on error.
  */
-int seq_lookup(sm1_session_t *s, const view_t &view, const char *name,
+int seq_lookup(sm1::session_t *s, const view_t &view, const char *name,
                seqdef_t *def) {
   std::string val;
   // Read the catalog row at view.
@@ -61,11 +61,11 @@ int seq_lookup(sm1_session_t *s, const view_t &view, const char *name,
 }
 
 /* sm1_mkseq, minus the out-of-memory guard. */
-int mkseq(sm1_session_t *s, const char *name, uint64_t start,
+int mkseq(sm1::session_t *s, const char *name, uint64_t start,
           uint64_t increment) {
   // Require an active, non-prepared transaction and a valid name.
   if (xct_check_active(s) != 0 ||
-      check_name(name, SM1_MAX_SEQNAME, "sequence") != 0) {
+      check_name(name, sm1::max_seqname, "sequence") != 0) {
     return -1;
   }
   // A sequence that never advances is a mistake, not a feature.
@@ -106,10 +106,10 @@ int mkseq(sm1_session_t *s, const char *name, uint64_t start,
 }
 
 /* sm1_rmseq, minus the out-of-memory guard. */
-int rmseq(sm1_session_t *s, const char *name) {
+int rmseq(sm1::session_t *s, const char *name) {
   // Require an active, non-prepared transaction and a valid name.
   if (xct_check_active(s) != 0 ||
-      check_name(name, SM1_MAX_SEQNAME, "sequence") != 0) {
+      check_name(name, sm1::max_seqname, "sequence") != 0) {
     return -1;
   }
   seqdef_t def;
@@ -134,12 +134,12 @@ int rmseq(sm1_session_t *s, const char *name) {
 }
 
 /* sm1_nextseq, minus the out-of-memory guard. */
-int nextseq(sm1_session_t *s, const char *name, uint64_t *out) {
+int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
   // Require somewhere to put the value and a valid name.
   if (!out) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: out is NULL");
   }
-  if (check_name(name, SM1_MAX_SEQNAME, "sequence") != 0) {
+  if (check_name(name, sm1::max_seqname, "sequence") != 0) {
     return -1;
   }
   // A session holding a prepared transaction does nothing else.
@@ -173,7 +173,7 @@ int nextseq(sm1_session_t *s, const char *name, uint64_t *out) {
 } // namespace
 
 /* Create a sequence. */
-int sm1_mkseq(sm1_session_t *session, const char *name, uint64_t start,
+int sm1_mkseq(sm1::session_t *session, const char *name, uint64_t start,
               uint64_t increment) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
@@ -188,7 +188,7 @@ int sm1_mkseq(sm1_session_t *session, const char *name, uint64_t start,
 }
 
 /* Drop a sequence. */
-int sm1_rmseq(sm1_session_t *session, const char *name) {
+int sm1_rmseq(sm1::session_t *session, const char *name) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     // Require a session, which xct_check_active cannot check.
@@ -202,7 +202,7 @@ int sm1_rmseq(sm1_session_t *session, const char *name) {
 }
 
 /* Hand out a sequence's next value. */
-int sm1_nextseq(sm1_session_t *session, const char *name, uint64_t *out) {
+int sm1_nextseq(sm1::session_t *session, const char *name, uint64_t *out) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     // Require a session; sm1_nextseq needs no transaction.

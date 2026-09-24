@@ -24,11 +24,11 @@ TEST_CASE("e03: RR contention gives CONFLICT, never SERIALIZATION") {
   std::atomic<int> serialization{0}, other{0}, retries{0};
   std::vector<std::thread> threads;
   for (int i = 0; i < 4; i++) {
-    sm1_session_t *sess = s.session(1 + i);
+    sm1::session_t *sess = s.session(1 + i);
     threads.emplace_back([&, sess] {
       for (int round = 0; round < 50; round++) {
         for (;;) {
-          if (sm1_begin(sess, SM1_XCT_REPEATABLE_READ) != 0) {
+          if (sm1_begin(sess, sm1::xctlevel_t::repeatable_read) != 0) {
             other++;
             return;
           }

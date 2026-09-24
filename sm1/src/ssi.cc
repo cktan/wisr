@@ -141,9 +141,9 @@ void free_node(db_t *db, ssi_node_t *n) {
 namespace wisr {
 
 /* Give a SERIALIZABLE transaction its node. */
-void ssi_begin(sm1_session_t *s) {
+void ssi_begin(sm1::session_t *s) {
   // Only SERIALIZABLE transactions take part.
-  if (s->level != SM1_XCT_SERIALIZABLE) {
+  if (s->level != sm1::xctlevel_t::serializable) {
     return;
   }
   // Create the node at the transaction's snapshot.
@@ -158,7 +158,7 @@ void ssi_begin(sm1_session_t *s) {
 }
 
 /* Map the transaction's new xid to its node, before any version. */
-void ssi_on_xid(sm1_session_t *s) {
+void ssi_on_xid(sm1::session_t *s) {
   // Non-SERIALIZABLE transactions have no node.
   if (!s->ssi) {
     return;
@@ -172,7 +172,7 @@ void ssi_on_xid(sm1_session_t *s) {
 }
 
 /* Leave a SIREAD entry on (storeid, key), found or not (§7.1). */
-void ssi_on_read(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key) {
+void ssi_on_read(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   // Non-SERIALIZABLE readers leave no entry.
   if (!s->ssi) {
     return;
@@ -193,7 +193,7 @@ void ssi_on_read(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key) {
 }
 
 /* A read stepped past a version of concurrent writer xid (§7.2). */
-void ssi_on_skip(sm1_session_t *s, uint64_t writer_xid) {
+void ssi_on_skip(sm1::session_t *s, uint64_t writer_xid) {
   // Non-SERIALIZABLE readers make no edges.
   if (!s->ssi) {
     return;
@@ -217,7 +217,7 @@ void ssi_on_skip(sm1_session_t *s, uint64_t writer_xid) {
 }
 
 /* A write of (storeid, key): an edge from every concurrent reader of it. */
-void ssi_on_write(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key) {
+void ssi_on_write(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   // Non-SERIALIZABLE writers take no part.
   if (!s->ssi) {
     return;
@@ -256,10 +256,10 @@ void ssi_on_write(sm1_session_t *s, uint64_t storeid, rocksdb::Slice key) {
 }
 
 /* Register a scan's requested range, before its snapshot (§10.2). */
-void ssi_range_open(sm1_scan_t *c, uint64_t storeid, const char *skey,
+void ssi_range_open(sm1::scan_t *c, uint64_t storeid, const char *skey,
                     size_t sklen, int skey_inclusive, const char *ekey,
                     size_t eklen, int ekey_inclusive) {
-  sm1_session_t *s = c->session;
+  sm1::session_t *s = c->session;
   // Non-SERIALIZABLE scans leave no range.
   if (!s->ssi) {
     return;
@@ -301,12 +301,12 @@ void ssi_range_open(sm1_scan_t *c, uint64_t storeid, const char *skey,
  * (§7.1): through the last key it examined, all of it if it
  * reached the end, nothing if it examined no key.
  */
-void ssi_range_close(sm1_scan_t *c) {
+void ssi_range_close(sm1::scan_t *c) {
   // A cursor without a range has nothing to narrow.
   if (!c->has_ssi_range) {
     return;
   }
-  sm1_session_t *s = c->session;
+  sm1::session_t *s = c->session;
   // Hold ssi_mu while editing the range.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
   // The range this cursor registered.
@@ -345,7 +345,7 @@ void ssi_range_close(sm1_scan_t *c) {
  * mark the node committed at end_ts, after which the rules treat
  * it as unable to fail. Returns 0 or -1.
  */
-int ssi_precommit(sm1_session_t *s, uint64_t end_ts) {
+int ssi_precommit(sm1::session_t *s, uint64_t end_ts) {
   // Non-SERIALIZABLE transactions pass unchecked.
   if (!s->ssi) {
     return 0;
@@ -369,7 +369,7 @@ int ssi_precommit(sm1_session_t *s, uint64_t end_ts) {
  * committed node stays for ssi_cleanup; an aborted one goes now:
  * its reads constrain nobody.
  */
-void ssi_end(sm1_session_t *s) {
+void ssi_end(sm1::session_t *s) {
   // No node, nothing to detach.
   if (!s->ssi) {
     return;
@@ -393,7 +393,7 @@ void ssi_end(sm1_session_t *s) {
  * committed at prepare with no end yet, gets one; a restored
  * transaction's entry records the commit_ts it must outlive.
  */
-void ssi_prepared_committed(sm1_session_t *s, uint64_t end_ts) {
+void ssi_prepared_committed(sm1::session_t *s, uint64_t end_ts) {
   // Hold ssi_mu while updating the node and restored map.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
   // Give a prepared node its end.
@@ -413,7 +413,7 @@ void ssi_prepared_committed(sm1_session_t *s, uint64_t end_ts) {
  * prepare though it is, and forget it as restored. Its versions
  * are dead, so no reader will step past them any more.
  */
-void ssi_prepared_aborted(sm1_session_t *s) {
+void ssi_prepared_aborted(sm1::session_t *s) {
   // Hold ssi_mu while freeing.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
   // Free the node, committed at prepare though it is.

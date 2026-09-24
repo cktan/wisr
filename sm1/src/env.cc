@@ -94,7 +94,7 @@ bool parse_dbid(const char *name, uint64_t *dbid) {
  * root db names: the remains of a crashed sm1_mkdb or sm1_rmdb.
  * Entries that are not dbids are left alone.
  */
-int sweep_base(sm1_env_t *env) {
+int sweep_base(sm1::env_t *env) {
   std::set<uint64_t> live;
   // Collect every dbid the root db names.
   std::unique_ptr<rocksdb::Iterator> it(
@@ -142,7 +142,7 @@ int sweep_base(sm1_env_t *env) {
     if (env_destroy_db_dir(path) != 0) {
       return -1;
     }
-    log_msg(SM1_LOG_INFO, "destroyed unnamed database directory {}",
+    log_msg(sm1::loglevel_t::info, "destroyed unnamed database directory {}",
             path.c_str());
   }
   return 0;
@@ -174,19 +174,19 @@ int sweep_base(sm1_env_t *env) {
   fprintf(stderr, "%s\n", msg);
   fflush(stderr);
   // Tell the log hook.
-  log_msg(SM1_LOG_ERROR, "{}", msg);
+  log_msg(sm1::loglevel_t::error, "{}", msg);
   // Abort the process.
   abort();
 }
 
 /* sm1_attach, minus the out-of-memory guard. */
-sm1_env_t *attach(const char *homedir) {
+sm1::env_t *attach(const char *homedir) {
   // Validate the home directory path.
   if (check_homedir(homedir) != 0) {
     return nullptr;
   }
   // Allocate the environment.
-  std::unique_ptr<sm1_env_t> env(new sm1_env_t);
+  std::unique_ptr<sm1::env_t> env(new sm1::env_t);
   env->homedir = homedir;
 
   // Open the root db. It must exist: attach creates nothing.
@@ -233,7 +233,7 @@ sm1_env_t *attach(const char *homedir) {
 } // namespace
 
 /* Close the root db. */
-sm1_env_t::~sm1_env_t() {
+sm1::env_t::~env_t() {
   // Close the root db, if it was opened.
   if (root) {
     root->Close();
@@ -244,7 +244,7 @@ sm1_env_t::~sm1_env_t() {
 namespace wisr {
 
 /* The directory of database dbid. */
-std::string env_db_path(const sm1_env_t *env, uint64_t dbid) {
+std::string env_db_path(const sm1::env_t *env, uint64_t dbid) {
   return base_dir(env->homedir) + "/" + std::to_string(dbid);
 }
 
@@ -335,7 +335,7 @@ int sm1_init(const char *homedir) {
 }
 
 /* Create an environment on an initialized home directory. */
-sm1_env_t *sm1_attach(const char *homedir) {
+sm1::env_t *sm1_attach(const char *homedir) {
   // Make running out of memory fatal, unless the host process
   // already has an out-of-memory policy of its own.
   if (!std::get_new_handler()) {
@@ -355,12 +355,12 @@ sm1_env_t *sm1_attach(const char *homedir) {
  * first, each as sm1_closedb would; without, refuse while any is
  * open.
  */
-int sm1_detach(sm1_env_t *env, int force) {
+int sm1_detach(sm1::env_t *env, int force) {
   // Detaching NULL is a no-op.
   if (!env) {
     return 0;
   }
-  std::set<sm1_session_t *> sessions;
+  std::set<sm1::session_t *> sessions;
   {
     // Hold the env mutex while reading the session set.
     std::lock_guard<std::mutex> guard(env->mu);
@@ -373,7 +373,7 @@ int sm1_detach(sm1_env_t *env, int force) {
     sessions = env->sessions;
   }
   // Close each session, as sm1_closedb would.
-  for (sm1_session_t *s : sessions) {
+  for (sm1::session_t *s : sessions) {
     sm1_closedb(s);
   }
   // Close the root db and free the environment.

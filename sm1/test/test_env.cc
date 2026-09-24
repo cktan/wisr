@@ -98,7 +98,7 @@ TEST_CASE("a home directory can be attached again after detach") {
   // the library does not enforce it, so it is not tested here.
   tmpdir_t tmp;
   REQUIRE(sm1_init(tmp.path()) == 0);
-  sm1_env_t *env = sm1_attach(tmp.path());
+  sm1::env_t *env = sm1_attach(tmp.path());
   REQUIRE(env);
 
   CHECK(sm1_detach(env, 0) == 0);
@@ -148,7 +148,7 @@ TEST_CASE("sm1_attach sweeps database directories no name points at") {
   fclose(f);
   REQUIRE(mkdir((base + "/notes").c_str(), 0700) == 0);
 
-  sm1_env_t *env = sm1_attach(tmp.path());
+  sm1::env_t *env = sm1_attach(tmp.path());
   REQUIRE(env);
   CHECK_FALSE(std::filesystem::exists(base + "/7"));
   CHECK(std::filesystem::exists(base + "/notes"));

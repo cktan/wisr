@@ -24,11 +24,11 @@ namespace {
 class xct_fixture_t {
 public:
   /* Create "db" and store 1; the first session opens "db" with opt. */
-  explicit xct_fixture_t(const sm1_options_t *opt = nullptr) {
+  explicit xct_fixture_t(const sm1::options_t *opt = nullptr) {
     REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
     m_first = sm1_opendb(m_home.env(), "db", opt);
     REQUIRE(m_first);
-    REQUIRE(sm1_begin(m_first, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(m_first, sm1::xctlevel_t::repeatable_read) == 0);
     m_store = mkstore(m_first);
     REQUIRE(sm1_commit(m_first) == 0);
   }
@@ -37,11 +37,11 @@ public:
   uint64_t store() const { return m_store; }
 
   /* The session the fixture opened. */
-  sm1_session_t *first() const { return m_first; }
+  sm1::session_t *first() const { return m_first; }
 
   /* Another session on "db". */
-  sm1_session_t *open() const {
-    sm1_session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
+  sm1::session_t *open() const {
+    sm1::session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
     REQUIRE(s);
     return s;
   }
@@ -54,13 +54,13 @@ public:
 
 private:
   home_t m_home;
-  sm1_session_t *m_first = nullptr;
+  sm1::session_t *m_first = nullptr;
   uint64_t m_store = 0;
 };
 
 /* Insert key -> "v" into store in one committed transaction. */
-int commit_one(sm1_session_t *s, uint64_t store, const std::string &key) {
-  if (sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0 ||
+int commit_one(sm1::session_t *s, uint64_t store, const std::string &key) {
+  if (sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
       sm1_insert(s, store, key.data(), key.size(), "v", 1) != 0) {
     return -1;
   }
@@ -78,9 +78,9 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   //    commit_ts must stay hidden while A's is unpublished.
   // 4. Release A; a new snapshot sees both.
   xct_fixture_t f;
-  sm1_session_t *a = f.first();
-  sm1_session_t *b = f.open();
-  sm1_session_t *c = f.open();
+  sm1::session_t *a = f.first();
+  sm1::session_t *b = f.open();
+  sm1::session_t *c = f.open();
 
   std::promise<void> entered, release;
   std::shared_future<void> released = release.get_future().share();
@@ -97,7 +97,7 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   entered.get_future().wait();
   REQUIRE(commit_one(b, f.store(), "b") == 0);
 
-  REQUIRE(sm1_begin(c, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(c, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(c, f.store(), "a") == "<none>");
   CHECK(get(c, f.store(), "b") == "<none>");
   REQUIRE(sm1_commit(c) == 0);
@@ -106,7 +106,7 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   ta.join();
   f.db()->test_before_commit = nullptr;
 
-  REQUIRE(sm1_begin(c, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(c, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(c, f.store(), "a") == "v");
   CHECK(get(c, f.store(), "b") == "v");
   REQUIRE(sm1_commit(c) == 0);
@@ -125,9 +125,9 @@ TEST_CASE("running out of memory after the commit point still commits") {
   //    past the commit and the store was not dropped.
   // 5. B updates "k", so A's row lock was released.
   xct_fixture_t f;
-  sm1_session_t *a = f.first();
-  sm1_session_t *b = f.open();
-  REQUIRE(sm1_begin(a, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *a = f.first();
+  sm1::session_t *b = f.open();
+  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t store = mkstore(a);
   REQUIRE(sm1_insert(a, store, "k", 1, "v", 1) == 0);
 
@@ -135,10 +135,10 @@ TEST_CASE("running out of memory after the commit point still commits") {
   CHECK_MESSAGE(sm1_commit(a) == 0, sm1::errmsg());
   f.db()->test_cache_insert = nullptr;
 
-  REQUIRE(sm1_begin(a, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1_commit(a) == 0);
 
-  REQUIRE(sm1_begin(b, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(b, store, "k") == "v");
   CHECK(sm1_update(b, store, "k", 1, "w", 1, nullptr, nullptr) == 0);
   REQUIRE(sm1_commit(b) == 0);
@@ -159,8 +159,8 @@ TEST_CASE(
   // 4. Once n passes every allocation, A's commit succeeds, and a
   //    fresh snapshot sees A's key.
   xct_fixture_t f;
-  sm1_session_t *a = f.first();
-  sm1_session_t *b = f.open();
+  sm1::session_t *a = f.first();
+  sm1::session_t *b = f.open();
   f.db()->test_before_commit = [](uint64_t) {
     t_alloc_budget = -1;
     return rocksdb::Status::OK();
@@ -169,7 +169,7 @@ TEST_CASE(
   long n = 0;
   for (;; n++) {
     REQUIRE(n < 10000);
-    REQUIRE(sm1_begin(a, SM1_XCT_SERIALIZABLE) == 0);
+    REQUIRE(sm1_begin(a, sm1::xctlevel_t::serializable) == 0);
     CHECK(get(a, f.store(), "x") == "<none>");
     REQUIRE(sm1_insert(a, f.store(), "a", 1, "v", 1) == 0);
     t_alloc_budget = n;
@@ -183,14 +183,14 @@ TEST_CASE(
     REQUIRE_MESSAGE(sm1_abort(a) == 0, sm1::errmsg());
     std::string key = "b" + std::to_string(n);
     REQUIRE(commit_one(b, f.store(), key) == 0);
-    REQUIRE(sm1_begin(b, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(b, sm1::xctlevel_t::repeatable_read) == 0);
     REQUIRE(get(b, f.store(), key) == "v");
     REQUIRE(sm1_commit(b) == 0);
   }
   f.db()->test_before_commit = nullptr;
   CHECK(n > 0);
 
-  REQUIRE(sm1_begin(b, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(b, f.store(), "a") == "v");
   REQUIRE(sm1_commit(b) == 0);
   sm1_closedb(b);
@@ -207,10 +207,10 @@ TEST_CASE("a failed status write fails the database stop") {
   // 5. Close every session and reopen: "x" never committed,
   //    and writes work again.
   xct_fixture_t f;
-  sm1_session_t *a = f.first();
-  sm1_session_t *b = f.open();
+  sm1::session_t *a = f.first();
+  sm1::session_t *b = f.open();
   REQUIRE(commit_one(a, f.store(), "old") == 0);
-  REQUIRE(sm1_begin(b, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(b, f.store(), "old") == "v");
 
   f.db()->test_before_commit = [](uint64_t) {
@@ -223,7 +223,7 @@ TEST_CASE("a failed status write fails the database stop") {
   CHECK(get(b, f.store(), "old") == "v");
   REQUIRE(sm1_commit(b) == 0);
 
-  REQUIRE(sm1_begin(a, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(a, f.store(), "old") == "v");
   CHECK(get(a, f.store(), "x") == "<none>");
   CHECK(sm1_insert(a, f.store(), "y", 1, "v", 1) == -1);
@@ -235,9 +235,9 @@ TEST_CASE("a failed status write fails the database stop") {
 
   REQUIRE(sm1_closedb(a) == 0);
   REQUIRE(sm1_closedb(b) == 0);
-  sm1_session_t *s = sm1_opendb(f.home().env(), "db", nullptr);
+  sm1::session_t *s = sm1_opendb(f.home().env(), "db", nullptr);
   REQUIRE(s);
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(s, f.store(), "old") == "v");
   CHECK(get(s, f.store(), "x") == "<none>");
   put(s, f.store(), "y", "v");
@@ -253,14 +253,13 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   // 4. A still sees none of them; a new snapshot sees all 50,
   //    by point read and by scan; the cache never exceeds one
   //    entry.
-  sm1_options_t opt;
-  sm1_options_init(&opt);
+  sm1::options_t opt;
   opt.commit_cache_entries = 1;
   xct_fixture_t f(&opt);
-  sm1_session_t *a = f.first();
-  sm1_session_t *b = f.open();
+  sm1::session_t *a = f.first();
+  sm1::session_t *b = f.open();
 
-  REQUIRE(sm1_begin(a, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 50; i++) {
     REQUIRE(commit_one(b, f.store(), "k" + std::to_string(100 + i)) == 0);
     CHECK(f.db()->cache.size() <= 1);
@@ -269,11 +268,11 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   CHECK(get(a, f.store(), "k149") == "<none>");
   REQUIRE(sm1_commit(a) == 0);
 
-  REQUIRE(sm1_begin(a, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 50; i++) {
     CHECK(get(a, f.store(), "k" + std::to_string(100 + i)) == "v");
   }
-  sm1_scan_t *c = sm1_scan(a, f.store(), nullptr, 0, 0, nullptr, 0, 0);
+  sm1::scan_t *c = sm1_scan(a, f.store(), nullptr, 0, 0, nullptr, 0, 0);
   REQUIRE(c);
   int n = 0;
   const char *k, *d;
@@ -302,7 +301,7 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
   // 3. At the end every pair is visible.
   xct_fixture_t f;
   const int writers = 4, per_writer = 200;
-  std::vector<sm1_session_t *> sessions;
+  std::vector<sm1::session_t *> sessions;
   for (int t = 0; t < writers + 1; t++) {
     sessions.push_back(f.open());
   }
@@ -312,10 +311,10 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
   std::vector<std::thread> threads;
   for (int t = 0; t < writers; t++) {
     threads.emplace_back([&, t] {
-      sm1_session_t *s = sessions[t];
+      sm1::session_t *s = sessions[t];
       for (int i = 0; i < per_writer; i++) {
         std::string base = std::to_string(t) + "." + std::to_string(i);
-        if (sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0 ||
+        if (sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
             sm1_insert(s, f.store(), (base + ".a").data(), base.size() + 2, "v",
                        1) != 0 ||
             sm1_insert(s, f.store(), (base + ".b").data(), base.size() + 2, "v",
@@ -330,15 +329,15 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
   size_t last = 0;
   int torn = 0, shrank = 0, scans = 0;
   std::thread reader([&] {
-    sm1_session_t *s = sessions[writers];
+    sm1::session_t *s = sessions[writers];
     bool final_pass = false;
     while (!final_pass) {
       final_pass = done;
-      if (sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0) {
+      if (sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
         failures++;
         return;
       }
-      sm1_scan_t *c = sm1_scan(s, f.store(), nullptr, 0, 0, nullptr, 0, 0);
+      sm1::scan_t *c = sm1_scan(s, f.store(), nullptr, 0, 0, nullptr, 0, 0);
       std::vector<std::string> keys;
       const char *k, *d;
       size_t kl, dl;
@@ -376,7 +375,7 @@ TEST_CASE("concurrent commits become visible atomically and monotonically") {
   CHECK(shrank == 0);
   CHECK(last == size_t(2 * writers * per_writer));
   MESSAGE("reader scans: " << scans);
-  for (sm1_session_t *s : sessions) {
+  for (sm1::session_t *s : sessions) {
     sm1_closedb(s);
   }
 }

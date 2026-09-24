@@ -1,5 +1,5 @@
 /*
- * db.cc -- sm1_options_init, sm1_mkdb, sm1_rmdb, sm1_lsdb, and the
+ * db.cc -- sm1_mkdb, sm1_rmdb, sm1_lsdb, and the
  * column family layout every database shares (SM1_DESIGN.md §3,
  * §3.5, §11).
  */
@@ -94,13 +94,13 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
 }
 
 /* sm1_mkdb, minus the out-of-memory guard. */
-int mkdb(sm1_env_t *env, const char *dbname, const sm1_options_t *opt) {
+int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   // Reject a NULL environment.
   if (!env) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_mkdb: env is NULL");
   }
   // Validate the database name.
-  if (check_name(dbname, SM1_MAX_DBNAME, "database") != 0) {
+  if (check_name(dbname, sm1::max_dbname, "database") != 0) {
     return -1;
   }
   // Parse the pass-through RocksDB options.
@@ -165,13 +165,13 @@ int mkdb(sm1_env_t *env, const char *dbname, const sm1_options_t *opt) {
 }
 
 /* sm1_rmdb, minus the out-of-memory guard. */
-int rmdb(sm1_env_t *env, const char *dbname) {
+int rmdb(sm1::env_t *env, const char *dbname) {
   // Reject a NULL environment.
   if (!env) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_rmdb: env is NULL");
   }
   // Validate the database name.
-  if (check_name(dbname, SM1_MAX_DBNAME, "database") != 0) {
+  if (check_name(dbname, sm1::max_dbname, "database") != 0) {
     return -1;
   }
 
@@ -218,7 +218,7 @@ int rmdb(sm1_env_t *env, const char *dbname) {
 }
 
 /* sm1_lsdb, minus the out-of-memory guard. */
-int lsdb(sm1_env_t *env, sm1_strlist_t **out) {
+int lsdb(sm1::env_t *env, sm1_strlist_t **out) {
   // Reject NULL arguments.
   if (!env || !out) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_lsdb: env or out is NULL");
@@ -295,7 +295,7 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
 }
 
 /* Parse the pass-through RocksDB option string onto *out. */
-int db_options(const sm1_options_t *opt, rocksdb::DBOptions *out) {
+int db_options(const sm1::options_t *opt, rocksdb::DBOptions *out) {
   // No option string: keep the defaults.
   if (!opt || !opt->rocksdb_options) {
     return 0;
@@ -344,11 +344,10 @@ static bool read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
 
 /* Open every column family of the database and load CF:meta. */
 db_t *db_open(const std::string &path, const char *dbname,
-              const sm1_options_t *opt) {
-  sm1_options_t defaults;
+              const sm1::options_t *opt) {
+  sm1::options_t defaults;
   // No options: use the defaults.
   if (!opt) {
-    sm1_options_init(&defaults);
     opt = &defaults;
   }
   // Reject an empty commit cache.
@@ -679,7 +678,7 @@ void db_forget_seq(db_t *db, uint64_t seqid) {
   rocksdb::Status s = db->rdb->Delete(rocksdb::WriteOptions(), db->cf_meta,
                                       seq_meta_key(seqid));
   if (!s.ok()) {
-    log_msg(SM1_LOG_ERROR,
+    log_msg(sm1::loglevel_t::error,
             "database {}: deleting sequence {}'s lease failed: {}",
             db->name.c_str(), seqid, s.ToString().c_str());
   }
@@ -729,7 +728,7 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
   db->stores.erase(it);
   // Report a failed drop; most callers cannot act on it, so log it.
   if (!s.ok()) {
-    log_msg(SM1_LOG_ERROR,
+    log_msg(sm1::loglevel_t::error,
             "database {}: dropping column family store.{} failed: {}",
             db->name.c_str(), storeid, s.ToString().c_str());
     return set_status_error(s, "drop column family");
@@ -777,26 +776,8 @@ wisr::db_t::~db_t() {
   delete rdb;
 }
 
-/* Fill opt with the defaults documented in sm1.h. */
-void sm1_options_init(sm1_options_t *opt) {
-  // Sync every commit record.
-  opt->durability_sync = 1;
-  // Accepted, unused.
-  opt->group_commit_us = 200;
-  // Check for deadlock after 50ms of waiting.
-  opt->deadlock_ms = 50;
-  // Accepted, unused.
-  opt->ssi_max_entries = 1 << 20;
-  // Persist the ts lease every million values.
-  opt->ts_lease = 1000000;
-  // No pass-through RocksDB options.
-  opt->rocksdb_options = NULL;
-  // Cache commit_ts for 64K transactions.
-  opt->commit_cache_entries = 65536;
-}
-
 /* Create the database dbname. */
-int sm1_mkdb(sm1_env_t *env, const char *dbname, const sm1_options_t *opt) {
+int sm1_mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return mkdb(env, dbname, opt);
@@ -806,7 +787,7 @@ int sm1_mkdb(sm1_env_t *env, const char *dbname, const sm1_options_t *opt) {
 }
 
 /* Delete the database dbname and all of its data. */
-int sm1_rmdb(sm1_env_t *env, const char *dbname) {
+int sm1_rmdb(sm1::env_t *env, const char *dbname) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return rmdb(env, dbname);
@@ -816,7 +797,7 @@ int sm1_rmdb(sm1_env_t *env, const char *dbname) {
 }
 
 /* List the databases in the home directory, in bytewise order. */
-int sm1_lsdb(sm1_env_t *env, sm1_strlist_t **out) {
+int sm1_lsdb(sm1::env_t *env, sm1_strlist_t **out) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return lsdb(env, out);

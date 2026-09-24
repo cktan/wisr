@@ -37,8 +37,8 @@ public:
   /* Create "db", the store, and the rows. */
   tpc_fixture_t() {
     REQUIRE(sm1_mkdb(m_home.env(), "db", nullptr) == 0);
-    sm1_session_t *s = open();
-    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+    sm1::session_t *s = open();
+    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     g_store = mkstore(s);
     put(s, g_store, "a", "0");
     put(s, g_store, "b", "0");
@@ -47,8 +47,8 @@ public:
   }
 
   /* A new session on "db". */
-  sm1_session_t *open() const {
-    sm1_session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
+  sm1::session_t *open() const {
+    sm1::session_t *s = sm1_opendb(m_home.env(), "db", nullptr);
     REQUIRE_MESSAGE(s, sm1::errmsg());
     return s;
   }
@@ -67,14 +67,14 @@ private:
 };
 
 /* Set key in store 1 to val; the result of sm1_update. */
-int set(sm1_session_t *s, const std::string &key, const std::string &val) {
+int set(sm1::session_t *s, const std::string &key, const std::string &val) {
   return sm1_update(s, g_store, key.data(), key.size(), val.data(), val.size(),
                     nullptr, nullptr);
 }
 
 /* The unresolved prepared transactions, as (gid, prepared_at). */
-std::vector<std::pair<std::string, long long>> listed(sm1_session_t *s) {
-  sm1_prepared_t *list = nullptr;
+std::vector<std::pair<std::string, long long>> listed(sm1::session_t *s) {
+  sm1::prepared_t *list = nullptr;
   size_t n = 0;
   REQUIRE(sm1_list_prepared(s, &list, &n) == 0);
   std::vector<std::pair<std::string, long long>> out;
@@ -87,8 +87,8 @@ std::vector<std::pair<std::string, long long>> listed(sm1_session_t *s) {
 }
 
 /* The value of key in store 1 at a fresh RR snapshot. */
-std::string read_now(sm1_session_t *s, const std::string &key) {
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+std::string read_now(sm1::session_t *s, const std::string &key) {
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   std::string v = get(s, g_store, key);
   REQUIRE(sm1_commit(s) == 0);
   return v;
@@ -133,7 +133,7 @@ void kill_after_report(pid_t pid, int fd) {
  * finds the store this way, having none of the parent's
  * state.
  */
-uint64_t first_store(sm1_session_t *s) {
+uint64_t first_store(sm1::session_t *s) {
   uint64_t *list = nullptr;
   size_t n = 0;
   if (sm1_lsstore(s, &list, &n) != 0 || n == 0) {
@@ -151,9 +151,9 @@ uint64_t first_store(sm1_session_t *s) {
  * wait to be killed with the transaction in doubt.
  */
 int prepare_child_main(const char *homedir) {
-  sm1_env_t *env = sm1_attach(homedir);
-  sm1_session_t *s = env ? sm1_opendb(env, "db", nullptr) : nullptr;
-  if (!s || sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0) {
+  sm1::env_t *env = sm1_attach(homedir);
+  sm1::session_t *s = env ? sm1_opendb(env, "db", nullptr) : nullptr;
+  if (!s || sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
     return 2;
   }
   // Find the store, then write into it and prepare.
@@ -176,9 +176,9 @@ int prepare_child_main(const char *homedir) {
  * leave a store CF that only the orphan sweep can remove.
  */
 int orphan_child_main(const char *homedir) {
-  sm1_env_t *env = sm1_attach(homedir);
-  sm1_session_t *s = env ? sm1_opendb(env, "db", nullptr) : nullptr;
-  if (!s || sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0) {
+  sm1::env_t *env = sm1_attach(homedir);
+  sm1::session_t *s = env ? sm1_opendb(env, "db", nullptr) : nullptr;
+  if (!s || sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0) {
     return 2;
   }
   // The newest store is the last one sm1_lsstore lists.
@@ -191,7 +191,7 @@ int orphan_child_main(const char *homedir) {
   free(list);
   uint64_t fresh = 0;
   if (sm1_rmstore(s, newest) != 0 || sm1_commit(s) != 0 ||
-      sm1_begin(s, SM1_XCT_REPEATABLE_READ) != 0 ||
+      sm1_begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||
       sm1_mkstore(s, &fresh) != 0) {
     return 2;
   }
@@ -212,9 +212,9 @@ TEST_CASE("prepare, then commit or abort on the preparing session") {
   // 3. Update "b", prepare as "g2", then sm1_abort: the change
   //    is gone and nothing is listed.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  sm1_session_t *r = f.open();
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *s = f.open();
+  sm1::session_t *r = f.open();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1_prepare(s, "g1") == 0);
   CHECK(read_now(r, "a") == "0");
@@ -225,7 +225,7 @@ TEST_CASE("prepare, then commit or abort on the preparing session") {
   CHECK(read_now(r, "a") == "1");
   CHECK(listed(r).empty());
 
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s, "b", "1") == 0);
   REQUIRE(sm1_prepare(s, "g2") == 0);
   REQUIRE(sm1_abort(s) == 0);
@@ -244,14 +244,14 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   // 3. A second prepare under the same gid fails with EXISTS.
   // 4. Resolving an unknown gid fails with NOTFOUND.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  sm1_session_t *u = f.open();
+  sm1::session_t *s = f.open();
+  sm1::session_t *u = f.open();
   CHECK(sm1_prepare(s, "g") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(sm1_prepare(s, "") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  std::string long_gid(SM1_MAX_GID + 1, 'g');
+  std::string long_gid(sm1::max_gid + 1, 'g');
   CHECK(sm1_prepare(s, long_gid.c_str()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(set(s, "a", "1") == 0);
@@ -269,15 +269,15 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1_forget(s, 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
-  CHECK(sm1_lock(s, g_store, "a", 1, SM1_LOCK_SHARED) == -1);
+  CHECK(sm1_lock(s, g_store, "a", 1, sm1::lockmode_t::shared) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   uint64_t fresh = 0;
   CHECK(sm1_mkstore(s, &fresh) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
-  CHECK(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == -1);
+  CHECK(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INTRANS);
 
-  REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(u, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(u, "b", "1") == 0);
   CHECK(sm1_prepare(u, "g") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
@@ -299,10 +299,10 @@ TEST_CASE("a prepare that fails validation releases its gid") {
   //    and "g" is not listed.
   // 4. A new transaction prepares and commits under "g".
   tpc_fixture_t f;
-  sm1_session_t *t1 = f.open();
-  sm1_session_t *t2 = f.open();
-  REQUIRE(sm1_begin(t1, SM1_XCT_SERIALIZABLE) == 0);
-  REQUIRE(sm1_begin(t2, SM1_XCT_SERIALIZABLE) == 0);
+  sm1::session_t *t1 = f.open();
+  sm1::session_t *t2 = f.open();
+  REQUIRE(sm1_begin(t1, sm1::xctlevel_t::serializable) == 0);
+  REQUIRE(sm1_begin(t2, sm1::xctlevel_t::serializable) == 0);
   CHECK(get(t2, g_store, "b") == "0");
   REQUIRE(set(t2, "a", "1") == 0);
   REQUIRE(sm1_commit(t2) == 0);
@@ -312,7 +312,7 @@ TEST_CASE("a prepare that fails validation releases its gid") {
   CHECK(sm1::errnum() == sm1::SM_ERR_SERIALIZATION);
   CHECK(listed(t2).empty());
 
-  REQUIRE(sm1_begin(t1, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(t1, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(t1, "b", "2") == 0);
   REQUIRE(sm1_prepare(t1, "g") == 0);
   REQUIRE(sm1_commit(t1) == 0);
@@ -333,10 +333,10 @@ TEST_CASE("nothing allocates once the PREPARED record is written") {
   //    by gid.
   // 4. A fresh snapshot reads S's update.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  sm1_session_t *u = f.open();
+  sm1::session_t *s = f.open();
+  sm1::session_t *u = f.open();
   const std::string gid = "g-" + std::string(60, 'x');
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s, "a", "1") == 0);
 
   s->db->test_after_prepare = [] { t_alloc_budget = 0; };
@@ -369,8 +369,8 @@ TEST_CASE("a prepare that runs out of memory before its record is undone") {
   // 4. Once n passes every allocation, the prepare succeeds; U
   //    commits it by gid and reads S's update.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  sm1_session_t *u = f.open();
+  sm1::session_t *s = f.open();
+  sm1::session_t *u = f.open();
   const std::string gid = "g-" + std::string(60, 'x');
   s->db->test_before_prepare = [] {
     t_alloc_budget = -1;
@@ -380,7 +380,7 @@ TEST_CASE("a prepare that runs out of memory before its record is undone") {
   long n = 0;
   for (;; n++) {
     REQUIRE(n < 10000);
-    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     REQUIRE(set(s, "a", "1") == 0);
     t_alloc_budget = n;
     int rc = sm1_prepare(s, gid.c_str());
@@ -392,7 +392,7 @@ TEST_CASE("a prepare that runs out of memory before its record is undone") {
     CHECK(sm1::errnum() == sm1::SM_ERR_NOMEM);
     REQUIRE_MESSAGE(sm1_abort(s) == 0, sm1::errmsg());
     CHECK(listed(u).empty());
-    REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(u, sm1::xctlevel_t::repeatable_read) == 0);
     CHECK(set(u, "a", "2") == 0);
     REQUIRE(sm1_abort(u) == 0);
   }
@@ -418,10 +418,10 @@ TEST_CASE("a resolve that fails and runs out of memory keeps the transaction") {
   //    every allocation on the way has then been failed.
   // 5. Clear the failure; U commits it by gid and reads S's update.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  sm1_session_t *u = f.open();
+  sm1::session_t *s = f.open();
+  sm1::session_t *u = f.open();
   const std::string gid = "g-" + std::string(60, 'x');
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1_prepare(s, gid.c_str()) == 0);
 
@@ -466,11 +466,11 @@ TEST_CASE("a commit by gid that runs out of memory before its record frees its "
   // 4. Once n passes every allocation, the commit succeeds, and a
   //    fresh snapshot reads S's update.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  sm1_session_t *u = f.open();
-  sm1_session_t *v = f.open();
+  sm1::session_t *s = f.open();
+  sm1::session_t *u = f.open();
+  sm1::session_t *v = f.open();
   const std::string gid = "g-" + std::string(60, 'x');
-  REQUIRE(sm1_begin(s, SM1_XCT_SERIALIZABLE) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::serializable) == 0);
   CHECK(get(s, g_store, "b") == "0");
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1_prepare(s, gid.c_str()) == 0);
@@ -494,7 +494,7 @@ TEST_CASE("a commit by gid that runs out of memory before its record frees its "
     REQUIRE(l.size() == 1);
     CHECK(l[0].first == gid);
     std::string key = "p" + std::to_string(n);
-    REQUIRE(sm1_begin(v, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(sm1_begin(v, sm1::xctlevel_t::repeatable_read) == 0);
     put(v, g_store, key, "v");
     REQUIRE(sm1_commit(v) == 0);
     REQUIRE(read_now(v, key) == "v");
@@ -516,13 +516,13 @@ TEST_CASE("another session can resolve a prepared transaction by gid") {
   //    sm1_begin succeeds.
   // 3. U's own active transaction is undisturbed by a resolve.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  sm1_session_t *u = f.open();
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *s = f.open();
+  sm1::session_t *u = f.open();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1_prepare(s, "g") == 0);
 
-  REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(u, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(u, g_store, "a") == "0");
   REQUIRE(sm1_commit_prepared(u, "g") == 0);
   CHECK(get(u, g_store, "a") == "0"); // its snapshot predates the commit
@@ -543,22 +543,22 @@ TEST_CASE("a prepared transaction keeps its locks after its session closes") {
   // 3. V commits "g" by gid; U's update then fails with
   //    SM_ERR_CONFLICT.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
+  sm1::session_t *s = f.open();
   long long before = (long long)time(nullptr);
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1_prepare(s, "g") == 0);
   REQUIRE(sm1_closedb(s) == 0);
 
-  sm1_session_t *u = f.open();
-  sm1_session_t *v = f.open();
+  sm1::session_t *u = f.open();
+  sm1::session_t *v = f.open();
   auto rows = listed(v);
   REQUIRE(rows.size() == 1);
   CHECK(rows[0].first == "g");
   CHECK(rows[0].second >= before);
   CHECK(rows[0].second <= (long long)time(nullptr));
 
-  REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(u, sm1::xctlevel_t::repeatable_read) == 0);
   std::atomic<bool> returned{false};
   int rc = 0, err = 0;
   std::thread tu([&] {
@@ -586,17 +586,17 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   //    a second shared lock on "b" is granted at once.
   // 4. Aborting "g" by gid frees "b"; the blocked write completes.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
-  REQUIRE(sm1_lock(s, g_store, "b", 1, SM1_LOCK_SHARED) == 0);
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1_lock(s, g_store, "b", 1, sm1::lockmode_t::shared) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1_prepare(s, "g") == 0);
   f.restart();
 
-  sm1_session_t *u = f.open();
-  sm1_session_t *v = f.open();
-  REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
-  CHECK(sm1_lock(u, g_store, "b", 1, SM1_LOCK_SHARED) == 0);
+  sm1::session_t *u = f.open();
+  sm1::session_t *v = f.open();
+  REQUIRE(sm1_begin(u, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(sm1_lock(u, g_store, "b", 1, sm1::lockmode_t::shared) == 0);
 
   std::atomic<bool> returned{false};
   int rc = -2;
@@ -625,23 +625,23 @@ TEST_CASE(
   // 3. Commit "gc" and abort "ga": a = 1, b = 0, and after one
   //    more restart nothing is listed.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  sm1_session_t *s2 = f.open();
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *s = f.open();
+  sm1::session_t *s2 = f.open();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1_prepare(s, "gc") == 0);
-  REQUIRE(sm1_begin(s2, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s2, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s2, "b", "1") == 0);
   REQUIRE(sm1_prepare(s2, "ga") == 0);
   auto before = listed(s);
   f.restart();
 
-  sm1_session_t *u = f.open();
-  sm1_session_t *v = f.open();
+  sm1::session_t *u = f.open();
+  sm1::session_t *v = f.open();
   CHECK(listed(v) == before);
   CHECK(read_now(v, "a") == "0");
 
-  REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(u, sm1::xctlevel_t::repeatable_read) == 0);
   std::atomic<bool> returned{false};
   int rc = 0, err = 0;
   std::thread tu([&] {
@@ -660,7 +660,7 @@ TEST_CASE(
   CHECK(read_now(v, "b") == "0");
 
   f.restart();
-  sm1_session_t *w = f.open();
+  sm1::session_t *w = f.open();
   CHECK(listed(w).empty());
   CHECK(read_now(w, "a") == "1");
   CHECK(read_now(w, "b") == "0");
@@ -672,15 +672,15 @@ TEST_CASE("read-only prepares survive a restart and resolve") {
   // 1. Two read-only transactions prepare as "r1" and "r2".
   // 2. After a restart both are listed and both commit.
   tpc_fixture_t f;
-  sm1_session_t *s1 = f.open();
-  sm1_session_t *s2 = f.open();
+  sm1::session_t *s1 = f.open();
+  sm1::session_t *s2 = f.open();
   for (auto p : {std::make_pair(s1, "r1"), std::make_pair(s2, "r2")}) {
-    REQUIRE(sm1_begin(p.first, SM1_XCT_SERIALIZABLE) == 0);
+    REQUIRE(sm1_begin(p.first, sm1::xctlevel_t::serializable) == 0);
     CHECK(get(p.first, g_store, "a") == "0");
     REQUIRE(sm1_prepare(p.first, p.second) == 0);
   }
   f.restart();
-  sm1_session_t *v = f.open();
+  sm1::session_t *v = f.open();
   auto rows = listed(v);
   REQUIRE(rows.size() == 2);
   CHECK(rows[0].first == "r1");
@@ -698,19 +698,19 @@ TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   // 2. Commit "gd" by gid; the store is gone.
   // 3. With no snapshot left to see it, GC drops its CF.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t storeid = mkstore(s);
   REQUIRE(sm1_commit(s) == 0);
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1_rmstore(s, storeid) == 0);
   REQUIRE(sm1_prepare(s, "gd") == 0);
   f.restart();
 
-  sm1_session_t *v = f.open();
+  sm1::session_t *v = f.open();
   CHECK(wisr::db_store_cf(v->db, storeid) != nullptr);
   REQUIRE(sm1_commit_prepared(v, "gd") == 0);
-  REQUIRE(sm1_begin(v, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(v, sm1::xctlevel_t::repeatable_read) == 0);
   const char *d;
   size_t dl;
   CHECK(sm1_read(v, storeid, "k", 1, &d, &dl) == -1);
@@ -729,15 +729,15 @@ TEST_CASE("write skew with a transaction restored in doubt is still caught") {
   //    version, and updates "a", which T_prep read.
   // 4. T_new fails at commit; T_prep then commits.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  REQUIRE(sm1_begin(s, SM1_XCT_SERIALIZABLE) == 0);
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::serializable) == 0);
   CHECK(get(s, g_store, "a") == "0");
   REQUIRE(set(s, "b", "1") == 0);
   REQUIRE(sm1_prepare(s, "gp") == 0);
   f.restart();
 
-  sm1_session_t *t = f.open();
-  REQUIRE(sm1_begin(t, SM1_XCT_SERIALIZABLE) == 0);
+  sm1::session_t *t = f.open();
+  REQUIRE(sm1_begin(t, sm1::xctlevel_t::serializable) == 0);
   CHECK(get(t, g_store, "b") == "0");
   REQUIRE(set(t, "a", "1") == 0);
   CHECK(sm1_commit(t) == -1);
@@ -761,7 +761,7 @@ TEST_CASE("a transaction prepared when the process is killed is restored") {
   kill_after_report(pid, fd);
   f.home().attach();
 
-  sm1_session_t *v = f.open();
+  sm1::session_t *v = f.open();
   auto rows = listed(v);
   REQUIRE(rows.size() == 1);
   CHECK(rows[0].first == "g-crash");
@@ -779,8 +779,8 @@ TEST_CASE("startup drops store CFs that nothing names") {
   // 2. Reattach: the dropped store is gone, and the only
   //    store CFs left are the catalog's and the fixture's.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t storeid = mkstore(s);
   REQUIRE(sm1_commit(s) == 0);
   f.home().detach();
@@ -790,13 +790,13 @@ TEST_CASE("startup drops store CFs that nothing names") {
   kill_after_report(pid, fd);
   f.home().attach();
 
-  sm1_session_t *v = f.open();
+  sm1::session_t *v = f.open();
   std::set<uint64_t> stores;
   for (auto &kv : v->db->stores) {
     stores.insert(kv.first);
   }
   CHECK(stores == std::set<uint64_t>{0, g_store});
-  REQUIRE(sm1_begin(v, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(v, sm1::xctlevel_t::repeatable_read) == 0);
   const char *d;
   size_t dl;
   CHECK(sm1_read(v, storeid, "k", 1, &d, &dl) == -1);
@@ -813,8 +813,8 @@ TEST_CASE("a failed prepare write fails the database stop") {
   // 3. After a restart the record never existed: nothing is
   //    listed and the update of "a" is gone.
   tpc_fixture_t f;
-  sm1_session_t *s = f.open();
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(set(s, "a", "1") == 0);
   s->db->test_before_prepare = [] {
     return rocksdb::Status::IOError("injected");
@@ -825,13 +825,13 @@ TEST_CASE("a failed prepare write fails the database stop") {
   CHECK(listed(s).empty());
   CHECK(sm1_commit_prepared(s, "gx") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(set(s, "b", "1") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_IO);
   REQUIRE(sm1_commit(s) == 0);
 
   f.restart();
-  sm1_session_t *v = f.open();
+  sm1::session_t *v = f.open();
   CHECK(listed(v).empty());
   CHECK(read_now(v, "a") == "0");
   sm1_closedb(v);

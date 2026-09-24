@@ -79,7 +79,7 @@ int concurrent_writer(db_t *db, const version_t &v, const view_t &view) {
 }
 
 /* Step past an invisible version: under SSI, owe its writer an edge. */
-int skip_version(sm1_session_t *s, const version_t &v, const view_t &view) {
+int skip_version(sm1::session_t *s, const version_t &v, const view_t &view) {
   // Only SERIALIZABLE readers track skipped versions.
   if (!s->ssi) {
     return 0;
@@ -116,7 +116,7 @@ rocksdb::ColumnFamilyHandle *store_cf(db_t *db, uint64_t storeid) {
  * whether it exists and is not a tombstone, and *commit_ts to
  * its commit_ts (0 for an own version or none). Returns 0 or -1.
  */
-int latest_version(sm1_session_t *s, rocksdb::ColumnFamilyHandle *cf,
+int latest_version(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
                    rocksdb::Slice key, bool *live, uint64_t *commit_ts,
                    std::string *value) {
   // Assume no version until one is found.
@@ -190,16 +190,16 @@ int latest_version(sm1_session_t *s, rocksdb::ColumnFamilyHandle *cf,
   return 0;
 }
 
-/* Check a caller's key: non-NULL unless empty, within SM1_MAX_KEYLEN. */
+/* Check a caller's key: non-NULL unless empty, within sm1::max_keylen. */
 int check_key(const char *key, size_t klen) {
   // Only an empty key may be NULL.
   if (!key && klen > 0) {
     return set_error(sm1::SM_ERR_INVALID, "key is NULL");
   }
   // Reject a key over the limit.
-  if (klen > SM1_MAX_KEYLEN) {
+  if (klen > sm1::max_keylen) {
     return set_error(sm1::SM_ERR_INVALID, "key of {} bytes exceeds {}", klen,
-                     SM1_MAX_KEYLEN);
+                     sm1::max_keylen);
   }
   return 0;
 }
@@ -208,7 +208,7 @@ int check_key(const char *key, size_t klen) {
  * Common entry checks for a data operation: a valid key, and a
  * storeid that names a live store at view.
  */
-int enter(sm1_session_t *s, const view_t &view, uint64_t storeid,
+int enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
           const char *key, size_t klen) {
   // Reject storeid 0, which no store has.
   if (storeid == 0) {
@@ -228,7 +228,7 @@ int enter(sm1_session_t *s, const view_t &view, uint64_t storeid,
 }
 
 /* sm1_insert / sm1_update / sm1_delete, minus the out-of-memory guard. */
-int write_row(sm1_session_t *s, write_op_t op, uint64_t storeid,
+int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
               const char *key, size_t klen, const char *data, size_t datalen,
               const char **old, size_t *oldlen) {
   // The out-parameters come as a pair; check before either is
@@ -250,9 +250,9 @@ int write_row(sm1_session_t *s, write_op_t op, uint64_t storeid,
     return set_error(sm1::SM_ERR_INVALID, "data is NULL");
   }
   // Reject a value over the limit.
-  if (datalen > SM1_MAX_DATALEN) {
+  if (datalen > sm1::max_datalen) {
     return set_error(sm1::SM_ERR_INVALID, "value of {} bytes exceeds {}",
-                     datalen, SM1_MAX_DATALEN);
+                     datalen, sm1::max_datalen);
   }
   // Validate the storeid and key at the current view.
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
@@ -271,14 +271,14 @@ int write_row(sm1_session_t *s, write_op_t op, uint64_t storeid,
 }
 
 /* sm1_lock, minus the out-of-memory guard. */
-int lock_row(sm1_session_t *s, uint64_t storeid, const char *key, size_t klen,
-             sm1_lockmode_t mode) {
+int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
+             sm1::lockmode_t mode) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
   }
   // Reject a mode that is neither shared nor exclusive.
-  if (mode != SM1_LOCK_SHARED && mode != SM1_LOCK_EXCLUSIVE) {
+  if (mode != sm1::lockmode_t::shared && mode != sm1::lockmode_t::exclusive) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
   }
   // Validate the storeid and key at the current view.
@@ -287,13 +287,13 @@ int lock_row(sm1_session_t *s, uint64_t storeid, const char *key, size_t klen,
   }
   // Take the lock, blocking while a conflicting holder has it.
   if (lock_acquire(s, storeid, rocksdb::Slice(key ? key : "", klen),
-                   mode == SM1_LOCK_EXCLUSIVE) != 0) {
+                   mode == sm1::lockmode_t::exclusive) != 0) {
     return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }
   // Read committed does not fail here: the caller reads the
   // row with sm1_read_latest instead.
-  if (s->level == SM1_XCT_READ_COMMITTED) {
+  if (s->level == sm1::xctlevel_t::read_committed) {
     return 0;
   }
   // Now that the lock is held, run §5.2's check, so what the
@@ -303,7 +303,7 @@ int lock_row(sm1_session_t *s, uint64_t storeid, const char *key, size_t klen,
 }
 
 /* sm1_read, minus the out-of-memory guard. */
-int read_row(sm1_session_t *s, uint64_t storeid, const char *key, size_t klen,
+int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
              const char **data, size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
@@ -334,7 +334,7 @@ int read_row(sm1_session_t *s, uint64_t storeid, const char *key, size_t klen,
 }
 
 /* sm1_read_latest, minus the out-of-memory guard. */
-int read_latest_row(sm1_session_t *s, uint64_t storeid, const char *key,
+int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
                     size_t klen, const char **data, size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
@@ -349,7 +349,7 @@ int read_latest_row(sm1_session_t *s, uint64_t storeid, const char *key,
     return -1;
   }
   // Only read committed has a snapshot to look past.
-  if (s->level != SM1_XCT_READ_COMMITTED) {
+  if (s->level != sm1::xctlevel_t::read_committed) {
     return set_error(sm1::SM_ERR_INVALID,
                      "sm1_read_latest requires READ COMMITTED");
   }
@@ -390,9 +390,9 @@ int read_latest_row(sm1_session_t *s, uint64_t storeid, const char *key,
 }
 
 /* sm1_scan, minus the out-of-memory guard. */
-sm1_scan_t *scan(sm1_session_t *s, uint64_t storeid, const char *skey,
-                 size_t sklen, int skey_inclusive, const char *ekey,
-                 size_t eklen, int ekey_inclusive) {
+sm1::scan_t *scan(sm1::session_t *s, uint64_t storeid, const char *skey,
+                  size_t sklen, int skey_inclusive, const char *ekey,
+                  size_t eklen, int ekey_inclusive) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return nullptr;
@@ -418,9 +418,10 @@ sm1_scan_t *scan(sm1_session_t *s, uint64_t storeid, const char *skey,
 namespace wisr {
 
 /* Open a cursor over storeid at view, between the given bounds. */
-sm1_scan_t *access_scan(sm1_session_t *s, uint64_t storeid, const view_t &view,
-                        const char *skey, size_t sklen, int skey_inclusive,
-                        const char *ekey, size_t eklen, int ekey_inclusive) {
+sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
+                         const view_t &view, const char *skey, size_t sklen,
+                         int skey_inclusive, const char *ekey, size_t eklen,
+                         int ekey_inclusive) {
   // Find the column family.
   rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
   if (!cf) {
@@ -428,7 +429,7 @@ sm1_scan_t *access_scan(sm1_session_t *s, uint64_t storeid, const view_t &view,
   }
 
   // Allocate the cursor.
-  std::unique_ptr<sm1_scan_t> c(new sm1_scan_t);
+  std::unique_ptr<sm1::scan_t> c(new sm1::scan_t);
   // Bind it to the session.
   c->session = s;
   // Number it, for savepoint rollback.
@@ -484,7 +485,7 @@ sm1_scan_t *access_scan(sm1_session_t *s, uint64_t storeid, const view_t &view,
 namespace {
 
 /* sm1_scan_seek, minus the out-of-memory guard. */
-int scan_seek(sm1_scan_t *c, const char *key, size_t klen, int inclusive) {
+int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
   // Reject a NULL cursor.
   if (!c) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_scan_seek: scan is NULL");
@@ -527,7 +528,7 @@ int scan_seek(sm1_scan_t *c, const char *key, size_t klen, int inclusive) {
 }
 
 /* sm1_scannxt, minus the out-of-memory guard. */
-int scan_next(sm1_scan_t *c, const char **key, size_t *klen, const char **data,
+int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
               size_t *datalen) {
   // Require every out-parameter.
   if (!c || !key || !klen || !data || !datalen) {
@@ -623,7 +624,7 @@ int scan_next(sm1_scan_t *c, const char **key, size_t *klen, const char **data,
 namespace wisr {
 
 /* Seek to the newest version a reader at view could see (§10.1). */
-int access_read(sm1_session_t *s, uint64_t storeid, const view_t &view,
+int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
                 rocksdb::Slice key, std::string *out) {
   // Find the store's CF.
   rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
@@ -692,7 +693,7 @@ int access_read(sm1_session_t *s, uint64_t storeid, const view_t &view,
 }
 
 /* Check existence, then put one new version (§5). */
-int access_write(sm1_session_t *s, uint64_t storeid, write_op_t op,
+int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, std::string *old) {
   // Find the store's CF.
   rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
@@ -720,7 +721,7 @@ int access_write(sm1_session_t *s, uint64_t storeid, write_op_t op,
   if (commit_ts > s->snapshot_ts) {
     // Read committed: an insert goes ahead against the newest
     // version; an update or delete must have read it first.
-    if (s->level == SM1_XCT_READ_COMMITTED) {
+    if (s->level == sm1::xctlevel_t::read_committed) {
       if (op != WRITE_INSERT && !lock_has_latest(s, storeid, key)) {
         return set_error(sm1::SM_ERR_UPDATED,
                          "key was changed by a transaction that committed "
@@ -791,7 +792,7 @@ int access_write(sm1_session_t *s, uint64_t storeid, write_op_t op,
  * key committed after this transaction's begin snapshot. The
  * caller holds the lock, so no one can add one behind us.
  */
-int access_check_current(sm1_session_t *s, uint64_t storeid,
+int access_check_current(sm1::session_t *s, uint64_t storeid,
                          rocksdb::Slice key) {
   // Find the store's CF.
   rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
@@ -817,7 +818,7 @@ int access_check_current(sm1_session_t *s, uint64_t storeid,
 } // namespace wisr
 
 /* Move an open cursor to key, forward only. */
-int sm1_scan_seek(sm1_scan_t *scan, const char *key, size_t klen,
+int sm1_scan_seek(sm1::scan_t *scan, const char *key, size_t klen,
                   int inclusive) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
@@ -828,8 +829,8 @@ int sm1_scan_seek(sm1_scan_t *scan, const char *key, size_t klen,
 }
 
 /* Take a row lock without writing the row. */
-int sm1_lock(sm1_session_t *session, uint64_t storeid, const char *key,
-             size_t klen, sm1_lockmode_t mode) {
+int sm1_lock(sm1::session_t *session, uint64_t storeid, const char *key,
+             size_t klen, sm1::lockmode_t mode) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return lock_row(session, storeid, key, klen, mode);
@@ -839,7 +840,7 @@ int sm1_lock(sm1_session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Insert a row; the key must not exist. */
-int sm1_insert(sm1_session_t *session, uint64_t storeid, const char *key,
+int sm1_insert(sm1::session_t *session, uint64_t storeid, const char *key,
                size_t klen, const char *data, size_t datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
@@ -851,7 +852,7 @@ int sm1_insert(sm1_session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Replace a row's value; the key must exist. */
-int sm1_update(sm1_session_t *session, uint64_t storeid, const char *key,
+int sm1_update(sm1::session_t *session, uint64_t storeid, const char *key,
                size_t klen, const char *data, size_t datalen, const char **old,
                size_t *oldlen) {
   // Report an allocation failure as SM_ERR_NOMEM.
@@ -864,7 +865,7 @@ int sm1_update(sm1_session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Delete a row; the key must exist. */
-int sm1_delete(sm1_session_t *session, uint64_t storeid, const char *key,
+int sm1_delete(sm1::session_t *session, uint64_t storeid, const char *key,
                size_t klen, const char **old, size_t *oldlen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
@@ -876,7 +877,7 @@ int sm1_delete(sm1_session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Read one key. */
-int sm1_read(sm1_session_t *session, uint64_t storeid, const char *key,
+int sm1_read(sm1::session_t *session, uint64_t storeid, const char *key,
              size_t klen, const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
@@ -887,7 +888,7 @@ int sm1_read(sm1_session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Read the newest committed version of a key. */
-int sm1_read_latest(sm1_session_t *session, uint64_t storeid, const char *key,
+int sm1_read_latest(sm1::session_t *session, uint64_t storeid, const char *key,
                     size_t klen, const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
@@ -898,9 +899,9 @@ int sm1_read_latest(sm1_session_t *session, uint64_t storeid, const char *key,
 }
 
 /* Open a cursor over a key range. */
-sm1_scan_t *sm1_scan(sm1_session_t *session, uint64_t storeid, const char *skey,
-                     size_t sklen, int skey_inclusive, const char *ekey,
-                     size_t eklen, int ekey_inclusive) {
+sm1::scan_t *sm1_scan(sm1::session_t *session, uint64_t storeid,
+                      const char *skey, size_t sklen, int skey_inclusive,
+                      const char *ekey, size_t eklen, int ekey_inclusive) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return scan(session, storeid, skey, sklen, skey_inclusive, ekey, eklen,
@@ -912,7 +913,7 @@ sm1_scan_t *sm1_scan(sm1_session_t *session, uint64_t storeid, const char *skey,
 }
 
 /* Advance a cursor to its next row. */
-int sm1_scannxt(sm1_scan_t *scan, const char **key, size_t *klen,
+int sm1_scannxt(sm1::scan_t *scan, const char **key, size_t *klen,
                 const char **data, size_t *datalen) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
@@ -925,7 +926,7 @@ int sm1_scannxt(sm1_scan_t *scan, const char **key, size_t *klen,
 }
 
 /* Close a cursor: the iterator first, then its snapshot. */
-void sm1_scanend(sm1_scan_t *scan) {
+void sm1_scanend(sm1::scan_t *scan) {
   // Closing NULL is a no-op.
   if (!scan) {
     return;

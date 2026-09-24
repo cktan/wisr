@@ -40,7 +40,7 @@ int restore_prepared(db_t *db) {
     }
     // Decode the xid.
     uint64_t xid = get_be64(it->key().data());
-    sm1_session_t *g = nullptr;
+    sm1::session_t *g = nullptr;
     // Rebuild a PREPARED record; skip every other state.
     if (!xct_decode_prepared(db, xid, it->value(), &g)) {
       continue; // not a PREPARED record
@@ -65,7 +65,7 @@ int restore_prepared(db_t *db) {
     // Register it under its gid for listing and resolution.
     db->prepared[g->prepared_gid] = g;
     // Tell the operator: it holds locks until a coordinator acts.
-    log_msg(SM1_LOG_INFO,
+    log_msg(sm1::loglevel_t::info,
             "database {}: restored prepared transaction {} in doubt",
             db->name.c_str(), g->prepared_gid.c_str());
   }
@@ -160,7 +160,7 @@ int sweep_orphan_cfs(db_t *db) {
     if (db_drop_store_cf(db, storeid) != 0) {
       return -1;
     }
-    log_msg(SM1_LOG_INFO,
+    log_msg(sm1::loglevel_t::info,
             "database {}: dropped orphaned column family store.{}",
             db->name.c_str(), storeid);
   }

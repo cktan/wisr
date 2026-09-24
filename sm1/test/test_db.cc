@@ -1,5 +1,5 @@
 /*
- * test_db.cc -- sm1_mkdb, sm1_rmdb, sm1_lsdb, and sm1_options_init.
+ * test_db.cc -- sm1_mkdb, sm1_rmdb, sm1_lsdb, and sm1::options_t.
  */
 
 #include "doctest.h"
@@ -8,7 +8,6 @@
 #include "sm1.h"
 
 #include <stdlib.h>
-#include <string.h>
 
 #include <filesystem>
 #include <set>
@@ -18,7 +17,7 @@
 namespace {
 
 /* The databases sm1_lsdb reports, in its order. */
-std::vector<std::string> lsdb(sm1_env_t *env) {
+std::vector<std::string> lsdb(sm1::env_t *env) {
   sm1_strlist_t *sl = nullptr;
   REQUIRE(sm1_lsdb(env, &sl) == 0);
   std::vector<std::string> out;
@@ -32,13 +31,11 @@ std::vector<std::string> lsdb(sm1_env_t *env) {
 
 } // namespace
 
-TEST_CASE("sm1_options_init fills the documented defaults") {
+TEST_CASE("a default options_t holds the documented defaults") {
   // Verify every option starts at the default sm1.h documents.
-  // 1. Initialize an options struct over garbage.
+  // 1. Default-construct an options_t.
   // 2. Check each field.
-  sm1_options_t opt;
-  memset(&opt, 0xab, sizeof(opt));
-  sm1_options_init(&opt);
+  sm1::options_t opt;
   CHECK(opt.durability_sync == 1);
   CHECK(opt.group_commit_us == 200);
   CHECK(opt.deadlock_ms == 50);
@@ -70,17 +67,17 @@ TEST_CASE("databases are listed in bytewise order and survive reattach") {
 TEST_CASE("sm1_mkdb rejects a duplicate or badly sized name") {
   // Verify mkdb's name checks.
   // 1. Create "db"; creating it again fails with SM_ERR_EXISTS.
-  // 2. A name of SM1_MAX_DBNAME bytes is accepted.
-  // 3. Names of SM1_MAX_DBNAME + 1 bytes, "", and NULL fail
+  // 2. A name of sm1::max_dbname bytes is accepted.
+  // 3. Names of sm1::max_dbname + 1 bytes, "", and NULL fail
   //    with SM_ERR_INVALID.
   home_t home;
   REQUIRE(sm1_mkdb(home.env(), "db", nullptr) == 0);
   CHECK(sm1_mkdb(home.env(), "db", nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
 
-  std::string max(SM1_MAX_DBNAME, 'x');
+  std::string max(sm1::max_dbname, 'x');
   CHECK(sm1_mkdb(home.env(), max.c_str(), nullptr) == 0);
-  std::string over(SM1_MAX_DBNAME + 1, 'x');
+  std::string over(sm1::max_dbname + 1, 'x');
   CHECK(sm1_mkdb(home.env(), over.c_str(), nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1_mkdb(home.env(), "", nullptr) == -1);
@@ -95,8 +92,7 @@ TEST_CASE("sm1_mkdb rejects a malformed rocksdb_options string") {
   // 2. Confirm no database and no directory was created.
   // 3. Create with a valid option string; it succeeds.
   home_t home;
-  sm1_options_t opt;
-  sm1_options_init(&opt);
+  sm1::options_t opt;
   opt.rocksdb_options = "no_such_option=1";
   CHECK(sm1_mkdb(home.env(), "db", &opt) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);

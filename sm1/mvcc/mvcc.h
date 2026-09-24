@@ -73,9 +73,9 @@ inline std::string pairing_name(pairing_t p) {
 }
 
 /* The level transaction n runs at in pairing p. T3 follows T2. */
-inline sm1_xctlevel_t level_of(pairing_t p, int n) {
+inline sm1::xctlevel_t level_of(pairing_t p, int n) {
   bool ser = n == 1 ? (p == P_S_RR || p == P_S_S) : (p == P_RR_S || p == P_S_S);
-  return ser ? SM1_XCT_SERIALIZABLE : SM1_XCT_REPEATABLE_READ;
+  return ser ? sm1::xctlevel_t::serializable : sm1::xctlevel_t::repeatable_read;
 }
 
 /* A fresh directory under the system temp dir, removed at scope exit. */
@@ -113,8 +113,8 @@ public:
     m_env = sm1_attach(m_tmp.path());
     REQUIRE(m_env);
     REQUIRE(sm1_mkdb(m_env, "db", nullptr) == 0);
-    sm1_session_t *s = session(1);
-    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+    sm1::session_t *s = session(1);
+    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     REQUIRE_MESSAGE(sm1_mkstore(s, &m_store) == 0, sm1::errmsg());
     // Seed each row in the transaction that creates the store.
     for (const std::string &row : rows) {
@@ -125,16 +125,16 @@ public:
 
   /* Close the sessions and detach. */
   ~scenario_t() {
-    for (sm1_session_t *s : m_sessions) {
+    for (sm1::session_t *s : m_sessions) {
       sm1_closedb(s);
     }
     sm1_detach(m_env, 1);
   }
 
   /* Transaction n's session, opened on first use. */
-  sm1_session_t *session(int n) {
+  sm1::session_t *session(int n) {
     while (static_cast<int>(m_sessions.size()) < n) {
-      sm1_session_t *s = sm1_opendb(m_env, "db", nullptr);
+      sm1::session_t *s = sm1_opendb(m_env, "db", nullptr);
       REQUIRE_MESSAGE(s, sm1::errmsg());
       m_sessions.push_back(s);
     }
@@ -151,7 +151,7 @@ public:
   }
 
   /* Begin T<n> at an explicit level. */
-  void begin_at(int n, sm1_xctlevel_t level) {
+  void begin_at(int n, sm1::xctlevel_t level) {
     REQUIRE_MESSAGE(sm1_begin(session(n), level) == 0, sm1::errmsg());
   }
 
@@ -185,8 +185,8 @@ public:
   /* s(lo, hi): the keys T<n> sees in the closed range [lo, hi]. */
   std::vector<std::string> s(int n, const std::string &lo,
                              const std::string &hi) {
-    sm1_scan_t *c = sm1_scan(session(n), m_store, lo.data(), lo.size(), 1,
-                             hi.data(), hi.size(), 1);
+    sm1::scan_t *c = sm1_scan(session(n), m_store, lo.data(), lo.size(), 1,
+                              hi.data(), hi.size(), 1);
     REQUIRE_MESSAGE(c, sm1::errmsg());
     std::vector<std::string> keys;
     const char *k, *d;
@@ -201,8 +201,8 @@ public:
   /* s(lo, hi) as (key, value) pairs. */
   std::vector<std::pair<std::string, std::string>>
   srows(int n, const std::string &lo, const std::string &hi) {
-    sm1_scan_t *c = sm1_scan(session(n), m_store, lo.data(), lo.size(), 1,
-                             hi.data(), hi.size(), 1);
+    sm1::scan_t *c = sm1_scan(session(n), m_store, lo.data(), lo.size(), 1,
+                              hi.data(), hi.size(), 1);
     REQUIRE_MESSAGE(c, sm1::errmsg());
     std::vector<std::pair<std::string, std::string>> rows;
     const char *k, *d;
@@ -234,9 +234,9 @@ public:
 
   /* The rows a fresh REPEATABLE READ transaction sees. */
   std::vector<std::pair<std::string, std::string>> final_rows() {
-    sm1_session_t *s = session(static_cast<int>(m_sessions.size()) + 1);
-    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
-    sm1_scan_t *cur = sm1_scan(s, m_store, nullptr, 0, 0, nullptr, 0, 0);
+    sm1::session_t *s = session(static_cast<int>(m_sessions.size()) + 1);
+    REQUIRE(sm1_begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+    sm1::scan_t *cur = sm1_scan(s, m_store, nullptr, 0, 0, nullptr, 0, 0);
     REQUIRE_MESSAGE(cur, sm1::errmsg());
     std::vector<std::pair<std::string, std::string>> rows;
     const char *k, *d;
@@ -270,8 +270,8 @@ public:
 
 private:
   mvcc_tmpdir_t m_tmp;
-  sm1_env_t *m_env = nullptr;
-  std::vector<sm1_session_t *> m_sessions;
+  sm1::env_t *m_env = nullptr;
+  std::vector<sm1::session_t *> m_sessions;
   uint64_t m_store = 0;
 };
 

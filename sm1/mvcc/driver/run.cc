@@ -59,8 +59,8 @@ std::string error_name() {
 /* One session of the script, and the thread that drives it. */
 struct worker_t {
   std::string name;
-  sm1_xctlevel_t level = SM1_XCT_REPEATABLE_READ;
-  sm1_session_t *sess = nullptr;
+  sm1::xctlevel_t level = sm1::xctlevel_t::repeatable_read;
+  sm1::session_t *sess = nullptr;
   uint64_t store = 0;
   uint64_t rel2 = 0; /* the second store, for rmstore/lookup */
 
@@ -72,9 +72,9 @@ struct worker_t {
   bool stop = false;
   std::string result;
 
-  std::map<std::string, sm1_scan_t *> cursors; /* open, by name */
-  const item_t *pending = nullptr;             /* a step reported as blocked */
-  std::string last;                            /* that session's last result */
+  std::map<std::string, sm1::scan_t *> cursors; /* open, by name */
+  const item_t *pending = nullptr;              /* a step reported as blocked */
+  std::string last;                             /* that session's last result */
   int commit_state = 0; /* 1 committed, -1 failed, 0 neither */
 };
 
@@ -152,8 +152,8 @@ std::string execute(worker_t *w, const item_t &it) {
     if (a.size() == 4 && a[2] == "limit") {
       limit = strtol(a[3].c_str(), nullptr, 10);
     }
-    sm1_scan_t *c = sm1_scan(w->sess, w->store, a[0].data(), a[0].size(), 1,
-                             a[1].data(), a[1].size(), 1);
+    sm1::scan_t *c = sm1_scan(w->sess, w->store, a[0].data(), a[0].size(), 1,
+                              a[1].data(), a[1].size(), 1);
     if (!c) {
       return error_name();
     }
@@ -171,8 +171,8 @@ std::string execute(worker_t *w, const item_t &it) {
   }
   if (it.verb == "open") {
     // open <name> <lo> <hi>: a cursor that outlives this step.
-    sm1_scan_t *c = sm1_scan(w->sess, w->store, a[1].data(), a[1].size(), 1,
-                             a[2].data(), a[2].size(), 1);
+    sm1::scan_t *c = sm1_scan(w->sess, w->store, a[1].data(), a[1].size(), 1,
+                              a[2].data(), a[2].size(), 1);
     if (!c) {
       return error_name();
     }
@@ -235,8 +235,8 @@ std::string execute(worker_t *w, const item_t &it) {
     if (a[1] != "shared" && a[1] != "exclusive") {
       return "ERROR: lock mode must be shared or exclusive, not " + a[1];
     }
-    sm1_lockmode_t mode =
-        a[1] == "shared" ? SM1_LOCK_SHARED : SM1_LOCK_EXCLUSIVE;
+    sm1::lockmode_t mode =
+        a[1] == "shared" ? sm1::lockmode_t::shared : sm1::lockmode_t::exclusive;
     return sm1_lock(w->sess, w->store, a[0].data(), a[0].size(), mode) == 0
                ? "ok"
                : error_name();
@@ -322,7 +322,8 @@ public:
     // and a second holding the same rows, which exists to be
     // dropped and looked up (DRIVER.md §5).
     m_checker = sm1_opendb(m_env, "db", nullptr);
-    m_ok = m_checker && sm1_begin(m_checker, SM1_XCT_REPEATABLE_READ) == 0 &&
+    m_ok = m_checker &&
+           sm1_begin(m_checker, sm1::xctlevel_t::repeatable_read) == 0 &&
            sm1_mkstore(m_checker, &m_store) == 0 &&
            sm1_mkstore(m_checker, &m_rel2) == 0;
     for (const auto &kv : m_script.seeds) {
@@ -380,9 +381,9 @@ public:
     m_out << "== pairing " << pairing_label(m_pairing) << " ==";
     for (const std::unique_ptr<worker_t> &w : m_workers) {
       m_out << " " << w->name << "="
-            << (w->level == SM1_XCT_SERIALIZABLE     ? "SER"
-                : w->level == SM1_XCT_READ_COMMITTED ? "RC"
-                                                     : "RR");
+            << (w->level == sm1::xctlevel_t::serializable     ? "SER"
+                : w->level == sm1::xctlevel_t::read_committed ? "RC"
+                                                              : "RR");
     }
     m_out << "\n";
 
@@ -422,21 +423,22 @@ public:
 
 private:
   /* The level a session runs at in this pairing. */
-  sm1_xctlevel_t level_for(const session_decl_t &d, size_t index) const {
+  sm1::xctlevel_t level_for(const session_decl_t &d, size_t index) const {
     // An explicit level in the script wins over the pairing.
     if (d.level == "rc") {
-      return SM1_XCT_READ_COMMITTED;
+      return sm1::xctlevel_t::read_committed;
     }
     if (d.level == "rr") {
-      return SM1_XCT_REPEATABLE_READ;
+      return sm1::xctlevel_t::repeatable_read;
     }
     if (d.level == "ser") {
-      return SM1_XCT_SERIALIZABLE;
+      return sm1::xctlevel_t::serializable;
     }
     // The first session takes T1's level; the rest take T2's.
     bool ser = index == 0 ? (m_pairing == PAIR_S_RR || m_pairing == PAIR_S_S)
                           : (m_pairing == PAIR_RR_S || m_pairing == PAIR_S_S);
-    return ser ? SM1_XCT_SERIALIZABLE : SM1_XCT_REPEATABLE_READ;
+    return ser ? sm1::xctlevel_t::serializable
+               : sm1::xctlevel_t::repeatable_read;
   }
 
   /* The worker of a named session, or null. */
@@ -517,10 +519,10 @@ private:
   /* The rows a fresh transaction sees, as "{r1=0, r2=t2}". */
   std::string rows() {
     std::ostringstream out;
-    if (sm1_begin(m_checker, SM1_XCT_REPEATABLE_READ) != 0) {
+    if (sm1_begin(m_checker, sm1::xctlevel_t::repeatable_read) != 0) {
       return error_name();
     }
-    sm1_scan_t *c = sm1_scan(m_checker, m_store, nullptr, 0, 0, nullptr, 0, 0);
+    sm1::scan_t *c = sm1_scan(m_checker, m_store, nullptr, 0, 0, nullptr, 0, 0);
     out << "{";
     const char *k, *d;
     size_t kl, dl;
@@ -537,7 +539,7 @@ private:
 
   /* The value of a row as a fresh transaction reads it. */
   std::string value(const std::string &row) {
-    if (sm1_begin(m_checker, SM1_XCT_REPEATABLE_READ) != 0) {
+    if (sm1_begin(m_checker, sm1::xctlevel_t::repeatable_read) != 0) {
       return error_name();
     }
     const char *data = nullptr;
@@ -618,8 +620,8 @@ private:
   int m_patience_ms = 60000; /* a step not claimed to block */
   std::ostringstream &m_out;
   std::string m_home;
-  sm1_env_t *m_env = nullptr;
-  sm1_session_t *m_checker = nullptr;
+  sm1::env_t *m_env = nullptr;
+  sm1::session_t *m_checker = nullptr;
   uint64_t m_store = 0;
   uint64_t m_rel2 = 0;
   std::vector<std::unique_ptr<worker_t>> m_workers;

@@ -129,7 +129,7 @@ void print_book(const book_t &b) {
  * Insert b, or update it if its id is already taken: wisr has
  * no upsert, so try the insert and fall back on SM_ERR_DUPKEY.
  */
-void upsert_book(sm1_session_t *s, uint64_t store, const book_t &b) {
+void upsert_book(sm1::session_t *s, uint64_t store, const book_t &b) {
   std::string key = encode_key(b.id);
   std::string val = encode_value(b);
   // Try the insert first.
@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
     check(-1, "sm1_init");
   }
   // Attach: this process now owns the home directory.
-  sm1_env_t *env = sm1_attach(homedir);
+  sm1::env_t *env = sm1_attach(homedir);
   if (!env) {
     check(-1, "sm1_attach");
   }
@@ -173,14 +173,14 @@ int main(int argc, char **argv) {
     check(-1, "sm1_mkdb");
   }
   // Open a session on it.
-  sm1_session_t *s = sm1_opendb(env, "library", nullptr);
+  sm1::session_t *s = sm1_opendb(env, "library", nullptr);
   if (!s) {
     check(-1, "sm1_opendb");
   }
 
   // List the tables, and create book in the same transaction
   // unless it is listed; DDL is transactional.
-  check(sm1_begin(s, SM1_XCT_REPEATABLE_READ), "sm1_begin");
+  check(sm1_begin(s, sm1::xctlevel_t::repeatable_read), "sm1_begin");
   uint64_t *stores = nullptr;
   size_t nstores = 0;
   check(sm1_lsstore(s, &stores, &nstores), "sm1_lsstore");
@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
       {3, "Serializable Isolation for Snapshot Databases", "Michael Cahill"},
       {4, "Architecture of a Database System", "Joseph Hellerstein"},
   };
-  check(sm1_begin(s, SM1_XCT_REPEATABLE_READ), "sm1_begin");
+  check(sm1_begin(s, sm1::xctlevel_t::repeatable_read), "sm1_begin");
   for (const book_t &b : books) {
     upsert_book(s, book, b);
   }
@@ -217,7 +217,7 @@ int main(int argc, char **argv) {
   printf("inserted %zu books\n", sizeof(books) / sizeof(books[0]));
 
   // Read and scan in one transaction: both see the same snapshot.
-  check(sm1_begin(s, SM1_XCT_REPEATABLE_READ), "sm1_begin");
+  check(sm1_begin(s, sm1::xctlevel_t::repeatable_read), "sm1_begin");
 
   // Read one row by its key.
   std::string key = encode_key(3);
@@ -241,7 +241,7 @@ int main(int argc, char **argv) {
 
   // Scan every row: NULL bounds mean from the first key to the last.
   printf("\nscan all books:\n");
-  sm1_scan_t *c = sm1_scan(s, book, nullptr, 0, 0, nullptr, 0, 0);
+  sm1::scan_t *c = sm1_scan(s, book, nullptr, 0, 0, nullptr, 0, 0);
   if (!c) {
     check(-1, "sm1_scan");
   }
