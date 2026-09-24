@@ -249,13 +249,11 @@ std::string execute(worker_t *w, const item_t &it) {
     return sm1::mkstore(w->sess, storeid) == 0 ? "ok" : error_name();
   }
   if (it.verb == "lsstore") {
-    uint64_t *list = nullptr;
-    size_t n = 0;
-    if (sm1::lsstore(w->sess, &list, &n) != 0) {
+    std::vector<uint64_t> list;
+    if (sm1::lsstore(w->sess, list) != 0) {
       return error_name();
     }
-    free(list);
-    return std::to_string(n) + " stores";
+    return std::to_string(list.size()) + " stores";
   }
   return "ERROR: unknown verb " + it.verb;
 }

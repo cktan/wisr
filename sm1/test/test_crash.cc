@@ -12,7 +12,6 @@
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -34,14 +33,11 @@ std::string crash_key(uint32_t i) {
  * Returns 0 if there is none.
  */
 uint64_t first_store(sm1::session_t *s) {
-  uint64_t *list = nullptr;
-  size_t n = 0;
-  if (sm1::lsstore(s, &list, &n) != 0 || n == 0) {
+  std::vector<uint64_t> list;
+  if (sm1::lsstore(s, list) != 0 || list.empty()) {
     return 0;
   }
-  uint64_t store = list[0];
-  free(list);
-  return store;
+  return list[0];
 }
 
 /* The number of rows in store, as s reads them. */

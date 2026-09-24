@@ -146,11 +146,8 @@ inline uint64_t mkstore(sm1::session_t *sess) {
 
 /* The storeids sess's transaction sees, failing the test on an error. */
 inline std::vector<uint64_t> lsstore(sm1::session_t *sess) {
-  uint64_t *list = nullptr;
-  size_t n = 0;
-  REQUIRE_MESSAGE(sm1::lsstore(sess, &list, &n) == 0, sm1::errmsg());
-  std::vector<uint64_t> out(list, list + n);
-  free(list);
+  std::vector<uint64_t> out;
+  REQUIRE_MESSAGE(sm1::lsstore(sess, out) == 0, sm1::errmsg());
   return out;
 }
 

@@ -7,8 +7,6 @@
 
 #include "sm1.h"
 
-#include <stdlib.h>
-
 #include <filesystem>
 #include <set>
 #include <string>
@@ -18,14 +16,8 @@ namespace {
 
 /* The databases sm1::lsdb reports, in its order. */
 std::vector<std::string> lsdb(sm1::env_t *env) {
-  sm1::strlist_t *sl = nullptr;
-  REQUIRE(sm1::lsdb(env, &sl) == 0);
   std::vector<std::string> out;
-  for (size_t i = 0; i < sm1::strlist_count(sl); i++) {
-    out.push_back(sm1::strlist_at(sl, i));
-  }
-  CHECK(sm1::strlist_at(sl, sm1::strlist_count(sl)) == nullptr);
-  free(sl);
+  REQUIRE(sm1::lsdb(env, out) == 0);
   return out;
 }
 

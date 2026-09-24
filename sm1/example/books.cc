@@ -178,20 +178,17 @@ int main(int argc, char **argv) {
   // List the tables, and create book in the same transaction
   // unless it is listed; DDL is transactional.
   check(sm1::begin(s, sm1::xctlevel_t::repeatable_read), "sm1_begin");
-  uint64_t *stores = nullptr;
-  size_t nstores = 0;
-  check(sm1::lsstore(s, &stores, &nstores), "sm1_lsstore");
+  std::vector<uint64_t> stores;
+  check(sm1::lsstore(s, stores), "sm1_lsstore");
   // The library allocates storeids, so an earlier run's book is
   // found again as the lowest storeid listed: the first store
   // this database ever had.
-  uint64_t book = nstores > 0 ? stores[0] : 0;
+  uint64_t book = stores.empty() ? 0 : stores[0];
   printf("stores:");
-  for (size_t i = 0; i < nstores; i++) {
-    printf(" %llu", (unsigned long long)stores[i]);
+  for (uint64_t storeid : stores) {
+    printf(" %llu", (unsigned long long)storeid);
   }
-  printf("%s\n", nstores == 0 ? " (none)" : "");
-  // The list is the library's; release it.
-  free(stores);
+  printf("%s\n", stores.empty() ? " (none)" : "");
   if (book == 0) {
     check(sm1::mkstore(s, book), "sm1_mkstore");
     printf("created book (storeid %llu)\n", (unsigned long long)book);

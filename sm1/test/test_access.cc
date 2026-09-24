@@ -756,8 +756,8 @@ TEST_CASE("a dropped store stays readable at an older snapshot") {
 
 TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   // Verify sm1::lsstore reads the catalog at the transaction's view.
-  // 1. In a new database the list is empty: *n is 0 and *out
-  //    NULL.
+  // 1. In a new database the list is empty, and it replaces what
+  //    out held.
   // 2. T creates three stores: T lists all three, in
   //    ascending storeid order, while a concurrent transaction
   //    lists none. The lowest is the first one created.
@@ -770,11 +770,9 @@ TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   sm1::session_t *t = f.session();
   sm1::session_t *o = f.open_other();
   REQUIRE(sm1::begin(t, sm1::xctlevel_t::repeatable_read) == 0);
-  uint64_t *list = reinterpret_cast<uint64_t *>(1);
-  size_t n = 1;
-  REQUIRE(sm1::lsstore(t, &list, &n) == 0);
-  CHECK(n == 0);
-  CHECK(list == nullptr);
+  std::vector<uint64_t> list{42};
+  REQUIRE(sm1::lsstore(t, list) == 0);
+  CHECK(list.empty());
 
   uint64_t a = mkstore(t), b = mkstore(t), c = mkstore(t);
   CHECK(a < b);
@@ -794,6 +792,6 @@ TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   REQUIRE(sm1::commit(o) == 0);
   sm1::closedb(o);
 
-  CHECK(sm1::lsstore(t, &list, &n) == -1);
+  CHECK(sm1::lsstore(t, list) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 }

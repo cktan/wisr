@@ -73,11 +73,10 @@ TEST_CASE("environment and database calls reject NULL and bad names") {
   expect_null(attach(std::string_view("a\0b", 3)), sm1::SM_ERR_INVALID);
   expect_null(attach(""), sm1::SM_ERR_INVALID);
 
-  sm1::strlist_t *sl = nullptr;
+  std::vector<std::string> names;
   expect_fail(sm1::mkdb(nullptr, "x", nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rmdb(nullptr, "x"), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::lsdb(nullptr, &sl), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::lsdb(f.env(), nullptr), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::lsdb(nullptr, names), sm1::SM_ERR_INVALID);
   expect_null(opendb(nullptr, "db", nullptr), sm1::SM_ERR_INVALID);
 
   std::string over(sm1::max_dbname + 1, 'd');
@@ -121,8 +120,7 @@ TEST_CASE("every session call rejects a NULL session") {
   //    SM_ERR_INVALID (or returns NULL with it).
   // 2. The release calls accept NULL as a no-op.
   std::string_view d;
-  sm1::prepared_t *list;
-  size_t n;
+  std::vector<sm1::prepared_t> list;
   expect_fail(sm1::begin(nullptr, sm1::xctlevel_t::repeatable_read),
               sm1::SM_ERR_INVALID);
   expect_fail(sm1::commit(nullptr), sm1::SM_ERR_INVALID);
@@ -133,7 +131,7 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm1::lock(nullptr, 1, "k", sm1::lockmode_t::shared),
               sm1::SM_ERR_INVALID);
   expect_fail(sm1::prepare(nullptr, "g"), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::list_prepared(nullptr, &list, &n), sm1::SM_ERR_INVALID);
+  expect_fail(sm1::list_prepared(nullptr, list), sm1::SM_ERR_INVALID);
   expect_fail(sm1::commit_prepared(nullptr, "g"), sm1::SM_ERR_INVALID);
   expect_fail(sm1::abort_prepared(nullptr, "g"), sm1::SM_ERR_INVALID);
   uint64_t storeid;
@@ -145,8 +143,8 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm1::read(nullptr, g_store, "k", d), sm1::SM_ERR_INVALID);
   expect_null(scan(nullptr, g_store, nullptr, 0, 0, nullptr, 0, 0),
               sm1::SM_ERR_INVALID);
-  uint64_t *stores;
-  expect_fail(sm1::lsstore(nullptr, &stores, &n), sm1::SM_ERR_INVALID);
+  std::vector<uint64_t> stores;
+  expect_fail(sm1::lsstore(nullptr, stores), sm1::SM_ERR_INVALID);
   uint64_t v;
   expect_fail(sm1::mkseq(nullptr, "s", 1, 1), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rmseq(nullptr, "s"), sm1::SM_ERR_INVALID);
@@ -154,7 +152,6 @@ TEST_CASE("every session call rejects a NULL session") {
 
   CHECK(sm1::closedb(nullptr) == 0);
   sm1::scanend(nullptr);
-  sm1::free_prepared(nullptr, 0);
 }
 
 TEST_CASE("storeid 0 is rejected by every call taking a storeid") {
@@ -245,17 +242,13 @@ TEST_CASE("keys and values: an empty string_view is the empty key or value") {
   REQUIRE(sm1::commit(s) == 0);
 }
 
-TEST_CASE("a NULL cursor or list out-parameter is refused") {
-  // Verify the out-parameters that can still be NULL.
+TEST_CASE("a NULL cursor is refused") {
+  // Verify the one out-parameter that can still be NULL.
   // 1. sm1::scannxt with a NULL cursor fails with SM_ERR_INVALID,
   //    and a real cursor is usable afterwards.
-  // 2. sm1::list_prepared with a NULL out or n fails with
-  //    SM_ERR_INVALID.
   args_fixture_t f;
   sm1::session_t *s = f.s();
   std::string_view k, d;
-  sm1::prepared_t *list;
-  size_t n;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
 
   sm1::scan_t *c = scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
@@ -265,9 +258,6 @@ TEST_CASE("a NULL cursor or list out-parameter is refused") {
   CHECK(std::string(k) == "a");
   sm1::scanend(c);
   REQUIRE(sm1::commit(s) == 0);
-
-  expect_fail(sm1::list_prepared(s, nullptr, &n), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::list_prepared(s, &list, nullptr), sm1::SM_ERR_INVALID);
 }
 
 TEST_CASE("resolving by gid validates the gid") {

@@ -946,51 +946,25 @@ int resolve(db_t *db, const std::string &gid, bool commit_it) {
 }
 
 /* sm1::list_prepared, minus the out-of-memory guard. */
-int list_prepared(sm1::session_t *s, sm1::prepared_t **out, size_t *n) {
-  // Require every argument.
-  if (!s || !out || !n) {
-    return set_error(sm1::SM_ERR_INVALID, "sm1_list_prepared: NULL argument");
+int list_prepared(sm1::session_t *s, std::vector<sm1::prepared_t> &out) {
+  // Require a session.
+  if (!s) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_list_prepared: session is NULL");
   }
   // Collect the listable transactions.
-  std::vector<std::pair<std::string, long long>> rows;
+  std::vector<sm1::prepared_t> rows;
   {
     // Hold prepared_mu while reading the registry.
     std::lock_guard<std::mutex> guard(s->db->prepared_mu);
     for (auto &kv : s->db->prepared) {
       // Skip reservations and transactions in limbo.
       if (kv.second && !kv.second->limbo) {
-        rows.emplace_back(kv.first, kv.second->prepared_at);
+        rows.push_back({kv.first, kv.second->prepared_at});
       }
     }
   }
-  // Report none until the list is built.
-  *out = nullptr;
-  *n = 0;
-  // Nothing to list: no allocation.
-  if (rows.empty()) {
-    return 0;
-  }
-  // Allocate the array.
-  sm1::prepared_t *list =
-      static_cast<sm1::prepared_t *>(calloc(rows.size(), sizeof(*list)));
-  // Fail if it could not be allocated.
-  if (!list) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_list_prepared: out of memory");
-  }
-  // Fill in each entry.
-  for (size_t i = 0; i < rows.size(); i++) {
-    // Copy the gid; the list owns it.
-    list[i].gid = strdup(rows[i].first.c_str());
-    list[i].prepared_at = rows[i].second;
-    // Free what was built if a copy failed.
-    if (!list[i].gid) {
-      sm1::free_prepared(list, i);
-      return set_error(sm1::SM_ERR_NOMEM, "sm1_list_prepared: out of memory");
-    }
-  }
   // Hand the list to the caller.
-  *out = list;
-  *n = rows.size();
+  out = std::move(rows);
   return 0;
 }
 
@@ -1364,28 +1338,14 @@ int sm1::prepare(sm1::session_t *session, std::string_view gid_arg) {
 }
 
 /* List the unresolved prepared transactions. */
-int sm1::list_prepared(sm1::session_t *session, sm1::prepared_t **out,
-                       size_t *n) {
+int sm1::list_prepared(sm1::session_t *session,
+                       std::vector<sm1::prepared_t> &out) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return ::list_prepared(session, out, n);
+    return ::list_prepared(session, out);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_list_prepared: out of memory");
   }
-}
-
-/* Release a list from sm1::list_prepared: each gid, then the array. */
-void sm1::free_prepared(sm1::prepared_t *list, size_t n) {
-  // Releasing NULL is a no-op.
-  if (!list) {
-    return;
-  }
-  // Free each gid.
-  for (size_t i = 0; i < n; i++) {
-    free(const_cast<char *>(list[i].gid));
-  }
-  // Free the array.
-  free(list);
 }
 
 /* Commit a prepared transaction by gid, from any session. */

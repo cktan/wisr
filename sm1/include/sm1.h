@@ -1,9 +1,9 @@
 /*
  * sm1.h -- the wisr storage manager's public C++ API, in
- * namespace sm1. It is being converted from C: byte strings and
- * lists still take their C shapes, and move to std::string_view
- * and std::vector in a later stage (DESIGN.md section 5 at the
- * top level).
+ * namespace sm1 (DESIGN.md section 5 at the top level). Names,
+ * keys and values travel as std::string_view, lists as
+ * std::vector; sm1::scan() alone keeps (pointer, length) bounds,
+ * since the empty key is a key and a NULL bound means none.
  *
  * API.md is the interface contract; SM1_DESIGN.md is the design
  * behind it.
@@ -45,7 +45,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace sm1 {
 
@@ -213,31 +215,6 @@ struct session_t;
 struct scan_t;
 
 /*
- * A counted, immutable list of names returned by a listing
- * call. Elements are NUL-terminated and owned by the list.
- * The list is one malloc() block; release the whole list with
- * one free().
- *
- * A list holds no engine state -- no lock, no snapshot, no
- * session reference -- so failing to free one leaks memory
- * and nothing else. This is unlike sm1::scan_t, where a
- * missed close pins the GC watermark.
- *
- * Names only. Keys and values may contain NUL and must not
- * travel in one.
- */
-struct strlist_t;
-
-/* The number of names in the list. */
-size_t strlist_count(const strlist_t* sl);
-
-/*
- * Name i, NUL-terminated and owned by the list, or NULL if
- * i is past the end. Valid until the list is freed.
- */
-const char* strlist_at(const strlist_t* sl, size_t i);
-
-/*
  * Isolation levels.
  *
  * READ UNCOMMITTED is deliberately absent: under MVCC there is
@@ -358,8 +335,8 @@ int mkdb(env_t* env, std::string_view dbname,
 int rmdb(env_t* env, std::string_view dbname);
 
 /*
- * List the databases in homedir, in bytewise order. On success
- * *out is a list to release with free().
+ * List the databases in homedir, in bytewise order, into out,
+ * which is replaced on success and untouched on failure.
  *
  * A database directory is named by number, so the names live
  * only in the root db: reading homedir will not tell a caller
@@ -367,7 +344,7 @@ int rmdb(env_t* env, std::string_view dbname);
  *
  * Errors: SM_ERR_NOMEM, SM_ERR_IO.
  */
-int lsdb(env_t* env, strlist_t** out);
+int lsdb(env_t* env, std::vector<std::string>& out);
 
 /*
  * Open the database dbname and start a session on it. The
@@ -701,7 +678,7 @@ int prepare(session_t* session, std::string_view gid);
 /* One unresolved prepared transaction, as listed below. */
 
 struct prepared_t {
-    const char* gid;
+    std::string gid;
     long long   prepared_at;   /* wall-clock, seconds since epoch */
 };
 
@@ -709,19 +686,15 @@ struct prepared_t {
  * List this database's unresolved prepared transactions,
  * including those restored from before a crash.
  *
- * On success *out points to *n entries allocated by the
- * library; release them with sm1::free_prepared(). *n may be 0,
- * in which case *out is NULL.
+ * On success out is replaced by the list, which may be empty;
+ * on failure it is untouched.
  *
  * Needs no active transaction and starts none.
  *
  * Errors: SM_ERR_NOMEM, SM_ERR_IO.
  */
-int list_prepared(session_t* session, prepared_t** out,
-                  size_t* n);
+int list_prepared(session_t* session, std::vector<prepared_t>& out);
 
-/* Release a list from sm1::list_prepared(). NULL is a no-op. */
-void free_prepared(prepared_t* list, size_t n);
 
 /*
  * Resolve a prepared transaction by global id, committing or
@@ -779,14 +752,13 @@ int rmstore(session_t* session, uint64_t storeid);
  * list is recorded as read, so a concurrent sm1::mkstore() or
  * sm1::rmstore() is a conflict.
  *
- * On success *out points to *n storeids in one malloc()
- * block; release it with free(). *n may be 0, in which case
- * *out is NULL.
+ * On success out is replaced by the storeids, which may be
+ * none; on failure it is untouched.
  *
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID,
  * SM_ERR_NOMEM, SM_ERR_CORRUPT, SM_ERR_IO.
  */
-int lsstore(session_t* session, uint64_t** out, size_t* n);
+int lsstore(session_t* session, std::vector<uint64_t>& out);
 
 /*
  * Write one row. All three calls require an active,

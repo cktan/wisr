@@ -12,7 +12,6 @@
 #include "error.h"
 #include "log.h"
 #include "session.h"
-#include "strlist.h"
 #include "version.h"
 
 #include <inttypes.h>
@@ -218,10 +217,10 @@ int rmdb(sm1::env_t *env, const char *dbname) {
 }
 
 /* sm1::lsdb, minus the out-of-memory guard. */
-int lsdb(sm1::env_t *env, sm1::strlist_t **out) {
-  // Reject NULL arguments.
-  if (!env || !out) {
-    return set_error(sm1::SM_ERR_INVALID, "sm1_lsdb: env or out is NULL");
+int lsdb(sm1::env_t *env, std::vector<std::string> &out) {
+  // Reject a NULL env.
+  if (!env) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_lsdb: env is NULL");
   }
   // Collect every database name.
   std::vector<std::string> names;
@@ -245,14 +244,8 @@ int lsdb(sm1::env_t *env, sm1::strlist_t **out) {
       return set_status_error(it->status(), "scan root db");
     }
   }
-  // Pack the names into one list.
-  sm1::strlist_t *sl = strlist_make(names);
-  // Fail if it could not be allocated.
-  if (!sl) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_lsdb: out of memory");
-  }
-  // Hand the list to the caller.
-  *out = sl;
+  // Hand the names to the caller.
+  out = std::move(names);
   return 0;
 }
 
@@ -810,7 +803,7 @@ int sm1::rmdb(sm1::env_t *env, std::string_view dbname_arg) {
 }
 
 /* List the databases in the home directory, in bytewise order. */
-int sm1::lsdb(sm1::env_t *env, sm1::strlist_t **out) {
+int sm1::lsdb(sm1::env_t *env, std::vector<std::string> &out) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return ::lsdb(env, out);

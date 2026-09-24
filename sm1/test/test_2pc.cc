@@ -73,15 +73,12 @@ int set(sm1::session_t *s, const std::string &key, const std::string &val) {
 
 /* The unresolved prepared transactions, as (gid, prepared_at). */
 std::vector<std::pair<std::string, long long>> listed(sm1::session_t *s) {
-  sm1::prepared_t *list = nullptr;
-  size_t n = 0;
-  REQUIRE(sm1::list_prepared(s, &list, &n) == 0);
+  std::vector<sm1::prepared_t> list;
+  REQUIRE(sm1::list_prepared(s, list) == 0);
   std::vector<std::pair<std::string, long long>> out;
-  for (size_t i = 0; i < n; i++) {
-    out.emplace_back(list[i].gid, list[i].prepared_at);
+  for (const sm1::prepared_t &p : list) {
+    out.emplace_back(p.gid, p.prepared_at);
   }
-  CHECK((n == 0) == (list == nullptr));
-  sm1::free_prepared(list, n);
   return out;
 }
 
@@ -133,14 +130,11 @@ void kill_after_report(pid_t pid, int fd) {
  * state.
  */
 uint64_t first_store(sm1::session_t *s) {
-  uint64_t *list = nullptr;
-  size_t n = 0;
-  if (sm1::lsstore(s, &list, &n) != 0 || n == 0) {
+  std::vector<uint64_t> list;
+  if (sm1::lsstore(s, list) != 0 || list.empty()) {
     return 0;
   }
-  uint64_t store = list[0];
-  free(list);
-  return store;
+  return list[0];
 }
 
 } // namespace
@@ -181,13 +175,11 @@ int orphan_child_main(const char *homedir) {
     return 2;
   }
   // The newest store is the last one sm1::lsstore lists.
-  uint64_t *list = nullptr;
-  size_t n = 0;
-  if (sm1::lsstore(s, &list, &n) != 0 || n < 2) {
+  std::vector<uint64_t> list;
+  if (sm1::lsstore(s, list) != 0 || list.size() < 2) {
     return 2;
   }
-  uint64_t newest = list[n - 1];
-  free(list);
+  uint64_t newest = list.back();
   uint64_t fresh = 0;
   if (sm1::rmstore(s, newest) != 0 || sm1::commit(s) != 0 ||
       sm1::begin(s, sm1::xctlevel_t::repeatable_read) != 0 ||

@@ -23,9 +23,6 @@
 #include "error.h"
 #include "session.h"
 
-#include <stdlib.h>
-#include <string.h>
-
 #include <new>
 #include <vector>
 
@@ -113,14 +110,7 @@ int rmstore(sm1::session_t *s, uint64_t storeid) {
 }
 
 /* sm1::lsstore, minus the out-of-memory guard. */
-int lsstore(sm1::session_t *s, uint64_t **out, size_t *n) {
-  // Require the out-parameters.
-  if (!out || !n) {
-    return set_error(sm1::SM_ERR_INVALID, "sm1_lsstore: out or n is NULL");
-  }
-  // Report an empty list until one is built.
-  *out = nullptr;
-  *n = 0;
+int lsstore(sm1::session_t *s, std::vector<uint64_t> &out) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -150,19 +140,8 @@ int lsstore(sm1::session_t *s, uint64_t **out, size_t *n) {
   if (r < 0) {
     return -1;
   }
-  // An empty list stays NULL.
-  if (ids.empty()) {
-    return 0;
-  }
-  // Copy the ids into memory the caller frees.
-  uint64_t *list =
-      static_cast<uint64_t *>(malloc(ids.size() * sizeof(uint64_t)));
-  if (!list) {
-    return set_error(sm1::SM_ERR_NOMEM, "sm1_lsstore: out of memory");
-  }
-  memcpy(list, ids.data(), ids.size() * sizeof(uint64_t));
-  *out = list;
-  *n = ids.size();
+  // Hand the storeids to the caller.
+  out = std::move(ids);
   return 0;
 }
 
@@ -200,10 +179,10 @@ int sm1::rmstore(sm1::session_t *session, uint64_t storeid) {
 }
 
 /* List the stores visible to the transaction. */
-int sm1::lsstore(sm1::session_t *session, uint64_t **out, size_t *n) {
+int sm1::lsstore(sm1::session_t *session, std::vector<uint64_t> &out) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
-    return ::lsstore(session, out, n);
+    return ::lsstore(session, out);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_lsstore: out of memory");
   }
