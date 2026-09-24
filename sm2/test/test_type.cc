@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <random>
 #include <string>
 #include <string_view>
@@ -146,9 +147,9 @@ template <typename F> void check_float_type(const sm2::type_t &t) {
 
 TEST_CASE("each type is found by its frozen code, and only by it") {
   // Verify the registry and each descriptor's fixed properties.
-  // 1. Codes 1 to 6 find bool, int2, int4, int8, float4 and
-  //    float8, whose name, width, by-value flag and alignment are
-  //    PostgreSQL's.
+  // 1. Codes 1 to 6 and 11 to 14 find bool, the integers, the
+  //    floats, date, time, timestamp and timestamptz, whose name,
+  //    width, by-value flag and alignment are PostgreSQL's.
   // 2. The slots not filled yet are null.
   // 3. Code 0, which is never a type, and codes not assigned yet
   //    find nothing.
@@ -157,8 +158,11 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     const char *name;
     int16_t len;
     uint8_t align;
-  } want[] = {{1, "bool", 1, 1}, {2, "int2", 2, 2},   {3, "int4", 4, 4},
-              {4, "int8", 8, 8}, {5, "float4", 4, 4}, {6, "float8", 8, 8}};
+  } want[] = {{1, "bool", 1, 1},       {2, "int2", 2, 2},
+              {3, "int4", 4, 4},       {4, "int8", 8, 8},
+              {5, "float4", 4, 4},     {6, "float8", 8, 8},
+              {11, "date", 4, 4},      {12, "time", 8, 8},
+              {13, "timestamp", 8, 8}, {14, "timestamptz", 8, 8}};
   for (auto &w : want) {
     CAPTURE(w.name);
     const sm2::type_t *t = sm2::type_by_code(w.code);
@@ -277,9 +281,11 @@ TEST_CASE("running out of memory in a type's in or out is SM_ERR_NOMEM") {
   // 2. So does out on a datum of the wrong width.
   // 3. With the budget restored, the same calls report
   //    SM_ERR_INVALID again.
-  for (uint8_t code = 1; code <= 6; code++) {
+  for (int code = 1; code < 256; code++) {
     const sm2::type_t *t = sm2::type_by_code(code);
-    REQUIRE(t);
+    if (!t) {
+      continue;
+    }
     CAPTURE(t->name);
     std::string datum, text;
     std::string wrong(t->len + 1, '\0');
@@ -297,5 +303,165 @@ TEST_CASE("running out of memory in a type's in or out is SM_ERR_NOMEM") {
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
     CHECK(t->out(wrong, -1, text) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  }
+}
+
+namespace {
+
+/* PostgreSQL's datetime bounds, as datums (TYPE.md §3.7-§3.9). */
+constexpr int32_t date_min = -2451545;          /* 4714-11-24 BC */
+constexpr int32_t date_max = 2145031948;        /* 5874897-12-31 */
+constexpr int64_t ts_min = -211813488000000000; /* 4714-11-24 BC */
+constexpr int64_t ts_max = 9223371331199999999; /* 294276-12-31 ... */
+constexpr int64_t usecs_per_day = 86400000000;
+
+/*
+ * Check a datetime type by property: every datum in [lo, hi], and
+ * the extra ones given, prints and reads back to itself, and cmp
+ * is the integers' order. Datums are drawn at the bounds, near
+ * them, and anywhere between.
+ */
+template <typename T>
+void check_datetime(const sm2::type_t &t, T lo, T hi, std::vector<T> extra) {
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  std::vector<T> values = extra;
+  for (T v : {lo, static_cast<T>(lo + 1), T{0}, static_cast<T>(hi - 1), hi}) {
+    values.push_back(v);
+  }
+  uint64_t span = static_cast<uint64_t>(hi) - static_cast<uint64_t>(lo) + 1;
+  for (int i = 0; i < property_runs; i++) {
+    values.push_back(static_cast<T>(static_cast<uint64_t>(lo) + rng() % span));
+  }
+  for (T v : values) {
+    std::string text, back;
+    REQUIRE(t.out(le_bytes(v), -1, text) == 0);
+    CAPTURE(text);
+    REQUIRE(t.in(text, -1, back) == 0);
+    CHECK(back == le_bytes(v));
+  }
+  for (size_t i = 0; i + 1 < values.size(); i++) {
+    T x = values[i], y = values[i + 1];
+    CHECK(sign(t.cmp(le_bytes(x), le_bytes(y), -1)) == (x > y) - (x < y));
+  }
+}
+
+/* t's out on the datum v, which must fail with SM_ERR_INVALID. */
+template <typename T> void expect_bad_datum(const sm2::type_t &t, T v) {
+  CAPTURE(v);
+  std::string text;
+  CHECK(t.out(le_bytes(v), -1, text) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+}
+
+} // namespace
+
+TEST_CASE("date, time and the timestamps round trip over their ranges") {
+  // Verify each datetime type by property, from test_seed().
+  // 1. Every datum in PostgreSQL's range, the infinities included
+  //    where the type has them, prints and reads back to itself.
+  // 2. cmp is the order of the underlying integers, so the
+  //    infinities sort at the ends.
+  const int32_t dinf = std::numeric_limits<int32_t>::max();
+  const int64_t tinf = std::numeric_limits<int64_t>::max();
+  check_datetime<int32_t>(sm2::type_date, date_min, date_max,
+                          {-dinf - 1, dinf});
+  check_datetime<int64_t>(sm2::type_time, 0, usecs_per_day, {});
+  check_datetime<int64_t>(sm2::type_timestamp, ts_min, ts_max,
+                          {-tinf - 1, tinf});
+  check_datetime<int64_t>(sm2::type_timestamptz, ts_min, ts_max,
+                          {-tinf - 1, tinf});
+}
+
+TEST_CASE("datetime text and datums outside PostgreSQL's range are refused") {
+  // Verify the range checks, one step past each end.
+  // 1. in refuses the day before the first date and after the
+  //    last, the microsecond before the first timestamp and the
+  //    first one past the last, and a time past 24:00:00.
+  // 2. out refuses the datums one past each end.
+  expect_bad_input(sm2::type_date, "4714-11-23 BC");
+  expect_bad_input(sm2::type_date, "5874898-01-01");
+  expect_bad_input(sm2::type_time, "24:00:00.000001");
+  expect_bad_input(sm2::type_timestamp, "4714-11-23 23:59:59.999999 BC");
+  expect_bad_input(sm2::type_timestamp, "294277-01-01 00:00:00");
+  expect_bad_input(sm2::type_timestamptz, "294277-01-01 00:00:00+00");
+
+  expect_bad_datum<int32_t>(sm2::type_date, date_min - 1);
+  expect_bad_datum<int32_t>(sm2::type_date, date_max + 1);
+  expect_bad_datum<int64_t>(sm2::type_time, -1);
+  expect_bad_datum<int64_t>(sm2::type_time, usecs_per_day + 1);
+  expect_bad_datum<int64_t>(sm2::type_timestamp, ts_min - 1);
+  expect_bad_datum<int64_t>(sm2::type_timestamp, ts_max + 1);
+  expect_bad_datum<int64_t>(sm2::type_timestamptz, ts_max + 1);
+}
+
+TEST_CASE("only PostgreSQL's ISO text is datetime input") {
+  // Verify in refuses every spelling PostgreSQL does not print
+  // under DateStyle ISO and, for timestamptz, TimeZone UTC.
+  // 1. Dates: impossible days, year 0, unpadded or overpadded
+  //    fields, other words for infinity, stray text.
+  // 2. Times: trailing zeros, missing seconds, an hour past 24.
+  // 3. Timestamps: a T, 24:00:00, BC in the wrong place, and a
+  //    zone on a timestamp.
+  // 4. Timestamptz: no zone, or any zone but +00.
+  for (std::string_view text :
+       {"", "2000-02-30", "2001-02-29", "0000-01-01", "2000-1-01", "2000-01-1",
+        "02000-01-01", "200-01-01", " 2000-01-01", "2000-01-01 ",
+        "2000-01-01 AD", "2000-01-01 bc", "Infinity", "+infinity", "-Infinity",
+        "today", "2000-01-01 00:00:00"}) {
+    CAPTURE(text);
+    expect_bad_input(sm2::type_date, text);
+  }
+  for (std::string_view text :
+       {"", "12:00:00.10", "12:00", "12:00:00.", "25:00:00", "12:60:00",
+        "12:00:60", "1:00:00", "12:00:00.1234567", "allballs", "12:00:00+00"}) {
+    CAPTURE(text);
+    expect_bad_input(sm2::type_time, text);
+  }
+  for (std::string_view text :
+       {"2000-01-01T00:00:00", "2000-01-01 24:00:00", "2000-01-01 00:00",
+        "2000-01-01", "2000-01-01 BC 00:00:00", "2000-01-01 00:00:00+00",
+        "2000-01-01 00:00:00.500"}) {
+    CAPTURE(text);
+    expect_bad_input(sm2::type_timestamp, text);
+  }
+  for (std::string_view text :
+       {"2000-01-01 00:00:00", "2000-01-01 00:00:00+01",
+        "2000-01-01 00:00:00-00", "2000-01-01 00:00:00Z",
+        "2000-01-01 00:00:00+00:00", "2000-01-01 00:00:00 BC+00"}) {
+    CAPTURE(text);
+    expect_bad_input(sm2::type_timestamptz, text);
+  }
+}
+
+TEST_CASE("a precision typmod bounds the fraction digits a text carries") {
+  // Verify time(p), timestamp(p) and timestamptz(p) input.
+  // 1. With p = 3, text with three fraction digits is accepted and
+  //    text with four is refused.
+  // 2. With p = 0, only whole seconds are accepted.
+  // 3. A typmod outside -1..6 is SM_ERR_INVALID, whatever the text.
+  struct {
+    const sm2::type_t *t;
+    const char *three, *four, *whole;
+  } cases[] = {
+      {&sm2::type_time, "12:00:00.123", "12:00:00.1234", "12:00:00"},
+      {&sm2::type_timestamp, "2000-01-01 12:00:00.123",
+       "2000-01-01 12:00:00.1234", "2000-01-01 12:00:00"},
+      {&sm2::type_timestamptz, "2000-01-01 12:00:00.123+00",
+       "2000-01-01 12:00:00.1234+00", "2000-01-01 12:00:00+00"},
+  };
+  for (auto &c : cases) {
+    CAPTURE(c.t->name);
+    std::string datum;
+    CHECK(c.t->in(c.three, 3, datum) == 0);
+    CHECK(c.t->in(c.four, 3, datum) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    CHECK(c.t->in(c.whole, 0, datum) == 0);
+    CHECK(c.t->in(c.three, 0, datum) == -1);
+    for (int32_t typmod : {-2, 7, 1000}) {
+      CAPTURE(typmod);
+      CHECK(c.t->in(c.whole, typmod, datum) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    }
   }
 }

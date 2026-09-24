@@ -181,7 +181,10 @@ with a PostgreSQL server and superuser rights; the build never
 touches PostgreSQL. The bytes hold on little-endian hosts only,
 which the fixture test asserts.
 
-The floats add 2,500 seeded random values each, since
+The date and time types add 500 seeded random values each,
+made by PostgreSQL itself, half within a few thousand years of
+2000 and half anywhere in range. The floats add 2,500 seeded
+random values each, since
 PostgreSQL's float text is not always the shortest decimal:
 2,000 random finite bit patterns and 500 integers just past
 the width's exact range, where most of the exceptions lie.

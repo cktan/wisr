@@ -18,6 +18,8 @@ set -euo pipefail
 export PGHOST=${PGHOST:-$HOME/pg18}
 export PGPORT=${PGPORT:-5418}
 export PGUSER=${PGUSER:-postgres}
+# The canonical text: ISO dates, timestamptz in UTC (sm2.h).
+export PGOPTIONS="-c DateStyle=ISO -c TimeZone=UTC"
 PSQL=${PSQL:-$HOME/pg18/bin/psql}
 DB=wisr_fixtures
 
@@ -59,6 +61,33 @@ PY
 TYPES[4]+=", $(random_floats 32)"
 TYPES[5]+=", $(random_floats 64)"
 
+TYPES+=(
+  "11|date|'-infinity', 'infinity', '2000-01-01', '1999-12-31', '2000-01-02', '1970-01-01', '2024-02-29', '0001-01-01', '0001-12-31 BC', '4713-11-24 BC', '4714-11-24 BC', '0999-12-31', '9999-12-31', '10000-01-01', '5874897-12-31'"
+  "12|time|'00:00:00', '24:00:00', '23:59:59.999999', '00:00:00.000001', '12:34:56.5', '12:00:00.1', '01:02:03.04'"
+  "13|timestamp|'-infinity', 'infinity', '2000-01-01 00:00:00', '1999-12-31 23:59:59.999999', '1970-01-01 00:00:00', '2024-02-29 12:34:56.789', '0001-01-01 00:00:00', '0001-12-31 23:59:59 BC', '4713-11-24 00:00:00 BC', '4714-11-24 00:00:00 BC', '294276-12-31 23:59:59.999999'"
+  "14|timestamptz|'-infinity', 'infinity', '2000-01-01 00:00:00+00', '1999-12-31 23:59:59.999999+00', '1970-01-01 00:00:00+00', '2024-02-29 12:34:56.789+00', '0001-01-01 00:00:00+00', '0001-12-31 23:59:59+00 BC', '4713-11-24 00:00:00+00 BC', '4714-11-24 00:00:00+00 BC', '294276-12-31 23:59:59.999999+00'"
+)
+
+# Seeded random values PostgreSQL itself makes, 500 per type: half
+# within a few thousand years of 2000, half anywhere in range.
+us="' microseconds')::interval"
+declare -A RANDOM_ROWS=(
+  [date]="SELECT DATE '2000-01-01' + CASE WHEN g % 2 = 0
+            THEN floor(random() * 4903090) - 2451545
+            ELSE floor(random() * 2147483493) - 2451545 END::int
+          FROM generate_series(1, 500) g"
+  [time]="SELECT TIME '00:00' + (floor(random() * 86400000000)::bigint || $us
+          FROM generate_series(1, 500)"
+  [timestamp]="SELECT TIMESTAMP '2000-01-01' + (CASE WHEN g % 2 = 0
+            THEN floor((random() * 2 - 1) * 1e17)
+            ELSE floor(random() * 9.4e18) - 2.1e17 END::bigint || $us
+          FROM generate_series(1, 500) g"
+  [timestamptz]="SELECT TIMESTAMPTZ '2000-01-01 00:00:00+00' + (CASE WHEN g % 2 = 0
+            THEN floor((random() * 2 - 1) * 1e17)
+            ELSE floor(random() * 9.4e18) - 2.1e17 END::bigint || $us
+          FROM generate_series(1, 500) g"
+)
+
 # A scratch database, made fresh for this run.
 "$PSQL" -q -d postgres -c "SET client_min_messages = warning" \
   -c "DROP DATABASE IF EXISTS $DB" \
@@ -94,6 +123,11 @@ for t in "${TYPES[@]}"; do
   # One table per type, one row per value, in insertion order.
   q -c "CREATE TABLE fx_$name (c $name)" \
     -c "INSERT INTO fx_$name VALUES ($(sed 's/, /), (/g' <<<"$values"))"
+  # Then the random ones, if the type has any.
+  if [[ -n "${RANDOM_ROWS[$name]:-}" ]]; then
+    q -c "SELECT setseed(0.20260924)" \
+      -c "INSERT INTO fx_$name ${RANDOM_ROWS[$name]}"
+  fi
   # Pair each row's text with its tuple's data bytes. The column
   # itself, not c::text, so that the text is the type's output
   # function's: a bool prints "t", but its cast to text is "true".

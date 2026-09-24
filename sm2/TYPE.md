@@ -270,6 +270,13 @@ PostgreSQL reserves the extreme values for `-infinity` and
 `infinity`; being the extremes, they sort at the ends of the
 range with no special handling.
 
+The text is PostgreSQL's under DateStyle ISO: `2000-01-01`,
+the year padded to at least four digits and a year before 1 AD
+followed by ` BC`. The range is PostgreSQL's, 4714-11-24 BC
+(Julian day 0) through 5874897-12-31; PostgreSQL's
+documentation calls the start "4713 BC", but its code starts a
+year earlier.
+
 ### 3.8 time
 
 Native is microseconds since midnight as `int64`, so the
@@ -277,6 +284,14 @@ range is `0` to `86400000000` inclusive — PostgreSQL admits
 `24:00:00`. The key is §3.2's `int8` key. The sign flip is a
 formality for a datum that is never negative, and is kept so
 that every fixed-width integer key is built the same way.
+
+The text is `HH:MM:SS`, with a fraction of up to six digits and
+no trailing zeros. A precision typmod `p`, 0 to 6, bounds the
+fraction's digits, as in `time(3)`: PostgreSQL rounds its input
+to `p` digits and so never prints more, and sm2 refuses text
+with more rather than rounding it, since only canonical text is
+input. A typmod of -1 allows six; any other is invalid. The same
+holds for the timestamps.
 
 ### 3.9 timestamp, timestamptz
 
@@ -286,6 +301,13 @@ in how they are rendered and in nothing else on disk, which
 is also PostgreSQL's arrangement. The key is §3.2's `int8`
 key, and PostgreSQL's reserved infinities sort at the ends as
 in §3.7.
+
+The text is a date and a time as in §3.7 and §3.8, joined by a
+space, with ` BC` last. `timestamptz` prints in UTC, as
+PostgreSQL does under TimeZone UTC — `2000-01-01 00:00:00+00` —
+since sm2 has no session time zone; showing a value in another
+zone is the caller's business. The range runs from 4714-11-24
+00:00:00 BC to 294276-12-31 23:59:59.999999.
 
 ### 3.10 interval
 

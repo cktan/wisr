@@ -38,8 +38,10 @@ struct type_t {
     /*
      * Parse PostgreSQL's canonical text for a value into its
      * datum, or fail with SM_ERR_INVALID. Only the canonical form
-     * -- what PostgreSQL prints, with DateStyle ISO and
-     * IntervalStyle iso_8601 -- is accepted (PLAN.md step 1).
+     * -- what PostgreSQL prints, with DateStyle ISO, IntervalStyle
+     * iso_8601 and, for timestamptz, TimeZone UTC -- is accepted
+     * (PLAN.md step 1). A precision typmod bounds the fraction
+     * digits a time or timestamp may carry (TYPE.md §3.8).
      */
     int (*in)(std::string_view text, int32_t typmod, std::string& datum);
 
@@ -65,12 +67,16 @@ struct type_t {
 };
 
 /* The types built so far. */
-extern const type_t type_bool;   /* code 1 */
-extern const type_t type_int2;   /* code 2 */
-extern const type_t type_int4;   /* code 3 */
-extern const type_t type_int8;   /* code 4 */
-extern const type_t type_float4; /* code 5 */
-extern const type_t type_float8; /* code 6 */
+extern const type_t type_bool;        /* code 1 */
+extern const type_t type_int2;        /* code 2 */
+extern const type_t type_int4;        /* code 3 */
+extern const type_t type_int8;        /* code 4 */
+extern const type_t type_float4;      /* code 5 */
+extern const type_t type_float8;      /* code 6 */
+extern const type_t type_date;        /* code 11 */
+extern const type_t type_time;        /* code 12 */
+extern const type_t type_timestamp;   /* code 13 */
+extern const type_t type_timestamptz; /* code 14 */
 
 /* The type with this code, or nullptr if there is none. */
 const type_t* type_by_code(uint8_t code);
