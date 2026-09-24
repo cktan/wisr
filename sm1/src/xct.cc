@@ -1348,9 +1348,15 @@ int sm1::forget(sm1::session_t *session, int depth) {
 }
 
 /* Prepare the active transaction under gid. */
-int sm1::prepare(sm1::session_t *session, const char *gid) {
+int sm1::prepare(sm1::session_t *session, std::string_view gid_arg) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
+    // Take the name as a C string, as the engine uses it.
+    std::string gid_str;
+    if (copy_name(gid_arg, "gid", gid_str) != 0) {
+      return -1;
+    }
+    const char *gid = gid_str.c_str();
     return ::prepare(session, gid);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_prepare: out of memory");
@@ -1383,9 +1389,15 @@ void sm1::free_prepared(sm1::prepared_t *list, size_t n) {
 }
 
 /* Commit a prepared transaction by gid, from any session. */
-int sm1::commit_prepared(sm1::session_t *session, const char *gid) {
+int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
+    // Take the name as a C string, as the engine uses it.
+    std::string gid_str;
+    if (copy_name(gid_arg, "gid", gid_str) != 0) {
+      return -1;
+    }
+    const char *gid = gid_str.c_str();
     // Require a session and a valid gid.
     if (!session || check_name(gid, sm1::max_gid, "gid") != 0) {
       return session ? -1 : set_error(sm1::SM_ERR_INVALID, "session is NULL");
@@ -1398,9 +1410,15 @@ int sm1::commit_prepared(sm1::session_t *session, const char *gid) {
 }
 
 /* Abort a prepared transaction by gid, from any session. */
-int sm1::abort_prepared(sm1::session_t *session, const char *gid) {
+int sm1::abort_prepared(sm1::session_t *session, std::string_view gid_arg) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
+    // Take the name as a C string, as the engine uses it.
+    std::string gid_str;
+    if (copy_name(gid_arg, "gid", gid_str) != 0) {
+      return -1;
+    }
+    const char *gid = gid_str.c_str();
     // Require a session and a valid gid.
     if (!session || check_name(gid, sm1::max_gid, "gid") != 0) {
       return session ? -1 : set_error(sm1::SM_ERR_INVALID, "session is NULL");

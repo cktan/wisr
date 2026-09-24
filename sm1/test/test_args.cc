@@ -63,13 +63,14 @@ void expect_null(const void *p, sm1::errnum_t e) {
 
 TEST_CASE("environment and database calls reject NULL and bad names") {
   // Verify argument checks outside any session.
-  // 1. sm1::attach with NULL or "" fails with SM_ERR_INVALID.
+  // 1. sm1::attach with a NUL byte in homedir, or "", fails with
+  //    SM_ERR_INVALID.
   // 2. A NULL env fails with SM_ERR_INVALID in sm1::mkdb, sm1::rmdb,
   //    sm1::lsdb, and sm1::opendb; so does a NULL out in sm1::lsdb.
-  // 3. sm1::rmdb and sm1::opendb reject NULL, empty, and over-long
-  //    database names with SM_ERR_INVALID.
+  // 3. sm1::rmdb and sm1::opendb reject names holding a NUL byte,
+  //    empty names, and over-long ones with SM_ERR_INVALID.
   args_fixture_t f;
-  expect_null(attach(nullptr), sm1::SM_ERR_INVALID);
+  expect_null(attach(std::string_view("a\0b", 3)), sm1::SM_ERR_INVALID);
   expect_null(attach(""), sm1::SM_ERR_INVALID);
 
   sm1::strlist_t *sl = nullptr;
@@ -80,8 +81,9 @@ TEST_CASE("environment and database calls reject NULL and bad names") {
   expect_null(opendb(nullptr, "db", nullptr), sm1::SM_ERR_INVALID);
 
   std::string over(sm1::max_dbname + 1, 'd');
-  for (const char *name : {(const char *)nullptr, "", over.c_str()}) {
-    CAPTURE(name ? name : "(null)");
+  for (std::string_view name : {std::string_view("x\0y", 3),
+                                std::string_view(""), std::string_view(over)}) {
+    CAPTURE(std::string(name));
     expect_fail(sm1::rmdb(f.env(), name), sm1::SM_ERR_INVALID);
     expect_null(opendb(f.env(), name, nullptr), sm1::SM_ERR_INVALID);
   }
@@ -306,14 +308,16 @@ TEST_CASE("out-parameters must not be NULL") {
 }
 
 TEST_CASE("resolving by gid validates the gid") {
-  // Verify sm1::commit_prepared and sm1::abort_prepared reject NULL,
-  // empty, and over-long gids with SM_ERR_INVALID, and report a
+  // Verify sm1::commit_prepared and sm1::abort_prepared reject gids
+  // holding a NUL byte, empty gids, and over-long ones with
+  // SM_ERR_INVALID, and report a
   // well-formed but unknown gid as SM_ERR_NOTFOUND.
   args_fixture_t f;
   sm1::session_t *s = f.s();
   std::string over(sm1::max_gid + 1, 'g');
-  for (const char *gid : {(const char *)nullptr, "", over.c_str()}) {
-    CAPTURE(gid ? gid : "(null)");
+  for (std::string_view gid : {std::string_view("x\0y", 3),
+                               std::string_view(""), std::string_view(over)}) {
+    CAPTURE(std::string(gid));
     expect_fail(sm1::commit_prepared(s, gid), sm1::SM_ERR_INVALID);
     expect_fail(sm1::abort_prepared(s, gid), sm1::SM_ERR_INVALID);
   }
@@ -386,8 +390,9 @@ TEST_CASE("a rejected call leaves the transaction active and unchanged") {
 }
 
 TEST_CASE("every sequence call validates its name") {
-  // Verify sequence names: NULL, "", and sm1::max_seqname + 1
-  // bytes fail with SM_ERR_INVALID; sm1::max_seqname bytes work.
+  // Verify sequence names: one holding a NUL byte, "", and
+  // sm1::max_seqname + 1 bytes fail with SM_ERR_INVALID;
+  // sm1::max_seqname bytes work.
   // 1. Each bad name is rejected by sm1::mkseq, sm1::rmseq, and
   //    sm1::nextseq.
   // 2. A sequence named with exactly sm1::max_seqname bytes can
@@ -397,8 +402,9 @@ TEST_CASE("every sequence call validates its name") {
   std::string over(sm1::max_seqname + 1, 's');
   uint64_t v = 0;
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  for (const char *name : {(const char *)nullptr, "", over.c_str()}) {
-    CAPTURE(name ? name : "(null)");
+  for (std::string_view name : {std::string_view("x\0y", 3),
+                                std::string_view(""), std::string_view(over)}) {
+    CAPTURE(std::string(name));
     expect_fail(sm1::mkseq(s, name, 1, 1), sm1::SM_ERR_INVALID);
     expect_fail(sm1::rmseq(s, name), sm1::SM_ERR_INVALID);
     expect_fail(sm1::nextseq(s, name, &v), sm1::SM_ERR_INVALID);

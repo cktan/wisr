@@ -23,7 +23,8 @@ TEST_CASE("sm1_init refuses a missing, non-directory, or empty homedir") {
   // Verify sm1::init validates homedir before creating anything.
   // 1. A path that does not exist fails with SM_ERR_NOTFOUND.
   // 2. A regular file fails with SM_ERR_INVALID.
-  // 3. NULL and "" fail with SM_ERR_INVALID.
+  // 3. A homedir holding a NUL byte, and "", fail with
+  //    SM_ERR_INVALID.
   tmpdir_t tmp;
   std::string missing = std::string(tmp.path()) + "/nope";
   CHECK(sm1::init(missing.c_str()) == -1);
@@ -36,7 +37,7 @@ TEST_CASE("sm1_init refuses a missing, non-directory, or empty homedir") {
   CHECK(sm1::init(file.c_str()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
-  CHECK(sm1::init(nullptr) == -1);
+  CHECK(sm1::init(std::string_view("a\0b", 3)) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1::init("") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
@@ -161,7 +162,7 @@ TEST_CASE("a successful call leaves the error state untouched") {
   // 2. Make a successful call.
   // 3. Confirm the code and message are unchanged.
   tmpdir_t tmp;
-  CHECK(sm1::init(nullptr) == -1);
+  CHECK(sm1::init("") == -1);
   std::string msg = sm1::errmsg();
   REQUIRE(sm1::init(tmp.path()) == 0);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);

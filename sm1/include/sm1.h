@@ -51,7 +51,9 @@ namespace sm1 {
 
 /*
  * Limits. A key or value beyond its bound, or a name outside
- * 1..bound bytes, fails with SM_ERR_INVALID.
+ * 1..bound bytes, fails with SM_ERR_INVALID. So does a name
+ * holding a NUL byte: names are passed as std::string_view, and
+ * the engine keeps them as C strings.
  *
  * max_dbname matches PostgreSQL's NAMEDATALEN - 1, so every
  * name PostgreSQL accepts for a database is one wisr accepts,
@@ -284,7 +286,7 @@ struct options_t {
  * process. It takes no lock and opens nothing. Returns 0, or
  * -1 with SM_ERR_EXISTS if homedir is already a wisr home.
  */
-int init(const char* homedir);
+int init(std::string_view homedir);
 
 /*
  * Create an environment on a home directory sm1::init() has
@@ -302,7 +304,7 @@ int init(const char* homedir);
  * aborts. A bad_alloc from inside RocksDB leaves it unreliable,
  * and only a fresh open's WAL replay recovers safely.
  */
-int attach(const char* homedir, env_t*& out);
+int attach(std::string_view homedir, env_t*& out);
 
 /*
  * Release an environment, leaving the home directory intact.
@@ -339,7 +341,8 @@ int detach(env_t* env, int force);
  * Errors: SM_ERR_EXISTS, SM_ERR_PERMISSION, SM_ERR_DISKFULL,
  * SM_ERR_IO, SM_ERR_INVALID.
  */
-int mkdb(env_t* env, const char* dbname, const options_t* opt);
+int mkdb(env_t* env, std::string_view dbname,
+         const options_t* opt = nullptr);
 
 /*
  * Delete the database dbname and all of its data. THIS IS
@@ -352,7 +355,7 @@ int mkdb(env_t* env, const char* dbname, const options_t* opt);
  * Errors: SM_ERR_INUSE, SM_ERR_NOTFOUND, SM_ERR_PERMISSION,
  * SM_ERR_IO, SM_ERR_INVALID.
  */
-int rmdb(env_t* env, const char* dbname);
+int rmdb(env_t* env, std::string_view dbname);
 
 /*
  * List the databases in homedir, in bytewise order. On success
@@ -383,7 +386,7 @@ int lsdb(env_t* env, strlist_t** out);
  * SM_ERR_NOTFOUND, SM_ERR_CORRUPT, SM_ERR_PERMISSION,
  * SM_ERR_NOMEM, SM_ERR_IO, SM_ERR_INVALID.
  */
-int opendb(env_t* env, const char* dbname, session_t*& out,
+int opendb(env_t* env, std::string_view dbname, session_t*& out,
            const options_t* opt = nullptr);
 
 /*
@@ -402,7 +405,7 @@ int opendb(env_t* env, const char* dbname, session_t*& out,
  * (retryable -- concurrently created), SM_ERR_INVALID,
  * SM_ERR_PREPARED, SM_ERR_DISKFULL, SM_ERR_IO.
  */
-int mkseq(session_t* session, const char* name,
+int mkseq(session_t* session, std::string_view name,
           uint64_t start, uint64_t increment);
 
 /*
@@ -411,7 +414,7 @@ int mkseq(session_t* session, const char* name,
  * Errors: SM_ERR_NOTFOUND, SM_ERR_NOTRANS, SM_ERR_CONFLICT
  * (retryable), SM_ERR_INVALID, SM_ERR_PREPARED.
  */
-int rmseq(session_t* session, const char* name);
+int rmseq(session_t* session, std::string_view name);
 
 /*
  * Hand out the sequence's next value in *out.
@@ -437,7 +440,7 @@ int rmseq(session_t* session, const char* name);
  * stopped, or persisting the next block failed),
  * SM_ERR_DISKFULL.
  */
-int nextseq(session_t* session, const char* name,
+int nextseq(session_t* session, std::string_view name,
             uint64_t* out);
 
 /*
@@ -694,7 +697,7 @@ int forget(session_t* session, int depth);
  * aborted and NOT prepared), SM_ERR_NOTRANS, SM_ERR_EXISTS
  * (gid in use), SM_ERR_INVALID, SM_ERR_IO (outcome unknown).
  */
-int prepare(session_t* session, const char* gid);
+int prepare(session_t* session, std::string_view gid);
 
 /* One unresolved prepared transaction, as listed below. */
 
@@ -733,8 +736,8 @@ void free_prepared(prepared_t* list, size_t n);
  * Errors: SM_ERR_NOTFOUND (no unresolved prepared transaction
  * with that gid), SM_ERR_DISKFULL, SM_ERR_IO.
  */
-int commit_prepared(session_t* session, const char* gid);
-int abort_prepared(session_t* session, const char* gid);
+int commit_prepared(session_t* session, std::string_view gid);
+int abort_prepared(session_t* session, std::string_view gid);
 
 /*
  * Create a store -- an ordered map from key to value -- and

@@ -160,6 +160,17 @@ int check_name(const char *name, size_t max, const char *what) {
   return 0;
 }
 
+/* Copy a name argument into out, refusing an embedded NUL. */
+int copy_name(std::string_view name, const char *what, std::string &out) {
+  // A NUL would end the name early in every C-string use of it.
+  if (name.find('\0') != std::string_view::npos) {
+    return set_error(sm1::SM_ERR_INVALID, "{} name holds a NUL byte", what);
+  }
+  // Copy it, terminated.
+  out.assign(name);
+  return 0;
+}
+
 } // namespace wisr
 
 namespace sm1 {

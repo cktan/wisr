@@ -82,7 +82,7 @@ TEST_CASE("sm1_mkdb rejects a duplicate or badly sized name") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1::mkdb(home.env(), "", nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::mkdb(home.env(), nullptr, nullptr) == -1);
+  CHECK(sm1::mkdb(home.env(), std::string_view("d\0b", 3)) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 

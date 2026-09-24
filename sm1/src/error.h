@@ -14,6 +14,7 @@
 #include <stddef.h>
 
 #include <format>
+#include <string>
 #include <string_view>
 
 #include <rocksdb/status.h>
@@ -53,6 +54,14 @@ int set_status_error(const rocksdb::Status &s, const char *what);
  * name in the message ("database", "store").
  */
 int check_name(const char *name, size_t max, const char *what);
+
+/*
+ * Copy a name argument into out, NUL-terminated, for the engine's
+ * C-string internals. Returns 0, or -1 with SM_ERR_INVALID if it
+ * holds a NUL byte, which no name may; what names the kind of
+ * name in the message ("database", "sequence").
+ */
+int copy_name(std::string_view name, const char *what, std::string &out);
 
 } // namespace wisr
 

@@ -777,9 +777,16 @@ wisr::db_t::~db_t() {
 }
 
 /* Create the database dbname. */
-int sm1::mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
+int sm1::mkdb(sm1::env_t *env, std::string_view dbname_arg,
+              const sm1::options_t *opt) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
+    // Take the name as a C string, as the engine uses it.
+    std::string dbname_str;
+    if (copy_name(dbname_arg, "database", dbname_str) != 0) {
+      return -1;
+    }
+    const char *dbname = dbname_str.c_str();
     return ::mkdb(env, dbname, opt);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_mkdb: out of memory");
@@ -787,9 +794,15 @@ int sm1::mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
 }
 
 /* Delete the database dbname and all of its data. */
-int sm1::rmdb(sm1::env_t *env, const char *dbname) {
+int sm1::rmdb(sm1::env_t *env, std::string_view dbname_arg) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
+    // Take the name as a C string, as the engine uses it.
+    std::string dbname_str;
+    if (copy_name(dbname_arg, "database", dbname_str) != 0) {
+      return -1;
+    }
+    const char *dbname = dbname_str.c_str();
     return ::rmdb(env, dbname);
   } catch (const std::bad_alloc &) {
     return set_error(sm1::SM_ERR_NOMEM, "sm1_rmdb: out of memory");

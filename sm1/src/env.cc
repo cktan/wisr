@@ -269,9 +269,15 @@ int env_destroy_db_dir(const std::string &path) {
 } // namespace wisr
 
 /* Make homedir a wisr home directory: global/, base/, root db. */
-int sm1::init(const char *homedir) {
+int sm1::init(std::string_view homedir_arg) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
+    // Take the name as a C string, as the engine uses it.
+    std::string homedir_str;
+    if (copy_name(homedir_arg, "home directory", homedir_str) != 0) {
+      return -1;
+    }
+    const char *homedir = homedir_str.c_str();
     // Validate the home directory path.
     if (check_homedir(homedir) != 0) {
       return -1;
@@ -335,7 +341,7 @@ int sm1::init(const char *homedir) {
 }
 
 /* Create an environment on an initialized home directory. */
-int sm1::attach(const char *homedir, sm1::env_t *&out) {
+int sm1::attach(std::string_view homedir_arg, sm1::env_t *&out) {
   // Make running out of memory fatal, unless the host process
   // already has an out-of-memory policy of its own.
   if (!std::get_new_handler()) {
@@ -343,6 +349,12 @@ int sm1::attach(const char *homedir, sm1::env_t *&out) {
   }
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
+    // Take the name as a C string, as the engine uses it.
+    std::string homedir_str;
+    if (copy_name(homedir_arg, "home directory", homedir_str) != 0) {
+      return -1;
+    }
+    const char *homedir = homedir_str.c_str();
     // Attach, handing the environment back only on success.
     sm1::env_t *env = ::attach(homedir);
     if (!env) {

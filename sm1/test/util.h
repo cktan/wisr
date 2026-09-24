@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 /* A fresh directory under the system temp dir, removed at scope exit. */
@@ -42,14 +43,14 @@ private:
  * sm1::attach, handing back the environment, or nullptr with the
  * error set: the shape tests check it in.
  */
-inline sm1::env_t *attach(const char *homedir) {
+inline sm1::env_t *attach(std::string_view homedir) {
   sm1::env_t *env = nullptr;
   attach(homedir, env);
   return env;
 }
 
 /* sm1::opendb, handing back the session, or nullptr with the error set. */
-inline sm1::session_t *opendb(sm1::env_t *env, const char *dbname,
+inline sm1::session_t *opendb(sm1::env_t *env, std::string_view dbname,
                               const sm1::options_t *opt = nullptr) {
   sm1::session_t *s = nullptr;
   opendb(env, dbname, s, opt);

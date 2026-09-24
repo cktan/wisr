@@ -142,7 +142,7 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1::nextseq(s, SEQ, nullptr) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::nextseq(s, nullptr, &out) == -1);
+  CHECK(sm1::nextseq(s, std::string_view("s\0q", 3), &out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 

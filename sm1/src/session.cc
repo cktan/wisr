@@ -92,10 +92,16 @@ sm1::session_t *open_session(sm1::env_t *env, const char *dbname,
 } // namespace
 
 /* Open dbname and start a session on it. */
-int sm1::opendb(sm1::env_t *env, const char *dbname, sm1::session_t *&out,
-                const sm1::options_t *opt) {
+int sm1::opendb(sm1::env_t *env, std::string_view dbname_arg,
+                sm1::session_t *&out, const sm1::options_t *opt) {
   // Report an allocation failure as SM_ERR_NOMEM.
   try {
+    // Take the name as a C string, as the engine uses it.
+    std::string dbname_str;
+    if (copy_name(dbname_arg, "database", dbname_str) != 0) {
+      return -1;
+    }
+    const char *dbname = dbname_str.c_str();
     // Open the session, handing it back only on success.
     sm1::session_t *s = open_session(env, dbname, opt);
     if (!s) {
