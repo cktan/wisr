@@ -16,10 +16,11 @@ Two kinds of entry, and the difference matters:
 Ordered by the step of `PLAN.md` each one blocks. Sections 1
 to 3 — the suggested answers in `SM2_OBJECTIVE.md`, types, and
 key encoding — are answered and have moved into `SM2_DESIGN.md`,
-`TYPE.md` and `sm3/SM3_DESIGN.md`, and 6.1, 6.2 and 6.3 — the
-build, the property tests and the PostgreSQL fixtures — into
-`PLAN.md`; the numbering of what remains is kept so that a
-question's number never changes.
+`TYPE.md` and `sm3/SM3_DESIGN.md`; 5.1 and 5.3 — the header
+and sm2's errors — into `SM2_DESIGN.md` §5; and 6.1, 6.2 and
+6.3 — the build, the property tests and the PostgreSQL fixtures
+— into `PLAN.md`. The numbering of what remains is kept so that
+a question's number never changes.
 
 ---
 
@@ -77,17 +78,6 @@ touched (`sm1/SM1_DESIGN.md` §13). → `SM2_DESIGN.md` §4
 
 ## 5. The `rel` API — blocks `PLAN.md` step 4
 
-**5.1 [ASSUMABLE] What is the header called, and what prefix
-do the symbols take?**
-`SM2_DESIGN.md` uses bare `rel_insert` and `tuple_encode`, which
-will share one binary with sm1 and sm3.
-*Suggested: `sm2/include/sm2.h`, a C++ header with
-everything in namespace `sm2` — `sm2::rel_insert`,
-`sm2::tuple_encode` — and the documents keep the short names
-for readability, saying so once.* A prefix is no longer
-needed: only the top level exposes C (`OBJECTIVE.md` at the
-top level). → `SM2_DESIGN.md` §5
-
 **5.2 [ASSUMABLE] Who owns a decoded datum's memory?**
 sm1's rule is that handed-out byte strings point into
 engine-owned memory, are not NUL-terminated, must not be
@@ -96,15 +86,6 @@ freed, and have a stated validity window.
 next call on this `rel`", which is what sm1 does for
 `sm1::read`.* A codec that allocates per datum will dominate the
 profile of every scan. → `SM2_DESIGN.md` §5
-
-**5.3 [ASSUMABLE] Does sm2 get its own error space?**
-`SM2_DESIGN.md` §5 says sm1's errors pass through untranslated,
-but sm2 has failures of its own: a key over the limit, a datum
-that does not match its column's type, an unknown schema
-version, a corrupt tuple.
-*Suggested: extend sm1's `sm1::errnum()` rather than invent a
-second mechanism, with sm2's codes in a reserved range, so one
-`sm1::errmsg()` serves the whole stack.* → `SM2_DESIGN.md` §5
 
 **5.4 [ASSUMABLE] Does sm2 enforce `NOT NULL`?**
 The tuple has a null bitmap, so it *can*.
@@ -197,3 +178,6 @@ Settled, and listed so nobody reopens them by accident:
 - That the PostgreSQL fixtures are PostgreSQL 18's on-disk
   bytes, read through `pageinspect` on the development machine
   and checked in — `PLAN.md`, "Testing".
+- That sm2's interface is `include/sm2.h` in `namespace sm2`,
+  and its failures go through sm1's error state with codes of
+  its own appended to `sm1::errnum_t` — `SM2_DESIGN.md` §5.

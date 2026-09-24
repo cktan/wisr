@@ -695,6 +695,17 @@ The rules it must satisfy:
   newest image (`sm1/SM1_DESIGN.md` §5.4), and filters live above
   sm2; `rel_read_latest` is what sm2 provides so sm3 can do it
   (`sm3/SM3_DESIGN.md` §3).
+- **sm2's own failures go through sm1's error state.** A key
+  over the limit, a datum that does not match its column's
+  type, an unknown schema version, a corrupt tuple: sm2
+  records each with `sm1::seterr`, its codes appended to
+  `sm1::errnum_t` under a comment naming sm2, so one
+  `sm1::errmsg()` serves the whole stack (`DESIGN.md` §5 at the
+  top level).
+- **The interface is `include/sm2.h`, in `namespace sm2`**, as
+  every level's is (`OBJECTIVE.md` at the top level):
+  `sm2::rel_insert`, `sm2::tuple_encode`. This document writes
+  the short names — `rel_insert` for `sm2::rel_insert`.
 - **Every column is in the tuple.** An encoded key — the
   primary key index's or any other's — is an ordering device,
   not storage, so an indexed column is written twice: encoded
