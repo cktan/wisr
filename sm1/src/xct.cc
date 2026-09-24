@@ -21,6 +21,7 @@
 
 #include "error.h"
 #include "log.h"
+#include "oom.h"
 #include "session.h"
 #include "sm1_codec.h"
 #include "sm1_defer.h"
@@ -1263,30 +1264,50 @@ void xct_end_scans(sm1::session_t *s) {
 
 /* Begin a transaction at level. */
 int sm1::begin(sm1::session_t *session, sm1::xctlevel_t level) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
   return ::begin(session, level);
 }
 
 /* Commit the active transaction. */
-int sm1::commit(sm1::session_t *session) { return ::commit(session); }
+int sm1::commit(sm1::session_t *session) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  return ::commit(session);
+}
 
 /* Read the rest of this statement at one snapshot. */
-int sm1::stmt_begin(sm1::session_t *session) { return ::stmt_begin(session); }
+int sm1::stmt_begin(sm1::session_t *session) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  return ::stmt_begin(session);
+}
 
 /* Set the session's one savepoint. */
-int sm1::savepoint(sm1::session_t *session) { return ::savepoint(session); }
+int sm1::savepoint(sm1::session_t *session) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  return ::savepoint(session);
+}
 
 /* Undo every write made since the savepoint at depth. */
 int sm1::rollback(sm1::session_t *session, int depth) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
   return ::rollback(session, depth);
 }
 
 /* Forget the savepoint at depth, and those inside it. */
 int sm1::forget(sm1::session_t *session, int depth) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
   return ::forget(session, depth);
 }
 
 /* Prepare the active transaction under gid. */
 int sm1::prepare(sm1::session_t *session, std::string_view gid_arg) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string gid_str;
   if (copy_name(gid_arg, "gid", gid_str) != 0) {
@@ -1299,11 +1320,15 @@ int sm1::prepare(sm1::session_t *session, std::string_view gid_arg) {
 /* List the unresolved prepared transactions. */
 int sm1::list_prepared(sm1::session_t *session,
                        std::vector<sm1::prepared_t> &out) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
   return ::list_prepared(session, out);
 }
 
 /* Commit a prepared transaction by gid, from any session. */
 int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string gid_str;
   if (copy_name(gid_arg, "gid", gid_str) != 0) {
@@ -1320,6 +1345,8 @@ int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
 
 /* Abort a prepared transaction by gid, from any session. */
 int sm1::abort_prepared(sm1::session_t *session, std::string_view gid_arg) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string gid_str;
   if (copy_name(gid_arg, "gid", gid_str) != 0) {
@@ -1335,4 +1362,8 @@ int sm1::abort_prepared(sm1::session_t *session, std::string_view gid_arg) {
 }
 
 /* Abort the active transaction. */
-int sm1::abort(sm1::session_t *session) { return abort_xct(session); }
+int sm1::abort(sm1::session_t *session) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  return abort_xct(session);
+}

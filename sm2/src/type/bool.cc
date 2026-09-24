@@ -10,23 +10,27 @@ namespace {
 
 /* Parse "t" or "f", PostgreSQL's canonical bool text. */
 int bool_in(std::string_view text, int32_t, std::string &datum) {
-  if (text == "t" || text == "f") {
-    datum.assign(1, text == "t" ? '\1' : '\0');
-    return 0;
-  }
-  return sm2::bad_input("bool", text);
+  return sm2::catch_nomem([&] {
+    if (text == "t" || text == "f") {
+      datum.assign(1, text == "t" ? '\1' : '\0');
+      return 0;
+    }
+    return sm2::bad_input("bool", text);
+  });
 }
 
 /* Print a bool datum as "t" or "f"; any byte but 0 or 1 is invalid. */
 int bool_out(std::string_view datum, int32_t, std::string &text) {
-  if (datum.size() != 1) {
-    return sm2::bad_datum("bool", datum, 1);
-  }
-  if (datum[0] != '\0' && datum[0] != '\1') {
-    return sm2::bad_input("bool", datum);
-  }
-  text = datum[0] ? "t" : "f";
-  return 0;
+  return sm2::catch_nomem([&] {
+    if (datum.size() != 1) {
+      return sm2::bad_datum("bool", datum, 1);
+    }
+    if (datum[0] != '\0' && datum[0] != '\1') {
+      return sm2::bad_input("bool", datum);
+    }
+    text = datum[0] ? "t" : "f";
+    return 0;
+  });
 }
 
 /* false before true. */

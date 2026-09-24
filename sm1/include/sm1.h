@@ -276,10 +276,12 @@ int init(std::string_view homedir);
  * environment in *out, or -1 on error.
  *
  * Unless the process already has one, installs a new-handler
- * (std::set_new_handler) that makes running out of memory fatal:
- * it reports "*** FATAL ***" on stderr and to the log hook, then
- * aborts. A bad_alloc from inside RocksDB leaves it unreliable,
- * and only a fresh open's WAL replay recovers safely.
+ * (std::set_new_handler) that makes running out of memory inside
+ * sm1 fatal: it reports "*** FATAL ***" on stderr and to the log
+ * hook, then aborts. A bad_alloc from inside RocksDB leaves it
+ * unreliable, and only a fresh open's WAL replay recovers safely.
+ * Outside sm1 the handler throws std::bad_alloc, for the levels
+ * above to report as SM_ERR_NOMEM.
  */
 int attach(std::string_view homedir, env_t*& out);
 

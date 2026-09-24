@@ -139,15 +139,19 @@ longer active, whatever the result. `sm1::prepare`: on
 #### Running out of memory
 
 `sm1::attach` installs a new-handler, unless the process
-already has one, that makes running out of memory fatal: it
-reports `*** FATAL ***` on stderr and to the log hook, then
-aborts, so `operator new` never throws. A `std::bad_alloc`
-thrown from inside RocksDB leaves it unreliable, and only a
-fresh open's WAL replay recovers safely. Under a host's own
-handler that throws, a `std::bad_alloc` propagates out of the
-call, since sm1 catches nothing at its entry points, and the
-caller aborts the session's transaction, as the top level's C
-wrapper does (`DESIGN.md` §5 at the top level).
+already has one, that makes running out of memory inside sm1
+fatal: while a thread is in an sm1 call, or on sm1's GC thread,
+a failing allocation reports `*** FATAL ***` on stderr and to
+the log hook, then aborts, so no sm1 call ever throws
+`std::bad_alloc`. A `std::bad_alloc` thrown from inside RocksDB
+leaves it unreliable, and only a fresh open's WAL replay
+recovers safely. Outside sm1 the handler throws
+`std::bad_alloc`, as `operator new` would with no handler, for
+the levels above to report as `SM_ERR_NOMEM`. Under a host's
+own handler that throws, a `std::bad_alloc` propagates out of
+the call, since sm1 catches nothing at its entry points, and
+the caller aborts the session's transaction, as the top
+level's C wrapper does (`DESIGN.md` §5 at the top level).
 
 ### Memory and lifetimes
 
@@ -435,10 +439,11 @@ only once to a given `homedir`.
 
 Unless the process already has one, `sm1::attach` installs a
 new-handler (`std::set_new_handler`) that makes running out
-of memory fatal: it reports `*** FATAL ***` on stderr and to
-the log hook, then aborts. A `std::bad_alloc` thrown from
-inside RocksDB leaves it unreliable, and only a fresh open's
-WAL replay recovers safely (`DESIGN.md` §5 at the top level).
+of memory inside sm1 fatal: it reports `*** FATAL ***` on
+stderr and to the log hook, then aborts. A `std::bad_alloc`
+thrown from inside RocksDB leaves it unreliable, and only a
+fresh open's WAL replay recovers safely (`DESIGN.md` §5 at the
+top level). Outside sm1 the handler throws `std::bad_alloc`.
 A process that installs its own handler first keeps it.
 
 Returns 0 with the environment in `out`, or -1 on error:

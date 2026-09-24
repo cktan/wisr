@@ -15,6 +15,7 @@
 #include <cstring>
 
 #include <bit>
+#include <new>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -51,6 +52,19 @@ template <typename T> void store_le(T v, std::string &datum) {
     v = byte_swap(v);
   }
   datum.assign(reinterpret_cast<const char *>(&v), sizeof(T));
+}
+
+/*
+ * f(), or -1 with SM_ERR_NOMEM if it runs out of memory: a type's
+ * in and out are sm2 entry points (SM2_DESIGN.md §5). Recording
+ * the error allocates nothing.
+ */
+template <typename F> int catch_nomem(F f) {
+  try {
+    return f();
+  } catch (const std::bad_alloc &) {
+    return sm1::seterr(sm1::SM_ERR_NOMEM, "out of memory");
+  }
 }
 
 /* Fail with SM_ERR_INVALID: text is not a valid value of type. */

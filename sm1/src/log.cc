@@ -12,6 +12,7 @@
 #include "log.h"
 
 #include "error.h"
+#include "oom.h"
 
 #include <atomic>
 #include <mutex>
@@ -50,6 +51,8 @@ void log_v(sm1::loglevel_t level, std::string_view fmt, std::format_args args) {
 
 /* Install or remove the process-wide log hook. */
 void sm1::set_log(sm1::log_fn fn, void *arg) {
+  // Inside sm1: running out of memory is fatal.
+  wisr::in_sm1_t in_sm1;
   // Swap the hook under its mutex, so no call sees half of it.
   std::lock_guard<std::mutex> guard(g_log_mu);
   g_log_fn = fn;

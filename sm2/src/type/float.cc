@@ -87,11 +87,11 @@ template <typename F> int float_cmp(std::string_view a, std::string_view b) {
 
 /* Parse a float4's canonical text. */
 int float4_in(std::string_view t, int32_t, std::string &d) {
-  return float_in<float>("float4", t, d);
+  return sm2::catch_nomem([&] { return float_in<float>("float4", t, d); });
 }
 /* Print a float4 datum. */
 int float4_out(std::string_view d, int32_t, std::string &t) {
-  return float_out<float>("float4", d, t);
+  return sm2::catch_nomem([&] { return float_out<float>("float4", d, t); });
 }
 /* Order two float4 datums. */
 int float4_cmp(std::string_view a, std::string_view b, int32_t) {
@@ -100,11 +100,11 @@ int float4_cmp(std::string_view a, std::string_view b, int32_t) {
 
 /* Parse a float8's canonical text. */
 int float8_in(std::string_view t, int32_t, std::string &d) {
-  return float_in<double>("float8", t, d);
+  return sm2::catch_nomem([&] { return float_in<double>("float8", t, d); });
 }
 /* Print a float8 datum. */
 int float8_out(std::string_view d, int32_t, std::string &t) {
-  return float_out<double>("float8", d, t);
+  return sm2::catch_nomem([&] { return float_out<double>("float8", d, t); });
 }
 /* Order two float8 datums. */
 int float8_cmp(std::string_view a, std::string_view b, int32_t) {

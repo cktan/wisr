@@ -7,11 +7,15 @@
 #include "util.h"
 
 #include "env.h"
+#include "oom.h"
 #include "sm1.h"
 #include "sm1_codec.h"
 
+#include <signal.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <filesystem>
 #include <new>
@@ -48,7 +52,53 @@ namespace {
 /* A host process's own out-of-memory policy, for the test below. */
 void host_oom_handler() { throw std::bad_alloc(); }
 
+/*
+ * Run `test_wisr --oom-child homedir` and wait for it; returns its
+ * wait status, with everything it wrote to stderr in err.
+ */
+int run_oom_child(const char *homedir, std::string &err) {
+  int fds[2];
+  REQUIRE(pipe(fds) == 0);
+  pid_t pid = fork();
+  REQUIRE(pid >= 0);
+  if (pid == 0) {
+    // In the child: stderr becomes the pipe, then exec.
+    dup2(fds[1], 2);
+    close(fds[0]);
+    close(fds[1]);
+    execl("/proc/self/exe", "test_wisr", "--oom-child", homedir,
+          (char *)nullptr);
+    _exit(127);
+  }
+  close(fds[1]);
+  // Collect its stderr until it exits.
+  char buf[512];
+  ssize_t n;
+  while ((n = read(fds[0], buf, sizeof(buf))) > 0) {
+    err.append(buf, n);
+  }
+  close(fds[0]);
+  int status;
+  REQUIRE(waitpid(pid, &status, 0) == pid);
+  return status;
+}
+
 } // namespace
+
+/*
+ * The out-of-memory child: attach, so sm1's new-handler is
+ * installed, then run out of memory inside sm1. Never returns.
+ */
+int oom_child_main(const char *homedir) {
+  sm1::env_t *env;
+  if (sm1::attach(homedir, env) != 0) {
+    return 2;
+  }
+  // Fail an allocation while marked inside sm1.
+  wisr::in_sm1_t in_sm1;
+  std::get_new_handler()();
+  return 3;
+}
 
 TEST_CASE(
     "sm1_attach makes running out of memory fatal, unless the host decided") {
@@ -69,6 +119,40 @@ TEST_CASE(
     CHECK(std::get_new_handler() == host_oom_handler);
   }
   std::set_new_handler(saved);
+}
+
+TEST_CASE("running out of memory outside sm1 throws, for sm2 to report") {
+  // Verify the handler sm1::attach installs leaves a failure
+  // outside sm1 to the caller (the top-level DESIGN.md §5).
+  // 1. Attach with no new-handler set, so sm1's is installed.
+  // 2. Outside any sm1 call, the handler throws std::bad_alloc.
+  // 3. Restore the handler the test binary had.
+  std::new_handler saved = std::get_new_handler();
+  std::set_new_handler(nullptr);
+  {
+    home_t home;
+    std::new_handler h = std::get_new_handler();
+    REQUIRE(h != nullptr);
+    CHECK_THROWS_AS(h(), std::bad_alloc);
+  }
+  std::set_new_handler(saved);
+}
+
+TEST_CASE("running out of memory inside sm1 aborts the process, loudly") {
+  // Verify the handler is fatal on a thread inside sm1, in a child
+  // process, since it aborts.
+  // 1. Initialize a home directory for the child.
+  // 2. The child attaches, marks itself inside sm1, and runs out
+  //    of memory.
+  // 3. It dies of SIGABRT, having said *** FATAL *** on stderr.
+  tmpdir_t tmp;
+  REQUIRE(sm1::init(tmp.path()) == 0);
+  std::string err;
+  int status = run_oom_child(tmp.path(), err);
+  CAPTURE(err);
+  REQUIRE(WIFSIGNALED(status));
+  CHECK(WTERMSIG(status) == SIGABRT);
+  CHECK(err.find("*** FATAL *** out of memory") != std::string::npos);
 }
 
 TEST_CASE("sm1_init runs once per home directory") {

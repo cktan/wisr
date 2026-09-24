@@ -702,6 +702,12 @@ The rules it must satisfy:
   `sm1::errnum_t` under a comment naming sm2, so one
   `sm1::errmsg()` serves the whole stack (`DESIGN.md` §5 at the
   top level).
+- **Running out of memory is `SM_ERR_NOMEM`.** A
+  `std::bad_alloc` reaches sm2 only from its own allocations,
+  since inside sm1 it is fatal to the process; every sm2 entry
+  point catches it and returns -1 with `SM_ERR_NOMEM`
+  (`DESIGN.md` §5 at the top level). A type's `cmp` and `hash`
+  have no error to return, so they must not allocate.
 - **The interface is `include/sm2.h`, in `namespace sm2`**, as
   every level's is (`OBJECTIVE.md` at the top level):
   `sm2::rel_insert`, `sm2::tuple_encode`. This document writes

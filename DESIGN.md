@@ -251,8 +251,9 @@ design:
   | `IO`, `PERMISSION` | `58030` | `io_error` |
   | `CORRUPT` | `XX001` | `data_corrupted` |
   | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
-- **Running out of memory is fatal to the process, because
-  `std::bad_alloc` can be thrown from inside RocksDB.** RocksDB
+- **Running out of memory inside sm1 is fatal to the process,
+  because `std::bad_alloc` can be thrown from inside RocksDB;
+  above sm1 it is an error, `NOMEM`.** RocksDB
   allocates as it works — a write builds a batch, joins a write
   group, appends to the WAL, inserts into the memtable — and when
   an allocation fails, `operator new` throws through RocksDB's
@@ -267,28 +268,49 @@ design:
   process, and none can tell such a `bad_alloc` from a harmless
   one: an exception from inside RocksDB looks the same as one
   from sm1's own code, or from inside RocksDB before it touched
-  anything. So every `bad_alloc` is treated as fatal, and only a
-  fresh open's WAL replay recovers — reliably, and with every
-  committed transaction. `sm1::attach` installs a new-handler,
-  unless the host process already has one, that runs when an
-  allocation fails, before anything is thrown: it reports
-  `*** FATAL ***` on stderr and through the log hook, then
-  aborts, so `operator new` never throws `std::bad_alloc`. It
-  should be very rare: on a default Linux system an allocation
-  seldom fails, since the kernel's OOM killer ends the process
-  first; it takes a hard memory limit to get here. A host with
-  its own handler keeps its own policy, and with it the risk: if
-  that handler throws, a `bad_alloc` from inside RocksDB can
-  leave it unreliable, and sm1 does not guard against that.
-- **Exceptions cross the levels; only the top level catches.** An
-  exception may pass from sm1 through sm2 and sm3 unchanged, and
-  no level catches at its own entry points; sm1's entry points
-  catch nothing. The C wrapper is the one catch, since it is the
+  anything. So every `bad_alloc` inside sm1 is treated as fatal,
+  and only a fresh open's WAL replay recovers — reliably, and
+  with every committed transaction. Above sm1 nothing touches
+  RocksDB, so sm2 and sm3 can unwind and report instead.
+  `sm1::attach` installs a new-handler, unless the host process
+  already has one, that runs when an allocation fails, before
+  anything is thrown, and asks whether the thread is inside sm1:
+  every sm1 entry point, the GC thread and the compaction filter
+  mark their thread as inside for as long as they run, with an
+  RAII guard over a thread-local flag. Inside sm1 the handler
+  reports `*** FATAL ***` on stderr and through the log hook,
+  then aborts where the allocation failed, before any frame
+  unwinds, so the core holds the failing allocation's own stack.
+  Outside sm1 — in sm2, sm3, the wrapper or the host's own code
+  — it throws `std::bad_alloc`, as `operator new` would with no
+  handler, and sm2 and sm3 report it as `NOMEM` (next). RocksDB's
+  own background threads run no sm1 entry point: an allocation
+  failing there throws, and the exception ends the process
+  through `std::terminate`, without the report. All of it should
+  be very rare: on a default Linux system an allocation seldom
+  fails, since the kernel's OOM killer ends the process first;
+  it takes a hard memory limit to get here. A host with its own
+  handler keeps its own policy, and with it the risk: if that
+  handler throws, a `bad_alloc` from inside RocksDB can leave it
+  unreliable, and sm1 does not guard against that.
+- **`std::bad_alloc` stops at sm2's and sm3's entry points;
+  other exceptions cross the levels, and only the top level
+  catches them.** Under sm1's handler (above), a `bad_alloc` is
+  thrown only outside sm1. Every sm2 and sm3 entry point catches
+  it and returns -1 with `NOMEM`; sm1's error state formats into
+  a thread-local buffer and allocates nothing, so recording the
+  error cannot fail in turn. Any other exception may pass from
+  sm1 through sm2 and sm3 unchanged; sm1's entry points catch
+  nothing. The C wrapper is the one catch-all, since it is the
   only place a C caller can be reached. It catches everything:
-  `std::bad_alloc` becomes `NOMEM` — possible only under a host's
-  own new-handler (above) — anything else a code of its own that
-  means a bug, and if the call involves a session the wrapper
-  aborts that session's transaction before returning -1. Aborting
+  `std::bad_alloc` becomes `NOMEM` — possible there only from
+  the wrapper's own code, or under a host's own new-handler
+  (above) — anything else a code of its own that means a bug,
+  and if the call involves a session the wrapper aborts that
+  session's transaction before returning -1. A `NOMEM` returned
+  from below is handled the same way: the wrapper aborts the
+  session's transaction, since a data operation that ran out of
+  memory midway may have written part of its change. Aborting
   is the right recovery because sm1's abort works only in memory
   — it leaves the active table, which kills the transaction's
   versions without writing a status record, and releases its

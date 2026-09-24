@@ -4,6 +4,7 @@
  * §3.1, §3.2).
  */
 
+#include "alloc.h"
 #include "doctest.h"
 #include "gen.h"
 
@@ -264,5 +265,37 @@ TEST_CASE("-0 and 0 are distinct datums that compare equal") {
     REQUIRE(t->in("0", -1, pos) == 0);
     CHECK(neg != pos);
     CHECK(t->cmp(neg, pos, -1) == 0);
+  }
+}
+
+TEST_CASE("running out of memory in a type's in or out is SM_ERR_NOMEM") {
+  // Verify every type's in and out turn a bad_alloc into an error
+  // (SM2_DESIGN.md §5), taking the allocation that reports bad
+  // input, since a fixed-width datum and its text fit without one.
+  // 1. With no allocation left, in on invalid text fails with
+  //    SM_ERR_NOMEM, not SM_ERR_INVALID, and throws nothing.
+  // 2. So does out on a datum of the wrong width.
+  // 3. With the budget restored, the same calls report
+  //    SM_ERR_INVALID again.
+  for (uint8_t code = 1; code <= 6; code++) {
+    const sm2::type_t *t = sm2::type_by_code(code);
+    REQUIRE(t);
+    CAPTURE(t->name);
+    std::string datum, text;
+    std::string wrong(t->len + 1, '\0');
+    t_alloc_budget = 0;
+    int in_rc = t->in("not a value", -1, datum);
+    sm1::errnum_t in_err = sm1::errnum();
+    int out_rc = t->out(wrong, -1, text);
+    sm1::errnum_t out_err = sm1::errnum();
+    t_alloc_budget = -1;
+    CHECK(in_rc == -1);
+    CHECK(in_err == sm1::SM_ERR_NOMEM);
+    CHECK(out_rc == -1);
+    CHECK(out_err == sm1::SM_ERR_NOMEM);
+    CHECK(t->in("not a value", -1, datum) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    CHECK(t->out(wrong, -1, text) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
 }
