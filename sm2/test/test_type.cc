@@ -10,6 +10,8 @@
 #include "sm1.h"
 #include "sm2.h"
 
+#include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <random>
@@ -49,6 +51,10 @@ template <typename T> void check_round_trip(const sm2::type_t &t, T v) {
   CHECK(back == text);
 }
 
+/* The unsigned integer as wide as the float F. */
+template <typename F>
+using bits_t = std::conditional_t<sizeof(F) == 4, uint32_t, uint64_t>;
+
 /* The sign of an int, for comparing orders. */
 int sign(int v) { return (v > 0) - (v < 0); }
 
@@ -86,12 +92,62 @@ template <typename T> void check_int_type(const sm2::type_t &t) {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
+/* PostgreSQL's order on floats: NaN last and equal to NaN. */
+template <typename F> int pg_float_order(F x, F y) {
+  if (std::isnan(x) || std::isnan(y)) {
+    return std::isnan(x) - std::isnan(y);
+  }
+  return (x > y) - (x < y);
+}
+
+/*
+ * The float-type checks: every boundary and generated value
+ * prints and reads back to the same datum -- every NaN to the
+ * one quiet NaN -- the order is PostgreSQL's, and the texts
+ * PostgreSQL never prints are refused.
+ */
+template <typename F> void check_float_type(const sm2::type_t &t) {
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  std::vector<F> values = float_boundaries<F>();
+  for (int i = 0; i < property_runs; i++) {
+    values.push_back(gen_float<F>(rng));
+  }
+  for (F v : values) {
+    std::string datum = le_bytes(std::bit_cast<bits_t<F>>(v)), text, back;
+    REQUIRE(t.out(datum, -1, text) == 0);
+    CAPTURE(text);
+    REQUIRE(t.in(text, -1, back) == 0);
+    F nan = std::numeric_limits<F>::quiet_NaN();
+    CHECK(back ==
+          (std::isnan(v) ? le_bytes(std::bit_cast<bits_t<F>>(nan)) : datum));
+  }
+  for (size_t i = 0; i + 1 < values.size(); i++) {
+    F x = values[i], y = values[i + 1];
+    CHECK(sign(t.cmp(le_bytes(std::bit_cast<bits_t<F>>(x)),
+                     le_bytes(std::bit_cast<bits_t<F>>(y)), -1)) ==
+          pg_float_order(x, y));
+  }
+  for (std::string_view text :
+       {"",         "+1",        "1.0",   "01",   ".5",
+        "5.",       "1e5",       "1E+16", "1e+5", " 1",
+        "1 ",       "nan",       "NAN",   "-NaN", "inf",
+        "infinity", "+Infinity", "0.10",  "-0.0", "0.1000000000000000055",
+        "1e+400",   "1e-400",    "abc"}) {
+    expect_bad_input(t, text);
+  }
+  std::string text;
+  CHECK(t.out(std::string(sizeof(F) + 1, '\0'), -1, text) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+}
+
 } // namespace
 
 TEST_CASE("each type is found by its frozen code, and only by it") {
   // Verify the registry and each descriptor's fixed properties.
-  // 1. Codes 1 to 4 find bool, int2, int4 and int8, whose name,
-  //    width, by-value flag and alignment are PostgreSQL's.
+  // 1. Codes 1 to 6 find bool, int2, int4, int8, float4 and
+  //    float8, whose name, width, by-value flag and alignment are
+  //    PostgreSQL's.
   // 2. The slots not filled yet are null.
   // 3. Code 0, which is never a type, and codes not assigned yet
   //    find nothing.
@@ -100,10 +156,8 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     const char *name;
     int16_t len;
     uint8_t align;
-  } want[] = {{1, "bool", 1, 1},
-              {2, "int2", 2, 2},
-              {3, "int4", 4, 4},
-              {4, "int8", 8, 8}};
+  } want[] = {{1, "bool", 1, 1}, {2, "int2", 2, 2},   {3, "int4", 4, 4},
+              {4, "int8", 8, 8}, {5, "float4", 4, 4}, {6, "float8", 8, 8}};
   for (auto &w : want) {
     CAPTURE(w.name);
     const sm2::type_t *t = sm2::type_by_code(w.code);
@@ -122,7 +176,7 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     CHECK_FALSE(t->recv);
     CHECK_FALSE(t->send);
   }
-  for (uint8_t code : {0, 5, 64, 255}) {
+  for (uint8_t code : {0, 7, 64, 255}) {
     CAPTURE(code);
     CHECK(sm2::type_by_code(code) == nullptr);
   }
@@ -182,4 +236,33 @@ TEST_CASE("an integer outside its type's range is refused") {
   expect_bad_input(sm2::type_int4, "2147483648");
   expect_bad_input(sm2::type_int8, "-9223372036854775809");
   expect_bad_input(sm2::type_int8, "9223372036854775808");
+}
+
+TEST_CASE("float4 and float8 are IEEE-754, printed as PostgreSQL does") {
+  // Verify each float type by property, from test_seed().
+  // 1. Every boundary and generated datum prints, and its text
+  //    reads back to the same bytes; a NaN reads back as the one
+  //    quiet NaN PostgreSQL stores.
+  // 2. The order is PostgreSQL's: NaN above everything and equal
+  //    to any NaN, -0 equal to 0.
+  // 3. Text PostgreSQL never prints -- other spellings of the
+  //    specials, a plus, trailing zeros, digits beyond the
+  //    shortest, an exponent it would print in fixed point -- and
+  //    values out of range are SM_ERR_INVALID.
+  check_float_type<float>(sm2::type_float4);
+  check_float_type<double>(sm2::type_float8);
+}
+
+TEST_CASE("-0 and 0 are distinct datums that compare equal") {
+  // Verify the zeros keep their sign but order together.
+  // 1. "-0" and "0" parse to different bytes.
+  // 2. cmp calls them equal, for both widths.
+  for (const sm2::type_t *t : {&sm2::type_float4, &sm2::type_float8}) {
+    CAPTURE(t->name);
+    std::string neg, pos;
+    REQUIRE(t->in("-0", -1, neg) == 0);
+    REQUIRE(t->in("0", -1, pos) == 0);
+    CHECK(neg != pos);
+    CHECK(t->cmp(neg, pos, -1) == 0);
+  }
 }

@@ -69,6 +69,8 @@ extern const type_t type_bool;   /* code 1 */
 extern const type_t type_int2;   /* code 2 */
 extern const type_t type_int4;   /* code 3 */
 extern const type_t type_int8;   /* code 4 */
+extern const type_t type_float4; /* code 5 */
+extern const type_t type_float8; /* code 6 */
 
 /* The type with this code, or nullptr if there is none. */
 const type_t* type_by_code(uint8_t code);

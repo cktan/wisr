@@ -22,6 +22,7 @@ sm2/
   include/      the public header (`QUESTIONS.md` 5.1)
   src/type/     steps 1 and 2: the ADT table, each type's
                 representation, and its key encoding
+  src/ryu/      PostgreSQL 18's float printers, copied verbatim
   src/tuple/    step 3: the tuple codec
   src/rel/      step 4: the tuple relation
   test/         doctest, as in sm1
@@ -176,6 +177,11 @@ the date it was generated. It runs on a developer's machine
 with a PostgreSQL server and superuser rights; the build never
 touches PostgreSQL. The bytes hold on little-endian hosts only,
 which the fixture test asserts.
+
+The floats add 2,500 seeded random values each, since
+PostgreSQL's float text is not always the shortest decimal:
+2,000 random finite bit patterns and 500 integers just past
+the width's exact range, where most of the exceptions lie.
 
 The fixtures are generated on the development machine, from
 PostgreSQL 18.6 built from source: tag `REL_18_6`, cloned into

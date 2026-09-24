@@ -28,7 +28,36 @@ TYPES=(
   "2|int2|-32768, -32767, -256, -1, 0, 1, 255, 256, 32766, 32767"
   "3|int4|-2147483648, -2147483647, -65536, -1, 0, 1, 65535, 65536, 2147483646, 2147483647"
   "4|int8|-9223372036854775808, -9223372036854775807, -4294967296, -1, 0, 1, 4294967295, 4294967296, 9223372036854775806, 9223372036854775807"
+  "5|float4|'NaN', 'Infinity', '-Infinity', '0', '-0', 1, -1, 0.1, 0.5, 1.5, 100, 3.1415927, 0.001, 0.0001, 1e-05, 123456, 1234567, 1e+06, 1.1754944e-38, 1e-45, 3.4028235e+38, -3.4028235e+38"
+  "6|float8|'NaN', 'Infinity', '-Infinity', '0', '-0', 1, -1, 0.1, 0.5, 1.5, 100, 3.141592653589793, 0.30000000000000004, 0.001, 0.0001, 1e-05, 123456789012345, 1234567890123456, 100000000000000, 1e+15, 1e+100, 1e-100, 2.2250738585072014e-308, 5e-324, 1.7976931348623157e+308, -1.7976931348623157e+308"
 )
+
+# random_floats BITS: seeded random float4 (32) or float8 (64)
+# values as SQL literals, appended to that type's fixtures so that
+# PostgreSQL's float printing is checked well beyond the chosen
+# values. Two thousand are any finite bit pattern, and five
+# hundred are integers just past the width's exact range, where
+# PostgreSQL does not print the shortest decimal. Python's repr of
+# the exact value reads back as the same float.
+random_floats() {
+  python3 - "$1" <<'PY'
+import math, random, struct, sys
+bits = int(sys.argv[1])
+fmt, top = ("<f", 24) if bits == 32 else ("<d", 53)
+rng = random.Random(20260924)
+out = []
+while len(out) < 2000:
+    v = struct.unpack(fmt, rng.getrandbits(bits).to_bytes(bits // 8, "little"))[0]
+    if math.isfinite(v):
+        out.append(repr(v))
+for _ in range(500):
+    v = rng.randrange(2**(top + 1), 2**(top + 4)) * rng.choice((1, -1))
+    out.append(repr(struct.unpack(fmt, struct.pack(fmt, v))[0]))
+print(", ".join(out))
+PY
+}
+TYPES[4]+=", $(random_floats 32)"
+TYPES[5]+=", $(random_floats 64)"
 
 # A scratch database, made fresh for this run.
 "$PSQL" -q -d postgres -c "SET client_min_messages = warning" \
@@ -62,17 +91,18 @@ HDR
 
 for t in "${TYPES[@]}"; do
   IFS='|' read -r code name values <<<"$t"
-  # One table per type, one row per value, all on page 0.
+  # One table per type, one row per value, in insertion order.
   q -c "CREATE TABLE fx_$name (c $name)" \
     -c "INSERT INTO fx_$name VALUES ($(sed 's/, /), (/g' <<<"$values"))"
   # Pair each row's text with its tuple's data bytes. The column
   # itself, not c::text, so that the text is the type's output
   # function's: a bool prints "t", but its cast to text is "true".
   q -c "SELECT f.c, encode(h.t_data, 'hex')
-          FROM fx_$name f
-          JOIN heap_page_items(get_raw_page('fx_$name', 0)) h
-            ON f.ctid = ('(0,' || h.lp || ')')::tid
-         ORDER BY h.lp" |
+          FROM generate_series(0, pg_relation_size('fx_$name') / 8192 - 1) p
+         CROSS JOIN heap_page_items(get_raw_page('fx_$name', p::int)) h
+          JOIN fx_$name f
+            ON f.ctid = ('(' || p || ',' || h.lp || ')')::tid
+         ORDER BY p, h.lp" |
     while IFS='|' read -r text hex; do
       printf '    {%s, "%s", "%s"},\n' "$code" "$text" "$hex"
     done

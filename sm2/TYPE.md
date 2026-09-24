@@ -130,6 +130,13 @@ both bounds.
 
 Native is IEEE-754, little-endian.
 
+The text is PostgreSQL's `float4out` and `float8out`, whose
+Ryu code sm2 copies verbatim into `src/ryu/`. It is nearly
+always the shortest decimal that reads back to the same value,
+but not always: float4 `122908496` prints `1.22908496e+08`
+where the shortest is `1.229085e+08`. No other printer
+matches it, `std::to_chars` included.
+
 The key is the IEEE **total order**, with two normalisations
 first, and only then the bit transform:
 
