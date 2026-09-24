@@ -150,6 +150,33 @@ with sm3 (`sm3/PLAN.md`).
 Whether sm2 gets its own driver or extends sm1's is a decision
 for the first scenario that needs it, not before.
 
+**Property tests are hand-rolled**, with no new dependency.
+Each type has a generator weighted toward small values and its
+boundaries. A property runs every pair of boundary values
+first, then N random pairs, from a fixed default seed that the
+environment variable `WISR_SEED` overrides; a failing property
+prints its seed through doctest, so any failure replays exactly.
+There is no shrinking: size-biased generation keeps failures
+small, and a simple shrink for byte strings is added only if a
+failure proves hard to read.
+
+**The PostgreSQL fixtures are observed on disk, once**, on
+PostgreSQL 18. For every type but `number`,
+`test/pg_fixtures.h` holds each fixture value with the bytes
+PostgreSQL stores for it, read through the
+`pageinspect` extension: a one-column table per type, the values
+inserted, and each tuple's data bytes taken from
+`heap_page_items(get_raw_page(...))`, with the varlena header
+stripped, since sm2 keeps the payload alone. The values are the
+generators' boundaries plus representative ones — multibyte
+UTF-8, the empty string, timestamps at 1970 and at PostgreSQL's
+2000 epoch. The script that produces the header is checked in
+beside it, and the header records the PostgreSQL version and
+the date it was generated. It runs on a developer's machine
+with a PostgreSQL server and superuser rights; the build never
+touches PostgreSQL. The bytes hold on little-endian hosts only,
+which the fixture test asserts.
+
 ## What is deliberately not here
 
 - No catalog, no secondary index, no predicate scan, no

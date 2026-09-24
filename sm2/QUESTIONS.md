@@ -16,9 +16,9 @@ Two kinds of entry, and the difference matters:
 Ordered by the step of `PLAN.md` each one blocks. Sections 1
 to 3 — the suggested answers in `SM2_OBJECTIVE.md`, types, and
 key encoding — are answered and have moved into `SM2_DESIGN.md`,
-`TYPE.md` and `sm3/SM3_DESIGN.md`, and 6.1, the build, into
-`PLAN.md`; the numbering of what remains is kept so that a
-question's number never changes.
+`TYPE.md` and `sm3/SM3_DESIGN.md`, and 6.1, the build, and
+6.2, the property tests, into `PLAN.md`; the numbering of what
+remains is kept so that a question's number never changes.
 
 ---
 
@@ -143,23 +143,18 @@ returns it, so the sequence is used in one place.*
 
 ## 6. Mechanics — blocks the first line of code
 
-**6.2 [BLOCKING] What generates the property-based tests?**
-`PLAN.md` steps 1 and 2 call for properties over generated
-values, and sm1 has no such library.
-*Suggested: hand-rolled generators with a fixed seed printed
-on failure, in the style of sm1's stress tests, rather than a
-new dependency.* → `PLAN.md`
-
 **6.3 [BLOCKING] Where do the PostgreSQL fixtures come from?**
 `PLAN.md` step 1 pins every representation to "a fixture taken
 from a running PostgreSQL", which is what makes `SM2_DESIGN.md`
 §2.1 a claim rather than an intention. That needs a PostgreSQL
 somewhere, and `SM2_OBJECTIVE.md` forbids a build dependency on
 one.
-*Suggested: generate the fixtures once, by hand, on a
-developer's machine; check the resulting table into
-`test/pg_fixtures.h` with the PostgreSQL version recorded in
-it; never build against PostgreSQL.* → `PLAN.md`
+The method is settled: the bytes are read on disk through
+`pageinspect`, once, on PostgreSQL 18, into a checked-in
+`test/pg_fixtures.h` (`PLAN.md`, "Testing"). Still open: on
+which machine they are generated, since the fixture run needs a
+server and this repository's machine has only the client.
+→ `PLAN.md`
 
 **6.4 [ASSUMABLE] Can sm2 land in pieces?**
 *Suggested: yes — steps 1 to 3 are a library with no sm1
@@ -209,3 +204,5 @@ Settled, and listed so nobody reopens them by accident:
   `sm3/SM3_DESIGN.md` §3.
 - sm2's build and source layout — `PLAN.md`, "Source
   layout".
+- That property tests are hand-rolled, seeded and replayable,
+  with no new dependency — `PLAN.md`, "Testing".
