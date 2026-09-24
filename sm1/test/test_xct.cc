@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <future>
+#include <new>
 #include <string>
 #include <thread>
 #include <vector>
@@ -111,6 +112,37 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   REQUIRE(sm1_commit(c) == 0);
   sm1_closedb(b);
   sm1_closedb(c);
+}
+
+TEST_CASE("running out of memory after the commit point still commits") {
+  // Verify a commit whose status record is written reports
+  // success, even if what follows it cannot allocate (§8.2).
+  // 1. Session A creates a store and inserts "k" into it.
+  // 2. Make the commit cache insert throw std::bad_alloc, then
+  //    commit: sm1_commit returns 0, since the record is written.
+  // 3. A is left with no transaction: a new one begins on it.
+  // 4. Session B sees "k" in the new store, so visible_ts moved
+  //    past the commit and the store was not dropped.
+  // 5. B updates "k", so A's row lock was released.
+  xct_fixture_t f;
+  sm1_session_t *a = f.first();
+  sm1_session_t *b = f.open();
+  REQUIRE(sm1_begin(a, SM1_XCT_REPEATABLE_READ) == 0);
+  uint64_t store = mkstore(a);
+  REQUIRE(sm1_insert(a, store, "k", 1, "v", 1) == 0);
+
+  f.db()->test_cache_insert = [] { throw std::bad_alloc(); };
+  CHECK_MESSAGE(sm1_commit(a) == 0, sm1_errmsg());
+  f.db()->test_cache_insert = nullptr;
+
+  REQUIRE(sm1_begin(a, SM1_XCT_REPEATABLE_READ) == 0);
+  REQUIRE(sm1_commit(a) == 0);
+
+  REQUIRE(sm1_begin(b, SM1_XCT_REPEATABLE_READ) == 0);
+  CHECK(get(b, store, "k") == "v");
+  CHECK(sm1_update(b, store, "k", 1, "w", 1, nullptr, nullptr) == 0);
+  REQUIRE(sm1_commit(b) == 0);
+  sm1_closedb(b);
 }
 
 TEST_CASE("a failed status write fails the database stop") {

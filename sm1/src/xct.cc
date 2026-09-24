@@ -49,6 +49,8 @@ constexpr uint8_t txn_aborted = 3;
 constexpr size_t txn_record_size = 1 + 8 + 8;
 
 int finish_commit(sm1_session_t *s, uint64_t commit_ts);
+void publish_commit(sm1_session_t *s, uint64_t xid,
+                    uint64_t commit_ts) noexcept;
 int resolve(db_t *db, const std::string &gid, bool commit_it);
 
 /*
@@ -113,16 +115,29 @@ void leave_active(db_t *db, uint64_t xid) {
  * Move xid from the active table into the commit cache, evicting
  * the oldest commit_ts if the cache is full. Eviction cannot
  * change an answer: the status record was written first (§3.4).
+ * For the same reason an xid the cache has no memory for is left
+ * out of it, so this never throws.
  */
-void enter_cache(db_t *db, uint64_t xid, uint64_t commit_ts) {
+void enter_cache(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
   // Hold txn_mu, so the xid moves atomically.
   std::lock_guard<std::mutex> guard(db->txn_mu);
   // No longer in flight.
   db->active.erase(xid);
-  // Cache its commit_ts by xid.
-  db->cache[xid] = commit_ts;
-  // Index it by commit_ts, for eviction.
-  db->cache_by_ts[commit_ts] = xid;
+  try {
+    // Let a test fail the cache insert.
+    if (db->test_cache_insert) {
+      db->test_cache_insert();
+    }
+    // Cache its commit_ts by xid.
+    db->cache[xid] = commit_ts;
+    // Index it by commit_ts, for eviction.
+    db->cache_by_ts[commit_ts] = xid;
+  } catch (const std::bad_alloc &) {
+    // Uncached: readers resolve xid from CF:txn. Undo a half
+    // insert, since eviction relies on the maps matching.
+    db->cache.erase(xid);
+    return;
+  }
   // Evict the oldest commit_ts while over capacity.
   while (db->cache.size() > db->cache_entries) {
     // The oldest commit_ts.
@@ -495,6 +510,22 @@ int finish_commit(sm1_session_t *s, uint64_t commit_ts) {
     return set_error(SM1_ERR_IO, "write commit record (outcome unknown): {}",
                      st.ToString().c_str());
   }
+  // Past the commit point: publish, and report success.
+  publish_commit(s, xid, commit_ts);
+  return 0;
+}
+
+/*
+ * Everything after the commit point (§8.2 steps 4-6). The record
+ * is written, so the transaction has committed whatever happens
+ * here: nothing may throw, or sm1_commit would report a failure
+ * for a committed transaction and a caller's sm1_abort would drop
+ * the stores it created. What must happen cannot fail; what can
+ * run out of memory is left for later and logged.
+ */
+void publish_commit(sm1_session_t *s, uint64_t xid,
+                    uint64_t commit_ts) noexcept {
+  db_t *db = s->db;
   // Resolve before publishing: a reader that misses the xid in
   // the active table finds it in the cache or CF:txn (§3.4).
   enter_cache(db, xid, commit_ts);
@@ -504,17 +535,37 @@ int finish_commit(sm1_session_t *s, uint64_t commit_ts) {
   // queue dropped stores for removal once no snapshot can
   // see them (§8.3).
   lock_release_all(s);
-  // Queue its dropped stores for GC.
-  gc_queue_drops(db, commit_ts, s->dropped);
+  try {
+    // Queue its dropped stores for GC.
+    gc_queue_drops(db, commit_ts, s->dropped);
+  } catch (const std::bad_alloc &) {
+    // Unqueued stores are dropped by the next open's sweep (§9.1).
+    log_msg(SM1_LOG_WARN,
+            "database {}: out of memory queueing dropped stores; "
+            "they are removed when the database is next opened",
+            db->name.c_str());
+  }
   // Drop each dropped sequence's lease; nothing reads it now
   // that its catalog row is gone.
   for (uint64_t seqid : s->dropped_seqs) {
-    db_forget_seq(db, seqid);
+    try {
+      db_forget_seq(db, seqid);
+    } catch (const std::bad_alloc &) {
+      // A leftover lease names a sequence no catalog row has.
+      log_msg(SM1_LOG_WARN,
+              "database {}: out of memory forgetting sequence {}; "
+              "its lease is left behind",
+              db->name.c_str(), seqid);
+    }
   }
-  ssi_end(s); // the committed node stays while others overlap it
+  try {
+    ssi_end(s); // the committed node stays while others overlap it
+  } catch (const std::bad_alloc &) {
+    // ssi_end detaches the node before its cleanup allocates;
+    // the next cleanup frees what this one could not.
+  }
   // Forget the transaction.
   reset(s);
-  return 0;
 }
 
 /*
