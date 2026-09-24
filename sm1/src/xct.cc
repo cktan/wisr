@@ -488,6 +488,17 @@ int finish_commit(sm1_session_t *s, uint64_t commit_ts) {
     // Sync it, unless durability was traded away.
     rocksdb::WriteOptions wo;
     wo.sync = db->durability_sync != 0;
+    // TODO: Put can throw std::bad_alloc from inside RocksDB,
+    // which then may or may not have written the record. The
+    // exception skips the "outcome unknown" fail-stop below and
+    // reaches sm1_commit's catch, which reports NOMEM for a
+    // transaction that may have committed. Either catch it here
+    // as a failed write (fail-stop, resolved at reopen), or
+    // abort() and let the WAL replay decide, since RocksDB is not
+    // written to be unwound through and closing it afterwards
+    // may hang. Decide by a test: fail allocations from
+    // test_before_commit, then check that fail-stop and a reopen
+    // both work.
     // Write the status record: the commit point (§8.2).
     st = db->rdb->Put(wo, db->cf_txn, txn_key(xid), val);
   }
@@ -765,6 +776,12 @@ int prepare(sm1_session_t *s, const char *gid) {
   if (st.ok()) {
     rocksdb::WriteOptions wo;
     wo.sync = true; // a prepare is always synced (§8.4)
+    // TODO: as at the commit point in finish_commit, Put can
+    // throw std::bad_alloc with the record's fate unknown. Here
+    // the transaction is already detached and its reservation
+    // dismissed, so the exception orphans it: registered
+    // nowhere, holding its row locks. Resolve it the same way as
+    // the commit record.
     // Write the PREPARED record: the vote of yes.
     st = db->rdb->Put(wo, db->cf_txn, txnkey, val);
     // Let a test act just past the prepare point.
