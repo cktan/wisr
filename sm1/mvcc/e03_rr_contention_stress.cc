@@ -6,7 +6,7 @@
  * value and writing it back, retrying on failure. At
  * REPEATABLE READ the only retryable failures are the
  * write-write conflict and the deadlock victim: a caller
- * choosing RR never has to handle SM1_ERR_SERIALIZATION.
+ * choosing RR never has to handle SM_ERR_SERIALIZATION.
  *
  * The total must be exactly 200, which is first-committer-wins
  * (b01) holding under load: no update is lost.
@@ -47,10 +47,10 @@ TEST_CASE("e03: RR contention gives CONFLICT, never SERIALIZATION") {
             break;
           }
           // Classify the failure, then retry the whole step.
-          if (sm1_errno() == SM1_ERR_SERIALIZATION) {
+          if (sm1_errno() == SM_ERR_SERIALIZATION) {
             serialization++;
-          } else if (sm1_errno() != SM1_ERR_CONFLICT &&
-                     sm1_errno() != SM1_ERR_DEADLOCK) {
+          } else if (sm1_errno() != SM_ERR_CONFLICT &&
+                     sm1_errno() != SM_ERR_DEADLOCK) {
             other++;
           }
           retries++;

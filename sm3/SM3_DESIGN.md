@@ -51,8 +51,8 @@ answer.
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
 | sm2's 2-byte object prefix | a table's rows, indexes and TOAST data share its one sm1 store (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own |
-| `SM1_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
-| `SM1_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
+| `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
+| `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
 | `sm1_lock(SHARED\|EXCLUSIVE)` | the DDL and online index build protocol (§2, §3) |
 | nested savepoints | a statement can be undone without losing the transaction |
@@ -152,7 +152,7 @@ above sm1 needs; every gap it found is now closed in sm1.
 - **Unique indexes are keyed without `rowno`:**
   `encode(sk)` → `rowno` and the INCLUDE columns. The KV key
   is then the uniqueness unit, so sm1's insert refuses a
-  duplicate with `SM1_ERR_DUPKEY` and its write-write conflict
+  duplicate with `SM_ERR_DUPKEY` and its write-write conflict
   handles two sessions inserting the same key at once; no
   separate existence check is needed. The primary key index
   is keyed this way. Two kinds of entry in a unique index
@@ -183,7 +183,7 @@ above sm1 needs; every gap it found is now closed in sm1.
   of it without decoding bytes itself.
 - **Read committed writes.** An update or delete that meets a
   row committed after the transaction began fails with
-  `SM1_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort
+  `SM_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort
   and it is not retryable, so sm3 must not treat it as an error
   to surface. sm2 does not resolve it, because the resolution
   needs a filter (`sm2/SM2_DESIGN.md` §5): sm3 calls

@@ -53,7 +53,7 @@ std::string root_path(const std::string &homedir) {
 int check_homedir(const char *homedir) {
   // Reject a NULL or empty path.
   if (!homedir || !*homedir) {
-    return set_error(SM1_ERR_INVALID, "homedir is NULL or empty");
+    return set_error(SM_ERR_INVALID, "homedir is NULL or empty");
   }
   struct stat st;
   // The path must exist.
@@ -62,7 +62,7 @@ int check_homedir(const char *homedir) {
   }
   // It must be a directory.
   if (!S_ISDIR(st.st_mode)) {
-    return set_error(SM1_ERR_INVALID, "{}: not a directory", homedir);
+    return set_error(SM_ERR_INVALID, "{}: not a directory", homedir);
   }
   return 0;
 }
@@ -102,7 +102,7 @@ int sweep_base(sm1_env_t *env) {
        it->Next()) {
     // Reject a malformed dbid.
     if (it->value().size() != 8) {
-      return set_error(SM1_ERR_CORRUPT, "{}: bad dbid for database {}",
+      return set_error(SM_ERR_CORRUPT, "{}: bad dbid for database {}",
                        root_path(env->homedir).c_str(),
                        it->key().ToString().c_str() + 1);
     }
@@ -161,7 +161,7 @@ sm1_env_t *attach(const char *homedir) {
   struct stat st;
   // Refuse a directory sm1_init never prepared.
   if (stat(rootpath.c_str(), &st) != 0) {
-    set_error(SM1_ERR_NOTFOUND, "{}: not a wisr home directory", homedir);
+    set_error(SM_ERR_NOTFOUND, "{}: not a wisr home directory", homedir);
     return nullptr;
   }
   rocksdb::Options opt;
@@ -178,13 +178,13 @@ sm1_env_t *attach(const char *homedir) {
   s = env->root->Get(rocksdb::ReadOptions(), WISR_ROOT_VERSION, &version);
   // Reject a home directory without one.
   if (!s.ok() || version.size() != 8) {
-    set_error(SM1_ERR_CORRUPT, "{}: no format version", rootpath.c_str());
+    set_error(SM_ERR_CORRUPT, "{}: no format version", rootpath.c_str());
     return nullptr;
   }
   uint64_t v = get_be64(version.data());
   // Reject a format this build does not understand.
   if (v != WISR_HOME_VERSION) {
-    set_error(SM1_ERR_VERSION, "{}: format version {}, expected {}", homedir, v,
+    set_error(SM_ERR_VERSION, "{}: format version {}, expected {}", homedir, v,
               WISR_HOME_VERSION);
     return nullptr;
   }
@@ -237,7 +237,7 @@ int env_destroy_db_dir(const std::string &path) {
 
 /* Make homedir a wisr home directory: global/, base/, root db. */
 int sm1_init(const char *homedir) {
-  // Report an allocation failure as SM1_ERR_NOMEM.
+  // Report an allocation failure as SM_ERR_NOMEM.
   try {
     // Validate the home directory path.
     if (check_homedir(homedir) != 0) {
@@ -251,7 +251,7 @@ int sm1_init(const char *homedir) {
     if (mkdir(global.c_str(), 0700) != 0) {
       // global/ already exists: this is already a home directory.
       if (errno == EEXIST) {
-        return set_error(SM1_ERR_EXISTS, "{}: already a wisr home directory",
+        return set_error(SM_ERR_EXISTS, "{}: already a wisr home directory",
                          homedir);
       }
       return set_errno_error(errno, global.c_str());
@@ -297,17 +297,17 @@ int sm1_init(const char *homedir) {
     }
     return 0;
   } catch (const std::bad_alloc &) {
-    return set_error(SM1_ERR_NOMEM, "sm1_init: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm1_init: out of memory");
   }
 }
 
 /* Create an environment on an initialized home directory. */
 sm1_env_t *sm1_attach(const char *homedir) {
-  // Report an allocation failure as SM1_ERR_NOMEM.
+  // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return attach(homedir);
   } catch (const std::bad_alloc &) {
-    set_error(SM1_ERR_NOMEM, "sm1_attach: out of memory");
+    set_error(SM_ERR_NOMEM, "sm1_attach: out of memory");
     return nullptr;
   }
 }
@@ -328,7 +328,7 @@ int sm1_detach(sm1_env_t *env, int force) {
     std::lock_guard<std::mutex> guard(env->mu);
     // Refuse while sessions are open, unless forced.
     if (!env->sessions.empty() && !force) {
-      return set_error(SM1_ERR_INUSE, "{} sessions are still open",
+      return set_error(SM_ERR_INUSE, "{} sessions are still open",
                        env->sessions.size());
     }
     // Copy the sessions to close outside the mutex.

@@ -149,7 +149,7 @@ void check_deadlock(db_t *db, sm1_session_t *s) {
     }
   }
   // Doom it.
-  victim->doomed = SM1_ERR_DEADLOCK;
+  victim->doomed = SM_ERR_DEADLOCK;
   // Wake every waiter so the victim sees its doom.
   db->lock_cv.notify_all();
 }

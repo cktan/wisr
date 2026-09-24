@@ -44,7 +44,7 @@ std::string catalog_key(uint64_t storeid) {
 int mkstore(sm1_session_t *s, uint64_t *out) {
   // Require the out-parameter.
   if (!out) {
-    return set_error(SM1_ERR_INVALID, "sm1_mkstore: storeid is NULL");
+    return set_error(SM_ERR_INVALID, "sm1_mkstore: storeid is NULL");
   }
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
@@ -89,7 +89,7 @@ int rmstore(sm1_session_t *s, uint64_t storeid) {
   }
   // Reject storeid 0, the catalog's own slot.
   if (storeid == 0) {
-    return set_error(SM1_ERR_INVALID, "storeid 0 is not a store");
+    return set_error(SM_ERR_INVALID, "storeid 0 is not a store");
   }
   // Resolve the storeid at the transaction's view.
   int r = catalog_lookup(s, xct_view(s), storeid);
@@ -99,7 +99,7 @@ int rmstore(sm1_session_t *s, uint64_t storeid) {
   }
   // Refuse a storeid that is not live.
   if (r == 1) {
-    return set_error(SM1_ERR_NOTFOUND, "store {} does not exist", storeid);
+    return set_error(SM_ERR_NOTFOUND, "store {} does not exist", storeid);
   }
   // Delete the catalog row; the column family stays until no
   // snapshot can still read the store (§8.3).
@@ -116,7 +116,7 @@ int rmstore(sm1_session_t *s, uint64_t storeid) {
 int lsstore(sm1_session_t *s, uint64_t **out, size_t *n) {
   // Require the out-parameters.
   if (!out || !n) {
-    return set_error(SM1_ERR_INVALID, "sm1_lsstore: out or n is NULL");
+    return set_error(SM_ERR_INVALID, "sm1_lsstore: out or n is NULL");
   }
   // Report an empty list until one is built.
   *out = nullptr;
@@ -142,7 +142,7 @@ int lsstore(sm1_session_t *s, uint64_t **out, size_t *n) {
   while ((r = sm1_scannxt(c, &key, &klen, &data, &datalen)) == 0) {
     // Reject a malformed catalog key.
     if (klen != 9) {
-      return set_error(SM1_ERR_CORRUPT, "bad catalog key of {} bytes", klen);
+      return set_error(SM_ERR_CORRUPT, "bad catalog key of {} bytes", klen);
     }
     ids.push_back(get_be64(key + 1));
   }
@@ -158,7 +158,7 @@ int lsstore(sm1_session_t *s, uint64_t **out, size_t *n) {
   uint64_t *list =
       static_cast<uint64_t *>(malloc(ids.size() * sizeof(uint64_t)));
   if (!list) {
-    return set_error(SM1_ERR_NOMEM, "sm1_lsstore: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm1_lsstore: out of memory");
   }
   memcpy(list, ids.data(), ids.size() * sizeof(uint64_t));
   *out = list;
@@ -181,30 +181,30 @@ int catalog_lookup(sm1_session_t *s, const view_t &view, uint64_t storeid) {
 
 /* Create a store and hand out its storeid. */
 int sm1_mkstore(sm1_session_t *session, uint64_t *storeid) {
-  // Report an allocation failure as SM1_ERR_NOMEM.
+  // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return mkstore(session, storeid);
   } catch (const std::bad_alloc &) {
-    return set_error(SM1_ERR_NOMEM, "sm1_mkstore: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm1_mkstore: out of memory");
   }
 }
 
 /* Drop a store and all of its rows. */
 int sm1_rmstore(sm1_session_t *session, uint64_t storeid) {
-  // Report an allocation failure as SM1_ERR_NOMEM.
+  // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return rmstore(session, storeid);
   } catch (const std::bad_alloc &) {
-    return set_error(SM1_ERR_NOMEM, "sm1_rmstore: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm1_rmstore: out of memory");
   }
 }
 
 /* List the stores visible to the transaction. */
 int sm1_lsstore(sm1_session_t *session, uint64_t **out, size_t *n) {
-  // Report an allocation failure as SM1_ERR_NOMEM.
+  // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return lsstore(session, out, n);
   } catch (const std::bad_alloc &) {
-    return set_error(SM1_ERR_NOMEM, "sm1_lsstore: out of memory");
+    return set_error(SM_ERR_NOMEM, "sm1_lsstore: out of memory");
   }
 }

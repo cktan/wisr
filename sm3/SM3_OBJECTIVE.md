@@ -93,7 +93,7 @@ These are settled and drive `SM3_DESIGN.md`.
   invalidation.
 - **Writes at READ COMMITTED follow sm1's protocol.** A write
   that meets a row committed after the transaction began is
-  refused with `SM1_ERR_UPDATED`; sm2 surfaces the error
+  refused with `SM_ERR_UPDATED`; sm2 surfaces the error
   without resolving it, so sm3 reads the newest image with
   `rel_read_latest`, re-checks the statement's filter, and
   only then repeats the write (`PART4.md` §5a,

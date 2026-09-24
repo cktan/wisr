@@ -16,7 +16,7 @@
  *   at commit, T fails if doomed or if in_conflict && out_conflict.
  *
  * A doomed transaction keeps running and fails with
- * SM1_ERR_SERIALIZATION at its commit (§7.3), so reads and writes
+ * SM_ERR_SERIALIZATION at its commit (§7.3), so reads and writes
  * never fail for SSI. The rules are conservative: a pivot that
  * is not part of a real cycle, and both ends of a write skew,
  * can fail. A prepared transaction's node is marked committed at

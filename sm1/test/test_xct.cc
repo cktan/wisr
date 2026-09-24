@@ -179,7 +179,7 @@ TEST_CASE(
       break;
     }
     INFO("allocation ", n, " failed");
-    CHECK(sm1_errno() == SM1_ERR_NOMEM);
+    CHECK(sm1_errno() == SM_ERR_NOMEM);
     REQUIRE_MESSAGE(sm1_abort(a) == 0, sm1_errmsg());
     std::string key = "b" + std::to_string(n);
     REQUIRE(commit_one(b, f.store(), key) == 0);
@@ -200,10 +200,10 @@ TEST_CASE("a failed status write fails the database stop") {
   // Verify the §8.2 fail-stop state and recovery by reopening.
   // 1. Session B begins and reads committed "old".
   // 2. Session A inserts "x"; its status write fails, and
-  //    sm1_commit returns SM1_ERR_IO.
+  //    sm1_commit returns SM_ERR_IO.
   // 3. B's existing snapshot still reads "old".
   // 4. A new transaction can begin, read, and commit with no
-  //    writes, but insert and sm1_mkstore fail with SM1_ERR_IO.
+  //    writes, but insert and sm1_mkstore fail with SM_ERR_IO.
   // 5. Close every session and reopen: "x" never committed,
   //    and writes work again.
   xct_fixture_t f;
@@ -217,7 +217,7 @@ TEST_CASE("a failed status write fails the database stop") {
     return rocksdb::Status::IOError("injected");
   };
   CHECK(commit_one(a, f.store(), "x") == -1);
-  CHECK(sm1_errno() == SM1_ERR_IO);
+  CHECK(sm1_errno() == SM_ERR_IO);
   f.db()->test_before_commit = nullptr;
 
   CHECK(get(b, f.store(), "old") == "v");
@@ -227,10 +227,10 @@ TEST_CASE("a failed status write fails the database stop") {
   CHECK(get(a, f.store(), "old") == "v");
   CHECK(get(a, f.store(), "x") == "<none>");
   CHECK(sm1_insert(a, f.store(), "y", 1, "v", 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_IO);
+  CHECK(sm1_errno() == SM_ERR_IO);
   uint64_t newstore = 0;
   CHECK(sm1_mkstore(a, &newstore) == -1);
-  CHECK(sm1_errno() == SM1_ERR_IO);
+  CHECK(sm1_errno() == SM_ERR_IO);
   REQUIRE(sm1_commit(a) == 0); // read-only: nothing to publish
 
   REQUIRE(sm1_closedb(a) == 0);
@@ -289,7 +289,7 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   opt.commit_cache_entries = 0;
   REQUIRE(sm1_mkdb(f.home().env(), "db2", nullptr) == 0);
   CHECK(sm1_opendb(f.home().env(), "db2", &opt) == nullptr);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
 }
 
 TEST_CASE("concurrent commits become visible atomically and monotonically") {

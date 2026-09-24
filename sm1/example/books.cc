@@ -127,7 +127,7 @@ void print_book(const book_t &b) {
 
 /*
  * Insert b, or update it if its id is already taken: wisr has
- * no upsert, so try the insert and fall back on SM1_ERR_DUPKEY.
+ * no upsert, so try the insert and fall back on SM_ERR_DUPKEY.
  */
 void upsert_book(sm1_session_t *s, uint64_t store, const book_t &b) {
   std::string key = encode_key(b.id);
@@ -138,7 +138,7 @@ void upsert_book(sm1_session_t *s, uint64_t store, const book_t &b) {
     return;
   }
   // Any failure but a taken key is a real error.
-  if (sm1_errno() != SM1_ERR_DUPKEY) {
+  if (sm1_errno() != SM_ERR_DUPKEY) {
     check(-1, "sm1_insert");
   }
   // The id exists: replace its value instead.
@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   // Prepare it as a wisr home directory, once in its life.
-  if (sm1_init(homedir) != 0 && sm1_errno() != SM1_ERR_EXISTS) {
+  if (sm1_init(homedir) != 0 && sm1_errno() != SM_ERR_EXISTS) {
     check(-1, "sm1_init");
   }
   // Attach: this process now owns the home directory.
@@ -168,7 +168,7 @@ int main(int argc, char **argv) {
     check(-1, "sm1_attach");
   }
   // Create the database, unless an earlier run did.
-  if (sm1_mkdb(env, "library", nullptr) != 0 && sm1_errno() != SM1_ERR_EXISTS) {
+  if (sm1_mkdb(env, "library", nullptr) != 0 && sm1_errno() != SM_ERR_EXISTS) {
     check(-1, "sm1_mkdb");
   }
   // Open a session on it.

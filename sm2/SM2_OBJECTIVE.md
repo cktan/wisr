@@ -151,7 +151,7 @@ These are settled and drive `SM2_DESIGN.md`.
   are no mirror relations.
 - **Writes at READ COMMITTED follow sm1's protocol, and sm2
   does not resolve them.** A write that meets a row committed
-  after the transaction began is refused with `SM1_ERR_UPDATED`
+  after the transaction began is refused with `SM_ERR_UPDATED`
   (`sm1/SM1_DESIGN.md` §5.4). Resolving it means re-checking the
   statement's filter against the newest image, and filters are
   sm3's; sm2 surfaces the error and provides

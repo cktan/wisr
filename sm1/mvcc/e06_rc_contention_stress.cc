@@ -66,7 +66,7 @@ TEST_CASE("e06: RC contention loses no increment, with compaction running") {
         int rc = sm1_update(sess, s.store(), row, 2, next.data(), next.size(),
                             nullptr, nullptr);
         // The counter moved: read the newest value, add one to that.
-        if (rc != 0 && sm1_errno() == SM1_ERR_UPDATED) {
+        if (rc != 0 && sm1_errno() == SM_ERR_UPDATED) {
           updated++;
           if (sm1_read_latest(sess, s.store(), row, 2, &data, &len) != 0) {
             failures++;

@@ -89,7 +89,7 @@ TEST_CASE("sm1_mkstore and sm1_rmstore are transactional") {
   // 2. Create one and commit; it holds its rows.
   // 3. Drop it and abort; it still exists with its rows.
   // 4. Drop it and commit; it is gone, and dropping it again
-  //    fails with SM1_ERR_NOTFOUND.
+  //    fails with SM_ERR_NOTFOUND.
   // 5. A store created now gets a storeid of its own, never
   //    one handed out before, and starts empty.
   db_fixture_t f;
@@ -103,7 +103,7 @@ TEST_CASE("sm1_mkstore and sm1_rmstore are transactional") {
   const char *d;
   size_t dl;
   CHECK(sm1_read(s, gone, "k", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
   uint64_t store = mkstore(s);
   CHECK(store != gone);
   put(s, store, "k", "v");
@@ -120,7 +120,7 @@ TEST_CASE("sm1_mkstore and sm1_rmstore are transactional") {
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_rmstore(s, store) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
   uint64_t fresh = mkstore(s);
   CHECK(fresh > store);
   CHECK(get(s, fresh, "k") == "<none>");
@@ -130,10 +130,10 @@ TEST_CASE("sm1_mkstore and sm1_rmstore are transactional") {
 TEST_CASE("a transaction reads its own inserts, updates, and deletes") {
   // Verify own-write visibility and the existence rules, at every level.
   // 1. Insert a key, read it back; inserting it again fails
-  //    with SM1_ERR_DUPKEY.
+  //    with SM_ERR_DUPKEY.
   // 2. Update it twice; the read returns the latest value.
   // 3. Delete it; the read returns 1, and update and delete
-  //    fail with SM1_ERR_NOTFOUND.
+  //    fail with SM_ERR_NOTFOUND.
   // 4. Re-insert the deleted key; the read returns the new value.
   // 5. A zero-length key and a zero-length value are legal, and
   //    an empty value is distinct from a missing key.
@@ -148,7 +148,7 @@ TEST_CASE("a transaction reads its own inserts, updates, and deletes") {
     put(s, store, "k", "v1");
     CHECK(get(s, store, "k") == "v1");
     CHECK(sm1_insert(s, store, "k", 1, "x", 1) == -1);
-    CHECK(sm1_errno() == SM1_ERR_DUPKEY);
+    CHECK(sm1_errno() == SM_ERR_DUPKEY);
 
     REQUIRE(sm1_update(s, store, "k", 1, "v2", 2, nullptr, nullptr) == 0);
     REQUIRE(sm1_update(s, store, "k", 1, "v3", 2, nullptr, nullptr) == 0);
@@ -157,9 +157,9 @@ TEST_CASE("a transaction reads its own inserts, updates, and deletes") {
     REQUIRE(sm1_delete(s, store, "k", 1, nullptr, nullptr) == 0);
     CHECK(get(s, store, "k") == "<none>");
     CHECK(sm1_update(s, store, "k", 1, "x", 1, nullptr, nullptr) == -1);
-    CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+    CHECK(sm1_errno() == SM_ERR_NOTFOUND);
     CHECK(sm1_delete(s, store, "k", 1, nullptr, nullptr) == -1);
-    CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+    CHECK(sm1_errno() == SM_ERR_NOTFOUND);
 
     put(s, store, "k", "v4");
     CHECK(get(s, store, "k") == "v4");
@@ -322,7 +322,7 @@ TEST_CASE("the statement snapshot is taken by the first read, not the call") {
 TEST_CASE("sm1_stmt_begin needs a transaction and does nothing above RC") {
   // Verify the call's contract at the other levels and outside a
   // transaction.
-  // 1. Without a transaction it fails with SM1_ERR_NOTRANS.
+  // 1. Without a transaction it fails with SM_ERR_NOTRANS.
   // 2. Under REPEATABLE READ it succeeds and changes nothing:
   //    the transaction still reads at its begin snapshot.
   db_fixture_t f;
@@ -331,7 +331,7 @@ TEST_CASE("sm1_stmt_begin needs a transaction and does nothing above RC") {
   sm1_session_t *other = f.open_other();
 
   CHECK(sm1_stmt_begin(s) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTRANS);
+  CHECK(sm1_errno() == SM_ERR_NOTRANS);
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   REQUIRE(sm1_stmt_begin(s) == 0);
@@ -536,23 +536,23 @@ TEST_CASE("sm1_scan_seek refuses to move backwards or out of range") {
   CHECK(std::string(k, kl) == "k3");
 
   CHECK(sm1_scan_seek(c, "k2", 2, 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
 
   REQUIRE(sm1_scan_seek(c, "k5", 2, 1) == 0);
   REQUIRE(sm1_scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k5");
   CHECK(sm1_scan_seek(c, "k3", 2, 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
 
   REQUIRE(sm1_scan_seek(c, "k5", 2, 1) == 0);
   REQUIRE(sm1_scannxt(c, &k, &kl, &d, &dl) == 0);
   CHECK(std::string(k, kl) == "k5");
 
   CHECK(sm1_scan_seek(nullptr, "k5", 2, 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   std::string huge(SM1_MAX_KEYLEN + 1, 'z');
   CHECK(sm1_scan_seek(c, huge.data(), huge.size(), 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   sm1_scanend(c);
   REQUIRE(sm1_commit(s) == 0);
 }
@@ -568,7 +568,7 @@ TEST_CASE("keys skipped by sm1_scan_seek still count as read under SSI") {
   //    k5 is outside it, and both transactions commit.
   // 3. With a seek from k1 to k8, k5 falls in the skipped gap
   //    and is covered all the same, so the cycle forms and a
-  //    commit fails with SM1_ERR_SERIALIZATION.
+  //    commit fails with SM_ERR_SERIALIZATION.
   db_fixture_t f;
   sm1_session_t *s = f.session();
   sm1_session_t *t2 = f.open_other();
@@ -609,10 +609,10 @@ TEST_CASE("keys skipped by sm1_scan_seek still count as read under SSI") {
     int err1 = sm1_errno();
     // Every failure here is a serialization failure.
     if (rc2 == -1) {
-      CHECK(err2 == SM1_ERR_SERIALIZATION);
+      CHECK(err2 == SM_ERR_SERIALIZATION);
     }
     if (rc1 == -1) {
-      CHECK(err1 == SM1_ERR_SERIALIZATION);
+      CHECK(err1 == SM_ERR_SERIALIZATION);
     }
     return rc1 == -1 || rc2 == -1;
   };
@@ -632,7 +632,7 @@ TEST_CASE("sm1_update and sm1_delete hand back the row they replaced") {
   // 3. Delete it: the old value is the last one written.
   // 4. An empty old value is reported with length 0.
   // 5. A failed write returns no old row, and passing one
-  //    out-parameter without the other is SM1_ERR_INVALID.
+  //    out-parameter without the other is SM_ERR_INVALID.
   db_fixture_t f;
   sm1_session_t *s = f.session();
   uint64_t store = mkstore_committed(s);
@@ -660,14 +660,14 @@ TEST_CASE("sm1_update and sm1_delete hand back the row they replaced") {
   old = (const char *)1;
   oldlen = 99;
   CHECK(sm1_update(s, store, "k", 1, "v3", 2, &old, &oldlen) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
   CHECK(old == nullptr);
   CHECK(oldlen == 0);
 
   CHECK(sm1_update(s, store, "empty", 5, "x", 1, &old, nullptr) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_delete(s, store, "empty", 5, nullptr, &oldlen) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   REQUIRE(sm1_commit(s) == 0);
 }
 
@@ -703,8 +703,8 @@ TEST_CASE("the old row shares sm1_read's buffer and its lifetime") {
 TEST_CASE("oversized keys and values are rejected") {
   // Verify the documented limits.
   // 1. A key of SM1_MAX_KEYLEN bytes is accepted; one byte more
-  //    fails with SM1_ERR_INVALID, for insert and for read.
-  // 2. An unknown store fails with SM1_ERR_NOTFOUND.
+  //    fails with SM_ERR_INVALID, for insert and for read.
+  // 2. An unknown store fails with SM_ERR_NOTFOUND.
   db_fixture_t f;
   sm1_session_t *s = f.session();
   uint64_t store = mkstore_committed(s);
@@ -714,13 +714,13 @@ TEST_CASE("oversized keys and values are rejected") {
   CHECK(get(s, store, max) == "v");
   std::string over(SM1_MAX_KEYLEN + 1, 'k');
   CHECK(sm1_insert(s, store, over.data(), over.size(), "v", 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   const char *d;
   size_t dl;
   CHECK(sm1_read(s, store, over.data(), over.size(), &d, &dl) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_insert(s, 999, "k", 1, "v", 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
   REQUIRE(sm1_commit(s) == 0);
 }
 
@@ -762,7 +762,7 @@ TEST_CASE("a dropped store stays readable at an older snapshot") {
   const char *d;
   size_t dl;
   CHECK(sm1_read(r, old, "k", 1, &d, &dl) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
   CHECK(get(r, store, "k") == "new");
   CHECK(scan_all(r, store) == rows_t{{"k", "new"}});
   REQUIRE(sm1_commit(r) == 0);
@@ -780,7 +780,7 @@ TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   //    list without it, while a transaction begun before that
   //    commit still lists all three.
   // 4. With no transaction active, sm1_lsstore fails with
-  //    SM1_ERR_NOTRANS.
+  //    SM_ERR_NOTRANS.
   db_fixture_t f;
   sm1_session_t *t = f.session();
   sm1_session_t *o = f.open_other();
@@ -810,5 +810,5 @@ TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   sm1_closedb(o);
 
   CHECK(sm1_lsstore(t, &list, &n) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTRANS);
+  CHECK(sm1_errno() == SM_ERR_NOTRANS);
 }

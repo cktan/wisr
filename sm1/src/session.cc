@@ -35,7 +35,7 @@ db_t *find_or_open(sm1_env_t *env, const char *dbname,
                      std::string(WISR_ROOT_DBNAME_PREFIX) + dbname, &val);
   // Fail if no database has this name.
   if (s.IsNotFound()) {
-    set_error(SM1_ERR_NOTFOUND, "database {} does not exist", dbname);
+    set_error(SM_ERR_NOTFOUND, "database {} does not exist", dbname);
     return nullptr;
   }
   // Fail on any other root db error.
@@ -45,7 +45,7 @@ db_t *find_or_open(sm1_env_t *env, const char *dbname,
   }
   // Reject a malformed dbid.
   if (val.size() != 8) {
-    set_error(SM1_ERR_CORRUPT, "bad dbid for database {}", dbname);
+    set_error(SM_ERR_CORRUPT, "bad dbid for database {}", dbname);
     return nullptr;
   }
   // Open the database: its first session in this process.
@@ -62,7 +62,7 @@ sm1_session_t *open_session(sm1_env_t *env, const char *dbname,
                             const sm1_options_t *opt) {
   // Reject a NULL environment.
   if (!env) {
-    set_error(SM1_ERR_INVALID, "sm1_opendb: env is NULL");
+    set_error(SM_ERR_INVALID, "sm1_opendb: env is NULL");
     return nullptr;
   }
   // Validate the database name.
@@ -94,11 +94,11 @@ sm1_session_t *open_session(sm1_env_t *env, const char *dbname,
 /* Open dbname and start a session on it. */
 sm1_session_t *sm1_opendb(sm1_env_t *env, const char *dbname,
                           const sm1_options_t *opt) {
-  // Report an allocation failure as SM1_ERR_NOMEM.
+  // Report an allocation failure as SM_ERR_NOMEM.
   try {
     return open_session(env, dbname, opt);
   } catch (const std::bad_alloc &) {
-    set_error(SM1_ERR_NOMEM, "sm1_opendb: out of memory");
+    set_error(SM_ERR_NOMEM, "sm1_opendb: out of memory");
     return nullptr;
   }
 }

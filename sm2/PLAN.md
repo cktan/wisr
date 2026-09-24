@@ -123,7 +123,7 @@ The three above, joined to sm1.
 - Rows keyed by `rowno`, an unsigned 64-bit number from the
   table's sm1 sequence, kept across updates (`SM2_DESIGN.md` §5).
 - Errors from sm1 passed through, not translated —
-  `SM1_ERR_UPDATED` in particular.
+  `SM_ERR_UPDATED` in particular.
 - Per-column decoding, so a reader that wants one column does
   not pay for the row.
 

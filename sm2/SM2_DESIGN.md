@@ -57,8 +57,8 @@ nothing that an IPC boundary would have made it cost.
 | opaque values of arbitrary bytes | the tuple layout is sm2's alone; sm1 never looks inside one (§4) |
 | transactions at RC / RR / SERIALIZABLE | sm2 opens none of its own; every `rel` call runs inside the caller's transaction (§5) |
 | `sm1_update` / `sm1_delete` returning the **old image** | `rel_update` / `rel_delete` can hand back the old *tuple*, which is what index maintenance above needs |
-| `SM1_ERR_DUPKEY` from `sm1_insert` | a unique index keyed without `rowno` gets its uniqueness from sm1 for free — the primary key index among them (§5, `sm3/SM3_DESIGN.md` §3) |
-| `SM1_ERR_UPDATED` and `sm1_read_latest` at READ COMMITTED | sm2 surfaces the error and offers `rel_read_latest`; it cannot resolve it, because the re-check needs a filter and filters are sm3's (§5) |
+| `SM_ERR_DUPKEY` from `sm1_insert` | a unique index keyed without `rowno` gets its uniqueness from sm1 for free — the primary key index among them (§5, `sm3/SM3_DESIGN.md` §3) |
+| `SM_ERR_UPDATED` and `sm1_read_latest` at READ COMMITTED | sm2 surfaces the error and offers `rel_read_latest`; it cannot resolve it, because the re-check needs a filter and filters are sm3's (§5) |
 | nested savepoints | a statement can be undone without losing the transaction, and sm2 holds no state that has to be undone with it |
 | forward scans with `sm1_scan_seek` | probe loops cost one cursor, not one per probe |
 | `SM1_MAX_KEYLEN` 4096, `SM1_MAX_DATALEN` 64MB | an encoded index key must fit 4096 bytes, prefix included; a datum above the TOAST threshold is stored out of line (§4) |
@@ -690,7 +690,7 @@ The rules it must satisfy:
   undo. This is what makes savepoints and abort cost sm2
   nothing at all.
 - **Errors pass through; they are not translated.**
-  `SM1_ERR_UPDATED` in particular is not retried here. The
+  `SM_ERR_UPDATED` in particular is not retried here. The
   retry needs the statement's filter re-checked against the
   newest image (`sm1/SM1_DESIGN.md` §5.4), and filters live above
   sm2; `rel_read_latest` is what sm2 provides so sm3 can do it
@@ -743,7 +743,7 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
   `rowno`; the primary key is one of sm3's indexes, and its
   uniqueness is sm3's (§5).
 - **Predicates.** sm2 has no filter, and therefore cannot
-  resolve `SM1_ERR_UPDATED` or derive a key range from a
+  resolve `SM_ERR_UPDATED` or derive a key range from a
   `WHERE` clause.
 - **Statistics.** sm2 counts nothing.
 

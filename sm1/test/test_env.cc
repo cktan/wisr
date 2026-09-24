@@ -19,44 +19,44 @@
 
 TEST_CASE("sm1_init refuses a missing, non-directory, or empty homedir") {
   // Verify sm1_init validates homedir before creating anything.
-  // 1. A path that does not exist fails with SM1_ERR_NOTFOUND.
-  // 2. A regular file fails with SM1_ERR_INVALID.
-  // 3. NULL and "" fail with SM1_ERR_INVALID.
+  // 1. A path that does not exist fails with SM_ERR_NOTFOUND.
+  // 2. A regular file fails with SM_ERR_INVALID.
+  // 3. NULL and "" fail with SM_ERR_INVALID.
   tmpdir_t tmp;
   std::string missing = std::string(tmp.path()) + "/nope";
   CHECK(sm1_init(missing.c_str()) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
 
   std::string file = std::string(tmp.path()) + "/file";
   FILE *f = fopen(file.c_str(), "w");
   REQUIRE(f);
   fclose(f);
   CHECK(sm1_init(file.c_str()) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
 
   CHECK(sm1_init(nullptr) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_init("") == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
 }
 
 TEST_CASE("sm1_init runs once per home directory") {
   // Verify a second sm1_init reports the home as existing.
   // 1. Initialize a fresh directory.
-  // 2. Initialize it again and expect SM1_ERR_EXISTS.
+  // 2. Initialize it again and expect SM_ERR_EXISTS.
   tmpdir_t tmp;
   REQUIRE(sm1_init(tmp.path()) == 0);
   CHECK(sm1_init(tmp.path()) == -1);
-  CHECK(sm1_errno() == SM1_ERR_EXISTS);
+  CHECK(sm1_errno() == SM_ERR_EXISTS);
 }
 
 TEST_CASE("sm1_attach requires an initialized home directory") {
   // Verify attach creates nothing on an uninitialized directory.
-  // 1. Attach to an empty directory; expect SM1_ERR_NOTFOUND.
+  // 1. Attach to an empty directory; expect SM_ERR_NOTFOUND.
   // 2. Confirm no global/ was created as a side effect.
   tmpdir_t tmp;
   CHECK(sm1_attach(tmp.path()) == nullptr);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
   CHECK_FALSE(std::filesystem::exists(std::string(tmp.path()) + "/global"));
 }
 
@@ -88,7 +88,7 @@ TEST_CASE("sm1_attach rejects an unknown format version") {
   // Verify attach refuses a home written by another format.
   // 1. Initialize a home directory.
   // 2. Overwrite the root db's version key with 99.
-  // 3. Attach and expect SM1_ERR_VERSION.
+  // 3. Attach and expect SM_ERR_VERSION.
   tmpdir_t tmp;
   REQUIRE(sm1_init(tmp.path()) == 0);
   {
@@ -101,7 +101,7 @@ TEST_CASE("sm1_attach rejects an unknown format version") {
     delete root;
   }
   CHECK(sm1_attach(tmp.path()) == nullptr);
-  CHECK(sm1_errno() == SM1_ERR_VERSION);
+  CHECK(sm1_errno() == SM_ERR_VERSION);
 }
 
 TEST_CASE("sm1_attach sweeps database directories no name points at") {
@@ -127,14 +127,14 @@ TEST_CASE("sm1_attach sweeps database directories no name points at") {
 
 TEST_CASE("a successful call leaves the error state untouched") {
   // Verify success does not clear sm1_errno or sm1_errmsg.
-  // 1. Provoke SM1_ERR_INVALID and save the message.
+  // 1. Provoke SM_ERR_INVALID and save the message.
   // 2. Make a successful call.
   // 3. Confirm the code and message are unchanged.
   tmpdir_t tmp;
   CHECK(sm1_init(nullptr) == -1);
   std::string msg = sm1_errmsg();
   REQUIRE(sm1_init(tmp.path()) == 0);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(msg == sm1_errmsg());
   CHECK(sm1_retryable() == 0);
 }

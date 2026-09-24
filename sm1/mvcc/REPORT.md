@@ -49,8 +49,8 @@ The suite is in four families:
 * **B — write-write conflicts (`b01`–`b29`).** Row locks,
   first-committer-wins, blocking and the `blocks` protocol,
   deadlock detection, and retryable against non-retryable
-  errors (`SM1_ERR_CONFLICT`, `SM1_ERR_DEADLOCK`,
-  `SM1_ERR_DUPKEY`, `SM1_ERR_NOTFOUND`).
+  errors (`SM_ERR_CONFLICT`, `SM_ERR_DEADLOCK`,
+  `SM_ERR_DUPKEY`, `SM_ERR_NOTFOUND`).
 * **C — read-write conflicts (`c01`–`c31`).** Cahill's SSI:
   SIREAD locks, rw-antidependency edges, pivots, false-abort
   bounds, point reads, predicate ranges, early cursor close.
@@ -160,7 +160,7 @@ T1: sm1_rmstore(R)             T2: sm1_update(S, x)
 
 **What is covered.** `test/test_access.cc` takes DDL through
 commit and abort in one session. `test/test_lock.cc` pairs a
-drop against a *drop* — blocked, then `SM1_ERR_CONFLICT`.
+drop against a *drop* — blocked, then `SM_ERR_CONFLICT`.
 `test/test_gc.cc` has the older snapshot reading a dropped
 store's rows, at REPEATABLE READ, incidentally, as a
 watermark test.
@@ -226,7 +226,7 @@ block. Upgrading from shared to exclusive waits for other shared
 holders; two transactions upgrading the same key deadlock. After
 the lock is held, `access_check_current` validates that the key
 was not committed after the transaction's begin snapshot, failing
-with `SM1_ERR_CONFLICT` otherwise.
+with `SM_ERR_CONFLICT` otherwise.
 
 **What it cost.** A `lock <row> <shared|exclusive>` verb in
 `driver/parse.cc` and `driver/run.cc`, then the four

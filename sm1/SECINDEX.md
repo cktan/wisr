@@ -13,8 +13,8 @@ writes base and index rows in one transaction, so commit and
 abort cover both.
 
 - **Unique enforcement.** `sm1_insert` on the index store
-  gives `SM1_ERR_DUPKEY`; a concurrent inserter of the same key
-  blocks on the row lock and then fails with `SM1_ERR_CONFLICT`
+  gives `SM_ERR_DUPKEY`; a concurrent inserter of the same key
+  blocks on the row lock and then fails with `SM_ERR_CONFLICT`
   (§5.1, §5.2).
 - **Halloween protection.** A cursor's view is fixed at open,
   so updating the indexed column while scanning the index does
@@ -24,7 +24,7 @@ abort cover both.
   on that cursor.
 - **Compensation.** A non-retryable error leaves the
   transaction active and unchanged, so a base insert followed
-  by an index `SM1_ERR_DUPKEY` can be undone by hand.
+  by an index `SM_ERR_DUPKEY` can be undone by hand.
 
 ## Gaps, in order of severity
 
@@ -252,7 +252,7 @@ PostgreSQL's `SELECT FOR SHARE` / `FOR UPDATE`. The call blocks
 on a conflicting holder. Once the lock is held it runs the
 §5.2 first-committer-wins check: a committed version of the key
 newer than `T.snapshot_ts` fails the call with
-`SM1_ERR_CONFLICT`. The lock is held to end of transaction and
+`SM_ERR_CONFLICT`. The lock is held to end of transaction and
 is released by an `sm1_rollback` past it.
 
 **Index-build protocol.** The layer's catalog keeps one schema
@@ -323,7 +323,7 @@ so a correct caller cannot form a stale depth. The hazard is
 stated in `sm1.h` and `API.md`.
 
 **The stack is capped** at `SM1_MAX_SAVEPOINTS` (256), so
-runaway nesting is an `SM1_ERR_INVALID` rather than unbounded
+runaway nesting is an `SM_ERR_INVALID` rather than unbounded
 growth. A layer that forgets each statement's mark never
 approaches it.
 

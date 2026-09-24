@@ -216,7 +216,7 @@ public:
 
   /*
    * c: commit T<n>, reporting whether it committed. A failure
-   * must be SM1_ERR_SERIALIZATION -- the only commit-time
+   * must be SM_ERR_SERIALIZATION -- the only commit-time
    * failure the design allows (SM1_DESIGN.md §7.3) -- and must be
    * retryable.
    */
@@ -224,7 +224,7 @@ public:
     if (sm1_commit(session(n)) == 0) {
       return true;
     }
-    CHECK(sm1_errno() == SM1_ERR_SERIALIZATION);
+    CHECK(sm1_errno() == SM_ERR_SERIALIZATION);
     CHECK(sm1_retryable());
     return false;
   }
@@ -281,10 +281,10 @@ inline void fails(int rc, sm1_errno_t e) {
   CHECK(sm1_errno() == e);
 }
 
-/* Expect rc to be -1 with SM1_ERR_CONFLICT, which is retryable. */
+/* Expect rc to be -1 with SM_ERR_CONFLICT, which is retryable. */
 inline void conflicts(int rc) {
   CHECK(rc == -1);
-  CHECK(sm1_errno() == SM1_ERR_CONFLICT);
+  CHECK(sm1_errno() == SM_ERR_CONFLICT);
   CHECK(sm1_retryable());
 }
 

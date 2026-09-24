@@ -4,7 +4,7 @@
 # write returns ok, doomed or not, and the failure appears at
 # the commit. The retry at the end -- each session writing its
 # row again, with nobody concurrent -- must then succeed, which
-# is what makes SM1_ERR_SERIALIZATION a retryable error.
+# is what makes SM_ERR_SERIALIZATION a retryable error.
 
 
 == pairing RR/RR == T1=RR T2=RR

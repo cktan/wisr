@@ -117,7 +117,7 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   //    value is one increment higher, with or without an active
   //    transaction.
   // 2. A second sequence keeps its own position.
-  // 3. NULL arguments fail with SM1_ERR_INVALID.
+  // 3. NULL arguments fail with SM_ERR_INVALID.
   seq_fixture_t f;
   sm1_session_t *s = f.s();
   commit_mkseq(s, SEQ, 1000, 1);
@@ -139,11 +139,11 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   REQUIRE(sm1_commit(s) == 0);
   uint64_t out;
   CHECK(sm1_nextseq(nullptr, SEQ, &out) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_nextseq(s, SEQ, nullptr) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_nextseq(s, nullptr, &out) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
 }
 
 TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
@@ -153,11 +153,11 @@ TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
   //    by its own transaction, and gone after an abort.
   // 2. Created and committed, it is usable by another session.
   // 3. Dropped and committed, sm1_nextseq fails with
-  //    SM1_ERR_NOTFOUND; created again under the same name, it
+  //    SM_ERR_NOTFOUND; created again under the same name, it
   //    starts over at its start.
-  // 4. sm1_mkseq of a live name fails with SM1_ERR_EXISTS,
-  //    sm1_rmseq of an unknown one with SM1_ERR_NOTFOUND, and
-  //    increment 0 with SM1_ERR_INVALID.
+  // 4. sm1_mkseq of a live name fails with SM_ERR_EXISTS,
+  //    sm1_rmseq of an unknown one with SM_ERR_NOTFOUND, and
+  //    increment 0 with SM_ERR_INVALID.
   seq_fixture_t f;
   sm1_session_t *s = f.s();
   sm1_session_t *o = f.open();
@@ -166,10 +166,10 @@ TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
   REQUIRE(sm1_mkseq(s, SEQ, 100, 1) == 0);
   CHECK(next(s) == 100);
   CHECK(sm1_nextseq(o, SEQ, &v) == -1); // not committed yet
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
   REQUIRE(sm1_abort(s) == 0);
   CHECK(sm1_nextseq(s, SEQ, &v) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
 
   commit_mkseq(s, SEQ, 100, 1);
   CHECK(next(o) == 100);
@@ -177,15 +177,15 @@ TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   CHECK(sm1_mkseq(s, SEQ, 1, 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_EXISTS);
+  CHECK(sm1_errno() == SM_ERR_EXISTS);
   CHECK(sm1_rmseq(s, "nope") == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
   CHECK(sm1_mkseq(s, "zero", 1, 0) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   REQUIRE(sm1_rmseq(s, SEQ) == 0);
   REQUIRE(sm1_commit(s) == 0);
   CHECK(sm1_nextseq(s, SEQ, &v) == -1);
-  CHECK(sm1_errno() == SM1_ERR_NOTFOUND);
+  CHECK(sm1_errno() == SM_ERR_NOTFOUND);
 
   commit_mkseq(s, SEQ, 100, 1);
   CHECK(next(s) == 100); // a new sequence, starting over
@@ -214,7 +214,7 @@ TEST_CASE("a sequence hands out its last value, then fails") {
   // Verify the end of the range, where a step would wrap.
   // 1. A sequence starting two steps below UINT64_MAX hands
   //    out both values.
-  // 2. The next call fails with SM1_ERR_INVALID, and keeps
+  // 2. The next call fails with SM_ERR_INVALID, and keeps
   //    failing.
   seq_fixture_t f;
   sm1_session_t *s = f.s();
@@ -223,9 +223,9 @@ TEST_CASE("a sequence hands out its last value, then fails") {
   CHECK(next(s, "end") == UINT64_MAX);
   uint64_t v = 0;
   CHECK(sm1_nextseq(s, "end", &v) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_nextseq(s, "end", &v) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
 }
 
 TEST_CASE("an abort does not give a sequence value back") {
@@ -321,7 +321,7 @@ TEST_CASE("concurrent sessions never receive the same value") {
 TEST_CASE("a stopped database hands out no sequence values") {
   // Verify the failed state (§8.2) covers the sequence.
   // 1. Make a commit's status write fail.
-  // 2. sm1_nextseq then fails with SM1_ERR_IO.
+  // 2. sm1_nextseq then fails with SM_ERR_IO.
   seq_fixture_t f;
   sm1_session_t *s = f.s();
   commit_mkseq(s, SEQ, 1000, 1);
@@ -335,7 +335,7 @@ TEST_CASE("a stopped database hands out no sequence values") {
   s->db->test_before_commit = nullptr;
   uint64_t v;
   CHECK(sm1_nextseq(s, SEQ, &v) == -1);
-  CHECK(sm1_errno() == SM1_ERR_IO);
+  CHECK(sm1_errno() == SM_ERR_IO);
 }
 
 TEST_CASE("values handed out before a kill are never handed out again") {

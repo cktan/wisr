@@ -547,10 +547,10 @@ sm1_update(storeid, k, v):
      if latest is absent:
          latest = newest committed version of (storeid, k)
          if latest.commit_ts > T.snapshot_ts:
-             RR, SER: abort with SM1_ERR_CONFLICT        # §5.2
-             RC: SM1_ERR_UPDATED, unless T.lock(k).latest
-                 (an insert: no check)                   # §5.4
-     if latest is absent or tombstone: SM1_ERR_NOTFOUND  # (insert: DUPKEY)
+             RR, SER: abort with SM_ERR_CONFLICT        # §5.2
+             RC: SM_ERR_UPDATED, unless T.lock(k).latest
+                 (an insert: no check)                  # §5.4
+     if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
      if old wanted: copy latest's payload into the session buffer  # §5.3
   4. if T.xid == 0: T.xid = global_ts++
   5. wts = global_ts++                                  # after the lock, §4.1
@@ -593,7 +593,7 @@ state, and a caller that needs the value to outlive the next
 call copies it, exactly as it must after `sm1_read`.
 
 The value is only produced for a live version. A write that
-fails — `SM1_ERR_NOTFOUND` on a missing key, a conflict, a
+fails — `SM_ERR_NOTFOUND` on a missing key, a conflict, a
 deadlock — reports no old row.
 
 ### 5.1 Row locks
@@ -628,7 +628,7 @@ finds them. A blocked transaction sleeps `deadlock_ms`
 (default 50ms), then searches the waits-for graph from
 itself. If it can reach itself, the **youngest** transaction
 on that cycle — the last to begin — fails with
-`SM1_ERR_DEADLOCK`. Short waits never pay for the search and
+`SM_ERR_DEADLOCK`. Short waits never pay for the search and
 there is no detector thread.
 
 The waits-for edges form a **graph, not a chain**: a waiter
@@ -678,7 +678,7 @@ that committed after our snapshot. Together with the row lock
 snapshot-isolation write rule and it is what makes the §4.1
 invariant hold. It applies at **repeatable read and
 serializable**. Read committed does not abort the loser: it fails
-the write with `SM1_ERR_UPDATED` and lets it go ahead once the
+the write with `SM_ERR_UPDATED` and lets it go ahead once the
 caller has re-read the row (§5.4). The caveat for the
 non-serializable levels is §7.4's: their writes still feed the
 SSI tracker, but they are never serialization victims themselves.
@@ -687,7 +687,7 @@ SSI tracker, but they are never serialization victims themselves.
 
 At READ COMMITTED an update or delete that meets a row committed
 after `sm1_begin` waits for the row lock, as every write does,
-and then is refused with `SM1_ERR_UPDATED`. That is not an abort:
+and then is refused with `SM_ERR_UPDATED`. That is not an abort:
 the transaction stays active, keeps the lock, and
 `sm1_retryable()` is
 0. The caller calls `sm1_read_latest`, which returns the newest
@@ -704,8 +704,8 @@ which holds 0; T1 updates it and T2 waits for T1's row lock:
 | | T2's update, after T1 commits | R1 |
 | --- | --- | --- |
 | PostgreSQL | re-reads R1 (1), re-checks `WHERE`, writes 2 | 2 |
-| before §5.4 | fails with `SM1_ERR_CONFLICT`, T2 aborted | 1, until T2 retries |
-| §5.4 | `SM1_ERR_UPDATED`; T2 reads the latest (1), re-checks, writes 2 | 2 |
+| before §5.4 | fails with `SM_ERR_CONFLICT`, T2 aborted | 1, until T2 retries |
+| §5.4 | `SM_ERR_UPDATED`; T2 reads the latest (1), re-checks, writes 2 | 2 |
 
 A client written for PostgreSQL has no retry loop, so it could not
 run on the old rule. The variant is `UPDATE R1 SET n = 1 WHERE
@@ -733,15 +733,15 @@ a predicate: writing again without the read is refused again.
   savepoint keeps its mark. - **`sm1_read_latest`** requires READ
   COMMITTED and a lock this transaction holds on the key, taken
   by the refused write or by `sm1_lock`; otherwise
-  `SM1_ERR_INVALID`. Under a shared lock it reads but sets no
+  `SM_ERR_INVALID`. Under a shared lock it reads but sets no
   mark, since a shared holder cannot write without upgrading. A
   caller that waited in `sm1_lock(SHARED)` (a writer reading a
   schema row, §3 of `sm3/SM3_DESIGN.md`) uses it to see what
   committed while it waited. - **An insert** has no predicate to
   re-evaluate, so it is judged against the newest committed
-  version (`SM1_ERR_DUPKEY` if live) with no check, as
+  version (`SM_ERR_DUPKEY` if live) with no check, as
   PostgreSQL's unique check does. - **`sm1_lock`** at READ
-  COMMITTED no longer fails with `SM1_ERR_CONFLICT`. At the
+  COMMITTED no longer fails with `SM_ERR_CONFLICT`. At the
   higher levels it is unchanged. - REPEATABLE READ, SERIALIZABLE,
   SSI (READ COMMITTED takes no part, §7.4), 2PC and the GC
   watermark are unchanged: a read committed transaction already
@@ -810,7 +810,7 @@ statement can read.
 Writes check against `T.snapshot_ts`, not the statement snapshot.
 A write that meets a row committed after `sm1_begin` does not
 abort, as it does at the higher levels (§5.2): it waits for the
-row lock, is refused with `SM1_ERR_UPDATED`, and goes ahead
+row lock, is refused with `SM_ERR_UPDATED`, and goes ahead
 against the newest committed version once the caller has read it
 with `sm1_read_latest` (§5.4). PostgreSQL does the same at its
 default level, and workloads rely on it (`PART4.md` §5a).
@@ -869,7 +869,7 @@ a stale depth. `API.md` states the hazard.
 ```
 sm1_savepoint():                        # returns the new depth
     if len(T.savepoints) == SM1_MAX_SAVEPOINTS:
-        fail with SM1_ERR_INVALID
+        fail with SM_ERR_INVALID
     push onto T.savepoints:
         mark.undo    = T.undo.size()
         mark.locks   = T.locks.size()
@@ -879,12 +879,12 @@ sm1_savepoint():                        # returns the new depth
     return len(T.savepoints)
 
 sm1_forget(depth):                      # SQL's RELEASE SAVEPOINT
-    if no mark at depth: fail with SM1_ERR_NOSAVEPOINT
+    if no mark at depth: fail with SM_ERR_NOSAVEPOINT
     T.savepoints.truncate(depth - 1)   # that mark and those inside it
     # writes stay; locks stay, now held for the enclosing mark
 
 sm1_rollback(depth):
-    if no mark at depth: fail with SM1_ERR_NOSAVEPOINT # API.md divergence 8
+    if no mark at depth: fail with SM_ERR_NOSAVEPOINT # API.md divergence 8
     m = T.savepoints[depth-1].undo
     for e in reverse(T.undo[m..]):
         db.Delete(cf(e.storeid), encode(e.key, ~T.xid, ~e.seq))
@@ -1048,7 +1048,7 @@ edge R ──rw──▶ W, made by S (R or W, whichever is acting):
 
 at commit of T:
     if T is doomed, or T.in_conflict and T.out_conflict:
-        abort T with SM1_ERR_SERIALIZATION
+        abort T with SM_ERR_SERIALIZATION
 ```
 
 A committed transaction cannot be told "no", so an edge that
@@ -1056,7 +1056,7 @@ would make it a pivot dooms the running transaction completing
 the structure instead. Dooming never fails the call that made the
 edge: the transaction runs on and fails at its commit, so
 `sm1_read`, `sm1_scannxt`, and the write calls never return
-`SM1_ERR_SERIALIZATION`. The commit check runs after the
+`SM_ERR_SERIALIZATION`. The commit check runs after the
 transaction claims its `commit_ts` and before its status record
 is written; a failure hands the `commit_ts` back to the sequencer
 unused. A prepared transaction (§8.4) counts as committed for
@@ -1145,7 +1145,7 @@ atomic and durable at commit: **the status record**.
 ```
 sm1_commit(T):
   1. close T's open scan cursors               (§10.2)
-     if SERIALIZABLE: ssi.validate(T)         → may SM1_ERR_SERIALIZATION
+     if SERIALIZABLE: ssi.validate(T)         → may SM_ERR_SERIALIZATION
      if T.xid == 0: go to step 6               ← read-only: nothing to publish
   2. commit_ts = sequencer.claim()           ← global_ts++, joins the set
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
@@ -1173,9 +1173,9 @@ therefore does not resolve it as dead:
   remain in-flight to readers and to the compaction filter, and
   no snapshot can include its `commit_ts`;
 - the database enters a failed state: further writes, commits,
-  prepares, and GC sweeps fail with `SM1_ERR_IO`, while reads on
+  prepares, and GC sweeps fail with `SM_ERR_IO`, while reads on
   existing snapshots continue;
-- `sm1_commit` returns `SM1_ERR_IO`, meaning *outcome unknown*.
+- `sm1_commit` returns `SM_ERR_IO`, meaning *outcome unknown*.
   After the database is reopened, §3.4 resolves the transaction
   from whatever the WAL holds.
 
@@ -1458,13 +1458,13 @@ not treat it as aborted:
   filter, and the column families in `T.created` are kept;
 - the database enters §8.2's failed state, so nothing can
   resolve the transaction before the database is reopened;
-- `sm1_prepare` returns `SM1_ERR_IO`, meaning *outcome unknown*,
+- `sm1_prepare` returns `SM_ERR_IO`, meaning *outcome unknown*,
   and the transaction is no longer active on its session.
 
 After reopen, WAL replay decides: either the record survived and
 the transaction is restored in doubt, listed by
 `sm1_list_prepared` under its `gid`, or it has no record and is
-dead (§3.4). A coordinator that got `SM1_ERR_IO` checks the list
+dead (§3.4). A coordinator that got `SM_ERR_IO` checks the list
 and resolves by `gid`. It never received a "yes" vote, so abort
 is always a correct decision.
 
@@ -1516,7 +1516,7 @@ one extra rule:
 ```
 T_reader skips a version written by a restored transaction (§7.2)
     →  doom T_reader; it fails at prepare/commit with
-       SM1_ERR_SERIALIZATION
+       SM_ERR_SERIALIZATION
 ```
 
 This is enough without replaying the SSI graph. Nothing written
@@ -1562,7 +1562,7 @@ int  sm1_abort_prepared(sm1_session_t* session, const char* gid);
 - `sm1_commit_prepared` and `sm1_abort_prepared` resolve by
   `gid` on any session, which is the whole point: after a
   restart the resolving session is never the preparing one.
-- `sm1_prepare` can still fail with `SM1_ERR_SERIALIZATION`,
+- `sm1_prepare` can still fail with `SM_ERR_SERIALIZATION`,
   leaving the transaction aborted rather than prepared.
   Validation runs at prepare (§8.4), so this is the last
   moment at which the engine is able to say no.
@@ -1638,7 +1638,7 @@ hazard as in any 2PC system and is exposed, not hidden.
 ### 9.4 Torn or corrupt state
 
 RocksDB checksums every block and WAL record. A checksum failure is
-surfaced as `SM1_ERR_CORRUPT` at open; the design does not
+surfaced as `SM_ERR_CORRUPT` at open; the design does not
 attempt repair beyond RocksDB's own WAL truncation of a torn tail
 record — which is safe here precisely because a torn tail can
 only lose commit records at the very end of the log, and losing a
@@ -1938,16 +1938,16 @@ CF, or else name two stores at once.
 There is no next-storeid row in the catalog. Storeids come from
 the lease in `CF:meta` (§4.2); a catalog row updated by every
 `sm1_mkstore` would make concurrent creates of *different* stores
-contend on one row lock and fail with `SM1_ERR_CONFLICT`.
+contend on one row lock and fail with `SM_ERR_CONFLICT`.
 
 Because it is an ordinary store, DDL is transactional for free:
 `sm1_mkstore` inserts a catalog row, `sm1_rmstore` deletes it
 (recording the storeid in `T.dropped`), and both roll back with
 the transaction. Both follow the §5 write path, reported in DDL
 terms: `sm1_mkstore` of a live storeid fails with
-`SM1_ERR_EXISTS` where an insert would report `SM1_ERR_DUPKEY`,
+`SM_ERR_EXISTS` where an insert would report `SM_ERR_DUPKEY`,
 and `sm1_rmstore` of a missing storeid fails with
-`SM1_ERR_NOTFOUND`. A dropped storeid's newest version is a
+`SM_ERR_NOTFOUND`. A dropped storeid's newest version is a
 tombstone, so `sm1_mkstore` can create it again.
 
 `sm1_lsstore` is a §10.2 scan of the catalog over `["R", "S")`,
@@ -2034,7 +2034,7 @@ lease.
 when there is one, so a sequence a transaction has just created
 is usable before it commits, and at `visible_ts` when there is
 none. The last value is the largest one at or below
-`UINT64_MAX`; a further call fails with `SM1_ERR_INVALID` rather
+`UINT64_MAX`; a further call fails with `SM_ERR_INVALID` rather
 than wrapping onto values already handed out.
 
 A committed `sm1_rmseq` deletes the sequence's lease, best
@@ -2082,22 +2082,22 @@ This section records only which codes the engine raises and
 where they come from:
 
 ```
-SM1_ERR_CONFLICT        write-write conflict (§5.2)
-SM1_ERR_UPDATED         read committed write past a newer commit (§5.4);
+SM_ERR_CONFLICT        write-write conflict (§5.2)
+SM_ERR_UPDATED         read committed write past a newer commit (§5.4);
                        not an abort
-SM1_ERR_SERIALIZATION   SSI validation failure (§7.3)
-SM1_ERR_DEADLOCK        victim of deadlock detection (§5.1)
-SM1_ERR_NOTFOUND        store or key does not exist
-SM1_ERR_DUPKEY          insert onto a live key (§5)
-SM1_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
-SM1_ERR_NOTRANS         data op outside a transaction (§6.1)
-SM1_ERR_INTRANS         op forbidden inside a transaction (§6.1)
-SM1_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
-SM1_ERR_EXISTS          home dir, database, or store exists (§11)
-SM1_ERR_INUSE           database still open in this process
-SM1_ERR_VERSION         home directory format unsupported (§3.5)
-SM1_ERR_CORRUPT         RocksDB integrity failure (§9.4)
-SM1_ERR_IO / SM1_ERR_NOMEM / SM1_ERR_PERMISSION / SM1_ERR_DISKFULL
+SM_ERR_SERIALIZATION   SSI validation failure (§7.3)
+SM_ERR_DEADLOCK        victim of deadlock detection (§5.1)
+SM_ERR_NOTFOUND        store or key does not exist
+SM_ERR_DUPKEY          insert onto a live key (§5)
+SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
+SM_ERR_NOTRANS         data op outside a transaction (§6.1)
+SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
+SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
+SM_ERR_EXISTS          home dir, database, or store exists (§11)
+SM_ERR_INUSE           database still open in this process
+SM_ERR_VERSION         home directory format unsupported (§3.5)
+SM_ERR_CORRUPT         RocksDB integrity failure (§9.4)
+SM_ERR_IO / SM_ERR_NOMEM / SM_ERR_PERMISSION / SM_ERR_DISKFULL
 ```
 
 `CONFLICT`, `SERIALIZATION`, and `DEADLOCK` are the three
@@ -2121,7 +2121,7 @@ Two consequences for the implementation:
   the next failing `sm1_*` call on that thread, so the message
   wants thread-local storage owned by the engine. Formatting
   it lazily is worthwhile: under SSI a retry loop can raise
-  `SM1_ERR_SERIALIZATION` constantly and never read the text.
+  `SM_ERR_SERIALIZATION` constantly and never read the text.
 
 ### 12.2 Configuration knobs
 
@@ -2224,7 +2224,7 @@ bullets below cover the rest of the engine.
   yielded by any surviving cursor (§6.5, §10.2).
   It can update a key it inserted and re-insert a key it
   deleted (§5), and `sm1_rollback` to a depth the stack does
-  not hold fails with `SM1_ERR_NOSAVEPOINT`. A key locked
+  not hold fails with `SM_ERR_NOSAVEPOINT`. A key locked
   before a savepoint and rewritten after it stays locked
   through `sm1_rollback` (§5.1).
 - **Nested savepoints.** Three marks deep: a rollback to the
@@ -2233,13 +2233,13 @@ bullets below cover the rest of the engine.
   survives for a second rollback. `sm1_forget` keeps the
   writes and releases no locks, and the depth it frees is
   handed out again by the next `sm1_savepoint`. Pushing past
-  `SM1_MAX_SAVEPOINTS` fails with `SM1_ERR_INVALID` (§6.5).
+  `SM1_MAX_SAVEPOINTS` fails with `SM_ERR_INVALID` (§6.5).
 - **The old row.** An update returns the committed value it
   replaced, then its own previous value on a second update,
   and a delete returns the last value written. An empty old
   value comes back with length 0, a failed write reports
   none, and one out-parameter without the other is
-  `SM1_ERR_INVALID`. A read on the same session overwrites
+  `SM_ERR_INVALID`. A read on the same session overwrites
   the buffer the old row was handed out in (§5.3).
 - **Cursor reposition.** A cursor seeks forward over rows and
   resumes there, with the bounds and view it opened with;
@@ -2253,7 +2253,7 @@ bullets below cover the rest of the engine.
   writing the key upgrades once the others go, and two
   upgraders on one key deadlock with the younger one the
   victim. At REPEATABLE READ and above `sm1_lock` runs §5.2's
-  check under the lock, so it fails with `SM1_ERR_CONFLICT` on a
+  check under the lock, so it fails with `SM_ERR_CONFLICT` on a
   key committed after the caller's snapshot; at read committed
   it does not fail, and the caller reads the row with
   `sm1_read_latest` (§5.4). A savepoint rollback releases an
@@ -2266,7 +2266,7 @@ bullets below cover the rest of the engine.
 - **Deadlock.** Build a two-transaction cycle in both orders:
   the older waiter finds the cycle and the younger is the
   victim, and the younger finds it and is itself the victim.
-  Either way the youngest fails with `SM1_ERR_DEADLOCK` and the
+  Either way the youngest fails with `SM_ERR_DEADLOCK` and the
   other proceeds. Separately, doom a running transaction and
   assert its next `sm1_*` call fails with that reason and
   changes nothing (§5.1).
@@ -2281,7 +2281,7 @@ bullets below cover the rest of the engine.
 - **Read committed after a write.** A read-committed
   transaction that has already written reads a key committed by
   another transaction after its first write, and sees it
-  (§10.1). Updating that key then fails with `SM1_ERR_UPDATED`,
+  (§10.1). Updating that key then fails with `SM_ERR_UPDATED`,
   and goes ahead after `sm1_read_latest` (§5.4). A read-committed
   transaction left idle while another deletes a key keeps that
   tombstone through a forced compaction and purge (§8.3).
@@ -2309,7 +2309,7 @@ bullets below cover the rest of the engine.
 - **DDL.** Concurrent `sm1_mkstore` calls both commit, each
   writing a catalog row of its own; concurrent `sm1_rmstore` of
   the same store blocks, and the second fails with
-  `SM1_ERR_CONFLICT` (§11). Every `sm1_mkstore` hands out a
+  `SM_ERR_CONFLICT` (§11). Every `sm1_mkstore` hands out a
   higher storeid than the last, and a dropped store stays
   readable at an older snapshot; `sm1_rollback` past an
   `sm1_rmstore` keeps the store's CF, and past an `sm1_mkstore`
@@ -2325,7 +2325,7 @@ bullets below cover the rest of the engine.
   and a sequence at `UINT64_MAX` hands out its last value and
   then fails (§11).
 - **Environment lifetime.** `sm1_detach` with `force` 0 and a
-  session open fails with `SM1_ERR_INUSE` and leaves the env
+  session open fails with `SM_ERR_INUSE` and leaves the env
   usable; with `force` non-zero it succeeds, and a second
   `sm1_attach` on the same home directory then works. A
   transaction left active in a
@@ -2341,7 +2341,7 @@ bullets below cover the rest of the engine.
   restored in-doubt, and that both resolutions produce the right state.
   Replay the §8.4 write-skew history across a restart and assert
   that the post-restart transaction fails with
-  `SM1_ERR_SERIALIZATION`; assert `sm1_list_prepared` reports the
+  `SM_ERR_SERIALIZATION`; assert `sm1_list_prepared` reports the
   original `prepared_at`. Prepare two read-only transactions
   under different gids, restart, and assert both are listed and
   resolvable (§8.4). Prepare a transaction that dropped a
@@ -2358,11 +2358,11 @@ bullets below cover the rest of the engine.
   Stall one commit's WAL sync under concurrent load and
   assert allocation continues and `visible_ts` catches up (§4.3).
 - **Status resolution.** Fail a commit's status write and assert
-  the database fails stop: `sm1_commit` returns `SM1_ERR_IO`, the
+  the database fails stop: `sm1_commit` returns `SM_ERR_IO`, the
   versions stay in-flight and are not compacted away, and after
   reopen the transaction is committed or dead according to the
   WAL (§8.2). Fail a prepare's record write and assert
-  `sm1_prepare` returns `SM1_ERR_IO`, the versions stay
+  `sm1_prepare` returns `SM_ERR_IO`, the versions stay
   in-flight, and after reopen the transaction is either listed by
   `sm1_list_prepared` or dead, according to the WAL (§8.4).
   Sweep `CF:txn` after a compaction pass and assert

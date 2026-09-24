@@ -317,7 +317,7 @@ correctness. What it means:
 ## 5a. The second conflict: READ COMMITTED writes
 
 `sm1` first settled that a write at READ COMMITTED fails with
-`SM1_ERR_CONFLICT` when the row was committed after the
+`SM_ERR_CONFLICT` when the row was committed after the
 transaction began. PostgreSQL's default level does not fail.
 The second of two concurrent
 `UPDATE t SET x = x + 1 WHERE id = 1` waits for the first,
@@ -329,7 +329,7 @@ level.
 
 Decided and built: at READ COMMITTED the write waits for the
 row lock and then proceeds instead of failing. The change is to
-sm1: a refused write, `SM1_ERR_UPDATED`, is followed by
+sm1: a refused write, `SM_ERR_UPDATED`, is followed by
 `sm1_read_latest` and then the write, and versions are keyed by a
 write timestamp so their order stays commit order. The design is
 `sm1/SM1_DESIGN.md` §5.4 and §6.2, and its tests are scenarios

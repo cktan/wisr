@@ -145,7 +145,7 @@ TEST_CASE("a key one byte over SM1_MAX_KEYLEN is rejected by every call") {
   // Verify the key limit is enforced everywhere a key is taken.
   // 1. Insert, update, delete, read, and a scan with an
   //    over-long lower or upper bound all fail with
-  //    SM1_ERR_INVALID.
+  //    SM_ERR_INVALID.
   // 2. None of them disturbs the transaction: an earlier write
   //    commits and reads back.
   limits_fixture_t f;
@@ -156,21 +156,21 @@ TEST_CASE("a key one byte over SM1_MAX_KEYLEN is rejected by every call") {
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   put(s, f.store(), "ok", "v");
   CHECK(sm1_insert(s, f.store(), over.data(), over.size(), "v", 1) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_update(s, f.store(), over.data(), over.size(), "v", 1, nullptr,
                    nullptr) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_delete(s, f.store(), over.data(), over.size(), nullptr, nullptr) ==
         -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_read(s, f.store(), over.data(), over.size(), &d, &dl) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_scan(s, f.store(), over.data(), over.size(), 1, nullptr, 0, 0) ==
         nullptr);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_scan(s, f.store(), nullptr, 0, 0, over.data(), over.size(), 1) ==
         nullptr);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   REQUIRE(sm1_commit(s) == 0);
 
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
@@ -214,7 +214,7 @@ TEST_CASE("values of SM1_MAX_DATALEN bytes are stored and read back intact") {
 TEST_CASE("a value one byte over SM1_MAX_DATALEN is rejected") {
   // Verify the value limit on both calls that take a value.
   // 1. Insert and update with SM1_MAX_DATALEN + 1 bytes fail with
-  //    SM1_ERR_INVALID.
+  //    SM_ERR_INVALID.
   // 2. The key keeps its earlier value, and the transaction
   //    still commits.
   limits_fixture_t f;
@@ -223,10 +223,10 @@ TEST_CASE("a value one byte over SM1_MAX_DATALEN is rejected") {
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   put(s, f.store(), "k", "v");
   CHECK(sm1_insert(s, f.store(), "k2", 2, over.data(), over.size()) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(sm1_update(s, f.store(), "k", 1, over.data(), over.size(), nullptr,
                    nullptr) == -1);
-  CHECK(sm1_errno() == SM1_ERR_INVALID);
+  CHECK(sm1_errno() == SM_ERR_INVALID);
   CHECK(get(s, f.store(), "k") == "v");
   CHECK(get(s, f.store(), "k2") == "<none>");
   REQUIRE(sm1_commit(s) == 0);

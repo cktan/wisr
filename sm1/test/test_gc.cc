@@ -187,7 +187,7 @@ TEST_CASE("a read committed write past a newer commit survives compaction") {
   // 1. Commit "k" = v0 and "j" = x.
   // 2. L (read committed) begins and writes "j", so its xid is early.
   // 3. Commit "k" = v1 from another session.
-  // 4. L's write of "k" fails with SM1_ERR_UPDATED; it reads the
+  // 4. L's write of "k" fails with SM_ERR_UPDATED; it reads the
   //    latest, writes v2 and commits.
   // 5. Compact; "k" reads v2 and only v2 is left.
   gc_fixture_t f;
@@ -199,7 +199,7 @@ TEST_CASE("a read committed write past a newer commit survives compaction") {
   REQUIRE(sm1_update(l, g_store, "j", 1, "y", 1, nullptr, nullptr) == 0);
   commit_set(w, "k", "v1");
   CHECK(sm1_update(l, g_store, "k", 1, "v2", 2, nullptr, nullptr) == -1);
-  CHECK(sm1_errno() == SM1_ERR_UPDATED);
+  CHECK(sm1_errno() == SM_ERR_UPDATED);
   const char *data = nullptr;
   size_t len = 0;
   REQUIRE(sm1_read_latest(l, g_store, "k", 1, &data, &len) == 0);

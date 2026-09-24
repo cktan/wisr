@@ -46,7 +46,7 @@ extern "C" {
 
 /*
  * Limits. A key or value beyond its bound, or a name outside
- * 1..bound bytes, fails with SM1_ERR_INVALID.
+ * 1..bound bytes, fails with SM_ERR_INVALID.
  *
  * SM1_MAX_DBNAME matches PostgreSQL's NAMEDATALEN - 1, so every
  * name PostgreSQL accepts for a database is one wisr accepts,
@@ -66,36 +66,36 @@ extern "C" {
  * appended, existing values never change.
  */
 typedef enum {
-    SM1_OK                = 0,
+    SM_OK                = 0,
 
     /* caller/programming errors */
-    SM1_ERR_INVALID       = 1,   /* bad argument */
-    SM1_ERR_NOTRANS       = 2,   /* op requires an active transaction */
-    SM1_ERR_INTRANS       = 3,   /* op forbidden inside a transaction */
-    SM1_ERR_PREPARED      = 4,   /* op forbidden on a prepared transaction */
-    SM1_ERR_NOSAVEPOINT   = 5,   /* rollback with no savepoint set */
+    SM_ERR_INVALID       = 1,   /* bad argument */
+    SM_ERR_NOTRANS       = 2,   /* op requires an active transaction */
+    SM_ERR_INTRANS       = 3,   /* op forbidden inside a transaction */
+    SM_ERR_PREPARED      = 4,   /* op forbidden on a prepared transaction */
+    SM_ERR_NOSAVEPOINT   = 5,   /* rollback with no savepoint set */
 
     /* data errors */
-    SM1_ERR_NOTFOUND      = 6,   /* store or key does not exist */
-    SM1_ERR_DUPKEY        = 7,   /* insert onto a live key */
-    SM1_ERR_EXISTS        = 8,   /* home dir, database, or store exists */
-    SM1_ERR_INUSE         = 9,   /* database or sessions still open */
+    SM_ERR_NOTFOUND      = 6,   /* store or key does not exist */
+    SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
+    SM_ERR_EXISTS        = 8,   /* home dir, database, or store exists */
+    SM_ERR_INUSE         = 9,   /* database or sessions still open */
 
     /* concurrency errors -- RETRYABLE */
-    SM1_ERR_CONFLICT      = 10,  /* write-write conflict */
-    SM1_ERR_SERIALIZATION = 11,  /* SSI validation failure */
-    SM1_ERR_DEADLOCK      = 12,  /* chosen as deadlock victim */
+    SM_ERR_CONFLICT      = 10,  /* write-write conflict */
+    SM_ERR_SERIALIZATION = 11,  /* SSI validation failure */
+    SM_ERR_DEADLOCK      = 12,  /* chosen as deadlock victim */
 
     /* environment errors */
-    SM1_ERR_CORRUPT       = 13,
-    SM1_ERR_IO            = 14,
-    SM1_ERR_NOMEM         = 15,
-    SM1_ERR_DISKFULL      = 16,
-    SM1_ERR_PERMISSION    = 17,
-    SM1_ERR_VERSION       = 18,  /* home dir format not supported */
+    SM_ERR_CORRUPT       = 13,
+    SM_ERR_IO            = 14,
+    SM_ERR_NOMEM         = 15,
+    SM_ERR_DISKFULL      = 16,
+    SM_ERR_PERMISSION    = 17,
+    SM_ERR_VERSION       = 18,  /* home dir format not supported */
 
     /* Not an abort: the transaction stays active (SM1_DESIGN.md §5.4). */
-    SM1_ERR_UPDATED       = 19   /* newer commit; sm1_read_latest, then retry */
+    SM_ERR_UPDATED       = 19   /* newer commit; sm1_read_latest, then retry */
 } sm1_errno_t;
 
 /*
@@ -116,7 +116,7 @@ const char* sm1_errmsg(void);
 /*
  * 1 if the last error on this thread is retryable, else 0.
  *
- * SM1_ERR_CONFLICT, SM1_ERR_SERIALIZATION, and SM1_ERR_DEADLOCK
+ * SM_ERR_CONFLICT, SM_ERR_SERIALIZATION, and SM_ERR_DEADLOCK
  * mean the transaction cannot proceed but the same work may
  * succeed on a fresh try. On any of them the engine has
  * ALREADY aborted the transaction: do not call sm1_abort(), do
@@ -130,7 +130,7 @@ const char* sm1_errmsg(void);
  * Every other error leaves the transaction active and
  * unchanged. The two exceptions are sm1_commit(), after which
  * the transaction is never still active, and sm1_prepare() on
- * SM1_ERR_IO.
+ * SM_ERR_IO.
  */
 int sm1_retryable(void);
 
@@ -258,7 +258,7 @@ void sm1_options_init(sm1_options_t* opt);
  *
  * Call it once in a home directory's life, not once per
  * process. It takes no lock and opens nothing. Returns 0, or
- * -1 with SM1_ERR_EXISTS if homedir is already a wisr home.
+ * -1 with SM_ERR_EXISTS if homedir is already a wisr home.
  */
 int sm1_init(const char* homedir);
 
@@ -278,7 +278,7 @@ sm1_env_t* sm1_attach(const char* homedir);
  * This undoes sm1_attach(), not sm1_init(); afterwards another
  * process may attach the home directory.
  *
- * With force == 0, returns -1 with SM1_ERR_INUSE if any
+ * With force == 0, returns -1 with SM_ERR_INUSE if any
  * session opened through env is still open, and env stays
  * valid. With force != 0, those sessions are closed first,
  * as sm1_closedb() would: cursors are closed and active
@@ -305,8 +305,8 @@ int sm1_detach(sm1_env_t* env, int force);
  * bytewise and never folded, so "Foo" and "foo" are two
  * databases.
  *
- * Errors: SM1_ERR_EXISTS, SM1_ERR_PERMISSION, SM1_ERR_DISKFULL,
- * SM1_ERR_IO, SM1_ERR_INVALID.
+ * Errors: SM_ERR_EXISTS, SM_ERR_PERMISSION, SM_ERR_DISKFULL,
+ * SM_ERR_IO, SM_ERR_INVALID.
  */
 int sm1_mkdb(sm1_env_t* env, const char* dbname, const sm1_options_t* opt);
 
@@ -314,12 +314,12 @@ int sm1_mkdb(sm1_env_t* env, const char* dbname, const sm1_options_t* opt);
  * Delete the database dbname and all of its data. THIS IS
  * DESTRUCTIVE AND CANNOT BE UNDONE.
  *
- * Fails with SM1_ERR_INUSE if any session in this environment
+ * Fails with SM_ERR_INUSE if any session in this environment
  * is open on it. No other process can be using it, provided
  * the caller keeps to one attached process (see "Processes").
  *
- * Errors: SM1_ERR_INUSE, SM1_ERR_NOTFOUND, SM1_ERR_PERMISSION,
- * SM1_ERR_IO, SM1_ERR_INVALID.
+ * Errors: SM_ERR_INUSE, SM_ERR_NOTFOUND, SM_ERR_PERMISSION,
+ * SM_ERR_IO, SM_ERR_INVALID.
  */
 int sm1_rmdb(sm1_env_t* env, const char* dbname);
 
@@ -331,7 +331,7 @@ int sm1_rmdb(sm1_env_t* env, const char* dbname);
  * only in the root db: reading homedir will not tell a caller
  * what is there.
  *
- * Errors: SM1_ERR_NOMEM, SM1_ERR_IO.
+ * Errors: SM_ERR_NOMEM, SM_ERR_IO.
  */
 int sm1_lsdb(sm1_env_t* env, sm1_strlist_t** out);
 
@@ -348,8 +348,8 @@ int sm1_lsdb(sm1_env_t* env, sm1_strlist_t** out);
  * A new session has no active transaction. It belongs to env,
  * which must not be released while the session is open.
  *
- * Returns NULL on error: SM1_ERR_NOTFOUND, SM1_ERR_CORRUPT,
- * SM1_ERR_PERMISSION, SM1_ERR_NOMEM, SM1_ERR_IO, SM1_ERR_INVALID.
+ * Returns NULL on error: SM_ERR_NOTFOUND, SM_ERR_CORRUPT,
+ * SM_ERR_PERMISSION, SM_ERR_NOMEM, SM_ERR_IO, SM_ERR_INVALID.
  */
 sm1_session_t* sm1_opendb(sm1_env_t* env, const char* dbname,
                           const sm1_options_t* opt);
@@ -366,9 +366,9 @@ sm1_session_t* sm1_opendb(sm1_env_t* env, const char* dbname,
  * again: the new sequence starts at its own start, keeping
  * nothing from the old one.
  *
- * Errors: SM1_ERR_EXISTS, SM1_ERR_NOTRANS, SM1_ERR_CONFLICT
- * (retryable -- concurrently created), SM1_ERR_INVALID,
- * SM1_ERR_PREPARED, SM1_ERR_DISKFULL, SM1_ERR_IO.
+ * Errors: SM_ERR_EXISTS, SM_ERR_NOTRANS, SM_ERR_CONFLICT
+ * (retryable -- concurrently created), SM_ERR_INVALID,
+ * SM_ERR_PREPARED, SM_ERR_DISKFULL, SM_ERR_IO.
  */
 int sm1_mkseq(sm1_session_t* session, const char* name,
               uint64_t start, uint64_t increment);
@@ -376,8 +376,8 @@ int sm1_mkseq(sm1_session_t* session, const char* name,
 /*
  * Drop a sequence. Transactional, as sm1_mkseq().
  *
- * Errors: SM1_ERR_NOTFOUND, SM1_ERR_NOTRANS, SM1_ERR_CONFLICT
- * (retryable), SM1_ERR_INVALID, SM1_ERR_PREPARED.
+ * Errors: SM_ERR_NOTFOUND, SM_ERR_NOTRANS, SM_ERR_CONFLICT
+ * (retryable), SM_ERR_INVALID, SM_ERR_PREPARED.
  */
 int sm1_rmseq(sm1_session_t* session, const char* name);
 
@@ -398,12 +398,12 @@ int sm1_rmseq(sm1_session_t* session, const char* name);
  * transaction's snapshot, so one created by the transaction
  * itself can be used at once. A sequence whose last value has
  * been handed out -- the next one would exceed UINT64_MAX --
- * fails with SM1_ERR_INVALID.
+ * fails with SM_ERR_INVALID.
  *
- * Errors: SM1_ERR_NOTFOUND (no such sequence), SM1_ERR_INVALID,
- * SM1_ERR_PREPARED, SM1_ERR_CORRUPT, SM1_ERR_IO (the database has
+ * Errors: SM_ERR_NOTFOUND (no such sequence), SM_ERR_INVALID,
+ * SM_ERR_PREPARED, SM_ERR_CORRUPT, SM_ERR_IO (the database has
  * stopped, or persisting the next block failed),
- * SM1_ERR_DISKFULL.
+ * SM_ERR_DISKFULL.
  */
 int sm1_nextseq(sm1_session_t* session, const char* name,
                 uint64_t* out);
@@ -424,7 +424,7 @@ int sm1_closedb(sm1_session_t* session);
  * level calls for one. Exactly one transaction may be active
  * on a session; there is no nesting.
  *
- * Errors: SM1_ERR_INTRANS, SM1_ERR_INVALID (unknown level).
+ * Errors: SM_ERR_INTRANS, SM_ERR_INVALID (unknown level).
  */
 int sm1_begin(sm1_session_t* session, sm1_xctlevel_t level);
 
@@ -435,22 +435,22 @@ int sm1_begin(sm1_session_t* session, sm1_xctlevel_t level);
  * transaction this is the coordinator's commit decision and
  * always succeeds, validation having happened at prepare.
  *
- * On SM1_ERR_SERIALIZATION the transaction is aborted and its
+ * On SM_ERR_SERIALIZATION the transaction is aborted and its
  * effects discarded; retry.
  *
- * On SM1_ERR_IO the outcome is UNKNOWN: the commit record may
+ * On SM_ERR_IO the outcome is UNKNOWN: the commit record may
  * or may not have reached the log. DO NOT RETRY BLINDLY -- the
  * work may already be committed. The database enters a failed
  * state, where further writes, commits, and prepares fail with
- * SM1_ERR_IO while reads on existing snapshots continue. After
+ * SM_ERR_IO while reads on existing snapshots continue. After
  * a reopen the transaction is committed or not according to
  * what reached the log.
  *
  * Once called on an active transaction, the transaction is no
  * longer active whatever the result.
  *
- * Errors: SM1_ERR_SERIALIZATION (retryable), SM1_ERR_NOTRANS,
- * SM1_ERR_IO (outcome unknown).
+ * Errors: SM_ERR_SERIALIZATION (retryable), SM_ERR_NOTRANS,
+ * SM_ERR_IO (outcome unknown).
  */
 int sm1_commit(sm1_session_t* session);
 
@@ -463,7 +463,7 @@ int sm1_commit(sm1_session_t* session);
  * Must not be called after a retryable error, which already
  * aborted the transaction.
  *
- * Errors: SM1_ERR_NOTRANS.
+ * Errors: SM_ERR_NOTRANS.
  */
 int sm1_abort(sm1_session_t* session);
 
@@ -485,7 +485,7 @@ typedef enum {
  *
  * The call BLOCKS while another transaction holds the lock in
  * a conflicting mode, exactly as a write does, and it can fail
- * with SM1_ERR_DEADLOCK for the same reason. A transaction that
+ * with SM_ERR_DEADLOCK for the same reason. A transaction that
  * already holds the row shared and asks for it exclusive --
  * including by writing the row -- upgrades, waiting for the
  * other shared holders to finish; two transactions upgrading
@@ -494,7 +494,7 @@ typedef enum {
  * Once the lock is held the call runs the same check a write
  * does: if another transaction committed a version of this key
  * after this transaction's snapshot, it fails with
- * SM1_ERR_CONFLICT. So a successful sm1_lock means what the
+ * SM_ERR_CONFLICT. So a successful sm1_lock means what the
  * caller reads next under that lock is current, which is what
  * makes "lock, then read, then act" safe.
  *
@@ -508,9 +508,9 @@ typedef enum {
  * after a crash, so nothing may write those rows until a
  * coordinator resolves it.
  *
- * Errors: SM1_ERR_CONFLICT / SM1_ERR_DEADLOCK (retryable),
- * SM1_ERR_NOTFOUND (store), SM1_ERR_NOTRANS, SM1_ERR_PREPARED,
- * SM1_ERR_INVALID.
+ * Errors: SM_ERR_CONFLICT / SM_ERR_DEADLOCK (retryable),
+ * SM_ERR_NOTFOUND (store), SM_ERR_NOTRANS, SM_ERR_PREPARED,
+ * SM_ERR_INVALID.
  */
 int sm1_lock(sm1_session_t* session, uint64_t storeid,
              const char* key, size_t klen, sm1_lockmode_t mode);
@@ -520,11 +520,11 @@ int sm1_lock(sm1_session_t* session, uint64_t storeid,
  * snapshot, under a row lock this transaction already holds.
  * Returns as sm1_read() does: 0 found, 1 no such key. At read
  * committed only. Under an exclusive lock it also lets the next
- * write of the key through, after SM1_ERR_UPDATED (SM1_DESIGN.md
+ * write of the key through, after SM_ERR_UPDATED (SM1_DESIGN.md
  * §5.4).
  *
- * Errors: SM1_ERR_INVALID (not read committed, or no lock held),
- * SM1_ERR_NOTRANS, SM1_ERR_PREPARED, SM1_ERR_NOTFOUND (store).
+ * Errors: SM_ERR_INVALID (not read committed, or no lock held),
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_NOTFOUND (store).
  */
 int sm1_read_latest(sm1_session_t* session, uint64_t storeid,
                     const char* key, size_t klen,
@@ -555,10 +555,10 @@ int sm1_read_latest(sm1_session_t* session, uint64_t storeid,
  *
  * Writes are unaffected: they still check for conflicts
  * against the snapshot taken by sm1_begin(), so an
- * SM1_ERR_CONFLICT can still arrive on a row this statement
+ * SM_ERR_CONFLICT can still arrive on a row this statement
  * has just read.
  *
- * Errors: SM1_ERR_NOTRANS, SM1_ERR_PREPARED, SM1_ERR_INVALID.
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID.
  */
 int sm1_stmt_begin(sm1_session_t* session);
 
@@ -576,7 +576,7 @@ int sm1_stmt_begin(sm1_session_t* session);
  *
  * Returns the depth (>= 1), or -1 on error.
  *
- * Errors: SM1_ERR_NOTRANS, SM1_ERR_PREPARED, SM1_ERR_INVALID
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID
  * (the stack is full).
  */
 int sm1_savepoint(sm1_session_t* session);
@@ -602,8 +602,8 @@ int sm1_savepoint(sm1_session_t* session);
  * reads performed and then rolled back still count towards
  * serialization checking. Conservative, never unsafe.
  *
- * Errors: SM1_ERR_NOSAVEPOINT (no savepoint at that depth),
- * SM1_ERR_NOTRANS, SM1_ERR_PREPARED.
+ * Errors: SM_ERR_NOSAVEPOINT (no savepoint at that depth),
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED.
  */
 int sm1_rollback(sm1_session_t* session, int depth);
 
@@ -616,8 +616,8 @@ int sm1_rollback(sm1_session_t* session, int depth);
  * taken since it: they now belong to the enclosing savepoint,
  * or to the transaction if there is none.
  *
- * Errors: SM1_ERR_NOSAVEPOINT (no savepoint at that depth),
- * SM1_ERR_NOTRANS, SM1_ERR_PREPARED.
+ * Errors: SM_ERR_NOSAVEPOINT (no savepoint at that depth),
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED.
  */
 int sm1_forget(sm1_session_t* session, int depth);
 
@@ -630,7 +630,7 @@ int sm1_forget(sm1_session_t* session, int depth);
  * Runs serialization validation, then durably records the
  * prepared state. The transaction is then PREPARED: data
  * operations, savepoints, and rollback are rejected with
- * SM1_ERR_PREPARED, and only sm1_commit() and sm1_abort() are
+ * SM_ERR_PREPARED, and only sm1_commit() and sm1_abort() are
  * accepted. It survives a crash, is restored at the next
  * sm1_opendb() still holding its row locks, and cannot be told
  * "no" by the engine.
@@ -638,28 +638,28 @@ int sm1_forget(sm1_session_t* session, int depth);
  * From here on the transaction belongs to the database, not
  * the session: any session may resolve it by gid, and
  * sm1_closedb() leaves it in doubt. While it is unresolved, the
- * preparing session's sm1_begin() fails with SM1_ERR_INTRANS.
+ * preparing session's sm1_begin() fails with SM_ERR_INTRANS.
  * Once any session has resolved it, the preparing session has
  * no transaction: its sm1_commit() and sm1_abort() fail with
- * SM1_ERR_NOTRANS, and sm1_begin() succeeds.
+ * SM_ERR_NOTRANS, and sm1_begin() succeeds.
  *
  * An abandoned prepared transaction blocks writers on its keys
  * and prevents reclamation indefinitely. That is inherent to
  * 2PC and is exposed rather than hidden;
  * sm1_abort_prepared() is the operator escape hatch.
  *
- * On SM1_ERR_IO the outcome is UNKNOWN: the prepared record may
+ * On SM_ERR_IO the outcome is UNKNOWN: the prepared record may
  * or may not have reached the log. The transaction is no
  * longer active, and the database enters the same failed state
- * as after SM1_ERR_IO from sm1_commit(). After a reopen the
+ * as after SM_ERR_IO from sm1_commit(). After a reopen the
  * transaction is either listed by sm1_list_prepared() under
  * gid, or was never prepared and is aborted. Since the
  * participant never voted yes, sm1_abort_prepared() is always a
  * correct resolution.
  *
- * Errors: SM1_ERR_SERIALIZATION (retryable; the transaction is
- * aborted and NOT prepared), SM1_ERR_NOTRANS, SM1_ERR_EXISTS
- * (gid in use), SM1_ERR_INVALID, SM1_ERR_IO (outcome unknown).
+ * Errors: SM_ERR_SERIALIZATION (retryable; the transaction is
+ * aborted and NOT prepared), SM_ERR_NOTRANS, SM_ERR_EXISTS
+ * (gid in use), SM_ERR_INVALID, SM_ERR_IO (outcome unknown).
  */
 int sm1_prepare(sm1_session_t* session, const char* gid);
 
@@ -680,7 +680,7 @@ struct sm1_prepared_t {
  *
  * Needs no active transaction and starts none.
  *
- * Errors: SM1_ERR_NOMEM, SM1_ERR_IO.
+ * Errors: SM_ERR_NOMEM, SM_ERR_IO.
  */
 int sm1_list_prepared(sm1_session_t* session, sm1_prepared_t** out,
                       size_t* n);
@@ -697,8 +697,8 @@ void sm1_free_prepared(sm1_prepared_t* list, size_t n);
  * the original session no longer exists. Neither call requires
  * an active transaction on session, and neither disturbs one.
  *
- * Errors: SM1_ERR_NOTFOUND (no unresolved prepared transaction
- * with that gid), SM1_ERR_DISKFULL, SM1_ERR_IO.
+ * Errors: SM_ERR_NOTFOUND (no unresolved prepared transaction
+ * with that gid), SM_ERR_DISKFULL, SM_ERR_IO.
  */
 int sm1_commit_prepared(sm1_session_t* session, const char* gid);
 int sm1_abort_prepared(sm1_session_t* session, const char* gid);
@@ -717,9 +717,9 @@ int sm1_abort_prepared(sm1_session_t* session, const char* gid);
  * undone by abort or by a rollback that spans it. A storeid from
  * a transaction that aborts is simply never used.
  *
- * Errors: SM1_ERR_NOTRANS, SM1_ERR_CONFLICT (retryable),
- * SM1_ERR_INVALID, SM1_ERR_PREPARED, SM1_ERR_DISKFULL,
- * SM1_ERR_IO.
+ * Errors: SM_ERR_NOTRANS, SM_ERR_CONFLICT (retryable),
+ * SM_ERR_INVALID, SM_ERR_PREPARED, SM_ERR_DISKFULL,
+ * SM_ERR_IO.
  */
 int sm1_mkstore(sm1_session_t* session, uint64_t* storeid);
 
@@ -732,8 +732,8 @@ int sm1_mkstore(sm1_session_t* session, uint64_t* storeid);
  * store; physical removal happens in the background once no
  * snapshot can see it.
  *
- * Errors: SM1_ERR_NOTFOUND, SM1_ERR_NOTRANS, SM1_ERR_CONFLICT
- * (retryable), SM1_ERR_INVALID (storeid 0), SM1_ERR_PREPARED.
+ * Errors: SM_ERR_NOTFOUND, SM_ERR_NOTRANS, SM_ERR_CONFLICT
+ * (retryable), SM_ERR_INVALID (storeid 0), SM_ERR_PREPARED.
  */
 int sm1_rmstore(sm1_session_t* session, uint64_t storeid);
 
@@ -748,8 +748,8 @@ int sm1_rmstore(sm1_session_t* session, uint64_t storeid);
  * block; release it with free(). *n may be 0, in which case
  * *out is NULL.
  *
- * Errors: SM1_ERR_NOTRANS, SM1_ERR_PREPARED, SM1_ERR_INVALID,
- * SM1_ERR_NOMEM, SM1_ERR_CORRUPT, SM1_ERR_IO.
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID,
+ * SM_ERR_NOMEM, SM_ERR_CORRUPT, SM_ERR_IO.
  */
 int sm1_lsstore(sm1_session_t* session, uint64_t** out, size_t* n);
 
@@ -757,25 +757,25 @@ int sm1_lsstore(sm1_session_t* session, uint64_t** out, size_t* n);
  * Write one row. All three calls require an active,
  * non-prepared transaction. When another transaction committed
  * a change to the same key after this transaction's snapshot,
- * all three fail with SM1_ERR_CONFLICT at REPEATABLE READ and
+ * all three fail with SM_ERR_CONFLICT at REPEATABLE READ and
  * SERIALIZABLE, aborting the transaction. At READ COMMITTED
- * sm1_update and sm1_delete fail with SM1_ERR_UPDATED instead,
+ * sm1_update and sm1_delete fail with SM_ERR_UPDATED instead,
  * which does not abort: call sm1_read_latest, then write again.
  * An sm1_insert there is judged against the newest committed
  * version.
  *
  * Each blocks while another active transaction holds the write
  * lock on the key, until that transaction ends, and a blocked
- * call can return SM1_ERR_DEADLOCK if it is chosen as the
+ * call can return SM_ERR_DEADLOCK if it is chosen as the
  * victim of a deadlock cycle.
  *
- *   sm1_insert  requires that the key not exist (SM1_ERR_DUPKEY)
- *   sm1_update  requires that it exist (SM1_ERR_NOTFOUND), and
+ *   sm1_insert  requires that the key not exist (SM_ERR_DUPKEY)
+ *   sm1_update  requires that it exist (SM_ERR_NOTFOUND), and
  *               replaces the value entirely -- no partial update
- *   sm1_delete  requires that it exist (SM1_ERR_NOTFOUND)
+ *   sm1_delete  requires that it exist (SM_ERR_NOTFOUND)
  *
  * There is no upsert: attempt sm1_insert() and fall back to
- * sm1_update() on SM1_ERR_DUPKEY.
+ * sm1_update() on SM_ERR_DUPKEY.
  *
  * A zero-length key is legal. A zero-length value is legal and
  * is distinct from a deleted key.
@@ -784,7 +784,7 @@ int sm1_lsstore(sm1_session_t* session, uint64_t** out, size_t* n);
  * replaced through old / oldlen, which a caller maintaining
  * secondary indexes needs in order to remove the entries the
  * old value produced. Pass NULL for both to skip it; they are
- * a pair, and giving one without the other is SM1_ERR_INVALID.
+ * a pair, and giving one without the other is SM_ERR_INVALID.
  * The write already reads that row to check the key exists, so
  * asking for it costs a copy, not another seek.
  *
@@ -794,10 +794,10 @@ int sm1_lsstore(sm1_session_t* session, uint64_t** out, size_t* n);
  * what the other handed out. Copy it to keep it. On failure,
  * and for a zero-length old value, *old may be NULL.
  *
- * Errors for all three: SM1_ERR_CONFLICT / SM1_ERR_DEADLOCK
- * (retryable), SM1_ERR_NOTFOUND (store, or key for
- * update/delete), SM1_ERR_DUPKEY (insert), SM1_ERR_NOTRANS,
- * SM1_ERR_PREPARED, SM1_ERR_INVALID, SM1_ERR_DISKFULL, SM1_ERR_IO.
+ * Errors for all three: SM_ERR_CONFLICT / SM_ERR_DEADLOCK
+ * (retryable), SM_ERR_NOTFOUND (store, or key for
+ * update/delete), SM_ERR_DUPKEY (insert), SM_ERR_NOTRANS,
+ * SM_ERR_PREPARED, SM_ERR_INVALID, SM_ERR_DISKFULL, SM_ERR_IO.
  */
 int sm1_insert(sm1_session_t* session, uint64_t storeid,
                const char* key, size_t klen,
@@ -826,13 +826,13 @@ int sm1_delete(sm1_session_t* session, uint64_t storeid,
  * unrelated part of the program. Copy it to keep it.
  *
  * Reads never block and never take locks, so they cannot
- * return SM1_ERR_CONFLICT or SM1_ERR_DEADLOCK. Under
+ * return SM_ERR_CONFLICT or SM_ERR_DEADLOCK. Under
  * SERIALIZABLE a read is recorded and may contribute to an
- * SM1_ERR_SERIALIZATION failure later, at commit.
+ * SM_ERR_SERIALIZATION failure later, at commit.
  *
- * Errors: SM1_ERR_NOTFOUND (the STORE does not exist -- a
- * missing key returns 1), SM1_ERR_NOTRANS, SM1_ERR_PREPARED,
- * SM1_ERR_INVALID, SM1_ERR_CORRUPT, SM1_ERR_IO.
+ * Errors: SM_ERR_NOTFOUND (the STORE does not exist -- a
+ * missing key returns 1), SM_ERR_NOTRANS, SM_ERR_PREPARED,
+ * SM_ERR_INVALID, SM_ERR_CORRUPT, SM_ERR_IO.
  */
 int sm1_read(sm1_session_t* session, uint64_t storeid,
              const char* key, size_t klen,
@@ -877,9 +877,9 @@ int sm1_read(sm1_session_t* session, uint64_t storeid,
  * to a savepoint older than it. Multiple cursors may be open
  * on one session at once.
  *
- * Returns NULL on error: SM1_ERR_NOTFOUND (no such store),
- * SM1_ERR_NOTRANS, SM1_ERR_PREPARED, SM1_ERR_INVALID,
- * SM1_ERR_NOMEM, SM1_ERR_IO.
+ * Returns NULL on error: SM_ERR_NOTFOUND (no such store),
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID,
+ * SM_ERR_NOMEM, SM_ERR_IO.
  */
 sm1_scan_t* sm1_scan(sm1_session_t* session, uint64_t storeid,
                      const char* skey, size_t sklen, int skey_inclusive,
@@ -896,7 +896,7 @@ sm1_scan_t* sm1_scan(sm1_session_t* session, uint64_t storeid,
  *
  * Once it has returned 1 or -1, further calls return the same.
  *
- * Errors: SM1_ERR_CORRUPT, SM1_ERR_IO.
+ * Errors: SM_ERR_CORRUPT, SM_ERR_IO.
  */
 int sm1_scannxt(sm1_scan_t* scan, const char** key, size_t* klen,
                 const char** data, size_t* datalen);
@@ -915,7 +915,7 @@ int sm1_scannxt(sm1_scan_t* scan, const char** key, size_t* klen,
  * given.
  *
  * Seeking moves FORWARD ONLY. A key before the last one the
- * cursor read fails with SM1_ERR_INVALID, as does a key below
+ * cursor read fails with SM_ERR_INVALID, as does a key below
  * the scan's start key. A key past the scan's end key is
  * allowed and leaves the cursor at its end, where sm1_scannxt()
  * returns 1.
@@ -926,7 +926,7 @@ int sm1_scannxt(sm1_scan_t* scan, const char** key, size_t* klen,
  * over-approximation, so it can only cause a serialization
  * failure that was not strictly necessary, never miss one.
  *
- * Errors: SM1_ERR_INVALID (a backward seek, a key below the
+ * Errors: SM_ERR_INVALID (a backward seek, a key below the
  * start key, or a cursor that already failed).
  */
 int sm1_scan_seek(sm1_scan_t* scan, const char* key, size_t klen,

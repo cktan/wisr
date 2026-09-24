@@ -77,7 +77,7 @@ struct sm1_session_t {
 
   /*
    * Why the transaction must fail at its next call (§5.1):
-   * SM1_ERR_DEADLOCK once chosen as a deadlock victim, else 0.
+   * SM_ERR_DEADLOCK once chosen as a deadlock victim, else 0.
    */
   std::atomic<int> doomed{0};
 
@@ -259,7 +259,7 @@ void ssi_range_close(sm1_scan_t *scan);
 /*
  * The SSI commit check (§7.3) for a transaction ending at
  * end_ts. Returns 0, or -1 if it must fail with
- * SM1_ERR_SERIALIZATION.
+ * SM_ERR_SERIALIZATION.
  */
 int ssi_precommit(sm1_session_t *session, uint64_t end_ts);
 
@@ -291,7 +291,7 @@ bool xct_decode_prepared(wisr::db_t *db, uint64_t xid, rocksdb::Slice val,
  */
 int recover(wisr::db_t *db);
 
-/* Fail with SM1_ERR_IO if db has failed stop (§8.2). */
+/* Fail with SM_ERR_IO if db has failed stop (§8.2). */
 int xct_check_writable(wisr::db_t *db);
 
 /*
@@ -347,7 +347,7 @@ sm1_scan_t *access_scan(sm1_session_t *session, uint64_t storeid,
  * exists (update, delete) or does not (insert). With old
  * non-NULL, it is filled with the row the write replaces, which
  * the existence check has already decoded. Returns 0, or -1
- * with SM1_ERR_DUPKEY / SM1_ERR_NOTFOUND / another error.
+ * with SM_ERR_DUPKEY / SM_ERR_NOTFOUND / another error.
  */
 int access_write(sm1_session_t *session, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, std::string *old);

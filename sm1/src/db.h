@@ -146,7 +146,7 @@ struct db_t {
   /*
    * Set when a status write fails (§8.2): the outcome of that
    * commit is unknown until a reopen, so writes, commits, and
-   * DDL fail with SM1_ERR_IO from then on.
+   * DDL fail with SM_ERR_IO from then on.
    */
   std::atomic<bool> failed{false};
 
@@ -406,7 +406,7 @@ int64_t gc_sweep_txn(db_t *db, bool start);
 
 /*
  * Apply opt->rocksdb_options, if any, on top of *out. Returns 0,
- * or -1 with SM1_ERR_INVALID if the string does not parse.
+ * or -1 with SM_ERR_INVALID if the string does not parse.
  */
 int db_options(const sm1_options_t *opt, rocksdb::DBOptions *out);
 

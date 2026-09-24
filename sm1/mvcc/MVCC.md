@@ -39,12 +39,12 @@ version nobody asked for. This is what makes a dirty write
 impossible. Two writers that wait on each other's rows
 would wait forever, so the engine breaks the cycle itself:
 the youngest transaction on it fails with
-`SM1_ERR_DEADLOCK`, and the others go on.
+`SM_ERR_DEADLOCK`, and the others go on.
 
 **First-committer-wins.** Once the lock is granted, the
 writer compares the row's newest committed version against
 its own snapshot. If that version committed after the
-snapshot, the write fails with `SM1_ERR_CONFLICT`, which is
+snapshot, the write fails with `SM_ERR_CONFLICT`, which is
 retryable and aborts the transaction. This applies at
 REPEATABLE READ and SERIALIZABLE, to every pair of writes —
 update, delete, and insert alike. READ COMMITTED does not
@@ -63,7 +63,7 @@ outgoing rw-edge — the pivot — where the transaction the
 outgoing edge points at commits first. wisr tracks the two
 flags per transaction and fails a transaction that would
 complete such a structure, at commit, with
-`SM1_ERR_SERIALIZATION`. This is Cahill's rule, as
+`SM_ERR_SERIALIZATION`. This is Cahill's rule, as
 PostgreSQL implements it: the check is conservative, so a
 failure does not prove a cycle existed, but no cycle escapes.
 
@@ -71,8 +71,8 @@ failure does not prove a cycle existed, but no cycle escapes.
 
 | Level | Promise |
 |---|---|
-| `SM1_XCT_REPEATABLE_READ` | Snapshot isolation: no dirty read, no dirty write, no non-repeatable read, no phantom within the snapshot, no lost update. Write skew and the read-only anomaly are allowed. Never fails with `SM1_ERR_SERIALIZATION`. |
-| `SM1_XCT_SERIALIZABLE` | Everything above, plus: every committed set of transactions is equivalent to some serial order. Pays for it with `SM1_ERR_SERIALIZATION` failures at commit. |
+| `SM1_XCT_REPEATABLE_READ` | Snapshot isolation: no dirty read, no dirty write, no non-repeatable read, no phantom within the snapshot, no lost update. Write skew and the read-only anomaly are allowed. Never fails with `SM_ERR_SERIALIZATION`. |
+| `SM1_XCT_SERIALIZABLE` | Everything above, plus: every committed set of transactions is equivalent to some serial order. Pays for it with `SM_ERR_SERIALIZATION` failures at commit. |
 
 ## 2. Notation
 
@@ -93,13 +93,13 @@ otherwise. **P** is a predicate: the key range of a scan.
 | Outcome | Meaning |
 |---|---|
 | `OK` | the call succeeds; for `c`, the transaction commits |
-| `CONFLICT` | `SM1_ERR_CONFLICT` at the write: first-committer-wins. Retryable, and it aborts the transaction |
-| `UPDATED` | `SM1_ERR_UPDATED` at a READ COMMITTED write: the row changed after the transaction began. Not retryable, and the transaction stays active; `readlatest` reads the newest version |
-| `SERIALIZATION` | `SM1_ERR_SERIALIZATION` at commit: the dangerous structure. Retryable |
+| `CONFLICT` | `SM_ERR_CONFLICT` at the write: first-committer-wins. Retryable, and it aborts the transaction |
+| `UPDATED` | `SM_ERR_UPDATED` at a READ COMMITTED write: the row changed after the transaction began. Not retryable, and the transaction stays active; `readlatest` reads the newest version |
+| `SERIALIZATION` | `SM_ERR_SERIALIZATION` at commit: the dangerous structure. Retryable |
 | `BLOCK` | the call waits on a row lock until the holder ends |
-| `DEADLOCK` | `SM1_ERR_DEADLOCK` at the write: the transaction was the youngest on a cycle of waits. Retryable, and it aborts the transaction |
-| `DUPKEY` | `SM1_ERR_DUPKEY`: the row exists in this transaction's own snapshot. Not retryable |
-| `NOTFOUND` | `SM1_ERR_NOTFOUND`: the row does not exist in this transaction's own snapshot. Not retryable |
+| `DEADLOCK` | `SM_ERR_DEADLOCK` at the write: the transaction was the youngest on a cycle of waits. Retryable, and it aborts the transaction |
+| `DUPKEY` | `SM_ERR_DUPKEY`: the row exists in this transaction's own snapshot. Not retryable |
+| `NOTFOUND` | `SM_ERR_NOTFOUND`: the row does not exist in this transaction's own snapshot. Not retryable |
 
 **Pairings.** Every scenario runs at each combination of
 levels, because SSI tracks only SERIALIZABLE transactions
