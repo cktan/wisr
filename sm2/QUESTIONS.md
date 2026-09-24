@@ -16,9 +16,10 @@ Two kinds of entry, and the difference matters:
 Ordered by the step of `PLAN.md` each one blocks. Sections 1
 to 3 — the suggested answers in `SM2_OBJECTIVE.md`, types, and
 key encoding — are answered and have moved into `SM2_DESIGN.md`,
-`TYPE.md` and `sm3/SM3_DESIGN.md`, and 6.1, the build, and
-6.2, the property tests, into `PLAN.md`; the numbering of what
-remains is kept so that a question's number never changes.
+`TYPE.md` and `sm3/SM3_DESIGN.md`, and 6.1, 6.2 and 6.3 — the
+build, the property tests and the PostgreSQL fixtures — into
+`PLAN.md`; the numbering of what remains is kept so that a
+question's number never changes.
 
 ---
 
@@ -143,19 +144,6 @@ returns it, so the sequence is used in one place.*
 
 ## 6. Mechanics — blocks the first line of code
 
-**6.3 [BLOCKING] Where do the PostgreSQL fixtures come from?**
-`PLAN.md` step 1 pins every representation to "a fixture taken
-from a running PostgreSQL", which is what makes `SM2_DESIGN.md`
-§2.1 a claim rather than an intention. That needs a PostgreSQL
-somewhere, and `SM2_OBJECTIVE.md` forbids a build dependency on
-one.
-The method is settled: the bytes are read on disk through
-`pageinspect`, once, on PostgreSQL 18, into a checked-in
-`test/pg_fixtures.h` (`PLAN.md`, "Testing"). Still open: on
-which machine they are generated, since the fixture run needs a
-server and this repository's machine has only the client.
-→ `PLAN.md`
-
 **6.4 [ASSUMABLE] Can sm2 land in pieces?**
 *Suggested: yes — steps 1 to 3 are a library with no sm1
 dependency at all and can land and be used before `rel`
@@ -206,3 +194,6 @@ Settled, and listed so nobody reopens them by accident:
   layout".
 - That property tests are hand-rolled, seeded and replayable,
   with no new dependency — `PLAN.md`, "Testing".
+- That the PostgreSQL fixtures are PostgreSQL 18's on-disk
+  bytes, read through `pageinspect` on the development machine
+  and checked in — `PLAN.md`, "Testing".

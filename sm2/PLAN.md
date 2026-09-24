@@ -177,6 +177,20 @@ with a PostgreSQL server and superuser rights; the build never
 touches PostgreSQL. The bytes hold on little-endian hosts only,
 which the fixture test asserts.
 
+The fixtures are generated on the development machine, from
+PostgreSQL 18.6 built from source: tag `REL_18_6`, cloned into
+`~/p/postgres18` and installed under `~/pg18` with
+`pageinspect`, its data directory at `~/pg18/data` with
+superuser `postgres` and trust authentication. The server runs
+only for a fixture run:
+
+```
+~/pg18/bin/pg_ctl -D ~/pg18/data -l ~/pg18/server.log \
+    -o "-p 5418 -k $HOME/pg18" -w start
+~/pg18/bin/psql -h ~/pg18 -p 5418 -U postgres
+~/pg18/bin/pg_ctl -D ~/pg18/data -w stop
+```
+
 ## What is deliberately not here
 
 - No catalog, no secondary index, no predicate scan, no
