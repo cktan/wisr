@@ -158,14 +158,6 @@ struct db_t {
   std::function<rocksdb::Status(uint64_t commit_ts)> test_before_commit;
 
   /*
-   * Test hook: called inside enter_cache just before the commit
-   * cache insert, after the commit point. Throwing std::bad_alloc
-   * stands in for that insert running out of memory. Empty
-   * outside tests.
-   */
-  std::function<void()> test_cache_insert;
-
-  /*
    * Row locks (§5.1): lock key -> the transactions holding it.
    * A lock is held SHARED by any number of them or EXCLUSIVE by
    * one. One mutex covers the table and every session's
@@ -282,12 +274,6 @@ struct db_t {
 
   /* Test hook, as test_before_commit, for the PREPARED record. */
   std::function<rocksdb::Status()> test_before_prepare;
-
-  /*
-   * Test hook: called right after the PREPARED record is written,
-   * on the preparing thread. Empty outside tests.
-   */
-  std::function<void()> test_after_prepare;
 
   /* Destroy the CF handles and close RocksDB. */
   ~db_t();

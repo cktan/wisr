@@ -289,9 +289,9 @@ design:
   be very rare: on a default Linux system an allocation seldom
   fails, since the kernel's OOM killer ends the process first;
   it takes a hard memory limit to get here. A host with its own
-  handler keeps its own policy, and with it the risk: if that
-  handler throws, a `bad_alloc` from inside RocksDB can leave it
-  unreliable, and sm1 does not guard against that.
+  handler keeps it, but one that throws is unsupported: sm1 does
+  not recover from a `bad_alloc` inside it, which can leave
+  RocksDB unreliable and sm1's own state half-changed.
 - **`std::bad_alloc` stops at sm2's and sm3's entry points;
   other exceptions cross the levels, and only the top level
   catches them.** Under sm1's handler (above), a `bad_alloc` is
@@ -303,8 +303,7 @@ design:
   nothing. The C wrapper is the one catch-all, since it is the
   only place a C caller can be reached. It catches everything:
   `std::bad_alloc` becomes `NOMEM` — possible there only from
-  the wrapper's own code, or under a host's own new-handler
-  (above) — anything else a code of its own that means a bug,
+  the wrapper's own code — anything else a code of its own that means a bug,
   and if the call involves a session the wrapper aborts that
   session's transaction before returning -1. A `NOMEM` returned
   from below is handled the same way: the wrapper aborts the
@@ -319,9 +318,9 @@ design:
   unwinding releases it. Four conditions come with it. Nothing
   may throw after a commit or prepare point: once the status or
   `PREPARED` record is written, an abort would kill in memory
-  versions the WAL says are committed, so that tail reserves what
-  it needs beforehand and is `noexcept`, or goes fail-stop as a
-  failed commit write already does. sm2 and sm3 must stay
+  versions the WAL says are committed. Nothing does: that tail
+  is `noexcept`, running out of memory in it aborts the process
+  as anywhere inside sm1, and a failed write goes fail-stop. sm2 and sm3 must stay
   consistent when unwound mid-call, so the abort undoes what a
   half-done call changed — above all in sm3's in-memory catalog.
   After `NOMEM`, as after a retryable code, the engine has

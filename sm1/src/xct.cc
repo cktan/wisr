@@ -32,7 +32,6 @@
 #include <time.h>
 
 #include <memory>
-#include <new>
 #include <vector>
 
 #include <rocksdb/write_batch.h>
@@ -116,29 +115,18 @@ void leave_active(db_t *db, uint64_t xid) {
  * Move xid from the active table into the commit cache, evicting
  * the oldest commit_ts if the cache is full. Eviction cannot
  * change an answer: the status record was written first (§3.4).
- * For the same reason an xid the cache has no memory for is left
- * out of it, so this never throws.
+ * It never throws: running out of memory inside sm1 aborts the
+ * process (oom.h).
  */
 void enter_cache(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
   // Hold txn_mu, so the xid moves atomically.
   std::lock_guard<std::mutex> guard(db->txn_mu);
   // No longer in flight.
   db->active.erase(xid);
-  try {
-    // Let a test fail the cache insert.
-    if (db->test_cache_insert) {
-      db->test_cache_insert();
-    }
-    // Cache its commit_ts by xid.
-    db->cache[xid] = commit_ts;
-    // Index it by commit_ts, for eviction.
-    db->cache_by_ts[commit_ts] = xid;
-  } catch (const std::bad_alloc &) {
-    // Uncached: readers resolve xid from CF:txn. Undo a half
-    // insert, since eviction relies on the maps matching.
-    db->cache.erase(xid);
-    return;
-  }
+  // Cache its commit_ts by xid.
+  db->cache[xid] = commit_ts;
+  // Index it by commit_ts, for eviction.
+  db->cache_by_ts[commit_ts] = xid;
   // Evict the oldest commit_ts while over capacity.
   while (db->cache.size() > db->cache_entries) {
     // The oldest commit_ts.
@@ -456,16 +444,7 @@ int commit(sm1::session_t *s) {
   }
   // Validate under SSI before the commit point; on failure give
   // the commit_ts back to the sequencer unused (§7.3, §8.2).
-  int valid;
-  try {
-    valid = ssi_precommit(s, commit_ts);
-  } catch (const std::bad_alloc &) {
-    // Out of memory before the record: hand the commit_ts back,
-    // or it would hold visible_ts back for good (§4.3).
-    db_commit_done(db, commit_ts);
-    throw;
-  }
-  if (valid != 0) {
+  if (ssi_precommit(s, commit_ts) != 0) {
     // Hand the commit_ts back to the sequencer unused.
     db_commit_done(db, commit_ts);
     return xct_fail_retryable(s, sm1::SM_ERR_SERIALIZATION, "not serializable");
@@ -486,9 +465,7 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
   // Keep the xid past reset.
   uint64_t xid = s->xid;
   // Build the COMMITTED record -- state, snapshot, commit_ts --
-  // and its key on the stack: between the claimed commit_ts and
-  // the write nothing may allocate, or a bad_alloc would strand
-  // the commit_ts and hold visible_ts back for good (§4.3).
+  // and its key on the stack.
   char val[txn_record_size];
   val[0] = static_cast<char>(txn_committed);
   uint64_t be = sm1::to_be64(s->snapshot_ts);
@@ -543,8 +520,9 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
  * is written, so the transaction has committed whatever happens
  * here: nothing may throw, or sm1::commit would report a failure
  * for a committed transaction and a caller's sm1::abort would drop
- * the stores it created. What must happen cannot fail; what can
- * run out of memory is left for later and logged.
+ * the stores it created. Nothing does: running out of memory
+ * inside sm1 aborts the process (oom.h), and the next open's WAL
+ * replay finds the commit.
  */
 void publish_commit(sm1::session_t *s, uint64_t xid,
                     uint64_t commit_ts) noexcept {
@@ -558,35 +536,14 @@ void publish_commit(sm1::session_t *s, uint64_t xid,
   // queue dropped stores for removal once no snapshot can
   // see them (§8.3).
   lock_release_all(s);
-  try {
-    // Queue its dropped stores for GC.
-    gc_queue_drops(db, commit_ts, s->dropped);
-  } catch (const std::bad_alloc &) {
-    // Unqueued stores are dropped by the next open's sweep (§9.1).
-    log_msg(sm1::loglevel_t::warn,
-            "database {}: out of memory queueing dropped stores; "
-            "they are removed when the database is next opened",
-            db->name.c_str());
-  }
+  // Queue its dropped stores for GC.
+  gc_queue_drops(db, commit_ts, s->dropped);
   // Drop each dropped sequence's lease; nothing reads it now
   // that its catalog row is gone.
   for (uint64_t seqid : s->dropped_seqs) {
-    try {
-      db_forget_seq(db, seqid);
-    } catch (const std::bad_alloc &) {
-      // A leftover lease names a sequence no catalog row has.
-      log_msg(sm1::loglevel_t::warn,
-              "database {}: out of memory forgetting sequence {}; "
-              "its lease is left behind",
-              db->name.c_str(), seqid);
-    }
+    db_forget_seq(db, seqid);
   }
-  try {
-    ssi_end(s); // the committed node stays while others overlap it
-  } catch (const std::bad_alloc &) {
-    // ssi_end detaches the node before its cleanup allocates;
-    // the next cleanup frees what this one could not.
-  }
+  ssi_end(s); // the committed node stays while others overlap it
   // Forget the transaction.
   reset(s);
 }
@@ -790,10 +747,6 @@ int prepare(sm1::session_t *s, const char *gid) {
     wo.sync = true; // a prepare is always synced (§8.4)
     // Write the PREPARED record: the vote of yes.
     st = db->rdb->Put(wo, db->cf_txn, txnkey, val);
-    // Let a test act just past the prepare point.
-    if (st.ok() && db->test_after_prepare) {
-      db->test_after_prepare();
-    }
   }
   // The record's fate is unknown: mark it before registering, so
   // no resolver ever sees it resolvable.
@@ -829,15 +782,8 @@ int commit_prepared_txn(sm1::session_t *g) {
       db_claim_commit_ts(g->db, &commit_ts) != 0) {
     return -1;
   }
-  try {
-    // Validated at prepare: the node only learns its end.
-    ssi_prepared_committed(g, commit_ts);
-  } catch (const std::bad_alloc &) {
-    // Out of memory before the record: hand the commit_ts back,
-    // or it would hold visible_ts back for good (§4.3).
-    db_commit_done(g->db, commit_ts);
-    throw;
-  }
+  // Validated at prepare: the node only learns its end.
+  ssi_prepared_committed(g, commit_ts);
   // Write COMMITTED over PREPARED, publish, and release.
   return finish_commit(g, commit_ts);
 }
@@ -932,15 +878,8 @@ int resolve(db_t *db, const std::string &gid, bool commit_it) {
     g = it->second;
     it->second = nullptr;
   }
-  int rc;
-  try {
-    // Commit or abort it.
-    rc = commit_it ? commit_prepared_txn(g) : abort_prepared_txn(g);
-  } catch (const std::bad_alloc &) {
-    // Out of memory midway: end the resolution, then report it.
-    unhold_prepared(db, gid, g);
-    throw;
-  }
+  // Commit or abort it.
+  int rc = commit_it ? commit_prepared_txn(g) : abort_prepared_txn(g);
   // Put it back if still unresolved; otherwise drop and free it.
   unhold_prepared(db, gid, g);
   return rc;

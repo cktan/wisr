@@ -13,7 +13,6 @@
 
 #include <atomic>
 #include <future>
-#include <new>
 #include <string>
 #include <thread>
 #include <vector>
@@ -112,89 +111,6 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   REQUIRE(sm1::commit(c) == 0);
   sm1::closedb(b);
   sm1::closedb(c);
-}
-
-TEST_CASE("running out of memory after the commit point still commits") {
-  // Verify a commit whose status record is written reports
-  // success, even if what follows it cannot allocate (§8.2).
-  // 1. Session A creates a store and inserts "k" into it.
-  // 2. Make the commit cache insert throw std::bad_alloc, then
-  //    commit: sm1::commit returns 0, since the record is written.
-  // 3. A is left with no transaction: a new one begins on it.
-  // 4. Session B sees "k" in the new store, so visible_ts moved
-  //    past the commit and the store was not dropped.
-  // 5. B updates "k", so A's row lock was released.
-  xct_fixture_t f;
-  sm1::session_t *a = f.first();
-  sm1::session_t *b = f.open();
-  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-  uint64_t store = mkstore(a);
-  REQUIRE(sm1::insert(a, store, "k", "v") == 0);
-
-  f.db()->test_cache_insert = [] { throw std::bad_alloc(); };
-  CHECK_MESSAGE(sm1::commit(a) == 0, sm1::errmsg());
-  f.db()->test_cache_insert = nullptr;
-
-  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::commit(a) == 0);
-
-  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(b, store, "k") == "v");
-  CHECK(sm1::update(b, store, "k", "w") == 0);
-  REQUIRE(sm1::commit(b) == 0);
-  sm1::closedb(b);
-}
-
-TEST_CASE(
-    "a commit that runs out of memory before its record frees its commit_ts") {
-  // Verify every allocation failure between claiming a commit_ts
-  // and writing the status record hands the commit_ts back, so
-  // later commits still become visible (§4.3, §8.2).
-  // 1. For n = 0, 1, 2, ...: A reads "x" and inserts a key at
-  //    SERIALIZABLE, and every allocation from the n-th on fails,
-  //    from the start of sm1::commit up to the status write.
-  // 2. sm1::commit throws std::bad_alloc, and A aborts its
-  //    transaction.
-  // 3. B commits a key of its own, and a fresh snapshot sees it:
-  //    no stranded commit_ts is holding visible_ts back.
-  // 4. Once n passes every allocation, A's commit succeeds, and a
-  //    fresh snapshot sees A's key.
-  xct_fixture_t f;
-  sm1::session_t *a = f.first();
-  sm1::session_t *b = f.open();
-  f.db()->test_before_commit = [](uint64_t) {
-    t_alloc_budget = -1;
-    return rocksdb::Status::OK();
-  };
-
-  long n = 0;
-  for (;; n++) {
-    REQUIRE(n < 10000);
-    REQUIRE(sm1::begin(a, sm1::xctlevel_t::serializable) == 0);
-    CHECK(get(a, f.store(), "x") == "<none>");
-    REQUIRE(sm1::insert(a, f.store(), "a", "v") == 0);
-    bool threw;
-    t_alloc_budget = n;
-    int rc = catch_oom([&] { return sm1::commit(a); }, threw);
-    if (rc == 0) {
-      break;
-    }
-    INFO("allocation ", n, " failed");
-    CHECK(threw);
-    REQUIRE_MESSAGE(sm1::abort(a) == 0, sm1::errmsg());
-    std::string key = "b" + std::to_string(n);
-    REQUIRE(commit_one(b, f.store(), key) == 0);
-    REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-    REQUIRE(get(b, f.store(), key) == "v");
-    REQUIRE(sm1::commit(b) == 0);
-  }
-  f.db()->test_before_commit = nullptr;
-  CHECK(n > 0);
-
-  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(b, f.store(), "a") == "v");
-  REQUIRE(sm1::commit(b) == 0);
-  sm1::closedb(b);
 }
 
 TEST_CASE("a failed status write fails the database stop") {

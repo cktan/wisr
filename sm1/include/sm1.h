@@ -281,7 +281,8 @@ int init(std::string_view homedir);
  * hook, then aborts. A bad_alloc from inside RocksDB leaves it
  * unreliable, and only a fresh open's WAL replay recovers safely.
  * Outside sm1 the handler throws std::bad_alloc, for the levels
- * above to report as SM_ERR_NOMEM.
+ * above to report as SM_ERR_NOMEM. A handler the process already
+ * has is kept, but one that throws is unsupported.
  */
 int attach(std::string_view homedir, env_t*& out);
 

@@ -15,7 +15,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <new>
 
 #include <rocksdb/options.h>
 
@@ -924,20 +923,13 @@ int sm1::scannxt(sm1::scan_t *scan, std::string_view &key,
                  std::string_view &data) {
   // Inside sm1: running out of memory is fatal.
   in_sm1_t in_sm1;
-  try {
-    const char *k = nullptr, *d = nullptr;
-    size_t klen = 0, dlen = 0;
-    int rc = scan_next(scan, &k, &klen, &d, &dlen);
-    // Hand back both: empty at the end (1) and on failure.
-    key = std::string_view(k, klen);
-    data = std::string_view(d, dlen);
-    return rc;
-  } catch (const std::bad_alloc &) {
-    // The cursor may be half-advanced: mark it unusable, then let
-    // the exception go on to the caller.
-    scan->state = -1;
-    throw;
-  }
+  const char *k = nullptr, *d = nullptr;
+  size_t klen = 0, dlen = 0;
+  int rc = scan_next(scan, &k, &klen, &d, &dlen);
+  // Hand back both: empty at the end (1) and on failure.
+  key = std::string_view(k, klen);
+  data = std::string_view(d, dlen);
+  return rc;
 }
 
 /* Close a cursor: the iterator first, then its snapshot. */
