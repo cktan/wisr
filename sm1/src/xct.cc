@@ -592,35 +592,37 @@ int abort_xct(sm1_session_t *s) {
 }
 
 /*
- * The PREPARED record (§3.2): state, snapshot_ts, a zero
- * commit_ts, then prepared_at, gid, the write set as lock keys,
- * and the storeids created and dropped. One value, however large
- * the write set; RocksDB stores it as a blob.
+ * The PREPARED record (§3.2) of t's transaction under gid, prepared
+ * at prepared_at: state, snapshot_ts, a zero commit_ts, then
+ * prepared_at, gid, the write set as lock keys, and the storeids
+ * created and dropped. One value, however large the write set;
+ * RocksDB stores it as a blob.
  */
-std::string encode_prepared(const sm1_session_t *g) {
+std::string encode_prepared(const sm1_session_t *t, const std::string &gid,
+                            long long prepared_at) {
   // Build the PREPARED record.
   std::string v;
   // The state byte.
   v.push_back(static_cast<char>(txn_prepared));
   // The snapshot, for the GC watermark after a restart.
-  put_be64(v, g->snapshot_ts);
+  put_be64(v, t->snapshot_ts);
   // No commit_ts yet.
   put_be64(v, 0);
   // When it was prepared.
-  put_be64(v, static_cast<uint64_t>(g->prepared_at));
+  put_be64(v, static_cast<uint64_t>(prepared_at));
   // The gid, length-prefixed.
-  put_be32(v, static_cast<uint32_t>(g->prepared_gid.size()));
-  v.append(g->prepared_gid);
+  put_be32(v, static_cast<uint32_t>(gid.size()));
+  v.append(gid);
   // The lock set: every lock key, length-prefixed, each
   // followed by the mode byte it is held in (§8.4).
-  put_be32(v, static_cast<uint32_t>(g->locks.size()));
-  for (const sm1_session_t::lockref_t &l : g->locks) {
+  put_be32(v, static_cast<uint32_t>(t->locks.size()));
+  for (const sm1_session_t::lockref_t &l : t->locks) {
     put_be32(v, static_cast<uint32_t>(l.key.size()));
     v.append(l.key);
     v.push_back(l.exclusive ? 1 : 0);
   }
   // The storeids created, then those dropped, each counted.
-  for (const std::vector<uint64_t> *stores : {&g->created, &g->dropped}) {
+  for (const std::vector<uint64_t> *stores : {&t->created, &t->dropped}) {
     put_be32(v, static_cast<uint32_t>(stores->size()));
     for (uint64_t storeid : *stores) {
       put_be64(v, storeid);
@@ -633,11 +635,16 @@ std::string encode_prepared(const sm1_session_t *g) {
  * Move the session's transaction into a new database-owned
  * object: its state, snapshot registration, SSI node, and row
  * locks, whose table entries are re-pointed at the new owner.
- * The session is left with no transaction.
+ * The session is left with no transaction. All or nothing: every
+ * allocation comes before anything moves, so if one throws the
+ * session still holds its transaction, untouched.
  */
-sm1_session_t *detach_prepared(sm1_session_t *s, const std::string &gid) {
-  // Allocate the database-owned transaction object.
-  sm1_session_t *g = new sm1_session_t;
+sm1_session_t *detach_prepared(sm1_session_t *s, const std::string &gid,
+                               long long prepared_at) {
+  // Allocate the database-owned transaction object, freed if a
+  // copy below throws.
+  std::unique_ptr<sm1_session_t> owner(new sm1_session_t);
+  sm1_session_t *g = owner.get();
   // Copy the transaction's identity and state.
   g->db = s->db;
   g->active = true;
@@ -653,7 +660,9 @@ sm1_session_t *detach_prepared(sm1_session_t *s, const std::string &gid) {
   // Name it by gid.
   g->prepared_gid = gid;
   // Stamp the wall-clock time of the prepare.
-  g->prepared_at = static_cast<long long>(time(nullptr));
+  g->prepared_at = prepared_at;
+  // Nothing below allocates: take ownership, then move.
+  owner.release();
   // Move the snapshot registration over.
   g->snapshot_registered = s->snapshot_registered;
   s->snapshot_registered = false;
@@ -702,22 +711,26 @@ int prepare(sm1_session_t *s, const char *gid) {
   if (xct_check_writable(db) != 0) {
     return -1;
   }
+  // Own the gid before reserving it: releasing the reservation,
+  // and everything after the record is written, must not
+  // allocate.
+  std::string key(gid);
   // Reserve the gid: unique among unresolved prepared ones.
   {
     // Hold prepared_mu while reserving.
     std::lock_guard<std::mutex> guard(db->prepared_mu);
     // Refuse a gid already in use.
-    if (db->prepared.count(gid)) {
+    if (db->prepared.count(key)) {
       return set_error(SM1_ERR_EXISTS, "gid {} is already in use", gid);
     }
     // Reserve it with a null entry.
-    db->prepared[gid] = nullptr;
+    db->prepared[key] = nullptr;
   }
   // Release the reservation if the prepare fails before the
   // transaction is detached; dismissed once it is.
   scope_guard_t unreserve([&] {
     std::lock_guard<std::mutex> guard(db->prepared_mu);
-    db->prepared.erase(gid);
+    db->prepared.erase(key);
   });
 
   // Close cursors, then validate: the last moment the engine
@@ -732,16 +745,16 @@ int prepare(sm1_session_t *s, const char *gid) {
     return -1;
   }
 
-  // Own the gid now: nothing after the record is written may
-  // allocate, since the prepare stands whatever happens then.
-  std::string key(gid);
+  // Build the record and its key while the transaction is still
+  // the session's: a failure here leaves it there to abort.
+  long long prepared_at = static_cast<long long>(time(nullptr));
+  std::string val = encode_prepared(s, key, prepared_at);
+  std::string txnkey = txn_key(s->xid);
+  // Move the transaction out of the session, all or nothing.
+  sm1_session_t *g = detach_prepared(s, key, prepared_at);
   // From here the entry is replaced, whether the write succeeds or
   // fails stop: keep the reservation.
   unreserve.dismiss();
-  // Move the transaction out of the session.
-  sm1_session_t *g = detach_prepared(s, key);
-  // Encode its PREPARED record.
-  std::string val = encode_prepared(g);
   // No error unless the hook or the write says so.
   rocksdb::Status st;
   // Let a test fail the prepare write.
@@ -753,7 +766,7 @@ int prepare(sm1_session_t *s, const char *gid) {
     rocksdb::WriteOptions wo;
     wo.sync = true; // a prepare is always synced (§8.4)
     // Write the PREPARED record: the vote of yes.
-    st = db->rdb->Put(wo, db->cf_txn, txn_key(g->xid), val);
+    st = db->rdb->Put(wo, db->cf_txn, txnkey, val);
     // Let a test act just past the prepare point.
     if (st.ok() && db->test_after_prepare) {
       db->test_after_prepare();

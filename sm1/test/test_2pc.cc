@@ -145,21 +145,28 @@ uint64_t first_store(sm1_session_t *s) {
   return store;
 }
 
-/* While set, operator new fails on this thread. */
-thread_local bool t_fail_alloc = false;
+/*
+ * How many more allocations on this thread succeed before
+ * operator new starts failing: -1 for no limit, 0 to fail every
+ * one from now on.
+ */
+thread_local long t_alloc_budget = -1;
 
 } // namespace
 
 /*
  * The test binary's global operator new: plain malloc, except that
- * it throws std::bad_alloc while t_fail_alloc is set on the calling
- * thread, so a test can make every allocation in a stretch of
- * engine code fail.
+ * it throws std::bad_alloc once the calling thread's
+ * t_alloc_budget is spent, so a test can make any allocation in a
+ * stretch of engine code, and every one after it, fail.
  */
 void *operator new(std::size_t n) {
-  // Fail on demand.
-  if (t_fail_alloc) {
+  // Fail once the budget is spent; otherwise spend from it.
+  if (t_alloc_budget == 0) {
     throw std::bad_alloc();
+  }
+  if (t_alloc_budget > 0) {
+    t_alloc_budget--;
   }
   // Otherwise allocate as the library would.
   if (void *p = malloc(n ? n : 1)) {
@@ -361,15 +368,66 @@ TEST_CASE("nothing allocates once the PREPARED record is written") {
   REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
   REQUIRE(set(s, "a", "1") == 0);
 
-  s->db->test_after_prepare = [] { t_fail_alloc = true; };
+  s->db->test_after_prepare = [] { t_alloc_budget = 0; };
   int rc = sm1_prepare(s, gid.c_str());
-  t_fail_alloc = false;
+  t_alloc_budget = -1;
   s->db->test_after_prepare = nullptr;
   CHECK_MESSAGE(rc == 0, sm1_errmsg());
 
   auto l = listed(u);
   REQUIRE(l.size() == 1);
   CHECK(l[0].first == gid);
+  REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1_errmsg());
+  CHECK(read_now(u, "a") == "1");
+  sm1_closedb(s);
+  sm1_closedb(u);
+}
+
+TEST_CASE("a prepare that runs out of memory before its record is undone") {
+  // Verify that every allocation failure before the PREPARED
+  // write leaves the transaction on its session, with its gid and
+  // its locks free (§8.4).
+  // 1. For n = 0, 1, 2, ...: S updates "a", and every allocation
+  //    from the n-th on fails, from the start of sm1_prepare up to
+  //    the PREPARED write.
+  // 2. sm1_prepare fails with NOMEM, and S can still abort its
+  //    transaction, which it would not have were it lost.
+  // 3. Nothing is listed as prepared, and U updates "a" at once:
+  //    no lock was stranded. The next round reuses the gid, so a
+  //    stranded reservation would fail it.
+  // 4. Once n passes every allocation, the prepare succeeds; U
+  //    commits it by gid and reads S's update.
+  tpc_fixture_t f;
+  sm1_session_t *s = f.open();
+  sm1_session_t *u = f.open();
+  const std::string gid = "g-" + std::string(60, 'x');
+  s->db->test_before_prepare = [] {
+    t_alloc_budget = -1;
+    return rocksdb::Status::OK();
+  };
+
+  long n = 0;
+  for (;; n++) {
+    REQUIRE(n < 10000);
+    REQUIRE(sm1_begin(s, SM1_XCT_REPEATABLE_READ) == 0);
+    REQUIRE(set(s, "a", "1") == 0);
+    t_alloc_budget = n;
+    int rc = sm1_prepare(s, gid.c_str());
+    t_alloc_budget = -1;
+    if (rc == 0) {
+      break;
+    }
+    INFO("allocation ", n, " failed");
+    CHECK(sm1_errno() == SM1_ERR_NOMEM);
+    REQUIRE_MESSAGE(sm1_abort(s) == 0, sm1_errmsg());
+    CHECK(listed(u).empty());
+    REQUIRE(sm1_begin(u, SM1_XCT_REPEATABLE_READ) == 0);
+    CHECK(set(u, "a", "2") == 0);
+    REQUIRE(sm1_abort(u) == 0);
+  }
+  s->db->test_before_prepare = nullptr;
+  CHECK(n > 0);
+
   REQUIRE_MESSAGE(sm1_commit_prepared(u, gid.c_str()) == 0, sm1_errmsg());
   CHECK(read_now(u, "a") == "1");
   sm1_closedb(s);
