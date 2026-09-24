@@ -2172,6 +2172,7 @@ include/sm1.h           public C++ API, namespace sm1
 include/sm1_codec.h     fixed-width big-endian integers
 include/sm1_defer.h     defer blocks and scope guards
 include/sm1_format.h    std::format into a fixed buffer, allocating nothing
+include/doctest.h       the vendored doctest test framework, used by every level
 src/env.cc              init/attach/detach, root db, db sweep
 src/db.cc               mkdb/rmdb, open registry, CF setup, storeid→CF map
 src/session.cc          open/close, per-session state and buffers

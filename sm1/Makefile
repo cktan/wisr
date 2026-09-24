@@ -67,7 +67,6 @@ SCRIPT_GOOD := mvcc/good
 FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h mvcc/*.cc \
                           mvcc/*.h mvcc/driver/*.cc mvcc/driver/*.h \
                           example/*.cc include/sm1_*.h)
-FORMAT_FILES := $(filter-out test/doctest.h,$(FORMAT_FILES))
 
 .PHONY: all test scenarios accept format clean
 
@@ -92,10 +91,9 @@ $(BUILD)/drvobj/%.o: mvcc/driver/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-# The scenario files take doctest.h from test/.
 $(BUILD)/mvcc/%.o: mvcc/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -Itest -Imvcc -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -Imvcc -c -o $@ $<
 
 $(BUILD)/example/%: $(BUILD)/example/%.o $(LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB) $(LDLIBS)
