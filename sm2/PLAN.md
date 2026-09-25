@@ -109,7 +109,13 @@ that calls it (`SM2_DESIGN.md` §4).
 - An attribute count per row, as PostgreSQL's `natts`, so
   `ADD COLUMN` is O(1) and a dropped column does not shift the
   ones after it; no schema version (`SM2_DESIGN.md` §4).
-- TOAST for large datums, below sm1's 64MB ceiling.
+- TOAST for large datums, below sm1's 64MB ceiling —
+  **postponed**. The codec is built without it: a variable
+  datum is always inline, and a TOAST pointer or a compressed
+  varlena is refused (`SM2_DESIGN.md` §4.1), so a row is bounded
+  by sm1's value limit until TOAST comes. Its keys, threshold,
+  chunk size and whether to compress stay open
+  (`QUESTIONS.md` 4.2, 4.4).
 
 **Verify:** a row written with N attributes reads correctly
 after columns are added — each missing one as null or its

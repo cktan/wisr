@@ -68,8 +68,8 @@ rejects data is a codec with a policy in it. sm2 stores what
 it is given. → `SM2_DESIGN.md` §5, `SM2_OBJECTIVE.md`
 
 **5.5 [ASSUMABLE] Does a `rel` copy its schema or borrow it?**
-Already open in `SM2_DESIGN.md` §5, and 4.1 changes its shape:
-the question becomes whether `rel` copies the registry.
+Already open in `SM2_DESIGN.md` §5. With no schema version
+(`SM2_DESIGN.md` §4), a `rel` has one schema, the current one.
 *Suggested: borrow, with sm3 required to keep it alive for the
 `rel`'s lifetime and to take the schema-row lock before
 changing it (`sm3/SM3_DESIGN.md` §2) — which it must do anyway.*
