@@ -15,8 +15,9 @@ document is what it is for.
 ## Scope
 
 - **A catalog.** Table and index definitions, column types,
-  collations and schema versions, held in memory and persisted
-  through sm2 relations in the same transactions as the data.
+  collations, dropped columns and missing values, held in
+  memory and persisted through sm2 relations in the same
+  transactions as the data.
   It also replaces PostgreSQL's heap catalogs and sequences,
   which the fork can no longer keep on heap (`PART4.md` §4).
 - **Secondary indexes.** Unique and non-unique, maintained

@@ -118,7 +118,7 @@ ordered key as the only access path below sm2.
 - [x] online index build
       — already closed, sm3/SM3_DESIGN.md §3
 - [x] online ADD COLUMN
-      — already assumed, via a schema-version stamp per row
+      — via each row's attribute count, as PostgreSQL's natts
 - [x] other online ALTER (type change, drop column)
       — not yet decided
 

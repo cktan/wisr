@@ -16,7 +16,7 @@ decisions in `SM2_OBJECTIVE.md`:
 | Types | a fixed set, each an ADT in `pg_type`'s shape, each with a stable on-disk type code |
 | Representation | PostgreSQL's, type by type, little-endian — except `decimal`, which follows DuckDB's |
 | Key encoding | order-preserving per type; descending is the inverted encoding |
-| Tuple format | null bitmap, fixed/variable split, a schema version stamp per row |
+| Tuple format | null bitmap, fixed/variable split, an attribute count per row, as PostgreSQL's `natts` |
 | Tuple codec | an API of its own, with its own header and its own tests |
 | Row identity | `rowno`, a 64-bit number from a per-table sequence; the table is a heap and the primary key is an index (§5) |
 | `rel` | one sm1 store, keys encoded and tuples decoded by sm2 |
@@ -596,7 +596,7 @@ Three reasons to split it out rather than let it live inside
 **The datums are PostgreSQL's; the framing is sm2's.** §2.1
 fixes what each column's bytes are, and stops there. The
 tuple around them — the null bitmap, the fixed/variable
-split, the alignment, the schema version stamp, the offsets —
+split, the attribute count, the offsets —
 owes `HeapTupleHeader` nothing and is designed here on its own
 merits. This is also where sm2's TOAST lives, in sm2's own
 format rather than PostgreSQL's: a `text` datum in an sm2
@@ -609,13 +609,23 @@ meets them (§4.1), which is only partly written:
 
 - A null bitmap, a fixed/variable split, and a way to find a
   column without decoding every column before it.
-- A **schema version stamp per row**, so `ADD COLUMN` is O(1):
-  an old row is read under its own layout and the missing
-  column comes from its default. The stamp is a number; what
-  it resolves to is a schema, which sm2 is handed (§5) and
-  sm3 persists (`sm3/SM3_DESIGN.md` §2).
-- Tolerance for dropped columns, since the column at a given
-  position may no longer exist.
+- **An attribute count per row, as PostgreSQL's `natts`**, so
+  `ADD COLUMN` is O(1). Columns are only ever appended: a row
+  holds the first `natts` of them, and a column past a row's
+  count reads as its missing value — null, or a default kept
+  once in the catalog, PostgreSQL's `attmissingval`
+  (`sm3/SM3_DESIGN.md` §2). There is **no schema version**. A
+  change to a column's stored bytes, such as a new type,
+  rewrites the table, as it does in PostgreSQL, so every row
+  reads under the one current schema, which sm2 is handed
+  (§5). A version stamp per row was the earlier draft; it
+  would have let a type change skip the rewrite, at the price
+  of sm3 keeping every schema a table ever had and sm2
+  resolving a stamp on every read.
+- **A dropped column keeps its place**, marked dropped, as
+  PostgreSQL's `attisdropped` marks it: an old row's bytes for
+  it are skipped, a new row stores it as null, and the columns
+  after it do not move.
 - **Cheap to turn into a PostgreSQL tuple.** The executor
   works in tuple slots, so a bespoke encoding pays a
   conversion on every row, in both directions. The threaded
@@ -675,7 +685,8 @@ bytes, in schema order too.
   the cost of its width per null; the space was preferred.
 - **The fixed part comes first**, so that when no fixed column
   is null, which is the common case, every fixed offset is a
-  constant of the schema version, precomputed once.
+  constant of the schema and the row's `natts`, precomputed
+  once.
 - **A TOAST bitmap says which variable datums are out of
   line**, one bit per variable-width column; fixed-width
   columns are at most 16 bytes and are never TOASTed.
@@ -692,15 +703,43 @@ bytes, in schema order too.
   variable offset was the alternative; it costs nothing, but it
   ties the mark to the offset's width, which is still open.
 
-Open: the header — the schema version stamp's width, and the
-flags for a tuple with no nulls and one with nothing TOASTed,
-which then omit their bitmaps, as PostgreSQL's `HEAP_HASNULL`
-and `HEAP_HASEXTERNAL` let it; the width of a variable offset,
-two bytes or four, which depends on the TOAST threshold; the
-shape of a TOAST pointer in the variable part; and whether sm2
-ever compresses a datum inline, as PostgreSQL does, which would
-need a second bit per variable column, or a flag in the TOAST
-pointer, to tell a compressed datum from a plain one.
+- **The header is a flag byte and `natts`**, two bytes for a
+  row of up to 127 columns:
+
+  ```
+  header = flags (1 byte) | natts (varint, LEB128)
+
+  flags: 0x01  has nulls   -- else no null bitmap
+         0x02  has TOAST   -- else no TOAST bitmap
+         0x04  wide offsets -- variable offsets are 4 bytes
+         0xF8  reserved: must be 0, and a reader refuses a
+               tuple with any of them set
+  ```
+
+  The two presence flags play the parts of PostgreSQL's
+  `HEAP_HASNULL` and `HEAP_HASEXTERNAL`. The reserved bits are
+  refused rather than ignored, so a tuple written with a
+  feature added later is never misread by a reader too old to
+  know it. PostgreSQL packs `natts` into 11 bits of
+  `t_infomask2`; a varint costs one byte to 127 columns and has
+  no ceiling.
+- **The bitmaps follow, when present**: the null bitmap, a bit
+  for each of the row's `natts` columns, then the TOAST bitmap,
+  a bit for each variable-width column among them, each rounded
+  up to whole bytes.
+- **A variable offset is where its datum ends**, counted from
+  the start of the variable data, one per non-null variable
+  column; the first datum starts at 0, and each next where the
+  one before ended. An offset is 2 bytes while the variable
+  data is under 64 KB, which it nearly always is, and 4 bytes
+  when the wide-offsets flag is set, chosen per tuple, so the
+  TOAST threshold is free to be set on its own merits.
+
+Open: the shape of a TOAST pointer in the variable part; and
+whether sm2 ever compresses a datum inline, as PostgreSQL
+does, which would need a second bit per variable column, or a
+flag in the TOAST pointer, to tell a compressed datum from a
+plain one.
 
 ---
 
@@ -802,7 +841,8 @@ The rules it must satisfy:
   (`sm3/SM3_DESIGN.md` §3).
 - **sm2's own failures go through sm1's error state.** A key
   over the limit, a datum that does not match its column's
-  type, an unknown schema version, a corrupt tuple: sm2
+  type, a row with more attributes than its schema, a corrupt
+  tuple: sm2
   records each with `sm1::seterr`, its codes appended to
   `sm1::errnum_t` under a comment naming sm2, so one
   `sm1::errmsg()` serves the whole stack (`DESIGN.md` §5 at the

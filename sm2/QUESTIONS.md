@@ -16,7 +16,10 @@ Two kinds of entry, and the difference matters:
 Ordered by the step of `PLAN.md` each one blocks. Sections 1
 to 3 — the suggested answers in `SM2_OBJECTIVE.md`, types, and
 key encoding — are answered and have moved into `SM2_DESIGN.md`,
-`TYPE.md` and `sm3/SM3_DESIGN.md`; 5.1 and 5.3 — the header
+`TYPE.md` and `sm3/SM3_DESIGN.md`; 4.1 and 4.3 — the schema a
+`rel` is handed and alignment — into `SM2_DESIGN.md` §4, the
+first answered by keeping no schema version and the second by
+packing, not aligning; 5.1 and 5.3 — the header
 and sm2's errors — into `SM2_DESIGN.md` §5; and 6.1, 6.2 and
 6.3 — the build, the property tests and the PostgreSQL fixtures
 — into `PLAN.md`. The numbering of what remains is kept so that
@@ -26,25 +29,7 @@ a question's number never changes.
 
 ## 4. Tuple format — blocks `PLAN.md` step 3
 
-The first two are holes in the design as written, not
-preferences.
-
-**4.1 [BLOCKING] Is `rel` handed one schema, or every schema
-version?**
-`SM2_DESIGN.md` §4 stamps each tuple with a schema version so
-that `ADD COLUMN` is O(1) and an old tuple is read under its own
-layout. But `SM2_DESIGN.md` §5 opens a `rel` with *a* schema,
-singular. A tuple stamped version 3 cannot be decoded by
-schema version 7: the column count, the null bitmap width and
-the offsets are all different. As written, sm2 cannot read any
-tuple it did not just write.
-*Suggested: `rel` is opened with a **schema registry** — a
-lookup from version number to schema — not a single schema.
-sm3's catalog owns it and keeps every version that any live
-tuple might carry; sm2 asks it for the version it finds in the
-stamp.* This also decides who may garbage-collect an old
-version: sm3, once a rewrite proves no tuple still carries it.
-→ `SM2_DESIGN.md` §4 and §5
+4.2 is a hole in the design as written, not a preference.
 
 **4.2 [BLOCKING] What are TOAST keys?**
 Where TOAST data lives is settled: in the table's own sm1
@@ -56,17 +41,6 @@ sequence and `chunk_seq` a 4-byte big-endian chunk number.*
 The tuple's TOAST pointer carries the `chunk_id`; `chunk_seq`
 keeps a datum's chunks contiguous and in order, so reading one
 back is one forward scan. → `SM2_DESIGN.md` §4
-
-**4.3 [BLOCKING] Are datums aligned inside the tuple, or
-packed?**
-This is the whole "cheap to turn into a PostgreSQL tuple"
-claim (`SM2_DESIGN.md` §2.1). Aligned means a decoded datum can
-be pointed at in place; packed means every fixed-width read is a
-`memcpy` to a local.
-*Suggested: aligned, to the type's natural alignment, as
-PostgreSQL does.* Packing saves a few bytes per tuple and
-gives them back on every read, and the conversion story in
-§2.1 is the reason this level exists. → `SM2_DESIGN.md` §4
 
 **4.4 [ASSUMABLE] What is the TOAST threshold?**
 *Suggested: start at 2KB, make it a per-relation setting with

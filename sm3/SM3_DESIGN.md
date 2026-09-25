@@ -65,13 +65,15 @@ answer.
 
 ## 2. Catalog
 
-*To be written.* Tables, indexes, columns, types, collations
-and schema versions, stored in sm3's own sm2 relations and
+*To be written.* Tables, indexes, columns, types and
+collations, stored in sm3's own sm2 relations and
 written in the same sm1 transaction as the DDL that changes
 them — which is what makes DDL transactional for free. It is
 also where a collation's recorded version lives
-(`sm2/SM2_DESIGN.md` §3), and where a tuple's schema version
-stamp (`sm2/SM2_DESIGN.md` §4) resolves to an actual schema.
+(`sm2/SM2_DESIGN.md` §3), and where each column's dropped
+mark and missing value live: a table's columns are only ever
+appended, and a row too old to hold a column reads it as that
+value, as in PostgreSQL (`sm2/SM2_DESIGN.md` §4).
 
 **Decision: the catalog is held in memory.** It is loaded at
 startup; a change is made in memory and written through to

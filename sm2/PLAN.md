@@ -104,13 +104,16 @@ that calls it (`SM2_DESIGN.md` §4).
 
 - `tuple_encode` and `tuple_decode`, the latter by ordinal so
   one column costs one column.
-- Null bitmap, fixed/variable split, alignment.
-- Schema version per row, so `ADD COLUMN` is O(1) and a dropped
-  column does not shift the ones after it.
+- Null bitmap, fixed/variable split, no padding
+  (`SM2_DESIGN.md` §4.1).
+- An attribute count per row, as PostgreSQL's `natts`, so
+  `ADD COLUMN` is O(1) and a dropped column does not shift the
+  ones after it; no schema version (`SM2_DESIGN.md` §4).
 - TOAST for large datums, below sm1's 64MB ceiling.
 
-**Verify:** a row written under schema version N reads correctly
-under N+1, N+2 and after a column drop; the golden-bytes test
+**Verify:** a row written with N attributes reads correctly
+after columns are added — each missing one as null or its
+default — and after a column is dropped; the golden-bytes test
 that a tuple written today still decodes tomorrow. All of it
 in a unit test with no database in it — the codec touches sm1
 nowhere, which is half the reason it is a separate API.
@@ -185,12 +188,12 @@ The date and time types add 500 seeded random values each,
 made by PostgreSQL itself, half within a few thousand years of
 2000 and half anywhere in range. `interval` adds 500 seeded
 random ones, spelled in PostgreSQL's verbose input form so
-that the ISO 8601 text is PostgreSQL's own printing,
-`uuid` 500 made from seeded `random()` through `md5`, and
-`text`, `varchar` and `bytea` 500 each, the text ones from
-random code points in every UTF-8 length. The floats add 2,500 seeded
-random values each, since
-PostgreSQL's float text is not always the shortest decimal:
+that the ISO 8601 text is PostgreSQL's own printing, `uuid`
+500 made from seeded `random()` through `md5`, and `text`,
+`varchar` and `bytea` 500 each, the text ones from random code
+points in every UTF-8 length. The floats add 2,500 seeded
+random values each, since PostgreSQL's float text is not
+always the shortest decimal:
 2,000 random finite bit patterns and 500 integers just past
 the width's exact range, where most of the exceptions lie.
 
