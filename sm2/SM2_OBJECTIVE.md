@@ -93,9 +93,9 @@ These are settled and drive `SM2_DESIGN.md`.
   little-endian, and variable-length datums, which carry the
   payload alone and leave framing to the tuple
   (`SM2_DESIGN.md` §2.1).
-- **Except `number`, which is Arrow's decimal**: a fixed-width
-  two's-complement integer with the scale in the schema, 128
-  bits to 38 digits of precision and 256 to 76. It buys a
+- **Except `number`, a decimal after DuckDB's**: a fixed-width
+  two's-complement integer with the scale in the schema, 64
+  bits to 18 digits of precision and 128 to 38. It buys a
   `number` key encoding that is just an integer's, and a
   fixed-width `number` column; it costs PG's unbounded
   precision, PG's NaN and infinity, and a per-datum
@@ -170,36 +170,37 @@ before anything is written to disk. They are sm2's and not
 sm3's because they are about the encoding, even though it is
 sm3's indexes that feel them most.
 
-- **Bare `number`.** Arrow's decimal takes its scale from
-  the schema; PostgreSQL allows `numeric` with no typmod at
-  all, where each datum carries its own weight and display
-  scale. A bare `number` column has no Arrow representation.
+- **Bare `number`.** A fixed-width decimal takes its scale
+  from the schema; PostgreSQL allows `numeric` with no typmod
+  at all, where each datum carries its own weight and display
+  scale. A bare `number` column has no fixed-width
+  representation.
   Refuse it, pick a default, or keep a second variable-width
   representation for it?
 
-  *Decided: a default of `number(38, 10)`* (`SM2_DESIGN.md`
-  §2.2). A bare `number` has 28 integer digits and 10 fractional.
-  A datum with more fractional digits is rounded to 10, as
-  PostgreSQL rounds for a declared typmod; one whose integer part
-  needs more than 28 digits is an error. `number(p)` means
-  `number(p, 0)`. The cost is accepted knowingly: a datum a user
-  believed exact can lose digits past the tenth fractional place
-  without an error. A second variable-width representation is
-  rejected, because it means two `number`s on disk with two key
-  encodings and two comparison paths, which is most of what §2.2
-  was avoiding. PostgreSQL's `NUMERIC` and `DECIMAL` are not
+  *Decided: a default of `number(18, 3)`*, DuckDB's
+  (`SM2_DESIGN.md` §2.2). A bare `number` has 15 integer digits
+  and 3 fractional. A datum with more fractional digits is
+  rounded to 3, as PostgreSQL rounds for a declared typmod; one
+  whose integer part needs more than 15 digits is an error.
+  `number(p)` means `number(p, 0)`. The cost is accepted
+  knowingly: a datum a user believed exact can lose digits past
+  the third fractional place without an error. A second
+  variable-width representation is rejected, because it means
+  two `number`s on disk with two key encodings and two
+  comparison paths, which is most of what §2.2 was avoiding. PostgreSQL's `NUMERIC` and `DECIMAL` are not
   accepted at all (`SM2_DESIGN.md` §2.2), so a schema ported from
   PostgreSQL declares `number(p, s)` in their place.
 
-- **`number` NaN and infinity.** PG's numeric has both; an
-  Arrow decimal is an integer and has neither. Refuse them,
-  or reserve values?
+- **`number` NaN and infinity.** PG's numeric has both; a
+  fixed-width decimal is an integer and has neither. Refuse
+  them, or reserve values?
 
   *Decided: refuse them* (`SM2_DESIGN.md` §2.2). A NaN or an
   infinity is rejected on insert with a clear error, and no
   value is reserved as a sentinel. The door stays open: a
-  precision of 38 digits does not reach the 128-bit limit, nor
-  76 the 256-bit one, so the extreme integers are never
+  precision of 18 digits does not reach the 64-bit limit, nor
+  38 the 128-bit one, so the extreme integers are never
   written and could still be reserved later without changing
   the meaning of stored bytes — provided the codec keeps
   rejecting any value outside the declared precision.

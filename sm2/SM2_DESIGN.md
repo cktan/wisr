@@ -14,7 +14,7 @@ decisions in `SM2_OBJECTIVE.md`:
 | Decision | Choice |
 | --- | --- |
 | Types | a fixed set, each an ADT in `pg_type`'s shape, each with a stable on-disk type code |
-| Representation | PostgreSQL's, type by type, little-endian — except `number`, which is Arrow's decimal |
+| Representation | PostgreSQL's, type by type, little-endian — except `number`, a decimal after DuckDB's |
 | Key encoding | order-preserving per type; descending is the inverted encoding |
 | Tuple format | null bitmap, fixed/variable split, a schema version stamp per row |
 | Tuple codec | an API of its own, with its own header and its own tests |
@@ -146,7 +146,7 @@ bytes themselves are copied, not converted.
 | `bool` | 0 or 1 | 1 |
 | `int2` / `int4` / `int8` | two's complement | 2 / 4 / 8 |
 | `float4` / `float8` | IEEE-754 | 4 / 8 |
-| `number` | **Arrow's**, not PG's — see §2.2 | 16 or 32 |
+| `number` | **after DuckDB's**, not PG's — see §2.2 | 8 or 16 |
 | `date` | days since 2000-01-01 | 4 |
 | `time` | microseconds since midnight | 8 |
 | `timestamp` / `timestamptz` | microseconds since 2000-01-01 00:00:00, UTC for `timestamptz` | 8 |
@@ -174,15 +174,20 @@ Two places need sm2 to be more precise than PostgreSQL is:
   framing is the tuple's business (§4) — sm2 has its own
   framing, and its own TOAST in its own format.
 
-### 2.2 Except number, which is Arrow's decimal
+### 2.2 Except number, a decimal after DuckDB's
 
-**Decision: `number` is Arrow's fixed-width decimal.** PG's
-numeric is a varlena of base-10000 digits with a weight and a
-display scale, effectively unbounded in length. Arrow's is a
-two's-complement integer of fixed width with the scale held in
-the schema: 128 bits for a precision up to 38, 256 bits up to
-76. Three things follow, and they are why the exception is
-worth making:
+**Decision: `number` is a fixed-width decimal, with DuckDB's
+`DECIMAL` as its reference.** PG's numeric is a varlena of
+base-10000 digits with a weight and a display scale,
+effectively unbounded in length. DuckDB's is a two's-complement
+integer, the value times 10^s, with `(precision, scale)` held
+in the schema and at most 38 digits of precision. sm2 takes that
+with two of DuckDB's four widths: 64 bits for a precision up to
+18, 128 bits up to 38. (DuckDB also has 16- and 32-bit forms up
+to 4 and 9 digits; sm2 does not.) An earlier draft took Arrow's
+decimal, with a 256-bit form up to 76 digits; DuckDB's limit of
+38 was preferred. Three things follow, and they are why the
+exception is worth making:
 
 1. **The key encoding falls out.** A fixed-width two's
    complement integer, sign bit flipped and written
@@ -198,18 +203,19 @@ worth making:
 The costs are real and are named here rather than discovered
 later:
 
-- **Precision stops at 38 or 76 digits.** PG allows 1000 for a
+- **Precision stops at 38 digits.** PG allows 1000 for a
   declared typmod, and far more for an undeclared one. A
   column that needs more has no representation at all.
 - **There is no NaN and no infinity.** PG's numeric has had
   NaN throughout and `Infinity` since version 14 (from memory,
-  not checked against the source); an Arrow decimal is an
+  not checked against the source); a fixed-width decimal is an
   integer and has neither, so sm2 refuses them on insert.
-- **The scale must be declared.** Arrow puts `(precision,
+- **The scale must be declared.** The decimal puts `(precision,
   scale)` in the schema; PG allows a bare `numeric` where
   every datum carries its own. A bare `number` column has no
-  Arrow equivalent, so it defaults to `number(38, 10)`, which
-  can round a datum its user believed exact.
+  equivalent, so it defaults to `number(18, 3)`, as DuckDB's
+  bare `DECIMAL` does, which can round a datum its user believed
+  exact.
 - **It is the one type that is converted** at the executor
   boundary, in both directions, while §2.1 makes every other
   type a copy.
@@ -222,24 +228,25 @@ What a column may declare, and what a datum may hold:
   ported from PostgreSQL declares `number(p, s)` in their
   place.
 - **One type code, two widths**, chosen by declared precision:
-  16 bytes up to 38 digits, 32 bytes from 39 to 76. Adding
-  the wider form later would have meant a second code for
-  what users call one type.
+  8 bytes up to 18 digits, 16 bytes from 19 to 38. A column
+  declares its precision, so a column's datums all have one
+  width; the width is the typmod's, not the datum's.
 - **`number(p)` is `number(p, 0)`**, as in PostgreSQL.
-- **A bare `number` is `number(38, 10)`**: 28 integer digits
-  and 10 fractional. A datum with more fractional digits is
-  rounded to 10, as PostgreSQL rounds for a declared typmod;
-  one whose integer part needs more than 28 digits is an
-  error. Refusing a bare `number` was the alternative; the
-  default was chosen over it, and its cost is in §7. A second,
+- **A bare `number` is `number(18, 3)`**, DuckDB's default:
+  15 integer digits and 3 fractional, in 8 bytes. A datum with
+  more fractional digits is rounded to 3, as PostgreSQL rounds
+  for a declared typmod; one whose integer part needs more
+  than 15 digits is an error. Refusing a bare `number` was the
+  alternative; the default was chosen over it, and its cost is
+  in §7. A second,
   variable-width representation was rejected outright: two
   `number`s on disk means two key encodings and two
   comparison paths, which is most of what this section
   avoids.
 - **NaN and infinities are refused** on insert with a clear
   error, and no value is reserved as a sentinel. That door is
-  not closed: 38 digits do not reach the 128-bit limit, nor 76
-  the 256-bit one, so the extreme integers are never written
+  not closed: 18 digits do not reach the 64-bit limit, nor 38
+  the 128-bit one, so the extreme integers are never written
   and could still be reserved later without changing what
   stored bytes mean — provided the codec keeps refusing every
   value outside the declared precision.
@@ -780,9 +787,9 @@ Accepted so far:
   executor boundary per tuple, not per datum: the framing is
   rebuilt, the column bytes are copied. The threaded fork
   removed the IPC boundary but not this (`PART4.md` §2).
-- **number is the exception, and pays for it.** It is
-  Arrow's decimal, not PostgreSQL's (§2.2), so it is the one
-  type converted datum by datum, it caps at 38 or 76 digits
+- **number is the exception, and pays for it.** It is a
+  decimal after DuckDB's, not PostgreSQL's (§2.2), so it is the
+  one type converted datum by datum, it caps at 38 digits
   where PG allows 1000, and it has no NaN and no infinity.
   Bought in exchange for a `number` key encoding that is
   an integer's, and a fixed-width `number` column.
@@ -825,8 +832,9 @@ Accepted so far:
   cheap, but only while the type code and the tuple layout
   leave room for them; that room is spent once.
 - **A bare `number` can round.** It defaults to
-  `number(38, 10)` (§2.2), so a datum a user believed exact
-  loses digits past the tenth fractional place, with no error.
+  `number(18, 3)` (§2.2), so a datum a user believed exact
+  loses digits past the third fractional place, with no error,
+  and one of 10^15 or more is refused.
   Refusing a bare `number` would have been louder; the default
   was chosen for compatibility.
 - **Every key column pays a null marker byte**, `NOT NULL`

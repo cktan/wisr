@@ -53,12 +53,12 @@ before them.
 - PostgreSQL's representation per type (`SM2_DESIGN.md` §2.1),
   little-endian, with variable-length datums carrying the
   payload alone.
-- `number` as Arrow's decimal (`SM2_DESIGN.md` §2.2), and
-  interval as PG's three components (`SM2_DESIGN.md` §2.4).
+- `number` as a decimal after DuckDB's (`SM2_DESIGN.md` §2.2),
+  and interval as PG's three components (`SM2_DESIGN.md` §2.4).
 - A stable on-disk type code per type, assigned once.
 - Null and collation as properties of a column, not of a type.
 - The `number` rules in `SM2_DESIGN.md` §2.2: only
-  `number(p, s)`, a bare `number` is `number(38, 10)`, and NaN
+  `number(p, s)`, a bare `number` is `number(18, 3)`, and NaN
   and infinity are refused.
 
 **Verify:** for every type, a datum round trips through the

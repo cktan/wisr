@@ -34,7 +34,7 @@ ordered key as the only access path below sm2.
 ## 1. Data types
 
 - [x] int / float / number
-- [x] number (this is a new implementation of decimal ala arrow;
+- [x] number (this is a new implementation of decimal ala duckdb;
   `NUMERIC` and `DECIMAL` are not supported)
 - [x] text / varchar
 - [x] bool

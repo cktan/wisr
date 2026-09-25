@@ -147,10 +147,11 @@ template <typename F> void check_float_type(const sm2::type_t &t) {
 
 TEST_CASE("each type is found by its frozen code, and only by it") {
   // Verify the registry and each descriptor's fixed properties.
-  // 1. Codes 1 to 6 and 8 to 16 find bool, the integers, the
-  //    floats, text, varchar, bytea, date, time, the timestamps,
-  //    interval and uuid, whose name, width (-1 for variable),
-  //    by-value flag and alignment are PostgreSQL's.
+  // 1. Codes 1 to 16 find bool, the integers, the floats,
+  //    number, text, varchar, bytea, date, time, the timestamps,
+  //    interval and uuid, whose name, width (-1 for variable, or
+  //    set by the typmod) and by-value flag are PostgreSQL's, and
+  //    whose alignment is too, number's aside.
   // 2. The slots not filled yet are null.
   // 3. Code 0, which is never a type, and codes not assigned yet
   //    find nothing.
@@ -160,14 +161,14 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     int16_t len;
     bool byval;
     uint8_t align;
-  } want[] = {{1, "bool", 1, true, 1},         {2, "int2", 2, true, 2},
-              {3, "int4", 4, true, 4},         {4, "int8", 8, true, 8},
-              {5, "float4", 4, true, 4},       {6, "float8", 8, true, 8},
-              {8, "text", -1, false, 4},       {9, "varchar", -1, false, 4},
-              {10, "bytea", -1, false, 4},     {11, "date", 4, true, 4},
-              {12, "time", 8, true, 8},        {13, "timestamp", 8, true, 8},
-              {14, "timestamptz", 8, true, 8}, {15, "interval", 16, false, 8},
-              {16, "uuid", 16, false, 1}};
+  } want[] = {{1, "bool", 1, true, 1},        {2, "int2", 2, true, 2},
+              {3, "int4", 4, true, 4},        {4, "int8", 8, true, 8},
+              {5, "float4", 4, true, 4},      {6, "float8", 8, true, 8},
+              {7, "number", -1, false, 8},    {8, "text", -1, false, 4},
+              {9, "varchar", -1, false, 4},   {10, "bytea", -1, false, 4},
+              {11, "date", 4, true, 4},       {12, "time", 8, true, 8},
+              {13, "timestamp", 8, true, 8},  {14, "timestamptz", 8, true, 8},
+              {15, "interval", 16, false, 8}, {16, "uuid", 16, false, 1}};
   for (auto &w : want) {
     CAPTURE(w.name);
     const sm2::type_t *t = sm2::type_by_code(w.code);
@@ -186,7 +187,7 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     CHECK_FALSE(t->recv);
     CHECK_FALSE(t->send);
   }
-  for (uint8_t code : {0, 7, 64, 255}) {
+  for (uint8_t code : {0, 17, 64, 255}) {
     CAPTURE(code);
     CHECK(sm2::type_by_code(code) == nullptr);
   }
@@ -298,10 +299,12 @@ TEST_CASE("running out of memory in a type's in or out is SM_ERR_NOMEM") {
     CAPTURE(t->name);
     bool utf8 = t == &sm2::type_text || t == &sm2::type_varchar;
     bool bytea = t == &sm2::type_bytea;
+    bool number = t == &sm2::type_number;
     std::string bad_text = utf8 ? "\xff" : "not a value";
-    std::string bad_datum = utf8    ? "\xff"
-                            : bytea ? std::string(16, '\0')
-                                    : std::string(t->len + 1, '\0');
+    std::string bad_datum = utf8     ? "\xff"
+                            : bytea  ? std::string(16, '\0')
+                            : number ? std::string(17, '\0')
+                                     : std::string(t->len + 1, '\0');
     std::string datum, text;
     t_alloc_budget = 0;
     int in_rc = t->in(bad_text, -1, datum);
@@ -857,4 +860,159 @@ TEST_CASE("bytea is any bytes, printed as hex, ordered bytewise") {
     CAPTURE(text);
     expect_bad_input(t, text);
   }
+}
+
+namespace {
+
+/* number's typmod for (p, s), as PostgreSQL encodes numeric's. */
+int32_t number_typmod(int p, int s) { return ((p << 16) | s) + 4; }
+
+/*
+ * A random number text at scale s with up to p digits: its
+ * sign, integer part and exactly s fraction digits.
+ */
+std::string gen_number_text(std::mt19937_64 &rng, int p, int s) {
+  std::string digits;
+  for (size_t n = 1 + rng() % p; n > 0; n--) {
+    digits += static_cast<char>('0' + rng() % 10);
+  }
+  digits.erase(0, std::min(digits.find_first_not_of('0'), digits.size()));
+  digits.insert(
+      0, s + 1 > static_cast<int>(digits.size()) ? s + 1 - digits.size() : 0,
+      '0');
+  std::string text = digits.substr(0, digits.size() - s);
+  if (s > 0) {
+    text += "." + digits.substr(digits.size() - s);
+  }
+  bool zero = text.find_first_not_of("0.") == std::string::npos;
+  return !zero && rng() % 2 ? "-" + text : text;
+}
+
+/* The order of two number texts at one scale, as values. */
+int number_text_order(const std::string &a, const std::string &b) {
+  bool na = a[0] == '-', nb = b[0] == '-';
+  if (na != nb) {
+    return na ? -1 : 1;
+  }
+  std::string ma = a.substr(na), mb = b.substr(nb);
+  int mag = ma.size() != mb.size() ? (ma.size() < mb.size() ? -1 : 1)
+                                   : sign(ma.compare(mb));
+  return na ? -mag : mag;
+}
+
+} // namespace
+
+TEST_CASE("number round trips at both widths, in integer order") {
+  // Verify number by property, from test_seed(), for precisions on
+  // both sides of 18, where the datum grows from 8 to 16 bytes.
+  // 1. Every generated text of at most p digits at scale s reads
+  //    into a datum of the typmod's width and prints back.
+  // 2. cmp orders the datums as their values.
+  // 3. The largest magnitude, 10^p - 1 at scale s, round trips,
+  //    and one more digit is refused.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  const sm2::type_t &t = sm2::type_number;
+  for (auto [p, s] : {std::pair{1, 0},
+                      {5, 2},
+                      {18, 3},
+                      {18, 18},
+                      {19, 0},
+                      {38, 10},
+                      {38, 38}}) {
+    CAPTURE(p);
+    CAPTURE(s);
+    int32_t typmod = number_typmod(p, s);
+    size_t width = p <= 18 ? 8 : 16;
+    std::vector<std::string> texts;
+    std::vector<std::string> datums;
+    for (int i = 0; i < property_runs / 10; i++) {
+      std::string text = gen_number_text(rng, p, s), datum, back;
+      CAPTURE(text);
+      REQUIRE(t.in(text, typmod, datum) == 0);
+      CHECK(datum.size() == width);
+      REQUIRE(t.out(datum, typmod, back) == 0);
+      CHECK(back == text);
+      texts.push_back(text);
+      datums.push_back(datum);
+    }
+    for (size_t i = 0; i + 1 < texts.size(); i++) {
+      CHECK(sign(t.cmp(datums[i], datums[i + 1], typmod)) ==
+            number_text_order(texts[i], texts[i + 1]));
+    }
+    std::string nines(p, '9');
+    std::string max = s == p ? "0." + nines
+                      : s > 0
+                          ? nines.substr(0, p - s) + "." + nines.substr(p - s)
+                          : nines;
+    std::string datum, back;
+    for (const std::string &m : {max, "-" + max}) {
+      CAPTURE(m);
+      REQUIRE(t.in(m, typmod, datum) == 0);
+      REQUIRE(t.out(datum, typmod, back) == 0);
+      CHECK(back == m);
+    }
+    std::string over =
+        s == p ? "1." + std::string(s, '0') : "1" + max.substr(s == p ? 2 : 0);
+    CAPTURE(over);
+    CHECK(t.in(over, typmod, datum) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  }
+}
+
+TEST_CASE("only numeric(p, s)'s own text is number input") {
+  // Verify in refuses what PostgreSQL never prints for numeric(p, s).
+  // 1. At (5, 2): the wrong number of fraction digits, leading
+  //    zeros, a plus, "-0.00", a bare point, exponents, NaN and
+  //    infinity, spaces, a separator, and 1000.00, which needs six
+  //    digits.
+  // 2. A bare number is number(18, 3): three fraction digits, in
+  //    8 bytes.
+  const sm2::type_t &t = sm2::type_number;
+  int32_t typmod = number_typmod(5, 2);
+  std::string datum;
+  CHECK(t.in("123.45", typmod, datum) == 0);
+  for (std::string_view text :
+       {"",        "1.5",      "1.500",     "1",     "01.50", "00.50",
+        "+1.50",   "-0.00",    ".50",       "1.",    "1e2",   "1.50e0",
+        "NaN",     "Infinity", "-Infinity", " 1.50", "1.50 ", "1,000.00",
+        "1000.00", "-",        "-.50",      "--1.50"}) {
+    CAPTURE(text);
+    CHECK(t.in(text, typmod, datum) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  }
+  CHECK(t.in("1.000", -1, datum) == 0);
+  CHECK(datum.size() == 8);
+  CHECK(t.in("999999999999999.999", -1, datum) == 0);
+  CHECK(t.in("1000000000000000.000", -1, datum) == -1);
+  CHECK(t.in("1.00", -1, datum) == -1);
+}
+
+TEST_CASE("a number typmod must be numeric(p, s) with 1 <= p <= 38, s <= p") {
+  // Verify the typmod checks on in and out.
+  // 1. A typmod with p of 0 or 39, s greater than p, or below the
+  //    +4 offset, or below -1, is SM_ERR_INVALID.
+  // 2. out refuses a datum of the other width, and one whose value
+  //    needs more than p digits.
+  const sm2::type_t &t = sm2::type_number;
+  std::string datum, text;
+  for (int32_t typmod : {number_typmod(0, 0), number_typmod(39, 0),
+                         number_typmod(5, 6), 0, 3, -2}) {
+    CAPTURE(typmod);
+    CHECK(t.in("0", typmod, datum) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    CHECK(t.out(std::string(16, '\0'), typmod, text) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  }
+  CHECK(t.out(std::string(16, '\0'), number_typmod(18, 0), text) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(t.out(std::string(8, '\0'), number_typmod(19, 0), text) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  // 100000, which needs six digits, under number(5, 0).
+  std::string six = le_bytes(int64_t{100000});
+  CHECK(t.out(six, number_typmod(5, 0), text) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  six = le_bytes(int64_t{-99999});
+  CHECK(t.out(six, number_typmod(5, 0), text) == 0);
+  CHECK(text == "-99999");
 }

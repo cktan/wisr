@@ -218,6 +218,66 @@ for rec in sys.stdin.buffer.read().rstrip(b"\n").split(b"\x1e"):
 ' "$code"
 done
 
+echo "};"
+
+# number is a decimal after DuckDB's, not PostgreSQL's numeric,
+# so there are no stored bytes to read back. For each (p, s),
+# PostgreSQL prints each numeric(p, s) value and computes its
+# value times 10^s, and Python writes that integer's two's
+# complement bytes: 8 of them up to precision 18, 16 up to 38,
+# each side of the step tested. The values are the
+# extremes, zero, one unit either way, and 100 seeded random ones
+# of every length.
+cat <<'HDR'
+
+/*
+ * number fixtures: a numeric(p, s) value's text, as PostgreSQL
+ * prints it, and its datum -- the value times 10^s as a two's
+ * complement integer, little-endian -- in hex, under the typmod
+ * ((p << 16) | s) + 4.
+ */
+struct pg_number_fixture_t {
+  int32_t typmod;
+  const char *text;
+  const char *hex;
+};
+
+inline const pg_number_fixture_t pg_number_fixtures[] = {
+HDR
+for ps in 1,0 5,2 10,10 18,0 18,3 18,18 19,0 19,5 38,0 38,10 38,38; do
+  p=${ps%,*} s=${ps#*,}
+  values=$(python3 - "$p" "$s" <<'PY'
+import random, sys
+p, s = int(sys.argv[1]), int(sys.argv[2])
+rng = random.Random(20260924 + 100 * p + s)
+top = 10**p - 1
+ns = [top, -top, 0, 1, -1]
+for _ in range(100):
+    ns.append(rng.choice((1, -1)) * rng.randrange(10**rng.randint(1, p)))
+def text(n):
+    d = str(abs(n)).rjust(s + 1, "0")
+    d = d[:len(d) - s] + ("." + d[len(d) - s:] if s else "")
+    return ("-" if n < 0 else "") + d
+print(", ".join("(%s)" % text(n) for n in ns))
+PY
+)
+  q -c "CREATE TABLE fn_${p}_$s (c numeric($p, $s))" \
+    -c "INSERT INTO fn_${p}_$s VALUES $values"
+  q -F $'\x1f' -R $'\x1e' \
+    -c "SELECT c, trunc(c * power(10::numeric, $s)) FROM fn_${p}_$s ORDER BY ctid" |
+    python3 -c '
+import sys
+p, s = int(sys.argv[1]), int(sys.argv[2])
+width = 8 if p <= 18 else 16
+typmod = ((p << 16) | s) + 4
+for rec in sys.stdin.read().rstrip("\n").split("\x1e"):
+    if rec:
+        text, n = rec.split("\x1f")
+        b = (int(n) % (1 << (8 * width))).to_bytes(width, "little")
+        print("    {%d, \"%s\", \"%s\"}," % (typmod, text, b.hex()))
+' "$p" "$s"
+done
+
 cat <<'TAIL'
 };
 

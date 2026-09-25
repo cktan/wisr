@@ -44,3 +44,20 @@ TEST_CASE("every datum is the bytes PostgreSQL stores") {
     CHECK(text == f.text);
   }
 }
+
+TEST_CASE("every number datum is PostgreSQL's value, scaled, as an integer") {
+  // Verify each number fixture both ways, under its typmod.
+  // 1. in on the text PostgreSQL printed for numeric(p, s) gives
+  //    the value times 10^s, as a two's complement integer of 16
+  //    or 32 bytes.
+  // 2. out on those bytes gives back PostgreSQL's text.
+  for (const pg_number_fixture_t &f : pg_number_fixtures) {
+    CAPTURE(f.typmod);
+    CAPTURE(f.text);
+    std::string datum, text;
+    REQUIRE(sm2::type_number.in(f.text, f.typmod, datum) == 0);
+    CHECK(datum == unhex(f.hex));
+    REQUIRE(sm2::type_number.out(unhex(f.hex), f.typmod, text) == 0);
+    CHECK(text == f.text);
+  }
+}

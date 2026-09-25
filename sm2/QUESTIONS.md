@@ -139,8 +139,8 @@ Settled, and listed so nobody reopens them by accident:
 
 - What the types are, and that their representation is
   PostgreSQL's — `SM2_DESIGN.md` §2.1, `TYPE.md` §3.
-- That `number` is Arrow's decimal, and why — `SM2_DESIGN.md`
-  §2.2.
+- That `number` is a decimal after DuckDB's, and why —
+  `SM2_DESIGN.md` §2.2.
 - That a type is an ADT in `pg_type`'s shape — `SM2_DESIGN.md`
   §2.3.
 - That interval keeps three components, and how its key

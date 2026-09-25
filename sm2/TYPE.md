@@ -88,7 +88,7 @@ null marker and before any inversion.
 | `int8` | 4 | two's complement, LE | 8 | sign-flipped, BE | 8 |
 | `float4` | 5 | IEEE-754 binary32, LE | 4 | total order, BE | 4 |
 | `float8` | 6 | IEEE-754 binary64, LE | 8 | total order, BE | 8 |
-| `number` | 7 | Arrow decimal, two's complement, LE | 16 or 32 | sign-flipped, BE | 16 or 32 |
+| `number` | 7 | decimal after DuckDB's, two's complement, LE | 8 or 16 | sign-flipped, BE | 8 or 16 |
 | `text` | 8 | payload bytes | var | collation sort key ‖ escaped original | var |
 | `varchar` | 9 | payload bytes | var | as `text` | var |
 | `bytea` | 10 | payload bytes | var | escaped bytes | var |
@@ -180,10 +180,11 @@ the subnormal and huge boundaries, and random datums.
 
 ### 3.4 number
 
-Native is Arrow's decimal (`SM2_DESIGN.md` §2.2): a two's
-complement integer, little-endian, 16 bytes for a declared
-precision up to 38 and 32 bytes up to 76, with `(precision,
-scale)` held in the schema rather than in the datum.
+Native is a decimal after DuckDB's (`SM2_DESIGN.md` §2.2): the
+value times 10^s as a two's complement integer, little-endian,
+8 bytes for a declared precision up to 18 and 16 bytes up to
+38, with `(precision, scale)` held in the schema rather than in
+the datum.
 
 The key is §3.2's, at the datum's width — sign bit flipped,
 big-endian. Nothing bespoke, which is the point of the whole
@@ -195,7 +196,7 @@ rescales. Comparing two columns of different scale is a cast,
 above sm2.
 
 Decided in `SM2_DESIGN.md` §2.2: a bare `number` is
-`number(38, 10)`, `number(p)` is `number(p, 0)`, and NaN and
+`number(18, 3)`, `number(p)` is `number(p, 0)`, and NaN and
 infinity are refused on insert, so no value is reserved as a
 sentinel.
 
