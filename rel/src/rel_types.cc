@@ -1,0 +1,335 @@
+/*
+ * rel_types.cc -- datum conversions between Janet values and sm2 types.
+ */
+
+#include "rel.h"
+
+#include <cstring>
+#include <string>
+#include <string_view>
+
+namespace rel {
+
+/* Parse a Janet keyword or symbol into an sm2 type code. */
+int parse_type_code(Janet val, uint8_t *code_out) {
+  std::string_view name;
+  if (janet_checktype(val, JANET_KEYWORD)) {
+    name = reinterpret_cast<const char *>(janet_unwrap_keyword(val));
+  } else if (janet_checktype(val, JANET_SYMBOL)) {
+    name = reinterpret_cast<const char *>(janet_unwrap_symbol(val));
+  } else if (janet_checktype(val, JANET_STRING)) {
+    name = reinterpret_cast<const char *>(janet_unwrap_string(val));
+  } else {
+    return -1;
+  }
+
+  if (name == "bool") {
+    *code_out = 1;
+  } else if (name == "int2") {
+    *code_out = 2;
+  } else if (name == "int4") {
+    *code_out = 3;
+  } else if (name == "int8") {
+    *code_out = 4;
+  } else if (name == "float4") {
+    *code_out = 5;
+  } else if (name == "float8") {
+    *code_out = 6;
+  } else if (name == "decimal") {
+    *code_out = 7;
+  } else if (name == "text") {
+    *code_out = 8;
+  } else if (name == "varchar") {
+    *code_out = 9;
+  } else if (name == "bytea") {
+    *code_out = 10;
+  } else if (name == "date") {
+    *code_out = 11;
+  } else if (name == "time") {
+    *code_out = 12;
+  } else if (name == "timestamp") {
+    *code_out = 13;
+  } else if (name == "timestamptz") {
+    *code_out = 14;
+  } else if (name == "interval") {
+    *code_out = 15;
+  } else if (name == "uuid") {
+    *code_out = 16;
+  } else {
+    return -1;
+  }
+  return 0;
+}
+
+/* Return the canonical name of a type code. */
+const char *type_name_of(uint8_t code) {
+  switch (code) {
+  case 1:
+    return "bool";
+  case 2:
+    return "int2";
+  case 3:
+    return "int4";
+  case 4:
+    return "int8";
+  case 5:
+    return "float4";
+  case 6:
+    return "float8";
+  case 7:
+    return "decimal";
+  case 8:
+    return "text";
+  case 9:
+    return "varchar";
+  case 10:
+    return "bytea";
+  case 11:
+    return "date";
+  case 12:
+    return "time";
+  case 13:
+    return "timestamp";
+  case 14:
+    return "timestamptz";
+  case 15:
+    return "interval";
+  case 16:
+    return "uuid";
+  default:
+    return "unknown";
+  }
+}
+
+/* Construct a varlena buffer from raw bytes. */
+void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out) {
+  if (len <= 126) {
+    // 1-byte header for short varlena.
+    uint8_t header = static_cast<uint8_t>(((len + 1) << 1) | 1);
+    out.resize(1 + len);
+    out[0] = header;
+    if (len > 0) {
+      memcpy(out.data() + 1, data, len);
+    }
+  } else {
+    // 4-byte little-endian header for long varlena.
+    uint32_t header = static_cast<uint32_t>((len + 4) << 2);
+    out.resize(4 + len);
+    memcpy(out.data(), &header, 4);
+    memcpy(out.data() + 4, data, len);
+  }
+}
+
+/* Extract data pointer and length from a varlena. */
+bool varlena_extract(const void *data, size_t len, const char **out_data,
+                     size_t *out_len) {
+  if (len < 1) {
+    return false;
+  }
+  const uint8_t *bytes = static_cast<const uint8_t *>(data);
+  if ((bytes[0] & 1) != 0) {
+    // 1-byte header.
+    size_t total_len = bytes[0] >> 1;
+    if (total_len > len || total_len == 0) {
+      return false;
+    }
+    *out_data = reinterpret_cast<const char *>(bytes + 1);
+    *out_len = total_len - 1;
+    return true;
+  } else if ((bytes[0] & 3) == 0) {
+    // 4-byte header.
+    if (len < 4) {
+      return false;
+    }
+    uint32_t header = 0;
+    memcpy(&header, bytes, 4);
+    size_t total_len = header >> 2;
+    if (total_len > len || total_len < 4) {
+      return false;
+    }
+    *out_data = reinterpret_cast<const char *>(bytes + 4);
+    *out_len = total_len - 4;
+    return true;
+  }
+  return false;
+}
+
+/* Convert a Janet value to a native sm_datum_t buffer. */
+int janet_to_datum(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
+                   sm_datum_t *datum_out) {
+  if (janet_checktype(val, JANET_NIL)) {
+    if (col.not_null) {
+      return -1;
+    }
+    datum_out->data = nullptr;
+    datum_out->len = 0;
+    datum_out->null = true;
+    return 0;
+  }
+
+  datum_out->null = false;
+
+  switch (col.type_code) {
+  case 1: { // bool
+    if (!janet_checktype(val, JANET_BOOLEAN)) {
+      return -1;
+    }
+    uint8_t b = janet_unwrap_boolean(val) ? 1 : 0;
+    buf.resize(1);
+    buf[0] = b;
+    datum_out->data = buf.data();
+    datum_out->len = 1;
+    return 0;
+  }
+  case 2: { // int2
+    if (!janet_checktype(val, JANET_NUMBER)) {
+      return -1;
+    }
+    int16_t i2 = static_cast<int16_t>(janet_unwrap_integer(val));
+    buf.resize(sizeof(i2));
+    memcpy(buf.data(), &i2, sizeof(i2));
+    datum_out->data = buf.data();
+    datum_out->len = sizeof(i2);
+    return 0;
+  }
+  case 3: { // int4
+    if (!janet_checktype(val, JANET_NUMBER)) {
+      return -1;
+    }
+    int32_t i4 = static_cast<int32_t>(janet_unwrap_integer(val));
+    buf.resize(sizeof(i4));
+    memcpy(buf.data(), &i4, sizeof(i4));
+    datum_out->data = buf.data();
+    datum_out->len = sizeof(i4);
+    return 0;
+  }
+  case 4: { // int8
+    if (!janet_checktype(val, JANET_NUMBER)) {
+      return -1;
+    }
+    int64_t i8 = static_cast<int64_t>(janet_unwrap_number(val));
+    buf.resize(sizeof(i8));
+    memcpy(buf.data(), &i8, sizeof(i8));
+    datum_out->data = buf.data();
+    datum_out->len = sizeof(i8);
+    return 0;
+  }
+  case 5: { // float4
+    if (!janet_checktype(val, JANET_NUMBER)) {
+      return -1;
+    }
+    float f4 = static_cast<float>(janet_unwrap_number(val));
+    buf.resize(sizeof(f4));
+    memcpy(buf.data(), &f4, sizeof(f4));
+    datum_out->data = buf.data();
+    datum_out->len = sizeof(f4);
+    return 0;
+  }
+  case 6: { // float8
+    if (!janet_checktype(val, JANET_NUMBER)) {
+      return -1;
+    }
+    double f8 = janet_unwrap_number(val);
+    buf.resize(sizeof(f8));
+    memcpy(buf.data(), &f8, sizeof(f8));
+    datum_out->data = buf.data();
+    datum_out->len = sizeof(f8);
+    return 0;
+  }
+  case 8:    // text
+  case 9:    // varchar
+  case 10: { // bytea
+    JanetByteView view;
+    if (!janet_bytes_view(val, &view.bytes, &view.len)) {
+      return -1;
+    }
+    make_varlena(reinterpret_cast<const char *>(view.bytes), view.len, buf);
+    datum_out->data = buf.data();
+    datum_out->len = buf.size();
+    return 0;
+  }
+  default:
+    // Handle arbitrary types via string representation if string passed.
+    if (janet_checktype(val, JANET_STRING)) {
+      JanetString s = janet_unwrap_string(val);
+      size_t slen = janet_string_length(s);
+      make_varlena(reinterpret_cast<const char *>(s), slen, buf);
+      datum_out->data = buf.data();
+      datum_out->len = buf.size();
+      return 0;
+    }
+    return -1;
+  }
+}
+
+/* Convert a native sm_datum_t back to a Janet value. */
+Janet datum_to_janet(const sm_datum_t &datum, uint8_t type_code) {
+  if (datum.null || datum.data == nullptr) {
+    return janet_wrap_nil();
+  }
+
+  switch (type_code) {
+  case 1: { // bool
+    uint8_t b = *static_cast<const uint8_t *>(datum.data);
+    return janet_wrap_boolean(b != 0);
+  }
+  case 2: { // int2
+    int16_t v = 0;
+    if (datum.len == sizeof(v)) {
+      memcpy(&v, datum.data, sizeof(v));
+    }
+    return janet_wrap_integer(v);
+  }
+  case 3: { // int4
+    int32_t v = 0;
+    if (datum.len == sizeof(v)) {
+      memcpy(&v, datum.data, sizeof(v));
+    }
+    return janet_wrap_integer(v);
+  }
+  case 4: { // int8
+    int64_t v = 0;
+    if (datum.len == sizeof(v)) {
+      memcpy(&v, datum.data, sizeof(v));
+    }
+    return janet_wrap_number(static_cast<double>(v));
+  }
+  case 5: { // float4
+    float v = 0.0f;
+    if (datum.len == sizeof(v)) {
+      memcpy(&v, datum.data, sizeof(v));
+    }
+    return janet_wrap_number(static_cast<double>(v));
+  }
+  case 6: { // float8
+    double v = 0.0;
+    if (datum.len == sizeof(v)) {
+      memcpy(&v, datum.data, sizeof(v));
+    }
+    return janet_wrap_number(v);
+  }
+  case 8:    // text
+  case 9:    // varchar
+  case 10: { // bytea
+    const char *payload = nullptr;
+    size_t payload_len = 0;
+    if (!varlena_extract(datum.data, datum.len, &payload, &payload_len)) {
+      return janet_wrap_nil();
+    }
+    return janet_wrap_string(
+        janet_string(reinterpret_cast<const uint8_t *>(payload), payload_len));
+  }
+  default:
+    // By default, extract varlena payload or treat as raw bytes.
+    const char *payload = nullptr;
+    size_t payload_len = 0;
+    if (varlena_extract(datum.data, datum.len, &payload, &payload_len)) {
+      return janet_wrap_string(janet_string(
+          reinterpret_cast<const uint8_t *>(payload), payload_len));
+    }
+    return janet_wrap_string(
+        janet_string(static_cast<const uint8_t *>(datum.data), datum.len));
+  }
+}
+
+} // namespace rel

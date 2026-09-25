@@ -36,9 +36,12 @@ LIB       := $(BUILD)/libsm.a
 LEVEL_LIBS := sm1/build/libwisr.a sm2/build/libsm2.a
 TEST_BIN  := $(BUILD)/test_sm
 
-.PHONY: all test clean format $(LEVELS)
+.PHONY: all test clean format rel $(LEVELS)
 
 all: $(LIB)
+
+rel: $(LIB)
+	$(MAKE) -C rel
 
 $(LEVELS):
 	$(MAKE) -C $@
@@ -79,12 +82,14 @@ clean:
 	@for d in $(LEVELS); do \
 	  $(MAKE) -C $$d $@ || exit 1; \
 	done
+	$(MAKE) -C rel clean
 	rm -rf $(BUILD)
 
 format:
 	@for d in $(LEVELS); do \
 	  $(MAKE) -C $$d $@ || exit 1; \
 	done
+	$(MAKE) -C rel format
 	clang-format -i src/sm.cc test/test_sm.c
 
 -include $(BUILD)/src/sm.d

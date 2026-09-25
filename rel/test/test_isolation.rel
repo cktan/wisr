@@ -1,0 +1,91 @@
+# test_isolation.rel -- multi-session MVCC, Repeatable Read snapshot isolation,
+# and Read Committed conflict handling with read-latest.
+
+(def test-dir "/tmp/wisr_rel_test_isolation")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "isodb")
+
+# Initialize table in session s1
+(session-open s1 "isodb")
+(session-use s1)
+(begin :rc)
+(table-create accounts
+  (columns
+    (id :int4 :not-null)
+    (balance :int4 :not-null)))
+(insert accounts [1 100])
+(commit)
+
+# Open session s2
+(session-open s2 "isodb")
+
+# 1. Test Repeatable Read Snapshot Isolation
+(session-use s1)
+(begin :rr)
+(assert-eq (read accounts 1) [1 100])
+
+(session-use s2)
+(begin :rc)
+(update accounts 1 [1 200])
+(commit)
+
+# Under Repeatable Read, s1 still observes [1 100] in its snapshot
+(session-use s1)
+(assert-eq (read accounts 1) [1 100])
+(commit)
+
+# After commit, new transaction in s1 sees committed value [1 200]
+(begin :rc)
+(assert-eq (read accounts 1) [1 200])
+(commit)
+
+# 2. Test Read Committed concurrent update conflict: SM_ERR_UPDATED & read-latest
+(session-use s1)
+(begin :rc)
+(assert-eq (read accounts 1) [1 200])
+
+# s2 updates to 300 and commits
+(session-use s2)
+(begin :rc)
+(update accounts 1 [1 300])
+(commit)
+
+# s1 tries to update row 1; rejected with SM_ERR_UPDATED
+(session-use s1)
+(assert-err :err-updated (update accounts 1 [1 400]))
+
+# s1 inspects the newest version via read-latest
+(assert-eq (read-latest accounts 1) [1 300])
+
+# Now s1 update succeeds
+(update accounts 1 [1 400])
+(assert-eq (read accounts 1) [1 400])
+(commit)
+
+# 3. Test Repeatable Read First-Committer-Wins conflict (SM_ERR_CONFLICT)
+(session-use s1)
+(begin :rr)
+(assert-eq (read accounts 1) [1 400])
+
+(session-use s2)
+(begin :rr)
+(assert-eq (read accounts 1) [1 400])
+(update accounts 1 [1 500])
+(commit)
+
+# s1 attempts to update row committed by s2 after s1 began; must abort with SM_ERR_CONFLICT
+(session-use s1)
+(assert-err :err-conflict (update accounts 1 [1 600]))
+# Transaction was aborted by the engine; sm:errnum is now SM_ERR_CONFLICT
+(assert-eq (sm:errnum) 10) # SM_ERR_CONFLICT = 10
+(assert-eq (sm:retryable) true)
+(abort) # clean up transaction handle
+
+(session-close s1)
+(session-close s2)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_isolation.rel: PASSED")

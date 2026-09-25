@@ -1,0 +1,84 @@
+# test_basic.rel -- basic CRUD, data types, transactions and savepoints
+
+(def test-dir "/tmp/wisr_rel_test_basic")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "basicdb")
+(def dbs (db-list))
+(assert-eq dbs ["basicdb"])
+
+(db-open "basicdb")
+
+# 1. Table creation and diverse types
+(begin :rc)
+(table-create products
+  (columns
+    (id :int4 :not-null)
+    (name :text :not-null)
+    (price :float8)
+    (stock :int8)
+    (active :bool)))
+
+# 2. Insert and Read
+(def r1 (insert products [1 "Widget" 19.99 1000 true]))
+(def r2 (insert products [2 "Gadget" 49.50 250 false]))
+(assert-eq r1 1)
+(assert-eq r2 2)
+
+(assert-eq (read products 1) [1 "Widget" 19.99 1000 true])
+(assert-eq (read products 2) [2 "Gadget" 49.50 250 false])
+(assert-nil (read products 999))
+
+# 3. Table Scan with bounds
+(def all-items (scan products))
+(assert-count 2 all-items)
+(assert-eq (all-items 0) [1 [1 "Widget" 19.99 1000 true]])
+(assert-eq (all-items 1) [2 [2 "Gadget" 49.50 250 false]])
+
+(def bounded (scan products :from 2 :to 2))
+(assert-count 1 bounded)
+(assert-eq (bounded 0) [2 [2 "Gadget" 49.50 250 false]])
+
+# 4. Update
+(def old-val (update products 1 [1 "Widget Pro" 29.99 800 true]))
+(assert-eq old-val [1 "Widget" 19.99 1000 true])
+(assert-eq (read products 1) [1 "Widget Pro" 29.99 800 true])
+
+# 5. Delete
+(def del-val (delete products 2))
+(assert-eq del-val [2 "Gadget" 49.50 250 false])
+(assert-nil (read products 2))
+(assert-count 1 (scan products))
+(commit)
+
+# 6. Transaction Abort rollback
+(begin :rc)
+(insert products [3 "Temporary" 5.00 10 true])
+(assert-eq (read products 3) [3 "Temporary" 5.00 10 true])
+(abort)
+# After abort, row 3 must not exist
+(begin :rc)
+(assert-nil (read products 3))
+(commit)
+
+# 7. Savepoint and Rollback
+(begin :rc)
+(def sp1 (savepoint))
+(update products 1 [1 "Widget Ultra" 99.99 100 true])
+(assert-eq (read products 1) [1 "Widget Ultra" 99.99 100 true])
+(rollback sp1)
+(forget sp1)
+(assert-eq (read products 1) [1 "Widget Pro" 29.99 800 true])
+(commit)
+
+# 8. Table Drop
+(begin :rc)
+(table-drop products)
+(commit)
+
+(db-close)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_basic.rel: PASSED")

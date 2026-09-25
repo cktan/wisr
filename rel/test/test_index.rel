@@ -1,0 +1,83 @@
+# test_index.rel -- composite keys, INCLUDE columns, unique constraints, and idx-scan
+
+(def test-dir "/tmp/wisr_rel_test_index")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "idxdb")
+(db-open "idxdb")
+(begin :rc)
+
+(table-create employees
+  (columns
+    (id :int4 :not-null)
+    (dept :text :not-null)
+    (salary :int4 :not-null)
+    (name :text :not-null)))
+
+# 1. Create a composite index on (dept :asc) (salary :desc) including (name)
+(index-create idx_dept_sal
+  (table employees)
+  (key (dept :asc) (salary :desc))
+  :unique false
+  :include (name))
+
+# 2. Create a unique index on (id)
+(index-create idx_id
+  (table employees)
+  (key (id :asc))
+  :unique true)
+
+(insert employees [101 "Engineering" 120000 "Alice"])
+(insert employees [102 "Engineering" 150000 "Bob"])
+(insert employees [103 "Engineering" 110000 "Charlie"])
+(insert employees [104 "Sales"       90000 "David"])
+(insert employees [105 "Sales"      130000 "Eve"])
+
+# 3. Scan composite index for Engineering
+# Because salary is :desc, order should be Bob (150k), Alice (120k), Charlie (110k)
+(def eng-entries (idx-scan idx_dept_sal :ge ["Engineering"] :le ["Engineering"]))
+(assert-count 3 eng-entries)
+(assert-eq ((eng-entries 0) 2) ["Bob"])
+(assert-eq ((eng-entries 1) 2) ["Alice"])
+(assert-eq ((eng-entries 2) 2) ["Charlie"])
+
+# 4. Scan unique index idx_id with range
+(def id-entries (idx-scan idx_id :ge [102] :le [104]))
+(assert-count 3 id-entries)
+(assert-eq ((id-entries 0) 0) 2)
+(assert-eq ((id-entries 1) 0) 3)
+(assert-eq ((id-entries 2) 0) 4)
+
+# 5. Duplicate key constraint violation on unique index
+(assert-err :err-dupkey (insert employees [101 "HR" 80000 "Frank"]))
+
+# Ensure Frank was not inserted (heap scan still has 5 rows)
+(assert-count 5 (scan employees))
+
+# 6. Update row: updates both heap and secondary index
+(update employees 1 [101 "Engineering" 160000 "Alice Cooper"])
+(def eng-after (idx-scan idx_dept_sal :ge ["Engineering"] :le ["Engineering"]))
+(assert-count 3 eng-after)
+# Alice Cooper now has highest salary (160k), so she must be first
+(assert-eq ((eng-after 0) 2) ["Alice Cooper"])
+(assert-eq ((eng-after 1) 2) ["Bob"])
+(assert-eq ((eng-after 2) 2) ["Charlie"])
+
+# 7. Delete row: removes from heap and index
+(delete employees 2) # deletes Bob
+(def eng-deleted (idx-scan idx_dept_sal :ge ["Engineering"] :le ["Engineering"]))
+(assert-count 2 eng-deleted)
+(assert-eq ((eng-deleted 0) 2) ["Alice Cooper"])
+(assert-eq ((eng-deleted 1) 2) ["Charlie"])
+
+# 8. Drop index
+(index-drop idx_dept_sal)
+(index-drop idx_id)
+(commit)
+
+(db-close)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_index.rel: PASSED")
