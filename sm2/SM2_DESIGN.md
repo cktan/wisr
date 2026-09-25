@@ -176,8 +176,8 @@ Two places need sm2 to be more precise than PostgreSQL is:
   framing is the tuple's business (§4) — sm2 has its own
   framing, and its own TOAST in its own format. In a tuple a
   variable datum is stored as a PostgreSQL varlena, header and
-  all, so PostgreSQL can read it in place (§4.1); a type's
-  functions take the payload alone.
+  all, so PostgreSQL can read it in place (§4.1,
+  `VARLENA.md`); a type's functions take the payload alone.
 
 ### 2.2 Except decimal, which follows DuckDB's
 
@@ -601,7 +601,7 @@ Three reasons to split it out rather than let it live inside
 **The datums are PostgreSQL's; the framing is sm2's.** §2.1
 fixes what each column's bytes are, and stops there. The
 tuple around them — the null bitmap, the fixed/variable
-split, the attribute count, the offsets —
+split, the attribute count, the slots —
 owes `HeapTupleHeader` nothing and is designed here on its own
 merits. This is also where sm2's TOAST lives, in sm2's own
 format rather than PostgreSQL's: a `text` datum in an sm2
@@ -650,15 +650,19 @@ meets them (§4.1), which is only partly written:
 ### 4.1 Layout
 
 ```
-[ header | null bitmap | fixed part | var offsets | var data ]
+[ header | null bitmap | fixed part | var data ]
 ```
+
+The bytes are specified in `TUPLE.md`, and a variable-width
+datum's in `VARLENA.md`; this section is why they are so.
 
 **Decision: the datums are serial, in schema order, split into
 a fixed part and a variable part, with no padding.** The fixed
-part holds every fixed-width column that is not null, in
-schema order, end to end; the variable part holds a table of
-offsets, one per non-null variable-width column, then their
-bytes, in schema order too.
+part is a table with an entry for every non-null column, in
+schema order, end to end: a fixed-width column's datum, or a
+variable-width column's **slot**, the position of its varlena
+in the tuple. The variable part holds those varlenas, in
+schema order too.
 
 - **No alignment.** PostgreSQL pads each attribute to its
   `typalign` because its tuples start MAXALIGNed on aligned
@@ -677,34 +681,30 @@ bytes, in schema order too.
   version that appends a column lays out its rows by the same
   rule.
 - **A null takes no space**, as in PostgreSQL, in either part:
-  its bit in the null bitmap is all it has. A fixed column's
-  offset is then the sum of the widths of the non-null fixed
-  columns before it, computed from the null bitmap and the
-  schema's widths, never by walking the data; a variable
-  column's entry in the offset table is found the same way,
-  by counting the non-null variable columns before it. That is
-  O(columns) arithmetic over the bitmap per column read,
-  rather than PostgreSQL's walk over the bytes once an earlier
-  column is null or of variable width. Keeping a slot for a
-  null fixed column would have made the offset a constant, at
-  the cost of its width per null; the space was preferred.
-- **The fixed part comes first**, so that when no fixed column
-  is null, which is the common case, every fixed offset is a
-  constant of the schema and the row's `natts`, precomputed
-  once.
+  its bit in the null bitmap is all it has. A column's entry
+  is then at the sum of the entry widths of the non-null
+  columns before it — a fixed column's width, a variable one's
+  slot width — computed from the null bitmap and the schema's
+  widths, never by walking the data. That is O(columns)
+  arithmetic over the bitmap per column read, rather than
+  PostgreSQL's walk over the bytes once an earlier column is
+  null or of variable width. Keeping an entry for a null
+  column would have made every position a constant, at the
+  cost of its width per null; the space was preferred.
+- **Every column is found the same way.** Because a variable
+  column has a fixed-width slot in the table, its entry is
+  found by the same arithmetic as a fixed column's, and its
+  varlena is one step further, at the position the slot
+  holds. When no column is null, which is the common case,
+  every entry's position is a constant of the schema, `natts`
+  and the slot width, precomputed once: the row reads like a
+  C struct.
 - **A variable datum is a PostgreSQL varlena**, its bytes
   exactly as PostgreSQL's `varatt.h` lays them out, so the glue
-  can hand PostgreSQL a `Datum` pointing into the tuple:
-
-  ```
-  xxxxxxx1  1-byte header, (len << 1) | 1: up to 126 bytes
-  xxxxxx00  4-byte little-endian header, len << 2: up to 1 GB
-  xxxxxx10  4-byte header, compressed      -- not built yet
-  00000001  a TOAST pointer: a vartag byte,
-            then the pointer               -- not built yet
-  ```
-
-  The length counts the header. A datum's header says what it
+  can hand PostgreSQL a `Datum` pointing into the tuple: a
+  1-byte header up to 126 bytes, a 4-byte one past that, and
+  forms for compressed data and TOAST pointers, neither built
+  yet (`VARLENA.md` §2). A datum's header says what it
   is, so a TOAST pointer travels through the executor's slot
   as itself, and is fetched only when a function needs the
   value, and an `UPDATE` that leaves the column alone writes it
@@ -729,41 +729,35 @@ bytes, in schema order too.
   row to save copying the long datums. The codec takes either
   header on input — PostgreSQL makes 4-byte headers for short
   data after it detoasts — and writes the shortest.
-- **The offsets stay.** A varlena's header repeats its length,
-  but the offset table is what finds the Nth variable column
-  without walking the ones before it.
+- **A slot holds where its varlena starts, and nothing else.**
+  The varlena's header already holds its length, so the slot
+  does not repeat it, and a position from the tuple's start
+  goes straight to the bytes. A slot is 2 bytes, or 4 under a
+  wide-slots flag the writer sets only when the tuple passes
+  64 KB, the furthest 2 bytes reach, so the TOAST threshold is
+  free to be set on its own merits. Two layouts came before:
+  a separate table of end offsets after the fixed part, which
+  stored each length twice once the varlena had its own
+  header; and dropping positions altogether and walking the
+  varlena headers, as PostgreSQL does, which saves the 2 bytes
+  but makes a variable column cost a walk over those before
+  it. The slot costs the same 2 bytes as the offset table did
+  and buys O(1) access to every column.
 - **The header is a flag byte and `natts`**, two bytes for a
-  row of up to 127 columns:
-
-  ```
-  header = flags (1 byte) | natts (varint, LEB128)
-
-  flags: 0x01  has nulls   -- else no null bitmap
-         0x04  wide offsets -- variable offsets are 4 bytes
-         0xFA  reserved: must be 0, and a reader refuses a
-               tuple with any of them set
-  ```
-
-  The has-nulls flag plays the part of PostgreSQL's
-  `HEAP_HASNULL`. `0x02` was once to mean a TOAST bitmap was
-  present, before the TOAST mark moved into the varlena; it is
-  reserved now, and no tuple was written with it. The reserved
-  bits are
-  refused rather than ignored, so a tuple written with a
-  feature added later is never misread by a reader too old to
-  know it. PostgreSQL packs `natts` into 11 bits of
-  `t_infomask2`; a varint costs one byte to 127 columns and has
-  no ceiling.
+  row of up to 127 columns: flags for has-nulls and wide
+  slots, the rest reserved, then `natts` as a varint
+  (`TUPLE.md` §2). The has-nulls flag plays the part of
+  PostgreSQL's `HEAP_HASNULL`. `0x02` was once to mean a TOAST
+  bitmap was present, before the TOAST mark moved into the
+  varlena; it is reserved now, and no tuple was written with
+  it. The reserved bits are refused rather than ignored, so a
+  tuple written with a feature added later is never misread by
+  a reader too old to know it. PostgreSQL packs `natts` into 11
+  bits of `t_infomask2`; a varint costs one byte to 127 columns
+  and has no ceiling.
 - **The null bitmap follows, when present**: a bit for each of
   the row's `natts` columns, set for a null, rounded up to
   whole bytes.
-- **A variable offset is where its varlena ends**, counted from
-  the start of the variable data, one per non-null variable
-  column; the first datum starts at 0, and each next where the
-  one before ended. An offset is 2 bytes while the variable
-  data is under 64 KB, which it nearly always is, and 4 bytes
-  when the wide-offsets flag is set, chosen per tuple, so the
-  TOAST threshold is free to be set on its own merits.
 
 Open: the shape of a TOAST pointer — a vartag of sm2's own,
 since PostgreSQL's 1, 2, 3 and 18 are taken, and the pointer

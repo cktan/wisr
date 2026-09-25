@@ -209,8 +209,8 @@ struct attribute_t {
 
 /*
  * A variable-width datum as the tuple codec takes and gives it:
- * a varlena in PostgreSQL's own bytes (SM2_DESIGN.md §4.1,
- * PostgreSQL's varatt.h), so PostgreSQL can read one in place.
+ * a varlena in PostgreSQL's own bytes (VARLENA.md, PostgreSQL's
+ * varatt.h), so PostgreSQL can read one in place.
  * Its first byte says what it is, and its header holds its length,
  * the header's own bytes included:
  *
@@ -242,7 +242,7 @@ std::string_view varlena_payload(std::string_view v);
 
 /*
  * Replace tuple with datums, one per attribute of schema, in the
- * layout of SM2_DESIGN.md §4.1: a fixed-width datum as its bytes,
+ * layout of TUPLE.md: a fixed-width datum as its bytes,
  * a variable-width one as a varlena, in either header form, which
  * the tuple stores in its shortest; a dropped attribute's datum
  * must be null. Fails with SM_ERR_INVALID, leaving tuple as it

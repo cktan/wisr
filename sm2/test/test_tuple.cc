@@ -73,12 +73,13 @@ TEST_CASE("a tuple's bytes are the layout SM2_DESIGN.md §4.1 fixes") {
   // Pin the format with two golden tuples, so a change to it is a
   // change to this test.
   // 1. (int4 7, text "hi", int8 null, bool true): flags 0x01 for a
-  //    null, natts 4, bitmap 0x04 for attribute 2, the fixed part
-  //    int4 then bool with the null int8 skipped, one end offset,
-  //    3, then "hi" as a varlena with PostgreSQL's 1-byte header,
-  //    (3 << 1) | 1.
-  // 2. (int4 7, text ""): no nulls, so no bitmap; an empty text
-  //    is its header alone, 0x03, ending at offset 1.
+  //    null, natts 4, bitmap 0x04 for attribute 2, then the fixed
+  //    part in schema order -- the int4, the text's slot, 10, where
+  //    its varlena starts in the tuple, and the bool, the null int8
+  //    taking nothing -- then "hi" as a varlena with PostgreSQL's
+  //    1-byte header, (3 << 1) | 1.
+  // 2. (int4 7, text ""): no nulls, so no bitmap; the text's slot
+  //    is 8, and an empty text is its header alone, 0x03.
   std::vector<sm2::attribute_t> schema = {
       attr(sm2::type_int4), attr(sm2::type_text), attr(sm2::type_int8),
       attr(sm2::type_bool)};
@@ -86,15 +87,15 @@ TEST_CASE("a tuple's bytes are the layout SM2_DESIGN.md §4.1 fixes") {
       schema, {le(int32_t{7}), vl("hi"), std::nullopt, std::string(1, '\1')});
   CHECK(hex(t) == "010404"
                   "07000000"
+                  "0a00"
                   "01"
-                  "0300"
                   "076869");
   std::vector<sm2::attribute_t> two = {attr(sm2::type_int4),
                                        attr(sm2::type_text)};
   t = encode(two, {le(int32_t{7}), vl("")});
   CHECK(hex(t) == "0002"
                   "07000000"
-                  "0100"
+                  "0800"
                   "03");
 }
 
@@ -141,19 +142,21 @@ TEST_CASE("every tuple round trips, and any one column decodes alone") {
   }
 }
 
-TEST_CASE("variable offsets widen to 4 bytes only past 64 KB") {
-  // Verify the wide-offsets flag, chosen per tuple.
-  // 1. 65535 bytes of variable data, a 65531-byte bytea and its
-  //    4-byte header, keep 2-byte offsets.
-  // 2. One byte more sets the flag, 0x04, and still round trips.
+TEST_CASE("variable slots widen to 4 bytes only past 64 KB") {
+  // Verify the wide-slots flag, chosen per tuple.
+  // 1. A tuple of 65535 bytes keeps 2-byte slots: a 2-byte header,
+  //    the bytea's slot and the int4, 6 bytes, and a 65523-byte
+  //    bytea with its 4-byte header.
+  // 2. One byte more, which a 2-byte slot cannot reach, sets the
+  //    flag, 0x04, and still round trips.
   std::vector<sm2::attribute_t> schema = {attr(sm2::type_bytea),
                                           attr(sm2::type_int4)};
-  for (size_t len : {size_t{65531}, size_t{65532}}) {
+  for (size_t len : {size_t{65523}, size_t{65524}}) {
     CAPTURE(len);
     std::vector<std::optional<std::string>> row = {vl(std::string(len, 'x')),
                                                    le(int32_t{-1})};
     std::string t = encode(schema, row);
-    CHECK(((t[0] & 0x04) != 0) == (len > 65531));
+    CHECK(((t[0] & 0x04) != 0) == (len > 65523));
     CHECK(deform(schema, t) == row);
   }
 }
@@ -211,9 +214,9 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
   // 1. Every proper prefix of a valid tuple, and the tuple with a
   //    byte added, is SM_ERR_CORRUPT: the parts must fit exactly.
   // 2. So is a reserved flag, more attributes than the schema has,
-  //    an end offset past the next one's, a varlena tagged as a
-  //    TOAST pointer, which sm2 cannot read yet, and one with a
-  //    reserved tag.
+  //    a slot that does not point to its varlena, a varlena that is
+  //    a TOAST pointer or compressed, which sm2 cannot read yet,
+  //    and one whose header claims a byte too many.
   std::vector<sm2::attribute_t> schema = {
       attr(sm2::type_int4), attr(sm2::type_text), attr(sm2::type_int8),
       attr(sm2::type_bytea)};
@@ -240,17 +243,18 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
   bad = good;
   bad[1] = 5; // natts past the schema's 4
   refused(bad);
-  // The offsets, 4 then 7, follow the header, the bitmap and the
-  // 4-byte fixed part: make the first end past the second.
+  // The fixed part follows the 3-byte header and bitmap: the int4,
+  // then the text's slot, 11, where "abc" starts, just past the
+  // fixed part's 8 bytes. Point it a byte further on.
   bad = good;
-  size_t offsets = 3 + 4;
-  REQUIRE(bad[offsets] == 4);
-  bad[offsets] = 8;
+  size_t slot = 3 + 4;
+  REQUIRE(bad[slot] == 11);
+  bad[slot] = 12;
   refused(bad);
-  // The first varlena, "abc" with header 0x09, follows the two
-  // offsets: make it a TOAST pointer, a compressed 4-byte header,
-  // and a 1-byte header one byte too long.
-  size_t first = offsets + 4;
+  // The first varlena, "abc" with header 0x09: make it a TOAST
+  // pointer, a compressed 4-byte header, and a 1-byte header one
+  // byte too long.
+  size_t first = 11;
   REQUIRE(good[first] == '\x09');
   for (char h : {sm2::varlena_toast, '\x02', '\x0b'}) {
     bad = good;

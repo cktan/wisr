@@ -1,18 +1,20 @@
 /*
- * tuple.cc -- the tuple codec (SM2_DESIGN.md §4, §4.1):
+ * tuple.cc -- the tuple codec (TUPLE.md, VARLENA.md; why in
+ * SM2_DESIGN.md §4, §4.1):
  *
- *   [ header | null bitmap | fixed part | var offsets |
- *     var data ]
+ *   [ header | null bitmap | fixed part | var data ]
  *
  * The header is a flag byte and natts, the row's attribute count,
  * as a varint. A null takes no space: its bit in the null bitmap,
- * set for null, is all it has. The fixed part holds the non-null
- * fixed-width datums in schema order, end to end with no padding;
- * the variable part holds one end offset per non-null
- * variable-width datum, 2 bytes or, under the wide-offsets flag,
- * 4, then their varlenas, PostgreSQL's, each in its shortest form
- * and unpadded. A column is found from the null bitmap and the
- * schema's widths, never by walking the data.
+ * set for null, is all it has. The fixed part holds an entry for
+ * each non-null attribute, in schema order, end to end with no
+ * padding: a fixed-width datum itself, or a variable-width one's
+ * slot, where its varlena starts, counted from the tuple's start,
+ * 2 bytes or, under the wide flag, 4. The var data holds those
+ * varlenas, PostgreSQL's, each in its shortest form, in schema
+ * order and end to end; a varlena's header gives its length. Any
+ * attribute is found from the null bitmap and the schema's widths,
+ * never by walking the data.
  *
  * TOAST and compression are not built yet: a TOAST pointer or a
  * compressed varlena is refused rather than misread.
@@ -26,17 +28,19 @@
 
 namespace {
 
-constexpr uint8_t has_nulls = 0x01, wide_offsets = 0x04;
+constexpr uint8_t has_nulls = 0x01, wide_slots = 0x04;
 constexpr uint8_t reserved = 0xFA;
 
 /* The longest datum a 1-byte varlena header holds. */
 constexpr size_t short_max = 126;
 
 /*
- * Why v is not a varlena this codec can store or read, or nullptr
- * if it is: an uncompressed one whose header gives its length.
+ * The length of the varlena at the start of v, which may run on
+ * past it, from its header, in len; or why it is not a varlena
+ * this codec can store or read: no header, one cut short, a
+ * compressed one or a TOAST pointer, or a length past v's end.
  */
-const char *varlena_problem(std::string_view v) {
+const char *varlena_extent(std::string_view v, size_t &len) {
   if (v.empty()) {
     return "a varlena without its header";
   }
@@ -44,7 +48,6 @@ const char *varlena_problem(std::string_view v) {
   if (first == static_cast<uint8_t>(sm2::varlena_toast)) {
     return "a TOAST pointer, which sm2 cannot store or read yet";
   }
-  size_t len;
   if (first & 0x01) {
     len = first >> 1;
   } else {
@@ -56,11 +59,24 @@ const char *varlena_problem(std::string_view v) {
       return "a compressed varlena, which sm2 cannot store or read yet";
     }
     len = header >> 2;
+    if (len < 4) {
+      return "a varlena whose length is shorter than its header";
+    }
   }
-  if (len != v.size()) {
-    return "a varlena whose header does not match its length";
+  if (len > v.size()) {
+    return "a varlena that runs past the tuple's end";
   }
   return nullptr;
+}
+
+/* Why v, a whole varlena, is not one the codec can store; or nullptr. */
+const char *varlena_problem(std::string_view v) {
+  size_t len;
+  if (const char *why = varlena_extent(v, len)) {
+    return why;
+  }
+  return len == v.size() ? nullptr
+                         : "a varlena whose header does not match its length";
 }
 
 /* The shortest varlena length for a datum of n bytes. */
@@ -98,6 +114,15 @@ bool get_varint(std::string_view in, size_t &pos, uint64_t &v) {
   return false;
 }
 
+/* The bytes varint v takes. */
+size_t varint_len(uint64_t v) {
+  size_t n = 1;
+  while (v >>= 7) {
+    n++;
+  }
+  return n;
+}
+
 /* True if bit i of bitmap is set. */
 bool bit(const char *bitmap, size_t i) {
   return (static_cast<uint8_t>(bitmap[i / 8]) >> (i % 8)) & 1;
@@ -124,29 +149,35 @@ int widths(std::span<const sm2::attribute_t> schema,
 
 /* A tuple's parts, located and checked against the schema. */
 struct parsed_t {
+  std::string_view tuple;
   size_t natts = 0;
   const char *nulls = nullptr; /* the null bitmap, or nullptr */
-  std::string_view fixed;      /* the fixed part */
-  std::string_view offsets;    /* the variable part's end offsets */
-  size_t offset_width = 2;
-  std::string_view var; /* the variable part's bytes */
+  size_t fixed = 0;            /* where the fixed part starts */
+  size_t slot_width = 2;       /* a variable attribute's entry */
 };
 
-/* The end offset of the n-th non-null variable datum. */
-size_t var_end(const parsed_t &t, size_t n) {
-  std::string_view o = t.offsets.substr(n * t.offset_width, t.offset_width);
-  return t.offset_width == 2 ? sm2::load_le<uint16_t>(o)
-                             : sm2::load_le<uint32_t>(o);
+/* The width of attribute i's entry in the fixed part. */
+size_t entry_width(const parsed_t &t, const std::vector<int32_t> &w, size_t i) {
+  return w[i] > 0 ? static_cast<size_t>(w[i]) : t.slot_width;
+}
+
+/* The value of the slot at pos: where a varlena starts. */
+size_t slot_at(const parsed_t &t, size_t pos) {
+  std::string_view s = t.tuple.substr(pos, t.slot_width);
+  return t.slot_width == 2 ? sm2::load_le<uint16_t>(s)
+                           : sm2::load_le<uint32_t>(s);
 }
 
 /*
  * Locate tuple's parts under schema, whose widths are w, and check
  * that they fit together exactly: the header's flags and natts,
- * the bitmaps' sizes, the fixed part's length, and the offsets,
- * which must not decrease and must end at the tuple's end.
+ * the bitmap, the fixed part, and each slot, which must point
+ * where the varlena before it ends, the first just past the fixed
+ * part, the last varlena ending at the tuple's end.
  */
 int parse(std::span<const sm2::attribute_t> schema,
           const std::vector<int32_t> &w, std::string_view tuple, parsed_t &t) {
+  t.tuple = tuple;
   // The header.
   if (tuple.empty()) {
     return corrupt("empty");
@@ -173,43 +204,55 @@ int parse(std::span<const sm2::attribute_t> schema,
     t.nulls = tuple.data() + pos;
     pos += len;
   }
-  // The fixed part's length and the number of variable datums.
-  size_t fixed = 0, nvar = 0;
+  // The fixed part, an entry per non-null attribute.
+  t.slot_width = flags & wide_slots ? 4 : 2;
+  t.fixed = pos;
+  size_t fixed = 0;
+  for (size_t i = 0; i < natts; i++) {
+    if (!(t.nulls && bit(t.nulls, i))) {
+      fixed += entry_width(t, w, i);
+    }
+  }
+  if (tuple.size() - pos < fixed) {
+    return corrupt("cut short in its fixed part");
+  }
+  // Each slot must point where the varlenas so far end.
+  size_t next = pos + fixed, entry = pos;
   for (size_t i = 0; i < natts; i++) {
     if (t.nulls && bit(t.nulls, i)) {
       continue;
     }
-    if (w[i] > 0) {
-      fixed += w[i];
-    } else {
-      nvar++;
+    if (w[i] < 0) {
+      if (slot_at(t, entry) != next) {
+        return corrupt("a slot that does not point to its varlena");
+      }
+      size_t len;
+      if (const char *why = varlena_extent(tuple.substr(next), len)) {
+        return corrupt(why);
+      }
+      next += len;
     }
+    entry += entry_width(t, w, i);
   }
-  t.offset_width = flags & wide_offsets ? 4 : 2;
-  size_t offsets = nvar * t.offset_width;
-  if (tuple.size() - pos < fixed + offsets) {
-    return corrupt("cut short in its fixed part or offsets");
-  }
-  t.fixed = tuple.substr(pos, fixed);
-  t.offsets = tuple.substr(pos + fixed, offsets);
-  t.var = tuple.substr(pos + fixed + offsets);
-  // The offsets must climb, and end where the tuple does; each
-  // varlena between them must be one this reader can read.
-  size_t prev = 0;
-  for (size_t n = 0; n < nvar; n++) {
-    size_t end = var_end(t, n);
-    if (end < prev || end > t.var.size()) {
-      return corrupt("a variable offset out of order or range");
-    }
-    if (const char *why = varlena_problem(t.var.substr(prev, end - prev))) {
-      return corrupt(why);
-    }
-    prev = end;
-  }
-  if (prev != t.var.size()) {
+  if (next != tuple.size()) {
     return corrupt("bytes past its last datum");
   }
   return 0;
+}
+
+/*
+ * Attribute i of a parsed tuple, known non-null and within natts,
+ * whose entry is at pos: a fixed-width datum, or the varlena its
+ * slot points to.
+ */
+std::string_view datum_at(const parsed_t &t, const std::vector<int32_t> &w,
+                          size_t i, size_t pos) {
+  if (w[i] > 0) {
+    return t.tuple.substr(pos, w[i]);
+  }
+  size_t start = slot_at(t, pos), len = 0;
+  varlena_extent(t.tuple.substr(start), len);
+  return t.tuple.substr(start, len);
 }
 
 } // namespace
@@ -258,9 +301,9 @@ int tuple_encode(std::span<const attribute_t> schema,
     if (datums.size() != schema.size()) {
       return invalid("a datum for every attribute, no more");
     }
-    // Check each datum, and size the variable data.
+    // Check each datum, and size the fixed part and the var data.
     bool nulls = false;
-    size_t var = 0;
+    size_t fixed = 0, nvar = 0, var = 0;
     for (size_t i = 0; i < datums.size(); i++) {
       if (datums[i].null) {
         nulls = true;
@@ -270,25 +313,31 @@ int tuple_encode(std::span<const attribute_t> schema,
         return invalid("attribute " + std::to_string(i) +
                        " is dropped, so its datum must be null");
       }
-      if (w[i] > 0 && datums[i].bytes.size() != static_cast<size_t>(w[i])) {
-        return invalid("attribute " + std::to_string(i) + " must be " +
-                       std::to_string(w[i]) + " bytes, not " +
-                       std::to_string(datums[i].bytes.size()));
-      }
-      if (w[i] < 0) {
-        if (const char *why = varlena_problem(datums[i].bytes)) {
-          return invalid("attribute " + std::to_string(i) + ": " + why);
+      if (w[i] > 0) {
+        if (datums[i].bytes.size() != static_cast<size_t>(w[i])) {
+          return invalid("attribute " + std::to_string(i) + " must be " +
+                         std::to_string(w[i]) + " bytes, not " +
+                         std::to_string(datums[i].bytes.size()));
         }
-        var += varlena_len(varlena_payload(datums[i].bytes).size());
+        fixed += w[i];
+        continue;
       }
+      if (const char *why = varlena_problem(datums[i].bytes)) {
+        return invalid("attribute " + std::to_string(i) + ": " + why);
+      }
+      nvar++;
+      var += varlena_len(varlena_payload(datums[i].bytes).size());
     }
-    bool wide = var > 0xFFFF;
-    // The header.
+    // 2-byte slots, unless the tuple is too long for them to reach.
+    size_t head =
+        1 + varint_len(datums.size()) + (nulls ? (datums.size() + 7) / 8 : 0);
+    bool wide = head + fixed + 2 * nvar + var > 0xFFFF;
+    size_t slot = wide ? 4 : 2;
+    size_t var_start = head + fixed + slot * nvar;
+    // The header, then the null bitmap, a set bit for a null.
     std::string out;
-    out +=
-        static_cast<char>((nulls ? has_nulls : 0) | (wide ? wide_offsets : 0));
+    out += static_cast<char>((nulls ? has_nulls : 0) | (wide ? wide_slots : 0));
     put_varint(datums.size(), out);
-    // The null bitmap, a set bit for a null.
     if (nulls) {
       size_t at = out.size();
       out.append((datums.size() + 7) / 8, '\0');
@@ -298,26 +347,26 @@ int tuple_encode(std::span<const attribute_t> schema,
         }
       }
     }
-    // The fixed part, then each variable datum's end offset.
-    for (size_t i = 0; i < datums.size(); i++) {
-      if (!datums[i].null && w[i] > 0) {
-        out += datums[i].bytes;
-      }
-    }
-    size_t end = 0;
+    // The fixed part: each datum, or each varlena's slot.
+    size_t next = var_start;
     std::string word;
     for (size_t i = 0; i < datums.size(); i++) {
-      if (!datums[i].null && w[i] < 0) {
-        end += varlena_len(varlena_payload(datums[i].bytes).size());
-        if (wide) {
-          store_le(static_cast<uint32_t>(end), word);
-        } else {
-          store_le(static_cast<uint16_t>(end), word);
-        }
-        out += word;
+      if (datums[i].null) {
+        continue;
       }
+      if (w[i] > 0) {
+        out += datums[i].bytes;
+        continue;
+      }
+      if (wide) {
+        store_le(static_cast<uint32_t>(next), word);
+      } else {
+        store_le(static_cast<uint16_t>(next), word);
+      }
+      out += word;
+      next += varlena_len(varlena_payload(datums[i].bytes).size());
     }
-    // The variable data, each varlena in its shortest form.
+    // The var data, each varlena in its shortest form.
     for (size_t i = 0; i < datums.size(); i++) {
       if (!datums[i].null && w[i] < 0) {
         out += make_varlena(varlena_payload(datums[i].bytes));
@@ -338,7 +387,7 @@ int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
       return -1;
     }
     datums.clear();
-    size_t fixed = 0, nvar = 0, var_start = 0;
+    size_t pos = t.fixed;
     for (size_t i = 0; i < schema.size(); i++) {
       // Past the row's attributes: the value it was added with.
       if (i >= t.natts) {
@@ -352,15 +401,8 @@ int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
         datums.push_back(std::nullopt);
         continue;
       }
-      std::string_view d;
-      if (w[i] > 0) {
-        d = t.fixed.substr(fixed, w[i]);
-        fixed += w[i];
-      } else {
-        size_t end = var_end(t, nvar++);
-        d = t.var.substr(var_start, end - var_start);
-        var_start = end;
-      }
+      std::string_view d = datum_at(t, w, i, pos);
+      pos += entry_width(t, w, i);
       // A dropped attribute's old bytes are skipped.
       datums.push_back(schema[i].dropped ? std::nullopt : std::optional(d));
     }
@@ -395,24 +437,14 @@ int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
     if (t.nulls && bit(t.nulls, ordinal)) {
       return 0;
     }
-    // Count the non-null datums before it, fixed and variable.
-    size_t fixed = 0, nvar = 0;
+    // Its entry follows those of the non-null attributes before it.
+    size_t pos = t.fixed;
     for (size_t i = 0; i < ordinal; i++) {
-      if (t.nulls && bit(t.nulls, i)) {
-        continue;
-      }
-      if (w[i] > 0) {
-        fixed += w[i];
-      } else {
-        nvar++;
+      if (!(t.nulls && bit(t.nulls, i))) {
+        pos += entry_width(t, w, i);
       }
     }
-    if (w[ordinal] > 0) {
-      datum = t.fixed.substr(fixed, w[ordinal]);
-    } else {
-      size_t start = nvar == 0 ? 0 : var_end(t, nvar - 1);
-      datum = t.var.substr(start, var_end(t, nvar) - start);
-    }
+    datum = datum_at(t, w, ordinal, pos);
     return 0;
   });
 }

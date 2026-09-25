@@ -1,0 +1,149 @@
+# TUPLE — sm2, a row's bytes
+
+The reference for the tuple format: the bytes `tuple_encode`
+writes and `tuple_decode` and `tuple_deform` read, which a heap
+`rel` stores as an sm1 value. `SM2_DESIGN.md` §4 argues *why*;
+`VARLENA.md` is a variable-width datum's bytes inside it; this
+file is the rest.
+
+**Status: built**, in `src/tuple/tuple.cc`, with the pinned
+examples of §8 in `test/test_tuple.cc`. TOAST is postponed
+(`SM2_DESIGN.md` §8.2): a tuple holds every datum inline.
+
+---
+
+## 1. The layout
+
+```
+[ header | null bitmap | fixed part | var data ]
+```
+
+Each part follows the one before it with no padding, and the
+whole ends exactly where the last variable datum does. Every
+multi-byte integer is little-endian.
+
+The fixed part is a table of the row's non-null attributes, a
+fixed-width entry for each: a fixed-width datum's bytes, or a
+variable-width datum's **slot**, saying where its varlena
+starts. So every attribute is found the same way, and a
+varlena's header, not the table, holds its length.
+
+The parts are laid out by the row's **schema**, the table's
+attributes in order: each attribute's type and typmod give its
+**width** (`datum_width` in `include/sm2.h`) — the type's own
+width, `decimal`'s 8 or 16 bytes by its precision, or
+*variable* for `text`, `varchar` and `bytea`.
+
+## 2. The header
+
+```
+header = flags (1 byte) | natts (varint)
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `0x01` | has nulls: the null bitmap is present |
+| `0x02` | reserved |
+| `0x04` | wide slots: each variable slot is 4 bytes, else 2 |
+| `0xF8` | reserved |
+
+Reserved bits must be 0, and a reader refuses a tuple with any
+set, so that a tuple using a feature added later is never
+misread by an older reader. `0x02` was once to mean a TOAST
+bitmap; no tuple was written with it.
+
+**`natts`** is the number of attributes the row holds, the
+schema's count when it was written, as an unsigned LEB128
+varint: seven bits a byte, least significant first, the high
+bit set on every byte but the last. One byte up to 127, two up
+to 16383; a reader accepts at most five bytes. `natts` must not
+exceed the reading schema's count.
+
+## 3. The null bitmap
+
+Present only when the has-nulls flag is set: one bit for each
+of the row's `natts` attributes, **set for a null**, attribute
+`i` at bit `i % 8` of byte `i / 8`, rounded up to whole bytes.
+Bits past `natts` are ignored.
+
+A null takes no other space: it has no entry in the fixed
+part, neither a datum nor a slot, and no varlena in the
+variable data.
+
+## 4. The fixed part
+
+An entry for each non-null attribute among the row's first
+`natts`, in schema order, end to end:
+
+- a **fixed-width** attribute's entry is its datum, exactly its
+  width;
+- a **variable-width** attribute's entry is its **slot**: the
+  position of its varlena, counted from the start of the
+  tuple, 2 bytes, or 4 under the wide-slots flag.
+
+The writer sets the wide-slots flag when the whole tuple would
+be longer than 65535 bytes, the furthest a 2-byte slot
+reaches.
+
+## 5. The variable data
+
+The non-null variable-width attributes' varlenas, in schema
+order, end to end, each in its shortest form (`VARLENA.md`),
+starting just past the fixed part. A varlena's length is in its
+own header.
+
+The slots must agree: the first variable attribute's slot
+points just past the fixed part, each next one's where the
+varlena before it ends, and the last varlena ends at the
+tuple's end. With no variable datums, the fixed part ends the
+tuple.
+
+## 7. Finding an attribute
+
+To read attribute `k` without the others:
+
+1. Read the header, and the null bitmap if present; the fixed
+   part begins after the bitmap.
+2. If `k` is at or past `natts`, the row was written before
+   `k` was added: it reads as the attribute's missing value,
+   or null if it has none.
+3. If `k`'s bit is set, it is null.
+4. Otherwise its entry starts at the sum of the entry widths
+   of the non-null attributes before it — each fixed-width
+   one's width, each variable-width one's slot width.
+5. A fixed-width `k` is the entry. A variable-width `k` is the
+   varlena at the position its slot holds, as long as that
+   varlena's header says.
+
+A dropped attribute reads as null, whatever the row holds:
+an old row's bytes for it are skipped, and a new row stores it
+as null.
+
+Step 4 is arithmetic over the bitmap and the widths; no
+attribute's bytes are read to find another's. With no nulls,
+every entry's position is a constant of the schema, `natts`
+and the slot width, so a row reads like a C struct.
+
+## 8. Examples
+
+Pinned by `test/test_tuple.cc`:
+
+| Schema | Row | Tuple, in hex |
+| --- | --- | --- |
+| `int4, text, int8, bool` | `7, 'hi', NULL, true` | `01 04 04` `07 00 00 00` `0a 00` `01` `07 68 69` |
+| `int4, text` | `7, ''` | `00 02` `07 00 00 00` `08 00` `03` |
+
+The first, part by part: flags `01`, has nulls; `natts` 4;
+bitmap `04`, attribute 2 null; the fixed part, in schema order
+— `int4` 7, the text's slot 10, `bool` true, the null `int8`
+taking nothing; then at byte 10, the varlena `07 68 69`,
+"hi".
+
+## 9. A malformed tuple
+
+A reader refuses, with `SM_ERR_CORRUPT`, a tuple that is empty;
+has a reserved flag set; has a malformed `natts`, or one past
+the schema's count; is cut short in its bitmap or fixed part;
+has a slot that does not point where its varlena should start
+(§5); holds a varlena that is not valid (`VARLENA.md` §4); or
+has bytes past its last varlena.
