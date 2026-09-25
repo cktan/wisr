@@ -23,11 +23,11 @@ decisions in `SM2_OBJECTIVE.md`:
 | API shape | one tuple at a time; batching belongs where filters do (`sm3/SM3_DESIGN.md`) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
-**Status: steps 1 to 3 of §8.2 are built** — the types, the
-key encoding and the tuple codec, TOAST aside — and step 4, the
-tuple relation, is not. This file was written so the formats
-were argued before they were written, because two of them —
-the key encoding and the tuple layout — are on disk and
+**Status: all four steps of §8.2 are built** — the types, the
+key encoding, the tuple codec and the tuple relation, heap and
+index — with TOAST postponed. This file was written so the
+formats were argued before they were written, because two of
+them — the key encoding and the tuple layout — are on disk and
 effectively permanent once any data exists. §8 has the order
 of work. The PostgreSQL target (`PART4.md`) shapes
 these decisions but is never a build dependency: sm2 must
@@ -516,8 +516,10 @@ sm2's part is the encoder's: `encode_key` takes the columns'
 budget, `max_key_len(rowno)`, and what to do past it —
 `overflow_t::refuse`, which fails with `SM_ERR_KEYTOOLONG`, sm2's
 first error code, or `overflow_t::truncate`, which keeps the
-budget's bytes and says it cut. Which to ask for, where the flag
-is kept, and the rechecks are sm3's (`sm3/SM3_DESIGN.md` §3).
+budget's bytes and says it cut. The index `rel` (§5) uses
+it: it cuts an over-long entry key, keeps the entry apart by
+its `rowno`, and marks it cut in the entry's value; which rows
+to recheck, and how, are sm3's (`sm3/SM3_DESIGN.md` §3).
 A cut key can never equal a whole one, since whole keys are
 prefix-free (§3.1), so a flagged entry is never mistaken for an
 exact one.
@@ -865,7 +867,30 @@ so sm2 gives it a `rel` for them too:
 
 sm2 prepends and strips the prefix for both kinds, and the
 table above is the heap `rel`'s; an index `rel`'s operations
-are the same shape, keyed by its columns.
+are the same shape, keyed by its columns (`index_open`,
+`index_insert`, `index_delete`, `index_scan`):
+
+- **An entry's key** is `prefix ‖ encode(sk)`, then the
+  `rowno` — always in a non-unique index, and in a unique one
+  only for an entry with a null key column, so that nulls stay
+  distinct, or one whose key had to be cut. A unique key with
+  neither is sm1's uniqueness unit, and a duplicate is sm1's
+  `SM_ERR_DUPKEY`.
+- **An entry's value** is a tuple: the `rowno`, a flag saying
+  the key was cut, then the INCLUDE columns.
+- **A scan's bounds** are the values of the index's leading
+  columns, inclusive or not, in the index's own order, after
+  each column's direction and null ordering; mapping a
+  predicate onto that order is sm3's, as predicates are (§6).
+  A bound becomes an sm1 key through the encoding's
+  prefix-freeness: the encoding P of the first j columns
+  begins exactly the keys whose first j columns hold those
+  values, contiguously, so a bound is P or its successor, the
+  least string above every key that starts with P. A bound
+  too long to encode is cut where keys are cut, which can only
+  widen the scan, and the scan says so.
+- **Index prefixes are below `0xFFFF`**, TOAST's, which is
+  also what guarantees every bound a successor.
 
 The rules it must satisfy:
 
@@ -1085,7 +1110,7 @@ error state (§5); `src/type` does already.
 | 1. Types | built |
 | 2. Key encoding | built |
 | 3. Tuple format and codec | built, TOAST postponed |
-| 4. Tuple relation | the heap `rel` built; the index `rel` next |
+| 4. Tuple relation | built: the heap and index `rel`s |
 
 #### Step 1. Types
 

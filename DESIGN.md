@@ -101,7 +101,7 @@ rule is that nothing turns them off.
 | Level | Status |
 | --- | --- |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
-| sm2 | partly built: its types, key encoding and tuple codec, with its C++ interface in `sm2/include/sm2.h`; the tuple relation and TOAST are not; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
+| sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
 | sm3 | designed, not yet implemented — the same, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md`; it cannot start before sm2's two formats are settled |
 | top level | not yet written — the C wrapper waits for the levels it wraps; until it exists the stack has no C surface |
 

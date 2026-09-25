@@ -365,6 +365,98 @@ int rel_scan_seek(rel_scan_t* scan, uint64_t rowno);
 void rel_scanend(rel_scan_t* scan);
 
 /*
+ * An index rel (SM2_DESIGN.md §5): a table's index entries in the
+ * table's sm1 store, under the index's 2-byte prefix, keyed by
+ * the encoded key columns it is opened with. An entry's key is
+ *
+ *   prefix | encode_key(key columns) [ | rowno ]
+ *
+ * with the rowno, big-endian, always in a non-unique index, and in
+ * a unique one only for an entry whose key has a null column or
+ * was cut to fit (SM2_DESIGN.md §3.2, sm3/SM3_DESIGN.md §3), so
+ * nulls stay distinct and a unique key without either is sm1's
+ * uniqueness unit: a duplicate fails with sm1's SM_ERR_DUPKEY. An
+ * entry's value is a tuple, index_value_schema's: the rowno, int8;
+ * whether the key was cut, bool; then the INCLUDE columns.
+ *
+ * As for a heap rel, every call is one sm1 call in the session's
+ * transaction, sm1's errors pass through, and what a scan hands
+ * out views sm1's memory until the next call on the session.
+ */
+struct index_t;
+
+/* A cursor over an index's entries, in key order. */
+struct index_scan_t;
+
+/*
+ * A scan bound: the values of the index's first columns -- one
+ * or more, nulls allowed -- and whether an entry equal to them in
+ * those columns is inside the bound. Bounds are in the index's own
+ * order, after each column's direction and null ordering: for a
+ * descending column, "x > 5" is an upper bound.
+ */
+struct bound_t {
+    std::span<const datum_t> prefix;
+    bool                     inclusive;
+};
+
+/*
+ * Open an index over storeid through session, under prefix, keyed
+ * by key -- borrowed, as a heap rel's schema is -- unique or not,
+ * with the INCLUDE columns include, also borrowed.
+ */
+int index_open(sm1::session_t* session, uint64_t storeid, uint16_t prefix,
+               std::span<const key_column_t> key, bool unique,
+               std::span<const attribute_t> include, index_t*& out);
+
+/* Close an index from index_open; nullptr is a no-op. */
+void index_close(index_t* index);
+
+/* The schema of an entry's value: rowno, cut, then the INCLUDE columns. */
+std::span<const attribute_t> index_value_schema(const index_t* index);
+
+/*
+ * Add the entry for the row at rowno: its key columns' datums key
+ * and its INCLUDE columns' include. A key too long for sm1 is cut
+ * to fit and marked cut, for the caller to recheck against the
+ * row. In a unique index, a key already present fails with sm1's
+ * SM_ERR_DUPKEY.
+ */
+int index_insert(index_t* index, std::span<const datum_t> key,
+                 uint64_t rowno, std::span<const datum_t> include);
+
+/* Remove the entry index_insert added for key and rowno. */
+int index_delete(index_t* index, std::span<const datum_t> key,
+                 uint64_t rowno);
+
+/*
+ * Open a cursor over the entries between lo and hi, either of
+ * which may be nullptr for no bound, in key order, forward only.
+ * A bound too long to encode is cut, which can only widen the
+ * scan: widened is then set, and the caller rechecks what it gets.
+ */
+int index_scan(index_t* index, const bound_t* lo, const bound_t* hi,
+               index_scan_t*& out, bool* widened = nullptr);
+
+/*
+ * The next entry: 0 with its rowno, whether its key was cut, and
+ * its value tuple, to decode under index_value_schema, set; 1 at
+ * the end; -1 on error.
+ */
+int index_scannxt(index_scan_t* scan, uint64_t& rowno, bool& cut,
+                  std::string_view& value);
+
+/*
+ * Move the cursor forward to the first entry at or after lo, a
+ * lower bound as index_scan takes; moving back fails, as
+ * sm1::scan_seek.
+ */
+int index_scan_seek(index_scan_t* scan, const bound_t& lo);
+
+/* Close a cursor from index_scan; nullptr is a no-op. */
+void index_scanend(index_scan_t* scan);
+
+/*
  * Decode a key encode_key made under cols into one datum per
  * column, std::nullopt for a null; the whole key must be used.
  */
