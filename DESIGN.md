@@ -249,6 +249,7 @@ design:
   | `DISKFULL` | `53100` | `disk_full` |
   | `IO`, `PERMISSION` | `58030` | `io_error` |
   | `CORRUPT` | `XX001` | `data_corrupted` |
+  | `KEYTOOLONG` | `54000` | `program_limit_exceeded` |
   | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
 - **Running out of memory inside sm1 is fatal to the process,
   because `std::bad_alloc` can be thrown from inside RocksDB;

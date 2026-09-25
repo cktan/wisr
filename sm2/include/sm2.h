@@ -18,6 +18,8 @@
 #ifndef SM2_H
 #define SM2_H
 
+#include "sm1.h"
+
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -152,6 +154,36 @@ struct key_datum_t {
  */
 int encode_key(std::span<const key_column_t> cols,
                std::span<const key_datum_t> datums, std::string& key);
+
+/*
+ * The share of sm1::max_keylen a key's columns may use
+ * (SM2_DESIGN.md §3.2): every sm1 key starts with a 2-byte object
+ * prefix, and an index entry that carries a rowno ends with its 8
+ * bytes.
+ */
+constexpr size_t key_prefix_len = 2;
+constexpr size_t rowno_len = 8;
+constexpr size_t max_key_len(bool rowno) {
+    return sm1::max_keylen - key_prefix_len - (rowno ? rowno_len : 0);
+}
+
+/*
+ * What encode_key does with a key longer than its budget: refuse
+ * it, as a primary key must be exact, or cut it to the budget, as
+ * a secondary index's may be, for sm3 to flag and recheck
+ * (SM2_DESIGN.md §3.2).
+ */
+enum class overflow_t { refuse, truncate };
+
+/*
+ * encode_key, the columns' bytes held to max_len. Over it, refuse
+ * fails with SM_ERR_KEYTOOLONG and leaves key as it was; truncate
+ * keeps the first max_len bytes, which order as a coarsening of
+ * the whole key, and sets cut. cut is false otherwise.
+ */
+int encode_key(std::span<const key_column_t> cols,
+               std::span<const key_datum_t> datums, size_t max_len,
+               overflow_t overflow, std::string& key, bool& cut);
 
 /*
  * Decode a key encode_key made under cols into one datum per

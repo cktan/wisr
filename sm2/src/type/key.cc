@@ -73,6 +73,35 @@ int encode_key(std::span<const key_column_t> cols,
   });
 }
 
+/* encode_key with the columns' bytes held to max_len; see sm2.h. */
+int encode_key(std::span<const key_column_t> cols,
+               std::span<const key_datum_t> datums, size_t max_len,
+               overflow_t overflow, std::string &key, bool &cut) {
+  return catch_nomem([&] {
+    cut = false;
+    size_t start = key.size();
+    if (encode_key(cols, datums, key) != 0) {
+      return -1;
+    }
+    if (key.size() - start <= max_len) {
+      return 0;
+    }
+    // Refuse a key that must be exact.
+    if (overflow == overflow_t::refuse) {
+      size_t len = key.size() - start;
+      key.resize(start);
+      return sm1::seterr(sm1::SM_ERR_KEYTOOLONG,
+                         "key of " + std::to_string(len) +
+                             " bytes exceeds the " + std::to_string(max_len) +
+                             " its columns may use");
+    }
+    // Cut the rest, keeping the order as a coarsening.
+    key.resize(start + max_len);
+    cut = true;
+    return 0;
+  });
+}
+
 /* Decode a key encode_key made under cols, every byte of it. */
 int decode_key(std::span<const key_column_t> cols, std::string_view key,
                std::vector<std::optional<std::string>> &datums) {

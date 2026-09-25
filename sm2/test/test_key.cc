@@ -605,3 +605,100 @@ TEST_CASE("a collated column keys and decodes among others") {
   sm2::collation_close(c);
   sm2::collation_close(en);
 }
+
+TEST_CASE("a key over its budget is refused or cut, as asked") {
+  // Verify encode_key's length limit (SM2_DESIGN.md §3.2).
+  // 1. The columns' budget is 4094 bytes, 4086 with a rowno.
+  // 2. A text key of exactly the budget fits; one byte more is
+  //    SM_ERR_KEYTOOLONG under refuse, and leaves key as it was.
+  // 3. Under truncate the same key is cut to the budget, a prefix
+  //    of the whole key, with cut set; a key that fits is whole,
+  //    with cut clear.
+  CHECK(sm2::max_key_len(false) == 4094);
+  CHECK(sm2::max_key_len(true) == 4086);
+  std::vector<sm2::key_column_t> cols = {
+      {&sm2::type_text, -1, nullptr, false, false}};
+  // A text key is its marker, its bytes and a 2-byte terminator.
+  size_t budget = sm2::max_key_len(false);
+  std::string fits(budget - 3, 'x'), over(budget - 2, 'x');
+  std::vector<sm2::key_datum_t> row_fits = {{fits, false}};
+  std::vector<sm2::key_datum_t> row_over = {{over, false}};
+  std::string key = "pre";
+  bool cut = true;
+  REQUIRE(sm2::encode_key(cols, row_fits, budget, sm2::overflow_t::refuse, key,
+                          cut) == 0);
+  CHECK(key.size() == 3 + budget);
+  CHECK_FALSE(cut);
+  key = "pre";
+  CHECK(sm2::encode_key(cols, row_over, budget, sm2::overflow_t::refuse, key,
+                        cut) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
+  CHECK(std::string(sm1::errname()) == "ERR_KEYTOOLONG");
+  CHECK(key == "pre");
+
+  std::string whole;
+  REQUIRE(sm2::encode_key(cols, row_over, whole) == 0);
+  key = "pre";
+  REQUIRE(sm2::encode_key(cols, row_over, budget, sm2::overflow_t::truncate,
+                          key, cut) == 0);
+  CHECK(cut);
+  CHECK(key.size() == 3 + budget);
+  CHECK(key.substr(3) == whole.substr(0, budget));
+  key.clear();
+  REQUIRE(sm2::encode_key(cols, row_fits, budget, sm2::overflow_t::truncate,
+                          key, cut) == 0);
+  CHECK_FALSE(cut);
+}
+
+TEST_CASE(
+    "a cut key keeps the order as a coarsening, and never poses as whole") {
+  // Verify truncation by property, from test_seed(), with a budget
+  // small enough to cut most keys.
+  // 1. Over rows of long text sharing prefixes, in any direction,
+  //    if a's whole key sorts at or before b's, a's cut key sorts
+  //    at or before b's.
+  // 2. A cut key never equals another row's whole, uncut key,
+  //    since whole keys are prefix-free.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  const size_t budget = 24;
+  for (int round = 0; round < 50; round++) {
+    std::vector<sm2::key_column_t> cols = {
+        {&sm2::type_text, -1, nullptr, rng() % 2 == 0, rng() % 2 == 0},
+        {&sm2::type_int4, -1, nullptr, rng() % 2 == 0, rng() % 2 == 0}};
+    std::vector<std::string> texts, ints;
+    std::vector<std::string> whole, cut_keys;
+    std::vector<bool> cuts;
+    for (int r = 0; r < 60; r++) {
+      std::string t(rng() % 30, 'a');
+      for (char &c : t) {
+        c = static_cast<char>('a' + rng() % 3);
+      }
+      texts.push_back(t);
+      ints.push_back(le(static_cast<int32_t>(rng() % 5)));
+    }
+    for (size_t r = 0; r < texts.size(); r++) {
+      std::vector<sm2::key_datum_t> row = {{texts[r], false},
+                                           {ints[r], rng() % 7 == 0}};
+      std::string w, c;
+      bool was_cut;
+      REQUIRE(sm2::encode_key(cols, row, w) == 0);
+      REQUIRE(sm2::encode_key(cols, row, budget, sm2::overflow_t::truncate, c,
+                              was_cut) == 0);
+      CHECK(was_cut == (w.size() > budget));
+      whole.push_back(w);
+      cut_keys.push_back(c);
+      cuts.push_back(was_cut);
+    }
+    for (size_t i = 0; i < whole.size(); i++) {
+      for (size_t j = 0; j < whole.size(); j++) {
+        if (whole[i] <= whole[j]) {
+          CHECK(cut_keys[i] <= cut_keys[j]);
+        }
+        if (cuts[i] && !cuts[j]) {
+          CHECK(cut_keys[i] != whole[j]);
+        }
+      }
+    }
+  }
+}

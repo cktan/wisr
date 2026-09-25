@@ -507,6 +507,16 @@ where the entry carries one. It no longer depends on the
 primary key's length, because an index entry points at
 `rowno`, not at the primary key.
 
+sm2's part is the encoder's: `encode_key` takes the columns'
+budget, `max_key_len(rowno)`, and what to do past it —
+`overflow_t::refuse`, which fails with `SM_ERR_KEYTOOLONG`, sm2's
+first error code, or `overflow_t::truncate`, which keeps the
+budget's bytes and says it cut. Which to ask for, where the flag
+is kept, and the rechecks are sm3's (`sm3/SM3_DESIGN.md` §3).
+A cut key can never equal a whole one, since whole keys are
+prefix-free (§3.1), so a flagged entry is never mistaken for an
+exact one.
+
 ### 3.3 Collation version and determinism
 
 - **ICU is pinned.** A specific ICU version is linked into the

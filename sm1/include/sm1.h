@@ -105,7 +105,10 @@ enum errnum_t {
     SM_ERR_VERSION       = 18,  /* home dir format not supported */
 
     /* Not an abort: the transaction stays active (SM1_DESIGN.md §5.4). */
-    SM_ERR_UPDATED       = 19   /* newer commit; sm1::read_latest, then retry */
+    SM_ERR_UPDATED       = 19,  /* newer commit; sm1::read_latest, then retry */
+
+    /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §5) */
+    SM_ERR_KEYTOOLONG    = 20   /* a key that may not be cut is too long */
 };
 
 /*
