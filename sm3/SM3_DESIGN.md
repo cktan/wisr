@@ -1,10 +1,13 @@
-# DESIGN — sm3, schema and indexes
+# DESIGN — sm3, schema and index maintenance
 
 The level that turns sm2's tuples into a schema. sm2 gives it
-typed rows in a heap keyed by `rowno`; sm3 gives those relations
-names, definitions, indexes — the primary key's among them —
-predicates and statistics. This document is the design of record;
-it follows the decisions in `SM3_OBJECTIVE.md`:
+typed rows in a heap keyed by `rowno`, and indexes whose
+entries are keyed by encoded columns and point at a `rowno`.
+sm3 gives those relations names and definitions, decides which
+indexes a table has — the primary key's among them — and keeps
+them in step with its heap, and adds predicates and statistics.
+This document is the design of record; it follows the
+decisions in `SM3_OBJECTIVE.md`:
 
 | Decision | Choice |
 | --- | --- |
@@ -49,6 +52,7 @@ answer.
 | the stack gives sm3 | and the constraint it brings |
 | --- | --- |
 | sm2's tuples in a heap keyed by `rowno` | a row's identity is its `rowno`, which never changes; every index, the primary key's included, points at it |
+| sm2's index `rel`: entries keyed by encoded columns, each pointing at a `rowno` | sm2 lays out an entry's bytes and scan bounds; which indexes exist, and writing their entries on every heap write, are sm3's (§3) |
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
 | sm2's 2-byte object prefix | a table's rows, indexes and TOAST data share its one sm1 store (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own |

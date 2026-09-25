@@ -23,8 +23,8 @@ The stack, as a whole:
 | --- | --- | --- |
 | 0 | RocksDB | bytes, ordering, durability, crash atomicity |
 | 1 | `sm1/` — the MVCC storage manager | row version, transaction, isolation, visibility |
-| 2 | `sm2/` — types and tuples | column, type, row |
-| 3 | `sm3/` — schema and indexes | table, index, predicate, statistic |
+| 2 | `sm2/` — types and tuples | column, type, row, index entry |
+| 3 | `sm3/` — schema and index maintenance | table, index definition, predicate, statistic |
 
 Each level is built on the level directly below it, through
 that level's own interface — `sm1` on RocksDB's API, `sm2` on

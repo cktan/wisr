@@ -7,15 +7,16 @@ built on the level below it.
 | --- | --- | --- |
 | 0 | — | RocksDB: an ordered, durable, crash-atomic key-value store |
 | 1 | `sm1/` | the MVCC storage manager: stores, transactions, isolation, locks, 2PC, recovery |
-| 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, a relation of tuples |
-| 3 | `sm3/` | schema and indexes: a catalog, secondary indexes, predicate scans, statistics |
+| 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, heap and index relations |
+| 3 | `sm3/` | schema and index maintenance: a catalog, index maintenance, predicate scans, statistics |
 | top | `include/`, `src/` | the C API over the stack, the only one, for PostgreSQL to call |
 
 Level 0 is used only as a place to put bytes. Every notion of
 *row version*, *transaction*, *isolation* and *visibility* is
-implemented in level 1, every notion of *column*, *type* and
-*row* belongs to level 2, and every notion of *table*,
-*index* and *predicate* belongs to level 3.
+implemented in level 1, every notion of *column*, *type*,
+*row* and *index entry* belongs to level 2, and every notion
+of *table*, *index definition* and *predicate* belongs to
+level 3.
 
 ## Building
 
@@ -56,8 +57,8 @@ no level; the wrapper is not written yet (`DESIGN.md` §3).
 - `sm2/QUESTIONS.md` — what is still open in sm2, and where
   each settled answer went
 - `sm3/SM3_OBJECTIVE.md` — what level 3 is for
-- `sm3/SM3_DESIGN.md` — the catalog, secondary indexes, predicate
-  scans and statistics
+- `sm3/SM3_DESIGN.md` — the catalog, index maintenance,
+  predicate scans and statistics
 - `sm3/PLAN.md` — sm3's order of work
 - `FEATURELIST.md` — which PostgreSQL features wisr supports
 - `PART4.md` — what it would take to put PostgreSQL on this

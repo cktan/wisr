@@ -20,16 +20,16 @@ format, sm3's catalog — are argued in that level's own
         └────────────────────┬─────────────────────────┘
                              │  sm3::
         ┌────────────────────┴─────────────────────────┐
-        │  sm3/  schema and indexes                    │
-        │  catalog · secondary indexes ·               │
+        │  sm3/  schema and index maintenance          │
+        │  catalog · index maintenance ·               │
         │  scan-by-predicate · statistics              │
         └────────────────────┬─────────────────────────┘
-                             │  sm2::  the tuple relation
+                             │  sm2::  heap and index relations
                              │         (sm3 also calls sm1::)
         ┌────────────────────┴─────────────────────────┐
         │  sm2/  types and tuples                      │
         │  type system · key encoding ·                │
-        │  tuple format · relation of tuples           │
+        │  tuple format · heap and index relations     │
         └────────────────────┬─────────────────────────┘
                              │  sm1::
         ┌────────────────────┴─────────────────────────┐
