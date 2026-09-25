@@ -270,6 +270,101 @@ int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
                  std::vector<std::optional<std::string_view>>& datums);
 
 /*
+ * A heap rel (SM2_DESIGN.md §5): one table's rows in one sm1
+ * store, each keyed by its rowno under a 2-byte object prefix
+ * the caller chooses, rows prefix and rowno both big-endian, and
+ * holding its tuple. A rel works through one sm1 session, in
+ * that session's transaction; sm2 keeps nothing across calls that
+ * a rollback would have to undo.
+ *
+ * A tuple a rel hands out -- a row read, scanned, or replaced --
+ * is the encoded tuple, for the caller to decode with
+ * tuple_decode or tuple_deform under rel_schema, only the columns
+ * it needs. It views sm1's memory and, as sm1's reads do, stays
+ * valid until the next call on the rel's session.
+ *
+ * Errors from sm1 pass through untranslated, SM_ERR_UPDATED among
+ * them (SM2_DESIGN.md §5).
+ */
+struct rel_t;
+
+/* A cursor over a heap rel's rows, in rowno order. */
+struct rel_scan_t;
+
+/*
+ * Open a heap rel over storeid through session: rows under
+ * prefix, laid out by schema -- borrowed, so the caller keeps it
+ * alive for the rel's lifetime -- and each new rowno drawn from
+ * the sm1 sequence rowno_seq. Fails with SM_ERR_INVALID if an
+ * attribute's type or typmod is not one sm2 can encode.
+ */
+int rel_open(sm1::session_t* session, uint64_t storeid, uint16_t prefix,
+             std::span<const attribute_t> schema,
+             std::string_view rowno_seq, rel_t*& out);
+
+/* Close a rel from rel_open; nullptr is a no-op. */
+void rel_close(rel_t* rel);
+
+/* The schema a rel lays its rows out by. */
+std::span<const attribute_t> rel_schema(const rel_t* rel);
+
+/*
+ * Insert a row: encode datums, one per attribute, draw a rowno
+ * from the rel's sequence, and write the tuple under it. rowno is
+ * set only on success. A row that does not encode fails before a
+ * rowno is drawn; one that fails later leaves its rowno unused,
+ * as a PostgreSQL sequence would.
+ */
+int rel_insert(rel_t* rel, std::span<const datum_t> datums,
+               uint64_t& rowno);
+
+/*
+ * Read the row at rowno as the transaction sees it: 0 with tuple
+ * set, 1 if there is none, -1 on error, as sm1::read.
+ */
+int rel_read(rel_t* rel, uint64_t rowno, std::string_view& tuple);
+
+/*
+ * Read the newest committed version of the row at rowno, as
+ * sm1::read_latest does, for a READ COMMITTED writer that met
+ * SM_ERR_UPDATED to check its filter against.
+ */
+int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
+
+/*
+ * Replace the row at rowno with datums; it keeps its rowno. With
+ * old non-null, the tuple replaced is handed back there, which
+ * the caller maintaining indexes needs.
+ */
+int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
+               std::string_view* old = nullptr);
+
+/* Delete the row at rowno, handing back its tuple through old. */
+int rel_delete(rel_t* rel, uint64_t rowno, std::string_view* old = nullptr);
+
+/*
+ * Open a cursor over the rows with rowno from first to last, both
+ * included, in rowno order, forward only; its view is fixed now,
+ * as sm1::scan's is.
+ */
+int rel_scan(rel_t* rel, uint64_t first, uint64_t last, rel_scan_t*& out);
+
+/*
+ * The next row: 0 with rowno and tuple set, valid until the next
+ * call on this cursor; 1 at the end; -1 on error.
+ */
+int rel_scannxt(rel_scan_t* scan, uint64_t& rowno, std::string_view& tuple);
+
+/*
+ * Move the cursor forward to rowno, so the next rel_scannxt
+ * returns from it on; moving back fails, as sm1::scan_seek.
+ */
+int rel_scan_seek(rel_scan_t* scan, uint64_t rowno);
+
+/* Close a cursor from rel_scan; nullptr is a no-op. */
+void rel_scanend(rel_scan_t* scan);
+
+/*
  * Decode a key encode_key made under cols into one datum per
  * column, std::nullopt for a null; the whole key must be used.
  */

@@ -923,11 +923,14 @@ The rules it must satisfy:
   are the other.
 - **Forward only.** A `rel` scan inherits sm1's ban, and the
   descending case is already handled in the encoding (§3).
-- **A decoded datum points into sm2's memory**, as sm1's
-  byte strings point into sm1's: it is not NUL-terminated, must
-  not be freed, and stays valid until the next call on the same
-  `rel`, the window `sm1::read` gives. A codec that allocated
-  per datum would dominate the profile of every scan.
+- **A decoded datum points into memory sm2 does not copy**:
+  a `rel` hands out the tuple as sm1's view of it, and a datum
+  decoded from it points into that. It is not NUL-terminated,
+  must not be freed, and stays valid, as sm1's reads do, until
+  the next call on the `rel`'s session — by that `rel`, another
+  over the same session, or anything else that calls sm1 on it.
+  A codec that allocated per datum would dominate the profile
+  of every scan.
 - **`NOT NULL` is not enforced here.** The tuple's null bitmap
   could, but constraints are sm3's, and a codec that rejects
   data is a codec with a policy in it; sm2 stores what it is
@@ -1088,7 +1091,7 @@ error state (§5); `src/type` does already.
 | 1. Types | built |
 | 2. Key encoding | built |
 | 3. Tuple format and codec | built, TOAST postponed |
-| 4. Tuple relation | not started; its questions are answered (§5) |
+| 4. Tuple relation | the heap `rel` built; the index `rel` next |
 
 #### Step 1. Types
 

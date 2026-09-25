@@ -1,0 +1,419 @@
+/*
+ * test_rel.cc -- the heap rel over sm1 (SM2_DESIGN.md §5, §8.2 step
+ * 4): rows in, rows out, under every isolation level, with sm1's
+ * behaviour showing through untranslated.
+ */
+
+#include "datums.h"
+#include "doctest.h"
+#include "gen.h"
+
+#include "sm1.h"
+#include "sm2.h"
+
+#include <stdlib.h>
+
+#include <filesystem>
+#include <optional>
+#include <random>
+#include <string>
+#include <vector>
+
+namespace {
+
+/*
+ * A fresh sm1 home, database and store with a rowno sequence, and
+ * sessions on it; all of it is removed at the end.
+ */
+class db_t {
+public:
+  /* Initialize a home, a database "db", a store and "rowno". */
+  db_t() {
+    std::string tmpl =
+        (std::filesystem::temp_directory_path() / "sm2-rel-XXXXXX").string();
+    m_path = mkdtemp(tmpl.data());
+    REQUIRE(sm1::init(m_path) == 0);
+    REQUIRE(sm1::attach(m_path, m_env) == 0);
+    REQUIRE(sm1::mkdb(m_env, "db") == 0);
+    sm1::session_t *s = open();
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+    REQUIRE(sm1::mkstore(s, m_store) == 0);
+    REQUIRE(sm1::mkseq(s, "rowno", 1, 1) == 0);
+    REQUIRE(sm1::commit(s) == 0);
+  }
+
+  /* Detach, closing every session, then remove the home. */
+  ~db_t() {
+    sm1::detach(m_env, 1);
+    std::error_code ec;
+    std::filesystem::remove_all(m_path, ec);
+  }
+
+  /* A new session on "db". */
+  sm1::session_t *open() {
+    sm1::session_t *s = nullptr;
+    REQUIRE(sm1::opendb(m_env, "db", s) == 0);
+    return s;
+  }
+
+  /* The store the rels live in. */
+  uint64_t store() const { return m_store; }
+
+private:
+  std::string m_path;
+  sm1::env_t *m_env = nullptr;
+  uint64_t m_store = 0;
+};
+
+/* A row as optional owned bytes, one per attribute. */
+using row_t = std::vector<std::optional<std::string>>;
+
+/* The datums of row, for the calls that take them. */
+std::vector<sm2::datum_t> datums_of(const row_t &row) {
+  std::vector<sm2::datum_t> d;
+  for (const auto &v : row) {
+    d.push_back({v ? std::string_view(*v) : std::string_view(), !v});
+  }
+  return d;
+}
+
+/* tuple decoded under schema, as owned bytes. */
+row_t decode(std::span<const sm2::attribute_t> schema, std::string_view tuple) {
+  std::vector<std::optional<std::string_view>> views;
+  REQUIRE_MESSAGE(sm2::tuple_deform(schema, tuple, views) == 0, sm1::errmsg());
+  row_t out;
+  for (const auto &v : views) {
+    out.push_back(v ? std::optional<std::string>(*v) : std::nullopt);
+  }
+  return out;
+}
+
+/* A schema of every type, and a random row of it, nulls included. */
+std::vector<sm2::attribute_t> wide_schema() {
+  std::vector<sm2::attribute_t> schema;
+  for (const typed_t &t : all_types()) {
+    schema.push_back({t.type, t.typmod, false, std::nullopt});
+  }
+  return schema;
+}
+
+/* A random row of schema, a variable datum as the codec takes it. */
+row_t gen_row(std::span<const sm2::attribute_t> schema, std::mt19937_64 &rng) {
+  row_t row;
+  for (const auto &a : schema) {
+    if (rng() % 5 == 0) {
+      row.push_back(std::nullopt);
+      continue;
+    }
+    std::string d = gen_datum({a.type, a.typmod}, rng);
+    row.push_back(sm2::datum_width(a.type, a.typmod) < 0 ? sm2::make_varlena(d)
+                                                         : d);
+  }
+  return row;
+}
+
+/* Open a heap rel over db's store under prefix; it must open. */
+sm2::rel_t *open_rel(db_t &db, sm1::session_t *s,
+                     std::span<const sm2::attribute_t> schema,
+                     uint16_t prefix = 0) {
+  sm2::rel_t *rel = nullptr;
+  REQUIRE(sm2::rel_open(s, db.store(), prefix, schema, "rowno", rel) == 0);
+  return rel;
+}
+
+} // namespace
+
+TEST_CASE("rows round trip through a heap rel at every isolation level") {
+  // Verify rel_insert, rel_read and rel_scan, from test_seed().
+  // 1. At each isolation level, insert random rows of a schema of
+  //    every type, nulls included, and commit; each gets a new,
+  //    increasing rowno.
+  // 2. In a new transaction, rel_read of each rowno decodes to its
+  //    row.
+  // 3. rel_scan over the whole range yields every row once, in
+  //    rowno order.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = wide_schema();
+  sm2::rel_t *rel = open_rel(db, s, schema);
+  for (sm1::xctlevel_t level :
+       {sm1::xctlevel_t::read_committed, sm1::xctlevel_t::repeatable_read,
+        sm1::xctlevel_t::serializable}) {
+    CAPTURE(static_cast<int>(level));
+    std::vector<uint64_t> rownos;
+    std::vector<row_t> rows;
+    REQUIRE(sm1::begin(s, level) == 0);
+    for (int i = 0; i < 50; i++) {
+      row_t row = gen_row(schema, rng);
+      std::vector<sm2::datum_t> d = datums_of(row);
+      uint64_t rowno;
+      REQUIRE_MESSAGE(sm2::rel_insert(rel, d, rowno) == 0, sm1::errmsg());
+      if (!rownos.empty()) {
+        CHECK(rowno > rownos.back());
+      }
+      rownos.push_back(rowno);
+      rows.push_back(row);
+    }
+    REQUIRE(sm1::commit(s) == 0);
+
+    REQUIRE(sm1::begin(s, level) == 0);
+    for (size_t i = 0; i < rows.size(); i++) {
+      std::string_view tuple;
+      REQUIRE(sm2::rel_read(rel, rownos[i], tuple) == 0);
+      CHECK(decode(schema, tuple) == rows[i]);
+    }
+    sm2::rel_scan_t *scan = nullptr;
+    REQUIRE(sm2::rel_scan(rel, rownos.front(), rownos.back(), scan) == 0);
+    size_t n = 0;
+    uint64_t rowno;
+    std::string_view tuple;
+    while (sm2::rel_scannxt(scan, rowno, tuple) == 0) {
+      REQUIRE(n < rows.size());
+      CHECK(rowno == rownos[n]);
+      CHECK(decode(schema, tuple) == rows[n]);
+      n++;
+    }
+    CHECK(n == rows.size());
+    sm2::rel_scanend(scan);
+    REQUIRE(sm1::commit(s) == 0);
+  }
+  sm2::rel_close(rel);
+}
+
+TEST_CASE("an update keeps its rowno, and update and delete hand back the "
+          "old row") {
+  // Verify rel_update and rel_delete.
+  // 1. Updating a row keeps its rowno, and hands back the tuple it
+  //    replaced.
+  // 2. The row then reads as the new one.
+  // 3. Deleting it hands back that new tuple, and it reads as
+  //    absent: rel_read returns 1.
+  // 4. Updating or deleting a rowno with no row is sm1's
+  //    SM_ERR_NOTFOUND, passed through.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt},
+      {&sm2::type_text, -1, false, std::nullopt}};
+  sm2::rel_t *rel = open_rel(db, s, schema);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  row_t before = {le(int32_t{1}), sm2::make_varlena("before")};
+  row_t after = {le(int32_t{2}), sm2::make_varlena("after")};
+  std::vector<sm2::datum_t> d = datums_of(before);
+  uint64_t rowno;
+  REQUIRE(sm2::rel_insert(rel, d, rowno) == 0);
+  d = datums_of(after);
+  std::string_view old;
+  REQUIRE(sm2::rel_update(rel, rowno, d, &old) == 0);
+  CHECK(decode(schema, old) == before);
+  std::string_view tuple;
+  REQUIRE(sm2::rel_read(rel, rowno, tuple) == 0);
+  CHECK(decode(schema, tuple) == after);
+  REQUIRE(sm2::rel_delete(rel, rowno, &old) == 0);
+  CHECK(decode(schema, old) == after);
+  CHECK(sm2::rel_read(rel, rowno, tuple) == 1);
+  CHECK(sm2::rel_update(rel, rowno, d) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  CHECK(sm2::rel_delete(rel, rowno + 100) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+}
+
+TEST_CASE("a savepoint rollback leaves no sm2 state behind") {
+  // Verify sm2 keeps nothing a rollback must undo.
+  // 1. Insert row A, set a savepoint, insert row B and update A.
+  // 2. Roll back to the savepoint: B is gone and A is as first
+  //    inserted.
+  // 3. The same rel goes on working: another insert succeeds, and
+  //    the commit keeps A and the new row.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int8, -1, false, std::nullopt}};
+  sm2::rel_t *rel = open_rel(db, s, schema);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  row_t a = {le(int64_t{10})}, a2 = {le(int64_t{11})}, b = {le(int64_t{20})};
+  std::vector<sm2::datum_t> d = datums_of(a);
+  uint64_t ra, rb, rc;
+  REQUIRE(sm2::rel_insert(rel, d, ra) == 0);
+  int depth = sm1::savepoint(s);
+  REQUIRE(depth >= 1);
+  d = datums_of(b);
+  REQUIRE(sm2::rel_insert(rel, d, rb) == 0);
+  d = datums_of(a2);
+  REQUIRE(sm2::rel_update(rel, ra, d) == 0);
+  REQUIRE(sm1::rollback(s, depth) == 0);
+  std::string_view tuple;
+  CHECK(sm2::rel_read(rel, rb, tuple) == 1);
+  REQUIRE(sm2::rel_read(rel, ra, tuple) == 0);
+  CHECK(decode(schema, tuple) == a);
+  d = datums_of(b);
+  REQUIRE(sm2::rel_insert(rel, d, rc) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(sm2::rel_read(rel, ra, tuple) == 0);
+  CHECK(sm2::rel_read(rel, rc, tuple) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+}
+
+TEST_CASE("two rels over one store, under two prefixes, never meet") {
+  // Verify the object prefix separates rels in one sm1 store.
+  // 1. Rels under prefixes 0 and 1 each insert rows; both draw
+  //    rownos from the one sequence.
+  // 2. Each rel's scan over every rowno yields only its own rows,
+  //    and reading the other's rowno finds nothing.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  sm2::rel_t *r0 = open_rel(db, s, schema, 0);
+  sm2::rel_t *r1 = open_rel(db, s, schema, 1);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  std::vector<uint64_t> rows0, rows1;
+  for (int i = 0; i < 10; i++) {
+    row_t row = {le(int32_t{i})};
+    std::vector<sm2::datum_t> d = datums_of(row);
+    uint64_t rowno;
+    REQUIRE(sm2::rel_insert(i % 2 ? r1 : r0, d, rowno) == 0);
+    (i % 2 ? rows1 : rows0).push_back(rowno);
+  }
+  for (auto [rel, mine, theirs] :
+       {std::tuple{r0, &rows0, &rows1}, std::tuple{r1, &rows1, &rows0}}) {
+    sm2::rel_scan_t *scan = nullptr;
+    REQUIRE(sm2::rel_scan(rel, 0, UINT64_MAX, scan) == 0);
+    std::vector<uint64_t> seen;
+    uint64_t rowno;
+    std::string_view tuple;
+    while (sm2::rel_scannxt(scan, rowno, tuple) == 0) {
+      seen.push_back(rowno);
+    }
+    sm2::rel_scanend(scan);
+    CHECK(seen == *mine);
+    CHECK(sm2::rel_read(rel, theirs->front(), tuple) == 1);
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(r0);
+  sm2::rel_close(r1);
+}
+
+TEST_CASE("sm1's SM_ERR_UPDATED passes through, and rel_read_latest "
+          "answers it") {
+  // Verify the READ COMMITTED path of SM2_DESIGN.md §5.
+  // 1. A row is committed. Session A begins at READ COMMITTED and
+  //    reads it; session B updates it and commits.
+  // 2. A's update fails with SM_ERR_UPDATED, untranslated, and its
+  //    transaction stays active.
+  // 3. rel_read_latest shows A B's version; A's update then goes
+  //    through and commits.
+  db_t db;
+  sm1::session_t *a = db.open(), *b = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  sm2::rel_t *ra = open_rel(db, a, schema), *rb = open_rel(db, b, schema);
+  row_t v1 = {le(int32_t{1})}, v2 = {le(int32_t{2})}, v3 = {le(int32_t{3})};
+  std::vector<sm2::datum_t> d = datums_of(v1);
+  uint64_t rowno;
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm2::rel_insert(ra, d, rowno) == 0);
+  REQUIRE(sm1::commit(a) == 0);
+
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  std::string_view tuple;
+  REQUIRE(sm2::rel_read(ra, rowno, tuple) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  d = datums_of(v2);
+  REQUIRE(sm2::rel_update(rb, rowno, d) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+
+  d = datums_of(v3);
+  CHECK(sm2::rel_update(ra, rowno, d) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
+  REQUIRE(sm2::rel_read_latest(ra, rowno, tuple) == 0);
+  CHECK(decode(schema, tuple) == v2);
+  REQUIRE(sm2::rel_update(ra, rowno, d) == 0);
+  REQUIRE(sm1::commit(a) == 0);
+  sm2::rel_close(ra);
+  sm2::rel_close(rb);
+}
+
+TEST_CASE("a rel scan takes a rowno range and seeks forward") {
+  // Verify rel_scan's bounds and rel_scan_seek.
+  // 1. A scan from the 3rd row to the 7th yields those five, both
+  //    ends included.
+  // 2. Seeking forward to the 9th row resumes there.
+  // 3. Seeking back is SM_ERR_INVALID, as sm1's seek is.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  sm2::rel_t *rel = open_rel(db, s, schema);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  std::vector<uint64_t> rownos;
+  for (int i = 0; i < 10; i++) {
+    row_t row = {le(int32_t{i})};
+    std::vector<sm2::datum_t> d = datums_of(row);
+    uint64_t rowno;
+    REQUIRE(sm2::rel_insert(rel, d, rowno) == 0);
+    rownos.push_back(rowno);
+  }
+  sm2::rel_scan_t *scan = nullptr;
+  REQUIRE(sm2::rel_scan(rel, rownos[2], rownos[6], scan) == 0);
+  std::vector<uint64_t> seen;
+  uint64_t rowno;
+  std::string_view tuple;
+  while (sm2::rel_scannxt(scan, rowno, tuple) == 0) {
+    seen.push_back(rowno);
+  }
+  sm2::rel_scanend(scan);
+  CHECK(seen == std::vector<uint64_t>(rownos.begin() + 2, rownos.begin() + 7));
+
+  REQUIRE(sm2::rel_scan(rel, rownos[0], rownos[9], scan) == 0);
+  REQUIRE(sm2::rel_scannxt(scan, rowno, tuple) == 0);
+  REQUIRE(sm2::rel_scan_seek(scan, rownos[8]) == 0);
+  REQUIRE(sm2::rel_scannxt(scan, rowno, tuple) == 0);
+  CHECK(rowno == rownos[8]);
+  CHECK(sm2::rel_scan_seek(scan, rownos[1]) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm2::rel_scanend(scan);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+}
+
+TEST_CASE("a row that cannot be encoded draws no rowno") {
+  // Verify rel_insert encodes before it draws, and rel_open's
+  // checks.
+  // 1. An insert with the wrong number of datums fails with
+  //    SM_ERR_INVALID.
+  // 2. The next good insert's rowno follows the last good one's:
+  //    the failure drew none.
+  // 3. rel_open refuses a schema with an attribute sm2 cannot
+  //    lay out, and a null session.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  sm2::rel_t *rel = open_rel(db, s, schema);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  row_t good = {le(int32_t{1})};
+  std::vector<sm2::datum_t> d = datums_of(good);
+  uint64_t first, second;
+  REQUIRE(sm2::rel_insert(rel, d, first) == 0);
+  std::vector<sm2::datum_t> none;
+  CHECK(sm2::rel_insert(rel, none, second) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm2::rel_insert(rel, d, second) == 0);
+  CHECK(second == first + 1);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+
+  std::vector<sm2::attribute_t> bad = {
+      {&sm2::type_decimal, 3, false, std::nullopt}};
+  sm2::rel_t *out = nullptr;
+  CHECK(sm2::rel_open(s, db.store(), 0, bad, "rowno", out) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm2::rel_open(nullptr, db.store(), 0, schema, "rowno", out) == -1);
+}
