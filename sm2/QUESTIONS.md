@@ -19,15 +19,15 @@ types, and key encoding — are answered and have moved into
 `SM2_DESIGN.md`, `TYPE.md` and `sm3/SM3_DESIGN.md`; 4.1 and 4.3
 — the schema a `rel` is handed and alignment — into
 `SM2_DESIGN.md` §4, the first answered by keeping no schema
-version and the second by packing, not aligning; 5.1 and 5.3
-— the header and sm2's errors — and 5.2, 5.4, 5.5 and 5.6 — a
-decoded datum's memory, `NOT NULL`, the schema a `rel` borrows,
-and heap and index `rel`s — into `SM2_DESIGN.md` §5, which
-empties section 5; and
-6.1, 6.2 and 6.3 — the build, the property tests and the
-PostgreSQL fixtures — into `SM2_DESIGN.md` §8. The numbering of
-what remains is kept so that a question's number never
-changes.
+version and the second by laying datums out unpadded, not
+aligned; 5.1 and 5.3 — the header and sm2's errors — and 5.2,
+5.4, 5.5 and 5.6 — a decoded datum's memory, `NOT NULL`, the
+schema a `rel` borrows, and heap and index `rel`s — into
+`SM2_DESIGN.md` §5, which empties section 5; and 6.1 to 6.4 —
+the build, the property tests, the PostgreSQL fixtures, and
+landing sm2 in pieces, which it did — into `SM2_DESIGN.md` §8.
+The numbering of what remains is kept so that a question's
+number never changes.
 
 ---
 
@@ -51,16 +51,6 @@ back is one forward scan. → `SM2_DESIGN.md` §4
 that default, and measure before defending the number.* sm1
 allows 64MB, but undo, lock and read sets are linear in keys
 touched (`sm1/SM1_DESIGN.md` §13). → `SM2_DESIGN.md` §4
-
----
-
-## 6. Mechanics — blocks the first line of code
-
-**6.4 [ASSUMABLE] Can sm2 land in pieces?**
-*Suggested: yes — steps 1 to 3 are a library with no sm1
-dependency at all and can land and be used before `rel`
-exists.* It is also the order that gets the permanent formats
-under test earliest. → `SM2_DESIGN.md` §8
 
 ---
 

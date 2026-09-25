@@ -26,8 +26,9 @@ make -C sm1     build level 1 alone
 ```
 
 Each level has a Makefile of its own with the real targets; the
-top-level one delegates to them, and builds the C wrapper in
-the root's `include/` and `src/`, which belongs to no level.
+top-level one delegates to them. It will also build the C
+wrapper, in the root's `include/` and `src/`, which belongs to
+no level; the wrapper is not written yet (`DESIGN.md` §3).
 
 ## Where to read
 
@@ -38,8 +39,13 @@ the root's `include/` and `src/`, which belongs to no level.
 - `sm1/SM1_OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
-- `sm1/API.md` — sm1's API, call by call: a C API today,
-  to become C++ (`OBJECTIVE.md`)
+- `sm1/API.md` — sm1's C++ API, call by call, in
+  `namespace sm1`
+- `sm1/SECINDEX.md` — what secondary indexes needed from sm1,
+  and how each gap was closed
+- `sm1/SIREAD.md` — SSI's SIREAD locks and rw-edges, explained
+- `sm1/RCOMPACT.md` — whether compaction can run on another
+  machine; research, not built
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
   scenarios that are executed on every build
 - `sm2/SM2_OBJECTIVE.md` — what level 2 is for
@@ -47,11 +53,14 @@ the root's `include/` and `src/`, which belongs to no level.
   encodings, and the tuple relation
 - `sm2/TYPE.md` — every type, one by one: native
   representation, order, and key bytes
-- `sm2/QUESTIONS.md` — what has to be decided before sm2 can
-  be written, and what is already settled
+- `sm2/TUPLE.md` — a row's bytes: the tuple format
+- `sm2/VARLENA.md` — a variable-width datum's bytes
+- `sm2/QUESTIONS.md` — what is still open in sm2, and where
+  each settled answer went
 - `sm3/SM3_OBJECTIVE.md` — what level 3 is for
 - `sm3/SM3_DESIGN.md` — the catalog, secondary indexes, predicate
   scans and statistics
+- `sm3/PLAN.md` — sm3's order of work
 - `FEATURELIST.md` — which PostgreSQL features wisr supports
 - `PART4.md` — what it would take to put PostgreSQL on this
   stack, and what that target forces on level 2's design

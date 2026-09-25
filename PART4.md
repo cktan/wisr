@@ -345,7 +345,7 @@ reflected in each level's own `SMn_OBJECTIVE.md` and
 
 | Forced | Level | Why |
 | --- | --- | --- |
-| **Tuple format cheap to turn into a PG tuple** | sm2 | the executor works in tuple slots; a bespoke encoding pays a conversion per row, in both directions, across an IPC boundary |
+| **Tuple format cheap to turn into a PG tuple** | sm2 | the executor works in tuple slots; a bespoke encoding pays a conversion per row, in both directions; the threaded fork removes the IPC boundary, not the conversion |
 | **Row identity is `rowno`; the table is a heap** | sm2 | the planner and executor assume a heap with every index secondary, and tables may have no primary key; `rowno` is a 64-bit number from an sm1 sequence, and the fork redefines `ctid` as a `uint64_t` to carry it |
 | **Key encoder takes a collation** | sm2 | PG's text order is `strcoll`/ICU, not memcmp; the encoder needs `(type, collation, direction, nulls-order)` per column or half of SQL's `ORDER BY` is unrepresentable |
 | **Collated keys store the sort key *and* the original** | sm2 | the collation transform is lossy and irreversible; this is what YugabyteDB does, and it costs storing the datum twice |

@@ -21,8 +21,11 @@ full MVCC, for OLTP workloads.
   index: the clustered primary key here, and any secondary
   index a layer above builds out of stores. It is a
   permanent decision, not a phase-1 limitation. A caller that
-  needs descending order keeps a second store whose key
-  bytes are inverted, and scans that one forward.
+  needs descending order builds it into the key: an index
+  whose key bytes are inverted, scanned forward. The stack
+  above does that per index column, and keeps no mirror copy
+  of an index to serve the other direction; an order an index
+  does not have is a sort (`PART4.md` §5).
 
 ## Goals
 

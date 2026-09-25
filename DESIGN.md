@@ -69,8 +69,9 @@ calls only sm1, and nothing calls upward.
 ## 2. Build
 
 Each level has a real `Makefile`; the top-level one
-delegates to them, and builds the one thing that belongs to
-no level — the C wrapper in the root's `include/` and `src/`.
+delegates to them, and will build the one thing that belongs
+to no level — the C wrapper in the root's `include/` and
+`src/` — once it is written (§3).
 
 ```
 make            build every level

@@ -9,13 +9,14 @@ it follows the decisions in `SM3_OBJECTIVE.md`:
 | Decision | Choice |
 | --- | --- |
 | Catalog | in memory, written through to sm2, lock-based DDL |
-| Index entry | `encode(index columns) ‖ rowno` → INCLUDE columns; a unique index's entry drops the `rowno` suffix and maps to it instead |
+| Index entry | `encode(index columns) ‖ rowno` → a tuple of the `rowno`, a cut flag and the INCLUDE columns; a unique index's key drops the `rowno` suffix unless a key column is NULL or the key was cut |
 | Encoder | sm2's, called with the same per-column arguments |
 | Relation mapping | one sm1 store per table, holding its rows, indexes and TOAST data, told apart by sm2's 2-byte object prefix |
 | API shape | open: batch-oriented (sets of rows, filters pushed down) was forced by an IPC boundary, which the threaded fork removes (§1) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
-**Status: nothing here is implemented**, and neither is sm2.
+**Status: nothing here is implemented.** sm2, which it is built
+on, is, but for TOAST (`sm2/SM2_DESIGN.md` §8.2).
 This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is
 permanent on disk — the catalog's own layout is the exception
@@ -146,13 +147,15 @@ above sm1 needs; every gap it found is now closed in sm1.
   by `rowno` (`sm2/SM2_DESIGN.md` §5), and the primary key is a
   unique index over it, built and maintained like any other.
   A table may have none.
-- **Entry:** `encode(sk) ‖ rowno` → empty, or the INCLUDE
-  columns, built with sm2's encoder (`sm2/SM2_DESIGN.md` §3). The
+- **Entry:** `encode(sk) ‖ rowno` → a tuple of the `rowno`, a
+  flag saying the key was cut, and the INCLUDE columns — sm2's
+  index `rel` (`sm2/SM2_DESIGN.md` §5), built with sm2's encoder
+  (`sm2/SM2_DESIGN.md` §3). The
   `rowno` suffix makes every entry unique, so a non-unique
   index needs no further disambiguation, and it is 8 bytes
   whatever the primary key is.
 - **Unique indexes are keyed without `rowno`:**
-  `encode(sk)` → `rowno` and the INCLUDE columns. The KV key
+  `encode(sk)` → the same tuple. The KV key
   is then the uniqueness unit, so sm1's insert refuses a
   duplicate with `SM_ERR_DUPKEY` and its write-write conflict
   handles two sessions inserting the same key at once; no
@@ -257,6 +260,7 @@ The alternative was many tables per sm1 store, with a wider
 object id as the prefix, which makes the relation count a
 tuning decision. It was rejected for v1 because `DROP TABLE`
 becomes a range delete instead of sm1's O(1) drop.
+
 ---
 
 ## 5. Scan by predicate

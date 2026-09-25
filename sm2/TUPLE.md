@@ -7,7 +7,7 @@ writes and `tuple_decode` and `tuple_deform` read, which a heap
 file is the rest.
 
 **Status: built**, in `src/tuple/tuple.cc`, with the pinned
-examples of §8 in `test/test_tuple.cc`. TOAST is postponed
+examples of §7 in `test/test_tuple.cc`. TOAST is postponed
 (`SM2_DESIGN.md` §8.2): a tuple holds every datum inline.
 
 ---
@@ -98,7 +98,7 @@ varlena before it ends, and the last varlena ends at the
 tuple's end. With no variable datums, the fixed part ends the
 tuple.
 
-## 7. Finding an attribute
+## 6. Finding an attribute
 
 To read attribute `k` without the others:
 
@@ -124,7 +124,7 @@ attribute's bytes are read to find another's. With no nulls,
 every entry's position is a constant of the schema, `natts`
 and the slot width, so a row reads like a C struct.
 
-## 8. Examples
+## 7. Examples
 
 Pinned by `test/test_tuple.cc`:
 
@@ -139,7 +139,7 @@ bitmap `04`, attribute 2 null; the fixed part, in schema order
 taking nothing; then at byte 10, the varlena `07 68 69`,
 "hi".
 
-## 9. A malformed tuple
+## 8. A malformed tuple
 
 A reader refuses, with `SM_ERR_CORRUPT`, a tuple that is empty;
 has a reserved flag set; has a malformed `natts`, or one past

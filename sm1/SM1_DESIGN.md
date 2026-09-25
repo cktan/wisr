@@ -34,8 +34,10 @@ design forecloses them.
 only, in ascending bytewise key order, and no index serves a
 backward scan — not the clustered primary key here, and not a
 secondary index a layer above builds out of stores
-(`SM1_OBJECTIVE.md`). Descending order is had by keeping a second
-store with inverted key bytes and scanning it forward.
+(`SM1_OBJECTIVE.md`). Descending order is built into the key —
+an index whose key bytes are inverted, scanned forward — and
+the stack above keeps no mirror copy of an index for the other
+direction (`PART4.md` §5).
 
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
 `sm1.h` and the design in this document, nothing more. Phase 2
@@ -574,29 +576,6 @@ Step 5 is an ordinary RocksDB `Put` into the memtable, WAL-logged but
 **not synced** — an uncommitted write does not need durability, only
 the commit record does (§8.2).
 
-### 5.3 The old row
-
-`sm1::update` and `sm1::erase` hand back the row they replace,
-through an optional out-parameter a caller may leave
-`nullptr`. It costs
-nothing to produce: step 3 already seeks to the deciding
-version and decodes its value to learn whether the key
-exists, and until now threw the payload away. A layer
-maintaining secondary indexes needs that value — the old
-entries to delete are computed from it — and without this it
-paid a whole `sm1::read`, an iterator and a seek of its own,
-for something the write had in hand.
-
-The bytes go in the session's read buffer, the one `sm1::read`
-uses, so either call invalidates what the other returned.
-Sharing it is deliberate: one buffer per session, one rule to
-state, and a caller that needs the value to outlive the next
-call copies it, exactly as it must after `sm1::read`.
-
-The value is only produced for a live version. A write that
-fails — `SM_ERR_NOTFOUND` on a missing key, a conflict, a
-deadlock — reports no old row.
-
 ### 5.1 Row locks
 
 An in-memory hash table, `(storeid, userkey)` → the
@@ -683,6 +662,29 @@ the write with `SM_ERR_UPDATED` and lets it go ahead once the
 caller has re-read the row (§5.4). The caveat for the
 non-serializable levels is §7.4's: their writes still feed the
 SSI tracker, but they are never serialization victims themselves.
+
+### 5.3 The old row
+
+`sm1::update` and `sm1::erase` hand back the row they replace,
+through an optional out-parameter a caller may leave
+`nullptr`. It costs
+nothing to produce: step 3 already seeks to the deciding
+version and decodes its value to learn whether the key
+exists, and until now threw the payload away. A layer
+maintaining secondary indexes needs that value — the old
+entries to delete are computed from it — and without this it
+paid a whole `sm1::read`, an iterator and a seek of its own,
+for something the write had in hand.
+
+The bytes go in the session's read buffer, the one `sm1::read`
+uses, so either call invalidates what the other returned.
+Sharing it is deliberate: one buffer per session, one rule to
+state, and a caller that needs the value to outlive the next
+call copies it, exactly as it must after `sm1::read`.
+
+The value is only produced for a live version. A write that
+fails — `SM_ERR_NOTFOUND` on a missing key, a conflict, a
+deadlock — reports no old row.
 
 ### 5.4 Read committed: write, re-read, write
 
@@ -2013,8 +2015,10 @@ the transaction. Both follow the §5 write path, reported in DDL
 terms: `sm1::mkstore` of a live storeid fails with
 `SM_ERR_EXISTS` where an insert would report `SM_ERR_DUPKEY`,
 and `sm1::rmstore` of a missing storeid fails with
-`SM_ERR_NOTFOUND`. A dropped storeid's newest version is a
-tombstone, so `sm1::mkstore` can create it again.
+`SM_ERR_NOTFOUND`. A dropped storeid's newest catalog version
+is a tombstone, and it stays one: `sm1::mkstore` always
+allocates a fresh storeid, so a dropped one is never created
+again (above).
 
 `sm1::lsstore` is a §10.2 scan of the catalog over `["R", "S")`,
 so under SERIALIZABLE it registers the whole range as read: a
@@ -2543,7 +2547,8 @@ that they are not raised again.
 3. **"The read-committed write-conflict divergence must be
    highlighted in user documentation."** It already is:
    §6.2 states it with its justification, and `API.md`
-   carries it as divergence 2.
+   states it as the second of its surprising isolation
+   behaviours.
 
 A fourth recommendation is recorded as unsafe rather than
 merely wrong: presuming that a version with

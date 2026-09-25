@@ -5,11 +5,11 @@ represented, how it is ordered, and what its key bytes are.
 `SM2_DESIGN.md` §2 argues *why* these choices; this file is the
 table you look things up in while writing code.
 
-**Status: nothing here is implemented.** These are the
-formats as designed. Where a fact about PostgreSQL is from
-memory rather than checked against the source it says so, and
-`SM2_DESIGN.md` §8.2 step 1 pins each one to a fixture taken
-from a running PostgreSQL.
+**Status: built**, every type here, with its text, its order
+and its key (`SM2_DESIGN.md` §8.2). Where a fact about
+PostgreSQL is from memory rather than checked against the
+source it says so, and `SM2_DESIGN.md` §8.2 step 1 pins each
+one to a fixture taken from a running PostgreSQL.
 
 ---
 

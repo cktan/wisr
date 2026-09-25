@@ -106,9 +106,10 @@ permanently: no index serves a backward scan, so this is a
 constraint the layer is built on, not a gap awaiting a fix.
 
 The layer's recourse is an index with inverted key bytes. It
-serves only that direction, so a column wanted both ways costs
-two stores, and the cost of that is now the layer's to
-carry.
+serves only that direction. A second, mirror index for the
+other direction was considered and rejected (`PART4.md` §5):
+the stack builds a descending index column when one is
+declared, and sorts when a query wants an order no index has.
 
 ### 5. No cursor reposition — CLOSED
 
@@ -174,39 +175,40 @@ now, is the batched read.
 Every signature the gaps ask for, in one place. The sections
 after this one explain each.
 
-```c
-/* gap 1: online index build, and lock-without-write -- IMPLEMENTED */
-typedef enum { SM1_LOCK_SHARED = 0, SM1_LOCK_EXCLUSIVE = 1 } sm1_lockmode_t;
+```cpp
+namespace sm1 {
 
-int sm1_lock(sm1_session_t* session, uint64_t storeid,
-             const char* key, size_t klen, sm1_lockmode_t mode);
+/* gap 1: online index build, and lock-without-write -- IMPLEMENTED */
+enum class lockmode_t { shared = 0, exclusive = 1 };
+
+int lock(session_t* session, uint64_t storeid,
+         std::string_view key, lockmode_t mode);
 
 /* gap 2: savepoint stack -- IMPLEMENTED */
-int sm1_savepoint(sm1_session_t* session);            /* push; returns depth >= 1, or -1 */
-int sm1_rollback(sm1_session_t* session, int depth);  /* undo to that mark; keeps it, drops deeper */
-int sm1_forget(sm1_session_t* session, int depth);    /* forget that mark and deeper ones */
+int savepoint(session_t* session);            /* push; returns depth >= 1, or -1 */
+int rollback(session_t* session, int depth);  /* undo to that mark; keeps it, drops deeper */
+int forget(session_t* session, int depth);    /* forget that mark and deeper ones */
 
 /* gap 3: RC statement snapshots -- IMPLEMENTED */
-int sm1_stmt_begin(sm1_session_t* session);
+int stmt_begin(session_t* session);
 
 /* gap 5: cursor reposition -- IMPLEMENTED */
-int sm1_scan_seek(sm1_scan_t* scan, const char* key, size_t klen,
-                  int inclusive);
+int scan_seek(scan_t* scan, std::string_view key, int inclusive);
 
 /* gap 6: batched read -- NOT BUILT; see the gap for why */
-int sm1_mread(sm1_session_t* session, uint64_t storeid, size_t n,
-              const char* const* key, const size_t* klen,
-              const char** data, size_t* datalen, int* found);
+int mread(session_t* session, uint64_t storeid,
+          std::span<const std::string_view> keys,
+          std::vector<std::optional<std::string_view>>& data);
 
 /* gap 6: old-image return -- IMPLEMENTED */
-int sm1_update(sm1_session_t* session, uint64_t storeid,
-               const char* key, size_t klen,
-               const char* data, size_t datalen,
-               const char** old, size_t* oldlen);
+int update(session_t* session, uint64_t storeid,
+           std::string_view key, std::string_view data,
+           std::string_view* old = nullptr);
 
-int sm1_delete(sm1_session_t* session, uint64_t storeid,
-               const char* key, size_t klen,
-               const char** old, size_t* oldlen);
+int erase(session_t* session, uint64_t storeid,
+          std::string_view key, std::string_view* old = nullptr);
+
+}
 ```
 
 Gap 4 needs no function: it is closed. Gap 6's
@@ -220,8 +222,8 @@ benchmark, so its signature is a guess, in particular how N
 values would be owned.
 
 **Three were breaking changes**, not additions: `sm1::rollback`
-gained a parameter, and `sm1::update` and `sm1::erase` gained two
-each.
+gained a parameter, and `sm1::update` and `sm1::erase` each
+gained one, the optional `old`.
 
 **The old-image lifetime is settled** the way the question
 framed it: `*old` points into session memory and dies at the

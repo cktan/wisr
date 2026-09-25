@@ -39,6 +39,7 @@ ordered key as the only access path below sm2.
 - [x] text / varchar
 - [x] bool
 - [x] timestamp / date / time
+- [x] interval
 - [x] UUID
 - [x] bytea
 - [ ] JSON / JSONB

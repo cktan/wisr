@@ -17,8 +17,10 @@ that matter most are the ones with two sessions in them.
 Everything else needs a definition to work from, so it comes
 first.
 
-- Tables, indexes, columns, types, collations, schema
-  versions, in sm3's own sm2 relations.
+- Tables, indexes, columns, types, collations, and each
+  column's dropped mark and missing value, in sm3's own sm2
+  relations. No schema versions: a row records its attribute
+  count instead (`sm2/SM2_DESIGN.md` §4).
 - In memory, written through to sm2, loaded at startup.
 - The schema-row lock protocol of `SM3_DESIGN.md` §2, which is
   what makes an in-memory catalog safe.
@@ -32,15 +34,17 @@ doing concurrent DDL behave as sm1's isolation says they must.
 
 ## 2. Object mapping
 
-- An sm3 object id as sm2's key prefix, many objects per sm1
-  store.
-- Decide what `DROP TABLE` costs once a table is a key range
-  rather than a column family.
+- One sm1 store per table (`SM3_DESIGN.md` §4): its rows under
+  prefix `0x0000`, each index under a prefix of its own,
+  allocated in increasing order and never reused, its TOAST
+  data under `0xFFFF`.
+- `DROP TABLE` is one `sm1::rmstore`; `DROP INDEX` is a range
+  delete over the index's prefix.
 
-**Verify:** a schema far past sm1's "low thousands of
-stores" target opens; two objects sharing an sm1 store
-never see each other's rows; a dropped table's space is
-reclaimed.
+**Verify:** a table's rows and indexes share its store without
+meeting; `DROP TABLE` removes the store, indexes and all; a
+dropped index's prefix is never handed out again, so its
+lingering versions are never read as another index's.
 
 ## 3. Indexes
 

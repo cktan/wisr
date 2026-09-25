@@ -1302,8 +1302,9 @@ ones.
     behaviours are now stated.** They were decided in
     `SM1_DESIGN.md` but invisible to a caller reading only the
     API.
-13. `sm1::xctlevel_t::read_committed` →
-    `sm1::xctlevel_t::read_committed`.
+13. **A misspelling fixed.** The level was spelled
+    `SM1_XCT_READ_COMMITED`; it became `SM1_XCT_READ_COMMITTED`,
+    and is now `sm1::xctlevel_t::read_committed`.
 14. **Databases are named within an environment.** (D)
     `sm1::attach(homedir)` returns an `sm1::env_t`, and
     `sm1::mkdb`, `sm1::rmdb`, and `sm1::opendb` take an env and a
@@ -1327,15 +1328,13 @@ ones.
     spelling: no path is built from a `dbname` at all.
     `sm1::lsdb` comes with it, because the directory names
     stop being readable.
-16. **A list of names is an `sm1::strlist_t`.** (D) `sm1::lsdb`
-    returns one counted, immutable handle rather than a
+16. **A list of names is a `std::vector<std::string>`.** (D)
+    `sm1::lsdb` fills one the caller owns, rather than a
     `char***` with a paired `size_t*`, and `sm1::free_dbs` is
-    gone. The count travels with the array, so the two
-    cannot disagree; an index past the end returns NULL;
-    and one call releases the whole list. Elements are
-    NUL-terminated, so a list carries names only — keys and
-    values may contain NUL, and a call that returns those
-    will need a counted-buffer type instead.
+    gone. The count travels with the list, so the two cannot
+    disagree, and the list frees itself. An intermediate
+    `sm1::strlist_t` handle did the same in C, and went with
+    the move to C++.
 17. **Preparing a home directory is separate from using
     one.** (D) `sm1::init` creates the structure once and
     returns an `int`; `sm1::attach` / `sm1::detach` bracket a

@@ -84,7 +84,7 @@ representation, its order and its key bytes, one section
 each. This section argues the decisions behind it; that file
 is what you read while writing code.
 
-*To be written.* The rules it must satisfy:
+The rules it satisfies:
 
 - The set is fixed and chosen from what the PostgreSQL target
   needs first: boolean, the integer widths, `float4` and
@@ -330,7 +330,7 @@ is.
 The per-type encodings are in `TYPE.md` §3; the rules they
 all have to satisfy are here.
 
-*To be written.* The rules it must satisfy:
+The rules it satisfies:
 
 - `encode(a) < encode(b)` bytewise **iff** `a < b` in the
   type's own order, for every supported type.
@@ -611,8 +611,8 @@ tuple is a PostgreSQL varlena, and a TOASTed datum is replaced
 by sm2's own TOAST pointer, in PostgreSQL's external form with
 a tag of sm2's own (§2.1, §4.1).
 
-The rules the format itself must satisfy, then the layout that
-meets them (§4.1), which is only partly written:
+The rules the format itself satisfies, then the layout that
+meets them (§4.1):
 
 - A null bitmap, a fixed/variable split, and a way to find a
   column without decoding every column before it.
@@ -771,8 +771,8 @@ does, which its compressed 4-byte form already provides for.
 
 ## 5. The tuple relation
 
-*To be written.* sm1's store is an ordered map of byte
-string to byte string. sm2's is that store with the types
+sm1's store is an ordered map of byte string to byte
+string. sm2's is that store with the types
 put back: a row goes in as a tuple and comes out as a tuple,
 and §3 and §4 happen inside. It is the whole of sm2's API
 surface; §2 to §4 are what it is built out of.
@@ -993,11 +993,9 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
 
 ## 7. Known trade-offs
 
-*To be filled in as the design settles, in the manner of
-`sm1/SM1_DESIGN.md` §13 — the costs this design accepts, written
-down where the next reader will find them.*
-
-Accepted so far:
+The costs this design accepts, in the manner of
+`sm1/SM1_DESIGN.md` §13, written down where the next reader
+will find them:
 
 - **Collated keys are stored twice.** The sort key is lossy,
   so the original datum is stored beside it (§3).

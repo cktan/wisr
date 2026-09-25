@@ -859,8 +859,9 @@ int read(session_t* session, uint64_t storeid,
  * rows. Scanning is FORWARD ONLY; descending iteration is not
  * supported, and is not a planned addition -- no index serves
  * a backward scan (see SM1_OBJECTIVE.md). A caller that needs
- * descending order keeps a second store with inverted key
- * bytes and scans that one forward.
+ * descending order builds it into the key -- inverted key bytes,
+ * scanned forward -- rather than keeping a mirror store for the
+ * other direction (PART4.md §5).
  *
  * Both bounds are taken, rather than a start key alone,
  * because under SERIALIZABLE the range is the predicate
