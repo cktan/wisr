@@ -245,6 +245,11 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
   *is* the original, so the key is just `escape(datum)` and
   the tie-break is dropped. Worth special-casing: it is the
   common case in practice and it halves the key.
+- ICU's sort key ends in a zero byte of its own and holds no
+  other; the key leaves that byte out, and the `0x00 0x00` that
+  follows is where decoding finds the original.
+- The type's `cmp` stays byte order: it takes no collation, so
+  the collation's order is in the key alone.
 - The collation's version is recorded with the schema
   (`sm3/SM3_DESIGN.md` §2); a mismatch is refused, not trusted.
 - A non-deterministic collation is refused at column creation

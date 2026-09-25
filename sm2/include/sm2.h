@@ -29,10 +29,27 @@ namespace sm2 {
 
 /*
  * A collation, for the keys of text and varchar (SM2_DESIGN.md
- * §3.3). Defined in step 2b; until then only nullptr, byte order,
- * which is PostgreSQL's C collation, is accepted.
+ * §3.3): ICU's order for a locale, or byte order. nullptr is byte
+ * order too, PostgreSQL's C collation.
  */
 struct collation_t;
+
+/*
+ * Open the collation for locale: a BCP 47 language tag, such as
+ * "en-US" or "und-u-ks-level2", or "C" or "POSIX" for byte order.
+ * A non-deterministic collation is refused, as is a locale ICU has
+ * no data for. With expected_version non-empty, a collation whose
+ * ICU version differs is refused (SM2_DESIGN.md §3.3); byte order
+ * has no version. Returns 0 with the collation in out, or -1.
+ */
+int collation_open(std::string_view locale, bool deterministic,
+                   std::string_view expected_version, collation_t*& out);
+
+/* Close a collation from collation_open; nullptr is a no-op. */
+void collation_close(collation_t* collation);
+
+/* The collation's ICU version, for the schema to record; "" for C. */
+std::string_view collation_version(const collation_t* collation);
 
 /*
  * A type, as a descriptor of functions in pg_type's shape

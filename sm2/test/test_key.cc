@@ -17,6 +17,9 @@
 #include <string>
 #include <vector>
 
+#include <unicode/ucol.h>
+#include <unicode/uloc.h>
+
 namespace {
 
 /* v's little-endian bytes. */
@@ -427,9 +430,7 @@ TEST_CASE("key encoding refuses what it cannot encode or decode") {
   // 1. A datum count that differs from the column count, a column
   //    without a type, and a datum of the wrong width are
   //    SM_ERR_INVALID, and leave the key as it was.
-  // 2. A text or varchar key under a collation is SM_ERR_INVALID
-  //    until step 2b.
-  // 3. decode_key refuses a key with bytes left over, an unknown
+  // 2. decode_key refuses a key with bytes left over, an unknown
   //    null marker, and one cut short.
   std::vector<sm2::key_column_t> cols = {
       {&sm2::type_int4, -1, nullptr, false, false}};
@@ -446,14 +447,6 @@ TEST_CASE("key encoding refuses what it cannot encode or decode") {
   CHECK(sm2::encode_key(untyped, one, key) == -1);
   CHECK(key == "keep");
 
-  const sm2::collation_t *some =
-      reinterpret_cast<const sm2::collation_t *>(&key);
-  for (const sm2::type_t *t : {&sm2::type_text, &sm2::type_varchar}) {
-    std::string k;
-    CHECK(t->key_encode("a", -1, some, k) == -1);
-    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  }
-
   std::string good = encode_row(cols, {le(int32_t{7})});
   std::vector<std::optional<std::string>> back;
   CHECK(sm2::decode_key(cols, good + "x", back) == -1);
@@ -461,4 +454,154 @@ TEST_CASE("key encoding refuses what it cannot encode or decode") {
   CHECK(sm2::decode_key(cols, "\x05" + good.substr(1), back) == -1);
   CHECK(sm2::decode_key(cols, good.substr(0, 3), back) == -1);
   CHECK(sm2::decode_key(cols, "", back) == -1);
+}
+
+namespace {
+
+/* Open locale's collation, which must open. */
+sm2::collation_t *open_collation(std::string_view locale) {
+  sm2::collation_t *c = nullptr;
+  REQUIRE_MESSAGE(sm2::collation_open(locale, true, "", c) == 0, sm1::errmsg());
+  return c;
+}
+
+} // namespace
+
+TEST_CASE("a collation opens by locale, and holds to its ICU version") {
+  // Verify collation_open's checks (SM2_DESIGN.md §3.3).
+  // 1. en-US, fr-CA, a keyword tag and the root locale open, each
+  //    with ICU's collator version; C and POSIX open as byte
+  //    order, with no version.
+  // 2. Reopening with the version collation_version reported
+  //    succeeds; with any other it is SM_ERR_INVALID.
+  // 3. A non-deterministic collation, a language ICU does not
+  //    know, a malformed tag, and a version on byte order are
+  //    SM_ERR_INVALID.
+  for (const char *locale :
+       {"en-US", "fr-CA", "de-u-co-phonebk", "und-u-ks-level2", "und"}) {
+    CAPTURE(locale);
+    sm2::collation_t *c = open_collation(locale);
+    std::string version(sm2::collation_version(c));
+    CHECK_FALSE(version.empty());
+    sm2::collation_t *again = nullptr;
+    CHECK(sm2::collation_open(locale, true, version, again) == 0);
+    sm2::collation_close(again);
+    CHECK(sm2::collation_open(locale, true, "1.2.3.4", again) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    sm2::collation_close(c);
+  }
+  for (const char *locale : {"C", "POSIX"}) {
+    sm2::collation_t *c = open_collation(locale);
+    CHECK(sm2::collation_version(c).empty());
+    sm2::collation_close(c);
+    CHECK(sm2::collation_open(locale, true, "1", c) == -1);
+  }
+  sm2::collation_t *c = nullptr;
+  for (std::string_view bad : {"zz", "xx-YY", "tlh", "en-US-!!"}) {
+    CAPTURE(bad);
+    CHECK(sm2::collation_open(bad, true, "", c) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  }
+  CHECK(sm2::collation_open("en-US", false, "", c) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm2::collation_close(nullptr);
+}
+
+TEST_CASE("a collated text key orders as ICU, its ties broken by bytes") {
+  // Verify text and varchar keys under a collation, by property
+  // from test_seed(), against ICU's own comparison.
+  // 1. Under en-US, de-u-co-phonebk and the case-insensitive
+  //    und-u-ks-level2, memcmp over two keys agrees with
+  //    ucol_strcollUTF8, and where ICU calls two strings equal,
+  //    with their bytes -- so different strings never share a key.
+  // 2. Every key decodes to its string.
+  // 3. Examples: under en-US "a" < "B", though "B" < "a" in bytes;
+  //    under und-u-ks-level2 "a" and "A" are ICU-equal and keep
+  //    two keys.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  for (const char *locale : {"en-US", "de-u-co-phonebk", "und-u-ks-level2"}) {
+    CAPTURE(locale);
+    sm2::collation_t *coll = open_collation(locale);
+    char id[ULOC_FULLNAME_CAPACITY];
+    UErrorCode status = U_ZERO_ERROR;
+    uloc_forLanguageTag(locale, id, sizeof(id), nullptr, &status);
+    UCollator *icu = ucol_open(id, &status);
+    REQUIRE(U_SUCCESS(status));
+    auto key = [&](const sm2::type_t *t, const std::string &s) {
+      std::string k;
+      REQUIRE(t->key_encode(s, -1, coll, k) == 0);
+      return k;
+    };
+    for (const sm2::type_t *t : {&sm2::type_text, &sm2::type_varchar}) {
+      CAPTURE(t->name);
+      for (int i = 0; i < property_runs / 5; i++) {
+        std::string a = gen_utf8(rng), b = gen_utf8(rng);
+        if (rng() % 4 == 0) {
+          // Case and accent variants of one string meet ICU ties.
+          b = a;
+          for (char &ch : b) {
+            if (ch >= 'a' && ch <= 'z' && rng() % 2) {
+              ch = static_cast<char>(ch - 'a' + 'A');
+            }
+          }
+        }
+        status = U_ZERO_ERROR;
+        int want = sign(ucol_strcollUTF8(icu, a.data(), a.size(), b.data(),
+                                         b.size(), &status));
+        REQUIRE(U_SUCCESS(status));
+        if (want == 0) {
+          want = sign(a.compare(b));
+        }
+        std::string ka = key(t, a), kb = key(t, b);
+        CHECK(sign(ka.compare(kb)) == want);
+        std::string_view rest = ka;
+        std::string back;
+        REQUIRE(t->key_decode(rest, -1, coll, back) == 0);
+        CHECK(back == a);
+        CHECK(rest.empty());
+      }
+    }
+    if (std::string_view(locale) == "en-US") {
+      CHECK(key(&sm2::type_text, "a") < key(&sm2::type_text, "B"));
+    }
+    if (std::string_view(locale) == "und-u-ks-level2") {
+      status = U_ZERO_ERROR;
+      CHECK(ucol_strcollUTF8(icu, "a", 1, "A", 1, &status) == UCOL_EQUAL);
+      CHECK(key(&sm2::type_text, "a") != key(&sm2::type_text, "A"));
+    }
+    ucol_close(icu);
+    sm2::collation_close(coll);
+  }
+}
+
+TEST_CASE("a collated column keys and decodes among others") {
+  // Verify a text column under a collation inside encode_key.
+  // 1. With (text en-US desc, int4 asc) columns, rows order by
+  //    the text descending in ICU's order, then by the int.
+  // 2. Every row decodes back to its datums.
+  // 3. A byte-order collation, C, keys as nullptr does.
+  sm2::collation_t *en = open_collation("en-US");
+  std::vector<sm2::key_column_t> cols = {
+      {&sm2::type_text, -1, en, true, false},
+      {&sm2::type_int4, -1, nullptr, false, false}};
+  std::string a1 = encode_row(cols, {std::string("a"), le(int32_t{1})});
+  std::string a2 = encode_row(cols, {std::string("a"), le(int32_t{2})});
+  std::string b1 = encode_row(cols, {std::string("B"), le(int32_t{1})});
+  CHECK(b1 < a1);
+  CHECK(a1 < a2);
+  for (const std::string &k : {a1, a2, b1}) {
+    std::vector<std::optional<std::string>> back;
+    CHECK(sm2::decode_key(cols, k, back) == 0);
+  }
+  std::vector<std::optional<std::string>> back;
+  REQUIRE(sm2::decode_key(cols, b1, back) == 0);
+  CHECK(back[0] == std::string("B"));
+  sm2::collation_t *c = open_collation("C");
+  std::string with_c, with_null;
+  REQUIRE(sm2::type_text.key_encode("abc", -1, c, with_c) == 0);
+  REQUIRE(sm2::type_text.key_encode("abc", -1, nullptr, with_null) == 0);
+  CHECK(with_c == with_null);
+  sm2::collation_close(c);
+  sm2::collation_close(en);
 }

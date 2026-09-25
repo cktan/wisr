@@ -34,7 +34,7 @@ CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc/type -Isrc/ryu \
             -I$(SM1)/include \
             -MMD -MP
-LDLIBS   += -lrocksdb -lpthread
+LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD := build
 

@@ -14,6 +14,7 @@
  * PostgreSQL does.
  */
 
+#include "collation.h"
 #include "native.h"
 #include "sm2.h"
 
@@ -104,41 +105,46 @@ int string_out(const char *type, std::string_view datum, std::string &text) {
   });
 }
 
-/*
- * Fail with SM_ERR_INVALID unless collation is byte order: the
- * collations of step 2b are not built yet.
- */
-int check_collation(const char *type, const sm2::collation_t *collation) {
-  if (collation == nullptr) {
-    return 0;
-  }
-  return sm1::seterr(sm1::SM_ERR_INVALID,
-                     std::string("type ") + type +
-                         ": only byte order is supported yet, no collation");
+/* True if collation is ICU's, not byte order. */
+bool uses_icu(const sm2::collation_t *collation) {
+  return collation != nullptr && collation->icu != nullptr;
 }
 
 /*
  * A byte string's key (TYPE.md §3.5, §3.6): the bytes escaped and
  * terminated, so memcmp orders keys as the strings and no key is a
- * prefix of another.
+ * prefix of another. Under an ICU collation the sort key comes
+ * first, then 0x00 0x00, which no sort key holds: the collation
+ * orders, and the escaped original breaks its ties.
  */
-int bytes_key(const char *type, std::string_view datum,
-              const sm2::collation_t *collation, std::string &key) {
+int bytes_key(std::string_view datum, const sm2::collation_t *collation,
+              std::string &key) {
   return sm2::catch_nomem([&] {
-    if (check_collation(type, collation) != 0) {
-      return -1;
+    if (uses_icu(collation)) {
+      size_t start = key.size();
+      if (sm2::collation_sortkey(collation, datum, key) != 0) {
+        key.resize(start);
+        return -1;
+      }
+      key.append(2, '\0');
     }
     sm2::put_escaped(datum, key);
     return 0;
   });
 }
 
-/* Read bytes_key's bytes back into the datum. */
+/* Read bytes_key's bytes back into the datum, past any sort key. */
 int bytes_unkey(const char *type, std::string_view &key,
                 const sm2::collation_t *collation, std::string &datum) {
   return sm2::catch_nomem([&] {
-    if (check_collation(type, collation) != 0) {
-      return -1;
+    // The sort key ends at the first zero byte, which begins 00 00.
+    if (uses_icu(collation)) {
+      size_t end = key.find('\0');
+      if (end == std::string_view::npos || end + 1 >= key.size() ||
+          key[end + 1] != '\0') {
+        return sm2::bad_key(type);
+      }
+      key.remove_prefix(end + 2);
     }
     if (!sm2::get_escaped(key, datum)) {
       return sm2::bad_key(type);
@@ -159,7 +165,7 @@ int text_out(std::string_view d, int32_t, std::string &t) {
 /* A text's key, under its collation. */
 int text_key(std::string_view d, int32_t, const sm2::collation_t *c,
              std::string &k) {
-  return bytes_key("text", d, c, k);
+  return bytes_key(d, c, k);
 }
 /* Read a text's key. */
 int text_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
@@ -179,7 +185,7 @@ int varchar_out(std::string_view d, int32_t, std::string &t) {
 /* A varchar's key, under its collation. */
 int varchar_key(std::string_view d, int32_t, const sm2::collation_t *c,
                 std::string &k) {
-  return bytes_key("varchar", d, c, k);
+  return bytes_key(d, c, k);
 }
 /* Read a varchar's key. */
 int varchar_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
@@ -190,7 +196,7 @@ int varchar_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
 /* A bytea's key: its bytes, escaped; a bytea has no collation. */
 int bytea_key(std::string_view d, int32_t, const sm2::collation_t *,
               std::string &k) {
-  return bytes_key("bytea", d, nullptr, k);
+  return bytes_key(d, nullptr, k);
 }
 /* Read a bytea's key. */
 int bytea_unkey(std::string_view &k, int32_t, const sm2::collation_t *,

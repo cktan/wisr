@@ -513,7 +513,20 @@ primary key's length, because an index entry points at
   server rather than whatever the operating system has, so the
   collation version changes only when an operator upgrades on
   purpose. glibc's collation is not stable across versions,
-  which is why it is not the source of sort keys.
+  which is why it is not the source of sort keys. For now sm2
+  links the system's ICU, 74 on the development machine: the
+  version check below turns an operating-system upgrade into a
+  refusal rather than a silent reordering, and pinning is left
+  to packaging.
+- **A collation is opened by locale**, a BCP 47 tag as
+  PostgreSQL's ICU collations take (`en-US`, `und-u-ks-level2`),
+  with `C` and `POSIX` meaning byte order. A language ICU does not
+  know is refused, as PostgreSQL's `icu_validate_locale` refuses
+  it; ICU itself would quietly sort it by its root order. One
+  collation serves every session, on the strength of ICU's
+  documentation that const operations on a collator, the sort key
+  among them, are safe from several threads at once — not yet
+  checked against ICU's source.
 - **A version mismatch is refused.** The version is recorded
   with the schema (`sm3/SM3_DESIGN.md` §2) and compared at open.
   Every index built under another version, the primary key
