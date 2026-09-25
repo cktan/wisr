@@ -220,29 +220,28 @@ done
 
 echo "};"
 
-# number is a decimal after DuckDB's, not PostgreSQL's numeric,
-# so there are no stored bytes to read back. For each (p, s),
-# PostgreSQL prints each numeric(p, s) value and computes its
-# value times 10^s, and Python writes that integer's two's
-# complement bytes: 8 of them up to precision 18, 16 up to 38,
-# each side of the step tested. The values are the
-# extremes, zero, one unit either way, and 100 seeded random ones
-# of every length.
+# decimal follows DuckDB's, not PostgreSQL's numeric, so there
+# are no stored bytes to read back. For each (p, s), PostgreSQL
+# prints each numeric(p, s) value and computes its value times
+# 10^s, and Python writes that integer's two's complement bytes:
+# 8 of them up to precision 18, 16 up to 38, each side of the
+# step tested. The values are the extremes, zero, one unit either
+# way, and 100 seeded random ones of every length.
 cat <<'HDR'
 
 /*
- * number fixtures: a numeric(p, s) value's text, as PostgreSQL
+ * decimal fixtures: a numeric(p, s) value's text, as PostgreSQL
  * prints it, and its datum -- the value times 10^s as a two's
  * complement integer, little-endian -- in hex, under the typmod
  * ((p << 16) | s) + 4.
  */
-struct pg_number_fixture_t {
+struct pg_decimal_fixture_t {
   int32_t typmod;
   const char *text;
   const char *hex;
 };
 
-inline const pg_number_fixture_t pg_number_fixtures[] = {
+inline const pg_decimal_fixture_t pg_decimal_fixtures[] = {
 HDR
 for ps in 1,0 5,2 10,10 18,0 18,3 18,18 19,0 19,5 38,0 38,10 38,38; do
   p=${ps%,*} s=${ps#*,}

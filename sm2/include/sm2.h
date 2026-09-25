@@ -32,7 +32,7 @@ struct type_t {
     uint8_t     code;   /* frozen on-disk type code (TYPE.md §3) */
     const char* name;   /* PostgreSQL's name for it, e.g. "int4" */
     int16_t     len;    /* width in bytes; -1 if variable, or set
-                           by the typmod, as number's is */
+                           by the typmod, as decimal's is */
     bool        byval;  /* passed by value in PostgreSQL */
     uint8_t     align;  /* alignment in bytes: 1, 2, 4 or 8 */
 
@@ -74,7 +74,7 @@ extern const type_t type_int4;        /* code 3 */
 extern const type_t type_int8;        /* code 4 */
 extern const type_t type_float4;      /* code 5 */
 extern const type_t type_float8;      /* code 6 */
-extern const type_t type_number;      /* code 7 */
+extern const type_t type_decimal;     /* code 7 */
 extern const type_t type_text;        /* code 8 */
 extern const type_t type_varchar;     /* code 9 */
 extern const type_t type_bytea;       /* code 10 */

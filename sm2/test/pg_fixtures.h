@@ -9674,18 +9674,18 @@ inline const pg_fixture_t pg_fixtures[] = {
 };
 
 /*
- * number fixtures: a numeric(p, s) value's text, as PostgreSQL
+ * decimal fixtures: a numeric(p, s) value's text, as PostgreSQL
  * prints it, and its datum -- the value times 10^s as a two's
  * complement integer, little-endian -- in hex, under the typmod
  * ((p << 16) | s) + 4.
  */
-struct pg_number_fixture_t {
+struct pg_decimal_fixture_t {
   int32_t typmod;
   const char *text;
   const char *hex;
 };
 
-inline const pg_number_fixture_t pg_number_fixtures[] = {
+inline const pg_decimal_fixture_t pg_decimal_fixtures[] = {
     {65540, "9", "0900000000000000"},
     {65540, "-9", "f7ffffffffffffff"},
     {65540, "0", "0000000000000000"},

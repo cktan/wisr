@@ -88,7 +88,7 @@ null marker and before any inversion.
 | `int8` | 4 | two's complement, LE | 8 | sign-flipped, BE | 8 |
 | `float4` | 5 | IEEE-754 binary32, LE | 4 | total order, BE | 4 |
 | `float8` | 6 | IEEE-754 binary64, LE | 8 | total order, BE | 8 |
-| `number` | 7 | decimal after DuckDB's, two's complement, LE | 8 or 16 | sign-flipped, BE | 8 or 16 |
+| `decimal` | 7 | after DuckDB's decimal, two's complement, LE | 8 or 16 | sign-flipped, BE | 8 or 16 |
 | `text` | 8 | payload bytes | var | collation sort key ‖ escaped original | var |
 | `varchar` | 9 | payload bytes | var | as `text` | var |
 | `bytea` | 10 | payload bytes | var | escaped bytes | var |
@@ -178,9 +178,11 @@ Verified: the resulting order agrees with PostgreSQL's
 comparison on every pair drawn from `±Infinity`, `±0.0`, NaN,
 the subnormal and huge boundaries, and random datums.
 
-### 3.4 number
+### 3.4 decimal
 
-Native is a decimal after DuckDB's (`SM2_DESIGN.md` §2.2): the
+`numeric` is an alias of `decimal`, resolved above sm2.
+
+Native follows DuckDB's decimal (`SM2_DESIGN.md` §2.2): the
 value times 10^s as a two's complement integer, little-endian,
 8 bytes for a declared precision up to 18 and 16 bytes up to
 38, with `(precision, scale)` held in the schema rather than in
@@ -195,8 +197,8 @@ schema fixes the scale per column, so the encoder never
 rescales. Comparing two columns of different scale is a cast,
 above sm2.
 
-Decided in `SM2_DESIGN.md` §2.2: a bare `number` is
-`number(18, 3)`, `number(p)` is `number(p, 0)`, and NaN and
+Decided in `SM2_DESIGN.md` §2.2: a bare `decimal` is
+`decimal(18, 3)`, `decimal(p)` is `decimal(p, 0)`, and NaN and
 infinity are refused on insert, so no value is reserved as a
 sentinel.
 

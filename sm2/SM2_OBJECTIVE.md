@@ -93,11 +93,11 @@ These are settled and drive `SM2_DESIGN.md`.
   little-endian, and variable-length datums, which carry the
   payload alone and leave framing to the tuple
   (`SM2_DESIGN.md` §2.1).
-- **Except `number`, a decimal after DuckDB's**: a fixed-width
+- **Except `decimal`, which follows DuckDB's**: a fixed-width
   two's-complement integer with the scale in the schema, 64
   bits to 18 digits of precision and 128 to 38. It buys a
-  `number` key encoding that is just an integer's, and a
-  fixed-width `number` column; it costs PG's unbounded
+  `decimal` key encoding that is just an integer's, and a
+  fixed-width `decimal` column; it costs PG's unbounded
   precision, PG's NaN and infinity, and a per-datum
   conversion for this one type (`SM2_DESIGN.md` §2.2).
 - **A type is an ADT, in PostgreSQL's shape** — one
@@ -170,29 +170,30 @@ before anything is written to disk. They are sm2's and not
 sm3's because they are about the encoding, even though it is
 sm3's indexes that feel them most.
 
-- **Bare `number`.** A fixed-width decimal takes its scale
+- **Bare `decimal`.** A fixed-width decimal takes its scale
   from the schema; PostgreSQL allows `numeric` with no typmod
   at all, where each datum carries its own weight and display
-  scale. A bare `number` column has no fixed-width
+  scale. A bare `decimal` column has no fixed-width
   representation.
   Refuse it, pick a default, or keep a second variable-width
   representation for it?
 
-  *Decided: a default of `number(18, 3)`*, DuckDB's
-  (`SM2_DESIGN.md` §2.2). A bare `number` has 15 integer digits
+  *Decided: a default of `decimal(18, 3)`*, DuckDB's
+  (`SM2_DESIGN.md` §2.2). A bare `decimal` has 15 integer digits
   and 3 fractional. A datum with more fractional digits is
   rounded to 3, as PostgreSQL rounds for a declared typmod; one
   whose integer part needs more than 15 digits is an error.
-  `number(p)` means `number(p, 0)`. The cost is accepted
+  `decimal(p)` means `decimal(p, 0)`. The cost is accepted
   knowingly: a datum a user believed exact can lose digits past
   the third fractional place without an error. A second
   variable-width representation is rejected, because it means
-  two `number`s on disk with two key encodings and two
-  comparison paths, which is most of what §2.2 was avoiding. PostgreSQL's `NUMERIC` and `DECIMAL` are not
-  accepted at all (`SM2_DESIGN.md` §2.2), so a schema ported from
-  PostgreSQL declares `number(p, s)` in their place.
+  two `decimal`s on disk with two key encodings and two
+  comparison paths, which is most of what §2.2 was avoiding.
+  `numeric` is an alias of `decimal` (`SM2_DESIGN.md` §2.2), so a
+  schema ported from PostgreSQL keeps its `numeric(p, s)`
+  columns, within 38 digits.
 
-- **`number` NaN and infinity.** PG's numeric has both; a
+- **`decimal` NaN and infinity.** PG's numeric has both; a
   fixed-width decimal is an integer and has neither. Refuse
   them, or reserve values?
 

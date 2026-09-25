@@ -139,7 +139,7 @@ Settled, and listed so nobody reopens them by accident:
 
 - What the types are, and that their representation is
   PostgreSQL's — `SM2_DESIGN.md` §2.1, `TYPE.md` §3.
-- That `number` is a decimal after DuckDB's, and why —
+- That `decimal` follows DuckDB's decimal, and why —
   `SM2_DESIGN.md` §2.2.
 - That a type is an ADT in `pg_type`'s shape — `SM2_DESIGN.md`
   §2.3.
@@ -157,7 +157,7 @@ Settled, and listed so nobody reopens them by accident:
   sm2's — `SM2_DESIGN.md` §6.
 - The type codes, `enum` as sm3's, and `text` / `varchar` —
   `SM2_DESIGN.md` §2.
-- `number(p, s)` only: its widths, its bare default, and the
+- `decimal(p, s)` only: its widths, its bare default, and the
   refusal of NaN — `SM2_DESIGN.md` §2.2.
 - That `in` / `out` are filled in v1 and `recv` / `send` wait —
   `SM2_DESIGN.md` §2.3.

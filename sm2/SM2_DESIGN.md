@@ -14,7 +14,7 @@ decisions in `SM2_OBJECTIVE.md`:
 | Decision | Choice |
 | --- | --- |
 | Types | a fixed set, each an ADT in `pg_type`'s shape, each with a stable on-disk type code |
-| Representation | PostgreSQL's, type by type, little-endian — except `number`, a decimal after DuckDB's |
+| Representation | PostgreSQL's, type by type, little-endian — except `decimal`, which follows DuckDB's |
 | Key encoding | order-preserving per type; descending is the inverted encoding |
 | Tuple format | null bitmap, fixed/variable split, a schema version stamp per row |
 | Tuple codec | an API of its own, with its own header and its own tests |
@@ -86,7 +86,7 @@ is what you read while writing code.
 
 - The set is fixed and chosen from what the PostgreSQL target
   needs first: boolean, the integer widths, `float4` and
-  `float8`, `number`, `text` / `varchar` / `bytea`, `date`,
+  `float8`, `decimal`, `text` / `varchar` / `bytea`, `date`,
   `time`, `timestamp`, `timestamptz`, `interval`, `uuid`.
   Arrays, composites, ranges and user-defined types are not in
   the first set; the format must leave room to add them
@@ -128,7 +128,7 @@ is what you read while writing code.
 ### 2.1 The representation is PostgreSQL's
 
 **Decision: a datum's bytes are what PostgreSQL makes them,
-type by type, with `number` the one exception.** Not a format
+type by type, with `decimal` the one exception.** Not a format
 of our own that happens to hold the same information — the
 same widths, the same epochs, the same units, the same struct
 layouts.
@@ -146,7 +146,7 @@ bytes themselves are copied, not converted.
 | `bool` | 0 or 1 | 1 |
 | `int2` / `int4` / `int8` | two's complement | 2 / 4 / 8 |
 | `float4` / `float8` | IEEE-754 | 4 / 8 |
-| `number` | **after DuckDB's**, not PG's — see §2.2 | 8 or 16 |
+| `decimal` | **after DuckDB's**, not PG's — see §2.2 | 8 or 16 |
 | `date` | days since 2000-01-01 | 4 |
 | `time` | microseconds since midnight | 8 |
 | `timestamp` / `timestamptz` | microseconds since 2000-01-01 00:00:00, UTC for `timestamptz` | 8 |
@@ -174,9 +174,9 @@ Two places need sm2 to be more precise than PostgreSQL is:
   framing is the tuple's business (§4) — sm2 has its own
   framing, and its own TOAST in its own format.
 
-### 2.2 Except number, a decimal after DuckDB's
+### 2.2 Except decimal, which follows DuckDB's
 
-**Decision: `number` is a fixed-width decimal, with DuckDB's
+**Decision: `decimal` is a fixed-width decimal, with DuckDB's
 `DECIMAL` as its reference.** PG's numeric is a varlena of
 base-10000 digits with a weight and a display scale,
 effectively unbounded in length. DuckDB's is a two's-complement
@@ -212,8 +212,8 @@ later:
   integer and has neither, so sm2 refuses them on insert.
 - **The scale must be declared.** The decimal puts `(precision,
   scale)` in the schema; PG allows a bare `numeric` where
-  every datum carries its own. A bare `number` column has no
-  equivalent, so it defaults to `number(18, 3)`, as DuckDB's
+  every datum carries its own. A bare `decimal` column has no
+  equivalent, so it defaults to `decimal(18, 3)`, as DuckDB's
   bare `DECIMAL` does, which can round a datum its user believed
   exact.
 - **It is the one type that is converted** at the executor
@@ -222,25 +222,30 @@ later:
 
 What a column may declare, and what a datum may hold:
 
-- **Only `number(p, s)`.** The type is named `number`, not
-  `numeric`, so it is not mistaken for PostgreSQL's: SQL's
-  `NUMERIC` and `DECIMAL` are not accepted, and a schema
-  ported from PostgreSQL declares `number(p, s)` in their
-  place.
+- **`decimal(p, s)`, with `numeric` as an alias.** The type is
+  named `decimal`, and `numeric` means the same, as `decimal`
+  does in PostgreSQL, where it is an alias of `numeric`. As
+  there, the alias is the SQL layer's to resolve: sm2's
+  descriptor carries the one name. The names are PostgreSQL's
+  but the type is not, so a schema ported from PostgreSQL keeps
+  its `numeric(p, s)` columns and gets at most 38 digits, no
+  NaN and no infinity (above). An earlier draft named the type
+  `number`, and refused `NUMERIC` and `DECIMAL`, to keep that
+  difference in view; the familiar names were preferred.
 - **One type code, two widths**, chosen by declared precision:
   8 bytes up to 18 digits, 16 bytes from 19 to 38. A column
   declares its precision, so a column's datums all have one
   width; the width is the typmod's, not the datum's.
-- **`number(p)` is `number(p, 0)`**, as in PostgreSQL.
-- **A bare `number` is `number(18, 3)`**, DuckDB's default:
+- **`decimal(p)` is `decimal(p, 0)`**, as in PostgreSQL.
+- **A bare `decimal` is `decimal(18, 3)`**, DuckDB's default:
   15 integer digits and 3 fractional, in 8 bytes. A datum with
   more fractional digits is rounded to 3, as PostgreSQL rounds
   for a declared typmod; one whose integer part needs more
-  than 15 digits is an error. Refusing a bare `number` was the
+  than 15 digits is an error. Refusing a bare `decimal` was the
   alternative; the default was chosen over it, and its cost is
   in §7. A second,
   variable-width representation was rejected outright: two
-  `number`s on disk means two key encodings and two
+  `decimal`s on disk means two key encodings and two
   comparison paths, which is most of what this section
   avoids.
 - **NaN and infinities are refused** on insert with a clear
@@ -357,7 +362,7 @@ all have to satisfy are here.
   orders them bytewise and keeps them as two datums, so a
   key that stopped at the sort key would merge two rows into
   one. The tuple holds the datum regardless (§5).
-- **number** needs nothing bespoke, because §2.2 made it a
+- **decimal** needs nothing bespoke, because §2.2 made it a
   fixed-width two's-complement integer: flip the sign bit,
   write the bytes big-endian, and it is an integer's key.
   Two datums only compare at a common scale, and the schema
@@ -787,12 +792,12 @@ Accepted so far:
   executor boundary per tuple, not per datum: the framing is
   rebuilt, the column bytes are copied. The threaded fork
   removed the IPC boundary but not this (`PART4.md` §2).
-- **number is the exception, and pays for it.** It is a
-  decimal after DuckDB's, not PostgreSQL's (§2.2), so it is the
+- **decimal is the exception, and pays for it.** It follows
+  DuckDB's decimal, not PostgreSQL's numeric (§2.2), so it is the
   one type converted datum by datum, it caps at 38 digits
   where PG allows 1000, and it has no NaN and no infinity.
-  Bought in exchange for a `number` key encoding that is
-  an integer's, and a fixed-width `number` column.
+  Bought in exchange for a `decimal` key encoding that is
+  an integer's, and a fixed-width `decimal` column.
 - **Little-endian is in the format.** §2.1 fixes the byte
   order that PostgreSQL leaves native, so a big-endian host
   byte-swaps on every datum where others `memcpy`.
@@ -831,11 +836,11 @@ Accepted so far:
 - **The type set is closed at the format.** New types are
   cheap, but only while the type code and the tuple layout
   leave room for them; that room is spent once.
-- **A bare `number` can round.** It defaults to
-  `number(18, 3)` (§2.2), so a datum a user believed exact
+- **A bare `decimal` can round.** It defaults to
+  `decimal(18, 3)` (§2.2), so a datum a user believed exact
   loses digits past the third fractional place, with no error,
   and one of 10^15 or more is refused.
-  Refusing a bare `number` would have been louder; the default
+  Refusing a bare `decimal` would have been louder; the default
   was chosen for compatibility.
 - **Every key column pays a null marker byte**, `NOT NULL`
   ones included (§3.1). It buys a key layout that no

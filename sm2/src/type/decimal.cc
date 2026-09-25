@@ -1,13 +1,13 @@
 /*
- * number.cc -- number (TYPE.md §3.4, SM2_DESIGN.md §2.2): a
- * decimal after DuckDB's, a two's complement integer scaled by
- * 10^s, little-endian, 8 bytes for a precision up to 18 and 16
- * bytes up to 38, with (precision, scale) in the typmod rather
- * than the datum.
+ * decimal.cc -- decimal, which SQL may also call numeric
+ * (TYPE.md §3.4, SM2_DESIGN.md §2.2): after DuckDB's decimal, a
+ * two's complement integer scaled by 10^s, little-endian, 8 bytes
+ * for a precision up to 18 and 16 bytes up to 38, with
+ * (precision, scale) in the typmod rather than the datum.
  *
  * The typmod is PostgreSQL's numeric typmod, ((p << 16) | s) + 4,
- * with 1 <= p <= 38 and 0 <= s <= p; -1 is a bare number, which
- * is number(18, 3), as DuckDB's bare DECIMAL is. The text is what
+ * with 1 <= p <= 38 and 0 <= s <= p; -1 is a bare decimal, which
+ * is decimal(18, 3), as DuckDB's bare DECIMAL is. The text is what
  * PostgreSQL prints for numeric(p, s): exactly s fraction digits,
  * a minus sign only on a value below zero. As for the other types,
  * in accepts only text that prints back unchanged, and a value
@@ -25,7 +25,7 @@
 
 namespace {
 
-/* A number typmod's precision and scale, and its datum's width. */
+/* A decimal typmod's precision and scale, and its datum's width. */
 struct numtype_t {
   int precision;
   int scale;
@@ -49,9 +49,9 @@ bool decode_typmod(int32_t typmod, numtype_t &t) {
   return true;
 }
 
-/* Fail with SM_ERR_INVALID: typmod is not a valid number typmod. */
+/* Fail with SM_ERR_INVALID: typmod is not a valid decimal typmod. */
 int bad_typmod(int32_t typmod) {
-  return sm1::seterr(sm1::SM_ERR_INVALID, "invalid typmod for type number: " +
+  return sm1::seterr(sm1::SM_ERR_INVALID, "invalid typmod for type decimal: " +
                                               std::to_string(typmod));
 }
 
@@ -92,7 +92,7 @@ void store(__int128 v, size_t width, std::string &datum) {
 }
 
 /* Print v at scale s, as PostgreSQL prints numeric(p, s). */
-std::string number_text(__int128 v, int scale) {
+std::string decimal_text(__int128 v, int scale) {
   unsigned __int128 mag = magnitude(v);
   std::string digits;
   do {
@@ -109,8 +109,8 @@ std::string number_text(__int128 v, int scale) {
   return v < 0 ? "-" + digits : digits;
 }
 
-/* Parse a number's canonical text under typmod. */
-int number_in(std::string_view text, int32_t typmod, std::string &datum) {
+/* Parse a decimal's canonical text under typmod. */
+int decimal_in(std::string_view text, int32_t typmod, std::string &datum) {
   return sm2::catch_nomem([&] {
     numtype_t t;
     if (!decode_typmod(typmod, t)) {
@@ -131,7 +131,7 @@ int number_in(std::string_view text, int32_t typmod, std::string &datum) {
         (frac_digits < 0 ? int_digits : frac_digits)++;
         mag = mag * 10 + (c - '0');
       } else {
-        return sm2::bad_input("number", text);
+        return sm2::bad_input("decimal", text);
       }
     }
     // Canonical text carries exactly the column's scale, and the
@@ -139,42 +139,42 @@ int number_in(std::string_view text, int32_t typmod, std::string &datum) {
     if (int_digits == 0 || frac_digits == 0 ||
         (frac_digits < 0 ? 0 : frac_digits) != t.scale ||
         mag >= pow10(t.precision)) {
-      return sm2::bad_input("number", text);
+      return sm2::bad_input("decimal", text);
     }
     __int128 v = neg ? -static_cast<__int128>(mag) : static_cast<__int128>(mag);
     // Canonical only if it prints back unchanged: no leading zero,
     // no "-0".
-    if (number_text(v, t.scale) != text) {
-      return sm2::bad_input("number", text);
+    if (decimal_text(v, t.scale) != text) {
+      return sm2::bad_input("decimal", text);
     }
     store(v, t.width, datum);
     return 0;
   });
 }
 
-/* Print a number datum under typmod. */
-int number_out(std::string_view datum, int32_t typmod, std::string &text) {
+/* Print a decimal datum under typmod. */
+int decimal_out(std::string_view datum, int32_t typmod, std::string &text) {
   return sm2::catch_nomem([&] {
     numtype_t t;
     if (!decode_typmod(typmod, t)) {
       return bad_typmod(typmod);
     }
     if (datum.size() != t.width) {
-      return sm2::bad_datum("number", datum, t.width);
+      return sm2::bad_datum("decimal", datum, t.width);
     }
     __int128 v = load(datum);
     if (magnitude(v) >= pow10(t.precision)) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "a number datum exceeds its precision " +
+                         "a decimal datum exceeds its precision " +
                              std::to_string(t.precision));
     }
-    text = number_text(v, t.scale);
+    text = decimal_text(v, t.scale);
     return 0;
   });
 }
 
-/* Order two number datums of one column: integer order. */
-int number_cmp(std::string_view a, std::string_view b, int32_t) {
+/* Order two decimal datums of one column: integer order. */
+int decimal_cmp(std::string_view a, std::string_view b, int32_t) {
   __int128 x = load(a), y = load(b);
   return (x > y) - (x < y);
 }
@@ -183,13 +183,13 @@ int number_cmp(std::string_view a, std::string_view b, int32_t) {
 
 namespace sm2 {
 
-const type_t type_number = {.code = 7,
-                            .name = "number",
-                            .len = -1,
-                            .byval = false,
-                            .align = 8,
-                            .in = number_in,
-                            .out = number_out,
-                            .cmp = number_cmp};
+const type_t type_decimal = {.code = 7,
+                             .name = "decimal",
+                             .len = -1,
+                             .byval = false,
+                             .align = 8,
+                             .in = decimal_in,
+                             .out = decimal_out,
+                             .cmp = decimal_cmp};
 
 } // namespace sm2

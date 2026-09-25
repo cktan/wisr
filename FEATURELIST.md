@@ -33,9 +33,9 @@ ordered key as the only access path below sm2.
 
 ## 1. Data types
 
-- [x] int / float / number
-- [x] number (this is a new implementation of decimal ala duckdb;
-  `NUMERIC` and `DECIMAL` are not supported)
+- [x] int / float / decimal
+- [x] decimal, with `numeric` as an alias (this is a new
+  implementation of decimal ala duckdb, not PostgreSQL's numeric)
 - [x] text / varchar
 - [x] bool
 - [x] timestamp / date / time

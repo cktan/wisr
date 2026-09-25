@@ -44,7 +44,7 @@ The vocabulary the two formats are written in, so it comes
 before them.
 
 - The first set: boolean, the integer widths, `float4`,
-  `float8`, `number`, `text` / `varchar` / `bytea`, `date`,
+  `float8`, `decimal`, `text` / `varchar` / `bytea`, `date`,
   `time`, `timestamp`, `timestamptz`, `interval`, `uuid` —
   each one spelled out in `TYPE.md` §3.
 - **The ADT table first** (`SM2_DESIGN.md` §2.3): one descriptor
@@ -53,19 +53,19 @@ before them.
 - PostgreSQL's representation per type (`SM2_DESIGN.md` §2.1),
   little-endian, with variable-length datums carrying the
   payload alone.
-- `number` as a decimal after DuckDB's (`SM2_DESIGN.md` §2.2),
+- `decimal` after DuckDB's decimal (`SM2_DESIGN.md` §2.2),
   and interval as PG's three components (`SM2_DESIGN.md` §2.4).
 - A stable on-disk type code per type, assigned once.
 - Null and collation as properties of a column, not of a type.
-- The `number` rules in `SM2_DESIGN.md` §2.2: only
-  `number(p, s)`, a bare `number` is `number(18, 3)`, and NaN
+- The `decimal` rules in `SM2_DESIGN.md` §2.2: only
+  `decimal(p, s)`, a bare `decimal` is `decimal(18, 3)`, and NaN
   and infinity are refused.
 
 **Verify:** for every type, a datum round trips through the
 in-memory representation, and the type's own comparison
 function agrees with hand-written expectations at the
 boundaries (min, max, zero, negative zero, NaN, empty
-string). For every type but `number`, a datum's bytes equal
+string). For every type but `decimal`, a datum's bytes equal
 what PostgreSQL stores for the same datum — a table of
 fixtures taken from PG, which is the only way "the
 representation is PostgreSQL's" is a claim rather than an
@@ -77,7 +77,7 @@ The foundation. sm1 orders keys bytewise only, so every
 ordered thing above rests on this, including sm3's indexes.
 
 - Order-preserving encodings per type: integers (sign-flipped
-  big-endian), floats (IEEE-754 total order), `number`,
+  big-endian), floats (IEEE-754 total order), `decimal`,
   timestamps, text (collation sort key).
 - Multi-column keys, ascending and descending per column,
   nulls first or last.
@@ -165,7 +165,7 @@ small, and a simple shrink for byte strings is added only if a
 failure proves hard to read.
 
 **The PostgreSQL fixtures are observed on disk, once**, on
-PostgreSQL 18. For every type but `number`,
+PostgreSQL 18. For every type but `decimal`,
 `test/pg_fixtures.h` holds each fixture value with the bytes
 PostgreSQL stores for it, read through the
 `pageinspect` extension: a one-column table per type, the values

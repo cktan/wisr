@@ -66,7 +66,9 @@ FORMAT_FILES := $(filter-out test/pg_fixtures.h src/ryu/%, \
 
 all: $(LIB) $(TEST_BIN)
 
+# Rebuilt from scratch, so an object whose source is gone leaves it.
 $(LIB): $(LIB_OBJS)
+	rm -f $@
 	$(AR) rcs $@ $^
 
 # sm1's Makefile decides whether its library is up to date.
