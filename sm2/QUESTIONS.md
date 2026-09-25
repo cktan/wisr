@@ -20,7 +20,10 @@ types, and key encoding — are answered and have moved into
 — the schema a `rel` is handed and alignment — into
 `SM2_DESIGN.md` §4, the first answered by keeping no schema
 version and the second by packing, not aligning; 5.1 and 5.3
-— the header and sm2's errors — into `SM2_DESIGN.md` §5; and
+— the header and sm2's errors — and 5.2, 5.4, 5.5 and 5.6 — a
+decoded datum's memory, `NOT NULL`, the schema a `rel` borrows,
+and heap and index `rel`s — into `SM2_DESIGN.md` §5, which
+empties section 5; and
 6.1, 6.2 and 6.3 — the build, the property tests and the
 PostgreSQL fixtures — into `SM2_DESIGN.md` §8. The numbering of
 what remains is kept so that a question's number never
@@ -48,53 +51,6 @@ back is one forward scan. → `SM2_DESIGN.md` §4
 that default, and measure before defending the number.* sm1
 allows 64MB, but undo, lock and read sets are linear in keys
 touched (`sm1/SM1_DESIGN.md` §13). → `SM2_DESIGN.md` §4
-
----
-
-## 5. The `rel` API — blocks step 4 (`SM2_DESIGN.md` §8.2)
-
-**5.2 [ASSUMABLE] Who owns a decoded datum's memory?**
-sm1's rule is that handed-out byte strings point into
-engine-owned memory, are not NUL-terminated, must not be
-freed, and have a stated validity window.
-*Suggested: the same rule, with the window being "until the
-next call on this `rel`", which is what sm1 does for
-`sm1::read`.* A codec that allocates per datum will dominate the
-profile of every scan. → `SM2_DESIGN.md` §5
-
-**5.4 [ASSUMABLE] Does sm2 enforce `NOT NULL`?**
-The tuple has a null bitmap, so it *can*.
-*Suggested: no.* Constraints are sm3's, and a codec that
-rejects data is a codec with a policy in it. sm2 stores what
-it is given. → `SM2_DESIGN.md` §5, `SM2_OBJECTIVE.md`
-
-**5.5 [ASSUMABLE] Does a `rel` copy its schema or borrow it?**
-Already open in `SM2_DESIGN.md` §5. With no schema version
-(`SM2_DESIGN.md` §4), a `rel` has one schema, the current one.
-*Suggested: borrow, with sm3 required to keep it alive for the
-`rel`'s lifetime and to take the schema-row lock before
-changing it (`sm3/SM3_DESIGN.md` §2) — which it must do anyway.*
-→ `SM2_DESIGN.md` §5
-
-**5.6 [BLOCKING] How does sm3 write index entries through
-sm2, and who draws `rowno`?**
-The table is now a heap keyed by `rowno` (`SM2_DESIGN.md` §5), so
-`rel` reads and writes rows by `rowno`. Index entries are keyed
-by encoded columns instead — `encode(sk) ‖ rowno`, or
-`encode(sk)` alone for a unique index (`sm3/SM3_DESIGN.md` §3) —
-and though sm3 may call sm1 directly (`DESIGN.md` §5 at the
-top level), sm2 alone prepends and strips the 2-byte object
-prefix, and sm3 never encodes a key itself, so sm2 needs a
-way to write, delete and scan them. Separately, someone calls
-`sm1::nextseq` for each new row.
-*Suggested: two kinds of `rel`, opened over the same sm1
-store with different prefixes: a **heap `rel`**, keyed by
-`rowno`, and an **index `rel`**, keyed by the encoded columns
-it is opened with, whose value is a tuple (the `rowno` and the
-INCLUDE columns). `rel_insert` on a heap `rel` draws the
-`rowno` from the table's sequence, named in the schema, and
-returns it, so the sequence is used in one place.*
-→ `SM2_DESIGN.md` §5
 
 ---
 

@@ -852,9 +852,26 @@ The operations, and what each one is over:
 | `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest` |
 | `rel_scan`, `rel_scan_seek` | tuples in `rowno` order, forward only | `sm1::scan`, `sm1::scan_seek` |
 
-How sm3 writes and scans index entries through sm2 — keyed by
-encoded columns rather than by `rowno` — and who draws the
-`rowno` from the sequence are open (`QUESTIONS.md` 5.6).
+**Decision: two kinds of `rel`, over the same sm1 store, told
+apart by their prefix.** Index entries are keyed by encoded
+columns, not by `rowno`, and sm3 never encodes a key itself,
+so sm2 gives it a `rel` for them too:
+
+- A **heap `rel`** is keyed by `rowno`, under the rows'
+  prefix `0x0000`, and its value is the row's tuple. Its
+  `rel_insert` draws the `rowno` from the table's sequence,
+  named in the schema the `rel` is opened with, and returns it,
+  so the sequence is drawn in one place.
+- An **index `rel`** is keyed by the encoded columns it is
+  opened with — `encode(sk) ‖ rowno`, or `encode(sk)` alone for
+  a unique index (`sm3/SM3_DESIGN.md` §3) — under the index's
+  prefix, and its value is a tuple holding the `rowno` and the
+  INCLUDE columns. It is how sm3 writes, deletes and scans
+  index entries.
+
+sm2 prepends and strips the prefix for both kinds, and the
+table above is the heap `rel`'s; an index `rel`'s operations
+are the same shape, keyed by its columns.
 
 The rules it must satisfy:
 
@@ -906,11 +923,22 @@ The rules it must satisfy:
   are the other.
 - **Forward only.** A `rel` scan inherits sm1's ban, and the
   descending case is already handled in the encoding (§3).
+- **A decoded datum points into sm2's memory**, as sm1's
+  byte strings point into sm1's: it is not NUL-terminated, must
+  not be freed, and stays valid until the next call on the same
+  `rel`, the window `sm1::read` gives. A codec that allocated
+  per datum would dominate the profile of every scan.
+- **`NOT NULL` is not enforced here.** The tuple's null bitmap
+  could, but constraints are sm3's, and a codec that rejects
+  data is a codec with a policy in it; sm2 stores what it is
+  given.
+- **A `rel` borrows its schema.** sm3's catalog owns it and
+  keeps it alive for the `rel`'s lifetime, and takes the schema
+  row's lock before changing it (`sm3/SM3_DESIGN.md` §2), which
+  it must do anyway. With no schema version (§4) a `rel` has one
+  schema, the current one, so there is nothing to copy for.
 
-Open: whether a `rel` copies the schema it is opened with or
-borrows it — sm3's catalog is the owner, and a schema change
-under a live `rel` is what makes the answer matter; and
-whether the tuple-at-a-time shape above is enough, or a
+Open: whether the tuple-at-a-time shape above is enough, or a
 batched form earns its keep once there are predicates to push
 down, which is a question for the level that has them
 (`sm3/SM3_DESIGN.md` §5).
@@ -1060,7 +1088,7 @@ error state (§5); `src/type` does already.
 | 1. Types | built |
 | 2. Key encoding | built |
 | 3. Tuple format and codec | built, TOAST postponed |
-| 4. Tuple relation | not started; `QUESTIONS.md` §5 first |
+| 4. Tuple relation | not started; its questions are answered (§5) |
 
 #### Step 1. Types
 
