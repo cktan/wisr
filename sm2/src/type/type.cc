@@ -14,9 +14,10 @@ namespace sm2 {
 const type_t *type_by_code(uint8_t code) {
   // Every type built so far, by its frozen code.
   static const type_t *const types[] = {
-      &type_bool,      &type_int2,        &type_int4,     &type_int8,
-      &type_float4,    &type_float8,      &type_date,     &type_time,
-      &type_timestamp, &type_timestamptz, &type_interval, &type_uuid};
+      &type_bool,        &type_int2,     &type_int4, &type_int8,
+      &type_float4,      &type_float8,   &type_text, &type_varchar,
+      &type_bytea,       &type_date,     &type_time, &type_timestamp,
+      &type_timestamptz, &type_interval, &type_uuid};
   for (const type_t *t : types) {
     if (t->code == code) {
       return t;

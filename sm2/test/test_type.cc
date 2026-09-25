@@ -147,10 +147,10 @@ template <typename F> void check_float_type(const sm2::type_t &t) {
 
 TEST_CASE("each type is found by its frozen code, and only by it") {
   // Verify the registry and each descriptor's fixed properties.
-  // 1. Codes 1 to 6 and 11 to 16 find bool, the integers, the
-  //    floats, date, time, the timestamps, interval and uuid,
-  //    whose name, width, by-value flag and alignment are
-  //    PostgreSQL's.
+  // 1. Codes 1 to 6 and 8 to 16 find bool, the integers, the
+  //    floats, text, varchar, bytea, date, time, the timestamps,
+  //    interval and uuid, whose name, width (-1 for variable),
+  //    by-value flag and alignment are PostgreSQL's.
   // 2. The slots not filled yet are null.
   // 3. Code 0, which is never a type, and codes not assigned yet
   //    find nothing.
@@ -160,12 +160,14 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     int16_t len;
     bool byval;
     uint8_t align;
-  } want[] = {{1, "bool", 1, true, 1},        {2, "int2", 2, true, 2},
-              {3, "int4", 4, true, 4},        {4, "int8", 8, true, 8},
-              {5, "float4", 4, true, 4},      {6, "float8", 8, true, 8},
-              {11, "date", 4, true, 4},       {12, "time", 8, true, 8},
-              {13, "timestamp", 8, true, 8},  {14, "timestamptz", 8, true, 8},
-              {15, "interval", 16, false, 8}, {16, "uuid", 16, false, 1}};
+  } want[] = {{1, "bool", 1, true, 1},         {2, "int2", 2, true, 2},
+              {3, "int4", 4, true, 4},         {4, "int8", 8, true, 8},
+              {5, "float4", 4, true, 4},       {6, "float8", 8, true, 8},
+              {8, "text", -1, false, 4},       {9, "varchar", -1, false, 4},
+              {10, "bytea", -1, false, 4},     {11, "date", 4, true, 4},
+              {12, "time", 8, true, 8},        {13, "timestamp", 8, true, 8},
+              {14, "timestamptz", 8, true, 8}, {15, "interval", 16, false, 8},
+              {16, "uuid", 16, false, 1}};
   for (auto &w : want) {
     CAPTURE(w.name);
     const sm2::type_t *t = sm2::type_by_code(w.code);
@@ -278,34 +280,47 @@ TEST_CASE("-0 and 0 are distinct datums that compare equal") {
 TEST_CASE("running out of memory in a type's in or out is SM_ERR_NOMEM") {
   // Verify every type's in and out turn a bad_alloc into an error
   // (SM2_DESIGN.md §5), taking the allocation that reports bad
-  // input, since a fixed-width datum and its text fit without one.
-  // 1. With no allocation left, in on invalid text fails with
+  // input, since a fixed-width datum and its text fit without one;
+  // for bytea, whose every datum prints, the allocation of a long
+  // text.
+  // 1. With no allocation left, in on invalid text -- bytes that
+  //    are not UTF-8, for text and varchar -- fails with
   //    SM_ERR_NOMEM, not SM_ERR_INVALID, and throws nothing.
-  // 2. So does out on a datum of the wrong width.
+  // 2. So does out on a datum of the wrong width or not UTF-8, or
+  //    on a 16-byte bytea.
   // 3. With the budget restored, the same calls report
-  //    SM_ERR_INVALID again.
+  //    SM_ERR_INVALID again, and the bytea prints.
   for (int code = 1; code < 256; code++) {
     const sm2::type_t *t = sm2::type_by_code(code);
     if (!t) {
       continue;
     }
     CAPTURE(t->name);
+    bool utf8 = t == &sm2::type_text || t == &sm2::type_varchar;
+    bool bytea = t == &sm2::type_bytea;
+    std::string bad_text = utf8 ? "\xff" : "not a value";
+    std::string bad_datum = utf8    ? "\xff"
+                            : bytea ? std::string(16, '\0')
+                                    : std::string(t->len + 1, '\0');
     std::string datum, text;
-    std::string wrong(t->len + 1, '\0');
     t_alloc_budget = 0;
-    int in_rc = t->in("not a value", -1, datum);
+    int in_rc = t->in(bad_text, -1, datum);
     sm1::errnum_t in_err = sm1::errnum();
-    int out_rc = t->out(wrong, -1, text);
+    int out_rc = t->out(bad_datum, -1, text);
     sm1::errnum_t out_err = sm1::errnum();
     t_alloc_budget = -1;
     CHECK(in_rc == -1);
     CHECK(in_err == sm1::SM_ERR_NOMEM);
     CHECK(out_rc == -1);
     CHECK(out_err == sm1::SM_ERR_NOMEM);
-    CHECK(t->in("not a value", -1, datum) == -1);
+    CHECK(t->in(bad_text, -1, datum) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-    CHECK(t->out(wrong, -1, text) == -1);
-    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    if (bytea) {
+      CHECK(t->out(bad_datum, -1, text) == 0);
+    } else {
+      CHECK(t->out(bad_datum, -1, text) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    }
   }
 }
 
@@ -690,6 +705,155 @@ TEST_CASE("a uuid is its 16 bytes, ordered bytewise") {
                                 "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a111",
                                 "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1g",
                                 " a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"}) {
+    CAPTURE(text);
+    expect_bad_input(t, text);
+  }
+}
+
+namespace {
+
+/* A code point's UTF-8 bytes. */
+std::string utf8(uint32_t cp) {
+  std::string s;
+  if (cp < 0x80) {
+    s += static_cast<char>(cp);
+  } else if (cp < 0x800) {
+    s += static_cast<char>(0xC0 | cp >> 6);
+    s += static_cast<char>(0x80 | (cp & 0x3F));
+  } else if (cp < 0x10000) {
+    s += static_cast<char>(0xE0 | cp >> 12);
+    s += static_cast<char>(0x80 | (cp >> 6 & 0x3F));
+    s += static_cast<char>(0x80 | (cp & 0x3F));
+  } else {
+    s += static_cast<char>(0xF0 | cp >> 18);
+    s += static_cast<char>(0x80 | (cp >> 12 & 0x3F));
+    s += static_cast<char>(0x80 | (cp >> 6 & 0x3F));
+    s += static_cast<char>(0x80 | (cp & 0x3F));
+  }
+  return s;
+}
+
+/*
+ * A random valid UTF-8 string of up to 20 code points: mostly
+ * ASCII, with every length of sequence, the edges of each range
+ * included.
+ */
+std::string gen_utf8(std::mt19937_64 &rng) {
+  static const uint32_t edges[] = {0x01,   0x7F,   0x80,   0x7FF,   0x800,
+                                   0xD7FF, 0xE000, 0xFFFF, 0x10000, 0x10FFFF};
+  std::string s;
+  for (size_t n = rng() % 21; n > 0; n--) {
+    uint32_t cp;
+    switch (rng() % 4) {
+    case 0:
+      cp = edges[rng() % std::size(edges)];
+      break;
+    case 1:
+      do {
+        cp = 1 + rng() % 0x10FFFF;
+      } while (cp >= 0xD800 && cp <= 0xDFFF);
+      break;
+    default:
+      cp = 0x20 + rng() % 0x5F;
+    }
+    s += utf8(cp);
+  }
+  return s;
+}
+
+/* memcmp's order on byte strings, the shorter first on a tie. */
+int bytes_order(const std::string &a, const std::string &b) {
+  return sign(a.compare(b));
+}
+
+} // namespace
+
+TEST_CASE("text and varchar hold valid UTF-8, ordered bytewise") {
+  // Verify text and varchar by property, from test_seed().
+  // 1. Every generated string, the empty one included, is its own
+  //    text and datum, both ways.
+  // 2. cmp is bytewise, the shorter first on a tie, which is
+  //    codepoint order.
+  // 3. in and out refuse bytes that are not UTF-8 -- overlong
+  //    forms, surrogates, past U+10FFFF, truncated sequences,
+  //    stray continuation bytes -- and a NUL.
+  INFO("seed ", test_seed());
+  const std::string_view bad[] = {"\xff",
+                                  "\x80",
+                                  "\xc0\x80",
+                                  "\xc1\xbf",
+                                  "\xe0\x80\x80",
+                                  "\xed\xa0\x80",
+                                  "\xed\xbf\xbf",
+                                  "\xf0\x80\x80\x80",
+                                  "\xf4\x90\x80\x80",
+                                  "\xf5\x80\x80\x80",
+                                  "\xe2\x82",
+                                  "a\xe2\x82",
+                                  "\xe2\x28\xa1",
+                                  std::string_view("a\0b", 3),
+                                  std::string_view("\0", 1)};
+  for (const sm2::type_t *t : {&sm2::type_text, &sm2::type_varchar}) {
+    CAPTURE(t->name);
+    std::mt19937_64 rng(test_seed());
+    std::vector<std::string> values = {"", "a", "ab", "b"};
+    for (int i = 0; i < property_runs; i++) {
+      values.push_back(gen_utf8(rng));
+    }
+    for (const std::string &v : values) {
+      std::string datum, text;
+      REQUIRE(t->in(v, -1, datum) == 0);
+      CHECK(datum == v);
+      REQUIRE(t->out(datum, -1, text) == 0);
+      CHECK(text == v);
+    }
+    for (size_t i = 0; i + 1 < values.size(); i++) {
+      CHECK(sign(t->cmp(values[i], values[i + 1], -1)) ==
+            bytes_order(values[i], values[i + 1]));
+    }
+    for (std::string_view b : bad) {
+      std::string datum, text;
+      CHECK(t->in(b, -1, datum) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+      CHECK(t->out(b, -1, text) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    }
+  }
+}
+
+TEST_CASE("bytea is any bytes, printed as hex, ordered bytewise") {
+  // Verify bytea by property, from test_seed().
+  // 1. Every generated byte string, empty and NUL-bearing ones
+  //    included, prints and reads back to itself.
+  // 2. cmp is bytewise, the shorter first on a tie.
+  // 3. in refuses what bytea_out never prints: upper case, the
+  //    escape format, a missing or odd hex digit, spaces.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  const sm2::type_t &t = sm2::type_bytea;
+  std::vector<std::string> values = {"", std::string(1, '\0'), "\xff",
+                                     std::string(2, '\0')};
+  for (int i = 0; i < property_runs; i++) {
+    std::string v;
+    for (size_t n = rng() % 24; n > 0; n--) {
+      v += static_cast<char>(rng() % 4 == 0 ? 0 : rng());
+    }
+    values.push_back(v);
+  }
+  for (const std::string &v : values) {
+    std::string text, back;
+    REQUIRE(t.out(v, -1, text) == 0);
+    CAPTURE(text);
+    REQUIRE(t.in(text, -1, back) == 0);
+    CHECK(back == v);
+  }
+  for (size_t i = 0; i + 1 < values.size(); i++) {
+    CHECK(sign(t.cmp(values[i], values[i + 1], -1)) ==
+          bytes_order(values[i], values[i + 1]));
+  }
+  for (std::string_view text :
+       {"", "x00", "\\X00", "\\x0", "\\x0g", "\\xFF", "\\x 00", "\\x00 ",
+        "\\000", "abc", "\\\\x00"}) {
     CAPTURE(text);
     expect_bad_input(t, text);
   }

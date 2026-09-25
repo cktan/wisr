@@ -73,6 +73,9 @@ extern const type_t type_int4;        /* code 3 */
 extern const type_t type_int8;        /* code 4 */
 extern const type_t type_float4;      /* code 5 */
 extern const type_t type_float8;      /* code 6 */
+extern const type_t type_text;        /* code 8 */
+extern const type_t type_varchar;     /* code 9 */
+extern const type_t type_bytea;       /* code 10 */
 extern const type_t type_date;        /* code 11 */
 extern const type_t type_time;        /* code 12 */
 extern const type_t type_timestamp;   /* code 13 */

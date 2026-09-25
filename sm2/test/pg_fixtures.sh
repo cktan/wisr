@@ -69,6 +69,16 @@ TYPES+=(
   "14|timestamptz|'-infinity', 'infinity', '2000-01-01 00:00:00+00', '1999-12-31 23:59:59.999999+00', '1970-01-01 00:00:00+00', '2024-02-29 12:34:56.789+00', '0001-01-01 00:00:00+00', '0001-12-31 23:59:59+00 BC', '4713-11-24 00:00:00+00 BC', '4714-11-24 00:00:00+00 BC', '294276-12-31 23:59:59.999999+00'"
 )
 
+# Text: empty, ASCII, every UTF-8 length, the characters C and
+# the separators care about, and a value long enough for a
+# four-byte varlena header. varchar takes the same values.
+STRINGS="'', 'a', 'hello world', 'ÿ', '€', '𝄞', 'ünïcödé', 'a\"b', 'back\\slash', E'tab\\there', E'new\\nline', 'pipe|char', repeat('x',200)"
+TYPES+=(
+  "8|text|$STRINGS"
+  "9|varchar|$STRINGS"
+  "10|bytea|'\\x', '\\x00', '\\xff', '\\x00ff10', 'abc', repeat('z',200)::bytea"
+)
+
 # random_intervals: 500 seeded random intervals as SQL literals
 # in PostgreSQL's verbose input form, so the ISO 8601 text in the
 # header is PostgreSQL's own printing: half small, half anywhere
@@ -104,6 +114,19 @@ declare -A RANDOM_ROWS=(
   [date]="SELECT DATE '2000-01-01' + CASE WHEN g % 2 = 0
             THEN floor(random() * 4903090) - 2451545
             ELSE floor(random() * 2147483493) - 2451545 END::int
+          FROM generate_series(1, 500) g"
+  [text]="SELECT string_agg(chr(CASE WHEN random() < 0.8
+                 THEN 32 + floor(random() * 95)
+                 ELSE 160 + floor(random() * 55000) END::int), '')
+          FROM generate_series(1, 500) g,
+               generate_series(1, (g % 40)) n GROUP BY g"
+  [varchar]="SELECT string_agg(chr(CASE WHEN random() < 0.8
+                 THEN 32 + floor(random() * 95)
+                 ELSE 65536 + floor(random() * 1048575) END::int), '')
+          FROM generate_series(1, 500) g,
+               generate_series(1, (g % 40)) n GROUP BY g"
+  [bytea]="SELECT substr(decode(md5(random()::text) || md5(random()::text), 'hex'),
+                 1, g % 33)
           FROM generate_series(1, 500) g"
   [uuid]="SELECT md5(random()::text)::uuid FROM generate_series(1, 500)"
   [time]="SELECT TIME '00:00' + (floor(random() * 86400000000)::bigint || $us
@@ -158,18 +181,41 @@ for t in "${TYPES[@]}"; do
     q -c "SELECT setseed(0.20260924)" \
       -c "INSERT INTO fx_$name ${RANDOM_ROWS[$name]}" >/dev/null
   fi
+  # A variable-length datum is stored behind a varlena header --
+  # one byte, low bit set, for a short value, else four -- and
+  # sm2's datum is the payload alone, so strip it.
+  bytes="h.t_data"
+  if [[ $(q -c "SELECT typlen FROM pg_type WHERE oid = '$name'::regtype") == -1 ]]; then
+    bytes="CASE WHEN get_byte(h.t_data, 0) & 1 = 1
+                THEN substr(h.t_data, 2) ELSE substr(h.t_data, 5) END"
+  fi
   # Pair each row's text with its tuple's data bytes. The column
   # itself, not c::text, so that the text is the type's output
   # function's: a bool prints "t", but its cast to text is "true".
-  q -c "SELECT f.c, encode(h.t_data, 'hex')
+  # Records and fields are split on ASCII's separators, which no
+  # fixture text holds, and Python writes each as a C string.
+  q -F $'\x1f' -R $'\x1e' \
+    -c "SELECT f.c, encode($bytes, 'hex')
           FROM generate_series(0, pg_relation_size('fx_$name') / 8192 - 1) p
          CROSS JOIN heap_page_items(get_raw_page('fx_$name', p::int)) h
           JOIN fx_$name f
             ON f.ctid = ('(' || p || ',' || h.lp || ')')::tid
          ORDER BY p, h.lp" |
-    while IFS='|' read -r text hex; do
-      printf '    {%s, "%s", "%s"},\n' "$code" "$text" "$hex"
-    done
+    python3 -c '
+import sys
+code = sys.argv[1]
+def c_string(b):
+    # Printable ASCII as is, but for quote and backslash; every
+    # other byte as a three-digit octal escape, which, unlike \x,
+    # cannot run on into a following digit.
+    return "".join(chr(c) if 32 <= c < 127 and c not in (34, 92)
+                   else "\\" + chr(c) if c in (34, 92)
+                   else "\\%03o" % c for c in b)
+for rec in sys.stdin.buffer.read().rstrip(b"\n").split(b"\x1e"):
+    if rec:
+        text, hexs = rec.split(b"\x1f")
+        print("    {%s, \"%s\", \"%s\"}," % (code, c_string(text), hexs.decode()))
+' "$code"
 done
 
 cat <<'TAIL'
