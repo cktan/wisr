@@ -1,0 +1,112 @@
+# test_seq.rel -- sequence monotonicity across transaction aborts
+
+(def test-dir "/tmp/wisr_rel_test_seq")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "seqdb")
+(db-open "seqdb")
+
+# 1. Create a sequence with start=100 and step=5
+(begin :rc)
+(seq-create s1 100 5)
+(commit)
+
+# 2. First value outside transaction is start
+(assert-eq (nextseq s1) 100)
+
+# 3. Nextseq values inside a transaction that aborts
+(begin :rc)
+(assert-eq (nextseq s1) 105)
+(assert-eq (nextseq s1) 110)
+(abort)
+
+# 4. Values after abort must strictly increment, never reused
+(assert-eq (nextseq s1) 115)
+
+# 5. Nextseq inside a transaction with savepoint rollback
+(begin :rr)
+(assert-eq (nextseq s1) 120)
+(def sp (savepoint))
+(assert-eq (nextseq s1) 125)
+(rollback sp)
+(forget sp)
+# 125 was permanently consumed despite savepoint rollback
+(assert-eq (nextseq s1) 130)
+(commit)
+
+(assert-eq (nextseq s1) 135)
+
+# 6. Two-phase commit prepared and then aborted
+(begin :rr)
+(assert-eq (nextseq s1) 140)
+(prepare "tx_seq_2pc")
+
+(session-open s2 "seqdb")
+(session-use s2)
+(abort-prepared "tx_seq_2pc")
+# Advance from session 2: 140 was consumed
+(assert-eq (nextseq s1) 145)
+(session-use default)
+(session-close s2)
+
+# 7. Heap table row numbers (drawn from sequence) across aborts
+(begin :rc)
+(table-create items
+  (columns
+    (id :int4)
+    (name :text)))
+(commit)
+
+# Committed insert draws rowno 1
+(begin :rc)
+(def r1 (insert items [1 "first"]))
+(assert-eq r1 1)
+(commit)
+
+# Aborted transaction draws rowno 2 and 3
+(begin :rc)
+(def r2 (insert items [2 "second"]))
+(def r3 (insert items [3 "third"]))
+(assert-eq r2 2)
+(assert-eq r3 3)
+(abort)
+
+# Next transaction draws rowno 4, skipping aborted 2 and 3
+(begin :rc)
+(def r4 (insert items [4 "fourth"]))
+(assert-eq r4 4)
+(commit)
+
+# Savepoint rollback inside table insert
+(begin :rc)
+(def r5 (insert items [5 "fifth"]))
+(assert-eq r5 5)
+(def sp2 (savepoint))
+(def r6 (insert items [6 "sixth"]))
+(assert-eq r6 6)
+(rollback sp2)
+(forget sp2)
+# Next insert gets rowno 7 (6 was consumed and never reused)
+(def r7 (insert items [7 "seventh"]))
+(assert-eq r7 7)
+(commit)
+
+# Verify table rows: exactly 1, 4, 5, 7 exist
+(begin :rc)
+(def all-rows (scan items))
+(assert-count 4 all-rows)
+(assert-eq (map (fn [r] (r 0)) all-rows) [1 4 5 7])
+(commit)
+
+# 8. Drop sequence and verify SM_ERR_NOTFOUND
+(begin :rc)
+(seq-drop s1)
+(commit)
+(assert-err :notfound (nextseq s1))
+
+(db-close)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_seq.rel: PASSED")

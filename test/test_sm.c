@@ -352,12 +352,216 @@ static void test_heap_and_index(void) {
   remove_home(home);
 }
 
+/* Verify sequences strictly increment across aborts, savepoints, and 2PC. */
+static void test_sequence_aborts(void) {
+  /*
+   * 1. A sequence starting at 100 with step 10 is read inside
+   *    transactions that abort or roll back to savepoints.
+   * 2. Values are strictly increasing: an abort never gives
+   *    back a sequence value or allows reusing an older one.
+   * 3. Two concurrent sessions advancing the sequence see
+   *    strictly monotonic values across aborts.
+   * 4. Heap table row numbers (drawn from a sequence) advance
+   *    monotonically across transaction aborts and rollbacks.
+   */
+  char home[64];
+  sm_env_t *env = NULL;
+  sm_session_t *s = NULL;
+  sm_session_t *u = NULL;
+  uint64_t storeid = 0;
+  uint64_t v = 0;
+  uint64_t last_v = 0;
+
+  make_home(home, sizeof(home));
+  CHECK(sm_attach(home, &env) == 0);
+  CHECK(sm_mkdb(env, "db", NULL) == 0);
+  CHECK(sm_opendb(env, "db", NULL, &s) == 0);
+  CHECK(sm_opendb(env, "db", NULL, &u) == 0);
+
+  /* Create sequence "seq1" with start=100, increment=10. */
+  CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_mkseq(s, "seq1", 100, 10) == 0);
+  CHECK(sm_commit(s) == 0);
+
+  /* Value before any transaction: 100. */
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 100);
+  last_v = v;
+
+  /* In a transaction that aborts: 110, 120. */
+  CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 110);
+  CHECK(v > last_v);
+  last_v = v;
+
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 120);
+  CHECK(v > last_v);
+  last_v = v;
+
+  CHECK(sm_abort(s) == 0);
+
+  /* After abort, outside transaction: must be 130 (strictly > last_v). */
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 130);
+  CHECK(v > last_v);
+  last_v = v;
+
+  /* In a transaction with savepoint rollback: */
+  CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 140);
+  CHECK(v > last_v);
+  last_v = v;
+
+  int sp = sm_savepoint(s);
+  CHECK(sp == 1);
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 150);
+  CHECK(v > last_v);
+  last_v = v;
+
+  CHECK(sm_rollback(s, sp) == 0);
+  CHECK(sm_forget(s, sp) == 0);
+
+  /* After rollback, next value must be 160 (150 is permanently consumed). */
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 160);
+  CHECK(v > last_v);
+  last_v = v;
+
+  CHECK(sm_abort(s) == 0);
+
+  /* In 2PC prepared transaction that is aborted: */
+  CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 170);
+  CHECK(v > last_v);
+  last_v = v;
+  CHECK(sm_prepare(s, "g_seq") == 0);
+
+  /* Abort prepared transaction from session u. */
+  CHECK(sm_abort_prepared(u, "g_seq") == 0);
+
+  /* Next value from session u must be 180 (170 is consumed). */
+  CHECK(sm_nextseq(u, "seq1", &v) == 0);
+  CHECK(v == 180);
+  CHECK(v > last_v);
+  last_v = v;
+
+  /* Interleaved calls across two sessions with aborts: */
+  CHECK(sm_begin(s, SM_XCT_READ_COMMITTED) == 0);
+  CHECK(sm_begin(u, SM_XCT_REPEATABLE_READ) == 0);
+
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 190);
+  CHECK(v > last_v);
+  last_v = v;
+
+  CHECK(sm_nextseq(u, "seq1", &v) == 0);
+  CHECK(v == 200);
+  CHECK(v > last_v);
+  last_v = v;
+
+  CHECK(sm_abort(s) == 0);
+
+  CHECK(sm_nextseq(u, "seq1", &v) == 0);
+  CHECK(v == 210);
+  CHECK(v > last_v);
+  last_v = v;
+
+  CHECK(sm_commit(u) == 0);
+
+  CHECK(sm_nextseq(s, "seq1", &v) == 0);
+  CHECK(v == 220);
+  CHECK(v > last_v);
+  last_v = v;
+
+  /* Now verify heap table row numbers with sm_rel_insert across aborts. */
+  CHECK(sm_begin(s, SM_XCT_SERIALIZABLE) == 0);
+  CHECK(sm_mkstore(s, &storeid) == 0);
+  CHECK(sm_mkseq(s, "t_rowno", 1, 1) == 0);
+  CHECK(sm_commit(s) == 0);
+
+  const sm_type_t *int4 = sm_type(0x23);
+  sm_attribute_t schema[1] = {{int4, -1, false, false, NULL, 0}};
+  sm_rel_t *rel = NULL;
+  CHECK(sm_rel_open(s, storeid, 0, schema, 1, "t_rowno", &rel) == 0);
+
+  int32_t val = 100;
+  sm_datum_t row = int4_datum(&val);
+  uint64_t rowno = 0;
+
+  /* Committed insert: rowno = 1. */
+  CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  val = 1;
+  CHECK(sm_rel_insert(rel, &row, 1, &rowno) == 0);
+  CHECK(rowno == 1);
+  CHECK(sm_commit(s) == 0);
+
+  /* Aborted transaction: inserts rowno = 2 and rowno = 3. */
+  CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  val = 2;
+  CHECK(sm_rel_insert(rel, &row, 1, &rowno) == 0);
+  CHECK(rowno == 2);
+  val = 3;
+  CHECK(sm_rel_insert(rel, &row, 1, &rowno) == 0);
+  CHECK(rowno == 3);
+  CHECK(sm_abort(s) == 0);
+
+  /* Next transaction: insert must receive rowno = 4, NOT 2 or 3! */
+  CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  val = 4;
+  CHECK(sm_rel_insert(rel, &row, 1, &rowno) == 0);
+  CHECK(rowno == 4);
+
+  /* Savepoint rollback inside this transaction: */
+  sp = sm_savepoint(s);
+  CHECK(sp == 1);
+  val = 5;
+  CHECK(sm_rel_insert(rel, &row, 1, &rowno) == 0);
+  CHECK(rowno == 5);
+  CHECK(sm_rollback(s, sp) == 0);
+  CHECK(sm_forget(s, sp) == 0);
+
+  /* After savepoint rollback, next insert must receive rowno = 6! */
+  val = 6;
+  CHECK(sm_rel_insert(rel, &row, 1, &rowno) == 0);
+  CHECK(rowno == 6);
+  CHECK(sm_commit(s) == 0);
+
+  /* Verify scan sees only rowno 1, 4, 6. */
+  sm_rel_scan_t *rscan = NULL;
+  const void *tuple = NULL;
+  size_t len = 0;
+  CHECK(sm_begin(s, SM_XCT_REPEATABLE_READ) == 0);
+  CHECK(sm_rel_scan(rel, 1, UINT64_MAX, &rscan) == 0);
+
+  CHECK(sm_rel_scannxt(rscan, &rowno, &tuple, &len) == 0);
+  CHECK(rowno == 1);
+  CHECK(sm_rel_scannxt(rscan, &rowno, &tuple, &len) == 0);
+  CHECK(rowno == 4);
+  CHECK(sm_rel_scannxt(rscan, &rowno, &tuple, &len) == 0);
+  CHECK(rowno == 6);
+  CHECK(sm_rel_scannxt(rscan, &rowno, &tuple, &len) == 1);
+  sm_rel_scanend(rscan);
+  CHECK(sm_commit(s) == 0);
+
+  sm_rel_close(rel);
+  CHECK(sm_closedb(u) == 0);
+  CHECK(sm_closedb(s) == 0);
+  CHECK(sm_detach(env, 0) == 0);
+  remove_home(home);
+}
+
 /* Run every test; exit nonzero if any check failed. */
 int main(void) {
   test_errors_and_options();
   test_lifecycle();
   test_2pc();
   test_heap_and_index();
+  test_sequence_aborts();
   if (g_failures != 0) {
     fprintf(stderr, "test_sm: %d check(s) failed\n", g_failures);
     return 1;

@@ -546,6 +546,17 @@ int sm_rmseq(sm_session_t *session, const char *name) {
   return guard(s, [&] { return sm1::rmseq(s, name_of(name)); });
 }
 
+/* Hand out the sequence's next value. */
+int sm_nextseq(sm_session_t *session, const char *name, uint64_t *out) {
+  sm1::session_t *s = session_of(session);
+  return guard(s, [&] {
+    if (!out) {
+      return sm1::seterr(sm1::SM_ERR_INVALID, "sm_nextseq: out is NULL");
+    }
+    return sm1::nextseq(s, name_of(name), *out);
+  });
+}
+
 /* The type with this frozen code, or NULL. */
 const sm_type_t *sm_type(uint8_t code) {
   return reinterpret_cast<const sm_type_t *>(sm2::type_by_code(code));

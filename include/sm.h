@@ -198,6 +198,9 @@ int sm_mkseq(sm_session_t* session, const char* name, uint64_t start,
 /* Drop the sequence name. */
 int sm_rmseq(sm_session_t* session, const char* name);
 
+/* Hand out the sequence's next value. */
+int sm_nextseq(sm_session_t* session, const char* name, uint64_t* out);
+
 /* ---- types and collations: sm2's ---- */
 
 /* A type: sm2::type_t, opaque. */

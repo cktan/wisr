@@ -521,6 +521,48 @@ static Janet cfun_table_drop(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (seq-create name [start] [increment]) */
+static Janet cfun_seq_create(int32_t argc, Janet *argv) {
+  janet_arity(argc, 1, 3);
+  session_ctx_t *s = require_session();
+  std::string name = identifier_of(argv[0]);
+  uint64_t start = 1;
+  uint64_t increment = 1;
+  if (argc >= 2) {
+    start = static_cast<uint64_t>(janet_getinteger64(argv, 1));
+  }
+  if (argc >= 3) {
+    increment = static_cast<uint64_t>(janet_getinteger64(argv, 2));
+  }
+  if (sm_mkseq(s->session, name.c_str(), start, increment) != 0) {
+    panic_sm_error("seq-create sm_mkseq");
+  }
+  return janet_wrap_nil();
+}
+
+/* (seq-drop name) */
+static Janet cfun_seq_drop(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string name = identifier_of(argv[0]);
+  if (sm_rmseq(s->session, name.c_str()) != 0) {
+    panic_sm_error("seq-drop sm_rmseq");
+  }
+  return janet_wrap_nil();
+}
+
+/* (nextseq name) */
+static Janet cfun_nextseq(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string name = identifier_of(argv[0]);
+  uint64_t val = 0;
+  if (sm_nextseq(s->session, name.c_str(), &val) != 0) {
+    panic_sm_error("nextseq sm_nextseq");
+  }
+  return janet_wrap_number(static_cast<double>(val));
+}
+
 /* (index-create idx_name (table tbl) (key ...) [:unique bool] [:include ...])
  */
 static Janet cfun_index_create(int32_t argc, Janet *argv) {
@@ -1434,6 +1476,10 @@ static const JanetReg s_rel_cfuns[] = {
 
     {"_table-create", cfun_table_create, "internal"},
     {"_table-drop", cfun_table_drop, "internal"},
+    {"_seq-create", cfun_seq_create, "internal"},
+    {"_seq-drop", cfun_seq_drop, "internal"},
+    {"_nextseq", cfun_nextseq, "internal"},
+    {"nextseq", cfun_nextseq, "(nextseq name) -- get next sequence value"},
     {"_index-create", cfun_index_create, "internal"},
     {"_index-drop", cfun_index_drop, "internal"},
 
@@ -1466,6 +1512,15 @@ static const char *s_prelude = R"janet(
 
 (defmacro table-drop [name]
   ~(_table-drop (string ',name)))
+
+(defmacro seq-create [name & rest]
+  ~(_seq-create (string ',name) ,;rest))
+
+(defmacro seq-drop [name]
+  ~(_seq-drop (string ',name)))
+
+(defmacro nextseq [name]
+  ~(_nextseq (string ',name)))
 
 (defmacro index-create [name & body]
   ~(_index-create (string ',name) ',body))
