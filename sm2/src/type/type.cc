@@ -26,6 +26,11 @@ const type_t *type_by_code(uint8_t code) {
   return nullptr;
 }
 
+/* A datum's width under typmod; see sm2.h. */
+int32_t datum_width(const type_t *type, int32_t typmod) {
+  return type == &type_decimal ? decimal_width(typmod) : type->len;
+}
+
 /* Append s escaped and terminated: 0x00 as 0x00 0xFF, then 0x00 0x00. */
 void put_escaped(std::string_view s, std::string &key) {
   for (char c : s) {

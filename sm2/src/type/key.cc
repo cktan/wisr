@@ -40,7 +40,7 @@ namespace sm2 {
 
 /* Append the key of datums under cols; key is unchanged on failure. */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const key_datum_t> datums, std::string &key) {
+               std::span<const datum_t> datums, std::string &key) {
   return catch_nomem([&] {
     if (cols.size() != datums.size()) {
       return bad_columns("a datum for every column, no more");
@@ -75,7 +75,7 @@ int encode_key(std::span<const key_column_t> cols,
 
 /* encode_key with the columns' bytes held to max_len; see sm2.h. */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const key_datum_t> datums, size_t max_len,
+               std::span<const datum_t> datums, size_t max_len,
                overflow_t overflow, std::string &key, bool &cut) {
   return catch_nomem([&] {
     cut = false;

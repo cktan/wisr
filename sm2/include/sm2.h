@@ -131,6 +131,13 @@ extern const type_t type_uuid;        /* code 16 */
 /* The type with this code, or nullptr if there is none. */
 const type_t* type_by_code(uint8_t code);
 
+/*
+ * A datum's width in bytes under typmod: the type's len, or
+ * decimal's 8 or 16 by its precision; -1 for a variable-width
+ * type; 0 if typmod is not valid for the type.
+ */
+int32_t datum_width(const type_t* type, int32_t typmod);
+
 /* One column of a key: its type and how it sorts (TYPE.md §2). */
 struct key_column_t {
     const type_t*       type;
@@ -141,7 +148,7 @@ struct key_column_t {
 };
 
 /* A column's datum in a key, or null. */
-struct key_datum_t {
+struct datum_t {
     std::string_view bytes;
     bool             null;
 };
@@ -153,7 +160,7 @@ struct key_datum_t {
  * orders them column by column.
  */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const key_datum_t> datums, std::string& key);
+               std::span<const datum_t> datums, std::string& key);
 
 /*
  * The share of sm1::max_keylen a key's columns may use
@@ -182,8 +189,85 @@ enum class overflow_t { refuse, truncate };
  * the whole key, and sets cut. cut is false otherwise.
  */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const key_datum_t> datums, size_t max_len,
+               std::span<const datum_t> datums, size_t max_len,
                overflow_t overflow, std::string& key, bool& cut);
+
+/*
+ * One attribute of a table's schema (SM2_DESIGN.md §4): its type,
+ * whether it has been dropped, and what a row written before it
+ * was added reads it as -- std::nullopt for null, or the value
+ * PostgreSQL keeps as attmissingval, a varlena if the type's width
+ * is variable. Attributes are only ever appended, and a dropped
+ * one keeps its place.
+ */
+struct attribute_t {
+    const type_t*              type;
+    int32_t                    typmod;
+    bool                       dropped;
+    std::optional<std::string> missing;
+};
+
+/*
+ * A variable-width datum as the tuple codec takes and gives it:
+ * a varlena in PostgreSQL's own bytes (SM2_DESIGN.md §4.1,
+ * PostgreSQL's varatt.h), so PostgreSQL can read one in place.
+ * Its first byte says what it is, and its header holds its length,
+ * the header's own bytes included:
+ *
+ *   xxxxxxx1  1-byte header, up to 126 bytes of data
+ *   xxxxxx00  4-byte little-endian header, up to 1 GB
+ *   xxxxxx10  4-byte header, compressed -- not built yet
+ *   00000001  a TOAST pointer: a vartag byte, then the pointer --
+ *             not built yet
+ *
+ * A type's own functions take the data after the header,
+ * varlena_payload's.
+ */
+constexpr char varlena_toast = '\x01';
+
+/*
+ * A varlena holding datum, in its shortest form: the 1-byte
+ * header up to 126 bytes, the 4-byte one past that.
+ */
+std::string make_varlena(std::string_view datum);
+
+/* True if v is a TOAST pointer: its first byte is varlena_toast. */
+bool varlena_is_toast(std::string_view v);
+
+/*
+ * The data of an uncompressed varlena, after its 1- or 4-byte
+ * header; empty for anything else, which callers check first.
+ */
+std::string_view varlena_payload(std::string_view v);
+
+/*
+ * Replace tuple with datums, one per attribute of schema, in the
+ * layout of SM2_DESIGN.md §4.1: a fixed-width datum as its bytes,
+ * a variable-width one as a varlena, in either header form, which
+ * the tuple stores in its shortest; a dropped attribute's datum
+ * must be null. Fails with SM_ERR_INVALID, leaving tuple as it
+ * was, on a datum count other than the schema's, a fixed-width
+ * datum of the wrong width, or a varlena whose header does not
+ * match its length, a compressed one, or a TOAST pointer, until
+ * those are built.
+ */
+int tuple_encode(std::span<const attribute_t> schema,
+                 std::span<const datum_t> datums, std::string& tuple);
+
+/*
+ * One attribute of a tuple, by its position in schema, without
+ * decoding the others: a view into the tuple -- a fixed-width
+ * datum's bytes, a variable-width one's varlena -- into the
+ * schema's missing value for a row older than the attribute,
+ * which is held in the same form, or std::nullopt for a null or
+ * dropped one. A malformed tuple is SM_ERR_CORRUPT.
+ */
+int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
+                 size_t ordinal, std::optional<std::string_view>& datum);
+
+/* Every attribute of a tuple, in one pass, as tuple_decode gives each. */
+int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
+                 std::vector<std::optional<std::string_view>>& datums);
 
 /*
  * Decode a key encode_key made under cols into one datum per

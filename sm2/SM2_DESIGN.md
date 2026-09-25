@@ -172,7 +172,10 @@ Two places need sm2 to be more precise than PostgreSQL is:
   carry the payload only. The varlena header, the 1-byte short
   form and the TOAST pointer are PostgreSQL's framing, and
   framing is the tuple's business (§4) — sm2 has its own
-  framing, and its own TOAST in its own format.
+  framing, and its own TOAST in its own format. In a tuple a
+  variable datum is stored as a PostgreSQL varlena, header and
+  all, so PostgreSQL can read it in place (§4.1); a type's
+  functions take the payload alone.
 
 ### 2.2 Except decimal, which follows DuckDB's
 
@@ -600,9 +603,9 @@ split, the attribute count, the offsets —
 owes `HeapTupleHeader` nothing and is designed here on its own
 merits. This is also where sm2's TOAST lives, in sm2's own
 format rather than PostgreSQL's: a `text` datum in an sm2
-tuple is payload bytes with its length in the framing, with
-no varlena header, and a TOASTed datum is replaced by sm2's
-own TOAST pointer rather than PostgreSQL's (§2.1).
+tuple is a PostgreSQL varlena, and a TOASTed datum is replaced
+by sm2's own TOAST pointer, in PostgreSQL's external form with
+a tag of sm2's own (§2.1, §4.1).
 
 The rules the format itself must satisfy, then the layout that
 meets them (§4.1), which is only partly written:
@@ -645,7 +648,7 @@ meets them (§4.1), which is only partly written:
 ### 4.1 Layout
 
 ```
-[ header | null bitmap | toast bitmap | fixed part | var offsets | var data ]
+[ header | null bitmap | fixed part | var offsets | var data ]
 ```
 
 **Decision: the datums are serial, in schema order, split into
@@ -687,22 +690,46 @@ bytes, in schema order too.
   is null, which is the common case, every fixed offset is a
   constant of the schema and the row's `natts`, precomputed
   once.
-- **A TOAST bitmap says which variable datums are out of
-  line**, one bit per variable-width column; fixed-width
-  columns are at most 16 bytes and are never TOASTed.
-  PostgreSQL marks an external datum in its own varlena header,
-  but an sm2 datum is its payload alone (§2.1), with no header
-  to hold the mark, and giving every variable datum a byte for
-  it would tax the great majority of tuples, which TOAST
-  nothing. So the mark is a bitmap beside the null bitmap, and
-  a header flag says whether it is there at all, as PostgreSQL's
-  `HEAP_HASEXTERNAL` says whether any datum is external: a tuple
-  with nothing TOASTed carries no TOAST bitmap. A datum is never
-  both null and TOASTed. A reader knows a column must be fetched
-  before it looks at the column's bytes. A spare bit in each
-  variable offset was the alternative; it costs nothing, but it
-  ties the mark to the offset's width, which is still open.
+- **A variable datum is a PostgreSQL varlena**, its bytes
+  exactly as PostgreSQL's `varatt.h` lays them out, so the glue
+  can hand PostgreSQL a `Datum` pointing into the tuple:
 
+  ```
+  xxxxxxx1  1-byte header, (len << 1) | 1: up to 126 bytes
+  xxxxxx00  4-byte little-endian header, len << 2: up to 1 GB
+  xxxxxx10  4-byte header, compressed      -- not built yet
+  00000001  a TOAST pointer: a vartag byte,
+            then the pointer               -- not built yet
+  ```
+
+  The length counts the header. A datum's header says what it
+  is, so a TOAST pointer travels through the executor's slot
+  as itself, and is fetched only when a function needs the
+  value, and an `UPDATE` that leaves the column alone writes it
+  back without a fetch — which is why the mark lives in the
+  datum and not in a bitmap beside the null bitmap, the first
+  draft, which would have had the executor carry a flag with
+  every datum. And a `Datum` is one pointer, so the length must
+  be in the bytes it points at; an earlier draft's tag byte
+  without a length could not be handed out alone.
+- **Alignment: short in place, long copied.** PostgreSQL reads
+  a 4-byte header only on data it knows is aligned, and pads
+  to make it so; an sm2 tuple starts unaligned inside a RocksDB
+  block, so padding would buy nothing (above). The codec
+  stores every varlena in its shortest form, unpadded: up to
+  126 bytes takes the 1-byte header, which PostgreSQL reads
+  unaligned, so most text goes to the executor in place; a
+  longer one takes the 4-byte header, and the glue copies it to
+  aligned memory before PostgreSQL reads it. A datum that long
+  is the costly case anyway, and a TOASTed one is copied when
+  fetched. Copying every tuple into an aligned buffer and
+  padding within it was the alternative; it would copy every
+  row to save copying the long datums. The codec takes either
+  header on input — PostgreSQL makes 4-byte headers for short
+  data after it detoasts — and writes the shortest.
+- **The offsets stay.** A varlena's header repeats its length,
+  but the offset table is what finds the Nth variable column
+  without walking the ones before it.
 - **The header is a flag byte and `natts`**, two bytes for a
   row of up to 127 columns:
 
@@ -710,24 +737,25 @@ bytes, in schema order too.
   header = flags (1 byte) | natts (varint, LEB128)
 
   flags: 0x01  has nulls   -- else no null bitmap
-         0x02  has TOAST   -- else no TOAST bitmap
          0x04  wide offsets -- variable offsets are 4 bytes
-         0xF8  reserved: must be 0, and a reader refuses a
+         0xFA  reserved: must be 0, and a reader refuses a
                tuple with any of them set
   ```
 
-  The two presence flags play the parts of PostgreSQL's
-  `HEAP_HASNULL` and `HEAP_HASEXTERNAL`. The reserved bits are
+  The has-nulls flag plays the part of PostgreSQL's
+  `HEAP_HASNULL`. `0x02` was once to mean a TOAST bitmap was
+  present, before the TOAST mark moved into the varlena; it is
+  reserved now, and no tuple was written with it. The reserved
+  bits are
   refused rather than ignored, so a tuple written with a
   feature added later is never misread by a reader too old to
   know it. PostgreSQL packs `natts` into 11 bits of
   `t_infomask2`; a varint costs one byte to 127 columns and has
   no ceiling.
-- **The bitmaps follow, when present**: the null bitmap, a bit
-  for each of the row's `natts` columns, then the TOAST bitmap,
-  a bit for each variable-width column among them, each rounded
-  up to whole bytes.
-- **A variable offset is where its datum ends**, counted from
+- **The null bitmap follows, when present**: a bit for each of
+  the row's `natts` columns, set for a null, rounded up to
+  whole bytes.
+- **A variable offset is where its varlena ends**, counted from
   the start of the variable data, one per non-null variable
   column; the first datum starts at 0, and each next where the
   one before ended. An offset is 2 bytes while the variable
@@ -735,11 +763,11 @@ bytes, in schema order too.
   when the wide-offsets flag is set, chosen per tuple, so the
   TOAST threshold is free to be set on its own merits.
 
-Open: the shape of a TOAST pointer in the variable part; and
-whether sm2 ever compresses a datum inline, as PostgreSQL
-does, which would need a second bit per variable column, or a
-flag in the TOAST pointer, to tell a compressed datum from a
-plain one.
+Open: the shape of a TOAST pointer — a vartag of sm2's own,
+since PostgreSQL's 1, 2, 3 and 18 are taken, and the pointer
+after it, which the fork's detoast code is taught to follow;
+and whether sm2 ever compresses a datum inline, as PostgreSQL
+does, which its compressed 4-byte form already provides for.
 
 ---
 

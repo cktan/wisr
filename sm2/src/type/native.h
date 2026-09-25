@@ -158,6 +158,9 @@ bool get_escaped(std::string_view &key, std::string &s);
 /* Fail with SM_ERR_INVALID: text is not a valid value of type. */
 int bad_input(const char *type, std::string_view text);
 
+/* A decimal datum's width under typmod: 8 or 16, or 0 if invalid. */
+int32_t decimal_width(int32_t typmod);
+
 } // namespace sm2
 
 #endif /* SM2_NATIVE_H */

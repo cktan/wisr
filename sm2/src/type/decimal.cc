@@ -233,6 +233,12 @@ int decimal_unkey(std::string_view &key, int32_t typmod,
 
 namespace sm2 {
 
+/* A decimal datum's width under typmod: 8 or 16, or 0 if invalid. */
+int32_t decimal_width(int32_t typmod) {
+  numtype_t t;
+  return decode_typmod(typmod, t) ? static_cast<int32_t>(t.width) : 0;
+}
+
 const type_t type_decimal = {.code = 7,
                              .name = "decimal",
                              .len = -1,
