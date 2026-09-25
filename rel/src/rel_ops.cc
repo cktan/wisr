@@ -281,13 +281,13 @@ static Janet cfun_abort(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
-/* (stmt-begin) */
-static Janet cfun_stmt_begin(int32_t argc, Janet *argv) {
+/* (snapshot) */
+static Janet cfun_snapshot(int32_t argc, Janet *argv) {
   (void)argc;
   (void)argv;
   session_ctx_t *s = require_session();
   if (sm_stmt_begin(s->session) != 0) {
-    panic_sm_error("stmt-begin");
+    panic_sm_error("snapshot");
   }
   return janet_wrap_nil();
 }
@@ -1461,7 +1461,8 @@ static const JanetReg s_rel_cfuns[] = {
     {"begin", cfun_begin, "(begin [:rc|:rr|:ser]) -- begin transaction"},
     {"commit", cfun_commit, "(commit) -- commit transaction"},
     {"abort", cfun_abort, "(abort) -- abort transaction"},
-    {"stmt-begin", cfun_stmt_begin, "(stmt-begin) -- pin statement snapshot"},
+    {"snapshot", cfun_snapshot, "(snapshot) -- pin/advance statement snapshot"},
+    {"stmt-begin", cfun_snapshot, "(stmt-begin) -- alias for (snapshot)"},
     {"savepoint", cfun_savepoint,
      "(savepoint) -- create savepoint, returns depth"},
     {"rollback", cfun_rollback, "(rollback depth) -- rollback to savepoint"},

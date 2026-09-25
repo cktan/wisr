@@ -145,12 +145,14 @@ modifications.
 (abort)
 ```
 
-### `(stmt-begin)`
-Pins a statement-level read snapshot inside a read-committed
-transaction.
+### `(snapshot)`
+Pins or advances a statement-level read snapshot inside a
+read-committed transaction. Subsequent reads within the
+statement see a consistent snapshot. `(stmt-begin)` is
+supported as an alias.
 
 ```janet
-(stmt-begin)
+(snapshot)
 ```
 
 ### `(savepoint)`
@@ -381,7 +383,50 @@ Returns an array of `[rowno key-tuple include-tuple]` entries.
 
 ## 7. Diagnostics & Error Handling
 
-Inspect engine errors and check retryability.
+Inspect engine errors, catch panics, and check retryability.
+
+### Error Propagation Model
+
+When a storage manager operation fails (returns `-1`), `rel`
+translates the error into a **Janet panic** via
+`janet_panicf`.
+
+1. **Panic Format:**
+   Panics are formatted as:
+   ```text
+   <action> failed: [<ERROR_NAME>] <message>
+   ```
+   For example, a unique constraint violation on an insert
+   or index creation produces:
+   ```text
+   insert sm_idx_insert failed: [SM_ERR_DUPKEY] duplicate key
+   ```
+
+2. **Unhandled Panics:**
+   If a script does not catch a panic, execution terminates
+   immediately with a non-zero exit code and prints a Janet stack
+   trace with the source file, line number, and error message.
+
+3. **Catching Panics with `try`:**
+   Janet scripts can intercept panics using standard `try`:
+   ```janet
+   (try
+     (insert users [1 "Alice"])
+     ([err]
+      (print "Caught error: " err)))
+   ```
+
+4. **Testing Expected Errors with `assert-err`:**
+   Test scripts can verify that an expression fails with a
+   specific error code name:
+   ```janet
+   (assert-err :err-dupkey (insert users [1 "Duplicate"]))
+   ```
+
+5. **Diagnostic State:**
+   Even after a panic is caught, the underlying storage manager
+   error state remains preserved on the calling thread until the
+   next operation or until cleared via `(sm:reseterr)`.
 
 ### `(sm:errnum)`
 Returns the integer error code of the last error.

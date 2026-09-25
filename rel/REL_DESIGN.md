@@ -232,7 +232,7 @@ map directly to `sm_options_t`:
 | `(begin [:rc \| :rr \| :ser])` | `sm_begin(s, level)` | Begins transaction |
 | `(commit)` | `sm_commit(s)` | Commits transaction |
 | `(abort)` | `sm_abort(s)` | Aborts transaction |
-| `(stmt-begin)` | `sm_stmt_begin(s)` | Statement snapshot |
+| `(snapshot)` | `sm_stmt_begin(s)` | Statement snapshot |
 | `(savepoint)` | `sm_savepoint(s)` | Sets savepoint depth |
 | `(rollback depth)` | `sm_rollback(s, depth)` | Undoes to savepoint |
 | `(forget depth)` | `sm_forget(s, depth)` | Drops savepoint |

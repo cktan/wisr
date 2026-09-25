@@ -84,6 +84,31 @@
 (assert-eq (sm:retryable) true)
 (abort) # clean up transaction handle
 
+# 4. Test Read Committed statement snapshot via (snapshot) and (stmt-begin)
+(session-use s1)
+(begin :rc)
+(snapshot)
+(assert-eq (read accounts 1) [1 500])
+
+# s2 updates row 1 to 999 and commits
+(session-use s2)
+(begin :rc)
+(update accounts 1 [1 999])
+(commit)
+
+# In s1, because snapshot is pinned, s1 still reads [1 500]
+(session-use s1)
+(assert-eq (read accounts 1) [1 500])
+
+# Calling (snapshot) refreshes the statement boundary to see 999
+(snapshot)
+(assert-eq (read accounts 1) [1 999])
+
+# Verify alias (stmt-begin) also works
+(stmt-begin)
+(assert-eq (read accounts 1) [1 999])
+(commit)
+
 (session-close s1)
 (session-close s2)
 (env-detach :force true)
