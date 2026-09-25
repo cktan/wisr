@@ -308,9 +308,9 @@ components to a single microsecond count at 30 days to the month
 and 24 hours to the day, computed in 128 bits (checked against
 PostgreSQL 18's source; the 128 bits are arithmetically
 necessary — over the full `int32`/`int64` component ranges the
-count reaches about 5.8e21, well past `int64`). That order is deliberately **not
-injective**: `'1 mon'` and `'30 days'` both flatten to
-2592000000000, and PG's btree calls them equal.
+count reaches about 5.8e21, well past `int64`). That order is
+deliberately **not injective**: `'1 mon'` and `'30 days'` both
+flatten to 2592000000000, and PG's btree calls them equal.
 
 Equal keys are exactly what a primary key cannot have, so §3
 says what an interval key is.
@@ -529,14 +529,15 @@ exact one.
   refusal rather than a silent reordering, and pinning is left
   to packaging.
 - **A collation is opened by locale**, a BCP 47 tag as
-  PostgreSQL's ICU collations take (`en-US`, `und-u-ks-level2`),
-  with `C` and `POSIX` meaning byte order. A language ICU does not
-  know is refused, as PostgreSQL's `icu_validate_locale` refuses
-  it; ICU itself would quietly sort it by its root order. One
-  collation serves every session, on the strength of ICU's
-  documentation that const operations on a collator, the sort key
-  among them, are safe from several threads at once — not yet
-  checked against ICU's source.
+  PostgreSQL's ICU collations take (`en-US`,
+  `und-u-ks-level2`), with `C` and `POSIX` meaning byte order.
+  A language ICU does not know is refused, as PostgreSQL's
+  `icu_validate_locale` refuses it; ICU itself would quietly
+  sort it by its root order. One collation serves every
+  session, on the strength of ICU's documentation that const
+  operations on a collator, the sort key among them, are safe
+  from several threads at once — not yet checked against ICU's
+  source.
 - **A version mismatch is refused.** The version is recorded
   with the schema (`sm3/SM3_DESIGN.md` §2) and compared at open.
   Every index built under another version, the primary key
@@ -603,11 +604,11 @@ tuple is payload bytes with its length in the framing, with
 no varlena header, and a TOASTed datum is replaced by sm2's
 own TOAST pointer rather than PostgreSQL's (§2.1).
 
-*To be written.* The rules the format itself must satisfy:
+The rules the format itself must satisfy, then the layout that
+meets them (§4.1), which is only partly written:
 
-- A null bitmap, a fixed/variable split, and enough alignment
-  discipline that reading a column does not require decoding
-  every column before it.
+- A null bitmap, a fixed/variable split, and a way to find a
+  column without decoding every column before it.
 - A **schema version stamp per row**, so `ADD COLUMN` is O(1):
   an old row is read under its own layout and the missing
   column comes from its default. The stamp is a number; what
@@ -630,6 +631,76 @@ own TOAST pointer rather than PostgreSQL's (§2.1).
   TOAST data is one atomic sm1 write, no chunk ever falls
   inside a scan of the rows or of an index, and `DROP TABLE`
   takes the TOAST data with it.
+
+### 4.1 Layout
+
+```
+[ header | null bitmap | toast bitmap | fixed part | var offsets | var data ]
+```
+
+**Decision: the datums are serial, in schema order, split into
+a fixed part and a variable part, with no padding.** The fixed
+part holds every fixed-width column that is not null, in
+schema order, end to end; the variable part holds a table of
+offsets, one per non-null variable-width column, then their
+bytes, in schema order too.
+
+- **No alignment.** PostgreSQL pads each attribute to its
+  `typalign` because its tuples start MAXALIGNed on aligned
+  pages, so the padding buys aligned loads. An sm2 tuple is a
+  RocksDB value, which starts wherever it lies in a block, so
+  padding inside it would align offsets relative to an
+  unaligned start and buy nothing. A fixed-width datum is read
+  with `memcpy` instead, which on the targets, x86-64 and
+  ARMv8, is one unaligned load (checked: `ldr` on aarch64).
+  Packing by alignment — 8-byte columns first, then 4, 2, 1 —
+  was considered and rejected: its one gain, aligned loads, is
+  the one it cannot deliver here, and it costs a permutation
+  from schema order to the tuple's.
+- **Schema order, not permuted.** The tuple reads in the order
+  the schema declares, so there is no map, and a new schema
+  version that appends a column lays out its rows by the same
+  rule.
+- **A null takes no space**, as in PostgreSQL, in either part:
+  its bit in the null bitmap is all it has. A fixed column's
+  offset is then the sum of the widths of the non-null fixed
+  columns before it, computed from the null bitmap and the
+  schema's widths, never by walking the data; a variable
+  column's entry in the offset table is found the same way,
+  by counting the non-null variable columns before it. That is
+  O(columns) arithmetic over the bitmap per column read,
+  rather than PostgreSQL's walk over the bytes once an earlier
+  column is null or of variable width. Keeping a slot for a
+  null fixed column would have made the offset a constant, at
+  the cost of its width per null; the space was preferred.
+- **The fixed part comes first**, so that when no fixed column
+  is null, which is the common case, every fixed offset is a
+  constant of the schema version, precomputed once.
+- **A TOAST bitmap says which variable datums are out of
+  line**, one bit per variable-width column; fixed-width
+  columns are at most 16 bytes and are never TOASTed.
+  PostgreSQL marks an external datum in its own varlena header,
+  but an sm2 datum is its payload alone (§2.1), with no header
+  to hold the mark, and giving every variable datum a byte for
+  it would tax the great majority of tuples, which TOAST
+  nothing. So the mark is a bitmap beside the null bitmap, and
+  a header flag says whether it is there at all, as PostgreSQL's
+  `HEAP_HASEXTERNAL` says whether any datum is external: a tuple
+  with nothing TOASTed carries no TOAST bitmap. A datum is never
+  both null and TOASTed. A reader knows a column must be fetched
+  before it looks at the column's bytes. A spare bit in each
+  variable offset was the alternative; it costs nothing, but it
+  ties the mark to the offset's width, which is still open.
+
+Open: the header — the schema version stamp's width, and the
+flags for a tuple with no nulls and one with nothing TOASTed,
+which then omit their bitmaps, as PostgreSQL's `HEAP_HASNULL`
+and `HEAP_HASEXTERNAL` let it; the width of a variable offset,
+two bytes or four, which depends on the TOAST threshold; the
+shape of a TOAST pointer in the variable part; and whether sm2
+ever compresses a datum inline, as PostgreSQL does, which would
+need a second bit per variable column, or a flag in the TOAST
+pointer, to tell a compressed datum from a plain one.
 
 ---
 
