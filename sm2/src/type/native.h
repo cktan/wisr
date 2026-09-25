@@ -67,11 +67,96 @@ template <typename F> int catch_nomem(F f) {
   }
 }
 
-/* Fail with SM_ERR_INVALID: text is not a valid value of type. */
-int bad_input(const char *type, std::string_view text);
+/*
+ * Append u's bytes most significant first; U is unsigned,
+ * unsigned __int128 included.
+ */
+template <typename U> void put_be(U u, std::string &key) {
+  for (int i = sizeof(U) - 1; i >= 0; i--) {
+    key += static_cast<char>(u >> (8 * i));
+  }
+}
+
+/* Read put_be's bytes from the front of key; false if too few. */
+template <typename U> bool get_be(std::string_view &key, U &u) {
+  if (key.size() < sizeof(U)) {
+    return false;
+  }
+  u = 0;
+  for (size_t i = 0; i < sizeof(U); i++) {
+    u = static_cast<U>(u << 8 | static_cast<unsigned char>(key[i]));
+  }
+  key.remove_prefix(sizeof(U));
+  return true;
+}
+
+/*
+ * The key of a signed integer (TYPE.md §3.2): its sign bit
+ * flipped, big-endian, so memcmp orders it as the integer. U is
+ * the unsigned type of the same width.
+ */
+template <typename U, typename S> void put_key_int(S v, std::string &key) {
+  put_be(static_cast<U>(static_cast<U>(v) ^ (U{1} << (8 * sizeof(U) - 1))),
+         key);
+}
+
+/* Read put_key_int's bytes from the front of key; false if too few. */
+template <typename U, typename S>
+bool get_key_int(std::string_view &key, S &v) {
+  U u;
+  if (!get_be(key, u)) {
+    return false;
+  }
+  v = static_cast<S>(static_cast<U>(u ^ (U{1} << (8 * sizeof(U) - 1))));
+  return true;
+}
+
+/* Fail with SM_ERR_INVALID: a key of type is malformed or cut short. */
+int bad_key(const char *type);
 
 /* Fail with SM_ERR_INVALID: datum is not len bytes, as type needs. */
 int bad_datum(const char *type, std::string_view datum, size_t len);
+
+/*
+ * The key of a datum that is the signed integer S, little-endian:
+ * the integers, date, time and the timestamps (TYPE.md §3.2).
+ */
+template <typename S, typename U>
+int int_key(const char *type, std::string_view datum, std::string &key) {
+  return catch_nomem([&] {
+    if (datum.size() != sizeof(S)) {
+      return bad_datum(type, datum, sizeof(S));
+    }
+    put_key_int<U>(load_le<S>(datum), key);
+    return 0;
+  });
+}
+
+/* Read int_key's bytes back into the little-endian datum. */
+template <typename S, typename U>
+int int_unkey(const char *type, std::string_view &key, std::string &datum) {
+  return catch_nomem([&] {
+    S v;
+    if (!get_key_int<U>(key, v)) {
+      return bad_key(type);
+    }
+    store_le(v, datum);
+    return 0;
+  });
+}
+
+/*
+ * Append s escaped and terminated (TYPE.md §3.6): each 0x00 as
+ * 0x00 0xFF, then 0x00 0x00, so the key orders as s and is a prefix
+ * of no other.
+ */
+void put_escaped(std::string_view s, std::string &key);
+
+/* Read put_escaped's bytes from the front of key; false if malformed. */
+bool get_escaped(std::string_view &key, std::string &s);
+
+/* Fail with SM_ERR_INVALID: text is not a valid value of type. */
+int bad_input(const char *type, std::string_view text);
 
 } // namespace sm2
 

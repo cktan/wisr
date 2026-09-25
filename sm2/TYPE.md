@@ -37,9 +37,11 @@ Three rules follow, and they apply to every type below.
   apart is not a constraint.
 - **`key_encode` need not be reversible.** The tuple holds
   the datum, so nothing depends on getting it back out of the
-  key. `key_decode` is provided where an inverse exists, for
-  sm3's index-only scans, and is an optimization rather than
-  a requirement.
+  key. `key_decode` is provided for sm3's index-only scans, and
+  is an optimization rather than a requirement. Every type has
+  one; a float's gives back the datum its key keeps, `0` for
+  `-0` and the quiet NaN for any NaN (§3.3), which PostgreSQL
+  calls equal to the original.
 - **Where PostgreSQL calls two datums equal, they may share a
   key.** That is agreement with PostgreSQL, not a collision.
   `-0.0` and `0.0` are the case that comes up.
@@ -54,7 +56,10 @@ in §3 produces.
 `0x01` and `0x02` when they sort last. A `NOT NULL` column
 carries the marker too, so a nullability change never
 rewrites a key (`SM2_DESIGN.md` §3.1). No type needs a reserved
-value to mean absent.
+value to mean absent. First and last mean in the finished key:
+since a descending column's marker is inverted with the rest
+(below), a descending column with nulls first takes the
+nulls-last markers, which inversion turns into nulls first.
 
 **Direction.** A `DESC` column is the ascending encoding with
 every byte inverted, marker included, because sm1 will not

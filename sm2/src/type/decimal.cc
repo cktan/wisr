@@ -179,6 +179,56 @@ int decimal_cmp(std::string_view a, std::string_view b, int32_t) {
   return (x > y) - (x < y);
 }
 
+/*
+ * A decimal's key (TYPE.md §3.4): the integer at the datum's
+ * width, sign bit flipped, big-endian, which orders a column's
+ * values, since the typmod fixes their scale.
+ */
+int decimal_key(std::string_view datum, int32_t typmod,
+                const sm2::collation_t *, std::string &key) {
+  return sm2::catch_nomem([&] {
+    numtype_t t;
+    if (!decode_typmod(typmod, t)) {
+      return bad_typmod(typmod);
+    }
+    if (datum.size() != t.width) {
+      return sm2::bad_datum("decimal", datum, t.width);
+    }
+    __int128 v = load(datum);
+    if (t.width == 8) {
+      sm2::put_key_int<uint64_t>(static_cast<int64_t>(v), key);
+    } else {
+      sm2::put_key_int<unsigned __int128>(v, key);
+    }
+    return 0;
+  });
+}
+
+/* Read a decimal's key back into its datum. */
+int decimal_unkey(std::string_view &key, int32_t typmod,
+                  const sm2::collation_t *, std::string &datum) {
+  return sm2::catch_nomem([&] {
+    numtype_t t;
+    if (!decode_typmod(typmod, t)) {
+      return bad_typmod(typmod);
+    }
+    __int128 v;
+    bool ok;
+    if (t.width == 8) {
+      int64_t n;
+      ok = sm2::get_key_int<uint64_t>(key, n);
+      v = n;
+    } else {
+      ok = sm2::get_key_int<unsigned __int128>(key, v);
+    }
+    if (!ok) {
+      return sm2::bad_key("decimal");
+    }
+    store(v, t.width, datum);
+    return 0;
+  });
+}
+
 } // namespace
 
 namespace sm2 {
@@ -190,6 +240,8 @@ const type_t type_decimal = {.code = 7,
                              .align = 8,
                              .in = decimal_in,
                              .out = decimal_out,
-                             .cmp = decimal_cmp};
+                             .cmp = decimal_cmp,
+                             .key_encode = decimal_key,
+                             .key_decode = decimal_unkey};
 
 } // namespace sm2

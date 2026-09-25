@@ -39,6 +39,31 @@ int bool_cmp(std::string_view a, std::string_view b, int32_t) {
          static_cast<int>(static_cast<unsigned char>(b[0]));
 }
 
+/* A bool's key is its byte: false before true. */
+int bool_key(std::string_view datum, int32_t, const sm2::collation_t *,
+             std::string &key) {
+  return sm2::catch_nomem([&] {
+    if (datum.size() != 1 || (datum[0] != '\0' && datum[0] != '\1')) {
+      return sm2::bad_datum("bool", datum, 1);
+    }
+    key += datum[0];
+    return 0;
+  });
+}
+
+/* Read a bool's key. */
+int bool_unkey(std::string_view &key, int32_t, const sm2::collation_t *,
+               std::string &datum) {
+  return sm2::catch_nomem([&] {
+    if (key.empty() || (key[0] != '\0' && key[0] != '\1')) {
+      return sm2::bad_key("bool");
+    }
+    datum.assign(1, key[0]);
+    key.remove_prefix(1);
+    return 0;
+  });
+}
+
 } // namespace
 
 namespace sm2 {
@@ -50,6 +75,8 @@ const type_t type_bool = {.code = 1,
                           .align = 1,
                           .in = bool_in,
                           .out = bool_out,
-                          .cmp = bool_cmp};
+                          .cmp = bool_cmp,
+                          .key_encode = bool_key,
+                          .key_decode = bool_unkey};
 
 } // namespace sm2

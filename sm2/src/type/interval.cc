@@ -338,6 +338,52 @@ int interval_cmp(std::string_view a, std::string_view b, int32_t) {
   return (x > y) - (x < y);
 }
 
+/*
+ * An interval's key (TYPE.md §3.10): its PostgreSQL order, the
+ * 128-bit span, then months and days, each sign-flipped and
+ * big-endian. Months and days break PostgreSQL's ties, as between
+ * '1 mon' and '30 days', and with the span they give back the
+ * time, so the key is injective.
+ */
+int interval_key(std::string_view datum, int32_t, const sm2::collation_t *,
+                 std::string &key) {
+  return sm2::catch_nomem([&] {
+    if (datum.size() != 16) {
+      return sm2::bad_datum("interval", datum, 16);
+    }
+    interval_t v = load(datum);
+    __int128 span =
+        static_cast<__int128>(v.time) +
+        static_cast<__int128>(int64_t{v.month} * 30 + v.day) * usecs_per_day;
+    sm2::put_key_int<unsigned __int128>(span, key);
+    sm2::put_key_int<uint32_t>(v.month, key);
+    sm2::put_key_int<uint32_t>(v.day, key);
+    return 0;
+  });
+}
+
+/* Read an interval's key: the time is the span less the rest. */
+int interval_unkey(std::string_view &key, int32_t, const sm2::collation_t *,
+                   std::string &datum) {
+  return sm2::catch_nomem([&] {
+    __int128 span;
+    int32_t month, day;
+    if (!sm2::get_key_int<unsigned __int128>(key, span) ||
+        !sm2::get_key_int<uint32_t>(key, month) ||
+        !sm2::get_key_int<uint32_t>(key, day)) {
+      return sm2::bad_key("interval");
+    }
+    __int128 time =
+        span - static_cast<__int128>(int64_t{month} * 30 + day) * usecs_per_day;
+    if (time < std::numeric_limits<int64_t>::min() ||
+        time > std::numeric_limits<int64_t>::max()) {
+      return sm2::bad_key("interval");
+    }
+    store({static_cast<int64_t>(time), day, month}, datum);
+    return 0;
+  });
+}
+
 } // namespace
 
 namespace sm2 {
@@ -349,6 +395,8 @@ const type_t type_interval = {.code = 15,
                               .align = 8,
                               .in = interval_in,
                               .out = interval_out,
-                              .cmp = interval_cmp};
+                              .cmp = interval_cmp,
+                              .key_encode = interval_key,
+                              .key_decode = interval_unkey};
 
 } // namespace sm2

@@ -152,7 +152,8 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
   //    interval and uuid, whose name, width (-1 for variable, or
   //    set by the typmod) and by-value flag are PostgreSQL's, and
   //    whose alignment is too, decimal's aside.
-  // 2. The slots not filled yet are null.
+  // 2. Each has its key functions, and the slots not filled yet
+  //    -- hash, recv, send -- are null.
   // 3. Code 0, which is never a type, and codes not assigned yet
   //    find nothing.
   struct {
@@ -181,9 +182,9 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     CHECK(t->in);
     CHECK(t->out);
     CHECK(t->cmp);
+    CHECK(t->key_encode);
+    CHECK(t->key_decode);
     CHECK_FALSE(t->hash);
-    CHECK_FALSE(t->key_encode);
-    CHECK_FALSE(t->key_decode);
     CHECK_FALSE(t->recv);
     CHECK_FALSE(t->send);
   }
@@ -714,55 +715,6 @@ TEST_CASE("a uuid is its 16 bytes, ordered bytewise") {
 }
 
 namespace {
-
-/* A code point's UTF-8 bytes. */
-std::string utf8(uint32_t cp) {
-  std::string s;
-  if (cp < 0x80) {
-    s += static_cast<char>(cp);
-  } else if (cp < 0x800) {
-    s += static_cast<char>(0xC0 | cp >> 6);
-    s += static_cast<char>(0x80 | (cp & 0x3F));
-  } else if (cp < 0x10000) {
-    s += static_cast<char>(0xE0 | cp >> 12);
-    s += static_cast<char>(0x80 | (cp >> 6 & 0x3F));
-    s += static_cast<char>(0x80 | (cp & 0x3F));
-  } else {
-    s += static_cast<char>(0xF0 | cp >> 18);
-    s += static_cast<char>(0x80 | (cp >> 12 & 0x3F));
-    s += static_cast<char>(0x80 | (cp >> 6 & 0x3F));
-    s += static_cast<char>(0x80 | (cp & 0x3F));
-  }
-  return s;
-}
-
-/*
- * A random valid UTF-8 string of up to 20 code points: mostly
- * ASCII, with every length of sequence, the edges of each range
- * included.
- */
-std::string gen_utf8(std::mt19937_64 &rng) {
-  static const uint32_t edges[] = {0x01,   0x7F,   0x80,   0x7FF,   0x800,
-                                   0xD7FF, 0xE000, 0xFFFF, 0x10000, 0x10FFFF};
-  std::string s;
-  for (size_t n = rng() % 21; n > 0; n--) {
-    uint32_t cp;
-    switch (rng() % 4) {
-    case 0:
-      cp = edges[rng() % std::size(edges)];
-      break;
-    case 1:
-      do {
-        cp = 1 + rng() % 0x10FFFF;
-      } while (cp >= 0xD800 && cp <= 0xDFFF);
-      break;
-    default:
-      cp = 0x20 + rng() % 0x5F;
-    }
-    s += utf8(cp);
-  }
-  return s;
-}
 
 /* memcmp's order on byte strings, the shorter first on a tie. */
 int bytes_order(const std::string &a, const std::string &b) {

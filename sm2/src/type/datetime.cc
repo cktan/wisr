@@ -443,6 +443,50 @@ int tstz_out(std::string_view d, int32_t, std::string &t) {
       [&] { return timestamp_out("timestamptz", true, d, t); });
 }
 
+/* A date's key: its integer's, so the infinities sort at the ends. */
+int date_key(std::string_view d, int32_t, const sm2::collation_t *,
+             std::string &k) {
+  return sm2::int_key<int32_t, uint32_t>("date", d, k);
+}
+/* Read a date's key. */
+int date_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
+               std::string &d) {
+  return sm2::int_unkey<int32_t, uint32_t>("date", k, d);
+}
+
+/* A time's key: its integer's, so the infinities sort at the ends. */
+int time_key(std::string_view d, int32_t, const sm2::collation_t *,
+             std::string &k) {
+  return sm2::int_key<int64_t, uint64_t>("time", d, k);
+}
+/* Read a time's key. */
+int time_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
+               std::string &d) {
+  return sm2::int_unkey<int64_t, uint64_t>("time", k, d);
+}
+
+/* A timestamp's key: its integer's, so the infinities sort at the ends. */
+int ts_key(std::string_view d, int32_t, const sm2::collation_t *,
+           std::string &k) {
+  return sm2::int_key<int64_t, uint64_t>("timestamp", d, k);
+}
+/* Read a timestamp's key. */
+int ts_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
+             std::string &d) {
+  return sm2::int_unkey<int64_t, uint64_t>("timestamp", k, d);
+}
+
+/* A timestamptz's key: its integer's, so the infinities sort at the ends. */
+int tstz_key(std::string_view d, int32_t, const sm2::collation_t *,
+             std::string &k) {
+  return sm2::int_key<int64_t, uint64_t>("timestamptz", d, k);
+}
+/* Read a timestamptz's key. */
+int tstz_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
+               std::string &d) {
+  return sm2::int_unkey<int64_t, uint64_t>("timestamptz", k, d);
+}
+
 } // namespace
 
 namespace sm2 {
@@ -454,7 +498,9 @@ const type_t type_date = {.code = 11,
                           .align = 4,
                           .in = date_in,
                           .out = date_out,
-                          .cmp = date_cmp};
+                          .cmp = date_cmp,
+                          .key_encode = date_key,
+                          .key_decode = date_unkey};
 
 const type_t type_time = {.code = 12,
                           .name = "time",
@@ -463,7 +509,9 @@ const type_t type_time = {.code = 12,
                           .align = 8,
                           .in = time_in,
                           .out = time_out,
-                          .cmp = usecs_cmp};
+                          .cmp = usecs_cmp,
+                          .key_encode = time_key,
+                          .key_decode = time_unkey};
 
 const type_t type_timestamp = {.code = 13,
                                .name = "timestamp",
@@ -472,7 +520,9 @@ const type_t type_timestamp = {.code = 13,
                                .align = 8,
                                .in = ts_in,
                                .out = ts_out,
-                               .cmp = usecs_cmp};
+                               .cmp = usecs_cmp,
+                               .key_encode = ts_key,
+                               .key_decode = ts_unkey};
 
 const type_t type_timestamptz = {.code = 14,
                                  .name = "timestamptz",
@@ -481,6 +531,8 @@ const type_t type_timestamptz = {.code = 14,
                                  .align = 8,
                                  .in = tstz_in,
                                  .out = tstz_out,
-                                 .cmp = usecs_cmp};
+                                 .cmp = usecs_cmp,
+                                 .key_encode = tstz_key,
+                                 .key_decode = tstz_unkey};
 
 } // namespace sm2

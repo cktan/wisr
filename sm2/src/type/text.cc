@@ -104,6 +104,49 @@ int string_out(const char *type, std::string_view datum, std::string &text) {
   });
 }
 
+/*
+ * Fail with SM_ERR_INVALID unless collation is byte order: the
+ * collations of step 2b are not built yet.
+ */
+int check_collation(const char *type, const sm2::collation_t *collation) {
+  if (collation == nullptr) {
+    return 0;
+  }
+  return sm1::seterr(sm1::SM_ERR_INVALID,
+                     std::string("type ") + type +
+                         ": only byte order is supported yet, no collation");
+}
+
+/*
+ * A byte string's key (TYPE.md §3.5, §3.6): the bytes escaped and
+ * terminated, so memcmp orders keys as the strings and no key is a
+ * prefix of another.
+ */
+int bytes_key(const char *type, std::string_view datum,
+              const sm2::collation_t *collation, std::string &key) {
+  return sm2::catch_nomem([&] {
+    if (check_collation(type, collation) != 0) {
+      return -1;
+    }
+    sm2::put_escaped(datum, key);
+    return 0;
+  });
+}
+
+/* Read bytes_key's bytes back into the datum. */
+int bytes_unkey(const char *type, std::string_view &key,
+                const sm2::collation_t *collation, std::string &datum) {
+  return sm2::catch_nomem([&] {
+    if (check_collation(type, collation) != 0) {
+      return -1;
+    }
+    if (!sm2::get_escaped(key, datum)) {
+      return sm2::bad_key(type);
+    }
+    return 0;
+  });
+}
+
 /* Parse a text's text. */
 int text_in(std::string_view t, int32_t, std::string &d) {
   return string_in("text", t, d);
@@ -113,6 +156,17 @@ int text_out(std::string_view d, int32_t, std::string &t) {
   return string_out("text", d, t);
 }
 
+/* A text's key, under its collation. */
+int text_key(std::string_view d, int32_t, const sm2::collation_t *c,
+             std::string &k) {
+  return bytes_key("text", d, c, k);
+}
+/* Read a text's key. */
+int text_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
+               std::string &d) {
+  return bytes_unkey("text", k, c, d);
+}
+
 /* Parse a varchar's text; the typmod's limit is sm3's. */
 int varchar_in(std::string_view t, int32_t, std::string &d) {
   return string_in("varchar", t, d);
@@ -120,6 +174,28 @@ int varchar_in(std::string_view t, int32_t, std::string &d) {
 /* Print a varchar datum. */
 int varchar_out(std::string_view d, int32_t, std::string &t) {
   return string_out("varchar", d, t);
+}
+
+/* A varchar's key, under its collation. */
+int varchar_key(std::string_view d, int32_t, const sm2::collation_t *c,
+                std::string &k) {
+  return bytes_key("varchar", d, c, k);
+}
+/* Read a varchar's key. */
+int varchar_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
+                  std::string &d) {
+  return bytes_unkey("varchar", k, c, d);
+}
+
+/* A bytea's key: its bytes, escaped; a bytea has no collation. */
+int bytea_key(std::string_view d, int32_t, const sm2::collation_t *,
+              std::string &k) {
+  return bytes_key("bytea", d, nullptr, k);
+}
+/* Read a bytea's key. */
+int bytea_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
+                std::string &d) {
+  return bytes_unkey("bytea", k, nullptr, d);
 }
 
 /* The hex digit's value, or -1 if c is not a lower-case hex digit. */
@@ -181,7 +257,9 @@ const type_t type_text = {.code = 8,
                           .align = 4,
                           .in = text_in,
                           .out = text_out,
-                          .cmp = bytes_cmp};
+                          .cmp = bytes_cmp,
+                          .key_encode = text_key,
+                          .key_decode = text_unkey};
 
 const type_t type_varchar = {.code = 9,
                              .name = "varchar",
@@ -190,7 +268,9 @@ const type_t type_varchar = {.code = 9,
                              .align = 4,
                              .in = varchar_in,
                              .out = varchar_out,
-                             .cmp = bytes_cmp};
+                             .cmp = bytes_cmp,
+                             .key_encode = varchar_key,
+                             .key_decode = varchar_unkey};
 
 const type_t type_bytea = {.code = 10,
                            .name = "bytea",
@@ -199,6 +279,8 @@ const type_t type_bytea = {.code = 10,
                            .align = 4,
                            .in = bytea_in,
                            .out = bytea_out,
-                           .cmp = bytes_cmp};
+                           .cmp = bytes_cmp,
+                           .key_encode = bytea_key,
+                           .key_decode = bytea_unkey};
 
 } // namespace sm2

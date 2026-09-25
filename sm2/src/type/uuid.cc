@@ -74,6 +74,31 @@ int uuid_cmp(std::string_view a, std::string_view b, int32_t) {
   return memcmp(a.data(), b.data(), 16);
 }
 
+/* A uuid's key: its 16 bytes, which memcmp already orders. */
+int uuid_key(std::string_view datum, int32_t, const sm2::collation_t *,
+             std::string &key) {
+  return sm2::catch_nomem([&] {
+    if (datum.size() != 16) {
+      return sm2::bad_datum("uuid", datum, 16);
+    }
+    key += datum;
+    return 0;
+  });
+}
+
+/* Read a uuid's key. */
+int uuid_unkey(std::string_view &key, int32_t, const sm2::collation_t *,
+               std::string &datum) {
+  return sm2::catch_nomem([&] {
+    if (key.size() < 16) {
+      return sm2::bad_key("uuid");
+    }
+    datum.assign(key.substr(0, 16));
+    key.remove_prefix(16);
+    return 0;
+  });
+}
+
 } // namespace
 
 namespace sm2 {
@@ -85,6 +110,8 @@ const type_t type_uuid = {.code = 16,
                           .align = 1,
                           .in = uuid_in,
                           .out = uuid_out,
-                          .cmp = uuid_cmp};
+                          .cmp = uuid_cmp,
+                          .key_encode = uuid_key,
+                          .key_decode = uuid_unkey};
 
 } // namespace sm2

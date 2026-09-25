@@ -10,8 +10,10 @@
 #include <bit>
 #include <cstdint>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
 #include <random>
+#include <string>
 #include <vector>
 
 /* The seed every property runs from: WISR_SEED, or a fixed default. */
@@ -86,6 +88,55 @@ template <typename F> F gen_float(std::mt19937_64 &rng) {
   default:
     return std::bit_cast<F>(static_cast<bits_t>(rng()));
   }
+}
+
+/* A code point's UTF-8 bytes. */
+inline std::string utf8(uint32_t cp) {
+  std::string s;
+  if (cp < 0x80) {
+    s += static_cast<char>(cp);
+  } else if (cp < 0x800) {
+    s += static_cast<char>(0xC0 | cp >> 6);
+    s += static_cast<char>(0x80 | (cp & 0x3F));
+  } else if (cp < 0x10000) {
+    s += static_cast<char>(0xE0 | cp >> 12);
+    s += static_cast<char>(0x80 | (cp >> 6 & 0x3F));
+    s += static_cast<char>(0x80 | (cp & 0x3F));
+  } else {
+    s += static_cast<char>(0xF0 | cp >> 18);
+    s += static_cast<char>(0x80 | (cp >> 12 & 0x3F));
+    s += static_cast<char>(0x80 | (cp >> 6 & 0x3F));
+    s += static_cast<char>(0x80 | (cp & 0x3F));
+  }
+  return s;
+}
+
+/*
+ * A random valid UTF-8 string of up to 20 code points: mostly
+ * ASCII, with every length of sequence, the edges of each range
+ * included.
+ */
+inline std::string gen_utf8(std::mt19937_64 &rng) {
+  static const uint32_t edges[] = {0x01,   0x7F,   0x80,   0x7FF,   0x800,
+                                   0xD7FF, 0xE000, 0xFFFF, 0x10000, 0x10FFFF};
+  std::string s;
+  for (size_t n = rng() % 21; n > 0; n--) {
+    uint32_t cp;
+    switch (rng() % 4) {
+    case 0:
+      cp = edges[rng() % std::size(edges)];
+      break;
+    case 1:
+      do {
+        cp = 1 + rng() % 0x10FFFF;
+      } while (cp >= 0xD800 && cp <= 0xDFFF);
+      break;
+    default:
+      cp = 0x20 + rng() % 0x5F;
+    }
+    s += utf8(cp);
+  }
+  return s;
 }
 
 #endif /* SM2_TEST_GEN_H */

@@ -85,6 +85,45 @@ template <typename F> int float_cmp(std::string_view a, std::string_view b) {
   return (x > y) - (x < y);
 }
 
+/*
+ * The key of an F datum (TYPE.md §3.3): -0 folded into 0 and every
+ * NaN into the one quiet NaN, as PostgreSQL calls them equal, then
+ * every bit of a negative value flipped and the sign bit of any
+ * other, big-endian, so memcmp orders it as float8_cmp_internal.
+ */
+template <typename F>
+int float_key(const char *type, std::string_view datum, std::string &key) {
+  return sm2::catch_nomem([&] {
+    using U = bits_t<F>;
+    if (datum.size() != sizeof(F)) {
+      return sm2::bad_datum(type, datum, sizeof(F));
+    }
+    F v = std::bit_cast<F>(sm2::load_le<U>(datum));
+    U bits = std::isnan(v)
+                 ? std::bit_cast<U>(std::numeric_limits<F>::quiet_NaN())
+             : v == F{0} ? U{0}
+                         : std::bit_cast<U>(v);
+    const U sign = U{1} << (8 * sizeof(U) - 1);
+    sm2::put_be(static_cast<U>(bits & sign ? ~bits : bits ^ sign), key);
+    return 0;
+  });
+}
+
+/* Read float_key's bytes back into the datum the key keeps. */
+template <typename F>
+int float_unkey(const char *type, std::string_view &key, std::string &datum) {
+  return sm2::catch_nomem([&] {
+    using U = bits_t<F>;
+    U k;
+    if (!sm2::get_be(key, k)) {
+      return sm2::bad_key(type);
+    }
+    const U sign = U{1} << (8 * sizeof(U) - 1);
+    sm2::store_le(static_cast<U>(k & sign ? k ^ sign : ~k), datum);
+    return 0;
+  });
+}
+
 /* Parse a float4's canonical text. */
 int float4_in(std::string_view t, int32_t, std::string &d) {
   return sm2::catch_nomem([&] { return float_in<float>("float4", t, d); });
@@ -96,6 +135,17 @@ int float4_out(std::string_view d, int32_t, std::string &t) {
 /* Order two float4 datums. */
 int float4_cmp(std::string_view a, std::string_view b, int32_t) {
   return float_cmp<float>(a, b);
+}
+
+/* A float4's key. */
+int float4_key(std::string_view d, int32_t, const sm2::collation_t *,
+               std::string &k) {
+  return float_key<float>("float4", d, k);
+}
+/* Read a float4's key. */
+int float4_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
+                 std::string &d) {
+  return float_unkey<float>("float4", k, d);
 }
 
 /* Parse a float8's canonical text. */
@@ -111,6 +161,17 @@ int float8_cmp(std::string_view a, std::string_view b, int32_t) {
   return float_cmp<double>(a, b);
 }
 
+/* A float8's key. */
+int float8_key(std::string_view d, int32_t, const sm2::collation_t *,
+               std::string &k) {
+  return float_key<double>("float8", d, k);
+}
+/* Read a float8's key. */
+int float8_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
+                 std::string &d) {
+  return float_unkey<double>("float8", k, d);
+}
+
 } // namespace
 
 namespace sm2 {
@@ -122,7 +183,9 @@ const type_t type_float4 = {.code = 5,
                             .align = 4,
                             .in = float4_in,
                             .out = float4_out,
-                            .cmp = float4_cmp};
+                            .cmp = float4_cmp,
+                            .key_encode = float4_key,
+                            .key_decode = float4_unkey};
 
 const type_t type_float8 = {.code = 6,
                             .name = "float8",
@@ -131,6 +194,8 @@ const type_t type_float8 = {.code = 6,
                             .align = 8,
                             .in = float8_in,
                             .out = float8_out,
-                            .cmp = float8_cmp};
+                            .cmp = float8_cmp,
+                            .key_encode = float8_key,
+                            .key_decode = float8_unkey};
 
 } // namespace sm2

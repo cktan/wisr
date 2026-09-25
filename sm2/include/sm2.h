@@ -19,10 +19,20 @@
 #define SM2_H
 
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace sm2 {
+
+/*
+ * A collation, for the keys of text and varchar (SM2_DESIGN.md
+ * §3.3). Defined in step 2b; until then only nullptr, byte order,
+ * which is PostgreSQL's C collation, is accepted.
+ */
+struct collation_t;
 
 /*
  * A type, as a descriptor of functions in pg_type's shape
@@ -53,14 +63,28 @@ struct type_t {
     int (*cmp)(std::string_view a, std::string_view b, int32_t typmod);
 
     /*
+     * Append the datum's ascending key (TYPE.md §3): bytes whose
+     * memcmp order is the type's order, injective up to what
+     * PostgreSQL calls equal, and prefix-free. Only text and
+     * varchar look at the collation; nullptr is byte order.
+     */
+    int (*key_encode)(std::string_view datum, int32_t typmod,
+                      const collation_t* collation, std::string& key);
+
+    /*
+     * Read one ascending key from the front of key, advancing past
+     * it, into the datum it encodes. Where the key folds datums
+     * PostgreSQL calls equal -- a float's -0 and its NaNs -- the
+     * datum is the one the key keeps (TYPE.md §3.3).
+     */
+    int (*key_decode)(std::string_view& key, int32_t typmod,
+                      const collation_t* collation, std::string& datum);
+
+    /*
      * Not filled yet (SM2_DESIGN.md §2.3): nullptr until the step
      * that needs each one.
      */
     uint64_t (*hash)(std::string_view datum, int32_t typmod) = nullptr;
-    int (*key_encode)(std::string_view datum, int32_t typmod,
-                      std::string& key) = nullptr;
-    int (*key_decode)(std::string_view key, int32_t typmod,
-                      std::string& datum) = nullptr;
     int (*recv)(std::string_view wire, int32_t typmod,
                 std::string& datum) = nullptr;
     int (*send)(std::string_view datum, int32_t typmod,
@@ -87,6 +111,37 @@ extern const type_t type_uuid;        /* code 16 */
 
 /* The type with this code, or nullptr if there is none. */
 const type_t* type_by_code(uint8_t code);
+
+/* One column of a key: its type and how it sorts (TYPE.md §2). */
+struct key_column_t {
+    const type_t*       type;
+    int32_t             typmod;
+    const collation_t*  collation;   /* text, varchar; nullptr: bytes */
+    bool                desc;        /* descending */
+    bool                nulls_first; /* nulls before every value */
+};
+
+/* A column's datum in a key, or null. */
+struct key_datum_t {
+    std::string_view bytes;
+    bool             null;
+};
+
+/*
+ * Append the key of datums under cols (TYPE.md §2): per column, a
+ * null marker and the type's key, inverted for a descending
+ * column, joined end to end. memcmp over two keys of one cols
+ * orders them column by column.
+ */
+int encode_key(std::span<const key_column_t> cols,
+               std::span<const key_datum_t> datums, std::string& key);
+
+/*
+ * Decode a key encode_key made under cols into one datum per
+ * column, std::nullopt for a null; the whole key must be used.
+ */
+int decode_key(std::span<const key_column_t> cols, std::string_view key,
+               std::vector<std::optional<std::string>>& datums);
 
 } // namespace sm2
 
