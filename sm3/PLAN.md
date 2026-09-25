@@ -2,9 +2,9 @@
 
 The order of work, and why it is this order. `SM3_OBJECTIVE.md`
 says what sm3 is for; `SM3_DESIGN.md` is where each step's
-argument goes before its code does. It starts where
-`sm2/PLAN.md` stops: sm2's types, encodings and tuple
-relation exist before anything here does.
+argument goes before its code does. It starts where sm2's
+build order (`sm2/SM2_DESIGN.md` §8) stops: sm2's types,
+encodings and tuple relation exist before anything here does.
 
 The principle: **the formats were sm2's problem; the
 concurrency is this one's.** Almost nothing sm3 writes is
@@ -91,7 +91,8 @@ for the first scenario that needs it, not before.
 ## What is deliberately not here
 
 - No types, no key encoding, no tuple format. All of it is
-  `sm2/PLAN.md`, and sm3 calls it rather than repeating it.
+  sm2's (`sm2/SM2_DESIGN.md` §8), and sm3 calls it rather than
+  repeating it.
 - No SQL, no planner, no executor.
 - No PostgreSQL dependency. `PART4.md` explains what the PG
   target forces on the decisions above; none of it requires a

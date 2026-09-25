@@ -79,8 +79,9 @@ make -C sm1     build level 1 alone
 ```
 
 `LEVELS` in the top-level `Makefile` lists which levels have
-a Makefile to delegate to; `sm3` joins it when it has one. Adding a level to the stack means adding its name
-there, nowhere else.
+a Makefile to delegate to; `sm3` joins it when it has one.
+Adding a level to the stack means adding its name there,
+nowhere else.
 
 **Never compile with `-fno-exceptions`,** at any level or in the
 C wrapper. An exception may unwind through sm1, sm2 and sm3 to
@@ -100,7 +101,7 @@ rule is that nothing turns them off.
 | Level | Status |
 | --- | --- |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
-| sm2 | designed, not yet implemented — every open section of `sm2/SM2_DESIGN.md` is marked "to be written"; `sm2/PLAN.md` has the build order |
+| sm2 | partly built: its types, key encoding and tuple codec, with its C++ interface in `sm2/include/sm2.h`; the tuple relation and TOAST are not; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
 | sm3 | designed, not yet implemented — the same, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md`; it cannot start before sm2's two formats are settled |
 | top level | not yet written — the C wrapper waits for the levels it wraps; until it exists the stack has no C surface |
 
@@ -112,7 +113,7 @@ sm2 and sm3 are split for the same reason in a different
 key: sm2 is two permanent on-disk formats and a codec over
 them, sm3 is protocols that can be rewritten, and keeping
 the permanent part small is what lets it get all the
-scrutiny (`sm2/PLAN.md`).
+scrutiny (`sm2/SM2_DESIGN.md` §8).
 
 ---
 
@@ -130,8 +131,9 @@ Every level uses the same two-layer scheme, established in
 Most of sm2 is the first kind — a codec is tested by
 property, not by interleaving — and most of the second kind
 arrives with sm3: an index build against a concurrent
-writer, DDL against DML. Both `PLAN.md`s reuse this scheme
-rather than invent a second, and defer only the question of
+writer, DDL against DML. sm2's testing (`sm2/SM2_DESIGN.md`
+§8.3) and `sm3/PLAN.md` reuse this scheme rather than invent a
+second, and defer only the question of
 whether a level needs a driver of its own or can extend
 sm1's — "a decision for the first scenario that needs it,
 not before."
@@ -304,9 +306,9 @@ design:
   nothing. The C wrapper is the one catch-all, since it is the
   only place a C caller can be reached. It catches everything:
   `std::bad_alloc` becomes `NOMEM` — possible there only from
-  the wrapper's own code — anything else a code of its own that means a bug,
-  and if the call involves a session the wrapper aborts that
-  session's transaction before returning -1. A `NOMEM` returned
+  the wrapper's own code — anything else a code of its own that
+  means a bug, and if the call involves a session the wrapper
+  aborts that session's transaction before returning -1. A `NOMEM` returned
   from below is handled the same way: the wrapper aborts the
   session's transaction, since a data operation that ran out of
   memory midway may have written part of its change. Aborting
@@ -321,8 +323,9 @@ design:
   `PREPARED` record is written, an abort would kill in memory
   versions the WAL says are committed. Nothing does: that tail
   is `noexcept`, running out of memory in it aborts the process
-  as anywhere inside sm1, and a failed write goes fail-stop. sm2 and sm3 must stay
-  consistent when unwound mid-call, so the abort undoes what a
+  as anywhere inside sm1, and a failed write goes fail-stop.
+  sm2 and sm3 must stay consistent when unwound mid-call, so
+  the abort undoes what a
   half-done call changed — above all in sm3's in-memory catalog.
   After `NOMEM`, as after a retryable code, the engine has
   already aborted, so the glue does not continue the transaction;

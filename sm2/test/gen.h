@@ -1,5 +1,5 @@
 /*
- * gen.h -- generators for sm2's property tests (PLAN.md,
+ * gen.h -- generators for sm2's property tests (SM2_DESIGN.md §8.3,
  * "Testing"). Every property runs from one seed: a fixed default
  * that the environment variable WISR_SEED overrides, which a
  * property prints when it fails, so any failure replays exactly.

@@ -1,5 +1,5 @@
 /*
- * test_tuple.cc -- the tuple codec (SM2_DESIGN.md §4, PLAN.md
+ * test_tuple.cc -- the tuple codec (SM2_DESIGN.md §4, §8.2
  * step 3): its bytes, its round trip, the schema changes it must
  * survive, and the tuples it must refuse. No database is involved:
  * the codec touches sm1 nowhere.

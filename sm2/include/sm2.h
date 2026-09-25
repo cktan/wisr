@@ -1,7 +1,7 @@
 /*
  * sm2.h -- the wisr type and tuple level's public C++ API, in
  * namespace sm2 (SM2_DESIGN.md). What exists so far is step 1 of
- * PLAN.md: the types.
+ * SM2_DESIGN.md §8.2: the types.
  *
  * Conventions that hold throughout, as in sm1.h:
  *
@@ -70,7 +70,7 @@ struct type_t {
      * datum, or fail with SM_ERR_INVALID. Only the canonical form
      * -- what PostgreSQL prints, with DateStyle ISO, IntervalStyle
      * iso_8601 and, for timestamptz, TimeZone UTC -- is accepted
-     * (PLAN.md step 1). A precision typmod bounds the fraction
+     * (SM2_DESIGN.md §8.2 step 1). A precision typmod bounds the fraction
      * digits a time or timestamp may carry (TYPE.md §3.8).
      */
     int (*in)(std::string_view text, int32_t typmod, std::string& datum);

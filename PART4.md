@@ -363,16 +363,16 @@ should become a dependency.
 
 ## 7. Recommended sequencing
 
-1. **Build sm2, then sm3, standalone**, to `sm2/PLAN.md` and
-   `sm3/PLAN.md`.
+1. **Build sm2, then sm3, standalone**, to
+   `sm2/SM2_DESIGN.md` §8 and `sm3/PLAN.md`.
 2. **Backward scans are settled** (§5): the ban stands, and
    the planner is changed not to ask for one.
 3. **Spike the fork early, and throw it away.** A prototype
    that runs `SELECT` and `INSERT` on one table through sm3,
    built to find which of §2's and §4's walls bites first —
-   not to be kept. The formats in `sm2/PLAN.md` steps 2 and 3
-   are permanent once data exists; the spike is how to learn
-   what they must carry *before* that happens.
+   not to be kept. The formats of `sm2/SM2_DESIGN.md` §8.2,
+   steps 2 and 3, are permanent once data exists; the spike is
+   how to learn what they must carry *before* that happens.
 4. Only then decide whether the full program is worth its
    multi-year cost.
 

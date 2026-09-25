@@ -8,8 +8,8 @@ table you look things up in while writing code.
 **Status: nothing here is implemented.** These are the
 formats as designed. Where a fact about PostgreSQL is from
 memory rather than checked against the source it says so, and
-`PLAN.md` step 1 pins each one to a fixture taken from a
-running PostgreSQL.
+`SM2_DESIGN.md` §8.2 step 1 pins each one to a fixture taken
+from a running PostgreSQL.
 
 ---
 

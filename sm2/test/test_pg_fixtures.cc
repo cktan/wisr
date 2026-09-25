@@ -1,6 +1,6 @@
 /*
  * test_pg_fixtures.cc -- sm2's datums against the bytes
- * PostgreSQL itself stored (test/pg_fixtures.h, PLAN.md
+ * PostgreSQL itself stored (test/pg_fixtures.h, SM2_DESIGN.md §8.3
  * "Testing").
  */
 

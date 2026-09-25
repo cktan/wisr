@@ -13,21 +13,22 @@ Two kinds of entry, and the difference matters:
   answer is recorded in the document named at the end of the
   entry.
 
-Ordered by the step of `PLAN.md` each one blocks. Sections 1
-to 3 — the suggested answers in `SM2_OBJECTIVE.md`, types, and
-key encoding — are answered and have moved into `SM2_DESIGN.md`,
-`TYPE.md` and `sm3/SM3_DESIGN.md`; 4.1 and 4.3 — the schema a
-`rel` is handed and alignment — into `SM2_DESIGN.md` §4, the
-first answered by keeping no schema version and the second by
-packing, not aligning; 5.1 and 5.3 — the header
-and sm2's errors — into `SM2_DESIGN.md` §5; and 6.1, 6.2 and
-6.3 — the build, the property tests and the PostgreSQL fixtures
-— into `PLAN.md`. The numbering of what remains is kept so that
-a question's number never changes.
+Ordered by the step of `SM2_DESIGN.md` §8.2 each one blocks.
+Sections 1 to 3 — the suggested answers in `SM2_OBJECTIVE.md`,
+types, and key encoding — are answered and have moved into
+`SM2_DESIGN.md`, `TYPE.md` and `sm3/SM3_DESIGN.md`; 4.1 and 4.3
+— the schema a `rel` is handed and alignment — into
+`SM2_DESIGN.md` §4, the first answered by keeping no schema
+version and the second by packing, not aligning; 5.1 and 5.3
+— the header and sm2's errors — into `SM2_DESIGN.md` §5; and
+6.1, 6.2 and 6.3 — the build, the property tests and the
+PostgreSQL fixtures — into `SM2_DESIGN.md` §8. The numbering of
+what remains is kept so that a question's number never
+changes.
 
 ---
 
-## 4. Tuple format — blocks `PLAN.md` step 3
+## 4. Tuple format — blocks step 3 (`SM2_DESIGN.md` §8.2)
 
 4.2 is a hole in the design as written, not a preference.
 
@@ -50,7 +51,7 @@ touched (`sm1/SM1_DESIGN.md` §13). → `SM2_DESIGN.md` §4
 
 ---
 
-## 5. The `rel` API — blocks `PLAN.md` step 4
+## 5. The `rel` API — blocks step 4 (`SM2_DESIGN.md` §8.2)
 
 **5.2 [ASSUMABLE] Who owns a decoded datum's memory?**
 sm1's rule is that handed-out byte strings point into
@@ -103,7 +104,7 @@ returns it, so the sequence is used in one place.*
 *Suggested: yes — steps 1 to 3 are a library with no sm1
 dependency at all and can land and be used before `rel`
 exists.* It is also the order that gets the permanent formats
-under test earliest. → `PLAN.md`
+under test earliest. → `SM2_DESIGN.md` §8
 
 ---
 
@@ -145,13 +146,12 @@ Settled, and listed so nobody reopens them by accident:
   `SM2_DESIGN.md` §5, `sm3/SM3_DESIGN.md` §3.
 - That NULLs are distinct in a unique index —
   `sm3/SM3_DESIGN.md` §3.
-- sm2's build and source layout — `PLAN.md`, "Source
-  layout".
+- sm2's build and source layout — `SM2_DESIGN.md` §8.1.
 - That property tests are hand-rolled, seeded and replayable,
-  with no new dependency — `PLAN.md`, "Testing".
+  with no new dependency — `SM2_DESIGN.md` §8.3.
 - That the PostgreSQL fixtures are PostgreSQL 18's on-disk
   bytes, read through `pageinspect` on the development machine
-  and checked in — `PLAN.md`, "Testing".
+  and checked in — `SM2_DESIGN.md` §8.3.
 - That sm2's interface is `include/sm2.h` in `namespace sm2`,
   and its failures go through sm1's error state with codes of
   its own appended to `sm1::errnum_t` — `SM2_DESIGN.md` §5.

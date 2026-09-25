@@ -1,5 +1,5 @@
 /*
- * test_key.cc -- key encoding (TYPE.md §1-§3, PLAN.md step 2):
+ * test_key.cc -- key encoding (TYPE.md §1-§3, SM2_DESIGN.md §8.2 step 2):
  * each type's key against its own order, and keys of several
  * columns against the order of their columns.
  */
