@@ -27,9 +27,12 @@ make -C sm1     build level 1 alone
 ```
 
 Each level has a Makefile of its own with the real targets; the
-top-level one delegates to them. It will also build the C
-wrapper, in the root's `include/` and `src/`, which belongs to
-no level; the wrapper is not written yet (`DESIGN.md` §3).
+top-level one delegates to them. It also builds the C wrapper,
+in the root's `include/` and `src/`, which belongs to no level,
+into `build/libsm.a`: one archive of every level's objects and
+the wrapper's, so a C program includes `include/sm.h` and links
+that (`DESIGN.md` §2). `make test` ends by driving the wrapper
+from C, with `test/test_sm.c`.
 
 ## Where to read
 

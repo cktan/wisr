@@ -101,7 +101,7 @@ These are settled; they bind every level below.
     returns 0 or -1, and the code and message are read from
     the thread-local `sm1::errnum()` and `sm1::errmsg()` — one
     errno namespace for the whole stack, every code defined
-    in `sm1/include/sm1.h` (`DESIGN.md` §5).
+    in the root's `include/sm_error.h` (`DESIGN.md` §5).
   - *Only the top level catches.* An exception may pass
     through sm1, sm2 and sm3 unchanged; the C wrapper catches
     everything, because a PostgreSQL `longjmp` across C++

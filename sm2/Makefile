@@ -32,7 +32,7 @@ CFLAGS   += -std=c11 -Wall -DFRONTEND -Isrc/ryu -MMD -MP
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc/type -Isrc/ryu \
-            -I$(SM1)/include \
+            -I$(SM1)/include -I../include \
             -MMD -MP
 LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 

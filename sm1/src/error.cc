@@ -164,15 +164,30 @@ void reseterr() {
 const char *errname() {
   // One name per code, indexed by its stable value.
   static constexpr const char *names[] = {
-      "OK",           "ERR_INVALID",  "ERR_NOTRANS",
-      "ERR_INTRANS",  "ERR_PREPARED", "ERR_NOSAVEPOINT",
-      "ERR_NOTFOUND", "ERR_DUPKEY",   "ERR_EXISTS",
-      "ERR_INUSE",    "ERR_CONFLICT", "ERR_SERIALIZATION",
-      "ERR_DEADLOCK", "ERR_CORRUPT",  "ERR_IO",
-      "ERR_NOMEM",    "ERR_DISKFULL", "ERR_PERMISSION",
-      "ERR_VERSION",  "ERR_UPDATED",  "ERR_KEYTOOLONG",
+      "OK",
+      "ERR_INVALID",
+      "ERR_NOTRANS",
+      "ERR_INTRANS",
+      "ERR_PREPARED",
+      "ERR_NOSAVEPOINT",
+      "ERR_NOTFOUND",
+      "ERR_DUPKEY",
+      "ERR_EXISTS",
+      "ERR_INUSE",
+      "ERR_CONFLICT",
+      "ERR_SERIALIZATION",
+      "ERR_DEADLOCK",
+      "ERR_CORRUPT",
+      "ERR_IO",
+      "ERR_NOMEM",
+      "ERR_DISKFULL",
+      "ERR_PERMISSION",
+      "ERR_VERSION",
+      "ERR_UPDATED",
+      "ERR_KEYTOOLONG",
+      "ERR_EXCEPTION",
   };
-  static_assert(sizeof(names) / sizeof(names[0]) == sm1::SM_ERR_KEYTOOLONG + 1,
+  static_assert(sizeof(names) / sizeof(names[0]) == sm1::SM_ERR_EXCEPTION + 1,
                 "every error code needs its name");
   // A value outside the table was never a code.
   size_t i = static_cast<size_t>(t_errno);

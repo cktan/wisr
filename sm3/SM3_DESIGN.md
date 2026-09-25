@@ -272,6 +272,15 @@ in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
   blocking builds hurt.
 - Partial, expression and INCLUDE indexes mean maintenance takes
   a predicate and an expression evaluator, not a column list.
+- **Open: whether sm3 or PostgreSQL's executor drives
+  maintenance.** The kept executor already writes index entries
+  through its index access method, evaluates expression and
+  partial index keys, and re-checks rows under READ COMMITTED
+  with `EvalPlanQual`, so much of this section may be the
+  executor's, reaching sm2's index `rel` through the C wrapper
+  (`DESIGN.md` §5). What cannot move up is named above: the
+  unique checks on NULL and cut keys, the online build, and the
+  index and the heap never disagreeing.
 
 ---
 

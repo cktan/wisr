@@ -43,6 +43,9 @@
 #ifndef SM1_H
 #define SM1_H
 
+#include "sm_error.h"
+#include "sm_options.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -72,44 +75,12 @@ inline constexpr int    max_savepoints  = 256;
 
 /*
  * Error codes, one namespace for the whole stack: every level's
- * codes are defined here. Values are explicit and stable: new
- * codes are appended, existing values never change.
+ * codes are defined in the root's include/sm_error.h, as a C
+ * enum the C wrapper shares. errnum_t names it here, and the
+ * using-enum brings its SM_* values into namespace sm1.
  */
-enum errnum_t {
-    SM_OK                = 0,
-
-    /* caller/programming errors */
-    SM_ERR_INVALID       = 1,   /* bad argument */
-    SM_ERR_NOTRANS       = 2,   /* op requires an active transaction */
-    SM_ERR_INTRANS       = 3,   /* op forbidden inside a transaction */
-    SM_ERR_PREPARED      = 4,   /* op forbidden on a prepared transaction */
-    SM_ERR_NOSAVEPOINT   = 5,   /* rollback with no savepoint set */
-
-    /* data errors */
-    SM_ERR_NOTFOUND      = 6,   /* store or key does not exist */
-    SM_ERR_DUPKEY        = 7,   /* insert onto a live key */
-    SM_ERR_EXISTS        = 8,   /* home dir, database, or store exists */
-    SM_ERR_INUSE         = 9,   /* database or sessions still open */
-
-    /* concurrency errors -- RETRYABLE */
-    SM_ERR_CONFLICT      = 10,  /* write-write conflict */
-    SM_ERR_SERIALIZATION = 11,  /* SSI validation failure */
-    SM_ERR_DEADLOCK      = 12,  /* chosen as deadlock victim */
-
-    /* environment errors */
-    SM_ERR_CORRUPT       = 13,
-    SM_ERR_IO            = 14,
-    SM_ERR_NOMEM         = 15,
-    SM_ERR_DISKFULL      = 16,
-    SM_ERR_PERMISSION    = 17,
-    SM_ERR_VERSION       = 18,  /* home dir format not supported */
-
-    /* Not an abort: the transaction stays active (SM1_DESIGN.md §5.4). */
-    SM_ERR_UPDATED       = 19,  /* newer commit; sm1::read_latest, then retry */
-
-    /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §5) */
-    SM_ERR_KEYTOOLONG    = 20   /* a key that may not be cut is too long */
-};
+using errnum_t = ::sm_errnum_t;
+using enum ::sm_errnum_t;
 
 /*
  * The last error raised on the calling thread. Meaningful
@@ -234,27 +205,12 @@ enum class xctlevel_t {
 /*
  * Database options, taken by sm1::mkdb() and by the sm1::opendb()
  * that first opens a database. NULL means all defaults, and a
- * default-constructed options_t holds them too.
- *
- * durability_sync = 0 trades a bounded window of committed-
- * transaction loss on power failure for throughput. The
- * database stays crash-CONSISTENT; it is no longer crash-
- * DURABLE. It does not weaken isolation.
- *
- * group_commit_us is accepted but currently unused: concurrent
- * commits already share one synced WAL write through RocksDB's
- * write group. commit_cache_entries bounds the in-memory map
- * from transaction id to commit timestamp that spares readers
- * a status-table lookup; it must be at least 1.
+ * default-constructed options_t holds them too. The fields and
+ * their defaults are the root's include/sm_options.h, shared with
+ * the C wrapper; options_t only adds the constructor.
  */
-struct options_t {
-    int         durability_sync      = 1;
-    int         group_commit_us      = 200;      /* unused */
-    int         deadlock_ms          = 50;
-    int         ssi_max_entries      = 1 << 20;  /* unused */
-    long long   ts_lease             = 1000000;
-    const char* rocksdb_options      = nullptr;  /* nullptr = defaults */
-    int         commit_cache_entries = 65536;
+struct options_t : ::sm_options_t {
+    options_t() { sm_options_init(this); }
 };
 
 /*
@@ -484,6 +440,19 @@ int commit(session_t* session);
  * Errors: SM_ERR_NOTRANS.
  */
 int abort(session_t* session);
+
+/*
+ * Whether session prepared a transaction that no session has
+ * resolved yet: then sm1::commit and sm1::abort on it resolve
+ * that prepared transaction, not an active one. A caller that
+ * must never undo a prepared transaction -- the C wrapper's
+ * catch-all -- asks this before aborting. Only the session's own
+ * thread can prepare, so a false answer stays false; a true one
+ * may turn false when another session resolves the gid.
+ *
+ * NULL is false. Needs no transaction and sets no error.
+ */
+bool in_doubt(session_t* session);
 
 /*
  * The mode of a row lock taken by sm1::lock().

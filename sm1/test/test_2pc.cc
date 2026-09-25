@@ -226,6 +226,36 @@ TEST_CASE("prepare, then commit or abort on the preparing session") {
   sm1::closedb(r);
 }
 
+TEST_CASE("sm1::in_doubt holds from prepare until the gid is resolved") {
+  // Verify that in_doubt names exactly a session whose prepared
+  // transaction no session has resolved yet.
+  // 1. NULL, a session with no transaction, and one with an
+  //    active transaction are not in doubt.
+  // 2. After prepare the preparing session is in doubt, and the
+  //    other session is not.
+  // 3. Once the other session commits the gid, the preparing
+  //    session is no longer in doubt and can begin again.
+  tpc_fixture_t f;
+  sm1::session_t *s = f.open();
+  sm1::session_t *r = f.open();
+  CHECK_FALSE(sm1::in_doubt(nullptr));
+  CHECK_FALSE(sm1::in_doubt(s));
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(set(s, "a", "1") == 0);
+  CHECK_FALSE(sm1::in_doubt(s));
+
+  REQUIRE(sm1::prepare(s, "g1") == 0);
+  CHECK(sm1::in_doubt(s));
+  CHECK_FALSE(sm1::in_doubt(r));
+
+  REQUIRE(sm1::commit_prepared(r, "g1") == 0);
+  CHECK_FALSE(sm1::in_doubt(s));
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::abort(s) == 0);
+  sm1::closedb(s);
+  sm1::closedb(r);
+}
+
 TEST_CASE("a prepared transaction accepts only commit and abort") {
   // Verify the PREPARED state's rules (§8.4, API.md).
   // 1. Preparing without a transaction fails with NOTRANS; an

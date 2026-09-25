@@ -16,7 +16,7 @@ format, sm3's catalog — are argued in that level's own
         ┌────────────────────┴─────────────────────────┐
         │  top level  the C wrapper                    │
         │  sessions · transactions · 2PC → sm1 ·       │
-        │  tables and indexes → sm3                    │
+        │  rows and index entries → sm2, sm3 later     │
         └────────────────────┬─────────────────────────┘
                              │  sm3::
         ┌────────────────────┴─────────────────────────┐
@@ -61,17 +61,34 @@ is the one place an exception is caught and a PostgreSQL
 error path is safe to take (`OBJECTIVE.md`). Like sm3, it
 may skip a level: it calls sm1 directly for sessions,
 transactions, savepoints and 2PC, which neither sm2 nor sm3
-has anything to add to, and sm3 for everything else. sm2
-calls only sm1, and nothing calls upward.
+has anything to add to, and sm3 for everything else. Until
+sm3 exists it calls sm2 for rows and index entries, and sm1
+for stores and sequences; the calls that open a table by its
+store and schema are scaffolding, marked so in `include/sm.h`,
+to be replaced by opening through sm3's catalog, while the row
+and entry calls keep their C signatures whichever level serves
+them. sm2 calls only sm1, and nothing calls upward.
+
+The root's `include/` also holds two C headers that belong to
+no level and that sm1 includes: `sm_error.h`, the stack's error
+codes, and `sm_options.h`, sm1's database options. They are
+shared definitions, not an upward call: sm1 and the wrapper
+must agree on them bytewise, and one C header is how.
 
 ---
 
 ## 2. Build
 
 Each level has a real `Makefile`; the top-level one
-delegates to them, and will build the one thing that belongs
-to no level — the C wrapper in the root's `include/` and
-`src/` — once it is written (§3).
+delegates to them, and builds the one thing that belongs to
+no level — the C wrapper in the root's `include/` and `src/`
+— into `build/libsm.a`. That archive bundles every level's
+objects with the wrapper's, by an `ar` script, so PostgreSQL
+links one archive, plus RocksDB, ICU and the C++ runtime, and
+never learns the stack has levels. `test/test_sm.c` is built
+as C11 with `-pedantic -Werror`, which proves `include/` is
+pure C, and linked against that archive the way PostgreSQL
+will be.
 
 ```
 make            build every level
@@ -104,7 +121,7 @@ rule is that nothing turns them off.
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
 | sm3 | designed, not yet implemented — the same, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md`; it cannot start before sm2's two formats are settled |
-| top level | not yet written — the C wrapper waits for the levels it wraps; until it exists the stack has no C surface |
+| top level | built: `include/sm.h` over sm1 and sm2, with `src/sm.cc` and a C test; the calls that open a table are scaffolding until sm3's catalog (§1) |
 
 sm1 was built first and alone, on purpose: it is usable
 without sm2 (an MVCC key-value store is a complete product
@@ -167,9 +184,11 @@ design:
   through unchanged; the price is that nothing stops a caller
   ignoring a -1. It is one errno namespace for the whole stack:
   sm2 and sm3 report through the same thread-local state, and
-  every error code any level uses is defined in
-  `sm1/include/sm1.h`, so sm1's header lists codes only an upper
-  level produces and the C wrapper maps one enum. The enum is
+  every error code any level uses is defined in the root's
+  `include/sm_error.h`, a C header that sm1 includes and that
+  `sm1.h` brings into `namespace sm1`, so the list holds codes
+  only an upper level produces and the C wrapper passes one
+  enum through unchanged. The enum is
   append only: a number is never reused or renumbered, a retired
   code stays with a note, and codes are grouped by the level that
   produces them under a comment naming it, with no reserved
@@ -254,6 +273,7 @@ design:
   | `CORRUPT` | `XX001` | `data_corrupted` |
   | `KEYTOOLONG` | `54000` | `program_limit_exceeded` |
   | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
+  | `EXCEPTION` | `XX000` | `internal_error` (a bug in the stack) |
 - **Running out of memory inside sm1 is fatal to the process,
   because `std::bad_alloc` can be thrown from inside RocksDB;
   above sm1 it is an error, `NOMEM`.** RocksDB
@@ -307,9 +327,13 @@ design:
   nothing. The C wrapper is the one catch-all, since it is the
   only place a C caller can be reached. It catches everything:
   `std::bad_alloc` becomes `NOMEM` — possible there only from
-  the wrapper's own code — anything else a code of its own that
-  means a bug, and if the call involves a session the wrapper
-  aborts that session's transaction before returning -1. A `NOMEM` returned
+  the wrapper's own code — anything else `SM_ERR_EXCEPTION`,
+  which means a bug, with `what()` as its message, and if the
+  call involves a session the wrapper aborts that session's
+  transaction before returning -1 — unless the transaction is
+  prepared, which `sm1::in_doubt` tells it: that one is the
+  coordinator's to resolve, and aborting it would break the
+  promise `sm1::prepare` made. A `NOMEM` returned
   from below is handled the same way: the wrapper aborts the
   session's transaction, since a data operation that ran out of
   memory midway may have written part of its change. Aborting
@@ -435,6 +459,18 @@ design:
   filter against the newest image, and filters exist only at sm3.
   sm2 surfaces the error and offers `rel_read_latest`; sm3 does
   the re-check (`sm3/SM3_DESIGN.md` §3).
+- **Open: who drives index maintenance.** PostgreSQL's kept
+  executor already maintains indexes through its index access
+  method (`ExecInsertIndexTuples`), evaluates expression and
+  partial index keys, and re-checks a row under READ COMMITTED
+  (`EvalPlanQual`) — the work `sm3/SM3_DESIGN.md` §3 plans for
+  sm3. Expression and partial indexes favour the executor:
+  sm3 cannot evaluate a PostgreSQL expression without calling
+  back into C that may `longjmp` across its frames. The unique
+  checks on NULL and cut keys, the online build and the
+  index-heap invariant must stay below it. The C wrapper's row
+  and entry calls have the shape either answer needs, so it is
+  settled with sm3's design, not before.
 - **No backward scans, at any level, ever.** Settled in
   `sm1/SM1_OBJECTIVE.md`, built into sm2's encoding and
   inherited by every index sm3 builds. The fork's planner is

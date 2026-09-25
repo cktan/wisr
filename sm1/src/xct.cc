@@ -1306,3 +1306,10 @@ int sm1::abort(sm1::session_t *session) {
   in_sm1_t in_sm1;
   return abort_xct(session);
 }
+
+/* Whether the session's prepared transaction is still unresolved. */
+bool sm1::in_doubt(sm1::session_t *session) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  return session != nullptr && !session->active && pending_prepared(session);
+}

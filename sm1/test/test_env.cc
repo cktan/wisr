@@ -279,7 +279,7 @@ TEST_CASE("seterr, reseterr and errname drive the thread's error state") {
   CHECK(n > 0);
   CHECK(n < big.size());
 
-  for (int c = sm1::SM_ERR_INVALID; c <= sm1::SM_ERR_KEYTOOLONG; c++) {
+  for (int c = sm1::SM_ERR_INVALID; c <= sm1::SM_ERR_EXCEPTION; c++) {
     sm1::seterr(static_cast<sm1::errnum_t>(c), "x");
     CHECK(std::string(sm1::errname()).rfind("ERR_", 0) == 0);
   }

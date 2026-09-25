@@ -37,7 +37,8 @@ interface, and the handles are opaque.
 ### Errors
 
 ```cpp
-enum errnum_t {
+/* include/sm_error.h, at the root */
+typedef enum sm_errnum_t {
     SM_OK                = 0,
 
     /* caller/programming errors */
@@ -70,13 +71,24 @@ enum errnum_t {
     SM_ERR_UPDATED       = 19,  /* newer commit; sm1::read_latest, then retry */
 
     /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §5) */
-    SM_ERR_KEYTOOLONG    = 20   /* a key that may not be cut is too long */
-};
+    SM_ERR_KEYTOOLONG    = 20,  /* a key that may not be cut is too long */
+
+    /* the C wrapper's: an exception reached its catch-all */
+    SM_ERR_EXCEPTION     = 21
+} sm_errnum_t;
+
+/* sm1.h */
+namespace sm1 {
+using errnum_t = ::sm_errnum_t;
+using enum ::sm_errnum_t;
+}
 ```
 
 The codes are one namespace for the whole stack: every
-level's are defined here, and a caller outside `namespace
-sm1` writes `sm1::SM_ERR_UPDATED`. Values are explicit and
+level's are defined in the root's `include/sm_error.h`, a C
+header the C wrapper shares, and `sm1.h` brings them into
+`namespace sm1`, so a caller outside it writes
+`sm1::SM_ERR_UPDATED`. Values are explicit and
 stable. New codes are appended, grouped by the level that
 produces them; existing values never change.
 
@@ -257,16 +269,27 @@ version, so the level has no meaning here.
 ### Options
 
 ```cpp
-struct options_t {
-    int         durability_sync      = 1;
-    int         group_commit_us      = 200;      /* unused */
-    int         deadlock_ms          = 50;
-    int         ssi_max_entries      = 1 << 20;  /* unused */
-    long long   ts_lease             = 1000000;
-    const char* rocksdb_options      = nullptr;  /* nullptr = defaults */
-    int         commit_cache_entries = 65536;
+/* include/sm_options.h, at the root */
+typedef struct sm_options_t {
+    int         durability_sync;       /* default 1 */
+    int         group_commit_us;       /* default 200; unused */
+    int         deadlock_ms;           /* default 50 */
+    int         ssi_max_entries;       /* default 1 << 20; unused */
+    long long   ts_lease;              /* default 1000000 */
+    const char* rocksdb_options;       /* default NULL: RocksDB's */
+    int         commit_cache_entries;  /* default 65536 */
+} sm_options_t;
+
+/* sm1.h */
+struct options_t : ::sm_options_t {
+    options_t() { sm_options_init(this); }
 };
 ```
+
+The fields and their defaults are the root's
+`include/sm_options.h`, shared with the C wrapper, whose
+`sm_options_init()` fills them; `sm1::options_t` adds only the
+constructor that calls it.
 
 A default-constructed `sm1::options_t` holds every default,
 so a caller sets only the fields it cares about, and fields
@@ -649,6 +672,21 @@ Must not be called after a retryable error, which already
 aborted the transaction.
 
 Errors: `SM_ERR_NOTRANS`.
+
+### bool sm1::in_doubt(sm1::session_t* session)
+
+Whether `session` prepared a transaction that no session has
+resolved yet. While it is, `sm1::commit` and `sm1::abort` on
+the session resolve that prepared transaction rather than an
+active one, so a caller that must never undo a prepared
+transaction asks first: the C wrapper's catch-all aborts the
+session's transaction only when this is false (`DESIGN.md`
+§5).
+
+Only the session's own thread can prepare, so a false answer
+stays false; a true one may turn false at any moment, when
+another session resolves the gid. `NULL` is false. It needs
+no transaction and sets no error.
 
 ### int sm1::stmt_begin(sm1::session_t* session)
 
