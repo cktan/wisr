@@ -75,7 +75,9 @@ FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h mvcc/*.cc \
 
 all: $(LIB) $(TEST_BIN) $(MVCC_BIN) $(DRIVER) $(EX_BINS)
 
+# Rebuilt from scratch, so an object whose source is gone leaves it.
 $(LIB): $(LIB_OBJS)
+	rm -f $@
 	$(AR) rcs $@ $^
 
 $(TEST_BIN): $(TEST_OBJS) $(LIB)
