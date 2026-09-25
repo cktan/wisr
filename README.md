@@ -32,7 +32,7 @@ in the root's `include/` and `src/`, which belongs to no level,
 into `build/libsm.a`: one archive of every level's objects and
 the wrapper's, so a C program includes `include/sm.h` and links
 that (`DESIGN.md` §2). `make test` ends by driving the wrapper
-from C, with `test/test_sm.c`.
+through the `rel/` test suite.
 
 ## Where to read
 

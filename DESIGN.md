@@ -85,10 +85,9 @@ no level — the C wrapper in the root's `include/` and `src/`
 — into `build/libsm.a`. That archive bundles every level's
 objects with the wrapper's, by an `ar` script, so PostgreSQL
 links one archive, plus RocksDB, ICU and the C++ runtime, and
-never learns the stack has levels. `test/test_sm.c` is built
-as C11 with `-pedantic -Werror`, which proves `include/` is
-pure C, and linked against that archive the way PostgreSQL
-will be.
+never learns the stack has levels. The test driver in `rel/`
+drives the C wrapper and verifies the relational engine
+against `libsm.a` via automated Janet test scripts.
 
 ```
 make            build every level

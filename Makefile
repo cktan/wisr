@@ -13,9 +13,10 @@
 #   make -C sm1 test      a level's own tests alone
 #
 #   make              build every level, then build/libsm.a
-#   make test         test every level, then the wrapper from C
+#   make rel          build the rel test driver
+#   make test         test every level, then the rel test suite
 #   make clean        remove each level's build directory, and build/
-#   make format       clang-format each level, and src/ and test/
+#   make format       clang-format each level, rel, and src/
 #
 # LEVELS lists the levels that have a Makefile, in build order;
 # sm3 joins it when it has one.
@@ -27,14 +28,11 @@ OPTFLAGS ?= -O1 -g
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Ism1/include -Ism2/include \
             -MMD -MP
-# The test is C, held to the standard, so sm.h is proved pure C.
-TEST_CFLAGS := $(OPTFLAGS) -std=c11 -pedantic -Wall -Wextra -Werror -Iinclude
 LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD     := build
 LIB       := $(BUILD)/libsm.a
 LEVEL_LIBS := sm1/build/libwisr.a sm2/build/libsm2.a
-TEST_BIN  := $(BUILD)/test_sm
 
 .PHONY: all test clean format rel $(LEVELS)
 
@@ -63,20 +61,13 @@ $(LIB): $(BUILD)/src/sm.o $(LEVEL_LIBS)
 	rm -f $@
 	printf 'CREATE $@\nADDLIB sm1/build/libwisr.a\nADDLIB sm2/build/libsm2.a\nADDMOD $(BUILD)/src/sm.o\nSAVE\nEND\n' | ar -M
 
-# Linked by the C++ driver, since the archive needs libstdc++.
-$(TEST_BIN): test/test_sm.c include/sm.h include/sm_error.h \
-             include/sm_options.h $(LIB)
-	@mkdir -p $(BUILD)/test
-	$(CC) $(TEST_CFLAGS) -c -o $(BUILD)/test/test_sm.o test/test_sm.c
-	$(CXX) -o $@ $(BUILD)/test/test_sm.o $(LIB) $(LDLIBS)
-
 # Each level's own target, in order, stopping at the first level
-# that fails; then the wrapper's part.
-test: $(TEST_BIN)
+# that fails; then the rel test driver.
+test: rel
 	@for d in $(LEVELS); do \
 	  $(MAKE) -C $$d $@ || exit 1; \
 	done
-	$(TEST_BIN)
+	$(MAKE) -C rel test
 
 clean:
 	@for d in $(LEVELS); do \
@@ -90,6 +81,6 @@ format:
 	  $(MAKE) -C $$d $@ || exit 1; \
 	done
 	$(MAKE) -C rel format
-	clang-format -i src/sm.cc test/test_sm.c
+	clang-format -i src/sm.cc
 
 -include $(BUILD)/src/sm.d
