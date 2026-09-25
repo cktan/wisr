@@ -1362,25 +1362,26 @@ ones.
     then offer SQL savepoints to its caller, since the two
     uses collide on the single mark. `sm1::savepoint` now
     returns a depth, `sm1::rollback` takes one, and
-    `sm1::forget` is `RELEASE SAVEPOINT`. `SECINDEX.md` gap 2
-    is the case that asked for it.
+    `sm1::forget` is `RELEASE SAVEPOINT`. `SM1_DESIGN.md` §6.5
+    has the case that asked for it.
 
 20. **`sm1::lock` added.** (D) Locking a row without writing it
     is how a layer does `SELECT ... FOR UPDATE`, and its
     shared mode is what lets a secondary-index builder wait
     out the writers that cannot yet know the index exists.
-    `SECINDEX.md` gap 1 is the case that asked for it; it was
-    the only gap there that made correct behaviour impossible
-    rather than merely awkward.
+    The index build (`sm3/SM3_DESIGN.md` §3) is the case that
+    asked for it; it was the only missing primitive whose
+    absence made correct behaviour impossible rather than
+    merely awkward.
 
 21. **`sm1::scan_seek` added.** (D) Repositioning a cursor is
     what an index nested-loop join, an IN-list, and a skip
     scan all need; without it each probe closes and reopens
     a cursor, and under READ COMMITTED every reopen takes a
-    new snapshot as well. `SECINDEX.md` gap 5.
+    new snapshot as well. `SM1_DESIGN.md` §10.2.
 
 22. **`sm1::update` and `sm1::erase` return the row they
     replaced.** (D) The write already reads it to check the
     key exists, so a layer maintaining secondary indexes
     would otherwise pay a second seek and a copy for
-    something the engine had in hand. `SECINDEX.md` gap 6.
+    something the engine had in hand. `SM1_DESIGN.md` §5.3.

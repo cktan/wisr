@@ -149,9 +149,9 @@ design:
 
 - **sm1's interface is the only channel into sm1.** Nothing
   above it may read RocksDB directly or depend on sm1's
-  internals — the `SECINDEX.md`-style gap
-  analysis in `sm1/` is how a missing primitive gets added
-  to sm1's surface instead of worked around from outside it.
+  internals. A missing primitive is added to sm1's surface
+  instead of worked around from outside it, as the ones
+  secondary indexes needed were (`sm1/SM1_DESIGN.md` §1).
 - **Every level reports failure the way sm1 does.** A call on a
   level's C++ interface returns a plain `int` — 0 on success, -1
   on failure — and the code and message are read afterwards from

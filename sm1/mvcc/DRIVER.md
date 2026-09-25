@@ -204,7 +204,8 @@ it.
 because the depth is the mark's name: a later `rollback` names
 the number this step reported. Marks nest, so a second
 `savepoint` prints `2`, and rolling back to a depth keeps that
-mark and drops the ones inside it.
+mark and drops the ones inside it. `sm1::forget` has no verb:
+no scenario has needed one, and it would take the same shape.
 
 **`lock`** takes the row lock without writing the row, in
 either mode. Shared holders coexist; anything else waits, so a
@@ -219,7 +220,9 @@ included, keeping the snapshot and bounds it opened with. It
 moves one way only: a key before the last one the cursor
 returned, or below the scan's start key, answers `invalid`
 (`a14`). The keys it jumps over still count as read under
-SERIALIZABLE, which is what `c30` pins.
+SERIALIZABLE, which is what `c30` pins. It takes no mode: no
+scenario asks for an exclusive seek, and `test/` covers that
+argument.
 
 **`stmt`** starts a statement. It matters only at READ
 COMMITTED, where every read after it uses one snapshot until

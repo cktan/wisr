@@ -139,9 +139,23 @@ changed it is the usual place such a design goes wrong. Open:
 
 ## 3. Indexes
 
-*To be written.* The shape is already argued in
-`sm1/SECINDEX.md`, which was an assessment of what a layer
-above sm1 needs; every gap it found is now closed in sm1.
+*To be written.* What sm3 needs from sm1 to build indexes is
+in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
+`sm1::stmt_begin` (§6.2), nested savepoints (§6.5),
+`sm1::scan_seek` (§10.2) and the old row a write returns
+(§5.3). What sm1 relies on is already there too:
+
+- **Unique enforcement.** An insert into the index's store
+  fails with `SM_ERR_DUPKEY`, and a concurrent inserter of the
+  same key blocks on the row lock, then fails with a conflict.
+- **Halloween protection.** A cursor's view is fixed at open,
+  so updating an indexed column while scanning the index does
+  not revisit the moved entries.
+- **Scan the index, then fetch the base.** A read does not
+  invalidate a cursor's current row, which lives until the
+  next call on that cursor.
+- **A statement's partial writes undo** to its savepoint, and
+  a failed write leaves the transaction active and unchanged.
 
 - **The primary key is an index.** The table is a heap keyed
   by `rowno` (`sm2/SM2_DESIGN.md` §5), and the primary key is a
@@ -200,8 +214,17 @@ above sm1 needs; every gap it found is now closed in sm1.
   insert has no filter and needs none of this. sm1 refuses a
   write repeated without the read, so an executor cannot
   forget it.
-- **Online build on a populated relation**, from
-  `sm1/SECINDEX.md` gap 1, the protocol `sm1::lock` exists for:
+- **Online build on a populated relation**, the protocol
+  `sm1::lock` exists for. The danger: a writer whose snapshot
+  predates the build's commit does not know the index exists,
+  so it changes the base relation and writes no entry.
+  PostgreSQL prevents it with a ShareLock on the table, or with
+  `CREATE INDEX CONCURRENTLY`, which waits out older
+  transactions. Before `sm1::lock` neither could be expressed —
+  locks were exclusive only, so a schema row every writer wrote
+  would serialize them all, and SSI catches it only if every
+  writer is SERIALIZABLE — which made correct behaviour
+  impossible, not merely slow. The protocol:
   1. every writer takes `sm1::lock(SHARED)` on the table's schema
      row and reads it, so what it maintains is current;
   2. the builder takes the schema row **exclusive** by updating
@@ -217,7 +240,24 @@ above sm1 needs; every gap it found is now closed in sm1.
      them out while the build runs, not a conflict check. At
      the higher levels `sm1::lock` still fails with a conflict,
      and the writer retries.
-  `sm1/test/test_lock.cc` has this end to end.
+  `sm1/test/test_lock.cc` has this end to end. Its costs:
+  - writers are blocked for the whole build, as by
+    PostgreSQL's plain `CREATE INDEX`;
+  - the schema row is a hot key: every writer on the table
+    locks it, so its lock-table mutex is contended (readers
+    never touch it). The table is one mutex, not sharded, so
+    this is the first place a benchmark will point.
+
+  The alternative was a primitive that waits for every
+  transaction begun before now, with a CIC-style multi-phase
+  build here. It needs no shared locks, but it admits stale
+  entries when a writer's `sm1::erase` of an entry not yet
+  built gets `NOTFOUND`: harmless for a non-unique index whose
+  readers recheck the base row, false duplicates for a unique
+  one. `sm1::lock` won because it also gives lock-without-write
+  — `SELECT … FOR UPDATE` through an index had to write a dummy
+  version to lock the base row. The alternative waits until
+  blocking builds hurt.
 - Partial, expression and INCLUDE indexes mean maintenance takes
   a predicate and an expression evaluator, not a column list.
 

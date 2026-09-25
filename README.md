@@ -41,8 +41,6 @@ no level; the wrapper is not written yet (`DESIGN.md` §3).
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
 - `sm1/API.md` — sm1's C++ API, call by call, in
   `namespace sm1`
-- `sm1/SECINDEX.md` — what secondary indexes needed from sm1,
-  and how each gap was closed
 - `sm1/SIREAD.md` — SSI's SIREAD locks and rw-edges, explained
 - `sm1/RCOMPACT.md` — whether compaction can run on another
   machine; research, not built

@@ -325,7 +325,7 @@ TEST_CASE(
 
 TEST_CASE(
     "the index-build protocol blocks writers, then shows them the new schema") {
-  // Verify SECINDEX.md gap 1's protocol end to end: a builder
+  // Verify sm3/SM3_DESIGN.md §3's build protocol end to end: a builder
   // cannot miss a concurrent writer's rows.
   // 1. A catalog store holds a schema row saying "no index".
   // 2. Writer W takes it shared, reads it, writes a base row,

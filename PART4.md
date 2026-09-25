@@ -73,7 +73,7 @@ call across that boundary is an RPC.** A per-row interface will
 not survive it. This is why the API above was made batch-shaped
 from the start — a decision that now belongs to sm3, the level
 with the filters (`sm3/SM3_OBJECTIVE.md`) — and it is why the
-batched read left unbuilt in `sm1/SECINDEX.md` gap 6 stops
+batched read left unbuilt in `sm1/SM1_DESIGN.md` §10.1 stops
 being an unproven optimization and becomes a requirement.
 
 **Decision: the fork is threaded.** The project does not put
@@ -272,7 +272,7 @@ ordered index, roughly doubling storage and write
 amplification.
 
 **Why the decision was made, and whether it can be revisited.**
-The reason is in `sm1/SECINDEX.md` gap 4, and it is not
+The reason is in `sm1/SM1_DESIGN.md` §1, and it is not
 "RocksDB cannot iterate backwards" — it can, with `Prev()`.
 It is that sm1 stores a key's versions newest-first
 (`key | ~wts | ~seq`), so a backward scan meets the *oldest*

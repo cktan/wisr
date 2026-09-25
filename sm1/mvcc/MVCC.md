@@ -276,7 +276,10 @@ them wrong would be invisible in ordinary use:
   step closes the cycle, b20 dooms one that is already
   blocked and must be woken to hear it, b21's cycle of three
   is longer than a single waits-for hop, and b28's cycle sits
-  on one row, which only a shared lock makes possible.
+  on one row, which only a shared lock makes possible. In b21
+  T2 aborts rather than commits after the victim dies: a
+  commit would hand T1 a first-committer-wins CONFLICT, which
+  is b19's point, not b21's.
 - **A lock is a lock, whoever takes it** (b26 to b29):
   `sm1::lock` shares the row locks writes take, so a shared
   holder stops a writer, a writer stops a shared request, and
@@ -342,6 +345,25 @@ Half of this family — c01, c08 through c12, c14, c15, c19,
 c20, c25 — exists to bound the other half. A level that failed
 every transaction would satisfy c02 to c07 and be useless;
 these scenarios are the ones that would catch it.
+
+Four of the rest say more than their row can:
+
+- **c26 and c27**: the pivot fails whichever neighbour
+  aborts, because the SSI flags record that T2 has an edge in
+  and an edge out, not whose they were (`SM1_DESIGN.md` §7.3).
+  That was confirmed by running c27, not assumed.
+- **c29**: a read taken before a savepoint still constrains
+  the transaction after a rollback past it (§6.5). Were it
+  otherwise, rollback could launder a serialization failure,
+  and both sides of the write skew would commit at S+S.
+- **c30 against c11**: a write into the gap a `seek` jumped
+  over is inside the predicate and makes the edge; a write
+  past the last key a cursor examined before closing is not,
+  and is let through.
+- **c31**: removing T2's `lookup` leaves one edge and both
+  commit, so the detection is the catalog SIREAD a storeid
+  resolution takes (§11) and nothing else. That control was
+  run before the script was accepted.
 
 ## 7. Family E — invariants under load, and housekeeping
 

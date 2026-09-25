@@ -237,7 +237,7 @@ TEST_CASE("repeatable read keeps its snapshot; read committed does not") {
 
 TEST_CASE("sm1_stmt_begin gives read committed one snapshot per statement") {
   // Verify a statement spanning several calls sees one committed
-  // state, the anomaly SECINDEX.md gap 3 describes.
+  // state, the anomaly SM1_DESIGN.md §6.2 describes.
   // 1. Two rows each hold 50; an RC session begins a statement
   //    and reads the first.
   // 2. Another session moves 30 from the first row to the
@@ -277,7 +277,7 @@ TEST_CASE("sm1_stmt_begin gives read committed one snapshot per statement") {
 
 TEST_CASE("the statement snapshot is taken by the first read, not the call") {
   // Verify a statement that waits before reading still sees what
-  // committed while it waited (SECINDEX.md gap 1's build protocol).
+  // committed while it waited (sm3/SM3_DESIGN.md §3's build protocol).
   // 1. An RC session begins a statement and does not read.
   // 2. Another session commits a row.
   // 3. The first read of the statement sees it.
@@ -620,7 +620,7 @@ TEST_CASE("keys skipped by sm1_scan_seek still count as read under SSI") {
 }
 
 TEST_CASE("sm1_update and sm1_delete hand back the row they replaced") {
-  // Verify the old-image return (SECINDEX.md gap 6).
+  // Verify the old-image return (SM1_DESIGN.md §5.3).
   // 1. Update a row: the old value is the one committed before.
   // 2. Update it again: the old value is this transaction's own
   //    previous write, not the committed one.

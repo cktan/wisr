@@ -39,19 +39,27 @@ an index whose key bytes are inverted, scanned forward — and
 the stack above keeps no mirror copy of an index for the other
 direction (`PART4.md` §5).
 
+The engine cost is part of why. A key's versions are stored
+newest first (`key|~wts|~seq`, §3.1), so a backward scan
+would meet the oldest version first and have to walk to the
+start of each key's run before picking the visible one; it
+would need `SeekForPrev` to work with §10.2's prefix-seek
+setup; and for SSI the traversed range would run from the last
+key examined up to `ekey`, inverting §10.2's bookkeeping.
+
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
 `sm1.h` and the design in this document, nothing more. Phase 2
-adds the API a secondary-index layer built on top of it needs.
-Every gap `SECINDEX.md` lists is now closed or decided:
+adds the API a secondary-index layer built on top of it needs
+(`sm3/SM3_DESIGN.md` §3), and it is built:
 `sm1::lsstore`, which came with naming stores by storeid (§11);
 `sm1::stmt_begin`, for read-committed statement snapshots
 (§6.2); the savepoint stack with `sm1::forget` (§6.5);
 `sm1::lock`, whose shared mode makes a safe index build
 possible (§5.1); `sm1::scan_seek`, which repositions a cursor
 instead of reopening it (§10.2); and the old row returned by
-`sm1::update` and `sm1::erase` (§5.3). Descending scans are the
-one gap it lists that will not be closed at all, and a
-batched read is left until a benchmark asks for it.
+`sm1::update` and `sm1::erase` (§5.3). Descending scans will
+not be added at all, and a batched read is left until a
+benchmark asks for it (§10.1).
 
 **Assumptions.**
 
@@ -810,6 +818,15 @@ transaction registers its *begin* snapshot for its whole life
 `gc_watermark` is already held below anything a pinned
 statement can read.
 
+**There is no `sm1::stmt_end`.** The next `sm1::stmt_begin`
+ends the last statement, and the transaction ends the last of
+all. The cost is that a transaction which uses the call once
+reads that way for the rest of its life, with no way back to a
+snapshot per call; the gain is one call instead of a pair to
+keep balanced across rollback and prepare. A layer that wants
+none of this can require REPEATABLE READ or SERIALIZABLE and
+never use RC at all; that needs no engine support.
+
 Writes check against `T.snapshot_ts`, not the statement snapshot.
 A write that meets a row committed after `sm1::begin` does not
 abort, as it does at the higher levels (§5.2): it waits for the
@@ -853,7 +870,17 @@ created by the transaction are tracked alongside it in
 `T.created`, a vector of storeids in creation order, and
 stores it dropped in `T.dropped`, likewise.
 
-Savepoints **nest**. `T.savepoints` is a stack of marks in
+Savepoints **nest**, because a layer above needs one per
+statement: index maintenance turns one row write into several,
+and a unique violation on the third row of a multi-row insert
+must undo the statement's partial writes. With a single
+savepoint per transaction, that statement mark clobbered any
+user-level SAVEPOINT, and compensating by hand instead left a
+tombstone version for every write it undid. The layer pushes a
+mark at each statement's start and forgets it at the end,
+above whatever marks its own caller holds.
+
+`T.savepoints` is a stack of marks in
 push order, so `T.savepoints[d-1]` is the mark at depth `d`,
 and a transaction holds at most `sm1::max_savepoints` (256) of
 them. The cap turns runaway nesting into an error instead of
@@ -1775,6 +1802,16 @@ Versions from other transactions with `snap < wts <= T.wts_hi`
 are stepped past as in-flight or committed too late, which the
 loop already handles.
 
+**No batched read.** An index lookup followed by N base reads
+costs N reads, and a call taking N keys was considered. RocksDB's
+`MultiGet` does not apply: a read here is an iterator seek
+across a key's version run, not a point `Get`. What a batched
+call would save is per-key iterator construction and read-epoch
+bookkeeping, plus seeking in sorted order, and it would need an
+ownership model for N values, since the session has one read
+buffer (§5.3). It is left unbuilt until a benchmark shows that
+setup dominating a probe loop.
+
 ### 10.2 Scan
 
 `sm1::scan` opens a RocksDB iterator on the store's CF, seeked
@@ -1854,6 +1891,13 @@ and revived, because §7.1 treats a scan that reached the end
 as having read its whole range; reviving it and closing it
 later would narrow that range to the last key examined, which
 is less than it read.
+
+Seeking backward was considered, for probes that do not arrive
+in key order. It would need `last_key_examined` to become a
+high-water mark, and a flag for a cursor that once hit the end,
+or the predicate would silently shrink. Forward only costs the
+layer a sort of its probe keys, which a batched index join does
+anyway.
 
 **Bound lifetime.** `iterate_upper_bound` is a
 `rocksdb::Slice`, which borrows rather than copies, and
@@ -2344,7 +2388,7 @@ bullets below cover the rest of the engine.
   builder taking the schema row exclusive blocks a writer,
   sees the row an earlier writer committed, and the blocked
   writer then fails, retries, and reads the new schema
-  (§5.1, `SECINDEX.md` gap 1).
+  (§5.1, `sm3/SM3_DESIGN.md` §3).
 - **Deadlock.** Build a two-transaction cycle in both orders:
   the older waiter finds the cycle and the younger is the
   victim, and the younger finds it and is itself the victim.
@@ -2521,10 +2565,9 @@ bullets below cover the rest of the engine.
 
 A review of this document (Andy Pavlo, CMU) raised six
 risks and four details to pin down. Its valid items are
-folded into the sections above; this appendix records
-where each landed, and refutes the three assertions that
-did not survive checking against the RocksDB source, so
-that they are not raised again.
+folded into the sections above. This appendix refutes the
+three assertions that did not survive checking against the
+RocksDB source, so that they are not raised again.
 
 ### A.1 Assertions refuted
 
@@ -2557,17 +2600,3 @@ is committed would resurrect the versions of crashed
 transactions, which by construction leave no status record
 anywhere. That absence *is* the abort (§3.4), and it is
 what makes recovery free of an undo pass.
-
-### A.2 Items addressed
-
-| Review item | Where it landed |
-| :--- | :--- |
-| Scans inherit RocksDB's prefix seek mode and return at most one userkey | §10.2 seek mode, §12.2, §12.5 regression test |
-| Full-compaction cost of the `CF:txn` sweep, and its unstated RocksDB dependencies | §8.3; the cost under load is an open question there |
-| One `DeleteRange` per deleted key saturates the range-tombstone aggregator | §8.3 no coalescing, flushed by count; §12.2 no `row_cache`, `memtable_max_range_deletions` |
-| Cursors opened after a savepoint outlive `sm1::rollback` | §6.5, §10.2, `API.md`, §12.5 |
-| No index for matching a write against active range predicates | §7.1 per-store interval tree |
-| `iterate_upper_bound` borrows its buffer | §10.2 bound lifetime |
-| A deadlock victim that is not blocked is never told | §5.1 `doomed` field, §12.5 |
-| Lock, undo, and read sets are unbounded in RAM | §5.1, §13 |
-| Column-family-per-store scaling ceiling | §13: target is hundreds to low thousands, with the shared-CF layout named as the replacement past that |
