@@ -260,22 +260,20 @@ sm3's indexes that feel them most.
   byte-equal under them, which is what unique indexes rest on.
   Support or refuse?
 
-  *Decided: refuse at first, and design so that accepting them
-  later needs no format change* (`SM2_DESIGN.md` §3.3). Under a
+  *Decided: accept them for ICU collations, keyed by the sort
+  key alone* (`SM2_DESIGN.md` §3.3). The first decision was to
+  refuse them and design so that accepting them later needed no
+  format change; that design is what was adopted. Under a
   non-deterministic collation two different strings can compare
   equal, and the sort key is the same for both, so a unique check
   on the sort key gives the right answer. What gets hard is
   everywhere else equality is used: hashing for joins and
   grouping, and the rule that a deterministic collation breaks
   ties bytewise while a non-deterministic one does not.
-  PostgreSQL has supported them only since version 12 (from
-  memory, not checked) and they are rare, so the first version
-  rejects a non-deterministic collation when a column or index is
-  created, with a clear error, and never silently. The collation
+  PostgreSQL has supported them since version 12. The collation
   carries a `deterministic` flag in the schema from the start,
   chosen when the column is created and never changed. A
   deterministic collation's key is the sort key followed by the
   original bytes as a tie-break; a non-deterministic one's is the
-  sort key alone. Because the flag is per column, a later release
-  can accept the second kind without touching data already on
-  disk.
+  sort key alone. Because the flag is per column, accepting the
+  second kind touched no data already on disk.

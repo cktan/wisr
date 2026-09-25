@@ -560,17 +560,30 @@ exact one.
   still the default rather than an automatic rebuild, because
   a rebuild of a large index is work an operator should
   schedule.
-- **Non-deterministic collations are refused** when a column
-  or index is created, with a clear error. Under one, two
-  different strings compare equal, and hashing, grouping and
-  the bytewise tie-break all have to change with it.
-- **The `deterministic` flag is carried from the start**,
-  per column, set at creation and never changed. A
-  deterministic collation's key is the sort key followed by
-  the original bytes as a tie-break; a non-deterministic
-  one's would be the sort key alone. Because the flag is
-  already in the schema, a later release can accept the
-  second kind without touching data on disk.
+- **Non-deterministic collations are accepted**, for ICU
+  only: byte order is refused as non-deterministic, as
+  PostgreSQL refuses it for libc. Under one, strings ICU calls
+  equal are equal, as PostgreSQL's `varstr_cmp` makes them by
+  skipping its bytewise tie-break.
+- **The `deterministic` flag is per column**, set at creation
+  and never changed. A deterministic collation's key is the
+  sort key followed by the original bytes as a tie-break; a
+  non-deterministic one's is the sort key alone, then
+  `0x00 0x00` (`TYPE.md` §3.5). Equal strings then share a
+  key, so a unique index refuses `'ABC'` after `'abc'` under a
+  case-insensitive collation with sm1's `SM_ERR_DUPKEY`, and
+  an equality bound finds both in a non-unique one: PostgreSQL's
+  answers, with no machinery of sm2's own.
+- **Such a key holds no string.** Its `key_decode` fails with
+  `SM_ERR_INVALID`. Nothing needs it: every column lives in
+  the tuple (§5), which returns the bytes as written, as
+  PostgreSQL's index holds the original datum.
+- **Equality above sm2 must follow.** Hashing, grouping,
+  `DISTINCT` and a recheck that compares strings must compare
+  them under the collation — the key, or the sort key — not
+  the datum's bytes, as PostgreSQL's `hashtext` hashes the sort
+  key (`sm3/SM3_DESIGN.md` §3). A type's `cmp` stays byte
+  order, so it is not that comparison.
 
 ---
 
@@ -867,8 +880,8 @@ so sm2 gives it a `rel` for them too:
 
 sm2 prepends and strips the prefix for both kinds, and the
 table above is the heap `rel`'s; an index `rel`'s operations
-are the same shape, keyed by its columns (`index_open`,
-`index_insert`, `index_delete`, `index_scan`):
+are the same shape, keyed by its columns (`idx_open`,
+`idx_insert`, `idx_delete`, `idx_scan`):
 
 - **An entry's key** is `prefix ‖ encode(sk)`, then the
   `rowno` — always in a non-unique index, and in a unique one
@@ -1156,8 +1169,8 @@ ordered thing above rests on this, including sm3's indexes.
 - The key rules in §3.1–§3.3: a null marker on
   every column, refuse an over-long primary key,
   truncate and flag an over-long secondary key, refuse a
-  mismatched collation version, and carry the `deterministic`
-  flag while refusing non-deterministic collations.
+  mismatched collation version, and key a non-deterministic
+  collation by its sort key alone.
 
 **Verify:** property-based tests, not examples. For every type
 and every column order, `encode(a) < encode(b)` iff `a < b`,

@@ -21,11 +21,13 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
   have prefixed 'm_'. 
 - for calls that trigger a significant operation (starting/
   stopping a service, acquiring a lock, chdir, logger setup,
-  etc.), add a short comment naming the step, even if the
+  etc.), add a short comment explaining why it is done, even if the
   call itself looks self-explanatory
 - every function in `.cpp` or `.c` files needs a doc comment
   (one or two lines above the definition)
 - do not use strncpy(), instead memcpy and assign NUL-terminator.  
+- when writing git commit messages, use concise sentences and 
+  bullet points.
 
 
 ## Guidelines

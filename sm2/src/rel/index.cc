@@ -142,9 +142,9 @@ int lower_key(const sm2::index_t *ix, const sm2::bound_t &lo, std::string &out,
 namespace sm2 {
 
 /* Open an index; see sm2.h. */
-int index_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
-               std::span<const key_column_t> key, bool unique,
-               std::span<const attribute_t> include, index_t *&out) {
+int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
+             std::span<const key_column_t> key, bool unique,
+             std::span<const attribute_t> include, index_t *&out) {
   return catch_nomem([&] {
     if (session == nullptr || key.empty()) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
@@ -179,16 +179,16 @@ int index_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
 }
 
 /* Close an index; nullptr is a no-op. */
-void index_close(index_t *index) { delete index; }
+void idx_close(index_t *index) { delete index; }
 
 /* The schema of an entry's value: rowno, cut, then INCLUDE. */
-std::span<const attribute_t> index_value_schema(const index_t *index) {
+std::span<const attribute_t> idx_value_schema(const index_t *index) {
   return index->value;
 }
 
 /* Add the entry for the row at rowno; see sm2.h. */
-int index_insert(index_t *index, std::span<const datum_t> key, uint64_t rowno,
-                 std::span<const datum_t> include) {
+int idx_insert(index_t *index, std::span<const datum_t> key, uint64_t rowno,
+               std::span<const datum_t> include) {
   return catch_nomem([&] {
     std::string k;
     bool cut;
@@ -214,7 +214,7 @@ int index_insert(index_t *index, std::span<const datum_t> key, uint64_t rowno,
 }
 
 /* Remove the entry for key and rowno. */
-int index_delete(index_t *index, std::span<const datum_t> key, uint64_t rowno) {
+int idx_delete(index_t *index, std::span<const datum_t> key, uint64_t rowno) {
   return catch_nomem([&] {
     std::string k;
     bool cut;
@@ -226,8 +226,8 @@ int index_delete(index_t *index, std::span<const datum_t> key, uint64_t rowno) {
 }
 
 /* Open a cursor between lo and hi; see sm2.h. */
-int index_scan(index_t *index, const bound_t *lo, const bound_t *hi,
-               index_scan_t *&out, bool *widened) {
+int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
+             index_scan_t *&out, bool *widened) {
   return catch_nomem([&] {
     bool wide = false;
     // The start: the bound, or the first of the index's keys.
@@ -274,8 +274,8 @@ int index_scan(index_t *index, const bound_t *lo, const bound_t *hi,
 }
 
 /* The next entry of a cursor: 0, 1 at the end, or -1. */
-int index_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
-                  std::string_view &value) {
+int idx_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
+                std::string_view &value) {
   return catch_nomem([&] {
     std::string_view key;
     int rc = sm1::scannxt(scan->scan, key, value);
@@ -299,7 +299,7 @@ int index_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
 }
 
 /* Move a cursor forward to lower bound lo. */
-int index_scan_seek(index_scan_t *scan, const bound_t &lo) {
+int idx_scan_seek(index_scan_t *scan, const bound_t &lo) {
   return catch_nomem([&] {
     std::string start;
     bool wide = false;
@@ -311,7 +311,7 @@ int index_scan_seek(index_scan_t *scan, const bound_t &lo) {
 }
 
 /* Close a cursor; nullptr is a no-op. */
-void index_scanend(index_scan_t *scan) {
+void idx_scanend(index_scan_t *scan) {
   if (scan == nullptr) {
     return;
   }

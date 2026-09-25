@@ -405,7 +405,9 @@ design:
   (`sm3/SM3_DESIGN.md` §2); sm2 refuses to read or write an index
   built under another version, the primary key's included, until
   an explicit online rebuild (`sm2/SM2_DESIGN.md` §3.3).
-  Non-deterministic collations are refused in v1.
+  Non-deterministic ICU collations are accepted, and a string
+  equal under one is equal at every level
+  (`sm2/SM2_DESIGN.md` §3.3).
 - **Constraints and labels are sm3's; sm2 stores what it is
   given.** The `varchar(n)` length limit is enforced by sm3,
   and an enum is `int4` to sm2 with its labels in sm3's

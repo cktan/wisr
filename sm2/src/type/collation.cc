@@ -77,16 +77,15 @@ namespace sm2 {
 int collation_open(std::string_view locale, bool deterministic,
                    std::string_view expected_version, collation_t *&out) {
   return catch_nomem([&] {
-    if (!deterministic) {
-      return bad_collation(locale, "a non-deterministic collation is not "
-                                   "supported (SM2_DESIGN.md §3.3)");
-    }
     // Byte order needs no ICU, and never changes.
     if (locale == "C" || locale == "POSIX") {
+      if (!deterministic) {
+        return bad_collation(locale, "byte order is always deterministic");
+      }
       if (!expected_version.empty()) {
         return bad_collation(locale, "byte order has no version");
       }
-      out = new collation_t{std::string(locale), "", nullptr};
+      out = new collation_t{std::string(locale), "", nullptr, true};
       return 0;
     }
     // A BCP 47 tag, as PostgreSQL's ICU collations take, into
@@ -121,7 +120,7 @@ int collation_open(std::string_view locale, bool deterministic,
                                        ", but this ICU has " + version);
     }
     try {
-      out = new collation_t{std::string(locale), version, icu};
+      out = new collation_t{std::string(locale), version, icu, deterministic};
     } catch (...) {
       ucol_close(icu);
       throw;

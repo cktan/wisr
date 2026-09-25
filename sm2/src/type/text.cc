@@ -115,7 +115,8 @@ bool uses_icu(const sm2::collation_t *collation) {
  * terminated, so memcmp orders keys as the strings and no key is a
  * prefix of another. Under an ICU collation the sort key comes
  * first, then 0x00 0x00, which no sort key holds: the collation
- * orders, and the escaped original breaks its ties.
+ * orders, and the escaped original breaks its ties -- unless the
+ * collation is non-deterministic, whose equal strings share a key.
  */
 int bytes_key(std::string_view datum, const sm2::collation_t *collation,
               std::string &key) {
@@ -127,16 +128,28 @@ int bytes_key(std::string_view datum, const sm2::collation_t *collation,
         return -1;
       }
       key.append(2, '\0');
+      if (!collation->deterministic) {
+        return 0;
+      }
     }
     sm2::put_escaped(datum, key);
     return 0;
   });
 }
 
-/* Read bytes_key's bytes back into the datum, past any sort key. */
+/*
+ * Read bytes_key's bytes back into the datum, past any sort key; a
+ * key under a non-deterministic collation holds no string to read.
+ */
 int bytes_unkey(const char *type, std::string_view &key,
                 const sm2::collation_t *collation, std::string &datum) {
   return sm2::catch_nomem([&] {
+    if (uses_icu(collation) && !collation->deterministic) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         std::string("a ") + type +
+                             " key under a non-deterministic collation "
+                             "holds only its sort key");
+    }
     // The sort key ends at the first zero byte, which begins 00 00.
     if (uses_icu(collation)) {
       size_t end = key.find('\0');

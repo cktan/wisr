@@ -194,6 +194,14 @@ in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
   §3.2). A scan rechecks flagged entries against the base row,
   and a unique check on a cut key compares originals over the
   prefix range, with NULLs distinct as above.
+- **Equal means the collation's equal.** Under a
+  non-deterministic collation sm2 gives strings ICU calls
+  equal one key, so uniqueness and equality bounds follow it
+  with no work here (`sm2/SM2_DESIGN.md` §3.3). Everything sm3
+  compares itself must follow it too: a recheck, the unique
+  check on a cut key, and hashing and grouping, which hash
+  the sort key as PostgreSQL's `hashtext` does, not the
+  string's bytes.
 - **Maintenance:** an update keeps the row's `rowno`, so only
   the indexes whose columns changed are touched — a primary key
   change included. On update and delete, the old image from

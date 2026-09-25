@@ -252,8 +252,12 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
   the collation's order is in the key alone.
 - The collation's version is recorded with the schema
   (`sm3/SM3_DESIGN.md` §2); a mismatch is refused, not trusted.
-- A non-deterministic collation is refused at column creation
-  in the first version (`SM2_DESIGN.md` §3.3).
+- Under a **non-deterministic** collation the tie-break is
+  left out: the key is `sortkey ‖ 0x00 0x00`, so strings ICU
+  calls equal share a key, and `key_decode` fails with
+  `SM_ERR_INVALID`, since the key holds no string
+  (`SM2_DESIGN.md` §3.3). Byte order is always
+  deterministic.
 - `text` (8) and `varchar` (9) share every byte and keep
   separate codes only so a round trip never rewrites a
   column's declared type. The `varchar(n)` limit is a

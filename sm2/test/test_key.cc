@@ -354,9 +354,9 @@ TEST_CASE("a collation opens by locale, and holds to its ICU version") {
   //    order, with no version.
   // 2. Reopening with the version collation_version reported
   //    succeeds; with any other it is SM_ERR_INVALID.
-  // 3. A non-deterministic collation, a language ICU does not
-  //    know, a malformed tag, and a version on byte order are
-  //    SM_ERR_INVALID.
+  // 3. A non-deterministic ICU collation opens; a non-deterministic
+  //    byte order, a language ICU does not know, a malformed tag,
+  //    and a version on byte order are SM_ERR_INVALID.
   for (const char *locale :
        {"en-US", "fr-CA", "de-u-co-phonebk", "und-u-ks-level2", "und"}) {
     CAPTURE(locale);
@@ -375,6 +375,8 @@ TEST_CASE("a collation opens by locale, and holds to its ICU version") {
     CHECK(sm2::collation_version(c).empty());
     sm2::collation_close(c);
     CHECK(sm2::collation_open(locale, true, "1", c) == -1);
+    CHECK(sm2::collation_open(locale, false, "", c) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
   sm2::collation_t *c = nullptr;
   for (std::string_view bad : {"zz", "xx-YY", "tlh", "en-US-!!"}) {
@@ -382,8 +384,8 @@ TEST_CASE("a collation opens by locale, and holds to its ICU version") {
     CHECK(sm2::collation_open(bad, true, "", c) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
-  CHECK(sm2::collation_open("en-US", false, "", c) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm2::collation_open("en-US", false, "", c) == 0);
+  sm2::collation_close(c);
   sm2::collation_close(nullptr);
 }
 
@@ -453,6 +455,63 @@ TEST_CASE("a collated text key orders as ICU, its ties broken by bytes") {
     ucol_close(icu);
     sm2::collation_close(coll);
   }
+}
+
+TEST_CASE("a non-deterministic collation keys ICU-equal strings alike") {
+  // Verify text and varchar keys under a non-deterministic
+  // collation, by property from test_seed(), against ICU.
+  // 1. Under the case-insensitive und-u-ks-level2, memcmp over two
+  //    keys agrees with ucol_strcollUTF8 alone, so strings ICU
+  //    calls equal share a key and no others do.
+  // 2. The key is the sort key and 0x00 0x00, and decoding it
+  //    fails with SM_ERR_INVALID: it holds no string.
+  // 3. Examples: "abc" and "ABC" share a key; "abc" and "abd" do
+  //    not.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  sm2::collation_t *coll = nullptr;
+  REQUIRE(sm2::collation_open("und-u-ks-level2", false, "", coll) == 0);
+  char id[ULOC_FULLNAME_CAPACITY];
+  UErrorCode status = U_ZERO_ERROR;
+  uloc_forLanguageTag("und-u-ks-level2", id, sizeof(id), nullptr, &status);
+  UCollator *icu = ucol_open(id, &status);
+  REQUIRE(U_SUCCESS(status));
+  auto key = [&](const sm2::type_t *t, const std::string &s) {
+    std::string k;
+    REQUIRE(t->key_encode(s, -1, coll, k) == 0);
+    return k;
+  };
+  for (const sm2::type_t *t : {&sm2::type_text, &sm2::type_varchar}) {
+    CAPTURE(t->name);
+    for (int i = 0; i < property_runs / 5; i++) {
+      std::string a = gen_utf8(rng), b = gen_utf8(rng);
+      if (rng() % 2 == 0) {
+        // Case variants of one string meet ICU ties.
+        b = a;
+        for (char &ch : b) {
+          if (ch >= 'a' && ch <= 'z' && rng() % 2) {
+            ch = static_cast<char>(ch - 'a' + 'A');
+          }
+        }
+      }
+      status = U_ZERO_ERROR;
+      int want = sign(ucol_strcollUTF8(icu, a.data(), a.size(), b.data(),
+                                       b.size(), &status));
+      REQUIRE(U_SUCCESS(status));
+      std::string ka = key(t, a);
+      CHECK(sign(ka.compare(key(t, b))) == want);
+      REQUIRE(ka.size() >= 2);
+      CHECK(ka.substr(ka.size() - 2) == std::string(2, '\0'));
+      std::string_view rest = ka;
+      std::string back;
+      CHECK(t->key_decode(rest, -1, coll, back) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    }
+  }
+  CHECK(key(&sm2::type_text, "abc") == key(&sm2::type_text, "ABC"));
+  CHECK(key(&sm2::type_text, "abc") != key(&sm2::type_text, "abd"));
+  ucol_close(icu);
+  sm2::collation_close(coll);
 }
 
 TEST_CASE("a collated column keys and decodes among others") {

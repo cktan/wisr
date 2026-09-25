@@ -16,6 +16,7 @@ struct sm2::collation_t {
   std::string locale;  /* as opened */
   std::string version; /* ICU's collator version; "" for byte order */
   UCollator *icu;      /* nullptr for byte order: C, POSIX */
+  bool deterministic;  /* false: equal under ICU is equal */
 };
 
 namespace sm2 {

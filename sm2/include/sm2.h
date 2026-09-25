@@ -39,8 +39,9 @@ struct collation_t;
 /*
  * Open the collation for locale: a BCP 47 language tag, such as
  * "en-US" or "und-u-ks-level2", or "C" or "POSIX" for byte order.
- * A non-deterministic collation is refused, as is a locale ICU has
- * no data for. With expected_version non-empty, a collation whose
+ * Non-deterministic, strings ICU calls equal are equal, and share a
+ * key; byte order cannot be. A locale ICU has no data for is
+ * refused. With expected_version non-empty, a collation whose
  * ICU version differs is refused (SM2_DESIGN.md §3.3); byte order
  * has no version. Returns 0 with the collation in out, or -1.
  */
@@ -94,7 +95,9 @@ struct type_t {
      * Read one ascending key from the front of key, advancing past
      * it, into the datum it encodes. Where the key folds datums
      * PostgreSQL calls equal -- a float's -0 and its NaNs -- the
-     * datum is the one the key keeps (TYPE.md §3.3).
+     * datum is the one the key keeps (TYPE.md §3.3). A text key
+     * under a non-deterministic collation keeps no datum, and
+     * fails with SM_ERR_INVALID (TYPE.md §3.5).
      */
     int (*key_decode)(std::string_view& key, int32_t typmod,
                       const collation_t* collation, std::string& datum);
@@ -376,7 +379,7 @@ void rel_scanend(rel_scan_t* scan);
  * was cut to fit (SM2_DESIGN.md §3.2, sm3/SM3_DESIGN.md §3), so
  * nulls stay distinct and a unique key without either is sm1's
  * uniqueness unit: a duplicate fails with sm1's SM_ERR_DUPKEY. An
- * entry's value is a tuple, index_value_schema's: the rowno, int8;
+ * entry's value is a tuple, idx_value_schema's: the rowno, int8;
  * whether the key was cut, bool; then the INCLUDE columns.
  *
  * As for a heap rel, every call is one sm1 call in the session's
@@ -405,15 +408,15 @@ struct bound_t {
  * by key -- borrowed, as a heap rel's schema is -- unique or not,
  * with the INCLUDE columns include, also borrowed.
  */
-int index_open(sm1::session_t* session, uint64_t storeid, uint16_t prefix,
+int idx_open(sm1::session_t* session, uint64_t storeid, uint16_t prefix,
                std::span<const key_column_t> key, bool unique,
                std::span<const attribute_t> include, index_t*& out);
 
-/* Close an index from index_open; nullptr is a no-op. */
-void index_close(index_t* index);
+/* Close an index from idx_open; nullptr is a no-op. */
+void idx_close(index_t* index);
 
 /* The schema of an entry's value: rowno, cut, then the INCLUDE columns. */
-std::span<const attribute_t> index_value_schema(const index_t* index);
+std::span<const attribute_t> idx_value_schema(const index_t* index);
 
 /*
  * Add the entry for the row at rowno: its key columns' datums key
@@ -422,11 +425,11 @@ std::span<const attribute_t> index_value_schema(const index_t* index);
  * row. In a unique index, a key already present fails with sm1's
  * SM_ERR_DUPKEY.
  */
-int index_insert(index_t* index, std::span<const datum_t> key,
+int idx_insert(index_t* index, std::span<const datum_t> key,
                  uint64_t rowno, std::span<const datum_t> include);
 
-/* Remove the entry index_insert added for key and rowno. */
-int index_delete(index_t* index, std::span<const datum_t> key,
+/* Remove the entry idx_insert added for key and rowno. */
+int idx_delete(index_t* index, std::span<const datum_t> key,
                  uint64_t rowno);
 
 /*
@@ -435,26 +438,26 @@ int index_delete(index_t* index, std::span<const datum_t> key,
  * A bound too long to encode is cut, which can only widen the
  * scan: widened is then set, and the caller rechecks what it gets.
  */
-int index_scan(index_t* index, const bound_t* lo, const bound_t* hi,
+int idx_scan(index_t* index, const bound_t* lo, const bound_t* hi,
                index_scan_t*& out, bool* widened = nullptr);
 
 /*
  * The next entry: 0 with its rowno, whether its key was cut, and
- * its value tuple, to decode under index_value_schema, set; 1 at
+ * its value tuple, to decode under idx_value_schema, set; 1 at
  * the end; -1 on error.
  */
-int index_scannxt(index_scan_t* scan, uint64_t& rowno, bool& cut,
+int idx_scannxt(index_scan_t* scan, uint64_t& rowno, bool& cut,
                   std::string_view& value);
 
 /*
  * Move the cursor forward to the first entry at or after lo, a
- * lower bound as index_scan takes; moving back fails, as
+ * lower bound as idx_scan takes; moving back fails, as
  * sm1::scan_seek.
  */
-int index_scan_seek(index_scan_t* scan, const bound_t& lo);
+int idx_scan_seek(index_scan_t* scan, const bound_t& lo);
 
-/* Close a cursor from index_scan; nullptr is a no-op. */
-void index_scanend(index_scan_t* scan);
+/* Close a cursor from idx_scan; nullptr is a no-op. */
+void idx_scanend(index_scan_t* scan);
 
 /*
  * Decode a key encode_key made under cols into one datum per
