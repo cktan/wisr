@@ -33,7 +33,7 @@ static_assert(static_cast<int>(sm1::loglevel_t::error) == SM_LOG_ERROR);
 static_assert(static_cast<int>(sm1::loglevel_t::warn) == SM_LOG_WARN);
 static_assert(static_cast<int>(sm1::loglevel_t::info) == SM_LOG_INFO);
 /*
- * sm.h's SM_DATUM_FROM_* macros set a by-value Datum by value,
+ * sm.h's SM_DATUM_FROM_* macros set a by-value datum_t by value,
  * and sm2 reads its bytes from the low address; the two agree
  * only on a little-endian machine.
  */
@@ -180,7 +180,7 @@ int null_arg(const char *fn, const char *arg) {
 
 /* One attribute of tuple under desc into *val and *isnull, for fn. */
 int decode(const char *fn, const sm2::tup_desc_t &desc, const void *tuple,
-           size_t len, size_t ordinal, sm_datum_val_t *val, bool *isnull) {
+           size_t len, size_t ordinal, sm_datum_t *val, bool *isnull) {
   if (!tuple || !val || !isnull) {
     return null_arg(fn, !tuple ? "tuple" : !val ? "val" : "isnull");
   }
@@ -190,7 +190,7 @@ int decode(const char *fn, const sm2::tup_desc_t &desc, const void *tuple,
 
 /* Every attribute of tuple under desc into values and isnull, for fn. */
 int deform(const char *fn, const sm2::tup_desc_t &desc, const void *tuple,
-           size_t len, sm_datum_val_t *values, bool *isnull, size_t n) {
+           size_t len, sm_datum_t *values, bool *isnull, size_t n) {
   if (!tuple || (n && !values) || (n && !isnull)) {
     return null_arg(fn, !tuple ? "tuple" : n && !values ? "values" : "isnull");
   }
@@ -199,7 +199,7 @@ int deform(const char *fn, const sm2::tup_desc_t &desc, const void *tuple,
                        std::string(fn) + ": n is not the attribute count");
   }
   std::string_view v(static_cast<const char *>(tuple), len);
-  return sm2::tup_deform(desc, v, std::span<sm2::Datum>(values, n),
+  return sm2::tup_deform(desc, v, std::span<sm2::datum_t>(values, n),
                          std::span<bool>(isnull, n));
 }
 
@@ -255,7 +255,7 @@ bool bad_bound(const sm_bound_t *b) {
 
 /* A C bound as sm2's, viewing its values and null flags. */
 sm2::bound_t bound_of(const sm_bound_t &b) {
-  return {std::span<const sm2::Datum>(b.prefix, b.n),
+  return {std::span<const sm2::datum_t>(b.prefix, b.n),
           std::span<const bool>(b.isnull, b.n), b.inclusive};
 }
 
@@ -552,7 +552,7 @@ const sm_type_t *sm_type(uint8_t code) {
 
 /* Parse a value's canonical text; see sm.h. */
 int sm_type_in(const sm_type_t *type, int32_t typmod, const char *text,
-               size_t len, sm_datum_val_t *val, void **buf, size_t *buf_len) {
+               size_t len, sm_datum_t *val, void **buf, size_t *buf_len) {
   return guard(nullptr, [&] {
     if (!type || (len && !text) || !val || !buf || !buf_len) {
       return null_arg("sm_type_in", !type          ? "type"
@@ -590,7 +590,7 @@ int sm_type_in(const sm_type_t *type, int32_t typmod, const char *text,
 }
 
 /* Print a value as canonical text; see sm.h. */
-int sm_type_out(const sm_type_t *type, int32_t typmod, sm_datum_val_t val,
+int sm_type_out(const sm_type_t *type, int32_t typmod, sm_datum_t val,
                 char **text) {
   return guard(nullptr, [&] {
     if (!type || !text) {
@@ -718,8 +718,8 @@ int sm_rel_update_tuple(sm_rel_t *rel, uint64_t rowno, const void *tuple,
 }
 
 /* Insert a row of values and isnull. */
-int sm_rel_insert(sm_rel_t *rel, const sm_datum_val_t *values,
-                  const bool *isnull, size_t n, uint64_t *rowno) {
+int sm_rel_insert(sm_rel_t *rel, const sm_datum_t *values, const bool *isnull,
+                  size_t n, uint64_t *rowno) {
   return guard(rel ? rel->session : nullptr, [&] {
     if (!rel || (n && !values) || (n && !isnull) || !rowno) {
       return null_arg("sm_rel_insert", !rel           ? "rel"
@@ -731,14 +731,14 @@ int sm_rel_insert(sm_rel_t *rel, const sm_datum_val_t *values,
       return sm1::seterr(sm1::SM_ERR_INVALID,
                          "sm_rel_insert: n is not rel schema count");
     }
-    std::span<const sm2::Datum> val_span(values, n);
+    std::span<const sm2::datum_t> val_span(values, n);
     std::span<const bool> null_span(isnull, n);
     return sm2::rel_insert(rel->rel, val_span, null_span, *rowno);
   });
 }
 
 /* Replace a row with values and isnull, handing back the old tuple. */
-int sm_rel_update(sm_rel_t *rel, uint64_t rowno, const sm_datum_val_t *values,
+int sm_rel_update(sm_rel_t *rel, uint64_t rowno, const sm_datum_t *values,
                   const bool *isnull, size_t n, const void **old,
                   size_t *old_len) {
   return guard(rel ? rel->session : nullptr, [&] {
@@ -752,7 +752,7 @@ int sm_rel_update(sm_rel_t *rel, uint64_t rowno, const sm_datum_val_t *values,
       return sm1::seterr(sm1::SM_ERR_INVALID,
                          "sm_rel_update: n is not rel schema count");
     }
-    std::span<const sm2::Datum> val_span(values, n);
+    std::span<const sm2::datum_t> val_span(values, n);
     std::span<const bool> null_span(isnull, n);
     std::string_view old_v;
     if (sm2::rel_update(rel->rel, rowno, val_span, null_span,
@@ -849,8 +849,8 @@ void sm_rel_scanend(sm_rel_scan_t *scan) {
 
 /* Encode values and isnull into a tuple buffer; sm_free(*tuple). */
 int sm_tup_encode(const sm_attribute_t *schema, size_t natts,
-                  const sm_datum_val_t *values, const bool *isnull,
-                  void **tuple, size_t *len) {
+                  const sm_datum_t *values, const bool *isnull, void **tuple,
+                  size_t *len) {
   return guard(nullptr, [&] {
     if ((natts && !schema) || (natts && !values) || (natts && !isnull) ||
         !tuple || !len) {
@@ -862,7 +862,7 @@ int sm_tup_encode(const sm_attribute_t *schema, size_t natts,
     }
     auto s = schema_of(schema, natts);
     std::string out;
-    std::span<const sm2::Datum> val_span(values, natts);
+    std::span<const sm2::datum_t> val_span(values, natts);
     std::span<const bool> null_span(isnull, natts);
     if (sm2::tup_encode(s, val_span, null_span, out) != 0) {
       return -1;
@@ -880,7 +880,7 @@ int sm_tup_encode(const sm_attribute_t *schema, size_t natts,
 
 /* Every attribute of a row's tuple into values and isnull. */
 int sm_rel_deform(sm_rel_t *rel, const void *tuple, size_t len,
-                  sm_datum_val_t *values, bool *isnull, size_t n) {
+                  sm_datum_t *values, bool *isnull, size_t n) {
   return guard(nullptr, [&] {
     if (!rel) {
       return null_arg("sm_rel_deform", "rel");
@@ -891,7 +891,7 @@ int sm_rel_deform(sm_rel_t *rel, const void *tuple, size_t len,
 
 /* One attribute of a row's tuple into val and isnull. */
 int sm_rel_decode(sm_rel_t *rel, const void *tuple, size_t len, size_t ordinal,
-                  sm_datum_val_t *val, bool *isnull) {
+                  sm_datum_t *val, bool *isnull) {
   return guard(nullptr, [&] {
     if (!rel) {
       return null_arg("sm_rel_decode", "rel");
@@ -942,10 +942,9 @@ size_t sm_idx_ncols(const sm_idx_t *idx) {
 }
 
 /* Add an entry. */
-int sm_idx_insert(sm_idx_t *idx, const sm_datum_val_t *key,
-                  const bool *key_isnull, size_t nkey, uint64_t rowno,
-                  const sm_datum_val_t *include, const bool *include_isnull,
-                  size_t ninclude) {
+int sm_idx_insert(sm_idx_t *idx, const sm_datum_t *key, const bool *key_isnull,
+                  size_t nkey, uint64_t rowno, const sm_datum_t *include,
+                  const bool *include_isnull, size_t ninclude) {
   return guard(idx ? idx->session : nullptr, [&] {
     if (!idx || (nkey && !key) || (nkey && !key_isnull) ||
         (ninclude && !include) || (ninclude && !include_isnull)) {
@@ -956,23 +955,23 @@ int sm_idx_insert(sm_idx_t *idx, const sm_datum_val_t *key,
                                            ? "include"
                                            : "include_isnull");
     }
-    return sm2::idx_insert(idx->index, std::span<const sm2::Datum>(key, nkey),
+    return sm2::idx_insert(idx->index, std::span<const sm2::datum_t>(key, nkey),
                            std::span<const bool>(key_isnull, nkey), rowno,
-                           std::span<const sm2::Datum>(include, ninclude),
+                           std::span<const sm2::datum_t>(include, ninclude),
                            std::span<const bool>(include_isnull, ninclude));
   });
 }
 
 /* Remove an entry. */
-int sm_idx_delete(sm_idx_t *idx, const sm_datum_val_t *key,
-                  const bool *key_isnull, size_t nkey, uint64_t rowno) {
+int sm_idx_delete(sm_idx_t *idx, const sm_datum_t *key, const bool *key_isnull,
+                  size_t nkey, uint64_t rowno) {
   return guard(idx ? idx->session : nullptr, [&] {
     if (!idx || (nkey && !key) || (nkey && !key_isnull)) {
       return null_arg("sm_idx_delete", !idx           ? "idx"
                                        : nkey && !key ? "key"
                                                       : "key_isnull");
     }
-    return sm2::idx_delete(idx->index, std::span<const sm2::Datum>(key, nkey),
+    return sm2::idx_delete(idx->index, std::span<const sm2::datum_t>(key, nkey),
                            std::span<const bool>(key_isnull, nkey), rowno);
   });
 }
@@ -1031,7 +1030,7 @@ void sm_idx_scanend(sm_idx_scan_t *scan) {
 
 /* One attribute of an entry's value into val and isnull. */
 int sm_idx_decode(sm_idx_t *idx, const void *value, size_t len, size_t ordinal,
-                  sm_datum_val_t *val, bool *isnull) {
+                  sm_datum_t *val, bool *isnull) {
   return guard(nullptr, [&] {
     if (!idx) {
       return null_arg("sm_idx_decode", "idx");
@@ -1043,7 +1042,7 @@ int sm_idx_decode(sm_idx_t *idx, const void *value, size_t len, size_t ordinal,
 
 /* Every attribute of an entry's value into values and isnull. */
 int sm_idx_deform(sm_idx_t *idx, const void *value, size_t len,
-                  sm_datum_val_t *values, bool *isnull, size_t n) {
+                  sm_datum_t *values, bool *isnull, size_t n) {
   return guard(nullptr, [&] {
     if (!idx) {
       return null_arg("sm_idx_deform", "idx");

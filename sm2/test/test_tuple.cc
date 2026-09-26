@@ -62,7 +62,7 @@ deform(const std::vector<sm2::attribute_t> &schema, std::string_view tuple) {
  */
 int decode_bytes(const sm2::tup_desc_t &desc, std::string_view tuple, size_t k,
                  std::optional<std::string> &out) {
-  sm2::Datum v;
+  sm2::datum_t v;
   bool isnull;
   out.reset();
   if (sm2::tup_decode(desc, tuple, k, v, isnull) != 0) {
@@ -327,7 +327,7 @@ TEST_CASE("the codec refuses arguments that do not fit the schema") {
   // Verify tup_encode and tup_decode's SM_ERR_INVALID cases.
   // 1. Fewer datums than attributes leaves the tuple as it was.
   // 2. A variable datum with a null pointer, a TOAST pointer, or a
-  //    compressed one. (A Datum has no length, so a datum of the
+  //    compressed one. (A datum_t has no length, so a datum of the
   //    wrong width, or a varlena longer than its buffer, cannot be
   //    told; the header is trusted, as in PostgreSQL.)
   // 3. A decimal64 attribute with a typmod decimal64 refuses.
@@ -335,7 +335,7 @@ TEST_CASE("the codec refuses arguments that do not fit the schema") {
   std::vector<sm2::attribute_t> schema = {attr(sm2::type_int4),
                                           attr(sm2::type_text)};
   std::string tuple = "keep";
-  sm2::Datum one[1] = {sm2::datum_from_int32(1)};
+  sm2::datum_t one[1] = {sm2::datum_from_int32(1)};
   bool no[2] = {false, false};
   CHECK(sm2::tup_encode(schema, one, std::span<const bool>(no, 1), tuple) ==
         -1);
@@ -346,13 +346,13 @@ TEST_CASE("the codec refuses arguments that do not fit the schema") {
   std::string compressed("\x12\0\0\0", 4);
   const char *bad_ptrs[] = {nullptr, toast.data(), compressed.data()};
   for (const char *v : bad_ptrs) {
-    sm2::Datum row[2] = {sm2::datum_from_int32(1), sm2::datum_from_ptr(v)};
+    sm2::datum_t row[2] = {sm2::datum_from_int32(1), sm2::datum_from_ptr(v)};
     CHECK(sm2::tup_encode(schema, row, no, tuple) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
   CHECK(tuple == "keep");
   std::vector<sm2::attribute_t> bad_typmod = {attr(sm2::type_decimal64, 3)};
-  sm2::Datum d8[1] = {sm2::datum_from_int64(1)};
+  sm2::datum_t d8[1] = {sm2::datum_from_int64(1)};
   CHECK(sm2::tup_encode(bad_typmod, d8, std::span<const bool>(no, 1), tuple) ==
         -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
@@ -394,8 +394,9 @@ TEST_CASE("a varlena is PostgreSQL's, in its shortest form") {
         std::vector<std::optional<std::string>>{sm2::make_varlena("abc")});
 }
 
-TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
-  // Verify the Datum form of the codec writes the same layout
+TEST_CASE(
+    "tuples encode, deform, and decode via PostgreSQL datum_t and isnull") {
+  // Verify the datum_t form of the codec writes the same layout
   // and reads back what it wrote, by value and by reference.
   // 1. Encode an int4, a text, a null int8 and a bool, and check
   //    the bytes.
@@ -407,16 +408,16 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
       attr(sm2::type_int4), attr(sm2::type_text), attr(sm2::type_int8),
       attr(sm2::type_bool)};
   std::string vl_hi = vl("hi");
-  sm2::Datum datums[4] = {sm2::datum_from_int32(7),
-                          sm2::datum_from_ptr(vl_hi.data()), 0,
-                          sm2::datum_from_bool(true)};
+  sm2::datum_t datums[4] = {sm2::datum_from_int32(7),
+                            sm2::datum_from_ptr(vl_hi.data()), 0,
+                            sm2::datum_from_bool(true)};
   bool isnull[4] = {false, false, true, false};
   std::string t;
   REQUIRE(sm2::tup_encode(schema, datums, isnull, t) == 0);
   CHECK(hex(t) == "010404070000000a0001076869");
 
-  // 2. Deform back to Datum and isnull.
-  sm2::Datum out_d[4];
+  // 2. Deform back to datum_t and isnull.
+  sm2::datum_t out_d[4];
   bool out_null[4];
   REQUIRE(sm2::tup_deform(schema, t, out_d, out_null) == 0);
   CHECK_FALSE(out_null[0]);
@@ -429,7 +430,7 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
   CHECK(sm2::datum_to_bool(out_d[3]) == true);
 
   // 3. Decode each attribute individually.
-  sm2::Datum val;
+  sm2::datum_t val;
   bool is_null;
   REQUIRE(sm2::tup_decode(schema, t, 0, val, is_null) == 0);
   CHECK_FALSE(is_null);
@@ -452,7 +453,7 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
   std::vector<sm2::attribute_t> expanded = schema;
   expanded.push_back({&sm2::type_int8, -1, false, missing_val});
 
-  sm2::Datum exp_d[5];
+  sm2::datum_t exp_d[5];
   bool exp_null[5];
   REQUIRE(sm2::tup_deform(expanded, t, exp_d, exp_null) == 0);
   CHECK_FALSE(exp_null[4]);
@@ -473,8 +474,8 @@ TEST_CASE("tup_check accepts what the codec writes, and nothing else") {
   std::vector<sm2::attribute_t> schema = {attr(sm2::type_int4),
                                           attr(sm2::type_text)};
   std::string vl_hi = vl("hi");
-  sm2::Datum datums[2] = {sm2::datum_from_int32(7),
-                          sm2::datum_from_ptr(vl_hi.data())};
+  sm2::datum_t datums[2] = {sm2::datum_from_int32(7),
+                            sm2::datum_from_ptr(vl_hi.data())};
   bool isnull[2] = {false, false};
   std::string t;
   REQUIRE(sm2::tup_encode(schema, datums, isnull, t) == 0);

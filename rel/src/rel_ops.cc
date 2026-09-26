@@ -1223,7 +1223,7 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
   while (sm_rel_scannxt(rscan, &rowno, &tuple, &len) == 0) {
     Janet *vals = janet_tuple_begin(ncols);
     for (size_t i = 0; i < ncols; i++) {
-      sm_datum_val_t val = 0;
+      sm_datum_t val = 0;
       bool isnull = false;
       if (sm_rel_decode(rel, tuple, len, i, &val, &isnull) != 0) {
         sm_rel_scanend(rscan);

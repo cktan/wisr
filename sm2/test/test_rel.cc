@@ -367,7 +367,7 @@ TEST_CASE("a row that cannot be encoded draws no rowno") {
   CHECK(sm2::rel_open(nullptr, db.store(), 0, schema, "rowno", out) == -1);
 }
 
-TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
+TEST_CASE("rel supports raw tuple bytes and datum_t/isnull writes") {
   // Verify a heap rel stores exactly the tuple it is given, from
   // pre-encoded bytes or from Datums and null flags.
   // 1. Insert a pre-encoded tuple and read the same bytes back.
@@ -386,8 +386,8 @@ TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
 
   // 1. Raw tuple byte insert and read.
   std::string vl1 = sm2::make_varlena("first");
-  sm2::Datum d1[2] = {sm2::datum_from_int32(100),
-                      sm2::datum_from_ptr(vl1.data())};
+  sm2::datum_t d1[2] = {sm2::datum_from_int32(100),
+                        sm2::datum_from_ptr(vl1.data())};
   bool nulls1[2] = {false, false};
   std::string tuple1;
   REQUIRE(sm2::tup_encode(schema, d1, nulls1, tuple1) == 0);
@@ -401,8 +401,8 @@ TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
 
   // 2. Raw tuple byte update.
   std::string vl2 = sm2::make_varlena("second");
-  sm2::Datum d2[2] = {sm2::datum_from_int32(200),
-                      sm2::datum_from_ptr(vl2.data())};
+  sm2::datum_t d2[2] = {sm2::datum_from_int32(200),
+                        sm2::datum_from_ptr(vl2.data())};
   bool nulls2[2] = {false, false};
   std::string tuple2;
   REQUIRE(sm2::tup_encode(schema, d2, nulls2, tuple2) == 0);
@@ -415,14 +415,14 @@ TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
   REQUIRE(sm2::rel_read(rel, r1, read_t2) == 0);
   CHECK(read_t2 == tuple2);
 
-  // 3. rel_insert taking (Datum, isnull) directly.
+  // 3. rel_insert taking (datum_t, isnull) directly.
   uint64_t r2;
   REQUIRE(sm2::rel_insert(rel, d1, nulls1, r2) == 0);
   CHECK(r2 > r1);
   REQUIRE(sm2::rel_read(rel, r2, read_t1) == 0);
   CHECK(read_t1 == tuple1);
 
-  // 4. rel_update taking (Datum, isnull) directly.
+  // 4. rel_update taking (datum_t, isnull) directly.
   REQUIRE(sm2::rel_update(rel, r2, d2, nulls2, &old_t) == 0);
   CHECK(old_t == tuple1);
   REQUIRE(sm2::rel_read(rel, r2, read_t2) == 0);
@@ -446,7 +446,7 @@ TEST_CASE("a raw tuple is checked before it is written") {
       {&sm2::type_int4, -1, false, std::nullopt}};
   sm2::rel_t *rel = open_rel(db, s, schema);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  sm2::Datum d[1] = {sm2::datum_from_int32(1)};
+  sm2::datum_t d[1] = {sm2::datum_from_int32(1)};
   bool nulls[1] = {false};
   std::string good;
   REQUIRE(sm2::tup_encode(schema, d, nulls, good) == 0);

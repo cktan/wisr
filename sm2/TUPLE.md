@@ -190,9 +190,9 @@ it never reads outside the tuple.
 
 - **Datums and null flags**, the shape of PostgreSQL's
   `heap_form_tuple` and `heap_deform_tuple`: a by-value
-  type's value sits in the `Datum` itself; a by-reference
-  type's `Datum` points to its fixed-width bytes or its
-  varlena.
+  type's value sits in the `datum_t`, sm2's `Datum`, itself;
+  a by-reference type's `datum_t` points to its fixed-width
+  bytes or its varlena.
   - `tup_encode(desc, datums, isnull, tuple)` writes the
     layout of §2 to §6, each varlena in its shortest form.
   - `tup_decode(desc, tuple, ordinal, val, isnull)`
@@ -204,12 +204,12 @@ it never reads outside the tuple.
     every attribute in one pass into the caller's arrays. It
     allocates only the schema's widths, not its output.
 
-  A by-reference `Datum` either one hands back points into
+  A by-reference `datum_t` either one hands back points into
   the tuple, or into the schema's missing value, and lives
   as long as that does. `datum_bytes(type, typmod, d, out)`
-  gives the bytes a `Datum` stands for — a fixed-width
+  gives the bytes a `datum_t` stands for — a fixed-width
   datum's, or a variable-width one's varlena — as the key
-  encoding reads them. A `Datum` carries no length, so a
+  encoding reads them. A `datum_t` carries no length, so a
   varlena's header is trusted, as in PostgreSQL.
 
 `tup_check(desc, tuple)` accepts only a tuple

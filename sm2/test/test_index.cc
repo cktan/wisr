@@ -284,7 +284,7 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
   for (size_t i = 0; i < texts.size(); i++) {
     std::vector<std::optional<std::string>> key = {texts[i]};
     values_t d = datums_of(cols, key);
-    sm2::Datum id[1] = {sm2::datum_from_int32(static_cast<int32_t>(i + 100))};
+    sm2::datum_t id[1] = {sm2::datum_from_int32(static_cast<int32_t>(i + 100))};
     bool idn[1] = {false};
     REQUIRE_MESSAGE(sm2::idx_insert(ix, d.d(), d.null(), i + 1, id, idn) == 0,
                     sm1::errmsg());
@@ -298,7 +298,7 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
     REQUIRE(sm2::idx_scannxt(scan, rowno, cut, value) == 0);
     CHECK(rowno == want);
     CHECK(cut);
-    sm2::Datum inc;
+    sm2::datum_t inc;
     bool inc_null;
     REQUIRE(sm2::tup_decode(sm2::idx_value_schema(ix), value, 2, inc,
                             inc_null) == 0);
@@ -336,7 +336,7 @@ TEST_CASE("index and heap entries share a store without meeting") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   std::vector<uint64_t> rows;
   for (int32_t v = 0; v < 5; v++) {
-    sm2::Datum d[1] = {sm2::datum_from_int32(v)};
+    sm2::datum_t d[1] = {sm2::datum_from_int32(v)};
     bool dn[1] = {false};
     uint64_t rowno;
     REQUIRE(sm2::rel_insert(rel, d, dn, rowno) == 0);
@@ -380,7 +380,7 @@ TEST_CASE("an index scan seeks forward, and index calls refuse misuse") {
   sm2::index_t *ix = open_index(db, s, cols, false);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   for (int32_t v = 0; v < 10; v++) {
-    sm2::Datum d[1] = {sm2::datum_from_int32(v)};
+    sm2::datum_t d[1] = {sm2::datum_from_int32(v)};
     bool dn[1] = {false};
     REQUIRE(sm2::idx_insert(ix, d, dn, static_cast<uint64_t>(v + 1), {}, {}) ==
             0);
@@ -391,7 +391,7 @@ TEST_CASE("an index scan seeks forward, and index calls refuse misuse") {
   bool cut;
   std::string_view value;
   REQUIRE(sm2::idx_scannxt(scan, rowno, cut, value) == 0);
-  sm2::Datum sd[1] = {sm2::datum_from_int32(7)};
+  sm2::datum_t sd[1] = {sm2::datum_from_int32(7)};
   bool sn[1] = {false};
   REQUIRE(sm2::idx_scan_seek(scan, sm2::bound_t{sd, sn, true}) == 0);
   REQUIRE(sm2::idx_scannxt(scan, rowno, cut, value) == 0);
@@ -402,7 +402,7 @@ TEST_CASE("an index scan seeks forward, and index calls refuse misuse") {
   CHECK(sm2::idx_open(s, db.store(), 0xFFFF, cols, false, {}, out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm2::idx_open(s, db.store(), 3, {}, false, {}, out) == -1);
-  sm2::Datum two[2] = {sd[0], sd[0]};
+  sm2::datum_t two[2] = {sd[0], sd[0]};
   bool twon[2] = {false, false};
   CHECK(sm2::idx_insert(ix, two, twon, 1, {}, {}) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
@@ -410,7 +410,7 @@ TEST_CASE("an index scan seeks forward, and index calls refuse misuse") {
   CHECK(sm2::idx_scan(ix, &none, nullptr, scan) == -1);
   CHECK(sm2::idx_scan(ix, &many, nullptr, scan) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  sm2::Datum ad[1] = {sm2::datum_from_int32(99)};
+  sm2::datum_t ad[1] = {sm2::datum_from_int32(99)};
   CHECK(sm2::idx_delete(ix, ad, sn, 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(s) == 0);

@@ -272,14 +272,14 @@ std::string_view datum_at(const parsed_t &t, const sm2::tup_desc_t &desc,
   return t.tuple.substr(start, len);
 }
 
-/* Convert bytes of attribute to Datum representation. */
+/* Convert bytes of attribute to datum_t representation. */
 void bytes_to_datum(const sm2::attribute_t &attr, std::string_view bytes,
-                    sm2::Datum &val) {
+                    sm2::datum_t &val) {
   if (attr.type && attr.type->byval) {
     val = 0;
     std::memcpy(&val, bytes.data(), bytes.size());
   } else {
-    val = reinterpret_cast<sm2::Datum>(bytes.data());
+    val = reinterpret_cast<sm2::datum_t>(bytes.data());
   }
 }
 
@@ -436,8 +436,8 @@ tup_desc_t::tup_desc_t(std::span<const attribute_t> s) : schema(s) {
   }
 }
 
-/* The bytes a non-null Datum stands for; see sm2.h. */
-int datum_bytes(const type_t *type, int32_t typmod, const Datum &d,
+/* The bytes a non-null datum_t stands for; see sm2.h. */
+int datum_bytes(const type_t *type, int32_t typmod, const datum_t &d,
                 std::string_view &out) {
   auto bad = [](const char *why) {
     return sm1::seterr(sm1::SM_ERR_INVALID, std::string("datum: ") + why);
@@ -446,7 +446,7 @@ int datum_bytes(const type_t *type, int32_t typmod, const Datum &d,
   if (w == 0) {
     return bad("no type, or a typmod its type refuses");
   }
-  // A by-value datum's bytes are the Datum's own, from its start.
+  // A by-value datum's bytes are the datum_t's own, from its start.
   if (type->byval) {
     out = std::string_view(reinterpret_cast<const char *>(&d), w);
     return 0;
@@ -501,7 +501,7 @@ std::string_view varlena_payload(std::string_view v) {
 }
 
 /* Encode datums and isnull under schema into tuple; see sm2.h. */
-int tup_encode(const tup_desc_t &desc, std::span<const Datum> datums,
+int tup_encode(const tup_desc_t &desc, std::span<const datum_t> datums,
                std::span<const bool> isnull, std::string &tuple) {
   return catch_nomem([&] {
     if (check_desc(desc) != 0) {
@@ -525,7 +525,7 @@ int tup_encode(const tup_desc_t &desc, std::span<const Datum> datums,
         return invalid("attribute " + std::to_string(i) +
                        " is dropped, so its datum must be null");
       }
-      // The bytes the Datum stands for, which the tuple stores.
+      // The bytes the datum_t stands for, which the tuple stores.
       if (datum_bytes(schema[i].type, schema[i].typmod, datums[i],
                       attr_bytes[i]) != 0) {
         return invalid("attribute " + std::to_string(i) + ": " +
@@ -615,7 +615,7 @@ int tup_check(const tup_desc_t &desc, std::string_view tuple) {
 
 /* Deform every attribute of tuple into datums and isnull; see sm2.h. */
 int tup_deform(const tup_desc_t &desc, std::string_view tuple,
-               std::span<Datum> datums, std::span<bool> isnull) {
+               std::span<datum_t> datums, std::span<bool> isnull) {
   return catch_nomem([&] {
     const auto &schema = desc.schema;
     if (datums.size() != schema.size() || isnull.size() != schema.size()) {
@@ -634,7 +634,7 @@ int tup_deform(const tup_desc_t &desc, std::string_view tuple,
 
 /* One attribute of a tuple, by ordinal, into val and isnull; see sm2.h. */
 int tup_decode(const tup_desc_t &desc, std::string_view tuple, size_t ordinal,
-               Datum &val, bool &isnull) {
+               datum_t &val, bool &isnull) {
   std::optional<std::string_view> d;
   if (decode_view(desc, tuple, ordinal, d) != 0) {
     return -1;

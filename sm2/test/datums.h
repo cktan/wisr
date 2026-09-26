@@ -36,18 +36,18 @@ struct typed_t {
 
 /*
  * A row as the Datums and null flags sm2 takes. A by-value type's
- * bytes are copied into its Datum; any other type's Datum points
+ * bytes are copied into its datum_t; any other type's datum_t points
  * at its bytes -- into the row, which must outlive this, or into
  * own, for a variable-width datum given native and wrapped here
  * in a varlena.
  */
 struct values_t {
-  std::vector<sm2::Datum> datums;
+  std::vector<sm2::datum_t> datums;
   std::unique_ptr<bool[]> nulls;
   std::vector<std::string> own;
   size_t n = 0;
 
-  std::span<const sm2::Datum> d() const { return datums; }
+  std::span<const sm2::datum_t> d() const { return datums; }
   std::span<const bool> null() const { return {nulls.get(), n}; }
 };
 
@@ -82,7 +82,7 @@ values_t values_of(const std::vector<const sm2::type_t *> &types,
   v.n = std::min(n, row.size());
   v.datums.assign(v.n, 0);
   v.nulls = std::make_unique<bool[]>(v.n);
-  // own must not move once a Datum points into it.
+  // own must not move once a datum_t points into it.
   v.own.reserve(v.n);
   for (size_t i = 0; i < v.n; i++) {
     if (!row[i]) {
@@ -91,7 +91,7 @@ values_t values_of(const std::vector<const sm2::type_t *> &types,
     }
     std::string_view b = *row[i];
     if (types[i]->byval) {
-      memcpy(&v.datums[i], b.data(), std::min(b.size(), sizeof(sm2::Datum)));
+      memcpy(&v.datums[i], b.data(), std::min(b.size(), sizeof(sm2::datum_t)));
     } else if (native && types[i]->len < 0) {
       v.own.push_back(sm2::make_varlena(b));
       v.datums[i] = sm2::datum_from_ptr(v.own.back().data());
@@ -112,7 +112,7 @@ inline int bytes_of(std::span<const sm2::attribute_t> schema,
                     std::string_view tuple,
                     std::vector<std::optional<std::string>> &out) {
   size_t n = schema.size();
-  std::vector<sm2::Datum> d(n);
+  std::vector<sm2::datum_t> d(n);
   auto nulls = std::make_unique<bool[]>(n);
   out.clear();
   if (sm2::tup_deform(schema, tuple, d, std::span<bool>(nulls.get(), n)) != 0) {

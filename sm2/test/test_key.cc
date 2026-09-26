@@ -317,13 +317,13 @@ TEST_CASE("key encoding refuses what it cannot encode or decode") {
   std::vector<sm2::key_column_t> text = {
       {&sm2::type_text, -1, nullptr, false, false}};
   std::string toast(1, sm2::varlena_toast);
-  sm2::Datum ptr[1] = {sm2::datum_from_ptr(toast.data())};
+  sm2::datum_t ptr[1] = {sm2::datum_from_ptr(toast.data())};
   bool no[1] = {false};
   CHECK(sm2::encode_key(text, ptr, no, key) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::vector<sm2::key_column_t> untyped = {
       {nullptr, -1, nullptr, false, false}};
-  sm2::Datum one[1] = {sm2::datum_from_int32(1234)};
+  sm2::datum_t one[1] = {sm2::datum_from_int32(1234)};
   CHECK(sm2::encode_key(untyped, one, no, key) == -1);
   CHECK(key == "keep");
 

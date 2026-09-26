@@ -69,7 +69,7 @@ struct table_def_t {
  */
 struct row_values_t {
   std::vector<std::vector<uint8_t>> bufs;
-  std::vector<sm_datum_val_t> values;
+  std::vector<sm_datum_t> values;
   std::unique_ptr<bool[]> isnull;
 
   explicit row_values_t(size_t n) : bufs(n), values(n), isnull(new bool[n]()) {}
@@ -154,14 +154,14 @@ const char *type_name_of(uint8_t code);
  * given as its canonical text, parsed by sm_type_in.
  */
 int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
-                   sm_datum_val_t *val_out, bool *isnull_out);
+                   sm_datum_t *val_out, bool *isnull_out);
 
 /*
  * Convert a value back to a Janet value: a number, boolean or
  * string for the types rel converts natively, and canonical text
  * (sm_type_out) for any other.
  */
-Janet value_to_janet(const sm_datum_val_t &val, bool isnull, uint8_t type_code,
+Janet value_to_janet(const sm_datum_t &val, bool isnull, uint8_t type_code,
                      int32_t typmod);
 
 /*

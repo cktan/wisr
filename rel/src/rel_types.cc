@@ -179,7 +179,7 @@ void varlena_payload(const void *p, const char **out_data, size_t *out_len) {
 
 /* Convert a Janet value to a value and null flag; see rel.h. */
 int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
-                   sm_datum_val_t *val_out, bool *isnull_out) {
+                   sm_datum_t *val_out, bool *isnull_out) {
   *val_out = 0;
   *isnull_out = false;
   if (janet_checktype(val, JANET_NIL)) {
@@ -268,7 +268,7 @@ int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
 }
 
 /* Convert a value back to a Janet value. */
-Janet value_to_janet(const sm_datum_val_t &val, bool isnull, uint8_t type_code,
+Janet value_to_janet(const sm_datum_t &val, bool isnull, uint8_t type_code,
                      int32_t typmod) {
   if (isnull) {
     return janet_wrap_nil();

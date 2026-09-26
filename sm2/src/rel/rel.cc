@@ -105,8 +105,8 @@ int rel_insert(rel_t *rel, std::string_view tuple, uint64_t &rowno) {
   });
 }
 
-/* Insert a row by Datum and isnull; see sm2.h. */
-int rel_insert(rel_t *rel, std::span<const Datum> datums,
+/* Insert a row by datum_t and isnull; see sm2.h. */
+int rel_insert(rel_t *rel, std::span<const datum_t> datums,
                std::span<const bool> isnull, uint64_t &rowno) {
   return catch_nomem([&] {
     std::string tuple;
@@ -144,8 +144,8 @@ int rel_update(rel_t *rel, uint64_t rowno, std::string_view tuple,
   });
 }
 
-/* Replace the row at rowno with Datum and isnull; see sm2.h. */
-int rel_update(rel_t *rel, uint64_t rowno, std::span<const Datum> datums,
+/* Replace the row at rowno with datum_t and isnull; see sm2.h. */
+int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
                std::span<const bool> isnull, std::string_view *old) {
   return catch_nomem([&] {
     std::string tuple;

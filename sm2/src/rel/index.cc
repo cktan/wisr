@@ -65,7 +65,7 @@ std::string prefix_of(const sm2::index_t *ix) {
  * encoded key columns, and the rowno where the entry carries one;
  * cut is set if the columns were cut to fit.
  */
-int entry_key(const sm2::index_t *ix, std::span<const sm2::Datum> key,
+int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
               std::span<const bool> isnull, uint64_t rowno, std::string &out,
               bool &cut) {
   if (key.size() != ix->key.size() || isnull.size() != ix->key.size()) {
@@ -196,9 +196,9 @@ std::span<const attribute_t> idx_value_schema(const index_t *index) {
 }
 
 /* Add the entry for the row at rowno; see sm2.h. */
-int idx_insert(index_t *index, std::span<const Datum> key,
+int idx_insert(index_t *index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, uint64_t rowno,
-               std::span<const Datum> include,
+               std::span<const datum_t> include,
                std::span<const bool> include_isnull) {
   return catch_nomem([&] {
     std::string k;
@@ -213,8 +213,8 @@ int idx_insert(index_t *index, std::span<const Datum> key,
           "index: a datum and null flag for every INCLUDE column, no more");
     }
     // The value: rowno, cut, then the INCLUDE columns.
-    std::vector<Datum> datums = {datum_from_int64(static_cast<int64_t>(rowno)),
-                                 datum_from_bool(cut)};
+    std::vector<datum_t> datums = {
+        datum_from_int64(static_cast<int64_t>(rowno)), datum_from_bool(cut)};
     datums.insert(datums.end(), include.begin(), include.end());
     auto nulls = std::make_unique<bool[]>(datums.size());
     for (size_t i = 0; i < include.size(); i++) {
@@ -231,7 +231,7 @@ int idx_insert(index_t *index, std::span<const Datum> key,
 }
 
 /* Remove the entry for key and rowno. */
-int idx_delete(index_t *index, std::span<const Datum> key,
+int idx_delete(index_t *index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, uint64_t rowno) {
   return catch_nomem([&] {
     std::string k;
@@ -301,7 +301,7 @@ int idx_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
       return rc;
     }
     // The value opens with the rowno and the cut flag.
-    Datum r, c;
+    datum_t r, c;
     bool r_null, c_null;
     if (tup_decode(scan->index->value_desc, value, 0, r, r_null) != 0 ||
         tup_decode(scan->index->value_desc, value, 1, c, c_null) != 0) {

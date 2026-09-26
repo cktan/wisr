@@ -228,19 +228,19 @@ void sm_collation_close(sm_collation_t* collation);
 const char* sm_collation_version(const sm_collation_t* collation);
 
 /*
- * A PostgreSQL-compatible 8-byte Datum (postgres.h).
- * For a by-value type, the value itself fits in the Datum (int2,
+ * A datum, as PostgreSQL's 8-byte Datum (postgres.h).
+ * For a by-value type, the value itself fits in the datum (int2,
  * int4, int8, bool, float4, float8, date, time, timestamp,
  * timestamptz). For a by-reference type, it is a pointer to the
  * bytes or varlena.
  */
-typedef uintptr_t sm_datum_val_t;
+typedef uintptr_t sm_datum_t;
 
-#define SM_DATUM_FROM_INT16(v) ((sm_datum_val_t)(uint16_t)(v))
-#define SM_DATUM_FROM_INT32(v) ((sm_datum_val_t)(uint32_t)(v))
-#define SM_DATUM_FROM_INT64(v) ((sm_datum_val_t)(uint64_t)(v))
-#define SM_DATUM_FROM_BOOL(v)  ((sm_datum_val_t)((v) ? 1 : 0))
-#define SM_DATUM_FROM_PTR(p)   ((sm_datum_val_t)(const void*)(p))
+#define SM_DATUM_FROM_INT16(v) ((sm_datum_t)(uint16_t)(v))
+#define SM_DATUM_FROM_INT32(v) ((sm_datum_t)(uint32_t)(v))
+#define SM_DATUM_FROM_INT64(v) ((sm_datum_t)(uint64_t)(v))
+#define SM_DATUM_FROM_BOOL(v)  ((sm_datum_t)((v) ? 1 : 0))
+#define SM_DATUM_FROM_PTR(p)   ((sm_datum_t)(const void*)(p))
 
 #define SM_DATUM_TO_INT16(d)   ((int16_t)(uint16_t)(d))
 #define SM_DATUM_TO_INT32(d)   ((int32_t)(uint32_t)(d))
@@ -248,22 +248,22 @@ typedef uintptr_t sm_datum_val_t;
 #define SM_DATUM_TO_BOOL(d)    (((uint8_t)(d)) != 0)
 #define SM_DATUM_TO_PTR(d)     ((const void*)(uintptr_t)(d))
 
-static inline sm_datum_val_t sm_datum_from_float(float f) {
-    sm_datum_val_t d = 0;
+static inline sm_datum_t sm_datum_from_float(float f) {
+    sm_datum_t d = 0;
     memcpy(&d, &f, sizeof(float));
     return d;
 }
-static inline sm_datum_val_t sm_datum_from_double(double f) {
-    sm_datum_val_t d = 0;
+static inline sm_datum_t sm_datum_from_double(double f) {
+    sm_datum_t d = 0;
     memcpy(&d, &f, sizeof(double));
     return d;
 }
-static inline float sm_datum_to_float(sm_datum_val_t d) {
+static inline float sm_datum_to_float(sm_datum_t d) {
     float f;
     memcpy(&f, &d, sizeof(float));
     return f;
 }
-static inline double sm_datum_to_double(sm_datum_val_t d) {
+static inline double sm_datum_to_double(sm_datum_t d) {
     double f;
     memcpy(&f, &d, sizeof(double));
     return f;
@@ -279,14 +279,14 @@ static inline double sm_datum_to_double(sm_datum_val_t d) {
  * the canonical text is accepted; any other is SM_ERR_INVALID.
  */
 int sm_type_in(const sm_type_t* type, int32_t typmod, const char* text,
-               size_t len, sm_datum_val_t* val, void** buf, size_t* buf_len);
+               size_t len, sm_datum_t* val, void** buf, size_t* buf_len);
 
 /*
  * Print a non-null value of type under typmod as PostgreSQL's
  * canonical text, as the type's typoutput does, into *text,
  * NUL-terminated and malloc'd; free it with sm_free.
  */
-int sm_type_out(const sm_type_t* type, int32_t typmod, sm_datum_val_t val,
+int sm_type_out(const sm_type_t* type, int32_t typmod, sm_datum_t val,
                 char** text);
 
 /*
@@ -319,7 +319,7 @@ typedef struct sm_key_column_t {
  * and null ordering.
  */
 typedef struct sm_bound_t {
-    const sm_datum_val_t* prefix;
+    const sm_datum_t* prefix;
     const bool*           isnull;
     size_t                n;
     bool                  inclusive;
@@ -370,7 +370,7 @@ int sm_rel_update_tuple(sm_rel_t* rel, uint64_t rowno, const void* tuple,
  * variable-width one at a PostgreSQL varlena, header included
  * (sm2/VARLENA.md).
  */
-int sm_rel_insert(sm_rel_t* rel, const sm_datum_val_t* values,
+int sm_rel_insert(sm_rel_t* rel, const sm_datum_t* values,
                   const bool* isnull, size_t n, uint64_t* rowno);
 
 /*
@@ -392,7 +392,7 @@ int sm_rel_read_latest(sm_rel_t* rel, uint64_t rowno, const void** tuple,
  * Replace the row at rowno with n values and null flags; old, if
  * not NULL, gets the old tuple.
  */
-int sm_rel_update(sm_rel_t* rel, uint64_t rowno, const sm_datum_val_t* values,
+int sm_rel_update(sm_rel_t* rel, uint64_t rowno, const sm_datum_t* values,
                   const bool* isnull, size_t n, const void** old,
                   size_t* old_len);
 
@@ -416,7 +416,7 @@ void sm_rel_scanend(sm_rel_scan_t* scan);
 
 /* Encode values and isnull into a tuple buffer; sm_free(*tuple). */
 int sm_tup_encode(const sm_attribute_t* schema, size_t natts,
-                    const sm_datum_val_t* values, const bool* isnull,
+                    const sm_datum_t* values, const bool* isnull,
                     void** tuple, size_t* len);
 
 /*
@@ -425,14 +425,14 @@ int sm_tup_encode(const sm_attribute_t* schema, size_t natts,
  * it shares the tuple's lifetime.
  */
 int sm_rel_deform(sm_rel_t* rel, const void* tuple, size_t len,
-                  sm_datum_val_t* values, bool* isnull, size_t n);
+                  sm_datum_t* values, bool* isnull, size_t n);
 
 /*
  * One attribute of a tuple, by ordinal, into *val and *isnull; a
  * null or dropped attribute sets *isnull.
  */
 int sm_rel_decode(sm_rel_t* rel, const void* tuple, size_t len,
-                  size_t ordinal, sm_datum_val_t* val, bool* isnull);
+                  size_t ordinal, sm_datum_t* val, bool* isnull);
 
 /* ---- index rels: a table's index entries, sm2's ---- */
 
@@ -467,13 +467,13 @@ size_t sm_idx_ncols(const sm_idx_t* idx);
  * Add the entry for the row at rowno. A unique index refuses a
  * key already present with SM_ERR_DUPKEY.
  */
-int sm_idx_insert(sm_idx_t* idx, const sm_datum_val_t* key,
+int sm_idx_insert(sm_idx_t* idx, const sm_datum_t* key,
                   const bool* key_isnull, size_t nkey, uint64_t rowno,
-                  const sm_datum_val_t* include, const bool* include_isnull,
+                  const sm_datum_t* include, const bool* include_isnull,
                   size_t ninclude);
 
 /* Remove the entry sm_idx_insert added for key and rowno. */
-int sm_idx_delete(sm_idx_t* idx, const sm_datum_val_t* key,
+int sm_idx_delete(sm_idx_t* idx, const sm_datum_t* key,
                   const bool* key_isnull, size_t nkey, uint64_t rowno);
 
 /*
@@ -496,11 +496,11 @@ void sm_idx_scanend(sm_idx_scan_t* scan);
 
 /* One attribute of an entry's value, as sm_rel_decode. */
 int sm_idx_decode(sm_idx_t* idx, const void* value, size_t len,
-                  size_t ordinal, sm_datum_val_t* val, bool* isnull);
+                  size_t ordinal, sm_datum_t* val, bool* isnull);
 
 /* Every attribute of an entry's value, as sm_rel_deform; n is sm_idx_ncols. */
 int sm_idx_deform(sm_idx_t* idx, const void* value, size_t len,
-                  sm_datum_val_t* values, bool* isnull, size_t n);
+                  sm_datum_t* values, bool* isnull, size_t n);
 
 #ifdef __cplusplus
 }

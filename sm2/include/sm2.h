@@ -159,94 +159,95 @@ struct key_column_t {
 };
 
 /*
- * A datum: a PostgreSQL 8-byte scalar value or pointer (postgres.h).
- * For a by-value type (type_t::byval is true), the value itself fits
- * in the Datum (cast to/from int2, int4, int8, bool, float4, float8,
+ * A datum, as PostgreSQL's Datum: an 8-byte scalar value or pointer
+ * (postgres.h). For a by-value type (type_t::byval is true), the value
+ * itself fits in the datum_t (cast to/from int2, int4, int8, bool,
+ * float4, float8,
  * date, time, timestamp, timestamptz).
- * For a by-reference type (type_t::byval is false), Datum is a pointer
+ * For a by-reference type (type_t::byval is false), datum_t is a pointer
  * (reinterpret_cast<const char*>) to its bytes: fixed-width bytes for
  * uuid, interval, decimal; or a PostgreSQL varlena (header included)
  * for text, varchar, bytea.
  */
-using Datum = uintptr_t;
+using datum_t = uintptr_t;
 
 /* int8, float8 and the 8-byte time types are passed by value. */
-static_assert(sizeof(Datum) == 8, "a Datum must hold 8 bytes");
+static_assert(sizeof(datum_t) == 8, "a datum_t must hold 8 bytes");
 
-inline Datum datum_from_int16(int16_t val) {
-    Datum d = 0;
+inline datum_t datum_from_int16(int16_t val) {
+    datum_t d = 0;
     std::memcpy(&d, &val, sizeof(val));
     return d;
 }
-inline Datum datum_from_int32(int32_t val) {
-    Datum d = 0;
+inline datum_t datum_from_int32(int32_t val) {
+    datum_t d = 0;
     std::memcpy(&d, &val, sizeof(val));
     return d;
 }
-inline Datum datum_from_int64(int64_t val) {
-    Datum d = 0;
+inline datum_t datum_from_int64(int64_t val) {
+    datum_t d = 0;
     std::memcpy(&d, &val, sizeof(val));
     return d;
 }
-inline Datum datum_from_uint64(uint64_t val) {
-    return static_cast<Datum>(val);
+inline datum_t datum_from_uint64(uint64_t val) {
+    return static_cast<datum_t>(val);
 }
-inline Datum datum_from_bool(bool val) {
-    Datum d = 0;
+inline datum_t datum_from_bool(bool val) {
+    datum_t d = 0;
     uint8_t b = val ? 1 : 0;
     std::memcpy(&d, &b, 1);
     return d;
 }
-inline Datum datum_from_float(float val) {
-    Datum d = 0;
+inline datum_t datum_from_float(float val) {
+    datum_t d = 0;
     std::memcpy(&d, &val, sizeof(val));
     return d;
 }
-inline Datum datum_from_double(double val) {
-    Datum d = 0;
+inline datum_t datum_from_double(double val) {
+    datum_t d = 0;
     std::memcpy(&d, &val, sizeof(val));
     return d;
 }
-inline Datum datum_from_ptr(const void* ptr) {
-    return reinterpret_cast<Datum>(ptr);
+inline datum_t datum_from_ptr(const void* ptr) {
+    return reinterpret_cast<datum_t>(ptr);
 }
 
-inline int16_t datum_to_int16(Datum d) {
+inline int16_t datum_to_int16(datum_t d) {
     int16_t val;
     std::memcpy(&val, &d, sizeof(val));
     return val;
 }
-inline int32_t datum_to_int32(Datum d) {
+inline int32_t datum_to_int32(datum_t d) {
     int32_t val;
     std::memcpy(&val, &d, sizeof(val));
     return val;
 }
-inline int64_t datum_to_int64(Datum d) {
+inline int64_t datum_to_int64(datum_t d) {
     int64_t val;
     std::memcpy(&val, &d, sizeof(val));
     return val;
 }
-inline bool datum_to_bool(Datum d) {
+inline bool datum_to_bool(datum_t d) {
     uint8_t b;
     std::memcpy(&b, &d, 1);
     return b != 0;
 }
-inline float datum_to_float(Datum d) {
+inline float datum_to_float(datum_t d) {
     float val;
     std::memcpy(&val, &d, sizeof(val));
     return val;
 }
-inline double datum_to_double(Datum d) {
+inline double datum_to_double(datum_t d) {
     double val;
     std::memcpy(&val, &d, sizeof(val));
     return val;
 }
-inline const void* datum_to_ptr(Datum d) {
+inline const void* datum_to_ptr(datum_t d) {
     return reinterpret_cast<const void*>(d);
 }
 
 /*
- * The bytes a non-null Datum of type under typmod stands for, as
+ * The bytes a non-null datum_t of type under typmod stands for, as
  * the tuple and key encodings read them: a by-value type's width
  * of bytes inside d itself -- so out views d, which must outlive
  * it -- a fixed-width by-reference type's width of bytes at the
@@ -255,7 +256,7 @@ inline const void* datum_to_ptr(Datum d) {
  * type refuses, a null pointer, or a varlena this codec cannot
  * read: a TOAST pointer, a compressed one, or a malformed header.
  */
-int datum_bytes(const type_t* type, int32_t typmod, const Datum& d,
+int datum_bytes(const type_t* type, int32_t typmod, const datum_t& d,
                 std::string_view& out);
 
 /*
@@ -265,7 +266,7 @@ int datum_bytes(const type_t* type, int32_t typmod, const Datum& d,
  * orders them column by column.
  */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const Datum> datums, std::span<const bool> isnull,
+               std::span<const datum_t> datums, std::span<const bool> isnull,
                std::string& key);
 
 /*
@@ -295,7 +296,7 @@ enum class overflow_t { refuse, truncate };
  * the whole key, and sets cut. cut is false otherwise.
  */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const Datum> datums, std::span<const bool> isnull,
+               std::span<const datum_t> datums, std::span<const bool> isnull,
                size_t max_len, overflow_t overflow, std::string& key,
                bool& cut);
 
@@ -378,15 +379,15 @@ struct tup_desc_t {
 
 /*
  * Replace tuple with datums, one per attribute of schema, in the
- * layout of TUPLE.md: a byval datum as its bytes inside Datum;
- * a byref fixed-width datum as the bytes pointed to by Datum;
- * a variable-width one as a varlena pointed to by Datum; a
+ * layout of TUPLE.md: a byval datum as its bytes inside datum_t;
+ * a byref fixed-width datum as the bytes pointed to by datum_t;
+ * a variable-width one as a varlena pointed to by datum_t; a
  * dropped attribute must be null. Fails with SM_ERR_INVALID on
  * wrong attribute count, invalid typmod, or malformed varlena,
  * and with SM_ERR_ROWTOOLONG on a tuple longer than
  * max_tup_len; either way tuple is left as it was.
  */
-int tup_encode(const tup_desc_t& desc, std::span<const Datum> datums,
+int tup_encode(const tup_desc_t& desc, std::span<const datum_t> datums,
                std::span<const bool> isnull, std::string& tuple);
 
 
@@ -403,15 +404,15 @@ int tup_encode(const tup_desc_t& desc, std::span<const Datum> datums,
  * -- or SM_ERR_INVALID if ordinal is past the schema.
  */
 int tup_decode(const tup_desc_t& desc, std::string_view tuple, size_t ordinal,
-               Datum& val, bool& isnull);
+               datum_t& val, bool& isnull);
 
 /*
  * Deform every attribute of tuple into datums and isnull in one
  * pass. datums and isnull must both have size equal to schema.size().
- * Any by-reference Datum points directly into tuple (or schema missing).
+ * Any by-reference datum_t points directly into tuple (or schema missing).
  */
 int tup_deform(const tup_desc_t& desc, std::string_view tuple,
-               std::span<Datum> datums, std::span<bool> isnull);
+               std::span<datum_t> datums, std::span<bool> isnull);
 
 /*
  * Check that tuple is one tup_encode could have written under
@@ -469,14 +470,14 @@ std::span<const attribute_t> rel_schema(const rel_t* rel);
 int rel_insert(rel_t* rel, std::string_view tuple, uint64_t& rowno);
 
 /* Encode datums and isnull, then insert under a new rowno. */
-int rel_insert(rel_t* rel, std::span<const Datum> datums,
+int rel_insert(rel_t* rel, std::span<const datum_t> datums,
                std::span<const bool> isnull, uint64_t& rowno);
 
 /*
  * Read the row at rowno as the transaction sees it: 0 with tuple
  * set, 1 if there is none, -1 on error, as sm1::read. The tuple views
  * sm1 memory and is valid only until the next call on this rel's
- * session; any by-reference Datum decoded from it shares this lifetime.
+ * session; any by-reference datum_t decoded from it shares this lifetime.
  */
 int rel_read(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
@@ -498,7 +499,7 @@ int rel_update(rel_t* rel, uint64_t rowno, std::string_view tuple,
                std::string_view* old = nullptr);
 
 /* Encode datums and isnull, then replace the row at rowno. */
-int rel_update(rel_t* rel, uint64_t rowno, std::span<const Datum> datums,
+int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
                std::span<const bool> isnull, std::string_view* old = nullptr);
 
 /* Delete the row at rowno, handing back its tuple through old. */
@@ -558,7 +559,7 @@ struct index_scan_t;
  * descending column, "x > 5" is an upper bound.
  */
 struct bound_t {
-    std::span<const Datum> prefix;
+    std::span<const datum_t> prefix;
     std::span<const bool>  isnull;    /* one per prefix value */
     bool                   inclusive;
 };
@@ -585,13 +586,13 @@ std::span<const attribute_t> idx_value_schema(const index_t* index);
  * row. In a unique index, a key already present fails with sm1's
  * SM_ERR_DUPKEY.
  */
-int idx_insert(index_t* index, std::span<const Datum> key,
+int idx_insert(index_t* index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, uint64_t rowno,
-               std::span<const Datum> include,
+               std::span<const datum_t> include,
                std::span<const bool> include_isnull);
 
 /* Remove the entry idx_insert added for key and rowno. */
-int idx_delete(index_t* index, std::span<const Datum> key,
+int idx_delete(index_t* index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, uint64_t rowno);
 
 /*

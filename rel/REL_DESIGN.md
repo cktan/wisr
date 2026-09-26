@@ -286,14 +286,15 @@ relational catalog mapping table names to their storage metadata.
 
 #### `(insert <table> <row-tuple>)`
 1. Validates that `<row-tuple>` matches column count and types.
-2. Converts tuple values into `sm_datum_val_t values[]` and
+2. Converts tuple values into `sm_datum_t values[]` and
    `bool isnull[]`, as PostgreSQL's `Datum` and nulls:
    - By-value types (bool, integers, floats) held in the
      Datum itself.
    - Strings and bytea built as PostgreSQL varlenas with
      1-byte or 4-byte header (`sm2/VARLENA.md`), the Datum
      pointing at them.
-   - Types rel cannot convert yet are refused.
+   - Any other type parsed from its canonical text by
+     `sm_type_in`.
 3. Calls `sm_tup_encode(attrs, n, values, isnull, &tuple,
    &len)`, then `sm_rel_insert_tuple(rel, tuple, len, &rowno)`.
 4. For each attached index on `<table>`:
@@ -486,7 +487,7 @@ detailed diagnostics when an invariant is violated:
      sequence name, open `sm_rel_t*`, open `sm_idx_t*` list).
 4. **Evaluator (`rel/eval.cc`):**
    - Dispatches builtins and commands.
-   - Converts input tuples to `sm_datum_val_t[]` values and
+   - Converts input tuples to `sm_datum_t[]` values and
      `bool[]` null flags.
    - Invokes `sm_` functions.
    - Decodes output tuples to `rel` vectors.
