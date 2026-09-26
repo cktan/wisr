@@ -44,6 +44,15 @@ format, sm3's catalog — are argued in that level's own
         └──────────────────────────────────────────────┘
 ```
 
+sm1's unit of storage is the **store**: an ordered map of byte
+keys to byte values, named by a `uint64_t` storeid. **A store
+is exactly one RocksDB column family**, `CF:store.<storeid>`
+(`sm1/SM1_DESIGN.md` §3.1): `sm1::mkstore` creates it and
+`sm1::rmstore` drops it. Whatever RocksDB offers per column
+family is therefore offered per store — an O(1) drop, and
+temporariness (§5) — and no level above sees a column family
+by that name.
+
 sm2 is a client of sm1, nothing more: it holds no RocksDB
 handle of its own and reaches storage only through sm1's
 interface. sm3 is built on sm2 — it never encodes a key or
@@ -408,6 +417,15 @@ design:
   hundreds to low thousands of stores sm1 handles
   (`sm1/SM1_DESIGN.md` §13); accepted for v1 (`sm3/SM3_DESIGN.md`
   §4).
+- **A temporary table is a temporary store.** Temporariness
+  belongs to an sm1 store, and so to its RocksDB column family,
+  not to any row, key or object prefix: every object in a
+  temporary store is temporary with it. Because a table's heap,
+  its indexes and its TOAST data share one store (above), a
+  temporary table is one temporary store, and an index is
+  temporary exactly when its table is. sm3 asks for a temporary
+  store when it creates a temporary table; sm2 neither knows
+  nor cares (`sm1/SM1_DESIGN.md` §11.3).
 - **The key budget is shared.** `sm1::max_keylen` (4096) bounds
   prefix, index columns and `rowno` together. sm2's encoder
   enforces it: an over-long primary key refuses the row, and an

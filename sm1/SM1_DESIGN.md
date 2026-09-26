@@ -2185,6 +2185,25 @@ ordering and the sweep that collects what a crash leaves
 behind. Neither call builds a path from `dbname`, so neither
 can be steered by one.
 
+### 11.3 Temporary stores
+
+**Decision: temporary tables and their indexes are built on
+temporary stores, and a store is temporary through its column
+family.** A store is made temporary when it is created, and the
+property belongs to the whole store — its column family — not
+to any key in it: everything written into a temporary store is
+temporary. sm1 does not know what a store holds. Above it, sm3
+puts a table's heap, its indexes and its TOAST data in one
+store (`DESIGN.md` §5), so a temporary table and all its
+indexes are one temporary store, and no per-row or per-key
+marking exists at any level.
+
+Open, and not decided here: how `sm1::mkstore` is asked for a
+temporary store; what "temporary" guarantees — whether the
+store outlives its session or a restart, whether other sessions
+can see it, and whether its writes are logged; and how that
+maps onto the column family's options.
+
 ---
 
 ## 12. Errors, configuration, and structure
