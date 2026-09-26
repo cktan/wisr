@@ -51,12 +51,10 @@ set, so that a tuple using a feature added later is never
 misread by an older reader. `0x02` was once to mean a TOAST
 bitmap; no tuple was written with it.
 
-**`natts`** is the number of attributes the row holds, the
-schema's count when it was written, as an unsigned LEB128
-varint: seven bits a byte, least significant first, the high
-bit set on every byte but the last. One byte up to 127, two up
-to 16383; a reader accepts at most five bytes. `natts` must not
-exceed the reading schema's count.
+**`natts`** is the row's attribute count when written, at most
+the reading schema's. It is a varint of up to 5 bytes: 7-bit
+groups, least significant first, each byte's high bit set if
+another follows. Up to 127 attributes take one byte.
 
 ## 3. The null bitmap
 
