@@ -196,12 +196,9 @@ int row_order(const std::vector<sm2::key_column_t> &cols,
 /* Encode a row under cols; the row must encode. */
 std::string encode_row(const std::vector<sm2::key_column_t> &cols,
                        const std::vector<std::optional<std::string>> &row) {
-  std::vector<sm2::datum_t> datums;
-  for (const auto &d : row) {
-    datums.push_back({d ? std::string_view(*d) : std::string_view(), !d});
-  }
+  values_t v = values_of(types_of(cols), row, true);
   std::string key;
-  REQUIRE(sm2::encode_key(cols, datums, key) == 0);
+  REQUIRE(sm2::encode_key(cols, v.d(), v.null(), key) == 0);
   return key;
 }
 
@@ -308,23 +305,26 @@ TEST_CASE("a byte string's key is a prefix of no other") {
 TEST_CASE("key encoding refuses what it cannot encode or decode") {
   // Verify the errors of encode_key, decode_key and the hooks.
   // 1. A datum count that differs from the column count, a column
-  //    without a type, and a datum of the wrong width are
+  //    without a type, and a varlena that is a TOAST pointer are
   //    SM_ERR_INVALID, and leave the key as it was.
   // 2. decode_key refuses a key with bytes left over, an unknown
   //    null marker, and one cut short.
   std::vector<sm2::key_column_t> cols = {
       {&sm2::type_int4, -1, nullptr, false, false}};
   std::string key = "keep";
-  std::vector<sm2::datum_t> none;
-  CHECK(sm2::encode_key(cols, none, key) == -1);
+  CHECK(sm2::encode_key(cols, {}, {}, key) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  std::vector<sm2::datum_t> wide = {{std::string_view("12345"), false}};
-  CHECK(sm2::encode_key(cols, wide, key) == -1);
+  std::vector<sm2::key_column_t> text = {
+      {&sm2::type_text, -1, nullptr, false, false}};
+  std::string toast(1, sm2::varlena_toast);
+  sm2::Datum ptr[1] = {sm2::datum_from_ptr(toast.data())};
+  bool no[1] = {false};
+  CHECK(sm2::encode_key(text, ptr, no, key) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::vector<sm2::key_column_t> untyped = {
       {nullptr, -1, nullptr, false, false}};
-  std::vector<sm2::datum_t> one = {{std::string_view("1234"), false}};
-  CHECK(sm2::encode_key(untyped, one, key) == -1);
+  sm2::Datum one[1] = {sm2::datum_from_int32(1234)};
+  CHECK(sm2::encode_key(untyped, one, no, key) == -1);
   CHECK(key == "keep");
 
   std::string good = encode_row(cols, {le(int32_t{7})});
@@ -560,32 +560,33 @@ TEST_CASE("a key over its budget is refused or cut, as asked") {
   // A text key is its marker, its bytes and a 2-byte terminator.
   size_t budget = sm2::max_key_len(false);
   std::string fits(budget - 3, 'x'), over(budget - 2, 'x');
-  std::vector<sm2::datum_t> row_fits = {{fits, false}};
-  std::vector<sm2::datum_t> row_over = {{over, false}};
+  std::vector<std::optional<std::string>> fits_row = {fits}, over_row = {over};
+  values_t vf = values_of(types_of(cols), fits_row, true);
+  values_t vo = values_of(types_of(cols), over_row, true);
   std::string key = "pre";
   bool cut = true;
-  REQUIRE(sm2::encode_key(cols, row_fits, budget, sm2::overflow_t::refuse, key,
-                          cut) == 0);
+  REQUIRE(sm2::encode_key(cols, vf.d(), vf.null(), budget,
+                          sm2::overflow_t::refuse, key, cut) == 0);
   CHECK(key.size() == 3 + budget);
   CHECK_FALSE(cut);
   key = "pre";
-  CHECK(sm2::encode_key(cols, row_over, budget, sm2::overflow_t::refuse, key,
-                        cut) == -1);
+  CHECK(sm2::encode_key(cols, vo.d(), vo.null(), budget,
+                        sm2::overflow_t::refuse, key, cut) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
   CHECK(std::string(sm1::errname()) == "ERR_KEYTOOLONG");
   CHECK(key == "pre");
 
   std::string whole;
-  REQUIRE(sm2::encode_key(cols, row_over, whole) == 0);
+  REQUIRE(sm2::encode_key(cols, vo.d(), vo.null(), whole) == 0);
   key = "pre";
-  REQUIRE(sm2::encode_key(cols, row_over, budget, sm2::overflow_t::truncate,
-                          key, cut) == 0);
+  REQUIRE(sm2::encode_key(cols, vo.d(), vo.null(), budget,
+                          sm2::overflow_t::truncate, key, cut) == 0);
   CHECK(cut);
   CHECK(key.size() == 3 + budget);
   CHECK(key.substr(3) == whole.substr(0, budget));
   key.clear();
-  REQUIRE(sm2::encode_key(cols, row_fits, budget, sm2::overflow_t::truncate,
-                          key, cut) == 0);
+  REQUIRE(sm2::encode_key(cols, vf.d(), vf.null(), budget,
+                          sm2::overflow_t::truncate, key, cut) == 0);
   CHECK_FALSE(cut);
 }
 
@@ -617,13 +618,16 @@ TEST_CASE(
       ints.push_back(le(static_cast<int32_t>(rng() % 5)));
     }
     for (size_t r = 0; r < texts.size(); r++) {
-      std::vector<sm2::datum_t> row = {{texts[r], false},
-                                       {ints[r], rng() % 7 == 0}};
+      std::vector<std::optional<std::string>> row = {texts[r], ints[r]};
+      if (rng() % 7 == 0) {
+        row[1] = std::nullopt;
+      }
+      values_t v = values_of(types_of(cols), row, true);
       std::string w, c;
       bool was_cut;
-      REQUIRE(sm2::encode_key(cols, row, w) == 0);
-      REQUIRE(sm2::encode_key(cols, row, budget, sm2::overflow_t::truncate, c,
-                              was_cut) == 0);
+      REQUIRE(sm2::encode_key(cols, v.d(), v.null(), w) == 0);
+      REQUIRE(sm2::encode_key(cols, v.d(), v.null(), budget,
+                              sm2::overflow_t::truncate, c, was_cut) == 0);
       CHECK(was_cut == (w.size() > budget));
       whole.push_back(w);
       cut_keys.push_back(c);

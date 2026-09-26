@@ -77,6 +77,27 @@
 (index-drop idx_id)
 (commit)
 
+# 9. A text index orders by the text, not by its varlena header.
+# 9.1 Index a text column, then insert "b" before "aa".
+# 9.2 An unbounded scan yields "aa" first: were the header in the
+#     key, the shorter "b" would sort first.
+# 9.3 A bounded scan between "a" and "az" finds "aa" alone.
+(begin :rc)
+(table-create words (columns (w :text :not-null)))
+(index-create idx_words (table words) (key (w :asc)) :unique false)
+(def rb (insert words ["b"]))
+(def raa (insert words ["aa"]))
+(def order (idx-scan idx_words))
+(assert-count 2 order)
+(assert-eq ((order 0) 0) raa)
+(assert-eq ((order 1) 0) rb)
+(def a-range (idx-scan idx_words :ge ["a"] :le ["az"]))
+(assert-count 1 a-range)
+(assert-eq ((a-range 0) 0) raa)
+(index-drop idx_words)
+(table-drop words)
+(commit)
+
 (db-close)
 (env-detach :force true)
 (rm-rf test-dir)

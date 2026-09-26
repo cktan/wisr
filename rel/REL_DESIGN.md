@@ -297,8 +297,10 @@ relational catalog mapping table names to their storage metadata.
 3. Calls `sm_tup_encode(attrs, n, values, isnull, &tuple,
    &len)`, then `sm_rel_insert_tuple(rel, tuple, len, &rowno)`.
 4. For each attached index on `<table>`:
-   - Extracts key column datums and INCLUDE column datums.
-   - Calls `sm_idx_insert(idx, kdatums, nk, rowno, idatums, ni)`.
+   - Gathers the key and INCLUDE columns' values and null
+     flags from the row.
+   - Calls `sm_idx_insert(idx, key, key_isnull, nk, rowno,
+     include, include_isnull, ni)`.
    - If `sm_idx_insert` fails (e.g., `SM_ERR_DUPKEY`), the error
      is preserved and returned.
 5. Returns `rowno`.
@@ -306,8 +308,8 @@ relational catalog mapping table names to their storage metadata.
 #### `(read <table> <rowno>)`
 1. Calls `sm_rel_read(rel, rowno, &tuple, &len)`.
 2. If return is 1, returns `nil` ("no row").
-3. Calls `sm_rel_deform_values(rel, tuple, len, values,
-   isnull, ncols)`.
+3. Calls `sm_rel_deform(rel, tuple, len, values, isnull,
+   ncols)`.
 4. Decodes each value into a `rel-lisp` value:
    - Integers and floats to numbers.
    - Varlenas decoded to strings.
@@ -321,39 +323,39 @@ relational catalog mapping table names to their storage metadata.
 
 #### `(update <table> <rowno> <new-row-tuple>)`
 1. Converts `<new-row-tuple>` into `values[]` and `isnull[]`.
-2. Calls `sm_rel_update_values(rel, rowno, values, isnull, n,
+2. Calls `sm_rel_update(rel, rowno, values, isnull, n,
    &old_tuple, &old_len)`.
-3. Calls `sm_rel_deform_values` on `old_tuple` to recover the
-   old values.
+3. Copies `old_tuple` and calls `sm_rel_deform` on the copy to
+   recover the old values.
 4. For each attached index on `<table>`:
-   - Extracts old key datums from old row.
-   - Calls `sm_idx_delete(idx, old_key, nk, rowno)`.
-   - Extracts new key datums from new row.
-   - Calls `sm_idx_insert(idx, new_key, nk, rowno, new_inc, ni)`.
+   - Calls `sm_idx_delete` with the old row's key values.
+   - Calls `sm_idx_insert` with the new row's key and INCLUDE
+     values.
 5. Returns decoded old tuple vector.
 
 #### `(delete <table> <rowno>)`
 1. Calls `sm_rel_delete(rel, rowno, &old_tuple, &old_len)`.
-2. If row found, calls `sm_rel_deform_values` on `old_tuple`.
+2. If row found, copies `old_tuple` and calls `sm_rel_deform`
+   on the copy.
 3. For each attached index on `<table>`:
-   - Calls `sm_idx_delete(idx, old_key, nk, rowno)`.
+   - Calls `sm_idx_delete` with the old row's key values.
 4. Returns decoded deleted tuple vector.
 
 #### `(scan <table> [:from first] [:to last])`
 1. Defaults: `first = 1`, `last = UINT64_MAX`.
 2. Calls `sm_rel_scan(rel, first, last, &rscan)`.
 3. Loops `sm_rel_scannxt(rscan, &rowno, &tuple, &len)` until 1.
-4. Decodes each column of a tuple via `sm_rel_decode_value`.
+4. Decodes each column of a tuple via `sm_rel_decode`.
 5. Calls `sm_rel_scanend(rscan)`.
 6. Returns list of pairs:
    `([rowno_1 tuple_1] [rowno_2 tuple_2] ...)`.
 
 #### `(idx-scan <index> [:ge lo] [:gt lo] [:le hi] [:lt hi])`
 1. Constructs lower bound `sm_bound_t lo_b`:
-   - Prefix datums encoded from `:ge` (inclusive) or
+   - Prefix values and null flags from `:ge` (inclusive) or
      `:gt` (exclusive).
 2. Constructs upper bound `sm_bound_t hi_b`:
-   - Prefix datums encoded from `:le` (inclusive) or
+   - Prefix values and null flags from `:le` (inclusive) or
      `:lt` (exclusive).
 3. Calls `sm_idx_scan(idx, &lo_b, &hi_b, &widened, &iscan)`.
 4. Loops `sm_idx_scannxt(iscan, &rowno, &cut, &val, &len)`
@@ -482,7 +484,8 @@ detailed diagnostics when an invariant is violated:
      sequence name, open `sm_rel_t*`, open `sm_idx_t*` list).
 4. **Evaluator (`rel/eval.cc`):**
    - Dispatches builtins and commands.
-   - Encodes input tuples to `sm_datum_t[]` buffers.
+   - Converts input tuples to `sm_datum_val_t[]` values and
+     `bool[]` null flags.
    - Invokes `sm_` functions.
    - Decodes output tuples to `rel` vectors.
 5. **Driver Main (`rel/main.cc`):**

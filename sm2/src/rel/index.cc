@@ -15,6 +15,7 @@
 #include "native.h"
 #include "sm2.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -64,20 +65,22 @@ std::string prefix_of(const sm2::index_t *ix) {
  * encoded key columns, and the rowno where the entry carries one;
  * cut is set if the columns were cut to fit.
  */
-int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
-              uint64_t rowno, std::string &out, bool &cut) {
-  if (key.size() != ix->key.size()) {
-    return sm1::seterr(sm1::SM_ERR_INVALID,
-                       "index: a datum for every key column, no more");
+int entry_key(const sm2::index_t *ix, std::span<const sm2::Datum> key,
+              std::span<const bool> isnull, uint64_t rowno, std::string &out,
+              bool &cut) {
+  if (key.size() != ix->key.size() || isnull.size() != ix->key.size()) {
+    return sm1::seterr(
+        sm1::SM_ERR_INVALID,
+        "index: a datum and null flag for every key column, no more");
   }
   // Encode the columns whole, then decide how they fit.
   std::string cols;
-  if (sm2::encode_key(ix->key, key, cols) != 0) {
+  if (sm2::encode_key(ix->key, key, isnull, cols) != 0) {
     return -1;
   }
   bool has_null = false;
-  for (const sm2::datum_t &d : key) {
-    has_null |= d.null;
+  for (bool n : isnull) {
+    has_null |= n;
   }
   bool suffix = !ix->unique || has_null;
   cut = cols.size() > sm2::max_key_len(suffix);
@@ -101,13 +104,15 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
  */
 int bound_key(const sm2::index_t *ix, const sm2::bound_t &b, std::string &out,
               bool &cut) {
-  if (b.prefix.empty() || b.prefix.size() > ix->key.size()) {
+  if (b.prefix.empty() || b.prefix.size() > ix->key.size() ||
+      b.isnull.size() != b.prefix.size()) {
     return sm1::seterr(sm1::SM_ERR_INVALID, "index: a bound gives 1 to " +
                                                 std::to_string(ix->key.size()) +
                                                 " columns");
   }
   std::string cols;
-  if (sm2::encode_key(ix->key.first(b.prefix.size()), b.prefix, cols) != 0) {
+  if (sm2::encode_key(ix->key.first(b.prefix.size()), b.prefix, b.isnull,
+                      cols) != 0) {
     return -1;
   }
   cut = cols.size() > sm2::max_key_len(true);
@@ -174,7 +179,8 @@ int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
                                " has no type, or a typmod its type refuses");
       }
     }
-    out = new index_t{session, storeid, prefix, key, unique, std::move(value)};
+    out = new index_t{session, storeid,          prefix, key,
+                      unique,  std::move(value), {}};
     // Lay the value out once, for every entry; it borrows out->value.
     out->value_desc = tup_desc_t(out->value);
     return 0;
@@ -190,26 +196,34 @@ std::span<const attribute_t> idx_value_schema(const index_t *index) {
 }
 
 /* Add the entry for the row at rowno; see sm2.h. */
-int idx_insert(index_t *index, std::span<const datum_t> key, uint64_t rowno,
-               std::span<const datum_t> include) {
+int idx_insert(index_t *index, std::span<const Datum> key,
+               std::span<const bool> key_isnull, uint64_t rowno,
+               std::span<const Datum> include,
+               std::span<const bool> include_isnull) {
   return catch_nomem([&] {
     std::string k;
     bool cut;
-    if (entry_key(index, key, rowno, k, cut) != 0) {
+    if (entry_key(index, key, key_isnull, rowno, k, cut) != 0) {
       return -1;
     }
-    if (include.size() + 2 != index->value.size()) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index: a datum for every INCLUDE column, no more");
+    if (include.size() + 2 != index->value.size() ||
+        include_isnull.size() != include.size()) {
+      return sm1::seterr(
+          sm1::SM_ERR_INVALID,
+          "index: a datum and null flag for every INCLUDE column, no more");
     }
     // The value: rowno, cut, then the INCLUDE columns.
-    std::string r, c;
-    store_le(static_cast<int64_t>(rowno), r);
-    c.assign(1, cut ? '\1' : '\0');
-    std::vector<datum_t> datums = {{r, false}, {c, false}};
+    std::vector<Datum> datums = {datum_from_int64(static_cast<int64_t>(rowno)),
+                                 datum_from_bool(cut)};
     datums.insert(datums.end(), include.begin(), include.end());
+    auto nulls = std::make_unique<bool[]>(datums.size());
+    for (size_t i = 0; i < include.size(); i++) {
+      nulls[i + 2] = include_isnull[i];
+    }
     std::string value;
-    if (tup_encode(index->value_desc, datums, value) != 0) {
+    if (tup_encode(index->value_desc, datums,
+                   std::span<const bool>(nulls.get(), datums.size()),
+                   value) != 0) {
       return -1;
     }
     return sm1::insert(index->session, index->storeid, k, value);
@@ -217,11 +231,12 @@ int idx_insert(index_t *index, std::span<const datum_t> key, uint64_t rowno,
 }
 
 /* Remove the entry for key and rowno. */
-int idx_delete(index_t *index, std::span<const datum_t> key, uint64_t rowno) {
+int idx_delete(index_t *index, std::span<const Datum> key,
+               std::span<const bool> key_isnull, uint64_t rowno) {
   return catch_nomem([&] {
     std::string k;
     bool cut;
-    if (entry_key(index, key, rowno, k, cut) != 0) {
+    if (entry_key(index, key, key_isnull, rowno, k, cut) != 0) {
       return -1;
     }
     return sm1::erase(index->session, index->storeid, k);
@@ -286,17 +301,18 @@ int idx_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
       return rc;
     }
     // The value opens with the rowno and the cut flag.
-    std::optional<std::string_view> r, c;
-    if (tup_decode(scan->index->value_desc, value, 0, r) != 0 ||
-        tup_decode(scan->index->value_desc, value, 1, c) != 0) {
+    Datum r, c;
+    bool r_null, c_null;
+    if (tup_decode(scan->index->value_desc, value, 0, r, r_null) != 0 ||
+        tup_decode(scan->index->value_desc, value, 1, c, c_null) != 0) {
       return -1;
     }
-    if (!r || !c) {
+    if (r_null || c_null) {
       return sm1::seterr(sm1::SM_ERR_CORRUPT,
                          "index: an entry without its rowno or cut flag");
     }
-    rowno = static_cast<uint64_t>(load_le<int64_t>(*r));
-    cut = (*c)[0] != '\0';
+    rowno = static_cast<uint64_t>(datum_to_int64(r));
+    cut = datum_to_bool(c);
     return 0;
   });
 }

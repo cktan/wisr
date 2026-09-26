@@ -58,12 +58,6 @@ int write_update(sm2::rel_t *rel, uint64_t rowno, std::string_view tuple,
                      tuple, old);
 }
 
-/* Encode datums under rel's schema; see tup_encode. */
-int encode(const sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
-           std::string &tuple) {
-  return sm2::tup_encode(rel->desc, datums, tuple);
-}
-
 } // namespace
 
 namespace sm2 {
@@ -123,17 +117,6 @@ int rel_insert(rel_t *rel, std::span<const Datum> datums,
   });
 }
 
-/* Insert a row by datum_t; see sm2.h. */
-int rel_insert(rel_t *rel, std::span<const datum_t> datums, uint64_t &rowno) {
-  return catch_nomem([&] {
-    std::string tuple;
-    if (encode(rel, datums, tuple) != 0) {
-      return -1;
-    }
-    return write_new(rel, tuple, rowno);
-  });
-}
-
 /* Read the row at rowno: 0, 1 if absent, or -1. */
 int rel_read(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
   return catch_nomem([&] {
@@ -167,18 +150,6 @@ int rel_update(rel_t *rel, uint64_t rowno, std::span<const Datum> datums,
   return catch_nomem([&] {
     std::string tuple;
     if (tup_encode(rel->desc, datums, isnull, tuple) != 0) {
-      return -1;
-    }
-    return write_update(rel, rowno, tuple, old);
-  });
-}
-
-/* Replace the row at rowno with datum_t; see sm2.h. */
-int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
-               std::string_view *old) {
-  return catch_nomem([&] {
-    std::string tuple;
-    if (encode(rel, datums, tuple) != 0) {
       return -1;
     }
     return write_update(rel, rowno, tuple, old);

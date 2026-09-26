@@ -25,23 +25,15 @@ namespace {
 /* A row as optional owned bytes, one per attribute. */
 using row_t = std::vector<std::optional<std::string>>;
 
-/* The datums of row, for the calls that take them. */
-std::vector<sm2::datum_t> datums_of(const row_t &row) {
-  std::vector<sm2::datum_t> d;
-  for (const auto &v : row) {
-    d.push_back({v ? std::string_view(*v) : std::string_view(), !v});
-  }
-  return d;
+/* row's values under schema, for the calls that take Datums. */
+values_t datums_of(std::span<const sm2::attribute_t> schema, const row_t &row) {
+  return values_of(types_of(schema), row, false);
 }
 
 /* tuple decoded under schema, as owned bytes. */
 row_t decode(std::span<const sm2::attribute_t> schema, std::string_view tuple) {
-  std::vector<std::optional<std::string_view>> views;
-  REQUIRE_MESSAGE(sm2::tup_deform(schema, tuple, views) == 0, sm1::errmsg());
   row_t out;
-  for (const auto &v : views) {
-    out.push_back(v ? std::optional<std::string>(*v) : std::nullopt);
-  }
+  REQUIRE_MESSAGE(bytes_of(schema, tuple, out) == 0, sm1::errmsg());
   return out;
 }
 
@@ -104,9 +96,10 @@ TEST_CASE("rows round trip through a heap rel at every isolation level") {
     REQUIRE(sm1::begin(s, level) == 0);
     for (int i = 0; i < 50; i++) {
       row_t row = gen_row(schema, rng);
-      std::vector<sm2::datum_t> d = datums_of(row);
+      values_t d = datums_of(schema, row);
       uint64_t rowno;
-      REQUIRE_MESSAGE(sm2::rel_insert(rel, d, rowno) == 0, sm1::errmsg());
+      REQUIRE_MESSAGE(sm2::rel_insert(rel, d.d(), d.null(), rowno) == 0,
+                      sm1::errmsg());
       if (!rownos.empty()) {
         CHECK(rowno > rownos.back());
       }
@@ -158,12 +151,12 @@ TEST_CASE("an update keeps its rowno, and update and delete hand back the "
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   row_t before = {le(int32_t{1}), sm2::make_varlena("before")};
   row_t after = {le(int32_t{2}), sm2::make_varlena("after")};
-  std::vector<sm2::datum_t> d = datums_of(before);
+  values_t d = datums_of(schema, before);
   uint64_t rowno;
-  REQUIRE(sm2::rel_insert(rel, d, rowno) == 0);
-  d = datums_of(after);
+  REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), rowno) == 0);
+  d = datums_of(schema, after);
   std::string_view old;
-  REQUIRE(sm2::rel_update(rel, rowno, d, &old) == 0);
+  REQUIRE(sm2::rel_update(rel, rowno, d.d(), d.null(), &old) == 0);
   CHECK(decode(schema, old) == before);
   std::string_view tuple;
   REQUIRE(sm2::rel_read(rel, rowno, tuple) == 0);
@@ -171,7 +164,7 @@ TEST_CASE("an update keeps its rowno, and update and delete hand back the "
   REQUIRE(sm2::rel_delete(rel, rowno, &old) == 0);
   CHECK(decode(schema, old) == after);
   CHECK(sm2::rel_read(rel, rowno, tuple) == 1);
-  CHECK(sm2::rel_update(rel, rowno, d) == -1);
+  CHECK(sm2::rel_update(rel, rowno, d.d(), d.null()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   CHECK(sm2::rel_delete(rel, rowno + 100) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
@@ -193,22 +186,22 @@ TEST_CASE("a savepoint rollback leaves no sm2 state behind") {
   sm2::rel_t *rel = open_rel(db, s, schema);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   row_t a = {le(int64_t{10})}, a2 = {le(int64_t{11})}, b = {le(int64_t{20})};
-  std::vector<sm2::datum_t> d = datums_of(a);
+  values_t d = datums_of(schema, a);
   uint64_t ra, rb, rc;
-  REQUIRE(sm2::rel_insert(rel, d, ra) == 0);
+  REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), ra) == 0);
   int depth = sm1::savepoint(s);
   REQUIRE(depth >= 1);
-  d = datums_of(b);
-  REQUIRE(sm2::rel_insert(rel, d, rb) == 0);
-  d = datums_of(a2);
-  REQUIRE(sm2::rel_update(rel, ra, d) == 0);
+  d = datums_of(schema, b);
+  REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), rb) == 0);
+  d = datums_of(schema, a2);
+  REQUIRE(sm2::rel_update(rel, ra, d.d(), d.null()) == 0);
   REQUIRE(sm1::rollback(s, depth) == 0);
   std::string_view tuple;
   CHECK(sm2::rel_read(rel, rb, tuple) == 1);
   REQUIRE(sm2::rel_read(rel, ra, tuple) == 0);
   CHECK(decode(schema, tuple) == a);
-  d = datums_of(b);
-  REQUIRE(sm2::rel_insert(rel, d, rc) == 0);
+  d = datums_of(schema, b);
+  REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), rc) == 0);
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(sm2::rel_read(rel, ra, tuple) == 0);
@@ -233,9 +226,9 @@ TEST_CASE("two rels over one store, under two prefixes, never meet") {
   std::vector<uint64_t> rows0, rows1;
   for (int i = 0; i < 10; i++) {
     row_t row = {le(int32_t{i})};
-    std::vector<sm2::datum_t> d = datums_of(row);
+    values_t d = datums_of(schema, row);
     uint64_t rowno;
-    REQUIRE(sm2::rel_insert(i % 2 ? r1 : r0, d, rowno) == 0);
+    REQUIRE(sm2::rel_insert(i % 2 ? r1 : r0, d.d(), d.null(), rowno) == 0);
     (i % 2 ? rows1 : rows0).push_back(rowno);
   }
   for (auto [rel, mine, theirs] :
@@ -272,26 +265,26 @@ TEST_CASE("sm1's SM_ERR_UPDATED passes through, and rel_read_latest "
       {&sm2::type_int4, -1, false, std::nullopt}};
   sm2::rel_t *ra = open_rel(db, a, schema), *rb = open_rel(db, b, schema);
   row_t v1 = {le(int32_t{1})}, v2 = {le(int32_t{2})}, v3 = {le(int32_t{3})};
-  std::vector<sm2::datum_t> d = datums_of(v1);
+  values_t d = datums_of(schema, v1);
   uint64_t rowno;
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm2::rel_insert(ra, d, rowno) == 0);
+  REQUIRE(sm2::rel_insert(ra, d.d(), d.null(), rowno) == 0);
   REQUIRE(sm1::commit(a) == 0);
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   std::string_view tuple;
   REQUIRE(sm2::rel_read(ra, rowno, tuple) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  d = datums_of(v2);
-  REQUIRE(sm2::rel_update(rb, rowno, d) == 0);
+  d = datums_of(schema, v2);
+  REQUIRE(sm2::rel_update(rb, rowno, d.d(), d.null()) == 0);
   REQUIRE(sm1::commit(b) == 0);
 
-  d = datums_of(v3);
-  CHECK(sm2::rel_update(ra, rowno, d) == -1);
+  d = datums_of(schema, v3);
+  CHECK(sm2::rel_update(ra, rowno, d.d(), d.null()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   REQUIRE(sm2::rel_read_latest(ra, rowno, tuple) == 0);
   CHECK(decode(schema, tuple) == v2);
-  REQUIRE(sm2::rel_update(ra, rowno, d) == 0);
+  REQUIRE(sm2::rel_update(ra, rowno, d.d(), d.null()) == 0);
   REQUIRE(sm1::commit(a) == 0);
   sm2::rel_close(ra);
   sm2::rel_close(rb);
@@ -312,9 +305,9 @@ TEST_CASE("a rel scan takes a rowno range and seeks forward") {
   std::vector<uint64_t> rownos;
   for (int i = 0; i < 10; i++) {
     row_t row = {le(int32_t{i})};
-    std::vector<sm2::datum_t> d = datums_of(row);
+    values_t d = datums_of(schema, row);
     uint64_t rowno;
-    REQUIRE(sm2::rel_insert(rel, d, rowno) == 0);
+    REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), rowno) == 0);
     rownos.push_back(rowno);
   }
   sm2::rel_scan_t *scan = nullptr;
@@ -356,13 +349,12 @@ TEST_CASE("a row that cannot be encoded draws no rowno") {
   sm2::rel_t *rel = open_rel(db, s, schema);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   row_t good = {le(int32_t{1})};
-  std::vector<sm2::datum_t> d = datums_of(good);
+  values_t d = datums_of(schema, good);
   uint64_t first, second;
-  REQUIRE(sm2::rel_insert(rel, d, first) == 0);
-  std::vector<sm2::datum_t> none;
-  CHECK(sm2::rel_insert(rel, none, second) == -1);
+  REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), first) == 0);
+  CHECK(sm2::rel_insert(rel, {}, {}, second) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm2::rel_insert(rel, d, second) == 0);
+  REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), second) == 0);
   CHECK(second == first + 1);
   REQUIRE(sm1::commit(s) == 0);
   sm2::rel_close(rel);

@@ -40,10 +40,11 @@ namespace sm2 {
 
 /* Append the key of datums under cols; key is unchanged on failure. */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const datum_t> datums, std::string &key) {
+               std::span<const Datum> datums, std::span<const bool> isnull,
+               std::string &key) {
   return catch_nomem([&] {
-    if (cols.size() != datums.size()) {
-      return bad_columns("a datum for every column, no more");
+    if (cols.size() != datums.size() || cols.size() != isnull.size()) {
+      return bad_columns("a datum and null flag for every column, no more");
     }
     size_t start = key.size();
     for (size_t i = 0; i < cols.size(); i++) {
@@ -54,12 +55,22 @@ int encode_key(std::span<const key_column_t> cols,
       }
       // The marker, then the type's own key.
       size_t pos = key.size();
-      if (datums[i].null) {
+      if (isnull[i]) {
         key += null_marker(col);
       } else {
+        // The type's key is over the bytes the Datum stands for: a
+        // variable-width type's payload, past its varlena header,
+        // as every type function takes it (SM2_DESIGN.md §2).
+        std::string_view bytes;
+        if (datum_bytes(col.type, col.typmod, datums[i], bytes) != 0) {
+          key.resize(start);
+          return -1;
+        }
+        if (col.type->len < 0) {
+          bytes = varlena_payload(bytes);
+        }
         key += value_mark;
-        if (col.type->key_encode(datums[i].bytes, col.typmod, col.collation,
-                                 key) != 0) {
+        if (col.type->key_encode(bytes, col.typmod, col.collation, key) != 0) {
           key.resize(start);
           return -1;
         }
@@ -75,12 +86,13 @@ int encode_key(std::span<const key_column_t> cols,
 
 /* encode_key with the columns' bytes held to max_len; see sm2.h. */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const datum_t> datums, size_t max_len,
-               overflow_t overflow, std::string &key, bool &cut) {
+               std::span<const Datum> datums, std::span<const bool> isnull,
+               size_t max_len, overflow_t overflow, std::string &key,
+               bool &cut) {
   return catch_nomem([&] {
     cut = false;
     size_t start = key.size();
-    if (encode_key(cols, datums, key) != 0) {
+    if (encode_key(cols, datums, isnull, key) != 0) {
       return -1;
     }
     if (key.size() - start <= max_len) {

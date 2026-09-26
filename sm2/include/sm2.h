@@ -158,12 +158,6 @@ struct key_column_t {
     bool                nulls_first; /* nulls before every value */
 };
 
-/* A column's datum in a key, or null. */
-struct datum_t {
-    std::string_view bytes;
-    bool             null;
-};
-
 /*
  * A datum: a PostgreSQL 8-byte scalar value or pointer (postgres.h).
  * For a by-value type (type_t::byval is true), the value itself fits
@@ -252,13 +246,27 @@ inline const void* datum_to_ptr(Datum d) {
 }
 
 /*
+ * The bytes a non-null Datum of type under typmod stands for, as
+ * the tuple and key encodings read them: a by-value type's width
+ * of bytes inside d itself -- so out views d, which must outlive
+ * it -- a fixed-width by-reference type's width of bytes at the
+ * pointer, or the varlena at the pointer, header included, as long
+ * as its header says. Fails with SM_ERR_INVALID on a typmod the
+ * type refuses, a null pointer, or a varlena this codec cannot
+ * read: a TOAST pointer, a compressed one, or a malformed header.
+ */
+int datum_bytes(const type_t* type, int32_t typmod, const Datum& d,
+                std::string_view& out);
+
+/*
  * Append the key of datums under cols (TYPE.md §2): per column, a
  * null marker and the type's key, inverted for a descending
  * column, joined end to end. memcmp over two keys of one cols
  * orders them column by column.
  */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const datum_t> datums, std::string& key);
+               std::span<const Datum> datums, std::span<const bool> isnull,
+               std::string& key);
 
 /*
  * The share of sm1::max_keylen a key's columns may use
@@ -287,8 +295,9 @@ enum class overflow_t { refuse, truncate };
  * the whole key, and sets cut. cut is false otherwise.
  */
 int encode_key(std::span<const key_column_t> cols,
-               std::span<const datum_t> datums, size_t max_len,
-               overflow_t overflow, std::string& key, bool& cut);
+               std::span<const Datum> datums, std::span<const bool> isnull,
+               size_t max_len, overflow_t overflow, std::string& key,
+               bool& cut);
 
 /*
  * One attribute of a table's schema (SM2_DESIGN.md §4): its type,
@@ -380,8 +389,6 @@ struct tup_desc_t {
 int tup_encode(const tup_desc_t& desc, std::span<const Datum> datums,
                std::span<const bool> isnull, std::string& tuple);
 
-int tup_encode(const tup_desc_t& desc, std::span<const datum_t> datums,
-               std::string& tuple);
 
 /*
  * One attribute of a tuple, by its position in schema, into val
@@ -399,12 +406,6 @@ int tup_decode(const tup_desc_t& desc, std::string_view tuple, size_t ordinal,
                Datum& val, bool& isnull);
 
 /*
- * Overload returning an optional string_view into tuple or missing.
- */
-int tup_decode(const tup_desc_t& desc, std::string_view tuple, size_t ordinal,
-               std::optional<std::string_view>& datum);
-
-/*
  * Deform every attribute of tuple into datums and isnull in one
  * pass. datums and isnull must both have size equal to schema.size().
  * Any by-reference Datum points directly into tuple (or schema missing).
@@ -419,10 +420,6 @@ int tup_deform(const tup_desc_t& desc, std::string_view tuple,
  * SM_ERR_INVALID, since the tuple is the caller's to fix.
  */
 int tup_check(const tup_desc_t& desc, std::string_view tuple);
-
-/* Every attribute of a tuple, in one pass, as tup_decode gives each. */
-int tup_deform(const tup_desc_t& desc, std::string_view tuple,
-               std::vector<std::optional<std::string_view>>& datums);
 
 /*
  * A heap rel (SM2_DESIGN.md §5): one table's rows in one sm1
@@ -471,11 +468,9 @@ std::span<const attribute_t> rel_schema(const rel_t* rel);
  */
 int rel_insert(rel_t* rel, std::string_view tuple, uint64_t& rowno);
 
-/* Convenience helpers: encode then insert under a new rowno. */
+/* Encode datums and isnull, then insert under a new rowno. */
 int rel_insert(rel_t* rel, std::span<const Datum> datums,
                std::span<const bool> isnull, uint64_t& rowno);
-int rel_insert(rel_t* rel, std::span<const datum_t> datums,
-               uint64_t& rowno);
 
 /*
  * Read the row at rowno as the transaction sees it: 0 with tuple
@@ -502,11 +497,9 @@ int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 int rel_update(rel_t* rel, uint64_t rowno, std::string_view tuple,
                std::string_view* old = nullptr);
 
-/* Convenience helpers: encode then update. */
+/* Encode datums and isnull, then replace the row at rowno. */
 int rel_update(rel_t* rel, uint64_t rowno, std::span<const Datum> datums,
                std::span<const bool> isnull, std::string_view* old = nullptr);
-int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
-               std::string_view* old = nullptr);
 
 /* Delete the row at rowno, handing back its tuple through old. */
 int rel_delete(rel_t* rel, uint64_t rowno, std::string_view* old = nullptr);
@@ -565,8 +558,9 @@ struct index_scan_t;
  * descending column, "x > 5" is an upper bound.
  */
 struct bound_t {
-    std::span<const datum_t> prefix;
-    bool                     inclusive;
+    std::span<const Datum> prefix;
+    std::span<const bool>  isnull;    /* one per prefix value */
+    bool                   inclusive;
 };
 
 /*
@@ -591,12 +585,14 @@ std::span<const attribute_t> idx_value_schema(const index_t* index);
  * row. In a unique index, a key already present fails with sm1's
  * SM_ERR_DUPKEY.
  */
-int idx_insert(index_t* index, std::span<const datum_t> key,
-                 uint64_t rowno, std::span<const datum_t> include);
+int idx_insert(index_t* index, std::span<const Datum> key,
+               std::span<const bool> key_isnull, uint64_t rowno,
+               std::span<const Datum> include,
+               std::span<const bool> include_isnull);
 
 /* Remove the entry idx_insert added for key and rowno. */
-int idx_delete(index_t* index, std::span<const datum_t> key,
-                 uint64_t rowno);
+int idx_delete(index_t* index, std::span<const Datum> key,
+               std::span<const bool> key_isnull, uint64_t rowno);
 
 /*
  * Open a cursor over the entries between lo and hi, either of

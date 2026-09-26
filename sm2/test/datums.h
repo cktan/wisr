@@ -9,8 +9,12 @@
 
 #include "sm2.h"
 
+#include <algorithm>
 #include <cstring>
+#include <memory>
+#include <optional>
 #include <random>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -29,6 +33,104 @@ struct typed_t {
   const sm2::type_t *type;
   int32_t typmod;
 };
+
+/*
+ * A row as the Datums and null flags sm2 takes. A by-value type's
+ * bytes are copied into its Datum; any other type's Datum points
+ * at its bytes -- into the row, which must outlive this, or into
+ * own, for a variable-width datum given native and wrapped here
+ * in a varlena.
+ */
+struct values_t {
+  std::vector<sm2::Datum> datums;
+  std::unique_ptr<bool[]> nulls;
+  std::vector<std::string> own;
+  size_t n = 0;
+
+  std::span<const sm2::Datum> d() const { return datums; }
+  std::span<const bool> null() const { return {nulls.get(), n}; }
+};
+
+/* The types of a schema's attributes, or of a key's columns. */
+inline std::vector<const sm2::type_t *>
+types_of(std::span<const sm2::attribute_t> schema) {
+  std::vector<const sm2::type_t *> t;
+  for (const auto &a : schema) {
+    t.push_back(a.type);
+  }
+  return t;
+}
+inline std::vector<const sm2::type_t *>
+types_of(std::span<const sm2::key_column_t> cols) {
+  std::vector<const sm2::type_t *> t;
+  for (const auto &c : cols) {
+    t.push_back(c.type);
+  }
+  return t;
+}
+
+/*
+ * The first n values of row under types, std::nullopt for null.
+ * With native, a variable-width datum is its payload, as a key
+ * test holds it; otherwise it is already a varlena, as a tuple
+ * test holds it.
+ */
+template <class Row>
+values_t values_of(const std::vector<const sm2::type_t *> &types,
+                   const Row &row, bool native, size_t n = SIZE_MAX) {
+  values_t v;
+  v.n = std::min(n, row.size());
+  v.datums.assign(v.n, 0);
+  v.nulls = std::make_unique<bool[]>(v.n);
+  // own must not move once a Datum points into it.
+  v.own.reserve(v.n);
+  for (size_t i = 0; i < v.n; i++) {
+    if (!row[i]) {
+      v.nulls[i] = true;
+      continue;
+    }
+    std::string_view b = *row[i];
+    if (types[i]->byval) {
+      memcpy(&v.datums[i], b.data(), std::min(b.size(), sizeof(sm2::Datum)));
+    } else if (native && types[i]->len < 0) {
+      v.own.push_back(sm2::make_varlena(b));
+      v.datums[i] = sm2::datum_from_ptr(v.own.back().data());
+    } else {
+      v.datums[i] = sm2::datum_from_ptr(b.data());
+    }
+  }
+  return v;
+}
+
+/*
+ * Deform tuple under schema into each attribute's bytes, as
+ * values_of takes them back: a fixed-width datum's bytes, a
+ * variable one's varlena, std::nullopt for null. Returns what
+ * tup_deform does.
+ */
+inline int bytes_of(std::span<const sm2::attribute_t> schema,
+                    std::string_view tuple,
+                    std::vector<std::optional<std::string>> &out) {
+  size_t n = schema.size();
+  std::vector<sm2::Datum> d(n);
+  auto nulls = std::make_unique<bool[]>(n);
+  out.clear();
+  if (sm2::tup_deform(schema, tuple, d, std::span<bool>(nulls.get(), n)) != 0) {
+    return -1;
+  }
+  for (size_t i = 0; i < n; i++) {
+    std::string_view b;
+    if (nulls[i]) {
+      out.push_back(std::nullopt);
+    } else if (sm2::datum_bytes(schema[i].type, schema[i].typmod, d[i], b) !=
+               0) {
+      return -1;
+    } else {
+      out.push_back(std::string(b));
+    }
+  }
+  return 0;
+}
 
 /* decimal's typmod for (p, s). */
 inline int32_t decimal_typmod(int p, int s) { return ((p << 16) | s) + 4; }

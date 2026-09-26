@@ -32,28 +32,51 @@ std::string codec_form(const sm2::attribute_t &a, const std::string &datum) {
   return sm2::datum_width(a.type, a.typmod) < 0 ? vl(datum) : datum;
 }
 
+/* row, in codec form, as the Datums tup_encode takes. */
+values_t datums_of(const std::vector<sm2::attribute_t> &schema,
+                   const std::vector<std::optional<std::string>> &row) {
+  return values_of(types_of(schema), row, false);
+}
+
 /* Encode row under schema; it must encode. */
 std::string encode(const std::vector<sm2::attribute_t> &schema,
                    const std::vector<std::optional<std::string>> &row) {
-  std::vector<sm2::datum_t> datums;
-  for (const auto &d : row) {
-    datums.push_back({d ? std::string_view(*d) : std::string_view(), !d});
-  }
+  values_t v = datums_of(schema, row);
   std::string tuple;
-  REQUIRE(sm2::tup_encode(schema, datums, tuple) == 0);
+  REQUIRE_MESSAGE(sm2::tup_encode(schema, v.d(), v.null(), tuple) == 0,
+                  sm1::errmsg());
   return tuple;
 }
 
 /* Every attribute of tuple under schema, as owned strings. */
 std::vector<std::optional<std::string>>
 deform(const std::vector<sm2::attribute_t> &schema, std::string_view tuple) {
-  std::vector<std::optional<std::string_view>> views;
-  REQUIRE_MESSAGE(sm2::tup_deform(schema, tuple, views) == 0, sm1::errmsg());
   std::vector<std::optional<std::string>> out;
-  for (const auto &v : views) {
-    out.push_back(v ? std::optional<std::string>(*v) : std::nullopt);
-  }
+  REQUIRE_MESSAGE(bytes_of(schema, tuple, out) == 0, sm1::errmsg());
   return out;
+}
+
+/*
+ * Attribute k of tuple under desc, as deform gives it; returns
+ * what tup_decode does.
+ */
+int decode_bytes(const sm2::tup_desc_t &desc, std::string_view tuple, size_t k,
+                 std::optional<std::string> &out) {
+  sm2::Datum v;
+  bool isnull;
+  out.reset();
+  if (sm2::tup_decode(desc, tuple, k, v, isnull) != 0) {
+    return -1;
+  }
+  if (isnull) {
+    return 0;
+  }
+  std::string_view b;
+  if (sm2::datum_bytes(desc.schema[k].type, desc.schema[k].typmod, v, b) != 0) {
+    return -1;
+  }
+  out = std::string(b);
+  return 0;
 }
 
 /* tuple's bytes in hex, for the golden tests' messages. */
@@ -130,8 +153,8 @@ TEST_CASE("every tuple round trips, and any one column decodes alone") {
       std::string tuple = encode(schema, row);
       CHECK(deform(schema, tuple) == row);
       for (size_t i = 0; i < schema.size(); i++) {
-        std::optional<std::string_view> d;
-        REQUIRE(sm2::tup_decode(schema, tuple, i, d) == 0);
+        std::optional<std::string> d;
+        REQUIRE(decode_bytes(schema, tuple, i, d) == 0);
         CHECK(d.has_value() == row[i].has_value());
         if (d && row[i]) {
           CHECK(*d == *row[i]);
@@ -163,18 +186,18 @@ TEST_CASE("a tuple is at most 65535 bytes, so its slots are 2 bytes") {
   CHECK(deform(schema, t) == row);
 
   std::string big = vl(std::string(65524, 'x')), four = le(int32_t{-1});
-  std::vector<sm2::datum_t> over = {{big, false}, {four, false}};
+  values_t over = datums_of(schema, {big, four});
   std::string kept = "keep";
-  CHECK(sm2::tup_encode(schema, over, kept) == -1);
+  CHECK(sm2::tup_encode(schema, over.d(), over.null(), kept) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_ROWTOOLONG);
   CHECK(kept == "keep");
 
-  std::vector<std::optional<std::string_view>> views;
-  CHECK(sm2::tup_deform(schema, t + "x", views) == -1);
+  std::vector<std::optional<std::string>> views;
+  CHECK(bytes_of(schema, t + "x", views) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
   std::string flagged = t;
   flagged[0] = 0x04;
-  CHECK(sm2::tup_deform(schema, flagged, views) == -1);
+  CHECK(bytes_of(schema, flagged, views) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
 }
 
@@ -193,11 +216,11 @@ TEST_CASE("a row reads on after ADD COLUMN, as null or its missing value") {
   std::vector<std::optional<std::string>> want = {
       le(int32_t{3}), vl("row"), std::nullopt, le(int32_t{42})};
   CHECK(deform(after, t) == want);
-  std::optional<std::string_view> d;
-  REQUIRE(sm2::tup_decode(after, t, 3, d) == 0);
+  std::optional<std::string> d;
+  REQUIRE(decode_bytes(after, t, 3, d) == 0);
   REQUIRE(d);
   CHECK(*d == le(int32_t{42}));
-  REQUIRE(sm2::tup_decode(after, t, 2, d) == 0);
+  REQUIRE(decode_bytes(after, t, 2, d) == 0);
   CHECK_FALSE(d);
 }
 
@@ -220,9 +243,10 @@ TEST_CASE("a dropped column keeps its place and reads as null") {
       encode(dropped, {le(int32_t{1}), std::nullopt, le(int32_t{2})});
   CHECK(deform(dropped, fresh) == want);
   std::string ignored;
-  std::vector<sm2::datum_t> with_value = {
-      {le(int32_t{1}), false}, {vl("x"), false}, {le(int32_t{2}), false}};
-  CHECK(sm2::tup_encode(dropped, with_value, ignored) == -1);
+  values_t with_value =
+      datums_of(dropped, {le(int32_t{1}), vl("x"), le(int32_t{2})});
+  CHECK(sm2::tup_encode(dropped, with_value.d(), with_value.null(), ignored) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -246,16 +270,16 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
       attr(sm2::type_bytea)};
   std::string good =
       encode(schema, {le(int32_t{7}), vl("abc"), std::nullopt, vl("de")});
-  std::vector<std::optional<std::string_view>> out;
-  std::optional<std::string_view> d;
+  std::vector<std::optional<std::string>> out;
+  std::optional<std::string> d;
   // Refused by deform, and by decoding attribute k, if one is named.
   auto refused = [&](std::string_view t, std::optional<size_t> k) {
     CAPTURE(hex(t));
-    CHECK(sm2::tup_deform(schema, t, out) == -1);
+    CHECK(bytes_of(schema, t, out) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
     if (k) {
       CAPTURE(*k);
-      CHECK(sm2::tup_decode(schema, t, *k, d) == -1);
+      CHECK(decode_bytes(schema, t, *k, d) == -1);
       CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
     }
   };
@@ -295,47 +319,46 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
   bad = good;
   bad[first] = '\x0b';
   refused(bad, std::nullopt);
-  REQUIRE(sm2::tup_decode(schema, bad, 1, d) == 0);
+  REQUIRE(decode_bytes(schema, bad, 1, d) == 0);
   CHECK(d == std::string_view(bad).substr(first, 5));
 }
 
 TEST_CASE("the codec refuses arguments that do not fit the schema") {
   // Verify tup_encode and tup_decode's SM_ERR_INVALID cases.
-  // 1. Fewer or more datums than attributes, and a fixed-width
-  //    datum of the wrong width, leave the tuple as it was.
-  // 2. A variable datum with no header, a TOAST pointer, a
-  //    compressed one, or a header that does not match its
-  //    length.
+  // 1. Fewer datums than attributes leaves the tuple as it was.
+  // 2. A variable datum with a null pointer, a TOAST pointer, or a
+  //    compressed one. (A Datum has no length, so a datum of the
+  //    wrong width, or a varlena longer than its buffer, cannot be
+  //    told; the header is trusted, as in PostgreSQL.)
   // 3. A decimal64 attribute with a typmod decimal64 refuses.
   // 4. An ordinal past the schema.
   std::vector<sm2::attribute_t> schema = {attr(sm2::type_int4),
                                           attr(sm2::type_text)};
   std::string tuple = "keep";
-  std::vector<sm2::datum_t> one = {{le(int32_t{1}), false}};
-  CHECK(sm2::tup_encode(schema, one, tuple) == -1);
+  sm2::Datum one[1] = {sm2::datum_from_int32(1)};
+  bool no[2] = {false, false};
+  CHECK(sm2::tup_encode(schema, one, std::span<const bool>(no, 1), tuple) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  std::vector<sm2::datum_t> wide = {{"12345", false}, {vl("t"), false}};
-  CHECK(sm2::tup_encode(schema, wide, tuple) == -1);
   CHECK(tuple == "keep");
   // A variable datum must be a varlena this codec can store.
   std::string toast(1, sm2::varlena_toast);
-  std::string compressed("\x12\0\0\0", 4), too_short = "\x09"
-                                                       "ab";
-  for (std::string_view v :
-       {std::string_view(), std::string_view(toast),
-        std::string_view(compressed), std::string_view(too_short)}) {
-    std::vector<sm2::datum_t> row = {{le(int32_t{1}), false}, {v, false}};
-    CHECK(sm2::tup_encode(schema, row, tuple) == -1);
+  std::string compressed("\x12\0\0\0", 4);
+  const char *bad_ptrs[] = {nullptr, toast.data(), compressed.data()};
+  for (const char *v : bad_ptrs) {
+    sm2::Datum row[2] = {sm2::datum_from_int32(1), sm2::datum_from_ptr(v)};
+    CHECK(sm2::tup_encode(schema, row, no, tuple) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
   CHECK(tuple == "keep");
   std::vector<sm2::attribute_t> bad_typmod = {attr(sm2::type_decimal64, 3)};
-  std::vector<sm2::datum_t> d8 = {{le(int64_t{1}), false}};
-  CHECK(sm2::tup_encode(bad_typmod, d8, tuple) == -1);
+  sm2::Datum d8[1] = {sm2::datum_from_int64(1)};
+  CHECK(sm2::tup_encode(bad_typmod, d8, std::span<const bool>(no, 1), tuple) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::string good = encode(schema, {le(int32_t{1}), vl("t")});
-  std::optional<std::string_view> d;
-  CHECK(sm2::tup_decode(schema, good, 2, d) == -1);
+  std::optional<std::string> d;
+  CHECK(decode_bytes(schema, good, 2, d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -511,8 +534,8 @@ TEST_CASE("a wide row decodes each attribute alone, across bitmap words") {
 
   for (size_t k = 0; k < schema.size(); k++) {
     CAPTURE(k);
-    std::optional<std::string_view> d;
-    REQUIRE(sm2::tup_decode(desc, t, k, d) == 0);
+    std::optional<std::string> d;
+    REQUIRE(decode_bytes(desc, t, k, d) == 0);
     CHECK(d.has_value() == row[k].has_value());
     if (d && row[k]) {
       CHECK(*d == *row[k]);
@@ -521,7 +544,7 @@ TEST_CASE("a wide row decodes each attribute alone, across bitmap words") {
 
   std::vector<sm2::attribute_t> refused = {attr(sm2::type_decimal64, 3)};
   sm2::tup_desc_t bad(refused);
-  std::optional<std::string_view> d;
-  CHECK(sm2::tup_decode(bad, t, 0, d) == -1);
+  std::optional<std::string> d;
+  CHECK(decode_bytes(bad, t, 0, d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }

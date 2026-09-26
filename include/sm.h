@@ -228,17 +228,6 @@ void sm_collation_close(sm_collation_t* collation);
 const char* sm_collation_version(const sm_collation_t* collation);
 
 /*
- * A datum, or null. A fixed-width datum is its bytes in memory;
- * a variable-width one is a PostgreSQL varlena, header included
- * (sm2/VARLENA.md) -- in rows, index keys and bounds alike.
- */
-typedef struct sm_datum_t {
-    const void* data;
-    size_t      len;
-    bool        null;
-} sm_datum_t;
-
-/*
  * A PostgreSQL-compatible 8-byte Datum (postgres.h).
  * For a by-value type, the value itself fits in the Datum (int2,
  * int4, int8, bool, float4, float8, date, time, timestamp,
@@ -304,14 +293,16 @@ typedef struct sm_key_column_t {
 } sm_key_column_t;
 
 /*
- * A scan bound: the values of the index's first n columns, and
- * whether an entry equal to them is inside the bound. Bounds are
- * in the index's own order, after direction and null ordering.
+ * A scan bound: the values of the index's first n columns, with
+ * a null flag each, and whether an entry equal to them is inside
+ * the bound. Bounds are in the index's own order, after direction
+ * and null ordering.
  */
 typedef struct sm_bound_t {
-    const sm_datum_t* prefix;
-    size_t            n;
-    bool              inclusive;
+    const sm_datum_val_t* prefix;
+    const bool*           isnull;
+    size_t                n;
+    bool                  inclusive;
 } sm_bound_t;
 
 /* ---- heap rels: a table's rows by rowno, sm2's ---- */
@@ -353,18 +344,14 @@ int sm_rel_insert_tuple(sm_rel_t* rel, const void* tuple, size_t len,
 int sm_rel_update_tuple(sm_rel_t* rel, uint64_t rowno, const void* tuple,
                         size_t len, const void** old, size_t* old_len);
 
-/* Insert a row of values and isnull; *rowno is its id. */
-int sm_rel_insert_values(sm_rel_t* rel, const sm_datum_val_t* values,
-                         const bool* isnull, size_t n, uint64_t* rowno);
-
-/* Replace a row with values and isnull. */
-int sm_rel_update_values(sm_rel_t* rel, uint64_t rowno,
-                         const sm_datum_val_t* values, const bool* isnull,
-                         size_t n, const void** old, size_t* old_len);
-
-/* Insert a row of n datums, one per attribute; *rowno is its id. */
-int sm_rel_insert(sm_rel_t* rel, const sm_datum_t* datums, size_t n,
-                  uint64_t* rowno);
+/*
+ * Insert a row of n values and null flags, one per attribute;
+ * *rowno is its id. A by-reference value points at its bytes, a
+ * variable-width one at a PostgreSQL varlena, header included
+ * (sm2/VARLENA.md).
+ */
+int sm_rel_insert(sm_rel_t* rel, const sm_datum_val_t* values,
+                  const bool* isnull, size_t n, uint64_t* rowno);
 
 /*
  * Read the row at rowno: 0 with its tuple, 1 if none, or -1.
@@ -381,9 +368,13 @@ int sm_rel_read(sm_rel_t* rel, uint64_t rowno, const void** tuple,
 int sm_rel_read_latest(sm_rel_t* rel, uint64_t rowno, const void** tuple,
                        size_t* len);
 
-/* Replace the row at rowno; old, if not NULL, gets the old tuple. */
-int sm_rel_update(sm_rel_t* rel, uint64_t rowno, const sm_datum_t* datums,
-                  size_t n, const void** old, size_t* old_len);
+/*
+ * Replace the row at rowno with n values and null flags; old, if
+ * not NULL, gets the old tuple.
+ */
+int sm_rel_update(sm_rel_t* rel, uint64_t rowno, const sm_datum_val_t* values,
+                  const bool* isnull, size_t n, const void** old,
+                  size_t* old_len);
 
 /* Delete the row at rowno; old, if not NULL, gets its tuple. */
 int sm_rel_delete(sm_rel_t* rel, uint64_t rowno, const void** old,
@@ -408,24 +399,20 @@ int sm_tup_encode(const sm_attribute_t* schema, size_t natts,
                     const sm_datum_val_t* values, const bool* isnull,
                     void** tuple, size_t* len);
 
-/* Deform tuple into values and isnull arrays of size n (sm_rel_ncols). */
-int sm_rel_deform_values(sm_rel_t* rel, const void* tuple, size_t len,
-                         sm_datum_val_t* values, bool* isnull, size_t n);
-
-/* Decode one attribute into val and isnull. */
-int sm_rel_decode_value(sm_rel_t* rel, const void* tuple, size_t len,
-                        size_t ordinal, sm_datum_val_t* val, bool* isnull);
+/*
+ * Every attribute of a tuple into values and isnull, n of each
+ * (sm_rel_ncols). A by-reference value points into the tuple, so
+ * it shares the tuple's lifetime.
+ */
+int sm_rel_deform(sm_rel_t* rel, const void* tuple, size_t len,
+                  sm_datum_val_t* values, bool* isnull, size_t n);
 
 /*
- * One attribute of a tuple, by ordinal, into *out: a view into
- * the tuple, or null for a null or dropped attribute.
+ * One attribute of a tuple, by ordinal, into *val and *isnull; a
+ * null or dropped attribute sets *isnull.
  */
 int sm_rel_decode(sm_rel_t* rel, const void* tuple, size_t len,
-                  size_t ordinal, sm_datum_t* out);
-
-/* Every attribute of a tuple into out[0..n); n is sm_rel_ncols. */
-int sm_rel_deform(sm_rel_t* rel, const void* tuple, size_t len,
-                  sm_datum_t* out, size_t n);
+                  size_t ordinal, sm_datum_val_t* val, bool* isnull);
 
 /* ---- index rels: a table's index entries, sm2's ---- */
 
@@ -460,13 +447,14 @@ size_t sm_idx_ncols(const sm_idx_t* idx);
  * Add the entry for the row at rowno. A unique index refuses a
  * key already present with SM_ERR_DUPKEY.
  */
-int sm_idx_insert(sm_idx_t* idx, const sm_datum_t* key, size_t nkey,
-                  uint64_t rowno, const sm_datum_t* include,
+int sm_idx_insert(sm_idx_t* idx, const sm_datum_val_t* key,
+                  const bool* key_isnull, size_t nkey, uint64_t rowno,
+                  const sm_datum_val_t* include, const bool* include_isnull,
                   size_t ninclude);
 
 /* Remove the entry sm_idx_insert added for key and rowno. */
-int sm_idx_delete(sm_idx_t* idx, const sm_datum_t* key, size_t nkey,
-                  uint64_t rowno);
+int sm_idx_delete(sm_idx_t* idx, const sm_datum_val_t* key,
+                  const bool* key_isnull, size_t nkey, uint64_t rowno);
 
 /*
  * Open a cursor over the entries between lo and hi, either NULL
@@ -488,11 +476,11 @@ void sm_idx_scanend(sm_idx_scan_t* scan);
 
 /* One attribute of an entry's value, as sm_rel_decode. */
 int sm_idx_decode(sm_idx_t* idx, const void* value, size_t len,
-                  size_t ordinal, sm_datum_t* out);
+                  size_t ordinal, sm_datum_val_t* val, bool* isnull);
 
-/* Every attribute of an entry's value; n is sm_idx_ncols. */
+/* Every attribute of an entry's value, as sm_rel_deform; n is sm_idx_ncols. */
 int sm_idx_deform(sm_idx_t* idx, const void* value, size_t len,
-                  sm_datum_t* out, size_t n);
+                  sm_datum_val_t* values, bool* isnull, size_t n);
 
 #ifdef __cplusplus
 }

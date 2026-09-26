@@ -186,33 +186,33 @@ it never reads outside the tuple.
 
 ## 9. Codec API
 
-`sm2.h` takes a row in either of two forms.
+`sm2.h` takes and returns a row in one form.
 
 - **Datums and null flags**, the shape of PostgreSQL's
   `heap_form_tuple` and `heap_deform_tuple`: a by-value
   type's value sits in the `Datum` itself; a by-reference
   type's `Datum` points to its fixed-width bytes or its
   varlena.
-  - `tup_encode(schema, datums, isnull, tuple)` writes the
+  - `tup_encode(desc, datums, isnull, tuple)` writes the
     layout of §2 to §6, each varlena in its shortest form.
-  - `tup_decode(schema, tuple, ordinal, val, isnull)`
-    decodes one attribute without decoding the others.
-    Finding its entry walks the entries before it, so it is
-    O(ordinal), as PostgreSQL's `nocachegetattr` is without
-    cached offsets.
-  - `tup_deform(schema, tuple, datums, isnull)` decodes
+  - `tup_decode(desc, tuple, ordinal, val, isnull)`
+    decodes one attribute without decoding the others. It
+    finds its entry by `off[]` less the nulls before it (§6),
+    one step per earlier null, and checks only what it reads
+    (§8).
+  - `tup_deform(desc, tuple, datums, isnull)` decodes
     every attribute in one pass into the caller's arrays. It
     allocates only the schema's widths, not its output.
 
   A by-reference `Datum` either one hands back points into
   the tuple, or into the schema's missing value, and lives
-  as long as that does.
-- **`datum_t` and views**: the same three calls over
-  `datum_t` and `std::optional<std::string_view>`, a
-  fixed-width datum as its bytes and a variable-width one as
-  its varlena.
+  as long as that does. `datum_bytes(type, typmod, d, out)`
+  gives the bytes a `Datum` stands for — a fixed-width
+  datum's, or a variable-width one's varlena — as the key
+  encoding reads them. A `Datum` carries no length, so a
+  varlena's header is trusted, as in PostgreSQL.
 
-`tup_check(schema, tuple)` accepts only a tuple
+`tup_check(desc, tuple)` accepts only a tuple
 `tup_encode` could have written: well formed (§8), with
 every attribute of the schema, and none dropped that is not
 null. A heap `rel` checks a pre-encoded tuple against it

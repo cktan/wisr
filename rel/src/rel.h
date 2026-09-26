@@ -148,13 +148,6 @@ int parse_type_code(Janet val, uint8_t *code_out);
 /* Return type name for a type code. */
 const char *type_name_of(uint8_t code);
 
-/* Convert a Janet value to a native sm_datum_t buffer. */
-int janet_to_datum(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
-                   sm_datum_t *datum_out);
-
-/* Convert a native sm_datum_t back to a Janet value. */
-Janet datum_to_janet(const sm_datum_t &datum, uint8_t type_code);
-
 /*
  * Convert a Janet value to a value and null flag; a by-reference
  * value points into buf. Types rel cannot convert are refused.
@@ -162,19 +155,14 @@ Janet datum_to_janet(const sm_datum_t &datum, uint8_t type_code);
 int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
                    sm_datum_val_t *val_out, bool *isnull_out);
 
-/* View a value as an sm_datum_t; a by-value one views val's bytes. */
-sm_datum_t value_to_datum(const sm_datum_val_t &val, bool isnull,
-                          uint8_t type_code);
-
 /* Convert a value back to a Janet value. */
 Janet value_to_janet(const sm_datum_val_t &val, bool isnull, uint8_t type_code);
 
 /* Construct a varlena buffer from raw string bytes. */
 void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out);
 
-/* Extract payload from a varlena. */
-bool varlena_extract(const void *data, size_t len, const char **out_data,
-                     size_t *out_len);
+/* The payload of the varlena at p, its length from its header. */
+void varlena_payload(const void *p, const char **out_data, size_t *out_len);
 
 /* Register all rel native functions and macros into env. */
 void register_rel_cfuns(JanetTable *env);
