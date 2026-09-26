@@ -240,14 +240,8 @@ void catalog_t::remove_index(const std::string &db_name,
   }
 }
 
-/* Retrieve or lazily open the relation handle for a table on this session. */
-sm_rel_t *catalog_t::get_or_open_rel(session_ctx_t *s,
-                                     const table_def_t &tdef) {
-  auto it = s->open_tables.find(tdef.name);
-  if (it != s->open_tables.end() && it->second != nullptr) {
-    return it->second;
-  }
-
+/* The sm_attribute_t schema of a table's columns. */
+std::vector<sm_attribute_t> attributes_of(const table_def_t &tdef) {
   std::vector<sm_attribute_t> schema;
   schema.reserve(tdef.columns.size());
   for (const auto &col : tdef.columns) {
@@ -260,6 +254,18 @@ sm_rel_t *catalog_t::get_or_open_rel(session_ctx_t *s,
     attr.missing_len = 0;
     schema.push_back(attr);
   }
+  return schema;
+}
+
+/* Retrieve or lazily open the relation handle for a table on this session. */
+sm_rel_t *catalog_t::get_or_open_rel(session_ctx_t *s,
+                                     const table_def_t &tdef) {
+  auto it = s->open_tables.find(tdef.name);
+  if (it != s->open_tables.end() && it->second != nullptr) {
+    return it->second;
+  }
+
+  std::vector<sm_attribute_t> schema = attributes_of(tdef);
 
   sm_rel_t *rel = nullptr;
   if (sm_rel_open(s->session, tdef.storeid, 0, schema.data(), schema.size(),

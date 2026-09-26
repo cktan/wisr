@@ -332,4 +332,85 @@ Janet datum_to_janet(const sm_datum_t &datum, uint8_t type_code) {
   }
 }
 
+/* The width of a by-value type's Datum bytes; 0 if by reference. */
+static size_t byval_width(uint8_t code) {
+  switch (code) {
+  case 1: // bool
+    return 1;
+  case 2: // int2
+    return 2;
+  case 3:  // int4
+  case 5:  // float4
+  case 11: // date
+    return 4;
+  case 4:  // int8
+  case 6:  // float8
+  case 12: // time
+  case 13: // timestamp
+  case 14: // timestamptz
+    return 8;
+  default:
+    return 0;
+  }
+}
+
+/* Convert a Janet value to a value and null flag; see rel.h. */
+int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
+                   sm_datum_val_t *val_out, bool *isnull_out) {
+  sm_datum_t d;
+  if (janet_to_datum(val, col, buf, &d) != 0) {
+    return -1;
+  }
+  *val_out = 0;
+  *isnull_out = d.null;
+  if (d.null) {
+    return 0;
+  }
+  // A by-value type carries its bytes in the Datum itself.
+  size_t w = byval_width(col.type_code);
+  if (w != 0) {
+    if (d.len != w) {
+      return -1;
+    }
+    memcpy(val_out, d.data, w);
+    return 0;
+  }
+  // Only the varlena types are built by reference here; a Datum
+  // pointing at anything else would be misread by the encoder.
+  if (col.type_code < 8 || col.type_code > 10) {
+    return -1;
+  }
+  *val_out = SM_DATUM_FROM_PTR(d.data);
+  return 0;
+}
+
+/* View a value as an sm_datum_t; see rel.h. */
+sm_datum_t value_to_datum(const sm_datum_val_t &val, bool isnull,
+                          uint8_t type_code) {
+  if (isnull) {
+    return sm_datum_t{nullptr, 0, true};
+  }
+  size_t w = byval_width(type_code);
+  if (w != 0) {
+    return sm_datum_t{&val, w, false};
+  }
+  // A varlena's length is in its 1-byte or 4-byte header.
+  const uint8_t *p = static_cast<const uint8_t *>(SM_DATUM_TO_PTR(val));
+  size_t len = 0;
+  if ((p[0] & 1) != 0) {
+    len = p[0] >> 1;
+  } else {
+    uint32_t header = 0;
+    memcpy(&header, p, 4);
+    len = header >> 2;
+  }
+  return sm_datum_t{p, len, false};
+}
+
+/* Convert a value back to a Janet value. */
+Janet value_to_janet(const sm_datum_val_t &val, bool isnull,
+                     uint8_t type_code) {
+  return datum_to_janet(value_to_datum(val, isnull, type_code), type_code);
+}
+
 } // namespace rel

@@ -808,31 +808,41 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
                  row_len);
   }
 
-  std::vector<std::vector<uint8_t>> datum_buffers(row_len);
-  std::vector<sm_datum_t> datums(row_len);
-
+  row_values_t row(row_len);
   for (int32_t i = 0; i < row_len; i++) {
-    if (janet_to_datum(row_items[i], p_tdef->columns[i], datum_buffers[i],
-                       &datums[i]) != 0) {
+    if (janet_to_value(row_items[i], p_tdef->columns[i], row.bufs[i],
+                       &row.values[i], &row.isnull[i]) != 0) {
       janet_panicf("insert: invalid value for column '%s' (type %s)",
                    p_tdef->columns[i].name.c_str(),
                    type_name_of(p_tdef->columns[i].type_code));
     }
   }
 
+  // Encode the tuple before the savepoint, so a bad row writes nothing.
+  std::vector<sm_attribute_t> attrs = attributes_of(*p_tdef);
+  void *tuple = nullptr;
+  size_t tuple_len = 0;
+  if (sm_tuple_encode(attrs.data(), attrs.size(), row.values.data(),
+                      row.isnull.get(), &tuple, &tuple_len) != 0) {
+    panic_sm_error("insert sm_tuple_encode");
+  }
+
   uint64_t rowno = 0;
   int sp = sm_savepoint(s->session);
   if (sp < 0) {
+    sm_free(tuple);
     panic_sm_error("insert sm_savepoint");
   }
 
   // 1. Insert into heap relation.
-  if (sm_rel_insert(rel, datums.data(), datums.size(), &rowno) != 0) {
+  int rc = sm_rel_insert_tuple(rel, tuple, tuple_len, &rowno);
+  sm_free(tuple);
+  if (rc != 0) {
     if (!sm_retryable()) {
       sm_rollback(s->session, sp);
       sm_forget(s->session, sp);
     }
-    panic_sm_error("insert sm_rel_insert");
+    panic_sm_error("insert sm_rel_insert_tuple");
   }
 
   // 2. Insert into attached secondary indexes.
@@ -848,12 +858,14 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
     std::vector<sm_datum_t> kdatums;
     kdatums.reserve(idef.keys.size());
     for (const auto &k : idef.keys) {
-      kdatums.push_back(datums[k.col_idx]);
+      kdatums.push_back(value_to_datum(row.values[k.col_idx],
+                                       row.isnull[k.col_idx], k.type_code));
     }
     std::vector<sm_datum_t> idatums;
     idatums.reserve(idef.includes.size());
     for (const auto &inc : idef.includes) {
-      idatums.push_back(datums[inc.col_idx]);
+      idatums.push_back(value_to_datum(row.values[inc.col_idx],
+                                       row.isnull[inc.col_idx], inc.type_code));
     }
     if (sm_idx_insert(idx, kdatums.data(), kdatums.size(), rowno,
                       idatums.empty() ? nullptr : idatums.data(),
@@ -897,14 +909,16 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
   }
 
   size_t ncols = p_tdef->columns.size();
-  std::vector<sm_datum_t> out(ncols);
-  if (sm_rel_deform(rel, tuple, len, out.data(), ncols) != 0) {
-    panic_sm_error("read sm_rel_deform");
+  row_values_t out(ncols);
+  if (sm_rel_deform_values(rel, tuple, len, out.values.data(), out.isnull.get(),
+                           ncols) != 0) {
+    panic_sm_error("read sm_rel_deform_values");
   }
 
   Janet *vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    vals[i] = datum_to_janet(out[i], p_tdef->columns[i].type_code);
+    vals[i] = value_to_janet(out.values[i], out.isnull[i],
+                             p_tdef->columns[i].type_code);
   }
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
@@ -936,14 +950,16 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   }
 
   size_t ncols = p_tdef->columns.size();
-  std::vector<sm_datum_t> out(ncols);
-  if (sm_rel_deform(rel, tuple, len, out.data(), ncols) != 0) {
-    panic_sm_error("read-latest sm_rel_deform");
+  row_values_t out(ncols);
+  if (sm_rel_deform_values(rel, tuple, len, out.values.data(), out.isnull.get(),
+                           ncols) != 0) {
+    panic_sm_error("read-latest sm_rel_deform_values");
   }
 
   Janet *vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    vals[i] = datum_to_janet(out[i], p_tdef->columns[i].type_code);
+    vals[i] = value_to_janet(out.values[i], out.isnull[i],
+                             p_tdef->columns[i].type_code);
   }
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
@@ -981,12 +997,10 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
                  row_len);
   }
 
-  std::vector<std::vector<uint8_t>> datum_buffers(row_len);
-  std::vector<sm_datum_t> datums(row_len);
-
+  row_values_t row(row_len);
   for (int32_t i = 0; i < row_len; i++) {
-    if (janet_to_datum(row_items[i], p_tdef->columns[i], datum_buffers[i],
-                       &datums[i]) != 0) {
+    if (janet_to_value(row_items[i], p_tdef->columns[i], row.bufs[i],
+                       &row.values[i], &row.isnull[i]) != 0) {
       janet_panicf("update: invalid value for column '%s'",
                    p_tdef->columns[i].name.c_str());
     }
@@ -999,22 +1013,30 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
 
   const void *old_tuple = nullptr;
   size_t old_len = 0;
-  if (sm_rel_update(rel, rowno, datums.data(), datums.size(), &old_tuple,
-                    &old_len) != 0) {
+  if (sm_rel_update_values(rel, rowno, row.values.data(), row.isnull.get(),
+                           row.values.size(), &old_tuple, &old_len) != 0) {
     if (sm_errnum() == SM_ERR_UPDATED) {
       sm_forget(s->session, sp);
     } else if (!sm_retryable()) {
       sm_rollback(s->session, sp);
       sm_forget(s->session, sp);
     }
-    panic_sm_error("update sm_rel_update");
+    panic_sm_error("update sm_rel_update_values");
+  }
+
+  // Copy the old tuple: it views session memory that the index
+  // calls below may reuse, and its values must outlive them.
+  std::string old_copy;
+  if (old_tuple != nullptr) {
+    old_copy.assign(static_cast<const char *>(old_tuple), old_len);
   }
 
   // Deform old tuple to update indexes.
   size_t ncols = p_tdef->columns.size();
-  std::vector<sm_datum_t> old_datums(ncols);
+  row_values_t old(ncols);
   if (old_tuple != nullptr &&
-      sm_rel_deform(rel, old_tuple, old_len, old_datums.data(), ncols) == 0) {
+      sm_rel_deform_values(rel, old_copy.data(), old_copy.size(),
+                           old.values.data(), old.isnull.get(), ncols) == 0) {
     for (auto &[iname, idef] : p_tdef->indexes) {
       sm_idx_t *idx = get_catalog().get_or_open_idx(s, idef, *p_tdef);
       if (idx == nullptr) {
@@ -1027,12 +1049,15 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
       std::vector<sm_datum_t> old_kdatums;
       std::vector<sm_datum_t> new_kdatums;
       for (const auto &k : idef.keys) {
-        old_kdatums.push_back(old_datums[k.col_idx]);
-        new_kdatums.push_back(datums[k.col_idx]);
+        old_kdatums.push_back(value_to_datum(
+            old.values[k.col_idx], old.isnull[k.col_idx], k.type_code));
+        new_kdatums.push_back(value_to_datum(
+            row.values[k.col_idx], row.isnull[k.col_idx], k.type_code));
       }
       std::vector<sm_datum_t> new_idatums;
       for (const auto &inc : idef.includes) {
-        new_idatums.push_back(datums[inc.col_idx]);
+        new_idatums.push_back(value_to_datum(
+            row.values[inc.col_idx], row.isnull[inc.col_idx], inc.type_code));
       }
       if (sm_idx_delete(idx, old_kdatums.data(), old_kdatums.size(), rowno) !=
               0 ||
@@ -1054,149 +1079,10 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   }
   Janet *old_vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    old_vals[i] = datum_to_janet(old_datums[i], p_tdef->columns[i].type_code);
+    old_vals[i] = value_to_janet(old.values[i], old.isnull[i],
+                                 p_tdef->columns[i].type_code);
   }
   return janet_wrap_tuple(janet_tuple_end(old_vals));
-}
-
-/* (test-c-api table) -- internal test verifying sm.h C API functions */
-static Janet cfun_test_c_api(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 1);
-  session_ctx_t *s = require_session();
-  std::string tbl_name = identifier_of(argv[0]);
-
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panicf("test-c-api: table '%s' not found", tbl_name.c_str());
-  }
-  sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
-  if (rel == nullptr) {
-    panic_sm_error("test-c-api get_or_open_rel");
-  }
-
-  // Schema for encoding
-  std::vector<sm_attribute_t> attrs;
-  attrs.reserve(p_tdef->columns.size());
-  for (const auto &col : p_tdef->columns) {
-    attrs.push_back(
-        {sm_type(col.type_code), col.typmod, false, false, nullptr, 0});
-  }
-
-  // 1. sm_tuple_encode with values & isnull
-  sm_datum_val_t vals[5];
-  bool isnulls[5] = {false, false, false, false, false};
-  vals[0] = SM_DATUM_FROM_INT32(42);
-  std::string name_vl;
-  name_vl +=
-      static_cast<char>((4 + 1) << 1 | 0x01); // 1-byte varlena for "Echo"
-  name_vl += "Echo";
-  vals[1] = SM_DATUM_FROM_PTR(name_vl.data());
-  vals[2] = sm_datum_from_double(12.34);
-  vals[3] = SM_DATUM_FROM_INT64(500);
-  vals[4] = SM_DATUM_FROM_BOOL(true);
-
-  void *tuple_buf = nullptr;
-  size_t tuple_len = 0;
-  if (sm_tuple_encode(attrs.data(), attrs.size(), vals, isnulls, &tuple_buf,
-                      &tuple_len) != 0) {
-    panic_sm_error("test-c-api sm_tuple_encode");
-  }
-
-  // 2. sm_rel_insert_tuple
-  uint64_t rowno = 0;
-  if (sm_rel_insert_tuple(rel, tuple_buf, tuple_len, &rowno) != 0) {
-    sm_free(tuple_buf);
-    panic_sm_error("test-c-api sm_rel_insert_tuple");
-  }
-
-  // 3. sm_rel_read
-  const void *read_buf = nullptr;
-  size_t read_len = 0;
-  if (sm_rel_read(rel, rowno, &read_buf, &read_len) != 0) {
-    sm_free(tuple_buf);
-    panic_sm_error("test-c-api sm_rel_read");
-  }
-  if (read_len != tuple_len ||
-      std::memcmp(read_buf, tuple_buf, tuple_len) != 0) {
-    sm_free(tuple_buf);
-    janet_panic("test-c-api: read tuple bytes do not match inserted tuple");
-  }
-
-  // 4. sm_rel_deform_values
-  sm_datum_val_t def_vals[5];
-  bool def_nulls[5];
-  if (sm_rel_deform_values(rel, read_buf, read_len, def_vals, def_nulls, 5) !=
-      0) {
-    sm_free(tuple_buf);
-    panic_sm_error("test-c-api sm_rel_deform_values");
-  }
-  if (def_nulls[0] || SM_DATUM_TO_INT32(def_vals[0]) != 42) {
-    sm_free(tuple_buf);
-    janet_panic("test-c-api: col 0 mismatch in deform");
-  }
-  if (def_nulls[4] || !SM_DATUM_TO_BOOL(def_vals[4])) {
-    sm_free(tuple_buf);
-    janet_panic("test-c-api: col 4 mismatch in deform");
-  }
-
-  // 5. sm_rel_decode_value
-  sm_datum_val_t col0;
-  bool col0_null;
-  if (sm_rel_decode_value(rel, read_buf, read_len, 0, &col0, &col0_null) != 0) {
-    sm_free(tuple_buf);
-    panic_sm_error("test-c-api sm_rel_decode_value");
-  }
-  if (col0_null || SM_DATUM_TO_INT32(col0) != 42) {
-    sm_free(tuple_buf);
-    janet_panic("test-c-api: col 0 decode mismatch");
-  }
-
-  // 6. sm_rel_update_tuple
-  vals[0] = SM_DATUM_FROM_INT32(43);
-  void *new_buf = nullptr;
-  size_t new_len = 0;
-  if (sm_tuple_encode(attrs.data(), attrs.size(), vals, isnulls, &new_buf,
-                      &new_len) != 0) {
-    sm_free(tuple_buf);
-    panic_sm_error("test-c-api sm_tuple_encode (update)");
-  }
-
-  const void *old_buf = nullptr;
-  size_t old_len = 0;
-  if (sm_rel_update_tuple(rel, rowno, new_buf, new_len, &old_buf, &old_len) !=
-      0) {
-    sm_free(tuple_buf);
-    sm_free(new_buf);
-    panic_sm_error("test-c-api sm_rel_update_tuple");
-  }
-  if (old_len != tuple_len || std::memcmp(old_buf, tuple_buf, tuple_len) != 0) {
-    sm_free(tuple_buf);
-    sm_free(new_buf);
-    janet_panic("test-c-api: old tuple does not match original");
-  }
-
-  // 7. sm_rel_insert_values
-  uint64_t rowno2 = 0;
-  vals[0] = SM_DATUM_FROM_INT32(44);
-  if (sm_rel_insert_values(rel, vals, isnulls, 5, &rowno2) != 0) {
-    sm_free(tuple_buf);
-    sm_free(new_buf);
-    panic_sm_error("test-c-api sm_rel_insert_values");
-  }
-
-  // 8. sm_rel_update_values
-  vals[0] = SM_DATUM_FROM_INT32(45);
-  if (sm_rel_update_values(rel, rowno2, vals, isnulls, 5, &old_buf, &old_len) !=
-      0) {
-    sm_free(tuple_buf);
-    sm_free(new_buf);
-    panic_sm_error("test-c-api sm_rel_update_values");
-  }
-
-  sm_free(tuple_buf);
-  sm_free(new_buf);
-
-  return janet_wrap_integer(rowno);
 }
 
 /* (delete table rowno) */
@@ -1237,10 +1123,18 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
     panic_sm_error("delete sm_rel_delete");
   }
 
+  // Copy the old tuple: it views session memory that the index
+  // calls below may reuse, and its values must outlive them.
+  std::string old_copy;
+  if (old_tuple != nullptr) {
+    old_copy.assign(static_cast<const char *>(old_tuple), old_len);
+  }
+
   size_t ncols = p_tdef->columns.size();
-  std::vector<sm_datum_t> old_datums(ncols);
+  row_values_t old(ncols);
   if (old_tuple != nullptr &&
-      sm_rel_deform(rel, old_tuple, old_len, old_datums.data(), ncols) == 0) {
+      sm_rel_deform_values(rel, old_copy.data(), old_copy.size(),
+                           old.values.data(), old.isnull.get(), ncols) == 0) {
     for (auto &[iname, idef] : p_tdef->indexes) {
       sm_idx_t *idx = get_catalog().get_or_open_idx(s, idef, *p_tdef);
       if (idx == nullptr) {
@@ -1252,7 +1146,8 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
       }
       std::vector<sm_datum_t> old_kdatums;
       for (const auto &k : idef.keys) {
-        old_kdatums.push_back(old_datums[k.col_idx]);
+        old_kdatums.push_back(value_to_datum(
+            old.values[k.col_idx], old.isnull[k.col_idx], k.type_code));
       }
       if (sm_idx_delete(idx, old_kdatums.data(), old_kdatums.size(), rowno) !=
           0) {
@@ -1271,7 +1166,8 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
   }
   Janet *old_vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    old_vals[i] = datum_to_janet(old_datums[i], p_tdef->columns[i].type_code);
+    old_vals[i] = value_to_janet(old.values[i], old.isnull[i],
+                                 p_tdef->columns[i].type_code);
   }
   return janet_wrap_tuple(janet_tuple_end(old_vals));
 }
@@ -1317,16 +1213,17 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
   const void *tuple = nullptr;
   size_t len = 0;
   size_t ncols = p_tdef->columns.size();
-  std::vector<sm_datum_t> out(ncols);
 
   while (sm_rel_scannxt(rscan, &rowno, &tuple, &len) == 0) {
-    if (sm_rel_deform(rel, tuple, len, out.data(), ncols) != 0) {
-      sm_rel_scanend(rscan);
-      panic_sm_error("scan sm_rel_deform");
-    }
     Janet *vals = janet_tuple_begin(ncols);
     for (size_t i = 0; i < ncols; i++) {
-      vals[i] = datum_to_janet(out[i], p_tdef->columns[i].type_code);
+      sm_datum_val_t val = 0;
+      bool isnull = false;
+      if (sm_rel_decode_value(rel, tuple, len, i, &val, &isnull) != 0) {
+        sm_rel_scanend(rscan);
+        panic_sm_error("scan sm_rel_decode_value");
+      }
+      vals[i] = value_to_janet(val, isnull, p_tdef->columns[i].type_code);
     }
     Janet t_val = janet_wrap_tuple(janet_tuple_end(vals));
 
@@ -1631,7 +1528,6 @@ static const JanetReg s_rel_cfuns[] = {
     {"_delete", cfun_delete, "internal"},
     {"_scan", cfun_scan, "internal"},
     {"_idx-scan", cfun_idx_scan, "internal"},
-    {"_test-c-api", cfun_test_c_api, "internal"},
 
     {"sm:errnum", cfun_sm_errnum, "(sm:errnum) -- last error code"},
     {"sm:errname", cfun_sm_errname, "(sm:errname) -- last error name"},
@@ -1699,9 +1595,6 @@ static const char *s_prelude = R"janet(
 
 (defmacro session-close [name]
   ~(_session-close (string ',name)))
-
-(defmacro test-c-api [tbl]
-  ~(_test-c-api (string ',tbl)))
 
 (defmacro assert-err [expected expr]
   ~(try

@@ -78,18 +78,49 @@
 (table-drop products)
 (commit)
 
-# 9. C API tuple and value functions
+# 9. Values round-trip through the Datum API for every type rel converts.
+# 9.1 Create a table of every convertible type, indexed on a text column.
+# 9.2 Insert a row with nulls and a long (4-byte header) varlena.
+# 9.3 Read, read-latest and scan it back unchanged.
+# 9.4 Update it and confirm the old row and the index key moved.
+# 9.5 Delete it and confirm the index entry is gone.
+# 9.6 Confirm a type rel cannot convert is refused, not stored.
 (begin :rc)
-(table-create test_c_api
+(table-create alltypes
   (columns
-    (id :int4 :not-null)
-    (name :text :not-null)
-    (price :float8)
-    (stock :int8)
-    (active :bool)))
-(def c-row (test-c-api test_c_api))
-(assert-eq (read test_c_api c-row) [43 "Echo" 12.34 500 true])
-(table-drop test_c_api)
+    (b :bool) (i2 :int2) (i4 :int4) (i8 :int8)
+    (f4 :float4) (f8 :float8)
+    (t :text) (vc :varchar) (by :bytea)))
+(index-create idx_alltypes_t
+  (table alltypes)
+  (key (t :asc))
+  :unique false
+  :include (i4))
+(def long-str (string/repeat "x" 200))
+(def row-a [true 7 70000 9000000000 1.5 2.25 long-str "vc" "by"])
+(def row-b [nil nil nil nil nil nil "short" nil nil])
+(def ra (insert alltypes row-a))
+(assert-eq (read alltypes ra) row-a)
+(assert-eq (read-latest alltypes ra) row-a)
+(assert-eq ((scan alltypes) 0) [ra row-a])
+(def hit-a (idx-scan idx_alltypes_t :ge [long-str] :le [long-str]))
+(assert-count 1 hit-a)
+(assert-eq (hit-a 0) [ra false [70000]])
+(assert-eq (update alltypes ra row-b) row-a)
+(assert-eq (read alltypes ra) row-b)
+(assert-count 0 (idx-scan idx_alltypes_t :ge [long-str] :le [long-str]))
+(def hit-b (idx-scan idx_alltypes_t :ge ["short"] :le ["short"]))
+(assert-count 1 hit-b)
+(assert-eq (hit-b 0) [ra false [nil]])
+(assert-eq (delete alltypes ra) row-b)
+(assert-count 0 (idx-scan idx_alltypes_t))
+(table-create dates (columns (d :date)))
+(def refused
+  (try (do (insert dates ["2026-09-25"]) false) ([err] true)))
+(assert-eq refused true)
+(assert-count 0 (scan dates))
+(table-drop dates)
+(table-drop alltypes)
 (commit)
 
 (db-close)

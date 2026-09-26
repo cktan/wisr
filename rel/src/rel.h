@@ -63,6 +63,18 @@ struct table_def_t {
   std::map<std::string, index_def_t> indexes;
 };
 
+/*
+ * A row as PostgreSQL-style values and null flags, with the
+ * buffers its by-reference values point into.
+ */
+struct row_values_t {
+  std::vector<std::vector<uint8_t>> bufs;
+  std::vector<sm_datum_val_t> values;
+  std::unique_ptr<bool[]> isnull;
+
+  explicit row_values_t(size_t n) : bufs(n), values(n), isnull(new bool[n]()) {}
+};
+
 /* Context for one active database session. */
 struct session_ctx_t {
   std::string name;
@@ -122,6 +134,9 @@ private:
   std::map<std::string, std::map<std::string, table_def_t>> m_db_tables;
 };
 
+/* The sm_attribute_t schema of a table's columns. */
+std::vector<sm_attribute_t> attributes_of(const table_def_t &tdef);
+
 /* Global singleton catalog instance. */
 catalog_t &get_catalog();
 
@@ -139,6 +154,20 @@ int janet_to_datum(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
 
 /* Convert a native sm_datum_t back to a Janet value. */
 Janet datum_to_janet(const sm_datum_t &datum, uint8_t type_code);
+
+/*
+ * Convert a Janet value to a value and null flag; a by-reference
+ * value points into buf. Types rel cannot convert are refused.
+ */
+int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
+                   sm_datum_val_t *val_out, bool *isnull_out);
+
+/* View a value as an sm_datum_t; a by-value one views val's bytes. */
+sm_datum_t value_to_datum(const sm_datum_val_t &val, bool isnull,
+                          uint8_t type_code);
+
+/* Convert a value back to a Janet value. */
+Janet value_to_janet(const sm_datum_val_t &val, bool isnull, uint8_t type_code);
 
 /* Construct a varlena buffer from raw string bytes. */
 void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out);

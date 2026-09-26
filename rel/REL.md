@@ -373,21 +373,14 @@ Returns an array of `[rowno [val1 val2 ...]]` pairs.
 ### `(idx-scan index [:ge lo] [:gt lo] [:le hi] [:lt hi])`
 Scans a secondary index across key prefix bounds.
 Bounds are tuples matching key prefix columns.
-Returns an array of `[rowno key-tuple include-tuple]` entries.
+Returns an array of `[rowno cut include-tuple]` entries: `cut`
+is true when sm2 truncated an over-long key, so the caller must
+recheck the row; `include-tuple` is nil for an index without
+INCLUDE columns. The key itself is not returned, since the index
+holds it only in its sort-key encoding.
 
 ```janet
 (def hits (idx-scan idx_users_email :ge ["alice@"] :le ["alice@~"]))
-```
-
-### `(test-c-api table)`
-Exercises the low-level C API (`sm_tuple_encode`,
-`sm_rel_insert_tuple`, `sm_rel_update_tuple`,
-`sm_rel_insert_values`, `sm_rel_update_values`,
-`sm_rel_deform_values`, `sm_rel_decode_value`) directly against
-`table`. Returns the allocated `rowno`.
-
-```janet
-(def r (test-c-api users))
 ```
 
 ---

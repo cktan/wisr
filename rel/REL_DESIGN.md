@@ -182,7 +182,7 @@ with composable stream operators:
 
 ;; Index scan with bounds: scan idx_users_name between "A" and "M"
 (idx-scan idx_users_name :ge ["A"] :lt ["M"])
-;; => ([1 false] [2 false]) ; yields (rowno, cut) entries
+;; => ([1 false nil] [2 false nil]) ; (rowno, cut, includes)
 
 ;; Functional filter and projection over row streams
 (project
@@ -285,12 +285,16 @@ relational catalog mapping table names to their storage metadata.
 
 #### `(insert <table> <row-tuple>)`
 1. Validates that `<row-tuple>` matches column count and types.
-2. Encodes tuple values into native format in `sm_datum_t[]`:
-   - Fixed-width integers and floats written in little-endian.
-   - Strings and bytea encoded as PostgreSQL varlenas with
-     1-byte or 4-byte header (`sm2/VARLENA.md`).
-   - Nulls marked with `null = true`.
-3. Calls `sm_rel_insert(rel, datums, n, &rowno)`.
+2. Converts tuple values into `sm_datum_val_t values[]` and
+   `bool isnull[]`, as PostgreSQL's `Datum` and nulls:
+   - By-value types (bool, integers, floats) held in the
+     Datum itself.
+   - Strings and bytea built as PostgreSQL varlenas with
+     1-byte or 4-byte header (`sm2/VARLENA.md`), the Datum
+     pointing at them.
+   - Types rel cannot convert yet are refused.
+3. Calls `sm_tuple_encode(attrs, n, values, isnull, &tuple,
+   &len)`, then `sm_rel_insert_tuple(rel, tuple, len, &rowno)`.
 4. For each attached index on `<table>`:
    - Extracts key column datums and INCLUDE column datums.
    - Calls `sm_idx_insert(idx, kdatums, nk, rowno, idatums, ni)`.
@@ -301,8 +305,9 @@ relational catalog mapping table names to their storage metadata.
 #### `(read <table> <rowno>)`
 1. Calls `sm_rel_read(rel, rowno, &tuple, &len)`.
 2. If return is 1, returns `nil` ("no row").
-3. Calls `sm_rel_deform(rel, tuple, len, out_datums, ncols)`.
-4. Decodes each `sm_datum_t` into a `rel-lisp` value:
+3. Calls `sm_rel_deform_values(rel, tuple, len, values,
+   isnull, ncols)`.
+4. Decodes each value into a `rel-lisp` value:
    - Integers and floats to numbers.
    - Varlenas decoded to strings.
    - Null datums to `nil`.
@@ -314,10 +319,11 @@ relational catalog mapping table names to their storage metadata.
 3. Returns newest committed tuple vector.
 
 #### `(update <table> <rowno> <new-row-tuple>)`
-1. Encodes `<new-row-tuple>` into `sm_datum_t[]`.
-2. Calls `sm_rel_update(rel, rowno, datums, n, &old_tuple,
-   &old_len)`.
-3. Calls `sm_rel_deform` on `old_tuple` to recover old datums.
+1. Converts `<new-row-tuple>` into `values[]` and `isnull[]`.
+2. Calls `sm_rel_update_values(rel, rowno, values, isnull, n,
+   &old_tuple, &old_len)`.
+3. Calls `sm_rel_deform_values` on `old_tuple` to recover the
+   old values.
 4. For each attached index on `<table>`:
    - Extracts old key datums from old row.
    - Calls `sm_idx_delete(idx, old_key, nk, rowno)`.
@@ -327,7 +333,7 @@ relational catalog mapping table names to their storage metadata.
 
 #### `(delete <table> <rowno>)`
 1. Calls `sm_rel_delete(rel, rowno, &old_tuple, &old_len)`.
-2. If row found, calls `sm_rel_deform` on `old_tuple`.
+2. If row found, calls `sm_rel_deform_values` on `old_tuple`.
 3. For each attached index on `<table>`:
    - Calls `sm_idx_delete(idx, old_key, nk, rowno)`.
 4. Returns decoded deleted tuple vector.
@@ -336,7 +342,7 @@ relational catalog mapping table names to their storage metadata.
 1. Defaults: `first = 1`, `last = UINT64_MAX`.
 2. Calls `sm_rel_scan(rel, first, last, &rscan)`.
 3. Loops `sm_rel_scannxt(rscan, &rowno, &tuple, &len)` until 1.
-4. Decodes each tuple via `sm_rel_deform`.
+4. Decodes each column of a tuple via `sm_rel_decode_value`.
 5. Calls `sm_rel_scanend(rscan)`.
 6. Returns list of pairs:
    `([rowno_1 tuple_1] [rowno_2 tuple_2] ...)`.
@@ -353,7 +359,8 @@ relational catalog mapping table names to their storage metadata.
    until 1.
 5. If INCLUDE columns exist, decodes value via `sm_idx_deform`.
 6. Calls `sm_idx_scanend(iscan)`.
-7. Returns list of index entries `([rowno cut val] ...)`.
+7. Returns list of index entries `([rowno cut includes] ...)`,
+   `includes` being nil for an index without INCLUDE columns.
 
 ### 4.5 Low-Level Direct `sm_` Builtins
 
