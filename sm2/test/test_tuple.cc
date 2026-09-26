@@ -227,39 +227,53 @@ TEST_CASE("a dropped column keeps its place and reads as null") {
 }
 
 TEST_CASE("a malformed tuple is refused as corrupt") {
-  // Verify the checks tup_deform and tup_decode make.
+  // Verify the checks tup_deform makes on the whole tuple, and the
+  // narrower ones tup_decode makes on what it reads.
   // 1. Every proper prefix of a valid tuple, and the tuple with a
-  //    byte added, is SM_ERR_CORRUPT: the parts must fit exactly.
-  // 2. So is a reserved flag, more attributes than the schema has,
-  //    a slot that does not point to its varlena, a varlena that is
-  //    a TOAST pointer or compressed, which sm2 cannot read yet,
-  //    and one whose header claims a byte too many.
+  //    byte added, is SM_ERR_CORRUPT to deform: the parts must fit
+  //    exactly. Decoding the last attribute, whose varlena ends
+  //    the tuple, refuses every prefix too.
+  // 2. A reserved flag, or more attributes than the schema has, is
+  //    refused by both, whichever attribute is decoded.
+  // 3. A slot that does not point to its varlena, and a varlena
+  //    that is a TOAST pointer or compressed, which sm2 cannot read
+  //    yet, are refused by deform and by decoding that attribute.
+  // 4. A varlena whose header claims a byte too many is refused by
+  //    deform; decode, which does not check the slots after it,
+  //    reads it as it claims.
   std::vector<sm2::attribute_t> schema = {
       attr(sm2::type_int4), attr(sm2::type_text), attr(sm2::type_int8),
       attr(sm2::type_bytea)};
   std::string good =
       encode(schema, {le(int32_t{7}), vl("abc"), std::nullopt, vl("de")});
   std::vector<std::optional<std::string_view>> out;
-  auto refused = [&](std::string_view t) {
+  std::optional<std::string_view> d;
+  // Refused by deform, and by decoding attribute k, if one is named.
+  auto refused = [&](std::string_view t, std::optional<size_t> k) {
     CAPTURE(hex(t));
     CHECK(sm2::tup_deform(schema, t, out) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
-    std::optional<std::string_view> d;
-    CHECK(sm2::tup_decode(schema, t, 0, d) == -1);
+    if (k) {
+      CAPTURE(*k);
+      CHECK(sm2::tup_decode(schema, t, *k, d) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
+    }
   };
   for (size_t n = 0; n < good.size(); n++) {
-    refused(good.substr(0, n));
+    refused(good.substr(0, n), 3);
   }
-  refused(good + "!");
+  refused(good + "!", std::nullopt);
   std::string bad = good;
   bad[0] = static_cast<char>(bad[0] | 0x80);
-  refused(bad);
+  for (size_t k = 0; k < schema.size(); k++) {
+    refused(bad, k);
+  }
   bad = good;
   bad[0] = static_cast<char>(bad[0] | 0x02);
-  refused(bad);
+  refused(bad, 0);
   bad = good;
   bad[1] = 5; // natts past the schema's 4
-  refused(bad);
+  refused(bad, 0);
   // The fixed part follows the 3-byte header and bitmap: the int4,
   // then the text's slot, 11, where "abc" starts, just past the
   // fixed part's 8 bytes. Point it a byte further on.
@@ -267,17 +281,22 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
   size_t slot = 3 + 4;
   REQUIRE(bad[slot] == 11);
   bad[slot] = 12;
-  refused(bad);
+  refused(bad, 1);
   // The first varlena, "abc" with header 0x09: make it a TOAST
   // pointer, a compressed 4-byte header, and a 1-byte header one
   // byte too long.
   size_t first = 11;
   REQUIRE(good[first] == '\x09');
-  for (char h : {sm2::varlena_toast, '\x02', '\x0b'}) {
+  for (char h : {sm2::varlena_toast, '\x02'}) {
     bad = good;
     bad[first] = h;
-    refused(bad);
+    refused(bad, 1);
   }
+  bad = good;
+  bad[first] = '\x0b';
+  refused(bad, std::nullopt);
+  REQUIRE(sm2::tup_decode(schema, bad, 1, d) == 0);
+  CHECK(d == std::string_view(bad).substr(first, 5));
 }
 
 TEST_CASE("the codec refuses arguments that do not fit the schema") {
@@ -451,5 +470,58 @@ TEST_CASE("tup_check accepts what the codec writes, and nothing else") {
   std::vector<sm2::attribute_t> dropped = schema;
   dropped[0].dropped = true;
   CHECK(sm2::tup_check(dropped, t) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+}
+
+TEST_CASE("a wide row decodes each attribute alone, across bitmap words") {
+  // Verify off[] less the widths of earlier nulls finds every entry
+  // when the null bitmap spans more than one 64-bit word.
+  // 1. Build a 150-attribute schema of int4, text, int8 and bool in
+  //    turn, and one tup_desc_t for it, reused for every call.
+  // 2. Encode a row with nulls every third attribute and around
+  //    the word edges, 63 to 65 and 127 to 129.
+  // 3. Decode each attribute alone; each matches the full deform.
+  // 4. A desc over a schema with a refused typmod fails every call
+  //    with SM_ERR_INVALID.
+  const sm2::type_t *types[] = {&sm2::type_int4, &sm2::type_text,
+                                &sm2::type_int8, &sm2::type_bool};
+  std::vector<sm2::attribute_t> schema;
+  for (size_t i = 0; i < 150; i++) {
+    schema.push_back(attr(*types[i % 4]));
+  }
+  sm2::tup_desc_t desc(schema);
+
+  std::vector<std::optional<std::string>> row;
+  for (size_t i = 0; i < schema.size(); i++) {
+    bool null = i % 3 == 0 || (i >= 63 && i <= 65) || (i >= 127 && i <= 129);
+    if (null) {
+      row.push_back(std::nullopt);
+    } else if (types[i % 4] == &sm2::type_int4) {
+      row.push_back(le(static_cast<int32_t>(i)));
+    } else if (types[i % 4] == &sm2::type_text) {
+      row.push_back(vl("t" + std::to_string(i)));
+    } else if (types[i % 4] == &sm2::type_int8) {
+      row.push_back(le(static_cast<int64_t>(i) * 1000));
+    } else {
+      row.push_back(std::string(1, static_cast<char>(i % 2)));
+    }
+  }
+  std::string t = encode(schema, row);
+  REQUIRE(deform(schema, t) == row);
+
+  for (size_t k = 0; k < schema.size(); k++) {
+    CAPTURE(k);
+    std::optional<std::string_view> d;
+    REQUIRE(sm2::tup_decode(desc, t, k, d) == 0);
+    CHECK(d.has_value() == row[k].has_value());
+    if (d && row[k]) {
+      CHECK(*d == *row[k]);
+    }
+  }
+
+  std::vector<sm2::attribute_t> refused = {attr(sm2::type_decimal64, 3)};
+  sm2::tup_desc_t bad(refused);
+  std::optional<std::string_view> d;
+  CHECK(sm2::tup_decode(bad, t, 0, d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }

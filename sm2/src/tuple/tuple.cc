@@ -15,7 +15,9 @@
  * varlenas, PostgreSQL's, each in its shortest form, in schema
  * order and end to end; a varlena's header gives its length. Any
  * attribute is found from the null bitmap and the schema's widths,
- * never by walking the data.
+ * never by walking the data: tup_desc_t holds each attribute's
+ * off[], where its entry starts in a row with no nulls, and an
+ * entry is off[k] less the widths of the nulls before it.
  *
  * TOAST and compression are not built yet: a TOAST pointer or a
  * compressed varlena is refused rather than misread.
@@ -24,6 +26,8 @@
 #include "native.h"
 #include "sm2.h"
 
+#include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -148,23 +152,13 @@ bool bit(const char *bitmap, size_t i) {
   return (static_cast<uint8_t>(bitmap[i / 8]) >> (i % 8)) & 1;
 }
 
-/*
- * Every attribute's width under schema (datum_width), -1 for
- * variable; fails with SM_ERR_INVALID if one is not valid.
- */
-int widths(std::span<const sm2::attribute_t> schema,
-           std::vector<int32_t> &out) {
-  out.clear();
-  for (size_t i = 0; i < schema.size(); i++) {
-    int32_t w =
-        schema[i].type ? sm2::datum_width(schema[i].type, schema[i].typmod) : 0;
-    if (w == 0) {
-      return invalid("attribute " + std::to_string(i) +
-                     " has no type, or a typmod its type refuses");
-    }
-    out.push_back(w);
+/* Fail with SM_ERR_INVALID if desc has an attribute it refused. */
+int check_desc(const sm2::tup_desc_t &desc) {
+  if (desc.bad == SIZE_MAX) {
+    return 0;
   }
-  return 0;
+  return invalid("attribute " + std::to_string(desc.bad) +
+                 " has no type, or a typmod its type refuses");
 }
 
 /* A tuple's parts, located and checked against the schema. */
@@ -176,8 +170,9 @@ struct parsed_t {
 };
 
 /* The width of attribute i's entry in the fixed part. */
-size_t entry_width(const std::vector<int32_t> &w, size_t i) {
-  return w[i] > 0 ? static_cast<size_t>(w[i]) : slot_width;
+size_t entry_width(const sm2::tup_desc_t &desc, size_t i) {
+  int32_t w = desc.width[i];
+  return w > 0 ? static_cast<size_t>(w) : slot_width;
 }
 
 /* The value of the slot at pos: where a varlena starts. */
@@ -186,14 +181,12 @@ size_t slot_at(const parsed_t &t, size_t pos) {
 }
 
 /*
- * Locate tuple's parts under schema, whose widths are w, and check
- * that they fit together exactly: the header's flags and natts,
- * the bitmap, the fixed part, and each slot, which must point
- * where the varlena before it ends, the first just past the fixed
- * part, the last varlena ending at the tuple's end.
+ * Locate tuple's header and null bitmap under desc, checking only
+ * them: the length, the flags, natts, and that the bitmap fits.
+ * t.fixed is then where the fixed part starts.
  */
-int parse(std::span<const sm2::attribute_t> schema,
-          const std::vector<int32_t> &w, std::string_view tuple, parsed_t &t) {
+int parse_head(const sm2::tup_desc_t &desc, std::string_view tuple,
+               parsed_t &t) {
   t.tuple = tuple;
   // The header.
   if (tuple.empty()) {
@@ -212,7 +205,7 @@ int parse(std::span<const sm2::attribute_t> schema,
   if (!get_varint(tuple, pos, natts)) {
     return corrupt("a malformed attribute count");
   }
-  if (natts > schema.size()) {
+  if (natts > desc.schema.size()) {
     return corrupt("more attributes than its schema has");
   }
   t.natts = natts;
@@ -225,12 +218,27 @@ int parse(std::span<const sm2::attribute_t> schema,
     t.nulls = tuple.data() + pos;
     pos += len;
   }
-  // The fixed part, an entry per non-null attribute.
   t.fixed = pos;
+  return 0;
+}
+
+/*
+ * Locate tuple's parts under desc and check that they fit together
+ * exactly: the header and bitmap, the fixed part, and each slot,
+ * which must point where the varlena before it ends, the first
+ * just past the fixed part, the last varlena ending at the tuple's
+ * end.
+ */
+int parse(const sm2::tup_desc_t &desc, std::string_view tuple, parsed_t &t) {
+  if (parse_head(desc, tuple, t) != 0) {
+    return -1;
+  }
+  // The fixed part, an entry per non-null attribute.
+  size_t pos = t.fixed, natts = t.natts;
   size_t fixed = 0;
   for (size_t i = 0; i < natts; i++) {
     if (!(t.nulls && bit(t.nulls, i))) {
-      fixed += entry_width(w, i);
+      fixed += entry_width(desc, i);
     }
   }
   if (tuple.size() - pos < fixed) {
@@ -242,7 +250,7 @@ int parse(std::span<const sm2::attribute_t> schema,
     if (t.nulls && bit(t.nulls, i)) {
       continue;
     }
-    if (w[i] < 0) {
+    if (desc.width[i] < 0) {
       if (slot_at(t, entry) != next) {
         return corrupt("a slot that does not point to its varlena");
       }
@@ -252,7 +260,7 @@ int parse(std::span<const sm2::attribute_t> schema,
       }
       next += len;
     }
-    entry += entry_width(w, i);
+    entry += entry_width(desc, i);
   }
   if (next != tuple.size()) {
     return corrupt("bytes past its last datum");
@@ -265,10 +273,10 @@ int parse(std::span<const sm2::attribute_t> schema,
  * whose entry is at pos: a fixed-width datum, or the varlena its
  * slot points to.
  */
-std::string_view datum_at(const parsed_t &t, const std::vector<int32_t> &w,
+std::string_view datum_at(const parsed_t &t, const sm2::tup_desc_t &desc,
                           size_t i, size_t pos) {
-  if (w[i] > 0) {
-    return t.tuple.substr(pos, w[i]);
+  if (desc.width[i] > 0) {
+    return t.tuple.substr(pos, desc.width[i]);
   }
   size_t start = slot_at(t, pos), len = 0;
   varlena_extent(t.tuple.substr(start), len);
@@ -287,15 +295,46 @@ void bytes_to_datum(const sm2::attribute_t &attr, std::string_view bytes,
 }
 
 /*
+ * The entry widths the nulls among attributes 0 to k - 1 would
+ * have taken: what they save of off[k] (TUPLE.md §6). It visits
+ * only the set bits, the bitmap read 64 bits at a time.
+ */
+size_t null_width(const parsed_t &t, const sm2::tup_desc_t &desc, size_t k) {
+  size_t sum = 0;
+  if (!t.nulls) {
+    return 0;
+  }
+  for (size_t base = 0; base < k; base += 64) {
+    // The bitmap is (natts + 7) / 8 bytes and k < natts, so the
+    // bytes read here are within it.
+    size_t n = std::min<size_t>(8, (k - base + 7) / 8);
+    char word[8] = {};
+    std::memcpy(word, t.nulls + base / 8, n);
+    uint64_t bits = sm2::load_le<uint64_t>(std::string_view(word, 8));
+    if (k - base < 64) {
+      bits &= (uint64_t{1} << (k - base)) - 1;
+    }
+    while (bits != 0) {
+      sum += entry_width(desc, base + std::countr_zero(bits));
+      bits &= bits - 1;
+    }
+  }
+  return sum;
+}
+
+/*
  * Every attribute of a tuple, in one pass: put(i, datum) for each,
- * datum as tup_decode's view gives it. Fails as tup_decode.
+ * datum as tup_decode's view gives it. The whole tuple is checked
+ * (parse), since the pass reads all of it anyway.
  */
 template <class F>
-int deform_each(std::span<const sm2::attribute_t> schema,
-                std::string_view tuple, F &&put) {
-  std::vector<int32_t> w;
+int deform_each(const sm2::tup_desc_t &desc, std::string_view tuple, F &&put) {
+  if (check_desc(desc) != 0) {
+    return -1;
+  }
+  const auto &schema = desc.schema;
   parsed_t t;
-  if (widths(schema, w) != 0 || parse(schema, w, tuple, t) != 0) {
+  if (parse(desc, tuple, t) != 0) {
     return -1;
   }
   size_t pos = t.fixed;
@@ -311,8 +350,8 @@ int deform_each(std::span<const sm2::attribute_t> schema,
       put(i, std::nullopt);
       continue;
     }
-    std::string_view d = datum_at(t, w, i, pos);
-    pos += entry_width(w, i);
+    std::string_view d = datum_at(t, desc, i, pos);
+    pos += entry_width(desc, i);
     // A dropped attribute's old bytes are skipped.
     put(i, schema[i].dropped ? std::nullopt : std::optional(d));
   }
@@ -322,6 +361,21 @@ int deform_each(std::span<const sm2::attribute_t> schema,
 } // namespace
 
 namespace sm2 {
+
+/* Lay schema out: each attribute's width, and off[]; see sm2.h. */
+tup_desc_t::tup_desc_t(std::span<const attribute_t> s) : schema(s) {
+  width.reserve(s.size());
+  off.reserve(s.size() + 1);
+  off.push_back(0);
+  for (size_t i = 0; i < s.size(); i++) {
+    int32_t w = s[i].type ? datum_width(s[i].type, s[i].typmod) : 0;
+    if (w == 0 && bad == SIZE_MAX) {
+      bad = i;
+    }
+    width.push_back(w);
+    off.push_back(off.back() + (w > 0 ? static_cast<size_t>(w) : slot_width));
+  }
+}
 
 /* A varlena holding datum, in its shortest form. */
 std::string make_varlena(std::string_view datum) {
@@ -355,14 +409,14 @@ std::string_view varlena_payload(std::string_view v) {
 }
 
 /* Encode datums and isnull under schema into tuple; see sm2.h. */
-int tup_encode(std::span<const attribute_t> schema,
-               std::span<const Datum> datums, std::span<const bool> isnull,
-               std::string &tuple) {
+int tup_encode(const tup_desc_t &desc, std::span<const Datum> datums,
+               std::span<const bool> isnull, std::string &tuple) {
   return catch_nomem([&] {
-    std::vector<int32_t> w;
-    if (widths(schema, w) != 0) {
+    if (check_desc(desc) != 0) {
       return -1;
     }
+    const auto &schema = desc.schema;
+    const auto &w = desc.width;
     if (datums.size() != schema.size() || isnull.size() != schema.size()) {
       return invalid("a datum and null flag for every attribute, no more");
     }
@@ -456,16 +510,17 @@ int tup_encode(std::span<const attribute_t> schema,
 }
 
 /* Encode datums under schema into tuple; see sm2.h. */
-int tup_encode(std::span<const attribute_t> schema,
-               std::span<const datum_t> datums, std::string &tuple) {
+int tup_encode(const tup_desc_t &desc, std::span<const datum_t> datums,
+               std::string &tuple) {
   return catch_nomem([&] {
+    const auto &schema = desc.schema;
     if (datums.size() != schema.size()) {
       return invalid("a datum for every attribute, no more");
     }
-    std::vector<int32_t> w;
-    if (widths(schema, w) != 0) {
+    if (check_desc(desc) != 0) {
       return -1;
     }
+    const auto &w = desc.width;
     std::vector<Datum> d(datums.size());
     auto isnull = std::make_unique<bool[]>(datums.size());
     for (size_t i = 0; i < datums.size(); i++) {
@@ -493,21 +548,21 @@ int tup_encode(std::span<const attribute_t> schema,
       }
     }
     return tup_encode(
-        schema, d, std::span<const bool>(isnull.get(), datums.size()), tuple);
+        desc, d, std::span<const bool>(isnull.get(), datums.size()), tuple);
   });
 }
 
 /* Check that tuple is one the codec could write; see sm2.h. */
-int tup_check(std::span<const attribute_t> schema, std::string_view tuple) {
+int tup_check(const tup_desc_t &desc, std::string_view tuple) {
   return catch_nomem([&] {
-    std::vector<int32_t> w;
+    const auto &schema = desc.schema;
     parsed_t t;
-    if (widths(schema, w) != 0) {
+    if (check_desc(desc) != 0) {
       return -1;
     }
     // A malformed tuple handed in to be written is the caller's
     // error, not corruption in the store.
-    if (parse(schema, w, tuple, t) != 0) {
+    if (parse(desc, tuple, t) != 0) {
       return sm1::seterr(sm1::SM_ERR_INVALID, std::string(sm1::errmsg()));
     }
     if (t.natts != schema.size()) {
@@ -524,13 +579,14 @@ int tup_check(std::span<const attribute_t> schema, std::string_view tuple) {
 }
 
 /* Deform every attribute of tuple into datums and isnull; see sm2.h. */
-int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
+int tup_deform(const tup_desc_t &desc, std::string_view tuple,
                std::span<Datum> datums, std::span<bool> isnull) {
   return catch_nomem([&] {
+    const auto &schema = desc.schema;
     if (datums.size() != schema.size() || isnull.size() != schema.size()) {
       return invalid("deform: output spans must match schema size");
     }
-    return deform_each(schema, tuple,
+    return deform_each(desc, tuple,
                        [&](size_t i, std::optional<std::string_view> d) {
                          isnull[i] = !d;
                          datums[i] = 0;
@@ -542,11 +598,11 @@ int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
 }
 
 /* Every attribute of a tuple, in one pass; see sm2.h. */
-int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
+int tup_deform(const tup_desc_t &desc, std::string_view tuple,
                std::vector<std::optional<std::string_view>> &datums) {
   return catch_nomem([&] {
     datums.clear();
-    return deform_each(schema, tuple,
+    return deform_each(desc, tuple,
                        [&](size_t, std::optional<std::string_view> d) {
                          datums.push_back(d);
                        });
@@ -554,31 +610,31 @@ int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
 }
 
 /* One attribute of a tuple, by ordinal, into val and isnull; see sm2.h. */
-int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
-               size_t ordinal, Datum &val, bool &isnull) {
+int tup_decode(const tup_desc_t &desc, std::string_view tuple, size_t ordinal,
+               Datum &val, bool &isnull) {
   std::optional<std::string_view> d;
-  if (tup_decode(schema, tuple, ordinal, d) != 0) {
+  if (tup_decode(desc, tuple, ordinal, d) != 0) {
     return -1;
   }
   val = 0;
   isnull = !d;
   if (d) {
-    bytes_to_datum(schema[ordinal], *d, val);
+    bytes_to_datum(desc.schema[ordinal], *d, val);
   }
   return 0;
 }
 
 /* One attribute of a tuple, by ordinal; see sm2.h. */
-int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
-               size_t ordinal, std::optional<std::string_view> &datum) {
+int tup_decode(const tup_desc_t &desc, std::string_view tuple, size_t ordinal,
+               std::optional<std::string_view> &datum) {
   return catch_nomem([&] {
-    std::vector<int32_t> w;
+    const auto &schema = desc.schema;
     parsed_t t;
     if (ordinal >= schema.size()) {
       return invalid("attribute " + std::to_string(ordinal) +
                      " is past the schema's " + std::to_string(schema.size()));
     }
-    if (widths(schema, w) != 0 || parse(schema, w, tuple, t) != 0) {
+    if (check_desc(desc) != 0 || parse_head(desc, tuple, t) != 0) {
       return -1;
     }
     datum = std::nullopt;
@@ -595,14 +651,22 @@ int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
     if (t.nulls && bit(t.nulls, ordinal)) {
       return 0;
     }
-    // Its entry follows those of the non-null attributes before it.
-    size_t pos = t.fixed;
-    for (size_t i = 0; i < ordinal; i++) {
-      if (!(t.nulls && bit(t.nulls, i))) {
-        pos += entry_width(w, i);
+    // Its entry is where it would be with no nulls, less what the
+    // nulls before it save; check only what this attribute uses.
+    size_t pos = t.fixed + desc.off[ordinal] - null_width(t, desc, ordinal);
+    if (pos + entry_width(desc, ordinal) > tuple.size()) {
+      return corrupt("cut short in its fixed part");
+    }
+    if (desc.width[ordinal] < 0) {
+      size_t start = slot_at(t, pos), len;
+      if (start < pos || start >= tuple.size()) {
+        return corrupt("a slot that does not point to its varlena");
+      }
+      if (const char *why = varlena_extent(tuple.substr(start), len)) {
+        return corrupt(why);
       }
     }
-    datum = datum_at(t, w, ordinal, pos);
+    datum = datum_at(t, desc, ordinal, pos);
     return 0;
   });
 }

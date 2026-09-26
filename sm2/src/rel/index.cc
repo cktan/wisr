@@ -26,6 +26,7 @@ struct sm2::index_t {
   std::span<const key_column_t> key; /* borrowed */
   bool unique;
   std::vector<attribute_t> value; /* rowno, cut, then INCLUDE */
+  tup_desc_t value_desc;          /* over value */
 };
 
 struct sm2::index_scan_t {
@@ -174,6 +175,8 @@ int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
       }
     }
     out = new index_t{session, storeid, prefix, key, unique, std::move(value)};
+    // Lay the value out once, for every entry; it borrows out->value.
+    out->value_desc = tup_desc_t(out->value);
     return 0;
   });
 }
@@ -206,7 +209,7 @@ int idx_insert(index_t *index, std::span<const datum_t> key, uint64_t rowno,
     std::vector<datum_t> datums = {{r, false}, {c, false}};
     datums.insert(datums.end(), include.begin(), include.end());
     std::string value;
-    if (tup_encode(index->value, datums, value) != 0) {
+    if (tup_encode(index->value_desc, datums, value) != 0) {
       return -1;
     }
     return sm1::insert(index->session, index->storeid, k, value);
@@ -284,8 +287,8 @@ int idx_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
     }
     // The value opens with the rowno and the cut flag.
     std::optional<std::string_view> r, c;
-    if (tup_decode(scan->index->value, value, 0, r) != 0 ||
-        tup_decode(scan->index->value, value, 1, c) != 0) {
+    if (tup_decode(scan->index->value_desc, value, 0, r) != 0 ||
+        tup_decode(scan->index->value_desc, value, 1, c) != 0) {
       return -1;
     }
     if (!r || !c) {

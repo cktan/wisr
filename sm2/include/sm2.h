@@ -345,6 +345,29 @@ std::string_view varlena_payload(std::string_view v);
 constexpr size_t max_tup_len = 65535;
 
 /*
+ * A schema laid out for the codec (TUPLE.md §6), as PostgreSQL's
+ * TupleDesc caches attlen and attcacheoff: each attribute's width
+ * and off[k], where attribute k's entry starts in a row with no
+ * nulls, counted from the start of the fixed part. Build one per
+ * schema and reuse it; it borrows the schema, which must outlive
+ * it. It converts implicitly from a schema, so a codec call handed
+ * a bare schema builds one for that call. An attribute with no
+ * type, or a typmod its type refuses, makes a desc every codec
+ * call refuses with SM_ERR_INVALID.
+ */
+struct tup_desc_t {
+    std::span<const attribute_t> schema;
+    std::vector<int32_t> width; /* datum_width; -1 if variable */
+    std::vector<size_t>  off;   /* schema.size() + 1 offsets */
+    size_t bad = SIZE_MAX;      /* first refused attribute, if any */
+
+    tup_desc_t() = default;
+    tup_desc_t(std::span<const attribute_t> schema);
+    tup_desc_t(const std::vector<attribute_t>& schema)
+        : tup_desc_t(std::span<const attribute_t>(schema)) {}
+};
+
+/*
  * Replace tuple with datums, one per attribute of schema, in the
  * layout of TUPLE.md: a byval datum as its bytes inside Datum;
  * a byref fixed-width datum as the bytes pointed to by Datum;
@@ -354,37 +377,40 @@ constexpr size_t max_tup_len = 65535;
  * and with SM_ERR_ROWTOOLONG on a tuple longer than
  * max_tup_len; either way tuple is left as it was.
  */
-int tup_encode(std::span<const attribute_t> schema,
-                 std::span<const Datum> datums,
-                 std::span<const bool> isnull, std::string& tuple);
+int tup_encode(const tup_desc_t& desc, std::span<const Datum> datums,
+               std::span<const bool> isnull, std::string& tuple);
 
-int tup_encode(std::span<const attribute_t> schema,
-                 std::span<const datum_t> datums, std::string& tuple);
+int tup_encode(const tup_desc_t& desc, std::span<const datum_t> datums,
+               std::string& tuple);
 
 /*
  * One attribute of a tuple, by its position in schema, into val
  * and isnull: byval sets val to the scalar value; byref sets val
  * to a pointer into tuple (or schema's missing value), sharing the
  * tuple's memory lifetime. A null or dropped attribute sets isnull
- * to true. Fails with SM_ERR_CORRUPT if tuple is malformed, or
- * SM_ERR_INVALID if ordinal is past schema.
+ * to true. Its entry is found as off[ordinal] less the widths of
+ * the nulls before it (TUPLE.md §6), and only what it touches is
+ * checked: the header, the bitmap, its entry and its varlena.
+ * Fails with SM_ERR_CORRUPT if those are malformed -- a flaw
+ * elsewhere in the tuple is tup_deform's and tup_check's to find
+ * -- or SM_ERR_INVALID if ordinal is past the schema.
  */
-int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
-                 size_t ordinal, Datum& val, bool& isnull);
+int tup_decode(const tup_desc_t& desc, std::string_view tuple, size_t ordinal,
+               Datum& val, bool& isnull);
 
 /*
  * Overload returning an optional string_view into tuple or missing.
  */
-int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
-                 size_t ordinal, std::optional<std::string_view>& datum);
+int tup_decode(const tup_desc_t& desc, std::string_view tuple, size_t ordinal,
+               std::optional<std::string_view>& datum);
 
 /*
  * Deform every attribute of tuple into datums and isnull in one
  * pass. datums and isnull must both have size equal to schema.size().
  * Any by-reference Datum points directly into tuple (or schema missing).
  */
-int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
-                 std::span<Datum> datums, std::span<bool> isnull);
+int tup_deform(const tup_desc_t& desc, std::string_view tuple,
+               std::span<Datum> datums, std::span<bool> isnull);
 
 /*
  * Check that tuple is one tup_encode could have written under
@@ -392,11 +418,11 @@ int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
  * one in schema and none dropped that is not null. Fails with
  * SM_ERR_INVALID, since the tuple is the caller's to fix.
  */
-int tup_check(std::span<const attribute_t> schema, std::string_view tuple);
+int tup_check(const tup_desc_t& desc, std::string_view tuple);
 
 /* Every attribute of a tuple, in one pass, as tup_decode gives each. */
-int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
-                 std::vector<std::optional<std::string_view>>& datums);
+int tup_deform(const tup_desc_t& desc, std::string_view tuple,
+               std::vector<std::optional<std::string_view>>& datums);
 
 /*
  * A heap rel (SM2_DESIGN.md §5): one table's rows in one sm1

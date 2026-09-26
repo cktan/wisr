@@ -146,8 +146,9 @@ at the first null or variable-width attribute; this does not.
 No count of leading non-null attributes is kept in the header:
 it is the bitmap's first set bit, found the same way, and the
 flag bits stay reserved for the format to grow into. The codec
-does not use `off[]` yet; it sums the widths attribute by
-attribute.
+keeps `off[]` in a `tup_desc_t` (`include/sm2.h`), built once
+per schema — a heap `rel` and an index each build theirs when
+opened — and `tup_decode` finds an entry by it.
 
 ## 7. Examples
 
@@ -166,13 +167,22 @@ taking nothing; then at byte 10, the varlena `07 68 69`,
 
 ## 8. A malformed tuple
 
-A reader refuses, with `SM_ERR_CORRUPT`, a tuple that is empty
+`tup_deform`, which reads the whole tuple, refuses with
+`SM_ERR_CORRUPT` a tuple that is empty
 or longer than 65535 bytes; has a reserved flag set; has a
 malformed `natts`, or one past the schema's count; is cut short
 in its bitmap or fixed part; has a slot that does not point
 where its varlena should start (§5); holds a varlena that is
 not valid (`VARLENA.md` §4); or has bytes past its last
-varlena.
+varlena. `tup_check` refuses the same, as `SM_ERR_INVALID`,
+before a tuple is written.
+
+`tup_decode` reads one attribute, so it checks only what it
+reads: the header and bitmap, the attribute's entry, and for a
+variable attribute its slot and varlena, each within the tuple.
+A flaw elsewhere in the tuple is not its to find, as a
+PostgreSQL attribute fetch does not check the rest of its row;
+it never reads outside the tuple.
 
 ## 9. Codec API
 

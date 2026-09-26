@@ -193,11 +193,11 @@ sm_datum_t c_datum_of(const std::optional<std::string_view> &d) {
            : sm_datum_t{nullptr, 0, true};
 }
 
-/* One attribute of tuple under schema into *out. */
-int decode(std::span<const sm2::attribute_t> schema, const void *tuple,
-           size_t len, size_t ordinal, sm_datum_t *out) {
+/* One attribute of tuple under desc into *out. */
+int decode(const sm2::tup_desc_t &desc, const void *tuple, size_t len,
+           size_t ordinal, sm_datum_t *out) {
   std::optional<std::string_view> d;
-  if (sm2::tup_decode(schema,
+  if (sm2::tup_decode(desc,
                       std::string_view(static_cast<const char *>(tuple), len),
                       ordinal, d) != 0) {
     return -1;
@@ -206,15 +206,15 @@ int decode(std::span<const sm2::attribute_t> schema, const void *tuple,
   return 0;
 }
 
-/* Every attribute of tuple under schema into out[0..n), via buf. */
-int deform(std::span<const sm2::attribute_t> schema,
+/* Every attribute of tuple under desc into out[0..n), via buf. */
+int deform(const sm2::tup_desc_t &desc,
            std::vector<std::optional<std::string_view>> &buf, const void *tuple,
            size_t len, sm_datum_t *out, size_t n) {
-  if (n != schema.size()) {
+  if (n != desc.schema.size()) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "deform: n is not the schema's attribute count");
   }
-  if (sm2::tup_deform(schema,
+  if (sm2::tup_deform(desc,
                       std::string_view(static_cast<const char *>(tuple), len),
                       buf) != 0) {
     return -1;
@@ -247,6 +247,7 @@ void view_out(std::string_view v, const void **data, size_t *len) {
 struct sm_rel_t {
   sm1::session_t *session;
   std::vector<sm2::attribute_t> schema;
+  sm2::tup_desc_t desc; /* over schema */
   sm2::rel_t *rel = nullptr;
   std::vector<sm2::datum_t> datums;
   std::vector<std::optional<std::string_view>> deformed;
@@ -262,6 +263,7 @@ struct sm_idx_t {
   std::vector<sm2::key_column_t> key;
   std::vector<sm2::attribute_t> include;
   sm2::index_t *index = nullptr;
+  sm2::tup_desc_t value_desc; /* over the index's value schema */
   std::vector<sm2::datum_t> key_datums;
   std::vector<sm2::datum_t> include_datums;
   std::vector<std::optional<std::string_view>> deformed;
@@ -613,6 +615,8 @@ int sm_rel_open(sm_session_t *session, uint64_t storeid, uint16_t prefix,
     sm_rel_t *rel = new sm_rel_t;
     rel->session = s;
     rel->schema = schema_of(schema, n);
+    // Lay the schema out once, for every row decoded through rel.
+    rel->desc = sm2::tup_desc_t(rel->schema);
     if (sm2::rel_open(s, storeid, prefix, rel->schema, name_of(rowno_seq),
                       rel->rel) != 0) {
       delete rel;
@@ -872,7 +876,7 @@ int sm_rel_deform_values(sm_rel_t *rel, const void *tuple, size_t len,
     std::string_view v(static_cast<const char *>(tuple), len);
     std::span<sm2::Datum> val_span(values, n);
     std::span<bool> null_span(isnull, n);
-    return sm2::tup_deform(rel->schema, v, val_span, null_span);
+    return sm2::tup_deform(rel->desc, v, val_span, null_span);
   });
 }
 
@@ -887,7 +891,7 @@ int sm_rel_decode_value(sm_rel_t *rel, const void *tuple, size_t len,
                                                       : "isnull");
     }
     std::string_view v(static_cast<const char *>(tuple), len);
-    return sm2::tup_decode(rel->schema, v, ordinal, *val, *isnull);
+    return sm2::tup_decode(rel->desc, v, ordinal, *val, *isnull);
   });
 }
 
@@ -895,14 +899,14 @@ int sm_rel_decode_value(sm_rel_t *rel, const void *tuple, size_t len,
 int sm_rel_decode(sm_rel_t *rel, const void *tuple, size_t len, size_t ordinal,
                   sm_datum_t *out) {
   return guard(nullptr,
-               [&] { return decode(rel->schema, tuple, len, ordinal, out); });
+               [&] { return decode(rel->desc, tuple, len, ordinal, out); });
 }
 
 /* Every attribute of a row's tuple. */
 int sm_rel_deform(sm_rel_t *rel, const void *tuple, size_t len, sm_datum_t *out,
                   size_t n) {
   return guard(nullptr, [&] {
-    return deform(rel->schema, rel->deformed, tuple, len, out, n);
+    return deform(rel->desc, rel->deformed, tuple, len, out, n);
   });
 }
 
@@ -927,6 +931,8 @@ int sm_idx_open(sm_session_t *session, uint64_t storeid, uint16_t prefix,
       delete idx;
       return -1;
     }
+    // Lay the entry value out once, for every entry decoded.
+    idx->value_desc = sm2::tup_desc_t(sm2::idx_value_schema(idx->index));
     *out = idx;
     return 0;
   });
@@ -1016,7 +1022,7 @@ void sm_idx_scanend(sm_idx_scan_t *scan) {
 int sm_idx_decode(sm_idx_t *idx, const void *value, size_t len, size_t ordinal,
                   sm_datum_t *out) {
   return guard(nullptr, [&] {
-    return decode(sm2::idx_value_schema(idx->index), value, len, ordinal, out);
+    return decode(idx->value_desc, value, len, ordinal, out);
   });
 }
 
@@ -1024,8 +1030,7 @@ int sm_idx_decode(sm_idx_t *idx, const void *value, size_t len, size_t ordinal,
 int sm_idx_deform(sm_idx_t *idx, const void *value, size_t len, sm_datum_t *out,
                   size_t n) {
   return guard(nullptr, [&] {
-    return deform(sm2::idx_value_schema(idx->index), idx->deformed, value, len,
-                  out, n);
+    return deform(idx->value_desc, idx->deformed, value, len, out, n);
   });
 }
 
