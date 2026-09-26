@@ -624,7 +624,15 @@ int tup_decode(const tup_desc_t &desc, std::string_view tuple, size_t ordinal,
   return 0;
 }
 
-/* One attribute of a tuple, by ordinal; see sm2.h. */
+/*
+ * One attribute of a tuple, by ordinal, as a view: its bytes, or
+ * std::nullopt for null; see sm2.h. It reads only what the
+ * attribute needs (TUPLE.md §6, §8): the header and bitmap, then
+ * the attribute's entry, found at off[ordinal] less the widths of
+ * the nulls before it, and for a variable attribute its varlena.
+ * Everything it reads is bounds-checked, but the rest of the tuple
+ * is not validated; tup_deform and tup_check do that.
+ */
 int tup_decode(const tup_desc_t &desc, std::string_view tuple, size_t ordinal,
                std::optional<std::string_view> &datum) {
   return catch_nomem([&] {
@@ -634,29 +642,42 @@ int tup_decode(const tup_desc_t &desc, std::string_view tuple, size_t ordinal,
       return invalid("attribute " + std::to_string(ordinal) +
                      " is past the schema's " + std::to_string(schema.size()));
     }
+    // Step 1: a usable schema, then the header and null bitmap only
+    // -- flags, natts, and that the bitmap fits -- not the fixed
+    // part or the var data.
     if (check_desc(desc) != 0 || parse_head(desc, tuple, t) != 0) {
       return -1;
     }
     datum = std::nullopt;
     const attribute_t &a = schema[ordinal];
+    // A dropped attribute reads as null, whatever the row holds.
     if (a.dropped) {
       return 0;
     }
+    // Step 2: the row was written before the attribute was added,
+    // so it has no entry; it reads as the missing value, or null.
     if (ordinal >= t.natts) {
       if (a.missing) {
         datum = std::string_view(*a.missing);
       }
       return 0;
     }
+    // Step 3: its bit in the null bitmap is set.
     if (t.nulls && bit(t.nulls, ordinal)) {
       return 0;
     }
-    // Its entry is where it would be with no nulls, less what the
-    // nulls before it save; check only what this attribute uses.
+    // Step 4: its entry is where it would be in a row with no
+    // nulls, off[ordinal] from the fixed part's start, less the
+    // entry widths the nulls before it do not take.
     size_t pos = t.fixed + desc.off[ordinal] - null_width(t, desc, ordinal);
+    // The entry -- a datum, or a 2-byte slot -- must lie within the
+    // tuple; a truncated or damaged tuple could place it past.
     if (pos + entry_width(desc, ordinal) > tuple.size()) {
       return corrupt("cut short in its fixed part");
     }
+    // Step 5, variable width: the slot must point past its own
+    // entry and into the tuple, and the varlena there must be one
+    // the codec reads, ending within the tuple.
     if (desc.width[ordinal] < 0) {
       size_t start = slot_at(t, pos), len;
       if (start < pos || start >= tuple.size()) {
@@ -666,6 +687,8 @@ int tup_decode(const tup_desc_t &desc, std::string_view tuple, size_t ordinal,
         return corrupt(why);
       }
     }
+    // Step 5: the fixed-width datum itself, or the varlena whole,
+    // header included, as a view into tuple.
     datum = datum_at(t, desc, ordinal, pos);
     return 0;
   });
