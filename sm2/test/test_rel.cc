@@ -374,3 +374,61 @@ TEST_CASE("a row that cannot be encoded draws no rowno") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm2::rel_open(nullptr, db.store(), 0, schema, "rowno", out) == -1);
 }
+
+TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
+  // Verify rel_insert and rel_update with raw bytes and Datum/isnull.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt},
+      {&sm2::type_text, -1, false, std::nullopt}};
+  sm2::rel_t *rel = open_rel(db, s, schema);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+
+  // 1. Raw tuple byte insert and read.
+  std::string vl1 = sm2::make_varlena("first");
+  sm2::Datum d1[2] = {sm2::datum_from_int32(100),
+                      sm2::datum_from_ptr(vl1.data())};
+  bool nulls1[2] = {false, false};
+  std::string tuple1;
+  REQUIRE(sm2::tuple_encode(schema, d1, nulls1, tuple1) == 0);
+
+  uint64_t r1;
+  REQUIRE(sm2::rel_insert(rel, tuple1, r1) == 0);
+
+  std::string_view read_t1;
+  REQUIRE(sm2::rel_read(rel, r1, read_t1) == 0);
+  CHECK(read_t1 == tuple1);
+
+  // 2. Raw tuple byte update.
+  std::string vl2 = sm2::make_varlena("second");
+  sm2::Datum d2[2] = {sm2::datum_from_int32(200),
+                      sm2::datum_from_ptr(vl2.data())};
+  bool nulls2[2] = {false, false};
+  std::string tuple2;
+  REQUIRE(sm2::tuple_encode(schema, d2, nulls2, tuple2) == 0);
+
+  std::string_view old_t;
+  REQUIRE(sm2::rel_update(rel, r1, tuple2, &old_t) == 0);
+  CHECK(old_t == tuple1);
+
+  std::string_view read_t2;
+  REQUIRE(sm2::rel_read(rel, r1, read_t2) == 0);
+  CHECK(read_t2 == tuple2);
+
+  // 3. rel_insert taking (Datum, isnull) directly.
+  uint64_t r2;
+  REQUIRE(sm2::rel_insert(rel, d1, nulls1, r2) == 0);
+  CHECK(r2 > r1);
+  REQUIRE(sm2::rel_read(rel, r2, read_t1) == 0);
+  CHECK(read_t1 == tuple1);
+
+  // 4. rel_update taking (Datum, isnull) directly.
+  REQUIRE(sm2::rel_update(rel, r2, d2, nulls2, &old_t) == 0);
+  CHECK(old_t == tuple1);
+  REQUIRE(sm2::rel_read(rel, r2, read_t2) == 0);
+  CHECK(read_t2 == tuple2);
+
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+}

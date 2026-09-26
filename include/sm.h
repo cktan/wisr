@@ -38,6 +38,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "sm_error.h"
 #include "sm_options.h"
@@ -238,6 +239,48 @@ typedef struct sm_datum_t {
 } sm_datum_t;
 
 /*
+ * A PostgreSQL-compatible 8-byte Datum (postgres.h).
+ * For a by-value type, the value itself fits in the Datum (int2,
+ * int4, int8, bool, float4, float8, date, time, timestamp,
+ * timestamptz). For a by-reference type, it is a pointer to the
+ * bytes or varlena.
+ */
+typedef uintptr_t sm_datum_val_t;
+
+#define SM_DATUM_FROM_INT16(v) ((sm_datum_val_t)(uint16_t)(v))
+#define SM_DATUM_FROM_INT32(v) ((sm_datum_val_t)(uint32_t)(v))
+#define SM_DATUM_FROM_INT64(v) ((sm_datum_val_t)(uint64_t)(v))
+#define SM_DATUM_FROM_BOOL(v)  ((sm_datum_val_t)((v) ? 1 : 0))
+#define SM_DATUM_FROM_PTR(p)   ((sm_datum_val_t)(const void*)(p))
+
+#define SM_DATUM_TO_INT16(d)   ((int16_t)(uint16_t)(d))
+#define SM_DATUM_TO_INT32(d)   ((int32_t)(uint32_t)(d))
+#define SM_DATUM_TO_INT64(d)   ((int64_t)(uint64_t)(d))
+#define SM_DATUM_TO_BOOL(d)    (((uint8_t)(d)) != 0)
+#define SM_DATUM_TO_PTR(d)     ((const void*)(uintptr_t)(d))
+
+static inline sm_datum_val_t sm_datum_from_float(float f) {
+    sm_datum_val_t d = 0;
+    memcpy(&d, &f, sizeof(float));
+    return d;
+}
+static inline sm_datum_val_t sm_datum_from_double(double f) {
+    sm_datum_val_t d = 0;
+    memcpy(&d, &f, sizeof(double));
+    return d;
+}
+static inline float sm_datum_to_float(sm_datum_val_t d) {
+    float f;
+    memcpy(&f, &d, sizeof(float));
+    return f;
+}
+static inline double sm_datum_to_double(sm_datum_val_t d) {
+    double f;
+    memcpy(&f, &d, sizeof(double));
+    return f;
+}
+
+/*
  * One attribute of a table's schema: its type and typmod, whether
  * it is dropped, and what a row older than it reads it as --
  * null, or missing[0..missing_len) when has_missing is set.
@@ -295,15 +338,39 @@ void sm_rel_close(sm_rel_t* rel);
 /* The number of attributes in the rel's schema. */
 size_t sm_rel_ncols(const sm_rel_t* rel);
 
+/* Insert an already-encoded tuple into the heap rel; *rowno is its id. */
+int sm_rel_insert_tuple(sm_rel_t* rel, const void* tuple, size_t len,
+                        uint64_t* rowno);
+
+/* Replace the row at rowno with an already-encoded tuple. */
+int sm_rel_update_tuple(sm_rel_t* rel, uint64_t rowno, const void* tuple,
+                        size_t len, const void** old, size_t* old_len);
+
+/* Insert a row of values and isnull; *rowno is its id. */
+int sm_rel_insert_values(sm_rel_t* rel, const sm_datum_val_t* values,
+                         const bool* isnull, size_t n, uint64_t* rowno);
+
+/* Replace a row with values and isnull. */
+int sm_rel_update_values(sm_rel_t* rel, uint64_t rowno,
+                         const sm_datum_val_t* values, const bool* isnull,
+                         size_t n, const void** old, size_t* old_len);
+
 /* Insert a row of n datums, one per attribute; *rowno is its id. */
 int sm_rel_insert(sm_rel_t* rel, const sm_datum_t* datums, size_t n,
                   uint64_t* rowno);
 
-/* Read the row at rowno: 0 with its tuple, 1 if none, or -1. */
+/*
+ * Read the row at rowno: 0 with its tuple, 1 if none, or -1.
+ * The tuple points into session memory and stays valid only
+ * until the next call on this session.
+ */
 int sm_rel_read(sm_rel_t* rel, uint64_t rowno, const void** tuple,
                 size_t* len);
 
-/* Read the newest committed version of the row at rowno. */
+/*
+ * Read the newest committed version of the row at rowno.
+ * Valid only until the next call on this session.
+ */
 int sm_rel_read_latest(sm_rel_t* rel, uint64_t rowno, const void** tuple,
                        size_t* len);
 
@@ -328,6 +395,19 @@ int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t rowno);
 
 /* Close a cursor; NULL is a no-op. */
 void sm_rel_scanend(sm_rel_scan_t* scan);
+
+/* Encode values and isnull into a tuple buffer; sm_free(*tuple). */
+int sm_tuple_encode(const sm_attribute_t* schema, size_t natts,
+                    const sm_datum_val_t* values, const bool* isnull,
+                    void** tuple, size_t* len);
+
+/* Deform tuple into values and isnull arrays of size n (sm_rel_ncols). */
+int sm_rel_deform_values(sm_rel_t* rel, const void* tuple, size_t len,
+                         sm_datum_val_t* values, bool* isnull, size_t n);
+
+/* Decode one attribute into val and isnull. */
+int sm_rel_decode_value(sm_rel_t* rel, const void* tuple, size_t len,
+                        size_t ordinal, sm_datum_val_t* val, bool* isnull);
 
 /*
  * One attribute of a tuple, by ordinal, into *out: a view into

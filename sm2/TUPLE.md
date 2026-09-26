@@ -147,3 +147,26 @@ the schema's count; is cut short in its bitmap or fixed part;
 has a slot that does not point where its varlena should start
 (§5); holds a varlena that is not valid (`VARLENA.md` §4); or
 has bytes past its last varlena.
+
+## 9. Codec API
+
+The tuple codec provides two decoupled interfaces:
+
+- **PostgreSQL Datum & Nulls (SoA):**
+  - `tuple_encode(schema, datums, isnull, tuple)` encodes
+    columns into on-disk format from separate Datum and null
+    arrays matching PostgreSQL's `heap_form_tuple`.
+  - `tuple_decode(schema, tuple, ordinal, val, isnull)`
+    extracts a single attribute lazily in $O(1)$ time without
+    deforming preceding or following columns.
+  - `tuple_deform(schema, tuple, datums, isnull)` deforms all
+    columns into contiguous output spans in a single pass with
+    zero memory allocations.
+- **Raw Tuple Byte Storage:**
+  - `rel_insert(rel, tuple, rowno)` writes already-encoded
+    tuple bytes directly under a newly allocated sequence id.
+  - `rel_read(rel, rowno, tuple)` and `rel_scannxt(...)` return
+    `std::string_view` referencing raw bytes in RocksDB buffer
+    memory with zero copies.
+  - `rel_update(rel, rowno, tuple, old)` replaces a row
+    directly using pre-encoded tuple bytes.

@@ -78,6 +78,20 @@
 (table-drop products)
 (commit)
 
+# 9. C API tuple and value functions
+(begin :rc)
+(table-create test_c_api
+  (columns
+    (id :int4 :not-null)
+    (name :text :not-null)
+    (price :float8)
+    (stock :int8)
+    (active :bool)))
+(def c-row (test-c-api test_c_api))
+(assert-eq (read test_c_api c-row) [43 "Echo" 12.34 500 true])
+(table-drop test_c_api)
+(commit)
+
 (db-close)
 (env-detach :force true)
 (rm-rf test-dir)

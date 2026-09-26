@@ -334,3 +334,66 @@ TEST_CASE("a varlena is PostgreSQL's, in its shortest form") {
   CHECK(deform(schema, t) ==
         std::vector<std::optional<std::string>>{sm2::make_varlena("abc")});
 }
+
+TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
+  // Verify tuple_encode, tuple_deform, tuple_decode with
+  // Datum and isnull arrays.
+  std::vector<sm2::attribute_t> schema = {
+      attr(sm2::type_int4), attr(sm2::type_text), attr(sm2::type_int8),
+      attr(sm2::type_bool)};
+  std::string vl_hi = vl("hi");
+  sm2::Datum datums[4] = {sm2::datum_from_int32(7),
+                          sm2::datum_from_ptr(vl_hi.data()), 0,
+                          sm2::datum_from_bool(true)};
+  bool isnull[4] = {false, false, true, false};
+  std::string t;
+  REQUIRE(sm2::tuple_encode(schema, datums, isnull, t) == 0);
+  CHECK(hex(t) == "010404070000000a0001076869");
+
+  // Deform back to Datum and isnull.
+  sm2::Datum out_d[4];
+  bool out_null[4];
+  REQUIRE(sm2::tuple_deform(schema, t, out_d, out_null) == 0);
+  CHECK_FALSE(out_null[0]);
+  CHECK(sm2::datum_to_int32(out_d[0]) == 7);
+  CHECK_FALSE(out_null[1]);
+  const char *text_ptr = reinterpret_cast<const char *>(out_d[1]);
+  CHECK(sm2::varlena_payload(std::string_view(text_ptr, 3)) == "hi");
+  CHECK(out_null[2]);
+  CHECK_FALSE(out_null[3]);
+  CHECK(sm2::datum_to_bool(out_d[3]) == true);
+
+  // Decode each attribute individually.
+  sm2::Datum val;
+  bool is_null;
+  REQUIRE(sm2::tuple_decode(schema, t, 0, val, is_null) == 0);
+  CHECK_FALSE(is_null);
+  CHECK(sm2::datum_to_int32(val) == 7);
+
+  REQUIRE(sm2::tuple_decode(schema, t, 1, val, is_null) == 0);
+  CHECK_FALSE(is_null);
+  CHECK(sm2::varlena_payload(
+            std::string_view(reinterpret_cast<const char *>(val), 3)) == "hi");
+
+  REQUIRE(sm2::tuple_decode(schema, t, 2, val, is_null) == 0);
+  CHECK(is_null);
+
+  REQUIRE(sm2::tuple_decode(schema, t, 3, val, is_null) == 0);
+  CHECK_FALSE(is_null);
+  CHECK(sm2::datum_to_bool(val) == true);
+
+  // Missing attribute decoding.
+  std::string missing_val = le(int64_t{9999});
+  std::vector<sm2::attribute_t> expanded = schema;
+  expanded.push_back({&sm2::type_int8, -1, false, missing_val});
+
+  sm2::Datum exp_d[5];
+  bool exp_null[5];
+  REQUIRE(sm2::tuple_deform(expanded, t, exp_d, exp_null) == 0);
+  CHECK_FALSE(exp_null[4]);
+  CHECK(sm2::datum_to_int64(exp_d[4]) == 9999);
+
+  REQUIRE(sm2::tuple_decode(expanded, t, 4, val, is_null) == 0);
+  CHECK_FALSE(is_null);
+  CHECK(sm2::datum_to_int64(val) == 9999);
+}

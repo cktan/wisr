@@ -379,6 +379,17 @@ Returns an array of `[rowno key-tuple include-tuple]` entries.
 (def hits (idx-scan idx_users_email :ge ["alice@"] :le ["alice@~"]))
 ```
 
+### `(test-c-api table)`
+Exercises the low-level C API (`sm_tuple_encode`,
+`sm_rel_insert_tuple`, `sm_rel_update_tuple`,
+`sm_rel_insert_values`, `sm_rel_update_values`,
+`sm_rel_deform_values`, `sm_rel_decode_value`) directly against
+`table`. Returns the allocated `rowno`.
+
+```janet
+(def r (test-c-api users))
+```
+
 ---
 
 ## 7. Diagnostics & Error Handling

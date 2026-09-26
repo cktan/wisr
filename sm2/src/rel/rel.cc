@@ -76,13 +76,8 @@ std::span<const attribute_t> rel_schema(const rel_t *rel) {
 }
 
 /* Insert a row under a new rowno; see sm2.h. */
-int rel_insert(rel_t *rel, std::span<const datum_t> datums, uint64_t &rowno) {
+int rel_insert(rel_t *rel, std::string_view tuple, uint64_t &rowno) {
   return catch_nomem([&] {
-    // Encode first, so a row that cannot be stored draws no rowno.
-    std::string tuple;
-    if (encode(rel, datums, tuple) != 0) {
-      return -1;
-    }
     // Draw the rowno from the table's sequence.
     uint64_t r;
     if (sm1::nextseq(rel->session, rel->rowno_seq, r) != 0) {
@@ -95,6 +90,29 @@ int rel_insert(rel_t *rel, std::span<const datum_t> datums, uint64_t &rowno) {
     }
     rowno = r;
     return 0;
+  });
+}
+
+/* Insert a row by Datum and isnull; see sm2.h. */
+int rel_insert(rel_t *rel, std::span<const Datum> datums,
+               std::span<const bool> isnull, uint64_t &rowno) {
+  return catch_nomem([&] {
+    std::string tuple;
+    if (tuple_encode(rel->schema, datums, isnull, tuple) != 0) {
+      return -1;
+    }
+    return rel_insert(rel, tuple, rowno);
+  });
+}
+
+/* Insert a row by datum_t; see sm2.h. */
+int rel_insert(rel_t *rel, std::span<const datum_t> datums, uint64_t &rowno) {
+  return catch_nomem([&] {
+    std::string tuple;
+    if (encode(rel, datums, tuple) != 0) {
+      return -1;
+    }
+    return rel_insert(rel, tuple, rowno);
   });
 }
 
@@ -114,7 +132,28 @@ int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
   });
 }
 
-/* Replace the row at rowno, handing back the old tuple. */
+/* Replace the row at rowno with an already-encoded tuple; see sm2.h. */
+int rel_update(rel_t *rel, uint64_t rowno, std::string_view tuple,
+               std::string_view *old) {
+  return catch_nomem([&] {
+    return sm1::update(rel->session, rel->storeid, row_key(rel->prefix, rowno),
+                       tuple, old);
+  });
+}
+
+/* Replace the row at rowno with Datum and isnull; see sm2.h. */
+int rel_update(rel_t *rel, uint64_t rowno, std::span<const Datum> datums,
+               std::span<const bool> isnull, std::string_view *old) {
+  return catch_nomem([&] {
+    std::string tuple;
+    if (tuple_encode(rel->schema, datums, isnull, tuple) != 0) {
+      return -1;
+    }
+    return rel_update(rel, rowno, tuple, old);
+  });
+}
+
+/* Replace the row at rowno with datum_t; see sm2.h. */
 int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
                std::string_view *old) {
   return catch_nomem([&] {
@@ -122,8 +161,7 @@ int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
     if (encode(rel, datums, tuple) != 0) {
       return -1;
     }
-    return sm1::update(rel->session, rel->storeid, row_key(rel->prefix, rowno),
-                       tuple, old);
+    return rel_update(rel, rowno, tuple, old);
   });
 }
 

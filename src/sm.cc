@@ -621,6 +621,77 @@ void sm_rel_close(sm_rel_t *rel) {
 /* The number of attributes in the rel's schema. */
 size_t sm_rel_ncols(const sm_rel_t *rel) { return rel->schema.size(); }
 
+/* Insert an already-encoded tuple into the heap rel. */
+int sm_rel_insert_tuple(sm_rel_t *rel, const void *tuple, size_t len,
+                        uint64_t *rowno) {
+  return guard(rel->session, [&] {
+    if (!rowno) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_rel_insert_tuple: rowno is NULL");
+    }
+    std::string_view v(static_cast<const char *>(tuple), len);
+    return sm2::rel_insert(rel->rel, v, *rowno);
+  });
+}
+
+/* Replace the row at rowno with an already-encoded tuple. */
+int sm_rel_update_tuple(sm_rel_t *rel, uint64_t rowno, const void *tuple,
+                        size_t len, const void **old, size_t *old_len) {
+  return guard(rel->session, [&] {
+    std::string_view v(static_cast<const char *>(tuple), len);
+    std::string_view old_v;
+    if (sm2::rel_update(rel->rel, rowno, v,
+                        old != nullptr ? &old_v : nullptr) != 0) {
+      return -1;
+    }
+    if (old != nullptr) {
+      view_out(old_v, old, old_len);
+    }
+    return 0;
+  });
+}
+
+/* Insert a row of values and isnull. */
+int sm_rel_insert_values(sm_rel_t *rel, const sm_datum_val_t *values,
+                         const bool *isnull, size_t n, uint64_t *rowno) {
+  return guard(rel->session, [&] {
+    if (!rowno) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_rel_insert_values: rowno is NULL");
+    }
+    if (n != rel->schema.size()) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_rel_insert_values: n is not rel schema count");
+    }
+    std::span<const sm2::Datum> val_span(values, n);
+    std::span<const bool> null_span(isnull, n);
+    return sm2::rel_insert(rel->rel, val_span, null_span, *rowno);
+  });
+}
+
+/* Replace a row with values and isnull. */
+int sm_rel_update_values(sm_rel_t *rel, uint64_t rowno,
+                         const sm_datum_val_t *values, const bool *isnull,
+                         size_t n, const void **old, size_t *old_len) {
+  return guard(rel->session, [&] {
+    if (n != rel->schema.size()) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_rel_update_values: n is not rel schema count");
+    }
+    std::span<const sm2::Datum> val_span(values, n);
+    std::span<const bool> null_span(isnull, n);
+    std::string_view old_v;
+    if (sm2::rel_update(rel->rel, rowno, val_span, null_span,
+                        old != nullptr ? &old_v : nullptr) != 0) {
+      return -1;
+    }
+    if (old != nullptr) {
+      view_out(old_v, old, old_len);
+    }
+    return 0;
+  });
+}
+
 /* Insert a row. */
 int sm_rel_insert(sm_rel_t *rel, const sm_datum_t *datums, size_t n,
                   uint64_t *rowno) {
@@ -724,6 +795,61 @@ int sm_rel_scan_seek(sm_rel_scan_t *scan, uint64_t rowno) {
 /* Close a heap cursor. */
 void sm_rel_scanend(sm_rel_scan_t *scan) {
   sm2::rel_scanend(rel_scan_of(scan));
+}
+
+/* Encode values and isnull into a tuple buffer; sm_free(*tuple). */
+int sm_tuple_encode(const sm_attribute_t *schema, size_t natts,
+                    const sm_datum_val_t *values, const bool *isnull,
+                    void **tuple, size_t *len) {
+  return guard(nullptr, [&] {
+    if (!tuple || !len || (!values && natts > 0) || (!isnull && natts > 0)) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_tuple_encode: invalid arguments");
+    }
+    auto s = schema_of(schema, natts);
+    std::string out;
+    std::span<const sm2::Datum> val_span(values, natts);
+    std::span<const bool> null_span(isnull, natts);
+    if (sm2::tuple_encode(s, val_span, null_span, out) != 0) {
+      return -1;
+    }
+    void *buf = std::malloc(out.size());
+    if (!buf) {
+      return sm1::seterr(sm1::SM_ERR_NOMEM, "sm_tuple_encode: out of memory");
+    }
+    std::memcpy(buf, out.data(), out.size());
+    *tuple = buf;
+    *len = out.size();
+    return 0;
+  });
+}
+
+/* Deform tuple into values and isnull arrays of size n. */
+int sm_rel_deform_values(sm_rel_t *rel, const void *tuple, size_t len,
+                         sm_datum_val_t *values, bool *isnull, size_t n) {
+  return guard(nullptr, [&] {
+    if (n != rel->schema.size()) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_rel_deform_values: n is not rel schema count");
+    }
+    std::string_view v(static_cast<const char *>(tuple), len);
+    std::span<sm2::Datum> val_span(values, n);
+    std::span<bool> null_span(isnull, n);
+    return sm2::tuple_deform(rel->schema, v, val_span, null_span);
+  });
+}
+
+/* Decode one attribute into val and isnull. */
+int sm_rel_decode_value(sm_rel_t *rel, const void *tuple, size_t len,
+                        size_t ordinal, sm_datum_val_t *val, bool *isnull) {
+  return guard(nullptr, [&] {
+    if (!val || !isnull) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_rel_decode_value: val or isnull is NULL");
+    }
+    std::string_view v(static_cast<const char *>(tuple), len);
+    return sm2::tuple_decode(rel->schema, v, ordinal, *val, *isnull);
+  });
 }
 
 /* One attribute of a row's tuple. */

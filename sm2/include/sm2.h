@@ -21,6 +21,7 @@
 #include "sm1.h"
 
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <span>
 #include <string>
@@ -157,6 +158,90 @@ struct datum_t {
 };
 
 /*
+ * A datum: a PostgreSQL 8-byte scalar value or pointer (postgres.h).
+ * For a by-value type (type_t::byval is true), the value itself fits
+ * in the Datum (cast to/from int2, int4, int8, bool, float4, float8,
+ * date, time, timestamp, timestamptz).
+ * For a by-reference type (type_t::byval is false), Datum is a pointer
+ * (reinterpret_cast<const char*>) to its bytes: fixed-width bytes for
+ * uuid, interval, decimal; or a PostgreSQL varlena (header included)
+ * for text, varchar, bytea.
+ */
+using Datum = uintptr_t;
+
+inline Datum datum_from_int16(int16_t val) {
+    Datum d = 0;
+    std::memcpy(&d, &val, sizeof(val));
+    return d;
+}
+inline Datum datum_from_int32(int32_t val) {
+    Datum d = 0;
+    std::memcpy(&d, &val, sizeof(val));
+    return d;
+}
+inline Datum datum_from_int64(int64_t val) {
+    Datum d = 0;
+    std::memcpy(&d, &val, sizeof(val));
+    return d;
+}
+inline Datum datum_from_uint64(uint64_t val) {
+    return static_cast<Datum>(val);
+}
+inline Datum datum_from_bool(bool val) {
+    Datum d = 0;
+    uint8_t b = val ? 1 : 0;
+    std::memcpy(&d, &b, 1);
+    return d;
+}
+inline Datum datum_from_float(float val) {
+    Datum d = 0;
+    std::memcpy(&d, &val, sizeof(val));
+    return d;
+}
+inline Datum datum_from_double(double val) {
+    Datum d = 0;
+    std::memcpy(&d, &val, sizeof(val));
+    return d;
+}
+inline Datum datum_from_ptr(const void* ptr) {
+    return reinterpret_cast<Datum>(ptr);
+}
+
+inline int16_t datum_to_int16(Datum d) {
+    int16_t val;
+    std::memcpy(&val, &d, sizeof(val));
+    return val;
+}
+inline int32_t datum_to_int32(Datum d) {
+    int32_t val;
+    std::memcpy(&val, &d, sizeof(val));
+    return val;
+}
+inline int64_t datum_to_int64(Datum d) {
+    int64_t val;
+    std::memcpy(&val, &d, sizeof(val));
+    return val;
+}
+inline bool datum_to_bool(Datum d) {
+    uint8_t b;
+    std::memcpy(&b, &d, 1);
+    return b != 0;
+}
+inline float datum_to_float(Datum d) {
+    float val;
+    std::memcpy(&val, &d, sizeof(val));
+    return val;
+}
+inline double datum_to_double(Datum d) {
+    double val;
+    std::memcpy(&val, &d, sizeof(val));
+    return val;
+}
+inline const void* datum_to_ptr(Datum d) {
+    return reinterpret_cast<const void*>(d);
+}
+
+/*
  * Append the key of datums under cols (TYPE.md §2): per column, a
  * null marker and the type's key, inverted for a descending
  * column, joined end to end. memcmp over two keys of one cols
@@ -245,28 +330,43 @@ std::string_view varlena_payload(std::string_view v);
 
 /*
  * Replace tuple with datums, one per attribute of schema, in the
- * layout of TUPLE.md: a fixed-width datum as its bytes,
- * a variable-width one as a varlena, in either header form, which
- * the tuple stores in its shortest; a dropped attribute's datum
- * must be null. Fails with SM_ERR_INVALID, leaving tuple as it
- * was, on a datum count other than the schema's, a fixed-width
- * datum of the wrong width, or a varlena whose header does not
- * match its length, a compressed one, or a TOAST pointer, until
- * those are built.
+ * layout of TUPLE.md: a byval datum as its bytes inside Datum;
+ * a byref fixed-width datum as the bytes pointed to by Datum;
+ * a variable-width one as a varlena pointed to by Datum; a
+ * dropped attribute must be null. Fails with SM_ERR_INVALID on
+ * wrong attribute count, invalid typmod, or malformed varlena.
  */
+int tuple_encode(std::span<const attribute_t> schema,
+                 std::span<const Datum> datums,
+                 std::span<const bool> isnull, std::string& tuple);
+
 int tuple_encode(std::span<const attribute_t> schema,
                  std::span<const datum_t> datums, std::string& tuple);
 
 /*
- * One attribute of a tuple, by its position in schema, without
- * decoding the others: a view into the tuple -- a fixed-width
- * datum's bytes, a variable-width one's varlena -- into the
- * schema's missing value for a row older than the attribute,
- * which is held in the same form, or std::nullopt for a null or
- * dropped one. A malformed tuple is SM_ERR_CORRUPT.
+ * One attribute of a tuple, by its position in schema, into val
+ * and isnull: byval sets val to the scalar value; byref sets val
+ * to a pointer into tuple (or schema's missing value), sharing the
+ * tuple's memory lifetime. A null or dropped attribute sets isnull
+ * to true. Fails with SM_ERR_CORRUPT if tuple is malformed, or
+ * SM_ERR_INVALID if ordinal is past schema.
+ */
+int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
+                 size_t ordinal, Datum& val, bool& isnull);
+
+/*
+ * Overload returning an optional string_view into tuple or missing.
  */
 int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
                  size_t ordinal, std::optional<std::string_view>& datum);
+
+/*
+ * Deform every attribute of tuple into datums and isnull in one
+ * pass. datums and isnull must both have size equal to schema.size().
+ * Any by-reference Datum points directly into tuple (or schema missing).
+ */
+int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
+                 std::span<Datum> datums, std::span<bool> isnull);
 
 /* Every attribute of a tuple, in one pass, as tuple_decode gives each. */
 int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
@@ -312,33 +412,44 @@ void rel_close(rel_t* rel);
 std::span<const attribute_t> rel_schema(const rel_t* rel);
 
 /*
- * Insert a row: encode datums, one per attribute, draw a rowno
- * from the rel's sequence, and write the tuple under it. rowno is
- * set only on success. A row that does not encode fails before a
- * rowno is drawn; one that fails later leaves its rowno unused,
- * as a PostgreSQL sequence would.
+ * Insert a row: write tuple under a new rowno drawn from the rel's
+ * sequence. rowno is set only on success.
  */
+int rel_insert(rel_t* rel, std::string_view tuple, uint64_t& rowno);
+
+/* Convenience helpers: encode then insert under a new rowno. */
+int rel_insert(rel_t* rel, std::span<const Datum> datums,
+               std::span<const bool> isnull, uint64_t& rowno);
 int rel_insert(rel_t* rel, std::span<const datum_t> datums,
                uint64_t& rowno);
 
 /*
  * Read the row at rowno as the transaction sees it: 0 with tuple
- * set, 1 if there is none, -1 on error, as sm1::read.
+ * set, 1 if there is none, -1 on error, as sm1::read. The tuple views
+ * sm1 memory and is valid only until the next call on this rel's
+ * session; any by-reference Datum decoded from it shares this lifetime.
  */
 int rel_read(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
 /*
  * Read the newest committed version of the row at rowno, as
  * sm1::read_latest does, for a READ COMMITTED writer that met
- * SM_ERR_UPDATED to check its filter against.
+ * SM_ERR_UPDATED to check its filter against. The tuple views sm1
+ * memory and is valid only until the next call on this session.
  */
 int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
 /*
- * Replace the row at rowno with datums; it keeps its rowno. With
+ * Replace the row at rowno with tuple; it keeps its rowno. With
  * old non-null, the tuple replaced is handed back there, which
  * the caller maintaining indexes needs.
  */
+int rel_update(rel_t* rel, uint64_t rowno, std::string_view tuple,
+               std::string_view* old = nullptr);
+
+/* Convenience helpers: encode then update. */
+int rel_update(rel_t* rel, uint64_t rowno, std::span<const Datum> datums,
+               std::span<const bool> isnull, std::string_view* old = nullptr);
 int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
                std::string_view* old = nullptr);
 
