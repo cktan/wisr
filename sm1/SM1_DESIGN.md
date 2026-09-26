@@ -2198,11 +2198,43 @@ store (`DESIGN.md` §5), so a temporary table and all its
 indexes are one temporary store, and no per-row or per-key
 marking exists at any level.
 
-Open, and not decided here: how `sm1::mkstore` is asked for a
-temporary store; what "temporary" guarantees — whether the
-store outlives its session or a restart, whether other sessions
-can see it, and whether its writes are logged; and how that
-maps onto the column family's options.
+**Status: not built, and low priority.** What follows is the
+proposed mechanism, checked against RocksDB 8.9.1.
+
+RocksDB has no temporary column family: no option marks one
+so. It has the parts to build one from, and sm1's write path
+suits them:
+
+| Wanted | RocksDB | Applies to |
+| --- | --- | --- |
+| not logged, lost in a crash | `WriteOptions::disableWAL` | one write |
+| cheap removal | `DropColumnFamily` | a column family |
+| files kept apart | `ColumnFamilyOptions::cf_paths` | a column family |
+| private to a session | nothing | — |
+
+- **Unlogged rows, logged commits.** Each row version is its
+  own `Put` into the store's column family (§5), apart from
+  the commit record, which goes to `CF:txn` in a batch of its
+  own (§8.2). A temporary store's `Put`s can carry `disableWAL`
+  while commit status stays logged, so transaction state is
+  crash-safe though the rows are not. The flag is per write,
+  so the store handle, not each caller, must decide it: one
+  path that forgets it logs a temporary store's data.
+- **Swept after a crash for free.** A temporary store belongs
+  to its session and never commits a catalog row, so the
+  startup sweep (§9.1, step 6) already drops its column family
+  as an orphan. At session end, sm1 drops it itself.
+- **Private by sm1.** RocksDB knows no sessions; every session
+  shares the one DB handle. sm1 must refuse any session but the
+  owner that names a temporary storeid.
+- **Lost on crash is the point.** Unlogged data survives only
+  once a memtable flush writes it out, which is PostgreSQL's
+  meaning of a temporary table, and holds because a temporary
+  store never outlives the process.
+
+Open: how `sm1::mkstore` is asked for a temporary store, and
+whether its files get their own `cf_paths` directory, as
+PostgreSQL's temporary tablespaces do.
 
 ---
 
