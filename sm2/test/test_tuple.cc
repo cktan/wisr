@@ -336,8 +336,14 @@ TEST_CASE("a varlena is PostgreSQL's, in its shortest form") {
 }
 
 TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
-  // Verify tuple_encode, tuple_deform, tuple_decode with
-  // Datum and isnull arrays.
+  // Verify the Datum form of the codec writes the same layout
+  // and reads back what it wrote, by value and by reference.
+  // 1. Encode an int4, a text, a null int8 and a bool, and check
+  //    the bytes.
+  // 2. Deform it back into Datums and null flags.
+  // 3. Decode each attribute on its own.
+  // 4. Read an attribute added after the row as its missing
+  //    value, by deform and by decode.
   std::vector<sm2::attribute_t> schema = {
       attr(sm2::type_int4), attr(sm2::type_text), attr(sm2::type_int8),
       attr(sm2::type_bool)};
@@ -350,7 +356,7 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
   REQUIRE(sm2::tuple_encode(schema, datums, isnull, t) == 0);
   CHECK(hex(t) == "010404070000000a0001076869");
 
-  // Deform back to Datum and isnull.
+  // 2. Deform back to Datum and isnull.
   sm2::Datum out_d[4];
   bool out_null[4];
   REQUIRE(sm2::tuple_deform(schema, t, out_d, out_null) == 0);
@@ -363,7 +369,7 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
   CHECK_FALSE(out_null[3]);
   CHECK(sm2::datum_to_bool(out_d[3]) == true);
 
-  // Decode each attribute individually.
+  // 3. Decode each attribute individually.
   sm2::Datum val;
   bool is_null;
   REQUIRE(sm2::tuple_decode(schema, t, 0, val, is_null) == 0);
@@ -382,7 +388,7 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
   CHECK_FALSE(is_null);
   CHECK(sm2::datum_to_bool(val) == true);
 
-  // Missing attribute decoding.
+  // 4. Missing attribute decoding.
   std::string missing_val = le(int64_t{9999});
   std::vector<sm2::attribute_t> expanded = schema;
   expanded.push_back({&sm2::type_int8, -1, false, missing_val});

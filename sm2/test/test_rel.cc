@@ -376,7 +376,14 @@ TEST_CASE("a row that cannot be encoded draws no rowno") {
 }
 
 TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
-  // Verify rel_insert and rel_update with raw bytes and Datum/isnull.
+  // Verify a heap rel stores exactly the tuple it is given, from
+  // pre-encoded bytes or from Datums and null flags.
+  // 1. Insert a pre-encoded tuple and read the same bytes back.
+  // 2. Update it with another pre-encoded tuple; the old one comes
+  //    back and the new one reads.
+  // 3. Insert from Datums and null flags; it reads as the same
+  //    tuple encoded directly.
+  // 4. Update from Datums and null flags, likewise.
   db_t db;
   sm1::session_t *s = db.open();
   std::vector<sm2::attribute_t> schema = {
