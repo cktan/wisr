@@ -12,6 +12,7 @@
 #include "sm1.h"
 #include "sm2.h"
 
+#include <bit>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -31,6 +32,12 @@ static_assert(static_cast<int>(sm1::xctlevel_t::serializable) ==
 static_assert(static_cast<int>(sm1::loglevel_t::error) == SM_LOG_ERROR);
 static_assert(static_cast<int>(sm1::loglevel_t::warn) == SM_LOG_WARN);
 static_assert(static_cast<int>(sm1::loglevel_t::info) == SM_LOG_INFO);
+/*
+ * sm.h's SM_DATUM_FROM_* macros set a by-value Datum by value,
+ * and sm2 reads its bytes from the low address; the two agree
+ * only on a little-endian machine.
+ */
+static_assert(std::endian::native == std::endian::little);
 
 namespace {
 

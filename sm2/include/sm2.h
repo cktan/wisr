@@ -169,6 +169,9 @@ struct datum_t {
  */
 using Datum = uintptr_t;
 
+/* int8, float8 and the 8-byte time types are passed by value. */
+static_assert(sizeof(Datum) == 8, "a Datum must hold 8 bytes");
+
 inline Datum datum_from_int16(int16_t val) {
     Datum d = 0;
     std::memcpy(&d, &val, sizeof(val));
