@@ -368,7 +368,7 @@ TEST_CASE("a row that cannot be encoded draws no rowno") {
   sm2::rel_close(rel);
 
   std::vector<sm2::attribute_t> bad = {
-      {&sm2::type_decimal, 3, false, std::nullopt}};
+      {&sm2::type_decimal64, 3, false, std::nullopt}};
   sm2::rel_t *out = nullptr;
   CHECK(sm2::rel_open(s, db.store(), 0, bad, "rowno", out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);

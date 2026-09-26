@@ -181,18 +181,20 @@ Two places need sm2 to be more precise than PostgreSQL is:
 
 ### 2.2 Except decimal, which follows DuckDB's
 
-**Decision: `decimal` is a fixed-width decimal, with DuckDB's
-`DECIMAL` as its reference.** PG's numeric is a varlena of
+**Decision: the decimals are fixed-width, with DuckDB's
+`DECIMAL` as their reference, and there are two of them:
+`decimal64` and `decimal128`.** PG's numeric is a varlena of
 base-10000 digits with a weight and a display scale,
 effectively unbounded in length. DuckDB's is a two's-complement
 integer, the value times 10^s, with `(precision, scale)` held
 in the schema and at most 38 digits of precision. sm2 takes that
-with two of DuckDB's four widths: 64 bits for a precision up to
-18, 128 bits up to 38. (DuckDB also has 16- and 32-bit forms up
-to 4 and 9 digits; sm2 does not.) An earlier draft took Arrow's
-decimal, with a 256-bit form up to 76 digits; DuckDB's limit of
-38 was preferred. Three things follow, and they are why the
-exception is worth making:
+with two of DuckDB's four widths, each its own type:
+`decimal64`, 64 bits for a precision up to 18, and
+`decimal128`, 128 bits up to 38. (DuckDB also has 16- and
+32-bit forms up to 4 and 9 digits; sm2 does not.) An earlier
+draft took Arrow's decimal, with a 256-bit form up to 76
+digits; DuckDB's limit of 38 was preferred. Three things
+follow, and they are why the exception is worth making:
 
 1. **The key encoding falls out.** A fixed-width two's
    complement integer, sign bit flipped and written
@@ -221,38 +223,35 @@ later:
   equivalent, so it defaults to `decimal(18, 3)`, as DuckDB's
   bare `DECIMAL` does, which can round a datum its user believed
   exact.
-- **It is the one type that is converted** at the executor
+- **They are the types that are converted** at the executor
   boundary, in both directions, while §2.1 makes every other
   type a copy.
+- **SQL's `decimal(p, s)` is not an sm2 type.** sm3 maps it to
+  one of the two (`sm3/SM3_DESIGN.md` §2.1), so the names a
+  user writes are resolved above sm2.
 
 What a column may declare, and what a datum may hold:
 
-- **`decimal(p, s)`, with `numeric` as an alias.** The type is
-  named `decimal`, and `numeric` means the same, as `decimal`
-  does in PostgreSQL, where it is an alias of `numeric`. As
-  there, the alias is the SQL layer's to resolve: sm2's
-  descriptor carries the one name. The names are PostgreSQL's
-  but the type is not, so a schema ported from PostgreSQL keeps
-  its `numeric(p, s)` columns and gets at most 38 digits, no
-  NaN and no infinity (above). An earlier draft named the type
-  `number`, and refused `NUMERIC` and `DECIMAL`, to keep that
-  difference in view; the familiar names were preferred.
-- **One type code, two widths**, chosen by declared precision:
-  8 bytes up to 18 digits, 16 bytes from 19 to 38. A column
-  declares its precision, so a column's datums all have one
-  width; the width is the typmod's, not the datum's.
-- **`decimal(p)` is `decimal(p, 0)`**, as in PostgreSQL.
-- **A bare `decimal` is `decimal(18, 3)`**, DuckDB's default:
-  15 integer digits and 3 fractional, in 8 bytes. A datum with
-  more fractional digits is rounded to 3, as PostgreSQL rounds
-  for a declared typmod; one whose integer part needs more
-  than 15 digits is an error. Refusing a bare `decimal` was the
-  alternative; the default was chosen over it, and its cost is
-  in §7. A second,
-  variable-width representation was rejected outright: two
-  `decimal`s on disk means two key encodings and two
-  comparison paths, which is most of what this section
-  avoids.
+- **Two types, one per width.** `decimal64` is 8 bytes and,
+  like `int8`, passed by value; `decimal128` is 16 bytes and
+  passed by reference, like `uuid`. Each takes PostgreSQL's
+  numeric typmod, `(p, s)`, and accepts any precision up to its
+  capacity — 18 for `decimal64`, 38 for `decimal128` — so a
+  `decimal128(10, 2)` is legal, if wider than it need be. Every
+  sm2 type's width is then its type's alone, not its typmod's.
+  An earlier design had one type, `decimal`, code 7, whose
+  typmod chose the width; it was split so that no width
+  depends on a typmod, and code 7 is retired.
+- **The typmod is required.** There is no bare form: `-1` is
+  refused, like any typmod outside the type's range, by the
+  type's `typmod_valid`, which `rel_open` and the codec check
+  through `datum_width`. sm3 resolves a bare `decimal`,
+  `decimal(p)` and the `numeric` alias to a declared `(p, s)`.
+- **One key rule at two widths.** Both are the same
+  two's-complement integer, so the key is §3.2's at 8 or 16
+  bytes and comparison is integer comparison. A variable-width
+  representation was rejected outright: a second key encoding
+  and comparison path is most of what this section avoids.
 - **NaN and infinities are refused** on insert with a clear
   error, and no value is reserved as a sentinel. That door is
   not closed: 18 digits do not reach the 64-bit limit, nor 38

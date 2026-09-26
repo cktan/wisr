@@ -94,7 +94,6 @@ exposed via `sm_type(code)`:
 | `:int8` | 4 | `int8` | 64-bit signed integer |
 | `:float4` | 5 | `float4` | 32-bit IEEE 754 float |
 | `:float8` | 6 | `float8` | 64-bit IEEE 754 float |
-| `:decimal` | 7 | `decimal` | Fixed-point decimal |
 | `:text` | 8 | `text` | Variable-length UTF-8 string |
 | `:varchar` | 9 | `varchar` | Variable-length varchar |
 | `:bytea` | 10 | `bytea` | Binary byte array |
@@ -104,6 +103,8 @@ exposed via `sm_type(code)`:
 | `:timestamptz` | 14 | `timestamptz` | Timestamp in UTC |
 | `:interval` | 15 | `interval` | Months, days, microseconds |
 | `:uuid` | 16 | `uuid` | 16-byte UUID |
+| `:decimal64` | 17 | `decimal64` | Fixed-point decimal, p <= 18 |
+| `:decimal128` | 18 | `decimal128` | Fixed-point decimal, p <= 38 |
 
 ### 3.2 Defining Tables and Indexes
 

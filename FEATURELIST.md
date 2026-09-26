@@ -34,8 +34,9 @@ ordered key as the only access path below sm2.
 ## 1. Data types
 
 - [x] int / float / decimal
-- [x] decimal, with `numeric` as an alias (this is a new
-  implementation of decimal ala duckdb, not PostgreSQL's numeric)
+- [x] decimal64 and decimal128, to which sm3 maps `decimal(p, s)`
+  and `numeric(p, s)` (a new implementation of decimal ala
+  duckdb, not PostgreSQL's numeric)
 - [x] text / varchar
 - [x] bool
 - [x] timestamp / date / time

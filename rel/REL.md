@@ -253,7 +253,7 @@ dedicated row sequence (`<name>_rowno`).
 Supported column types:
 - Integer: `:int2`, `:int4`, `:int8`
 - Floating: `:float4`, `:float8`
-- Numeric: `:numeric`, `:decimal`
+- Numeric: `:decimal64`, `:decimal128`
 - Boolean: `:bool`
 - Text: `:text`, `:varchar`
 - UUID: `:uuid`

@@ -31,8 +31,7 @@ varlena's header, not the table, holds its length.
 The parts are laid out by the row's **schema**, the table's
 attributes in order: each attribute's type and typmod give its
 **width** (`datum_width` in `include/sm2.h`) — the type's own
-width, `decimal`'s 8 or 16 bytes by its precision, or
-*variable* for `text`, `varchar` and `bytea`.
+width, or *variable* for `text`, `varchar` and `bytea`.
 
 ## 2. The header
 

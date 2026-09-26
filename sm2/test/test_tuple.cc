@@ -270,7 +270,7 @@ TEST_CASE("the codec refuses arguments that do not fit the schema") {
   // 2. A variable datum with no header, a TOAST pointer, a
   //    compressed one, or a header that does not match its
   //    length.
-  // 3. A decimal attribute with a typmod decimal refuses.
+  // 3. A decimal64 attribute with a typmod decimal64 refuses.
   // 4. An ordinal past the schema.
   std::vector<sm2::attribute_t> schema = {attr(sm2::type_int4),
                                           attr(sm2::type_text)};
@@ -293,7 +293,7 @@ TEST_CASE("the codec refuses arguments that do not fit the schema") {
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
   CHECK(tuple == "keep");
-  std::vector<sm2::attribute_t> bad_typmod = {attr(sm2::type_decimal, 3)};
+  std::vector<sm2::attribute_t> bad_typmod = {attr(sm2::type_decimal64, 3)};
   std::vector<sm2::datum_t> d8 = {{le(int64_t{1}), false}};
   CHECK(sm2::tuple_encode(bad_typmod, d8, tuple) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);

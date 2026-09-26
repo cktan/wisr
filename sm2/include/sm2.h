@@ -61,9 +61,9 @@ std::string_view collation_version(const collation_t* collation);
  */
 struct type_t {
     uint8_t     code;   /* frozen on-disk type code (TYPE.md §3) */
-    const char* name;   /* PostgreSQL's name for it, e.g. "int4" */
-    int16_t     len;    /* width in bytes; -1 if variable, or set
-                           by the typmod, as decimal's is */
+    const char* name;   /* its name: PostgreSQL's, e.g. "int4",
+                           but for decimal64 and decimal128 */
+    int16_t     len;    /* width in bytes; -1 if variable */
     bool        byval;  /* passed by value in PostgreSQL */
     uint8_t     align;  /* alignment in bytes: 1, 2, 4 or 8 */
 
@@ -104,6 +104,12 @@ struct type_t {
                       const collation_t* collation, std::string& datum);
 
     /*
+     * Whether typmod is one the type accepts, as PostgreSQL's
+     * typmodin checks a declared modifier; nullptr accepts any.
+     */
+    bool (*typmod_valid)(int32_t typmod) = nullptr;
+
+    /*
      * Not filled yet (SM2_DESIGN.md §2.3): nullptr until the step
      * that needs each one.
      */
@@ -121,7 +127,7 @@ extern const type_t type_int4;        /* code 3 */
 extern const type_t type_int8;        /* code 4 */
 extern const type_t type_float4;      /* code 5 */
 extern const type_t type_float8;      /* code 6 */
-extern const type_t type_decimal;     /* code 7 */
+                                      /* code 7, decimal, retired */
 extern const type_t type_text;        /* code 8 */
 extern const type_t type_varchar;     /* code 9 */
 extern const type_t type_bytea;       /* code 10 */
@@ -131,14 +137,15 @@ extern const type_t type_timestamp;   /* code 13 */
 extern const type_t type_timestamptz; /* code 14 */
 extern const type_t type_interval;    /* code 15 */
 extern const type_t type_uuid;        /* code 16 */
+extern const type_t type_decimal64;   /* code 17 */
+extern const type_t type_decimal128;  /* code 18 */
 
 /* The type with this code, or nullptr if there is none. */
 const type_t* type_by_code(uint8_t code);
 
 /*
- * A datum's width in bytes under typmod: the type's len, or
- * decimal's 8 or 16 by its precision; -1 for a variable-width
- * type; 0 if typmod is not valid for the type.
+ * A datum's width in bytes under typmod: the type's len, -1 for a
+ * variable-width type; 0 if typmod is not valid for the type.
  */
 int32_t datum_width(const type_t* type, int32_t typmod);
 

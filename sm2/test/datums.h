@@ -33,7 +33,7 @@ struct typed_t {
 /* decimal's typmod for (p, s). */
 inline int32_t decimal_typmod(int p, int s) { return ((p << 16) | s) + 4; }
 
-/* Every type, decimal at both of its widths. */
+/* Every type, decimal64 and decimal128 among them. */
 inline const std::vector<typed_t> &all_types() {
   static const std::vector<typed_t> types = {
       {&sm2::type_bool, -1},
@@ -42,8 +42,8 @@ inline const std::vector<typed_t> &all_types() {
       {&sm2::type_int8, -1},
       {&sm2::type_float4, -1},
       {&sm2::type_float8, -1},
-      {&sm2::type_decimal, decimal_typmod(10, 2)},
-      {&sm2::type_decimal, decimal_typmod(30, 5)},
+      {&sm2::type_decimal64, decimal_typmod(10, 2)},
+      {&sm2::type_decimal128, decimal_typmod(30, 5)},
       {&sm2::type_text, -1},
       {&sm2::type_varchar, -1},
       {&sm2::type_bytea, -1},
@@ -93,7 +93,7 @@ inline std::string gen_datum(const typed_t &t, std::mt19937_64 &rng) {
   if (type == &sm2::type_float8) {
     return le(gen_float<double>(rng));
   }
-  if (type == &sm2::type_decimal) {
+  if (type == &sm2::type_decimal64 || type == &sm2::type_decimal128) {
     int p = (t.typmod - 4) >> 16;
     unsigned __int128 limit = 1;
     for (int i = 0; i < p; i++) {

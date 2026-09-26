@@ -1,19 +1,21 @@
 /*
- * decimal.cc -- decimal, which SQL may also call numeric
- * (TYPE.md §3.4, SM2_DESIGN.md §2.2): after DuckDB's decimal, a
- * two's complement integer scaled by 10^s, little-endian, 8 bytes
- * for a precision up to 18 and 16 bytes up to 38, with
- * (precision, scale) in the typmod rather than the datum.
+ * decimal.cc -- decimal64 and decimal128 (TYPE.md §3.4,
+ * SM2_DESIGN.md §2.2): after DuckDB's decimal, a two's complement
+ * integer scaled by 10^s, little-endian, 8 bytes for decimal64 and
+ * 16 for decimal128, with (precision, scale) in the typmod rather
+ * than the datum. sm3 maps SQL's decimal(p, s) and numeric(p, s)
+ * to one of the two.
  *
  * The typmod is PostgreSQL's numeric typmod, ((p << 16) | s) + 4,
- * with 1 <= p <= 38 and 0 <= s <= p; -1 is a bare decimal, which
- * is decimal(18, 3), as DuckDB's bare DECIMAL is. The text is what
- * PostgreSQL prints for numeric(p, s): exactly s fraction digits,
- * a minus sign only on a value below zero. As for the other types,
- * in accepts only text that prints back unchanged, and a value
- * needing more than p digits is refused.
+ * with 0 <= s <= p and 1 <= p <= 18 for decimal64, 38 for
+ * decimal128; there is no bare form, so -1 is refused. The text is
+ * what PostgreSQL prints for numeric(p, s): exactly s fraction
+ * digits, a minus sign only on a value below zero. As for the
+ * other types, in accepts only text that prints back unchanged,
+ * and a value needing more than p digits is refused.
  *
- * Both widths go through one 128-bit integer; an 8-byte datum is
+ * Both types share one implementation over a 128-bit integer,
+ * parameterized by the datum's width W; an 8-byte datum is
  * sign-extended when read.
  */
 
@@ -25,34 +27,45 @@
 
 namespace {
 
-/* A decimal typmod's precision and scale, and its datum's width. */
+/* A decimal typmod's precision and scale. */
 struct numtype_t {
   int precision;
   int scale;
-  size_t width;
 };
 
-/* Decode typmod; false if it is not -1 or a valid (p, s). */
-bool decode_typmod(int32_t typmod, numtype_t &t) {
-  int p = 18, s = 3;
-  if (typmod != -1) {
-    if (typmod < 4) {
-      return false;
-    }
-    p = (typmod - 4) >> 16;
-    s = (typmod - 4) & 0xFFFF;
-  }
-  if (p < 1 || p > 38 || s > p) {
+/* The name of the decimal type whose datum is W bytes. */
+template <size_t W> constexpr const char *decimal_name() {
+  return W == 8 ? "decimal64" : "decimal128";
+}
+
+/* The most digits a W-byte decimal holds. */
+template <size_t W> constexpr int max_precision() { return W == 8 ? 18 : 38; }
+
+/* Decode typmod; false if it is not a (p, s) a W-byte decimal holds. */
+template <size_t W> bool decode_typmod(int32_t typmod, numtype_t &t) {
+  if (typmod < 4) {
     return false;
   }
-  t = {p, s, p <= 18 ? size_t{8} : size_t{16}};
+  int p = (typmod - 4) >> 16;
+  int s = (typmod - 4) & 0xFFFF;
+  if (p < 1 || p > max_precision<W>() || s > p) {
+    return false;
+  }
+  t = {p, s};
   return true;
 }
 
-/* Fail with SM_ERR_INVALID: typmod is not a valid decimal typmod. */
-int bad_typmod(int32_t typmod) {
-  return sm1::seterr(sm1::SM_ERR_INVALID, "invalid typmod for type decimal: " +
-                                              std::to_string(typmod));
+/* True if typmod is a (p, s) a W-byte decimal holds. */
+template <size_t W> bool decimal_typmod_valid(int32_t typmod) {
+  numtype_t t;
+  return decode_typmod<W>(typmod, t);
+}
+
+/* Fail with SM_ERR_INVALID: typmod is not valid for a W-byte decimal. */
+template <size_t W> int bad_typmod(int32_t typmod) {
+  return sm1::seterr(sm1::SM_ERR_INVALID,
+                     std::string("invalid typmod for type ") +
+                         decimal_name<W>() + ": " + std::to_string(typmod));
 }
 
 /* 10^n, for n <= 38. */
@@ -110,11 +123,12 @@ std::string decimal_text(__int128 v, int scale) {
 }
 
 /* Parse a decimal's canonical text under typmod. */
+template <size_t W>
 int decimal_in(std::string_view text, int32_t typmod, std::string &datum) {
   return sm2::catch_nomem([&] {
     numtype_t t;
-    if (!decode_typmod(typmod, t)) {
-      return bad_typmod(typmod);
+    if (!decode_typmod<W>(typmod, t)) {
+      return bad_typmod<W>(typmod);
     }
     // Read [-]digits[.digits] as an integer at the text's scale,
     // stopping at 39 digits, past any precision.
@@ -131,7 +145,7 @@ int decimal_in(std::string_view text, int32_t typmod, std::string &datum) {
         (frac_digits < 0 ? int_digits : frac_digits)++;
         mag = mag * 10 + (c - '0');
       } else {
-        return sm2::bad_input("decimal", text);
+        return sm2::bad_input(decimal_name<W>(), text);
       }
     }
     // Canonical text carries exactly the column's scale, and the
@@ -139,33 +153,35 @@ int decimal_in(std::string_view text, int32_t typmod, std::string &datum) {
     if (int_digits == 0 || frac_digits == 0 ||
         (frac_digits < 0 ? 0 : frac_digits) != t.scale ||
         mag >= pow10(t.precision)) {
-      return sm2::bad_input("decimal", text);
+      return sm2::bad_input(decimal_name<W>(), text);
     }
     __int128 v = neg ? -static_cast<__int128>(mag) : static_cast<__int128>(mag);
     // Canonical only if it prints back unchanged: no leading zero,
     // no "-0".
     if (decimal_text(v, t.scale) != text) {
-      return sm2::bad_input("decimal", text);
+      return sm2::bad_input(decimal_name<W>(), text);
     }
-    store(v, t.width, datum);
+    store(v, W, datum);
     return 0;
   });
 }
 
 /* Print a decimal datum under typmod. */
+template <size_t W>
 int decimal_out(std::string_view datum, int32_t typmod, std::string &text) {
   return sm2::catch_nomem([&] {
     numtype_t t;
-    if (!decode_typmod(typmod, t)) {
-      return bad_typmod(typmod);
+    if (!decode_typmod<W>(typmod, t)) {
+      return bad_typmod<W>(typmod);
     }
-    if (datum.size() != t.width) {
-      return sm2::bad_datum("decimal", datum, t.width);
+    if (datum.size() != W) {
+      return sm2::bad_datum(decimal_name<W>(), datum, W);
     }
     __int128 v = load(datum);
     if (magnitude(v) >= pow10(t.precision)) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "a decimal datum exceeds its precision " +
+                         std::string("a ") + decimal_name<W>() +
+                             " datum exceeds its precision " +
                              std::to_string(t.precision));
     }
     text = decimal_text(v, t.scale);
@@ -184,18 +200,19 @@ int decimal_cmp(std::string_view a, std::string_view b, int32_t) {
  * width, sign bit flipped, big-endian, which orders a column's
  * values, since the typmod fixes their scale.
  */
+template <size_t W>
 int decimal_key(std::string_view datum, int32_t typmod,
                 const sm2::collation_t *, std::string &key) {
   return sm2::catch_nomem([&] {
     numtype_t t;
-    if (!decode_typmod(typmod, t)) {
-      return bad_typmod(typmod);
+    if (!decode_typmod<W>(typmod, t)) {
+      return bad_typmod<W>(typmod);
     }
-    if (datum.size() != t.width) {
-      return sm2::bad_datum("decimal", datum, t.width);
+    if (datum.size() != W) {
+      return sm2::bad_datum(decimal_name<W>(), datum, W);
     }
     __int128 v = load(datum);
-    if (t.width == 8) {
+    if constexpr (W == 8) {
       sm2::put_key_int<uint64_t>(static_cast<int64_t>(v), key);
     } else {
       sm2::put_key_int<unsigned __int128>(v, key);
@@ -205,16 +222,17 @@ int decimal_key(std::string_view datum, int32_t typmod,
 }
 
 /* Read a decimal's key back into its datum. */
+template <size_t W>
 int decimal_unkey(std::string_view &key, int32_t typmod,
                   const sm2::collation_t *, std::string &datum) {
   return sm2::catch_nomem([&] {
     numtype_t t;
-    if (!decode_typmod(typmod, t)) {
-      return bad_typmod(typmod);
+    if (!decode_typmod<W>(typmod, t)) {
+      return bad_typmod<W>(typmod);
     }
     __int128 v;
     bool ok;
-    if (t.width == 8) {
+    if constexpr (W == 8) {
       int64_t n;
       ok = sm2::get_key_int<uint64_t>(key, n);
       v = n;
@@ -222,9 +240,9 @@ int decimal_unkey(std::string_view &key, int32_t typmod,
       ok = sm2::get_key_int<unsigned __int128>(key, v);
     }
     if (!ok) {
-      return sm2::bad_key("decimal");
+      return sm2::bad_key(decimal_name<W>());
     }
-    store(v, t.width, datum);
+    store(v, W, datum);
     return 0;
   });
 }
@@ -233,21 +251,28 @@ int decimal_unkey(std::string_view &key, int32_t typmod,
 
 namespace sm2 {
 
-/* A decimal datum's width under typmod: 8 or 16, or 0 if invalid. */
-int32_t decimal_width(int32_t typmod) {
-  numtype_t t;
-  return decode_typmod(typmod, t) ? static_cast<int32_t>(t.width) : 0;
-}
+const type_t type_decimal64 = {.code = 17,
+                               .name = "decimal64",
+                               .len = 8,
+                               .byval = true,
+                               .align = 8,
+                               .in = decimal_in<8>,
+                               .out = decimal_out<8>,
+                               .cmp = decimal_cmp,
+                               .key_encode = decimal_key<8>,
+                               .key_decode = decimal_unkey<8>,
+                               .typmod_valid = decimal_typmod_valid<8>};
 
-const type_t type_decimal = {.code = 7,
-                             .name = "decimal",
-                             .len = -1,
-                             .byval = false,
-                             .align = 8,
-                             .in = decimal_in,
-                             .out = decimal_out,
-                             .cmp = decimal_cmp,
-                             .key_encode = decimal_key,
-                             .key_decode = decimal_unkey};
+const type_t type_decimal128 = {.code = 18,
+                                .name = "decimal128",
+                                .len = 16,
+                                .byval = false,
+                                .align = 8,
+                                .in = decimal_in<16>,
+                                .out = decimal_out<16>,
+                                .cmp = decimal_cmp,
+                                .key_encode = decimal_key<16>,
+                                .key_decode = decimal_unkey<16>,
+                                .typmod_valid = decimal_typmod_valid<16>};
 
 } // namespace sm2

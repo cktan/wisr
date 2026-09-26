@@ -81,7 +81,7 @@ const std::vector<typed_t> &key_types() {
   static const std::vector<typed_t> types = {
       {&sm2::type_bool, -1},  {&sm2::type_int4, -1},
       {&sm2::type_text, -1},  {&sm2::type_float8, -1},
-      {&sm2::type_bytea, -1}, {&sm2::type_decimal, decimal_typmod(10, 2)}};
+      {&sm2::type_bytea, -1}, {&sm2::type_decimal64, decimal_typmod(10, 2)}};
   return types;
 }
 

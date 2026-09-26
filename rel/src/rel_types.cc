@@ -35,8 +35,10 @@ int parse_type_code(Janet val, uint8_t *code_out) {
     *code_out = 5;
   } else if (name == "float8") {
     *code_out = 6;
-  } else if (name == "decimal") {
-    *code_out = 7;
+  } else if (name == "decimal64") {
+    *code_out = 17;
+  } else if (name == "decimal128") {
+    *code_out = 18;
   } else if (name == "text") {
     *code_out = 8;
   } else if (name == "varchar") {
@@ -76,8 +78,7 @@ const char *type_name_of(uint8_t code) {
     return "float4";
   case 6:
     return "float8";
-  case 7:
-    return "decimal";
+
   case 8:
     return "text";
   case 9:
@@ -96,6 +97,10 @@ const char *type_name_of(uint8_t code) {
     return "interval";
   case 16:
     return "uuid";
+  case 17:
+    return "decimal64";
+  case 18:
+    return "decimal128";
   default:
     return "unknown";
   }

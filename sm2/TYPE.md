@@ -93,7 +93,6 @@ null marker and before any inversion.
 | `int8` | 4 | two's complement, LE | 8 | sign-flipped, BE | 8 |
 | `float4` | 5 | IEEE-754 binary32, LE | 4 | total order, BE | 4 |
 | `float8` | 6 | IEEE-754 binary64, LE | 8 | total order, BE | 8 |
-| `decimal` | 7 | after DuckDB's decimal, two's complement, LE | 8 or 16 | sign-flipped, BE | 8 or 16 |
 | `text` | 8 | payload bytes | var | collation sort key ‖ escaped original | var |
 | `varchar` | 9 | payload bytes | var | as `text` | var |
 | `bytea` | 10 | payload bytes | var | escaped bytes | var |
@@ -103,10 +102,14 @@ null marker and before any inversion.
 | `timestamptz` | 14 | as `timestamp`, in UTC | 8 | sign-flipped, BE | 8 |
 | `interval` | 15 | `{time int64, day int32, month int32}` | 16 | `span` ‖ months ‖ days | 24 |
 | `uuid` | 16 | the 16 bytes | 16 | the same 16 bytes | 16 |
+| `decimal64` | 17 | after DuckDB's decimal, two's complement, LE | 8 | sign-flipped, BE | 8 |
+| `decimal128` | 18 | as `decimal64` | 16 | sign-flipped, BE | 16 |
 
 The codes are frozen: assigned once, never reused or
-renumbered (`SM2_DESIGN.md` §2). Codes 64–127 are reserved for
-types added later; 0 is never a type code.
+renumbered (`SM2_DESIGN.md` §2). Code 7 was `decimal`, before
+it was split into `decimal64` and `decimal128`, and is retired.
+Codes 64–127 are reserved for types added later; 0 is never a
+type code.
 
 ### 3.1 bool
 
@@ -183,15 +186,19 @@ Verified: the resulting order agrees with PostgreSQL's
 comparison on every pair drawn from `±Infinity`, `±0.0`, NaN,
 the subnormal and huge boundaries, and random datums.
 
-### 3.4 decimal
+### 3.4 decimal64, decimal128
 
-`numeric` is an alias of `decimal`, resolved above sm2.
+SQL's `decimal(p, s)`, and `numeric` its alias, are not sm2
+types: sm3 maps them to one of these two
+(`sm3/SM3_DESIGN.md` §2.1).
 
 Native follows DuckDB's decimal (`SM2_DESIGN.md` §2.2): the
 value times 10^s as a two's complement integer, little-endian,
-8 bytes for a declared precision up to 18 and 16 bytes up to
-38, with `(precision, scale)` held in the schema rather than in
-the datum.
+8 bytes for `decimal64` and 16 for `decimal128`, with
+`(precision, scale)` held in the schema rather than in the
+datum. The typmod is PostgreSQL's numeric typmod,
+`((p << 16) | s) + 4`, with `0 <= s <= p` and `1 <= p <= 18`
+for `decimal64`, `38` for `decimal128`; `-1` is refused.
 
 The key is §3.2's, at the datum's width — sign bit flipped,
 big-endian. Nothing bespoke, which is the point of the whole
@@ -199,13 +206,12 @@ exception.
 
 Two datums compare correctly only at a common scale, and the
 schema fixes the scale per column, so the encoder never
-rescales. Comparing two columns of different scale is a cast,
-above sm2.
+rescales. Comparing two columns of different scale, or a
+`decimal64` with a `decimal128`, is a cast, above sm2.
 
-Decided in `SM2_DESIGN.md` §2.2: a bare `decimal` is
-`decimal(18, 3)`, `decimal(p)` is `decimal(p, 0)`, and NaN and
-infinity are refused on insert, so no value is reserved as a
-sentinel.
+Decided in `SM2_DESIGN.md` §2.2: a typmod is required, and NaN
+and infinity are refused on insert, so no value is reserved as
+a sentinel.
 
 ### 3.5 text, varchar
 

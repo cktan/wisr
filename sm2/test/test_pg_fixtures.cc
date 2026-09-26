@@ -46,18 +46,22 @@ TEST_CASE("every datum is the bytes PostgreSQL stores") {
 }
 
 TEST_CASE("every decimal datum is PostgreSQL's value, scaled, as an integer") {
-  // Verify each decimal fixture both ways, under its typmod.
+  // Verify each decimal fixture both ways, under its typmod, as
+  // sm3 maps numeric(p, s): decimal64 up to 18 digits, decimal128
+  // past them.
   // 1. in on the text PostgreSQL printed for numeric(p, s) gives
-  //    the value times 10^s, as a two's complement integer of 16
-  //    or 32 bytes.
+  //    the value times 10^s, as a two's complement integer of 8
+  //    or 16 bytes.
   // 2. out on those bytes gives back PostgreSQL's text.
   for (const pg_decimal_fixture_t &f : pg_decimal_fixtures) {
     CAPTURE(f.typmod);
     CAPTURE(f.text);
+    const sm2::type_t &t = ((f.typmod - 4) >> 16) <= 18 ? sm2::type_decimal64
+                                                        : sm2::type_decimal128;
     std::string datum, text;
-    REQUIRE(sm2::type_decimal.in(f.text, f.typmod, datum) == 0);
+    REQUIRE(t.in(f.text, f.typmod, datum) == 0);
     CHECK(datum == unhex(f.hex));
-    REQUIRE(sm2::type_decimal.out(unhex(f.hex), f.typmod, text) == 0);
+    REQUIRE(t.out(unhex(f.hex), f.typmod, text) == 0);
     CHECK(text == f.text);
   }
 }

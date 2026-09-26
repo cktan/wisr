@@ -139,6 +139,29 @@ changed it is the usual place such a design goes wrong. Open:
 - **Size and startup.** Load time and memory for a schema
   with many partitions.
 
+### 2.1 Decimal columns
+
+sm2 has no `decimal(p, s)`: it has `decimal64` and
+`decimal128`, one per width (`sm2/SM2_DESIGN.md` §2.2). The
+catalog maps a declared column to one of them.
+
+**Decision: the narrowest that holds the precision.**
+
+| Declared | sm2 type | typmod |
+| --- | --- | --- |
+| `decimal(p, s)`, `numeric(p, s)`, `p <= 18` | `decimal64` | `(p, s)` |
+| `decimal(p, s)`, `numeric(p, s)`, `19 <= p <= 38` | `decimal128` | `(p, s)` |
+| `decimal(p)` | as `decimal(p, 0)` | |
+| bare `decimal` or `numeric` | `decimal64` | `(18, 3)`, DuckDB's default |
+
+A precision past 38 is refused at `CREATE TABLE`. A bare
+`decimal` rounds a datum past 3 fractional digits, as PostgreSQL
+rounds for a declared typmod, and refuses one whose integer part
+needs more than 15 digits; refusing a bare `decimal` was the
+alternative. Widening a column from `decimal64` to `decimal128`,
+as `ALTER COLUMN TYPE decimal(30, 2)` on a `decimal(10, 2)`
+does, changes its type and so rewrites the table.
+
 ---
 
 ## 3. Indexes
