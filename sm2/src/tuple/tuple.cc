@@ -10,7 +10,8 @@
  * each non-null attribute, in schema order, end to end with no
  * padding: a fixed-width datum itself, or a variable-width one's
  * slot, where its varlena starts, counted from the tuple's start,
- * 2 bytes or, under the wide flag, 4. The var data holds those
+ * 2 bytes, since no tuple is longer than 65535 bytes. The var
+ * data holds those
  * varlenas, PostgreSQL's, each in its shortest form, in schema
  * order and end to end; a varlena's header gives its length. Any
  * attribute is found from the null bitmap and the schema's widths,
@@ -30,8 +31,12 @@
 
 namespace {
 
-constexpr uint8_t has_nulls = 0x01, wide_slots = 0x04;
-constexpr uint8_t reserved = 0xFA;
+/* 0x02 and 0x04, once a TOAST bitmap and wide slots, are retired. */
+constexpr uint8_t has_nulls = 0x01;
+constexpr uint8_t reserved = 0xFE;
+
+/* A variable attribute's slot: 2 bytes reach any byte of a tuple. */
+constexpr size_t slot_width = 2;
 
 /* The longest datum a 1-byte varlena header holds. */
 constexpr size_t short_max = 126;
@@ -168,19 +173,16 @@ struct parsed_t {
   size_t natts = 0;
   const char *nulls = nullptr; /* the null bitmap, or nullptr */
   size_t fixed = 0;            /* where the fixed part starts */
-  size_t slot_width = 2;       /* a variable attribute's entry */
 };
 
 /* The width of attribute i's entry in the fixed part. */
-size_t entry_width(const parsed_t &t, const std::vector<int32_t> &w, size_t i) {
-  return w[i] > 0 ? static_cast<size_t>(w[i]) : t.slot_width;
+size_t entry_width(const std::vector<int32_t> &w, size_t i) {
+  return w[i] > 0 ? static_cast<size_t>(w[i]) : slot_width;
 }
 
 /* The value of the slot at pos: where a varlena starts. */
 size_t slot_at(const parsed_t &t, size_t pos) {
-  std::string_view s = t.tuple.substr(pos, t.slot_width);
-  return t.slot_width == 2 ? sm2::load_le<uint16_t>(s)
-                           : sm2::load_le<uint32_t>(s);
+  return sm2::load_le<uint16_t>(t.tuple.substr(pos, slot_width));
 }
 
 /*
@@ -196,6 +198,10 @@ int parse(std::span<const sm2::attribute_t> schema,
   // The header.
   if (tuple.empty()) {
     return corrupt("empty");
+  }
+  if (tuple.size() > sm2::max_tuple_len) {
+    return corrupt("longer than " + std::to_string(sm2::max_tuple_len) +
+                   " bytes");
   }
   uint8_t flags = static_cast<uint8_t>(tuple[0]);
   if (flags & reserved) {
@@ -220,12 +226,11 @@ int parse(std::span<const sm2::attribute_t> schema,
     pos += len;
   }
   // The fixed part, an entry per non-null attribute.
-  t.slot_width = flags & wide_slots ? 4 : 2;
   t.fixed = pos;
   size_t fixed = 0;
   for (size_t i = 0; i < natts; i++) {
     if (!(t.nulls && bit(t.nulls, i))) {
-      fixed += entry_width(t, w, i);
+      fixed += entry_width(w, i);
     }
   }
   if (tuple.size() - pos < fixed) {
@@ -247,7 +252,7 @@ int parse(std::span<const sm2::attribute_t> schema,
       }
       next += len;
     }
-    entry += entry_width(t, w, i);
+    entry += entry_width(w, i);
   }
   if (next != tuple.size()) {
     return corrupt("bytes past its last datum");
@@ -307,7 +312,7 @@ int deform_each(std::span<const sm2::attribute_t> schema,
       continue;
     }
     std::string_view d = datum_at(t, w, i, pos);
-    pos += entry_width(t, w, i);
+    pos += entry_width(w, i);
     // A dropped attribute's old bytes are skipped.
     put(i, schema[i].dropped ? std::nullopt : std::optional(d));
   }
@@ -401,15 +406,19 @@ int tuple_encode(std::span<const attribute_t> schema,
       nvar++;
       var += varlena_len(varlena_payload(v).size());
     }
-    // 2-byte slots, unless the tuple is too long for them to reach.
+    // A row past the limit is refused, so every slot is 2 bytes.
     size_t head =
         1 + varint_len(datums.size()) + (nulls ? (datums.size() + 7) / 8 : 0);
-    bool wide = head + fixed + 2 * nvar + var > 0xFFFF;
-    size_t slot = wide ? 4 : 2;
-    size_t var_start = head + fixed + slot * nvar;
+    size_t var_start = head + fixed + slot_width * nvar;
+    if (var_start + var > max_tuple_len) {
+      return sm1::seterr(sm1::SM_ERR_ROWTOOLONG,
+                         "tuple: a row of " + std::to_string(var_start + var) +
+                             " bytes is longer than " +
+                             std::to_string(max_tuple_len));
+    }
     // The header, then the null bitmap, a set bit for a null.
     std::string out;
-    out += static_cast<char>((nulls ? has_nulls : 0) | (wide ? wide_slots : 0));
+    out += static_cast<char>(nulls ? has_nulls : 0);
     put_varint(datums.size(), out);
     if (nulls) {
       size_t at = out.size();
@@ -431,11 +440,7 @@ int tuple_encode(std::span<const attribute_t> schema,
         out += attr_bytes[i];
         continue;
       }
-      if (wide) {
-        store_le(static_cast<uint32_t>(next), word);
-      } else {
-        store_le(static_cast<uint16_t>(next), word);
-      }
+      store_le(static_cast<uint16_t>(next), word);
       out += word;
       next += varlena_len(varlena_payload(attr_bytes[i]).size());
     }
@@ -594,7 +599,7 @@ int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
     size_t pos = t.fixed;
     for (size_t i = 0; i < ordinal; i++) {
       if (!(t.nulls && bit(t.nulls, i))) {
-        pos += entry_width(t, w, i);
+        pos += entry_width(w, i);
       }
     }
     datum = datum_at(t, w, ordinal, pos);

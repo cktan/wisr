@@ -22,6 +22,11 @@ Each part follows the one before it with no padding, and the
 whole ends exactly where the last variable datum does. Every
 multi-byte integer is little-endian.
 
+A tuple is at most **65535 bytes**, TOAST aside
+(`max_tuple_len` in `include/sm2.h`): the writer refuses a
+longer row with `SM_ERR_ROWTOOLONG`, so a 2-byte slot (§4)
+reaches any byte of any tuple.
+
 The fixed part is a table of the row's non-null attributes, a
 fixed-width entry for each: a fixed-width datum's bytes, or a
 variable-width datum's **slot**, saying where its varlena
@@ -43,13 +48,14 @@ header = flags (1 byte) | natts (varint)
 | --- | --- |
 | `0x01` | has nulls: the null bitmap is present |
 | `0x02` | reserved |
-| `0x04` | wide slots: each variable slot is 4 bytes, else 2 |
+| `0x04` | reserved |
 | `0xF8` | reserved |
 
 Reserved bits must be 0, and a reader refuses a tuple with any
 set, so that a tuple using a feature added later is never
 misread by an older reader. `0x02` was once to mean a TOAST
-bitmap; no tuple was written with it.
+bitmap, and `0x04` 4-byte slots in a tuple past 64 KB, before
+the length limit (§1); no stored tuple uses either.
 
 **`natts`** is the row's attribute count when written, at most
 the reading schema's. It is a varint of up to 5 bytes: 7-bit
@@ -60,8 +66,9 @@ another follows. Up to 127 attributes take one byte.
 
 Present only when the has-nulls flag is set: one bit for each
 of the row's `natts` attributes, **set for a null**, attribute
-`i` at bit `i % 8` of byte `i / 8`, rounded up to whole bytes.
-Bits past `natts` are ignored.
+`i` at bit `i % 8` of byte `i / 8`. The bitmap is
+`ALIGN8(natts) / 8` bytes, `natts` rounded up to a multiple of
+8; bits past `natts` are ignored.
 
 A null takes no other space: it has no entry in the fixed
 part, neither a datum nor a slot, and no varlena in the
@@ -76,11 +83,7 @@ An entry for each non-null attribute among the row's first
   width;
 - a **variable-width** attribute's entry is its **slot**: the
   position of its varlena, counted from the start of the
-  tuple, 2 bytes, or 4 under the wide-slots flag.
-
-The writer sets the wide-slots flag when the whole tuple would
-be longer than 65535 bytes, the furthest a 2-byte slot
-reaches.
+  tuple, 2 bytes.
 
 ## 5. The variable data
 
@@ -107,7 +110,7 @@ To read attribute `k` without the others:
 3. If `k`'s bit is set, it is null.
 4. Otherwise its entry starts at the sum of the entry widths
    of the non-null attributes before it — each fixed-width
-   one's width, each variable-width one's slot width.
+   one's width, each variable-width one's 2-byte slot.
 5. A fixed-width `k` is the entry. A variable-width `k` is the
    varlena at the position its slot holds, as long as that
    varlena's header says.
@@ -117,9 +120,32 @@ an old row's bytes for it are skipped, and a new row stores it
 as null.
 
 Step 4 is arithmetic over the bitmap and the widths; no
-attribute's bytes are read to find another's. With no nulls,
-every entry's position is a constant of the schema, `natts`
-and the slot width, so a row reads like a C struct.
+attribute's bytes are read to find another's. Every entry's
+width is a constant of the schema — a fixed width, or 2 for a
+slot — so the arithmetic needs no walk either. Let `off[k]` be
+the sum of the entry widths of attributes `0` to `k - 1`,
+computed once per schema: where `k`'s entry would start in a
+row with no nulls, counted from the start of the fixed part. A
+null has no entry, so in any row:
+
+```
+entry(k) = fixed + off[k] - sum of width(i), for each null i < k
+```
+
+where `fixed` is where the fixed part starts (step 1). The sum
+visits only the set bits of the bitmap below `k`, found a word
+at a time with count-trailing-zeros, so it costs one step per
+null before `k`, not one per attribute. With no null before `k`
+— and for every attribute when the has-nulls flag is clear —
+`entry(k)` is `fixed + off[k]`, and a row reads like a C
+struct. PostgreSQL's `attcacheoff` is the same idea, but stops
+at the first null or variable-width attribute; this does not.
+
+No count of leading non-null attributes is kept in the header:
+it is the bitmap's first set bit, found the same way, and the
+flag bits stay reserved for the format to grow into. The codec
+does not use `off[]` yet; it sums the widths attribute by
+attribute.
 
 ## 7. Examples
 
@@ -138,12 +164,13 @@ taking nothing; then at byte 10, the varlena `07 68 69`,
 
 ## 8. A malformed tuple
 
-A reader refuses, with `SM_ERR_CORRUPT`, a tuple that is empty;
-has a reserved flag set; has a malformed `natts`, or one past
-the schema's count; is cut short in its bitmap or fixed part;
-has a slot that does not point where its varlena should start
-(§5); holds a varlena that is not valid (`VARLENA.md` §4); or
-has bytes past its last varlena.
+A reader refuses, with `SM_ERR_CORRUPT`, a tuple that is empty
+or longer than 65535 bytes; has a reserved flag set; has a
+malformed `natts`, or one past the schema's count; is cut short
+in its bitmap or fixed part; has a slot that does not point
+where its varlena should start (§5); holds a varlena that is
+not valid (`VARLENA.md` §4); or has bytes past its last
+varlena.
 
 ## 9. Codec API
 

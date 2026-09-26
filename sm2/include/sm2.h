@@ -339,12 +339,20 @@ bool varlena_is_toast(std::string_view v);
 std::string_view varlena_payload(std::string_view v);
 
 /*
+ * The longest tuple, TOAST aside (TUPLE.md §1): the furthest a
+ * 2-byte slot reaches.
+ */
+constexpr size_t max_tuple_len = 65535;
+
+/*
  * Replace tuple with datums, one per attribute of schema, in the
  * layout of TUPLE.md: a byval datum as its bytes inside Datum;
  * a byref fixed-width datum as the bytes pointed to by Datum;
  * a variable-width one as a varlena pointed to by Datum; a
  * dropped attribute must be null. Fails with SM_ERR_INVALID on
- * wrong attribute count, invalid typmod, or malformed varlena.
+ * wrong attribute count, invalid typmod, or malformed varlena,
+ * and with SM_ERR_ROWTOOLONG on a tuple longer than
+ * max_tuple_len; either way tuple is left as it was.
  */
 int tuple_encode(std::span<const attribute_t> schema,
                  std::span<const Datum> datums,

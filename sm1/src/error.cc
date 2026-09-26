@@ -186,8 +186,9 @@ const char *errname() {
       "ERR_UPDATED",
       "ERR_KEYTOOLONG",
       "ERR_EXCEPTION",
+      "ERR_ROWTOOLONG",
   };
-  static_assert(sizeof(names) / sizeof(names[0]) == sm1::SM_ERR_EXCEPTION + 1,
+  static_assert(sizeof(names) / sizeof(names[0]) == sm1::SM_ERR_LAST + 1,
                 "every error code needs its name");
   // A value outside the table was never a code.
   size_t i = static_cast<size_t>(t_errno);

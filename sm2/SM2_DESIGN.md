@@ -655,6 +655,13 @@ meets them (§4.1):
   read sets are linear in the keys it touches
   (`sm1/SM1_DESIGN.md` §13), and very large datums hurt LSM
   compaction, so the threshold is well below sm1's ceiling.
+  A tuple is at most 64 KB (§4.1), so TOAST must be decided
+  per tuple, not per datum: as PostgreSQL does, it moves the
+  largest datums out of line until the tuple fits, since many
+  columns each under a datum threshold can still pass the
+  limit. The fixed part always fits: PostgreSQL's 1600
+  columns at 16 bytes, or an 18-byte TOAST pointer each, stay
+  under 29 KB.
   The TOAST data lives in the table's own sm1 store, under
   the object prefix `0xFFFF` (§5), so writing a row and its
   TOAST data is one atomic sm1 write, no chunk ever falls
@@ -698,7 +705,7 @@ schema order too.
   its bit in the null bitmap is all it has. A column's entry
   is then at the sum of the entry widths of the non-null
   columns before it — a fixed column's width, a variable one's
-  slot width — computed from the null bitmap and the schema's
+  2-byte slot — computed from the null bitmap and the schema's
   widths, never by walking the data. That is O(columns)
   arithmetic over the bitmap per column read, rather than
   PostgreSQL's walk over the bytes once an earlier column is
@@ -710,9 +717,8 @@ schema order too.
   found by the same arithmetic as a fixed column's, and its
   varlena is one step further, at the position the slot
   holds. When no column is null, which is the common case,
-  every entry's position is a constant of the schema, `natts`
-  and the slot width, precomputed once: the row reads like a
-  C struct.
+  every entry's position is a constant of the schema and
+  `natts`, precomputed once: the row reads like a C struct.
 - **A variable datum is a PostgreSQL varlena**, its bytes
   exactly as PostgreSQL's `varatt.h` lays them out, so the glue
   can hand PostgreSQL a `Datum` pointing into the tuple: a
@@ -746,10 +752,21 @@ schema order too.
 - **A slot holds where its varlena starts, and nothing else.**
   The varlena's header already holds its length, so the slot
   does not repeat it, and a position from the tuple's start
-  goes straight to the bytes. A slot is 2 bytes, or 4 under a
-  wide-slots flag the writer sets only when the tuple passes
-  64 KB, the furthest 2 bytes reach, so the TOAST threshold is
-  free to be set on its own merits. Two layouts came before:
+  goes straight to the bytes. A slot is always 2 bytes.
+- **A tuple is at most 64 KB, 65535 bytes, TOAST aside.** It
+  is the furthest a 2-byte slot reaches, and the writer refuses
+  a longer row with `SM_ERR_ROWTOOLONG`, which the glue maps to
+  PostgreSQL's `program_limit_exceeded`, as for an over-long
+  key. Every slot is then 2 bytes and every entry's width a
+  constant of the schema, so a column's position can be
+  precomputed per table, not per tuple. It is eight times
+  PostgreSQL's 8 KB page, which bounds its tuples. The cost is
+  that until TOAST is built a row past 64 KB cannot be stored
+  at all. An earlier layout widened every slot to 4 bytes,
+  under a header flag, in a tuple past 64 KB, which let the
+  TOAST threshold be set on its own merits but made the slot
+  width, and every position after a variable column, depend
+  on the tuple. Two layouts came before the slot:
   a separate table of end offsets after the fixed part, which
   stored each length twice once the varlena had its own
   header; and dropping positions altogether and walking the
@@ -758,17 +775,18 @@ schema order too.
   it. The slot costs the same 2 bytes as the offset table did
   and buys O(1) access to every column.
 - **The header is a flag byte and `natts`**, two bytes for a
-  row of up to 127 columns: flags for has-nulls and wide
-  slots, the rest reserved, then `natts` as a varint
-  (`TUPLE.md` §2). The has-nulls flag plays the part of
-  PostgreSQL's `HEAP_HASNULL`. `0x02` was once to mean a TOAST
-  bitmap was present, before the TOAST mark moved into the
-  varlena; it is reserved now, and no tuple was written with
-  it. The reserved bits are refused rather than ignored, so a
-  tuple written with a feature added later is never misread by
-  a reader too old to know it. PostgreSQL packs `natts` into 11
-  bits of `t_infomask2`; a varint costs one byte to 127 columns
-  and has no ceiling.
+  row of up to 127 columns: a flag for has-nulls, the rest
+  reserved, then `natts` as a varint (`TUPLE.md` §2). The
+  has-nulls flag plays the part of PostgreSQL's
+  `HEAP_HASNULL`. `0x02` was once to mean a TOAST bitmap was
+  present, before the TOAST mark moved into the varlena, and
+  `0x04` 4-byte slots, before the 64 KB limit; both are
+  reserved now, and no stored tuple uses either. The reserved
+  bits are refused rather than ignored, so a tuple written
+  with a feature added later is never misread by a reader too
+  old to know it. PostgreSQL packs `natts` into 11 bits of
+  `t_infomask2`; a varint costs one byte to 127 columns and
+  has no ceiling.
 - **The null bitmap follows, when present**: a bit for each of
   the row's `natts` columns, set for a null, rounded up to
   whole bytes.

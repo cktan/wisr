@@ -142,23 +142,40 @@ TEST_CASE("every tuple round trips, and any one column decodes alone") {
   }
 }
 
-TEST_CASE("variable slots widen to 4 bytes only past 64 KB") {
-  // Verify the wide-slots flag, chosen per tuple.
-  // 1. A tuple of 65535 bytes keeps 2-byte slots: a 2-byte header,
-  //    the bytea's slot and the int4, 6 bytes, and a 65523-byte
-  //    bytea with its 4-byte header.
-  // 2. One byte more, which a 2-byte slot cannot reach, sets the
-  //    flag, 0x04, and still round trips.
+TEST_CASE("a tuple is at most 65535 bytes, so its slots are 2 bytes") {
+  // Verify the tuple length limit, which is what keeps every slot
+  // at 2 bytes.
+  // 1. A tuple of exactly 65535 bytes -- a 2-byte header, the
+  //    bytea's slot and the int4, 6 bytes, and a 65523-byte bytea
+  //    with its 4-byte header -- encodes with no flag set and
+  //    round trips.
+  // 2. One byte more fails with SM_ERR_ROWTOOLONG and leaves the
+  //    tuple as it was.
+  // 3. A reader refuses, as corrupt, a tuple past 65535 bytes and
+  //    one with the retired wide-slots flag, 0x04.
   std::vector<sm2::attribute_t> schema = {attr(sm2::type_bytea),
                                           attr(sm2::type_int4)};
-  for (size_t len : {size_t{65523}, size_t{65524}}) {
-    CAPTURE(len);
-    std::vector<std::optional<std::string>> row = {vl(std::string(len, 'x')),
-                                                   le(int32_t{-1})};
-    std::string t = encode(schema, row);
-    CHECK(((t[0] & 0x04) != 0) == (len > 65523));
-    CHECK(deform(schema, t) == row);
-  }
+  std::vector<std::optional<std::string>> row = {vl(std::string(65523, 'x')),
+                                                 le(int32_t{-1})};
+  std::string t = encode(schema, row);
+  CHECK(t.size() == sm2::max_tuple_len);
+  CHECK(t[0] == 0);
+  CHECK(deform(schema, t) == row);
+
+  std::string big = vl(std::string(65524, 'x')), four = le(int32_t{-1});
+  std::vector<sm2::datum_t> over = {{big, false}, {four, false}};
+  std::string kept = "keep";
+  CHECK(sm2::tuple_encode(schema, over, kept) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_ROWTOOLONG);
+  CHECK(kept == "keep");
+
+  std::vector<std::optional<std::string_view>> views;
+  CHECK(sm2::tuple_deform(schema, t + "x", views) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
+  std::string flagged = t;
+  flagged[0] = 0x04;
+  CHECK(sm2::tuple_deform(schema, flagged, views) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
 }
 
 TEST_CASE("a row reads on after ADD COLUMN, as null or its missing value") {

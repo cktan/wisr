@@ -48,15 +48,19 @@ typedef enum sm_errnum_t {
     /* Not an abort: the transaction stays active (SM1_DESIGN.md §5.4). */
     SM_ERR_UPDATED       = 19,  /* newer commit; sm1::read_latest, then retry */
 
-    /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §5) */
+    /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §4, §5) */
     SM_ERR_KEYTOOLONG    = 20,  /* a key that may not be cut is too long */
+    SM_ERR_ROWTOOLONG    = 22,  /* a tuple past sm2::max_tuple_len */
 
     /*
      * The C wrapper's: an exception other than std::bad_alloc
      * reached its catch-all, which means a bug; the session's
      * transaction has been aborted (DESIGN.md section 5).
      */
-    SM_ERR_EXCEPTION     = 21
+    SM_ERR_EXCEPTION     = 21,
+
+    /* The highest code, for code that walks them all. */
+    SM_ERR_LAST          = SM_ERR_ROWTOOLONG
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */
