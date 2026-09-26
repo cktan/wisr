@@ -855,9 +855,9 @@ The operations, and what each one is over:
 
 | sm2 | what it adds | over |
 | --- | --- | --- |
-| `rel_insert` | writes a tuple under a new `rowno` and returns the `rowno` | `sm1::nextseq`, `sm1::insert` |
+| `rel_insert` | writes a tuple under a new `rowno` and returns the `rowno`; the tuple is encoded from datums, or handed in pre-encoded and checked by `tuple_check` before a `rowno` is drawn | `sm1::nextseq`, `sm1::insert` |
 | `rel_read` | reads a row by `rowno` and decodes it into a tuple | `sm1::read` |
-| `rel_update`, `rel_delete` | by `rowno`; hands back the old image as a **tuple**, not bytes | `sm1::update`, `sm1::erase` |
+| `rel_update`, `rel_delete` | by `rowno`; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is | `sm1::update`, `sm1::erase` |
 | `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest` |
 | `rel_scan`, `rel_scan_seek` | tuples in `rowno` order, forward only | `sm1::scan`, `sm1::scan_seek` |
 

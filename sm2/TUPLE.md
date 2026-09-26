@@ -150,23 +150,34 @@ has bytes past its last varlena.
 
 ## 9. Codec API
 
-The tuple codec provides two decoupled interfaces:
+`sm2.h` takes a row in either of two forms.
 
-- **PostgreSQL Datum & Nulls (SoA):**
-  - `tuple_encode(schema, datums, isnull, tuple)` encodes
-    columns into on-disk format from separate Datum and null
-    arrays matching PostgreSQL's `heap_form_tuple`.
+- **Datums and null flags**, the shape of PostgreSQL's
+  `heap_form_tuple` and `heap_deform_tuple`: a by-value
+  type's value sits in the `Datum` itself; a by-reference
+  type's `Datum` points to its fixed-width bytes or its
+  varlena.
+  - `tuple_encode(schema, datums, isnull, tuple)` writes the
+    layout of §2 to §6, each varlena in its shortest form.
   - `tuple_decode(schema, tuple, ordinal, val, isnull)`
-    extracts a single attribute lazily in $O(1)$ time without
-    deforming preceding or following columns.
-  - `tuple_deform(schema, tuple, datums, isnull)` deforms all
-    columns into contiguous output spans in a single pass with
-    zero memory allocations.
-- **Raw Tuple Byte Storage:**
-  - `rel_insert(rel, tuple, rowno)` writes already-encoded
-    tuple bytes directly under a newly allocated sequence id.
-  - `rel_read(rel, rowno, tuple)` and `rel_scannxt(...)` return
-    `std::string_view` referencing raw bytes in RocksDB buffer
-    memory with zero copies.
-  - `rel_update(rel, rowno, tuple, old)` replaces a row
-    directly using pre-encoded tuple bytes.
+    decodes one attribute without decoding the others.
+    Finding its entry walks the entries before it, so it is
+    O(ordinal), as PostgreSQL's `nocachegetattr` is without
+    cached offsets.
+  - `tuple_deform(schema, tuple, datums, isnull)` decodes
+    every attribute in one pass into the caller's arrays. It
+    allocates only the schema's widths, not its output.
+
+  A by-reference `Datum` either one hands back points into
+  the tuple, or into the schema's missing value, and lives
+  as long as that does.
+- **`datum_t` and views**: the same three calls over
+  `datum_t` and `std::optional<std::string_view>`, a
+  fixed-width datum as its bytes and a variable-width one as
+  its varlena.
+
+`tuple_check(schema, tuple)` accepts only a tuple
+`tuple_encode` could have written: well formed (§8), with
+every attribute of the schema, and none dropped that is not
+null. A heap `rel` checks a pre-encoded tuple against it
+before writing it (`SM2_DESIGN.md` §5).
