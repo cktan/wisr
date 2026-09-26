@@ -218,6 +218,12 @@ int deform(std::span<const sm2::attribute_t> schema,
   return 0;
 }
 
+/* Fail with SM_ERR_INVALID: fn was handed NULL for arg. */
+int null_arg(const char *fn, const char *arg) {
+  return sm1::seterr(sm1::SM_ERR_INVALID,
+                     std::string(fn) + ": " + arg + " is NULL");
+}
+
 /* A C view out-parameter pair, set from v. */
 void view_out(std::string_view v, const void **data, size_t *len) {
   *data = v.data();
@@ -624,10 +630,11 @@ size_t sm_rel_ncols(const sm_rel_t *rel) { return rel->schema.size(); }
 /* Insert an already-encoded tuple into the heap rel. */
 int sm_rel_insert_tuple(sm_rel_t *rel, const void *tuple, size_t len,
                         uint64_t *rowno) {
-  return guard(rel->session, [&] {
-    if (!rowno) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "sm_rel_insert_tuple: rowno is NULL");
+  return guard(rel ? rel->session : nullptr, [&] {
+    if (!rel || !tuple || !rowno) {
+      return null_arg("sm_rel_insert_tuple", !rel     ? "rel"
+                                             : !tuple ? "tuple"
+                                                      : "rowno");
     }
     std::string_view v(static_cast<const char *>(tuple), len);
     return sm2::rel_insert(rel->rel, v, *rowno);
@@ -637,7 +644,12 @@ int sm_rel_insert_tuple(sm_rel_t *rel, const void *tuple, size_t len,
 /* Replace the row at rowno with an already-encoded tuple. */
 int sm_rel_update_tuple(sm_rel_t *rel, uint64_t rowno, const void *tuple,
                         size_t len, const void **old, size_t *old_len) {
-  return guard(rel->session, [&] {
+  return guard(rel ? rel->session : nullptr, [&] {
+    if (!rel || !tuple || (old && !old_len)) {
+      return null_arg("sm_rel_update_tuple", !rel     ? "rel"
+                                             : !tuple ? "tuple"
+                                                      : "old_len");
+    }
     std::string_view v(static_cast<const char *>(tuple), len);
     std::string_view old_v;
     if (sm2::rel_update(rel->rel, rowno, v,
@@ -654,10 +666,12 @@ int sm_rel_update_tuple(sm_rel_t *rel, uint64_t rowno, const void *tuple,
 /* Insert a row of values and isnull. */
 int sm_rel_insert_values(sm_rel_t *rel, const sm_datum_val_t *values,
                          const bool *isnull, size_t n, uint64_t *rowno) {
-  return guard(rel->session, [&] {
-    if (!rowno) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "sm_rel_insert_values: rowno is NULL");
+  return guard(rel ? rel->session : nullptr, [&] {
+    if (!rel || (n && !values) || (n && !isnull) || !rowno) {
+      return null_arg("sm_rel_insert_values", !rel           ? "rel"
+                                              : !rowno       ? "rowno"
+                                              : n && !values ? "values"
+                                                             : "isnull");
     }
     if (n != rel->schema.size()) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
@@ -673,7 +687,13 @@ int sm_rel_insert_values(sm_rel_t *rel, const sm_datum_val_t *values,
 int sm_rel_update_values(sm_rel_t *rel, uint64_t rowno,
                          const sm_datum_val_t *values, const bool *isnull,
                          size_t n, const void **old, size_t *old_len) {
-  return guard(rel->session, [&] {
+  return guard(rel ? rel->session : nullptr, [&] {
+    if (!rel || (n && !values) || (n && !isnull) || (old && !old_len)) {
+      return null_arg("sm_rel_update_values", !rel           ? "rel"
+                                              : n && !values ? "values"
+                                              : n && !isnull ? "isnull"
+                                                             : "old_len");
+    }
     if (n != rel->schema.size()) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
                          "sm_rel_update_values: n is not rel schema count");
@@ -802,9 +822,13 @@ int sm_tuple_encode(const sm_attribute_t *schema, size_t natts,
                     const sm_datum_val_t *values, const bool *isnull,
                     void **tuple, size_t *len) {
   return guard(nullptr, [&] {
-    if (!tuple || !len || (!values && natts > 0) || (!isnull && natts > 0)) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "sm_tuple_encode: invalid arguments");
+    if ((natts && !schema) || (natts && !values) || (natts && !isnull) ||
+        !tuple || !len) {
+      return null_arg("sm_tuple_encode", natts && !schema   ? "schema"
+                                         : natts && !values ? "values"
+                                         : natts && !isnull ? "isnull"
+                                         : !tuple           ? "tuple"
+                                                            : "len");
     }
     auto s = schema_of(schema, natts);
     std::string out;
@@ -828,6 +852,12 @@ int sm_tuple_encode(const sm_attribute_t *schema, size_t natts,
 int sm_rel_deform_values(sm_rel_t *rel, const void *tuple, size_t len,
                          sm_datum_val_t *values, bool *isnull, size_t n) {
   return guard(nullptr, [&] {
+    if (!rel || !tuple || (n && !values) || (n && !isnull)) {
+      return null_arg("sm_rel_deform_values", !rel           ? "rel"
+                                              : !tuple       ? "tuple"
+                                              : n && !values ? "values"
+                                                             : "isnull");
+    }
     if (n != rel->schema.size()) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
                          "sm_rel_deform_values: n is not rel schema count");
@@ -843,9 +873,11 @@ int sm_rel_deform_values(sm_rel_t *rel, const void *tuple, size_t len,
 int sm_rel_decode_value(sm_rel_t *rel, const void *tuple, size_t len,
                         size_t ordinal, sm_datum_val_t *val, bool *isnull) {
   return guard(nullptr, [&] {
-    if (!val || !isnull) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "sm_rel_decode_value: val or isnull is NULL");
+    if (!rel || !tuple || !val || !isnull) {
+      return null_arg("sm_rel_decode_value", !rel     ? "rel"
+                                             : !tuple ? "tuple"
+                                             : !val   ? "val"
+                                                      : "isnull");
     }
     std::string_view v(static_cast<const char *>(tuple), len);
     return sm2::tuple_decode(rel->schema, v, ordinal, *val, *isnull);
