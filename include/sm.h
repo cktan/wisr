@@ -404,7 +404,7 @@ int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t rowno);
 void sm_rel_scanend(sm_rel_scan_t* scan);
 
 /* Encode values and isnull into a tuple buffer; sm_free(*tuple). */
-int sm_tuple_encode(const sm_attribute_t* schema, size_t natts,
+int sm_tup_encode(const sm_attribute_t* schema, size_t natts,
                     const sm_datum_val_t* values, const bool* isnull,
                     void** tuple, size_t* len);
 

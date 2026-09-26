@@ -37,7 +37,7 @@ std::vector<sm2::datum_t> datums_of(const row_t &row) {
 /* tuple decoded under schema, as owned bytes. */
 row_t decode(std::span<const sm2::attribute_t> schema, std::string_view tuple) {
   std::vector<std::optional<std::string_view>> views;
-  REQUIRE_MESSAGE(sm2::tuple_deform(schema, tuple, views) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm2::tup_deform(schema, tuple, views) == 0, sm1::errmsg());
   row_t out;
   for (const auto &v : views) {
     out.push_back(v ? std::optional<std::string>(*v) : std::nullopt);
@@ -398,7 +398,7 @@ TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
                       sm2::datum_from_ptr(vl1.data())};
   bool nulls1[2] = {false, false};
   std::string tuple1;
-  REQUIRE(sm2::tuple_encode(schema, d1, nulls1, tuple1) == 0);
+  REQUIRE(sm2::tup_encode(schema, d1, nulls1, tuple1) == 0);
 
   uint64_t r1;
   REQUIRE(sm2::rel_insert(rel, tuple1, r1) == 0);
@@ -413,7 +413,7 @@ TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
                       sm2::datum_from_ptr(vl2.data())};
   bool nulls2[2] = {false, false};
   std::string tuple2;
-  REQUIRE(sm2::tuple_encode(schema, d2, nulls2, tuple2) == 0);
+  REQUIRE(sm2::tup_encode(schema, d2, nulls2, tuple2) == 0);
 
   std::string_view old_t;
   REQUIRE(sm2::rel_update(rel, r1, tuple2, &old_t) == 0);
@@ -457,7 +457,7 @@ TEST_CASE("a raw tuple is checked before it is written") {
   sm2::Datum d[1] = {sm2::datum_from_int32(1)};
   bool nulls[1] = {false};
   std::string good;
-  REQUIRE(sm2::tuple_encode(schema, d, nulls, good) == 0);
+  REQUIRE(sm2::tup_encode(schema, d, nulls, good) == 0);
 
   uint64_t first, second;
   REQUIRE(sm2::rel_insert(rel, good, first) == 0);

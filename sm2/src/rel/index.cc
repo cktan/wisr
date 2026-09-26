@@ -206,7 +206,7 @@ int idx_insert(index_t *index, std::span<const datum_t> key, uint64_t rowno,
     std::vector<datum_t> datums = {{r, false}, {c, false}};
     datums.insert(datums.end(), include.begin(), include.end());
     std::string value;
-    if (tuple_encode(index->value, datums, value) != 0) {
+    if (tup_encode(index->value, datums, value) != 0) {
       return -1;
     }
     return sm1::insert(index->session, index->storeid, k, value);
@@ -284,8 +284,8 @@ int idx_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
     }
     // The value opens with the rowno and the cut flag.
     std::optional<std::string_view> r, c;
-    if (tuple_decode(scan->index->value, value, 0, r) != 0 ||
-        tuple_decode(scan->index->value, value, 1, c) != 0) {
+    if (tup_decode(scan->index->value, value, 0, r) != 0 ||
+        tup_decode(scan->index->value, value, 1, c) != 0) {
       return -1;
     }
     if (!r || !c) {

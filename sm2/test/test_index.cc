@@ -300,7 +300,7 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
     CHECK(rowno == want);
     CHECK(cut);
     std::optional<std::string_view> inc;
-    REQUIRE(sm2::tuple_decode(sm2::idx_value_schema(ix), value, 2, inc) == 0);
+    REQUIRE(sm2::tup_decode(sm2::idx_value_schema(ix), value, 2, inc) == 0);
     REQUIRE(inc);
     CHECK(*inc == le(static_cast<int32_t>(want + 99)));
   }

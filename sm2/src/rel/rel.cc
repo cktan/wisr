@@ -58,10 +58,10 @@ int write_update(sm2::rel_t *rel, uint64_t rowno, std::string_view tuple,
                      tuple, old);
 }
 
-/* Encode datums under rel's schema; see tuple_encode. */
+/* Encode datums under rel's schema; see tup_encode. */
 int encode(const sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
            std::string &tuple) {
-  return sm2::tuple_encode(rel->schema, datums, tuple);
+  return sm2::tup_encode(rel->schema, datums, tuple);
 }
 
 } // namespace
@@ -102,7 +102,7 @@ std::span<const attribute_t> rel_schema(const rel_t *rel) {
 int rel_insert(rel_t *rel, std::string_view tuple, uint64_t &rowno) {
   return catch_nomem([&] {
     // Check first, so a tuple that cannot be stored draws no rowno.
-    if (tuple_check(rel->schema, tuple) != 0) {
+    if (tup_check(rel->schema, tuple) != 0) {
       return -1;
     }
     return write_new(rel, tuple, rowno);
@@ -114,7 +114,7 @@ int rel_insert(rel_t *rel, std::span<const Datum> datums,
                std::span<const bool> isnull, uint64_t &rowno) {
   return catch_nomem([&] {
     std::string tuple;
-    if (tuple_encode(rel->schema, datums, isnull, tuple) != 0) {
+    if (tup_encode(rel->schema, datums, isnull, tuple) != 0) {
       return -1;
     }
     return write_new(rel, tuple, rowno);
@@ -152,7 +152,7 @@ int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
 int rel_update(rel_t *rel, uint64_t rowno, std::string_view tuple,
                std::string_view *old) {
   return catch_nomem([&] {
-    if (tuple_check(rel->schema, tuple) != 0) {
+    if (tup_check(rel->schema, tuple) != 0) {
       return -1;
     }
     return write_update(rel, rowno, tuple, old);
@@ -164,7 +164,7 @@ int rel_update(rel_t *rel, uint64_t rowno, std::span<const Datum> datums,
                std::span<const bool> isnull, std::string_view *old) {
   return catch_nomem([&] {
     std::string tuple;
-    if (tuple_encode(rel->schema, datums, isnull, tuple) != 0) {
+    if (tup_encode(rel->schema, datums, isnull, tuple) != 0) {
       return -1;
     }
     return write_update(rel, rowno, tuple, old);

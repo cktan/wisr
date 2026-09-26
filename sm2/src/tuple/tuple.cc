@@ -199,8 +199,8 @@ int parse(std::span<const sm2::attribute_t> schema,
   if (tuple.empty()) {
     return corrupt("empty");
   }
-  if (tuple.size() > sm2::max_tuple_len) {
-    return corrupt("longer than " + std::to_string(sm2::max_tuple_len) +
+  if (tuple.size() > sm2::max_tup_len) {
+    return corrupt("longer than " + std::to_string(sm2::max_tup_len) +
                    " bytes");
   }
   uint8_t flags = static_cast<uint8_t>(tuple[0]);
@@ -288,7 +288,7 @@ void bytes_to_datum(const sm2::attribute_t &attr, std::string_view bytes,
 
 /*
  * Every attribute of a tuple, in one pass: put(i, datum) for each,
- * datum as tuple_decode's view gives it. Fails as tuple_decode.
+ * datum as tup_decode's view gives it. Fails as tup_decode.
  */
 template <class F>
 int deform_each(std::span<const sm2::attribute_t> schema,
@@ -355,9 +355,9 @@ std::string_view varlena_payload(std::string_view v) {
 }
 
 /* Encode datums and isnull under schema into tuple; see sm2.h. */
-int tuple_encode(std::span<const attribute_t> schema,
-                 std::span<const Datum> datums, std::span<const bool> isnull,
-                 std::string &tuple) {
+int tup_encode(std::span<const attribute_t> schema,
+               std::span<const Datum> datums, std::span<const bool> isnull,
+               std::string &tuple) {
   return catch_nomem([&] {
     std::vector<int32_t> w;
     if (widths(schema, w) != 0) {
@@ -410,11 +410,11 @@ int tuple_encode(std::span<const attribute_t> schema,
     size_t head =
         1 + varint_len(datums.size()) + (nulls ? (datums.size() + 7) / 8 : 0);
     size_t var_start = head + fixed + slot_width * nvar;
-    if (var_start + var > max_tuple_len) {
+    if (var_start + var > max_tup_len) {
       return sm1::seterr(sm1::SM_ERR_ROWTOOLONG,
                          "tuple: a row of " + std::to_string(var_start + var) +
                              " bytes is longer than " +
-                             std::to_string(max_tuple_len));
+                             std::to_string(max_tup_len));
     }
     // The header, then the null bitmap, a set bit for a null.
     std::string out;
@@ -456,8 +456,8 @@ int tuple_encode(std::span<const attribute_t> schema,
 }
 
 /* Encode datums under schema into tuple; see sm2.h. */
-int tuple_encode(std::span<const attribute_t> schema,
-                 std::span<const datum_t> datums, std::string &tuple) {
+int tup_encode(std::span<const attribute_t> schema,
+               std::span<const datum_t> datums, std::string &tuple) {
   return catch_nomem([&] {
     if (datums.size() != schema.size()) {
       return invalid("a datum for every attribute, no more");
@@ -492,13 +492,13 @@ int tuple_encode(std::span<const attribute_t> schema,
         d[i] = reinterpret_cast<uintptr_t>(datums[i].bytes.data());
       }
     }
-    return tuple_encode(
+    return tup_encode(
         schema, d, std::span<const bool>(isnull.get(), datums.size()), tuple);
   });
 }
 
 /* Check that tuple is one the codec could write; see sm2.h. */
-int tuple_check(std::span<const attribute_t> schema, std::string_view tuple) {
+int tup_check(std::span<const attribute_t> schema, std::string_view tuple) {
   return catch_nomem([&] {
     std::vector<int32_t> w;
     parsed_t t;
@@ -524,8 +524,8 @@ int tuple_check(std::span<const attribute_t> schema, std::string_view tuple) {
 }
 
 /* Deform every attribute of tuple into datums and isnull; see sm2.h. */
-int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
-                 std::span<Datum> datums, std::span<bool> isnull) {
+int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
+               std::span<Datum> datums, std::span<bool> isnull) {
   return catch_nomem([&] {
     if (datums.size() != schema.size() || isnull.size() != schema.size()) {
       return invalid("deform: output spans must match schema size");
@@ -542,8 +542,8 @@ int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
 }
 
 /* Every attribute of a tuple, in one pass; see sm2.h. */
-int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
-                 std::vector<std::optional<std::string_view>> &datums) {
+int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
+               std::vector<std::optional<std::string_view>> &datums) {
   return catch_nomem([&] {
     datums.clear();
     return deform_each(schema, tuple,
@@ -554,10 +554,10 @@ int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
 }
 
 /* One attribute of a tuple, by ordinal, into val and isnull; see sm2.h. */
-int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
-                 size_t ordinal, Datum &val, bool &isnull) {
+int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
+               size_t ordinal, Datum &val, bool &isnull) {
   std::optional<std::string_view> d;
-  if (tuple_decode(schema, tuple, ordinal, d) != 0) {
+  if (tup_decode(schema, tuple, ordinal, d) != 0) {
     return -1;
   }
   val = 0;
@@ -569,8 +569,8 @@ int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
 }
 
 /* One attribute of a tuple, by ordinal; see sm2.h. */
-int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
-                 size_t ordinal, std::optional<std::string_view> &datum) {
+int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
+               size_t ordinal, std::optional<std::string_view> &datum) {
   return catch_nomem([&] {
     std::vector<int32_t> w;
     parsed_t t;

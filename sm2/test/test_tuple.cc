@@ -40,7 +40,7 @@ std::string encode(const std::vector<sm2::attribute_t> &schema,
     datums.push_back({d ? std::string_view(*d) : std::string_view(), !d});
   }
   std::string tuple;
-  REQUIRE(sm2::tuple_encode(schema, datums, tuple) == 0);
+  REQUIRE(sm2::tup_encode(schema, datums, tuple) == 0);
   return tuple;
 }
 
@@ -48,7 +48,7 @@ std::string encode(const std::vector<sm2::attribute_t> &schema,
 std::vector<std::optional<std::string>>
 deform(const std::vector<sm2::attribute_t> &schema, std::string_view tuple) {
   std::vector<std::optional<std::string_view>> views;
-  REQUIRE_MESSAGE(sm2::tuple_deform(schema, tuple, views) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm2::tup_deform(schema, tuple, views) == 0, sm1::errmsg());
   std::vector<std::optional<std::string>> out;
   for (const auto &v : views) {
     out.push_back(v ? std::optional<std::string>(*v) : std::nullopt);
@@ -102,9 +102,9 @@ TEST_CASE("a tuple's bytes are the layout SM2_DESIGN.md §4.1 fixes") {
 TEST_CASE("every tuple round trips, and any one column decodes alone") {
   // Verify the codec by property, from test_seed(), over random
   // schemas of every type, decimal at both widths.
-  // 1. Every row, nulls included, encodes, and tuple_deform gives
+  // 1. Every row, nulls included, encodes, and tup_deform gives
   //    it back.
-  // 2. tuple_decode of each attribute alone agrees with deform.
+  // 2. tup_decode of each attribute alone agrees with deform.
   // 3. A row with no nulls carries no null bitmap: its has-nulls
   //    flag is clear.
   INFO("seed ", test_seed());
@@ -131,7 +131,7 @@ TEST_CASE("every tuple round trips, and any one column decodes alone") {
       CHECK(deform(schema, tuple) == row);
       for (size_t i = 0; i < schema.size(); i++) {
         std::optional<std::string_view> d;
-        REQUIRE(sm2::tuple_decode(schema, tuple, i, d) == 0);
+        REQUIRE(sm2::tup_decode(schema, tuple, i, d) == 0);
         CHECK(d.has_value() == row[i].has_value());
         if (d && row[i]) {
           CHECK(*d == *row[i]);
@@ -158,23 +158,23 @@ TEST_CASE("a tuple is at most 65535 bytes, so its slots are 2 bytes") {
   std::vector<std::optional<std::string>> row = {vl(std::string(65523, 'x')),
                                                  le(int32_t{-1})};
   std::string t = encode(schema, row);
-  CHECK(t.size() == sm2::max_tuple_len);
+  CHECK(t.size() == sm2::max_tup_len);
   CHECK(t[0] == 0);
   CHECK(deform(schema, t) == row);
 
   std::string big = vl(std::string(65524, 'x')), four = le(int32_t{-1});
   std::vector<sm2::datum_t> over = {{big, false}, {four, false}};
   std::string kept = "keep";
-  CHECK(sm2::tuple_encode(schema, over, kept) == -1);
+  CHECK(sm2::tup_encode(schema, over, kept) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_ROWTOOLONG);
   CHECK(kept == "keep");
 
   std::vector<std::optional<std::string_view>> views;
-  CHECK(sm2::tuple_deform(schema, t + "x", views) == -1);
+  CHECK(sm2::tup_deform(schema, t + "x", views) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
   std::string flagged = t;
   flagged[0] = 0x04;
-  CHECK(sm2::tuple_deform(schema, flagged, views) == -1);
+  CHECK(sm2::tup_deform(schema, flagged, views) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
 }
 
@@ -183,7 +183,7 @@ TEST_CASE("a row reads on after ADD COLUMN, as null or its missing value") {
   // 1. A row written under (int4, text) reads under a schema with
   //    two more attributes: its own two, then std::nullopt for the
   //    one added with no value, then the other's missing value.
-  // 2. tuple_decode of an added attribute says the same.
+  // 2. tup_decode of an added attribute says the same.
   std::vector<sm2::attribute_t> before = {attr(sm2::type_int4),
                                           attr(sm2::type_text)};
   std::string t = encode(before, {le(int32_t{3}), vl("row")});
@@ -194,10 +194,10 @@ TEST_CASE("a row reads on after ADD COLUMN, as null or its missing value") {
       le(int32_t{3}), vl("row"), std::nullopt, le(int32_t{42})};
   CHECK(deform(after, t) == want);
   std::optional<std::string_view> d;
-  REQUIRE(sm2::tuple_decode(after, t, 3, d) == 0);
+  REQUIRE(sm2::tup_decode(after, t, 3, d) == 0);
   REQUIRE(d);
   CHECK(*d == le(int32_t{42}));
-  REQUIRE(sm2::tuple_decode(after, t, 2, d) == 0);
+  REQUIRE(sm2::tup_decode(after, t, 2, d) == 0);
   CHECK_FALSE(d);
 }
 
@@ -222,12 +222,12 @@ TEST_CASE("a dropped column keeps its place and reads as null") {
   std::string ignored;
   std::vector<sm2::datum_t> with_value = {
       {le(int32_t{1}), false}, {vl("x"), false}, {le(int32_t{2}), false}};
-  CHECK(sm2::tuple_encode(dropped, with_value, ignored) == -1);
+  CHECK(sm2::tup_encode(dropped, with_value, ignored) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
 TEST_CASE("a malformed tuple is refused as corrupt") {
-  // Verify the checks tuple_deform and tuple_decode make.
+  // Verify the checks tup_deform and tup_decode make.
   // 1. Every proper prefix of a valid tuple, and the tuple with a
   //    byte added, is SM_ERR_CORRUPT: the parts must fit exactly.
   // 2. So is a reserved flag, more attributes than the schema has,
@@ -242,10 +242,10 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
   std::vector<std::optional<std::string_view>> out;
   auto refused = [&](std::string_view t) {
     CAPTURE(hex(t));
-    CHECK(sm2::tuple_deform(schema, t, out) == -1);
+    CHECK(sm2::tup_deform(schema, t, out) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
     std::optional<std::string_view> d;
-    CHECK(sm2::tuple_decode(schema, t, 0, d) == -1);
+    CHECK(sm2::tup_decode(schema, t, 0, d) == -1);
   };
   for (size_t n = 0; n < good.size(); n++) {
     refused(good.substr(0, n));
@@ -281,7 +281,7 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
 }
 
 TEST_CASE("the codec refuses arguments that do not fit the schema") {
-  // Verify tuple_encode and tuple_decode's SM_ERR_INVALID cases.
+  // Verify tup_encode and tup_decode's SM_ERR_INVALID cases.
   // 1. Fewer or more datums than attributes, and a fixed-width
   //    datum of the wrong width, leave the tuple as it was.
   // 2. A variable datum with no header, a TOAST pointer, a
@@ -293,10 +293,10 @@ TEST_CASE("the codec refuses arguments that do not fit the schema") {
                                           attr(sm2::type_text)};
   std::string tuple = "keep";
   std::vector<sm2::datum_t> one = {{le(int32_t{1}), false}};
-  CHECK(sm2::tuple_encode(schema, one, tuple) == -1);
+  CHECK(sm2::tup_encode(schema, one, tuple) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::vector<sm2::datum_t> wide = {{"12345", false}, {vl("t"), false}};
-  CHECK(sm2::tuple_encode(schema, wide, tuple) == -1);
+  CHECK(sm2::tup_encode(schema, wide, tuple) == -1);
   CHECK(tuple == "keep");
   // A variable datum must be a varlena this codec can store.
   std::string toast(1, sm2::varlena_toast);
@@ -306,17 +306,17 @@ TEST_CASE("the codec refuses arguments that do not fit the schema") {
        {std::string_view(), std::string_view(toast),
         std::string_view(compressed), std::string_view(too_short)}) {
     std::vector<sm2::datum_t> row = {{le(int32_t{1}), false}, {v, false}};
-    CHECK(sm2::tuple_encode(schema, row, tuple) == -1);
+    CHECK(sm2::tup_encode(schema, row, tuple) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
   CHECK(tuple == "keep");
   std::vector<sm2::attribute_t> bad_typmod = {attr(sm2::type_decimal64, 3)};
   std::vector<sm2::datum_t> d8 = {{le(int64_t{1}), false}};
-  CHECK(sm2::tuple_encode(bad_typmod, d8, tuple) == -1);
+  CHECK(sm2::tup_encode(bad_typmod, d8, tuple) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::string good = encode(schema, {le(int32_t{1}), vl("t")});
   std::optional<std::string_view> d;
-  CHECK(sm2::tuple_decode(schema, good, 2, d) == -1);
+  CHECK(sm2::tup_decode(schema, good, 2, d) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
@@ -370,13 +370,13 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
                           sm2::datum_from_bool(true)};
   bool isnull[4] = {false, false, true, false};
   std::string t;
-  REQUIRE(sm2::tuple_encode(schema, datums, isnull, t) == 0);
+  REQUIRE(sm2::tup_encode(schema, datums, isnull, t) == 0);
   CHECK(hex(t) == "010404070000000a0001076869");
 
   // 2. Deform back to Datum and isnull.
   sm2::Datum out_d[4];
   bool out_null[4];
-  REQUIRE(sm2::tuple_deform(schema, t, out_d, out_null) == 0);
+  REQUIRE(sm2::tup_deform(schema, t, out_d, out_null) == 0);
   CHECK_FALSE(out_null[0]);
   CHECK(sm2::datum_to_int32(out_d[0]) == 7);
   CHECK_FALSE(out_null[1]);
@@ -389,19 +389,19 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
   // 3. Decode each attribute individually.
   sm2::Datum val;
   bool is_null;
-  REQUIRE(sm2::tuple_decode(schema, t, 0, val, is_null) == 0);
+  REQUIRE(sm2::tup_decode(schema, t, 0, val, is_null) == 0);
   CHECK_FALSE(is_null);
   CHECK(sm2::datum_to_int32(val) == 7);
 
-  REQUIRE(sm2::tuple_decode(schema, t, 1, val, is_null) == 0);
+  REQUIRE(sm2::tup_decode(schema, t, 1, val, is_null) == 0);
   CHECK_FALSE(is_null);
   CHECK(sm2::varlena_payload(
             std::string_view(reinterpret_cast<const char *>(val), 3)) == "hi");
 
-  REQUIRE(sm2::tuple_decode(schema, t, 2, val, is_null) == 0);
+  REQUIRE(sm2::tup_decode(schema, t, 2, val, is_null) == 0);
   CHECK(is_null);
 
-  REQUIRE(sm2::tuple_decode(schema, t, 3, val, is_null) == 0);
+  REQUIRE(sm2::tup_decode(schema, t, 3, val, is_null) == 0);
   CHECK_FALSE(is_null);
   CHECK(sm2::datum_to_bool(val) == true);
 
@@ -412,18 +412,18 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
 
   sm2::Datum exp_d[5];
   bool exp_null[5];
-  REQUIRE(sm2::tuple_deform(expanded, t, exp_d, exp_null) == 0);
+  REQUIRE(sm2::tup_deform(expanded, t, exp_d, exp_null) == 0);
   CHECK_FALSE(exp_null[4]);
   CHECK(sm2::datum_to_int64(exp_d[4]) == 9999);
 
-  REQUIRE(sm2::tuple_decode(expanded, t, 4, val, is_null) == 0);
+  REQUIRE(sm2::tup_decode(expanded, t, 4, val, is_null) == 0);
   CHECK_FALSE(is_null);
   CHECK(sm2::datum_to_int64(val) == 9999);
 }
 
-TEST_CASE("tuple_check accepts what the codec writes, and nothing else") {
-  // Verify tuple_check refuses, as SM_ERR_INVALID, any tuple
-  // tuple_encode could not have written under the schema.
+TEST_CASE("tup_check accepts what the codec writes, and nothing else") {
+  // Verify tup_check refuses, as SM_ERR_INVALID, any tuple
+  // tup_encode could not have written under the schema.
   // 1. An encoded tuple passes.
   // 2. Malformed bytes fail.
   // 3. A tuple with fewer attributes than the schema fails.
@@ -435,21 +435,21 @@ TEST_CASE("tuple_check accepts what the codec writes, and nothing else") {
                           sm2::datum_from_ptr(vl_hi.data())};
   bool isnull[2] = {false, false};
   std::string t;
-  REQUIRE(sm2::tuple_encode(schema, datums, isnull, t) == 0);
-  CHECK(sm2::tuple_check(schema, t) == 0);
+  REQUIRE(sm2::tup_encode(schema, datums, isnull, t) == 0);
+  CHECK(sm2::tup_check(schema, t) == 0);
 
-  CHECK(sm2::tuple_check(schema, "garbage") == -1);
+  CHECK(sm2::tup_check(schema, "garbage") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm2::tuple_check(schema, t.substr(0, t.size() - 1)) == -1);
+  CHECK(sm2::tup_check(schema, t.substr(0, t.size() - 1)) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
   std::vector<sm2::attribute_t> wider = schema;
   wider.push_back(attr(sm2::type_int8));
-  CHECK(sm2::tuple_check(wider, t) == -1);
+  CHECK(sm2::tup_check(wider, t) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 
   std::vector<sm2::attribute_t> dropped = schema;
   dropped[0].dropped = true;
-  CHECK(sm2::tuple_check(dropped, t) == -1);
+  CHECK(sm2::tup_check(dropped, t) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }

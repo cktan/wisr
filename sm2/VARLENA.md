@@ -77,11 +77,11 @@ valid when:
 
 The tuple's own rule, that its varlenas lie end to end with
 nothing after the last, catches a header that claims too much
-or too little. A varlena passed to `tuple_encode` alone must
+or too little. A varlena passed to `tup_encode` alone must
 match its length exactly.
 
 Anything else is a corrupt tuple, `SM_ERR_CORRUPT`. The same
-checks refuse a malformed varlena passed to `tuple_encode`,
+checks refuse a malformed varlena passed to `tup_encode`,
 with `SM_ERR_INVALID`.
 
 ## 5. Alignment

@@ -594,8 +594,8 @@ component with its own header, designed, built and tested
 before anything calls it:
 
 ```
-tuple_encode(schema, datums[], nulls[])  -> bytes
-tuple_decode(schema, bytes, ordinal)     -> one datum
+tup_encode(schema, datums[], nulls[])  -> bytes
+tup_decode(schema, bytes, ordinal)     -> one datum
 ```
 
 Three reasons to split it out rather than let it live inside
@@ -872,7 +872,7 @@ The operations, and what each one is over:
 
 | sm2 | what it adds | over |
 | --- | --- | --- |
-| `rel_insert` | writes a tuple under a new `rowno` and returns the `rowno`; the tuple is encoded from datums, or handed in pre-encoded and checked by `tuple_check` before a `rowno` is drawn | `sm1::nextseq`, `sm1::insert` |
+| `rel_insert` | writes a tuple under a new `rowno` and returns the `rowno`; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before a `rowno` is drawn | `sm1::nextseq`, `sm1::insert` |
 | `rel_read` | reads a row by `rowno` and decodes it into a tuple | `sm1::read` |
 | `rel_update`, `rel_delete` | by `rowno`; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is | `sm1::update`, `sm1::erase` |
 | `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest` |
@@ -951,7 +951,7 @@ The rules it must satisfy:
   have no error to return, so they must not allocate.
 - **The interface is `include/sm2.h`, in `namespace sm2`**, as
   every level's is (`OBJECTIVE.md` at the top level):
-  `sm2::rel_insert`, `sm2::tuple_encode`. This document writes
+  `sm2::rel_insert`, `sm2::tup_encode`. This document writes
   the short names — `rel_insert` for `sm2::rel_insert`.
 - **Every column is in the tuple.** An encoded key — the
   primary key index's or any other's — is an ordering device,
@@ -964,7 +964,7 @@ The rules it must satisfy:
 - **Decoding is per column, not per row.** Reading one column
   of a wide tuple must not cost the whole tuple, or a
   predicate above sm2 pays for every column it does not look
-  at. `rel` gets this from `tuple_decode`'s by-ordinal
+  at. `rel` gets this from `tup_decode`'s by-ordinal
   signature (§4); it does not implement it a second time.
 - **`rel` calls the tuple codec, it does not contain it.**
   §4 is a component with its own header and its own tests,
@@ -1204,7 +1204,7 @@ and separating the datums PG calls equal.
 Its own API, with its own header, built before the relation
 that calls it (§4).
 
-- `tuple_encode` and `tuple_decode`, the latter by ordinal so
+- `tup_encode` and `tup_decode`, the latter by ordinal so
   one column costs one column.
 - Null bitmap, fixed/variable split, no padding
   (§4.1).

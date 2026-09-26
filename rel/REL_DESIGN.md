@@ -294,7 +294,7 @@ relational catalog mapping table names to their storage metadata.
      1-byte or 4-byte header (`sm2/VARLENA.md`), the Datum
      pointing at them.
    - Types rel cannot convert yet are refused.
-3. Calls `sm_tuple_encode(attrs, n, values, isnull, &tuple,
+3. Calls `sm_tup_encode(attrs, n, values, isnull, &tuple,
    &len)`, then `sm_rel_insert_tuple(rel, tuple, len, &rowno)`.
 4. For each attached index on `<table>`:
    - Extracts key column datums and INCLUDE column datums.

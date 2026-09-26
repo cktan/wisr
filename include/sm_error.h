@@ -50,7 +50,7 @@ typedef enum sm_errnum_t {
 
     /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §4, §5) */
     SM_ERR_KEYTOOLONG    = 20,  /* a key that may not be cut is too long */
-    SM_ERR_ROWTOOLONG    = 22,  /* a tuple past sm2::max_tuple_len */
+    SM_ERR_ROWTOOLONG    = 22,  /* a tuple past sm2::max_tup_len */
 
     /*
      * The C wrapper's: an exception other than std::bad_alloc

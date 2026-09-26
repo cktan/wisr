@@ -197,9 +197,9 @@ sm_datum_t c_datum_of(const std::optional<std::string_view> &d) {
 int decode(std::span<const sm2::attribute_t> schema, const void *tuple,
            size_t len, size_t ordinal, sm_datum_t *out) {
   std::optional<std::string_view> d;
-  if (sm2::tuple_decode(schema,
-                        std::string_view(static_cast<const char *>(tuple), len),
-                        ordinal, d) != 0) {
+  if (sm2::tup_decode(schema,
+                      std::string_view(static_cast<const char *>(tuple), len),
+                      ordinal, d) != 0) {
     return -1;
   }
   *out = c_datum_of(d);
@@ -214,9 +214,9 @@ int deform(std::span<const sm2::attribute_t> schema,
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "deform: n is not the schema's attribute count");
   }
-  if (sm2::tuple_deform(schema,
-                        std::string_view(static_cast<const char *>(tuple), len),
-                        buf) != 0) {
+  if (sm2::tup_deform(schema,
+                      std::string_view(static_cast<const char *>(tuple), len),
+                      buf) != 0) {
     return -1;
   }
   for (size_t i = 0; i < n; i++) {
@@ -825,28 +825,28 @@ void sm_rel_scanend(sm_rel_scan_t *scan) {
 }
 
 /* Encode values and isnull into a tuple buffer; sm_free(*tuple). */
-int sm_tuple_encode(const sm_attribute_t *schema, size_t natts,
-                    const sm_datum_val_t *values, const bool *isnull,
-                    void **tuple, size_t *len) {
+int sm_tup_encode(const sm_attribute_t *schema, size_t natts,
+                  const sm_datum_val_t *values, const bool *isnull,
+                  void **tuple, size_t *len) {
   return guard(nullptr, [&] {
     if ((natts && !schema) || (natts && !values) || (natts && !isnull) ||
         !tuple || !len) {
-      return null_arg("sm_tuple_encode", natts && !schema   ? "schema"
-                                         : natts && !values ? "values"
-                                         : natts && !isnull ? "isnull"
-                                         : !tuple           ? "tuple"
-                                                            : "len");
+      return null_arg("sm_tup_encode", natts && !schema   ? "schema"
+                                       : natts && !values ? "values"
+                                       : natts && !isnull ? "isnull"
+                                       : !tuple           ? "tuple"
+                                                          : "len");
     }
     auto s = schema_of(schema, natts);
     std::string out;
     std::span<const sm2::Datum> val_span(values, natts);
     std::span<const bool> null_span(isnull, natts);
-    if (sm2::tuple_encode(s, val_span, null_span, out) != 0) {
+    if (sm2::tup_encode(s, val_span, null_span, out) != 0) {
       return -1;
     }
     void *buf = std::malloc(out.size());
     if (!buf) {
-      return sm1::seterr(sm1::SM_ERR_NOMEM, "sm_tuple_encode: out of memory");
+      return sm1::seterr(sm1::SM_ERR_NOMEM, "sm_tup_encode: out of memory");
     }
     std::memcpy(buf, out.data(), out.size());
     *tuple = buf;
@@ -872,7 +872,7 @@ int sm_rel_deform_values(sm_rel_t *rel, const void *tuple, size_t len,
     std::string_view v(static_cast<const char *>(tuple), len);
     std::span<sm2::Datum> val_span(values, n);
     std::span<bool> null_span(isnull, n);
-    return sm2::tuple_deform(rel->schema, v, val_span, null_span);
+    return sm2::tup_deform(rel->schema, v, val_span, null_span);
   });
 }
 
@@ -887,7 +887,7 @@ int sm_rel_decode_value(sm_rel_t *rel, const void *tuple, size_t len,
                                                       : "isnull");
     }
     std::string_view v(static_cast<const char *>(tuple), len);
-    return sm2::tuple_decode(rel->schema, v, ordinal, *val, *isnull);
+    return sm2::tup_decode(rel->schema, v, ordinal, *val, *isnull);
   });
 }
 

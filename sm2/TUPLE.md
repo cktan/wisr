@@ -1,7 +1,7 @@
 # TUPLE — sm2, a row's bytes
 
-The reference for the tuple format: the bytes `tuple_encode`
-writes and `tuple_decode` and `tuple_deform` read, which a heap
+The reference for the tuple format: the bytes `tup_encode`
+writes and `tup_decode` and `tup_deform` read, which a heap
 `rel` stores as an sm1 value. `SM2_DESIGN.md` §4 argues *why*;
 `VARLENA.md` is a variable-width datum's bytes inside it; this
 file is the rest.
@@ -23,7 +23,7 @@ whole ends exactly where the last variable datum does. Every
 multi-byte integer is little-endian.
 
 A tuple is at most **65535 bytes**, TOAST aside
-(`max_tuple_len` in `include/sm2.h`): the writer refuses a
+(`max_tup_len` in `include/sm2.h`): the writer refuses a
 longer row with `SM_ERR_ROWTOOLONG`, so a 2-byte slot (§4)
 reaches any byte of any tuple.
 
@@ -65,10 +65,12 @@ another follows. Up to 127 attributes take one byte.
 ## 3. The null bitmap
 
 Present only when the has-nulls flag is set: one bit for each
-of the row's `natts` attributes, **set for a null**, attribute
-`i` at bit `i % 8` of byte `i / 8`. The bitmap is
-`ALIGN8(natts) / 8` bytes, `natts` rounded up to a multiple of
-8; bits past `natts` are ignored.
+of the row's `natts` attributes, **set for a null**.
+
+- size: `ALIGN8(natts) / 8` bytes
+- attribute `i`'s byte: `i / 8`
+- attribute `i`'s bit in that byte: `i % 8`
+- bits past `natts` are ignored
 
 A null takes no other space: it has no entry in the fixed
 part, neither a datum nor a slot, and no varlena in the
@@ -181,14 +183,14 @@ varlena.
   type's value sits in the `Datum` itself; a by-reference
   type's `Datum` points to its fixed-width bytes or its
   varlena.
-  - `tuple_encode(schema, datums, isnull, tuple)` writes the
+  - `tup_encode(schema, datums, isnull, tuple)` writes the
     layout of §2 to §6, each varlena in its shortest form.
-  - `tuple_decode(schema, tuple, ordinal, val, isnull)`
+  - `tup_decode(schema, tuple, ordinal, val, isnull)`
     decodes one attribute without decoding the others.
     Finding its entry walks the entries before it, so it is
     O(ordinal), as PostgreSQL's `nocachegetattr` is without
     cached offsets.
-  - `tuple_deform(schema, tuple, datums, isnull)` decodes
+  - `tup_deform(schema, tuple, datums, isnull)` decodes
     every attribute in one pass into the caller's arrays. It
     allocates only the schema's widths, not its output.
 
@@ -200,8 +202,8 @@ varlena.
   fixed-width datum as its bytes and a variable-width one as
   its varlena.
 
-`tuple_check(schema, tuple)` accepts only a tuple
-`tuple_encode` could have written: well formed (§8), with
+`tup_check(schema, tuple)` accepts only a tuple
+`tup_encode` could have written: well formed (§8), with
 every attribute of the schema, and none dropped that is not
 null. A heap `rel` checks a pre-encoded tuple against it
 before writing it (`SM2_DESIGN.md` §5).

@@ -822,9 +822,9 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
   std::vector<sm_attribute_t> attrs = attributes_of(*p_tdef);
   void *tuple = nullptr;
   size_t tuple_len = 0;
-  if (sm_tuple_encode(attrs.data(), attrs.size(), row.values.data(),
-                      row.isnull.get(), &tuple, &tuple_len) != 0) {
-    panic_sm_error("insert sm_tuple_encode");
+  if (sm_tup_encode(attrs.data(), attrs.size(), row.values.data(),
+                    row.isnull.get(), &tuple, &tuple_len) != 0) {
+    panic_sm_error("insert sm_tup_encode");
   }
 
   uint64_t rowno = 0;

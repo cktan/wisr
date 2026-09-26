@@ -342,7 +342,7 @@ std::string_view varlena_payload(std::string_view v);
  * The longest tuple, TOAST aside (TUPLE.md §1): the furthest a
  * 2-byte slot reaches.
  */
-constexpr size_t max_tuple_len = 65535;
+constexpr size_t max_tup_len = 65535;
 
 /*
  * Replace tuple with datums, one per attribute of schema, in the
@@ -352,13 +352,13 @@ constexpr size_t max_tuple_len = 65535;
  * dropped attribute must be null. Fails with SM_ERR_INVALID on
  * wrong attribute count, invalid typmod, or malformed varlena,
  * and with SM_ERR_ROWTOOLONG on a tuple longer than
- * max_tuple_len; either way tuple is left as it was.
+ * max_tup_len; either way tuple is left as it was.
  */
-int tuple_encode(std::span<const attribute_t> schema,
+int tup_encode(std::span<const attribute_t> schema,
                  std::span<const Datum> datums,
                  std::span<const bool> isnull, std::string& tuple);
 
-int tuple_encode(std::span<const attribute_t> schema,
+int tup_encode(std::span<const attribute_t> schema,
                  std::span<const datum_t> datums, std::string& tuple);
 
 /*
@@ -369,13 +369,13 @@ int tuple_encode(std::span<const attribute_t> schema,
  * to true. Fails with SM_ERR_CORRUPT if tuple is malformed, or
  * SM_ERR_INVALID if ordinal is past schema.
  */
-int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
+int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
                  size_t ordinal, Datum& val, bool& isnull);
 
 /*
  * Overload returning an optional string_view into tuple or missing.
  */
-int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
+int tup_decode(std::span<const attribute_t> schema, std::string_view tuple,
                  size_t ordinal, std::optional<std::string_view>& datum);
 
 /*
@@ -383,19 +383,19 @@ int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
  * pass. datums and isnull must both have size equal to schema.size().
  * Any by-reference Datum points directly into tuple (or schema missing).
  */
-int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
+int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
                  std::span<Datum> datums, std::span<bool> isnull);
 
 /*
- * Check that tuple is one tuple_encode could have written under
+ * Check that tuple is one tup_encode could have written under
  * schema: well formed (TUPLE.md §8), with an attribute for every
  * one in schema and none dropped that is not null. Fails with
  * SM_ERR_INVALID, since the tuple is the caller's to fix.
  */
-int tuple_check(std::span<const attribute_t> schema, std::string_view tuple);
+int tup_check(std::span<const attribute_t> schema, std::string_view tuple);
 
-/* Every attribute of a tuple, in one pass, as tuple_decode gives each. */
-int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
+/* Every attribute of a tuple, in one pass, as tup_decode gives each. */
+int tup_deform(std::span<const attribute_t> schema, std::string_view tuple,
                  std::vector<std::optional<std::string_view>>& datums);
 
 /*
@@ -408,7 +408,7 @@ int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
  *
  * A tuple a rel hands out -- a row read, scanned, or replaced --
  * is the encoded tuple, for the caller to decode with
- * tuple_decode or tuple_deform under rel_schema, only the columns
+ * tup_decode or tup_deform under rel_schema, only the columns
  * it needs. It views sm1's memory and, as sm1's reads do, stays
  * valid until the next call on the rel's session.
  *
@@ -439,7 +439,7 @@ std::span<const attribute_t> rel_schema(const rel_t* rel);
 
 /*
  * Insert a row: write tuple under a new rowno drawn from the rel's
- * sequence. rowno is set only on success. A tuple tuple_check
+ * sequence. rowno is set only on success. A tuple tup_check
  * refuses fails before a rowno is drawn; one that fails later
  * leaves its rowno unused, as a PostgreSQL sequence would.
  */
@@ -469,7 +469,7 @@ int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
 /*
  * Replace the row at rowno with tuple, which must pass
- * tuple_check; it keeps its rowno. With
+ * tup_check; it keeps its rowno. With
  * old non-null, the tuple replaced is handed back there, which
  * the caller maintaining indexes needs.
  */
