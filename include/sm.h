@@ -338,11 +338,18 @@ void sm_rel_close(sm_rel_t* rel);
 /* The number of attributes in the rel's schema. */
 size_t sm_rel_ncols(const sm_rel_t* rel);
 
-/* Insert an already-encoded tuple into the heap rel; *rowno is its id. */
+/*
+ * Insert an already-encoded tuple into the heap rel; *rowno is
+ * its id. A tuple sm2 could not have encoded under the rel's
+ * schema fails with SM_ERR_INVALID and draws no rowno.
+ */
 int sm_rel_insert_tuple(sm_rel_t* rel, const void* tuple, size_t len,
                         uint64_t* rowno);
 
-/* Replace the row at rowno with an already-encoded tuple. */
+/*
+ * Replace the row at rowno with an already-encoded tuple; one sm2
+ * could not have encoded fails with SM_ERR_INVALID.
+ */
 int sm_rel_update_tuple(sm_rel_t* rel, uint64_t rowno, const void* tuple,
                         size_t len, const void** old, size_t* old_len);
 

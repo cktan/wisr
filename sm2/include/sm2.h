@@ -368,6 +368,14 @@ int tuple_decode(std::span<const attribute_t> schema, std::string_view tuple,
 int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
                  std::span<Datum> datums, std::span<bool> isnull);
 
+/*
+ * Check that tuple is one tuple_encode could have written under
+ * schema: well formed (TUPLE.md §8), with an attribute for every
+ * one in schema and none dropped that is not null. Fails with
+ * SM_ERR_INVALID, since the tuple is the caller's to fix.
+ */
+int tuple_check(std::span<const attribute_t> schema, std::string_view tuple);
+
 /* Every attribute of a tuple, in one pass, as tuple_decode gives each. */
 int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
                  std::vector<std::optional<std::string_view>>& datums);
@@ -413,7 +421,9 @@ std::span<const attribute_t> rel_schema(const rel_t* rel);
 
 /*
  * Insert a row: write tuple under a new rowno drawn from the rel's
- * sequence. rowno is set only on success.
+ * sequence. rowno is set only on success. A tuple tuple_check
+ * refuses fails before a rowno is drawn; one that fails later
+ * leaves its rowno unused, as a PostgreSQL sequence would.
  */
 int rel_insert(rel_t* rel, std::string_view tuple, uint64_t& rowno);
 
@@ -440,7 +450,8 @@ int rel_read(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
 /*
- * Replace the row at rowno with tuple; it keeps its rowno. With
+ * Replace the row at rowno with tuple, which must pass
+ * tuple_check; it keeps its rowno. With
  * old non-null, the tuple replaced is handed back there, which
  * the caller maintaining indexes needs.
  */

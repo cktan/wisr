@@ -432,3 +432,39 @@ TEST_CASE("rel supports raw tuple bytes and Datum/isnull writes") {
   REQUIRE(sm1::commit(s) == 0);
   sm2::rel_close(rel);
 }
+
+TEST_CASE("a raw tuple is checked before it is written") {
+  // Verify rel_insert and rel_update refuse a tuple the codec
+  // could not have written, without drawing a rowno or changing
+  // the row.
+  // 1. A raw insert of malformed bytes fails with SM_ERR_INVALID.
+  // 2. The next good insert's rowno follows the last good one's.
+  // 3. A raw update with malformed bytes fails, and the row reads
+  //    as it was.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  sm2::rel_t *rel = open_rel(db, s, schema);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  sm2::Datum d[1] = {sm2::datum_from_int32(1)};
+  bool nulls[1] = {false};
+  std::string good;
+  REQUIRE(sm2::tuple_encode(schema, d, nulls, good) == 0);
+
+  uint64_t first, second;
+  REQUIRE(sm2::rel_insert(rel, good, first) == 0);
+  CHECK(sm2::rel_insert(rel, std::string_view("garbage"), second) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm2::rel_insert(rel, good, second) == 0);
+  CHECK(second == first + 1);
+
+  CHECK(sm2::rel_update(rel, first, std::string_view("garbage")) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  std::string_view now;
+  REQUIRE(sm2::rel_read(rel, first, now) == 0);
+  CHECK(now == good);
+
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+}

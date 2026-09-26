@@ -35,6 +35,29 @@ std::string row_key(uint16_t prefix, uint64_t rowno) {
   return key;
 }
 
+/* Write tuple, already checked, under a new rowno from rel's sequence. */
+int write_new(sm2::rel_t *rel, std::string_view tuple, uint64_t &rowno) {
+  // Draw the rowno from the table's sequence.
+  uint64_t r;
+  if (sm1::nextseq(rel->session, rel->rowno_seq, r) != 0) {
+    return -1;
+  }
+  // Write the row.
+  if (sm1::insert(rel->session, rel->storeid, row_key(rel->prefix, r), tuple) !=
+      0) {
+    return -1;
+  }
+  rowno = r;
+  return 0;
+}
+
+/* Replace the row at rowno with tuple, already checked. */
+int write_update(sm2::rel_t *rel, uint64_t rowno, std::string_view tuple,
+                 std::string_view *old) {
+  return sm1::update(rel->session, rel->storeid, row_key(rel->prefix, rowno),
+                     tuple, old);
+}
+
 /* Encode datums under rel's schema; see tuple_encode. */
 int encode(const sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
            std::string &tuple) {
@@ -78,18 +101,11 @@ std::span<const attribute_t> rel_schema(const rel_t *rel) {
 /* Insert a row under a new rowno; see sm2.h. */
 int rel_insert(rel_t *rel, std::string_view tuple, uint64_t &rowno) {
   return catch_nomem([&] {
-    // Draw the rowno from the table's sequence.
-    uint64_t r;
-    if (sm1::nextseq(rel->session, rel->rowno_seq, r) != 0) {
+    // Check first, so a tuple that cannot be stored draws no rowno.
+    if (tuple_check(rel->schema, tuple) != 0) {
       return -1;
     }
-    // Write the row.
-    if (sm1::insert(rel->session, rel->storeid, row_key(rel->prefix, r),
-                    tuple) != 0) {
-      return -1;
-    }
-    rowno = r;
-    return 0;
+    return write_new(rel, tuple, rowno);
   });
 }
 
@@ -101,7 +117,7 @@ int rel_insert(rel_t *rel, std::span<const Datum> datums,
     if (tuple_encode(rel->schema, datums, isnull, tuple) != 0) {
       return -1;
     }
-    return rel_insert(rel, tuple, rowno);
+    return write_new(rel, tuple, rowno);
   });
 }
 
@@ -112,7 +128,7 @@ int rel_insert(rel_t *rel, std::span<const datum_t> datums, uint64_t &rowno) {
     if (encode(rel, datums, tuple) != 0) {
       return -1;
     }
-    return rel_insert(rel, tuple, rowno);
+    return write_new(rel, tuple, rowno);
   });
 }
 
@@ -136,8 +152,10 @@ int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
 int rel_update(rel_t *rel, uint64_t rowno, std::string_view tuple,
                std::string_view *old) {
   return catch_nomem([&] {
-    return sm1::update(rel->session, rel->storeid, row_key(rel->prefix, rowno),
-                       tuple, old);
+    if (tuple_check(rel->schema, tuple) != 0) {
+      return -1;
+    }
+    return write_update(rel, rowno, tuple, old);
   });
 }
 
@@ -149,7 +167,7 @@ int rel_update(rel_t *rel, uint64_t rowno, std::span<const Datum> datums,
     if (tuple_encode(rel->schema, datums, isnull, tuple) != 0) {
       return -1;
     }
-    return rel_update(rel, rowno, tuple, old);
+    return write_update(rel, rowno, tuple, old);
   });
 }
 
@@ -161,7 +179,7 @@ int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
     if (encode(rel, datums, tuple) != 0) {
       return -1;
     }
-    return rel_update(rel, rowno, tuple, old);
+    return write_update(rel, rowno, tuple, old);
   });
 }
 

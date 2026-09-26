@@ -397,3 +397,36 @@ TEST_CASE("tuples encode, deform, and decode via PostgreSQL Datum and isnull") {
   CHECK_FALSE(is_null);
   CHECK(sm2::datum_to_int64(val) == 9999);
 }
+
+TEST_CASE("tuple_check accepts what the codec writes, and nothing else") {
+  // Verify tuple_check refuses, as SM_ERR_INVALID, any tuple
+  // tuple_encode could not have written under the schema.
+  // 1. An encoded tuple passes.
+  // 2. Malformed bytes fail.
+  // 3. A tuple with fewer attributes than the schema fails.
+  // 4. A non-null value under a dropped attribute fails.
+  std::vector<sm2::attribute_t> schema = {attr(sm2::type_int4),
+                                          attr(sm2::type_text)};
+  std::string vl_hi = vl("hi");
+  sm2::Datum datums[2] = {sm2::datum_from_int32(7),
+                          sm2::datum_from_ptr(vl_hi.data())};
+  bool isnull[2] = {false, false};
+  std::string t;
+  REQUIRE(sm2::tuple_encode(schema, datums, isnull, t) == 0);
+  CHECK(sm2::tuple_check(schema, t) == 0);
+
+  CHECK(sm2::tuple_check(schema, "garbage") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm2::tuple_check(schema, t.substr(0, t.size() - 1)) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+
+  std::vector<sm2::attribute_t> wider = schema;
+  wider.push_back(attr(sm2::type_int8));
+  CHECK(sm2::tuple_check(wider, t) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+
+  std::vector<sm2::attribute_t> dropped = schema;
+  dropped[0].dropped = true;
+  CHECK(sm2::tuple_check(dropped, t) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+}

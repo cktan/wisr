@@ -469,6 +469,32 @@ int tuple_encode(std::span<const attribute_t> schema,
   });
 }
 
+/* Check that tuple is one the codec could write; see sm2.h. */
+int tuple_check(std::span<const attribute_t> schema, std::string_view tuple) {
+  return catch_nomem([&] {
+    std::vector<int32_t> w;
+    parsed_t t;
+    if (widths(schema, w) != 0) {
+      return -1;
+    }
+    // A malformed tuple handed in to be written is the caller's
+    // error, not corruption in the store.
+    if (parse(schema, w, tuple, t) != 0) {
+      return sm1::seterr(sm1::SM_ERR_INVALID, std::string(sm1::errmsg()));
+    }
+    if (t.natts != schema.size()) {
+      return invalid("an attribute count other than the schema's");
+    }
+    for (size_t i = 0; i < schema.size(); i++) {
+      if (schema[i].dropped && !(t.nulls && bit(t.nulls, i))) {
+        return invalid("attribute " + std::to_string(i) +
+                       " is dropped, so it must be null");
+      }
+    }
+    return 0;
+  });
+}
+
 /* Deform every attribute of tuple into datums and isnull; see sm2.h. */
 int tuple_deform(std::span<const attribute_t> schema, std::string_view tuple,
                  std::span<Datum> datums, std::span<bool> isnull) {
