@@ -106,6 +106,42 @@ const char *type_name_of(uint8_t code) {
   }
 }
 
+/* A column's typmod from the numbers after its type; see rel.h. */
+int typmod_of(uint8_t code, const std::vector<int32_t> &mods,
+              int32_t *typmod_out) {
+  *typmod_out = -1;
+  if (mods.empty()) {
+    return 0;
+  }
+  switch (code) {
+  case 17: // decimal64 (p[, s])
+  case 18: // decimal128 (p[, s])
+    if (mods.size() > 2) {
+      return -1;
+    }
+    // PostgreSQL's numeric typmod: ((p << 16) | s) + 4.
+    *typmod_out = ((mods[0] << 16) | (mods.size() > 1 ? mods[1] : 0)) + 4;
+    return 0;
+  case 12: // time (p)
+  case 13: // timestamp (p)
+  case 14: // timestamptz (p)
+    if (mods.size() != 1) {
+      return -1;
+    }
+    *typmod_out = mods[0];
+    return 0;
+  case 9: // varchar (n)
+    if (mods.size() != 1) {
+      return -1;
+    }
+    // PostgreSQL's varchar typmod: n + 4.
+    *typmod_out = mods[0] + 4;
+    return 0;
+  default:
+    return -1;
+  }
+}
+
 /* Construct a varlena buffer from raw bytes. */
 void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out) {
   if (len <= 126) {
@@ -204,15 +240,36 @@ int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
     *val_out = SM_DATUM_FROM_PTR(buf.data());
     return 0;
   }
-  default:
-    // A type rel cannot convert yet: date, time, decimal, uuid, ...
-    return -1;
+  default: {
+    // Any other type is written as its canonical text, which the
+    // type parses (sm_type_in); a by-reference result is copied
+    // into buf, which the value then points at.
+    if (!janet_checktype(val, JANET_STRING)) {
+      return -1;
+    }
+    JanetString str = janet_unwrap_string(val);
+    void *block = nullptr;
+    size_t block_len = 0;
+    if (sm_type_in(sm_type(col.type_code), col.typmod,
+                   reinterpret_cast<const char *>(str),
+                   janet_string_length(str), val_out, &block,
+                   &block_len) != 0) {
+      return -1;
+    }
+    if (block != nullptr) {
+      const uint8_t *b = static_cast<const uint8_t *>(block);
+      buf.assign(b, b + block_len);
+      sm_free(block);
+      *val_out = SM_DATUM_FROM_PTR(buf.data());
+    }
+    return 0;
+  }
   }
 }
 
 /* Convert a value back to a Janet value. */
-Janet value_to_janet(const sm_datum_val_t &val, bool isnull,
-                     uint8_t type_code) {
+Janet value_to_janet(const sm_datum_val_t &val, bool isnull, uint8_t type_code,
+                     int32_t typmod) {
   if (isnull) {
     return janet_wrap_nil();
   }
@@ -238,9 +295,16 @@ Janet value_to_janet(const sm_datum_val_t &val, bool isnull,
     return janet_wrap_string(
         janet_string(reinterpret_cast<const uint8_t *>(payload), len));
   }
-  default:
-    // rel writes no value of another type (janet_to_value).
-    return janet_wrap_nil();
+  default: {
+    // Any other type reads back as its canonical text.
+    char *text = nullptr;
+    if (sm_type_out(sm_type(type_code), typmod, val, &text) != 0) {
+      return janet_wrap_nil();
+    }
+    Janet out = janet_cstringv(text);
+    sm_free(text);
+    return out;
+  }
   }
 }
 

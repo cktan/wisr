@@ -257,8 +257,20 @@ Supported column types:
 - Boolean: `:bool`
 - Text: `:text`, `:varchar`
 - UUID: `:uuid`
-- Temporal: `:date`, `:time`, `:timetz`, `:timestamp`,
-  `:timestamptz`, `:interval`
+- Temporal: `:date`, `:time`, `:timestamp`, `:timestamptz`,
+  `:interval`
+
+Numbers after the type are its modifier, as in SQL:
+`(price :decimal64 10 2)` is `decimal(10, 2)`,
+`(at :timestamp 3)` keeps 3 fraction digits, and
+`(code :varchar 20)` is `varchar(20)`. A decimal must be given
+one.
+
+Values are Janet numbers for the integers and floats, booleans
+for `:bool`, and strings for the text types. Every other type is
+written and read as PostgreSQL's canonical text for it --
+`"2026-09-26"`, `"12.30"` under `decimal(10, 2)`,
+`"P1Y2M3DT4H5M6S"` -- which is the only text accepted.
 
 Column qualifiers:
 - `:not-null` -- requires non-null value on insert/update.

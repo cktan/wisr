@@ -313,6 +313,8 @@ relational catalog mapping table names to their storage metadata.
 4. Decodes each value into a `rel-lisp` value:
    - Integers and floats to numbers.
    - Varlenas decoded to strings.
+   - Any other type to its canonical text, via `sm_type_out`;
+     on insert, that text is parsed by `sm_type_in`.
    - Null datums to `nil`.
 5. Returns tuple vector `[v0 v1 ... vn]`.
 

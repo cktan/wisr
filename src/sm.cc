@@ -550,6 +550,76 @@ const sm_type_t *sm_type(uint8_t code) {
   return reinterpret_cast<const sm_type_t *>(sm2::type_by_code(code));
 }
 
+/* Parse a value's canonical text; see sm.h. */
+int sm_type_in(const sm_type_t *type, int32_t typmod, const char *text,
+               size_t len, sm_datum_val_t *val, void **buf, size_t *buf_len) {
+  return guard(nullptr, [&] {
+    if (!type || (len && !text) || !val || !buf || !buf_len) {
+      return null_arg("sm_type_in", !type          ? "type"
+                                    : len && !text ? "text"
+                                    : !val         ? "val"
+                                    : !buf         ? "buf"
+                                                   : "buf_len");
+    }
+    const sm2::type_t *t = reinterpret_cast<const sm2::type_t *>(type);
+    std::string datum;
+    if (t->in(std::string_view(text, len), typmod, datum) != 0) {
+      return -1;
+    }
+    *val = 0;
+    *buf = nullptr;
+    *buf_len = 0;
+    // A by-value datum's bytes are the value itself.
+    if (t->byval) {
+      std::memcpy(val, datum.data(), datum.size());
+      return 0;
+    }
+    // A by-reference one is a block the value points at: a
+    // variable-width datum's payload wrapped in its varlena.
+    std::string bytes = t->len < 0 ? sm2::make_varlena(datum) : datum;
+    void *p = std::malloc(bytes.size());
+    if (!p) {
+      return nomem();
+    }
+    std::memcpy(p, bytes.data(), bytes.size());
+    *buf = p;
+    *buf_len = bytes.size();
+    *val = SM_DATUM_FROM_PTR(p);
+    return 0;
+  });
+}
+
+/* Print a value as canonical text; see sm.h. */
+int sm_type_out(const sm_type_t *type, int32_t typmod, sm_datum_val_t val,
+                char **text) {
+  return guard(nullptr, [&] {
+    if (!type || !text) {
+      return null_arg("sm_type_out", !type ? "type" : "text");
+    }
+    const sm2::type_t *t = reinterpret_cast<const sm2::type_t *>(type);
+    // The type's out takes a variable-width datum's payload alone.
+    std::string_view bytes;
+    if (sm2::datum_bytes(t, typmod, val, bytes) != 0) {
+      return -1;
+    }
+    if (t->len < 0) {
+      bytes = sm2::varlena_payload(bytes);
+    }
+    std::string out;
+    if (t->out(bytes, typmod, out) != 0) {
+      return -1;
+    }
+    char *p = static_cast<char *>(std::malloc(out.size() + 1));
+    if (!p) {
+      return nomem();
+    }
+    std::memcpy(p, out.data(), out.size());
+    p[out.size()] = '\0';
+    *text = p;
+    return 0;
+  });
+}
+
 /* Open a collation. */
 int sm_collation_open(const char *locale, bool deterministic,
                       const char *expected_version, sm_collation_t **out) {

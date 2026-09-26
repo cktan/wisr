@@ -150,13 +150,28 @@ const char *type_name_of(uint8_t code);
 
 /*
  * Convert a Janet value to a value and null flag; a by-reference
- * value points into buf. Types rel cannot convert are refused.
+ * value points into buf. A type rel does not convert natively is
+ * given as its canonical text, parsed by sm_type_in.
  */
 int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
                    sm_datum_val_t *val_out, bool *isnull_out);
 
-/* Convert a value back to a Janet value. */
-Janet value_to_janet(const sm_datum_val_t &val, bool isnull, uint8_t type_code);
+/*
+ * Convert a value back to a Janet value: a number, boolean or
+ * string for the types rel converts natively, and canonical text
+ * (sm_type_out) for any other.
+ */
+Janet value_to_janet(const sm_datum_val_t &val, bool isnull, uint8_t type_code,
+                     int32_t typmod);
+
+/*
+ * A column's typmod from the numbers after its type, as
+ * PostgreSQL encodes them: (p[, s]) for a decimal, (p) for a
+ * time or timestamp precision, (n) for varchar; -1 with none.
+ * Fails if the type takes no such numbers.
+ */
+int typmod_of(uint8_t code, const std::vector<int32_t> &mods,
+              int32_t *typmod_out);
 
 /* Construct a varlena buffer from raw string bytes. */
 void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out);

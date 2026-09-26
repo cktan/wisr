@@ -454,11 +454,22 @@ static Janet cfun_table_create(int32_t argc, Janet *argv) {
         }
         c.typmod = -1;
         c.not_null = false;
+        // Numbers after the type are its typmod, as in decimal(p, s).
+        std::vector<int32_t> mods;
         for (int32_t k = 2; k < c_n; k++) {
+          if (janet_checktype(c_items[k], JANET_NUMBER)) {
+            mods.push_back(janet_unwrap_integer(c_items[k]));
+            continue;
+          }
           std::string flag = identifier_of(c_items[k]);
           if (flag == "not-null" || flag == ":not-null") {
             c.not_null = true;
           }
+        }
+        if (typmod_of(c.type_code, mods, &c.typmod) != 0) {
+          janet_panicf("table-create: type %s takes no such modifiers, for "
+                       "column '%s'",
+                       type_name_of(c.type_code), c.name.c_str());
         }
         tdef.columns.push_back(std::move(c));
       }
@@ -922,8 +933,9 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
 
   Janet *vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    vals[i] = value_to_janet(out.values[i], out.isnull[i],
-                             p_tdef->columns[i].type_code);
+    vals[i] =
+        value_to_janet(out.values[i], out.isnull[i],
+                       p_tdef->columns[i].type_code, p_tdef->columns[i].typmod);
   }
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
@@ -963,8 +975,9 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
 
   Janet *vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    vals[i] = value_to_janet(out.values[i], out.isnull[i],
-                             p_tdef->columns[i].type_code);
+    vals[i] =
+        value_to_janet(out.values[i], out.isnull[i],
+                       p_tdef->columns[i].type_code, p_tdef->columns[i].typmod);
   }
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
@@ -1074,8 +1087,9 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   }
   Janet *old_vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    old_vals[i] = value_to_janet(old.values[i], old.isnull[i],
-                                 p_tdef->columns[i].type_code);
+    old_vals[i] =
+        value_to_janet(old.values[i], old.isnull[i],
+                       p_tdef->columns[i].type_code, p_tdef->columns[i].typmod);
   }
   return janet_wrap_tuple(janet_tuple_end(old_vals));
 }
@@ -1157,8 +1171,9 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
   }
   Janet *old_vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    old_vals[i] = value_to_janet(old.values[i], old.isnull[i],
-                                 p_tdef->columns[i].type_code);
+    old_vals[i] =
+        value_to_janet(old.values[i], old.isnull[i],
+                       p_tdef->columns[i].type_code, p_tdef->columns[i].typmod);
   }
   return janet_wrap_tuple(janet_tuple_end(old_vals));
 }
@@ -1214,7 +1229,8 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
         sm_rel_scanend(rscan);
         panic_sm_error("scan sm_rel_decode");
       }
-      vals[i] = value_to_janet(val, isnull, p_tdef->columns[i].type_code);
+      vals[i] = value_to_janet(val, isnull, p_tdef->columns[i].type_code,
+                               p_tdef->columns[i].typmod);
     }
     Janet t_val = janet_wrap_tuple(janet_tuple_end(vals));
 
@@ -1330,7 +1346,8 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
         Janet *ivals = janet_tuple_begin(n_inc);
         for (size_t m = 0; m < n_inc; m++) {
           ivals[m] = value_to_janet(entry.values[2 + m], entry.isnull[2 + m],
-                                    p_idef->includes[m].type_code);
+                                    p_idef->includes[m].type_code,
+                                    p_idef->includes[m].typmod);
         }
         inc_val = janet_wrap_tuple(janet_tuple_end(ivals));
       }

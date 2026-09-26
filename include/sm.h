@@ -270,6 +270,26 @@ static inline double sm_datum_to_double(sm_datum_val_t d) {
 }
 
 /*
+ * Parse PostgreSQL's canonical text for a value of type under
+ * typmod, as the type's typinput does (sm2/TYPE.md §3). A by-value
+ * result is *val itself, and *buf is NULL and *buf_len 0. A
+ * by-reference one -- fixed-width bytes, or a varlena for a
+ * variable-width type -- is one malloc'd block at *buf, *buf_len
+ * bytes long, which *val points at; free it with sm_free. Only
+ * the canonical text is accepted; any other is SM_ERR_INVALID.
+ */
+int sm_type_in(const sm_type_t* type, int32_t typmod, const char* text,
+               size_t len, sm_datum_val_t* val, void** buf, size_t* buf_len);
+
+/*
+ * Print a non-null value of type under typmod as PostgreSQL's
+ * canonical text, as the type's typoutput does, into *text,
+ * NUL-terminated and malloc'd; free it with sm_free.
+ */
+int sm_type_out(const sm_type_t* type, int32_t typmod, sm_datum_val_t val,
+                char** text);
+
+/*
  * One attribute of a table's schema: its type and typmod, whether
  * it is dropped, and what a row older than it reads it as --
  * null, or missing[0..missing_len) when has_missing is set.

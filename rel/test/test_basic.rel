@@ -84,7 +84,8 @@
 # 9.3 Read, read-latest and scan it back unchanged.
 # 9.4 Update it and confirm the old row and the index key moved.
 # 9.5 Delete it and confirm the index entry is gone.
-# 9.6 Confirm a type rel cannot convert is refused, not stored.
+# 9.6 Confirm a value that is not a number, bool or string is
+#     refused, not stored.
 (begin :rc)
 (table-create alltypes
   (columns
@@ -114,13 +115,68 @@
 (assert-eq (hit-b 0) [ra false [nil]])
 (assert-eq (delete alltypes ra) row-b)
 (assert-count 0 (idx-scan idx_alltypes_t))
-(table-create dates (columns (d :date)))
+(table-create dates (columns (d :int4)))
 (def refused
-  (try (do (insert dates ["2026-09-25"]) false) ([err] true)))
+  (try (do (insert dates ["not a number"]) false) ([err] true)))
 (assert-eq refused true)
 (assert-count 0 (scan dates))
 (table-drop dates)
 (table-drop alltypes)
+(commit)
+
+# 10. Every other type round-trips as its canonical text.
+# 10.1 Create a table of date, time(3), timestamp, timestamptz,
+#      interval, uuid, varchar(20), decimal64(10, 2) and
+#      decimal128(30, 5), indexed on the decimal64 and the date.
+# 10.2 Insert a row as canonical text; read, scan and the
+#      indexes give it back unchanged.
+# 10.3 Order holds through the decimal64 index: a smaller value
+#      scans first, negative included.
+# 10.4 Text that is not canonical for its type, or that does not
+#      fit its typmod, is refused.
+(begin :rc)
+(table-create other
+  (columns
+    (d :date)
+    (t :time 3)
+    (ts :timestamp)
+    (tz :timestamptz)
+    (iv :interval)
+    (u :uuid)
+    (vc :varchar 20)
+    (d64 :decimal64 10 2)
+    (d128 :decimal128 30 5)))
+(index-create idx_other_d64 (table other) (key (d64 :asc)) :unique false)
+(index-create idx_other_d (table other) (key (d :asc)) :unique false)
+(def row-o ["2026-09-26" "12:34:56.789" "2026-09-26 12:34:56"
+            "2026-09-26 12:34:56+00" "P1Y2M3DT4H5M6S"
+            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11" "hello"
+            "12345.67" "123456789012345678901.23456"])
+(def ro (insert other row-o))
+(assert-eq (read other ro) row-o)
+(assert-eq ((scan other) 0) [ro row-o])
+(def row-n ["2020-01-01" nil nil nil nil nil nil "-5.00" nil])
+(def rn (insert other row-n))
+(assert-eq (read other rn) row-n)
+(def by-d64 (idx-scan idx_other_d64))
+(assert-count 2 by-d64)
+(assert-eq ((by-d64 0) 0) rn)
+(assert-eq ((by-d64 1) 0) ro)
+(def on-day (idx-scan idx_other_d :ge ["2026-09-26"] :le ["2026-09-26"]))
+(assert-count 1 on-day)
+(assert-eq ((on-day 0) 0) ro)
+(def bad-dec
+  (try (do (insert other [nil nil nil nil nil nil nil "1.5" nil]) false)
+       ([err] true)))
+(assert-eq bad-dec true)
+(def too-wide
+  (try (do (insert other [nil nil nil nil nil nil nil "123456789.00" nil])
+         false)
+       ([err] true)))
+(assert-eq too-wide true)
+(index-drop idx_other_d64)
+(index-drop idx_other_d)
+(table-drop other)
 (commit)
 
 (db-close)
