@@ -184,6 +184,9 @@ Janet value_to_janet(const sm_datum_t &val, bool isnull, uint8_t type_code,
 int typmod_of(uint8_t code, const std::vector<int32_t> &mods,
               int32_t *typmod_out);
 
+/* The numbers after a column's type that give typmod: typmod_of's inverse. */
+std::vector<int32_t> mods_of(uint8_t code, int32_t typmod);
+
 /* Construct a varlena buffer from raw string bytes. */
 void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out);
 

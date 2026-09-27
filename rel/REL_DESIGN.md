@@ -278,6 +278,18 @@ own.
 2. Calls `sm_cat_drop_index(s, table, index)`, which erases the
    index and its entries.
 
+#### `(list-tables)`
+1. Calls `sm_cat_list_tables(s, SM_NSP_PUBLIC, &names, &n)`,
+   which takes no lock.
+2. Returns the names, sorted, as an array of strings.
+
+#### `(describe-table <name> [:include-indices])`
+1. Opens the table under its schema lock IS, as a read does.
+2. Renders each live column of its `sm_table_def_t` in
+   `table-create`'s form, its typmod as the numbers after the
+   type, and with the flag each index as a struct of
+   `index-create`'s clauses, all as bracket tuples.
+
 ### 4.4 High-Level Row DML Operations
 
 Each statement first opens its table by name: `sm_cat_table_oid`,

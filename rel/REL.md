@@ -297,6 +297,40 @@ associated row sequence.
 (table-drop users)
 ```
 
+### `(list-tables)`
+Returns an array of the names of the tables in `public`, sorted,
+as the active transaction sees them: its own uncommitted DDL
+included, another session's not. It takes no lock.
+
+```janet
+(list-tables)
+# => @["products" "users"]
+```
+
+### `(describe-table name [:include-indices])`
+Returns a struct describing table `name`, under its schema lock
+intent-shared, as a read takes it. `:columns` holds each live
+column in the form `table-create` takes it: its name, type, the
+numbers after the type, and `:not-null`. A decimal always shows
+both numbers: `(price :decimal64 10)` comes back as
+`[price :decimal64 10 0]`. With `:include-indices`, `:indexes`
+holds each index as a struct of its `index-create` clauses,
+every key column's order and null placement spelled out.
+
+The forms are bracket tuples, so compare against a quoted
+literal: a quoted `[...]` keeps its brackets, which `=` tells
+apart from an evaluated one.
+
+```janet
+(describe-table users :include-indices)
+# => {:name "users"
+#     :columns [[id :int4 :not-null] [name :text]]
+#     :indexes [{:name "idx_users_name" :unique false
+#                :key [[name :asc :nulls-last]] :include [id]}]}
+(assert-eq ((describe-table users) :columns)
+           '[[id :int4 :not-null] [name :text]])
+```
+
 ### `(index-create name (table tbl) ...)`
 Creates a secondary index on table `tbl`. It records the index
 only: rows already in the table are not added to it, so create

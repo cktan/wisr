@@ -170,6 +170,9 @@ std::shared_ptr<const table_def_t> cat_table(const session_t* s,
                                              uint64_t nspoid,
                                              std::string_view name);
 
+/* The names of the tables in nspoid, sorted, as s's transaction sees them. */
+std::vector<std::string> cat_tables(const session_t* s, uint64_t nspoid);
+
 /*
  * The index named name in nspoid, as s's transaction sees it:
  * true with its table's oid and its own set. A scan of every

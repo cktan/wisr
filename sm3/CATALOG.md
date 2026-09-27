@@ -205,7 +205,9 @@ as sm1 does (`DESIGN.md` §5).
   session sees it, which cannot change until then. A table
   dropped while the caller waited is `SM_ERR_NOTFOUND`.
 - **`cat_table(ss, oid)`** and **`cat_table(ss, nspoid, name)`**
-  find a table as the session's transaction sees it;
+  find a table as the session's transaction sees it, and
+  **`cat_tables(ss, nspoid)`** lists the names of its tables,
+  sorted;
   **`cat_index(ss, nspoid, name, table, index)`** finds an index
   and its table, by a scan of the tables' indexes, since no map
   of index names is kept.
@@ -290,9 +292,10 @@ The C API (`include/sm.h`) keeps each database's catalog in its
 `sm_env_t`, made by `sm_mkdb` and loaded by the first
 `sm_opendb`, and an sm3 session in each `sm_session_t`, so its
 transaction calls keep the overlay in step. `sm_cat_*` are the
-calls above that `rel` needs: look up a table or index, lock a
-table and read its definition as plain C structs, and create
-and drop tables and indexes. `rel` keeps no catalog of its own.
+calls above that `rel` needs: list the tables, look up a table
+or index, lock a table and read its definition as plain C
+structs, and create and drop tables and indexes. `rel` keeps no
+catalog of its own.
 
 ---
 

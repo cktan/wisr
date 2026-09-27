@@ -142,6 +142,26 @@ int typmod_of(uint8_t code, const std::vector<int32_t> &mods,
   }
 }
 
+/* The numbers after a column's type, from its typmod; see rel.h. */
+std::vector<int32_t> mods_of(uint8_t code, int32_t typmod) {
+  if (typmod < 0) {
+    return {};
+  }
+  switch (code) {
+  case 17: // decimal64 (p, s)
+  case 18: // decimal128 (p, s)
+    return {(typmod - 4) >> 16, (typmod - 4) & 0xFFFF};
+  case 12: // time (p)
+  case 13: // timestamp (p)
+  case 14: // timestamptz (p)
+    return {typmod};
+  case 9: // varchar (n)
+    return {typmod - 4};
+  default:
+    return {};
+  }
+}
+
 /* Construct a varlena buffer from raw bytes. */
 void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out) {
   if (len <= 126) {

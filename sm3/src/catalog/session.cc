@@ -238,6 +238,31 @@ int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
   });
 }
 
+/* The table names in nspoid as s sees them: its changes over the shared. */
+std::vector<std::string> cat_tables(const session_t *s, uint64_t nspoid) {
+  std::map<std::string, bool> seen; /* name -> taken */
+  for (const name_change_t &c : s->names) {
+    if (c.name.first == nspoid) {
+      seen[c.name.second] = c.oid.has_value();
+    }
+  }
+  {
+    std::shared_lock lock(s->cat->mu);
+    for (const auto &[name, oid] : s->cat->table_names) {
+      if (name.first == nspoid) {
+        seen.emplace(name.second, true);
+      }
+    }
+  }
+  std::vector<std::string> out;
+  for (const auto &[name, taken] : seen) {
+    if (taken) {
+      out.push_back(name);
+    }
+  }
+  return out;
+}
+
 /* An index by name as s sees it: its tables, overlay first. */
 bool cat_index(const session_t *s, uint64_t nspoid, std::string_view name,
                uint64_t &table, uint64_t &index) {

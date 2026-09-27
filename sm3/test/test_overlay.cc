@@ -241,3 +241,29 @@ TEST_CASE("an index is found by name as the session sees it") {
   REQUIRE(sm3::commit(db.b) == 0);
   REQUIRE(sm3::abort(db.a) == 0);
 }
+
+TEST_CASE("a session lists the tables its transaction sees") {
+  // Verify cat_tables merges the overlay's names over the shared ones.
+  // 1. A creates b and a and commits: both list them, sorted.
+  // 2. A creates c, renames a to d and drops b, uncommitted: A lists
+  //    c and d; B still lists a and b.
+  // 3. A aborts: A lists a and b again.
+  two_t db;
+  begin(db.a);
+  uint64_t tb = create(db.a, "b"), ta = create(db.a, "a");
+  REQUIRE(sm3::commit(db.a) == 0);
+  using names = std::vector<std::string>;
+  CHECK(sm3::cat_tables(db.a, sm3::nsp_public) == names{"a", "b"});
+  CHECK(sm3::cat_tables(db.b, sm3::nsp_public) == names{"a", "b"});
+
+  begin(db.a);
+  create(db.a, "c");
+  REQUIRE(sm3::cat_rename_table(db.a, ta, "d") == 0);
+  REQUIRE(sm3::cat_drop_table(db.a, tb) == 0);
+  CHECK(sm3::cat_tables(db.a, sm3::nsp_public) == names{"c", "d"});
+  CHECK(sm3::cat_tables(db.b, sm3::nsp_public) == names{"a", "b"});
+  CHECK(sm3::cat_tables(db.a, sm3::nsp_pg_catalog).empty());
+
+  REQUIRE(sm3::abort(db.a) == 0);
+  CHECK(sm3::cat_tables(db.a, sm3::nsp_public) == names{"a", "b"});
+}

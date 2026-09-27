@@ -602,6 +602,13 @@ typedef struct sm_table_def_t {
 int sm_cat_table_oid(sm_session_t* session, uint64_t nspoid,
                      const char* name, uint64_t* oid);
 
+/*
+ * The names of the tables in nspoid, sorted, as the session's
+ * transaction sees them: *names holds *n strings; sm_free(*names).
+ */
+int sm_cat_list_tables(sm_session_t* session, uint64_t nspoid, char*** names,
+                       size_t* n);
+
 /* The index named name in nspoid, and its table: 0, or 1 if none. */
 int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
                      const char* name, uint64_t* table, uint64_t* index);

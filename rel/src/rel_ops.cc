@@ -781,6 +781,105 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (list-tables): the table names in public, sorted. */
+static Janet cfun_list_tables(int32_t argc, Janet *argv) {
+  (void)argv;
+  janet_fixarity(argc, 0);
+  session_ctx_t *s = require_session();
+  char **names = nullptr;
+  size_t n = 0;
+  if (sm_cat_list_tables(s->session, SM_NSP_PUBLIC, &names, &n) != 0) {
+    panic_sm_error("list-tables");
+  }
+  JanetArray *out = janet_array(static_cast<int32_t>(n));
+  for (size_t i = 0; i < n; i++) {
+    janet_array_push(out, janet_cstringv(names[i]));
+  }
+  sm_free(names);
+  return janet_wrap_array(out);
+}
+
+/* A bracket tuple of items, as [...] reads, so = matches a literal. */
+static Janet tuple_of(const std::vector<Janet> &items) {
+  Janet *t = janet_tuple_begin(static_cast<int32_t>(items.size()));
+  std::copy(items.begin(), items.end(), t);
+  janet_tuple_flag(t) |= JANET_TUPLE_FLAG_BRACKETCTOR;
+  return janet_wrap_tuple(janet_tuple_end(t));
+}
+
+/* A column of def as table-create takes it: [name :type mods... :not-null]. */
+static Janet column_form(const sm_column_def_t &c) {
+  std::vector<Janet> items = {janet_csymbolv(c.name),
+                              janet_ckeywordv(type_name_of(c.type_code))};
+  for (int32_t m : mods_of(c.type_code, c.typmod)) {
+    items.push_back(janet_wrap_integer(m));
+  }
+  if (c.not_null) {
+    items.push_back(janet_ckeywordv("not-null"));
+  }
+  return tuple_of(items);
+}
+
+/* An index of def as a struct of index-create's clauses. */
+static Janet index_form(const sm_table_def_t &def, const sm_index_def_t &x) {
+  std::vector<Janet> keys, includes;
+  for (size_t j = 0; j < x.nkey; j++) {
+    keys.push_back(
+        tuple_of({janet_csymbolv(def.columns[x.key_attnums[j]].name),
+                  janet_ckeywordv(x.key[j].desc ? "desc" : "asc"),
+                  janet_ckeywordv(x.key[j].nulls_first ? "nulls-first"
+                                                       : "nulls-last")}));
+  }
+  for (size_t j = 0; j < x.ninclude; j++) {
+    includes.push_back(janet_csymbolv(def.columns[x.include_attnums[j]].name));
+  }
+  JanetKV *st = janet_struct_begin(4);
+  janet_struct_put(st, janet_ckeywordv("name"), janet_cstringv(x.name));
+  janet_struct_put(st, janet_ckeywordv("unique"), janet_wrap_boolean(x.unique));
+  janet_struct_put(st, janet_ckeywordv("key"), tuple_of(keys));
+  janet_struct_put(st, janet_ckeywordv("include"), tuple_of(includes));
+  return janet_wrap_struct(janet_struct_end(st));
+}
+
+/*
+ * (describe-table name [:include-indices]): the table's columns in
+ * table-create's form, and with the flag its indexes, under its
+ * schema lock IS.
+ */
+static Janet cfun_describe_table(int32_t argc, Janet *argv) {
+  janet_arity(argc, 1, 2);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  bool with_indexes = false;
+  if (argc == 2) {
+    if (identifier_of(argv[1]) != "include-indices") {
+      janet_panic("describe-table: the only flag is :include-indices");
+    }
+    with_indexes = true;
+  }
+  table_def_t *p_tdef =
+      need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "describe-table");
+  const sm_table_def_t &def = *p_tdef->def;
+
+  std::vector<Janet> columns;
+  for (size_t i = 0; i < def.natts; i++) {
+    if (!def.columns[i].dropped) {
+      columns.push_back(column_form(def.columns[i]));
+    }
+  }
+  JanetKV *st = janet_struct_begin(with_indexes ? 3 : 2);
+  janet_struct_put(st, janet_ckeywordv("name"), janet_cstringv(def.name));
+  janet_struct_put(st, janet_ckeywordv("columns"), tuple_of(columns));
+  if (with_indexes) {
+    std::vector<Janet> indexes;
+    for (size_t i = 0; i < def.nindex; i++) {
+      indexes.push_back(index_form(def, def.indexes[i]));
+    }
+    janet_struct_put(st, janet_ckeywordv("indexes"), tuple_of(indexes));
+  }
+  return janet_wrap_struct(janet_struct_end(st));
+}
+
 /* (index-drop idx_name) */
 static Janet cfun_index_drop(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 1);
@@ -1522,6 +1621,9 @@ static const JanetReg s_rel_cfuns[] = {
     {"nextseq", cfun_nextseq, "(nextseq name) -- get next sequence value"},
     {"_index-create", cfun_index_create, "internal"},
     {"_index-drop", cfun_index_drop, "internal"},
+    {"list-tables", cfun_list_tables,
+     "(list-tables) -- the table names in public, sorted"},
+    {"_describe-table", cfun_describe_table, "internal"},
 
     {"_insert", cfun_insert, "internal"},
     {"_read", cfun_read, "internal"},
@@ -1567,6 +1669,9 @@ static const char *s_prelude = R"janet(
 
 (defmacro index-drop [name]
   ~(_index-drop (string ',name)))
+
+(defmacro describe-table [name & flags]
+  ~(_describe-table (string ',name) ,;flags))
 
 (defmacro insert [tbl row]
   ~(_insert (string ',tbl) ,row))

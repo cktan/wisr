@@ -84,7 +84,77 @@
 (table-drop t)
 (commit)
 
+# 6. list-tables lists the tables the session's transaction sees.
+# 6.1 Create p and o and commit: both sessions list them, sorted.
+# 6.2 In a new transaction, create q and drop o: the creator lists
+#     o's drop and q; another session still lists o and p.
+# 6.3 Abort: the creator lists o and p again.
+(session-open s2 "catdb")
+(session-use default)
+(begin :rc)
+(table-create p (columns (x :int4)))
+(table-create o (columns (x :int4)))
+(commit)
+(assert-eq (list-tables) @["o" "p"])
+(session-use s2)
+(assert-eq (list-tables) @["o" "p"])
+(session-use default)
+(begin :rc)
+(table-create q (columns (x :int4)))
+(table-drop o)
+(assert-eq (list-tables) @["p" "q"])
+(session-use s2)
+(assert-eq (list-tables) @["o" "p"])
+(session-use default)
+(abort)
+(assert-eq (list-tables) @["o" "p"])
+
+# 7. describe-table gives a table back as table-create and
+#    index-create take it.
+# 7.1 Create a table with typmods and :not-null, and two indexes.
+# 7.2 Its columns come back in table-create's form, typmods as
+#     the numbers after the type.
+# 7.3 With :include-indices, its indexes come back too, in
+#     index-create's clauses, every order and null place spelled.
+# 7.4 A table that does not exist fails.
+(begin :rc)
+(table-create prices
+  (columns
+    (id :int4 :not-null)
+    (amount :decimal64 10 2)
+    (big :decimal128 30 5)
+    (code :varchar 20)
+    (at :timestamp 3)
+    (note :text)))
+(index-create prices_code (table prices) (key (code :asc)) :unique true
+  :include (id))
+(index-create prices_at (table prices)
+  (key (at :desc :nulls-first) (id :asc))
+  :unique false)
+# Symbols in the result need a quote, and a quoted [...] keeps
+# its brackets, which = tells apart: quote the whole literal.
+(assert-eq (describe-table prices)
+           '{:name "prices"
+             :columns [[id :int4 :not-null]
+                       [amount :decimal64 10 2]
+                       [big :decimal128 30 5]
+                       [code :varchar 20]
+                       [at :timestamp 3]
+                       [note :text]]})
+(assert-eq ((describe-table prices :include-indices) :indexes)
+           '[{:name "prices_code" :unique true
+              :key [[code :asc :nulls-last]] :include [id]}
+             {:name "prices_at" :unique false
+              :key [[at :desc :nulls-first] [id :asc :nulls-last]]
+              :include []}])
+(assert-eq (fails? (fn [] (describe-table nosuch))) true)
+(table-drop prices)
+(table-drop p)
+(table-drop o)
+(commit)
+
 (db-close)
+(session-close s2)
 (env-detach :force true)
 (rm-rf test-dir)
 (print "test_catalog.rel: PASSED")

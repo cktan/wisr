@@ -1278,6 +1278,25 @@ int sm_cat_table_oid(sm_session_t *session, uint64_t nspoid, const char *name,
   });
 }
 
+/* The table names in a namespace, as the session sees them. */
+int sm_cat_list_tables(sm_session_t *session, uint64_t nspoid, char ***names,
+                       size_t *n) {
+  return guard(session, [&] {
+    if (!names || !n) {
+      return null_arg("sm_cat_list_tables", !names ? "names" : "n");
+    }
+    std::vector<std::string> list = sm3::cat_tables(session->sm3, nspoid);
+    bool failed;
+    char **out = pack_strings(list, &failed);
+    if (failed) {
+      return nomem();
+    }
+    *names = out;
+    *n = list.size();
+    return 0;
+  });
+}
+
 /* An index's oid and its table's by name; 1 if none. */
 int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
                      uint64_t *table, uint64_t *index) {
