@@ -210,13 +210,18 @@ int check_key(const char *key, size_t klen) {
  */
 int enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
           const char *key, size_t klen) {
-  // Reject storeid 0, which no store has.
-  if (storeid == 0) {
-    return set_error(sm1::SM_ERR_INVALID, "storeid 0 is not a store");
-  }
   // Validate the key.
   if (check_key(key, klen) != 0) {
     return -1;
+  }
+  // Store 0, the catalog, always exists, and takes a caller's key
+  // only under the level above's prefix.
+  if (storeid == 0) {
+    if (klen == 0 || key[0] != sm1::upper_prefix) {
+      return set_error(sm1::SM_ERR_INVALID,
+                       "store 0 takes only keys under the upper prefix");
+    }
+    return 0;
   }
   // Look the store up at the view.
   int r = catalog_lookup(s, view, storeid);
@@ -404,8 +409,21 @@ sm1::scan_t *scan(sm1::session_t *s, uint64_t storeid, const char *skey,
   }
   // The view the cursor reads at, fixed from now on.
   view_t view = xct_read_view(s);
-  // Validate the storeid.
-  if (enter(s, view, storeid, "", 0) != 0) {
+  // A scan of store 0 stays inside the upper prefix: it starts
+  // under it and ends under it, or at its successor, exclusive.
+  if (storeid == 0) {
+    const char up = sm1::upper_prefix, next = sm1::upper_prefix + 1;
+    bool start_in = skey && sklen > 0 && skey[0] == up;
+    bool end_in =
+        ekey && eklen > 0 &&
+        (ekey[0] == up || (eklen == 1 && ekey[0] == next && !ekey_inclusive));
+    if (!start_in || !end_in) {
+      set_error(sm1::SM_ERR_INVALID,
+                "a scan of store 0 must stay under the upper prefix");
+      return nullptr;
+    }
+  } else if (enter(s, view, storeid, "", 0) != 0) {
+    // Validate the storeid.
     return nullptr;
   }
   // Open the cursor on the store's column family.

@@ -940,8 +940,14 @@ transaction with that `gid`), `SM_ERR_DISKFULL`,
 
 A store is an ordered map from key to value, named by a
 `uint64_t` storeid that the library allocates. Storeid 0 is the
-catalog's own slot, never a store: every call given it
-fails with `SM_ERR_INVALID`.
+catalog's own slot, never a store: `sm1::rmstore` given it
+fails with `SM_ERR_INVALID`. The level above may keep its own
+catalog there, under `sm1::upper_prefix` (`"U"`): `read`,
+`read_latest`, `insert`, `update`, `erase` and `lock` take
+store 0 for a key that begins with it, and `scan` for bounds
+that stay inside it — a start key under it, and an end key
+under it or `"V"`, exclusive. Any other key in store 0 fails
+with `SM_ERR_INVALID`, so sm1's own rows stay its own.
 
 ### int sm1::mkstore(sm1::session_t* session, uint64_t& storeid)
 

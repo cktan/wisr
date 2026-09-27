@@ -74,6 +74,17 @@ inline constexpr size_t max_gid         = 200;
 inline constexpr int    max_savepoints  = 256;
 
 /*
+ * Store 0 is sm1's catalog. Callers may read, write, scan and
+ * lock the keys in it that begin with upper_prefix, which sm1
+ * keeps for the catalog of the level above and never reads
+ * itself (SM1_DESIGN.md §11); any other key in store 0 is
+ * SM_ERR_INVALID. A scan of store 0 must stay inside the
+ * prefix: its start key begins with it, and its end key does
+ * too, or is its successor, "V", exclusive.
+ */
+inline constexpr char   upper_prefix    = 'U';
+
+/*
  * Error codes, one namespace for the whole stack: every level's
  * codes are defined in the root's include/sm_error.h, as a C
  * enum the C wrapper shares. errnum_t names it here, and the

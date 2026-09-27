@@ -2024,12 +2024,23 @@ allocates and hands back; there are no store names. The
 storeid names the store's column family, `CF:store.<storeid>`, so
 resolving one costs no indirection. The catalog is itself
 `storeid = 0`, an ordinary MVCC store in `CF:store.0` holding a
-row per store and a row per sequence:
+row per store, a row per sequence, and whatever the level above
+keeps under `"U"`:
 
 ```
 key = "R" | be64(storeid)    →  { }                         (store)
 key = "S" | name           →  { seqid, start, increment }  (sequence)
+key = "U" | anything       →  anything                    (the level above)
 ```
+
+The `"U"` rows are the level above's catalog, which sm1 stores
+and versions like any row but never reads: `sm1::lsstore` scans
+`["R", "S")`, and the startup sweep keeps a store only for an
+`"R"` row. Callers reach store 0 under `"U"` and nowhere else
+(`sm1::upper_prefix`), so they cannot touch a store's or a
+sequence's row. A commit that writes a `"U"` row still counts as
+a write to `CF:store.0`, so it raises `last_ddl_ts`, which costs
+nothing until the store cache below exists.
 
 A store's row carries nothing: that the row exists at a
 snapshot is what makes the store exist there. The design's

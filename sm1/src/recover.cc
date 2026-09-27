@@ -119,7 +119,9 @@ int live_storeids(db_t *db, std::set<uint64_t> *live) {
     decided = v.userkey.ToString();
     have = true;
     // A live row's key names a storeid to keep: "R" | be64(storeid).
-    if (!(v.flags & version_tombstone) && v.userkey.size() == 9) {
+    // Other rows -- a sequence's "S", the level above's "U" -- do not.
+    if (!(v.flags & version_tombstone) && v.userkey.size() == 9 &&
+        v.userkey[0] == 'R') {
       live->insert(sm1::get_be64(v.userkey.data() + 1));
     }
   }

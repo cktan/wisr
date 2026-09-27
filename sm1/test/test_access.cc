@@ -773,6 +773,65 @@ TEST_CASE("object ids start at 1000, below which none is handed out") {
   CHECK(mkstore_committed(f.session()) > 1002);
 }
 
+TEST_CASE("store 0 takes the level above's keys, under its prefix only") {
+  // Verify callers' access to store 0, the catalog (SM1_DESIGN.md
+  // §11), under sm1::upper_prefix.
+  // 1. In a transaction, "U" keys in store 0 insert, read, update,
+  //    lock, and scan over ["U", "V"), in key order.
+  // 2. An abort undoes the writes.
+  // 3. A key outside the prefix -- sm1's own "R" and "S", or empty
+  //    -- is SM_ERR_INVALID for a read, a write and a lock; so is a
+  //    scan that starts or ends outside it.
+  // 4. "U" rows add no store to lsstore, and after a reopen they
+  //    are still there and lsstore is unchanged.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::insert(s, 0, "Ub", "2") == 0);
+  REQUIRE(sm1::insert(s, 0, "Ua", "1") == 0);
+  REQUIRE(sm1::update(s, 0, "Ub", "two") == 0);
+  std::string_view v;
+  REQUIRE(sm1::read(s, 0, "Ua", v) == 0);
+  CHECK(v == "1");
+  CHECK(sm1::lock(s, 0, "Ua", sm1::lockmode_t::shared) == 0);
+  sm1::scan_t *c = nullptr;
+  REQUIRE(sm1::scan(s, 0, "U", 1, 1, "V", 1, 0, c) == 0);
+  CHECK(drain(c) == rows_t{{"Ua", "1"}, {"Ub", "two"}});
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::insert(s, 0, "Uc", "3") == 0);
+  REQUIRE(sm1::abort(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm1::read(s, 0, "Uc", v) == 1);
+
+  for (std::string_view key :
+       {std::string_view("R"), std::string_view("Sq"), std::string_view()}) {
+    CAPTURE(key);
+    CHECK(sm1::read(s, 0, key, v) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    CHECK(sm1::insert(s, 0, key, "x") == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    CHECK(sm1::lock(s, 0, key, sm1::lockmode_t::shared) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  }
+  CHECK(sm1::scan(s, 0, "R", 1, 1, "V", 1, 0, c) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::scan(s, 0, "U", 1, 1, "V", 1, 1, c) == -1);
+  CHECK(sm1::scan(s, 0, "U", 1, 1, nullptr, 0, 0, c) == -1);
+  CHECK(lsstore(s) == std::vector<uint64_t>{store});
+  REQUIRE(sm1::commit(s) == 0);
+
+  f.reopen();
+  s = f.session();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::read(s, 0, "Ub", v) == 0);
+  CHECK(v == "two");
+  CHECK(lsstore(s) == std::vector<uint64_t>{store});
+  REQUIRE(sm1::commit(s) == 0);
+}
+
 TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   // Verify sm1::lsstore reads the catalog at the transaction's view.
   // 1. In a new database the list is empty, and it replaces what
