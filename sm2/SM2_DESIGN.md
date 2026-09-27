@@ -1004,7 +1004,10 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
 
 - **The catalog.** sm2 is *handed* a schema; it neither
   persists one nor looks one up, and it has no notion of a
-  table name, a DDL statement or a schema lock.
+  table name, a DDL statement or a schema lock. It does keep
+  sm3's catalog bytes for it — `catkv_*`, a key-value store in
+  sm1's store 0 under sm1's upper prefix (`sm3/CATALOG.md`
+  §3.2) — but never reads them.
 - **Secondary indexes.** sm2 maintains no index. It gives sm3
   the two things index maintenance needs: the encoder (§3) and
   the old image as a tuple (§5).

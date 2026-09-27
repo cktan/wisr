@@ -629,6 +629,57 @@ void idx_scanend(index_scan_t* scan);
 int decode_key(std::span<const key_column_t> cols, std::string_view key,
                std::vector<std::optional<std::string>>& datums);
 
+/*
+ * The catalog key-value store (sm3/CATALOG.md §3.2): the level
+ * above's catalog, kept as sm1's store 0 under sm1::upper_prefix.
+ * Every call is one sm1 call in the session's transaction, so the
+ * catalog is transactional with the DDL that writes it; sm1's
+ * errors pass through as they are. Keys and values are the
+ * caller's; the prefix is added and stripped here.
+ */
+struct catkv_t;
+
+/* A cursor over the catalog's keys under a prefix, in key order. */
+struct catkv_scan_t;
+
+/* Open the catalog of session's database; it always exists. */
+int catkv_open(sm1::session_t* session, catkv_t*& out);
+
+/* Close a catalog handle; nullptr is a no-op. */
+void catkv_close(catkv_t* kv);
+
+/*
+ * Read key: 0 with value set, 1 if there is none, -1 on error.
+ * value views sm1 memory, valid until the next call on the
+ * session.
+ */
+int catkv_get(catkv_t* kv, std::string_view key, std::string_view& value);
+
+/* Add key; one already there fails with SM_ERR_DUPKEY. */
+int catkv_insert(catkv_t* kv, std::string_view key, std::string_view value);
+
+/* Replace key's value; a missing key fails with SM_ERR_NOTFOUND. */
+int catkv_update(catkv_t* kv, std::string_view key, std::string_view value);
+
+/* Remove key; a missing one fails with SM_ERR_NOTFOUND. */
+int catkv_erase(catkv_t* kv, std::string_view key);
+
+/* Lock key shared or exclusive, to the end of the transaction. */
+int catkv_lock(catkv_t* kv, std::string_view key, sm1::lockmode_t mode);
+
+/* Open a cursor over every key that begins with prefix. */
+int catkv_scan(catkv_t* kv, std::string_view prefix, catkv_scan_t*& out);
+
+/*
+ * The next key and value: 0 with them, 1 at the end, -1 on error.
+ * Both view sm1 memory, valid until the next call on the cursor.
+ */
+int catkv_scannxt(catkv_scan_t* scan, std::string_view& key,
+                  std::string_view& value);
+
+/* Close a cursor; nullptr is a no-op. */
+void catkv_scanend(catkv_scan_t* scan);
+
 } // namespace sm2
 
 #endif /* SM2_H */

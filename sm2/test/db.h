@@ -49,6 +49,12 @@ public:
     return s;
   }
 
+  /* Close every session and reattach the home, as a restart does. */
+  void restart() {
+    REQUIRE(sm1::detach(m_env, 1) == 0);
+    REQUIRE(sm1::attach(m_path, m_env) == 0);
+  }
+
   /* The store the rels live in. */
   uint64_t store() const { return m_store; }
 
