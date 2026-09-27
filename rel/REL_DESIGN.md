@@ -1,7 +1,7 @@
 # DESIGN — rel, an interactive relational test driver for wisr
 
 Andy Pavlo, Databaseology Division, CMU
-Status: Design proposal for the `rel` test driver.
+Status: built; the design of record for the `rel` test driver.
 
 ---
 
@@ -35,12 +35,14 @@ simulates a full relational database without SQL:
 
 ---
 
-## 2. Language Choice: Janet-Inspired Lisp (`rel-lisp`)
+## 2. Language Choice: Janet
 
 To manipulate rows directly and execute commands with minimal
-syntactic baggage, `rel` adopts a Janet-inspired Lisp syntax.
+syntactic baggage, `rel` is Janet: it embeds the Janet
+interpreter (`libjanet`) and registers its builtins in Janet's
+core environment, so a script is a Janet program.
 
-Why a Janet-inspired Lisp over Python or Lua?
+Why Janet over Python or Lua?
 
 1. **First-Class Tuples:** Janet natively distinguishes array
    brackets `[...]` for data tuples and parentheses `(...)` for
@@ -49,10 +51,9 @@ Why a Janet-inspired Lisp over Python or Lua?
 2. **Keywords as Enums:** Types and options are native keywords
    prefixed with `:` (e.g., `:int4`, `:text`, `:serializable`,
    `:asc`, `:desc`, `:unique`).
-3. **Simplicity First:** Parsing S-expressions requires only a
-   tiny, zero-dependency reader (~300 lines of standard C/C++).
-   We don't need to drag in a Python virtual machine or Lua
-   runtime into `wisr`'s lean build.
+3. **Simplicity First:** Janet is one small embeddable C
+   library. We don't need to drag in a Python virtual machine
+   or Lua runtime into `wisr`'s lean build.
 4. **Scripting and Assertions:** Every operation is an expression
    that returns a value, making assertions and multi-statement
    transactions trivial to compose.
@@ -70,7 +71,7 @@ Why a Janet-inspired Lisp over Python or Lua?
 | Null | `nil` | `nil` |
 | Row / Tuple | `[elem1 elem2 ...]` | `[101 "Andy" nil true]` |
 | Expression | `(op arg1 arg2 ...)` | `(insert users [1 "Andy"])` |
-| Comment | `; comment text` | `; insert a row` |
+| Comment | `# comment text` | `# insert a row` |
 
 ---
 
@@ -112,14 +113,14 @@ Tables define an ordered list of named attributes. Each attribute
 specifies a type and optional flags (`:not-null`).
 
 ```lisp
-;; Create table 'users'
+# Create table 'users'
 (table-create users
   (columns
     (id   :int4 :not-null)
     (name :text)
     (age  :int4)))
 
-;; Drop table 'users'
+# Drop table 'users'
 (table-drop users)
 ```
 
@@ -127,20 +128,20 @@ Indexes are created on existing tables, specifying indexed key
 columns, sort order, and uniqueness.
 
 ```lisp
-;; Create secondary unique index on 'users' by name ascending
+# Create secondary unique index on 'users' by name ascending
 (index-create idx_users_name
   (table users)
   (key (name :asc))
   :unique true)
 
-;; Multi-column composite index with INCLUDE column
+# Multi-column composite index with INCLUDE column
 (index-create idx_users_age_name
   (table users)
   (key (age :desc :nulls-last) (name :asc))
   :unique false
   :include (id))
 
-;; Drop index
+# Drop index
 (index-drop idx_users_name)
 ```
 
@@ -150,46 +151,45 @@ Rows are manipulated directly as tuples without SQL
 `INSERT INTO`, `UPDATE`, or `DELETE` syntax:
 
 ```lisp
-;; 1. Insert a row directly: returns generated rowno (e.g. 1)
+# 1. Insert a row directly: returns generated rowno (e.g. 1)
 (insert users [1 "Andy Pavlo" 44])
 
-;; 2. Read row by rowno: returns decoded tuple
+# 2. Read row by rowno: returns decoded tuple
 (read users 1)
-;; => [1 "Andy Pavlo" 44]
+# => [1 "Andy Pavlo" 44]
 
-;; 3. Read latest committed version of row by rowno
-;; Useful under READ COMMITTED to inspect newer commits
+# 3. Read latest committed version of row by rowno
+# Useful under READ COMMITTED to inspect newer commits
 (read-latest users 1)
-;; => [1 "Andy Pavlo" 44]
+# => [1 "Andy Pavlo" 44]
 
-;; 4. Update row directly: replaces row at rowno, returns old tuple
+# 4. Update row directly: replaces row at rowno, returns old tuple
 (update users 1 [1 "Andy Pavlo" 45])
-;; => [1 "Andy Pavlo" 44]
+# => [1 "Andy Pavlo" 44]
 
-;; 5. Delete row directly: removes row at rowno, returns old tuple
+# 5. Delete row directly: removes row at rowno, returns old tuple
 (delete users 1)
-;; => [1 "Andy Pavlo" 45]
+# => [1 "Andy Pavlo" 45]
 ```
 
 ### 3.4 Direct Relational Scans and Queries
 
-Instead of SQL queries, `rel` uses direct table and index scans
-with composable stream operators:
+Instead of SQL queries, `rel` uses direct table and index scans,
+which return Janet arrays; Janet's own `filter` and `map`
+compose over them, and `rel` adds no stream operators:
 
 ```lisp
-;; Heap scan: scan all rows from rowno 1 to 100
+# Heap scan: scan all rows from rowno 1 to 100
 (scan users :from 1 :to 100)
-;; => ([1 [1 "Andy" 45]] [2 [2 "Lin" 30]])
+# => ([1 [1 "Andy" 45]] [2 [2 "Lin" 30]])
 
-;; Index scan with bounds: scan idx_users_name between "A" and "M"
+# Index scan with bounds: scan idx_users_name between "A" and "M"
 (idx-scan idx_users_name :ge ["A"] :lt ["M"])
-;; => ([1 false nil] [2 false nil]) ; (rowno, cut, includes)
+# => ([1 false nil] [2 false nil]) ; (rowno, cut, includes)
 
-;; Functional filter and projection over row streams
-(project
-  (filter (scan users)
-    (fn [r] (> (col r :age) 21)))
-  [:name :age])
+# Filter and project with Janet's own functions
+(map (fn [[rowno r]] [(r 1) (r 2)])
+     (filter (fn [[rowno r]] (> (r 2) 21)) (scan users)))
 ```
 
 ---
@@ -219,12 +219,9 @@ statements:
 | `(db-close)` | `sm_closedb(session)` | Closes session |
 
 Database options in `(db-create name {:durability-sync 0 ...})`
-map directly to `sm_options_t`:
+map directly to `sm_options_t`; the others keep their defaults:
 - `:durability-sync` -> `opt.durability_sync`
 - `:deadlock-ms` -> `opt.deadlock_ms`
-- `:ts-lease` -> `opt.ts_lease`
-- `:commit-cache-entries` -> `opt.commit_cache_entries`
-- `:rocksdb-options` -> `opt.rocksdb_options`
 
 ### 4.2 Transaction Management and 2PC
 
@@ -377,31 +374,20 @@ the session's next statement begins.
 
 ### 4.5 Low-Level Direct `sm_` Builtins
 
-For testing exact `sm.h` C API boundaries and verifying error
-conditions directly, `rel` exposes unadorned `sm:` primitives:
+For verifying error conditions directly, `rel` exposes the
+calling thread's error state as unadorned `sm:` primitives:
 
 | Builtin | `sm.h` Equivalent |
 | --- | --- |
-| `(sm:mkstore)` | `sm_mkstore(s, &storeid)` |
-| `(sm:rmstore storeid)` | `sm_rmstore(s, storeid)` |
-| `(sm:lsstore)` | `sm_lsstore(s, &ids, &n)` |
-| `(sm:mkseq name start inc)` | `sm_mkseq(s, name, start, inc)` |
-| `(sm:rmseq name)` | `sm_rmseq(s, name)` |
-| `(sm:rel-open ...)` | `sm_rel_open(...)` |
-| `(sm:rel-close rel)` | `sm_rel_close(rel)` |
-| `(sm:rel-insert rel datums)` | `sm_rel_insert(...)` |
-| `(sm:rel-read rel rowno)` | `sm_rel_read(...)` |
-| `(sm:rel-update rel rowno ...)`| `sm_rel_update(...)` |
-| `(sm:rel-delete rel rowno)` | `sm_rel_delete(...)` |
-| `(sm:idx-open ...)` | `sm_idx_open(...)` |
-| `(sm:idx-insert idx ...)` | `sm_idx_insert(...)` |
-| `(sm:idx-delete idx ...)` | `sm_idx_delete(...)` |
-| `(sm:idx-scan idx ...)` | `sm_idx_scan(...)` |
 | `(sm:errnum)` | `sm_errnum()` |
 | `(sm:errname)` | `sm_errname()` |
 | `(sm:errmsg)` | `sm_errmsg()` |
 | `(sm:retryable)` | `sm_retryable()` |
 | `(sm:reseterr)` | `sm_reseterr()` |
+
+Sequences are reached through `(seq-create)`, `(seq-drop)` and
+`(nextseq)`, over `sm_mkseq`, `sm_rmseq` and `sm_nextseq`.
+Stores, heap rels and indexes are reached only through tables.
 
 ---
 
@@ -415,28 +401,32 @@ concurrent sessions.
 `rel` supports first-class session switching:
 
 ```lisp
-;; Open two concurrent sessions on 'testdb'
+# Open two concurrent sessions on 'testdb'
 (session-open s1 "testdb")
 (session-open s2 "testdb")
 
-;; Session 1 starts serializable transaction and inserts row 1
+# Session 1 starts serializable transaction and inserts row 1
 (session-use s1)
 (begin :serializable)
 (insert accounts [1 100])
 
-;; Session 2 reads in its own transaction (does not see row 1)
+# Session 2 reads in its own transaction (does not see row 1)
 (session-use s2)
 (begin :serializable)
 (assert-nil (read accounts 1))
 
-;; Session 1 commits
+# Session 1 commits
 (session-use s1)
 (commit)
 
-;; Session 2 attempts write that causes serialization conflict
+# Session 2 updates a row session 1 changed after it began:
+# first-committer-wins fails it, retryably
 (session-use s2)
-(insert accounts [2 200])
-(assert-err :err-serialization (commit))
+(assert-eq (try (do (update accounts 1 [1 50]) false) ([err] true))
+           true)
+(assert-eq (sm:errname) "ERR_CONFLICT")
+(assert-eq (sm:retryable) true)
+(abort)
 ```
 
 ### 5.1 Test Assertions
@@ -446,30 +436,32 @@ detailed diagnostics when an invariant is violated:
 
 - `(assert-eq <actual> <expected>)`: Value equality check.
 - `(assert-nil <expr>)`: Verifies expression evaluates to `nil`.
-- `(assert-err <err-keyword> <expr>)`: Verifies `<expr>` fails
-  with the specified error code name (e.g. `:err-dupkey`,
-  `:err-serialization`, `:err-conflict`).
-- `(assert-count <n> <stream-or-list>)`: Verifies row count.
+- `(assert-count <n> <list>)`: Verifies row count.
+
+An expected failure is caught with Janet's `try`, and its code
+read with `(sm:errname)`, as in the example above.
 
 ---
 
 ## 6. Architecture of the `rel` Interpreter
 
-`rel` is implemented in standard C++20 and linked directly with
-`build/libsm.a`. It has zero external dependencies.
+`rel` is implemented in standard C++20, linked with
+`build/libsm.a` and with `libjanet`, its one dependency beyond
+the stack's own.
 
 ```
 +-------------------------------------------------------------+
 |                     rel Test Driver                         |
 |                                                             |
-|  +-------------------+      +----------------------------+  |
-|  | Lexer & Parser    | ---> | AST / S-Expression Evaluator| |
-|  +-------------------+      +----------------------------+  |
-|                                           |                 |
-|                                           v                 |
 |  +-------------------------------------------------------+  |
-|  |              Relational Catalog & Schema              |  |
-|  |    (Maps table names -> storeid, seq, rel_t, idx_t)   |  |
+|  |          Janet interpreter (libjanet), with           |  |
+|  |          rel's builtins in its core environment       |  |
+|  +-------------------------------------------------------+  |
+|                              |                              |
+|                              v                              |
+|  +-------------------------------------------------------+  |
+|  |     Sessions, and each statement's tables, opened     |  |
+|  |     from sm3's catalog (sm_cat_*) under their locks   |  |
 |  +-------------------------------------------------------+  |
 |          |                                   |              |
 |          v (row serialization)               v (index keys) |
@@ -481,28 +473,27 @@ detailed diagnostics when an invariant is violated:
 
 ### 6.1 Component Structure
 
-1. **Reader / Parser (`rel/reader.cc`):**
-   - Tokenizes input stream into symbols, numbers, strings,
-     keywords, lists `(...)`, and tuples `[...]`.
-   - Emits an S-expression value tree.
-2. **Value Model (`rel/value.h`):**
-   - Represents atoms (`int64_t`, `double`, `string`, `bool`,
-     `nil`, `keyword`) and compound forms (`vector`, `list`).
-3. **Environment & Sessions (`rel/src/rel_catalog.cc`):**
+Reading, parsing and evaluating are Janet's; `rel` adds its
+builtins (`rel/src/`):
+
+1. **Builtins (`rel_ops.cc`):**
+   - Registers every builtin, and the macros that let a script
+     name tables and indexes by bare symbol.
+   - Invokes `sm_` functions, and turns an error into a Janet
+     panic.
+2. **Values (`rel_types.cc`):**
+   - Converts input tuples to `sm_datum_t[]` values and
+     `bool[]` null flags, and output tuples back to Janet
+     values.
+3. **Sessions and Tables (`rel_catalog.cc`):**
    - Stores session handles (`sm_session_t*`).
    - Opens a statement's tables from sm3's catalog, and keeps
      them with their `sm_rel_t*` and `sm_idx_t*` until the
      session's next statement.
-4. **Evaluator (`rel/eval.cc`):**
-   - Dispatches builtins and commands.
-   - Converts input tuples to `sm_datum_t[]` values and
-     `bool[]` null flags.
-   - Invokes `sm_` functions.
-   - Decodes output tuples to `rel` vectors.
-5. **Driver Main (`rel/main.cc`):**
+4. **Driver Main (`main.cc`):**
    - Supports interactive REPL mode when launched without args.
    - Executes script files when passed a path:
-     `rel <script.rel>`.
+     `rel <script.rel>`, or one expression with `rel -e`.
    - Exits with 0 on test success, non-zero on assertion failure.
 
 ---
@@ -512,7 +503,7 @@ detailed diagnostics when an invariant is violated:
 Here is what an end-to-end test script in `rel` looks like:
 
 ```lisp
-; test_isolation.rel -- verify repeatable-read snapshot isolation
+# test_isolation.rel -- verify repeatable-read snapshot isolation
 (env-init "/tmp/wisr_rel_test")
 (env-attach "/tmp/wisr_rel_test")
 (db-create "testdb" {:durability-sync 0})
@@ -520,7 +511,7 @@ Here is what an end-to-end test script in `rel` looks like:
 (session-open s1 "testdb")
 (session-open s2 "testdb")
 
-; Setup table
+# Setup table
 (session-use s1)
 (begin :rc)
 (table-create accounts
@@ -535,26 +526,28 @@ Here is what an end-to-end test script in `rel` looks like:
 (insert accounts [2 2000])
 (commit)
 
-; Verify Repeatable Read Isolation
+# Verify Repeatable Read Isolation
 (session-use s1)
 (begin :rr)
 (assert-eq (read accounts 1) [1 1000])
 
-; Session 2 updates row 1 concurrently
+# Session 2 updates row 1 concurrently
 (session-use s2)
 (begin :rc)
 (update accounts 1 [1 1500])
 (commit)
 
-; Session 1 must still see old snapshot (1000)
+# Session 1 must still see old snapshot (1000)
 (session-use s1)
 (assert-eq (read accounts 1) [1 1000])
-
-; But read-latest sees 1500
-(assert-eq (read-latest accounts 1) [1 1500])
 (commit)
 
-; Cleanup
+# A new transaction sees 1500
+(begin :rc)
+(assert-eq (read accounts 1) [1 1500])
+(commit)
+
+# Cleanup
 (session-close s1)
 (session-close s2)
 (db-drop "testdb")

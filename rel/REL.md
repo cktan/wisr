@@ -2,9 +2,9 @@
 
 The `rel` driver provides a Janet-based scripting interface
 and interactive environment for driving the storage engine
-via [`include/sm.h`](file:///home/cktan/p/wisr/include/sm.h).
+via [`include/sm.h`](../include/sm.h).
 Source bindings are implemented in
-[`rel_ops.cc`](file:///home/cktan/p/wisr/rel/src/rel_ops.cc).
+[`rel_ops.cc`](src/rel_ops.cc).
 
 Primitives are grouped below by entity type.
 
@@ -180,7 +180,8 @@ back changes made since it was taken.
 ### `(prepare gid)`
 Prepares the active transaction under global transaction ID `gid`
 in a two-phase commit protocol. The session becomes idle and
-disassociated from the transaction.
+disassociated from the transaction. A transaction that made DDL
+cannot be prepared: it fails with `ERR_INVALID`.
 
 ```janet
 (prepare "tx-coord-001")
@@ -244,13 +245,15 @@ and never recycled on abort.
 
 ## 5. Schema: Tables & Indexes (DDL)
 
-Define and manage heap tables and secondary indexes.
+Define and manage heap tables and secondary indexes. Tables and
+indexes live in sm3's catalog, in the `public` namespace. Every
+DDL statement runs in the active transaction: it is undone by
+`(abort)` or `(rollback sp)`, seen by other sessions only once
+committed, and kept across a restart.
 
 ### `(table-create name (columns ...))`
-Defines and creates a heap table in sm3's catalog, backed by a
-store and a row sequence of its own. Like all DDL, it is undone
-by `(abort)` or `(rollback sp)`, seen by other sessions only
-once committed, and kept across a restart.
+Defines and creates a heap table, backed by a store and a row
+sequence of its own.
 
 Supported column types:
 - Integer: `:int2`, `:int4`, `:int8`
@@ -274,10 +277,8 @@ written and read as PostgreSQL's canonical text for it --
 `"2026-09-26"`, `"12.30"` under `decimal(10, 2)`,
 `"P1Y2M3DT4H5M6S"` -- which is the only text accepted.
 
-Column qualifiers:
+Column qualifier:
 - `:not-null` -- requires non-null value on insert/update.
-- `:dropped` -- marks column as dropped.
-- `:missing val` -- default missing value for older tuples.
 
 ```janet
 (table-create users
@@ -297,7 +298,9 @@ associated row sequence.
 ```
 
 ### `(index-create name (table tbl) ...)`
-Creates a secondary index on table `tbl`.
+Creates a secondary index on table `tbl`. It records the index
+only: rows already in the table are not added to it, so create
+an index before inserting the rows it should find.
 
 Clauses:
 - `(table tbl)` -- target table name.
@@ -332,7 +335,12 @@ Drops the secondary index named `name`.
 ## 6. Data Manipulation (DML) & Scans
 
 CRUD operations and ordered scans on tables and indexes.
-All DML operations require an active transaction.
+All DML operations require an active transaction. Each one
+first takes its table's schema lock -- intent-shared to read,
+intent-exclusive to write -- held to the end of the transaction,
+so DDL on the table waits for it and it for DDL. A table that
+does not exist, or that another session has created but not
+committed, fails with `<op>: table '<name>' not found`.
 
 ### `(insert table [val1 val2 ...])`
 Encodes and inserts a new row into `table` and all attached
@@ -417,7 +425,7 @@ translates the error into a **Janet panic** via
    For example, a unique constraint violation on an insert
    or index creation produces:
    ```text
-   insert sm_idx_insert failed: [SM_ERR_DUPKEY] duplicate key
+   insert sm_idx_insert failed: [ERR_DUPKEY] key already exists
    ```
 
 2. **Unhandled Panics:**
@@ -434,14 +442,7 @@ translates the error into a **Janet panic** via
       (print "Caught error: " err)))
    ```
 
-4. **Testing Expected Errors with `assert-err`:**
-   Test scripts can verify that an expression fails with a
-   specific error code name:
-   ```janet
-   (assert-err :err-dupkey (insert users [1 "Duplicate"]))
-   ```
-
-5. **Diagnostic State:**
+4. **Diagnostic State:**
    Even after a panic is caught, the underlying storage manager
    error state remains preserved on the calling thread until the
    next operation or until cleared via `(sm:reseterr)`.
@@ -454,8 +455,9 @@ Returns the integer error code of the last error.
 ```
 
 ### `(sm:errname)`
-Returns the uppercase string name of the last error code (e.g.
-`"SM_ERR_DUPKEY"`, `"SM_ERR_UPDATED"`, `"SM_ERR_CONFLICT"`).
+Returns the uppercase name of the last error code, without its
+`SM_` prefix (e.g. `"ERR_DUPKEY"`, `"ERR_UPDATED"`,
+`"ERR_CONFLICT"`).
 
 ```janet
 (def name (sm:errname))
@@ -511,10 +513,8 @@ Panics if the length/count of `list` is not `n`.
 (assert-count 5 (scan users))
 ```
 
-### `(assert-err expected-keyword-or-string expr)`
-Evaluates `expr` and expects it to fail. Panics if `expr`
-succeeds or if the thrown error does not match `expected`.
+To expect an error, catch it with `try`:
 
 ```janet
-(assert-err :err-dupkey (insert users [1 "Bob" "alice@example.com" true]))
+(assert-eq (try (do (insert users [1 "Bob"]) false) ([err] true)) true)
 ```
