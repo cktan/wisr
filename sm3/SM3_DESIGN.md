@@ -18,7 +18,8 @@ decisions in `SM3_OBJECTIVE.md`:
 | API shape | open: batch-oriented (sets of rows, filters pushed down) was forced by an IPC boundary, which the threaded fork removes (§1) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
-**Status: nothing here is implemented.** sm2, which it is built
+**Status: only the catalog's layout is implemented** — its keys
+and blobs (`CATALOG.md` §4.3, step 3). sm2, which it is built
 on, is, but for TOAST (`sm2/SM2_DESIGN.md` §8.2).
 This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is

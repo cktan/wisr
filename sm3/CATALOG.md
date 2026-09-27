@@ -7,8 +7,11 @@ decisions it takes as given: the catalog is held in memory,
 written through to storage, and changed under lock-based DDL,
 as in PostgreSQL.
 
-**Status: a design, not built.** §1 compares the candidates,
-§2 picks one, §3 lists the primitives, §4 sketches the build.
+**Status: steps 1 to 3 of §4.3 are built** — sm1's store 0
+under `"U"` and object ids from 1000, sm2's `catkv_*`, and the
+catalog's keys and blobs in `src/catalog/`; the rest is
+design. §1 compares the candidates, §2 picks one, §3 lists the
+primitives, §4 sketches the build.
 
 ---
 
