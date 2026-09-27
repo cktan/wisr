@@ -8,9 +8,9 @@ through to storage in the DDL's own transaction, and changed
 under lock-based DDL, as in PostgreSQL.
 
 **Status: built** — the store, its keys and values, `cat_init`,
-`cat_open` and the DDL of §5, which writes the catalog but does
-not yet change a loaded one. §7 is what is settled but not
-built yet.
+`cat_open`, the DDL of §5, and a session's overlay, which keeps
+its transaction's DDL to itself until commit. §7 is what is
+settled but not built yet.
 
 ---
 
@@ -141,17 +141,26 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
   its `tup_desc_t`, built with it, so a reader never lays out a
   row itself. A definition is built whole and never edited, and
   never copied, since its `desc` views its `schema`.
-- **`catalog_t`**, opaque: every table by oid and by namespace
-  and name, as `std::shared_ptr<const table_def_t>`; every
-  namespace; every collation, opened by `cat_open` at its
-  recorded ICU version and closed by `cat_close`.
+- **`catalog_t`**, opaque and shared by sessions: every
+  committed table by oid and by namespace and name, as
+  `std::shared_ptr<const table_def_t>`; every namespace; every
+  collation, opened by `cat_open` at its recorded ICU version
+  and closed by `cat_close`. A reader-writer mutex guards it.
+- **`session_t`**: an sm1 session, the catalog it reads, and its
+  open transaction's **overlay** — the table definitions, table
+  names and collations its DDL has changed, each tagged with the
+  savepoint depth it was made at (0 before any). A lookup through
+  the session finds its newest change first, then the shared
+  catalog, so the transaction sees its own DDL and no other
+  session sees it.
 
 ---
 
 ## 5. Calls
 
-Every call takes the session and works in its transaction; each
-reports failure as sm1 does (`DESIGN.md` §5).
+`cat_init` and `cat_open` take an sm1 session; the rest take an
+sm3 session and work in its transaction. Each reports failure
+as sm1 does (`DESIGN.md` §5).
 
 - **`cat_init(session)`** makes a new database's catalog:
   `META`, the `sm3.oid` sequence, and the `pg_catalog` and
@@ -165,7 +174,19 @@ reports failure as sm1 does (`DESIGN.md` §5).
   not there — is `SM_ERR_CORRUPT`.
 - **`cat_close(cat)`** frees the catalog and its collations.
 - **`cat_table(cat, oid)`** and **`cat_table(cat, nspoid,
-  name)`** find a table, or nullptr.
+  name)`** find a committed table, or nullptr.
+- **`session_open(cat, s, ss)`** opens a session over the sm1
+  session `s`; **`session_close`** drops its overlay.
+- **`begin`, `savepoint`, `rollback`, `forget`, `commit`,
+  `abort`** wrap sm1's and keep the overlay in step.
+  `rollback(d)` drops the changes tagged `d` or deeper, since the
+  mark at `d` survives; `forget(d)` re-tags them `d - 1`, so a
+  later mark that reuses the depth cannot drop them; `abort`
+  drops them all;
+  `commit` commits in sm1, then publishes them into the shared
+  catalog, or drops them if the commit fails.
+- **`cat_table(ss, oid)`** and **`cat_table(ss, nspoid, name)`**
+  find a table as the session's transaction sees it.
 - **`cat_create_table(session, nspoid, name, columns, oid)`**
   checks the name, the column names and each column's type
   code and typmod (`SM_ERR_INVALID`) and the namespace
@@ -203,9 +224,10 @@ reports failure as sm1 does (`DESIGN.md` §5).
 
 A missing table, index, namespace or collation is
 `SM_ERR_NOTFOUND`; a name taken in its namespace is
-`SM_ERR_DUPKEY`. Each call writes the catalog only: a
-`catalog_t` already loaded does not see the change until the
-overlay of §7 is built.
+`SM_ERR_DUPKEY`. Each call writes the catalog in the session's
+transaction and records the new definition in its overlay; a
+collation it creates stays open there, for the transaction's
+DDL to use at once.
 
 ---
 
@@ -216,13 +238,16 @@ sm1/src/access.cc          store 0 under "U" for callers
 sm2/src/rel/catkv.cc       the catalog key-value store
 sm3/include/sm3.h          definitions and calls
 sm3/src/catalog/catalog.h  keys, records and parts (internal)
+sm3/src/catalog/internal.h catalog_t, session_t and the overlay
 sm3/src/catalog/key.cc     keys
 sm3/src/catalog/blob.cc    values: parts and their framing
 sm3/src/catalog/load.cc    cat_open and the lookups
 sm3/src/catalog/ddl.cc     cat_init and the DDL
+sm3/src/catalog/session.cc the session, its transaction, publishing
 sm3/test/test_layout.cc    keys and values
 sm3/test/test_catalog.cc   init, load and create
 sm3/test/test_ddl.cc       the rest of the DDL
+sm3/test/test_overlay.cc   the overlay: visibility, rollback, abort
 ```
 
 ---
@@ -231,27 +256,23 @@ sm3/test/test_ddl.cc       the rest of the DDL
 
 Settled, and next in this order:
 
-1. **The overlay.** A session's open transaction keeps the
-   definitions it has changed, each tagged with the savepoint
-   depth it was made at; its lookups see them first, a rollback
-   to a savepoint drops those made past it, an abort drops all,
-   and nobody else sees them. `sm3::savepoint`, `rollback`,
-   `commit` and `abort` wrap sm1's to keep it in step.
-2. **Schema locks and publishing.** A table's `TABLE` key is its
-   schema lock (`SM3_DESIGN.md` §2): a user takes it shared
-   before reading the definition, DDL takes it exclusive by
-   rewriting the blob. At commit the session takes the shared
-   catalog's mutex exclusive, commits in sm1 — which releases
-   its locks — moves its overlay into the shared catalog, and
-   releases the mutex; a transaction that got the lock in
-   between waits on the mutex, so it sees the new definition,
-   never the old. DDL in a prepared transaction is refused, since
-   the overlay would have to outlive its session.
-3. **Temporary tables.** A temporary table is a temporary store
+1. **Schema locks, and publishing under them.** A table's
+   `TABLE` key is its schema lock (`SM3_DESIGN.md` §2): a user
+   takes it shared before reading the definition, DDL takes it
+   exclusive by rewriting the blob. Today `commit` publishes
+   after sm1 commits, so a reader could read between the two;
+   instead the session takes the shared catalog's mutex
+   exclusive, commits in sm1 — which releases its locks — moves
+   its overlay in, and releases the mutex, and a transaction
+   that got the lock in between waits on the mutex, so it sees
+   the new definition, never the old. DDL in a prepared
+   transaction is refused, since the overlay would have to
+   outlive its session.
+2. **Temporary tables.** A temporary table is a temporary store
    (`DESIGN.md` §5, `sm1/SM1_DESIGN.md` §11.3); its definition
    lives only in the session's own temporary catalog, in the
    session's temporary namespace, never written to store 0.
-4. **`rel` on sm3.** The `rel` driver's own catalog
+3. **`rel` on sm3.** The `rel` driver's own catalog
    (`rel/src/rel_catalog.cc`) gives way to this one.
 
 Open: namespaces beyond the two built in (`CREATE SCHEMA` is a

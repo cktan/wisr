@@ -80,14 +80,19 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   REQUIRE(sm1::commit(s) == 0);
   std::vector<sm3::column_spec_t> cols = order_columns();
   uint64_t oid = 0, gone = 0;
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  sm3::catalog_t *first = load(s);
+  sm3::session_t *ss = nullptr;
+  REQUIRE(sm3::session_open(first, s, ss) == 0);
+  REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE_MESSAGE(
-      sm3::cat_create_table(s, sm3::nsp_public, "orders", cols, oid) == 0,
+      sm3::cat_create_table(ss, sm3::nsp_public, "orders", cols, oid) == 0,
       sm1::errmsg());
-  REQUIRE(sm1::commit(s) == 0);
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_create_table(s, sm3::nsp_public, "gone", cols, gone) == 0);
-  REQUIRE(sm1::abort(s) == 0);
+  REQUIRE(sm3::commit(ss) == 0);
+  REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_create_table(ss, sm3::nsp_public, "gone", cols, gone) == 0);
+  REQUIRE(sm3::abort(ss) == 0);
+  sm3::session_close(ss);
+  sm3::cat_close(first);
 
   db.restart();
   s = db.open();
@@ -140,13 +145,18 @@ TEST_CASE("cat_create_table refuses what it cannot make") {
   sm1::session_t *s = db.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm3::cat_init(s) == 0);
+  // Load the catalog in the same transaction, which sees its init.
+  sm3::catalog_t *loaded = nullptr;
+  sm3::session_t *ss = nullptr;
+  REQUIRE(sm3::cat_open(s, loaded) == 0);
+  REQUIRE(sm3::session_open(loaded, s, ss) == 0);
   std::vector<sm3::column_spec_t> cols = order_columns();
   uint64_t oid;
-  REQUIRE(sm3::cat_create_table(s, sm3::nsp_public, "t", cols, oid) == 0);
-  CHECK(sm3::cat_create_table(s, sm3::nsp_public, "t", cols, oid) == -1);
+  REQUIRE(sm3::cat_create_table(ss, sm3::nsp_public, "t", cols, oid) == 0);
+  CHECK(sm3::cat_create_table(ss, sm3::nsp_public, "t", cols, oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
-  CHECK(sm3::cat_create_table(s, sm3::nsp_pg_catalog, "t", cols, oid) == 0);
-  CHECK(sm3::cat_create_table(s, 999, "u", cols, oid) == -1);
+  CHECK(sm3::cat_create_table(ss, sm3::nsp_pg_catalog, "t", cols, oid) == 0);
+  CHECK(sm3::cat_create_table(ss, 999, "u", cols, oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   std::vector<std::vector<sm3::column_spec_t>> bad = {
@@ -155,10 +165,10 @@ TEST_CASE("cat_create_table refuses what it cannot make") {
       {{"a", 7, -1, false}},
       {{"a", sm2::type_decimal64.code, -1, false}},
   };
-  CHECK(sm3::cat_create_table(s, sm3::nsp_public, "", cols, oid) == -1);
+  CHECK(sm3::cat_create_table(ss, sm3::nsp_public, "", cols, oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   for (const auto &b : bad) {
-    CHECK(sm3::cat_create_table(s, sm3::nsp_public, "v", b, oid) == -1);
+    CHECK(sm3::cat_create_table(ss, sm3::nsp_public, "v", b, oid) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
 
@@ -172,5 +182,7 @@ TEST_CASE("cat_create_table refuses what it cannot make") {
   sm3::catalog_t *cat = nullptr;
   CHECK(sm3::cat_open(s, cat) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_VERSION);
-  REQUIRE(sm1::abort(s) == 0);
+  REQUIRE(sm3::abort(ss) == 0);
+  sm3::session_close(ss);
+  sm3::cat_close(loaded);
 }

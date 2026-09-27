@@ -5,26 +5,11 @@
  * out a row itself.
  */
 
-#include "catalog.h"
-#include "sm3.h"
+#include "internal.h"
 
-#include <map>
+#include <mutex>
 #include <string>
 #include <utility>
-
-struct sm3::catalog_t {
-  std::map<uint64_t, std::shared_ptr<const table_def_t>> tables;
-  std::map<std::pair<uint64_t, std::string>, uint64_t> table_names;
-  std::map<uint64_t, std::string> nspaces;
-  std::map<uint64_t, sm2::collation_t *> collations;
-
-  /* Close every collation the catalog opened. */
-  ~catalog_t() {
-    for (auto &[oid, c] : collations) {
-      sm2::collation_close(c);
-    }
-  }
-};
 
 namespace {
 
@@ -62,24 +47,20 @@ int scan_kind(sm2::catkv_t *kv, sm3::kind_t kind,
 }
 
 /* The collation oid names, or nullptr for none; false if unknown. */
-bool collation_of(const sm3::catalog_t &cat, std::optional<uint64_t> oid,
-                  const sm2::collation_t *&out) {
+bool collation_of(const sm3::collation_lookup_t &lookup,
+                  std::optional<uint64_t> oid, const sm2::collation_t *&out) {
   out = nullptr;
-  if (!oid) {
-    return true;
-  }
-  auto it = cat.collations.find(*oid);
-  if (it == cat.collations.end()) {
-    return false;
-  }
-  out = it->second;
-  return true;
+  return !oid || lookup(*oid, out);
 }
 
-/* Build a table's definition from its record. */
-int build_table(const sm3::catalog_t &cat, uint64_t oid,
-                const sm3::table_rec_t &rec,
-                std::shared_ptr<const sm3::table_def_t> &out) {
+} // namespace
+
+namespace sm3 {
+
+/* Build a table's definition from its record; see internal.h. */
+int build_table(const collation_lookup_t &lookup, uint64_t oid,
+                const table_rec_t &rec,
+                std::shared_ptr<const table_def_t> &out) {
   auto t = std::make_shared<sm3::table_def_t>();
   t->oid = oid;
   t->nspoid = rec.nspoid;
@@ -90,7 +71,7 @@ int build_table(const sm3::catalog_t &cat, uint64_t oid,
   for (const sm3::column_rec_t &c : rec.columns) {
     const sm2::type_t *type = sm2::type_by_code(c.type_code);
     const sm2::collation_t *coll;
-    if (!type || !collation_of(cat, c.collation, coll)) {
+    if (!type || !collation_of(lookup, c.collation, coll)) {
       return corrupt("column " + c.name + " of " + rec.name +
                      " names an unknown type or collation");
     }
@@ -108,7 +89,7 @@ int build_table(const sm3::catalog_t &cat, uint64_t oid,
     for (const sm3::index_key_rec_t &k : x.keys) {
       const sm2::collation_t *coll;
       if (k.attnum < 0 || static_cast<size_t>(k.attnum) >= t->columns.size() ||
-          !collation_of(cat, k.collation, coll)) {
+          !collation_of(lookup, k.collation, coll)) {
         return corrupt("index " + x.name + " names an unknown column");
       }
       const sm3::column_def_t &col = t->columns[k.attnum];
@@ -128,6 +109,10 @@ int build_table(const sm3::catalog_t &cat, uint64_t oid,
   out = std::move(t);
   return 0;
 }
+
+} // namespace sm3
+
+namespace {
 
 /* Load every entry into cat. */
 int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
@@ -185,8 +170,15 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
   for (auto &[oid, blob] : entries) {
     sm3::table_rec_t rec;
     std::shared_ptr<const sm3::table_def_t> def;
+    // Collations from cat, which has them all by now.
+    sm3::collation_lookup_t lookup = [&](uint64_t c,
+                                         const sm2::collation_t *&o) {
+      auto it = cat.collations.find(c);
+      o = it == cat.collations.end() ? nullptr : it->second;
+      return o != nullptr;
+    };
     if (sm3::decode_table(blob, rec) != 0 ||
-        build_table(cat, oid, rec, def) != 0) {
+        sm3::build_table(lookup, oid, rec, def) != 0) {
       return -1;
     }
     cat.table_names[{rec.nspoid, rec.name}] = oid;
@@ -219,18 +211,27 @@ int cat_open(sm1::session_t *session, catalog_t *&out) {
 /* Close a catalog; nullptr is a no-op. */
 void cat_close(catalog_t *cat) { delete cat; }
 
-/* A table by oid, or nullptr. */
+/* A committed table by oid, or nullptr. */
 std::shared_ptr<const table_def_t> cat_table(const catalog_t *cat,
                                              uint64_t oid) {
+  std::shared_lock lock(cat->mu);
   auto it = cat->tables.find(oid);
   return it == cat->tables.end() ? nullptr : it->second;
 }
 
-/* A table by namespace and name, or nullptr. */
+/* A committed table by namespace and name, or nullptr. */
 std::shared_ptr<const table_def_t>
 cat_table(const catalog_t *cat, uint64_t nspoid, std::string_view name) {
-  auto it = cat->table_names.find({nspoid, std::string(name)});
-  return it == cat->table_names.end() ? nullptr : cat_table(cat, it->second);
+  uint64_t oid;
+  {
+    std::shared_lock lock(cat->mu);
+    auto it = cat->table_names.find({nspoid, std::string(name)});
+    if (it == cat->table_names.end()) {
+      return nullptr;
+    }
+    oid = it->second;
+  }
+  return cat_table(cat, oid);
 }
 
 } // namespace sm3

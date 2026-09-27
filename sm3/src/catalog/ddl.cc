@@ -5,8 +5,7 @@
  * it commits and rolls back with the transaction's other writes.
  */
 
-#include "catalog.h"
-#include "sm3.h"
+#include "internal.h"
 
 #include <algorithm>
 #include <set>
@@ -170,6 +169,23 @@ int check_columns(std::span<const sm3::column_spec_t> columns) {
   return 0;
 }
 
+/*
+ * Build the definition rec describes, as s sees its collations, and
+ * record it in s's overlay as the table oid's.
+ */
+int record_table(sm3::session_t *s, uint64_t oid, const sm3::table_rec_t &rec) {
+  std::shared_ptr<const sm3::table_def_t> def;
+  sm3::collation_lookup_t lookup = [s](uint64_t c,
+                                       const sm2::collation_t *&out) {
+    return sm3::session_collation(s, c, out);
+  };
+  if (sm3::build_table(lookup, oid, rec, def) != 0) {
+    return -1;
+  }
+  sm3::overlay_table(s, oid, std::move(def));
+  return 0;
+}
+
 } // namespace
 
 namespace sm3 {
@@ -215,8 +231,7 @@ int cat_init(sm1::session_t *session) {
 }
 
 /* Create a table; see sm3.h. */
-int cat_create_table(sm1::session_t *session, uint64_t nspoid,
-                     std::string_view name,
+int cat_create_table(session_t *session, uint64_t nspoid, std::string_view name,
                      std::span<const column_spec_t> columns, uint64_t &oid) {
   return catch_nomem([&] {
     if (name.empty()) {
@@ -228,7 +243,7 @@ int cat_create_table(sm1::session_t *session, uint64_t nspoid,
     kv_ptr kv(nullptr, &sm2::catkv_close);
     std::string key, blob;
     std::string_view v;
-    if (open_kv(session, kv) != 0 ||
+    if (open_kv(session->sm1, kv) != 0 ||
         entity_key(kind_t::nspace, nspoid, key) != 0) {
       return -1;
     }
@@ -241,7 +256,7 @@ int cat_create_table(sm1::session_t *session, uint64_t nspoid,
     }
     // The oid first: the name's entry says what it names.
     uint64_t t;
-    if (sm1::nextseq(session, oid_seq, t) != 0) {
+    if (sm1::nextseq(session->sm1, oid_seq, t) != 0) {
       return -1;
     }
     // The name next, so a taken one fails before a store is made.
@@ -253,8 +268,8 @@ int cat_create_table(sm1::session_t *session, uint64_t nspoid,
         nspoid, std::string(name), 0, "sm3.rowno." + std::to_string(t), 1, {},
         {}};
     // The table's store and its rowno sequence (DESIGN.md §5).
-    if (sm1::mkstore(session, rec.storeid) != 0 ||
-        sm1::mkseq(session, rec.rowno_seq, 1, 1) != 0) {
+    if (sm1::mkstore(session->sm1, rec.storeid) != 0 ||
+        sm1::mkseq(session->sm1, rec.rowno_seq, 1, 1) != 0) {
       return -1;
     }
     for (const column_spec_t &c : columns) {
@@ -262,9 +277,11 @@ int cat_create_table(sm1::session_t *session, uint64_t nspoid,
                              std::nullopt, std::nullopt});
     }
     if (encode_table(rec, blob) != 0 ||
-        insert_entity(kv.get(), kind_t::table, t, blob) != 0) {
+        insert_entity(kv.get(), kind_t::table, t, blob) != 0 ||
+        record_table(session, t, rec) != 0) {
       return -1;
     }
+    overlay_name(session, nspoid, name, t);
     oid = t;
     return 0;
   });
@@ -275,12 +292,12 @@ int cat_create_table(sm1::session_t *session, uint64_t nspoid,
 namespace sm3 {
 
 /* Drop a table; see sm3.h. */
-int cat_drop_table(sm1::session_t *session, uint64_t oid) {
+int cat_drop_table(session_t *session, uint64_t oid) {
   return catch_nomem([&] {
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
     std::string key;
-    if (open_kv(session, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
+    if (open_kv(session->sm1, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
       return -1;
     }
     // Its names, then its definition.
@@ -297,24 +314,25 @@ int cat_drop_table(sm1::session_t *session, uint64_t oid) {
       return -1;
     }
     // Its store takes its rows and index entries with it (DESIGN.md §5).
-    if (sm1::rmstore(session, rec.storeid) != 0 ||
-        sm1::rmseq(session, rec.rowno_seq) != 0) {
+    if (sm1::rmstore(session->sm1, rec.storeid) != 0 ||
+        sm1::rmseq(session->sm1, rec.rowno_seq) != 0) {
       return -1;
     }
+    overlay_table(session, oid, nullptr);
+    overlay_name(session, rec.nspoid, rec.name, std::nullopt);
     return 0;
   });
 }
 
 /* Rename a table; see sm3.h. */
-int cat_rename_table(sm1::session_t *session, uint64_t oid,
-                     std::string_view name) {
+int cat_rename_table(session_t *session, uint64_t oid, std::string_view name) {
   return catch_nomem([&] {
     if (name.empty()) {
       return invalid("rename table: no name");
     }
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
-    if (open_kv(session, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
+    if (open_kv(session->sm1, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
       return -1;
     }
     if (rec.name == name) {
@@ -326,14 +344,18 @@ int cat_rename_table(sm1::session_t *session, uint64_t oid,
         erase_name(kv.get(), rec.nspoid, rec.name) != 0) {
       return -1;
     }
+    overlay_name(session, rec.nspoid, rec.name, std::nullopt);
+    overlay_name(session, rec.nspoid, name, oid);
     rec.name = name;
-    return write_table(kv.get(), oid, rec);
+    if (write_table(kv.get(), oid, rec) != 0) {
+      return -1;
+    }
+    return record_table(session, oid, rec);
   });
 }
 
 /* Append a column; see sm3.h. */
-int cat_add_column(sm1::session_t *session, uint64_t oid,
-                   const column_spec_t &col,
+int cat_add_column(session_t *session, uint64_t oid, const column_spec_t &col,
                    std::optional<std::string_view> missing) {
   return catch_nomem([&] {
     if (check_columns(std::span<const column_spec_t>(&col, 1)) != 0) {
@@ -349,7 +371,7 @@ int cat_add_column(sm1::session_t *session, uint64_t oid,
     }
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
-    if (open_kv(session, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
+    if (open_kv(session->sm1, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
       return -1;
     }
     if (live_column(rec, col.name) >= 0) {
@@ -359,17 +381,19 @@ int cat_add_column(sm1::session_t *session, uint64_t oid,
         {col.name, col.type_code, col.typmod, col.not_null, false,
          missing ? std::optional<std::string>(*missing) : std::nullopt,
          std::nullopt});
-    return write_table(kv.get(), oid, rec);
+    if (write_table(kv.get(), oid, rec) != 0) {
+      return -1;
+    }
+    return record_table(session, oid, rec);
   });
 }
 
 /* Drop a column; see sm3.h. */
-int cat_drop_column(sm1::session_t *session, uint64_t oid,
-                    std::string_view name) {
+int cat_drop_column(session_t *session, uint64_t oid, std::string_view name) {
   return catch_nomem([&] {
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
-    if (open_kv(session, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
+    if (open_kv(session->sm1, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
       return -1;
     }
     int at = live_column(rec, name);
@@ -393,13 +417,15 @@ int cat_drop_column(sm1::session_t *session, uint64_t oid,
     c.dropped = true;
     c.not_null = false;
     c.missing = std::nullopt;
-    return write_table(kv.get(), oid, rec);
+    if (write_table(kv.get(), oid, rec) != 0) {
+      return -1;
+    }
+    return record_table(session, oid, rec);
   });
 }
 
 /* Create an index; see sm3.h. */
-int cat_create_index(sm1::session_t *session, uint64_t table,
-                     std::string_view name,
+int cat_create_index(session_t *session, uint64_t table, std::string_view name,
                      std::span<const index_key_spec_t> keys,
                      std::span<const int32_t> includes, bool unique,
                      uint64_t &oid) {
@@ -410,7 +436,8 @@ int cat_create_index(sm1::session_t *session, uint64_t table,
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
     std::string blob;
-    if (open_kv(session, kv) != 0 || read_table(kv.get(), table, rec) != 0) {
+    if (open_kv(session->sm1, kv) != 0 ||
+        read_table(kv.get(), table, rec) != 0) {
       return -1;
     }
     index_rec_t x{0, std::string(name), rec.next_prefix, unique, {}, {}};
@@ -441,7 +468,7 @@ int cat_create_index(sm1::session_t *session, uint64_t table,
       return invalid("create index: the table has no index prefix left");
     }
     uint64_t i;
-    if (sm1::nextseq(session, oid_seq, i) != 0 ||
+    if (sm1::nextseq(session->sm1, oid_seq, i) != 0 ||
         insert_name(kv.get(), rec.nspoid, name, {kind_t::index, i, table}) !=
             0) {
       return -1;
@@ -449,7 +476,8 @@ int cat_create_index(sm1::session_t *session, uint64_t table,
     x.oid = i;
     rec.next_prefix++;
     rec.indexes.push_back(std::move(x));
-    if (write_table(kv.get(), table, rec) != 0) {
+    if (write_table(kv.get(), table, rec) != 0 ||
+        record_table(session, table, rec) != 0) {
       return -1;
     }
     oid = i;
@@ -458,11 +486,12 @@ int cat_create_index(sm1::session_t *session, uint64_t table,
 }
 
 /* Drop an index; see sm3.h. */
-int cat_drop_index(sm1::session_t *session, uint64_t table, uint64_t oid) {
+int cat_drop_index(session_t *session, uint64_t table, uint64_t oid) {
   return catch_nomem([&] {
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
-    if (open_kv(session, kv) != 0 || read_table(kv.get(), table, rec) != 0) {
+    if (open_kv(session->sm1, kv) != 0 ||
+        read_table(kv.get(), table, rec) != 0) {
       return -1;
     }
     auto it = std::find_if(rec.indexes.begin(), rec.indexes.end(),
@@ -481,7 +510,7 @@ int cat_drop_index(sm1::session_t *session, uint64_t table, uint64_t oid) {
     std::string end{static_cast<char>(q >> 8), static_cast<char>(q & 0xFF)};
     std::vector<std::string> entries;
     sm1::scan_t *c = nullptr;
-    if (sm1::scan(session, rec.storeid, start.data(), start.size(), 1,
+    if (sm1::scan(session->sm1, rec.storeid, start.data(), start.size(), 1,
                   end.data(), end.size(), 0, c) != 0) {
       return -1;
     }
@@ -495,17 +524,20 @@ int cat_drop_index(sm1::session_t *session, uint64_t table, uint64_t oid) {
       return -1;
     }
     for (const std::string &e : entries) {
-      if (sm1::erase(session, rec.storeid, e) != 0) {
+      if (sm1::erase(session->sm1, rec.storeid, e) != 0) {
         return -1;
       }
     }
     rec.indexes.erase(it);
-    return write_table(kv.get(), table, rec);
+    if (write_table(kv.get(), table, rec) != 0) {
+      return -1;
+    }
+    return record_table(session, table, rec);
   });
 }
 
 /* Create a collation; see sm3.h. */
-int cat_create_collation(sm1::session_t *session, uint64_t nspoid,
+int cat_create_collation(session_t *session, uint64_t nspoid,
                          std::string_view name, std::string_view locale,
                          bool deterministic, uint64_t &oid) {
   return catch_nomem([&] {
@@ -514,19 +546,20 @@ int cat_create_collation(sm1::session_t *session, uint64_t nspoid,
     }
     kv_ptr kv(nullptr, &sm2::catkv_close);
     std::string blob;
-    if (open_kv(session, kv) != 0 ||
+    if (open_kv(session->sm1, kv) != 0 ||
         get_entity(kv.get(), kind_t::nspace, nspoid, blob, "namespace") != 0) {
       return -1;
     }
     // Opening it checks the locale and gives the version to record.
-    sm2::collation_t *c = nullptr;
-    if (sm2::collation_open(locale, deterministic, "", c) != 0) {
+    sm2::collation_t *raw = nullptr;
+    if (sm2::collation_open(locale, deterministic, "", raw) != 0) {
       return -1;
     }
-    std::string version(sm2::collation_version(c));
-    sm2::collation_close(c);
+    std::unique_ptr<sm2::collation_t, decltype(&sm2::collation_close)> c(
+        raw, &sm2::collation_close);
+    std::string version(sm2::collation_version(c.get()));
     uint64_t i;
-    if (sm1::nextseq(session, oid_seq, i) != 0 ||
+    if (sm1::nextseq(session->sm1, oid_seq, i) != 0 ||
         insert_name(kv.get(), nspoid, name,
                     {kind_t::collation, i, std::nullopt}) != 0 ||
         encode_collation(
@@ -535,6 +568,8 @@ int cat_create_collation(sm1::session_t *session, uint64_t nspoid,
         insert_entity(kv.get(), kind_t::collation, i, blob) != 0) {
       return -1;
     }
+    // The overlay holds it open, for this transaction's DDL to use.
+    overlay_collation(session, i, c.release());
     oid = i;
     return 0;
   });

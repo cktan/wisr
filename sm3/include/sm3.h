@@ -2,9 +2,11 @@
  * sm3.h -- level 3: schema and index maintenance (SM3_DESIGN.md).
  *
  * So far, the catalog (CATALOG.md): made in a database with
- * cat_init, loaded into memory with cat_open, and added to with
- * cat_create_table. Every call reports failure as sm1 does
- * (DESIGN.md §5): -1, with sm1::errnum() and sm1::errmsg() set.
+ * cat_init, loaded into memory with cat_open, and changed by DDL
+ * through a session, whose transaction sees its own changes and
+ * publishes them at commit. Every call reports failure as sm1
+ * does (DESIGN.md §5): -1, with sm1::errnum() and sm1::errmsg()
+ * set.
  */
 #ifndef SM3_H
 #define SM3_H
@@ -87,8 +89,15 @@ struct table_def_t {
     std::vector<index_def_t>      indexes;
 };
 
-/* A database's catalog, loaded into memory. */
+/* A database's catalog, loaded into memory, shared by sessions. */
 struct catalog_t;
+
+/*
+ * A session: an sm1 session reading a shared catalog, with its
+ * open transaction's overlay -- the DDL it has made, which it sees
+ * and no other session does until it commits.
+ */
+struct session_t;
 
 /*
  * Make the catalog of a new database, in session's transaction:
@@ -110,12 +119,47 @@ int cat_open(sm1::session_t* session, catalog_t*& out);
 /* Close a catalog and its collations; nullptr is a no-op. */
 void cat_close(catalog_t* cat);
 
-/* The table with oid, or nullptr. */
+/* The committed table with oid, or nullptr. */
 std::shared_ptr<const table_def_t> cat_table(const catalog_t* cat,
                                              uint64_t oid);
 
-/* The table named name in namespace nspoid, or nullptr. */
+/* The committed table named name in namespace nspoid, or nullptr. */
 std::shared_ptr<const table_def_t> cat_table(const catalog_t* cat,
+                                             uint64_t nspoid,
+                                             std::string_view name);
+
+/*
+ * Open a session over sm1's session s, reading the catalog cat;
+ * both must outlive it.
+ */
+int session_open(catalog_t* cat, sm1::session_t* s, session_t*& out);
+
+/* Close a session; nullptr is a no-op. Its overlay is dropped. */
+void session_close(session_t* s);
+
+/* The sm1 session under s. */
+sm1::session_t* session_sm1(const session_t* s);
+
+/*
+ * The transaction, as sm1's (sm1.h), with the overlay kept in
+ * step: rollback drops the DDL made since the savepoint, forget
+ * keeps it, abort drops it all, and commit publishes it into the
+ * shared catalog once sm1 has committed. savepoint returns the
+ * depth, as sm1::savepoint does.
+ */
+int begin(session_t* s, sm1::xctlevel_t level);
+int savepoint(session_t* s);
+int rollback(session_t* s, int depth);
+int forget(session_t* s, int depth);
+int commit(session_t* s);
+int abort(session_t* s);
+
+/* The table with oid, or nullptr, as s's transaction sees it. */
+std::shared_ptr<const table_def_t> cat_table(const session_t* s,
+                                             uint64_t oid);
+
+/* The table named name in nspoid, as s's transaction sees it. */
+std::shared_ptr<const table_def_t> cat_table(const session_t* s,
                                              uint64_t nspoid,
                                              std::string_view name);
 
@@ -127,16 +171,16 @@ std::shared_ptr<const table_def_t> cat_table(const catalog_t* cat,
  * SM_ERR_NOTFOUND; a type code sm2 does not have, or a typmod
  * its type refuses, with SM_ERR_INVALID.
  *
- * It writes the catalog only: a catalog already loaded does not
- * see the table until it is loaded again.
+ * The session's transaction sees it at once; others once it
+ * commits.
  */
-int cat_create_table(sm1::session_t* session, uint64_t nspoid,
+int cat_create_table(session_t* session, uint64_t nspoid,
                      std::string_view name,
                      std::span<const column_spec_t> columns, uint64_t& oid);
 
 /*
  * The rest of the DDL, each in session's transaction and, as
- * cat_create_table, writing the catalog only. A table, index or
+ * cat_create_table, seen by it at once and by others at commit. A table, index or
  * collation that is not there fails with SM_ERR_NOTFOUND; a name
  * already taken in its namespace with SM_ERR_DUPKEY; anything the
  * definition cannot hold with SM_ERR_INVALID.
@@ -147,10 +191,10 @@ int cat_create_table(sm1::session_t* session, uint64_t nspoid,
  * definition, its store with its rows and index entries, and its
  * rowno sequence.
  */
-int cat_drop_table(sm1::session_t* session, uint64_t oid);
+int cat_drop_table(session_t* session, uint64_t oid);
 
 /* Rename the table oid to name, in its namespace. */
-int cat_rename_table(sm1::session_t* session, uint64_t oid,
+int cat_rename_table(session_t* session, uint64_t oid,
                      std::string_view name);
 
 /*
@@ -159,7 +203,7 @@ int cat_rename_table(sm1::session_t* session, uint64_t oid,
  * variable-width type -- or as null without one, so a NOT NULL
  * column needs one.
  */
-int cat_add_column(sm1::session_t* session, uint64_t oid,
+int cat_add_column(session_t* session, uint64_t oid,
                    const column_spec_t& col,
                    std::optional<std::string_view> missing);
 
@@ -168,7 +212,7 @@ int cat_add_column(sm1::session_t* session, uint64_t oid,
  * as null from then on (SM2_DESIGN.md §4); one an index uses is
  * refused.
  */
-int cat_drop_column(sm1::session_t* session, uint64_t oid,
+int cat_drop_column(session_t* session, uint64_t oid,
                     std::string_view name);
 
 /*
@@ -177,7 +221,7 @@ int cat_drop_column(sm1::session_t* session, uint64_t oid,
  * oid is set in oid. It records the index only: filling it from
  * the table's rows is the build's (SM3_DESIGN.md §3).
  */
-int cat_create_index(sm1::session_t* session, uint64_t table,
+int cat_create_index(session_t* session, uint64_t table,
                      std::string_view name,
                      std::span<const index_key_spec_t> keys,
                      std::span<const int32_t> includes, bool unique,
@@ -187,14 +231,14 @@ int cat_create_index(sm1::session_t* session, uint64_t table,
  * Drop the index oid of the table: its name, its place in the
  * table's definition, and its entries.
  */
-int cat_drop_index(sm1::session_t* session, uint64_t table, uint64_t oid);
+int cat_drop_index(session_t* session, uint64_t table, uint64_t oid);
 
 /*
  * Create a collation named name in namespace nspoid for locale,
  * recording the ICU version it opens at; its oid is set in oid. A
  * locale ICU has no data for fails as sm2::collation_open does.
  */
-int cat_create_collation(sm1::session_t* session, uint64_t nspoid,
+int cat_create_collation(session_t* session, uint64_t nspoid,
                          std::string_view name, std::string_view locale,
                          bool deterministic, uint64_t& oid);
 

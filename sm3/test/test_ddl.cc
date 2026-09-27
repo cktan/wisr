@@ -18,35 +18,55 @@ template <typename T> std::string le(T v) {
   return std::string(reinterpret_cast<const char *>(&v), sizeof(T));
 }
 
-/* A catalog with cat_init committed, on a fresh database. */
+/*
+ * A catalog with cat_init committed, on a fresh database, loaded,
+ * with an sm3 session ss over the sm1 session s.
+ */
 class cat_db_t : public db_t {
 public:
-  /* Initialize the catalog of "db". */
+  /* Initialize the catalog of "db", load it, and open a session. */
   cat_db_t() {
     s = open();
     REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
     REQUIRE(sm3::cat_init(s) == 0);
     REQUIRE(sm1::commit(s) == 0);
+    load();
   }
 
-  /* Restart, then load the catalog in a transaction of its own. */
+  /* Close the session and the catalog. */
+  ~cat_db_t() { sm3::session_close(ss); }
+
+  /* Restart, then load the catalog and open a session again. */
   sm3::catalog_t *reload() {
+    sm3::session_close(ss);
+    ss = nullptr;
+    cat = nullptr;
     restart();
     s = open();
-    sm3::catalog_t *cat = nullptr;
-    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-    REQUIRE_MESSAGE(sm3::cat_open(s, cat) == 0, sm1::errmsg());
-    REQUIRE(sm1::commit(s) == 0);
+    load();
     return cat;
   }
 
-  /* Begin a transaction on s. */
-  void begin() { REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0); }
+  /* Begin a transaction on ss. */
+  void begin() {
+    REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
+  }
 
-  /* Commit s's transaction. */
-  void commit() { REQUIRE_MESSAGE(sm1::commit(s) == 0, sm1::errmsg()); }
+  /* Commit ss's transaction. */
+  void commit() { REQUIRE_MESSAGE(sm3::commit(ss) == 0, sm1::errmsg()); }
 
   sm1::session_t *s = nullptr;
+  sm3::session_t *ss = nullptr;
+  sm3::catalog_t *cat = nullptr;
+
+private:
+  /* Load the catalog in a transaction of its own; open ss over s. */
+  void load() {
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE_MESSAGE(sm3::cat_open(s, cat) == 0, sm1::errmsg());
+    REQUIRE(sm1::commit(s) == 0);
+    REQUIRE(sm3::session_open(cat, s, ss) == 0);
+  }
 };
 
 /* Make the table t (a int4, b text) in public; its oid. */
@@ -55,7 +75,7 @@ uint64_t make_t(cat_db_t &db) {
       {"a", sm2::type_int4.code, -1, true},
       {"b", sm2::type_text.code, -1, false}};
   uint64_t oid = 0;
-  REQUIRE(sm3::cat_create_table(db.s, sm3::nsp_public, "t", cols, oid) == 0);
+  REQUIRE(sm3::cat_create_table(db.ss, sm3::nsp_public, "t", cols, oid) == 0);
   return oid;
 }
 
@@ -72,16 +92,16 @@ TEST_CASE("columns, indexes and collations are added and load back") {
   cat_db_t db;
   db.begin();
   uint64_t t = make_t(db), ci = 0, ix = 0;
-  REQUIRE(sm3::cat_add_column(db.s, t, {"c", sm2::type_int8.code, -1, true},
+  REQUIRE(sm3::cat_add_column(db.ss, t, {"c", sm2::type_int8.code, -1, true},
                               le(int64_t{7})) == 0);
-  REQUIRE(sm3::cat_add_column(db.s, t, {"d", sm2::type_text.code, -1, false},
+  REQUIRE(sm3::cat_add_column(db.ss, t, {"d", sm2::type_text.code, -1, false},
                               std::nullopt) == 0);
-  REQUIRE_MESSAGE(sm3::cat_create_collation(db.s, sm3::nsp_public, "ci",
+  REQUIRE_MESSAGE(sm3::cat_create_collation(db.ss, sm3::nsp_public, "ci",
                                             "und-u-ks-level2", false, ci) == 0,
                   sm1::errmsg());
   std::vector<sm3::index_key_spec_t> keys = {{1, true, true, ci}};
   std::vector<int32_t> inc = {0};
-  REQUIRE(sm3::cat_create_index(db.s, t, "t_b", keys, inc, true, ix) == 0);
+  REQUIRE(sm3::cat_create_index(db.ss, t, "t_b", keys, inc, true, ix) == 0);
   db.commit();
 
   sm3::catalog_t *cat = db.reload();
@@ -109,7 +129,6 @@ TEST_CASE("columns, indexes and collations are added and load back") {
   CHECK(x.key[0].nulls_first);
   REQUIRE(x.include.size() == 1);
   CHECK(x.include[0].type == &sm2::type_int4);
-  sm3::cat_close(cat);
 }
 
 TEST_CASE("columns, indexes and tables are dropped and renamed") {
@@ -127,13 +146,13 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
   db.begin();
   uint64_t t = make_t(db), ix = 0, ix2 = 0;
   std::vector<sm3::index_key_spec_t> keys = {{0, false, false, std::nullopt}};
-  REQUIRE(sm3::cat_create_index(db.s, t, "t_a", keys, {}, false, ix) == 0);
-  REQUIRE(sm3::cat_drop_column(db.s, t, "b") == 0);
-  REQUIRE(sm3::cat_add_column(db.s, t, {"b", sm2::type_int8.code, -1, false},
+  REQUIRE(sm3::cat_create_index(db.ss, t, "t_a", keys, {}, false, ix) == 0);
+  REQUIRE(sm3::cat_drop_column(db.ss, t, "b") == 0);
+  REQUIRE(sm3::cat_add_column(db.ss, t, {"b", sm2::type_int8.code, -1, false},
                               std::nullopt) == 0);
-  REQUIRE(sm3::cat_drop_index(db.s, t, ix) == 0);
-  REQUIRE(sm3::cat_create_index(db.s, t, "t_a", keys, {}, false, ix2) == 0);
-  REQUIRE(sm3::cat_rename_table(db.s, t, "t2") == 0);
+  REQUIRE(sm3::cat_drop_index(db.ss, t, ix) == 0);
+  REQUIRE(sm3::cat_create_index(db.ss, t, "t_a", keys, {}, false, ix2) == 0);
+  REQUIRE(sm3::cat_rename_table(db.ss, t, "t2") == 0);
   db.commit();
 
   sm3::catalog_t *cat = db.reload();
@@ -149,17 +168,15 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
   CHECK(d->indexes[0].prefix == 2);
   uint64_t storeid = d->storeid;
   std::string seq = d->rowno_seq;
-  sm3::cat_close(cat);
 
   db.begin();
-  REQUIRE(sm3::cat_drop_table(db.s, t) == 0);
-  REQUIRE(sm1::abort(db.s) == 0);
+  REQUIRE(sm3::cat_drop_table(db.ss, t) == 0);
+  REQUIRE(sm3::abort(db.ss) == 0);
   db.begin();
-  REQUIRE(sm3::cat_drop_table(db.s, t) == 0);
+  REQUIRE(sm3::cat_drop_table(db.ss, t) == 0);
   db.commit();
   cat = db.reload();
   CHECK(sm3::cat_table(cat, t) == nullptr);
-  sm3::cat_close(cat);
   db.begin();
   std::vector<uint64_t> stores;
   REQUIRE(sm1::lsstore(db.s, stores) == 0);
@@ -182,12 +199,11 @@ TEST_CASE("dropping an index erases its entries and nothing else") {
   db.begin();
   uint64_t t = make_t(db), i1 = 0, i2 = 0;
   std::vector<sm3::index_key_spec_t> keys = {{0, false, false, std::nullopt}};
-  REQUIRE(sm3::cat_create_index(db.s, t, "i1", keys, {}, false, i1) == 0);
-  REQUIRE(sm3::cat_create_index(db.s, t, "i2", keys, {}, false, i2) == 0);
+  REQUIRE(sm3::cat_create_index(db.ss, t, "i1", keys, {}, false, i1) == 0);
+  REQUIRE(sm3::cat_create_index(db.ss, t, "i2", keys, {}, false, i2) == 0);
   db.commit();
   sm3::catalog_t *cat = db.reload();
   uint64_t storeid = sm3::cat_table(cat, t)->storeid;
-  sm3::cat_close(cat);
 
   db.begin();
   auto key = [](uint16_t prefix, char tail) {
@@ -198,7 +214,7 @@ TEST_CASE("dropping an index erases its entries and nothing else") {
   REQUIRE(sm1::insert(db.s, storeid, key(1, 'a'), "e") == 0);
   REQUIRE(sm1::insert(db.s, storeid, key(1, 'b'), "e") == 0);
   REQUIRE(sm1::insert(db.s, storeid, key(2, 'a'), "e") == 0);
-  REQUIRE(sm3::cat_drop_index(db.s, t, i1) == 0);
+  REQUIRE(sm3::cat_drop_index(db.ss, t, i1) == 0);
   std::string_view v;
   CHECK(sm1::read(db.s, storeid, key(0, 'r'), v) == 0);
   CHECK(sm1::read(db.s, storeid, key(1, 'a'), v) == 1);
@@ -224,59 +240,62 @@ TEST_CASE("the DDL refuses what the catalog cannot hold") {
   db.begin();
   uint64_t t = make_t(db), ix = 0, other = 0;
   using col = sm3::column_spec_t;
-  CHECK(sm3::cat_add_column(db.s, t, col{"a", sm2::type_int8.code, -1, false},
+  CHECK(sm3::cat_add_column(db.ss, t, col{"a", sm2::type_int8.code, -1, false},
                             std::nullopt) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_add_column(db.s, t, col{"x", sm2::type_int8.code, -1, true},
+  CHECK(sm3::cat_add_column(db.ss, t, col{"x", sm2::type_int8.code, -1, true},
                             std::nullopt) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_add_column(db.s, t, col{"x", sm2::type_int8.code, -1, false},
+  CHECK(sm3::cat_add_column(db.ss, t, col{"x", sm2::type_int8.code, -1, false},
                             le(int32_t{1})) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_add_column(db.s, t, col{"x", sm2::type_text.code, -1, false},
+  CHECK(sm3::cat_add_column(db.ss, t, col{"x", sm2::type_text.code, -1, false},
                             std::string_view("\x09"
                                              "ab")) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_add_column(db.s, 999, col{"x", sm2::type_int8.code, -1, false},
+  CHECK(sm3::cat_add_column(db.ss, 999,
+                            col{"x", sm2::type_int8.code, -1, false},
                             std::nullopt) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
-  REQUIRE(sm3::cat_create_index(db.s, t, "t_a", on_a, {}, false, ix) == 0);
-  CHECK(sm3::cat_drop_column(db.s, t, "zz") == -1);
+  REQUIRE(sm3::cat_create_index(db.ss, t, "t_a", on_a, {}, false, ix) == 0);
+  CHECK(sm3::cat_drop_column(db.ss, t, "zz") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm3::cat_drop_column(db.s, t, "a") == -1);
+  CHECK(sm3::cat_drop_column(db.ss, t, "a") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm3::cat_drop_column(db.s, t, "b") == 0);
+  REQUIRE(sm3::cat_drop_column(db.ss, t, "b") == 0);
 
   std::vector<sm3::index_key_spec_t> on_b = {{1, false, false, std::nullopt}};
   std::vector<sm3::index_key_spec_t> on_7 = {{7, false, false, std::nullopt}};
   std::vector<sm3::index_key_spec_t> a_coll = {{0, false, false, 1000}};
-  CHECK(sm3::cat_create_index(db.s, t, "x", on_b, {}, false, other) == -1);
+  CHECK(sm3::cat_create_index(db.ss, t, "x", on_b, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_create_index(db.s, t, "x", on_7, {}, false, other) == -1);
+  CHECK(sm3::cat_create_index(db.ss, t, "x", on_7, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_create_index(db.s, t, "x", a_coll, {}, false, other) == -1);
+  CHECK(sm3::cat_create_index(db.ss, t, "x", a_coll, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_create_index(db.s, t, "t_a", on_a, {}, false, other) == -1);
+  CHECK(sm3::cat_create_index(db.ss, t, "t_a", on_a, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
-  REQUIRE(sm3::cat_add_column(db.s, t, col{"s", sm2::type_text.code, -1, false},
+  REQUIRE(sm3::cat_add_column(db.ss, t,
+                              col{"s", sm2::type_text.code, -1, false},
                               std::nullopt) == 0);
   std::vector<sm3::index_key_spec_t> s_unknown = {{2, false, false, 999999}};
-  CHECK(sm3::cat_create_index(db.s, t, "x", s_unknown, {}, false, other) == -1);
+  CHECK(sm3::cat_create_index(db.ss, t, "x", s_unknown, {}, false, other) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
-  CHECK(sm3::cat_drop_index(db.s, t, 999999) == -1);
+  CHECK(sm3::cat_drop_index(db.ss, t, 999999) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm3::cat_drop_table(db.s, 999999) == -1);
+  CHECK(sm3::cat_drop_table(db.ss, 999999) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   std::vector<sm3::column_spec_t> one = {{"a", sm2::type_int4.code, -1, false}};
   uint64_t u = 0;
-  REQUIRE(sm3::cat_create_table(db.s, sm3::nsp_public, "u", one, u) == 0);
-  CHECK(sm3::cat_rename_table(db.s, t, "u") == -1);
+  REQUIRE(sm3::cat_create_table(db.ss, sm3::nsp_public, "u", one, u) == 0);
+  CHECK(sm3::cat_rename_table(db.ss, t, "u") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   uint64_t co = 0;
-  CHECK(sm3::cat_create_collation(db.s, sm3::nsp_public, "bad", "zz-QQ-bogus!",
+  CHECK(sm3::cat_create_collation(db.ss, sm3::nsp_public, "bad", "zz-QQ-bogus!",
                                   true, co) == -1);
-  REQUIRE(sm1::abort(db.s) == 0);
+  REQUIRE(sm3::abort(db.ss) == 0);
 }
