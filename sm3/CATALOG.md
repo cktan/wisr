@@ -8,8 +8,9 @@ through to storage in the DDL's own transaction, and changed
 under lock-based DDL, as in PostgreSQL.
 
 **Status: built** — the store, its keys and values, `cat_init`,
-`cat_open` and `cat_create_table`. §7 is what is settled but
-not built yet.
+`cat_open` and the DDL of §5, which writes the catalog but does
+not yet change a loaded one. §7 is what is settled but not
+built yet.
 
 ---
 
@@ -69,6 +70,7 @@ kinds' values are on disk, so frozen.
 | `NAMESPACE` | 3 | oid `int8` | the namespace's blob |
 | `TABLE` | 4 | oid `int8` | the table's blob: the table, its columns, its indexes |
 | `COLLATION` | 5 | oid `int8` | the collation's blob |
+| `INDEX` | 6 | — | no key of its own: an index is named by a `NAME` entry and kept in its table's blob |
 
 - **A table is one entry.** Its columns and indexes are in its
   blob, so every DDL on a table rewrites that one value.
@@ -170,9 +172,40 @@ reports failure as sm1 does (`DESIGN.md` §5).
   (`SM_ERR_NOTFOUND`); then takes an oid, inserts the name —
   first, so a taken one (`SM_ERR_DUPKEY`) fails before a store
   is made — makes the table's store and rowno sequence, and
-  writes its blob. It writes the catalog only: a `catalog_t`
-  already loaded does not see the table until the overlay of §7
-  is built.
+  writes its blob.
+- **`cat_drop_table(session, oid)`** erases the table's name,
+  its indexes' names and its blob, and drops its store, which
+  takes its rows and index entries with it, and its rowno
+  sequence.
+- **`cat_rename_table(session, oid, name)`** inserts the new
+  name before erasing the old, so a taken one leaves the table
+  as it was.
+- **`cat_add_column(session, oid, col, missing)`** appends a
+  column. A row written before it reads it as `missing` — its
+  bytes, checked to be a datum of the column's type — or as
+  null without one, so a `NOT NULL` column needs one.
+- **`cat_drop_column(session, oid, name)`** marks the column
+  dropped; it keeps its place and reads as null, and its name
+  can be added again. One an index uses is refused.
+- **`cat_create_index(session, table, name, keys, includes,
+  unique, oid)`** records an index — its key columns with their
+  direction, null order and collation, a collation only on
+  text or varchar — and takes the table's next prefix, which is
+  never handed out again. It does not fill the index from the
+  table's rows: that is the build's (`SM3_DESIGN.md` §3).
+- **`cat_drop_index(session, table, oid)`** erases the index's
+  name, its place in the blob, and its entries, one by one over
+  its prefix in the table's store, since sm1 has no range
+  delete.
+- **`cat_create_collation(session, nspoid, name, locale,
+  deterministic, oid)`** opens the collation, to check the
+  locale and record the ICU version it opens at.
+
+A missing table, index, namespace or collation is
+`SM_ERR_NOTFOUND`; a name taken in its namespace is
+`SM_ERR_DUPKEY`. Each call writes the catalog only: a
+`catalog_t` already loaded does not see the change until the
+overlay of §7 is built.
 
 ---
 
@@ -186,9 +219,10 @@ sm3/src/catalog/catalog.h  keys, records and parts (internal)
 sm3/src/catalog/key.cc     keys
 sm3/src/catalog/blob.cc    values: parts and their framing
 sm3/src/catalog/load.cc    cat_open and the lookups
-sm3/src/catalog/ddl.cc     cat_init and cat_create_table
+sm3/src/catalog/ddl.cc     cat_init and the DDL
 sm3/test/test_layout.cc    keys and values
 sm3/test/test_catalog.cc   init, load and create
+sm3/test/test_ddl.cc       the rest of the DDL
 ```
 
 ---
@@ -197,16 +231,13 @@ sm3/test/test_catalog.cc   init, load and create
 
 Settled, and next in this order:
 
-1. **The rest of the DDL** — drop table, add and drop column,
-   rename, create and drop index, create collation — each
-   rewriting its entries as `cat_create_table` writes them.
-2. **The overlay.** A session's open transaction keeps the
+1. **The overlay.** A session's open transaction keeps the
    definitions it has changed, each tagged with the savepoint
    depth it was made at; its lookups see them first, a rollback
    to a savepoint drops those made past it, an abort drops all,
    and nobody else sees them. `sm3::savepoint`, `rollback`,
    `commit` and `abort` wrap sm1's to keep it in step.
-3. **Schema locks and publishing.** A table's `TABLE` key is its
+2. **Schema locks and publishing.** A table's `TABLE` key is its
    schema lock (`SM3_DESIGN.md` §2): a user takes it shared
    before reading the definition, DDL takes it exclusive by
    rewriting the blob. At commit the session takes the shared
@@ -216,11 +247,11 @@ Settled, and next in this order:
    between waits on the mutex, so it sees the new definition,
    never the old. DDL in a prepared transaction is refused, since
    the overlay would have to outlive its session.
-4. **Temporary tables.** A temporary table is a temporary store
+3. **Temporary tables.** A temporary table is a temporary store
    (`DESIGN.md` §5, `sm1/SM1_DESIGN.md` §11.3); its definition
    lives only in the session's own temporary catalog, in the
    session's temporary namespace, never written to store 0.
-5. **`rel` on sm3.** The `rel` driver's own catalog
+4. **`rel` on sm3.** The `rel` driver's own catalog
    (`rel/src/rel_catalog.cc`) gives way to this one.
 
 Open: namespaces beyond the two built in (`CREATE SCHEMA` is a

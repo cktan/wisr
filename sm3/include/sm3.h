@@ -34,6 +34,14 @@ struct column_spec_t {
     bool        not_null;
 };
 
+/* A key column, as an index is declared with it. */
+struct index_key_spec_t {
+    int32_t                 attnum;      /* the column's 0-based place */
+    bool                    desc;
+    bool                    nulls_first;
+    std::optional<uint64_t> collation;   /* text, varchar only */
+};
+
 /* A column of a loaded table. */
 struct column_def_t {
     std::string                name;
@@ -125,6 +133,70 @@ std::shared_ptr<const table_def_t> cat_table(const catalog_t* cat,
 int cat_create_table(sm1::session_t* session, uint64_t nspoid,
                      std::string_view name,
                      std::span<const column_spec_t> columns, uint64_t& oid);
+
+/*
+ * The rest of the DDL, each in session's transaction and, as
+ * cat_create_table, writing the catalog only. A table, index or
+ * collation that is not there fails with SM_ERR_NOTFOUND; a name
+ * already taken in its namespace with SM_ERR_DUPKEY; anything the
+ * definition cannot hold with SM_ERR_INVALID.
+ */
+
+/*
+ * Drop the table oid: its name, its indexes' names, its
+ * definition, its store with its rows and index entries, and its
+ * rowno sequence.
+ */
+int cat_drop_table(sm1::session_t* session, uint64_t oid);
+
+/* Rename the table oid to name, in its namespace. */
+int cat_rename_table(sm1::session_t* session, uint64_t oid,
+                     std::string_view name);
+
+/*
+ * Append col to the table oid. A row written before it reads it as
+ * missing -- its bytes as sm2 holds them, a varlena for a
+ * variable-width type -- or as null without one, so a NOT NULL
+ * column needs one.
+ */
+int cat_add_column(sm1::session_t* session, uint64_t oid,
+                   const column_spec_t& col,
+                   std::optional<std::string_view> missing);
+
+/*
+ * Drop the column name of the table oid. It keeps its place, read
+ * as null from then on (SM2_DESIGN.md §4); one an index uses is
+ * refused.
+ */
+int cat_drop_column(sm1::session_t* session, uint64_t oid,
+                    std::string_view name);
+
+/*
+ * Create an index named name on the table, keyed by keys, with the
+ * INCLUDE columns includes, taking the table's next prefix; its
+ * oid is set in oid. It records the index only: filling it from
+ * the table's rows is the build's (SM3_DESIGN.md §3).
+ */
+int cat_create_index(sm1::session_t* session, uint64_t table,
+                     std::string_view name,
+                     std::span<const index_key_spec_t> keys,
+                     std::span<const int32_t> includes, bool unique,
+                     uint64_t& oid);
+
+/*
+ * Drop the index oid of the table: its name, its place in the
+ * table's definition, and its entries.
+ */
+int cat_drop_index(sm1::session_t* session, uint64_t table, uint64_t oid);
+
+/*
+ * Create a collation named name in namespace nspoid for locale,
+ * recording the ICU version it opens at; its oid is set in oid. A
+ * locale ICU has no data for fails as sm2::collation_open does.
+ */
+int cat_create_collation(sm1::session_t* session, uint64_t nspoid,
+                         std::string_view name, std::string_view locale,
+                         bool deterministic, uint64_t& oid);
 
 } // namespace sm3
 
