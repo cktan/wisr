@@ -17,10 +17,10 @@ that matter most are the ones with two sessions in them.
 Everything else needs a definition to work from, so it comes
 first.
 
-**Status: built but for its schema locks** — the store, keys,
-values, load, DDL and a session's overlay, as `CATALOG.md`
-documents; the lock protocol below, and publishing under it,
-are its §7.
+**Status: built** — the store, keys, values, load, DDL, a
+session's overlay, and the schema locks with publishing under
+them, as `CATALOG.md` documents; the index build's S lock is
+its §7.
 
 - Tables, indexes, columns, types, collations, and each
   column's dropped mark and missing value, in sm3's own sm2
@@ -30,7 +30,8 @@ are its §7.
 - The schema-row lock protocol of `SM3_DESIGN.md` §2, which is
   what makes an in-memory catalog safe.
 - Decide the open question there: how a DDL change stays
-  private until it commits.
+  private until it commits. Settled: the overlay
+  (`CATALOG.md` §4).
 
 **Verify:** DDL rolls back with its transaction, including the
 in-memory copy; a transaction that holds the shared schema

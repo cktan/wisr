@@ -69,6 +69,14 @@ int catkv_get(catkv_t *kv, std::string_view key, std::string_view &value) {
   });
 }
 
+/* Read a catalog key's newest committed version; see sm2.h. */
+int catkv_get_latest(catkv_t *kv, std::string_view key,
+                     std::string_view &value) {
+  return catch_nomem([&] {
+    return sm1::read_latest(kv->session, catalog_store, upper_key(key), value);
+  });
+}
+
 /* Add a catalog key; see sm2.h. */
 int catkv_insert(catkv_t *kv, std::string_view key, std::string_view value) {
   return catch_nomem([&] {

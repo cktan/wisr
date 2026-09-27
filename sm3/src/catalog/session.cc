@@ -26,10 +26,12 @@ void drop_from(sm3::session_t *s, int d) {
   }
 }
 
-/* Move every change of s into the shared catalog, then clear them. */
+/*
+ * Move every change of s into the shared catalog, then clear them.
+ * The caller holds the catalog's mutex exclusive.
+ */
 void publish(sm3::session_t *s) {
   sm3::catalog_t *cat = s->cat;
-  std::unique_lock lock(cat->mu);
   for (sm3::collation_change_t &c : s->collations) {
     cat->collations[c.oid] = c.collation;
   }
@@ -63,7 +65,7 @@ int session_open(catalog_t *cat, sm1::session_t *s, session_t *&out) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
                          "session_open: no catalog or no sm1 session");
     }
-    out = new session_t{s, cat, 0, {}, {}, {}};
+    out = new session_t{s, cat, sm1::xctlevel_t::read_committed, 0, {}, {}, {}};
     return 0;
   });
 }
@@ -86,6 +88,7 @@ int begin(session_t *s, sm1::xctlevel_t level) {
     return -1;
   }
   drop_from(s, 0);
+  s->level = level;
   s->depth = 0;
   return 0;
 }
@@ -132,8 +135,19 @@ int forget(session_t *s, int depth) {
   return 0;
 }
 
-/* Commit in sm1, then publish the overlay; a failed commit drops it. */
+/*
+ * Commit in sm1 and publish the overlay; a failed commit drops it.
+ * With DDL to publish, the shared catalog's mutex is held across
+ * both: sm1's commit releases the schema locks, and a transaction
+ * that gets one then waits on the mutex to read the definition,
+ * so it sees the new one, never the old (CATALOG.md §4).
+ */
 int commit(session_t *s) {
+  if (s->tables.empty() && s->names.empty() && s->collations.empty()) {
+    return sm1::commit(s->sm1);
+  }
+  // Readers of the catalog wait from here until the change is in.
+  std::unique_lock lock(s->cat->mu);
   if (sm1::commit(s->sm1) != 0) {
     drop_from(s, 0);
     return -1;
@@ -189,6 +203,29 @@ std::shared_ptr<const table_def_t> cat_table(const session_t *s, uint64_t oid) {
     }
   }
   return cat_table(s->cat, oid);
+}
+
+/* Lock a table's schema, then read its definition; see sm3.h. */
+int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
+                   std::shared_ptr<const table_def_t> &out) {
+  return catch_nomem([&] {
+    sm2::catkv_t *kv = nullptr;
+    if (sm2::catkv_open(s->sm1, kv) != 0) {
+      return -1;
+    }
+    int rc = lock_table(kv, oid, mode);
+    sm2::catkv_close(kv);
+    if (rc != 0) {
+      return -1;
+    }
+    // Under the lock, the definition cannot change until commit;
+    // one dropped while this waited is gone.
+    out = cat_table(s, oid);
+    return out ? 0
+               : sm1::seterr(sm1::SM_ERR_NOTFOUND, "table " +
+                                                       std::to_string(oid) +
+                                                       " does not exist");
+  });
 }
 
 /* A table by name as s sees it: its newest name change first. */

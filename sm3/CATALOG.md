@@ -8,9 +8,10 @@ through to storage in the DDL's own transaction, and changed
 under lock-based DDL, as in PostgreSQL.
 
 **Status: built** — the store, its keys and values, `cat_init`,
-`cat_open`, the DDL of §5, and a session's overlay, which keeps
-its transaction's DDL to itself until commit. §7 is what is
-settled but not built yet.
+`cat_open`, the DDL of §5, a session's overlay, which keeps its
+transaction's DDL to itself until commit, and the schema locks,
+under which commit publishes it. §7 is what is settled but not
+built yet.
 
 ---
 
@@ -49,6 +50,7 @@ key going in and stripped coming out.
 | --- | --- | --- |
 | `catkv_open`, `catkv_close` | a handle on the session's catalog | — |
 | `catkv_get` | 0 with the value, 1 if none; a view valid to the next call | `sm1::read` |
+| `catkv_get_latest` | as `catkv_get`, the newest committed version, under a lock held | `sm1::read_latest` |
 | `catkv_insert` | a new key; `SM_ERR_DUPKEY` if taken | `sm1::insert` |
 | `catkv_update`, `catkv_erase` | replace or remove a key; `SM_ERR_NOTFOUND` if missing | `sm1::update`, `sm1::erase` |
 | `catkv_lock` | a row lock in any of sm1's modes (IS, IX, S, SIX, X) | `sm1::lock` |
@@ -71,6 +73,7 @@ kinds' values are on disk, so frozen.
 | `TABLE` | 4 | oid `int8` | the table's blob: the table, its columns, its indexes |
 | `COLLATION` | 5 | oid `int8` | the collation's blob |
 | `INDEX` | 6 | — | no key of its own: an index is named by a `NAME` entry and kept in its table's blob |
+| `LOCK` | 7 | table oid `int8` | nothing: the table's schema lock, locked and never written |
 
 - **A table is one entry.** Its columns and indexes are in its
   blob, so every DDL on a table rewrites that one value.
@@ -81,6 +84,13 @@ kinds' values are on disk, so frozen.
   no namespace.
 - **A table's rowno sequence is `sm3.rowno.<oid>`**, made with
   its store.
+- **A table's schema lock is its `LOCK` key**, not its `TABLE`
+  key (`SM3_DESIGN.md` §2). Every DDL rewrites the `TABLE`
+  entry, and a write takes its key X, which would shut readers
+  out of an index build taken S. And a key no one writes never
+  fails a lock at REPEATABLE READ for a version newer than the
+  snapshot, so a reader that waited out DDL gets the new
+  definition, not a serialization failure.
 
 ---
 
@@ -184,7 +194,16 @@ as sm1 does (`DESIGN.md` §5).
   later mark that reuses the depth cannot drop them; `abort`
   drops them all;
   `commit` commits in sm1, then publishes them into the shared
-  catalog, or drops them if the commit fails.
+  catalog, or drops them if the commit fails. With changes to
+  publish, it holds the catalog's mutex exclusive across both:
+  sm1's commit releases the schema locks, and a transaction
+  that gets one then waits on the mutex to read the
+  definition, so it sees the new one, never the old.
+- **`cat_lock_table(ss, oid, mode, def)`** takes the table's
+  schema lock — IS to read it, IX to write it — held to the end
+  of the transaction, then sets `def` to its definition as the
+  session sees it, which cannot change until then. A table
+  dropped while the caller waited is `SM_ERR_NOTFOUND`.
 - **`cat_table(ss, oid)`** and **`cat_table(ss, nspoid, name)`**
   find a table as the session's transaction sees it.
 - **`cat_create_table(session, nspoid, name, columns, oid)`**
@@ -222,6 +241,14 @@ as sm1 does (`DESIGN.md` §5).
   deterministic, oid)`** opens the collation, to check the
   locale and record the ICU version it opens at.
 
+Every DDL on an existing table takes its schema lock X first,
+so it waits out the table's readers and writers and they wait
+for it, and then reads the table's entry under an X lock on its
+`TABLE` key: at READ COMMITTED with `catkv_get_latest`, which
+lets it overwrite a version newer than its snapshot; at
+REPEATABLE READ the lock fails on one. `cat_create_index` takes
+X too, until the build takes S (§7).
+
 A missing table, index, namespace or collation is
 `SM_ERR_NOTFOUND`; a name taken in its namespace is
 `SM_ERR_DUPKEY`. Each call writes the catalog in the session's
@@ -248,6 +275,7 @@ sm3/test/test_layout.cc    keys and values
 sm3/test/test_catalog.cc   init, load and create
 sm3/test/test_ddl.cc       the rest of the DDL
 sm3/test/test_overlay.cc   the overlay: visibility, rollback, abort
+sm3/test/test_lock.cc      schema locks, and publishing under them
 ```
 
 ---
@@ -256,23 +284,15 @@ sm3/test/test_overlay.cc   the overlay: visibility, rollback, abort
 
 Settled, and next in this order:
 
-1. **Schema locks, and publishing under them.** A table's
-   schema lock is taken in Gray's modes (`SM3_DESIGN.md` §2): a
-   reader takes it IS and a writer IX before reading the
-   definition, a plain index build S, other DDL X. It cannot be
-   the `TABLE` key itself: every DDL rewrites that entry, and a
-   write takes its key X, which would block readers during an
-   index build after all. Open: a key of its own per table — a
-   new kind, `LOCK`, beside `TABLE` — which DDL takes in its
-   mode before writing the entry. Today `commit` publishes
-   after sm1 commits, so a reader could read between the two;
-   instead the session takes the shared catalog's mutex
-   exclusive, commits in sm1 — which releases its locks — moves
-   its overlay in, and releases the mutex, and a transaction
-   that got the lock in between waits on the mutex, so it sees
-   the new definition, never the old. DDL in a prepared
-   transaction is refused, since the overlay would have to
-   outlive its session.
+1. **The index build under S.** `cat_create_index` takes X
+   until the build (`SM3_DESIGN.md` §3) exists to take S. Then
+   a reader holding IS sees the index appear mid-transaction,
+   and the index may lack rows its older snapshot still sees,
+   as PostgreSQL's `indcheckxmin` guards against: a reader
+   keeps the definition it locked, or skips an index built
+   after its snapshot. DDL in a prepared transaction is
+   refused, since the overlay would have to outlive its
+   session.
 2. **Temporary tables.** A temporary table is a temporary store
    (`DESIGN.md` §5, `sm1/SM1_DESIGN.md` §11.3); its definition
    lives only in the session's own temporary catalog, in the

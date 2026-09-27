@@ -164,6 +164,19 @@ std::shared_ptr<const table_def_t> cat_table(const session_t* s,
                                              std::string_view name);
 
 /*
+ * Take the schema lock of the table oid in mode, held to the end
+ * of s's transaction, then set out to its definition as s sees
+ * it (SM3_DESIGN.md §2). A transaction reading the table takes
+ * it intent_shared, one writing it intent_exclusive; DDL takes it
+ * exclusive itself, so it waits for them, and they for it. Once
+ * held, the definition cannot change under s. A table dropped
+ * while s waited fails with SM_ERR_NOTFOUND; a deadlock as
+ * sm1::lock does.
+ */
+int cat_lock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
+                   std::shared_ptr<const table_def_t>& out);
+
+/*
  * Create a table named name in namespace nspoid, with columns,
  * in session's transaction: its store, its rowno sequence, its
  * name and its definition. Its oid is set in oid. A name already

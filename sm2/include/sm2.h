@@ -655,6 +655,15 @@ void catkv_close(catkv_t* kv);
  */
 int catkv_get(catkv_t* kv, std::string_view key, std::string_view& value);
 
+/*
+ * Read key's newest committed version, as sm1::read_latest does:
+ * at READ COMMITTED only, under a lock already held on key, and
+ * returning as catkv_get does. Under an exclusive lock it lets
+ * the next write of key through.
+ */
+int catkv_get_latest(catkv_t* kv, std::string_view key,
+                     std::string_view& value);
+
 /* Add key; one already there fails with SM_ERR_DUPKEY. */
 int catkv_insert(catkv_t* kv, std::string_view key, std::string_view value);
 

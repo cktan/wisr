@@ -31,6 +31,7 @@ enum class kind_t : int16_t {
   table = 4,     /* a table, its columns and indexes */
   collation = 5, /* a collation */
   index = 6,     /* an index: only named, kept in its table's blob */
+  lock = 7,      /* a table's schema lock: locked, never written */
 };
 
 /*

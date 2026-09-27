@@ -113,10 +113,11 @@ table locks are:
 - so once a transaction holds its IS or IX lock, the definition
   in memory cannot change under it. A catalog served from
   memory must take this lock, or DDL has nothing to wait on.
-  At READ COMMITTED sm1's `sm1::lock` no longer fails when the
-  schema row committed after the transaction began, so the
-  lock alone is what protects the reader, and the in-memory
-  definition, not a read of the schema row, is what it uses.
+  The schema row is the table's `LOCK` key, which no one
+  writes (`CATALOG.md` §2), so `sm1::lock` on it never fails
+  on a newer commit, at any level: the lock alone is what
+  protects the reader, and the in-memory definition, not a
+  read of the row, is what it uses. `cat_lock_table` takes it.
 
 Deadlocks between DDL and DML are found by sm1's detector like
 any other.
@@ -314,20 +315,19 @@ in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
      after the lock, so it sees every committed row — fills the
      index, and commits;
   4. blocked writers then get their IX lock and read the new
-     schema. At READ COMMITTED their `sm1::lock` no longer fails
-     on the newer commit; they read the schema row with
-     `rel_read_latest`. It is the schema-row lock that keeps
-     them out while the build runs, not a conflict check. At
-     the higher levels `sm1::lock` still fails with a conflict,
-     and the writer retries.
+     schema, which commit published before they could read it
+     (`CATALOG.md` §5). The schema row is never written, so
+     their `sm1::lock` does not fail at any level: it is the
+     lock that keeps them out while the build runs, not a
+     conflict check.
   `sm1/test/test_lock.cc` has its shape end to end, in the
   shared and exclusive modes that came before Gray's. Its costs:
   - writers are blocked for the whole build, as by
     PostgreSQL's plain `CREATE INDEX`; readers are not;
   - recording the index rewrites the table's catalog entry, so
     that write must not take the schema lock X, or readers are
-    blocked after all: the lock key and the entry's key are to
-    be separate (`CATALOG.md` §7);
+    blocked after all: the lock key and the entry's key are
+    separate (`CATALOG.md` §2);
   - the schema row is a hot key: every reader and writer of the
     table locks it, so its lock-table mutex is contended. The
     table is one mutex, not sharded, so this is the first place

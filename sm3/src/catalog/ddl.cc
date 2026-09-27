@@ -80,12 +80,34 @@ int get_entity(sm2::catkv_t *kv, sm3::kind_t kind, uint64_t oid,
   return 0;
 }
 
-/* Read the table oid's record. */
-int read_table(sm2::catkv_t *kv, uint64_t oid, sm3::table_rec_t &rec) {
-  std::string blob;
-  if (get_entity(kv, sm3::kind_t::table, oid, blob, "table") != 0) {
+/*
+ * Open session's catalog store into kv, take the table oid's
+ * schema lock X, and read its record under an X lock on its TABLE
+ * key too: the newest committed one, which no other DDL can
+ * change until commit. At READ COMMITTED that is a read_latest,
+ * which also lets this transaction overwrite a newer version; at
+ * REPEATABLE READ the lock has already failed on one.
+ */
+int open_table(sm3::session_t *session, uint64_t oid, kv_ptr &kv,
+               sm3::table_rec_t &rec) {
+  std::string key, blob;
+  std::string_view v;
+  if (open_kv(session->sm1, kv) != 0 ||
+      sm3::lock_table(kv.get(), oid, sm1::lockmode_t::exclusive) != 0 ||
+      sm3::entity_key(sm3::kind_t::table, oid, key) != 0 ||
+      sm2::catkv_lock(kv.get(), key, sm1::lockmode_t::exclusive) != 0) {
     return -1;
   }
+  int rc = session->level == sm1::xctlevel_t::read_committed
+               ? sm2::catkv_get_latest(kv.get(), key, v)
+               : sm2::catkv_get(kv.get(), key, v);
+  if (rc != 0) {
+    return rc == 1
+               ? sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                             "table " + std::to_string(oid) + " does not exist")
+               : -1;
+  }
+  blob.assign(v);
   return sm3::decode_table(blob, rec);
 }
 
@@ -297,7 +319,7 @@ int cat_drop_table(session_t *session, uint64_t oid) {
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
     std::string key;
-    if (open_kv(session->sm1, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
+    if (open_table(session, oid, kv, rec) != 0) {
       return -1;
     }
     // Its names, then its definition.
@@ -332,7 +354,7 @@ int cat_rename_table(session_t *session, uint64_t oid, std::string_view name) {
     }
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
-    if (open_kv(session->sm1, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
+    if (open_table(session, oid, kv, rec) != 0) {
       return -1;
     }
     if (rec.name == name) {
@@ -371,7 +393,7 @@ int cat_add_column(session_t *session, uint64_t oid, const column_spec_t &col,
     }
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
-    if (open_kv(session->sm1, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
+    if (open_table(session, oid, kv, rec) != 0) {
       return -1;
     }
     if (live_column(rec, col.name) >= 0) {
@@ -393,7 +415,7 @@ int cat_drop_column(session_t *session, uint64_t oid, std::string_view name) {
   return catch_nomem([&] {
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
-    if (open_kv(session->sm1, kv) != 0 || read_table(kv.get(), oid, rec) != 0) {
+    if (open_table(session, oid, kv, rec) != 0) {
       return -1;
     }
     int at = live_column(rec, name);
@@ -436,8 +458,7 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
     std::string blob;
-    if (open_kv(session->sm1, kv) != 0 ||
-        read_table(kv.get(), table, rec) != 0) {
+    if (open_table(session, table, kv, rec) != 0) {
       return -1;
     }
     index_rec_t x{0, std::string(name), rec.next_prefix, unique, {}, {}};
@@ -490,8 +511,7 @@ int cat_drop_index(session_t *session, uint64_t table, uint64_t oid) {
   return catch_nomem([&] {
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
-    if (open_kv(session->sm1, kv) != 0 ||
-        read_table(kv.get(), table, rec) != 0) {
+    if (open_table(session, table, kv, rec) != 0) {
       return -1;
     }
     auto it = std::find_if(rec.indexes.begin(), rec.indexes.end(),
@@ -573,6 +593,16 @@ int cat_create_collation(session_t *session, uint64_t nspoid,
     oid = i;
     return 0;
   });
+}
+
+/* Take a table's schema lock on its LOCK key; see internal.h. */
+int lock_table(sm2::catkv_t *kv, uint64_t oid, sm1::lockmode_t mode) {
+  std::string key;
+  if (entity_key(kind_t::lock, oid, key) != 0) {
+    return -1;
+  }
+  // Held to the end of the transaction: DDL waits out its users.
+  return sm2::catkv_lock(kv, key, mode);
 }
 
 } // namespace sm3

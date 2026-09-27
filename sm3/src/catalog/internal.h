@@ -68,7 +68,8 @@ struct collation_change_t {
 struct sm3::session_t {
   sm1::session_t *sm1;
   catalog_t *cat;
-  int depth = 0; /* the savepoint depth changes are made at */
+  sm1::xctlevel_t level; /* the open transaction's, set by begin */
+  int depth = 0;         /* the savepoint depth changes are made at */
   std::vector<table_change_t> tables;
   std::vector<name_change_t> names;
   std::vector<collation_change_t> collations;
@@ -88,6 +89,13 @@ using collation_lookup_t =
 int build_table(const collation_lookup_t &lookup, uint64_t oid,
                 const table_rec_t &rec,
                 std::shared_ptr<const table_def_t> &out);
+
+/*
+ * Take the schema lock of the table oid in mode (SM3_DESIGN.md
+ * §2): sm1's row lock on its LOCK key, which no one writes, so
+ * the lock waits on DDL but never fails as a stale read would.
+ */
+int lock_table(sm2::catkv_t *kv, uint64_t oid, sm1::lockmode_t mode);
 
 /* The collation oid, as session sees it; false if unknown. */
 bool session_collation(const session_t *s, uint64_t oid,
