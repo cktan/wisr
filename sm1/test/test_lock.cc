@@ -388,6 +388,79 @@ TEST_CASE(
   sm1::closedb(x);
 }
 
+TEST_CASE(
+    "reads take no locks, so readers and writers never block each other") {
+  // Verify sm1 stays MVCC for plain reads and writes (§5.1), at
+  // every isolation level.
+  // 1. W writes "x" and does not commit: it holds "x" exclusive,
+  //    and nothing on "y", which it did not write.
+  // 2. R reads "x" and scans the store: neither waits on W's lock,
+  //    both see "x" as it was, and R holds no lock afterwards.
+  // 3. With R's transaction still open, W writes "y" and commits
+  //    without waiting.
+  lock_fixture_t f;
+  sm1::session_t *w = f.open(), *r = f.open();
+  int round = 0;
+  for (sm1::xctlevel_t level :
+       {sm1::xctlevel_t::read_committed, sm1::xctlevel_t::repeatable_read,
+        sm1::xctlevel_t::serializable}) {
+    CAPTURE(static_cast<int>(level));
+    // A value no earlier round committed, so seeing it is a dirty read.
+    std::string dirty = "w" + std::to_string(++round);
+    REQUIRE(sm1::begin(w, level) == 0);
+    REQUIRE(set(w, "x", dirty) == 0);
+    sm1::lockmode_t mode;
+    REQUIRE(wisr::lock_held(w, g_store, "x", &mode));
+    CHECK(mode == sm1::lockmode_t::exclusive);
+    CHECK_FALSE(wisr::lock_held(w, g_store, "y", &mode));
+
+    REQUIRE(sm1::begin(r, level) == 0);
+    std::atomic<bool> returned{false};
+    std::string seen;
+    size_t rows = 0;
+    std::thread tr([&] {
+      std::string_view v;
+      if (sm1::read(r, g_store, "x", v) == 0) {
+        seen.assign(v);
+      }
+      sm1::scan_t *c = nullptr;
+      if (sm1::scan(r, g_store, nullptr, 0, 1, nullptr, 0, 0, c) == 0) {
+        std::string_view k;
+        while (sm1::scannxt(c, k, v) == 0) {
+          rows++;
+        }
+        sm1::scanend(c);
+      }
+      returned = true;
+    });
+    settle();
+    CHECK(returned.load());
+    tr.join();
+    CHECK_FALSE(seen.empty());
+    CHECK(seen != dirty);
+    CHECK(rows == 2);
+    CHECK_FALSE(wisr::lock_held(r, g_store, "x", &mode));
+    CHECK_FALSE(wisr::lock_held(r, g_store, "y", &mode));
+
+    returned = false;
+    int rc = -2;
+    std::thread tw([&] {
+      rc = set(w, "y", "w");
+      if (rc == 0) {
+        rc = sm1::commit(w);
+      }
+      returned = true;
+    });
+    settle();
+    CHECK(returned.load());
+    tw.join();
+    CHECK(rc == 0);
+    REQUIRE(sm1::commit(r) == 0);
+  }
+  sm1::closedb(w);
+  sm1::closedb(r);
+}
+
 TEST_CASE("Gray's lock modes grant and block as their matrix says") {
   // Verify the conflict table of sm1.h's lockmode_t, pair by pair.
   // 1. For each mode a and mode b, A holds "x" in a, then B asks
