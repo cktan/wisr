@@ -599,7 +599,7 @@ std::string encode_prepared(const sm1::session_t *t, const std::string &gid,
   for (const sm1::session_t::lockref_t &l : t->locks) {
     sm1::put_be32(v, static_cast<uint32_t>(l.key.size()));
     v.append(l.key);
-    v.push_back(l.exclusive ? 1 : 0);
+    v.push_back(static_cast<char>(l.mode));
   }
   // The storeids created, then those dropped, each counted.
   for (const std::vector<uint64_t> *stores : {&t->created, &t->dropped}) {
@@ -1158,7 +1158,11 @@ bool xct_decode_prepared(db_t *db, uint64_t xid, rocksdb::Slice val,
     if (end - p < 1) {
       return false;
     }
-    l.exclusive = *p++ != 0;
+    uint8_t m = static_cast<uint8_t>(*p++);
+    if (m > 4) {
+      return false;
+    }
+    l.mode = static_cast<sm1::lockmode_t>(m);
     g->locks.push_back(std::move(l));
   }
   // Read the storeids created, then dropped.

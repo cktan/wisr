@@ -180,7 +180,7 @@ can be read at a glance. Several steps may share a time.
 | `close` | `<cursor>` | `ok` |
 | `savepoint` | — | the new mark's depth: `1`, `2`, … |
 | `rollback` | `<depth>` | `ok`, or an error name |
-| `lock` | `<row> <shared\|exclusive>` | `ok`, or an error name |
+| `lock` | `<row> <is\|ix\|shared\|six\|exclusive>` | `ok`, or an error name |
 | `seek` | `<cursor> <key>` | `ok`, or an error name |
 | `stmt` | — | `ok`: starts a statement, for `rc` |
 | `readlatest` | `<row>` | the newest committed value, or `-`; at `rc`, under a lock the session holds |
@@ -207,12 +207,13 @@ the number this step reported. Marks nest, so a second
 mark and drops the ones inside it. `sm1::forget` has no verb:
 no scenario has needed one, and it would take the same shape.
 
-**`lock`** takes the row lock without writing the row, in
-either mode. Shared holders coexist; anything else waits, so a
-`lock` step takes `blocks` like a write does. A transaction
-already holding the row shared and asking for it exclusive
-upgrades, which is how two transactions deadlock on one row
-(`b28`). Once held, the lock is checked against the
+**`lock`** takes the row lock without writing the row, in one
+of Gray's modes: `is`, `ix`, `shared`, `six` or `exclusive`.
+Compatible holders coexist, as `sm1.h`'s table for `lockmode_t`
+says; anything else waits, so a `lock` step takes `blocks` like
+a write does. A transaction already holding the row and asking
+for a stronger mode converts to the weakest mode covering both,
+which is how two transactions deadlock on one row (`b28`). Once held, the lock is checked against the
 transaction's snapshot, so `lock` can also answer `conflict`.
 
 **`seek`** moves an open cursor forward to a key, that key

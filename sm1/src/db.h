@@ -165,15 +165,19 @@ struct db_t {
 
   /*
    * Row locks (§5.1): lock key -> the transactions holding it.
-   * A lock is held SHARED by any number of them or EXCLUSIVE by
-   * one. One mutex covers the table and every session's
+   * Each holder holds it in a mode of its own, and every pair of
+   * holders' modes is compatible (sm1.h, lockmode_t). One mutex
+   * covers the table and every session's
    * waits-for list, so a deadlock walk sees a consistent
    * waits-for graph; shard it if a benchmark shows contention.
    * Every release and every doom notifies lock_cv.
    */
   struct lock_ent_t {
-    bool exclusive = false;                /* holders is then one */
-    std::vector<sm1::session_t *> holders; /* never empty */
+    struct holder_t {
+      sm1::session_t *session;
+      sm1::lockmode_t mode;
+    };
+    std::vector<holder_t> holders; /* never empty */
   };
   std::mutex lock_mu;
   std::condition_variable lock_cv;

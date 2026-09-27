@@ -589,25 +589,31 @@ the commit record does (§8.2).
 
 ### 5.1 Row locks
 
-An in-memory hash table, `(storeid, userkey)` → the
-transactions holding it. A lock is held **shared** by any
-number of them or **exclusive** by one; the compatibility
-table is the usual one, S/S being the only pair that
-coexists. A write takes it exclusive, `sm1::lock` takes either,
-and a plain read still takes none. Locks are released at
-commit/abort — strict, so no cascading aborts. The key is
-exact, so two distinct keys never share an entry and never
+An in-memory hash table, `(storeid, userkey)` → the transactions
+holding it, each in a mode of its own. The modes are **Gray's**,
+for locking at several granularities: IS, IX, S, SIX and X, with
+his compatibility table (`sm1.h`, `lockmode_t`). sm1 keeps no
+hierarchy; a caller that makes one key stand for a larger object
+— sm3's table catalog row — takes an intention mode on it to
+announce what it does below, so readers (IS) and writers (IX) of
+a table coexist while a builder that must stop writers but not
+readers takes S. A write takes the key it writes X, `sm1::lock`
+takes any mode, and a plain read still takes none. Locks are
+released at commit/abort — strict, so no cascading aborts. The
+key is exact, so two distinct keys never share an entry and never
 block or deadlock each other. One mutex covers the table and
 every waiter's waits-for list, which keeps a deadlock walk
-consistent; sharding it is a later optimization if a
-benchmark shows contention.
+consistent; sharding it is a later optimization if a benchmark
+shows contention.
 
-**Upgrades.** A transaction holding a key shared and asking
-for it exclusive — including by writing it — upgrades: it
-waits for the other shared holders to go, then flips the
-entry, without ever releasing what it holds. An upgrade is
-what makes two transactions on ONE key deadlock, which
-exclusive-only locking could not do.
+**Conversions.** A transaction holding a key in one mode and
+asking for one it does not cover — including by writing it —
+converts to the weakest mode covering both: IS below IX and S,
+those two meeting at SIX, and X above all. It waits for the
+other holders that conflict with the new mode, then changes its
+entry in place, without ever releasing what it holds. A
+conversion is what makes two transactions on ONE key deadlock,
+which exclusive-only locking could not do.
 
 **A read-only transaction can hold locks.** Before `sm1::lock`,
 a transaction with no `xid` held nothing, and the read-only
@@ -622,13 +628,13 @@ on that cycle — the last to begin — fails with
 `SM_ERR_DEADLOCK`. Short waits never pay for the search and
 there is no detector thread.
 
-The waits-for edges form a **graph, not a chain**: a waiter
-blocked on a shared lock waits on every holder at once, so
-the search is a depth-first walk with a visited set, and the
-path it is on supplies the cycle to pick a victim from. This
-is the cost of shared mode. Before it, only writers could
-wait, each on exactly one holder, and following the single
-pointer was enough.
+The waits-for edges form a **graph, not a chain**: a waiter waits
+on every holder whose mode conflicts with the one it asks, and
+there can be many, so the search is a depth-first walk with a
+visited set, and the path it is on supplies the cycle to pick a
+victim from. This is the cost of shared modes. Before it, only
+writers could wait, each on exactly one holder, and following the
+single pointer was enough.
 
 A transaction appends a lock entry to `T.locks` only when it
 first acquires it. Re-acquiring a key it already holds

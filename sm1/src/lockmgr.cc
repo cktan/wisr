@@ -1,12 +1,13 @@
 /*
- * lockmgr.cc -- shared and exclusive row locks and deadlock
- * detection (SM1_DESIGN.md §5.1).
+ * lockmgr.cc -- row locks in Gray's modes, and deadlock detection
+ * (SM1_DESIGN.md §5.1).
  *
  * A lock is keyed exactly by (storeid, userkey) and held by the
- * sessions whose transactions took it: SHARED by any number of
- * them, EXCLUSIVE by one. Writes take it exclusive, sm1::lock
- * takes either, and a plain read still takes none. It is held
- * until the transaction commits or aborts.
+ * sessions whose transactions took it, each in a mode of its own,
+ * every pair of them compatible (sm1.h, lockmode_t). Writes take
+ * it exclusive, sm1::lock takes any mode, and a plain read still
+ * takes none. It is held until the transaction commits or
+ * aborts.
  *
  * Deadlocks are found the way PostgreSQL's deadlock_timeout
  * finds them: a blocked transaction sleeps deadlock_ms, then
@@ -27,6 +28,61 @@
 using namespace wisr;
 
 namespace {
+
+using lmode_t = sm1::lockmode_t;
+
+/* A mode as an index into the tables below: IS, IX, S, SIX, X. */
+int rank(lmode_t m) {
+  switch (m) {
+  case lmode_t::intent_shared:
+    return 0;
+  case lmode_t::intent_exclusive:
+    return 1;
+  case lmode_t::shared:
+    return 2;
+  case lmode_t::shared_intent_exclusive:
+    return 3;
+  case lmode_t::exclusive:
+    return 4;
+  }
+  return 4;
+}
+
+/* Gray's compatibility of two modes held by different sessions. */
+bool compatible(lmode_t a, lmode_t b) {
+  static const bool ok[5][5] = {
+      /*        IS     IX     S      SIX    X    */
+      /* IS  */ {true, true, true, true, false},
+      /* IX  */ {true, true, false, false, false},
+      /* S   */ {true, false, true, false, false},
+      /* SIX */ {true, false, false, false, false},
+      /* X   */ {false, false, false, false, false},
+  };
+  return ok[rank(a)][rank(b)];
+}
+
+/*
+ * The weakest mode covering both a and b, which a holder of a that
+ * asks for b converts to: IS < IX, S < SIX < X, and IX and S meet
+ * at SIX.
+ */
+lmode_t cover(lmode_t a, lmode_t b) {
+  static const lmode_t sup[5][5] = {
+      {lmode_t::intent_shared, lmode_t::intent_exclusive, lmode_t::shared,
+       lmode_t::shared_intent_exclusive, lmode_t::exclusive},
+      {lmode_t::intent_exclusive, lmode_t::intent_exclusive,
+       lmode_t::shared_intent_exclusive, lmode_t::shared_intent_exclusive,
+       lmode_t::exclusive},
+      {lmode_t::shared, lmode_t::shared_intent_exclusive, lmode_t::shared,
+       lmode_t::shared_intent_exclusive, lmode_t::exclusive},
+      {lmode_t::shared_intent_exclusive, lmode_t::shared_intent_exclusive,
+       lmode_t::shared_intent_exclusive, lmode_t::shared_intent_exclusive,
+       lmode_t::exclusive},
+      {lmode_t::exclusive, lmode_t::exclusive, lmode_t::exclusive,
+       lmode_t::exclusive, lmode_t::exclusive},
+  };
+  return sup[rank(a)][rank(b)];
+}
 
 /* The lock table key of (storeid, userkey). */
 std::string lock_key(uint64_t storeid, rocksdb::Slice key) {
@@ -50,10 +106,10 @@ void lock_drop_holder(db_t *db, const std::string &k, sm1::session_t *s) {
   if (it == db->lock_table.end()) {
     return;
   }
-  std::vector<sm1::session_t *> &holders = it->second.holders;
+  std::vector<db_t::lock_ent_t::holder_t> &holders = it->second.holders;
   // Drop us from the holder list.
   for (size_t i = 0; i < holders.size(); i++) {
-    if (holders[i] == s) {
+    if (holders[i].session == s) {
       holders.erase(holders.begin() + i);
       break;
     }
@@ -81,16 +137,16 @@ sm1::session_t::lockref_t *find_lockref(sm1::session_t *s, uint64_t storeid,
 }
 
 /*
- * Record a mode upgrade in the session's lock list, so release
- * and the prepare record carry the mode actually held. Only an
- * upgrade scans; the common write, which holds nothing on the
+ * Record a conversion in the session's lock list, so release and
+ * the prepare record carry the mode actually held. Only a
+ * conversion scans; the common write, which holds nothing on the
  * key yet, appends instead.
  */
-void note_upgrade(sm1::session_t *s, const std::string &k) {
-  // Newest first: a key just upgraded was likely just taken.
+void note_mode(sm1::session_t *s, const std::string &k, lmode_t mode) {
+  // Newest first: a key just converted was likely just taken.
   for (size_t i = s->locks.size(); i-- > 0;) {
     if (s->locks[i].key == k) {
-      s->locks[i].exclusive = true;
+      s->locks[i].mode = mode;
       return;
     }
   }
@@ -160,7 +216,7 @@ namespace wisr {
 
 /* Block until (storeid, key) is ours in mode, checking for deadlock. */
 int lock_acquire(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
-                 bool exclusive) {
+                 sm1::lockmode_t mode) {
   db_t *db = s->db;
   // Build the lock table key.
   std::string k = lock_key(storeid, key);
@@ -181,55 +237,50 @@ int lock_acquire(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
     // Free: take it in the mode asked.
     if (it == db->lock_table.end()) {
       // Record us as the only holder.
-      db_t::lock_ent_t &ent = db->lock_table[k];
-      ent.exclusive = exclusive;
-      ent.holders.push_back(s);
+      db->lock_table[k].holders.push_back({s, mode});
       // Remember the lock for release at commit or abort.
-      s->locks.push_back({std::move(k), exclusive});
+      s->locks.push_back({std::move(k), mode});
       // We no longer wait on anyone.
       s->waiting_for.clear();
       return 0;
     }
     db_t::lock_ent_t &ent = it->second;
-    // Are we already a holder?
-    bool ours = false;
-    for (sm1::session_t *h : ent.holders) {
-      if (h == s) {
-        ours = true;
+    // Our own hold, if any, and the mode we would hold after.
+    db_t::lock_ent_t::holder_t *mine = nullptr;
+    for (db_t::lock_ent_t::holder_t &h : ent.holders) {
+      if (h.session == s) {
+        mine = &h;
         break;
       }
     }
+    lmode_t want = mine ? cover(mine->mode, mode) : mode;
     // Ours already, in a mode at least as strong: nothing to do.
-    if (ours && (ent.exclusive || !exclusive)) {
+    if (mine && want == mine->mode) {
       s->waiting_for.clear();
       return 0;
     }
-    // Ours shared, and we are the only holder: upgrade in place.
-    if (ours && ent.holders.size() == 1) {
-      ent.exclusive = true;
-      // The list must show the stronger mode from now on.
-      note_upgrade(s, k);
-      s->waiting_for.clear();
-      return 0;
-    }
-    // Compatible with the holders: join them. Shared and shared
-    // is the only pair that shares a lock.
-    if (!ours && !exclusive && !ent.exclusive) {
-      ent.holders.push_back(s);
-      s->locks.push_back({std::move(k), false});
-      s->waiting_for.clear();
-      return 0;
-    }
-    // Blocked: we wait on every holder but ourselves. An
-    // upgrade waits on the other shared holders, which is how
-    // two upgraders on one key form a cycle.
+    // Collect the other holders whose modes conflict with want.
     s->waiting_for.clear();
-    for (sm1::session_t *h : ent.holders) {
-      if (h != s) {
-        s->waiting_for.push_back(h);
+    for (const db_t::lock_ent_t::holder_t &h : ent.holders) {
+      if (h.session != s && !compatible(h.mode, want)) {
+        s->waiting_for.push_back(h.session);
       }
     }
-    // Wait for a release; after deadlock_ms, look for a cycle.
+    // None: convert our hold in place, or join the holders.
+    if (s->waiting_for.empty()) {
+      if (mine) {
+        mine->mode = want;
+        // The list must show the stronger mode from now on.
+        note_mode(s, k, want);
+      } else {
+        ent.holders.push_back({s, want});
+        s->locks.push_back({std::move(k), want});
+      }
+      return 0;
+    }
+    // Blocked, on exactly the holders that conflict: a converter
+    // waits on the others, which is how two converters on one key
+    // form a cycle. After deadlock_ms, look for one.
     if (db->lock_cv.wait_until(guard, deadline) == std::cv_status::timeout) {
       // Timed out: look for a cycle through us.
       check_deadlock(db, s);
@@ -249,9 +300,9 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g) {
     auto it = db->lock_table.find(l.key);
     // Replace s with g among the holders.
     if (it != db->lock_table.end()) {
-      for (sm1::session_t *&h : it->second.holders) {
-        if (h == s) {
-          h = g;
+      for (db_t::lock_ent_t::holder_t &h : it->second.holders) {
+        if (h.session == s) {
+          h.session = g;
         }
       }
     }
@@ -264,21 +315,20 @@ void lock_restore(db_t *db, sm1::session_t *g) {
   std::lock_guard<std::mutex> guard(db->lock_mu);
   // Re-take each lock in the mode the record carries.
   for (const sm1::session_t::lockref_t &l : g->locks) {
-    db_t::lock_ent_t &ent = db->lock_table[l.key];
-    // An exclusive lock is the only one its entry can hold.
-    ent.exclusive = l.exclusive;
-    ent.holders.push_back(g);
+    db->lock_table[l.key].holders.push_back({g, l.mode});
   }
 }
 
-/* The mode the session holds (storeid, key) in: 0, 1 shared, 2 exclusive. */
-int lock_mode_held(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
+/* Whether the session holds (storeid, key), and in which mode. */
+bool lock_held(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
+               sm1::lockmode_t *mode) {
   sm1::session_t::lockref_t *l = find_lockref(s, storeid, key);
   // Not held.
   if (!l) {
-    return 0;
+    return false;
   }
-  return l->exclusive ? 2 : 1;
+  *mode = l->mode;
+  return true;
 }
 
 /* Mark (storeid, key)'s exclusive lock: the next write may go ahead. */

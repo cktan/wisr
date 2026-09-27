@@ -83,9 +83,10 @@ struct sm1::session_t {
 
   /* Row locks (§5.1); guarded by the database's lock_mu. */
   struct lockref_t {
-    std::string key;        /* the lock table key */
-    bool exclusive = false; /* the mode held now, after upgrades */
-    bool latest = false;    /* read_latest done: the write may go ahead */
+    std::string key;                                /* the lock table key */
+    sm1::lockmode_t mode = sm1::lockmode_t::shared; /* held now, after
+                                                       conversions */
+    bool latest = false; /* read_latest done: the write may go ahead */
   };
   std::vector<lockref_t> locks; /* held, in acquisition order */
   size_t latest_marks = 0;      /* locks with latest set; 0 skips scans */
@@ -181,25 +182,26 @@ int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
 
 /*
  * Take the row lock on (storeid, key) for the session's
- * transaction in the given mode, blocking while another holds
- * it in a conflicting one (§5.1). A transaction already
- * holding it shared and asking exclusive upgrades. Returns 0,
- * or -1 without an error set if the transaction was doomed
- * while waiting; the caller then fails it with s->doomed.
+ * transaction in mode, blocking while another holds it in a
+ * conflicting one (§5.1). A transaction already holding it
+ * converts to the weakest mode covering both, waiting for the
+ * other holders that conflict with that. Returns 0, or -1
+ * without an error set if the transaction was doomed while
+ * waiting; the caller then fails it with s->doomed.
  */
 int lock_acquire(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
-                 bool exclusive);
+                 sm1::lockmode_t mode);
 
 /* §5.2's first-committer-wins check alone, for sm1::lock. */
 int access_check_current(sm1::session_t *session, uint64_t storeid,
                          rocksdb::Slice key);
 
 /*
- * The mode the session holds (storeid, key) in: 0 none, 1 shared,
- * 2 exclusive. Reads only the session's own lock list.
+ * Whether the session holds (storeid, key), and if so in which
+ * mode. Reads only the session's own lock list.
  */
-int lock_mode_held(sm1::session_t *session, uint64_t storeid,
-                   rocksdb::Slice key);
+bool lock_held(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
+               sm1::lockmode_t *mode);
 
 /* Mark the exclusive lock on (storeid, key): a write may go ahead. */
 void lock_set_latest(sm1::session_t *session, uint64_t storeid,

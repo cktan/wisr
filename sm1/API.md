@@ -729,25 +729,43 @@ Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
 ```cpp
 enum class lockmode_t {
-    shared    = 0,
-    exclusive = 1
+    shared                  = 0,  /* S */
+    exclusive               = 1,  /* X */
+    intent_shared           = 2,  /* IS */
+    intent_exclusive        = 3,  /* IX */
+    shared_intent_exclusive = 4   /* SIX */
 };
 ```
 
 Lock a row without writing it: SQL's `SELECT ... FOR SHARE`
-and `FOR UPDATE`. The key need not exist.
+and `FOR UPDATE`, and the intention locks of Gray's scheme for
+locking at several granularities. The key need not exist.
 
-`sm1::lockmode_t::shared` lets other transactions hold the same
-row shared but stops any of them writing it.
-`sm1::lockmode_t::exclusive` excludes every other holder.
+The modes are Gray's. An intention mode locks a key that stands
+for something larger — a table's catalog row, say — to announce
+locks on what lies below it; sm1 keeps no hierarchy itself,
+only this table on each key:
+
+| held \ asked | IS | IX | S | SIX | X |
+| --- | --- | --- | --- | --- | --- |
+| IS | ok | ok | ok | ok | — |
+| IX | ok | ok | — | — | — |
+| S | ok | — | ok | — | — |
+| SIX | ok | — | — | — | — |
+| X | — | — | — | — | — |
+
+A write takes the key it writes exclusive, so every mode stops
+others writing the key.
 
 The call **blocks** while another transaction holds the row
 in a conflicting mode, exactly as a write does, and can fail
 with `SM_ERR_DEADLOCK` for the same reason. A transaction
-holding the row shared and asking for it exclusive — including
-by writing it — **upgrades**, waiting for the other shared
-holders to finish. Two transactions upgrading the same row
-deadlock, and the younger is the victim.
+already holding the row and asking for a mode it does not
+cover — including by writing it — **converts** to the weakest
+mode covering both (IX and S make SIX; anything and X make X),
+waiting for the other holders that conflict with it. Two
+transactions converting on the same row deadlock, and the
+younger is the victim.
 
 Once the lock is held, the call runs the same check a write
 runs: if another transaction committed a version of this key
@@ -760,14 +778,14 @@ newer commit; the caller reads the row with `sm1::read_latest`,
 which returns the newest committed version.
 
 The lock is held to the end of the transaction, or until an
-`sm1::rollback` past the point it was taken. An upgrade is never
-undone by a rollback: the row stays locked in the stronger
-mode until the transaction ends.
+`sm1::rollback` past the point it was taken. A conversion is
+never undone by a rollback: the row stays locked in the
+stronger mode until the transaction ends.
 
-A transaction holding shared locks may be prepared. They
-survive in the prepared transaction and are restored after a
-crash, so nothing may write those rows until a coordinator
-resolves it.
+A transaction holding locks it took with `sm1::lock` may be
+prepared. They survive in the prepared transaction, each in its
+mode, and are restored after a crash, so nothing conflicting
+may take those rows until a coordinator resolves it.
 
 Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_NOTFOUND` (no such

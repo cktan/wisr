@@ -282,8 +282,8 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Reject a mode that is neither shared nor exclusive.
-  if (mode != sm1::lockmode_t::shared && mode != sm1::lockmode_t::exclusive) {
+  // Reject a mode that is not one of Gray's five.
+  if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
   }
   // Validate the storeid and key at the current view.
@@ -291,8 +291,8 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
     return -1;
   }
   // Take the lock, blocking while a conflicting holder has it.
-  if (lock_acquire(s, storeid, rocksdb::Slice(key ? key : "", klen),
-                   mode == sm1::lockmode_t::exclusive) != 0) {
+  if (lock_acquire(s, storeid, rocksdb::Slice(key ? key : "", klen), mode) !=
+      0) {
     return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }
@@ -363,9 +363,10 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
     return -1;
   }
   rocksdb::Slice k(key ? key : "", klen);
-  // The lock is what keeps the newest version from changing.
-  int mode = lock_mode_held(s, storeid, k);
-  if (mode == 0) {
+  // The lock is what keeps the newest version from changing: every
+  // mode conflicts with a writer's exclusive one.
+  sm1::lockmode_t mode;
+  if (!lock_held(s, storeid, k, &mode)) {
     return set_error(sm1::SM_ERR_INVALID,
                      "sm1_read_latest requires a lock held on the key");
   }
@@ -381,7 +382,7 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
     return -1;
   }
   // An exclusive holder may now write.
-  if (mode == 2) {
+  if (mode == sm1::lockmode_t::exclusive) {
     lock_set_latest(s, storeid, k);
   }
   // Absent, or deleted.
@@ -724,7 +725,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   }
   // Take the row lock; this blocks while another transaction
   // holds it, and fails if we are chosen as a deadlock victim.
-  if (lock_acquire(s, storeid, key, true) != 0) {
+  if (lock_acquire(s, storeid, key, sm1::lockmode_t::exclusive) != 0) {
     return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }

@@ -466,16 +466,36 @@ int abort(session_t* session);
 bool in_doubt(session_t* session);
 
 /*
- * The mode of a row lock taken by sm1::lock().
+ * The mode of a row lock taken by sm1::lock(): Gray's modes for
+ * locking at several granularities. The intention modes lock a
+ * key that stands for a larger object -- a table's catalog row,
+ * say -- to announce locks on the rows below it; sm1 keeps no
+ * hierarchy itself, only this conflict table on each key. A
+ * write takes the key it writes EXCLUSIVE.
  *
- *   sm1::lockmode_t::shared     others may hold it shared, none may
- *                       write the row
- *   sm1::lockmode_t::exclusive  no one else may hold it in any mode
+ *              IS   IX   S    SIX  X
+ *      IS      ok   ok   ok   ok   --
+ *      IX      ok   ok   --   --   --
+ *      S       ok   --   ok   --   --
+ *      SIX     ok   --   --   --   --
+ *      X       --   --   --   --   --
+ *
+ *   intent_shared            IS: will read below it
+ *   intent_exclusive         IX: will write below it
+ *   shared                   S: reads it, and all below it
+ *   shared_intent_exclusive  SIX: S, and will write below it
+ *   exclusive                X: no one else holds it in any mode
+ *
+ * The values are persisted in a prepared transaction's lock set,
+ * so they never change.
  */
 
 enum class lockmode_t {
   shared = 0,
-  exclusive = 1
+  exclusive = 1,
+  intent_shared = 2,
+  intent_exclusive = 3,
+  shared_intent_exclusive = 4
 };
 
 /*
@@ -483,12 +503,14 @@ enum class lockmode_t {
  * and FOR UPDATE. The key need not exist.
  *
  * The call BLOCKS while another transaction holds the lock in
- * a conflicting mode, exactly as a write does, and it can fail
- * with SM_ERR_DEADLOCK for the same reason. A transaction that
- * already holds the row shared and asks for it exclusive --
- * including by writing the row -- upgrades, waiting for the
- * other shared holders to finish; two transactions upgrading
- * the same row deadlock, and the younger one is the victim.
+ * a conflicting mode (lockmode_t's table), exactly as a write
+ * does, and it can fail with SM_ERR_DEADLOCK for the same
+ * reason. A transaction that already holds the row and asks for
+ * a mode it does not cover -- including by writing the row --
+ * converts to the weakest mode covering both, waiting for the
+ * other holders that conflict with it; two transactions
+ * converting on the same row deadlock, and the younger one is
+ * the victim.
  *
  * Once the lock is held the call runs the same check a write
  * does: if another transaction committed a version of this key
@@ -498,14 +520,15 @@ enum class lockmode_t {
  * makes "lock, then read, then act" safe.
  *
  * The lock is held to the end of the transaction, or until an
- * sm1::rollback() past the point it was taken. An upgrade is
+ * sm1::rollback() past the point it was taken. A conversion is
  * never undone by a rollback: the row stays locked in the
  * stronger mode until the transaction ends.
  *
- * A transaction holding shared locks may be prepared; the
- * locks survive in the prepared transaction and are restored
- * after a crash, so nothing may write those rows until a
- * coordinator resolves it.
+ * A transaction holding locks it took with sm1::lock may be
+ * prepared; the locks survive in the prepared transaction, each
+ * in its mode, and are restored after a crash, so nothing
+ * conflicting may take those rows until a coordinator resolves
+ * it.
  *
  * Errors: SM_ERR_CONFLICT / SM_ERR_DEADLOCK (retryable),
  * SM_ERR_NOTFOUND (store), SM_ERR_NOTRANS, SM_ERR_PREPARED,

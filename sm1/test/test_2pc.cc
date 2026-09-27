@@ -447,6 +447,45 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   sm1::closedb(v);
 }
 
+TEST_CASE("a prepared transaction keeps its intention locks across a "
+          "restart") {
+  // Verify a mode beyond shared and exclusive reaches the PREPARED
+  // record's mode byte and comes back with it (§8.4, §9.1).
+  // 1. S locks "b" IX, writes "a", and prepares "g".
+  // 2. Restart, so "g" is rebuilt from its record.
+  // 3. An IX on "b" is granted at once beside the restored one; an
+  //    S on "b" waits.
+  // 4. Aborting "g" by gid frees "b"; the S is granted.
+  tpc_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::lock(s, g_store, "b", sm1::lockmode_t::intent_exclusive) == 0);
+  REQUIRE(set(s, "a", "1") == 0);
+  REQUIRE(sm1::prepare(s, "g") == 0);
+  f.restart();
+
+  sm1::session_t *u = f.open(), *v = f.open(), *w = f.open();
+  REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(sm1::lock(u, g_store, "b", sm1::lockmode_t::intent_exclusive) == 0);
+  REQUIRE(sm1::commit(u) == 0);
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  std::atomic<bool> returned{false};
+  int rc = -2;
+  std::thread tw([&] {
+    rc = sm1::lock(w, g_store, "b", sm1::lockmode_t::shared);
+    returned = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  CHECK_FALSE(returned);
+  REQUIRE(sm1::abort_prepared(v, "g") == 0);
+  tw.join();
+  CHECK(rc == 0);
+  REQUIRE(sm1::commit(w) == 0);
+  sm1::closedb(u);
+  sm1::closedb(v);
+  sm1::closedb(w);
+}
+
 TEST_CASE(
     "an in-doubt transaction survives a restart, then commits or aborts") {
   // Verify restore (§9.1 step 5) and both resolutions after it.

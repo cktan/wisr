@@ -218,14 +218,23 @@ std::string execute(worker_t *w, const item_t &it) {
                                                            : error_name();
   }
   if (it.verb == "lock") {
-    // lock <row> <shared|exclusive>: take the row lock
-    // without writing the row.
-    if (a[1] != "shared" && a[1] != "exclusive") {
-      return "ERROR: lock mode must be shared or exclusive, not " + a[1];
+    // lock <row> <is|ix|shared|six|exclusive>: take the row
+    // lock in one of Gray's modes without writing the row.
+    static const std::pair<const char *, sm1::lockmode_t> modes[] = {
+        {"is", sm1::lockmode_t::intent_shared},
+        {"ix", sm1::lockmode_t::intent_exclusive},
+        {"shared", sm1::lockmode_t::shared},
+        {"six", sm1::lockmode_t::shared_intent_exclusive},
+        {"exclusive", sm1::lockmode_t::exclusive},
+    };
+    for (const auto &[name, mode] : modes) {
+      if (a[1] == name) {
+        return sm1::lock(w->sess, w->store, a[0], mode) == 0 ? "ok"
+                                                             : error_name();
+      }
     }
-    sm1::lockmode_t mode =
-        a[1] == "shared" ? sm1::lockmode_t::shared : sm1::lockmode_t::exclusive;
-    return sm1::lock(w->sess, w->store, a[0], mode) == 0 ? "ok" : error_name();
+    return "ERROR: lock mode must be is, ix, shared, six or exclusive, not " +
+           a[1];
   }
   if (it.verb == "lookup") {
     // lookup <row>: read a row of the SECOND store. What

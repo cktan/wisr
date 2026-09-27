@@ -388,6 +388,98 @@ TEST_CASE(
   sm1::closedb(x);
 }
 
+TEST_CASE("Gray's lock modes grant and block as their matrix says") {
+  // Verify the conflict table of sm1.h's lockmode_t, pair by pair.
+  // 1. For each mode a and mode b, A holds "x" in a, then B asks
+  //    for "x" in b on a thread of its own.
+  // 2. A compatible b is granted within 150 ms; a conflicting one
+  //    is still waiting then.
+  // 3. A commits; B's request is granted, and B commits.
+  using m = sm1::lockmode_t;
+  const m modes[] = {m::intent_shared, m::intent_exclusive, m::shared,
+                     m::shared_intent_exclusive, m::exclusive};
+  // Gray's table, written out apart from the lock manager's.
+  const bool ok[5][5] = {
+      {true, true, true, true, false},     {true, true, false, false, false},
+      {true, false, true, false, false},   {true, false, false, false, false},
+      {false, false, false, false, false},
+  };
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open();
+  for (int i = 0; i < 5; i++) {
+    for (int j = 0; j < 5; j++) {
+      CAPTURE(i);
+      CAPTURE(j);
+      REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+      REQUIRE(sm1::lock(a, g_store, "x", modes[i]) == 0);
+      REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+      std::atomic<bool> returned{false};
+      int rc = -2;
+      std::thread tb([&] {
+        rc = sm1::lock(b, g_store, "x", modes[j]);
+        returned = true;
+      });
+      settle();
+      CHECK(returned.load() == ok[i][j]);
+      REQUIRE(sm1::commit(a) == 0);
+      tb.join();
+      CHECK(rc == 0);
+      REQUIRE(sm1::commit(b) == 0);
+    }
+  }
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
+TEST_CASE("a holder asking for more converts to the mode covering both") {
+  // Verify lock conversion.
+  // 1. A holds "x" IX, then asks S: it now holds SIX, so B's IS is
+  //    granted and C's IX waits until A commits.
+  // 2. A holds "y" IS, then writes "y", which converts it to X: B's
+  //    IS on "y" waits until A commits.
+  using m = sm1::lockmode_t;
+  lock_fixture_t f;
+  sm1::session_t *a = f.open(), *b = f.open(), *c = f.open();
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock(a, g_store, "x", m::intent_exclusive) == 0);
+  REQUIRE(sm1::lock(a, g_store, "x", m::shared) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm1::lock(b, g_store, "x", m::intent_shared) == 0);
+  REQUIRE(sm1::begin(c, sm1::xctlevel_t::read_committed) == 0);
+  std::atomic<bool> returned{false};
+  int rc = -2;
+  std::thread tc([&] {
+    rc = sm1::lock(c, g_store, "x", m::intent_exclusive);
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned.load());
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  tc.join();
+  CHECK(rc == 0);
+  REQUIRE(sm1::commit(c) == 0);
+
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock(a, g_store, "y", m::intent_shared) == 0);
+  REQUIRE(set(a, "y", "1") == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  returned = false;
+  std::thread tb([&] {
+    rc = sm1::lock(b, g_store, "y", m::intent_shared);
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned.load());
+  REQUIRE(sm1::commit(a) == 0);
+  tb.join();
+  CHECK(rc == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+  sm1::closedb(c);
+}
+
 TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
   // Verify the call's contract.
   // 1. A NULL session, an unknown mode, and storeid 0 are
