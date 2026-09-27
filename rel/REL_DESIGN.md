@@ -249,40 +249,47 @@ Isolation levels map directly to `sm_xctlevel_t`:
 
 ### 4.3 High-Level Table and Index Operations
 
-Under `wisr`'s pre-sm3 scaffolding, `sm_` manages storage through
-store IDs and sequence names. `rel` maintains an in-memory
-relational catalog mapping table names to their storage metadata.
+Tables and indexes live in sm3's catalog (`sm3/CATALOG.md`),
+through the C API's `sm_cat_*` calls, in the `public`
+namespace. DDL is transactional -- undone by abort and by
+rollback to a savepoint, private to its session until commit --
+and a table outlives a restart. `rel` keeps no catalog of its
+own.
 
 #### `(table-create <name> (columns ...))`
-1. Calls `sm_mkstore(s, &storeid)` to allocate a backing store.
-2. Calls `sm_mkseq(s, seq_name, 1, 1)` for row number generation.
-3. Constructs an array of `sm_attribute_t` from column schemas
-   using `sm_type(code)`.
-4. Calls `sm_rel_open(s, storeid, 0, schema, n, seq, &rel)` to
-   open the heap relation.
-5. Records the table in `rel`'s active session catalog.
+1. Builds an `sm_column_spec_t` per column: its name, type code,
+   typmod and `:not-null`.
+2. Calls `sm_cat_create_table(s, SM_NSP_PUBLIC, name, cols, n,
+   &oid)`, which makes the table's store, rowno sequence and
+   catalog entry.
 
 #### `(table-drop <name>)`
-1. Calls `sm_rel_close(rel)` on open table handle.
-2. For each attached index, calls `sm_idx_close(idx)`.
-3. Calls `sm_rmseq(s, seq_name)` to remove sequence.
-4. Calls `sm_rmstore(s, storeid)` to drop the store and all rows.
+1. Calls `sm_cat_table_oid` for the table's oid.
+2. Calls `sm_cat_drop_table(s, oid)`, which drops its store, its
+   rows and index entries, and its rowno sequence.
 
 #### `(index-create <idx_name> (table <table>) (key ...) [:unique bool] [:include ...])`
-1. Looks up the table's `storeid`. Allocates a distinct prefix
-   (e.g., prefix 1, 2, ...).
-2. Converts key definitions into `sm_key_column_t` array:
-   - Sets type via `sm_type(code)`.
-   - Opens collation via `sm_collation_open(locale, ...)`.
-   - Sets `desc` and `nulls_first` flags.
-3. Converts INCLUDE definitions into `sm_attribute_t` array.
-4. Calls `sm_idx_open(s, storeid, prefix, key, nkey,
-   unique, inc, ninc, &idx)`.
-5. If table already contains rows, scans heap via `sm_rel_scan`
-   and populates index entries via `sm_idx_insert`.
-6. Registers index under table in catalog.
+1. Opens the table under its schema lock X, as the DDL takes it,
+   to resolve the key and INCLUDE column names to their places.
+2. Calls `sm_cat_create_index(s, table, name, keys, nkey,
+   includes, ninclude, unique, &oid)`, which records the index
+   under the table's next prefix. It does not fill the index
+   from rows already in the table.
+
+#### `(index-drop <idx_name>)`
+1. Calls `sm_cat_index_oid` for the index and its table.
+2. Calls `sm_cat_drop_index(s, table, index)`, which erases the
+   index and its entries.
 
 ### 4.4 High-Level Row DML Operations
+
+Each statement first opens its table by name: `sm_cat_table_oid`,
+then `sm_cat_lock_table` -- `SM_LOCK_INTENT_SHARED` to read,
+`SM_LOCK_INTENT_EXCLUSIVE` to write -- which holds the table's
+schema lock to the end of the transaction and hands out its
+definition. The heap and index handles are opened from that
+definition with `sm_rel_open` and `sm_idx_open`, and closed when
+the session's next statement begins.
 
 #### `(insert <table> <row-tuple>)`
 1. Validates that `<row-tuple>` matches column count and types.
@@ -481,10 +488,11 @@ detailed diagnostics when an invariant is violated:
 2. **Value Model (`rel/value.h`):**
    - Represents atoms (`int64_t`, `double`, `string`, `bool`,
      `nil`, `keyword`) and compound forms (`vector`, `list`).
-3. **Environment & Catalog (`rel/catalog.h`):**
+3. **Environment & Sessions (`rel/src/rel_catalog.cc`):**
    - Stores session handles (`sm_session_t*`).
-   - Tracks table definitions (attribute types, store ID,
-     sequence name, open `sm_rel_t*`, open `sm_idx_t*` list).
+   - Opens a statement's tables from sm3's catalog, and keeps
+     them with their `sm_rel_t*` and `sm_idx_t*` until the
+     session's next statement.
 4. **Evaluator (`rel/eval.cc`):**
    - Dispatches builtins and commands.
    - Converts input tuples to `sm_datum_t[]` values and

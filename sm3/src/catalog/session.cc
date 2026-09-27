@@ -238,6 +238,35 @@ int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
   });
 }
 
+/* An index by name as s sees it: its tables, overlay first. */
+bool cat_index(const session_t *s, uint64_t nspoid, std::string_view name,
+               uint64_t &table, uint64_t &index) {
+  // The session's own definitions, newest last, over the shared ones.
+  std::map<uint64_t, std::shared_ptr<const table_def_t>> seen;
+  for (const table_change_t &c : s->tables) {
+    seen[c.oid] = c.def;
+  }
+  {
+    std::shared_lock lock(s->cat->mu);
+    for (const auto &[oid, def] : s->cat->tables) {
+      seen.emplace(oid, def);
+    }
+  }
+  for (const auto &[oid, def] : seen) {
+    if (!def || def->nspoid != nspoid) {
+      continue;
+    }
+    for (const index_def_t &x : def->indexes) {
+      if (x.name == name) {
+        table = oid;
+        index = x.oid;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /* A table by name as s sees it: its newest name change first. */
 std::shared_ptr<const table_def_t>
 cat_table(const session_t *s, uint64_t nspoid, std::string_view name) {

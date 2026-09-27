@@ -18,6 +18,7 @@
 #include <cstring>
 #include <exception>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -33,6 +34,17 @@ static_assert(static_cast<int>(sm1::xctlevel_t::repeatable_read) ==
               SM_XCT_REPEATABLE_READ);
 static_assert(static_cast<int>(sm1::xctlevel_t::serializable) ==
               SM_XCT_SERIALIZABLE);
+static_assert(static_cast<int>(sm1::lockmode_t::shared) == SM_LOCK_SHARED);
+static_assert(static_cast<int>(sm1::lockmode_t::exclusive) ==
+              SM_LOCK_EXCLUSIVE);
+static_assert(static_cast<int>(sm1::lockmode_t::intent_shared) ==
+              SM_LOCK_INTENT_SHARED);
+static_assert(static_cast<int>(sm1::lockmode_t::intent_exclusive) ==
+              SM_LOCK_INTENT_EXCLUSIVE);
+static_assert(static_cast<int>(sm1::lockmode_t::shared_intent_exclusive) ==
+              SM_LOCK_SHARED_INTENT_EXCLUSIVE);
+static_assert(sm3::nsp_pg_catalog == SM_NSP_PG_CATALOG);
+static_assert(sm3::nsp_public == SM_NSP_PUBLIC);
 static_assert(static_cast<int>(sm1::loglevel_t::error) == SM_LOG_ERROR);
 static_assert(static_cast<int>(sm1::loglevel_t::warn) == SM_LOG_WARN);
 static_assert(static_cast<int>(sm1::loglevel_t::info) == SM_LOG_INFO);
@@ -294,6 +306,80 @@ bool bad_bound(const sm_bound_t *b) {
 sm2::bound_t bound_of(const sm_bound_t &b) {
   return {std::span<const sm2::datum_t>(b.prefix, b.n),
           std::span<const bool>(b.isnull, b.n), b.inclusive};
+}
+
+} // namespace
+
+/*
+ * A table definition handed out by sm_cat_lock_table: the C view,
+ * and what it points into -- sm3's definition, kept alive, and
+ * the arrays built over it.
+ */
+struct table_holder_t : sm_table_def_t {
+  std::shared_ptr<const sm3::table_def_t> keep;
+  std::vector<sm_column_def_t> column_arr;
+  std::vector<sm_attribute_t> schema_arr;
+  std::vector<sm_index_def_t> index_arr;
+  std::vector<std::vector<sm_key_column_t>> key_arrs;
+  std::vector<std::vector<sm_attribute_t>> include_arrs;
+};
+
+namespace {
+
+/* sm2's attribute as C's, viewing its missing value. */
+sm_attribute_t c_attribute(const sm2::attribute_t &a) {
+  return {reinterpret_cast<const sm_type_t *>(a.type),
+          a.typmod,
+          a.dropped,
+          a.missing.has_value(),
+          a.missing ? a.missing->data() : nullptr,
+          a.missing ? a.missing->size() : 0};
+}
+
+/* Build h's C view of def, pointing into def and h's arrays. */
+void build_holder(std::shared_ptr<const sm3::table_def_t> def,
+                  table_holder_t &h) {
+  h.keep = std::move(def);
+  const sm3::table_def_t &d = *h.keep;
+  for (const sm3::column_def_t &c : d.columns) {
+    h.column_arr.push_back(
+        {c.name.c_str(), c.type->code, c.typmod, c.not_null, c.dropped});
+  }
+  for (const sm2::attribute_t &a : d.schema) {
+    h.schema_arr.push_back(c_attribute(a));
+  }
+  // Every inner array is built before any is pointed at.
+  for (const sm3::index_def_t &x : d.indexes) {
+    std::vector<sm_key_column_t> key;
+    for (const sm2::key_column_t &k : x.key) {
+      key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
+                     reinterpret_cast<const sm_collation_t *>(k.collation),
+                     k.desc, k.nulls_first});
+    }
+    h.key_arrs.push_back(std::move(key));
+    std::vector<sm_attribute_t> inc;
+    for (const sm2::attribute_t &a : x.include) {
+      inc.push_back(c_attribute(a));
+    }
+    h.include_arrs.push_back(std::move(inc));
+  }
+  for (size_t i = 0; i < d.indexes.size(); i++) {
+    const sm3::index_def_t &x = d.indexes[i];
+    h.index_arr.push_back({x.oid, x.name.c_str(), x.prefix, x.unique,
+                           x.key_attnums.size(), x.key_attnums.data(),
+                           h.key_arrs[i].data(), x.include_attnums.size(),
+                           x.include_attnums.data(), h.include_arrs[i].data()});
+  }
+  h.oid = d.oid;
+  h.nspoid = d.nspoid;
+  h.name = d.name.c_str();
+  h.storeid = d.storeid;
+  h.rowno_seq = d.rowno_seq.c_str();
+  h.natts = h.column_arr.size();
+  h.columns = h.column_arr.data();
+  h.schema = h.schema_arr.data();
+  h.nindex = h.index_arr.size();
+  h.indexes = h.index_arr.data();
 }
 
 } // namespace
@@ -1174,6 +1260,111 @@ int sm_idx_deform(sm_idx_t *idx, const void *value, size_t len,
     return deform("sm_idx_deform", idx->value_desc, value, len, values, isnull,
                   n);
   });
+}
+
+/* A table's oid by name, as the session sees it; 1 if none. */
+int sm_cat_table_oid(sm_session_t *session, uint64_t nspoid, const char *name,
+                     uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_table_oid", "oid");
+    }
+    auto def = sm3::cat_table(session->sm3, nspoid, name_of(name));
+    if (!def) {
+      return 1;
+    }
+    *oid = def->oid;
+    return 0;
+  });
+}
+
+/* An index's oid and its table's by name; 1 if none. */
+int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
+                     uint64_t *table, uint64_t *index) {
+  return guard(session, [&] {
+    if (!table || !index) {
+      return null_arg("sm_cat_index_oid", !table ? "table" : "index");
+    }
+    return sm3::cat_index(session->sm3, nspoid, name_of(name), *table, *index)
+               ? 0
+               : 1;
+  });
+}
+
+/* Lock a table's schema and hand out its definition. */
+int sm_cat_lock_table(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
+                      sm_table_def_t **out) {
+  return guard(session, [&] {
+    if (!out) {
+      return null_arg("sm_cat_lock_table", "out");
+    }
+    std::shared_ptr<const sm3::table_def_t> def;
+    if (sm3::cat_lock_table(session->sm3, oid,
+                            static_cast<sm1::lockmode_t>(mode), def) != 0) {
+      return -1;
+    }
+    auto h = std::make_unique<table_holder_t>();
+    build_holder(std::move(def), *h);
+    *out = h.release();
+    return 0;
+  });
+}
+
+/* Free a definition; NULL is a no-op. */
+void sm_cat_table_free(sm_table_def_t *def) {
+  delete static_cast<table_holder_t *>(def);
+}
+
+/* Create a table in the session's transaction. */
+int sm_cat_create_table(sm_session_t *session, uint64_t nspoid,
+                        const char *name, const sm_column_spec_t *columns,
+                        size_t n, uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid || (n && !columns)) {
+      return null_arg("sm_cat_create_table", !oid ? "oid" : "columns");
+    }
+    std::vector<sm3::column_spec_t> cols;
+    for (size_t i = 0; i < n; i++) {
+      cols.push_back({std::string(name_of(columns[i].name)),
+                      columns[i].type_code, columns[i].typmod,
+                      columns[i].not_null});
+    }
+    return sm3::cat_create_table(session->sm3, nspoid, name_of(name), cols,
+                                 *oid);
+  });
+}
+
+/* Drop a table in the session's transaction. */
+int sm_cat_drop_table(sm_session_t *session, uint64_t oid) {
+  return guard(session, [&] { return sm3::cat_drop_table(session->sm3, oid); });
+}
+
+/* Create an index in the session's transaction. */
+int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
+                        const sm_index_key_spec_t *keys, size_t nkey,
+                        const int32_t *includes, size_t ninclude, bool unique,
+                        uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid || (nkey && !keys) || (ninclude && !includes)) {
+      return null_arg("sm_cat_create_index", !oid            ? "oid"
+                                             : nkey && !keys ? "keys"
+                                                             : "includes");
+    }
+    std::vector<sm3::index_key_spec_t> k;
+    for (size_t i = 0; i < nkey; i++) {
+      k.push_back(
+          {keys[i].attnum, keys[i].desc, keys[i].nulls_first, std::nullopt});
+    }
+    return sm3::cat_create_index(session->sm3, table, name_of(name), k,
+                                 std::span<const int32_t>(includes, ninclude),
+                                 unique, *oid);
+  });
+}
+
+/* Drop an index in the session's transaction. */
+int sm_cat_drop_index(sm_session_t *session, uint64_t table, uint64_t index) {
+  return guard(session,
+               [&] { return sm3::cat_drop_index(session->sm3, table, index); });
 }
 
 } // extern "C"

@@ -247,8 +247,10 @@ and never recycled on abort.
 Define and manage heap tables and secondary indexes.
 
 ### `(table-create name (columns ...))`
-Defines and creates a heap table backed by a storage store and a
-dedicated row sequence (`<name>_rowno`).
+Defines and creates a heap table in sm3's catalog, backed by a
+store and a row sequence of its own. Like all DDL, it is undone
+by `(abort)` or `(rollback sp)`, seen by other sessions only
+once committed, and kept across a restart.
 
 Supported column types:
 - Integer: `:int2`, `:int4`, `:int8`

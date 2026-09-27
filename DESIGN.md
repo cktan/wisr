@@ -72,13 +72,14 @@ session is an sm3 session over an sm1 one, and each database's
 sm3 catalog is loaded by its first session: sessions,
 transactions, savepoints and prepare go through sm3, which keeps
 its overlay of DDL in step with them, and the rest of 2PC,
-stores and sequences go to sm1 directly. Until rel opens tables
-through sm3's catalog it calls sm2 for rows and index entries;
-the calls that open a table by its store and schema are
-scaffolding, marked so in `include/sm.h`, to be replaced by
-opening through the catalog, while the row and entry calls keep
-their C signatures whichever level serves them. sm2 calls only
-sm1, and nothing calls upward.
+stores and sequences go to sm1 directly. A caller finds and
+locks a table through sm3's catalog (`sm_cat_*`), then opens it
+with sm2's calls from the definition it is handed: those take a
+store and schema, and are scaffolding, marked so in
+`include/sm.h`, until sm3 opens tables and maintains their
+indexes itself; the row and entry calls keep their C signatures
+whichever level serves them. sm2 calls only sm1, and nothing
+calls upward.
 
 The root's `include/` also holds two C headers that belong to
 no level and that sm1 includes: `sm_error.h`, the stack's error

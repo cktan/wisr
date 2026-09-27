@@ -171,6 +171,14 @@ std::shared_ptr<const table_def_t> cat_table(const session_t* s,
                                              std::string_view name);
 
 /*
+ * The index named name in nspoid, as s's transaction sees it:
+ * true with its table's oid and its own set. A scan of every
+ * table's indexes, since the catalog keeps no map of their names.
+ */
+bool cat_index(const session_t* s, uint64_t nspoid, std::string_view name,
+               uint64_t& table, uint64_t& index);
+
+/*
  * Take the schema lock of the table oid in mode, held to the end
  * of s's transaction, then set out to its definition as s sees
  * it (SM3_DESIGN.md §2). A transaction reading the table takes

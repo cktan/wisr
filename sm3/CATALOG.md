@@ -9,9 +9,9 @@ under lock-based DDL, as in PostgreSQL.
 
 **Status: built** — the store, its keys and values, `cat_init`,
 `cat_open`, the DDL of §5, a session's overlay, which keeps its
-transaction's DDL to itself until commit, and the schema locks,
-under which commit publishes it. §7 is what is settled but not
-built yet.
+transaction's DDL to itself until commit, the schema locks,
+under which commit publishes it, and the C API over them, which
+`rel` runs on. §7 is what is settled but not built yet.
 
 ---
 
@@ -205,7 +205,13 @@ as sm1 does (`DESIGN.md` §5).
   session sees it, which cannot change until then. A table
   dropped while the caller waited is `SM_ERR_NOTFOUND`.
 - **`cat_table(ss, oid)`** and **`cat_table(ss, nspoid, name)`**
-  find a table as the session's transaction sees it.
+  find a table as the session's transaction sees it;
+  **`cat_index(ss, nspoid, name, table, index)`** finds an index
+  and its table, by a scan of the tables' indexes, since no map
+  of index names is kept.
+- **`prepare(ss, gid)`** prepares as sm1 does, but refuses a
+  transaction that made DDL: its overlay would have to outlive
+  the session.
 - **`cat_create_table(session, nspoid, name, columns, oid)`**
   checks the name, the column names and each column's type
   code and typmod (`SM_ERR_INVALID`) and the namespace
@@ -276,7 +282,17 @@ sm3/test/test_catalog.cc   init, load and create
 sm3/test/test_ddl.cc       the rest of the DDL
 sm3/test/test_overlay.cc   the overlay: visibility, rollback, abort
 sm3/test/test_lock.cc      schema locks, and publishing under them
+src/sm.cc                  the C API: sm_cat_*, a catalog per database
+rel/test/test_catalog.rel  DDL through the C API, end to end
 ```
+
+The C API (`include/sm.h`) keeps each database's catalog in its
+`sm_env_t`, made by `sm_mkdb` and loaded by the first
+`sm_opendb`, and an sm3 session in each `sm_session_t`, so its
+transaction calls keep the overlay in step. `sm_cat_*` are the
+calls above that `rel` needs: look up a table or index, lock a
+table and read its definition as plain C structs, and create
+and drop tables and indexes. `rel` keeps no catalog of its own.
 
 ---
 
@@ -297,8 +313,6 @@ Settled, and next in this order:
    (`DESIGN.md` §5, `sm1/SM1_DESIGN.md` §11.3); its definition
    lives only in the session's own temporary catalog, in the
    session's temporary namespace, never written to store 0.
-3. **`rel` on sm3.** The `rel` driver's own catalog
-   (`rel/src/rel_catalog.cc`) gives way to this one.
 
 Open: namespaces beyond the two built in (`CREATE SCHEMA` is a
 `NAMESPACE` blob and a `NAME` key; search paths are the SQL

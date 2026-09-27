@@ -193,11 +193,12 @@ int sm_abort_prepared(sm_session_t* session, const char* gid);
 void sm_free(void* p);
 
 /*
- * ---- scaffolding: until sm3's catalog ----
+ * ---- scaffolding: stores and sequences, below the catalog ----
  *
- * These exist so a table can be made and opened before sm3 does
- * it by name (DESIGN.md section 1). They will be replaced by
- * opening through sm3's catalog; the row calls will not change.
+ * A table is made with sm_cat_create_table, which makes its
+ * store and sequence; these make them without the catalog, for
+ * tests of the levels below (DESIGN.md section 1). They go when
+ * sm3 opens tables itself; the row calls will not change.
  */
 
 /* Create a store in the active transaction. */
@@ -351,7 +352,7 @@ typedef struct sm_rel_t sm_rel_t;
 typedef struct sm_rel_scan_t sm_rel_scan_t;
 
 /*
- * Scaffolding, until sm3's catalog: open a heap rel over storeid
+ * Scaffolding, until sm3 opens tables: open a heap rel over storeid
  * through session, rows under prefix, laid out by the n
  * attributes of schema, each new rowno drawn from the sequence
  * rowno_seq. schema is copied; the caller may free it at once.
@@ -460,7 +461,7 @@ typedef struct sm_idx_t sm_idx_t;
 typedef struct sm_idx_scan_t sm_idx_scan_t;
 
 /*
- * Scaffolding, until sm3's catalog: open an index over storeid
+ * Scaffolding, until sm3 opens tables: open an index over storeid
  * through session, under prefix, keyed by the nkey columns of
  * key, unique or not, with the ninclude INCLUDE attributes of
  * include. Both are copied; the caller may free them at once.
@@ -518,6 +519,130 @@ int sm_idx_decode(sm_idx_t* idx, const void* value, size_t len,
 /* Every attribute of an entry's value, as sm_rel_deform; n is sm_idx_ncols. */
 int sm_idx_deform(sm_idx_t* idx, const void* value, size_t len,
                   sm_datum_t* values, bool* isnull, size_t n);
+
+/* ---- the catalog: sm3's ---- */
+
+/* sm1's lock modes, Gray's five (sm1::lockmode_t). */
+typedef enum sm_lockmode_t {
+    SM_LOCK_SHARED                  = 0,
+    SM_LOCK_EXCLUSIVE               = 1,
+    SM_LOCK_INTENT_SHARED           = 2,
+    SM_LOCK_INTENT_EXCLUSIVE        = 3,
+    SM_LOCK_SHARED_INTENT_EXCLUSIVE = 4
+} sm_lockmode_t;
+
+/* The built-in namespaces' oids (sm3::nsp_pg_catalog, nsp_public). */
+#define SM_NSP_PG_CATALOG 1
+#define SM_NSP_PUBLIC     2
+
+/* A column, as a table is created with it. */
+typedef struct sm_column_spec_t {
+    const char* name;
+    uint8_t     type_code;  /* sm2/TYPE.md section 3 */
+    int32_t     typmod;
+    bool        not_null;
+} sm_column_spec_t;
+
+/* A key column, as an index is created with it; no collation yet. */
+typedef struct sm_index_key_spec_t {
+    int32_t attnum;         /* the column's 0-based place */
+    bool    desc;
+    bool    nulls_first;
+} sm_index_key_spec_t;
+
+/* A column of a table definition. */
+typedef struct sm_column_def_t {
+    const char* name;
+    uint8_t     type_code;
+    int32_t     typmod;
+    bool        not_null;
+    bool        dropped;
+} sm_column_def_t;
+
+/*
+ * An index of a table definition: its key and INCLUDE columns,
+ * by 0-based place in the table and as sm_idx_open takes them.
+ */
+typedef struct sm_index_def_t {
+    uint64_t               oid;
+    const char*            name;
+    uint16_t               prefix;
+    bool                   unique;
+    size_t                 nkey;
+    const int32_t*         key_attnums;
+    const sm_key_column_t* key;
+    size_t                 ninclude;
+    const int32_t*         include_attnums;
+    const sm_attribute_t*  include;
+} sm_index_def_t;
+
+/*
+ * A table definition, as sm_rel_open and sm_idx_open take it:
+ * natts columns, with schema their attributes, and nindex
+ * indexes. Every pointer in it is valid until sm_cat_table_free.
+ */
+typedef struct sm_table_def_t {
+    uint64_t               oid;
+    uint64_t               nspoid;
+    const char*            name;
+    uint64_t               storeid;
+    const char*            rowno_seq;
+    size_t                 natts;
+    const sm_column_def_t* columns;
+    const sm_attribute_t*  schema;
+    size_t                 nindex;
+    const sm_index_def_t*  indexes;
+} sm_table_def_t;
+
+/*
+ * The oid of the table named name in nspoid, as the session's
+ * transaction sees it: 0, or 1 if there is none. It takes no
+ * lock: sm_cat_lock_table then finds a table dropped since.
+ */
+int sm_cat_table_oid(sm_session_t* session, uint64_t nspoid,
+                     const char* name, uint64_t* oid);
+
+/* The index named name in nspoid, and its table: 0, or 1 if none. */
+int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
+                     const char* name, uint64_t* table, uint64_t* index);
+
+/*
+ * Take the schema lock of the table oid in mode, to the end of the
+ * transaction -- SM_LOCK_INTENT_SHARED to read its rows,
+ * SM_LOCK_INTENT_EXCLUSIVE to write them -- and hand out its
+ * definition, which cannot change until then. A table dropped
+ * while the caller waited is SM_ERR_NOTFOUND.
+ */
+int sm_cat_lock_table(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
+                      sm_table_def_t** out);
+
+/* Free a definition sm_cat_lock_table handed out; NULL is a no-op. */
+void sm_cat_table_free(sm_table_def_t* def);
+
+/*
+ * Create the table name in nspoid with n columns: its store, its
+ * rowno sequence and its definition, seen by the session's
+ * transaction at once and by others at commit.
+ */
+int sm_cat_create_table(sm_session_t* session, uint64_t nspoid,
+                        const char* name, const sm_column_spec_t* columns,
+                        size_t n, uint64_t* oid);
+
+/* Drop the table oid: its store, rows, indexes and sequence. */
+int sm_cat_drop_table(sm_session_t* session, uint64_t oid);
+
+/*
+ * Create the index name on the table, keyed by nkey key columns,
+ * with ninclude INCLUDE columns by 0-based place. It records the
+ * index only: filling it from the table's rows is the caller's.
+ */
+int sm_cat_create_index(sm_session_t* session, uint64_t table,
+                        const char* name, const sm_index_key_spec_t* keys,
+                        size_t nkey, const int32_t* includes, size_t ninclude,
+                        bool unique, uint64_t* oid);
+
+/* Drop the index oid of the table, and its entries. */
+int sm_cat_drop_index(sm_session_t* session, uint64_t table, uint64_t index);
 
 #ifdef __cplusplus
 }

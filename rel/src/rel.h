@@ -42,25 +42,36 @@ struct include_col_def_t {
   int32_t typmod;
 };
 
-/* Definition of an index. */
+/*
+ * An index of a table a statement opened: as sm3's catalog
+ * defines it, and its handle once opened.
+ */
 struct index_def_t {
   std::string name;
-  std::string table_name;
-  uint16_t prefix = 0;
   bool unique = false;
   std::vector<key_col_def_t> keys;
   std::vector<include_col_def_t> includes;
+  const sm_index_def_t *def = nullptr;
+  sm_idx_t *idx = nullptr;
 };
 
-/* Definition of a table. */
+/*
+ * A table a statement opened, under its schema lock: sm3's
+ * definition, rel's view of its columns and indexes, and its
+ * handle once opened. The session keeps it until its next
+ * statement begins.
+ */
 struct table_def_t {
   std::string name;
-  std::string db_name;
-  uint64_t storeid = 0;
-  std::string seq_name;
-  uint16_t next_prefix = 1;
+  sm_table_def_t *def = nullptr;
+  sm_rel_t *rel = nullptr;
   std::vector<col_def_t> columns;
   std::map<std::string, index_def_t> indexes;
+
+  table_def_t() = default;
+  table_def_t(const table_def_t &) = delete;
+  table_def_t &operator=(const table_def_t &) = delete;
+  ~table_def_t();
 };
 
 /*
@@ -80,8 +91,7 @@ struct session_ctx_t {
   std::string name;
   std::string db_name;
   sm_session_t *session = nullptr;
-  std::map<std::string, sm_rel_t *> open_tables;
-  std::map<std::string, sm_idx_t *> open_indexes;
+  std::vector<std::unique_ptr<table_def_t>> stmt_tables; /* this statement's */
 };
 
 /* The global catalog tracking environment, sessions and active state. */
@@ -109,18 +119,20 @@ public:
   session_ctx_t *active_session();
   session_ctx_t *get_session(const std::string &name);
 
-  /* Database-level Table & Index Catalog. */
-  table_def_t *find_table(const std::string &db_name,
-                          const std::string &table_name);
-  void add_table(const std::string &db_name, table_def_t tdef);
-  void remove_table(const std::string &db_name, const std::string &table_name);
+  /*
+   * Tables, from sm3's catalog in the session's transaction: the
+   * table name in public, or nullptr if there is none, locked in
+   * mode and kept by the session for this statement; and the
+   * index name with its table, as {nullptr, nullptr} if none.
+   */
+  table_def_t *open_table(session_ctx_t *s, const std::string &name,
+                          sm_lockmode_t mode);
   std::pair<table_def_t *, index_def_t *>
-  find_index(const std::string &db_name, const std::string &idx_name);
-  void remove_index(const std::string &db_name, const std::string &idx_name);
+  open_index(session_ctx_t *s, const std::string &name, sm_lockmode_t mode);
 
-  /* Per-session handles. */
-  sm_rel_t *get_or_open_rel(session_ctx_t *s, const table_def_t &tdef);
-  sm_idx_t *get_or_open_idx(session_ctx_t *s, const index_def_t &idef,
+  /* Handles on a table the statement opened, opened once. */
+  sm_rel_t *get_or_open_rel(session_ctx_t *s, table_def_t &tdef);
+  sm_idx_t *get_or_open_idx(session_ctx_t *s, index_def_t &idef,
                             const table_def_t &tdef);
 
   /* Reset all state (closing sessions and detaching env). */
@@ -131,7 +143,6 @@ private:
   std::string m_env_path;
   std::map<std::string, session_ctx_t> m_sessions;
   std::string m_active_session;
-  std::map<std::string, std::map<std::string, table_def_t>> m_db_tables;
 };
 
 /* The sm_attribute_t schema of a table's columns. */

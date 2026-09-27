@@ -1,0 +1,90 @@
+# test_catalog.rel -- tables live in sm3's catalog: DDL is
+# transactional, private to its session until commit, and
+# survives a restart.
+
+(def test-dir "/tmp/wisr_rel_test_catalog")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "catdb")
+
+# True if running thunk fails.
+(defn fails? [thunk]
+  (try (do (thunk) false) ([err] true)))
+
+(session-open s1 "catdb")
+(session-open s2 "catdb")
+
+# 1. Abort undoes a table's creation.
+# 1.1 Create t and insert into it, then abort.
+# 1.2 In a new transaction, t is gone and its name is free.
+(session-use s1)
+(begin :rc)
+(table-create t (columns (x :int4)))
+(assert-eq (insert t [1]) 1)
+(abort)
+(begin :rc)
+(assert-eq (fails? (fn [] (read t 1))) true)
+(table-create t (columns (x :int4)))
+(commit)
+
+# 2. Rolling back to a savepoint undoes the DDL made after it.
+# 2.1 Set a savepoint, then create u and an index on t.
+# 2.2 Roll back to it: u and the index are gone, t is not.
+(begin :rc)
+(def sp (savepoint))
+(table-create u (columns (y :int4)))
+(index-create t_x (table t) (key (x :asc)) :unique false)
+(rollback sp)
+(forget sp)
+(assert-eq (fails? (fn [] (read u 1))) true)
+(assert-eq (fails? (fn [] (idx-scan t_x))) true)
+(assert-count 0 (scan t))
+(commit)
+
+# 3. A session's DDL is its own until it commits.
+# 3.1 s1 creates v and an index on it, uncommitted.
+# 3.2 s2 sees neither.
+# 3.3 s1 commits: s2 now writes v, and its index is kept.
+(begin :rc)
+(table-create v (columns (id :int4 :not-null) (name :text)))
+(index-create v_name (table v) (key (name :asc)) :unique true)
+(session-use s2)
+(begin :rc)
+(assert-eq (fails? (fn [] (insert v [1 "a"]))) true)
+(assert-eq (fails? (fn [] (idx-scan v_name))) true)
+(commit)
+(session-use s1)
+(commit)
+(session-use s2)
+(begin :rc)
+(def rv (insert v [1 "a"]))
+(assert-eq ((idx-scan v_name) 0) [rv false nil])
+(assert-eq (fails? (fn [] (insert v [2 "a"]))) true)
+(commit)
+
+# 4. A transaction that made DDL cannot be prepared.
+(begin :rc)
+(table-create w (columns (z :int4)))
+(assert-eq (fails? (fn [] (prepare "g1"))) true)
+(abort)
+
+# 5. Tables, their rows and their indexes survive a restart.
+# 5.1 Detach and reattach the home.
+# 5.2 v's row reads back, through the table and its index.
+# 5.3 w, which was never committed, is not there.
+(env-detach :force true)
+(env-attach test-dir)
+(db-open "catdb")
+(begin :rc)
+(assert-eq (read v rv) [1 "a"])
+(assert-eq ((idx-scan v_name :ge ["a"] :le ["a"]) 0) [rv false nil])
+(assert-eq (fails? (fn [] (read w 1))) true)
+(table-drop v)
+(table-drop t)
+(commit)
+
+(db-close)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_catalog.rel: PASSED")

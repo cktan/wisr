@@ -1,5 +1,6 @@
 /*
- * rel_catalog.cc -- session and table catalog tracking for rel.
+ * rel_catalog.cc -- rel's sessions, and the tables a statement opens
+ * from sm3's catalog.
  */
 
 #include "rel.h"
@@ -47,19 +48,7 @@ int catalog_t::env_detach(int force) {
   }
   // Close all open tables and sessions before detaching.
   for (auto &[sname, sctx] : m_sessions) {
-    for (auto &[iname, idx] : sctx.open_indexes) {
-      if (idx != nullptr) {
-        sm_idx_close(idx);
-      }
-    }
-    sctx.open_indexes.clear();
-
-    for (auto &[tname, rel] : sctx.open_tables) {
-      if (rel != nullptr) {
-        sm_rel_close(rel);
-      }
-    }
-    sctx.open_tables.clear();
+    sctx.stmt_tables.clear();
 
     if (sctx.session != nullptr) {
       sm_closedb(sctx.session);
@@ -68,7 +57,6 @@ int catalog_t::env_detach(int force) {
   }
   m_sessions.clear();
   m_active_session.clear();
-  m_db_tables.clear();
 
   // Detach from wisr environment.
   int rc = sm_detach(m_env, force);
@@ -122,19 +110,7 @@ int catalog_t::session_close(const std::string &name) {
     return 0;
   }
 
-  for (auto &[iname, idx] : it->second.open_indexes) {
-    if (idx != nullptr) {
-      sm_idx_close(idx);
-    }
-  }
-  it->second.open_indexes.clear();
-
-  for (auto &[tname, rel] : it->second.open_tables) {
-    if (rel != nullptr) {
-      sm_rel_close(rel);
-    }
-  }
-  it->second.open_tables.clear();
+  it->second.stmt_tables.clear();
 
   if (it->second.session != nullptr) {
     sm_closedb(it->second.session);
@@ -164,160 +140,123 @@ session_ctx_t *catalog_t::get_session(const std::string &name) {
   return &it->second;
 }
 
-/* Find a table definition within a database. */
-table_def_t *catalog_t::find_table(const std::string &db_name,
-                                   const std::string &table_name) {
-  auto db_it = m_db_tables.find(db_name);
-  if (db_it == m_db_tables.end()) {
-    return nullptr;
+/* Close a statement's table: its handles, then its definition. */
+table_def_t::~table_def_t() {
+  for (auto &[iname, idef] : indexes) {
+    sm_idx_close(idef.idx);
   }
-  auto t_it = db_it->second.find(table_name);
-  if (t_it == db_it->second.end()) {
-    return nullptr;
-  }
-  return &t_it->second;
+  sm_rel_close(rel);
+  sm_cat_table_free(def);
 }
 
-/* Add a table definition to a database. */
-void catalog_t::add_table(const std::string &db_name, table_def_t tdef) {
-  m_db_tables[db_name][tdef.name] = std::move(tdef);
-}
-
-/* Remove a table definition from a database. */
-void catalog_t::remove_table(const std::string &db_name,
-                             const std::string &table_name) {
-  // Close open handles across all sessions on this database.
-  for (auto &[sname, sctx] : m_sessions) {
-    if (sctx.db_name == db_name) {
-      auto rel_it = sctx.open_tables.find(table_name);
-      if (rel_it != sctx.open_tables.end()) {
-        if (rel_it->second != nullptr) {
-          sm_rel_close(rel_it->second);
-        }
-        sctx.open_tables.erase(rel_it);
-      }
+/* rel's view of a table sm3's catalog defines, as def gives it. */
+static std::unique_ptr<table_def_t> view_of(const std::string &name,
+                                            sm_table_def_t *def) {
+  auto t = std::make_unique<table_def_t>();
+  t->name = name;
+  t->def = def;
+  for (size_t i = 0; i < def->natts; i++) {
+    const sm_column_def_t &c = def->columns[i];
+    t->columns.push_back({c.name, c.type_code, c.typmod, c.not_null});
+  }
+  for (size_t i = 0; i < def->nindex; i++) {
+    const sm_index_def_t &x = def->indexes[i];
+    index_def_t idef;
+    idef.name = x.name;
+    idef.unique = x.unique;
+    idef.def = &x;
+    for (size_t j = 0; j < x.nkey; j++) {
+      const col_def_t &c = t->columns[x.key_attnums[j]];
+      key_col_def_t k;
+      k.col_idx = x.key_attnums[j];
+      k.type_code = c.type_code;
+      k.typmod = c.typmod;
+      k.collation = nullptr;
+      k.desc = x.key[j].desc;
+      k.nulls_first = x.key[j].nulls_first;
+      idef.keys.push_back(std::move(k));
     }
+    for (size_t j = 0; j < x.ninclude; j++) {
+      const col_def_t &c = t->columns[x.include_attnums[j]];
+      idef.includes.push_back({c.name,
+                               static_cast<size_t>(x.include_attnums[j]),
+                               c.type_code, c.typmod});
+    }
+    t->indexes[idef.name] = std::move(idef);
   }
-  auto db_it = m_db_tables.find(db_name);
-  if (db_it != m_db_tables.end()) {
-    db_it->second.erase(table_name);
-  }
+  return t;
 }
 
-/* Find an index definition within a database. */
+/* Lock the table oid in mode, and keep rel's view of it in s. */
+static table_def_t *lock_into(session_ctx_t *s, const std::string &name,
+                              uint64_t oid, sm_lockmode_t mode) {
+  sm_table_def_t *def = nullptr;
+  // The schema lock, held to the end of the transaction.
+  if (sm_cat_lock_table(s->session, oid, mode, &def) != 0) {
+    return nullptr;
+  }
+  s->stmt_tables.push_back(view_of(name, def));
+  return s->stmt_tables.back().get();
+}
+
+/* Open the table name in public, locked in mode; nullptr if none. */
+table_def_t *catalog_t::open_table(session_ctx_t *s, const std::string &name,
+                                   sm_lockmode_t mode) {
+  uint64_t oid = 0;
+  if (sm_cat_table_oid(s->session, SM_NSP_PUBLIC, name.c_str(), &oid) != 0) {
+    return nullptr;
+  }
+  return lock_into(s, name, oid, mode);
+}
+
+/* Open the index name's table, locked in mode, and find the index. */
 std::pair<table_def_t *, index_def_t *>
-catalog_t::find_index(const std::string &db_name, const std::string &idx_name) {
-  auto db_it = m_db_tables.find(db_name);
-  if (db_it == m_db_tables.end()) {
+catalog_t::open_index(session_ctx_t *s, const std::string &name,
+                      sm_lockmode_t mode) {
+  uint64_t table = 0, index = 0;
+  if (sm_cat_index_oid(s->session, SM_NSP_PUBLIC, name.c_str(), &table,
+                       &index) != 0) {
     return {nullptr, nullptr};
   }
-  for (auto &[tname, tdef] : db_it->second) {
-    auto i_it = tdef.indexes.find(idx_name);
-    if (i_it != tdef.indexes.end()) {
-      return {&tdef, &i_it->second};
-    }
+  table_def_t *t = lock_into(s, "", table, mode);
+  if (t == nullptr) {
+    return {nullptr, nullptr};
   }
-  return {nullptr, nullptr};
+  t->name = t->def->name;
+  auto it = t->indexes.find(name);
+  if (it == t->indexes.end()) {
+    return {nullptr, nullptr};
+  }
+  return {t, &it->second};
 }
 
-/* Remove an index definition from a database. */
-void catalog_t::remove_index(const std::string &db_name,
-                             const std::string &idx_name) {
-  for (auto &[sname, sctx] : m_sessions) {
-    if (sctx.db_name == db_name) {
-      auto idx_it = sctx.open_indexes.find(idx_name);
-      if (idx_it != sctx.open_indexes.end()) {
-        if (idx_it->second != nullptr) {
-          sm_idx_close(idx_it->second);
-        }
-        sctx.open_indexes.erase(idx_it);
-      }
-    }
-  }
-  auto [p_tdef, p_idef] = find_index(db_name, idx_name);
-  if (p_tdef != nullptr) {
-    p_tdef->indexes.erase(idx_name);
-  }
-}
-
-/* The sm_attribute_t schema of a table's columns. */
+/* The sm_attribute_t schema of a table's columns, as sm3 defines it. */
 std::vector<sm_attribute_t> attributes_of(const table_def_t &tdef) {
-  std::vector<sm_attribute_t> schema;
-  schema.reserve(tdef.columns.size());
-  for (const auto &col : tdef.columns) {
-    sm_attribute_t attr;
-    attr.type = sm_type(col.type_code);
-    attr.typmod = col.typmod;
-    attr.dropped = false;
-    attr.has_missing = false;
-    attr.missing = nullptr;
-    attr.missing_len = 0;
-    schema.push_back(attr);
-  }
-  return schema;
+  return std::vector<sm_attribute_t>(tdef.def->schema,
+                                     tdef.def->schema + tdef.def->natts);
 }
 
-/* Retrieve or lazily open the relation handle for a table on this session. */
-sm_rel_t *catalog_t::get_or_open_rel(session_ctx_t *s,
-                                     const table_def_t &tdef) {
-  auto it = s->open_tables.find(tdef.name);
-  if (it != s->open_tables.end() && it->second != nullptr) {
-    return it->second;
-  }
-
-  std::vector<sm_attribute_t> schema = attributes_of(tdef);
-
-  sm_rel_t *rel = nullptr;
-  if (sm_rel_open(s->session, tdef.storeid, 0, schema.data(), schema.size(),
-                  tdef.seq_name.c_str(), &rel) != 0) {
+/* The statement's handle on a table, opened on first use. */
+sm_rel_t *catalog_t::get_or_open_rel(session_ctx_t *s, table_def_t &tdef) {
+  if (tdef.rel == nullptr &&
+      sm_rel_open(s->session, tdef.def->storeid, 0, tdef.def->schema,
+                  tdef.def->natts, tdef.def->rowno_seq, &tdef.rel) != 0) {
     return nullptr;
   }
-  s->open_tables[tdef.name] = rel;
-  return rel;
+  return tdef.rel;
 }
 
-/* Retrieve or lazily open the index handle for an index on this session. */
-sm_idx_t *catalog_t::get_or_open_idx(session_ctx_t *s, const index_def_t &idef,
+/* The statement's handle on an index, opened on first use. */
+sm_idx_t *catalog_t::get_or_open_idx(session_ctx_t *s, index_def_t &idef,
                                      const table_def_t &tdef) {
-  auto it = s->open_indexes.find(idef.name);
-  if (it != s->open_indexes.end() && it->second != nullptr) {
-    return it->second;
-  }
-
-  std::vector<sm_key_column_t> sm_keys;
-  sm_keys.reserve(idef.keys.size());
-  for (const auto &k : idef.keys) {
-    sm_key_column_t sm_k;
-    sm_k.type = sm_type(k.type_code);
-    sm_k.typmod = k.typmod;
-    sm_k.collation = nullptr;
-    sm_k.desc = k.desc;
-    sm_k.nulls_first = k.nulls_first;
-    sm_keys.push_back(sm_k);
-  }
-
-  std::vector<sm_attribute_t> sm_includes;
-  sm_includes.reserve(idef.includes.size());
-  for (const auto &inc : idef.includes) {
-    sm_attribute_t sm_inc;
-    sm_inc.type = sm_type(inc.type_code);
-    sm_inc.typmod = inc.typmod;
-    sm_inc.dropped = false;
-    sm_inc.has_missing = false;
-    sm_inc.missing = nullptr;
-    sm_inc.missing_len = 0;
-    sm_includes.push_back(sm_inc);
-  }
-
-  sm_idx_t *idx = nullptr;
-  if (sm_idx_open(s->session, tdef.storeid, idef.prefix, sm_keys.data(),
-                  sm_keys.size(), idef.unique,
-                  sm_includes.empty() ? nullptr : sm_includes.data(),
-                  sm_includes.size(), &idx) != 0) {
+  const sm_index_def_t *x = idef.def;
+  if (idef.idx == nullptr &&
+      sm_idx_open(s->session, tdef.def->storeid, x->prefix, x->key, x->nkey,
+                  x->unique, x->ninclude ? x->include : nullptr, x->ninclude,
+                  &idef.idx) != 0) {
     return nullptr;
   }
-  s->open_indexes[idef.name] = idx;
-  return idx;
+  return idef.idx;
 }
 
 /* Reset all environment and session state. */

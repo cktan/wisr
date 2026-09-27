@@ -48,6 +48,8 @@ static session_ctx_t *require_session() {
   if (s == nullptr || s->session == nullptr) {
     janet_panic("no active database session; call (db-open ...) first");
   }
+  // A new statement: the last one's tables are closed.
+  s->stmt_tables.clear();
   return s;
 }
 
@@ -63,6 +65,35 @@ static sm_env_t *require_env() {
 /* Fail with last sm_ error. */
 [[noreturn]] static void panic_sm_error(const char *action) {
   janet_panicf("%s failed: [%s] %s", action, sm_errname(), sm_errmsg());
+}
+
+/* The table name for op, locked in mode; a panic if none, or on error. */
+static table_def_t *need_table(session_ctx_t *s, const std::string &name,
+                               sm_lockmode_t mode, const char *op) {
+  sm_reseterr();
+  table_def_t *t = get_catalog().open_table(s, name, mode);
+  if (t == nullptr) {
+    if (sm_errnum() != SM_OK) {
+      panic_sm_error(op);
+    }
+    janet_panicf("%s: table '%s' not found", op, name.c_str());
+  }
+  return t;
+}
+
+/* The index name and its table for op, locked in mode, as need_table. */
+static std::pair<table_def_t *, index_def_t *>
+need_index(session_ctx_t *s, const std::string &name, sm_lockmode_t mode,
+           const char *op) {
+  sm_reseterr();
+  auto found = get_catalog().open_index(s, name, mode);
+  if (found.first == nullptr) {
+    if (sm_errnum() != SM_OK) {
+      panic_sm_error(op);
+    }
+    janet_panicf("%s: index '%s' not found", op, name.c_str());
+  }
+  return found;
 }
 
 /* (env-init path) */
@@ -388,8 +419,7 @@ static Janet cfun_table_create(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
 
-  table_def_t tdef;
-  tdef.name = tbl_name;
+  std::vector<col_def_t> columns;
 
   std::vector<Janet> clauses;
   if (argc == 2 && (janet_checktype(argv[1], JANET_TUPLE) ||
@@ -471,39 +501,25 @@ static Janet cfun_table_create(int32_t argc, Janet *argv) {
                        "column '%s'",
                        type_name_of(c.type_code), c.name.c_str());
         }
-        tdef.columns.push_back(std::move(c));
+        columns.push_back(std::move(c));
       }
     }
   }
 
-  if (tdef.columns.empty()) {
+  if (columns.empty()) {
     janet_panic("table-create: table must have at least one column");
   }
 
-  // 1. Allocate a store for the table.
-  if (sm_mkstore(s->session, &tdef.storeid) != 0) {
-    panic_sm_error("table-create sm_mkstore");
+  // sm3 makes its store, rowno sequence and catalog entry.
+  std::vector<sm_column_spec_t> specs;
+  for (const col_def_t &c : columns) {
+    specs.push_back({c.name.c_str(), c.type_code, c.typmod, c.not_null});
   }
-
-  // 2. Allocate a sequence for row numbers.
-  tdef.seq_name = tdef.name + "_rowno";
-  if (sm_mkseq(s->session, tdef.seq_name.c_str(), 1, 1) != 0) {
-    panic_sm_error("table-create sm_mkseq");
+  uint64_t oid = 0;
+  if (sm_cat_create_table(s->session, SM_NSP_PUBLIC, tbl_name.c_str(),
+                          specs.data(), specs.size(), &oid) != 0) {
+    panic_sm_error("table-create");
   }
-
-  tdef.db_name = s->db_name;
-  get_catalog().add_table(s->db_name, std::move(tdef));
-
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panic("table-create: failed to register table in catalog");
-  }
-
-  // Pre-open relation handle on this session
-  if (get_catalog().get_or_open_rel(s, *p_tdef) == nullptr) {
-    panic_sm_error("table-create sm_rel_open");
-  }
-
   return janet_wrap_nil();
 }
 
@@ -513,22 +529,15 @@ static Janet cfun_table_drop(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
 
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
+  uint64_t oid = 0;
+  int rc = sm_cat_table_oid(s->session, SM_NSP_PUBLIC, tbl_name.c_str(), &oid);
+  if (rc == 1) {
     janet_panicf("table-drop: table '%s' does not exist", tbl_name.c_str());
   }
-
-  uint64_t storeid = p_tdef->storeid;
-  std::string seq_name = p_tdef->seq_name;
-
-  // remove_table closes open handles across all sessions and erases from
-  // catalog
-  get_catalog().remove_table(s->db_name, tbl_name);
-
-  // Drop sequence and store
-  sm_rmseq(s->session, seq_name.c_str());
-  sm_rmstore(s->session, storeid);
-
+  // Its store, rows, indexes and rowno sequence go with it.
+  if (rc != 0 || sm_cat_drop_table(s->session, oid) != 0) {
+    panic_sm_error("table-drop");
+  }
   return janet_wrap_nil();
 }
 
@@ -712,13 +721,9 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
     janet_panic("index-create: (table <table_name>) clause is required");
   }
 
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panicf("index-create: table '%s' not found", tbl_name.c_str());
-  }
-
-  idef.table_name = tbl_name;
-  idef.prefix = p_tdef->next_prefix++;
+  // X, as the DDL takes it: the columns cannot change under us.
+  table_def_t *p_tdef =
+      need_table(s, tbl_name, SM_LOCK_EXCLUSIVE, "index-create");
 
   // Resolve key columns against table schema.
   for (auto &k : idef.keys) {
@@ -758,17 +763,21 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
     }
   }
 
-  std::string iname = idef.name;
-  p_tdef->indexes[iname] = std::move(idef);
-
-  // Open index relation handle for current session.
-  sm_idx_t *idx =
-      get_catalog().get_or_open_idx(s, p_tdef->indexes[iname], *p_tdef);
-  if (idx == nullptr) {
-    p_tdef->indexes.erase(iname);
-    panic_sm_error("index-create sm_idx_open");
+  // sm3 records it, under the table's next prefix.
+  std::vector<sm_index_key_spec_t> keys;
+  for (const key_col_def_t &k : idef.keys) {
+    keys.push_back({static_cast<int32_t>(k.col_idx), k.desc, k.nulls_first});
   }
-
+  std::vector<int32_t> includes;
+  for (const include_col_def_t &inc : idef.includes) {
+    includes.push_back(static_cast<int32_t>(inc.col_idx));
+  }
+  uint64_t oid = 0;
+  if (sm_cat_create_index(s->session, p_tdef->def->oid, idx_name.c_str(),
+                          keys.data(), keys.size(), includes.data(),
+                          includes.size(), idef.unique, &oid) != 0) {
+    panic_sm_error("index-create");
+  }
   return janet_wrap_nil();
 }
 
@@ -778,12 +787,15 @@ static Janet cfun_index_drop(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   std::string idx_name = identifier_of(argv[0]);
 
-  auto [p_tdef, p_idef] = get_catalog().find_index(s->db_name, idx_name);
-  if (p_tdef == nullptr || p_idef == nullptr) {
+  uint64_t table = 0, index = 0;
+  int rc = sm_cat_index_oid(s->session, SM_NSP_PUBLIC, idx_name.c_str(), &table,
+                            &index);
+  if (rc == 1) {
     janet_panicf("index-drop: index '%s' not found", idx_name.c_str());
   }
-
-  get_catalog().remove_index(s->db_name, idx_name);
+  if (rc != 0 || sm_cat_drop_index(s->session, table, index) != 0) {
+    panic_sm_error("index-drop");
+  }
   return janet_wrap_nil();
 }
 
@@ -808,10 +820,8 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
 
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panicf("insert: table '%s' not found", tbl_name.c_str());
-  }
+  table_def_t *p_tdef =
+      need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "insert");
   sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
   if (rel == nullptr) {
     panic_sm_error("insert get_or_open_rel");
@@ -905,10 +915,7 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panicf("read: table '%s' not found", tbl_name.c_str());
-  }
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "read");
   sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
   if (rel == nullptr) {
     panic_sm_error("read get_or_open_rel");
@@ -947,10 +954,8 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panicf("read-latest: table '%s' not found", tbl_name.c_str());
-  }
+  table_def_t *p_tdef =
+      need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "read-latest");
   sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
   if (rel == nullptr) {
     panic_sm_error("read-latest get_or_open_rel");
@@ -989,10 +994,8 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panicf("update: table '%s' not found", tbl_name.c_str());
-  }
+  table_def_t *p_tdef =
+      need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "update");
   sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
   if (rel == nullptr) {
     panic_sm_error("update get_or_open_rel");
@@ -1101,10 +1104,8 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panicf("delete: table '%s' not found", tbl_name.c_str());
-  }
+  table_def_t *p_tdef =
+      need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "delete");
   sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
   if (rel == nullptr) {
     panic_sm_error("delete get_or_open_rel");
@@ -1200,10 +1201,7 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
     }
   }
 
-  table_def_t *p_tdef = get_catalog().find_table(s->db_name, tbl_name);
-  if (p_tdef == nullptr) {
-    janet_panicf("scan: table '%s' not found", tbl_name.c_str());
-  }
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "scan");
   sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
   if (rel == nullptr) {
     panic_sm_error("scan get_or_open_rel");
@@ -1250,10 +1248,8 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   std::string idx_name = identifier_of(argv[0]);
 
-  auto [p_tdef, p_idef] = get_catalog().find_index(s->db_name, idx_name);
-  if (p_tdef == nullptr || p_idef == nullptr) {
-    janet_panicf("idx-scan: index '%s' not found", idx_name.c_str());
-  }
+  auto [p_tdef, p_idef] =
+      need_index(s, idx_name, SM_LOCK_INTENT_SHARED, "idx-scan");
   sm_idx_t *idx = get_catalog().get_or_open_idx(s, *p_idef, *p_tdef);
   if (idx == nullptr) {
     panic_sm_error("idx-scan get_or_open_idx");
