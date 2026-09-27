@@ -3,8 +3,10 @@
  * PostgreSQL to call (DESIGN.md sections 1 and 5).
  *
  * Every call is the sm1, sm2 or sm3 call of the same name with
- * sm_ in front, given a C signature: sm_commit is sm1::commit.
- * The top level adds no notion of its own.
+ * sm_ in front, given a C signature: sm_commit is sm3::commit,
+ * which is sm1::commit that also publishes the transaction's DDL.
+ * The top level adds no notion of its own: it keeps each
+ * database's sm3 catalog, and each session's sm3 session.
  *
  * Conventions that hold throughout:
  *
@@ -47,10 +49,16 @@
 extern "C" {
 #endif
 
-/* An attached home directory: sm1::env_t. */
+/*
+ * An attached home directory: sm1::env_t, and the sm3 catalog of
+ * each database opened, shared by its sessions.
+ */
 typedef struct sm_env_t sm_env_t;
 
-/* One database session: sm1::session_t. */
+/*
+ * One database session: an sm3::session_t over an sm1::session_t,
+ * so the transaction calls keep its DDL's overlay in step.
+ */
 typedef struct sm_session_t sm_session_t;
 
 /* ---- errors: sm1's thread-local error state ---- */
@@ -102,16 +110,22 @@ int sm_attach(const char* homedir, sm_env_t** out);
 /* Detach env; force != 0 closes its open sessions first. */
 int sm_detach(sm_env_t* env, int force);
 
-/* Create database dbname; opt NULL means the defaults. */
+/*
+ * Create database dbname and its catalog (sm3::cat_init); opt
+ * NULL means the defaults.
+ */
 int sm_mkdb(sm_env_t* env, const char* dbname, const sm_options_t* opt);
 
-/* Drop database dbname. */
+/* Drop database dbname, and its catalog in memory. */
 int sm_rmdb(sm_env_t* env, const char* dbname);
 
 /* List the databases: *names holds *n strings; sm_free(*names). */
 int sm_lsdb(sm_env_t* env, char*** names, size_t* n);
 
-/* Open a session on dbname; opt NULL means the defaults. */
+/*
+ * Open a session on dbname; opt NULL means the defaults. The
+ * first session on a database loads its catalog (sm3::cat_open).
+ */
 int sm_opendb(sm_env_t* env, const char* dbname, const sm_options_t* opt,
               sm_session_t** out);
 
@@ -153,7 +167,10 @@ int sm_forget(sm_session_t* session, int depth);
 
 /* ---- two-phase commit ---- */
 
-/* Prepare the active transaction under the global id gid. */
+/*
+ * Prepare the active transaction under the global id gid. One that
+ * made DDL is refused with SM_ERR_INVALID (sm3::prepare).
+ */
 int sm_prepare(sm_session_t* session, const char* gid);
 
 /* One unresolved prepared transaction. */

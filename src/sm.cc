@@ -1,5 +1,5 @@
 /*
- * sm.cc -- wisr's C API over sm1 and sm2 (include/sm.h).
+ * sm.cc -- wisr's C API over sm1, sm2 and sm3 (include/sm.h).
  *
  * Each entry point converts its arguments, calls the level below
  * inside guard(), and converts the results back. guard() is the
@@ -11,13 +11,17 @@
 
 #include "sm1.h"
 #include "sm2.h"
+#include "sm3.h"
 
 #include <bit>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <map>
+#include <mutex>
 #include <new>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -39,17 +43,39 @@ static_assert(static_cast<int>(sm1::loglevel_t::info) == SM_LOG_INFO);
  */
 static_assert(std::endian::native == std::endian::little);
 
+struct sm_session_t;
+
+/*
+ * An environment as the wrapper holds it: sm1's, and the catalog
+ * of each database a session has opened, loaded by the first and
+ * shared by every session on it until detach or rmdb. mu guards
+ * the catalogs and the sessions.
+ */
+struct sm_env_t {
+  sm1::env_t *env;
+  std::mutex mu;
+  std::map<std::string, sm3::catalog_t *, std::less<>> catalogs;
+  std::set<sm_session_t *> sessions;
+};
+
+/*
+ * A session as the wrapper holds it: an sm3 session, over the sm1
+ * one, whose transaction calls go through sm3 so its overlay of
+ * DDL stays in step (sm3/CATALOG.md §4).
+ */
+struct sm_session_t {
+  sm_env_t *env;
+  sm1::session_t *sm1;
+  sm3::session_t *sm3 = nullptr;
+};
+
 namespace {
 
 /* The sm1 environment behind a C handle. */
-sm1::env_t *env_of(sm_env_t *env) {
-  return reinterpret_cast<sm1::env_t *>(env);
-}
+sm1::env_t *env_of(sm_env_t *env) { return env->env; }
 
 /* The sm1 session behind a C handle. */
-sm1::session_t *session_of(sm_session_t *session) {
-  return reinterpret_cast<sm1::session_t *>(session);
-}
+sm1::session_t *session_of(sm_session_t *session) { return session->sm1; }
 
 /* A C name as a view; NULL is the empty name, which sm1 refuses. */
 std::string_view name_of(const char *name) {
@@ -71,7 +97,7 @@ thread_local char t_kept[4096 + 256];
  * engine has already aborted, and must not replace the error the
  * caller gets. A prepared transaction in doubt is left alone.
  */
-void abort_keeping_error(sm1::session_t *session) {
+void abort_keeping_error(sm_session_t *session) {
   // Keep the code and a copy of the message; nothing allocates.
   sm1::errnum_t code = sm1::errnum();
   const char *msg = sm1::errmsg();
@@ -83,10 +109,21 @@ void abort_keeping_error(sm1::session_t *session) {
   t_kept[n] = '\0';
   // Abort in memory: it undoes what a half-done call wrote. A
   // prepared transaction is the coordinator's, never ours to undo.
-  if (!sm1::in_doubt(session)) {
-    sm1::abort(session);
+  if (!sm1::in_doubt(session->sm1)) {
+    sm3::abort(session->sm3);
   }
   sm1::seterr(code, std::string_view(t_kept, n));
+}
+
+/*
+ * Run fn, a cleanup after a failure, keeping the calling thread's
+ * error as it was: the error the caller gets is the failure's.
+ */
+template <class F> void keeping_error(F &&fn) {
+  sm1::errnum_t code = sm1::errnum();
+  std::string msg = sm1::errmsg();
+  fn();
+  sm1::seterr(code, msg);
 }
 
 /*
@@ -95,7 +132,7 @@ void abort_keeping_error(sm1::session_t *session) {
  * after either, from fn or from below, session's transaction is
  * aborted, since a data call may have written part of its change.
  */
-template <class F> int guard(sm1::session_t *session, F &&fn) noexcept {
+template <class F> int guard(sm_session_t *session, F &&fn) noexcept {
   int rc;
   try {
     rc = fn();
@@ -217,7 +254,7 @@ void view_out(std::string_view v, const void **data, size_t *len) {
  * layout, built once.
  */
 struct sm_rel_t {
-  sm1::session_t *session;
+  sm_session_t *session;
   std::vector<sm2::attribute_t> schema;
   sm2::tup_desc_t desc; /* over schema */
   sm2::rel_t *rel = nullptr;
@@ -229,7 +266,7 @@ struct sm_rel_t {
  * value's layout, built once.
  */
 struct sm_idx_t {
-  sm1::session_t *session;
+  sm_session_t *session;
   std::vector<sm2::key_column_t> key;
   std::vector<sm2::attribute_t> include;
   sm2::index_t *index = nullptr;
@@ -309,31 +346,83 @@ int sm_attach(const char *homedir, sm_env_t **out) {
     if (sm1::attach(name_of(homedir), env) != 0) {
       return -1;
     }
-    *out = reinterpret_cast<sm_env_t *>(env);
+    *out = new sm_env_t{env, {}, {}, {}};
     return 0;
   });
 }
 
-/* Detach env. */
+/*
+ * Detach env. Once sm1 has, the sessions it closed and the
+ * catalogs are freed with the handle.
+ */
 int sm_detach(sm_env_t *env, int force) {
-  return guard(nullptr, [&] { return sm1::detach(env_of(env), force); });
+  return guard(nullptr, [&] {
+    if (env == nullptr) {
+      return 0;
+    }
+    // Detach: closes the databases and stops sm1's threads.
+    if (sm1::detach(env->env, force) != 0) {
+      return -1;
+    }
+    for (sm_session_t *s : env->sessions) {
+      sm3::session_close(s->sm3);
+      delete s;
+    }
+    for (auto &[name, cat] : env->catalogs) {
+      sm3::cat_close(cat);
+    }
+    delete env;
+    return 0;
+  });
 }
 
-/* Create dbname, with opt's options or the defaults. */
+/*
+ * Create dbname, with opt's options or the defaults, and its
+ * catalog; a database whose catalog cannot be made is removed.
+ */
 int sm_mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
   return guard(nullptr, [&] {
     sm1::options_t o;
     if (opt != nullptr) {
       static_cast<sm_options_t &>(o) = *opt;
     }
-    return sm1::mkdb(env_of(env), name_of(dbname), &o);
+    if (sm1::mkdb(env->env, name_of(dbname), &o) != 0) {
+      return -1;
+    }
+    // Make the catalog in a transaction of its own.
+    sm1::session_t *s = nullptr;
+    int rc = sm1::opendb(env->env, name_of(dbname), s, &o);
+    if (rc == 0) {
+      rc = sm1::begin(s, sm1::xctlevel_t::read_committed) != 0 ||
+                   sm3::cat_init(s) != 0 || sm1::commit(s) != 0
+               ? -1
+               : 0;
+    }
+    if (rc != 0) {
+      keeping_error([&] {
+        sm1::closedb(s);
+        sm1::rmdb(env->env, name_of(dbname));
+      });
+      return -1;
+    }
+    return sm1::closedb(s);
   });
 }
 
-/* Drop dbname. */
+/* Drop dbname, and the catalog loaded for it. */
 int sm_rmdb(sm_env_t *env, const char *dbname) {
-  return guard(nullptr,
-               [&] { return sm1::rmdb(env_of(env), name_of(dbname)); });
+  return guard(nullptr, [&] {
+    if (sm1::rmdb(env->env, name_of(dbname)) != 0) {
+      return -1;
+    }
+    std::lock_guard lock(env->mu);
+    auto it = env->catalogs.find(name_of(dbname));
+    if (it != env->catalogs.end()) {
+      sm3::cat_close(it->second);
+      env->catalogs.erase(it);
+    }
+    return 0;
+  });
 }
 
 /* List the databases into one block. */
@@ -354,7 +443,10 @@ int sm_lsdb(sm_env_t *env, char ***names, size_t *n) {
   });
 }
 
-/* Open a session on dbname. */
+/*
+ * Open a session on dbname, over its catalog: the first session
+ * on the database loads it, in a transaction of its own.
+ */
 int sm_opendb(sm_env_t *env, const char *dbname, const sm_options_t *opt,
               sm_session_t **out) {
   return guard(nullptr, [&] {
@@ -362,39 +454,74 @@ int sm_opendb(sm_env_t *env, const char *dbname, const sm_options_t *opt,
     if (opt != nullptr) {
       static_cast<sm_options_t &>(o) = *opt;
     }
-    sm1::session_t *session = nullptr;
+    sm1::session_t *s = nullptr;
     // Open the session: the first one opens the database itself.
-    if (sm1::opendb(env_of(env), name_of(dbname), session, &o) != 0) {
+    if (sm1::opendb(env->env, name_of(dbname), s, &o) != 0) {
       return -1;
     }
-    *out = reinterpret_cast<sm_session_t *>(session);
+    // Held while loading, so two first sessions load it once.
+    std::lock_guard lock(env->mu);
+    auto it = env->catalogs.find(name_of(dbname));
+    sm3::catalog_t *cat = it == env->catalogs.end() ? nullptr : it->second;
+    sm_session_t *session = nullptr;
+    int rc = 0;
+    if (cat == nullptr) {
+      rc = sm1::begin(s, sm1::xctlevel_t::read_committed) != 0 ||
+                   sm3::cat_open(s, cat) != 0 || sm1::commit(s) != 0
+               ? -1
+               : 0;
+      if (rc == 0) {
+        env->catalogs.emplace(std::string(name_of(dbname)), cat);
+      }
+    }
+    if (rc == 0) {
+      session = new sm_session_t{env, s};
+      rc = sm3::session_open(cat, s, session->sm3);
+    }
+    if (rc != 0) {
+      delete session;
+      keeping_error([&] { sm1::closedb(s); });
+      return -1;
+    }
+    env->sessions.insert(session);
+    *out = session;
     return 0;
   });
 }
 
-/* Close a session. */
+/* Close a session: its overlay, then sm1's. */
 int sm_closedb(sm_session_t *session) {
-  return guard(nullptr, [&] { return sm1::closedb(session_of(session)); });
+  return guard(nullptr, [&] {
+    if (session == nullptr) {
+      return 0;
+    }
+    {
+      std::lock_guard lock(session->env->mu);
+      session->env->sessions.erase(session);
+    }
+    sm3::session_close(session->sm3);
+    int rc = sm1::closedb(session->sm1);
+    delete session;
+    return rc;
+  });
 }
 
 /* Begin a transaction at level. */
 int sm_begin(sm_session_t *session, sm_xctlevel_t level) {
-  sm1::session_t *s = session_of(session);
-  return guard(
-      s, [&] { return sm1::begin(s, static_cast<sm1::xctlevel_t>(level)); });
+  return guard(session, [&] {
+    return sm3::begin(session->sm3, static_cast<sm1::xctlevel_t>(level));
+  });
 }
 
 /* Commit the active transaction. */
 int sm_commit(sm_session_t *session) {
-  sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::commit(s); });
+  return guard(session, [&] { return sm3::commit(session->sm3); });
 }
 
 /* Abort the active transaction, or accept that it is already gone. */
 int sm_abort(sm_session_t *session) {
-  sm1::session_t *s = session_of(session);
-  return guard(s, [&] {
-    if (sm1::abort(s) != 0) {
+  return guard(session, [&] {
+    if (sm3::abort(session->sm3) != 0) {
       // The engine aborted it already, after a retryable error.
       return sm1::errnum() == sm1::SM_ERR_NOTRANS ? 0 : -1;
     }
@@ -405,37 +532,34 @@ int sm_abort(sm_session_t *session) {
 /* Begin a statement. */
 int sm_stmt_begin(sm_session_t *session) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::stmt_begin(s); });
+  return guard(session, [&] { return sm1::stmt_begin(s); });
 }
 
 /* Set a savepoint and return its depth. */
 int sm_savepoint(sm_session_t *session) {
-  sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::savepoint(s); });
+  return guard(session, [&] { return sm3::savepoint(session->sm3); });
 }
 
 /* Roll back to the savepoint at depth. */
 int sm_rollback(sm_session_t *session, int depth) {
-  sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::rollback(s, depth); });
+  return guard(session, [&] { return sm3::rollback(session->sm3, depth); });
 }
 
 /* Forget the savepoint at depth. */
 int sm_forget(sm_session_t *session, int depth) {
-  sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::forget(s, depth); });
+  return guard(session, [&] { return sm3::forget(session->sm3, depth); });
 }
 
 /* Prepare the active transaction as gid. */
 int sm_prepare(sm_session_t *session, const char *gid) {
-  sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::prepare(s, name_of(gid)); });
+  return guard(session,
+               [&] { return sm3::prepare(session->sm3, name_of(gid)); });
 }
 
 /* List the prepared transactions into one block. */
 int sm_list_prepared(sm_session_t *session, sm_prepared_t **out, size_t *n) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] {
+  return guard(session, [&] {
     std::vector<sm1::prepared_t> list;
     if (sm1::list_prepared(s, list) != 0) {
       return -1;
@@ -471,13 +595,13 @@ int sm_list_prepared(sm_session_t *session, sm_prepared_t **out, size_t *n) {
 /* Commit the prepared transaction gid. */
 int sm_commit_prepared(sm_session_t *session, const char *gid) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::commit_prepared(s, name_of(gid)); });
+  return guard(session, [&] { return sm1::commit_prepared(s, name_of(gid)); });
 }
 
 /* Abort the prepared transaction gid. */
 int sm_abort_prepared(sm_session_t *session, const char *gid) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::abort_prepared(s, name_of(gid)); });
+  return guard(session, [&] { return sm1::abort_prepared(s, name_of(gid)); });
 }
 
 /* Release a block this API handed out. */
@@ -486,19 +610,19 @@ void sm_free(void *p) { free(p); }
 /* Create a store. */
 int sm_mkstore(sm_session_t *session, uint64_t *storeid) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::mkstore(s, *storeid); });
+  return guard(session, [&] { return sm1::mkstore(s, *storeid); });
 }
 
 /* Drop a store. */
 int sm_rmstore(sm_session_t *session, uint64_t storeid) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::rmstore(s, storeid); });
+  return guard(session, [&] { return sm1::rmstore(s, storeid); });
 }
 
 /* List the stores into one block. */
 int sm_lsstore(sm_session_t *session, uint64_t **ids, size_t *n) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] {
+  return guard(session, [&] {
     std::vector<uint64_t> list;
     if (sm1::lsstore(s, list) != 0) {
       return -1;
@@ -524,20 +648,20 @@ int sm_lsstore(sm_session_t *session, uint64_t **ids, size_t *n) {
 int sm_mkseq(sm_session_t *session, const char *name, uint64_t start,
              uint64_t increment) {
   sm1::session_t *s = session_of(session);
-  return guard(s,
+  return guard(session,
                [&] { return sm1::mkseq(s, name_of(name), start, increment); });
 }
 
 /* Drop a sequence. */
 int sm_rmseq(sm_session_t *session, const char *name) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] { return sm1::rmseq(s, name_of(name)); });
+  return guard(session, [&] { return sm1::rmseq(s, name_of(name)); });
 }
 
 /* Hand out the sequence's next value. */
 int sm_nextseq(sm_session_t *session, const char *name, uint64_t *out) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] {
+  return guard(session, [&] {
     if (!out) {
       return sm1::seterr(sm1::SM_ERR_INVALID, "sm_nextseq: out is NULL");
     }
@@ -654,9 +778,9 @@ int sm_rel_open(sm_session_t *session, uint64_t storeid, uint16_t prefix,
                 const sm_attribute_t *schema, size_t n, const char *rowno_seq,
                 sm_rel_t **out) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] {
+  return guard(session, [&] {
     sm_rel_t *rel = new sm_rel_t;
-    rel->session = s;
+    rel->session = session;
     rel->schema = schema_of(schema, n);
     // Lay the schema out once, for every row decoded through rel.
     rel->desc = sm2::tup_desc_t(rel->schema);
@@ -906,9 +1030,9 @@ int sm_idx_open(sm_session_t *session, uint64_t storeid, uint16_t prefix,
                 const sm_attribute_t *include, size_t ninclude,
                 sm_idx_t **out) {
   sm1::session_t *s = session_of(session);
-  return guard(s, [&] {
+  return guard(session, [&] {
     sm_idx_t *idx = new sm_idx_t;
-    idx->session = s;
+    idx->session = session;
     idx->include = schema_of(include, ninclude);
     for (size_t i = 0; i < nkey; i++) {
       idx->key.push_back(

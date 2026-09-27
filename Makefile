@@ -2,7 +2,7 @@
 #
 # Level 0 is RocksDB. Level 1 is sm1/, the MVCC storage manager.
 # Level 2 is sm2/, types and records, and level 3 is sm3/, schema
-# and index maintenance, which is not built yet.
+# and index maintenance, being built.
 #
 # This file delegates to the levels, each of which has a Makefile
 # of its own with the real targets, and builds the one thing that
@@ -25,7 +25,7 @@ CC       ?= gcc
 CXX      ?= g++
 OPTFLAGS ?= -O1 -g
 CXXFLAGS ?= $(OPTFLAGS)
-CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Ism1/include -Ism2/include \
+CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Ism1/include -Ism2/include -Ism3/include \
             -MMD -MP
 LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 

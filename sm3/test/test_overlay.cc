@@ -190,3 +190,20 @@ TEST_CASE("a collation made in a transaction serves its DDL at once") {
     REQUIRE(sm3::commit(db.b) == 0);
   }
 }
+
+TEST_CASE("a transaction that made DDL cannot be prepared") {
+  // Verify prepare refuses DDL, whose overlay could not outlive the session.
+  // 1. A creates a table, and prepare fails with SM_ERR_INVALID.
+  // 2. A aborts; a transaction without DDL prepares, and commits.
+  two_t db;
+  begin(db.a);
+  create(db.a, "x");
+  CHECK(sm3::prepare(db.a, "g1") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::abort(db.a) == 0);
+
+  begin(db.a);
+  REQUIRE(sm3::prepare(db.a, "g2") == 0);
+  REQUIRE(sm1::commit_prepared(sm3::session_sm1(db.b), "g2") == 0);
+  CHECK(sm3::cat_table(db.cat, sm3::nsp_public, "x") == nullptr);
+}

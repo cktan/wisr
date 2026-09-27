@@ -154,6 +154,13 @@ int forget(session_t* s, int depth);
 int commit(session_t* s);
 int abort(session_t* s);
 
+/*
+ * Prepare s's transaction as gid, as sm1::prepare does. One that
+ * made DDL is refused with SM_ERR_INVALID: its overlay would have
+ * to outlive the session to be published at commit_prepared.
+ */
+int prepare(session_t* s, std::string_view gid);
+
 /* The table with oid, or nullptr, as s's transaction sees it. */
 std::shared_ptr<const table_def_t> cat_table(const session_t* s,
                                              uint64_t oid);

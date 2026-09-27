@@ -156,6 +156,16 @@ int commit(session_t *s) {
   return 0;
 }
 
+/* Prepare, if s's transaction made no DDL; see sm3.h. */
+int prepare(session_t *s, std::string_view gid) {
+  if (!s->tables.empty() || !s->names.empty() || !s->collations.empty()) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "prepare: a transaction that made DDL cannot be "
+                       "prepared");
+  }
+  return sm1::prepare(s->sm1, gid);
+}
+
 /* Abort, dropping the overlay. */
 int abort(session_t *s) {
   drop_from(s, 0);
