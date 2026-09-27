@@ -10,7 +10,8 @@ as in PostgreSQL.
 **Status: steps 1 to 4 of §4.3 are built** — sm1's store 0
 under `"U"` and object ids from 1000, sm2's `catkv_*`, the
 catalog's keys and blobs, and `cat_init`, `cat_open` and
-`cat_create_table` in `src/catalog/`; the rest is design. §1 compares the candidates, §2 picks one, §3 lists the
+`cat_create_table` in `src/catalog/`; the rest is design.
+§1 compares the candidates, §2 picks one, §3 lists the
 primitives, §4 sketches the build.
 
 ---
