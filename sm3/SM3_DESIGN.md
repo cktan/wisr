@@ -55,7 +55,10 @@ answer.
 | sm2's index `rel`: entries keyed by encoded columns, each pointing at a `rowno` | sm2 lays out an entry's bytes and scan bounds; which indexes exist, and writing their entries on every heap write, are sm3's (§3) |
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
 | sm2's 2-byte object prefix | a table's rows, indexes and TOAST data share its one sm1 store (§4) |
-| `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own |
+| `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own; the image views sm1 session memory, valid until the next call, so sm3 copies it before any index call (§3) |
+| sm2's codec over `datum_t` values and null flags, as PostgreSQL's `Datum` (`sm2/TUPLE.md` §9) | sm3 never handles a value's bytes: rows, index keys and bounds are `datum_t`s, and `encode_key` strips a varlena's header itself |
+| `tup_desc_t`: a schema's widths and entry offsets, built once (`sm2/TUPLE.md` §6) | sm3 builds one per table and per index value when a definition loads or changes, so a one-column read costs a step per earlier null, not a pass over the row |
+| a tuple of at most 64 KB, TOAST postponed (`sm2/TUPLE.md` §1) | a longer row fails with `SM_ERR_ROWTOOLONG`, which sm3 passes up, as PostgreSQL's `program_limit_exceeded`, until TOAST exists |
 | `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
 | `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
@@ -127,7 +130,9 @@ over PostgreSQL's WAL do not apply to data held in RocksDB
 
 Making memory authoritative moves the hard part; it does not
 remove it. A definition that outlives the transaction that
-changed it is the usual place such a design goes wrong. Open:
+changed it is the usual place such a design goes wrong.
+`CATALOG.md` proposes a layout that answers each of these;
+until it is built they stay open here:
 
 - **Privacy until commit.** A DDL change must be invisible to
   other transactions until it commits, and undone on abort and
@@ -138,6 +143,30 @@ changed it is the usual place such a design goes wrong. Open:
   (`sm1/SM1_DESIGN.md` §3.4).
 - **Size and startup.** Load time and memory for a schema
   with many partitions.
+- **Bootstrap.** Which sm1 store holds the catalog's own
+  relations, how their schemas are known before the catalog
+  is loaded — PostgreSQL hard-codes its bootstrap catalogs —
+  and how the catalog's layout, the one format sm3 writes that
+  lasts, is versioned.
+- **Rows within 64 KB.** A catalog row is an sm2 tuple, so it
+  is held to 64 KB with no TOAST behind it (`sm2/TUPLE.md`
+  §1). A table's definition in one row, its columns' missing
+  values included, could pass that; a row per column, as
+  PostgreSQL's `pg_attribute` has, keeps each row small.
+- **Temporary tables.** A temporary table is a temporary
+  store, which never commits a catalog row (`DESIGN.md` §5,
+  `sm1/SM1_DESIGN.md` §11.3). Its definition is the one the
+  catalog holds in the session's memory only, never written
+  through to sm2, and visible to no other session.
+
+Settled for the layout, whatever its shape:
+
+- **Type codes are sm2's frozen codes** (`sm2/TYPE.md` §3).
+  Code 7, `decimal` before it was split, is retired; the
+  catalog never writes it.
+- **Each table's next index prefix is persisted**, since a
+  prefix is never reused (§4) and must not be after a restart
+  either.
 
 ### 2.1 Decimal columns
 
@@ -208,7 +237,13 @@ in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
   reads the newest version, not the snapshot: a statement
   snapshot can predate a duplicate that committed while the
   lock was awaited, and the lock is what keeps the newest
-  version stable.
+  version stable. **Open: nothing reads a range at its newest
+  version.** The check is a scan over the key's prefix, but
+  sm1's `read_latest` reads one key, and sm2's `idx_scan`
+  reads at the transaction's snapshot. It needs a primitive
+  that does not exist yet — a scan of the newest committed
+  versions, in sm1 and through sm2 — or a check shaped
+  differently.
 - **NULLs are distinct in a unique index.** Two NULLs encode to
   the same bytes, so an entry with a NULL key column carries the
   `rowno` suffix and skips the uniqueness check, as SQL requires
@@ -234,7 +269,11 @@ in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
   change included. On update and delete, the old image from
   `rel_update` / `rel_delete` gives the old index entries to
   remove — as a tuple, so sm3 reads the indexed columns out
-  of it without decoding bytes itself.
+  of it without decoding bytes itself. The image views sm1
+  session memory, valid only until the next call on the
+  session, and the index calls that use it are calls on the
+  session: sm3 copies it first, or a later index's old key is
+  read from memory an earlier call reused.
 - **Read committed writes.** An update or delete that meets a
   row committed after the transaction began fails with
   `SM_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort
