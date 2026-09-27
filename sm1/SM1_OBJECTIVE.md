@@ -49,7 +49,8 @@ full MVCC, for OLTP workloads.
   - nested savepoints: `sm1::savepoint` / `sm1::rollback` /
     `sm1::forget`
   - statement boundaries: `sm1::stmt_begin`
-  - row locks without writing: `sm1::lock`
+  - row locks without writing, in Gray's modes (IS, IX, S,
+    SIX, X): `sm1::lock`
   - cursor reposition: `sm1::scan_seek`
   - stores: `sm1::mkstore` / `sm1::rmstore` / `sm1::lsstore`
   - sequences: `sm1::mkseq` / `sm1::rmseq` / `sm1::nextseq`

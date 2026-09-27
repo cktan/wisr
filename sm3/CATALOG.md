@@ -51,7 +51,7 @@ key going in and stripped coming out.
 | `catkv_get` | 0 with the value, 1 if none; a view valid to the next call | `sm1::read` |
 | `catkv_insert` | a new key; `SM_ERR_DUPKEY` if taken | `sm1::insert` |
 | `catkv_update`, `catkv_erase` | replace or remove a key; `SM_ERR_NOTFOUND` if missing | `sm1::update`, `sm1::erase` |
-| `catkv_lock` | a shared or exclusive row lock | `sm1::lock` |
+| `catkv_lock` | a row lock in any of sm1's modes (IS, IX, S, SIX, X) | `sm1::lock` |
 | `catkv_scan`, `catkv_scannxt`, `catkv_scanend` | the keys under a prefix, in order | `sm1::scan` |
 
 ---
@@ -257,9 +257,14 @@ sm3/test/test_overlay.cc   the overlay: visibility, rollback, abort
 Settled, and next in this order:
 
 1. **Schema locks, and publishing under them.** A table's
-   `TABLE` key is its schema lock (`SM3_DESIGN.md` §2): a user
-   takes it shared before reading the definition, DDL takes it
-   exclusive by rewriting the blob. Today `commit` publishes
+   schema lock is taken in Gray's modes (`SM3_DESIGN.md` §2): a
+   reader takes it IS and a writer IX before reading the
+   definition, a plain index build S, other DDL X. It cannot be
+   the `TABLE` key itself: every DDL rewrites that entry, and a
+   write takes its key X, which would block readers during an
+   index build after all. Open: a key of its own per table — a
+   new kind, `LOCK`, beside `TABLE` — which DDL takes in its
+   mode before writing the entry. Today `commit` publishes
    after sm1 commits, so a reader could read between the two;
    instead the session takes the shared catalog's mutex
    exclusive, commits in sm1 — which releases its locks — moves

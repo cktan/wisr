@@ -113,11 +113,10 @@ These are settled and drive `SM3_DESIGN.md`.
   and fewer calls per scan — is decided in `SM3_DESIGN.md` §5.
   sm2 is tuple-at-a-time either way, and nothing below depends on
   the answer.
-- **Privacy of a catalog change until commit.** A DDL change
-  must be invisible to other transactions until it commits,
-  and undone on abort and on savepoint rollback, while the
-  catalog it changes is shared and in memory
-  (`SM3_DESIGN.md` §2).
+- **Privacy of a catalog change until commit** — settled and
+  built: a session's overlay keeps its transaction's DDL to
+  itself, undone on abort and savepoint rollback, and publishes
+  it at commit (`CATALOG.md` §4, §5).
 - **How good RocksDB's approximate statistics are** for
   `reltuples` and `relpages`. It has not been measured, and
   `SM3_DESIGN.md` §6 depends on the answer.

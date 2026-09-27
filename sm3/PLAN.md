@@ -17,6 +17,11 @@ that matter most are the ones with two sessions in them.
 Everything else needs a definition to work from, so it comes
 first.
 
+**Status: built but for its schema locks** — the store, keys,
+values, load, DDL and a session's overlay, as `CATALOG.md`
+documents; the lock protocol below, and publishing under it,
+are its §7.
+
 - Tables, indexes, columns, types, collations, and each
   column's dropped mark and missing value, in sm3's own sm2
   relations. No schema versions: a row records its attribute

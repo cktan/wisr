@@ -14,7 +14,7 @@ decisions in `SM2_OBJECTIVE.md`:
 | Decision | Choice |
 | --- | --- |
 | Types | a fixed set, each an ADT in `pg_type`'s shape, each with a stable on-disk type code |
-| Representation | PostgreSQL's, type by type, little-endian — except `decimal`, which follows DuckDB's |
+| Representation | PostgreSQL's, type by type, little-endian — except the decimals, which follow DuckDB's |
 | Key encoding | order-preserving per type; descending is the inverted encoding |
 | Tuple format | null bitmap, fixed/variable split, an attribute count per row, as PostgreSQL's `natts` |
 | Tuple codec | an API of its own, with its own header and its own tests |
@@ -88,8 +88,9 @@ The rules it satisfies:
 
 - The set is fixed and chosen from what the PostgreSQL target
   needs first: boolean, the integer widths, `float4` and
-  `float8`, `decimal`, `text` / `varchar` / `bytea`, `date`,
-  `time`, `timestamp`, `timestamptz`, `interval`, `uuid`.
+  `float8`, `decimal64` and `decimal128`, `text` / `varchar` /
+  `bytea`, `date`, `time`, `timestamp`, `timestamptz`,
+  `interval`, `uuid`.
   Arrays, composites, ranges and user-defined types are not in
   the first set; the format must leave room to add them
   without changing what is already on disk.
@@ -130,7 +131,7 @@ The rules it satisfies:
 ### 2.1 The representation is PostgreSQL's
 
 **Decision: a datum's bytes are what PostgreSQL makes them,
-type by type, with `decimal` the one exception.** Not a format
+type by type, with the decimals the one exception.** Not a format
 of our own that happens to hold the same information — the
 same widths, the same epochs, the same units, the same struct
 layouts.
@@ -1149,8 +1150,9 @@ The vocabulary the two formats are written in, so it comes
 before them.
 
 - The first set: boolean, the integer widths, `float4`,
-  `float8`, `decimal`, `text` / `varchar` / `bytea`, `date`,
-  `time`, `timestamp`, `timestamptz`, `interval`, `uuid` —
+  `float8`, `decimal64`, `decimal128`, `text` / `varchar` /
+  `bytea`, `date`, `time`, `timestamp`, `timestamptz`,
+  `interval`, `uuid` —
   each one spelled out in `TYPE.md` §3.
 - **The ADT table first** (§2.3): one descriptor
   of function pointers per type, so that every step after

@@ -2056,8 +2056,9 @@ Big-endian storeids make the catalog's key order numeric, so
 `sm1::lsstore` is one scan of the `"R"` prefix and returns
 storeids in ascending order. Storeids are handed out in creation
 order, so the lowest one listed is the first store the database
-ever had: that is how a layer finds its own catalog store again
-after a restart, having nothing else to go on.
+ever had. A layer above keeps its own catalog in store 0 under
+`"U"` (below), which is always there, so it has no store to
+find.
 
 A storeid is never reused, so it never names two stores. That
 is what makes a drop safe: after `sm1::rmstore` commits, the
@@ -2390,7 +2391,8 @@ engine.
    `mkdb/open/mkstore/insert/read/scan` under one transaction at a time.
 2. Timestamps, commit sequencer, status table, snapshot visibility;
    RC and RR isolation. Crash tests begin here.
-3. Row locks (shared and exclusive), write-write conflict,
+3. Row locks (shared and exclusive, later Gray's five modes),
+   write-write conflict,
    deadlock detection.
 4. Savepoints.
 5. GC / compaction filter (until this exists, the database only grows —

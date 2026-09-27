@@ -64,19 +64,19 @@ level's `OBJECTIVE.md` can promise it is "useful and
 testable on its own" — the whole lower stack is one
 dependency.
 
-The top level is not a level: it adds no notion of its own,
-only a C signature over the levels' C++ interfaces, and it
-is the one place an exception is caught and a PostgreSQL
-error path is safe to take (`OBJECTIVE.md`). Like sm3, it
-may skip a level: it calls sm1 directly for sessions,
-transactions, savepoints and 2PC, which neither sm2 nor sm3
-has anything to add to, and sm3 for everything else. Until
-sm3 exists it calls sm2 for rows and index entries, and sm1
-for stores and sequences; the calls that open a table by its
-store and schema are scaffolding, marked so in `include/sm.h`,
-to be replaced by opening through sm3's catalog, while the row
-and entry calls keep their C signatures whichever level serves
-them. sm2 calls only sm1, and nothing calls upward.
+The top level is not a level: it adds no notion of its own, only
+a C signature over the levels' C++ interfaces, and it is the one
+place an exception is caught and a PostgreSQL error path is safe
+to take (`OBJECTIVE.md`). Like sm3, it may skip a level: it calls
+sm1 directly for sessions, transactions, savepoints and 2PC,
+which neither sm2 nor sm3 has anything to add to, and sm3 for
+everything else. Until it serves sm3's catalog it calls sm2 for
+rows and index entries, and sm1 for stores and sequences; the
+calls that open a table by its store and schema are scaffolding,
+marked so in `include/sm.h`, to be replaced by opening through
+sm3's catalog, while the row and entry calls keep their C
+signatures whichever level serves them. sm2 calls only sm1, and
+nothing calls upward.
 
 The root's `include/` also holds two C headers that belong to
 no level and that sm1 includes: `sm_error.h`, the stack's error
@@ -128,8 +128,8 @@ rule is that nothing turns them off.
 | --- | --- |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
-| sm3 | designed, not yet implemented — the same, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md`; it cannot start before sm2's two formats are settled |
-| top level | built: `include/sm.h` over sm1 and sm2, with `src/sm.cc` and a C test; the calls that open a table are scaffolding until sm3's catalog (§1) |
+| sm3 | being built: its catalog — keys, values, load, DDL and a session's overlay — with its C++ interface in `sm3/include/sm3.h` and `sm3/CATALOG.md`; schema locks, index maintenance, predicate scans and statistics are still design, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md` |
+| top level | built: `include/sm.h` over sm1 and sm2, with `src/sm.cc`; the calls that open a table are scaffolding until the wrapper serves sm3's catalog (§1), and the `rel` driver keeps a catalog of its own until then |
 
 sm1 was built first and alone, on purpose: it is usable
 without sm2 (an MVCC key-value store is a complete product

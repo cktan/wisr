@@ -18,8 +18,9 @@ decisions in `SM3_OBJECTIVE.md`:
 | API shape | open: batch-oriented (sets of rows, filters pushed down) was forced by an IPC boundary, which the threaded fork removes (§1) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
-**Status: only the catalog's layout is implemented** — its keys
-and blobs (`CATALOG.md` §2, §3). sm2, which it is built
+**Status: the catalog is implemented** — its keys, values,
+load, DDL and a session's overlay (`CATALOG.md`); the schema
+locks of §2 are not yet, nor §3 to §6. sm2, which it is built
 on, is, but for TOAST (`sm2/SM2_DESIGN.md` §8.2).
 This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is
@@ -63,7 +64,7 @@ answer.
 | `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
 | `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
-| `sm1::lock(SHARED\|EXCLUSIVE)` | the DDL and online index build protocol (§2, §3) |
+| `sm1::lock` in Gray's modes (IS, IX, S, SIX, X) | the DDL and online index build protocol (§2, §3): readers and writers of a table coexist on its schema row, and an index build stops writers without stopping readers |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
 | `sm1::max_keylen` 4096 | an index entry's key must fit 4094 bytes after the prefix, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
@@ -97,16 +98,19 @@ but it does not give a transaction the old schema either: it
 keeps DDL and users of a table apart with table locks, so a
 transaction that first touches a table after a DDL commits sees
 the new definition, alongside its old data snapshot. sm3 does
-the same with sm1's row locks:
+the same with sm1's row locks, in Gray's modes, as PostgreSQL's
+table locks are:
 
-- every transaction that reads or writes a table takes
-  `sm1::lock(SHARED)` on that table's schema row, held to the end
-  of the transaction, before it reads the definition;
-- DDL takes the schema row exclusive by updating it, which
-  waits out the transactions in flight and blocks new ones
-  until it commits — the protocol §3 already uses for online
-  index builds, applied to all DDL;
-- so once a transaction holds the shared lock, the definition
+- every transaction that reads a table takes `sm1::lock` IS on
+  that table's schema row, and one that writes it IX, held to
+  the end of the transaction, before it reads the definition —
+  PostgreSQL's AccessShareLock and RowExclusiveLock, which
+  coexist;
+- DDL takes the schema row X, which waits out the transactions
+  in flight and blocks new ones until it commits; a plain index
+  build takes S, which waits out writers and blocks new ones but
+  lets readers through, as PostgreSQL's ShareLock does (§3);
+- so once a transaction holds its IS or IX lock, the definition
   in memory cannot change under it. A catalog served from
   memory must take this lock, or DDL has nothing to wait on.
   At READ COMMITTED sm1's `sm1::lock` no longer fails when the
@@ -133,8 +137,8 @@ Making memory authoritative moves the hard part; it does not
 remove it. A definition that outlives the transaction that
 changed it is the usual place such a design goes wrong.
 `CATALOG.md` documents the catalog as built, which settles
-bootstrap and row size; its §7 settles the others, not built
-yet:
+bootstrap, row size and privacy until commit; its §7 settles
+the others, not built yet:
 
 - **Privacy until commit.** A DDL change must be invisible to
   other transactions until it commits, and undone on abort and
@@ -301,28 +305,33 @@ in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
   would serialize them all, and SSI catches it only if every
   writer is SERIALIZABLE — which made correct behaviour
   impossible, not merely slow. The protocol:
-  1. every writer takes `sm1::lock(SHARED)` on the table's schema
+  1. every writer takes `sm1::lock` IX on the table's schema
      row and reads it, so what it maintains is current;
-  2. the builder takes the schema row **exclusive** by updating
-     it, which waits out the writers in flight and blocks new
-     ones;
+  2. the builder takes the schema row **S**, which waits out the
+     writers in flight and blocks new ones, while readers, who
+     hold IS, go on;
   3. the builder scans the base relation — its snapshot is taken
      after the lock, so it sees every committed row — fills the
      index, and commits;
-  4. blocked writers then get the shared lock and read the new
+  4. blocked writers then get their IX lock and read the new
      schema. At READ COMMITTED their `sm1::lock` no longer fails
      on the newer commit; they read the schema row with
      `rel_read_latest`. It is the schema-row lock that keeps
      them out while the build runs, not a conflict check. At
      the higher levels `sm1::lock` still fails with a conflict,
      and the writer retries.
-  `sm1/test/test_lock.cc` has this end to end. Its costs:
+  `sm1/test/test_lock.cc` has its shape end to end, in the
+  shared and exclusive modes that came before Gray's. Its costs:
   - writers are blocked for the whole build, as by
-    PostgreSQL's plain `CREATE INDEX`;
-  - the schema row is a hot key: every writer on the table
-    locks it, so its lock-table mutex is contended (readers
-    never touch it). The table is one mutex, not sharded, so
-    this is the first place a benchmark will point.
+    PostgreSQL's plain `CREATE INDEX`; readers are not;
+  - recording the index rewrites the table's catalog entry, so
+    that write must not take the schema lock X, or readers are
+    blocked after all: the lock key and the entry's key are to
+    be separate (`CATALOG.md` §7);
+  - the schema row is a hot key: every reader and writer of the
+    table locks it, so its lock-table mutex is contended. The
+    table is one mutex, not sharded, so this is the first place
+    a benchmark will point.
 
   The alternative was a primitive that waits for every
   transaction begun before now, with a CIC-style multi-phase

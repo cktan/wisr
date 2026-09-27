@@ -727,8 +727,9 @@ int abort_prepared(session_t* session, std::string_view gid);
  * one dropped by sm1::rmstore() never comes back.
  *
  * Storeids rise in creation order, so the lowest one sm1::lsstore()
- * lists is the first store the database ever had: a program
- * can find its own catalog store again that way.
+ * lists is the first store the database ever had. A layer above
+ * keeps its own catalog in store 0 under upper_prefix instead,
+ * which needs no finding.
  *
  * Transactional -- visible to others only at commit, and
  * undone by abort or by a rollback that spans it. A storeid from

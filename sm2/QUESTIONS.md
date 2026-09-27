@@ -60,8 +60,8 @@ Settled, and listed so nobody reopens them by accident:
 
 - What the types are, and that their representation is
   PostgreSQL's — `SM2_DESIGN.md` §2.1, `TYPE.md` §3.
-- That `decimal` follows DuckDB's decimal, and why —
-  `SM2_DESIGN.md` §2.2.
+- That the decimals, `decimal64` and `decimal128`, follow
+  DuckDB's decimal, and why — `SM2_DESIGN.md` §2.2.
 - That a type is an ADT in `pg_type`'s shape — `SM2_DESIGN.md`
   §2.3.
 - That interval keeps three components, and how its key
@@ -78,8 +78,9 @@ Settled, and listed so nobody reopens them by accident:
   sm2's — `SM2_DESIGN.md` §6.
 - The type codes, `enum` as sm3's, and `text` / `varchar` —
   `SM2_DESIGN.md` §2.
-- `decimal(p, s)` only: its widths, its bare default, and the
-  refusal of NaN — `SM2_DESIGN.md` §2.2.
+- The decimals' widths, their required `(p, s)` typmod, and the
+  refusal of NaN — `SM2_DESIGN.md` §2.2; the bare `decimal`
+  default is sm3's — `sm3/SM3_DESIGN.md` §2.1.
 - That `in` / `out` are filled in v1 and `recv` / `send` wait —
   `SM2_DESIGN.md` §2.3.
 - Null markers, escaping and terminators — `SM2_DESIGN.md` §3.1.

@@ -977,9 +977,9 @@ transaction that aborts is simply never used.
 A storeid is never reused, so it never names two stores,
 and one dropped by `sm1::rmstore` never comes back. Storeids rise
 in creation order, so the lowest one `sm1::lsstore` lists is the
-first store the database ever had — which is how a
-program finds its own catalog store again after a
-restart.
+first store the database ever had. A layer above that needs a
+catalog of its own keeps it in store 0 under
+`sm1::upper_prefix`, which needs no finding.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_CONFLICT` (retryable),
 `SM_ERR_INVALID`, `SM_ERR_PREPARED`,
