@@ -43,6 +43,12 @@
 #define WISR_META_NEXT_TS "next_ts"
 #define WISR_META_NEXT_OBJID "next_objid"
 
+/*
+ * The first object id handed out: 1 to 999 are reserved for
+ * objects a database is made with (SM1_DESIGN.md §4.2).
+ */
+#define WISR_FIRST_OBJID 1000
+
 /* CF:meta key prefix of a sequence's lease: "seq." | be64(seqid). */
 #define WISR_META_SEQ_PREFIX "seq."
 

@@ -18,6 +18,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 
+#include <algorithm>
 #include <memory>
 #include <new>
 #include <vector>
@@ -454,9 +455,10 @@ db_t *db_open(const std::string &path, const char *dbname,
   db->ts_limit = next_ts + 1;
   // Everything below the lease is published.
   db->visible_ts = next_ts;
-  // Resume object ids the same way.
-  db->next_objid = next_objid + 1;
-  db->objid_limit = next_objid + 1;
+  // Resume object ids the same way, but never below the first
+  // unreserved one, in a new database or an older one.
+  db->next_objid = std::max<uint64_t>(next_objid + 1, WISR_FIRST_OBJID);
+  db->objid_limit = db->next_objid;
   // Size the commit cache.
   db->cache_entries = opt->commit_cache_entries;
   // Arm deadlock detection.

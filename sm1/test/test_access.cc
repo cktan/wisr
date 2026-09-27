@@ -754,6 +754,25 @@ TEST_CASE("a dropped store stays readable at an older snapshot") {
   sm1::closedb(r);
 }
 
+TEST_CASE("object ids start at 1000, below which none is handed out") {
+  // Verify the reserved range of object ids (SM1_DESIGN.md §4.2).
+  // 1. The first store a new database makes is 1000.
+  // 2. A sequence made next takes an object id too, so the store
+  //    after it skips one: 1002.
+  // 3. After a reopen, the next store is above both, never below
+  //    1000.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t first = mkstore_committed(s);
+  CHECK(first == 1000);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::mkseq(s, "q", 1, 1) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(mkstore_committed(s) == 1002);
+  f.reopen();
+  CHECK(mkstore_committed(f.session()) > 1002);
+}
+
 TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   // Verify sm1::lsstore reads the catalog at the transaction's view.
   // 1. In a new database the list is empty, and it replaces what

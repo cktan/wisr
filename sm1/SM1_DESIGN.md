@@ -460,7 +460,10 @@ persisted value itself, so every `xid` allocated after restart is
 `> visible_ts`, keeping §4.1's `xid > snapshot_ts`. The persisted
 value itself is never handed out. Object ids — storeids and
 seqids, from one allocator `next_objid`, so the two never
-collide — are allocated the same way.
+collide — are allocated the same way, but never below 1000:
+0 is the catalog store, and 1 to 999 are reserved for objects
+a database is made with, so none is ever handed out. A
+database made before the rule resumes at 1000 when it opens.
 
 A named sequence (§11) has a lease of its own, `"seq." |
 be64(seqid)`, holding the first value **not** covered by the
