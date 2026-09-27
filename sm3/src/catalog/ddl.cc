@@ -1,5 +1,5 @@
 /*
- * ddl.cc -- changes to the catalog (CATALOG.md §3.4): cat_init,
+ * ddl.cc -- changes to the catalog (CATALOG.md §5): cat_init,
  * and so far cat_create_table. Each writes its entries through
  * sm2's catalog key-value store, in the session's transaction, so
  * it commits and rolls back with the transaction's other writes.
@@ -15,7 +15,7 @@ namespace {
 
 using kv_ptr = std::unique_ptr<sm2::catkv_t, decltype(&sm2::catkv_close)>;
 
-/* The sequence oids come from; they start at 1000 (CATALOG.md §2.1). */
+/* The sequence oids come from; they start at 1000 (CATALOG.md §1). */
 constexpr const char *oid_seq = "sm3.oid";
 constexpr uint64_t first_oid = 1000;
 

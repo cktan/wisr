@@ -19,7 +19,7 @@ decisions in `SM3_OBJECTIVE.md`:
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
 **Status: only the catalog's layout is implemented** — its keys
-and blobs (`CATALOG.md` §4.3, step 3). sm2, which it is built
+and blobs (`CATALOG.md` §2, §3). sm2, which it is built
 on, is, but for TOAST (`sm2/SM2_DESIGN.md` §8.2).
 This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is
@@ -132,8 +132,9 @@ over PostgreSQL's WAL do not apply to data held in RocksDB
 Making memory authoritative moves the hard part; it does not
 remove it. A definition that outlives the transaction that
 changed it is the usual place such a design goes wrong.
-`CATALOG.md` proposes a layout that answers each of these;
-until it is built they stay open here:
+`CATALOG.md` documents the catalog as built, which settles
+bootstrap and row size; its §7 settles the others, not built
+yet:
 
 - **Privacy until commit.** A DDL change must be invisible to
   other transactions until it commits, and undone on abort and

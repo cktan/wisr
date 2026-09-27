@@ -1,6 +1,6 @@
 /*
- * catalog.h -- sm3's catalog as it is kept (CATALOG.md §2.2,
- * §2.3): the keys of its entries, and the blobs they hold. Each
+ * catalog.h -- sm3's catalog as it is kept (CATALOG.md §2,
+ * §3): the keys of its entries, and the blobs they hold. Each
  * entry lives in sm2's catalog key-value store; this is the
  * layout only, with no store, no lock and no memory of its own.
  */
@@ -47,7 +47,7 @@ template <typename F> int catch_nomem(F f) {
 /* The catalog's format version, which META holds. */
 constexpr int32_t format_version = 1;
 
-/* ---- keys (CATALOG.md §2.2) ---- */
+/* ---- keys (CATALOG.md §2) ---- */
 
 /* META's key. */
 int meta_key(std::string &key);
@@ -67,7 +67,7 @@ int kind_prefix(kind_t kind, std::string &prefix);
  */
 int entity_oid(kind_t kind, std::string_view key, uint64_t &oid);
 
-/* ---- records: what the blobs hold (CATALOG.md §2.3) ---- */
+/* ---- records: what the blobs hold (CATALOG.md §3) ---- */
 
 /* What a NAME key names. */
 struct name_rec_t {
@@ -147,7 +147,7 @@ int decode_collation(std::string_view blob, collation_rec_t &rec);
 
 /* ---- parts: a blob's tuples, for the codec and its tests ---- */
 
-/* The layout of each part of a blob (CATALOG.md §2.3). */
+/* The layout of each part of a blob (CATALOG.md §3). */
 enum class part_t {
   meta,
   name,

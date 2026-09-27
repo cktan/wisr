@@ -630,7 +630,7 @@ int decode_key(std::span<const key_column_t> cols, std::string_view key,
                std::vector<std::optional<std::string>>& datums);
 
 /*
- * The catalog key-value store (sm3/CATALOG.md §3.2): the level
+ * The catalog key-value store (sm3/CATALOG.md §1): the level
  * above's catalog, kept as sm1's store 0 under sm1::upper_prefix.
  * Every call is one sm1 call in the session's transaction, so the
  * catalog is transactional with the DDL that writes it; sm1's

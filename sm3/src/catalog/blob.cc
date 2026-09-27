@@ -1,5 +1,5 @@
 /*
- * blob.cc -- the catalog's values (CATALOG.md §2.3). A value is a
+ * blob.cc -- the catalog's values (CATALOG.md §3). A value is a
  * sequence of parts, each an sm2 tuple under a schema this file
  * fixes, framed by its length as a varint. A part evolves as any
  * tuple does: an attribute appended to its schema reads as its
@@ -164,7 +164,7 @@ private:
   sm3::row_t m_row;
 };
 
-/* The schema of each part, in part_t order (CATALOG.md §2.3). */
+/* The schema of each part, in part_t order (CATALOG.md §3). */
 const std::vector<attribute_t> &schema_of(sm3::part_t part) {
   using namespace sm2;
   static const std::vector<attribute_t> schemas[] = {

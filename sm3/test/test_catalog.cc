@@ -1,6 +1,6 @@
 /*
  * test_catalog.cc -- init, load and table creation (CATALOG.md
- * §4.3, step 4).
+ * §5).
  */
 
 #include "catalog.h"

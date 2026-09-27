@@ -1,6 +1,6 @@
 /*
  * test_catkv.cc -- the catalog key-value store over sm1's store 0
- * (sm3/CATALOG.md §3.2, step 2).
+ * (sm3/CATALOG.md §1).
  */
 
 #include "db.h"
