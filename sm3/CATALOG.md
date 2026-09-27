@@ -7,10 +7,10 @@ decisions it takes as given: the catalog is held in memory,
 written through to storage, and changed under lock-based DDL,
 as in PostgreSQL.
 
-**Status: steps 1 to 3 of §4.3 are built** — sm1's store 0
-under `"U"` and object ids from 1000, sm2's `catkv_*`, and the
-catalog's keys and blobs in `src/catalog/`; the rest is
-design. §1 compares the candidates, §2 picks one, §3 lists the
+**Status: steps 1 to 4 of §4.3 are built** — sm1's store 0
+under `"U"` and object ids from 1000, sm2's `catkv_*`, the
+catalog's keys and blobs, and `cat_init`, `cat_open` and
+`cat_create_table` in `src/catalog/`; the rest is design. §1 compares the candidates, §2 picks one, §3 lists the
 primitives, §4 sketches the build.
 
 ---
@@ -165,7 +165,9 @@ its table's blob — which DDL's rate makes free.
 ### 2.2 Keys and entities
 
 Every key starts with a kind (`int2`), then the kind's own
-columns, encoded ascending by sm2's `encode_key`.
+columns, encoded ascending by sm2's `encode_key`. The kinds'
+values are on disk, so frozen: `META` 1, `NAME` 2, `NAMESPACE`
+3, `TABLE` 4, `COLLATION` 5.
 
 | Kind | Key after the kind | Value |
 | --- | --- | --- |
@@ -181,7 +183,8 @@ columns, encoded ascending by sm2's `encode_key`.
   takes the table's schema lock exclusive.
 - **Names are keys.** A table, an index, a namespace and a
   collation each own a `NAME` key, whose value says what it
-  names; an index's names its table too. `CREATE` inserts the
+  names; an index's names its table too. A namespace's own name
+  is in namespace 0, which is no namespace. `CREATE` inserts the
   key, `RENAME` erases one and inserts another, `DROP` erases
   it, so sm1 refuses a duplicate and orders concurrent
   creators.
@@ -189,6 +192,10 @@ columns, encoded ascending by sm2's `encode_key`.
   code 7, the retired `decimal`, is never written. A declared
   `decimal(p, s)` is stored as the sm2 type it maps to
   (`SM3_DESIGN.md` §2.1).
+- **A table's rowno sequence is `sm3.rowno.<oid>`**, made
+  with its store.
+- **Column positions are 0-based**, in an index's key and
+  include parts as in memory.
 - **The next index prefix is persisted** in the table's blob,
   so a prefix is never reused, across restarts too
   (`SM3_DESIGN.md` §4).

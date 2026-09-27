@@ -87,7 +87,7 @@ struct column_rec_t {
   std::optional<uint64_t> collation;
 };
 
-/* One key column of an index. */
+/* One key column of an index; attnum is the column's 0-based place. */
 struct index_key_rec_t {
   int32_t attnum;
   bool desc;
@@ -102,7 +102,7 @@ struct index_rec_t {
   uint16_t prefix;
   bool unique;
   std::vector<index_key_rec_t> keys;
-  std::vector<int32_t> includes; /* attnums */
+  std::vector<int32_t> includes; /* 0-based attnums */
 };
 
 /* A table, its columns and its indexes: one blob. */
