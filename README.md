@@ -40,6 +40,9 @@ through the `rel/` test suite.
   decisions that span every level
 - `DESIGN.md` — how the levels fit together: the stack, the
   build, and the decisions that cross level boundaries
+- `NEXT.md` — what to build next and in what order: the
+  decisions standing in front of `sm3/PLAN.md` step 3, and the
+  gaps that block nothing
 - `sm1/SM1_OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record

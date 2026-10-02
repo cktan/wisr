@@ -38,7 +38,7 @@ Everything below is about step 3.
 
 ---
 
-## 1. What sm3 owns: re-evaluation, and with it an evaluator
+## 1. Who owns re-evaluation
 
 **Start from what `SM3_DESIGN.md` §3 already says**, because it
 is not silent here. Lines 292-297 give the READ COMMITTED
@@ -78,9 +78,10 @@ UPDATE jobs SET state='taken', owner=:me WHERE state='free';
 | 5 | T2 reads the latest image: `state='taken'` |
 | 6 | T2 re-evaluates `state='free'` against it, false, and writes nothing |
 
-Without step 6, T2 writes `owner='w2'`, the job is claimed
-twice, and nothing raises an error anywhere: the statement
-reports one row and the application believes it won the race.
+Without that last step T2 writes `owner='w2'`, the job is
+claimed twice, and nothing raises an error anywhere: the
+statement reports one row and the application believes it won
+the race.
 
 ### 1.2 Why the index makes it sm3's
 
@@ -101,7 +102,12 @@ the statement's. That is a second and independent need for an
 evaluator inside sm3, and the executor cannot serve it unless
 the executor also owns maintenance.
 
-### 1.3 What an evaluator in sm3 takes
+### 1.3 What an evaluator in sm3 would take
+
+1.6 settles that the READ COMMITTED re-check does not need
+one. This is what an evaluator costs where it *is* wanted:
+§5's residual filters, and partial and expression index
+maintenance.
 
 - **A predicate representation across the C API.**
   `include/sm.h` has none: a scan takes a `rowno` range or an
@@ -122,9 +128,9 @@ the executor also owns maintenance.
   with the new tuple substituted and sm3 has no plan; and
   volatile functions, which are wrong to re-evaluate at all. So
   a classifier above decides pushdown or fallback, and
-  `EvalPlanQual` stays for the fallback. sm3 owning the
-  re-check does not remove the executor's path, it adds one
-  beside it, and that is the honest cost.
+  `EvalPlanQual` stays for the fallback. Pushing a filter down
+  does not remove the executor's path, it adds one beside it,
+  and that is the honest cost.
 - **Semantic agreement with PostgreSQL**, which is where the
   bugs will be: NULL propagation, collation (§3 already
   requires sm3's own comparisons to follow it, and to hash the
@@ -153,15 +159,15 @@ qual is the executor's at every isolation level.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:406`-408). Owning the
-  re-check is then incremental, not a new axis of work.
+  caller to discard" (`SM3_DESIGN.md:406`-408). The evaluator
+  is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.
-- **The API stops depending on caller discipline.** sm1 makes a
-  caller re-read; only sm3 can make it re-check. For `rel`, and
-  for the non-PostgreSQL consumer `OBJECTIVE.md` keeps
-  possible, that is the difference between an API that is
-  correct and one that is correct when used correctly.
+- **`rel` and any non-PostgreSQL consumer get predicate
+  scans.** `OBJECTIVE.md` keeps a consumer other than the fork
+  possible, and without an evaluator below the API such a
+  consumer filters rows itself — which is the waste §5 exists
+  to remove.
 - **The chosen precedent did this.** YugabyteDB "replaced whole
   executor nodes to push work down — sequential scan, bitmap
   scan, batched nested loop, expression evaluation"
@@ -169,29 +175,33 @@ qual is the executor's at every isolation level.
 
 ### 1.5 Recommendation
 
-**Split by qual, not by operation.** sm3 owns re-evaluation
-over a closed subset of quals; the executor's `EvalPlanQual`
-owns everything else. This is forced rather than chosen: UDFs,
-joins and volatile functions cannot descend, and §5 needs the
-evaluator either way.
+**Re-evaluation stays above sm3; sm3 takes the index
+fix-up.** 1.6 has the decomposition this rests on: deciding
+whether a row still qualifies needs the statement's qual and
+is the executor's, while removing the index entries that are
+actually there needs only the newest old image, which sm1
+hands back on the retried write. sm3 needs no evaluator to be
+correct at READ COMMITTED.
 
-The v1 subset, which covers the quals that drive index scans:
-equality and range comparisons on sm2's scalar types with
-collation, conjunctions, and `IS [NOT] NULL`. No `OR`, no
-functions. Widening it later adds operators to a table and
-changes no bytes on disk.
+**An evaluator is still wanted, for two things that are not
+the re-check:** §5's residual filters, and partial and
+expression index maintenance. Wherever it lands, the subset is
+1.3's — equality and range comparisons on sm2's scalar types
+with collation, conjunctions, and `IS [NOT] NULL`, no `OR` and
+no functions — because UDFs, joins and volatile functions
+cannot descend at all.
 
-Unchanged whichever way the quals are split: the cut-key unique
-check (§2), the online build under the schema lock (§4 below,
-step 7) and the invariant that the index and the heap never
-disagree are all sm3's.
+Unchanged either way: the cut-key unique check (§2), the
+online build under the schema lock (§4 below, step 5) and the
+invariant that the index and the heap never disagree are all
+sm3's.
 
-**The consequence for order:** §5's API shape stops being a
-later step and becomes a precondition of step 3, because the
-predicate representation is what the re-check is written
-against. §4 below is ordered that way.
+**The consequence for order:** §5's API shape is not a
+precondition of index maintenance, so it stays where
+`PLAN.md` has it, after step 3, and the evaluator arrives with
+it. §4 below is ordered that way.
 
-### 1.6 The decomposition, and what it corrects
+### 1.6 The decomposition
 
 The re-check is two jobs rather than one, and they need
 different knowledge:
@@ -209,8 +219,8 @@ qual and re-issues the write, sm1 hands sm3 the newest old
 image, and index maintenance is correct with sm3 never
 learning what a qual is.
 
-That removes the load-bearing claim in 1.3 and 1.5: **sm3
-needs no evaluator for the READ COMMITTED path.** An evaluator
+That is what 1.5 rests on: **sm3 needs no evaluator for the
+READ COMMITTED path.** An evaluator
 is still wanted, but for two independent features — §5's
 residual filters, and partial and expression index maintenance
 — and neither of those is the re-check.
@@ -221,7 +231,7 @@ a scan takes a `rowno` range or an `sm_bound_t`. And
 "The executor's side of the exchange belongs to the PostgreSQL
 fork, not to sm1".
 
-`SM3_DESIGN.md` §3 is ambivalent, which is how 1.5 went wrong.
+`SM3_DESIGN.md` §3 is ambivalent, and reads both ways.
 One sentence has sm3 "re-checks the statement's filter against
 that image"; four sentences later, "sm1 refuses a write
 repeated without the read, so **an executor** cannot forget
@@ -231,18 +241,12 @@ filter.
 
 **The rule: ownership of re-evaluation follows ownership of the
 qual, and the qual lives above.** sm3's share is the index
-fix-up from the newest image. What 1.5 says is unchanged by
-this is still unchanged — the cut-key unique check, the online
-build and the heap/index invariant are sm3's either way.
+fix-up from the newest image.
 
-Two consequences, not yet applied to the rest of this file:
-
-- 1.5's split by qual is wrong as written, and §3's bullet
-  needs the same correction when §4's step 2 rewrites it.
-- The ordering 1.5 forced comes undone: §5's API shape is not
-  a precondition of index maintenance, so §4's step 1 may go
-  back to being later work. The evaluator is then wanted when
-  §5 or partial indexes are built, not before step 6.
+One correction is still owed, to `SM3_DESIGN.md` rather than
+to this file: §3's bullet gives the re-check to sm3 while
+assuming an executor makes it. §4's step 1 rewrites that prose
+and should settle it there.
 
 ---
 
@@ -348,46 +352,45 @@ transcript is long and nobody reads all of it.
 ## 4. Then the code, in this order
 
 `SM3_DESIGN.md` §3 still opens "*To be written.*" though its
-bullets are detailed, and §5 opens the same way. This repo
-argues a protocol before writing it, so the prose and the two
-decisions come before any code.
+bullets are detailed. This repo argues a protocol before
+writing it, so the prose and the decisions come before code.
 
-1. **Settle §5's API shape and the pushdown subset** (§1.3 and
-   §1.5): the predicate representation that crosses
-   `include/sm.h`, and the closed set of quals sm3 evaluates.
-   → verify: both written into `SM3_DESIGN.md` §5, with the
-   fallback rule for every qual outside the set.
-2. **Finish `SM3_DESIGN.md` §3's prose** against that split.
+1. **Finish `SM3_DESIGN.md` §3's prose** against 1.5's split,
+   settling §3's own ambivalence about who re-checks the qual
+   (1.6).
    → verify: the section no longer says "to be written", and
-   says plainly which quals are sm3's and which the
-   executor's.
-3. **Settle the NULL/cut contradiction** (§2.1) and record the
+   says plainly that the qual check is the executor's and the
+   index fix-up sm3's.
+2. **Settle the NULL/cut contradiction** (§2.1) and record the
    over-long-key decision in `SM3_DESIGN.md` §7.
    → verify: §3 says one thing about NULL keys, not two.
-4. **sm3's scenario driver** (§3 above), with one scenario
+3. **sm3's scenario driver** (§3 above), with one scenario
    passing: two sessions, DDL against DML, over the catalog
    that is already built.
    → verify: `make -C sm3 test` runs it and diffs a transcript.
-5. **The evaluator**: three-valued logic over sm2's ADT table,
-   per-ordinal decode, comparison by the collation.
-   → verify: §5's own criterion — for generated predicates, the
-   rows returned match a brute-force scan-and-filter.
-6. **Index maintenance** — insert, update and delete, the old
+4. **Index maintenance** — insert, update and delete, the old
    image copied before the next call on the session
-   (`SM3_DESIGN.md:283`-287), and the READ COMMITTED re-check
-   through `rel_read_latest` and the evaluator.
+   (`SM3_DESIGN.md:283`-287), and the index fix-up from the
+   newest old image after `SM_ERR_UPDATED`, with no predicate
+   of sm3's own.
    → verify: scenarios at every isolation level in which the
    index and a brute-force scan of the heap agree, the
-   claim-once shape of §1.1 among them.
-7. **The online build under S**, which `CATALOG.md` §7.1 waits
+   claim-once shape of 1.1 among them.
+5. **The online build under S**, which `CATALOG.md` §7.1 waits
    on: `cat_create_index` takes X today and takes S once the
    build exists, with the `indcheckxmin` guard for a reader
    whose snapshot predates the index, and DDL in a prepared
    transaction refused.
    → verify: a writer in flight when the build starts is not
    missed; a reader holding IS is never blocked.
+6. **§5's predicate scans, with the evaluator** (1.3): the API
+   shape, the pushdown subset, and the residual filter
+   evaluated below the API. Partial and expression indexes
+   follow it.
+   → verify: §5's own criterion — for generated predicates,
+   the rows returned match a brute-force scan-and-filter.
 
-Step 7 carries the sharpest cost already written down: the
+Step 5 carries the sharpest cost already written down: the
 schema row is a hot key, every reader and writer of the table
 locks it, and the lock table is one mutex rather than sharded
 (`SM3_DESIGN.md` §3). That is where the first benchmark should
