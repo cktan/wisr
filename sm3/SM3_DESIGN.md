@@ -19,9 +19,13 @@ decisions in `SM3_OBJECTIVE.md`:
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
 **Status: the catalog is implemented** — its keys, values,
-load, DDL and a session's overlay (`CATALOG.md`); the schema
-locks of §2 are not yet, nor §3 to §6. sm2, which it is built
-on, is, but for TOAST (`sm2/SM2_DESIGN.md` §8.2).
+load, DDL, a session's overlay and the schema locks of §2
+(`CATALOG.md`), and §4's object mapping with them: a store
+per table, index prefixes allocated and never reused, and
+`DROP TABLE` as one `sm1::rmstore`. §3's index maintenance,
+§5's predicate scans and §6's statistics are not built. sm2,
+which it is built on, is, but for TOAST
+(`sm2/SM2_DESIGN.md` §8.2).
 This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is
 permanent on disk — the catalog's own layout is the exception

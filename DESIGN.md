@@ -132,7 +132,7 @@ rule is that nothing turns them off.
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
 | sm3 | being built: its catalog — keys, values, load, DDL, a session's overlay and schema locks — with its C++ interface in `sm3/include/sm3.h` and `sm3/CATALOG.md`; index maintenance, predicate scans and statistics are still design, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md` |
-| top level | built: `include/sm.h` over sm1 and sm2, with `src/sm.cc`; the calls that open a table are scaffolding until the wrapper serves sm3's catalog (§1), and the `rel` driver keeps a catalog of its own until then |
+| top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`, the `sm_cat_*` calls included, which the `rel` driver opens its tables through; `sm_rel_open` and `sm_idx_open` are still scaffolding in that they take a store id and prefix rather than an oid, which a caller now gets from `sm_cat_lock_table`'s definition |
 
 sm1 was built first and alone, on purpose: it is usable
 without sm2 (an MVCC key-value store is a complete product
