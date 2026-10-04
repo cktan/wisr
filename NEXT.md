@@ -465,7 +465,56 @@ What the three cases show:
   to be checked against the PostgreSQL source before the fork
   relies on it.
 
-### 1.9 Bottom line
+### 1.9 What the C API shows the executor
+
+Once the table-level write exists, the heap-level write calls
+leave `include/sm.h`:
+
+- **They let a caller break the invariant.** With
+  `sm_rel_update` exposed, any caller can change a row and
+  leave its index entries behind. The table-level write keeps
+  the index and the heap in agreement only if it is the sole
+  way to write a row.
+- **The header already calls them temporary.** The comment on
+  `sm_rel_open` reads "Scaffolding, until sm3 opens tables".
+- **Nothing is lost.** On a table with no index the
+  table-level write does what `sm_rel_update` does.
+
+| Call | Verdict |
+| --- | --- |
+| `sm_rel_insert`, `sm_rel_update`, `sm_rel_delete` and their `_tuple` forms | remove; the table-level writes replace them |
+| `sm_idx_insert`, `sm_idx_delete` | remove; only sm3 writes index entries |
+| `sm_rel_open` | remove; a table is opened through the catalog |
+| `sm_rel_read`, `sm_rel_read_latest`, `sm_rel_scan`, the index scans | keep the operations, on the table handle |
+
+sm2's own `rel_update` and `idx_*` stay as they are, and sm3
+calls them. The cost is the `rel` driver: `rel/src/rel_ops.cc`
+and `rel/src/rel_catalog.cc` use the heap-level calls and move
+to the table-level ones in the same change.
+
+**Re-evaluation loses nothing by this.** It never calls
+`sm_rel_update` or `sm_idx_*`. These are the calls the
+executor makes in 1.7:
+
+| Step | What the executor does | Call it needs |
+| --- | --- | --- |
+| 3 | tries the write and learns of the conflict | `sm_tbl_update`, which returns `SM_ERR_UPDATED` |
+| 4 | fetches the latest image of the row | `sm_rel_read_latest`, kept |
+| 5 | evaluates the qual against that image and rebuilds the new tuple | none; its own code on its own memory |
+| 6 | writes again, or skips | `sm_tbl_update` again, or nothing |
+
+The executor's job is to take an error code, read one row,
+decide, and call the same write again or not. The removed
+calls do sm3's share and not the executor's: `rel_update` at
+steps 3a and 6a, `idx_delete` and `idx_insert` at step 8.
+
+One thing must stay true. sm1 accepts the repeated write only
+if `read_latest` marked the lock first
+(`sm1/SM1_DESIGN.md` §5.4). `sm_rel_read_latest` does that
+today, and whatever read ends up on the table handle must keep
+doing it.
+
+### 1.10 Bottom line
 
 **sm guarantees that the index and the heap never disagree;
 the executor decides which rows get written.**
@@ -616,7 +665,8 @@ writing it, so the prose and the decisions come before code.
    → verify: `make -C sm3 test` runs it and diffs a transcript.
 4. **Index maintenance** — first the entry point the executor
    calls, a table-level write that sm3 owns (1.7), which
-   `include/sm.h` lacks. Then insert, update and delete, the old
+   `include/sm.h` lacks, and the heap-level writes it retires
+   (1.9). Then insert, update and delete, the old
    image copied before the next call on the session
    (`SM3_DESIGN.md:283`-287), and the index fix-up from the
    newest old image after `SM_ERR_UPDATED`, with no predicate
