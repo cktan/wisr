@@ -114,17 +114,40 @@ UPDATE jobs SET state='done' WHERE id=7;                     -- T2
 | 5 | off its snapshot image T2 removes `('free', 7)`, which is gone, and inserts `('done', 7)` |
 | 6 | the heap says `done`; the index holds `('taken', 7)` and `('done', 7)` |
 
-Taking the old key from the image the retried write hands back
-makes step 5 remove `('taken', 7)` instead, and the two agree.
-A scan for `state='taken'` otherwise returns a row that is not
-taken, and again nothing raises an error.
+Step 5 is the bug: T2 has two old images of row 7 and uses
+the wrong one. The first is what its scan read at the
+snapshot, `state='free'`. The second is what the repeated
+`rel_update` returns, the version it actually overwrote, which
+is T1's `state='taken'`. The index entry to remove must be
+computed from the second. Then step 5 removes `('taken', 7)`
+and inserts `('done', 7)`, and the index holds one entry that
+matches the heap. With the first, a scan for `state='taken'`
+returns a row that is not taken, and again nothing raises an
+error.
 
 A partial index sharpens it. For `jobs(owner) WHERE
 state='free'`, deciding whether to remove the entry means
 evaluating the *index's* predicate against the new image, not
 the statement's. That is a second and independent need for an
-evaluator inside sm3, and the executor cannot serve it unless
-the executor also owns maintenance.
+evaluator inside sm3.
+
+Two jobs are in play, and "owning" one means being the layer
+whose code does it. *Evaluation* decides whether a predicate
+holds for a row image: the statement's filter in 1.1, the
+index's predicate here. *Maintenance* removes and inserts
+index entries when a base row changes, as in steps 2 and 5
+above. Either job could sit in sm3 or in the executor above
+it, but they cannot be split:
+
+- Maintenance needs the overwritten image, which exists only
+  at the retried write, so the layer that re-checks and
+  retries is the layer holding it.
+- Maintaining a partial index means evaluating its predicate,
+  so the layer that maintains must be able to evaluate.
+
+So sm3 does both, or the executor does both. An evaluator
+that lives only in the executor is no use to maintenance that
+lives in sm3.
 
 ### 1.3 What an evaluator in sm3 would take
 
