@@ -95,6 +95,30 @@ matters most. §3 says it too: "the old image the retried write
 hands back is the newest version's, so the index entries
 removed are the ones that are actually there".
 
+The same race, with an index on `state` and a second statement
+whose filter row 7 still passes after T1, so the re-check of
+1.1 lets the write through and only the index can go wrong:
+
+```sql
+-- row 7: state='free', index entry ('free', 7)
+UPDATE jobs SET state='taken', owner=:me WHERE state='free'; -- T1
+UPDATE jobs SET state='done' WHERE id=7;                     -- T2
+```
+
+| Step | What happens |
+| --- | --- |
+| 1 | both statements take a snapshot in which row 7 is `free` |
+| 2 | T1 writes row 7, replacing `('free', 7)` with `('taken', 7)` |
+| 3 | T1 commits; T2's write is refused with `SM_ERR_UPDATED` |
+| 4 | T2 reads the latest image; `id=7` still holds, so it repeats the write |
+| 5 | off its snapshot image T2 removes `('free', 7)`, which is gone, and inserts `('done', 7)` |
+| 6 | the heap says `done`; the index holds `('taken', 7)` and `('done', 7)` |
+
+Taking the old key from the image the retried write hands back
+makes step 5 remove `('taken', 7)` instead, and the two agree.
+A scan for `state='taken'` otherwise returns a row that is not
+taken, and again nothing raises an error.
+
 A partial index sharpens it. For `jobs(owner) WHERE
 state='free'`, deciding whether to remove the entry means
 evaluating the *index's* predicate against the new image, not
