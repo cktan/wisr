@@ -314,24 +314,43 @@ UPDATE jobs SET state='taken', owner='w1' WHERE state='free';
 UPDATE jobs SET state='done' WHERE id=7;
 ```
 
+The executor needs a way into sm3, and there is none today.
+Its write call is `sm_rel_update` in `include/sm.h`, on a heap
+relation that `src/sm.cc` hands straight to sm2, so the call
+knows of no index. `sm_idx_insert` and `sm_idx_delete` are
+separate calls, and `sm3/include/sm3.h` has the catalog and
+the transaction calls but nothing that writes a row. The steps
+below assume a table-level write that sm3 owns, which updates
+the heap and maintains every index of the table in one call.
+The name and shape are placeholders:
+
+```c
+int sm_tbl_update(sm_tbl_t* tbl, uint64_t rowno,
+                  const sm_datum_t* values, const bool* isnull,
+                  size_t n);
+```
+
 **The write case: the row still qualifies.**
 
 | Step | Layer | What happens |
 | --- | --- | --- |
 | 1 | executor | T2's scan reads row 7 at its snapshot: `(7, 'free', NULL)`. It builds the new tuple `(7, 'done', NULL)`. |
 | 2 | sm1 | T1 updates row 7 and commits. The heap holds `(7, 'taken', 'w1')` and the index holds `('taken', 7)`. |
-| 3 | sm3 | T2 calls `rel_update(7, (7, 'done', NULL))`. sm1 refuses it with `SM_ERR_UPDATED`. sm3 touches no index and returns the status to the executor as a non-error. |
+| 3 | executor | T2 calls `sm_tbl_update(jobs, 7, (7, 'done', NULL))`. |
+| 3a | sm3 | It calls sm2's `rel_update` on the heap. sm1 refuses it with `SM_ERR_UPDATED`. sm3 touches no index and returns the status to the executor as a non-error. |
 | 4 | executor | It calls `sm_rel_read_latest(7)`, which marks the lock and returns `(7, 'taken', 'w1')`. sm3 has no part in it: no index is involved. |
 | 5 | executor | It checks `id=7` against that image: true. It rebuilds the new tuple from it: `(7, 'done', 'w1')`. |
-| 6 | sm3 | It calls `rel_update(7, (7, 'done', 'w1'))` again. sm1 accepts it and hands back the old image `(7, 'taken', 'w1')`. |
-| 7 | sm3 | It copies that old image before making any index call. |
-| 8 | sm3 | For `jobs_state`: old key from the copy is `'taken'`, new key from the new tuple is `'done'`. They differ, so `idx_delete('taken', 7)` then `idx_insert('done', 7)`. |
+| 6 | executor | It calls `sm_tbl_update(jobs, 7, (7, 'done', 'w1'))`. Steps 6a to 8 run inside that one call. |
+| 6a | sm3 | It calls sm2's `rel_update` on the heap again. sm1 accepts it and hands back the old image `(7, 'taken', 'w1')`. |
+| 7 | sm3 | It copies that old image, because the next sm2 call on the session reuses the memory. |
+| 8 | sm3 | For each index in the table's definition, it takes the old key from the copy and the new key from the new values. For `jobs_state`, `'taken'` and `'done'` differ, so `idx_delete('taken', 7)` then `idx_insert('done', 7)`. It returns 0 to the executor. |
 | 9 | — | The heap holds `(7, 'done', 'w1')` and the index holds `('done', 7)` only. |
 
-Steps 6 to 8 are the fix-up, and they are the same code as an
-ordinary update. The point is in step 8: the old key comes
-from the image returned in step 6, not from the `'free'` image
-the scan read in step 1. An index on `owner` would be left
+Steps 6a to 8 are the fix-up, and they are the same code as an
+ordinary update. Step 3a is that code stopping early, before
+it reaches an index. The point is in step 8: the old key comes
+from the image returned in step 6a, not from the `'free'`
+image the scan read in step 1. An index on `owner` would be left
 alone in step 8, since its old and new keys are both `'w1'`.
 
 **The skip case: the row no longer qualifies.** Replace T2
@@ -351,12 +370,18 @@ Steps 1 to 4 are the same. Then:
 | 7 | — | The heap holds `(7, 'taken', 'w1')`, the index holds `('taken', 7)`, and T2 reports zero rows. |
 
 In both cases sm3 never sees a predicate: the executor
-decides, and sm3 acts only on the image sm1 hands back. The
-call shapes are illustrative. `rel_update`, `idx_delete` and
-`idx_insert` are the sm2 calls sm3 would make, and
-`sm_rel_read_latest` is the executor's own call through
-`include/sm.h`. sm3's index maintenance is §4's step 4 and is
-not written yet.
+decides, and sm3 acts only on the image sm1 hands back.
+`rel_update`, `idx_delete` and `idx_insert` are the sm2 calls
+sm3 would make, and `sm_rel_read_latest` is the executor's own
+call through `include/sm.h`.
+
+The alternative to a table-level call is to keep
+`sm_rel_update` and have the executor call `sm_idx_*` itself,
+as PostgreSQL's executor does natively. It adds no API, but
+then the fix-up is the executor's and not sm3's, against 1.5,
+and an executor can forget an index or use the wrong old
+image. §4's step 4 has to design the entry point before it
+writes the maintenance.
 
 ---
 
@@ -478,7 +503,9 @@ writing it, so the prose and the decisions come before code.
    passing: two sessions, DDL against DML, over the catalog
    that is already built.
    → verify: `make -C sm3 test` runs it and diffs a transcript.
-4. **Index maintenance** — insert, update and delete, the old
+4. **Index maintenance** — first the entry point the executor
+   calls, a table-level write that sm3 owns (1.7), which
+   `include/sm.h` lacks. Then insert, update and delete, the old
    image copied before the next call on the session
    (`SM3_DESIGN.md:283`-287), and the index fix-up from the
    newest old image after `SM_ERR_UPDATED`, with no predicate
