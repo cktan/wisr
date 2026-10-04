@@ -321,7 +321,7 @@ UPDATE jobs SET state='done' WHERE id=7;
 | 1 | executor | T2's scan reads row 7 at its snapshot: `(7, 'free', NULL)`. It builds the new tuple `(7, 'done', NULL)`. |
 | 2 | sm1 | T1 updates row 7 and commits. The heap holds `(7, 'taken', 'w1')` and the index holds `('taken', 7)`. |
 | 3 | sm3 | T2 calls `rel_update(7, (7, 'done', NULL))`. sm1 refuses it with `SM_ERR_UPDATED`. sm3 touches no index and returns the status to the executor as a non-error. |
-| 4 | sm3 | The executor asks for the latest image. sm3 calls `rel_read_latest(7)`, which marks the lock and returns `(7, 'taken', 'w1')`. |
+| 4 | executor | It calls `sm_rel_read_latest(7)`, which marks the lock and returns `(7, 'taken', 'w1')`. sm3 has no part in it: no index is involved. |
 | 5 | executor | It checks `id=7` against that image: true. It rebuilds the new tuple from it: `(7, 'done', 'w1')`. |
 | 6 | sm3 | It calls `rel_update(7, (7, 'done', 'w1'))` again. sm1 accepts it and hands back the old image `(7, 'taken', 'w1')`. |
 | 7 | sm3 | It copies that old image before making any index call. |
@@ -352,10 +352,11 @@ Steps 1 to 4 are the same. Then:
 
 In both cases sm3 never sees a predicate: the executor
 decides, and sm3 acts only on the image sm1 hands back. The
-call shapes are illustrative. `rel_update`, `rel_read_latest`,
-`idx_delete` and `idx_insert` are the sm2 calls sm3 would
-make; its index maintenance is §4's step 4 and is not written
-yet.
+call shapes are illustrative. `rel_update`, `idx_delete` and
+`idx_insert` are the sm2 calls sm3 would make, and
+`sm_rel_read_latest` is the executor's own call through
+`include/sm.h`. sm3's index maintenance is §4's step 4 and is
+not written yet.
 
 ---
 
