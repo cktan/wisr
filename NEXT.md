@@ -465,6 +465,35 @@ What the three cases show:
   to be checked against the PostgreSQL source before the fork
   relies on it.
 
+### 1.9 Bottom line
+
+**sm guarantees that the index and the heap never disagree;
+the executor decides which rows get written.**
+
+- **Tuple and index together are sm's alone.** Once a write is
+  issued, sm3 updates the heap, takes the old image sm1 hands
+  back, and fixes every index from it (1.7, steps 6a to 8).
+  It needs nothing from the executor for that.
+- **Whether the row still qualifies is the executor's.** After
+  `SM_ERR_UPDATED`, the statement's qual is re-checked against
+  the latest image, and the outcome is write or skip. sm never
+  sees the qual, and in 1.8's join it does not have the other
+  table's row either.
+
+The line is not drawn by the index. 1.1's double claim happens
+on a table with no index at all.
+
+Two caveats:
+
+- **Today the executor would have to do both.** The
+  table-level write does not exist, so a caller must pair
+  `sm_rel_update` with `sm_idx_*` itself to keep the two in
+  step. §4's step 4 closes that gap.
+- **Partial and expression indexes are the exception.**
+  Maintaining one means evaluating the index's own predicate
+  or expression, so sm needs an evaluator of its own (§4's
+  step 6), though still no help from the executor per write.
+
 ---
 
 ## 2. The missing primitive, and how much it is really needed
