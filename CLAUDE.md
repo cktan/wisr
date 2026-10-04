@@ -28,6 +28,7 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 - do not use strncpy(), instead memcpy and assign NUL-terminator.  
 - when writing git commit messages, use concise sentences and 
   bullet points.
+- on git commit, if source files are not involved, do not run tests.
 
 
 ## Guidelines
