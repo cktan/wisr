@@ -488,9 +488,31 @@ leave `include/sm.h`:
 | `sm_rel_read`, `sm_rel_read_latest`, `sm_rel_scan`, the index scans | keep the operations, on the table handle |
 
 sm2's own `rel_update` and `idx_*` stay as they are, and sm3
-calls them. The cost is the `rel` driver: `rel/src/rel_ops.cc`
+calls them.
+
+**The `rel` driver follows the same rule**: it keeps the raw
+reads and scans and loses the raw writes. `rel/src/rel_ops.cc`
 and `rel/src/rel_catalog.cc` use the heap-level calls and move
 to the table-level ones in the same change.
+
+- **`rel` exists to drive the public API** (`rel/REL.md`). A
+  private write path would test something no consumer runs.
+- **`rel` does sm3's job by hand today.** `rel_ops.cc` pairs
+  `sm_rel_update` with `sm_idx_delete` and `sm_idx_insert`
+  itself. Once sm3 owns maintenance that is a second
+  implementation, and it can pass while sm3's is broken.
+- **sm2 is tested where it lives.** `sm2/test/test_rel.cc` and
+  `sm2/test/test_index.cc` test the heap and the index in
+  C++, so `rel` gives up no coverage of sm2.
+- **The check that matters needs only reads.** §4's step 4
+  asks that the index agree with a brute-force scan of the
+  heap, which takes a raw heap scan and a raw index scan.
+
+The one case for raw writes in QA is deliberate corruption:
+writing a heap row without its index entry to prove that a
+consistency checker catches it. Those calls would go in a
+test-only header the fork never includes, not back in
+`include/sm.h`, and not before there is a checker to test.
 
 **Re-evaluation loses nothing by this.** It never calls
 `sm_rel_update` or `sm_idx_*`. These are the calls the
