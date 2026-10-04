@@ -203,8 +203,9 @@ UPDATE orders o SET status='hold' FROM customers c
 ```
 
 The newest image of `orders` says nothing about whether
-`c.region` still matches, and `c` may have changed too. That
-qual is the executor's at every isolation level.
+`c.region` matches: that takes the customer row the executor
+joined, which sm3 was never given. That qual is the executor's
+at every isolation level. 1.8 works it through.
 
 ### 1.4 What it buys
 
@@ -382,6 +383,87 @@ then the fix-up is the executor's and not sm3's, against 1.5,
 and an executor can forget an index or use the wrong old
 image. §4's step 4 has to design the entry point before it
 writes the maintenance.
+
+### 1.8 A qual that spans two tables
+
+1.3's join, worked through as 1.7 was, with the same
+placeholder `sm_tbl_update`:
+
+```sql
+-- orders:    row 42 = (id=42, cust_id=5, status='new')
+-- customers: row 5  = (id=5, region='EU')
+--            row 9  = (id=9, region='US')
+CREATE INDEX orders_status ON orders(status); -- holds ('new', 42)
+
+-- T2, READ COMMITTED
+UPDATE orders o SET status='hold' FROM customers c
+ WHERE o.cust_id = c.id AND c.region = 'EU';
+```
+
+Only `orders` is written. `customers` is read at T2's
+statement snapshot and never locked.
+
+**Case A: the order row changes under T2.** T1 runs `UPDATE
+orders SET cust_id=9 WHERE id=42` and commits after T2's
+snapshot.
+
+| Step | Layer | What happens |
+| --- | --- | --- |
+| 1 | executor | T2's join pairs order 42 `(42, 5, 'new')` with customer 5 `(5, 'EU')` at its snapshot. It builds the new tuple `(42, 5, 'hold')`. |
+| 2 | sm1 | T1 commits. The heap holds `(42, 9, 'new')`; the index is unchanged. |
+| 3 | executor | T2 calls `sm_tbl_update(orders, 42, (42, 5, 'hold'))`. |
+| 3a | sm3 | sm2's `rel_update` is refused with `SM_ERR_UPDATED`. sm3 touches no index and returns the status. |
+| 4 | executor | It calls `sm_rel_read_latest(42)` and gets `(42, 9, 'new')`. |
+| 5 | executor | It re-runs the join for this one row: the latest order image against the customer row it had already joined, `(5, 'EU')`. `o.cust_id = c.id` is `9 = 5`: false. It skips the row. |
+| 6 | sm3 | Nothing. No write is issued and no index call is made. |
+| 7 | — | The heap holds `(42, 9, 'new')`, the index holds `('new', 42)`, and T2 reports zero rows. |
+
+Step 5 is the point. The qual needs the customer row, and
+`sm_tbl_update` carries a row of `orders` and nothing else. An
+evaluator in sm3 holding only the latest order image could not
+decide it.
+
+**Case B: only the customer changes.** T1 runs `UPDATE
+customers SET region='US' WHERE id=5` and commits after T2's
+snapshot.
+
+- Order 42 was not touched, so `sm_tbl_update` succeeds the
+  first time and there is no `SM_ERR_UPDATED`.
+- T2 sets the order to `'hold'` on the strength of
+  `region='EU'` as its snapshot saw it.
+- sm3 does an ordinary update: the old image is `(42, 5,
+  'new')`, so `idx_delete('new', 42)` and `idx_insert('hold',
+  42)`.
+
+No re-check happens at all, and that is correct at READ
+COMMITTED: only a conflict on the row being written triggers
+one.
+
+**Case C: the order changes and still qualifies.** T1 runs
+`UPDATE orders SET status='shipped' WHERE id=42` and commits.
+
+- Steps 1 to 4 are case A's, and the latest image is `(42, 5,
+  'shipped')`.
+- At step 5 the join holds, `5 = 5` and `'EU'`, so the
+  executor rebuilds the new tuple `(42, 5, 'hold')` and calls
+  `sm_tbl_update` again.
+- sm3's fix-up is 1.7's: the old image handed back is `(42, 5,
+  'shipped')`, so it removes `('shipped', 42)` and inserts
+  `('hold', 42)`.
+
+What the three cases show:
+
+- **sm3's share is unchanged.** It sees one row of `orders`
+  and the image sm1 hands back, as in 1.7.
+- **The executor's share is larger.** It keeps the joined
+  customer row and re-runs the join for one row, which is the
+  work of PostgreSQL's `EvalPlanQual`.
+- **The re-check uses the customer row already joined**, not
+  the newest one. In case A the order is skipped even if
+  customer 9 were in the EU. This is `EvalPlanQual`'s
+  treatment of non-target tables as recalled here, and it is
+  to be checked against the PostgreSQL source before the fork
+  relies on it.
 
 ---
 
