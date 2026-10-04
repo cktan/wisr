@@ -143,18 +143,15 @@ whose code does it. *Evaluation* decides whether a predicate
 holds for a row image: the statement's filter in 1.1, the
 index's predicate here. *Maintenance* removes and inserts
 index entries when a base row changes, as in steps 2 and 5
-above. Either job could sit in sm3 or in the executor above
-it, but they cannot be split:
+above.
 
-- Maintenance needs the overwritten image, which exists only
-  at the retried write, so the layer that re-checks and
-  retries is the layer holding it.
-- Maintaining a partial index means evaluating its predicate,
-  so the layer that maintains must be able to evaluate.
-
-So sm3 does both, or the executor does both. An evaluator
-that lives only in the executor is no use to maintenance that
-lives in sm3.
+For a plain index the two jobs split cleanly, and 1.6 splits
+them: the executor evaluates the statement's filter and
+re-issues the write, and sm1 hands sm3 the overwritten image
+whoever asked for the write. Only a partial or expression
+index ties them together, because maintaining one means
+evaluating its predicate, so the layer that maintains it must
+be able to evaluate.
 
 ### 1.3 What an evaluator in sm3 would take
 
@@ -301,6 +298,64 @@ One correction is still owed, to `SM3_DESIGN.md` rather than
 to this file: §3's bullet gives the re-check to sm3 while
 assuming an executor makes it. §4's step 1 rewrites that prose
 and should settle it there.
+
+### 1.7 The fix-up, step by step
+
+1.2's race again, with the split of 1.6 applied. One index on
+`state`, and row 7 starts as `(id=7, state='free',
+owner=NULL)`:
+
+```sql
+CREATE INDEX jobs_state ON jobs(state);   -- holds ('free', 7)
+
+-- T1, worker w1
+UPDATE jobs SET state='taken', owner='w1' WHERE state='free';
+-- T2, a reaper, READ COMMITTED
+UPDATE jobs SET state='done' WHERE id=7;
+```
+
+**The write case: the row still qualifies.**
+
+| Step | Layer | What happens |
+| --- | --- | --- |
+| 1 | executor | T2's scan reads row 7 at its snapshot: `(7, 'free', NULL)`. It builds the new tuple `(7, 'done', NULL)`. |
+| 2 | sm1 | T1 updates row 7 and commits. The heap holds `(7, 'taken', 'w1')` and the index holds `('taken', 7)`. |
+| 3 | sm3 | T2 calls `rel_update(7, (7, 'done', NULL))`. sm1 refuses it with `SM_ERR_UPDATED`. sm3 touches no index and returns the status to the executor as a non-error. |
+| 4 | sm3 | The executor asks for the latest image. sm3 calls `rel_read_latest(7)`, which marks the lock and returns `(7, 'taken', 'w1')`. |
+| 5 | executor | It checks `id=7` against that image: true. It rebuilds the new tuple from it: `(7, 'done', 'w1')`. |
+| 6 | sm3 | It calls `rel_update(7, (7, 'done', 'w1'))` again. sm1 accepts it and hands back the old image `(7, 'taken', 'w1')`. |
+| 7 | sm3 | It copies that old image before making any index call. |
+| 8 | sm3 | For `jobs_state`: old key from the copy is `'taken'`, new key from the new tuple is `'done'`. They differ, so `idx_delete('taken', 7)` then `idx_insert('done', 7)`. |
+| 9 | — | The heap holds `(7, 'done', 'w1')` and the index holds `('done', 7)` only. |
+
+Steps 6 to 8 are the fix-up, and they are the same code as an
+ordinary update. The point is in step 8: the old key comes
+from the image returned in step 6, not from the `'free'` image
+the scan read in step 1. An index on `owner` would be left
+alone in step 8, since its old and new keys are both `'w1'`.
+
+**The skip case: the row no longer qualifies.** Replace T2
+with a second worker running 1.1's claim statement:
+
+```sql
+-- T2, worker w2
+UPDATE jobs SET state='taken', owner='w2' WHERE state='free';
+```
+
+Steps 1 to 4 are the same. Then:
+
+| Step | Layer | What happens |
+| --- | --- | --- |
+| 5 | executor | It checks `state='free'` against `(7, 'taken', 'w1')`: false. It skips the row. |
+| 6 | sm3 | Nothing. No write is issued and no index call is made. |
+| 7 | — | The heap holds `(7, 'taken', 'w1')`, the index holds `('taken', 7)`, and T2 reports zero rows. |
+
+In both cases sm3 never sees a predicate: the executor
+decides, and sm3 acts only on the image sm1 hands back. The
+call shapes are illustrative. `rel_update`, `rel_read_latest`,
+`idx_delete` and `idx_insert` are the sm2 calls sm3 would
+make; its index maintenance is §4's step 4 and is not written
+yet.
 
 ---
 
