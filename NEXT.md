@@ -121,9 +121,16 @@ snapshot, `state='free'`. The second is what the repeated
 is T1's `state='taken'`. The index entry to remove must be
 computed from the second. Then step 5 removes `('taken', 7)`
 and inserts `('done', 7)`, and the index holds one entry that
-matches the heap. With the first, a scan for `state='taken'`
-returns a row that is not taken, and again nothing raises an
-error.
+matches the heap.
+
+With the first, the index is invalid from step 5 on: every
+later snapshot sees two entries for row 7 where the invariant
+is one visible entry per row per index. Until then it held,
+since T1 swapped one entry for another. What a query sees
+depends on the key it asks for. A scan for `state='done'` is
+right, and a scan for `state='taken'` returns a row that is
+not taken. Nothing rechecks the leftover entry against the
+base row, and again nothing raises an error.
 
 A partial index sharpens it. For `jobs(owner) WHERE
 state='free'`, deciding whether to remove the entry means
