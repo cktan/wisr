@@ -102,7 +102,7 @@ whose filter row 7 still passes after T1, so the re-check of
 ```sql
 -- row 7: state='free', index entry ('free', 7)
 UPDATE jobs SET state='taken', owner=:me WHERE state='free'; -- T1
-UPDATE jobs SET state='done' WHERE id=7;                     -- T2
+UPDATE jobs SET state='done' WHERE state<>'done';            -- T2
 ```
 
 | Step | What happens |
@@ -110,7 +110,7 @@ UPDATE jobs SET state='done' WHERE id=7;                     -- T2
 | 1 | both statements take a snapshot in which row 7 is `free` |
 | 2 | T1 writes row 7, replacing `('free', 7)` with `('taken', 7)` |
 | 3 | T1 commits; T2's write is refused with `SM_ERR_UPDATED` |
-| 4 | T2 reads the latest image; `id=7` still holds, so it repeats the write |
+| 4 | T2 reads the latest image, `state='taken'`; `'taken' <> 'done'` still holds, so it repeats the write |
 | 5 | off its snapshot image T2 removes `('free', 7)`, which is gone, and inserts `('done', 7)` |
 | 6 | the heap says `done`; the index holds `('taken', 7)` and `('done', 7)` |
 
@@ -312,7 +312,7 @@ CREATE INDEX jobs_state ON jobs(state);   -- holds ('free', 7)
 -- T1, worker w1
 UPDATE jobs SET state='taken', owner='w1' WHERE state='free';
 -- T2, a reaper, READ COMMITTED
-UPDATE jobs SET state='done' WHERE id=7;
+UPDATE jobs SET state='done' WHERE state <> 'done';
 ```
 
 The executor needs a way into sm3, and there is none today.
@@ -340,7 +340,7 @@ int sm_tbl_update(sm_tbl_t* tbl, uint64_t rowno,
 | 3 | executor | T2 calls `sm_tbl_update(jobs, 7, (7, 'done', NULL))`. |
 | 3a | sm3 | It calls sm2's `rel_update` on the heap. sm1 refuses it with `SM_ERR_UPDATED`. sm3 touches no index and returns the status to the executor as a non-error. |
 | 4 | executor | It calls `sm_rel_read_latest(7)`, which marks the lock and returns `(7, 'taken', 'w1')`. sm3 has no part in it: no index is involved. |
-| 5 | executor | It checks `id=7` against that image: true. It rebuilds the new tuple from it: `(7, 'done', 'w1')`. |
+| 5 | executor | It evaluates T2's qual against that image, whose `state` is now `'taken'` and no longer the `'free'` its scan saw. `'taken' <> 'done'` is true, so the row still qualifies. It rebuilds the new tuple from the image: `(7, 'done', 'w1')`. |
 | 6 | executor | It calls `sm_tbl_update(jobs, 7, (7, 'done', 'w1'))`. Steps 6a to 8 run inside that one call. |
 | 6a | sm3 | It calls sm2's `rel_update` on the heap again. sm1 accepts it and hands back the old image `(7, 'taken', 'w1')`. |
 | 7 | sm3 | It copies that old image, because the next sm2 call on the session reuses the memory. |
