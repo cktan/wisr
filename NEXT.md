@@ -430,7 +430,9 @@ UPDATE orders o SET status='hold' FROM customers c
  WHERE o.cust_id = c.id AND c.region = 'EU';
 ```
 
-Only `orders` is written. `customers` is read at T2's
+A tuple below is written with its table's name in front, as
+in `orders(42, 5, 'new')` or `customers(5, 'EU')`. Only
+`orders` is written. `customers` is read at T2's
 statement snapshot and never locked.
 
 **Case A: the order row changes under T2.** T1 runs `UPDATE
@@ -439,14 +441,14 @@ snapshot.
 
 | Step | Layer | What happens |
 | --- | --- | --- |
-| 1 | executor | T2's join pairs order 42 `(42, 5, 'new')` with customer 5 `(5, 'EU')` at its snapshot. It builds the new tuple `(42, 5, 'hold')`. |
-| 2 | sm1 | T1 commits. The heap holds `(42, 9, 'new')`; the index is unchanged. |
+| 1 | executor | T2's join pairs order 42 `orders(42, 5, 'new')` with customer 5 `customers(5, 'EU')` at its snapshot. It builds the new tuple `orders(42, 5, 'hold')`. |
+| 2 | sm1 | T1 commits. The heap holds `orders(42, 9, 'new')`; the index is unchanged. |
 | 3 | executor | T2 calls `sm_tbl_update(orders, 42, (42, 5, 'hold'))`. |
 | 3a | sm3 | sm2's `rel_update` is refused with `SM_ERR_UPDATED`. sm3 touches no index and returns the status. |
-| 4 | executor | It calls `sm_rel_read_latest(42)` and gets `(42, 9, 'new')`. |
-| 5 | executor | It re-runs the join for this one row: the latest order image against the customer row it had already joined, `(5, 'EU')`. `o.cust_id = c.id` is `9 = 5`: false. It skips the row. |
+| 4 | executor | It calls `sm_rel_read_latest(orders, 42)` and gets `orders(42, 9, 'new')`. |
+| 5 | executor | It re-runs the join for this one row: the latest order image against the customer row it had already joined, `customers(5, 'EU')`. `o.cust_id = c.id` is `9 = 5`: false. It skips the row. |
 | 6 | sm3 | Nothing. No write is issued and no index call is made. |
-| 7 | — | The heap holds `(42, 9, 'new')`, the index holds `('new', 42)`, and T2 reports zero rows. |
+| 7 | — | The heap holds `orders(42, 9, 'new')`, the index `orders_status` holds `('new', 42)`, and T2 reports zero rows. |
 
 Step 5 is the point. The qual needs the customer row, and
 `sm_tbl_update` carries a row of `orders` and nothing else. An
@@ -461,9 +463,9 @@ snapshot.
   first time and there is no `SM_ERR_UPDATED`.
 - T2 sets the order to `'hold'` on the strength of
   `region='EU'` as its snapshot saw it.
-- sm3 does an ordinary update: the old image is `(42, 5,
-  'new')`, so `idx_delete('new', 42)` and `idx_insert('hold',
-  42)`.
+- sm3 does an ordinary update: the old image is `orders(42,
+  5, 'new')`, so `idx_delete('new', 42)` and
+  `idx_insert('hold', 42)`.
 
 No re-check happens at all, and that is correct at READ
 COMMITTED: only a conflict on the row being written triggers
@@ -472,14 +474,14 @@ one.
 **Case C: the order changes and still qualifies.** T1 runs
 `UPDATE orders SET status='shipped' WHERE id=42` and commits.
 
-- Steps 1 to 4 are case A's, and the latest image is `(42, 5,
-  'shipped')`.
+- Steps 1 to 4 are case A's, and the latest image is
+  `orders(42, 5, 'shipped')`.
 - At step 5 the join holds, `5 = 5` and `'EU'`, so the
-  executor rebuilds the new tuple `(42, 5, 'hold')` and calls
-  `sm_tbl_update` again.
-- sm3's fix-up is 1.7's: the old image handed back is `(42, 5,
-  'shipped')`, so it removes `('shipped', 42)` and inserts
-  `('hold', 42)`.
+  executor rebuilds the new tuple `orders(42, 5, 'hold')` and
+  calls `sm_tbl_update` again.
+- sm3's fix-up is 1.7's: the old image handed back is
+  `orders(42, 5, 'shipped')`, so it removes `('shipped', 42)`
+  and inserts `('hold', 42)`.
 
 What the three cases show:
 
