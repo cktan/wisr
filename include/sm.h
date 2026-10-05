@@ -353,84 +353,17 @@ typedef struct sm_bound_t {
     bool                  inclusive;
 } sm_bound_t;
 
-/* ---- heap rels: a table's rows by rowno, sm2's ---- */
+/*
+ * ---- cursors over a table's rows and index entries, sm2's ----
+ *
+ * A row and an index entry are read and written through an open
+ * table (sm_tbl_*, below), never through a heap or an index rel of
+ * their own, so no caller can change a row and leave its index
+ * entries behind (sm3/SM3_DESIGN.md section 3).
+ */
 
-/* A heap rel. */
-typedef struct sm_rel_t sm_rel_t;
-
-/* A cursor over a heap rel's rows, in rowno order. */
+/* A cursor over a table's rows, in rowno order; sm_tbl_scan opens one. */
 typedef struct sm_rel_scan_t sm_rel_scan_t;
-
-/*
- * Scaffolding, until sm3 opens tables: open a heap rel over storeid
- * through session, rows under prefix, laid out by the n
- * attributes of schema, each new rowno drawn from the sequence
- * rowno_seq. schema is copied; the caller may free it at once.
- */
-int sm_rel_open(sm_session_t* session, uint64_t storeid, uint16_t prefix,
-                const sm_attribute_t* schema, size_t n,
-                const char* rowno_seq, sm_rel_t** out);
-
-/* Close a heap rel; NULL is a no-op. */
-void sm_rel_close(sm_rel_t* rel);
-
-/* The number of attributes in the rel's schema. */
-size_t sm_rel_ncols(const sm_rel_t* rel);
-
-/*
- * Insert an already-encoded tuple into the heap rel; *rowno is
- * its id. A tuple sm2 could not have encoded under the rel's
- * schema fails with SM_ERR_INVALID and draws no rowno.
- */
-int sm_rel_insert_tuple(sm_rel_t* rel, const void* tuple, size_t len,
-                        uint64_t* rowno);
-
-/*
- * Replace the row at rowno with an already-encoded tuple; one sm2
- * could not have encoded fails with SM_ERR_INVALID.
- */
-int sm_rel_update_tuple(sm_rel_t* rel, uint64_t rowno, const void* tuple,
-                        size_t len, const void** old, size_t* old_len);
-
-/*
- * Insert a row of n values and null flags, one per attribute;
- * *rowno is its id. A by-reference value points at its bytes, a
- * variable-width one at a PostgreSQL varlena, header included
- * (sm2/VARLENA.md).
- */
-int sm_rel_insert(sm_rel_t* rel, const sm_datum_t* values,
-                  const bool* isnull, size_t n, uint64_t* rowno);
-
-/*
- * Read the row at rowno: 0 with its tuple, 1 if none, or -1.
- * The tuple points into session memory and stays valid only
- * until the next call on this session.
- */
-int sm_rel_read(sm_rel_t* rel, uint64_t rowno, const void** tuple,
-                size_t* len);
-
-/*
- * Read the newest committed version of the row at rowno.
- * Valid only until the next call on this session.
- */
-int sm_rel_read_latest(sm_rel_t* rel, uint64_t rowno, const void** tuple,
-                       size_t* len);
-
-/*
- * Replace the row at rowno with n values and null flags; old, if
- * not NULL, gets the old tuple.
- */
-int sm_rel_update(sm_rel_t* rel, uint64_t rowno, const sm_datum_t* values,
-                  const bool* isnull, size_t n, const void** old,
-                  size_t* old_len);
-
-/* Delete the row at rowno; old, if not NULL, gets its tuple. */
-int sm_rel_delete(sm_rel_t* rel, uint64_t rowno, const void** old,
-                  size_t* old_len);
-
-/* Open a cursor over the rows first..last, both included. */
-int sm_rel_scan(sm_rel_t* rel, uint64_t first, uint64_t last,
-                sm_rel_scan_t** out);
 
 /* The next row: 0 with it, 1 at the end, or -1. */
 int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* rowno, const void** tuple,
@@ -448,70 +381,10 @@ int sm_tup_encode(const sm_attribute_t* schema, size_t natts,
                     void** tuple, size_t* len);
 
 /*
- * Every attribute of a tuple into values and isnull, n of each
- * (sm_rel_ncols). A by-reference value points into the tuple, so
- * it shares the tuple's lifetime.
+ * A cursor over an index's entries, in key order; sm_tbl_idx_scan
+ * opens one.
  */
-int sm_rel_deform(sm_rel_t* rel, const void* tuple, size_t len,
-                  sm_datum_t* values, bool* isnull, size_t n);
-
-/*
- * One attribute of a tuple, by ordinal, into *val and *isnull; a
- * null or dropped attribute sets *isnull.
- */
-int sm_rel_decode(sm_rel_t* rel, const void* tuple, size_t len,
-                  size_t ordinal, sm_datum_t* val, bool* isnull);
-
-/* ---- index rels: a table's index entries, sm2's ---- */
-
-/* An index rel. */
-typedef struct sm_idx_t sm_idx_t;
-
-/* A cursor over an index's entries, in key order. */
 typedef struct sm_idx_scan_t sm_idx_scan_t;
-
-/*
- * Scaffolding, until sm3 opens tables: open an index over storeid
- * through session, under prefix, keyed by the nkey columns of
- * key, unique or not, with the ninclude INCLUDE attributes of
- * include. Both are copied; the caller may free them at once.
- */
-int sm_idx_open(sm_session_t* session, uint64_t storeid, uint16_t prefix,
-                const sm_key_column_t* key, size_t nkey, bool unique,
-                const sm_attribute_t* include, size_t ninclude,
-                sm_idx_t** out);
-
-/* Close an index; NULL is a no-op. */
-void sm_idx_close(sm_idx_t* idx);
-
-/*
- * The number of attributes in an entry's value: the rowno
- * (int8), whether the key was cut (bool), then the INCLUDE
- * columns.
- */
-size_t sm_idx_ncols(const sm_idx_t* idx);
-
-/*
- * Add the entry for the row at rowno. A unique index refuses a
- * key already present with SM_ERR_DUPKEY, and one too long for
- * sm1 with SM_ERR_KEYTOOLONG.
- */
-int sm_idx_insert(sm_idx_t* idx, const sm_datum_t* key,
-                  const bool* key_isnull, size_t nkey, uint64_t rowno,
-                  const sm_datum_t* include, const bool* include_isnull,
-                  size_t ninclude);
-
-/* Remove the entry sm_idx_insert added for key and rowno. */
-int sm_idx_delete(sm_idx_t* idx, const sm_datum_t* key,
-                  const bool* key_isnull, size_t nkey, uint64_t rowno);
-
-/*
- * Open a cursor over the entries between lo and hi, either NULL
- * for no bound. A bound too long to encode widens the scan, and
- * *widened, if widened is not NULL, says so.
- */
-int sm_idx_scan(sm_idx_t* idx, const sm_bound_t* lo, const sm_bound_t* hi,
-                bool* widened, sm_idx_scan_t** out);
 
 /* The next entry: 0 with it, 1 at the end, or -1. */
 int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* rowno, bool* cut,
@@ -522,14 +395,6 @@ int sm_idx_scan_seek(sm_idx_scan_t* scan, const sm_bound_t* lo);
 
 /* Close a cursor; NULL is a no-op. */
 void sm_idx_scanend(sm_idx_scan_t* scan);
-
-/* One attribute of an entry's value, as sm_rel_decode. */
-int sm_idx_decode(sm_idx_t* idx, const void* value, size_t len,
-                  size_t ordinal, sm_datum_t* val, bool* isnull);
-
-/* Every attribute of an entry's value, as sm_rel_deform; n is sm_idx_ncols. */
-int sm_idx_deform(sm_idx_t* idx, const void* value, size_t len,
-                  sm_datum_t* values, bool* isnull, size_t n);
 
 /* ---- the catalog: sm3's ---- */
 
@@ -572,7 +437,7 @@ typedef struct sm_column_def_t {
 
 /*
  * An index of a table definition: its key and INCLUDE columns,
- * by 0-based place in the table and as sm_idx_open takes them.
+ * by 0-based place in the table and as sm2 lays them out.
  */
 typedef struct sm_index_def_t {
     uint64_t               oid;
@@ -588,8 +453,7 @@ typedef struct sm_index_def_t {
 } sm_index_def_t;
 
 /*
- * A table definition, as sm_rel_open and sm_idx_open take it:
- * natts columns, with schema their attributes, and nindex
+ * A table definition: natts columns, with schema their attributes, and nindex
  * indexes. Every pointer in it is valid until sm_cat_table_free.
  */
 typedef struct sm_table_def_t {
@@ -704,22 +568,30 @@ int sm_tbl_read(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
 int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
                        size_t* len);
 
-/* Open a cursor over the rows first..last, as sm_rel_scan. */
+/* Open a cursor over the rows first..last, both included. */
 int sm_tbl_scan(sm_tbl_t* tbl, uint64_t first, uint64_t last,
                 sm_rel_scan_t** out);
 
-/* Every attribute of a row's tuple, as sm_rel_deform; n is natts. */
+/*
+ * Every attribute of a row's tuple into values and isnull, n of
+ * each, n being natts. A by-reference value points into the tuple,
+ * so it shares the tuple's lifetime.
+ */
 int sm_tbl_deform(sm_tbl_t* tbl, const void* tuple, size_t len,
                   sm_datum_t* values, bool* isnull, size_t n);
 
-/* One attribute of a row's tuple, as sm_rel_decode. */
+/*
+ * One attribute of a row's tuple, by ordinal, into *val and
+ * *isnull; a null or dropped attribute sets *isnull.
+ */
 int sm_tbl_decode(sm_tbl_t* tbl, const void* tuple, size_t len,
                   size_t ordinal, sm_datum_t* val, bool* isnull);
 
 /*
  * Open a cursor over the entries of the table's index, by oid,
- * between lo and hi, as sm_idx_scan; SM_ERR_NOTFOUND if the table
- * has no such index.
+ * between lo and hi, either NULL for no bound; SM_ERR_NOTFOUND if
+ * the table has no such index. A bound too long to encode widens
+ * the scan, and *widened, if widened is not NULL, says so.
  */
 int sm_tbl_idx_scan(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
                     const sm_bound_t* hi, bool* widened,
@@ -732,7 +604,7 @@ int sm_tbl_idx_scan(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
  */
 size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
 
-/* Every attribute of an entry's value in that index, as sm_idx_deform. */
+/* Every attribute of an entry's value in that index, as sm_tbl_deform. */
 int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
                       size_t len, sm_datum_t* values, bool* isnull,
                       size_t n);

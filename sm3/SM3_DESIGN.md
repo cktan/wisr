@@ -23,7 +23,7 @@ load, DDL, a session's overlay and the schema locks of §2
 (`CATALOG.md`), and §4's object mapping with them: a store
 per table, index prefixes allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
-is built in sm3, not yet behind the C API; its online build,
+is built, the C API's one way to write a row; its online build,
 §5's predicate scans and §6's statistics are not built. sm2,
 which it is built on, is, but for TOAST
 (`sm2/SM2_DESIGN.md` §8.2).

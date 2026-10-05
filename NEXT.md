@@ -19,8 +19,8 @@ here sit below and beside sm3 (§5 below).
 | --- | --- |
 | sm1 | built and tested |
 | sm2 | built but for TOAST (`sm2/SM2_DESIGN.md` §8.2) |
-| sm3 | catalog, schema locks and object mapping built; `SM3_DESIGN.md` §3 to §6 are design |
-| top | `include/sm.h` over all three, the `sm_cat_*` calls included; `rel` opens its tables through them |
+| sm3 | catalog, schema locks, object mapping and index maintenance built; the online build and `SM3_DESIGN.md` §5 and §6 are design |
+| top | `include/sm.h` over all three, with the `sm_cat_*` and `sm_tbl_*` calls; `rel` reads and writes its tables through them |
 
 `sm3/PLAN.md` steps 1 and 2 are both done. Step 2's object
 mapping arrived inside the catalog's DDL rather than as a step
@@ -519,6 +519,10 @@ What the three cases show:
 
 ### 1.9 What the C API shows the executor
 
+**Done** (§4's step 4, stage C), and further than the table
+below: the heap-level reads, scans and decoders went too,
+replaced by the `sm_tbl_*` calls on the table handle.
+
 Once the table-level write exists, the heap-level write calls
 leave `include/sm.h`:
 
@@ -785,9 +789,13 @@ writing it, so the prose and the decisions come before code.
    **Stage B done:** `sm_tbl_*` in `include/sm.h`, and `rel`
    moved onto it. `rel` no longer names an index or computes a
    key, and it sets no savepoint: a write that fails aborts
-   the transaction, as PostgreSQL does. Still to do:
-   the removal of the heap-level calls from `include/sm.h`
-   (1.9), which nothing uses any more.
+   the transaction, as PostgreSQL does.
+   **Stage C done:** the heap-level and index-level calls are
+   gone from `include/sm.h` (1.9), reads included, since the
+   table handle serves them. What is left of them is the two
+   cursor types, with their next, seek and end calls. Still
+   owed against the criterion above: the races are tested at
+   READ COMMITTED only, not at every isolation level.
 5. **The online build under S**, which `CATALOG.md` §7.1 waits
    on: `cat_create_index` takes X today and takes S once the
    build exists, with the `indcheckxmin` guard for a reader
