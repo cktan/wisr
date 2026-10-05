@@ -131,8 +131,8 @@ rule is that nothing turns them off.
 | --- | --- |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
-| sm3 | being built: its catalog — keys, values, load, DDL, a session's overlay and schema locks — with its C++ interface in `sm3/include/sm3.h` and `sm3/CATALOG.md`; index maintenance, predicate scans and statistics are still design, in `sm3/SM3_DESIGN.md` and `sm3/PLAN.md` |
-| top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`, the `sm_cat_*` calls included, which the `rel` driver opens its tables through; `sm_rel_open` and `sm_idx_open` are still scaffolding in that they take a store id and prefix rather than an oid, which a caller now gets from `sm_cat_lock_table`'s definition |
+| sm3 | being built: its catalog (`sm3/CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, with its C++ interface in `sm3/include/sm3.h`; partial and expression indexes, predicate scans, statistics and constraints are still design, in `sm3/SM3_DESIGN.md`, with the order of work in `sm3/PLAN.md` and `NEXT.md` |
+| top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`. A row is read and written through an open table, `sm_tbl_*`, by the table's oid from `sm_cat_*`; the heap-level and index-level calls that took a store id and a prefix are gone. The `rel` driver runs on it |
 
 sm1 was built first and alone, on purpose: it is usable
 without sm2 (an MVCC key-value store is a complete product
@@ -160,12 +160,23 @@ Every level uses the same two-layer scheme, established in
 Most of sm2 is the first kind — a codec is tested by
 property, not by interleaving — and most of the second kind
 arrives with sm3: an index build against a concurrent
-writer, DDL against DML. sm2's testing (`sm2/SM2_DESIGN.md`
-§8.3) and `sm3/PLAN.md` reuse this scheme rather than invent a
-second, and defer only the question of
-whether a level needs a driver of its own or can extend
-sm1's — "a decision for the first scenario that needs it,
-not before."
+writer, DDL against DML.
+
+sm3 did not get a driver of its own, nor extend sm1's.
+sm1's driver is one verb per sm1 call and links sm1 alone, so
+teaching it `create table` would make sm1's test binary link
+the levels above it. Instead sm1 gained a QA-only session
+flag, `sm1::set_qa_nowait`: a write or a lock that would wait
+fails with `SM_ERR_BLOCKED`, the transaction left active, and
+the caller repeats the call (`sm1/SM1_DESIGN.md` §5.1). One
+thread can then play several sessions, and "this step blocks"
+needs no thread and no sleep. sm3's two-session cases are
+written this way in C++ (`sm3/test/test_table.cc`), and again
+through the C API as `rel` scripts (`rel/REL_DESIGN.md` §5).
+What the flag cannot reach stays where it was: a polling
+session is never a deadlock victim, so deadlocks are tested
+with real threads in sm1, and the background index build is
+tested with real threads in sm3.
 
 ---
 
@@ -489,10 +500,10 @@ design:
 - **sm3 drives index maintenance.** PostgreSQL's kept executor
   could maintain indexes itself through its index access
   method (`ExecInsertIndexTuples`). It does not: it writes a
-  row through one table-level call that sm3 owns, and the C
-  wrapper's heap-level writes and entry writes go away
-  (`sm3/SM3_DESIGN.md` §3). The rules of a unique index's
-  key, the online build and the index-heap invariant must
+  row through one table-level call that sm3 owns, `sm_tbl_*`,
+  and the C wrapper's heap-level and index-level calls are
+  gone (`sm3/SM3_DESIGN.md` §3). The rules of a unique index's
+  key, the index build and the index-heap invariant must
   stay below the executor, and the invariant holds only if one
   layer writes both a row and its entries. The cost is in
   expression and partial indexes. sm3 cannot evaluate a
@@ -500,6 +511,23 @@ design:
   `longjmp` across its frames, so it evaluates only what its
   own evaluator covers (`sm3/SM3_DESIGN.md` §5), and an index
   whose predicate or expression falls outside that is refused.
+- **A write that fails partway is the caller's to undo.** A
+  table write is the heap write and then a write or two per
+  index, and sm3 sets no savepoint inside it. One that fails
+  on a later step, a duplicate in a unique index for one, has
+  left the earlier steps done. The caller rolls back to a
+  savepoint of its own or aborts, as PostgreSQL's errors abort
+  the transaction or the subtransaction anyway; `rel` aborts.
+  `SM_ERR_UPDATED` needs no undoing: it comes from the heap
+  write, the first step (`sm3/SM3_DESIGN.md` §3).
+- **An index is built in the background.** An index made on a
+  table that has rows is recorded as building, maintained by
+  every writer from then on, and filled by workers the catalog
+  owns, which the C wrapper starts when it opens a database.
+  A reader may not scan it until it is valid, nor if its
+  snapshot is older than the build; `sm_cat_index_wait` is for
+  a caller that wants it at once. A failed build keeps its
+  reason in the index's record (`sm3/SM3_DESIGN.md` §3).
 - **No backward scans, at any level, ever.** Settled in
   `sm1/SM1_OBJECTIVE.md`, built into sm2's encoding and
   inherited by every index sm3 builds. The fork's planner is

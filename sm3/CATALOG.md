@@ -86,11 +86,10 @@ kinds' values are on disk, so frozen.
   its store.
 - **A table's schema lock is its `LOCK` key**, not its `TABLE`
   key (`SM3_DESIGN.md` §2). Every DDL rewrites the `TABLE`
-  entry, and a write takes its key X, which would shut readers
-  out of an index build taken S. And a key no one writes never
-  fails a lock at REPEATABLE READ for a version newer than the
-  snapshot, so a reader that waited out DDL gets the new
-  definition, not a serialization failure.
+  entry, and a lock on a key that was written fails at
+  REPEATABLE READ for a version newer than the snapshot. A key
+  no one writes never does, so a reader that waited out DDL
+  gets the new definition, not a serialization failure.
 
 ---
 
@@ -169,6 +168,15 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
   the session finds its newest change first, then the shared
   catalog, so the transaction sees its own DDL and no other
   session sees it.
+- **The count of publishes.** The catalog counts the commits
+  that published DDL, and remembers for an index the count at
+  which it became valid. A session notes the count before it
+  takes a snapshot, and may scan an index only if it was valid
+  by then (`SM3_DESIGN.md` §3). Neither is on disk: no
+  snapshot survives a restart.
+- **The builder**: the queue of indexes still building and
+  the workers filling them (`SM3_DESIGN.md` §3,
+  `src/catalog/build.cc`).
 
 ---
 
@@ -314,21 +322,12 @@ catalog of its own.
 
 ## 7. Not built yet
 
-Settled, and next in this order:
+Settled, and next:
 
-1. **The index build** (`SM3_DESIGN.md` §3). It is concurrent,
-   so `cat_create_index` keeps its X, held only while it
-   records the index, and an index's record gains a state:
-   building, valid or failed. That is a change to §3's blob.
-   A reader whose snapshot is older than the build is kept off
-   the index, as PostgreSQL's `indcheckxmin` guards against,
-   by the count of publishes each session notes before it
-   takes a snapshot. DDL in a prepared transaction is refused,
-   since the overlay would have to outlive its session.
-2. **Temporary tables.** A temporary table is a temporary store
-   (`DESIGN.md` §5, `sm1/SM1_DESIGN.md` §11.3); its definition
-   lives only in the session's own temporary catalog, in the
-   session's temporary namespace, never written to store 0.
+- **Temporary tables.** A temporary table is a temporary store
+  (`DESIGN.md` §5, `sm1/SM1_DESIGN.md` §11.3); its definition
+  lives only in the session's own temporary catalog, in the
+  session's temporary namespace, never written to store 0.
 
 Open: namespaces beyond the two built in (`CREATE SCHEMA` is a
 `NAMESPACE` blob and a `NAME` key; search paths are the SQL

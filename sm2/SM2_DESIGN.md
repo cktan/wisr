@@ -895,6 +895,11 @@ so sm2 gives it a `rel` for them too:
   INCLUDE columns. It is how sm3 writes, deletes and scans
   index entries.
 
+`rel_lock` takes a row's lock without writing it, as
+`sm1::lock` does: `SELECT … FOR SHARE` and `FOR UPDATE`, and
+what sm3's index build holds on a row while it adds the row's
+entry (`sm3/SM3_DESIGN.md` §3).
+
 sm2 prepends and strips the prefix for both kinds, and the
 table above is the heap `rel`'s; an index `rel`'s operations
 are the same shape, keyed by its columns (`idx_open`,

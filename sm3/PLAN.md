@@ -19,8 +19,7 @@ first.
 
 **Status: built** — the store, keys, values, load, DDL, a
 session's overlay, and the schema locks with publishing under
-them, as `CATALOG.md` documents; the index build's S lock is
-its §7.
+them, as `CATALOG.md` documents.
 
 - Tables, indexes, columns, types, collations, and each
   column's dropped mark and missing value, in sm3's own sm2
@@ -40,6 +39,9 @@ doing concurrent DDL behave as sm1's isolation says they must.
 
 ## 2. Object mapping
 
+**Status: built**, inside the catalog's DDL
+(`SM3_DESIGN.md` §4, `src/catalog/ddl.cc`).
+
 - One sm1 store per table (`SM3_DESIGN.md` §4): its rows under
   prefix `0x0000`, each index under a prefix of its own,
   allocated in increasing order and never reused, its TOAST
@@ -54,21 +56,30 @@ lingering versions are never read as another index's.
 
 ## 3. Indexes
 
-- Unique and non-unique entries, built with sm2's encoder;
-  maintenance from the old image sm2 hands back.
-- The READ COMMITTED re-check: `rel_read_latest`, the filter
-  again, then the write.
-- The online build protocol from `SM3_DESIGN.md` §3.
-- Partial, expression and INCLUDE indexes.
+**Status: built, but for partial and expression indexes**
+(`SM3_DESIGN.md` §3).
 
-**Verify:** the index and the base relation never disagree,
-under concurrency, at every isolation level — the property that
-matters most here. The online build must not miss a row written
-by a transaction that was in flight when it started; `sm1`'s
-scenario suite has that shape already and sm3's version of it
-belongs in the same style.
+- Unique and non-unique entries, built with sm2's encoder, and
+  INCLUDE columns; maintenance from the old image sm2 hands
+  back, through the table-level writes that are the one way to
+  write a row.
+- The READ COMMITTED re-check is the executor's, since the
+  filter is. sm3's share is the index fix-up from the newest
+  old image (`SM3_DESIGN.md` §3.1).
+- The index build: concurrent, in the background, with the
+  index building, valid or failed.
+- **Not built:** partial and expression indexes. They need an
+  evaluator, which arrives with step 4.
+
+**Verified:** the index and the base relation agree with a
+brute-force scan, under concurrency, at every isolation level;
+the build does not miss a row written while it runs
+(`SM3_DESIGN.md` §3.2).
 
 ## 4. Scan by predicate
+
+**Status: not started.** `NEXT.md` §1 has what the evaluator
+takes, and the order.
 
 - A predicate in, a key range derived, the residual filter
   evaluated below the API.
@@ -80,23 +91,33 @@ over the same data, for generated predicates.
 
 ## 5. Statistics, constraints, bulk load
 
+**Status: not started.**
+
 - Row counts, sizes, sampling.
-- Foreign keys via `sm1::lock(SHARED)` on the parent row.
+- `NOT NULL` and the length of a `varchar(n)`, which
+  `DESIGN.md` §5 gives to sm3 and nothing enforces yet.
+- Foreign keys via `sm1::lock(SHARED)` on the parent row, which
+  sm2's `rel_lock` now takes.
 - A bulk path that batches within sm1's RAM bound.
 
 ---
 
 ## Testing
 
-sm1's two-layer arrangement is worth copying, because it earned
-its keep: C++ tests for contract and single-session mechanics,
-and a declarative scenario suite for anything where two sessions
-interleave. sm3's concurrency questions — an index build against
-a concurrent writer, DDL against DML — are exactly the second
-kind, and `sm1/mvcc/DRIVER.md` explains why that language exists.
+sm1's two-layer arrangement is kept: C++ tests for contract
+and single-session mechanics, and something declarative for
+anything where two sessions interleave. sm3's concurrency
+questions — an index build against a concurrent writer, DDL
+against DML — are the second kind.
 
-Whether sm3 gets its own driver or extends sm1's is a decision
-for the first scenario that needs it, not before.
+sm3 did not get a scenario driver of its own, nor extend
+sm1's, which links sm1 alone. sm1's QA-only `set_qa_nowait`
+lets one thread play several sessions: a step that would wait
+fails with `SM_ERR_BLOCKED` and is repeated later. sm3's
+two-session cases are written that way in `test/test_table.cc`
+and as `rel` scripts; what needs real threads, deadlocks and
+the background build, has them (`SM3_DESIGN.md` §3.2,
+`DESIGN.md` §4).
 
 ## What is deliberately not here
 

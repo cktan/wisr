@@ -1,13 +1,14 @@
-# test_recheck.rel -- the worked examples of NEXT.md section 1, step by
+# test_recheck.rel -- the worked examples of sm3/SM3_DESIGN.md 3.1, step by
 # step: a READ COMMITTED writer that meets a row changed under it reads
 # the latest image, re-checks its filter, and writes or skips, and the
 # indexes follow the heap. The script plays the executor; T2 is set
 # qa-nowait, so a step that would wait says ERR_BLOCKED and is repeated.
 #
-# 1.1  Two workers claim one job, on a table with no index.
-# 1.7  The write case on an indexed table (1.2's race), the skip case,
-#      and the lock mark's rules.
-# 1.8  A filter that spans two tables: cases A, C and B.
+# 1. Two workers claim one job, on a table with no index.
+# 2. The write case on an indexed table, and the skip case.
+# 3. The lock mark's rules (sm1/SM1_DESIGN.md 5.4).
+# 4. A filter that spans two tables: the order row changes, the order
+#    changes and still qualifies, and only the customer changes.
 
 (def test-dir "/tmp/wisr_rel_test_recheck")
 (rm-rf test-dir)
@@ -23,7 +24,7 @@
 (defn under [entries] (map (fn [e] (e 0)) entries))
 
 # ---------------------------------------------------------------
-# NEXT.md 1.1 -- UPDATE claims SET state='taken', owner=:me
+# SM3_DESIGN.md 3.1, why sm1 cannot -- UPDATE claims SET state='taken', owner=:me
 #                WHERE state='free'; no index.
 # ---------------------------------------------------------------
 (session-use t1)
@@ -63,7 +64,7 @@
 (commit)
 
 # ---------------------------------------------------------------
-# NEXT.md 1.7, the write case -- an index on state;
+# SM3_DESIGN.md 3.1, the write case -- an index on state;
 #   T1: UPDATE jobs SET state='taken', owner='w1' WHERE state='free';
 #   T2: UPDATE jobs SET state='done' WHERE state <> 'done';
 # ---------------------------------------------------------------
@@ -114,7 +115,7 @@
 (commit)
 
 # ---------------------------------------------------------------
-# NEXT.md 1.7, the skip case -- T2 is a second worker:
+# SM3_DESIGN.md 3.1, the skip case -- T2 is a second worker:
 #   UPDATE jobs SET state='taken', owner='w2' WHERE state='free';
 # ---------------------------------------------------------------
 (session-use t2)
@@ -138,7 +139,7 @@
 (commit)
 
 # ---------------------------------------------------------------
-# NEXT.md 1.7 -- what "marks the lock" means, event by event.
+# sm1/SM1_DESIGN.md 5.4 -- the lock mark, event by event.
 # ---------------------------------------------------------------
 (session-use t2)
 (begin :rc)
@@ -182,7 +183,7 @@
 (commit)
 
 # ---------------------------------------------------------------
-# NEXT.md 1.8 -- a qual that spans two tables:
+# SM3_DESIGN.md 3.1 -- a qual that spans two tables:
 #   UPDATE orders o SET status='hold' FROM customers c
 #    WHERE o.cust_id = c.id AND c.region = 'EU';
 # ---------------------------------------------------------------

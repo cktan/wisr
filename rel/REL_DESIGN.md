@@ -231,6 +231,7 @@ map directly to `sm_options_t`; the others keep their defaults:
 | `(commit)` | `sm_commit(s)` | Commits transaction |
 | `(abort)` | `sm_abort(s)` | Aborts transaction |
 | `(snapshot)` | `sm_stmt_begin(s)` | Statement snapshot |
+| `(qa-nowait on)` | `sm_set_qa_nowait(s, on)` | A step that would wait fails with `ERR_BLOCKED` |
 | `(savepoint)` | `sm_savepoint(s)` | Sets savepoint depth |
 | `(rollback depth)` | `sm_rollback(s, depth)` | Undoes to savepoint |
 | `(forget depth)` | `sm_forget(s, depth)` | Drops savepoint |
@@ -270,8 +271,22 @@ own.
    to resolve the key and INCLUDE column names to their places.
 2. Calls `sm_cat_create_index(s, table, name, keys, nkey,
    includes, ninclude, unique, &oid)`, which records the index
-   under the table's next prefix. It does not fill the index
-   from rows already in the table.
+   under the table's next prefix. On a table made in the same
+   transaction the index is filled and valid at once. On any
+   other it is recorded as building, and filled in the
+   background after the transaction commits
+   (`sm3/SM3_DESIGN.md` §3).
+
+#### `(index-wait <idx_name>)`
+1. Calls `sm_cat_index_oid` for the index and its table.
+2. Calls `sm_cat_index_wait(s, table, index)`, outside a
+   transaction, which blocks until the build has ended and
+   fails with the build's own error if it failed.
+
+#### `(index-state <idx_name>)`
+1. Opens the index's table under its schema lock IS.
+2. Returns `:building`, `:valid` or `:failed` from the
+   `state` of its `sm_index_def_t`.
 
 #### `(index-drop <idx_name>)`
 1. Calls `sm_cat_index_oid` for the index and its table.
@@ -410,6 +425,19 @@ Stores, heap rels and indexes are reached only through tables.
 ---
 
 ## 5. Multi-Session Concurrency and Test Harness
+
+`rel` runs one session at a time, on one thread, so a step
+that would wait for another session's lock would hang the
+script. `(qa-nowait true)` makes such a step fail with
+`ERR_BLOCKED` instead, the transaction left active, and the
+script repeats the step once the other session has let go
+(`sm1/SM1_DESIGN.md` §5.1). That is how a script says "this
+step blocks", with no thread and no sleep. A session polling
+this way is never a deadlock victim, so deadlocks are tested
+in C++ instead. `test/test_blocking.rel` and
+`test/test_recheck.rel` are written this way; the second runs
+the worked examples of `sm3/SM3_DESIGN.md` §3.1 step for step.
+
 
 Concurrency anomalies and isolation verification are the entire
 reason `wisr` implements MVCC, SSI, and Cahill pivot detection.

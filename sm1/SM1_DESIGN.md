@@ -54,10 +54,11 @@ adds the API a secondary-index layer built on top of it needs
 `sm1::lsstore`, which came with naming stores by storeid (§11);
 `sm1::stmt_begin`, for read-committed statement snapshots
 (§6.2); the savepoint stack with `sm1::forget` (§6.5);
-`sm1::lock`, whose shared mode makes a safe index build
-possible (§5.1); `sm1::scan_seek`, which repositions a cursor
-instead of reopening it (§10.2); and the old row returned by
-`sm1::update` and `sm1::erase` (§5.3). Descending scans will
+`sm1::lock`, whose modes carry sm3's schema locks and the row
+lock of its index build (§5.1); `sm1::scan_seek`, which
+repositions a cursor instead of reopening it (§10.2); and the
+old row returned by `sm1::update` and `sm1::erase` (§5.3).
+Descending scans will
 not be added at all, and a batched read is left until a
 benchmark asks for it (§10.1).
 
@@ -759,6 +760,23 @@ The re-read is enforced, not requested. `sm1::read_latest` marks
 the lock entry, and the write's step 3 lets the write through
 only on a marked lock. A caller cannot skip the exchange and lose
 a predicate: writing again without the read is refused again.
+
+| Event | Effect on the mark |
+| --- | --- |
+| first write refused with `SM_ERR_UPDATED` | lock taken, mark not set |
+| `read_latest` on that row | mark set |
+| write repeated with the mark set | write goes through; mark cleared |
+| write repeated without the mark | refused again with `SM_ERR_UPDATED` |
+| rollback to a savepoint taken before the lock | lock released, mark gone with it |
+
+The mark is single-use, but a later write to the row needs no
+read while the newest version is the transaction's own. It
+needs one again if those writes are undone by a rollback to a
+savepoint taken after the lock: the newest version is the
+other transaction's once more, the lock is still held, and the
+mark was spent. sm1 forces the read, not the re-check: whether
+the caller evaluates its predicate against the image is up to
+the caller.
 
 - **The mark** is one bit on the session's own lock list
   (`sm1::session_t::lockref_t`), not on the shared lock table, so

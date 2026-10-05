@@ -504,6 +504,151 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   stays above is `EvalPlanQual`: re-checking a row under READ
   COMMITTED needs the statement's filter.
 
+### 3.1 Read committed, worked through
+
+The split above is two jobs that need different knowledge:
+
+| | Needs | Whose |
+| --- | --- | --- |
+| (a) decide whether the row still qualifies, then write or skip | the statement's qual | above sm3: the executor's |
+| (b) remove the index entries that are actually there | the newest old image | sm3's |
+
+`rel/test/test_recheck.rel` runs every example below as
+written, the script playing the executor. T2 is the
+transaction that lost the race, at READ COMMITTED.
+
+**Why sm1 cannot do (a).** sm1 forces the re-read and can do
+no more: it does not know the statement's predicate
+(`sm1/SM1_DESIGN.md` §5.4). Two workers claim one job, on a
+table with no index:
+
+```sql
+-- row 7: state='free', owner=NULL
+UPDATE jobs SET state='taken', owner=:me WHERE state='free';
+```
+
+| Step | What happens |
+| --- | --- |
+| 1 | both statements take a snapshot in which row 7 is `free` |
+| 2 | T1 writes row 7 and holds the row lock |
+| 3 | T2's write blocks on that lock |
+| 4 | T1 commits; T2's write is refused with `SM_ERR_UPDATED` |
+| 5 | T2 reads the latest image: `state='taken'` |
+| 6 | T2 re-evaluates `state='free'` against it, false, and writes nothing |
+
+Without step 6 the job is claimed twice and nothing raises an
+error. The line is not drawn by the index: this table has
+none.
+
+**Why (b) is sm3's.** With an index on `state`, T2 holds two
+old images of the row: the one its scan read at its snapshot,
+and the one the repeated write replaces. Computing the entry
+to remove from the first is the bug. T1 claims the job as
+above, and T2 runs a statement whose filter the row still
+passes:
+
+```sql
+-- row 7: state='free', index entry ('free', 7)
+UPDATE jobs SET state='taken', owner='w1' WHERE state='free'; -- T1
+UPDATE jobs SET state='done' WHERE state <> 'done';           -- T2
+```
+
+Off the snapshot image, T2 would remove `('free', 7)`, which
+T1 already replaced with `('taken', 7)`, and insert `('done',
+7)`. The heap then says `done` and the index holds two entries
+for one row. A scan for `state='done'` is right and a scan for
+`state='taken'` returns a row that is not taken. This is what
+happens instead:
+
+| Step | Layer | What happens |
+| --- | --- | --- |
+| 1 | executor | T2's scan reads row 7 at its snapshot: `(7, 'free', NULL)`. It builds the new tuple `(7, 'done', NULL)`. |
+| 2 | sm1 | T1 updates row 7 and commits. The heap holds `(7, 'taken', 'w1')` and the index holds `('taken', 7)`. |
+| 3 | executor | T2 calls `tbl_update(jobs, 7, (7, 'done', NULL))`. |
+| 3a | sm3 | sm2's `rel_update` is refused with `SM_ERR_UPDATED`. sm3 has touched no index and returns the status. |
+| 4 | executor | It calls `tbl_read_latest(jobs, 7)`, which marks the row's lock and returns `(7, 'taken', 'w1')`. No index is involved. |
+| 5 | executor | It evaluates T2's qual against that image, whose `state` is now `'taken'`. `'taken' <> 'done'` is true, so the row still qualifies. It rebuilds the new tuple from the image: `(7, 'done', 'w1')`. |
+| 6 | executor | It calls `tbl_update(jobs, 7, (7, 'done', 'w1'))`. Steps 6a to 6c run inside that one call. |
+| 6a | sm3 | `rel_update` again. sm1 accepts it and hands back the old image `(7, 'taken', 'w1')`. |
+| 6b | sm3 | It copies that old image, because the next sm2 call on the session reuses the memory. |
+| 6c | sm3 | For each index it takes the old key from the copy and the new key from the new values. For the index on `state`, `'taken'` and `'done'` differ, so `idx_delete('taken', 7)` then `idx_insert('done', 7)`. |
+| 7 | — | The heap holds `(7, 'done', 'w1')` and the index holds `('done', 7)` only. |
+
+Steps 6a to 6c are the code of an ordinary update, and step
+3a is that code stopping before it reaches an index. Step 6c
+hides one more exchange with sm1: the entry `('taken', 7)` is
+an sm1 key that T1 committed after T2 began, so its erase is
+refused until its newest version is read. An entry has no qual
+to re-check, and sm2's `idx_delete` does that read and repeats
+the erase itself (`sm2/SM2_DESIGN.md` §5).
+
+If T2 is a second worker running the claim statement, step 5
+evaluates `state='free'` against `(7, 'taken', 'w1')`, false.
+No write is issued, no index call is made, and T2 reports zero
+rows.
+
+**A qual that spans two tables** is why (a) can never descend.
+
+```sql
+-- orders:    row 42 = (id=42, cust_id=5, status='new')
+-- customers: row 5  = (id=5, region='EU')
+--            row 9  = (id=9, region='US')
+-- an index on orders(status) holds ('new', 42)
+UPDATE orders o SET status='hold' FROM customers c
+ WHERE o.cust_id = c.id AND c.region = 'EU';
+```
+
+Only `orders` is written; `customers` is read at T2's snapshot
+and never locked.
+
+- **The order row changes under T2.** T1 sets `cust_id=9` and
+  commits. T2's `tbl_update` is refused with `SM_ERR_UPDATED`
+  and it reads the latest image, `orders(42, 9, 'new')`. It
+  re-runs the join for this one row against the customer row
+  it had already joined, `customers(5, 'EU')`: `9 = 5` is
+  false, and it skips the row. The qual needed the customer
+  row, and a table write carries a row of `orders` and nothing
+  else.
+- **Only the customer changes.** T1 sets customer 5's region
+  to `'US'` and commits. Order 42 was not touched, so T2's
+  write succeeds the first time, on the strength of `'EU'` as
+  its snapshot saw it. No re-check happens: only a conflict on
+  the row being written triggers one.
+- **The order changes and still qualifies.** T1 sets
+  `status='shipped'` and commits. T2 is refused, reads
+  `orders(42, 5, 'shipped')`, finds the join still holds, and
+  writes again. sm3's part is the single-table one: the old
+  image handed back is the `'shipped'` one, so it removes
+  `('shipped', 42)` and inserts `('hold', 42)`.
+
+In all three sm3 sees one row of `orders` and the image sm1
+hands back. That the re-check uses the customer row already
+joined, and not the newest, is `EvalPlanQual`'s treatment of
+non-target tables as recalled here; it is to be checked
+against the PostgreSQL source before the fork relies on it.
+
+### 3.2 How it is tested
+
+- **`test/test_table.cc`** checks every index against a
+  brute-force scan of the heap after each scenario: plain
+  maintenance at all three isolation levels; the row race at
+  READ COMMITTED, both the write and the skip, and above it,
+  where the loser gets `SM_ERR_CONFLICT`; races on a unique
+  key; the build's batches, a writer and a deleter racing
+  them from either side, a duplicate found late, the inline
+  build, the guard for older snapshots, and the background
+  build with writers running.
+- **Two sessions on one thread.** A step that would wait is
+  scripted with sm1's `set_qa_nowait`, which makes it fail
+  with `SM_ERR_BLOCKED` to be repeated later
+  (`sm1/SM1_DESIGN.md` §5.1). sm3 has no scenario driver of
+  its own: sm1's links sm1 alone, and a level may not depend
+  on one above it. Deadlocks, which a polling session cannot
+  be the victim of, stay in sm1's threaded tests.
+- **`rel`** drives the same paths through the C API
+  (`rel/test/test_recheck.rel`, `test_blocking.rel`,
+  `test_build.rel`).
+
 ---
 
 ## 4. Object mapping
