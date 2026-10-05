@@ -60,8 +60,11 @@
 (begin :rc)
 (def rv (insert v [1 "a"]))
 (assert-eq ((idx-scan v_name) 0) [rv false nil])
-(assert-eq (fails? (fn [] (insert v [2 "a"]))) true)
 (commit)
+# A duplicate in the unique index fails, and aborts the transaction.
+(begin :rc)
+(assert-eq (fails? (fn [] (insert v [2 "a"]))) true)
+(abort)
 
 # 4. A transaction that made DDL cannot be prepared.
 (begin :rc)

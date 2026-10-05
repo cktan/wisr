@@ -1340,6 +1340,252 @@ void sm_cat_table_free(sm_table_def_t *def) {
   delete static_cast<table_holder_t *>(def);
 }
 
+/*
+ * A table as the wrapper holds it: the session, for the
+ * catch-all's abort; sm3's handle; the C view of its definition;
+ * the old tuple the last write handed out; and each index's value
+ * layout, built on first use.
+ */
+struct sm_tbl_t {
+  sm_session_t *session;
+  sm3::table_t *table = nullptr;
+  table_holder_t def;
+  std::string old;
+  std::map<uint64_t, sm2::tup_desc_t> value_descs;
+};
+
+namespace {
+
+/* Check a write's row arguments, for fn; n must be the table's natts. */
+int check_row(const char *fn, const sm_tbl_t *tbl, const sm_datum_t *values,
+              const bool *isnull, size_t n) {
+  if (!tbl || (n && !values) || (n && !isnull)) {
+    return null_arg(fn, !tbl ? "tbl" : n && !values ? "values" : "isnull");
+  }
+  if (n != tbl->def.natts) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       std::string(fn) + ": n is not the attribute count");
+  }
+  return 0;
+}
+
+/* Hand tbl's kept old tuple out through old and old_len, if asked. */
+void old_out(sm_tbl_t *tbl, const void **old, size_t *old_len) {
+  if (old != nullptr) {
+    view_out(tbl->old, old, old_len);
+  }
+}
+
+/* The value layout of tbl's index oid, or nullptr with the error set. */
+const sm2::tup_desc_t *value_desc(sm_tbl_t *tbl, uint64_t index) {
+  auto it = tbl->value_descs.find(index);
+  if (it != tbl->value_descs.end()) {
+    return &it->second;
+  }
+  std::span<const sm2::attribute_t> schema =
+      sm3::tbl_idx_value_schema(tbl->table, index);
+  if (schema.empty()) {
+    sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                "table: no index " + std::to_string(index));
+    return nullptr;
+  }
+  return &tbl->value_descs.emplace(index, sm2::tup_desc_t(schema))
+              .first->second;
+}
+
+} // namespace
+
+/* Lock a table and open its heap and indexes. */
+int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
+                sm_tbl_t **out) {
+  return guard(session, [&] {
+    if (!session || !out) {
+      return null_arg("sm_tbl_open", !session ? "session" : "out");
+    }
+    auto t = std::make_unique<sm_tbl_t>();
+    t->session = session;
+    if (sm3::tbl_open(session->sm3, oid, static_cast<sm1::lockmode_t>(mode),
+                      t->table) != 0) {
+      return -1;
+    }
+    // The C view shares sm3's definition; the handle keeps it alive.
+    const sm3::table_def_t &def = sm3::tbl_def(t->table);
+    build_holder(std::shared_ptr<const sm3::table_def_t>(
+                     std::shared_ptr<const sm3::table_def_t>(), &def),
+                 t->def);
+    *out = t.release();
+    return 0;
+  });
+}
+
+/* Close a table; NULL is a no-op. */
+void sm_tbl_close(sm_tbl_t *tbl) {
+  if (tbl) {
+    sm3::tbl_close(tbl->table);
+    delete tbl;
+  }
+}
+
+/* The table's definition. */
+const sm_table_def_t *sm_tbl_def(const sm_tbl_t *tbl) { return &tbl->def; }
+
+/* Insert a row and its index entries. */
+int sm_tbl_insert(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
+                  size_t n, uint64_t *rowno) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (check_row("sm_tbl_insert", tbl, values, isnull, n) != 0) {
+      return -1;
+    }
+    if (!rowno) {
+      return null_arg("sm_tbl_insert", "rowno");
+    }
+    return sm3::tbl_insert(tbl->table, {values, n}, {isnull, n}, *rowno);
+  });
+}
+
+/* Replace a row and fix its index entries. */
+int sm_tbl_update(sm_tbl_t *tbl, uint64_t rowno, const sm_datum_t *values,
+                  const bool *isnull, size_t n, const void **old,
+                  size_t *old_len) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (check_row("sm_tbl_update", tbl, values, isnull, n) != 0) {
+      return -1;
+    }
+    if (old && !old_len) {
+      return null_arg("sm_tbl_update", "old_len");
+    }
+    if (sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n},
+                        old ? &tbl->old : nullptr) != 0) {
+      return -1;
+    }
+    old_out(tbl, old, old_len);
+    return 0;
+  });
+}
+
+/* Delete a row and its index entries. */
+int sm_tbl_delete(sm_tbl_t *tbl, uint64_t rowno, const void **old,
+                  size_t *old_len) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl || (old && !old_len)) {
+      return null_arg("sm_tbl_delete", !tbl ? "tbl" : "old_len");
+    }
+    if (sm3::tbl_delete(tbl->table, rowno, old ? &tbl->old : nullptr) != 0) {
+      return -1;
+    }
+    old_out(tbl, old, old_len);
+    return 0;
+  });
+}
+
+/* Read a row. */
+int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, const void **tuple,
+                size_t *len) {
+  return guard(tbl->session, [&] {
+    std::string_view v;
+    int rc = sm3::tbl_read(tbl->table, rowno, v);
+    if (rc == 0) {
+      view_out(v, tuple, len);
+    }
+    return rc;
+  });
+}
+
+/* Read the newest committed version of a row. */
+int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, const void **tuple,
+                       size_t *len) {
+  return guard(tbl->session, [&] {
+    std::string_view v;
+    int rc = sm3::tbl_read_latest(tbl->table, rowno, v);
+    if (rc == 0) {
+      view_out(v, tuple, len);
+    }
+    return rc;
+  });
+}
+
+/* Open a cursor over a table's rows. */
+int sm_tbl_scan(sm_tbl_t *tbl, uint64_t first, uint64_t last,
+                sm_rel_scan_t **out) {
+  return guard(tbl->session, [&] {
+    sm2::rel_scan_t *scan = nullptr;
+    if (sm3::tbl_scan(tbl->table, first, last, scan) != 0) {
+      return -1;
+    }
+    *out = reinterpret_cast<sm_rel_scan_t *>(scan);
+    return 0;
+  });
+}
+
+/* Every attribute of a row's tuple. */
+int sm_tbl_deform(sm_tbl_t *tbl, const void *tuple, size_t len,
+                  sm_datum_t *values, bool *isnull, size_t n) {
+  return guard(nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_deform", "tbl");
+    }
+    return deform("sm_tbl_deform", sm3::tbl_def(tbl->table).desc, tuple, len,
+                  values, isnull, n);
+  });
+}
+
+/* One attribute of a row's tuple. */
+int sm_tbl_decode(sm_tbl_t *tbl, const void *tuple, size_t len, size_t ordinal,
+                  sm_datum_t *val, bool *isnull) {
+  return guard(nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_decode", "tbl");
+    }
+    return decode("sm_tbl_decode", sm3::tbl_def(tbl->table).desc, tuple, len,
+                  ordinal, val, isnull);
+  });
+}
+
+/* Open a cursor over one of a table's indexes. */
+int sm_tbl_idx_scan(sm_tbl_t *tbl, uint64_t index, const sm_bound_t *lo,
+                    const sm_bound_t *hi, bool *widened, sm_idx_scan_t **out) {
+  return guard(tbl->session, [&] {
+    if (bad_bound(lo) || bad_bound(hi)) {
+      return null_arg("sm_tbl_idx_scan", "a bound's prefix or isnull");
+    }
+    sm2::bound_t lo_b, hi_b;
+    if (lo != nullptr) {
+      lo_b = bound_of(*lo);
+    }
+    if (hi != nullptr) {
+      hi_b = bound_of(*hi);
+    }
+    sm2::index_scan_t *scan = nullptr;
+    if (sm3::tbl_idx_scan(tbl->table, index, lo != nullptr ? &lo_b : nullptr,
+                          hi != nullptr ? &hi_b : nullptr, scan,
+                          widened) != 0) {
+      return -1;
+    }
+    *out = reinterpret_cast<sm_idx_scan_t *>(scan);
+    return 0;
+  });
+}
+
+/* The attribute count of an entry's value in one of a table's indexes. */
+size_t sm_tbl_idx_ncols(const sm_tbl_t *tbl, uint64_t index) {
+  return sm3::tbl_idx_value_schema(tbl->table, index).size();
+}
+
+/* Every attribute of an entry's value in one of a table's indexes. */
+int sm_tbl_idx_deform(sm_tbl_t *tbl, uint64_t index, const void *value,
+                      size_t len, sm_datum_t *values, bool *isnull, size_t n) {
+  return guard(nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_idx_deform", "tbl");
+    }
+    const sm2::tup_desc_t *desc = value_desc(tbl, index);
+    if (!desc) {
+      return -1;
+    }
+    return deform("sm_tbl_idx_deform", *desc, value, len, values, isnull, n);
+  });
+}
+
 /* Create a table in the session's transaction. */
 int sm_cat_create_table(sm_session_t *session, uint64_t nspoid,
                         const char *name, const sm_column_spec_t *columns,

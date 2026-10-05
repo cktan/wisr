@@ -773,9 +773,13 @@ writing it, so the prose and the decisions come before code.
    things differ from 1.7. A write sets no savepoint, so a
    caller rolls back a write that fails partway. And an update
    skips an index whose key columns compare equal and whose
-   INCLUDE columns hold the same bytes. Still to do: `sm_tbl_*`
-   in `include/sm.h` with `rel` moved onto it, then the
-   removal of the heap-level writes (1.9).
+   INCLUDE columns hold the same bytes.
+   **Stage B done:** `sm_tbl_*` in `include/sm.h`, and `rel`
+   moved onto it. `rel` no longer names an index or computes a
+   key, and it sets no savepoint: a write that fails aborts
+   the transaction, as PostgreSQL does. Still to do:
+   the removal of the heap-level calls from `include/sm.h`
+   (1.9), which nothing uses any more.
 5. **The online build under S**, which `CATALOG.md` §7.1 waits
    on: `cat_create_index` takes X today and takes S once the
    build exists, with the `indcheckxmin` guard for a reader

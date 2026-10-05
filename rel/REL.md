@@ -394,7 +394,8 @@ committed, fails with `<op>: table '<name>' not found`.
 ### `(insert table [val1 val2 ...])`
 Encodes and inserts a new row into `table` and all attached
 secondary indexes. Returns the allocated 64-bit `rowno`. If a
-unique index violation occurs, raises `SM_ERR_DUPKEY`.
+unique index violation occurs, raises `SM_ERR_DUPKEY`, and the
+transaction is aborted (§7).
 
 ```janet
 (def r1 (insert users [1 "Alice" "alice@example.com" true]))
@@ -474,7 +475,7 @@ translates the error into a **Janet panic** via
    For example, a unique constraint violation on an insert
    or index creation produces:
    ```text
-   insert sm_idx_insert failed: [ERR_DUPKEY] key already exists
+   insert sm_tbl_insert failed: [ERR_DUPKEY] key already exists
    ```
 
 2. **Unhandled Panics:**
@@ -491,7 +492,20 @@ translates the error into a **Janet panic** via
       (print "Caught error: " err)))
    ```
 
-4. **Diagnostic State:**
+4. **A Failed Write Aborts the Transaction:**
+   When `insert`, `update` or `delete` fails inside the storage
+   manager, `rel` aborts the session's transaction before it
+   panics, as PostgreSQL does on an error. The write may have
+   changed the heap and some indexes before it failed, and the
+   abort is what undoes that. A script that catches the panic
+   calls `(abort)`, which is harmless, and `(begin)` again. Two
+   outcomes are not errors and leave the transaction active:
+   `ERR_UPDATED`, answered with `(read-latest ...)`, and
+   `ERR_BLOCKED` under `(qa-nowait true)`, answered by repeating
+   the step. A row that `rel` itself refuses, before any call
+   on the storage manager, aborts nothing.
+
+5. **Diagnostic State:**
    Even after a panic is caught, the underlying storage manager
    error state remains preserved on the calling thread until the
    next operation or until cleared via `(sm:reseterr)`.

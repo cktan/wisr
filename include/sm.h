@@ -638,6 +638,106 @@ int sm_cat_lock_table(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
 void sm_cat_table_free(sm_table_def_t* def);
 
 /*
+ * ---- tables: a row and its index entries, sm3's ----
+ *
+ * An open table: its definition under the schema lock, its heap
+ * and its indexes. A write through it keeps every index of the
+ * table in step with the heap (sm3/SM3_DESIGN.md section 3).
+ */
+typedef struct sm_tbl_t sm_tbl_t;
+
+/*
+ * Open the table oid in the session's transaction, taking its
+ * schema lock in mode as sm_cat_lock_table does:
+ * SM_LOCK_INTENT_SHARED to read its rows, SM_LOCK_INTENT_EXCLUSIVE
+ * to write them. The handle is good for this transaction only;
+ * close it before or after the transaction ends.
+ */
+int sm_tbl_open(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
+                sm_tbl_t** out);
+
+/* Close a table; NULL is a no-op. */
+void sm_tbl_close(sm_tbl_t* tbl);
+
+/* The table's definition, valid until sm_tbl_close. */
+const sm_table_def_t* sm_tbl_def(const sm_tbl_t* tbl);
+
+/*
+ * The writes. Each is the heap write, then a write or two to every
+ * index it changes, and sets no savepoint: one that fails after
+ * its first step leaves the earlier steps done, and the caller
+ * rolls back to a savepoint of its own, or aborts, before going
+ * on. SM_ERR_UPDATED needs no rollback; it comes from the heap
+ * write, the first step. A table not opened to write fails with
+ * SM_ERR_INVALID.
+ */
+
+/* Insert a row of n values and null flags; *rowno is its id. */
+int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
+                  const bool* isnull, size_t n, uint64_t* rowno);
+
+/*
+ * Replace the row at rowno. old, if not NULL, gets the tuple
+ * replaced -- at read committed the newest, not the one the caller
+ * read -- valid until the next write on this table.
+ */
+int sm_tbl_update(sm_tbl_t* tbl, uint64_t rowno, const sm_datum_t* values,
+                  const bool* isnull, size_t n, const void** old,
+                  size_t* old_len);
+
+/* Delete the row at rowno; old as sm_tbl_update's. */
+int sm_tbl_delete(sm_tbl_t* tbl, uint64_t rowno, const void** old,
+                  size_t* old_len);
+
+/*
+ * Read the row at rowno: 0 with its tuple, 1 if none, or -1. The
+ * tuple is valid only until the next call on this session.
+ */
+int sm_tbl_read(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
+                size_t* len);
+
+/*
+ * Read the newest committed version of the row at rowno, which a
+ * read committed writer does after SM_ERR_UPDATED, before it
+ * writes again.
+ */
+int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
+                       size_t* len);
+
+/* Open a cursor over the rows first..last, as sm_rel_scan. */
+int sm_tbl_scan(sm_tbl_t* tbl, uint64_t first, uint64_t last,
+                sm_rel_scan_t** out);
+
+/* Every attribute of a row's tuple, as sm_rel_deform; n is natts. */
+int sm_tbl_deform(sm_tbl_t* tbl, const void* tuple, size_t len,
+                  sm_datum_t* values, bool* isnull, size_t n);
+
+/* One attribute of a row's tuple, as sm_rel_decode. */
+int sm_tbl_decode(sm_tbl_t* tbl, const void* tuple, size_t len,
+                  size_t ordinal, sm_datum_t* val, bool* isnull);
+
+/*
+ * Open a cursor over the entries of the table's index, by oid,
+ * between lo and hi, as sm_idx_scan; SM_ERR_NOTFOUND if the table
+ * has no such index.
+ */
+int sm_tbl_idx_scan(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
+                    const sm_bound_t* hi, bool* widened,
+                    sm_idx_scan_t** out);
+
+/*
+ * The number of attributes in an entry's value in that index: the
+ * rowno, the cut flag, then the INCLUDE columns; 0 if there is no
+ * such index.
+ */
+size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
+
+/* Every attribute of an entry's value in that index, as sm_idx_deform. */
+int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
+                      size_t len, sm_datum_t* values, bool* isnull,
+                      size_t n);
+
+/*
  * Create the table name in nspoid with n columns: its store, its
  * rowno sequence and its definition, seen by the session's
  * transaction at once and by others at commit.

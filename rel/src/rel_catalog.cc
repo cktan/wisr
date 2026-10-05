@@ -141,19 +141,15 @@ session_ctx_t *catalog_t::get_session(const std::string &name) {
 }
 
 /* Close a statement's table: its handles, then its definition. */
-table_def_t::~table_def_t() {
-  for (auto &[iname, idef] : indexes) {
-    sm_idx_close(idef.idx);
-  }
-  sm_rel_close(rel);
-  sm_cat_table_free(def);
-}
+table_def_t::~table_def_t() { sm_tbl_close(tbl); }
 
-/* rel's view of a table sm3's catalog defines, as def gives it. */
+/* rel's view of the open table tbl, which it takes over. */
 static std::unique_ptr<table_def_t> view_of(const std::string &name,
-                                            sm_table_def_t *def) {
+                                            sm_tbl_t *tbl) {
   auto t = std::make_unique<table_def_t>();
+  const sm_table_def_t *def = sm_tbl_def(tbl);
   t->name = name;
+  t->tbl = tbl;
   t->def = def;
   for (size_t i = 0; i < def->natts; i++) {
     const sm_column_def_t &c = def->columns[i];
@@ -190,12 +186,13 @@ static std::unique_ptr<table_def_t> view_of(const std::string &name,
 /* Lock the table oid in mode, and keep rel's view of it in s. */
 static table_def_t *lock_into(session_ctx_t *s, const std::string &name,
                               uint64_t oid, sm_lockmode_t mode) {
-  sm_table_def_t *def = nullptr;
-  // The schema lock, held to the end of the transaction.
-  if (sm_cat_lock_table(s->session, oid, mode, &def) != 0) {
+  sm_tbl_t *tbl = nullptr;
+  // The schema lock, held to the end of the transaction, with the
+  // table's heap and indexes opened under it.
+  if (sm_tbl_open(s->session, oid, mode, &tbl) != 0) {
     return nullptr;
   }
-  s->stmt_tables.push_back(view_of(name, def));
+  s->stmt_tables.push_back(view_of(name, tbl));
   return s->stmt_tables.back().get();
 }
 
@@ -228,35 +225,6 @@ catalog_t::open_index(session_ctx_t *s, const std::string &name,
     return {nullptr, nullptr};
   }
   return {t, &it->second};
-}
-
-/* The sm_attribute_t schema of a table's columns, as sm3 defines it. */
-std::vector<sm_attribute_t> attributes_of(const table_def_t &tdef) {
-  return std::vector<sm_attribute_t>(tdef.def->schema,
-                                     tdef.def->schema + tdef.def->natts);
-}
-
-/* The statement's handle on a table, opened on first use. */
-sm_rel_t *catalog_t::get_or_open_rel(session_ctx_t *s, table_def_t &tdef) {
-  if (tdef.rel == nullptr &&
-      sm_rel_open(s->session, tdef.def->storeid, 0, tdef.def->schema,
-                  tdef.def->natts, tdef.def->rowno_seq, &tdef.rel) != 0) {
-    return nullptr;
-  }
-  return tdef.rel;
-}
-
-/* The statement's handle on an index, opened on first use. */
-sm_idx_t *catalog_t::get_or_open_idx(session_ctx_t *s, index_def_t &idef,
-                                     const table_def_t &tdef) {
-  const sm_index_def_t *x = idef.def;
-  if (idef.idx == nullptr &&
-      sm_idx_open(s->session, tdef.def->storeid, x->prefix, x->key, x->nkey,
-                  x->unique, x->ninclude ? x->include : nullptr, x->ninclude,
-                  &idef.idx) != 0) {
-    return nullptr;
-  }
-  return idef.idx;
 }
 
 /* Reset all environment and session state. */

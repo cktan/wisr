@@ -303,4 +303,16 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
                      "table: no index " + std::to_string(index));
 }
 
+/* The value schema of one of the table's indexes; see sm3.h. */
+std::span<const sm2::attribute_t> tbl_idx_value_schema(const table_t *table,
+                                                       uint64_t index) {
+  const table_def_t &def = *table->def;
+  for (size_t i = 0; i < def.indexes.size(); i++) {
+    if (def.indexes[i].oid == index) {
+      return sm2::idx_value_schema(table->indexes[i]);
+    }
+  }
+  return {};
+}
+
 } // namespace sm3

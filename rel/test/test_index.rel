@@ -50,11 +50,19 @@
 (assert-eq ((id-entries 1) 0) 3)
 (assert-eq ((id-entries 2) 0) 4)
 
-# 5. Duplicate key constraint violation on unique index
+# 5. Duplicate key constraint violation on unique index. A failed
+# write aborts its transaction, so the rows so far are committed first.
+(commit)
+(begin :rc)
 (assert-err :err-dupkey (insert employees [101 "HR" 80000 "Frank"]))
+(assert-err :err-notrans (scan employees))
+(abort)
 
-# Ensure Frank was not inserted (heap scan still has 5 rows)
+# Ensure Frank was not inserted (heap scan still has 5 rows), nor
+# left an entry in the index that took him before idx_id refused.
+(begin :rc)
 (assert-count 5 (scan employees))
+(assert-count 0 (idx-scan idx_dept_sal :ge ["HR"] :le ["HR"]))
 
 # 6. Update row: updates both heap and secondary index
 (update employees 1 [101 "Engineering" 160000 "Alice Cooper"])

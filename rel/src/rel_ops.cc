@@ -62,6 +62,25 @@ static sm_env_t *require_env() {
   return env;
 }
 
+/*
+ * After a write on s failed: abort the transaction, as PostgreSQL
+ * does on an error, keeping the error for the panic that follows.
+ * The write sets no savepoint, so one that failed partway has left
+ * its earlier steps done, and only an abort undoes them. Two
+ * outcomes are not errors and leave the transaction alone:
+ * SM_ERR_UPDATED, which a read-latest answers, and SM_ERR_BLOCKED,
+ * which repeating the step answers. After a retryable error the
+ * engine has aborted already.
+ */
+static void abort_failed_write(session_ctx_t *s) {
+  if (sm_errnum() == SM_ERR_UPDATED || sm_errnum() == SM_ERR_BLOCKED ||
+      sm_retryable()) {
+    return;
+  }
+  // A successful abort leaves the error state as the write set it.
+  sm_abort(s->session);
+}
+
 /* Fail with last sm_ error. */
 [[noreturn]] static void panic_sm_error(const char *action) {
   janet_panicf("%s failed: [%s] %s", action, sm_errname(), sm_errmsg());
@@ -908,21 +927,6 @@ static Janet cfun_index_drop(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
-/*
- * The values of row at the columns an index names -- its key or
- * INCLUDE columns, each with a col_idx -- for an sm_idx_* call.
- */
-template <class C>
-static row_values_t values_at(const row_values_t &row,
-                              const std::vector<C> &cols) {
-  row_values_t out(cols.size());
-  for (size_t i = 0; i < cols.size(); i++) {
-    out.values[i] = row.values[cols[i].col_idx];
-    out.isnull[i] = row.isnull[cols[i].col_idx];
-  }
-  return out;
-}
-
 /* (insert table [val1 val2 ...]) */
 static Janet cfun_insert(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
@@ -931,10 +935,7 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
 
   table_def_t *p_tdef =
       need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "insert");
-  sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
-  if (rel == nullptr) {
-    panic_sm_error("insert get_or_open_rel");
-  }
+  sm_tbl_t *tbl = p_tdef->tbl;
 
   const Janet *row_items = nullptr;
   int32_t row_len = 0;
@@ -963,56 +964,13 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
     }
   }
 
-  // Encode the tuple before the savepoint, so a bad row writes nothing.
-  std::vector<sm_attribute_t> attrs = attributes_of(*p_tdef);
-  void *tuple = nullptr;
-  size_t tuple_len = 0;
-  if (sm_tup_encode(attrs.data(), attrs.size(), row.values.data(),
-                    row.isnull.get(), &tuple, &tuple_len) != 0) {
-    panic_sm_error("insert sm_tup_encode");
-  }
-
+  // The heap row and its entry in every index, in one call.
   uint64_t rowno = 0;
-  int sp = sm_savepoint(s->session);
-  if (sp < 0) {
-    sm_free(tuple);
-    panic_sm_error("insert sm_savepoint");
+  if (sm_tbl_insert(tbl, row.values.data(), row.isnull.get(), row.values.size(),
+                    &rowno) != 0) {
+    abort_failed_write(s);
+    panic_sm_error("insert sm_tbl_insert");
   }
-
-  // 1. Insert into heap relation.
-  int rc = sm_rel_insert_tuple(rel, tuple, tuple_len, &rowno);
-  sm_free(tuple);
-  if (rc != 0) {
-    if (!sm_retryable()) {
-      sm_rollback(s->session, sp);
-      sm_forget(s->session, sp);
-    }
-    panic_sm_error("insert sm_rel_insert_tuple");
-  }
-
-  // 2. Insert into attached secondary indexes.
-  for (auto &[iname, idef] : p_tdef->indexes) {
-    sm_idx_t *idx = get_catalog().get_or_open_idx(s, idef, *p_tdef);
-    if (idx == nullptr) {
-      if (!sm_retryable()) {
-        sm_rollback(s->session, sp);
-        sm_forget(s->session, sp);
-      }
-      panic_sm_error("insert get_or_open_idx");
-    }
-    row_values_t kv = values_at(row, idef.keys);
-    row_values_t iv = values_at(row, idef.includes);
-    if (sm_idx_insert(idx, kv.values.data(), kv.isnull.get(), kv.values.size(),
-                      rowno, iv.values.data(), iv.isnull.get(),
-                      iv.values.size()) != 0) {
-      if (!sm_retryable()) {
-        sm_rollback(s->session, sp);
-        sm_forget(s->session, sp);
-      }
-      panic_sm_error("insert sm_idx_insert");
-    }
-  }
-  sm_forget(s->session, sp);
 
   return janet_wrap_number(static_cast<double>(rowno));
 }
@@ -1025,26 +983,23 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
   table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "read");
-  sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
-  if (rel == nullptr) {
-    panic_sm_error("read get_or_open_rel");
-  }
+  sm_tbl_t *tbl = p_tdef->tbl;
 
   const void *tuple = nullptr;
   size_t len = 0;
-  int rc = sm_rel_read(rel, rowno, &tuple, &len);
+  int rc = sm_tbl_read(tbl, rowno, &tuple, &len);
   if (rc == 1) {
     return janet_wrap_nil();
   }
   if (rc != 0) {
-    panic_sm_error("read sm_rel_read");
+    panic_sm_error("read sm_tbl_read");
   }
 
   size_t ncols = p_tdef->columns.size();
   row_values_t out(ncols);
-  if (sm_rel_deform(rel, tuple, len, out.values.data(), out.isnull.get(),
+  if (sm_tbl_deform(tbl, tuple, len, out.values.data(), out.isnull.get(),
                     ncols) != 0) {
-    panic_sm_error("read sm_rel_deform");
+    panic_sm_error("read sm_tbl_deform");
   }
 
   Janet *vals = janet_tuple_begin(ncols);
@@ -1065,26 +1020,23 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
 
   table_def_t *p_tdef =
       need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "read-latest");
-  sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
-  if (rel == nullptr) {
-    panic_sm_error("read-latest get_or_open_rel");
-  }
+  sm_tbl_t *tbl = p_tdef->tbl;
 
   const void *tuple = nullptr;
   size_t len = 0;
-  int rc = sm_rel_read_latest(rel, rowno, &tuple, &len);
+  int rc = sm_tbl_read_latest(tbl, rowno, &tuple, &len);
   if (rc == 1) {
     return janet_wrap_nil();
   }
   if (rc != 0) {
-    panic_sm_error("read-latest sm_rel_read_latest");
+    panic_sm_error("read-latest sm_tbl_read_latest");
   }
 
   size_t ncols = p_tdef->columns.size();
   row_values_t out(ncols);
-  if (sm_rel_deform(rel, tuple, len, out.values.data(), out.isnull.get(),
+  if (sm_tbl_deform(tbl, tuple, len, out.values.data(), out.isnull.get(),
                     ncols) != 0) {
-    panic_sm_error("read-latest sm_rel_deform");
+    panic_sm_error("read-latest sm_tbl_deform");
   }
 
   Janet *vals = janet_tuple_begin(ncols);
@@ -1105,10 +1057,7 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
 
   table_def_t *p_tdef =
       need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "update");
-  sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
-  if (rel == nullptr) {
-    panic_sm_error("update get_or_open_rel");
-  }
+  sm_tbl_t *tbl = p_tdef->tbl;
 
   const Janet *row_items = nullptr;
   int32_t row_len = 0;
@@ -1136,66 +1085,20 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
     }
   }
 
-  int sp = sm_savepoint(s->session);
-  if (sp < 0) {
-    panic_sm_error("update sm_savepoint");
-  }
-
+  // The heap write and every index it changes, in one call.
   const void *old_tuple = nullptr;
   size_t old_len = 0;
-  if (sm_rel_update(rel, rowno, row.values.data(), row.isnull.get(),
+  if (sm_tbl_update(tbl, rowno, row.values.data(), row.isnull.get(),
                     row.values.size(), &old_tuple, &old_len) != 0) {
-    if (sm_errnum() == SM_ERR_UPDATED) {
-      sm_forget(s->session, sp);
-    } else if (!sm_retryable()) {
-      sm_rollback(s->session, sp);
-      sm_forget(s->session, sp);
-    }
-    panic_sm_error("update sm_rel_update");
+    abort_failed_write(s);
+    panic_sm_error("update sm_tbl_update");
   }
 
-  // Copy the old tuple: it views session memory that the index
-  // calls below may reuse, and its values must outlive them.
-  std::string old_copy;
-  if (old_tuple != nullptr) {
-    old_copy.assign(static_cast<const char *>(old_tuple), old_len);
-  }
-
-  // Deform old tuple to update indexes.
   size_t ncols = p_tdef->columns.size();
   row_values_t old(ncols);
-  if (old_tuple != nullptr &&
-      sm_rel_deform(rel, old_copy.data(), old_copy.size(), old.values.data(),
-                    old.isnull.get(), ncols) == 0) {
-    for (auto &[iname, idef] : p_tdef->indexes) {
-      sm_idx_t *idx = get_catalog().get_or_open_idx(s, idef, *p_tdef);
-      if (idx == nullptr) {
-        if (!sm_retryable()) {
-          sm_rollback(s->session, sp);
-          sm_forget(s->session, sp);
-        }
-        panic_sm_error("update get_or_open_idx");
-      }
-      row_values_t okv = values_at(old, idef.keys);
-      row_values_t nkv = values_at(row, idef.keys);
-      row_values_t niv = values_at(row, idef.includes);
-      if (sm_idx_delete(idx, okv.values.data(), okv.isnull.get(),
-                        okv.values.size(), rowno) != 0 ||
-          sm_idx_insert(idx, nkv.values.data(), nkv.isnull.get(),
-                        nkv.values.size(), rowno, niv.values.data(),
-                        niv.isnull.get(), niv.values.size()) != 0) {
-        if (!sm_retryable()) {
-          sm_rollback(s->session, sp);
-          sm_forget(s->session, sp);
-        }
-        panic_sm_error("update sm_idx_insert");
-      }
-    }
-  }
-  sm_forget(s->session, sp);
-
-  if (old_tuple == nullptr) {
-    return janet_wrap_nil();
+  if (sm_tbl_deform(tbl, old_tuple, old_len, old.values.data(),
+                    old.isnull.get(), ncols) != 0) {
+    panic_sm_error("update sm_tbl_deform");
   }
   Janet *old_vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
@@ -1215,69 +1118,20 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
 
   table_def_t *p_tdef =
       need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "delete");
-  sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
-  if (rel == nullptr) {
-    panic_sm_error("delete get_or_open_rel");
-  }
-
-  int sp = sm_savepoint(s->session);
-  if (sp < 0) {
-    panic_sm_error("delete sm_savepoint");
-  }
+  sm_tbl_t *tbl = p_tdef->tbl;
 
   const void *old_tuple = nullptr;
   size_t old_len = 0;
-  int rc = sm_rel_delete(rel, rowno, &old_tuple, &old_len);
-  if (rc == 1) {
-    sm_forget(s->session, sp);
-    return janet_wrap_nil();
-  }
-  if (rc != 0) {
-    if (sm_errnum() == SM_ERR_UPDATED) {
-      sm_forget(s->session, sp);
-    } else if (!sm_retryable()) {
-      sm_rollback(s->session, sp);
-      sm_forget(s->session, sp);
-    }
-    panic_sm_error("delete sm_rel_delete");
-  }
-
-  // Copy the old tuple: it views session memory that the index
-  // calls below may reuse, and its values must outlive them.
-  std::string old_copy;
-  if (old_tuple != nullptr) {
-    old_copy.assign(static_cast<const char *>(old_tuple), old_len);
+  if (sm_tbl_delete(tbl, rowno, &old_tuple, &old_len) != 0) {
+    abort_failed_write(s);
+    panic_sm_error("delete sm_tbl_delete");
   }
 
   size_t ncols = p_tdef->columns.size();
   row_values_t old(ncols);
-  if (old_tuple != nullptr &&
-      sm_rel_deform(rel, old_copy.data(), old_copy.size(), old.values.data(),
-                    old.isnull.get(), ncols) == 0) {
-    for (auto &[iname, idef] : p_tdef->indexes) {
-      sm_idx_t *idx = get_catalog().get_or_open_idx(s, idef, *p_tdef);
-      if (idx == nullptr) {
-        if (!sm_retryable()) {
-          sm_rollback(s->session, sp);
-          sm_forget(s->session, sp);
-        }
-        panic_sm_error("delete get_or_open_idx");
-      }
-      row_values_t okv = values_at(old, idef.keys);
-      if (sm_idx_delete(idx, okv.values.data(), okv.isnull.get(),
-                        okv.values.size(), rowno) != 0) {
-        if (!sm_retryable()) {
-          sm_rollback(s->session, sp);
-          sm_forget(s->session, sp);
-        }
-        panic_sm_error("delete sm_idx_delete");
-      }
-    }
-  }
-  sm_forget(s->session, sp);
-
-  if (old_tuple == nullptr) {
-    return janet_wrap_nil();
+  if (sm_tbl_deform(tbl, old_tuple, old_len, old.values.data(),
+                    old.isnull.get(), ncols) != 0) {
+    panic_sm_error("delete sm_tbl_deform");
   }
   Janet *old_vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
@@ -1311,14 +1165,11 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
   }
 
   table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "scan");
-  sm_rel_t *rel = get_catalog().get_or_open_rel(s, *p_tdef);
-  if (rel == nullptr) {
-    panic_sm_error("scan get_or_open_rel");
-  }
+  sm_tbl_t *tbl = p_tdef->tbl;
 
   sm_rel_scan_t *rscan = nullptr;
-  if (sm_rel_scan(rel, first, last, &rscan) != 0) {
-    panic_sm_error("scan sm_rel_scan");
+  if (sm_tbl_scan(tbl, first, last, &rscan) != 0) {
+    panic_sm_error("scan sm_tbl_scan");
   }
 
   JanetArray *rows = janet_array(16);
@@ -1332,9 +1183,9 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
     for (size_t i = 0; i < ncols; i++) {
       sm_datum_t val = 0;
       bool isnull = false;
-      if (sm_rel_decode(rel, tuple, len, i, &val, &isnull) != 0) {
+      if (sm_tbl_decode(tbl, tuple, len, i, &val, &isnull) != 0) {
         sm_rel_scanend(rscan);
-        panic_sm_error("scan sm_rel_decode");
+        panic_sm_error("scan sm_tbl_decode");
       }
       vals[i] = value_to_janet(val, isnull, p_tdef->columns[i].type_code,
                                p_tdef->columns[i].typmod);
@@ -1359,10 +1210,8 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
 
   auto [p_tdef, p_idef] =
       need_index(s, idx_name, SM_LOCK_INTENT_SHARED, "idx-scan");
-  sm_idx_t *idx = get_catalog().get_or_open_idx(s, *p_idef, *p_tdef);
-  if (idx == nullptr) {
-    panic_sm_error("idx-scan get_or_open_idx");
-  }
+  sm_tbl_t *tbl = p_tdef->tbl;
+  uint64_t index = p_idef->def->oid;
 
   sm_bound_t lo_b = {nullptr, nullptr, 0, true};
   sm_bound_t hi_b = {nullptr, nullptr, 0, true};
@@ -1427,9 +1276,9 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
 
   bool widened = false;
   sm_idx_scan_t *iscan = nullptr;
-  if (sm_idx_scan(idx, has_lo ? &lo_b : nullptr, has_hi ? &hi_b : nullptr,
-                  &widened, &iscan) != 0) {
-    panic_sm_error("idx-scan sm_idx_scan");
+  if (sm_tbl_idx_scan(tbl, index, has_lo ? &lo_b : nullptr,
+                      has_hi ? &hi_b : nullptr, &widened, &iscan) != 0) {
+    panic_sm_error("idx-scan sm_tbl_idx_scan");
   }
 
   JanetArray *res = janet_array(16);
@@ -1438,14 +1287,14 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
   const void *val = nullptr;
   size_t val_len = 0;
 
-  size_t n_val_cols = sm_idx_ncols(idx);
+  size_t n_val_cols = sm_tbl_idx_ncols(tbl, index);
   row_values_t entry(n_val_cols);
 
   while (sm_idx_scannxt(iscan, &rowno, &cut, &val, &val_len) == 0) {
     Janet inc_val = janet_wrap_nil();
     if (p_idef->includes.size() > 0 && val != nullptr) {
-      if (sm_idx_deform(idx, val, val_len, entry.values.data(),
-                        entry.isnull.get(), n_val_cols) == 0) {
+      if (sm_tbl_idx_deform(tbl, index, val, val_len, entry.values.data(),
+                            entry.isnull.get(), n_val_cols) == 0) {
         // In idx value: rowno (0), cut (1), then includes (2...)
         size_t n_inc = p_idef->includes.size();
         Janet *ivals = janet_tuple_begin(n_inc);

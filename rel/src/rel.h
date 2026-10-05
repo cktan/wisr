@@ -42,17 +42,13 @@ struct include_col_def_t {
   int32_t typmod;
 };
 
-/*
- * An index of a table a statement opened: as sm3's catalog
- * defines it, and its handle once opened.
- */
+/* An index of a table a statement opened, as sm3's catalog defines it. */
 struct index_def_t {
   std::string name;
   bool unique = false;
   std::vector<key_col_def_t> keys;
   std::vector<include_col_def_t> includes;
   const sm_index_def_t *def = nullptr;
-  sm_idx_t *idx = nullptr;
 };
 
 /*
@@ -63,8 +59,8 @@ struct index_def_t {
  */
 struct table_def_t {
   std::string name;
-  sm_table_def_t *def = nullptr;
-  sm_rel_t *rel = nullptr;
+  sm_tbl_t *tbl = nullptr;             /* owned; closed with this */
+  const sm_table_def_t *def = nullptr; /* tbl's, valid while it is open */
   std::vector<col_def_t> columns;
   std::map<std::string, index_def_t> indexes;
 
@@ -130,11 +126,6 @@ public:
   std::pair<table_def_t *, index_def_t *>
   open_index(session_ctx_t *s, const std::string &name, sm_lockmode_t mode);
 
-  /* Handles on a table the statement opened, opened once. */
-  sm_rel_t *get_or_open_rel(session_ctx_t *s, table_def_t &tdef);
-  sm_idx_t *get_or_open_idx(session_ctx_t *s, index_def_t &idef,
-                            const table_def_t &tdef);
-
   /* Reset all state (closing sessions and detaching env). */
   void reset();
 
@@ -144,9 +135,6 @@ private:
   std::map<std::string, session_ctx_t> m_sessions;
   std::string m_active_session;
 };
-
-/* The sm_attribute_t schema of a table's columns. */
-std::vector<sm_attribute_t> attributes_of(const table_def_t &tdef);
 
 /* Global singleton catalog instance. */
 catalog_t &get_catalog();

@@ -293,12 +293,23 @@ own.
 ### 4.4 High-Level Row DML Operations
 
 Each statement first opens its table by name: `sm_cat_table_oid`,
-then `sm_cat_lock_table` -- `SM_LOCK_INTENT_SHARED` to read,
+then `sm_tbl_open` -- `SM_LOCK_INTENT_SHARED` to read,
 `SM_LOCK_INTENT_EXCLUSIVE` to write -- which holds the table's
-schema lock to the end of the transaction and hands out its
-definition. The heap and index handles are opened from that
-definition with `sm_rel_open` and `sm_idx_open`, and closed when
-the session's next statement begins.
+schema lock to the end of the transaction and opens its heap
+and its indexes under it. `sm_tbl_def` gives its definition.
+The handle is closed when the session's next statement begins.
+
+A write is one call. sm3 writes the heap row and then every
+index the write changes (`sm3/SM3_DESIGN.md` §3); `rel` names
+no index and computes no key. The call sets no savepoint, so a
+write that fails partway, on a duplicate in a unique index for
+one, has left its earlier steps done. `rel` then aborts the
+transaction, as PostgreSQL does on an error, and that undoes
+them. `SM_ERR_UPDATED` and `SM_ERR_BLOCKED` are outcomes, not
+errors, and leave the transaction active. One limit follows:
+a `SM_ERR_BLOCKED` that struck after the heap write, on a
+later index, cannot be repeated safely, and a script that
+meets one must abort.
 
 #### `(insert <table> <row-tuple>)`
 1. Validates that `<row-tuple>` matches column count and types.
@@ -311,21 +322,16 @@ the session's next statement begins.
      pointing at them.
    - Any other type parsed from its canonical text by
      `sm_type_in`.
-3. Calls `sm_tup_encode(attrs, n, values, isnull, &tuple,
-   &len)`, then `sm_rel_insert_tuple(rel, tuple, len, &rowno)`.
-4. For each attached index on `<table>`:
-   - Gathers the key and INCLUDE columns' values and null
-     flags from the row.
-   - Calls `sm_idx_insert(idx, key, key_isnull, nk, rowno,
-     include, include_isnull, ni)`.
-   - If `sm_idx_insert` fails (e.g., `SM_ERR_DUPKEY`), the error
-     is preserved and returned.
+3. Calls `sm_tbl_insert(tbl, values, isnull, n, &rowno)`.
+4. If it fails (e.g., `SM_ERR_DUPKEY` from a unique index),
+   aborts the transaction; the error is preserved and
+   returned.
 5. Returns `rowno`.
 
 #### `(read <table> <rowno>)`
-1. Calls `sm_rel_read(rel, rowno, &tuple, &len)`.
+1. Calls `sm_tbl_read(tbl, rowno, &tuple, &len)`.
 2. If return is 1, returns `nil` ("no row").
-3. Calls `sm_rel_deform(rel, tuple, len, values, isnull,
+3. Calls `sm_tbl_deform(tbl, tuple, len, values, isnull,
    ncols)`.
 4. Decodes each value into a `rel-lisp` value:
    - Integers and floats to numbers.
@@ -336,35 +342,33 @@ the session's next statement begins.
 5. Returns tuple vector `[v0 v1 ... vn]`.
 
 #### `(read-latest <table> <rowno>)`
-1. Calls `sm_rel_read_latest(rel, rowno, &tuple, &len)`.
+1. Calls `sm_tbl_read_latest(tbl, rowno, &tuple, &len)`.
 2. Deforms and decodes tuple identically to `read`.
 3. Returns newest committed tuple vector.
 
 #### `(update <table> <rowno> <new-row-tuple>)`
 1. Converts `<new-row-tuple>` into `values[]` and `isnull[]`.
-2. Calls `sm_rel_update(rel, rowno, values, isnull, n,
+2. Calls `sm_tbl_update(tbl, rowno, values, isnull, n,
    &old_tuple, &old_len)`.
-3. Copies `old_tuple` and calls `sm_rel_deform` on the copy to
-   recover the old values.
-4. For each attached index on `<table>`:
-   - Calls `sm_idx_delete` with the old row's key values.
-   - Calls `sm_idx_insert` with the new row's key and INCLUDE
-     values.
+3. If it fails, aborts the transaction, except on
+   `SM_ERR_UPDATED`, which keeps the row lock for the
+   `read-latest` that must come before the write is repeated,
+   and on `SM_ERR_BLOCKED`.
+4. Calls `sm_tbl_deform` on `old_tuple` to recover the old
+   values.
 5. Returns decoded old tuple vector.
 
 #### `(delete <table> <rowno>)`
-1. Calls `sm_rel_delete(rel, rowno, &old_tuple, &old_len)`.
-2. If row found, copies `old_tuple` and calls `sm_rel_deform`
-   on the copy.
-3. For each attached index on `<table>`:
-   - Calls `sm_idx_delete` with the old row's key values.
-4. Returns decoded deleted tuple vector.
+1. Calls `sm_tbl_delete(tbl, rowno, &old_tuple, &old_len)`,
+   and on failure does as `update`.
+2. Calls `sm_tbl_deform` on `old_tuple`.
+3. Returns decoded deleted tuple vector.
 
 #### `(scan <table> [:from first] [:to last])`
 1. Defaults: `first = 1`, `last = UINT64_MAX`.
-2. Calls `sm_rel_scan(rel, first, last, &rscan)`.
+2. Calls `sm_tbl_scan(tbl, first, last, &rscan)`.
 3. Loops `sm_rel_scannxt(rscan, &rowno, &tuple, &len)` until 1.
-4. Decodes each column of a tuple via `sm_rel_decode`.
+4. Decodes each column of a tuple via `sm_tbl_decode`.
 5. Calls `sm_rel_scanend(rscan)`.
 6. Returns list of pairs:
    `([rowno_1 tuple_1] [rowno_2 tuple_2] ...)`.
@@ -376,10 +380,12 @@ the session's next statement begins.
 2. Constructs upper bound `sm_bound_t hi_b`:
    - Prefix values and null flags from `:le` (inclusive) or
      `:lt` (exclusive).
-3. Calls `sm_idx_scan(idx, &lo_b, &hi_b, &widened, &iscan)`.
+3. Calls `sm_tbl_idx_scan(tbl, index, &lo_b, &hi_b,
+   &widened, &iscan)`, the index named by its oid.
 4. Loops `sm_idx_scannxt(iscan, &rowno, &cut, &val, &len)`
    until 1.
-5. If INCLUDE columns exist, decodes value via `sm_idx_deform`.
+5. If INCLUDE columns exist, decodes value via
+   `sm_tbl_idx_deform`.
 6. Calls `sm_idx_scanend(iscan)`.
 7. Returns list of index entries `([rowno cut includes] ...)`,
    `includes` being nil for an index without INCLUDE columns.
@@ -500,8 +506,8 @@ builtins (`rel/src/`):
 3. **Sessions and Tables (`rel_catalog.cc`):**
    - Stores session handles (`sm_session_t*`).
    - Opens a statement's tables from sm3's catalog, and keeps
-     them with their `sm_rel_t*` and `sm_idx_t*` until the
-     session's next statement.
+     them, each with its `sm_tbl_t*`, until the session's
+     next statement.
 4. **Driver Main (`main.cc`):**
    - Supports interactive REPL mode when launched without args.
    - Executes script files when passed a path:

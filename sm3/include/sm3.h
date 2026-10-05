@@ -361,6 +361,14 @@ int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
                  const sm2::bound_t* hi, sm2::index_scan_t*& out,
                  bool* widened = nullptr);
 
+/*
+ * The schema of an entry's value in the table's index oid, as
+ * sm2::idx_value_schema gives it; empty if the table has no such
+ * index.
+ */
+std::span<const sm2::attribute_t> tbl_idx_value_schema(const table_t* table,
+                                                       uint64_t index);
+
 } // namespace sm3
 
 #endif /* SM3_H */
