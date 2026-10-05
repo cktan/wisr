@@ -52,6 +52,9 @@ In this order, tests first:
    heap put through the same evaluator, at every isolation
    level, with a writer racing the build. An evaluator that
    fails makes the write fail, and a build keep the reason.
+   **Done** in sm3 (`src/table/table.cc`), a writer racing the
+   build of an evaluated index among the tests, in both orders
+   on one thread and with real threads.
 4. **The C API and `rel`**: registering an evaluator, and a
    `rel` script supplying one as a Janet function.
 

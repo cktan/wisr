@@ -533,7 +533,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   stack to PostgreSQL's function catalog, and it stays open if
   the callback ever shows in a profile.
 
-  Settled, and not built:
+  How it is built:
   - **What the callback computes** is only what sm3 cannot:
     whether the row belongs in the index, and the values of
     the key columns that are expressions. A plain key column
@@ -571,9 +571,15 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     created, and a write to its table or a build of it fails
     with an error that says so.
 
-  `cat_create_index` takes key columns and INCLUDE columns
-  only today, so the catalog cannot record any of this yet.
-  What a call a row costs on the write path is unmeasured.
+  A write to a table with such an index encodes the row
+  itself, once, to have a tuple to show the evaluator, and
+  hands sm2 the tuple instead of the values. The build shows
+  it each row's newest image under the row's lock, as it reads
+  any row. An evaluator that fails fails the write with its
+  error, and fails a build, which keeps the error as its
+  reason. What a call a row costs on the write path is
+  unmeasured, and the C API cannot create or register any of
+  this yet.
 - **sm3 drives maintenance; the executor owns the qual.** The
   kept executor could write index entries itself through its
   index access method, as PostgreSQL does, reaching sm2's

@@ -6,6 +6,7 @@
 
 #include "../catalog/internal.h"
 
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -73,65 +74,68 @@ int need_writable(const sm3::table_t *t) {
 }
 
 /* A non-null datum's native bytes: a varlena's without its header. */
-int native(const sm2::attribute_t &a, const sm2::datum_t &d,
+int native(const sm2::type_t *type, int32_t typmod, const sm2::datum_t &d,
            std::string_view &out) {
-  if (sm2::datum_bytes(a.type, a.typmod, d, out) != 0) {
+  if (sm2::datum_bytes(type, typmod, d, out) != 0) {
     return -1;
   }
-  if (a.type->len < 0) {
+  if (type->len < 0) {
     out = sm2::varlena_payload(out);
   }
   return 0;
 }
 
 /*
- * Whether index x's entry for a row is the same before and after:
- * 1 if its key columns compare equal by their types' cmp and its
- * INCLUDE columns hold the same bytes, 0 if not, -1 on error. The
- * key folds what cmp calls equal, so cmp decides it; an INCLUDE
- * column is stored as written, so only its bytes do.
+ * Whether the columns atts of a row are the same before and after:
+ * 1 if each compares equal by its type's cmp, or with by_cmp off
+ * holds the same bytes, 0 if not, -1 on error.
  */
-int unchanged(const sm3::table_def_t &def, const sm3::index_def_t &x,
-              const vals_t &before, const vals_t &after) {
-  auto same = [&](int32_t att, bool by_cmp) {
+int cols_same(const sm3::table_def_t &def, const std::vector<int32_t> &atts,
+              const vals_t &before, const vals_t &after, bool by_cmp) {
+  for (int32_t att : atts) {
+    // An expression has no column here; the evaluator answers for it.
+    if (att < 0) {
+      continue;
+    }
     if (before.null[att] || after.null[att]) {
-      return before.null[att] && after.null[att] ? 1 : 0;
+      if (before.null[att] && after.null[att]) {
+        continue;
+      }
+      return 0;
     }
     const sm2::attribute_t &a = def.schema[att];
     std::string_view b, c;
-    if (native(a, before.d[att], b) != 0 || native(a, after.d[att], c) != 0) {
+    if (native(a.type, a.typmod, before.d[att], b) != 0 ||
+        native(a.type, a.typmod, after.d[att], c) != 0) {
       return -1;
     }
-    return (by_cmp ? a.type->cmp(b, c, a.typmod) == 0 : b == c) ? 1 : 0;
-  };
-  for (int32_t att : x.key_attnums) {
-    if (int rc = same(att, true); rc != 1) {
-      return rc;
-    }
-  }
-  for (int32_t att : x.include_attnums) {
-    if (int rc = same(att, false); rc != 1) {
-      return rc;
+    if (by_cmp ? a.type->cmp(b, c, a.typmod) != 0 : b != c) {
+      return 0;
     }
   }
   return 1;
 }
 
 /*
- * Fail if t has an index the host evaluates: maintaining one, and
- * building one, are not built yet (SM3_DESIGN.md §3), and a write
- * that kept such an index wrong would be worse than none.
+ * Whether index x's entry for a row is the same before and after,
+ * told from the row's columns alone: 1 if its key columns compare
+ * equal by their types' cmp, and its INCLUDE columns and the
+ * columns its predicate and expressions read hold the same bytes;
+ * 0 if not; -1 on error. The key folds what cmp calls equal, so cmp
+ * decides it. An INCLUDE column is stored as written, and what the
+ * host makes of a column it reads is the host's, so only their
+ * bytes do.
  */
-int need_no_evaluated(const sm3::table_t *t) {
-  for (const sm3::index_def_t &x : t->def->indexes) {
-    if (!x.eval.empty() && x.state != sm3::index_state_t::failed) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "table: index " + x.name +
-                             " is partial or of expressions, which are not "
-                             "maintained yet");
-    }
+int unchanged(const sm3::table_def_t &def, const sm3::index_def_t &x,
+              const vals_t &before, const vals_t &after) {
+  int rc = cols_same(def, x.key_attnums, before, after, true);
+  if (rc == 1) {
+    rc = cols_same(def, x.include_attnums, before, after, false);
   }
-  return 0;
+  if (rc == 1) {
+    rc = cols_same(def, x.reads, before, after, false);
+  }
+  return rc;
 }
 
 /* Whether writes maintain index i of t: all but one whose build failed. */
@@ -139,26 +143,137 @@ bool maintained(const sm3::table_t *t, size_t i) {
   return t->def->indexes[i].state != sm3::index_state_t::failed;
 }
 
-/* Add index i's entry for the row r at rowno. */
-int add_entry(sm3::table_t *t, size_t i, const vals_t &r, uint64_t rowno) {
+/* Whether t has a maintained index the host evaluates. */
+bool has_evaluated(const sm3::table_t *t) {
+  for (size_t i = 0; i < t->indexes.size(); i++) {
+    if (maintained(t, i) && !t->def->indexes[i].eval.empty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/*
+ * An index's entry for one row image: whether the row is in the
+ * index, and its key. own holds the values the evaluator gave,
+ * which the key points into.
+ */
+struct entry_t {
+  bool belongs = true;
+  std::vector<std::string> own;
+  std::vector<sm2::datum_t> key;
+  std::unique_ptr<bool[]> key_null;
+
+  std::span<const sm2::datum_t> d() const { return key; }
+  std::span<const bool> null() const { return {key_null.get(), key.size()}; }
+};
+
+/*
+ * Index i's entry for a row: its values r, and its image as a
+ * tuple, which only an index the host evaluates needs. A plain key
+ * column is read from r; whether the row belongs, and each key
+ * column that is an expression, are the evaluator's
+ * (SM3_DESIGN.md §3).
+ */
+int make_entry(const sm3::table_t *t, size_t i, const vals_t &r,
+               std::string_view tuple, entry_t &e) {
   const sm3::index_def_t &x = t->def->indexes[i];
-  picked_t key(r, x.key_attnums), inc(r, x.include_attnums);
-  return sm2::idx_insert(t->indexes[i], key.d(), key.null(), rowno, inc.d(),
+  size_t n = x.key_attnums.size(), nexpr = 0;
+  for (int32_t att : x.key_attnums) {
+    nexpr += att < 0;
+  }
+  e.key.assign(n, 0);
+  e.key_null.reset(new bool[n]());
+  std::unique_ptr<bool[]> own_null(new bool[nexpr]());
+  if (!x.eval.empty()) {
+    const sm3::index_eval_fn &eval = t->session->cat->eval;
+    if (!eval) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "table: index " + x.name +
+                             " is evaluated by the host, and the catalog "
+                             "has no evaluator");
+    }
+    e.own.assign(nexpr, std::string());
+    // The host's answer; its failure is this call's.
+    if (eval(*t->def, x, tuple, e.belongs, e.own, {own_null.get(), nexpr}) !=
+        0) {
+      return -1;
+    }
+    if (!e.belongs) {
+      return 0;
+    }
+  }
+  size_t k = 0;
+  for (size_t j = 0; j < n; j++) {
+    int32_t att = x.key_attnums[j];
+    if (att >= 0) {
+      e.key[j] = r.d[att];
+      e.key_null[j] = r.null[att];
+      continue;
+    }
+    e.key_null[j] = own_null[k];
+    if (!own_null[k]) {
+      // The value's bytes as sm2::datum_bytes would give them: a
+      // by-value type's inside the datum, any other's pointed at.
+      const sm2::key_column_t &c = x.key[j];
+      const std::string &b = e.own[k];
+      int32_t width = sm2::datum_width(c.type, c.typmod);
+      if (b.empty() || (width > 0 && b.size() != static_cast<size_t>(width))) {
+        return sm1::seterr(sm1::SM_ERR_INVALID,
+                           "table: the evaluator gave index " + x.name +
+                               " a value of the wrong width");
+      }
+      if (c.type->byval) {
+        memcpy(&e.key[j], b.data(), b.size());
+      } else {
+        e.key[j] = sm2::datum_from_ptr(b.data());
+      }
+    }
+    k++;
+  }
+  return 0;
+}
+
+/* Whether two entries of index x have equal keys: 1, 0, or -1 on error. */
+int keys_equal(const sm3::index_def_t &x, const entry_t &a, const entry_t &b) {
+  for (size_t j = 0; j < x.key.size(); j++) {
+    if (a.key_null[j] || b.key_null[j]) {
+      if (a.key_null[j] && b.key_null[j]) {
+        continue;
+      }
+      return 0;
+    }
+    const sm2::key_column_t &c = x.key[j];
+    std::string_view p, q;
+    if (native(c.type, c.typmod, a.key[j], p) != 0 ||
+        native(c.type, c.typmod, b.key[j], q) != 0) {
+      return -1;
+    }
+    if (c.type->cmp(p, q, c.typmod) != 0) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+/* Add index i's entry e for the row r at rowno. */
+int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
+              uint64_t rowno) {
+  picked_t inc(r, t->def->indexes[i].include_attnums);
+  return sm2::idx_insert(t->indexes[i], e.d(), e.null(), rowno, inc.d(),
                          inc.null());
 }
 
 /*
- * Remove index i's entry for the row r at rowno. While the index
+ * Remove index i's entry e for the row at rowno. While the index
  * is building, an entry that is not there is no error: the build
  * has not reached the row (SM3_DESIGN.md §3).
  */
-int remove_entry(sm3::table_t *t, size_t i, const vals_t &r, uint64_t rowno) {
-  const sm3::index_def_t &x = t->def->indexes[i];
-  picked_t key(r, x.key_attnums);
-  if (sm2::idx_delete(t->indexes[i], key.d(), key.null(), rowno) == 0) {
+int remove_entry(sm3::table_t *t, size_t i, const entry_t &e, uint64_t rowno) {
+  if (sm2::idx_delete(t->indexes[i], e.d(), e.null(), rowno) == 0) {
     return 0;
   }
-  return x.state == sm3::index_state_t::building &&
+  return t->def->indexes[i].state == sm3::index_state_t::building &&
                  sm1::errnum() == sm1::SM_ERR_NOTFOUND
              ? 0
              : -1;
@@ -227,16 +342,29 @@ bool tbl_index_usable(const table_t *table, uint64_t index) {
 int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, uint64_t &rowno) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0 || need_no_evaluated(table) != 0) {
+    if (need_writable(table) != 0) {
       return -1;
     }
+    // An index the host evaluates is shown the row as a tuple, so
+    // the row is encoded here, once, and written as encoded.
     uint64_t r = 0;
-    if (sm2::rel_insert(table->rel, values, isnull, r) != 0) {
+    std::string image;
+    if (has_evaluated(table)) {
+      if (sm2::tup_encode(table->def->desc, values, isnull, image) != 0 ||
+          sm2::rel_insert(table->rel, image, r) != 0) {
+        return -1;
+      }
+    } else if (sm2::rel_insert(table->rel, values, isnull, r) != 0) {
       return -1;
     }
     vals_t row{values, isnull};
     for (size_t i = 0; i < table->indexes.size(); i++) {
-      if (maintained(table, i) && add_entry(table, i, row, r) != 0) {
+      if (!maintained(table, i)) {
+        continue;
+      }
+      entry_t e;
+      if (make_entry(table, i, row, image, e) != 0 ||
+          (e.belongs && add_entry(table, i, e, row, r) != 0)) {
         return -1;
       }
     }
@@ -250,11 +378,19 @@ int tbl_update(table_t *table, uint64_t rowno,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, std::string *old) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0 || need_no_evaluated(table) != 0) {
+    if (need_writable(table) != 0) {
       return -1;
     }
+    // As in tbl_insert: encoded here if an index is to be shown it.
     std::string_view image;
-    if (sm2::rel_update(table->rel, rowno, values, isnull, &image) != 0) {
+    std::string fresh;
+    if (has_evaluated(table)) {
+      if (sm2::tup_encode(table->def->desc, values, isnull, fresh) != 0 ||
+          sm2::rel_update(table->rel, rowno, fresh, &image) != 0) {
+        return -1;
+      }
+    } else if (sm2::rel_update(table->rel, rowno, values, isnull, &image) !=
+               0) {
       return -1;
     }
     // Copy the old image: it views session memory that the index
@@ -272,15 +408,38 @@ int tbl_update(table_t *table, uint64_t rowno,
       if (!maintained(table, i)) {
         continue;
       }
-      int same = unchanged(def, def.indexes[i], before.row(), after);
+      const index_def_t &x = def.indexes[i];
+      // No column the index depends on changed: leave it alone,
+      // and the evaluator unasked.
+      int same = unchanged(def, x, before.row(), after);
       if (same < 0) {
         return -1;
       }
       if (same) {
         continue;
       }
-      if (remove_entry(table, i, before.row(), rowno) != 0 ||
-          add_entry(table, i, after, rowno) != 0) {
+      entry_t was, is;
+      if (make_entry(table, i, before.row(), copy, was) != 0 ||
+          make_entry(table, i, after, fresh, is) != 0) {
+        return -1;
+      }
+      // A column it reads changed, yet the entry may not have: the
+      // row is in the index both times, under an equal key, with
+      // the same INCLUDE columns.
+      if (!x.eval.empty() && was.belongs && is.belongs) {
+        int kept = keys_equal(x, was, is);
+        if (kept == 1) {
+          kept = cols_same(def, x.include_attnums, before.row(), after, false);
+        }
+        if (kept < 0) {
+          return -1;
+        }
+        if (kept) {
+          continue;
+        }
+      }
+      if ((was.belongs && remove_entry(table, i, was, rowno) != 0) ||
+          (is.belongs && add_entry(table, i, is, after, rowno) != 0)) {
         return -1;
       }
     }
@@ -294,7 +453,7 @@ int tbl_update(table_t *table, uint64_t rowno,
 /* Delete the row, then its entry in every index; see sm3.h. */
 int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0 || need_no_evaluated(table) != 0) {
+    if (need_writable(table) != 0) {
       return -1;
     }
     std::string_view image;
@@ -312,8 +471,12 @@ int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
       return -1;
     }
     for (size_t i = 0; i < table->indexes.size(); i++) {
-      if (maintained(table, i) &&
-          remove_entry(table, i, before.row(), rowno) != 0) {
+      if (!maintained(table, i)) {
+        continue;
+      }
+      entry_t was;
+      if (make_entry(table, i, before.row(), copy, was) != 0 ||
+          (was.belongs && remove_entry(table, i, was, rowno) != 0)) {
         return -1;
       }
     }
@@ -363,7 +526,7 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
 int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
                        size_t max_rows, uint64_t &next, bool &done) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0 || need_no_evaluated(table) != 0) {
+    if (need_writable(table) != 0) {
       return -1;
     }
     const table_def_t &def = *table->def;
@@ -431,7 +594,12 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
           0) {
         return -1;
       }
-      if (add_entry(table, i, row.row(), r) == 0) {
+      // A row a partial index does not take needs no entry.
+      entry_t key;
+      if (make_entry(table, i, row.row(), copy, key) != 0) {
+        return -1;
+      }
+      if (!key.belongs || add_entry(table, i, key, row.row(), r) == 0) {
         continue;
       }
       if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
@@ -439,7 +607,6 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
       }
       // An entry is there already. With the rowno in its key it is
       // this row's, made by a writer; without, it may be another's.
-      picked_t key(row.row(), x.key_attnums);
       bool has_null = false;
       for (bool n : key.null()) {
         has_null |= n;

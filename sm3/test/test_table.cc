@@ -9,6 +9,8 @@
 #include "doctest.h"
 #include "sm3.h"
 
+#include <atomic>
+#include <cctype>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -42,6 +44,48 @@ private:
   bool m_null[3];
 };
 
+/* How many times the test's evaluator has been called. */
+std::atomic<int> g_evals{0};
+
+/*
+ * The evaluator the tests give the catalog, over a table of
+ * (id int4, state text, owner text). An index's blob is words:
+ * "free" makes it partial, on state = 'free'; "lower" gives it one
+ * expression column, lower(owner); "fail" makes every call fail.
+ * It asserts nothing, since a build's worker calls it too.
+ */
+int jobs_eval(const sm3::table_def_t &table, const sm3::index_def_t &index,
+              std::string_view tuple, bool &belongs,
+              std::vector<std::string> &values, std::span<bool> isnull) {
+  g_evals++;
+  if (index.eval.find("fail") != std::string::npos) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "the evaluator failed");
+  }
+  sm2::datum_t d[3];
+  bool n[3];
+  if (sm2::tup_deform(table.desc, tuple, d, n) != 0) {
+    return -1;
+  }
+  auto text = [&](size_t i) {
+    std::string_view v;
+    sm2::datum_bytes(&sm2::type_text, -1, d[i], v);
+    return std::string(sm2::varlena_payload(v));
+  };
+  belongs = index.eval.find("free") == std::string::npos ||
+            (!n[1] && text(1) == "free");
+  if (index.eval.find("lower") != std::string::npos) {
+    isnull[0] = n[2];
+    if (!n[2]) {
+      std::string o = text(2);
+      for (char &c : o) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      }
+      values[0] = sm2::make_varlena(o);
+    }
+  }
+  return 0;
+}
+
 /*
  * A catalog with jobs (id int4, state text, owner text), its
  * indexes jobs_state on (state) INCLUDE (owner) and jobs_id, unique,
@@ -58,6 +102,7 @@ public:
     REQUIRE(sm1::commit(s) == 0);
     REQUIRE(sm3::session_open(cat, s, a) == 0);
     REQUIRE(sm3::session_open(cat, open(), b) == 0);
+    REQUIRE(sm3::cat_set_evaluator(cat, jobs_eval) == 0);
     std::vector<sm3::column_spec_t> cols = {
         {"id", sm2::type_int4.code, -1, true},
         {"state", sm2::type_text.code, -1, false},
@@ -83,8 +128,11 @@ public:
     sm3::cat_close(cat);
   }
 
-  /* Restart the database, and load the catalog and a and b again. */
-  void reload() {
+  /*
+   * Restart the database, and load the catalog and a and b again,
+   * with the evaluator unless told to leave the catalog without.
+   */
+  void reload(bool with_evaluator = true) {
     sm3::session_close(a);
     sm3::session_close(b);
     sm3::cat_close(cat);
@@ -95,6 +143,9 @@ public:
     REQUIRE(sm1::commit(s) == 0);
     REQUIRE(sm3::session_open(cat, s, a) == 0);
     REQUIRE(sm3::session_open(cat, open(), b) == 0);
+    if (with_evaluator) {
+      REQUIRE(sm3::cat_set_evaluator(cat, jobs_eval) == 0);
+    }
   }
 
   /* Start the catalog's builder, with sessions from this database. */
@@ -227,9 +278,11 @@ private:
 
 /*
  * Check every index of t against a brute-force scan of its heap:
- * an index holds as many entries as the heap has rows, and each row
- * has, under its own key, an entry with its rowno whose INCLUDE
- * columns are the row's.
+ * an index holds as many entries as the heap has rows that belong
+ * in it, and each such row has, under its own key, an entry with
+ * its rowno whose INCLUDE columns are the row's. For a partial or
+ * an expression index, whether a row belongs and what its
+ * expression columns are come from the tests' evaluator.
  */
 void check_agree(sm3::table_t *t) {
   const sm3::table_def_t &def = sm3::tbl_def(t);
@@ -246,8 +299,7 @@ void check_agree(sm3::table_t *t) {
         {&sm2::type_bool, -1, false, std::nullopt}};
     vschema.insert(vschema.end(), x.include.begin(), x.include.end());
     sm2::tup_desc_t vdesc(vschema);
-    // As many entries as rows.
-    size_t entries = 0;
+    size_t entries = 0, belonging = 0;
     uint64_t rowno;
     bool cut;
     std::string_view value;
@@ -257,19 +309,39 @@ void check_agree(sm3::table_t *t) {
         entries++;
       }
     }
-    CHECK(entries == heap.size());
-    // Each row is found under its own key, with its own INCLUDEs.
+    size_t nexpr = 0;
+    for (int32_t att : x.key_attnums) {
+      nexpr += att < 0;
+    }
+    // Each row that belongs is found under its own key, with its
+    // own INCLUDEs.
     for (const auto &[want, tuple] : heap) {
       CAPTURE(want);
       std::vector<sm2::datum_t> d(def.schema.size());
       std::unique_ptr<bool[]> n(new bool[def.schema.size()]);
       REQUIRE(sm2::tup_deform(def.desc, tuple, d,
                               {n.get(), def.schema.size()}) == 0);
+      bool belongs = true;
+      std::vector<std::string> ev(nexpr);
+      std::unique_ptr<bool[]> en(new bool[nexpr]());
+      if (!x.eval.empty()) {
+        REQUIRE(jobs_eval(def, x, tuple, belongs, ev, {en.get(), nexpr}) == 0);
+      }
+      if (!belongs) {
+        continue;
+      }
+      belonging++;
       std::vector<sm2::datum_t> kd;
       std::unique_ptr<bool[]> kn(new bool[x.key_attnums.size()]);
+      size_t e = 0;
       for (size_t i = 0; i < x.key_attnums.size(); i++) {
-        kd.push_back(d[x.key_attnums[i]]);
-        kn[i] = n[x.key_attnums[i]];
+        if (x.key_attnums[i] < 0) {
+          kd.push_back(sm2::datum_from_ptr(ev[e].data()));
+          kn[i] = en[e++];
+        } else {
+          kd.push_back(d[x.key_attnums[i]]);
+          kn[i] = n[x.key_attnums[i]];
+        }
       }
       sm2::bound_t eq{kd, {kn.get(), kd.size()}, true};
       peek_t scan(t, x.oid, &eq, &eq);
@@ -289,6 +361,7 @@ void check_agree(sm3::table_t *t) {
       }
       CHECK(found);
     }
+    CHECK(entries == belonging);
   }
 }
 
@@ -1784,39 +1857,441 @@ TEST_CASE("writers go on while an index is built, and it still agrees") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("an evaluated index is not maintained yet, so writes are refused") {
-  // Verify the stopgap until maintenance calls the evaluator: a
-  // table with a partial or an expression index refuses every
-  // write and every build with SM_ERR_INVALID, rather than keep the
-  // index wrong.
-  // 1. A partial index is recorded on jobs, which is committed.
-  // 2. An insert and a batch of its build are both refused.
-  jobs_t f;
-  REQUIRE(sm3::cat_set_evaluator(
-              f.cat, [](const sm3::table_def_t &, const sm3::index_def_t &,
-                        std::string_view, bool &belongs,
-                        std::vector<std::string> &, std::span<bool>) {
-                belongs = true;
-                return 0;
-              }) == 0);
-  std::vector<sm3::index_key_spec_t> by_owner = {
-      {2, false, false, std::nullopt}};
-  std::vector<int32_t> reads = {1};
-  uint64_t partial = 0;
-  start(f.a);
-  REQUIRE(sm3::cat_create_index(f.a, f.jobs, "jobs_free", by_owner, {}, false,
-                                "state = 'free'", reads, partial) == 0);
-  REQUIRE(sm3::commit(f.a) == 0);
+namespace {
 
+/* An index on jobs with a blob, made after its rows: building. */
+uint64_t late_eval(jobs_t &f, const std::string &name, const std::string &blob,
+                   std::vector<sm3::index_key_spec_t> keys,
+                   std::vector<int32_t> reads, bool unique = false) {
+  uint64_t oid = 0;
+  start(f.a);
+  REQUIRE_MESSAGE(sm3::cat_create_index(f.a, f.jobs, name, keys, {}, unique,
+                                        blob, reads, oid) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::commit(f.a) == 0);
+  return oid;
+}
+
+/* The key of an index on owner, and of one on lower(owner). */
+const std::vector<sm3::index_key_spec_t> by_owner_key = {
+    {2, false, false, std::nullopt}};
+const std::vector<sm3::index_key_spec_t> by_lower_key = {
+    {-1, false, false, std::nullopt, sm2::type_text.code, -1}};
+
+} // namespace
+
+TEST_CASE("a partial index holds the rows its predicate takes") {
+  // Verify maintenance of a partial index, at every isolation level:
+  // jobs_free, on owner, of the rows whose state is 'free'.
+  // 1. The index is built over three rows, one of them not free.
+  // 2. A free row inserted goes in; a taken one does not.
+  // 3. A row that stops being free leaves it, and one that becomes
+  //    free joins it.
+  // 4. A free row whose owner changes moves to its new key.
+  // 5. An update that changes only id, which neither the predicate
+  //    nor the key reads, leaves the index alone and does not call
+  //    the evaluator.
+  // 6. A deleted row's entry goes. The index agrees with the heap
+  //    after each step.
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    start(f.a);
+    sm3::table_t *t = f.write(f.a);
+    uint64_t r1 = put(t, 1, "free", "a");
+    uint64_t r2 = put(t, 2, "taken", "b");
+    uint64_t r3 = put(t, 3, "free", "c");
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+    uint64_t jobs_free = late_eval(f, "jobs_free", "free", by_owner_key, {1});
+    build(f, jobs_free);
+
+    start(f.a, level);
+    t = f.write(f.a);
+    CHECK(under(t, jobs_free, "a") == std::vector<uint64_t>{r1});
+    CHECK(under(t, jobs_free, "b").empty());
+    check_agree(t);
+    uint64_t r4 = put(t, 4, "free", "d");
+    uint64_t r5 = put(t, 5, "done", "e");
+    CHECK(under(t, jobs_free, "d") == std::vector<uint64_t>{r4});
+    CHECK(under(t, jobs_free, "e").empty());
+    check_agree(t);
+
+    REQUIRE_MESSAGE(set(t, r1, 1, "taken", "a") == 0, sm1::errmsg());
+    REQUIRE(set(t, r2, 2, "free", "b") == 0);
+    CHECK(under(t, jobs_free, "a").empty());
+    CHECK(under(t, jobs_free, "b") == std::vector<uint64_t>{r2});
+    check_agree(t);
+
+    REQUIRE(set(t, r3, 3, "free", "z") == 0);
+    CHECK(under(t, jobs_free, "c").empty());
+    CHECK(under(t, jobs_free, "z") == std::vector<uint64_t>{r3});
+    check_agree(t);
+
+    int before = g_evals;
+    REQUIRE(set(t, r3, 33, "free", "z") == 0);
+    CHECK(g_evals == before);
+    check_agree(t);
+
+    REQUIRE(sm3::tbl_delete(t, r4) == 0);
+    REQUIRE(sm3::tbl_delete(t, r5) == 0);
+    CHECK(under(t, jobs_free, "d").empty());
+    check_agree(t);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+  }
+}
+
+TEST_CASE("an expression index is keyed by what the evaluator computes") {
+  // Verify maintenance of an expression index: jobs_lower, unique,
+  // on lower(owner).
+  // 1. The index is built over two rows; each is found under its
+  //    owner in lower case, not as written.
+  // 2. A row whose owner differs from another's only in case is a
+  //    duplicate: SM_ERR_DUPKEY.
+  // 3. An update of the owner moves the entry; one that changes
+  //    only its case leaves the key where it was.
+  // 4. A NULL owner is a NULL key, and two of them are no duplicate.
+  // 5. The index agrees with the heap throughout.
+  jobs_t f;
   start(f.a);
   sm3::table_t *t = f.write(f.a);
+  uint64_t r1 = put(t, 1, "free", "Alice");
+  uint64_t r2 = put(t, 2, "free", "BOB");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_lower =
+      late_eval(f, "jobs_lower", "lower", by_lower_key, {2}, true);
+  build(f, jobs_lower);
+
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(under(t, jobs_lower, "alice") == std::vector<uint64_t>{r1});
+  CHECK(under(t, jobs_lower, "Alice").empty());
+  CHECK(under(t, jobs_lower, "bob") == std::vector<uint64_t>{r2});
+  check_agree(t);
+
+  int sp = sm3::savepoint(f.a);
+  row_t dup(3, "free", "bob");
+  uint64_t rowno;
+  CHECK(sm3::tbl_insert(t, dup.d(), dup.null(), rowno) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  REQUIRE(sm3::rollback(f.a, sp) == 0);
+  REQUIRE(sm3::forget(f.a, sp) == 0);
+
+  REQUIRE_MESSAGE(set(t, r2, 2, "free", "Carol") == 0, sm1::errmsg());
+  CHECK(under(t, jobs_lower, "bob").empty());
+  CHECK(under(t, jobs_lower, "carol") == std::vector<uint64_t>{r2});
+  REQUIRE(set(t, r2, 2, "free", "CAROL") == 0);
+  CHECK(under(t, jobs_lower, "carol") == std::vector<uint64_t>{r2});
+  check_agree(t);
+
+  put(t, 4, "free", std::nullopt);
+  put(t, 5, "free", std::nullopt);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("read committed: an evaluated entry is the newest image's") {
+  // Verify the fix-up after SM_ERR_UPDATED with a partial index on
+  // owner, of free rows, and an expression index on lower(owner).
+  // 1. Row 1 is free, owned by Ann. A and B both read it.
+  // 2. A sets it taken, owned by BEA, and holds the row; B, set
+  //    qa_nowait, is SM_ERR_BLOCKED; A commits; B is SM_ERR_UPDATED.
+  // 3. B reads the newest image and writes: free again, owned by Cy.
+  //    The entries removed are the newest image's: none in the
+  //    partial index, where it was not, and 'bea' in the other.
+  // 4. Both indexes agree with the heap.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *ta = f.write(f.a);
+  uint64_t r1 = put(ta, 1, "free", "Ann");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_free = late_eval(f, "jobs_free", "free", by_owner_key, {1});
+  uint64_t jobs_lower = late_eval(f, "jobs_lower", "lower", by_lower_key, {2});
+  build(f, jobs_free);
+  build(f, jobs_lower);
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+
+  start(f.a);
+  start(f.b);
+  ta = f.write(f.a);
+  sm3::table_t *tb = f.write(f.b);
+  CHECK(get(ta, r1) == "1|free|Ann");
+  CHECK(get(tb, r1) == "1|free|Ann");
+  REQUIRE(set(ta, r1, 1, "taken", "BEA") == 0);
+  CHECK(set(tb, r1, 1, "free", "Cy") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  CHECK(set(tb, r1, 1, "free", "Cy") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
+  CHECK(latest(tb, r1) == "1|taken|BEA");
+  REQUIRE_MESSAGE(set(tb, r1, 1, "free", "Cy") == 0, sm1::errmsg());
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  start(f.a);
+  ta = f.write(f.a);
+  CHECK(under(ta, jobs_free, "Cy") == std::vector<uint64_t>{r1});
+  CHECK(under(ta, jobs_free, "Ann").empty());
+  CHECK(under(ta, jobs_lower, "cy") == std::vector<uint64_t>{r1});
+  CHECK(under(ta, jobs_lower, "bea").empty());
+  CHECK(under(ta, jobs_lower, "ann").empty());
+  check_agree(ta);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("an evaluated index is built in the background, and inline") {
+  // Verify the build calls the evaluator, from a worker and inline.
+  // 1. 120 rows are committed, a third of them free. A partial and
+  //    an expression index are created, and the builder fills them:
+  //    after the wait each agrees with the heap.
+  // 2. In one transaction: a table, three rows, then an expression
+  //    index on it. It is valid at once and agrees with the heap.
+  jobs_t f;
+  f.builder(2, 25);
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 120; i++) {
+    put(t, i, i % 3 == 0 ? "free" : "taken", "Owner" + std::to_string(i));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_free = late_eval(f, "jobs_free", "free", by_owner_key, {1});
+  uint64_t jobs_lower = late_eval(f, "jobs_lower", "lower", by_lower_key, {2});
+  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_free) == 0,
+                  sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_lower) == 0,
+                  sm1::errmsg());
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(scanned(t, jobs_free) == 40);
+  CHECK(scanned(t, jobs_lower) == 120);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  std::vector<sm3::column_spec_t> cols = {
+      {"id", sm2::type_int4.code, -1, true},
+      {"state", sm2::type_text.code, -1, false},
+      {"owner", sm2::type_text.code, -1, false}};
+  uint64_t tasks = 0, tasks_lower = 0;
+  start(f.a);
+  REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
+          0);
+  REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) == 0);
+  put(t, 1, "free", "Dee");
+  put(t, 2, "free", "Eve");
+  put(t, 3, "free", std::nullopt);
+  sm3::tbl_close(t);
+  REQUIRE_MESSAGE(sm3::cat_create_index(f.a, tasks, "tasks_lower", by_lower_key,
+                                        {}, true, "lower", {{2}},
+                                        tasks_lower) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) == 0);
+  CHECK(sm3::tbl_def(t).indexes[0].state == sm3::index_state_t::valid);
+  CHECK(under(t, tasks_lower, "dee") == std::vector<uint64_t>{1});
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("an evaluator that fails fails the write, and the build") {
+  // Verify the evaluator's errors are the call's.
+  // 1. A row is committed; an index whose blob makes the evaluator
+  //    fail is created, and the builder is running.
+  // 2. Its build fails: the wait returns the evaluator's own error
+  //    and message, and the index is failed, so writes leave it
+  //    alone from then on.
+  // 3. With such an index still building, a write fails with the
+  //    evaluator's error.
+  // 4. A catalog loaded with no evaluator refuses a write to a table
+  //    that has an evaluated index, with SM_ERR_INVALID.
+  jobs_t f;
+  f.builder();
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "a");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t bad = late_eval(f, "jobs_bad", "fail", by_owner_key, {1});
+  CHECK(sm3::cat_index_wait(f.a, f.jobs, bad) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(std::string(sm1::errmsg()) == "the evaluator failed");
+  CHECK(state_of(f, bad) == sm3::index_state_t::failed);
+  start(f.a);
+  t = f.write(f.a);
+  put(t, 2, "free", "b");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  jobs_t g;
+  uint64_t bad2 = late_eval(g, "jobs_bad", "fail", by_owner_key, {1});
+  (void)bad2;
   row_t r(1, "free", "a");
-  uint64_t rowno, next;
-  bool done;
+  uint64_t rowno;
+  start(g.a);
+  t = g.write(g.a);
   CHECK(sm3::tbl_insert(t, r.d(), r.null(), rowno) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::tbl_index_backfill(t, partial, 0, 10, next, done) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(std::string(sm1::errmsg()) == "the evaluator failed");
   sm3::tbl_close(t);
-  REQUIRE(sm3::abort(f.a) == 0);
+  REQUIRE(sm3::abort(g.a) == 0);
+
+  jobs_t h;
+  late_eval(h, "jobs_free", "free", by_owner_key, {1});
+  h.reload(false);
+  start(h.a);
+  t = h.write(h.a);
+  CHECK(sm3::tbl_insert(t, r.d(), r.null(), rowno) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(std::string(sm1::errmsg()).find("no evaluator") != std::string::npos);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(h.a) == 0);
+}
+
+TEST_CASE("an evaluated build and a writer settle on the row's lock") {
+  // Verify both orders of the race for a partial index, jobs_free,
+  // on owner, of free rows, one thread playing both sessions.
+  // 1. The writer first. A makes row 1 taken and holds it; the
+  //    build, set qa_nowait, is SM_ERR_BLOCKED and aborts its batch;
+  //    A commits. The build runs again and shows the evaluator the
+  //    row's newest image, which is not free: no entry for row 1.
+  // 2. The build first. It covers row 3, which is free, and holds
+  //    its lock; A, set qa_nowait, makes row 3 taken:
+  //    SM_ERR_BLOCKED. The build commits, and A's update goes
+  //    through, removing the entry the build added after A began.
+  // 3. Marked valid, the index holds row 2 alone, and agrees with
+  //    the heap.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *ta = f.write(f.a);
+  uint64_t r1 = put(ta, 1, "free", "a");
+  uint64_t r2 = put(ta, 2, "free", "b");
+  uint64_t r3 = put(ta, 3, "free", "c");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_free = late_eval(f, "jobs_free", "free", by_owner_key, {1});
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+  uint64_t next = 0, unused = 0;
+  bool done = false;
+
+  start(f.a);
+  ta = f.write(f.a);
+  REQUIRE(set(ta, r1, 1, "taken", "a") == 0);
+  start(f.b);
+  sm3::table_t *tb = f.write(f.b);
+  CHECK(sm3::tbl_index_backfill(tb, jobs_free, 0, 2, next, done) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::abort(f.b) == 0);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.b);
+  tb = f.write(f.b);
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(tb, jobs_free, 0, 2, next, done) == 0,
+                  sm1::errmsg());
+  CHECK(next == r2 + 1);
+  CHECK(under(tb, jobs_free, "a").empty());
+  CHECK(under(tb, jobs_free, "b") == std::vector<uint64_t>{r2});
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.a), true) == 0);
+  start(f.a);
+  ta = f.write(f.a);
+  CHECK(get(ta, r3) == "3|free|c");
+  start(f.b);
+  tb = f.write(f.b);
+  REQUIRE(sm3::tbl_index_backfill(tb, jobs_free, next, 10, unused, done) == 0);
+  CHECK(done);
+  CHECK(under(tb, jobs_free, "c") == std::vector<uint64_t>{r3});
+  CHECK(set(ta, r3, 3, "taken", "c") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE_MESSAGE(set(ta, r3, 3, "taken", "c") == 0, sm1::errmsg());
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  validate(f, f.b, jobs_free);
+
+  start(f.b);
+  tb = f.write(f.b);
+  CHECK(under(tb, jobs_free, "a").empty());
+  CHECK(under(tb, jobs_free, "b") == std::vector<uint64_t>{r2});
+  CHECK(under(tb, jobs_free, "c").empty());
+  check_agree(tb);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+}
+
+TEST_CASE("writers go on while evaluated indexes are built, and they agree") {
+  // Verify the evaluated build under real concurrency: the test's
+  // thread writes while workers backfill a partial and an expression
+  // index, calling the evaluator from both sides.
+  // 1. The builder is started with small batches. 300 rows are
+  //    committed, half of them free, and both indexes are created.
+  // 2. While they build, the test flips rows between free and
+  //    taken with a new owner, deletes rows and inserts rows, one
+  //    transaction each, retrying on a retryable error.
+  // 3. After the waits both are valid and agree with the heap.
+  jobs_t f;
+  f.builder(2, 5);
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 300; i++) {
+    put(t, i, i % 2 ? "free" : "taken", "Own" + std::to_string(i));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_free = late_eval(f, "jobs_free", "free", by_owner_key, {1});
+  uint64_t jobs_lower = late_eval(f, "jobs_lower", "lower", by_lower_key, {2});
+
+  for (int i = 0; i < 150; i++) {
+    for (;;) {
+      start(f.a);
+      t = f.write(f.a);
+      uint64_t r = 1 + (static_cast<uint64_t>(i) * 37) % 300;
+      int rc = 0;
+      if (i % 3 == 0) {
+        rc = set(t, r, static_cast<int32_t>(r), i % 2 ? "free" : "taken",
+                 "New" + std::to_string(i));
+      } else if (i % 3 == 1) {
+        rc = sm3::tbl_delete(t, r);
+      } else {
+        row_t n(1000 + i, i % 2 ? "free" : "taken", "Ins" + std::to_string(i));
+        uint64_t rowno;
+        rc = sm3::tbl_insert(t, n.d(), n.null(), rowno);
+      }
+      bool retry = rc != 0 && sm1::retryable() == 1;
+      // A row deleted by an earlier round is not there to change.
+      bool gone = rc != 0 && sm1::errnum() == sm1::SM_ERR_NOTFOUND;
+      sm3::tbl_close(t);
+      if (rc == 0) {
+        REQUIRE(sm3::commit(f.a) == 0);
+        break;
+      }
+      sm3::abort(f.a);
+      REQUIRE((retry || gone));
+      if (gone) {
+        break;
+      }
+    }
+  }
+  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_free) == 0,
+                  sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_lower) == 0,
+                  sm1::errmsg());
+  start(f.a);
+  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  CHECK(sm3::tbl_index_usable(t, jobs_free));
+  CHECK(sm3::tbl_index_usable(t, jobs_lower));
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
 }
