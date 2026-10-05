@@ -211,7 +211,7 @@ at every isolation level. 1.8 works it through.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:406`-408). The evaluator
+  caller to discard" (`SM3_DESIGN.md:434`-436). The evaluator
   is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.
@@ -700,8 +700,8 @@ transcript is long and nobody reads all of it.
 
 ## 4. Then the code, in this order
 
-`SM3_DESIGN.md` §3 still opens "*To be written.*" though its
-bullets are detailed. This repo argues a protocol before
+`SM3_DESIGN.md` §3 opened "*To be written.*" though its
+bullets were detailed. This repo argues a protocol before
 writing it, so the prose and the decisions come before code.
 
 1. **Finish `SM3_DESIGN.md` §3's prose** against 1.5's split,
@@ -710,6 +710,9 @@ writing it, so the prose and the decisions come before code.
    → verify: the section no longer says "to be written", and
    says plainly that the qual check is the executor's and the
    index fix-up sm3's.
+   **Done.** §3 also says the executor writes through one
+   table-level call (1.7, 1.9), and closes its "Open" on who
+   drives maintenance in favour of sm3.
 2. **Settle the NULL/cut contradiction** (§2.1) and record the
    over-long-key decision in `SM3_DESIGN.md` §7.
    → verify: §3 says one thing about NULL keys, not two.

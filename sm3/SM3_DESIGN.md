@@ -206,9 +206,9 @@ does, changes its type and so rewrites the table.
 
 ## 3. Indexes
 
-*To be written.* What sm3 needs from sm1 to build indexes is
-in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
-`sm1::stmt_begin` (§6.2), nested savepoints (§6.5),
+How indexes are defined, maintained and built. What sm3 needs
+from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
+§5.1), `sm1::stmt_begin` (§6.2), nested savepoints (§6.5),
 `sm1::scan_seek` (§10.2) and the old row a write returns
 (§5.3). What sm1 relies on is already there too:
 
@@ -285,19 +285,39 @@ in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
   session, and the index calls that use it are calls on the
   session: sm3 copies it first, or a later index's old key is
   read from memory an earlier call reused.
+- **One call writes a row and its indexes.** The executor
+  writes a table through a table-level call that sm3 owns. It
+  changes the heap row and then every index the table's
+  definition lists. That call is the only way to write a row
+  through the C API. The heap-level writes and the index
+  entry writes in `include/sm.h` are scaffolding from before
+  sm3 opened tables, and they leave it, so no caller can
+  change a row and leave its entries behind. Reads and scans
+  of the heap and of an index stay. The call's name and its
+  handle are settled when maintenance is written (`PLAN.md`
+  step 3).
 - **Read committed writes.** An update or delete that meets a
   row committed after the transaction began fails with
   `SM_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort
-  and it is not retryable, so sm3 must not treat it as an error
-  to surface. sm2 does not resolve it, because the resolution
-  needs a filter (`sm2/SM2_DESIGN.md` §5): sm3 calls
-  `rel_read_latest` on the base row, re-checks the statement's
-  filter against that image, and repeats the write only if the
-  row still qualifies, or skips it. The old image the retried
-  write hands back is the newest version's, so the index
-  entries removed are the ones that are actually there. An
-  insert has no filter and needs none of this. sm1 refuses a
-  write repeated without the read, so an executor cannot
+  and it is not retryable. Resolving it needs the statement's
+  filter, which neither sm2 (`sm2/SM2_DESIGN.md` §5) nor sm3
+  has, so the work divides in two:
+  - **The qual check is the executor's.** When the heap write
+    is refused, sm3 has touched no index, and it returns the
+    status to the caller as an outcome, not as a failure. The
+    executor reads the newest committed image of the row,
+    re-checks its filter against it, and repeats the write
+    only if the row still qualifies, or skips it. A filter may
+    span tables, so no image of this row alone could decide
+    it.
+  - **The index fix-up is sm3's.** The old image the repeated
+    write hands back is the newest version's, not the one the
+    statement's scan read. sm3 takes the index entries to
+    remove from it, so the entries removed are the ones that
+    are actually there. It needs no predicate for this.
+
+  An insert has no filter and needs none of this. sm1 refuses
+  a write repeated without the read, so an executor cannot
   forget it.
 - **Online build on a populated relation**, the protocol
   `sm1::lock` exists for. The danger: a writer whose snapshot
@@ -347,17 +367,25 @@ in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md` §5.1),
   — `SELECT … FOR UPDATE` through an index had to write a dummy
   version to lock the base row. The alternative waits until
   blocking builds hurt.
-- Partial, expression and INCLUDE indexes mean maintenance takes
-  a predicate and an expression evaluator, not a column list.
-- **Open: whether sm3 or PostgreSQL's executor drives
-  maintenance.** The kept executor already writes index entries
-  through its index access method, evaluates expression and
-  partial index keys, and re-checks rows under READ COMMITTED
-  with `EvalPlanQual`, so much of this section may be the
-  executor's, reaching sm2's index `rel` through the C wrapper
-  (`DESIGN.md` §5). What cannot move up is named above: the
-  unique checks on NULL and cut keys, the online build, and the
-  index and the heap never disagreeing.
+- **Partial and expression indexes wait for an evaluator.**
+  Maintaining one means evaluating the index's own predicate
+  or expression against a row image. That is sm3's to do, and
+  it needs no help from the executor per write. The evaluator
+  arrives with §5, and `CREATE INDEX` refuses both kinds until
+  then: `cat_create_index` takes key columns and INCLUDE
+  columns only, so the catalog cannot record a predicate or
+  an expression. INCLUDE columns need no evaluator and are
+  maintained with the key.
+- **sm3 drives maintenance; the executor owns the qual.** The
+  kept executor could write index entries itself through its
+  index access method, as PostgreSQL does, reaching sm2's
+  index `rel` through the C wrapper (`DESIGN.md` §5). It does
+  not. The unique checks on NULL and cut keys, the online
+  build, and the index and the heap never disagreeing are
+  sm3's whoever writes the entries, and the last holds only
+  if one layer writes both the row and its entries. What
+  stays above is `EvalPlanQual`: re-checking a row under READ
+  COMMITTED needs the statement's filter.
 
 ---
 
