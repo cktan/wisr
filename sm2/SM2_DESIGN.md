@@ -1277,7 +1277,7 @@ mechanics, and a declarative scenario suite for anything where
 two sessions interleave. Most of sm2 is the first kind — a
 codec is tested by property, not by interleaving — and the
 concurrency questions that need the second kind mostly arrive
-with sm3 (`sm3/PLAN.md`).
+with sm3 (`sm3/SM3_DESIGN.md` §8).
 
 Whether sm2 gets its own driver or extends sm1's is a decision
 for the first scenario that needs it, not before.
@@ -1340,7 +1340,7 @@ only for a fixture run:
 
 - No catalog, no secondary index, no predicate scan, no
   statistics, and no choice of which prefix means what.
-  All of it is `sm3/PLAN.md`.
+  All of it is `sm3/SM3_DESIGN.md` §8.
 - No SQL, no planner, no executor.
 - No PostgreSQL dependency. `PART4.md` explains what the PG
   target forces on the decisions above; none of it requires a

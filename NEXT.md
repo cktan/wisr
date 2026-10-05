@@ -1,56 +1,29 @@
 # NEXT — what to build next, and in what order
 
-What was here about index maintenance, the READ COMMITTED
-re-check and the index build is built, and has moved into the
-design documents: `sm3/SM3_DESIGN.md` §3, with its worked
-examples in §3.1 and its tests in §3.2; `sm1/SM1_DESIGN.md`
-§5.1 and §5.4; `sm2/SM2_DESIGN.md` §3.2 and §5; `DESIGN.md` §3
-to §5; and `rel/REL_DESIGN.md`. This file holds only what is
-still to do, across levels. `sm3/PLAN.md` stays sm3's own
-order of work.
-
----
-
-## 0. Where the stack stands
-
-| Level | State |
-| --- | --- |
-| sm1 | built and tested |
-| sm2 | built but for TOAST (`sm2/SM2_DESIGN.md` §8.2) |
-| sm3 | catalog, schema locks, object mapping, indexes of every kind with their maintenance and their concurrent build, and scans built; constraints and `SM3_DESIGN.md` §6, statistics, are design |
-| top | `include/sm.h` over all three, with the `sm_cat_*` and `sm_tbl_*` calls; `rel` reads and writes its tables through them |
-
-`DESIGN.md` §3 has the same table at more length.
+This file holds only what is still to do, across levels. What
+is built or settled is in the design documents: `DESIGN.md`
+§3 has where each level stands, and `sm3/SM3_DESIGN.md` §8
+has sm3's own order of work.
 
 ---
 
 ## 1. Next
 
-Constraints are settled. `NOT NULL` is sm3's and built. The
-`varchar(n)` limit and foreign keys are the host's, and the
-row lock a host checks a foreign key under is handed out:
-`tbl_lock` and `sm_tbl_lock` (`DESIGN.md` §5). It waits as a
-write does; the wait policy is not on it (§3 below).
+The rest of `sm3/SM3_DESIGN.md` §8.1 step 5, in this order.
 
-What is next is the rest of `sm3/PLAN.md` step 5, in §2.
-
----
-
-## 2. After it
-
-The rest of `sm3/PLAN.md` step 5: statistics for a planner,
-and a bulk-load path that batches within sm1's memory bound.
-
-Statistics has a strategy, `STATISTICS.md`, and no design yet:
-`SM3_DESIGN.md` §6 is still to be written. The stack
-analyzes: `sm_analyze` samples a table and records statistics
-of an LSM in sm3's catalog, and the host fits them to the
-planner. The strategy's first step is to measure how good
-RocksDB's size estimates are, which nothing has done.
+1. **Statistics for a planner.** It has a strategy,
+   `STATISTICS.md`, and no design yet: `SM3_DESIGN.md` §6 is
+   still to be written. The stack analyzes: `sm_analyze`
+   samples a table and records statistics of an LSM in sm3's
+   catalog, and the host fits them to the planner. The
+   strategy's first step is to measure how good RocksDB's size
+   estimates are, which nothing has done.
+2. **Bulk load**: a path that batches within sm1's memory
+   bound.
 
 ---
 
-## 3. Loose ends
+## 2. Loose ends
 
 Owed, and blocking nothing above:
 
@@ -91,7 +64,7 @@ Owed, and blocking nothing above:
 
 ---
 
-## 4. Not blocking
+## 3. Not blocking
 
 - **sm2's TOAST** (`sm2/SM2_DESIGN.md` §8.2, step 3). The
   `0xFFFF` prefix is reserved per table and unused. Wholly
@@ -106,10 +79,10 @@ Owed, and blocking nothing above:
 
 ---
 
-## 5. What this file is not
+## 4. What this file is not
 
-Not a replacement for `sm3/PLAN.md`, which holds sm3's order
-of work and the reasoning behind it, nor for the design
-documents, where a protocol is argued before it is built and
-recorded once it is. A decision settled here moves into one of
-those and leaves this file.
+Not a replacement for `sm3/SM3_DESIGN.md` §8, which holds
+sm3's order of work and the reasoning behind it, nor for the
+design documents, where a protocol is argued before it is
+built and recorded once it is. A decision settled here moves
+into one of those and leaves this file.

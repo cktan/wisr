@@ -364,7 +364,7 @@ should become a dependency.
 ## 7. Recommended sequencing
 
 1. **Build sm2, then sm3, standalone**, to
-   `sm2/SM2_DESIGN.md` §8 and `sm3/PLAN.md`.
+   `sm2/SM2_DESIGN.md` §8 and `sm3/SM3_DESIGN.md` §8.
 2. **Backward scans are settled** (§5): the ban stands, and
    the planner is changed not to ask for one.
 3. **Spike the fork early, and throw it away.** A prototype

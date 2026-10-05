@@ -86,8 +86,8 @@ ordered key as the only access path below sm2.
 
 - [x] PRIMARY KEY / UNIQUE / NOT NULL
 - [x] FOREIGN KEY, with CASCADE / RESTRICT / SET NULL
-      — sm3/PLAN.md already names this as future work, via
-        sm1::lock(SHARED) on the parent row
+      — the host checks it (DESIGN.md §5), under the row
+        lock sm_tbl_lock takes on the parent row
 - [x] CHECK
       — needs an expression evaluator
 - [ ] EXCLUSION

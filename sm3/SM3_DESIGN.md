@@ -31,7 +31,7 @@ This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is
 permanent on disk — the catalog's own layout is the exception
 — so the scrutiny goes to the concurrency instead.
-`PLAN.md` has the order of work. The PostgreSQL target
+§8 has the order of work. The PostgreSQL target
 (`PART4.md`) shapes these decisions but is never a build
 dependency: sm3 must build and be tested without a PostgreSQL
 source tree.
@@ -888,3 +888,93 @@ Accepted so far, from the PostgreSQL target (`PART4.md`):
   lag it already counts as a liability.
 - **Not unblocked by sm3:** replication, PITR and logical
   decoding over PostgreSQL's WAL (§2).
+
+---
+
+## 8. Build order and testing
+
+The order of work, and why it is this order; it was `PLAN.md`
+until this section took it in. It starts where sm2's build
+order (`sm2/SM2_DESIGN.md` §8) stops: sm2's types, encodings
+and tuple relation exist before anything here does.
+
+The principle: **the formats were sm2's problem; the
+concurrency is this one's.** Almost nothing sm3 writes is
+permanent on disk — the catalog's own layout is the exception
+— so what gets the scrutiny is the protocols, and the tests
+that matter most are the ones with two sessions in them.
+
+### 8.1 The steps
+
+| Step | What | State | Where |
+| --- | --- | --- | --- |
+| 1 | Catalog | built | §2, `CATALOG.md` |
+| 2 | Object mapping | built | §4 |
+| 3 | Indexes | built | §3 |
+| 4 | Scans | settled, nothing to build | §5 |
+| 5 | Statistics, constraints, bulk load | constraints settled; the rest not started | §6, `NEXT.md` |
+
+1. **Catalog** comes first because everything else needs a
+   definition to work from. Tables, indexes, columns, types,
+   collations, and each column's dropped mark and missing
+   value, in memory, written through to sm2 and loaded at
+   startup, under the schema-row locks of §2. A DDL change
+   stays private until it commits in a session's overlay
+   (`CATALOG.md` §4).
+   Verified: DDL rolls back with its transaction, the
+   in-memory copy included; a transaction holding the shared
+   schema lock never sees a definition change under it; two
+   sessions doing concurrent DDL behave as sm1's isolation
+   says they must.
+2. **Object mapping** is inside the catalog's DDL
+   (`src/catalog/ddl.cc`).
+   Verified: a table's rows and indexes share its store
+   without meeting; `DROP TABLE` removes the store, indexes
+   and all; a dropped index's prefix is never handed out
+   again, so its lingering versions are never read as another
+   index's.
+3. **Indexes**: maintenance through the table-level writes,
+   the READ COMMITTED fix-up, the concurrent build, and
+   partial and expression indexes by the host's callback.
+   Verified: the index and the base relation agree with a
+   brute-force scan, under concurrency, at every isolation
+   level; the build does not miss a row written while it runs
+   (§3.2).
+4. **Scans** were to take a predicate, derive a key range and
+   evaluate the residual below the API. Deriving the range is
+   the kept planner's, and the residual is the executor's,
+   since sm3 has no evaluator and gets none. A scan takes key
+   bounds and filters nothing.
+5. **Constraints** are settled: `NOT NULL` is built (§3), and
+   the `varchar(n)` limit and foreign keys are the host's,
+   with `tbl_lock` as the stack's share of a foreign key
+   (`DESIGN.md` §5). **Statistics** has a strategy and no
+   design (§6). **Bulk load**, a path that batches within
+   sm1's RAM bound, is not started. `NEXT.md` has what is
+   left and in what order.
+
+### 8.2 Testing
+
+sm1's two-layer arrangement is kept: C++ tests for contract
+and single-session mechanics, and something declarative for
+anything where two sessions interleave. sm3's concurrency
+questions — an index build against a concurrent writer, DDL
+against DML — are the second kind.
+
+sm3 did not get a scenario driver of its own, nor extend
+sm1's, which links sm1 alone. sm1's QA-only `set_qa_nowait`
+lets one thread play several sessions: a step that would wait
+fails with `SM_ERR_BLOCKED` and is repeated later. sm3's
+two-session cases are written that way in `test/test_table.cc`
+and as `rel` scripts; what needs real threads, deadlocks and
+the background build, has them (§3.2, `DESIGN.md` §4).
+
+### 8.3 What is deliberately not here
+
+- No types, no key encoding, no tuple format. All of it is
+  sm2's (`sm2/SM2_DESIGN.md` §8), and sm3 calls it rather than
+  repeating it.
+- No SQL, no planner, no executor.
+- No PostgreSQL dependency. `PART4.md` explains what the PG
+  target forces on the decisions above; none of it requires a
+  PostgreSQL source tree to build or test sm3.
