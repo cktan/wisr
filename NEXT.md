@@ -354,6 +354,36 @@ from the image returned in step 6a, not from the `'free'`
 image the scan read in step 1. An index on `owner` would be left
 alone in step 8, since its old and new keys are both `'w1'`.
 
+**What "marks the lock" means in step 4.** The mark is a
+one-bit flag recording that this transaction has looked at
+the newest version of the row, and sm1 refuses a repeated
+write without it (`sm1/SM1_DESIGN.md` §5.4). T2 holds the
+exclusive lock on row 7 from the refused write in step 3a
+onward. The bit sits on T2's entry for that lock in its own
+session's lock list, not on the shared lock table.
+
+| Event | Effect on the mark |
+| --- | --- |
+| first write refused with `SM_ERR_UPDATED` | lock taken, mark not set |
+| `read_latest` on that row | mark set |
+| write repeated with the mark set | write goes through; mark cleared |
+| write repeated without the mark | refused again with `SM_ERR_UPDATED` |
+| rollback to a savepoint taken before the lock | lock released, mark gone with it |
+
+The mark makes the re-read mandatory. Without it an executor
+could take `SM_ERR_UPDATED`, call the write again, and
+overwrite T1's change with no re-check: 1.1's double claim.
+
+- **The image read cannot go stale.** T2 holds the row lock
+  throughout, so nobody changes row 7 between its
+  `read_latest` and its repeated write.
+- **The mark is single-use.** A successful write clears it, so
+  a later write to the row in the same transaction needs a
+  fresh read.
+- **sm1 forces the read, not the re-check.** Whether the qual
+  is evaluated against that image is still up to the
+  executor.
+
 **The skip case: the row no longer qualifies.** Replace T2
 with a second worker running 1.1's claim statement:
 
