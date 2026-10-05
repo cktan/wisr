@@ -323,6 +323,16 @@ static Janet cfun_snapshot(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (qa-nowait on) */
+static Janet cfun_qa_nowait(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  if (sm_set_qa_nowait(s->session, janet_getboolean(argv, 0)) != 0) {
+    panic_sm_error("qa-nowait");
+  }
+  return janet_wrap_nil();
+}
+
 /* (savepoint) */
 static Janet cfun_savepoint(int32_t argc, Janet *argv) {
   (void)argc;
@@ -1601,6 +1611,8 @@ static const JanetReg s_rel_cfuns[] = {
     {"abort", cfun_abort, "(abort) -- abort transaction"},
     {"snapshot", cfun_snapshot, "(snapshot) -- pin/advance statement snapshot"},
     {"stmt-begin", cfun_snapshot, "(stmt-begin) -- alias for (snapshot)"},
+    {"qa-nowait", cfun_qa_nowait,
+     "(qa-nowait on) -- fail with ERR_BLOCKED where a lock would wait"},
     {"savepoint", cfun_savepoint,
      "(savepoint) -- create savepoint, returns depth"},
     {"rollback", cfun_rollback, "(rollback depth) -- rollback to savepoint"},

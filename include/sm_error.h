@@ -59,8 +59,14 @@ typedef enum sm_errnum_t {
      */
     SM_ERR_EXCEPTION     = 21,
 
+    /*
+     * sm1's, and not an abort either: a lock another transaction
+     * holds, met by a session set qa_nowait (SM1_DESIGN.md §5.1).
+     */
+    SM_ERR_BLOCKED       = 23,  /* would wait for a lock; repeat the call */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_ROWTOOLONG
+    SM_ERR_LAST          = SM_ERR_BLOCKED
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

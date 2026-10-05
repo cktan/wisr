@@ -77,8 +77,11 @@ typedef enum sm_errnum_t {
     /* the C wrapper's: an exception reached its catch-all */
     SM_ERR_EXCEPTION     = 21,
 
+    /* sm1's: NOT retryable, and not an abort */
+    SM_ERR_BLOCKED       = 23,  /* would wait for a lock; repeat the call */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_ROWTOOLONG
+    SM_ERR_LAST          = SM_ERR_BLOCKED
 } sm_errnum_t;
 
 /* sm1.h */
@@ -725,6 +728,29 @@ has just read; `sm1::read_latest` then gives the newest version.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
+### int sm1::set_qa_nowait(sm1::session_t* session, bool on)
+
+**For QA only.** It lets one thread play several sessions in a
+test. `NOWAIT` and `SKIP LOCKED` are to be explicit flags on
+the calls that can wait, not this.
+
+Sets whether the session waits for locks. Off, the default, a
+write or an `sm1::lock` blocks while another transaction holds
+the lock in a conflicting mode. On, such a call fails at once
+with `SM_ERR_BLOCKED`. That is not an abort and it is not
+retryable: the transaction stays active and holds exactly what
+it held before. The caller polls by repeating the call, which
+fails the same way or goes through, and then runs the checks
+it always ran, so `SM_ERR_UPDATED` and `SM_ERR_CONFLICT` still
+arrive as before. The setting lasts until it is changed, across
+transactions.
+
+A session that polls is never a deadlock victim, and sessions
+polling each other's locks poll for ever: breaking that cycle
+is the caller's.
+
+Errors: `SM_ERR_INVALID`.
+
 ### int sm1::lock(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::lockmode_t mode)
 
 ```cpp
@@ -788,9 +814,9 @@ mode, and are restored after a crash, so nothing conflicting
 may take those rows until a coordinator resolves it.
 
 Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
-`SM_ERR_DEADLOCK` (retryable), `SM_ERR_NOTFOUND` (no such
-store), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
-`SM_ERR_INVALID`.
+`SM_ERR_DEADLOCK` (retryable), `SM_ERR_BLOCKED` (under
+`sm1::set_qa_nowait`), `SM_ERR_NOTFOUND` (no such store),
+`SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
 ### int sm1::savepoint(sm1::session_t* session)
 

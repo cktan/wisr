@@ -577,3 +577,77 @@ TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
   REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
 }
+
+TEST_CASE(
+    "a qa_nowait session is told a write would block, and may repeat it") {
+  // Verify a write that would wait fails with SM_ERR_BLOCKED instead.
+  // 1. A updates "x" and holds its row lock.
+  // 2. B, set qa_nowait, updates "x": SM_ERR_BLOCKED, not retryable,
+  //    and B's transaction is still active, for it writes "y".
+  // 3. B repeats the update and is told the same.
+  // 4. A aborts; B repeats the update once more and it goes through.
+  // 5. B commits, and "x" holds B's value.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open();
+  sm1::session_t *b = f.open();
+  REQUIRE(sm1::set_qa_nowait(b, true) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(set(a, "x", "a") == 0);
+  CHECK(set(b, "x", "b") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  CHECK(std::string(sm1::errname()) == "ERR_BLOCKED");
+  CHECK(sm1::retryable() == 0);
+  REQUIRE(set(b, "y", "b") == 0);
+  CHECK(set(b, "x", "b") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  REQUIRE(sm1::abort(a) == 0);
+  REQUIRE(set(b, "x", "b") == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(a, g_store, "x") == "b");
+  CHECK(get(a, g_store, "y") == "b");
+  REQUIRE(sm1::commit(a) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
+TEST_CASE(
+    "a qa_nowait session is told sm1_lock would block, and holds nothing") {
+  // Verify sm1::lock under qa_nowait, and that a refusal takes no lock.
+  // 1. A locks "x" shared.
+  // 2. B, set qa_nowait, asks for it exclusive: SM_ERR_BLOCKED. Asking
+  //    for it shared is compatible and goes through.
+  // 3. C, set qa_nowait, asks for it exclusive: SM_ERR_BLOCKED.
+  // 4. A and B commit. C's request now goes through at once, so its
+  //    refused one left nothing behind and nobody waits on anybody.
+  // 5. With qa_nowait off again, a compatible request still succeeds.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open();
+  sm1::session_t *b = f.open();
+  sm1::session_t *c = f.open();
+  REQUIRE(sm1::set_qa_nowait(b, true) == 0);
+  REQUIRE(sm1::set_qa_nowait(c, true) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::lock(a, g_store, "x", sm1::lockmode_t::shared) == 0);
+  CHECK(sm1::lock(b, g_store, "x", sm1::lockmode_t::exclusive) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  CHECK(sm1::lock(b, g_store, "x", sm1::lockmode_t::shared) == 0);
+  CHECK(sm1::lock(c, g_store, "x", sm1::lockmode_t::exclusive) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  CHECK(sm1::lock(c, g_store, "x", sm1::lockmode_t::exclusive) == 0);
+  REQUIRE(sm1::commit(c) == 0);
+  REQUIRE(sm1::set_qa_nowait(c, false) == 0);
+  REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(sm1::lock(c, g_store, "x", sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::commit(c) == 0);
+  CHECK(sm1::set_qa_nowait(nullptr, true) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm1::closedb(a);
+  sm1::closedb(b);
+  sm1::closedb(c);
+}

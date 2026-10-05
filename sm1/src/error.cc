@@ -187,6 +187,7 @@ const char *errname() {
       "ERR_KEYTOOLONG",
       "ERR_EXCEPTION",
       "ERR_ROWTOOLONG",
+      "ERR_BLOCKED",
   };
   static_assert(sizeof(names) / sizeof(names[0]) == sm1::SM_ERR_LAST + 1,
                 "every error code needs its name");

@@ -620,6 +620,26 @@ a transaction with no `xid` held nothing, and the read-only
 commit path skipped lock release for that reason. It no
 longer can.
 
+**A session can ask not to wait, for QA only.**
+`sm1::set_qa_nowait` turns a wait into a failure: a write or an `sm1::lock` that would
+block returns `SM_ERR_BLOCKED` at once. Like `SM_ERR_UPDATED`
+it is not an abort and not retryable. The transaction stays
+active and holds exactly what it held, and the caller polls by
+repeating the call, which fails the same way or goes through
+to the checks it always made. Repeating is all a poll needs
+because the table keeps no queue: a waiter that is woken
+re-tries its whole request too. The price is deadlock
+detection. A polling session records no waits-for edges, so it
+is never a victim, and sessions polling each other's locks
+poll for ever; that cycle is the caller's to break. It exists
+so one thread can play several sessions, and a script can say
+"this step blocks" with no thread and no sleep
+(`rel/REL.md`). It is not the interface for PostgreSQL's
+`NOWAIT` and `SKIP LOCKED`: PostgreSQL passes a wait policy
+with each call, and sm1 is to take one the same way, as a flag
+on the calls that can wait. `SM_ERR_BLOCKED` is the code those
+flags will return too.
+
 Deadlocks are found as PostgreSQL's `deadlock_timeout`
 finds them. A blocked transaction sleeps `deadlock_ms`
 (default 50ms), then searches the waits-for graph from

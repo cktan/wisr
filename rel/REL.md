@@ -155,6 +155,21 @@ supported as an alias.
 (snapshot)
 ```
 
+### `(qa-nowait on)`
+Sets whether the active session waits for locks. With `true`,
+an operation that would wait for another session's lock fails
+with `ERR_BLOCKED` instead. The transaction stays active, and
+the script polls by repeating the operation once the other
+session has let go. `rel` runs one session at a time, so this
+is how a script says "this step blocks". The setting lasts
+until it is changed, across transactions; `false` is the
+default, and a blocked step then hangs the script.
+
+```janet
+(qa-nowait true)
+(assert-err :err-blocked (update accounts 1 [1 400]))
+```
+
 ### `(savepoint)`
 Creates a transaction savepoint and returns its integer depth.
 

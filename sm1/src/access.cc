@@ -291,8 +291,12 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
     return -1;
   }
   // Take the lock, blocking while a conflicting holder has it.
-  if (lock_acquire(s, storeid, rocksdb::Slice(key ? key : "", klen), mode) !=
-      0) {
+  int held =
+      lock_acquire(s, storeid, rocksdb::Slice(key ? key : "", klen), mode);
+  if (held > 0) {
+    return set_error(sm1::SM_ERR_BLOCKED, "the lock is held by another");
+  }
+  if (held != 0) {
     return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }
@@ -725,7 +729,11 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   }
   // Take the row lock; this blocks while another transaction
   // holds it, and fails if we are chosen as a deadlock victim.
-  if (lock_acquire(s, storeid, key, sm1::lockmode_t::exclusive) != 0) {
+  int held = lock_acquire(s, storeid, key, sm1::lockmode_t::exclusive);
+  if (held > 0) {
+    return set_error(sm1::SM_ERR_BLOCKED, "the row is locked by another");
+  }
+  if (held != 0) {
     return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
                               "chosen as a deadlock victim");
   }

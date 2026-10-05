@@ -45,6 +45,7 @@ struct sm1::session_t {
    * read of each statement, not by the boundary call.
    */
   bool stmt_pinned = false; /* sm1::stmt_begin was called */
+  bool qa_nowait = false;   /* QA only: fail, do not wait (§5.1) */
   bool stmt_taken = false;  /* stmt_snapshot_ts is the one to use */
   uint64_t stmt_snapshot_ts = 0;
 
@@ -187,7 +188,9 @@ int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
  * converts to the weakest mode covering both, waiting for the
  * other holders that conflict with that. Returns 0, or -1
  * without an error set if the transaction was doomed while
- * waiting; the caller then fails it with s->doomed.
+ * waiting; the caller then fails it with s->doomed. A session
+ * set qa_nowait does not wait: it returns 1, holding nothing more
+ * than it did, and the caller reports SM_ERR_BLOCKED.
  */
 int lock_acquire(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
                  sm1::lockmode_t mode);

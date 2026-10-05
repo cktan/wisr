@@ -531,8 +531,8 @@ enum class lockmode_t {
  * it.
  *
  * Errors: SM_ERR_CONFLICT / SM_ERR_DEADLOCK (retryable),
- * SM_ERR_NOTFOUND (store), SM_ERR_NOTRANS, SM_ERR_PREPARED,
- * SM_ERR_INVALID.
+ * SM_ERR_BLOCKED (under sm1::set_qa_nowait), SM_ERR_NOTFOUND
+ * (store), SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID.
  */
 int lock(session_t* session, uint64_t storeid,
          std::string_view key, lockmode_t mode);
@@ -582,6 +582,29 @@ int read_latest(session_t* session, uint64_t storeid,
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID.
  */
 int stmt_begin(session_t* session);
+
+/*
+ * FOR QA ONLY: it lets one thread play several sessions in a
+ * test, and is not how a caller asks for NOWAIT or SKIP LOCKED.
+ * Those are to be explicit flags on the calls that can wait.
+ *
+ * Set whether the session waits for locks. Off, the default, a
+ * write or an sm1::lock() BLOCKS while another transaction holds
+ * the lock in a conflicting mode. On, such a call fails at once
+ * with SM_ERR_BLOCKED instead. That is not an abort and it is
+ * not retryable: the transaction stays active and holds exactly
+ * what it held before, and the caller polls by repeating the
+ * call, which fails the same way or goes through. The setting
+ * lasts until it is changed, across transactions.
+ *
+ * A session that polls waits on nobody as far as the lock table
+ * knows, so it is never a deadlock victim, and sessions polling
+ * each other's locks poll for ever: breaking that cycle is the
+ * caller's (SM1_DESIGN.md §5.1).
+ *
+ * Errors: SM_ERR_INVALID.
+ */
+int set_qa_nowait(session_t* session, bool on);
 
 /*
  * Set a savepoint at the current point in the transaction and

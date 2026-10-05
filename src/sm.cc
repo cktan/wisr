@@ -621,6 +621,12 @@ int sm_stmt_begin(sm_session_t *session) {
   return guard(session, [&] { return sm1::stmt_begin(s); });
 }
 
+/* QA only: make the session's lock requests fail where they would wait. */
+int sm_set_qa_nowait(sm_session_t *session, bool on) {
+  sm1::session_t *s = session_of(session);
+  return guard(session, [&] { return sm1::set_qa_nowait(s, on); });
+}
+
 /* Set a savepoint and return its depth. */
 int sm_savepoint(sm_session_t *session) {
   return guard(session, [&] { return sm3::savepoint(session->sm3); });

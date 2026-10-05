@@ -156,6 +156,16 @@ int sm_abort(sm_session_t* session);
 /* Begin a statement: its writes can be undone on their own. */
 int sm_stmt_begin(sm_session_t* session);
 
+/*
+ * FOR QA ONLY (rel's scripts); not how NOWAIT or SKIP LOCKED is
+ * asked for, which is to be a flag on the calls that can wait.
+ * Set whether the session waits for locks. On, a call that would
+ * wait for another transaction's lock fails with SM_ERR_BLOCKED
+ * instead, leaving the transaction active; the caller polls by
+ * repeating the call. Off is the default.
+ */
+int sm_set_qa_nowait(sm_session_t* session, bool on);
+
 /* Set a savepoint; returns its depth (>= 1), or -1. */
 int sm_savepoint(sm_session_t* session);
 

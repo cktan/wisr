@@ -215,7 +215,7 @@ at every isolation level. 1.8 works it through.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:430`-432). The evaluator
+  caller to discard" (`SM3_DESIGN.md:433`-435). The evaluator
   is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.
@@ -357,6 +357,14 @@ it reaches an index. The point is in step 6c: the old key comes
 from the image returned in step 6a, not from the `'free'`
 image the scan read in step 1. An index on `owner` would be left
 alone in step 6c, since its old and new keys are both `'w1'`.
+
+Step 6c hides one more exchange with sm1. The entry `('taken',
+7)` is an sm1 key that T1 committed after T2 began, so sm1
+refuses to erase it, with `SM_ERR_UPDATED`, until its newest
+version has been read. An entry has no qual to re-check, so
+sm2's `idx_delete` does that read and repeats the erase
+itself (`sm2/SM2_DESIGN.md` §5). `rel/test/test_blocking.rel`
+found this; the documents had missed it.
 
 **What "marks the lock" means in step 4.** The mark is a
 one-bit flag recording that this transaction has looked at
@@ -735,6 +743,16 @@ writing it, so the prose and the decisions come before code.
    passing: two sessions, DDL against DML, over the catalog
    that is already built.
    → verify: `make -C sm3 test` runs it and diffs a transcript.
+   **Done, another way.** No driver was built. sm1 gained
+   `sm1::set_qa_nowait` and `SM_ERR_BLOCKED`
+   (`sm1/SM1_DESIGN.md` §5.1), so `rel`, on one thread, can
+   say a step blocks and repeat it later. The scenario is
+   `rel/test/test_blocking.rel`: 1.1's and 1.2's races, DDL
+   against a writer, and a writer against DDL. It asserts in
+   the script and has no transcript. It also found that the
+   fix-up's delete of an index entry met `SM_ERR_UPDATED` of
+   its own, which sm2's `idx_delete` now resolves
+   (`sm2/SM2_DESIGN.md` §5). Deadlocks stay in C++ tests.
 4. **Index maintenance** — first the entry point the executor
    calls, a table-level write that sm3 owns (1.7), which
    `include/sm.h` lacks, and the heap-level writes it retires

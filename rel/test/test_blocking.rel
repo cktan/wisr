@@ -1,0 +1,133 @@
+# test_blocking.rel -- steps that would wait for another session's lock,
+# scripted with (qa-nowait true): the step fails with ERR_BLOCKED and is
+# repeated once the holder has let go.
+#
+# 1. A row write blocks on a row lock, then meets ERR_UPDATED at READ
+#    COMMITTED, re-reads the latest image and re-checks before writing.
+# 2. The same race where the re-check fails: the second claim writes
+#    nothing.
+# 3. DDL blocks on a writer of the table, and goes ahead after it commits.
+# 4. A writer blocks on uncommitted DDL, and goes ahead after it commits.
+
+(def test-dir "/tmp/wisr_rel_test_blocking")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "blkdb")
+
+(session-open s1 "blkdb")
+(session-open s2 "blkdb")
+
+(session-use s1)
+(begin :rc)
+(table-create jobs
+  (columns
+    (id :int4 :not-null)
+    (state :text :not-null)
+    (owner :text)))
+(index-create jobs_state (table jobs) (key (state :asc)) :unique false)
+(insert jobs [7 "free" nil])
+(insert jobs [8 "free" nil])
+(commit)
+
+(session-use s2)
+(qa-nowait true)
+
+# 1. s1 claims job 7 and holds its row lock.
+(session-use s1)
+(begin :rc)
+(assert-eq (read jobs 1) [7 "free" nil])
+(update jobs 1 [7 "taken" "w1"])
+
+# s2 saw the job free and marks it done: the write would wait.
+(session-use s2)
+(begin :rc)
+(assert-eq (read jobs 1) [7 "free" nil])
+(assert-err :err-blocked (update jobs 1 [7 "done" nil]))
+(assert-eq (sm:retryable) false)
+# Still blocked when asked again, and the transaction is still usable.
+(assert-err :err-blocked (update jobs 1 [7 "done" nil]))
+(assert-eq (read jobs 2) [8 "free" nil])
+
+# s1 commits and lets go.
+(session-use s1)
+(commit)
+
+# s2 repeats the write: no longer blocked, but the row has changed.
+(session-use s2)
+(assert-err :err-updated (update jobs 1 [7 "done" nil]))
+# It reads the latest image; state <> "done" still holds, so it writes.
+(assert-eq (read-latest jobs 1) [7 "taken" "w1"])
+(update jobs 1 [7 "done" "w1"])
+(commit)
+
+# The heap and the index agree: one entry for the row, under "done".
+(begin :rc)
+(assert-eq (read jobs 1) [7 "done" "w1"])
+(assert-count 0 (idx-scan jobs_state :ge ["taken"] :le ["taken"]))
+(assert-count 1 (idx-scan jobs_state :ge ["done"] :le ["done"]))
+(assert-count 1 (idx-scan jobs_state :ge ["free"] :le ["free"]))
+(commit)
+
+# 2. Two workers claim job 8. s1 goes first.
+(session-use s1)
+(begin :rc)
+(update jobs 2 [8 "taken" "w1"])
+
+(session-use s2)
+(begin :rc)
+(assert-eq (read jobs 2) [8 "free" nil])
+(assert-err :err-blocked (update jobs 2 [8 "taken" "w2"]))
+
+(session-use s1)
+(commit)
+
+# s2 is let through to the re-check, which fails: state is not "free".
+(session-use s2)
+(assert-err :err-updated (update jobs 2 [8 "taken" "w2"]))
+(assert-eq (read-latest jobs 2) [8 "taken" "w1"])
+# So s2 writes nothing, and the job is claimed once.
+(commit)
+(begin :rc)
+(assert-eq (read jobs 2) [8 "taken" "w1"])
+(assert-count 1 (idx-scan jobs_state :ge ["taken"] :le ["taken"]))
+(commit)
+
+# 3. s1 writes the table and has not committed.
+(session-use s1)
+(begin :rc)
+(insert jobs [9 "free" nil])
+
+# s2's DDL on the table would wait for the writer.
+(session-use s2)
+(begin :rc)
+(assert-err :err-blocked
+  (index-create jobs_owner (table jobs) (key (owner :asc)) :unique false))
+
+(session-use s1)
+(commit)
+
+# The writer is gone: the DDL goes ahead.
+(session-use s2)
+(index-create jobs_owner (table jobs) (key (owner :asc)) :unique false)
+
+# 4. s2's DDL is not committed; s1, a writer, would wait for it.
+(session-use s1)
+(qa-nowait true)
+(begin :rc)
+(assert-err :err-blocked (insert jobs [10 "free" nil]))
+
+(session-use s2)
+(commit)
+
+# The DDL is committed: the writer goes ahead.
+(session-use s1)
+(insert jobs [10 "free" nil])
+(commit)
+
+(session-close s1)
+(session-close s2)
+(env-detach)
+(rm-rf test-dir)
+(print "test_blocking.rel: PASSED")

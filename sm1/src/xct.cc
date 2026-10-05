@@ -1226,6 +1226,17 @@ int sm1::stmt_begin(sm1::session_t *session) {
   return ::stmt_begin(session);
 }
 
+/* QA only: make the session's lock requests fail where they would wait. */
+int sm1::set_qa_nowait(sm1::session_t *session, bool on) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "NULL session");
+  }
+  session->qa_nowait = on;
+  return 0;
+}
+
 /* Set the session's one savepoint. */
 int sm1::savepoint(sm1::session_t *session) {
   // Inside sm1: running out of memory is fatal.

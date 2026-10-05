@@ -214,7 +214,10 @@ void check_deadlock(db_t *db, sm1::session_t *s) {
 
 namespace wisr {
 
-/* Block until (storeid, key) is ours in mode, checking for deadlock. */
+/*
+ * Block until (storeid, key) is ours in mode, checking for deadlock;
+ * a qa_nowait session gets 1 instead of blocking.
+ */
 int lock_acquire(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
                  sm1::lockmode_t mode) {
   db_t *db = s->db;
@@ -277,6 +280,11 @@ int lock_acquire(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
         s->locks.push_back({std::move(k), want});
       }
       return 0;
+    }
+    // A qa_nowait session is told, and waits on nobody.
+    if (s->qa_nowait) {
+      s->waiting_for.clear();
+      return 1;
     }
     // Blocked, on exactly the holders that conflict: a converter
     // waits on the others, which is how two converters on one key
