@@ -130,6 +130,51 @@
 (insert jobs [10 "free" nil])
 (commit)
 
+# 5. A foreign key, checked as a host would check it: the child's
+# transaction locks the parent row shared, so the parent cannot be
+# deleted under it.
+(session-use s1)
+(qa-nowait false)
+(begin :rc)
+(table-create owners (columns (id :int4 :not-null) (name :text)))
+(table-create pets (columns (id :int4 :not-null) (owner :int4 :not-null)))
+(def o1 (insert owners [1 "Ann"]))
+(commit)
+
+# s1 is to add a pet of owner 1: it finds the owner and locks its row.
+(begin :rc)
+(assert-eq (read owners o1) [1 "Ann"])
+(lock-row owners o1 :shared)
+# A second child of the same parent shares the lock; a delete of the
+# parent would wait.
+(session-use s2)
+(begin :rc)
+(lock-row owners o1 :shared)
+(commit)
+(begin :rc)
+(assert-err :err-blocked (delete owners o1))
+# s1 inserts the pet and commits, and its lock ends.
+(session-use s1)
+(insert pets [100 1])
+(commit)
+# The delete is no longer blocked. A host would now look for the
+# parent's children before deleting it, and find one.
+(session-use s2)
+(assert-count 1 (scan pets))
+(delete owners o1)
+(abort)
+# An exclusive lock, as SELECT ... FOR UPDATE takes, shuts out a
+# shared one.
+(session-use s1)
+(begin :rc)
+(lock-row owners o1 :exclusive)
+(session-use s2)
+(begin :rc)
+(assert-err :err-blocked (lock-row owners o1 :shared))
+(commit)
+(session-use s1)
+(commit)
+
 (session-close s1)
 (session-close s2)
 (env-detach)

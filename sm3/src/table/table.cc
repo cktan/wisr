@@ -486,6 +486,16 @@ int tbl_read_latest(table_t *table, uint64_t rowno, std::string_view &tuple) {
   return sm2::rel_read_latest(table->rel, rowno, tuple);
 }
 
+/* Lock the row at rowno without writing it; see sm3.h. */
+int tbl_lock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
+  // Only a shared lock sits under a table opened to read.
+  if (mode != sm1::lockmode_t::shared && need_writable(table) != 0) {
+    return -1;
+  }
+  // Held to the end of the transaction, as a write's lock is.
+  return sm2::rel_lock(table->rel, rowno, mode);
+}
+
 /* Open a cursor over the rows first..last. */
 int tbl_scan(table_t *table, uint64_t first, uint64_t last,
              sm2::rel_scan_t *&out) {

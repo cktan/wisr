@@ -452,6 +452,19 @@ Read Committed isolation.
 (def u (read-latest users r1))
 ```
 
+### `(lock-row table rowno mode)`
+Locks the row at `rowno` without writing it, to the end of the
+transaction. `mode` is `:shared`, which other shared lockers
+join and a writer of the row waits for, or `:exclusive`, which
+everyone waits for. It is what a host takes on the parent row
+to check a foreign key, and what `SELECT ... FOR SHARE` and
+`FOR UPDATE` take. Under `(qa-nowait true)` a lock that would
+wait fails with `ERR_BLOCKED`.
+
+```janet
+(lock-row owners r1 :shared)
+```
+
 ### `(update table rowno [val1 val2 ...])`
 Updates the row at `rowno` and synchronizes secondary indexes.
 Returns the previous tuple values `[old1 old2 ...]`.

@@ -512,9 +512,12 @@ design:
   Those are queries, and the stack runs none. Its share is the
   lock: a row locked without being written, in a mode a
   reader of the key can share and a writer cannot, held to
-  the end of the transaction. sm1 has it, `sm1::lock`, and
-  sm2 has it on a heap row, `rel_lock`. sm3 and the C API do
-  not hand it out yet. The lock is coarser than PostgreSQL's:
+  the end of the transaction. sm1 has it, `sm1::lock`; sm2
+  has it on a heap row, `rel_lock`; sm3 hands it out on an
+  open table, `tbl_lock`, and the C API as `sm_tbl_lock`. It
+  is what `SELECT … FOR SHARE` and `FOR UPDATE` take too. It
+  waits as a write does; `NOWAIT` and `SKIP LOCKED` are not
+  on it yet. The lock is coarser than PostgreSQL's:
   sm1 has no mode that admits an update of the parent's other
   columns while a child holds its key, as `FOR KEY SHARE`
   does against `FOR NO KEY UPDATE`, so such an update waits

@@ -1171,6 +1171,29 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
 
+/* (lock-row table rowno :shared|:exclusive) */
+static Janet cfun_lock_row(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 3);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
+  std::string how = identifier_of(argv[2]);
+  if (how != "shared" && how != "exclusive") {
+    janet_panic("lock-row: the mode is :shared or :exclusive");
+  }
+  bool exclusive = how == "exclusive";
+
+  // The table lock under the row's: IS for shared, IX for exclusive.
+  table_def_t *p_tdef = need_table(
+      s, tbl_name, exclusive ? SM_LOCK_INTENT_EXCLUSIVE : SM_LOCK_INTENT_SHARED,
+      "lock-row");
+  if (sm_tbl_lock(p_tdef->tbl, rowno,
+                  exclusive ? SM_LOCK_EXCLUSIVE : SM_LOCK_SHARED) != 0) {
+    panic_sm_error("lock-row sm_tbl_lock");
+  }
+  return janet_wrap_nil();
+}
+
 /* (update table rowno [new_val1 new_val2 ...]) */
 static Janet cfun_update(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 3);
@@ -1612,6 +1635,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_insert", cfun_insert, "internal"},
     {"_read", cfun_read, "internal"},
     {"_read-latest", cfun_read_latest, "internal"},
+    {"_lock-row", cfun_lock_row, "internal"},
     {"_update", cfun_update, "internal"},
     {"_delete", cfun_delete, "internal"},
     {"_scan", cfun_scan, "internal"},
@@ -1671,6 +1695,9 @@ static const char *s_prelude = R"janet(
 
 (defmacro read-latest [tbl rowno]
   ~(_read-latest (string ',tbl) ,rowno))
+
+(defmacro lock-row [tbl rowno mode]
+  ~(_lock-row (string ',tbl) ,rowno ,mode))
 
 (defmacro update [tbl rowno row]
   ~(_update (string ',tbl) ,rowno ,row))

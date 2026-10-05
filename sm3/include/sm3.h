@@ -508,6 +508,19 @@ int tbl_read(table_t* table, uint64_t rowno, std::string_view& tuple);
  */
 int tbl_read_latest(table_t* table, uint64_t rowno, std::string_view& tuple);
 
+/*
+ * Lock the row at rowno in mode without writing it, as
+ * sm2::rel_lock does, to the end of the transaction: shared, as a
+ * foreign key check locks the parent row and SELECT ... FOR SHARE
+ * a row it read, which other readers of the key may share and a
+ * writer waits for; or exclusive, as SELECT ... FOR UPDATE. The
+ * row need not exist. It waits as a write does. A mode other than
+ * shared needs the table opened to write, SM_ERR_INVALID if not.
+ * Above read committed, a row committed since the snapshot fails
+ * with SM_ERR_CONFLICT, as sm1::lock says.
+ */
+int tbl_lock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
+
 /* Open a cursor over the rows first..last, as sm2::rel_scan does. */
 int tbl_scan(table_t* table, uint64_t first, uint64_t last,
              sm2::rel_scan_t*& out);

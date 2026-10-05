@@ -1052,6 +1052,16 @@ int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, const void **tuple,
   });
 }
 
+/* Lock a row without writing it. */
+int sm_tbl_lock(sm_tbl_t *tbl, uint64_t rowno, sm_lockmode_t mode) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_lock", "tbl");
+    }
+    return sm3::tbl_lock(tbl->table, rowno, static_cast<sm1::lockmode_t>(mode));
+  });
+}
+
 /* Open a cursor over a table's rows. */
 int sm_tbl_scan(sm_tbl_t *tbl, uint64_t first, uint64_t last,
                 sm_rel_scan_t **out) {

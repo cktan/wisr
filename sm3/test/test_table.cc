@@ -2330,3 +2330,58 @@ TEST_CASE(
     REQUIRE(sm3::commit(f.a) == 0);
   }
 }
+
+TEST_CASE("a row is locked without being written") {
+  // Verify tbl_lock, the stack's share of a foreign key check and of
+  // SELECT ... FOR SHARE and FOR UPDATE (DESIGN.md §5).
+  // 1. A locks row 1 shared. B, set qa_nowait, locks it shared too,
+  //    as a second child of one parent does; B's update of the row
+  //    and its exclusive lock on it are both SM_ERR_BLOCKED.
+  // 2. A commits, and with it the lock ends: B's update goes through,
+  //    with no SM_ERR_UPDATED, for A wrote nothing.
+  // 3. A locks row 1 exclusive: B's shared lock is SM_ERR_BLOCKED.
+  // 4. A row that is not there can be locked.
+  // 5. An exclusive lock needs the table opened to write; a shared
+  //    one does not.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *ta = f.write(f.a);
+  uint64_t r1 = put(ta, 1, "free", "a");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+
+  start(f.a);
+  start(f.b);
+  ta = f.write(f.a, sm1::lockmode_t::intent_shared);
+  sm3::table_t *tb = f.write(f.b);
+  REQUIRE_MESSAGE(sm3::tbl_lock(ta, r1, sm1::lockmode_t::shared) == 0,
+                  sm1::errmsg());
+  CHECK(sm3::tbl_lock(tb, r1, sm1::lockmode_t::shared) == 0);
+  CHECK(set(tb, r1, 1, "taken", "b") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  CHECK(sm3::tbl_lock(tb, r1, sm1::lockmode_t::exclusive) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  CHECK(get(ta, r1) == "1|free|a");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE_MESSAGE(set(tb, r1, 1, "taken", "b") == 0, sm1::errmsg());
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  start(f.a);
+  start(f.b);
+  ta = f.write(f.a);
+  tb = f.write(f.b, sm1::lockmode_t::intent_shared);
+  REQUIRE(sm3::tbl_lock(ta, r1, sm1::lockmode_t::exclusive) == 0);
+  CHECK(sm3::tbl_lock(tb, r1, sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  CHECK(sm3::tbl_lock(ta, r1 + 999, sm1::lockmode_t::shared) == 0);
+  CHECK(sm3::tbl_lock(tb, r1 + 500, sm1::lockmode_t::shared) == 0);
+  CHECK(sm3::tbl_lock(tb, r1 + 500, sm1::lockmode_t::exclusive) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm3::tbl_close(ta);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::commit(f.b) == 0);
+}

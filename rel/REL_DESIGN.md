@@ -379,6 +379,12 @@ meets one must abort.
 2. Deforms and decodes tuple identically to `read`.
 3. Returns newest committed tuple vector.
 
+#### `(lock-row <table> <rowno> <mode>)`
+1. Opens the table under `SM_LOCK_INTENT_SHARED` for
+   `:shared`, `SM_LOCK_INTENT_EXCLUSIVE` for `:exclusive`.
+2. Calls `sm_tbl_lock(tbl, rowno, mode)`, which holds the row
+   to the end of the transaction and writes nothing.
+
 #### `(update <table> <rowno> <new-row-tuple>)`
 1. Converts `<new-row-tuple>` into `values[]` and `isnull[]`.
 2. Calls `sm_tbl_update(tbl, rowno, values, isnull, n,

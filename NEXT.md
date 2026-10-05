@@ -24,28 +24,15 @@ order of work.
 
 ---
 
-## 1. Next: a row lock on the table handle
+## 1. Next
 
-Constraints are settled: `NOT NULL` is sm3's and built, and
-the `varchar(n)` limit and foreign keys are the host's
-(`DESIGN.md` §5). What a host needs from the stack to check a
-foreign key, and for `SELECT … FOR SHARE` and `FOR UPDATE`, is
-to lock a row without writing it. sm1 and sm2 have that; sm3
-and `include/sm.h` do not hand it out.
+Constraints are settled. `NOT NULL` is sm3's and built. The
+`varchar(n)` limit and foreign keys are the host's, and the
+row lock a host checks a foreign key under is handed out:
+`tbl_lock` and `sm_tbl_lock` (`DESIGN.md` §5). It waits as a
+write does; the wait policy is not on it (§3 below).
 
-1. `tbl_lock` in sm3 and `sm_tbl_lock` in the C API, over
-   sm2's `rel_lock`, with a verb in `rel`.
-   → verify: a shared lock on a parent row lets a second
-   reader in and makes a writer of that row wait; an exclusive
-   one makes both wait; each ends with its transaction.
-2. Decide whether the wait policy comes with it. `NOWAIT` and
-   `SKIP LOCKED` are per-call flags in PostgreSQL, and this is
-   the call they most belong on (§3 below).
-
-One cost is recorded and not addressed: sm1 has no pair of
-modes like PostgreSQL's `FOR KEY SHARE` and `FOR NO KEY
-UPDATE`, so an update of a parent row's other columns waits
-for a child's transaction.
+What is next is the rest of `sm3/PLAN.md` step 5, in §2.
 
 ---
 
@@ -65,10 +52,16 @@ Owed, and blocking nothing above:
   `SM3_DESIGN.md` §3.1 says the re-check of a join uses the
   row of the other table that was already joined, not its
   newest version. That is from memory.
+- **A parent's other columns wait for its children.** sm1 has
+  no pair of modes like PostgreSQL's `FOR KEY SHARE` and `FOR
+  NO KEY UPDATE`, so an update of a parent row that leaves its
+  key alone still waits for a child's transaction, which holds
+  the row shared.
 - **`NOWAIT` and `SKIP LOCKED` as flags on the calls.** sm1's
   `set_qa_nowait` is for QA only (`sm1/SM1_DESIGN.md` §5.1).
   PostgreSQL passes a wait policy with each call, and sm1 is to
-  take one the same way, through sm2, sm3 and `include/sm.h`.
+  take one the same way, through sm2, sm3 and `include/sm.h`,
+  `sm_tbl_lock` first among the calls.
   `lock_timeout` needs a timed wait besides.
 - **A lock wait cannot be cancelled.** A build's worker that
   waits on a lock held by a prepared, in-doubt transaction

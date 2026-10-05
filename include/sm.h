@@ -624,6 +624,17 @@ int sm_tbl_read(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
 int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
                        size_t* len);
 
+/*
+ * Lock the row at rowno in mode without writing it, to the end of
+ * the transaction: SM_LOCK_SHARED, as a foreign key check locks the
+ * parent row and SELECT ... FOR SHARE a row it read, which other
+ * readers of the key may share and a writer waits for; or
+ * SM_LOCK_EXCLUSIVE, as SELECT ... FOR UPDATE, which needs the
+ * table opened to write. The row need not exist. It waits as a
+ * write does.
+ */
+int sm_tbl_lock(sm_tbl_t* tbl, uint64_t rowno, sm_lockmode_t mode);
+
 /* Open a cursor over the rows first..last, both included. */
 int sm_tbl_scan(sm_tbl_t* tbl, uint64_t first, uint64_t last,
                 sm_rel_scan_t** out);
