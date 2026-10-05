@@ -838,7 +838,10 @@ sizes, and a sampling primitive from sm1. For a heap keyed by
 roughly insertion order, so a column that grows with insertion
 correlates, and the primary key usually does. How accurate
 RocksDB's approximate statistics are for this purpose has not
-been measured, and this section depends on it.
+been measured, and this section depends on it. The strategy is
+in `STATISTICS.md` at the root: sm3 analyzes a table itself and
+records statistics of an LSM, and the host fits them to the
+planner.
 
 ---
 

@@ -39,8 +39,14 @@ What is next is the rest of `sm3/PLAN.md` step 5, in §2.
 ## 2. After it
 
 The rest of `sm3/PLAN.md` step 5: statistics for a planner,
-whose section of `SM3_DESIGN.md`, §6, is still to be written;
 and a bulk-load path that batches within sm1's memory bound.
+
+Statistics has a strategy, `STATISTICS.md`, and no design yet:
+`SM3_DESIGN.md` §6 is still to be written. The stack
+analyzes: `sm_analyze` samples a table and records statistics
+of an LSM in sm3's catalog, and the host fits them to the
+planner. The strategy's first step is to measure how good
+RocksDB's size estimates are, which nothing has done.
 
 ---
 

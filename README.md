@@ -65,6 +65,9 @@ the wrapper through the `rel/` test suite.
 - `sm3/SM3_DESIGN.md` — the catalog, index maintenance and
   builds, scans and statistics
 - `sm3/PLAN.md` — sm3's order of work
+- `STATISTICS.md` — the strategy for statistics: the stack
+  analyzes a table and records what is true of an LSM, and
+  the host fits that to PostgreSQL's planner
 - `FEATURELIST.md` — which PostgreSQL features wisr supports
 - `PART4.md` — what it would take to put PostgreSQL on this
   stack, and what that target forces on level 2's design
