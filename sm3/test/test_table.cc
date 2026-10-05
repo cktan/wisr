@@ -1052,3 +1052,164 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
     REQUIRE(sm3::abort(f.b) == 0);
   }
 }
+
+TEST_CASE("a build skips a row deleted under it, and adds back nothing") {
+  // Verify deletes against a building index, on four rows.
+  // 1. Row 1: the build covers it and commits; A then deletes it, and
+  //    its entry goes with it.
+  // 2. Row 2: A deletes it and has not committed. The build, set
+  //    qa_nowait, is SM_ERR_BLOCKED on it; A commits, and the row is
+  //    gone before the build comes back.
+  // 3. Row 3: a writer's update made its entry. A deletes it and has
+  //    not committed; the build is blocked again; A aborts, so the
+  //    row and its entry both stand.
+  // 4. Row 4: the build's statement snapshot still lists it when A
+  //    deletes it and commits. The build visits it, finds it gone at
+  //    its newest version, and skips it.
+  // 5. The build ends: only row 3 is left, with one entry, and the
+  //    index agrees with the heap.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *ta = f.write(f.a);
+  uint64_t r1 = put(ta, 1, "free", "o1");
+  uint64_t r2 = put(ta, 2, "free", "o2");
+  uint64_t r3 = put(ta, 3, "free", "o3");
+  uint64_t r4 = put(ta, 4, "free", "o4");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_index(f);
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+  uint64_t next = 0, unused = 0;
+  bool done = false;
+
+  start(f.b);
+  sm3::table_t *tb = f.write(f.b);
+  REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, 0, 1, next, done) == 0);
+  CHECK(next == r1 + 1);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  start(f.a);
+  ta = f.write(f.a);
+  CHECK(under(ta, jobs_owner, "o1") == std::vector<uint64_t>{r1});
+  REQUIRE_MESSAGE(sm3::tbl_delete(ta, r1) == 0, sm1::errmsg());
+  CHECK(under(ta, jobs_owner, "o1").empty());
+
+  REQUIRE(sm3::tbl_delete(ta, r2) == 0);
+  start(f.b);
+  tb = f.write(f.b);
+  CHECK(sm3::tbl_index_backfill(tb, jobs_owner, next, 10, unused, done) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::abort(f.b) == 0);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  ta = f.write(f.a);
+  REQUIRE(set(ta, r3, 3, "free", "trois") == 0);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  start(f.a);
+  ta = f.write(f.a);
+  REQUIRE(sm3::tbl_delete(ta, r3) == 0);
+  start(f.b);
+  tb = f.write(f.b);
+  CHECK(sm3::tbl_index_backfill(tb, jobs_owner, next, 10, unused, done) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::abort(f.b) == 0);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  start(f.b);
+  tb = f.write(f.b);
+  REQUIRE(sm1::stmt_begin(sm3::session_sm1(f.b)) == 0);
+  CHECK(get(tb, r4) == "4|free|o4");
+  start(f.a);
+  ta = f.write(f.a);
+  REQUIRE(sm3::tbl_delete(ta, r4) == 0);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  CHECK(get(tb, r4) == "4|free|o4");
+  REQUIRE_MESSAGE(
+      sm3::tbl_index_backfill(tb, jobs_owner, next, 10, unused, done) == 0,
+      sm1::errmsg());
+  CHECK(done);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  validate(f, f.b, jobs_owner);
+
+  start(f.a);
+  ta = f.write(f.a);
+  CHECK(rows(ta).size() == 1);
+  CHECK(get(ta, r3) == "3|free|trois");
+  CHECK(under(ta, jobs_owner, "trois") == std::vector<uint64_t>{r3});
+  CHECK(under(ta, jobs_owner, "o2").empty());
+  CHECK(under(ta, jobs_owner, "o3").empty());
+  CHECK(under(ta, jobs_owner, "o4").empty());
+  check_agree(ta);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a deleter waits for a build, then removes the entry it added") {
+  // Verify a delete of a row in the build's uncommitted batch, with
+  // the deleter at each isolation level.
+  // 1. Row 1 is committed; an index on owner is building. A, the
+  //    deleter, set qa_nowait, begins and reads the row.
+  // 2. B, the build, covers row 1 and holds its lock: A's delete is
+  //    SM_ERR_BLOCKED.
+  // 3. B commits. At READ COMMITTED A's delete goes through, the
+  //    entry B added after A began removed with the row. Above it,
+  //    removing that entry is SM_ERR_CONFLICT; A retries in a new
+  //    transaction and the delete goes through.
+  // 4. Marked valid, the index and the heap are both empty.
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    start(f.a);
+    sm3::table_t *ta = f.write(f.a);
+    uint64_t r1 = put(ta, 1, "free", "old");
+    sm3::tbl_close(ta);
+    REQUIRE(sm3::commit(f.a) == 0);
+    uint64_t jobs_owner = late_index(f);
+    REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.a), true) == 0);
+
+    start(f.a, level);
+    ta = f.write(f.a);
+    CHECK(get(ta, r1) == "1|free|old");
+    uint64_t next = 0;
+    bool done = false;
+    start(f.b);
+    sm3::table_t *tb = f.write(f.b);
+    REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, 0, 10, next, done) == 0);
+    CHECK(sm3::tbl_delete(ta, r1) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+    sm3::tbl_close(tb);
+    REQUIRE(sm3::commit(f.b) == 0);
+
+    if (level == sm1::xctlevel_t::read_committed) {
+      REQUIRE_MESSAGE(sm3::tbl_delete(ta, r1) == 0, sm1::errmsg());
+    } else {
+      CHECK(sm3::tbl_delete(ta, r1) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+      CHECK(sm1::retryable() == 1);
+      sm3::tbl_close(ta);
+      sm3::abort(f.a);
+      start(f.a, level);
+      ta = f.write(f.a);
+      REQUIRE_MESSAGE(sm3::tbl_delete(ta, r1) == 0, sm1::errmsg());
+    }
+    sm3::tbl_close(ta);
+    REQUIRE(sm3::commit(f.a) == 0);
+    validate(f, f.b, jobs_owner);
+
+    start(f.b);
+    tb = f.write(f.b);
+    CHECK(rows(tb).empty());
+    CHECK(under(tb, jobs_owner, "old").empty());
+    check_agree(tb);
+    sm3::tbl_close(tb);
+    REQUIRE(sm3::commit(f.b) == 0);
+  }
+}
