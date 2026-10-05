@@ -24,16 +24,28 @@ order of work.
 
 ---
 
-## 1. Next: foreign keys
+## 1. Next: a row lock on the table handle
 
-What is left of constraints in `sm3/PLAN.md` step 5. `NOT
-NULL` is enforced by sm3, and the `varchar(n)` limit is the
-host's to apply (`DESIGN.md` §5, `SM3_DESIGN.md` §3).
+Constraints are settled: `NOT NULL` is sm3's and built, and
+the `varchar(n)` limit and foreign keys are the host's
+(`DESIGN.md` §5). What a host needs from the stack to check a
+foreign key, and for `SELECT … FOR SHARE` and `FOR UPDATE`, is
+to lock a row without writing it. sm1 and sm2 have that; sm3
+and `include/sm.h` do not hand it out.
 
-A foreign key needs a shared lock on the parent row, held to
-the end of the child's transaction, which sm2's `rel_lock`
-takes. Whether the check is sm3's, or the host's as PostgreSQL
-runs it from triggers, is the first thing to settle.
+1. `tbl_lock` in sm3 and `sm_tbl_lock` in the C API, over
+   sm2's `rel_lock`, with a verb in `rel`.
+   → verify: a shared lock on a parent row lets a second
+   reader in and makes a writer of that row wait; an exclusive
+   one makes both wait; each ends with its transaction.
+2. Decide whether the wait policy comes with it. `NOWAIT` and
+   `SKIP LOCKED` are per-call flags in PostgreSQL, and this is
+   the call they most belong on (§3 below).
+
+One cost is recorded and not addressed: sm1 has no pair of
+modes like PostgreSQL's `FOR KEY SHARE` and `FOR NO KEY
+UPDATE`, so an update of a parent row's other columns waits
+for a child's transaction.
 
 ---
 

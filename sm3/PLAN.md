@@ -94,8 +94,10 @@ the executor's, since sm3 has no evaluator and gets none.
 - `NOT NULL`: built, in the table-level writes
   (`SM3_DESIGN.md` §3). The length of a `varchar(n)` is the
   host's to apply, not sm3's (`DESIGN.md` §5).
-- Foreign keys via `sm1::lock(SHARED)` on the parent row, which
-  sm2's `rel_lock` now takes.
+- Foreign keys are the host's to check (`DESIGN.md` §5). The
+  stack's share is a row locked without being written, which
+  sm2's `rel_lock` takes and sm3 is still to hand out
+  (`NEXT.md` §1).
 - A bulk path that batches within sm1's RAM bound.
 
 ---

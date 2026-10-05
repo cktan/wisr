@@ -506,6 +506,19 @@ design:
   evaluation is the host's (below); the stack keeps the typmod
   and stores what it is given. An enum is `int4` to sm2 with
   its labels in sm3's catalog (`sm2/SM2_DESIGN.md` §2).
+- **Foreign keys are the host's.** PostgreSQL checks one from
+  triggers its executor runs: it looks the parent row up and
+  locks it, and on a change to the parent looks for children.
+  Those are queries, and the stack runs none. Its share is the
+  lock: a row locked without being written, in a mode a
+  reader of the key can share and a writer cannot, held to
+  the end of the transaction. sm1 has it, `sm1::lock`, and
+  sm2 has it on a heap row, `rel_lock`. sm3 and the C API do
+  not hand it out yet. The lock is coarser than PostgreSQL's:
+  sm1 has no mode that admits an update of the parent's other
+  columns while a child holds its key, as `FOR KEY SHARE`
+  does against `FOR NO KEY UPDATE`, so such an update waits
+  for the child's transaction.
 - **The API is tuple at a time, at every level.** Sets of
   rows in and out was forced by an IPC boundary between a
   PostgreSQL backend process and sm1; the fork now moves
