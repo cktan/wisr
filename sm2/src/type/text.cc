@@ -4,7 +4,7 @@
  *
  * text and varchar are the same bytes under two codes: valid
  * UTF-8 with no NUL, as a PostgreSQL UTF8 database holds, and
- * their own text. varchar(n)'s limit is a constraint sm3 enforces
+ * their own text. varchar(n)'s limit is a coercion the host applies
  * (SM2_DESIGN.md §2), so its typmod does nothing here. Until the
  * collation work of step 2, cmp orders them bytewise, which is
  * codepoint order.
@@ -186,7 +186,7 @@ int text_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
   return bytes_unkey("text", k, c, d);
 }
 
-/* Parse a varchar's text; the typmod's limit is sm3's. */
+/* Parse a varchar's text; the typmod's limit is the host's. */
 int varchar_in(std::string_view t, int32_t, std::string &d) {
   return string_in("varchar", t, d);
 }

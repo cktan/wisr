@@ -202,10 +202,9 @@ int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
                    sm_datum_t *val_out, bool *isnull_out) {
   *val_out = 0;
   *isnull_out = false;
+  // A nil is a NULL; whether the column allows one is the storage
+  // manager's to say (SM_ERR_NOTNULL).
   if (janet_checktype(val, JANET_NIL)) {
-    if (col.not_null) {
-      return -1;
-    }
     *isnull_out = true;
     return 0;
   }

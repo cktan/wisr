@@ -73,6 +73,23 @@ int need_writable(const sm3::table_t *t) {
                                    "table: opened to read, not to write");
 }
 
+/*
+ * Fail with SM_ERR_NOTNULL if the row of t has a NULL in a column
+ * declared NOT NULL: the one constraint sm3 enforces, before the
+ * row is written, so nothing is half done (SM3_DESIGN.md §3).
+ */
+int need_not_null(const sm3::table_t *t, std::span<const bool> isnull) {
+  const std::vector<sm3::column_def_t> &cols = t->def->columns;
+  for (size_t i = 0; i < cols.size() && i < isnull.size(); i++) {
+    if (cols[i].not_null && isnull[i]) {
+      return sm1::seterr(sm1::SM_ERR_NOTNULL,
+                         "null value in column " + cols[i].name + " of " +
+                             t->def->name + ", which is NOT NULL");
+    }
+  }
+  return 0;
+}
+
 /* A non-null datum's native bytes: a varlena's without its header. */
 int native(const sm2::type_t *type, int32_t typmod, const sm2::datum_t &d,
            std::string_view &out) {
@@ -330,7 +347,7 @@ bool tbl_index_usable(const table_t *table, uint64_t index) {
 int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, uint64_t &rowno) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0) {
+    if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
       return -1;
     }
     uint64_t r = 0;
@@ -358,7 +375,7 @@ int tbl_update(table_t *table, uint64_t rowno,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, std::string *old) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0) {
+    if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
       return -1;
     }
     std::string_view image;

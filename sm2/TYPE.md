@@ -267,7 +267,7 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
 - `text` (8) and `varchar` (9) share every byte and keep
   separate codes only so a round trip never rewrites a
   column's declared type. The `varchar(n)` limit is a
-  constraint, enforced by sm3; sm2's codec stores what it is
+  coercion the host applies; sm2's codec stores what it is
   given (`SM2_DESIGN.md` §2).
 
 ### 3.6 bytea

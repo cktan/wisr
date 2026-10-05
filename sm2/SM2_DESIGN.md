@@ -104,8 +104,9 @@ The rules it satisfies:
 - **`text` and `varchar` are separate types with identical
   bytes.** They keep two codes so a round trip through sm2
   never rewrites a column's declared type. The `varchar(n)`
-  length limit is a constraint, and constraints are sm3's;
-  sm2's codec stores what it is given.
+  length limit is a coercion the host applies before the value
+  arrives (`DESIGN.md` §5); sm2's codec stores what it is
+  given.
 - A type is three things together: an in-memory datum, an
   order-preserving key encoding (§3), and a tuple encoding
   (§4). A type is not added until it has all three.

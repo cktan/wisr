@@ -80,8 +80,11 @@ typedef enum sm_errnum_t {
     /* sm1's: NOT retryable, and not an abort */
     SM_ERR_BLOCKED       = 23,  /* would wait for a lock; repeat the call */
 
+    /* sm3's: constraints */
+    SM_ERR_NOTNULL       = 24,  /* a NULL in a NOT NULL column */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_BLOCKED
+    SM_ERR_LAST          = SM_ERR_NOTNULL
 } sm_errnum_t;
 
 /* sm1.h */

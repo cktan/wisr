@@ -17,65 +17,31 @@ order of work.
 | --- | --- |
 | sm1 | built and tested |
 | sm2 | built but for TOAST (`sm2/SM2_DESIGN.md` §8.2) |
-| sm3 | catalog, schema locks, object mapping, index maintenance and the concurrent index build built; partial and expression indexes and `SM3_DESIGN.md` §6 are design |
+| sm3 | catalog, schema locks, object mapping, indexes of every kind with their maintenance and their concurrent build, and scans built; constraints and `SM3_DESIGN.md` §6, statistics, are design |
 | top | `include/sm.h` over all three, with the `sm_cat_*` and `sm_tbl_*` calls; `rel` reads and writes its tables through them |
 
 `DESIGN.md` §3 has the same table at more length.
 
 ---
 
-## 1. Next: partial and expression indexes, by callback
+## 1. Next: foreign keys
 
-The last of `sm3/PLAN.md` step 3. sm3 evaluates nothing: the
-host does, through a callback it registers
-(`SM3_DESIGN.md` §3, `DESIGN.md` §5). That decision also
-settled step 4: a scan takes key bounds and filters nothing,
-so there is no predicate scan to build (`SM3_DESIGN.md` §5).
+What is left of constraints in `sm3/PLAN.md` step 5. `NOT
+NULL` is enforced by sm3, and the `varchar(n)` limit is the
+host's to apply (`DESIGN.md` §5, `SM3_DESIGN.md` §3).
 
-In this order, tests first:
-
-1. **Settle what §3 left open** — **done**: what the callback
-   computes, who owns the values it hands back, how an update
-   leaves such an index alone, how the predicate and the
-   expressions are kept, and where the evaluator is
-   registered (`SM3_DESIGN.md` §3).
-2. **The catalog**: an index's record keeps its blob, the
-   columns it reads, and each expression key column's type,
-   typmod and collation; `cat_create_index` takes them.
-   → verify: they load back after a restart.
-   **Done**, with `cat_set_evaluator`. Until 3, a table with
-   such an index refuses every write and every build.
-3. **Maintenance and the build** call the evaluator: on
-   insert, on the old and the new image of an update and a
-   delete, and in each batch of a build.
-   → verify: the index agrees with a brute-force scan of the
-   heap put through the same evaluator, at every isolation
-   level, with a writer racing the build. An evaluator that
-   fails makes the write fail, and a build keep the reason.
-   **Done** in sm3 (`src/table/table.cc`), a writer racing the
-   build of an evaluated index among the tests, in both orders
-   on one thread and with real threads.
-4. **The C API and `rel`** — **done**:
-   `sm_set_index_evaluator`, `sm_seterr`, and
-   `sm_cat_create_index` taking the blob and the columns
-   read. `rel` has an evaluator of its own, in C++ and not a
-   script's function, since the build calls it from worker
-   threads where Janet may not run: `:where (col value)`, and
-   `(lower col)` or `(upper col)` as a key column
-   (`rel/test/test_partial.rel`).
-
-What it costs a row on the write path is unmeasured; measure
-it once step 3 runs.
+A foreign key needs a shared lock on the parent row, held to
+the end of the child's transaction, which sm2's `rel_lock`
+takes. Whether the check is sm3's, or the host's as PostgreSQL
+runs it from triggers, is the first thing to settle.
 
 ---
 
 ## 2. After it
 
-`sm3/PLAN.md` step 5: statistics for a planner; constraints;
-a bulk-load path that batches within sm1's memory bound.
-Among the constraints are two that `DESIGN.md` §5 already
-gives to sm3 and nothing enforces today: `NOT NULL`, and the
-length of a `varchar(n)`.
+The rest of `sm3/PLAN.md` step 5: statistics for a planner,
+whose section of `SM3_DESIGN.md`, §6, is still to be written;
+and a bulk-load path that batches within sm1's memory bound.
 
 ---
 
@@ -100,6 +66,9 @@ Owed, and blocking nothing above:
   catalog change does, so a long transaction on the table
   delays it. The step only flips a state writers do not depend
   on; a weaker lock would do.
+- **The evaluator's cost is unmeasured**: what a call a row
+  adds to a write on a table with a partial or an expression
+  index.
 - **The index build is unmeasured.** Four workers is a guess:
   builds contend on sm1's lock table, one mutex, and on
   RocksDB's write path. Two indexes built on one table walk

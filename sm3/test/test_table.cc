@@ -2292,3 +2292,41 @@ TEST_CASE("writers go on while evaluated indexes are built, and they agree") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE(
+    "a NULL in a NOT NULL column is refused, before anything is written") {
+  // Verify the one constraint sm3 enforces (SM3_DESIGN.md §3):
+  // jobs.id is NOT NULL, jobs.owner is not.
+  // 1. Inserting a row with a NULL id fails with SM_ERR_NOTNULL, in
+  //    a message that names the column. Nothing was written, so the
+  //    transaction goes on with no rollback: a good row inserts.
+  // 2. Updating a row's id to NULL fails the same way, and the row
+  //    and its index entries are as they were.
+  // 3. A NULL in a column that allows it is written.
+  // 4. The same at every isolation level.
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    start(f.a, level);
+    sm3::table_t *t = f.write(f.a);
+    std::string state = sm2::make_varlena("free");
+    sm2::datum_t d[3] = {0, sm2::datum_from_ptr(state.data()), 0};
+    bool n[3] = {true, false, true};
+    uint64_t rowno = 0;
+    CHECK(sm3::tbl_insert(t, d, n, rowno) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTNULL);
+    CHECK(std::string(sm1::errname()) == "ERR_NOTNULL");
+    CHECK(sm1::retryable() == 0);
+    CHECK(std::string(sm1::errmsg()).find("id") != std::string::npos);
+    CHECK(rows(t).empty());
+
+    uint64_t r1 = put(t, 1, "free", std::nullopt);
+    CHECK(get(t, r1) == "1|free|-");
+    CHECK(sm3::tbl_update(t, r1, d, n) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTNULL);
+    CHECK(get(t, r1) == "1|free|-");
+    check_agree(t);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+  }
+}

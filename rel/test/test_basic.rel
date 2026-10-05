@@ -179,6 +179,26 @@
 (table-drop other)
 (commit)
 
+# A NULL in a NOT NULL column is refused by the storage manager, on
+# insert and on update, and as any failed write it aborts the
+# transaction; a NULL where one is allowed is written.
+(begin :rc)
+(table-create strict (columns (id :int4 :not-null) (note :text)))
+(def rs (insert strict [1 nil]))
+(commit)
+(begin :rc)
+(assert-err :err-notnull (insert strict [nil "x"]))
+(assert-eq (sm:retryable) false)
+(abort)
+(begin :rc)
+(assert-err :err-notnull (update strict rs [nil "x"]))
+(abort)
+(begin :rc)
+(assert-count 1 (scan strict))
+(assert-eq (read strict rs) [1 nil])
+(table-drop strict)
+(commit)
+
 (db-close)
 (env-detach :force true)
 (rm-rf test-dir)

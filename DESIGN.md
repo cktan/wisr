@@ -131,7 +131,7 @@ rule is that nothing turns them off.
 | --- | --- |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
-| sm3 | being built: its catalog (`sm3/CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, with its C++ interface in `sm3/include/sm3.h`; partial and expression indexes, statistics and constraints are still design, in `sm3/SM3_DESIGN.md`, with the order of work in `sm3/PLAN.md` and `NEXT.md` |
+| sm3 | being built: its catalog (`sm3/CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, partial and expression indexes among them, with its C++ interface in `sm3/include/sm3.h`; statistics and constraints are still design, in `sm3/SM3_DESIGN.md`, with the order of work in `sm3/PLAN.md` and `NEXT.md` |
 | top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`. A row is read and written through an open table, `sm_tbl_*`, by the table's oid from `sm_cat_*`; the heap-level and index-level calls that took a store id and a prefix are gone. The `rel` driver runs on it |
 
 sm1 was built first and alone, on purpose: it is usable
@@ -320,6 +320,7 @@ design:
   | `DISKFULL` | `53100` | `disk_full` |
   | `IO`, `PERMISSION` | `58030` | `io_error` |
   | `CORRUPT` | `XX001` | `data_corrupted` |
+  | `NOTNULL` | `23502` | `not_null_violation` |
   | `KEYTOOLONG`, `ROWTOOLONG` | `54000` | `program_limit_exceeded` |
   | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
   | `EXCEPTION` | `XX000` | `internal_error` (a bug in the stack) |
@@ -493,10 +494,18 @@ design:
   Non-deterministic ICU collations are accepted, and a string
   equal under one is equal at every level
   (`sm2/SM2_DESIGN.md` §3.3).
-- **Constraints and labels are sm3's; sm2 stores what it is
-  given.** The `varchar(n)` length limit is enforced by sm3,
-  and an enum is `int4` to sm2 with its labels in sm3's
-  catalog (`sm2/SM2_DESIGN.md` §2).
+- **`NOT NULL` and labels are sm3's; sm2 stores what it is
+  given.** sm3 refuses a NULL in a `NOT NULL` column with
+  `SM_ERR_NOTNULL`, before the row is written: the check is
+  exact and costs a flag a column, and sm3 itself leans on it,
+  since a primary key column is taken never to be NULL. The
+  `varchar(n)` limit is not sm3's, nor any level's. It is a
+  coercion and not a constraint: PostgreSQL raises an error
+  for a value too long unless the excess is all spaces, which
+  it trims, and it counts characters. That is evaluation, and
+  evaluation is the host's (below); the stack keeps the typmod
+  and stores what it is given. An enum is `int4` to sm2 with
+  its labels in sm3's catalog (`sm2/SM2_DESIGN.md` §2).
 - **The API is tuple at a time, at every level.** Sets of
   rows in and out was forced by an IPC boundary between a
   PostgreSQL backend process and sm1; the fork now moves

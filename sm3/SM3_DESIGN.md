@@ -24,7 +24,7 @@ load, DDL, a session's overlay and the schema locks of §2
 per table, index prefixes allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
 is built, the C API's one way to write a row, and so is its
-index build; partial and expression indexes and §6's
+index build, for partial and expression indexes too; §6's
 statistics are not. sm2, which it is built on, is, but for TOAST
 (`sm2/SM2_DESIGN.md` §8.2).
 This file exists so the protocols are argued before they are
@@ -315,6 +315,15 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   row, and PostgreSQL's errors abort the transaction or the
   subtransaction anyway. `SM_ERR_UPDATED` needs no rollback:
   it comes from the heap write, the first step.
+- **A write refuses a NULL in a `NOT NULL` column**, with
+  `SM_ERR_NOTNULL`, before the heap write, so nothing is half
+  done and the transaction goes on. It is the one constraint
+  sm3 enforces. The check is exact, it costs a flag a column,
+  and sm3 leans on it itself: a primary key column is taken
+  never to be NULL (above). The `varchar(n)` limit is not
+  checked here. It is a coercion with PostgreSQL's own rules,
+  trimming excess spaces and counting characters, so it is the
+  host's, as all evaluation is (`DESIGN.md` §5).
 - **Read committed writes.** An update or delete that meets a
   row committed after the transaction began fails with
   `SM_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort
@@ -730,7 +739,9 @@ against the PostgreSQL source before the fork relies on it.
   key; the build's batches, a writer and a deleter racing
   them from either side, a duplicate found late, the inline
   build, the guard for older snapshots, and the background
-  build with writers running.
+  build with writers running. Partial and expression indexes
+  go through the same cases with the tests' own evaluator: a
+  row is checked against what that evaluator says of it.
 - **Two sessions on one thread.** A step that would wait is
   scripted with sm1's `set_qa_nowait`, which makes it fail
   with `SM_ERR_BLOCKED` to be repeated later
@@ -740,7 +751,7 @@ against the PostgreSQL source before the fork relies on it.
   be the victim of, stay in sm1's threaded tests.
 - **`rel`** drives the same paths through the C API
   (`rel/test/test_recheck.rel`, `test_blocking.rel`,
-  `test_build.rel`).
+  `test_build.rel`, `test_partial.rel`).
 
 ---
 

@@ -56,8 +56,7 @@ lingering versions are never read as another index's.
 
 ## 3. Indexes
 
-**Status: built, but for partial and expression indexes**
-(`SM3_DESIGN.md` §3).
+**Status: built** (`SM3_DESIGN.md` §3).
 
 - Unique and non-unique entries, built with sm2's encoder, and
   INCLUDE columns; maintenance from the old image sm2 hands
@@ -68,9 +67,10 @@ lingering versions are never read as another index's.
   old image (`SM3_DESIGN.md` §3.1).
 - The index build: concurrent, in the background, with the
   index building, valid or failed.
-- **Not built:** partial and expression indexes. sm3 evaluates
-  nothing; the host does, through a callback, which is the
-  next thing to build (`SM3_DESIGN.md` §3, `NEXT.md` §1).
+- Partial and expression indexes. sm3 evaluates nothing: the
+  host does, through a callback it registers, which says
+  whether a row belongs in the index and computes its
+  expression key columns.
 
 **Verified:** the index and the base relation agree with a
 brute-force scan, under concurrency, at every isolation level;
@@ -88,11 +88,12 @@ the executor's, since sm3 has no evaluator and gets none.
 
 ## 5. Statistics, constraints, bulk load
 
-**Status: not started.**
+**Status: not started.** `NEXT.md` has constraints first.
 
 - Row counts, sizes, sampling.
-- `NOT NULL` and the length of a `varchar(n)`, which
-  `DESIGN.md` §5 gives to sm3 and nothing enforces yet.
+- `NOT NULL`: built, in the table-level writes
+  (`SM3_DESIGN.md` §3). The length of a `varchar(n)` is the
+  host's to apply, not sm3's (`DESIGN.md` §5).
 - Foreign keys via `sm1::lock(SHARED)` on the parent row, which
   sm2's `rel_lock` now takes.
 - A bulk path that batches within sm1's RAM bound.
