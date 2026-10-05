@@ -97,10 +97,20 @@ public:
   uint64_t jobs = 0, jobs_state = 0, jobs_id = 0;
 };
 
-/* Begin a READ COMMITTED transaction on s. */
-void begin(sm3::session_t *s) {
-  REQUIRE(sm3::begin(s, sm1::xctlevel_t::read_committed) == 0);
+/* Begin a transaction on s, at READ COMMITTED unless told. */
+void start(sm3::session_t *s,
+           sm1::xctlevel_t level = sm1::xctlevel_t::read_committed) {
+  REQUIRE(sm3::begin(s, level) == 0);
 }
+
+/* The three isolation levels, for a test that runs at each. */
+const sm1::xctlevel_t all_levels[] = {sm1::xctlevel_t::read_committed,
+                                      sm1::xctlevel_t::repeatable_read,
+                                      sm1::xctlevel_t::serializable};
+
+/* The two levels at which a lost race aborts the loser. */
+const sm1::xctlevel_t snapshot_levels[] = {sm1::xctlevel_t::repeatable_read,
+                                           sm1::xctlevel_t::serializable};
 
 /* A text datum's string, or "-" for NULL. */
 std::string text_of(sm2::datum_t d, bool isnull) {
@@ -266,40 +276,44 @@ TEST_CASE("a table's writes keep every index in step with its heap") {
   // 3. Update an INCLUDE column only: the entry carries the new value.
   // 4. Delete a row: its entries go, and the old image is handed back.
   // 5. All of it holds after commit, in a new transaction.
-  jobs_t f;
-  begin(f.a);
-  sm3::table_t *t = f.write(f.a);
-  uint64_t r7 = put(t, 7, "free", std::nullopt);
-  uint64_t r8 = put(t, 8, "free", std::nullopt);
-  uint64_t r9 = put(t, 9, std::nullopt, "w9");
-  check_agree(t);
-  CHECK(under(t, f.jobs_state, "free") == std::vector<uint64_t>{r7, r8});
+  // 6. The same at each isolation level.
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    start(f.a, level);
+    sm3::table_t *t = f.write(f.a);
+    uint64_t r7 = put(t, 7, "free", std::nullopt);
+    uint64_t r8 = put(t, 8, "free", std::nullopt);
+    uint64_t r9 = put(t, 9, std::nullopt, "w9");
+    check_agree(t);
+    CHECK(under(t, f.jobs_state, "free") == std::vector<uint64_t>{r7, r8});
 
-  std::string old;
-  REQUIRE_MESSAGE(set(t, r7, 7, "taken", "w1", &old) == 0, sm1::errmsg());
-  CHECK(show(t, old) == "7|free|-");
-  CHECK(get(t, r7) == "7|taken|w1");
-  check_agree(t);
-  CHECK(under(t, f.jobs_state, "free") == std::vector<uint64_t>{r8});
-  CHECK(under(t, f.jobs_state, "taken") == std::vector<uint64_t>{r7});
+    std::string old;
+    REQUIRE_MESSAGE(set(t, r7, 7, "taken", "w1", &old) == 0, sm1::errmsg());
+    CHECK(show(t, old) == "7|free|-");
+    CHECK(get(t, r7) == "7|taken|w1");
+    check_agree(t);
+    CHECK(under(t, f.jobs_state, "free") == std::vector<uint64_t>{r8});
+    CHECK(under(t, f.jobs_state, "taken") == std::vector<uint64_t>{r7});
 
-  REQUIRE(set(t, r7, 7, "taken", "w2") == 0);
-  check_agree(t);
+    REQUIRE(set(t, r7, 7, "taken", "w2") == 0);
+    check_agree(t);
 
-  REQUIRE(sm3::tbl_delete(t, r9, &old) == 0);
-  CHECK(show(t, old) == "9|-|w9");
-  CHECK(get(t, r9) == "<none>");
-  check_agree(t);
-  sm3::tbl_close(t);
-  REQUIRE(sm3::commit(f.a) == 0);
+    REQUIRE(sm3::tbl_delete(t, r9, &old) == 0);
+    CHECK(show(t, old) == "9|-|w9");
+    CHECK(get(t, r9) == "<none>");
+    check_agree(t);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
 
-  begin(f.b);
-  t = f.write(f.b, sm1::lockmode_t::intent_shared);
-  CHECK(rows(t).size() == 2);
-  CHECK(get(t, r7) == "7|taken|w2");
-  check_agree(t);
-  sm3::tbl_close(t);
-  REQUIRE(sm3::commit(f.b) == 0);
+    start(f.b, level);
+    t = f.write(f.b, sm1::lockmode_t::intent_shared);
+    CHECK(rows(t).size() == 2);
+    CHECK(get(t, r7) == "7|taken|w2");
+    check_agree(t);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.b) == 0);
+  }
 }
 
 TEST_CASE("an update leaves alone an index whose columns did not change") {
@@ -314,19 +328,19 @@ TEST_CASE("an update leaves alone an index whose columns did not change") {
   //    SM_ERR_BLOCKED: the entry for 7 is A's to remove.
   // 4. A commits; the indexes agree with the heap.
   jobs_t f;
-  begin(f.a);
+  start(f.a);
   sm3::table_t *ta = f.write(f.a);
   uint64_t r7 = put(ta, 7, "free", std::nullopt);
   sm3::tbl_close(ta);
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
 
-  begin(f.a);
+  start(f.a);
   ta = f.write(f.a);
   REQUIRE(set(ta, r7, 7, "taken", "w1") == 0);
   row_t dup(7, "free", std::nullopt);
   uint64_t rowno;
-  begin(f.b);
+  start(f.b);
   sm3::table_t *tb = f.write(f.b);
   CHECK(sm3::tbl_insert(tb, dup.d(), dup.null(), rowno) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
@@ -334,7 +348,7 @@ TEST_CASE("an update leaves alone an index whose columns did not change") {
   REQUIRE(sm3::abort(f.b) == 0);
 
   REQUIRE(set(ta, r7, 70, "taken", "w1") == 0);
-  begin(f.b);
+  start(f.b);
   tb = f.write(f.b);
   CHECK(sm3::tbl_insert(tb, dup.d(), dup.null(), rowno) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
@@ -355,7 +369,7 @@ TEST_CASE("a write that fails partway is the caller's to roll back") {
   // 3. A rolls back to its savepoint: one row, and the indexes agree.
   // 4. A table opened intent_shared refuses a write.
   jobs_t f;
-  begin(f.a);
+  start(f.a);
   sm3::table_t *t = f.write(f.a);
   put(t, 7, "free", std::nullopt);
   int sp = sm3::savepoint(f.a);
@@ -372,7 +386,7 @@ TEST_CASE("a write that fails partway is the caller's to roll back") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  begin(f.a);
+  start(f.a);
   t = f.write(f.a, sm1::lockmode_t::intent_shared);
   CHECK(sm3::tbl_insert(t, dup.d(), dup.null(), rowno) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
@@ -394,15 +408,15 @@ TEST_CASE("read committed: the entry removed is the newest image's") {
   // 5. B commits: jobs_state holds the row under done and nowhere
   //    else, and the indexes agree with the heap.
   jobs_t f;
-  begin(f.a);
+  start(f.a);
   sm3::table_t *ta = f.write(f.a);
   uint64_t r7 = put(ta, 7, "free", std::nullopt);
   sm3::tbl_close(ta);
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
 
-  begin(f.a);
-  begin(f.b);
+  start(f.a);
+  start(f.b);
   ta = f.write(f.a);
   sm3::table_t *tb = f.write(f.b);
   CHECK(get(ta, r7) == "7|free|-");
@@ -422,7 +436,7 @@ TEST_CASE("read committed: the entry removed is the newest image's") {
   sm3::tbl_close(tb);
   REQUIRE(sm3::commit(f.b) == 0);
 
-  begin(f.a);
+  start(f.a);
   ta = f.write(f.a, sm1::lockmode_t::intent_shared);
   CHECK(get(ta, r7) == "7|done|w1");
   CHECK(under(ta, f.jobs_state, "free").empty());
@@ -442,15 +456,15 @@ TEST_CASE("read committed: a row that stopped qualifying is claimed once") {
   //    so B writes nothing and commits.
   // 4. The row is w1's, under taken only, and the indexes agree.
   jobs_t f;
-  begin(f.a);
+  start(f.a);
   sm3::table_t *ta = f.write(f.a);
   uint64_t r7 = put(ta, 7, "free", std::nullopt);
   sm3::tbl_close(ta);
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
 
-  begin(f.a);
-  begin(f.b);
+  start(f.a);
+  start(f.b);
   ta = f.write(f.a);
   sm3::table_t *tb = f.write(f.b);
   REQUIRE(set(ta, r7, 7, "taken", "w1") == 0);
@@ -464,7 +478,7 @@ TEST_CASE("read committed: a row that stopped qualifying is claimed once") {
   sm3::tbl_close(tb);
   REQUIRE(sm3::commit(f.b) == 0);
 
-  begin(f.a);
+  start(f.a);
   ta = f.write(f.a, sm1::lockmode_t::intent_shared);
   CHECK(get(ta, r7) == "7|taken|w1");
   CHECK(under(ta, f.jobs_state, "taken") == std::vector<uint64_t>{r7});
@@ -472,4 +486,155 @@ TEST_CASE("read committed: a row that stopped qualifying is claimed once") {
   check_agree(ta);
   sm3::tbl_close(ta);
   REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("above read committed the loser of a row race writes nothing") {
+  // Verify the indexes at REPEATABLE READ and SERIALIZABLE, where a
+  // lost race is a retryable error and not a re-check.
+  // 1. Row 7 is free. A and B both read it.
+  // 2. A sets it taken and holds the row; B, set qa_nowait, sets it
+  //    done: SM_ERR_BLOCKED.
+  // 3. A commits. B repeats: SM_ERR_CONFLICT, retryable, and B's
+  //    transaction is gone with nothing written.
+  // 4. The row is taken, under taken only, and the indexes agree.
+  // 5. B retries in a new transaction, reads taken and sets it done:
+  //    the entry removed is taken's, and the indexes agree.
+  for (sm1::xctlevel_t level : snapshot_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    start(f.a);
+    sm3::table_t *ta = f.write(f.a);
+    uint64_t r7 = put(ta, 7, "free", std::nullopt);
+    sm3::tbl_close(ta);
+    REQUIRE(sm3::commit(f.a) == 0);
+    REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+
+    start(f.a, level);
+    start(f.b, level);
+    ta = f.write(f.a);
+    sm3::table_t *tb = f.write(f.b);
+    CHECK(get(ta, r7) == "7|free|-");
+    CHECK(get(tb, r7) == "7|free|-");
+    REQUIRE(set(ta, r7, 7, "taken", "w1") == 0);
+    CHECK(set(tb, r7, 7, "done", std::nullopt) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+    sm3::tbl_close(ta);
+    REQUIRE(sm3::commit(f.a) == 0);
+
+    CHECK(set(tb, r7, 7, "done", std::nullopt) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+    CHECK(sm1::retryable() == 1);
+    sm3::tbl_close(tb);
+    sm3::abort(f.b);
+
+    start(f.a, level);
+    ta = f.write(f.a, sm1::lockmode_t::intent_shared);
+    CHECK(get(ta, r7) == "7|taken|w1");
+    CHECK(under(ta, f.jobs_state, "taken") == std::vector<uint64_t>{r7});
+    CHECK(under(ta, f.jobs_state, "done").empty());
+    check_agree(ta);
+    sm3::tbl_close(ta);
+    REQUIRE(sm3::commit(f.a) == 0);
+
+    start(f.b, level);
+    tb = f.write(f.b);
+    CHECK(get(tb, r7) == "7|taken|w1");
+    std::string old;
+    REQUIRE_MESSAGE(set(tb, r7, 7, "done", "w1", &old) == 0, sm1::errmsg());
+    CHECK(show(tb, old) == "7|taken|w1");
+    CHECK(under(tb, f.jobs_state, "taken").empty());
+    CHECK(under(tb, f.jobs_state, "done") == std::vector<uint64_t>{r7});
+    check_agree(tb);
+    sm3::tbl_close(tb);
+    REQUIRE(sm3::commit(f.b) == 0);
+  }
+}
+
+TEST_CASE("two inserters of one unique key leave one row, at every level") {
+  // Verify a race that is lost on an index, after the heap write.
+  // 1. A inserts id 7 and holds its entry in jobs_id.
+  // 2. B, set qa_nowait, inserts id 7: its heap row and its jobs_state
+  //    entry go in, then jobs_id says SM_ERR_BLOCKED. The write set no
+  //    savepoint, so B sees its own orphan row, and aborts to undo it.
+  // 3. A commits. B inserts id 7 in a new transaction:
+  //    SM_ERR_DUPKEY, and B aborts again.
+  // 4. One row holds id 7, and the indexes agree.
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+    start(f.a, level);
+    sm3::table_t *ta = f.write(f.a);
+    uint64_t r7 = put(ta, 7, "free", std::nullopt);
+
+    row_t dup(7, "free", "w2");
+    uint64_t rowno;
+    start(f.b, level);
+    sm3::table_t *tb = f.write(f.b);
+    CHECK(sm3::tbl_insert(tb, dup.d(), dup.null(), rowno) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+    CHECK(rows(tb).size() == 1);
+    sm3::tbl_close(tb);
+    REQUIRE(sm3::abort(f.b) == 0);
+
+    sm3::tbl_close(ta);
+    REQUIRE(sm3::commit(f.a) == 0);
+
+    start(f.b, level);
+    tb = f.write(f.b);
+    CHECK(sm3::tbl_insert(tb, dup.d(), dup.null(), rowno) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+    sm3::tbl_close(tb);
+    REQUIRE(sm3::abort(f.b) == 0);
+
+    start(f.b, level);
+    tb = f.write(f.b, sm1::lockmode_t::intent_shared);
+    CHECK(rows(tb).size() == 1);
+    CHECK(get(tb, r7) == "7|free|-");
+    check_agree(tb);
+    sm3::tbl_close(tb);
+    REQUIRE(sm3::commit(f.b) == 0);
+  }
+}
+
+TEST_CASE("an inserter that began before its rival committed, at every level") {
+  // Verify a unique key committed after the loser began.
+  // 1. B begins and reads the empty table.
+  // 2. A inserts id 7 and commits.
+  // 3. B inserts id 7: at READ COMMITTED it is judged against the
+  //    newest version, SM_ERR_DUPKEY; above it, the key was committed
+  //    after B's snapshot, SM_ERR_CONFLICT, and B is gone.
+  // 4. One row holds id 7, and the indexes agree.
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    start(f.b, level);
+    sm3::table_t *tb = f.write(f.b);
+    CHECK(rows(tb).empty());
+
+    start(f.a, level);
+    sm3::table_t *ta = f.write(f.a);
+    uint64_t r7 = put(ta, 7, "free", std::nullopt);
+    sm3::tbl_close(ta);
+    REQUIRE(sm3::commit(f.a) == 0);
+
+    row_t dup(7, "free", "w2");
+    uint64_t rowno;
+    CHECK(sm3::tbl_insert(tb, dup.d(), dup.null(), rowno) == -1);
+    if (level == sm1::xctlevel_t::read_committed) {
+      CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+    } else {
+      CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+    }
+    sm3::tbl_close(tb);
+    sm3::abort(f.b);
+
+    start(f.b, level);
+    tb = f.write(f.b, sm1::lockmode_t::intent_shared);
+    CHECK(rows(tb).size() == 1);
+    CHECK(get(tb, r7) == "7|free|-");
+    check_agree(tb);
+    sm3::tbl_close(tb);
+    REQUIRE(sm3::commit(f.b) == 0);
+  }
 }

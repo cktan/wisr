@@ -793,9 +793,14 @@ writing it, so the prose and the decisions come before code.
    **Stage C done:** the heap-level and index-level calls are
    gone from `include/sm.h` (1.9), reads included, since the
    table handle serves them. What is left of them is the two
-   cursor types, with their next, seek and end calls. Still
-   owed against the criterion above: the races are tested at
-   READ COMMITTED only, not at every isolation level.
+   cursor types, with their next, seek and end calls.
+   **The criterion is met at every level.**
+   `sm3/test/test_table.cc` runs plain maintenance at all
+   three, the row race at REPEATABLE READ and SERIALIZABLE,
+   where the loser gets `SM_ERR_CONFLICT` and writes nothing,
+   and two races on a unique key at all three, one of them
+   lost on the index after the heap write. Each ends with the
+   indexes checked against a brute-force scan of the heap.
 5. **The online build under S**, which `CATALOG.md` §7.1 waits
    on: `cat_create_index` takes X today and takes S once the
    build exists, with the `indcheckxmin` guard for a reader
