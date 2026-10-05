@@ -592,7 +592,13 @@ int idx_insert(index_t* index, std::span<const datum_t> key,
                std::span<const datum_t> include,
                std::span<const bool> include_isnull);
 
-/* Remove the entry idx_insert added for key and rowno. */
+/*
+ * Remove the entry idx_insert added for key and rowno. At read
+ * committed an entry committed after the transaction began is
+ * removed all the same: where sm1 answers SM_ERR_UPDATED, this
+ * reads the entry's newest version and repeats the erase, an
+ * entry having no filter to re-check (SM2_DESIGN.md §5).
+ */
 int idx_delete(index_t* index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, uint64_t rowno);
 

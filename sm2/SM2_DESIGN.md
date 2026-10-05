@@ -908,6 +908,15 @@ are the same shape, keyed by its columns (`idx_open`,
   key is never cut (§3.2).
 - **An entry's value** is a tuple: the `rowno`, a flag saying
   the key was cut, then the INCLUDE columns.
+- **`idx_delete` removes an entry committed since the
+  transaction began.** An entry is an sm1 key, so at READ
+  COMMITTED sm1 refuses to erase one committed after the
+  transaction began, with `SM_ERR_UPDATED`, until its newest
+  version has been read (`sm1/SM1_DESIGN.md` §5.4). An entry
+  has no filter to re-check: whether to write was decided on
+  the heap row, whose lock the caller holds. So `idx_delete`
+  reads the newest version itself and repeats the erase, and
+  the caller never sees the code from an index.
 - **A scan's bounds** are the values of the index's leading
   columns, inclusive or not, in the index's own order, after
   each column's direction and null ordering; mapping a

@@ -244,7 +244,19 @@ int idx_delete(index_t *index, std::span<const datum_t> key,
     if (entry_key(index, key, key_isnull, rowno, k, cut) != 0) {
       return -1;
     }
-    return sm1::erase(index->session, index->storeid, k);
+    int rc = sm1::erase(index->session, index->storeid, k);
+    if (rc != 0 && sm1::errnum() == sm1::SM_ERR_UPDATED) {
+      // At read committed the entry was committed after this
+      // transaction began. An entry has no filter to re-check --
+      // the caller decided on the heap row -- so read the newest
+      // version, which is what lets sm1 take the erase again.
+      std::string_view latest;
+      if (sm1::read_latest(index->session, index->storeid, k, latest) < 0) {
+        return -1;
+      }
+      rc = sm1::erase(index->session, index->storeid, k);
+    }
+    return rc;
   });
 }
 

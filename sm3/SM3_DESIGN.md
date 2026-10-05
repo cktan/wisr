@@ -310,7 +310,10 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     write hands back is the newest version's, not the one the
     statement's scan read. sm3 takes the index entries to
     remove from it, so the entries removed are the ones that
-    are actually there. It needs no predicate for this.
+    are actually there. It needs no predicate for this. Those
+    entries were committed after the transaction began too,
+    and sm2's `idx_delete` removes them all the same
+    (`sm2/SM2_DESIGN.md` §5).
 
   An insert has no filter and needs none of this. sm1 refuses
   a write repeated without the read, so an executor cannot

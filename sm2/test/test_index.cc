@@ -358,6 +358,38 @@ TEST_CASE("a key too long for sm1 is refused in a unique index") {
   sm2::idx_close(ix);
 }
 
+TEST_CASE("at read committed an entry committed since begin is still deleted") {
+  // Verify idx_delete resolves SM_ERR_UPDATED itself (SM2_DESIGN.md §5).
+  // 1. A begins at READ COMMITTED.
+  // 2. B inserts the entry for row 1 and commits, after A began.
+  // 3. A deletes that entry: sm1 refuses the erase of a key committed
+  //    since A began until A reads its newest version, and idx_delete
+  //    does that read and repeats the erase, so the call succeeds.
+  // 4. A commits, and the index is empty.
+  // 5. An entry that is not there still fails with SM_ERR_NOTFOUND.
+  db_t db;
+  sm1::session_t *a = db.open();
+  sm1::session_t *b = db.open();
+  std::vector<sm2::key_column_t> cols = {
+      {&sm2::type_text, -1, nullptr, false, false}};
+  sm2::index_t *ia = open_index(db, a, cols, false);
+  sm2::index_t *ib = open_index(db, b, cols, false);
+  values_t d = datums_of(cols, {"taken"});
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm2::idx_insert(ib, d.d(), d.null(), 1, {}, {}) == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  REQUIRE_MESSAGE(sm2::idx_delete(ia, d.d(), d.null(), 1) == 0, sm1::errmsg());
+  CHECK(sm2::idx_delete(ia, d.d(), d.null(), 1) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(scan_all(ia, nullptr, nullptr).empty());
+  REQUIRE(sm1::commit(a) == 0);
+  sm2::idx_close(ia);
+  sm2::idx_close(ib);
+}
+
 TEST_CASE("index and heap entries share a store without meeting") {
   // Verify an index's prefix keeps it apart from the heap and from
   // other indexes in the same sm1 store.
