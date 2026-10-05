@@ -255,7 +255,7 @@ for it, and then reads the table's entry under an X lock on its
 `TABLE` key: at READ COMMITTED with `catkv_get_latest`, which
 lets it overwrite a version newer than its snapshot; at
 REPEATABLE READ the lock fails on one. `cat_create_index` takes
-X too, until the build takes S (§7).
+X too, and keeps it: the build is concurrent (§7).
 
 A missing table, index, namespace or collation is
 `SM_ERR_NOTFOUND`; a name taken in its namespace is
@@ -303,15 +303,15 @@ catalog of its own.
 
 Settled, and next in this order:
 
-1. **The index build under S.** `cat_create_index` takes X
-   until the build (`SM3_DESIGN.md` §3) exists to take S. Then
-   a reader holding IS sees the index appear mid-transaction,
-   and the index may lack rows its older snapshot still sees,
-   as PostgreSQL's `indcheckxmin` guards against: a reader
-   keeps the definition it locked, or skips an index built
-   after its snapshot. DDL in a prepared transaction is
-   refused, since the overlay would have to outlive its
-   session.
+1. **The index build** (`SM3_DESIGN.md` §3). It is concurrent,
+   so `cat_create_index` keeps its X, held only while it
+   records the index, and an index's record gains a state:
+   building, valid or failed. That is a change to §3's blob.
+   A reader whose snapshot is older than the build is kept off
+   the index, as PostgreSQL's `indcheckxmin` guards against,
+   by the count of publishes each session notes before it
+   takes a snapshot. DDL in a prepared transaction is refused,
+   since the overlay would have to outlive its session.
 2. **Temporary tables.** A temporary table is a temporary store
    (`DESIGN.md` §5, `sm1/SM1_DESIGN.md` §11.3); its definition
    lives only in the session's own temporary catalog, in the

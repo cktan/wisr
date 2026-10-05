@@ -215,7 +215,7 @@ at every isolation level. 1.8 works it through.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:456`-458). The evaluator
+  caller to discard" (`SM3_DESIGN.md:527`-529). The evaluator
   is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.
@@ -801,13 +801,24 @@ writing it, so the prose and the decisions come before code.
    and two races on a unique key at all three, one of them
    lost on the index after the heap write. Each ends with the
    indexes checked against a brute-force scan of the heap.
-5. **The online build under S**, which `CATALOG.md` §7.1 waits
-   on: `cat_create_index` takes X today and takes S once the
-   build exists, with the `indcheckxmin` guard for a reader
-   whose snapshot predates the index, and DDL in a prepared
-   transaction refused.
+5. **The index build**, concurrent, and the only one
+   (`SM3_DESIGN.md` §3). Today `cat_create_index` records an
+   index and fills nothing, so one made on a table with rows
+   is empty and an update of such a row fails. In this order,
+   tests first:
+   1. the protocol in `SM3_DESIGN.md` §3 — **done**;
+   2. the index's state in the catalog, and maintenance that
+      tolerates a missing entry while it is building;
+   3. the batch routine, tested on one thread with
+      `qa_nowait`, a writer racing the backfill among the
+      cases;
+   4. the guard that keeps an older snapshot off the index;
+   5. the queue of builds, its workers, and `cat_index_wait`;
+   6. the C API and `rel`.
    → verify: a writer in flight when the build starts is not
-   missed; a reader holding IS is never blocked.
+   missed; neither a reader nor a writer waits for the build;
+   the index agrees with a brute-force scan of the heap when
+   it becomes valid.
 6. **§5's predicate scans, with the evaluator** (1.3): the API
    shape, the pushdown subset, and the residual filter
    evaluated below the API. Partial and expression indexes

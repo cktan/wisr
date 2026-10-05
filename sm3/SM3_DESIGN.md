@@ -23,7 +23,7 @@ load, DDL, a session's overlay and the schema locks of §2
 (`CATALOG.md`), and §4's object mapping with them: a store
 per table, index prefixes allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
-is built, the C API's one way to write a row; its online build,
+is built, the C API's one way to write a row; its index build,
 §5's predicate scans and §6's statistics are not built. sm2,
 which it is built on, is, but for TOAST
 (`sm2/SM2_DESIGN.md` §8.2).
@@ -341,54 +341,125 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   An insert has no filter and needs none of this. sm1 refuses
   a write repeated without the read, so an executor cannot
   forget it.
-- **Online build on a populated relation**, the protocol
-  `sm1::lock` exists for. The danger: a writer whose snapshot
-  predates the build's commit does not know the index exists,
-  so it changes the base relation and writes no entry.
-  PostgreSQL prevents it with a ShareLock on the table, or with
-  `CREATE INDEX CONCURRENTLY`, which waits out older
-  transactions. Before `sm1::lock` neither could be expressed —
-  locks were exclusive only, so a schema row every writer wrote
-  would serialize them all, and SSI catches it only if every
-  writer is SERIALIZABLE — which made correct behaviour
-  impossible, not merely slow. The protocol:
-  1. every writer takes `sm1::lock` IX on the table's schema
-     row and reads it, so what it maintains is current;
-  2. the builder takes the schema row **S**, which waits out the
-     writers in flight and blocks new ones, while readers, who
-     hold IS, go on;
-  3. the builder scans the base relation — its snapshot is taken
-     after the lock, so it sees every committed row — fills the
-     index, and commits;
-  4. blocked writers then get their IX lock and read the new
-     schema, which commit published before they could read it
-     (`CATALOG.md` §5). The schema row is never written, so
-     their `sm1::lock` does not fail at any level: it is the
-     lock that keeps them out while the build runs, not a
-     conflict check.
-  `sm1/test/test_lock.cc` has its shape end to end, in the
-  shared and exclusive modes that came before Gray's. Its costs:
-  - writers are blocked for the whole build, as by
-    PostgreSQL's plain `CREATE INDEX`; readers are not;
-  - recording the index rewrites the table's catalog entry, so
-    that write must not take the schema lock X, or readers are
-    blocked after all: the lock key and the entry's key are
-    separate (`CATALOG.md` §2);
+- **Building an index on a populated relation.** There is one
+  build and it is concurrent: neither writers nor readers are
+  shut out for longer than a catalog change takes. An index
+  has a state, *building*, *valid* or *failed*, kept in its
+  record (`CATALOG.md` §3). The danger is a writer that does
+  not know the index exists, changes the base relation and
+  writes no entry. PostgreSQL's `CREATE INDEX CONCURRENTLY`
+  meets it by entering the index as not ready and not valid,
+  waiting out older transactions, scanning the table twice and
+  waiting again. Here the schema lock does the waiting and the
+  row lock stands in for the second scan:
+  1. **Create.** `cat_create_index` takes the schema lock X,
+     as every DDL does, and records the index as building. A
+     writer holds that lock IX to the end of its transaction,
+     so when this commits no writer is left that does not know
+     the index, and the next one reads a definition that lists
+     it (`CATALOG.md` §5).
+  2. **Maintain.** From then on every writer maintains the
+     index as it does any other, with one allowance: while the
+     index is building, an entry to remove that is not there
+     is no error, since the backfill may not have reached the
+     row. A row a writer touches is covered from then on.
+  3. **Backfill.** A background task walks the heap in `rowno`
+     order, in batches, each a short READ COMMITTED
+     transaction that holds the schema lock IX. For each row
+     it takes the row's lock shared, reads the row's newest
+     committed version, and adds its entry if it is not there.
+  4. **Validate.** When the walk reaches the end of the heap,
+     the task marks the index valid, a catalog change like any
+     other.
+
+  Step 3 is safe because of the order a writer works in. It
+  changes the heap row before any index and holds that row X
+  to its commit, so the task and a writer never work on one
+  row at once. Either the task waits for the writer and then
+  finds the entry already made, or the writer waits for the
+  task and then finds the entry to remove. No second scan is
+  needed, and no lock stronger than a row's.
+
+  The walk is in `rowno` order, not key order. A B-tree gains
+  from sorted input; RocksDB sorts what it is given when it
+  flushes, the heap is read sequentially by `rowno`, and each
+  row is read again under its lock whatever the order.
+
+  What follows from it:
+  - **A unique index finds some duplicates late.** A duplicate
+    of a row not yet reached is found only when the backfill
+    reaches that row and its entry meets another row's. The
+    build then fails and marks the index failed, as PostgreSQL
+    leaves an invalid index behind. A failed index is not
+    maintained and cannot be scanned; it can only be dropped.
+  - **A reader with an older snapshot is kept off the index.**
+    Entries are versioned as rows are, so a snapshot older
+    than the last batch sees the index partly filled.
+    PostgreSQL waits such transactions out. Here the catalog
+    counts its publishes; a session notes the count before it
+    takes a snapshot, at `begin` and at each statement of a
+    READ COMMITTED transaction; and it may scan an index only
+    if the index became valid at or before that count. An
+    index made valid in its own transaction it may scan at
+    once. Writers maintain an index whatever their snapshot.
+  - **A table made in the same transaction** is seen by no one
+    else, so `cat_create_index` runs the backfill itself, over
+    the rows the transaction has written, and records the
+    index valid at once. It is the same routine, called from a
+    second place, not a second build.
+  - **Waiting.** `cat_index_wait` blocks until the index is
+    valid, and fails if the build failed. It waits on the
+    index's state, not on a thread, so any session may wait,
+    for a build another session or an earlier run of the
+    process began. It is called outside a transaction, so that
+    the caller's next snapshot is new enough to scan the
+    index.
+  - **Restart.** A build unfinished at a restart starts again
+    from the first row. Adding only what is absent makes that
+    safe, and no progress is kept on disk.
+  - **The task is a queue and a few workers.** The catalog
+    keeps a queue of builds and runs at most N of them at
+    once, N an option that defaults to 4. A worker is a thread
+    with a session of its own, from whoever opened the
+    catalog. It is started when a build is queued and fewer
+    than N are running, and it exits when it finds the queue
+    empty, so a database with nothing to build holds no
+    thread. Opening a catalog queues every index still marked
+    building, which is how a build survives a restart. One
+    routine does a batch, and tests call it directly. A thread
+    per build was the alternative: less code, but a restore
+    that creates hundreds of indexes would start hundreds of
+    threads, and nothing would restart a build after a crash.
+
+  Its costs:
+  - a writer above READ COMMITTED that updates a row
+    backfilled after its snapshot gets `SM_ERR_CONFLICT` from
+    the index entry, though the heap row had not changed, and
+    retries;
+  - uniqueness is not enforced against a row the backfill has
+    not reached, so a build can fail late, over a row
+    committed while it ran;
+  - the state is in the index's record, which changes the
+    catalog's format;
+  - four workers are not four times the speed: builds contend
+    on sm1's lock table, one mutex, and on RocksDB's write
+    path, and the default is unmeasured;
+  - two indexes built on one table walk its heap twice, where
+    one pass could fill both;
   - the schema row is a hot key: every reader and writer of the
     table locks it, so its lock-table mutex is contended. The
     table is one mutex, not sharded, so this is the first place
     a benchmark will point.
 
-  The alternative was a primitive that waits for every
-  transaction begun before now, with a CIC-style multi-phase
-  build here. It needs no shared locks, but it admits stale
-  entries when a writer's `sm1::erase` of an entry not yet
-  built gets `NOTFOUND`: harmless for a non-unique index whose
-  readers recheck the base row, false duplicates for a unique
-  one. `sm1::lock` won because it also gives lock-without-write
-  — `SELECT … FOR UPDATE` through an index had to write a dummy
-  version to lock the base row. The alternative waits until
-  blocking builds hurt.
+  The alternative was the build this section first described:
+  the builder takes the schema lock S for the whole build,
+  which shuts writers out and lets readers on, as PostgreSQL's
+  plain `CREATE INDEX` does, and fills the index in one
+  transaction. It is simpler, but it would have been a second
+  build to keep beside this one, and its one transaction
+  holds a lock and an undo entry in memory for every row
+  (`sm1/SM1_DESIGN.md` §13). `sm1::lock` is used all the same:
+  the schema lock, and the shared row lock of step 3.
 - **Partial and expression indexes wait for an evaluator.**
   Maintaining one means evaluating the index's own predicate
   or expression against a row image. That is sm3's to do, and
