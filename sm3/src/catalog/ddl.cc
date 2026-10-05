@@ -424,8 +424,10 @@ int cat_drop_column(session_t *session, uint64_t oid, std::string_view name) {
                          "drop column: no column " + std::string(name));
     }
     for (const index_rec_t &x : rec.indexes) {
-      bool used = std::find(x.includes.begin(), x.includes.end(), at) !=
-                  x.includes.end();
+      bool used =
+          std::find(x.includes.begin(), x.includes.end(), at) !=
+              x.includes.end() ||
+          std::find(x.reads.begin(), x.reads.end(), at) != x.reads.end();
       for (const index_key_rec_t &k : x.keys) {
         used |= k.attnum == at;
       }
@@ -446,14 +448,31 @@ int cat_drop_column(session_t *session, uint64_t oid, std::string_view name) {
   });
 }
 
-/* Create an index; see sm3.h. */
+/* Create a plain index; see sm3.h. */
 int cat_create_index(session_t *session, uint64_t table, std::string_view name,
                      std::span<const index_key_spec_t> keys,
                      std::span<const int32_t> includes, bool unique,
                      uint64_t &oid) {
+  return cat_create_index(session, table, name, keys, includes, unique, {}, {},
+                          oid);
+}
+
+/* Create an index, plain, partial or of expressions; see sm3.h. */
+int cat_create_index(session_t *session, uint64_t table, std::string_view name,
+                     std::span<const index_key_spec_t> keys,
+                     std::span<const int32_t> includes, bool unique,
+                     std::string_view eval, std::span<const int32_t> reads,
+                     uint64_t &oid) {
   return catch_nomem([&] {
     if (name.empty() || keys.empty()) {
       return invalid("create index: no name, or no key column");
+    }
+    // A blob is what makes an index one the host evaluates.
+    if (eval.empty() && !reads.empty()) {
+      return invalid("create index: columns read, and nothing to evaluate");
+    }
+    if (!eval.empty() && !session->cat->eval) {
+      return invalid("create index: the catalog has no evaluator");
     }
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
@@ -467,12 +486,27 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     x.prefix = rec.next_prefix;
     x.unique = unique;
     x.state = index_state_t::building;
+    x.eval = std::string(eval);
+    for (int32_t a : reads) {
+      if (!live_attnum(rec, a)) {
+        return invalid("create index: it reads no live column");
+      }
+      x.reads.push_back(a);
+    }
     for (const index_key_spec_t &k : keys) {
-      if (!live_attnum(rec, k.attnum)) {
+      bool expr = k.attnum == -1;
+      if (expr) {
+        // An expression gives its own type, and needs the blob.
+        const sm2::type_t *type = sm2::type_by_code(k.type_code);
+        if (eval.empty() || !type || sm2::datum_width(type, k.typmod) == 0) {
+          return invalid("create index: an expression with nothing to "
+                         "evaluate, or of no type sm2 has");
+        }
+      } else if (!live_attnum(rec, k.attnum)) {
         return invalid("create index: a key names no live column");
       }
       if (k.collation) {
-        uint8_t code = rec.columns[k.attnum].type_code;
+        uint8_t code = expr ? k.type_code : rec.columns[k.attnum].type_code;
         if (code != sm2::type_text.code && code != sm2::type_varchar.code) {
           return invalid("create index: a collation on a column not text");
         }
@@ -481,7 +515,8 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
           return -1;
         }
       }
-      x.keys.push_back({k.attnum, k.desc, k.nulls_first, k.collation});
+      x.keys.push_back({k.attnum, k.desc, k.nulls_first, k.collation,
+                        expr ? k.type_code : uint8_t{0}, expr ? k.typmod : -1});
     }
     for (int32_t a : includes) {
       if (!live_attnum(rec, a)) {

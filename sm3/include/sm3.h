@@ -37,12 +37,18 @@ struct column_spec_t {
     bool        not_null;
 };
 
-/* A key column, as an index is declared with it. */
+/*
+ * A key column, as an index is declared with it: a column of the
+ * table, or with attnum -1 an expression, which has no column
+ * behind it and so gives its own type and typmod.
+ */
 struct index_key_spec_t {
-    int32_t                 attnum;      /* the column's 0-based place */
+    int32_t                 attnum;      /* 0-based place; -1: expression */
     bool                    desc;
     bool                    nulls_first;
     std::optional<uint64_t> collation;   /* text, varchar only */
+    uint8_t                 type_code = 0;  /* an expression's (TYPE.md §3) */
+    int32_t                 typmod = -1;    /* an expression's */
 };
 
 /* A column of a loaded table. */
@@ -70,7 +76,7 @@ struct index_def_t {
     std::string                       name;
     uint16_t                          prefix;
     bool                              unique;
-    std::vector<int32_t>              key_attnums;     /* 0-based */
+    std::vector<int32_t>              key_attnums;     /* 0-based; -1: expr */
     std::vector<int32_t>              include_attnums; /* 0-based */
     std::vector<sm2::key_column_t>    key;             /* for sm2 */
     std::vector<sm2::attribute_t>     include;         /* for sm2 */
@@ -78,6 +84,14 @@ struct index_def_t {
     /* Why its build failed, as the build met it; SM_OK unless failed. */
     sm1::errnum_t                     error = sm1::SM_OK;
     std::string                       reason;
+    /*
+     * A partial or an expression index (SM3_DESIGN.md §3): eval is
+     * its predicate and its expressions as the host serialized
+     * them, bytes sm3 does not read, empty for a plain index; reads
+     * is the columns they read, 0-based.
+     */
+    std::string                       eval;
+    std::vector<int32_t>              reads;
 };
 
 /*
@@ -283,6 +297,52 @@ int cat_create_index(session_t* session, uint64_t table,
                      std::span<const index_key_spec_t> keys,
                      std::span<const int32_t> includes, bool unique,
                      uint64_t& oid);
+
+/*
+ * As cat_create_index, for a partial or an expression index
+ * (SM3_DESIGN.md §3). eval is its predicate and its expressions,
+ * serialized as the host likes: sm3 keeps the bytes and hands them
+ * to the catalog's evaluator, which decides whether a row belongs
+ * in the index and computes each key column that is an expression,
+ * one with attnum -1. reads lists the columns the predicate and
+ * the expressions read, so an update that changes none of them can
+ * leave the index alone. An empty eval is a plain index, which
+ * then may have neither. Fails with SM_ERR_INVALID if the catalog
+ * has no evaluator.
+ */
+int cat_create_index(session_t* session, uint64_t table,
+                     std::string_view name,
+                     std::span<const index_key_spec_t> keys,
+                     std::span<const int32_t> includes, bool unique,
+                     std::string_view eval, std::span<const int32_t> reads,
+                     uint64_t& oid);
+
+/*
+ * The host's evaluator of partial and expression indexes
+ * (SM3_DESIGN.md §3). Given a table, one of its indexes that has
+ * an eval, and a row image as a tuple under the table's schema,
+ * it sets belongs to whether the row is in the index, and for each
+ * key column that is an expression, in key order, sets the value
+ * in values to the value's bytes as sm2::datum_bytes gives them --
+ * a varlena for a variable-width type -- or its flag in isnull.
+ * values and isnull come sized to the count of expression columns.
+ * It returns 0, or -1 with the error set (sm1::seterr).
+ *
+ * It must not throw nor longjmp out; it must give the same answer
+ * for the same row image every time; it may be called from any
+ * thread, the build's workers among them; and it must not call the
+ * storage manager on the session that is writing.
+ */
+using index_eval_fn = std::function<int(
+    const table_def_t& table, const index_def_t& index,
+    std::string_view tuple, bool& belongs, std::vector<std::string>& values,
+    std::span<bool> isnull)>;
+
+/*
+ * Give the catalog its evaluator: once, before any session uses
+ * the catalog and before its builder is started.
+ */
+int cat_set_evaluator(catalog_t* cat, index_eval_fn eval);
 
 /*
  * Drop the index oid of the table: its name, its place in the

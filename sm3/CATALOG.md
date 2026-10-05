@@ -100,7 +100,7 @@ schema sm3 fixes for it, preceded by its length as a varint
 (`src/catalog/blob.cc`):
 
 ```
-table blob = table | column × natts | (index | key × nkey | include × ninclude) × nindex
+table blob = table | column × natts | (index | key × nkey | include × ninclude | read × nread) × nindex
 ```
 
 | Part | Fields |
@@ -109,9 +109,10 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index prefix `int2`, natts `int4`, nindex `int4` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null |
-| index | oid `int8`, name `text`, prefix `int2`, unique `bool`, nkey `int4`, ninclude `int4`, state `int2`, error `int2` or null, reason `text` or null |
-| key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null |
+| index | oid `int8`, name `text`, prefix `int2`, unique `bool`, nkey `int4`, ninclude `int4`, state `int2`, error `int2` or null, reason `text` or null, eval `bytea` or null, nread `int4` or null |
+| key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
 | include | attnum `int4` |
+| read | attnum `int4` |
 | namespace | name `text` |
 | collation | name `text`, locale `text`, deterministic `bool`, ICU version `text` |
 
@@ -123,6 +124,13 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
 - **An index's state** is 0 building, 1 valid or 2 failed
   (`SM3_DESIGN.md` §3). It was appended to the index part, so
   an index written before it has none, and reads as valid.
+- **A partial or an expression index keeps a blob.** Its eval
+  is its predicate and its expressions as the host serialized
+  them, bytes sm3 does not read, and its read parts are the
+  columns they read (`SM3_DESIGN.md` §3). A plain index has
+  neither. A key that is an expression has attnum -1 and gives
+  its own type code and typmod, which a column's key leaves
+  null.
 - **A failed index keeps why.** Its error is the code its build
   failed with and its reason that error's message, both null
   in any other state.
@@ -259,6 +267,10 @@ as sm1 does (`DESIGN.md` §5).
   transaction made, which no other can see, it runs the build
   itself, over the rows the transaction has written, and
   records the index valid.
+- **`cat_create_index(…, eval, reads, oid)`** is the same for
+  a partial or an expression index: `eval` its blob, `reads`
+  the columns it reads. It needs the catalog to have an
+  evaluator, **`cat_set_evaluator(cat, eval)`**, given once.
 - **`cat_set_index_state(session, table, oid, state, error,
   reason)`** rewrites an index's state, as the build does when
   it ends, with the error and its message for a failed one.

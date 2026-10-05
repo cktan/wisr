@@ -362,3 +362,124 @@ TEST_CASE("an index's state is recorded, and survives a restart") {
   CHECK(d->indexes[0].error == sm1::SM_OK);
   CHECK(d->indexes[0].reason.empty());
 }
+
+namespace {
+
+/* An evaluator that answers nothing: for a test that only records. */
+int no_eval(const sm3::table_def_t &, const sm3::index_def_t &,
+            std::string_view, bool &belongs, std::vector<std::string> &,
+            std::span<bool>) {
+  belongs = true;
+  return 0;
+}
+
+} // namespace
+
+TEST_CASE("an evaluated index keeps its blob, its columns and its types") {
+  // Verify what the catalog records for a partial or expression
+  // index (SM3_DESIGN.md §3).
+  // 1. On t (a int4, b text), committed, create an index keyed by an
+  //    expression of type text, descending, then by column a, with a
+  //    blob that holds a NUL byte, reading columns b and a.
+  // 2. A partial index over a plain column is recorded the same way,
+  //    with no expression column.
+  // 3. After a restart: each index's blob byte for byte, the columns
+  //    it reads, -1 for the expression's place, and the key built
+  //    for sm2 with the expression's own type.
+  // 4. A plain index has an empty blob and reads nothing.
+  cat_db_t db;
+  REQUIRE(sm3::cat_set_evaluator(db.cat, no_eval) == 0);
+  db.begin();
+  uint64_t t = make_t(db);
+  db.commit();
+
+  std::string blob("lower(b)\0a > 0", 14);
+  std::vector<sm3::index_key_spec_t> expr_then_a = {
+      {-1, true, false, std::nullopt, sm2::type_text.code, -1},
+      {0, false, false, std::nullopt}};
+  std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
+  std::vector<int32_t> reads = {1, 0}, reads_b = {1};
+  uint64_t expr = 0, partial = 0, plain = 0;
+  db.begin();
+  REQUIRE_MESSAGE(sm3::cat_create_index(db.ss, t, "t_expr", expr_then_a, {},
+                                        false, blob, reads, expr) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::cat_create_index(db.ss, t, "t_partial", on_a, {}, true,
+                                "b is not null", reads_b, partial) == 0);
+  REQUIRE(sm3::cat_create_index(db.ss, t, "t_plain", on_a, {}, false, plain) ==
+          0);
+  db.commit();
+
+  auto d = sm3::cat_table(db.reload(), t);
+  REQUIRE(d != nullptr);
+  REQUIRE(d->indexes.size() == 3);
+  const sm3::index_def_t &x = d->indexes[0];
+  CHECK(x.eval == blob);
+  CHECK(x.reads == reads);
+  CHECK(x.key_attnums == std::vector<int32_t>{-1, 0});
+  REQUIRE(x.key.size() == 2);
+  CHECK(x.key[0].type == &sm2::type_text);
+  CHECK(x.key[0].typmod == -1);
+  CHECK(x.key[0].desc);
+  CHECK(x.key[1].type == &sm2::type_int4);
+  const sm3::index_def_t &p = d->indexes[1];
+  CHECK(p.eval == "b is not null");
+  CHECK(p.reads == reads_b);
+  CHECK(p.key_attnums == std::vector<int32_t>{0});
+  CHECK(p.unique);
+  CHECK(d->indexes[2].eval.empty());
+  CHECK(d->indexes[2].reads.empty());
+}
+
+TEST_CASE("the catalog refuses an evaluated index it cannot keep") {
+  // Verify cat_create_index's errors for partial and expression
+  // indexes; each is SM_ERR_INVALID.
+  // 1. With no evaluator given to the catalog, any index with a blob.
+  // 2. An expression key column, or columns read, with no blob.
+  // 3. An expression of a type sm2 does not have, and a collation on
+  //    an expression that is not text.
+  // 4. A column read that is not a live column of the table.
+  // 5. A column an index reads cannot be dropped.
+  // 6. Giving the catalog a second evaluator, or an empty one.
+  cat_db_t db;
+  db.begin();
+  uint64_t t = make_t(db), ci = 0, ix = 0;
+  REQUIRE(sm3::cat_create_collation(db.ss, sm3::nsp_public, "ci",
+                                    "und-u-ks-level2", false, ci) == 0);
+  db.commit();
+  std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
+  std::vector<sm3::index_key_spec_t> expr = {
+      {-1, false, false, std::nullopt, sm2::type_text.code, -1}};
+  std::vector<sm3::index_key_spec_t> expr_no_type = {
+      {-1, false, false, std::nullopt, 200, -1}};
+  std::vector<sm3::index_key_spec_t> int_expr_coll = {
+      {-1, false, false, ci, sm2::type_int4.code, -1}};
+  std::vector<int32_t> reads_b = {1}, reads_far = {7};
+  auto refused = [&](std::span<const sm3::index_key_spec_t> keys,
+                     std::string_view blob, std::span<const int32_t> reads) {
+    int rc =
+        sm3::cat_create_index(db.ss, t, "x", keys, {}, false, blob, reads, ix);
+    return rc == -1 && sm1::errnum() == sm1::SM_ERR_INVALID;
+  };
+
+  db.begin();
+  CHECK(refused(on_a, "a > 0", {}));
+  CHECK(sm3::cat_set_evaluator(db.cat, nullptr) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::cat_set_evaluator(db.cat, no_eval) == 0);
+  CHECK(sm3::cat_set_evaluator(db.cat, no_eval) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+
+  CHECK(refused(expr, "", {}));
+  CHECK(refused(on_a, "", reads_b));
+  CHECK(refused(expr_no_type, "f(b)", reads_b));
+  CHECK(refused(int_expr_coll, "f(b)", reads_b));
+  CHECK(refused(on_a, "c > 0", reads_far));
+
+  REQUIRE_MESSAGE(sm3::cat_create_index(db.ss, t, "t_partial", on_a, {}, false,
+                                        "b is not null", reads_b, ix) == 0,
+                  sm1::errmsg());
+  CHECK(sm3::cat_drop_column(db.ss, t, "b") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  db.commit();
+}

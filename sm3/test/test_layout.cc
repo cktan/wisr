@@ -41,6 +41,8 @@ sm3::table_rec_t sample_table() {
        {},
        sm3::index_state_t::valid,
        sm1::SM_OK,
+       {},
+       {},
        {}},
       {1101,
        "orders_note",
@@ -50,6 +52,8 @@ sm3::table_rec_t sample_table() {
        {3},
        sm3::index_state_t::valid,
        sm1::SM_OK,
+       {},
+       {},
        {}},
   };
   return t;

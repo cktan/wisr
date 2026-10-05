@@ -69,6 +69,9 @@ struct sm3::catalog_t {
 
   builder_t builder;
 
+  /* The host's evaluator of partial and expression indexes; set once. */
+  index_eval_fn eval;
+
   /* Close every collation the catalog holds. */
   ~catalog_t() {
     for (auto &[oid, c] : collations) {

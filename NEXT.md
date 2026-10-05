@@ -43,6 +43,8 @@ In this order, tests first:
    columns it reads, and each expression key column's type,
    typmod and collation; `cat_create_index` takes them.
    → verify: they load back after a restart.
+   **Done**, with `cat_set_evaluator`. Until 3, a table with
+   such an index refuses every write and every build.
 3. **Maintenance and the build** call the evaluator: on
    insert, on the old and the new image of an update and a
    delete, and in each batch of a build.

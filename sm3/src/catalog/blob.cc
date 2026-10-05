@@ -152,6 +152,12 @@ public:
     }
     return i2(i);
   }
+  std::optional<int32_t> opt_i4(size_t i) {
+    if (m_row.isnull[i]) {
+      return std::nullopt;
+    }
+    return i4(i);
+  }
 
   /* False once a required attribute was found null. */
   bool ok = true;
@@ -185,9 +191,10 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       /* index */
       {att(type_int8), att(type_text), att(type_int2), att(type_bool),
        att(type_int4), att(type_int4), att(type_int2), att(type_int2),
-       att(type_text)},
+       att(type_text), att(type_bytea), att(type_int4)},
       /* index_key */
-      {att(type_int4), att(type_bool), att(type_bool), att(type_int8)},
+      {att(type_int4), att(type_bool), att(type_bool), att(type_int8),
+       att(type_int2), att(type_int4)},
       /* include */ {att(type_int4)},
       /* nspace */ {att(type_text)},
       /* collation */
@@ -324,7 +331,7 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
       }
     }
     for (const index_rec_t &x : rec.indexes) {
-      writer_t w(9);
+      writer_t w(11);
       w.i8(0, x.oid);
       w.bytes(1, x.name);
       w.i2(2, static_cast<int16_t>(x.prefix));
@@ -337,15 +344,26 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
         w.i2(7, static_cast<int16_t>(x.error));
         w.bytes(8, x.reason);
       }
+      // Only a partial or an expression index has a blob, and
+      // columns it reads, which follow its INCLUDE parts.
+      if (!x.eval.empty()) {
+        w.bytes(9, x.eval);
+        w.i4(10, static_cast<int32_t>(x.reads.size()));
+      }
       if (w.append(part_desc(part_t::index), blob) != 0) {
         return -1;
       }
       for (const index_key_rec_t &k : x.keys) {
-        writer_t kw(4);
+        writer_t kw(6);
         kw.i4(0, k.attnum);
         kw.b(1, k.desc);
         kw.b(2, k.nulls_first);
         kw.opt_i8(3, k.collation);
+        // An expression has no column to take its type from.
+        if (k.attnum < 0) {
+          kw.i2(4, static_cast<int16_t>(k.type_code));
+          kw.i4(5, k.typmod);
+        }
         if (kw.append(part_desc(part_t::index_key), blob) != 0) {
           return -1;
         }
@@ -354,6 +372,14 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
         writer_t iw(1);
         iw.i4(0, attnum);
         if (iw.append(part_desc(part_t::include), blob) != 0) {
+          return -1;
+        }
+      }
+      // A column read is laid out as an INCLUDE column is.
+      for (int32_t attnum : x.reads) {
+        writer_t rw(1);
+        rw.i4(0, attnum);
+        if (rw.append(part_desc(part_t::include), blob) != 0) {
           return -1;
         }
       }
@@ -422,12 +448,19 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
       x.state = static_cast<index_state_t>(state);
       x.error = static_cast<sm1::errnum_t>(r.opt_i2(7).value_or(sm1::SM_OK));
       x.reason = r.opt_bytes(8).value_or("");
+      x.eval = r.opt_bytes(9).value_or("");
+      int32_t nread = r.opt_i4(10).value_or(0);
+      if (nread < 0) {
+        return corrupt("an index part cut short");
+      }
       for (int32_t k = 0; k < nkey; k++) {
         reader_t kr;
         if (kr.read(blob, pos, part_t::index_key) != 0) {
           return -1;
         }
-        x.keys.push_back({kr.i4(0), kr.b(1), kr.b(2), kr.opt_i8(3)});
+        x.keys.push_back({kr.i4(0), kr.b(1), kr.b(2), kr.opt_i8(3),
+                          static_cast<uint8_t>(kr.opt_i2(4).value_or(0)),
+                          kr.opt_i4(5).value_or(-1)});
         if (!kr.ok) {
           return corrupt("an index key part cut short");
         }
@@ -440,6 +473,16 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
         x.includes.push_back(ir.i4(0));
         if (!ir.ok) {
           return corrupt("an include part cut short");
+        }
+      }
+      for (int32_t k = 0; k < nread; k++) {
+        reader_t rr;
+        if (rr.read(blob, pos, part_t::include) != 0) {
+          return -1;
+        }
+        x.reads.push_back(rr.i4(0));
+        if (!rr.ok) {
+          return corrupt("a column an index reads cut short");
         }
       }
       rec.indexes.push_back(std::move(x));

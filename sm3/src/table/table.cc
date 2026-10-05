@@ -117,6 +117,23 @@ int unchanged(const sm3::table_def_t &def, const sm3::index_def_t &x,
   return 1;
 }
 
+/*
+ * Fail if t has an index the host evaluates: maintaining one, and
+ * building one, are not built yet (SM3_DESIGN.md §3), and a write
+ * that kept such an index wrong would be worse than none.
+ */
+int need_no_evaluated(const sm3::table_t *t) {
+  for (const sm3::index_def_t &x : t->def->indexes) {
+    if (!x.eval.empty() && x.state != sm3::index_state_t::failed) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "table: index " + x.name +
+                             " is partial or of expressions, which are not "
+                             "maintained yet");
+    }
+  }
+  return 0;
+}
+
 /* Whether writes maintain index i of t: all but one whose build failed. */
 bool maintained(const sm3::table_t *t, size_t i) {
   return t->def->indexes[i].state != sm3::index_state_t::failed;
@@ -210,7 +227,7 @@ bool tbl_index_usable(const table_t *table, uint64_t index) {
 int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, uint64_t &rowno) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0) {
+    if (need_writable(table) != 0 || need_no_evaluated(table) != 0) {
       return -1;
     }
     uint64_t r = 0;
@@ -233,7 +250,7 @@ int tbl_update(table_t *table, uint64_t rowno,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, std::string *old) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0) {
+    if (need_writable(table) != 0 || need_no_evaluated(table) != 0) {
       return -1;
     }
     std::string_view image;
@@ -277,7 +294,7 @@ int tbl_update(table_t *table, uint64_t rowno,
 /* Delete the row, then its entry in every index; see sm3.h. */
 int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0) {
+    if (need_writable(table) != 0 || need_no_evaluated(table) != 0) {
       return -1;
     }
     std::string_view image;
@@ -346,7 +363,7 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
 int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
                        size_t max_rows, uint64_t &next, bool &done) {
   return catch_nomem([&] {
-    if (need_writable(table) != 0) {
+    if (need_writable(table) != 0 || need_no_evaluated(table) != 0) {
       return -1;
     }
     const table_def_t &def = *table->def;

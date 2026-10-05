@@ -1783,3 +1783,40 @@ TEST_CASE("writers go on while an index is built, and it still agrees") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE("an evaluated index is not maintained yet, so writes are refused") {
+  // Verify the stopgap until maintenance calls the evaluator: a
+  // table with a partial or an expression index refuses every
+  // write and every build with SM_ERR_INVALID, rather than keep the
+  // index wrong.
+  // 1. A partial index is recorded on jobs, which is committed.
+  // 2. An insert and a batch of its build are both refused.
+  jobs_t f;
+  REQUIRE(sm3::cat_set_evaluator(
+              f.cat, [](const sm3::table_def_t &, const sm3::index_def_t &,
+                        std::string_view, bool &belongs,
+                        std::vector<std::string> &, std::span<bool>) {
+                belongs = true;
+                return 0;
+              }) == 0);
+  std::vector<sm3::index_key_spec_t> by_owner = {
+      {2, false, false, std::nullopt}};
+  std::vector<int32_t> reads = {1};
+  uint64_t partial = 0;
+  start(f.a);
+  REQUIRE(sm3::cat_create_index(f.a, f.jobs, "jobs_free", by_owner, {}, false,
+                                "state = 'free'", reads, partial) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  row_t r(1, "free", "a");
+  uint64_t rowno, next;
+  bool done;
+  CHECK(sm3::tbl_insert(t, r.d(), r.null(), rowno) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::tbl_index_backfill(t, partial, 0, 10, next, done) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(f.a) == 0);
+}

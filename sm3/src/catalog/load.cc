@@ -85,17 +85,41 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
     return corrupt("a column of " + rec.name + " sm2 cannot lay out");
   }
   for (const sm3::index_rec_t &x : rec.indexes) {
-    sm3::index_def_t d{x.oid, x.name, x.prefix, x.unique, {},      {},
-                       {},    {},     x.state,  x.error,  x.reason};
+    sm3::index_def_t d;
+    d.oid = x.oid;
+    d.name = x.name;
+    d.prefix = x.prefix;
+    d.unique = x.unique;
+    d.state = x.state;
+    d.error = x.error;
+    d.reason = x.reason;
+    d.eval = x.eval;
     for (const sm3::index_key_rec_t &k : x.keys) {
       const sm2::collation_t *coll;
-      if (k.attnum < 0 || static_cast<size_t>(k.attnum) >= t->columns.size() ||
+      if (k.attnum < -1 ||
+          static_cast<int64_t>(k.attnum) >=
+              static_cast<int64_t>(t->columns.size()) ||
           !collation_of(lookup, k.collation, coll)) {
         return corrupt("index " + x.name + " names an unknown column");
       }
-      const sm3::column_def_t &col = t->columns[k.attnum];
       d.key_attnums.push_back(k.attnum);
+      // An expression gives its own type; a column gives its column's.
+      if (k.attnum < 0) {
+        const sm2::type_t *type = sm2::type_by_code(k.type_code);
+        if (!type) {
+          return corrupt("index " + x.name + " has an expression of no type");
+        }
+        d.key.push_back({type, k.typmod, coll, k.desc, k.nulls_first});
+        continue;
+      }
+      const sm3::column_def_t &col = t->columns[k.attnum];
       d.key.push_back({col.type, col.typmod, coll, k.desc, k.nulls_first});
+    }
+    for (int32_t a : x.reads) {
+      if (a < 0 || static_cast<size_t>(a) >= t->columns.size()) {
+        return corrupt("index " + x.name + " reads an unknown column");
+      }
+      d.reads.push_back(a);
     }
     for (int32_t a : x.includes) {
       if (a < 0 || static_cast<size_t>(a) >= t->columns.size()) {
@@ -207,6 +231,16 @@ int cat_open(sm1::session_t *session, catalog_t *&out) {
     out = cat.release();
     return 0;
   });
+}
+
+/* Give the catalog its evaluator; see sm3.h. */
+int cat_set_evaluator(catalog_t *cat, index_eval_fn eval) {
+  if (!cat || !eval || cat->eval) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "evaluator: no catalog, none given, or one set already");
+  }
+  cat->eval = std::move(eval);
+  return 0;
 }
 
 /* Close a catalog; nullptr is a no-op. */

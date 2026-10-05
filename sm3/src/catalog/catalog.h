@@ -96,6 +96,8 @@ struct index_key_rec_t {
   bool desc;
   bool nulls_first;
   std::optional<uint64_t> collation;
+  uint8_t type_code = 0; /* an expression's, attnum -1 (TYPE.md §3) */
+  int32_t typmod = -1;   /* an expression's */
 };
 
 /* An index, as its table's blob holds it. */
@@ -109,6 +111,8 @@ struct index_rec_t {
   index_state_t state = index_state_t::valid;
   sm1::errnum_t error = sm1::SM_OK; /* why its build failed */
   std::string reason;               /* that error's message */
+  std::string eval;                 /* the host's blob; empty: plain */
+  std::vector<int32_t> reads;       /* the columns it reads, 0-based */
 };
 
 /* A table, its columns and its indexes: one blob. */
