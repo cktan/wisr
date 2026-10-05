@@ -215,7 +215,7 @@ at every isolation level. 1.8 works it through.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:434`-436). The evaluator
+  caller to discard" (`SM3_DESIGN.md:430`-432). The evaluator
   is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.
@@ -247,10 +247,10 @@ with collation, conjunctions, and `IS [NOT] NULL`, no `OR` and
 no functions — because UDFs, joins and volatile functions
 cannot descend at all.
 
-Unchanged either way: the cut-key unique check (§2), the
-online build under the schema lock (§4 below, step 5) and the
-invariant that the index and the heap never disagree are all
-sm3's.
+Unchanged either way: the rules of a unique index's key (§2),
+the online build under the schema lock (§4 below, step 5) and
+the invariant that the index and the heap never disagree are
+all sm3's.
 
 **The consequence for order:** §5's API shape is not a
 precondition of index maintenance, so it stays where
@@ -605,8 +605,16 @@ Two caveats:
 
 ## 2. The missing primitive, and how much it is really needed
 
-`SM3_DESIGN.md:251` flags it: **"Open: nothing reads a range
-at its newest version."** The chain that leads there:
+**Settled (§4's step 2, done).** Both recommendations below
+were taken, and the line numbers this section cited are gone
+with the text they pointed at. `SM3_DESIGN.md` §3 now says one
+thing about NULL keys, an over-long key in a unique index is
+refused whether or not a key column is NULL, and §7 records
+the trade-off. The primitive is unbuilt. What follows is the
+argument as it was made.
+
+`SM3_DESIGN.md` §3 flagged it: **"Open: nothing reads a range
+at its newest version."** The chain that led there:
 
 1. A unique index is keyed `encode(sk)` with no `rowno`
    suffix, so the KV key is the uniqueness unit, and sm1's
@@ -633,11 +641,11 @@ Nothing in the stack reads a *range* that way:
 
 ### 2.1 Settle a contradiction first — it sets the urgency
 
-`SM3_DESIGN.md:244`-247 says two kinds of entry "still need
-the existence check": one with a NULL key column, and one
-whose key was cut. `SM3_DESIGN.md:258`-261 then says an entry
-with a NULL key column "skips the uniqueness check, as SQL
-requires by default". Both cannot hold.
+`SM3_DESIGN.md` §3 said two kinds of entry "still need the
+existence check": one with a NULL key column, and one whose
+key was cut. Its next bullet then said an entry with a NULL
+key column "skips the uniqueness check, as SQL requires by
+default". Both could not hold.
 
 **The second is right.** SQL's default is that NULLs are
 distinct, `NULLS NOT DISTINCT` is refused in v1, and a
@@ -659,8 +667,8 @@ It stops being a precondition for step 3 at all.
   (`sm1/include/sm1.h:541`-543), and a range has no single key
   to lock, so the primitive needs a rule of its own — an X
   lock on the cut key's prefix, or a lock per key visited.
-- **Reshape the check**, which `SM3_DESIGN.md:256` already
-  leaves room for. The cheapest shape: refuse an over-long key
+- **Reshape the check**, which `SM3_DESIGN.md` §3 already
+  left room for. The cheapest shape: refuse an over-long key
   in a unique index in v1, and the path disappears until
   someone needs it. PostgreSQL itself refuses an over-long
   B-tree index row rather than cutting it, so this is not a
@@ -720,6 +728,9 @@ writing it, so the prose and the decisions come before code.
 2. **Settle the NULL/cut contradiction** (§2.1) and record the
    over-long-key decision in `SM3_DESIGN.md` §7.
    → verify: §3 says one thing about NULL keys, not two.
+   **Done.** An over-long key in a unique index is refused,
+   with or without a NULL column, in `SM3_DESIGN.md` §3 and
+   §7, `sm2/SM2_DESIGN.md` §3.2 and §5, and `DESIGN.md` §5.
 3. **sm3's scenario driver** (§3 above), with one scenario
    passing: two sessions, DDL against DML, over the catalog
    that is already built.
@@ -729,9 +740,13 @@ writing it, so the prose and the decisions come before code.
    `include/sm.h` lacks, and the heap-level writes it retires
    (1.9). Then insert, update and delete, the old
    image copied before the next call on the session
-   (`SM3_DESIGN.md:283`-287), and the index fix-up from the
+   (`SM3_DESIGN.md:279`-283), and the index fix-up from the
    newest old image after `SM_ERR_UPDATED`, with no predicate
-   of sm3's own.
+   of sm3's own. sm2's code is owed a change here too: its
+   index `rel` still cuts an over-long key in a unique index
+   and keeps the `rowno` suffix (`sm2/include/sm2.h`, the
+   comments on the index `rel` and `idx_insert`), where the
+   design now refuses it with `SM_ERR_KEYTOOLONG`.
    → verify: scenarios at every isolation level in which the
    index and a brute-force scan of the heap agree, the
    claim-once shape of 1.1 among them.

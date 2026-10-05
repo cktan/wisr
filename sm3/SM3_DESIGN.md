@@ -12,7 +12,7 @@ decisions in `SM3_OBJECTIVE.md`:
 | Decision | Choice |
 | --- | --- |
 | Catalog | in memory, written through to sm2, lock-based DDL |
-| Index entry | `encode(index columns) ‖ rowno` → a tuple of the `rowno`, a cut flag and the INCLUDE columns; a unique index's key drops the `rowno` suffix unless a key column is NULL or the key was cut |
+| Index entry | `encode(index columns) ‖ rowno` → a tuple of the `rowno`, a cut flag and the INCLUDE columns; a unique index's key drops the `rowno` suffix unless a key column is NULL, and is never cut |
 | Encoder | sm2's, called with the same per-column arguments |
 | Relation mapping | one sm1 store per table, holding its rows, indexes and TOAST data, told apart by sm2's 2-byte object prefix |
 | API shape | open: batch-oriented (sets of rows, filters pushed down) was forced by an IPC boundary, which the threaded fork removes (§1) |
@@ -241,20 +241,10 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   duplicate with `SM_ERR_DUPKEY` and its write-write conflict
   handles two sessions inserting the same key at once; no
   separate existence check is needed. The primary key index
-  is keyed this way. Two kinds of entry in a unique index
-  still carry the suffix, and still need the existence check
-  under `sm1::lock(EXCLUSIVE)`: one with a NULL key column, and
-  one whose key was cut (below). At READ COMMITTED that check
-  reads the newest version, not the snapshot: a statement
-  snapshot can predate a duplicate that committed while the
-  lock was awaited, and the lock is what keeps the newest
-  version stable. **Open: nothing reads a range at its newest
-  version.** The check is a scan over the key's prefix, but
-  sm1's `read_latest` reads one key, and sm2's `idx_scan`
-  reads at the transaction's snapshot. It needs a primitive
-  that does not exist yet — a scan of the newest committed
-  versions, in sm1 and through sm2 — or a check shaped
-  differently.
+  is keyed this way. One kind of entry in a unique index still
+  carries the suffix: one with a NULL key column (next). It
+  needs no check either, so sm3 makes no uniqueness check of
+  its own in any case.
 - **NULLs are distinct in a unique index.** Two NULLs encode to
   the same bytes, so an entry with a NULL key column carries the
   `rowno` suffix and skips the uniqueness check, as SQL requires
@@ -262,19 +252,25 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   key index never has such an entry. `NULLS NOT DISTINCT` is
   refused at `CREATE INDEX` in v1; adding it later is a catalog
   flag and changes no bytes on disk.
-- **A truncated key is rechecked.** sm2 cuts an over-long
-  index key to fit and flags the entry (`sm2/SM2_DESIGN.md`
-  §3.2). A scan rechecks flagged entries against the base row,
-  and a unique check on a cut key compares originals over the
-  prefix range, with NULLs distinct as above.
+- **A truncated key is rechecked, and a unique index has
+  none.** In a non-unique index sm2 cuts an over-long key to
+  fit and flags the entry (`sm2/SM2_DESIGN.md` §3.2), and a
+  scan rechecks flagged entries against the base row. In a
+  unique index an over-long key refuses the write with
+  `SM_ERR_KEYTOOLONG`, whether or not a key column is NULL,
+  as PostgreSQL refuses an oversize B-tree entry. Two
+  different originals can share a cut key's bytes, so a cut
+  key would need a check that compares originals over the
+  prefix range, and at READ COMMITTED that check would have
+  to read a range at its newest committed version, which
+  nothing in the stack does (§7).
 - **Equal means the collation's equal.** Under a
   non-deterministic collation sm2 gives strings ICU calls
   equal one key, so uniqueness and equality bounds follow it
   with no work here (`sm2/SM2_DESIGN.md` §3.3). Everything sm3
-  compares itself must follow it too: a recheck, the unique
-  check on a cut key, and hashing and grouping, which hash
-  the sort key as PostgreSQL's `hashtext` does, not the
-  string's bytes.
+  compares itself must follow it too: a recheck, and hashing
+  and grouping, which hash the sort key as PostgreSQL's
+  `hashtext` does, not the string's bytes.
 - **Maintenance:** an update keeps the row's `rowno`, so only
   the indexes whose columns changed are touched — a primary key
   change included. On update and delete, the old image from
@@ -380,7 +376,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   kept executor could write index entries itself through its
   index access method, as PostgreSQL does, reaching sm2's
   index `rel` through the C wrapper (`DESIGN.md` §5). It does
-  not. The unique checks on NULL and cut keys, the online
+  not. The rules of a unique index's key, the online
   build, and the index and the heap never disagreeing are
   sm3's whoever writes the entries, and the last holds only
   if one layer writes both the row and its entries. What
@@ -486,6 +482,16 @@ Accepted so far, from the PostgreSQL target (`PART4.md`):
   changed to return false for every table. These lose plans, not
   correctness, and the size of the loss is expected from how the
   planner works but has not been measured.
+- **An over-long key in a unique index is refused.** A write
+  whose unique-index key exceeds the key budget fails with
+  `SM_ERR_KEYTOOLONG`, where a non-unique index would cut the
+  key (§3). Accepting it needs a uniqueness check over a cut
+  key's prefix range at the newest committed version, a new
+  concurrency primitive in sm1 with a locking rule of its
+  own, since `sm1::read_latest` reads one key under a lock
+  already held and a range has no single key to lock. That is
+  too much for the rarest path in index maintenance. The
+  primitive is built when a workload asks for it.
 - **Tables are bounded by sm1's store count.** One sm1
   store per table makes `DROP TABLE` sm1's O(1) drop, and
   caps tables, partitions included, at the hundreds to low

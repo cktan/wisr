@@ -488,21 +488,19 @@ prefix and `rowno` alone, so only index keys can be long.
 Collation sort keys run several times the length of their
 text, so the limit is reachable.
 
-- **An over-long primary key refuses the row.** The primary
-  key index enforces uniqueness on exact key bytes
-  (`sm3/SM3_DESIGN.md` §3), so its key must be exact. PostgreSQL
-  likewise refuses an oversize btree entry.
-- **An over-long secondary index key is truncated, flagged and
-  rechecked.** Truncation keeps order as a coarsening — if
-  `a <= b` then `trunc(a) <= trunc(b)` — so a range scan over
+- **An over-long key in a unique index refuses the row.** A
+  unique index, the primary key's among them, enforces
+  uniqueness on exact key bytes (`sm3/SM3_DESIGN.md` §3), so
+  its key must be exact. PostgreSQL likewise refuses an
+  oversize btree entry.
+- **An over-long key in a non-unique index is truncated,
+  flagged and rechecked.** Truncation keeps order as a
+  coarsening — if `a <= b` then `trunc(a) <= trunc(b)` — so a
+  range scan over
   truncated keys returns a superset, and a recheck against
   the original, which the tuple holds, removes the extras. The
   entry is flagged as cut, because the index can no longer
-  promise order among entries that share the prefix. A unique
-  check on a cut key compares originals over the prefix range
-  rather than trusting key equality, and treats NULLs as
-  distinct, as every unique check does (`DESIGN.md` §5 at the
-  top level).
+  promise order among entries that share the prefix.
 - **A key is never hashed.** A hash keeps equality and
   destroys order, and an index that cannot serve a range or an
   `ORDER BY` is not worth having.
@@ -517,9 +515,10 @@ budget, `max_key_len(rowno)`, and what to do past it —
 `overflow_t::refuse`, which fails with `SM_ERR_KEYTOOLONG`, sm2's
 first error code, or `overflow_t::truncate`, which keeps the
 budget's bytes and says it cut. The index `rel` (§5) uses
-it: it cuts an over-long entry key, keeps the entry apart by
-its `rowno`, and marks it cut in the entry's value; which rows
-to recheck, and how, are sm3's (`sm3/SM3_DESIGN.md` §3).
+both: in a unique index it refuses an over-long entry key,
+and in a non-unique one it cuts the key and marks it cut in
+the entry's value; which rows to recheck, and how, are sm3's
+(`sm3/SM3_DESIGN.md` §3).
 A cut key can never equal a whole one, since whole keys are
 prefix-free (§3.1), so a flagged entry is never mistaken for an
 exact one.
@@ -904,9 +903,9 @@ are the same shape, keyed by its columns (`idx_open`,
 - **An entry's key** is `prefix ‖ encode(sk)`, then the
   `rowno` — always in a non-unique index, and in a unique one
   only for an entry with a null key column, so that nulls stay
-  distinct, or one whose key had to be cut. A unique key with
-  neither is sm1's uniqueness unit, and a duplicate is sm1's
-  `SM_ERR_DUPKEY`.
+  distinct. A unique key without one is sm1's uniqueness unit,
+  and a duplicate is sm1's `SM_ERR_DUPKEY`. A unique index's
+  key is never cut (§3.2).
 - **An entry's value** is a tuple: the `rowno`, a flag saying
   the key was cut, then the INCLUDE columns.
 - **A scan's bounds** are the values of the index's leading

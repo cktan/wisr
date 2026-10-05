@@ -431,16 +431,19 @@ design:
   nor cares (`sm1/SM1_DESIGN.md` §11.3).
 - **The key budget is shared.** `sm1::max_keylen` (4096) bounds
   prefix, index columns and `rowno` together. sm2's encoder
-  enforces it: an over-long primary key refuses the row, and an
-  over-long index key is truncated, flagged and rechecked
-  against the tuple, never hashed (`sm2/SM2_DESIGN.md` §3.2). sm3
-  owns the recheck and the unique check that follow from a cut
-  key (`sm3/SM3_DESIGN.md` §3).
-- **Unique checks are sm3's, and NULLs are distinct in them.**
-  Two NULLs encode to the same bytes, so the encoding cannot
-  say they differ; sm3's unique check skips any entry with a
-  NULL key column, as SQL requires by default. `NULLS NOT
-  DISTINCT` is refused at `CREATE INDEX` in v1; adding it
+  enforces it: an over-long key in a unique index, the primary
+  key's among them, refuses the row, and an over-long key in a
+  non-unique index is truncated, flagged and rechecked against
+  the tuple, never hashed (`sm2/SM2_DESIGN.md` §3.2). sm3 owns
+  the recheck that follows from a cut key
+  (`sm3/SM3_DESIGN.md` §3).
+- **Uniqueness is sm1's `SM_ERR_DUPKEY`, and NULLs are
+  distinct.** Two NULLs encode to the same bytes, so the
+  encoding cannot say they differ; an entry with a NULL key
+  column carries the `rowno` suffix and is never a duplicate,
+  as SQL requires by default. No level makes a uniqueness
+  check of its own. `NULLS NOT DISTINCT` is refused at
+  `CREATE INDEX` in v1; adding it
   later is a catalog flag and changes no bytes on disk
   (`sm3/SM3_DESIGN.md` §3).
 - **Collation versions are pinned, recorded and enforced across
@@ -488,8 +491,8 @@ design:
   method (`ExecInsertIndexTuples`). It does not: it writes a
   row through one table-level call that sm3 owns, and the C
   wrapper's heap-level writes and entry writes go away
-  (`sm3/SM3_DESIGN.md` §3). The unique checks on NULL and cut
-  keys, the online build and the index-heap invariant must
+  (`sm3/SM3_DESIGN.md` §3). The rules of a unique index's
+  key, the online build and the index-heap invariant must
   stay below the executor, and the invariant holds only if one
   layer writes both a row and its entries. The cost is in
   expression and partial indexes. sm3 cannot evaluate a
