@@ -95,13 +95,6 @@ Owed, and blocking nothing above:
   builds contend on sm1's lock table, one mutex, and on
   RocksDB's write path. Two indexes built on one table walk
   its heap twice where one pass could fill both.
-- **`include/sm.h` still has its C forms.** It is C++ in a C
-  style now, and `std::string` and `std::vector` may cross it
-  (`DESIGN.md` §5). The calls that predate that keep a list as
-  one malloc'd block freed with `sm_free`, an owned result as
-  bytes valid "until the next call", and a C mirror of each
-  table definition. Each moves when it is next touched, or all
-  at once if that proves cleaner.
 - **Nothing reads a range at its newest version.** An
   over-long key in a unique index is refused instead
   (`SM3_DESIGN.md` §7). The primitive is built when a workload

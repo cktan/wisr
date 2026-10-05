@@ -268,18 +268,14 @@ int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
       return -1;
     }
     JanetString str = janet_unwrap_string(val);
-    void *block = nullptr;
-    size_t block_len = 0;
+    std::string block;
     if (sm_type_in(sm_type(col.type_code), col.typmod,
                    reinterpret_cast<const char *>(str),
-                   janet_string_length(str), val_out, &block,
-                   &block_len) != 0) {
+                   janet_string_length(str), val_out, block) != 0) {
       return -1;
     }
-    if (block != nullptr) {
-      const uint8_t *b = static_cast<const uint8_t *>(block);
-      buf.assign(b, b + block_len);
-      sm_free(block);
+    if (!block.empty()) {
+      buf.assign(block.begin(), block.end());
       *val_out = SM_DATUM_FROM_PTR(buf.data());
     }
     return 0;
@@ -317,13 +313,11 @@ Janet value_to_janet(const sm_datum_t &val, bool isnull, uint8_t type_code,
   }
   default: {
     // Any other type reads back as its canonical text.
-    char *text = nullptr;
-    if (sm_type_out(sm_type(type_code), typmod, val, &text) != 0) {
+    std::string text;
+    if (sm_type_out(sm_type(type_code), typmod, val, text) != 0) {
       return janet_wrap_nil();
     }
-    Janet out = janet_cstringv(text);
-    sm_free(text);
-    return out;
+    return janet_cstringv(text.c_str());
   }
   }
 }

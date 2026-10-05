@@ -272,17 +272,19 @@ design:
   a pointer and a length into session memory, since a copy a
   row would be an allocation a row. No `optional`, `function`
   or `shared_ptr`, and no class of the stack's own: that line
-  is what keeps the header from growing abstractions. What it
-  replaces is what the header did to stay C: lists as one
-  malloc'd block freed with `sm_free`, owned results that
-  lived "until the next call", and a C mirror of each table
-  definition built and kept by the wrapper. The costs are that
+  is what keeps the header from growing abstractions. A plain
+  struct may hold the two types, and a vector may hold such
+  structs: a table's definition is one, of its columns and its
+  indexes. What it replaced is what the header did to stay C:
+  lists as one malloc'd block freed by hand, owned results
+  that lived "until the next call", and a C mirror of each
+  table definition, seven parallel arrays built and kept by
+  the wrapper. The costs are that
   no plain C program and no foreign-function binding can
   include the header, and that both sides must be built with
   one C++ runtime, as they are while the stack is linked from
   source into one archive. It is still called the C wrapper
-  and the C API below and elsewhere. The calls that predate
-  this rule keep their C forms until each is next touched.
+  and the C API below and elsewhere.
 - **The C wrapper keeps the convention; the fork's glue
   calls `ereport`.** The wrapper's `sm_*` calls return 0 or
   -1 and leave the code and message in the same thread-local

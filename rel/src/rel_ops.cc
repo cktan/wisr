@@ -215,17 +215,15 @@ static Janet cfun_db_list(int32_t argc, Janet *argv) {
   (void)argc;
   (void)argv;
   sm_env_t *env = require_env();
-  char **names = nullptr;
-  size_t n = 0;
+  std::vector<std::string> names;
   // List all databases.
-  if (sm_lsdb(env, &names, &n) != 0) {
+  if (sm_lsdb(env, names) != 0) {
     panic_sm_error("db-list");
   }
-  JanetArray *arr = janet_array(n);
-  for (size_t i = 0; i < n; i++) {
-    janet_array_push(arr, janet_cstringv(names[i]));
+  JanetArray *arr = janet_array(static_cast<int32_t>(names.size()));
+  for (const std::string &name : names) {
+    janet_array_push(arr, janet_cstringv(name.c_str()));
   }
-  sm_free(names);
   return janet_wrap_array(arr);
 }
 
@@ -402,21 +400,18 @@ static Janet cfun_prepared_list(int32_t argc, Janet *argv) {
   (void)argc;
   (void)argv;
   session_ctx_t *s = require_session();
-  sm_prepared_t *list = nullptr;
-  size_t n = 0;
-  if (sm_list_prepared(s->session, &list, &n) != 0) {
+  std::vector<sm_prepared_t> list;
+  if (sm_list_prepared(s->session, list) != 0) {
     panic_sm_error("prepared-list");
   }
-  JanetArray *arr = janet_array(n);
-  for (size_t i = 0; i < n; i++) {
+  JanetArray *arr = janet_array(static_cast<int32_t>(list.size()));
+  for (const sm_prepared_t &p : list) {
     JanetTable *t = janet_table(2);
-    janet_table_put(t, janet_ckeywordv("gid"), janet_cstringv(list[i].gid));
-    janet_table_put(
-        t, janet_ckeywordv("prepared-at"),
-        janet_wrap_number(static_cast<double>(list[i].prepared_at)));
+    janet_table_put(t, janet_ckeywordv("gid"), janet_cstringv(p.gid.c_str()));
+    janet_table_put(t, janet_ckeywordv("prepared-at"),
+                    janet_wrap_number(static_cast<double>(p.prepared_at)));
     janet_array_push(arr, janet_wrap_table(t));
   }
-  sm_free(list);
   return janet_wrap_array(arr);
 }
 
@@ -545,8 +540,8 @@ static Janet cfun_table_create(int32_t argc, Janet *argv) {
     specs.push_back({c.name.c_str(), c.type_code, c.typmod, c.not_null});
   }
   uint64_t oid = 0;
-  if (sm_cat_create_table(s->session, SM_NSP_PUBLIC, tbl_name.c_str(),
-                          specs.data(), specs.size(), &oid) != 0) {
+  if (sm_cat_create_table(s->session, SM_NSP_PUBLIC, tbl_name.c_str(), specs,
+                          &oid) != 0) {
     panic_sm_error("table-create");
   }
   return janet_wrap_nil();
@@ -802,9 +797,8 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
     includes.push_back(static_cast<int32_t>(inc.col_idx));
   }
   uint64_t oid = 0;
-  if (sm_cat_create_index(s->session, p_tdef->def->oid, idx_name.c_str(),
-                          keys.data(), keys.size(), includes.data(),
-                          includes.size(), idef.unique, &oid) != 0) {
+  if (sm_cat_create_index(s->session, p_tdef->def->oid, idx_name.c_str(), keys,
+                          includes, idef.unique, &oid) != 0) {
     panic_sm_error("index-create");
   }
   return janet_wrap_nil();
@@ -815,16 +809,14 @@ static Janet cfun_list_tables(int32_t argc, Janet *argv) {
   (void)argv;
   janet_fixarity(argc, 0);
   session_ctx_t *s = require_session();
-  char **names = nullptr;
-  size_t n = 0;
-  if (sm_cat_list_tables(s->session, SM_NSP_PUBLIC, &names, &n) != 0) {
+  std::vector<std::string> names;
+  if (sm_cat_list_tables(s->session, SM_NSP_PUBLIC, names) != 0) {
     panic_sm_error("list-tables");
   }
-  JanetArray *out = janet_array(static_cast<int32_t>(n));
-  for (size_t i = 0; i < n; i++) {
-    janet_array_push(out, janet_cstringv(names[i]));
+  JanetArray *out = janet_array(static_cast<int32_t>(names.size()));
+  for (const std::string &name : names) {
+    janet_array_push(out, janet_cstringv(name.c_str()));
   }
-  sm_free(names);
   return janet_wrap_array(out);
 }
 
@@ -838,7 +830,7 @@ static Janet tuple_of(const std::vector<Janet> &items) {
 
 /* A column of def as table-create takes it: [name :type mods... :not-null]. */
 static Janet column_form(const sm_column_def_t &c) {
-  std::vector<Janet> items = {janet_csymbolv(c.name),
+  std::vector<Janet> items = {janet_csymbolv(c.name.c_str()),
                               janet_ckeywordv(type_name_of(c.type_code))};
   for (int32_t m : mods_of(c.type_code, c.typmod)) {
     items.push_back(janet_wrap_integer(m));
@@ -852,18 +844,18 @@ static Janet column_form(const sm_column_def_t &c) {
 /* An index of def as a struct of index-create's clauses. */
 static Janet index_form(const sm_table_def_t &def, const sm_index_def_t &x) {
   std::vector<Janet> keys, includes;
-  for (size_t j = 0; j < x.nkey; j++) {
+  for (size_t j = 0; j < x.key.size(); j++) {
     keys.push_back(
-        tuple_of({janet_csymbolv(def.columns[x.key_attnums[j]].name),
+        tuple_of({janet_csymbolv(def.columns[x.key_attnums[j]].name.c_str()),
                   janet_ckeywordv(x.key[j].desc ? "desc" : "asc"),
                   janet_ckeywordv(x.key[j].nulls_first ? "nulls-first"
                                                        : "nulls-last")}));
   }
-  for (size_t j = 0; j < x.ninclude; j++) {
-    includes.push_back(janet_csymbolv(def.columns[x.include_attnums[j]].name));
+  for (int32_t att : x.include_attnums) {
+    includes.push_back(janet_csymbolv(def.columns[att].name.c_str()));
   }
   JanetKV *st = janet_struct_begin(4);
-  janet_struct_put(st, janet_ckeywordv("name"), janet_cstringv(x.name));
+  janet_struct_put(st, janet_ckeywordv("name"), janet_cstringv(x.name.c_str()));
   janet_struct_put(st, janet_ckeywordv("unique"), janet_wrap_boolean(x.unique));
   janet_struct_put(st, janet_ckeywordv("key"), tuple_of(keys));
   janet_struct_put(st, janet_ckeywordv("include"), tuple_of(includes));
@@ -891,18 +883,19 @@ static Janet cfun_describe_table(int32_t argc, Janet *argv) {
   const sm_table_def_t &def = *p_tdef->def;
 
   std::vector<Janet> columns;
-  for (size_t i = 0; i < def.natts; i++) {
-    if (!def.columns[i].dropped) {
-      columns.push_back(column_form(def.columns[i]));
+  for (const sm_column_def_t &c : def.columns) {
+    if (!c.dropped) {
+      columns.push_back(column_form(c));
     }
   }
   JanetKV *st = janet_struct_begin(with_indexes ? 3 : 2);
-  janet_struct_put(st, janet_ckeywordv("name"), janet_cstringv(def.name));
+  janet_struct_put(st, janet_ckeywordv("name"),
+                   janet_cstringv(def.name.c_str()));
   janet_struct_put(st, janet_ckeywordv("columns"), tuple_of(columns));
   if (with_indexes) {
     std::vector<Janet> indexes;
-    for (size_t i = 0; i < def.nindex; i++) {
-      indexes.push_back(index_form(def, def.indexes[i]));
+    for (const sm_index_def_t &x : def.indexes) {
+      indexes.push_back(index_form(def, x));
     }
     janet_struct_put(st, janet_ckeywordv("indexes"), tuple_of(indexes));
   }
@@ -1124,17 +1117,16 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   }
 
   // The heap write and every index it changes, in one call.
-  const void *old_tuple = nullptr;
-  size_t old_len = 0;
+  std::string old_tuple;
   if (sm_tbl_update(tbl, rowno, row.values.data(), row.isnull.get(),
-                    row.values.size(), &old_tuple, &old_len) != 0) {
+                    row.values.size(), &old_tuple) != 0) {
     abort_failed_write(s);
     panic_sm_error("update sm_tbl_update");
   }
 
   size_t ncols = p_tdef->columns.size();
   row_values_t old(ncols);
-  if (sm_tbl_deform(tbl, old_tuple, old_len, old.values.data(),
+  if (sm_tbl_deform(tbl, old_tuple.data(), old_tuple.size(), old.values.data(),
                     old.isnull.get(), ncols) != 0) {
     panic_sm_error("update sm_tbl_deform");
   }
@@ -1158,16 +1150,15 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
       need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "delete");
   sm_tbl_t *tbl = p_tdef->tbl;
 
-  const void *old_tuple = nullptr;
-  size_t old_len = 0;
-  if (sm_tbl_delete(tbl, rowno, &old_tuple, &old_len) != 0) {
+  std::string old_tuple;
+  if (sm_tbl_delete(tbl, rowno, &old_tuple) != 0) {
     abort_failed_write(s);
     panic_sm_error("delete sm_tbl_delete");
   }
 
   size_t ncols = p_tdef->columns.size();
   row_values_t old(ncols);
-  if (sm_tbl_deform(tbl, old_tuple, old_len, old.values.data(),
+  if (sm_tbl_deform(tbl, old_tuple.data(), old_tuple.size(), old.values.data(),
                     old.isnull.get(), ncols) != 0) {
     panic_sm_error("delete sm_tbl_deform");
   }

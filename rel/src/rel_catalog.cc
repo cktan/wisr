@@ -151,17 +151,15 @@ static std::unique_ptr<table_def_t> view_of(const std::string &name,
   t->name = name;
   t->tbl = tbl;
   t->def = def;
-  for (size_t i = 0; i < def->natts; i++) {
-    const sm_column_def_t &c = def->columns[i];
+  for (const sm_column_def_t &c : def->columns) {
     t->columns.push_back({c.name, c.type_code, c.typmod, c.not_null});
   }
-  for (size_t i = 0; i < def->nindex; i++) {
-    const sm_index_def_t &x = def->indexes[i];
+  for (const sm_index_def_t &x : def->indexes) {
     index_def_t idef;
     idef.name = x.name;
     idef.unique = x.unique;
     idef.def = &x;
-    for (size_t j = 0; j < x.nkey; j++) {
+    for (size_t j = 0; j < x.key.size(); j++) {
       const col_def_t &c = t->columns[x.key_attnums[j]];
       key_col_def_t k;
       k.col_idx = x.key_attnums[j];
@@ -172,11 +170,10 @@ static std::unique_ptr<table_def_t> view_of(const std::string &name,
       k.nulls_first = x.key[j].nulls_first;
       idef.keys.push_back(std::move(k));
     }
-    for (size_t j = 0; j < x.ninclude; j++) {
-      const col_def_t &c = t->columns[x.include_attnums[j]];
-      idef.includes.push_back({c.name,
-                               static_cast<size_t>(x.include_attnums[j]),
-                               c.type_code, c.typmod});
+    for (int32_t att : x.include_attnums) {
+      const col_def_t &c = t->columns[att];
+      idef.includes.push_back(
+          {c.name, static_cast<size_t>(att), c.type_code, c.typmod});
     }
     t->indexes[idef.name] = std::move(idef);
   }

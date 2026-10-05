@@ -14,7 +14,6 @@
 #include "sm3.h"
 
 #include <bit>
-#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <map>
@@ -179,48 +178,15 @@ void log_trampoline(void *arg, sm1::loglevel_t level, const char *msg) {
   hook->fn(hook->arg, static_cast<sm_loglevel_t>(level), msg);
 }
 
-/*
- * Copy strings into one malloc'd block: the n pointers first,
- * each pointing at its string's copy after them. Returns nullptr
- * for an empty list, or on running out of memory, which *failed
- * then says.
- */
-char **pack_strings(const std::vector<std::string> &strings, bool *failed) {
-  *failed = false;
-  if (strings.empty()) {
-    return nullptr;
-  }
-  size_t size = strings.size() * sizeof(char *);
-  for (const std::string &s : strings) {
-    size += s.size() + 1;
-  }
-  char **out = static_cast<char **>(malloc(size));
-  if (out == nullptr) {
-    *failed = true;
-    return nullptr;
-  }
-  char *p = reinterpret_cast<char *>(out + strings.size());
-  for (size_t i = 0; i < strings.size(); i++) {
-    out[i] = p;
-    memcpy(p, strings[i].data(), strings[i].size());
-    p[strings[i].size()] = '\0';
-    p += strings[i].size() + 1;
-  }
-  return out;
-}
-
-/* A C schema as sm2's, the missing values copied. */
-std::vector<sm2::attribute_t> schema_of(const sm_attribute_t *attrs, size_t n) {
+/* The API's schema as sm2's, the missing values copied. */
+std::vector<sm2::attribute_t>
+schema_of(const std::vector<sm_attribute_t> &attrs) {
   std::vector<sm2::attribute_t> out;
-  out.reserve(n);
-  for (size_t i = 0; i < n; i++) {
-    const sm_attribute_t &a = attrs[i];
-    std::optional<std::string> missing;
-    if (a.has_missing) {
-      missing.emplace(static_cast<const char *>(a.missing), a.missing_len);
-    }
-    out.push_back({reinterpret_cast<const sm2::type_t *>(a.type), a.typmod,
-                   a.dropped, std::move(missing)});
+  out.reserve(attrs.size());
+  for (const sm_attribute_t &a : attrs) {
+    out.push_back(
+        {reinterpret_cast<const sm2::type_t *>(a.type), a.typmod, a.dropped,
+         a.has_missing ? std::optional<std::string>(a.missing) : std::nullopt});
   }
   return out;
 }
@@ -289,82 +255,44 @@ sm2::bound_t bound_of(const sm_bound_t &b) {
 
 } // namespace
 
-/*
- * A table definition handed out by sm_cat_lock_table: the C view,
- * and what it points into -- sm3's definition, kept alive, and
- * the arrays built over it.
- */
-struct table_holder_t : sm_table_def_t {
-  std::shared_ptr<const sm3::table_def_t> keep;
-  std::vector<sm_column_def_t> column_arr;
-  std::vector<sm_attribute_t> schema_arr;
-  std::vector<sm_index_def_t> index_arr;
-  std::vector<std::vector<sm_key_column_t>> key_arrs;
-  std::vector<std::vector<sm_attribute_t>> include_arrs;
-};
-
 namespace {
 
-/* sm2's attribute as C's, viewing its missing value. */
-sm_attribute_t c_attribute(const sm2::attribute_t &a) {
-  return {reinterpret_cast<const sm_type_t *>(a.type),
-          a.typmod,
-          a.dropped,
-          a.missing.has_value(),
-          a.missing ? a.missing->data() : nullptr,
-          a.missing ? a.missing->size() : 0};
+/* sm2's attribute as the API's, its missing value copied. */
+sm_attribute_t api_attribute(const sm2::attribute_t &a) {
+  return {reinterpret_cast<const sm_type_t *>(a.type), a.typmod, a.dropped,
+          a.missing.has_value(), a.missing.value_or("")};
 }
 
-/* Build h's C view of def, pointing into def and h's arrays. */
-void build_holder(std::shared_ptr<const sm3::table_def_t> def,
-                  table_holder_t &h) {
-  h.keep = std::move(def);
-  const sm3::table_def_t &d = *h.keep;
+/* sm3's definition d as the API's, which owns all it holds. */
+sm_table_def_t api_def(const sm3::table_def_t &d) {
+  sm_table_def_t out{d.oid, d.nspoid, d.name, {}, {}, {}};
   for (const sm3::column_def_t &c : d.columns) {
-    h.column_arr.push_back(
-        {c.name.c_str(), c.type->code, c.typmod, c.not_null, c.dropped});
+    out.columns.push_back(
+        {c.name, c.type->code, c.typmod, c.not_null, c.dropped});
   }
   for (const sm2::attribute_t &a : d.schema) {
-    h.schema_arr.push_back(c_attribute(a));
+    out.schema.push_back(api_attribute(a));
   }
-  // Every inner array is built before any is pointed at.
   for (const sm3::index_def_t &x : d.indexes) {
-    std::vector<sm_key_column_t> key;
+    sm_index_def_t i{x.oid,    x.name,
+                     x.unique, x.key_attnums,
+                     {},       x.include_attnums,
+                     {},       static_cast<sm_index_state_t>(x.state),
+                     x.error,  x.reason};
     for (const sm2::key_column_t &k : x.key) {
-      key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
-                     reinterpret_cast<const sm_collation_t *>(k.collation),
-                     k.desc, k.nulls_first});
+      i.key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
+                       reinterpret_cast<const sm_collation_t *>(k.collation),
+                       k.desc, k.nulls_first});
     }
-    h.key_arrs.push_back(std::move(key));
-    std::vector<sm_attribute_t> inc;
     for (const sm2::attribute_t &a : x.include) {
-      inc.push_back(c_attribute(a));
+      i.include.push_back(api_attribute(a));
     }
-    h.include_arrs.push_back(std::move(inc));
+    out.indexes.push_back(std::move(i));
   }
-  for (size_t i = 0; i < d.indexes.size(); i++) {
-    const sm3::index_def_t &x = d.indexes[i];
-    h.index_arr.push_back(
-        {x.oid, x.name.c_str(), x.prefix, x.unique, x.key_attnums.size(),
-         x.key_attnums.data(), h.key_arrs[i].data(), x.include_attnums.size(),
-         x.include_attnums.data(), h.include_arrs[i].data(),
-         static_cast<sm_index_state_t>(x.state), x.error, x.reason.c_str()});
-  }
-  h.oid = d.oid;
-  h.nspoid = d.nspoid;
-  h.name = d.name.c_str();
-  h.storeid = d.storeid;
-  h.rowno_seq = d.rowno_seq.c_str();
-  h.natts = h.column_arr.size();
-  h.columns = h.column_arr.data();
-  h.schema = h.schema_arr.data();
-  h.nindex = h.index_arr.size();
-  h.indexes = h.index_arr.data();
+  return out;
 }
 
 } // namespace
-
-extern "C" {
 
 /* The last error raised on the calling thread. */
 sm_errnum_t sm_errnum(void) { return sm1::errnum(); }
@@ -534,22 +462,9 @@ int sm_rmdb(sm_env_t *env, const char *dbname) {
   });
 }
 
-/* List the databases into one block. */
-int sm_lsdb(sm_env_t *env, char ***names, size_t *n) {
-  return guard(nullptr, [&] {
-    std::vector<std::string> list;
-    if (sm1::lsdb(env_of(env), list) != 0) {
-      return -1;
-    }
-    bool failed;
-    char **out = pack_strings(list, &failed);
-    if (failed) {
-      return nomem();
-    }
-    *names = out;
-    *n = list.size();
-    return 0;
-  });
+/* List the databases. */
+int sm_lsdb(sm_env_t *env, std::vector<std::string> &names) {
+  return guard(nullptr, [&] { return sm1::lsdb(env_of(env), names); });
 }
 
 /*
@@ -677,38 +592,18 @@ int sm_prepare(sm_session_t *session, const char *gid) {
                [&] { return sm3::prepare(session->sm3, name_of(gid)); });
 }
 
-/* List the prepared transactions into one block. */
-int sm_list_prepared(sm_session_t *session, sm_prepared_t **out, size_t *n) {
+/* List the prepared transactions. */
+int sm_list_prepared(sm_session_t *session, std::vector<sm_prepared_t> &out) {
   sm1::session_t *s = session_of(session);
   return guard(session, [&] {
     std::vector<sm1::prepared_t> list;
     if (sm1::list_prepared(s, list) != 0) {
       return -1;
     }
-    *out = nullptr;
-    *n = 0;
-    if (list.empty()) {
-      return 0;
-    }
-    // The entries first, then each gid's copy after them.
-    size_t size = list.size() * sizeof(sm_prepared_t);
+    out.clear();
     for (const sm1::prepared_t &p : list) {
-      size += p.gid.size() + 1;
+      out.push_back({p.gid, p.prepared_at});
     }
-    sm_prepared_t *block = static_cast<sm_prepared_t *>(malloc(size));
-    if (block == nullptr) {
-      return nomem();
-    }
-    char *str = reinterpret_cast<char *>(block + list.size());
-    for (size_t i = 0; i < list.size(); i++) {
-      memcpy(str, list[i].gid.data(), list[i].gid.size());
-      str[list[i].gid.size()] = '\0';
-      block[i].gid = str;
-      block[i].prepared_at = list[i].prepared_at;
-      str += list[i].gid.size() + 1;
-    }
-    *out = block;
-    *n = list.size();
     return 0;
   });
 }
@@ -725,9 +620,6 @@ int sm_abort_prepared(sm_session_t *session, const char *gid) {
   return guard(session, [&] { return sm1::abort_prepared(s, name_of(gid)); });
 }
 
-/* Release a block this API handed out. */
-void sm_free(void *p) { free(p); }
-
 /* Create a store. */
 int sm_mkstore(sm_session_t *session, uint64_t *storeid) {
   sm1::session_t *s = session_of(session);
@@ -740,29 +632,10 @@ int sm_rmstore(sm_session_t *session, uint64_t storeid) {
   return guard(session, [&] { return sm1::rmstore(s, storeid); });
 }
 
-/* List the stores into one block. */
-int sm_lsstore(sm_session_t *session, uint64_t **ids, size_t *n) {
+/* List the stores the transaction sees. */
+int sm_lsstore(sm_session_t *session, std::vector<uint64_t> &ids) {
   sm1::session_t *s = session_of(session);
-  return guard(session, [&] {
-    std::vector<uint64_t> list;
-    if (sm1::lsstore(s, list) != 0) {
-      return -1;
-    }
-    *ids = nullptr;
-    *n = 0;
-    if (list.empty()) {
-      return 0;
-    }
-    uint64_t *block =
-        static_cast<uint64_t *>(malloc(list.size() * sizeof(uint64_t)));
-    if (block == nullptr) {
-      return nomem();
-    }
-    memcpy(block, list.data(), list.size() * sizeof(uint64_t));
-    *ids = block;
-    *n = list.size();
-    return 0;
-  });
+  return guard(session, [&] { return sm1::lsstore(s, ids); });
 }
 
 /* Create a sequence. */
@@ -797,14 +670,12 @@ const sm_type_t *sm_type(uint8_t code) {
 
 /* Parse a value's canonical text; see sm.h. */
 int sm_type_in(const sm_type_t *type, int32_t typmod, const char *text,
-               size_t len, sm_datum_t *val, void **buf, size_t *buf_len) {
+               size_t len, sm_datum_t *val, std::string &buf) {
   return guard(nullptr, [&] {
-    if (!type || (len && !text) || !val || !buf || !buf_len) {
+    if (!type || (len && !text) || !val) {
       return null_arg("sm_type_in", !type          ? "type"
                                     : len && !text ? "text"
-                                    : !val         ? "val"
-                                    : !buf         ? "buf"
-                                                   : "buf_len");
+                                                   : "val");
     }
     const sm2::type_t *t = reinterpret_cast<const sm2::type_t *>(type);
     std::string datum;
@@ -812,34 +683,26 @@ int sm_type_in(const sm_type_t *type, int32_t typmod, const char *text,
       return -1;
     }
     *val = 0;
-    *buf = nullptr;
-    *buf_len = 0;
+    buf.clear();
     // A by-value datum's bytes are the value itself.
     if (t->byval) {
       std::memcpy(val, datum.data(), datum.size());
       return 0;
     }
-    // A by-reference one is a block the value points at: a
+    // A by-reference one is bytes the value points at: a
     // variable-width datum's payload wrapped in its varlena.
-    std::string bytes = t->len < 0 ? sm2::make_varlena(datum) : datum;
-    void *p = std::malloc(bytes.size());
-    if (!p) {
-      return nomem();
-    }
-    std::memcpy(p, bytes.data(), bytes.size());
-    *buf = p;
-    *buf_len = bytes.size();
-    *val = SM_DATUM_FROM_PTR(p);
+    buf = t->len < 0 ? sm2::make_varlena(datum) : std::move(datum);
+    *val = SM_DATUM_FROM_PTR(buf.data());
     return 0;
   });
 }
 
 /* Print a value as canonical text; see sm.h. */
 int sm_type_out(const sm_type_t *type, int32_t typmod, sm_datum_t val,
-                char **text) {
+                std::string &text) {
   return guard(nullptr, [&] {
-    if (!type || !text) {
-      return null_arg("sm_type_out", !type ? "type" : "text");
+    if (!type) {
+      return null_arg("sm_type_out", "type");
     }
     const sm2::type_t *t = reinterpret_cast<const sm2::type_t *>(type);
     // The type's out takes a variable-width datum's payload alone.
@@ -850,18 +713,7 @@ int sm_type_out(const sm_type_t *type, int32_t typmod, sm_datum_t val,
     if (t->len < 0) {
       bytes = sm2::varlena_payload(bytes);
     }
-    std::string out;
-    if (t->out(bytes, typmod, out) != 0) {
-      return -1;
-    }
-    char *p = static_cast<char *>(std::malloc(out.size() + 1));
-    if (!p) {
-      return nomem();
-    }
-    std::memcpy(p, out.data(), out.size());
-    p[out.size()] = '\0';
-    *text = p;
-    return 0;
+    return t->out(bytes, typmod, text);
   });
 }
 
@@ -921,34 +773,18 @@ void sm_rel_scanend(sm_rel_scan_t *scan) {
   sm2::rel_scanend(rel_scan_of(scan));
 }
 
-/* Encode values and isnull into a tuple buffer; sm_free(*tuple). */
-int sm_tup_encode(const sm_attribute_t *schema, size_t natts,
-                  const sm_datum_t *values, const bool *isnull, void **tuple,
-                  size_t *len) {
+/* Encode values and isnull into a tuple. */
+int sm_tup_encode(const std::vector<sm_attribute_t> &schema,
+                  const sm_datum_t *values, const bool *isnull,
+                  std::string &tuple) {
   return guard(nullptr, [&] {
-    if ((natts && !schema) || (natts && !values) || (natts && !isnull) ||
-        !tuple || !len) {
-      return null_arg("sm_tup_encode", natts && !schema   ? "schema"
-                                       : natts && !values ? "values"
-                                       : natts && !isnull ? "isnull"
-                                       : !tuple           ? "tuple"
-                                                          : "len");
+    size_t natts = schema.size();
+    if ((natts && !values) || (natts && !isnull)) {
+      return null_arg("sm_tup_encode", !values ? "values" : "isnull");
     }
-    auto s = schema_of(schema, natts);
-    std::string out;
-    std::span<const sm2::datum_t> val_span(values, natts);
-    std::span<const bool> null_span(isnull, natts);
-    if (sm2::tup_encode(s, val_span, null_span, out) != 0) {
-      return -1;
-    }
-    void *buf = std::malloc(out.size());
-    if (!buf) {
-      return sm1::seterr(sm1::SM_ERR_NOMEM, "sm_tup_encode: out of memory");
-    }
-    std::memcpy(buf, out.data(), out.size());
-    *tuple = buf;
-    *len = out.size();
-    return 0;
+    auto s = schema_of(schema);
+    return sm2::tup_encode(s, std::span<const sm2::datum_t>(values, natts),
+                           std::span<const bool>(isnull, natts), tuple);
   });
 }
 
@@ -997,20 +833,10 @@ int sm_cat_table_oid(sm_session_t *session, uint64_t nspoid, const char *name,
 }
 
 /* The table names in a namespace, as the session sees them. */
-int sm_cat_list_tables(sm_session_t *session, uint64_t nspoid, char ***names,
-                       size_t *n) {
+int sm_cat_list_tables(sm_session_t *session, uint64_t nspoid,
+                       std::vector<std::string> &names) {
   return guard(session, [&] {
-    if (!names || !n) {
-      return null_arg("sm_cat_list_tables", !names ? "names" : "n");
-    }
-    std::vector<std::string> list = sm3::cat_tables(session->sm3, nspoid);
-    bool failed;
-    char **out = pack_strings(list, &failed);
-    if (failed) {
-      return nomem();
-    }
-    *names = out;
-    *n = list.size();
+    names = sm3::cat_tables(session->sm3, nspoid);
     return 0;
   });
 }
@@ -1028,30 +854,6 @@ int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
   });
 }
 
-/* Lock a table's schema and hand out its definition. */
-int sm_cat_lock_table(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
-                      sm_table_def_t **out) {
-  return guard(session, [&] {
-    if (!out) {
-      return null_arg("sm_cat_lock_table", "out");
-    }
-    std::shared_ptr<const sm3::table_def_t> def;
-    if (sm3::cat_lock_table(session->sm3, oid,
-                            static_cast<sm1::lockmode_t>(mode), def) != 0) {
-      return -1;
-    }
-    auto h = std::make_unique<table_holder_t>();
-    build_holder(std::move(def), *h);
-    *out = h.release();
-    return 0;
-  });
-}
-
-/* Free a definition; NULL is a no-op. */
-void sm_cat_table_free(sm_table_def_t *def) {
-  delete static_cast<table_holder_t *>(def);
-}
-
 /* Wait for an index's build to end. */
 int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index) {
   return guard(nullptr, [&] {
@@ -1064,38 +866,29 @@ int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index) {
 
 /*
  * A table as the wrapper holds it: the session, for the
- * catch-all's abort; sm3's handle; the C view of its definition;
- * the old tuple the last write handed out; and each index's value
- * layout, built on first use.
+ * catch-all's abort; sm3's handle; its definition as the API gives
+ * it; and each index's value layout, built on first use.
  */
 struct sm_tbl_t {
   sm_session_t *session;
   sm3::table_t *table = nullptr;
-  table_holder_t def;
-  std::string old;
+  sm_table_def_t def;
   std::map<uint64_t, sm2::tup_desc_t> value_descs;
 };
 
 namespace {
 
-/* Check a write's row arguments, for fn; n must be the table's natts. */
+/* Check a write's row arguments, for fn; n must be the column count. */
 int check_row(const char *fn, const sm_tbl_t *tbl, const sm_datum_t *values,
               const bool *isnull, size_t n) {
   if (!tbl || (n && !values) || (n && !isnull)) {
     return null_arg(fn, !tbl ? "tbl" : n && !values ? "values" : "isnull");
   }
-  if (n != tbl->def.natts) {
+  if (n != tbl->def.columns.size()) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        std::string(fn) + ": n is not the attribute count");
   }
   return 0;
-}
-
-/* Hand tbl's kept old tuple out through old and old_len, if asked. */
-void old_out(sm_tbl_t *tbl, const void **old, size_t *old_len) {
-  if (old != nullptr) {
-    view_out(tbl->old, old, old_len);
-  }
 }
 
 /* The value layout of tbl's index oid, or nullptr with the error set. */
@@ -1130,11 +923,7 @@ int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
                       t->table) != 0) {
       return -1;
     }
-    // The C view shares sm3's definition; the handle keeps it alive.
-    const sm3::table_def_t &def = sm3::tbl_def(t->table);
-    build_holder(std::shared_ptr<const sm3::table_def_t>(
-                     std::shared_ptr<const sm3::table_def_t>(), &def),
-                 t->def);
+    t->def = api_def(sm3::tbl_def(t->table));
     *out = t.release();
     return 0;
   });
@@ -1167,36 +956,22 @@ int sm_tbl_insert(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
 
 /* Replace a row and fix its index entries. */
 int sm_tbl_update(sm_tbl_t *tbl, uint64_t rowno, const sm_datum_t *values,
-                  const bool *isnull, size_t n, const void **old,
-                  size_t *old_len) {
+                  const bool *isnull, size_t n, std::string *old) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (check_row("sm_tbl_update", tbl, values, isnull, n) != 0) {
       return -1;
     }
-    if (old && !old_len) {
-      return null_arg("sm_tbl_update", "old_len");
-    }
-    if (sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n},
-                        old ? &tbl->old : nullptr) != 0) {
-      return -1;
-    }
-    old_out(tbl, old, old_len);
-    return 0;
+    return sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n}, old);
   });
 }
 
 /* Delete a row and its index entries. */
-int sm_tbl_delete(sm_tbl_t *tbl, uint64_t rowno, const void **old,
-                  size_t *old_len) {
+int sm_tbl_delete(sm_tbl_t *tbl, uint64_t rowno, std::string *old) {
   return guard(tbl ? tbl->session : nullptr, [&] {
-    if (!tbl || (old && !old_len)) {
-      return null_arg("sm_tbl_delete", !tbl ? "tbl" : "old_len");
+    if (!tbl) {
+      return null_arg("sm_tbl_delete", "tbl");
     }
-    if (sm3::tbl_delete(tbl->table, rowno, old ? &tbl->old : nullptr) != 0) {
-      return -1;
-    }
-    old_out(tbl, old, old_len);
-    return 0;
+    return sm3::tbl_delete(tbl->table, rowno, old);
   });
 }
 
@@ -1315,17 +1090,17 @@ int sm_tbl_idx_deform(sm_tbl_t *tbl, uint64_t index, const void *value,
 
 /* Create a table in the session's transaction. */
 int sm_cat_create_table(sm_session_t *session, uint64_t nspoid,
-                        const char *name, const sm_column_spec_t *columns,
-                        size_t n, uint64_t *oid) {
+                        const char *name,
+                        const std::vector<sm_column_spec_t> &columns,
+                        uint64_t *oid) {
   return guard(session, [&] {
-    if (!oid || (n && !columns)) {
-      return null_arg("sm_cat_create_table", !oid ? "oid" : "columns");
+    if (!oid) {
+      return null_arg("sm_cat_create_table", "oid");
     }
     std::vector<sm3::column_spec_t> cols;
-    for (size_t i = 0; i < n; i++) {
-      cols.push_back({std::string(name_of(columns[i].name)),
-                      columns[i].type_code, columns[i].typmod,
-                      columns[i].not_null});
+    for (const sm_column_spec_t &c : columns) {
+      cols.push_back(
+          {std::string(name_of(c.name)), c.type_code, c.typmod, c.not_null});
     }
     return sm3::cat_create_table(session->sm3, nspoid, name_of(name), cols,
                                  *oid);
@@ -1339,23 +1114,19 @@ int sm_cat_drop_table(sm_session_t *session, uint64_t oid) {
 
 /* Create an index in the session's transaction. */
 int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
-                        const sm_index_key_spec_t *keys, size_t nkey,
-                        const int32_t *includes, size_t ninclude, bool unique,
+                        const std::vector<sm_index_key_spec_t> &keys,
+                        const std::vector<int32_t> &includes, bool unique,
                         uint64_t *oid) {
   return guard(session, [&] {
-    if (!oid || (nkey && !keys) || (ninclude && !includes)) {
-      return null_arg("sm_cat_create_index", !oid            ? "oid"
-                                             : nkey && !keys ? "keys"
-                                                             : "includes");
+    if (!oid) {
+      return null_arg("sm_cat_create_index", "oid");
     }
     std::vector<sm3::index_key_spec_t> k;
-    for (size_t i = 0; i < nkey; i++) {
-      k.push_back(
-          {keys[i].attnum, keys[i].desc, keys[i].nulls_first, std::nullopt});
+    for (const sm_index_key_spec_t &key : keys) {
+      k.push_back({key.attnum, key.desc, key.nulls_first, std::nullopt});
     }
     return sm3::cat_create_index(session->sm3, table, name_of(name), k,
-                                 std::span<const int32_t>(includes, ninclude),
-                                 unique, *oid);
+                                 includes, unique, *oid);
   });
 }
 
@@ -1364,5 +1135,3 @@ int sm_cat_drop_index(sm_session_t *session, uint64_t table, uint64_t index) {
   return guard(session,
                [&] { return sm3::cat_drop_index(session->sm3, table, index); });
 }
-
-} // extern "C"

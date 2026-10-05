@@ -3,8 +3,7 @@
  * PostgreSQL to call (DESIGN.md sections 1 and 5). It is C in
  * style and compiled as C++: std::string and std::vector may
  * cross it, for owned data only, and no other C++ type does
- * (DESIGN.md section 5). The calls that predate that rule keep
- * their C forms until each is next touched.
+ * (DESIGN.md section 5).
  *
  * Every call is the sm1, sm2 or sm3 call of the same name with
  * sm_ in front, given a C signature: sm_commit is sm3::commit,
@@ -22,11 +21,12 @@
  *     parameter, set only on success.
  *   - Names are NUL-terminated strings; data is a pointer and a
  *     length. Both are read during the call and never retained.
- *   - Bytes handed out point into engine memory, are not
- *     NUL-terminated, must not be freed, and stay valid until the
- *     next call on the same session.
- *   - A list is handed out as one malloc'd block, the strings it
- *     points to included, released with one sm_free().
+ *   - A row or an index entry handed out points into engine
+ *     memory, is not NUL-terminated, must not be freed, and stays
+ *     valid until the next call on the same session.
+ *   - Anything else handed out is the caller's own: a list is a
+ *     std::vector and bytes are a std::string, filled by the call.
+ *     Nothing is freed by hand.
  *   - No C++ exception crosses this boundary. Every call catches
  *     everything: std::bad_alloc becomes SM_ERR_NOMEM, anything
  *     else SM_ERR_EXCEPTION, and when the call has a session, the
@@ -41,17 +41,14 @@
 #ifndef SM_H
 #define SM_H
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <vector>
 
 #include "sm_error.h"
 #include "sm_options.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /*
  * An attached home directory: sm1::env_t, and the sm3 catalog of
@@ -84,11 +81,11 @@ void sm_reseterr(void);
 
 /* ---- the log hook ---- */
 
-typedef enum sm_loglevel_t {
+enum sm_loglevel_t {
     SM_LOG_ERROR = 0,   /* something failed and nobody was told */
     SM_LOG_WARN  = 1,   /* something needs an operator's attention */
     SM_LOG_INFO  = 2    /* a notable event, such as recovery */
-} sm_loglevel_t;
+};
 
 /*
  * A log hook: level, a NUL-terminated message valid only during
@@ -123,8 +120,8 @@ int sm_mkdb(sm_env_t* env, const char* dbname, const sm_options_t* opt);
 /* Drop database dbname, and its catalog in memory. */
 int sm_rmdb(sm_env_t* env, const char* dbname);
 
-/* List the databases: *names holds *n strings; sm_free(*names). */
-int sm_lsdb(sm_env_t* env, char*** names, size_t* n);
+/* List the databases into names, which it replaces. */
+int sm_lsdb(sm_env_t* env, std::vector<std::string>& names);
 
 /*
  * Open a session on dbname; opt NULL means the defaults. The
@@ -138,11 +135,11 @@ int sm_closedb(sm_session_t* session);
 
 /* ---- transactions ---- */
 
-typedef enum sm_xctlevel_t {
+enum sm_xctlevel_t {
     SM_XCT_READ_COMMITTED  = 0,
     SM_XCT_REPEATABLE_READ = 1,
     SM_XCT_SERIALIZABLE    = 2
-} sm_xctlevel_t;
+};
 
 /* Begin a transaction at level. */
 int sm_begin(sm_session_t* session, sm_xctlevel_t level);
@@ -188,14 +185,13 @@ int sm_forget(sm_session_t* session, int depth);
 int sm_prepare(sm_session_t* session, const char* gid);
 
 /* One unresolved prepared transaction. */
-typedef struct sm_prepared_t {
-    const char* gid;
+struct sm_prepared_t {
+    std::string gid;
     long long   prepared_at;   /* wall-clock, seconds since epoch */
-} sm_prepared_t;
+};
 
-/* List prepared transactions: *out holds *n; sm_free(*out). */
-int sm_list_prepared(sm_session_t* session, sm_prepared_t** out,
-                     size_t* n);
+/* List prepared transactions into out, which it replaces. */
+int sm_list_prepared(sm_session_t* session, std::vector<sm_prepared_t>& out);
 
 /* Commit the prepared transaction gid. */
 int sm_commit_prepared(sm_session_t* session, const char* gid);
@@ -203,16 +199,13 @@ int sm_commit_prepared(sm_session_t* session, const char* gid);
 /* Abort the prepared transaction gid. */
 int sm_abort_prepared(sm_session_t* session, const char* gid);
 
-/* Release a list handed out by this API; NULL is a no-op. */
-void sm_free(void* p);
-
 /*
- * ---- scaffolding: stores and sequences, below the catalog ----
+ * ---- stores and sequences, below the catalog ----
  *
  * A table is made with sm_cat_create_table, which makes its
- * store and sequence; these make them without the catalog, for
- * tests of the levels below (DESIGN.md section 1). They go when
- * sm3 opens tables itself; the row calls will not change.
+ * store and its rowno sequence. These make a store or a sequence
+ * without the catalog: a sequence of the caller's own, and stores
+ * for tests of the levels below (DESIGN.md section 1).
  */
 
 /* Create a store in the active transaction. */
@@ -221,8 +214,8 @@ int sm_mkstore(sm_session_t* session, uint64_t* storeid);
 /* Drop a store and its rows in the active transaction. */
 int sm_rmstore(sm_session_t* session, uint64_t storeid);
 
-/* List the stores the transaction sees: *n ids; sm_free(*ids). */
-int sm_lsstore(sm_session_t* session, uint64_t** ids, size_t* n);
+/* List the stores the transaction sees into ids, which it replaces. */
+int sm_lsstore(sm_session_t* session, std::vector<uint64_t>& ids);
 
 /* Create the sequence name, handing out start, start+increment, ... */
 int sm_mkseq(sm_session_t* session, const char* name, uint64_t start,
@@ -304,45 +297,43 @@ static inline double sm_datum_to_double(sm_datum_t d) {
 /*
  * Parse PostgreSQL's canonical text for a value of type under
  * typmod, as the type's typinput does (sm2/TYPE.md §3). A by-value
- * result is *val itself, and *buf is NULL and *buf_len 0. A
- * by-reference one -- fixed-width bytes, or a varlena for a
- * variable-width type -- is one malloc'd block at *buf, *buf_len
- * bytes long, which *val points at; free it with sm_free. Only
- * the canonical text is accepted; any other is SM_ERR_INVALID.
+ * result is *val itself, and buf is left empty. A by-reference
+ * one -- fixed-width bytes, or a varlena for a variable-width
+ * type -- is put in buf, and *val points at it, so buf must
+ * outlive *val and not be changed meanwhile. Only the canonical
+ * text is accepted; any other is SM_ERR_INVALID.
  */
 int sm_type_in(const sm_type_t* type, int32_t typmod, const char* text,
-               size_t len, sm_datum_t* val, void** buf, size_t* buf_len);
+               size_t len, sm_datum_t* val, std::string& buf);
 
 /*
  * Print a non-null value of type under typmod as PostgreSQL's
- * canonical text, as the type's typoutput does, into *text,
- * NUL-terminated and malloc'd; free it with sm_free.
+ * canonical text, as the type's typoutput does, into text.
  */
 int sm_type_out(const sm_type_t* type, int32_t typmod, sm_datum_t val,
-                char** text);
+                std::string& text);
 
 /*
  * One attribute of a table's schema: its type and typmod, whether
  * it is dropped, and what a row older than it reads it as --
- * null, or missing[0..missing_len) when has_missing is set.
+ * null, or missing when has_missing is set.
  */
-typedef struct sm_attribute_t {
+struct sm_attribute_t {
     const sm_type_t* type;
     int32_t          typmod;
     bool             dropped;
     bool             has_missing;
-    const void*      missing;
-    size_t           missing_len;
-} sm_attribute_t;
+    std::string      missing;
+};
 
 /* One key column of an index: its type and how it sorts. */
-typedef struct sm_key_column_t {
+struct sm_key_column_t {
     const sm_type_t*      type;
     int32_t               typmod;
     const sm_collation_t* collation;   /* text, varchar; NULL: bytes */
     bool                  desc;        /* descending */
     bool                  nulls_first; /* nulls before every value */
-} sm_key_column_t;
+};
 
 /*
  * A scan bound: the values of the index's first n columns, with
@@ -350,12 +341,12 @@ typedef struct sm_key_column_t {
  * the bound. Bounds are in the index's own order, after direction
  * and null ordering.
  */
-typedef struct sm_bound_t {
+struct sm_bound_t {
     const sm_datum_t* prefix;
     const bool*           isnull;
     size_t                n;
     bool                  inclusive;
-} sm_bound_t;
+};
 
 /*
  * ---- cursors over a table's rows and index entries, sm2's ----
@@ -379,10 +370,10 @@ int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t rowno);
 /* Close a cursor; NULL is a no-op. */
 void sm_rel_scanend(sm_rel_scan_t* scan);
 
-/* Encode values and isnull into a tuple buffer; sm_free(*tuple). */
-int sm_tup_encode(const sm_attribute_t* schema, size_t natts,
-                    const sm_datum_t* values, const bool* isnull,
-                    void** tuple, size_t* len);
+/* Encode values and isnull, one per attribute of schema, into tuple. */
+int sm_tup_encode(const std::vector<sm_attribute_t>& schema,
+                  const sm_datum_t* values, const bool* isnull,
+                  std::string& tuple);
 
 /*
  * A cursor over an index's entries, in key order; sm_tbl_idx_scan
@@ -403,117 +394,99 @@ void sm_idx_scanend(sm_idx_scan_t* scan);
 /* ---- the catalog: sm3's ---- */
 
 /* sm1's lock modes, Gray's five (sm1::lockmode_t). */
-typedef enum sm_lockmode_t {
+enum sm_lockmode_t {
     SM_LOCK_SHARED                  = 0,
     SM_LOCK_EXCLUSIVE               = 1,
     SM_LOCK_INTENT_SHARED           = 2,
     SM_LOCK_INTENT_EXCLUSIVE        = 3,
     SM_LOCK_SHARED_INTENT_EXCLUSIVE = 4
-} sm_lockmode_t;
+};
 
 /* The built-in namespaces' oids (sm3::nsp_pg_catalog, nsp_public). */
 #define SM_NSP_PG_CATALOG 1
 #define SM_NSP_PUBLIC     2
 
 /* A column, as a table is created with it. */
-typedef struct sm_column_spec_t {
+struct sm_column_spec_t {
     const char* name;
     uint8_t     type_code;  /* sm2/TYPE.md section 3 */
     int32_t     typmod;
     bool        not_null;
-} sm_column_spec_t;
+};
 
 /* A key column, as an index is created with it; no collation yet. */
-typedef struct sm_index_key_spec_t {
+struct sm_index_key_spec_t {
     int32_t attnum;         /* the column's 0-based place */
     bool    desc;
     bool    nulls_first;
-} sm_index_key_spec_t;
+};
 
 /* A column of a table definition. */
-typedef struct sm_column_def_t {
-    const char* name;
+struct sm_column_def_t {
+    std::string name;
     uint8_t     type_code;
     int32_t     typmod;
     bool        not_null;
     bool        dropped;
-} sm_column_def_t;
+};
 
 /* Where an index's build stands (sm3::index_state_t). */
-typedef enum sm_index_state_t {
+enum sm_index_state_t {
     SM_INDEX_BUILDING = 0,  /* maintained, not yet filled; not scanned */
     SM_INDEX_VALID    = 1,
     SM_INDEX_FAILED   = 2   /* its build failed; it can only be dropped */
-} sm_index_state_t;
+};
 
 /*
- * An index of a table definition: its key and INCLUDE columns,
- * by 0-based place in the table and as sm2 lays them out.
+ * An index of a table definition: its key and INCLUDE columns, by
+ * 0-based place in the table and as sm2 lays them out; where its
+ * build stands; and, if the build failed, the error it failed
+ * with and that error's message.
  */
-typedef struct sm_index_def_t {
-    uint64_t               oid;
-    const char*            name;
-    uint16_t               prefix;
-    bool                   unique;
-    size_t                 nkey;
-    const int32_t*         key_attnums;
-    const sm_key_column_t* key;
-    size_t                 ninclude;
-    const int32_t*         include_attnums;
-    const sm_attribute_t*  include;
-    sm_index_state_t       state;
-    int                    error;   /* why its build failed; SM_OK unless */
-    const char*            reason;  /* that error's message, or "" */
-} sm_index_def_t;
+struct sm_index_def_t {
+    uint64_t                     oid;
+    std::string                  name;
+    bool                         unique;
+    std::vector<int32_t>         key_attnums;
+    std::vector<sm_key_column_t> key;
+    std::vector<int32_t>         include_attnums;
+    std::vector<sm_attribute_t>  include;
+    sm_index_state_t             state;
+    int                          error;   /* SM_OK unless failed */
+    std::string                  reason;
+};
 
 /*
- * A table definition: natts columns, with schema their attributes, and nindex
- * indexes. Every pointer in it is valid until sm_cat_table_free.
+ * A table definition: its columns, with schema their attributes
+ * as sm2 lays a row out by, and its indexes.
  */
-typedef struct sm_table_def_t {
-    uint64_t               oid;
-    uint64_t               nspoid;
-    const char*            name;
-    uint64_t               storeid;
-    const char*            rowno_seq;
-    size_t                 natts;
-    const sm_column_def_t* columns;
-    const sm_attribute_t*  schema;
-    size_t                 nindex;
-    const sm_index_def_t*  indexes;
-} sm_table_def_t;
+struct sm_table_def_t {
+    uint64_t                     oid;
+    uint64_t                     nspoid;
+    std::string                  name;
+    std::vector<sm_column_def_t> columns;
+    std::vector<sm_attribute_t>  schema;
+    std::vector<sm_index_def_t>  indexes;
+};
 
 /*
  * The oid of the table named name in nspoid, as the session's
  * transaction sees it: 0, or 1 if there is none. It takes no
- * lock: sm_cat_lock_table then finds a table dropped since.
+ * lock: sm_tbl_open then finds a table dropped since.
  */
 int sm_cat_table_oid(sm_session_t* session, uint64_t nspoid,
                      const char* name, uint64_t* oid);
 
 /*
  * The names of the tables in nspoid, sorted, as the session's
- * transaction sees them: *names holds *n strings; sm_free(*names).
+ * transaction sees them, into names, which it replaces.
  */
-int sm_cat_list_tables(sm_session_t* session, uint64_t nspoid, char*** names,
-                       size_t* n);
+int sm_cat_list_tables(sm_session_t* session, uint64_t nspoid,
+                       std::vector<std::string>& names);
 
 /* The index named name in nspoid, and its table: 0, or 1 if none. */
 int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
                      const char* name, uint64_t* table, uint64_t* index);
-
-/*
- * Take the schema lock of the table oid in mode, to the end of the
- * transaction -- SM_LOCK_INTENT_SHARED to read its rows,
- * SM_LOCK_INTENT_EXCLUSIVE to write them -- and hand out its
- * definition, which cannot change until then. A table dropped
- * while the caller waited is SM_ERR_NOTFOUND.
- */
-int sm_cat_lock_table(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
-                      sm_table_def_t** out);
-
-/* Free a definition sm_cat_lock_table handed out; NULL is a no-op. */
-void sm_cat_table_free(sm_table_def_t* def);
 
 /*
  * Wait until the build of the table's index has ended. An index
@@ -537,10 +510,12 @@ typedef struct sm_tbl_t sm_tbl_t;
 
 /*
  * Open the table oid in the session's transaction, taking its
- * schema lock in mode as sm_cat_lock_table does:
+ * schema lock in mode, held to the end of the transaction:
  * SM_LOCK_INTENT_SHARED to read its rows, SM_LOCK_INTENT_EXCLUSIVE
- * to write them. The handle is good for this transaction only;
- * close it before or after the transaction ends.
+ * to write them. Its definition cannot change until then. A table
+ * dropped while the caller waited is SM_ERR_NOTFOUND. The handle
+ * is good for this transaction only; close it before or after the
+ * transaction ends.
  */
 int sm_tbl_open(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
                 sm_tbl_t** out);
@@ -568,15 +543,13 @@ int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
 /*
  * Replace the row at rowno. old, if not NULL, gets the tuple
  * replaced -- at read committed the newest, not the one the caller
- * read -- valid until the next write on this table.
+ * read.
  */
 int sm_tbl_update(sm_tbl_t* tbl, uint64_t rowno, const sm_datum_t* values,
-                  const bool* isnull, size_t n, const void** old,
-                  size_t* old_len);
+                  const bool* isnull, size_t n, std::string* old = nullptr);
 
 /* Delete the row at rowno; old as sm_tbl_update's. */
-int sm_tbl_delete(sm_tbl_t* tbl, uint64_t rowno, const void** old,
-                  size_t* old_len);
+int sm_tbl_delete(sm_tbl_t* tbl, uint64_t rowno, std::string* old = nullptr);
 
 /*
  * Read the row at rowno: 0 with its tuple, 1 if none, or -1. The
@@ -599,7 +572,7 @@ int sm_tbl_scan(sm_tbl_t* tbl, uint64_t first, uint64_t last,
 
 /*
  * Every attribute of a row's tuple into values and isnull, n of
- * each, n being natts. A by-reference value points into the tuple,
+ * each, one per column. A by-reference value points into the tuple,
  * so it shares the tuple's lifetime.
  */
 int sm_tbl_deform(sm_tbl_t* tbl, const void* tuple, size_t len,
@@ -643,32 +616,32 @@ int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
                       size_t n);
 
 /*
- * Create the table name in nspoid with n columns: its store, its
- * rowno sequence and its definition, seen by the session's
+ * Create the table name in nspoid with these columns: its store,
+ * its rowno sequence and its definition, seen by the session's
  * transaction at once and by others at commit.
  */
 int sm_cat_create_table(sm_session_t* session, uint64_t nspoid,
-                        const char* name, const sm_column_spec_t* columns,
-                        size_t n, uint64_t* oid);
+                        const char* name,
+                        const std::vector<sm_column_spec_t>& columns,
+                        uint64_t* oid);
 
 /* Drop the table oid: its store, rows, indexes and sequence. */
 int sm_cat_drop_table(sm_session_t* session, uint64_t oid);
 
 /*
- * Create the index name on the table, keyed by nkey key columns,
- * with ninclude INCLUDE columns by 0-based place. It records the
- * index only: filling it from the table's rows is the caller's.
+ * Create the index name on the table, keyed by keys, with the
+ * INCLUDE columns includes by 0-based place. On a table this
+ * transaction made it is filled and valid at once. On any other
+ * it is recorded as building, and filled in the background once
+ * the transaction commits: sm_cat_index_wait waits for that.
  */
 int sm_cat_create_index(sm_session_t* session, uint64_t table,
-                        const char* name, const sm_index_key_spec_t* keys,
-                        size_t nkey, const int32_t* includes, size_t ninclude,
-                        bool unique, uint64_t* oid);
+                        const char* name,
+                        const std::vector<sm_index_key_spec_t>& keys,
+                        const std::vector<int32_t>& includes, bool unique,
+                        uint64_t* oid);
 
 /* Drop the index oid of the table, and its entries. */
 int sm_cat_drop_index(sm_session_t* session, uint64_t table, uint64_t index);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* SM_H */
