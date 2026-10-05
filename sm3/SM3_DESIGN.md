@@ -22,7 +22,8 @@ decisions in `SM3_OBJECTIVE.md`:
 load, DDL, a session's overlay and the schema locks of §2
 (`CATALOG.md`), and §4's object mapping with them: a store
 per table, index prefixes allocated and never reused, and
-`DROP TABLE` as one `sm1::rmstore`. §3's index maintenance,
+`DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
+is built in sm3, not yet behind the C API; its online build,
 §5's predicate scans and §6's statistics are not built. sm2,
 which it is built on, is, but for TOAST
 (`sm2/SM2_DESIGN.md` §8.2).
@@ -273,7 +274,14 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   `hashtext` does, not the string's bytes.
 - **Maintenance:** an update keeps the row's `rowno`, so only
   the indexes whose columns changed are touched — a primary key
-  change included. On update and delete, the old image from
+  change included. An index is left alone when the row's key
+  columns compare equal before and after, by their types'
+  `cmp`, and its INCLUDE columns hold the same bytes. The two
+  tests differ on purpose. The key folds values the type calls
+  equal, a float's `-0` and `+0`, so `cmp` decides whether the
+  key moved. An INCLUDE column is stored as written, so an
+  entry skipped on `cmp` alone would keep `-0` beside a heap
+  row that says `+0`. On update and delete, the old image from
   `rel_update` / `rel_delete` gives the old index entries to
   remove — as a tuple, so sm3 reads the indexed columns out
   of it without decoding bytes itself. The image views sm1
@@ -289,9 +297,24 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   entry writes in `include/sm.h` are scaffolding from before
   sm3 opened tables, and they leave it, so no caller can
   change a row and leave its entries behind. Reads and scans
-  of the heap and of an index stay. The call's name and its
-  handle are settled when maintenance is written (`PLAN.md`
-  step 3).
+  of the heap and of an index stay. In sm3 the calls are
+  `tbl_open`, on a table's oid and in the mode of its schema
+  lock, then `tbl_insert`, `tbl_update` and `tbl_delete`, with
+  `tbl_read`, `tbl_read_latest` and the two scans beside them
+  (`include/sm3.h`). A handle is good for one transaction, the
+  schema lock ending with it.
+- **A write sets no savepoint.** It is the heap write and then
+  a write or two per index, and one that fails after its first
+  step — a duplicate in a unique index, an over-long key —
+  leaves the earlier steps done: the heap and the indexes
+  disagree inside the transaction. The caller rolls back to a
+  savepoint of its own, or aborts, before going on, as sm1
+  expects of the layer that makes one row write into several
+  (`sm1/SM1_DESIGN.md` §6.5). A mark per row was the
+  alternative; it costs a lock-table mutex acquisition per
+  row, and PostgreSQL's errors abort the transaction or the
+  subtransaction anyway. `SM_ERR_UPDATED` needs no rollback:
+  it comes from the heap write, the first step.
 - **Read committed writes.** An update or delete that meets a
   row committed after the transaction began fails with
   `SM_ERR_UPDATED` (`sm1/SM1_DESIGN.md` §5.4). It does not abort

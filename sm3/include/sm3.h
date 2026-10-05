@@ -273,6 +273,94 @@ int cat_create_collation(session_t* session, uint64_t nspoid,
                          std::string_view name, std::string_view locale,
                          bool deterministic, uint64_t& oid);
 
+/*
+ * ---- tables: a row and its index entries (SM3_DESIGN.md §3) ----
+ *
+ * An open table: its definition under the schema lock, its heap,
+ * and its indexes. It is the one way to write a row, and each
+ * write keeps every index of the table in step with the heap.
+ */
+struct table_t;
+
+/*
+ * Open the table oid in session's transaction, taking its schema
+ * lock in mode as cat_lock_table does: intent_shared to read its
+ * rows, intent_exclusive to write them. The handle is good for
+ * this transaction only, the lock ending with it; close it with
+ * tbl_close, before or after the transaction ends.
+ */
+int tbl_open(session_t* session, uint64_t oid, sm1::lockmode_t mode,
+             table_t*& out);
+
+/* Close a table from tbl_open; nullptr is a no-op. */
+void tbl_close(table_t* table);
+
+/* The definition the table was opened with. */
+const table_def_t& tbl_def(const table_t* table);
+
+/*
+ * The writes. Each is the heap write, then a write or two to every
+ * index it changes, and sets no savepoint of its own: one that
+ * fails after its first step leaves the earlier steps done, the
+ * heap and the indexes disagreeing inside the transaction, and the
+ * caller must roll back to a savepoint of its own, or abort,
+ * before going on. SM_ERR_UPDATED is the exception: it comes from
+ * the heap write, which is the first step, so nothing is half done
+ * and the transaction goes on as sm1 says (SM1_DESIGN.md §5.4).
+ * A table opened in a mode that does not cover intent_exclusive
+ * fails with SM_ERR_INVALID.
+ */
+
+/*
+ * Insert a row of values and null flags, one per attribute of the
+ * table's schema; rowno is its id. Every index gets its entry.
+ */
+int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull, uint64_t& rowno);
+
+/*
+ * Replace the row at rowno. An index is left alone if the row's
+ * key columns compare equal before and after, by their types' cmp,
+ * and its INCLUDE columns hold the same bytes; otherwise its old
+ * entry is removed and a new one added. The old entry is computed
+ * from the image the heap write replaced, which at read committed
+ * is the newest, not the one the caller read. old, if not null,
+ * gets that image.
+ */
+int tbl_update(table_t* table, uint64_t rowno,
+               std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull, std::string* old = nullptr);
+
+/*
+ * Delete the row at rowno, and its entry in every index. old, if
+ * not null, gets the image deleted.
+ */
+int tbl_delete(table_t* table, uint64_t rowno, std::string* old = nullptr);
+
+/* Read the row at rowno, as sm2::rel_read does. */
+int tbl_read(table_t* table, uint64_t rowno, std::string_view& tuple);
+
+/*
+ * Read the newest committed version of the row at rowno, as
+ * sm2::rel_read_latest does: what a read committed writer that met
+ * SM_ERR_UPDATED checks its filter against, and what lets sm1 take
+ * its write again.
+ */
+int tbl_read_latest(table_t* table, uint64_t rowno, std::string_view& tuple);
+
+/* Open a cursor over the rows first..last, as sm2::rel_scan does. */
+int tbl_scan(table_t* table, uint64_t first, uint64_t last,
+             sm2::rel_scan_t*& out);
+
+/*
+ * Open a cursor over the entries of the table's index oid between
+ * lo and hi, as sm2::idx_scan does; SM_ERR_NOTFOUND if the table
+ * has no such index.
+ */
+int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
+                 const sm2::bound_t* hi, sm2::index_scan_t*& out,
+                 bool* widened = nullptr);
+
 } // namespace sm3
 
 #endif /* SM3_H */

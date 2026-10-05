@@ -215,7 +215,7 @@ at every isolation level. 1.8 works it through.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:433`-435). The evaluator
+  caller to discard" (`SM3_DESIGN.md:456`-458). The evaluator
   is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.
@@ -758,7 +758,7 @@ writing it, so the prose and the decisions come before code.
    `include/sm.h` lacks, and the heap-level writes it retires
    (1.9). Then insert, update and delete, the old
    image copied before the next call on the session
-   (`SM3_DESIGN.md:279`-283), and the index fix-up from the
+   (`SM3_DESIGN.md:287`-291), and the index fix-up from the
    newest old image after `SM_ERR_UPDATED`, with no predicate
    of sm3's own. sm2's index `rel` already refuses an
    over-long key in a unique index with `SM_ERR_KEYTOOLONG`
@@ -766,6 +766,16 @@ writing it, so the prose and the decisions come before code.
    → verify: scenarios at every isolation level in which the
    index and a brute-force scan of the heap agree, the
    claim-once shape of 1.1 among them.
+   **Stage A done:** sm3's `tbl_*` calls (`sm3/include/sm3.h`,
+   `sm3/src/table/table.cc`), tested in
+   `sm3/test/test_table.cc` against a brute-force scan of the
+   heap, with 1.1's and 1.2's races at READ COMMITTED. Two
+   things differ from 1.7. A write sets no savepoint, so a
+   caller rolls back a write that fails partway. And an update
+   skips an index whose key columns compare equal and whose
+   INCLUDE columns hold the same bytes. Still to do: `sm_tbl_*`
+   in `include/sm.h` with `rel` moved onto it, then the
+   removal of the heap-level writes (1.9).
 5. **The online build under S**, which `CATALOG.md` §7.1 waits
    on: `cat_create_index` takes X today and takes S once the
    build exists, with the `indcheckxmin` guard for a reader
