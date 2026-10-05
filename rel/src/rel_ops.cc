@@ -927,6 +927,44 @@ static Janet cfun_index_drop(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (index-wait idx_name) */
+static Janet cfun_index_wait(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string idx_name = identifier_of(argv[0]);
+
+  uint64_t table = 0, index = 0;
+  int rc = sm_cat_index_oid(s->session, SM_NSP_PUBLIC, idx_name.c_str(), &table,
+                            &index);
+  if (rc == 1) {
+    janet_panicf("index-wait: index '%s' not found", idx_name.c_str());
+  }
+  // Blocks until the background build of the index has ended.
+  if (rc != 0 || sm_cat_index_wait(s->session, table, index) != 0) {
+    panic_sm_error("index-wait");
+  }
+  return janet_wrap_nil();
+}
+
+/* (index-state idx_name) */
+static Janet cfun_index_state(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string idx_name = identifier_of(argv[0]);
+
+  auto [p_tdef, p_idef] =
+      need_index(s, idx_name, SM_LOCK_INTENT_SHARED, "index-state");
+  (void)p_tdef;
+  switch (p_idef->def->state) {
+  case SM_INDEX_BUILDING:
+    return janet_ckeywordv("building");
+  case SM_INDEX_VALID:
+    return janet_ckeywordv("valid");
+  default:
+    return janet_ckeywordv("failed");
+  }
+}
+
 /* (insert table [val1 val2 ...]) */
 static Janet cfun_insert(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
@@ -1482,6 +1520,8 @@ static const JanetReg s_rel_cfuns[] = {
     {"nextseq", cfun_nextseq, "(nextseq name) -- get next sequence value"},
     {"_index-create", cfun_index_create, "internal"},
     {"_index-drop", cfun_index_drop, "internal"},
+    {"_index-wait", cfun_index_wait, "internal"},
+    {"_index-state", cfun_index_state, "internal"},
     {"list-tables", cfun_list_tables,
      "(list-tables) -- the table names in public, sorted"},
     {"_describe-table", cfun_describe_table, "internal"},
@@ -1530,6 +1570,12 @@ static const char *s_prelude = R"janet(
 
 (defmacro index-drop [name]
   ~(_index-drop (string ',name)))
+
+(defmacro index-wait [name]
+  ~(_index-wait (string ',name)))
+
+(defmacro index-state [name]
+  ~(_index-state (string ',name)))
 
 (defmacro describe-table [name & flags]
   ~(_describe-table (string ',name) ,;flags))

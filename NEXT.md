@@ -19,7 +19,7 @@ here sit below and beside sm3 (§5 below).
 | --- | --- |
 | sm1 | built and tested |
 | sm2 | built but for TOAST (`sm2/SM2_DESIGN.md` §8.2) |
-| sm3 | catalog, schema locks, object mapping and index maintenance built; the online build and `SM3_DESIGN.md` §5 and §6 are design |
+| sm3 | catalog, schema locks, object mapping, index maintenance and the concurrent index build built; `SM3_DESIGN.md` §5 and §6 are design |
 | top | `include/sm.h` over all three, with the `sm_cat_*` and `sm_tbl_*` calls; `rel` reads and writes its tables through them |
 
 `sm3/PLAN.md` steps 1 and 2 are both done. Step 2's object
@@ -824,7 +824,11 @@ writing it, so the prose and the decisions come before code.
       — **done** in sm3: `cat_builder_start` and
       `src/catalog/build.cc`. Nothing starts it for the C
       API yet;
-   6. the C API and `rel`.
+   6. the C API and `rel` — **done**: opening a database
+      starts its catalog's builder; `sm_cat_index_wait`,
+      `sm_tbl_index_usable` and the state and failure reason
+      in `sm_index_def_t`; `rel`'s `(index-wait ...)` and
+      `(index-state ...)`, with `rel/test/test_build.rel`.
    → verify: a writer in flight when the build starts is not
    missed; neither a reader nor a writer waits for the build;
    the index agrees with a brute-force scan of the heap when

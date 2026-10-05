@@ -136,9 +136,6 @@ void build_enqueue(catalog_t *cat, uint64_t table, uint64_t index);
 /* Wake whoever waits on an index's state: the catalog has changed. */
 void build_notify(catalog_t *cat);
 
-/* Stop the builder's workers and wait for them; for cat_close. */
-void build_stop(catalog_t *cat);
-
 /*
  * Whether session may scan the index oid of the table it sees as
  * def (sm3.h, tbl_index_usable).

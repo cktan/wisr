@@ -45,6 +45,10 @@ static_assert(static_cast<int>(sm1::lockmode_t::shared_intent_exclusive) ==
               SM_LOCK_SHARED_INTENT_EXCLUSIVE);
 static_assert(sm3::nsp_pg_catalog == SM_NSP_PG_CATALOG);
 static_assert(sm3::nsp_public == SM_NSP_PUBLIC);
+static_assert(static_cast<int>(sm3::index_state_t::building) ==
+              SM_INDEX_BUILDING);
+static_assert(static_cast<int>(sm3::index_state_t::valid) == SM_INDEX_VALID);
+static_assert(static_cast<int>(sm3::index_state_t::failed) == SM_INDEX_FAILED);
 static_assert(static_cast<int>(sm1::loglevel_t::error) == SM_LOG_ERROR);
 static_assert(static_cast<int>(sm1::loglevel_t::warn) == SM_LOG_WARN);
 static_assert(static_cast<int>(sm1::loglevel_t::info) == SM_LOG_INFO);
@@ -340,10 +344,11 @@ void build_holder(std::shared_ptr<const sm3::table_def_t> def,
   }
   for (size_t i = 0; i < d.indexes.size(); i++) {
     const sm3::index_def_t &x = d.indexes[i];
-    h.index_arr.push_back({x.oid, x.name.c_str(), x.prefix, x.unique,
-                           x.key_attnums.size(), x.key_attnums.data(),
-                           h.key_arrs[i].data(), x.include_attnums.size(),
-                           x.include_attnums.data(), h.include_arrs[i].data()});
+    h.index_arr.push_back(
+        {x.oid, x.name.c_str(), x.prefix, x.unique, x.key_attnums.size(),
+         x.key_attnums.data(), h.key_arrs[i].data(), x.include_attnums.size(),
+         x.include_attnums.data(), h.include_arrs[i].data(),
+         static_cast<sm_index_state_t>(x.state), x.error, x.reason.c_str()});
   }
   h.oid = d.oid;
   h.nspoid = d.nspoid;
@@ -399,6 +404,20 @@ int sm_init(const char *homedir) {
   return guard(nullptr, [&] { return sm1::init(name_of(homedir)); });
 }
 
+/*
+ * Start the builder of dbname's catalog, its workers opening sm1
+ * sessions of their own on that database.
+ */
+static int start_builder(sm_env_t *env, std::string_view dbname,
+                         sm3::catalog_t *cat) {
+  sm1::env_t *e = env->env;
+  std::string name(dbname);
+  return sm3::cat_builder_start(cat, [e, name]() -> sm1::session_t * {
+    sm1::session_t *s = nullptr;
+    return sm1::opendb(e, name, s) == 0 ? s : nullptr;
+  });
+}
+
 /* Attach homedir. */
 int sm_attach(const char *homedir, sm_env_t **out) {
   return guard(nullptr, [&] {
@@ -421,8 +440,30 @@ int sm_detach(sm_env_t *env, int force) {
     if (env == nullptr) {
       return 0;
     }
+    // Sessions still open: an unforced detach is refused by sm1,
+    // and the builders stay as they are.
+    if (!force && !env->sessions.empty()) {
+      return sm1::detach(env->env, force);
+    }
+    // A forced detach abandons the open transactions; do it now, so
+    // no worker is left waiting for a lock one of them holds.
+    for (sm_session_t *s : env->sessions) {
+      if (!sm1::in_doubt(s->sm1)) {
+        keeping_error([&] { sm3::abort(s->sm3); });
+      }
+    }
+    // Stop the builders first: their workers hold sm1 sessions,
+    // which must be closed before the databases are.
+    for (auto &[name, cat] : env->catalogs) {
+      sm3::cat_builder_stop(cat);
+    }
     // Detach: closes the databases and stops sm1's threads.
     if (sm1::detach(env->env, force) != 0) {
+      keeping_error([&] {
+        for (auto &[name, cat] : env->catalogs) {
+          start_builder(env, name, cat);
+        }
+      });
       return -1;
     }
     for (sm_session_t *s : env->sessions) {
@@ -473,11 +514,18 @@ int sm_mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
 /* Drop dbname, and the catalog loaded for it. */
 int sm_rmdb(sm_env_t *env, const char *dbname) {
   return guard(nullptr, [&] {
-    if (sm1::rmdb(env->env, name_of(dbname)) != 0) {
-      return -1;
-    }
     std::lock_guard lock(env->mu);
     auto it = env->catalogs.find(name_of(dbname));
+    // Its builder's workers hold sessions on it: close them first.
+    if (it != env->catalogs.end()) {
+      sm3::cat_builder_stop(it->second);
+    }
+    if (sm1::rmdb(env->env, name_of(dbname)) != 0) {
+      if (it != env->catalogs.end()) {
+        keeping_error([&] { start_builder(env, name_of(dbname), it->second); });
+      }
+      return -1;
+    }
     if (it != env->catalogs.end()) {
       sm3::cat_close(it->second);
       env->catalogs.erase(it);
@@ -531,6 +579,13 @@ int sm_opendb(sm_env_t *env, const char *dbname, const sm_options_t *opt,
                    sm3::cat_open(s, cat) != 0 || sm1::commit(s) != 0
                ? -1
                : 0;
+      // Build its indexes in the background from here on, and
+      // queue what a restart left unbuilt.
+      if (rc == 0 && start_builder(env, name_of(dbname), cat) != 0) {
+        sm3::cat_close(cat);
+        cat = nullptr;
+        rc = -1;
+      }
       if (rc == 0) {
         env->catalogs.emplace(std::string(name_of(dbname)), cat);
       }
@@ -997,6 +1052,16 @@ void sm_cat_table_free(sm_table_def_t *def) {
   delete static_cast<table_holder_t *>(def);
 }
 
+/* Wait for an index's build to end. */
+int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index) {
+  return guard(nullptr, [&] {
+    if (!session) {
+      return null_arg("sm_cat_index_wait", "session");
+    }
+    return sm3::cat_index_wait(session->sm3, table, index);
+  });
+}
+
 /*
  * A table as the wrapper holds it: the session, for the
  * catch-all's abort; sm3's handle; the C view of its definition;
@@ -1221,6 +1286,11 @@ int sm_tbl_idx_scan(sm_tbl_t *tbl, uint64_t index, const sm_bound_t *lo,
     *out = reinterpret_cast<sm_idx_scan_t *>(scan);
     return 0;
   });
+}
+
+/* Whether the table's session may scan one of its indexes now. */
+bool sm_tbl_index_usable(const sm_tbl_t *tbl, uint64_t index) {
+  return sm3::tbl_index_usable(tbl->table, index);
 }
 
 /* The attribute count of an entry's value in one of a table's indexes. */

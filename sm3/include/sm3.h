@@ -310,6 +310,15 @@ int cat_builder_start(catalog_t* cat, std::function<sm1::session_t*()> open,
                       size_t max_workers = 4, size_t batch_rows = 1000);
 
 /*
+ * Stop the catalog's builder: its workers end after the batch they
+ * are in, and their sessions are closed. A build cut short leaves
+ * its index building, for the next cat_builder_start to queue.
+ * cat_close does this itself; it is called apart to close the
+ * workers' sessions before the database is closed under them.
+ */
+void cat_builder_stop(catalog_t* cat);
+
+/*
  * Wait until the build of the table's index oid has ended, for a
  * caller that wants to use the index at once: 0 once it is valid.
  * It waits on the index's state, so any session may wait, for a

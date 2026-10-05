@@ -213,7 +213,7 @@ int cat_open(sm1::session_t *session, catalog_t *&out) {
 void cat_close(catalog_t *cat) {
   if (cat) {
     // A worker reads the catalog: none may outlive it.
-    build_stop(cat);
+    cat_builder_stop(cat);
   }
   delete cat;
 }

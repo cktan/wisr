@@ -1,0 +1,89 @@
+# test_build.rel -- an index made on a table that already has rows is
+# built in the background (sm3/SM3_DESIGN.md section 3): writers and
+# readers go on meanwhile, and (index-wait ...) waits for it to end.
+#
+# 1. An index on a table with committed rows is building, then valid;
+#    after the wait it holds every row and is maintained like any other.
+# 2. A unique index over two rows with one key fails to build: the wait
+#    raises the build's own error, and the index can be neither scanned
+#    nor relied on, only dropped.
+# 3. An index made in its table's own transaction is valid at once.
+# 4. index-wait is refused inside a transaction.
+# 5. A valid index is valid, and usable, after a restart.
+
+(def test-dir "/tmp/wisr_rel_test_build")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "builddb")
+(db-open "builddb")
+
+# 1. 200 rows, then an index on them.
+(begin :rc)
+(table-create jobs
+  (columns (id :int4 :not-null) (state :text :not-null) (owner :text)))
+(for i 1 201
+  (insert jobs [i "free" (string "w" (% i 7))]))
+(commit)
+(begin :rc)
+(index-create jobs_owner (table jobs) (key (owner :asc)) :unique false)
+(commit)
+(index-wait jobs_owner)
+(begin :rc)
+(assert-eq (index-state jobs_owner) :valid)
+(assert-count 200 (idx-scan jobs_owner))
+(assert-count 28 (idx-scan jobs_owner :ge ["w0"] :le ["w0"]))
+# It is maintained from here on like any other index.
+(update jobs 7 [7 "taken" "zed"])
+(assert-count 27 (idx-scan jobs_owner :ge ["w0"] :le ["w0"]))
+(assert-eq (((idx-scan jobs_owner :ge ["zed"] :le ["zed"]) 0) 0) 7)
+(commit)
+# Waiting again for a valid index returns at once.
+(index-wait jobs_owner)
+
+# 2. A unique index on state: every row but one is "free".
+(begin :rc)
+(index-create jobs_state_u (table jobs) (key (state :asc)) :unique true)
+(commit)
+(assert-err :err-dupkey (index-wait jobs_state_u))
+(assert-eq (sm:errnum) 7) # SM_ERR_DUPKEY = 7
+(assert-eq (not= nil (string/find "jobs_state_u" (sm:errmsg))) true)
+(begin :rc)
+(assert-eq (index-state jobs_state_u) :failed)
+(assert-err :err-invalid (idx-scan jobs_state_u))
+# A failed index is not maintained: it refuses no duplicate.
+(def r (insert jobs [201 "free" "w1"]))
+(assert-count 201 (idx-scan jobs_owner))
+(index-drop jobs_state_u)
+(commit)
+
+# 3. A table, its rows and its index in one transaction.
+(begin :rc)
+(table-create notes (columns (id :int4 :not-null) (body :text)))
+(insert notes [1 "a"])
+(insert notes [2 "b"])
+(index-create notes_body (table notes) (key (body :asc)) :unique true)
+(assert-eq (index-state notes_body) :valid)
+(assert-count 2 (idx-scan notes_body))
+
+# 4. index-wait is for outside a transaction.
+(assert-err :err-intrans (index-wait notes_body))
+(commit)
+(index-wait notes_body)
+
+# 5. After a restart.
+(db-close)
+(env-detach)
+(env-attach test-dir)
+(db-open "builddb")
+(index-wait jobs_owner)
+(begin :rc)
+(assert-eq (index-state jobs_owner) :valid)
+(assert-count 201 (idx-scan jobs_owner))
+(assert-count 2 (idx-scan notes_body))
+(commit)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_build.rel: PASSED")

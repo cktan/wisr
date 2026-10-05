@@ -379,6 +379,32 @@ Drops the secondary index named `name`.
 (index-drop idx_users_email)
 ```
 
+### `(index-wait name)`
+Waits until the build of the index named `name` has ended. An
+index created on a table that already holds committed rows is
+built in the background (`sm3/SM3_DESIGN.md` §3): writers and
+readers go on meanwhile, but the index may not be scanned
+until it is valid. One created in the same transaction as its
+table is valid at once and needs no wait. Call it outside a
+transaction. If the build failed, on two rows with one key in
+a unique index for one, it raises the build's own error.
+
+```janet
+(index-create idx_users_email (table users) (key (email :asc))
+  :unique true)
+(commit)
+(index-wait idx_users_email)
+```
+
+### `(index-state name)`
+Returns `:building`, `:valid` or `:failed` for the index named
+`name`, inside a transaction. A failed index is not maintained
+and cannot be scanned; it can only be dropped.
+
+```janet
+(assert-eq (index-state idx_users_email) :valid)
+```
+
 ---
 
 ## 6. Data Manipulation (DML) & Scans

@@ -435,6 +435,13 @@ typedef struct sm_column_def_t {
     bool        dropped;
 } sm_column_def_t;
 
+/* Where an index's build stands (sm3::index_state_t). */
+typedef enum sm_index_state_t {
+    SM_INDEX_BUILDING = 0,  /* maintained, not yet filled; not scanned */
+    SM_INDEX_VALID    = 1,
+    SM_INDEX_FAILED   = 2   /* its build failed; it can only be dropped */
+} sm_index_state_t;
+
 /*
  * An index of a table definition: its key and INCLUDE columns,
  * by 0-based place in the table and as sm2 lays them out.
@@ -450,6 +457,9 @@ typedef struct sm_index_def_t {
     size_t                 ninclude;
     const int32_t*         include_attnums;
     const sm_attribute_t*  include;
+    sm_index_state_t       state;
+    int                    error;   /* why its build failed; SM_OK unless */
+    const char*            reason;  /* that error's message, or "" */
 } sm_index_def_t;
 
 /*
@@ -500,6 +510,17 @@ int sm_cat_lock_table(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
 
 /* Free a definition sm_cat_lock_table handed out; NULL is a no-op. */
 void sm_cat_table_free(sm_table_def_t* def);
+
+/*
+ * Wait until the build of the table's index has ended. An index
+ * made on a table that has rows is built in the background, and
+ * may not be scanned until it is valid; this is for a caller that
+ * wants it at once. Returns 0 once it is valid. If the build
+ * failed it fails with the build's own error, code and message,
+ * as the index keeps them; SM_ERR_INTRANS inside a transaction;
+ * SM_ERR_NOTFOUND if there is no such table or index.
+ */
+int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index);
 
 /*
  * ---- tables: a row and its index entries, sm3's ----
@@ -596,6 +617,14 @@ int sm_tbl_decode(sm_tbl_t* tbl, const void* tuple, size_t len,
 int sm_tbl_idx_scan(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
                     const sm_bound_t* hi, bool* widened,
                     sm_idx_scan_t** out);
+
+/*
+ * Whether the session may scan the table's index now. Not while it
+ * is building, never once it has failed, and not in a statement or
+ * transaction whose snapshot is older than the index's build.
+ * sm_tbl_idx_scan fails with SM_ERR_INVALID on one that may not be.
+ */
+bool sm_tbl_index_usable(const sm_tbl_t* tbl, uint64_t index);
 
 /*
  * The number of attributes in an entry's value in that index: the

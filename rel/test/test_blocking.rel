@@ -120,6 +120,10 @@
 
 (session-use s2)
 (commit)
+# The index was made on a table with rows, so it is built in the
+# background; wait for that, or the build's own locks could meet the
+# qa-nowait step below.
+(index-wait jobs_owner)
 
 # The DDL is committed: the writer goes ahead.
 (session-use s1)

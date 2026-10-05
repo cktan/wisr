@@ -209,8 +209,8 @@ void build_notify(catalog_t *cat) {
   cat->builder.cv.notify_all();
 }
 
-/* Stop the workers and wait for them; see internal.h. */
-void build_stop(catalog_t *cat) {
+/* Stop the workers and wait for them; see sm3.h. */
+void cat_builder_stop(catalog_t *cat) {
   builder_t &b = cat->builder;
   std::vector<std::thread> threads;
   {
@@ -223,6 +223,15 @@ void build_stop(catalog_t *cat) {
   for (std::thread &t : threads) {
     t.join();
   }
+  // As before it was started: what was queued is found again, still
+  // building, by the next start.
+  std::lock_guard lock(b.mu);
+  b.open = nullptr;
+  b.queue.clear();
+  b.active.clear();
+  b.finished.clear();
+  b.stop = false;
+  b.cv.notify_all();
 }
 
 /* Start the builder, and queue what a restart left; see sm3.h. */
