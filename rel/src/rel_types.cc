@@ -322,4 +322,105 @@ Janet value_to_janet(const sm_datum_t &val, bool isnull, uint8_t type_code,
   }
 }
 
+/* e as an index's blob: a line a part, the predicate's text by length. */
+std::string format_index_eval(const index_eval_t &e) {
+  std::string out;
+  if (e.has_where) {
+    out += "where " + std::to_string(e.where_att) + " " +
+           std::to_string(e.where_code) + " " + std::to_string(e.where_typmod) +
+           " " + std::to_string(e.where_text.size()) + "\n" + e.where_text +
+           "\n";
+  }
+  for (const auto &[fn, att] : e.exprs) {
+    out += "expr " + fn + " " + std::to_string(att) + "\n";
+  }
+  return out;
+}
+
+/* Read a blob format_index_eval wrote; false if it is not one. */
+bool parse_index_eval(const std::string &blob, index_eval_t &e) {
+  e = index_eval_t();
+  size_t pos = 0;
+  while (pos < blob.size()) {
+    size_t eol = blob.find('\n', pos);
+    if (eol == std::string::npos) {
+      return false;
+    }
+    std::string line = blob.substr(pos, eol - pos);
+    pos = eol + 1;
+    int att = 0, code = 0, typmod = 0;
+    size_t len = 0;
+    char fn[16];
+    if (sscanf(line.c_str(), "where %d %d %d %zu", &att, &code, &typmod,
+               &len) == 4) {
+      if (pos + len + 1 > blob.size()) {
+        return false;
+      }
+      e.has_where = true;
+      e.where_att = att;
+      e.where_code = static_cast<uint8_t>(code);
+      e.where_typmod = typmod;
+      e.where_text = blob.substr(pos, len);
+      pos += len + 1;
+    } else if (sscanf(line.c_str(), "expr %15s %d", fn, &att) == 2) {
+      e.exprs.emplace_back(fn, att);
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* rel's evaluator; see rel.h. */
+int index_eval(void *, uint64_t, uint64_t, const std::string &eval,
+               const sm_datum_t *values, const bool *isnull, size_t n,
+               bool *belongs, std::vector<std::string> &out, bool *out_isnull) {
+  index_eval_t e;
+  if (!parse_index_eval(eval, e)) {
+    return sm_seterr(SM_ERR_INVALID, "rel: an index's blob is not rel's");
+  }
+  // The predicate: the column's value, as its type prints it, is
+  // the text the index was made with. A null equals nothing.
+  *belongs = true;
+  if (e.has_where) {
+    size_t att = static_cast<size_t>(e.where_att);
+    if (att >= n) {
+      return sm_seterr(SM_ERR_INVALID, "rel: a predicate on no column");
+    }
+    *belongs = false;
+    if (!isnull[att]) {
+      std::string text;
+      if (sm_type_out(sm_type(e.where_code), e.where_typmod, values[att],
+                      text) != 0) {
+        return -1;
+      }
+      *belongs = text == e.where_text;
+    }
+  }
+  // Each expression: the text column in one case, as a varlena.
+  for (size_t k = 0; k < e.exprs.size(); k++) {
+    size_t att = static_cast<size_t>(e.exprs[k].second);
+    if (att >= n) {
+      return sm_seterr(SM_ERR_INVALID, "rel: an expression on no column");
+    }
+    out_isnull[k] = isnull[att];
+    if (isnull[att]) {
+      continue;
+    }
+    const char *data = nullptr;
+    size_t len = 0;
+    varlena_payload(SM_DATUM_TO_PTR(values[att]), &data, &len);
+    std::string text(data, len);
+    bool upper = e.exprs[k].first == "upper";
+    for (char &c : text) {
+      unsigned char u = static_cast<unsigned char>(c);
+      c = static_cast<char>(upper ? std::toupper(u) : std::tolower(u));
+    }
+    std::vector<uint8_t> v;
+    make_varlena(text.data(), text.size(), v);
+    out[k].assign(v.begin(), v.end());
+  }
+  return 0;
+}
+
 } // namespace rel

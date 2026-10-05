@@ -36,6 +36,12 @@ int catalog_t::env_attach(const char *path) {
   if (sm_attach(path, &env) != 0) {
     return -1;
   }
+  // rel evaluates its own partial and expression indexes; the
+  // evaluator must be in place before a database is opened.
+  if (sm_set_index_evaluator(env, index_eval, nullptr) != 0) {
+    sm_detach(env, 1);
+    return -1;
+  }
   m_env = env;
   m_env_path = path;
   return 0;
@@ -159,10 +165,19 @@ static std::unique_ptr<table_def_t> view_of(const std::string &name,
     idef.name = x.name;
     idef.unique = x.unique;
     idef.def = &x;
+    // An expression key column is of a column the blob names.
+    index_eval_t ev;
+    parse_index_eval(x.eval, ev);
+    size_t e = 0;
     for (size_t j = 0; j < x.key.size(); j++) {
-      const col_def_t &c = t->columns[x.key_attnums[j]];
+      bool expr = x.key_attnums[j] < 0 && e < ev.exprs.size();
+      int32_t att = expr ? ev.exprs[e].second : x.key_attnums[j];
+      const col_def_t &c = t->columns[att];
       key_col_def_t k;
-      k.col_idx = x.key_attnums[j];
+      if (expr) {
+        k.expr = ev.exprs[e++].first;
+      }
+      k.col_idx = att;
       k.type_code = c.type_code;
       k.typmod = c.typmod;
       k.collation = nullptr;

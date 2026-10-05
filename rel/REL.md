@@ -347,17 +347,26 @@ apart from an evaluated one.
 ```
 
 ### `(index-create name (table tbl) ...)`
-Creates a secondary index on table `tbl`. It records the index
-only: rows already in the table are not added to it, so create
-an index before inserting the rows it should find.
+Creates a secondary index on table `tbl`. On a table made in
+the same transaction it is filled and valid at once. On a table
+that already holds committed rows it is built in the
+background once the transaction commits; `(index-wait name)`
+waits for that.
 
 Clauses:
 - `(table tbl)` -- target table name.
 - `(key (col [:asc|:desc] [:nulls-first|:nulls-last])...)` -- key
-  columns with ordering and null placement.
+  columns with ordering and null placement. In a column's
+  place, `(lower col)` or `(upper col)` makes the key column an
+  expression of a text column.
 - `:unique bool` -- enforce unique constraint on key columns.
 - `:include (col...)` -- non-key payload columns embedded
   in index tuples.
+- `:where (col value)` -- a partial index: only the rows whose
+  `col` prints as `value` are in it. A null equals nothing.
+
+The storage manager evaluates neither form. It calls `rel`'s
+own evaluator, as it would call PostgreSQL's in the fork.
 
 ```janet
 (index-create idx_users_email

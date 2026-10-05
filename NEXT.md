@@ -55,8 +55,14 @@ In this order, tests first:
    **Done** in sm3 (`src/table/table.cc`), a writer racing the
    build of an evaluated index among the tests, in both orders
    on one thread and with real threads.
-4. **The C API and `rel`**: registering an evaluator, and a
-   `rel` script supplying one as a Janet function.
+4. **The C API and `rel`** — **done**:
+   `sm_set_index_evaluator`, `sm_seterr`, and
+   `sm_cat_create_index` taking the blob and the columns
+   read. `rel` has an evaluator of its own, in C++ and not a
+   script's function, since the build calls it from worker
+   threads where Janet may not run: `:where (col value)`, and
+   `(lower col)` or `(upper col)` as a key column
+   (`rel/test/test_partial.rel`).
 
 What it costs a row on the write path is unmeasured; measure
 it once step 3 runs.
@@ -90,6 +96,11 @@ Owed, and blocking nothing above:
   waits on a lock held by a prepared, in-doubt transaction
   holds up `cat_close`, and so a detach, until that transaction
   is resolved. sm1 needs a way to cancel a wait.
+- **One sm1 test depends on timing.** `sm1/test/test_gc.cc`,
+  "the purge's range tombstones are flushed by count", expects
+  no level-0 file right after a compaction, and once found
+  one, in a full run on a busy machine. It passed alone six
+  times and in the next full run.
 - **Marking an index valid takes the schema lock X**, as every
   catalog change does, so a long transaction on the table
   delays it. The step only flips a state writers do not depend

@@ -492,8 +492,9 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   keeps what the host gives it for an index, its predicate and
   its expressions, as bytes it does not read. The host
   registers one evaluator with the catalog. Given a table, an
-  index and a row image, it says whether the row belongs in
-  the index and gives the row's key values, and sm3 calls it
+  index and a row image as its values, it says whether the row
+  belongs in the index and gives the row's key values, and sm3
+  calls it
   wherever it computes an entry: on insert, on the old and the
   new image of an update and of a delete, and in the build.
   INCLUDE columns are plain columns and need none of this.
@@ -571,15 +572,20 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     created, and a write to its table or a build of it fails
     with an error that says so.
 
-  A write to a table with such an index encodes the row
-  itself, once, to have a tuple to show the evaluator, and
-  hands sm2 the tuple instead of the values. The build shows
-  it each row's newest image under the row's lock, as it reads
-  any row. An evaluator that fails fails the write with its
-  error, and fails a build, which keeps the error as its
-  reason. What a call a row costs on the write path is
-  unmeasured, and the C API cannot create or register any of
-  this yet.
+  The evaluator is shown a row as its values and null flags,
+  one a column, and not as a tuple: a write has the new row
+  that way already, sm3 deforms the old image to maintain any
+  index, and a host needs no schema and no decoder to read
+  it. The build shows it each row's newest image under the
+  row's lock, as it reads any row. An evaluator that fails
+  fails the write with its error, and fails a build, which
+  keeps the error as its reason. In the C API the host gives
+  its evaluator to an environment with
+  `sm_set_index_evaluator`, and fails from it with
+  `sm_seterr`. `rel` has one of its own, for a predicate that
+  is a column equal to a value and for `lower` and `upper` of
+  a text column (`rel/REL_DESIGN.md` §4.3). What a call a row
+  costs on the write path is unmeasured.
 - **sm3 drives maintenance; the executor owns the qual.** The
   kept executor could write index entries itself through its
   index access method, as PostgreSQL does, reaching sm2's

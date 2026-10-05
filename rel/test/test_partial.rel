@@ -1,0 +1,130 @@
+# test_partial.rel -- partial and expression indexes
+# (sm3/SM3_DESIGN.md section 3). The storage manager evaluates
+# nothing itself: it calls the host's evaluator, which here is rel's
+# own, over two forms: :where (column value), a partial index of the
+# rows whose column equals the value, and a key column written
+# (lower column) or (upper column) in place of a column.
+#
+# 1. A partial index holds only the rows its predicate takes, and
+#    follows them as they start and stop qualifying.
+# 2. An expression index is keyed by the computed value, and a unique
+#    one refuses two rows that differ only in case.
+# 3. Both are built in the background on a table that has rows.
+# 4. describe-table gives them back in index-create's own forms.
+# 5. A predicate on a column that is not text.
+
+(def test-dir "/tmp/wisr_rel_test_partial")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "partdb")
+(db-open "partdb")
+
+# The rownos of a list of index entries.
+(defn rownos [entries] (map (fn [e] (e 0)) entries))
+
+# 1. A partial index, made with its table, so valid at once.
+(begin :rc)
+(table-create jobs
+  (columns (id :int4 :not-null) (state :text :not-null) (owner :text)))
+(def r1 (insert jobs [1 "free" "Ann"]))
+(def r2 (insert jobs [2 "taken" "Bob"]))
+(def r3 (insert jobs [3 "free" "Cy"]))
+(index-create jobs_free (table jobs) (key (owner :asc)) :unique false
+  :where (state "free"))
+(assert-eq (index-state jobs_free) :valid)
+(assert-eq (rownos (idx-scan jobs_free)) @[r1 r3])
+# A row that stops being free leaves it; one that becomes free joins.
+(update jobs r1 [1 "taken" "Ann"])
+(update jobs r2 [2 "free" "Bob"])
+(assert-eq (rownos (idx-scan jobs_free)) @[r2 r3])
+# A free row whose owner changes moves to its new key.
+(update jobs r3 [3 "free" "Abe"])
+(assert-eq (rownos (idx-scan jobs_free)) @[r3 r2])
+# A row inserted is in or out by its state; a deleted one goes.
+(def r4 (insert jobs [4 "done" "Di"]))
+(def r5 (insert jobs [5 "free" "Ed"]))
+(assert-eq (rownos (idx-scan jobs_free)) @[r3 r2 r5])
+(delete jobs r5)
+(assert-eq (rownos (idx-scan jobs_free)) @[r3 r2])
+(commit)
+
+# 2. An expression index, unique on lower(owner).
+(begin :rc)
+(index-create jobs_lower (table jobs) (key ((lower owner) :asc))
+  :unique true)
+(commit)
+(index-wait jobs_lower)
+(begin :rc)
+(assert-eq (index-state jobs_lower) :valid)
+(assert-count 4 (idx-scan jobs_lower))
+# Found under the lower-case key, not as written.
+(assert-eq (rownos (idx-scan jobs_lower :ge ["bob"] :le ["bob"])) @[r2])
+(assert-count 0 (idx-scan jobs_lower :ge ["Bob"] :le ["Bob"]))
+# A change of case alone keeps the key; a new owner moves it.
+(update jobs r2 [2 "free" "BOB"])
+(assert-eq (rownos (idx-scan jobs_lower :ge ["bob"] :le ["bob"])) @[r2])
+(update jobs r2 [2 "free" "Zed"])
+(assert-count 0 (idx-scan jobs_lower :ge ["bob"] :le ["bob"]))
+(assert-eq (rownos (idx-scan jobs_lower :ge ["zed"] :le ["zed"])) @[r2])
+(commit)
+# Two rows that differ only in case are one key.
+(begin :rc)
+(assert-err :err-dupkey (insert jobs [6 "free" "ANN"]))
+(abort)
+(begin :rc)
+(assert-count 4 (idx-scan jobs_lower))
+(assert-count 4 (scan jobs))
+(commit)
+
+# 3. Both kinds, on a table that already has rows.
+(begin :rc)
+(table-create notes
+  (columns (id :int4 :not-null) (kind :text) (title :text)))
+(for i 1 101
+  (insert notes [i (if (= 0 (% i 4)) "pin" "plain") (string "Title" i)]))
+(commit)
+(begin :rc)
+(index-create notes_pinned (table notes) (key (title :asc)) :unique false
+  :where (kind "pin"))
+(index-create notes_upper (table notes) (key ((upper title) :asc))
+  :unique true)
+(commit)
+(index-wait notes_pinned)
+(index-wait notes_upper)
+(begin :rc)
+(assert-count 25 (idx-scan notes_pinned))
+(assert-count 100 (idx-scan notes_upper))
+(assert-eq (rownos (idx-scan notes_upper :ge ["TITLE7"] :le ["TITLE7"])) @[7])
+(commit)
+
+# 4. describe-table gives each back as index-create takes it.
+(begin :rc)
+(assert-eq ((describe-table jobs :include-indices) :indexes)
+           '[{:name "jobs_free" :unique false
+              :key [[owner :asc :nulls-last]] :include []
+              :where [state "free"]}
+             {:name "jobs_lower" :unique true
+              :key [[[lower owner] :asc :nulls-last]] :include []}])
+(commit)
+
+# 5. A predicate on an integer column.
+(begin :rc)
+(table-create tasks (columns (id :int4 :not-null) (pri :int4) (name :text)))
+(def t1 (insert tasks [1 5 "a"]))
+(def t2 (insert tasks [2 7 "b"]))
+(def t3 (insert tasks [3 nil "c"]))
+(index-create tasks_urgent (table tasks) (key (name :asc)) :unique false
+  :where (pri 5))
+(assert-eq (rownos (idx-scan tasks_urgent)) @[t1])
+(update tasks t2 [2 5 "b"])
+(update tasks t3 [3 5 "c"])
+(assert-eq (rownos (idx-scan tasks_urgent)) @[t1 t2 t3])
+(update tasks t1 [1 nil "a"])
+(assert-eq (rownos (idx-scan tasks_urgent)) @[t2 t3])
+(commit)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_partial.rel: PASSED")

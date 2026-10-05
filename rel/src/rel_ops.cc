@@ -618,6 +618,10 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
   index_def_t idef;
   idef.name = idx_name;
   idef.unique = false;
+  // :where (column value): a partial index of the rows whose
+  // column prints as value.
+  bool has_where = false;
+  std::string where_col, where_text;
 
   std::vector<Janet> clauses;
   if (argc == 2 && (janet_checktype(argv[1], JANET_TUPLE) ||
@@ -647,6 +651,19 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
       if (kw == "unique" && i + 1 < clauses.size()) {
         idef.unique = janet_unwrap_boolean(clauses[i + 1]);
         i++;
+      } else if (kw == "where" && i + 1 < clauses.size()) {
+        Janet w = clauses[i + 1];
+        i++;
+        if (!janet_checktype(w, JANET_TUPLE) ||
+            janet_tuple_length(janet_unwrap_tuple(w)) != 2) {
+          janet_panic("index-create: :where takes (column value)");
+        }
+        const Janet *w_items = janet_unwrap_tuple(w);
+        has_where = true;
+        where_col = identifier_of(w_items[0]);
+        JanetString text = janet_to_string(w_items[1]);
+        where_text.assign(reinterpret_cast<const char *>(text),
+                          janet_string_length(text));
       } else if (kw == "include" && i + 1 < clauses.size()) {
         Janet inc_arg = clauses[i + 1];
         i++;
@@ -714,7 +731,22 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
         k.collation = nullptr;
         k.desc = false;
         k.nulls_first = false;
-        k.collation_name = identifier_of(k_items[0]);
+        // (lower column) or (upper column) in a column's place is
+        // an expression, which rel's evaluator computes.
+        if (janet_checktype(k_items[0], JANET_TUPLE)) {
+          const Janet *e_items = janet_unwrap_tuple(k_items[0]);
+          if (janet_tuple_length(e_items) != 2) {
+            janet_panic("index-create: an expression is (lower column) or "
+                        "(upper column)");
+          }
+          k.expr = identifier_of(e_items[0]);
+          if (k.expr != "lower" && k.expr != "upper") {
+            janet_panicf("index-create: no function '%s'", k.expr.c_str());
+          }
+          k.collation_name = identifier_of(e_items[1]);
+        } else {
+          k.collation_name = identifier_of(k_items[0]);
+        }
 
         for (int32_t m = 1; m < k_n; m++) {
           std::string flag = identifier_of(k_items[m]);
@@ -787,10 +819,51 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
     }
   }
 
+  // What rel's evaluator is to make of it: the predicate, and each
+  // key column that is an expression, with the columns they read.
+  index_eval_t ev;
+  std::vector<int32_t> reads;
+  auto read = [&](int32_t att) {
+    if (std::find(reads.begin(), reads.end(), att) == reads.end()) {
+      reads.push_back(att);
+    }
+  };
+  if (has_where) {
+    bool found = false;
+    for (size_t idx = 0; idx < p_tdef->columns.size(); idx++) {
+      if (p_tdef->columns[idx].name == where_col) {
+        ev.has_where = true;
+        ev.where_att = static_cast<int32_t>(idx);
+        ev.where_code = p_tdef->columns[idx].type_code;
+        ev.where_typmod = p_tdef->columns[idx].typmod;
+        ev.where_text = where_text;
+        read(ev.where_att);
+        found = true;
+      }
+    }
+    if (!found) {
+      janet_panicf("index-create: column '%s' not found in table '%s'",
+                   where_col.c_str(), tbl_name.c_str());
+    }
+  }
+
   // sm3 records it, under the table's next prefix.
   std::vector<sm_index_key_spec_t> keys;
   for (const key_col_def_t &k : idef.keys) {
-    keys.push_back({static_cast<int32_t>(k.col_idx), k.desc, k.nulls_first});
+    int32_t att = static_cast<int32_t>(k.col_idx);
+    if (k.expr.empty()) {
+      keys.push_back({att, k.desc, k.nulls_first, 0, -1});
+      continue;
+    }
+    // The expression is text of a text column, whose type it keeps.
+    if (std::string(type_name_of(k.type_code)) != "text" &&
+        std::string(type_name_of(k.type_code)) != "varchar") {
+      janet_panicf("index-create: (%s ...) takes a text column",
+                   k.expr.c_str());
+    }
+    ev.exprs.emplace_back(k.expr, att);
+    read(att);
+    keys.push_back({-1, k.desc, k.nulls_first, k.type_code, -1});
   }
   std::vector<int32_t> includes;
   for (const include_col_def_t &inc : idef.includes) {
@@ -798,7 +871,8 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
   }
   uint64_t oid = 0;
   if (sm_cat_create_index(s->session, p_tdef->def->oid, idx_name.c_str(), keys,
-                          includes, idef.unique, &oid) != 0) {
+                          includes, idef.unique, format_index_eval(ev), reads,
+                          &oid) != 0) {
     panic_sm_error("index-create");
   }
   return janet_wrap_nil();
@@ -843,22 +917,40 @@ static Janet column_form(const sm_column_def_t &c) {
 
 /* An index of def as a struct of index-create's clauses. */
 static Janet index_form(const sm_table_def_t &def, const sm_index_def_t &x) {
+  index_eval_t ev;
+  parse_index_eval(x.eval, ev);
   std::vector<Janet> keys, includes;
+  size_t e = 0;
   for (size_t j = 0; j < x.key.size(); j++) {
+    // A key column, or (function column) for an expression.
+    Janet what;
+    if (x.key_attnums[j] < 0 && e < ev.exprs.size()) {
+      what = tuple_of(
+          {janet_csymbolv(ev.exprs[e].first.c_str()),
+           janet_csymbolv(def.columns[ev.exprs[e].second].name.c_str())});
+      e++;
+    } else {
+      what = janet_csymbolv(def.columns[x.key_attnums[j]].name.c_str());
+    }
     keys.push_back(
-        tuple_of({janet_csymbolv(def.columns[x.key_attnums[j]].name.c_str()),
-                  janet_ckeywordv(x.key[j].desc ? "desc" : "asc"),
+        tuple_of({what, janet_ckeywordv(x.key[j].desc ? "desc" : "asc"),
                   janet_ckeywordv(x.key[j].nulls_first ? "nulls-first"
                                                        : "nulls-last")}));
   }
   for (int32_t att : x.include_attnums) {
     includes.push_back(janet_csymbolv(def.columns[att].name.c_str()));
   }
-  JanetKV *st = janet_struct_begin(4);
+  JanetKV *st = janet_struct_begin(ev.has_where ? 5 : 4);
   janet_struct_put(st, janet_ckeywordv("name"), janet_cstringv(x.name.c_str()));
   janet_struct_put(st, janet_ckeywordv("unique"), janet_wrap_boolean(x.unique));
   janet_struct_put(st, janet_ckeywordv("key"), tuple_of(keys));
   janet_struct_put(st, janet_ckeywordv("include"), tuple_of(includes));
+  if (ev.has_where) {
+    janet_struct_put(
+        st, janet_ckeywordv("where"),
+        tuple_of({janet_csymbolv(def.columns[ev.where_att].name.c_str()),
+                  janet_cstringv(ev.where_text.c_str())}));
+  }
   return janet_wrap_struct(janet_struct_end(st));
 }
 

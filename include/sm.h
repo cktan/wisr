@@ -79,6 +79,13 @@ int sm_retryable(void);
 /* Clear the thread's error back to SM_OK and "no error". */
 void sm_reseterr(void);
 
+/*
+ * Record code and msg as the calling thread's error and return -1,
+ * so a callback of the host's can fail as a call of the stack's
+ * does: return sm_seterr(...).
+ */
+int sm_seterr(sm_errnum_t code, const char* msg);
+
 /* ---- the log hook ---- */
 
 enum sm_loglevel_t {
@@ -414,11 +421,17 @@ struct sm_column_spec_t {
     bool        not_null;
 };
 
-/* A key column, as an index is created with it; no collation yet. */
+/*
+ * A key column, as an index is created with it; no collation yet.
+ * With attnum -1 it is an expression, which has no column behind
+ * it and so gives its own type code and typmod.
+ */
 struct sm_index_key_spec_t {
-    int32_t attnum;         /* the column's 0-based place */
+    int32_t attnum;         /* the column's 0-based place; -1: expression */
     bool    desc;
     bool    nulls_first;
+    uint8_t type_code;      /* an expression's (sm2/TYPE.md section 3) */
+    int32_t typmod;         /* an expression's */
 };
 
 /* A column of a table definition. */
@@ -454,6 +467,14 @@ struct sm_index_def_t {
     sm_index_state_t             state;
     int                          error;   /* SM_OK unless failed */
     std::string                  reason;
+    /*
+     * A partial or an expression index: eval is its predicate and
+     * its expressions as the host gave them, empty for a plain
+     * index; reads the columns they read. A key column that is an
+     * expression has -1 in key_attnums.
+     */
+    std::string                  eval;
+    std::vector<int32_t>         reads;
 };
 
 /*
@@ -498,6 +519,42 @@ int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
  * SM_ERR_NOTFOUND if there is no such table or index.
  */
 int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index);
+
+/*
+ * The host's evaluator of partial and expression indexes
+ * (sm3/SM3_DESIGN.md section 3). The stack evaluates nothing
+ * itself: where it must know whether a row belongs in such an
+ * index, and what its expression key columns are, it calls this.
+ *
+ * It is given the table's oid and the index's, the index's eval
+ * as it was given to sm_cat_create_index, and a row image as n
+ * values and null flags, one per column; a by-reference value
+ * points at memory good only for the call. It sets *belongs, and
+ * for each key column that is an expression, in key order, puts
+ * the value's bytes in out -- a by-value type's bytes, a
+ * fixed-width type's, or a varlena for a variable-width one -- or
+ * sets its flag in out_isnull; both come sized to the count of
+ * expression columns. It returns 0, or -1 with the error set.
+ *
+ * It must not throw nor longjmp out. It must give the same answer
+ * for the same row every time. It may be called from any thread,
+ * the index build's workers among them, and must not call this
+ * API on the session that is writing.
+ */
+typedef int (*sm_index_eval_fn)(void* ctx, uint64_t table, uint64_t index,
+                                const std::string& eval,
+                                const sm_datum_t* values, const bool* isnull,
+                                size_t n, bool* belongs,
+                                std::vector<std::string>& out,
+                                bool* out_isnull);
+
+/*
+ * Give env its evaluator: once, before any database is opened,
+ * since opening one may at once resume the build of such an
+ * index. Without one, no partial or expression index can be
+ * created, and a write to a table that has one fails.
+ */
+int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
 
 /*
  * ---- tables: a row and its index entries, sm3's ----
@@ -634,12 +691,19 @@ int sm_cat_drop_table(sm_session_t* session, uint64_t oid);
  * transaction made it is filled and valid at once. On any other
  * it is recorded as building, and filled in the background once
  * the transaction commits: sm_cat_index_wait waits for that.
+ *
+ * A partial or an expression index gives eval, its predicate and
+ * its expressions serialized as the host likes -- the stack keeps
+ * the bytes and hands them to the evaluator -- and reads, the
+ * columns they read, so an update that changes none of them can
+ * leave the index alone. A plain index gives both empty.
  */
 int sm_cat_create_index(sm_session_t* session, uint64_t table,
                         const char* name,
                         const std::vector<sm_index_key_spec_t>& keys,
                         const std::vector<int32_t>& includes, bool unique,
-                        uint64_t* oid);
+                        const std::string& eval,
+                        const std::vector<int32_t>& reads, uint64_t* oid);
 
 /* Drop the index oid of the table, and its entries. */
 int sm_cat_drop_index(sm_session_t* session, uint64_t table, uint64_t index);

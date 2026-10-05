@@ -143,16 +143,6 @@ bool maintained(const sm3::table_t *t, size_t i) {
   return t->def->indexes[i].state != sm3::index_state_t::failed;
 }
 
-/* Whether t has a maintained index the host evaluates. */
-bool has_evaluated(const sm3::table_t *t) {
-  for (size_t i = 0; i < t->indexes.size(); i++) {
-    if (maintained(t, i) && !t->def->indexes[i].eval.empty()) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /*
  * An index's entry for one row image: whether the row is in the
  * index, and its key. own holds the values the evaluator gave,
@@ -169,14 +159,12 @@ struct entry_t {
 };
 
 /*
- * Index i's entry for a row: its values r, and its image as a
- * tuple, which only an index the host evaluates needs. A plain key
- * column is read from r; whether the row belongs, and each key
- * column that is an expression, are the evaluator's
+ * Index i's entry for a row of values r. A plain key column is
+ * read from r; whether the row belongs, and each key column that
+ * is an expression, are the evaluator's, which is shown r
  * (SM3_DESIGN.md §3).
  */
-int make_entry(const sm3::table_t *t, size_t i, const vals_t &r,
-               std::string_view tuple, entry_t &e) {
+int make_entry(const sm3::table_t *t, size_t i, const vals_t &r, entry_t &e) {
   const sm3::index_def_t &x = t->def->indexes[i];
   size_t n = x.key_attnums.size(), nexpr = 0;
   for (int32_t att : x.key_attnums) {
@@ -195,8 +183,8 @@ int make_entry(const sm3::table_t *t, size_t i, const vals_t &r,
     }
     e.own.assign(nexpr, std::string());
     // The host's answer; its failure is this call's.
-    if (eval(*t->def, x, tuple, e.belongs, e.own, {own_null.get(), nexpr}) !=
-        0) {
+    if (eval(*t->def, x, r.d, r.null, e.belongs, e.own,
+             {own_null.get(), nexpr}) != 0) {
       return -1;
     }
     if (!e.belongs) {
@@ -345,16 +333,8 @@ int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
     if (need_writable(table) != 0) {
       return -1;
     }
-    // An index the host evaluates is shown the row as a tuple, so
-    // the row is encoded here, once, and written as encoded.
     uint64_t r = 0;
-    std::string image;
-    if (has_evaluated(table)) {
-      if (sm2::tup_encode(table->def->desc, values, isnull, image) != 0 ||
-          sm2::rel_insert(table->rel, image, r) != 0) {
-        return -1;
-      }
-    } else if (sm2::rel_insert(table->rel, values, isnull, r) != 0) {
+    if (sm2::rel_insert(table->rel, values, isnull, r) != 0) {
       return -1;
     }
     vals_t row{values, isnull};
@@ -363,7 +343,7 @@ int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
         continue;
       }
       entry_t e;
-      if (make_entry(table, i, row, image, e) != 0 ||
+      if (make_entry(table, i, row, e) != 0 ||
           (e.belongs && add_entry(table, i, e, row, r) != 0)) {
         return -1;
       }
@@ -381,16 +361,8 @@ int tbl_update(table_t *table, uint64_t rowno,
     if (need_writable(table) != 0) {
       return -1;
     }
-    // As in tbl_insert: encoded here if an index is to be shown it.
     std::string_view image;
-    std::string fresh;
-    if (has_evaluated(table)) {
-      if (sm2::tup_encode(table->def->desc, values, isnull, fresh) != 0 ||
-          sm2::rel_update(table->rel, rowno, fresh, &image) != 0) {
-        return -1;
-      }
-    } else if (sm2::rel_update(table->rel, rowno, values, isnull, &image) !=
-               0) {
+    if (sm2::rel_update(table->rel, rowno, values, isnull, &image) != 0) {
       return -1;
     }
     // Copy the old image: it views session memory that the index
@@ -419,8 +391,8 @@ int tbl_update(table_t *table, uint64_t rowno,
         continue;
       }
       entry_t was, is;
-      if (make_entry(table, i, before.row(), copy, was) != 0 ||
-          make_entry(table, i, after, fresh, is) != 0) {
+      if (make_entry(table, i, before.row(), was) != 0 ||
+          make_entry(table, i, after, is) != 0) {
         return -1;
       }
       // A column it reads changed, yet the entry may not have: the
@@ -475,7 +447,7 @@ int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
         continue;
       }
       entry_t was;
-      if (make_entry(table, i, before.row(), copy, was) != 0 ||
+      if (make_entry(table, i, before.row(), was) != 0 ||
           (was.belongs && remove_entry(table, i, was, rowno) != 0)) {
         return -1;
       }
@@ -596,7 +568,7 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
       }
       // A row a partial index does not take needs no entry.
       entry_t key;
-      if (make_entry(table, i, row.row(), copy, key) != 0) {
+      if (make_entry(table, i, row.row(), key) != 0) {
         return -1;
       }
       if (!key.belongs || add_entry(table, i, key, row.row(), r) == 0) {

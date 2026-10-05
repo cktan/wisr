@@ -367,8 +367,8 @@ namespace {
 
 /* An evaluator that answers nothing: for a test that only records. */
 int no_eval(const sm3::table_def_t &, const sm3::index_def_t &,
-            std::string_view, bool &belongs, std::vector<std::string> &,
-            std::span<bool>) {
+            std::span<const sm2::datum_t>, std::span<const bool>, bool &belongs,
+            std::vector<std::string> &, std::span<bool>) {
   belongs = true;
   return 0;
 }

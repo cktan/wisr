@@ -320,13 +320,15 @@ int cat_create_index(session_t* session, uint64_t table,
 /*
  * The host's evaluator of partial and expression indexes
  * (SM3_DESIGN.md §3). Given a table, one of its indexes that has
- * an eval, and a row image as a tuple under the table's schema,
- * it sets belongs to whether the row is in the index, and for each
- * key column that is an expression, in key order, sets the value
- * in values to the value's bytes as sm2::datum_bytes gives them --
- * a varlena for a variable-width type -- or its flag in isnull.
- * values and isnull come sized to the count of expression columns.
- * It returns 0, or -1 with the error set (sm1::seterr).
+ * an eval, and a row image as its values and null flags, one per
+ * attribute of the table's schema, it sets belongs to whether the
+ * row is in the index, and for each key column that is an
+ * expression, in key order, sets the value in out to the value's
+ * bytes as sm2::datum_bytes gives them -- a varlena for a
+ * variable-width type -- or its flag in out_isnull. out and
+ * out_isnull come sized to the count of expression columns. A
+ * by-reference value of the row points at memory good only for
+ * the call. It returns 0, or -1 with the error set (sm1::seterr).
  *
  * It must not throw nor longjmp out; it must give the same answer
  * for the same row image every time; it may be called from any
@@ -335,8 +337,9 @@ int cat_create_index(session_t* session, uint64_t table,
  */
 using index_eval_fn = std::function<int(
     const table_def_t& table, const index_def_t& index,
-    std::string_view tuple, bool& belongs, std::vector<std::string>& values,
-    std::span<bool> isnull)>;
+    std::span<const sm2::datum_t> values, std::span<const bool> isnull,
+    bool& belongs, std::vector<std::string>& out,
+    std::span<bool> out_isnull)>;
 
 /*
  * Give the catalog its evaluator: once, before any session uses

@@ -277,6 +277,24 @@ own.
    background after the transaction commits
    (`sm3/SM3_DESIGN.md` §3).
 
+A partial or an expression index is evaluated by the host, not
+by the storage manager (`sm3/SM3_DESIGN.md` §3), and `rel` is
+the host. It gives the storage manager its evaluator with
+`sm_set_index_evaluator` when a home is attached. The
+evaluator is C++ and touches nothing of Janet's, because the
+index build calls it from worker threads, where the Janet
+interpreter may not run. So it is a fixed one and not a script's
+function, over two forms:
+- `:where (col value)`: the row is in the index if `col`, as
+  its type prints it, is `value`;
+- `(lower col)` or `(upper col)` as a key column, of a text
+  column.
+
+`index-create` writes what it parsed into the index's blob,
+which the storage manager keeps and hands back, with the
+columns it reads. `describe-table` reads the blob to give both
+forms back.
+
 #### `(index-wait <idx_name>)`
 1. Calls `sm_cat_index_oid` for the index and its table.
 2. Calls `sm_cat_index_wait(s, table, index)`, outside a

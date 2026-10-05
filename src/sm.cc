@@ -71,6 +71,8 @@ struct sm_env_t {
   std::mutex mu;
   std::map<std::string, sm3::catalog_t *, std::less<>> catalogs;
   std::set<sm_session_t *> sessions;
+  sm_index_eval_fn eval = nullptr; /* the host's evaluator, set once */
+  void *eval_ctx = nullptr;
 };
 
 /*
@@ -278,7 +280,8 @@ sm_table_def_t api_def(const sm3::table_def_t &d) {
                      x.unique, x.key_attnums,
                      {},       x.include_attnums,
                      {},       static_cast<sm_index_state_t>(x.state),
-                     x.error,  x.reason};
+                     x.error,  x.reason,
+                     x.eval,   x.reads};
     for (const sm2::key_column_t &k : x.key) {
       i.key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
                        reinterpret_cast<const sm_collation_t *>(k.collation),
@@ -308,6 +311,11 @@ int sm_retryable(void) { return sm1::retryable(); }
 
 /* Clear the calling thread's error. */
 void sm_reseterr(void) { sm1::reseterr(); }
+
+/* Record the thread's error and return -1. */
+int sm_seterr(sm_errnum_t code, const char *msg) {
+  return sm1::seterr(code, name_of(msg));
+}
 
 /*
  * Install fn as the log hook, through log_trampoline. Each hook
@@ -346,6 +354,28 @@ static int start_builder(sm_env_t *env, std::string_view dbname,
   });
 }
 
+/*
+ * Give cat the environment's evaluator, if it has one: the C
+ * callback behind sm3's, shown the row's values as it was.
+ */
+static int set_evaluator(sm_env_t *env, sm3::catalog_t *cat) {
+  if (!env->eval) {
+    return 0;
+  }
+  sm_index_eval_fn fn = env->eval;
+  void *ctx = env->eval_ctx;
+  return sm3::cat_set_evaluator(
+      cat,
+      [fn, ctx](const sm3::table_def_t &table, const sm3::index_def_t &index,
+                std::span<const sm2::datum_t> values,
+                std::span<const bool> isnull, bool &belongs,
+                std::vector<std::string> &out, std::span<bool> out_isnull) {
+        return fn(ctx, table.oid, index.oid, index.eval, values.data(),
+                  isnull.data(), values.size(), &belongs, out,
+                  out_isnull.data());
+      });
+}
+
 /* Attach homedir. */
 int sm_attach(const char *homedir, sm_env_t **out) {
   return guard(nullptr, [&] {
@@ -354,7 +384,8 @@ int sm_attach(const char *homedir, sm_env_t **out) {
     if (sm1::attach(name_of(homedir), env) != 0) {
       return -1;
     }
-    *out = new sm_env_t{env, {}, {}, {}};
+    *out = new sm_env_t;
+    (*out)->env = env;
     return 0;
   });
 }
@@ -402,6 +433,24 @@ int sm_detach(sm_env_t *env, int force) {
       sm3::cat_close(cat);
     }
     delete env;
+    return 0;
+  });
+}
+
+/* Give env its evaluator; see sm.h. */
+int sm_set_index_evaluator(sm_env_t *env, sm_index_eval_fn fn, void *ctx) {
+  return guard(nullptr, [&] {
+    if (!env || !fn) {
+      return null_arg("sm_set_index_evaluator", !env ? "env" : "fn");
+    }
+    std::lock_guard lock(env->mu);
+    if (env->eval || !env->catalogs.empty()) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_set_index_evaluator: one is set already, or a "
+                         "database has been opened");
+    }
+    env->eval = fn;
+    env->eval_ctx = ctx;
     return 0;
   });
 }
@@ -495,8 +544,10 @@ int sm_opendb(sm_env_t *env, const char *dbname, const sm_options_t *opt,
                ? -1
                : 0;
       // Build its indexes in the background from here on, and
-      // queue what a restart left unbuilt.
-      if (rc == 0 && start_builder(env, name_of(dbname), cat) != 0) {
+      // queue what a restart left unbuilt; the evaluator first,
+      // for a build may need it at once.
+      if (rc == 0 && (set_evaluator(env, cat) != 0 ||
+                      start_builder(env, name_of(dbname), cat) != 0)) {
         sm3::cat_close(cat);
         cat = nullptr;
         rc = -1;
@@ -1116,17 +1167,19 @@ int sm_cat_drop_table(sm_session_t *session, uint64_t oid) {
 int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
                         const std::vector<sm_index_key_spec_t> &keys,
                         const std::vector<int32_t> &includes, bool unique,
-                        uint64_t *oid) {
+                        const std::string &eval,
+                        const std::vector<int32_t> &reads, uint64_t *oid) {
   return guard(session, [&] {
     if (!oid) {
       return null_arg("sm_cat_create_index", "oid");
     }
     std::vector<sm3::index_key_spec_t> k;
     for (const sm_index_key_spec_t &key : keys) {
-      k.push_back({key.attnum, key.desc, key.nulls_first, std::nullopt});
+      k.push_back({key.attnum, key.desc, key.nulls_first, std::nullopt,
+                   key.type_code, key.typmod});
     }
     return sm3::cat_create_index(session->sm3, table, name_of(name), k,
-                                 includes, unique, *oid);
+                                 includes, unique, eval, reads, *oid);
   });
 }
 

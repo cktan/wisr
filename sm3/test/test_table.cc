@@ -54,17 +54,13 @@ std::atomic<int> g_evals{0};
  * expression column, lower(owner); "fail" makes every call fail.
  * It asserts nothing, since a build's worker calls it too.
  */
-int jobs_eval(const sm3::table_def_t &table, const sm3::index_def_t &index,
-              std::string_view tuple, bool &belongs,
-              std::vector<std::string> &values, std::span<bool> isnull) {
+int jobs_eval(const sm3::table_def_t &, const sm3::index_def_t &index,
+              std::span<const sm2::datum_t> d, std::span<const bool> n,
+              bool &belongs, std::vector<std::string> &values,
+              std::span<bool> isnull) {
   g_evals++;
   if (index.eval.find("fail") != std::string::npos) {
     return sm1::seterr(sm1::SM_ERR_INVALID, "the evaluator failed");
-  }
-  sm2::datum_t d[3];
-  bool n[3];
-  if (sm2::tup_deform(table.desc, tuple, d, n) != 0) {
-    return -1;
   }
   auto text = [&](size_t i) {
     std::string_view v;
@@ -325,7 +321,8 @@ void check_agree(sm3::table_t *t) {
       std::vector<std::string> ev(nexpr);
       std::unique_ptr<bool[]> en(new bool[nexpr]());
       if (!x.eval.empty()) {
-        REQUIRE(jobs_eval(def, x, tuple, belongs, ev, {en.get(), nexpr}) == 0);
+        REQUIRE(jobs_eval(def, x, d, {n.get(), def.schema.size()}, belongs, ev,
+                          {en.get(), nexpr}) == 0);
       }
       if (!belongs) {
         continue;

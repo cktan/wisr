@@ -32,6 +32,7 @@ struct key_col_def_t {
   sm_collation_t *collation;
   bool desc;
   bool nulls_first;
+  std::string expr; /* "lower" or "upper" of the column; empty: the column */
 };
 
 /* One INCLUDE column in an index definition. */
@@ -174,6 +175,37 @@ int typmod_of(uint8_t code, const std::vector<int32_t> &mods,
 
 /* The numbers after a column's type that give typmod: typmod_of's inverse. */
 std::vector<int32_t> mods_of(uint8_t code, int32_t typmod);
+
+/*
+ * What rel's evaluator makes of an index (REL_DESIGN.md §4.3): the
+ * predicate of a partial one, column where_att equal to where_text
+ * as its type prints it, and for each key column that is an
+ * expression the function, "lower" or "upper", and the text column
+ * it is of. It travels as the index's blob, which the storage
+ * manager keeps and does not read.
+ */
+struct index_eval_t {
+  bool has_where = false;
+  int32_t where_att = 0;
+  uint8_t where_code = 0;
+  int32_t where_typmod = -1;
+  std::string where_text;
+  std::vector<std::pair<std::string, int32_t>> exprs; /* function, attnum */
+};
+
+/* e as an index's blob, and back; parsing fails on a blob not rel's. */
+std::string format_index_eval(const index_eval_t &e);
+bool parse_index_eval(const std::string &blob, index_eval_t &e);
+
+/*
+ * rel's evaluator of partial and expression indexes, given to the
+ * storage manager when a home is attached. It runs on the index
+ * build's worker threads too, so it touches nothing of Janet's.
+ */
+int index_eval(void *ctx, uint64_t table, uint64_t index,
+               const std::string &eval, const sm_datum_t *values,
+               const bool *isnull, size_t n, bool *belongs,
+               std::vector<std::string> &out, bool *out_isnull);
 
 /* Construct a varlena buffer from raw string bytes. */
 void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out);
