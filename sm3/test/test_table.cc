@@ -83,6 +83,20 @@ public:
     sm3::cat_close(cat);
   }
 
+  /* Restart the database, and load the catalog and a and b again. */
+  void reload() {
+    sm3::session_close(a);
+    sm3::session_close(b);
+    sm3::cat_close(cat);
+    restart();
+    sm1::session_t *s = open();
+    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+    REQUIRE(sm3::cat_open(s, cat) == 0);
+    REQUIRE(sm1::commit(s) == 0);
+    REQUIRE(sm3::session_open(cat, s, a) == 0);
+    REQUIRE(sm3::session_open(cat, open(), b) == 0);
+  }
+
   /* jobs, opened to write in s's transaction; it must open. */
   sm3::table_t *
   write(sm3::session_t *s,
@@ -164,6 +178,47 @@ std::vector<std::pair<uint64_t, std::string>> rows(sm3::table_t *t) {
 }
 
 /*
+ * A scan of index oid of t read straight from sm2, in the table's
+ * own session, whatever the index's state: a test looks into a
+ * building index, and into one its snapshot may not use, both of
+ * which tbl_idx_scan refuses.
+ */
+class peek_t {
+public:
+  /* Open the index and a cursor between lo and hi. */
+  peek_t(sm3::table_t *t, uint64_t oid, const sm2::bound_t *lo,
+         const sm2::bound_t *hi) {
+    const sm3::table_def_t &def = sm3::tbl_def(t);
+    for (const sm3::index_def_t &x : def.indexes) {
+      if (x.oid == oid) {
+        REQUIRE(sm2::idx_open(sm3::session_sm1(sm3::tbl_session(t)),
+                              def.storeid, x.prefix, x.key, x.unique, x.include,
+                              m_ix) == 0);
+      }
+    }
+    REQUIRE(m_ix);
+    REQUIRE(sm2::idx_scan(m_ix, lo, hi, m_scan) == 0);
+  }
+  peek_t(const peek_t &) = delete;
+  peek_t &operator=(const peek_t &) = delete;
+
+  /* Close the cursor and the index. */
+  ~peek_t() {
+    sm2::idx_scanend(m_scan);
+    sm2::idx_close(m_ix);
+  }
+
+  /* The next entry, as sm2::idx_scannxt gives it. */
+  int next(uint64_t &rowno, bool &cut, std::string_view &value) {
+    return sm2::idx_scannxt(m_scan, rowno, cut, value);
+  }
+
+private:
+  sm2::index_t *m_ix = nullptr;
+  sm2::index_scan_t *m_scan = nullptr;
+};
+
+/*
  * Check every index of t against a brute-force scan of its heap:
  * an index holds as many entries as the heap has rows, and each row
  * has, under its own key, an entry with its rowno whose INCLUDE
@@ -185,16 +240,16 @@ void check_agree(sm3::table_t *t) {
     vschema.insert(vschema.end(), x.include.begin(), x.include.end());
     sm2::tup_desc_t vdesc(vschema);
     // As many entries as rows.
-    sm2::index_scan_t *scan = nullptr;
-    REQUIRE(sm3::tbl_idx_scan(t, x.oid, nullptr, nullptr, scan) == 0);
     size_t entries = 0;
     uint64_t rowno;
     bool cut;
     std::string_view value;
-    while (sm2::idx_scannxt(scan, rowno, cut, value) == 0) {
-      entries++;
+    {
+      peek_t all(t, x.oid, nullptr, nullptr);
+      while (all.next(rowno, cut, value) == 0) {
+        entries++;
+      }
     }
-    sm2::idx_scanend(scan);
     CHECK(entries == heap.size());
     // Each row is found under its own key, with its own INCLUDEs.
     for (const auto &[want, tuple] : heap) {
@@ -210,9 +265,9 @@ void check_agree(sm3::table_t *t) {
         kn[i] = n[x.key_attnums[i]];
       }
       sm2::bound_t eq{kd, {kn.get(), kd.size()}, true};
-      REQUIRE(sm3::tbl_idx_scan(t, x.oid, &eq, &eq, scan) == 0);
+      peek_t scan(t, x.oid, &eq, &eq);
       bool found = false;
-      while (sm2::idx_scannxt(scan, rowno, cut, value) == 0) {
+      while (scan.next(rowno, cut, value) == 0) {
         if (rowno != want) {
           continue;
         }
@@ -225,7 +280,6 @@ void check_agree(sm3::table_t *t) {
           CHECK(text_of(inc, inc_null) == text_of(d[att], n[att]));
         }
       }
-      sm2::idx_scanend(scan);
       CHECK(found);
     }
   }
@@ -238,16 +292,14 @@ std::vector<uint64_t> under(sm3::table_t *t, uint64_t oid,
   sm2::datum_t d[1] = {sm2::datum_from_ptr(v.data())};
   bool n[1] = {false};
   sm2::bound_t eq{d, n, true};
-  sm2::index_scan_t *scan = nullptr;
-  REQUIRE(sm3::tbl_idx_scan(t, oid, &eq, &eq, scan) == 0);
+  peek_t scan(t, oid, &eq, &eq);
   std::vector<uint64_t> out;
   uint64_t rowno;
   bool cut;
   std::string_view value;
-  while (sm2::idx_scannxt(scan, rowno, cut, value) == 0) {
+  while (scan.next(rowno, cut, value) == 0) {
     out.push_back(rowno);
   }
-  sm2::idx_scanend(scan);
   return out;
 }
 
@@ -1211,5 +1263,247 @@ TEST_CASE("a deleter waits for a build, then removes the entry it added") {
     check_agree(tb);
     sm3::tbl_close(tb);
     REQUIRE(sm3::commit(f.b) == 0);
+  }
+}
+
+namespace {
+
+/* How many entries tbl_idx_scan yields from index oid of t, or -1. */
+int scanned(sm3::table_t *t, uint64_t oid) {
+  sm2::index_scan_t *scan = nullptr;
+  if (sm3::tbl_idx_scan(t, oid, nullptr, nullptr, scan) != 0) {
+    return -1;
+  }
+  int n = 0;
+  uint64_t rowno;
+  bool cut;
+  std::string_view value;
+  while (sm2::idx_scannxt(scan, rowno, cut, value) == 0) {
+    n++;
+  }
+  sm2::idx_scanend(scan);
+  return n;
+}
+
+/* Build index oid of jobs to its end in b, and mark it valid. */
+void build(jobs_t &f, uint64_t oid) {
+  uint64_t next = 0;
+  bool done = false;
+  start(f.b);
+  sm3::table_t *t = f.write(f.b);
+  REQUIRE(sm3::tbl_index_backfill(t, oid, 0, 1000, next, done) == 0);
+  REQUIRE(done);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+  validate(f, f.b, oid);
+}
+
+} // namespace
+
+TEST_CASE("a snapshot older than a build is kept off the index") {
+  // Verify the guard at REPEATABLE READ and SERIALIZABLE.
+  // 1. Two rows are committed; an index on owner is building.
+  // 2. A begins, which takes its snapshot, and does not touch the
+  //    table: marking an index valid waits out every transaction
+  //    that holds the table's schema lock, so the guard is for those
+  //    that do not hold it yet. B builds the index and marks it valid.
+  // 3. A opens the table and is given the valid index, but may not
+  //    use it: read at A's snapshot it holds nothing, though the heap
+  //    holds two rows. tbl_idx_scan refuses with SM_ERR_INVALID.
+  // 4. A still maintains it: a row A inserts gets its entry.
+  // 5. A's next transaction may use it, and it agrees with the heap.
+  for (sm1::xctlevel_t level : snapshot_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    start(f.a);
+    sm3::table_t *t = f.write(f.a);
+    put(t, 1, "free", "a");
+    put(t, 2, "free", "b");
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+    uint64_t jobs_owner = late_index(f);
+
+    start(f.a, level);
+    build(f, jobs_owner);
+
+    t = f.write(f.a);
+    CHECK(sm3::tbl_def(t).indexes[2].state == sm3::index_state_t::valid);
+    CHECK_FALSE(sm3::tbl_index_usable(t, jobs_owner));
+    CHECK(scanned(t, jobs_owner) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    CHECK(under(t, jobs_owner, "a").empty());
+    CHECK(rows(t).size() == 2);
+    CHECK(sm3::tbl_index_usable(t, f.jobs_state));
+    uint64_t r3 = put(t, 3, "free", "c");
+    CHECK(under(t, jobs_owner, "c") == std::vector<uint64_t>{r3});
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+
+    start(f.a, level);
+    t = f.write(f.a);
+    CHECK(sm3::tbl_index_usable(t, jobs_owner));
+    CHECK(scanned(t, jobs_owner) == 3);
+    check_agree(t);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+  }
+}
+
+TEST_CASE("read committed may use an index from its next statement on") {
+  // Verify the guard at READ COMMITTED, statement by statement.
+  // 1. An index on owner is building. A begins a statement and reads
+  //    another table, which takes the statement's snapshot without
+  //    the schema lock of jobs. B builds the index and marks it valid.
+  // 2. In that statement A may not use it. In its next statement,
+  //    begun after the index became valid, it may.
+  // 3. A transaction that begins no statements reads each call at a
+  //    fresh snapshot, and may use the index as soon as it is valid.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "a");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_index(f);
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  uint64_t pin = 0;
+  start(f.a);
+  REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "pin", cols, pin) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  REQUIRE(sm3::stmt_begin(f.a) == 0);
+  REQUIRE(sm3::tbl_open(f.a, pin, sm1::lockmode_t::intent_shared, t) == 0);
+  CHECK(rows(t).empty());
+  sm3::tbl_close(t);
+  build(f, jobs_owner);
+  t = f.write(f.a);
+  CHECK_FALSE(sm3::tbl_index_usable(t, jobs_owner));
+  CHECK(scanned(t, jobs_owner) == -1);
+  REQUIRE(sm3::stmt_begin(f.a) == 0);
+  CHECK(sm3::tbl_index_usable(t, jobs_owner));
+  CHECK(scanned(t, jobs_owner) == 1);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  jobs_t g;
+  start(g.a);
+  t = g.write(g.a);
+  put(t, 1, "free", "a");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(g.a) == 0);
+  jobs_owner = late_index(g);
+  start(g.a);
+  build(g, jobs_owner);
+  t = g.write(g.a);
+  CHECK(sm3::tbl_index_usable(t, jobs_owner));
+  CHECK(scanned(t, jobs_owner) == 1);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(g.a) == 0);
+}
+
+TEST_CASE("an index is usable by its state, and by who made it valid") {
+  // Verify the rest of tbl_index_usable.
+  // 1. A building index is not usable, and its scan is refused.
+  // 2. The transaction that marks it valid may use it at once,
+  //    before it commits; another whose snapshot is older may not.
+  // 3. A failed index is not usable.
+  // 4. An index made valid in its table's own transaction is usable
+  //    there at once, at every level.
+  // 5. An index the table does not have is not usable.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "a");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_index(f);
+
+  start(f.a, sm1::xctlevel_t::repeatable_read);
+  t = f.write(f.a);
+  CHECK_FALSE(sm3::tbl_index_usable(t, jobs_owner));
+  CHECK(scanned(t, jobs_owner) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK_FALSE(sm3::tbl_index_usable(t, jobs_owner + 999));
+  CHECK(scanned(t, jobs_owner + 999) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  uint64_t next = 0;
+  bool done = false;
+  start(f.b);
+  t = f.write(f.b);
+  REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::cat_set_index_state(f.b, f.jobs, jobs_owner,
+                                   sm3::index_state_t::valid) == 0);
+  t = f.write(f.b);
+  CHECK(sm3::tbl_index_usable(t, jobs_owner));
+  CHECK(scanned(t, jobs_owner) == 1);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  start(f.b);
+  REQUIRE(sm3::cat_set_index_state(f.b, f.jobs, jobs_owner,
+                                   sm3::index_state_t::failed) == 0);
+  t = f.write(f.b);
+  CHECK_FALSE(sm3::tbl_index_usable(t, jobs_owner));
+  CHECK(scanned(t, jobs_owner) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t g;
+    std::vector<sm3::column_spec_t> cols = {
+        {"id", sm2::type_int4.code, -1, true},
+        {"state", sm2::type_text.code, -1, false},
+        {"owner", sm2::type_text.code, -1, false}};
+    std::vector<sm3::index_key_spec_t> by_owner = {
+        {2, false, false, std::nullopt}};
+    uint64_t tasks = 0, tasks_owner = 0;
+    start(g.a, level);
+    REQUIRE(sm3::cat_create_table(g.a, sm3::nsp_public, "tasks", cols, tasks) ==
+            0);
+    REQUIRE(sm3::tbl_open(g.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
+            0);
+    put(t, 1, "free", "a");
+    sm3::tbl_close(t);
+    REQUIRE(sm3::cat_create_index(g.a, tasks, "tasks_owner", by_owner, {},
+                                  false, tasks_owner) == 0);
+    REQUIRE(sm3::tbl_open(g.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
+            0);
+    CHECK(sm3::tbl_index_usable(t, tasks_owner));
+    CHECK(scanned(t, tasks_owner) == 1);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(g.a) == 0);
+  }
+}
+
+TEST_CASE("after a restart every valid index is usable") {
+  // Verify the count of publishes is not needed across a restart:
+  // no snapshot survives one.
+  // 1. An index is built and marked valid; the database restarts.
+  // 2. A session at each level may use it at once.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "a");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_index(f);
+  build(f, jobs_owner);
+  f.reload();
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    start(f.a, level);
+    t = f.write(f.a);
+    CHECK(sm3::tbl_index_usable(t, jobs_owner));
+    CHECK(scanned(t, jobs_owner) == 1);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
   }
 }

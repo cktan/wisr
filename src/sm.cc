@@ -592,8 +592,7 @@ int sm_abort(sm_session_t *session) {
 
 /* Begin a statement. */
 int sm_stmt_begin(sm_session_t *session) {
-  sm1::session_t *s = session_of(session);
-  return guard(session, [&] { return sm1::stmt_begin(s); });
+  return guard(session, [&] { return sm3::stmt_begin(session->sm3); });
 }
 
 /* QA only: make the session's lock requests fail where they would wait. */

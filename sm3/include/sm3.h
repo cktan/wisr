@@ -157,6 +157,15 @@ sm1::session_t* session_sm1(const session_t* s);
  * depth, as sm1::savepoint does.
  */
 int begin(session_t* s, sm1::xctlevel_t level);
+
+/*
+ * Begin a statement, as sm1::stmt_begin does. A session's
+ * statements start here and not in sm1, because this is where a
+ * READ COMMITTED session notes how far the catalog had got before
+ * the statement's snapshot, which decides the indexes the statement
+ * may scan (tbl_index_usable).
+ */
+int stmt_begin(session_t* s);
 int savepoint(session_t* s);
 int rollback(session_t* s, int depth);
 int forget(session_t* s, int depth);
@@ -318,6 +327,20 @@ void tbl_close(table_t* table);
 /* The definition the table was opened with. */
 const table_def_t& tbl_def(const table_t* table);
 
+/* The session the table was opened in. */
+session_t* tbl_session(const table_t* table);
+
+/*
+ * Whether the table's index oid may be scanned now by the table's
+ * session (SM3_DESIGN.md §3). A valid index may not be, if it
+ * became valid after the session's snapshot: its entries are
+ * versioned as rows are, and that snapshot would see it partly
+ * filled. A building or a failed index never may. An index the
+ * session's own transaction made valid always may. Writes maintain
+ * an index whether it is usable or not.
+ */
+bool tbl_index_usable(const table_t* table, uint64_t index);
+
 /*
  * The writes. Each is the heap write, then a write or two to every
  * index it changes, and sets no savepoint of its own: one that
@@ -377,7 +400,8 @@ int tbl_scan(table_t* table, uint64_t first, uint64_t last,
 /*
  * Open a cursor over the entries of the table's index oid between
  * lo and hi, as sm2::idx_scan does; SM_ERR_NOTFOUND if the table
- * has no such index, SM_ERR_INVALID if its build failed.
+ * has no such index, SM_ERR_INVALID if it is not usable
+ * (tbl_index_usable).
  */
 int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
                  const sm2::bound_t* hi, sm2::index_scan_t*& out,

@@ -215,7 +215,7 @@ at every isolation level. 1.8 works it through.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:527`-529). The evaluator
+  caller to discard" (`SM3_DESIGN.md:537`-539). The evaluator
   is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.
@@ -817,7 +817,9 @@ writing it, so the prose and the decisions come before code.
       table its own transaction made. Nothing runs it for any
       other table yet, so an index made on a committed table
       stays building until 5;
-   4. the guard that keeps an older snapshot off the index;
+   4. the guard that keeps an older snapshot off the index —
+      **done**: `tbl_index_usable`, and `tbl_idx_scan` refuses
+      an index that is not usable;
    5. the queue of builds, its workers, and `cat_index_wait`;
    6. the C API and `rel`.
    → verify: a writer in flight when the build starts is not

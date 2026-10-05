@@ -198,6 +198,14 @@ void tbl_close(table_t *table) {
 /* The definition the table was opened with. */
 const table_def_t &tbl_def(const table_t *table) { return *table->def; }
 
+/* The session the table was opened in. */
+session_t *tbl_session(const table_t *table) { return table->session; }
+
+/* Whether the table's session may scan index now; see sm3.h. */
+bool tbl_index_usable(const table_t *table, uint64_t index) {
+  return index_usable(table->session, *table->def, index);
+}
+
 /* Insert the row, then its entry in every index; see sm3.h. */
 int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, uint64_t &rowno) {
@@ -322,10 +330,10 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
   const table_def_t &def = *table->def;
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (def.indexes[i].oid == index) {
-      if (!maintained(table, i)) {
-        return sm1::seterr(sm1::SM_ERR_INVALID, "table: the build of index " +
-                                                    std::to_string(index) +
-                                                    " failed");
+      if (!index_usable(table->session, def, index)) {
+        return sm1::seterr(sm1::SM_ERR_INVALID,
+                           "table: index " + def.indexes[i].name +
+                               " is not usable by this snapshot");
       }
       return sm2::idx_scan(table->indexes[i], lo, hi, out, widened);
     }

@@ -36,14 +36,41 @@ void publish(sm3::session_t *s) {
     cat->collations[c.oid] = c.collation;
   }
   s->collations.clear();
+  // One more publish; an index it makes valid dates from it.
+  uint64_t seq = cat->seq.load() + 1;
   for (sm3::table_change_t &t : s->tables) {
+    auto old = cat->tables.find(t.oid);
+    // An index valid now and not before became valid here; one
+    // that is gone needs its count no longer.
+    auto was_valid = [&](uint64_t oid) {
+      if (old == cat->tables.end()) {
+        return false;
+      }
+      for (const sm3::index_def_t &x : old->second->indexes) {
+        if (x.oid == oid) {
+          return x.state == sm3::index_state_t::valid;
+        }
+      }
+      return false;
+    };
+    if (old != cat->tables.end()) {
+      for (const sm3::index_def_t &x : old->second->indexes) {
+        cat->valid_seq.erase(x.oid);
+      }
+    }
     if (t.def) {
+      for (const sm3::index_def_t &x : t.def->indexes) {
+        if (x.state == sm3::index_state_t::valid && !was_valid(x.oid)) {
+          cat->valid_seq[x.oid] = seq;
+        }
+      }
       cat->tables[t.oid] = std::move(t.def);
     } else {
       cat->tables.erase(t.oid);
     }
   }
   s->tables.clear();
+  cat->seq.store(seq);
   for (sm3::name_change_t &n : s->names) {
     if (n.oid) {
       cat->table_names[n.name] = *n.oid;
@@ -84,13 +111,71 @@ sm1::session_t *session_sm1(const session_t *s) { return s->sm1; }
 
 /* Begin a transaction, with an empty overlay. */
 int begin(session_t *s, sm1::xctlevel_t level) {
+  // Note how far the catalog has got before the snapshot is taken:
+  // what was published by then, the snapshot sees whole.
+  uint64_t seq = s->cat->seq.load();
   if (sm1::begin(s->sm1, level) != 0) {
     return -1;
   }
   drop_from(s, 0);
   s->level = level;
   s->depth = 0;
+  s->snap_seq = seq;
+  s->stmt_pinned = false;
   return 0;
+}
+
+/* Begin a statement; see sm3.h. */
+int stmt_begin(session_t *s) {
+  // As begin does, and for the same reason; only a READ COMMITTED
+  // statement takes a snapshot of its own.
+  uint64_t seq = s->cat->seq.load();
+  if (sm1::stmt_begin(s->sm1) != 0) {
+    return -1;
+  }
+  if (s->level == sm1::xctlevel_t::read_committed) {
+    s->snap_seq = seq;
+    s->stmt_pinned = true;
+  }
+  return 0;
+}
+
+/* Whether session may scan an index; see internal.h. */
+bool index_usable(const session_t *session, const table_def_t &def,
+                  uint64_t oid) {
+  const index_def_t *x = nullptr;
+  for (const index_def_t &i : def.indexes) {
+    if (i.oid == oid) {
+      x = &i;
+    }
+  }
+  if (!x || x->state != index_state_t::valid) {
+    return false;
+  }
+  const catalog_t *cat = session->cat;
+  std::shared_lock lock(cat->mu);
+  // Not valid in the committed catalog: this transaction made it
+  // valid, and reads what it wrote.
+  auto t = cat->tables.find(def.oid);
+  bool committed = false;
+  if (t != cat->tables.end()) {
+    for (const index_def_t &i : t->second->indexes) {
+      committed |= i.oid == oid && i.state == index_state_t::valid;
+    }
+  }
+  if (!committed) {
+    return true;
+  }
+  // READ COMMITTED without statements reads each call at a fresh
+  // snapshot, newer than anything the catalog holds.
+  if (session->level == sm1::xctlevel_t::read_committed &&
+      !session->stmt_pinned) {
+    return true;
+  }
+  // Valid since the catalog was loaded, or since a count this
+  // session's snapshot is not older than.
+  auto v = cat->valid_seq.find(oid);
+  return v == cat->valid_seq.end() || v->second <= session->snap_seq;
 }
 
 /* Set a savepoint; changes from now are made at its depth. */

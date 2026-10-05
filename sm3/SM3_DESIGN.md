@@ -402,6 +402,16 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     if the index became valid at or before that count. An
     index made valid in its own transaction it may scan at
     once. Writers maintain an index whatever their snapshot.
+    A READ COMMITTED transaction that begins no statements
+    reads each call at a fresh snapshot and may scan the index
+    as soon as it is valid. The count is kept in memory only:
+    no snapshot survives a restart. `tbl_index_usable` answers
+    for a planner, and `tbl_idx_scan` refuses an index that is
+    not usable. A session's statements begin through sm3,
+    `stmt_begin`, since that is where the count is noted. The
+    guard is for a transaction that has not yet touched the
+    table: marking the index valid takes the schema lock X,
+    which waits out every one that has.
   - **A table made in the same transaction** is seen by no one
     else, so `cat_create_index` runs the backfill itself, over
     the rows the transaction has written, and records the

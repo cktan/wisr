@@ -9,6 +9,7 @@
 #include "catalog.h"
 #include "sm3.h"
 
+#include <atomic>
 #include <functional>
 #include <map>
 #include <shared_mutex>
@@ -27,6 +28,16 @@ struct sm3::catalog_t {
   std::map<std::pair<uint64_t, std::string>, uint64_t> table_names;
   std::map<uint64_t, std::string> nspaces;
   std::map<uint64_t, sm2::collation_t *> collations; /* owned */
+
+  /*
+   * How many times a transaction's DDL has been published, and, for
+   * an index that became valid since the catalog was loaded, the
+   * count at which it did (SM3_DESIGN.md §3). A session notes the
+   * count before it takes a snapshot; an index valid at or before
+   * that count is filled as far as that snapshot can see.
+   */
+  std::atomic<uint64_t> seq{0};
+  std::map<uint64_t, uint64_t> valid_seq; /* index oid -> count */
 
   /* Close every collation the catalog holds. */
   ~catalog_t() {
@@ -73,6 +84,8 @@ struct sm3::session_t {
   std::vector<table_change_t> tables;
   std::vector<name_change_t> names;
   std::vector<collation_change_t> collations;
+  uint64_t snap_seq = 0;    /* cat->seq, noted before the snapshot */
+  bool stmt_pinned = false; /* stmt_begin was called: statement snapshots */
 };
 
 namespace sm3 {
@@ -80,6 +93,13 @@ namespace sm3 {
 /* The collation oid names, as session sees it; false if unknown. */
 using collation_lookup_t =
     std::function<bool(uint64_t, const sm2::collation_t *&)>;
+
+/*
+ * Whether session may scan the index oid of the table it sees as
+ * def (sm3.h, tbl_index_usable).
+ */
+bool index_usable(const session_t *session, const table_def_t &def,
+                  uint64_t oid);
 
 /*
  * Build the definition of table oid from its record, resolving its
