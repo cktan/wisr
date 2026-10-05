@@ -97,6 +97,13 @@ public:
     REQUIRE(sm3::session_open(cat, open(), b) == 0);
   }
 
+  /* Start the catalog's builder, with sessions from this database. */
+  void builder(size_t max_workers = 4, size_t batch_rows = 1000) {
+    REQUIRE(sm3::cat_builder_start(
+                cat, [this] { return try_open(); }, max_workers, batch_rows) ==
+            0);
+  }
+
   /* jobs, opened to write in s's transaction; it must open. */
   sm3::table_t *
   write(sm3::session_t *s,
@@ -1506,4 +1513,221 @@ TEST_CASE("after a restart every valid index is usable") {
     sm3::tbl_close(t);
     REQUIRE(sm3::commit(f.a) == 0);
   }
+}
+
+namespace {
+
+/* An index on column att of jobs, named name, made after its rows. */
+uint64_t late_on(jobs_t &f, const std::string &name, int32_t att,
+                 bool unique = false) {
+  std::vector<sm3::index_key_spec_t> key = {{att, false, false, std::nullopt}};
+  uint64_t oid = 0;
+  start(f.a);
+  REQUIRE(sm3::cat_create_index(f.a, f.jobs, name, key, {}, unique, oid) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  return oid;
+}
+
+/* The state of index oid of jobs in the committed catalog. */
+sm3::index_state_t state_of(jobs_t &f, uint64_t oid) {
+  auto d = sm3::cat_table(f.cat, f.jobs);
+  REQUIRE(d != nullptr);
+  for (const sm3::index_def_t &x : d->indexes) {
+    if (x.oid == oid) {
+      return x.state;
+    }
+  }
+  FAIL("no such index");
+  return sm3::index_state_t::failed;
+}
+
+} // namespace
+
+TEST_CASE("an index on a table with rows is built in the background") {
+  // Verify the queue, a worker and cat_index_wait end to end.
+  // 1. The builder is started. 250 rows are committed.
+  // 2. An index on owner is created and committed: it is building,
+  //    and its build is queued at that commit.
+  // 3. cat_index_wait returns 0: the index is valid, the caller's
+  //    next transaction may use it, and it agrees with the heap.
+  // 4. Waiting again on a valid index returns at once.
+  jobs_t f;
+  f.builder(4, 40);
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 250; i++) {
+    put(t, i, "free", "w" + std::to_string(i % 17));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_on(f, "jobs_owner", 2);
+
+  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0,
+                  sm1::errmsg());
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::valid);
+  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0);
+  start(f.a, sm1::xctlevel_t::repeatable_read);
+  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  CHECK(sm3::tbl_index_usable(t, jobs_owner));
+  CHECK(scanned(t, jobs_owner) == 250);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a failed build is reported to whoever waits for it") {
+  // Verify a unique build that meets a duplicate.
+  // 1. Two rows with one owner are committed; the builder is started.
+  // 2. A unique index on owner is created: its build fails.
+  // 3. cat_index_wait returns SM_ERR_DUPKEY, and the index is failed.
+  jobs_t f;
+  f.builder();
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "same");
+  put(t, 2, "free", "same");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_on(f, "jobs_owner", 2, true);
+
+  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::failed);
+}
+
+TEST_CASE("a build left unfinished is queued when the builder starts") {
+  // Verify the restart path, and the wait's other answers.
+  // 1. With no builder, an index is created on a table with rows:
+  //    it stays building, and waiting for it is SM_ERR_INVALID,
+  //    since no build of it is queued.
+  // 2. Waiting inside a transaction is SM_ERR_INTRANS, and for an
+  //    index or a table that is not there, SM_ERR_NOTFOUND.
+  // 3. The database restarts and the builder is started: the index
+  //    found building is queued, and waiting for it returns 0.
+  // 4. Starting the builder twice is SM_ERR_INVALID.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 30; i++) {
+    put(t, i, "free", "w" + std::to_string(i));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_on(f, "jobs_owner", 2);
+  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  start(f.a);
+  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INTRANS);
+  REQUIRE(sm3::commit(f.a) == 0);
+  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner + 999) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  CHECK(sm3::cat_index_wait(f.a, f.jobs + 999, jobs_owner) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  f.reload();
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::building);
+  f.builder(2, 7);
+  CHECK(sm3::cat_builder_start(f.cat, [&f] { return f.try_open(); }) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0,
+                  sm1::errmsg());
+  start(f.a);
+  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  CHECK(scanned(t, jobs_owner) == 30);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("more builds than workers all end, a few at a time") {
+  // Verify the queue holds what the workers cannot take yet.
+  // 1. The builder is started with two workers. 60 rows are committed.
+  // 2. Six indexes are created, one transaction each.
+  // 3. Waiting for each returns 0, and all agree with the heap.
+  jobs_t f;
+  f.builder(2, 10);
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 60; i++) {
+    put(t, i, "s" + std::to_string(i % 5), "w" + std::to_string(i % 7));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  std::vector<uint64_t> made;
+  for (int i = 0; i < 6; i++) {
+    made.push_back(late_on(f, "extra" + std::to_string(i), 1 + i % 2));
+  }
+  for (uint64_t oid : made) {
+    REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, oid) == 0, sm1::errmsg());
+  }
+  start(f.a);
+  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  CHECK(sm3::tbl_def(t).indexes.size() == 8);
+  for (uint64_t oid : made) {
+    CHECK(scanned(t, oid) == 60);
+  }
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("writers go on while an index is built, and it still agrees") {
+  // Verify the build under real concurrency: the test's thread writes
+  // while a worker backfills.
+  // 1. The builder is started with small batches. 300 rows are
+  //    committed, and an index on owner is created.
+  // 2. While it is building, the test updates, deletes and inserts
+  //    rows, one transaction each, retrying on a retryable error.
+  // 3. After the wait the index is valid and agrees with the heap.
+  jobs_t f;
+  f.builder(1, 5);
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 300; i++) {
+    put(t, i, "free", "w" + std::to_string(i % 23));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_on(f, "jobs_owner", 2);
+
+  for (int i = 0; i < 150; i++) {
+    for (;;) {
+      start(f.a);
+      t = f.write(f.a);
+      uint64_t r = 1 + (static_cast<uint64_t>(i) * 37) % 300;
+      int rc = 0;
+      if (i % 3 == 0) {
+        rc = set(t, r, static_cast<int32_t>(r), "taken",
+                 "x" + std::to_string(i));
+      } else if (i % 3 == 1) {
+        rc = sm3::tbl_delete(t, r);
+      } else {
+        row_t n(1000 + i, "free", "n" + std::to_string(i));
+        uint64_t rowno;
+        rc = sm3::tbl_insert(t, n.d(), n.null(), rowno);
+      }
+      bool retry = rc != 0 && sm1::retryable() == 1;
+      // A row deleted by an earlier round is not there to change.
+      bool gone = rc != 0 && sm1::errnum() == sm1::SM_ERR_NOTFOUND;
+      sm3::tbl_close(t);
+      if (rc == 0) {
+        REQUIRE(sm3::commit(f.a) == 0);
+        break;
+      }
+      sm3::abort(f.a);
+      REQUIRE((retry || gone));
+      if (gone) {
+        break;
+      }
+    }
+  }
+  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0,
+                  sm1::errmsg());
+  start(f.a);
+  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  CHECK(sm3::tbl_index_usable(t, jobs_owner));
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
 }

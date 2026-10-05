@@ -436,7 +436,17 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     empty, so a database with nothing to build holds no
     thread. Opening a catalog queues every index still marked
     building, which is how a build survives a restart. One
-    routine does a batch, and tests call it directly. A thread
+    routine does a batch, and tests call it directly. Each
+    batch is a transaction of its own, and so is marking the
+    index valid: it waits for every user of the table, and
+    must hold no row one of them may want. A batch that ends
+    in a retryable error is run again. A build that meets any
+    other error but a duplicate gives up and leaves the index
+    building, for the next start to queue, and whoever waits
+    for it is told no build is running. `cat_builder_start`
+    starts all this, and `cat_close` stops the workers and
+    waits for them, so no transaction on a table being built
+    may be open then. A thread
     per build was the alternative: less code, but a restore
     that creates hundreds of indexes would start hundreds of
     threads, and nothing would restart a build after a crash.

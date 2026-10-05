@@ -215,7 +215,7 @@ at every isolation level. 1.8 works it through.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:537`-539). The evaluator
+  caller to discard" (`SM3_DESIGN.md:547`-549). The evaluator
   is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.
@@ -820,7 +820,10 @@ writing it, so the prose and the decisions come before code.
    4. the guard that keeps an older snapshot off the index —
       **done**: `tbl_index_usable`, and `tbl_idx_scan` refuses
       an index that is not usable;
-   5. the queue of builds, its workers, and `cat_index_wait`;
+   5. the queue of builds, its workers, and `cat_index_wait`
+      — **done** in sm3: `cat_builder_start` and
+      `src/catalog/build.cc`. Nothing starts it for the C
+      API yet;
    6. the C API and `rel`.
    → verify: a writer in flight when the build starts is not
    missed; neither a reader nor a writer waits for the build;

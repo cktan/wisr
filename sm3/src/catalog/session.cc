@@ -38,6 +38,7 @@ void publish(sm3::session_t *s) {
   s->collations.clear();
   // One more publish; an index it makes valid dates from it.
   uint64_t seq = cat->seq.load() + 1;
+  std::vector<std::pair<uint64_t, uint64_t>> to_build; /* table, index */
   for (sm3::table_change_t &t : s->tables) {
     auto old = cat->tables.find(t.oid);
     // An index valid now and not before became valid here; one
@@ -63,6 +64,11 @@ void publish(sm3::session_t *s) {
         if (x.state == sm3::index_state_t::valid && !was_valid(x.oid)) {
           cat->valid_seq[x.oid] = seq;
         }
+        // A building index is the builder's from this commit on;
+        // one queued already is not queued twice.
+        if (x.state == sm3::index_state_t::building) {
+          to_build.emplace_back(t.oid, x.oid);
+        }
       }
       cat->tables[t.oid] = std::move(t.def);
     } else {
@@ -71,6 +77,10 @@ void publish(sm3::session_t *s) {
   }
   s->tables.clear();
   cat->seq.store(seq);
+  for (const auto &[table, index] : to_build) {
+    sm3::build_enqueue(cat, table, index);
+  }
+  sm3::build_notify(cat);
   for (sm3::name_change_t &n : s->names) {
     if (n.oid) {
       cat->table_names[n.name] = *n.oid;
@@ -122,6 +132,7 @@ int begin(session_t *s, sm1::xctlevel_t level) {
   s->depth = 0;
   s->snap_seq = seq;
   s->stmt_pinned = false;
+  s->in_txn = true;
   return 0;
 }
 
@@ -228,6 +239,8 @@ int forget(session_t *s, int depth) {
  * so it sees the new one, never the old (CATALOG.md §4).
  */
 int commit(session_t *s) {
+  // Committed or not, the transaction is over.
+  s->in_txn = false;
   if (s->tables.empty() && s->names.empty() && s->collations.empty()) {
     return sm1::commit(s->sm1);
   }
@@ -248,12 +261,18 @@ int prepare(session_t *s, std::string_view gid) {
                        "prepare: a transaction that made DDL cannot be "
                        "prepared");
   }
-  return sm1::prepare(s->sm1, gid);
+  if (sm1::prepare(s->sm1, gid) != 0) {
+    return -1;
+  }
+  // The prepared transaction is the coordinator's now.
+  s->in_txn = false;
+  return 0;
 }
 
 /* Abort, dropping the overlay. */
 int abort(session_t *s) {
   drop_from(s, 0);
+  s->in_txn = false;
   return sm1::abort(s->sm1);
 }
 

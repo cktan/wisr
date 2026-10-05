@@ -15,6 +15,7 @@
 #include "sm2.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -285,6 +286,38 @@ int cat_create_index(session_t* session, uint64_t table,
  * table's definition, and its entries.
  */
 int cat_drop_index(session_t* session, uint64_t table, uint64_t oid);
+
+/*
+ * Start the catalog's builder (SM3_DESIGN.md §3). From now on an
+ * index recorded as building is queued when its transaction
+ * commits, and every index found building now -- left so by a
+ * restart -- is queued at once. At most max_workers builds run at
+ * a time, each on a thread started when a build is queued and
+ * ended when the queue is empty. A worker gets an sm1 session of
+ * its own from open, which returns one on the catalog's database
+ * or nullptr, and closes it with sm1::closedb; it covers
+ * batch_rows rows a transaction. cat_close stops the workers and
+ * waits for them, so no transaction on a table being built may be
+ * open then. Fails with SM_ERR_INVALID if started twice.
+ */
+int cat_builder_start(catalog_t* cat, std::function<sm1::session_t*()> open,
+                      size_t max_workers = 4, size_t batch_rows = 1000);
+
+/*
+ * Wait until the build of the table's index oid has ended, for a
+ * caller that wants to use the index at once: 0 once it is valid.
+ * It waits on the index's state, so any session may wait, for a
+ * build any other began. Called outside a transaction, so that
+ * the caller's next snapshot is new enough to scan the index.
+ *
+ * Errors: SM_ERR_DUPKEY if the build failed, on two rows with one
+ * key in a unique index; SM_ERR_INVALID if the index is building
+ * and no build of it is queued or running -- no builder was
+ * started, or its build gave up on an error; SM_ERR_INTRANS inside
+ * a transaction; SM_ERR_NOTFOUND if there is no such table or
+ * index.
+ */
+int cat_index_wait(session_t* session, uint64_t table, uint64_t oid);
 
 /*
  * Set the state of the table's index oid, as the build does when

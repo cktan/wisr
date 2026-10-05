@@ -210,7 +210,13 @@ int cat_open(sm1::session_t *session, catalog_t *&out) {
 }
 
 /* Close a catalog; nullptr is a no-op. */
-void cat_close(catalog_t *cat) { delete cat; }
+void cat_close(catalog_t *cat) {
+  if (cat) {
+    // A worker reads the catalog: none may outlive it.
+    build_stop(cat);
+  }
+  delete cat;
+}
 
 /* A committed table by oid, or nullptr. */
 std::shared_ptr<const table_def_t> cat_table(const catalog_t *cat,

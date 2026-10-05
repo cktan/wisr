@@ -41,6 +41,15 @@ public:
     return s;
   }
 
+  /*
+   * A new session on "db", or nullptr: for a thread other than the
+   * test's, where a failed REQUIRE has nowhere to go.
+   */
+  sm1::session_t *try_open() {
+    sm1::session_t *s = nullptr;
+    return sm1::opendb(m_env, "db", s) == 0 ? s : nullptr;
+  }
+
   /* Close every session and reattach the home, as a restart does. */
   void restart() {
     REQUIRE(sm1::detach(m_env, 1) == 0);

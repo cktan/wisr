@@ -10,12 +10,40 @@
 #include "sm3.h"
 
 #include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <functional>
 #include <map>
+#include <mutex>
+#include <set>
 #include <shared_mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+
+namespace sm3 {
+
+/*
+ * The catalog's builder (SM3_DESIGN.md §3): a queue of indexes to
+ * build and the workers building them. mu guards all of it, and is
+ * taken after the catalog's own mutex, never before.
+ */
+struct builder_t {
+  std::mutex mu;
+  std::condition_variable cv; /* a build ended, or the catalog changed */
+  std::function<sm1::session_t *()> open; /* empty: not started */
+  size_t max_workers = 0;
+  size_t batch_rows = 0;
+  std::deque<std::pair<uint64_t, uint64_t>> queue; /* table, index */
+  std::set<uint64_t> active; /* indexes queued or being built */
+  size_t running = 0;        /* workers alive */
+  bool stop = false;
+  std::vector<std::thread> threads;
+  std::vector<std::thread::id> finished; /* workers to join */
+};
+
+} // namespace sm3
 
 /*
  * The shared catalog: every committed definition, read by every
@@ -38,6 +66,8 @@ struct sm3::catalog_t {
    */
   std::atomic<uint64_t> seq{0};
   std::map<uint64_t, uint64_t> valid_seq; /* index oid -> count */
+
+  builder_t builder;
 
   /* Close every collation the catalog holds. */
   ~catalog_t() {
@@ -84,6 +114,7 @@ struct sm3::session_t {
   std::vector<table_change_t> tables;
   std::vector<name_change_t> names;
   std::vector<collation_change_t> collations;
+  bool in_txn = false;      /* between begin and commit or abort */
   uint64_t snap_seq = 0;    /* cat->seq, noted before the snapshot */
   bool stmt_pinned = false; /* stmt_begin was called: statement snapshots */
 };
@@ -93,6 +124,20 @@ namespace sm3 {
 /* The collation oid names, as session sees it; false if unknown. */
 using collation_lookup_t =
     std::function<bool(uint64_t, const sm2::collation_t *&)>;
+
+/*
+ * Queue the build of a table's index, if the builder was started
+ * and the index is not queued already, starting a worker if fewer
+ * than the most allowed are alive. The caller may hold the
+ * catalog's mutex.
+ */
+void build_enqueue(catalog_t *cat, uint64_t table, uint64_t index);
+
+/* Wake whoever waits on an index's state: the catalog has changed. */
+void build_notify(catalog_t *cat);
+
+/* Stop the builder's workers and wait for them; for cat_close. */
+void build_stop(catalog_t *cat);
 
 /*
  * Whether session may scan the index oid of the table it sees as
