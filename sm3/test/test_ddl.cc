@@ -330,11 +330,15 @@ TEST_CASE("an index's state is recorded, and survives a restart") {
   db.begin();
   REQUIRE(sm3::cat_set_index_state(db.ss, t, late, sm3::index_state_t::valid) ==
           0);
-  REQUIRE(sm3::cat_set_index_state(db.ss, t, fresh,
-                                   sm3::index_state_t::failed) == 0);
+  REQUIRE(sm3::cat_set_index_state(db.ss, t, fresh, sm3::index_state_t::failed,
+                                   sm1::SM_ERR_DUPKEY, "two rows") == 0);
   d = sm3::cat_table(db.ss, t);
   CHECK(d->indexes[0].state == sm3::index_state_t::failed);
+  CHECK(d->indexes[0].error == sm1::SM_ERR_DUPKEY);
+  CHECK(d->indexes[0].reason == "two rows");
   CHECK(d->indexes[1].state == sm3::index_state_t::valid);
+  CHECK(d->indexes[1].error == sm1::SM_OK);
+  CHECK(d->indexes[1].reason.empty());
   CHECK(sm3::cat_set_index_state(db.ss, t, late + 999,
                                  sm3::index_state_t::valid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
@@ -344,5 +348,17 @@ TEST_CASE("an index's state is recorded, and survives a restart") {
   d = sm3::cat_table(cat, t);
   REQUIRE(d != nullptr);
   CHECK(d->indexes[0].state == sm3::index_state_t::failed);
+  CHECK(d->indexes[0].error == sm1::SM_ERR_DUPKEY);
+  CHECK(d->indexes[0].reason == "two rows");
   CHECK(d->indexes[1].state == sm3::index_state_t::valid);
+
+  // A state other than failed keeps no reason.
+  db.begin();
+  REQUIRE(sm3::cat_set_index_state(db.ss, t, fresh,
+                                   sm3::index_state_t::building) == 0);
+  db.commit();
+  d = sm3::cat_table(db.reload(), t);
+  CHECK(d->indexes[0].state == sm3::index_state_t::building);
+  CHECK(d->indexes[0].error == sm1::SM_OK);
+  CHECK(d->indexes[0].reason.empty());
 }

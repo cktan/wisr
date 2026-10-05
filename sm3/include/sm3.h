@@ -75,6 +75,9 @@ struct index_def_t {
     std::vector<sm2::key_column_t>    key;             /* for sm2 */
     std::vector<sm2::attribute_t>     include;         /* for sm2 */
     index_state_t                     state = index_state_t::valid;
+    /* Why its build failed, as the build met it; SM_OK unless failed. */
+    sm1::errnum_t                     error = sm1::SM_OK;
+    std::string                       reason;
 };
 
 /*
@@ -296,7 +299,10 @@ int cat_drop_index(session_t* session, uint64_t table, uint64_t oid);
  * ended when the queue is empty. A worker gets an sm1 session of
  * its own from open, which returns one on the catalog's database
  * or nullptr, and closes it with sm1::closedb; it covers
- * batch_rows rows a transaction. cat_close stops the workers and
+ * batch_rows rows a transaction. A batch that fails with an error
+ * that is not retryable fails the build: the index is marked
+ * failed, and the error is kept in its record. cat_close stops
+ * the workers and
  * waits for them, so no transaction on a table being built may be
  * open then. Fails with SM_ERR_INVALID if started twice.
  */
@@ -310,21 +316,24 @@ int cat_builder_start(catalog_t* cat, std::function<sm1::session_t*()> open,
  * build any other began. Called outside a transaction, so that
  * the caller's next snapshot is new enough to scan the index.
  *
- * Errors: SM_ERR_DUPKEY if the build failed, on two rows with one
- * key in a unique index; SM_ERR_INVALID if the index is building
- * and no build of it is queued or running -- no builder was
- * started, or its build gave up on an error; SM_ERR_INTRANS inside
- * a transaction; SM_ERR_NOTFOUND if there is no such table or
- * index.
+ * Errors: if the build failed, the error it failed with, code and
+ * message, as the index's record keeps them -- SM_ERR_DUPKEY on
+ * two rows with one key in a unique index, SM_ERR_KEYTOOLONG on a
+ * key too long for one; SM_ERR_INVALID if the index is building
+ * and no build of it is queued or running; SM_ERR_INTRANS inside a
+ * transaction; SM_ERR_NOTFOUND if there is no such table or index.
  */
 int cat_index_wait(session_t* session, uint64_t table, uint64_t oid);
 
 /*
  * Set the state of the table's index oid, as the build does when
- * it ends: valid, or failed.
+ * it ends: valid, or failed. A failed index keeps why, error and
+ * reason, in its record; any other state clears them.
  */
 int cat_set_index_state(session_t* session, uint64_t table, uint64_t oid,
-                        index_state_t state);
+                        index_state_t state,
+                        sm1::errnum_t error = sm1::SM_OK,
+                        std::string_view reason = {});
 
 /*
  * Create a collation named name in namespace nspoid for locale,

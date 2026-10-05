@@ -1575,11 +1575,15 @@ TEST_CASE("an index on a table with rows is built in the background") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("a failed build is reported to whoever waits for it") {
-  // Verify a unique build that meets a duplicate.
+TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
+  // Verify what is kept of a build that failed.
   // 1. Two rows with one owner are committed; the builder is started.
   // 2. A unique index on owner is created: its build fails.
-  // 3. cat_index_wait returns SM_ERR_DUPKEY, and the index is failed.
+  // 3. cat_index_wait returns the build's own error, SM_ERR_DUPKEY,
+  //    with its message, which names the table and the index.
+  // 4. The index is failed, and its definition holds the code and
+  //    the message.
+  // 5. Both survive a restart, and the wait gives them again.
   jobs_t f;
   f.builder();
   start(f.a);
@@ -1592,7 +1596,55 @@ TEST_CASE("a failed build is reported to whoever waits for it") {
 
   CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  std::string why = sm1::errmsg();
+  CHECK(why.find("jobs_owner") != std::string::npos);
+  CHECK(why.find("two rows of jobs") != std::string::npos);
   CHECK(state_of(f, jobs_owner) == sm3::index_state_t::failed);
+  auto d = sm3::cat_table(f.cat, f.jobs);
+  CHECK(d->indexes[2].error == sm1::SM_ERR_DUPKEY);
+  CHECK(d->indexes[2].reason == why);
+
+  f.reload();
+  d = sm3::cat_table(f.cat, f.jobs);
+  CHECK(d->indexes[2].state == sm3::index_state_t::failed);
+  CHECK(d->indexes[2].error == sm1::SM_ERR_DUPKEY);
+  CHECK(d->indexes[2].reason == why);
+  sm1::reseterr();
+  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(why == sm1::errmsg());
+}
+
+TEST_CASE("a build fails on any error the rows cause, and says which") {
+  // Verify a failure that is not a duplicate.
+  // 1. A row whose owner is 5000 bytes is committed: too long a key
+  //    for a unique index, which may not cut one.
+  // 2. A unique index on owner is created. Its build fails, and the
+  //    wait returns SM_ERR_KEYTOOLONG with the encoder's message.
+  // 3. The index is failed with that code kept; the valid indexes
+  //    are untouched and agree with the heap.
+  jobs_t f;
+  f.builder();
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", std::string(5000, 'k'));
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_on(f, "jobs_owner", 2, true);
+
+  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
+  std::string why = sm1::errmsg();
+  CHECK_FALSE(why.empty());
+  auto d = sm3::cat_table(f.cat, f.jobs);
+  CHECK(d->indexes[2].state == sm3::index_state_t::failed);
+  CHECK(d->indexes[2].error == sm1::SM_ERR_KEYTOOLONG);
+  CHECK(d->indexes[2].reason == why);
+  start(f.a);
+  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
 }
 
 TEST_CASE("a build left unfinished is queued when the builder starts") {

@@ -107,6 +107,8 @@ struct index_rec_t {
   std::vector<index_key_rec_t> keys;
   std::vector<int32_t> includes; /* 0-based attnums */
   index_state_t state = index_state_t::valid;
+  sm1::errnum_t error = sm1::SM_OK; /* why its build failed */
+  std::string reason;               /* that error's message */
 };
 
 /* A table, its columns and its indexes: one blob. */

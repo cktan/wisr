@@ -215,7 +215,7 @@ at every isolation level. 1.8 works it through.
 
 - **§5 needs the evaluator regardless**: "the residual filter
   is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md:547`-549). The evaluator
+  caller to discard" (`SM3_DESIGN.md:551`-553). The evaluator
   is owed to §5 whatever becomes of the re-check.
 - **Partial and expression indexes come with it**, which was
   most of the case for handing maintenance to the executor.

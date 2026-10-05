@@ -392,6 +392,12 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     build then fails and marks the index failed, as PostgreSQL
     leaves an invalid index behind. A failed index is not
     maintained and cannot be scanned; it can only be dropped.
+  - **A failed build keeps its reason.** Any error from a
+    batch that is not retryable fails the build: a duplicate,
+    a key too long for a unique index, or anything else. The
+    index's record keeps the error's code and its message,
+    across restarts, and `cat_index_wait` returns them to
+    whoever waits.
   - **A reader with an older snapshot is kept off the index.**
     Entries are versioned as rows are, so a snapshot older
     than the last batch sees the index partly filled.
@@ -440,10 +446,8 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     batch is a transaction of its own, and so is marking the
     index valid: it waits for every user of the table, and
     must hold no row one of them may want. A batch that ends
-    in a retryable error is run again. A build that meets any
-    other error but a duplicate gives up and leaves the index
-    building, for the next start to queue, and whoever waits
-    for it is told no build is running. `cat_builder_start`
+    in a retryable error is run again, and one that ends in
+    any other fails the build. `cat_builder_start`
     starts all this, and `cat_close` stops the workers and
     waits for them, so no transaction on a table being built
     may be open then. A thread

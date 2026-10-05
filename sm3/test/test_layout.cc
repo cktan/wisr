@@ -33,13 +33,24 @@ sm3::table_rec_t sample_table() {
       {"gone", 27, -1, false, true, std::nullopt, std::nullopt},
   };
   t.indexes = {
-      {1100, "orders_pkey", 1, true, {{1, false, false, std::nullopt}}, {}},
+      {1100,
+       "orders_pkey",
+       1,
+       true,
+       {{1, false, false, std::nullopt}},
+       {},
+       sm3::index_state_t::valid,
+       sm1::SM_OK,
+       {}},
       {1101,
        "orders_note",
        2,
        false,
        {{2, true, true, 1000}, {1, false, false, std::nullopt}},
-       {3}},
+       {3},
+       sm3::index_state_t::valid,
+       sm1::SM_OK,
+       {}},
   };
   return t;
 }

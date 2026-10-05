@@ -21,16 +21,18 @@ bool stopping(catalog_t *cat) {
 
 /*
  * Set the index's state in a transaction of ws's own, again after
- * a retryable error; any other error gives up.
+ * a retryable error; any other error gives up. A failed index is
+ * given why: the error its build met, and that error's message.
  */
 void set_state(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
-               index_state_t state) {
+               index_state_t state, sm1::errnum_t error = sm1::SM_OK,
+               const std::string &reason = {}) {
   while (!stopping(cat)) {
     if (sm3::begin(ws, sm1::xctlevel_t::read_committed) != 0) {
       return;
     }
     // The schema lock X: this waits out every user of the table.
-    if (sm3::cat_set_index_state(ws, table, index, state) == 0 &&
+    if (sm3::cat_set_index_state(ws, table, index, state, error, reason) == 0 &&
         sm3::commit(ws) == 0) {
       return;
     }
@@ -45,8 +47,10 @@ void set_state(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
 /*
  * Build one index to its end: batches from the first row on, each
  * a transaction of its own, then the index marked valid; or marked
- * failed, on two rows with one key. A table or an index that has
- * gone, or is no longer building, ends the build quietly.
+ * failed, with the error kept, when a batch meets one that is not
+ * retryable -- two rows with one key, a key too long. A table or
+ * an index that has gone, or is no longer building, ends the build
+ * quietly.
  */
 void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index) {
   uint64_t from = 0;
@@ -60,6 +64,7 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index) {
     uint64_t next = from;
     bool done = false, building = false;
     int rc = sm3::tbl_open(ws, table, sm1::lockmode_t::intent_exclusive, t);
+    bool opened = rc == 0;
     if (rc == 0) {
       for (const sm3::index_def_t &x : sm3::tbl_def(t).indexes) {
         building |= x.oid == index && x.state == index_state_t::building;
@@ -79,14 +84,18 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index) {
       rc = sm3::commit(ws);
     }
     if (rc != 0) {
+      // Keep the error as it was met: the abort below may not.
       bool again = sm1::retryable() == 1;
-      bool duplicate = sm1::errnum() == sm1::SM_ERR_DUPKEY;
+      sm1::errnum_t error = sm1::errnum();
+      std::string reason = sm1::errmsg();
       sm3::abort(ws);
       if (again) {
         continue;
       }
-      if (duplicate) {
-        set_state(cat, ws, table, index, index_state_t::failed);
+      // A table that would not open has gone; anything else is the
+      // build's failure, kept for whoever asks why.
+      if (opened) {
+        set_state(cat, ws, table, index, index_state_t::failed, error, reason);
       }
       return;
     }
@@ -272,9 +281,16 @@ int cat_index_wait(session_t *session, uint64_t table, uint64_t oid) {
         return 0;
       }
       if (*state == index_state_t::failed) {
-        return sm1::seterr(sm1::SM_ERR_DUPKEY,
-                           "index wait: the build failed, on two rows with "
-                           "one key");
+        // The build's own error, as the index's record keeps it.
+        std::shared_ptr<const table_def_t> d = cat_table(cat, table);
+        if (d) {
+          for (const index_def_t &x : d->indexes) {
+            if (x.oid == oid && x.error != sm1::SM_OK) {
+              return sm1::seterr(x.error, x.reason);
+            }
+          }
+        }
+        return sm1::seterr(sm1::SM_ERR_INVALID, "index wait: the build failed");
       }
       std::unique_lock lock(b.mu);
       if (!b.active.count(oid)) {

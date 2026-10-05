@@ -461,8 +461,12 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     if (open_table(session, table, kv, rec) != 0) {
       return -1;
     }
-    index_rec_t x{0,  std::string(name),      rec.next_prefix, unique, {},
-                  {}, index_state_t::building};
+    index_rec_t x;
+    x.oid = 0;
+    x.name = std::string(name);
+    x.prefix = rec.next_prefix;
+    x.unique = unique;
+    x.state = index_state_t::building;
     for (const index_key_spec_t &k : keys) {
       if (!live_attnum(rec, k.attnum)) {
         return invalid("create index: a key names no live column");
@@ -584,7 +588,8 @@ int cat_drop_index(session_t *session, uint64_t table, uint64_t oid) {
 
 /* Set an index's state; see sm3.h. */
 int cat_set_index_state(session_t *session, uint64_t table, uint64_t oid,
-                        index_state_t state) {
+                        index_state_t state, sm1::errnum_t error,
+                        std::string_view reason) {
   return catch_nomem([&] {
     kv_ptr kv(nullptr, &sm2::catkv_close);
     table_rec_t rec;
@@ -598,6 +603,9 @@ int cat_set_index_state(session_t *session, uint64_t table, uint64_t oid,
                          "index state: no index " + std::to_string(oid));
     }
     it->state = state;
+    bool failed = state == index_state_t::failed;
+    it->error = failed ? error : sm1::SM_OK;
+    it->reason = failed ? std::string(reason) : std::string();
     if (write_table(kv.get(), table, rec) != 0) {
       return -1;
     }

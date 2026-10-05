@@ -184,7 +184,8 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
        att(type_bool), att(type_bytea), att(type_int8)},
       /* index */
       {att(type_int8), att(type_text), att(type_int2), att(type_bool),
-       att(type_int4), att(type_int4), att(type_int2)},
+       att(type_int4), att(type_int4), att(type_int2), att(type_int2),
+       att(type_text)},
       /* index_key */
       {att(type_int4), att(type_bool), att(type_bool), att(type_int8)},
       /* include */ {att(type_int4)},
@@ -323,7 +324,7 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
       }
     }
     for (const index_rec_t &x : rec.indexes) {
-      writer_t w(7);
+      writer_t w(9);
       w.i8(0, x.oid);
       w.bytes(1, x.name);
       w.i2(2, static_cast<int16_t>(x.prefix));
@@ -331,6 +332,11 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
       w.i4(4, static_cast<int32_t>(x.keys.size()));
       w.i4(5, static_cast<int32_t>(x.includes.size()));
       w.i2(6, static_cast<int16_t>(x.state));
+      // Only a failed index has a reason to keep.
+      if (x.state == index_state_t::failed) {
+        w.i2(7, static_cast<int16_t>(x.error));
+        w.bytes(8, x.reason);
+      }
       if (w.append(part_desc(part_t::index), blob) != 0) {
         return -1;
       }
@@ -414,6 +420,8 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
         return corrupt("an index in no known state");
       }
       x.state = static_cast<index_state_t>(state);
+      x.error = static_cast<sm1::errnum_t>(r.opt_i2(7).value_or(sm1::SM_OK));
+      x.reason = r.opt_bytes(8).value_or("");
       for (int32_t k = 0; k < nkey; k++) {
         reader_t kr;
         if (kr.read(blob, pos, part_t::index_key) != 0) {
