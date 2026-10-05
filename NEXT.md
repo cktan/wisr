@@ -341,18 +341,18 @@ int sm_tbl_update(sm_tbl_t* tbl, uint64_t rowno,
 | 3a | sm3 | It calls sm2's `rel_update` on the heap. sm1 refuses it with `SM_ERR_UPDATED`. sm3 touches no index and returns the status to the executor as a non-error. |
 | 4 | executor | It calls `sm_rel_read_latest(7)`, which marks the lock and returns `(7, 'taken', 'w1')`. sm3 has no part in it: no index is involved. |
 | 5 | executor | It evaluates T2's qual against that image, whose `state` is now `'taken'` and no longer the `'free'` its scan saw. `'taken' <> 'done'` is true, so the row still qualifies. It rebuilds the new tuple from the image: `(7, 'done', 'w1')`. |
-| 6 | executor | It calls `sm_tbl_update(jobs, 7, (7, 'done', 'w1'))`. Steps 6a to 8 run inside that one call. |
+| 6 | executor | It calls `sm_tbl_update(jobs, 7, (7, 'done', 'w1'))`. Steps 6a to 6c run inside that one call. |
 | 6a | sm3 | It calls sm2's `rel_update` on the heap again. sm1 accepts it and hands back the old image `(7, 'taken', 'w1')`. |
-| 7 | sm3 | It copies that old image, because the next sm2 call on the session reuses the memory. |
-| 8 | sm3 | For each index in the table's definition, it takes the old key from the copy and the new key from the new values. For `jobs_state`, `'taken'` and `'done'` differ, so `idx_delete('taken', 7)` then `idx_insert('done', 7)`. It returns 0 to the executor. |
-| 9 | — | The heap holds `(7, 'done', 'w1')` and the index holds `('done', 7)` only. |
+| 6b | sm3 | It copies that old image, because the next sm2 call on the session reuses the memory. |
+| 6c | sm3 | For each index in the table's definition, it takes the old key from the copy and the new key from the new values. For `jobs_state`, `'taken'` and `'done'` differ, so `idx_delete('taken', 7)` then `idx_insert('done', 7)`. It returns 0 to the executor. |
+| 7 | — | The heap holds `(7, 'done', 'w1')` and the index holds `('done', 7)` only. |
 
-Steps 6a to 8 are the fix-up, and they are the same code as an
+Steps 6a to 6c are the fix-up, and they are the same code as an
 ordinary update. Step 3a is that code stopping early, before
-it reaches an index. The point is in step 8: the old key comes
+it reaches an index. The point is in step 6c: the old key comes
 from the image returned in step 6a, not from the `'free'`
 image the scan read in step 1. An index on `owner` would be left
-alone in step 8, since its old and new keys are both `'w1'`.
+alone in step 6c, since its old and new keys are both `'w1'`.
 
 **What "marks the lock" means in step 4.** The mark is a
 one-bit flag recording that this transaction has looked at
@@ -558,7 +558,7 @@ executor makes in 1.7:
 The executor's job is to take an error code, read one row,
 decide, and call the same write again or not. The removed
 calls do sm3's share and not the executor's: `rel_update` at
-steps 3a and 6a, `idx_delete` and `idx_insert` at step 8.
+steps 3a and 6a, `idx_delete` and `idx_insert` at step 6c.
 
 One thing must stay true. sm1 accepts the repeated write only
 if `read_latest` marked the lock first
@@ -573,7 +573,7 @@ the executor decides which rows get written.**
 
 - **Tuple and index together are sm's alone.** Once a write is
   issued, sm3 updates the heap, takes the old image sm1 hands
-  back, and fixes every index from it (1.7, steps 6a to 8).
+  back, and fixes every index from it (1.7, steps 6a to 6c).
   It needs nothing from the executor for that.
 - **Whether the row still qualifies is the executor's.** After
   `SM_ERR_UPDATED`, the statement's qual is re-checked against
