@@ -1,0 +1,292 @@
+# test_recheck.rel -- the worked examples of NEXT.md section 1, step by
+# step: a READ COMMITTED writer that meets a row changed under it reads
+# the latest image, re-checks its filter, and writes or skips, and the
+# indexes follow the heap. The script plays the executor; T2 is set
+# qa-nowait, so a step that would wait says ERR_BLOCKED and is repeated.
+#
+# 1.1  Two workers claim one job, on a table with no index.
+# 1.7  The write case on an indexed table (1.2's race), the skip case,
+#      and the lock mark's rules.
+# 1.8  A filter that spans two tables: cases A, C and B.
+
+(def test-dir "/tmp/wisr_rel_test_recheck")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "nextdb")
+(session-open t1 "nextdb")
+(session-open t2 "nextdb")
+(session-use t2)
+(qa-nowait true)
+
+# The rownos an index holds under a one-column text key.
+(defn under [entries] (map (fn [e] (e 0)) entries))
+
+# ---------------------------------------------------------------
+# NEXT.md 1.1 -- UPDATE claims SET state='taken', owner=:me
+#                WHERE state='free'; no index.
+# ---------------------------------------------------------------
+(session-use t1)
+(begin :rc)
+(table-create claims
+  (columns (id :int4 :not-null) (state :text :not-null) (owner :text)))
+(def c7 (insert claims [7 "free" nil]))
+(commit)
+
+# Step 1: both statements take a snapshot in which row 7 is free.
+(session-use t1)
+(begin :rc)
+(assert-eq (read claims c7) [7 "free" nil])
+(session-use t2)
+(begin :rc)
+(assert-eq (read claims c7) [7 "free" nil])
+# Step 2: T1 writes row 7 and holds the row lock.
+(session-use t1)
+(update claims c7 [7 "taken" "w1"])
+# Step 3: T2's write blocks on that lock.
+(session-use t2)
+(assert-err :err-blocked (update claims c7 [7 "taken" "w2"]))
+# Step 4: T1 commits; T2's write is refused with SM_ERR_UPDATED.
+(session-use t1)
+(commit)
+(session-use t2)
+(assert-err :err-updated (update claims c7 [7 "taken" "w2"]))
+# Step 5: T2 reads the latest image: state='taken'.
+(def latest (read-latest claims c7))
+(assert-eq latest [7 "taken" "w1"])
+# Step 6: T2 re-evaluates state='free' against it, false, and writes
+# nothing. The job is claimed once.
+(assert-eq (= (latest 1) "free") false)
+(commit)
+(begin :rc)
+(assert-eq (read claims c7) [7 "taken" "w1"])
+(commit)
+
+# ---------------------------------------------------------------
+# NEXT.md 1.7, the write case -- an index on state;
+#   T1: UPDATE jobs SET state='taken', owner='w1' WHERE state='free';
+#   T2: UPDATE jobs SET state='done' WHERE state <> 'done';
+# ---------------------------------------------------------------
+(session-use t1)
+(begin :rc)
+(table-create jobs
+  (columns (id :int4 :not-null) (state :text :not-null) (owner :text)))
+(index-create jobs_state (table jobs) (key (state :asc)) :unique false)
+(def j7 (insert jobs [7 "free" nil]))
+(def j8 (insert jobs [8 "free" nil]))
+(def j9 (insert jobs [9 "free" nil]))
+(commit)
+
+# Step 1: T2's scan reads row 7 at its snapshot, and builds the new
+# tuple (7, 'done', NULL).
+(session-use t2)
+(begin :rc)
+(assert-eq (read jobs j7) [7 "free" nil])
+# Step 2: T1 updates row 7 and commits; the index holds ('taken', 7).
+(session-use t1)
+(begin :rc)
+(update jobs j7 [7 "taken" "w1"])
+(commit)
+# Steps 3, 3a: T2's write is refused with SM_ERR_UPDATED, and no index
+# was touched: 'taken' still holds the row, 'done' nothing.
+(session-use t2)
+(assert-err :err-updated (update jobs j7 [7 "done" nil]))
+(assert-eq (sm:retryable) false)
+# Step 4: T2 reads the latest image, which marks the lock.
+(def latest (read-latest jobs j7))
+(assert-eq latest [7 "taken" "w1"])
+# Step 5: its state is 'taken', no longer the 'free' the scan saw, and
+# 'taken' <> 'done' holds, so the row still qualifies. The new tuple is
+# rebuilt from the latest image.
+(assert-eq (not= (latest 1) "done") true)
+# Steps 6, 6a: the write goes through, and the old image handed back is
+# the newest, (7, 'taken', 'w1'), not the 'free' one of step 1.
+(assert-eq (update jobs j7 [7 "done" (latest 2)]) [7 "taken" "w1"])
+(commit)
+# Steps 6c, 7: the heap holds (7, 'done', 'w1'), and the index holds the
+# row under 'done' only.
+(begin :rc)
+(assert-eq (read jobs j7) [7 "done" "w1"])
+(assert-eq (under (idx-scan jobs_state :ge ["done"] :le ["done"])) @[j7])
+(assert-count 0 (idx-scan jobs_state :ge ["taken"] :le ["taken"]))
+(assert-eq (under (idx-scan jobs_state :ge ["free"] :le ["free"])) @[j8 j9])
+(assert-count 3 (idx-scan jobs_state))
+(commit)
+
+# ---------------------------------------------------------------
+# NEXT.md 1.7, the skip case -- T2 is a second worker:
+#   UPDATE jobs SET state='taken', owner='w2' WHERE state='free';
+# ---------------------------------------------------------------
+(session-use t2)
+(begin :rc)
+(assert-eq (read jobs j8) [8 "free" nil])
+(session-use t1)
+(begin :rc)
+(update jobs j8 [8 "taken" "w1"])
+(commit)
+(session-use t2)
+(assert-err :err-updated (update jobs j8 [8 "taken" "w2"]))
+(def latest (read-latest jobs j8))
+# Step 5: state='free' against (8, 'taken', 'w1') is false: skip.
+(assert-eq (= (latest 1) "free") false)
+# Steps 6, 7: no write and no index call; T2 reports zero rows.
+(commit)
+(begin :rc)
+(assert-eq (read jobs j8) [8 "taken" "w1"])
+(assert-eq (under (idx-scan jobs_state :ge ["taken"] :le ["taken"])) @[j8])
+(assert-count 3 (idx-scan jobs_state))
+(commit)
+
+# ---------------------------------------------------------------
+# NEXT.md 1.7 -- what "marks the lock" means, event by event.
+# ---------------------------------------------------------------
+(session-use t2)
+(begin :rc)
+(assert-eq (read jobs j9) [9 "free" nil])
+(session-use t1)
+(begin :rc)
+(update jobs j9 [9 "taken" "w1"])
+(commit)
+(session-use t2)
+(def sp0 (savepoint))
+# First write refused: lock taken, mark not set.
+(assert-err :err-updated (update jobs j9 [9 "done" nil]))
+# Write repeated without the mark: refused again.
+(assert-err :err-updated (update jobs j9 [9 "done" nil]))
+# read-latest on that row: mark set.
+(assert-eq (read-latest jobs j9) [9 "taken" "w1"])
+# Rollback to a savepoint taken before the lock: the lock is released
+# and the mark gone with it, so the write is refused again.
+(rollback sp0)
+(forget sp0)
+(assert-err :err-updated (update jobs j9 [9 "done" nil]))
+# Write repeated with the mark set: it goes through.
+(assert-eq (read-latest jobs j9) [9 "taken" "w1"])
+(def sp1 (savepoint))
+(assert-eq (update jobs j9 [9 "done" "w1"]) [9 "taken" "w1"])
+# A later write to the row needs no read: the newest version is now
+# this transaction's own.
+(assert-eq (update jobs j9 [9 "done" "w2"]) [9 "done" "w1"])
+# The mark is single-use all the same. Undo those writes, to a
+# savepoint taken after the lock, and the newest version is T1's
+# again: the lock is still held, but the mark was spent.
+(rollback sp1)
+(forget sp1)
+(assert-err :err-updated (update jobs j9 [9 "done" nil]))
+(assert-eq (read-latest jobs j9) [9 "taken" "w1"])
+(assert-eq (update jobs j9 [9 "done" "w1"]) [9 "taken" "w1"])
+(commit)
+(begin :rc)
+(assert-eq (under (idx-scan jobs_state :ge ["done"] :le ["done"])) @[j7 j9])
+(assert-count 3 (idx-scan jobs_state))
+(commit)
+
+# ---------------------------------------------------------------
+# NEXT.md 1.8 -- a qual that spans two tables:
+#   UPDATE orders o SET status='hold' FROM customers c
+#    WHERE o.cust_id = c.id AND c.region = 'EU';
+# ---------------------------------------------------------------
+(session-use t1)
+(begin :rc)
+(table-create customers
+  (columns (id :int4 :not-null) (region :text :not-null)))
+(table-create orders
+  (columns (id :int4 :not-null) (cust_id :int4 :not-null)
+           (status :text :not-null)))
+(index-create orders_status (table orders) (key (status :asc)) :unique false)
+(def c5 (insert customers [5 "EU"]))
+(def c9 (insert customers [9 "US"]))
+(def o42 (insert orders [42 5 "new"]))
+(def o43 (insert orders [43 5 "new"]))
+(def o44 (insert orders [44 5 "new"]))
+(commit)
+
+# The join's filter, on an order image and the customer row joined.
+(defn qualifies [o c] (and (= (o 1) (c 0)) (= (c 1) "EU")))
+
+# Case A: the order row changes under T2.
+# Step 1: T2's join pairs order 42 with customer 5 at its snapshot.
+(session-use t2)
+(begin :rc)
+(def cust (read customers c5))
+(assert-eq (qualifies (read orders o42) cust) true)
+# Step 2: T1 moves the order to customer 9 and commits.
+(session-use t1)
+(begin :rc)
+(update orders o42 [42 9 "new"])
+(commit)
+# Steps 3, 3a: T2's write is refused with SM_ERR_UPDATED.
+(session-use t2)
+(assert-err :err-updated (update orders o42 [42 5 "hold"]))
+# Step 4: the latest image is orders(42, 9, 'new').
+(def latest (read-latest orders o42))
+(assert-eq latest [42 9 "new"])
+# Step 5: the join is re-run for this row against the customer row
+# already joined, customers(5, 'EU'): 9 = 5 is false. Skip.
+(assert-eq (qualifies latest cust) false)
+# Steps 6, 7: nothing is written; orders_status still holds ('new', 42).
+(commit)
+(begin :rc)
+(assert-eq (read orders o42) [42 9 "new"])
+(assert-eq (under (idx-scan orders_status :ge ["new"] :le ["new"]))
+           @[o42 o43 o44])
+(assert-count 0 (idx-scan orders_status :ge ["hold"] :le ["hold"]))
+(commit)
+
+# Case C: the order changes and still qualifies.
+(session-use t2)
+(begin :rc)
+(def cust (read customers c5))
+(assert-eq (qualifies (read orders o43) cust) true)
+(session-use t1)
+(begin :rc)
+(update orders o43 [43 5 "shipped"])
+(commit)
+(session-use t2)
+(assert-err :err-updated (update orders o43 [43 5 "hold"]))
+(def latest (read-latest orders o43))
+(assert-eq latest [43 5 "shipped"])
+# The join holds: 5 = 5 and 'EU'. The write goes ahead, and the old
+# image handed back is orders(43, 5, 'shipped').
+(assert-eq (qualifies latest cust) true)
+(assert-eq (update orders o43 [43 5 "hold"]) [43 5 "shipped"])
+(commit)
+# sm3 removed ('shipped', 43) and inserted ('hold', 43).
+(begin :rc)
+(assert-count 0 (idx-scan orders_status :ge ["shipped"] :le ["shipped"]))
+(assert-eq (under (idx-scan orders_status :ge ["hold"] :le ["hold"])) @[o43])
+(assert-count 3 (idx-scan orders_status))
+(commit)
+
+# Case B: only the customer changes.
+# T2's statement reads customer 5 as EU at its snapshot.
+(session-use t2)
+(begin :rc)
+(snapshot)
+(def cust (read customers c5))
+(assert-eq (qualifies (read orders o44) cust) true)
+# T1 moves the customer to the US and commits.
+(session-use t1)
+(begin :rc)
+(update customers c5 [5 "US"])
+(commit)
+# The statement still sees EU, and order 44 was not touched, so the
+# write succeeds the first time: no SM_ERR_UPDATED and no re-check.
+(session-use t2)
+(assert-eq (read customers c5) [5 "EU"])
+(assert-eq (update orders o44 [44 5 "hold"]) [44 5 "new"])
+(commit)
+(begin :rc)
+(assert-eq (read customers c5) [5 "US"])
+(assert-eq (read orders o44) [44 5 "hold"])
+(assert-eq (under (idx-scan orders_status :ge ["hold"] :le ["hold"]))
+           @[o43 o44])
+(assert-eq (under (idx-scan orders_status :ge ["new"] :le ["new"])) @[o42])
+(assert-count 3 (idx-scan orders_status))
+(commit)
+
+(session-close t1)
+(session-close t2)
+(env-detach)
+(rm-rf test-dir)
+(print "test_recheck.rel: PASSED")

@@ -306,6 +306,11 @@ step 1).
 
 ### 1.7 The fix-up, step by step
 
+`rel/test/test_recheck.rel` runs the examples of 1.1, of this
+section and of 1.8 as written, step for step, with the script
+playing the executor. The table-level write assumed below now
+exists as `sm_tbl_update`.
+
 1.2's race again, with the split of 1.6 applied. One index on
 `state`, and row 7 starts as `(id=7, state='free',
 owner=NULL)`:
@@ -389,9 +394,12 @@ overwrite T1's change with no re-check: 1.1's double claim.
 - **The image read cannot go stale.** T2 holds the row lock
   throughout, so nobody changes row 7 between its
   `read_latest` and its repeated write.
-- **The mark is single-use.** A successful write clears it, so
-  a later write to the row in the same transaction needs a
-  fresh read.
+- **The mark is single-use.** A successful write clears it. A
+  later write to the row needs no read while the newest
+  version is the transaction's own. It needs one again if
+  those writes are undone by a rollback to a savepoint taken
+  after the lock: the newest version is T1's once more, the
+  lock is still held, and the mark was spent.
 - **sm1 forces the read, not the re-check.** Whether the qual
   is evaluated against that image is still up to the
   executor.
