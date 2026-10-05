@@ -381,6 +381,9 @@ TEST_CASE("the purge's range tombstones are flushed by count, not per run") {
   //    empty after the compaction.
   // 2. Queue more purges than the limit and run GC: RocksDB
   //    flushes the memtable by itself, and a level-0 file appears.
+  //    Level 0 is not checked first: the compaction that queues the
+  //    purges wakes the database's own GC thread, which may purge
+  //    them, and so cause the flush, before this test's run does.
   // 3. The purged keys read as gone.
   gc_fixture_t f;
   queue_purges(f, 10);
@@ -389,7 +392,6 @@ TEST_CASE("the purge's range tombstones are flushed by count, not per run") {
   CHECK(l0_files(f) == 0);
 
   queue_purges(f, store_max_range_deletions + 10);
-  REQUIRE(l0_files(f) == 0);
   gc_run_once(f.db());
   // The flush runs in the background; give it a few seconds.
   for (int i = 0; i < 500 && l0_files(f) == 0; i++) {
