@@ -131,7 +131,7 @@ rule is that nothing turns them off.
 | --- | --- |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
-| sm3 | being built: its catalog (`sm3/CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, with its C++ interface in `sm3/include/sm3.h`; partial and expression indexes, predicate scans, statistics and constraints are still design, in `sm3/SM3_DESIGN.md`, with the order of work in `sm3/PLAN.md` and `NEXT.md` |
+| sm3 | being built: its catalog (`sm3/CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, with its C++ interface in `sm3/include/sm3.h`; partial and expression indexes, statistics and constraints are still design, in `sm3/SM3_DESIGN.md`, with the order of work in `sm3/PLAN.md` and `NEXT.md` |
 | top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`. A row is read and written through an open table, `sm_tbl_*`, by the table's oid from `sm_cat_*`; the heap-level and index-level calls that took a store id and a prefix are gone. The `rel` driver runs on it |
 
 sm1 was built first and alone, on purpose: it is usable
@@ -470,14 +470,14 @@ design:
   given.** The `varchar(n)` length limit is enforced by sm3,
   and an enum is `int4` to sm2 with its labels in sm3's
   catalog (`sm2/SM2_DESIGN.md` §2).
-- **Batch-shaped API: a question for sm3, not sm2.** Sets of
+- **The API is tuple at a time, at every level.** Sets of
   rows in and out was forced by an IPC boundary between a
   PostgreSQL backend process and sm1; the fork now moves
   PostgreSQL to threads (`PART4.md` §2), so the boundary is
-  a function call and the shape is no longer forced. sm2 is
-  tuple-at-a-time (`sm2/SM2_OBJECTIVE.md`); whether sm3 batches
-  above it, for filter pushdown and fewer calls per scan, is
-  open and belongs where the filters are
+  a function call and the shape is no longer forced. Its other
+  reason was filter pushdown, and sm3 filters nothing (above).
+  Fewer calls per scan is what is left of the case for
+  batches, and it waits for a profile that asks
   (`sm3/SM3_DESIGN.md` §5).
 - **READ COMMITTED writes wait, then proceed.** PostgreSQL's
   default level does not fail a concurrent update of the same
@@ -505,12 +505,22 @@ design:
   gone (`sm3/SM3_DESIGN.md` §3). The rules of a unique index's
   key, the index build and the index-heap invariant must
   stay below the executor, and the invariant holds only if one
-  layer writes both a row and its entries. The cost is in
-  expression and partial indexes. sm3 cannot evaluate a
-  PostgreSQL expression without calling back into C that may
-  `longjmp` across its frames, so it evaluates only what its
-  own evaluator covers (`sm3/SM3_DESIGN.md` §5), and an index
-  whose predicate or expression falls outside that is refused.
+  layer writes both a row and its entries.
+- **Evaluation is the host's, by callback.** No level of the
+  stack evaluates a predicate or an expression. Where sm3
+  needs one evaluated, to maintain or build a partial or an
+  expression index, it calls a callback the host registers:
+  given a row image, whether the row belongs in the index, and
+  its key values. The callback must not `longjmp` out or throw
+  through sm3's frames, reports failure by return code, is
+  deterministic, and may be called from sm3's build workers.
+  The fork is threaded and rewrites PostgreSQL's functions and
+  operators for threads, so those rules are its to keep as it
+  ports them, and the results are PostgreSQL's by
+  construction. A scan takes key bounds and filters nothing:
+  deriving bounds from a `WHERE` clause and testing the
+  residual are the planner's and the executor's
+  (`sm3/SM3_DESIGN.md` §3, §5).
 - **A write that fails partway is the caller's to undo.** A
   table write is the heap write and then a write or two per
   index, and sm3 sets no savepoint inside it. One that fails

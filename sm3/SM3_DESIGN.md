@@ -5,7 +5,7 @@ typed rows in a heap keyed by `rowno`, and indexes whose
 entries are keyed by encoded columns and point at a `rowno`.
 sm3 gives those relations names and definitions, decides which
 indexes a table has — the primary key's among them — and keeps
-them in step with its heap, and adds predicates and statistics.
+them in step with its heap, and adds statistics.
 This document is the design of record; it follows the
 decisions in `SM3_OBJECTIVE.md`:
 
@@ -15,7 +15,7 @@ decisions in `SM3_OBJECTIVE.md`:
 | Index entry | `encode(index columns) ‖ rowno` → a tuple of the `rowno`, a cut flag and the INCLUDE columns; a unique index's key drops the `rowno` suffix unless a key column is NULL, and is never cut |
 | Encoder | sm2's, called with the same per-column arguments |
 | Relation mapping | one sm1 store per table, holding its rows, indexes and TOAST data, told apart by sm2's 2-byte object prefix |
-| API shape | open: batch-oriented (sets of rows, filters pushed down) was forced by an IPC boundary, which the threaded fork removes (§1) |
+| API shape | tuple at a time; a scan takes key bounds and filters nothing, and whatever needs evaluating is the host's, by callback (§3, §5) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
 **Status: the catalog is implemented** — its keys, values,
@@ -24,8 +24,8 @@ load, DDL, a session's overlay and the schema locks of §2
 per table, index prefixes allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
 is built, the C API's one way to write a row, and so is its
-index build; §5's predicate scans and §6's statistics are
-not. sm2, which it is built on, is, but for TOAST
+index build; partial and expression indexes and §6's
+statistics are not. sm2, which it is built on, is, but for TOAST
 (`sm2/SM2_DESIGN.md` §8.2).
 This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is
@@ -484,15 +484,66 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   holds a lock and an undo entry in memory for every row
   (`sm1/SM1_DESIGN.md` §13). `sm1::lock` is used all the same:
   the schema lock, and the shared row lock of step 3.
-- **Partial and expression indexes wait for an evaluator.**
-  Maintaining one means evaluating the index's own predicate
-  or expression against a row image. That is sm3's to do, and
-  it needs no help from the executor per write. The evaluator
-  arrives with §5, and `CREATE INDEX` refuses both kinds until
-  then: `cat_create_index` takes key columns and INCLUDE
-  columns only, so the catalog cannot record a predicate or
-  an expression. INCLUDE columns need no evaluator and are
-  maintained with the key.
+- **Partial and expression indexes are evaluated by the host,
+  through a callback.** Maintaining one means deciding whether
+  a row belongs in the index and computing its key, from the
+  index's predicate and its expressions. sm3 does neither
+  itself: it has no evaluator and is to get none. The catalog
+  keeps what the host gives it for an index, its predicate and
+  its expressions, as bytes it does not read. The host
+  registers one evaluator with the catalog. Given a table, an
+  index and a row image, it says whether the row belongs in
+  the index and gives the row's key values, and sm3 calls it
+  wherever it computes an entry: on insert, on the old and the
+  new image of an update and of a delete, and in the build.
+  INCLUDE columns are plain columns and need none of this.
+
+  The callback's rules:
+  - **No `longjmp` out of it, and no C++ exception.** Either
+    would unwind through sm3's frames and skip what they clean
+    up.
+  - **Failure is a return code, with the error set.** The
+    write or the build fails with that error, and a failed
+    build keeps it as its reason.
+  - **It is deterministic.** The same row image gives the same
+    answer every time, or a later delete computes another key
+    and does not find the entry. PostgreSQL asks the same of
+    an index's functions: they must be immutable.
+  - **It may be called from any thread**, sm3's build workers
+    among them, where no executor is running.
+  - **It does not call the storage manager on the same
+    session**, which is in the middle of a write.
+
+  This is the host's to keep and not a wrapper's, because the
+  fork is threaded and rewrites PostgreSQL's functions and
+  operators for threads: how they report an error, and whether
+  they need a backend around them, are choices made as they
+  are ported. The results are PostgreSQL's by construction —
+  NULLs, collations, coercions, every function — which no
+  second implementation could promise.
+
+  The alternative was an evaluator in sm3 over a subset safe to
+  push down: comparisons of a column with a constant,
+  conjunctions, `IS [NOT] NULL`. It would have refused any
+  index outside the subset, an expression index with a
+  function among them, and to widen it meant a function
+  library that had to agree with PostgreSQL's row for row. A
+  third course is for sm3 to link the fork's rewritten
+  functions and call them without a callback. It ties the
+  stack to PostgreSQL's function catalog, and it stays open if
+  the callback ever shows in a profile.
+
+  Not built. `cat_create_index` takes key columns and INCLUDE
+  columns only, so the catalog cannot record a predicate or an
+  expression yet. Open:
+  - how long the key values the callback hands back live, the
+    variable-width ones above all;
+  - how an update knows to leave such an index alone. sm3
+    skips an index whose columns did not change, and it does
+    not know which columns an expression reads: either the
+    catalog records them, or sm3 evaluates both images and
+    compares the keys;
+  - what a call a row costs on the write path, unmeasured.
 - **sm3 drives maintenance; the executor owns the qual.** The
   kept executor could write index entries itself through its
   index access method, as PostgreSQL does, reaching sm2's
@@ -691,28 +742,36 @@ becomes a range delete instead of sm1's O(1) drop.
 
 ---
 
-## 5. Scan by predicate
+## 5. Scans
 
-*To be written.* A predicate goes in, a key range comes out of
-it, and the residual filter is evaluated below the API instead
-of returning rows for a caller to discard.
+A scan takes key bounds and filters nothing. The heap is
+scanned by a range of `rowno`, and an index between two bounds
+on its leading columns (`sm2/SM2_DESIGN.md` §5); `tbl_scan` and
+`tbl_idx_scan` are those, on an open table. sm3 has no
+predicate, and so no predicate scan.
 
-- Deriving the range from the predicate is the whole point:
-  the columns of the index, in order, matched against the
-  predicate's conjuncts, giving a start key, an end key, and
-  whatever is left over as a residual.
-- The residual is evaluated against the tuple, per column
-  (`sm2/SM2_DESIGN.md` §5), so a filter on one column of a wide
-  row does not decode the row.
-- Forward only, at every level (§1). An `ORDER BY x DESC` that
-  an index could have served backwards is a top-N sort over a
-  forward scan instead (§7).
-
-Open: **the API shape.** Sets of rows in and out was forced by
-an IPC boundary that the threaded fork removes (§1). Filter
-pushdown and fewer calls per scan are reasons to keep it
-anyway, and the choice belongs here, at the level that has the
-filters — sm2 is tuple-at-a-time either way.
+- **Deriving the bounds from a `WHERE` clause is the
+  planner's**, above: the columns of the index, in order,
+  matched against the predicate's conjuncts, giving a start
+  key, an end key, and whatever is left over as a residual.
+  The kept planner does this already.
+- **The residual is evaluated above too.** sm3 evaluates
+  nothing (§3), so a filter pushed down would be a call back
+  into the host for every row, and the rows that fail would
+  cross the API all the same. The host filters what the scan
+  returns.
+- **A filter on one column of a wide row does not decode the
+  row.** sm2 decodes a tuple per column
+  (`sm2/SM2_DESIGN.md` §5), and the C API hands that through.
+- **Tuple at a time.** Sets of rows in and out was forced by an
+  IPC boundary that the threaded fork removes (§1), and its
+  other reason was filter pushdown, which is gone. Fewer calls
+  per scan is what is left of the case for batches, and it
+  waits for a profile that asks, as sm1's batched read does
+  (`sm1/SM1_DESIGN.md` §10.1).
+- **Forward only**, at every level (§1). An `ORDER BY x DESC`
+  that an index could have served backwards is a top-N sort
+  over a forward scan instead (§7).
 
 ---
 

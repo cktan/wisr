@@ -68,26 +68,23 @@ lingering versions are never read as another index's.
   old image (`SM3_DESIGN.md` §3.1).
 - The index build: concurrent, in the background, with the
   index building, valid or failed.
-- **Not built:** partial and expression indexes. They need an
-  evaluator, which arrives with step 4.
+- **Not built:** partial and expression indexes. sm3 evaluates
+  nothing; the host does, through a callback, which is the
+  next thing to build (`SM3_DESIGN.md` §3, `NEXT.md` §1).
 
 **Verified:** the index and the base relation agree with a
 brute-force scan, under concurrency, at every isolation level;
 the build does not miss a row written while it runs
 (`SM3_DESIGN.md` §3.2).
 
-## 4. Scan by predicate
+## 4. Scans
 
-**Status: not started.** `NEXT.md` §1 has what the evaluator
-takes, and the order.
-
-- A predicate in, a key range derived, the residual filter
-  evaluated below the API.
-- Decide the API shape: tuple at a time, as sm2 is, or sets
-  of rows for pushdown (`SM3_DESIGN.md` §5).
-
-**Verify:** the rows returned match a brute-force scan-and-filter
-over the same data, for generated predicates.
+**Status: settled, and nothing left to build.** A scan takes
+key bounds and filters nothing, tuple at a time
+(`SM3_DESIGN.md` §5). This step was to take a predicate,
+derive a key range and evaluate the residual below the API.
+Deriving the range is the kept planner's, and the residual is
+the executor's, since sm3 has no evaluator and gets none.
 
 ## 5. Statistics, constraints, bulk load
 

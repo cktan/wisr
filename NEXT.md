@@ -17,107 +17,46 @@ order of work.
 | --- | --- |
 | sm1 | built and tested |
 | sm2 | built but for TOAST (`sm2/SM2_DESIGN.md` §8.2) |
-| sm3 | catalog, schema locks, object mapping, index maintenance and the concurrent index build built; `SM3_DESIGN.md` §5 and §6 are design |
+| sm3 | catalog, schema locks, object mapping, index maintenance and the concurrent index build built; partial and expression indexes and `SM3_DESIGN.md` §6 are design |
 | top | `include/sm.h` over all three, with the `sm_cat_*` and `sm_tbl_*` calls; `rel` reads and writes its tables through them |
 
 `DESIGN.md` §3 has the same table at more length.
 
 ---
 
-## 1. Next: predicate scans, and the evaluator they need
+## 1. Next: partial and expression indexes, by callback
 
-`sm3/PLAN.md` step 4, and `SM3_DESIGN.md` §5, which still
-opens "*To be written.*" A predicate goes in, a key range
-comes out of it, and the residual filter is evaluated below
-the API. Partial and expression indexes wait on the same
-evaluator: maintaining one means evaluating the index's own
-predicate or expression against a row image
-(`SM3_DESIGN.md` §3).
+The last of `sm3/PLAN.md` step 3. sm3 evaluates nothing: the
+host does, through a callback it registers
+(`SM3_DESIGN.md` §3, `DESIGN.md` §5). That decision also
+settled step 4: a scan takes key bounds and filters nothing,
+so there is no predicate scan to build (`SM3_DESIGN.md` §5).
 
-The evaluator is not needed for the READ COMMITTED re-check.
-That is the executor's, because the qual is
-(`SM3_DESIGN.md` §3.1).
+In this order, tests first:
 
-### 1.1 What an evaluator in sm3 would take
-
-- **A predicate representation across the C API.**
-  `include/sm.h` has none: a scan takes a `rowno` range or an
-  `sm_bound_t`. It needs a serialized tree — `Var` by attnum,
-  `Const` as an `sm_datum_t` with its type code and typmod,
-  operator application by a stable code, `AND` / `OR` / `NOT`,
-  `IS [NOT] NULL`, and a collation on every comparison. This is
-  the same decision as §5's open "API shape", not a second one.
-- **The evaluator itself**, the cheap part: sm2 already has one
-  ADT descriptor per type (`sm2/SM2_DESIGN.md` §2.3),
-  collation-aware comparison (§3.3) and per-ordinal decode, so
-  a filter on one column of a wide row decodes one column. sm3
-  adds three-valued logic and operator dispatch.
-- **A pushdown-safe subset, defined and enforced.** Three
-  things can never go down: user-defined functions and
-  operators, because sm3 cannot call PL code; subqueries and
-  joins, because `EvalPlanQual` re-evaluates a plan subtree
-  with the new tuple substituted and sm3 has no plan; and
-  volatile functions, which are wrong to re-evaluate at all. So
-  a classifier above decides pushdown or fallback, and the
-  executor's own path stays for the fallback. Pushing a filter
-  down does not remove that path, it adds one beside it, and
-  that is the honest cost.
-- **Semantic agreement with PostgreSQL**, which is where the
-  bugs will be: NULL propagation, collation (`SM3_DESIGN.md`
-  §3 already requires sm3's own comparisons to follow it, and
-  to hash the sort key as `hashtext` does under a
-  non-deterministic one), decimal comparison, coercion. A
-  divergence surfaces as wrong rows, the failure mode a test
-  suite is worst at catching.
-
-The subset to start from: equality and range comparisons on
-sm2's scalar types with collation, conjunctions, and
-`IS [NOT] NULL`; no `OR` and no functions.
-
-One consequence for indexes, recorded in `DESIGN.md` §5: an
-index whose predicate or expression falls outside what the
-evaluator covers is refused. sm3 cannot evaluate a PostgreSQL
-expression without calling back into C that may `longjmp`
-across its frames.
-
-### 1.2 What it buys
-
-- **§5 needs the evaluator regardless**: "the residual filter
-  is evaluated below the API instead of returning rows for a
-  caller to discard" (`SM3_DESIGN.md` §5).
-- **Partial and expression indexes come with it.** The catalog
-  cannot record a predicate or an expression today:
-  `cat_create_index` takes key columns and INCLUDE columns
-  only.
-- **`rel` and any non-PostgreSQL consumer get predicate
-  scans.** `OBJECTIVE.md` keeps a consumer other than the fork
-  possible, and without an evaluator below the API such a
-  consumer filters rows itself, which is the waste §5 exists
-  to remove.
-- **The chosen precedent did this.** YugabyteDB "replaced whole
-  executor nodes to push work down — sequential scan, bitmap
-  scan, batched nested loop, expression evaluation"
-  (`PART4.md`).
-
-### 1.3 Order
-
-This repo argues a protocol before writing it, so:
-
-1. **`SM3_DESIGN.md` §5's prose**: the API shape, one tuple at
-   a time as sm2 is or sets of rows; the predicate's
-   representation; and the pushdown subset.
-   → verify: the section no longer says "to be written".
-2. **The evaluator**, tested by property against sm2's own
-   `cmp` for every type.
-3. **Predicate scans**: a key range derived from the
-   predicate, the residual filter evaluated below the API.
-   → verify: for generated predicates, the rows returned match
-   a brute-force scan-and-filter.
-4. **Partial and expression indexes**: the predicate or the
-   expression in the index's catalog record, maintenance and
-   the build evaluating it.
+1. **Settle what §3 leaves open**, in `SM3_DESIGN.md`:
+   - how long the key values the callback hands back live;
+   - how an update knows to leave such an index alone:
+     the columns the predicate and the expressions read,
+     recorded in the catalog, or both images evaluated and
+     their keys compared;
+   - the callback's signature, in sm3 and in `include/sm.h`.
+2. **The catalog**: an index's record keeps its predicate and
+   its expressions as bytes sm3 does not read, and
+   `cat_create_index` takes them.
+   → verify: they load back after a restart.
+3. **Maintenance and the build** call the evaluator: on
+   insert, on the old and the new image of an update and a
+   delete, and in each batch of a build.
    → verify: the index agrees with a brute-force scan of the
-   heap, filtered, at every isolation level.
+   heap put through the same evaluator, at every isolation
+   level, with a writer racing the build. An evaluator that
+   fails makes the write fail, and a build keep the reason.
+4. **The C API and `rel`**: registering an evaluator, and a
+   `rel` script supplying one as a Janet function.
+
+What it costs a row on the write path is unmeasured; measure
+it once step 3 runs.
 
 ---
 

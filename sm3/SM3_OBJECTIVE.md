@@ -2,8 +2,8 @@
 
 Build the level that turns sm2's tuples into a **schema**: a
 catalog of tables and indexes, secondary indexes maintained
-transactionally with the base row, scans driven by a
-predicate, and the statistics a planner above needs.
+transactionally with the base row, scans between key bounds,
+and the statistics a planner above needs.
 
 sm2 stops exactly where this begins. `sm2/SM2_OBJECTIVE.md` says
 sm2 is "handed a schema", that it "maintains no index", that
@@ -25,9 +25,11 @@ document is what it is for.
   populated relation.
 - **Object mapping.** Many logical tables and indexes onto few
   sm1 stores, through the key prefix sm2 offers.
-- **A scan interface** that takes a predicate and derives the
-  key range from it, rather than returning rows to be
-  discarded above.
+- **A scan interface** over a table and over each of its
+  indexes, between key bounds. It began as one that takes a
+  predicate and derives the key range from it; deriving the
+  range is the planner's, and sm3 evaluates nothing
+  (`SM3_DESIGN.md` §3, §5).
 - **Statistics** good enough for a cost-based planner above.
   They are not optional: the planner is kept, so it needs row
   counts, sizes, histograms and correlations, and `ANALYZE`
@@ -108,11 +110,10 @@ These are settled and drive `SM3_DESIGN.md`.
   link sm1, and behind an IPC boundary a per-row API is
   unsalvageable. The fork is now threaded, so the boundary
   between the executor and sm3 is a function call and the
-  shape is no longer forced (`PART4.md` §2). Whether sm3 keeps
-  sets of rows in and out for other reasons — filter pushdown
-  and fewer calls per scan — is decided in `SM3_DESIGN.md` §5.
-  sm2 is tuple-at-a-time either way, and nothing below depends on
-  the answer.
+  shape is no longer forced (`PART4.md` §2). Settled in
+  `SM3_DESIGN.md` §5: tuple at a time. Filter pushdown, the
+  other reason for sets of rows, went when sm3 was given no
+  evaluator, and fewer calls per scan waits for a profile.
 - **Privacy of a catalog change until commit** — settled and
   built: a session's overlay keeps its transaction's DDL to
   itself, undone on abort and savepoint rollback, and publishes
