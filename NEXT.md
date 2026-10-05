@@ -40,16 +40,20 @@ Everything below is about step 3.
 
 ## 1. Who owns re-evaluation
 
-**Start from what `SM3_DESIGN.md` §3 already says**, because it
-is not silent here. Lines 292-297 give the READ COMMITTED
-re-check to sm3: sm2 "does not resolve it, because the
-resolution needs a filter", so sm3 calls `rel_read_latest` on
-the base row, re-checks the statement's filter against that
-image, and repeats the write only if the row still qualifies.
-sm3 owning re-evaluation is the design of record. §3's closing
-"Open" — whether PostgreSQL's executor drives maintenance
-instead — is a proposal to deviate from that, not a blank
-slate, and moving maintenance up moves the re-check with it.
+**Start from what `SM3_DESIGN.md` §3 said when this section
+was written**, because it was not silent. Its "Read committed
+writes" bullet gave the re-check to sm3: sm2 "does not resolve
+it, because the resolution needs a filter", so sm3 would call
+`rel_read_latest` on the base row, re-check the statement's
+filter against that image, and repeat the write only if the
+row still qualified. sm3 owning re-evaluation was the design
+of record. §3's closing "Open" — whether PostgreSQL's executor
+drives maintenance instead — was a proposal to deviate from
+that, not a blank slate.
+
+The rest of this section argues the split that §3 now records
+(§4's step 1, done): the qual check is the executor's, the
+index fix-up is sm3's, and sm3 drives maintenance.
 
 ### 1.1 Why the re-check cannot be left to sm1
 
@@ -91,9 +95,9 @@ remove at key `'free'`, while the entry that exists is at
 `'free'` entry that is already gone and leaves `'taken'`
 pointing at a row just overwritten — the heap and the index
 disagree, which `PLAN.md` step 3 calls the property that
-matters most. §3 says it too: "the old image the retried write
-hands back is the newest version's, so the index entries
-removed are the ones that are actually there".
+matters most. §3 says it too: sm3 takes the entries to remove
+from the old image the repeated write hands back, "so the
+entries removed are the ones that are actually there".
 
 The same race, with an index on `state` and a second statement
 whose filter row 7 still passes after T1, so the re-check of
@@ -263,13 +267,13 @@ different knowledge:
 | (a) decide whether the row still qualifies, then write or skip | the statement's qual | above sm3: the executor's |
 | (b) remove the index entries that are actually there | the newest old image | sm3's |
 
-**(b) needs no predicate at all.** §3 already supplies the
-mechanism: "the old image the retried write hands back is the
-newest version's, so the index entries removed are the ones
-that are actually there". So when the executor re-checks the
-qual and re-issues the write, sm1 hands sm3 the newest old
-image, and index maintenance is correct with sm3 never
-learning what a qual is.
+**(b) needs no predicate at all.** §3 supplies the mechanism:
+"The old image the repeated write hands back is the newest
+version's, not the one the statement's scan read", so the
+entries removed are the ones that are actually there. So when
+the executor re-checks the qual and re-issues the write, sm1
+hands sm3 the newest old image, and index maintenance is
+correct with sm3 never learning what a qual is.
 
 That is what 1.5 rests on: **sm3 needs no evaluator for the
 READ COMMITTED path.** An evaluator
@@ -283,22 +287,22 @@ a scan takes a `rowno` range or an `sm_bound_t`. And
 "The executor's side of the exchange belongs to the PostgreSQL
 fork, not to sm1".
 
-`SM3_DESIGN.md` §3 is ambivalent, and reads both ways.
-One sentence has sm3 "re-checks the statement's filter against
+`SM3_DESIGN.md` §3 was ambivalent, and read both ways.
+One sentence had sm3 "re-checks the statement's filter against
 that image"; four sentences later, "sm1 refuses a write
 repeated without the read, so **an executor** cannot forget
-it". It gives the check to sm3 while assuming an executor is
-the one making it, and never says where sm3 would get a
+it". It gave the check to sm3 while assuming an executor was
+the one making it, and never said where sm3 would get a
 filter.
 
 **The rule: ownership of re-evaluation follows ownership of the
 qual, and the qual lives above.** sm3's share is the index
 fix-up from the newest image.
 
-One correction is still owed, to `SM3_DESIGN.md` rather than
-to this file: §3's bullet gives the re-check to sm3 while
-assuming an executor makes it. §4's step 1 rewrites that prose
-and should settle it there.
+That correction has been made, in `SM3_DESIGN.md` and not in
+this file: §3's "Read committed writes" bullet now gives the
+qual check to the executor and the index fix-up to sm3 (§4's
+step 1).
 
 ### 1.7 The fix-up, step by step
 

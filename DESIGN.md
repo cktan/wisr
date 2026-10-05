@@ -474,23 +474,29 @@ design:
   and written through to sm2, so a DDL statement and the data
   it changes commit in one sm1 transaction, and recovery is
   RocksDB's alone (`PART4.md` §4, `sm3/SM3_DESIGN.md` §2).
-- **READ COMMITTED writes are resolved at sm3, not sm2.**
-  `SM_ERR_UPDATED` is answered by re-checking the statement's
-  filter against the newest image, and filters exist only at sm3.
-  sm2 surfaces the error and offers `rel_read_latest`; sm3 does
-  the re-check (`sm3/SM3_DESIGN.md` §3).
-- **Open: who drives index maintenance.** PostgreSQL's kept
-  executor already maintains indexes through its index access
-  method (`ExecInsertIndexTuples`), evaluates expression and
-  partial index keys, and re-checks a row under READ COMMITTED
-  (`EvalPlanQual`) — the work `sm3/SM3_DESIGN.md` §3 plans for
-  sm3. Expression and partial indexes favour the executor:
-  sm3 cannot evaluate a PostgreSQL expression without calling
-  back into C that may `longjmp` across its frames. The unique
-  checks on NULL and cut keys, the online build and the
-  index-heap invariant must stay below it. The C wrapper's row
-  and entry calls have the shape either answer needs, so it is
-  settled with sm3's design, not before.
+- **READ COMMITTED writes are resolved above the stack, and
+  sm3 fixes the indexes.** `SM_ERR_UPDATED` is answered by
+  re-checking the statement's filter against the newest image.
+  The filter is the executor's and may span tables, so the
+  executor reads that image, re-checks (`EvalPlanQual`), and
+  repeats the write or skips the row. sm2 and sm3 surface the
+  error and offer the read. sm3's share is to take the index
+  entries to remove from the old image the repeated write
+  hands back (`sm3/SM3_DESIGN.md` §3).
+- **sm3 drives index maintenance.** PostgreSQL's kept executor
+  could maintain indexes itself through its index access
+  method (`ExecInsertIndexTuples`). It does not: it writes a
+  row through one table-level call that sm3 owns, and the C
+  wrapper's heap-level writes and entry writes go away
+  (`sm3/SM3_DESIGN.md` §3). The unique checks on NULL and cut
+  keys, the online build and the index-heap invariant must
+  stay below the executor, and the invariant holds only if one
+  layer writes both a row and its entries. The cost is in
+  expression and partial indexes. sm3 cannot evaluate a
+  PostgreSQL expression without calling back into C that may
+  `longjmp` across its frames, so it evaluates only what its
+  own evaluator covers (`sm3/SM3_DESIGN.md` §5), and an index
+  whose predicate or expression falls outside that is refused.
 - **No backward scans, at any level, ever.** Settled in
   `sm1/SM1_OBJECTIVE.md`, built into sm2's encoding and
   inherited by every index sm3 builds. The fork's planner is
