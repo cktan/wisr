@@ -533,17 +533,47 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   stack to PostgreSQL's function catalog, and it stays open if
   the callback ever shows in a profile.
 
-  Not built. `cat_create_index` takes key columns and INCLUDE
-  columns only, so the catalog cannot record a predicate or an
-  expression yet. Open:
-  - how long the key values the callback hands back live, the
-    variable-width ones above all;
-  - how an update knows to leave such an index alone. sm3
-    skips an index whose columns did not change, and it does
-    not know which columns an expression reads: either the
-    catalog records them, or sm3 evaluates both images and
-    compares the keys;
-  - what a call a row costs on the write path, unmeasured.
+  Settled, and not built:
+  - **What the callback computes** is only what sm3 cannot:
+    whether the row belongs in the index, and the values of
+    the key columns that are expressions. A plain key column
+    sm3 reads from the row itself, as it does now, so a partial
+    index over plain columns costs one yes or no an image. An
+    expression column has no table column behind it, so the
+    catalog records its type, typmod and collation, given when
+    the index is created.
+  - **The values it hands back are owned by whoever asked.**
+    The evaluator fills a `std::vector<std::string>`, one
+    string per expression column, each the value's bytes as
+    sm2's `datum_bytes` gives them, a varlena for a
+    variable-width type; a flag beside each says null. No rule
+    says how long the host's memory must live, and sm3 holds
+    an old image's values and a new one's together when it
+    compares them. It costs a copy of each value a call.
+    `std::string` and `std::vector` are the two C++ types that
+    may cross `include/sm.h` (`DESIGN.md` §5).
+  - **An update leaves such an index alone by its columns.**
+    The host lists the columns the predicate and the
+    expressions read, when the index is created, and the
+    catalog records them. If none of them changed, by their
+    bytes, and no plain key or INCLUDE column did (above), sm3
+    does not call the evaluator at all. If one did, it
+    evaluates both images: an entry is removed for the old
+    one if it belonged, and added for the new one if it does,
+    unless both belong with equal keys.
+  - **The predicate and the expressions are one opaque blob**
+    an index, serialized as the host likes, and handed back to
+    the evaluator in the index's definition.
+  - **The evaluator is registered once an environment, before
+    a database is opened**, since opening one starts its
+    builder, which may at once resume a build a restart left.
+    With none registered, an index that needs one cannot be
+    created, and a write to its table or a build of it fails
+    with an error that says so.
+
+  `cat_create_index` takes key columns and INCLUDE columns
+  only today, so the catalog cannot record any of this yet.
+  What a call a row costs on the write path is unmeasured.
 - **sm3 drives maintenance; the executor owns the qual.** The
   kept executor could write index entries itself through its
   index access method, as PostgreSQL does, reaching sm2's

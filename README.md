@@ -9,7 +9,7 @@ built on the level below it.
 | 1 | `sm1/` | the MVCC storage manager: stores, transactions, isolation, locks, 2PC, recovery |
 | 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, heap and index relations |
 | 3 | `sm3/` | schema and index maintenance: a catalog, index maintenance and builds, scans, statistics |
-| top | `include/`, `src/` | the C API over the stack, the only one, for PostgreSQL to call |
+| top | `include/`, `src/` | the API over the stack, the only one, for PostgreSQL to call: C in style, compiled as C++ |
 
 Level 0 is used only as a place to put bytes. Every notion of
 *row version*, *transaction*, *isolation* and *visibility* is
@@ -30,9 +30,9 @@ Each level has a Makefile of its own with the real targets; the
 top-level one delegates to them. It also builds the C wrapper,
 in the root's `include/` and `src/`, which belongs to no level,
 into `build/libsm.a`: one archive of every level's objects and
-the wrapper's, so a C program includes `include/sm.h` and links
-that (`DESIGN.md` §2). `make test` ends by driving the wrapper
-through the `rel/` test suite.
+the wrapper's, so a C++ program includes `include/sm.h` and
+links that (`DESIGN.md` §2, §5). `make test` ends by driving
+the wrapper through the `rel/` test suite.
 
 ## Where to read
 

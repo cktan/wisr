@@ -1,6 +1,10 @@
 /*
- * sm.h -- wisr's C API: the one entry into the stack, for
- * PostgreSQL to call (DESIGN.md sections 1 and 5).
+ * sm.h -- wisr's API: the one entry into the stack, for
+ * PostgreSQL to call (DESIGN.md sections 1 and 5). It is C in
+ * style and compiled as C++: std::string and std::vector may
+ * cross it, for owned data only, and no other C++ type does
+ * (DESIGN.md section 5). The calls that predate that rule keep
+ * their C forms until each is next touched.
  *
  * Every call is the sm1, sm2 or sm3 call of the same name with
  * sm_ in front, given a C signature: sm_commit is sm3::commit,

@@ -258,6 +258,31 @@ design:
   which replaced sm1's C string list and `malloc`'d arrays. Bytes
   that point into engine memory are a `std::string_view&`, valid
   until the next call on the session, as today.
+- **The top-level API is C++ in a C style.** `include/sm.h` is
+  compiled as C++ by everything that includes it: the fork's
+  glue is a C++ file, as `rel` is. It stays C in shape: free
+  functions named `sm_*`, opaque handles, an `int` result with
+  the thread-local error, callbacks that return a code and
+  never throw. Two C++ types may cross it and no others,
+  `std::string` and `std::vector`, of plain C types, of
+  `sm_datum_t` or of strings. They carry owned data only: a
+  result the caller keeps, or a list passed in, as an
+  out-parameter or a const reference, filled inside the
+  wrapper's catch-all. A row or an index entry on a scan stays
+  a pointer and a length into session memory, since a copy a
+  row would be an allocation a row. No `optional`, `function`
+  or `shared_ptr`, and no class of the stack's own: that line
+  is what keeps the header from growing abstractions. What it
+  replaces is what the header did to stay C: lists as one
+  malloc'd block freed with `sm_free`, owned results that
+  lived "until the next call", and a C mirror of each table
+  definition built and kept by the wrapper. The costs are that
+  no plain C program and no foreign-function binding can
+  include the header, and that both sides must be built with
+  one C++ runtime, as they are while the stack is linked from
+  source into one archive. It is still called the C wrapper
+  and the C API below and elsewhere. The calls that predate
+  this rule keep their C forms until each is next touched.
 - **The C wrapper keeps the convention; the fork's glue
   calls `ereport`.** The wrapper's `sm_*` calls return 0 or
   -1 and leave the code and message in the same thread-local

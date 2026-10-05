@@ -34,16 +34,14 @@ so there is no predicate scan to build (`SM3_DESIGN.md` §5).
 
 In this order, tests first:
 
-1. **Settle what §3 leaves open**, in `SM3_DESIGN.md`:
-   - how long the key values the callback hands back live;
-   - how an update knows to leave such an index alone:
-     the columns the predicate and the expressions read,
-     recorded in the catalog, or both images evaluated and
-     their keys compared;
-   - the callback's signature, in sm3 and in `include/sm.h`.
-2. **The catalog**: an index's record keeps its predicate and
-   its expressions as bytes sm3 does not read, and
-   `cat_create_index` takes them.
+1. **Settle what §3 left open** — **done**: what the callback
+   computes, who owns the values it hands back, how an update
+   leaves such an index alone, how the predicate and the
+   expressions are kept, and where the evaluator is
+   registered (`SM3_DESIGN.md` §3).
+2. **The catalog**: an index's record keeps its blob, the
+   columns it reads, and each expression key column's type,
+   typmod and collation; `cat_create_index` takes them.
    → verify: they load back after a restart.
 3. **Maintenance and the build** call the evaluator: on
    insert, on the old and the new image of an update and a
@@ -95,6 +93,13 @@ Owed, and blocking nothing above:
   builds contend on sm1's lock table, one mutex, and on
   RocksDB's write path. Two indexes built on one table walk
   its heap twice where one pass could fill both.
+- **`include/sm.h` still has its C forms.** It is C++ in a C
+  style now, and `std::string` and `std::vector` may cross it
+  (`DESIGN.md` §5). The calls that predate that keep a list as
+  one malloc'd block freed with `sm_free`, an owned result as
+  bytes valid "until the next call", and a C mirror of each
+  table definition. Each moves when it is next touched, or all
+  at once if that proves cleaner.
 - **Nothing reads a range at its newest version.** An
   over-long key in a unique index is refused instead
   (`SM3_DESIGN.md` §7). The primitive is built when a workload
