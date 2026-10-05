@@ -55,6 +55,14 @@ struct column_def_t {
     const sm2::collation_t*    collation; /* nullptr: none */
 };
 
+/*
+ * Where an index's build stands (SM3_DESIGN.md §3). A building
+ * index is maintained by every write but not yet filled from the
+ * rows that were there before it; a failed one is not maintained
+ * and can only be dropped.
+ */
+enum class index_state_t : uint8_t { building = 0, valid = 1, failed = 2 };
+
 /* An index of a loaded table. */
 struct index_def_t {
     uint64_t                          oid;
@@ -65,6 +73,7 @@ struct index_def_t {
     std::vector<int32_t>              include_attnums; /* 0-based */
     std::vector<sm2::key_column_t>    key;             /* for sm2 */
     std::vector<sm2::attribute_t>     include;         /* for sm2 */
+    index_state_t                     state = index_state_t::valid;
 };
 
 /*
@@ -249,8 +258,12 @@ int cat_drop_column(session_t* session, uint64_t oid,
 /*
  * Create an index named name on the table, keyed by keys, with the
  * INCLUDE columns includes, taking the table's next prefix; its
- * oid is set in oid. It records the index only: filling it from
- * the table's rows is the build's (SM3_DESIGN.md §3).
+ * oid is set in oid. It records the index as building, for the
+ * build to fill from the table's rows and then mark valid
+ * (SM3_DESIGN.md §3). On a table this transaction created, which
+ * no other can see, it fills the index itself, from the rows the
+ * transaction has written, and records it valid; two of those
+ * rows with one key fail a unique index with SM_ERR_DUPKEY.
  */
 int cat_create_index(session_t* session, uint64_t table,
                      std::string_view name,
@@ -263,6 +276,13 @@ int cat_create_index(session_t* session, uint64_t table,
  * table's definition, and its entries.
  */
 int cat_drop_index(session_t* session, uint64_t table, uint64_t oid);
+
+/*
+ * Set the state of the table's index oid, as the build does when
+ * it ends: valid, or failed.
+ */
+int cat_set_index_state(session_t* session, uint64_t table, uint64_t oid,
+                        index_state_t state);
 
 /*
  * Create a collation named name in namespace nspoid for locale,
@@ -322,7 +342,9 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
  * Replace the row at rowno. An index is left alone if the row's
  * key columns compare equal before and after, by their types' cmp,
  * and its INCLUDE columns hold the same bytes; otherwise its old
- * entry is removed and a new one added. The old entry is computed
+ * entry is removed and a new one added. While an index is building
+ * an old entry that is not there is no error: the build has not
+ * reached the row. A failed index is left alone by every write. The old entry is computed
  * from the image the heap write replaced, which at read committed
  * is the newest, not the one the caller read. old, if not null,
  * gets that image.
@@ -355,11 +377,33 @@ int tbl_scan(table_t* table, uint64_t first, uint64_t last,
 /*
  * Open a cursor over the entries of the table's index oid between
  * lo and hi, as sm2::idx_scan does; SM_ERR_NOTFOUND if the table
- * has no such index.
+ * has no such index, SM_ERR_INVALID if its build failed.
  */
 int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
                  const sm2::bound_t* hi, sm2::index_scan_t*& out,
                  bool* widened = nullptr);
+
+/*
+ * One batch of the build of the table's index oid, which must be
+ * building (SM3_DESIGN.md §3): cover up to max_rows rows from
+ * rowno from on. For each it takes the row's lock shared, reads
+ * the row's newest committed version, and adds the row's entry if
+ * it is not there. next is set to the rowno to go on from, and
+ * done once the end of the heap was reached. The caller commits
+ * the batch, and marks the index valid after the last.
+ *
+ * The table is opened to write, in a READ COMMITTED transaction.
+ * At another level only a table this transaction made, which no
+ * other can see, may be built; no lock is taken on its rows.
+ *
+ * Errors: SM_ERR_DUPKEY when a unique index finds two rows with
+ * one key, which fails the build; SM_ERR_INVALID if the index is
+ * not building or the level does not allow it; SM_ERR_NOTFOUND if
+ * the table has no such index. Like a write, a batch that fails
+ * partway is the caller's to roll back.
+ */
+int tbl_index_backfill(table_t* table, uint64_t index, uint64_t from,
+                       size_t max_rows, uint64_t& next, bool& done);
 
 /*
  * The schema of an entry's value in the table's index oid, as

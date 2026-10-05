@@ -8,6 +8,7 @@
 #define SM3_CATALOG_H
 
 #include "sm2.h"
+#include "sm3.h"
 
 #include <cstdint>
 #include <memory>
@@ -105,6 +106,7 @@ struct index_rec_t {
   bool unique;
   std::vector<index_key_rec_t> keys;
   std::vector<int32_t> includes; /* 0-based attnums */
+  index_state_t state = index_state_t::valid;
 };
 
 /* A table, its columns and its indexes: one blob. */

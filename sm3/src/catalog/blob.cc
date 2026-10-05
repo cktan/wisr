@@ -146,6 +146,12 @@ public:
     }
     return i8(i);
   }
+  std::optional<int16_t> opt_i2(size_t i) {
+    if (m_row.isnull[i]) {
+      return std::nullopt;
+    }
+    return i2(i);
+  }
 
   /* False once a required attribute was found null. */
   bool ok = true;
@@ -178,7 +184,7 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
        att(type_bool), att(type_bytea), att(type_int8)},
       /* index */
       {att(type_int8), att(type_text), att(type_int2), att(type_bool),
-       att(type_int4), att(type_int4)},
+       att(type_int4), att(type_int4), att(type_int2)},
       /* index_key */
       {att(type_int4), att(type_bool), att(type_bool), att(type_int8)},
       /* include */ {att(type_int4)},
@@ -317,13 +323,14 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
       }
     }
     for (const index_rec_t &x : rec.indexes) {
-      writer_t w(6);
+      writer_t w(7);
       w.i8(0, x.oid);
       w.bytes(1, x.name);
       w.i2(2, static_cast<int16_t>(x.prefix));
       w.b(3, x.unique);
       w.i4(4, static_cast<int32_t>(x.keys.size()));
       w.i4(5, static_cast<int32_t>(x.includes.size()));
+      w.i2(6, static_cast<int16_t>(x.state));
       if (w.append(part_desc(part_t::index), blob) != 0) {
         return -1;
       }
@@ -397,9 +404,16 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
       x.prefix = static_cast<uint16_t>(r.i2(2));
       x.unique = r.b(3);
       int32_t nkey = r.i4(4), ninclude = r.i4(5);
+      // An index written before the state was kept is valid.
+      int16_t state =
+          r.opt_i2(6).value_or(static_cast<int16_t>(index_state_t::valid));
       if (!r.ok || nkey < 0 || ninclude < 0) {
         return corrupt("an index part cut short");
       }
+      if (state < 0 || state > static_cast<int16_t>(index_state_t::failed)) {
+        return corrupt("an index in no known state");
+      }
+      x.state = static_cast<index_state_t>(state);
       for (int32_t k = 0; k < nkey; k++) {
         reader_t kr;
         if (kr.read(blob, pos, part_t::index_key) != 0) {

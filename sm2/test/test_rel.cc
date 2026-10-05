@@ -467,3 +467,38 @@ TEST_CASE("a raw tuple is checked before it is written") {
   REQUIRE(sm1::commit(s) == 0);
   sm2::rel_close(rel);
 }
+
+TEST_CASE("rel_lock locks a row without writing it") {
+  // Verify the row lock an index build and SELECT FOR SHARE take.
+  // 1. A row is committed. A locks it shared.
+  // 2. B, set qa_nowait, locks it shared too, then updates it:
+  //    SM_ERR_BLOCKED, for A's shared lock stands in the way.
+  // 3. A commits; B's update goes through. The row was never
+  //    written by A, so B meets no SM_ERR_UPDATED.
+  db_t db;
+  sm1::session_t *a = db.open(), *b = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  sm2::rel_t *ra = open_rel(db, a, schema), *rb = open_rel(db, b, schema);
+  row_t v1 = {le(int32_t{1})}, v2 = {le(int32_t{2})};
+  values_t d = datums_of(schema, v1);
+  uint64_t rowno;
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm2::rel_insert(ra, d.d(), d.null(), rowno) == 0);
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE(sm1::set_qa_nowait(b, true) == 0);
+
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm2::rel_lock(ra, rowno, sm1::lockmode_t::shared) == 0);
+  CHECK(sm2::rel_lock(rb, rowno, sm1::lockmode_t::shared) == 0);
+  d = datums_of(schema, v2);
+  CHECK(sm2::rel_update(rb, rowno, d.d(), d.null()) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  REQUIRE(sm1::commit(a) == 0);
+  REQUIRE_MESSAGE(sm2::rel_update(rb, rowno, d.d(), d.null()) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm1::commit(b) == 0);
+  sm2::rel_close(ra);
+  sm2::rel_close(rb);
+}

@@ -174,6 +174,10 @@ void check_agree(sm3::table_t *t) {
   std::vector<std::pair<uint64_t, std::string>> heap = rows(t);
   for (const sm3::index_def_t &x : def.indexes) {
     CAPTURE(x.name);
+    // A failed index is not maintained, and cannot be scanned.
+    if (x.state == sm3::index_state_t::failed) {
+      continue;
+    }
     // The entry's value: rowno, cut, then the INCLUDE columns.
     std::vector<sm2::attribute_t> vschema = {
         {&sm2::type_int8, -1, false, std::nullopt},
@@ -636,5 +640,415 @@ TEST_CASE("an inserter that began before its rival committed, at every level") {
     check_agree(tb);
     sm3::tbl_close(tb);
     REQUIRE(sm3::commit(f.b) == 0);
+  }
+}
+
+TEST_CASE("while an index is building, rows it has not reached are written") {
+  // Verify maintenance of a building index (SM3_DESIGN.md §3).
+  // 1. Rows 7, 8 and 10 are committed; then an index on owner is
+  //    made, on a table committed earlier, so it is building and
+  //    holds no entry for them.
+  // 2. Updating row 7 succeeds though its old entry is not there,
+  //    and the row is covered from then on.
+  // 3. Deleting row 8 succeeds the same way; inserting row 9 adds
+  //    its entry.
+  // 4. Row 10 was never touched: the index lacks it, and that is the
+  //    backfill's to add.
+  // 5. Once the index is marked valid, a missing old entry is an
+  //    error again: updating row 10 fails with SM_ERR_NOTFOUND.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t r7 = put(t, 7, "free", "a");
+  uint64_t r8 = put(t, 8, "free", "b");
+  uint64_t r10 = put(t, 10, "free", "c");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  std::vector<sm3::index_key_spec_t> by_owner = {
+      {2, false, false, std::nullopt}};
+  uint64_t jobs_owner = 0;
+  start(f.a);
+  REQUIRE(sm3::cat_create_index(f.a, f.jobs, "jobs_owner", by_owner, {}, false,
+                                jobs_owner) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(sm3::tbl_def(t).indexes[2].state == sm3::index_state_t::building);
+  CHECK(under(t, jobs_owner, "a").empty());
+  REQUIRE_MESSAGE(set(t, r7, 7, "free", "z") == 0, sm1::errmsg());
+  CHECK(under(t, jobs_owner, "z") == std::vector<uint64_t>{r7});
+  REQUIRE_MESSAGE(sm3::tbl_delete(t, r8) == 0, sm1::errmsg());
+  uint64_t r9 = put(t, 9, "free", "y");
+  CHECK(under(t, jobs_owner, "y") == std::vector<uint64_t>{r9});
+  CHECK(under(t, jobs_owner, "c").empty());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::cat_set_index_state(f.a, f.jobs, jobs_owner,
+                                   sm3::index_state_t::valid) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(set(t, r10, 10, "free", "x") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(f.a) == 0);
+}
+
+TEST_CASE("a failed index is not maintained, and cannot be scanned") {
+  // Verify what a failed build leaves behind (SM3_DESIGN.md §3).
+  // 1. Row 7 is committed; jobs_id, unique on id, is marked failed.
+  // 2. A second row with id 7 inserts: jobs_id no longer refuses it.
+  // 3. Scanning jobs_id fails with SM_ERR_INVALID.
+  // 4. jobs_state is maintained as before, and agrees with the heap.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 7, "free", std::nullopt);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::cat_set_index_state(f.a, f.jobs, f.jobs_id,
+                                   sm3::index_state_t::failed) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  t = f.write(f.a);
+  put(t, 7, "free", std::nullopt);
+  CHECK(rows(t).size() == 2);
+  sm2::index_scan_t *scan = nullptr;
+  CHECK(sm3::tbl_idx_scan(t, f.jobs_id, nullptr, nullptr, scan) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+namespace {
+
+/* An index on owner, made on jobs after its rows: building. */
+uint64_t late_index(jobs_t &f, bool unique = false) {
+  std::vector<sm3::index_key_spec_t> by_owner = {
+      {2, false, false, std::nullopt}};
+  uint64_t oid = 0;
+  start(f.a);
+  REQUIRE(sm3::cat_create_index(f.a, f.jobs, "jobs_owner", by_owner, {}, unique,
+                                oid) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  return oid;
+}
+
+/* Mark index oid of jobs valid, in a transaction of s's own. */
+void validate(jobs_t &f, sm3::session_t *s, uint64_t oid) {
+  start(s);
+  REQUIRE(sm3::cat_set_index_state(s, f.jobs, oid, sm3::index_state_t::valid) ==
+          0);
+  REQUIRE(sm3::commit(s) == 0);
+}
+
+} // namespace
+
+TEST_CASE("a build fills an index in batches, and it then agrees") {
+  // Verify the backfill on a table nobody else is writing.
+  // 1. Five rows are committed, then an index on owner is made.
+  // 2. Batches of two cover rows 1-2, 3-4, then 5: the last says done.
+  // 3. A batch run again over rows already covered adds nothing and
+  //    fails nothing.
+  // 4. Marked valid, the index agrees with the heap.
+  // 5. A batch on an index that is not building is SM_ERR_INVALID,
+  //    and on one the table does not have, SM_ERR_NOTFOUND.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 5; i++) {
+    put(t, i, "free", "w" + std::to_string(i));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_index(f);
+
+  uint64_t next = 0;
+  bool done = true;
+  start(f.b);
+  t = f.write(f.b);
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, jobs_owner, 0, 2, next, done) == 0,
+                  sm1::errmsg());
+  CHECK(next == 3);
+  CHECK_FALSE(done);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+  start(f.b);
+  t = f.write(f.b);
+  REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, next, 2, next, done) == 0);
+  CHECK(next == 5);
+  CHECK_FALSE(done);
+  REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, next, 2, next, done) == 0);
+  CHECK(done);
+  REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, 0, 100, next, done) == 0);
+  CHECK(done);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+  validate(f, f.b, jobs_owner);
+
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(under(t, jobs_owner, "w3") == std::vector<uint64_t>{3});
+  check_agree(t);
+  CHECK(sm3::tbl_index_backfill(t, jobs_owner, 0, 2, next, done) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::tbl_index_backfill(t, jobs_owner + 999, 0, 2, next, done) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a build waits for a writer, and finds the row covered") {
+  // Verify the race the row lock settles, the writer first.
+  // 1. Rows 1 and 2 are committed; an index on owner is building.
+  // 2. A updates row 1's owner and holds the row. B, the build, set
+  //    qa_nowait, runs a batch: SM_ERR_BLOCKED on row 1, and it
+  //    aborts the batch.
+  // 3. A commits. B runs the batch again: row 1's entry is the one A
+  //    made, row 2's is added.
+  // 4. Marked valid, the index agrees with the heap, and holds
+  //    nothing under row 1's old owner.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *ta = f.write(f.a);
+  uint64_t r1 = put(ta, 1, "free", "old");
+  uint64_t r2 = put(ta, 2, "free", "two");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_index(f);
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
+
+  start(f.a);
+  ta = f.write(f.a);
+  REQUIRE(set(ta, r1, 1, "free", "new") == 0);
+  uint64_t next = 0;
+  bool done = false;
+  start(f.b);
+  sm3::table_t *tb = f.write(f.b);
+  CHECK(sm3::tbl_index_backfill(tb, jobs_owner, 0, 10, next, done) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::abort(f.b) == 0);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.b);
+  tb = f.write(f.b);
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(tb, jobs_owner, 0, 10, next, done) ==
+                      0,
+                  sm1::errmsg());
+  CHECK(done);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  validate(f, f.b, jobs_owner);
+
+  start(f.a);
+  ta = f.write(f.a);
+  CHECK(under(ta, jobs_owner, "new") == std::vector<uint64_t>{r1});
+  CHECK(under(ta, jobs_owner, "old").empty());
+  CHECK(under(ta, jobs_owner, "two") == std::vector<uint64_t>{r2});
+  check_agree(ta);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a writer waits for a build, and removes the entry it added") {
+  // Verify the race the row lock settles, the build first.
+  // 1. Row 1 is committed; an index on owner is building.
+  // 2. A, a writer set qa_nowait, begins. B, the build, covers row 1
+  //    and holds its lock: A's update of row 1 is SM_ERR_BLOCKED.
+  // 3. B commits. A's update goes through: the heap row had not
+  //    changed, and the entry B added after A began is removed all
+  //    the same.
+  // 4. Marked valid, the index holds row 1 under its new owner only.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *ta = f.write(f.a);
+  uint64_t r1 = put(ta, 1, "free", "old");
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_index(f);
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.a), true) == 0);
+
+  start(f.a);
+  ta = f.write(f.a);
+  CHECK(get(ta, r1) == "1|free|old");
+  uint64_t next = 0;
+  bool done = false;
+  start(f.b);
+  sm3::table_t *tb = f.write(f.b);
+  REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, 0, 10, next, done) == 0);
+  CHECK(set(ta, r1, 1, "free", "new") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  REQUIRE_MESSAGE(set(ta, r1, 1, "free", "new") == 0, sm1::errmsg());
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+  validate(f, f.b, jobs_owner);
+
+  start(f.b);
+  tb = f.write(f.b);
+  CHECK(under(tb, jobs_owner, "new") == std::vector<uint64_t>{r1});
+  CHECK(under(tb, jobs_owner, "old").empty());
+  check_agree(tb);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+}
+
+TEST_CASE("a unique build fails on a duplicate it reaches late") {
+  // Verify what a building unique index cannot refuse at once.
+  // 1. Rows 1 and 2 are committed with one owner; a unique index on
+  //    owner is made, and is building.
+  // 2. A third row with that owner inserts: no entry stands against
+  //    it yet.
+  // 3. The backfill reaches the rows: SM_ERR_DUPKEY, and the batch
+  //    is aborted.
+  // 4. A row whose own entry a writer already made is no duplicate:
+  //    with a table of distinct owners the same build succeeds.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "same");
+  put(t, 2, "free", "same");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_index(f, true);
+
+  start(f.a);
+  t = f.write(f.a);
+  put(t, 3, "free", "same");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  uint64_t next = 0;
+  bool done = false;
+  start(f.b);
+  t = f.write(f.b);
+  CHECK(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(f.b) == 0);
+
+  jobs_t g;
+  start(g.a);
+  t = g.write(g.a);
+  uint64_t r1 = put(t, 1, "free", "one");
+  put(t, 2, "free", "two");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(g.a) == 0);
+  jobs_owner = late_index(g, true);
+  start(g.a);
+  t = g.write(g.a);
+  REQUIRE(set(t, r1, 1, "taken", "uno") == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(g.a) == 0);
+  start(g.b);
+  t = g.write(g.b);
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) ==
+                      0,
+                  sm1::errmsg());
+  CHECK(done);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(g.b) == 0);
+  validate(g, g.b, jobs_owner);
+  start(g.b);
+  t = g.write(g.b);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(g.b) == 0);
+}
+
+TEST_CASE("an index made in its table's transaction is filled at once") {
+  // Verify the inline build, at every isolation level.
+  // 1. In one transaction: create a table, insert three rows, then
+  //    create an index on it.
+  // 2. The index is valid at once, and agrees with the heap, before
+  //    the transaction commits and after.
+  // 3. A unique index over two of those rows with one key fails
+  //    with SM_ERR_DUPKEY.
+  // 4. A table committed earlier cannot be built above READ
+  //    COMMITTED: the batch is SM_ERR_INVALID.
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    std::vector<sm3::column_spec_t> cols = {
+        {"id", sm2::type_int4.code, -1, true},
+        {"state", sm2::type_text.code, -1, false},
+        {"owner", sm2::type_text.code, -1, false}};
+    std::vector<sm3::index_key_spec_t> by_owner = {
+        {2, false, false, std::nullopt}};
+    std::vector<sm3::index_key_spec_t> by_state = {
+        {1, false, false, std::nullopt}};
+    uint64_t tasks = 0, tasks_owner = 0, tasks_state = 0;
+    start(f.a, level);
+    REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
+            0);
+    sm3::table_t *t = nullptr;
+    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
+            0);
+    put(t, 1, "free", "a");
+    put(t, 2, "free", "b");
+    put(t, 3, "done", "c");
+    sm3::tbl_close(t);
+    REQUIRE_MESSAGE(sm3::cat_create_index(f.a, tasks, "tasks_owner", by_owner,
+                                          {}, true, tasks_owner) == 0,
+                    sm1::errmsg());
+    CHECK(sm3::cat_create_index(f.a, tasks, "tasks_state", by_state, {}, true,
+                                tasks_state) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  }
+  for (sm1::xctlevel_t level : all_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    std::vector<sm3::column_spec_t> cols = {
+        {"id", sm2::type_int4.code, -1, true},
+        {"state", sm2::type_text.code, -1, false},
+        {"owner", sm2::type_text.code, -1, false}};
+    std::vector<sm3::index_key_spec_t> by_owner = {
+        {2, false, false, std::nullopt}};
+    uint64_t tasks = 0, tasks_owner = 0;
+    start(f.a, level);
+    REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
+            0);
+    sm3::table_t *t = nullptr;
+    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
+            0);
+    put(t, 1, "free", "a");
+    put(t, 2, "free", "b");
+    sm3::tbl_close(t);
+    REQUIRE(sm3::cat_create_index(f.a, tasks, "tasks_owner", by_owner, {}, true,
+                                  tasks_owner) == 0);
+    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
+            0);
+    CHECK(sm3::tbl_def(t).indexes[0].state == sm3::index_state_t::valid);
+    check_agree(t);
+    REQUIRE(set(t, 1, 1, "taken", "z") == 0);
+    check_agree(t);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+
+    start(f.b, level);
+    REQUIRE(sm3::tbl_open(f.b, tasks, sm1::lockmode_t::intent_shared, t) == 0);
+    check_agree(t);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.b) == 0);
+  }
+  for (sm1::xctlevel_t level : snapshot_levels) {
+    CAPTURE(static_cast<int>(level));
+    jobs_t f;
+    uint64_t jobs_owner = late_index(f);
+    uint64_t next = 0;
+    bool done = false;
+    start(f.b, level);
+    sm3::table_t *t = f.write(f.b);
+    CHECK(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::abort(f.b) == 0);
   }
 }

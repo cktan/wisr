@@ -11,8 +11,10 @@
 #include <vector>
 
 struct sm3::table_t {
+  session_t *session;
   std::shared_ptr<const table_def_t> def; /* held under the schema lock */
   bool writable;                          /* the lock covers intent_exclusive */
+  bool fresh;                             /* made by this transaction */
   sm2::rel_t *rel = nullptr;
   std::vector<sm2::index_t *> indexes; /* one per def->indexes, in order */
 };
@@ -115,6 +117,11 @@ int unchanged(const sm3::table_def_t &def, const sm3::index_def_t &x,
   return 1;
 }
 
+/* Whether writes maintain index i of t: all but one whose build failed. */
+bool maintained(const sm3::table_t *t, size_t i) {
+  return t->def->indexes[i].state != sm3::index_state_t::failed;
+}
+
 /* Add index i's entry for the row r at rowno. */
 int add_entry(sm3::table_t *t, size_t i, const vals_t &r, uint64_t rowno) {
   const sm3::index_def_t &x = t->def->indexes[i];
@@ -123,10 +130,21 @@ int add_entry(sm3::table_t *t, size_t i, const vals_t &r, uint64_t rowno) {
                          inc.null());
 }
 
-/* Remove index i's entry for the row r at rowno. */
+/*
+ * Remove index i's entry for the row r at rowno. While the index
+ * is building, an entry that is not there is no error: the build
+ * has not reached the row (SM3_DESIGN.md §3).
+ */
 int remove_entry(sm3::table_t *t, size_t i, const vals_t &r, uint64_t rowno) {
-  picked_t key(r, t->def->indexes[i].key_attnums);
-  return sm2::idx_delete(t->indexes[i], key.d(), key.null(), rowno);
+  const sm3::index_def_t &x = t->def->indexes[i];
+  picked_t key(r, x.key_attnums);
+  if (sm2::idx_delete(t->indexes[i], key.d(), key.null(), rowno) == 0) {
+    return 0;
+  }
+  return x.state == sm3::index_state_t::building &&
+                 sm1::errnum() == sm1::SM_ERR_NOTFOUND
+             ? 0
+             : -1;
 }
 
 } // namespace
@@ -142,7 +160,11 @@ int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
     if (cat_lock_table(session, oid, mode, t->def) != 0) {
       return -1;
     }
+    t->session = session;
     t->writable = covers_write(mode);
+    // No committed definition: this transaction made the table, and
+    // no other can see it or its rows.
+    t->fresh = cat_table(session->cat, oid) == nullptr;
     const table_def_t &def = *t->def;
     if (sm2::rel_open(session->sm1, def.storeid, 0, def.schema, def.rowno_seq,
                       t->rel) != 0) {
@@ -189,7 +211,7 @@ int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
     }
     vals_t row{values, isnull};
     for (size_t i = 0; i < table->indexes.size(); i++) {
-      if (add_entry(table, i, row, r) != 0) {
+      if (maintained(table, i) && add_entry(table, i, row, r) != 0) {
         return -1;
       }
     }
@@ -222,6 +244,9 @@ int tbl_update(table_t *table, uint64_t rowno,
     }
     vals_t after{values, isnull};
     for (size_t i = 0; i < table->indexes.size(); i++) {
+      if (!maintained(table, i)) {
+        continue;
+      }
       int same = unchanged(def, def.indexes[i], before.row(), after);
       if (same < 0) {
         return -1;
@@ -262,7 +287,8 @@ int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
       return -1;
     }
     for (size_t i = 0; i < table->indexes.size(); i++) {
-      if (remove_entry(table, i, before.row(), rowno) != 0) {
+      if (maintained(table, i) &&
+          remove_entry(table, i, before.row(), rowno) != 0) {
         return -1;
       }
     }
@@ -296,11 +322,131 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
   const table_def_t &def = *table->def;
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (def.indexes[i].oid == index) {
+      if (!maintained(table, i)) {
+        return sm1::seterr(sm1::SM_ERR_INVALID, "table: the build of index " +
+                                                    std::to_string(index) +
+                                                    " failed");
+      }
       return sm2::idx_scan(table->indexes[i], lo, hi, out, widened);
     }
   }
   return sm1::seterr(sm1::SM_ERR_NOTFOUND,
                      "table: no index " + std::to_string(index));
+}
+
+/* One batch of an index's build; see sm3.h. */
+int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
+                       size_t max_rows, uint64_t &next, bool &done) {
+  return catch_nomem([&] {
+    if (need_writable(table) != 0) {
+      return -1;
+    }
+    const table_def_t &def = *table->def;
+    size_t i = 0;
+    while (i < def.indexes.size() && def.indexes[i].oid != index) {
+      i++;
+    }
+    if (i == def.indexes.size()) {
+      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                         "table: no index " + std::to_string(index));
+    }
+    const index_def_t &x = def.indexes[i];
+    if (x.state != index_state_t::building) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "index build: index " + x.name + " is not building");
+    }
+    // Rows another transaction may write are read at their newest
+    // version, which only READ COMMITTED can do.
+    bool rc = table->session->level == sm1::xctlevel_t::read_committed;
+    if (!table->fresh && !rc) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "index build: not at READ COMMITTED");
+    }
+    // The batch's rows, by rowno; their tuples are read again below.
+    std::vector<uint64_t> rownos;
+    sm2::rel_scan_t *scan = nullptr;
+    if (sm2::rel_scan(table->rel, from, UINT64_MAX, scan) != 0) {
+      return -1;
+    }
+    uint64_t rowno;
+    std::string_view tuple;
+    int more = 0;
+    while (rownos.size() < max_rows &&
+           (more = sm2::rel_scannxt(scan, rowno, tuple)) == 0) {
+      rownos.push_back(rowno);
+    }
+    sm2::rel_scanend(scan);
+    if (more < 0) {
+      return -1;
+    }
+    deformed_t row(def.schema.size());
+    for (uint64_t r : rownos) {
+      int found;
+      if (table->fresh) {
+        found = sm2::rel_read(table->rel, r, tuple);
+      } else {
+        // Hold the row shared to the end of the batch: a writer
+        // changes the heap row first, so it and the build never
+        // work on one row at once (SM3_DESIGN.md §3).
+        if (sm2::rel_lock(table->rel, r, sm1::lockmode_t::shared) != 0) {
+          return -1;
+        }
+        found = sm2::rel_read_latest(table->rel, r, tuple);
+      }
+      if (found < 0) {
+        return -1;
+      }
+      // Deleted since the scan: nothing to cover.
+      if (found == 1) {
+        continue;
+      }
+      // Copy the tuple: the index calls below reuse session memory.
+      std::string copy(tuple);
+      if (sm2::tup_deform(def.desc, copy, row.d, {row.null.get(), row.n}) !=
+          0) {
+        return -1;
+      }
+      if (add_entry(table, i, row.row(), r) == 0) {
+        continue;
+      }
+      if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
+        return -1;
+      }
+      // An entry is there already. With the rowno in its key it is
+      // this row's, made by a writer; without, it may be another's.
+      picked_t key(row.row(), x.key_attnums);
+      bool has_null = false;
+      for (bool n : key.null()) {
+        has_null |= n;
+      }
+      if (!x.unique || has_null) {
+        continue;
+      }
+      sm2::bound_t eq{key.d(), key.null(), true};
+      sm2::index_scan_t *is = nullptr;
+      if (sm2::idx_scan(table->indexes[i], &eq, &eq, is) != 0) {
+        return -1;
+      }
+      uint64_t owner;
+      bool cut, mine = false;
+      std::string_view value;
+      while ((more = sm2::idx_scannxt(is, owner, cut, value)) == 0) {
+        mine |= owner == r;
+      }
+      sm2::idx_scanend(is);
+      if (more < 0) {
+        return -1;
+      }
+      if (!mine) {
+        return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                           "index build: two rows of " + def.name +
+                               " with one key in " + x.name);
+      }
+    }
+    done = rownos.size() < max_rows;
+    next = rownos.empty() ? from : rownos.back() + 1;
+    return 0;
+  });
 }
 
 /* The value schema of one of the table's indexes; see sm3.h. */

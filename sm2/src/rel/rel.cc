@@ -125,6 +125,15 @@ int rel_read(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
   });
 }
 
+/* Lock the row at rowno in mode, without writing it. */
+int rel_lock(rel_t *rel, uint64_t rowno, sm1::lockmode_t mode) {
+  return catch_nomem([&] {
+    // Held to the end of the transaction, as a write's lock is.
+    return sm1::lock(rel->session, rel->storeid, row_key(rel->prefix, rowno),
+                     mode);
+  });
+}
+
 /* Read the newest committed version of the row at rowno. */
 int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
   return catch_nomem([&] {

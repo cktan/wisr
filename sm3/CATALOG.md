@@ -110,7 +110,7 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index prefix `int2`, natts `int4`, nindex `int4` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null |
-| index | oid `int8`, name `text`, prefix `int2`, unique `bool`, nkey `int4`, ninclude `int4` |
+| index | oid `int8`, name `text`, prefix `int2`, unique `bool`, nkey `int4`, ninclude `int4`, state `int2` |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null |
 | include | attnum `int4` |
 | namespace | name `text` |
@@ -121,6 +121,9 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
   before it (`sm2/TUPLE.md` §2), so a value needs no version of
   its own. `META`'s version changes only if a key's layout, or
   the framing, does.
+- **An index's state** is 0 building, 1 valid or 2 failed
+  (`SM3_DESIGN.md` §3). It was appended to the index part, so
+  an index written before it has none, and reads as valid.
 - **Type codes are sm2's frozen codes** (`sm2/TYPE.md` §3); code
   7, the retired `decimal`, is never written. A declared
   `decimal(p, s)` is stored as the sm2 type it maps to
@@ -240,7 +243,13 @@ as sm1 does (`DESIGN.md` §5).
   direction, null order and collation, a collation only on
   text or varchar — and takes the table's next prefix, which is
   never handed out again. It does not fill the index from the
-  table's rows: that is the build's (`SM3_DESIGN.md` §3).
+  table's rows: it records it as building, for the build to
+  fill and mark valid (`SM3_DESIGN.md` §3). On a table its own
+  transaction made, which no other can see, it runs the build
+  itself, over the rows the transaction has written, and
+  records the index valid.
+- **`cat_set_index_state(session, table, oid, state)`**
+  rewrites an index's state, as the build does when it ends.
 - **`cat_drop_index(session, table, oid)`** erases the index's
   name, its place in the blob, and its entries, one by one over
   its prefix in the table's store, since sm1 has no range

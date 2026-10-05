@@ -85,7 +85,8 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
     return corrupt("a column of " + rec.name + " sm2 cannot lay out");
   }
   for (const sm3::index_rec_t &x : rec.indexes) {
-    sm3::index_def_t d{x.oid, x.name, x.prefix, x.unique, {}, {}, {}, {}};
+    sm3::index_def_t d{x.oid, x.name, x.prefix, x.unique, {},
+                       {},    {},     {},       x.state};
     for (const sm3::index_key_rec_t &k : x.keys) {
       const sm2::collation_t *coll;
       if (k.attnum < 0 || static_cast<size_t>(k.attnum) >= t->columns.size() ||

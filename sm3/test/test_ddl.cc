@@ -299,3 +299,50 @@ TEST_CASE("the DDL refuses what the catalog cannot hold") {
                                   true, co) == -1);
   REQUIRE(sm3::abort(db.ss) == 0);
 }
+
+TEST_CASE("an index's state is recorded, and survives a restart") {
+  // Verify the state in an index's record (SM3_DESIGN.md §3).
+  // 1. An index made in the transaction that made its table is valid.
+  // 2. One made on a table committed earlier is building.
+  // 3. Both states load back after a restart.
+  // 4. cat_set_index_state changes one, seen at once by its own
+  //    transaction, and that loads back too.
+  // 5. An index the table does not have is SM_ERR_NOTFOUND.
+  cat_db_t db;
+  std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
+  uint64_t fresh = 0, late = 0;
+  db.begin();
+  uint64_t t = make_t(db);
+  REQUIRE(sm3::cat_create_index(db.ss, t, "fresh", on_a, {}, false, fresh) ==
+          0);
+  db.commit();
+  db.begin();
+  REQUIRE(sm3::cat_create_index(db.ss, t, "late", on_a, {}, false, late) == 0);
+  db.commit();
+
+  sm3::catalog_t *cat = db.reload();
+  auto d = sm3::cat_table(cat, t);
+  REQUIRE(d != nullptr);
+  REQUIRE(d->indexes.size() == 2);
+  CHECK(d->indexes[0].state == sm3::index_state_t::valid);
+  CHECK(d->indexes[1].state == sm3::index_state_t::building);
+
+  db.begin();
+  REQUIRE(sm3::cat_set_index_state(db.ss, t, late, sm3::index_state_t::valid) ==
+          0);
+  REQUIRE(sm3::cat_set_index_state(db.ss, t, fresh,
+                                   sm3::index_state_t::failed) == 0);
+  d = sm3::cat_table(db.ss, t);
+  CHECK(d->indexes[0].state == sm3::index_state_t::failed);
+  CHECK(d->indexes[1].state == sm3::index_state_t::valid);
+  CHECK(sm3::cat_set_index_state(db.ss, t, late + 999,
+                                 sm3::index_state_t::valid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  db.commit();
+
+  cat = db.reload();
+  d = sm3::cat_table(cat, t);
+  REQUIRE(d != nullptr);
+  CHECK(d->indexes[0].state == sm3::index_state_t::failed);
+  CHECK(d->indexes[1].state == sm3::index_state_t::valid);
+}

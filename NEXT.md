@@ -808,10 +808,15 @@ writing it, so the prose and the decisions come before code.
    tests first:
    1. the protocol in `SM3_DESIGN.md` §3 — **done**;
    2. the index's state in the catalog, and maintenance that
-      tolerates a missing entry while it is building;
+      tolerates a missing entry while it is building —
+      **done**;
    3. the batch routine, tested on one thread with
       `qa_nowait`, a writer racing the backfill among the
-      cases;
+      cases — **done**: `tbl_index_backfill`, over sm2's new
+      `rel_lock`, and `cat_create_index` runs it inline on a
+      table its own transaction made. Nothing runs it for any
+      other table yet, so an index made on a committed table
+      stays building until 5;
    4. the guard that keeps an older snapshot off the index;
    5. the queue of builds, its workers, and `cat_index_wait`;
    6. the C API and `rel`.

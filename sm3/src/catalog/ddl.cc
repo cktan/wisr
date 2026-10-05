@@ -461,7 +461,8 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     if (open_table(session, table, kv, rec) != 0) {
       return -1;
     }
-    index_rec_t x{0, std::string(name), rec.next_prefix, unique, {}, {}};
+    index_rec_t x{0,  std::string(name),      rec.next_prefix, unique, {},
+                  {}, index_state_t::building};
     for (const index_key_spec_t &k : keys) {
       if (!live_attnum(rec, k.attnum)) {
         return invalid("create index: a key names no live column");
@@ -500,6 +501,31 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     if (write_table(kv.get(), table, rec) != 0 ||
         record_table(session, table, rec) != 0) {
       return -1;
+    }
+    // No other transaction sees a table this one made, so the build
+    // has nothing to wait for: run it here, over the rows this
+    // transaction has written, and record the index valid. Any other
+    // table's index stays building, for the build to fill.
+    if (!cat_table(session->cat, table)) {
+      table_t *t = nullptr;
+      if (tbl_open(session, table, sm1::lockmode_t::exclusive, t) != 0) {
+        return -1;
+      }
+      uint64_t from = 0;
+      bool done = false;
+      int rc = 0;
+      while (rc == 0 && !done) {
+        rc = tbl_index_backfill(t, i, from, 1024, from, done);
+      }
+      tbl_close(t);
+      if (rc != 0) {
+        return -1;
+      }
+      rec.indexes.back().state = index_state_t::valid;
+      if (write_table(kv.get(), table, rec) != 0 ||
+          record_table(session, table, rec) != 0) {
+        return -1;
+      }
     }
     oid = i;
     return 0;
@@ -549,6 +575,29 @@ int cat_drop_index(session_t *session, uint64_t table, uint64_t oid) {
       }
     }
     rec.indexes.erase(it);
+    if (write_table(kv.get(), table, rec) != 0) {
+      return -1;
+    }
+    return record_table(session, table, rec);
+  });
+}
+
+/* Set an index's state; see sm3.h. */
+int cat_set_index_state(session_t *session, uint64_t table, uint64_t oid,
+                        index_state_t state) {
+  return catch_nomem([&] {
+    kv_ptr kv(nullptr, &sm2::catkv_close);
+    table_rec_t rec;
+    if (open_table(session, table, kv, rec) != 0) {
+      return -1;
+    }
+    auto it = std::find_if(rec.indexes.begin(), rec.indexes.end(),
+                           [&](const index_rec_t &x) { return x.oid == oid; });
+    if (it == rec.indexes.end()) {
+      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                         "index state: no index " + std::to_string(oid));
+    }
+    it->state = state;
     if (write_table(kv.get(), table, rec) != 0) {
       return -1;
     }

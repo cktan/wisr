@@ -490,6 +490,14 @@ int rel_read(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
 /*
+ * Lock the row at rowno in mode without writing it, as sm1::lock
+ * does: SQL's SELECT ... FOR SHARE and FOR UPDATE, and what an
+ * index build holds on a row while it adds the row's entry
+ * (sm3/SM3_DESIGN.md §3). The row need not exist.
+ */
+int rel_lock(rel_t* rel, uint64_t rowno, sm1::lockmode_t mode);
+
+/*
  * Replace the row at rowno with tuple, which must pass
  * tup_check; it keeps its rowno. With
  * old non-null, the tuple replaced is handed back there, which
