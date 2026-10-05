@@ -742,11 +742,9 @@ writing it, so the prose and the decisions come before code.
    image copied before the next call on the session
    (`SM3_DESIGN.md:279`-283), and the index fix-up from the
    newest old image after `SM_ERR_UPDATED`, with no predicate
-   of sm3's own. sm2's code is owed a change here too: its
-   index `rel` still cuts an over-long key in a unique index
-   and keeps the `rowno` suffix (`sm2/include/sm2.h`, the
-   comments on the index `rel` and `idx_insert`), where the
-   design now refuses it with `SM_ERR_KEYTOOLONG`.
+   of sm3's own. sm2's index `rel` already refuses an
+   over-long key in a unique index with `SM_ERR_KEYTOOLONG`
+   (`sm2/src/rel/index.cc`, `entry_key`).
    → verify: scenarios at every isolation level in which the
    index and a brute-force scan of the heap agree, the
    claim-once shape of 1.1 among them.

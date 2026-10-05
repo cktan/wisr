@@ -263,10 +263,11 @@ TEST_CASE("under a non-deterministic collation, equal is ICU's equal") {
 }
 
 TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
-  // Verify an over-long key in a unique index (SM2_DESIGN.md §3.2).
+  // Verify an over-long key in a non-unique index (SM2_DESIGN.md
+  // §3.2).
   // 1. Two 5000-byte texts that share their first 4500 bytes both
-  //    insert: each is cut to fit, carries its rowno, and so never
-  //    meets the other as a duplicate.
+  //    insert: each is cut to fit and carries its rowno, so the two
+  //    stay apart though their cut bytes are the same.
   // 2. The scan reports both as cut, with their INCLUDE column.
   // 3. A bound on such a text is itself too long: the scan says it
   //    was widened, and still yields both entries.
@@ -276,7 +277,7 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
       {&sm2::type_text, -1, nullptr, false, false}};
   std::vector<sm2::attribute_t> include = {
       {&sm2::type_int4, -1, false, std::nullopt}};
-  sm2::index_t *ix = open_index(db, s, cols, true, 1, include);
+  sm2::index_t *ix = open_index(db, s, cols, false, 1, include);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   std::string common(4500, 'k');
   std::vector<std::string> texts = {common + std::string(500, 'a'),
@@ -312,6 +313,47 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
   bool widened = false;
   CHECK(scan_all(ix, &lo, &lo, &widened) == std::vector<uint64_t>{1, 2});
   CHECK(widened);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::idx_close(ix);
+}
+
+TEST_CASE("a key too long for sm1 is refused in a unique index") {
+  // Verify a unique index never holds a cut key (SM2_DESIGN.md §3.2).
+  // 1. Inserting a 5000-byte text fails with SM_ERR_KEYTOOLONG.
+  // 2. So does one beside a null column, though that entry would
+  //    carry its rowno and meet no other as a duplicate.
+  // 3. Deleting by such a key fails the same way.
+  // 4. The transaction is still usable: a short key inserts, and
+  //    the scan yields that entry alone, not cut.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::key_column_t> cols = {
+      {&sm2::type_text, -1, nullptr, false, false},
+      {&sm2::type_text, -1, nullptr, false, false}};
+  sm2::index_t *ix = open_index(db, s, cols, true);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  std::string big(5000, 'k');
+  values_t whole = datums_of(cols, {"a", big});
+  CHECK(sm2::idx_insert(ix, whole.d(), whole.null(), 1, {}, {}) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
+  values_t nulled = datums_of(cols, {std::nullopt, big});
+  CHECK(sm2::idx_insert(ix, nulled.d(), nulled.null(), 2, {}, {}) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
+  CHECK(sm2::idx_delete(ix, whole.d(), whole.null(), 1) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
+  values_t small = datums_of(cols, {"a", "b"});
+  REQUIRE_MESSAGE(sm2::idx_insert(ix, small.d(), small.null(), 3, {}, {}) == 0,
+                  sm1::errmsg());
+  sm2::index_scan_t *scan = nullptr;
+  REQUIRE(sm2::idx_scan(ix, nullptr, nullptr, scan) == 0);
+  uint64_t rowno;
+  bool cut;
+  std::string_view value;
+  REQUIRE(sm2::idx_scannxt(scan, rowno, cut, value) == 0);
+  CHECK(rowno == 3);
+  CHECK_FALSE(cut);
+  CHECK(sm2::idx_scannxt(scan, rowno, cut, value) == 1);
+  sm2::idx_scanend(scan);
   REQUIRE(sm1::commit(s) == 0);
   sm2::idx_close(ix);
 }

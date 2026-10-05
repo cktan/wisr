@@ -483,7 +483,8 @@ size_t sm_idx_ncols(const sm_idx_t* idx);
 
 /*
  * Add the entry for the row at rowno. A unique index refuses a
- * key already present with SM_ERR_DUPKEY.
+ * key already present with SM_ERR_DUPKEY, and one too long for
+ * sm1 with SM_ERR_KEYTOOLONG.
  */
 int sm_idx_insert(sm_idx_t* idx, const sm_datum_t* key,
                   const bool* key_isnull, size_t nkey, uint64_t rowno,

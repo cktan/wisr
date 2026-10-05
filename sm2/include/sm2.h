@@ -283,9 +283,9 @@ constexpr size_t max_key_len(bool rowno) {
 
 /*
  * What encode_key does with a key longer than its budget: refuse
- * it, as a primary key must be exact, or cut it to the budget, as
- * a secondary index's may be, for sm3 to flag and recheck
- * (SM2_DESIGN.md §3.2).
+ * it, as a unique index's key must be exact, or cut it to the
+ * budget, as a non-unique index's may be, for sm3 to flag and
+ * recheck (SM2_DESIGN.md §3.2).
  */
 enum class overflow_t { refuse, truncate };
 
@@ -535,10 +535,11 @@ void rel_scanend(rel_scan_t* scan);
  *   prefix | encode_key(key columns) [ | rowno ]
  *
  * with the rowno, big-endian, always in a non-unique index, and in
- * a unique one only for an entry whose key has a null column or
- * was cut to fit (SM2_DESIGN.md §3.2, sm3/SM3_DESIGN.md §3), so
- * nulls stay distinct and a unique key without either is sm1's
- * uniqueness unit: a duplicate fails with sm1's SM_ERR_DUPKEY. An
+ * a unique one only for an entry whose key has a null column
+ * (sm3/SM3_DESIGN.md §3), so nulls stay distinct and a unique key
+ * without one is sm1's uniqueness unit: a duplicate fails with
+ * sm1's SM_ERR_DUPKEY. A unique index's key is never cut
+ * (SM2_DESIGN.md §3.2). An
  * entry's value is a tuple, idx_value_schema's: the rowno, int8;
  * whether the key was cut, bool; then the INCLUDE columns.
  *
@@ -583,8 +584,8 @@ std::span<const attribute_t> idx_value_schema(const index_t* index);
  * Add the entry for the row at rowno: its key columns' datums key
  * and its INCLUDE columns' include. A key too long for sm1 is cut
  * to fit and marked cut, for the caller to recheck against the
- * row. In a unique index, a key already present fails with sm1's
- * SM_ERR_DUPKEY.
+ * row. In a unique index it fails with SM_ERR_KEYTOOLONG instead,
+ * and a key already present fails with sm1's SM_ERR_DUPKEY.
  */
 int idx_insert(index_t* index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, uint64_t rowno,

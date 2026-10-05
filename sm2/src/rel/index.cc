@@ -63,7 +63,8 @@ std::string prefix_of(const sm2::index_t *ix) {
 /*
  * The sm1 key of the entry for key and rowno: the prefix, the
  * encoded key columns, and the rowno where the entry carries one;
- * cut is set if the columns were cut to fit.
+ * cut is set if the columns were cut to fit. A unique index's key
+ * is never cut: too long, it fails with SM_ERR_KEYTOOLONG.
  */
 int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
               std::span<const bool> isnull, uint64_t rowno, std::string &out,
@@ -84,6 +85,10 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
   }
   bool suffix = !ix->unique || has_null;
   cut = cols.size() > sm2::max_key_len(suffix);
+  if (cut && ix->unique) {
+    return sm1::seterr(sm1::SM_ERR_KEYTOOLONG,
+                       "index: a key too long for a unique index");
+  }
   // Cut at the one length every cut key and cut bound share.
   if (cut) {
     // A cut key keeps the rowno, so cut keys that meet stay apart.
