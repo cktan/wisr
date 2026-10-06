@@ -77,9 +77,8 @@ the wrapper through the `rel/` test suite.
   analyzes a table and records what is true of an LSM, and
   the host fits that to PostgreSQL's planner
 - `BULKLOAD.md` — the design of a bulk load: one
-  transaction and a table lock in place of row locks, with
-  rows written in batches or to sorted files that RocksDB
-  ingests
+  transaction in one of three modes, mini-batch, batch and
+  file, the last writing sorted files that RocksDB ingests
 - `FEATURELIST.md` — which PostgreSQL features wisr supports
 - `PART4.md` — what it would take to put PostgreSQL on this
   stack, and what that target forces on level 2's design

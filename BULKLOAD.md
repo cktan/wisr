@@ -4,10 +4,12 @@
 restore all put millions of rows into one table in one
 transaction. Row at a time through `tbl_insert` that works,
 and costs memory in proportion to the rows. This file is the
-design of a loader that does not, in two modes: **batch
-mode**, which writes rows a chunk at a time through RocksDB's
-ordinary write path, and **file mode**, which writes them to
-sorted files that RocksDB ingests whole.
+design of a loader that does not, in three modes:
+**mini-batch**, which writes 100 rows at a time and lets other
+writers go on; **batch mode**, which writes rows a chunk at a
+time through RocksDB's ordinary write path with other writers
+kept out; and **file mode**, which writes them to sorted files
+that RocksDB ingests whole.
 
 It is a design and not yet built. What is said here of
 RocksDB is from memory of its documentation, and the stack
@@ -18,45 +20,55 @@ of it is relied on.
 
 ## 0. The proposal in brief
 
-**One loader, two modes: batch mode and file mode**
+**One loader, three modes: mini-batch, batch mode and file
+mode**
 
-- Both hold one lock on the table that keeps other writers
-  out: SIX, or X when file mode fills an empty table. Under
-  it, a lock on each row says nothing new, so none is taken.
-- Both are one transaction. Every version carries its `xid`,
+- Batch and file mode hold one lock on the table that keeps
+  other writers out: SIX, or X when file mode fills an empty
+  table. Under it, a lock on each row says nothing new, so
+  none is taken.
+- Mini-batch holds the table IX, as any writer does, so other
+  writers go on. It locks only its unique keys (§4.5).
+- All are one transaction. Every version carries its `xid`,
   and the load commits or aborts whole, by the one status
   record every transaction has.
-- They differ in how the versions reach RocksDB.
+- They differ in the lock they take and in how the versions
+  reach RocksDB.
 
-| | Batch mode | File mode |
-| --- | --- | --- |
-| The table | any; rows are appended | any. Empty, made or truncated in this transaction: everything goes to files. With rows: the heap goes to files and the index entries in batches |
-| Lock | SIX: readers pass | X for an empty table, which readers wait for; SIX for one with rows |
-| How rows are written | a chunk at a time, one RocksDB write batch each | into sorted files, ingested whole at the end |
-| Log, memtable, compaction | all three, as any write | none for what goes to files |
-| The transaction reads its rows | after each chunk | only after the close |
-| A duplicate key is found | within its chunk | at the end in an empty table; within its chunk in one with rows |
-| Memory | one chunk | the sort budget |
-| Meant for | `INSERT ... SELECT`, and any load that reads as it goes | `COPY`, a restore, `CREATE TABLE AS` |
+| | Mini-batch | Batch mode | File mode |
+| --- | --- | --- | --- |
+| The table | any; rows are appended | any; rows are appended | any. Empty, made or truncated in this transaction: everything goes to files. With rows: the heap goes to files and the index entries in batches |
+| Lock | IX: other writers and readers pass | SIX: readers pass | X for an empty table, which readers wait for; SIX for one with rows |
+| Row locks | one for each unique key, to commit | none | none |
+| How rows are written | 100 at a time, one RocksDB write batch each | a chunk at a time, one RocksDB write batch each | into sorted files, ingested whole at the end |
+| Log, memtable, compaction | all three, as any write | all three, as any write | none for what goes to files |
+| A duplicate key is found | within 100 rows | within its chunk | at the end in an empty table; within its chunk in one with rows |
+| Memory | 100 rows, and a lock for each unique key | one chunk | the sort budget |
+| Meant for | `INSERT ... SELECT`, and any load others must not wait for | a load others may wait for | `COPY`, a restore, `CREATE TABLE AS` |
 
-**What both keep**
+**What all keep**
 
 - Atomic. No reader sees part of a load.
 - Every check a row gets today: `NOT NULL`, unique indexes,
   the host's evaluator for partial and expression indexes.
-- Memory that does not grow with the load.
+- Memory that does not grow with the load, in batch and file
+  mode; in mini-batch, but for a lock on each unique key.
 
-**What both give up**
+**What they give up**
 
-- Other writers of the table wait until the load's transaction
-  ends, and readers too when file mode fills an empty table.
-  A load that must not block them uses `tbl_insert`.
+- In batch and file mode, other writers of the table wait
+  until the load's transaction ends, and readers too when file
+  mode fills an empty table. Mini-batch makes no one wait.
+- A statement that must read the table as it loads, for
+  `ON CONFLICT` or a trigger that queries it, uses
+  `tbl_insert`.
 - They insert. There is no bulk update or delete.
 
 **What has to be built**
 
-- sm1: a loader on a store, with both ways of writing, and a
-  sweep of leftover files at startup.
+- sm1: a loader on a store, writing in batches or to files,
+  locking unique keys when the table is not held, and a sweep
+  of leftover files at startup.
 - sm2: heap and index inserts that feed it.
 - sm3: a loader on an open table.
 - `include/sm.h` and `rel`: the calls, and a verb.
@@ -116,7 +128,8 @@ it will stay.
    routines `tbl_insert` calls to check a row and to make its
    index entries. It differs only in how they reach RocksDB.
 4. **Bounded memory.** What a load holds does not grow with
-   the rows loaded.
+   the rows loaded, but for mini-batch's locks on unique keys,
+   the price of letting other writers go on.
 5. **Crash safe by what is already there.** No log of its
    own, and no recovery but deleting files left behind.
 6. **Tuple at a time across the API** (`DESIGN.md` §5). The
@@ -124,14 +137,16 @@ it will stay.
 
 ---
 
-## 3. What the two modes share
+## 3. What the modes share
 
 ### 3.1 A table lock stands in for the row locks
 
 A writer holds its table's schema lock IX, and a reader IS
-(`sm3/SM3_DESIGN.md` §2). A loader takes it **SIX**. One in
-file mode filling an empty table holds it **X** already
-(§5.1); X covers SIX, so all that follows holds for it too.
+(`sm3/SM3_DESIGN.md` §2). A loader in batch or file mode takes
+it **SIX**. One in file mode filling an empty table holds it
+**X** already (§5.1); X covers SIX, so all that follows holds
+for it too. Mini-batch takes it **IX**, as a writer does, and
+§4.5 says what it does instead.
 
 | Held by another | Against the loader's SIX |
 | --- | --- |
@@ -159,8 +174,8 @@ A table made in the same transaction is held X by its
 creator, which covers SIX. It needs no case of its own.
 
 sm1 keeps no lock hierarchy and cannot know that one key
-stands for a table. So sm1's loader, in either mode, is told
-which lock covers it, and refuses unless the transaction
+stands for a table. So sm1's loader is told which lock covers
+it, and in batch and file mode refuses unless the transaction
 holds that lock SIX or X. The check is cheap and it is what
 stops a caller that forgot the lock from writing unprotected.
 
@@ -175,8 +190,8 @@ by the same routines (requirement 3):
    hands them out as rows arrive. It needs nothing else: a
    sequence hands out each value once and in rising order,
    so the load's rownos are its own and ascend, whoever else
-   draws. With other writers kept out, they are also above
-   every row the table holds.
+   draws. With other writers kept out, in batch and file
+   mode, they are also above every row the table holds.
 3. The tuple is encoded.
 4. The entry of every index is made, calling the host's
    evaluator where an index needs it.
@@ -190,8 +205,8 @@ is checked.
 A version's key is `userkey | ~wts | ~seq`
 (`sm1/SM1_DESIGN.md` §3.1). An ordinary write takes one `wts`
 and one `seq` for each key. A load takes one of each for many
-keys: for a chunk in batch mode, for the whole load in file
-mode.
+keys: for 100 rows in mini-batch, for a chunk in batch mode,
+for the whole load in file mode.
 
 - **One `wts` is enough** because of the lock. The rule `wts`
   serves is that a key's versions sort in commit order. Every
@@ -225,16 +240,17 @@ COMMITTED is the level to load at.
 
 An ordinary write made while a savepoint is set is listed in
 `T.undo`, so that a rollback can delete it
-(`sm1/SM1_DESIGN.md` §6.5). A load lists nothing, in either
+(`sm1/SM1_DESIGN.md` §6.5). A load lists nothing, in any
 mode.
 
 - **With no savepoint set** nothing is listed by any write,
   and there is nothing to decide.
 - **With one set**, a rollback to it could not undo the load.
-  Until `sm1/SAVEPOINT.md` is built, such a rollback is
-  refused and the transaction is aborted, as sm1 already
-  does for a savepoint whose undo list passed its cap
-  (`SM_ERR_UNDOLIMIT`, `sm1/SM1_DESIGN.md` §6.5).
+  Until `sm1/SAVEPOINT.md` is built, opening a loader marks
+  the savepoints then set lost, by the mechanism that marks
+  them lost at the undo list's cap: a rollback to one fails
+  with `SM_ERR_UNDOLIMIT`, and the transaction is aborted
+  (`sm1/SM1_DESIGN.md` §6.5).
 - **Once it is built**, a rollback marks a range of `seq`
   dead, and a load's versions are covered by it like any
   other. The refusal goes, with no code here.
@@ -244,7 +260,7 @@ an abort deletes nothing.
 
 ### 3.6 Indexes
 
-A load maintains every index of the table, in either mode.
+A load maintains every index of the table, in any mode.
 An index that is still building is maintained too, as any
 writer maintains it.
 
@@ -268,7 +284,7 @@ which is exactly what file mode requires (§5.1).
 
 ---
 
-## 4. Batch mode
+## 4. Batch mode and mini-batch
 
 ### 4.1 A chunk
 
@@ -287,10 +303,12 @@ For each chunk:
 Nothing is appended to `T.locks` or `T.undo`. What the loader
 holds in memory is the chunk it is filling.
 
-From then the transaction sees the chunk's rows, by the heap
-and by every index, as it sees any of its writes. A caller
-that must read what it has handed over calls `flush`, which
-writes the chunk in hand.
+A chunk is written when the buffer fills, inside the call that
+hands over a row, and the last one when the loader closes.
+There is no call to write it sooner. The loading statement
+does not see its own rows in any case, as no statement sees
+its own writes (`sm1/MVCC.md` §10), and the next statement
+begins after the loader has closed.
 
 The transaction may also write the table the ordinary way
 while a batch loader is open. Such a write does not see rows
@@ -328,8 +346,8 @@ few thousand rows of the row that caused it.
 
 Nothing here is new.
 
-- **Commit** is the one status record. A commit with rows
-  still buffered is refused; the loader is closed first.
+- **Commit** is the one status record. A commit or prepare
+  with a loader open is refused; the loader is closed first.
 - **Abort** writes nothing. The versions resolve as dead and
   compaction drops them.
 - **A crash** before commit leaves no status record, which is
@@ -337,7 +355,8 @@ Nothing here is new.
 - **Prepare** records the locks the transaction holds, with
   their modes. The SIX schema lock is one of them, so after a
   restart an in-doubt load still keeps writers out, as the
-  row locks would have.
+  row locks would have. A mini-batch load's locks on unique
+  keys are recorded like any others.
 
 ### 4.4 What batch mode does not save
 
@@ -345,6 +364,39 @@ Every row is still written to RocksDB's log, then to a
 level-0 file, then rewritten as compaction moves it down. It
 saves the memory of §1 and the per-key lock, timestamp and
 write call. It does not save the bytes written.
+
+### 4.5 Mini-batch
+
+Mini-batch is batch mode with the table held IX, so other
+writers go on, as PostgreSQL's `COPY` and `INSERT` let them.
+
+- **A batch is 100 rows**, buffered and written as one
+  RocksDB batch, with one `wts` and one `seq`. Its rownos are
+  reserved together, 100 drawn ahead (§3.2).
+- **Heap keys and non-unique entries take no lock.** Each ends
+  in a rowno from the reserved block, which no one else can
+  draw, so no other transaction can write the same key.
+- **Each unique key is locked**, exclusive, as an insert locks
+  it, waiting or failing as an insert would, and then read as
+  §4.2 reads it. The lock is held to commit. Every unique key
+  of a batch is locked before the batch takes its `wts`, which
+  keeps a key's versions in commit order (§3.3).
+- **Every other check is batch mode's**, at 100 rows: a
+  duplicate within the batch by sorting, against the table by
+  the read, `SM_ERR_CONFLICT` above READ COMMITTED.
+- **It keeps no undo list**, as batch mode, so it treats
+  savepoints as §3.5 says.
+
+What it costs is a lock for each unique key, to commit: §6.1
+counts them. What it saves over `tbl_insert` is the locks on
+heap keys and non-unique entries, and a RocksDB write, a
+timestamp and a sequence draw for each row.
+
+One small difference from the ordinary path: a transaction may
+lock a row that does not exist yet (`tbl_lock`), and such a
+lock on a reserved rowno is not met when the row is written.
+PostgreSQL cannot lock a row that does not exist, so nothing
+in the fork does this.
 
 ---
 
@@ -541,7 +593,7 @@ The host cannot always know a load's size when it starts; a
 as a batch.** The loader keeps its first rows in memory and
 starts no file until they pass one chunk, §4.1's size. If the
 load is closed before that, the rows are written as that one
-chunk. It is the reason the two modes are one loader.
+chunk. It is the reason the modes are one loader.
 
 ### 5.8 How PostgreSQL does the same
 
@@ -602,11 +654,11 @@ host's, by what the statement needs:
 
 | The statement | Path |
 | --- | --- |
-| must not make other writers of the table wait | `tbl_insert` |
 | writes a few rows | `tbl_insert` |
-| reads the table as it writes: `ON CONFLICT`, a trigger that queries it | batch mode, flushing before each read, or `tbl_insert` |
-| must report a duplicate near its row | batch mode |
-| is large, and does not read the table until it ends | file mode |
+| reads the table as it writes: `ON CONFLICT`, a trigger that queries it | `tbl_insert` |
+| must not make other writers of the table wait | mini-batch |
+| may make other writers wait | batch mode |
+| is large, may make other writers wait, and does not read the table until it ends | file mode |
 
 By statement, that is usually:
 
@@ -614,22 +666,23 @@ By statement, that is usually:
   file mode, everything to files.
 - **A `COPY` that appends**: file mode, the heap to files and
   the index entries in batches.
-- **A `COPY` into a table with triggers that read it**: batch
-  mode, flushing before each, as PostgreSQL's own `COPY`
-  falls back to one row at a time for such a table.
-- **`INSERT ... SELECT`**: batch mode. The planner's row
-  estimate says whether it is worth leaving `tbl_insert` for.
+- **A `COPY` that appends, where other writers must not
+  wait**: mini-batch.
+- **A `COPY` into a table with triggers that read it**:
+  `tbl_insert`, as PostgreSQL's own `COPY` falls back to one
+  row at a time for such a table.
+- **`INSERT ... SELECT`**: mini-batch, which blocks no one,
+  as PostgreSQL's does not; batch mode where the host may
+  block writers. The planner's row estimate says whether it
+  is worth leaving `tbl_insert` for.
 
 ### 6.1 The row locks each path holds
 
-A third way is proposed beside the two modes: **mini-batch**,
-which writes 100 rows at a time in one RocksDB batch, reserves
-100 rownos for them, and holds the table only IX, so other
-writers go on. Under IX nothing keeps another transaction from
-inserting the same unique value, so a mini-batch locks each of
-its unique keys, then reads it, as an insert does, and holds
-the lock to commit. Heap keys and non-unique entries need no
-lock: each ends in a rowno no one else can draw.
+Mini-batch holds the table IX, so nothing keeps another
+transaction from inserting the same unique value: it locks
+each of its unique keys and holds the lock to commit (§4.5).
+Heap keys and non-unique entries need no lock: each ends in a
+rowno no one else can draw.
 
 Locks held for 1,000 rows into a table with two unique indexes
 and one non-unique one, to the end of the transaction:
@@ -639,6 +692,9 @@ and one non-unique one, to the end of the transaction:
 | `tbl_insert` | 4,000 | the heap row, both unique keys and the non-unique entry, for each row |
 | mini-batch | 2,000 | the two unique keys, for each row |
 | batch mode, file mode | 0 | none: the table lock, SIX or X, keeps other writers out |
+
+Batch mode and file mode bound the memory by making other
+writers wait; mini-batch lets them go on and pays in locks.
 
 A lock costs on the order of 150 to 250 bytes, an estimate from
 the structures and not measured. 2,000 is half a megabyte; ten
@@ -698,55 +754,96 @@ be designed on its own.
 
 ## 7. The interface
 
-In sm3, on a table opened SIX or X; file mode on an empty
-table needs it X, which the transaction that made the table
-holds already (§5.1):
+### 7.1 sm3, on an open table
+
+On a table opened IX or stronger for mini-batch, and SIX or X
+for batch and file mode; file mode on an empty table needs it
+X, which the transaction that made the table holds already
+(§5.1):
 
 ```cpp
-enum class load_mode_t { batch, files };
+enum class load_mode_t { mini_batch, batch, files };
+struct loader_t;
 
-// Begin a load into table.
+// Begin a load into table in mode.
 int tbl_load_open(table_t* table, load_mode_t mode, loader_t*& loader);
 
-// Hand over one row. Its rowno is known at once.
+// Hand over one row. Its rowno is known at once. Checks NOT
+// NULL and makes every index's entry, as tbl_insert does; a
+// full buffer is written here, and a duplicate it finds is
+// reported here.
 int tbl_load_add(loader_t* loader, std::span<const sm2::datum_t> values,
                  std::span<const bool> isnull, uint64_t& rowno);
 
-// Batch mode: write what is buffered, so the transaction can
-// read it. Refused in file mode.
-int tbl_load_flush(loader_t* loader);
-
-// Finish: write the last chunk, or sort, check and ingest.
-// The transaction is still to commit.
+// Finish: write the last batch, or sort, check and ingest, and
+// free the loader, which is freed even on error. The
+// transaction is still to commit.
 int tbl_load_close(loader_t* loader);
 ```
 
-`include/sm.h` has the same four as `sm_load_*`, in its C
-style. The chunk size, the sort budget, the file size and the
-small-load threshold are options of the database, not
-arguments.
+`include/sm.h` has the same three as `sm_tbl_load_open`,
+`sm_tbl_load_add` and `sm_tbl_load_close`, in its C style. They
+take the table handle and no session: the handle carries its
+session, as `sm_tbl_insert`'s does. The chunk size, the sort
+budget, the file size and the small-load threshold are options
+of the database, not arguments; mini-batch's 100 rows is fixed.
 
 **Errors.** `tbl_load_add` fails at once for what it can see
 in the row: a NULL in a `NOT NULL` column, a key too long for
-a unique index, an evaluator that fails. A duplicate key
-fails the call that writes it: in batch mode, and for the
-index entries of file mode in a table with rows, a later
-`add`, a `flush` or the `close`; in file mode in an empty
-table, the `close`. The message
-names the index and the rownos. After any failure the
-transaction is to be aborted.
+a unique index, an evaluator that fails. A duplicate key fails
+the call that writes it: a later `add` or the `close`; in file
+mode in an empty table, the `close`. The message names the
+index and the rownos. After any failure the transaction is to
+be aborted.
 
+### 7.2 sm1 and sm2, underneath
+
+```cpp
+// sm1: a load into one store. cover names the lock that keeps
+// other writers out, held SIX or X; with exclusive false the
+// caller holds no such lock, and checked keys are locked one
+// by one (mini-batch). Opening marks the savepoints then set
+// lost (§3.5).
+int load_open(session_t* session, uint64_t storeid,
+              uint64_t cover_storeid, std::string_view cover_key,
+              bool exclusive, loader_t*& out);
+
+// Add one new key. check: it must not exist, so it is read,
+// and locked first when the load is not exclusive; false: the
+// caller vouches it is new. Every key is checked against its
+// batch either way.
+int load_put(loader_t* loader, std::string_view key,
+             std::string_view value, bool check);
+
+// Write the last batch and free the loader.
+int load_close(loader_t* loader);
+
+// sm2: a row under a fresh rowno, and an index entry, put into
+// a loader as rel_insert and idx_insert would write them; an
+// entry of a unique index is put with check set.
+int rel_load(rel_t* rel, sm1::loader_t* loader,
+             std::span<const datum_t> datums,
+             std::span<const bool> isnull, uint64_t& rowno);
+int idx_load(index_t* index, sm1::loader_t* loader,
+             std::span<const datum_t> key, std::span<const bool> key_isnull,
+             uint64_t rowno, std::span<const datum_t> include,
+             std::span<const bool> include_isnull);
+```
+
+The batch size, 100 rows or a chunk's bytes, is the caller's:
+sm3 closes a batch with a write when it is full. A commit or
+prepare with a loader open fails with `SM_ERR_INVALID`; an
+abort leaves the loader dead, for `load_close` to free.
 ---
 
 ## 8. What it costs
 
-Both modes:
+Every mode:
 
-- **Writers wait for the whole transaction**, not for the
-  load alone: the lock is held to commit, as every lock is.
-  PostgreSQL's `COPY` and `INSERT` shut no writer out. This
-  is the design's main price, and the reason `tbl_insert`
-  stays the default.
+- **In batch and file mode writers wait for the whole
+  transaction**, not for the load alone: the lock is held to
+  commit, as every lock is. PostgreSQL's `COPY` and `INSERT`
+  shut no writer out; mini-batch does not either.
 - **A load is a long transaction.** It holds back garbage
   collection across the database for as long as any long
   transaction does.
@@ -755,6 +852,11 @@ Both modes:
 - **A second way to write in sm1.** It shares the version
   format, the visibility rules and the commit with the
   ordinary one.
+
+Mini-batch:
+
+- **A lock for each unique key**, held to commit (§6.1).
+- **The bytes are still written several times** (§4.4).
 
 Batch mode:
 
@@ -847,12 +949,13 @@ chunk as §5.7's threshold.
 | --- | --- | --- |
 | sm1 | a loader on a store: the covering-lock check, the unique check, the SSI calls | §3 |
 | sm1 | batch mode: one `wts` and `seq` a chunk, one write batch | §4 |
+| sm1 | mini-batch: unique keys locked and read, then the batch | §4.5 |
 | sm1 | file mode: streams, files, the sort and the merge, ingestion; the load directory, emptied when the database opens; a loader's files deleted by abort | §5 |
 | sm1 | commit and prepare refused with a loader open; a rollback refused past a load, until `sm1/SAVEPOINT.md` | §3.5, §4.3, §5.6 |
 | sm1 | options: the chunk size, the sort budget, the file size, the small-load threshold | §4.1, §5 |
-| sm2 | heap and index inserts that feed the loader in place of writing | §3.2 |
+| sm2 | `rel_load` and `idx_load`, and a cache of drawn rownos in `rel_t` | §3.2, §7.2 |
 | sm3 | `tbl_load_*`, over `tbl_insert`'s own routines; file mode's two cases, told apart when the loader opens; the table's own reads and writes refused while a file loader is open | §5.1, §5.5, §7 |
-| top | `sm_load_*` in `include/sm.h` | §7 |
+| top | `sm_tbl_load_*` in `include/sm.h` | §7 |
 | `rel` | a `load` verb, in each mode | testing |
 | fork | each bulk statement choosing a path | §6 |
 
@@ -860,9 +963,9 @@ chunk as §5.7's threshold.
 
 ## 12. Order of work
 
-Batch mode comes first: it is the smaller, file mode's small
-loads need it, and it puts the lock, the checks and the
-interface in place.
+Batch mode comes first: it is the smaller, mini-batch and file
+mode's small loads need it, and it puts the lock, the checks
+and the interface in place.
 
 1. The checks of §10.
    → verify: each written up here, and the design changed
@@ -876,24 +979,29 @@ interface in place.
 3. sm2's and sm3's loader, in batch mode.
    → verify: after a load the indexes and the heap agree with
    a brute-force scan, with a partial and an expression index
-   among them; rows are readable after a flush.
+   among them; the next statement reads the rows.
 4. Two sessions, as `rel` scripts and with `qa_nowait`.
    → verify: a reader passes a load in flight and sees none
    of it; a writer is blocked until it commits; an aborted
    load leaves nothing; a prepared load still blocks writers
    after a restart, and commits.
-5. File mode for the heap: one ascending stream, into a table
+5. Mini-batch, through sm1, sm2, sm3 and `rel`.
+   → verify: a writer of other rows goes on during the load; a
+   second inserter of a unique key waits for the load's
+   transaction, then fails or goes ahead as it commits or
+   aborts; locks are held on unique keys only.
+6. File mode for the heap: one ascending stream, into a table
    with rows, the index entries in batches.
    → verify: the rows invisible to others until commit and
    gone after an abort, before the close and after it; the
    transaction's reads and writes of the table refused while
    the loader is open; files left by a crash are deleted at
    open.
-6. Sorted streams and the unique check, for an empty table.
+7. Sorted streams and the unique check, for an empty table.
    → verify: told apart from a table with rows, and from a
    new one already written to; runs and merge with a budget
    of a few rows; a duplicate inside the load is found.
-7. File mode through sm2, sm3 and `rel`, and the small load.
+8. File mode through sm2, sm3 and `rel`, and the small load.
    → verify: step 3's and step 4's checks again in file mode,
    for a load on each side of the threshold.
 

@@ -20,12 +20,12 @@ between them is not settled.
    strategy's first step is to measure how good RocksDB's size
    estimates are, which nothing has done.
 2. **Bulk load**: a path that batches within sm1's memory
-   bound. It has a design, `BULKLOAD.md`, and is not built:
-   a load holds the table's schema lock SIX in place of row
-   locks, in one transaction, and writes in one of two
-   modes: batches, or sorted files that RocksDB ingests. Its
-   first step is to check what it assumes of RocksDB; nothing
-   is to be measured first.
+   bound. It has a design, `BULKLOAD.md`, and is not built. A
+   load is one transaction in one of three modes: mini-batch,
+   100 rows a write under IX, locking only unique keys;
+   batch mode, a chunk a write under SIX; and file mode,
+   sorted files that RocksDB ingests. Its checks against
+   RocksDB are done, and batch mode is next.
 
 ---
 
