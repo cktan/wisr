@@ -806,8 +806,11 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   s->wts_hi = wts;
   // The write used the re-read; the next needs its own.
   lock_clear_latest(s, storeid, key);
-  // Record it for savepoint rollback.
-  s->undo.push_back({storeid, key.ToString(), wts, seq});
+  // Record it for savepoint rollback, if a savepoint could
+  // roll it back; with none set, nothing is kept (§6.5).
+  if (!s->savepoints.empty()) {
+    s->undo.push_back({storeid, key.ToString(), wts, seq});
+  }
   // After the put, look for readers the write invalidates; a
   // reader arriving later steps past the version instead (§7.2).
   ssi_on_write(s, storeid, key);

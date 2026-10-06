@@ -326,3 +326,95 @@ TEST_CASE("rollback undoes sm1_mkstore and sm1_rmstore made after the mark") {
   REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
 }
+
+TEST_CASE("a transaction with no savepoint keeps no undo list") {
+  // Verify a write is listed for rollback only when one could need it.
+  // 1. Write three rows with no savepoint set.
+  // 2. The undo list is empty.
+  // 3. Commit; the rows are there.
+  sp_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(set(s, "a", "1") == 0);
+  put(s, g_store, "b", "1");
+  put(s, g_store, "c", "1");
+  CHECK(s->undo.empty());
+
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(s, g_store, "a") == "1");
+  CHECK(get(s, g_store, "c") == "1");
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}
+
+TEST_CASE("the undo list lives only while a savepoint does") {
+  // Verify the list starts with the first mark and goes with the last.
+  // 1. Write before any savepoint: nothing is listed.
+  // 2. Set two savepoints with a write after each: both are listed.
+  // 3. Forget the inner one: its write is still listed, for the outer.
+  // 4. Forget the outer one: the list is dropped.
+  // 5. A later write lists nothing, and every write commits.
+  sp_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, g_store, "b", "1");
+  CHECK(s->undo.empty());
+
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, g_store, "c", "1");
+  REQUIRE(sm1::savepoint(s) == 2);
+  put(s, g_store, "d", "1");
+  CHECK(s->undo.size() == 2);
+
+  REQUIRE(sm1::forget(s, 2) == 0);
+  CHECK(s->undo.size() == 2);
+
+  REQUIRE(sm1::forget(s, 1) == 0);
+  CHECK(s->undo.empty());
+
+  put(s, g_store, "e", "1");
+  CHECK(s->undo.empty());
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(keys_of(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
+        std::vector<std::string>{"a", "b", "c", "d", "e"});
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}
+
+TEST_CASE("rollback rewinds seq to the mark with nothing listed before it") {
+  // Verify the seq rewind no longer reads the write before the mark.
+  // 1. Write two rows with no savepoint, so neither is listed.
+  // 2. Set a savepoint, write a third row, and roll back.
+  // 3. seq is back at the second write, whose rows are still seen.
+  // 4. Write again and roll back again, to the same mark.
+  // 5. Write once more and commit: only the surviving rows are there.
+  sp_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, g_store, "b", "1");
+  put(s, g_store, "c", "1");
+  const uint32_t before = s->seq_hwm;
+
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, g_store, "d", "1");
+  REQUIRE(sm1::rollback(s, 1) == 0);
+  CHECK(s->seq_hwm == before);
+  CHECK(s->seq == before);
+  CHECK(s->undo.empty());
+  CHECK(get(s, g_store, "c") == "1");
+  CHECK(get(s, g_store, "d") == "<none>");
+
+  put(s, g_store, "d", "2");
+  REQUIRE(sm1::rollback(s, 1) == 0);
+  CHECK(s->seq_hwm == before);
+
+  put(s, g_store, "e", "1");
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(keys_of(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
+        std::vector<std::string>{"a", "b", "c", "e"});
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}

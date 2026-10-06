@@ -50,9 +50,11 @@ struct sm1::session_t {
   uint64_t stmt_snapshot_ts = 0;
 
   /*
-   * The undo list (§6.5): every version written, in write
-   * order, as (storeid, userkey, wts, seq), so a rollback can delete
-   * exactly the versions written since the savepoint.
+   * The undo list (§6.5): every version written while a
+   * savepoint is set, in write order, as (storeid, userkey,
+   * wts, seq), so a rollback can delete exactly the versions
+   * written since the savepoint. Empty while no savepoint is
+   * set: no rollback could reach a write made then.
    */
   struct undo_t {
     uint64_t storeid;
@@ -68,6 +70,7 @@ struct sm1::session_t {
    */
   struct mark_t {
     size_t undo = 0;         /* undo.size() at the mark */
+    uint32_t seq_hwm = 0;    /* seq_hwm at the mark */
     size_t locks = 0;        /* locks.size() at the mark */
     size_t created = 0;      /* created.size() at the mark */
     size_t dropped = 0;      /* dropped.size() at the mark */

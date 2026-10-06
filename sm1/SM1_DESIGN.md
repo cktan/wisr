@@ -571,7 +571,8 @@ sm1::update(storeid, k, v):
      seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
      db.Put(cf(storeid), encode(k, ~wts, ~seq), encode(flags, T.xid, v))
      T.lock(k).latest = false                          # §5.4
-  6. T.undo.push(storeid, k, wts, seq)                  # for savepoint
+  6. if T.savepoints is not empty:                      # §6.5
+         T.undo.push(storeid, k, wts, seq)
   7. ssi.on_write(T, storeid, k)                        # §7
 ```
 
@@ -680,7 +681,8 @@ sets on a serializable reader.
 to RocksDB, so a transaction is bounded by disk, but
 three structures are not: `T.locks` (one entry per
 distinct key written), `T.undo` (one `(storeid, userkey,
-wts, seq)` tuple per write), and the SSI read set. All three
+wts, seq)` tuple per write made while a savepoint is set,
+§6.5), and the SSI read set. All three
 are linear in the number of keys touched, with the
 userkey stored inline, so a transaction writing tens of
 millions of keys costs gigabytes. This is the price of
@@ -912,7 +914,39 @@ Repeatable read plus SSI validation (§7).
 A savepoint is a mark into the per-transaction **undo
 list** — an in-memory vector of `(storeid, userkey, wts, seq)`
 tuples in write order, holding no payloads, so a large
-transaction costs bytes per write, not rows. Stores
+transaction costs bytes per write, not rows.
+
+**A write is listed only while a savepoint is set.** A
+rollback goes back to a mark and no further, so a write made
+with no mark on the stack can never be undone by one, and
+listing it would cost memory for nothing. A transaction that
+sets no savepoint keeps no list at all, however much it
+writes. When the last mark is forgotten the list is freed,
+for the same reason. Each mark carries the `seq_hwm` of its
+moment, since the write before it may not be in the list to
+ask.
+
+**A savepoint is expensive by design.** Setting one is a
+mark and costs nothing. Holding one costs memory in
+proportion to the work done after it: one tuple, with the
+key inline, for every write until the last savepoint is
+forgotten or the transaction ends. A transaction that sets a
+savepoint and then writes tens of millions of keys holds
+gigabytes for it, and a rollback to that mark issues one
+delete for each.
+
+This follows from two choices made elsewhere. Writes are
+eager (§5), so a version to be undone is already in RocksDB
+and must be deleted by its key. And visibility is decided by
+`xid`, one for the whole transaction, so a version left in
+place would commit with the rest. PostgreSQL pays nothing
+here because each savepoint starts a subtransaction with an
+xid of its own, and rolling back marks that xid aborted.
+
+`SAVEPOINT.md` is the design that removes the cost: a
+rollback records the range of `seq` it undid as dead, in the
+transaction's status, and deletes nothing. It is not built.
+§13 lists the cost as a known trade-off. Stores
 created by the transaction are tracked alongside it in
 `T.created`, a vector of storeids in creation order, and
 stores it dropped in `T.dropped`, likewise.
@@ -950,6 +984,7 @@ sm1::savepoint():                        # returns the new depth
         fail with SM_ERR_INVALID
     push onto T.savepoints:
         mark.undo    = T.undo.size()
+        mark.seq_hwm = T.seq_hwm
         mark.locks   = T.locks.size()
         mark.stores  = T.created.size()
         mark.drops   = T.dropped.size()
@@ -959,6 +994,7 @@ sm1::savepoint():                        # returns the new depth
 sm1::forget(depth):                      # SQL's RELEASE SAVEPOINT
     if no mark at depth: fail with SM_ERR_NOSAVEPOINT
     T.savepoints.truncate(depth - 1)   # that mark and those inside it
+    if T.savepoints is empty: T.undo.clear()       # nothing can reach it
     # writes stay; locks stay, now held for the enclosing mark
 
 sm1::rollback(depth):
@@ -972,7 +1008,7 @@ sm1::rollback(depth):
     T.created.truncate(r)
     T.dropped.truncate(mark.drops)                  # the undo restored their rows
     T.undo.truncate(m)
-    T.seq_hwm = (m > 0) ? T.undo[m-1].seq : 0       # own-write visibility
+    T.seq_hwm = mark.seq_hwm                        # own-write visibility
     T.seq     = T.seq_hwm + 1                        # live seqs stay a prefix
     close every open cursor with id > mark.scan_id   # see below
     release locks acquired after the mark
@@ -2650,7 +2686,13 @@ bullets below cover the rest of the engine.
   Row values stream to disk, but `T.locks`, `T.undo`, and the
   SSI read set are linear in the keys touched (§5.1), so a
   single transaction writing tens of millions of keys costs
-  gigabytes. Bulk loads want batching into many transactions.
+  gigabytes. `T.locks` always is kept. `T.undo` is kept
+  only while a savepoint is set, so **a savepoint costs
+  memory in proportion to the work done after it** (§6.5):
+  cheap to set, expensive to hold over a large statement.
+  `SAVEPOINT.md` designs the fix, rolled-back writes
+  marked dead by their `seq`, and it is not built. Bulk loads want a path of
+  their own (`BULKLOAD.md`).
 - **Every write takes a timestamp.** A version is keyed by a `wts`
   taken after its row lock (§4.1), so the counter is used once per
   row written and not once per transaction, and its lease (§4.2,

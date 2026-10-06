@@ -242,6 +242,7 @@ int savepoint(sm1::session_t *s) {
   // Mark the current positions; the mark goes on top.
   sm1::session_t::mark_t m;
   m.undo = s->undo.size();
+  m.seq_hwm = s->seq_hwm;
   m.created = s->created.size();
   m.dropped = s->dropped.size();
   m.dropped_seqs = s->dropped_seqs.size();
@@ -270,6 +271,11 @@ int forget(sm1::session_t *s, int depth) {
   // Drop it and every mark inside it; the writes stay, and so
   // do the locks (§6.5).
   s->savepoints.resize(static_cast<size_t>(depth) - 1);
+  // With no mark left, no rollback can reach the writes listed.
+  if (s->savepoints.empty()) {
+    // Free the list, not just empty it: it may be large.
+    std::vector<sm1::session_t::undo_t>().swap(s->undo);
+  }
   return 0;
 }
 
@@ -342,8 +348,9 @@ int rollback(sm1::session_t *s, int depth) {
   // Rewind seq with seq_hwm, so the own versions still in
   // effect are exactly seqs 1..seq_hwm (§6.5).
   s->undo.resize(m.undo);
-  // The last write still in effect.
-  s->seq_hwm = s->undo.empty() ? 0 : s->undo.back().seq;
+  // The last write still in effect: the one before the mark,
+  // which the list does not hold if no savepoint was set then.
+  s->seq_hwm = m.seq_hwm;
   // The next write reuses the undone seqs.
   s->seq = s->seq_hwm;
 
