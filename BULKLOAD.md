@@ -734,25 +734,32 @@ used:
 
 ## 10. To check, first
 
-**Check**, against RocksDB 8.9.1 and the code:
+Checked on 2026-10-06 against RocksDB 8.9.1: its source
+(`db/external_sst_file_ingestion_job.cc`,
+`db/db_impl/db_impl.cc`, `db/version_set.cc`,
+`table/sst_file_writer.cc`) and a throwaway program over the
+installed library, not kept. Each check, and what the design
+takes from it:
 
-- `SstFileWriter` writes with a custom comparator and the
-  column family's options, and its files ingest into that
-  column family;
-- one ingestion call takes many files and applies them
-  atomically, and files that overlap nothing land at the
-  bottom of the tree, as §5.5 says;
-- an ingested file is durable once the call returns, so that
-  a commit record written after it never outlives its rows;
-- what ingestion blocks, and for how long: writes to the
-  store and to the database;
-- an iterator or snapshot opened before an ingestion does
-  not see the file, and a compaction filter sees its keys as
-  it sees any other;
-- a write batch of the chunk size is taken by RocksDB without
-  a stall of its own;
-- that no caller under IS can lock or write a key the loader
-  inserts, beyond `tbl_lock` on a row that exists.
+| Check | Found | So the loader |
+| --- | --- | --- |
+| `SstFileWriter` with a custom comparator, its files ingested into that column family | **Yes**: a file written with the column family's own options, a non-bytewise comparator among them, ingests and reads back in order | builds the writer's options from the store's own, `GetOptions(cf)` |
+| A file written with the wrong comparator is refused | **No**: RocksDB does not check the comparator's name, and ingests such a file, whose keys are then out of order | must never write with any options but the store's; nothing below it would notice |
+| One call, many files, applied atomically | **Yes**: one ingestion job per column family, its files in one manifest edit; `IngestExternalFiles` groups several column families | ingests a load's files in one call |
+| Files that overlap nothing land at the bottom | **Yes**, a snapshot open or not: three files at the bottom level after ingesting two above existing data | §5.5 holds |
+| Files that overlap each other | all go to level 0, with a new sequence number | must never put two overlapping files in one call: the heap's files, and each index's merged files, are disjoint |
+| `fail_if_not_bottommost_level` | refuses with `TryAgain` a file that cannot go to the bottom | may set it for an empty table, to turn a placement surprise into an error |
+| Durable once the call returns | **Yes**: a moved file is linked, reopened and synced; a copied one is synced; the data directory is synced; the manifest edit is written and synced before the call returns | needs no sync of its own before the commit record |
+| What ingestion blocks | linking and syncing the files come first and block nothing. Then every write to the **whole database** waits, while RocksDB checks for a memtable to flush, flushes it if one overlaps, picks levels, and writes and syncs the manifest | holds the database's writes for a manifest sync and, when it must, a flush; in an empty table nothing overlaps, so never a flush |
+| An iterator or snapshot opened before does not see the files | **Yes**: an iterator opened before saw the old rows only, and a read at an earlier snapshot did not find an ingested key | §5.5 holds; sm1's own visibility would hide the uncommitted rows anyway |
+| The compaction filter sees ingested keys | **Yes**: a forced compaction showed the filter every key, ingested ones included | stamping and garbage collection work on loaded rows as on any (§5.6) |
+| A write batch of a chunk | sm1's stores keep RocksDB's 64 MB memtable, and a 4 MB batch is far below it | §4.1 holds; such a batch stalls only as any write does |
+| No caller under IS locks or writes a key the loader inserts | **Yes**, from sm3's code: a write needs IX; under IS only `tbl_lock` shared, on a row that exists, and never on an index key | §3.1 holds |
+
+Two findings change the design: the comparator must come from
+the store, since a wrong one would be taken silently; and the
+files of one call must be disjoint, or all of them land in
+level 0.
 
 Nothing is measured first (§0). The defaults of the knobs are
 §4.1's chunk, §5.2's file size, §5.3's sort budget, and one
