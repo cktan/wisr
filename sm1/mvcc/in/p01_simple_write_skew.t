@@ -38,28 +38,19 @@ step s2 rwx2 update-where t t~ apple pear
 # c2: COMMIT;
 step s2 c2 commit
 
-# Where sm1 differs from PostgreSQL, an "sm1" line under the
-# permutation's expect line gives sm1's outcome. Every such
-# difference here is sm1 failing more transactions, never fewer:
-# its SSI applies Cahill's original rule, failing any transaction
-# with both an incoming and an outgoing rw-edge, where PostgreSQL
-# adds the refinements of Ports and Grittner (commit order, and
-# read-only transactions), and fails only a transaction in a real
-# cycle (SM1_DESIGN.md §7.3).
+# Every permutation ends as PostgreSQL's does: sm1's SSI applies
+# the refinements of Ports and Grittner (commit order, and
+# read-only transactions) as PostgreSQL does (SM1_DESIGN.md §7.3).
 
 permutation rwx1 c1 rwx2 c2
 expect s1=commit s2=commit
 permutation rwx1 rwx2 c1 c2
 expect s1=commit s2=serialize
-sm1 s1=serialize s2=serialize
 permutation rwx1 rwx2 c2 c1
 expect s1=serialize s2=commit
-sm1 s1=serialize s2=serialize
 permutation rwx2 rwx1 c1 c2
 expect s1=commit s2=serialize
-sm1 s1=serialize s2=serialize
 permutation rwx2 rwx1 c2 c1
 expect s1=serialize s2=commit
-sm1 s1=serialize s2=serialize
 permutation rwx2 c2 rwx1 c1
 expect s1=commit s2=commit

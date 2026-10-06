@@ -28,14 +28,9 @@
 # rxy2: SELECT SUM(balance) FROM accounts;
 # c2: COMMIT;
 
-# Where sm1 differs from PostgreSQL, an "sm1" line under the
-# permutation's expect line gives sm1's outcome. Every such
-# difference here is sm1 failing more transactions, never fewer:
-# its SSI applies Cahill's original rule, failing any transaction
-# with both an incoming and an outgoing rw-edge, where PostgreSQL
-# adds the refinements of Ports and Grittner (commit order, and
-# read-only transactions), and fails only a transaction in a real
-# cycle (SM1_DESIGN.md §7.3).
+# Every permutation ends as PostgreSQL's does: sm1's SSI applies
+# the refinements of Ports and Grittner (commit order, and
+# read-only transactions) as PostgreSQL does (SM1_DESIGN.md §7.3).
 
 == permutation 1: wx1 rxy1 c1 wy2 rxy2 c2 ==
 wx1 s1 -> 600 | ok
@@ -58,17 +53,17 @@ wx1 s1 -> 600 | ok
 rxy1 s1 -> {a:checking, a:savings}
 wy2 s2 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}
-c1 s1 -> serialization
+c1 s1 -> ok
 c2 s2 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+outcome s1=commit s2=serialize -> as PostgreSQL
 == permutation 4: wx1 rxy1 wy2 rxy2 c2 c1 ==
 wx1 s1 -> 600 | ok
 rxy1 s1 -> {a:checking, a:savings}
 wy2 s2 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+outcome s1=serialize s2=commit -> as PostgreSQL
 == permutation 5: wx1 wy2 rxy1 c1 rxy2 c2 ==
 wx1 s1 -> 600 | ok
 wy2 s2 -> 600 | ok
@@ -82,33 +77,33 @@ wx1 s1 -> 600 | ok
 wy2 s2 -> 600 | ok
 rxy1 s1 -> {a:checking, a:savings}
 rxy2 s2 -> {a:checking, a:savings}
-c1 s1 -> serialization
+c1 s1 -> ok
 c2 s2 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+outcome s1=commit s2=serialize -> as PostgreSQL
 == permutation 7: wx1 wy2 rxy1 rxy2 c2 c1 ==
 wx1 s1 -> 600 | ok
 wy2 s2 -> 600 | ok
 rxy1 s1 -> {a:checking, a:savings}
 rxy2 s2 -> {a:checking, a:savings}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+outcome s1=serialize s2=commit -> as PostgreSQL
 == permutation 8: wx1 wy2 rxy2 rxy1 c1 c2 ==
 wx1 s1 -> 600 | ok
 wy2 s2 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}
 rxy1 s1 -> {a:checking, a:savings}
-c1 s1 -> serialization
+c1 s1 -> ok
 c2 s2 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+outcome s1=commit s2=serialize -> as PostgreSQL
 == permutation 9: wx1 wy2 rxy2 rxy1 c2 c1 ==
 wx1 s1 -> 600 | ok
 wy2 s2 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}
 rxy1 s1 -> {a:checking, a:savings}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+outcome s1=serialize s2=commit -> as PostgreSQL
 == permutation 10: wx1 wy2 rxy2 c2 rxy1 c1 ==
 wx1 s1 -> 600 | ok
 wy2 s2 -> 600 | ok
@@ -130,33 +125,33 @@ wy2 s2 -> 600 | ok
 wx1 s1 -> 600 | ok
 rxy1 s1 -> {a:checking, a:savings}
 rxy2 s2 -> {a:checking, a:savings}
-c1 s1 -> serialization
+c1 s1 -> ok
 c2 s2 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+outcome s1=commit s2=serialize -> as PostgreSQL
 == permutation 13: wy2 wx1 rxy1 rxy2 c2 c1 ==
 wy2 s2 -> 600 | ok
 wx1 s1 -> 600 | ok
 rxy1 s1 -> {a:checking, a:savings}
 rxy2 s2 -> {a:checking, a:savings}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+outcome s1=serialize s2=commit -> as PostgreSQL
 == permutation 14: wy2 wx1 rxy2 rxy1 c1 c2 ==
 wy2 s2 -> 600 | ok
 wx1 s1 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}
 rxy1 s1 -> {a:checking, a:savings}
-c1 s1 -> serialization
+c1 s1 -> ok
 c2 s2 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+outcome s1=commit s2=serialize -> as PostgreSQL
 == permutation 15: wy2 wx1 rxy2 rxy1 c2 c1 ==
 wy2 s2 -> 600 | ok
 wx1 s1 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}
 rxy1 s1 -> {a:checking, a:savings}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+outcome s1=serialize s2=commit -> as PostgreSQL
 == permutation 16: wy2 wx1 rxy2 c2 rxy1 c1 ==
 wy2 s2 -> 600 | ok
 wx1 s1 -> 600 | ok
@@ -170,17 +165,17 @@ wy2 s2 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}
 wx1 s1 -> 600 | ok
 rxy1 s1 -> {a:checking, a:savings}
-c1 s1 -> serialization
+c1 s1 -> ok
 c2 s2 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+outcome s1=commit s2=serialize -> as PostgreSQL
 == permutation 18: wy2 rxy2 wx1 rxy1 c2 c1 ==
 wy2 s2 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}
 wx1 s1 -> 600 | ok
 rxy1 s1 -> {a:checking, a:savings}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+outcome s1=serialize s2=commit -> as PostgreSQL
 == permutation 19: wy2 rxy2 wx1 c2 rxy1 c1 ==
 wy2 s2 -> 600 | ok
 rxy2 s2 -> {a:checking, a:savings}

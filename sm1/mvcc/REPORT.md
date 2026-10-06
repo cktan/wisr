@@ -49,12 +49,12 @@ are recorded so the next reader does not re-open them.
 
 1. **Why `at-most-one-committed`, not `exactly-one`, under
    S/S.** `c02`–`c05`, `c21`, `c22` and `c24` assert write
-   skew that way. `add_edge()` in `src/ssi.cc` keeps two
-   flags per transaction, not edge targets, so in a symmetric
-   cycle both sides become pivots and `ssi_precommit()` fails
-   whichever reaches commit with both flags set — one or
-   both, depending on the interleaving. `SM1_DESIGN.md` §7.3 says
-   the same. At most one is the sound assertion.
+   skew that way. `ssi_precommit()` in `src/ssi.cc` now
+   fails only the second to commit of a plain write skew
+   (`SM1_DESIGN.md` §7.3), but serializability asks only that
+   one not commit; a more conservative rule would be as
+   sound. At most one is the assertion of the property, not
+   of the rule.
 
 2. **`c17` leaves T3 open on purpose.** T3 reads R1 to make
    an edge into T2 and never ends. `~run_t()` in

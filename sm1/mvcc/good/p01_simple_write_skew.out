@@ -29,14 +29,9 @@
 # rwx2: UPDATE test SET t = 'pear' WHERE t = 'apple'
 # c2: COMMIT;
 
-# Where sm1 differs from PostgreSQL, an "sm1" line under the
-# permutation's expect line gives sm1's outcome. Every such
-# difference here is sm1 failing more transactions, never fewer:
-# its SSI applies Cahill's original rule, failing any transaction
-# with both an incoming and an outgoing rw-edge, where PostgreSQL
-# adds the refinements of Ports and Grittner (commit order, and
-# read-only transactions), and fails only a transaction in a real
-# cycle (SM1_DESIGN.md §7.3).
+# Every permutation ends as PostgreSQL's does: sm1's SSI applies
+# the refinements of Ports and Grittner (commit order, and
+# read-only transactions) as PostgreSQL does (SM1_DESIGN.md §7.3).
 
 == permutation 1: rwx1 c1 rwx2 c2 ==
 rwx1 s1 -> {t07}
@@ -47,27 +42,27 @@ outcome s1=commit s2=commit -> as PostgreSQL
 == permutation 2: rwx1 rwx2 c1 c2 ==
 rwx1 s1 -> {t07}
 rwx2 s2 -> {t05}
-c1 s1 -> serialization
+c1 s1 -> ok
 c2 s2 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+outcome s1=commit s2=serialize -> as PostgreSQL
 == permutation 3: rwx1 rwx2 c2 c1 ==
 rwx1 s1 -> {t07}
 rwx2 s2 -> {t05}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+outcome s1=serialize s2=commit -> as PostgreSQL
 == permutation 4: rwx2 rwx1 c1 c2 ==
 rwx2 s2 -> {t05}
 rwx1 s1 -> {t07}
-c1 s1 -> serialization
+c1 s1 -> ok
 c2 s2 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+outcome s1=commit s2=serialize -> as PostgreSQL
 == permutation 5: rwx2 rwx1 c2 c1 ==
 rwx2 s2 -> {t05}
 rwx1 s1 -> {t07}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> serialization
-outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+outcome s1=serialize s2=commit -> as PostgreSQL
 == permutation 6: rwx2 c2 rwx1 c1 ==
 rwx2 s2 -> {t05}
 c2 s2 -> ok

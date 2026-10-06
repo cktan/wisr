@@ -1,25 +1,29 @@
 /*
  * ssi.cc -- serializable snapshot isolation (SM1_DESIGN.md §7),
  * after Cahill, Röhm and Fekete, "Serializable Isolation for
- * Snapshot Databases" (SIGMOD 2008).
+ * Snapshot Databases" (SIGMOD 2008), with the refinements of
+ * Ports and Grittner, "Serializable Snapshot Isolation in
+ * PostgreSQL" (VLDB 2012).
  *
  * Only SERIALIZABLE transactions take part, as in PostgreSQL:
  * they leave SIREAD entries on what they read, and their writes
- * and reads turn those into rw-antidependency edges, recorded as
- * two flags per transaction. The rules are the paper's:
+ * and reads turn those into rw-antidependency edges, kept on both
+ * ends. A dangerous structure is T1 -> T2 -> T3, T1 and T3 maybe
+ * the same; it fails a transaction only if T3 committed first,
+ * before T2 and before T1, and, where T1 committed having written
+ * nothing, only if T3 committed before T1's snapshot:
  *
- *   an edge R -> W sets R.out_conflict and W.in_conflict, but if
- *   the other end has already committed as a pivot (a committed
- *   W with out_conflict, or a committed R with in_conflict), the
- *   transaction making the edge is doomed instead;
+ *   at commit, T2 fails if doomed, or if it is the middle of a
+ *   dangerous structure;
  *
- *   at commit, T fails if doomed or if in_conflict && out_conflict.
+ *   an edge T1 -> T2 onto a committed T2 dooms T1 if it makes a
+ *   dangerous structure, T1 being the one still running.
  *
  * A doomed transaction keeps running and fails with
  * SM_ERR_SERIALIZATION at its commit (§7.3), so reads and writes
- * never fail for SSI. The rules are conservative: a pivot that
- * is not part of a real cycle, and both ends of a write skew,
- * can fail. A prepared transaction's node is marked committed at
+ * never fail for SSI. The rules are still conservative: a
+ * structure fails a transaction whether or not it closes a
+ * cycle. A prepared transaction's node is marked committed at
  * prepare, with no end until its commit. A transaction restored
  * in doubt after a restart has no node at all: a reader stepping
  * past its versions is doomed (§8.4). Not yet: the read-only
@@ -79,25 +83,87 @@ bool concurrent(const ssi_node_t *r, const ssi_node_t *w) {
 }
 
 /*
+ * When n committed, as T3 of a structure. A prepared node's
+ * commit is still to come; it counts as having come first, the
+ * reading that can only fail more.
+ */
+uint64_t commit_early(const ssi_node_t *n) {
+  return n->end_ts == UINT64_MAX ? 0 : n->end_ts;
+}
+
+/*
+ * When n commits, as T1 or T2 of a structure. A node still
+ * running, or prepared, counts as committing last, which again
+ * can only fail more.
+ */
+uint64_t commit_late(const ssi_node_t *n) {
+  return n->committed ? n->end_ts : UINT64_MAX;
+}
+
+/*
+ * Whether t1 -> t2 -> t3 is dangerous, for some t2 that commits
+ * after t3 (§7.3): t3 committed first, before t1 too, and, if t1
+ * committed having written nothing, before t1's snapshot. Where
+ * t1 is t3, the two-edge cycle, t3's commit is enough.
+ */
+bool dangerous(const ssi_node_t *t1, const ssi_node_t *t3) {
+  // T3 has not committed: nothing to fail yet.
+  if (!t3->committed) {
+    return false;
+  }
+  // The cycle of two: T1 is T3, and it committed.
+  if (t1 == t3) {
+    return true;
+  }
+  uint64_t e3 = commit_early(t3);
+  // T1 committed before T3: no anomaly runs through here.
+  if (commit_late(t1) < e3) {
+    return false;
+  }
+  // A read-only T1 that did not see T3: T1, T2, T3 is an order.
+  if (t1->read_only && e3 > t1->snapshot_ts) {
+    return false;
+  }
+  return true;
+}
+
+/* Add n to v unless it is there; false if it was. */
+bool add_once(std::vector<ssi_node_t *> &v, ssi_node_t *n) {
+  if (std::find(v.begin(), v.end(), n) != v.end()) {
+    return false;
+  }
+  v.push_back(n);
+  return true;
+}
+
+/*
  * Record the edge reader -> writer made by `self`, which is one
- * of the two (§7.2). If the other end has already committed as
- * a pivot, doom self instead.
+ * of the two (§7.2), on both ends. If the writer has committed,
+ * it is the middle of any structure the edge makes, and self,
+ * the reader, still running, is doomed if one is dangerous.
  */
 void add_edge(ssi_node_t *reader, ssi_node_t *writer, ssi_node_t *self) {
-  // Find the end of the edge that is not self.
-  ssi_node_t *other = self == reader ? writer : reader;
-  // Is that end a pivot on this edge's side?
-  bool other_is_pivot =
-      other == writer ? writer->out_conflict : reader->in_conflict;
-  // An edge onto a committed pivot dooms self instead.
-  if (other->committed && other_is_pivot) {
-    // Doom self: it fails at its commit.
-    self->doomed = true;
-    return;
+  // Record the edge on both ends, once.
+  if (add_once(reader->out_edges, writer)) {
+    writer->in_edges.push_back(reader);
   }
-  // Record the edge in both ends' flags.
-  reader->out_conflict = true;
-  writer->in_conflict = true;
+  // A committed writer is a T2 that will not be checked again.
+  if (self == reader && writer->committed) {
+    for (ssi_node_t *t3 : writer->out_edges) {
+      // T3 must have committed before T2 did.
+      if (t3->committed && commit_early(t3) < commit_late(writer) &&
+          dangerous(reader, t3)) {
+        // Doom self: it fails at its commit.
+        self->doomed = true;
+        return;
+      }
+    }
+  }
+}
+
+/* Remove n from v. */
+void remove_from(std::vector<ssi_node_t *> &v, ssi_node_t *n) {
+  v.erase(std::remove(v.begin(), v.end(), n), v.end());
 }
 
 /* Unlink node from every index and free it, with ssi_mu held. */
@@ -129,6 +195,13 @@ void free_node(db_t *db, ssi_node_t *n) {
     if (it != db->ssi_by_xid.end() && it->second == n) {
       db->ssi_by_xid.erase(it);
     }
+  }
+  // Drop its edges from the nodes at their other ends.
+  for (ssi_node_t *m : n->in_edges) {
+    remove_from(m->out_edges, n);
+  }
+  for (ssi_node_t *m : n->out_edges) {
+    remove_from(m->in_edges, n);
   }
   // Unregister the node.
   db->ssi_nodes.erase(n);
@@ -353,14 +426,29 @@ int ssi_precommit(sm1::session_t *s, uint64_t end_ts) {
   // Hold ssi_mu while checking and marking the node.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
   ssi_node_t *n = s->ssi;
-  // Fail a doomed transaction or a pivot.
-  if (n->doomed || (n->in_conflict && n->out_conflict)) {
+  // Fail a doomed transaction.
+  if (n->doomed) {
     return -1;
+  }
+  // Fail the middle of a dangerous structure: a T3 it read past
+  // has committed, before it, and a T1 that read past it makes
+  // the structure dangerous.
+  for (ssi_node_t *t3 : n->out_edges) {
+    if (!t3->committed) {
+      continue;
+    }
+    for (ssi_node_t *t1 : n->in_edges) {
+      if (dangerous(t1, t3)) {
+        return -1;
+      }
+    }
   }
   // Mark the node committed; the rules can no longer fail it.
   n->committed = true;
   // Record when it ended.
   n->end_ts = end_ts;
+  // Having written nothing, and not prepared: read-only.
+  n->read_only = s->xid == 0 && end_ts != UINT64_MAX;
   return 0;
 }
 

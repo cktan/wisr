@@ -99,18 +99,18 @@ aborts.
     adds reader → writer.
   - A **reader** skips a version written by a concurrent
     transaction and adds reader → writer (`on_skip`, §10.1).
-- **Flags.** Each node has `in_conflict` and `out_conflict`,
-  and a `doomed` bit.
+- **Edge lists.** Each node keeps `in_edges` and `out_edges`,
+  the transactions at the other ends, and a `doomed` bit. An
+  aborted node takes its edges with it.
 
-wisr keeps only the flags, following Cahill et al.'s original
-rules (`SM1_DESIGN.md` §7.3): an edge that would make an
-already-committed transaction a pivot dooms the running
-transaction completing it, and a transaction with both flags,
-or doomed, fails at commit. PostgreSQL also keeps edge targets,
-so it can check which end of a dangerous structure commits
-first and abort fewer transactions. That refinement is a
-possible later step; the flags alone are sound, just more
-conservative.
+With the edges, wisr applies Ports and Grittner's refinements,
+as PostgreSQL does (`SM1_DESIGN.md` §7.3): a structure
+`T_in ──rw──▶ T_pivot ──rw──▶ T_out` fails a transaction only
+if `T_out` committed first, before the pivot and before
+`T_in`; and, if `T_in` committed having written nothing, only
+if `T_out` committed before `T_in`'s snapshot. The pivot fails
+at its commit; an edge onto a pivot that has already committed
+dooms the running `T_in` instead.
 
 In the on-call doctors example above, the graph is a two-node
 cycle:
@@ -120,14 +120,14 @@ T1 read bob,   T2 wrote bob    →  T1 ──rw──▶ T2
 T2 read alice, T1 wrote alice  →  T2 ──rw──▶ T1
 ```
 
-Each transaction has both an incoming and an outgoing edge, so
-each is a pivot, and with flags alone both fail at commit with
-`SM_ERR_SERIALIZATION`. PostgreSQL's refinement would fail only
-the one committing second.
+Each transaction is a pivot, with the other as both `T_in` and
+`T_out`. The first to commit finds no `T_out` committed yet and
+commits; the second finds it and fails with
+`SM_ERR_SERIALIZATION`.
 
 The graph lives only in memory and isn't rebuilt at restart.
 That is why §8.4 has its `restored` rule: a prepared transaction
-brought back after a crash has lost its edges and flags, so the
+brought back after a crash has lost its edges, so the
 engine is conservative about it and dooms any serializable reader
 that skips one of its versions.
 

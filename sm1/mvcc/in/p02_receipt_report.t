@@ -52,13 +52,15 @@ step s3 ry3 scan r: r:~
 step s3 c3 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the
-# permutation's expect line gives sm1's outcome. Every such
-# difference here is sm1 failing more transactions, never fewer:
-# its SSI applies Cahill's original rule, failing any transaction
-# with both an incoming and an outgoing rw-edge, where PostgreSQL
-# adds the refinements of Ports and Grittner (commit order, and
-# read-only transactions), and fails only a transaction in a real
-# cycle (SM1_DESIGN.md §7.3).
+# permutation's expect line gives sm1's outcome. sm1's SSI
+# applies the refinements of Ports and Grittner (commit order,
+# and read-only transactions) as PostgreSQL does
+# (SM1_DESIGN.md §7.3), so the differences here are these:
+# sm1 fails one more transaction. PostgreSQL knows s3 is READ
+# ONLY from its BEGIN; sm1 has no such declaration and learns it
+# only when s3 commits having written nothing (§7.4), too late
+# for these permutations, where s1's commit, or an edge from s3
+# onto a committed s1, comes before s3's.
 
 permutation rxwy1 c1 wx2 c2 rx3 ry3 c3
 expect s1=commit s2=commit s3=commit
@@ -98,13 +100,10 @@ permutation rxwy1 wx2 c2 rx3 ry3 c3 c1
 expect s1=serialize s2=commit s3=commit
 permutation rxwy1 wx2 rx3 c1 c2 ry3 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rxwy1 wx2 rx3 c1 ry3 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rxwy1 wx2 rx3 c1 ry3 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rxwy1 wx2 rx3 c2 c1 ry3 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=commit s2=commit s3=serialize
@@ -113,25 +112,19 @@ expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 wx2 rx3 c2 ry3 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 wx2 rx3 ry3 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 wx2 rx3 ry3 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 wx2 rx3 ry3 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 wx2 rx3 ry3 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 wx2 rx3 ry3 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 wx2 rx3 ry3 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 c1 wx2 c2 ry3 c3
 expect s1=commit s2=commit s3=commit
 permutation rxwy1 rx3 c1 wx2 ry3 c2 c3
@@ -146,13 +139,10 @@ permutation rxwy1 rx3 c1 ry3 c3 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rxwy1 rx3 wx2 c1 c2 ry3 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rxwy1 rx3 wx2 c1 ry3 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rxwy1 rx3 wx2 c1 ry3 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rxwy1 rx3 wx2 c2 c1 ry3 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=commit s2=commit s3=serialize
@@ -161,25 +151,19 @@ expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 wx2 c2 ry3 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 wx2 ry3 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 wx2 ry3 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 wx2 ry3 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 wx2 ry3 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 wx2 ry3 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 wx2 ry3 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 ry3 c1 wx2 c2 c3
 expect s1=commit s2=commit s3=commit
 permutation rxwy1 rx3 ry3 c1 wx2 c3 c2
@@ -188,30 +172,23 @@ permutation rxwy1 rx3 ry3 c1 c3 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rxwy1 rx3 ry3 wx2 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 ry3 wx2 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 ry3 wx2 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 ry3 wx2 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 ry3 wx2 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 ry3 wx2 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 ry3 c3 c1 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rxwy1 rx3 ry3 c3 wx2 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rxwy1 rx3 ry3 c3 wx2 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 c1 c2 rx3 ry3 c3
 expect s1=commit s2=commit s3=commit
 permutation wx2 rxwy1 c1 rx3 c2 ry3 c3
@@ -230,13 +207,10 @@ permutation wx2 rxwy1 c2 rx3 ry3 c3 c1
 expect s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 rx3 c1 c2 ry3 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation wx2 rxwy1 rx3 c1 ry3 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation wx2 rxwy1 rx3 c1 ry3 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation wx2 rxwy1 rx3 c2 c1 ry3 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=commit s2=commit s3=serialize
@@ -245,25 +219,19 @@ expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 rx3 c2 ry3 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 rx3 ry3 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 rx3 ry3 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 rx3 ry3 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 rx3 ry3 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 rx3 ry3 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rxwy1 rx3 ry3 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 c2 rxwy1 c1 rx3 ry3 c3
 expect s1=commit s2=commit s3=commit
 permutation wx2 c2 rxwy1 rx3 c1 ry3 c3
@@ -286,13 +254,10 @@ permutation wx2 c2 rx3 ry3 c3 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation wx2 rx3 rxwy1 c1 c2 ry3 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation wx2 rx3 rxwy1 c1 ry3 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation wx2 rx3 rxwy1 c1 ry3 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation wx2 rx3 rxwy1 c2 c1 ry3 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=commit s2=commit s3=serialize
@@ -301,25 +266,19 @@ expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 rxwy1 c2 ry3 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 rxwy1 ry3 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 rxwy1 ry3 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 rxwy1 ry3 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 rxwy1 ry3 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 rxwy1 ry3 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 rxwy1 ry3 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 c2 rxwy1 c1 ry3 c3
 expect s1=commit s2=commit s3=commit
 permutation wx2 rx3 c2 rxwy1 ry3 c1 c3
@@ -334,22 +293,17 @@ permutation wx2 rx3 c2 ry3 c3 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation wx2 rx3 ry3 rxwy1 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 ry3 rxwy1 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 ry3 rxwy1 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 ry3 rxwy1 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 ry3 rxwy1 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 ry3 rxwy1 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 ry3 c2 rxwy1 c1 c3
 expect s1=commit s2=commit s3=commit
 permutation wx2 rx3 ry3 c2 rxwy1 c3 c1
@@ -358,10 +312,8 @@ permutation wx2 rx3 ry3 c2 c3 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation wx2 rx3 ry3 c3 rxwy1 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 ry3 c3 rxwy1 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation wx2 rx3 ry3 c3 c2 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation rx3 rxwy1 c1 wx2 c2 ry3 c3
@@ -378,13 +330,10 @@ permutation rx3 rxwy1 c1 ry3 c3 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rx3 rxwy1 wx2 c1 c2 ry3 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rx3 rxwy1 wx2 c1 ry3 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rx3 rxwy1 wx2 c1 ry3 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rx3 rxwy1 wx2 c2 c1 ry3 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=commit s2=commit s3=serialize
@@ -393,25 +342,19 @@ expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 wx2 c2 ry3 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 wx2 ry3 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 wx2 ry3 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 wx2 ry3 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 wx2 ry3 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 wx2 ry3 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 wx2 ry3 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 ry3 c1 wx2 c2 c3
 expect s1=commit s2=commit s3=commit
 permutation rx3 rxwy1 ry3 c1 wx2 c3 c2
@@ -420,39 +363,29 @@ permutation rx3 rxwy1 ry3 c1 c3 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rx3 rxwy1 ry3 wx2 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 ry3 wx2 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 ry3 wx2 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 ry3 wx2 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 ry3 wx2 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 ry3 wx2 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 ry3 c3 c1 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rx3 rxwy1 ry3 c3 wx2 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 rxwy1 ry3 c3 wx2 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 rxwy1 c1 c2 ry3 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rx3 wx2 rxwy1 c1 ry3 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rx3 wx2 rxwy1 c1 ry3 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=commit s2=commit s3=serialize
 permutation rx3 wx2 rxwy1 c2 c1 ry3 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=commit s2=commit s3=serialize
@@ -461,25 +394,19 @@ expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 rxwy1 c2 ry3 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 rxwy1 ry3 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 rxwy1 ry3 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 rxwy1 ry3 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 rxwy1 ry3 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 rxwy1 ry3 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 rxwy1 ry3 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 c2 rxwy1 c1 ry3 c3
 expect s1=commit s2=commit s3=commit
 permutation rx3 wx2 c2 rxwy1 ry3 c1 c3
@@ -494,22 +421,17 @@ permutation rx3 wx2 c2 ry3 c3 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation rx3 wx2 ry3 rxwy1 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 ry3 rxwy1 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 ry3 rxwy1 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 ry3 rxwy1 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 ry3 rxwy1 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 ry3 rxwy1 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 ry3 c2 rxwy1 c1 c3
 expect s1=commit s2=commit s3=commit
 permutation rx3 wx2 ry3 c2 rxwy1 c3 c1
@@ -518,10 +440,8 @@ permutation rx3 wx2 ry3 c2 c3 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation rx3 wx2 ry3 c3 rxwy1 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 ry3 c3 rxwy1 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 wx2 ry3 c3 c2 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation rx3 ry3 rxwy1 c1 wx2 c2 c3
@@ -532,48 +452,36 @@ permutation rx3 ry3 rxwy1 c1 c3 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rx3 ry3 rxwy1 wx2 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 rxwy1 wx2 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 rxwy1 wx2 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 rxwy1 wx2 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 rxwy1 wx2 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 rxwy1 wx2 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 rxwy1 c3 c1 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rx3 ry3 rxwy1 c3 wx2 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 rxwy1 c3 wx2 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 rxwy1 c1 c2 c3
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 rxwy1 c1 c3 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 rxwy1 c2 c1 c3
 expect s1=commit s2=commit s3=commit
 sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 rxwy1 c2 c3 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 rxwy1 c3 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 rxwy1 c3 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 c2 rxwy1 c1 c3
 expect s1=commit s2=commit s3=commit
 permutation rx3 ry3 wx2 c2 rxwy1 c3 c1
@@ -582,25 +490,19 @@ permutation rx3 ry3 wx2 c2 c3 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation rx3 ry3 wx2 c3 rxwy1 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 c3 rxwy1 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 wx2 c3 c2 rxwy1 c1
 expect s1=commit s2=commit s3=commit
 permutation rx3 ry3 c3 rxwy1 c1 wx2 c2
 expect s1=commit s2=commit s3=commit
 permutation rx3 ry3 c3 rxwy1 wx2 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 c3 rxwy1 wx2 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 c3 wx2 rxwy1 c1 c2
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 c3 wx2 rxwy1 c2 c1
 expect s1=commit s2=commit s3=commit
-sm1 s1=serialize s2=commit s3=commit
 permutation rx3 ry3 c3 wx2 c2 rxwy1 c1
 expect s1=commit s2=commit s3=commit

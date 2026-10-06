@@ -63,11 +63,14 @@ struct ssi_range_t;
  */
 struct ssi_node_t {
   uint64_t snapshot_ts = 0;
-  uint64_t xid = 0;                /* 0 while it has written nothing */
-  bool committed = false;          /* passed its commit check */
-  uint64_t end_ts = 0;             /* once committed: when it ended */
-  bool in_conflict = false;        /* some rw-edge points into it */
-  bool out_conflict = false;       /* it has an rw-edge out */
+  uint64_t xid = 0;       /* 0 while it has written nothing */
+  bool committed = false; /* passed its commit check */
+  uint64_t end_ts = 0;    /* once committed: when it ended */
+  bool read_only = false; /* committed having written nothing */
+  /* Its rw-edges, by the node at the other end (§7.2): readers
+     of what it wrote, and writers of what it read. */
+  std::vector<ssi_node_t *> in_edges;
+  std::vector<ssi_node_t *> out_edges;
   bool doomed = false;             /* must fail at its commit */
   std::vector<std::string> points; /* its SIREAD point keys */
   std::vector<std::pair<uint64_t, std::list<ssi_range_t>::iterator>>

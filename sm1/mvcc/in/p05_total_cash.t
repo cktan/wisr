@@ -38,14 +38,9 @@ step s2 rxy2 scan a: a:~
 # c2: COMMIT;
 step s2 c2 commit
 
-# Where sm1 differs from PostgreSQL, an "sm1" line under the
-# permutation's expect line gives sm1's outcome. Every such
-# difference here is sm1 failing more transactions, never fewer:
-# its SSI applies Cahill's original rule, failing any transaction
-# with both an incoming and an outgoing rw-edge, where PostgreSQL
-# adds the refinements of Ports and Grittner (commit order, and
-# read-only transactions), and fails only a transaction in a real
-# cycle (SM1_DESIGN.md §7.3).
+# Every permutation ends as PostgreSQL's does: sm1's SSI applies
+# the refinements of Ports and Grittner (commit order, and
+# read-only transactions) as PostgreSQL does (SM1_DESIGN.md §7.3).
 
 permutation wx1 rxy1 c1 wy2 rxy2 c2
 expect s1=commit s2=commit
@@ -53,48 +48,36 @@ permutation wx1 rxy1 wy2 c1 rxy2 c2
 expect s1=commit s2=serialize
 permutation wx1 rxy1 wy2 rxy2 c1 c2
 expect s1=commit s2=serialize
-sm1 s1=serialize s2=serialize
 permutation wx1 rxy1 wy2 rxy2 c2 c1
 expect s1=serialize s2=commit
-sm1 s1=serialize s2=serialize
 permutation wx1 wy2 rxy1 c1 rxy2 c2
 expect s1=commit s2=serialize
 permutation wx1 wy2 rxy1 rxy2 c1 c2
 expect s1=commit s2=serialize
-sm1 s1=serialize s2=serialize
 permutation wx1 wy2 rxy1 rxy2 c2 c1
 expect s1=serialize s2=commit
-sm1 s1=serialize s2=serialize
 permutation wx1 wy2 rxy2 rxy1 c1 c2
 expect s1=commit s2=serialize
-sm1 s1=serialize s2=serialize
 permutation wx1 wy2 rxy2 rxy1 c2 c1
 expect s1=serialize s2=commit
-sm1 s1=serialize s2=serialize
 permutation wx1 wy2 rxy2 c2 rxy1 c1
 expect s1=serialize s2=commit
 permutation wy2 wx1 rxy1 c1 rxy2 c2
 expect s1=commit s2=serialize
 permutation wy2 wx1 rxy1 rxy2 c1 c2
 expect s1=commit s2=serialize
-sm1 s1=serialize s2=serialize
 permutation wy2 wx1 rxy1 rxy2 c2 c1
 expect s1=serialize s2=commit
-sm1 s1=serialize s2=serialize
 permutation wy2 wx1 rxy2 rxy1 c1 c2
 expect s1=commit s2=serialize
-sm1 s1=serialize s2=serialize
 permutation wy2 wx1 rxy2 rxy1 c2 c1
 expect s1=serialize s2=commit
-sm1 s1=serialize s2=serialize
 permutation wy2 wx1 rxy2 c2 rxy1 c1
 expect s1=serialize s2=commit
 permutation wy2 rxy2 wx1 rxy1 c1 c2
 expect s1=commit s2=serialize
-sm1 s1=serialize s2=serialize
 permutation wy2 rxy2 wx1 rxy1 c2 c1
 expect s1=serialize s2=commit
-sm1 s1=serialize s2=serialize
 permutation wy2 rxy2 wx1 c2 rxy1 c1
 expect s1=serialize s2=commit
 permutation wy2 rxy2 c2 wx1 rxy1 c1

@@ -60,12 +60,13 @@ recorded, that is a read-write conflict, an edge
 **The dangerous structure.** A cycle in the serialization
 graph always contains a transaction with an incoming and an
 outgoing rw-edge — the pivot — where the transaction the
-outgoing edge points at commits first. wisr tracks the two
-flags per transaction and fails a transaction that would
-complete such a structure, at commit, with
-`SM_ERR_SERIALIZATION`. This is Cahill's rule, as
-PostgreSQL implements it: the check is conservative, so a
-failure does not prove a cycle existed, but no cycle escapes.
+outgoing edge points at commits first. wisr keeps the edges of
+each transaction and fails one that would complete such a
+structure, at commit, with `SM_ERR_SERIALIZATION`. This is
+Cahill's rule with Ports and Grittner's commit-order and
+read-only refinements, as PostgreSQL implements it: the check
+is conservative, so a failure does not prove a cycle existed,
+but no cycle escapes.
 
 **What each level promises.**
 
@@ -335,7 +336,7 @@ that costs.
 | c14 | `T1: w(R1)` ‖ `T2: w(R2)`, no reads at all | OK | OK | OK | `in/c14_blind_writes_only.t` |
 | c15 | `T1: s(P) w(R1) i(R3)` — its own range | OK | OK | OK | `in/c15_scan_then_write_own_range.t` |
 | c16 | `T2: r(R2) w(R1) c` ‖ `T1: r(R1) w(R2) c` | OK | OK | T1 fails | `in/c16_read_past_committed_writer.t` |
-| c17 | `T3: r(R1)` ‖ `T2: r(R2) w(R1) c` ‖ `T1: w(R2) c` | OK | OK | T1 fails | `in/c17_edge_onto_committed_pivot.t` |
+| c17 | `T3: r(R1)` ‖ `T2: r(R2) w(R1) c` ‖ `T1: w(R2) c` | OK | OK | OK | `in/c17_edge_onto_committed_pivot.t` |
 | c18 | `T1: cursor open over P` ‖ `T2: r(R3) i(R2 in P) c` ‖ `T1: w(R3) c` | OK | OK | T1 fails | `in/c18_phantom_while_cursor_open.t` |
 | c19 | `T1: r(R1)` ‖ `T2: w(R2) c` ‖ `T1: w(R1) c` | OK | OK | OK | `in/c19_safe_snapshot.t` |
 | c20 | three concurrent readers, then one writes | OK | OK | OK | `in/c20_concurrent_readers.t` |
@@ -344,8 +345,8 @@ that costs.
 | c23 | `T2: r(R2) w(R1) c` ‖ `T1: s(P over R1) w(R2) c` | OK | OK | T1 fails | `in/c23_scan_past_committed_writer.t` |
 | c24 | `T1: scan, stop at R1, close` ‖ `T2: w(R1) r(R2)` ‖ `T1: w(R2)` | both commit | both commit | ≤ 1 commits | `in/c24_write_inside_examined_range.t` |
 | c25 | `T1: cursor over P, closed unread` ‖ `T2: w(R1 in P) r(R2)` ‖ `T1: w(R2)` | OK | OK | OK | `in/c25_cursor_closed_unread.t` |
-| c26 | c06 with `T3: a` in place of `T3: c` | all commit | all commit | T2 (pivot) fails anyway | `in/c26_pivot_successor_aborts.t` |
-| c27 | c06 with `T1: a` in place of `T1: c` | all commit | all commit | T2 (pivot) fails anyway | `in/c27_pivot_predecessor_aborts.t` |
+| c26 | c06 with `T3: a` in place of `T3: c` | all commit | all commit | all commit | `in/c26_pivot_successor_aborts.t` |
+| c27 | c06 with `T1: a` in place of `T1: c` | all commit | all commit | all commit | `in/c27_pivot_predecessor_aborts.t` |
 | c28 | `T1: r(R1,R2) w(R1)` ‖ `T2: r(R2,R3) w(R2)` ‖ `T3: r(R3,R1) w(R3)` | all commit | all commit | at least one fails | `in/c28_write_skew_three_transactions.t` |
 | c29 | c02 with T1's read taken before a savepoint it rolls back to | all commit | all commit | at most one commits | `in/c29_rollback_keeps_read_set.t` |
 | c30 | `T1: open C, next, seek past R5, next, close` ‖ `T2: w(R5) r(R2)` ‖ `T1: w(R2)` | all commit | all commit | at most one commits | `in/c30_seek_skips_inside_predicate.t` |
@@ -358,10 +359,10 @@ these scenarios are the ones that would catch it.
 
 Four of the rest say more than their row can:
 
-- **c26 and c27**: the pivot fails whichever neighbour
-  aborts, because the SSI flags record that T2 has an edge in
-  and an edge out, not whose they were (`SM1_DESIGN.md` §7.3).
-  That was confirmed by running c27, not assumed.
+- **c26 and c27**: the pivot commits whichever neighbour
+  aborts, because an abort takes its edges with it
+  (`SM1_DESIGN.md` §7.3). Under Cahill's two flags both
+  failed T2; they pin that the refinement withdraws an edge.
 - **c29**: a read taken before a savepoint still constrains
   the transaction after a rollback past it (§6.5). Were it
   otherwise, rollback could launder a serialization failure,
@@ -422,26 +423,32 @@ outcome PostgreSQL's expected output gives.
 
 | # | PostgreSQL spec | Permutations | As PostgreSQL | Differs, as noted | File |
 |---|---|---|---|---|---|
-| p01 | `simple-write-skew` | 6 | 2 | 4 | `in/p01_simple_write_skew.t` |
-| p02 | `receipt-report` | 210 | 86 | 124 | `in/p02_receipt_report.t` |
+| p01 | `simple-write-skew` | 6 | 6 | 0 | `in/p01_simple_write_skew.t` |
+| p02 | `receipt-report` | 210 | 186 | 24 | `in/p02_receipt_report.t` |
 | p03 | `read-only-anomaly` | 1 | 1 | 0 | `in/p03_read_only_anomaly.t` |
 | p04 | `read-write-unique` | 2 | 2 | 0 | `in/p04_read_write_unique.t` |
-| p05 | `total-cash` | 20 | 8 | 12 | `in/p05_total_cash.t` |
-| p06 | `two-ids` | 90 | 54 | 36 | `in/p06_two_ids.t` |
-| p07 | `classroom-scheduling` | 20 | 8 | 12 | `in/p07_classroom_scheduling.t` |
-| p08 | `temporal-range-integrity` | 20 | 8 | 12 | `in/p08_temporal_range_integrity.t` |
-| p09 | `project-manager` | 20 | 8 | 12 | `in/p09_project_manager.t` |
+| p05 | `total-cash` | 20 | 20 | 0 | `in/p05_total_cash.t` |
+| p06 | `two-ids` | 90 | 84 | 6 | `in/p06_two_ids.t` |
+| p07 | `classroom-scheduling` | 20 | 20 | 0 | `in/p07_classroom_scheduling.t` |
+| p08 | `temporal-range-integrity` | 20 | 20 | 0 | `in/p08_temporal_range_integrity.t` |
+| p09 | `project-manager` | 20 | 20 | 0 | `in/p09_project_manager.t` |
 | p10 | `multiple-row-versions` | 1 | 0 | 1 | `in/p10_multiple_row_versions.t` |
 
-**No permutation commits a transaction PostgreSQL fails.** Every
-difference is sm1 failing more: both transactions of a write
-skew where PostgreSQL fails one (p01, p05, p07 to p09), and one
-of three where PostgreSQL commits all (p02, p06). sm1's SSI uses
-Cahill's original rule, failing any transaction with both an
-incoming and an outgoing rw-edge; PostgreSQL adds the commit-
-order and read-only refinements of Ports and Grittner, and fails
-only a transaction in a real cycle (`SM1_DESIGN.md` §7.3). Those
-refinements would turn 213 of these into "as PostgreSQL".
+sm1 applies Ports and Grittner's commit-order and read-only
+refinements, as PostgreSQL does (`SM1_DESIGN.md` §7.3), so 359
+of the 390 permutations end as PostgreSQL's do. The rest:
+
+- **p02, 24: sm1 fails one more.** PostgreSQL knows s3 is
+  `READ ONLY` from its `BEGIN`; sm1 learns it only when s3
+  commits having written nothing, too late here.
+- **p10, 1: sm1 fails s3 as well.** sm1's SIREAD entries are on
+  keys, PostgreSQL's on tuple versions, so sm1 has an edge
+  PostgreSQL does not.
+- **p06, 6: sm1 commits more.** s3 only reads and commits
+  before s2, and s1 commits after s3's read, so s3, s2, s1 is
+  a serial order. sm1 applies the read-only test to any
+  transaction that committed having written nothing;
+  PostgreSQL only to one declared `READ ONLY`, which s3 is not.
 
 ## 8. What wisr does not detect, by design
 

@@ -39,13 +39,15 @@
 # c4: COMMIT;
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the
-# permutation's expect line gives sm1's outcome. Every such
-# difference here is sm1 failing more transactions, never fewer:
-# its SSI applies Cahill's original rule, failing any transaction
-# with both an incoming and an outgoing rw-edge, where PostgreSQL
-# adds the refinements of Ports and Grittner (commit order, and
-# read-only transactions), and fails only a transaction in a real
-# cycle (SM1_DESIGN.md §7.3).
+# permutation's expect line gives sm1's outcome. sm1's SSI
+# applies the refinements of Ports and Grittner (commit order,
+# and read-only transactions) as PostgreSQL does
+# (SM1_DESIGN.md §7.3), so the differences here are these:
+# sm1 fails s3 as well. sm1's SIREAD entries are on keys, so
+# s3's write of t:1000000 makes an edge from s1, which read the
+# key, and s3 is a pivot between s1 and s4, which committed
+# first. PostgreSQL's are on tuple versions: s1 read the version
+# s2 replaced, not the one s3 replaced, so it has no such edge.
 
 == permutation 1: rx1 wx2 c2 wx3 ry3 wy4 rz4 c4 c3 wz1 c1 ==
 rx1 s1 -> -

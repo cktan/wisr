@@ -2,8 +2,10 @@
 #
 # T3 reads R1; T2 reads R2, writes R1, and commits, so T2 has
 # an edge in. T1's write of R2 gives T2 an edge out after it
-# committed, making it a pivot; T1, which has no edge of its
-# own out, is the one doomed.
+# committed, making it a pivot. T1 is the pivot's successor
+# and commits last, after T2, so the order T3, T2, T1 is
+# serial and nothing fails: a pivot is dangerous only when its
+# successor commits first (Ports and Grittner).
 
 pairings all
 session T1
@@ -21,6 +23,4 @@ seed R2 0
 @5 T2 commit
 @6 T1 write R2 t1
 @7 T1 commit
-@8 check committed T1 when rr
-@8 check committed T1 when rr+s
-@8 check failed T1 when s+s
+@8 check committed T1

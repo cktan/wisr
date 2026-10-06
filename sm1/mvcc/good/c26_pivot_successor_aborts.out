@@ -2,10 +2,8 @@
 #
 # c06's chain, T1 --rw--> T2 --rw--> T3, with T3 aborting
 # instead of committing. An aborted T3 cannot be part of a
-# cycle, so the pivot is a false positive; wisr keeps two
-# flags per transaction rather than the edges themselves, so
-# nothing withdraws T2's outgoing flag and T2 fails anyway.
-# The rule is conservative by design: this is what that costs.
+# cycle. wisr keeps the edges themselves, and an abort takes
+# its edges with it, so T2 is no longer a pivot and commits.
 
 
 == pairing RR/RR == T1=RR T2=RR T3=RR
@@ -59,9 +57,8 @@
 @4 T2 write R1 t2 -> ok
 @5 T3 write R2 t3 -> ok
 @6 T3 abort -> ok
-@7 T2 commit -> serialization
+@7 T2 commit -> ok
 @8 T1 commit -> ok
-@9 check failed T2 -> satisfied
-@9 check committed T1 -> satisfied
-@10 check row R1 0 -> satisfied
+@9 check committed T1 T2 -> satisfied
+@10 check row R1 t2 -> satisfied
 @11 check row R2 0 -> satisfied

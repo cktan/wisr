@@ -32,13 +32,15 @@
 # c3: COMMIT;
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the
-# permutation's expect line gives sm1's outcome. Every such
-# difference here is sm1 failing more transactions, never fewer:
-# its SSI applies Cahill's original rule, failing any transaction
-# with both an incoming and an outgoing rw-edge, where PostgreSQL
-# adds the refinements of Ports and Grittner (commit order, and
-# read-only transactions), and fails only a transaction in a real
-# cycle (SM1_DESIGN.md §7.3).
+# permutation's expect line gives sm1's outcome. sm1's SSI
+# applies the refinements of Ports and Grittner (commit order,
+# and read-only transactions) as PostgreSQL does
+# (SM1_DESIGN.md §7.3), so the differences here are these:
+# sm1 commits s2 where PostgreSQL fails it. s3 only reads and
+# commits before s2, and s1 commits after s3's read, so s3, s2,
+# s1 is a serial order. sm1 applies the read-only test to any
+# transaction that committed having written nothing (§7.4);
+# PostgreSQL only to one declared READ ONLY, which s3 is not.
 
 == permutation 1: wx1 c1 rxwy2 c2 ry3 c3 ==
 wx1 s1 -> {d1:r} | ok
@@ -150,40 +152,40 @@ rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
 c1 s1 -> ok
 c3 s3 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> as PostgreSQL
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> differs from PostgreSQL (s1=commit s2=serialize s3=commit) as noted
 == permutation 15: wx1 rxwy2 ry3 c2 c1 c3 ==
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
 c3 s3 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 16: wx1 rxwy2 ry3 c2 c3 c1 ==
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
-c2 s2 -> serialization
+c2 s2 -> ok
 c3 s3 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 17: wx1 rxwy2 ry3 c3 c1 c2 ==
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 18: wx1 rxwy2 ry3 c3 c2 c1 ==
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 19: wx1 ry3 c1 rxwy2 c2 c3 ==
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
@@ -222,40 +224,40 @@ ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c1 s1 -> ok
 c3 s3 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> as PostgreSQL
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> differs from PostgreSQL (s1=commit s2=serialize s3=commit) as noted
 == permutation 24: wx1 ry3 rxwy2 c2 c1 c3 ==
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
 c3 s3 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 25: wx1 ry3 rxwy2 c2 c3 c1 ==
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c3 s3 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 26: wx1 ry3 rxwy2 c3 c1 c2 ==
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c3 s3 -> ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 27: wx1 ry3 rxwy2 c3 c2 c1 ==
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c3 s3 -> ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 28: wx1 ry3 c3 c1 rxwy2 c2 ==
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
@@ -270,16 +272,16 @@ ry3 s3 -> {d2:r}
 c3 s3 -> ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 30: wx1 ry3 c3 rxwy2 c2 c1 ==
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 31: rxwy2 wx1 c1 c2 ry3 c3 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
@@ -342,40 +344,40 @@ wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
 c1 s1 -> ok
 c3 s3 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> as PostgreSQL
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> differs from PostgreSQL (s1=commit s2=serialize s3=commit) as noted
 == permutation 39: rxwy2 wx1 ry3 c2 c1 c3 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
 c3 s3 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 40: rxwy2 wx1 ry3 c2 c3 c1 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
-c2 s2 -> serialization
+c2 s2 -> ok
 c3 s3 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 41: rxwy2 wx1 ry3 c3 c1 c2 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 42: rxwy2 wx1 ry3 c3 c2 c1 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 43: rxwy2 c2 wx1 c1 ry3 c3 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c2 s2 -> ok
@@ -438,40 +440,40 @@ ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
 c1 s1 -> ok
 c3 s3 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> as PostgreSQL
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> differs from PostgreSQL (s1=commit s2=serialize s3=commit) as noted
 == permutation 51: rxwy2 ry3 wx1 c2 c1 c3 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
 c3 s3 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 52: rxwy2 ry3 wx1 c2 c3 c1 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c3 s3 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 53: rxwy2 ry3 wx1 c3 c1 c2 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
 c3 s3 -> ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 54: rxwy2 ry3 wx1 c3 c2 c1 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
 c3 s3 -> ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 55: rxwy2 ry3 c2 wx1 c1 c3 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
@@ -502,16 +504,16 @@ ry3 s3 -> {d2:r}
 c3 s3 -> ok
 wx1 s1 -> {d1:r} | ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 59: rxwy2 ry3 c3 wx1 c2 c1 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
 wx1 s1 -> {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 60: rxwy2 ry3 c3 c2 wx1 c1 ==
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 ry3 s3 -> {d2:r}
@@ -558,40 +560,40 @@ wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c1 s1 -> ok
 c3 s3 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> as PostgreSQL
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> differs from PostgreSQL (s1=commit s2=serialize s3=commit) as noted
 == permutation 66: ry3 wx1 rxwy2 c2 c1 c3 ==
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
 c3 s3 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 67: ry3 wx1 rxwy2 c2 c3 c1 ==
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c3 s3 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 68: ry3 wx1 rxwy2 c3 c1 c2 ==
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c3 s3 -> ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 69: ry3 wx1 rxwy2 c3 c2 c1 ==
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c3 s3 -> ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 70: ry3 wx1 c3 c1 rxwy2 c2 ==
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
@@ -606,16 +608,16 @@ wx1 s1 -> {d1:r} | ok
 c3 s3 -> ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 72: ry3 wx1 c3 rxwy2 c2 c1 ==
 ry3 s3 -> {d2:r}
 wx1 s1 -> {d1:r} | ok
 c3 s3 -> ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 73: ry3 rxwy2 wx1 c1 c2 c3 ==
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
@@ -630,40 +632,40 @@ rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
 c1 s1 -> ok
 c3 s3 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> as PostgreSQL
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> differs from PostgreSQL (s1=commit s2=serialize s3=commit) as noted
 == permutation 75: ry3 rxwy2 wx1 c2 c1 c3 ==
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
 c3 s3 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 76: ry3 rxwy2 wx1 c2 c3 c1 ==
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c3 s3 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 77: ry3 rxwy2 wx1 c3 c1 c2 ==
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
 c3 s3 -> ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 78: ry3 rxwy2 wx1 c3 c2 c1 ==
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
 c3 s3 -> ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 79: ry3 rxwy2 c2 wx1 c1 c3 ==
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
@@ -694,16 +696,16 @@ rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c3 s3 -> ok
 wx1 s1 -> {d1:r} | ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 83: ry3 rxwy2 c3 wx1 c2 c1 ==
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c3 s3 -> ok
 wx1 s1 -> {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 84: ry3 rxwy2 c3 c2 wx1 c1 ==
 ry3 s3 -> {d2:r}
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
@@ -726,32 +728,32 @@ c3 s3 -> ok
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 87: ry3 c3 wx1 rxwy2 c2 c1 ==
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
 wx1 s1 -> {d1:r} | ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 88: ry3 c3 rxwy2 wx1 c1 c2 ==
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
 c1 s1 -> ok
-c2 s2 -> serialization
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+c2 s2 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 89: ry3 c3 rxwy2 wx1 c2 c1 ==
 ry3 s3 -> {d2:r}
 c3 s3 -> ok
 rxwy2 s2 -> {d2:r} | {d1:r} | ok
 wx1 s1 -> {d1:r} | ok
-c2 s2 -> serialization
+c2 s2 -> ok
 c1 s1 -> ok
-outcome s1=commit s2=serialize s3=commit -> differs from PostgreSQL (s1=commit s2=commit s3=commit) as noted
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
 == permutation 90: ry3 c3 rxwy2 c2 wx1 c1 ==
 ry3 s3 -> {d2:r}
 c3 s3 -> ok

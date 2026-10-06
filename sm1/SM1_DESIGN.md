@@ -1208,9 +1208,11 @@ dangerous structure.
   time. SIREAD locks survive the transaction's own commit; they
   are dropped only when no active snapshot could still conflict
   with them.
-- **Conflict flags.** Per transaction, `in_conflict` and
-  `out_conflict` — "some transaction has an rw-edge into me" / "I have
-  an rw-edge out to someone".
+- **Edges.** Per transaction, `in_edges` and `out_edges`: the
+  transactions with an rw-edge into it, and those it has an
+  rw-edge out to. An edge is kept on both ends, and a node that
+  goes takes its edges with it, so an aborted transaction leaves
+  no edge behind.
 
 **How they are indexed.** Every write calls
 `ssi.on_write(T, storeid, k)` (§5), which must find every
@@ -1237,8 +1239,8 @@ one store; it is not built yet.
 T_writer writes k  →  for each SIREAD on k (or a range covering k)
                       held by T_reader (T_reader != T_writer):
                           edge  T_reader ──rw──▶ T_writer
-                          T_reader.out_conflict = true
-                          T_writer.in_conflict  = true
+                          (in T_reader.out_edges and
+                           T_writer.in_edges)
 
 T_reader reads k   →  if the version it skipped was written by a
                       concurrent T_writer (committed after our
@@ -1248,43 +1250,54 @@ T_reader reads k   →  if the version it skipped was written by a
 
 ### 7.3 The abort rule
 
-A cycle in the serialization graph always contains a transaction
-with **both** an incoming and an outgoing rw-edge (a *pivot*).
-wisr applies the original rules of Cahill, Röhm and Fekete
-(SIGMOD 2008), which need only the two flags:
+A cycle in the serialization graph always contains a
+*dangerous structure* `T1 ──rw──▶ T2 ──rw──▶ T3`, T2 the
+*pivot*, in which T3 commits first (Ports and Grittner,
+VLDB 2012). T1 and T3 may be the same transaction: a write
+skew is the cycle of two. wisr applies their rule, which the
+edge lists make possible, in place of Cahill's two flags:
 
 ```
-edge R ──rw──▶ W, made by S (R or W, whichever is acting):
-    if the other end has committed and is a pivot on that side
-       (a committed W with out_conflict, or a committed R with
-        in_conflict):
-        doom S
-    else:
-        R.out_conflict = true;  W.in_conflict = true
+dangerous(T1, T3), for a pivot T2 that commits after T3:
+    T3 has committed, and
+    T1 is T3, or
+       T3 committed before T1 did (or T1 is still running), and
+       if T1 committed having written nothing (read-only):
+           T3 committed before T1's snapshot
 
 at commit of T:
-    if T is doomed, or T.in_conflict and T.out_conflict:
+    if T is doomed, or
+       for some committed T3 in T.out_edges and T1 in T.in_edges,
+       dangerous(T1, T3):
         abort T with SM_ERR_SERIALIZATION
+
+edge R ──rw──▶ W, made by R, onto a committed W:
+    if for some T3 in W.out_edges that committed before W,
+       dangerous(R, T3):
+        doom R
 ```
 
-A committed transaction cannot be told "no", so an edge that
-would make it a pivot dooms the running transaction completing
-the structure instead. Dooming never fails the call that made the
+A committed pivot cannot be told "no", so an edge that makes it
+the middle of a dangerous structure dooms the running T1
+completing it instead. A structure whose T3 commits after T2
+fails no one: T3 then follows T2 in the serial order, and the
+pivot's own commit check already let it through. Dooming never
+fails the call that made the
 edge: the transaction runs on and fails at its commit, so
 `sm1::read`, `sm1::scannxt`, and the write calls never return
 `SM_ERR_SERIALIZATION`. The commit check runs after the
 transaction claims its `commit_ts` and before its status record
 is written; a failure hands the `commit_ts` back to the sequencer
 unused. A prepared transaction (§8.4) counts as committed for
-these rules.
+these rules, at no known time: as T3 it counts as having
+committed first, and as T1 or T2 as committing last, the
+readings that can only fail more.
 
-The rules are conservative: a pivot that is not part of a real
-cycle fails, and in a plain write skew both transactions can end
-up pivots and both fail, where tracking edge targets and commit
-order (PostgreSQL's refinement, SIREAD.md) would fail only one.
-That is the accepted cost of never taking a read lock and never
-deadlocking on reads; the refinement is a later step if the
-false-abort rate matters.
+The rules are still conservative: a dangerous structure fails a
+transaction whether or not the rest of a cycle exists. In a
+plain write skew only the second to commit fails. That is the
+accepted cost of never taking a read lock and never deadlocking
+on reads.
 
 ### 7.4 Interaction with the other levels
 
@@ -1317,7 +1330,12 @@ one of them does commit with such an out-conflict, the snapshot
 is unsafe.
 
 The API has no read-only declaration, so a transaction is known
-to be read-only only when it commits with `T.xid == 0`. While it
+to be read-only only when it commits with `T.xid == 0`. From
+then on §7.3's read-only test applies to it as T1: a structure
+through it is dangerous only if T3 committed before its
+snapshot. PostgreSQL applies the test only to a transaction
+declared `READ ONLY`, so sm1 commits some pivots that
+PostgreSQL fails; `mvcc/MVCC.md` §7b has p06's. While it
 is active it stays fully tracked, safe snapshot or not: it may
 still write, and then it needs its read set as a possible pivot.
 Dropping the tracking early and failing a later write instead
@@ -1332,7 +1350,7 @@ late to be concurrent with a `T_out` that committed before it.
 
 ### 7.5 Memory
 
-The tracker holds SIREAD locks and conflict flags for
+The tracker holds SIREAD locks and edges for
 transactions that have committed but might still conflict with a
 live one — bounded by the oldest active snapshot. A committed
 transaction's node and locks go once `gc_watermark` passes its
@@ -1769,7 +1787,7 @@ validation, so they were checked against each other.
 
 **After a restart.** That argument does not cover a transaction
 that begins after restart. A restored in-doubt transaction has
-lost its SIREAD locks and conflict flags, which are volatile, so
+lost its SIREAD locks and edges, which are volatile, so
 a new transaction can write a key the prepared one read and no
 edge appears. Unchecked, that admits write skew:
 
@@ -1786,7 +1804,7 @@ edge appears. Unchecked, that admits write skew:
    overwrote — a cycle.
 
 Persisting SIREAD locks in the `PREPARED` record would not be
-enough alone, because the conflict flags are lost too (a
+enough alone, because the edges are lost too (a
 restored transaction that already had an out-edge is a pivot
 the moment a new reader adds an in-edge), and it would make the
 record as large as the read set. PostgreSQL persists the locks
@@ -2688,7 +2706,9 @@ bullets below cover the rest of the engine.
   transaction that reads, outlives every concurrent writer so
   that its snapshot is safe, and then writes commits, including
   on an otherwise idle database (§7.4). With a prepared or
-  committed pivot, the partner is the one that fails (§7.3).
+  committed pivot, the partner is the one that fails, and only
+  if T3 committed first; a pivot whose predecessor or
+  successor aborts commits (§7.3).
 - **DDL.** Concurrent `sm1::mkstore` calls both commit, each
   writing a catalog row of its own; concurrent `sm1::rmstore` of
   the same store blocks, and the second fails with
