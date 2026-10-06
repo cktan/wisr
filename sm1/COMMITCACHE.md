@@ -305,7 +305,28 @@ These follow from the code and are not decisions.
   costs one read to return, where it cost one a row.
 - **One mutex.** Every resolution of an unstamped version
   takes `txn_mu`, which every begin, commit and abort takes
-  too. No benchmark has measured it.
+  too. No benchmark has measured it. At hundreds of thousands
+  of transactions a second it is likely to bind before the
+  cache's size does; splitting the cache and the active table
+  into shards is the answer once a benchmark shows it.
+- **65,536 entries is small for a busy server.** The cache
+  holds the most recent entries, so it reaches back its size
+  over the commit rate: about 6.5 seconds at 10,000
+  transactions a second, 0.65 at 100,000, and 0.2 at 320,000,
+  about the single-server TPC-C record. What it must cover is
+  the time until compaction stamps a version (§5), seconds to
+  minutes under load. A miss is cheap, a `CF:txn` read that
+  recent records answer from the memtable or block cache, and
+  hot rows stay covered; cold rows written a few seconds
+  earlier are the misses.
+  - **Size it by memory, not by count**, with a larger
+    default. An entry is on the order of 64 bytes, an estimate
+    and not measured, so a million is about 64 MB and covers
+    10 seconds at 100,000 a second.
+  - **Measure how long stamping takes** under load: from a
+    commit to the compaction that stamps its versions. That
+    lag is what the size should be set from, and nothing has
+    measured it.
 
 `test/test_xct.cc` opens a database with
 `commit_cache_entries = 1` and checks that reads still see

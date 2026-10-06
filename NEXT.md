@@ -33,6 +33,14 @@ between them is not settled.
 
 Owed, and blocking nothing above:
 
+- **The commit cache's size** (`sm1/COMMITCACHE.md` §7).
+  65,536 entries reaches back under a second at 100,000
+  transactions a second, while a version needs a lookup until
+  compaction stamps it. Size the cache by memory with a larger
+  default, about 64 MB for a million entries; and measure how
+  long stamping takes under load, which is what the size
+  should be set from.
+
 - **Check `EvalPlanQual` against PostgreSQL's source.**
   `SM3_DESIGN.md` §3.1 says the re-check of a join uses the
   row of the other table that was already joined, not its

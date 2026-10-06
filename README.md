@@ -64,6 +64,8 @@ the wrapper through the `rel/` test suite.
   machine; research, not built
 - `sm1/mvcc/MVCC.md` — the isolation rules, as a table of
   scenarios that are executed on every build
+- `sm1/mvcc/POSTGRES.md` — PostgreSQL's isolation test suite,
+  listed, and set against the scenarios here
 - `sm2/SM2_OBJECTIVE.md` — what level 2 is for
 - `sm2/SM2_DESIGN.md` — the type system, the two on-disk
   encodings, and the tuple relation
