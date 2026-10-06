@@ -620,6 +620,80 @@ By statement, that is usually:
 - **`INSERT ... SELECT`**: batch mode. The planner's row
   estimate says whether it is worth leaving `tbl_insert` for.
 
+### 6.1 The row locks each path holds
+
+A third way is proposed beside the two modes: **mini-batch**,
+which writes 100 rows at a time in one RocksDB batch, reserves
+100 rownos for them, and holds the table only IX, so other
+writers go on. Under IX nothing keeps another transaction from
+inserting the same unique value, so a mini-batch locks each of
+its unique keys, then reads it, as an insert does, and holds
+the lock to commit. Heap keys and non-unique entries need no
+lock: each ends in a rowno no one else can draw.
+
+Locks held for 1,000 rows into a table with two unique indexes
+and one non-unique one, to the end of the transaction:
+
+| Path | Row locks | Which |
+| --- | --- | --- |
+| `tbl_insert` | 4,000 | the heap row, both unique keys and the non-unique entry, for each row |
+| mini-batch | 2,000 | the two unique keys, for each row |
+| batch mode, file mode | 0 | none: the table lock, SIX or X, keeps other writers out |
+
+A lock costs on the order of 150 to 250 bytes, an estimate from
+the structures and not measured. 2,000 is half a megabyte; ten
+million rows would be twenty million locks, several gigabytes.
+Mini-batch halves `tbl_insert`'s locks and does not bound them;
+a load that cannot afford them uses batch mode.
+
+**How PostgreSQL holds none.** It does lock, but only for an
+instant; the lasting "lock" is the uncommitted index entry
+itself. Say transactions A and B both insert `id = 7`:
+
+1. A takes the latch of the B-tree leaf page where `7`
+   belongs: an exclusive lock in memory, held for
+   microseconds.
+2. A checks the page for `7` and finds none.
+3. A writes its entry for `7`, still holding the latch, then
+   releases it. The entry is on the page, uncommitted, marked
+   with A's transaction id.
+4. B takes the same latch and finds A's entry.
+5. B sees that A is still running, releases the latch, and
+   waits for A to end.
+6. When A ends, B checks again: a duplicate if A committed,
+   free if A aborted.
+
+| Mechanism | Lasts | Purpose |
+| --- | --- | --- |
+| the page latch | microseconds | makes check-then-write one step, so A and B cannot both check before either writes |
+| the uncommitted entry | until A ends | tells everyone else the key is taken, or about to be |
+| A's lock on its own transaction id | A's life, one per transaction | lets B wait for A to end |
+
+The last is the only lasting lock, one per transaction however
+many rows it writes: 1,000 rows cost one lock, not 2,000.
+
+**Why sm1 holds row locks.** It has no pages, so no latch to
+make check-then-write one step: checking a key and writing it
+are two RocksDB operations. The row lock on the key is what
+keeps A and B from both checking before either writes, and,
+held to commit, what makes B wait for A.
+
+**How sm1 could do the same.** Split the row lock into
+PostgreSQL's two roles:
+
+1. A short lock on the key, held only across check-then-write
+   and then released: the latch's part.
+2. A write that finds another transaction's uncommitted
+   version of its key waits for that transaction to end, and
+   checks again. sm1 knows every running transaction, in its
+   active table, so it needs one wait point per transaction.
+
+An insert would then keep no lock once it returns, in any
+path, and mini-batch would hold none. It is a change to how
+sm1 orders and waits on writes: deadlock detection, for one,
+must see a wait on a transaction as well as on a key. It is to
+be designed on its own.
+
 ---
 
 ## 7. The interface
