@@ -873,3 +873,153 @@ TEST_CASE("sm1_lsstore lists the storeids a transaction sees, in order") {
   CHECK(sm1::lsstore(t, list) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 }
+
+TEST_CASE("a statement does not see its own writes; the next one does") {
+  // Verify the statement mark, as PostgreSQL's command id, at each level.
+  // 1. Commit row a = 1.
+  // 2. Begin a statement: update a to 2 and insert b.
+  // 3. A point read, and a cursor opened after the writes, see
+  //    a = 1 and no b.
+  // 4. The next statement sees both writes.
+  // 5. Commit: the writes are there for a new transaction.
+  for (sm1::xctlevel_t level :
+       {sm1::xctlevel_t::read_committed, sm1::xctlevel_t::repeatable_read,
+        sm1::xctlevel_t::serializable}) {
+    CAPTURE(static_cast<int>(level));
+    db_fixture_t f;
+    sm1::session_t *s = f.session();
+    uint64_t store = mkstore_committed(s);
+    REQUIRE(sm1::begin(s, level) == 0);
+    put(s, store, "a", "1");
+    REQUIRE(sm1::commit(s) == 0);
+
+    REQUIRE(sm1::begin(s, level) == 0);
+    REQUIRE(sm1::stmt_begin(s) == 0);
+    REQUIRE(sm1::update(s, store, "a", "2") == 0);
+    put(s, store, "b", "1");
+    CHECK(get(s, store, "a") == "1");
+    CHECK(get(s, store, "b") == "<none>");
+    CHECK(scan_all(s, store) == rows_t{{"a", "1"}});
+
+    REQUIRE(sm1::stmt_begin(s) == 0);
+    CHECK(get(s, store, "a") == "2");
+    CHECK(scan_all(s, store) == rows_t{{"a", "2"}, {"b", "1"}});
+    REQUIRE(sm1::commit(s) == 0);
+
+    REQUIRE(sm1::begin(s, level) == 0);
+    CHECK(scan_all(s, store) == rows_t{{"a", "2"}, {"b", "1"}});
+    REQUIRE(sm1::commit(s) == 0);
+  }
+}
+
+TEST_CASE("a write to a row the statement already changed fails, writing "
+          "nothing") {
+  // Verify SM_ERR_SELFMODIFIED, PostgreSQL's "already modified by me".
+  // 1. Commit row a = 1.
+  // 2. In one statement update a to 2; updating or deleting it
+  //    again fails with SM_ERR_SELFMODIFIED.
+  // 3. The transaction is still active, and the next statement
+  //    sees a = 2 and may update it.
+  // 4. Commit: a holds the last update.
+  // 5. With no statement begun, a transaction writes a row twice
+  //    as before.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  put(s, store, "a", "1");
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::stmt_begin(s) == 0);
+  REQUIRE(sm1::update(s, store, "a", "2") == 0);
+  CHECK(sm1::update(s, store, "a", "3") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SELFMODIFIED);
+  CHECK(sm1::erase(s, store, "a") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SELFMODIFIED);
+
+  REQUIRE(sm1::stmt_begin(s) == 0);
+  CHECK(get(s, store, "a") == "2");
+  REQUIRE(sm1::update(s, store, "a", "4") == 0);
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(get(s, store, "a") == "4");
+  REQUIRE(sm1::update(s, store, "a", "5") == 0);
+  REQUIRE(sm1::update(s, store, "a", "6") == 0);
+  CHECK(get(s, store, "a") == "6");
+  REQUIRE(sm1::commit(s) == 0);
+}
+
+TEST_CASE("a statement inside another sees the outer's writes, and the outer "
+          "resumes its own view") {
+  // Verify sm1::stmt_end puts back the outer statement, as a
+  // trigger's commands run inside the statement that fired it.
+  // 1. Commit a = 1. An RC statement updates a to 2.
+  // 2. Another session commits c, mid-statement.
+  // 3. An inner statement begins: it sees a = 2 and c, and
+  //    inserts b.
+  // 4. The inner one ends: the outer again sees a = 1, no b, and
+  //    no c, its own snapshot and mark.
+  // 5. The next statement sees all three.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  sm1::session_t *other = f.open_other();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  put(s, store, "a", "1");
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::stmt_begin(s) == 0);
+  CHECK(get(s, store, "a") == "1");
+  REQUIRE(sm1::update(s, store, "a", "2") == 0);
+
+  REQUIRE(sm1::begin(other, sm1::xctlevel_t::read_committed) == 0);
+  put(other, store, "c", "1");
+  REQUIRE(sm1::commit(other) == 0);
+
+  sm1::stmt_t outer;
+  REQUIRE(sm1::stmt_begin(s, outer) == 0);
+  CHECK(get(s, store, "a") == "2");
+  CHECK(get(s, store, "c") == "1");
+  put(s, store, "b", "1");
+  CHECK(get(s, store, "b") == "<none>");
+
+  REQUIRE(sm1::stmt_end(s, outer) == 0);
+  CHECK(scan_all(s, store) == rows_t{{"a", "1"}});
+
+  REQUIRE(sm1::stmt_begin(s) == 0);
+  CHECK(scan_all(s, store) == rows_t{{"a", "2"}, {"b", "1"}, {"c", "1"}});
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(other);
+}
+
+TEST_CASE("a rollback within a statement keeps its mark below the writes "
+          "that follow") {
+  // Verify the mark follows seq down when a rollback rewinds it.
+  // 1. Set a savepoint, write a, and begin a statement.
+  // 2. Roll back to the savepoint: a is gone, and seq is rewound
+  //    below the statement's mark.
+  // 3. Write b in the same statement: the statement does not see
+  //    it, though b reuses a's seq.
+  // 4. The next statement sees b.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  int depth = sm1::savepoint(s);
+  REQUIRE(depth == 1);
+  put(s, store, "a", "1");
+  REQUIRE(sm1::stmt_begin(s) == 0);
+  CHECK(get(s, store, "a") == "1");
+
+  REQUIRE(sm1::rollback(s, depth) == 0);
+  CHECK(get(s, store, "a") == "<none>");
+  put(s, store, "b", "1");
+  CHECK(get(s, store, "b") == "<none>");
+
+  REQUIRE(sm1::stmt_begin(s) == 0);
+  CHECK(scan_all(s, store) == rows_t{{"b", "1"}});
+  REQUIRE(sm1::commit(s) == 0);
+}

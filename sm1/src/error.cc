@@ -190,6 +190,7 @@ const char *errname() {
       "ERR_BLOCKED",
       "ERR_NOTNULL",
       "ERR_UNDOLIMIT",
+      "ERR_SELFMODIFIED",
   };
   static_assert(sizeof(names) / sizeof(names[0]) == sm1::SM_ERR_LAST + 1,
                 "every error code needs its name");

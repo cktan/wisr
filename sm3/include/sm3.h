@@ -184,6 +184,23 @@ int begin(session_t* s, sm1::xctlevel_t level);
  * may scan (tbl_index_usable).
  */
 int stmt_begin(session_t* s);
+
+/* What a statement replaces, for stmt_end to put back. */
+struct stmt_t {
+    sm1::stmt_t sm1;
+    uint64_t snap_seq = 0;
+    bool pinned = false;
+};
+
+/*
+ * Begin a statement inside another, as a trigger's commands run
+ * inside the statement that fired it, saving the outer one in
+ * outer; stmt_end puts it back (sm1::stmt_begin, sm1::stmt_end).
+ */
+int stmt_begin(session_t* s, stmt_t& outer);
+
+/* End a statement begun inside another, resuming the outer one. */
+int stmt_end(session_t* s, const stmt_t& outer);
 int savepoint(session_t* s);
 int rollback(session_t* s, int depth);
 int forget(session_t* s, int depth);

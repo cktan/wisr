@@ -541,6 +541,7 @@ while unstamped), read at `snapshot_ts` by transaction `T`:
 ```
 if V.xid == T.xid:                      # own write
     visible iff V.seq <= T.seq_hwm      # savepoint-aware, §6.5
+            and V.seq <= T.stmt_seq     # within a statement, §6.2
 elif V.wts > snapshot_ts:               # written after the snapshot,
     invisible                           # so committed after it too
 else:
@@ -873,7 +874,45 @@ transaction registers its *begin* snapshot for its whole life
 `gc_watermark` is already held below anything a pinned
 statement can read.
 
-**There is no `sm1::stmt_end`.** The next `sm1::stmt_begin`
+**A statement does not see its own writes.** `sm1::stmt_begin`
+also sets a mark, `T.stmt_seq`, to the transaction's `seq` at
+that moment, at every isolation level. From then every read,
+a point read or a cursor, sees the transaction's own versions
+only up to the mark: those written before the statement
+began. This is PostgreSQL's command id. Without it, a cursor
+was safe, freezing `seq_hwm` when it opened, but any read
+begun later in the statement saw the statement's own writes:
+the inner side of a nested-loop join re-scanned per outer row,
+a correlated subquery, a host's lookup by key. That is the
+Halloween problem.
+
+- **Writes still see the newest own version**, to lock and
+  check against it (§5). An update or a delete whose key's
+  newest version is the transaction's own, with `seq` above
+  the mark, fails with `SM_ERR_SELFMODIFIED` and writes
+  nothing: the statement changed that row already and cannot
+  see the change. It is not an abort. The caller skips the
+  row, as PostgreSQL's update skips a row "already modified by
+  me", or raises an error, as `INSERT ... ON CONFLICT` does.
+  An insert is unchanged: a key the statement inserted is
+  still a duplicate.
+- **A rollback lowers the mark** with `seq` (§6.5), since the
+  rewound numbers are written again by the same statement.
+- **A transaction that never calls `sm1::stmt_begin`** sees all
+  its own writes, as before.
+
+**A statement inside another.** A trigger's or a function's
+commands run inside the statement that fired them. Each sees
+the outer's writes so far, and when it returns, the outer
+resumes with its own snapshot and mark, seeing neither its own
+writes nor the inner one's. `sm1::stmt_begin(session, outer)`
+begins such a statement, saving the outer's snapshot and mark
+in `outer`, and `sm1::stmt_end(session, outer)` puts them back,
+the mark no higher than `seq`, which a rollback in between may
+have lowered. PostgreSQL's executor saves and restores its
+snapshot the same way around nested commands.
+
+**A top-level statement needs no `sm1::stmt_end`.** The next `sm1::stmt_begin`
 ends the last statement, and the transaction ends the last of
 all. The cost is that a transaction which uses the call once
 reads that way for the rest of its life, with no way back to a
@@ -2381,6 +2420,8 @@ SM_ERR_NOTFOUND        store or key does not exist
 SM_ERR_DUPKEY          insert onto a live key (§5)
 SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
 SM_ERR_UNDOLIMIT       the savepoint was lost at savepoint_undo_bytes (§6.5)
+SM_ERR_SELFMODIFIED    update or erase of a key the running statement
+                       wrote (§6.2); not an abort
 SM_ERR_NOTRANS         data op outside a transaction (§6.1)
 SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
 SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)

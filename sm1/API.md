@@ -86,8 +86,11 @@ typedef enum sm_errnum_t {
     /* sm1's: NOT retryable; the transaction is to be aborted */
     SM_ERR_UNDOLIMIT     = 25,  /* the savepoint can no longer be rolled back to */
 
+    /* sm1's: NOT an abort; the caller skips the row */
+    SM_ERR_SELFMODIFIED  = 26,  /* the statement already changed this row */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_UNDOLIMIT
+    SM_ERR_LAST          = SM_ERR_SELFMODIFIED
 } sm_errnum_t;
 
 /* sm1.h */
@@ -730,16 +733,38 @@ until the transaction ends.
 Once called, the transaction reads this way for the rest of
 its life; there is no returning to a snapshot per call. Under
 `sm1::xctlevel_t::repeatable_read` and
-`sm1::xctlevel_t::serializable` the call is accepted and does
-nothing, since the whole transaction already reads at one
-snapshot.
+`sm1::xctlevel_t::serializable` the whole transaction already
+reads at one snapshot.
 
-Writes are unaffected: they still check for a newer commit
-against the snapshot taken by `sm1::begin`, so
-`SM_ERR_UPDATED` can still arrive on a row this statement
-has just read; `sm1::read_latest` then gives the newest version.
+**A statement does not see its own writes**, at any level. Its
+reads, point reads and cursors alike, see the transaction's
+own writes made before it began, as PostgreSQL's command id
+does (SM1_DESIGN.md §6.2).
+
+Writes still check for a newer commit against the snapshot
+taken by `sm1::begin`, so `SM_ERR_UPDATED` can still arrive on
+a row this statement has just read; `sm1::read_latest` then
+gives the newest version. An `sm1::update` or `sm1::erase` of a
+key this statement has already written fails with
+`SM_ERR_SELFMODIFIED` and writes nothing. It is not an abort:
+the caller skips the row.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
+
+### int sm1::stmt_begin(sm1::session_t* session, sm1::stmt_t& outer)
+
+Begin a statement inside the running one, as a trigger's or a
+function's commands run inside the statement that fired them.
+The outer statement's snapshot and mark are saved in `outer`.
+The inner statement sees the outer's writes so far.
+
+### int sm1::stmt_end(sm1::session_t* session, const sm1::stmt_t& outer)
+
+End a statement begun inside another. The outer one resumes
+with its own snapshot and mark, and again sees neither its own
+writes nor the inner one's.
+
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
 
 ### int sm1::set_qa_nowait(sm1::session_t* session, bool on)
 

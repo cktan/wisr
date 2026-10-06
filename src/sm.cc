@@ -616,6 +616,36 @@ int sm_stmt_begin(sm_session_t *session) {
   return guard(session, [&] { return sm3::stmt_begin(session->sm3); });
 }
 
+struct sm_stmt_t {
+  sm3::stmt_t outer;
+};
+
+/* Begin a statement inside the running one, saving the outer. */
+int sm_stmt_begin_inner(sm_session_t *session, sm_stmt_t **outer) {
+  return guard(session, [&] {
+    if (!session || !outer) {
+      return null_arg("sm_stmt_begin_inner", !session ? "session" : "outer");
+    }
+    auto saved = std::make_unique<sm_stmt_t>();
+    if (sm3::stmt_begin(session->sm3, saved->outer) != 0) {
+      return -1;
+    }
+    *outer = saved.release();
+    return 0;
+  });
+}
+
+/* End an inner statement, resuming the outer, and free it. */
+int sm_stmt_end(sm_session_t *session, sm_stmt_t *outer) {
+  std::unique_ptr<sm_stmt_t> saved(outer);
+  return guard(session, [&] {
+    if (!session || !saved) {
+      return null_arg("sm_stmt_end", !session ? "session" : "outer");
+    }
+    return sm3::stmt_end(session->sm3, saved->outer);
+  });
+}
+
 /* QA only: make the session's lock requests fail where they would wait. */
 int sm_set_qa_nowait(sm_session_t *session, bool on) {
   sm1::session_t *s = session_of(session);

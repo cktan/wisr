@@ -75,8 +75,15 @@ typedef enum sm_errnum_t {
      */
     SM_ERR_UNDOLIMIT     = 25,  /* the savepoint can no longer be rolled back to */
 
+    /*
+     * sm1's, and not an abort: an update or delete of a row the
+     * running statement has already changed (SM1_DESIGN.md §6.2).
+     * Nothing is written; the caller skips the row.
+     */
+    SM_ERR_SELFMODIFIED  = 26,  /* the statement already changed this row */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_UNDOLIMIT
+    SM_ERR_LAST          = SM_ERR_SELFMODIFIED
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

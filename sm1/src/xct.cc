@@ -176,6 +176,8 @@ void reset(sm1::session_t *s) {
   s->stmt_pinned = false;
   s->stmt_taken = false;
   s->stmt_snapshot_ts = 0;
+  s->stmt_marked = false;
+  s->stmt_seq = 0;
 }
 
 /*
@@ -223,6 +225,9 @@ int stmt_begin(sm1::session_t *s) {
   // The next read takes the new statement's snapshot (§6.2).
   s->stmt_taken = false;
   s->stmt_snapshot_ts = 0;
+  // Its reads see the transaction's own writes made before now.
+  s->stmt_marked = true;
+  s->stmt_seq = s->seq;
   return 0;
 }
 /*
@@ -385,6 +390,9 @@ int rollback(sm1::session_t *s, int depth) {
   s->seq_hwm = m.seq_hwm;
   // The next write reuses the undone seqs.
   s->seq = s->seq_hwm;
+  // A statement's mark must stay below them: they are its own
+  // writes again (§6.2).
+  s->stmt_seq = std::min(s->stmt_seq, s->seq);
 
   // Give back the locks taken after the mark; nobody saw our
   // intent on those rows.
@@ -993,9 +1001,10 @@ view_t xct_view(sm1::session_t *s) {
   if (s->level == sm1::xctlevel_t::read_committed && s->stmt_taken) {
     v.snapshot_ts = s->stmt_snapshot_ts;
   }
-  // Its own writes, up to the last still in effect.
+  // Its own writes, up to the last still in effect, and within
+  // a statement only those made before it began.
   v.xid = s->xid;
-  v.seq_hwm = s->seq_hwm;
+  v.seq_hwm = s->stmt_marked ? std::min(s->seq_hwm, s->stmt_seq) : s->seq_hwm;
   return v;
 }
 
@@ -1254,6 +1263,44 @@ void xct_undo_overflow(sm1::session_t *s) {
   // Every mark now set is lost; one set later starts a new list.
   s->lost_marks = s->savepoints.size();
 }
+
+} // namespace wisr
+
+/* Begin a statement inside another; see sm1.h. */
+int sm1::stmt_begin(sm1::session_t *session, sm1::stmt_t &outer) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  if (xct_check_active(session) != 0) {
+    return -1;
+  }
+  // Keep the outer statement, for sm1::stmt_end to put back.
+  outer.pinned = session->stmt_pinned;
+  outer.taken = session->stmt_taken;
+  outer.snapshot_ts = session->stmt_snapshot_ts;
+  outer.marked = session->stmt_marked;
+  outer.seq = session->stmt_seq;
+  return ::stmt_begin(session);
+}
+
+/* End a statement begun inside another; see sm1.h. */
+int sm1::stmt_end(sm1::session_t *session, const sm1::stmt_t &outer) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  if (xct_check_active(session) != 0) {
+    return -1;
+  }
+  // Resume the outer statement's snapshot and mark.
+  session->stmt_pinned = outer.pinned;
+  session->stmt_taken = outer.taken;
+  session->stmt_snapshot_ts = outer.snapshot_ts;
+  session->stmt_marked = outer.marked;
+  // Never above the writes still in effect: a rollback since may
+  // have rewound seq below the outer mark (§6.2).
+  session->stmt_seq = std::min(outer.seq, session->seq);
+  return 0;
+}
+
+namespace wisr {
 
 /* Close every open cursor of the session. */
 void xct_end_scans(sm1::session_t *s) {

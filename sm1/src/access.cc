@@ -114,14 +114,19 @@ rocksdb::ColumnFamilyHandle *store_cf(db_t *db, uint64_t storeid) {
  * own version still visible to the transaction, else the newest
  * committed version, whatever its commit_ts. Sets *live to
  * whether it exists and is not a tombstone, and *commit_ts to
- * its commit_ts (0 for an own version or none). Returns 0 or -1.
+ * its commit_ts (0 for an own version or none), and *own_seq, if
+ * given, to an own version's seq (0 if a committed one or none
+ * decides). Returns 0 or -1.
  */
 int latest_version(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
                    rocksdb::Slice key, bool *live, uint64_t *commit_ts,
-                   std::string *value) {
+                   std::string *value, uint32_t *own_seq = nullptr) {
   // Assume no version until one is found.
   *live = false;
   *commit_ts = 0;
+  if (own_seq) {
+    *own_seq = 0;
+  }
   // No row to hand back yet.
   if (value) {
     value->clear();
@@ -153,6 +158,9 @@ int latest_version(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
       // Still in effect: it is the latest.
       if (v.seq <= s->seq_hwm) {
         *live = !(v.flags & version_tombstone);
+        if (own_seq) {
+          *own_seq = v.seq;
+        }
         // Hand back what it holds, for the old image.
         if (value && *live) {
           value->assign(v.payload.data(), v.payload.size());
@@ -739,10 +747,17 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   }
   bool live;
   uint64_t commit_ts;
+  uint32_t own_seq;
   // Find the version this write checks against, keeping its
   // value when the caller asked for the old image.
-  if (latest_version(s, cf, key, &live, &commit_ts, old) != 0) {
+  if (latest_version(s, cf, key, &live, &commit_ts, old, &own_seq) != 0) {
     return -1;
+  }
+  // The running statement changed this row already: it cannot
+  // see that change, so it must not change the row again (§6.2).
+  if (op != WRITE_INSERT && s->stmt_marked && own_seq > s->stmt_seq) {
+    return set_error(sm1::SM_ERR_SELFMODIFIED,
+                     "the row was already changed by this statement");
   }
   // Something committed after we began (§5.2).
   if (commit_ts > s->snapshot_ts) {

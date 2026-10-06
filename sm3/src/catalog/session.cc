@@ -151,6 +151,32 @@ int stmt_begin(session_t *s) {
   return 0;
 }
 
+/* Begin a statement inside another; see sm3.h. */
+int stmt_begin(session_t *s, stmt_t &outer) {
+  outer.snap_seq = s->snap_seq;
+  outer.pinned = s->stmt_pinned;
+  uint64_t seq = s->cat->seq.load();
+  if (sm1::stmt_begin(s->sm1, outer.sm1) != 0) {
+    return -1;
+  }
+  if (s->level == sm1::xctlevel_t::read_committed) {
+    s->snap_seq = seq;
+    s->stmt_pinned = true;
+  }
+  return 0;
+}
+
+/* End a statement begun inside another; see sm3.h. */
+int stmt_end(session_t *s, const stmt_t &outer) {
+  if (sm1::stmt_end(s->sm1, outer.sm1) != 0) {
+    return -1;
+  }
+  // The outer statement's view of the catalog, with its snapshot.
+  s->snap_seq = outer.snap_seq;
+  s->stmt_pinned = outer.pinned;
+  return 0;
+}
+
 /* Whether session may scan an index; see internal.h. */
 bool index_usable(const session_t *session, const table_def_t &def,
                   uint64_t oid) {

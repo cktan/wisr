@@ -48,6 +48,13 @@ struct sm1::session_t {
   bool qa_nowait = false;   /* QA only: fail, do not wait (§5.1) */
   bool stmt_taken = false;  /* stmt_snapshot_ts is the one to use */
   uint64_t stmt_snapshot_ts = 0;
+  /*
+   * The statement mark (§6.2): once a statement has begun, its
+   * reads see the transaction's own writes up to stmt_seq, those
+   * made before it began, as PostgreSQL's command id does.
+   */
+  bool stmt_marked = false;
+  uint32_t stmt_seq = 0;
 
   /*
    * The undo list (§6.5): every version written while a

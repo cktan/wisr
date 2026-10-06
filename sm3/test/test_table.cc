@@ -2535,3 +2535,78 @@ TEST_CASE("a truncate needs the table opened exclusive, which waits for "
   sm3::tbl_close(ta);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE("a statement does not see its own table writes, nor change a row "
+          "twice") {
+  // Verify the statement mark through the table writes and the indexes.
+  // 1. Commit row 7, free.
+  // 2. In one statement claim it: the statement's reads, by the
+  //    heap and by the index, still find it free.
+  // 3. Updating or deleting it again fails with
+  //    SM_ERR_SELFMODIFIED and changes nothing.
+  // 4. The next statement finds it taken, and the indexes agree.
+  // 5. Commit: it is taken for a new transaction.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t r7 = put(t, 7, "free", std::nullopt);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  REQUIRE(sm3::stmt_begin(f.a) == 0);
+  t = f.write(f.a);
+  REQUIRE(set(t, r7, 7, "taken", "w1") == 0);
+  CHECK(get(t, r7) == "7|free|-");
+  CHECK(under(t, f.jobs_state, "free") == std::vector<uint64_t>{r7});
+  CHECK(under(t, f.jobs_state, "taken").empty());
+
+  CHECK(set(t, r7, 7, "done", "w2") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SELFMODIFIED);
+  CHECK(sm3::tbl_delete(t, r7) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SELFMODIFIED);
+
+  REQUIRE(sm3::stmt_begin(f.a) == 0);
+  CHECK(get(t, r7) == "7|taken|w1");
+  CHECK(under(t, f.jobs_state, "taken") == std::vector<uint64_t>{r7});
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.b);
+  t = f.write(f.b, sm1::lockmode_t::intent_shared);
+  CHECK(get(t, r7) == "7|taken|w1");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+}
+
+TEST_CASE("a statement inside another sees the outer's table writes, and the "
+          "outer resumes") {
+  // Verify sm3::stmt_end, as a trigger's commands inside a statement.
+  // 1. A statement inserts row 7.
+  // 2. An inner statement sees it, by heap and index, and
+  //    inserts row 8.
+  // 3. The inner ends: the outer sees neither row.
+  // 4. The next statement sees both, and the indexes agree.
+  jobs_t f;
+  start(f.a);
+  REQUIRE(sm3::stmt_begin(f.a) == 0);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t r7 = put(t, 7, "free", std::nullopt);
+
+  sm3::stmt_t outer;
+  REQUIRE(sm3::stmt_begin(f.a, outer) == 0);
+  CHECK(get(t, r7) == "7|free|-");
+  CHECK(under(t, f.jobs_state, "free") == std::vector<uint64_t>{r7});
+  uint64_t r8 = put(t, 8, "free", std::nullopt);
+
+  REQUIRE(sm3::stmt_end(f.a, outer) == 0);
+  CHECK(rows(t).empty());
+  CHECK(under(t, f.jobs_state, "free").empty());
+
+  REQUIRE(sm3::stmt_begin(f.a) == 0);
+  CHECK(under(t, f.jobs_state, "free") == std::vector<uint64_t>{r7, r8});
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}

@@ -322,6 +322,7 @@ design:
   | `CORRUPT` | `XX001` | `data_corrupted` |
   | `NOTNULL` | `23502` | `not_null_violation` |
   | `KEYTOOLONG`, `ROWTOOLONG`, `UNDOLIMIT` | `54000` | `program_limit_exceeded` |
+  | `SELFMODIFIED` | none for `UPDATE` and `DELETE`, which skip the row; `21000` for `INSERT ... ON CONFLICT` | `cardinality_violation` |
   | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
   | `EXCEPTION` | `XX000` | `internal_error` (a bug in the stack) |
 - **Running out of memory inside sm1 is fatal to the process,

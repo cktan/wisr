@@ -68,13 +68,14 @@ static sm_env_t *require_env() {
  * The write sets no savepoint, so one that failed partway has left
  * its earlier steps done, and only an abort undoes them. Two
  * outcomes are not errors and leave the transaction alone:
- * SM_ERR_UPDATED, which a read-latest answers, and SM_ERR_BLOCKED,
- * which repeating the step answers. After a retryable error the
- * engine has aborted already.
+ * SM_ERR_UPDATED, which a read-latest answers, SM_ERR_BLOCKED,
+ * which repeating the step answers, and SM_ERR_SELFMODIFIED, a row
+ * the statement already changed, which the caller skips. After a
+ * retryable error the engine has aborted already.
  */
 static void abort_failed_write(session_ctx_t *s) {
   if (sm_errnum() == SM_ERR_UPDATED || sm_errnum() == SM_ERR_BLOCKED ||
-      sm_retryable()) {
+      sm_errnum() == SM_ERR_SELFMODIFIED || sm_retryable()) {
     return;
   }
   // A successful abort leaves the error state as the write set it.
@@ -336,6 +337,35 @@ static Janet cfun_snapshot(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   if (sm_stmt_begin(s->session) != 0) {
     panic_sm_error("snapshot");
+  }
+  return janet_wrap_nil();
+}
+
+/* (stmt-inner) */
+static Janet cfun_stmt_inner(int32_t argc, Janet *argv) {
+  (void)argv;
+  janet_fixarity(argc, 0);
+  session_ctx_t *s = require_session();
+  sm_stmt_t *outer = nullptr;
+  if (sm_stmt_begin_inner(s->session, &outer) != 0) {
+    panic_sm_error("stmt-inner");
+  }
+  s->outer_stmts.push_back(outer);
+  return janet_wrap_nil();
+}
+
+/* (stmt-end) */
+static Janet cfun_stmt_end(int32_t argc, Janet *argv) {
+  (void)argv;
+  janet_fixarity(argc, 0);
+  session_ctx_t *s = require_session();
+  if (s->outer_stmts.empty()) {
+    janet_panic("stmt-end: no statement begun by (stmt-inner)");
+  }
+  sm_stmt_t *outer = s->outer_stmts.back();
+  s->outer_stmts.pop_back();
+  if (sm_stmt_end(s->session, outer) != 0) {
+    panic_sm_error("stmt-end");
   }
   return janet_wrap_nil();
 }
@@ -1617,6 +1647,10 @@ static const JanetReg s_rel_cfuns[] = {
     {"abort", cfun_abort, "(abort) -- abort transaction"},
     {"snapshot", cfun_snapshot, "(snapshot) -- pin/advance statement snapshot"},
     {"stmt-begin", cfun_snapshot, "(stmt-begin) -- alias for (snapshot)"},
+    {"stmt-inner", cfun_stmt_inner,
+     "(stmt-inner) -- begin a statement inside the running one"},
+    {"stmt-end", cfun_stmt_end,
+     "(stmt-end) -- end the last (stmt-inner), resuming the outer"},
     {"qa-nowait", cfun_qa_nowait,
      "(qa-nowait on) -- fail with ERR_BLOCKED where a lock would wait"},
     {"savepoint", cfun_savepoint,

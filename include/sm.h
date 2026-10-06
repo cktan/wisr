@@ -161,8 +161,37 @@ int sm_commit(sm_session_t* session);
  */
 int sm_abort(sm_session_t* session);
 
-/* Begin a statement: its writes can be undone on their own. */
+/*
+ * Begin a statement, a SQL command. Its reads see the
+ * transaction's own writes made before it began, not those it
+ * makes itself, as PostgreSQL's command id does; under READ
+ * COMMITTED they also read at one snapshot, taken by the first
+ * read. An update or delete of a row the statement has already
+ * changed fails with SM_ERR_SELFMODIFIED and writes nothing: not
+ * an abort, and the caller skips the row, or raises an error as
+ * INSERT ... ON CONFLICT does. A statement runs until the next
+ * sm_stmt_begin or the end of the transaction. A transaction that
+ * never calls it sees all its own writes, call by call.
+ */
 int sm_stmt_begin(sm_session_t* session);
+
+/* A statement put aside by sm_stmt_begin_inner: opaque. */
+typedef struct sm_stmt_t sm_stmt_t;
+
+/*
+ * Begin a statement inside the running one, as a trigger's or a
+ * function's commands run inside the statement that fired them.
+ * The inner statement sees the outer's writes so far. The outer
+ * is saved in *outer, which sm_stmt_end takes back and frees.
+ */
+int sm_stmt_begin_inner(sm_session_t* session, sm_stmt_t** outer);
+
+/*
+ * End a statement begun by sm_stmt_begin_inner: the outer one
+ * resumes with its own snapshot, and again does not see its own
+ * writes nor the inner one's. outer is freed either way.
+ */
+int sm_stmt_end(sm_session_t* session, sm_stmt_t* outer);
 
 /*
  * FOR QA ONLY (rel's scripts); not how NOWAIT or SKIP LOCKED is

@@ -571,17 +571,48 @@ int read_latest(session_t* session, uint64_t storeid,
  * Once called, the transaction reads this way for the rest of
  * its life; there is no going back to a snapshot per call.
  * Under sm1::xctlevel_t::repeatable_read and sm1::xctlevel_t::serializable the
- * call is accepted and does nothing, the whole transaction
- * already reading at one snapshot.
+ * whole transaction already reads at one snapshot.
  *
- * Writes are unaffected: they still check for conflicts
- * against the snapshot taken by sm1::begin(), so an
- * SM_ERR_CONFLICT can still arrive on a row this statement
- * has just read.
+ * At every level, the statement's reads see the transaction's
+ * own writes made before it began, and not those it makes
+ * itself, as PostgreSQL's command id does. A cursor or a point
+ * read begun later in the statement does not see them either.
+ *
+ * Writes still check for conflicts against the snapshot taken
+ * by sm1::begin(), so an SM_ERR_CONFLICT can still arrive on a
+ * row this statement has just read. An update or erase of a key
+ * the statement itself has already written fails with
+ * SM_ERR_SELFMODIFIED and writes nothing; it is not an abort,
+ * and the caller skips the row.
  *
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID.
  */
 int stmt_begin(session_t* session);
+
+/* What a statement replaces, for sm1::stmt_end() to put back. */
+struct stmt_t {
+    bool pinned = false;      /* statement snapshots on (§6.2) */
+    bool taken = false;       /* snapshot_ts is the one to read at */
+    uint64_t snapshot_ts = 0; /* the statement's snapshot */
+    bool marked = false;      /* reads see own writes up to seq */
+    uint32_t seq = 0;         /* the statement's mark */
+};
+
+/*
+ * Begin a statement inside the running one, as a trigger's
+ * commands run inside the statement that fired them, saving the
+ * outer statement's snapshot and mark in outer. The inner one
+ * sees the outer's writes so far. Errors as sm1::stmt_begin().
+ */
+int stmt_begin(session_t* session, stmt_t& outer);
+
+/*
+ * End a statement begun by the call above: the outer one resumes
+ * with its own snapshot and mark, and again sees neither its own
+ * writes nor the inner one's. Errors: SM_ERR_NOTRANS,
+ * SM_ERR_PREPARED.
+ */
+int stmt_end(session_t* session, const stmt_t& outer);
 
 /*
  * FOR QA ONLY: it lets one thread play several sessions in a

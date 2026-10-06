@@ -55,6 +55,11 @@ int catalog_t::env_detach(int force) {
   // Close all open tables and sessions before detaching.
   for (auto &[sname, sctx] : m_sessions) {
     sctx.stmt_tables.clear();
+    // Free the statements a script put aside and never ended.
+    for (sm_stmt_t *outer : sctx.outer_stmts) {
+      sm_stmt_end(sctx.session, outer);
+    }
+    sctx.outer_stmts.clear();
 
     if (sctx.session != nullptr) {
       sm_closedb(sctx.session);
@@ -117,6 +122,11 @@ int catalog_t::session_close(const std::string &name) {
   }
 
   it->second.stmt_tables.clear();
+  // Free the statements a script put aside and never ended.
+  for (sm_stmt_t *outer : it->second.outer_stmts) {
+    sm_stmt_end(it->second.session, outer);
+  }
+  it->second.outer_stmts.clear();
 
   if (it->second.session != nullptr) {
     sm_closedb(it->second.session);

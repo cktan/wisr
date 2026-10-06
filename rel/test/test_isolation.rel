@@ -109,6 +109,38 @@
 (assert-eq (read accounts 1) [1 999])
 (commit)
 
+# 5. A statement does not see its own writes, and a second change
+#    of a row it changed fails with ERR_SELFMODIFIED. That is not
+#    an abort: the transaction keeps the first change and commits.
+(session-use s1)
+(begin :rc)
+(snapshot)
+(update accounts 1 [1 700])
+(assert-eq (read accounts 1) [1 999])
+(assert-err :err-selfmodified (update accounts 1 [1 800]))
+(snapshot)
+(assert-eq (read accounts 1) [1 700])
+(commit)
+(begin :rc)
+(assert-eq (read accounts 1) [1 700])
+(commit)
+
+# 6. A statement inside another, as a trigger's: it sees the outer's
+#    write, and once it ends the outer again sees neither.
+(begin :rc)
+(snapshot)
+(update accounts 1 [1 710])
+(stmt-inner)
+(assert-eq (read accounts 1) [1 710])
+(def r2 (insert accounts [2 210]))
+(stmt-end)
+(assert-eq (read accounts 1) [1 700])
+(assert-eq (read accounts r2) nil)
+(snapshot)
+(assert-eq (read accounts 1) [1 710])
+(assert-eq (read accounts r2) [2 210])
+(commit)
+
 (session-close s1)
 (session-close s2)
 (env-detach :force true)

@@ -89,6 +89,7 @@ struct session_ctx_t {
   std::string db_name;
   sm_session_t *session = nullptr;
   std::vector<std::unique_ptr<table_def_t>> stmt_tables; /* this statement's */
+  std::vector<sm_stmt_t *> outer_stmts; /* put aside by (stmt-inner) */
 };
 
 /* The global catalog tracking environment, sessions and active state. */

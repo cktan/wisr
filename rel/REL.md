@@ -146,13 +146,27 @@ modifications.
 ```
 
 ### `(snapshot)`
-Pins or advances a statement-level read snapshot inside a
-read-committed transaction. Subsequent reads within the
-statement see a consistent snapshot. `(stmt-begin)` is
-supported as an alias.
+Begins a statement. Inside a read-committed transaction its
+reads see one snapshot. At every level its reads see the
+transaction's own writes made before it began, not its own:
+an `update` or `delete` of a row the statement already changed
+fails with `ERR_SELFMODIFIED`, which leaves the transaction
+active. `(stmt-begin)` is supported as an alias.
 
 ```janet
 (snapshot)
+```
+
+### `(stmt-inner)` and `(stmt-end)`
+`(stmt-inner)` begins a statement inside the running one, as a
+trigger's commands run inside the statement that fired them:
+it sees the outer's writes so far. `(stmt-end)` ends it, and the
+outer statement resumes with its own view.
+
+```janet
+(stmt-inner)
+(insert audit [1 "fired"])
+(stmt-end)
 ```
 
 ### `(qa-nowait on)`

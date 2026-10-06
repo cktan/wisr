@@ -143,6 +143,7 @@ A version `V`, read by transaction `T` at `snapshot_ts`
 ```
 if V.xid == T.xid:                      # T's own write
     visible iff V.seq <= T.seq_hwm
+            and V.seq <= T.stmt_seq     # within a statement
 elif V.wts > snapshot_ts:               # written after the snapshot,
     invisible                           # so committed after it too
 else:
@@ -319,7 +320,97 @@ snapshot allows.
 
 ---
 
-## 10. The isolation levels
+## 10. A statement and its own writes
+
+A transaction sees its own writes. A statement, one SQL
+command, does not see the writes it makes itself: only those
+the transaction made before it began. This is PostgreSQL's
+rule, and without it a statement's answer can depend on the
+order it happens to visit rows.
+
+**The mark.** `stmt_begin` notes the transaction's `seq` as
+`stmt_seq`. Every read of the statement sees own versions only
+up to it (§4). The statement's own writes take `seq` numbers
+above it, so they stay hidden from the statement and appear to
+the next one.
+
+**An example.** `emp(id, boss, pay)` holds three rows,
+committed:
+
+| rowno | id | boss | pay |
+| --- | --- | --- | --- |
+| 1 | 1 Bob | — | 1000 |
+| 2 | 2 Ann | 1 | 950 |
+| 3 | 3 Cid | 2 | 500 |
+
+One statement raises everyone whose boss earns at least 1000:
+
+```sql
+UPDATE emp e SET pay = e.pay + 100
+FROM emp b WHERE e.boss = b.id AND b.pay >= 1000;
+```
+
+The executor walks `e` with a cursor and, for each row, looks
+the boss up by key. In a fresh transaction, before the
+statement, `seq` is 0.
+
+| Step | Call | `seq` | What the statement sees |
+| --- | --- | --- | --- |
+| 1 | `stmt_begin`: `stmt_seq` = 0 | 0 | |
+| 2 | open the cursor over `e` | 0 | |
+| 3 | `e` = Bob: no boss, skipped | 0 | |
+| 4 | `e` = Ann: read boss Bob, pay 1000; qualifies | 0 | Bob 1000 |
+| 5 | update Ann's pay to 1050 | 1 | |
+| 6 | `e` = Cid: read boss Ann | 1 | **Ann 950**: her new version has `seq` 1, above the mark |
+| 7 | 950 < 1000: Cid not raised | 1 | |
+| 8 | the next `stmt_begin`: `stmt_seq` = 1 | 1 | Ann 1050 |
+
+Without the mark, step 6 would read Ann at 1050 and raise Cid
+too. Visit the rows in another order, Cid before Ann, and Cid
+would not be raised. The result would depend on the plan, which
+SQL forbids. The cursor of step 2 was safe either way, having
+frozen `seq_hwm` when it opened; the point read of step 6 is
+the read the mark protects, as is any cursor opened later in
+the statement.
+
+**A row changed twice.** Change the condition so that a row
+can be reached twice in one statement, as when a row joins two
+others. The second update of it finds that the newest version
+of the key is the transaction's own, with `seq` above the
+mark: the statement changed it already, and cannot see that
+change. The write fails with `SM_ERR_SELFMODIFIED` and writes
+nothing. It is not an abort: the executor skips the row, as
+PostgreSQL's does, or raises an error for `INSERT ... ON
+CONFLICT`, which may not change one row twice.
+
+**A trigger.** Say an update of `emp` fires a trigger that
+reads `emp` to write an audit row. The trigger's commands run
+inside the statement, as an inner statement:
+
+| Step | Call | `stmt_seq` | Reads Ann as |
+| --- | --- | --- | --- |
+| 5 | update Ann to 1050 | 0 | |
+| 5a | `stmt_begin(outer)`: the trigger begins | 1 | 1050: the outer's write so far |
+| 5b | insert the audit row, `seq` 2 | 1 | |
+| 5c | `stmt_end(outer)`: the trigger ends | 0 | 950, and no audit row |
+
+The trigger sees what the statement has done so far, and the
+statement resumes with its own view.
+
+**No command id is stored.** `seq` is already in every
+version's key (§2), and a statement's writes are one unbroken
+run of it, so "written before this statement" is `seq <=
+stmt_seq`. PostgreSQL stores a command id, `cmin`, in each
+tuple and a second one, `cmax`, because an update or delete
+stamps the old tuple's header with the command that ended it.
+sm1 never writes into an existing version: a delete or update
+is a new version with its own `seq`, so one number does both
+jobs. The mark lives only in the session, since it matters only
+while the transaction issues statements.
+
+---
+
+## 11. The isolation levels
 
 | Level | Snapshot | Beyond the rule of §4 |
 | --- | --- | --- |
@@ -333,7 +424,7 @@ pairing of levels.
 
 ---
 
-## 11. Commit, abort and crash
+## 12. Commit, abort and crash
 
 **Commit** (`SM1_DESIGN.md` §8.2):
 
@@ -365,14 +456,14 @@ make it work as abort does.
 
 ---
 
-## 12. The data structures
+## 13. The data structures
 
 Everything above rests on three structures on disk and a
 handful in memory. The ones in memory hold nothing that
 cannot be lost: a restart rebuilds them empty, or from the
 three on disk.
 
-### 12.1 On disk
+### 13.1 On disk
 
 Each is a RocksDB column family of one database.
 
@@ -385,7 +476,7 @@ Each is a RocksDB column family of one database.
 RocksDB's own log makes all three durable and atomic. sm1
 keeps no log of its own.
 
-### 12.2 In memory, for the database
+### 13.2 In memory, for the database
 
 One `db_t` for each open database, shared by all its
 sessions (`src/db.h`). It lives from the first `sm1::opendb`
@@ -400,7 +491,7 @@ to the last `sm1::closedb`.
 | `cache`, `cache_order` | hash map `xid → commit_ts`, and a queue of xids in order of entry | the commit cache and its eviction (§7) | `txn_mu` |
 | `snapshots` | multiset of `snapshot_ts` | the snapshots in use; its smallest is the GC watermark (§8) | `snap_mu` |
 | `lock_table` | hash map from store and key to the list of holders, each with a mode | row locks (§9) | `lock_mu`, with one condition variable for every waiter |
-| the SSI tracker | nodes, SIREAD entries on points and on ranges, a map from `xid` to node | serializable isolation (§10) | one mutex |
+| the SSI tracker | nodes, SIREAD entries on points and on ranges, a map from `xid` to node | serializable isolation (§11) | one mutex |
 | `purges`, `drops` | a list of tombstones to purge, and stores to drop once the watermark passes | garbage collection's queues (§8) | `gc_mu` |
 | `readers`, `read_epoch` | two counters and which is current | how the sweep knows every reader that began before its pass has finished (§8) | atomics |
 
@@ -414,7 +505,7 @@ sections:
   one step. Without that, a reader could find a committing
   transaction in neither and call it dead.
 
-### 12.3 In memory, for a transaction
+### 13.3 In memory, for a transaction
 
 One `sm1::session_t` for each session, holding at most one
 transaction (`src/session.h`).
@@ -427,6 +518,7 @@ transaction (`src/session.h`).
 | `xid` | zero until the first write |
 | `seq` | the last write's number within the transaction |
 | `seq_hwm` | the newest own write still in effect; a rollback to a savepoint lowers it |
+| `stmt_seq` | the statement's mark: its reads see own writes up to it, those made before the statement began, as PostgreSQL's command id |
 | `wts_hi` | the largest `wts` written, so that a seek for the transaction's own versions starts high enough |
 | `locks` | the locks held, in the order taken, each with its mode: one entry for each key written or locked |
 | `undo` | the versions written while a savepoint is set, for a rollback to delete; capped by `savepoint_undo_bytes`, past which it is dropped and the savepoints lost |
@@ -445,7 +537,7 @@ an object of the same type that the database owns, registered
 by its global id, so that any session can resolve it. After a
 restart the same object is rebuilt from the `PREPARED` record.
 
-### 12.4 In memory, for a cursor
+### 13.4 In memory, for a cursor
 
 One `sm1::scan_t` for each open scan. It carries two views:
 
@@ -461,7 +553,7 @@ transaction writes after it opened.
 
 ---
 
-## 13. Where to read more
+## 14. Where to read more
 
 | For | Read |
 | --- | --- |
