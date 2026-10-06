@@ -11,8 +11,8 @@ sorted files that RocksDB ingests whole.
 
 It is a design and not yet built. What is said here of
 RocksDB is from memory of its documentation, and the stack
-builds on 8.9.1. §10 lists what is to be checked and measured
-before any of it is relied on.
+builds on 8.9.1. §10 lists what is to be checked before any
+of it is relied on.
 
 ---
 
@@ -63,9 +63,13 @@ before any of it is relied on.
 
 **What is not known**
 
-- How much faster either is. Nothing has measured the present
-  path, so §10 begins with that.
 - Several of RocksDB's behaviours file mode leans on (§10).
+
+**Not measured, by decision.** File mode writes each row once,
+past the log, the memtable and the compactions, so it wins on
+any load big enough to leave the small-load path (§5.7). No
+benchmark is run before building it. The knobs start at
+defaults chosen here, to be tuned in use.
 
 ---
 
@@ -269,8 +273,7 @@ which is exactly what file mode requires (§5.1).
 ### 4.1 A chunk
 
 The loader buffers rows and writes them a chunk at a time. A
-chunk is bounded in bytes, a knob whose default is to be
-measured.
+chunk is bounded in bytes, a knob, 4 MB by default.
 
 For each chunk:
 
@@ -418,7 +421,7 @@ ascending or not, and unique or not.
 **The heap is ascending for free.** A row's key is its
 `rowno`, and a load's rownos ascend (§3.2). A heap file is
 started, filled as rows arrive, and closed at a size limit,
-and the next one started.
+256 MB by default, and the next one started.
 
 ### 5.3 Sorting an index
 
@@ -426,8 +429,9 @@ An index's entries arrive in the heap's order, not the key's.
 It is an external sort, in the plain two-phase form.
 
 1. **Runs.** Entries collect in memory up to a budget, a
-   knob. When it is full they are sorted and written out as a
-   run, and the memory is reused.
+   knob, 256 MB by default for the whole load. When it is full
+   they are sorted and written out as a run, and the memory is
+   reused.
 2. **Merge.** At the end the runs are merged into the files
    to ingest, which do not overlap each other. A stream that
    never filled its budget is sorted and written once, with
@@ -535,9 +539,9 @@ The host cannot always know a load's size when it starts; a
 
 **Decision proposed: a file load that ends small is written
 as a batch.** The loader keeps its first rows in memory and
-starts no file until they pass a threshold. If the load is
-closed before that, the rows are written as one chunk of
-§4.1. It is the reason the two modes are one loader.
+starts no file until they pass one chunk, §4.1's size. If the
+load is closed before that, the rows are written as that one
+chunk. It is the reason the two modes are one loader.
 
 ### 5.8 How PostgreSQL does the same
 
@@ -692,8 +696,7 @@ File mode:
 - **Nothing is readable before the close** (§5.5).
 - **Disk for the sort**: for a moment, twice the indexes.
 - **Ingestion pauses the database's writes for a moment**
-  while RocksDB fits the files in. How long is to be
-  measured.
+  while RocksDB fits the files in.
 - **Loaded rows cost a status lookup for longer** (§5.6).
 - **The first code in the stack that writes files of its
   own**, with a directory to sweep.
@@ -729,7 +732,7 @@ used:
 
 ---
 
-## 10. To check and to measure, first
+## 10. To check, first
 
 **Check**, against RocksDB 8.9.1 and the code:
 
@@ -751,28 +754,9 @@ used:
 - that no caller under IS can lock or write a key the loader
   inserts, beyond `tbl_lock` on a row that exists.
 
-**Measure**, each with a small program and no PostgreSQL:
-
-1. **The present path.** Load ten million rows through
-   `tbl_insert`, with no index and with three.
-   → report: rows a second, peak memory, bytes written to
-   disk against bytes loaded.
-2. **Batch mode.** The same load through a prototype of
-   §4.1, at several chunk sizes.
-   → accept: memory flat in the row count. Report the gain,
-   and pick the default chunk size.
-3. **The heap by ingestion.** The same rows written to files
-   and ingested into an empty store.
-   → accept: memory flat in the row count. Report the gain
-   over 2, where the files land, and the pause of the
-   ingestion.
-4. **An index by ingestion.** Sorted with a budget far below
-   its size, merged and ingested into an empty index.
-   → report: the gain, the disk used, and the state of the
-   tree afterwards.
-5. **The small load.** Loads of ten rows to a million, in
-   each mode.
-   → pick the threshold of §5.7.
+Nothing is measured first (§0). The defaults of the knobs are
+§4.1's chunk, §5.2's file size, §5.3's sort budget, and one
+chunk as §5.7's threshold.
 
 ---
 
@@ -799,7 +783,7 @@ Batch mode comes first: it is the smaller, file mode's small
 loads need it, and it puts the lock, the checks and the
 interface in place.
 
-1. The checks of §10, and measurement 1.
+1. The checks of §10.
    → verify: each written up here, and the design changed
    where a check fails.
 2. sm1's loader in batch mode, tests first.
@@ -817,21 +801,19 @@ interface in place.
    of it; a writer is blocked until it commits; an aborted
    load leaves nothing; a prepared load still blocks writers
    after a restart, and commits.
-5. Measurement 2.
-6. File mode for the heap: one ascending stream, into a table
+5. File mode for the heap: one ascending stream, into a table
    with rows, the index entries in batches.
    → verify: the rows invisible to others until commit and
    gone after an abort, before the close and after it; the
    transaction's reads and writes of the table refused while
    the loader is open; files left by a crash are deleted at
    open.
-7. Sorted streams and the unique check, for an empty table.
+6. Sorted streams and the unique check, for an empty table.
    → verify: told apart from a table with rows, and from a
    new one already written to; runs and merge with a budget
    of a few rows; a duplicate inside the load is found.
-8. File mode through sm2, sm3 and `rel`, and the small load.
+7. File mode through sm2, sm3 and `rel`, and the small load.
    → verify: step 3's and step 4's checks again in file mode,
    for a load on each side of the threshold.
-9. Measurements 3 to 5.
 
 The fork's own work in §11 is outside this repository.

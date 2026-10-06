@@ -24,7 +24,8 @@ between them is not settled.
    a load holds the table's schema lock SIX in place of row
    locks, in one transaction, and writes in one of two
    modes: batches, or sorted files that RocksDB ingests. Its
-   first step is to check what it assumes of RocksDB.
+   first step is to check what it assumes of RocksDB; nothing
+   is to be measured first.
 
 ---
 
