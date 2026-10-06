@@ -8,28 +8,28 @@
 
 == pairing RR/RR == T1=RR-RO
 @1 T1 begin -> ok
-@2 T1 write R1 t1 -> error:the transaction was declared read-only
+@2 T1 write R1 t1 -> readonly
 @3 T1 read R1 -> 0
 @4 T1 commit -> ok
 @5 check committed T1 -> satisfied
 @6 check row R1 0 -> satisfied
 == pairing RR/S == T1=RR-RO
 @1 T1 begin -> ok
-@2 T1 write R1 t1 -> error:the transaction was declared read-only
+@2 T1 write R1 t1 -> readonly
 @3 T1 read R1 -> 0
 @4 T1 commit -> ok
 @5 check committed T1 -> satisfied
 @6 check row R1 0 -> satisfied
 == pairing S/RR == T1=SER-RO
 @1 T1 begin -> ok
-@2 T1 write R1 t1 -> error:the transaction was declared read-only
+@2 T1 write R1 t1 -> readonly
 @3 T1 read R1 -> 0
 @4 T1 commit -> ok
 @5 check committed T1 -> satisfied
 @6 check row R1 0 -> satisfied
 == pairing S/S == T1=SER-RO
 @1 T1 begin -> ok
-@2 T1 write R1 t1 -> error:the transaction was declared read-only
+@2 T1 write R1 t1 -> readonly
 @3 T1 read R1 -> 0
 @4 T1 commit -> ok
 @5 check committed T1 -> satisfied

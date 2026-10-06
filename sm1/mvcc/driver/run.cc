@@ -52,6 +52,8 @@ std::string error_name() {
     return "invalid";
   case sm1::SM_ERR_UPDATED:
     return "updated";
+  case sm1::SM_ERR_READONLY:
+    return "readonly";
   default:
     return std::string("error:") + sm1::errmsg();
   }
@@ -319,7 +321,7 @@ std::string error_class(const std::string &r) {
     return "deadlock";
   }
   if (r == "notfound" || r == "notrans" || r == "invalid" || r == "updated" ||
-      r == "prepared" || r.rfind("error:", 0) == 0 ||
+      r == "prepared" || r == "readonly" || r.rfind("error:", 0) == 0 ||
       r.rfind("ERROR", 0) == 0) {
     return "abort";
   }

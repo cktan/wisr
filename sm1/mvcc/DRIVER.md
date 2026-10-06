@@ -194,7 +194,7 @@ can be read at a glance. Several steps may share a time.
 
 Error names are symbolic, never numbers or messages:
 `conflict`, `serialization`, `dupkey`, `notfound`, `notrans`,
-`deadlock`, `prepared`, `invalid`, `updated`.
+`deadlock`, `prepared`, `invalid`, `updated`, `readonly`.
 
 **`commit?`** is for a commit whose outcome may differ from
 run to run -- at S+S either side of a write skew may be the

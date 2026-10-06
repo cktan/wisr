@@ -32,7 +32,7 @@ afterwards.
 **Verdict: no incorrect expected output was found.** All 109
 scripts and their transcripts give the outcome the rules
 require. One defect in the *driver* turned up on the way, in
-`c34`'s transcript, and is §7's first item.
+`c34`'s transcript; it is §7's first item, and is fixed.
 
 ---
 
@@ -240,24 +240,30 @@ unique violation, matching `b06` and `b12`.
 
 ## 7. What the audit found
 
-1. **A defect: `c34`'s transcript prints an engine message,
-   not an error name.** The step reads
+1. **A defect, since fixed: `c34`'s transcript printed an
+   engine message, not an error name.** The step read
    `@2 T1 write R1 t1 -> error:the transaction was declared
    read-only`. `DRIVER.md` §2.2 says error names are
-   "symbolic, never numbers or messages" and lists the nine;
-   §4 says the driver "prints nothing the engine generates".
-   The cause is a gap in `error_name()` in
-   `mvcc/driver/run.cc`, which has a case for each of the
-   nine and none for the new `SM_ERR_READONLY`, so `c34`
-   falls to the `default:` branch and emits
-   `"error:" + sm1::errmsg()`. The behaviour under test is
-   right; only its rendering is wrong, and it makes `c34`'s
-   transcript hostage to the wording of a message — the
-   coupling §4 exists to prevent. The fix is one case
-   returning `"readonly"`, `readonly` added to §2.2's list,
-   and `c34`'s transcript regenerated. Regenerating an
-   expected transcript needs the owner's say-so, so it is
-   reported rather than done.
+   "symbolic, never numbers or messages"; §4 says the driver
+   "prints nothing the engine generates". The cause was a gap
+   in `error_name()` in `mvcc/driver/run.cc`, which had a
+   case for each of the nine names and none for the new
+   `SM_ERR_READONLY`, so `c34` fell to the `default:` branch
+   and emitted `"error:" + sm1::errmsg()`. The behaviour
+   under test was right; only its rendering was wrong — but
+   it left `c34`'s transcript hostage to the wording of a
+   message, the coupling §4 exists to prevent.
+
+   Fixed by a `case` returning `"readonly"`, with `readonly`
+   added to §2.2's list and `c34`'s transcript regenerated —
+   the one scenario the change touches. `error_class()` in
+   the same file needed it too: that function sorted a
+   read-only failure into PostgreSQL's `abort` class only by
+   the `error:` prefix, which a symbolic name no longer
+   matches, so `readonly` joins the names listed there. No
+   permutation script reaches it today — p02's declared s3
+   never writes — but a script that did would otherwise have
+   been classified silently wrong.
 
 2. **`c03`, `c04` and `c22` assert final row state only at
    RR/RR.** Their `@9 check rows when rr` is scoped to that
@@ -282,10 +288,16 @@ Two measurements were taken after the audit above, re-run at
 
 **`make -j4 test` passes.** All 109 scripts match `good/`,
 the transcripts `2ae8668` and `44bd134` regenerated included;
-169 unit cases and 21,266 assertions pass, `test_ssi.cc`
-among them, as do the four stress scenarios and the
-examples. So the engine does produce these transcripts, and
-the audit's verdict and the engine's behaviour agree.
+169 unit cases pass, `test_ssi.cc` among them, as do the four
+stress scenarios and the examples. So the engine does produce
+these transcripts, and the audit's verdict and the engine's
+behaviour agree.
+
+The case count is the figure to compare; the assertion total
+is not. Two runs of identical sources gave 21,266 and 21,262,
+so some test's assertion count depends on contention or
+timing. A number recorded here would read as a regression on
+the next run that disagreed with it.
 
 **The suite did not lose assertive power.** `MVCC.md` §9's
 three deliberate breakages were re-run, because `2ae8668`
