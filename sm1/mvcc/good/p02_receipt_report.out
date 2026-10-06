@@ -15,12 +15,28 @@
 # read by primary key is a read of the row; a SELECT on
 # deposit_date has no index, so it scans the whole table.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE ctl (k text NOT NULL PRIMARY KEY, deposit_date date NOT NULL);
+#   INSERT INTO ctl VALUES ('receipt', DATE '2008-12-22');
+#   CREATE TABLE receipt (receipt_no int NOT NULL PRIMARY KEY, deposit_date date NOT NULL, amount numeric(13,2));
+#   INSERT INTO receipt VALUES (1, (SELECT deposit_date FROM ctl WHERE k = 'receipt'), 1.00);
+#   INSERT INTO receipt VALUES (2, (SELECT deposit_date FROM ctl WHERE k = 'receipt'), 2.00);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s3: BEGIN ISOLATION LEVEL SERIALIZABLE, READ ONLY;
 
-# INSERT INTO receipt VALUES (3, (SELECT deposit_date FROM ctl
-#   WHERE k = 'receipt'), 4.00)
-# UPDATE ctl SET deposit_date = '2008-12-23' WHERE k = 'receipt'
-# SELECT * FROM ctl WHERE k = 'receipt'
-# SELECT * FROM receipt WHERE deposit_date = '2008-12-22'
+
+# rxwy1: INSERT INTO receipt VALUES (3, (SELECT deposit_date FROM ctl WHERE k = 'receipt'), 4.00);
+# c1: COMMIT;
+# wx2: UPDATE ctl SET deposit_date = DATE '2008-12-23' WHERE k = 'receipt';
+# c2: COMMIT;
+# rx3: SELECT * FROM ctl WHERE k = 'receipt';
+# ry3: SELECT * FROM receipt WHERE deposit_date = DATE '2008-12-22';
+# c3: COMMIT;
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the
 # permutation's expect line gives sm1's outcome. Every such

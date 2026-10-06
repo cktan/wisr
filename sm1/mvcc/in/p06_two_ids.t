@@ -10,20 +10,36 @@
 # Tables D1 and D2 (id, no key) become rows d1:r and d2:r;
 # with no index, every statement scans its table.
 
+# PostgreSQL's setup:
+#
+#   create table D1 (id int not null);
+#   create table D2 (id int not null);
+#   insert into D1 values (1);
+#   insert into D2 values (1);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s3: BEGIN ISOLATION LEVEL SERIALIZABLE;
+
 session s1 ser
 session s2 ser
 session s3 ser
 seed d1:r 1
 seed d2:r 1
 
-# update D1 set id = id + 1
+# wx1: update D1 set id = id + 1;
 step s1 wx1 scan d1: d1:~ ; write d1:r 2
+# c1: COMMIT;
 step s1 c1 commit
-# update D2 set id = (select id+1 from D1)
+# rxwy2: update D2 set id = (select id+1 from D1);
 step s2 rxwy2 scan d2: d2:~ ; scan d1: d1:~ ; write d2:r 2
+# c2: COMMIT;
 step s2 c2 commit
-# select id from D2
+# ry3: select id from D2;
 step s3 ry3 scan d2: d2:~
+# c3: COMMIT;
 step s3 c3 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the

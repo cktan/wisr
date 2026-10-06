@@ -11,6 +11,20 @@
 # the steps touch, t:0000001, t:0500000 and t:1000000; reads and
 # updates are by primary key.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE t (id int NOT NULL, txt text) WITH (fillfactor=50);
+#   INSERT INTO t (id)
+#   SELECT x FROM (SELECT * FROM generate_series(1, 1000000)) a(x);
+#   ALTER TABLE t ADD PRIMARY KEY (id);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s3: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s4: BEGIN ISOLATION LEVEL SERIALIZABLE;
+
 session s1 ser
 session s2 ser
 session s3 ser
@@ -19,23 +33,27 @@ seed t:0000001 -
 seed t:0500000 -
 seed t:1000000 -
 
-# SELECT * FROM t WHERE id = 1000000
+# rx1: SELECT * FROM t WHERE id = 1000000;
 step s1 rx1 read t:1000000
-# UPDATE t SET txt = 'a' WHERE id = 1
+# wz1: UPDATE t SET txt = 'a' WHERE id = 1;
 step s1 wz1 read t:0000001 ; write t:0000001 a
+# c1: COMMIT;
 step s1 c1 commit
-# UPDATE t SET txt = 'b' WHERE id = 1000000
+# wx2: UPDATE t SET txt = 'b' WHERE id = 1000000;
 step s2 wx2 read t:1000000 ; write t:1000000 b
+# c2: COMMIT;
 step s2 c2 commit
-# UPDATE t SET txt = 'c' WHERE id = 1000000
+# wx3: UPDATE t SET txt = 'c' WHERE id = 1000000;
 step s3 wx3 read t:1000000 ; write t:1000000 c
-# SELECT * FROM t WHERE id = 500000
+# ry3: SELECT * FROM t WHERE id = 500000;
 step s3 ry3 read t:0500000
+# c3: COMMIT;
 step s3 c3 commit
-# UPDATE t SET txt = 'd' WHERE id = 500000
+# wy4: UPDATE t SET txt = 'd' WHERE id = 500000;
 step s4 wy4 read t:0500000 ; write t:0500000 d
-# SELECT * FROM t WHERE id = 1
+# rz4: SELECT * FROM t WHERE id = 1;
 step s4 rz4 read t:0000001
+# c4: COMMIT;
 step s4 c4 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the

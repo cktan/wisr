@@ -11,13 +11,27 @@
 # Table bank_account (id PRIMARY KEY, balance) becomes rows
 # bX, bY.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE bank_account (id TEXT PRIMARY KEY, balance DECIMAL NOT NULL);
+#   INSERT INTO bank_account (id, balance) VALUES ('X', 0), ('Y', 0);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+#   s2: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+#   s3: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 
-# SELECT balance FROM bank_account WHERE id = 'Y'
-# UPDATE bank_account SET balance = 20 WHERE id = 'Y'
-# SELECT balance FROM bank_account WHERE id = 'X'
-# SELECT balance FROM bank_account WHERE id = 'Y'
-# UPDATE bank_account SET balance = -11 WHERE id = 'X'
-# SELECT id, balance FROM bank_account WHERE id IN ('X', 'Y')
+
+# s1ry: SELECT balance FROM bank_account WHERE id = 'Y';
+# s1wy: UPDATE bank_account SET balance = 20 WHERE id = 'Y';
+# s1c: COMMIT;
+# s2rx: SELECT balance FROM bank_account WHERE id = 'X';
+# s2ry: SELECT balance FROM bank_account WHERE id = 'Y';
+# s2wx: UPDATE bank_account SET balance = -11 WHERE id = 'X';
+# s2c: COMMIT;
+# s3r: SELECT id, balance FROM bank_account WHERE id IN ('X', 'Y') ORDER BY id;
+# s3c: COMMIT;
 
 == permutation 1: s2rx s2ry s1ry s1wy s1c s3r s2wx s2c s3c ==
 s2rx s2 -> 0

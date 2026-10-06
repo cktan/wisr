@@ -12,9 +12,22 @@
 # Table test (i PRIMARY KEY) becomes rows t:42 and so on; a
 # SELECT * scans the whole table.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE test (i integer PRIMARY KEY);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
 
-# SELECT * FROM test
-# INSERT INTO test VALUES (42)
+
+# r1: SELECT * FROM test;
+# w1: INSERT INTO test VALUES (42);
+# c1: COMMIT;
+# r2: SELECT * FROM test;
+# w2: INSERT INTO test VALUES (42);
+# c2: COMMIT;
 
 == permutation 1: r1 r2 w1 w2 c1 c2 ==
 r1 s1 -> {}

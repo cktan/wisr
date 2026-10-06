@@ -10,19 +10,32 @@
 # Table accounts (accountid PRIMARY KEY, balance) becomes rows
 # a:checking, a:savings; SUM scans the whole table.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE accounts (accountid text NOT NULL PRIMARY KEY, balance numeric not null);
+#   INSERT INTO accounts VALUES ('checking', 600),('savings',600);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+
 session s1 ser
 session s2 ser
 seed a:checking 600
 seed a:savings 600
 
-# UPDATE accounts SET balance = balance - 200 WHERE accountid = 'checking'
+# wx1: UPDATE accounts SET balance = balance - 200 WHERE accountid = 'checking';
 step s1 wx1 read a:checking ; write a:checking 400
-# SELECT SUM(balance) FROM accounts
+# rxy1: SELECT SUM(balance) FROM accounts;
 step s1 rxy1 scan a: a:~
+# c1: COMMIT;
 step s1 c1 commit
-# UPDATE accounts SET balance = balance - 200 WHERE accountid = 'savings'
+# wy2: UPDATE accounts SET balance = balance - 200 WHERE accountid = 'savings';
 step s2 wy2 read a:savings ; write a:savings 400
+# rxy2: SELECT SUM(balance) FROM accounts;
 step s2 rxy2 scan a: a:~
+# c2: COMMIT;
 step s2 c2 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the

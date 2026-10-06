@@ -13,22 +13,32 @@
 # rows o:<no>. A count on offense's statute_cite has no index,
 # so it scans the whole table.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE statute (statute_cite text NOT NULL, eff_date date NOT NULL, exp_date date, CONSTRAINT statute_pkey PRIMARY KEY (statute_cite, eff_date));
+#   INSERT INTO statute VALUES ('123.45(1)a', DATE '2008-01-01', NULL);
+#   CREATE TABLE offense (offense_no int NOT NULL, statute_cite text NOT NULL, offense_date date NOT NULL, CONSTRAINT offense_pkey PRIMARY KEY (offense_no));
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+
 session s1 ser
 session s2 ser
 seed s:123:20080101 null
 
-# SELECT count(*) FROM statute WHERE statute_cite = '123.45(1)a'
-#   AND eff_date <= '2009-05-15' AND (...)
+# rx1: SELECT count(*) FROM statute WHERE statute_cite = '123.45(1)a' AND eff_date <= DATE '2009-05-15' AND (exp_date IS NULL OR exp_date > DATE '2009-05-15');
 step s1 rx1 scan s:123: s:123:20090515
-# INSERT INTO offense VALUES (1, '123.45(1)a', '2009-05-15')
+# wy1: INSERT INTO offense VALUES (1, '123.45(1)a', DATE '2009-05-15');
 step s1 wy1 insert o:1 123
+# c1: COMMIT;
 step s1 c1 commit
-# SELECT count(*) FROM offense WHERE statute_cite = '123.45(1)a'
-#   AND offense_date >= '2008-01-01'
+# ry2: SELECT count(*) FROM offense WHERE statute_cite = '123.45(1)a' AND offense_date >= DATE '2008-01-01';
 step s2 ry2 scan o: o:~
-# DELETE FROM statute WHERE statute_cite = '123.45(1)a'
-#   AND eff_date = '2008-01-01'
+# wx2: DELETE FROM statute WHERE statute_cite = '123.45(1)a' AND eff_date = DATE '2008-01-01';
 step s2 wx2 read s:123:20080101 ; delete s:123:20080101
+# c2: COMMIT;
 step s2 c2 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the

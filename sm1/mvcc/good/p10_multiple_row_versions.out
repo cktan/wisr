@@ -11,14 +11,32 @@
 # the steps touch, t:0000001, t:0500000 and t:1000000; reads and
 # updates are by primary key.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE t (id int NOT NULL, txt text) WITH (fillfactor=50);
+#   INSERT INTO t (id)
+#   SELECT x FROM (SELECT * FROM generate_series(1, 1000000)) a(x);
+#   ALTER TABLE t ADD PRIMARY KEY (id);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s3: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s4: BEGIN ISOLATION LEVEL SERIALIZABLE;
 
-# SELECT * FROM t WHERE id = 1000000
-# UPDATE t SET txt = 'a' WHERE id = 1
-# UPDATE t SET txt = 'b' WHERE id = 1000000
-# UPDATE t SET txt = 'c' WHERE id = 1000000
-# SELECT * FROM t WHERE id = 500000
-# UPDATE t SET txt = 'd' WHERE id = 500000
-# SELECT * FROM t WHERE id = 1
+
+# rx1: SELECT * FROM t WHERE id = 1000000;
+# wz1: UPDATE t SET txt = 'a' WHERE id = 1;
+# c1: COMMIT;
+# wx2: UPDATE t SET txt = 'b' WHERE id = 1000000;
+# c2: COMMIT;
+# wx3: UPDATE t SET txt = 'c' WHERE id = 1000000;
+# ry3: SELECT * FROM t WHERE id = 500000;
+# c3: COMMIT;
+# wy4: UPDATE t SET txt = 'd' WHERE id = 500000;
+# rz4: SELECT * FROM t WHERE id = 1;
+# c4: COMMIT;
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the
 # permutation's expect line gives sm1's outcome. Every such

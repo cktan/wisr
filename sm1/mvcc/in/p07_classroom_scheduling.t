@@ -12,22 +12,31 @@
 # of bookings starting before a time scans the key range from
 # the room's first booking up to that time.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE room_reservation (room_id text NOT NULL, start_time timestamp with time zone NOT NULL, end_time timestamp with time zone NOT NULL, description text NOT NULL, CONSTRAINT room_reservation_pkey PRIMARY KEY (room_id, start_time));
+#   INSERT INTO room_reservation VALUES ('101', TIMESTAMP WITH TIME ZONE '2010-04-01 10:00', TIMESTAMP WITH TIME ZONE '2010-04-01 11:00', 'Bob');
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+
 session s1 ser
 session s2 ser
 seed r:101:1000 1100
 
-# SELECT count(*) ... WHERE room_id = '101' AND start_time < 14:00
-#   AND end_time > 13:00
+# rx1: SELECT count(*) FROM room_reservation WHERE room_id = '101' AND start_time < TIMESTAMP WITH TIME ZONE '2010-04-01 14:00' AND end_time > TIMESTAMP WITH TIME ZONE '2010-04-01 13:00';
 step s1 rx1 scan r:101: r:101:14
-# INSERT ... ('101', 13:00, 14:00, 'Carol')
+# wy1: INSERT INTO room_reservation VALUES ('101', TIMESTAMP WITH TIME ZONE '2010-04-01 13:00', TIMESTAMP WITH TIME ZONE '2010-04-01 14:00', 'Carol');
 step s1 wy1 insert r:101:1300 1400
+# c1: COMMIT;
 step s1 c1 commit
-# SELECT count(*) ... WHERE room_id = '101' AND start_time < 14:30
-#   AND end_time > 13:30
+# ry2: SELECT count(*) FROM room_reservation WHERE room_id = '101' AND start_time < TIMESTAMP WITH TIME ZONE '2010-04-01 14:30' AND end_time > TIMESTAMP WITH TIME ZONE '2010-04-01 13:30';
 step s2 ry2 scan r:101: r:101:143
-# UPDATE ... SET start_time = 13:30, end_time = 14:30
-#   WHERE room_id = '101' AND start_time = 10:00
+# wx2: UPDATE room_reservation SET start_time = TIMESTAMP WITH TIME ZONE '2010-04-01 13:30', end_time = TIMESTAMP WITH TIME ZONE '2010-04-01 14:30' WHERE room_id = '101' AND start_time = TIMESTAMP WITH TIME ZONE '2010-04-01 10:00';
 step s2 wx2 read r:101:1000 ; delete r:101:1000 ; insert r:101:1330 1430
+# c2: COMMIT;
 step s2 c2 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the

@@ -12,19 +12,32 @@
 # (project_no PRIMARY KEY, ..., project_manager) rows j:<no>. A
 # count on project_manager has no index, so it scans the table.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE person (person_id int NOT NULL PRIMARY KEY, name text NOT NULL, is_project_manager bool NOT NULL);
+#   INSERT INTO person VALUES (1, 'Robert Haas', true);
+#   CREATE TABLE project (project_no int NOT NULL PRIMARY KEY, description text NOT NULL, project_manager int NOT NULL);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+
 session s1 ser
 session s2 ser
 seed p:1 t
 
-# SELECT count(*) FROM person WHERE person_id = 1 AND is_project_manager
+# rx1: SELECT count(*) FROM person WHERE person_id = 1 AND is_project_manager;
 step s1 rx1 read p:1
-# INSERT INTO project VALUES (101, 'Build Great Wall', 1)
+# wy1: INSERT INTO project VALUES (101, 'Build Great Wall', 1);
 step s1 wy1 insert j:101 1
+# c1: COMMIT;
 step s1 c1 commit
-# SELECT count(*) FROM project WHERE project_manager = 1
+# ry2: SELECT count(*) FROM project WHERE project_manager = 1;
 step s2 ry2 scan j: j:~
-# UPDATE person SET is_project_manager = false WHERE person_id = 1
+# wx2: UPDATE person SET is_project_manager = false WHERE person_id = 1;
 step s2 wx2 read p:1 ; write p:1 f
+# c2: COMMIT;
 step s2 c2 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the

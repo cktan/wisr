@@ -15,6 +15,20 @@
 # read by primary key is a read of the row; a SELECT on
 # deposit_date has no index, so it scans the whole table.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE ctl (k text NOT NULL PRIMARY KEY, deposit_date date NOT NULL);
+#   INSERT INTO ctl VALUES ('receipt', DATE '2008-12-22');
+#   CREATE TABLE receipt (receipt_no int NOT NULL PRIMARY KEY, deposit_date date NOT NULL, amount numeric(13,2));
+#   INSERT INTO receipt VALUES (1, (SELECT deposit_date FROM ctl WHERE k = 'receipt'), 1.00);
+#   INSERT INTO receipt VALUES (2, (SELECT deposit_date FROM ctl WHERE k = 'receipt'), 2.00);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s3: BEGIN ISOLATION LEVEL SERIALIZABLE, READ ONLY;
+
 session s1 ser
 session s2 ser
 session s3 ser
@@ -22,17 +36,19 @@ seed c:receipt 1222
 seed r:1 1222
 seed r:2 1222
 
-# INSERT INTO receipt VALUES (3, (SELECT deposit_date FROM ctl
-#   WHERE k = 'receipt'), 4.00)
+# rxwy1: INSERT INTO receipt VALUES (3, (SELECT deposit_date FROM ctl WHERE k = 'receipt'), 4.00);
 step s1 rxwy1 read c:receipt ; insert r:3 1222
+# c1: COMMIT;
 step s1 c1 commit
-# UPDATE ctl SET deposit_date = '2008-12-23' WHERE k = 'receipt'
+# wx2: UPDATE ctl SET deposit_date = DATE '2008-12-23' WHERE k = 'receipt';
 step s2 wx2 read c:receipt ; write c:receipt 1223
+# c2: COMMIT;
 step s2 c2 commit
-# SELECT * FROM ctl WHERE k = 'receipt'
+# rx3: SELECT * FROM ctl WHERE k = 'receipt';
 step s3 rx3 read c:receipt
-# SELECT * FROM receipt WHERE deposit_date = '2008-12-22'
+# ry3: SELECT * FROM receipt WHERE deposit_date = DATE '2008-12-22';
 step s3 ry3 scan r: r:~
+# c3: COMMIT;
 step s3 c3 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the

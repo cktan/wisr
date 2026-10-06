@@ -12,11 +12,24 @@
 # (project_no PRIMARY KEY, ..., project_manager) rows j:<no>. A
 # count on project_manager has no index, so it scans the table.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE person (person_id int NOT NULL PRIMARY KEY, name text NOT NULL, is_project_manager bool NOT NULL);
+#   INSERT INTO person VALUES (1, 'Robert Haas', true);
+#   CREATE TABLE project (project_no int NOT NULL PRIMARY KEY, description text NOT NULL, project_manager int NOT NULL);
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
 
-# SELECT count(*) FROM person WHERE person_id = 1 AND is_project_manager
-# INSERT INTO project VALUES (101, 'Build Great Wall', 1)
-# SELECT count(*) FROM project WHERE project_manager = 1
-# UPDATE person SET is_project_manager = false WHERE person_id = 1
+
+# rx1: SELECT count(*) FROM person WHERE person_id = 1 AND is_project_manager;
+# wy1: INSERT INTO project VALUES (101, 'Build Great Wall', 1);
+# c1: COMMIT;
+# ry2: SELECT count(*) FROM project WHERE project_manager = 1;
+# wx2: UPDATE person SET is_project_manager = false WHERE person_id = 1;
+# c2: COMMIT;
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the
 # permutation's expect line gives sm1's outcome. Every such

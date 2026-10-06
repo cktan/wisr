@@ -13,17 +13,29 @@
 # value being t. An UPDATE ... WHERE t = ... has no index on t,
 # so it reads the whole table: update-where over t..t~.
 
+# PostgreSQL's setup:
+#
+#   CREATE TABLE test (i int PRIMARY KEY, t text);
+#   INSERT INTO test VALUES (5, 'apple'), (7, 'pear'), (11, 'banana');
+#
+# and each session runs, before its first step:
+#
+#   s1: BEGIN ISOLATION LEVEL SERIALIZABLE;
+#   s2: BEGIN ISOLATION LEVEL SERIALIZABLE;
+
 session s1 ser
 session s2 ser
 seed t05 apple
 seed t07 pear
 seed t11 banana
 
-# UPDATE test SET t = 'apple' WHERE t = 'pear'
+# rwx1: UPDATE test SET t = 'apple' WHERE t = 'pear';
 step s1 rwx1 update-where t t~ pear apple
+# c1: COMMIT;
 step s1 c1 commit
-# UPDATE test SET t = 'pear' WHERE t = 'apple'
+# rwx2: UPDATE test SET t = 'pear' WHERE t = 'apple'
 step s2 rwx2 update-where t t~ apple pear
+# c2: COMMIT;
 step s2 c2 commit
 
 # Where sm1 differs from PostgreSQL, an "sm1" line under the
