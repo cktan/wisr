@@ -49,7 +49,10 @@ sm3: sm2
 
 # The levels' archives are rebuilt by their own Makefiles; the
 # levels are phony, so the bundle is redone after each build.
-$(LEVEL_LIBS): $(LEVELS)
+# The empty recipe matters: without one, make does not look at
+# an archive's time again after its level rebuilt it, and the
+# bundle, and rel with it, would keep the stale one.
+$(LEVEL_LIBS): $(LEVELS) ;
 
 $(BUILD)/src/sm.o: src/sm.cc
 	@mkdir -p $(dir $@)
