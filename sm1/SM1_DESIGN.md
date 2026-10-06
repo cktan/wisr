@@ -309,8 +309,12 @@ being misjudged:
   reader that still finds it there cannot hold a snapshot that
   includes its commit.
 
-The commit cache is bounded by `commit_cache_entries` and evicts
-the oldest `commit_ts` first. Eviction cannot change an answer:
+The commit cache is bounded by `commit_cache_entries`. An entry
+is made at commit, and also by a lookup that misses the cache
+and finds a `COMMITTED` record in `CF:txn`, so that a
+transaction's other versions do not each pay for the read. It
+evicts the entry that has been in it longest (`COMMITCACHE.md`).
+Eviction cannot change an answer:
 the status record was written before the insert, so a reader
 that misses the cache finds it in `CF:txn`, and the record is
 swept only once every version it covers is stamped (§8.3).

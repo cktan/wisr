@@ -112,11 +112,30 @@ void leave_active(db_t *db, uint64_t xid) {
 }
 
 /*
- * Move xid from the active table into the commit cache, evicting
- * the oldest commit_ts if the cache is full. Eviction cannot
- * change an answer: the status record was written first (§3.4).
- * It never throws: running out of memory inside sm1 aborts the
- * process (oom.h).
+ * Put xid's commit_ts in the commit cache, with txn_mu held,
+ * evicting the entry longest in the cache if it is full. Eviction
+ * cannot change an answer: the status record was written before
+ * any entry is made (§3.4).
+ */
+void cache_put_locked(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
+  // Already cached, by a commit or by another reader: keep it.
+  if (!db->cache.emplace(xid, commit_ts).second) {
+    return;
+  }
+  // Remember the order of entry, for eviction.
+  db->cache_order.push_back(xid);
+  // Evict the oldest entries while over capacity.
+  while (db->cache.size() > db->cache_entries) {
+    // Drop the entry that came in first.
+    db->cache.erase(db->cache_order.front());
+    db->cache_order.pop_front();
+  }
+}
+
+/*
+ * Move xid from the active table into the commit cache. It never
+ * throws: running out of memory inside sm1 aborts the process
+ * (oom.h).
  */
 void enter_cache(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
   // Hold txn_mu, so the xid moves atomically.
@@ -124,17 +143,7 @@ void enter_cache(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
   // No longer in flight.
   db->active.erase(xid);
   // Cache its commit_ts by xid.
-  db->cache[xid] = commit_ts;
-  // Index it by commit_ts, for eviction.
-  db->cache_by_ts[commit_ts] = xid;
-  // Evict the oldest commit_ts while over capacity.
-  while (db->cache.size() > db->cache_entries) {
-    // The oldest commit_ts.
-    auto oldest = db->cache_by_ts.begin();
-    // Drop it from both maps.
-    db->cache.erase(oldest->second);
-    db->cache_by_ts.erase(oldest);
-  }
+  cache_put_locked(db, xid, commit_ts);
 }
 
 /*
@@ -1057,9 +1066,16 @@ xct_state_t xct_status(db_t *db, uint64_t xid, uint64_t *commit_ts) {
   }
   // Decide by the record's state.
   switch (static_cast<uint8_t>(val[0])) {
-  case txn_committed:
+  case txn_committed: {
     *commit_ts = sm1::get_be64(val.data() + 9);
+    // Hold txn_mu while adding to the cache.
+    std::lock_guard<std::mutex> guard(db->txn_mu);
+    // Remember it: the transaction's other versions, and the
+    // next reader's, then cost no read of CF:txn. A commit is
+    // final, so the entry can never become wrong (§3.4).
+    cache_put_locked(db, xid, *commit_ts);
     return XCT_COMMITTED;
+  }
   case txn_aborted:
     return XCT_DEAD;
   default:

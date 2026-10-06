@@ -17,13 +17,15 @@ It describes the code as it is, in `src/xct.cc` and
   `commit_ts`. Nothing else is in it.
 - **It is in memory only.** It is never written to disk and
   never read from disk.
-- An entry is added at one moment: when a transaction
-  commits. A lookup never adds one.
+- An entry is added when a transaction commits, and when a
+  lookup misses the cache and finds the transaction's commit
+  record on disk.
 - It holds a bounded number of entries, 65,536 by default,
-  and evicts the oldest commit first.
-- **After a restart it is empty**, and it is not refilled
-  from disk. It fills again only with transactions that
-  commit after the restart.
+  and evicts the entry that has been in it longest.
+- **After a restart it is empty.** Nothing loads it at
+  startup. It fills as transactions commit and as readers
+  ask about older ones, one disk read for each transaction
+  asked about.
 - An entry stops mattering once compaction has stamped the
   commit timestamp into the transaction's versions, in the
   background (§5).
@@ -62,8 +64,8 @@ Two maps in the database object, `db_t`, guarded by one
 mutex, `txn_mu`:
 
 ```
-cache        xid       → commit_ts     the lookup
-cache_by_ts  commit_ts → xid           the order of eviction
+cache        xid → commit_ts           the lookup
+cache_order  xids, oldest entry first  the order of eviction
 ```
 
 The same mutex guards the active table. That is deliberate: a
@@ -98,9 +100,25 @@ while a lookup would still miss it.
 
 The commit of a prepared transaction takes the same path.
 
-This is the only place an entry is added.
+### 3.2 It enters when a lookup finds it on disk
 
-### 3.2 It is read on every unstamped version of another transaction
+A lookup that misses the cache reads the transaction's record
+from `CF:txn`. If the record says `COMMITTED`, the lookup puts
+the `xid` and its `commit_ts` in the cache before it answers.
+
+So a transaction costs one disk read however many of its
+versions are met, by this reader or the next. Without it, a
+scan over a million unstamped rows of one transaction read
+the same record a million times.
+
+- **It is safe** because a commit is final: the record's
+  `commit_ts` never changes, and an `xid` is never reused.
+  An entry cannot become wrong.
+- **Only `COMMITTED` is kept.** A prepared transaction may yet
+  go either way. An aborted one, or one with no record, is
+  not cached (§6).
+
+### 3.3 It is read on every unstamped version of another transaction
 
 One routine, `xct_status`, does steps 1 to 4 of §1. It is
 called from three places:
@@ -118,12 +136,21 @@ A version the reader wrote itself is recognised by its `xid`
 and never reaches the cache. A stamped version never does
 either.
 
-### 3.3 It leaves by eviction
+### 3.4 It leaves by eviction
 
 After each insertion, while the cache holds more than
-`commit_cache_entries`, the entry with the smallest
-`commit_ts` is removed. So the cache is always the most
-recent commits, by commit order.
+`commit_cache_entries`, the entry that came in first is
+removed: first in, first out.
+
+It is not by `commit_ts`, though it once was. An old commit
+read back from disk has a small `commit_ts`. Evicting the
+smallest would remove it the moment it entered a full cache,
+and §3.2 would do nothing.
+
+It is not by use either. Moving an entry to the front on
+every hit would put a write on the read path, under the mutex
+every begin and commit takes. A hot entry that is evicted
+comes back with one disk read.
 
 `commit_cache_entries` is an option given when the database
 is opened. Its default is 65,536 and it must be at least 1.
@@ -132,7 +159,7 @@ Eviction cannot change an answer. The record was written
 before the entry was made, so a lookup that misses the cache
 goes on to `CF:txn` and finds the same `commit_ts` there.
 
-### 3.4 Nothing else removes it
+### 3.5 Nothing else removes it
 
 An entry is not removed when its transaction's versions are
 all stamped, nor when the periodic sweep deletes its record
@@ -140,7 +167,7 @@ from `CF:txn` (`SM1_DESIGN.md` §8.3). It stays until newer
 commits push it out. That is harmless: the entry is still
 true, and once every version is stamped nothing asks for it.
 
-### 3.5 It dies with the database object
+### 3.6 It dies with the database object
 
 The cache belongs to `db_t`, which exists from the first
 `sm1::opendb` of a database in the process until the last
@@ -152,30 +179,23 @@ again starts with an empty one.
 
 ## 4. After a restart
 
-The cache starts empty. **Nothing repopulates it from disk.**
+The cache starts empty, and **nothing loads it at startup.**
+Recovery (`SM1_DESIGN.md` §9.1) reads `CF:txn` only for
+`PREPARED` records, to rebuild the transactions in doubt.
 
-- Recovery (`SM1_DESIGN.md` §9.1) reads `CF:txn` only for
-  `PREPARED` records, to rebuild the transactions in doubt.
-  It does not load committed ones into the cache.
-- A lookup that misses the cache and finds a `COMMITTED`
-  record in `CF:txn` returns the answer and does not keep it.
-  There is no read-through.
-
-So the cache after a restart holds only transactions that
-committed since. For everything committed before:
+It fills on demand (§3.2). For what was committed before the
+restart:
 
 | Version | How it is resolved after a restart |
 | --- | --- |
 | stamped by compaction | by its header; nothing to look up |
-| unstamped, committed before the restart | by a read of `CF:txn`, every time it is met |
-| unstamped, of a transaction that was running at the crash | by a read of `CF:txn` that finds nothing: dead |
+| unstamped, committed before the restart | by a read of `CF:txn` the first time its transaction is asked about, and from the cache after |
+| unstamped, of a transaction that was running at the crash | by a read of `CF:txn` that finds nothing, every time: dead |
 
 Answers are right from the first read. What a restart costs
-is speed: until compaction stamps them, the versions written
-shortly before the restart each cost a RocksDB point read
-when met, where before the restart they cost a hash lookup.
-RocksDB's own block cache softens that, and it is the same
-cost an evicted transaction's versions pay at any time.
+is one disk read for each committed transaction a reader
+meets, not one for each version. It is the same cost an
+evicted transaction pays at any time.
 
 ---
 
@@ -224,7 +244,7 @@ second. One of its jobs is a sweep of `CF:txn`.
 
 A record is removed, not marked, and only once no version
 needs it. A cache entry for a transaction whose record has
-gone is still true, and nothing asks for it (§3.4).
+gone is still true, and nothing asks for it (§3.5).
 
 ### 5.3 What follows
 
@@ -256,7 +276,6 @@ gone is still true, and nothing asks for it (§3.4).
   the cache, and is resolved by `CF:txn` each time: a record
   that says aborted, or no record. It stays that way until
   compaction drops the version.
-- **It does not cache what it reads from disk** (§4).
 - **It does not hold a transaction's whole status**, only
   `commit_ts`. A design that adds to a transaction's status,
   as `SAVEPOINT.md` does with dead ranges of `seq`, has to
@@ -272,17 +291,18 @@ gone is still true, and nothing asks for it (§3.4).
 
 These follow from the code and are not decisions.
 
-- **A restart is a cold start for visibility**, as §4 says.
-  A read-through, keeping what a miss finds in `CF:txn`,
-  would warm the cache again with the transactions readers
-  actually ask about. It would have to be reconciled with
-  eviction, which today assumes the cache is exactly the
-  newest commits.
-- **A burst of small transactions pushes out a large one.**
-  Eviction is by commit order, not by use. One transaction
-  that wrote a hundred million rows is evicted by the next
-  65,536 commits, however many of its rows are still
-  unstamped and being read.
+- **Dead transactions are looked up every time.** Caching
+  "no record" would spare those reads too. It is sound, since
+  a transaction absent from the active table with no record
+  can never commit, and it is not built.
+- **A scan can flush the cache.** A scan over the unstamped
+  rows of more than 65,536 old transactions pushes every
+  recent commit out, and each comes back with a disk read
+  when next asked about. Eviction by use would resist that,
+  at the price given in §3.4.
+- **A large transaction is still evicted** by the next 65,536
+  entries, however many of its rows are being read. It now
+  costs one read to return, where it cost one a row.
 - **One mutex.** Every resolution of an unstamped version
   takes `txn_mu`, which every begin, commit and abort takes
   too. No benchmark has measured it.

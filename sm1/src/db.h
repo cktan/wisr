@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <list>
 #include <map>
@@ -141,12 +142,14 @@ struct db_t {
   /*
    * The active transaction table and the commit cache (§3.4),
    * under one mutex so a committing xid moves from one to the
-   * other atomically. The cache evicts the oldest commit_ts.
+   * other atomically. The cache holds commits as they happen
+   * and commits read back from CF:txn, and evicts the entry
+   * that has been in it longest.
    */
   std::mutex txn_mu;
   std::unordered_set<uint64_t> active;          /* xids in flight */
   std::unordered_map<uint64_t, uint64_t> cache; /* xid -> commit_ts */
-  std::map<uint64_t, uint64_t> cache_by_ts;     /* commit_ts -> xid */
+  std::deque<uint64_t> cache_order;             /* xids, oldest entry first */
   size_t cache_entries = 0;
 
   /*

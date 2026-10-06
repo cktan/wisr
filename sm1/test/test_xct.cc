@@ -207,6 +207,87 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
+TEST_CASE("a commit read from the status table is remembered") {
+  // Verify a cache miss that finds a commit record keeps it, so
+  // the next version of that transaction costs no disk read.
+  // 1. Commit a key, noting the writer's xid, and close the
+  //    database, which frees the cache.
+  // 2. Reopen: the cache does not hold the xid.
+  // 3. Read the key: it is there, and the xid is now cached.
+  // 4. Read it again: the same answer, the same entry.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "db", nullptr);
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, store, "k", "v");
+  const uint64_t xid = s->xid;
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+
+  s = opendb(home.env(), "db", nullptr);
+  REQUIRE(s);
+  CHECK(s->db->cache.count(xid) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(s, store, "k") == "v");
+  CHECK(s->db->cache.count(xid) == 1);
+
+  CHECK(get(s, store, "k") == "v");
+  CHECK(s->db->cache.count(xid) == 1);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}
+
+TEST_CASE("a remembered commit displaces the oldest entry, not itself") {
+  // Verify eviction is by order of entry, so an old commit read
+  // back from the status table stays to be used.
+  // 1. Open "db" with commit_cache_entries = 1.
+  // 2. Commit k1, then k2: the cache holds k2's xid only.
+  // 3. Read k1: its xid is cached, and the cache is still one entry.
+  // 4. Read k2: its xid is cached in turn, and both reads are right.
+  // 5. An aborted writer's xid is never cached.
+  sm1::options_t opt;
+  opt.commit_cache_entries = 1;
+  xct_fixture_t f(&opt);
+  sm1::session_t *a = f.first();
+  sm1::session_t *b = f.open();
+
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  put(b, f.store(), "k1", "v");
+  const uint64_t x1 = b->xid;
+  REQUIRE(sm1::commit(b) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  put(b, f.store(), "k2", "v");
+  const uint64_t x2 = b->xid;
+  REQUIRE(sm1::commit(b) == 0);
+  CHECK(f.db()->cache.count(x1) == 0);
+  CHECK(f.db()->cache.count(x2) == 1);
+
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(a, f.store(), "k1") == "v");
+  CHECK(f.db()->cache.count(x1) == 1);
+  CHECK(f.db()->cache.size() == 1);
+
+  CHECK(get(a, f.store(), "k2") == "v");
+  CHECK(f.db()->cache.count(x2) == 1);
+  CHECK(f.db()->cache.size() == 1);
+  REQUIRE(sm1::commit(a) == 0);
+
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  put(b, f.store(), "k3", "v");
+  const uint64_t x3 = b->xid;
+  REQUIRE(sm1::abort(b) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(a, f.store(), "k3") == "<none>");
+  CHECK(f.db()->cache.count(x3) == 0);
+  REQUIRE(sm1::commit(a) == 0);
+  sm1::closedb(b);
+}
+
 TEST_CASE("concurrent commits become visible atomically and monotonically") {
   // Verify snapshot correctness under concurrent committers.
   // 1. Four writer threads each commit 200 transactions, each
