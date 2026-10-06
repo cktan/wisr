@@ -47,6 +47,9 @@ the wrapper through the `rel/` test suite.
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
 - `sm1/API.md` — sm1's C++ API, call by call, in
   `namespace sm1`
+- `sm1/COMMITCACHE.md` — the commit cache: what it holds,
+  the life of an entry, and that it starts empty after a
+  restart
 - `sm1/SAVEPOINT.md` — a rollback to a savepoint that
   deletes nothing: rolled-back writes marked dead by their
   `seq`; designed, not built
