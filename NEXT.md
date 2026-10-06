@@ -22,9 +22,9 @@ to sm1. The order among them is not settled.
 2. **Bulk load**: a path that batches within sm1's memory
    bound. It has a design, `BULKLOAD.md`, and is not built:
    a load holds the table's schema lock SIX in place of row
-   locks, writes its rows to sorted files, and has RocksDB
-   ingest them, in one transaction. Its first step is to
-   check what it assumes of RocksDB.
+   locks, in one transaction, and writes in one of two
+   modes: batches, or sorted files that RocksDB ingests. Its
+   first step is to check what it assumes of RocksDB.
 
 3. **Savepoints without an undo list**
    (`sm1/SAVEPOINT.md`): a rollback marks the `seq` range it
