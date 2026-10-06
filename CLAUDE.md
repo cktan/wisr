@@ -54,6 +54,14 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 
 - **Verification:** Always run full test suite before committing.
 
+- **The isolation scenarios are the specification:** Change
+  the tests in `sm1/mvcc` very reluctantly. They define what
+  sm1's concurrency control must do, so a change to sm1 that
+  makes one fail is presumed wrong, not the test. Adding a
+  scenario is fine. Changing or removing an existing one, or
+  its expected output, needs the user's explicit approval,
+  with the reason stated before any edit.
+
 - **Inspect tests via a saved log:** When running tests for
   inspection, save output to a file rather than repeatedly piping to
   grep. 
