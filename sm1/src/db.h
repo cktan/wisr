@@ -147,7 +147,10 @@ struct db_t {
    * that has been in it longest.
    */
   std::mutex txn_mu;
-  std::unordered_set<uint64_t> active;          /* xids in flight */
+  std::unordered_set<uint64_t> active; /* xids in flight */
+  /* The transaction object running each xid in flight, for a
+     writer that waits for it (WRITELOCK.md §3.4). */
+  std::unordered_map<uint64_t, sm1::session_t *> xid_owner;
   std::unordered_map<uint64_t, uint64_t> cache; /* xid -> commit_ts */
   std::deque<uint64_t> cache_order;             /* xids, oldest entry first */
   size_t cache_entries = 0;
@@ -189,6 +192,20 @@ struct db_t {
   std::condition_variable lock_cv;
   std::unordered_map<std::string, lock_ent_t> lock_table;
   int deadlock_ms = 50;
+  /*
+   * Bumped, under lock_mu, by every rollback to a savepoint: it
+   * deletes versions, so a writer waiting for the transaction
+   * looks again (WRITELOCK.md §3.4).
+   */
+  uint64_t rollback_epoch = 0;
+
+  /*
+   * Write latches (WRITELOCK.md §3.1): a write holds the one its
+   * store and key hash to while it checks the key and puts its
+   * version, and never while it waits.
+   */
+  static constexpr size_t write_latches = 4096;
+  std::mutex write_latch[write_latches];
 
   /* Hands out sm1::session_t::begin_seq. */
   std::atomic<uint64_t> begin_seq{0};

@@ -116,16 +116,24 @@ rocksdb::ColumnFamilyHandle *store_cf(db_t *db, uint64_t storeid) {
  * whether it exists and is not a tombstone, and *commit_ts to
  * its commit_ts (0 for an own version or none), and *own_seq, if
  * given, to an own version's seq (0 if a committed one or none
- * decides). Returns 0 or -1.
+ * decides). With inflight given, a version written by another
+ * transaction still running stops the search: *inflight is set to
+ * its xid, for the caller to wait for (WRITELOCK.md §3.2), and is
+ * 0 otherwise. Without it such a version is skipped. Returns 0 or
+ * -1.
  */
 int latest_version(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
                    rocksdb::Slice key, bool *live, uint64_t *commit_ts,
-                   std::string *value, uint32_t *own_seq = nullptr) {
+                   std::string *value, uint32_t *own_seq = nullptr,
+                   uint64_t *inflight = nullptr) {
   // Assume no version until one is found.
   *live = false;
   *commit_ts = 0;
   if (own_seq) {
     *own_seq = 0;
+  }
+  if (inflight) {
+    *inflight = 0;
   }
   // No row to hand back yet.
   if (value) {
@@ -174,11 +182,18 @@ int latest_version(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
     uint64_t ts = v.commit_ts;
     // Resolve an unstamped version's writer.
     if (!(v.flags & version_stamped)) {
-      committed = xct_resolve(s->db, v.xid, &ts);
-    }
-    // Fail on a status lookup error.
-    if (committed < 0) {
-      return -1;
+      xct_state_t st = xct_status(s->db, v.xid, &ts);
+      // Fail on a status lookup error.
+      if (st == XCT_ERROR) {
+        return -1;
+      }
+      // Another transaction's write still in flight: its version
+      // is its lock, and the caller waits for it.
+      if (st == XCT_IN_FLIGHT && inflight) {
+        *inflight = v.xid;
+        return 0;
+      }
+      committed = st == XCT_COMMITTED ? 1 : 0;
     }
     // The newest committed version decides.
     if (committed) {
@@ -298,15 +313,41 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
   }
-  // Take the lock, blocking while a conflicting holder has it.
-  int held =
-      lock_acquire(s, storeid, rocksdb::Slice(key ? key : "", klen), mode);
-  if (held > 0) {
-    return set_error(sm1::SM_ERR_BLOCKED, "the lock is held by another");
+  rocksdb::Slice k(key ? key : "", klen);
+  // Find the store's CF.
+  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
+  if (!cf) {
+    return -1;
   }
-  if (held != 0) {
-    return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
-                              "chosen as a deadlock victim");
+  for (;;) {
+    uint64_t inflight;
+    {
+      // Under the key's latch, so no write of it comes between
+      // the check and the lock (WRITELOCK.md §3.3).
+      std::lock_guard<std::mutex> latch(lock_latch(s->db, storeid, k));
+      bool live;
+      uint64_t commit_ts;
+      if (latest_version(s, cf, k, &live, &commit_ts, nullptr, nullptr,
+                         &inflight) != 0) {
+        return -1;
+      }
+      // Free of uncommitted writes: take the lock if no holder
+      // conflicts.
+      if (inflight == 0 && lock_try(s, storeid, k, mode) == 0) {
+        break;
+      }
+    }
+    // Wait, without the latch, for the uncommitted writer, or for
+    // the holders that conflict.
+    int waited = inflight != 0 ? lock_wait_xact(s, inflight)
+                               : lock_wait(s, storeid, k, mode);
+    if (waited > 0) {
+      return set_error(sm1::SM_ERR_BLOCKED, "the lock is held by another");
+    }
+    if (waited != 0) {
+      return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
+                                "chosen as a deadlock victim");
+    }
   }
   // Read committed does not fail here: the caller reads the
   // row with sm1::read_latest instead.
@@ -316,7 +357,7 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   // Now that the lock is held, run §5.2's check, so what the
   // caller reads next under this lock is current: a version
   // committed after this transaction began fails the call.
-  return access_check_current(s, storeid, rocksdb::Slice(key ? key : "", klen));
+  return access_check_current(s, storeid, k);
 }
 
 /* sm1::read, minus the out-of-memory guard. */
@@ -375,13 +416,6 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
     return -1;
   }
   rocksdb::Slice k(key ? key : "", klen);
-  // The lock is what keeps the newest version from changing: every
-  // mode conflicts with a writer's exclusive one.
-  sm1::lockmode_t mode;
-  if (!lock_held(s, storeid, k, &mode)) {
-    return set_error(sm1::SM_ERR_INVALID,
-                     "sm1_read_latest requires a lock held on the key");
-  }
   // Find the store's CF.
   rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
   if (!cf) {
@@ -389,12 +423,24 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   }
   bool live;
   uint64_t commit_ts;
+  uint32_t own_seq;
   // Read the newest version, ignoring the snapshot.
-  if (latest_version(s, cf, k, &live, &commit_ts, &s->readbuf) != 0) {
+  if (latest_version(s, cf, k, &live, &commit_ts, &s->readbuf, &own_seq) != 0) {
     return -1;
   }
+  // Something must keep the newest version from changing: a lock
+  // on the key, every mode of which a writer waits for, or a
+  // write of our own still in flight, which every other writer
+  // waits for (WRITELOCK.md §3.2).
+  sm1::lockmode_t mode;
+  bool held = lock_held(s, storeid, k, &mode);
+  if (!held && own_seq == 0) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "sm1_read_latest requires a lock held on the key, or "
+                     "a write of it by this transaction");
+  }
   // An exclusive holder may now write.
-  if (mode == sm1::lockmode_t::exclusive) {
+  if (held && mode == sm1::lockmode_t::exclusive) {
     lock_set_latest(s, storeid, k);
   }
   // Absent, or deleted.
@@ -735,23 +781,45 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   if (xct_check_writable(s->db) != 0) {
     return -1;
   }
-  // Take the row lock; this blocks while another transaction
-  // holds it, and fails if we are chosen as a deadlock victim.
-  int held = lock_acquire(s, storeid, key, sm1::lockmode_t::exclusive);
-  if (held > 0) {
-    return set_error(sm1::SM_ERR_BLOCKED, "the row is locked by another");
-  }
-  if (held != 0) {
-    return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
-                              "chosen as a deadlock victim");
-  }
+  // Check the key and put the version under its latch, so no
+  // other write of it comes between (WRITELOCK.md §3.2).
+  std::unique_lock<std::mutex> latch(lock_latch(s->db, storeid, key));
   bool live;
   uint64_t commit_ts;
   uint32_t own_seq;
-  // Find the version this write checks against, keeping its
-  // value when the caller asked for the old image.
-  if (latest_version(s, cf, key, &live, &commit_ts, old, &own_seq) != 0) {
-    return -1;
+  for (;;) {
+    int waited = 0;
+    // Another transaction's explicit lock that a write conflicts
+    // with: wait for it, without the latch.
+    if (lock_write_check(s, storeid, key) != 0) {
+      latch.unlock();
+      waited = lock_wait(s, storeid, key, sm1::lockmode_t::exclusive);
+    } else {
+      uint64_t inflight;
+      // Find the version this write checks against, keeping its
+      // value when the caller asked for the old image.
+      if (latest_version(s, cf, key, &live, &commit_ts, old, &own_seq,
+                         &inflight) != 0) {
+        return -1;
+      }
+      // Done looking: this write goes on with the latch held.
+      if (inflight == 0) {
+        break;
+      }
+      // Another transaction's uncommitted version is its lock:
+      // wait for that transaction, without the latch.
+      latch.unlock();
+      waited = lock_wait_xact(s, inflight);
+    }
+    if (waited > 0) {
+      return set_error(sm1::SM_ERR_BLOCKED, "the row is locked by another");
+    }
+    if (waited != 0) {
+      return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
+                                "chosen as a deadlock victim");
+    }
+    // Look again from the start.
+    latch.lock();
   }
   // The running statement changed this row already: it cannot
   // see that change, so it must not change the row again (§6.2).
@@ -765,6 +833,11 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     // version; an update or delete must have read it first.
     if (s->level == sm1::xctlevel_t::read_committed) {
       if (op != WRITE_INSERT && !lock_has_latest(s, storeid, key)) {
+        // Keep the key locked until the re-read and the repeated
+        // write, so its newest version cannot change in between
+        // (§5.4, WRITELOCK.md §3.5). No other holder conflicts:
+        // the check above found none, under the latch.
+        lock_try(s, storeid, key, sm1::lockmode_t::exclusive);
         return set_error(sm1::SM_ERR_UPDATED,
                          "key was changed by a transaction that committed "
                          "after this one began; sm1_read_latest it first");
@@ -797,13 +870,14 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   uint32_t seq = s->seq + 1;
   // A delete writes a tombstone version.
   uint8_t flags = op == WRITE_DELETE ? version_tombstone : 0;
-  // Allocate the write timestamp now that the lock is held, so it
-  // sorts after every committed version of the key (§4.1).
+  // Allocate the write timestamp now that no other writer of the
+  // key is in flight, so it sorts after every committed version
+  // of the key (§4.1, WRITELOCK.md §3.6).
   uint64_t wts;
   if (db_alloc_ts(s->db, &wts) != 0) {
     return -1;
   }
-  // The previous writer took its commit_ts before releasing the lock.
+  // The previous writer took its commit_ts before it ended.
   assert(commit_ts < wts);
   // Put the version eagerly; it is not synced (§5 step 5).
   rocksdb::Status st = s->db->rdb->Put(

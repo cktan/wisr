@@ -201,19 +201,50 @@ view_t xct_read_view(sm1::session_t *session);
 int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
                        const char *msg);
 
+/* The write latch (storeid, key) hashes to (WRITELOCK.md §3.1). */
+std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key);
+
 /*
- * Take the row lock on (storeid, key) for the session's
- * transaction in mode, blocking while another holds it in a
- * conflicting one (§5.1). A transaction already holding it
- * converts to the weakest mode covering both, waiting for the
- * other holders that conflict with that. Returns 0, or -1
- * without an error set if the transaction was doomed while
- * waiting; the caller then fails it with s->doomed. A session
- * set qa_nowait does not wait: it returns 1, holding nothing more
- * than it did, and the caller reports SM_ERR_BLOCKED.
+ * Take the row lock on (storeid, key) in mode if no other holder
+ * conflicts, recording it; a holder already converts to the
+ * weakest mode covering both. Returns 0, or 2 if another holder
+ * conflicts, taking nothing. Never waits.
  */
-int lock_acquire(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
-                 sm1::lockmode_t mode);
+int lock_try(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
+             sm1::lockmode_t mode);
+
+/*
+ * For a write (WRITELOCK.md §3.2): 2 if another transaction holds
+ * a lock on (storeid, key) that a write conflicts with, else 0,
+ * converting the session's own lock on the key, if it holds one,
+ * to exclusive. A write without a lock of its own takes none.
+ */
+int lock_write_check(sm1::session_t *session, uint64_t storeid,
+                     rocksdb::Slice key);
+
+/*
+ * Block until no other transaction holds (storeid, key) in a mode
+ * that conflicts with mode, taking nothing, and checking for
+ * deadlock (§5.1). Returns 0; -1 without an error set if the
+ * transaction was doomed while waiting, the caller then failing
+ * it with s->doomed; or 1 at once for a qa_nowait session, the
+ * caller reporting SM_ERR_BLOCKED.
+ */
+int lock_wait(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
+              sm1::lockmode_t mode);
+
+/*
+ * Block until the transaction xid ends, or rolls back to a
+ * savepoint, which may delete the version waited on (WRITELOCK.md
+ * §3.4). Returns as lock_wait does.
+ */
+int lock_wait_xact(sm1::session_t *session, uint64_t xid);
+
+/*
+ * Wake every waiter, after a transaction ended, or after it rolled
+ * back to a savepoint when rollback is true.
+ */
+void lock_wake(db_t *db, bool rollback);
 
 /* §5.2's first-committer-wins check alone, for sm1::lock. */
 int access_check_current(sm1::session_t *session, uint64_t storeid,

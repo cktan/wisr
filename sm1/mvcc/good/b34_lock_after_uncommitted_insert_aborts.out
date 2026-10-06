@@ -1,0 +1,58 @@
+# b34 -- an explicit lock waits for an uncommitted insert,
+# which aborts.
+#
+# The other half of b33. T1 inserts R3, absent until then, and
+# T2 asks for R3 exclusive, as SELECT ... FOR UPDATE would: it
+# waits for T1. T1 aborts, so its version is dead and there was
+# never a row; T2's lock is granted, and its own insert of R3
+# then goes through.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 insert R3 t1 -> ok
+@3 T2 lock R3 exclusive blocks -> blocked
+@4 T1 abort -> ok
+@3 T2 lock R3 exclusive blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 insert R3 t2 -> ok
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check row R3 t2 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 insert R3 t1 -> ok
+@3 T2 lock R3 exclusive blocks -> blocked
+@4 T1 abort -> ok
+@3 T2 lock R3 exclusive blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 insert R3 t2 -> ok
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check row R3 t2 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 insert R3 t1 -> ok
+@3 T2 lock R3 exclusive blocks -> blocked
+@4 T1 abort -> ok
+@3 T2 lock R3 exclusive blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 insert R3 t2 -> ok
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check row R3 t2 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 insert R3 t1 -> ok
+@3 T2 lock R3 exclusive blocks -> blocked
+@4 T1 abort -> ok
+@3 T2 lock R3 exclusive blocks -> ok (resumed)
+@5 check last T2 ok -> satisfied
+@6 T2 insert R3 t2 -> ok
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check row R3 t2 -> satisfied

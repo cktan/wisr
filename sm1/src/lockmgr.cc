@@ -4,17 +4,19 @@
  *
  * A lock is keyed exactly by (storeid, userkey) and held by the
  * sessions whose transactions took it, each in a mode of its own,
- * every pair of them compatible (sm1.h, lockmode_t). Writes take
- * it exclusive, sm1::lock takes any mode, and a plain read still
- * takes none. It is held until the transaction commits or
- * aborts.
+ * every pair of them compatible (sm1.h, lockmode_t). sm1::lock
+ * takes any mode, held until the transaction commits or aborts,
+ * and a plain read takes none. A write takes no lock: it checks
+ * and puts its key under a short latch, and its uncommitted
+ * version stands for the lock, a second writer waiting for the
+ * transaction that wrote it (WRITELOCK.md).
  *
  * Deadlocks are found the way PostgreSQL's deadlock_timeout
  * finds them: a blocked transaction sleeps deadlock_ms, then
  * searches the waits-for graph from itself. If it can reach
  * itself, the youngest transaction on that cycle is doomed and
  * woken; every member of a cycle is blocked, so the victim is
- * always waiting somewhere in lock_acquire and fails from
+ * always waiting in lock_wait or lock_wait_xact and fails from
  * there. A waiter for a shared lock waits on every holder at
  * once, so the search walks a graph, not a chain.
  */
@@ -23,7 +25,10 @@
 #include "sm1_codec.h"
 
 #include <chrono>
+#include <functional>
 #include <set>
+#include <string_view>
+#include <vector>
 
 using namespace wisr;
 
@@ -210,18 +215,128 @@ void check_deadlock(db_t *db, sm1::session_t *s) {
   db->lock_cv.notify_all();
 }
 
+/*
+ * The other holders of k that conflict with mode for s, into
+ * out, with lock_mu held; sets *mine to s's own hold, if any, and
+ * *want to the mode s would hold. Returns false if k has no entry.
+ */
+bool conflicting(db_t *db, sm1::session_t *s, const std::string &k,
+                 lmode_t mode, db_t::lock_ent_t::holder_t **mine, lmode_t *want,
+                 std::vector<sm1::session_t *> *out) {
+  out->clear();
+  *mine = nullptr;
+  *want = mode;
+  auto it = db->lock_table.find(k);
+  if (it == db->lock_table.end()) {
+    return false;
+  }
+  // Our own hold, if any, and the mode we would hold after.
+  for (db_t::lock_ent_t::holder_t &h : it->second.holders) {
+    if (h.session == s) {
+      *mine = &h;
+      break;
+    }
+  }
+  *want = *mine ? cover((*mine)->mode, mode) : mode;
+  // The other holders whose modes conflict with that.
+  for (const db_t::lock_ent_t::holder_t &h : it->second.holders) {
+    if (h.session != s && !compatible(h.mode, *want)) {
+      out->push_back(h.session);
+    }
+  }
+  return true;
+}
+
+/*
+ * Sleep on lock_cv until woken or deadlock_ms after *deadline was
+ * set, with lock_mu held in guard; on timeout, look for a cycle
+ * through s and re-arm the timer.
+ */
+void wait_once(db_t *db, sm1::session_t *s, std::unique_lock<std::mutex> &guard,
+               std::chrono::steady_clock::time_point *deadline) {
+  if (db->lock_cv.wait_until(guard, *deadline) == std::cv_status::timeout) {
+    // Timed out: look for a cycle through us.
+    check_deadlock(db, s);
+    // Re-arm the timer for the next check.
+    *deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(db->deadlock_ms);
+  }
+}
+
 } // namespace
 
 namespace wisr {
 
-/*
- * Block until (storeid, key) is ours in mode, checking for deadlock;
- * a qa_nowait session gets 1 instead of blocking.
- */
-int lock_acquire(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
-                 sm1::lockmode_t mode) {
+/* The write latch (storeid, key) hashes to. */
+std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key) {
+  size_t h =
+      std::hash<std::string_view>{}(std::string_view(key.data(), key.size()));
+  // Mix the storeid in, so equal keys of two stores spread too.
+  h ^= std::hash<uint64_t>{}(storeid) + 0x9e3779b97f4a7c15ULL + (h << 6) +
+       (h >> 2);
+  return db->write_latch[h % db_t::write_latches];
+}
+
+/* Take (storeid, key) in mode unless another holder conflicts. */
+int lock_try(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
+             sm1::lockmode_t mode) {
   db_t *db = s->db;
-  // Build the lock table key.
+  std::string k = lock_key(storeid, key);
+  // Hold lock_mu for the table.
+  std::lock_guard<std::mutex> guard(db->lock_mu);
+  db_t::lock_ent_t::holder_t *mine;
+  lmode_t want;
+  std::vector<sm1::session_t *> others;
+  conflicting(db, s, k, mode, &mine, &want, &others);
+  // Another holder conflicts: take nothing.
+  if (!others.empty()) {
+    return 2;
+  }
+  if (mine) {
+    // Ours already, at least as strong: nothing to do.
+    if (want != mine->mode) {
+      mine->mode = want;
+      // The list must show the stronger mode from now on.
+      note_mode(s, k, want);
+    }
+    return 0;
+  }
+  // Join the holders, or make the entry.
+  db->lock_table[k].holders.push_back({s, want});
+  // Remember the lock for release at commit or abort.
+  s->locks.push_back({std::move(k), want});
+  return 0;
+}
+
+/* For a write: 2 if another holder conflicts, else convert our own. */
+int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
+  db_t *db = s->db;
+  std::string k = lock_key(storeid, key);
+  // Hold lock_mu for the table.
+  std::lock_guard<std::mutex> guard(db->lock_mu);
+  db_t::lock_ent_t::holder_t *mine;
+  lmode_t want;
+  std::vector<sm1::session_t *> others;
+  // No entry: the common write, which takes no lock.
+  if (!conflicting(db, s, k, lmode_t::exclusive, &mine, &want, &others)) {
+    return 0;
+  }
+  if (!others.empty()) {
+    return 2;
+  }
+  // A lock of our own on the key is held exclusive from now on,
+  // as a write converts it (SM1_DESIGN.md §5.1).
+  if (mine && mine->mode != lmode_t::exclusive) {
+    mine->mode = lmode_t::exclusive;
+    note_mode(s, k, lmode_t::exclusive);
+  }
+  return 0;
+}
+
+/* Block until no other holder of (storeid, key) conflicts with mode. */
+int lock_wait(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
+              sm1::lockmode_t mode) {
+  db_t *db = s->db;
   std::string k = lock_key(storeid, key);
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
@@ -231,54 +346,14 @@ int lock_acquire(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
-      // Clear its wait edges before leaving.
       s->waiting_for.clear();
       return -1;
     }
-    // Look up the lock's current holders.
-    auto it = db->lock_table.find(k);
-    // Free: take it in the mode asked.
-    if (it == db->lock_table.end()) {
-      // Record us as the only holder.
-      db->lock_table[k].holders.push_back({s, mode});
-      // Remember the lock for release at commit or abort.
-      s->locks.push_back({std::move(k), mode});
-      // We no longer wait on anyone.
-      s->waiting_for.clear();
-      return 0;
-    }
-    db_t::lock_ent_t &ent = it->second;
-    // Our own hold, if any, and the mode we would hold after.
-    db_t::lock_ent_t::holder_t *mine = nullptr;
-    for (db_t::lock_ent_t::holder_t &h : ent.holders) {
-      if (h.session == s) {
-        mine = &h;
-        break;
-      }
-    }
-    lmode_t want = mine ? cover(mine->mode, mode) : mode;
-    // Ours already, in a mode at least as strong: nothing to do.
-    if (mine && want == mine->mode) {
-      s->waiting_for.clear();
-      return 0;
-    }
-    // Collect the other holders whose modes conflict with want.
-    s->waiting_for.clear();
-    for (const db_t::lock_ent_t::holder_t &h : ent.holders) {
-      if (h.session != s && !compatible(h.mode, want)) {
-        s->waiting_for.push_back(h.session);
-      }
-    }
-    // None: convert our hold in place, or join the holders.
+    db_t::lock_ent_t::holder_t *mine;
+    lmode_t want;
+    // Wait on exactly the holders that conflict.
+    conflicting(db, s, k, mode, &mine, &want, &s->waiting_for);
     if (s->waiting_for.empty()) {
-      if (mine) {
-        mine->mode = want;
-        // The list must show the stronger mode from now on.
-        note_mode(s, k, want);
-      } else {
-        ent.holders.push_back({s, want});
-        s->locks.push_back({std::move(k), want});
-      }
       return 0;
     }
     // A qa_nowait session is told, and waits on nobody.
@@ -286,17 +361,62 @@ int lock_acquire(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
       s->waiting_for.clear();
       return 1;
     }
-    // Blocked, on exactly the holders that conflict: a converter
-    // waits on the others, which is how two converters on one key
-    // form a cycle. After deadlock_ms, look for one.
-    if (db->lock_cv.wait_until(guard, deadline) == std::cv_status::timeout) {
-      // Timed out: look for a cycle through us.
-      check_deadlock(db, s);
-      // Re-arm the timer for the next check.
-      deadline = std::chrono::steady_clock::now() +
-                 std::chrono::milliseconds(db->deadlock_ms);
-    }
+    wait_once(db, s, guard, &deadline);
   }
+}
+
+/* Block until xid ends, or rolls back to a savepoint. */
+int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
+  db_t *db = s->db;
+  // Hold lock_mu for the waits-for lists; every wake-up takes it.
+  std::unique_lock<std::mutex> guard(db->lock_mu);
+  // A rollback from now on may delete what we wait for.
+  uint64_t epoch = db->rollback_epoch;
+  auto deadline = std::chrono::steady_clock::now() +
+                  std::chrono::milliseconds(db->deadlock_ms);
+  for (;;) {
+    // A doomed transaction stops waiting and fails.
+    if (s->doomed) {
+      s->waiting_for.clear();
+      return -1;
+    }
+    sm1::session_t *owner = nullptr;
+    bool running;
+    {
+      // Hold txn_mu while reading the active table.
+      std::lock_guard<std::mutex> t(db->txn_mu);
+      running = db->active.count(xid) != 0;
+      auto it = db->xid_owner.find(xid);
+      if (it != db->xid_owner.end()) {
+        owner = it->second;
+      }
+    }
+    // Ended, or rolled back: the caller looks again.
+    if (!running || db->rollback_epoch != epoch) {
+      s->waiting_for.clear();
+      return 0;
+    }
+    // A qa_nowait session is told, and waits on nobody.
+    if (s->qa_nowait) {
+      s->waiting_for.clear();
+      return 1;
+    }
+    // Our edge in the waits-for graph: to the transaction itself.
+    s->waiting_for.clear();
+    if (owner && owner != s) {
+      s->waiting_for.push_back(owner);
+    }
+    wait_once(db, s, guard, &deadline);
+  }
+}
+
+/* Wake every waiter: a transaction ended, or rolled back. */
+void lock_wake(db_t *db, bool rollback) {
+  std::lock_guard<std::mutex> guard(db->lock_mu);
+  if (rollback) {
+    db->rollback_epoch++;
+  }
+  db->lock_cv.notify_all();
 }
 
 /* Move every lock s holds to g, which takes its place. */

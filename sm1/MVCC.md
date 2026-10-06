@@ -298,9 +298,12 @@ database.
 A write puts a new version above the old one. Nothing is
 overwritten (`SM1_DESIGN.md` §5).
 
-1. Take the key's **row lock**, exclusive, waiting if another
-   transaction holds it. Locks are held to the end of the
-   transaction.
+1. Take the key's **latch**, a short mutex chosen by hashing
+   the store and key, held only within the call. Under it:
+   if another transaction holds an explicit lock on the key, or
+   has written it and not ended, let the latch go, wait for
+   that transaction, and start again. An uncommitted version is
+   the lock; a write keeps no lock entry (`WRITELOCK.md`).
 2. Find the newest version: the transaction's own if it has
    one, else the newest committed.
 3. If that version committed **after the writer's snapshot**,
@@ -311,8 +314,8 @@ overwritten (`SM1_DESIGN.md` §5).
    | REPEATABLE READ, SERIALIZABLE | `SM_ERR_CONFLICT`: first committer wins, and the transaction is to be retried |
    | READ COMMITTED | `SM_ERR_UPDATED`: the caller re-reads the row at its newest version and repeats the write |
 
-4. Take a `wts`, and put the version, with the writer's
-   `xid`.
+4. Take a `wts`, put the version, with the writer's `xid`,
+   and let the latch go.
 
 Readers take no lock and never wait. A reader and a writer of
 one row pass each other: the reader sees the version its
@@ -490,7 +493,9 @@ to the last `sm1::closedb`.
 | `active` | hash set of `xid` | the active table: transactions running or prepared (§5, step 2) | `txn_mu` |
 | `cache`, `cache_order` | hash map `xid → commit_ts`, and a queue of xids in order of entry | the commit cache and its eviction (§7) | `txn_mu` |
 | `snapshots` | multiset of `snapshot_ts` | the snapshots in use; its smallest is the GC watermark (§8) | `snap_mu` |
-| `lock_table` | hash map from store and key to the list of holders, each with a mode | row locks (§9) | `lock_mu`, with one condition variable for every waiter |
+| `lock_table` | hash map from store and key to the list of holders, each with a mode | explicit row locks, `sm1::lock` (§9) | `lock_mu`, with one condition variable for every waiter |
+| `write_latch` | 4,096 mutexes, chosen by hashing store and key | a write's check-then-put (§9) | itself |
+| `xid_owner` | hash map `xid → session` | whom a writer waits for, for deadlock detection (§9) | `txn_mu` |
 | the SSI tracker | nodes, SIREAD entries on points and on ranges, a map from `xid` to node | serializable isolation (§11) | one mutex |
 | `purges`, `drops` | a list of tombstones to purge, and stores to drop once the watermark passes | garbage collection's queues (§8) | `gc_mu` |
 | `readers`, `read_epoch` | two counters and which is current | how the sweep knows every reader that began before its pass has finished (§8) | atomics |
@@ -520,17 +525,18 @@ transaction (`src/session.h`).
 | `seq_hwm` | the newest own write still in effect; a rollback to a savepoint lowers it |
 | `stmt_seq` | the statement's mark: its reads see own writes up to it, those made before the statement began, as PostgreSQL's command id |
 | `wts_hi` | the largest `wts` written, so that a seek for the transaction's own versions starts high enough |
-| `locks` | the locks held, in the order taken, each with its mode: one entry for each key written or locked |
+| `locks` | the explicit locks held, in the order taken, each with its mode; a write adds none |
 | `undo` | the versions written while a savepoint is set, for a rollback to delete; capped by `savepoint_undo_bytes`, past which it is dropped and the savepoints lost |
 | `savepoints` | a stack of marks into `locks`, `undo` and the lists below |
 | `created`, `dropped` | stores made and removed, to drop or keep at the end |
 | `scans` | the open cursors |
 | `ssi` | the transaction's node in the SSI tracker, if serializable |
 
-`locks` and `undo` are the two that grow with what a
-transaction writes. Everything else is of fixed size, which
-is why abort is cheap and why a large transaction costs
-memory at all (`SM1_DESIGN.md` §13).
+`undo` grows with what a transaction writes while a savepoint
+is set, up to its cap; `locks` only with what it locks
+explicitly. Everything else is of fixed size, which is why
+abort is cheap, and why a large transaction's memory is now
+bounded but for its explicit locks (`SM1_DESIGN.md` §13).
 
 A **prepared** transaction is moved out of its session into
 an object of the same type that the database owns, registered

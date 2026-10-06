@@ -106,10 +106,15 @@ std::string txn_key(uint64_t xid) {
 
 /* Remove xid from the active table: its versions now resolve dead. */
 void leave_active(db_t *db, uint64_t xid) {
-  // Hold txn_mu while editing the active table.
-  std::lock_guard<std::mutex> guard(db->txn_mu);
-  // Its versions now resolve through CF:txn, or as dead.
-  db->active.erase(xid);
+  {
+    // Hold txn_mu while editing the active table.
+    std::lock_guard<std::mutex> guard(db->txn_mu);
+    // Its versions now resolve through CF:txn, or as dead.
+    db->active.erase(xid);
+    db->xid_owner.erase(xid);
+  }
+  // Writers waiting for it look again (WRITELOCK.md §3.4).
+  lock_wake(db, false);
 }
 
 /*
@@ -139,12 +144,17 @@ void cache_put_locked(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
  * (oom.h).
  */
 void enter_cache(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
-  // Hold txn_mu, so the xid moves atomically.
-  std::lock_guard<std::mutex> guard(db->txn_mu);
-  // No longer in flight.
-  db->active.erase(xid);
-  // Cache its commit_ts by xid.
-  cache_put_locked(db, xid, commit_ts);
+  {
+    // Hold txn_mu, so the xid moves atomically.
+    std::lock_guard<std::mutex> guard(db->txn_mu);
+    // No longer in flight.
+    db->active.erase(xid);
+    db->xid_owner.erase(xid);
+    // Cache its commit_ts by xid.
+    cache_put_locked(db, xid, commit_ts);
+  }
+  // Writers waiting for it look again (WRITELOCK.md §3.4).
+  lock_wake(db, false);
 }
 
 /*
@@ -397,6 +407,9 @@ int rollback(sm1::session_t *s, int depth) {
   // Give back the locks taken after the mark; nobody saw our
   // intent on those rows.
   lock_release_from(s, m.locks);
+  // Writers waiting for this transaction look again: the
+  // versions they waited on may be gone (WRITELOCK.md §3.8).
+  lock_wake(db, true);
   // The mark survives, so it can be rolled back to again; the
   // marks set inside it are gone with the work they covered.
   s->savepoints.resize(static_cast<size_t>(depth));
@@ -698,6 +711,12 @@ sm1::session_t *detach_prepared(sm1::session_t *s, const std::string &gid,
   s->ssi = nullptr;
   // Hand every held lock, in its mode, to the new owner.
   lock_transfer(s->db, s, g);
+  if (g->xid != 0) {
+    // Hold txn_mu while re-pointing the xid at its new owner.
+    std::lock_guard<std::mutex> guard(s->db->txn_mu);
+    // A writer waiting for it now waits on the prepared object.
+    s->db->xid_owner[g->xid] = g;
+  }
   {
     // Hold lock_mu while moving the list the table points into.
     std::lock_guard<std::mutex> guard(s->db->lock_mu);
@@ -1048,6 +1067,8 @@ int xct_alloc_xid(sm1::session_t *s) {
     std::lock_guard<std::mutex> guard(s->db->txn_mu);
     // In flight from now on, before any version exists.
     s->db->active.insert(xid);
+    // Run by this session, for a writer that waits for it.
+    s->db->xid_owner[xid] = s;
   }
   // Record the xid.
   s->xid = xid;

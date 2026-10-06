@@ -429,7 +429,8 @@ Read-only transactions never allocate one.
 - The first write in a transaction allocates `xid = global_ts++`.
   Because `snapshot_ts <= visible_ts < xid`, always `xid > snapshot_ts`.
 - Every write allocates a **write timestamp** `wts = global_ts++`
-  after it holds the row lock (§5), and keys its version by it
+  once no other writer of its key is in flight (§5), and keys
+  its version by it
   (§3.1). Commit allocates `commit_ts = global_ts++`, so
   `commit_ts > wts` for every write of the transaction, and
   `commit_ts > xid`.
@@ -437,10 +438,12 @@ Read-only transactions never allocate one.
 **Invariant (version chain order).** For one key, committed versions in
 descending `wts` order are also in descending `commit_ts` order.
 
-*Why.* Two transactions that both write key `k` are serialized by
-the row lock (§5), and a writer takes its `commit_ts` before it
-releases it. If `T2` committed a version of `k` after `T1` did,
-`T2` acquired the lock after `T1` released it, so `T2.wts >
+*Why.* Two transactions that both write key `k` are serialized:
+a writer that finds another transaction's version of `k` still
+in flight waits for that transaction to end (§5), and a writer
+takes its `commit_ts` before it leaves the active table. If `T2`
+committed a version of `k` after `T1` did, `T2` took its `wts`
+after finding `T1`'s version no longer in flight, so `T2.wts >
 T1.commit_ts > T1.wts`. ∎
 
 The argument uses no snapshot, so it holds at every level,
@@ -561,18 +564,23 @@ version into RocksDB immediately, before commit.
 ```
 sm1::update(storeid, k, v):
   1. catalog.lookup(storeid)                           # MVCC read, §11
-  2. lock   = lockmgr.acquire_x(storeid, k, T)          # blocking, §5.1
+  2. take latch(storeid, k)                             # §5.1
+     if another holds an explicit lock on k a write conflicts with:
+         let the latch go; wait for it; go to 2
+     if the newest version of k is another's, still in flight:
+         let the latch go; wait for that transaction; go to 2
   3. latest = newest own version of (storeid, k) visible to T  # §4.4
      if latest is absent:
          latest = newest committed version of (storeid, k)
          if latest.commit_ts > T.snapshot_ts:
              RR, SER: abort with SM_ERR_CONFLICT        # §5.2
-             RC: SM_ERR_UPDATED, unless T.lock(k).latest
+             RC: SM_ERR_UPDATED, keeping k locked X,
+                 unless T.lock(k).latest
                  (an insert: no check)                  # §5.4
      if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
      if old wanted: copy latest's payload into the session buffer  # §5.3
   4. if T.xid == 0: T.xid = global_ts++
-  5. wts = global_ts++                                  # after the lock, §4.1
+  5. wts = global_ts++                                  # no other writer in flight, §4.1
      seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
      db.Put(cf(storeid), encode(k, ~wts, ~seq), encode(flags, T.xid, v))
      T.lock(k).latest = false                          # §5.4
@@ -581,13 +589,15 @@ sm1::update(storeid, k, v):
          if T.undo is over savepoint_undo_bytes:
              free T.undo; every mark now set is lost
   7. ssi.on_write(T, storeid, k)                        # §7
+  8. let the latch go
 ```
 
 Step 3 consults the transaction's own writes first, so a key it
 inserted can be updated and a key it deleted can be re-inserted.
-An own version still visible under `seq_hwm` means the row lock
-has been held since that write, so no other transaction can have
-committed `k` in between and the conflict check is skipped. Own
+An own version still visible under `seq_hwm` is still in flight,
+and every other writer of `k` waits for it, so no other
+transaction can have committed `k` in between and the conflict
+check is skipped. Own
 versions undone by `sm1::rollback` are invisible (§6.5), and the
 check falls through to the committed version as if they had
 never been written.
@@ -606,9 +616,27 @@ hierarchy; a caller that makes one key stand for a larger object
 — sm3's table catalog row — takes an intention mode on it to
 announce what it does below, so readers (IS) and writers (IX) of
 a table coexist while a builder that must stop writers but not
-readers takes S. A write takes the key it writes X, `sm1::lock`
-takes any mode, and a plain read still takes none. Locks are
-released at commit/abort — strict, so no cascading aborts. The
+readers takes S. `sm1::lock` takes any mode, and a plain read
+still takes none. Locks are released at commit/abort — strict,
+so no cascading aborts.
+
+**A write takes no lock** (`WRITELOCK.md`). It checks its key
+and puts its version under a short **latch**, one of 4,096
+mutexes chosen by hashing the store and key, held only within
+the call and never while waiting. Its uncommitted version
+stands for the lock: a second writer of the key, or an
+`sm1::lock` on it, finds the version still in flight and waits
+for the transaction that wrote it, then looks again. That
+transaction's end wakes it, and so does a rollback to a
+savepoint, which may have deleted the version. A write also
+waits for another transaction's explicit lock on the key, and
+converts its own explicit lock, if it holds one, to X. So a
+write adds no entry to `T.locks`, with one exception: one
+refused with `SM_ERR_UPDATED` keeps the key locked X until
+the re-read (§5.4). A wait on a transaction is an edge in the
+waits-for graph to the session running it, found through a
+map from `xid` to session beside the active table; a prepared
+transaction waits on no one. The
 key is exact, so two distinct keys never share an entry and never
 block or deadlock each other. One mutex covers the table and
 every waiter's waits-for list, which keeps a deadlock walk
@@ -686,8 +714,9 @@ sets on a serializable reader.
 
 **What a transaction holds in memory.** Row values stream
 to RocksDB, so a transaction is bounded by disk, but
-three structures are not: `T.locks` (one entry per
-distinct key written), `T.undo` (one `(storeid, userkey,
+three structures are not: `T.locks` (one entry per key
+locked with `sm1::lock`; a write keeps none), `T.undo` (one
+`(storeid, userkey,
 wts, seq)` tuple per write made while a savepoint is set,
 §6.5), and the SSI read set. All three
 are linear in the number of keys touched, with the
@@ -736,9 +765,10 @@ deadlock — reports no old row.
 ### 5.4 Read committed: write, re-read, write
 
 At READ COMMITTED an update or delete that meets a row committed
-after `sm1::begin` waits for the row lock, as every write does,
-and then is refused with `SM_ERR_UPDATED`. That is not an abort:
-the transaction stays active, keeps the lock, and
+after `sm1::begin` waits for any writer of it in flight, as
+every write does, and then is refused with `SM_ERR_UPDATED`,
+taking the key's lock X. That is not an abort: the transaction
+stays active, keeps the lock, and
 `sm1::retryable()` is
 0. The caller calls `sm1::read_latest`, which returns the newest
 committed version of the row ignoring the snapshot, re-evaluates
@@ -1133,7 +1163,9 @@ which also lets `gc_watermark` advance past an abandoned
 scan.
 
 Releasing locks acquired after the mark is safe: the row was untouched
-before the savepoint, so no one observed our intent on it.
+before the savepoint, so no one observed our intent on it. A
+writer waiting for the transaction is woken, since a version
+it waited on may be gone, and looks again.
 
 ### 6.6 Abort
 
@@ -1649,6 +1681,7 @@ sm1::prepare(T, gid):
      if T.xid == 0: T.xid = global_ts++        ← read-only: key the record
   2. rec = {PREPARED, xid, gid, snapshot_ts, prepared_at = now(),
             lockset = (key, mode) of every lock T holds,
+                      explicit ones: a write keeps none
             created = T.created, dropped = T.dropped}
   3. db.Write({CF:txn[T.xid] = rec}, sync = true)      ← always synced
   4. T.state = PREPARED;  locks and SSI state are RETAINED
@@ -1834,7 +1867,9 @@ the status resolution rule.
         marked restored so that readers skipping its versions
         are doomed (§8.4), with T.created and T.dropped from
         the record
-      - re-acquire an X row lock for every key in its writeset
+      - re-acquire the locks in its lockset, each in its mode;
+        its writes need none, their versions being in flight
+        again, so a writer waits for it as before
       - pin gc_watermark at its snapshot_ts
 6. Orphan CF sweep: read the catalog (store.0) and drop every
    store.<storeid> CF that has neither a live catalog row naming
@@ -2759,7 +2794,8 @@ bullets below cover the rest of the engine.
   Row values stream to disk, but `T.locks`, `T.undo`, and the
   SSI read set are linear in the keys touched (§5.1), so a
   single transaction writing tens of millions of keys costs
-  gigabytes. `T.locks` always is kept. `T.undo` is kept
+  gigabytes. `T.locks` holds only explicit locks: a write
+  keeps none (§5.1, `WRITELOCK.md`). `T.undo` is kept
   only while a savepoint is set, so **a savepoint costs
   memory in proportion to the work done after it** (§6.5):
   cheap to set, expensive to hold over a large statement.

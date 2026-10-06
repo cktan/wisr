@@ -53,6 +53,8 @@ int restore_prepared(db_t *db) {
       // Put it back in the active table: its versions stay in flight.
       std::lock_guard<std::mutex> guard(db->txn_mu);
       db->active.insert(xid);
+      // Owned by the restored object, for a writer that waits.
+      db->xid_owner[xid] = g;
     }
     // Re-acquire the row locks of its write set, each in the
     // mode the record carries.

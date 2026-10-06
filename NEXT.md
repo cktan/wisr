@@ -22,7 +22,7 @@ between them is not settled.
 2. **Bulk load**: a path that batches within sm1's memory
    bound. It has a design, `BULKLOAD.md`, and is not built. A
    load is one transaction in one of three modes: mini-batch,
-   100 rows a write under IX, locking only unique keys;
+   100 rows a write under IX, keeping no row locks;
    batch mode, a chunk a write under SIX; and file mode,
    sorted files that RocksDB ingests. Its checks against
    RocksDB are done, and batch mode is next.

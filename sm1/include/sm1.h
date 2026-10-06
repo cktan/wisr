@@ -539,14 +539,17 @@ int lock(session_t* session, uint64_t storeid,
 
 /*
  * Read the newest committed version of a key, ignoring the
- * snapshot, under a row lock this transaction already holds.
+ * snapshot, under a row lock this transaction already holds, or
+ * with a write of the key by this transaction still in effect,
+ * which every other writer of it waits for.
  * Returns as sm1::read() does: 0 found, 1 no such key. At read
  * committed only. Under an exclusive lock it also lets the next
  * write of the key through, after SM_ERR_UPDATED (SM1_DESIGN.md
  * §5.4).
  *
- * Errors: SM_ERR_INVALID (not read committed, or no lock held),
- * SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_NOTFOUND (store).
+ * Errors: SM_ERR_INVALID (not read committed, or neither a lock
+ * held nor a write of the key), SM_ERR_NOTRANS, SM_ERR_PREPARED,
+ * SM_ERR_NOTFOUND (store).
  */
 int read_latest(session_t* session, uint64_t storeid,
                 std::string_view key, std::string_view& data);
@@ -843,10 +846,12 @@ int lsstore(session_t* session, std::vector<uint64_t>& out);
  * An sm1::insert there is judged against the newest committed
  * version.
  *
- * Each blocks while another active transaction holds the write
- * lock on the key, until that transaction ends, and a blocked
- * call can return SM_ERR_DEADLOCK if it is chosen as the
- * victim of a deadlock cycle.
+ * Each blocks while another active transaction has written the
+ * key and not ended, or holds a lock on it taken with
+ * sm1::lock(), until that transaction ends; a blocked call can
+ * return SM_ERR_DEADLOCK if it is chosen as the victim of a
+ * deadlock cycle. A write itself keeps no lock: its uncommitted
+ * version is what the next writer waits for (WRITELOCK.md).
  *
  *   sm1::insert  requires that the key not exist (SM_ERR_DUPKEY)
  *   sm1::update  requires that it exist (SM_ERR_NOTFOUND), and

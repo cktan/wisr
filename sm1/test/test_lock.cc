@@ -392,10 +392,12 @@ TEST_CASE(
     "reads take no locks, so readers and writers never block each other") {
   // Verify sm1 stays MVCC for plain reads and writes (§5.1), at
   // every isolation level.
-  // 1. W writes "x" and does not commit: it holds "x" exclusive,
-  //    and nothing on "y", which it did not write.
-  // 2. R reads "x" and scans the store: neither waits on W's lock,
-  //    both see "x" as it was, and R holds no lock afterwards.
+  // 1. W writes "x" and does not commit: its uncommitted version
+  //    is its lock, so it holds no lock entry on "x", nor on "y"
+  //    (WRITELOCK.md §3.2).
+  // 2. R reads "x" and scans the store: neither waits on W's
+  //    write, both see "x" as it was, and R holds no lock
+  //    afterwards.
   // 3. With R's transaction still open, W writes "y" and commits
   //    without waiting.
   lock_fixture_t f;
@@ -410,9 +412,9 @@ TEST_CASE(
     REQUIRE(sm1::begin(w, level) == 0);
     REQUIRE(set(w, "x", dirty) == 0);
     sm1::lockmode_t mode;
-    REQUIRE(wisr::lock_held(w, g_store, "x", &mode));
-    CHECK(mode == sm1::lockmode_t::exclusive);
+    CHECK_FALSE(wisr::lock_held(w, g_store, "x", &mode));
     CHECK_FALSE(wisr::lock_held(w, g_store, "y", &mode));
+    CHECK(w->locks.empty());
 
     REQUIRE(sm1::begin(r, level) == 0);
     std::atomic<bool> returned{false};
@@ -650,4 +652,83 @@ TEST_CASE(
   sm1::closedb(a);
   sm1::closedb(b);
   sm1::closedb(c);
+}
+
+TEST_CASE("a transaction's writes leave no lock entries") {
+  // Verify WRITELOCK.md: memory for locks does not grow with writes.
+  // 1. W inserts a thousand keys and updates and deletes the two
+  //    seeded rows, without committing.
+  // 2. W's lock list is empty, and the shared lock table holds
+  //    nothing for any of those keys.
+  // 3. Another session's write of one of them still waits for W,
+  //    the uncommitted version standing for the lock: under
+  //    qa_nowait it fails with SM_ERR_BLOCKED.
+  // 4. W commits; the other session's write then goes through.
+  lock_fixture_t f;
+  sm1::session_t *w = f.open(), *o = f.open();
+  REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
+  for (int i = 0; i < 1000; i++) {
+    put(w, g_store, "k" + std::to_string(i), "v");
+  }
+  REQUIRE(set(w, "x", "1") == 0);
+  REQUIRE(sm1::erase(w, g_store, "y") == 0);
+  CHECK(w->locks.empty());
+  {
+    std::lock_guard<std::mutex> guard(w->db->lock_mu);
+    CHECK(w->db->lock_table.empty());
+  }
+
+  REQUIRE(sm1::set_qa_nowait(o, true) == 0);
+  REQUIRE(sm1::begin(o, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm1::insert(o, g_store, "k7", "o") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  CHECK(set(o, "x", "2") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+
+  REQUIRE(sm1::commit(w) == 0);
+  CHECK(sm1::insert(o, g_store, "k7", "o") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  REQUIRE(sm1::commit(o) == 0);
+  sm1::closedb(w);
+  sm1::closedb(o);
+}
+
+TEST_CASE("a write refused with SM_ERR_UPDATED keeps the row locked until "
+          "the re-read") {
+  // Verify the one write that leaves a lock behind (WRITELOCK.md §3.5).
+  // 1. T begins at READ COMMITTED; U commits a new "x".
+  // 2. T's update of "x" fails with SM_ERR_UPDATED, and T now
+  //    holds "x" exclusive.
+  // 3. A third session's write of "x" is blocked by that lock.
+  // 4. T reads the latest "x", writes it, and commits; the third
+  //    session's write then goes through.
+  lock_fixture_t f;
+  sm1::session_t *t = f.open(), *u = f.open(), *o = f.open();
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(u, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(set(u, "x", "u") == 0);
+  REQUIRE(sm1::commit(u) == 0);
+
+  CHECK(set(t, "x", "t") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
+  sm1::lockmode_t mode;
+  REQUIRE(wisr::lock_held(t, g_store, "x", &mode));
+  CHECK(mode == sm1::lockmode_t::exclusive);
+
+  REQUIRE(sm1::set_qa_nowait(o, true) == 0);
+  REQUIRE(sm1::begin(o, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(set(o, "x", "o") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+
+  std::string_view v;
+  REQUIRE(sm1::read_latest(t, g_store, "x", v) == 0);
+  CHECK(v == "u");
+  REQUIRE(set(t, "x", "t") == 0);
+  REQUIRE(sm1::commit(t) == 0);
+  CHECK(set(o, "x", "o") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
+  REQUIRE(sm1::abort(o) == 0);
+  sm1::closedb(t);
+  sm1::closedb(u);
+  sm1::closedb(o);
 }

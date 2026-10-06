@@ -1241,9 +1241,11 @@ such key (or deleted), **-1** on error.
 It exists for `sm1::xctlevel_t::read_committed`, and needs a row
 lock the transaction already holds on the key: the one a write
 that failed with `SM_ERR_UPDATED` left behind, or one taken with
-`sm1::lock`. The lock is what keeps the version from changing
-before commit. At any other level, or with no lock held, it
-fails with `SM_ERR_INVALID`.
+`sm1::lock`. A write of the key by the transaction, still in
+effect, does as well, since every other writer waits for it.
+That is what keeps the version from changing before commit. At
+any other level, or with neither, it fails with
+`SM_ERR_INVALID`.
 
 Under an exclusive lock the call also lets the next write of
 this key go ahead, once. Under a shared lock it reads but
@@ -1265,7 +1267,8 @@ if (rc != 0 && sm1::errnum() == sm1::SM_ERR_UPDATED) {
 
 Errors: `SM_ERR_NOTFOUND` (the *store* does not exist),
 `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`
-(not READ COMMITTED, or no lock held), `SM_ERR_CORRUPT`,
+(not READ COMMITTED, or neither a lock held nor a write of the
+key), `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
 ### int sm1::scan(sm1::session_t* session, uint64_t storeid, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive, sm1::scan_t*& out)

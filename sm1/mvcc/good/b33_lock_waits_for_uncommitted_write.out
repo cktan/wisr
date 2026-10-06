@@ -1,0 +1,60 @@
+# b33 -- an explicit lock waits for an uncommitted write.
+#
+# A write keeps no lock entry: its uncommitted version stands
+# for the lock (WRITELOCK.md). So a lock on a row another
+# transaction has written and not committed must wait for that
+# transaction, as FOR SHARE waits for an uncommitted update in
+# PostgreSQL. T1 updates R1; T2 asks for R1 shared and waits.
+# When T1 commits, T2's lock is granted and its check finds R1
+# committed after its snapshot: a conflict. R2, which T1 did
+# not write, is locked at once.
+
+
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 lock R2 shared -> ok
+@4 check last T2 ok -> satisfied
+@5 T2 lock R1 shared blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 lock R1 shared blocks -> conflict (resumed)
+@7 check last T2 conflict -> satisfied
+@8 check committed T1 -> satisfied
+@9 check row R1 t1 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 lock R2 shared -> ok
+@4 check last T2 ok -> satisfied
+@5 T2 lock R1 shared blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 lock R1 shared blocks -> conflict (resumed)
+@7 check last T2 conflict -> satisfied
+@8 check committed T1 -> satisfied
+@9 check row R1 t1 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 lock R2 shared -> ok
+@4 check last T2 ok -> satisfied
+@5 T2 lock R1 shared blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 lock R1 shared blocks -> conflict (resumed)
+@7 check last T2 conflict -> satisfied
+@8 check committed T1 -> satisfied
+@9 check row R1 t1 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 write R1 t1 -> ok
+@3 T2 lock R2 shared -> ok
+@4 check last T2 ok -> satisfied
+@5 T2 lock R1 shared blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 lock R1 shared blocks -> conflict (resumed)
+@7 check last T2 conflict -> satisfied
+@8 check committed T1 -> satisfied
+@9 check row R1 t1 -> satisfied
