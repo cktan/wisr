@@ -1,0 +1,142 @@
+# b35 -- two read-modify-writes of one row; the first commits.
+#
+# R1 holds v = 0. T1 and T2 both read it; T1 sets v = v + 10,
+# then T2 sets v = v + 20 and waits, T1's uncommitted version
+# being the lock. T1 commits, and T2's outcome depends on its
+# own level, at every pairing of the three levels:
+#
+# - READ COMMITTED: the write is refused with updated, not an
+#   abort. T2 reads the newest value, 10, re-applies v + 20 to
+#   it, and writes 30: both increments survive, as PostgreSQL's
+#   EvalPlanQual re-check gives (SM1_DESIGN.md §5.4).
+# - REPEATABLE READ and SERIALIZABLE: first committer wins. T2
+#   fails with conflict and is aborted; R1 keeps T1's 10.
+#
+# T1's level does not change it. The scenario language has no
+# arithmetic, so v + 10 and v + 20 are written as the values
+# they give from 0.
+
+
+== pairing RC/RC == T1=RC T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> updated (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 updated -> satisfied
+@9 T2 readlatest R1 -> 10
+@10 check last T2 10 -> satisfied
+@11 T2 write R1 30 -> ok
+@12 T2 commit -> ok
+@13 check committed T2 -> satisfied
+@14 check row R1 30 -> satisfied
+== pairing RC/RR == T1=RC T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> conflict (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 conflict -> satisfied
+@14 check row R1 10 -> satisfied
+== pairing RC/S == T1=RC T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> conflict (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 conflict -> satisfied
+@14 check row R1 10 -> satisfied
+== pairing RR/RC == T1=RR T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> updated (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 updated -> satisfied
+@9 T2 readlatest R1 -> 10
+@10 check last T2 10 -> satisfied
+@11 T2 write R1 30 -> ok
+@12 T2 commit -> ok
+@13 check committed T2 -> satisfied
+@14 check row R1 30 -> satisfied
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> conflict (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 conflict -> satisfied
+@14 check row R1 10 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> conflict (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 conflict -> satisfied
+@14 check row R1 10 -> satisfied
+== pairing S/RC == T1=SER T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> updated (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 updated -> satisfied
+@9 T2 readlatest R1 -> 10
+@10 check last T2 10 -> satisfied
+@11 T2 write R1 30 -> ok
+@12 T2 commit -> ok
+@13 check committed T2 -> satisfied
+@14 check row R1 30 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> conflict (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 conflict -> satisfied
+@14 check row R1 10 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 commit -> ok
+@5 T2 write R1 20 blocks -> conflict (resumed)
+@7 check committed T1 -> satisfied
+@8 check last T2 conflict -> satisfied
+@14 check row R1 10 -> satisfied

@@ -138,6 +138,7 @@ Directives set the run up. They are not echoed.
 | `pairings rr` | only RR/RR |
 | `pairings rr+s` | only the two mixed pairings |
 | `pairings s+s` | only S/S |
+| `pairings levels` | every pairing of READ COMMITTED, REPEATABLE READ and SERIALIZABLE: RC/RC, RC/RR, RC/S, RR/RC, RR/RR, RR/S, S/RC, S/RR, S/S |
 | `session <name>` | declare a session; its level comes from the pairing |
 | `session <name> rc` | declare a session pinned to READ COMMITTED |
 | `session <name> rr` | declare a session pinned to REPEATABLE READ |
@@ -260,8 +261,11 @@ finishes immediately fails with `DID NOT BLOCK`; an unmarked
 step that never finishes fails with `HUNG`, after a minute.
 
 **`when <group>`** limits a step to some pairings: `rr`,
-`rr+s`, `s+s`, or `all`. It is how a scenario states an
-outcome that differs by level, as `c06` does:
+`rr+s`, `s+s`, or `all`; or by one side's level, `t1=` or
+`t2=` and levels joined by `+`, as `t2=rc` or `t2=rr+ser`,
+which is how a script under `pairings levels` says what READ
+COMMITTED does differently (`b35`). It is how a scenario
+states an outcome that differs by level, as `c06` does:
 
 ```
 @9 check committed T1 T2 T3 when rr

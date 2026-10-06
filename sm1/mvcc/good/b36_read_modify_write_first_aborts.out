@@ -1,0 +1,126 @@
+# b36 -- two read-modify-writes of one row; the first aborts.
+#
+# The other half of b35. R1 holds v = 0; T1 and T2 both read
+# it, T1 sets v = v + 10, and T2's v = v + 20 waits for T1. T1
+# aborts, so its version is dead and nothing committed since
+# T2 began: T2's write goes through at once, at every pairing of
+# the three levels, with no re-read, and R1 ends at 20.
+
+
+== pairing RC/RC == T1=RC T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied
+== pairing RC/RR == T1=RC T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied
+== pairing RC/S == T1=RC T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied
+== pairing RR/RC == T1=RR T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied
+== pairing RR/RR == T1=RR T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied
+== pairing RR/S == T1=RR T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied
+== pairing S/RC == T1=SER T2=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied
+== pairing S/RR == T1=SER T2=RR
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied
+== pairing S/S == T1=SER T2=SER
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 read R1 -> 0
+@4 T1 write R1 10 -> ok
+@5 T2 write R1 20 blocks -> blocked
+@6 T1 abort -> ok
+@5 T2 write R1 20 blocks -> ok (resumed)
+@7 check last T2 ok -> satisfied
+@8 T2 commit -> ok
+@9 check committed T2 -> satisfied
+@10 check row R1 20 -> satisfied

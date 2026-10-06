@@ -134,7 +134,24 @@ bool take_when(std::vector<std::string> *arg, std::string *when) {
   }
   *when = (*arg)[n - 1];
   arg->resize(n - 2);
-  return *when == "rr" || *when == "rr+s" || *when == "s+s" || *when == "all";
+  if (*when == "rr" || *when == "rr+s" || *when == "s+s" || *when == "all") {
+    return true;
+  }
+  // t1=<levels> or t2=<levels>: the levels rc, rr, ser, by "+".
+  if (when->size() < 4 || (*when)[0] != 't' ||
+      ((*when)[1] != '1' && (*when)[1] != '2') || (*when)[2] != '=') {
+    return false;
+  }
+  std::string rest = when->substr(3) + "+";
+  for (size_t at = 0; at < rest.size();) {
+    size_t plus = rest.find('+', at);
+    std::string l = rest.substr(at, plus - at);
+    if (l != "rc" && l != "rr" && l != "ser") {
+      return false;
+    }
+    at = plus + 1;
+  }
+  return true;
 }
 
 std::string outcomes(const script_t &s, const std::vector<std::string> &w,
@@ -203,15 +220,40 @@ const char *pairing_label(pairing_t p) {
     return "RR/S";
   case PAIR_S_RR:
     return "S/RR";
+  case PAIR_RC_RC:
+    return "RC/RC";
+  case PAIR_RC_RR:
+    return "RC/RR";
+  case PAIR_RC_S:
+    return "RC/S";
+  case PAIR_RR_RC:
+    return "RR/RC";
+  case PAIR_S_RC:
+    return "S/RC";
   default:
     return "S/S";
   }
 }
 
+/* The level pairing p gives T1 (side 0) or T2 (side 1). */
+std::string pairing_level(pairing_t p, int side) {
+  // The label is "T1/T2", each RC, RR or S.
+  std::string label = pairing_label(p);
+  std::string l = side == 0 ? label.substr(0, label.find('/'))
+                            : label.substr(label.find('/') + 1);
+  return l == "RC" ? "rc" : l == "RR" ? "rr" : "ser";
+}
+
 /* True if pairing p belongs to the group filter names. */
 bool pairing_selected(pairing_t p, const std::string &filter) {
-  if (filter == "all") {
+  if (filter == "all" || filter == "levels") {
     return true;
+  }
+  // t1=... or t2=...: the side's level is one of those listed.
+  if (filter.size() > 3 && filter[0] == 't' && filter[2] == '=') {
+    std::string l = pairing_level(p, filter[1] == '1' ? 0 : 1);
+    return ("+" + filter.substr(3) + "+").find("+" + l + "+") !=
+           std::string::npos;
   }
   if (filter == "rr") {
     return p == PAIR_RR_RR;
@@ -247,9 +289,10 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
     std::vector<std::string> w = words(line);
     // Directives describe the run and are not echoed.
     if (w[0] == "pairings") {
-      if (w.size() != 2 ||
-          !(w[1] == "all" || w[1] == "rr" || w[1] == "rr+s" || w[1] == "s+s")) {
-        *err = where(path, lineno, "pairings takes all, rr, rr+s, or s+s");
+      if (w.size() != 2 || !(w[1] == "all" || w[1] == "rr" || w[1] == "rr+s" ||
+                             w[1] == "s+s" || w[1] == "levels")) {
+        *err =
+            where(path, lineno, "pairings takes all, rr, rr+s, s+s, or levels");
         return false;
       }
       out->pairings = w[1];

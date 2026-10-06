@@ -693,10 +693,10 @@ private:
       return sm1::xctlevel_t::serializable;
     }
     // The first session takes T1's level; the rest take T2's.
-    bool ser = index == 0 ? (m_pairing == PAIR_S_RR || m_pairing == PAIR_S_S)
-                          : (m_pairing == PAIR_RR_S || m_pairing == PAIR_S_S);
-    return ser ? sm1::xctlevel_t::serializable
-               : sm1::xctlevel_t::repeatable_read;
+    std::string l = pairing_level(m_pairing, index == 0 ? 0 : 1);
+    return l == "rc"   ? sm1::xctlevel_t::read_committed
+           : l == "rr" ? sm1::xctlevel_t::repeatable_read
+                       : sm1::xctlevel_t::serializable;
   }
 
   /* The index of a named session's worker. */
@@ -945,7 +945,14 @@ int script_run(const script_t &script, int block_ms, std::string *out) {
     *out = text.str();
     return failures;
   }
-  for (pairing_t p : {PAIR_RR_RR, PAIR_RR_S, PAIR_S_RR, PAIR_S_S}) {
+  // "levels" runs every pairing of the three levels, READ
+  // COMMITTED first; the other groups only RR and SERIALIZABLE.
+  std::vector<pairing_t> order = {PAIR_RR_RR, PAIR_RR_S, PAIR_S_RR, PAIR_S_S};
+  if (script.pairings == "levels") {
+    order = {PAIR_RC_RC, PAIR_RC_RR, PAIR_RC_S, PAIR_RR_RC, PAIR_RR_RR,
+             PAIR_RR_S,  PAIR_S_RC,  PAIR_S_RR, PAIR_S_S};
+  }
+  for (pairing_t p : order) {
     // The script may ask for one group of pairings only.
     if (!pairing_selected(p, script.pairings)) {
       continue;

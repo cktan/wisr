@@ -19,13 +19,25 @@ enum pairing_t {
   PAIR_RR_RR, /* T1 REPEATABLE READ,  T2 REPEATABLE READ */
   PAIR_RR_S,  /* T1 REPEATABLE READ,  T2 SERIALIZABLE    */
   PAIR_S_RR,  /* T1 SERIALIZABLE,     T2 REPEATABLE READ */
-  PAIR_S_S    /* T1 SERIALIZABLE,     T2 SERIALIZABLE    */
+  PAIR_S_S,   /* T1 SERIALIZABLE,     T2 SERIALIZABLE    */
+  /* "pairings levels" adds READ COMMITTED on either side. */
+  PAIR_RC_RC, /* T1 READ COMMITTED,   T2 READ COMMITTED  */
+  PAIR_RC_RR, /* T1 READ COMMITTED,   T2 REPEATABLE READ */
+  PAIR_RC_S,  /* T1 READ COMMITTED,   T2 SERIALIZABLE    */
+  PAIR_RR_RC, /* T1 REPEATABLE READ,  T2 READ COMMITTED  */
+  PAIR_S_RC   /* T1 SERIALIZABLE,     T2 READ COMMITTED  */
 };
+
+/* The level, "rc", "rr" or "ser", pairing p gives T1 (side 0) or T2. */
+std::string pairing_level(pairing_t p, int side);
 
 /* The banner name of a pairing, as the transcript prints it. */
 const char *pairing_label(pairing_t p);
 
-/* The pairing group a "when" filter names: rr, rr+s, s+s, all. */
+/*
+ * The pairing group a "when" filter names: rr, rr+s, s+s, all,
+ * or t1= or t2= with levels joined by "+", as t2=rr+ser.
+ */
 bool pairing_selected(pairing_t p, const std::string &filter);
 
 /* What an item in a script is. */

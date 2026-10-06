@@ -253,6 +253,16 @@ SSI.
 | b30 | `T1: lock-s(R1)`, `T2: lock-s(R1)` ‖ `T1: w(R1)` ‖ `T2: c` | BLOCK → OK, then exclusive | same | same | `in/b30_upgrade_after_holder_commits.t` |
 | b31 | `T1: lock-s(R1) sp lock-s(R2) w(R1)` ‖ `T1: rollback` | R2 freed, R1 still exclusive | same | same | `in/b31_savepoint_and_explicit_locks.t` |
 | b32 | `T1: rmstore` ‖ `T2: rmstore` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b32_concurrent_drop_of_one_relation.t` |
+| b33 | `T1: w(R1)` ‖ `T2: lock-s(R1)` ‖ `T1: c` | BLOCK → CONFLICT: a lock waits for an uncommitted write | same | same | `in/b33_lock_waits_for_uncommitted_write.t` |
+| b34 | `T1: i(R3)` ‖ `T2: lock-x(R3)` ‖ `T1: a` | BLOCK → OK, then T2 inserts R3 | same | same | `in/b34_lock_after_uncommitted_insert_aborts.t` |
+| b35 | `T1: r(R1)`, `T2: r(R1)`, `T1: w(R1)` ‖ `T2: w(R1)` ‖ `T1: c` | BLOCK → CONFLICT | same | same | `in/b35_read_modify_write_first_commits.t` |
+| b36 | as b35, `T1: a` | BLOCK → OK, R1 = 20 | same | same | `in/b36_read_modify_write_first_aborts.t` |
+
+b35 and b36 run at all nine pairings of the three levels
+(`pairings levels`, `DRIVER.md` §2.1). Where T2 is READ
+COMMITTED, b35's T2 is not aborted: its write is refused with
+UPDATED, it re-reads 10, re-applies v + 20 and commits 30, so
+neither increment is lost. T1's level changes nothing.
 
 Three distinctions this family pins down, because getting
 them wrong would be invisible in ordinary use:
