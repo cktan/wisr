@@ -9,7 +9,8 @@ has sm3's own order of work.
 
 ## 1. Next
 
-The rest of `sm3/SM3_DESIGN.md` §8.1 step 5, in this order.
+The rest of `sm3/SM3_DESIGN.md` §8.1 step 5, and one change
+to sm1. The order among them is not settled.
 
 1. **Statistics for a planner.** It has a strategy,
    `STATISTICS.md`, and no design yet: `SM3_DESIGN.md` §6 is
@@ -19,7 +20,18 @@ The rest of `sm3/SM3_DESIGN.md` §8.1 step 5, in this order.
    strategy's first step is to measure how good RocksDB's size
    estimates are, which nothing has done.
 2. **Bulk load**: a path that batches within sm1's memory
-   bound.
+   bound. It has a design, `BULKLOAD.md`, and is not built:
+   a load holds the table's schema lock SIX in place of row
+   locks, writes its rows to sorted files, and has RocksDB
+   ingest them, in one transaction. Its first step is to
+   check what it assumes of RocksDB.
+
+3. **Savepoints without an undo list**
+   (`sm1/SAVEPOINT.md`): a rollback marks the `seq` range it
+   undid as dead and deletes nothing, so holding a savepoint
+   costs no memory. Designed, not built. It changes sm1's
+   visibility rule, status record and compaction filter, and
+   lets a bulk load be rolled back to a savepoint.
 
 ---
 
