@@ -20,8 +20,9 @@ It describes the code as it is, in `src/xct.cc` and
 - An entry is added when a transaction commits, and when a
   lookup misses the cache and finds the transaction's commit
   record on disk.
-- It holds a bounded number of entries, 65,536 by default,
-  and evicts the entry that has been in it longest.
+- It is a fixed array of 65,536 slots by default, in sets of
+  two. An `xid` hashes to a set, and a new entry takes the slot
+  of the smaller `xid` of the two.
 - **After a restart it is empty.** Nothing loads it at
   startup. It fills as transactions commit and as readers
   ask about older ones, one disk read for each transaction
@@ -60,13 +61,28 @@ the transactions most likely to be asked about: the newest.
 
 ## 2. What it is
 
-Two maps in the database object, `db_t`, guarded by one
+A fixed array in the database object, `db_t`, guarded by one
 mutex, `txn_mu`:
 
 ```
-cache        xid → commit_ts           the lookup
-cache_order  xids, oldest entry first  the order of eviction
+cache       2 × cache_sets slots, each { xid, commit_ts }
+cache_sets  commit_cache_entries / 2, rounded up
 ```
+
+An `xid` belongs to one set, chosen by hashing it; its entry is
+in one of the set's two slots or nowhere. A lookup reads two
+slots. An empty slot holds `xid` 0, which no transaction has.
+
+A slot is 16 bytes, so the default 65,536 slots take 1 MB, and
+a million take 16 MB. Nothing is allocated after the database
+opens. It replaced a hash map and a queue of the order of
+entry, on the order of 64 bytes an entry.
+
+The ids are hashed, not used as an index, because they are
+sparse: one counter hands out every `xid`, `wts` and
+`commit_ts` (`MVCC.md` §1), so consecutive transactions' ids
+are several apart. PostgreSQL can index its commit status by
+`xid` because its ids have a counter of their own.
 
 The same mutex guards the active table. That is deliberate: a
 committing transaction leaves the active table and enters the
@@ -138,22 +154,37 @@ either.
 
 ### 3.4 It leaves by eviction
 
-After each insertion, while the cache holds more than
-`commit_cache_entries`, the entry that came in first is
-removed: first in, first out.
+A new entry, from a commit or from a lookup that found the
+commit on disk, takes the slot in its set that holds the
+smaller `xid`, an empty one first. The other stays.
 
-It is not by `commit_ts`, though it once was. An old commit
-read back from disk has a small `commit_ts`. Evicting the
-smallest would remove it the moment it entered a full cache,
-and §3.2 would do nothing.
+- **A lookup of an old transaction keeps the newer entry.** An
+  old commit read back from disk has a small `xid`, so it
+  takes the older of the two slots, and the most recent entry
+  of the set survives a scan over old transactions.
+- **An old transaction being read keeps its place** until two
+  newer entries land in its set. Replacing only an entry with a
+  smaller `xid` than its own would protect recent entries
+  further, and lock such a transaction out for good once newer
+  ones held both slots: after a restart, every transaction from
+  before it.
+- **A commit always enters.** A long transaction's `xid` was
+  taken at its first write, so it may be the smallest of the
+  set when it commits. It still takes a slot, the one of the
+  smaller `xid`, and is the first evicted after.
 
-It is not by use either. Moving an entry to the front on
-every hit would put a write on the read path, under the mutex
-every begin and commit takes. A hot entry that is evicted
-comes back with one disk read.
+It is not by use. Marking an entry on every hit would put a
+write on the read path, under the mutex every begin and commit
+takes. A hot entry that is evicted comes back with one disk
+read.
+
+It was first in, first out, over a hash map and a queue, and
+before that by `commit_ts`, which evicted an old commit read
+back from disk the moment it entered a full cache.
 
 `commit_cache_entries` is an option given when the database
-is opened. Its default is 65,536 and it must be at least 1.
+is opened: the number of slots, rounded up to even. Its
+default is 65,536 and it must be at least 1.
 
 Eviction cannot change an answer. The record was written
 before the entry was made, so a lookup that misses the cache
@@ -295,14 +326,14 @@ These follow from the code and are not decisions.
   "no record" would spare those reads too. It is sound, since
   a transaction absent from the active table with no record
   can never commit, and it is not built.
-- **A scan can flush the cache.** A scan over the unstamped
-  rows of more than 65,536 old transactions pushes every
-  recent commit out, and each comes back with a disk read
-  when next asked about. Eviction by use would resist that,
-  at the price given in §3.4.
-- **A large transaction is still evicted** by the next 65,536
-  entries, however many of its rows are being read. It now
-  costs one read to return, where it cost one a row.
+- **A scan over old transactions keeps recent commits.** Each
+  old commit read back takes the older slot of its set, so the
+  newer entry stays (§3.4). A recent commit is lost to a scan
+  only where the set's other slot already held one newer.
+- **A large transaction is still evicted** once two newer
+  entries land in its set, however many of its rows are being
+  read. It costs one read to return, where it once cost one a
+  row.
 - **One mutex.** Every resolution of an unstamped version
   takes `txn_mu`, which every begin, commit and abort takes
   too. No benchmark has measured it. At hundreds of thousands
@@ -319,10 +350,9 @@ These follow from the code and are not decisions.
   recent records answer from the memtable or block cache, and
   hot rows stay covered; cold rows written a few seconds
   earlier are the misses.
-  - **Size it by memory, not by count**, with a larger
-    default. An entry is on the order of 64 bytes, an estimate
-    and not measured, so a million is about 64 MB and covers
-    10 seconds at 100,000 a second.
+  - **Size it by memory, with a larger default.** A slot is 16
+    bytes, so a million is 16 MB and covers 10 seconds at
+    100,000 a second.
   - **Measure how long stamping takes** under load: from a
     commit to the compaction that stamps its versions. That
     lag is what the size should be set from, and nothing has

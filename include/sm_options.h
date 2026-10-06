@@ -17,9 +17,10 @@
  *
  * group_commit_us is accepted but currently unused: concurrent
  * commits already share one synced WAL write through RocksDB's
- * write group. commit_cache_entries bounds the in-memory map
- * from transaction id to commit timestamp that spares readers
- * a status-table lookup; it must be at least 1.
+ * write group. commit_cache_entries is the number of slots,
+ * rounded up to even, in the in-memory cache from transaction
+ * id to commit timestamp that spares readers a status-table
+ * lookup; a slot is 16 bytes, and it must be at least 1.
  *
  * savepoint_undo_bytes caps what one transaction keeps in
  * memory to roll back to its savepoints. A transaction that

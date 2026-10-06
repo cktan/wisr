@@ -180,6 +180,12 @@ enum write_op_t { WRITE_INSERT, WRITE_UPDATE, WRITE_DELETE };
 /* Fail with NOTRANS unless session has an active transaction. */
 int xct_check_active(sm1::session_t *session);
 
+/* Whether the commit cache holds xid (COMMITCACHE.md); for tests. */
+bool xct_cache_has(wisr::db_t *db, uint64_t xid);
+
+/* How many entries the commit cache holds; for tests. */
+size_t xct_cache_used(wisr::db_t *db);
+
 /* Drop session's undo list, which passed the cap; its marks are lost. */
 void xct_undo_overflow(sm1::session_t *session);
 

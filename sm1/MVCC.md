@@ -261,8 +261,9 @@ not yet stamped.
 - It is in memory only, and empty after a restart.
 - An entry is made at commit, and when a lookup finds a
   `COMMITTED` record on disk.
-- It is bounded, 65,536 entries by default, and evicts the
-  entry longest in it.
+- It is a fixed array of slots, 65,536 by default, in sets of
+  two; a new entry takes the slot of the smaller `xid` in its
+  set.
 - It changes speed and never an answer.
 
 `COMMITCACHE.md` has the rest.
@@ -491,7 +492,7 @@ to the last `sm1::closedb`.
 | `committing` | ordered set of `commit_ts` | the commit sequencer: commits claimed and not yet published (§3) | `alloc_mu` |
 | `visible_ts` | atomic 64-bit | what a new snapshot is (§3) | written by the advancer |
 | `active` | hash set of `xid` | the active table: transactions running or prepared (§5, step 2) | `txn_mu` |
-| `cache`, `cache_order` | hash map `xid → commit_ts`, and a queue of xids in order of entry | the commit cache and its eviction (§7) | `txn_mu` |
+| `cache` | an array of slots `{ xid, commit_ts }`, in sets of two, an `xid` hashed to its set | the commit cache (§7) | `txn_mu` |
 | `snapshots` | multiset of `snapshot_ts` | the snapshots in use; its smallest is the GC watermark (§8) | `snap_mu` |
 | `lock_table` | hash map from store and key to the list of holders, each with a mode | explicit row locks, `sm1::lock` (§9) | `lock_mu`, with one condition variable for every waiter |
 | `write_latch` | 4,096 mutexes, chosen by hashing store and key | a write's check-then-put (§9) | itself |

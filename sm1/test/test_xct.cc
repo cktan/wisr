@@ -162,14 +162,15 @@ TEST_CASE("a failed status write fails the database stop") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
-TEST_CASE("a one-entry commit cache gives the same answers") {
+TEST_CASE("the smallest commit cache gives the same answers") {
   // Verify eviction never changes visibility (§3.4, §12.5).
-  // 1. Open "db" with commit_cache_entries = 1.
+  // 1. Open "db" with commit_cache_entries = 1: one set of two
+  //    slots, the smallest there is.
   // 2. Session A takes an RR snapshot.
   // 3. Session B commits 50 keys, one per transaction.
   // 4. A still sees none of them; a new snapshot sees all 50,
-  //    by point read and by scan; the cache never exceeds one
-  //    entry.
+  //    by point read and by scan; the cache never holds more
+  //    than its two slots.
   sm1::options_t opt;
   opt.commit_cache_entries = 1;
   xct_fixture_t f(&opt);
@@ -179,7 +180,7 @@ TEST_CASE("a one-entry commit cache gives the same answers") {
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   for (int i = 0; i < 50; i++) {
     REQUIRE(commit_one(b, f.store(), "k" + std::to_string(100 + i)) == 0);
-    CHECK(f.db()->cache.size() <= 1);
+    CHECK(wisr::xct_cache_used(f.db()) <= 2);
   }
   CHECK(get(a, f.store(), "k100") == "<none>");
   CHECK(get(a, f.store(), "k149") == "<none>");
@@ -230,61 +231,125 @@ TEST_CASE("a commit read from the status table is remembered") {
 
   s = opendb(home.env(), "db", nullptr);
   REQUIRE(s);
-  CHECK(s->db->cache.count(xid) == 0);
+  CHECK_FALSE(wisr::xct_cache_has(s->db, xid));
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(s, store, "k") == "v");
-  CHECK(s->db->cache.count(xid) == 1);
+  CHECK(wisr::xct_cache_has(s->db, xid));
 
   CHECK(get(s, store, "k") == "v");
-  CHECK(s->db->cache.count(xid) == 1);
+  CHECK(wisr::xct_cache_has(s->db, xid));
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
 }
 
-TEST_CASE("a remembered commit displaces the oldest entry, not itself") {
-  // Verify eviction is by order of entry, so an old commit read
-  // back from the status table stays to be used.
-  // 1. Open "db" with commit_cache_entries = 1.
-  // 2. Commit k1, then k2: the cache holds k2's xid only.
-  // 3. Read k1: its xid is cached, and the cache is still one entry.
-  // 4. Read k2: its xid is cached in turn, and both reads are right.
-  // 5. An aborted writer's xid is never cached.
+/* Commit key -> "v" from s in a transaction of its own; its xid. */
+uint64_t commit_key(sm1::session_t *s, uint64_t store, const std::string &key) {
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, store, key, "v");
+  uint64_t xid = s->xid;
+  REQUIRE(sm1::commit(s) == 0);
+  return xid;
+}
+
+TEST_CASE("a commit cache set holds two, and a third evicts the smaller xid") {
+  // Verify the two-slot set (COMMITCACHE.md §3.4).
+  // 1. Open "db" with commit_cache_entries = 2: one set of two
+  //    slots, which every transaction shares.
+  // 2. Commit k1, then k2: both are cached.
+  // 3. Commit k3: it takes the slot of k1, the smaller xid, and
+  //    k2 stays.
   sm1::options_t opt;
-  opt.commit_cache_entries = 1;
+  opt.commit_cache_entries = 2;
+  xct_fixture_t f(&opt);
+  sm1::session_t *b = f.open();
+  const uint64_t x1 = commit_key(b, f.store(), "k1");
+  const uint64_t x2 = commit_key(b, f.store(), "k2");
+  CHECK(wisr::xct_cache_has(f.db(), x1));
+  CHECK(wisr::xct_cache_has(f.db(), x2));
+
+  const uint64_t x3 = commit_key(b, f.store(), "k3");
+  CHECK_FALSE(wisr::xct_cache_has(f.db(), x1));
+  CHECK(wisr::xct_cache_has(f.db(), x2));
+  CHECK(wisr::xct_cache_has(f.db(), x3));
+  CHECK(wisr::xct_cache_used(f.db()) == 2);
+  sm1::closedb(b);
+}
+
+TEST_CASE("an old commit read back from disk keeps the newer of its set") {
+  // Verify a miss takes the slot of the smaller xid, so a lookup of
+  // an old transaction does not push out the newest commit.
+  // 1. With one set of two, commit k1, k2 and k3: k2 and k3 are
+  //    cached.
+  // 2. Read k1: its commit is read from disk and cached in k2's
+  //    slot, the smaller xid of the two; k3 stays.
+  // 3. Read k2: it takes k1's slot in turn; k3 still stays.
+  // 4. Every read is right.
+  sm1::options_t opt;
+  opt.commit_cache_entries = 2;
   xct_fixture_t f(&opt);
   sm1::session_t *a = f.first();
   sm1::session_t *b = f.open();
-
-  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  put(b, f.store(), "k1", "v");
-  const uint64_t x1 = b->xid;
-  REQUIRE(sm1::commit(b) == 0);
-  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  put(b, f.store(), "k2", "v");
-  const uint64_t x2 = b->xid;
-  REQUIRE(sm1::commit(b) == 0);
-  CHECK(f.db()->cache.count(x1) == 0);
-  CHECK(f.db()->cache.count(x2) == 1);
+  const uint64_t x1 = commit_key(b, f.store(), "k1");
+  const uint64_t x2 = commit_key(b, f.store(), "k2");
+  const uint64_t x3 = commit_key(b, f.store(), "k3");
+  REQUIRE(wisr::xct_cache_has(f.db(), x3));
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(a, f.store(), "k1") == "v");
-  CHECK(f.db()->cache.count(x1) == 1);
-  CHECK(f.db()->cache.size() == 1);
+  CHECK(wisr::xct_cache_has(f.db(), x1));
+  CHECK_FALSE(wisr::xct_cache_has(f.db(), x2));
+  CHECK(wisr::xct_cache_has(f.db(), x3));
 
   CHECK(get(a, f.store(), "k2") == "v");
-  CHECK(f.db()->cache.count(x2) == 1);
-  CHECK(f.db()->cache.size() == 1);
+  CHECK(wisr::xct_cache_has(f.db(), x2));
+  CHECK_FALSE(wisr::xct_cache_has(f.db(), x1));
+  CHECK(wisr::xct_cache_has(f.db(), x3));
+  CHECK(get(a, f.store(), "k3") == "v");
   REQUIRE(sm1::commit(a) == 0);
+  sm1::closedb(b);
+}
+
+TEST_CASE("a long transaction committing late is cached, and evicted first") {
+  // Verify a commit always enters the cache, and the victim is the
+  // smaller xid, not the earlier entry.
+  // 1. With one set of two, L writes first, so its xid is the
+  //    smallest, and does not commit yet.
+  // 2. k2 commits, then L commits: both are cached, though L's
+  //    xid is the smaller.
+  // 3. k3 commits: it evicts L, the smaller xid, though L entered
+  //    the cache after k2.
+  // 4. An aborted writer is never cached.
+  sm1::options_t opt;
+  opt.commit_cache_entries = 2;
+  xct_fixture_t f(&opt);
+  sm1::session_t *l = f.open();
+  sm1::session_t *b = f.open();
+  REQUIRE(sm1::begin(l, sm1::xctlevel_t::read_committed) == 0);
+  put(l, f.store(), "kl", "v");
+  const uint64_t xl = l->xid;
+
+  const uint64_t x2 = commit_key(b, f.store(), "k2");
+  REQUIRE(xl < x2);
+  REQUIRE(sm1::commit(l) == 0);
+  CHECK(wisr::xct_cache_has(f.db(), xl));
+  CHECK(wisr::xct_cache_has(f.db(), x2));
+
+  const uint64_t x3 = commit_key(b, f.store(), "k3");
+  CHECK_FALSE(wisr::xct_cache_has(f.db(), xl));
+  CHECK(wisr::xct_cache_has(f.db(), x2));
+  CHECK(wisr::xct_cache_has(f.db(), x3));
 
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  put(b, f.store(), "k3", "v");
-  const uint64_t x3 = b->xid;
+  put(b, f.store(), "k4", "v");
+  const uint64_t x4 = b->xid;
   REQUIRE(sm1::abort(b) == 0);
+  sm1::session_t *a = f.first();
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(get(a, f.store(), "k3") == "<none>");
-  CHECK(f.db()->cache.count(x3) == 0);
+  CHECK(get(a, f.store(), "k4") == "<none>");
+  CHECK_FALSE(wisr::xct_cache_has(f.db(), x4));
   REQUIRE(sm1::commit(a) == 0);
+  sm1::closedb(l);
   sm1::closedb(b);
 }
 

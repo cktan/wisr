@@ -465,7 +465,9 @@ db_t *db_open(const std::string &path, const char *dbname,
   db->next_objid = std::max<uint64_t>(next_objid + 1, WISR_FIRST_OBJID);
   db->objid_limit = db->next_objid;
   // Size the commit cache.
-  db->cache_entries = opt->commit_cache_entries;
+  // Two slots a set, the entries asked for rounded up to even.
+  db->cache_sets = (static_cast<size_t>(opt->commit_cache_entries) + 1) / 2;
+  db->cache.assign(2 * db->cache_sets, db_t::cache_slot_t{});
   // Cap each transaction's undo list.
   db->undo_max_bytes = static_cast<size_t>(opt->savepoint_undo_bytes);
   // Arm deadlock detection.

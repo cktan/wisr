@@ -37,7 +37,7 @@ Owed, and blocking nothing above:
   65,536 entries reaches back under a second at 100,000
   transactions a second, while a version needs a lookup until
   compaction stamps it. Size the cache by memory with a larger
-  default, about 64 MB for a million entries; and measure how
+  default, 16 MB for a million slots; and measure how
   long stamping takes under load, which is what the size
   should be set from.
 

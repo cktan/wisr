@@ -117,25 +117,43 @@ void leave_active(db_t *db, uint64_t xid) {
   lock_wake(db, false);
 }
 
+/* The first of the two slots of xid's set in the commit cache. */
+db_t::cache_slot_t *cache_set(db_t *db, uint64_t xid) {
+  // xids are sparse -- one counter hands out every timestamp --
+  // so mix the bits before taking the set.
+  uint64_t h = xid * 0x9e3779b97f4a7c15ULL;
+  return &db->cache[2 * ((h >> 32) % db->cache_sets)];
+}
+
 /*
- * Put xid's commit_ts in the commit cache, with txn_mu held,
- * evicting the entry longest in the cache if it is full. Eviction
- * cannot change an answer: the status record was written before
- * any entry is made (§3.4).
+ * Put xid's commit_ts in the commit cache, with txn_mu held. It
+ * takes the slot in its set that holds the smaller xid, so a
+ * lookup of an old transaction never pushes out the newer entry
+ * of the two (COMMITCACHE.md §3.4). Eviction cannot change an
+ * answer: the status record was written before any entry is made.
  */
 void cache_put_locked(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
+  db_t::cache_slot_t *set = cache_set(db, xid);
   // Already cached, by a commit or by another reader: keep it.
-  if (!db->cache.emplace(xid, commit_ts).second) {
+  if (set[0].xid == xid || set[1].xid == xid) {
     return;
   }
-  // Remember the order of entry, for eviction.
-  db->cache_order.push_back(xid);
-  // Evict the oldest entries while over capacity.
-  while (db->cache.size() > db->cache_entries) {
-    // Drop the entry that came in first.
-    db->cache.erase(db->cache_order.front());
-    db->cache_order.pop_front();
+  // The slot of the smaller xid, an empty one, holding 0, first.
+  db_t::cache_slot_t *victim = set[0].xid <= set[1].xid ? &set[0] : &set[1];
+  victim->xid = xid;
+  victim->commit_ts = commit_ts;
+}
+
+/* The commit_ts cached for xid, with txn_mu held; false if none. */
+bool cache_get_locked(db_t *db, uint64_t xid, uint64_t *commit_ts) {
+  db_t::cache_slot_t *set = cache_set(db, xid);
+  for (int i = 0; i < 2; i++) {
+    if (set[i].xid == xid) {
+      *commit_ts = set[i].commit_ts;
+      return true;
+    }
   }
+  return false;
 }
 
 /*
@@ -1093,9 +1111,7 @@ xct_state_t xct_status(db_t *db, uint64_t xid, uint64_t *commit_ts) {
       return XCT_IN_FLIGHT;
     }
     // Committed recently: the cache has its commit_ts.
-    auto it = db->cache.find(xid);
-    if (it != db->cache.end()) {
-      *commit_ts = it->second;
+    if (cache_get_locked(db, xid, commit_ts)) {
       return XCT_COMMITTED;
     }
   }
@@ -1269,6 +1285,23 @@ int xct_resolve(db_t *db, uint64_t xid, uint64_t *commit_ts) {
   default:
     return 0;
   }
+}
+
+/* Whether the commit cache holds xid. */
+bool xct_cache_has(db_t *db, uint64_t xid) {
+  std::lock_guard<std::mutex> guard(db->txn_mu);
+  uint64_t ts;
+  return cache_get_locked(db, xid, &ts);
+}
+
+/* How many entries the commit cache holds. */
+size_t xct_cache_used(db_t *db) {
+  std::lock_guard<std::mutex> guard(db->txn_mu);
+  size_t n = 0;
+  for (const db_t::cache_slot_t &slot : db->cache) {
+    n += slot.xid != 0;
+  }
+  return n;
 }
 
 /* Drop session's undo list, which passed the cap; its marks are lost. */

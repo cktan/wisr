@@ -324,10 +324,12 @@ concurrent commits already share one synced WAL write
 through RocksDB's write group, which has no knob for
 waiting on followers.
 
-`commit_cache_entries` bounds the in-memory map from
-transaction id to commit timestamp that spares readers a
-status-table lookup (SM1_DESIGN.md §3.4). It must be at least
-1; a smaller cache costs lookups, never correctness.
+`commit_cache_entries` is the number of slots, rounded up to
+even, in the in-memory cache from transaction id to commit
+timestamp that spares readers a status-table lookup
+(SM1_DESIGN.md §3.4, COMMITCACHE.md). A slot is 16 bytes. It
+must be at least 1; a smaller cache costs lookups, never
+correctness.
 
 `savepoint_undo_bytes` caps what one transaction keeps in
 memory to roll back to its savepoints (SM1_DESIGN.md §6.5).

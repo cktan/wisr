@@ -12,7 +12,6 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <deque>
 #include <functional>
 #include <list>
 #include <map>
@@ -143,17 +142,22 @@ struct db_t {
    * The active transaction table and the commit cache (§3.4),
    * under one mutex so a committing xid moves from one to the
    * other atomically. The cache holds commits as they happen
-   * and commits read back from CF:txn, and evicts the entry
-   * that has been in it longest.
+   * and commits read back from CF:txn, in sets of two slots: an
+   * xid hashes to a set, and a new entry takes the slot of the
+   * smaller xid (COMMITCACHE.md §2). An empty slot has xid 0,
+   * which no transaction has.
    */
   std::mutex txn_mu;
   std::unordered_set<uint64_t> active; /* xids in flight */
   /* The transaction object running each xid in flight, for a
      writer that waits for it (WRITELOCK.md §3.4). */
   std::unordered_map<uint64_t, sm1::session_t *> xid_owner;
-  std::unordered_map<uint64_t, uint64_t> cache; /* xid -> commit_ts */
-  std::deque<uint64_t> cache_order;             /* xids, oldest entry first */
-  size_t cache_entries = 0;
+  struct cache_slot_t {
+    uint64_t xid = 0;
+    uint64_t commit_ts = 0;
+  };
+  std::vector<cache_slot_t> cache; /* cache_sets sets, two slots each */
+  size_t cache_sets = 0;
 
   /* The most one transaction's undo list may hold (§6.5). */
   size_t undo_max_bytes = 0;
