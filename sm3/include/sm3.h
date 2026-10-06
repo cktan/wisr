@@ -261,6 +261,18 @@ int cat_create_table(session_t* session, uint64_t nspoid,
 int cat_drop_table(session_t* session, uint64_t oid);
 
 /* Rename the table oid to name, in its namespace. */
+/*
+ * Empty the table oid: it gets a new, empty store, and the old one
+ * is dropped, rows and index entries with it. The columns, the
+ * indexes and their states, and the rowno sequence are kept, so
+ * new rows go on from the last rowno handed out. Transactional,
+ * and the same cost whatever the table holds. It takes the schema
+ * lock exclusive, as other DDL does. A transaction that began
+ * before it committed and first reads the table after finds it
+ * empty, as in PostgreSQL.
+ */
+int cat_truncate_table(session_t* session, uint64_t oid);
+
 int cat_rename_table(session_t* session, uint64_t oid,
                      std::string_view name);
 
@@ -520,6 +532,14 @@ int tbl_read_latest(table_t* table, uint64_t rowno, std::string_view& tuple);
  * with SM_ERR_CONFLICT, as sm1::lock says.
  */
 int tbl_lock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
+
+/*
+ * Empty the table: its rows and every index's entries, in the
+ * table's transaction (cat_truncate_table). The table must be
+ * opened exclusive, SM_ERR_INVALID if not. The handle stays open
+ * on the emptied table.
+ */
+int tbl_truncate(table_t* table);
 
 /* Open a cursor over the rows first..last, as sm2::rel_scan does. */
 int tbl_scan(table_t* table, uint64_t first, uint64_t last,

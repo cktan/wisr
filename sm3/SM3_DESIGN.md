@@ -776,6 +776,19 @@ encodes a key itself.
 
 - **`DROP TABLE` is one `sm1::rmstore`**, sm1's O(1) column
   family drop, and takes the indexes and TOAST data with it.
+- **`TRUNCATE` swaps the store.** `cat_truncate_table` makes a
+  new, empty store, points the table's record at it and drops
+  the old one with `sm1::rmstore`, under the schema lock X.
+  All three are transactional, so an abort, or a rollback to
+  a savepoint before it, brings the rows back, and it costs
+  the same whatever the table holds. The columns, the index
+  definitions and their prefixes and states, and the rowno
+  sequence carry over, so new rows go on from the last rowno.
+  A transaction that began before it committed and first
+  reads the table after finds it empty, as in PostgreSQL:
+  the catalog is not versioned (§2). On an open table it is
+  `tbl_truncate`, which needs the table opened exclusive and
+  reopens the handle on the new store.
 - **`DROP INDEX` is a range delete** over the index's prefix.
 - **Index prefixes are allocated in increasing order and never
   reused.** A dropped index's versions linger until sm1's

@@ -15,6 +15,7 @@ struct sm3::table_t {
   session_t *session;
   std::shared_ptr<const table_def_t> def; /* held under the schema lock */
   bool writable;                          /* the lock covers intent_exclusive */
+  bool exclusive;                         /* the lock is exclusive */
   bool fresh;                             /* made by this transaction */
   sm2::rel_t *rel = nullptr;
   std::vector<sm2::index_t *> indexes; /* one per def->indexes, in order */
@@ -288,6 +289,39 @@ int remove_entry(sm3::table_t *t, size_t i, const entry_t &e, uint64_t rowno) {
 
 namespace sm3 {
 
+namespace {
+
+/* Open table's heap and indexes on the store its definition names. */
+int open_rels(table_t *table) {
+  const table_def_t &def = *table->def;
+  sm1::session_t *s = table->session->sm1;
+  if (sm2::rel_open(s, def.storeid, 0, def.schema, def.rowno_seq, table->rel) !=
+      0) {
+    return -1;
+  }
+  for (const index_def_t &x : def.indexes) {
+    sm2::index_t *ix = nullptr;
+    if (sm2::idx_open(s, def.storeid, x.prefix, x.key, x.unique, x.include,
+                      ix) != 0) {
+      return -1;
+    }
+    table->indexes.push_back(ix);
+  }
+  return 0;
+}
+
+/* Close table's heap and indexes, leaving it with neither. */
+void close_rels(table_t *table) {
+  for (sm2::index_t *ix : table->indexes) {
+    sm2::idx_close(ix);
+  }
+  table->indexes.clear();
+  sm2::rel_close(table->rel);
+  table->rel = nullptr;
+}
+
+} // namespace
+
 /* Lock the table, then open its heap and every index; see sm3.h. */
 int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
              table_t *&out) {
@@ -299,21 +333,12 @@ int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
     }
     t->session = session;
     t->writable = covers_write(mode);
+    t->exclusive = mode == sm1::lockmode_t::exclusive;
     // No committed definition: this transaction made the table, and
     // no other can see it or its rows.
     t->fresh = cat_table(session->cat, oid) == nullptr;
-    const table_def_t &def = *t->def;
-    if (sm2::rel_open(session->sm1, def.storeid, 0, def.schema, def.rowno_seq,
-                      t->rel) != 0) {
+    if (open_rels(t.get()) != 0) {
       return -1;
-    }
-    for (const index_def_t &x : def.indexes) {
-      sm2::index_t *ix = nullptr;
-      if (sm2::idx_open(session->sm1, def.storeid, x.prefix, x.key, x.unique,
-                        x.include, ix) != 0) {
-        return -1;
-      }
-      t->indexes.push_back(ix);
     }
     out = t.release();
     return 0;
@@ -325,10 +350,7 @@ void tbl_close(table_t *table) {
   if (!table) {
     return;
   }
-  for (sm2::index_t *ix : table->indexes) {
-    sm2::idx_close(ix);
-  }
-  sm2::rel_close(table->rel);
+  close_rels(table);
   delete table;
 }
 
@@ -494,6 +516,27 @@ int tbl_lock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
   }
   // Held to the end of the transaction, as a write's lock is.
   return sm2::rel_lock(table->rel, rowno, mode);
+}
+
+/* Empty the table, then reopen its heap and indexes; see sm3.h. */
+int tbl_truncate(table_t *table) {
+  return catch_nomem([&] {
+    if (!table->exclusive) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "truncate: the table is not opened exclusive");
+    }
+    const uint64_t oid = table->def->oid;
+    std::shared_ptr<const table_def_t> def;
+    if (cat_truncate_table(table->session, oid) != 0 ||
+        cat_lock_table(table->session, oid, sm1::lockmode_t::exclusive, def) !=
+            0) {
+      return -1;
+    }
+    // The handle's heap and indexes are on the old store.
+    close_rels(table);
+    table->def = std::move(def);
+    return open_rels(table);
+  });
 }
 
 /* Open a cursor over the rows first..last. */

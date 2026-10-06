@@ -1194,6 +1194,19 @@ static Janet cfun_lock_row(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (truncate table) */
+static Janet cfun_truncate(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  // The table lock exclusive, as TRUNCATE takes it.
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCK_EXCLUSIVE, "truncate");
+  if (sm_tbl_truncate(p_tdef->tbl) != 0) {
+    panic_sm_error("truncate sm_tbl_truncate");
+  }
+  return janet_wrap_nil();
+}
+
 /* (update table rowno [new_val1 new_val2 ...]) */
 static Janet cfun_update(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 3);
@@ -1636,6 +1649,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_read", cfun_read, "internal"},
     {"_read-latest", cfun_read_latest, "internal"},
     {"_lock-row", cfun_lock_row, "internal"},
+    {"_truncate", cfun_truncate, "internal"},
     {"_update", cfun_update, "internal"},
     {"_delete", cfun_delete, "internal"},
     {"_scan", cfun_scan, "internal"},
@@ -1698,6 +1712,9 @@ static const char *s_prelude = R"janet(
 
 (defmacro lock-row [tbl rowno mode]
   ~(_lock-row (string ',tbl) ,rowno ,mode))
+
+(defmacro truncate [tbl]
+  ~(_truncate (string ',tbl)))
 
 (defmacro update [tbl rowno row]
   ~(_update (string ',tbl) ,rowno ,row))

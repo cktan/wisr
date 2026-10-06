@@ -1,0 +1,91 @@
+# test_truncate.rel -- (truncate table) empties a table and its
+# indexes in the transaction that runs it.
+#
+# 1. A truncate empties the heap and every index, new rows go on from
+#    the last rowno, and an abort brings the old rows back.
+# 2. A rollback to a savepoint taken before the truncate undoes it.
+# 3. A committed truncate leaves an empty table that takes new rows.
+# 4. A truncate waits for a reader of the table, and goes ahead once
+#    the reader commits.
+
+(def test-dir "/tmp/wisr_rel_test_truncate")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "trdb")
+
+(session-open s1 "trdb")
+(session-open s2 "trdb")
+
+(session-use s1)
+(begin :rc)
+(table-create jobs
+  (columns
+    (id :int4 :not-null)
+    (state :text :not-null)))
+(index-create jobs_id (table jobs) (key (id :asc)) :unique true)
+(insert jobs [7 "free"])
+(insert jobs [8 "free"])
+(insert jobs [9 "taken"])
+(commit)
+
+# 1. Truncate, insert, and abort.
+(begin :rc)
+(truncate jobs)
+(assert-count 0 (scan jobs))
+(assert-count 0 (idx-scan jobs_id))
+(assert-eq (insert jobs [7 "again"]) 4)
+(assert-count 1 (idx-scan jobs_id))
+(abort)
+
+(begin :rc)
+(assert-count 3 (scan jobs))
+(assert-count 3 (idx-scan jobs_id))
+(commit)
+
+# 2. A rollback to a savepoint before the truncate.
+(begin :rc)
+(def sp (savepoint))
+(truncate jobs)
+(assert-count 0 (scan jobs))
+(rollback sp)
+(assert-count 3 (scan jobs))
+(assert-count 3 (idx-scan jobs_id))
+(commit)
+
+# 3. A committed truncate.
+(begin :rc)
+(truncate jobs)
+(commit)
+
+(begin :rc)
+(assert-count 0 (scan jobs))
+(assert-eq (insert jobs [8 "new"]) 5)
+(assert-count 1 (idx-scan jobs_id))
+(commit)
+
+# 4. A reader holds the table; the truncate waits for it.
+(session-use s2)
+(begin :rc)
+(assert-count 1 (scan jobs))
+
+(session-use s1)
+(qa-nowait true)
+(begin :rc)
+(assert-err :err-blocked (truncate jobs))
+
+(session-use s2)
+(commit)
+
+(session-use s1)
+(truncate jobs)
+(assert-count 0 (scan jobs))
+(commit)
+(qa-nowait false)
+
+(session-close s1)
+(session-close s2)
+(env-detach)
+(rm-rf test-dir)
+(print "test_truncate.rel: PASSED")

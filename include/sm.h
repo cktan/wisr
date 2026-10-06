@@ -635,6 +635,19 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
  */
 int sm_tbl_lock(sm_tbl_t* tbl, uint64_t rowno, sm_lockmode_t mode);
 
+/*
+ * Empty the table, as SQL's TRUNCATE: its rows and every index's
+ * entries go, in the table's transaction, at the same cost however
+ * many there are. The table must be opened SM_LOCK_EXCLUSIVE,
+ * SM_ERR_INVALID if not. Columns, indexes and the row numbering
+ * are kept, so new rows go on from the last rowno handed out. The
+ * handle stays open on the emptied table, and sm_tbl_def gives its
+ * new definition. A transaction that began before the truncate
+ * committed and first reads the table after finds it empty, as in
+ * PostgreSQL.
+ */
+int sm_tbl_truncate(sm_tbl_t* tbl);
+
 /* Open a cursor over the rows first..last, both included. */
 int sm_tbl_scan(sm_tbl_t* tbl, uint64_t first, uint64_t last,
                 sm_rel_scan_t** out);

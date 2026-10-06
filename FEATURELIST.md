@@ -103,6 +103,10 @@ ordered key as the only access path below sm2.
       — sm2's own TOAST, in its own format, in the table's
         sm1 store (sm2/SM2_DESIGN.md §4)
 - [x] generated / computed columns
+- [x] TRUNCATE
+      — the table gets a new, empty store and the old one is
+        dropped, so it is transactional and costs the same
+        whatever the table holds (sm3/SM3_DESIGN.md §4)
 - [x] temporary tables
 - [ ] unlogged tables
 - [ ] materialized views

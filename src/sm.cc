@@ -1062,6 +1062,21 @@ int sm_tbl_lock(sm_tbl_t *tbl, uint64_t rowno, sm_lockmode_t mode) {
   });
 }
 
+/* Empty a table, and refresh the handle's definition. */
+int sm_tbl_truncate(sm_tbl_t *tbl) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_truncate", "tbl");
+    }
+    if (sm3::tbl_truncate(tbl->table) != 0) {
+      return -1;
+    }
+    // The table now lives in another store.
+    tbl->def = api_def(sm3::tbl_def(tbl->table));
+    return 0;
+  });
+}
+
 /* Open a cursor over a table's rows. */
 int sm_tbl_scan(sm_tbl_t *tbl, uint64_t first, uint64_t last,
                 sm_rel_scan_t **out) {

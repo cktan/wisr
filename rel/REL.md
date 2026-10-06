@@ -465,6 +465,19 @@ wait fails with `ERR_BLOCKED`.
 (lock-row owners r1 :shared)
 ```
 
+### `(truncate table)`
+Empties the table and every index on it, in the current
+transaction: `TRUNCATE`. It takes the table's lock
+exclusive, so it waits for every other reader and writer of
+the table; under `(qa-nowait true)` it fails with
+`ERR_BLOCKED` instead. Columns and indexes are kept, and new
+rows go on from the last row number handed out. An abort, or a
+rollback to a savepoint taken before it, brings the rows back.
+
+```janet
+(truncate jobs)
+```
+
 ### `(update table rowno [val1 val2 ...])`
 Updates the row at `rowno` and synchronizes secondary indexes.
 Returns the previous tuple values `[old1 old2 ...]`.

@@ -346,6 +346,30 @@ int cat_drop_table(session_t *session, uint64_t oid) {
   });
 }
 
+/* Empty a table, by giving it a new store; see sm3.h. */
+int cat_truncate_table(session_t *session, uint64_t oid) {
+  return catch_nomem([&] {
+    kv_ptr kv(nullptr, &sm2::catkv_close);
+    table_rec_t rec;
+    if (open_table(session, oid, kv, rec) != 0) {
+      return -1;
+    }
+    const uint64_t old_store = rec.storeid;
+    // A new, empty store for the rows and index entries; the
+    // index prefixes and the rowno sequence carry over.
+    if (sm1::mkstore(session->sm1, rec.storeid) != 0) {
+      return -1;
+    }
+    if (write_table(kv.get(), oid, rec) != 0 ||
+        record_table(session, oid, rec) != 0) {
+      return -1;
+    }
+    // The old store goes at commit, taking the rows and index
+    // entries with it (DESIGN.md §5).
+    return sm1::rmstore(session->sm1, old_store);
+  });
+}
+
 /* Rename a table; see sm3.h. */
 int cat_rename_table(session_t *session, uint64_t oid, std::string_view name) {
   return catch_nomem([&] {

@@ -9,6 +9,7 @@
 #include "doctest.h"
 #include "sm3.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstring>
@@ -2384,4 +2385,153 @@ TEST_CASE("a row is locked without being written") {
   sm3::tbl_close(tb);
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE(sm3::commit(f.b) == 0);
+}
+
+TEST_CASE("a truncate empties the table and its indexes, with its "
+          "transaction") {
+  // Verify a truncate is transactional and leaves a working table.
+  // 1. Commit three rows.
+  // 2. Truncate in a new transaction: no rows, the indexes agree,
+  //    and the table has a new store.
+  // 3. Insert a row: its rowno follows the old ones, and the
+  //    indexes hold it alone.
+  // 4. Abort: the three rows are back, in the old store.
+  // 5. Truncate again and commit: a new transaction finds the
+  //    table empty, and the old store is gone.
+  // 6. After a restart the table is still empty and writable.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 7, "free", std::nullopt);
+  put(t, 8, "free", "w8");
+  uint64_t r9 = put(t, 9, "taken", "w9");
+  const uint64_t old_store = sm3::tbl_def(t).storeid;
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  t = f.write(f.a, sm1::lockmode_t::exclusive);
+  REQUIRE_MESSAGE(sm3::tbl_truncate(t) == 0, sm1::errmsg());
+  CHECK(rows(t).empty());
+  CHECK(sm3::tbl_def(t).storeid != old_store);
+  check_agree(t);
+
+  uint64_t r10 = put(t, 10, "free", std::nullopt);
+  CHECK(r10 > r9);
+  CHECK(under(t, f.jobs_state, "free") == std::vector<uint64_t>{r10});
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  start(f.b);
+  t = f.write(f.b, sm1::lockmode_t::intent_shared);
+  CHECK(rows(t).size() == 3);
+  CHECK(sm3::tbl_def(t).storeid == old_store);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  start(f.a);
+  t = f.write(f.a, sm1::lockmode_t::exclusive);
+  REQUIRE(sm3::tbl_truncate(t) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.b);
+  t = f.write(f.b, sm1::lockmode_t::intent_shared);
+  CHECK(rows(t).empty());
+  CHECK(sm3::tbl_def(t).storeid != old_store);
+  std::vector<uint64_t> stores;
+  REQUIRE(sm1::lsstore(sm3::session_sm1(f.b), stores) == 0);
+  CHECK(std::find(stores.begin(), stores.end(), old_store) == stores.end());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  f.reload();
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(rows(t).empty());
+  uint64_t r11 = put(t, 11, "free", std::nullopt);
+  CHECK(r11 > r10);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a truncate is undone by a rollback to a savepoint before it") {
+  // Verify the truncate is undone like any DDL inside a savepoint.
+  // 1. Commit two rows.
+  // 2. Set a savepoint, truncate, and roll back to it.
+  // 3. The handle is reopened and finds both rows, in the old
+  //    store, and the indexes agree.
+  // 4. Commit; a new transaction finds the same.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 7, "free", std::nullopt);
+  put(t, 8, "taken", "w8");
+  const uint64_t old_store = sm3::tbl_def(t).storeid;
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  t = f.write(f.a, sm1::lockmode_t::exclusive);
+  int depth = sm3::savepoint(f.a);
+  REQUIRE(depth > 0);
+  REQUIRE(sm3::tbl_truncate(t) == 0);
+  CHECK(rows(t).empty());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::rollback(f.a, depth) == 0);
+
+  t = f.write(f.a, sm1::lockmode_t::exclusive);
+  CHECK(rows(t).size() == 2);
+  CHECK(sm3::tbl_def(t).storeid == old_store);
+  check_agree(t);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.b);
+  t = f.write(f.b, sm1::lockmode_t::intent_shared);
+  CHECK(rows(t).size() == 2);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+}
+
+TEST_CASE("a truncate needs the table opened exclusive, which waits for "
+          "its readers") {
+  // Verify the lock a truncate needs, and what it waits for.
+  // 1. Opened to write, not exclusive: the truncate is refused
+  //    with SM_ERR_INVALID and nothing changes.
+  // 2. b reads the table; a, not waiting, cannot open it
+  //    exclusive: SM_ERR_BLOCKED.
+  // 3. Once b commits, a opens it exclusive and truncates.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 7, "free", std::nullopt);
+  CHECK(sm3::tbl_truncate(t) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(rows(t).size() == 1);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.b);
+  sm3::table_t *tb = f.write(f.b, sm1::lockmode_t::intent_shared);
+  CHECK(rows(tb).size() == 1);
+
+  REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.a), true) == 0);
+  start(f.a);
+  sm3::table_t *ta = nullptr;
+  CHECK(sm3::tbl_open(f.a, f.jobs, sm1::lockmode_t::exclusive, ta) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE_MESSAGE(sm3::tbl_open(f.a, f.jobs, sm1::lockmode_t::exclusive, ta) ==
+                      0,
+                  sm1::errmsg());
+  REQUIRE(sm3::tbl_truncate(ta) == 0);
+  CHECK(rows(ta).empty());
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
 }
