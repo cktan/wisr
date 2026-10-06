@@ -21,8 +21,8 @@ before any of it is relied on.
 **One loader, two modes: batch mode and file mode**
 
 - Both hold one lock on the table that keeps other writers
-  out: SIX in batch mode, X in file mode. Under it, a lock on
-  each row says nothing new, so none is taken.
+  out: SIX, or X when file mode fills an empty table. Under
+  it, a lock on each row says nothing new, so none is taken.
 - Both are one transaction. Every version carries its `xid`,
   and the load commits or aborts whole, by the one status
   record every transaction has.
@@ -30,14 +30,14 @@ before any of it is relied on.
 
 | | Batch mode | File mode |
 | --- | --- | --- |
-| The table | any; rows are appended | empty: made or truncated in this transaction, and nothing written to it yet |
-| Lock | SIX: readers pass | X: readers wait too |
+| The table | any; rows are appended | any. Empty, made or truncated in this transaction: everything goes to files. With rows: the heap goes to files and the index entries in batches |
+| Lock | SIX: readers pass | X for an empty table, which readers wait for; SIX for one with rows |
 | How rows are written | a chunk at a time, one RocksDB write batch each | into sorted files, ingested whole at the end |
-| Log, memtable, compaction | all three, as any write | none |
+| Log, memtable, compaction | all three, as any write | none for what goes to files |
 | The transaction reads its rows | after each chunk | only after the close |
-| A duplicate key is found | within its chunk | at the end, within the load only |
+| A duplicate key is found | within its chunk | at the end in an empty table; within its chunk in one with rows |
 | Memory | one chunk | the sort budget |
-| Meant for | `INSERT ... SELECT`, a `COPY` that appends, and any load that reads as it goes | a restore, `CREATE TABLE AS`, `TRUNCATE` then `COPY` |
+| Meant for | `INSERT ... SELECT`, and any load that reads as it goes | `COPY`, a restore, `CREATE TABLE AS` |
 
 **What both keep**
 
@@ -49,15 +49,14 @@ before any of it is relied on.
 **What both give up**
 
 - Other writers of the table wait until the load's transaction
-  ends, and in file mode readers too. A load that must not
-  block them uses `tbl_insert`.
+  ends, and readers too when file mode fills an empty table.
+  A load that must not block them uses `tbl_insert`.
 - They insert. There is no bulk update or delete.
 
 **What has to be built**
 
-- sm1: a loader on a store, with both ways of writing; a
-  sequence call that draws a run of values; a sweep of
-  leftover files at startup.
+- sm1: a loader on a store, with both ways of writing, and a
+  sweep of leftover files at startup.
 - sm2: heap and index inserts that feed it.
 - sm3: a loader on an open table.
 - `include/sm.h` and `rel`: the calls, and a verb.
@@ -126,10 +125,9 @@ it will stay.
 ### 3.1 A table lock stands in for the row locks
 
 A writer holds its table's schema lock IX, and a reader IS
-(`sm3/SM3_DESIGN.md` §2). A loader in batch mode takes it
-**SIX**. One in file mode needs it **X**, which it already
-holds (§5.1); X covers SIX, so all that follows holds for it
-too.
+(`sm3/SM3_DESIGN.md` §2). A loader takes it **SIX**. One in
+file mode filling an empty table holds it **X** already
+(§5.1); X covers SIX, so all that follows holds for it too.
 
 | Held by another | Against the loader's SIX |
 | --- | --- |
@@ -168,11 +166,13 @@ A row handed to the loader gets what `tbl_insert` gives it,
 by the same routines (requirement 3):
 
 1. `NOT NULL` is checked.
-2. A `rowno` is taken. The loader draws rownos from the
-   table's sequence a run at a time, in place of one call a
-   row. No one else draws from it while SIX is held, so a
-   load's rownos ascend and are above every `rowno` the table
-   has.
+2. A `rowno` is taken. The loader takes rownos from the
+   table's sequence a hundred at a time, ahead of need, and
+   hands them out as rows arrive. It needs nothing else: a
+   sequence hands out each value once and in rising order,
+   so the load's rownos are its own and ascend, whoever else
+   draws. With other writers kept out, they are also above
+   every row the table holds.
 3. The tuple is encoded.
 4. The entry of every index is made, calling the host's
    evaluator where an index needs it.
@@ -347,22 +347,31 @@ write call. It does not save the bytes written.
 
 ## 5. File mode
 
-### 5.1 Only into an empty table, held X
+### 5.1 Two cases: an empty table, and one with rows
 
-File mode loads only a table whose store was made in the
-loader's transaction, by `CREATE TABLE` or by `TRUNCATE`,
-and holds nothing yet. Such a table is held X by that
-transaction already. The loader checks both when it opens:
-the table's store is not the one in its committed
-definition, and one seek finds no key in the store. Anything
-else is refused with `SM_ERR_INVALID`, and the caller uses
-batch mode.
+The loader decides which when it opens.
 
-It covers the cases file mode is for: a restore, `CREATE
-TABLE AS`, and `TRUNCATE` then `COPY`. A `COPY` that appends
-to a table with rows goes to batch mode.
+**An empty table.** Its store was made in the loader's
+transaction, by `CREATE TABLE` or by `TRUNCATE`, and holds
+nothing yet: the store is not the one in the table's
+committed definition, and one seek finds no key in it. Such a
+table is held X by that transaction already. Everything goes
+to files: the heap and every index. This is a restore,
+`CREATE TABLE AS`, and `TRUNCATE` then `COPY`.
 
-What the rule removes:
+**A table with rows**, or one the transaction has written to,
+under SIX. The heap goes to files and the index entries go in
+batches, as in batch mode (§4). This is a `COPY` that appends.
+
+The split follows where each part can collide. A heap key is
+a `rowno` the load drew (§3.2), so it is new and above every
+existing row, and a heap file meets nothing. An index key is
+a column value, which may sit anywhere among the entries the
+index has: a unique one must be checked against them, and a
+file of them would overlap them. Batch mode already does both
+of those right, so the index entries take its path.
+
+In the empty case, what the rule removes:
 
 - **No unique check against the table.** Nothing is there to
   collide with; a duplicate can only be within the load, and
@@ -374,10 +383,13 @@ What the rule removes:
   writers, so nothing is read or written in the store but by
   the loader's own transaction.
 
-What it costs: an append through `COPY` pays batch mode's
-log and compactions, and readers of a table being filled wait
-for the transaction. In the three cases above they wait
-already, behind the X that made the store.
+What it costs: readers of a table being filled wait for the
+transaction. In the three cases they wait already, behind the
+X that made the store.
+
+In the case with rows, the heap's bytes, usually most of a
+load, skip the log and the compactions, and readers pass. The
+index entries pay batch mode's costs (§4.4).
 
 ### 5.2 The files
 
@@ -436,15 +448,18 @@ is where §5.4 does its work. The merge is kept.
 
 ### 5.4 Unique keys
 
-Only a unique index's key can collide, and in an empty table
-only with another row of the same load. The merge finds it:
-equal keys come out as neighbours. No key is read from the
-store.
+In an empty table a unique key can collide only with another
+row of the same load. The merge finds it: equal keys come out
+as neighbours. No key is read from the store.
 
-**All of this happens at the end.** A duplicate in the tenth
-row of a hundred million is found after the last row is
-handed over. PostgreSQL finds it at the tenth row. The work
-lost is the price of sorting before checking.
+In a table with rows the index entries go in batches, and a
+unique key is checked as batch mode checks it (§4.2): within
+its chunk and by a read of the store.
+
+**In an empty table all of this happens at the end.** A
+duplicate in the tenth row of a hundred million is found after
+the last row is handed over. PostgreSQL finds it at the tenth
+row. The work lost is the price of sorting before checking.
 
 ### 5.5 Closing: ingestion
 
@@ -454,32 +469,41 @@ atomically.
 
 - **Files are moved, not copied.** The load directory is on
   the database's filesystem so that RocksDB can link them in.
-- **Every file overlaps nothing**, the store being new and
-  empty (§5.1), so RocksDB places each at the bottom of the
-  tree, where no compaction has reason to rewrite it, and
-  flushes no memtable first.
+- **In an empty table every file overlaps nothing**, the
+  store being new (§5.1), so RocksDB places each at the
+  bottom of the tree, where no compaction has reason to
+  rewrite it, and flushes no memtable first.
+- **In a table with rows only heap files are ingested.**
+  Their rownos are above every row the table holds, so they
+  overlap no row. A file at the bottom of the tree may still
+  span the end of the heap and the start of the first index,
+  whose keys sort next in the store; a heap file inside that
+  span lands higher, and costs a later compaction.
 
 From then the transaction sees its loaded rows, by the load's
 `seq`, and other transactions do not, by its `xid`.
 
-Before the close nothing of the load is in the database. The
-transaction cannot read the rows it has handed over, by the
-heap or by any index.
-
-While a file loader is open on a table, the transaction's
-ordinary writes to that table are refused. They could not see
-the rows in the files, and the load's one timestamp (§3.3)
-was taken before them.
+Before the close the heap's rows are not in the database. In
+a table with rows the index entries already are, written in
+batches, and point at rows not there yet. So while a file
+loader is open on a table, the transaction's reads of that
+table are refused, and so are its ordinary writes: a read
+would meet those entries, and a write could not see the rows
+in the files, and the load's one timestamp (§3.3) was taken
+before it.
 
 ### 5.6 Commit, abort, crash and prepare
 
 - **Commit** is the one status record, as ever. A commit with
   a loader still open is refused.
-- **Abort before the close** deletes the load's files. Nothing
-  reached the database.
-- **Abort after the close** writes nothing, as any abort. The
-  store was made by the transaction, so the abort drops it
-  whole, files and all.
+- **Abort before the close** deletes the load's files. In a
+  table with rows the index entries written in batches are
+  dead with the rest.
+- **Abort after the close** writes nothing, as any abort. An
+  empty table's store was made by the transaction, so the
+  abort drops it whole, files and all. In a table with rows
+  the heap files' versions are dead, and wait for the sweep
+  below to be dropped.
 - **A crash before the close** leaves files in the load
   directory that no database knows. Opening the database
   empties the directory.
@@ -495,6 +519,8 @@ compaction, so a load's versions are stamped by the periodic
 sweep, which rewrites every store. Until then each read of
 one resolves its `xid`, from the commit cache or the status
 table. It is correct, and it is the same for any cold file.
+Dead versions from a load aborted after its close wait for
+the same sweep.
 
 
 ### 5.7 A small load
@@ -550,16 +576,18 @@ crash: its data is not durable at all.
 
 | | PostgreSQL | wisr, file mode |
 | --- | --- | --- |
-| Condition | storage file created in this transaction, and `wal_level = minimal` | store created in this transaction, by `CREATE TABLE` or `TRUNCATE`, and empty (§5.1) |
+| Condition | storage file created in this transaction, and `wal_level = minimal` | for everything: store created in this transaction, by `CREATE TABLE` or `TRUNCATE`, and empty. For the heap alone: any table (§5.1) |
 | Contents logged | no | no: written to sorted files and ingested, past RocksDB's log |
 | Made durable before commit by | `fsync`, or full-page images for a small file | RocksDB's ingestion, which records the files in its manifest before it returns (§10) |
 | Abort or crash | the file is discarded | the store is dropped; after a crash the startup sweep drops it |
 | Replication | must be off | no constraint: nothing replays RocksDB's log elsewhere |
 
-The rule of §5.1 is what lines file mode up with PostgreSQL's
-own. The last row is the one real difference: PostgreSQL gives
-the saving up on any server with standbys, and wisr does not
-have to.
+For an empty table file mode follows PostgreSQL's rule. It
+goes further in two ways. A load that appends to a table with
+rows still keeps its heap out of the log, which PostgreSQL
+never does, because new rownos meet no existing row. And, the
+last row, PostgreSQL gives the saving up on any server with
+standbys, where wisr does not have to.
 
 ---
 
@@ -574,16 +602,17 @@ host's, by what the statement needs:
 | writes a few rows | `tbl_insert` |
 | reads the table as it writes: `ON CONFLICT`, a trigger that queries it | batch mode, flushing before each read, or `tbl_insert` |
 | must report a duplicate near its row | batch mode |
-| is large, and fills a table made or truncated in its transaction | file mode |
+| is large, and does not read the table until it ends | file mode |
 
 By statement, that is usually:
 
 - **A restore, `CREATE TABLE AS`, `TRUNCATE` then `COPY`**:
-  file mode.
-- **A `COPY` that appends**: batch mode. So does a `COPY` into
-  a table with triggers that read it, flushing before each,
-  as PostgreSQL's own `COPY` falls back to one row at a time
-  for such a table.
+  file mode, everything to files.
+- **A `COPY` that appends**: file mode, the heap to files and
+  the index entries in batches.
+- **A `COPY` into a table with triggers that read it**: batch
+  mode, flushing before each, as PostgreSQL's own `COPY`
+  falls back to one row at a time for such a table.
 - **`INSERT ... SELECT`**: batch mode. The planner's row
   estimate says whether it is worth leaving `tbl_insert` for.
 
@@ -591,8 +620,9 @@ By statement, that is usually:
 
 ## 7. The interface
 
-In sm3, on a table opened SIX or X for batch mode, and on an
-empty table made in the transaction for file mode (§5.1):
+In sm3, on a table opened SIX or X; file mode on an empty
+table needs it X, which the transaction that made the table
+holds already (§5.1):
 
 ```cpp
 enum class load_mode_t { batch, files };
@@ -621,8 +651,10 @@ arguments.
 **Errors.** `tbl_load_add` fails at once for what it can see
 in the row: a NULL in a `NOT NULL` column, a key too long for
 a unique index, an evaluator that fails. A duplicate key
-fails the call that writes it: in batch mode a later `add`, a
-`flush` or the `close`; in file mode the `close`. The message
+fails the call that writes it: in batch mode, and for the
+index entries of file mode in a table with rows, a later
+`add`, a `flush` or the `close`; in file mode in an empty
+table, the `close`. The message
 names the index and the rownos. After any failure the
 transaction is to be aborted.
 
@@ -653,9 +685,10 @@ Batch mode:
 
 File mode:
 
-- **A late duplicate wastes the load** (§5.4).
-- **Only into an empty table**, held X: an append goes to
-  batch mode, and readers wait (§5.1).
+- **In an empty table a late duplicate wastes the load**
+  (§5.4), and readers wait for the transaction (§5.1).
+- **In a table with rows the index entries pay batch mode's
+  costs**, and only the heap skips the log (§5.1).
 - **Nothing is readable before the close** (§5.5).
 - **Disk for the sort**: for a moment, twice the indexes.
 - **Ingestion pauses the database's writes for a moment**
@@ -751,10 +784,9 @@ used:
 | sm1 | batch mode: one `wts` and `seq` a chunk, one write batch | §4 |
 | sm1 | file mode: streams, files, the sort and the merge, ingestion; the load directory, emptied when the database opens; a loader's files deleted by abort | §5 |
 | sm1 | commit and prepare refused with a loader open; a rollback refused past a load, until `sm1/SAVEPOINT.md` | §3.5, §4.3, §5.6 |
-| sm1 | a sequence call that draws a run of values | §3.2 |
 | sm1 | options: the chunk size, the sort budget, the file size, the small-load threshold | §4.1, §5 |
 | sm2 | heap and index inserts that feed the loader in place of writing | §3.2 |
-| sm3 | `tbl_load_*`, over `tbl_insert`'s own routines; file mode refused unless the table's store is new to the transaction and empty | §5.1, §7 |
+| sm3 | `tbl_load_*`, over `tbl_insert`'s own routines; file mode's two cases, told apart when the loader opens; the table's own reads and writes refused while a file loader is open | §5.1, §5.5, §7 |
 | top | `sm_load_*` in `include/sm.h` | §7 |
 | `rel` | a `load` verb, in each mode | testing |
 | fork | each bulk statement choosing a path | §6 |
@@ -786,15 +818,17 @@ interface in place.
    load leaves nothing; a prepared load still blocks writers
    after a restart, and commits.
 5. Measurement 2.
-6. File mode for the heap: one ascending stream.
-   → verify: refused on a table with a committed store, and
-   on a new one already written to; the rows invisible to
-   others until commit and gone after an abort, before the
-   close and after it; files left by a crash are deleted at
+6. File mode for the heap: one ascending stream, into a table
+   with rows, the index entries in batches.
+   → verify: the rows invisible to others until commit and
+   gone after an abort, before the close and after it; the
+   transaction's reads and writes of the table refused while
+   the loader is open; files left by a crash are deleted at
    open.
-7. Sorted streams and the unique check.
-   → verify: runs and merge with a budget of a few rows; a
-   duplicate inside the load is found.
+7. Sorted streams and the unique check, for an empty table.
+   → verify: told apart from a table with rows, and from a
+   new one already written to; runs and merge with a budget
+   of a few rows; a duplicate inside the load is found.
 8. File mode through sm2, sm3 and `rel`, and the small load.
    → verify: step 3's and step 4's checks again in file mode,
    for a load on each side of the threshold.
