@@ -513,6 +513,54 @@ starts no file until they pass a threshold. If the load is
 closed before that, the rows are written as one chunk of
 §4.1. It is the reason the two modes are one loader.
 
+### 5.8 How PostgreSQL does the same
+
+PostgreSQL skips the WAL for a table's contents under nearly
+the same rule. What follows is from memory of its source and
+documentation, and is among the claims to check (§10).
+
+**Its conditions.** Both must hold:
+
+1. `wal_level = minimal`. The default since PostgreSQL 10 is
+   `replica`, and at `replica` or `logical` everything is
+   logged, because standbys and logical decoding replay the
+   WAL. On a default installation `CREATE TABLE AS` is fully
+   logged.
+2. The table's storage file was created in the current
+   transaction: `CREATE TABLE AS`, `CREATE TABLE` then `COPY`,
+   or `TRUNCATE` then `COPY`, since `TRUNCATE` gives the table
+   a new file.
+
+**How it stays crash-safe.** Rows go to the new file's pages
+with no WAL records. At commit, before the commit record, the
+file is made durable. Since PostgreSQL 13 the choice is by
+size, against `wal_skip_threshold`, 2 MB by default: a small
+file is written into the WAL whole, as full-page images, and a
+large one is flushed with `fsync`. An abort or a crash undoes
+nothing: the file belonged to a table that never committed,
+and is discarded, or after a crash left behind as an orphan.
+The commit record is what makes the table exist, so its
+contents need only be on disk before it.
+
+Two neighbours are not the same thing. `COPY ... FREEZE`
+uses the same condition to write rows already frozen, saving
+a later rewrite by vacuum, not WAL. An unlogged table never
+logs its contents at any `wal_level` and is emptied after a
+crash: its data is not durable at all.
+
+| | PostgreSQL | wisr, file mode |
+| --- | --- | --- |
+| Condition | storage file created in this transaction, and `wal_level = minimal` | store created in this transaction, by `CREATE TABLE` or `TRUNCATE`, and empty (§5.1) |
+| Contents logged | no | no: written to sorted files and ingested, past RocksDB's log |
+| Made durable before commit by | `fsync`, or full-page images for a small file | RocksDB's ingestion, which records the files in its manifest before it returns (§10) |
+| Abort or crash | the file is discarded | the store is dropped; after a crash the startup sweep drops it |
+| Replication | must be off | no constraint: nothing replays RocksDB's log elsewhere |
+
+The rule of §5.1 is what lines file mode up with PostgreSQL's
+own. The last row is the one real difference: PostgreSQL gives
+the saving up on any server with standbys, and wisr does not
+have to.
+
 ---
 
 ## 6. Choosing a mode
