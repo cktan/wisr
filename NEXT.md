@@ -9,8 +9,8 @@ has sm3's own order of work.
 
 ## 1. Next
 
-The rest of `sm3/SM3_DESIGN.md` §8.1 step 5, and one change
-to sm1. The order among them is not settled.
+The rest of `sm3/SM3_DESIGN.md` §8.1 step 5. The order
+between them is not settled.
 
 1. **Statistics for a planner.** It has a strategy,
    `STATISTICS.md`, and no design yet: `SM3_DESIGN.md` §6 is
@@ -25,13 +25,6 @@ to sm1. The order among them is not settled.
    locks, in one transaction, and writes in one of two
    modes: batches, or sorted files that RocksDB ingests. Its
    first step is to check what it assumes of RocksDB.
-
-3. **Savepoints without an undo list**
-   (`sm1/SAVEPOINT.md`): a rollback marks the `seq` range it
-   undid as dead and deletes nothing, so holding a savepoint
-   costs no memory. Designed, not built. It changes sm1's
-   visibility rule, status record and compaction filter, and
-   lets a bulk load be rolled back to a savepoint.
 
 ---
 
@@ -88,6 +81,11 @@ Owed, and blocking nothing above:
   as refusing `DROP COLLATION` in use, and the unmeasured
   startup cost for thousands of tables — all three open in
   `sm3/CATALOG.md` §7.
+- **Savepoints without an undo list** (`sm1/SAVEPOINT.md`):
+  a rollback would mark the `seq` range it undid as dead and
+  delete nothing. Designed, and not to be built for now: we
+  lean towards the capped undo list, for the reasons at the
+  top of that file.
 
 ---
 

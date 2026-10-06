@@ -6,6 +6,32 @@ that a rollback can delete it (`SM1_DESIGN.md` §6.5). This
 file is the design of a rollback that deletes nothing and
 remembers nothing per write.
 
+**We are leaning towards keeping the current
+implementation**, the undo list, and not building this. Four
+reasons:
+
+- **A rollback is rare.** What this design saves is paid
+  only while a savepoint is held, to prepare for an event
+  that seldom comes.
+- **The current cost is already bounded.** The undo list is
+  kept only while a savepoint is set, and
+  `savepoint_undo_bytes` caps it. Past the cap the
+  transaction keeps writing and only the rare rollback
+  becomes an abort.
+- **The saving would be partial.** The lock list, one entry
+  for each key written, is larger than the undo list and
+  stays either way, so a transaction holding a savepoint
+  over a large statement would still cost a great deal.
+- **The change is to the core.** The visibility rule, the
+  status record, the commit cache, the compaction filter and
+  recovery all change, and the database format with them,
+  for that partial saving.
+
+It would be worth revisiting if drivers that set a savepoint
+around every statement turn out to be common for the fork,
+or when the lock list is reduced too, so that the two
+together make a large transaction cheap.
+
 It is a design and not yet built. It changes sm1's visibility
 rule, its status record and its compaction filter, so it is a
 change to the core and is argued here first.
