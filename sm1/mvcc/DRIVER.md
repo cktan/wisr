@@ -143,6 +143,7 @@ Directives set the run up. They are not echoed.
 | `session <name> rc` | declare a session pinned to READ COMMITTED |
 | `session <name> rr` | declare a session pinned to REPEATABLE READ |
 | `session <name> ser` | declare a session pinned to SERIALIZABLE |
+| `session <name> [<level>] ro` | as above, each transaction begun read-only (`sm1::begin`'s `read_only`) |
 | `seed <row> <value>` | create the row, committed, before the scenario starts |
 
 **How a pairing assigns levels.** The first session declared

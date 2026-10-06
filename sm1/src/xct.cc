@@ -435,7 +435,7 @@ int rollback(sm1::session_t *s, int depth) {
 }
 
 /* sm1::begin, minus the out-of-memory guard. */
-int begin(sm1::session_t *s, sm1::xctlevel_t level) {
+int begin(sm1::session_t *s, sm1::xctlevel_t level, bool read_only) {
   // Reject a NULL session.
   if (!s) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_begin: session is NULL");
@@ -459,8 +459,9 @@ int begin(sm1::session_t *s, sm1::xctlevel_t level) {
   }
   // Clear any state of an earlier transaction.
   reset(s);
-  // Record the level.
+  // Record the level, and whether it may write.
   s->level = level;
+  s->read_only = read_only;
   // Record begin order, for deadlock victim choice.
   s->begin_seq = ++s->db->begin_seq;
   // A new transaction starts undoomed.
@@ -996,6 +997,16 @@ int list_prepared(sm1::session_t *s, std::vector<sm1::prepared_t> &out) {
 
 namespace wisr {
 
+/* READONLY if the transaction was declared read-only. */
+int xct_check_readonly(sm1::session_t *s) {
+  // Declared read-only at sm1::begin: refuse the write.
+  if (s->read_only) {
+    return set_error(sm1::SM_ERR_READONLY,
+                     "the transaction was declared read-only");
+  }
+  return 0;
+}
+
 /* NOTRANS unless a transaction is active. */
 int xct_check_active(sm1::session_t *s) {
   // Reject a NULL session.
@@ -1366,11 +1377,11 @@ void xct_end_scans(sm1::session_t *s) {
 
 } // namespace wisr
 
-/* Begin a transaction at level. */
-int sm1::begin(sm1::session_t *session, sm1::xctlevel_t level) {
+/* Begin a transaction at level, declared read-only or not. */
+int sm1::begin(sm1::session_t *session, sm1::xctlevel_t level, bool read_only) {
   // Inside sm1: running out of memory is fatal.
   in_sm1_t in_sm1;
-  return ::begin(session, level);
+  return ::begin(session, level, read_only);
 }
 
 /* Commit the active transaction. */

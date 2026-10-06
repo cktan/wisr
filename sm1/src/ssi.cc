@@ -26,9 +26,14 @@
  * cycle. A prepared transaction's node is marked committed at
  * prepare, with no end until its commit. A transaction restored
  * in doubt after a restart has no node at all: a reader stepping
- * past its versions is doomed (§8.4). Not yet: the read-only
- * safe-snapshot early release and the ssi_max_entries summary
- * (§7.4, §7.5).
+ * past its versions is doomed (§8.4).
+ *
+ * A transaction declared read-only at sm1::begin is read-only
+ * to the rules from its begin, and its SIREAD entries go once its
+ * snapshot is safe: when every writer concurrent with it has
+ * ended without an edge out to a transaction committed before
+ * its snapshot (§7.4). Not yet: the ssi_max_entries summary
+ * (§7.5).
  */
 
 #include "session.h"
@@ -166,8 +171,8 @@ void remove_from(std::vector<ssi_node_t *> &v, ssi_node_t *n) {
   v.erase(std::remove(v.begin(), v.end(), n), v.end());
 }
 
-/* Unlink node from every index and free it, with ssi_mu held. */
-void free_node(db_t *db, ssi_node_t *n) {
+/* Remove n's SIREAD entries from the indexes, with ssi_mu held. */
+void drop_reads(db_t *db, ssi_node_t *n) {
   // Remove the node from each of its point entries.
   for (const std::string &k : n->points) {
     // Find the point's reader list.
@@ -187,6 +192,112 @@ void free_node(db_t *db, ssi_node_t *n) {
   // Remove each of its ranges from its store's list.
   for (auto &r : n->ranges) {
     db->ssi_ranges[r.first].erase(r.second);
+  }
+  n->points.clear();
+  n->ranges.clear();
+}
+
+/*
+ * Whether writer w has an edge out to a transaction committed
+ * before ro's snapshot: what makes ro's snapshot unsafe (§7.4).
+ * A prepared one counts as committed first.
+ */
+bool out_to_earlier(const ssi_node_t *w, const ssi_node_t *ro) {
+  for (const ssi_node_t *t3 : w->out_edges) {
+    if (t3->committed && commit_early(t3) <= ro->snapshot_ts) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/*
+ * ro's snapshot is safe: drop its SIREAD entries and its edges,
+ * none of which can complete a dangerous structure now (§7.4).
+ */
+void release(db_t *db, ssi_node_t *ro) {
+  // Its SIREAD entries constrain no writer any more.
+  drop_reads(db, ro);
+  // Nor its edges out: it can no longer be a T1.
+  for (ssi_node_t *m : ro->out_edges) {
+    remove_from(m->in_edges, ro);
+  }
+  ro->out_edges.clear();
+  ro->safe = true;
+}
+
+/*
+ * Writer w has ended, committed or not: tell each read-only node
+ * waiting on it, which is unsafe if w committed with an edge out
+ * to a transaction committed before its snapshot, and safe once
+ * it waits on no writer.
+ */
+void settle(db_t *db, ssi_node_t *w, bool committed) {
+  for (ssi_node_t *ro : w->watchers) {
+    remove_from(ro->watching, w);
+    // Already unsafe: stays tracked.
+    if (ro->unsafe) {
+      continue;
+    }
+    // A pivot's T3 committed before the snapshot: unsafe for good.
+    if (committed && out_to_earlier(w, ro)) {
+      ro->unsafe = true;
+      continue;
+    }
+    // The last writer it waited on: safe.
+    if (ro->watching.empty()) {
+      release(db, ro);
+    }
+  }
+  w->watchers.clear();
+}
+
+/*
+ * Start ro's safe-snapshot watch at its begin (§7.4): unsafe at
+ * once if a writer already committed after its snapshot has an
+ * edge out to one before it, or a restored transaction is about;
+ * otherwise wait on every writer still running, safe at once if
+ * there is none.
+ */
+void watch_writers(db_t *db, ssi_node_t *ro) {
+  // A restored transaction's edges are unknown (§8.4).
+  for (auto &kv : db->ssi_restored) {
+    if (kv.second == 0 || kv.second > ro->snapshot_ts) {
+      ro->unsafe = true;
+      return;
+    }
+  }
+  // A writer that passed its commit check after the snapshot is
+  // concurrent, and its edges out are final.
+  for (ssi_node_t *m : db->ssi_nodes) {
+    if (m != ro && !m->read_only && m->committed &&
+        m->end_ts > ro->snapshot_ts && out_to_earlier(m, ro)) {
+      ro->unsafe = true;
+      return;
+    }
+  }
+  // Wait on every writer still running.
+  for (ssi_node_t *m : db->ssi_nodes) {
+    if (m != ro && !m->read_only && !m->committed) {
+      m->watchers.push_back(ro);
+      ro->watching.push_back(m);
+    }
+  }
+  // None: safe at once.
+  if (ro->watching.empty()) {
+    release(db, ro);
+  }
+}
+
+/* Unlink node from every index and free it, with ssi_mu held. */
+void free_node(db_t *db, ssi_node_t *n) {
+  // Remove its SIREAD entries.
+  drop_reads(db, n);
+  // A writer ending uncommitted: its watchers wait on it no more.
+  settle(db, n, false);
+  // A read-only node: stop waiting on its writers.
+  for (ssi_node_t *w : n->watching) {
+    remove_from(w->watchers, n);
   }
   // Unmap its xid, if it wrote.
   if (n->xid != 0) {
@@ -222,12 +333,18 @@ void ssi_begin(sm1::session_t *s) {
   // Create the node at the transaction's snapshot.
   ssi_node_t *n = new ssi_node_t;
   n->snapshot_ts = s->snapshot_ts;
+  // Declared read-only: the rules treat it so from now on.
+  n->read_only = s->read_only;
   // Hold ssi_mu while registering it.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
   // Register the node.
   s->db->ssi_nodes.insert(n);
   // Attach it to the session.
   s->ssi = n;
+  // A declared read-only node waits for its snapshot to be safe.
+  if (n->read_only) {
+    watch_writers(s->db, n);
+  }
 }
 
 /* Map the transaction's new xid to its node, before any version. */
@@ -254,6 +371,10 @@ void ssi_on_read(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   std::string k = point_key(storeid, key);
   // Hold ssi_mu while updating the index.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+  // A safe snapshot leaves no entry.
+  if (s->ssi->safe) {
+    return;
+  }
   // Find or create the key's reader list.
   std::vector<ssi_node_t *> &v = s->db->ssi_points[k];
   // Add this reader once only.
@@ -273,6 +394,10 @@ void ssi_on_skip(sm1::session_t *s, uint64_t writer_xid) {
   }
   // Hold ssi_mu while reading and changing flags.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+  // A safe snapshot makes no edge.
+  if (s->ssi->safe) {
+    return;
+  }
   // Stepping past a restored transaction's version dooms the reader.
   if (s->db->ssi_restored.count(writer_xid)) {
     // A transaction restored in doubt lost its SIREAD entries
@@ -357,6 +482,10 @@ void ssi_range_open(sm1::scan_t *c, uint64_t storeid, const char *skey,
   }
   // Hold ssi_mu while registering the range.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+  // A safe snapshot leaves no range.
+  if (s->ssi->safe) {
+    return;
+  }
   // Find or create the store's range list.
   std::list<ssi_range_t> &list = s->db->ssi_ranges[storeid];
   // Append the range; the cursor keeps its position.
@@ -382,6 +511,11 @@ void ssi_range_close(sm1::scan_t *c) {
   sm1::session_t *s = c->session;
   // Hold ssi_mu while editing the range.
   std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+  // The snapshot became safe and its ranges went with it.
+  if (s->ssi->safe) {
+    c->has_ssi_range = false;
+    return;
+  }
   // The range this cursor registered.
   ssi_range_t &r = *c->ssi_range;
   // A scan that reached the end read the whole range.
@@ -447,8 +581,10 @@ int ssi_precommit(sm1::session_t *s, uint64_t end_ts) {
   n->committed = true;
   // Record when it ended.
   n->end_ts = end_ts;
-  // Having written nothing, and not prepared: read-only.
-  n->read_only = s->xid == 0 && end_ts != UINT64_MAX;
+  // Declared, or having written nothing and not prepared: read-only.
+  n->read_only = n->read_only || (s->xid == 0 && end_ts != UINT64_MAX);
+  // Its edges out are final: settle the read-only nodes waiting on it.
+  settle(s->db, n, true);
   return 0;
 }
 

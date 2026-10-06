@@ -300,7 +300,7 @@ static Janet cfun_begin(int32_t argc, Janet *argv) {
     }
   }
   // Begin transaction at the requested isolation level.
-  if (sm_begin(s->session, level) != 0) {
+  if (sm_begin(s->session, level, 0) != 0) {
     panic_sm_error("begin");
   }
   return janet_wrap_nil();

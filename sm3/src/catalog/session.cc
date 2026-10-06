@@ -120,11 +120,11 @@ void session_close(session_t *s) {
 sm1::session_t *session_sm1(const session_t *s) { return s->sm1; }
 
 /* Begin a transaction, with an empty overlay. */
-int begin(session_t *s, sm1::xctlevel_t level) {
+int begin(session_t *s, sm1::xctlevel_t level, bool read_only) {
   // Note how far the catalog has got before the snapshot is taken:
   // what was published by then, the snapshot sees whole.
   uint64_t seq = s->cat->seq.load();
-  if (sm1::begin(s->sm1, level) != 0) {
+  if (sm1::begin(s->sm1, level, read_only) != 0) {
     return -1;
   }
   drop_from(s, 0);

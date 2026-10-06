@@ -89,8 +89,11 @@ typedef enum sm_errnum_t {
     /* sm1's: NOT an abort; the caller skips the row */
     SM_ERR_SELFMODIFIED  = 26,  /* the statement already changed this row */
 
+    /* sm1's: NOT an abort; nothing was written */
+    SM_ERR_READONLY      = 27,  /* the transaction was declared read-only */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_SELFMODIFIED
+    SM_ERR_LAST          = SM_ERR_READONLY
 } sm_errnum_t;
 
 /* sm1.h */
@@ -651,10 +654,22 @@ underlying database.
 Exactly one transaction may be active on a session at a
 time. There is no nesting.
 
-### int sm1::begin(sm1::session_t* session, sm1::xctlevel_t level)
+### int sm1::begin(sm1::session_t* session, sm1::xctlevel_t level, bool read_only = false)
 
 Begin a transaction at `level`, and take its snapshot if
 the level calls for one.
+
+`read_only` declares the transaction will not write, as
+SQL's `READ ONLY`. A write, `sm1::mkstore`, `sm1::rmstore`,
+`sm1::mkseq` or `sm1::rmseq` then fails with
+`SM_ERR_READONLY`; it is not an abort, and nothing is
+written. `sm1::lock` and `sm1::nextseq` are not refused:
+refusing `SELECT FOR UPDATE` and `nextval` is the host's.
+At SERIALIZABLE the declaration costs SSI less: the
+read-only rule applies from here on, and the transaction's
+SIREAD entries go once its snapshot is safe
+(`SM1_DESIGN.md` §7.4). At the other levels it changes
+nothing else.
 
 Errors: `SM_ERR_INTRANS` (a transaction is already active),
 `SM_ERR_INVALID` (unknown level).

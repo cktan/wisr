@@ -82,8 +82,14 @@ typedef enum sm_errnum_t {
      */
     SM_ERR_SELFMODIFIED  = 26,  /* the statement already changed this row */
 
+    /*
+     * sm1's, and not an abort: a write in a transaction begun
+     * read-only (SM1_DESIGN.md §7.4). Nothing is written.
+     */
+    SM_ERR_READONLY      = 27,  /* the transaction was declared read-only */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_SELFMODIFIED
+    SM_ERR_LAST          = SM_ERR_READONLY
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

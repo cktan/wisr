@@ -172,9 +172,9 @@ sm1::session_t* session_sm1(const session_t* s);
  * step: rollback drops the DDL made since the savepoint, forget
  * keeps it, abort drops it all, and commit publishes it into the
  * shared catalog once sm1 has committed. savepoint returns the
- * depth, as sm1::savepoint does.
+ * depth, as sm1::savepoint does. read_only is sm1::begin's.
  */
-int begin(session_t* s, sm1::xctlevel_t level);
+int begin(session_t* s, sm1::xctlevel_t level, bool read_only = false);
 
 /*
  * Begin a statement, as sm1::stmt_begin does. A session's

@@ -409,9 +409,15 @@ int closedb(session_t* session);
  * level calls for one. Exactly one transaction may be active
  * on a session; there is no nesting.
  *
+ * read_only declares that the transaction will not write, as
+ * SQL's READ ONLY: a write, mkstore, rmstore, mkseq or rmseq
+ * then fails with SM_ERR_READONLY. At SERIALIZABLE, SSI treats
+ * it as read-only from here on, and releases its SIREAD entries
+ * once its snapshot is safe (SM1_DESIGN.md §7.4).
+ *
  * Errors: SM_ERR_INTRANS, SM_ERR_INVALID (unknown level).
  */
-int begin(session_t* session, xctlevel_t level);
+int begin(session_t* session, xctlevel_t level, bool read_only = false);
 
 /*
  * Commit the active transaction, making its writes durable and

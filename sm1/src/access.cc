@@ -777,8 +777,8 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   if (!cf) {
     return -1;
   }
-  // Refuse writes after fail-stop.
-  if (xct_check_writable(s->db) != 0) {
+  // Refuse writes after fail-stop, or in a read-only transaction.
+  if (xct_check_writable(s->db) != 0 || xct_check_readonly(s) != 0) {
     return -1;
   }
   // Check the key and put the version under its latch, so no

@@ -66,11 +66,20 @@ struct ssi_node_t {
   uint64_t xid = 0;       /* 0 while it has written nothing */
   bool committed = false; /* passed its commit check */
   uint64_t end_ts = 0;    /* once committed: when it ended */
-  bool read_only = false; /* committed having written nothing */
+  /* Declared read-only, or committed having written nothing. */
+  bool read_only = false;
   /* Its rw-edges, by the node at the other end (§7.2): readers
      of what it wrote, and writers of what it read. */
   std::vector<ssi_node_t *> in_edges;
   std::vector<ssi_node_t *> out_edges;
+  /* The safe-snapshot watch (§7.4): a declared read-only node
+     waits on the writers concurrent with its snapshot, each of
+     which lists it among its watchers. Once safe, the node holds
+     no SIREAD entry and makes no edge; once unsafe, never safe. */
+  std::vector<ssi_node_t *> watching;
+  std::vector<ssi_node_t *> watchers;
+  bool safe = false;
+  bool unsafe = false;
   bool doomed = false;             /* must fail at its commit */
   std::vector<std::string> points; /* its SIREAD point keys */
   std::vector<std::pair<uint64_t, std::list<ssi_range_t>::iterator>>

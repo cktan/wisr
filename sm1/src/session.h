@@ -27,6 +27,7 @@ struct sm1::session_t {
   /* The transaction; meaningful only while active. */
   bool active = false;
   sm1::xctlevel_t level = sm1::xctlevel_t::read_committed;
+  bool read_only = false; /* declared at sm1::begin (§7.4) */
   uint64_t snapshot_ts = 0;
   uint64_t xid = 0;              /* 0 until the first write (§4.1) */
   uint32_t seq = 0;              /* last write's seq; the next is seq + 1 */
@@ -179,6 +180,9 @@ enum write_op_t { WRITE_INSERT, WRITE_UPDATE, WRITE_DELETE };
 
 /* Fail with NOTRANS unless session has an active transaction. */
 int xct_check_active(sm1::session_t *session);
+
+/* Fail with READONLY if session's transaction was declared read-only. */
+int xct_check_readonly(sm1::session_t *session);
 
 /* Whether the commit cache holds xid (COMMITCACHE.md); for tests. */
 bool xct_cache_has(wisr::db_t *db, uint64_t xid);

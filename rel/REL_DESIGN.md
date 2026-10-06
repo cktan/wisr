@@ -227,7 +227,7 @@ map directly to `sm_options_t`; the others keep their defaults:
 
 | `rel` Statement | `include/sm.h` Function | Description |
 | --- | --- | --- |
-| `(begin [:rc \| :rr \| :ser])` | `sm_begin(s, level)` | Begins transaction |
+| `(begin [:rc \| :rr \| :ser])` | `sm_begin(s, level, 0)` | Begins transaction |
 | `(commit)` | `sm_commit(s)` | Commits transaction |
 | `(abort)` | `sm_abort(s)` | Aborts transaction |
 | `(snapshot)` | `sm_stmt_begin(s)` | Statement snapshot |

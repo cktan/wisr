@@ -148,8 +148,12 @@ enum sm_xctlevel_t {
     SM_XCT_SERIALIZABLE    = 2
 };
 
-/* Begin a transaction at level. */
-int sm_begin(sm_session_t* session, sm_xctlevel_t level);
+/*
+ * Begin a transaction at level. A nonzero read_only declares it
+ * READ ONLY: a write fails with SM_ERR_READONLY, and at
+ * SERIALIZABLE it costs SSI less (sm1/SM1_DESIGN.md §7.4).
+ */
+int sm_begin(sm_session_t* session, sm_xctlevel_t level, int read_only);
 
 /* Commit the active transaction. */
 int sm_commit(sm_session_t* session);

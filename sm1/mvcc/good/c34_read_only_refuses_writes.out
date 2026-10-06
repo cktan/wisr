@@ -1,0 +1,36 @@
+# c34 -- a transaction declared read-only refuses to write.
+#
+# sm1 enforces the declaration at every level: the read-only
+# rule of §7.3 is sound only for a transaction that cannot
+# write. The refused write is not an abort; T1 reads on and
+# commits, and the row is unchanged.
+
+
+== pairing RR/RR == T1=RR-RO
+@1 T1 begin -> ok
+@2 T1 write R1 t1 -> error:the transaction was declared read-only
+@3 T1 read R1 -> 0
+@4 T1 commit -> ok
+@5 check committed T1 -> satisfied
+@6 check row R1 0 -> satisfied
+== pairing RR/S == T1=RR-RO
+@1 T1 begin -> ok
+@2 T1 write R1 t1 -> error:the transaction was declared read-only
+@3 T1 read R1 -> 0
+@4 T1 commit -> ok
+@5 check committed T1 -> satisfied
+@6 check row R1 0 -> satisfied
+== pairing S/RR == T1=SER-RO
+@1 T1 begin -> ok
+@2 T1 write R1 t1 -> error:the transaction was declared read-only
+@3 T1 read R1 -> 0
+@4 T1 commit -> ok
+@5 check committed T1 -> satisfied
+@6 check row R1 0 -> satisfied
+== pairing S/S == T1=SER-RO
+@1 T1 begin -> ok
+@2 T1 write R1 t1 -> error:the transaction was declared read-only
+@3 T1 read R1 -> 0
+@4 T1 commit -> ok
+@5 check committed T1 -> satisfied
+@6 check row R1 0 -> satisfied

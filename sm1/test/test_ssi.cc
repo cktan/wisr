@@ -2,15 +2,20 @@
  * test_ssi.cc -- SSI's abort rule with the refinements of Ports
  * and Grittner (SM1_DESIGN.md §7.3): a dangerous structure
  * T1 -> T2 -> T3 fails a transaction only if T3 committed first,
- * and, where T1 committed read-only, only if T3 committed before
- * T1's snapshot.
+ * and, where T1 is read-only, only if T3 committed before T1's
+ * snapshot; and a transaction declared read-only at sm1::begin,
+ * which may not write and drops its tracking once its snapshot
+ * is safe (§7.4).
  */
 
 #include "doctest.h"
 #include "util.h"
 
+#include "db.h"
+#include "session.h"
 #include "sm1.h"
 
+#include <mutex>
 #include <string>
 
 namespace {
@@ -62,6 +67,14 @@ private:
 /* Commit s, returning 0 or the error number. */
 int finish(sm1::session_t *s) {
   return sm1::commit(s) == 0 ? 0 : sm1::errnum();
+}
+
+/* Whether s's transaction still holds SIREAD entries or edges. */
+bool tracked(sm1::session_t *s) {
+  std::lock_guard<std::mutex> guard(s->db->ssi_mu);
+  wisr::ssi_node_t *n = s->ssi;
+  return n &&
+         (!n->points.empty() || !n->ranges.empty() || !n->out_edges.empty());
 }
 
 } // namespace
@@ -199,4 +212,156 @@ TEST_CASE("an edge onto a committed pivot dooms the reader only if T3 "
     CHECK(f.read(f.a, "x") == "0");
     CHECK(finish(f.a) == (c_first ? sm1::SM_ERR_SERIALIZATION : 0));
   }
+}
+
+TEST_CASE("a declared read-only transaction refuses to write") {
+  // Verify sm1 enforces the declaration, at every level.
+  // 1. Begin A declared read-only.
+  // 2. An insert, an update, a delete and a mkstore each fail with
+  //    SM_ERR_READONLY, and the transaction stays usable.
+  // 3. A reads x and commits.
+  for (sm1::xctlevel_t level : {sm1::xctlevel_t::read_committed,
+                                sm1::xctlevel_t::repeatable_read, SER}) {
+    CAPTURE((int)level);
+    ssi_fixture_t f;
+    REQUIRE(sm1::begin(f.a, level, true) == 0);
+    CHECK(sm1::insert(f.a, f.store, "z", "a") != 0);
+    CHECK(sm1::errnum() == sm1::SM_ERR_READONLY);
+    CHECK(sm1::update(f.a, f.store, "x", "a") != 0);
+    CHECK(sm1::errnum() == sm1::SM_ERR_READONLY);
+    CHECK(sm1::erase(f.a, f.store, "x") != 0);
+    CHECK(sm1::errnum() == sm1::SM_ERR_READONLY);
+    uint64_t id = 0;
+    CHECK(sm1::mkstore(f.a, id) != 0);
+    CHECK(sm1::errnum() == sm1::SM_ERR_READONLY);
+    CHECK(f.read(f.a, "x") == "0");
+    CHECK(finish(f.a) == 0);
+  }
+}
+
+TEST_CASE("a declared read-only T1 is read-only from its begin") {
+  // Verify the read-only rule applies before T1 commits when it
+  // is declared, and only at its commit when it is not.
+  // 1. A, B and C begin, C read-only if declared.
+  // 2. A reads x; B writes x and commits: A -> B, B committed.
+  // 3. C reads y; A writes y: C -> A, A the pivot.
+  // 4. A commits. B committed after C's snapshot, so if C is
+  //    declared, C, A, B is a serial order and A commits; if not,
+  //    C may yet write and A fails.
+  // 5. C commits.
+  for (bool declared : {false, true}) {
+    CAPTURE(declared);
+    ssi_fixture_t f;
+    REQUIRE(sm1::begin(f.a, SER) == 0);
+    REQUIRE(sm1::begin(f.b, SER) == 0);
+    REQUIRE(sm1::begin(f.c, SER, declared) == 0);
+    f.read(f.a, "x");
+    f.write(f.b, "x", "b");
+    CHECK(finish(f.b) == 0);
+    CHECK(f.read(f.c, "y") == "0");
+    f.write(f.a, "y", "a");
+    CHECK(finish(f.a) == (declared ? 0 : sm1::SM_ERR_SERIALIZATION));
+    CHECK(finish(f.c) == 0);
+  }
+}
+
+TEST_CASE("an edge onto a committed pivot spares a declared read-only "
+          "reader") {
+  // Verify a declared read-only T1 is not doomed by T3 committing
+  // after its snapshot.
+  // 1. C begins, read-only if declared; A and B begin.
+  // 2. A reads x; B writes x and commits: A -> B.
+  // 3. A writes y and commits: it has no edge in, so it commits.
+  // 4. C reads y, stepping past A's version: C -> A, onto a
+  //    committed pivot whose T3, B, committed after C's snapshot.
+  // 5. C commits if declared; if not, it was doomed at step 4.
+  for (bool declared : {false, true}) {
+    CAPTURE(declared);
+    ssi_fixture_t f;
+    REQUIRE(sm1::begin(f.c, SER, declared) == 0);
+    REQUIRE(sm1::begin(f.a, SER) == 0);
+    REQUIRE(sm1::begin(f.b, SER) == 0);
+    f.read(f.a, "x");
+    f.write(f.b, "x", "b");
+    CHECK(finish(f.b) == 0);
+    f.write(f.a, "y", "a");
+    CHECK(finish(f.a) == 0);
+    CHECK(f.read(f.c, "y") == "0");
+    CHECK(finish(f.c) == (declared ? 0 : sm1::SM_ERR_SERIALIZATION));
+  }
+}
+
+TEST_CASE("a read-only snapshot with no writer alongside is safe at once") {
+  // Verify the safe-snapshot release when nothing is concurrent.
+  // 1. C begins declared read-only with no other transaction.
+  // 2. C reads x and scans the store: it leaves no SIREAD entry.
+  // 3. A writes x and commits; C commits.
+  ssi_fixture_t f;
+  REQUIRE(sm1::begin(f.c, SER, true) == 0);
+  CHECK(f.read(f.c, "x") == "0");
+  sm1::scan_t *cur = scan(f.c, f.store, nullptr, 0, 0, nullptr, 0, 0);
+  REQUIRE(cur);
+  sm1::scanend(cur);
+  CHECK_FALSE(tracked(f.c));
+  REQUIRE(sm1::begin(f.a, SER) == 0);
+  f.write(f.a, "x", "a");
+  CHECK(finish(f.a) == 0);
+  CHECK(finish(f.c) == 0);
+}
+
+TEST_CASE("a read-only snapshot becomes safe when its writers finish") {
+  // Verify the release once every concurrent writer has ended
+  // without an edge out to a transaction committed before it.
+  // 1. A and B begin; C begins declared read-only.
+  // 2. C reads x and opens a cursor over the store, reading one
+  //    row: it is tracked.
+  // 3. A writes y and commits: C waits on B still.
+  // 4. B aborts: C's snapshot is safe and its entries go.
+  // 5. C's cursor reads on and closes; C commits.
+  ssi_fixture_t f;
+  REQUIRE(sm1::begin(f.a, SER) == 0);
+  REQUIRE(sm1::begin(f.b, SER) == 0);
+  REQUIRE(sm1::begin(f.c, SER, true) == 0);
+  CHECK(f.read(f.c, "x") == "0");
+  sm1::scan_t *cur = scan(f.c, f.store, nullptr, 0, 0, nullptr, 0, 0);
+  REQUIRE(cur);
+  std::string_view k, v;
+  REQUIRE(sm1::scannxt(cur, k, v) == 0);
+  CHECK(tracked(f.c));
+  f.write(f.a, "y", "a");
+  CHECK(finish(f.a) == 0);
+  CHECK(tracked(f.c));
+  REQUIRE(sm1::abort(f.b) == 0);
+  CHECK_FALSE(tracked(f.c));
+  while (sm1::scannxt(cur, k, v) == 0) {
+  }
+  sm1::scanend(cur);
+  CHECK(f.read(f.c, "y") == "0");
+  CHECK_FALSE(tracked(f.c));
+  CHECK(finish(f.c) == 0);
+}
+
+TEST_CASE("an unsafe read-only snapshot stays tracked and still fails") {
+  // Verify Fekete's read-only anomaly with T1 declared read-only.
+  // 1. A reads x; B writes x and commits: A -> B.
+  // 2. C begins declared read-only, after B's commit, while A runs.
+  // 3. C reads x, and sees B's value.
+  // 4. A writes y and commits, with an edge out to B, which
+  //    committed before C's snapshot: C's snapshot is unsafe and
+  //    C stays tracked.
+  // 5. C reads y, stepping past A's version: C -> A, B before C's
+  //    snapshot, so C is doomed and fails at its commit.
+  ssi_fixture_t f;
+  REQUIRE(sm1::begin(f.a, SER) == 0);
+  REQUIRE(sm1::begin(f.b, SER) == 0);
+  f.read(f.a, "x");
+  f.write(f.b, "x", "b");
+  CHECK(finish(f.b) == 0);
+  REQUIRE(sm1::begin(f.c, SER, true) == 0);
+  CHECK(f.read(f.c, "x") == "b");
+  f.write(f.a, "y", "a");
+  CHECK(finish(f.a) == 0);
+  CHECK(tracked(f.c));
+  CHECK(f.read(f.c, "y") == "0");
+  CHECK(finish(f.c) == sm1::SM_ERR_SERIALIZATION);
 }

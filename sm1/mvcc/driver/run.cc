@@ -61,6 +61,7 @@ std::string error_name() {
 struct worker_t {
   std::string name;
   sm1::xctlevel_t level = sm1::xctlevel_t::repeatable_read;
+  bool read_only = false; /* begins its transactions read-only */
   sm1::session_t *sess = nullptr;
   uint64_t store = 0;
   uint64_t store2 = 0; /* the second store, for rmstore/lookup */
@@ -101,7 +102,8 @@ std::string step_text(const item_t &it) {
 std::string execute(worker_t *w, const item_t &it) {
   const std::vector<std::string> &a = it.arg;
   if (it.verb == "begin") {
-    return sm1::begin(w->sess, w->level) == 0 ? "ok" : error_name();
+    return sm1::begin(w->sess, w->level, w->read_only) == 0 ? "ok"
+                                                            : error_name();
   }
   if (it.verb == "commit" || it.verb == "commit?") {
     bool ok = sm1::commit(w->sess) == 0;
@@ -335,7 +337,7 @@ std::string execute_step(worker_t *w, const named_step_t &st) {
     return w->outcome == "commit" ? "ERROR: already committed" : "skipped";
   }
   if (!w->begun) {
-    if (sm1::begin(w->sess, w->level) != 0) {
+    if (sm1::begin(w->sess, w->level, w->read_only) != 0) {
       w->outcome = "abort";
       return "begin: " + error_name();
     }
@@ -439,6 +441,7 @@ public:
       const session_decl_t &d = m_script.sessions[i];
       w.name = d.name;
       w.level = level_for(d, i);
+      w.read_only = d.read_only;
       sm1::opendb(m_env, "db", w.sess);
       w.store = m_store;
       w.store2 = m_store2;
@@ -641,7 +644,8 @@ public:
       m_out << " " << w->name << "="
             << (w->level == sm1::xctlevel_t::serializable     ? "SER"
                 : w->level == sm1::xctlevel_t::read_committed ? "RC"
-                                                              : "RR");
+                                                              : "RR")
+            << (w->read_only ? "-RO" : "");
     }
     m_out << "\n";
 

@@ -588,10 +588,11 @@ int sm_closedb(sm_session_t *session) {
   });
 }
 
-/* Begin a transaction at level. */
-int sm_begin(sm_session_t *session, sm_xctlevel_t level) {
+/* Begin a transaction at level, declared read-only or not. */
+int sm_begin(sm_session_t *session, sm_xctlevel_t level, int read_only) {
   return guard(session, [&] {
-    return sm3::begin(session->sm3, static_cast<sm1::xctlevel_t>(level));
+    return sm3::begin(session->sm3, static_cast<sm1::xctlevel_t>(level),
+                      read_only != 0);
   });
 }
 

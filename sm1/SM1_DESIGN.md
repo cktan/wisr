@@ -1262,7 +1262,8 @@ dangerous(T1, T3), for a pivot T2 that commits after T3:
     T3 has committed, and
     T1 is T3, or
        T3 committed before T1 did (or T1 is still running), and
-       if T1 committed having written nothing (read-only):
+       if T1 is read-only (declared, or committed having written
+       nothing):
            T3 committed before T1's snapshot
 
 at commit of T:
@@ -1311,10 +1312,12 @@ transaction and a REPEATABLE READ one is not prevented. The write
 path's `ssi.on_write` (§5, step 7) therefore runs only for
 SERIALIZABLE writers.
 
-Read-only serializable transactions can get the standard
-safe-snapshot optimization (Ports & Grittner), described below;
-it is not implemented yet, and a committed read-only transaction
-keeps its SIREAD locks under §7.1's rule like any other.
+A transaction is read-only to SSI in two ways. `sm1::begin`
+can declare it, as SQL's `READ ONLY`; sm1 then refuses its
+writes with `SM_ERR_READONLY`, which is what makes the rest
+sound. Or it commits with `T.xid == 0`, having written
+nothing. Only the declared kind gets the safe-snapshot
+optimization (Ports & Grittner), described below.
 
 A read-only transaction is never
 a pivot — it writes nothing, so nothing has an rw-edge into it —
@@ -1329,24 +1332,52 @@ transactions at `sm1::begin`, the snapshot is safe at once. If
 one of them does commit with such an out-conflict, the snapshot
 is unsafe.
 
-The API has no read-only declaration, so a transaction is known
-to be read-only only when it commits with `T.xid == 0`. From
-then on §7.3's read-only test applies to it as T1: a structure
-through it is dangerous only if T3 committed before its
-snapshot. PostgreSQL applies the test only to a transaction
+**Declared.** §7.3's read-only test applies to a declared
+transaction as T1 from its begin: a structure through it is
+dangerous only if T3 committed before its snapshot. Its node
+also watches for its snapshot to become safe:
+
+```
+at begin of declared T_ro (snapshot S):
+    if a restored transaction is in doubt or committed after S:
+        unsafe
+    if a writer that committed after S has an edge out to a
+       transaction committed at or before S:
+        unsafe
+    otherwise watch every serializable writer still running;
+    none: safe at once
+
+when a watched writer W ends:
+    W committed with an edge out to a transaction committed at
+    or before S:  T_ro is unsafe
+    W was the last one watched, T_ro not unsafe:  T_ro is safe
+```
+
+Deciding at a writer's commit check is enough: an edge out
+it gains later leads to a transaction still running then,
+which commits after S. A writer that ends without committing
+simply stops being watched. A safe node drops its
+SIREAD locks and its edges out, and its later reads leave no
+entry and make no edge: it can no longer be the T1 of a
+dangerous structure. An unsafe one stays fully tracked to its
+end. A writer here is any serializable transaction not itself
+declared read-only. The watch is under `ssi_mu`, like the rest
+of the tracker. `DEFERRABLE`, waiting at begin for a safe
+snapshot, is not built.
+
+**Undeclared.** A transaction that never declared itself is
+known to be read-only only when it commits with `T.xid ==
+0`; from then on §7.3's read-only test applies to it. While
+it is active it stays fully tracked: it may still write, and
+then it needs its read set as a possible pivot. Dropping the
+tracking early and failing a later write instead would fail
+every read-then-write transaction whose snapshot became safe,
+on an idle database at once, and again on every retry. Its
+SIREAD locks stay under §7.1's rule after it commits.
+
+PostgreSQL applies the read-only test only to a transaction
 declared `READ ONLY`, so sm1 commits some pivots that
-PostgreSQL fails; `mvcc/MVCC.md` §7b has p06's. While it
-is active it stays fully tracked, safe snapshot or not: it may
-still write, and then it needs its read set as a possible pivot.
-Dropping the tracking early and failing a later write instead
-would fail every read-then-write transaction whose snapshot
-became safe, on an idle database at once, and again on every
-retry.
-The optimization applies from commit on. A transaction that
-commits with `T.xid == 0` releases its SIREAD locks as soon as
-its snapshot is safe, instead of holding them under §7.1's rule.
-Any pivot it could still reach began after its snapshot, too
-late to be concurrent with a `T_out` that committed before it.
+PostgreSQL fails; `mvcc/MVCC.md` §7b has p06's.
 
 ### 7.5 Memory
 

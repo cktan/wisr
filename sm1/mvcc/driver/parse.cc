@@ -299,12 +299,17 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
       continue;
     }
     if (w[0] == "session") {
+      session_decl_t d;
+      // A trailing ro: the session begins read-only.
+      d.read_only = w.size() >= 3 && w.back() == "ro";
+      if (d.read_only) {
+        w.pop_back();
+      }
       if (w.size() < 2 || w.size() > 3) {
-        *err =
-            where(path, lineno, "session takes a name and an optional level");
+        *err = where(path, lineno,
+                     "session takes a name, an optional level, and ro");
         return false;
       }
-      session_decl_t d;
       d.name = w[1];
       d.level = w.size() == 3 ? w[2] : "";
       if (!d.level.empty() && d.level != "rr" && d.level != "ser" &&

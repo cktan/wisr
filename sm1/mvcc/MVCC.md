@@ -351,9 +351,12 @@ that costs.
 | c29 | c02 with T1's read taken before a savepoint it rolls back to | all commit | all commit | at most one commits | `in/c29_rollback_keeps_read_set.t` |
 | c30 | `T1: open C, next, seek past R5, next, close` ‖ `T2: w(R5) r(R2)` ‖ `T1: w(R2)` | all commit | all commit | at most one commits | `in/c30_seek_skips_inside_predicate.t` |
 | c31 | `T1: r(R1) rmstore` ‖ `T2: lookup(R1) w(R1)` | all commit | all commit | at most one commits | `in/c31_write_skew_across_a_drop.t` |
+| c32 | c07 with T3 declared read-only | all commit | all commit | not all commit | `in/c32_read_only_declared_anomaly.t` |
+| c33 | `T2: r(R1)` ‖ `T1: w(R1) c` ‖ `T3 (declared read-only): r(R2)` ‖ `T2: w(R2) c` ‖ `T3: c` | all commit | all commit | all commit | `in/c33_read_only_spares_pivot.t` |
+| c34 | `T1 (declared read-only): w(R1) r(R1) c` | write refused, T1 commits | write refused, T1 commits | write refused, T1 commits | `in/c34_read_only_refuses_writes.t` |
 
 Half of this family — c01, c08 through c12, c14, c15, c19,
-c20, c25 — exists to bound the other half. A level that failed
+c20, c25, c33 — exists to bound the other half. A level that failed
 every transaction would satisfy c02 to c07 and be useless;
 these scenarios are the ones that would catch it.
 
@@ -424,7 +427,7 @@ outcome PostgreSQL's expected output gives.
 | # | PostgreSQL spec | Permutations | As PostgreSQL | Differs, as noted | File |
 |---|---|---|---|---|---|
 | p01 | `simple-write-skew` | 6 | 6 | 0 | `in/p01_simple_write_skew.t` |
-| p02 | `receipt-report` | 210 | 186 | 24 | `in/p02_receipt_report.t` |
+| p02 | `receipt-report` | 210 | 210 | 0 | `in/p02_receipt_report.t` |
 | p03 | `read-only-anomaly` | 1 | 1 | 0 | `in/p03_read_only_anomaly.t` |
 | p04 | `read-write-unique` | 2 | 2 | 0 | `in/p04_read_write_unique.t` |
 | p05 | `total-cash` | 20 | 20 | 0 | `in/p05_total_cash.t` |
@@ -435,12 +438,11 @@ outcome PostgreSQL's expected output gives.
 | p10 | `multiple-row-versions` | 1 | 0 | 1 | `in/p10_multiple_row_versions.t` |
 
 sm1 applies Ports and Grittner's commit-order and read-only
-refinements, as PostgreSQL does (`SM1_DESIGN.md` §7.3), so 359
+refinements, as PostgreSQL does (`SM1_DESIGN.md` §7.3), and a
+session declared `READ ONLY` in PostgreSQL's setup, as p02's
+s3, is declared read-only here (`session s3 ser ro`), so 383
 of the 390 permutations end as PostgreSQL's do. The rest:
 
-- **p02, 24: sm1 fails one more.** PostgreSQL knows s3 is
-  `READ ONLY` from its `BEGIN`; sm1 learns it only when s3
-  commits having written nothing, too late here.
 - **p10, 1: sm1 fails s3 as well.** sm1's SIREAD entries are on
   keys, PostgreSQL's on tuple versions, so sm1 has an edge
   PostgreSQL does not.

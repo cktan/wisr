@@ -63,7 +63,8 @@ struct item_t {
 /* A session the script declares. */
 struct session_decl_t {
   std::string name;
-  std::string level; /* "", "rr", or "ser": "" takes the pairing's */
+  std::string level;      /* "", "rr", or "ser": "" takes the pairing's */
+  bool read_only = false; /* "ro" after the level: begun read-only */
 };
 
 /*
