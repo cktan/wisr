@@ -4,7 +4,10 @@
 restore all put millions of rows into one table in one
 transaction. Row at a time through `tbl_insert` that works,
 and costs memory in proportion to the rows. This file is the
-design of a loader that does not, in two modes.
+design of a loader that does not, in two modes: **batch
+mode**, which writes rows a chunk at a time through RocksDB's
+ordinary write path, and **file mode**, which writes them to
+sorted files that RocksDB ingests whole.
 
 It is a design and not yet built. What is said here of
 RocksDB is from memory of its documentation, and the stack
@@ -15,11 +18,11 @@ before any of it is relied on.
 
 ## 0. The proposal in brief
 
-**One loader, two modes**
+**One loader, two modes: batch mode and file mode**
 
 - Both hold one lock on the table that keeps other writers
-  out. Under it, a lock on each row says nothing new, so none
-  is taken.
+  out: SIX in batch mode, X in file mode. Under it, a lock on
+  each row says nothing new, so none is taken.
 - Both are one transaction. Every version carries its `xid`,
   and the load commits or aborts whole, by the one status
   record every transaction has.
@@ -27,17 +30,18 @@ before any of it is relied on.
 
 | | Batch mode | File mode |
 | --- | --- | --- |
+| The table | any; rows are appended | empty: made or truncated in this transaction, and nothing written to it yet |
+| Lock | SIX: readers pass | X: readers wait too |
 | How rows are written | a chunk at a time, one RocksDB write batch each | into sorted files, ingested whole at the end |
 | Log, memtable, compaction | all three, as any write | none |
 | The transaction reads its rows | after each chunk | only after the close |
-| A duplicate key is found | within its chunk | at the end |
+| A duplicate key is found | within its chunk | at the end, within the load only |
 | Memory | one chunk | the sort budget |
-| Meant for | `INSERT ... SELECT`, and any load that reads as it goes | `COPY`, a restore, `CREATE TABLE AS` |
+| Meant for | `INSERT ... SELECT`, a `COPY` that appends, and any load that reads as it goes | a restore, `CREATE TABLE AS`, `TRUNCATE` then `COPY` |
 
 **What both keep**
 
 - Atomic. No reader sees part of a load.
-- Readers are not blocked by the lock.
 - Every check a row gets today: `NOT NULL`, unique indexes,
   the host's evaluator for partial and expression indexes.
 - Memory that does not grow with the load.
@@ -45,7 +49,8 @@ before any of it is relied on.
 **What both give up**
 
 - Other writers of the table wait until the load's transaction
-  ends. A load that must not block them uses `tbl_insert`.
+  ends, and in file mode readers too. A load that must not
+  block them uses `tbl_insert`.
 - They insert. There is no bulk update or delete.
 
 **What has to be built**
@@ -121,7 +126,10 @@ it will stay.
 ### 3.1 A table lock stands in for the row locks
 
 A writer holds its table's schema lock IX, and a reader IS
-(`sm3/SM3_DESIGN.md` §2). A loader takes it **SIX**.
+(`sm3/SM3_DESIGN.md` §2). A loader in batch mode takes it
+**SIX**. One in file mode needs it **X**, which it already
+holds (§5.1); X covers SIX, so all that follows holds for it
+too.
 
 | Held by another | Against the loader's SIX |
 | --- | --- |
@@ -243,11 +251,16 @@ concurrent build's (`sm3/SM3_DESIGN.md` §3). That build goes
 a row at a time through the ordinary path, and how fast it is
 has not been measured (`NEXT.md` §2). For a restore it is the
 larger half of the work, and sorting an index into files is
-what §5.2 builds. Giving the build the same streams is the
+what §5.3 builds. Giving the build the same streams is the
 natural next step and is not part of this design.
 
 A backfill batch holds the schema lock IX. So a load waits
 for the batch in flight, and the build waits for the load.
+
+`TRUNCATE` and then `COPY` in one transaction is the other
+common way to fill a table. The truncate gives the table a new,
+empty store under the schema lock X (`sm3/SM3_DESIGN.md` §4),
+which is exactly what file mode requires (§5.1).
 
 ---
 
@@ -334,7 +347,39 @@ write call. It does not save the bytes written.
 
 ## 5. File mode
 
-### 5.1 The files
+### 5.1 Only into an empty table, held X
+
+File mode loads only a table whose store was made in the
+loader's transaction, by `CREATE TABLE` or by `TRUNCATE`,
+and holds nothing yet. Such a table is held X by that
+transaction already. The loader checks both when it opens:
+the table's store is not the one in its committed
+definition, and one seek finds no key in the store. Anything
+else is refused with `SM_ERR_INVALID`, and the caller uses
+batch mode.
+
+It covers the cases file mode is for: a restore, `CREATE
+TABLE AS`, and `TRUNCATE` then `COPY`. A `COPY` that appends
+to a table with rows goes to batch mode.
+
+What the rule removes:
+
+- **No unique check against the table.** Nothing is there to
+  collide with; a duplicate can only be within the load, and
+  the merge finds it (§5.4).
+- **No overlap.** Every file overlaps nothing in the store, so
+  RocksDB places each at the bottom of the tree, and no
+  memtable holds a key in its range to be flushed first.
+- **No other session at all.** X keeps readers out as well as
+  writers, so nothing is read or written in the store but by
+  the loader's own transaction.
+
+What it costs: an append through `COPY` pays batch mode's
+log and compactions, and readers of a table being filled wait
+for the transaction. In the three cases above they wait
+already, behind the X that made the store.
+
+### 5.2 The files
 
 A file is written with RocksDB's `SstFileWriter`, using the
 store's own options and comparator, into a directory of the
@@ -355,15 +400,15 @@ ascending or not, and unique or not.
 | Stream | Declared | So sm1 |
 | --- | --- | --- |
 | the heap | ascending | writes each key straight into a file |
-| a non-unique index | unsorted | sorts it (§5.2) |
-| a unique index | unsorted, unique | sorts it and checks it (§5.3) |
+| a non-unique index | unsorted | sorts it (§5.3) |
+| a unique index | unsorted, unique | sorts it and checks it (§5.4) |
 
 **The heap is ascending for free.** A row's key is its
 `rowno`, and a load's rownos ascend (§3.2). A heap file is
 started, filled as rows arrive, and closed at a size limit,
 and the next one started.
 
-### 5.2 Sorting an index
+### 5.3 Sorting an index
 
 An index's entries arrive in the heap's order, not the key's.
 It is an external sort, in the plain two-phase form.
@@ -387,29 +432,21 @@ code, and it moves the merge into the database: tens of
 overlapping files in level 0, compaction rewriting the index
 at least once more, and reads of the index slow until it has.
 The merge here is a small routine over sorted streams, and it
-is where §5.3 does its work. The merge is kept.
+is where §5.4 does its work. The merge is kept.
 
-### 5.3 Unique keys
+### 5.4 Unique keys
 
-Only a unique index's key can collide, as in §4.2.
-
-| Collides with | Found by |
-| --- | --- |
-| another row of the load | the merge: equal keys come out as neighbours |
-| a row already in the table, or written earlier by this transaction | a read of the key as it comes out of the merge |
-
-The read is §4.2's, with the same outcomes. The keys are read
-in ascending order, which is kind to the block cache. An
-index with nothing under its prefix needs no reads at all,
-which is every index of a table being restored or made by
-`CREATE TABLE AS`.
+Only a unique index's key can collide, and in an empty table
+only with another row of the same load. The merge finds it:
+equal keys come out as neighbours. No key is read from the
+store.
 
 **All of this happens at the end.** A duplicate in the tenth
 row of a hundred million is found after the last row is
 handed over. PostgreSQL finds it at the tenth row. The work
 lost is the price of sorting before checking.
 
-### 5.4 Closing: ingestion
+### 5.5 Closing: ingestion
 
 Closing the loader finishes the merges and then ingests every
 file of the load in one call, which RocksDB applies
@@ -417,16 +454,10 @@ atomically.
 
 - **Files are moved, not copied.** The load directory is on
   the database's filesystem so that RocksDB can link them in.
-- **The heap's files overlap nothing**, so RocksDB can place
-  them at the bottom of the tree, where no compaction has
-  reason to rewrite them.
-- **An index's files** overlap nothing if the index was
-  empty, and go to the bottom too. Otherwise RocksDB places
-  each at the lowest level it fits, level 0 at worst, and
-  compaction folds it in.
-- **A memtable holding keys in a file's range is flushed
-  first.** That can only be an index of a table recently
-  written. The heap's new rownos are in no memtable.
+- **Every file overlaps nothing**, the store being new and
+  empty (§5.1), so RocksDB places each at the bottom of the
+  tree, where no compaction has reason to rewrite it, and
+  flushes no memtable first.
 
 From then the transaction sees its loaded rows, by the load's
 `seq`, and other transactions do not, by its `xid`.
@@ -440,16 +471,15 @@ ordinary writes to that table are refused. They could not see
 the rows in the files, and the load's one timestamp (§3.3)
 was taken before them.
 
-### 5.5 Commit, abort, crash and prepare
+### 5.6 Commit, abort, crash and prepare
 
 - **Commit** is the one status record, as ever. A commit with
   a loader still open is refused.
 - **Abort before the close** deletes the load's files. Nothing
   reached the database.
 - **Abort after the close** writes nothing, as any abort. The
-  versions resolve as dead, and compaction drops them when it
-  next visits their files. A table made in the same
-  transaction loses its store whole.
+  store was made by the transaction, so the abort drops it
+  whole, files and all.
 - **A crash before the close** leaves files in the load
   directory that no database knows. Opening the database
   empties the directory.
@@ -466,12 +496,8 @@ sweep, which rewrites every store. Until then each read of
 one resolves its `xid`, from the commit cache or the status
 table. It is correct, and it is the same for any cold file.
 
-Dead versions from a load aborted after its close also wait
-for that sweep, if their files went to the bottom. Deleting
-the heap's range at once is possible, since the loader knows
-it, and is not proposed until the space matters.
 
-### 5.6 A small load
+### 5.7 A small load
 
 Each ingestion adds files, and a file of a hundred rows at
 the bottom of the tree stays a file of a hundred rows: no
@@ -500,12 +526,14 @@ host's, by what the statement needs:
 | writes a few rows | `tbl_insert` |
 | reads the table as it writes: `ON CONFLICT`, a trigger that queries it | batch mode, flushing before each read, or `tbl_insert` |
 | must report a duplicate near its row | batch mode |
-| is large, and nothing reads the table until it ends | file mode |
+| is large, and fills a table made or truncated in its transaction | file mode |
 
 By statement, that is usually:
 
-- **`COPY`, a restore, `CREATE TABLE AS`**: file mode. A
-  `COPY` into a table with triggers that read it falls back,
+- **A restore, `CREATE TABLE AS`, `TRUNCATE` then `COPY`**:
+  file mode.
+- **A `COPY` that appends**: batch mode. So does a `COPY` into
+  a table with triggers that read it, flushing before each,
   as PostgreSQL's own `COPY` falls back to one row at a time
   for such a table.
 - **`INSERT ... SELECT`**: batch mode. The planner's row
@@ -515,7 +543,8 @@ By statement, that is usually:
 
 ## 7. The interface
 
-In sm3, on a table opened SIX or X:
+In sm3, on a table opened SIX or X for batch mode, and on an
+empty table made in the transaction for file mode (§5.1):
 
 ```cpp
 enum class load_mode_t { batch, files };
@@ -576,13 +605,15 @@ Batch mode:
 
 File mode:
 
-- **A late duplicate wastes the load** (§5.3).
-- **Nothing is readable before the close** (§5.4).
+- **A late duplicate wastes the load** (§5.4).
+- **Only into an empty table**, held X: an append goes to
+  batch mode, and readers wait (§5.1).
+- **Nothing is readable before the close** (§5.5).
 - **Disk for the sort**: for a moment, twice the indexes.
 - **Ingestion pauses the database's writes for a moment**
-  while RocksDB fits the files in, and for longer if it must
-  flush a memtable first. How long is to be measured.
-- **Loaded rows cost a status lookup for longer** (§5.5).
+  while RocksDB fits the files in. How long is to be
+  measured.
+- **Loaded rows cost a status lookup for longer** (§5.6).
 - **The first code in the stack that writes files of its
   own**, with a directory to sweep.
 
@@ -597,7 +628,7 @@ File mode:
 | One mode only, files | Cannot serve a statement that reads the table as it writes, and makes every duplicate a late one |
 | Keep the row locks and undo, spilled to disk | Atomic and blocks no one, but keeps every per-row cost and adds a spill file with a life of its own |
 | Lock escalation: trade row locks for a table lock past a threshold | The same end state as §3.1, reached by a conversion in mid-statement that can deadlock, and sm1 has no hierarchy to escalate along |
-| Ingest each index's runs unmerged | §5.2 |
+| Ingest each index's runs unmerged | §5.3 |
 | Skip the log for an ordinary write (`disableWAL`) | Saves the log and keeps the memtable and the compactions. Ingestion saves all three |
 
 Other RocksDB facilities for loading, and why they are not
@@ -625,12 +656,12 @@ used:
   column family's options, and its files ingest into that
   column family;
 - one ingestion call takes many files and applies them
-  atomically, and files that overlap each other or existing
-  data are accepted and placed as §5.4 says;
+  atomically, and files that overlap nothing land at the
+  bottom of the tree, as §5.5 says;
 - an ingested file is durable once the call returns, so that
   a commit record written after it never outlives its rows;
 - what ingestion blocks, and for how long: writes to the
-  store, to the database, and the flush it may force;
+  store and to the database;
 - an iterator or snapshot opened before an ingestion does
   not see the file, and a compaction filter sees its keys as
   it sees any other;
@@ -650,18 +681,17 @@ used:
    → accept: memory flat in the row count. Report the gain,
    and pick the default chunk size.
 3. **The heap by ingestion.** The same rows written to files
-   and ingested, into an empty store and into one with rows.
+   and ingested into an empty store.
    → accept: memory flat in the row count. Report the gain
    over 2, where the files land, and the pause of the
    ingestion.
 4. **An index by ingestion.** Sorted with a budget far below
-   its size, merged and ingested, into an empty index and
-   into one with entries.
+   its size, merged and ingested into an empty index.
    → report: the gain, the disk used, and the state of the
    tree afterwards.
 5. **The small load.** Loads of ten rows to a million, in
    each mode.
-   → pick the threshold of §5.6.
+   → pick the threshold of §5.7.
 
 ---
 
@@ -672,11 +702,11 @@ used:
 | sm1 | a loader on a store: the covering-lock check, the unique check, the SSI calls | §3 |
 | sm1 | batch mode: one `wts` and `seq` a chunk, one write batch | §4 |
 | sm1 | file mode: streams, files, the sort and the merge, ingestion; the load directory, emptied when the database opens; a loader's files deleted by abort | §5 |
-| sm1 | commit and prepare refused with a loader open; a rollback refused past a load, until `sm1/SAVEPOINT.md` | §3.5, §4.3, §5.5 |
+| sm1 | commit and prepare refused with a loader open; a rollback refused past a load, until `sm1/SAVEPOINT.md` | §3.5, §4.3, §5.6 |
 | sm1 | a sequence call that draws a run of values | §3.2 |
 | sm1 | options: the chunk size, the sort budget, the file size, the small-load threshold | §4.1, §5 |
 | sm2 | heap and index inserts that feed the loader in place of writing | §3.2 |
-| sm3 | `tbl_load_*`, over `tbl_insert`'s own routines | §7 |
+| sm3 | `tbl_load_*`, over `tbl_insert`'s own routines; file mode refused unless the table's store is new to the transaction and empty | §5.1, §7 |
 | top | `sm_load_*` in `include/sm.h` | §7 |
 | `rel` | a `load` verb, in each mode | testing |
 | fork | each bulk statement choosing a path | §6 |
@@ -709,13 +739,14 @@ interface in place.
    after a restart, and commits.
 5. Measurement 2.
 6. File mode for the heap: one ascending stream.
-   → verify: the rows invisible to others until commit and
-   gone after an abort, before the close and after it; files
-   left by a crash are deleted at open.
+   → verify: refused on a table with a committed store, and
+   on a new one already written to; the rows invisible to
+   others until commit and gone after an abort, before the
+   close and after it; files left by a crash are deleted at
+   open.
 7. Sorted streams and the unique check.
    → verify: runs and merge with a budget of a few rows; a
-   duplicate inside the load, against a committed row, and
-   against the transaction's own.
+   duplicate inside the load is found.
 8. File mode through sm2, sm3 and `rel`, and the small load.
    → verify: step 3's and step 4's checks again in file mode,
    for a load on each side of the threshold.
