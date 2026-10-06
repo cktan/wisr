@@ -55,7 +55,7 @@ TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 
 LIB      := $(BUILD)/libsm2.a
-SM1_LIB  := $(SM1)/build/libwisr.a
+SM1_LIB  := $(SM1)/build/libsm1.a
 TEST_BIN := $(BUILD)/test_sm2
 
 # Everything but the generated fixture header and src/ryu/.
@@ -73,7 +73,7 @@ $(LIB): $(LIB_OBJS)
 
 # sm1's Makefile decides whether its library is up to date.
 $(SM1_LIB):
-	$(MAKE) -C $(SM1) build/libwisr.a
+	$(MAKE) -C $(SM1) build/libsm1.a
 
 $(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM1_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM1_LIB) $(LDLIBS)

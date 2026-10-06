@@ -90,7 +90,7 @@ std::string read_now(sm1::session_t *s, const std::string &key) {
   return v;
 }
 
-/* Start `test_wisr --<name>-child homedir`, its stdout piped to *fd. */
+/* Start `test_sm1 --<name>-child homedir`, its stdout piped to *fd. */
 pid_t spawn_child(const char *name, const char *homedir, int *fd) {
   int fds[2];
   REQUIRE(pipe(fds) == 0);
@@ -102,8 +102,7 @@ pid_t spawn_child(const char *name, const char *homedir, int *fd) {
     close(fds[0]);
     close(fds[1]);
     std::string flag = std::string("--") + name + "-child";
-    execl("/proc/self/exe", "test_wisr", flag.c_str(), homedir,
-          (char *)nullptr);
+    execl("/proc/self/exe", "test_sm1", flag.c_str(), homedir, (char *)nullptr);
     _exit(127);
   }
   close(fds[1]);

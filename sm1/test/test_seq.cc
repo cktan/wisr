@@ -354,7 +354,7 @@ TEST_CASE("values handed out before a kill are never handed out again") {
     dup2(fds[1], 1);
     close(fds[0]);
     close(fds[1]);
-    execl("/proc/self/exe", "test_wisr", "--seq-child", f.home().path(),
+    execl("/proc/self/exe", "test_sm1", "--seq-child", f.home().path(),
           (char *)nullptr);
     _exit(127);
   }

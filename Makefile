@@ -31,7 +31,7 @@ LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD     := build
 LIB       := $(BUILD)/libsm.a
-LEVEL_LIBS := sm1/build/libwisr.a sm2/build/libsm2.a sm3/build/libsm3.a
+LEVEL_LIBS := sm1/build/libsm1.a sm2/build/libsm2.a sm3/build/libsm3.a
 
 .PHONY: all test clean format rel $(LEVELS)
 
@@ -59,7 +59,7 @@ $(BUILD)/src/sm.o: src/sm.cc
 # ar script: ADDLIB keeps two levels' same-named objects apart.
 $(LIB): $(BUILD)/src/sm.o $(LEVEL_LIBS)
 	rm -f $@
-	printf 'CREATE $@\nADDLIB sm1/build/libwisr.a\nADDLIB sm2/build/libsm2.a\nADDLIB sm3/build/libsm3.a\nADDMOD $(BUILD)/src/sm.o\nSAVE\nEND\n' | ar -M
+	printf 'CREATE $@\nADDLIB sm1/build/libsm1.a\nADDLIB sm2/build/libsm2.a\nADDLIB sm3/build/libsm3.a\nADDMOD $(BUILD)/src/sm.o\nSAVE\nEND\n' | ar -M
 
 # Each level's own target, in order, stopping at the first level
 # that fails; then the rel test driver.

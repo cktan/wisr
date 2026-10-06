@@ -47,7 +47,7 @@ TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 
 LIB      := $(BUILD)/libsm3.a
-SM1_LIB  := $(SM1)/build/libwisr.a
+SM1_LIB  := $(SM1)/build/libsm1.a
 SM2_LIB  := $(SM2)/build/libsm2.a
 TEST_BIN := $(BUILD)/test_sm3
 
@@ -65,7 +65,7 @@ $(LIB): $(LIB_OBJS)
 # The lower levels' Makefiles decide whether their libraries are
 # up to date.
 $(SM1_LIB):
-	$(MAKE) -C $(SM1) build/libwisr.a
+	$(MAKE) -C $(SM1) build/libsm1.a
 
 $(SM2_LIB):
 	$(MAKE) -C $(SM2) build/libsm2.a

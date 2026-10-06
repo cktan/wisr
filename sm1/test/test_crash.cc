@@ -141,7 +141,7 @@ TEST_CASE("a killed process leaves a prefix of its commits, acknowledged ones "
       dup2(fds[1], 1);
       close(fds[0]);
       close(fds[1]);
-      execl("/proc/self/exe", "test_wisr", "--crash-child", tmp.path(),
+      execl("/proc/self/exe", "test_sm1", "--crash-child", tmp.path(),
             (char *)nullptr);
       _exit(127);
     }

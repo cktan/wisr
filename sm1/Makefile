@@ -1,6 +1,6 @@
 # wisr -- build the storage manager library and its tests.
 #
-#   make -j4          libwisr.a, the test binaries, and the examples
+#   make -j4          libsm1.a, the test binaries, and the examples
 #   make test         build, then run every test, script, and example
 #   make accept       take the scenario transcripts as expected
 #   make format       clang-format src/, test/, and example/ in place
@@ -51,8 +51,8 @@ EX_SRCS   := $(wildcard example/*.cc)
 EX_OBJS   := $(EX_SRCS:example/%.cc=$(BUILD)/example/%.o)
 EX_BINS   := $(EX_SRCS:example/%.cc=$(BUILD)/example/%)
 
-LIB       := $(BUILD)/libwisr.a
-TEST_BIN  := $(BUILD)/test_wisr
+LIB       := $(BUILD)/libsm1.a
+TEST_BIN  := $(BUILD)/test_sm1
 MVCC_BIN  := $(BUILD)/mvcc_tests
 DRIVER    := $(BUILD)/driver
 

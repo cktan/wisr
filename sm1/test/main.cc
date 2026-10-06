@@ -2,7 +2,7 @@
  * main.cc -- the doctest runner. Every other file in test/
  * contributes test cases; this one supplies main().
  *
- * `test_wisr --<name>-child <homedir>` runs a child workload
+ * `test_sm1 --<name>-child <homedir>` runs a child workload
  * instead of the tests: crash (test_crash.cc), prepare and
  * orphan (test_2pc.cc), seq (test_seq.cc), and oom
  * (test_env.cc). Those tests

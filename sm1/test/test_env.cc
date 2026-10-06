@@ -53,7 +53,7 @@ namespace {
 void host_oom_handler() { throw std::bad_alloc(); }
 
 /*
- * Run `test_wisr --oom-child homedir` and wait for it; returns its
+ * Run `test_sm1 --oom-child homedir` and wait for it; returns its
  * wait status, with everything it wrote to stderr in err.
  */
 int run_oom_child(const char *homedir, std::string &err) {
@@ -66,7 +66,7 @@ int run_oom_child(const char *homedir, std::string &err) {
     dup2(fds[1], 2);
     close(fds[0]);
     close(fds[1]);
-    execl("/proc/self/exe", "test_wisr", "--oom-child", homedir,
+    execl("/proc/self/exe", "test_sm1", "--oom-child", homedir,
           (char *)nullptr);
     _exit(127);
   }
