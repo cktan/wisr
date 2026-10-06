@@ -1,0 +1,44 @@
+# p10 -- PostgreSQL's isolation spec multiple-row-versions.
+#
+# Ported from PostgreSQL's src/test/isolation/specs (branch
+# REL_17_STABLE), under the PostgreSQL License; the expected
+# outcomes are copied from its expected/multiple-row-versions.out.
+#
+# Four transactions over a table of a million rows, where the
+# cycle runs through several versions of one row.
+#
+# Table t (id PRIMARY KEY, txt) is seeded with the three rows
+# the steps touch, t:0000001, t:0500000 and t:1000000; reads and
+# updates are by primary key.
+
+
+# SELECT * FROM t WHERE id = 1000000
+# UPDATE t SET txt = 'a' WHERE id = 1
+# UPDATE t SET txt = 'b' WHERE id = 1000000
+# UPDATE t SET txt = 'c' WHERE id = 1000000
+# SELECT * FROM t WHERE id = 500000
+# UPDATE t SET txt = 'd' WHERE id = 500000
+# SELECT * FROM t WHERE id = 1
+
+# Where sm1 differs from PostgreSQL, an "sm1" line under the
+# permutation's expect line gives sm1's outcome. Every such
+# difference here is sm1 failing more transactions, never fewer:
+# its SSI applies Cahill's original rule, failing any transaction
+# with both an incoming and an outgoing rw-edge, where PostgreSQL
+# adds the refinements of Ports and Grittner (commit order, and
+# read-only transactions), and fails only a transaction in a real
+# cycle (SM1_DESIGN.md §7.3).
+
+== permutation 1: rx1 wx2 c2 wx3 ry3 wy4 rz4 c4 c3 wz1 c1 ==
+rx1 s1 -> -
+wx2 s2 -> - | ok
+c2 s2 -> ok
+wx3 s3 -> b | ok
+ry3 s3 -> -
+wy4 s4 -> - | ok
+rz4 s4 -> -
+c4 s4 -> ok
+c3 s3 -> serialization
+wz1 s1 -> - | ok
+c1 s1 -> serialization
+outcome s1=serialize s2=commit s3=serialize s4=commit -> differs from PostgreSQL (s1=serialize s2=commit s3=commit s4=commit) as noted

@@ -1,0 +1,192 @@
+# p07 -- PostgreSQL's isolation spec classroom-scheduling.
+#
+# Ported from PostgreSQL's src/test/isolation/specs (branch
+# REL_17_STABLE), under the PostgreSQL License; the expected
+# outcomes are copied from its expected/classroom-scheduling.out.
+#
+# Two bookings of room 101 that overlap, each checked against
+# the other's absence: a write skew through a predicate.
+#
+# Table room_reservation, PRIMARY KEY (room_id, start_time),
+# becomes rows r:101:<start>, the value the end time. A count
+# of bookings starting before a time scans the key range from
+# the room's first booking up to that time.
+
+
+# SELECT count(*) ... WHERE room_id = '101' AND start_time < 14:00
+#   AND end_time > 13:00
+# INSERT ... ('101', 13:00, 14:00, 'Carol')
+# SELECT count(*) ... WHERE room_id = '101' AND start_time < 14:30
+#   AND end_time > 13:30
+# UPDATE ... SET start_time = 13:30, end_time = 14:30
+#   WHERE room_id = '101' AND start_time = 10:00
+
+# Where sm1 differs from PostgreSQL, an "sm1" line under the
+# permutation's expect line gives sm1's outcome. Every such
+# difference here is sm1 failing more transactions, never fewer:
+# its SSI applies Cahill's original rule, failing any transaction
+# with both an incoming and an outgoing rw-edge, where PostgreSQL
+# adds the refinements of Ports and Grittner (commit order, and
+# read-only transactions), and fails only a transaction in a real
+# cycle (SM1_DESIGN.md §7.3).
+
+== permutation 1: rx1 wy1 c1 ry2 wx2 c2 ==
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+c1 s1 -> ok
+ry2 s2 -> {r:101:1000, r:101:1300}
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> ok
+outcome s1=commit s2=commit -> as PostgreSQL
+== permutation 2: rx1 wy1 ry2 c1 wx2 c2 ==
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+ry2 s2 -> {r:101:1000}
+c1 s1 -> ok
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> serialization
+outcome s1=commit s2=serialize -> as PostgreSQL
+== permutation 3: rx1 wy1 ry2 wx2 c1 c2 ==
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+c1 s1 -> serialization
+c2 s2 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+== permutation 4: rx1 wy1 ry2 wx2 c2 c1 ==
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> serialization
+c1 s1 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+== permutation 5: rx1 ry2 wy1 c1 wx2 c2 ==
+rx1 s1 -> {r:101:1000}
+ry2 s2 -> {r:101:1000}
+wy1 s1 -> ok
+c1 s1 -> ok
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> serialization
+outcome s1=commit s2=serialize -> as PostgreSQL
+== permutation 6: rx1 ry2 wy1 wx2 c1 c2 ==
+rx1 s1 -> {r:101:1000}
+ry2 s2 -> {r:101:1000}
+wy1 s1 -> ok
+wx2 s2 -> 1100 | ok | ok
+c1 s1 -> serialization
+c2 s2 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+== permutation 7: rx1 ry2 wy1 wx2 c2 c1 ==
+rx1 s1 -> {r:101:1000}
+ry2 s2 -> {r:101:1000}
+wy1 s1 -> ok
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> serialization
+c1 s1 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+== permutation 8: rx1 ry2 wx2 wy1 c1 c2 ==
+rx1 s1 -> {r:101:1000}
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+wy1 s1 -> ok
+c1 s1 -> serialization
+c2 s2 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+== permutation 9: rx1 ry2 wx2 wy1 c2 c1 ==
+rx1 s1 -> {r:101:1000}
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+wy1 s1 -> ok
+c2 s2 -> serialization
+c1 s1 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+== permutation 10: rx1 ry2 wx2 c2 wy1 c1 ==
+rx1 s1 -> {r:101:1000}
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> ok
+wy1 s1 -> ok
+c1 s1 -> serialization
+outcome s1=serialize s2=commit -> as PostgreSQL
+== permutation 11: ry2 rx1 wy1 c1 wx2 c2 ==
+ry2 s2 -> {r:101:1000}
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+c1 s1 -> ok
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> serialization
+outcome s1=commit s2=serialize -> as PostgreSQL
+== permutation 12: ry2 rx1 wy1 wx2 c1 c2 ==
+ry2 s2 -> {r:101:1000}
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+wx2 s2 -> 1100 | ok | ok
+c1 s1 -> serialization
+c2 s2 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+== permutation 13: ry2 rx1 wy1 wx2 c2 c1 ==
+ry2 s2 -> {r:101:1000}
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> serialization
+c1 s1 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+== permutation 14: ry2 rx1 wx2 wy1 c1 c2 ==
+ry2 s2 -> {r:101:1000}
+rx1 s1 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+wy1 s1 -> ok
+c1 s1 -> serialization
+c2 s2 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+== permutation 15: ry2 rx1 wx2 wy1 c2 c1 ==
+ry2 s2 -> {r:101:1000}
+rx1 s1 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+wy1 s1 -> ok
+c2 s2 -> serialization
+c1 s1 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+== permutation 16: ry2 rx1 wx2 c2 wy1 c1 ==
+ry2 s2 -> {r:101:1000}
+rx1 s1 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> ok
+wy1 s1 -> ok
+c1 s1 -> serialization
+outcome s1=serialize s2=commit -> as PostgreSQL
+== permutation 17: ry2 wx2 rx1 wy1 c1 c2 ==
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+c1 s1 -> serialization
+c2 s2 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+== permutation 18: ry2 wx2 rx1 wy1 c2 c1 ==
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+rx1 s1 -> {r:101:1000}
+wy1 s1 -> ok
+c2 s2 -> serialization
+c1 s1 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=serialize s2=commit) as noted
+== permutation 19: ry2 wx2 rx1 c2 wy1 c1 ==
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+rx1 s1 -> {r:101:1000}
+c2 s2 -> ok
+wy1 s1 -> ok
+c1 s1 -> serialization
+outcome s1=serialize s2=commit -> as PostgreSQL
+== permutation 20: ry2 wx2 c2 rx1 wy1 c1 ==
+ry2 s2 -> {r:101:1000}
+wx2 s2 -> 1100 | ok | ok
+c2 s2 -> ok
+rx1 s1 -> {r:101:1330}
+wy1 s1 -> ok
+c1 s1 -> ok
+outcome s1=commit s2=commit -> as PostgreSQL

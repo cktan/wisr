@@ -1,0 +1,35 @@
+# p04 -- PostgreSQL's isolation spec read-write-unique.
+#
+# Ported from PostgreSQL's src/test/isolation/specs (branch
+# REL_17_STABLE), under the PostgreSQL License; the expected
+# outcomes are copied from its expected/read-write-unique.out.
+#
+# Two serializable transactions each read an empty table and
+# insert the same key. PostgreSQL reports the second as a
+# serialization failure, not a unique violation, since the
+# duplicate comes of their running at once.
+#
+# Table test (i PRIMARY KEY) becomes rows t:42 and so on; a
+# SELECT * scans the whole table.
+
+
+# SELECT * FROM test
+# INSERT INTO test VALUES (42)
+
+== permutation 1: r1 r2 w1 w2 c1 c2 ==
+r1 s1 -> {}
+r2 s2 -> {}
+w1 s1 -> ok
+w2 s2 -> waiting
+c1 s1 -> ok
+w2 s2 -> conflict (resumed)
+c2 s2 -> skipped
+outcome s1=commit s2=serialize -> as PostgreSQL
+== permutation 2: r1 w1 c1 r2 w2 c2 ==
+r1 s1 -> {}
+w1 s1 -> ok
+c1 s1 -> ok
+r2 s2 -> {t:42}
+w2 s2 -> dupkey
+c2 s2 -> skipped
+outcome s1=commit s2=unique -> as PostgreSQL

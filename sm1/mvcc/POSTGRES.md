@@ -136,14 +136,21 @@ RUBiS. The suite below is where the cases live.
 | `prepared-transactions` | `test/test_2pc.cc` |
 | `truncate-conflict` | `rel/test/test_truncate.rel`, step 4 |
 
-**Worth porting**, as plain sm1 scenarios:
+**Ported**, as permutation scripts (`DRIVER.md` §6), `in/p01`
+to `in/p10`: `simple-write-skew`, `receipt-report`,
+`read-only-anomaly`, `read-write-unique`, `total-cash`,
+`two-ids`, `classroom-scheduling`, `temporal-range-integrity`,
+`project-manager`, `multiple-row-versions`. `MVCC.md` §7b has
+how each compares.
 
-- `read-write-unique*`: PostgreSQL reports a serialization
-  failure, not a unique violation, when the duplicate comes of
-  a serialization conflict. No scenario here checks that
-  ordering.
-- `total-cash`, `two-ids`, `multiple-row-versions`: three or
-  more transactions over chains of versions.
+**Worth porting next**, also serializable: `partial-index`,
+`index-only-scan`, `read-write-unique-2` to `-4`,
+`read-only-anomaly-2` and `-3`, `prepared-transactions`.
+
+`read-write-unique` (p04) confirms the ordering no scenario
+here had checked: two serializable inserts of one key end with
+a serialization failure, not a unique violation, as in
+PostgreSQL.
 
 **Not for sm1 yet:**
 

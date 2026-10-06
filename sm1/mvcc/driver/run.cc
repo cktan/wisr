@@ -15,6 +15,7 @@
 
 #include "driver.h"
 
+#include "session.h"
 #include "sm1.h"
 
 #include <stdlib.h>
@@ -71,6 +72,10 @@ struct worker_t {
   bool done = true;
   bool stop = false;
   std::string result;
+
+  const named_step_t *req_step = nullptr; /* a permutation's step */
+  bool begun = false;  /* the session's transaction is begun */
+  std::string outcome; /* commit, or the class of the error that ended it */
 
   std::map<std::string, sm1::scan_t *> cursors; /* open, by name */
   const item_t *pending = nullptr;              /* a step reported as blocked */
@@ -136,6 +141,34 @@ std::string execute(worker_t *w, const item_t &it) {
   }
   if (it.verb == "delete") {
     return sm1::erase(w->sess, w->store, a[0]) == 0 ? "ok" : error_name();
+  }
+  if (it.verb == "update-where") {
+    // update-where <lo> <hi> <old> <new>: SQL's UPDATE ... SET
+    // v = new WHERE v = old, over the rows lo..hi: a scan, so the
+    // read is a range, then a write of each row that matched.
+    sm1::scan_t *c = nullptr;
+    if (sm1::scan(w->sess, w->store, a[0].data(), a[0].size(), 1, a[1].data(),
+                  a[1].size(), 1, c) != 0) {
+      return error_name();
+    }
+    std::vector<std::string> hit;
+    std::string_view k, d;
+    while (sm1::scannxt(c, k, d) == 0) {
+      if (d == a[2]) {
+        hit.emplace_back(k);
+      }
+    }
+    sm1::scanend(c);
+    std::ostringstream out;
+    out << "{";
+    for (size_t i = 0; i < hit.size(); i++) {
+      if (sm1::update(w->sess, w->store, hit[i], a[3]) != 0) {
+        return error_name();
+      }
+      out << (i ? ", " : "") << hit[i];
+    }
+    out << "}";
+    return out.str();
   }
   if (it.verb == "scan") {
     // scan <lo> <hi> [limit <n>]: take n rows, then close.
@@ -267,27 +300,96 @@ std::string execute(worker_t *w, const item_t &it) {
   return "ERROR: unknown verb " + it.verb;
 }
 
+/*
+ * The outcome class an operation's result names, or "" if the
+ * operation succeeded: PostgreSQL's errors, as the permutation
+ * scripts compare them (DRIVER.md §6). sm1's conflict and its
+ * serialization failure are both PostgreSQL's 40001.
+ */
+std::string error_class(const std::string &r) {
+  if (r == "conflict" || r == "serialization") {
+    return "serialize";
+  }
+  if (r == "dupkey") {
+    return "unique";
+  }
+  if (r == "deadlock") {
+    return "deadlock";
+  }
+  if (r == "notfound" || r == "notrans" || r == "invalid" || r == "updated" ||
+      r == "prepared" || r.rfind("error:", 0) == 0 ||
+      r.rfind("ERROR", 0) == 0) {
+    return "abort";
+  }
+  return "";
+}
+
+/*
+ * Run a permutation's step, as PostgreSQL would run its SQL:
+ * the session's transaction begins at its first step, which is
+ * when PostgreSQL takes the snapshot, and any error ends the
+ * transaction, the rest of its steps doing nothing.
+ */
+std::string execute_step(worker_t *w, const named_step_t &st) {
+  if (!w->outcome.empty()) {
+    return w->outcome == "commit" ? "ERROR: already committed" : "skipped";
+  }
+  if (!w->begun) {
+    if (sm1::begin(w->sess, w->level) != 0) {
+      w->outcome = "abort";
+      return "begin: " + error_name();
+    }
+    w->begun = true;
+  }
+  std::string out;
+  for (const item_t &op : st.ops) {
+    std::string r = execute(w, op);
+    out += (out.empty() ? "" : " | ") + r;
+    if (op.verb == "commit" && r == "ok") {
+      w->outcome = "commit";
+    }
+    std::string cls = error_class(r);
+    if (!cls.empty()) {
+      // PostgreSQL aborts the transaction on any error; sm1 has
+      // already, for a retryable one.
+      w->outcome = cls;
+      sm1::abort(w->sess);
+      break;
+    }
+  }
+  return out;
+}
+
 /* The loop each session's thread runs. */
 void worker_main(worker_t *w) {
   for (;;) {
     const item_t *it = nullptr;
+    const named_step_t *st = nullptr;
     {
       std::unique_lock<std::mutex> lk(w->mu);
-      w->cv.wait(lk, [w] { return w->req || w->stop; });
+      w->cv.wait(lk, [w] { return w->req || w->req_step || w->stop; });
       if (w->stop) {
         return;
       }
       it = w->req;
+      st = w->req_step;
     }
-    std::string res = execute(w, *it);
+    std::string res = st ? execute_step(w, *st) : execute(w, *it);
     {
       std::lock_guard<std::mutex> lk(w->mu);
       w->result = res;
       w->req = nullptr;
+      w->req_step = nullptr;
       w->done = true;
     }
     w->cv.notify_all();
   }
+}
+
+/* Whether the session's transaction waits on a lock or a writer. */
+bool waiting(sm1::session_t *s) {
+  std::lock_guard<std::mutex> guard(s->db->lock_mu);
+  return !s->waiting_for.empty();
 }
 
 /* One run of a script: its sessions, database, and transcript. */
@@ -313,18 +415,20 @@ public:
     // them. There are two: the one every row verb works in,
     // and a second holding the same rows, which exists to be
     // dropped and looked up (DRIVER.md §5).
-    sm1::opendb(m_env, "db", m_checker);
+    // A permutation script runs hundreds of short transactions,
+    // and what it checks never needs a commit to survive a crash:
+    // its database does not sync each commit (DRIVER.md §6).
+    sm1::options_t opt;
+    if (!m_script.perms.empty()) {
+      opt.durability_sync = 0;
+    }
+    sm1::opendb(m_env, "db", m_checker, &opt);
     m_ok = m_checker &&
            sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) == 0 &&
            sm1::mkstore(m_checker, m_store) == 0 &&
-           sm1::mkstore(m_checker, m_store2) == 0;
-    for (const auto &kv : m_script.seeds) {
-      // The same rows in both, so a script can read either.
-      for (uint64_t store : {m_store, m_store2}) {
-        m_ok = m_ok && sm1::insert(m_checker, store, kv.first, kv.second) == 0;
-      }
-    }
-    m_ok = m_ok && sm1::commit(m_checker) == 0;
+           sm1::mkstore(m_checker, m_store2) == 0 &&
+           sm1::commit(m_checker) == 0;
+    m_ok = m_ok && make_stores();
 
     // One session, and one thread, per declared session. A
     // worker holds a mutex and a thread, so it is held by
@@ -363,8 +467,172 @@ public:
     std::filesystem::remove_all(m_home, ec);
   }
 
+  /*
+   * Set the two stores' rows to the seeds, in one transaction. A
+   * permutation script calls it again before each permutation
+   * after the first, so each starts from the seeded rows, with
+   * every row an earlier permutation added deleted again.
+   */
+  bool make_stores() {
+    bool ok = sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) == 0;
+    for (uint64_t store : {m_store, m_store2}) {
+      // Delete every row there is, then insert the seeds.
+      std::vector<std::string> keys;
+      sm1::scan_t *c = nullptr;
+      ok = ok &&
+           sm1::scan(m_checker, store, nullptr, 0, 0, nullptr, 0, 0, c) == 0;
+      std::string_view k, d;
+      while (ok && sm1::scannxt(c, k, d) == 0) {
+        keys.emplace_back(k);
+      }
+      if (c) {
+        sm1::scanend(c);
+      }
+      for (const std::string &key : keys) {
+        ok = ok && sm1::erase(m_checker, store, key) == 0;
+      }
+      // The same rows in both, so a script can read either.
+      for (const auto &kv : m_script.seeds) {
+        ok = ok && sm1::insert(m_checker, store, kv.first, kv.second) == 0;
+      }
+    }
+    ok = ok && sm1::commit(m_checker) == 0;
+    // Every session works in the new stores, from a clean slate.
+    for (std::unique_ptr<worker_t> &w : m_workers) {
+      w->store = m_store;
+      w->store2 = m_store2;
+      w->begun = false;
+      w->outcome.clear();
+      w->last.clear();
+      w->commit_state = 0;
+    }
+    return ok;
+  }
+
+  /*
+   * Ready the run for its next permutation: end any transaction
+   * the last one left open, then make fresh stores.
+   */
+  bool next_permutation() {
+    for (std::unique_ptr<worker_t> &w : m_workers) {
+      for (auto &[name, c] : w->cursors) {
+        sm1::scanend(c);
+      }
+      w->cursors.clear();
+      // A session whose permutation ended before its commit.
+      if (w->begun && w->outcome.empty()) {
+        sm1::abort(w->sess);
+      }
+    }
+    return make_stores();
+  }
+
+  /* Failures other than outcomes: a hang, a step out of turn. */
+  int failures() const { return m_failures; }
+
   /* Whether the database and sessions came up. */
   bool ok() const { return m_ok; }
+
+  /*
+   * Run one permutation (DRIVER.md §6): each step to its
+   * session, a step that waits reported as such and printed
+   * again when it finishes, then each session's outcome against
+   * PostgreSQL's. Returns 1 if the outcomes differ, else 0.
+   */
+  int run_permutation(size_t index, const permutation_t &p) {
+    m_out << "== permutation " << index << ":";
+    for (const std::string &s : p.steps) {
+      m_out << " " << s;
+    }
+    m_out << " ==\n";
+    std::vector<const named_step_t *> pending(m_workers.size(), nullptr);
+    for (const std::string &name : p.steps) {
+      const named_step_t *st = nullptr;
+      for (const named_step_t &s : m_script.steps) {
+        if (s.name == name) {
+          st = &s;
+        }
+      }
+      size_t wi = worker_index(st->session);
+      worker_t &w = *m_workers[wi];
+      // A step that finished since is printed before the next.
+      drain_steps(pending, m_block_ms);
+      if (pending[wi]) {
+        m_out << name << " " << w.name << " -> ERROR: " << w.name
+              << " is waiting\n";
+        m_failures++;
+        continue;
+      }
+      std::unique_lock<std::mutex> lk(w.mu);
+      w.req_step = st;
+      w.done = false;
+      w.cv.notify_all();
+      // Done, or waiting on another transaction: that is how
+      // PostgreSQL's tester tells a waiting step too.
+      bool finished = false;
+      for (int ms = 0; ms < m_patience_ms; ms++) {
+        if (w.cv.wait_for(lk, std::chrono::milliseconds(1),
+                          [&w] { return w.done; })) {
+          finished = true;
+          break;
+        }
+        lk.unlock();
+        bool waits = waiting(w.sess);
+        lk.lock();
+        if (waits && !w.done) {
+          break;
+        }
+      }
+      finished = finished || w.done;
+      if (!finished) {
+        pending[wi] = st;
+        lk.unlock();
+        m_out << name << " " << w.name << " -> waiting\n";
+        continue;
+      }
+      std::string r = w.result;
+      lk.unlock();
+      m_out << name << " " << w.name << " -> " << r << "\n";
+    }
+    // Every step must finish by the end: wait properly first.
+    drain_steps(pending, m_patience_ms);
+    for (size_t i = 0; i < pending.size(); i++) {
+      if (pending[i]) {
+        m_out << pending[i]->name << " " << m_workers[i]->name
+              << " -> STILL WAITING\n";
+        m_failures++;
+      }
+    }
+    // Each session's outcome, against PostgreSQL's.
+    std::string got, pg, ours;
+    bool as_pg = true, as_noted = !p.sm1.empty();
+    for (const auto &[name, o] : p.expect) {
+      worker_t &w = *m_workers[worker_index(name)];
+      std::string mine = w.outcome.empty() ? "open" : w.outcome;
+      got += (got.empty() ? "" : " ") + name + "=" + mine;
+      pg += (pg.empty() ? "" : " ") + name + "=" + o;
+      as_pg = as_pg && mine == o;
+      std::string noted = o;
+      for (const auto &[n2, o2] : p.sm1) {
+        if (n2 == name) {
+          noted = o2;
+        }
+      }
+      ours += (ours.empty() ? "" : " ") + name + "=" + noted;
+      as_noted = as_noted && mine == noted;
+    }
+    m_out << "outcome " << got;
+    if (as_pg) {
+      m_out << " -> as PostgreSQL\n";
+      return 0;
+    }
+    if (as_noted) {
+      m_out << " -> differs from PostgreSQL (" << pg << ") as noted\n";
+      return 0;
+    }
+    m_out << " -> FAILED (PostgreSQL: " << pg << ")\n";
+    return 1;
+  }
 
   /* Run every item of the script, returning the failed checks. */
   int run(size_t first) {
@@ -429,6 +697,36 @@ private:
                           : (m_pairing == PAIR_RR_S || m_pairing == PAIR_S_S);
     return ser ? sm1::xctlevel_t::serializable
                : sm1::xctlevel_t::repeatable_read;
+  }
+
+  /* The index of a named session's worker. */
+  size_t worker_index(const std::string &name) const {
+    for (size_t i = 0; i < m_workers.size(); i++) {
+      if (m_workers[i]->name == name) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
+  /* Print each waiting permutation step that has finished. */
+  void drain_steps(std::vector<const named_step_t *> &pending, int wait_ms) {
+    for (size_t i = 0; i < pending.size(); i++) {
+      if (!pending[i]) {
+        continue;
+      }
+      worker_t &w = *m_workers[i];
+      std::unique_lock<std::mutex> lk(w.mu);
+      if (!w.cv.wait_for(lk, std::chrono::milliseconds(wait_ms),
+                         [&w] { return w.done; })) {
+        continue;
+      }
+      std::string r = w.result;
+      lk.unlock();
+      m_out << pending[i]->name << " " << w.name << " -> " << r
+            << " (resumed)\n";
+      pending[i] = nullptr;
+    }
   }
 
   /* The worker of a named session, or null. */
@@ -629,6 +927,23 @@ int script_run(const script_t &script, int block_ms, std::string *out) {
   while (first < script.items.size() && script.items[first].kind == ITEM_TEXT) {
     text << script.items[first].text << "\n";
     first++;
+  }
+  // A permutation script runs each permutation on a database of
+  // its own; the sessions name their levels, so there are no
+  // pairings (DRIVER.md §6).
+  if (!script.perms.empty()) {
+    run_t run(script, PAIR_RR_RR, block_ms, &text);
+    for (size_t i = 0; i < script.perms.size(); i++) {
+      // The first permutation has the stores the run made.
+      if (!run.ok() || (i > 0 && !run.next_permutation())) {
+        *out = text.str();
+        return -1;
+      }
+      failures += run.run_permutation(i + 1, script.perms[i]);
+    }
+    failures += run.failures();
+    *out = text.str();
+    return failures;
   }
   for (pairing_t p : {PAIR_RR_RR, PAIR_RR_S, PAIR_S_RR, PAIR_S_S}) {
     // The script may ask for one group of pairings only.

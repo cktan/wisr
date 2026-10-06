@@ -54,6 +54,31 @@ struct session_decl_t {
   std::string level; /* "", "rr", or "ser": "" takes the pairing's */
 };
 
+/*
+ * A named step of a permutation script (DRIVER.md §6): one
+ * session runs its operations in order, as PostgreSQL's
+ * isolation tester runs one step's SQL.
+ */
+struct named_step_t {
+  std::string session;
+  std::string name;
+  std::vector<item_t> ops;
+  int lineno = 0;
+};
+
+/*
+ * One permutation: the steps in the order they run, and each
+ * session's outcome as PostgreSQL's expected output gives it,
+ * with sm1's where it differs on purpose.
+ */
+struct permutation_t {
+  std::vector<std::string> steps;
+  std::vector<std::pair<std::string, std::string>>
+      expect;                                           /* session, outcome */
+  std::vector<std::pair<std::string, std::string>> sm1; /* the same, sm1's */
+  int lineno = 0;
+};
+
 /* A parsed script. */
 struct script_t {
   std::string path;
@@ -61,6 +86,8 @@ struct script_t {
   std::vector<session_decl_t> sessions;
   std::vector<std::pair<std::string, std::string>> seeds; /* row, value */
   std::vector<item_t> items;
+  std::vector<named_step_t> steps;  /* a permutation script's */
+  std::vector<permutation_t> perms; /* empty for a schedule script */
 };
 
 /*

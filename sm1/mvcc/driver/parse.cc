@@ -37,6 +37,20 @@ std::string where(const std::string &path, int lineno, const std::string &msg) {
   return out.str();
 }
 
+/* The outcomes a permutation may expect of a session (§6). */
+bool outcome_known(const std::string &o) {
+  return o == "commit" || o == "serialize" || o == "unique" ||
+         o == "deadlock" || o == "abort";
+}
+
+/*
+ * Parse "s1=commit s2=serialize" into pairs, for an expect or
+ * sm1 line. Returns an empty string if every word is a known
+ * session and outcome.
+ */
+std::string outcomes(const script_t &s, const std::vector<std::string> &w,
+                     std::vector<std::pair<std::string, std::string>> *out);
+
 /* True if name is one of the script's declared sessions. */
 bool declared(const script_t &s, const std::string &name) {
   for (const session_decl_t &d : s.sessions) {
@@ -61,14 +75,14 @@ struct verb_t {
 };
 
 const verb_t STEP_VERBS[] = {
-    {"begin", 0, 0},      {"commit", 0, 0},  {"commit?", 0, 0},
-    {"abort", 0, 0},      {"read", 1, 1},    {"write", 2, 2},
-    {"insert", 2, 2},     {"delete", 1, 1},  {"scan", 2, 4},
-    {"open", 3, 3},       {"next", 1, 1},    {"close", 1, 1},
-    {"mkstore", 0, 0},    {"lsstore", 0, 0}, {"savepoint", 0, 0},
-    {"rollback", 1, 1},   {"lock", 2, 2},    {"seek", 2, 2},
-    {"stmt", 0, 0},       {"lookup", 1, 1},  {"rmstore", 0, 0},
-    {"readlatest", 1, 1},
+    {"begin", 0, 0},      {"commit", 0, 0},       {"commit?", 0, 0},
+    {"abort", 0, 0},      {"read", 1, 1},         {"write", 2, 2},
+    {"insert", 2, 2},     {"delete", 1, 1},       {"scan", 2, 4},
+    {"open", 3, 3},       {"next", 1, 1},         {"close", 1, 1},
+    {"mkstore", 0, 0},    {"lsstore", 0, 0},      {"savepoint", 0, 0},
+    {"rollback", 1, 1},   {"lock", 2, 2},         {"seek", 2, 2},
+    {"stmt", 0, 0},       {"lookup", 1, 1},       {"rmstore", 0, 0},
+    {"readlatest", 1, 1}, {"update-where", 4, 4},
 };
 
 const verb_t CHECK_VERBS[] = {
@@ -121,6 +135,61 @@ bool take_when(std::vector<std::string> *arg, std::string *when) {
   *when = (*arg)[n - 1];
   arg->resize(n - 2);
   return *when == "rr" || *when == "rr+s" || *when == "s+s" || *when == "all";
+}
+
+std::string outcomes(const script_t &s, const std::vector<std::string> &w,
+                     std::vector<std::pair<std::string, std::string>> *out) {
+  for (size_t i = 1; i < w.size(); i++) {
+    size_t eq = w[i].find('=');
+    if (eq == std::string::npos) {
+      return "expected <session>=<outcome>, given " + w[i];
+    }
+    std::string name = w[i].substr(0, eq), o = w[i].substr(eq + 1);
+    if (!declared(s, name)) {
+      return "no such session: " + name;
+    }
+    if (!outcome_known(o)) {
+      return "an outcome is commit, serialize, unique, deadlock or abort, "
+             "not " +
+             o;
+    }
+    out->emplace_back(name, o);
+  }
+  return "";
+}
+
+/*
+ * Check a permutation script once it is all read: every step a
+ * permutation names exists, every permutation says what each
+ * session's outcome is, and every session has its own level.
+ */
+std::string check_permutations(const script_t &s) {
+  for (const item_t &it : s.items) {
+    if (it.kind != ITEM_TEXT) {
+      return "a script with permutations has no @ steps or checks";
+    }
+  }
+  for (const session_decl_t &d : s.sessions) {
+    if (d.level.empty()) {
+      return "in a permutation script every session names its level: " + d.name;
+    }
+  }
+  for (const permutation_t &p : s.perms) {
+    for (const std::string &name : p.steps) {
+      bool found = false;
+      for (const named_step_t &st : s.steps) {
+        found = found || st.name == name;
+      }
+      if (!found) {
+        return "line " + std::to_string(p.lineno) + ": no such step: " + name;
+      }
+    }
+    if (p.expect.size() != s.sessions.size()) {
+      return "line " + std::to_string(p.lineno) +
+             ": the permutation needs an expect line naming every session";
+    }
+  }
+  return "";
 }
 
 } // namespace
@@ -203,6 +272,82 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
       out->sessions.push_back(d);
       continue;
     }
+    // A named step of a permutation script: step <session>
+    // <name> <verb> ... [; <verb> ...] (§6).
+    if (w[0] == "step") {
+      if (w.size() < 4) {
+        *err = where(path, lineno, "step takes a session, a name and a verb");
+        return false;
+      }
+      if (!declared(*out, w[1])) {
+        *err = where(path, lineno, "no such session: " + w[1]);
+        return false;
+      }
+      named_step_t st;
+      st.session = w[1];
+      st.name = w[2];
+      st.lineno = lineno;
+      for (const named_step_t &o : out->steps) {
+        if (o.name == st.name) {
+          *err = where(path, lineno, "a step named " + st.name + " already");
+          return false;
+        }
+      }
+      // Its operations, separated by ";".
+      std::vector<std::string> cur;
+      for (size_t i = 3; i <= w.size(); i++) {
+        if (i < w.size() && w[i] != ";") {
+          cur.push_back(w[i]);
+          continue;
+        }
+        if (cur.empty()) {
+          *err = where(path, lineno, "an empty operation in step " + st.name);
+          return false;
+        }
+        item_t op;
+        op.kind = ITEM_STEP;
+        op.session = st.session;
+        op.time = st.name;
+        op.verb = cur[0];
+        op.arg.assign(cur.begin() + 1, cur.end());
+        op.lineno = lineno;
+        std::string bad = check_verb(
+            op, STEP_VERBS, sizeof(STEP_VERBS) / sizeof(STEP_VERBS[0]), "verb");
+        if (!bad.empty()) {
+          *err = where(path, lineno, bad);
+          return false;
+        }
+        st.ops.push_back(op);
+        cur.clear();
+      }
+      out->steps.push_back(st);
+      continue;
+    }
+    if (w[0] == "permutation") {
+      if (w.size() < 2) {
+        *err = where(path, lineno, "permutation takes the steps to run");
+        return false;
+      }
+      permutation_t p;
+      p.steps.assign(w.begin() + 1, w.end());
+      p.lineno = lineno;
+      out->perms.push_back(p);
+      continue;
+    }
+    if (w[0] == "expect" || w[0] == "sm1") {
+      if (out->perms.empty()) {
+        *err = where(path, lineno, w[0] + " follows a permutation");
+        return false;
+      }
+      permutation_t &p = out->perms.back();
+      std::string bad =
+          outcomes(*out, w, w[0] == "expect" ? &p.expect : &p.sm1);
+      if (!bad.empty()) {
+        *err = where(path, lineno, bad);
+        return false;
+      }
+      continue;
+    }
     if (w[0] == "seed") {
       if (w.size() != 3) {
         *err = where(path, lineno, "seed takes a row and a value");
@@ -266,6 +411,14 @@ bool script_parse(const std::string &path, script_t *out, std::string *err) {
   if (out->sessions.empty()) {
     *err = path + ": no session declared";
     return false;
+  }
+  // A permutation script is checked as a whole.
+  if (!out->perms.empty()) {
+    std::string bad = check_permutations(*out);
+    if (!bad.empty()) {
+      *err = path + ": " + bad;
+      return false;
+    }
   }
   return true;
 }

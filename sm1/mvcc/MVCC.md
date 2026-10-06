@@ -403,6 +403,36 @@ which does not abort; the caller reads the newest version with
 | f09 | `T1: w(R1) c` ‖ `T2: d(R1)` | UPDATED, readlatest 1, delete skipped | `in/f09_delete_meets_concurrent_update.t` |
 | f10 | savepoint, failed write, readlatest, rollback | a lock taken after the savepoint drops its mark; one taken before keeps it | `in/f10_savepoint_rollback_around_readlatest.t` |
 
+## 7b. Family P — PostgreSQL's own isolation tests
+
+Ported from PostgreSQL's isolation test suite (`POSTGRES.md`):
+each script is one PostgreSQL spec, run as a permutation script
+(`DRIVER.md` §6), every permutation PostgreSQL runs, with the
+outcome PostgreSQL's expected output gives.
+
+| # | PostgreSQL spec | Permutations | As PostgreSQL | Differs, as noted | File |
+|---|---|---|---|---|---|
+| p01 | `simple-write-skew` | 6 | 2 | 4 | `in/p01_simple_write_skew.t` |
+| p02 | `receipt-report` | 210 | 86 | 124 | `in/p02_receipt_report.t` |
+| p03 | `read-only-anomaly` | 1 | 1 | 0 | `in/p03_read_only_anomaly.t` |
+| p04 | `read-write-unique` | 2 | 2 | 0 | `in/p04_read_write_unique.t` |
+| p05 | `total-cash` | 20 | 8 | 12 | `in/p05_total_cash.t` |
+| p06 | `two-ids` | 90 | 54 | 36 | `in/p06_two_ids.t` |
+| p07 | `classroom-scheduling` | 20 | 8 | 12 | `in/p07_classroom_scheduling.t` |
+| p08 | `temporal-range-integrity` | 20 | 8 | 12 | `in/p08_temporal_range_integrity.t` |
+| p09 | `project-manager` | 20 | 8 | 12 | `in/p09_project_manager.t` |
+| p10 | `multiple-row-versions` | 1 | 0 | 1 | `in/p10_multiple_row_versions.t` |
+
+**No permutation commits a transaction PostgreSQL fails.** Every
+difference is sm1 failing more: both transactions of a write
+skew where PostgreSQL fails one (p01, p05, p07 to p09), and one
+of three where PostgreSQL commits all (p02, p06). sm1's SSI uses
+Cahill's original rule, failing any transaction with both an
+incoming and an outgoing rw-edge; PostgreSQL adds the commit-
+order and read-only refinements of Ports and Grittner, and fails
+only a transaction in a real cycle (`SM1_DESIGN.md` §7.3). Those
+refinements would turn 213 of these into "as PostgreSQL".
+
 ## 8. What wisr does not detect, by design
 
 At REPEATABLE READ, wisr **does not** detect, and must not

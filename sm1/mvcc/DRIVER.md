@@ -172,6 +172,7 @@ can be read at a glance. Several steps may share a time.
 | `write` | `<row> <value>` | `ok`, or an error name |
 | `insert` | `<row> <value>` | `ok`, or an error name |
 | `delete` | `<row>` | `ok`, or an error name |
+| `update-where` | `<lo> <hi> <old> <new>` | SQL's `UPDATE ... SET v = new WHERE v = old` over rows `lo..hi`: a scan, then a write of each row holding `old`; prints the rows written, `{R1, R2}` |
 | `commit` | — | `ok`, or an error name |
 | `commit?` | — | `recorded`: the outcome is kept but not printed |
 | `abort` | — | `ok` |
@@ -399,3 +400,73 @@ noise.
   file order and does not sort by `@<time>`; a script whose
   times are out of order will mislead a reader, not the
   driver.
+
+---
+
+## 6. Permutation scripts
+
+A second kind of script, made for porting PostgreSQL's
+isolation tests (`POSTGRES.md`). It names its steps once and
+lists the orders to run them in, as PostgreSQL's specs do, in
+place of one schedule of `@` steps. A script is one kind or the
+other.
+
+```
+session s1 ser
+session s2 ser
+seed t05 apple
+
+step s1 rwx1 update-where t t~ pear apple
+step s1 c1 commit
+step s2 rwx2 update-where t t~ apple pear
+step s2 c2 commit
+
+permutation rwx1 rwx2 c1 c2
+expect s1=commit s2=serialize
+sm1 s1=serialize s2=serialize
+```
+
+| Directive | Meaning |
+|---|---|
+| `session <name> <level>` | as §2.1, but the level is required: there are no pairings |
+| `step <session> <name> <verb> [args] [; <verb> [args]]...` | a named step: the session runs the verbs in order, as one SQL statement |
+| `permutation <step>...` | one order to run the steps in |
+| `expect <session>=<outcome>...` | each session's outcome in PostgreSQL, for the permutation above it; every session is named |
+| `sm1 <session>=<outcome>...` | sm1's outcome where it differs on purpose, with the reason in a comment |
+
+An outcome is `commit`, `serialize` (a serialization failure:
+sm1's `serialization` or `conflict`, both PostgreSQL's 40001),
+`unique`, `deadlock`, or `abort` (any other error, or no
+commit).
+
+**How a permutation runs.**
+
+- **Each permutation starts from the seeds.** The driver keeps
+  one database for the script, and before each permutation
+  deletes every row and inserts the seeds again, so no
+  permutation sees another's rows. Making new stores each time
+  was the alternative; a column family each made a script of
+  two hundred permutations take half a minute. The database
+  does not sync each commit, which nothing here needs.
+- **A session's transaction begins at its first step,** which
+  is when PostgreSQL takes the snapshot, not at its `BEGIN`.
+- **Any error ends the transaction.** The driver aborts it, as
+  PostgreSQL does, and the session's later steps print
+  `skipped`. The session's outcome is the class of that error.
+- **Waiting is found, not declared.** A step is reported as
+  `waiting` once sm1 shows its session waiting on a lock or on
+  another transaction, which is how PostgreSQL's tester tells
+  too; it is printed again, `(resumed)`, when it finishes. No
+  `blocks` annotation is used.
+- **The outcome line** compares each session's outcome with
+  `expect`: `as PostgreSQL`, or `differs from PostgreSQL (...)
+  as noted` when it matches the `sm1` line, or `FAILED`.
+
+```
+== permutation 2: rwx1 rwx2 c1 c2 ==
+rwx1 s1 -> {t07}
+rwx2 s2 -> {t05}
+c1 s1 -> serialization
+c2 s2 -> serialization
+outcome s1=serialize s2=serialize -> differs from PostgreSQL (s1=commit s2=serialize) as noted
+```

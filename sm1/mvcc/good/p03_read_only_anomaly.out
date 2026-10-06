@@ -1,0 +1,32 @@
+# p03 -- PostgreSQL's isolation spec read-only-anomaly.
+#
+# Ported from PostgreSQL's src/test/isolation/specs (branch
+# REL_17_STABLE), under the PostgreSQL License; the expected
+# outcomes are copied from its expected/read-only-anomaly.out.
+#
+# The read-only anomaly under REPEATABLE READ: all three
+# commit, though no serial order gives what s3 read. It shows
+# what snapshot isolation allows, not what it forbids.
+#
+# Table bank_account (id PRIMARY KEY, balance) becomes rows
+# bX, bY.
+
+
+# SELECT balance FROM bank_account WHERE id = 'Y'
+# UPDATE bank_account SET balance = 20 WHERE id = 'Y'
+# SELECT balance FROM bank_account WHERE id = 'X'
+# SELECT balance FROM bank_account WHERE id = 'Y'
+# UPDATE bank_account SET balance = -11 WHERE id = 'X'
+# SELECT id, balance FROM bank_account WHERE id IN ('X', 'Y')
+
+== permutation 1: s2rx s2ry s1ry s1wy s1c s3r s2wx s2c s3c ==
+s2rx s2 -> 0
+s2ry s2 -> 0
+s1ry s1 -> 0
+s1wy s1 -> 0 | ok
+s1c s1 -> ok
+s3r s3 -> 0 | 20
+s2wx s2 -> 0 | ok
+s2c s2 -> ok
+s3c s3 -> ok
+outcome s1=commit s2=commit s3=commit -> as PostgreSQL
