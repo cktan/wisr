@@ -207,22 +207,15 @@ int sm_commit_prepared(sm_session_t* session, const char* gid);
 int sm_abort_prepared(sm_session_t* session, const char* gid);
 
 /*
- * ---- stores and sequences, below the catalog ----
+ * ---- sequences, below the catalog ----
  *
- * A table is made with sm_cat_create_table, which makes its
- * store and its rowno sequence. These make a store or a sequence
- * without the catalog: a sequence of the caller's own, and stores
- * for tests of the levels below (DESIGN.md section 1).
+ * A sequence of the caller's own, as SQL's CREATE SEQUENCE. A
+ * table's store and its rowno sequence are made and dropped with
+ * the table, by sm_cat_create_table and sm_cat_drop_table, and are
+ * not reachable here. Names beginning "sm3." are sm3's own, a
+ * table's rowno sequence among them, and each call below refuses
+ * one with SM_ERR_INVALID.
  */
-
-/* Create a store in the active transaction. */
-int sm_mkstore(sm_session_t* session, uint64_t* storeid);
-
-/* Drop a store and its rows in the active transaction. */
-int sm_rmstore(sm_session_t* session, uint64_t storeid);
-
-/* List the stores the transaction sees into ids, which it replaces. */
-int sm_lsstore(sm_session_t* session, std::vector<uint64_t>& ids);
 
 /* Create the sequence name, handing out start, start+increment, ... */
 int sm_mkseq(sm_session_t* session, const char* name, uint64_t start,

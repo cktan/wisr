@@ -671,36 +671,41 @@ int sm_abort_prepared(sm_session_t *session, const char *gid) {
   return guard(session, [&] { return sm1::abort_prepared(s, name_of(gid)); });
 }
 
-/* Create a store. */
-int sm_mkstore(sm_session_t *session, uint64_t *storeid) {
-  sm1::session_t *s = session_of(session);
-  return guard(session, [&] { return sm1::mkstore(s, *storeid); });
+namespace {
+
+/* Refuse, for fn, a sequence name sm3 keeps for its own. */
+int reserved_seq(const char *fn, const char *name) {
+  if (name && strncmp(name, "sm3.", 4) == 0) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, std::string(fn) + ": " + name +
+                                                ": names beginning sm3. "
+                                                "are sm3's own");
+  }
+  return 0;
 }
 
-/* Drop a store. */
-int sm_rmstore(sm_session_t *session, uint64_t storeid) {
-  sm1::session_t *s = session_of(session);
-  return guard(session, [&] { return sm1::rmstore(s, storeid); });
-}
-
-/* List the stores the transaction sees. */
-int sm_lsstore(sm_session_t *session, std::vector<uint64_t> &ids) {
-  sm1::session_t *s = session_of(session);
-  return guard(session, [&] { return sm1::lsstore(s, ids); });
-}
+} // namespace
 
 /* Create a sequence. */
 int sm_mkseq(sm_session_t *session, const char *name, uint64_t start,
              uint64_t increment) {
   sm1::session_t *s = session_of(session);
-  return guard(session,
-               [&] { return sm1::mkseq(s, name_of(name), start, increment); });
+  return guard(session, [&] {
+    if (reserved_seq("sm_mkseq", name) != 0) {
+      return -1;
+    }
+    return sm1::mkseq(s, name_of(name), start, increment);
+  });
 }
 
 /* Drop a sequence. */
 int sm_rmseq(sm_session_t *session, const char *name) {
   sm1::session_t *s = session_of(session);
-  return guard(session, [&] { return sm1::rmseq(s, name_of(name)); });
+  return guard(session, [&] {
+    if (reserved_seq("sm_rmseq", name) != 0) {
+      return -1;
+    }
+    return sm1::rmseq(s, name_of(name));
+  });
 }
 
 /* Hand out the sequence's next value. */
@@ -709,6 +714,9 @@ int sm_nextseq(sm_session_t *session, const char *name, uint64_t *out) {
   return guard(session, [&] {
     if (!out) {
       return sm1::seterr(sm1::SM_ERR_INVALID, "sm_nextseq: out is NULL");
+    }
+    if (reserved_seq("sm_nextseq", name) != 0) {
+      return -1;
     }
     return sm1::nextseq(s, name_of(name), *out);
   });
