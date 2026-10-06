@@ -24,6 +24,9 @@ It describes the code as it is, in `src/xct.cc` and
 - **After a restart it is empty**, and it is not refilled
   from disk. It fills again only with transactions that
   commit after the restart.
+- An entry stops mattering once compaction has stamped the
+  commit timestamp into the transaction's versions, in the
+  background (§5).
 - It is never needed for a right answer. The durable status
   record, in `CF:txn`, says the same thing. A miss costs a
   RocksDB read and nothing else.
@@ -176,7 +179,77 @@ cost an evicted transaction's versions pay at any time.
 
 ---
 
-## 5. What it does not do
+## 5. How a version stops needing the cache
+
+The cache covers the time between a commit and the moment its
+versions no longer need a lookup at all. Two background steps
+end that time (`SM1_DESIGN.md` §8.3). Neither is prompt.
+
+### 5.1 Compaction stamps the version
+
+When RocksDB's background compaction rewrites a file, sm1's
+compaction filter (`src/gc.cc`) looks at each version in it.
+
+| The version's writer | The filter |
+| --- | --- |
+| aborted, or crashed | drops the version |
+| still running, or prepared | keeps it as it is |
+| committed after the GC watermark | keeps it as it is |
+| committed at or below the watermark | replaces the `xid` in its header with the `commit_ts`, and sets a flag |
+
+A stamped version is step 0 of §1: a reader takes the commit
+timestamp from the header and asks neither the cache nor
+`CF:txn`.
+
+The filter runs only where compaction goes. A version in a
+file that nothing rewrites stays unstamped. No task stamps
+versions on a schedule of its own.
+
+### 5.2 The GC worker deletes the status records
+
+Each open database has a GC thread that wakes at least once a
+second. One of its jobs is a sweep of `CF:txn`.
+
+1. **Trigger.** RocksDB's estimate of the records in `CF:txn`
+   passes one million (`txn_sweep_records`, `src/db.h`).
+2. **Pass.** It notes the GC watermark, `W0`, and forces a
+   full compaction of every store, down to the bottom level.
+   Every committed version at or below `W0` is then stamped
+   or dropped.
+3. **Wait.** Readers that began before the pass may still
+   hold unstamped copies. The sweep is left pending until
+   they have finished.
+4. **Delete.** It removes the `COMMITTED` records at or below
+   `W0`, and every `ABORTED` record.
+
+A record is removed, not marked, and only once no version
+needs it. A cache entry for a transaction whose record has
+gone is still true, and nothing asks for it (§3.4).
+
+### 5.3 What follows
+
+- **Records linger.** Below a million records nothing is
+  swept. A database with modest traffic keeps every commit
+  record, tens of megabytes at most, and that is what a cache
+  miss falls through to.
+- **Stamping is not prompt.** A new version starts at the top
+  of the tree and is compacted soon, so for ordinary writes
+  the gap is short. A version in a file at the bottom of the
+  tree is reached only by the sweep's forced pass. That is
+  where a bulk load's ingested files land (`BULKLOAD.md`
+  §5.5), so their rows lean on the cache, and then on
+  `CF:txn`, for a long time.
+- **The sweep is expensive.** It rewrites every store to
+  reclaim a small table, runs as an exclusive compaction, and
+  holds up the GC thread while it does. `SM1_DESIGN.md` §8.3
+  leaves this open, with a fix proposed and not built: record
+  for each file whether it holds unstamped versions, and
+  compact only those. That would also be the way to stamp
+  sooner on purpose, after a bulk load or a restart.
+
+---
+
+## 6. What it does not do
 
 - **It does not cache aborted transactions.** A version of an
   aborted or crashed transaction misses the active table and
@@ -195,7 +268,7 @@ cost an evicted transaction's versions pay at any time.
 
 ---
 
-## 6. Observations
+## 7. Observations
 
 These follow from the code and are not decisions.
 
