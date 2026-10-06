@@ -15,7 +15,10 @@ transcript looks like progress.
 
 **Audited at** commit `2ae8668`, which introduced Ports and
 Grittner's commit-order and read-only refinements, on
-2026-10-06.
+2026-10-06; brought forward to `44bd134`, which added the
+`READ ONLY` declaration, on 2026-10-07. §6 and §8 carry the
+later figures, and §4a the three scenarios that arrived with
+it.
 
 **Method.** Every expected outcome was re-derived from
 `MVCC.md` §1 and `SM1_DESIGN.md` §7.3 by hand — the edge set
@@ -26,9 +29,10 @@ paper, deliberately independent of what the engine does:
 wrong. §8 records what the engine in fact does, measured
 afterwards.
 
-**Verdict: no incorrect expected output was found.** All 106
-scripts and their transcripts are correct per the documented
-rules. Two observations that are not defects are in §7.
+**Verdict: no incorrect expected output was found.** All 109
+scripts and their transcripts give the outcome the rules
+require. One defect in the *driver* turned up on the way, in
+`c34`'s transcript, and is §7's first item.
 
 ---
 
@@ -38,7 +42,7 @@ rules. Two observations that are not defects are in §7.
 |---|---|---|
 | A — visibility | 17 | the version each read must return |
 | B — write-write | 36 | lock, first-committer-wins, deadlock victim, error choice |
-| C — read-write | 31 | the edge set, then §7.3's abort rule |
+| C — read-write | 34 | the edge set, then §7.3's abort rule |
 | E — housekeeping | 2 | catalog predicates, RR under many readers |
 | F — read committed | 10 | the `updated` / `readlatest` exchange |
 | P — PostgreSQL ports | 10 files, 390 permutations | each permutation's outcome against PostgreSQL's |
@@ -128,6 +132,39 @@ last key examined, `c24` catches one inside it, `c25` records
 nothing for a cursor closed unread, and `c30` keeps the gap a
 `seek` jumped over.
 
+## 4a. The read-only declaration — c32, c33, c34
+
+These three arrived with `44bd134` and were audited the same
+way. All correct.
+
+**`c33` is the one that earns the declaration.** `T3 ──rw──▶
+T2 ──rw──▶ T1`, pivot T2, successor T1 committing first — the
+shape that fails T2 everywhere else. T1 commits *after* T3's
+snapshot, and T3 is declared read-only, so the read-only test
+spares the pivot and all three commit. The serial order
+T3, T2, T1 confirms it: T3 reads R2 before T2 writes it, T2
+reads R1 before T1 writes it, and T3 and T1 touch different
+rows. Undeclared, T3 might still write, so T2 would have to
+fail — which is exactly p02's old behaviour, making `c33` and
+p02 the two ends of one change.
+
+**`c32` is the control that keeps it honest.** It is `c07`
+with T3 declared, and T2 still fails at S+S, because T3's
+snapshot is taken *after* T1's commit: the test's condition is
+that T3 committed before the read-only transaction's
+snapshot, and here it did. A declaration that excused this
+would re-admit Fekete's anomaly, so `c32` is what stops the
+refinement from being over-applied. Its RR and mixed pairings
+commit, as they must.
+
+**`c34` pins soundness at the source.** A declared
+transaction's write is refused, at every level, and the
+refusal does not abort it — T1 reads on and commits, and the
+row is unchanged. This is what makes the other two sound: the
+read-only test is only valid for a transaction that cannot
+write. The behaviour is right; the one thing wrong is how the
+refusal *prints*, which is §7's first item.
+
 ## 5. Families E and F
 
 `e04` holds the catalog to the same predicate rules as rows,
@@ -150,20 +187,15 @@ permutation orders align between script and transcript, each
 `as PostgreSQL` outcome equals its script's `expect` line,
 each `differs` outcome equals its `sm1` override and its
 parenthetical equals `expect`, and no override is stale. The
-totals match `MVCC.md` §7b exactly — 390 permutations, 359 as
-PostgreSQL, 31 differing, 0 failures.
+totals match `MVCC.md` §7b exactly — 390 permutations, 383 as
+PostgreSQL, 7 differing, 0 failures.
 
-The 31 differences divide into two kinds, and only one of them
+The 7 differences divide into two kinds, and only one of them
 needs an argument.
 
-**sm1 fails more (p02's 24, p10's 1).** Safe by construction:
-a conservative rule costs a retry, never correctness. p02's
-cause is that PostgreSQL knows s3 is `READ ONLY` from its
-`BEGIN` while sm1 learns it only at commit; permutations 22
-and 23 were traced step by step, and they differ only in
-whether the edge completes before or after s1 commits, which
-is exactly what decides whether s1 or s3 is the one refused.
-p10's cause is granularity: sm1's SIREAD entries are on keys,
+**sm1 fails more (p10's 1).** Safe by construction: a
+conservative rule costs a retry, never correctness. p10's
+cause is granularity: sm1's SIREAD entries are on keys,
 so the extra `s1 ──▶ s3` edge makes `s1 → s3 → s4 → s1` a
 real cycle in sm1's graph, and failing s3 follows.
 
@@ -181,13 +213,23 @@ in failing s2. A scan of all 390 permutations confirmed these
 six are the only places sm1 commits a transaction PostgreSQL
 fails.
 
-Applying the read-only test to any transaction that committed
-having written nothing — rather than only to a declared
-`READ ONLY` one — is sound for the same reason: by the time
-the test is applied the transaction has demonstrably written
-nothing, so the property holds in retrospect. sm1 defers the
-decision and therefore has more information than PostgreSQL
-does, which is why it can commit where PostgreSQL cannot.
+Applying the read-only test to an *undeclared* transaction —
+one merely observed to have committed having written nothing
+— is sound for the same reason: by the time the test is
+applied it has demonstrably written nothing, so the property
+holds in retrospect. That is still how p06's s3 qualifies,
+and why those six remain the one place sm1 commits more.
+
+p02's 24 differences were of this family until `44bd134`,
+which gave `sm1::begin` a `READ ONLY` declaration and the
+driver a `ro` session modifier. p02's s3 is declared in
+PostgreSQL's setup and is now declared here too, so the test
+applies from its begin rather than from its commit and all
+210 permutations end as PostgreSQL's do. The audit's earlier
+reading of those 24 — that sm1 learned too late, and which of
+s1 or s3 was refused turned on whether the edge completed
+before s1's commit — was the diagnosis; the declaration is
+the fix, and `c33` is the scenario that pins it.
 
 `p03` is at REPEATABLE READ, where the read-only anomaly is
 permitted, and all three commit with the anomaly visible —
@@ -196,9 +238,28 @@ the same shape as `c07` and the opposite outcome, correctly.
 concurrent duplicate insert is 40001, a non-concurrent one a
 unique violation, matching `b06` and `b12`.
 
-## 7. Two observations, neither a defect
+## 7. What the audit found
 
-1. **`c03`, `c04` and `c22` assert final row state only at
+1. **A defect: `c34`'s transcript prints an engine message,
+   not an error name.** The step reads
+   `@2 T1 write R1 t1 -> error:the transaction was declared
+   read-only`. `DRIVER.md` §2.2 says error names are
+   "symbolic, never numbers or messages" and lists the nine;
+   §4 says the driver "prints nothing the engine generates".
+   The cause is a gap in `error_name()` in
+   `mvcc/driver/run.cc`, which has a case for each of the
+   nine and none for the new `SM_ERR_READONLY`, so `c34`
+   falls to the `default:` branch and emits
+   `"error:" + sm1::errmsg()`. The behaviour under test is
+   right; only its rendering is wrong, and it makes `c34`'s
+   transcript hostage to the wording of a message — the
+   coupling §4 exists to prevent. The fix is one case
+   returning `"readonly"`, `readonly` added to §2.2's list,
+   and `c34`'s transcript regenerated. Regenerating an
+   expected transcript needs the owner's say-so, so it is
+   reported rather than done.
+
+2. **`c03`, `c04` and `c22` assert final row state only at
    RR/RR.** Their `@9 check rows when rr` is scoped to that
    one pairing, so the mixed pairings assert that both
    transactions commit but never what the rows ended up
@@ -208,36 +269,43 @@ unique violation, matching `b06` and `b12`.
    close a small gap at no cost; it changes expected output,
    so it is recorded here rather than done.
 
-2. **`REPORT.md`'s family ranges are stale.** It names family
-   B as `b01`–`b29` and family E as `e01`–`e05`; they are now
-   `b01`–`b36` and `e01`–`e06`. The three behaviours that
-   document records are all still accurate, `c17`'s open T3
-   included.
+3. **`REPORT.md`'s family ranges are stale.** It names family
+   B as `b01`–`b29`, family C as `c01`–`c31` and family E as
+   `e01`–`e05`; they are now `b01`–`b36`, `c01`–`c34` and
+   `e01`–`e06`. The three behaviours that document records
+   are all still accurate, `c17`'s open T3 included.
 
 ## 8. The engine, and whether the suite still asserts
 
-Two measurements were taken after the audit above, both at
-`2ae8668`.
+Two measurements were taken after the audit above, re-run at
+`44bd134`.
 
-**`make -j4 test` passes.** All 106 scripts match `good/`,
-the eleven transcripts the refinement regenerated included;
-163 unit cases and 21,041 assertions pass, `test_ssi.cc`
+**`make -j4 test` passes.** All 109 scripts match `good/`,
+the transcripts `2ae8668` and `44bd134` regenerated included;
+169 unit cases and 21,266 assertions pass, `test_ssi.cc`
 among them, as do the four stress scenarios and the
 examples. So the engine does produce these transcripts, and
 the audit's verdict and the engine's behaviour agree.
 
 **The suite did not lose assertive power.** `MVCC.md` §9's
-three deliberate breakages were re-run, since the refinement
+three deliberate breakages were re-run, because `2ae8668`
 made three scenarios stop failing (`c17`, `c26`, `c27`) and
 that is exactly the shape of a suite going quiet. None of the
-three breakages escapes: they are caught by 17, 18 and 17
-scenarios. Breakage A is the one whose old count is
-recoverable, and it is unchanged — family C still catches it
-14 times, the three extra being P scripts added since. The
-counts for B and C are not comparable to the old 11 and
-"5 of the 6", because those were recorded without saying what
-the edit was; §9 now names all three edits so the numbers can
-be reproduced.
+three escapes: they are caught by 18, 18 and 17 scenarios.
+
+Across the two commits the counts moved once, upward:
+breakage A went from 17 to 18, `c32` being a fourteenth
+family-C scenario that catches it — fifteenth, counting from
+the family. B and C did not move, which is expected: the
+read-only work touched neither the write path's
+first-committer-wins nor snapshot visibility.
+
+Only A's pre-audit count is recoverable, and it is unchanged
+where it can be compared: the 14 family-C scenarios that
+caught it before still do. B and C are not comparable to the
+old 11 and "5 of the 6", because those were recorded without
+saying what the edit was; §9 now names all three edits so the
+numbers can be reproduced.
 
 ## 9. What this audit does not establish
 
