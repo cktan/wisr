@@ -38,11 +38,16 @@ public:
     REQUIRE(sm1::closedb(s) == 0);
   }
 
-  /* A new session on "db". */
-  sm1::session_t *open() const {
-    sm1::session_t *s = opendb(m_home.env(), "db", nullptr);
+  /* A new session on "db"; opt applies if it is the first. */
+  sm1::session_t *open(const sm1::options_t *opt = nullptr) const {
+    sm1::session_t *s = opendb(m_home.env(), "db", opt);
     REQUIRE(s);
     return s;
+  }
+
+  /* Whether opening "db" with opt is refused. */
+  bool open_fails(const sm1::options_t *opt) const {
+    return ::opendb(m_home.env(), "db", opt) == nullptr;
   }
 
 private:
@@ -417,4 +422,163 @@ TEST_CASE("rollback rewinds seq to the mark with nothing listed before it") {
         std::vector<std::string>{"a", "b", "c", "e"});
   REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
+}
+
+namespace {
+
+/* An undo entry's cost for a one-byte key, as sm1 counts it. */
+const size_t g_undo_entry = sizeof(sm1::session_t::undo_t) + 1;
+
+/* Options whose undo list holds n one-byte-key writes and no more. */
+sm1::options_t undo_cap(size_t n) {
+  sm1::options_t opt;
+  opt.savepoint_undo_bytes = static_cast<long long>(n * g_undo_entry);
+  return opt;
+}
+
+} // namespace
+
+TEST_CASE("past savepoint_undo_bytes the undo list is dropped, and the "
+          "savepoints with it") {
+  // Verify the cap bounds a transaction's undo memory without
+  // stopping its writes.
+  // 1. Open with room for three writes; set a savepoint.
+  // 2. Three writes are listed and counted.
+  // 3. The fourth passes the cap: the list is freed and the mark
+  //    is lost.
+  // 4. Later writes list nothing.
+  // 5. Rolling back to the mark fails with SM_ERR_UNDOLIMIT, and
+  //    the transaction is still active with its writes in view.
+  // 6. It commits, and every write is there.
+  sp_fixture_t f;
+  sm1::options_t opt = undo_cap(3);
+  sm1::session_t *s = f.open(&opt);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, g_store, "b", "1");
+  put(s, g_store, "c", "1");
+  put(s, g_store, "d", "1");
+  CHECK(s->undo.size() == 3);
+  CHECK(s->undo_bytes == 3 * g_undo_entry);
+  CHECK(s->lost_marks == 0);
+
+  put(s, g_store, "e", "1");
+  CHECK(s->undo.empty());
+  CHECK(s->undo_bytes == 0);
+  CHECK(s->lost_marks == 1);
+
+  put(s, g_store, "f", "1");
+  CHECK(s->undo.empty());
+
+  CHECK(sm1::rollback(s, 1) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
+  CHECK(get(s, g_store, "f") == "1");
+
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(keys_of(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
+        std::vector<std::string>{"a", "b", "c", "d", "e", "f"});
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}
+
+TEST_CASE("a savepoint set after the undo list was dropped works") {
+  // Verify only the marks set before the loss are lost.
+  // 1. Lose the mark at depth 1 by passing the cap.
+  // 2. Set a savepoint at depth 2, write, and roll back to it:
+  //    that write is gone and the earlier ones stay.
+  // 3. Depth 1 still cannot be rolled back to.
+  // 4. Forget depth 1: no mark is lost any more, and a new
+  //    savepoint at depth 1 rolls back as usual.
+  // 5. Abort: nothing of the transaction is left.
+  sp_fixture_t f;
+  sm1::options_t opt = undo_cap(2);
+  sm1::session_t *s = f.open(&opt);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, g_store, "b", "1");
+  put(s, g_store, "c", "1");
+  put(s, g_store, "d", "1");
+  REQUIRE(s->lost_marks == 1);
+
+  REQUIRE(sm1::savepoint(s) == 2);
+  put(s, g_store, "e", "1");
+  CHECK(s->undo.size() == 1);
+  REQUIRE(sm1::rollback(s, 2) == 0);
+  CHECK(get(s, g_store, "e") == "<none>");
+  CHECK(get(s, g_store, "d") == "1");
+  CHECK(s->undo_bytes == 0);
+
+  CHECK(sm1::rollback(s, 1) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
+
+  REQUIRE(sm1::forget(s, 1) == 0);
+  CHECK(s->lost_marks == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, g_store, "g", "1");
+  REQUIRE(sm1::rollback(s, 1) == 0);
+  CHECK(get(s, g_store, "g") == "<none>");
+  CHECK(get(s, g_store, "d") == "1");
+
+  REQUIRE(sm1::abort(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(keys_of(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
+        std::vector<std::string>{"a"});
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}
+
+TEST_CASE("passing the cap loses every savepoint set, and a rollback gives "
+          "its bytes back") {
+  // Verify the count follows the list, and the loss covers the stack.
+  // 1. With room for three writes, set a savepoint, write twice,
+  //    and roll back: the count is back at zero.
+  // 2. Three more writes fit, which they would not had the count
+  //    kept the two undone.
+  // 3. Set a second savepoint and write once more: both marks
+  //    are lost, and neither can be rolled back to.
+  // 4. The next transaction starts with nothing lost.
+  sp_fixture_t f;
+  sm1::options_t opt = undo_cap(3);
+  sm1::session_t *s = f.open(&opt);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, g_store, "b", "1");
+  put(s, g_store, "c", "1");
+  REQUIRE(sm1::rollback(s, 1) == 0);
+  CHECK(s->undo_bytes == 0);
+
+  put(s, g_store, "b", "2");
+  put(s, g_store, "c", "2");
+  put(s, g_store, "d", "2");
+  CHECK(s->undo.size() == 3);
+  CHECK(s->lost_marks == 0);
+
+  REQUIRE(sm1::savepoint(s) == 2);
+  put(s, g_store, "e", "2");
+  CHECK(s->lost_marks == 2);
+  CHECK(sm1::rollback(s, 2) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
+  CHECK(sm1::rollback(s, 1) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
+  REQUIRE(sm1::abort(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(s->lost_marks == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, g_store, "b", "3");
+  REQUIRE(sm1::rollback(s, 1) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}
+
+TEST_CASE("savepoint_undo_bytes must be at least 1") {
+  // Verify the option is checked when the database opens.
+  // 1. Open with savepoint_undo_bytes = 0.
+  // 2. The open fails with SM_ERR_INVALID.
+  sp_fixture_t f;
+  sm1::options_t opt;
+  opt.savepoint_undo_bytes = 0;
+  CHECK(f.open_fails(&opt));
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }

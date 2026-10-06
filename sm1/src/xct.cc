@@ -31,6 +31,7 @@
 #include <string.h>
 #include <time.h>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -167,8 +168,10 @@ void reset(sm1::session_t *s) {
   s->dropped.clear();
   s->dropped_seqs.clear();
   s->undo.clear();
+  s->undo_bytes = 0;
   // The savepoints end with the transaction.
   s->savepoints.clear();
+  s->lost_marks = 0;
   // So does the statement snapshot (§6.2).
   s->stmt_pinned = false;
   s->stmt_taken = false;
@@ -237,6 +240,12 @@ sm1::session_t::mark_t *mark_at(sm1::session_t *s, int depth) {
   return &s->savepoints[depth - 1];
 }
 
+/* Free the session's undo list, not just empty it: it may be large. */
+void undo_free(sm1::session_t *s) {
+  std::vector<sm1::session_t::undo_t>().swap(s->undo);
+  s->undo_bytes = 0;
+}
+
 /* sm1::savepoint, minus the out-of-memory guard. */
 int savepoint(sm1::session_t *s) {
   // Require an active, non-prepared transaction.
@@ -280,10 +289,12 @@ int forget(sm1::session_t *s, int depth) {
   // Drop it and every mark inside it; the writes stay, and so
   // do the locks (§6.5).
   s->savepoints.resize(static_cast<size_t>(depth) - 1);
-  // With no mark left, no rollback can reach the writes listed.
-  if (s->savepoints.empty()) {
-    // Free the list, not just empty it: it may be large.
-    std::vector<sm1::session_t::undo_t>().swap(s->undo);
+  // A lost mark that is forgotten is no longer counted.
+  s->lost_marks = std::min(s->lost_marks, s->savepoints.size());
+  // With no mark left that can be rolled back to, no rollback
+  // can reach the writes listed.
+  if (s->savepoints.size() == s->lost_marks) {
+    undo_free(s);
   }
   return 0;
 }
@@ -298,6 +309,14 @@ int rollback(sm1::session_t *s, int depth) {
   sm1::session_t::mark_t *mp = mark_at(s, depth);
   if (!mp) {
     return -1;
+  }
+  // Refuse a mark whose undo list was dropped at the cap: the
+  // versions to delete are no longer known (§6.5).
+  if (static_cast<size_t>(depth) <= s->lost_marks) {
+    return set_error(sm1::SM_ERR_UNDOLIMIT,
+                     "savepoint {} can no longer be rolled back to: the "
+                     "transaction passed savepoint_undo_bytes",
+                     depth);
   }
   // Copy it: the stack is truncated before it is used below.
   const sm1::session_t::mark_t m = *mp;
@@ -354,6 +373,10 @@ int rollback(sm1::session_t *s, int depth) {
   s->dropped.resize(m.dropped);           // the undo restored their rows
   s->dropped_seqs.resize(m.dropped_seqs); // and their sequences
 
+  // Stop counting the entries undone.
+  for (size_t i = m.undo; i < s->undo.size(); i++) {
+    s->undo_bytes -= sizeof(sm1::session_t::undo_t) + s->undo[i].key.size();
+  }
   // Rewind seq with seq_hwm, so the own versions still in
   // effect are exactly seqs 1..seq_hwm (§6.5).
   s->undo.resize(m.undo);
@@ -1216,6 +1239,20 @@ int xct_resolve(db_t *db, uint64_t xid, uint64_t *commit_ts) {
   default:
     return 0;
   }
+}
+
+/* Drop session's undo list, which passed the cap; its marks are lost. */
+void xct_undo_overflow(sm1::session_t *s) {
+  // Tell the operator: a rollback to these savepoints will fail.
+  log_msg(sm1::loglevel_t::warn,
+          "database {}: transaction {} passed savepoint_undo_bytes ({}) with "
+          "{} savepoint(s) set; they can no longer be rolled back to",
+          s->db->name.c_str(), s->xid, s->db->undo_max_bytes,
+          s->savepoints.size() - s->lost_marks);
+  // Give the memory back.
+  undo_free(s);
+  // Every mark now set is lost; one set later starts a new list.
+  s->lost_marks = s->savepoints.size();
 }
 
 /* Close every open cursor of the session. */

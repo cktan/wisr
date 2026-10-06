@@ -67,7 +67,7 @@ out, and it does so one by one:
 | | Today |
 | --- | --- |
 | each write, while a savepoint is set | one undo entry in memory: store, key, `wts`, `seq` |
-| holding a savepoint over `n` writes | `n` entries, keys inline, until the last mark is forgotten |
+| holding a savepoint over `n` writes | `n` entries, keys inline, until the last mark is forgotten, or until they pass `savepoint_undo_bytes`, when the list is dropped and the savepoint lost |
 | rolling back | one RocksDB delete for each entry after the mark |
 | after a rollback | `seq` is rewound, and the next write reuses the undone numbers |
 
@@ -78,8 +78,10 @@ Two choices made elsewhere force it.
 - **Visibility is by `xid`, one for the whole transaction.**
   A version left in place would commit with the rest.
 
-So a transaction that sets a savepoint and then writes tens
-of millions of keys holds gigabytes for it. That is the case
+So a transaction that sets a savepoint and then writes a
+great deal holds memory for it up to the cap, and past the
+cap can no longer be rolled back to that savepoint, only
+aborted. That is the case
 of a large statement run by a driver that savepoints every
 statement, or inside a PL/pgSQL block with an exception
 handler.
@@ -306,7 +308,7 @@ The others are untouched by this design.
 
 | Alternative | Why not |
 | --- | --- |
-| Today's undo list, kept only while a savepoint is set | Built, and what this replaces. A transaction with no savepoint is already free of it; one with a savepoint still pays for every write |
+| Today's undo list, kept only while a savepoint is set, and capped | Built, and what this replaces. A transaction with no savepoint is free of it. One with a savepoint pays for every write up to `savepoint_undo_bytes`, and past that keeps writing but can no longer roll back to it (`SM1_DESIGN.md` §6.5) |
 | The undo list spilled to disk | Bounded memory, but a file with a life of its own, and a rollback still issues a delete for each write |
 | An xid for each savepoint, as PostgreSQL's subtransactions | The same effect: a rolled-back subtransaction's xid never gets a commit record, and its versions are dead by the existing rule. But a commit then writes a record for each surviving subtransaction; the active table, the commit cache, the prepare record and SSI's bookkeeping all learn that one transaction has many xids; and a transaction must know which xids are its own to read its own writes. The ranges keep one xid and one record |
 

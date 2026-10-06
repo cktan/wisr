@@ -807,9 +807,15 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   // The write used the re-read; the next needs its own.
   lock_clear_latest(s, storeid, key);
   // Record it for savepoint rollback, if a savepoint could
-  // roll it back; with none set, nothing is kept (§6.5).
-  if (!s->savepoints.empty()) {
+  // still roll it back; with none set, or every one lost,
+  // nothing is kept (§6.5).
+  if (s->savepoints.size() > s->lost_marks) {
     s->undo.push_back({storeid, key.ToString(), wts, seq});
+    s->undo_bytes += sizeof(sm1::session_t::undo_t) + key.size();
+    // Past the cap: give up the savepoints, not the write.
+    if (s->undo_bytes > s->db->undo_max_bytes) {
+      xct_undo_overflow(s);
+    }
   }
   // After the put, look for readers the write invalidates; a
   // reader arriving later steps past the version instead (§7.2).

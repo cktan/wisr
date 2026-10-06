@@ -20,6 +20,13 @@
  * write group. commit_cache_entries bounds the in-memory map
  * from transaction id to commit timestamp that spares readers
  * a status-table lookup; it must be at least 1.
+ *
+ * savepoint_undo_bytes caps what one transaction keeps in
+ * memory to roll back to its savepoints. A transaction that
+ * writes more than that while a savepoint is set keeps
+ * writing, but those savepoints can no longer be rolled back
+ * to: sm1::rollback fails with SM_ERR_UNDOLIMIT and the
+ * transaction can only be aborted. It must be at least 1.
  */
 #ifndef SM_OPTIONS_H
 #define SM_OPTIONS_H
@@ -32,6 +39,7 @@ typedef struct sm_options_t {
     long long   ts_lease;
     const char* rocksdb_options;       /* NULL = defaults */
     int         commit_cache_entries;
+    long long   savepoint_undo_bytes;
 } sm_options_t;
 
 /* Fill opt with the defaults. */
@@ -43,6 +51,7 @@ static inline void sm_options_init(sm_options_t* opt) {
     opt->ts_lease             = 1000000;
     opt->rocksdb_options      = 0;
     opt->commit_cache_entries = 65536;
+    opt->savepoint_undo_bytes = 64LL << 20;
 }
 
 #endif /* SM_OPTIONS_H */

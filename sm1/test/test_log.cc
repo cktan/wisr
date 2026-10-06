@@ -247,3 +247,39 @@ TEST_CASE("a snapshot holding back GC too long is reported once") {
   CHECK(cap.count(sm1::loglevel_t::warn, "held back") == 1);
   sm1::closedb(t);
 }
+
+TEST_CASE("passing savepoint_undo_bytes is logged, once for each loss") {
+  // Verify an operator learns a transaction outgrew its undo list.
+  // 1. Open with room for one write's undo; set a savepoint.
+  // 2. One write fits: nothing is logged.
+  // 3. The second passes the cap: one warning names the option.
+  // 4. Later writes log nothing more.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::options_t opt;
+  opt.savepoint_undo_bytes =
+      static_cast<long long>(sizeof(sm1::session_t::undo_t) + 1);
+  sm1::session_t *s = opendb(home.env(), "db", &opt);
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+
+  log_capture_t log;
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, store, "a", "1");
+  CHECK_MESSAGE(log.count(sm1::loglevel_t::warn, "savepoint_undo_bytes") == 0,
+                log.all());
+
+  put(s, store, "b", "1");
+  CHECK_MESSAGE(log.count(sm1::loglevel_t::warn, "savepoint_undo_bytes") == 1,
+                log.all());
+
+  put(s, store, "c", "1");
+  put(s, store, "d", "1");
+  CHECK_MESSAGE(log.count(sm1::loglevel_t::warn, "savepoint_undo_bytes") == 1,
+                log.all());
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::closedb(s) == 0);
+}

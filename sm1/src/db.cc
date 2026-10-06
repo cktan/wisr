@@ -354,6 +354,11 @@ db_t *db_open(const std::string &path, const char *dbname,
     set_error(sm1::SM_ERR_INVALID, "commit_cache_entries must be at least 1");
     return nullptr;
   }
+  // Reject an undo list that could hold nothing.
+  if (opt->savepoint_undo_bytes < 1) {
+    set_error(sm1::SM_ERR_INVALID, "savepoint_undo_bytes must be at least 1");
+    return nullptr;
+  }
   // Reject a non-positive deadlock timeout.
   if (opt->deadlock_ms <= 0) {
     set_error(sm1::SM_ERR_INVALID, "deadlock_ms must be positive");
@@ -461,6 +466,8 @@ db_t *db_open(const std::string &path, const char *dbname,
   db->objid_limit = db->next_objid;
   // Size the commit cache.
   db->cache_entries = opt->commit_cache_entries;
+  // Cap each transaction's undo list.
+  db->undo_max_bytes = static_cast<size_t>(opt->savepoint_undo_bytes);
   // Arm deadlock detection.
   db->deadlock_ms = opt->deadlock_ms;
 

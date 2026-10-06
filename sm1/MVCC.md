@@ -429,7 +429,7 @@ transaction (`src/session.h`).
 | `seq_hwm` | the newest own write still in effect; a rollback to a savepoint lowers it |
 | `wts_hi` | the largest `wts` written, so that a seek for the transaction's own versions starts high enough |
 | `locks` | the locks held, in the order taken, each with its mode: one entry for each key written or locked |
-| `undo` | the versions written while a savepoint is set, for a rollback to delete |
+| `undo` | the versions written while a savepoint is set, for a rollback to delete; capped by `savepoint_undo_bytes`, past which it is dropped and the savepoints lost |
 | `savepoints` | a stack of marks into `locks`, `undo` and the lists below |
 | `created`, `dropped` | stores made and removed, to drop or keep at the end |
 | `scans` | the open cursors |

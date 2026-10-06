@@ -68,8 +68,15 @@ typedef enum sm_errnum_t {
     /* sm3's: constraints (sm3/SM3_DESIGN.md §3) */
     SM_ERR_NOTNULL       = 24,  /* a NULL in a NOT NULL column */
 
+    /*
+     * sm1's: a rollback to a savepoint whose undo list was
+     * dropped at savepoint_undo_bytes (SM1_DESIGN.md §6.5). The
+     * transaction can only be aborted.
+     */
+    SM_ERR_UNDOLIMIT     = 25,  /* the savepoint can no longer be rolled back to */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_NOTNULL
+    SM_ERR_LAST          = SM_ERR_UNDOLIMIT
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

@@ -575,8 +575,10 @@ sm1::update(storeid, k, v):
      seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
      db.Put(cf(storeid), encode(k, ~wts, ~seq), encode(flags, T.xid, v))
      T.lock(k).latest = false                          # §5.4
-  6. if T.savepoints is not empty:                      # §6.5
+  6. if a savepoint is set and not lost:                # §6.5
          T.undo.push(storeid, k, wts, seq)
+         if T.undo is over savepoint_undo_bytes:
+             free T.undo; every mark now set is lost
   7. ssi.on_write(T, storeid, k)                        # §7
 ```
 
@@ -930,14 +932,36 @@ for the same reason. Each mark carries the `seq_hwm` of its
 moment, since the write before it may not be in the list to
 ask.
 
+**The list is capped.** `savepoint_undo_bytes`, 64 MB by
+default, bounds what one transaction's list may hold, each
+entry counted with its key. A write that takes the list past
+it is not refused. The list is freed, a warning is logged,
+and every mark then on the stack is **lost**: `T.lost_marks`
+records how many, from the bottom of the stack up.
+
+- A rollback to a lost mark fails with `SM_ERR_UNDOLIMIT` and
+  changes nothing. The versions to delete are no longer
+  known, so the transaction can only be aborted, which needs
+  no list.
+- Writes go on, and list nothing while every mark is lost.
+- A savepoint set afterwards starts a new list, counted
+  against the cap again, and rolls back as usual.
+- Forgetting a lost mark is allowed, and it is then no longer
+  counted.
+
+The write is let through because a rollback is the rare
+case. A statement that outgrows the cap and succeeds, which
+is nearly all of them, is not made to fail for the sake of
+one that might have been rolled back. The price is paid only
+by the rare one: its rollback becomes an abort of the whole
+transaction.
+
 **A savepoint is expensive by design.** Setting one is a
 mark and costs nothing. Holding one costs memory in
 proportion to the work done after it: one tuple, with the
 key inline, for every write until the last savepoint is
-forgotten or the transaction ends. A transaction that sets a
-savepoint and then writes tens of millions of keys holds
-gigabytes for it, and a rollback to that mark issues one
-delete for each.
+forgotten or the transaction ends, up to the cap above. A
+rollback to that mark issues one delete for each.
 
 This follows from two choices made elsewhere. Writes are
 eager (§5), so a version to be undone is already in RocksDB
@@ -998,11 +1022,13 @@ sm1::savepoint():                        # returns the new depth
 sm1::forget(depth):                      # SQL's RELEASE SAVEPOINT
     if no mark at depth: fail with SM_ERR_NOSAVEPOINT
     T.savepoints.truncate(depth - 1)   # that mark and those inside it
-    if T.savepoints is empty: T.undo.clear()       # nothing can reach it
+    T.lost_marks = min(T.lost_marks, len(T.savepoints))
+    if every mark left is lost: T.undo.clear()     # nothing can reach it
     # writes stay; locks stay, now held for the enclosing mark
 
 sm1::rollback(depth):
     if no mark at depth: fail with SM_ERR_NOSAVEPOINT # API.md divergence 8
+    if depth <= T.lost_marks: fail with SM_ERR_UNDOLIMIT
     m = T.savepoints[depth-1].undo
     for e in reverse(T.undo[m..]):
         db.Delete(cf(e.storeid), encode(e.key, ~T.xid, ~e.seq))
@@ -2354,6 +2380,7 @@ SM_ERR_DEADLOCK        victim of deadlock detection (§5.1)
 SM_ERR_NOTFOUND        store or key does not exist
 SM_ERR_DUPKEY          insert onto a live key (§5)
 SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
+SM_ERR_UNDOLIMIT       the savepoint was lost at savepoint_undo_bytes (§6.5)
 SM_ERR_NOTRANS         data op outside a transaction (§6.1)
 SM_ERR_INTRANS         op forbidden inside a transaction (§6.1)
 SM_ERR_PREPARED        illegal op on a prepared transaction (§8.4)
@@ -2390,7 +2417,8 @@ Two consequences for the implementation:
 ### 12.2 Configuration knobs
 
 `durability_sync` (default on), `group_commit_us`, `deadlock_ms`,
-`ssi_max_entries`, `commit_cache_entries`, `ts_lease`, plus
+`ssi_max_entries`, `commit_cache_entries`,
+`savepoint_undo_bytes`, `ts_lease`, plus
 pass-through RocksDB options (block cache size, write buffer
 size, compaction style). Bloom filters
 are worth enabling on store CFs, and `CF:txn` benefits from a
@@ -2694,6 +2722,8 @@ bullets below cover the rest of the engine.
   only while a savepoint is set, so **a savepoint costs
   memory in proportion to the work done after it** (§6.5):
   cheap to set, expensive to hold over a large statement.
+  `savepoint_undo_bytes` caps it, and past the cap the
+  savepoint is lost: a rollback to it becomes an abort.
   `SAVEPOINT.md` designs the fix, rolled-back writes
   marked dead by their `seq`, and it is not built. Bulk loads want a path of
   their own (`BULKLOAD.md`).

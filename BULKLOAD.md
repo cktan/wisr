@@ -220,7 +220,9 @@ mode.
   and there is nothing to decide.
 - **With one set**, a rollback to it could not undo the load.
   Until `sm1/SAVEPOINT.md` is built, such a rollback is
-  refused and the transaction is aborted.
+  refused and the transaction is aborted, as sm1 already
+  does for a savepoint whose undo list passed its cap
+  (`SM_ERR_UNDOLIMIT`, `sm1/SM1_DESIGN.md` §6.5).
 - **Once it is built**, a rollback marks a range of `seq`
   dead, and a load's versions are covered by it like any
   other. The refusal goes, with no code here.

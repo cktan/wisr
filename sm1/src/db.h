@@ -152,6 +152,9 @@ struct db_t {
   std::deque<uint64_t> cache_order;             /* xids, oldest entry first */
   size_t cache_entries = 0;
 
+  /* The most one transaction's undo list may hold (§6.5). */
+  size_t undo_max_bytes = 0;
+
   /*
    * Set when a status write fails (§8.2): the outcome of that
    * commit is unknown until a reopen, so writes, commits, and

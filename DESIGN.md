@@ -321,7 +321,7 @@ design:
   | `IO`, `PERMISSION` | `58030` | `io_error` |
   | `CORRUPT` | `XX001` | `data_corrupted` |
   | `NOTNULL` | `23502` | `not_null_violation` |
-  | `KEYTOOLONG`, `ROWTOOLONG` | `54000` | `program_limit_exceeded` |
+  | `KEYTOOLONG`, `ROWTOOLONG`, `UNDOLIMIT` | `54000` | `program_limit_exceeded` |
   | `INVALID`, `NOTRANS`, `INTRANS` | `XX000` | `internal_error` (a bug in the glue) |
   | `EXCEPTION` | `XX000` | `internal_error` (a bug in the stack) |
 - **Running out of memory inside sm1 is fatal to the process,

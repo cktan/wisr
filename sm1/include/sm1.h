@@ -646,8 +646,16 @@ int savepoint(session_t* session);
  * reads performed and then rolled back still count towards
  * serialization checking. Conservative, never unsafe.
  *
+ * What a rollback deletes is remembered in memory, up to the
+ * savepoint_undo_bytes option for each transaction. A
+ * transaction that writes more than that while a savepoint is
+ * set keeps writing, and the savepoints then set are lost: a
+ * rollback to one fails with SM_ERR_UNDOLIMIT, changes
+ * nothing, and leaves the transaction to be aborted. A
+ * savepoint set afterwards works as usual.
+ *
  * Errors: SM_ERR_NOSAVEPOINT (no savepoint at that depth),
- * SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ * SM_ERR_UNDOLIMIT, SM_ERR_NOTRANS, SM_ERR_PREPARED.
  */
 int rollback(session_t* session, int depth);
 

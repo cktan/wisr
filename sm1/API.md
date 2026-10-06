@@ -83,8 +83,11 @@ typedef enum sm_errnum_t {
     /* sm3's: constraints */
     SM_ERR_NOTNULL       = 24,  /* a NULL in a NOT NULL column */
 
+    /* sm1's: NOT retryable; the transaction is to be aborted */
+    SM_ERR_UNDOLIMIT     = 25,  /* the savepoint can no longer be rolled back to */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_NOTNULL
+    SM_ERR_LAST          = SM_ERR_UNDOLIMIT
 } sm_errnum_t;
 
 /* sm1.h */
@@ -288,6 +291,7 @@ typedef struct sm_options_t {
     long long   ts_lease;              /* default 1000000 */
     const char* rocksdb_options;       /* default NULL: RocksDB's */
     int         commit_cache_entries;  /* default 65536 */
+    long long   savepoint_undo_bytes;  /* default 64 MB */
 } sm_options_t;
 
 /* sm1.h */
@@ -321,6 +325,12 @@ waiting on followers.
 transaction id to commit timestamp that spares readers a
 status-table lookup (SM1_DESIGN.md §3.4). It must be at least
 1; a smaller cache costs lookups, never correctness.
+
+`savepoint_undo_bytes` caps what one transaction keeps in
+memory to roll back to its savepoints (SM1_DESIGN.md §6.5).
+Past it the transaction keeps writing, a warning is logged,
+and the savepoints then set can no longer be rolled back to.
+It must be at least 1.
 
 ### Logging
 
@@ -871,8 +881,17 @@ back still count towards serialization checking and can still
 cause `SM_ERR_SERIALIZATION` at commit. This is
 conservative and safe, never unsafe.
 
+**A savepoint can be lost.** What a rollback deletes is
+remembered in memory, up to `savepoint_undo_bytes` for each
+transaction. A transaction that writes more than that while a
+savepoint is set keeps writing, and the savepoints then set
+are lost: a rollback to one fails with `SM_ERR_UNDOLIMIT`,
+changes nothing, and leaves the transaction to be aborted. A
+savepoint set afterwards works as usual, and forgetting a
+lost one is allowed.
+
 Errors: `SM_ERR_NOSAVEPOINT` (no savepoint at that depth),
-`SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
+`SM_ERR_UNDOLIMIT`, `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
 
 ### int sm1::forget(sm1::session_t* session, int depth)
 

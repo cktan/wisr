@@ -63,6 +63,7 @@ struct sm1::session_t {
     uint32_t seq;
   };
   std::vector<undo_t> undo;
+  size_t undo_bytes = 0; /* what undo holds, keys included */
 
   /*
    * The savepoint stack (§6.5): one mark per savepoint, in
@@ -78,6 +79,12 @@ struct sm1::session_t {
     uint64_t scan_id = 0;    /* cursors with a larger id came later */
   };
   std::vector<mark_t> savepoints;
+  /*
+   * The marks at depth 1..lost_marks can no longer be rolled
+   * back to: the undo list passed savepoint_undo_bytes while
+   * they were set, and was dropped (§6.5).
+   */
+  size_t lost_marks = 0;
 
   /*
    * Why the transaction must fail at its next call (§5.1):
@@ -165,6 +172,9 @@ enum write_op_t { WRITE_INSERT, WRITE_UPDATE, WRITE_DELETE };
 
 /* Fail with NOTRANS unless session has an active transaction. */
 int xct_check_active(sm1::session_t *session);
+
+/* Drop session's undo list, which passed the cap; its marks are lost. */
+void xct_undo_overflow(sm1::session_t *session);
 
 /* The view a statement starting now reads at (§6.2, §10.1). */
 view_t xct_view(sm1::session_t *session);
