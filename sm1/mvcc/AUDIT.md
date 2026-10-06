@@ -20,9 +20,11 @@ Grittner's commit-order and read-only refinements, on
 **Method.** Every expected outcome was re-derived from
 `MVCC.md` §1 and `SM1_DESIGN.md` §7.3 by hand — the edge set
 of each history, then the abort rule applied to it — and
-compared with the transcript. Nothing was built and nothing
-was run; this is a paper audit, deliberately independent of
-what the engine does.
+compared with the transcript. The derivation was done on
+paper, deliberately independent of what the engine does:
+§1 to §7 would read the same against an engine that was
+wrong. §8 records what the engine in fact does, measured
+afterwards.
 
 **Verdict: no incorrect expected output was found.** All 106
 scripts and their transcripts are correct per the documented
@@ -212,13 +214,32 @@ unique violation, matching `b06` and `b12`.
    document records are all still accurate, `c17`'s open T3
    included.
 
-## 8. What this audit does not establish
+## 8. The engine, and whether the suite still asserts
 
-It does not establish that the engine produces these
-transcripts — that is `make test`, and it is worth running
-after any change to concurrency control, the more so after a
-commit that rewrites `src/ssi.cc` and regenerates eleven
-transcripts.
+Two measurements were taken after the audit above, both at
+`2ae8668`.
+
+**`make -j4 test` passes.** All 106 scripts match `good/`,
+the eleven transcripts the refinement regenerated included;
+163 unit cases and 21,041 assertions pass, `test_ssi.cc`
+among them, as do the four stress scenarios and the
+examples. So the engine does produce these transcripts, and
+the audit's verdict and the engine's behaviour agree.
+
+**The suite did not lose assertive power.** `MVCC.md` §9's
+three deliberate breakages were re-run, since the refinement
+made three scenarios stop failing (`c17`, `c26`, `c27`) and
+that is exactly the shape of a suite going quiet. None of the
+three breakages escapes: they are caught by 17, 18 and 17
+scenarios. Breakage A is the one whose old count is
+recoverable, and it is unchanged — family C still catches it
+14 times, the three extra being P scripts added since. The
+counts for B and C are not comparable to the old 11 and
+"5 of the 6", because those were recorded without saying what
+the edit was; §9 now names all three edits so the numbers can
+be reproduced.
+
+## 9. What this audit does not establish
 
 It does not re-derive the C++ scenarios (`e01` to `e03`,
 `e06`), and it inherits `MVCC.md` §9's limits: these are

@@ -536,10 +536,20 @@ fixing.
 **The scenarios were checked against a broken engine, not
 only a working one.** A suite that asserts nothing passes
 just as quietly as one that asserts everything, so three
-deliberate breakages were run against it: removing the SIREAD
-record a point read leaves fails 14 scenarios; removing the
-first-committer-wins check fails 11; breaking snapshot
-visibility fails 5 of the 6 it should. Those counts are worth
-re-measuring after a change to the engine's concurrency
-control -- if a breakage stops failing, a scenario has
-stopped asserting.
+deliberate breakages are run against it. Each is one edit to
+`src/access.cc`, named here so the count can be reproduced:
+
+| Breakage | The edit | Scenarios that catch it |
+|---|---|---|
+| **A** — a point read leaves no SIREAD | drop the `ssi_on_read` call in `access_read` | 17: the 14 of family C, and p02, p09, p10 |
+| **B** — no first-committer-wins | drop the `SM_ERR_CONFLICT` branch in `access_write` taken when `commit_ts > snapshot_ts` | 18: 16 of family B, and f06, p04 |
+| **C** — no snapshot visibility | in `visible()`, drop both the `v.wts > view.snapshot_ts` short circuit and the closing `commit_ts <= view.snapshot_ts`, so any committed version shows | 17: 12 of family A, c12, c16, c23, p02, p05 |
+
+Re-measure after a change to the engine's concurrency
+control: if a breakage stops failing, a scenario has stopped
+asserting. Measured at `2ae8668`, which is the first
+measurement to name its edits — the earlier counts of 14, 11
+and "5 of the 6 it should" were recorded without them, so
+only A's is recoverable, and it is unchanged: family C still
+catches it 14 times, and the three P scripts are additions
+since.
