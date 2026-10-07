@@ -386,21 +386,157 @@ are kept in sm2's own encoding of the column's type.
 Unlike an index's evaluator blob, sm3 reads and writes this
 format, and it is declared in `sm3/include/sm3.h`.
 
-- **Under keys of their own**, not in the table's definition.
-  `sm_analyze` must not take the schema lock X, which every
-  reader and writer of the table waits for. Statistics change
-  no definition, and a reader that sees last week's histogram
-  is not wrong.
-- **In memory with the catalog**, read at every plan, and
-  written through in the caller's transaction.
-- **Gone with what they describe.** Dropping a table drops
-  its statistics; dropping a column, or an index, drops that
-  one's.
-
 Heap bytes on disk beside rows times average row bytes says
 how much of the table is compression, old versions and
 tombstones. That ratio is an LSM's bloat, and it falls out of
 what is recorded.
+
+**Everything below follows from one asymmetry.** A stale
+definition is corruption: read last week's column list after a
+`DROP COLUMN` committed and a row is decoded wrong. A stale
+histogram is a worse plan and nothing else. The catalog pays
+for correctness with the schema lock and a session overlay;
+statistics need neither, and most of what follows is the
+saving.
+
+**On disk: store 0, under a key kind of their own.** The
+catalog is a key-value map in store 0 under the prefix `"U"`,
+reached through sm2's `catkv_*` (`CATALOG.md` §1), and
+statistics go there like everything else — written in the
+caller's transaction, so they commit, roll back and survive a
+crash with it, and sm3 writes no undo of its own.
+
+- **A kind of their own**, not the `TABLE` blob. A table is
+  one catalog entry and every DDL rewrites it, so writing
+  statistics into it would make `sm_analyze` contend with DDL
+  for the same key under first-committer-wins, and mutate the
+  definition its readers hold. `CATALOG.md` §2's kinds run to
+  7 and are frozen because they are on disk; statistics are
+  kind 8, and that document has to say so.
+- **One entry a table**, not one a column. `sm_analyze` writes
+  every column at once and a plan reads every column at once.
+  PostgreSQL's per-column granularity suits a `pg_statistic`
+  it reaches through an index; this is a blob.
+- **Gone with what they describe.** Dropping a table drops its
+  statistics; dropping a column, or an index, drops that one's.
+
+**In memory: beside the catalog, not in it.** A map from table
+oid to an immutable `stats_t`, held by
+`std::shared_ptr<const stats_t>`, loaded **lazily** on the
+first plan that wants a table and never edited after it is
+built. A new `sm_analyze` publishes by swapping the pointer.
+
+This is PostgreSQL's own shape, and for its reasons. Relation-
+level numbers ride in the relcache with the `pg_class` row;
+column distributions sit in a *different* cache, the syscache
+`STATRELATTINH`, populated per column on first use and not
+loaded with the relation. The fork sets
+`get_relation_stats_hook` anyway, so its statistics lookup is
+already a separate path from its definition lookup.
+
+Lazily, because the sizes differ by two orders of magnitude.
+At the default target a column's statistics run about 1.2 KB —
+101 histogram bounds, up to 100 common values, their
+frequencies — so a twenty-column table is some 24 KB and a
+thousand tables some 24 MB, against definitions that are
+bytes. `CATALOG.md` §7 lists startup cost for thousands of
+tables as unmeasured and open; loading statistics eagerly
+would be most of it, and none of it is wanted until something
+plans against that table. The definition must be there
+eagerly, because the schema lock is taken before it is read.
+Statistics are under no such rule.
+
+**Not in the session overlay.** The overlay exists to give a
+transaction its own correct view of a definition, at the cost
+of a publish that cannot be made atomic with sm1's commit. A
+transaction's own statistics are not worth that: see the
+truncate below, where the one case that looked as though it
+needed two versions turns out not to.
+
+**Written in the transaction, published after it commits.**
+The in-memory publish and the sm1 commit are two steps and
+cannot be one. For a definition the schema lock covers the
+gap, holding readers out until the publish is done. For
+statistics there is nothing to cover: publish after the commit
+returns, and the window where the store is new and the cache
+is old is a stale read, which is allowed. If the process dies
+in that window the store is right and the cache reloads.
+
+**Never read at the planner's snapshot.** It is tempting —
+sm1 would then give the two versions, the abort and the
+savepoint for nothing, which is exactly how PostgreSQL's MVCC
+catalog behaves. Two reasons not to.
+
+- **Cost.** An sm1 read and a blob decode for every table of
+  every plan. Avoiding that is why the catalog is in memory
+  at all.
+- **It would enrol statistics in SSI**, which is the serious
+  one. A SERIALIZABLE transaction's read leaves a SIREAD on
+  the row (§1), and `catkv_get` is `sm1::read`. Every planner
+  reading a table's statistics would take one, and
+  `sm_analyze` writing them would make an rw-edge to every
+  planner concurrent with it: metadata reads manufacturing
+  dangerous structures, and `ANALYZE` a serialization failure
+  waiting to happen. `catkv_get_latest` is worse, being
+  `sm1::read_latest`, which holds a lock — one lock on one key
+  per plan, which is principle 5's hot key. The catalog
+  already avoids this class of thing on purpose: the schema
+  lock sits on a `LOCK` key no one writes, so that taking it
+  "never fails on a newer commit, at any level"
+  (`CATALOG.md` §2). Reading statistics per plan through sm1
+  would put the snapshot sensitivity back.
+
+**What a `TRUNCATE` does, and why it needs no versioning.**
+`cat_truncate_table` makes a new empty store, writes the new
+storeid into the table's record, publishes the rebuilt
+definition to the session's overlay, and drops the old store
+at commit (`src/catalog/ddl.cc`, `SM3_DESIGN.md` §4). A
+table's oid is stable but the store holding its rows is a
+field of its definition, and the definition is already
+overlay-versioned. So after an uncommitted truncate the
+truncating transaction resolves the table to the new, empty
+store and every other to the old one, and both ask sm1 the
+same question of different stores:
+
+| asks for the heap's bytes | resolves through | gets |
+| --- | --- | --- |
+| the truncating transaction | its overlay | the new store, 0 |
+| any other | the shared catalog | the old store, its bytes |
+
+Nothing in the statistics path learns that a truncate
+happened, and no row count is held twice, because §3.1 and
+§3.2 do not store one: it is derived from whichever store the
+asker's definition points at. An abort is free the same way —
+`mkstore` and `rmstore` are transactional, so the old store
+stays and the overlay is discarded.
+
+The recorded distributions are keyed by oid, which a truncate
+does not change, so they survive it and describe rows that are
+gone. PostgreSQL does the same — measured, `pg_stats` came
+through a `TRUNCATE` intact (§7) — and it is harmless there
+because a live row count of nearly nothing multiplies every
+selectivity into nearly nothing. The one number that does not
+get that protection is **average row width**, which §3.7 hands
+to the planner unscaled; after a truncate it is the old
+table's. Small, and the only place the free ride stops.
+
+**A truncated table is not an empty one.** PostgreSQL sets
+`reltuples` to -1 on truncate, which is its never-analyzed
+marker, and the truncating transaction then plans 2,260 rows
+rather than 0 (§7). That is deliberate: a truncated table is
+usually about to be refilled, and planning it empty invites a
+nested loop that turns bad the moment it is. An AM callback
+returning 0 tuples from a live size of 0 would be more
+aggressive than PostgreSQL, so §3.7's floor on `pages` wants a
+companion on `tuples`, and whoever writes
+`sm3/SM3_DESIGN.md` §6 should choose it rather than inherit it.
+
+**The cost of keeping them separate.** Statistics inside the
+catalog entry would go when it went. A side structure has to
+be swept on `DROP`, which is code. sm3's oids come from a
+sequence and are not reused (`CATALOG.md` §1), so an entry
+left behind is never mistaken for another table's — it is
+wasted memory until the sweep, not a wrong answer.
 
 ### 3.7 What the host derives
 
@@ -472,7 +608,8 @@ would need the stack to decide when, and nothing here does.
 | sm3 | on an open table: the heap's size, an index's size, and the rowno limit `N` | §3.1, §3.2 |
 | sm3 | the sampler over runs of rownos | §3.3 |
 | sm3 | the estimators, ported from PostgreSQL | §3.4 |
-| sm3 | a catalog entry kind for statistics, outside the schema lock | §3.6 |
+| sm3 | catalog kind 8 for statistics, one entry a table, outside the `TABLE` blob and the schema lock | §3.6 |
+| sm3 | the in-memory statistics map, beside the catalog: immutable, lazily loaded, published after commit | §3.6 |
 | sm3 | `analyze`, over those four | §3.6 |
 | top | `sm_analyze`, and the calls that read, in `include/sm.h` | all |
 | `rel` | an `analyze` verb and one that prints statistics | testing |
@@ -698,9 +835,13 @@ make it on purpose.
 3. The sm1 primitives of §4, with sm2 and sm3 over them.
    → verify: a table's and an index's size follow the rows
    loaded; `N` is the sequence's last value.
-4. Statistics in the catalog.
-   → verify: they survive a restart, and writing them blocks
-   no reader or writer of the table.
+4. Statistics in the catalog, and the map beside it.
+   → verify: they survive a restart; writing them blocks no
+   reader or writer of the table; a table's are loaded on the
+   first plan that wants them and not at startup; an
+   `sm_analyze` that aborts leaves the old ones in place; and
+   a planner holding one is unaffected by another publishing
+   the next.
 5. The sampler, and the row count from it.
    → verify: against a full count, on dense and sparse tables.
 6. The estimators, one statistic at a time, tests first.
