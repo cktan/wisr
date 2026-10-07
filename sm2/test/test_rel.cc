@@ -490,8 +490,8 @@ TEST_CASE("rel_lock locks a row without writing it") {
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm2::rel_lock(ra, rowno, sm1::lockmode_t::shared) == 0);
-  CHECK(sm2::rel_lock(rb, rowno, sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm2::rel_lock(ra, rowno, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm2::rel_lock(rb, rowno, sm1::SM_LOCKMODE_SH) == 0);
   d = datums_of(schema, v2);
   CHECK(sm2::rel_update(rb, rowno, d.d(), d.null()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);

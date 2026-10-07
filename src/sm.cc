@@ -34,15 +34,6 @@ static_assert(static_cast<int>(sm1::xctlevel_t::repeatable_read) ==
               SM_XCT_REPEATABLE_READ);
 static_assert(static_cast<int>(sm1::xctlevel_t::serializable) ==
               SM_XCT_SERIALIZABLE);
-static_assert(static_cast<int>(sm1::lockmode_t::shared) == SM_LOCK_SHARED);
-static_assert(static_cast<int>(sm1::lockmode_t::exclusive) ==
-              SM_LOCK_EXCLUSIVE);
-static_assert(static_cast<int>(sm1::lockmode_t::intent_shared) ==
-              SM_LOCK_INTENT_SHARED);
-static_assert(static_cast<int>(sm1::lockmode_t::intent_exclusive) ==
-              SM_LOCK_INTENT_EXCLUSIVE);
-static_assert(static_cast<int>(sm1::lockmode_t::shared_intent_exclusive) ==
-              SM_LOCK_SHARED_INTENT_EXCLUSIVE);
 static_assert(sm3::nsp_pg_catalog == SM_NSP_PG_CATALOG);
 static_assert(sm3::nsp_public == SM_NSP_PUBLIC);
 static_assert(static_cast<int>(sm3::index_state_t::building) ==
@@ -1024,8 +1015,7 @@ int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
     }
     auto t = std::make_unique<sm_tbl_t>();
     t->session = session;
-    if (sm3::tbl_open(session->sm3, oid, static_cast<sm1::lockmode_t>(mode),
-                      t->table) != 0) {
+    if (sm3::tbl_open(session->sm3, oid, mode, t->table) != 0) {
       return -1;
     }
     t->def = api_def(sm3::tbl_def(t->table));
@@ -1112,7 +1102,7 @@ int sm_tbl_lock(sm_tbl_t *tbl, uint64_t rowno, sm_lockmode_t mode) {
     if (!tbl) {
       return null_arg("sm_tbl_lock", "tbl");
     }
-    return sm3::tbl_lock(tbl->table, rowno, static_cast<sm1::lockmode_t>(mode));
+    return sm3::tbl_lock(tbl->table, rowno, mode);
   });
 }
 

@@ -100,7 +100,9 @@ int catkv_erase(catkv_t *kv, std::string_view key) {
 /* Lock a catalog key; see sm2.h. */
 int catkv_lock(catkv_t *kv, std::string_view key, sm1::lockmode_t mode) {
   return catch_nomem([&] {
-    return sm1::lock(kv->session, catalog_store, upper_key(key), mode);
+    // A real catalog row, so a row lock: it meets a write of it.
+    return sm1::lock(kv->session, sm1::LOCKTYPE_ROW, catalog_store,
+                     upper_key(key), mode);
   });
 }
 

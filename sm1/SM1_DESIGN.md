@@ -609,8 +609,8 @@ the commit record does (§8.2).
 
 ### 5.1 Row locks
 
-An in-memory hash table, `(storeid, userkey)` → the transactions
-holding it, each in a mode of its own. The modes are **Gray's**,
+An in-memory hash table, `(locktype, storeid, userkey)` → the
+transactions holding it, each in a mode of its own. The modes are **Gray's**,
 for locking at several granularities: IS, IX, S, SIX and X, with
 his compatibility table (`sm1.h`, `lockmode_t`). sm1 keeps no
 hierarchy; a caller that makes one key stand for a larger object

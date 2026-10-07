@@ -118,11 +118,12 @@ table locks are:
 - so once a transaction holds its IS or IX lock, the definition
   in memory cannot change under it. A catalog served from
   memory must take this lock, or DDL has nothing to wait on.
-  The schema row is the table's `LOCK` key, which no one
-  writes (`CATALOG.md` §2), so `sm1::lock` on it never fails
-  on a newer commit, at any level: the lock alone is what
+  The lock is an `sm1::LOCKTYPE_SCHEMA` lock on the table's
+  oid: a name in no store, which nothing writes, so
+  `sm1::lock` reads no store and checks no version and cannot
+  fail on a newer commit at any level. The lock alone is what
   protects the reader, and the in-memory definition, not a
-  read of the row, is what it uses. `cat_lock_table` takes it.
+  read of a row, is what it uses. `cat_lock_table` takes it.
 
 Deadlocks between DDL and DML are found by sm1's detector like
 any other.

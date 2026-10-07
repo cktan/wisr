@@ -273,8 +273,10 @@ TEST_CASE("two upgraders on one row deadlock, and the younger one loses") {
   sm1::session_t *b = f.open();
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(a, g_store, "x", sm1::lockmode_t::shared) == 0);
-  REQUIRE(sm1::lock(b, g_store, "x", sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
+  REQUIRE(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
 
   int rc_a = -2, rc_b = -2, err_b = 0;
   std::thread ta([&] { rc_a = set(a, "x", "a"); });
@@ -300,8 +302,7 @@ TEST_CASE(
   // 2. B updates "x" and commits.
   // 3. A's sm1::lock on "x" fails with SM_ERR_CONFLICT, in either
   //    mode, and its transaction is aborted.
-  for (sm1::lockmode_t mode :
-       {sm1::lockmode_t::shared, sm1::lockmode_t::exclusive}) {
+  for (sm1::lockmode_t mode : {sm1::SM_LOCKMODE_SH, sm1::SM_LOCKMODE_EX}) {
     CAPTURE(mode);
     lock_fixture_t f;
     sm1::session_t *a = f.open();
@@ -313,7 +314,7 @@ TEST_CASE(
     REQUIRE(set(b, "x", "b") == 0);
     REQUIRE(sm1::commit(b) == 0);
 
-    CHECK(sm1::lock(a, g_store, "x", mode) == -1);
+    CHECK(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", mode) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
     CHECK(sm1::retryable() == 1);
     CHECK(sm1::abort(a) == -1);
@@ -351,7 +352,7 @@ TEST_CASE(
 
   // A writer reads the schema under a shared lock, then writes.
   REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(w, cat, "S", sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(w, sm1::LOCKTYPE_ROW, cat, "S", sm1::SM_LOCKMODE_SH) == 0);
   CHECK(get(w, cat, "S") == "noindex");
   put(w, g_store, "w-row", "1");
   REQUIRE(sm1::commit(w) == 0);
@@ -365,7 +366,7 @@ TEST_CASE(
   std::atomic<bool> returned{false};
   int rc = -2, err = 0;
   std::thread tx([&] {
-    rc = sm1::lock(x, cat, "S", sm1::lockmode_t::shared);
+    rc = sm1::lock(x, sm1::LOCKTYPE_ROW, cat, "S", sm1::SM_LOCKMODE_SH);
     err = sm1::errnum();
     returned = true;
   });
@@ -470,9 +471,9 @@ TEST_CASE("Gray's lock modes grant and block as their matrix says") {
   // 2. A compatible b is granted within 150 ms; a conflicting one
   //    is still waiting then.
   // 3. A commits; B's request is granted, and B commits.
-  using m = sm1::lockmode_t;
-  const m modes[] = {m::intent_shared, m::intent_exclusive, m::shared,
-                     m::shared_intent_exclusive, m::exclusive};
+  const sm1::lockmode_t modes[] = {sm1::SM_LOCKMODE_IS, sm1::SM_LOCKMODE_IX,
+                                   sm1::SM_LOCKMODE_SH, sm1::SM_LOCKMODE_SIX,
+                                   sm1::SM_LOCKMODE_EX};
   // Gray's table, written out apart from the lock manager's.
   const bool ok[5][5] = {
       {true, true, true, true, false},     {true, true, false, false, false},
@@ -486,12 +487,12 @@ TEST_CASE("Gray's lock modes grant and block as their matrix says") {
       CAPTURE(i);
       CAPTURE(j);
       REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-      REQUIRE(sm1::lock(a, g_store, "x", modes[i]) == 0);
+      REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", modes[i]) == 0);
       REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
       std::atomic<bool> returned{false};
       int rc = -2;
       std::thread tb([&] {
-        rc = sm1::lock(b, g_store, "x", modes[j]);
+        rc = sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", modes[j]);
         returned = true;
       });
       settle();
@@ -512,19 +513,21 @@ TEST_CASE("a holder asking for more converts to the mode covering both") {
   //    granted and C's IX waits until A commits.
   // 2. A holds "y" IS, then writes "y", which converts it to X: B's
   //    IS on "y" waits until A commits.
-  using m = sm1::lockmode_t;
   lock_fixture_t f;
   sm1::session_t *a = f.open(), *b = f.open(), *c = f.open();
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, g_store, "x", m::intent_exclusive) == 0);
-  REQUIRE(sm1::lock(a, g_store, "x", m::shared) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_IX) ==
+          0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(sm1::lock(b, g_store, "x", m::intent_shared) == 0);
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_IS) ==
+        0);
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::read_committed) == 0);
   std::atomic<bool> returned{false};
   int rc = -2;
   std::thread tc([&] {
-    rc = sm1::lock(c, g_store, "x", m::intent_exclusive);
+    rc = sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_IX);
     returned = true;
   });
   settle();
@@ -536,12 +539,13 @@ TEST_CASE("a holder asking for more converts to the mode covering both") {
   REQUIRE(sm1::commit(c) == 0);
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm1::lock(a, g_store, "y", m::intent_shared) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_IS) ==
+          0);
   REQUIRE(set(a, "y", "1") == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   returned = false;
   std::thread tb([&] {
-    rc = sm1::lock(b, g_store, "y", m::intent_shared);
+    rc = sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_IS);
     returned = true;
   });
   settle();
@@ -563,19 +567,24 @@ TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
   // 3. A key that does not exist is lockable.
   lock_fixture_t f;
   sm1::session_t *s = f.open();
-  CHECK(sm1::lock(nullptr, g_store, "x", sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(nullptr, sm1::LOCKTYPE_ROW, g_store, "x",
+                  sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, g_store, "x", sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(s, g_store, "x", (sm1::lockmode_t)7) == -1);
+  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "x", (sm1::lockmode_t)7) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, 0, "x", sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, 0, "x", sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm1::lock(s, g_store + 999, "x", sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store + 999, "x",
+                  sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm1::lock(s, g_store, "absent", sm1::lockmode_t::exclusive) == 0);
+  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "absent",
+                  sm1::SM_LOCKMODE_EX) == 0);
   REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
 }
@@ -633,19 +642,25 @@ TEST_CASE(
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(a, g_store, "x", sm1::lockmode_t::shared) == 0);
-  CHECK(sm1::lock(b, g_store, "x", sm1::lockmode_t::exclusive) == -1);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
-  CHECK(sm1::lock(b, g_store, "x", sm1::lockmode_t::shared) == 0);
-  CHECK(sm1::lock(c, g_store, "x", sm1::lockmode_t::exclusive) == -1);
+  CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+        0);
+  CHECK(sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
   REQUIRE(sm1::commit(a) == 0);
   REQUIRE(sm1::commit(b) == 0);
-  CHECK(sm1::lock(c, g_store, "x", sm1::lockmode_t::exclusive) == 0);
+  CHECK(sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_EX) ==
+        0);
   REQUIRE(sm1::commit(c) == 0);
   REQUIRE(sm1::set_qa_nowait(c, false) == 0);
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(c, g_store, "x", sm1::lockmode_t::shared) == 0);
+  CHECK(sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+        0);
   REQUIRE(sm1::commit(c) == 0);
   CHECK(sm1::set_qa_nowait(nullptr, true) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
@@ -713,7 +728,7 @@ TEST_CASE("a write refused with SM_ERR_UPDATED keeps the row locked until "
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   sm1::lockmode_t mode;
   REQUIRE(wisr::lock_held(t, g_store, "x", &mode));
-  CHECK(mode == sm1::lockmode_t::exclusive);
+  CHECK(mode == sm1::SM_LOCKMODE_EX);
 
   REQUIRE(sm1::set_qa_nowait(o, true) == 0);
   REQUIRE(sm1::begin(o, sm1::xctlevel_t::read_committed) == 0);

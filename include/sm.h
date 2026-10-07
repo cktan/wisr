@@ -48,6 +48,7 @@
 #include <vector>
 
 #include "sm_error.h"
+#include "sm_lock.h"
 #include "sm_options.h"
 
 /*
@@ -426,15 +427,6 @@ void sm_idx_scanend(sm_idx_scan_t* scan);
 
 /* ---- the catalog: sm3's ---- */
 
-/* sm1's lock modes, Gray's five (sm1::lockmode_t). */
-enum sm_lockmode_t {
-    SM_LOCK_SHARED                  = 0,
-    SM_LOCK_EXCLUSIVE               = 1,
-    SM_LOCK_INTENT_SHARED           = 2,
-    SM_LOCK_INTENT_EXCLUSIVE        = 3,
-    SM_LOCK_SHARED_INTENT_EXCLUSIVE = 4
-};
-
 /* The built-in namespaces' oids (sm3::nsp_pg_catalog, nsp_public). */
 #define SM_NSP_PG_CATALOG 1
 #define SM_NSP_PUBLIC     2
@@ -594,7 +586,7 @@ typedef struct sm_tbl_t sm_tbl_t;
 /*
  * Open the table oid in the session's transaction, taking its
  * schema lock in mode, held to the end of the transaction:
- * SM_LOCK_INTENT_SHARED to read its rows, SM_LOCK_INTENT_EXCLUSIVE
+ * SM_LOCKMODE_IS to read its rows, SM_LOCKMODE_IX
  * to write them. Its definition cannot change until then. A table
  * dropped while the caller waited is SM_ERR_NOTFOUND. The handle
  * is good for this transaction only; close it before or after the
@@ -652,10 +644,10 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
 
 /*
  * Lock the row at rowno in mode without writing it, to the end of
- * the transaction: SM_LOCK_SHARED, as a foreign key check locks the
+ * the transaction: SM_LOCKMODE_SH, as a foreign key check locks the
  * parent row and SELECT ... FOR SHARE a row it read, which other
  * readers of the key may share and a writer waits for; or
- * SM_LOCK_EXCLUSIVE, as SELECT ... FOR UPDATE, which needs the
+ * SM_LOCKMODE_EX, as SELECT ... FOR UPDATE, which needs the
  * table opened to write. The row need not exist. It waits as a
  * write does.
  */
@@ -664,7 +656,7 @@ int sm_tbl_lock(sm_tbl_t* tbl, uint64_t rowno, sm_lockmode_t mode);
 /*
  * Empty the table, as SQL's TRUNCATE: its rows and every index's
  * entries go, in the table's transaction, at the same cost however
- * many there are. The table must be opened SM_LOCK_EXCLUSIVE,
+ * many there are. The table must be opened SM_LOCKMODE_EX,
  * SM_ERR_INVALID if not. Columns, indexes and the row numbering
  * are kept, so new rows go on from the last rowno handed out. The
  * handle stays open on the emptied table, and sm_tbl_def gives its

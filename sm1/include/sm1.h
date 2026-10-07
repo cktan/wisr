@@ -44,6 +44,7 @@
 #define SM1_H
 
 #include "sm_error.h"
+#include "sm_lock.h"
 #include "sm_options.h"
 
 #include <cstddef>
@@ -472,41 +473,51 @@ int abort(session_t* session);
 bool in_doubt(session_t* session);
 
 /*
- * The mode of a row lock taken by sm1::lock(): Gray's modes for
- * locking at several granularities. The intention modes lock a
- * key that stands for a larger object -- a table's catalog row,
- * say -- to announce locks on the rows below it; sm1 keeps no
- * hierarchy itself, only this conflict table on each key. A
- * write takes the key it writes EXCLUSIVE.
- *
- *              IS   IX   S    SIX  X
- *      IS      ok   ok   ok   ok   --
- *      IX      ok   ok   --   --   --
- *      S       ok   --   ok   --   --
- *      SIX     ok   --   --   --   --
- *      X       --   --   --   --   --
- *
- *   intent_shared            IS: will read below it
- *   intent_exclusive         IX: will write below it
- *   shared                   S: reads it, and all below it
- *   shared_intent_exclusive  SIX: S, and will write below it
- *   exclusive                X: no one else holds it in any mode
- *
- * The values are persisted in a prepared transaction's lock set,
- * so they never change.
+ * The mode a lock is taken in, Gray's five, with the conflict
+ * table and what each mode means in the root's sm_lock.h. They
+ * are defined there, as the error codes are, so the C wrapper
+ * and sm1 share one enum: lockmode_t names it here, and the
+ * using-enum brings its SM_LOCKMODE_* values into namespace
+ * sm1. A write takes the name it writes EXCLUSIVE.
  */
+using lockmode_t = ::sm_lockmode_t;
+using enum ::sm_lockmode_t;
 
-enum class lockmode_t {
-  shared = 0,
-  exclusive = 1,
-  intent_shared = 2,
-  intent_exclusive = 3,
-  shared_intent_exclusive = 4
+/*
+ * What a lock names, which decides whether it touches data at
+ * all (LOCK.md). The values are persisted in a prepared
+ * transaction's lock set, so they never change.
+ *
+ *   LOCKTYPE_ROW     a key in a store. The lock meets the
+ *                    write path: it waits for an uncommitted
+ *                    writer of the key, and once held it runs
+ *                    the currency check below. storeid and key
+ *                    must name a live store and a legal key.
+ *   LOCKTYPE_SCHEMA  a name in no store, which nothing ever
+ *                    writes -- what a level above locks to
+ *                    stand for an object of its own (sm3's
+ *                    table definitions). No store is read, no
+ *                    version is checked, and storeid is part of
+ *                    the name and nothing more; pass 0 unless
+ *                    the name needs it.
+ *   LOCKTYPE_OBJECT  reserved for another such namespace; no
+ *                    caller yet.
+ *
+ * Two locks of different types never conflict, however equal
+ * their storeid and key.
+ */
+enum locktype_t : uint8_t {
+  LOCKTYPE_ROW = 0,
+  LOCKTYPE_SCHEMA = 1,
+  LOCKTYPE_OBJECT = 2
 };
 
 /*
  * Lock a row without writing it: SQL's SELECT ... FOR SHARE
- * and FOR UPDATE. The key need not exist.
+ * and FOR UPDATE. The key need not exist. With locktype_t
+ * other than row it locks a name instead, and the paragraphs
+ * below about the store, the uncommitted writer and the
+ * currency check do not apply.
  *
  * The call BLOCKS while another transaction holds the lock in
  * a conflicting mode (lockmode_t's table), exactly as a write
@@ -540,7 +551,7 @@ enum class lockmode_t {
  * SM_ERR_BLOCKED (under sm1::set_qa_nowait), SM_ERR_NOTFOUND
  * (store), SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID.
  */
-int lock(session_t* session, uint64_t storeid,
+int lock(session_t* session, locktype_t type, uint64_t storeid,
          std::string_view key, lockmode_t mode);
 
 /*

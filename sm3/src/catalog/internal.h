@@ -175,7 +175,7 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
  * §2): sm1's row lock on its LOCK key, which no one writes, so
  * the lock waits on DDL but never fails as a stale read would.
  */
-int lock_table(sm2::catkv_t *kv, uint64_t oid, sm1::lockmode_t mode);
+int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode);
 
 /* The collation oid, as session sees it; false if unknown. */
 bool session_collation(const session_t *s, uint64_t oid,

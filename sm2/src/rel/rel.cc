@@ -129,8 +129,8 @@ int rel_read(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
 int rel_lock(rel_t *rel, uint64_t rowno, sm1::lockmode_t mode) {
   return catch_nomem([&] {
     // Held to the end of the transaction, as a write's lock is.
-    return sm1::lock(rel->session, rel->storeid, row_key(rel->relid, rowno),
-                     mode);
+    return sm1::lock(rel->session, sm1::LOCKTYPE_ROW, rel->storeid,
+                     row_key(rel->relid, rowno), mode);
   });
 }
 

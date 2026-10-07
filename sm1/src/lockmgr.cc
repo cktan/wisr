@@ -39,15 +39,15 @@ using lmode_t = sm1::lockmode_t;
 /* A mode as an index into the tables below: IS, IX, S, SIX, X. */
 int rank(lmode_t m) {
   switch (m) {
-  case lmode_t::intent_shared:
+  case sm1::SM_LOCKMODE_IS:
     return 0;
-  case lmode_t::intent_exclusive:
+  case sm1::SM_LOCKMODE_IX:
     return 1;
-  case lmode_t::shared:
+  case sm1::SM_LOCKMODE_SH:
     return 2;
-  case lmode_t::shared_intent_exclusive:
+  case sm1::SM_LOCKMODE_SIX:
     return 3;
-  case lmode_t::exclusive:
+  case sm1::SM_LOCKMODE_EX:
     return 4;
   }
   return 4;
@@ -73,28 +73,29 @@ bool compatible(lmode_t a, lmode_t b) {
  */
 lmode_t cover(lmode_t a, lmode_t b) {
   static const lmode_t sup[5][5] = {
-      {lmode_t::intent_shared, lmode_t::intent_exclusive, lmode_t::shared,
-       lmode_t::shared_intent_exclusive, lmode_t::exclusive},
-      {lmode_t::intent_exclusive, lmode_t::intent_exclusive,
-       lmode_t::shared_intent_exclusive, lmode_t::shared_intent_exclusive,
-       lmode_t::exclusive},
-      {lmode_t::shared, lmode_t::shared_intent_exclusive, lmode_t::shared,
-       lmode_t::shared_intent_exclusive, lmode_t::exclusive},
-      {lmode_t::shared_intent_exclusive, lmode_t::shared_intent_exclusive,
-       lmode_t::shared_intent_exclusive, lmode_t::shared_intent_exclusive,
-       lmode_t::exclusive},
-      {lmode_t::exclusive, lmode_t::exclusive, lmode_t::exclusive,
-       lmode_t::exclusive, lmode_t::exclusive},
+      {sm1::SM_LOCKMODE_IS, sm1::SM_LOCKMODE_IX, sm1::SM_LOCKMODE_SH,
+       sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_EX},
+      {sm1::SM_LOCKMODE_IX, sm1::SM_LOCKMODE_IX, sm1::SM_LOCKMODE_SIX,
+       sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_EX},
+      {sm1::SM_LOCKMODE_SH, sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_SH,
+       sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_EX},
+      {sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_SIX,
+       sm1::SM_LOCKMODE_SIX, sm1::SM_LOCKMODE_EX},
+      {sm1::SM_LOCKMODE_EX, sm1::SM_LOCKMODE_EX, sm1::SM_LOCKMODE_EX,
+       sm1::SM_LOCKMODE_EX, sm1::SM_LOCKMODE_EX},
   };
   return sup[rank(a)][rank(b)];
 }
 
-/* The lock table key of (storeid, userkey). */
-std::string lock_key(uint64_t storeid, rocksdb::Slice key) {
+/* The lock table key of (type, storeid, userkey). */
+std::string lock_key(sm1::locktype_t type, uint64_t storeid,
+                     rocksdb::Slice key) {
   std::string k;
-  // Reserve room for the storeid prefix and the key.
-  k.reserve(8 + key.size());
-  // Prefix the storeid, so equal keys in different stores differ.
+  // Reserve room for the type byte, the storeid and the key.
+  k.reserve(1 + 8 + key.size());
+  // Lead with the type, so no two namespaces share a lock.
+  k.push_back(static_cast<char>(type));
+  // Then the storeid, so equal keys in different stores differ.
   sm1::put_be64(k, storeid);
   // Append the userkey.
   k.append(key.data(), key.size());
@@ -130,9 +131,9 @@ void lock_drop_holder(db_t *db, const std::string &k, sm1::session_t *s) {
  * list is the session's own, so no lock_mu is taken. Newest
  * first: the lock in question was likely just taken.
  */
-sm1::session_t::lockref_t *find_lockref(sm1::session_t *s, uint64_t storeid,
-                                        rocksdb::Slice key) {
-  std::string k = lock_key(storeid, key);
+sm1::session_t::lockref_t *find_lockref(sm1::session_t *s, sm1::locktype_t type,
+                                        uint64_t storeid, rocksdb::Slice key) {
+  std::string k = lock_key(type, storeid, key);
   for (size_t i = s->locks.size(); i-- > 0;) {
     if (s->locks[i].key == k) {
       return &s->locks[i];
@@ -277,11 +278,11 @@ std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key) {
   return db->write_latch[h % db_t::write_latches];
 }
 
-/* Take (storeid, key) in mode unless another holder conflicts. */
-int lock_try(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
-             sm1::lockmode_t mode) {
+/* Take (type, storeid, key) in mode unless another holder conflicts. */
+int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
+             rocksdb::Slice key, sm1::lockmode_t mode) {
   db_t *db = s->db;
-  std::string k = lock_key(storeid, key);
+  std::string k = lock_key(type, storeid, key);
   // Hold lock_mu for the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   db_t::lock_ent_t::holder_t *mine;
@@ -311,14 +312,15 @@ int lock_try(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
 /* For a write: 2 if another holder conflicts, else convert our own. */
 int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   db_t *db = s->db;
-  std::string k = lock_key(storeid, key);
+  // A write meets row locks and no other namespace.
+  std::string k = lock_key(sm1::LOCKTYPE_ROW, storeid, key);
   // Hold lock_mu for the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);
   db_t::lock_ent_t::holder_t *mine;
   lmode_t want;
   std::vector<sm1::session_t *> others;
   // No entry: the common write, which takes no lock.
-  if (!conflicting(db, s, k, lmode_t::exclusive, &mine, &want, &others)) {
+  if (!conflicting(db, s, k, sm1::SM_LOCKMODE_EX, &mine, &want, &others)) {
     return 0;
   }
   if (!others.empty()) {
@@ -326,18 +328,18 @@ int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   }
   // A lock of our own on the key is held exclusive from now on,
   // as a write converts it (SM1_DESIGN.md §5.1).
-  if (mine && mine->mode != lmode_t::exclusive) {
-    mine->mode = lmode_t::exclusive;
-    note_mode(s, k, lmode_t::exclusive);
+  if (mine && mine->mode != sm1::SM_LOCKMODE_EX) {
+    mine->mode = sm1::SM_LOCKMODE_EX;
+    note_mode(s, k, sm1::SM_LOCKMODE_EX);
   }
   return 0;
 }
 
 /* Block until no other holder of (storeid, key) conflicts with mode. */
-int lock_wait(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
-              sm1::lockmode_t mode) {
+int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
+              rocksdb::Slice key, sm1::lockmode_t mode) {
   db_t *db = s->db;
-  std::string k = lock_key(storeid, key);
+  std::string k = lock_key(type, storeid, key);
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // Time the first deadlock check.
@@ -450,7 +452,8 @@ void lock_restore(db_t *db, sm1::session_t *g) {
 /* Whether the session holds (storeid, key), and in which mode. */
 bool lock_held(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
                sm1::lockmode_t *mode) {
-  sm1::session_t::lockref_t *l = find_lockref(s, storeid, key);
+  sm1::session_t::lockref_t *l =
+      find_lockref(s, sm1::LOCKTYPE_ROW, storeid, key);
   // Not held.
   if (!l) {
     return false;
@@ -461,7 +464,8 @@ bool lock_held(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key,
 
 /* Mark (storeid, key)'s exclusive lock: the next write may go ahead. */
 void lock_set_latest(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
-  sm1::session_t::lockref_t *l = find_lockref(s, storeid, key);
+  sm1::session_t::lockref_t *l =
+      find_lockref(s, sm1::LOCKTYPE_ROW, storeid, key);
   // Count a mark once.
   if (l && !l->latest) {
     l->latest = true;
@@ -475,7 +479,8 @@ bool lock_has_latest(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   if (s->latest_marks == 0) {
     return false;
   }
-  sm1::session_t::lockref_t *l = find_lockref(s, storeid, key);
+  sm1::session_t::lockref_t *l =
+      find_lockref(s, sm1::LOCKTYPE_ROW, storeid, key);
   return l && l->latest;
 }
 
@@ -486,7 +491,8 @@ void lock_clear_latest(sm1::session_t *s, uint64_t storeid,
   if (s->latest_marks == 0) {
     return;
   }
-  sm1::session_t::lockref_t *l = find_lockref(s, storeid, key);
+  sm1::session_t::lockref_t *l =
+      find_lockref(s, sm1::LOCKTYPE_ROW, storeid, key);
   if (l && l->latest) {
     l->latest = false;
     s->latest_marks--;

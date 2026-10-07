@@ -808,8 +808,7 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
   }
 
   // X, as the DDL takes it: the columns cannot change under us.
-  table_def_t *p_tdef =
-      need_table(s, tbl_name, SM_LOCK_EXCLUSIVE, "index-create");
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_EX, "index-create");
 
   // Resolve key columns against table schema.
   for (auto &k : idef.keys) {
@@ -1001,7 +1000,7 @@ static Janet cfun_describe_table(int32_t argc, Janet *argv) {
     with_indexes = true;
   }
   table_def_t *p_tdef =
-      need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "describe-table");
+      need_table(s, tbl_name, SM_LOCKMODE_IS, "describe-table");
   const sm_table_def_t &def = *p_tdef->def;
 
   std::vector<Janet> columns;
@@ -1068,7 +1067,7 @@ static Janet cfun_index_state(int32_t argc, Janet *argv) {
   std::string idx_name = identifier_of(argv[0]);
 
   auto [p_tdef, p_idef] =
-      need_index(s, idx_name, SM_LOCK_INTENT_SHARED, "index-state");
+      need_index(s, idx_name, SM_LOCKMODE_IS, "index-state");
   (void)p_tdef;
   switch (p_idef->def->state) {
   case SM_INDEX_BUILDING:
@@ -1086,8 +1085,7 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
 
-  table_def_t *p_tdef =
-      need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "insert");
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IX, "insert");
   sm_tbl_t *tbl = p_tdef->tbl;
 
   const Janet *row_items = nullptr;
@@ -1135,7 +1133,7 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
-  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "read");
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "read");
   sm_tbl_t *tbl = p_tdef->tbl;
 
   const void *tuple = nullptr;
@@ -1171,8 +1169,7 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
-  table_def_t *p_tdef =
-      need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "read-latest");
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "read-latest");
   sm_tbl_t *tbl = p_tdef->tbl;
 
   const void *tuple = nullptr;
@@ -1215,10 +1212,9 @@ static Janet cfun_lock_row(int32_t argc, Janet *argv) {
 
   // The table lock under the row's: IS for shared, IX for exclusive.
   table_def_t *p_tdef = need_table(
-      s, tbl_name, exclusive ? SM_LOCK_INTENT_EXCLUSIVE : SM_LOCK_INTENT_SHARED,
-      "lock-row");
+      s, tbl_name, exclusive ? SM_LOCKMODE_IX : SM_LOCKMODE_IS, "lock-row");
   if (sm_tbl_lock(p_tdef->tbl, rowno,
-                  exclusive ? SM_LOCK_EXCLUSIVE : SM_LOCK_SHARED) != 0) {
+                  exclusive ? SM_LOCKMODE_EX : SM_LOCKMODE_SH) != 0) {
     panic_sm_error("lock-row sm_tbl_lock");
   }
   return janet_wrap_nil();
@@ -1230,7 +1226,7 @@ static Janet cfun_truncate(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
   // The table lock exclusive, as TRUNCATE takes it.
-  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCK_EXCLUSIVE, "truncate");
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_EX, "truncate");
   if (sm_tbl_truncate(p_tdef->tbl) != 0) {
     panic_sm_error("truncate sm_tbl_truncate");
   }
@@ -1244,8 +1240,7 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
-  table_def_t *p_tdef =
-      need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "update");
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IX, "update");
   sm_tbl_t *tbl = p_tdef->tbl;
 
   const Janet *row_items = nullptr;
@@ -1304,8 +1299,7 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
   uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
-  table_def_t *p_tdef =
-      need_table(s, tbl_name, SM_LOCK_INTENT_EXCLUSIVE, "delete");
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IX, "delete");
   sm_tbl_t *tbl = p_tdef->tbl;
 
   std::string old_tuple;
@@ -1351,7 +1345,7 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
     }
   }
 
-  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCK_INTENT_SHARED, "scan");
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "scan");
   sm_tbl_t *tbl = p_tdef->tbl;
 
   sm_rel_scan_t *rscan = nullptr;
@@ -1395,8 +1389,7 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
   session_ctx_t *s = require_session();
   std::string idx_name = identifier_of(argv[0]);
 
-  auto [p_tdef, p_idef] =
-      need_index(s, idx_name, SM_LOCK_INTENT_SHARED, "idx-scan");
+  auto [p_tdef, p_idef] = need_index(s, idx_name, SM_LOCKMODE_IS, "idx-scan");
   sm_tbl_t *tbl = p_tdef->tbl;
   uint64_t index = p_idef->def->oid;
 

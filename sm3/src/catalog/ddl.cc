@@ -93,9 +93,9 @@ int open_table(sm3::session_t *session, uint64_t oid, kv_ptr &kv,
   std::string key, blob;
   std::string_view v;
   if (open_kv(session->sm1, kv) != 0 ||
-      sm3::lock_table(kv.get(), oid, sm1::lockmode_t::exclusive) != 0 ||
+      sm3::lock_table(session->sm1, oid, sm1::SM_LOCKMODE_EX) != 0 ||
       sm3::entity_key(sm3::kind_t::table, oid, key) != 0 ||
-      sm2::catkv_lock(kv.get(), key, sm1::lockmode_t::exclusive) != 0) {
+      sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX) != 0) {
     return -1;
   }
   int rc = session->level == sm1::xctlevel_t::read_committed
@@ -575,7 +575,7 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     // table's index stays building, for the build to fill.
     if (!cat_table(session->cat, table)) {
       table_t *t = nullptr;
-      if (tbl_open(session, table, sm1::lockmode_t::exclusive, t) != 0) {
+      if (tbl_open(session, table, sm1::SM_LOCKMODE_EX, t) != 0) {
         return -1;
       }
       uint64_t from = 0;
@@ -715,14 +715,22 @@ int cat_create_collation(session_t *session, uint64_t nspoid,
   });
 }
 
-/* Take a table's schema lock on its LOCK key; see internal.h. */
-int lock_table(sm2::catkv_t *kv, uint64_t oid, sm1::lockmode_t mode) {
-  std::string key;
-  if (entity_key(kind_t::lock, oid, key) != 0) {
-    return -1;
+/* Take a table's schema lock; see internal.h. */
+int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode) {
+  // The name is the oid, big-endian: it is persisted in a
+  // prepared transaction's lock set, so host order will not do.
+  std::string key(8, '\0');
+  for (int i = 0; i < 8; i++) {
+    key[i] = static_cast<char>(oid >> (56 - 8 * i));
   }
-  // Held to the end of the transaction: DDL waits out its users.
-  return sm2::catkv_lock(kv, key, mode);
+  /*
+   * An sm1 schema lock: a name in no store, which nothing writes,
+   * so the lock never fails on a version newer than the caller's
+   * snapshot and a reader that waited out DDL gets the new
+   * definition. Held to the end of the transaction, so DDL waits
+   * out its users (SM3_DESIGN.md §2).
+   */
+  return sm1::lock(s, sm1::LOCKTYPE_SCHEMA, 0, key, mode);
 }
 
 } // namespace sm3

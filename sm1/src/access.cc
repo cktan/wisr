@@ -298,9 +298,34 @@ int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
   return r;
 }
 
+/*
+ * A lock on a name in a namespace nothing writes: no store is
+ * read and no version is checked, since none can exist. Only
+ * the lock table is touched (sm1.h, locktype_t).
+ */
+int lock_name(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
+              const char *key, size_t klen, sm1::lockmode_t mode) {
+  rocksdb::Slice k(key ? key : "", klen);
+  for (;;) {
+    // No writer of this name can exist, so no latch is needed.
+    if (lock_try(s, type, storeid, k, mode) == 0) {
+      return 0;
+    }
+    // Wait for the holders that conflict.
+    int waited = lock_wait(s, type, storeid, k, mode);
+    if (waited > 0) {
+      return set_error(sm1::SM_ERR_BLOCKED, "the lock is held by another");
+    }
+    if (waited != 0) {
+      return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
+                                "chosen as a deadlock victim");
+    }
+  }
+}
+
 /* sm1::lock, minus the out-of-memory guard. */
-int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
-             sm1::lockmode_t mode) {
+int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
+             const char *key, size_t klen, sm1::lockmode_t mode) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -308,6 +333,14 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   // Reject a mode that is not one of Gray's five.
   if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
+  }
+  // Reject a type that is not one of the three.
+  if (type > sm1::LOCKTYPE_OBJECT) {
+    return set_error(sm1::SM_ERR_INVALID, "unknown lock type {}", (int)type);
+  }
+  // A name outside any store takes the lock and nothing else.
+  if (type != sm1::LOCKTYPE_ROW) {
+    return lock_name(s, type, storeid, key, klen, mode);
   }
   // Validate the storeid and key at the current view.
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
@@ -333,14 +366,16 @@ int lock_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
       }
       // Free of uncommitted writes: take the lock if no holder
       // conflicts.
-      if (inflight == 0 && lock_try(s, storeid, k, mode) == 0) {
+      if (inflight == 0 &&
+          lock_try(s, sm1::LOCKTYPE_ROW, storeid, k, mode) == 0) {
         break;
       }
     }
     // Wait, without the latch, for the uncommitted writer, or for
     // the holders that conflict.
-    int waited = inflight != 0 ? lock_wait_xact(s, inflight)
-                               : lock_wait(s, storeid, k, mode);
+    int waited = inflight != 0
+                     ? lock_wait_xact(s, inflight)
+                     : lock_wait(s, sm1::LOCKTYPE_ROW, storeid, k, mode);
     if (waited > 0) {
       return set_error(sm1::SM_ERR_BLOCKED, "the lock is held by another");
     }
@@ -440,7 +475,7 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
                      "a write of it by this transaction");
   }
   // An exclusive holder may now write.
-  if (held && mode == sm1::lockmode_t::exclusive) {
+  if (held && mode == sm1::SM_LOCKMODE_EX) {
     lock_set_latest(s, storeid, k);
   }
   // Absent, or deleted.
@@ -793,7 +828,8 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     // with: wait for it, without the latch.
     if (lock_write_check(s, storeid, key) != 0) {
       latch.unlock();
-      waited = lock_wait(s, storeid, key, sm1::lockmode_t::exclusive);
+      waited =
+          lock_wait(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
     } else {
       uint64_t inflight;
       // Find the version this write checks against, keeping its
@@ -837,7 +873,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
         // write, so its newest version cannot change in between
         // (§5.4, WRITELOCK.md §3.5). No other holder conflicts:
         // the check above found none, under the latch.
-        lock_try(s, storeid, key, sm1::lockmode_t::exclusive);
+        lock_try(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
         return set_error(sm1::SM_ERR_UPDATED,
                          "key was changed by a transaction that committed "
                          "after this one began; sm1_read_latest it first");
@@ -949,12 +985,12 @@ int sm1::scan_seek(sm1::scan_t *scan, std::string_view key, int inclusive) {
   return ::scan_seek(scan, key.data(), key.size(), inclusive);
 }
 
-/* Take a row lock without writing the row. */
-int sm1::lock(sm1::session_t *session, uint64_t storeid, std::string_view key,
-              sm1::lockmode_t mode) {
+/* Take a lock without writing anything; see sm1.h. */
+int sm1::lock(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
+              std::string_view key, sm1::lockmode_t mode) {
   // Inside sm1: running out of memory is fatal.
   in_sm1_t in_sm1;
-  return lock_row(session, storeid, key.data(), key.size(), mode);
+  return lock_row(session, type, storeid, key.data(), key.size(), mode);
 }
 
 /* Insert a row; the key must not exist. */

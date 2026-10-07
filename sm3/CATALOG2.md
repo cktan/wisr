@@ -70,7 +70,7 @@ The index-valid watermark and the count of publishes are
 | --- | --- | --- |
 | identity | oid, namespace oid, name | yes |
 | storage | storeid, rowno sequence name, next index relid | yes |
-| schema lock | a row that exists only to be locked and is never written | yes, `LOCK` |
+| schema lock | nothing to store: an `sm1::LOCKTYPE_SCHEMA` lock on the table's oid | n/a |
 | kind | relkind (table, matview, partitioned); persistence (permanent, unlogged, temporary) | **no**. Partitioning needs relkind; persistence does not need storing yet, since a temporary table is never written to store 0 and unlogged tables and matviews are unsupported |
 | partitioning | strategy, partition key, bounds, parent and child links | **no**, though `FEATURELIST.md` §4 marks partitioning supported |
 | constraints | CHECK expressions; FOREIGN KEY columns, referenced table and actions; EXCLUSION | **no**, though CHECK and FOREIGN KEY are both marked supported |

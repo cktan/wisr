@@ -102,8 +102,8 @@ struct sm1::session_t {
 
   /* Row locks (§5.1); guarded by the database's lock_mu. */
   struct lockref_t {
-    std::string key;                                /* the lock table key */
-    sm1::lockmode_t mode = sm1::lockmode_t::shared; /* held now, after
+    std::string key;                            /* the lock table key */
+    sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
                                                        conversions */
     bool latest = false; /* read_latest done: the write may go ahead */
   };
@@ -220,8 +220,8 @@ std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key);
  * weakest mode covering both. Returns 0, or 2 if another holder
  * conflicts, taking nothing. Never waits.
  */
-int lock_try(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
-             sm1::lockmode_t mode);
+int lock_try(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
+             rocksdb::Slice key, sm1::lockmode_t mode);
 
 /*
  * For a write (WRITELOCK.md §3.2): 2 if another transaction holds
@@ -240,8 +240,8 @@ int lock_write_check(sm1::session_t *session, uint64_t storeid,
  * it with s->doomed; or 1 at once for a qa_nowait session, the
  * caller reporting SM_ERR_BLOCKED.
  */
-int lock_wait(sm1::session_t *session, uint64_t storeid, rocksdb::Slice key,
-              sm1::lockmode_t mode);
+int lock_wait(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
+              rocksdb::Slice key, sm1::lockmode_t mode);
 
 /*
  * Block until the transaction xid ends, or rolls back to a

@@ -326,8 +326,8 @@ forms back.
 ### 4.4 High-Level Row DML Operations
 
 Each statement first opens its table by name: `sm_cat_table_oid`,
-then `sm_tbl_open` -- `SM_LOCK_INTENT_SHARED` to read,
-`SM_LOCK_INTENT_EXCLUSIVE` to write -- which holds the table's
+then `sm_tbl_open` -- `SM_LOCKMODE_IS` to read,
+`SM_LOCKMODE_IX` to write -- which holds the table's
 schema lock to the end of the transaction and opens its heap
 and its indexes under it. `sm_tbl_def` gives its definition.
 The handle is closed when the session's next statement begins.
@@ -380,8 +380,8 @@ meets one must abort.
 3. Returns newest committed tuple vector.
 
 #### `(lock-row <table> <rowno> <mode>)`
-1. Opens the table under `SM_LOCK_INTENT_SHARED` for
-   `:shared`, `SM_LOCK_INTENT_EXCLUSIVE` for `:exclusive`.
+1. Opens the table under `SM_LOCKMODE_IS` for
+   `:shared`, `SM_LOCKMODE_IX` for `:exclusive`.
 2. Calls `sm_tbl_lock(tbl, rowno, mode)`, which holds the row
    to the end of the transaction and writes nothing.
 

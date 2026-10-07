@@ -288,7 +288,8 @@ TEST_CASE("a prepared transaction accepts only commit and abort") {
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   CHECK(sm1::forget(s, 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
-  CHECK(sm1::lock(s, g_store, "a", sm1::lockmode_t::shared) == -1);
+  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "a", sm1::SM_LOCKMODE_SH) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_PREPARED);
   uint64_t fresh = 0;
   CHECK(sm1::mkstore(s, fresh) == -1);
@@ -420,7 +421,8 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   tpc_fixture_t f;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(s, g_store, "b", sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_SH) ==
+          0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
   f.restart();
@@ -428,7 +430,8 @@ TEST_CASE("a prepared transaction keeps its shared locks across a restart") {
   sm1::session_t *u = f.open();
   sm1::session_t *v = f.open();
   REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(u, g_store, "b", sm1::lockmode_t::shared) == 0);
+  CHECK(sm1::lock(u, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_SH) ==
+        0);
 
   std::atomic<bool> returned{false};
   int rc = -2;
@@ -458,20 +461,22 @@ TEST_CASE("a prepared transaction keeps its intention locks across a "
   tpc_fixture_t f;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  REQUIRE(sm1::lock(s, g_store, "b", sm1::lockmode_t::intent_exclusive) == 0);
+  REQUIRE(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_IX) ==
+          0);
   REQUIRE(set(s, "a", "1") == 0);
   REQUIRE(sm1::prepare(s, "g") == 0);
   f.restart();
 
   sm1::session_t *u = f.open(), *v = f.open(), *w = f.open();
   REQUIRE(sm1::begin(u, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm1::lock(u, g_store, "b", sm1::lockmode_t::intent_exclusive) == 0);
+  CHECK(sm1::lock(u, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_IX) ==
+        0);
   REQUIRE(sm1::commit(u) == 0);
   REQUIRE(sm1::begin(w, sm1::xctlevel_t::read_committed) == 0);
   std::atomic<bool> returned{false};
   int rc = -2;
   std::thread tw([&] {
-    rc = sm1::lock(w, g_store, "b", sm1::lockmode_t::shared);
+    rc = sm1::lock(w, sm1::LOCKTYPE_ROW, g_store, "b", sm1::SM_LOCKMODE_SH);
     returned = true;
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(150));

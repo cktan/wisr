@@ -73,7 +73,7 @@ kinds' values are on disk, so frozen.
 | `TABLE` | 4 | oid `int8` | the table's blob: the table, its columns, its indexes |
 | `COLLATION` | 5 | oid `int8` | the collation's blob |
 | `INDEX` | 6 | — | no key of its own: an index is named by a `NAME` entry and kept in its table's blob |
-| `LOCK` | 7 | table oid `int8` | nothing: the table's schema lock, locked and never written |
+| — | 7 | — | retired: a table's schema lock was a key here, and is now an `sm1::LOCKTYPE_SCHEMA` lock on its oid |
 
 - **A table is one entry.** Its columns and indexes are in its
   blob, so every DDL on a table rewrites that one value.
@@ -84,12 +84,13 @@ kinds' values are on disk, so frozen.
   no namespace.
 - **A table's rowno sequence is `sm3.rowno.<oid>`**, made with
   its store.
-- **A table's schema lock is its `LOCK` key**, not its `TABLE`
-  key (`SM3_DESIGN.md` §2). Every DDL rewrites the `TABLE`
-  entry, and a lock on a key that was written fails at
-  REPEATABLE READ for a version newer than the snapshot. A key
-  no one writes never does, so a reader that waited out DDL
-  gets the new definition, not a serialization failure.
+- **A table's schema lock is no longer a key here.** It is an
+  `sm1::LOCKTYPE_SCHEMA` lock on the table's oid
+  (`SM3_DESIGN.md` §2). Locking the `TABLE` key instead would
+  not do: every DDL rewrites it, and a lock on a key that was
+  written fails at REPEATABLE READ for a version newer than
+  the snapshot, which is exactly the reader that waited out
+  the DDL and should get the new definition.
 
 ---
 

@@ -128,8 +128,9 @@ TEST_CASE("every session call rejects a NULL session") {
   expect_fail(sm1::savepoint(nullptr), sm1::SM_ERR_INVALID);
   expect_fail(sm1::rollback(nullptr, 1), sm1::SM_ERR_INVALID);
   expect_fail(sm1::forget(nullptr, 1), sm1::SM_ERR_INVALID);
-  expect_fail(sm1::lock(nullptr, 1, "k", sm1::lockmode_t::shared),
-              sm1::SM_ERR_INVALID);
+  expect_fail(
+      sm1::lock(nullptr, sm1::LOCKTYPE_ROW, 1, "k", sm1::SM_LOCKMODE_SH),
+      sm1::SM_ERR_INVALID);
   expect_fail(sm1::prepare(nullptr, "g"), sm1::SM_ERR_INVALID);
   expect_fail(sm1::list_prepared(nullptr, list), sm1::SM_ERR_INVALID);
   expect_fail(sm1::commit_prepared(nullptr, "g"), sm1::SM_ERR_INVALID);
@@ -290,7 +291,7 @@ TEST_CASE("calls needing a transaction fail with SM_ERR_NOTRANS without one") {
   expect_fail(sm1::savepoint(s), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::rollback(s, 1), sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::forget(s, 1), sm1::SM_ERR_NOTRANS);
-  expect_fail(sm1::lock(s, 1, "k", sm1::lockmode_t::shared),
+  expect_fail(sm1::lock(s, sm1::LOCKTYPE_ROW, 1, "k", sm1::SM_LOCKMODE_SH),
               sm1::SM_ERR_NOTRANS);
   expect_fail(sm1::prepare(s, "g"), sm1::SM_ERR_NOTRANS);
   uint64_t storeid;

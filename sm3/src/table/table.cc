@@ -62,9 +62,8 @@ struct deformed_t {
 
 /* Whether mode lets its holder write the table's rows. */
 bool covers_write(sm1::lockmode_t mode) {
-  return mode == sm1::lockmode_t::intent_exclusive ||
-         mode == sm1::lockmode_t::shared_intent_exclusive ||
-         mode == sm1::lockmode_t::exclusive;
+  return mode == sm1::SM_LOCKMODE_IX || mode == sm1::SM_LOCKMODE_SIX ||
+         mode == sm1::SM_LOCKMODE_EX;
 }
 
 /* Fail unless t was opened to write. */
@@ -333,7 +332,7 @@ int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
     }
     t->session = session;
     t->writable = covers_write(mode);
-    t->exclusive = mode == sm1::lockmode_t::exclusive;
+    t->exclusive = mode == sm1::SM_LOCKMODE_EX;
     // No committed definition: this transaction made the table, and
     // no other can see it or its rows.
     t->fresh = cat_table(session->cat, oid) == nullptr;
@@ -511,7 +510,7 @@ int tbl_read_latest(table_t *table, uint64_t rowno, std::string_view &tuple) {
 /* Lock the row at rowno without writing it; see sm3.h. */
 int tbl_lock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
   // Only a shared lock sits under a table opened to read.
-  if (mode != sm1::lockmode_t::shared && need_writable(table) != 0) {
+  if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
     return -1;
   }
   // Held to the end of the transaction, as a write's lock is.
@@ -528,8 +527,7 @@ int tbl_truncate(table_t *table) {
     const uint64_t oid = table->def->oid;
     std::shared_ptr<const table_def_t> def;
     if (cat_truncate_table(table->session, oid) != 0 ||
-        cat_lock_table(table->session, oid, sm1::lockmode_t::exclusive, def) !=
-            0) {
+        cat_lock_table(table->session, oid, sm1::SM_LOCKMODE_EX, def) != 0) {
       return -1;
     }
     // The handle's heap and indexes are on the old store.
@@ -618,7 +616,7 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
         // Hold the row shared to the end of the batch: a writer
         // changes the heap row first, so it and the build never
         // work on one row at once (SM3_DESIGN.md §3).
-        if (sm2::rel_lock(table->rel, r, sm1::lockmode_t::shared) != 0) {
+        if (sm2::rel_lock(table->rel, r, sm1::SM_LOCKMODE_SH) != 0) {
           return -1;
         }
         found = sm2::rel_read_latest(table->rel, r, tuple);

@@ -69,12 +69,9 @@ TEST_CASE("readers and writers of a table hold its schema lock together") {
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_lock_table(f.a, f.t, sm1::lockmode_t::intent_shared, da) ==
-          0);
-  REQUIRE(sm3::cat_lock_table(f.b, f.t, sm1::lockmode_t::intent_exclusive,
-                              db) == 0);
-  REQUIRE(sm3::cat_lock_table(f.c, f.t, sm1::lockmode_t::intent_shared, dc) ==
-          0);
+  REQUIRE(sm3::cat_lock_table(f.a, f.t, sm1::SM_LOCKMODE_IS, da) == 0);
+  REQUIRE(sm3::cat_lock_table(f.b, f.t, sm1::SM_LOCKMODE_IX, db) == 0);
+  REQUIRE(sm3::cat_lock_table(f.c, f.t, sm1::SM_LOCKMODE_IS, dc) == 0);
   CHECK(da->columns.size() == 1);
   CHECK(db == da);
   CHECK(dc == da);
@@ -93,10 +90,8 @@ TEST_CASE("DDL waits for the table's readers and writers") {
   def_ptr d;
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_lock_table(f.a, f.t, sm1::lockmode_t::intent_shared, d) ==
-          0);
-  REQUIRE(sm3::cat_lock_table(f.b, f.t, sm1::lockmode_t::intent_exclusive, d) ==
-          0);
+  REQUIRE(sm3::cat_lock_table(f.a, f.t, sm1::SM_LOCKMODE_IS, d) == 0);
+  REQUIRE(sm3::cat_lock_table(f.b, f.t, sm1::SM_LOCKMODE_IX, d) == 0);
 
   std::atomic<bool> returned{false};
   int rc = -1;
@@ -137,7 +132,7 @@ TEST_CASE("a reader waits for DDL, then reads the new definition") {
     int rc = -1;
     def_ptr d;
     std::thread ta([&] {
-      rc = sm3::cat_lock_table(f.a, f.t, sm1::lockmode_t::intent_shared, d);
+      rc = sm3::cat_lock_table(f.a, f.t, sm1::SM_LOCKMODE_IS, d);
       returned = true;
     });
     settle();
@@ -165,7 +160,7 @@ TEST_CASE("a table dropped while a reader waited is not found") {
   int rc = 0, err = 0;
   def_ptr d;
   std::thread ta([&] {
-    rc = sm3::cat_lock_table(f.a, f.t, sm1::lockmode_t::intent_shared, d);
+    rc = sm3::cat_lock_table(f.a, f.t, sm1::SM_LOCKMODE_IS, d);
     err = sm1::errnum();
     returned = true;
   });

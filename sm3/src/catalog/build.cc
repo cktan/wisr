@@ -63,7 +63,7 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index) {
     sm3::table_t *t = nullptr;
     uint64_t next = from;
     bool done = false, building = false;
-    int rc = sm3::tbl_open(ws, table, sm1::lockmode_t::intent_exclusive, t);
+    int rc = sm3::tbl_open(ws, table, sm1::SM_LOCKMODE_IX, t);
     bool opened = rc == 0;
     if (rc == 0) {
       for (const sm3::index_def_t &x : sm3::tbl_def(t).indexes) {

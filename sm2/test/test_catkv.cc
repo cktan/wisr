@@ -126,8 +126,8 @@ TEST_CASE("the catalog store orders concurrent writers") {
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm2::catkv_lock(ka, "name", sm1::lockmode_t::shared) == 0);
-  REQUIRE(sm2::catkv_lock(kb, "name", sm1::lockmode_t::shared) == 0);
+  REQUIRE(sm2::catkv_lock(ka, "name", sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm2::catkv_lock(kb, "name", sm1::SM_LOCKMODE_SH) == 0);
   REQUIRE(sm1::commit(b) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   std::atomic<bool> done{false};

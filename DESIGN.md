@@ -83,7 +83,8 @@ calls upward.
 
 The root's `include/` also holds two C headers that belong to
 no level and that sm1 includes: `sm_error.h`, the stack's error
-codes, and `sm_options.h`, sm1's database options. They are
+codes, `sm_lock.h`, its lock modes, and `sm_options.h`, sm1's
+database options. They are
 shared definitions, not an upward call: sm1 and the wrapper
 must agree on them bytewise, and one C header is how.
 

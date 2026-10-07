@@ -350,13 +350,7 @@ std::shared_ptr<const table_def_t> cat_table(const session_t *s, uint64_t oid) {
 int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
                    std::shared_ptr<const table_def_t> &out) {
   return catch_nomem([&] {
-    sm2::catkv_t *kv = nullptr;
-    if (sm2::catkv_open(s->sm1, kv) != 0) {
-      return -1;
-    }
-    int rc = lock_table(kv, oid, mode);
-    sm2::catkv_close(kv);
-    if (rc != 0) {
+    if (lock_table(s->sm1, oid, mode) != 0) {
       return -1;
     }
     // Under the lock, the definition cannot change until commit;

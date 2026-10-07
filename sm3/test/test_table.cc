@@ -153,9 +153,8 @@ public:
   }
 
   /* jobs, opened to write in s's transaction; it must open. */
-  sm3::table_t *
-  write(sm3::session_t *s,
-        sm1::lockmode_t mode = sm1::lockmode_t::intent_exclusive) {
+  sm3::table_t *write(sm3::session_t *s,
+                      sm1::lockmode_t mode = sm1::SM_LOCKMODE_IX) {
     sm3::table_t *t = nullptr;
     REQUIRE_MESSAGE(sm3::tbl_open(s, jobs, mode, t) == 0, sm1::errmsg());
     return t;
@@ -441,7 +440,7 @@ TEST_CASE("a table's writes keep every index in step with its heap") {
     REQUIRE(sm3::commit(f.a) == 0);
 
     start(f.b, level);
-    t = f.write(f.b, sm1::lockmode_t::intent_shared);
+    t = f.write(f.b, sm1::SM_LOCKMODE_IS);
     CHECK(rows(t).size() == 2);
     CHECK(get(t, r7) == "7|taken|w2");
     check_agree(t);
@@ -521,7 +520,7 @@ TEST_CASE("a write that fails partway is the caller's to roll back") {
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(sm3::tbl_insert(t, dup.d(), dup.null(), rowno) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm3::tbl_delete(t, 1) == -1);
@@ -571,7 +570,7 @@ TEST_CASE("read committed: the entry removed is the newest image's") {
   REQUIRE(sm3::commit(f.b) == 0);
 
   start(f.a);
-  ta = f.write(f.a, sm1::lockmode_t::intent_shared);
+  ta = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(get(ta, r7) == "7|done|w1");
   CHECK(under(ta, f.jobs_state, "free").empty());
   CHECK(under(ta, f.jobs_state, "taken").empty());
@@ -613,7 +612,7 @@ TEST_CASE("read committed: a row that stopped qualifying is claimed once") {
   REQUIRE(sm3::commit(f.b) == 0);
 
   start(f.a);
-  ta = f.write(f.a, sm1::lockmode_t::intent_shared);
+  ta = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(get(ta, r7) == "7|taken|w1");
   CHECK(under(ta, f.jobs_state, "taken") == std::vector<uint64_t>{r7});
   CHECK(under(ta, f.jobs_state, "free").empty());
@@ -662,7 +661,7 @@ TEST_CASE("above read committed the loser of a row race writes nothing") {
     sm3::abort(f.b);
 
     start(f.a, level);
-    ta = f.write(f.a, sm1::lockmode_t::intent_shared);
+    ta = f.write(f.a, sm1::SM_LOCKMODE_IS);
     CHECK(get(ta, r7) == "7|taken|w1");
     CHECK(under(ta, f.jobs_state, "taken") == std::vector<uint64_t>{r7});
     CHECK(under(ta, f.jobs_state, "done").empty());
@@ -722,7 +721,7 @@ TEST_CASE("two inserters of one unique key leave one row, at every level") {
     REQUIRE(sm3::abort(f.b) == 0);
 
     start(f.b, level);
-    tb = f.write(f.b, sm1::lockmode_t::intent_shared);
+    tb = f.write(f.b, sm1::SM_LOCKMODE_IS);
     CHECK(rows(tb).size() == 1);
     CHECK(get(tb, r7) == "7|free|-");
     check_agree(tb);
@@ -764,7 +763,7 @@ TEST_CASE("an inserter that began before its rival committed, at every level") {
     sm3::abort(f.b);
 
     start(f.b, level);
-    tb = f.write(f.b, sm1::lockmode_t::intent_shared);
+    tb = f.write(f.b, sm1::SM_LOCKMODE_IS);
     CHECK(rows(tb).size() == 1);
     CHECK(get(tb, r7) == "7|free|-");
     check_agree(tb);
@@ -1119,8 +1118,7 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
     REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
             0);
     sm3::table_t *t = nullptr;
-    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
-            0);
+    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     put(t, 1, "free", "a");
     put(t, 2, "free", "b");
     put(t, 3, "done", "c");
@@ -1146,15 +1144,13 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
     REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
             0);
     sm3::table_t *t = nullptr;
-    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
-            0);
+    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     put(t, 1, "free", "a");
     put(t, 2, "free", "b");
     sm3::tbl_close(t);
     REQUIRE(sm3::cat_create_index(f.a, tasks, "tasks_owner", by_owner, {}, true,
                                   tasks_owner) == 0);
-    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
-            0);
+    REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     CHECK(sm3::tbl_def(t).indexes[0].state == sm3::index_state_t::valid);
     check_agree(t);
     REQUIRE(set(t, 1, 1, "taken", "z") == 0);
@@ -1163,7 +1159,7 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
     REQUIRE(sm3::commit(f.a) == 0);
 
     start(f.b, level);
-    REQUIRE(sm3::tbl_open(f.b, tasks, sm1::lockmode_t::intent_shared, t) == 0);
+    REQUIRE(sm3::tbl_open(f.b, tasks, sm1::SM_LOCKMODE_IS, t) == 0);
     check_agree(t);
     sm3::tbl_close(t);
     REQUIRE(sm3::commit(f.b) == 0);
@@ -1452,7 +1448,7 @@ TEST_CASE("read committed may use an index from its next statement on") {
 
   start(f.a);
   REQUIRE(sm3::stmt_begin(f.a) == 0);
-  REQUIRE(sm3::tbl_open(f.a, pin, sm1::lockmode_t::intent_shared, t) == 0);
+  REQUIRE(sm3::tbl_open(f.a, pin, sm1::SM_LOCKMODE_IS, t) == 0);
   CHECK(rows(t).empty());
   sm3::tbl_close(t);
   build(f, jobs_owner);
@@ -1546,14 +1542,12 @@ TEST_CASE("an index is usable by its state, and by who made it valid") {
     start(g.a, level);
     REQUIRE(sm3::cat_create_table(g.a, sm3::nsp_public, "tasks", cols, tasks) ==
             0);
-    REQUIRE(sm3::tbl_open(g.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
-            0);
+    REQUIRE(sm3::tbl_open(g.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     put(t, 1, "free", "a");
     sm3::tbl_close(t);
     REQUIRE(sm3::cat_create_index(g.a, tasks, "tasks_owner", by_owner, {},
                                   false, tasks_owner) == 0);
-    REQUIRE(sm3::tbl_open(g.a, tasks, sm1::lockmode_t::intent_exclusive, t) ==
-            0);
+    REQUIRE(sm3::tbl_open(g.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     CHECK(sm3::tbl_index_usable(t, tasks_owner));
     CHECK(scanned(t, tasks_owner) == 1);
     sm3::tbl_close(t);
@@ -1638,7 +1632,7 @@ TEST_CASE("an index on a table with rows is built in the background") {
   CHECK(state_of(f, jobs_owner) == sm3::index_state_t::valid);
   CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0);
   start(f.a, sm1::xctlevel_t::repeatable_read);
-  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(sm3::tbl_index_usable(t, jobs_owner));
   CHECK(scanned(t, jobs_owner) == 250);
   check_agree(t);
@@ -1712,7 +1706,7 @@ TEST_CASE("a build fails on any error the rows cause, and says which") {
   CHECK(d->indexes[2].error == sm1::SM_ERR_KEYTOOLONG);
   CHECK(d->indexes[2].reason == why);
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   check_agree(t);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
@@ -1756,7 +1750,7 @@ TEST_CASE("a build left unfinished is queued when the builder starts") {
   REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0,
                   sm1::errmsg());
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(scanned(t, jobs_owner) == 30);
   check_agree(t);
   sm3::tbl_close(t);
@@ -1785,7 +1779,7 @@ TEST_CASE("more builds than workers all end, a few at a time") {
     REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, oid) == 0, sm1::errmsg());
   }
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(sm3::tbl_def(t).indexes.size() == 8);
   for (uint64_t oid : made) {
     CHECK(scanned(t, oid) == 60);
@@ -1848,7 +1842,7 @@ TEST_CASE("writers go on while an index is built, and it still agrees") {
   REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0,
                   sm1::errmsg());
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(sm3::tbl_index_usable(t, jobs_owner));
   check_agree(t);
   sm3::tbl_close(t);
@@ -2081,7 +2075,7 @@ TEST_CASE("an evaluated index is built in the background, and inline") {
   start(f.a);
   REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
           0);
-  REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) == 0);
+  REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
   put(t, 1, "free", "Dee");
   put(t, 2, "free", "Eve");
   put(t, 3, "free", std::nullopt);
@@ -2090,7 +2084,7 @@ TEST_CASE("an evaluated index is built in the background, and inline") {
                                         {}, true, "lower", {{2}},
                                         tasks_lower) == 0,
                   sm1::errmsg());
-  REQUIRE(sm3::tbl_open(f.a, tasks, sm1::lockmode_t::intent_exclusive, t) == 0);
+  REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
   CHECK(sm3::tbl_def(t).indexes[0].state == sm3::index_state_t::valid);
   CHECK(under(t, tasks_lower, "dee") == std::vector<uint64_t>{1});
   check_agree(t);
@@ -2286,7 +2280,7 @@ TEST_CASE("writers go on while evaluated indexes are built, and they agree") {
   REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_lower) == 0,
                   sm1::errmsg());
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::intent_shared);
+  t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(sm3::tbl_index_usable(t, jobs_free));
   CHECK(sm3::tbl_index_usable(t, jobs_lower));
   check_agree(t);
@@ -2354,14 +2348,14 @@ TEST_CASE("a row is locked without being written") {
 
   start(f.a);
   start(f.b);
-  ta = f.write(f.a, sm1::lockmode_t::intent_shared);
+  ta = f.write(f.a, sm1::SM_LOCKMODE_IS);
   sm3::table_t *tb = f.write(f.b);
-  REQUIRE_MESSAGE(sm3::tbl_lock(ta, r1, sm1::lockmode_t::shared) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_lock(ta, r1, sm1::SM_LOCKMODE_SH) == 0,
                   sm1::errmsg());
-  CHECK(sm3::tbl_lock(tb, r1, sm1::lockmode_t::shared) == 0);
+  CHECK(sm3::tbl_lock(tb, r1, sm1::SM_LOCKMODE_SH) == 0);
   CHECK(set(tb, r1, 1, "taken", "b") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
-  CHECK(sm3::tbl_lock(tb, r1, sm1::lockmode_t::exclusive) == -1);
+  CHECK(sm3::tbl_lock(tb, r1, sm1::SM_LOCKMODE_EX) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
   CHECK(get(ta, r1) == "1|free|a");
   sm3::tbl_close(ta);
@@ -2373,13 +2367,13 @@ TEST_CASE("a row is locked without being written") {
   start(f.a);
   start(f.b);
   ta = f.write(f.a);
-  tb = f.write(f.b, sm1::lockmode_t::intent_shared);
-  REQUIRE(sm3::tbl_lock(ta, r1, sm1::lockmode_t::exclusive) == 0);
-  CHECK(sm3::tbl_lock(tb, r1, sm1::lockmode_t::shared) == -1);
+  tb = f.write(f.b, sm1::SM_LOCKMODE_IS);
+  REQUIRE(sm3::tbl_lock(ta, r1, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm3::tbl_lock(tb, r1, sm1::SM_LOCKMODE_SH) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
-  CHECK(sm3::tbl_lock(ta, r1 + 999, sm1::lockmode_t::shared) == 0);
-  CHECK(sm3::tbl_lock(tb, r1 + 500, sm1::lockmode_t::shared) == 0);
-  CHECK(sm3::tbl_lock(tb, r1 + 500, sm1::lockmode_t::exclusive) == -1);
+  CHECK(sm3::tbl_lock(ta, r1 + 999, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm3::tbl_lock(tb, r1 + 500, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm3::tbl_lock(tb, r1 + 500, sm1::SM_LOCKMODE_EX) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm3::tbl_close(ta);
   sm3::tbl_close(tb);
@@ -2410,7 +2404,7 @@ TEST_CASE("a truncate empties the table and its indexes, with its "
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::exclusive);
+  t = f.write(f.a, sm1::SM_LOCKMODE_EX);
   REQUIRE_MESSAGE(sm3::tbl_truncate(t) == 0, sm1::errmsg());
   CHECK(rows(t).empty());
   CHECK(sm3::tbl_def(t).storeid != old_store);
@@ -2424,7 +2418,7 @@ TEST_CASE("a truncate empties the table and its indexes, with its "
   REQUIRE(sm3::abort(f.a) == 0);
 
   start(f.b);
-  t = f.write(f.b, sm1::lockmode_t::intent_shared);
+  t = f.write(f.b, sm1::SM_LOCKMODE_IS);
   CHECK(rows(t).size() == 3);
   CHECK(sm3::tbl_def(t).storeid == old_store);
   check_agree(t);
@@ -2432,13 +2426,13 @@ TEST_CASE("a truncate empties the table and its indexes, with its "
   REQUIRE(sm3::commit(f.b) == 0);
 
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::exclusive);
+  t = f.write(f.a, sm1::SM_LOCKMODE_EX);
   REQUIRE(sm3::tbl_truncate(t) == 0);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.b);
-  t = f.write(f.b, sm1::lockmode_t::intent_shared);
+  t = f.write(f.b, sm1::SM_LOCKMODE_IS);
   CHECK(rows(t).empty());
   CHECK(sm3::tbl_def(t).storeid != old_store);
   std::vector<uint64_t> stores;
@@ -2475,7 +2469,7 @@ TEST_CASE("a truncate is undone by a rollback to a savepoint before it") {
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.a);
-  t = f.write(f.a, sm1::lockmode_t::exclusive);
+  t = f.write(f.a, sm1::SM_LOCKMODE_EX);
   int depth = sm3::savepoint(f.a);
   REQUIRE(depth > 0);
   REQUIRE(sm3::tbl_truncate(t) == 0);
@@ -2483,7 +2477,7 @@ TEST_CASE("a truncate is undone by a rollback to a savepoint before it") {
   sm3::tbl_close(t);
   REQUIRE(sm3::rollback(f.a, depth) == 0);
 
-  t = f.write(f.a, sm1::lockmode_t::exclusive);
+  t = f.write(f.a, sm1::SM_LOCKMODE_EX);
   CHECK(rows(t).size() == 2);
   CHECK(sm3::tbl_def(t).storeid == old_store);
   check_agree(t);
@@ -2491,7 +2485,7 @@ TEST_CASE("a truncate is undone by a rollback to a savepoint before it") {
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.b);
-  t = f.write(f.b, sm1::lockmode_t::intent_shared);
+  t = f.write(f.b, sm1::SM_LOCKMODE_IS);
   CHECK(rows(t).size() == 2);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.b) == 0);
@@ -2516,19 +2510,18 @@ TEST_CASE("a truncate needs the table opened exclusive, which waits for "
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.b);
-  sm3::table_t *tb = f.write(f.b, sm1::lockmode_t::intent_shared);
+  sm3::table_t *tb = f.write(f.b, sm1::SM_LOCKMODE_IS);
   CHECK(rows(tb).size() == 1);
 
   REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.a), true) == 0);
   start(f.a);
   sm3::table_t *ta = nullptr;
-  CHECK(sm3::tbl_open(f.a, f.jobs, sm1::lockmode_t::exclusive, ta) == -1);
+  CHECK(sm3::tbl_open(f.a, f.jobs, sm1::SM_LOCKMODE_EX, ta) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
 
   sm3::tbl_close(tb);
   REQUIRE(sm3::commit(f.b) == 0);
-  REQUIRE_MESSAGE(sm3::tbl_open(f.a, f.jobs, sm1::lockmode_t::exclusive, ta) ==
-                      0,
+  REQUIRE_MESSAGE(sm3::tbl_open(f.a, f.jobs, sm1::SM_LOCKMODE_EX, ta) == 0,
                   sm1::errmsg());
   REQUIRE(sm3::tbl_truncate(ta) == 0);
   CHECK(rows(ta).empty());
@@ -2574,7 +2567,7 @@ TEST_CASE("a statement does not see its own table writes, nor change a row "
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.b);
-  t = f.write(f.b, sm1::lockmode_t::intent_shared);
+  t = f.write(f.b, sm1::SM_LOCKMODE_IS);
   CHECK(get(t, r7) == "7|taken|w1");
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.b) == 0);

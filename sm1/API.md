@@ -806,16 +806,29 @@ is the caller's.
 
 Errors: `SM_ERR_INVALID`.
 
-### int sm1::lock(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::lockmode_t mode)
+### int sm1::lock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode)
+
+`type` says what the lock names. `LOCKTYPE_ROW` is a key in a
+store: the lock meets the write path and runs the currency
+check below. `LOCKTYPE_SCHEMA` is a name in no store, which
+nothing writes, so no store is read and no version is checked
+— sm3's table definitions are locked that way, with `storeid`
+part of the name and nothing more. `LOCKTYPE_OBJECT` is
+reserved. Locks of different types never conflict.
+
+`lockmode_t` is the root's `sm_lockmode_t`, as `errnum_t` is
+the root's `sm_errnum_t`: one enum the C wrapper and sm1
+share, defined in `include/sm_lock.h` and brought into
+namespace `sm1` by a using-enum.
 
 ```cpp
-enum class lockmode_t {
-    shared                  = 0,  /* S */
-    exclusive               = 1,  /* X */
-    intent_shared           = 2,  /* IS */
-    intent_exclusive        = 3,  /* IX */
-    shared_intent_exclusive = 4   /* SIX */
-};
+typedef enum sm_lockmode_t {
+    SM_LOCKMODE_SH  = 0,  /* S */
+    SM_LOCKMODE_EX  = 1,  /* X */
+    SM_LOCKMODE_IS  = 2,  /* IS */
+    SM_LOCKMODE_IX  = 3,  /* IX */
+    SM_LOCKMODE_SIX = 4   /* SIX */
+} sm_lockmode_t;
 ```
 
 Lock a row without writing it: SQL's `SELECT ... FOR SHARE`

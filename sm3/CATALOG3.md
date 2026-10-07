@@ -23,7 +23,7 @@ than giving it away.
 
 ## 0. The entities
 
-§3 has thirteen key shapes. Which of the things they name
+§3 has twelve key shapes. Which of the things they name
 has an identity of its own is what decides that shape, so the
 things come first.
 
@@ -41,9 +41,9 @@ things come first.
   that index. Nothing may point at a part, it is dropped with
   its owner, and it means nothing apart from it.
 - **Bookkeeping keys** are neither. The format version, the
-  name index, the dependency index and a table's schema lock
-  describe objects without being any; three of them hold a
-  value and the fourth holds none.
+  name index and the dependency index describe objects without
+  being any. A table's schema lock is not even a key: it is an
+  sm1 locktype (§0.4).
 
 This division is why §3's keys nest. An object gets a key
 word and an oid; a part gets its owner's key extended by its
@@ -110,43 +110,29 @@ and this lock is the only thing stopping that replacement
 from happening under a reader. Without it DDL has nothing to
 wait on.
 
-**Why it needs an oid.** It has none of its own; it *borrows*
-its table's, because a lock is not an object. sm1 offers no
-lock on an object: `sm1::lock(session, storeid, key, mode)`
-takes an arbitrary byte string, so a lock is always a lock on
-**a key**, and there is no key that could not also be a row.
-The interface itself imposes nothing — any key in store 0
-under `"U"` would do. Two things narrow it to the oid:
+**It is not a key.** `sm1::lock` takes a **locktype**, and a
+schema lock is `LOCKTYPE_SCHEMA`: a name in a namespace of its
+own, in no store, which nothing ever writes. sm1 reads no
+store for it and checks no version, because none can exist. So
+the catalog holds nothing for it — no `lock:` key, no entry,
+no kind of its own.
 
-- **Every session must compute the same bytes**, so the key
-  has to come from an identity that is stable for the table's
-  whole life. A name moves under `ALTER TABLE … RENAME`; a
-  storeid is the store's identity and not the table's, and a
-  rewriting `ALTER TABLE` would change it while the lock must
-  not move; a column's position is no name at all. The oid is
-  the one thing that never changes.
-- **The key must be one no DDL writes**, which rules out the
-  `tbl:` key and anything else carrying a value.
+**Why the name is the table's oid.** Every session that locks
+the table must compute the same bytes, so the name has to come
+from an identity stable for the table's whole life. A table
+name moves under `ALTER TABLE … RENAME`; a storeid is the
+store's identity and not the table's, and `TRUNCATE` swaps it
+while the lock must not move. The oid is the one thing that
+never changes, so the name is `be64(oid)` — big-endian
+because it is persisted in a prepared transaction's lock set.
 
-So `lock:<oid>` is the table's oid used as an **address**, not
-as an identity, and `lock:` is a word of its own rather than a
-field of the table.
-
-Two properties follow, and both are load-bearing:
-
-- **The key is never written.** `sm1::lock` runs the same
-  check a write does: a version of the key committed after
-  the caller's snapshot is `SM_ERR_CONFLICT`. A key no DDL
-  ever writes has no such version, so the lock never fails
-  that way at any isolation level, and a reader that waited
-  out a DDL gets the new definition instead of a
-  serialization failure (`SM3_DESIGN.md` §2, `CATALOG.md`
-  §2). A lock on the `tbl:` key, which every `ALTER TABLE`
-  rewrites, would fail at REPEATABLE READ for exactly the
-  readers that most need it.
-- **It sits outside the table's range**, `lock:<oid>` and not
-  `tbl:<oid>:lock`, so the scan that loads a table never
-  meets a valueless key in the middle of its parts.
+**What the type buys.** A lock on a key that *is* written
+fails with `SM_ERR_CONFLICT` for a version committed after the
+caller's snapshot. That would hit exactly the reader which
+waited out a DDL and should be handed the new definition. The
+earlier design dodged this by locking a key deliberately never
+written; `LOCKTYPE_SCHEMA` makes the property explicit instead
+of a convention the next reader has to notice.
 
 ### 0.5 Dependency, and what a dependent is
 
@@ -271,7 +257,6 @@ tbl:<oid>:idx:<oid>                     one of its indexes
 tbl:<oid>:idx:<oid>:inc:<seqno>         an INCLUDE attribute
 tbl:<oid>:idx:<oid>:key:<seqno>         a key column
 tbl:<oid>:idx:<oid>:rd:<seqno>          a column its eval reads
-lock:<oid>                              a table's schema lock
 name:<nspoid>:<name>                    the unique-name index
 dep:<kind>:<oid>:<kind>:<oid>           referenced, then dependent
 
@@ -497,10 +482,11 @@ implicitly" until the first hash, GiST or GIN index.
 `tbl:<oid>:idx:<oid>:rd:<seqno>` — a column the eval reads —
 each hold one field, `a`, the attnum.
 
-### 5.9 `lock:<oid>`, `name:…`, `dep:…`
+### 5.9 `name:…`, `dep:…`
 
-`lock:<oid>` has no value and is never written: it exists
-only to be locked (§0.4).
+A table's schema lock is not here: it is an
+`sm1::LOCKTYPE_SCHEMA` lock on the oid, storing nothing
+(§0.4).
 
 `name:<nspoid>:<name>`:
 
@@ -527,9 +513,11 @@ only to be locked (§0.4).
 | 05 | constraint |
 
 06 sequence, 07 type and 08 materialized view are reserved for
-`CATALOG2.md` §7. `META`, `NAME` and `LOCK` are no longer
-kinds at all — they were key kinds, and they are key words
-now. Only `name:` and `dep:` need a code for an object kind.
+`CATALOG2.md` §7. `META` and `NAME` are no longer kinds at
+all — they were key kinds and are key words now — and `LOCK`
+is not even that: a schema lock is an sm1 locktype and stores
+nothing. Only `name:` and `dep:` need a code for an object
+kind.
 
 Nothing in `CATALOG2.md` §9 is here: the sm2 `schema`, its
 `tup_desc_t`, and an index's `key_column_t` and `attribute_t`

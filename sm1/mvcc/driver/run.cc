@@ -269,16 +269,15 @@ std::string execute(worker_t *w, const item_t &it) {
     // lock <row> <is|ix|shared|six|exclusive>: take the row
     // lock in one of Gray's modes without writing the row.
     static const std::pair<const char *, sm1::lockmode_t> modes[] = {
-        {"is", sm1::lockmode_t::intent_shared},
-        {"ix", sm1::lockmode_t::intent_exclusive},
-        {"shared", sm1::lockmode_t::shared},
-        {"six", sm1::lockmode_t::shared_intent_exclusive},
-        {"exclusive", sm1::lockmode_t::exclusive},
+        {"is", sm1::SM_LOCKMODE_IS},        {"ix", sm1::SM_LOCKMODE_IX},
+        {"shared", sm1::SM_LOCKMODE_SH},    {"six", sm1::SM_LOCKMODE_SIX},
+        {"exclusive", sm1::SM_LOCKMODE_EX},
     };
     for (const auto &[name, mode] : modes) {
       if (a[1] == name) {
-        return sm1::lock(w->sess, w->store, a[0], mode) == 0 ? "ok"
-                                                             : error_name();
+        return sm1::lock(w->sess, sm1::LOCKTYPE_ROW, w->store, a[0], mode) == 0
+                   ? "ok"
+                   : error_name();
       }
     }
     return "ERROR: lock mode must be is, ix, shared, six or exclusive, not " +
