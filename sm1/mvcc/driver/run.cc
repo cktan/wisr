@@ -31,32 +31,43 @@
 
 namespace {
 
+/*
+ * Every error a step can report: its code, the symbolic name
+ * the transcript prints (DRIVER.md §2.2, §4), and the
+ * PostgreSQL outcome class a permutation sorts it into
+ * (DRIVER.md §6). One row per error, because a name without a
+ * class reads as success in error_class() below; adding an
+ * error here gives it both at once.
+ */
+struct errinfo_t {
+  sm1::errnum_t num;
+  const char *name;
+  const char *cls;
+};
+const errinfo_t errtab[] = {
+    {sm1::SM_ERR_CONFLICT, "conflict", "serialize"},
+    {sm1::SM_ERR_SERIALIZATION, "serialization", "serialize"},
+    {sm1::SM_ERR_DUPKEY, "dupkey", "unique"},
+    {sm1::SM_ERR_DEADLOCK, "deadlock", "deadlock"},
+    {sm1::SM_ERR_NOTFOUND, "notfound", "abort"},
+    {sm1::SM_ERR_NOTRANS, "notrans", "abort"},
+    {sm1::SM_ERR_PREPARED, "prepared", "abort"},
+    {sm1::SM_ERR_INVALID, "invalid", "abort"},
+    {sm1::SM_ERR_UPDATED, "updated", "abort"},
+    {sm1::SM_ERR_READONLY, "readonly", "abort"},
+};
+
 /* The symbolic name of the current error (DRIVER.md §4). */
 std::string error_name() {
-  switch (sm1::errnum()) {
-  case sm1::SM_ERR_CONFLICT:
-    return "conflict";
-  case sm1::SM_ERR_SERIALIZATION:
-    return "serialization";
-  case sm1::SM_ERR_DUPKEY:
-    return "dupkey";
-  case sm1::SM_ERR_NOTFOUND:
-    return "notfound";
-  case sm1::SM_ERR_NOTRANS:
-    return "notrans";
-  case sm1::SM_ERR_DEADLOCK:
-    return "deadlock";
-  case sm1::SM_ERR_PREPARED:
-    return "prepared";
-  case sm1::SM_ERR_INVALID:
-    return "invalid";
-  case sm1::SM_ERR_UPDATED:
-    return "updated";
-  case sm1::SM_ERR_READONLY:
-    return "readonly";
-  default:
-    return std::string("error:") + sm1::errmsg();
+  sm1::errnum_t num = sm1::errnum();
+  for (const errinfo_t &e : errtab) {
+    if (e.num == num) {
+      return e.name;
+    }
   }
+  // Unnamed: the message, which a transcript diff will show as
+  // the name DRIVER.md §2.2 says it should have had.
+  return std::string("error:") + sm1::errmsg();
 }
 
 /* One session of the script, and the thread that drives it. */
@@ -308,23 +319,21 @@ std::string execute(worker_t *w, const item_t &it) {
  * The outcome class an operation's result names, or "" if the
  * operation succeeded: PostgreSQL's errors, as the permutation
  * scripts compare them (DRIVER.md §6). sm1's conflict and its
- * serialization failure are both PostgreSQL's 40001.
+ * serialization failure are both PostgreSQL's 40001, which is
+ * why two rows of errtab share a class.
  */
 std::string error_class(const std::string &r) {
-  if (r == "conflict" || r == "serialization") {
-    return "serialize";
+  for (const errinfo_t &e : errtab) {
+    if (r == e.name) {
+      return e.cls;
+    }
   }
-  if (r == "dupkey") {
-    return "unique";
-  }
-  if (r == "deadlock") {
-    return "deadlock";
-  }
-  if (r == "notfound" || r == "notrans" || r == "invalid" || r == "updated" ||
-      r == "prepared" || r == "readonly" || r.rfind("error:", 0) == 0 ||
-      r.rfind("ERROR", 0) == 0) {
+  // An error error_name() could not name, or one the driver
+  // itself raised: PostgreSQL ends the transaction either way.
+  if (r.rfind("error:", 0) == 0 || r.rfind("ERROR", 0) == 0) {
     return "abort";
   }
+  // Not an error: the step's value, "ok", a row set, a depth.
   return "";
 }
 

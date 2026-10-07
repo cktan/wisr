@@ -254,16 +254,27 @@ unique violation, matching `b06` and `b12`.
    it left `c34`'s transcript hostage to the wording of a
    message, the coupling §4 exists to prevent.
 
-   Fixed by a `case` returning `"readonly"`, with `readonly`
-   added to §2.2's list and `c34`'s transcript regenerated —
-   the one scenario the change touches. `error_class()` in
-   the same file needed it too: that function sorted a
-   read-only failure into PostgreSQL's `abort` class only by
-   the `error:` prefix, which a symbolic name no longer
-   matches, so `readonly` joins the names listed there. No
-   permutation script reaches it today — p02's declared s3
-   never writes — but a script that did would otherwise have
-   been classified silently wrong.
+   Fixed by naming the error, with `readonly` added to
+   §2.2's list and `c34`'s transcript regenerated — the one
+   scenario the change touches.
+
+   `error_class()` in the same file was the more interesting
+   half. It sorts a failure into PostgreSQL's outcome classes
+   for the permutation scripts, and it caught a read-only
+   failure only by the `error:` prefix, which a symbolic name
+   no longer matches. Naming the error without telling that
+   function would have made it return `""` — which
+   `execute_step` reads as *success*. No permutation reaches
+   it today, p02's declared s3 never writing, but one that
+   did would have recorded a committed transaction where sm1
+   refused the write, and no test would have said so.
+
+   The two functions kept parallel lists of the same ten
+   names, which is what allowed a name to exist without a
+   class. They now share one table of
+   `{code, name, class}`, so an error cannot be given a name
+   without also being given a class. The refactor leaves all
+   109 transcripts byte-identical.
 
 2. **`c03`, `c04` and `c22` assert final row state only at
    RR/RR.** Their `@9 check rows when rr` is scoped to that
