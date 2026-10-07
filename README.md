@@ -36,6 +36,9 @@ the wrapper through the `rel/` test suite.
 
 ## Where to read
 
+- `LOCK.md` — what gets locked and how: the two mechanisms,
+  the lock subjects, and the scenarios that are easy to get
+  wrong
 - `GLOSSARY.md` — the words this stack uses, the ones that
   mean more than one thing first, and the identifiers side
   by side
