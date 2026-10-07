@@ -40,7 +40,7 @@ relies on it.
   average bytes, distinct count, most common values, histogram
   bounds, and correlation with `rowno`.
 
-**What the stack answers live, at any plan**
+**What the stack answers live, at plan time**
 
 - The bytes of a heap or an index now, the rowno limit now,
   and the LSM's level count now. None is stored, and none
