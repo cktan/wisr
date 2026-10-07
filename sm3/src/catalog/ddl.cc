@@ -730,7 +730,7 @@ int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode) {
    * definition. Held to the end of the transaction, so DDL waits
    * out its users (SM3_DESIGN.md §2).
    */
-  return sm1::lock(s, sm1::LOCKTYPE_SCHEMA, 0, key, mode);
+  return sm1::lock(s, sm1::LOCKTYPE_OID, 0, key, mode);
 }
 
 } // namespace sm3

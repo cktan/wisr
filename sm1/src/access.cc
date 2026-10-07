@@ -334,9 +334,14 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
   }
-  // Reject a type that is not one of the three.
-  if (type > sm1::LOCKTYPE_OBJECT) {
+  // Reject a type that is neither of the two.
+  if (type > sm1::LOCKTYPE_OID) {
     return set_error(sm1::SM_ERR_INVALID, "unknown lock type {}", (int)type);
+  }
+  // An oid is 8 bytes, so a name of any other length is a mistake.
+  if (type == sm1::LOCKTYPE_OID && klen != 8) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "a LOCKTYPE_OID key is 8 bytes, not {}", klen);
   }
   // A name outside any store takes the lock and nothing else.
   if (type != sm1::LOCKTYPE_ROW) {

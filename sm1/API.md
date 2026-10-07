@@ -810,11 +810,12 @@ Errors: `SM_ERR_INVALID`.
 
 `type` says what the lock names. `LOCKTYPE_ROW` is a key in a
 store: the lock meets the write path and runs the currency
-check below. `LOCKTYPE_SCHEMA` is a name in no store, which
-nothing writes, so no store is read and no version is checked
-— sm3's table definitions are locked that way, with `storeid`
-part of the name and nothing more. `LOCKTYPE_OBJECT` is
-reserved. Locks of different types never conflict.
+check below. `LOCKTYPE_OID` is an object id in no store, which
+nothing writes, so no store is read and no version is checked:
+the key must be exactly 8 bytes, an oid big-endian, and
+`storeid` is part of the name and nothing more. sm3 locks a
+table's definition that way. Locks of different types never
+conflict.
 
 `lockmode_t` is the root's `sm_lockmode_t`, as `errnum_t` is
 the root's `sm_errnum_t`: one enum the C wrapper and sm1

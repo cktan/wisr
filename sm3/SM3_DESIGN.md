@@ -118,7 +118,7 @@ table locks are:
 - so once a transaction holds its IS or IX lock, the definition
   in memory cannot change under it. A catalog served from
   memory must take this lock, or DDL has nothing to wait on.
-  The lock is an `sm1::LOCKTYPE_SCHEMA` lock on the table's
+  The lock is an `sm1::LOCKTYPE_OID` lock on the table's
   oid: a name in no store, which nothing writes, so
   `sm1::lock` reads no store and checks no version and cannot
   fail on a newer commit at any level. The lock alone is what

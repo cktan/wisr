@@ -111,7 +111,7 @@ from happening under a reader. Without it DDL has nothing to
 wait on.
 
 **It is not a key.** `sm1::lock` takes a **locktype**, and a
-schema lock is `LOCKTYPE_SCHEMA`: a name in a namespace of its
+schema lock is `LOCKTYPE_OID`: a name in a namespace of its
 own, in no store, which nothing ever writes. sm1 reads no
 store for it and checks no version, because none can exist. So
 the catalog holds nothing for it — no `lock:` key, no entry,
@@ -131,7 +131,7 @@ fails with `SM_ERR_CONFLICT` for a version committed after the
 caller's snapshot. That would hit exactly the reader which
 waited out a DDL and should be handed the new definition. The
 earlier design dodged this by locking a key deliberately never
-written; `LOCKTYPE_SCHEMA` makes the property explicit instead
+written; `LOCKTYPE_OID` makes the property explicit instead
 of a convention the next reader has to notice.
 
 ### 0.5 Dependency, and what a dependent is
@@ -485,7 +485,7 @@ each hold one field, `a`, the attnum.
 ### 5.9 `name:…`, `dep:…`
 
 A table's schema lock is not here: it is an
-`sm1::LOCKTYPE_SCHEMA` lock on the oid, storing nothing
+`sm1::LOCKTYPE_OID` lock on the oid, storing nothing
 (§0.4).
 
 `name:<nspoid>:<name>`:

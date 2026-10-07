@@ -481,7 +481,7 @@ catalog behaves. Two reasons not to.
   `sm1::read_latest`, which holds a lock — one lock on one key
   per plan, which is principle 5's hot key. The catalog
   already avoids this class of thing on purpose: the schema
-  lock is an `sm1::LOCKTYPE_SCHEMA` lock, which writes
+  lock is an `sm1::LOCKTYPE_OID` lock, which writes
   nothing, so that taking it "never fails on a newer commit,
   at any level"
   (`CATALOG.md` §2). Reading statistics per plan through sm1

@@ -48,8 +48,7 @@ path, not just a prefix:
 | type | what sm1 does |
 | --- | --- |
 | `LOCKTYPE_ROW` | validates the store and key, waits for an uncommitted writer of the key, and once held runs the currency check of §1.1 |
-| `LOCKTYPE_SCHEMA` | a name in no store: no store is read, no version is checked, no latch is taken. A lock-table entry and nothing else |
-| `LOCKTYPE_OBJECT` | reserved; no caller yet |
+| `LOCKTYPE_OID` | an object id in no store, exactly 8 bytes: no store is read, no version is checked, no latch is taken. A lock-table entry and nothing else |
 
 The lock table is keyed `type ‖ be64(storeid) ‖ userkey`, so
 **two locks of different types never conflict**, however equal
@@ -83,8 +82,15 @@ of the key after this transaction's snapshot — at REPEATABLE
 READ and SERIALIZABLE. At READ COMMITTED it does not fail
 there; the caller reads with `sm1::read_latest` instead.
 
-`LOCKTYPE_SCHEMA` runs no such check, because no version of
-such a name can exist.
+`LOCKTYPE_OID` runs no such check, because no version of such a
+name can exist.
+
+**One type serves every object.** Every sm3 object -- table,
+index, namespace, collation -- draws its oid from the one
+sequence `sm3.oid`, so `be64(oid)` is unambiguous across kinds
+and subjects 1 and 4 to 7 of §2 all lock `LOCKTYPE_OID`, with
+no kind byte and no collision. sm1 refuses a key of any other
+length for it.
 
 ---
 
@@ -95,7 +101,7 @@ something the caller is not writing.
 
 | # | Subject | Name | Guards | Today |
 | --- | --- | --- | --- | --- |
-| 1 | a table's definition | `SCHEMA`, `be64(oid)` | DDL against readers and writers of the in-memory catalog | built: `cat_lock_table` → `lock_table` → `sm1::lock` |
+| 1 | a table's definition | `OID`, `be64(oid)` | DDL against readers and writers of the in-memory catalog | built: `cat_lock_table` → `lock_table` → `sm1::lock` |
 | 2 | a heap row, read intent | `ROW`, `(storeid, relid ‖ rowno)` | `FOR SHARE`, `FOR UPDATE`, an index build against a writer | built: `tbl_lock` → `rel_lock` → `sm1::lock` |
 | 3 | a catalog key, lock-then-read | `ROW`, `(store 0, "U" ‖ key)` | DDL takes X, reads the row current, may rewrite it | built: `catkv_lock` → `sm1::lock` |
 | 4 | a namespace | `(oid)` | `DROP SCHEMA` against `CREATE` in it | not built |
@@ -185,7 +191,7 @@ the new definition. Failing it is wrong.
 
 The design once dodged this by locking a `LOCK` key that no
 DDL ever wrote — correct, but a convention the next reader had
-to notice. `LOCKTYPE_SCHEMA` makes it structural: no version
+to notice. `LOCKTYPE_OID` makes it structural: no version
 of that name can exist, so the check cannot fire, at any
 isolation level.
 
@@ -196,7 +202,7 @@ isolation level.
 sm3::lock_table(s, 16384, X)
   // Hold table 16384's definition exclusively: no one may read
   // or write the table until this transaction ends.
-  -> sm1::lock(s, LOCKTYPE_SCHEMA, 0, be64(16384), SM_LOCKMODE_EX)
+  -> sm1::lock(s, LOCKTYPE_OID, 0, be64(16384), SM_LOCKMODE_EX)
      // Take the lock named 16384 in the schema namespace;
      // nothing writes that name, so no store is read and no
      // version checked.

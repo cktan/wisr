@@ -366,3 +366,32 @@ TEST_CASE("every sequence call validates its name") {
   CHECK(sm1::rmseq(s, max.c_str()) == 0);
   REQUIRE(sm1::commit(s) == 0);
 }
+
+TEST_CASE("sm1::lock validates its lock type and an oid's length") {
+  // Verify the locktype_t argument and LOCKTYPE_OID's fixed width.
+  // 1. A type past the last one is SM_ERR_INVALID.
+  // 2. A LOCKTYPE_OID key of any length but 8 is SM_ERR_INVALID,
+  //    the empty one included.
+  // 3. An 8-byte one is taken, and needs no store to exist.
+  // 4. LOCKTYPE_ROW is unaffected: it takes a key of any length.
+  args_fixture_t f;
+  sm1::session_t *s = f.s();
+  std::string oid(8, '\0');
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+
+  expect_fail(sm1::lock(s, static_cast<sm1::locktype_t>(2), 0, oid,
+                        sm1::SM_LOCKMODE_SH),
+              sm1::SM_ERR_INVALID);
+  for (size_t n : {size_t{0}, size_t{7}, size_t{9}}) {
+    CAPTURE(n);
+    expect_fail(sm1::lock(s, sm1::LOCKTYPE_OID, 0, std::string(n, '\0'),
+                          sm1::SM_LOCKMODE_SH),
+                sm1::SM_ERR_INVALID);
+  }
+
+  // Store 999 does not exist, which an oid lock never looks at.
+  CHECK(sm1::lock(s, sm1::LOCKTYPE_OID, 999, oid, sm1::SM_LOCKMODE_EX) == 0);
+  CHECK(sm1::lock(s, sm1::LOCKTYPE_ROW, g_store, "a longer key",
+                  sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+}

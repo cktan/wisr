@@ -493,23 +493,24 @@ using enum ::sm_lockmode_t;
  *                    writer of the key, and once held it runs
  *                    the currency check below. storeid and key
  *                    must name a live store and a legal key.
- *   LOCKTYPE_SCHEMA  a name in no store, which nothing ever
- *                    writes -- what a level above locks to
- *                    stand for an object of its own (sm3's
- *                    table definitions). No store is read, no
- *                    version is checked, and storeid is part of
- *                    the name and nothing more; pass 0 unless
- *                    the name needs it.
- *   LOCKTYPE_OBJECT  reserved for another such namespace; no
- *                    caller yet.
+ *   LOCKTYPE_OID     an object id in no store, which nothing
+ *                    ever writes -- what a level above locks to
+ *                    stand for an object of its own. The key
+ *                    must be exactly 8 bytes, an oid
+ *                    big-endian; no store is read, no version
+ *                    is checked, and storeid is part of the
+ *                    name and nothing more, so pass 0 unless
+ *                    the name needs it. sm3 locks a table's
+ *                    definition this way, and every sm3 object
+ *                    draws its oid from one sequence, so one
+ *                    type serves them all.
  *
  * Two locks of different types never conflict, however equal
  * their storeid and key.
  */
 enum locktype_t : uint8_t {
   LOCKTYPE_ROW = 0,
-  LOCKTYPE_SCHEMA = 1,
-  LOCKTYPE_OBJECT = 2
+  LOCKTYPE_OID = 1
 };
 
 /*

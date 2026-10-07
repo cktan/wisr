@@ -73,7 +73,7 @@ kinds' values are on disk, so frozen.
 | `TABLE` | 4 | oid `int8` | the table's blob: the table, its columns, its indexes |
 | `COLLATION` | 5 | oid `int8` | the collation's blob |
 | `INDEX` | 6 | — | no key of its own: an index is named by a `NAME` entry and kept in its table's blob |
-| — | 7 | — | retired: a table's schema lock was a key here, and is now an `sm1::LOCKTYPE_SCHEMA` lock on its oid |
+| — | 7 | — | retired: a table's schema lock was a key here, and is now an `sm1::LOCKTYPE_OID` lock on its oid |
 
 - **A table is one entry.** Its columns and indexes are in its
   blob, so every DDL on a table rewrites that one value.
@@ -85,7 +85,7 @@ kinds' values are on disk, so frozen.
 - **A table's rowno sequence is `sm3.rowno.<oid>`**, made with
   its store.
 - **A table's schema lock is no longer a key here.** It is an
-  `sm1::LOCKTYPE_SCHEMA` lock on the table's oid
+  `sm1::LOCKTYPE_OID` lock on the table's oid
   (`SM3_DESIGN.md` §2). Locking the `TABLE` key instead would
   not do: every DDL rewrites it, and a lock on a key that was
   written fails at REPEATABLE READ for a version newer than
