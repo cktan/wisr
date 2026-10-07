@@ -25,6 +25,7 @@
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check committed T1 T2 -> satisfied
+@9 check rows -> {R1=t1, R2=t2}
 == pairing S/RR == T1=SER T2=RR
 @1 T1 begin -> ok
 @1 T2 begin -> ok
@@ -35,6 +36,7 @@
 @6 T1 commit? -> recorded
 @7 T2 commit? -> recorded
 @8 check committed T1 T2 -> satisfied
+@9 check rows -> {R1=t1, R2=t2}
 == pairing S/S == T1=SER T2=SER
 @1 T1 begin -> ok
 @1 T2 begin -> ok

@@ -20,25 +20,34 @@ isolation levels:
 | **S/RR** | SERIALIZABLE | REPEATABLE READ | the mirror of it |
 | **S/S** | SERIALIZABLE | SERIALIZABLE | full SSI |
 
-The suite is in four families:
+The suite is in six families:
 
 * **A — visibility (`a01`–`a17`).** Dirty reads,
   non-repeatable reads, phantoms, cursor stability, own
   writes, resurrected rows, commit boundaries, cursor
   seeking, read committed's statement boundaries, and a
   dropped store an older snapshot still reads.
-* **B — write-write conflicts (`b01`–`b29`).** Row locks,
+* **B — write-write conflicts (`b01`–`b36`).** Row locks,
   first-committer-wins, blocking and the `blocks` protocol,
-  deadlock detection, and retryable against non-retryable
+  deadlock detection, explicit locking and the locks a
+  savepoint gives back, and retryable against non-retryable
   errors (`SM_ERR_CONFLICT`, `SM_ERR_DEADLOCK`,
   `SM_ERR_DUPKEY`, `SM_ERR_NOTFOUND`).
-* **C — read-write conflicts (`c01`–`c31`).** Cahill's SSI:
-  SIREAD locks, rw-antidependency edges, pivots, false-abort
-  bounds, point reads, predicate ranges, early cursor close.
-* **E — invariants and housekeeping (`e01`–`e05`).** SSI
+* **C — read-write conflicts (`c01`–`c34`).** SSI: SIREAD
+  locks, rw-antidependency edges, pivots, false-abort
+  bounds, point reads, predicate ranges, early cursor close,
+  and the `READ ONLY` declaration (`c32`–`c34`).
+* **E — invariants and housekeeping (`e01`–`e06`).** SSI
   state cleanup (`e01`), invariants under load (`e02`,
   `e03`), catalog predicates (`e04`), RR reader/writer
-  throughput (`e05`).
+  throughput (`e05`), RC contention (`e06`).
+* **F — read committed (`f01`–`f10`).** The `updated` /
+  `readlatest` exchange: a write that meets a row committed
+  since the transaction began is refused without an abort,
+  and the caller re-reads and goes on.
+* **P — PostgreSQL's isolation tests (`p01`–`p10`).** Ten of
+  its specs, run as permutation scripts against the outcome
+  its expected output gives.
 
 ---
 
@@ -48,8 +57,8 @@ Each of these reads as a bug in the suite and is not. They
 are recorded so the next reader does not re-open them.
 
 1. **Why `at-most-one-committed`, not `exactly-one`, under
-   S/S.** `c02`–`c05`, `c21`, `c22` and `c24` assert write
-   skew that way. `ssi_precommit()` in `src/ssi.cc` now
+   S/S.** `c02`–`c05`, `c13`, `c21`, `c22`, `c24`,
+   `c29`–`c31` and `e04` assert write skew that way. `ssi_precommit()` in `src/ssi.cc` now
    fails only the second to commit of a plain write skew
    (`SM1_DESIGN.md` §7.3), but serializability asks only that
    one not commit; a more conservative rule would be as

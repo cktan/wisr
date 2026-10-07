@@ -23,3 +23,4 @@ seed R2 0
 @8 check committed T1 T2 when rr+s
 @8 check at-most-one-committed T1 T2 when s+s
 @9 check rows when rr
+@9 check rows when rr+s

@@ -276,21 +276,36 @@ unique violation, matching `b06` and `b12`.
    without also being given a class. The refactor leaves all
    109 transcripts byte-identical.
 
-2. **`c03`, `c04` and `c22` assert final row state only at
-   RR/RR.** Their `@9 check rows when rr` is scoped to that
-   one pairing, so the mixed pairings assert that both
-   transactions commit but never what the rows ended up
-   holding. The difference between the RR/RR and RR/S blocks
-   in those three transcripts is precisely that one line, and
-   nothing behavioural. Widening the scope to `rr+s` would
-   close a small gap at no cost; it changes expected output,
-   so it is recorded here rather than done.
+2. **Fixed: `c03`, `c04` and `c22` asserted final row state
+   only at RR/RR.** Their `@9 check rows when rr` was scoped
+   to that one pairing, so the mixed pairings established
+   that both transactions commit but never what the rows
+   ended up holding — the sole difference between their
+   RR/RR and RR/S blocks, and nothing behavioural. Each now
+   carries a second `@9 check rows when rr+s`, the idiom
+   those scripts already use at `@8`, since the language has
+   no group for "every pairing but S+S". The three
+   transcripts gain that one line per mixed pairing and
+   nothing else, and it records the same rows RR/RR gives,
+   which is the point: all four pairings but S+S end in the
+   same state, and now all three say so.
 
-3. **`REPORT.md`'s family ranges are stale.** It names family
-   B as `b01`–`b29`, family C as `c01`–`c31` and family E as
-   `e01`–`e05`; they are now `b01`–`b36`, `c01`–`c34` and
-   `e01`–`e06`. The three behaviours that document records
-   are all still accurate, `c17`'s open T3 included.
+3. **Fixed: `REPORT.md` had gone stale in its lists, though
+   not in its findings.** It named family B as `b01`–`b29`,
+   C as `c01`–`c31` and E as `e01`–`e05`, now `b01`–`b36`,
+   `c01`–`c34` and `e01`–`e06`; it opened "the suite is in
+   four families" when F and P had since made six, and
+   neither had a bullet; its §2 listed seven scenarios
+   asserting write skew at S/S where twelve do. Its C bullet
+   also still called the mechanism "Cahill's SSI", which
+   `2ae8668` made only half true. All corrected.
+
+   Its three verified behaviours needed no change, and each
+   was re-checked rather than assumed: the
+   `at-most-one-committed` reasoning still holds,
+   `ssi_precommit`, `ssi_on_write` and the `closedb` abort
+   all still exist where it says, and `c17` still leaves T3
+   open, `2ae8668` having rewritten the script but not that.
 
 ## 8. The engine, and whether the suite still asserts
 
