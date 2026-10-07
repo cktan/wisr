@@ -194,14 +194,28 @@ isolation level.
 
 ```
 sm3::lock_table(s, 16384, X)
+  // Hold table 16384's definition exclusively: no one may read
+  // or write the table until this transaction ends.
   -> sm1::lock(s, LOCKTYPE_SCHEMA, 0, be64(16384), SM_LOCKMODE_EX)
-     mutual exclusion; no store, no version
+     // Take the lock named 16384 in the schema namespace;
+     // nothing writes that name, so no store is read and no
+     // version checked.
 
 sm2::catkv_lock(kv, entity_key(table, 16384), X)
+  // Hold the catalog row that stores table 16384's definition,
+  // so what this transaction reads from it next is current.
   -> sm1::lock(s, LOCKTYPE_ROW, 0, "U" | kind(4) | be64(16384),
                SM_LOCKMODE_EX)
-     currency, because that key IS written
+     // Take the row lock on that key in store 0, failing if
+     // another transaction committed a version of it after our
+     // snapshot.
 ```
+
+The pair reads twice over because the wrapper says *which
+object* and `sm1::lock` says *which bytes*. That gap is
+inherent to sm1 not knowing what a table is; the type tag
+narrows it — a schema lock no longer pretends to be a row —
+but does not close it.
 
 At READ COMMITTED the second one lets the DDL overwrite a
 newer version after a `catkv_get_latest`; at REPEATABLE READ
@@ -211,11 +225,17 @@ it is the correct `CONFLICT`.
 
 ```
 T1  sm2::rel_lock(rel, 7, X)
-      -> sm1::lock(s, LOCKTYPE_ROW, 1001, be16(1)|be64(7), SM_LOCKMODE_EX)
+      // Hold row 7 of the table's heap exclusively without
+      // writing it: SELECT ... FOR UPDATE.
+      -> sm1::lock(s, LOCKTYPE_ROW, 1001, be16(1)|be64(7),
+                   SM_LOCKMODE_EX)
+         // Take the row lock on the heap's key for rowno 7 in
+         // store 1001 -- the same name a write of that row
+         // would wait on.
 T2  sm2::rel_update(rel, 7, ...)
       -> sm1::update(s, 1001, be16(1)|be64(7), ...)
-         blocks: a write waits for a conflicting lock on the
-         key it writes
+         // Blocks: a write waits for a conflicting lock on the
+         // very key it writes.
 ```
 
 This works only because both name `(storeid, relid ‖ rowno)` —
