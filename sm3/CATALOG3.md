@@ -70,8 +70,11 @@ is the SQL layer's, not sm3's (`CATALOG.md` §7).
 ### 0.3 Table, column, index, constraint, collation
 
 - **A table** is a heap of rows in one sm1 store, keyed by
-  `rowno`. The catalog holds its identity, which store holds
-  it, and the sequence that hands out its rownos.
+  `rowno`. The heap is one rel in that store, always at
+  rel-id 1, and the table's indexes are rels beside it
+  (`SM3_DESIGN.md` §4). The catalog holds the table's
+  identity, which store holds it, and the sequence that hands
+  out its rownos.
 - **A column** is a part of a table: a name, an sm2 type and
   typmod, and what a row needs in order to be read — among
   it the `missing` value, which is what a row written before

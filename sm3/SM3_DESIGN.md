@@ -14,7 +14,7 @@ decisions in `SM3_OBJECTIVE.md`:
 | Catalog | in memory, written through to sm2, lock-based DDL |
 | Index entry | `encode(index columns) ‖ rowno` → a tuple of the `rowno`, a cut flag and the INCLUDE columns; a unique index's key drops the `rowno` suffix unless a key column is NULL, and is never cut |
 | Encoder | sm2's, called with the same per-column arguments |
-| Relation mapping | one sm1 store per table, holding its rows, indexes and TOAST data, told apart by sm2's 2-byte rel-id |
+| Relation mapping | one sm1 store per table; a store is a collection of rels -- its heap, one per index, one for TOAST -- told apart by sm2's 2-byte short-rel-id |
 | API shape | tuple at a time; a scan takes key bounds and filters nothing, and whatever needs evaluating is the host's, by callback (§3, §5) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
@@ -61,7 +61,7 @@ answer.
 | sm2's tuples in a heap keyed by `rowno` | a row's identity is its `rowno`, which never changes; every index, the primary key's included, points at it |
 | sm2's index `rel`: entries keyed by encoded columns, each pointing at a `rowno` | sm2 lays out an entry's bytes and scan bounds; which indexes exist, and writing their entries on every heap write, are sm3's (§3) |
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
-| sm2's 2-byte rel-id | a table's rows, indexes and TOAST data share its one sm1 store (§4) |
+| sm2's 2-byte short-rel-id | a table's heap, indexes and TOAST data are rels in its one sm1 store (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own; the image views sm1 session memory, valid until the next call, so sm3 copies it before any index call (§3) |
 | sm2's codec over `datum_t` values and null flags, as PostgreSQL's `Datum` (`sm2/TUPLE.md` §9) | sm3 never handles a value's bytes: rows, index keys and bounds are `datum_t`s, and `encode_key` strips a varlena's header itself |
 | `tup_desc_t`: a schema's widths and entry offsets, built once (`sm2/TUPLE.md` §6) | sm3 builds one per table and per index value when a definition loads or changes, so a one-column read costs a step per earlier null, not a pass over the row |
@@ -757,22 +757,33 @@ against the PostgreSQL source before the fork relies on it.
 
 ## 4. Object mapping
 
-**Decision: one sm1 store per table.** A table's rows, all
-its secondary indexes and its TOAST data live in one
-sm1 store, told apart by sm2's 2-byte rel-id
+**Decision: one sm1 store per table.** A store is a
+collection of **rels**, and a table's heap, each of its
+secondary indexes and its TOAST data is one of them. They are
+told apart by sm2's 2-byte **short-rel-id**
 (`sm2/SM2_DESIGN.md` §5):
 
-| rel-id | Relation |
+| short-rel-id | Relation |
 | --- | --- |
-| `0x0000` | the table's rows, its heap |
-| `0x0001`–`0xFFFE` | its indexes, one rel-id each |
+| `0x0000` | unused |
+| `0x0001` | the table's heap, always |
+| `0x0002`–`0xFFFE` | its indexes, one short-rel-id each |
 | `0xFFFF` | its TOAST data |
 
-sm3 chooses the rel-ids and records them in the catalog. An
-sm3 table or index is one `rel` over the table's sm1 store
-with its rel-id; sm2 prepends and strips it and otherwise
-ignores it. sm2 never learns what a table is, and sm3 never
-encodes a key itself.
+- **The heap is always `0x0001`.** It is the constant
+  `sm3::heap_rel_id` and is never drawn from the counter that
+  hands out index rel-ids, so a table's heap sits at the same
+  rel-id in every database and nothing about it is recorded.
+- **`0x0000` is left unused**, so a zeroed or unset rel-id is
+  never a live rel.
+
+A rel's identity across the database is its **full-rel-id**,
+`(storeid, short-rel-id)`. sm3 chooses an index's
+short-rel-id and records it in the catalog; the heap's and
+TOAST's are fixed. An sm3 table or index is one `rel` over the
+table's sm1 store with its rel-id; sm2 prepends and strips it
+and otherwise ignores it. sm2 never learns what a table is,
+and sm3 never encodes a key itself.
 
 - **`DROP TABLE` is one `sm1::rmstore`**, sm1's O(1) column
   family drop, and takes the indexes and TOAST data with it.
@@ -794,7 +805,7 @@ encodes a key itself.
   reused.** A dropped index's versions linger until sm1's
   garbage collection passes them; never reusing a rel-id means
   no later index can read them as its own, with no rule tied
-  to the GC horizon. 65,534 index creations per table,
+  to the GC horizon. 65,533 index creations per table,
   rebuilds included, is the ceiling.
 - **The cost: tables are bounded by sm1's store count.**
   sm1 targets hundreds to low thousands of stores, and

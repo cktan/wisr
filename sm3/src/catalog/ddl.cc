@@ -286,9 +286,13 @@ int cat_create_table(session_t *session, uint64_t nspoid, std::string_view name,
         0) {
       return -1;
     }
-    table_rec_t rec{
-        nspoid, std::string(name), 0, "sm3.rowno." + std::to_string(t), 1, {},
-        {}};
+    table_rec_t rec{nspoid,
+                    std::string(name),
+                    0,
+                    "sm3.rowno." + std::to_string(t),
+                    first_index_rel_id,
+                    {},
+                    {}};
     // The table's store and its rowno sequence (DESIGN.md §5).
     if (sm1::mkstore(session->sm1, rec.storeid) != 0 ||
         sm1::mkseq(session->sm1, rec.rowno_seq, 1, 1) != 0) {

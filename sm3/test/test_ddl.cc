@@ -113,12 +113,12 @@ TEST_CASE("columns, indexes and collations are added and load back") {
   CHECK(d->columns[2].missing == le(int64_t{7}));
   CHECK_FALSE(d->columns[3].missing);
   CHECK(d->desc.bad == SIZE_MAX);
-  CHECK(d->next_rel_id == 2);
+  CHECK(d->next_rel_id == 3);
   REQUIRE(d->indexes.size() == 1);
   const sm3::index_def_t &x = d->indexes[0];
   CHECK(x.oid == ix);
   CHECK(x.name == "t_b");
-  CHECK(x.rel_id == 1);
+  CHECK(x.rel_id == 2);
   CHECK(x.unique);
   CHECK(x.key_attnums == std::vector<int32_t>{1});
   CHECK(x.include_attnums == std::vector<int32_t>{0});
@@ -165,7 +165,7 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
   CHECK(d->columns[2].type == &sm2::type_int8);
   REQUIRE(d->indexes.size() == 1);
   CHECK(d->indexes[0].oid == ix2);
-  CHECK(d->indexes[0].rel_id == 2);
+  CHECK(d->indexes[0].rel_id == 3);
   uint64_t storeid = d->storeid;
   std::string seq = d->rowno_seq;
 
@@ -191,8 +191,8 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
 
 TEST_CASE("dropping an index erases its entries and nothing else") {
   // Verify cat_drop_index clears the index's rel_id.
-  // 1. Put a row under rel_id 0 and entries under the rel_ids of
-  //    two indexes in the table's store.
+  // 1. Put a row under the heap's rel_id and entries under the
+  //    rel_ids of two indexes in the table's store.
   // 2. Drop the first index: its entries are gone; the row and the
   //    other index's entry remain.
   cat_db_t db;
@@ -210,16 +210,16 @@ TEST_CASE("dropping an index erases its entries and nothing else") {
     return std::string{static_cast<char>(rel_id >> 8),
                        static_cast<char>(rel_id & 0xFF), tail};
   };
-  REQUIRE(sm1::insert(db.s, storeid, key(0, 'r'), "row") == 0);
-  REQUIRE(sm1::insert(db.s, storeid, key(1, 'a'), "e") == 0);
-  REQUIRE(sm1::insert(db.s, storeid, key(1, 'b'), "e") == 0);
+  REQUIRE(sm1::insert(db.s, storeid, key(sm3::heap_rel_id, 'r'), "row") == 0);
   REQUIRE(sm1::insert(db.s, storeid, key(2, 'a'), "e") == 0);
+  REQUIRE(sm1::insert(db.s, storeid, key(2, 'b'), "e") == 0);
+  REQUIRE(sm1::insert(db.s, storeid, key(3, 'a'), "e") == 0);
   REQUIRE(sm3::cat_drop_index(db.ss, t, i1) == 0);
   std::string_view v;
-  CHECK(sm1::read(db.s, storeid, key(0, 'r'), v) == 0);
-  CHECK(sm1::read(db.s, storeid, key(1, 'a'), v) == 1);
-  CHECK(sm1::read(db.s, storeid, key(1, 'b'), v) == 1);
-  CHECK(sm1::read(db.s, storeid, key(2, 'a'), v) == 0);
+  CHECK(sm1::read(db.s, storeid, key(sm3::heap_rel_id, 'r'), v) == 0);
+  CHECK(sm1::read(db.s, storeid, key(2, 'a'), v) == 1);
+  CHECK(sm1::read(db.s, storeid, key(2, 'b'), v) == 1);
+  CHECK(sm1::read(db.s, storeid, key(3, 'a'), v) == 0);
   db.commit();
 }
 

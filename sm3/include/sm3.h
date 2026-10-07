@@ -29,6 +29,15 @@ namespace sm3 {
 constexpr uint64_t nsp_pg_catalog = 1;
 constexpr uint64_t nsp_public = 2;
 
+/*
+ * The rel-ids of a table's rels in its store (SM3_DESIGN.md §4):
+ * the heap takes 1 and its indexes the ones above, 0xFFFF being
+ * TOAST's. 0 is left unused, so an unset rel-id is never a live
+ * rel.
+ */
+constexpr uint16_t heap_rel_id = 1;
+constexpr uint16_t first_index_rel_id = 2;
+
 /* A column, as a table is declared with it. */
 struct column_spec_t {
     std::string name;
