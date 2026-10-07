@@ -74,7 +74,7 @@ enum class index_state_t : uint8_t { building = 0, valid = 1, failed = 2 };
 struct index_def_t {
     uint64_t                          oid;
     std::string                       name;
-    uint16_t                          prefix;
+    uint16_t                          rel_id;
     bool                              unique;
     std::vector<int32_t>              key_attnums;     /* 0-based; -1: expr */
     std::vector<int32_t>              include_attnums; /* 0-based */
@@ -109,7 +109,7 @@ struct table_def_t {
     std::string                   name;
     uint64_t                      storeid;
     std::string                   rowno_seq;
-    uint16_t                      next_prefix;
+    uint16_t                      next_rel_id;
     std::vector<column_def_t>     columns;
     std::vector<sm2::attribute_t> schema;
     sm2::tup_desc_t               desc;    /* over schema */
@@ -313,7 +313,7 @@ int cat_drop_column(session_t* session, uint64_t oid,
 
 /*
  * Create an index named name on the table, keyed by keys, with the
- * INCLUDE columns includes, taking the table's next prefix; its
+ * INCLUDE columns includes, taking the table's next rel_id; its
  * oid is set in oid. It records the index as building, for the
  * build to fill from the table's rows and then mark valid
  * (SM3_DESIGN.md §3). On a table this transaction created, which

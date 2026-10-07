@@ -272,13 +272,13 @@ int encode_key(std::span<const key_column_t> cols,
 /*
  * The share of sm1::max_keylen a key's columns may use
  * (SM2_DESIGN.md §3.2): every sm1 key starts with a 2-byte object
- * prefix, and an index entry that carries a rowno ends with its 8
+ * rel_id, and an index entry that carries a rowno ends with its 8
  * bytes.
  */
-constexpr size_t key_prefix_len = 2;
+constexpr size_t rel_id_len = 2;
 constexpr size_t rowno_len = 8;
 constexpr size_t max_key_len(bool rowno) {
-    return sm1::max_keylen - key_prefix_len - (rowno ? rowno_len : 0);
+    return sm1::max_keylen - rel_id_len - (rowno ? rowno_len : 0);
 }
 
 /*
@@ -424,8 +424,8 @@ int tup_check(const tup_desc_t& desc, std::string_view tuple);
 
 /*
  * A heap rel (SM2_DESIGN.md §5): one table's rows in one sm1
- * store, each keyed by its rowno under a 2-byte object prefix
- * the caller chooses, rows prefix and rowno both big-endian, and
+ * store, each keyed by its rowno under a 2-byte rel_id
+ * the caller chooses, the rel_id and rowno both big-endian, and
  * holding its tuple. A rel works through one sm1 session, in
  * that session's transaction; sm2 keeps nothing across calls that
  * a rollback would have to undo.
@@ -446,12 +446,12 @@ struct rel_scan_t;
 
 /*
  * Open a heap rel over storeid through session: rows under
- * prefix, laid out by schema -- borrowed, so the caller keeps it
+ * rel_id, laid out by schema -- borrowed, so the caller keeps it
  * alive for the rel's lifetime -- and each new rowno drawn from
  * the sm1 sequence rowno_seq. Fails with SM_ERR_INVALID if an
  * attribute's type or typmod is not one sm2 can encode.
  */
-int rel_open(sm1::session_t* session, uint64_t storeid, uint16_t prefix,
+int rel_open(sm1::session_t* session, uint64_t storeid, uint16_t rel_id,
              std::span<const attribute_t> schema,
              std::string_view rowno_seq, rel_t*& out);
 
@@ -537,10 +537,10 @@ void rel_scanend(rel_scan_t* scan);
 
 /*
  * An index rel (SM2_DESIGN.md §5): a table's index entries in the
- * table's sm1 store, under the index's 2-byte prefix, keyed by
+ * table's sm1 store, under the index's 2-byte rel_id, keyed by
  * the encoded key columns it is opened with. An entry's key is
  *
- *   prefix | encode_key(key columns) [ | rowno ]
+ *   rel_id | encode_key(key columns) [ | rowno ]
  *
  * with the rowno, big-endian, always in a non-unique index, and in
  * a unique one only for an entry whose key has a null column
@@ -574,11 +574,11 @@ struct bound_t {
 };
 
 /*
- * Open an index over storeid through session, under prefix, keyed
+ * Open an index over storeid through session, under rel_id, keyed
  * by key -- borrowed, as a heap rel's schema is -- unique or not,
  * with the INCLUDE columns include, also borrowed.
  */
-int idx_open(sm1::session_t* session, uint64_t storeid, uint16_t prefix,
+int idx_open(sm1::session_t* session, uint64_t storeid, uint16_t rel_id,
                std::span<const key_column_t> key, bool unique,
                std::span<const attribute_t> include, index_t*& out);
 

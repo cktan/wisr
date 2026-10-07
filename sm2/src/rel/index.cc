@@ -1,6 +1,6 @@
 /*
  * index.cc -- the index rel (SM2_DESIGN.md §5): a table's index
- * entries in its sm1 store, under the index's prefix, keyed by
+ * entries in its sm1 store, under the index's rel_id, keyed by
  * their encoded key columns, holding the rowno, the cut flag and
  * the INCLUDE columns as a tuple.
  *
@@ -23,7 +23,7 @@
 struct sm2::index_t {
   sm1::session_t *session;
   uint64_t storeid;
-  uint16_t prefix;
+  uint16_t rel_id;
   std::span<const key_column_t> key; /* borrowed */
   bool unique;
   std::vector<attribute_t> value; /* rowno, cut, then INCLUDE */
@@ -53,15 +53,15 @@ std::optional<std::string> successor(std::string p) {
   return p;
 }
 
-/* The index's prefix, big-endian, which starts all its keys. */
-std::string prefix_of(const sm2::index_t *ix) {
+/* The index's rel_id, big-endian, which starts all its keys. */
+std::string rel_id_of(const sm2::index_t *ix) {
   std::string p;
-  sm2::put_be(ix->prefix, p);
+  sm2::put_be(ix->rel_id, p);
   return p;
 }
 
 /*
- * The sm1 key of the entry for key and rowno: the prefix, the
+ * The sm1 key of the entry for key and rowno: the rel_id, the
  * encoded key columns, and the rowno where the entry carries one;
  * cut is set if the columns were cut to fit. A unique index's key
  * is never cut: too long, it fails with SM_ERR_KEYTOOLONG.
@@ -95,7 +95,7 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
     suffix = true;
     cols.resize(sm2::max_key_len(true));
   }
-  out = prefix_of(ix) + cols;
+  out = rel_id_of(ix) + cols;
   if (suffix) {
     sm2::put_be(rowno, out);
   }
@@ -103,7 +103,7 @@ int entry_key(const sm2::index_t *ix, std::span<const sm2::datum_t> key,
 }
 
 /*
- * The encoding of a bound's columns, after the prefix, cut where
+ * The encoding of a bound's columns, after the rel_id, cut where
  * an entry's key is cut, so the cut bound orders against cut keys
  * as the whole one would against theirs; cut is then set.
  */
@@ -124,7 +124,7 @@ int bound_key(const sm2::index_t *ix, const sm2::bound_t &b, std::string &out,
   if (cut) {
     cols.resize(sm2::max_key_len(true));
   }
-  out = prefix_of(ix) + cols;
+  out = rel_id_of(ix) + cols;
   return 0;
 }
 
@@ -142,7 +142,7 @@ int lower_key(const sm2::index_t *ix, const sm2::bound_t &lo, std::string &out,
   }
   widened |= cut;
   if (!lo.inclusive && !cut) {
-    // A successor exists: the prefix is below 0xFFFF.
+    // A successor exists: the rel_id is below 0xFFFF.
     out = *successor(out);
   }
   return 0;
@@ -153,7 +153,7 @@ int lower_key(const sm2::index_t *ix, const sm2::bound_t &lo, std::string &out,
 namespace sm2 {
 
 /* Open an index; see sm2.h. */
-int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
+int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t rel_id,
              std::span<const key_column_t> key, bool unique,
              std::span<const attribute_t> include, index_t *&out) {
   return catch_nomem([&] {
@@ -163,9 +163,9 @@ int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
     }
     // 0xFFFF is TOAST's (SM2_DESIGN.md §5); below it, every key
     // has a successor.
-    if (prefix == 0xFFFF) {
+    if (rel_id == 0xFFFF) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index: prefix 0xFFFF is TOAST's, not an index's");
+                         "index: rel_id 0xFFFF is TOAST's, not an index's");
     }
     for (const key_column_t &c : key) {
       if (c.type == nullptr) {
@@ -184,7 +184,7 @@ int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
                                " has no type, or a typmod its type refuses");
       }
     }
-    out = new index_t{session, storeid,          prefix, key,
+    out = new index_t{session, storeid,          rel_id, key,
                       unique,  std::move(value), {}};
     // Lay the value out once, for every entry; it borrows out->value.
     out->value_desc = tup_desc_t(out->value);
@@ -272,7 +272,7 @@ int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
         return -1;
       }
     } else {
-      start = prefix_of(index);
+      start = rel_id_of(index);
     }
     // The end: the bound or its successor, or past the index.
     std::optional<std::string> end;
@@ -287,7 +287,7 @@ int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
       // Keys that equal an inclusive or cut bound stay in.
       end = hi->inclusive || cut ? successor(p) : std::optional(p);
     } else {
-      end = successor(prefix_of(index));
+      end = successor(rel_id_of(index));
     }
     sm1::scan_t *c;
     if (sm1::scan(index->session, index->storeid, start.data(), start.size(), 1,

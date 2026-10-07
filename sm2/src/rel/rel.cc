@@ -1,6 +1,6 @@
 /*
  * rel.cc -- the heap rel (SM2_DESIGN.md §5): a table's rows in
- * one sm1 store, keyed by prefix and rowno, holding their tuples.
+ * one sm1 store, keyed by rel_id and rowno, holding their tuples.
  * It is a codec in front of sm1, not a state machine: every
  * durable effect is one sm1 call in the caller's transaction,
  * sm1's errors pass through as they are, and the tuples it hands
@@ -15,22 +15,22 @@
 struct sm2::rel_t {
   sm1::session_t *session;
   uint64_t storeid;
-  uint16_t prefix;
+  uint16_t rel_id;
   tup_desc_t desc; /* over the borrowed schema */
   std::string rowno_seq;
 };
 
 struct sm2::rel_scan_t {
   sm1::scan_t *scan;
-  uint16_t prefix;
+  uint16_t rel_id;
 };
 
 namespace {
 
-/* The sm1 key of the row at rowno: prefix then rowno, big-endian. */
-std::string row_key(uint16_t prefix, uint64_t rowno) {
+/* The sm1 key of the row at rowno: rel_id then rowno, big-endian. */
+std::string row_key(uint16_t rel_id, uint64_t rowno) {
   std::string key;
-  sm2::put_be(prefix, key);
+  sm2::put_be(rel_id, key);
   sm2::put_be(rowno, key);
   return key;
 }
@@ -43,7 +43,7 @@ int write_new(sm2::rel_t *rel, std::string_view tuple, uint64_t &rowno) {
     return -1;
   }
   // Write the row.
-  if (sm1::insert(rel->session, rel->storeid, row_key(rel->prefix, r), tuple) !=
+  if (sm1::insert(rel->session, rel->storeid, row_key(rel->rel_id, r), tuple) !=
       0) {
     return -1;
   }
@@ -54,7 +54,7 @@ int write_new(sm2::rel_t *rel, std::string_view tuple, uint64_t &rowno) {
 /* Replace the row at rowno with tuple, already checked. */
 int write_update(sm2::rel_t *rel, uint64_t rowno, std::string_view tuple,
                  std::string_view *old) {
-  return sm1::update(rel->session, rel->storeid, row_key(rel->prefix, rowno),
+  return sm1::update(rel->session, rel->storeid, row_key(rel->rel_id, rowno),
                      tuple, old);
 }
 
@@ -63,7 +63,7 @@ int write_update(sm2::rel_t *rel, uint64_t rowno, std::string_view tuple,
 namespace sm2 {
 
 /* Open a heap rel; see sm2.h. */
-int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
+int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t rel_id,
              std::span<const attribute_t> schema, std::string_view rowno_seq,
              rel_t *&out) {
   return catch_nomem([&] {
@@ -80,7 +80,7 @@ int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t prefix,
       }
     }
     // Lay the schema out once, for every row the rel encodes.
-    out = new rel_t{session, storeid, prefix, tup_desc_t(schema),
+    out = new rel_t{session, storeid, rel_id, tup_desc_t(schema),
                     std::string(rowno_seq)};
     return 0;
   });
@@ -120,7 +120,7 @@ int rel_insert(rel_t *rel, std::span<const datum_t> datums,
 /* Read the row at rowno: 0, 1 if absent, or -1. */
 int rel_read(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
   return catch_nomem([&] {
-    return sm1::read(rel->session, rel->storeid, row_key(rel->prefix, rowno),
+    return sm1::read(rel->session, rel->storeid, row_key(rel->rel_id, rowno),
                      tuple);
   });
 }
@@ -129,7 +129,7 @@ int rel_read(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
 int rel_lock(rel_t *rel, uint64_t rowno, sm1::lockmode_t mode) {
   return catch_nomem([&] {
     // Held to the end of the transaction, as a write's lock is.
-    return sm1::lock(rel->session, rel->storeid, row_key(rel->prefix, rowno),
+    return sm1::lock(rel->session, rel->storeid, row_key(rel->rel_id, rowno),
                      mode);
   });
 }
@@ -138,7 +138,7 @@ int rel_lock(rel_t *rel, uint64_t rowno, sm1::lockmode_t mode) {
 int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
   return catch_nomem([&] {
     return sm1::read_latest(rel->session, rel->storeid,
-                            row_key(rel->prefix, rowno), tuple);
+                            row_key(rel->rel_id, rowno), tuple);
   });
 }
 
@@ -168,7 +168,7 @@ int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
 /* Delete the row at rowno, handing back its tuple. */
 int rel_delete(rel_t *rel, uint64_t rowno, std::string_view *old) {
   return catch_nomem([&] {
-    return sm1::erase(rel->session, rel->storeid, row_key(rel->prefix, rowno),
+    return sm1::erase(rel->session, rel->storeid, row_key(rel->rel_id, rowno),
                       old);
   });
 }
@@ -176,8 +176,8 @@ int rel_delete(rel_t *rel, uint64_t rowno, std::string_view *old) {
 /* Open a cursor over rows first..last, both included. */
 int rel_scan(rel_t *rel, uint64_t first, uint64_t last, rel_scan_t *&out) {
   return catch_nomem([&] {
-    std::string lo = row_key(rel->prefix, first);
-    std::string hi = row_key(rel->prefix, last);
+    std::string lo = row_key(rel->rel_id, first);
+    std::string hi = row_key(rel->rel_id, last);
     // sm1 copies the bounds into the cursor.
     sm1::scan_t *c;
     if (sm1::scan(rel->session, rel->storeid, lo.data(), lo.size(), 1,
@@ -185,7 +185,7 @@ int rel_scan(rel_t *rel, uint64_t first, uint64_t last, rel_scan_t *&out) {
       return -1;
     }
     try {
-      out = new rel_scan_t{c, rel->prefix};
+      out = new rel_scan_t{c, rel->rel_id};
     } catch (...) {
       sm1::scanend(c);
       throw;
@@ -202,7 +202,7 @@ int rel_scannxt(rel_scan_t *scan, uint64_t &rowno, std::string_view &tuple) {
     if (rc != 0) {
       return rc;
     }
-    // The range holds only this prefix's 10-byte keys.
+    // The range holds only this rel_id's 10-byte keys.
     if (key.size() != 10) {
       return sm1::seterr(sm1::SM_ERR_CORRUPT, "rel: a row key of " +
                                                   std::to_string(key.size()) +
@@ -219,7 +219,7 @@ int rel_scannxt(rel_scan_t *scan, uint64_t &rowno, std::string_view &tuple) {
 /* Move a cursor forward to rowno. */
 int rel_scan_seek(rel_scan_t *scan, uint64_t rowno) {
   return catch_nomem([&] {
-    return sm1::scan_seek(scan->scan, row_key(scan->prefix, rowno), 1);
+    return sm1::scan_seek(scan->scan, row_key(scan->rel_id, rowno), 1);
   });
 }
 

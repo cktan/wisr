@@ -87,7 +87,7 @@ TEST_CASE("columns, indexes and collations are added and load back") {
   // 2. Create a non-deterministic collation, and a unique index on
   //    (b, under it, DESC NULLS FIRST) INCLUDE (a).
   // 3. After a restart, the columns hold their types and missing
-  //    values; the index its oid, name, first prefix, key collation,
+  //    values; the index its oid, name, first rel_id, key collation,
   //    direction, null order and INCLUDE column, built for sm2.
   cat_db_t db;
   db.begin();
@@ -113,12 +113,12 @@ TEST_CASE("columns, indexes and collations are added and load back") {
   CHECK(d->columns[2].missing == le(int64_t{7}));
   CHECK_FALSE(d->columns[3].missing);
   CHECK(d->desc.bad == SIZE_MAX);
-  CHECK(d->next_prefix == 2);
+  CHECK(d->next_rel_id == 2);
   REQUIRE(d->indexes.size() == 1);
   const sm3::index_def_t &x = d->indexes[0];
   CHECK(x.oid == ix);
   CHECK(x.name == "t_b");
-  CHECK(x.prefix == 1);
+  CHECK(x.rel_id == 1);
   CHECK(x.unique);
   CHECK(x.key_attnums == std::vector<int32_t>{1});
   CHECK(x.include_attnums == std::vector<int32_t>{0});
@@ -137,7 +137,7 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
   // 1. A dropped column keeps its place, marked dropped; its name
   //    can be added again as a new column.
   // 2. A dropped index frees its name, and one made after it takes
-  //    a new prefix, never the old one.
+  //    a new rel_id, never the old one.
   // 3. A renamed table is found by its new name only.
   // 4. A dropped table is gone, with its store and its rowno
   //    sequence, and its name can be taken again.
@@ -165,7 +165,7 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
   CHECK(d->columns[2].type == &sm2::type_int8);
   REQUIRE(d->indexes.size() == 1);
   CHECK(d->indexes[0].oid == ix2);
-  CHECK(d->indexes[0].prefix == 2);
+  CHECK(d->indexes[0].rel_id == 2);
   uint64_t storeid = d->storeid;
   std::string seq = d->rowno_seq;
 
@@ -190,8 +190,8 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
 }
 
 TEST_CASE("dropping an index erases its entries and nothing else") {
-  // Verify cat_drop_index clears the index's prefix.
-  // 1. Put a row under prefix 0 and entries under the prefixes of
+  // Verify cat_drop_index clears the index's rel_id.
+  // 1. Put a row under rel_id 0 and entries under the rel_ids of
   //    two indexes in the table's store.
   // 2. Drop the first index: its entries are gone; the row and the
   //    other index's entry remain.
@@ -206,9 +206,9 @@ TEST_CASE("dropping an index erases its entries and nothing else") {
   uint64_t storeid = sm3::cat_table(cat, t)->storeid;
 
   db.begin();
-  auto key = [](uint16_t prefix, char tail) {
-    return std::string{static_cast<char>(prefix >> 8),
-                       static_cast<char>(prefix & 0xFF), tail};
+  auto key = [](uint16_t rel_id, char tail) {
+    return std::string{static_cast<char>(rel_id >> 8),
+                       static_cast<char>(rel_id & 0xFF), tail};
   };
   REQUIRE(sm1::insert(db.s, storeid, key(0, 'r'), "row") == 0);
   REQUIRE(sm1::insert(db.s, storeid, key(1, 'a'), "e") == 0);

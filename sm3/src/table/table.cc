@@ -301,7 +301,7 @@ int open_rels(table_t *table) {
   }
   for (const index_def_t &x : def.indexes) {
     sm2::index_t *ix = nullptr;
-    if (sm2::idx_open(s, def.storeid, x.prefix, x.key, x.unique, x.include,
+    if (sm2::idx_open(s, def.storeid, x.rel_id, x.key, x.unique, x.include,
                       ix) != 0) {
       return -1;
     }
