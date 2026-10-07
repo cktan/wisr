@@ -79,7 +79,7 @@ are corrected where they were said: how its sampler works
 **What is now known, and what is not**
 
 - RocksDB's size estimates are good enough **at rest**: exact
-  over a whole store, and within 8% over one object's prefix
+  over a whole store, and within 8% over one rel's relid
   beside a much larger one (§6).
 - They are **not** good in motion. Unflushed rows are
   estimated at their uncompressed size, which overstated a
@@ -173,7 +173,7 @@ plan.
 **How:** a table is one sm1 store, a RocksDB column family,
 and its heap and each index sit under a 2-byte relid of their
 own (`sm3/SM3_DESIGN.md` §4). RocksDB estimates the bytes in a
-key range without reading it. Asked of a prefix's range, with
+key range without reading it. Asked of a relid's range, with
 the memtables counted, that is the object's size.
 
 **What it measures:** bytes on disk, after compression, with
@@ -356,7 +356,7 @@ the fraction of rows a partial index takes comes with them.
 
 ### 3.5 Indexes
 
-**Size:** as §3.1, over the index's prefix.
+**Size:** as §3.1, over the index's relid.
 
 **Entries:** the table's row count, times the fraction of
 sampled rows that belong to the index, which is 1 unless it
@@ -604,7 +604,7 @@ would need the stack to decide when, and nothing here does.
 | sm1 | the approximate bytes of a key range in a store | §3.1 |
 | sm1 | a sequence's last value, read without drawing one | §3.2, §3.3 |
 | sm1 | the number of LSM levels a store has now | §3.5 |
-| sm2 | the same sizes for a heap or an index, by its prefix | §3.1 |
+| sm2 | the same sizes for a heap or an index, by its relid | §3.1 |
 | sm3 | on an open table: the heap's size, an index's size, and the rowno limit `N` | §3.1, §3.2 |
 | sm3 | the sampler over runs of rownos | §3.3 |
 | sm3 | the estimators, ported from PostgreSQL | §3.4 |
@@ -621,7 +621,7 @@ would need the stack to decide when, and nothing here does.
 
 | Number | Source of error | Measured |
 | --- | --- | --- |
-| bytes, at rest | RocksDB's estimate over a prefix | none to 8%: exact over a whole store, 1.000 and 1.002 for a heap and a large index, 0.923 for a thousand-row index beside them (§6) |
+| bytes, at rest | RocksDB's estimate over a relid | none to 8%: exact over a whole store, 1.000 and 1.002 for a heap and a large index, 0.923 for a thousand-row index beside them (§6) |
 | bytes, unflushed | a memtable is uncompressed, and the estimate adds it at that size | 7x over, until the rows are flushed (§6). The worst number here, and the one §3.1 now warns about |
 | bytes, mid-update | new versions in the memtable, old ones not yet collected | 6.6x over at the peak of a burst that changed no row count, back to exact after a compaction (§6) |
 | row count at `sm_analyze` | sampling | exact on a dense table; 0.26% low on one with nine rownos in ten dead, at every run length (§6) |
@@ -653,7 +653,7 @@ filter, keys of a 2-byte relid and an 8-byte rowno.
 
 **1. Size, at rest. Accepted.** Tables of 1,000 to 1,000,000
 rows at 100 and at 1,000 bytes a row, flushed and compacted,
-then the estimate over the heap's prefix against the store's
+then the estimate over the heap's relid against the store's
 bytes on disk.
 
 | rows | width | disk | estimate | est/disk |
@@ -687,7 +687,7 @@ count took the estimate to 6.6x and a compaction brought it
 back. Once anything is flushed and compacted the estimate is
 exact again. §3.1 and §5 now say so.
 
-**3. Size, by prefix. Accepted.** One store holding a heap of
+**3. Size, by relid. Accepted.** One store holding a heap of
 500,000 rows at 400 bytes and three indexes at 16, of 500,000,
 1,000 and 10 rows. The truth is each object loaded alone into
 a store of its own, since logical bytes are not the truth when

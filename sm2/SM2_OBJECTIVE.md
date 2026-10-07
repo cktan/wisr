@@ -46,7 +46,7 @@ sm2 the way sm2 is built on sm1 (`sm3/SM3_OBJECTIVE.md`).
 - **Mapping tables onto stores.** An sm2 relation is one sm1
   store. sm2 prepends a 2-byte relid chosen by sm3, so
   a table's rows, indexes and TOAST data can share one sm1
-  store; which prefix means what is sm3's.
+  store; which relid means what is sm3's.
 - A query language, a planner, or an executor.
 - Anything sm1 already does: transactions, isolation, locking,
   durability, recovery, garbage collection. sm2 calls them; it

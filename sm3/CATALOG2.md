@@ -96,7 +96,7 @@ The strongest candidate for a row of its own, for the reason
 
 | What | Today |
 | --- | --- |
-| oid, name, prefix, unique | yes |
+| oid, name, relid, unique | yes |
 | key attnums, and per key: desc, nulls first, collation oid, and type code and typmod for an expression | yes |
 | include attnums | yes |
 | build state, the code its build failed with, and that error's message | yes |

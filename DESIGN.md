@@ -132,7 +132,7 @@ rule is that nothing turns them off.
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
 | sm3 | being built: its catalog (`sm3/CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, partial and expression indexes among them, with its C++ interface in `sm3/include/sm3.h`; constraints are settled, `NOT NULL` built in sm3 and the rest the host's (§5); statistics has a strategy, `STATISTICS.md`, and no design; the order of work is in `sm3/SM3_DESIGN.md` §8, and what is left in `NEXT.md` |
-| top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`. A row is read and written through an open table, `sm_tbl_*`, by the table's oid from `sm_cat_*`; the heap-level and index-level calls that took a store id and a prefix are gone. The `rel` driver runs on it |
+| top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`. A row is read and written through an open table, `sm_tbl_*`, by the table's oid from `sm_cat_*`; the heap-level and index-level calls that took a store id and a relid are gone. The `rel` driver runs on it |
 
 sm1 was built first and alone, on purpose: it is usable
 without sm2 (an MVCC key-value store is a complete product
@@ -447,16 +447,15 @@ design:
   serves tables without a primary key, and keeps a primary
   key change from rewriting every index; a primary key lookup
   costs two reads.
-- **One sm1 store per table.** A table's rows, all its
-  indexes and its TOAST data share one sm1 store,
-  told apart by a 2-byte relid: `0x0001` for the heap,
-  always, `0x0002`–`0xFFFE` for indexes, `0xFFFF` for TOAST,
-  and `0x0000` unused. sm3 chooses an index's relid; sm2
-  prepends and strips it and never
-  interprets it (`sm2/SM2_DESIGN.md` §5), so sm2 never learns
-  what a table is. `DROP TABLE` is one `sm1::rmstore`, sm1's O(1)
-  column family drop; `DROP INDEX` is a range delete over its
-  relid, and index relids are never reused. The cost is
+- **One sm1 store per table.** A table's heap, all its
+  indexes and its TOAST data are rels in one sm1 store, told
+  apart by a 2-byte relid whose values `sm3/SM3_DESIGN.md` §4
+  fixes. sm3 chooses an index's relid; sm2 prepends and strips
+  it and never interprets it (`sm2/SM2_DESIGN.md` §5), so sm2
+  never learns what a table is. `DROP TABLE` is one
+  `sm1::rmstore`, sm1's O(1) column family drop; `DROP INDEX`
+  is a range delete over the index's relid, and index relids
+  are never reused. The cost is
   that tables, partitions included, are bounded by the
   hundreds to low thousands of stores sm1 handles
   (`sm1/SM1_DESIGN.md` §13); accepted for v1 (`sm3/SM3_DESIGN.md`

@@ -770,6 +770,9 @@ told apart by sm2's 2-byte **relid**
 | `0x0002`–`0xFFFE` | its indexes, one relid each |
 | `0xFFFF` | its TOAST data |
 
+This table is the only place these values are written down;
+every other document points here for them.
+
 - **The heap is always `0x0001`.** It is the constant
   `sm3::heap_relid` and is never drawn from the counter that
   hands out index relids, so a table's heap sits at the same

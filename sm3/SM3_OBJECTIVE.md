@@ -79,9 +79,9 @@ These are settled and drive `SM3_DESIGN.md`.
   catalog is not versioned; a transaction is kept away from a
   concurrent DDL with sm1's row locks on the schema row, not
   given an old definition (`SM3_DESIGN.md` §2).
-- **One sm1 store per table.** A table's rows, its
-  indexes and its TOAST data share one sm1 store,
-  told apart by sm2's 2-byte relid, so `DROP TABLE` is
+- **One sm1 store per table.** A table's heap, its indexes
+  and its TOAST data are rels in one sm1 store, told apart by
+  sm2's 2-byte relid (§4), so `DROP TABLE` is
   sm1's O(1) column family drop. sm1 targets "hundreds to low
   thousands of stores per database" (`sm1/SM1_DESIGN.md` §13),
   so tables, partitions included, are bounded by that;

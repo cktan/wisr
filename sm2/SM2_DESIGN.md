@@ -814,33 +814,21 @@ things:
 - a **schema** — the ordered columns, their types and
   collations, and per key column its direction and null
   ordering;
-- a **relid** of exactly 2 bytes, big-endian,
-  prepended to every key sm2 writes and stripped from every
-  key it reads. sm3 chooses the value and sm2 never interprets
-  it, so sm2 never learns what a table is. It exists because
-  one sm1 store holds one table and everything that belongs
-  to it (`sm3/SM3_DESIGN.md` §4):
-
-  | relid | Rel |
-  | --- | --- |
-  | `0x0000` | unused |
-  | `0x0001` | the table's heap, keyed by `rowno`, always |
-  | `0x0002`–`0xFFFE` | its indexes, one relid each |
-  | `0xFFFF` | its TOAST data (§4) |
-
-  Index relids are allocated in increasing order and never
-  reused, so a dropped index's leftover versions can never be
-  read as another index's entries, and no rule tied to sm1's
-  garbage collection is needed. `DROP INDEX` is a range delete
-  over its prefix. The prefix is fixed-width, so no object's
-  prefix can be the start of another's. It spends 2 of
-  `sm1::max_keylen`'s 4096 bytes, and sm2 checks the whole key
-  against the limit (§3.2);
+- a **relid** of exactly 2 bytes, big-endian, prepended to
+  every key sm2 writes and stripped from every key it reads.
+  It exists because one sm1 store holds one table and
+  everything that belongs to it. sm3 chooses the value and sm2
+  never interprets it, so sm2 never learns what a table is:
+  which relid means what is sm3's, in `sm3/SM3_DESIGN.md` §4.
+  Two of its properties are sm2's own, though. A relid is
+  fixed-width, so no rel's relid can be the start of
+  another's; and it spends 2 of `sm1::max_keylen`'s 4096
+  bytes, which sm2 checks the whole key against (§3.2);
 - an **sm1 session**, which is where the transaction lives.
 
 **Decision: the table is a heap keyed by `rowno`, and the
 primary key is an index**, as in PostgreSQL. A row's sm1 key
-is `0x0001 ‖ rowno`:
+is `relid ‖ rowno`:
 
 - **`rowno` is an unsigned 64-bit number**, written as 8
   bytes big-endian, drawn from an sm1 sequence that belongs to
@@ -881,12 +869,12 @@ The operations, and what each one is over:
 | `rel_scan`, `rel_scan_seek` | tuples in `rowno` order, forward only | `sm1::scan`, `sm1::scan_seek` |
 
 **Decision: two kinds of `rel`, over the same sm1 store, told
-apart by their prefix.** Index entries are keyed by encoded
+apart by their relid.** Index entries are keyed by encoded
 columns, not by `rowno`, and sm3 never encodes a key itself,
 so sm2 gives it a `rel` for them too:
 
 - A **heap `rel`** is keyed by `rowno`, under the heap's
-  relid `0x0001`, and its value is the row's tuple. Its
+  relid, and its value is the row's tuple. Its
   `rel_insert` draws the `rowno` from the table's sequence,
   named in the schema the `rel` is opened with, and returns it,
   so the sequence is drawn in one place.
@@ -902,12 +890,12 @@ so sm2 gives it a `rel` for them too:
 what sm3's index build holds on a row while it adds the row's
 entry (`sm3/SM3_DESIGN.md` §3).
 
-sm2 prepends and strips the prefix for both kinds, and the
+sm2 prepends and strips the relid for both kinds, and the
 table above is the heap `rel`'s; an index `rel`'s operations
 are the same shape, keyed by its columns (`idx_open`,
 `idx_insert`, `idx_delete`, `idx_scan`):
 
-- **An entry's key** is `prefix ‖ encode(sk)`, then the
+- **An entry's key** is `relid ‖ encode(sk)`, then the
   `rowno` — always in a non-unique index, and in a unique one
   only for an entry with a null key column, so that nulls stay
   distinct. A unique key without one is sm1's uniqueness unit,
@@ -935,8 +923,8 @@ are the same shape, keyed by its columns (`idx_open`,
   least string above every key that starts with P. A bound
   too long to encode is cut where keys are cut, which can only
   widen the scan, and the scan says so.
-- **Index relids are below `0xFFFF`**, TOAST's, which is
-  also what guarantees every bound a successor.
+- **Index relids are below TOAST's** (`sm3/SM3_DESIGN.md`
+  §4), which is also what guarantees every bound a successor.
 
 The rules it must satisfy:
 
@@ -1028,7 +1016,7 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
   the two things index maintenance needs: the encoder (§3) and
   the old image as a tuple (§5).
 - **Object mapping.** Which sm1 store holds a table, and
-  which prefix each of its indexes gets, is sm3's; sm2 only
+  which relid each of its indexes gets, is sm3's; sm2 only
   prepends and strips the relid (§5).
 - **The primary key.** sm2's table is a heap keyed by
   `rowno`; the primary key is one of sm3's indexes, and its
@@ -1340,7 +1328,7 @@ only for a fixture run:
 ### 8.4 What is deliberately not here
 
 - No catalog, no secondary index, no predicate scan, no
-  statistics, and no choice of which prefix means what.
+  statistics, and no choice of which relid means what.
   All of it is `sm3/SM3_DESIGN.md` §8.
 - No SQL, no planner, no executor.
 - No PostgreSQL dependency. `PART4.md` explains what the PG

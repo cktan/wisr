@@ -109,7 +109,7 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index relid `int2`, natts `int4`, nindex `int4` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null |
-| index | oid `int8`, name `text`, prefix `int2`, unique `bool`, nkey `int4`, ninclude `int4`, state `int2`, error `int2` or null, reason `text` or null, eval `bytea` or null, nread `int4` or null |
+| index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, state `int2`, error `int2` or null, reason `text` or null, eval `bytea` or null, nread `int4` or null |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
 | include | attnum `int4` |
 | read | attnum `int4` |
@@ -143,7 +143,7 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
 - **A missing value is its bytes**, a varlena for a
   variable-width type, as sm2's `attribute_t` holds it.
 - **The next index relid is kept** in the table part, so a
-  prefix is never reused, across restarts too (`SM3_DESIGN.md`
+  relid is never reused, across restarts too (`SM3_DESIGN.md`
   §4).
 - **Each part is held to 64 KB** (`sm2/TUPLE.md` §1); a value, a
   sequence of them, is not, and is an sm1 value of up to 64 MB.
@@ -276,7 +276,7 @@ as sm1 does (`DESIGN.md` §5).
   it ends, with the error and its message for a failed one.
 - **`cat_drop_index(session, table, oid)`** erases the index's
   name, its place in the blob, and its entries, one by one over
-  its prefix in the table's store, since sm1 has no range
+  its relid in the table's store, since sm1 has no range
   delete.
 - **`cat_create_collation(session, nspoid, name, locale,
   deterministic, oid)`** opens the collation, to check the

@@ -36,8 +36,7 @@ and neither of them an identifier.
   `successor`. **Prefix-free** (§7) is this sense too.
 
 The 2 bytes at the head of every userkey in a table's store
-are a **relid** and not a prefix, though the code calls them
-one; see **relation** below.
+are a **relid**, not a prefix; see **relation** below.
 
 **relation**, **rel.** A store is a collection of rels: a
 table's heap, one per index, one for TOAST. Each is named
@@ -123,11 +122,10 @@ Six numbers name things, and none of the six is ever reused.
   per entry. It is the counterpart of PostgreSQL's
   `relfilenode`, scoped to one store rather than the
   database.
-- **A table's heap is always relid 1**, a constant and
-  not a number drawn from the counter, and **0 is unused**,
-  so a zeroed relid is never a live rel. An index gets 2 or
-  above; `0xFFFF` is TOAST's
-  (`sm3/SM3_DESIGN.md` §4).
+- **A table's heap is always relid 1**, a constant and not a
+  number drawn from the counter, and **0 is unused**, so a
+  zeroed relid is never a live rel. Which relid means what is
+  written down once, in `sm3/SM3_DESIGN.md` §4.
 - **An index therefore has two identities**: its **oid** in
   the catalog, and its **relid** in its table's store, with
   the catalog holding the mapping between them.

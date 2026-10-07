@@ -38,7 +38,7 @@ number never changes.
 **4.2 [BLOCKING] What are TOAST keys?**
 Where TOAST data lives is settled: in the table's own sm1
 store, under the relid `0xFFFF` (`SM2_DESIGN.md` §4,
-§5). What follows the prefix is not.
+§5). What follows the relid is not.
 *Suggested: `0xFFFF ‖ chunk_id ‖ chunk_seq`, PostgreSQL's
 names, with `chunk_id` an 8-byte big-endian value from an sm1
 sequence and `chunk_seq` a 4-byte big-endian chunk number.*

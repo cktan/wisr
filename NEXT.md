@@ -81,7 +81,7 @@ Owed, and blocking nothing above:
 ## 3. Not blocking
 
 - **sm2's TOAST** (`sm2/SM2_DESIGN.md` §8.2, step 3). The
-  `0xFFFF` prefix is reserved per table and unused. Wholly
+  `0xFFFF` relid is reserved per table and unused. Wholly
   independent of the above, so it can run in parallel.
 - **Temporary tables** (`sm3/CATALOG.md` §7): a temporary
   store, its definition in the session's own temporary catalog

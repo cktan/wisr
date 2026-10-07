@@ -333,7 +333,7 @@ the snapshot of a transaction above READ COMMITTED is
 `SM_ERR_CONFLICT`. It costs one seek a unique key, which a
 bloom filter answers for a key that was never there.
 
-**An index with nothing under its prefix needs no reads of
+**An index with nothing under its relid needs no reads of
 the table.** The loader looks once when it opens. No one else
 can write the index while SIX is held, so the only keys it
 can meet are its own.
