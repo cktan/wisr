@@ -16,15 +16,16 @@
 #include <bit>
 #include <cstring>
 #include <exception>
-#include <map>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <new>
 #include <optional>
-#include <set>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 static_assert(static_cast<int>(sm1::xctlevel_t::read_committed) ==
@@ -61,6 +62,18 @@ static_assert(std::endian::native == std::endian::little);
 struct sm_session_t;
 
 /*
+ * The hash of a database name, over std::string and
+ * std::string_view alike: a lookup by the name the caller passed
+ * copies nothing, as it did not under std::less<>.
+ */
+struct dbname_hash_t {
+  using is_transparent = void;
+  size_t operator()(std::string_view name) const {
+    return std::hash<std::string_view>{}(name);
+  }
+};
+
+/*
  * An environment as the wrapper holds it: sm1's, and the catalog
  * of each database a session has opened, loaded by the first and
  * shared by every session on it until detach or rmdb. mu guards
@@ -69,8 +82,10 @@ struct sm_session_t;
 struct sm_env_t {
   sm1::env_t *env;
   std::mutex mu;
-  std::map<std::string, sm3::catalog_t *, std::less<>> catalogs;
-  std::set<sm_session_t *> sessions;
+  std::unordered_map<std::string, sm3::catalog_t *, dbname_hash_t,
+                     std::equal_to<>>
+      catalogs;
+  std::unordered_set<sm_session_t *> sessions;
   sm_index_eval_fn eval = nullptr; /* the host's evaluator, set once */
   void *eval_ctx = nullptr;
 };
@@ -963,7 +978,7 @@ struct sm_tbl_t {
   sm_session_t *session;
   sm3::table_t *table = nullptr;
   sm_table_def_t def;
-  std::map<uint64_t, sm2::tup_desc_t> value_descs;
+  std::unordered_map<uint64_t, sm2::tup_desc_t> value_descs;
 };
 
 namespace {

@@ -8,6 +8,7 @@
 
 #include "internal.h"
 
+#include <map>
 #include <mutex>
 
 namespace {

@@ -8,8 +8,8 @@
 #include "internal.h"
 
 #include <algorithm>
-#include <set>
 #include <string>
+#include <unordered_set>
 
 namespace {
 
@@ -172,7 +172,7 @@ int check_missing(const sm2::type_t *type, int32_t typmod,
 
 /* Refuse columns the table cannot be laid out by. */
 int check_columns(std::span<const sm3::column_spec_t> columns) {
-  std::set<std::string> seen;
+  std::unordered_set<std::string> seen;
   for (const sm3::column_spec_t &c : columns) {
     const sm2::type_t *type = sm2::type_by_code(c.type_code);
     if (c.name.empty() || !seen.insert(c.name).second) {

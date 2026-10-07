@@ -13,12 +13,12 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
-#include <map>
 #include <mutex>
-#include <set>
 #include <shared_mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -36,11 +36,25 @@ struct builder_t {
   size_t max_workers = 0;
   size_t batch_rows = 0;
   std::deque<std::pair<uint64_t, uint64_t>> queue; /* table, index */
-  std::set<uint64_t> active; /* indexes queued or being built */
-  size_t running = 0;        /* workers alive */
+  std::unordered_set<uint64_t> active; /* indexes queued or being built */
+  size_t running = 0;                  /* workers alive */
   bool stop = false;
   std::vector<std::thread> threads;
   std::vector<std::thread::id> finished; /* workers to join */
+};
+
+/*
+ * The hash of a (nspoid, name) key, for the catalog's table_names.
+ * The nspoid is mixed into the name's hash, so one name in two
+ * namespaces lands in two buckets.
+ */
+struct tblname_hash_t {
+  size_t operator()(const std::pair<uint64_t, std::string> &k) const {
+    size_t h = std::hash<std::string>{}(k.second);
+    h ^= std::hash<uint64_t>{}(k.first) + 0x9e3779b97f4a7c15ULL + (h << 6) +
+         (h >> 2);
+    return h;
+  }
 };
 
 } // namespace sm3
@@ -52,10 +66,11 @@ struct builder_t {
  */
 struct sm3::catalog_t {
   mutable std::shared_mutex mu;
-  std::map<uint64_t, std::shared_ptr<const table_def_t>> tables;
-  std::map<std::pair<uint64_t, std::string>, uint64_t> table_names;
-  std::map<uint64_t, std::string> nspaces;
-  std::map<uint64_t, sm2::collation_t *> collations; /* owned */
+  std::unordered_map<uint64_t, std::shared_ptr<const table_def_t>> tables;
+  std::unordered_map<std::pair<uint64_t, std::string>, uint64_t, tblname_hash_t>
+      table_names;
+  std::unordered_map<uint64_t, std::string> nspaces;
+  std::unordered_map<uint64_t, sm2::collation_t *> collations; /* owned */
 
   /*
    * How many times a transaction's DDL has been published, and, for
@@ -65,7 +80,7 @@ struct sm3::catalog_t {
    * that count is filled as far as that snapshot can see.
    */
   std::atomic<uint64_t> seq{0};
-  std::map<uint64_t, uint64_t> valid_seq; /* index oid -> count */
+  std::unordered_map<uint64_t, uint64_t> valid_seq; /* index oid -> count */
 
   builder_t builder;
 
