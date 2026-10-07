@@ -9,10 +9,12 @@ pages, no heap files and no vacuum.
 It is a strategy and not yet a design. `sm3/SM3_DESIGN.md` §6
 is where the design goes once §6 below has been measured.
 
-What is said here of PostgreSQL is from memory of its source
-and its documentation. Each claim the strategy leans on is
-listed in §7 to be checked against the source before the fork
-relies on it.
+**§6 has now been measured and §7 checked**, against RocksDB
+9.11.2 through sm1 and against PostgreSQL 17.11's source and a
+server built from it. §6 carries the numbers, §7 the verdicts.
+Two things the strategy said of PostgreSQL were wrong, and both
+are corrected where they were said: how its sampler works
+(§3.3) and where the planner's size conversion lives (§3.7).
 
 ---
 
@@ -74,15 +76,23 @@ relies on it.
 - `include/sm.h`: `sm_analyze` and the calls that read.
 - `rel`: an `analyze` verb, so that all of it is tested here.
 
-**What is not known**
+**What is now known, and what is not**
 
-- Whether RocksDB's size estimates are good enough. Nothing
-  has measured it, and four experiments come before any
-  design (§6).
-- Whether what is said here of PostgreSQL is right. It is
-  from memory, and the claims are listed to check (§7).
-- The weights in the index lookup cost, to be calibrated
-  against real queries.
+- RocksDB's size estimates are good enough **at rest**: exact
+  over a whole store, and within 8% over one object's prefix
+  beside a much larger one (§6).
+- They are **not** good in motion. Unflushed rows are
+  estimated at their uncompressed size, which overstated a
+  table by 7x until it was flushed (§6, experiment 2). That is
+  the one measured result the design has to answer.
+- Sampling by runs of rownos gives an exact row count on a
+  dense table and one within 0.26% on a sparse one, at every
+  run length tried, and costs a fraction of a scan. The run
+  length decides the distinct count, over a 30x range (§6).
+- What is said here of PostgreSQL is now checked against
+  17.11 (§7).
+- Still unknown: the weights in the index lookup cost, to be
+  calibrated against real queries.
 
 ---
 
@@ -171,6 +181,17 @@ every version sm1 has not yet collected and every tombstone
 not yet compacted away. That is the right thing to charge a
 scan for, since a scan reads them.
 
+**Except for what is still in a memtable.** A memtable holds
+rows uncompressed, and the estimate adds them at that size, so
+a table whose rows have not been flushed is charged what they
+would occupy with no compression at all — 7x its flushed size,
+in the measurement of §6. Asking for the estimate without the
+memtables is worse: it answers zero for a table that is
+entirely unflushed. So the number is right at rest, overstated
+in proportion to the compression ratio while a load or a burst
+of updates is in flight, and the design has to say which it
+reports (§6).
+
 `sm_analyze` records the size it saw, beside the row count it
 estimated at the same moment. The size is also answered live,
 so a caller can tell how far a table has moved since.
@@ -229,9 +250,35 @@ a fixed length `B`.
 uniform sample of rows and costs a seek for each row or two.
 A long run costs few seeks, and its rows are neighbours, which
 were inserted together and are alike, so distinct counts come
-out low. PostgreSQL's sampler, which takes about one row from
-each of 30,000 heap pages, sits at the short end. Where wisr
-should sit is measured (§6), not assumed.
+out low. §6's experiment 4 measures both ends: a run of 1
+costs twenty times a run of 1,000 and sees thirty times the
+distinct values.
+
+**PostgreSQL's sampler is not at the short end**, which an
+earlier draft of this file had wrong. `acquire_sample_rows`
+picks up to `targrows` *blocks* at random and reads **every**
+tuple of each, then thins them to `targrows` rows with Vitter's
+algorithm. Its own comment grants the consequence: "for large
+relations the number of different blocks represented by the
+sample tends to be too small". A block is 8 KB, so at a
+hundred-byte row PostgreSQL's unit is some eighty neighbouring
+rows — wisr's run of about that length, not a run of one. And
+for a table of fewer than `targrows` blocks, 240 MB at the
+default target, it reads every block there is.
+
+So the clustering a long run brings is not a cost wisr would
+be paying and PostgreSQL would not. Matching PostgreSQL means
+a run of roughly the rows in 8 KB, and §6 measures what that
+costs and what it does to a distinct count.
+
+**A sparse table needs more runs than rows wanted.** The
+reservoir handles a sample that comes out too big; too small
+is the case a purged table gives, and §3.3 as first written
+had no answer. With nine rownos in ten dead, runs of one
+rowno returned 2,950 rows where 30,000 were asked for (§6).
+The count of runs has to be scaled by the live fraction, which
+is not known until something has been sampled: either a first
+pass to find it, or runs drawn until the sample fills.
 
 No part of this is PostgreSQL's sampler, and no sampled row
 crosses the API.
@@ -259,6 +306,30 @@ list, and where histogram bounds fall are judgements the
 planner's selectivity code was written against. They are
 copied and adapted into sm3, not reinvented, so that the
 numbers mean what the planner assumes.
+
+The routine to port is `std_typanalyze` and the
+`compute_scalar_stats` it chooses, and §7 confirms it asks the
+type for nothing but its equality and its ordering operator.
+It chooses among three by what the type has: both operators
+gives the full six statistics, equality alone drops the
+histogram and the correlation, and neither leaves the null
+fraction and the width. A measured shape to match: at the
+default target the histogram comes back as **target + 1**
+bounds, and a column whose every value is common gets a most-
+common-values list and no histogram at all, while a unique one
+gets a histogram and no list.
+
+**There is more than one analyze routine.** PostgreSQL also
+has `array_typanalyze`, `range_typanalyze`,
+`multirange_typanalyze` and `ts_typanalyze`, which fill slots
+`std_typanalyze` never does — most common elements, a
+distinct-element-count histogram, and range bounds and length
+histograms. A fork that ports only the standard routine costs
+the planner its selectivity for the containment and overlap
+operators those types are queried by, which is what a GIN or
+a GiST index is usually for. Porting them is not in this
+strategy, and the cost of leaving them out should be stated
+rather than discovered.
 
 **Correlation is a fact about this storage**, not a borrowed
 one. The heap is stored in `rowno` order, so a column whose
@@ -337,16 +408,37 @@ The fork's planner is PostgreSQL's, written for a paged heap
 and a B-tree. The fork converts, in its own code, where it
 used to read `pg_class` and `pg_statistic`.
 
+**Where the conversion goes, corrected.** This file said the
+host converts "where it used to read `pg_class` and
+`pg_statistic`". For a relation's size that is the wrong
+place, and §7 found it: `estimate_rel_size` hands a table
+straight to the table access method's `relation_estimate_size`
+callback, and only an *index* is sized by the planner itself.
+The fork has its own table AM, so it implements that callback
+and answers `pages`, `tuples` and `allvisfrac` from sm3's
+numbers directly. There is no `pg_class` row to fake and no
+density to store: the callback is handed the relation and
+returns the three, so the "scaled by bytes now over bytes
+recorded" of the row below happens inside it, at every plan.
+
+For column statistics the shape is firmer than "the same
+shape". `examine_variable` reaches them through
+`get_relation_stats_hook`, which the fork sets, but what it
+must hand back is a **`pg_statistic`-shaped `HeapTuple`**: the
+planner does `GETSTRUCT` on it and reads the slots with
+`get_attstatsslot`. So the fork builds that tuple in memory
+from sm3's statistics; it does not hand over loose numbers.
+
 | The planner wants | The host makes it from |
 | --- | --- |
-| `relpages` | bytes now, over 8 KB, and never less than 1 for an object with a row, so that the page cost constants keep their meaning |
-| `reltuples` | recorded live rows, scaled by bytes now over bytes recorded, or moved by the rownos handed out since |
-| `relallvisible` | `relpages`. An index entry carries versions of its own (`sm3/SM3_DESIGN.md` §3), so an index-only scan never visits the heap |
+| `pages` | bytes now, over 8 KB, and never less than 1 for an object with a row, so that the page cost constants keep their meaning. Returned from the AM callback, not stored |
+| `tuples` | recorded live rows, scaled by bytes now over bytes recorded, or moved by the rownos handed out since. Also from the callback |
+| `allvisfrac` | 1. An index entry carries versions of its own (`sm3/SM3_DESIGN.md` §3), so an index-only scan never visits the heap, and §7 measured that this is exactly what removes the heap-fetch charge |
 | null fraction, most common values, histogram | the same, values decoded to PostgreSQL's datums |
 | average width | average bytes as stored |
-| distinct count | the count, negated as a fraction of rows when it grows with the table, which is PostgreSQL's convention |
-| correlation | correlation with `rowno`, which is the fork's `ctid` |
-| a B-tree's height | nothing. The fork's index access method costs a lookup from the level count, the index's bytes and its entries, with weights to be calibrated (§6) |
+| distinct count | the count, negated as a multiplier of **total** rows, nulls included, when it grows with the table. That is PostgreSQL's convention, and §7 found the reason it exists: the row count is refreshed more often than the statistics, so a multiplier stays right as the count drifts — which is exactly what §3.2 does between runs |
+| correlation | correlation with `rowno`, which is the fork's `ctid`. PostgreSQL computes its own from the sample in physical order, and relies on the sample being returned that way |
+| a B-tree's height | nothing. The fork's index access method costs a lookup from the level count, the index's bytes and its entries, with weights to be calibrated (§6). What the height buys in PostgreSQL is a CPU charge, `(height + 1)` times 50 `cpu_operator_cost`, not page I/O, so the level count should buy the same kind of thing. An AM that leaves the height unknown has it guessed as `log(pages)/log(100)` |
 | dead rows | none. Vacuum is gone (`PART4.md` §4) |
 
 Each row of that table is a choice the host can change
@@ -390,89 +482,219 @@ would need the stack to decide when, and nothing here does.
 
 ## 5. What is approximate, and how far off
 
-| Number | Source of error | Expected size |
+| Number | Source of error | Measured |
 | --- | --- | --- |
-| bytes | RocksDB's estimate; compression; versions and tombstones not yet collected | unknown; §6 |
-| bytes, small table | data still in the memtable, where the estimate is coarse | unknown; likely the worst case |
-| row count at `sm_analyze` | sampling | well under 1% for a table that is not nearly empty |
-| row count between runs | whatever the host scales it by: bytes inherit their error and count a burst of updates as growth; rownos see no delete | unknown; §6 |
-| distinct count | sampling, and the likeness of neighbouring rows in a run | depends on the run length; §6 |
-| other column statistics | sampling | as PostgreSQL's on a heap |
-| index lookup cost | weights not yet calibrated | unknown; §6 |
+| bytes, at rest | RocksDB's estimate over a prefix | none to 8%: exact over a whole store, 1.000 and 1.002 for a heap and a large index, 0.923 for a thousand-row index beside them (§6) |
+| bytes, unflushed | a memtable is uncompressed, and the estimate adds it at that size | 7x over, until the rows are flushed (§6). The worst number here, and the one §3.1 now warns about |
+| bytes, mid-update | new versions in the memtable, old ones not yet collected | 6.6x over at the peak of a burst that changed no row count, back to exact after a compaction (§6) |
+| row count at `sm_analyze` | sampling | exact on a dense table; 0.26% low on one with nine rownos in ten dead, at every run length (§6) |
+| row count between runs | whatever the host scales it by: bytes inherit their error and count a burst of updates as growth; rownos see no delete | not measured. PostgreSQL's own version of this was 3.9% low over a tenfold growth (§7) |
+| distinct count | sampling, and the likeness of neighbouring rows in a run | the run length decides it, over a 30x range for a column whose neighbours are alike (§6) |
+| other column statistics | sampling | as PostgreSQL's on a heap, whose sampler clusters the same way (§3.3) |
+| index lookup cost | weights not yet calibrated | still unknown |
 
 A wrong size for a small table matters less than it looks.
 PostgreSQL itself assumes a never-analyzed table is ten pages,
-and small tables are cheap whichever plan is chosen.
+and small tables are cheap whichever plan is chosen. Measured,
+that assumption is cruder than this file implied: a
+never-analyzed table of five rows is planned as **2,550**
+rows, five hundred times the truth, and one `ANALYZE` brings
+it to exactly five (§7). The condition is `reltuples < 0`,
+which is how "never analyzed" is written down, with 0 meaning
+an analyzed empty table.
 
 ---
 
-## 6. What to measure before designing
+## 6. What was measured
 
-`PART4.md` §8 and `sm3/SM3_OBJECTIVE.md` both list the accuracy
-of RocksDB's approximate statistics as unverified. Four
-experiments settle the strategy. Each is a small program over
-sm1, with no PostgreSQL in it.
+`PART4.md` §8 and `sm3/SM3_OBJECTIVE.md` both listed the
+accuracy of RocksDB's approximate statistics as unverified.
+Four experiments were run against RocksDB 9.11.2 through sm1,
+with no PostgreSQL in them, as one program over sm1's own
+store options: the same comparator, the same userkey bloom
+filter, keys of a 2-byte object prefix and an 8-byte rowno.
 
-1. **Size, at rest.** Load tables of known row count and row
-   width, from a thousand rows to tens of millions, compact,
-   and compare the estimated bytes of the heap's range with
-   the bytes written.
-   → accept: within a factor of 1.5 above ten thousand rows.
-2. **Size, in motion.** The same tables while rows are being
-   inserted, with some data only in the memtable, and after a
-   burst of updates before sm1 has collected the old versions.
-   → report: how far the estimate lags and overshoots, since
-   this is what the planner sees between runs.
-3. **Size, by prefix.** One store holding a heap and several
-   indexes of very different sizes. Compare each range's
-   estimate with the truth.
-   → accept: a small index beside a large heap is not charged
-   the heap's bytes.
-4. **Sampling cost, by run length.** Draw 30,000 rows from a
-   table of a hundred million rownos by forward seeks, with
-   runs of 1, 10, 100 and 1,000 rownos, with the table dense
-   and with nine rows in ten deleted.
-   → report: wall time and reads against a full scan, and the
-   distinct count each run length gives for a column whose
-   neighbours are alike, against the truth.
+**1. Size, at rest. Accepted.** Tables of 1,000 to 1,000,000
+rows at 100 and at 1,000 bytes a row, flushed and compacted,
+then the estimate over the heap's prefix against the store's
+bytes on disk.
 
-If experiment 1 or 3 fails, §3.1 needs a fallback: sizes that
-`sm_analyze` measures itself, from its sample, and records.
-That is worse, because it goes stale between runs, which is
-exactly what the planner asks the storage to avoid.
+| rows | width | disk | estimate | est/disk |
+| --- | --- | --- | --- | --- |
+| 1,000 | 100 | 27,865 | 27,865 | 1.000 |
+| 1,000,000 | 100 | 26,904,808 | 26,904,808 | 1.000 |
+| 1,000 | 1,000 | 87,060 | 87,060 | 1.000 |
+| 1,000,000 | 1,000 | 88,558,446 | 88,558,446 | 1.000 |
+
+Exact, at every size and both widths, against an acceptance
+line of 1.5. Worth knowing why it is *so* exact and not merely
+good: the range covers the whole store, so RocksDB has only to
+total whole files, and none has to be interpolated. The
+acceptance line was really a test of experiment 3.
+
+**2. Size, in motion. The one bad result.** 200,000 rows of
+200 bytes, and the same after updating every row three times.
+
+| state | logical | on disk | estimate |
+| --- | --- | --- | --- |
+| unflushed | 44,400,000 | 0 | 48,400,000 |
+| flushed and compacted | 44,400,000 | 6,756,562 | 6,756,562 |
+| mid-burst, 3 updates a row | — | — | 44,664,992 |
+| burst flushed and compacted | — | 6,767,319 | 6,767,319 |
+
+Unflushed rows are counted at their uncompressed size, so the
+estimate was **7.2x** the bytes those same rows occupied once
+flushed. Asked without the memtables it answers 0 instead,
+which is no better. A burst of updates that changed no row
+count took the estimate to 6.6x and a compaction brought it
+back. Once anything is flushed and compacted the estimate is
+exact again. §3.1 and §5 now say so.
+
+**3. Size, by prefix. Accepted.** One store holding a heap of
+500,000 rows at 400 bytes and three indexes at 16, of 500,000,
+1,000 and 10 rows. The truth is each object loaded alone into
+a store of its own, since logical bytes are not the truth when
+each object compresses differently — the heap's payload
+compressed 8.8x against the index's 1.8x, which is why a share
+of logical bytes looked wrong and was not.
+
+| object | rows | alone on disk | estimate in the store | est/alone |
+| --- | --- | --- | --- | --- |
+| heap | 500,000 | 23,901,543 | 23,890,172 | 1.000 |
+| index, big | 500,000 | 10,353,564 | 10,370,944 | 1.002 |
+| index, small | 1,000 | 21,827 | 20,153 | 0.923 |
+| index, tiny | 10 | 1,462 | 1,443 | 0.987 |
+
+A thousand-row index beside a half-million-row heap is charged
+20 KB, not the heap's 24 MB, and the four estimates sum to the
+store's bytes exactly. So §3.1 stands and the fallback below
+is not needed.
+
+**4. Sampling, by run length. Reported.** 30,000 rows wanted
+from 10,000,000 rownos by forward seeks, dense and with nine
+rownos in ten never inserted. The column whose neighbours are
+alike is `rowno / 32`, so its truth is known. Ten million
+rather than the hundred million first written, which changes
+none of the ratios below.
+
+Dense, 10,000,000 live, a full scan of it 6,659 ms:
+
+| run | seeks | rows | row count | distinct seen | time |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 29,959 | 29,959 | 10,000,000 | 28,617 | 395 ms |
+| 10 | 2,999 | 29,963 | 10,000,000 | 3,837 | 53 ms |
+| 100 | 300 | 29,948 | 10,000,000 | 1,223 | 24 ms |
+| 1,000 | 30 | 30,000 | 10,000,000 | 966 | 19 ms |
+
+Sparse, 1,000,000 live of 10,000,000 rownos, a full scan 674 ms:
+
+| run | seeks | rows | row count | truth | time |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 29,576 | 2,950 | 997,430 | 1,000,000 | 230 ms |
+| 10 | 2,996 | 2,996 | 1,000,601 | 1,000,000 | 30 ms |
+| 100 | 300 | 2,995 | 1,000,167 | 1,000,000 | 5 ms |
+| 1,000 | 30 | 3,000 | 1,000,000 | 1,000,000 | 2 ms |
+
+Three things come out of it.
+
+- **The row count is the easy part.** Exact when dense, and
+  0.26% low at worst when sparse, at every run length. §3.2
+  needs no more than this.
+- **The run length decides the distinct count**, over a 30x
+  range, and nothing else here moves as much. A run of 1 is
+  what a uniform sample would give; a run of 1,000 sees 966
+  distinct groups where the sample holds 30,000 rows.
+- **Cost is not the argument for a long run.** Even a run of
+  1 cost 395 ms against a 6,659 ms full scan, seventeen times
+  less. The spread from 395 ms to 19 ms is real but it is a
+  fifth of a second on ten million rows. So the run length
+  should be chosen for what it does to the statistics, and
+  §3.3 now argues for the length that matches PostgreSQL's
+  own clustering rather than the cheapest one.
+
+And the result §3.3 did not expect: sparse with a run of 1
+returned 2,950 rows where 30,000 were asked for, because nine
+seeks in ten land on a dead rowno. The sampler has to draw
+until the sample fills, not draw a fixed count of runs.
 
 The index lookup weights of §3.7 are calibrated last, against
 real queries through the fork, and are not part of this.
 
 ---
 
-## 7. To check against PostgreSQL's source
+## 7. Checked against PostgreSQL
 
-The strategy leans on these, recalled and not verified:
+All six claims were checked against 17.11's source, and the
+four that can be observed were also run against a server built
+from it. All six hold. Two were imprecise in a way that
+changes what the fork builds, and §3.3 and §3.7 are corrected.
 
-- the planner re-reads a relation's size at plan time and
-  scales `reltuples` by the stored density;
-- `ANALYZE`'s standard routine for a column uses nothing of
-  the type but its equality and its ordering operator;
-- the planner's selectivity code reads `pg_statistic` only
-  through a few functions, so that statistics from elsewhere
-  can be handed to it in the same shape;
-- an index-only scan is costed from the all-visible fraction
-  and nothing else of visibility;
-- the B-tree cost estimate reads the tree's height from the
-  index's metapage;
-- the heap's write path is where the insert, update and delete
-  counts are reported, and autovacuum is what launches
-  `ANALYZE`.
+| Recalled | Verdict |
+| --- | --- |
+| the planner re-reads a relation's size at plan time and scales `reltuples` by the stored density | **true, wrong place.** For a *table* `estimate_rel_size` calls the table AM's `relation_estimate_size`; the planner sizes only indexes itself. Measured: a table analyzed at 1,000 rows and grown tenfold with no `ANALYZE` kept `relpages`/`reltuples` at 18/1,000 and planned 9,611 rows against a true 10,000 — the size re-read, the density stored, 3.9% low. §3.7 corrected |
+| `ANALYZE`'s standard routine for a column uses nothing of the type but its equality and its ordering operator | **true.** `std_typanalyze` picks `compute_scalar_stats` with both, `compute_distinct_stats` with equality alone, `compute_trivial_stats` with neither — which is §3.4's table of what each statistic needs. But four other analyze routines exist for arrays, ranges, multiranges and tsvectors; §3.4 now records that |
+| the planner's selectivity code reads `pg_statistic` only through a few functions, so statistics from elsewhere can be handed to it in the same shape | **true, and the shape is specific.** `get_relation_stats_hook` and `get_index_stats_hook` in `utils/selfuncs.h` are the way in, and what they must return is a `pg_statistic`-shaped `HeapTuple`, read with `GETSTRUCT` and `get_attstatsslot`. §3.7 says so now |
+| an index-only scan is costed from the all-visible fraction and nothing else of visibility | **true.** `cost_index` applies `pages_fetched * (1 - allvisfrac)` only `if (indexonly)`. Measured: 50,000 rows, an index-only scan cost 46.81 with `relallvisible` 0 and 32.81 once a `VACUUM` made it equal `relpages` — the whole heap-fetch charge, gone |
+| the B-tree cost estimate reads the tree's height from the index's metapage | **true.** `plancat.c` calls `_bt_getrootheight` for a B-tree and leaves the height -1 otherwise. What it buys is a CPU charge, `(height + 1) * 50 * cpu_operator_cost`, not page I/O; an AM that leaves it unknown gets `log(pages)/log(100)` guessed instead |
+| the heap's write path is where the insert, update and delete counts are reported, and autovacuum is what launches `ANALYZE` | **true.** `pgstat_count_heap_insert`, `_update` and `_delete` are all in `heapam.c`, and autovacuum compares `mod_since_analyze` against `analyze_base_threshold + analyze_scale_factor * reltuples` |
+
+Four more things the measurements settled, which this file had
+either loosely or not at all.
+
+- **`reltuples` is -1 when never analyzed**, not 0, and 0
+  means an analyzed empty table. The ten-page floor applies
+  only in the -1 state, and it is coarse: five rows plan as
+  2,550 (§5).
+- **A negative `stadistinct` is a multiplier of total rows**,
+  nulls included. A column 99% null with 100 distinct values
+  in 10,000 rows came back as -0.00999999. The header in
+  `pg_statistic.h` gives the reason, and it is wisr's reason
+  too: the row count is refreshed more often than the
+  statistics, so a multiplier survives the drift §3.2 creates.
+- **The statistics target sizes the output as well as the
+  sample.** 300 rows a unit going in; target + 1 histogram
+  bounds coming out, measured at 11, 101 and 301 for targets
+  of 10, 100 and 300. Most common values and a histogram are
+  complementary: a column of seven values got a list of seven
+  and no histogram, a unique one a histogram and no list.
+- **PostgreSQL's sampler clusters**, which §3.3 had backwards
+  and now states correctly.
+
+### 7.1 An alternative this file does not take
+
+PostgreSQL's table AM has analyze callbacks of its own,
+`scan_analyze_next_block` and `scan_analyze_next_tuple`, and
+`acquire_sample_rows` drives them: it chooses blocks and asks
+the AM for the tuples of each. A fork could implement them
+with a block standing for a run of rownos — §3.3's sampling
+unit, exactly — and then PostgreSQL's own sampler, reservoir
+and estimators would run unchanged, and §3.4 would have
+nothing to port.
+
+It is not free. The results would still have nowhere to go:
+`update_attstats` writes `pg_statistic`, which the fork does
+not have, so that half must be replaced regardless. And it
+would put the sample's shape under PostgreSQL's control rather
+than the stack's, against principle 2, and leave sm3 unable to
+analyze anything without a host.
+
+This file keeps the stack analyzing. The point of recording
+the alternative is that the choice is real and was not made
+knowingly before: whoever writes `sm3/SM3_DESIGN.md` §6 should
+make it on purpose.
 
 ---
 
 ## 8. Order of work
 
-1. The four measurements of §6.
-   → verify: the acceptance lines there, written up here.
+1. ~~The four measurements of §6.~~ **Done**: both acceptance
+   lines pass, and §6 carries the numbers. What they leave for
+   the design: what to report for a table whose rows are still
+   unflushed (§6, experiment 2), and what run length to sample
+   at (§6, experiment 4, and §3.3).
 2. `sm3/SM3_DESIGN.md` §6, from this file and what was
-   measured, with the format of §3.6 written out.
+   measured, with the format of §3.6 written out, and with
+   §7.1's choice made on purpose.
 3. The sm1 primitives of §4, with sm2 and sm3 over them.
    → verify: a table's and an index's size follow the rows
    loaded; `N` is the sequence's last value.
