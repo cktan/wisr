@@ -36,6 +36,9 @@ the wrapper through the `rel/` test suite.
 
 ## Where to read
 
+- `GLOSSARY.md` — the words this stack uses, the ones that
+  mean more than one thing first, and the identifiers side
+  by side
 - `OBJECTIVE.md` — what wisr as a whole is for, and the
   decisions that span every level
 - `DESIGN.md` — how the levels fit together: the stack, the
