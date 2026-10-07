@@ -29,7 +29,7 @@
 #include <filesystem>
 #include <memory>
 #include <new>
-#include <set>
+#include <unordered_set>
 #include <vector>
 
 #include <rocksdb/options.h>
@@ -98,7 +98,7 @@ bool parse_dbid(const char *name, uint64_t *dbid) {
  * Entries that are not dbids are left alone.
  */
 int sweep_base(sm1::env_t *env) {
-  std::set<uint64_t> live;
+  std::unordered_set<uint64_t> live;
   // Collect every dbid the root db names.
   std::unique_ptr<rocksdb::Iterator> it(
       env->root->NewIterator(rocksdb::ReadOptions()));
@@ -384,7 +384,7 @@ int sm1::detach(sm1::env_t *env, int force) {
   if (!env) {
     return 0;
   }
-  std::set<sm1::session_t *> sessions;
+  std::unordered_set<sm1::session_t *> sessions;
   {
     // Hold the env mutex while reading the session set.
     std::lock_guard<std::mutex> guard(env->mu);

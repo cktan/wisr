@@ -26,8 +26,8 @@
 
 #include <chrono>
 #include <functional>
-#include <set>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 using namespace wisr;
@@ -164,7 +164,7 @@ void note_mode(sm1::session_t *s, const std::string &k, lmode_t mode) {
  * Returns true once a cycle through s is found.
  */
 bool find_cycle(sm1::session_t *s, sm1::session_t *cur,
-                std::set<sm1::session_t *> *seen,
+                std::unordered_set<sm1::session_t *> *seen,
                 std::vector<sm1::session_t *> *path) {
   // Follow every holder this transaction waits on.
   for (sm1::session_t *next : cur->waiting_for) {
@@ -195,7 +195,7 @@ bool find_cycle(sm1::session_t *s, sm1::session_t *cur,
  * the members of that other cycle run their own check.
  */
 void check_deadlock(db_t *db, sm1::session_t *s) {
-  std::set<sm1::session_t *> seen;
+  std::unordered_set<sm1::session_t *> seen;
   std::vector<sm1::session_t *> path;
   // No cycle through us: nothing to resolve here.
   if (!find_cycle(s, s, &seen, &path)) {

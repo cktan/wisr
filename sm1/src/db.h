@@ -110,7 +110,7 @@ struct db_t {
 
   /* storeid -> column family handle, for every live store CF. */
   std::shared_mutex store_mu;
-  std::map<uint64_t, rocksdb::ColumnFamilyHandle *> stores;
+  std::unordered_map<uint64_t, rocksdb::ColumnFamilyHandle *> stores;
 
   /* The ts and object-id allocators and their leases (§4.2). */
   std::mutex alloc_mu;
@@ -137,7 +137,7 @@ struct db_t {
     uint64_t limit = 0;     /* persisted; never handed out */
     bool exhausted = false; /* the last value is handed out */
   };
-  std::map<uint64_t, seq_state_t> seqs;
+  std::unordered_map<uint64_t, seq_state_t> seqs;
 
   /*
    * The commit sequencer (§4.3): commit_ts values claimed and
@@ -241,7 +241,7 @@ struct db_t {
    * GC for over stuck_warn_secs. Guarded by snap_mu.
    */
   std::multimap<uint64_t, std::chrono::steady_clock::time_point> snap_since;
-  std::set<uint64_t> snap_warned;
+  std::unordered_set<uint64_t> snap_warned;
   int stuck_warn_secs = 60;
 
   /*
@@ -299,9 +299,10 @@ struct db_t {
    * remains.
    */
   std::mutex ssi_mu;
-  std::set<ssi_node_t *> ssi_nodes;
+  std::unordered_set<ssi_node_t *> ssi_nodes;
   std::unordered_map<std::string, std::vector<ssi_node_t *>> ssi_points;
-  std::map<uint64_t, std::list<ssi_range_t>> ssi_ranges; /* by storeid */
+  std::unordered_map<uint64_t, std::list<ssi_range_t>>
+      ssi_ranges; /* by storeid */
   std::unordered_map<uint64_t, ssi_node_t *> ssi_by_xid;
 
   /*

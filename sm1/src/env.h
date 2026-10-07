@@ -9,10 +9,10 @@
 
 #include <stdint.h>
 
-#include <map>
 #include <mutex>
-#include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <rocksdb/db.h>
 
@@ -34,10 +34,10 @@ struct sm1::env_t {
   std::mutex mu;               /* guards the root db and the two sets below */
 
   /* Open databases by name, shared by their sessions. */
-  std::map<std::string, wisr::db_t *> dbs;
+  std::unordered_map<std::string, wisr::db_t *> dbs;
 
   /* Every open session, for sm1::detach. */
-  std::set<sm1::session_t *> sessions;
+  std::unordered_set<sm1::session_t *> sessions;
 
   /* Close the root db. */
   ~env_t();

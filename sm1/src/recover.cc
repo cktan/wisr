@@ -16,7 +16,7 @@
 #include "version.h"
 
 #include <memory>
-#include <set>
+#include <unordered_set>
 #include <vector>
 
 using namespace wisr;
@@ -83,7 +83,7 @@ int restore_prepared(db_t *db) {
  * newest committed version, if that is not a tombstone. Versions
  * of restored prepared transactions are in flight and skipped.
  */
-int live_storeids(db_t *db, std::set<uint64_t> *live) {
+int live_storeids(db_t *db, std::unordered_set<uint64_t> *live) {
   // Scan the catalog in total order, across every userkey.
   rocksdb::ReadOptions ro;
   ro.total_order_seek = true;
@@ -142,7 +142,7 @@ int live_storeids(db_t *db, std::set<uint64_t> *live) {
  */
 int sweep_orphan_cfs(db_t *db) {
   // Always keep the catalog's own CF.
-  std::set<uint64_t> keep{0};
+  std::unordered_set<uint64_t> keep{0};
   // Keep every storeid a live catalog row names.
   if (live_storeids(db, &keep) != 0) {
     return -1;

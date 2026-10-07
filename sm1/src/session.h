@@ -14,8 +14,8 @@
 #include <atomic>
 #include <list>
 #include <memory>
-#include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <rocksdb/db.h>
@@ -131,9 +131,9 @@ struct sm1::session_t {
   bool restored = false;     /* rebuilt from its record at open (§9.1) */
   bool limbo = false;        /* its prepare write failed (§8.4) */
 
-  std::set<sm1::scan_t *> scans; /* open cursors */
-  uint64_t next_scan_id = 0;     /* hands out sm1::scan_t::id */
-  std::string readbuf;           /* what sm1::read hands out */
+  std::unordered_set<sm1::scan_t *> scans; /* open cursors */
+  uint64_t next_scan_id = 0;               /* hands out sm1::scan_t::id */
+  std::string readbuf;                     /* what sm1::read hands out */
 };
 
 struct sm1::scan_t {
