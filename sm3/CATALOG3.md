@@ -71,7 +71,7 @@ is the SQL layer's, not sm3's (`CATALOG.md` §7).
 
 - **A table** is a heap of rows in one sm1 store, keyed by
   `rowno`. The heap is one rel in that store, always at
-  rel-id 1, and the table's indexes are rels beside it
+  relid 1, and the table's indexes are rels beside it
   (`SM3_DESIGN.md` §4). The catalog holds the table's
   identity, which store holds it, and the sequence that hands
   out its rownos.
@@ -82,7 +82,7 @@ is the SQL layer's, not sm3's (`CATALOG.md` §7).
   position, and a dropped column keeps its attnum for ever,
   so no later column shifts under a row already written.
 - **An index** is an ordered mapping from an encoded key to a
-  `rowno`, under its own rel-id inside its table's store
+  `rowno`, under its own relid inside its table's store
   (`SM3_DESIGN.md` §4). It is an object, not a part of its
   table: it has an oid and a name, so `DROP INDEX` can name
   it. Its **key columns**, its **INCLUDE attributes** and the
@@ -408,7 +408,7 @@ schemas are known before it is loaded — is still open
 | `j` | partition key | bytea | — | host-serialized |
 | `k` | relkind | int2 | — | absent: an ordinary table |
 | `n` | name | text | yes | |
-| `p` | next index rel-id | int2 | yes | never reused |
+| `p` | next index relid | int2 | yes | never reused |
 | `q` | rowno sequence name | text | yes | `sm3.rowno.<oid>` |
 | `s` | namespace oid | oid | yes | |
 | `t` | storeid | oid | yes | sm1's store |
@@ -468,7 +468,7 @@ table whose count is least bounded.
 | `e` | error code | int2 | — | failed only |
 | `m` | access method | int2 | — | absent: btree |
 | `n` | name | text | yes | |
-| `p` | rel-id | int2 | yes | |
+| `p` | relid | int2 | yes | |
 | `r` | failure reason | text | — | failed only |
 | `s` | build state | int2 | — | absent: valid |
 | `v` | eval blob | bytea | — | partial or expression |

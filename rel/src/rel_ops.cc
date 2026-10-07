@@ -877,7 +877,7 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
     }
   }
 
-  // sm3 records it, under the table's next rel_id.
+  // sm3 records it, under the table's next relid.
   std::vector<sm_index_key_spec_t> keys;
   for (const key_col_def_t &k : idef.keys) {
     int32_t att = static_cast<int32_t>(k.col_idx);

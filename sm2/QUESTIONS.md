@@ -37,7 +37,7 @@ number never changes.
 
 **4.2 [BLOCKING] What are TOAST keys?**
 Where TOAST data lives is settled: in the table's own sm1
-store, under the object prefix `0xFFFF` (`SM2_DESIGN.md` §4,
+store, under the relid `0xFFFF` (`SM2_DESIGN.md` §4,
 §5). What follows the prefix is not.
 *Suggested: `0xFFFF ‖ chunk_id ‖ chunk_seq`, PostgreSQL's
 names, with `chunk_id` an 8-byte big-endian value from an sm1
@@ -86,7 +86,7 @@ Settled, and listed so nobody reopens them by accident:
 - Null markers, escaping and terminators — `SM2_DESIGN.md` §3.1.
 - Over-long keys — `SM2_DESIGN.md` §3.2.
 - Collation version and determinism — `SM2_DESIGN.md` §3.3.
-- One sm1 store per table and the 2-byte object prefix —
+- One sm1 store per table and the 2-byte relid —
   `SM2_DESIGN.md` §5, `sm3/SM3_DESIGN.md` §4.
 - That the table is a heap keyed by a 64-bit `rowno`, the
   primary key is an index, and `rowno` is `ctid` —

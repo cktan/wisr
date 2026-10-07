@@ -449,20 +449,21 @@ design:
   costs two reads.
 - **One sm1 store per table.** A table's rows, all its
   indexes and its TOAST data share one sm1 store,
-  told apart by a 2-byte object prefix: `0x0000` for rows,
-  `0x0001`–`0xFFFE` for indexes, `0xFFFF` for TOAST. sm3
-  chooses the prefix; sm2 prepends and strips it and never
+  told apart by a 2-byte relid: `0x0001` for the heap,
+  always, `0x0002`–`0xFFFE` for indexes, `0xFFFF` for TOAST,
+  and `0x0000` unused. sm3 chooses an index's relid; sm2
+  prepends and strips it and never
   interprets it (`sm2/SM2_DESIGN.md` §5), so sm2 never learns
   what a table is. `DROP TABLE` is one `sm1::rmstore`, sm1's O(1)
   column family drop; `DROP INDEX` is a range delete over its
-  prefix, and index prefixes are never reused. The cost is
+  relid, and index relids are never reused. The cost is
   that tables, partitions included, are bounded by the
   hundreds to low thousands of stores sm1 handles
   (`sm1/SM1_DESIGN.md` §13); accepted for v1 (`sm3/SM3_DESIGN.md`
   §4).
 - **A temporary table is a temporary store.** Temporariness
   belongs to an sm1 store, and so to its RocksDB column family,
-  not to any row, key or object prefix: every object in a
+  not to any row, key or relid: every object in a
   temporary store is temporary with it. Because a table's heap,
   its indexes and its TOAST data share one store (above), a
   temporary table is one temporary store, and an index is
@@ -470,7 +471,7 @@ design:
   store when it creates a temporary table; sm2 neither knows
   nor cares (`sm1/SM1_DESIGN.md` §11.3).
 - **The key budget is shared.** `sm1::max_keylen` (4096) bounds
-  prefix, index columns and `rowno` together. sm2's encoder
+  relid, index columns and `rowno` together. sm2's encoder
   enforces it: an over-long key in a unique index, the primary
   key's among them, refuses the row, and an over-long key in a
   non-unique index is truncated, flagged and rechecked against

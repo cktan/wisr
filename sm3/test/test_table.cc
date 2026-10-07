@@ -247,7 +247,7 @@ public:
     for (const sm3::index_def_t &x : def.indexes) {
       if (x.oid == oid) {
         REQUIRE(sm2::idx_open(sm3::session_sm1(sm3::tbl_session(t)),
-                              def.storeid, x.rel_id, x.key, x.unique, x.include,
+                              def.storeid, x.relid, x.key, x.unique, x.include,
                               m_ix) == 0);
       }
     }

@@ -104,7 +104,7 @@ struct index_key_rec_t {
 struct index_rec_t {
   uint64_t oid;
   std::string name;
-  uint16_t rel_id;
+  uint16_t relid;
   bool unique;
   std::vector<index_key_rec_t> keys;
   std::vector<int32_t> includes; /* 0-based attnums */
@@ -121,7 +121,7 @@ struct table_rec_t {
   std::string name;
   uint64_t storeid;
   std::string rowno_seq;
-  uint16_t next_rel_id;
+  uint16_t next_relid;
   std::vector<column_rec_t> columns;
   std::vector<index_rec_t> indexes;
 };

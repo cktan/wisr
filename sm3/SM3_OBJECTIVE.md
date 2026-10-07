@@ -8,7 +8,7 @@ and the statistics a planner above needs.
 sm2 stops exactly where this begins. `sm2/SM2_OBJECTIVE.md` says
 sm2 is "handed a schema", that it "maintains no index", that
 it "has no filter and counts nothing", and that an sm2
-relation is one sm1 store with an opaque object prefix
+relation is one sm1 store with an opaque relid
 reserved for the level above. sm3 is that level, and this
 document is what it is for.
 
@@ -81,7 +81,7 @@ These are settled and drive `SM3_DESIGN.md`.
   given an old definition (`SM3_DESIGN.md` §2).
 - **One sm1 store per table.** A table's rows, its
   indexes and its TOAST data share one sm1 store,
-  told apart by sm2's 2-byte object prefix, so `DROP TABLE` is
+  told apart by sm2's 2-byte relid, so `DROP TABLE` is
   sm1's O(1) column family drop. sm1 targets "hundreds to low
   thousands of stores per database" (`sm1/SM1_DESIGN.md` §13),
   so tables, partitions included, are bounded by that;

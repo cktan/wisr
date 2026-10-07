@@ -271,7 +271,7 @@ own.
    to resolve the key and INCLUDE column names to their places.
 2. Calls `sm_cat_create_index(s, table, name, keys, nkey,
    includes, ninclude, unique, &oid)`, which records the index
-   under the table's next prefix. On a table made in the same
+   under the table's next relid. On a table made in the same
    transaction the index is filled and valid at once. On any
    other it is recorded as building, and filled in the
    background after the transaction commits

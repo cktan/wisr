@@ -26,7 +26,7 @@ sm3::table_rec_t sample_table() {
   t.name = "orders";
   t.storeid = 1001;
   t.rowno_seq = "orders_rowno";
-  t.next_rel_id = 3;
+  t.next_relid = 3;
   t.columns = {
       {"id", 36, -1, true, false, std::nullopt, std::nullopt},
       {"note", 64, -1, false, false, sm2::make_varlena("n/a"), 1000},
@@ -73,13 +73,13 @@ bool same(const sm3::table_rec_t &a, const sm3::table_rec_t &b) {
            x.nulls_first == y.nulls_first && x.collation == y.collation;
   };
   auto idx_eq = [&](const sm3::index_rec_t &x, const sm3::index_rec_t &y) {
-    return x.oid == y.oid && x.name == y.name && x.rel_id == y.rel_id &&
+    return x.oid == y.oid && x.name == y.name && x.relid == y.relid &&
            x.unique == y.unique && x.includes == y.includes &&
            std::equal(x.keys.begin(), x.keys.end(), y.keys.begin(),
                       y.keys.end(), key_eq);
   };
   return a.nspoid == b.nspoid && a.name == b.name && a.storeid == b.storeid &&
-         a.rowno_seq == b.rowno_seq && a.next_rel_id == b.next_rel_id &&
+         a.rowno_seq == b.rowno_seq && a.next_relid == b.next_relid &&
          std::equal(a.columns.begin(), a.columns.end(), b.columns.begin(),
                     b.columns.end(), col_eq) &&
          std::equal(a.indexes.begin(), a.indexes.end(), b.indexes.begin(),

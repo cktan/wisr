@@ -44,7 +44,7 @@ sm2 the way sm2 is built on sm1 (`sm3/SM3_OBJECTIVE.md`).
 - **Predicates, scans by predicate, and statistics.** sm2 has
   no filter and counts nothing. Both are sm3's.
 - **Mapping tables onto stores.** An sm2 relation is one sm1
-  store. sm2 prepends a 2-byte object prefix chosen by sm3, so
+  store. sm2 prepends a 2-byte relid chosen by sm3, so
   a table's rows, indexes and TOAST data can share one sm1
   store; which prefix means what is sm3's.
 - A query language, a planner, or an executor.
@@ -232,7 +232,7 @@ sm3's indexes that feel them most.
   distinct (`sm3/SM3_DESIGN.md` §3). A hash is out, because it
   keeps equality but destroys order, and an index that cannot
   serve a range or an `ORDER BY` is not worth having. The budget
-  for an index key is `4094` after the prefix, less 8 for `rowno`
+  for an index key is `4094` after the relid, less 8 for `rowno`
   where the entry carries one.
 
 - **Collation stability.** A sort key is only valid for the

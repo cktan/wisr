@@ -309,7 +309,7 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
     t.bytes(1, rec.name);
     t.i8(2, rec.storeid);
     t.bytes(3, rec.rowno_seq);
-    t.i2(4, static_cast<int16_t>(rec.next_rel_id));
+    t.i2(4, static_cast<int16_t>(rec.next_relid));
     t.i4(5, static_cast<int32_t>(rec.columns.size()));
     t.i4(6, static_cast<int32_t>(rec.indexes.size()));
     if (t.append(part_desc(part_t::table), blob) != 0) {
@@ -334,7 +334,7 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
       writer_t w(11);
       w.i8(0, x.oid);
       w.bytes(1, x.name);
-      w.i2(2, static_cast<int16_t>(x.rel_id));
+      w.i2(2, static_cast<int16_t>(x.relid));
       w.b(3, x.unique);
       w.i4(4, static_cast<int32_t>(x.keys.size()));
       w.i4(5, static_cast<int32_t>(x.includes.size()));
@@ -400,7 +400,7 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
     rec.name = t.bytes(1);
     rec.storeid = t.i8(2);
     rec.rowno_seq = t.bytes(3);
-    rec.next_rel_id = static_cast<uint16_t>(t.i2(4));
+    rec.next_relid = static_cast<uint16_t>(t.i2(4));
     int32_t natts = t.i4(5), nindex = t.i4(6);
     if (!t.ok || natts < 0 || nindex < 0) {
       return corrupt("a table part cut short");
@@ -433,7 +433,7 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
       index_rec_t x;
       x.oid = r.i8(0);
       x.name = r.bytes(1);
-      x.rel_id = static_cast<uint16_t>(r.i2(2));
+      x.relid = static_cast<uint16_t>(r.i2(2));
       x.unique = r.b(3);
       int32_t nkey = r.i4(4), ninclude = r.i4(5);
       // An index written before the state was kept is valid.

@@ -45,11 +45,11 @@ std::string enc(const std::vector<sm2::key_column_t> &cols,
 /* Open an index; it must open. */
 sm2::index_t *open_index(db_t &db, sm1::session_t *s,
                          const std::vector<sm2::key_column_t> &key, bool unique,
-                         uint16_t rel_id = 1,
+                         uint16_t relid = 1,
                          std::span<const sm2::attribute_t> include = {}) {
   sm2::index_t *ix = nullptr;
   REQUIRE_MESSAGE(
-      sm2::idx_open(s, db.store(), rel_id, key, unique, include, ix) == 0,
+      sm2::idx_open(s, db.store(), relid, key, unique, include, ix) == 0,
       sm1::errmsg());
   return ix;
 }
@@ -391,9 +391,9 @@ TEST_CASE("at read committed an entry committed since begin is still deleted") {
 }
 
 TEST_CASE("index and heap entries share a store without meeting") {
-  // Verify an index's rel_id keeps it apart from the heap and from
+  // Verify an index's relid keeps it apart from the heap and from
   // other indexes in the same sm1 store.
-  // 1. A heap rel under rel_id 0 and two indexes under 1 and 2
+  // 1. A heap rel under relid 0 and two indexes under 1 and 2
   //    each get entries.
   // 2. Each index's unbounded scan yields its own entries only,
   //    and the heap's scan yields only its rows.
@@ -441,7 +441,7 @@ TEST_CASE("an index scan seeks forward, and index calls refuse misuse") {
   // Verify idx_scan_seek and the SM_ERR_INVALID cases.
   // 1. After reading the first entry, seeking to 7 resumes at the
   //    entry for 7.
-  // 2. idx_open refuses rel_id 0xFFFF, TOAST's, and an index
+  // 2. idx_open refuses relid 0xFFFF, TOAST's, and an index
   //    with no key columns; idx_insert refuses a wrong number of
   //    key datums; idx_scan refuses a bound with no columns or
   //    more than the index has.

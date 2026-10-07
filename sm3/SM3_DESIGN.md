@@ -14,14 +14,14 @@ decisions in `SM3_OBJECTIVE.md`:
 | Catalog | in memory, written through to sm2, lock-based DDL |
 | Index entry | `encode(index columns) ‖ rowno` → a tuple of the `rowno`, a cut flag and the INCLUDE columns; a unique index's key drops the `rowno` suffix unless a key column is NULL, and is never cut |
 | Encoder | sm2's, called with the same per-column arguments |
-| Relation mapping | one sm1 store per table; a store is a collection of rels -- its heap, one per index, one for TOAST -- told apart by sm2's 2-byte short-rel-id |
+| Relation mapping | one sm1 store per table; a store is a collection of rels -- its heap, one per index, one for TOAST -- told apart by sm2's 2-byte relid |
 | API shape | tuple at a time; a scan takes key bounds and filters nothing, and whatever needs evaluating is the host's, by callback (§3, §5) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
 **Status: the catalog is implemented** — its keys, values,
 load, DDL, a session's overlay and the schema locks of §2
 (`CATALOG.md`), and §4's object mapping with them: a store
-per table, index rel-ids allocated and never reused, and
+per table, index relids allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
 is built, the C API's one way to write a row, and so is its
 index build, for partial and expression indexes too; §6's
@@ -61,7 +61,7 @@ answer.
 | sm2's tuples in a heap keyed by `rowno` | a row's identity is its `rowno`, which never changes; every index, the primary key's included, points at it |
 | sm2's index `rel`: entries keyed by encoded columns, each pointing at a `rowno` | sm2 lays out an entry's bytes and scan bounds; which indexes exist, and writing their entries on every heap write, are sm3's (§3) |
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
-| sm2's 2-byte short-rel-id | a table's heap, indexes and TOAST data are rels in its one sm1 store (§4) |
+| sm2's 2-byte relid | a table's heap, indexes and TOAST data are rels in its one sm1 store (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own; the image views sm1 session memory, valid until the next call, so sm3 copies it before any index call (§3) |
 | sm2's codec over `datum_t` values and null flags, as PostgreSQL's `Datum` (`sm2/TUPLE.md` §9) | sm3 never handles a value's bytes: rows, index keys and bounds are `datum_t`s, and `encode_key` strips a varlena's header itself |
 | `tup_desc_t`: a schema's widths and entry offsets, built once (`sm2/TUPLE.md` §6) | sm3 builds one per table and per index value when a definition loads or changes, so a one-column read costs a step per earlier null, not a pass over the row |
@@ -72,7 +72,7 @@ answer.
 | `sm1::lock` in Gray's modes (IS, IX, S, SIX, X) | the DDL and online index build protocol (§2, §3): readers and writers of a table coexist on its schema row, and an index build stops writers without stopping readers |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
-| `sm1::max_keylen` 4096 | an index entry's key must fit 4094 bytes after the rel-id, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
+| `sm1::max_keylen` 4096 | an index entry's key must fit 4094 bytes after the relid, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward, in the same index; there are no mirror relations, and the fork's planner never asks for a backward scan (§5, §7) |
 | one column family per store, hundreds to low thousands | tables, partitions included, are bounded by it (§4) |
 
@@ -176,8 +176,8 @@ Settled for the layout, whatever its shape:
 - **Type codes are sm2's frozen codes** (`sm2/TYPE.md` §3).
   Code 7, `decimal` before it was split, is retired; the
   catalog never writes it.
-- **Each table's next index rel-id is persisted**, since a
-  rel-id is never reused (§4) and must not be after a restart
+- **Each table's next index relid is persisted**, since a
+  relid is never reused (§4) and must not be after a restart
   either.
 
 ### 2.1 Decimal columns
@@ -760,28 +760,29 @@ against the PostgreSQL source before the fork relies on it.
 **Decision: one sm1 store per table.** A store is a
 collection of **rels**, and a table's heap, each of its
 secondary indexes and its TOAST data is one of them. They are
-told apart by sm2's 2-byte **short-rel-id**
+told apart by sm2's 2-byte **relid**
 (`sm2/SM2_DESIGN.md` §5):
 
-| short-rel-id | Relation |
+| relid | Relation |
 | --- | --- |
 | `0x0000` | unused |
 | `0x0001` | the table's heap, always |
-| `0x0002`–`0xFFFE` | its indexes, one short-rel-id each |
+| `0x0002`–`0xFFFE` | its indexes, one relid each |
 | `0xFFFF` | its TOAST data |
 
 - **The heap is always `0x0001`.** It is the constant
-  `sm3::heap_rel_id` and is never drawn from the counter that
-  hands out index rel-ids, so a table's heap sits at the same
-  rel-id in every database and nothing about it is recorded.
-- **`0x0000` is left unused**, so a zeroed or unset rel-id is
+  `sm3::heap_relid` and is never drawn from the counter that
+  hands out index relids, so a table's heap sits at the same
+  relid in every database and nothing about it is recorded.
+- **`0x0000` is left unused**, so a zeroed or unset relid is
   never a live rel.
 
-A rel's identity across the database is its **full-rel-id**,
-`(storeid, short-rel-id)`. sm3 chooses an index's
-short-rel-id and records it in the catalog; the heap's and
-TOAST's are fixed. An sm3 table or index is one `rel` over the
-table's sm1 store with its rel-id; sm2 prepends and strips it
+A relid names a rel within its store and nowhere else; a rel
+is reached as its store and its relid, and there is no wider
+identity for one. sm3 chooses an index's relid and records it
+in the catalog; the heap's and TOAST's are fixed. An sm3 table
+or index is one `rel` over the
+table's sm1 store with its relid; sm2 prepends and strips it
 and otherwise ignores it. sm2 never learns what a table is,
 and sm3 never encodes a key itself.
 
@@ -793,7 +794,7 @@ and sm3 never encodes a key itself.
   All three are transactional, so an abort, or a rollback to
   a savepoint before it, brings the rows back, and it costs
   the same whatever the table holds. The columns, the index
-  definitions and their rel-ids and states, and the rowno
+  definitions and their relids and states, and the rowno
   sequence carry over, so new rows go on from the last rowno.
   A transaction that began before it committed and first
   reads the table after finds it empty, as in PostgreSQL:
@@ -801,9 +802,9 @@ and sm3 never encodes a key itself.
   `tbl_truncate`, which needs the table opened exclusive and
   reopens the handle on the new store.
 - **`DROP INDEX` is a range delete** over the index's keys.
-- **Index rel-ids are allocated in increasing order and never
+- **Index relids are allocated in increasing order and never
   reused.** A dropped index's versions linger until sm1's
-  garbage collection passes them; never reusing a rel-id means
+  garbage collection passes them; never reusing a relid means
   no later index can read them as its own, with no rule tied
   to the GC horizon. 65,533 index creations per table,
   rebuilds included, is the ceiling.
@@ -813,7 +814,7 @@ and sm3 never encodes a key itself.
   for v1; raising that ceiling is sm1's problem if it bites.
 
 The alternative was many tables per sm1 store, with a wider
-object id as the rel-id, which makes the relation count a
+object id as the relid, which makes the relation count a
 tuning decision. It was rejected for v1 because `DROP TABLE`
 becomes a range delete instead of sm1's O(1) drop.
 
@@ -954,7 +955,7 @@ that matter most are the ones with two sessions in them.
    (`src/catalog/ddl.cc`).
    Verified: a table's rows and indexes share its store
    without meeting; `DROP TABLE` removes the store, indexes
-   and all; a dropped index's rel-id is never handed out
+   and all; a dropped index's relid is never handed out
    again, so its lingering versions are never read as another
    index's.
 3. **Indexes**: maintenance through the table-level writes,

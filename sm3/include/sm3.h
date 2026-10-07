@@ -30,13 +30,13 @@ constexpr uint64_t nsp_pg_catalog = 1;
 constexpr uint64_t nsp_public = 2;
 
 /*
- * The rel-ids of a table's rels in its store (SM3_DESIGN.md §4):
+ * The relids of a table's rels in its store (SM3_DESIGN.md §4):
  * the heap takes 1 and its indexes the ones above, 0xFFFF being
- * TOAST's. 0 is left unused, so an unset rel-id is never a live
+ * TOAST's. 0 is left unused, so an unset relid is never a live
  * rel.
  */
-constexpr uint16_t heap_rel_id = 1;
-constexpr uint16_t first_index_rel_id = 2;
+constexpr uint16_t heap_relid = 1;
+constexpr uint16_t first_index_relid = 2;
 
 /* A column, as a table is declared with it. */
 struct column_spec_t {
@@ -83,7 +83,7 @@ enum class index_state_t : uint8_t { building = 0, valid = 1, failed = 2 };
 struct index_def_t {
     uint64_t                          oid;
     std::string                       name;
-    uint16_t                          rel_id;
+    uint16_t                          relid;
     bool                              unique;
     std::vector<int32_t>              key_attnums;     /* 0-based; -1: expr */
     std::vector<int32_t>              include_attnums; /* 0-based */
@@ -118,7 +118,7 @@ struct table_def_t {
     std::string                   name;
     uint64_t                      storeid;
     std::string                   rowno_seq;
-    uint16_t                      next_rel_id;
+    uint16_t                      next_relid;
     std::vector<column_def_t>     columns;
     std::vector<sm2::attribute_t> schema;
     sm2::tup_desc_t               desc;    /* over schema */
@@ -322,7 +322,7 @@ int cat_drop_column(session_t* session, uint64_t oid,
 
 /*
  * Create an index named name on the table, keyed by keys, with the
- * INCLUDE columns includes, taking the table's next rel_id; its
+ * INCLUDE columns includes, taking the table's next relid; its
  * oid is set in oid. It records the index as building, for the
  * build to fill from the table's rows and then mark valid
  * (SM3_DESIGN.md §3). On a table this transaction created, which

@@ -107,7 +107,7 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
 | --- | --- |
 | meta | format version `int4` |
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
-| table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index prefix `int2`, natts `int4`, nindex `int4` |
+| table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index relid `int2`, natts `int4`, nindex `int4` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null |
 | index | oid `int8`, name `text`, prefix `int2`, unique `bool`, nkey `int4`, ninclude `int4`, state `int2`, error `int2` or null, reason `text` or null, eval `bytea` or null, nread `int4` or null |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
@@ -142,7 +142,7 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
   in memory.
 - **A missing value is its bytes**, a varlena for a
   variable-width type, as sm2's `attribute_t` holds it.
-- **The next index prefix is kept** in the table part, so a
+- **The next index relid is kept** in the table part, so a
   prefix is never reused, across restarts too (`SM3_DESIGN.md`
   §4).
 - **Each part is held to 64 KB** (`sm2/TUPLE.md` §1); a value, a
@@ -260,7 +260,7 @@ as sm1 does (`DESIGN.md` §5).
 - **`cat_create_index(session, table, name, keys, includes,
   unique, oid)`** records an index — its key columns with their
   direction, null order and collation, a collation only on
-  text or varchar — and takes the table's next prefix, which is
+  text or varchar — and takes the table's next relid, which is
   never handed out again. It does not fill the index from the
   table's rows: it records it as building, for the build to
   fill and mark valid (`SM3_DESIGN.md` §3). On a table its own

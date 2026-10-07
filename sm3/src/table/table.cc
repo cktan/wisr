@@ -295,13 +295,13 @@ namespace {
 int open_rels(table_t *table) {
   const table_def_t &def = *table->def;
   sm1::session_t *s = table->session->sm1;
-  if (sm2::rel_open(s, def.storeid, heap_rel_id, def.schema, def.rowno_seq,
+  if (sm2::rel_open(s, def.storeid, heap_relid, def.schema, def.rowno_seq,
                     table->rel) != 0) {
     return -1;
   }
   for (const index_def_t &x : def.indexes) {
     sm2::index_t *ix = nullptr;
-    if (sm2::idx_open(s, def.storeid, x.rel_id, x.key, x.unique, x.include,
+    if (sm2::idx_open(s, def.storeid, x.relid, x.key, x.unique, x.include,
                       ix) != 0) {
       return -1;
     }

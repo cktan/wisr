@@ -61,12 +61,12 @@ row_t gen_row(std::span<const sm2::attribute_t> schema, std::mt19937_64 &rng) {
   return row;
 }
 
-/* Open a heap rel over db's store under rel_id; it must open. */
+/* Open a heap rel over db's store under relid; it must open. */
 sm2::rel_t *open_rel(db_t &db, sm1::session_t *s,
                      std::span<const sm2::attribute_t> schema,
-                     uint16_t rel_id = 0) {
+                     uint16_t relid = 0) {
   sm2::rel_t *rel = nullptr;
-  REQUIRE(sm2::rel_open(s, db.store(), rel_id, schema, "rowno", rel) == 0);
+  REQUIRE(sm2::rel_open(s, db.store(), relid, schema, "rowno", rel) == 0);
   return rel;
 }
 
@@ -210,9 +210,9 @@ TEST_CASE("a savepoint rollback leaves no sm2 state behind") {
   sm2::rel_close(rel);
 }
 
-TEST_CASE("two rels over one store, under two rel_ids, never meet") {
-  // Verify the rel_id separates rels in one sm1 store.
-  // 1. Rels under rel_ids 0 and 1 each insert rows; both draw
+TEST_CASE("two rels over one store, under two relids, never meet") {
+  // Verify the relid separates rels in one sm1 store.
+  // 1. Rels under relids 0 and 1 each insert rows; both draw
   //    rownos from the one sequence.
   // 2. Each rel's scan over every rowno yields only its own rows,
   //    and reading the other's rowno finds nothing.

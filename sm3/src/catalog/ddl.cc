@@ -290,7 +290,7 @@ int cat_create_table(session_t *session, uint64_t nspoid, std::string_view name,
                     std::string(name),
                     0,
                     "sm3.rowno." + std::to_string(t),
-                    first_index_rel_id,
+                    first_index_relid,
                     {},
                     {}};
     // The table's store and its rowno sequence (DESIGN.md §5).
@@ -360,7 +360,7 @@ int cat_truncate_table(session_t *session, uint64_t oid) {
     }
     const uint64_t old_store = rec.storeid;
     // A new, empty store for the rows and index entries; the
-    // index rel_ids and the rowno sequence carry over.
+    // index relids and the rowno sequence carry over.
     if (sm1::mkstore(session->sm1, rec.storeid) != 0) {
       return -1;
     }
@@ -511,7 +511,7 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     index_rec_t x;
     x.oid = 0;
     x.name = std::string(name);
-    x.rel_id = rec.next_rel_id;
+    x.relid = rec.next_relid;
     x.unique = unique;
     x.state = index_state_t::building;
     x.eval = std::string(eval);
@@ -552,9 +552,9 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
       }
       x.includes.push_back(a);
     }
-    // 0xFFFF is TOAST's (SM2_DESIGN.md §5); rel_ids are never reused.
-    if (rec.next_rel_id == 0xFFFF) {
-      return invalid("create index: the table has no index rel_id left");
+    // 0xFFFF is TOAST's (SM2_DESIGN.md §5); relids are never reused.
+    if (rec.next_relid == 0xFFFF) {
+      return invalid("create index: the table has no index relid left");
     }
     uint64_t i;
     if (sm1::nextseq(session->sm1, oid_seq, i) != 0 ||
@@ -563,7 +563,7 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
       return -1;
     }
     x.oid = i;
-    rec.next_rel_id++;
+    rec.next_relid++;
     rec.indexes.push_back(std::move(x));
     if (write_table(kv.get(), table, rec) != 0 ||
         record_table(session, table, rec) != 0) {
@@ -616,9 +616,9 @@ int cat_drop_index(session_t *session, uint64_t table, uint64_t oid) {
     if (erase_name(kv.get(), rec.nspoid, it->name) != 0) {
       return -1;
     }
-    // Its entries are the keys under its rel_id in the table's store;
+    // Its entries are the keys under its relid in the table's store;
     // sm1 has no range delete, so each is erased.
-    uint16_t p = it->rel_id, q = static_cast<uint16_t>(p + 1);
+    uint16_t p = it->relid, q = static_cast<uint16_t>(p + 1);
     std::string start{static_cast<char>(p >> 8), static_cast<char>(p & 0xFF)};
     std::string end{static_cast<char>(q >> 8), static_cast<char>(q & 0xFF)};
     std::vector<std::string> entries;

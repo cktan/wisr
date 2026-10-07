@@ -73,7 +73,7 @@ every variable-length encoding is made prefix-free by §3's
 escaping rule. Fixed-width encodings are prefix-free already.
 
 **Length.** `sm1::max_keylen` is 4096 and bounds the whole
-concatenation, the 2-byte object prefix included. What
+concatenation, the 2-byte relid included. What
 happens when a key does not fit is in `SM2_DESIGN.md` §3.2:
 refused for a primary key, truncated and rechecked for a
 secondary index.

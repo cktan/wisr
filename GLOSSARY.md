@@ -18,7 +18,7 @@ confusion lives. §1 does the same for the identifiers.
   §3.1).
 - an **index key** — the encoded key columns of an index
   entry, produced by sm2's `encode_key`. It *becomes part of*
-  a userkey once the rel-id is prepended
+  a userkey once the relid is prepended
   (`sm2/TYPE.md` §2).
 - a **key column** — one column of an index definition, with
   its direction, null order and collation.
@@ -36,14 +36,14 @@ and neither of them an identifier.
   `successor`. **Prefix-free** (§7) is this sense too.
 
 The 2 bytes at the head of every userkey in a table's store
-are a **rel-id** and not a prefix, though the code calls them
+are a **relid** and not a prefix, though the code calls them
 one; see **relation** below.
 
 **relation**, **rel.** A store is a collection of rels: a
 table's heap, one per index, one for TOAST. Each is named
-within its store by a **short-rel-id**, a `uint16`; a rel's
-identity across the database is its **full-rel-id**,
-`(storeid, short-rel-id)` (§1, §8). PostgreSQL uses the word
+within its store by a **relid**, a `uint16`, and nowhere
+else: a rel is reached as its store and its relid, and has no
+wider identity (§1, §8). PostgreSQL uses the word
 the same way — `pg_class` holds tables, indexes and toast
 relations alike, and `relkind` tells them apart — so a table
 is *one* catalog object and *several* rels.
@@ -106,39 +106,34 @@ Six numbers name things, and none of the six is ever reused.
 | `storeid` | uint64 | database | the objid lease in `CF:meta` | a store, and so its column family |
 | `seqid` | uint64 | database | the same objid lease | a sequence |
 | `oid` | uint64 | database | the sequence `sm3.oid` | a catalog object |
-| short-rel-id | uint16 | one store | a constant, or that table's counter | a rel in that store |
+| relid | uint16 | one store | a constant, or that table's counter | a rel in that store |
 | `rowno` | uint64 | one table | the sequence `sm3.rowno.<oid>` | a row in the heap |
 | `attnum` | int32 | one table | the column's position | a column |
 
 - **Never reused** means the same thing in every row: a
   reused id would name two things at once. A dropped store's
   column family outlives its `rmstore` until GC
-  (`sm1/SM1_DESIGN.md` §11); a dropped index's rel-id is
+  (`sm1/SM1_DESIGN.md` §11); a dropped index's relid is
   never handed out again, so its surviving entries cannot be
   read as a new index's; a dropped column keeps its attnum,
   so no later column shifts under a row already written.
-- **Scope buys width.** A short-rel-id is 2 bytes because it
+- **Scope buys width.** A relid is 2 bytes because it
   only has to be unique within one store, and it sits in
   every key of every index. An oid would cost 6 more bytes
   per entry. It is the counterpart of PostgreSQL's
   `relfilenode`, scoped to one store rather than the
   database.
-- **A table's heap is always short-rel-id 1**, a constant and
+- **A table's heap is always relid 1**, a constant and
   not a number drawn from the counter, and **0 is unused**,
-  so a zeroed rel-id is never a live rel. An index gets 2 or
+  so a zeroed relid is never a live rel. An index gets 2 or
   above; `0xFFFF` is TOAST's
   (`sm3/SM3_DESIGN.md` §4).
 - **An index therefore has two identities**: its **oid** in
-  the catalog, and its **full-rel-id** in storage, with the
-  catalog holding the mapping between them. The two are not
-  interchangeable: `TRUNCATE` swaps a table's store, so a
-  full-rel-id changes under it while the oid does not.
+  the catalog, and its **relid** in its table's store, with
+  the catalog holding the mapping between them.
 - `rowno` starts at 1, so `rowno = 0` names no row. It is the
   key of an entry in the heap rel, in the same place an
   index's encoded key sits in its own.
-- **The code still says `prefix`** — `rel_open`'s parameter,
-  `index_t::prefix`, the catalog's `next_prefix`. The
-  documents say rel-id.
 - Ids 1 to 999 are reserved in both database-wide spaces:
   sm1's objid lease starts at 1000, and so does `sm3.oid`,
   which leaves `pg_catalog` = 1 and `public` = 2 as fixed
@@ -338,13 +333,13 @@ layout built over it.
 **deform** — take a tuple apart into one datum per column.
 
 **rel** — sm2's name for a relation: one member of one sm1
-store, named by its short-rel-id, which the code calls
-`rel_id`. A **heap** rel is keyed by `rowno`; an **index**
-rel is keyed by its encoded key columns. Both are entries in
+store, named by its relid. A **heap** rel is keyed by
+`rowno`; an **index** rel is keyed by its encoded key
+columns. Both are entries in
 a rel, differing only in what their keys hold.
 
 **index entry** — one key-value pair of an index: the key is
-the rel-id, the encoded key columns and, when the entry is not
+the relid, the encoded key columns and, when the entry is not
 uniquely keyed, the `rowno`; the value holds the `rowno`, the
 cut flag and the **INCLUDE** columns.
 

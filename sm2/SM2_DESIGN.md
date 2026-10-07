@@ -63,13 +63,13 @@ nothing that an IPC boundary would have made it cost.
 | `SM_ERR_UPDATED` and `sm1::read_latest` at READ COMMITTED | sm2 surfaces the error and offers `rel_read_latest`; it cannot resolve it, because the re-check needs a filter and filters are sm3's (§5) |
 | nested savepoints | a statement can be undone without losing the transaction, and sm2 holds no state that has to be undone with it |
 | forward scans with `sm1::scan_seek` | probe loops cost one cursor, not one per probe |
-| `sm1::max_keylen` 4096, `sm1::max_datalen` 64MB | an encoded index key must fit 4096 bytes, prefix included; a datum above the TOAST threshold is stored out of line (§4) |
+| `sm1::max_keylen` 4096, `sm1::max_datalen` 64MB | an encoded index key must fit 4096 bytes, relid included; a datum above the TOAST threshold is stored out of line (§4) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward; there are no mirror relations, and the fork's planner never asks for a backward scan (§3) |
 
 sm1 keeps one column family per store and handles hundreds
 to low thousands of them. sm3 gives each table one sm1
 store, holding the table's rows, its indexes and its
-TOAST data, told apart by the 2-byte object prefix in
+TOAST data, told apart by the 2-byte relid in
 §5. A `DROP TABLE` is then one `sm1::rmstore`, sm1's O(1) column
 family drop. The price is that the number of tables,
 partitions included, is bounded by how many stores sm1
@@ -483,9 +483,9 @@ decisions behind them are here.
 ### 3.2 Over-long keys
 
 `sm1::max_keylen` is 4096 and bounds the whole key: the 2-byte
-object prefix (§5), then the encoded index columns, then the
+relid (§5), then the encoded index columns, then the
 8-byte `rowno` where the entry carries one. A row's key is the
-prefix and `rowno` alone, so only index keys can be long.
+relid and `rowno` alone, so only index keys can be long.
 Collation sort keys run several times the length of their
 text, so the limit is reachable.
 
@@ -664,7 +664,7 @@ meets them (§4.1):
   columns at 16 bytes, or an 18-byte TOAST pointer each, stay
   under 29 KB.
   The TOAST data lives in the table's own sm1 store, under
-  the object prefix `0xFFFF` (§5), so writing a row and its
+  the relid `0xFFFF` (§5), so writing a row and its
   TOAST data is one atomic sm1 write, no chunk ever falls
   inside a scan of the rows or of an index, and `DROP TABLE`
   takes the TOAST data with it.
@@ -814,20 +814,21 @@ things:
 - a **schema** — the ordered columns, their types and
   collations, and per key column its direction and null
   ordering;
-- an **object prefix** of exactly 2 bytes, big-endian,
+- a **relid** of exactly 2 bytes, big-endian,
   prepended to every key sm2 writes and stripped from every
   key it reads. sm3 chooses the value and sm2 never interprets
   it, so sm2 never learns what a table is. It exists because
   one sm1 store holds one table and everything that belongs
   to it (`sm3/SM3_DESIGN.md` §4):
 
-  | Prefix | Object |
+  | relid | Rel |
   | --- | --- |
-  | `0x0000` | the table's rows, keyed by `rowno` |
-  | `0x0001`–`0xFFFE` | its indexes, one prefix each |
+  | `0x0000` | unused |
+  | `0x0001` | the table's heap, keyed by `rowno`, always |
+  | `0x0002`–`0xFFFE` | its indexes, one relid each |
   | `0xFFFF` | its TOAST data (§4) |
 
-  Index prefixes are allocated in increasing order and never
+  Index relids are allocated in increasing order and never
   reused, so a dropped index's leftover versions can never be
   read as another index's entries, and no rule tied to sm1's
   garbage collection is needed. `DROP INDEX` is a range delete
@@ -839,7 +840,7 @@ things:
 
 **Decision: the table is a heap keyed by `rowno`, and the
 primary key is an index**, as in PostgreSQL. A row's sm1 key
-is `0x0000 ‖ rowno`:
+is `0x0001 ‖ rowno`:
 
 - **`rowno` is an unsigned 64-bit number**, written as 8
   bytes big-endian, drawn from an sm1 sequence that belongs to
@@ -884,15 +885,15 @@ apart by their prefix.** Index entries are keyed by encoded
 columns, not by `rowno`, and sm3 never encodes a key itself,
 so sm2 gives it a `rel` for them too:
 
-- A **heap `rel`** is keyed by `rowno`, under the rows'
-  prefix `0x0000`, and its value is the row's tuple. Its
+- A **heap `rel`** is keyed by `rowno`, under the heap's
+  relid `0x0001`, and its value is the row's tuple. Its
   `rel_insert` draws the `rowno` from the table's sequence,
   named in the schema the `rel` is opened with, and returns it,
   so the sequence is drawn in one place.
 - An **index `rel`** is keyed by the encoded columns it is
   opened with — `encode(sk) ‖ rowno`, or `encode(sk)` alone for
   a unique index (`sm3/SM3_DESIGN.md` §3) — under the index's
-  prefix, and its value is a tuple holding the `rowno` and the
+  relid, and its value is a tuple holding the `rowno` and the
   INCLUDE columns. It is how sm3 writes, deletes and scans
   index entries.
 
@@ -934,7 +935,7 @@ are the same shape, keyed by its columns (`idx_open`,
   least string above every key that starts with P. A bound
   too long to encode is cut where keys are cut, which can only
   widen the scan, and the scan says so.
-- **Index prefixes are below `0xFFFF`**, TOAST's, which is
+- **Index relids are below `0xFFFF`**, TOAST's, which is
   also what guarantees every bound a successor.
 
 The rules it must satisfy:
@@ -1028,7 +1029,7 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
   the old image as a tuple (§5).
 - **Object mapping.** Which sm1 store holds a table, and
   which prefix each of its indexes gets, is sm3's; sm2 only
-  prepends and strips the prefix (§5).
+  prepends and strips the relid (§5).
 - **The primary key.** sm2's table is a heap keyed by
   `rowno`; the primary key is one of sm3's indexes, and its
   uniqueness is sm3's (§5).
@@ -1252,7 +1253,7 @@ The three above, joined to sm1.
 - `rel_insert`, `rel_read`, `rel_update`, `rel_delete`,
   `rel_read_latest`, `rel_scan`, `rel_scan_seek`, over the
   codec of step 3 rather than a second copy of it.
-- The 2-byte object prefix, chosen by sm3, opaque to sm2
+- The 2-byte relid, chosen by sm3, opaque to sm2
   (§5).
 - Rows keyed by `rowno`, an unsigned 64-bit number from the
   table's sm1 sequence, kept across updates (§5).
@@ -1266,7 +1267,7 @@ back out, under every isolation level; the old image returned
 by an update or a delete is the tuple that was there; a
 savepoint rollback leaves no sm2 state behind, because there
 is none to leave; an update keeps its `rowno`; two `rel`s over
-the same sm1 store with different prefixes never see each
+the same sm1 store with different relids never see each
 other's rows.
 
 ### 8.3 Testing

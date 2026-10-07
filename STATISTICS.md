@@ -171,7 +171,7 @@ approximate size in bytes, cheap enough to ask for at every
 plan.
 
 **How:** a table is one sm1 store, a RocksDB column family,
-and its heap and each index sit under a 2-byte prefix of their
+and its heap and each index sit under a 2-byte relid of their
 own (`sm3/SM3_DESIGN.md` §4). RocksDB estimates the bytes in a
 key range without reading it. Asked of a prefix's range, with
 the memtables counted, that is the object's size.
@@ -649,7 +649,7 @@ accuracy of RocksDB's approximate statistics as unverified.
 Four experiments were run against RocksDB 9.11.2 through sm1,
 with no PostgreSQL in them, as one program over sm1's own
 store options: the same comparator, the same userkey bloom
-filter, keys of a 2-byte object prefix and an 8-byte rowno.
+filter, keys of a 2-byte relid and an 8-byte rowno.
 
 **1. Size, at rest. Accepted.** Tables of 1,000 to 1,000,000
 rows at 100 and at 1,000 bytes a row, flushed and compacted,

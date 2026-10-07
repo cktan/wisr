@@ -67,7 +67,7 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
   t->name = rec.name;
   t->storeid = rec.storeid;
   t->rowno_seq = rec.rowno_seq;
-  t->next_rel_id = rec.next_rel_id;
+  t->next_relid = rec.next_relid;
   for (const sm3::column_rec_t &c : rec.columns) {
     const sm2::type_t *type = sm2::type_by_code(c.type_code);
     const sm2::collation_t *coll;
@@ -88,7 +88,7 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
     sm3::index_def_t d;
     d.oid = x.oid;
     d.name = x.name;
-    d.rel_id = x.rel_id;
+    d.relid = x.relid;
     d.unique = x.unique;
     d.state = x.state;
     d.error = x.error;
