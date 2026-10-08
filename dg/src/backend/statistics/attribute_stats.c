@@ -573,13 +573,6 @@ static void get_attr_stat_type(Oid reloid, AttrNumber attnum, Oid *atttypid,
   *eq_opr = typcache->eq_opr;
   *lt_opr = typcache->lt_opr;
 
-  /*
-   * Special case: collation for tsvector is DEFAULT_COLLATION_OID. See
-   * compute_tsvector_stats().
-   */
-  if (*atttypid == TSVECTOROID)
-    *atttypcoll = DEFAULT_COLLATION_OID;
-
   relation_close(rel, NoLock);
 }
 
@@ -590,16 +583,8 @@ static bool get_elem_stat_type(Oid atttypid, char atttyptype, Oid *elemtypid,
                                Oid *elem_eq_opr) {
   TypeCacheEntry *elemtypcache;
 
-  if (atttypid == TSVECTOROID) {
-    /*
-     * Special case: element type for tsvector is text. See
-     * compute_tsvector_stats().
-     */
-    *elemtypid = TEXTOID;
-  } else {
-    /* find underlying element type through any domain */
-    *elemtypid = get_base_element_type(atttypid);
-  }
+  /* find underlying element type through any domain */
+  *elemtypid = get_base_element_type(atttypid);
 
   if (!OidIsValid(*elemtypid))
     return false;

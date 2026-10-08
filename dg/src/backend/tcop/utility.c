@@ -1241,21 +1241,11 @@ static void ProcessUtilitySlow(ParseState *pstate, PlannedStmt *pstmt,
         address = DefineType(pstate, stmt->defnames, stmt->definition);
         break;
       case OBJECT_TSPARSER:
-        Assert(stmt->args == NIL);
-        address = DefineTSParser(stmt->defnames, stmt->definition);
-        break;
       case OBJECT_TSDICTIONARY:
-        Assert(stmt->args == NIL);
-        address = DefineTSDictionary(stmt->defnames, stmt->definition);
-        break;
       case OBJECT_TSTEMPLATE:
-        Assert(stmt->args == NIL);
-        address = DefineTSTemplate(stmt->defnames, stmt->definition);
-        break;
       case OBJECT_TSCONFIGURATION:
-        Assert(stmt->args == NIL);
-        address = DefineTSConfiguration(stmt->defnames, stmt->definition,
-                                        &secondaryObject);
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        errmsg("text search is not supported")));
         break;
       case OBJECT_COLLATION:
         Assert(stmt->args == NIL);
@@ -1550,18 +1540,9 @@ static void ProcessUtilitySlow(ParseState *pstate, PlannedStmt *pstmt,
       break;
 
     case T_AlterTSDictionaryStmt:
-      address = AlterTSDictionary((AlterTSDictionaryStmt *)parsetree);
-      break;
-
     case T_AlterTSConfigurationStmt:
-      AlterTSConfiguration((AlterTSConfigurationStmt *)parsetree);
-
-      /*
-       * Commands are stashed in MakeConfigurationMapping and
-       * DropConfigurationMapping, which are called from
-       * AlterTSConfiguration
-       */
-      commandCollected = true;
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("text search is not supported")));
       break;
 
     case T_AlterTableMoveAllStmt:

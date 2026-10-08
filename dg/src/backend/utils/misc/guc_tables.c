@@ -4799,14 +4799,6 @@ struct config_string ConfigureNamesString[] = {
      assign_synchronous_standby_names,
      NULL},
 
-    {{"default_text_search_config", PGC_USERSET, CLIENT_CONN_LOCALE,
-      gettext_noop("Sets default text search configuration."), NULL},
-     &TSCurrentConfig,
-     "pg_catalog.simple",
-     check_default_text_search_config,
-     assign_default_text_search_config,
-     NULL},
-
     {{"ssl_tls13_ciphers", PGC_SIGHUP, CONN_AUTH_SSL,
       gettext_noop("Sets the list of allowed TLSv1.3 cipher suites."),
       gettext_noop("An empty string means use the default cipher suites."),

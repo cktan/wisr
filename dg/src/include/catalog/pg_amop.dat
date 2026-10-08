@@ -1108,41 +1108,9 @@
   amopopr => '=(anyenum,anyenum)', amopmethod => 'hash' },
 
 # btree tsvector_ops
-{ amopfamily => 'btree/tsvector_ops', amoplefttype => 'tsvector',
-  amoprighttype => 'tsvector', amopstrategy => '1',
-  amopopr => '<(tsvector,tsvector)', amopmethod => 'btree' },
-{ amopfamily => 'btree/tsvector_ops', amoplefttype => 'tsvector',
-  amoprighttype => 'tsvector', amopstrategy => '2',
-  amopopr => '<=(tsvector,tsvector)', amopmethod => 'btree' },
-{ amopfamily => 'btree/tsvector_ops', amoplefttype => 'tsvector',
-  amoprighttype => 'tsvector', amopstrategy => '3',
-  amopopr => '=(tsvector,tsvector)', amopmethod => 'btree' },
-{ amopfamily => 'btree/tsvector_ops', amoplefttype => 'tsvector',
-  amoprighttype => 'tsvector', amopstrategy => '4',
-  amopopr => '>=(tsvector,tsvector)', amopmethod => 'btree' },
-{ amopfamily => 'btree/tsvector_ops', amoplefttype => 'tsvector',
-  amoprighttype => 'tsvector', amopstrategy => '5',
-  amopopr => '>(tsvector,tsvector)', amopmethod => 'btree' },
-
 # GiST tsvector_ops
 # GIN tsvector_ops
 # btree tsquery_ops
-{ amopfamily => 'btree/tsquery_ops', amoplefttype => 'tsquery',
-  amoprighttype => 'tsquery', amopstrategy => '1',
-  amopopr => '<(tsquery,tsquery)', amopmethod => 'btree' },
-{ amopfamily => 'btree/tsquery_ops', amoplefttype => 'tsquery',
-  amoprighttype => 'tsquery', amopstrategy => '2',
-  amopopr => '<=(tsquery,tsquery)', amopmethod => 'btree' },
-{ amopfamily => 'btree/tsquery_ops', amoplefttype => 'tsquery',
-  amoprighttype => 'tsquery', amopstrategy => '3',
-  amopopr => '=(tsquery,tsquery)', amopmethod => 'btree' },
-{ amopfamily => 'btree/tsquery_ops', amoplefttype => 'tsquery',
-  amoprighttype => 'tsquery', amopstrategy => '4',
-  amopopr => '>=(tsquery,tsquery)', amopmethod => 'btree' },
-{ amopfamily => 'btree/tsquery_ops', amoplefttype => 'tsquery',
-  amoprighttype => 'tsquery', amopstrategy => '5',
-  amopopr => '>(tsquery,tsquery)', amopmethod => 'btree' },
-
 # GiST tsquery_ops
 # btree range_ops
 { amopfamily => 'btree/range_ops', amoplefttype => 'anyrange',

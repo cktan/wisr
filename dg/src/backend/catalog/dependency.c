@@ -1280,10 +1280,6 @@ static void doDeletion(const ObjectAddress *object, int flags) {
     RemoveStatisticsById(object->objectId);
     break;
 
-  case TSConfigRelationId:
-    RemoveTSConfigurationById(object->objectId);
-    break;
-
   case ExtensionRelationId:
     RemoveExtensionById(object->objectId);
     break;
