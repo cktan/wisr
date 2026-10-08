@@ -273,7 +273,7 @@ own.
    includes, ninclude, unique, &oid)`, which records the index
    under the table's next relid. On a table made in the same
    transaction the index is filled and valid at once. On any
-   other it is recorded as building, and filled in the
+   other it is recorded as pending, and filled in the
    background after the transaction commits
    (`sm3/SM3_DESIGN.md` §3).
 
@@ -303,8 +303,8 @@ forms back.
 
 #### `(index-state <idx_name>)`
 1. Opens the index's table under its schema lock IS.
-2. Returns `:building`, `:valid` or `:failed` from the
-   `state` of its `sm_index_def_t`.
+2. Returns `:pending`, `:building`, `:valid` or `:failed`
+   from the `state` of its `sm_index_def_t`.
 
 #### `(index-drop <idx_name>)`
 1. Calls `sm_cat_index_oid` for the index and its table.

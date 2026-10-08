@@ -72,12 +72,13 @@ struct column_def_t {
 };
 
 /*
- * Where an index's build stands (SM3_DESIGN.md §3). A building
+ * Where an index's build stands (SM3_DESIGN.md §3). A pending
  * index is maintained by every write but not yet filled from the
- * rows that were there before it; a failed one is not maintained
- * and can only be dropped.
+ * rows that were there before it: it waits for the builder, or is
+ * being built by it (builder_building). A failed one is not
+ * maintained and can only be dropped.
  */
-enum class index_state_t : uint8_t { building = 0, valid = 1, failed = 2 };
+enum class index_state_t : uint8_t { pending = 0, valid = 1, failed = 2 };
 
 /* An index of a loaded table. */
 struct index_def_t {
@@ -164,6 +165,9 @@ std::shared_ptr<const table_def_t> cat_table(const catalog_t* cat,
                                              uint64_t nspoid,
                                              std::string_view name);
 
+/* Every committed table, in no order. */
+std::vector<std::shared_ptr<const table_def_t>> cat_tables(const catalog_t* cat);
+
 /*
  * Open a session over sm1's session s, reading the catalog cat;
  * both must outlive it.
@@ -175,6 +179,9 @@ void session_close(session_t* s);
 
 /* The sm1 session under s. */
 sm1::session_t* session_sm1(const session_t* s);
+
+/* The catalog s reads. */
+catalog_t* session_cat(const session_t* s);
 
 /*
  * The transaction, as sm1's (sm1.h), with the overlay kept in
@@ -323,7 +330,7 @@ int cat_drop_column(session_t* session, uint64_t oid,
 /*
  * Create an index named name on the table, keyed by keys, with the
  * INCLUDE columns includes, taking the table's next relid; its
- * oid is set in oid. It records the index as building, for the
+ * oid is set in oid. It records the index as pending, for the
  * build to fill from the table's rows and then mark valid
  * (SM3_DESIGN.md §3). On a table this transaction created, which
  * no other can see, it fills the index itself, from the rows the
@@ -392,50 +399,6 @@ int cat_set_evaluator(catalog_t* cat, index_eval_fn eval);
 int cat_drop_index(session_t* session, uint64_t table, uint64_t oid);
 
 /*
- * Start the catalog's builder (SM3_DESIGN.md §3). From now on an
- * index recorded as building is queued when its transaction
- * commits, and every index found building now -- left so by a
- * restart -- is queued at once. At most max_workers builds run at
- * a time, each on a thread started when a build is queued and
- * ended when the queue is empty. A worker gets an sm1 session of
- * its own from open, which returns one on the catalog's database
- * or nullptr, and closes it with sm1::closedb; it covers
- * batch_rows rows a transaction. A batch that fails with an error
- * that is not retryable fails the build: the index is marked
- * failed, and the error is kept in its record. cat_close stops
- * the workers and
- * waits for them, so no transaction on a table being built may be
- * open then. Fails with SM_ERR_INVALID if started twice.
- */
-int cat_builder_start(catalog_t* cat, std::function<sm1::session_t*()> open,
-                      size_t max_workers = 4, size_t batch_rows = 1000);
-
-/*
- * Stop the catalog's builder: its workers end after the batch they
- * are in, and their sessions are closed. A build cut short leaves
- * its index building, for the next cat_builder_start to queue.
- * cat_close does this itself; it is called apart to close the
- * workers' sessions before the database is closed under them.
- */
-void cat_builder_stop(catalog_t* cat);
-
-/*
- * Wait until the build of the table's index oid has ended, for a
- * caller that wants to use the index at once: 0 once it is valid.
- * It waits on the index's state, so any session may wait, for a
- * build any other began. Called outside a transaction, so that
- * the caller's next snapshot is new enough to scan the index.
- *
- * Errors: if the build failed, the error it failed with, code and
- * message, as the index's record keeps them -- SM_ERR_DUPKEY on
- * two rows with one key in a unique index, SM_ERR_KEYTOOLONG on a
- * key too long for one; SM_ERR_INVALID if the index is building
- * and no build of it is queued or running; SM_ERR_INTRANS inside a
- * transaction; SM_ERR_NOTFOUND if there is no such table or index.
- */
-int cat_index_wait(session_t* session, uint64_t table, uint64_t oid);
-
-/*
  * Set the state of the table's index oid, as the build does when
  * it ends: valid, or failed. A failed index keeps why, error and
  * reason, in its record; any other state clears them.
@@ -487,7 +450,7 @@ session_t* tbl_session(const table_t* table);
  * session (SM3_DESIGN.md §3). A valid index may not be, if it
  * became valid after the session's snapshot: its entries are
  * versioned as rows are, and that snapshot would see it partly
- * filled. A building or a failed index never may. An index the
+ * filled. A pending or a failed index never may. An index the
  * session's own transaction made valid always may. Writes maintain
  * an index whether it is usable or not.
  */
@@ -518,7 +481,7 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
  * Replace the row at rowno. An index is left alone if the row's
  * key columns compare equal before and after, by their types' cmp,
  * and its INCLUDE columns hold the same bytes; otherwise its old
- * entry is removed and a new one added. While an index is building
+ * entry is removed and a new one added. While an index is pending
  * an old entry that is not there is no error: the build has not
  * reached the row. A failed index is left alone by every write. The old entry is computed
  * from the image the heap write replaced, which at read committed
@@ -583,7 +546,7 @@ int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
 
 /*
  * One batch of the build of the table's index oid, which must be
- * building (SM3_DESIGN.md §3): cover up to max_rows rows from
+ * pending (SM3_DESIGN.md §3): cover up to max_rows rows from
  * rowno from on. For each it takes the row's lock shared, reads
  * the row's newest committed version, and adds the row's entry if
  * it is not there. next is set to the rowno to go on from, and
@@ -596,7 +559,7 @@ int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
  *
  * Errors: SM_ERR_DUPKEY when a unique index finds two rows with
  * one key, which fails the build; SM_ERR_INVALID if the index is
- * not building or the level does not allow it; SM_ERR_NOTFOUND if
+ * not pending or the level does not allow it; SM_ERR_NOTFOUND if
  * the table has no such index. Like a write, a batch that fails
  * partway is the caller's to roll back.
  */
@@ -610,6 +573,76 @@ int tbl_index_backfill(table_t* table, uint64_t index, uint64_t from,
  */
 std::span<const sm2::attribute_t> tbl_idx_value_schema(const table_t* table,
                                                        uint64_t index);
+
+/*
+ * ---- the builder: pending indexes, filled (SM3_DESIGN.md §3) ----
+ *
+ * One per process: a queue of pending indexes and the workers
+ * that fill them. It is no part of the catalog, which it reads
+ * and changes as any caller does. cat_create_index puts an index
+ * it leaves pending on the queue once its transaction has
+ * committed (sm1::on_commit).
+ */
+
+/*
+ * Attach cat to the builder. From now on the queue takes cat's
+ * indexes, and every index pending now -- left so by a restart --
+ * is queued at once. A worker takes an index from the
+ * queue and fills it in batches of batch_rows rows, each a
+ * transaction, on an sm1 session of its own from open, which
+ * returns one on the catalog's database or nullptr, and which the
+ * worker closes with sm1::closedb. Then it marks the index valid;
+ * or failed, with the error kept in its record, if a batch met an
+ * error that is not retryable. Fails with SM_ERR_INVALID if cat is
+ * attached already.
+ */
+int builder_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
+                   size_t batch_rows = 1000);
+
+/*
+ * Detach cat from the builder: what is queued for it is dropped,
+ * and a worker building one of its indexes ends after the batch
+ * it is in and closes its session. A build cut short leaves its
+ * index pending, for the next builder_attach to queue. It must be
+ * called before cat_close, and before the database is closed
+ * under the workers' sessions; a catalog not attached is a no-op.
+ */
+void builder_detach(catalog_t* cat);
+
+/*
+ * Put the table's pending index on the queue, starting a worker
+ * if fewer than the most allowed are alive. One queued already,
+ * or of a catalog not attached, is left alone, and so is one that
+ * cannot be queued for want of memory: it stays pending, for the
+ * next builder_attach to find. It does not throw.
+ */
+void builder_enqueue(catalog_t* cat, uint64_t table, uint64_t index);
+
+/*
+ * The most builds that run at a time, over every catalog; 4
+ * unless set. A worker is a thread, started when a build is
+ * queued and ended when it finds the queue empty.
+ */
+void builder_set_max_workers(size_t max_workers);
+
+/* Whether a worker is filling cat's index oid now. */
+bool builder_building(const catalog_t* cat, uint64_t oid);
+
+/*
+ * Wait until the build of the table's index oid has ended, for a
+ * caller that wants to use the index at once: 0 once it is valid.
+ * It waits on the index's state, so any session may wait, for a
+ * build any other began. Called outside a transaction, so that
+ * the caller's next snapshot is new enough to scan the index.
+ *
+ * Errors: if the build failed, the error it failed with, code and
+ * message, as the index's record keeps them -- SM_ERR_DUPKEY on
+ * two rows with one key in a unique index, SM_ERR_KEYTOOLONG on a
+ * key too long for one; SM_ERR_INVALID if the index is pending
+ * and no build of it is queued or running; SM_ERR_INTRANS inside a
+ * transaction; SM_ERR_NOTFOUND if there is no such table or index.
+ */
+int builder_wait(session_t* session, uint64_t table, uint64_t oid);
 
 } // namespace sm3
 

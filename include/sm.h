@@ -463,9 +463,10 @@ struct sm_column_def_t {
 
 /* Where an index's build stands (sm3::index_state_t). */
 enum sm_index_state_t {
-    SM_INDEX_BUILDING = 0,  /* maintained, not yet filled; not scanned */
+    SM_INDEX_PENDING  = 0,  /* maintained, not yet filled; not scanned */
     SM_INDEX_VALID    = 1,
-    SM_INDEX_FAILED   = 2   /* its build failed; it can only be dropped */
+    SM_INDEX_FAILED   = 2,  /* its build failed; it can only be dropped */
+    SM_INDEX_BUILDING = 3   /* pending, and being filled now */
 };
 
 /*
@@ -732,7 +733,7 @@ int sm_cat_drop_table(sm_session_t* session, uint64_t oid);
  * Create the index name on the table, keyed by keys, with the
  * INCLUDE columns includes by 0-based place. On a table this
  * transaction made it is filled and valid at once. On any other
- * it is recorded as building, and filled in the background once
+ * it is recorded as pending, and filled in the background once
  * the transaction commits: sm_cat_index_wait waits for that.
  *
  * A partial or an expression index gives eval, its predicate and

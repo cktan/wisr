@@ -122,7 +122,7 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
   before it (`sm2/TUPLE.md` §2), so a value needs no version of
   its own. `META`'s version changes only if a key's layout, or
   the framing, does.
-- **An index's state** is 0 building, 1 valid or 2 failed
+- **An index's state** is 0 pending, 1 valid or 2 failed
   (`SM3_DESIGN.md` §3). It was appended to the index part, so
   an index written before it has none, and reads as valid.
 - **A partial or an expression index keeps a blob.** Its eval
@@ -183,9 +183,8 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
   takes a snapshot, and may scan an index only if it was valid
   by then (`SM3_DESIGN.md` §3). Neither is on disk: no
   snapshot survives a restart.
-- **The builder**: the queue of indexes still building and
-  the workers filling them (`SM3_DESIGN.md` §3,
-  `src/catalog/build.cc`).
+- The builder's queue and workers are not here: they are the
+  process's, not a catalog's (`SM3_DESIGN.md` §3).
 
 ---
 
@@ -205,7 +204,9 @@ as sm1 does (`DESIGN.md` §5).
   builds every definition. A definition that contradicts itself
   — an unknown type or collation, an index on a column that is
   not there — is `SM_ERR_CORRUPT`.
-- **`cat_close(cat)`** frees the catalog and its collations.
+- **`cat_close(cat)`** frees the catalog and its collations. A
+  catalog attached to the builder is detached first, by its
+  caller.
 - **`cat_table(cat, oid)`** and **`cat_table(cat, nspoid,
   name)`** find a committed table, or nullptr.
 - **`session_open(cat, s, ss)`** opens a session over the sm1
@@ -251,6 +252,12 @@ as sm1 does (`DESIGN.md` §5).
 - **`cat_rename_table(session, oid, name)`** inserts the new
   name before erasing the old, so a taken one leaves the table
   as it was.
+- **`cat_truncate_table(session, oid)`** empties the table: it
+  gets a new, empty store, and the old one is dropped, rows and
+  index entries with it. The columns, the indexes and their
+  states, and the rowno sequence are kept, so new rows go on
+  from the last rowno handed out, and the cost is the same
+  whatever the table holds.
 - **`cat_add_column(session, oid, col, missing)`** appends a
   column. A row written before it reads it as `missing` — its
   bytes, checked to be a datum of the column's type — or as
@@ -263,7 +270,7 @@ as sm1 does (`DESIGN.md` §5).
   direction, null order and collation, a collation only on
   text or varchar — and takes the table's next relid, which is
   never handed out again. It does not fill the index from the
-  table's rows: it records it as building, for the build to
+  table's rows: it records it as pending, for the build to
   fill and mark valid (`SM3_DESIGN.md` §3). On a table its own
   transaction made, which no other can see, it runs the build
   itself, over the rows the transaction has written, and
@@ -298,6 +305,24 @@ transaction and records the new definition in its overlay; a
 collation it creates stays open there, for the transaction's
 DDL to use at once.
 
+The builder is no part of the catalog (`SM3_DESIGN.md` §3).
+The catalog's interface is meant to read like a REST API: each
+call above makes, reads, changes or drops one kind of object.
+The builder runs a service and waits on it, so its calls are
+its own, `builder_*`, in `src/builder/builder.cc`. The two
+meet in three places:
+
+- **`cat_create_index`** hands an index it leaves pending to
+  the builder's queue, `builder_enqueue`, in a function it
+  gives `sm1::on_commit`: it runs once the transaction has
+  committed, and not at all if the transaction aborts or
+  rolls back past the index. The catalog knows the queue and
+  nothing of the workers behind it.
+- **`cat_tables(cat)`** lists every committed table, which is
+  how the builder finds the indexes a restart left pending.
+- **`cat_set_index_state`**, above, marks an index valid or
+  failed when its build ends.
+
 ---
 
 ## 6. Source
@@ -313,6 +338,7 @@ sm3/src/catalog/blob.cc    values: parts and their framing
 sm3/src/catalog/load.cc    cat_open and the lookups
 sm3/src/catalog/ddl.cc     cat_init and the DDL
 sm3/src/catalog/session.cc the session, its transaction, publishing
+sm3/src/builder/builder.cc the builder: a caller of the catalog
 sm3/test/test_layout.cc    keys and values
 sm3/test/test_catalog.cc   init, load and create
 sm3/test/test_ddl.cc       the rest of the DDL

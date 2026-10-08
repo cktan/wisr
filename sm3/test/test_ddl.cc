@@ -303,7 +303,7 @@ TEST_CASE("the DDL refuses what the catalog cannot hold") {
 TEST_CASE("an index's state is recorded, and survives a restart") {
   // Verify the state in an index's record (SM3_DESIGN.md §3).
   // 1. An index made in the transaction that made its table is valid.
-  // 2. One made on a table committed earlier is building.
+  // 2. One made on a table committed earlier is pending.
   // 3. Both states load back after a restart.
   // 4. cat_set_index_state changes one, seen at once by its own
   //    transaction, and that loads back too.
@@ -325,7 +325,7 @@ TEST_CASE("an index's state is recorded, and survives a restart") {
   REQUIRE(d != nullptr);
   REQUIRE(d->indexes.size() == 2);
   CHECK(d->indexes[0].state == sm3::index_state_t::valid);
-  CHECK(d->indexes[1].state == sm3::index_state_t::building);
+  CHECK(d->indexes[1].state == sm3::index_state_t::pending);
 
   db.begin();
   REQUIRE(sm3::cat_set_index_state(db.ss, t, late, sm3::index_state_t::valid) ==
@@ -355,10 +355,10 @@ TEST_CASE("an index's state is recorded, and survives a restart") {
   // A state other than failed keeps no reason.
   db.begin();
   REQUIRE(sm3::cat_set_index_state(db.ss, t, fresh,
-                                   sm3::index_state_t::building) == 0);
+                                   sm3::index_state_t::pending) == 0);
   db.commit();
   d = sm3::cat_table(db.reload(), t);
-  CHECK(d->indexes[0].state == sm3::index_state_t::building);
+  CHECK(d->indexes[0].state == sm3::index_state_t::pending);
   CHECK(d->indexes[0].error == sm1::SM_OK);
   CHECK(d->indexes[0].reason.empty());
 }

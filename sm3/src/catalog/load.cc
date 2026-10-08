@@ -244,12 +244,18 @@ int cat_set_evaluator(catalog_t *cat, index_eval_fn eval) {
 }
 
 /* Close a catalog; nullptr is a no-op. */
-void cat_close(catalog_t *cat) {
-  if (cat) {
-    // A worker reads the catalog: none may outlive it.
-    cat_builder_stop(cat);
+void cat_close(catalog_t *cat) { delete cat; }
+
+/* Every committed table; see sm3.h. */
+std::vector<std::shared_ptr<const table_def_t>>
+cat_tables(const catalog_t *cat) {
+  std::shared_lock lock(cat->mu);
+  std::vector<std::shared_ptr<const table_def_t>> out;
+  out.reserve(cat->tables.size());
+  for (const auto &[oid, def] : cat->tables) {
+    out.push_back(def);
   }
-  delete cat;
+  return out;
 }
 
 /* A committed table by oid, or nullptr. */

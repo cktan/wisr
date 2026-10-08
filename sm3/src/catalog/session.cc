@@ -39,7 +39,6 @@ void publish(sm3::session_t *s) {
   s->collations.clear();
   // One more publish; an index it makes valid dates from it.
   uint64_t seq = cat->seq.load() + 1;
-  std::vector<std::pair<uint64_t, uint64_t>> to_build; /* table, index */
   for (sm3::table_change_t &t : s->tables) {
     auto old = cat->tables.find(t.oid);
     // An index valid now and not before became valid here; one
@@ -65,11 +64,6 @@ void publish(sm3::session_t *s) {
         if (x.state == sm3::index_state_t::valid && !was_valid(x.oid)) {
           cat->valid_seq[x.oid] = seq;
         }
-        // A building index is the builder's from this commit on;
-        // one queued already is not queued twice.
-        if (x.state == sm3::index_state_t::building) {
-          to_build.emplace_back(t.oid, x.oid);
-        }
       }
       cat->tables[t.oid] = std::move(t.def);
     } else {
@@ -78,10 +72,6 @@ void publish(sm3::session_t *s) {
   }
   s->tables.clear();
   cat->seq.store(seq);
-  for (const auto &[table, index] : to_build) {
-    sm3::build_enqueue(cat, table, index);
-  }
-  sm3::build_notify(cat);
   for (sm3::name_change_t &n : s->names) {
     if (n.oid) {
       cat->table_names[n.name] = *n.oid;
@@ -119,6 +109,9 @@ void session_close(session_t *s) {
 
 /* The sm1 session under s. */
 sm1::session_t *session_sm1(const session_t *s) { return s->sm1; }
+
+/* The catalog s reads. */
+catalog_t *session_cat(const session_t *s) { return s->cat; }
 
 /* Begin a transaction, with an empty overlay. */
 int begin(session_t *s, sm1::xctlevel_t level, bool read_only) {

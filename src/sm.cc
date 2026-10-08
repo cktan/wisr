@@ -36,8 +36,8 @@ static_assert(static_cast<int>(sm1::xctlevel_t::serializable) ==
               SM_XCT_SERIALIZABLE);
 static_assert(sm3::nsp_pg_catalog == SM_NSP_PG_CATALOG);
 static_assert(sm3::nsp_public == SM_NSP_PUBLIC);
-static_assert(static_cast<int>(sm3::index_state_t::building) ==
-              SM_INDEX_BUILDING);
+static_assert(static_cast<int>(sm3::index_state_t::pending) ==
+              SM_INDEX_PENDING);
 static_assert(static_cast<int>(sm3::index_state_t::valid) == SM_INDEX_VALID);
 static_assert(static_cast<int>(sm3::index_state_t::failed) == SM_INDEX_FAILED);
 static_assert(static_cast<int>(sm1::loglevel_t::error) == SM_LOG_ERROR);
@@ -271,8 +271,11 @@ sm_attribute_t api_attribute(const sm2::attribute_t &a) {
           a.missing.has_value(), a.missing.value_or("")};
 }
 
-/* sm3's definition d as the API's, which owns all it holds. */
-sm_table_def_t api_def(const sm3::table_def_t &d) {
+/*
+ * sm3's definition d, of a table in cat, as the API's, which owns
+ * all it holds. A pending index a worker is filling is building.
+ */
+sm_table_def_t api_def(const sm3::catalog_t *cat, const sm3::table_def_t &d) {
   sm_table_def_t out{d.oid, d.nspoid, d.name, {}, {}, {}};
   for (const sm3::column_def_t &c : d.columns) {
     out.columns.push_back(
@@ -282,12 +285,13 @@ sm_table_def_t api_def(const sm3::table_def_t &d) {
     out.schema.push_back(api_attribute(a));
   }
   for (const sm3::index_def_t &x : d.indexes) {
-    sm_index_def_t i{x.oid,    x.name,
-                     x.unique, x.key_attnums,
-                     {},       x.include_attnums,
-                     {},       static_cast<sm_index_state_t>(x.state),
-                     x.error,  x.reason,
-                     x.eval,   x.reads};
+    sm_index_state_t state = x.state == sm3::index_state_t::pending &&
+                                     sm3::builder_building(cat, x.oid)
+                                 ? SM_INDEX_BUILDING
+                                 : static_cast<sm_index_state_t>(x.state);
+    sm_index_def_t i{
+        x.oid, x.name, x.unique, x.key_attnums, {},     x.include_attnums,
+        {},    state,  x.error,  x.reason,      x.eval, x.reads};
     for (const sm2::key_column_t &k : x.key) {
       i.key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
                        reinterpret_cast<const sm_collation_t *>(k.collation),
@@ -347,14 +351,14 @@ int sm_init(const char *homedir) {
 }
 
 /*
- * Start the builder of dbname's catalog, its workers opening sm1
+ * Attach dbname's catalog to the builder, whose workers open sm1
  * sessions of their own on that database.
  */
 static int start_builder(sm_env_t *env, std::string_view dbname,
                          sm3::catalog_t *cat) {
   sm1::env_t *e = env->env;
   std::string name(dbname);
-  return sm3::cat_builder_start(cat, [e, name]() -> sm1::session_t * {
+  return sm3::builder_attach(cat, [e, name]() -> sm1::session_t * {
     sm1::session_t *s = nullptr;
     return sm1::opendb(e, name, s) == 0 ? s : nullptr;
   });
@@ -420,7 +424,7 @@ int sm_detach(sm_env_t *env, int force) {
     // Stop the builders first: their workers hold sm1 sessions,
     // which must be closed before the databases are.
     for (auto &[name, cat] : env->catalogs) {
-      sm3::cat_builder_stop(cat);
+      sm3::builder_detach(cat);
     }
     // Detach: closes the databases and stops sm1's threads.
     if (sm1::detach(env->env, force) != 0) {
@@ -501,7 +505,7 @@ int sm_rmdb(sm_env_t *env, const char *dbname) {
     auto it = env->catalogs.find(name_of(dbname));
     // Its builder's workers hold sessions on it: close them first.
     if (it != env->catalogs.end()) {
-      sm3::cat_builder_stop(it->second);
+      sm3::builder_detach(it->second);
     }
     if (sm1::rmdb(env->env, name_of(dbname)) != 0) {
       if (it != env->catalogs.end()) {
@@ -956,7 +960,7 @@ int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index) {
     if (!session) {
       return null_arg("sm_cat_index_wait", "session");
     }
-    return sm3::cat_index_wait(session->sm3, table, index);
+    return sm3::builder_wait(session->sm3, table, index);
   });
 }
 
@@ -1018,7 +1022,7 @@ int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
     if (sm3::tbl_open(session->sm3, oid, mode, t->table) != 0) {
       return -1;
     }
-    t->def = api_def(sm3::tbl_def(t->table));
+    t->def = api_def(sm3::session_cat(session->sm3), sm3::tbl_def(t->table));
     *out = t.release();
     return 0;
   });
@@ -1116,7 +1120,8 @@ int sm_tbl_truncate(sm_tbl_t *tbl) {
       return -1;
     }
     // The table now lives in another store.
-    tbl->def = api_def(sm3::tbl_def(tbl->table));
+    tbl->def =
+        api_def(sm3::session_cat(tbl->session->sm3), sm3::tbl_def(tbl->table));
     return 0;
   });
 }

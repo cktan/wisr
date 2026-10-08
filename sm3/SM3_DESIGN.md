@@ -354,8 +354,10 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
 - **Building an index on a populated relation.** There is one
   build and it is concurrent: neither writers nor readers are
   shut out for longer than a catalog change takes. An index
-  has a state, *building*, *valid* or *failed*, kept in its
-  record (`CATALOG.md` §3). The danger is a writer that does
+  has a state, *pending*, *valid* or *failed*, kept in its
+  record (`CATALOG.md` §3). A pending index a worker is
+  filling is *building*, which only the builder knows and
+  nothing records. The danger is a writer that does
   not know the index exists, changes the base relation and
   writes no entry. PostgreSQL's `CREATE INDEX CONCURRENTLY`
   meets it by entering the index as not ready and not valid,
@@ -363,14 +365,14 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   waiting again. Here the schema lock does the waiting and the
   row lock stands in for the second scan:
   1. **Create.** `cat_create_index` takes the schema lock X,
-     as every DDL does, and records the index as building. A
+     as every DDL does, and records the index as pending. A
      writer holds that lock IX to the end of its transaction,
      so when this commits no writer is left that does not know
      the index, and the next one reads a definition that lists
      it (`CATALOG.md` §5).
   2. **Maintain.** From then on every writer maintains the
      index as it does any other, with one allowance: while the
-     index is building, an entry to remove that is not there
+     index is pending, an entry to remove that is not there
      is no error, since the backfill may not have reached the
      row. A row a writer touches is covered from then on.
   3. **Backfill.** A background task walks the heap in `rowno`
@@ -406,7 +408,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     batch that is not retryable fails the build: a duplicate,
     a key too long for a unique index, or anything else. The
     index's record keeps the error's code and its message,
-    across restarts, and `cat_index_wait` returns them to
+    across restarts, and `builder_wait` returns them to
     whoever waits.
   - **A reader with an older snapshot is kept off the index.**
     Entries are versioned as rows are, so a snapshot older
@@ -433,7 +435,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     the rows the transaction has written, and records the
     index valid at once. It is the same routine, called from a
     second place, not a second build.
-  - **Waiting.** `cat_index_wait` blocks until the index is
+  - **Waiting.** `builder_wait` blocks until the index is
     valid, and fails if the build failed. It waits on the
     index's state, not on a thread, so any session may wait,
     for a build another session or an earlier run of the
@@ -443,24 +445,38 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   - **Restart.** A build unfinished at a restart starts again
     from the first row. Adding only what is absent makes that
     safe, and no progress is kept on disk.
-  - **The task is a queue and a few workers.** The catalog
-    keeps a queue of builds and runs at most N of them at
-    once, N an option that defaults to 4. A worker is a thread
-    with a session of its own, from whoever opened the
-    catalog. It is started when a build is queued and fewer
-    than N are running, and it exits when it finds the queue
-    empty, so a database with nothing to build holds no
-    thread. Opening a catalog queues every index still marked
-    building, which is how a build survives a restart. One
-    routine does a batch, and tests call it directly. Each
+  - **The task is a queue and a few workers, and no part of
+    the catalog.** The builder is the process's: one queue of
+    pending indexes over every catalog attached to it, and at
+    most N builds at once, N an option that defaults to 4. A
+    worker is a thread, started when a build is queued and
+    fewer than N are running, and it exits when it finds the
+    queue empty, so a process with nothing to build holds no
+    thread. It takes an index from the queue, which makes the
+    index building, and fills it on a session of its own on
+    that index's database, from whoever attached the catalog.
+    One routine does a batch, and tests call it directly. Each
     batch is a transaction of its own, and so is marking the
     index valid: it waits for every user of the table, and
     must hold no row one of them may want. A batch that ends
     in a retryable error is run again, and one that ends in
-    any other fails the build. `cat_builder_start`
-    starts all this, and `cat_close` stops the workers and
-    waits for them, so no transaction on a table being built
-    may be open then. A thread
+    any other fails the build.
+  - **The builder is a caller of the catalog.** It reads and
+    changes one through the catalog's own calls
+    (`CATALOG.md` §5). The catalog knows its queue and nothing
+    else of it: `cat_create_index` gives `sm1::on_commit` a
+    function that puts the pending index on the queue, so it
+    is queued once its transaction has committed and never if
+    that aborts. The function runs before the commit publishes
+    the new definition; a worker that takes the index at once
+    waits for the publish when it opens the table.
+    `builder_attach` queues every index pending in a catalog
+    already, which is how a build survives a restart, and
+    nothing is queued twice. `builder_detach` drops what is
+    queued for a catalog and waits for its builds to end, each
+    after the batch it is in; it comes before `cat_close`, so
+    no transaction on a table being built may be open then. A
+    thread
     per build was the alternative: less code, but a restore
     that creates hundreds of indexes would start hundreds of
     threads, and nothing would restart a build after a crash.
@@ -576,8 +592,9 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     an index, serialized as the host likes, and handed back to
     the evaluator in the index's definition.
   - **The evaluator is registered once an environment, before
-    a database is opened**, since opening one starts its
-    builder, which may at once resume a build a restart left.
+    a database is opened**, since opening one attaches it to
+    the builder, which may at once resume a build a restart
+    left.
     With none registered, an index that needs one cannot be
     created, and a write to its table or a build of it fails
     with an error that says so.

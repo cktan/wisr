@@ -1070,6 +1070,8 @@ static Janet cfun_index_state(int32_t argc, Janet *argv) {
       need_index(s, idx_name, SM_LOCKMODE_IS, "index-state");
   (void)p_tdef;
   switch (p_idef->def->state) {
+  case SM_INDEX_PENDING:
+    return janet_ckeywordv("pending");
   case SM_INDEX_BUILDING:
     return janet_ckeywordv("building");
   case SM_INDEX_VALID:

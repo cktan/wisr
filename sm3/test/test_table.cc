@@ -12,9 +12,11 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -122,6 +124,7 @@ public:
   ~jobs_t() {
     sm3::session_close(a);
     sm3::session_close(b);
+    sm3::builder_detach(cat);
     sm3::cat_close(cat);
   }
 
@@ -132,6 +135,7 @@ public:
   void reload(bool with_evaluator = true) {
     sm3::session_close(a);
     sm3::session_close(b);
+    sm3::builder_detach(cat);
     sm3::cat_close(cat);
     restart();
     sm1::session_t *s = open();
@@ -145,11 +149,11 @@ public:
     }
   }
 
-  /* Start the catalog's builder, with sessions from this database. */
+  /* Attach the catalog to the builder, with sessions from this database. */
   void builder(size_t max_workers = 4, size_t batch_rows = 1000) {
-    REQUIRE(sm3::cat_builder_start(
-                cat, [this] { return try_open(); }, max_workers, batch_rows) ==
-            0);
+    sm3::builder_set_max_workers(max_workers);
+    REQUIRE(sm3::builder_attach(
+                cat, [this] { return try_open(); }, batch_rows) == 0);
   }
 
   /* jobs, opened to write in s's transaction; it must open. */
@@ -804,7 +808,7 @@ TEST_CASE("while an index is building, rows it has not reached are written") {
 
   start(f.a);
   t = f.write(f.a);
-  CHECK(sm3::tbl_def(t).indexes[2].state == sm3::index_state_t::building);
+  CHECK(sm3::tbl_def(t).indexes[2].state == sm3::index_state_t::pending);
   CHECK(under(t, jobs_owner, "a").empty());
   REQUIRE_MESSAGE(set(t, r7, 7, "free", "z") == 0, sm1::errmsg());
   CHECK(under(t, jobs_owner, "z") == std::vector<uint64_t>{r7});
@@ -1609,11 +1613,11 @@ sm3::index_state_t state_of(jobs_t &f, uint64_t oid) {
 } // namespace
 
 TEST_CASE("an index on a table with rows is built in the background") {
-  // Verify the queue, a worker and cat_index_wait end to end.
+  // Verify the queue, a worker and builder_wait end to end.
   // 1. The builder is started. 250 rows are committed.
-  // 2. An index on owner is created and committed: it is building,
+  // 2. An index on owner is created and committed: it is pending,
   //    and its build is queued at that commit.
-  // 3. cat_index_wait returns 0: the index is valid, the caller's
+  // 3. builder_wait returns 0: the index is valid, the caller's
   //    next transaction may use it, and it agrees with the heap.
   // 4. Waiting again on a valid index returns at once.
   jobs_t f;
@@ -1627,10 +1631,10 @@ TEST_CASE("an index on a table with rows is built in the background") {
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_owner = late_on(f, "jobs_owner", 2);
 
-  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0,
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_owner) == 0,
                   sm1::errmsg());
   CHECK(state_of(f, jobs_owner) == sm3::index_state_t::valid);
-  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner) == 0);
   start(f.a, sm1::xctlevel_t::repeatable_read);
   t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   CHECK(sm3::tbl_index_usable(t, jobs_owner));
@@ -1644,7 +1648,7 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   // Verify what is kept of a build that failed.
   // 1. Two rows with one owner are committed; the builder is started.
   // 2. A unique index on owner is created: its build fails.
-  // 3. cat_index_wait returns the build's own error, SM_ERR_DUPKEY,
+  // 3. builder_wait returns the build's own error, SM_ERR_DUPKEY,
   //    with its message, which names the table and the index.
   // 4. The index is failed, and its definition holds the code and
   //    the message.
@@ -1659,7 +1663,7 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_owner = late_on(f, "jobs_owner", 2, true);
 
-  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   std::string why = sm1::errmsg();
   CHECK(why.find("jobs_owner") != std::string::npos);
@@ -1675,7 +1679,7 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   CHECK(d->indexes[2].error == sm1::SM_ERR_DUPKEY);
   CHECK(d->indexes[2].reason == why);
   sm1::reseterr();
-  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   CHECK(why == sm1::errmsg());
 }
@@ -1697,7 +1701,7 @@ TEST_CASE("a build fails on any error the rows cause, and says which") {
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_owner = late_on(f, "jobs_owner", 2, true);
 
-  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
   std::string why = sm1::errmsg();
   CHECK_FALSE(why.empty());
@@ -1715,13 +1719,13 @@ TEST_CASE("a build fails on any error the rows cause, and says which") {
 TEST_CASE("a build left unfinished is queued when the builder starts") {
   // Verify the restart path, and the wait's other answers.
   // 1. With no builder, an index is created on a table with rows:
-  //    it stays building, and waiting for it is SM_ERR_INVALID,
+  //    it stays pending, and waiting for it is SM_ERR_INVALID,
   //    since no build of it is queued.
   // 2. Waiting inside a transaction is SM_ERR_INTRANS, and for an
   //    index or a table that is not there, SM_ERR_NOTFOUND.
   // 3. The database restarts and the builder is started: the index
-  //    found building is queued, and waiting for it returns 0.
-  // 4. Starting the builder twice is SM_ERR_INVALID.
+  //    found pending is queued, and waiting for it returns 0.
+  // 4. Attaching the catalog twice is SM_ERR_INVALID.
   jobs_t f;
   start(f.a);
   sm3::table_t *t = f.write(f.a);
@@ -1731,23 +1735,23 @@ TEST_CASE("a build left unfinished is queued when the builder starts") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_owner = late_on(f, "jobs_owner", 2);
-  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   start(f.a);
-  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == -1);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INTRANS);
   REQUIRE(sm3::commit(f.a) == 0);
-  CHECK(sm3::cat_index_wait(f.a, f.jobs, jobs_owner + 999) == -1);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner + 999) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm3::cat_index_wait(f.a, f.jobs + 999, jobs_owner) == -1);
+  CHECK(sm3::builder_wait(f.a, f.jobs + 999, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   f.reload();
-  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::building);
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::pending);
   f.builder(2, 7);
-  CHECK(sm3::cat_builder_start(f.cat, [&f] { return f.try_open(); }) == -1);
+  CHECK(sm3::builder_attach(f.cat, [&f] { return f.try_open(); }) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0,
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_owner) == 0,
                   sm1::errmsg());
   start(f.a);
   t = f.write(f.a, sm1::SM_LOCKMODE_IS);
@@ -1755,6 +1759,59 @@ TEST_CASE("a build left unfinished is queued when the builder starts") {
   check_agree(t);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a pending index is building only while a worker fills it") {
+  // Verify the builder's claim, and that a detached catalog queues
+  // nothing.
+  // 1. 20 rows are committed. The catalog is attached with an open
+  //    that waits to be let go, so a worker that has taken a build
+  //    stays in it.
+  // 2. An index is created and committed, which queues it: it
+  //    becomes building while the catalog still records it pending.
+  // 3. The worker is let go: the wait returns 0 and the index is
+  //    valid. Once the catalog is detached nothing is building.
+  // 4. Detached, a second index stays pending, and waiting for it
+  //    is SM_ERR_INVALID.
+  // 5. Attached again, the index found pending is built.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 20; i++) {
+    put(t, i, "free", "w" + std::to_string(i));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  std::atomic<bool> go{false};
+  REQUIRE(sm3::builder_attach(f.cat, [&] {
+            while (!go.load()) {
+              std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            return f.try_open();
+          }) == 0);
+
+  uint64_t jobs_owner = late_on(f, "jobs_owner", 2);
+  while (!sm3::builder_building(f.cat, jobs_owner)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::pending);
+
+  go.store(true);
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_owner) == 0,
+                  sm1::errmsg());
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::valid);
+  sm3::builder_detach(f.cat);
+  CHECK_FALSE(sm3::builder_building(f.cat, jobs_owner));
+
+  uint64_t jobs_state2 = late_on(f, "jobs_state2", 1);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_state2) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(state_of(f, jobs_state2) == sm3::index_state_t::pending);
+
+  f.builder();
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_state2) == 0,
+                  sm1::errmsg());
+  CHECK(state_of(f, jobs_state2) == sm3::index_state_t::valid);
 }
 
 TEST_CASE("more builds than workers all end, a few at a time") {
@@ -1776,7 +1833,7 @@ TEST_CASE("more builds than workers all end, a few at a time") {
     made.push_back(late_on(f, "extra" + std::to_string(i), 1 + i % 2));
   }
   for (uint64_t oid : made) {
-    REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, oid) == 0, sm1::errmsg());
+    REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, oid) == 0, sm1::errmsg());
   }
   start(f.a);
   t = f.write(f.a, sm1::SM_LOCKMODE_IS);
@@ -1839,7 +1896,7 @@ TEST_CASE("writers go on while an index is built, and it still agrees") {
       }
     }
   }
-  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_owner) == 0,
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_owner) == 0,
                   sm1::errmsg());
   start(f.a);
   t = f.write(f.a, sm1::SM_LOCKMODE_IS);
@@ -2055,9 +2112,9 @@ TEST_CASE("an evaluated index is built in the background, and inline") {
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_free = late_eval(f, "jobs_free", "free", by_owner_key, {1});
   uint64_t jobs_lower = late_eval(f, "jobs_lower", "lower", by_lower_key, {2});
-  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_free) == 0,
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_free) == 0,
                   sm1::errmsg());
-  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_lower) == 0,
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_lower) == 0,
                   sm1::errmsg());
   start(f.a);
   t = f.write(f.a);
@@ -2111,7 +2168,7 @@ TEST_CASE("an evaluator that fails fails the write, and the build") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t bad = late_eval(f, "jobs_bad", "fail", by_owner_key, {1});
-  CHECK(sm3::cat_index_wait(f.a, f.jobs, bad) == -1);
+  CHECK(sm3::builder_wait(f.a, f.jobs, bad) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(std::string(sm1::errmsg()) == "the evaluator failed");
   CHECK(state_of(f, bad) == sm3::index_state_t::failed);
@@ -2275,9 +2332,9 @@ TEST_CASE("writers go on while evaluated indexes are built, and they agree") {
       }
     }
   }
-  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_free) == 0,
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_free) == 0,
                   sm1::errmsg());
-  REQUIRE_MESSAGE(sm3::cat_index_wait(f.a, f.jobs, jobs_lower) == 0,
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_lower) == 0,
                   sm1::errmsg());
   start(f.a);
   t = f.write(f.a, sm1::SM_LOCKMODE_IS);

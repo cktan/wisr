@@ -271,14 +271,14 @@ int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
 
 /*
  * Remove index i's entry e for the row at rowno. While the index
- * is building, an entry that is not there is no error: the build
+ * is pending, an entry that is not there is no error: the build
  * has not reached the row (SM3_DESIGN.md §3).
  */
 int remove_entry(sm3::table_t *t, size_t i, const entry_t &e, uint64_t rowno) {
   if (sm2::idx_delete(t->indexes[i], e.d(), e.null(), rowno) == 0) {
     return 0;
   }
-  return t->def->indexes[i].state == sm3::index_state_t::building &&
+  return t->def->indexes[i].state == sm3::index_state_t::pending &&
                  sm1::errnum() == sm1::SM_ERR_NOTFOUND
              ? 0
              : -1;
@@ -579,9 +579,9 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
                          "table: no index " + std::to_string(index));
     }
     const index_def_t &x = def.indexes[i];
-    if (x.state != index_state_t::building) {
+    if (x.state != index_state_t::pending) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index build: index " + x.name + " is not building");
+                         "index build: index " + x.name + " is not pending");
     }
     // Rows another transaction may write are read at their newest
     // version, which only READ COMMITTED can do.

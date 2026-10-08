@@ -585,9 +585,10 @@ design:
   `SM_ERR_UPDATED` needs no undoing: it comes from the heap
   write, the first step (`sm3/SM3_DESIGN.md` §3).
 - **An index is built in the background.** An index made on a
-  table that has rows is recorded as building, maintained by
-  every writer from then on, and filled by workers the catalog
-  owns, which the C wrapper starts when it opens a database.
+  table that has rows is recorded as pending, maintained by
+  every writer from then on, and filled by the process's
+  builder, which the C wrapper attaches a database's catalog
+  to when it opens the database.
   A reader may not scan it until it is valid, nor if its
   snapshot is older than the build; `sm_cat_index_wait` is for
   a caller that wants it at once. A failed build keeps its

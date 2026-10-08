@@ -420,8 +420,10 @@ a unique index for one, it raises the build's own error.
 ```
 
 ### `(index-state name)`
-Returns `:building`, `:valid` or `:failed` for the index named
-`name`, inside a transaction. A failed index is not maintained
+Returns `:pending`, `:building`, `:valid` or `:failed` for the
+index named `name`, inside a transaction. A pending index waits
+for a worker, and a building one has a worker filling it; neither
+may be scanned yet. A failed index is not maintained
 and cannot be scanned; it can only be dropped.
 
 ```janet

@@ -10,38 +10,15 @@
 #include "sm3.h"
 
 #include <atomic>
-#include <condition_variable>
-#include <deque>
 #include <functional>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
-#include <thread>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace sm3 {
-
-/*
- * The catalog's builder (SM3_DESIGN.md §3): a queue of indexes to
- * build and the workers building them. mu guards all of it, and is
- * taken after the catalog's own mutex, never before.
- */
-struct builder_t {
-  std::mutex mu;
-  std::condition_variable cv; /* a build ended, or the catalog changed */
-  std::function<sm1::session_t *()> open; /* empty: not started */
-  size_t max_workers = 0;
-  size_t batch_rows = 0;
-  std::deque<std::pair<uint64_t, uint64_t>> queue; /* table, index */
-  std::unordered_set<uint64_t> active; /* indexes queued or being built */
-  size_t running = 0;                  /* workers alive */
-  bool stop = false;
-  std::vector<std::thread> threads;
-  std::vector<std::thread::id> finished; /* workers to join */
-};
 
 /*
  * The hash of a (nspoid, name) key, for the catalog's table_names.
@@ -81,8 +58,6 @@ struct sm3::catalog_t {
    */
   std::atomic<uint64_t> seq{0};
   std::unordered_map<uint64_t, uint64_t> valid_seq; /* index oid -> count */
-
-  builder_t builder;
 
   /* The host's evaluator of partial and expression indexes; set once. */
   index_eval_fn eval;
@@ -142,17 +117,6 @@ namespace sm3 {
 /* The collation oid names, as session sees it; false if unknown. */
 using collation_lookup_t =
     std::function<bool(uint64_t, const sm2::collation_t *&)>;
-
-/*
- * Queue the build of a table's index, if the builder was started
- * and the index is not queued already, starting a worker if fewer
- * than the most allowed are alive. The caller may hold the
- * catalog's mutex.
- */
-void build_enqueue(catalog_t *cat, uint64_t table, uint64_t index);
-
-/* Wake whoever waits on an index's state: the catalog has changed. */
-void build_notify(catalog_t *cat);
 
 /*
  * Whether session may scan the index oid of the table it sees as

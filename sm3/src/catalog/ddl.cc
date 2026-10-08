@@ -513,7 +513,7 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     x.name = std::string(name);
     x.relid = rec.next_relid;
     x.unique = unique;
-    x.state = index_state_t::building;
+    x.state = index_state_t::pending;
     x.eval = std::string(eval);
     for (int32_t a : reads) {
       if (!live_attnum(rec, a)) {
@@ -572,7 +572,7 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
     // No other transaction sees a table this one made, so the build
     // has nothing to wait for: run it here, over the rows this
     // transaction has written, and record the index valid. Any other
-    // table's index stays building, for the build to fill.
+    // table's index stays pending, for the build to fill.
     if (!cat_table(session->cat, table)) {
       table_t *t = nullptr;
       if (tbl_open(session, table, sm1::SM_LOCKMODE_EX, t) != 0) {
@@ -591,6 +591,15 @@ int cat_create_index(session_t *session, uint64_t table, std::string_view name,
       rec.indexes.back().state = index_state_t::valid;
       if (write_table(kv.get(), table, rec) != 0 ||
           record_table(session, table, rec) != 0) {
+        return -1;
+      }
+    } else {
+      // Once this transaction has committed, put the index on the
+      // builder's queue; a rollback that undoes the index drops it.
+      catalog_t *cat = session->cat;
+      if (sm1::on_commit(session->sm1, [cat, table, i] {
+            builder_enqueue(cat, table, i);
+          }) != 0) {
         return -1;
       }
     }
