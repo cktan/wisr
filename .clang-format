@@ -1,6 +1,6 @@
 # The formatting contract. Without this file clang-format falls back
 # to its built-in LLVM default, which drifts between clang releases:
-# clang-format 21 unwraps the braced list in sm1/mvcc/mvcc.h's
+# clang-format 21 unwraps the braced list in sm/sm1/mvcc/mvcc.h's
 # MVCC_PAIRINGS that an earlier release had wrapped. Pinning the
 # style here keeps `make format` from rewriting the tree whenever the
 # distro's clang moves.
