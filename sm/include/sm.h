@@ -463,8 +463,8 @@ void sm_idx_scanend(sm_idx_scan_t* scan);
 /* ---- the catalog: sm3's ---- */
 
 /* The built-in namespaces' oids (sm3::nsp_pg_catalog, nsp_public). */
-#define SM_NSP_PG_CATALOG 1
-#define SM_NSP_PUBLIC     2
+#define SM_NSP_PG_CATALOG 11
+#define SM_NSP_PUBLIC     2200
 
 /* A column, as a table is created with it. */
 struct sm_column_spec_t {

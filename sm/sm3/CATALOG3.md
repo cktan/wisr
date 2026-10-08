@@ -61,8 +61,9 @@ both be called `orders` as long as they sit in different
 namespaces — which is why the name index is keyed by
 `(namespace oid, name)` and not by the name alone.
 
-Two exist from `cat_init`: `pg_catalog` at oid 1 and `public`
-at oid 2 (`CATALOG.md` §1). A namespace's own name is in no
+Two exist from `cat_init`: `pg_catalog` at oid 11 and
+`public` at oid 2200, PostgreSQL's oids for them (`CATALOG.md`
+§1). A namespace's own name is in no
 namespace: it is recorded under namespace oid 0, so that
 namespace names are unique across the database. Which
 namespace an unqualified name resolves to — the search path —
@@ -865,9 +866,9 @@ luck. §4's tagged fields are what removes them.
 
 A table `orders` in `public`, with 1,000 columns and 10
 indexes, as the catalog stores it today (`CATALOG.md` §2,
-§3). Say the table got oid 1000, its indexes oids 1001 to
-1010 in the order they were made, and its store is sm1's
-store 7. `public` is namespace oid 2.
+§3). Say the table got oid 16384, its indexes oids 16385 to
+16394 in the order they were made, and its store is sm1's
+store 7. `public` is namespace oid 2200.
 
 Once its ten indexes are built it takes **1,032 entries** in
 the catalog store:
@@ -885,13 +886,13 @@ before it and has entries of its own, counted once for the
 namespace and not once for each table in it:
 
 ```
-NAMESPACE | 2        →  name "public"
-NAME | 0 | "public"  →  a namespace, oid 2
+NAMESPACE | 2200        →  name "public"
+NAME | 0 | "public"  →  a namespace, oid 2200
 ```
 
 The table adds nothing to those. It only points at its
 namespace: by the namespace oid in its `TABLE` value, and by
-the 2 in each of its `NAME` keys. A second table in `public`
+the 2200 in each of its `NAME` keys. A second table in `public`
 adds its own entries and no more; a table in a new namespace
 costs the two entries of making that namespace, once.
 
@@ -913,11 +914,11 @@ fields listed. `→` separates the two.
 **`TABLE`**, keyed by the table's oid:
 
 ```
-TABLE | 1000  →  namespace oid 2
-                 name "orders"
-                 storeid 7
-                 rowno sequence "sm3.rowno.1000"
-                 next index relid 12
+TABLE | 16384  →  namespace oid 2200
+                  name "orders"
+                  storeid 7
+                  rowno sequence "sm3.rowno.16384"
+                  next index relid 12
 ```
 
 It says nothing of the columns or indexes, not even how many
@@ -929,17 +930,17 @@ handed out twice, so it only goes up.
 attnum, its 0-based place:
 
 ```
-COLUMN | 1000 | 0    →  name "id", type int8, typmod none,
-                        not null, not dropped
-COLUMN | 1000 | 1    →  name "note", type text, typmod none,
-                        nullable, not dropped,
-                        missing value "n/a", collation oid 1500
+COLUMN | 16384 | 0    →  name "id", type int8, typmod none,
+                         not null, not dropped
+COLUMN | 16384 | 1    →  name "note", type text, typmod none,
+                         nullable, not dropped,
+                         missing value "n/a", collation oid 16500
 …
-COLUMN | 1000 | 999  →  name "c999", type int4, …
+COLUMN | 16384 | 999  →  name "c999", type int4, …
 ```
 
-A column has no oid; the pair (1000, 3) is its whole identity.
-Its entries sort by attnum, so a scan from `COLUMN | 1000`
+A column has no oid; the pair (16384, 3) is its whole identity.
+Its entries sort by attnum, so a scan from `COLUMN | 16384`
 returns the columns in the order rows are laid out by. A
 dropped column keeps its entry, with `dropped` set: its place
 is never given to another.
@@ -947,20 +948,20 @@ is never given to another.
 **`INDEX`**, keyed by the table's oid and the index's own:
 
 ```
-INDEX | 1000 | 1001  →  oid 1001, name "orders_pkey", relid 2,
-                        unique,
-                        key columns: (attnum 0, ascending,
-                                      nulls last)
-INDEX | 1000 | 1002  →  oid 1002, name "orders_note", relid 3,
-                        not unique,
-                        key columns: (attnum 1, descending,
-                                      nulls first,
-                                      collation oid 1500),
-                                     (attnum 0, ascending,
-                                      nulls last)
-                        include columns: attnum 2
+INDEX | 16384 | 16385  →  oid 16385, name "orders_pkey", relid 2,
+                          unique,
+                          key columns: (attnum 0, ascending,
+                                        nulls last)
+INDEX | 16384 | 16386  →  oid 16386, name "orders_note", relid 3,
+                          not unique,
+                          key columns: (attnum 1, descending,
+                                        nulls first,
+                                        collation oid 16500),
+                                       (attnum 0, ascending,
+                                        nulls last)
+                          include columns: attnum 2
 …
-INDEX | 1000 | 1010  →  …
+INDEX | 16384 | 16394  →  …
 ```
 
 An index is an object, so it has an oid, and its key carries
@@ -973,9 +974,9 @@ indexes were made in.
 and the index's:
 
 ```
-INDEX_STATE | 1000 | 1001  →  valid
-INDEX_STATE | 1000 | 1003  →  failed, error SM_ERR_DUPKEY,
-                              reason "two rows of orders …"
+INDEX_STATE | 16384 | 16385  →  valid
+INDEX_STATE | 16384 | 16387  →  failed, error SM_ERR_DUPKEY,
+                                reason "two rows of orders …"
 ```
 
 An index's state is not in its `INDEX` entry. It changes when
@@ -983,15 +984,15 @@ a build ends, while transactions are using the table, and
 without the table's definition being replaced; so it has an
 entry of its own, written under the table's lock IX
 (`CATALOG.md` §5.1). An index that is pending has no entry
-here at all: 1002 above is still waiting for its build, and
+here at all: 16386 above is still waiting for its build, and
 no entry is what says so.
 
 **`NAME`**, keyed by a namespace's oid and a name:
 
 ```
-NAME | 2 | "orders"       →  a table, oid 1000
-NAME | 2 | "orders_note"  →  an index, oid 1002, of table 1000
-NAME | 2 | "orders_pkey"  →  an index, oid 1001, of table 1000
+NAME | 2200 | "orders"       →  a table, oid 16384
+NAME | 2200 | "orders_note"  →  an index, oid 16386, of table 16384
+NAME | 2200 | "orders_pkey"  →  an index, oid 16385, of table 16384
 …
 ```
 
@@ -1000,7 +1001,7 @@ NAME | 2 | "orders_pkey"  →  an index, oid 1001, of table 1000
 A `NAME` entry is how the catalog makes a name unique. That is
 its job, and it is nearly its only one.
 
-- **The key is the claim.** `NAME | 2 | "orders"` exists
+- **The key is the claim.** `NAME | 2200 | "orders"` exists
   exactly while something in namespace 2 is called `orders`.
   Creating a table inserts it; a name already taken is the
   store's own `SM_ERR_DUPKEY`, with no check the catalog has
@@ -1016,7 +1017,7 @@ its job, and it is nearly its only one.
   key shape, so a table and an index cannot share a name, as
   in PostgreSQL. A namespace's own name is claimed under
   namespace oid 0, which is no namespace:
-  `NAME | 0 | "public" → a namespace, oid 2`. That is what
+  `NAME | 0 | "public" → a namespace, oid 2200`. That is what
   makes namespace names unique in the database.
 - **The value says who holds the name**: the kind of object,
   its oid, and for an index its table's oid. It lets the
@@ -1068,12 +1069,12 @@ changed, and then erases the ones no longer there. So:
 example changes but the bytes:
 
 ```
-tbl:00000000000003e8                          the table
-tbl:00000000000003e8:att:0000 … :att:03e7     its 1,000 columns
-tbl:00000000000003e8:idx:00000000000003e9     an index
-name:0000000000000002:orders                  the name index
+tbl:0000000000004000                          the table
+tbl:0000000000004000:att:0000 … :att:03e7     its 1,000 columns
+tbl:0000000000004000:idx:0000000000004001     an index
+name:0000000000000898:orders                  the name index
 ```
 
 There the columns and indexes nest under the table's own key,
-so one scan of `tbl:00000000000003e8:` returns the whole
+so one scan of `tbl:0000000000004000:` returns the whole
 table; today they are three kinds apart, read by three scans.

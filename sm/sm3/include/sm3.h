@@ -25,9 +25,16 @@
 
 namespace sm3 {
 
-/* The built-in namespaces' fixed oids; oids from 1000 are handed out. */
-constexpr uint64_t nsp_pg_catalog = 1;
-constexpr uint64_t nsp_public = 2;
+/*
+ * The built-in namespaces' fixed oids, which are PostgreSQL's for
+ * the two, and the first oid handed out, which is PostgreSQL's
+ * FirstNormalObjectId: the oids below it are for what is built in,
+ * and digres compiles those in with PostgreSQL's own numbers
+ * (PART4.md §10).
+ */
+constexpr uint64_t nsp_pg_catalog = 11;
+constexpr uint64_t nsp_public = 2200;
+constexpr uint64_t first_oid = 16384;
 
 /*
  * The relids of a table's rels in its store (SM3_DESIGN.md §4):

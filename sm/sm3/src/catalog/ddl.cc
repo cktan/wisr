@@ -17,9 +17,8 @@ namespace {
 
 using kv_ptr = std::unique_ptr<sm2::catkv_t, decltype(&sm2::catkv_close)>;
 
-/* The sequence oids come from; they start at 1000 (CATALOG.md §1). */
+/* The sequence oids come from; they start at first_oid (CATALOG.md §1). */
 constexpr const char *oid_seq = "sm3.oid";
-constexpr uint64_t first_oid = 1000;
 
 /*
  * Names of namespaces live in namespace 0, which is no namespace:

@@ -51,7 +51,7 @@ template <typename F> int catch_nomem(F f) {
 }
 
 /* The catalog's format version, which META holds. */
-constexpr int32_t format_version = 3;
+constexpr int32_t format_version = 4;
 
 /* ---- keys (CATALOG.md §2) ---- */
 

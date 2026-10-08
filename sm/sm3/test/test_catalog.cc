@@ -85,7 +85,7 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   // 1. Create a table of int8, text and decimal64(10, 2) in public,
   //    and commit.
   // 2. After a restart, the loaded catalog finds it by name and by
-  //    oid, both at least 1000, with its columns, types, typmods
+  //    oid, the first at least 16384, with its columns, types, typmods
   //    and not-null flags as declared, and a layout sm2 accepts.
   // 3. Its store exists and holds nothing, and its rowno sequence
   //    hands out 1.
@@ -116,7 +116,7 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   REQUIRE(t != nullptr);
   CHECK(sm3::cat_get_table(cat, oid) == t);
   CHECK(t->oid == oid);
-  CHECK(oid >= 1000);
+  CHECK(oid >= sm3::first_oid);
   CHECK(t->storeid >= 1000);
   CHECK(t->name == "orders");
   CHECK(t->nspoid == sm3::nsp_public);

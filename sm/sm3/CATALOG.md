@@ -36,8 +36,10 @@ own catalog store, store 0, under the key prefix `"U"`.
 - **Object ids.** sm1's stores and sequences share one counter,
   which starts at 1000; 1 to 999 are reserved. sm3's own oids
   come from the sequence `sm3.oid`, which `cat_init` makes to
-  start at 1000; oids below it are for built-in objects:
-  `pg_catalog` is 1, `public` is 2. `nextseq` is not
+  start at 16384, PostgreSQL's `FirstNormalObjectId`. Oids
+  below it are for built-in objects, and are PostgreSQL's own
+  numbers, since digres compiles its built-ins in with them
+  (`PART4.md` §10): `pg_catalog` is 11, `public` is 2200. `nextseq` is not
   transactional, so an aborted DDL leaves a gap, as PostgreSQL's
   oid counter does.
 
@@ -146,8 +148,9 @@ INDEX_STATE value = index state
   before it (`sm2/TUPLE.md` §2), so a value needs no version of
   its own. `META`'s version changes only if a key's layout, or
   the framing, does: it was 2 when a table's columns and
-  indexes left its blob for keys of their own, and is 3 since
-  an index's state left the index part for one too.
+  indexes left its blob for keys of their own, 3 when an
+  index's state left the index part for one too, and is 4
+  since the built-in namespaces took PostgreSQL's oids.
 - **An index's state** is 0 pending, 1 valid or 2 failed
   (`SM3_DESIGN.md` §3), in the index state part. The index
   part's three attributes that once held it are retired and

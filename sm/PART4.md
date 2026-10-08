@@ -663,7 +663,15 @@ What replaces it:
   constraints and defaults when they are built
   (`sm3/CATALOG3.md` §10).
 
-**An oid is 64 bits**, in digres as in sm3.
+**An oid is 64 bits**, in digres as in sm3, and the numbers
+are PostgreSQL's where it has them: sm3 hands out oids from
+16384, PostgreSQL's `FirstNormalObjectId`, and its two
+built-in namespaces are `pg_catalog` at 11 and `public` at
+2200. Below 16384 are the built-ins, compiled in with the
+oids PostgreSQL gave them.
+
+**Linux and UTF-8 only.** No other operating system's port,
+and no other server encoding or its conversion procedures.
 
 **Left out of the copy from the start**: PL/pgSQL and every
 other procedural language, and BKI. More is to be cut; the

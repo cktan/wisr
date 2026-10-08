@@ -247,7 +247,7 @@ TEST_CASE("a namespace is created like a table, and found by name") {
   REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
   db.begin();
   REQUIRE_MESSAGE(sm3::create_namespace(db.ss, "app", app) == 0, sm1::errmsg());
-  CHECK(app >= 1000);
+  CHECK(app >= sm3::first_oid);
   REQUIRE(sm3::savepoint(db.ss) == 1);
   REQUIRE(sm3::create_namespace(db.ss, "tmp", tmp) == 0);
   CHECK(sm3::cat_get_namespace(db.ss, "tmp", oid));
