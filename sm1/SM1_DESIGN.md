@@ -100,7 +100,7 @@ benchmark asks for it (§10.1).
    │            │               │               │              │
 ┌──┴──────┐ ┌───┴──────┐ ┌──────┴──────┐ ┌──────┴─────┐ ┌──────┴─────┐
 │ Catalog │ │ Access   │ │ Transaction │ │ Lock mgr   │ │ SSI        │
-│ (storeid│ │ methods  │ │ manager     │ │ (row X     │ │ tracker    │
+│ (storeid│ │ methods  │ │ manager     │ │ (explicit  │ │ tracker    │
 │ lookup) │ │ read /   │ │ ts, status, │ │  locks,    │ │ (SIREAD,   │
 │         │ │ scan /   │ │ commit seq, │ │  deadlock  │ │  rw-edges, │
 │         │ │ write    │ │ 2PC         │ │  detect)   │ │  pivots)   │
@@ -188,7 +188,8 @@ Notes on the encoding:
   one `DropColumnFamily`. The key itself carries no storeid; the
   column family is the store.
 - **`wts`**, the write timestamp, is taken from the one counter
-  (§4.1) after the writer holds the row lock, so a key's
+  (§4.1) under the key's latch, when no other writer of the
+  key is in flight (§5.1), so a key's
   versions are in commit order by construction. Complemented,
   it makes versions of a key sort **newest first**. A point
   read becomes one `Seek` to `userkey|~snapshot_ts|0x00000000`,
@@ -607,14 +608,15 @@ Step 5 is an ordinary RocksDB `Put` into the memtable, WAL-logged but
 **not synced** — an uncommitted write does not need durability, only
 the commit record does (§8.2).
 
-### 5.1 Row locks
+### 5.1 The lock table, and what a write does instead
 
 An in-memory hash table, `(locktype, storeid, userkey)` → the
 transactions holding it, each in a mode of its own. The modes are **Gray's**,
 for locking at several granularities: IS, IX, S, SIX and X, with
 his compatibility table (`sm1.h`, `lockmode_t`). sm1 keeps no
-hierarchy; a caller that makes one key stand for a larger object
-— sm3's table catalog row — takes an intention mode on it to
+hierarchy; a caller that makes one name stand for a larger
+object — sm3's table, by an OID lock on its oid — takes an
+intention mode on it to
 announce what it does below, so readers (IS) and writers (IX) of
 a table coexist while a builder that must stop writers but not
 readers takes S. `sm1::lock` takes any mode, and a plain read
@@ -730,8 +732,9 @@ it.
 ### 5.2 First-committer-wins
 
 Step 3 rejects a write when the key was modified by a transaction
-that committed after our snapshot. Together with the row lock
-(which prevents the concurrent case), this is the standard
+that committed after our snapshot. Together with the wait on
+an uncommitted writer of the key (which prevents the concurrent
+case), this is the standard
 snapshot-isolation write rule and it is what makes the §4.1
 invariant hold. It applies at **repeatable read and
 serializable**. Read committed does not abort the loser: it fails
@@ -780,7 +783,7 @@ level after a lock wait, and workloads written for it rely on it
 
 The commonest case is a hot row, a shared counter or a
 `next_order_id`. Two read committed sessions each add one to `R1`,
-which holds 0; T1 updates it and T2 waits for T1's row lock:
+which holds 0; T1 updates it and T2 waits for T1:
 
 | | T2's update, after T1 commits | R1 |
 | --- | --- | --- |
@@ -893,8 +896,8 @@ the transaction) and `T.stmt_snapshot_ts` once taken.
 
 The snapshot is taken by the statement's first **read**, not
 by the boundary call and not by a write, so a statement may
-block — on a row lock, or on the `sm1::lock` a secondary-index
-layer would use — and still read everything committed while
+block — on another writer of its key, or on an `sm1::lock` — and
+still read everything committed while
 it waited. `xct_read_view` takes it; `xct_view`, which the
 write path uses to validate a storeid and key, only reads it
 once taken.
@@ -955,14 +958,16 @@ never use RC at all; that needs no engine support.
 Writes check against `T.snapshot_ts`, not the statement snapshot.
 A write that meets a row committed after `sm1::begin` does not
 abort, as it does at the higher levels (§5.2): it waits for the
-row lock, is refused with `SM_ERR_UPDATED`, and goes ahead
+writer in flight, is refused with `SM_ERR_UPDATED`, and goes
+ahead
 against the newest committed version once the caller has read it
 with `sm1::read_latest` (§5.4). PostgreSQL does the same at its
 default level, and workloads rely on it (`PART4.md` §5a).
 REPEATABLE READ and SERIALIZABLE keep §5.2 as it is.
 
 What makes that safe is that a version's key is its `wts`, taken
-after the row lock, and not the writer's `xid` (§3.1, §4.1).
+once no other writer of the key is in flight, and not the
+writer's `xid` (§3.1, §4.1).
 Keyed by `xid`, a read committed transaction with `T.xid = 50`
 that updated a row committed at 70 would put a version `k|~50`
 that sorts *behind* the committed `xid 60` version: readers would
@@ -2299,7 +2304,7 @@ CF, or else name two stores at once.
 There is no next-storeid row in the catalog. Storeids come from
 the lease in `CF:meta` (§4.2); a catalog row updated by every
 `sm1::mkstore` would make concurrent creates of *different*
-stores contend on one row lock and fail with `SM_ERR_CONFLICT`.
+stores contend on one row and fail with `SM_ERR_CONFLICT`.
 
 Because it is an ordinary store, DDL is transactional for free:
 `sm1::mkstore` inserts a catalog row, `sm1::rmstore` deletes it
@@ -2375,7 +2380,7 @@ SERIALIZABLE:
 
 A sequence is a catalog row of its own, keyed `"S" | name`, so
 `sm1::mkseq` and `sm1::rmseq` are transactional exactly as
-`sm1::mkstore` is, down to the row lock that makes two concurrent
+`sm1::mkstore` is, down to the wait that makes two concurrent
 creates of one name conflict. The row holds
 `{ seqid, start, increment }`, and the `seqid` comes from the
 same object-id allocator as a storeid (§4.2), so a name created
@@ -2598,7 +2603,7 @@ src/session.cc          open/close, per-session state and buffers
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
 src/version.cc          key/value codec, version comparator, visibility
 src/access.cc           read / scan / insert / update / delete
-src/lockmgr.cc          row locks, waits-for graph, deadlock detection
+src/lockmgr.cc          lock table, write latches, waits-for graph, deadlocks
 src/ssi.cc              SIREAD locks, rw-edges, validation
 src/catalog.cc          store catalog: DDL, sm1::lsstore, CF create/drop
 src/seq.cc              named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq
@@ -2857,7 +2862,8 @@ bullets below cover the rest of the engine.
   marked dead by their `seq`, and it is not built. Bulk loads want a path of
   their own (`BULKLOAD.md`).
 - **Every write takes a timestamp.** A version is keyed by a `wts`
-  taken after its row lock (§4.1), so the counter is used once per
+  taken under its key's latch (§4.1), so the counter is used
+  once per
   row written and not once per transaction, and its lease (§4.2,
   `ts_lease`) runs out sooner; each renewal is a synchronous
   `Put`. `global_ts` is an atomic so the common case takes no

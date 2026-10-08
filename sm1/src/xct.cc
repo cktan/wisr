@@ -258,7 +258,7 @@ void discard(sm1::session_t *s) {
   }
   // Drop the stores it created.
   drop_created(s);
-  // Release its row locks.
+  // Release its locks.
   lock_release_all(s);
   // Forget the transaction.
   reset(s);
@@ -531,7 +531,7 @@ int commit(sm1::session_t *s) {
     }
     // Keep the committed SSI node for its overlaps.
     ssi_end(s);
-    // Release its row locks: a transaction that never wrote can
+    // Release its locks: a transaction that never wrote can
     // still hold them, through sm1::lock (§5.1).
     lock_release_all(s);
     // Keep its on_commit functions for the entry point to run.
@@ -640,7 +640,7 @@ void publish_commit(sm1::session_t *s, uint64_t xid,
   enter_cache(db, xid, commit_ts);
   // Publish: advance visible_ts past this commit.
   db_commit_done(db, commit_ts);
-  // Release the row locks only once the commit is visible, and
+  // Release the locks only once the commit is visible, and
   // queue dropped stores for removal once no snapshot can
   // see them (§8.3).
   lock_release_all(s);
@@ -1092,7 +1092,7 @@ view_t xct_view(sm1::session_t *s) {
  * the statement has not read yet (§6.2). Only reads take it:
  * a write consults its view to validate the storeid and key, and
  * pinning there would hold a statement's later reads at a
- * snapshot from before the write waited for its row lock.
+ * snapshot from before the write waited for another writer.
  */
 view_t xct_read_view(sm1::session_t *s) {
   // A statement running without its snapshot: this read takes it.

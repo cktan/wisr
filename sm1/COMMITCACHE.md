@@ -107,7 +107,7 @@ in this order:
    under `txn_mu` (`enter_cache`).
 3. The commit is published: `visible_ts` moves past its
    `commit_ts`, so that new snapshots include it.
-4. The row locks are released.
+4. Its locks are released.
 
 The record comes first so that the cache never says
 "committed" of something the disk does not. The cache comes

@@ -698,7 +698,7 @@ int sm_tbl_idx_scan(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
 
 /*
  * Whether the session may scan the table's index now. Not while it
- * is building, never once it has failed, and not in a statement or
+ * is pending, never once it has failed, and not in a statement or
  * transaction whose snapshot is older than the index's build.
  * sm_tbl_idx_scan fails with SM_ERR_INVALID on one that may not be.
  */

@@ -104,7 +104,7 @@ struct sm1::session_t {
    */
   std::atomic<int> doomed{0};
 
-  /* Row locks (§5.1); guarded by the database's lock_mu. */
+  /* Locks, row and OID (§5.1); guarded by the database's lock_mu. */
   struct lockref_t {
     std::string key;                            /* the lock table key */
     sm1::lockmode_t mode = sm1::SM_LOCKMODE_SH; /* held now, after
@@ -219,7 +219,7 @@ int xct_fail_retryable(sm1::session_t *session, sm1::errnum_t e,
 std::mutex &lock_latch(db_t *db, uint64_t storeid, rocksdb::Slice key);
 
 /*
- * Take the row lock on (storeid, key) in mode if no other holder
+ * Take the lock (type, storeid, key) in mode if no other holder
  * conflicts, recording it; a holder already converts to the
  * weakest mode covering both. Returns 0, or 2 if another holder
  * conflicts, taking nothing. Never waits.
@@ -289,7 +289,7 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g);
 /* Put a restored transaction's locks back in the table (§9.1). */
 void lock_restore(db_t *db, sm1::session_t *g);
 
-/* Release every row lock the session's transaction holds. */
+/* Release every lock the session's transaction holds. */
 void lock_release_all(sm1::session_t *session);
 
 /*

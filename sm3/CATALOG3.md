@@ -99,12 +99,12 @@ is the SQL layer's, not sm3's (`CATALOG.md` §7).
 
 ### 0.4 A table's oid lock
 
-**What it is.** One sm1 row lock per table, taken in Gray's
+**What it is.** One sm1 OID lock per table, taken in Gray's
 modes before a transaction reads or writes that table's
 definition and held to the end of the transaction: IS to read
 it, IX to write rows under it, S for a plain index build, X
 for DDL (`SM3_DESIGN.md` §2). It does not lock the table's
-rows — sm1 locks those itself. It is what makes an
+rows — sm1 orders writes to those itself. It is what makes an
 **in-memory** catalog safe: the definition a transaction uses
 is a pointer into shared memory, DDL replaces it at commit,
 and this lock is the only thing stopping that replacement
@@ -459,9 +459,9 @@ table whose count is least bounded.
 | `s` | build state | int2 | — | absent: valid |
 | `v` | eval blob | bytea | — | partial or expression |
 
-State 0 is building, 1 valid, 2 failed (`SM3_DESIGN.md` §3);
+State 0 is pending, 1 valid, 2 failed (`SM3_DESIGN.md` §3);
 absent reads as valid, which keeps `CATALOG.md` §3's rule, so
-a building or failed index writes `s` and a plain one does
+a pending or failed index writes `s` and a plain one does
 not. `m` is §10.2's access method, true as "btree
 implicitly" until the first hash, GiST or GIN index.
 
@@ -856,3 +856,178 @@ columns and indexes went when those got keys of their own;
 (`src/catalog/blob.cc`). A reader that has a count wrong reads
 one kind of part as another, and whether that is caught is
 luck. §4's tagged fields are what removes them.
+
+---
+
+## 11. An example: what one table takes
+
+A table `orders` in `public`, with 1,000 columns and 10
+indexes, as the catalog stores it today (`CATALOG.md` §2,
+§3). Say the table got oid 1000, its indexes oids 1001 to
+1010 in the order they were made, and its store is sm1's
+store 7. `public` is namespace oid 2.
+
+It takes **1,022 entries** in the catalog store:
+
+| Kind | Entries | One for |
+| --- | --- | --- |
+| `TABLE` | 1 | the table's own fields |
+| `COLUMN` | 1,000 | each column |
+| `INDEX` | 10 | each index |
+| `NAME` | 11 | the table's name and each index's name |
+
+### 11.1 The entries
+
+A key is a kind and then the kind's columns; a value is the
+fields listed. `→` separates the two.
+
+**`TABLE`**, keyed by the table's oid:
+
+```
+TABLE | 1000  →  namespace oid 2
+                 name "orders"
+                 storeid 7
+                 rowno sequence "sm3.rowno.1000"
+                 next index relid 12
+```
+
+It says nothing of the columns or indexes, not even how many
+there are. The next index relid is 12 because the heap is
+relid 1 and the ten indexes took 2 to 11; a relid is never
+handed out twice, so it only goes up.
+
+**`COLUMN`**, keyed by the table's oid and the column's
+attnum, its 0-based place:
+
+```
+COLUMN | 1000 | 0    →  name "id", type int8, typmod none,
+                        not null, not dropped
+COLUMN | 1000 | 1    →  name "note", type text, typmod none,
+                        nullable, not dropped,
+                        missing value "n/a", collation oid 1500
+…
+COLUMN | 1000 | 999  →  name "c999", type int4, …
+```
+
+A column has no oid; the pair (1000, 3) is its whole identity.
+Its entries sort by attnum, so a scan from `COLUMN | 1000`
+returns the columns in the order rows are laid out by. A
+dropped column keeps its entry, with `dropped` set: its place
+is never given to another.
+
+**`INDEX`**, keyed by the table's oid and the index's own:
+
+```
+INDEX | 1000 | 1001  →  oid 1001, name "orders_pkey", relid 2,
+                        unique, state valid,
+                        key columns: (attnum 0, ascending,
+                                      nulls last)
+INDEX | 1000 | 1002  →  oid 1002, name "orders_note", relid 3,
+                        not unique, state pending,
+                        key columns: (attnum 1, descending,
+                                      nulls first,
+                                      collation oid 1500),
+                                     (attnum 0, ascending,
+                                      nulls last)
+                        include columns: attnum 2
+…
+INDEX | 1000 | 1010  →  …
+```
+
+An index is an object, so it has an oid, and its key carries
+it. Its key columns, include columns and the columns its
+predicate reads are parts of the index and live inside its one
+value. Entries sort by index oid, which is the order the
+indexes were made in.
+
+**`NAME`**, keyed by a namespace's oid and a name:
+
+```
+NAME | 2 | "orders"       →  a table, oid 1000
+NAME | 2 | "orders_note"  →  an index, oid 1002, of table 1000
+NAME | 2 | "orders_pkey"  →  an index, oid 1001, of table 1000
+…
+```
+
+### 11.2 What `NAME` is for
+
+A `NAME` entry is how the catalog makes a name unique. That is
+its job, and it is nearly its only one.
+
+- **The key is the claim.** `NAME | 2 | "orders"` exists
+  exactly while something in namespace 2 is called `orders`.
+  Creating a table inserts it; a name already taken is the
+  store's own `SM_ERR_DUPKEY`, with no check the catalog has
+  to write.
+- **It settles two sessions at once.** If two transactions
+  create `orders` in `public` together, both insert the same
+  key. The second waits for the first's uncommitted version,
+  then fails with `SM_ERR_DUPKEY` if the first commits, or
+  goes ahead if it aborts (`LOCK.md` §4.1). No lock is taken
+  for this; the write is the lock.
+- **One name space per namespace.** Tables, indexes and
+  collations in a namespace all claim names with the same
+  key shape, so a table and an index cannot share a name, as
+  in PostgreSQL. A namespace's own name is claimed under
+  namespace oid 0, which is no namespace:
+  `NAME | 0 | "public" → a namespace, oid 2`. That is what
+  makes namespace names unique in the database.
+- **The value says who holds the name**: the kind of object,
+  its oid, and for an index its table's oid. It lets the
+  entry be read on its own.
+- **A column has none.** A column's name need only be unique
+  in its table, and the DDL checks that against the table's
+  record. So the 1,000 columns add no `NAME` entries.
+
+What it is **not** used for is finding things. Looking a table
+up by name does not read `NAME`: `cat_get_table(…, nspoid,
+name)` uses a map in memory, built when the catalog is loaded
+from each table's own entry, which holds its namespace and
+name. Finding an index by name walks the tables' indexes in
+memory. The one thing read back out of `NAME` at load is each
+collation's namespace, which a collation's own entry does not
+record.
+
+A `NAME` entry is kept in step by whatever changes the name's
+owner. `cat_put_table` compares the names in the record it is
+given with the names in the record it replaces: it inserts the
+new ones first, so a taken name fails before anything is
+changed, and then erases the ones no longer there. So:
+
+| DDL | `NAME` entries |
+| --- | --- |
+| create the table | insert `orders` |
+| create an index | insert the index's name |
+| rename the table to `sales` | insert `sales`, then erase `orders` |
+| drop an index | erase the index's name |
+| add or drop a column | none |
+| drop the table | erase `orders` and all ten index names |
+
+### 11.3 What each DDL writes
+
+| DDL | Entries written |
+| --- | --- |
+| create the table | 1 `TABLE`, 1,000 `COLUMN`, 1 `NAME` |
+| create one index | 1 `INDEX`, 1 `NAME`, and the `TABLE` entry, for its next relid |
+| an index's build ends | that 1 `INDEX`, for its state |
+| add a column | 1 `COLUMN` |
+| drop a column | that 1 `COLUMN`, marked dropped |
+| rename the table | the `TABLE` entry, 2 `NAME` |
+| truncate | the `TABLE` entry, for its new storeid |
+| drop the table | all 1,022 erased, one by one |
+
+### 11.4 The same table under §3's keys
+
+§3 proposes spelling these keys as words. Nothing about the
+example changes but the bytes:
+
+```
+tbl:00000000000003e8                          the table
+tbl:00000000000003e8:att:0000 … :att:03e7     its 1,000 columns
+tbl:00000000000003e8:idx:00000000000003e9     an index
+name:0000000000000002:orders                  the name index
+```
+
+There the columns and indexes nest under the table's own key,
+so one scan of `tbl:00000000000003e8:` returns the whole
+table; today they are three kinds apart, read by three scans.

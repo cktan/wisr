@@ -1,5 +1,5 @@
 /*
- * test_lock.cc -- row locks, first-committer-wins, retryable
+ * test_lock.cc -- locks and waits, first-committer-wins, retryable
  * errors, and deadlock detection (SM1_DESIGN.md §5, §6.2, §12.1).
  *
  * The timelines two sessions play out against each other live
@@ -592,7 +592,7 @@ TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
 TEST_CASE(
     "a qa_nowait session is told a write would block, and may repeat it") {
   // Verify a write that would wait fails with SM_ERR_BLOCKED instead.
-  // 1. A updates "x" and holds its row lock.
+  // 1. A updates "x"; its version is uncommitted.
   // 2. B, set qa_nowait, updates "x": SM_ERR_BLOCKED, not retryable,
   //    and B's transaction is still active, for it writes "y".
   // 3. B repeats the update and is told the same.

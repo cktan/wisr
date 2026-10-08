@@ -171,8 +171,9 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
 
 /*
  * Take the table-oid lock of the table oid in mode (SM3_DESIGN.md
- * §2): sm1's row lock on its LOCK key, which no one writes, so
- * the lock waits on DDL but never fails as a stale read would.
+ * §2): sm1's OID lock on the table's oid, a name nothing writes,
+ * so the lock waits on DDL but never fails as a stale read would.
+ * A namespace's lock is taken the same way, on its oid.
  */
 int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode);
 

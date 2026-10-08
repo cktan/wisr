@@ -2,7 +2,7 @@
 # built in the background (sm3/SM3_DESIGN.md section 3): writers and
 # readers go on meanwhile, and (index-wait ...) waits for it to end.
 #
-# 1. An index on a table with committed rows is building, then valid;
+# 1. An index on a table with committed rows is pending, then valid;
 #    after the wait it holds every row and is maintained like any other.
 # 2. A unique index over two rows with one key fails to build: the wait
 #    raises the build's own error, and the index can be neither scanned

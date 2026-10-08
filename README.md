@@ -57,8 +57,7 @@ the wrapper through the `rel/` test suite.
   version's bytes, the status table, and how a reader turns a
   writer's id into a commit timestamp
 - `sm1/WRITELOCK.md` — writes that keep no row lock: the
-  uncommitted version stands for the lock, as in PostgreSQL;
-  designed, not built
+  uncommitted version stands for the lock, as in PostgreSQL
 - `sm1/COMMITCACHE.md` — the commit cache: what it holds,
   the life of an entry, and that it starts empty after a
   restart

@@ -77,7 +77,7 @@ These are settled and drive `SM3_DESIGN.md`.
   point, and DDL is transactional for free.
 - **Schema changes are lock-based, as in PostgreSQL.** The
   catalog is not versioned; a transaction is kept away from a
-  concurrent DDL with sm1's row locks on the schema row, not
+  concurrent DDL with an sm1 lock on the table's oid, not
   given an old definition (`SM3_DESIGN.md` §2).
 - **One sm1 store per table.** A table's heap, its indexes
   and its TOAST data are rels in one sm1 store, told apart by

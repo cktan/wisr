@@ -260,7 +260,7 @@ an abort deletes nothing.
 ### 3.6 Indexes
 
 A load maintains every index of the table, in any mode.
-An index that is still building is maintained too, as any
+An index that is still pending is maintained too, as any
 writer maintains it.
 
 A restore does not need that. `pg_dump` loads a table's rows

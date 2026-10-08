@@ -41,7 +41,7 @@
 (session-use t2)
 (begin :rc)
 (assert-eq (read claims c7) [7 "free" nil])
-# Step 2: T1 writes row 7 and holds the row lock.
+# Step 2: T1 writes row 7; its version is uncommitted.
 (session-use t1)
 (update claims c7 [7 "taken" "w1"])
 # Step 3: T2's write blocks on that lock.

@@ -189,7 +189,7 @@ struct db_t {
   std::function<rocksdb::Status(uint64_t commit_ts)> test_before_commit;
 
   /*
-   * Row locks (§5.1): lock key -> the transactions holding it.
+   * The lock table (§5.1): lock key -> the transactions holding it.
    * Each holder holds it in a mode of its own, and every pair of
    * holders' modes is compatible (sm1.h, lockmode_t). One mutex
    * covers the table and every session's

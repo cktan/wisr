@@ -86,7 +86,7 @@ enum class index_state_t : uint8_t { pending = 0, valid = 1, failed = 2 };
  * were made in.
  */
 
-/* A column, as its table's blob holds it. */
+/* A column, as the catalog stores it. */
 struct column_rec_t {
   std::string name;
   uint8_t type_code;
@@ -109,7 +109,7 @@ struct index_key_rec_t {
   bool operator==(const index_key_rec_t&) const = default;
 };
 
-/* An index, as its table's blob holds it. */
+/* An index, as the catalog stores it. */
 struct index_rec_t {
   uint64_t oid;
   std::string name;

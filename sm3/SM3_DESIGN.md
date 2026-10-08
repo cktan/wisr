@@ -103,15 +103,16 @@ but it does not give a transaction the old schema either: it
 keeps DDL and users of a table apart with table locks, so a
 transaction that first touches a table after a DDL commits sees
 the new definition, alongside its old data snapshot. sm3 does
-the same with sm1's row locks, in Gray's modes, as PostgreSQL's
-table locks are:
+the same with an sm1 OID lock on the table's oid, the
+**table-oid lock**, in Gray's modes, as PostgreSQL's table
+locks are:
 
 - every transaction that reads a table takes `sm1::lock` IS on
-  that table's schema row, and one that writes it IX, held to
+  that table's oid, and one that writes it IX, held to
   the end of the transaction, before it reads the definition —
   PostgreSQL's AccessShareLock and RowExclusiveLock, which
   coexist;
-- DDL takes the schema row X, which waits out the transactions
+- DDL takes it X, which waits out the transactions
   in flight and blocks new ones until it commits; a plain index
   build takes S, which waits out writers and blocks new ones but
   lets readers through, as PostgreSQL's ShareLock does (§3);
@@ -216,7 +217,8 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
 
 - **Unique enforcement.** An insert into the index's store
   fails with `SM_ERR_DUPKEY`, and a concurrent inserter of the
-  same key blocks on the row lock, then fails with a conflict.
+  same key waits for the first one's uncommitted version, then
+  fails the same way if that commits (`LOCK.md` §4.1).
 - **Halloween protection.** A cursor's view is fixed at open,
   so updating an indexed column while scanning the index does
   not revisit the moved entries.
@@ -385,8 +387,10 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
      other.
 
   Step 3 is safe because of the order a writer works in. It
-  changes the heap row before any index and holds that row X
-  to its commit, so the task and a writer never work on one
+  changes the heap row before any index, and its uncommitted
+  version of the row stands until it commits, which the
+  task's row lock waits for; a writer in turn waits for the
+  task's row lock. So the task and a writer never work on one
   row at once. Either the task waits for the writer and then
   finds the entry already made, or the writer waits for the
   task and then finds the entry to remove. No second scan is
@@ -500,7 +504,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     path, and the default is unmeasured;
   - two indexes built on one table walk its heap twice, where
     one pass could fill both;
-  - the schema row is a hot key: every reader and writer of the
+  - a table's oid is a hot name: every reader and writer of the
     table locks it, so its lock-table mutex is contended. The
     table is one mutex, not sharded, so this is the first place
     a benchmark will point.
@@ -654,8 +658,8 @@ UPDATE jobs SET state='taken', owner=:me WHERE state='free';
 | Step | What happens |
 | --- | --- |
 | 1 | both statements take a snapshot in which row 7 is `free` |
-| 2 | T1 writes row 7 and holds the row lock |
-| 3 | T2's write blocks on that lock |
+| 2 | T1 writes row 7; its version is uncommitted |
+| 3 | T2's write waits for T1 |
 | 4 | T1 commits; T2's write is refused with `SM_ERR_UPDATED` |
 | 5 | T2 reads the latest image: `state='taken'` |
 | 6 | T2 re-evaluates `state='free'` against it, false, and writes nothing |
@@ -968,7 +972,7 @@ that matter most are the ones with two sessions in them.
    definition to work from. Tables, indexes, columns, types,
    collations, and each column's dropped mark and missing
    value, in memory, written through to sm2 and loaded at
-   startup, under the schema-row locks of §2. A DDL change
+   startup, under the table-oid locks of §2. A DDL change
    stays private until it commits in a session's overlay
    (`CATALOG.md` §4).
    Verified: DDL rolls back with its transaction, the

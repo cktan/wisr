@@ -238,7 +238,7 @@ std::vector<std::pair<uint64_t, std::string>> rows(sm3::table_t *t) {
 /*
  * A scan of index oid of t read straight from sm2, in the table's
  * own session, whatever the index's state: a test looks into a
- * building index, and into one its snapshot may not use, both of
+ * pending index, and into one its snapshot may not use, both of
  * which tbl_idx_scan refuses.
  */
 class peek_t {
@@ -776,10 +776,10 @@ TEST_CASE("an inserter that began before its rival committed, at every level") {
   }
 }
 
-TEST_CASE("while an index is building, rows it has not reached are written") {
-  // Verify maintenance of a building index (SM3_DESIGN.md §3).
+TEST_CASE("while an index is pending, rows it has not reached are written") {
+  // Verify maintenance of a pending index (SM3_DESIGN.md §3).
   // 1. Rows 7, 8 and 10 are committed; then an index on owner is
-  //    made, on a table committed earlier, so it is building and
+  //    made, on a table committed earlier, so it is pending and
   //    holds no entry for them.
   // 2. Updating row 7 succeeds though its old entry is not there,
   //    and the row is covered from then on.
@@ -858,7 +858,7 @@ TEST_CASE("a failed index is not maintained, and cannot be scanned") {
 
 namespace {
 
-/* An index on owner, made on jobs after its rows: building. */
+/* An index on owner, made on jobs after its rows: pending. */
 uint64_t late_index(jobs_t &f, bool unique = false) {
   std::vector<sm3::index_key_spec_t> by_owner = {
       {2, false, false, std::nullopt}};
@@ -886,7 +886,7 @@ TEST_CASE("a build fills an index in batches, and it then agrees") {
   // 3. A batch run again over rows already covered adds nothing and
   //    fails nothing.
   // 4. Marked valid, the index agrees with the heap.
-  // 5. A batch on an index that is not building is SM_ERR_INVALID,
+  // 5. A batch on an index that is not pending is SM_ERR_INVALID,
   //    and on one the table does not have, SM_ERR_NOTFOUND.
   jobs_t f;
   start(f.a);
@@ -935,7 +935,7 @@ TEST_CASE("a build fills an index in batches, and it then agrees") {
 
 TEST_CASE("a build waits for a writer, and finds the row covered") {
   // Verify the race the row lock settles, the writer first.
-  // 1. Rows 1 and 2 are committed; an index on owner is building.
+  // 1. Rows 1 and 2 are committed; an index on owner is pending.
   // 2. A updates row 1's owner and holds the row. B, the build, set
   //    qa_nowait, runs a batch: SM_ERR_BLOCKED on row 1, and it
   //    aborts the batch.
@@ -989,7 +989,7 @@ TEST_CASE("a build waits for a writer, and finds the row covered") {
 
 TEST_CASE("a writer waits for a build, and removes the entry it added") {
   // Verify the race the row lock settles, the build first.
-  // 1. Row 1 is committed; an index on owner is building.
+  // 1. Row 1 is committed; an index on owner is pending.
   // 2. A, a writer set qa_nowait, begins. B, the build, covers row 1
   //    and holds its lock: A's update of row 1 is SM_ERR_BLOCKED.
   // 3. B commits. A's update goes through: the heap row had not
@@ -1033,9 +1033,9 @@ TEST_CASE("a writer waits for a build, and removes the entry it added") {
 }
 
 TEST_CASE("a unique build fails on a duplicate it reaches late") {
-  // Verify what a building unique index cannot refuse at once.
+  // Verify what a pending unique index cannot refuse at once.
   // 1. Rows 1 and 2 are committed with one owner; a unique index on
-  //    owner is made, and is building.
+  //    owner is made, and is pending.
   // 2. A third row with that owner inserts: no entry stands against
   //    it yet.
   // 3. The backfill reaches the rows: SM_ERR_DUPKEY, and the batch
@@ -1181,7 +1181,7 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
 }
 
 TEST_CASE("a build skips a row deleted under it, and adds back nothing") {
-  // Verify deletes against a building index, on four rows.
+  // Verify deletes against a pending index, on four rows.
   // 1. Row 1: the build covers it and commits; A then deletes it, and
   //    its entry goes with it.
   // 2. Row 2: A deletes it and has not committed. The build, set
@@ -1282,7 +1282,7 @@ TEST_CASE("a build skips a row deleted under it, and adds back nothing") {
 TEST_CASE("a deleter waits for a build, then removes the entry it added") {
   // Verify a delete of a row in the build's uncommitted batch, with
   // the deleter at each isolation level.
-  // 1. Row 1 is committed; an index on owner is building. A, the
+  // 1. Row 1 is committed; an index on owner is pending. A, the
   //    deleter, set qa_nowait, begins and reads the row.
   // 2. B, the build, covers row 1 and holds its lock: A's delete is
   //    SM_ERR_BLOCKED.
@@ -1377,7 +1377,7 @@ void build(jobs_t &f, uint64_t oid) {
 
 TEST_CASE("a snapshot older than a build is kept off the index") {
   // Verify the guard at REPEATABLE READ and SERIALIZABLE.
-  // 1. Two rows are committed; an index on owner is building.
+  // 1. Two rows are committed; an index on owner is pending.
   // 2. A begins, which takes its snapshot, and does not touch the
   //    table: marking an index valid waits out every transaction
   //    that holds the table's oid lock, so the guard is for those
@@ -1426,7 +1426,7 @@ TEST_CASE("a snapshot older than a build is kept off the index") {
 
 TEST_CASE("read committed may use an index from its next statement on") {
   // Verify the guard at READ COMMITTED, statement by statement.
-  // 1. An index on owner is building. A begins a statement and reads
+  // 1. An index on owner is pending. A begins a statement and reads
   //    another table, which takes the statement's snapshot without
   //    the table-oid lock of jobs. B builds the index and marks it valid.
   // 2. In that statement A may not use it. In its next statement,
@@ -1480,7 +1480,7 @@ TEST_CASE("read committed may use an index from its next statement on") {
 
 TEST_CASE("an index is usable by its state, and by who made it valid") {
   // Verify the rest of tbl_index_usable.
-  // 1. A building index is not usable, and its scan is refused.
+  // 1. A pending index is not usable, and its scan is refused.
   // 2. The transaction that marks it valid may use it at once,
   //    before it commits; another whose snapshot is older may not.
   // 3. A failed index is not usable.
@@ -1852,7 +1852,7 @@ TEST_CASE("writers go on while an index is built, and it still agrees") {
   // while a worker backfills.
   // 1. The builder is started with small batches. 300 rows are
   //    committed, and an index on owner is created.
-  // 2. While it is building, the test updates, deletes and inserts
+  // 2. While it is being built, the test updates, deletes and inserts
   //    rows, one transaction each, retrying on a retryable error.
   // 3. After the wait the index is valid and agrees with the heap.
   jobs_t f;
@@ -1909,7 +1909,7 @@ TEST_CASE("writers go on while an index is built, and it still agrees") {
 
 namespace {
 
-/* An index on jobs with a blob, made after its rows: building. */
+/* An index on jobs with a blob, made after its rows: pending. */
 uint64_t late_eval(jobs_t &f, const std::string &name, const std::string &blob,
                    std::vector<sm3::index_key_spec_t> keys,
                    std::vector<int32_t> reads, bool unique = false) {
@@ -2155,7 +2155,7 @@ TEST_CASE("an evaluator that fails fails the write, and the build") {
   // 2. Its build fails: the wait returns the evaluator's own error
   //    and message, and the index is failed, so writes leave it
   //    alone from then on.
-  // 3. With such an index still building, a write fails with the
+  // 3. With such an index still pending, a write fails with the
   //    evaluator's error.
   // 4. A catalog loaded with no evaluator refuses a write to a table
   //    that has an evaluated index, with SM_ERR_INVALID.

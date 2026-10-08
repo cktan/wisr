@@ -40,7 +40,7 @@ so they are all comparable (`SM1_DESIGN.md` §4.1).
 | --- | --- | --- |
 | `snapshot_ts` | at `sm1::begin`, without using a counter value | the point in time a reader sees the database at |
 | `xid` | at a transaction's first write | the transaction's identity. A read-only transaction has none |
-| `wts` | at each write, after the row lock is held | the version's write timestamp, part of its key |
+| `wts` | at each write, under the key's latch | the version's write timestamp, part of its key |
 | `seq` | at each write, counting from 1 within the transaction | what tells two writes of one key by one transaction apart |
 | `commit_ts` | at commit | the point in time the transaction becomes visible |
 
@@ -51,9 +51,11 @@ snapshot_ts  <  xid  <  wts of each write  <  commit_ts
 ```
 
 **Versions of a key sort in commit order.** A writer takes
-its `wts` after it holds the row lock and its `commit_ts`
-before it releases it. So if `T2` committed a key after `T1`
-did, `T2.wts > T1.commit_ts > T1.wts`. That is why a reader
+its `wts` under the key's latch, when no other writer of the
+key is in flight, and no other can take one for that key
+until this one has ended, so after its `commit_ts`. So if
+`T2` committed a key after `T1` did,
+`T2.wts > T1.commit_ts > T1.wts`. That is why a reader
 can seek by `wts` and meet versions in the order they were
 committed, at every isolation level.
 
@@ -438,7 +440,7 @@ pairing of levels.
    RocksDB; from here they resolve as committed.
 3. Move the `xid` from the active table to the commit cache.
 4. Publish: let `visible_ts` pass the `commit_ts`.
-5. Release the row locks.
+5. Release its locks, and wake whoever waits on it.
 
 **Abort** writes nothing. The transaction leaves the active
 table, and its versions resolve as dead for want of a record.

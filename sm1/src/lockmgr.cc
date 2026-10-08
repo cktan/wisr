@@ -1,8 +1,10 @@
 /*
- * lockmgr.cc -- row locks in Gray's modes, and deadlock detection
- * (SM1_DESIGN.md §5.1).
+ * lockmgr.cc -- the lock table: locks in Gray's modes, the write
+ * latches, and deadlock detection (SM1_DESIGN.md §5.1).
  *
- * A lock is keyed exactly by (storeid, userkey) and held by the
+ * A lock is keyed exactly by (locktype, storeid, userkey) -- a row
+ * lock names a key in a store, an OID lock an object in none -- and
+ * is held by the
  * sessions whose transactions took it, each in a mode of its own,
  * every pair of them compatible (sm1.h, lockmode_t). sm1::lock
  * takes any mode, held until the transaction commits or aborts,
@@ -312,7 +314,7 @@ int lock_try(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
 /* For a write: 2 if another holder conflicts, else convert our own. */
 int lock_write_check(sm1::session_t *s, uint64_t storeid, rocksdb::Slice key) {
   db_t *db = s->db;
-  // A write meets row locks and no other namespace.
+  // A write meets row locks and no other lock type.
   std::string k = lock_key(sm1::LOCKTYPE_ROW, storeid, key);
   // Hold lock_mu for the table.
   std::lock_guard<std::mutex> guard(db->lock_mu);

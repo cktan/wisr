@@ -74,6 +74,14 @@ entry in a table.
 - a **latch**, a short mutex hashed on store and key, held
   only inside a call, which makes check-then-write one step.
 
+A lock-table entry is one of two kinds, by what it names
+(`LOCK.md` §1). A **row lock** names a key in a store: a heap
+row locked without being written, or a catalog key about to
+be. An **OID lock** names an object's oid, a key in no store:
+a table's is its **table-oid lock**, and a namespace has one
+too. "Row lock" never means what a write does to the row it
+writes: that is the uncommitted version.
+
 **index.** Two things: an sm3 **index**, an object that maps
 an encoded key to a `rowno`; and "index" used loosely of a
 lookup structure in the catalog — the **name index** and the

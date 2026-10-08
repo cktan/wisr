@@ -72,8 +72,9 @@ A history is serializable exactly when this graph has no cycle.
 ### Why SSI only tracks rw edges
 
 Under snapshot isolation the ww and wr edges are already under
-control. Row locks plus first-committer-wins (`SM1_DESIGN.md`
-§5.2) keep concurrent writers of the same key apart, and a
+control. A writer waits for another's uncommitted version of
+its key, and with first-committer-wins (`SM1_DESIGN.md`
+§5.2) that keeps concurrent writers of the same key apart, and a
 snapshot never sees uncommitted data. The only edges that can
 close a cycle are **rw** edges between concurrent transactions.
 Fekete et al. (2005) proved that every cycle under SI contains

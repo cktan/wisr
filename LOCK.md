@@ -103,16 +103,16 @@ something the caller is not writing.
 | --- | --- | --- | --- | --- |
 | 1 | a table's definition | `OID`, `be64(oid)` | DDL against readers and writers of the in-memory catalog | built: `cat_lock_table` → `lock_table` → `sm1::lock` |
 | 2 | a heap row, read intent | `ROW`, `(storeid, relid ‖ rowno)` | `FOR SHARE`, `FOR UPDATE`, an index build against a writer | built: `tbl_lock` → `rel_lock` → `sm1::lock` |
-| 3 | a catalog key, lock-then-read | `ROW`, `(store 0, "U" ‖ key)` | DDL takes X, reads the row current, may rewrite it | built: `catkv_lock` → `sm1::lock` |
-| 4 | a namespace | `(oid)` | `DROP SCHEMA` against `CREATE` in it | not built |
+| 3 | a catalog key, lock-then-write | `ROW`, `(store 0, "U" ‖ key)` | DDL takes X on each key it is about to write, reads it current, rewrites it | built: `catkv_lock` → `sm1::lock` |
+| 4 | a namespace | `OID`, `be64(oid)` | `DROP SCHEMA` against `CREATE` in it | built: `cat_put_table`, `cat_put_collation` take S, `cat_del_namespace` X → `lock_table` → `sm1::lock` |
 | 5 | a collation or type in use | `(oid)` | `DROP COLLATION` with a column using it | not built |
 | 6 | an index as an object | `(oid)` | `DROP INDEX` against a scan on it | subsumed by 1 |
 | 7 | a sequence as an object | `(oid)` | `CREATE` / `DROP SEQUENCE` | no sm3 sequence object yet |
 
 Every name in use today is **fixed-width**: 9 bytes for a
-table-oid lock, 11 for a heap row, 13 for the catalog keys DDL
-locks. Nothing in sm1 requires that; `max_keylen` 4096 bounds
-a name.
+table-oid lock, 11 for a heap row, and the width of its kind
+for each catalog key DDL locks. Nothing in sm1 requires that;
+`max_keylen` 4096 bounds a name.
 
 ---
 

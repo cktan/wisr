@@ -989,10 +989,11 @@ The rules it must satisfy:
   data is a codec with a policy in it; sm2 stores what it is
   given.
 - **A `rel` borrows its schema.** sm3's catalog owns it and
-  keeps it alive for the `rel`'s lifetime, and takes the schema
-  row's lock before changing it (`sm3/SM3_DESIGN.md` §2), which
-  it must do anyway. With no schema version (§4) a `rel` has one
-  schema, the current one, so there is nothing to copy for.
+  keeps it alive for the `rel`'s lifetime, and takes the
+  table-oid lock before changing it (`sm3/SM3_DESIGN.md` §2),
+  which it must do anyway. With no schema version (§4) a `rel`
+  has one schema, the current one, so there is nothing to copy
+  for.
 
 Open: whether the tuple-at-a-time shape above is enough, or a
 batched form earns its keep once there are predicates to push

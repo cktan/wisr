@@ -2,7 +2,7 @@
 # scripted with (qa-nowait true): the step fails with ERR_BLOCKED and is
 # repeated once the holder has let go.
 #
-# 1. A row write blocks on a row lock, then meets ERR_UPDATED at READ
+# 1. A row write blocks on another's, then meets ERR_UPDATED at READ
 #    COMMITTED, re-reads the latest image and re-checks before writing.
 # 2. The same race where the re-check fails: the second claim writes
 #    nothing.
@@ -34,7 +34,7 @@
 (session-use s2)
 (qa-nowait true)
 
-# 1. s1 claims job 7 and holds its row lock.
+# 1. s1 claims job 7; its write is uncommitted.
 (session-use s1)
 (begin :rc)
 (assert-eq (read jobs 1) [7 "free" nil])
