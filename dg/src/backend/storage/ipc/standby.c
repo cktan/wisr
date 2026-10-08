@@ -15,7 +15,7 @@
  *
  *-------------------------------------------------------------------------
  */
-#include "storage/standby.h"
+#include "postgres.h"
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
@@ -24,12 +24,12 @@
 #include "access/xlogutils.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postgres.h"
 #include "replication/slot.h"
 #include "storage/bufmgr.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/sinvaladt.h"
+#include "storage/standby.h"
 #include "utils/hsearch.h"
 #include "utils/injection_point.h"
 #include "utils/ps_status.h"
@@ -915,7 +915,8 @@ void StandbyAcquireAccessExclusiveLock(TransactionId xid, Oid dbOid,
   Assert(OidIsValid(relOid));
 
   /* Create a hash entry for this xid, if we don't have one already. */
-  xidentry = hash_search(RecoveryLockXidHash, &xid, HASH_ENTER, &found);
+  xidentry = (RecoveryLockXidEntry *)hash_search(RecoveryLockXidHash, &xid,
+                                                 HASH_ENTER, &found);
   if (!found) {
     Assert(xidentry->xid == xid); /* dynahash should have set this */
     xidentry->head = NULL;
@@ -925,7 +926,8 @@ void StandbyAcquireAccessExclusiveLock(TransactionId xid, Oid dbOid,
   key.xid = xid;
   key.dbOid = dbOid;
   key.relOid = relOid;
-  lockentry = hash_search(RecoveryLockHash, &key, HASH_ENTER, &found);
+  lockentry = (RecoveryLockEntry *)hash_search(RecoveryLockHash, &key,
+                                               HASH_ENTER, &found);
   if (!found) {
     /* It's new, so link it into the XID's list ... */
     lockentry->next = xidentry->head;
@@ -974,7 +976,8 @@ static void StandbyReleaseLocks(TransactionId xid) {
   RecoveryLockXidEntry *entry;
 
   if (TransactionIdIsValid(xid)) {
-    if ((entry = hash_search(RecoveryLockXidHash, &xid, HASH_FIND, NULL))) {
+    if ((entry = (RecoveryLockXidEntry *)hash_search(RecoveryLockXidHash, &xid,
+                                                     HASH_FIND, NULL))) {
       StandbyReleaseXidEntryLocks(entry);
       hash_search(RecoveryLockXidHash, entry, HASH_REMOVE, NULL);
     }
@@ -1009,7 +1012,7 @@ void StandbyReleaseAllLocks(void) {
   elog(DEBUG2, "release all standby locks");
 
   hash_seq_init(&status, RecoveryLockXidHash);
-  while ((entry = hash_seq_search(&status))) {
+  while ((entry = (RecoveryLockXidEntry *)hash_seq_search(&status))) {
     StandbyReleaseXidEntryLocks(entry);
     hash_search(RecoveryLockXidHash, entry, HASH_REMOVE, NULL);
   }
@@ -1028,7 +1031,7 @@ void StandbyReleaseOldLocks(TransactionId oldxid) {
   RecoveryLockXidEntry *entry;
 
   hash_seq_init(&status, RecoveryLockXidHash);
-  while ((entry = hash_seq_search(&status))) {
+  while ((entry = (RecoveryLockXidEntry *)hash_seq_search(&status))) {
     Assert(TransactionIdIsValid(entry->xid));
 
     /* Skip if prepared transaction. */

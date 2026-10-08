@@ -26,8 +26,8 @@ typedef struct JsonPathString {
 typedef void *yyscan_t;
 #endif
 
-#include "jsonpath_gram.h"
 #include "utils/jsonpath.h"
+#include "jsonpath_gram.h"
 
 #define YY_DECL extern int     jsonpath_yylex(YYSTYPE *yylval_param, \
 							  JsonPathParseResult **result, \

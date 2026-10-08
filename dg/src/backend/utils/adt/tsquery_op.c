@@ -27,7 +27,7 @@ Datum tsquery_numnode(PG_FUNCTION_ARGS) {
   PG_RETURN_INT32(nnode);
 }
 
-static QTNode *join_tsqueries(TSQuery a, TSQuery b, int8 operator,
+static QTNode *join_tsqueries(TSQuery a, TSQuery b, int8 operator_,
                               uint16 distance) {
   QTNode *res = (QTNode *)palloc0(sizeof(QTNode));
 
@@ -35,8 +35,8 @@ static QTNode *join_tsqueries(TSQuery a, TSQuery b, int8 operator,
 
   res->valnode = (QueryItem *)palloc0(sizeof(QueryItem));
   res->valnode->type = QI_OPR;
-  res->valnode->qoperator.oper = operator;
-  if (operator== OP_PHRASE)
+  res->valnode->qoperator.oper = operator_;
+  if (operator_ == OP_PHRASE)
     res->valnode->qoperator.distance = distance;
 
   res->child = (QTNode **)palloc0(sizeof(QTNode *) * 2);
@@ -242,7 +242,7 @@ static char **collectTSQueryValues(TSQuery a, int *nvalues_p) {
       int len = ptr->qoperand.length;
       char *val;
 
-      val = palloc(len + 1);
+      val = (char *)palloc(len + 1);
       memcpy(val, operand + ptr->qoperand.distance, len);
       val[len] = '\0';
 

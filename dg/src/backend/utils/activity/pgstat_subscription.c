@@ -28,7 +28,7 @@ void pgstat_report_subscription_error(Oid subid, bool is_apply_error) {
 
   entry_ref = pgstat_prep_pending_entry(PGSTAT_KIND_SUBSCRIPTION, InvalidOid,
                                         subid, NULL);
-  pending = entry_ref->pending;
+  pending = (PgStat_BackendSubEntry *)entry_ref->pending;
 
   if (is_apply_error)
     pending->apply_error_count++;
@@ -45,7 +45,7 @@ void pgstat_report_subscription_conflict(Oid subid, ConflictType type) {
 
   entry_ref = pgstat_prep_pending_entry(PGSTAT_KIND_SUBSCRIPTION, InvalidOid,
                                         subid, NULL);
-  pending = entry_ref->pending;
+  pending = (PgStat_BackendSubEntry *)entry_ref->pending;
   pending->conflict_count[type]++;
 }
 

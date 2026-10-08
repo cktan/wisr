@@ -906,7 +906,8 @@ static bool XLogCompressBackupBlock(const PageData *page, uint16 hole_offset,
 
   switch ((WalCompression)wal_compression) {
   case WAL_COMPRESSION_PGLZ:
-    len = pglz_compress(source, orig_len, dest, PGLZ_strategy_default);
+    len = pglz_compress((const char *)source, orig_len, (char *)dest,
+                        PGLZ_strategy_default);
     break;
 
   case WAL_COMPRESSION_LZ4:
@@ -1278,8 +1279,8 @@ void InitXLogInsert(void) {
     max_registered_buffers = XLR_NORMAL_MAX_BLOCK_ID + 1;
   }
   if (rdatas == NULL) {
-    rdatas = MemoryContextAlloc(xloginsert_cxt,
-                                sizeof(XLogRecData) * XLR_NORMAL_RDATAS);
+    rdatas = (XLogRecData *)MemoryContextAlloc(
+        xloginsert_cxt, sizeof(XLogRecData) * XLR_NORMAL_RDATAS);
     max_rdatas = XLR_NORMAL_RDATAS;
   }
 
@@ -1287,5 +1288,6 @@ void InitXLogInsert(void) {
    * Allocate a buffer to hold the header information for a WAL record.
    */
   if (hdr_scratch == NULL)
-    hdr_scratch = MemoryContextAllocZero(xloginsert_cxt, HEADER_SCRATCH_SIZE);
+    hdr_scratch =
+        (char *)MemoryContextAllocZero(xloginsert_cxt, HEADER_SCRATCH_SIZE);
 }

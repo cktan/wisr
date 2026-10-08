@@ -937,7 +937,7 @@ ObjectAddress DefineTSConfiguration(List *names, List *parameters,
      */
     max_slots =
         MAX_CATALOG_MULTI_INSERT_BYTES / sizeof(FormData_pg_ts_config_map);
-    slot = palloc(sizeof(TupleTableSlot *) * max_slots);
+    slot = (TupleTableSlot **)palloc(sizeof(TupleTableSlot *) * max_slots);
 
     ScanKeyInit(&skey, Anum_pg_ts_config_map_mapcfg, BTEqualStrategyNumber,
                 F_OIDEQ, ObjectIdGetDatum(sourceOid));
@@ -1298,7 +1298,7 @@ static void MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
     /* Allocate the slots to use and initialize them */
     nslots = Min(ntoken * ndict, MAX_CATALOG_MULTI_INSERT_BYTES /
                                      sizeof(FormData_pg_ts_config_map));
-    slot = palloc(sizeof(TupleTableSlot *) * nslots);
+    slot = (TupleTableSlot **)palloc(sizeof(TupleTableSlot *) * nslots);
     for (i = 0; i < nslots; i++)
       slot[i] =
           MakeSingleTupleTableSlot(RelationGetDescr(relMap), &TTSOpsHeapTuple);

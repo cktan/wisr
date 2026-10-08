@@ -127,8 +127,9 @@ json_parse_manifest_incremental_init(JsonManifestParseContext *context) {
   JsonManifestParseState *parse;
   pg_cryptohash_ctx *manifest_ctx;
 
-  incstate = palloc(sizeof(JsonManifestParseIncrementalState));
-  parse = palloc(sizeof(JsonManifestParseState));
+  incstate = (JsonManifestParseIncrementalState *)palloc(
+      sizeof(JsonManifestParseIncrementalState));
+  parse = (JsonManifestParseState *)palloc(sizeof(JsonManifestParseState));
 
   parse->context = context;
   parse->state = JM_EXPECT_TOPLEVEL_START;
@@ -179,7 +180,8 @@ void json_parse_manifest_incremental_chunk(
     JsonManifestParseIncrementalState *incstate, const char *chunk, size_t size,
     bool is_last) {
   JsonParseErrorType res, expected;
-  JsonManifestParseState *parse = incstate->sem.semstate;
+  JsonManifestParseState *parse =
+      (JsonManifestParseState *)incstate->sem.semstate;
   JsonManifestParseContext *context = parse->context;
 
   res = pg_parse_json_incremental(&(incstate->lex), &(incstate->sem), chunk,
@@ -258,7 +260,7 @@ void json_parse_manifest(JsonManifestParseContext *context, const char *buffer,
  * document, it's an error.
  */
 static JsonParseErrorType json_manifest_object_start(void *state) {
-  JsonManifestParseState *parse = state;
+  JsonManifestParseState *parse = (JsonManifestParseState *)state;
 
   switch (parse->state) {
   case JM_EXPECT_TOPLEVEL_START:
@@ -295,7 +297,7 @@ static JsonParseErrorType json_manifest_object_start(void *state) {
  * we must call json_manifest_finalize_file() to save the associated details.
  */
 static JsonParseErrorType json_manifest_object_end(void *state) {
-  JsonManifestParseState *parse = state;
+  JsonManifestParseState *parse = (JsonManifestParseState *)state;
 
   switch (parse->state) {
   case JM_EXPECT_TOPLEVEL_END:
@@ -325,7 +327,7 @@ static JsonParseErrorType json_manifest_object_end(void *state) {
  * are expected.
  */
 static JsonParseErrorType json_manifest_array_start(void *state) {
-  JsonManifestParseState *parse = state;
+  JsonManifestParseState *parse = (JsonManifestParseState *)state;
 
   switch (parse->state) {
   case JM_EXPECT_FILES_START:
@@ -348,7 +350,7 @@ static JsonParseErrorType json_manifest_array_start(void *state) {
  * The cases here are analogous to those in json_manifest_array_start.
  */
 static JsonParseErrorType json_manifest_array_end(void *state) {
-  JsonManifestParseState *parse = state;
+  JsonManifestParseState *parse = (JsonManifestParseState *)state;
 
   switch (parse->state) {
   case JM_EXPECT_FILES_NEXT:
@@ -368,7 +370,7 @@ static JsonParseErrorType json_manifest_array_end(void *state) {
  */
 static JsonParseErrorType
 json_manifest_object_field_start(void *state, char *fname, bool isnull) {
-  JsonManifestParseState *parse = state;
+  JsonManifestParseState *parse = (JsonManifestParseState *)state;
 
   switch (parse->state) {
   case JM_EXPECT_TOPLEVEL_FIELD:
@@ -473,7 +475,7 @@ json_manifest_object_field_start(void *state, char *fname, bool isnull) {
  */
 static JsonParseErrorType json_manifest_scalar(void *state, char *token,
                                                JsonTokenType tokentype) {
-  JsonManifestParseState *parse = state;
+  JsonManifestParseState *parse = (JsonManifestParseState *)state;
 
   switch (parse->state) {
   case JM_EXPECT_VERSION_VALUE:
@@ -620,7 +622,7 @@ static void json_manifest_finalize_file(JsonManifestParseState *parse) {
     int encoded_length = strlen(parse->encoded_pathname);
     int raw_length = encoded_length / 2;
 
-    parse->pathname = palloc(raw_length + 1);
+    parse->pathname = (char *)palloc(raw_length + 1);
     if (encoded_length % 2 != 0 ||
         !hexdecode_string((uint8 *)parse->pathname, parse->encoded_pathname,
                           raw_length))
@@ -650,7 +652,7 @@ static void json_manifest_finalize_file(JsonManifestParseState *parse) {
     checksum_payload = NULL;
   } else {
     checksum_length = checksum_string_length / 2;
-    checksum_payload = palloc(checksum_length);
+    checksum_payload = (uint8 *)palloc(checksum_length);
     if (checksum_string_length % 2 != 0 ||
         !hexdecode_string(checksum_payload, parse->checksum, checksum_length))
       context->error_cb(context, "invalid checksum for file \"%s\": \"%s\"",

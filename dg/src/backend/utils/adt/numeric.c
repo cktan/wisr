@@ -1149,7 +1149,7 @@ Datum numeric_support(PG_FUNCTION_ARGS) {
 Datum numeric(PG_FUNCTION_ARGS) {
   Numeric num = PG_GETARG_NUMERIC(0);
   int32 typmod = PG_GETARG_INT32(1);
-  Numeric new;
+  Numeric new_;
   int precision;
   int scale;
   int ddigits;
@@ -1194,15 +1194,15 @@ Datum numeric(PG_FUNCTION_ARGS) {
   if (ddigits <= maxdigits && scale >= NUMERIC_DSCALE(num) &&
       (NUMERIC_CAN_BE_SHORT(dscale, NUMERIC_WEIGHT(num)) ||
        !NUMERIC_IS_SHORT(num))) {
-    new = duplicate_numeric(num);
+    new_ = duplicate_numeric(num);
     if (NUMERIC_IS_SHORT(num))
-      new->choice.n_short.n_header =
+      new_->choice.n_short.n_header =
           (num->choice.n_short.n_header & ~NUMERIC_SHORT_DSCALE_MASK) |
           (dscale << NUMERIC_SHORT_DSCALE_SHIFT);
     else
-      new->choice.n_long.n_sign_dscale =
-          NUMERIC_SIGN(new) | ((uint16)dscale & NUMERIC_DSCALE_MASK);
-    PG_RETURN_NUMERIC(new);
+      new_->choice.n_long.n_sign_dscale =
+          NUMERIC_SIGN(new_) | ((uint16)dscale & NUMERIC_DSCALE_MASK);
+    PG_RETURN_NUMERIC(new_);
   }
 
   /*
@@ -1213,11 +1213,11 @@ Datum numeric(PG_FUNCTION_ARGS) {
 
   set_var_from_num(num, &var);
   (void)apply_typmod(&var, typmod, NULL);
-  new = make_result(&var);
+  new_ = make_result(&var);
 
   free_var(&var);
 
-  PG_RETURN_NUMERIC(new);
+  PG_RETURN_NUMERIC(new_);
 }
 
 /*
@@ -1648,7 +1648,7 @@ Datum generate_series_step_numeric(PG_FUNCTION_ARGS) {
    * Get the saved state and use current state as the result of this
    * iteration.
    */
-  fctx = funcctx->user_fctx;
+  fctx = (generate_series_numeric_fctx *)funcctx->user_fctx;
 
   if ((fctx->step.sign == NUMERIC_POS &&
        cmp_var(&fctx->current, &fctx->stop) <= 0) ||
@@ -1687,10 +1687,10 @@ Datum generate_series_numeric_support(PG_FUNCTION_ARGS) {
       Node *arg1, *arg2, *arg3;
 
       /* We can use estimated argument values here */
-      arg1 = estimate_expression_value(req->root, linitial(args));
-      arg2 = estimate_expression_value(req->root, lsecond(args));
+      arg1 = estimate_expression_value(req->root, (Node *)linitial(args));
+      arg2 = estimate_expression_value(req->root, (Node *)lsecond(args));
       if (list_length(args) >= 3)
-        arg3 = estimate_expression_value(req->root, lthird(args));
+        arg3 = estimate_expression_value(req->root, (Node *)lthird(args));
       else
         arg3 = NULL;
 
@@ -1946,7 +1946,7 @@ Datum numeric_sortsupport(PG_FUNCTION_ARGS) {
     NumericSortSupport *nss;
     MemoryContext oldcontext = MemoryContextSwitchTo(ssup->ssup_cxt);
 
-    nss = palloc(sizeof(NumericSortSupport));
+    nss = (NumericSortSupport *)palloc(sizeof(NumericSortSupport));
 
     /*
      * palloc a buffer for handling unaligned packed values in addition to
@@ -1976,7 +1976,7 @@ Datum numeric_sortsupport(PG_FUNCTION_ARGS) {
  * (must not leak memory!)
  */
 static Datum numeric_abbrev_convert(Datum original_datum, SortSupport ssup) {
-  NumericSortSupport *nss = ssup->ssup_extra;
+  NumericSortSupport *nss = (NumericSortSupport *)ssup->ssup_extra;
   void *original_varatt = PG_DETOAST_DATUM_PACKED(original_datum);
   Numeric value;
   Datum result;
@@ -2031,7 +2031,7 @@ static Datum numeric_abbrev_convert(Datum original_datum, SortSupport ssup) {
  * whether the underlying values are also equal.
  */
 static bool numeric_abbrev_abort(int memtupcount, SortSupport ssup) {
-  NumericSortSupport *nss = ssup->ssup_extra;
+  NumericSortSupport *nss = (NumericSortSupport *)ssup->ssup_extra;
   double abbr_card;
 
   if (memtupcount < 10000 || nss->input_count < 10000 || !nss->estimating)
@@ -6897,7 +6897,7 @@ static char *get_str_from_var(const NumericVar *var) {
   if (i <= 0)
     i = 1;
 
-  str = palloc(i + dscale + DEC_DIGITS + 2);
+  str = (char *)palloc(i + dscale + DEC_DIGITS + 2);
   cp = str;
 
   /*
@@ -7070,7 +7070,7 @@ static char *get_str_from_var_sci(const NumericVar *var, int rscale) {
    * exponent itself, and of course the null terminator.
    */
   len = strlen(sig_out) + 13;
-  str = palloc(len);
+  str = (char *)palloc(len);
   snprintf(str, len, "%se%+03d", sig_out, exponent);
 
   pfree(sig_out);
@@ -11330,8 +11330,8 @@ static void accum_sum_rescale(NumericSumAccum *accum, const NumericVar *val) {
 
     weightdiff = accum_weight - old_weight;
 
-    new_pos_digits = palloc0(accum_ndigits * sizeof(int32));
-    new_neg_digits = palloc0(accum_ndigits * sizeof(int32));
+    new_pos_digits = (int32 *)palloc0(accum_ndigits * sizeof(int32));
+    new_neg_digits = (int32 *)palloc0(accum_ndigits * sizeof(int32));
 
     if (accum->pos_digits) {
       memcpy(&new_pos_digits[weightdiff], accum->pos_digits,
@@ -11412,8 +11412,8 @@ static void accum_sum_final(NumericSumAccum *accum, NumericVar *result) {
  * freeing old values.
  */
 static void accum_sum_copy(NumericSumAccum *dst, NumericSumAccum *src) {
-  dst->pos_digits = palloc(src->ndigits * sizeof(int32));
-  dst->neg_digits = palloc(src->ndigits * sizeof(int32));
+  dst->pos_digits = (int32 *)palloc(src->ndigits * sizeof(int32));
+  dst->neg_digits = (int32 *)palloc(src->ndigits * sizeof(int32));
 
   memcpy(dst->pos_digits, src->pos_digits, src->ndigits * sizeof(int32));
   memcpy(dst->neg_digits, src->neg_digits, src->ndigits * sizeof(int32));

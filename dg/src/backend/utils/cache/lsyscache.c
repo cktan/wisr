@@ -30,8 +30,8 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_opclass.h"
-#include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
+#include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_range.h"
@@ -2443,7 +2443,7 @@ Node *get_typdefault(Oid typid) {
 
   if (!isNull) {
     /* We have an expression default */
-    expr = stringToNode(TextDatumGetCString(datum));
+    expr = (Node *)stringToNode(TextDatumGetCString(datum));
   } else {
     /* Perhaps we have a plain literal default */
     datum =

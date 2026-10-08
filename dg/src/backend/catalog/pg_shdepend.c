@@ -21,8 +21,8 @@
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
-#include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
+#include "catalog/pg_auth_members.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_conversion.h"
 #include "catalog/pg_database.h"
@@ -694,7 +694,7 @@ bool checkSharedDependencies(Oid classId, Oid objectId, char **detail_msg,
        * I suppose.
        */
       foreach (cell, remDeps) {
-        dep = lfirst(cell);
+        dep = (remoteDep *)lfirst(cell);
         if (dep->dbOid == sdepForm->dbid) {
           dep->count++;
           stored = true;
@@ -725,18 +725,18 @@ bool checkSharedDependencies(Oid classId, Oid objectId, char **detail_msg,
     if (numReportedDeps < MAX_REPORTED_DEPS) {
       numReportedDeps++;
       storeObjectDescription(&descs, objects[i].objtype, &objects[i].object,
-                             objects[i].deptype, 0);
+                             (SharedDependencyType)objects[i].deptype, 0);
     } else
       numNotReportedDeps++;
     storeObjectDescription(&alldescs, objects[i].objtype, &objects[i].object,
-                           objects[i].deptype, 0);
+                           (SharedDependencyType)objects[i].deptype, 0);
   }
 
   /*
    * Summarize dependencies in remote databases.
    */
   foreach (cell, remDeps) {
-    remoteDep *dep = lfirst(cell);
+    remoteDep *dep = (remoteDep *)lfirst(cell);
 
     object.classId = DatabaseRelationId;
     object.objectId = dep->dbOid;
@@ -808,7 +808,7 @@ void copyTemplateDependencies(Oid templateDbId, Oid newDbId) {
    * know that they will be used.
    */
   max_slots = MAX_CATALOG_MULTI_INSERT_BYTES / sizeof(FormData_pg_shdepend);
-  slot = palloc(sizeof(TupleTableSlot *) * max_slots);
+  slot = (TupleTableSlot **)palloc(sizeof(TupleTableSlot *) * max_slots);
 
   indstate = CatalogOpenIndexes(sdepRel);
 

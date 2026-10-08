@@ -228,7 +228,7 @@ bool contain_window_function(Node *clause) {
  * Caller must provide an upper bound on the winref IDs expected in the tree.
  */
 WindowFuncLists *find_window_functions(Node *clause, Index maxWinRef) {
-  WindowFuncLists *lists = palloc(sizeof(WindowFuncLists));
+  WindowFuncLists *lists = (WindowFuncLists *)palloc(sizeof(WindowFuncLists));
 
   lists->numWindowFuncs = 0;
   lists->maxWinRef = maxWinRef;
@@ -375,7 +375,7 @@ static bool contain_mutable_functions_walker(Node *node, void *context) {
      * because of TimeZone, for example.
      */
     foreach (lc, ctor->args) {
-      Oid typid = exprType(lfirst(lc));
+      Oid typid = exprType((const Node *)lfirst(lc));
 
       if (is_jsonb ? !to_jsonb_is_immutable(typid)
                    : !to_json_is_immutable(typid))
@@ -1333,8 +1333,8 @@ static Relids find_nonnullable_rels_walker(Node *node, bool top_level) {
      * top_level flag unmodified.
      */
     foreach (l, (List *)node) {
-      result =
-          bms_join(result, find_nonnullable_rels_walker(lfirst(l), top_level));
+      result = bms_join(
+          result, find_nonnullable_rels_walker((Node *)lfirst(l), top_level));
     }
   } else if (IsA(node, FuncExpr)) {
     FuncExpr *expr = (FuncExpr *)node;
@@ -1381,7 +1381,7 @@ static Relids find_nonnullable_rels_walker(Node *node, bool top_level) {
       foreach (l, expr->args) {
         Relids subresult;
 
-        subresult = find_nonnullable_rels_walker(lfirst(l), top_level);
+        subresult = find_nonnullable_rels_walker((Node *)lfirst(l), top_level);
         if (result == NULL) /* first subresult? */
           result = subresult;
         else
@@ -1544,7 +1544,7 @@ static List *find_nonnullable_vars_walker(Node *node, bool top_level) {
      */
     foreach (l, (List *)node) {
       result = mbms_add_members(
-          result, find_nonnullable_vars_walker(lfirst(l), top_level));
+          result, find_nonnullable_vars_walker((Node *)lfirst(l), top_level));
     }
   } else if (IsA(node, FuncExpr)) {
     FuncExpr *expr = (FuncExpr *)node;
@@ -1596,7 +1596,7 @@ static List *find_nonnullable_vars_walker(Node *node, bool top_level) {
       foreach (l, expr->args) {
         List *subresult;
 
-        subresult = find_nonnullable_vars_walker(lfirst(l), top_level);
+        subresult = find_nonnullable_vars_walker((Node *)lfirst(l), top_level);
         if (result == NIL) /* first subresult? */
           result = subresult;
         else
@@ -1902,7 +1902,7 @@ void CommuteOpExpr(OpExpr *clause) {
   clause->opfuncid = InvalidOid;
   /* opresulttype, opretset, opcollid, inputcollid need not change */
 
-  temp = linitial(clause->args);
+  temp = (Node *)linitial(clause->args);
   linitial(clause->args) = lsecond(clause->args);
   lsecond(clause->args) = temp;
 }
@@ -2542,7 +2542,8 @@ eval_const_expressions_mutator(Node *node,
       Node *arg;
 
       Assert(list_length(expr->args) == 1);
-      arg = eval_const_expressions_mutator(linitial(expr->args), context);
+      arg =
+          eval_const_expressions_mutator((Node *)linitial(expr->args), context);
 
       /*
        * Use negate_clause() to see if we can simplify
@@ -3508,8 +3509,8 @@ static Node *simplify_boolean_equality(Oid opno, List *args) {
   Node *rightop;
 
   Assert(list_length(args) == 2);
-  leftop = linitial(args);
-  rightop = lsecond(args);
+  leftop = (Node *)linitial(args);
+  rightop = (Node *)lsecond(args);
   if (leftop && IsA(leftop, Const)) {
     Assert(!((Const *)leftop)->constisnull);
     if (opno == BooleanEqualOperator) {
@@ -4106,14 +4107,14 @@ static Expr *inline_function(Oid funcid, Oid result_type, Oid result_collid,
     Node *n;
     List *query_list;
 
-    n = stringToNode(TextDatumGetCString(tmp));
+    n = (Node *)stringToNode(TextDatumGetCString(tmp));
     if (IsA(n, List))
       query_list = linitial_node(List, castNode(List, n));
     else
       query_list = list_make1(n);
     if (list_length(query_list) != 1)
       goto fail;
-    querytree = linitial(query_list);
+    querytree = (Query *)linitial(query_list);
 
     /*
      * Because we'll insist below that the querytree have an empty rtable
@@ -4138,7 +4139,8 @@ static Expr *inline_function(Oid funcid, Oid result_type, Oid result_collid,
     pstate->p_sourcetext = src;
     sql_fn_parser_setup(pstate, pinfo);
 
-    querytree = transformTopLevelStmt(pstate, linitial(raw_parsetree_list));
+    querytree =
+        transformTopLevelStmt(pstate, (RawStmt *)linitial(raw_parsetree_list));
 
     free_parsestate(pstate);
   }
@@ -4240,7 +4242,7 @@ static Expr *inline_function(Oid funcid, Oid result_type, Oid result_collid,
   /* Now check for parameter usage */
   i = 0;
   foreach (arg, args) {
-    Node *param = lfirst(arg);
+    Node *param = (Node *)lfirst(arg);
 
     if (usecounts[i] == 0) {
       /* Param not used at all: uncool if func is strict */
@@ -4361,7 +4363,7 @@ static Node *substitute_actual_parameters_mutator(
 
     /* Select the appropriate actual arg and replace the Param with it */
     /* We don't need to copy at this time (it'll get done later) */
-    return list_nth(context->args, param->paramid - 1);
+    return (Node *)list_nth(context->args, param->paramid - 1);
   }
   return expression_tree_mutator(node, substitute_actual_parameters_mutator,
                                  context);
@@ -4610,21 +4612,21 @@ Query *inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte) {
   if (!isNull) {
     Node *n;
 
-    n = stringToNode(TextDatumGetCString(tmp));
+    n = (Node *)stringToNode(TextDatumGetCString(tmp));
     if (IsA(n, List))
       querytree_list = linitial_node(List, castNode(List, n));
     else
       querytree_list = list_make1(n);
     if (list_length(querytree_list) != 1)
       goto fail;
-    querytree = linitial(querytree_list);
+    querytree = (Query *)linitial(querytree_list);
 
     /* Acquire necessary locks, then apply rewriter. */
     AcquireRewriteLocks(querytree, true, false);
     querytree_list = pg_rewrite_query(querytree);
     if (list_length(querytree_list) != 1)
       goto fail;
-    querytree = linitial(querytree_list);
+    querytree = (Query *)linitial(querytree_list);
   } else {
     /*
      * Set up to handle parameters while parsing the function body.  We
@@ -4644,11 +4646,11 @@ Query *inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte) {
       goto fail;
 
     querytree_list = pg_analyze_and_rewrite_withcb(
-        linitial(raw_parsetree_list), src, (ParserSetupHook)sql_fn_parser_setup,
-        pinfo, NULL);
+        (RawStmt *)linitial(raw_parsetree_list), src,
+        (ParserSetupHook)sql_fn_parser_setup, pinfo, NULL);
     if (list_length(querytree_list) != 1)
       goto fail;
-    querytree = linitial(querytree_list);
+    querytree = (Query *)linitial(querytree_list);
   }
 
   /*
@@ -4786,7 +4788,7 @@ static Node *substitute_actual_srf_parameters_mutator(
        * Since the parameter is being inserted into a subquery, we must
        * adjust levels.
        */
-      result = copyObject(list_nth(context->args, param->paramid - 1));
+      result = (Node *)copyObject(list_nth(context->args, param->paramid - 1));
       IncrementVarSublevelsUp(result, context->sublevels_up, 0);
       return result;
     }

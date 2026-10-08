@@ -199,7 +199,7 @@ regex_t *RE_compile_and_cache(text *text_re, int cflags, Oid collation) {
   }
 
   /* Copy the pattern into the per-regexp memory context. */
-  re_temp.cre_pat = palloc(text_re_len + 1);
+  re_temp.cre_pat = (char *)palloc(text_re_len + 1);
   memcpy(re_temp.cre_pat, text_re_val, text_re_len);
 
   /*
@@ -1258,7 +1258,8 @@ static regexp_matches_ctx *
 setup_regexp_matches(text *orig_str, text *pattern, pg_re_flags *re_flags,
                      int start_search, Oid collation, bool use_subpatterns,
                      bool ignore_degenerate, bool fetching_unmatched) {
-  regexp_matches_ctx *matchctx = palloc0(sizeof(regexp_matches_ctx));
+  regexp_matches_ctx *matchctx =
+      (regexp_matches_ctx *)palloc0(sizeof(regexp_matches_ctx));
   int eml = pg_database_encoding_max_length();
   int orig_len;
   pg_wchar *wide_str;
@@ -1298,7 +1299,7 @@ setup_regexp_matches(text *orig_str, text *pattern, pg_re_flags *re_flags,
   }
 
   /* temporary output space for RE package */
-  pmatch = palloc(sizeof(regmatch_t) * pmatch_len);
+  pmatch = (pg_regmatch_t *)palloc(sizeof(regmatch_t) * pmatch_len);
 
   /*
    * the real output space (grown dynamically if needed)
@@ -1418,7 +1419,7 @@ setup_regexp_matches(text *orig_str, text *pattern, pg_re_flags *re_flags,
     Assert(eml <= sizeof(pg_wchar));
     conv_bufsiz = maxlen * eml + 1;
 
-    matchctx->conv_buf = palloc(conv_bufsiz);
+    matchctx->conv_buf = (char *)palloc(conv_bufsiz);
     matchctx->conv_bufsiz = conv_bufsiz;
     matchctx->wide_str = wide_str;
   } else {

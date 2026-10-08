@@ -656,8 +656,8 @@ static List *objectNamesToOids(ObjectType objtype, List *objnames,
     foreach (cell, objnames) {
       ObjectAddress address;
 
-      address =
-          get_object_address(objtype, lfirst(cell), NULL, lockmode, false);
+      address = get_object_address(objtype, (Node *)lfirst(cell), NULL,
+                                   lockmode, false);
       objects = lappend_oid(objects, address.objectId);
     }
     break;
@@ -1005,7 +1005,7 @@ void ExecAlterDefaultPrivilegesStmt(ParseState *pstate,
     ListCell *rolecell;
 
     foreach (rolecell, rolespecs) {
-      RoleSpec *rolespec = lfirst(rolecell);
+      RoleSpec *rolespec = (RoleSpec *)lfirst(rolecell);
 
       iacls.roleid = get_rolespec_oid(rolespec, false);
 

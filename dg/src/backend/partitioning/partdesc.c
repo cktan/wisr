@@ -161,7 +161,8 @@ retry:
   if (nparts > 0) {
     oids = (Oid *)palloc(nparts * sizeof(Oid));
     is_leaf = (bool *)palloc(nparts * sizeof(bool));
-    boundspecs = palloc(nparts * sizeof(PartitionBoundSpec *));
+    boundspecs =
+        (PartitionBoundSpec **)palloc(nparts * sizeof(PartitionBoundSpec *));
   }
 
   /* Collect bound spec nodes for each partition. */
@@ -180,7 +181,8 @@ retry:
       datum =
           SysCacheGetAttr(RELOID, tuple, Anum_pg_class_relpartbound, &isnull);
       if (!isnull)
-        boundspec = stringToNode(TextDatumGetCString(datum));
+        boundspec =
+            (PartitionBoundSpec *)stringToNode(TextDatumGetCString(datum));
       ReleaseSysCache(tuple);
     }
 
@@ -229,7 +231,8 @@ retry:
         datum = heap_getattr(tuple, Anum_pg_class_relpartbound,
                              RelationGetDescr(pg_class), &isnull);
         if (!isnull)
-          boundspec = stringToNode(TextDatumGetCString(datum));
+          boundspec =
+              (PartitionBoundSpec *)stringToNode(TextDatumGetCString(datum));
       }
       systable_endscan(scan);
       table_close(pg_class, AccessShareLock);
@@ -395,7 +398,7 @@ PartitionDirectory CreatePartitionDirectory(MemoryContext mcxt,
   PartitionDirectory pdir;
   HASHCTL ctl;
 
-  pdir = palloc(sizeof(PartitionDirectoryData));
+  pdir = (PartitionDirectory)palloc(sizeof(PartitionDirectoryData));
   pdir->pdir_mcxt = mcxt;
 
   ctl.keysize = sizeof(Oid);
@@ -427,7 +430,8 @@ PartitionDesc PartitionDirectoryLookup(PartitionDirectory pdir, Relation rel) {
   Oid relid = RelationGetRelid(rel);
   bool found;
 
-  pde = hash_search(pdir->pdir_hash, &relid, HASH_ENTER, &found);
+  pde = (PartitionDirectoryEntry *)hash_search(pdir->pdir_hash, &relid,
+                                               HASH_ENTER, &found);
   if (!found) {
     /*
      * We must keep a reference count on the relation so that the
@@ -452,7 +456,7 @@ void DestroyPartitionDirectory(PartitionDirectory pdir) {
   PartitionDirectoryEntry *pde;
 
   hash_seq_init(&status, pdir->pdir_hash);
-  while ((pde = hash_seq_search(&status)) != NULL)
+  while ((pde = (PartitionDirectoryEntry *)hash_seq_search(&status)) != NULL)
     RelationDecrementReferenceCount(pde->rel);
 }
 

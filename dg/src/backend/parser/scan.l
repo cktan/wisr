@@ -365,7 +365,7 @@ not_equals		"!="
  */
 self			[,()\[\].;\:\+\-\*\/\%\^\<\>\=]
 op_chars		[\~\!\@\#\^\&\|\`\?\+\-\*\/\%\<\>\=]
-operator		{op_chars}+
+operator_		{op_chars}+
 
 /*
  * Numbers
@@ -883,7 +883,7 @@ other			.
 					return yytext[0];
 				}
 
-{operator}		{
+{operator_}		{
 					/*
 					 * Check for embedded slash-star or dash-dash; those
 					 * are comment starts, so operator must stop there.
@@ -1346,12 +1346,12 @@ static char *
 litbufdup(core_yyscan_t yyscanner)
 {
 	int			llen = yyextra->literallen;
-	char	   *new;
+	char	   *new_;
 
-	new = palloc(llen + 1);
-	memcpy(new, yyextra->literalbuf, llen);
-	new[llen] = '\0';
-	return new;
+	new_ = (char *) palloc(llen + 1);
+	memcpy(new_, yyextra->literalbuf, llen);
+	new_[llen] = '\0';
+	return new_;
 }
 
 /*

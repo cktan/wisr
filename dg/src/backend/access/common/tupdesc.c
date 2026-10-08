@@ -1014,7 +1014,7 @@ Node *TupleDescGetDefault(TupleDesc tupdesc, AttrNumber attnum) {
 
     for (int i = 0; i < tupdesc->constr->num_defval; i++) {
       if (attrdef[i].adnum == attnum) {
-        result = stringToNode(attrdef[i].adbin);
+        result = (Node *)stringToNode(attrdef[i].adbin);
         break;
       }
     }

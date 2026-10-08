@@ -295,8 +295,8 @@ TransactionId index_compute_xid_horizon_for_tuples(Relation irel, Relation hrel,
   delstate.bottomup = false;
   delstate.bottomupfreespace = 0;
   delstate.ndeltids = 0;
-  delstate.deltids = palloc(nitems * sizeof(TM_IndexDelete));
-  delstate.status = palloc(nitems * sizeof(TM_IndexStatus));
+  delstate.deltids = (TM_IndexDelete *)palloc(nitems * sizeof(TM_IndexDelete));
+  delstate.status = (TM_IndexStatus *)palloc(nitems * sizeof(TM_IndexStatus));
 
   /* identify what the index tuples about to be deleted point to */
   for (int i = 0; i < nitems; i++) {

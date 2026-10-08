@@ -15,11 +15,11 @@
 
 #include "postgres_fe.h"
 
-#include <ctype.h>
+#include <sys/stat.h>
 #include <fcntl.h>
+#include <ctype.h>
 #include <limits.h>
 #include <netdb.h>
-#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -28,8 +28,8 @@
 #include "common/link-canary.h"
 #include "common/scram-common.h"
 #include "common/string.h"
-#include "fe-auth-oauth.h"
 #include "fe-auth.h"
+#include "fe-auth-oauth.h"
 #include "libpq-fe.h"
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
@@ -46,14 +46,14 @@
 #undef near
 #endif
 #define near
-#include <mstcpip.h>
 #include <shlobj.h>
+#include <mstcpip.h>
 #else
+#include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pwd.h>
-#include <sys/socket.h>
 #endif
 
 #ifdef WIN32
@@ -1297,7 +1297,7 @@ bool pqConnectOptions2(PGconn *conn) {
 
       if (pqGetHomeDirectory(homedir, sizeof(homedir))) {
         free(conn->pgpassfile);
-        conn->pgpassfile = malloc(MAXPGPATH);
+        conn->pgpassfile = (char *)malloc(MAXPGPATH);
         if (!conn->pgpassfile)
           goto oom_error;
         snprintf(conn->pgpassfile, MAXPGPATH, "%s/%s", homedir, PGPASSFILE);
@@ -1821,7 +1821,7 @@ bool pqConnectOptions2(PGconn *conn) {
     int len;
 
     len = pg_b64_dec_len(strlen(conn->scram_client_key));
-    conn->scram_client_key_binary = malloc(len);
+    conn->scram_client_key_binary = (uint8 *)malloc(len);
     if (!conn->scram_client_key_binary)
       goto oom_error;
     len = pg_b64_decode(conn->scram_client_key, strlen(conn->scram_client_key),
@@ -1841,7 +1841,7 @@ bool pqConnectOptions2(PGconn *conn) {
     int len;
 
     len = pg_b64_dec_len(strlen(conn->scram_server_key));
-    conn->scram_server_key_binary = malloc(len);
+    conn->scram_server_key_binary = (uint8 *)malloc(len);
     if (!conn->scram_server_key_binary)
       goto oom_error;
     len = pg_b64_decode(conn->scram_server_key, strlen(conn->scram_server_key),
@@ -4701,7 +4701,7 @@ static int store_conn_addrinfo(PGconn *conn, struct addrinfo *addrlist) {
     conn->naddr++;
   }
 
-  conn->addr = calloc(conn->naddr, sizeof(AddrInfo));
+  conn->addr = (AddrInfo *)calloc(conn->naddr, sizeof(AddrInfo));
   if (conn->addr == NULL) {
     libpq_append_conn_error(conn, "out of memory");
     return 1;
@@ -6484,7 +6484,7 @@ static char *conninfo_uri_decode(const char *str, PQExpBuffer errorMessage) {
   char *p;             /* output location */
   const char *q = str; /* input location */
 
-  buf = malloc(strlen(str) + 1);
+  buf = (char *)malloc(strlen(str) + 1);
   if (buf == NULL) {
     libpq_append_error(errorMessage, "out of memory");
     return NULL;

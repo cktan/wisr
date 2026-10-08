@@ -362,7 +362,7 @@ static Node *build_subplan(PlannerInfo *root, Plan *plan, Path *path,
     isInitPlan = true;
     result = (Node *)prm;
   } else if (splan->parParam == NIL && subLinkType == EXPR_SUBLINK) {
-    TargetEntry *te = linitial(plan->targetlist);
+    TargetEntry *te = (TargetEntry *)linitial(plan->targetlist);
     Param *prm;
 
     Assert(!te->resjunk);
@@ -374,7 +374,7 @@ static Node *build_subplan(PlannerInfo *root, Plan *plan, Path *path,
     isInitPlan = true;
     result = (Node *)prm;
   } else if (splan->parParam == NIL && subLinkType == ARRAY_SUBLINK) {
-    TargetEntry *te = linitial(plan->targetlist);
+    TargetEntry *te = (TargetEntry *)linitial(plan->targetlist);
     Oid arraytype;
     Param *prm;
 
@@ -750,7 +750,7 @@ static bool hash_ok_operator(OpExpr *expr) {
   if (opid == ARRAY_EQ_OP || opid == RECORD_EQ_OP || opid == RANGE_EQ_OP ||
       opid == MULTIRANGE_EQ_OP) {
     /* these are strict, but must check input type to ensure hashable */
-    Node *leftarg = linitial(expr->args);
+    Node *leftarg = (Node *)linitial(expr->args);
 
     return op_hashjoinable(opid, exprType(leftarg));
   } else {
@@ -1120,8 +1120,8 @@ ScalarArrayOpExpr *convert_VALUES_to_ANY(PlannerInfo *root, Node *testexpr,
     return NULL;
 
   rte = linitial_node(RangeTblEntry, values->rtable);
-  leftop = linitial(((OpExpr *)testexpr)->args);
-  rightop = lsecond(((OpExpr *)testexpr)->args);
+  leftop = (Node *)linitial(((OpExpr *)testexpr)->args);
+  rightop = (Node *)lsecond(((OpExpr *)testexpr)->args);
   opno = ((OpExpr *)testexpr)->opno;
   inputcollid = ((OpExpr *)testexpr)->inputcollid;
 
@@ -1134,8 +1134,8 @@ ScalarArrayOpExpr *convert_VALUES_to_ANY(PlannerInfo *root, Node *testexpr,
     return NULL;
 
   foreach (lc, rte->values_lists) {
-    List *elem = lfirst(lc);
-    Node *value = linitial(elem);
+    List *elem = (List *)lfirst(lc);
+    Node *value = (Node *)linitial(elem);
 
     /*
      * Prepare an evaluation of the right side of the operator with
@@ -1923,7 +1923,7 @@ static Node *process_sublinks_mutator(Node *node,
     foreach (l, ((BoolExpr *)node)->args) {
       Node *newarg;
 
-      newarg = process_sublinks_mutator(lfirst(l), &locContext);
+      newarg = process_sublinks_mutator((Node *)lfirst(l), &locContext);
       if (is_andclause(newarg))
         newargs = list_concat(newargs, ((BoolExpr *)newarg)->args);
       else
@@ -1942,7 +1942,7 @@ static Node *process_sublinks_mutator(Node *node,
     foreach (l, ((BoolExpr *)node)->args) {
       Node *newarg;
 
-      newarg = process_sublinks_mutator(lfirst(l), &locContext);
+      newarg = process_sublinks_mutator((Node *)lfirst(l), &locContext);
       if (is_orclause(newarg))
         newargs = list_concat(newargs, ((BoolExpr *)newarg)->args);
       else

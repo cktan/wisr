@@ -43,7 +43,7 @@ int pgaio_io_get_iovec(PgAioHandle *ioh, struct iovec **iov) {
   return PG_IOV_MAX;
 }
 
-PgAioOp pgaio_io_get_op(PgAioHandle *ioh) { return ioh->op; }
+PgAioOp pgaio_io_get_op(PgAioHandle *ioh) { return (PgAioOp)ioh->op; }
 
 PgAioOpData *pgaio_io_get_op_data(PgAioHandle *ioh) { return &ioh->op_data; }
 

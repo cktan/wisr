@@ -334,7 +334,7 @@ static char *build_client_first_message(fe_scram_state *state) {
 
   encoded_len = pg_b64_enc_len(SCRAM_RAW_NONCE_LEN);
   /* don't forget the zero-terminator */
-  state->client_nonce = malloc(encoded_len + 1);
+  state->client_nonce = (char *)malloc(encoded_len + 1);
   if (state->client_nonce == NULL) {
     libpq_append_conn_error(conn, "out of memory");
     return NULL;
@@ -591,7 +591,7 @@ static bool read_server_first_message(fe_scram_state *state, char *input) {
     return false;
   }
   decoded_salt_len = pg_b64_dec_len(strlen(encoded_salt));
-  state->salt = malloc(decoded_salt_len);
+  state->salt = (uint8 *)malloc(decoded_salt_len);
   if (state->salt == NULL) {
     libpq_append_conn_error(conn, "out of memory");
     return false;
@@ -664,7 +664,7 @@ static bool read_server_final_message(fe_scram_state *state, char *input) {
         "malformed SCRAM message (garbage at end of server-final-message)");
 
   server_signature_len = pg_b64_dec_len(strlen(encoded_server_signature));
-  decoded_server_signature = malloc(server_signature_len);
+  decoded_server_signature = (uint8 *)malloc(server_signature_len);
   if (!decoded_server_signature) {
     libpq_append_conn_error(conn, "out of memory");
     return false;

@@ -444,7 +444,7 @@ TypeCreate(Oid newTypeOid, const char *typeName, Oid typeNamespace,
   if (!IsBootstrapProcessingMode())
     GenerateTypeDependencies(
         tup, pg_type_desc,
-        (defaultTypeBin ? stringToNode(defaultTypeBin) : NULL), typacl,
+        (Node *)(defaultTypeBin ? stringToNode(defaultTypeBin) : NULL), typacl,
         relationKind, isImplicitArray, isDependentType,
         true, /* make extension dependency */
         rebuildDeps);
@@ -516,7 +516,7 @@ void GenerateTypeDependencies(
     datum = heap_getattr(typeTuple, Anum_pg_type_typdefaultbin,
                          RelationGetDescr(typeCatalog), &isNull);
     if (!isNull)
-      defaultExpr = stringToNode(TextDatumGetCString(datum));
+      defaultExpr = (Node *)stringToNode(TextDatumGetCString(datum));
   }
   /* Extract typacl if caller didn't pass it */
   if (typacl == NULL) {
@@ -555,7 +555,7 @@ void GenerateTypeDependencies(
     recordDependencyOnOwner(TypeRelationId, typeObjectId, typeForm->typowner);
 
     recordDependencyOnNewAcl(TypeRelationId, typeObjectId, 0,
-                             typeForm->typowner, typacl);
+                             typeForm->typowner, (Acl *)typacl);
   }
 
   /*

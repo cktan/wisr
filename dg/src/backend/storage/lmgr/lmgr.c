@@ -823,7 +823,7 @@ void WaitForLockersMultiple(List *locktags, LOCKMODE lockmode, bool progress) {
 
   /* Collect the transactions we need to wait on */
   foreach (lc, locktags) {
-    LOCKTAG *locktag = lfirst(lc);
+    LOCKTAG *locktag = (LOCKTAG *)lfirst(lc);
     int count;
 
     holders = lappend(
@@ -842,7 +842,7 @@ void WaitForLockersMultiple(List *locktags, LOCKMODE lockmode, bool progress) {
 
   /* Finally wait for each such transaction to complete */
   foreach (lc, holders) {
-    VirtualTransactionId *lockholders = lfirst(lc);
+    VirtualTransactionId *lockholders = (VirtualTransactionId *)lfirst(lc);
 
     while (VirtualTransactionIdIsValid(*lockholders)) {
       /* If requested, publish who we're going to wait for. */

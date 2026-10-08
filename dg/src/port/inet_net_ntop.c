@@ -28,9 +28,9 @@ static const char rcsid[] =
 #include "postgres_fe.h"
 #endif
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #ifndef FRONTEND
 #include "utils/inet.h"
@@ -82,12 +82,12 @@ char *pg_inet_net_ntop(int af, const void *src, int bits, char *dst,
    */
   switch (af) {
   case PGSQL_AF_INET:
-    return (inet_net_ntop_ipv4(src, bits, dst, size));
+    return (inet_net_ntop_ipv4((const u_char *)src, bits, dst, size));
   case PGSQL_AF_INET6:
 #if AF_INET6 != PGSQL_AF_INET6
   case AF_INET6:
 #endif
-    return (inet_net_ntop_ipv6(src, bits, dst, size));
+    return (inet_net_ntop_ipv6((const u_char *)src, bits, dst, size));
   default:
     errno = EAFNOSUPPORT;
     return (NULL);

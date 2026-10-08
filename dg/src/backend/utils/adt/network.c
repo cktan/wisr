@@ -8,9 +8,9 @@
 
 #include "postgres.h"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "access/stratnum.h"
 #include "catalog/pg_opfamily.h"
@@ -380,7 +380,8 @@ Datum network_sortsupport(PG_FUNCTION_ARGS) {
 
     oldcontext = MemoryContextSwitchTo(ssup->ssup_cxt);
 
-    uss = palloc(sizeof(network_sortsupport_state));
+    uss =
+        (network_sortsupport_state *)palloc(sizeof(network_sortsupport_state));
     uss->input_count = 0;
     uss->estimating = true;
     initHyperLogLog(&uss->abbr_card, 10);
@@ -415,7 +416,8 @@ static int network_fast_cmp(Datum x, Datum y, SortSupport ssup) {
  * there is no equality fast-path within authoritative inet comparator.
  */
 static bool network_abbrev_abort(int memtupcount, SortSupport ssup) {
-  network_sortsupport_state *uss = ssup->ssup_extra;
+  network_sortsupport_state *uss =
+      (network_sortsupport_state *)ssup->ssup_extra;
   double abbr_card;
 
   if (memtupcount < 10000 || uss->input_count < 10000 || !uss->estimating)
@@ -543,7 +545,8 @@ static bool network_abbrev_abort(int memtupcount, SortSupport ssup) {
  * +----------+---------------------------------+
  */
 static Datum network_abbrev_convert(Datum original, SortSupport ssup) {
-  network_sortsupport_state *uss = ssup->ssup_extra;
+  network_sortsupport_state *uss =
+      (network_sortsupport_state *)ssup->ssup_extra;
   inet *authoritative = DatumGetInetPP(original);
   Datum res, ipaddr_datum, subnet_bitmask, network;
   int subnet_size;

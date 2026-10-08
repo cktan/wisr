@@ -536,8 +536,8 @@ void ExecComputeStoredGenerated(ResultRelInfo *resultRelInfo, EState *estate,
 
   oldContext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-  values = palloc(sizeof(*values) * natts);
-  nulls = palloc(sizeof(*nulls) * natts);
+  values = (Datum *)palloc(sizeof(*values) * natts);
+  nulls = (bool *)palloc(sizeof(*nulls) * natts);
 
   slot_getallattrs(slot);
   memcpy(nulls, slot->tts_isnull, sizeof(*nulls) * natts);
@@ -876,10 +876,10 @@ static TupleTableSlot *ExecInsert(ModifyTableContext *context,
       oldContext = MemoryContextSwitchTo(estate->es_query_cxt);
 
       if (resultRelInfo->ri_Slots == NULL) {
-        resultRelInfo->ri_Slots =
-            palloc(sizeof(TupleTableSlot *) * resultRelInfo->ri_BatchSize);
-        resultRelInfo->ri_PlanSlots =
-            palloc(sizeof(TupleTableSlot *) * resultRelInfo->ri_BatchSize);
+        resultRelInfo->ri_Slots = (TupleTableSlot **)palloc(
+            sizeof(TupleTableSlot *) * resultRelInfo->ri_BatchSize);
+        resultRelInfo->ri_PlanSlots = (TupleTableSlot **)palloc(
+            sizeof(TupleTableSlot *) * resultRelInfo->ri_BatchSize);
       }
 
       /*
@@ -2168,7 +2168,7 @@ static void ExecCrossPartitionUpdateForeignKey(ModifyTableContext *context,
    * for now, we simply report an error that those cannot be enforced.
    */
   foreach (lc, ancestorRels) {
-    ResultRelInfo *rInfo = lfirst(lc);
+    ResultRelInfo *rInfo = (ResultRelInfo *)lfirst(lc);
     TriggerDesc *trigdesc = rInfo->ri_TrigDesc;
     bool has_noncloned_fkey = false;
 
@@ -3431,7 +3431,7 @@ void ExecInitMerge(ModifyTableState *mtstate, EState *estate) {
    */
   i = 0;
   foreach (lc, mergeActionLists) {
-    List *mergeActionList = lfirst(lc);
+    List *mergeActionList = (List *)lfirst(lc);
     Node *joinCondition;
     TupleDesc relationDesc;
     ListCell *l;
@@ -3584,7 +3584,7 @@ void ExecInitMerge(ModifyTableState *mtstate, EState *estate) {
        * this will be for the same relation as rootRelInfo, and so there
        * will be no need to adjust its attno's.
        */
-      wcoList = linitial(node->withCheckOptionLists);
+      wcoList = (List *)linitial(node->withCheckOptionLists);
       if (rootRelation != firstResultRel) {
         /* Convert any Vars in it to contain the root's attno's */
         part_attmap =
@@ -3620,7 +3620,7 @@ void ExecInitMerge(ModifyTableState *mtstate, EState *estate) {
        * case, this will be for the same relation as rootRelInfo, and so
        * there will be no need to adjust its attno's.
        */
-      returningList = linitial(node->returningLists);
+      returningList = (List *)linitial(node->returningLists);
       if (rootRelation != firstResultRel) {
         /* Convert any Vars in it to contain the root's attno's */
         if (part_attmap == NULL)
@@ -4333,17 +4333,18 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
         returningLists = lappend(returningLists, returningList);
       }
       if (node->updateColnosLists) {
-        List *updateColnosList = list_nth(node->updateColnosLists, i);
+        List *updateColnosList = (List *)list_nth(node->updateColnosLists, i);
 
         updateColnosLists = lappend(updateColnosLists, updateColnosList);
       }
       if (node->mergeActionLists) {
-        List *mergeActionList = list_nth(node->mergeActionLists, i);
+        List *mergeActionList = (List *)list_nth(node->mergeActionLists, i);
 
         mergeActionLists = lappend(mergeActionLists, mergeActionList);
       }
       if (node->mergeJoinConditions) {
-        List *mergeJoinCondition = list_nth(node->mergeJoinConditions, i);
+        List *mergeJoinCondition =
+            (List *)list_nth(node->mergeJoinConditions, i);
 
         mergeJoinConditions = lappend(mergeJoinConditions, mergeJoinCondition);
       }
@@ -4441,7 +4442,7 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
     List *mergeActions = NIL;
 
     if (mergeActionLists)
-      mergeActions = list_nth(mergeActionLists, i);
+      mergeActions = (List *)list_nth(mergeActionLists, i);
 
     if (resultRelInfo != mtstate->rootResultRelInfo) {
       ExecInitResultRelation(estate, resultRelInfo, resultRelation);

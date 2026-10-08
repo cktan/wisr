@@ -294,14 +294,7 @@ do {									\
 			__myhe->next = &(_he)[*__myhsp];								\
 			__myhe->prev = NULL;											\
 			__myhe->hindex = __hindex;										\
-			__myhe->pos  = (_s);                \
-     /* If there was an existing entry in this hash slot, link */              \
-     /* this new entry to it. However, the 0th entry in the */                 \
-     /* entries table is unused, so we can freely scribble on it. */           \
-     /* So don't bother checking if the slot was used - we'll */               \
-     /* scribble on the unused entry if it was not, but that's */              \
-     /* harmless. Avoiding the branch in this critical path */                 \
-     /* speeds this up a little bit. */ /* if (*__myhsp != INVALID_ENTRY) */							\
+			__myhe->pos  = (_s); /* If there was an existing entry in this hash slot, link */ /* this new entry to it. However, the 0th entry in the */ /* entries table is unused, so we can freely scribble on it. */ /* So don't bother checking if the slot was used - we'll */ /* scribble on the unused entry if it was not, but that's */ /* harmless. Avoiding the branch in this critical path */ /* speeds this up a little bit. */ /* if (*__myhsp != INVALID_ENTRY) */							\
 				(_he)[(*__myhsp)].prev = __myhe;							\
 			*__myhsp = _hn;													\
 			if (++(_hn) >= PGLZ_HISTORY_SIZE + 1) {							\

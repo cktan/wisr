@@ -85,7 +85,7 @@ static VarBit *bit_overlay(VarBit *t1, VarBit *t2, int sp, int sl);
 /*
  * common code for bittypmodin and varbittypmodin
  */
-static int32 anybit_typmodin(ArrayType *ta, const char *typename) {
+static int32 anybit_typmodin(ArrayType *ta, const char *typename_) {
   int32 typmod;
   int32 *tl;
   int n;
@@ -101,11 +101,12 @@ static int32 anybit_typmodin(ArrayType *ta, const char *typename) {
                     errmsg("invalid type modifier")));
 
   if (*tl < 1)
-    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("length for type %s must be at least 1", typename)));
+    ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+             errmsg("length for type %s must be at least 1", typename_)));
   if (*tl > (MaxAttrSize * BITS_PER_BYTE))
     ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("length for type %s cannot exceed %d", typename,
+                    errmsg("length for type %s cannot exceed %d", typename_,
                            MaxAttrSize * BITS_PER_BYTE)));
 
   typmod = *tl;

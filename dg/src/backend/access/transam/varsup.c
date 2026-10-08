@@ -41,8 +41,8 @@ void VarsupShmemInit(void) {
   bool found;
 
   /* Initialize our shared state struct */
-  TransamVariables =
-      ShmemInitStruct("TransamVariables", sizeof(TransamVariablesData), &found);
+  TransamVariables = (TransamVariablesData *)ShmemInitStruct(
+      "TransamVariables", sizeof(TransamVariablesData), &found);
   if (!IsUnderPostmaster) {
     Assert(!found);
     memset(TransamVariables, 0, sizeof(TransamVariablesData));

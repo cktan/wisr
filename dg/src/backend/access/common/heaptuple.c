@@ -176,7 +176,8 @@ Datum getmissingattr(TupleDesc tupleDesc, int attnum, bool *isnull) {
         key.len = VARSIZE_ANY(attrmiss->am_value);
       key.value = attrmiss->am_value;
 
-      entry = hash_search(missing_cache, &key, HASH_ENTER, &found);
+      entry = (missing_cache_key *)hash_search(missing_cache, &key, HASH_ENTER,
+                                               &found);
 
       if (!found) {
         /* cache miss, so we need a non-transient copy of the datum */
@@ -1306,7 +1307,7 @@ MinimalTuple heap_form_minimal_tuple(TupleDesc tupleDescriptor,
   /*
    * Allocate and zero the space needed.
    */
-  mem = palloc0(len + extra);
+  mem = (char *)palloc0(len + extra);
   memset(mem, 0, extra);
   tuple = (MinimalTuple)(mem + extra);
 
@@ -1340,7 +1341,7 @@ MinimalTuple heap_copy_minimal_tuple(MinimalTuple mtup, Size extra) {
   char *mem;
 
   Assert(extra == MAXALIGN(extra));
-  mem = palloc(mtup->t_len + extra);
+  mem = (char *)palloc(mtup->t_len + extra);
   memset(mem, 0, extra);
   result = (MinimalTuple)(mem + extra);
   memcpy(result, mtup, mtup->t_len);
@@ -1384,7 +1385,7 @@ MinimalTuple minimal_tuple_from_heap_tuple(HeapTuple htup, Size extra) {
   Assert(extra == MAXALIGN(extra));
   Assert(htup->t_len > MINIMAL_TUPLE_OFFSET);
   len = htup->t_len - MINIMAL_TUPLE_OFFSET;
-  mem = palloc(len + extra);
+  mem = (char *)palloc(len + extra);
   memset(mem, 0, extra);
   result = (MinimalTuple)(mem + extra);
   memcpy(result, (char *)htup->t_data + MINIMAL_TUPLE_OFFSET, len);

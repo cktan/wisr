@@ -91,7 +91,8 @@ static void TidExprListCreate(TidScanState *tidstate) {
       ScalarArrayOpExpr *saex = (ScalarArrayOpExpr *)expr;
 
       Assert(IsCTIDVar(linitial(saex->args)));
-      tidexpr->exprstate = ExecInitExpr(lsecond(saex->args), &tidstate->ss.ps);
+      tidexpr->exprstate =
+          ExecInitExpr((Expr *)lsecond(saex->args), &tidstate->ss.ps);
       tidexpr->isarray = true;
     } else if (expr && IsA(expr, CurrentOfExpr)) {
       CurrentOfExpr *cexpr = (CurrentOfExpr *)expr;

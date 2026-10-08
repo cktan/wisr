@@ -42,8 +42,8 @@
 #include "catalog/namespace.h"
 #include "catalog/storage.h"
 #include "commands/async.h"
-#include "commands/event_trigger.h"
 #include "commands/extension.h"
+#include "commands/event_trigger.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
 #include "commands/user.h"
@@ -1977,7 +1977,12 @@ struct config_bool ConfigureNamesBool[] = {
      NULL},
 
     /* End-of-list marker */
-    {{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL}};
+    {{NULL, (GucContext)0, (config_group)0, NULL, NULL},
+     NULL,
+     false,
+     NULL,
+     NULL,
+     NULL}};
 
 struct config_int ConfigureNamesInt[] = {
     {{"archive_timeout", PGC_SIGHUP, WAL_ARCHIVING,
@@ -3893,7 +3898,14 @@ struct config_int ConfigureNamesInt[] = {
      NULL},
 
     /* End-of-list marker */
-    {{NULL, 0, 0, NULL, NULL}, NULL, 0, 0, 0, NULL, NULL, NULL}};
+    {{NULL, (GucContext)0, (config_group)0, NULL, NULL},
+     NULL,
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL}};
 
 struct config_real ConfigureNamesReal[] = {
     {{"seq_page_cost", PGC_USERSET, QUERY_TUNING_COST,
@@ -4199,7 +4211,14 @@ struct config_real ConfigureNamesReal[] = {
      NULL},
 
     /* End-of-list marker */
-    {{NULL, 0, 0, NULL, NULL}, NULL, 0.0, 0.0, 0.0, NULL, NULL, NULL}};
+    {{NULL, (GucContext)0, (config_group)0, NULL, NULL},
+     NULL,
+     0.0,
+     0.0,
+     0.0,
+     NULL,
+     NULL,
+     NULL}};
 
 struct config_string ConfigureNamesString[] = {
     {{"archive_command", PGC_SIGHUP, WAL_ARCHIVING,
@@ -4964,7 +4983,12 @@ struct config_string ConfigureNamesString[] = {
      NULL},
 
     /* End-of-list marker */
-    {{NULL, 0, 0, NULL, NULL}, NULL, NULL, NULL, NULL, NULL}};
+    {{NULL, (GucContext)0, (config_group)0, NULL, NULL},
+     NULL,
+     NULL,
+     NULL,
+     NULL,
+     NULL}};
 
 struct config_enum ConfigureNamesEnum[] = {
     {{"backslash_quote", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
@@ -5410,4 +5434,10 @@ struct config_enum ConfigureNamesEnum[] = {
      NULL},
 
     /* End-of-list marker */
-    {{NULL, 0, 0, NULL, NULL}, NULL, 0, NULL, NULL, NULL, NULL}};
+    {{NULL, (GucContext)0, (config_group)0, NULL, NULL},
+     NULL,
+     0,
+     NULL,
+     NULL,
+     NULL,
+     NULL}};

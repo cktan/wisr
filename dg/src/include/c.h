@@ -59,18 +59,52 @@
 #include "pg_config_os.h"     /* config from include/port/PORTNAME.h */
 
 /* System header files that should be available everywhere in Postgres */
+/* digres is C++: these come before the macros defined below. */
+#include <array>
+#include <type_traits>
+
+/*
+ * C steps through an enum with ++ and --, as in a loop over every
+ * ForkNumber. C++ has no such operators for an enum, so here they are,
+ * for every enum at once.
+ */
+template <typename E>
+  requires std::is_enum_v<E>
+inline E &operator++(E &e) {
+  return e = static_cast<E>(static_cast<std::underlying_type_t<E>>(e) + 1);
+}
+template <typename E>
+  requires std::is_enum_v<E>
+inline E operator++(E &e, int) {
+  E old = e;
+  ++e;
+  return old;
+}
+template <typename E>
+  requires std::is_enum_v<E>
+inline E &operator--(E &e) {
+  return e = static_cast<E>(static_cast<std::underlying_type_t<E>>(e) - 1);
+}
+template <typename E>
+  requires std::is_enum_v<E>
+inline E operator--(E &e, int) {
+  E old = e;
+  --e;
+  return old;
+}
+
 #include <inttypes.h>
-#include <stdarg.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
+#include <stdarg.h>
 #ifdef HAVE_STRINGS_H
 #include <strings.h>
 #endif
-#include <errno.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <errno.h>
 #if defined(WIN32) || defined(__CYGWIN__)
 #include <fcntl.h> /* ensure O_BINARY is available */
 #endif
@@ -945,19 +979,19 @@ pg_noreturn extern void ExceptionalCondition(const char *conditionName,
  * platforms) but it provides at least some coverage.
  */
 #ifdef HAVE__BUILTIN_TYPES_COMPATIBLE_P
-#define AssertVariableIsOfType(varname, typename) \
-	StaticAssertStmt(__builtin_types_compatible_p(__typeof__(varname), typename), \
-	CppAsString(varname) " does not have type " CppAsString(typename))
-#define AssertVariableIsOfTypeMacro(varname, typename) \
-	(StaticAssertExpr(__builtin_types_compatible_p(__typeof__(varname), typename), \
-	 CppAsString(varname) " does not have type " CppAsString(typename)))
+#define AssertVariableIsOfType(varname, typename_) \
+	StaticAssertStmt(__builtin_types_compatible_p(__typeof__(varname), typename_), \
+	CppAsString(varname) " does not have type " CppAsString(typename_))
+#define AssertVariableIsOfTypeMacro(varname, typename_) \
+	(StaticAssertExpr(__builtin_types_compatible_p(__typeof__(varname), typename_), \
+	 CppAsString(varname) " does not have type " CppAsString(typename_)))
 #else /* !HAVE__BUILTIN_TYPES_COMPATIBLE_P */
-#define AssertVariableIsOfType(varname, typename) \
-	StaticAssertStmt(sizeof(varname) == sizeof(typename), \
-	CppAsString(varname) " does not have type " CppAsString(typename))
-#define AssertVariableIsOfTypeMacro(varname, typename) \
-	(StaticAssertExpr(sizeof(varname) == sizeof(typename), \
-	 CppAsString(varname) " does not have type " CppAsString(typename)))
+#define AssertVariableIsOfType(varname, typename_) \
+	StaticAssertStmt(sizeof(varname) == sizeof(typename_), \
+	CppAsString(varname) " does not have type " CppAsString(typename_))
+#define AssertVariableIsOfTypeMacro(varname, typename_) \
+	(StaticAssertExpr(sizeof(varname) == sizeof(typename_), \
+	 CppAsString(varname) " does not have type " CppAsString(typename_)))
 #endif /* HAVE__BUILTIN_TYPES_COMPATIBLE_P */
 
 /* ----------------------------------------------------------------

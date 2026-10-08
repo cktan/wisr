@@ -57,16 +57,16 @@
 #define WIN32_LEAN_AND_MEAN
 #define UMDF_USING_NTSTATUS
 
-#include <ntstatus.h>
-#include <windows.h>
 #include <winsock2.h>
-#include <winternl.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <ntstatus.h>
+#include <winternl.h>
 
 #undef small
-#include <direct.h>
 #include <process.h>
 #include <signal.h>
+#include <direct.h>
 #undef near
 
 /* needed before sys/stat hacking below: */

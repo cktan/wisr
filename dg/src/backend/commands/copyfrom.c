@@ -21,8 +21,8 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "access/heapam.h"
 #include "access/tableam.h"
@@ -626,7 +626,7 @@ static inline void CopyMultiInsertInfoCleanup(CopyMultiInsertInfo *miinfo) {
   ListCell *lc;
 
   foreach (lc, miinfo->multiInsertBuffers)
-    CopyMultiInsertBufferCleanup(miinfo, lfirst(lc));
+    CopyMultiInsertBufferCleanup(miinfo, (CopyMultiInsertBuffer *)lfirst(lc));
 
   list_free(miinfo->multiInsertBuffers);
 }
@@ -1551,7 +1551,7 @@ CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *whereClause,
    * attribute_buf and raw_buf are used in both text and binary modes, but
    * input_buf and line_buf only in text mode.
    */
-  cstate->raw_buf = palloc(RAW_BUF_SIZE + 1);
+  cstate->raw_buf = (char *)palloc(RAW_BUF_SIZE + 1);
   cstate->raw_buf_index = cstate->raw_buf_len = 0;
   cstate->raw_reached_eof = false;
 

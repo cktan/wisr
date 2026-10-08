@@ -231,13 +231,13 @@ char *scram_build_secret(pg_cryptohash_type hash_type, int key_length,
            + encoded_server_len + 1;            /* Base64-encoded ServerKey */
 
 #ifdef FRONTEND
-  result = malloc(maxlen);
+  result = (char *)malloc(maxlen);
   if (!result) {
     *errstr = _("out of memory");
     return NULL;
   }
 #else
-  result = palloc(maxlen);
+  result = (char *)palloc(maxlen);
 #endif
 
   p = result + sprintf(result, "SCRAM-SHA-256$%d:", iterations);

@@ -87,7 +87,7 @@ static const astreamer_ops astreamer_tar_terminator_ops = {
 astreamer *astreamer_tar_parser_new(astreamer *next) {
   astreamer_tar_parser *streamer;
 
-  streamer = palloc0(sizeof(astreamer_tar_parser));
+  streamer = (astreamer_tar_parser *)palloc0(sizeof(astreamer_tar_parser));
   *((const astreamer_ops **)&streamer->base.bbs_ops) =
       &astreamer_tar_parser_ops;
   streamer->base.bbs_next = next;
@@ -352,7 +352,7 @@ static void astreamer_tar_parser_free(astreamer *streamer) {
 astreamer *astreamer_tar_archiver_new(astreamer *next) {
   astreamer_tar_archiver *streamer;
 
-  streamer = palloc0(sizeof(astreamer_tar_archiver));
+  streamer = (astreamer_tar_archiver *)palloc0(sizeof(astreamer_tar_archiver));
   *((const astreamer_ops **)&streamer->base.bbs_ops) =
       &astreamer_tar_archiver_ops;
   streamer->base.bbs_next = next;
@@ -444,7 +444,7 @@ static void astreamer_tar_archiver_free(astreamer *streamer) {
 astreamer *astreamer_tar_terminator_new(astreamer *next) {
   astreamer *streamer;
 
-  streamer = palloc0(sizeof(astreamer));
+  streamer = (astreamer *)palloc0(sizeof(astreamer));
   *((const astreamer_ops **)&streamer->bbs_ops) = &astreamer_tar_terminator_ops;
   streamer->bbs_next = next;
 

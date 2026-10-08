@@ -29,7 +29,7 @@
 #include "utils/varlena.h"
 
 /* common code for bpchartypmodin and varchartypmodin */
-static int32 anychar_typmodin(ArrayType *ta, const char *typename) {
+static int32 anychar_typmodin(ArrayType *ta, const char *typename_) {
   int32 typmod;
   int32 *tl;
   int n;
@@ -45,11 +45,12 @@ static int32 anychar_typmodin(ArrayType *ta, const char *typename) {
                     errmsg("invalid type modifier")));
 
   if (*tl < 1)
-    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("length for type %s must be at least 1", typename)));
+    ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+             errmsg("length for type %s must be at least 1", typename_)));
   if (*tl > MaxAttrSize)
     ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("length for type %s cannot exceed %d", typename,
+                    errmsg("length for type %s cannot exceed %d", typename_,
                            MaxAttrSize)));
 
   /*
@@ -304,7 +305,7 @@ Datum bpchar(PG_FUNCTION_ARGS) {
 
   Assert(maxlen >= len);
 
-  result = palloc(maxlen + VARHDRSZ);
+  result = (BpChar *)palloc(maxlen + VARHDRSZ);
   SET_VARSIZE(result, maxlen + VARHDRSZ);
   r = VARDATA(result);
 
@@ -897,7 +898,7 @@ Datum hashbpchar(PG_FUNCTION_ARGS) {
     char *buf;
 
     bsize = pg_strnxfrm(NULL, 0, keydata, keylen, mylocale);
-    buf = palloc(bsize + 1);
+    buf = (char *)palloc(bsize + 1);
 
     rsize = pg_strnxfrm(buf, bsize + 1, keydata, keylen, mylocale);
 
@@ -950,7 +951,7 @@ Datum hashbpcharextended(PG_FUNCTION_ARGS) {
     char *buf;
 
     bsize = pg_strnxfrm(NULL, 0, keydata, keylen, mylocale);
-    buf = palloc(bsize + 1);
+    buf = (char *)palloc(bsize + 1);
 
     rsize = pg_strnxfrm(buf, bsize + 1, keydata, keylen, mylocale);
 

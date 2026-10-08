@@ -102,7 +102,7 @@ static void RelationBuildPartitionKey(Relation relation) {
 
   /* Fixed-length attributes */
   form = (Form_pg_partitioned_table)GETSTRUCT(tuple);
-  key->strategy = form->partstrat;
+  key->strategy = (PartitionStrategy)form->partstrat;
   key->partnatts = form->partnatts;
 
   /* Validate partition strategy code */
@@ -137,7 +137,7 @@ static void RelationBuildPartitionKey(Relation relation) {
     Node *expr;
 
     exprString = TextDatumGetCString(datum);
-    expr = stringToNode(exprString);
+    expr = (Node *)stringToNode(exprString);
     pfree(exprString);
 
     /*
@@ -224,9 +224,9 @@ static void RelationBuildPartitionKey(Relation relation) {
       if (partexprs_item == NULL)
         elog(ERROR, "wrong number of partition key expressions");
 
-      key->parttypid[i] = exprType(lfirst(partexprs_item));
-      key->parttypmod[i] = exprTypmod(lfirst(partexprs_item));
-      key->parttypcoll[i] = exprCollation(lfirst(partexprs_item));
+      key->parttypid[i] = exprType((const Node *)lfirst(partexprs_item));
+      key->parttypmod[i] = exprTypmod((const Node *)lfirst(partexprs_item));
+      key->parttypcoll[i] = exprCollation((const Node *)lfirst(partexprs_item));
 
       partexprs_item = lnext(key->partexprs, partexprs_item);
     }
@@ -292,7 +292,7 @@ Expr *get_partition_qual_relid(Oid relid) {
     else if (list_length(and_args) > 1)
       result = makeBoolExpr(AND_EXPR, and_args, -1);
     else
-      result = linitial(and_args);
+      result = (Expr *)linitial(and_args);
 
     /* Keep the lock, to allow safe deparsing against the rel by caller. */
     relation_close(rel, NoLock);

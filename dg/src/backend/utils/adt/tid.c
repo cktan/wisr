@@ -17,8 +17,8 @@
  */
 #include "postgres.h"
 
-#include <limits.h>
 #include <math.h>
+#include <limits.h>
 
 #include "access/sysattr.h"
 #include "access/table.h"

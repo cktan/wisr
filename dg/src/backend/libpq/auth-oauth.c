@@ -15,8 +15,8 @@
  */
 #include "postgres.h"
 
-#include <fcntl.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "common/oauth-common.h"
 #include "fmgr.h"
@@ -106,7 +106,7 @@ static void *oauth_init(Port *port, const char *selected_mech,
     ereport(ERROR, errcode(ERRCODE_PROTOCOL_VIOLATION),
             errmsg("client selected an invalid SASL authentication mechanism"));
 
-  ctx = palloc0(sizeof(*ctx));
+  ctx = (oauth_ctx *)palloc0(sizeof(*ctx));
 
   ctx->state = OAUTH_STATE_INIT;
   ctx->port = port;
@@ -137,7 +137,7 @@ static int oauth_exchange(void *opaq, const char *input, int inputlen,
   char *auth;
   int status;
 
-  struct oauth_ctx *ctx = opaq;
+  struct oauth_ctx *ctx = (oauth_ctx *)opaq;
 
   *output = NULL;
   *outputlen = -1;
@@ -610,7 +610,7 @@ static bool validate(Port *port, const char *auth) {
             "validation of OAuth token requested without a validator loaded"));
 
   /* Call the validation function from the validator module */
-  ret = palloc0(sizeof(ValidatorModuleResult));
+  ret = (ValidatorModuleResult *)palloc0(sizeof(ValidatorModuleResult));
   if (!ValidatorCallbacks->validate_cb(validator_module_state, token,
                                        port->user_name, ret)) {
     ereport(WARNING, errcode(ERRCODE_INTERNAL_ERROR),
@@ -738,7 +738,7 @@ static void load_validator_library(const char *libname) {
     ValidatorCallbacks->startup_cb(validator_module_state);
 
   /* Shut down the library before cleaning up its state. */
-  mcb = palloc0(sizeof(*mcb));
+  mcb = (MemoryContextCallback *)palloc0(sizeof(*mcb));
   mcb->func = shutdown_validator_library;
 
   MemoryContextRegisterResetCallback(CurrentMemoryContext, mcb);
@@ -796,7 +796,7 @@ bool check_oauth_validator(HbaLine *hbaline, int elevel, char **err_msg) {
 
   if (!hbaline->oauth_validator) {
     if (elemlist->length == 1) {
-      hbaline->oauth_validator = pstrdup(linitial(elemlist));
+      hbaline->oauth_validator = pstrdup((const char *)linitial(elemlist));
       goto done;
     }
 

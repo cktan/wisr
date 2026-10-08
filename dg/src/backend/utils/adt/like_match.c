@@ -228,7 +228,7 @@ static int MatchText(const char *t, int tlen, const char *p, int plen,
       if (found_escape) {
         char *b;
 
-        b = buf = palloc(p1 - p);
+        b = buf = (char *)palloc(p1 - p);
         for (const char *c = p; c < p1; c++) {
           if (*c == '\\')
             c++; /* we already checked this isn't the end */

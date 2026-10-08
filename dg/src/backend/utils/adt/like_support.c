@@ -668,7 +668,7 @@ static double patternsel_common(PlannerInfo *root, Oid oprid, Oid opfuncid,
  */
 static double patternsel(PG_FUNCTION_ARGS, Pattern_Type ptype, bool negate) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
   int varRelid = PG_GETARG_INT32(3);
   Oid collation = PG_GET_COLLATION();
@@ -678,12 +678,12 @@ static double patternsel(PG_FUNCTION_ARGS, Pattern_Type ptype, bool negate) {
    * positive-match operator and work with that.
    */
   if (negate) {
-    operator= get_negator(operator);
-    if (!OidIsValid(operator))
+    operator_ = get_negator(operator_);
+    if (!OidIsValid(operator_))
       elog(ERROR, "patternsel called for operator without a negator");
   }
 
-  return patternsel_common(root, operator, InvalidOid, args, varRelid,
+  return patternsel_common(root, operator_, InvalidOid, args, varRelid,
                            collation, ptype, negate);
 }
 
@@ -871,16 +871,16 @@ like_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
   char *match;
   char *patt;
   int pattlen;
-  Oid typeid = patt_const->consttype;
+  Oid typeid_ = patt_const->consttype;
   int pos, match_pos;
   bool is_multibyte = (pg_database_encoding_max_length() > 1);
   pg_locale_t locale = 0;
 
   /* the right-hand const is type text or bytea */
-  Assert(typeid == BYTEAOID || typeid == TEXTOID);
+  Assert(typeid_ == BYTEAOID || typeid_ == TEXTOID);
 
   if (case_insensitive) {
-    if (typeid == BYTEAOID)
+    if (typeid_ == BYTEAOID)
       ereport(
           ERROR,
           (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -901,7 +901,7 @@ like_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
     locale = pg_newlocale_from_collation(collation);
   }
 
-  if (typeid != BYTEAOID) {
+  if (typeid_ != BYTEAOID) {
     patt = TextDatumGetCString(patt_const->constvalue);
     pattlen = strlen(patt);
   } else {
@@ -913,7 +913,7 @@ like_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
     Assert((Pointer)bstr == DatumGetPointer(patt_const->constvalue));
   }
 
-  match = palloc(pattlen + 1);
+  match = (char *)palloc(pattlen + 1);
   match_pos = 0;
   for (pos = 0; pos < pattlen; pos++) {
     /* % and _ are wildcard characters in LIKE */
@@ -937,8 +937,8 @@ like_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
 
   match[match_pos] = '\0';
 
-  if (typeid != BYTEAOID)
-    *prefix_const = string_to_const(match, typeid);
+  if (typeid_ != BYTEAOID)
+    *prefix_const = string_to_const(match, typeid_);
   else
     *prefix_const = string_to_bytea_const(match, match_pos);
 
@@ -961,7 +961,7 @@ like_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
 static Pattern_Prefix_Status
 regex_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
                    Const **prefix_const, Selectivity *rest_selec) {
-  Oid typeid = patt_const->consttype;
+  Oid typeid_ = patt_const->consttype;
   char *prefix;
   bool exact;
 
@@ -970,7 +970,7 @@ regex_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
    * such, it should be noted that the rest of this function has *not* been
    * made safe for binary (possibly NULL containing) strings.
    */
-  if (typeid == BYTEAOID)
+  if (typeid_ == BYTEAOID)
     ereport(
         ERROR,
         (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -993,7 +993,7 @@ regex_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
     return Pattern_Prefix_None;
   }
 
-  *prefix_const = string_to_const(prefix, typeid);
+  *prefix_const = string_to_const(prefix, typeid_);
 
   if (rest_selec != NULL) {
     if (exact) {
@@ -1414,13 +1414,13 @@ static Const *make_greater_string(const Const *str_const, FmgrInfo *ltproc,
 
       /* And build the string to compare to */
       if (datatype == NAMEOID) {
-        cmptxt = palloc(len + 2);
+        cmptxt = (char *)palloc(len + 2);
         memcpy(cmptxt, workstr, len);
         cmptxt[len] = suffixchar;
         cmptxt[len + 1] = '\0';
         cmpstr = PointerGetDatum(cmptxt);
       } else {
-        cmptxt = palloc(VARHDRSZ + len + 1);
+        cmptxt = (char *)palloc(VARHDRSZ + len + 1);
         SET_VARSIZE(cmptxt, VARHDRSZ + len + 1);
         memcpy(VARDATA(cmptxt), workstr, len);
         *(VARDATA(cmptxt) + len) = suffixchar;
@@ -1555,7 +1555,7 @@ static Const *string_to_const(const char *str, Oid datatype) {
  * Generate a Const node of bytea type from a binary C string and a length.
  */
 static Const *string_to_bytea_const(const char *str, size_t str_len) {
-  bytea *bstr = palloc(VARHDRSZ + str_len);
+  bytea *bstr = (bytea *)palloc(VARHDRSZ + str_len);
   Datum conval;
 
   memcpy(VARDATA(bstr), str, str_len);

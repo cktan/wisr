@@ -4456,7 +4456,7 @@ TimeZoneAbbrevTable *ConvertTimeZoneAbbrevs(struct tzEntry *abbrevs, int n) {
   }
 
   /* Alloc the result ... */
-  tbl = guc_malloc(LOG, tbl_size);
+  tbl = (TimeZoneAbbrevTable *)guc_malloc(LOG, tbl_size);
   if (!tbl)
     return NULL;
 

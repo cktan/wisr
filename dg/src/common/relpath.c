@@ -49,7 +49,7 @@ StaticAssertDecl(lengthof(forkNames) == (MAX_FORKNUM + 1),
 ForkNumber forkname_to_number(const char *forkName) {
   ForkNumber forkNum;
 
-  for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
+  for (forkNum = (ForkNumber)0; forkNum <= MAX_FORKNUM; forkNum++)
     if (strcmp(forkNames[forkNum], forkName) == 0)
       return forkNum;
 
@@ -77,7 +77,7 @@ ForkNumber forkname_to_number(const char *forkName) {
 int forkname_chars(const char *str, ForkNumber *fork) {
   ForkNumber forkNum;
 
-  for (forkNum = 1; forkNum <= MAX_FORKNUM; forkNum++) {
+  for (forkNum = (ForkNumber)1; forkNum <= MAX_FORKNUM; forkNum++) {
     int len = strlen(forkNames[forkNum]);
 
     if (strncmp(forkNames[forkNum], str, len) == 0) {

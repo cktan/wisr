@@ -457,7 +457,7 @@ pg_saslprep_rc pg_saslprep(const char *input, char **output) {
   if (input_size >= MaxAllocSize / sizeof(pg_wchar))
     goto oom;
 
-  input_chars = ALLOC((input_size + 1) * sizeof(pg_wchar));
+  input_chars = (pg_wchar *)ALLOC((input_size + 1) * sizeof(pg_wchar));
   if (!input_chars)
     goto oom;
 
@@ -573,7 +573,7 @@ pg_saslprep_rc pg_saslprep(const char *input, char **output) {
     result_size += pg_utf_mblen(buf);
   }
 
-  result = ALLOC(result_size + 1);
+  result = (char *)ALLOC(result_size + 1);
   if (!result)
     goto oom;
 

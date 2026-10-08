@@ -92,10 +92,10 @@ void XLogReaderSetDecodeBuffer(XLogReaderState *state, void *buffer,
                                size_t size) {
   Assert(state->decode_buffer == NULL);
 
-  state->decode_buffer = buffer;
+  state->decode_buffer = (char *)buffer;
   state->decode_buffer_size = size;
-  state->decode_buffer_tail = buffer;
-  state->decode_buffer_head = buffer;
+  state->decode_buffer_tail = (char *)buffer;
+  state->decode_buffer_head = (char *)buffer;
 }
 
 /*
@@ -136,7 +136,7 @@ XLogReaderState *XLogReaderAllocate(int wal_segment_size, const char *waldir,
   state->private_data = private_data;
   /* ReadRecPtr, EndRecPtr and readLen initialized to zeroes above */
   state->errormsg_buf =
-      palloc_extended(MAX_ERRORMSG_LEN + 1, MCXT_ALLOC_NO_OOM);
+      (char *)palloc_extended(MAX_ERRORMSG_LEN + 1, MCXT_ALLOC_NO_OOM);
   if (!state->errormsg_buf) {
     pfree(state->readBuf);
     pfree(state);
@@ -416,7 +416,7 @@ static DecodedXLogRecord *XLogReadRecordAlloc(XLogReaderState *state,
   if (unlikely(state->decode_buffer == NULL)) {
     if (state->decode_buffer_size == 0)
       state->decode_buffer_size = DEFAULT_DECODE_BUFFER_SIZE;
-    state->decode_buffer = palloc(state->decode_buffer_size);
+    state->decode_buffer = (char *)palloc(state->decode_buffer_size);
     state->decode_buffer_head = state->decode_buffer;
     state->decode_buffer_tail = state->decode_buffer;
     state->free_decode_buffer = true;
@@ -479,7 +479,7 @@ static DecodedXLogRecord *XLogReadRecordAlloc(XLogReaderState *state,
 
   /* Not enough space in the decode buffer.  Are we allowed to allocate? */
   if (allow_oversized) {
-    decoded = palloc(required_space);
+    decoded = (DecodedXLogRecord *)palloc(required_space);
     decoded->oversized = true;
     return decoded;
   }
@@ -1617,7 +1617,7 @@ bool DecodeXLogRecord(XLogReaderState *state, DecodedXLogRecord *decoded,
       blk->apply_image = false;
 
       COPY_HEADER_FIELD(&fork_flags, sizeof(uint8));
-      blk->forknum = fork_flags & BKPBLOCK_FORK_MASK;
+      blk->forknum = (ForkNumber)(fork_flags & BKPBLOCK_FORK_MASK);
       blk->flags = fork_flags;
       blk->has_image = ((fork_flags & BKPBLOCK_HAS_IMAGE) != 0);
       blk->has_data = ((fork_flags & BKPBLOCK_HAS_DATA) != 0);

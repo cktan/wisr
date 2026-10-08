@@ -1003,7 +1003,7 @@ ObjectAddress DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
   attnum = 0;
 
   foreach (listptr, stmt->tableElts) {
-    ColumnDef *colDef = lfirst(listptr);
+    ColumnDef *colDef = (ColumnDef *)lfirst(listptr);
 
     attnum++;
     if (colDef->raw_default != NULL) {
@@ -1365,7 +1365,7 @@ TupleDesc BuildDescForRelation(const List *columns) {
   attnum = 0;
 
   foreach (l, columns) {
-    ColumnDef *entry = lfirst(l);
+    ColumnDef *entry = (ColumnDef *)lfirst(l);
     AclResult aclresult;
     Form_pg_attribute att;
 
@@ -1798,7 +1798,7 @@ void ExecuteTruncate(TruncateStmt *stmt) {
    * Open, exclusive-lock, and check all the explicitly-specified relations
    */
   foreach (cell, stmt->relations) {
-    RangeVar *rv = lfirst(cell);
+    RangeVar *rv = (RangeVar *)lfirst(cell);
     Relation rel;
     bool recurse = rv->inh;
     Oid myrelid;
@@ -2081,7 +2081,8 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
       }
 
       /* Find or create cached entry for the foreign table */
-      ft_info = hash_search(ft_htab, &serverid, HASH_ENTER, &found);
+      ft_info = (ForeignTruncateInfo *)hash_search(ft_htab, &serverid,
+                                                   HASH_ENTER, &found);
       if (!found)
         ft_info->rels = NIL;
 
@@ -2158,7 +2159,7 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
 
     PG_TRY();
     {
-      while ((ft_info = hash_seq_search(&seq)) != NULL) {
+      while ((ft_info = (ForeignTruncateInfo *)hash_seq_search(&seq)) != NULL) {
         FdwRoutine *routine = GetFdwRoutineByServerId(ft_info->serverid);
 
         /* truncate_check_rel() has checked that already */
@@ -2195,7 +2196,7 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
     /* should only get here if wal_level >= logical */
     Assert(XLogLogicalInfoActive());
 
-    logrelids = palloc(list_length(relids_logged) * sizeof(Oid));
+    logrelids = (Oid *)palloc(list_length(relids_logged) * sizeof(Oid));
     foreach (cell, relids_logged)
       logrelids[i++] = lfirst_oid(cell);
 
@@ -2420,7 +2421,7 @@ static List *MergeAttributes(List *columns, const List *supers,
   List *nnconstraints = NIL;
   bool have_bogus_defaults = false;
   int child_attno;
-  static Node bogus_marker = {0}; /* marks conflicting defaults */
+  static Node bogus_marker = {(NodeTag)0}; /* marks conflicting defaults */
   List *saved_columns = NIL;
   ListCell *lc;
 
@@ -2773,7 +2774,7 @@ static List *MergeAttributes(List *columns, const List *supers,
           continue;
 
         /* Adjust Vars to match new table's column numbering */
-        expr = map_variable_attnos(stringToNode(check[i].ccbin), 1, 0,
+        expr = map_variable_attnos((Node *)stringToNode(check[i].ccbin), 1, 0,
                                    newattmap, InvalidOid, &found_whole_row);
 
         /*
@@ -2873,12 +2874,12 @@ static List *MergeAttributes(List *columns, const List *supers,
    */
   if (is_partition) {
     foreach (lc, saved_columns) {
-      ColumnDef *restdef = lfirst(lc);
+      ColumnDef *restdef = (ColumnDef *)lfirst(lc);
       bool found = false;
       ListCell *l;
 
       foreach (l, columns) {
-        ColumnDef *coldef = lfirst(l);
+        ColumnDef *coldef = (ColumnDef *)lfirst(l);
 
         if (strcmp(coldef->colname, restdef->colname) == 0) {
           found = true;
@@ -2959,7 +2960,7 @@ static List *MergeAttributes(List *columns, const List *supers,
    */
   if (have_bogus_defaults) {
     foreach (lc, columns) {
-      ColumnDef *def = lfirst(lc);
+      ColumnDef *def = (ColumnDef *)lfirst(lc);
 
       if (def->cooked_default == &bogus_marker) {
         if (def->generated)
@@ -5012,7 +5013,7 @@ static void ATRewriteCatalogs(List **wqueue, LOCKMODE lockmode,
    * re-adding of the foreign key constraint to the other table).  Work can
    * only be propagated into later passes, however.
    */
-  for (AlterTablePass pass = 0; pass < AT_NUM_PASSES; pass++) {
+  for (AlterTablePass pass = (AlterTablePass)0; pass < AT_NUM_PASSES; pass++) {
     /* Go through each table that needs to be processed */
     foreach (ltab, *wqueue) {
       AlteredTableInfo *tab = (AlteredTableInfo *)lfirst(ltab);
@@ -5696,7 +5697,7 @@ static void ATRewriteTables(AlterTableStmt *parsetree, List **wqueue,
       continue;
 
     foreach (lcon, tab->constraints) {
-      NewConstraint *con = lfirst(lcon);
+      NewConstraint *con = (NewConstraint *)lfirst(lcon);
 
       if (con->contype == CONSTR_FOREIGN) {
         Constraint *fkconstraint = (Constraint *)con->qual;
@@ -5799,7 +5800,7 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
 
   /* Build the needed expression execution states */
   foreach (l, tab->constraints) {
-    NewConstraint *con = lfirst(l);
+    NewConstraint *con = (NewConstraint *)lfirst(l);
 
     switch (con->contype) {
     case CONSTR_CHECK:
@@ -5823,7 +5824,7 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
   }
 
   foreach (l, tab->newvals) {
-    NewColumnValue *ex = lfirst(l);
+    NewColumnValue *ex = (NewColumnValue *)lfirst(l);
 
     /* expr already planned */
     ex->exprstate = ExecInitExpr((Expr *)ex->expr, NULL);
@@ -5993,7 +5994,7 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
         econtext->ecxt_scantuple = oldslot;
 
         foreach (l, tab->newvals) {
-          NewColumnValue *ex = lfirst(l);
+          NewColumnValue *ex = (NewColumnValue *)lfirst(l);
 
           if (ex->is_generated)
             continue;
@@ -6012,7 +6013,7 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
         econtext->ecxt_scantuple = newslot;
 
         foreach (l, tab->newvals) {
-          NewColumnValue *ex = lfirst(l);
+          NewColumnValue *ex = (NewColumnValue *)lfirst(l);
 
           if (!ex->is_generated)
             continue;
@@ -6064,7 +6065,7 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
       }
 
       foreach (l, tab->constraints) {
-        NewConstraint *con = lfirst(l);
+        NewConstraint *con = (NewConstraint *)lfirst(l);
 
         switch (con->contype) {
         case CONSTR_CHECK:
@@ -7497,7 +7498,7 @@ static ObjectAddress ATExecSetNotNull(List **wqueue, Relation rel,
   /* and do it */
   cooked = AddRelationNewConstraints(rel, NIL, list_make1(constraint), false,
                                      !recursing, false, NULL);
-  ccon = linitial(cooked);
+  ccon = (CookedConstraint *)linitial(cooked);
   ObjectAddressSet(address, ConstraintRelationId, ccon->conoid);
 
   /* Mark pg_attribute.attnotnull for the column and queue validation */
@@ -10166,7 +10167,7 @@ static void addFkRecurseReferenced(
       map = build_attrmap_by_name_if_req(RelationGetDescr(partRel),
                                          RelationGetDescr(pkrel), false);
       if (map) {
-        mapped_pkattnum = palloc(sizeof(AttrNumber) * numfks);
+        mapped_pkattnum = (AttrNumber *)palloc(sizeof(AttrNumber) * numfks);
         for (int j = 0; j < numfks; j++)
           mapped_pkattnum[j] = map->attnums[pkattnum[j] - 1];
       } else
@@ -10501,7 +10502,7 @@ static void CloneFkReferenced(Relation parentRel, Relation partitionRel) {
       mapped_confkey[i] = attmap->attnums[confkey[i] - 1];
 
     fkconstraint = makeNode(Constraint);
-    fkconstraint->contype = CONSTRAINT_FOREIGN;
+    fkconstraint->contype = (ConstrType)CONSTRAINT_FOREIGN;
     fkconstraint->conname = NameStr(constrForm->conname);
     fkconstraint->deferrable = constrForm->condeferrable;
     fkconstraint->initdeferred = constrForm->condeferred;
@@ -10591,7 +10592,7 @@ static void CloneFkReferencing(List **wqueue, Relation parentRel,
 
   /* obtain a list of constraints that we need to clone */
   foreach (cell, RelationGetFKeyList(parentRel)) {
-    ForeignKeyCacheInfo *fk = lfirst(cell);
+    ForeignKeyCacheInfo *fk = (ForeignKeyCacheInfo *)lfirst(cell);
 
     /*
      * Refuse to attach a table as partition that this partitioned table
@@ -10733,7 +10734,7 @@ static void CloneFkReferencing(List **wqueue, Relation parentRel,
 
     /* No dice.  Set up to create our own constraint */
     fkconstraint = makeNode(Constraint);
-    fkconstraint->contype = CONSTRAINT_FOREIGN;
+    fkconstraint->contype = (ConstrType)CONSTRAINT_FOREIGN;
     /* ->conname determined below */
     fkconstraint->deferrable = constrForm->condeferrable;
     fkconstraint->initdeferred = constrForm->condeferred;
@@ -12158,7 +12159,8 @@ static void QueueCheckConstraintValidation(List **wqueue, Relation conrel,
 
   val = SysCacheGetAttrNotNull(CONSTROID, contuple, Anum_pg_constraint_conbin);
   conbin = TextDatumGetCString(val);
-  newcon->qual = expand_generated_columns_in_expr(stringToNode(conbin), rel, 1);
+  newcon->qual =
+      expand_generated_columns_in_expr((Node *)stringToNode(conbin), rel, 1);
 
   /* Find or create work queue entry for this table */
   tab = ATGetQueueEntry(wqueue, rel);
@@ -12684,7 +12686,7 @@ static void validateForeignKeyConstraint(char *conname, Relation rel,
 
   while (table_scan_getnextslot(scan, ForwardScanDirection, slot)) {
     LOCAL_FCINFO(fcinfo, 0);
-    TriggerData trigdata = {0};
+    TriggerData trigdata = {(NodeTag)0};
 
     CHECK_FOR_INTERRUPTS();
 
@@ -13562,7 +13564,7 @@ static bool ATColumnChangeRequiresRewrite(Node *expr, AttrNumber varattno) {
         if (TimestampTimestampTzRequiresRewrite())
           return true;
         else
-          expr = linitial(f->args);
+          expr = (Node *)linitial(f->args);
         break;
       default:
         return true;
@@ -15805,8 +15807,8 @@ static void index_copy_data(Relation rel, RelFileLocator newrlocator) {
                       rel->rd_rel->relpersistence);
 
   /* copy those extra forks that exist */
-  for (ForkNumber forkNum = MAIN_FORKNUM + 1; forkNum <= MAX_FORKNUM;
-       forkNum++) {
+  for (ForkNumber forkNum = (ForkNumber)(MAIN_FORKNUM + 1);
+       forkNum <= MAX_FORKNUM; forkNum++) {
     if (smgrexists(RelationGetSmgr(rel), forkNum)) {
       smgrcreate(dstrel, forkNum, false);
 
@@ -16784,7 +16786,7 @@ static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
   Oid relid = RelationGetRelid(rel);
   Type typetuple;
   Form_pg_type typeform;
-  Oid typeid;
+  Oid typeid_;
   Relation inheritsRelation, relationRelation;
   SysScanDesc scan;
   ScanKeyData key;
@@ -16798,11 +16800,11 @@ static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
   typetuple = typenameType(NULL, ofTypename, NULL);
   check_of_type(typetuple);
   typeform = (Form_pg_type)GETSTRUCT(typetuple);
-  typeid = typeform->oid;
+  typeid_ = typeform->oid;
 
-  aclresult = object_aclcheck(TypeRelationId, typeid, GetUserId(), ACL_USAGE);
+  aclresult = object_aclcheck(TypeRelationId, typeid_, GetUserId(), ACL_USAGE);
   if (aclresult != ACLCHECK_OK)
-    aclcheck_error_type(aclresult, typeid);
+    aclcheck_error_type(aclresult, typeid_);
 
   /* Fail if the table has any inheritance parents. */
   inheritsRelation = table_open(InheritsRelationId, AccessShareLock);
@@ -16820,7 +16822,7 @@ static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
    * Check the tuple descriptors for compatibility.  Unlike inheritance, we
    * require that the order also match.  However, attnotnull need not match.
    */
-  typeTupleDesc = lookup_rowtype_tupdesc(typeid, -1);
+  typeTupleDesc = lookup_rowtype_tupdesc(typeid_, -1);
   tableTupleDesc = RelationGetDescr(rel);
   table_attno = 1;
   for (type_attno = 1; type_attno <= typeTupleDesc->natts; type_attno++) {
@@ -16883,7 +16885,7 @@ static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
   tableobj.objectId = relid;
   tableobj.objectSubId = 0;
   typeobj.classId = TypeRelationId;
-  typeobj.objectId = typeid;
+  typeobj.objectId = typeid_;
   typeobj.objectSubId = 0;
   recordDependencyOn(&tableobj, &typeobj, DEPENDENCY_NORMAL);
 
@@ -16892,7 +16894,7 @@ static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
   classtuple = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relid));
   if (!HeapTupleIsValid(classtuple))
     elog(ERROR, "cache lookup failed for relation %u", relid);
-  ((Form_pg_class)GETSTRUCT(classtuple))->reloftype = typeid;
+  ((Form_pg_class)GETSTRUCT(classtuple))->reloftype = typeid_;
   CatalogTupleUpdate(relationRelation, &classtuple->t_self, classtuple);
 
   InvokeObjectPostAlterHook(RelationRelationId, relid, 0);
@@ -18523,7 +18525,7 @@ bool ConstraintImpliedByRelConstraint(Relation scanrel, List *testConstraint,
      */
     Assert(constr->check[i].ccenforced);
 
-    cexpr = stringToNode(constr->check[i].ccbin);
+    cexpr = (Node *)stringToNode(constr->check[i].ccbin);
 
     /*
      * Run each expression through const-simplification and
@@ -18951,8 +18953,10 @@ static void AttachPartitionEnsureIndexes(List **wqueue, Relation rel,
 
   idxes = RelationGetIndexList(rel);
   attachRelIdxs = RelationGetIndexList(attachrel);
-  attachrelIdxRels = palloc(sizeof(Relation) * list_length(attachRelIdxs));
-  attachInfos = palloc(sizeof(IndexInfo *) * list_length(attachRelIdxs));
+  attachrelIdxRels =
+      (RelationData **)palloc(sizeof(Relation) * list_length(attachRelIdxs));
+  attachInfos =
+      (IndexInfo **)palloc(sizeof(IndexInfo *) * list_length(attachRelIdxs));
 
   /* Build arrays of all existing indexes and their IndexInfos */
   foreach_oid(cldIdxId, attachRelIdxs) {
@@ -19154,7 +19158,7 @@ static void CloneRowTriggersToPartition(Relation parent, Relation partition) {
     value = heap_getattr(tuple, Anum_pg_trigger_tgqual,
                          RelationGetDescr(pg_trigger), &isnull);
     if (!isnull) {
-      qual = stringToNode(TextDatumGetCString(value));
+      qual = (Node *)stringToNode(TextDatumGetCString(value));
       qual = (Node *)map_partition_varattnos((List *)qual, PRS2_OLD_VARNO,
                                              partition, parent);
       qual = (Node *)map_partition_varattnos((List *)qual, PRS2_NEW_VARNO,
@@ -19470,7 +19474,7 @@ static void DetachPartitionFinalize(Relation rel, Relation partRel,
       lappend_oid(fkoids, fk->conoid);
 
   foreach (cell, fks) {
-    ForeignKeyCacheInfo *fk = lfirst(cell);
+    ForeignKeyCacheInfo *fk = (ForeignKeyCacheInfo *)lfirst(cell);
     HeapTuple contup;
     Form_pg_constraint conform;
 
@@ -19544,7 +19548,7 @@ static void DetachPartitionFinalize(Relation rel, Relation partRel,
 
       /* Create a synthetic node we'll use throughout */
       fkconstraint = makeNode(Constraint);
-      fkconstraint->contype = CONSTRAINT_FOREIGN;
+      fkconstraint->contype = (ConstrType)CONSTRAINT_FOREIGN;
       fkconstraint->conname = pstrdup(NameStr(conform->conname));
       fkconstraint->deferrable = conform->condeferrable;
       fkconstraint->initdeferred = conform->condeferred;

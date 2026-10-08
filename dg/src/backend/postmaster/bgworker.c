@@ -143,8 +143,8 @@ Size BackgroundWorkerShmemSize(void) {
 void BackgroundWorkerShmemInit(void) {
   bool found;
 
-  BackgroundWorkerData = ShmemInitStruct("Background Worker Data",
-                                         BackgroundWorkerShmemSize(), &found);
+  BackgroundWorkerData = (BackgroundWorkerArray *)ShmemInitStruct(
+      "Background Worker Data", BackgroundWorkerShmemSize(), &found);
   if (!IsUnderPostmaster) {
     dlist_iter iter;
     int slotno = 0;
@@ -309,9 +309,9 @@ void BackgroundWorkerStateChange(bool allow_new_workers) {
     /*
      * Copy the registration data into the registered workers list.
      */
-    rw = MemoryContextAllocExtended(PostmasterContext,
-                                    sizeof(RegisteredBgWorker),
-                                    MCXT_ALLOC_NO_OOM | MCXT_ALLOC_ZERO);
+    rw = (RegisteredBgWorker *)MemoryContextAllocExtended(
+        PostmasterContext, sizeof(RegisteredBgWorker),
+        MCXT_ALLOC_NO_OOM | MCXT_ALLOC_ZERO);
     if (rw == NULL) {
       ereport(LOG, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
       return;
@@ -652,7 +652,8 @@ void BackgroundWorkerMain(const void *startup_data, size_t startup_data_len) {
   if (startup_data == NULL)
     elog(FATAL, "unable to find bgworker entry");
   Assert(startup_data_len == sizeof(BackgroundWorker));
-  worker = MemoryContextAlloc(TopMemoryContext, sizeof(BackgroundWorker));
+  worker = (BackgroundWorker *)MemoryContextAlloc(TopMemoryContext,
+                                                  sizeof(BackgroundWorker));
   memcpy(worker, startup_data, sizeof(BackgroundWorker));
 
   /*
@@ -923,8 +924,8 @@ void RegisterBackgroundWorker(BackgroundWorker *worker) {
   /*
    * Copy the registration data into the registered workers list.
    */
-  rw = MemoryContextAllocExtended(PostmasterContext, sizeof(RegisteredBgWorker),
-                                  MCXT_ALLOC_NO_OOM);
+  rw = (RegisteredBgWorker *)MemoryContextAllocExtended(
+      PostmasterContext, sizeof(RegisteredBgWorker), MCXT_ALLOC_NO_OOM);
   if (rw == NULL) {
     ereport(LOG, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
     return;
@@ -1029,7 +1030,7 @@ bool RegisterDynamicBackgroundWorker(BackgroundWorker *worker,
    * If we found a slot and the user has provided a handle, initialize it.
    */
   if (success && handle) {
-    *handle = palloc(sizeof(BackgroundWorkerHandle));
+    *handle = (BackgroundWorkerHandle *)palloc(sizeof(BackgroundWorkerHandle));
     (*handle)->slot = slotno;
     (*handle)->generation = generation;
   }

@@ -116,16 +116,16 @@ static void pgaio_worker_shmem_init(bool first_time) {
   bool found;
   int queue_size;
 
-  io_worker_submission_queue =
-      ShmemInitStruct("AioWorkerSubmissionQueue",
-                      pgaio_worker_queue_shmem_size(&queue_size), &found);
+  io_worker_submission_queue = (PgAioWorkerSubmissionQueue *)ShmemInitStruct(
+      "AioWorkerSubmissionQueue", pgaio_worker_queue_shmem_size(&queue_size),
+      &found);
   if (!found) {
     io_worker_submission_queue->size = queue_size;
     io_worker_submission_queue->head = 0;
     io_worker_submission_queue->tail = 0;
   }
 
-  io_worker_control = ShmemInitStruct(
+  io_worker_control = (PgAioWorkerControl *)ShmemInitStruct(
       "AioWorkerControl", pgaio_worker_control_shmem_size(), &found);
   if (!found) {
     io_worker_control->idle_worker_mask = 0;
@@ -310,7 +310,7 @@ static void pgaio_worker_error_callback(void *arg) {
   ProcNumber owner;
   PGPROC *owner_proc;
   int32 owner_pid;
-  PgAioHandle *ioh = arg;
+  PgAioHandle *ioh = (PgAioHandle *)arg;
 
   if (!ioh)
     return;

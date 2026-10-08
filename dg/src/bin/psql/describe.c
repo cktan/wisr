@@ -1979,11 +1979,12 @@ static bool describeOneTableDetails(const char *schemaname,
 
       printTableAddCell(&cont, PQgetvalue(res, i, attcoll_col), false, false);
 
-      printTableAddCell(&cont,
-                        strcmp(PQgetvalue(res, i, attnotnull_col), "t") == 0
-                            ? "not null"
-                            : "",
-                        false, false);
+      printTableAddCell(
+          &cont,
+          (char *)(strcmp(PQgetvalue(res, i, attnotnull_col), "t") == 0
+                       ? "not null"
+                       : ""),
+          false, false);
 
       identity = PQgetvalue(res, i, attidentity_col);
       generated = PQgetvalue(res, i, attgenerated_col);
@@ -2023,14 +2024,15 @@ static bool describeOneTableDetails(const char *schemaname,
       /* these strings are literal in our syntax, so not translated. */
       printTableAddCell(
           &cont,
-          (storage[0] == TYPSTORAGE_PLAIN
-               ? "plain"
-               : (storage[0] == TYPSTORAGE_MAIN
-                      ? "main"
-                      : (storage[0] == TYPSTORAGE_EXTENDED
-                             ? "extended"
-                             : (storage[0] == TYPSTORAGE_EXTERNAL ? "external"
-                                                                  : "???")))),
+          (char *)(storage[0] == TYPSTORAGE_PLAIN
+                       ? "plain"
+                       : (storage[0] == TYPSTORAGE_MAIN
+                              ? "main"
+                              : (storage[0] == TYPSTORAGE_EXTENDED
+                                     ? "extended"
+                                     : (storage[0] == TYPSTORAGE_EXTERNAL
+                                            ? "external"
+                                            : "???")))),
           false, false);
     }
 
@@ -2039,13 +2041,14 @@ static bool describeOneTableDetails(const char *schemaname,
       char *compression = PQgetvalue(res, i, attcompression_col);
 
       /* these strings are literal in our syntax, so not translated. */
-      printTableAddCell(&cont,
-                        (compression[0] == 'p'
-                             ? "pglz"
-                             : (compression[0] == 'l'
-                                    ? "lz4"
-                                    : (compression[0] == '\0' ? "" : "???"))),
-                        false, false);
+      printTableAddCell(
+          &cont,
+          (char *)(compression[0] == 'p'
+                       ? "pglz"
+                       : (compression[0] == 'l'
+                              ? "lz4"
+                              : (compression[0] == '\0' ? "" : "???"))),
+          false, false);
     }
 
     /* Statistics target, if the relkind supports this feature */
@@ -3590,7 +3593,7 @@ bool describeRoles(const char *pattern, bool verbose, bool showSystem) {
     return false;
 
   nrows = PQntuples(res);
-  attr = pg_malloc0((nrows + 1) * sizeof(*attr));
+  attr = (char **)pg_malloc0((nrows + 1) * sizeof(*attr));
 
   printTableInit(&cont, &myopt, _("List of roles"), ncols, nrows);
 
@@ -4018,14 +4021,15 @@ bool listTables(const char *tabtypes, const char *pattern, bool verbose,
         pg_log_error_internal("Did not find any ??? relations.");
     }
   } else {
-    myopt.title = (ntypes != 1)    ? _("List of relations")
-                  : (showTables)   ? _("List of tables")
-                  : (showIndexes)  ? _("List of indexes")
-                  : (showViews)    ? _("List of views")
-                  : (showMatViews) ? _("List of materialized views")
-                  : (showSeq)      ? _("List of sequences")
-                  : (showForeign)  ? _("List of foreign tables")
-                                   : "List of ???"; /* should not get here */
+    myopt.title =
+        (char *)((ntypes != 1)    ? _("List of relations")
+                 : (showTables)   ? _("List of tables")
+                 : (showIndexes)  ? _("List of indexes")
+                 : (showViews)    ? _("List of views")
+                 : (showMatViews) ? _("List of materialized views")
+                 : (showSeq)      ? _("List of sequences")
+                 : (showForeign)  ? _("List of foreign tables")
+                                  : "List of ???"); /* should not get here */
     myopt.translate_header = true;
     myopt.translate_columns = translate_columns;
     myopt.n_translate_columns = lengthof(translate_columns);

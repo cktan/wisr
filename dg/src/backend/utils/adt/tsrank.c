@@ -699,7 +699,8 @@ static DocRepresentation *get_docrep(TSVector txt, QueryRepresentation *qr,
      * Join QueryItem per WordEntry and its position
      */
     storage.pos = doc->pos;
-    storage.data.query.items = palloc(sizeof(QueryItem *) * qr->query->size);
+    storage.data.query.items =
+        (QueryItem **)palloc(sizeof(QueryItem *) * qr->query->size);
     storage.data.query.items[0] = doc->data.map.item;
     storage.data.query.nitem = 1;
 
@@ -714,7 +715,7 @@ static DocRepresentation *get_docrep(TSVector txt, QueryRepresentation *qr,
         wptr++;
         storage.pos = rptr->pos;
         storage.data.query.items =
-            palloc(sizeof(QueryItem *) * qr->query->size);
+            (QueryItem **)palloc(sizeof(QueryItem *) * qr->query->size);
         storage.data.query.items[0] = rptr->data.map.item;
         storage.data.query.nitem = 1;
       }

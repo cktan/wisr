@@ -393,12 +393,12 @@ ParallelVacuumState *parallel_vacuum_init(Relation rel, Relation *indrels,
    * Allocate space for each worker's BufferUsage and WalUsage; no need to
    * initialize
    */
-  buffer_usage = shm_toc_allocate(
+  buffer_usage = (BufferUsage *)shm_toc_allocate(
       pcxt->toc, mul_size(sizeof(BufferUsage), pcxt->nworkers));
   shm_toc_insert(pcxt->toc, PARALLEL_VACUUM_KEY_BUFFER_USAGE, buffer_usage);
   pvs->buffer_usage = buffer_usage;
-  wal_usage =
-      shm_toc_allocate(pcxt->toc, mul_size(sizeof(WalUsage), pcxt->nworkers));
+  wal_usage = (WalUsage *)shm_toc_allocate(
+      pcxt->toc, mul_size(sizeof(WalUsage), pcxt->nworkers));
   shm_toc_insert(pcxt->toc, PARALLEL_VACUUM_KEY_WAL_USAGE, wal_usage);
   pvs->wal_usage = wal_usage;
 
@@ -975,7 +975,8 @@ void parallel_vacuum_main(dsm_segment *seg, shm_toc *toc) {
   shared = (PVShared *)shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_SHARED, false);
 
   /* Set debug_query_string for individual workers */
-  sharedquery = shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_QUERY_TEXT, true);
+  sharedquery =
+      (char *)shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_QUERY_TEXT, true);
   debug_query_string = sharedquery;
   pgstat_report_activity(STATE_RUNNING, debug_query_string);
 
@@ -1052,8 +1053,10 @@ void parallel_vacuum_main(dsm_segment *seg, shm_toc *toc) {
   parallel_vacuum_process_safe_indexes(&pvs);
 
   /* Report buffer/WAL usage during parallel execution */
-  buffer_usage = shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_BUFFER_USAGE, false);
-  wal_usage = shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_WAL_USAGE, false);
+  buffer_usage = (BufferUsage *)shm_toc_lookup(
+      toc, PARALLEL_VACUUM_KEY_BUFFER_USAGE, false);
+  wal_usage =
+      (WalUsage *)shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_WAL_USAGE, false);
   InstrEndParallelQuery(&buffer_usage[ParallelWorkerNumber],
                         &wal_usage[ParallelWorkerNumber]);
 
@@ -1079,7 +1082,7 @@ void parallel_vacuum_main(dsm_segment *seg, shm_toc *toc) {
  * as well.
  */
 static void parallel_vacuum_error_callback(void *arg) {
-  ParallelVacuumState *errinfo = arg;
+  ParallelVacuumState *errinfo = (ParallelVacuumState *)arg;
 
   switch (errinfo->status) {
   case PARALLEL_INDVAC_STATUS_NEED_BULKDELETE:

@@ -97,7 +97,7 @@ void PrepareQuery(ParseState *pstate, PrepareStmt *stmt, int stmt_location,
     i = 0;
 
     foreach (l, stmt->argtypes) {
-      TypeName *tn = lfirst(l);
+      TypeName *tn = (TypeName *)lfirst(l);
       Oid toid = typenameTypeId(pstate, tn);
 
       argtypes[i++] = toid;
@@ -281,7 +281,7 @@ static ParamListInfo EvaluateParams(ParseState *pstate,
 
   i = 0;
   foreach (l, params) {
-    Node *expr = lfirst(l);
+    Node *expr = (Node *)lfirst(l);
     Oid expected_type_id = param_types[i];
     Oid given_type_id;
 
@@ -301,7 +301,7 @@ static ParamListInfo EvaluateParams(ParseState *pstate,
                       i + 1, format_type_be(given_type_id),
                       format_type_be(expected_type_id)),
                errhint("You will need to rewrite or cast the expression."),
-               parser_errposition(pstate, exprLocation(lfirst(l)))));
+               parser_errposition(pstate, exprLocation((Node *)lfirst(l)))));
 
     /* Take care of collations in the finished expression. */
     assign_expr_collations(pstate, expr);
@@ -489,7 +489,7 @@ void DropAllPreparedStatements(void) {
 
   /* walk over cache */
   hash_seq_init(&seq, prepared_queries);
-  while ((entry = hash_seq_search(&seq)) != NULL) {
+  while ((entry = (PreparedStatement *)hash_seq_search(&seq)) != NULL) {
     /* Release the plancache entry */
     DropCachedPlan(entry->plansource);
 
@@ -630,7 +630,8 @@ Datum pg_prepared_statement(PG_FUNCTION_ARGS) {
     PreparedStatement *prep_stmt;
 
     hash_seq_init(&hash_seq, prepared_queries);
-    while ((prep_stmt = hash_seq_search(&hash_seq)) != NULL) {
+    while ((prep_stmt = (PreparedStatement *)hash_seq_search(&hash_seq)) !=
+           NULL) {
       TupleDesc result_desc;
       Datum values[8];
       bool nulls[8] = {0};

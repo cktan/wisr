@@ -1086,7 +1086,8 @@ static bool is_standard_join_alias_expression(Node *newnode, Var *oldvar) {
      * Examine only the first argument --- coercions might have additional
      * arguments that are constants.
      */
-    return is_standard_join_alias_expression(linitial(fexpr->args), oldvar);
+    return is_standard_join_alias_expression((Node *)linitial(fexpr->args),
+                                             oldvar);
   } else if (IsA(newnode, RelabelType)) {
     RelabelType *relabel = (RelabelType *)newnode;
 
@@ -1108,7 +1109,7 @@ static bool is_standard_join_alias_expression(Node *newnode, Var *oldvar) {
 
     Assert(cexpr->args != NIL);
     foreach (lc, cexpr->args) {
-      if (!is_standard_join_alias_expression(lfirst(lc), oldvar))
+      if (!is_standard_join_alias_expression((Node *)lfirst(lc), oldvar))
         return false;
     }
     return true;
@@ -1136,7 +1137,8 @@ static void adjust_standard_join_alias_expression(Node *newnode, Var *oldvar) {
   } else if (IsA(newnode, FuncExpr)) {
     FuncExpr *fexpr = (FuncExpr *)newnode;
 
-    adjust_standard_join_alias_expression(linitial(fexpr->args), oldvar);
+    adjust_standard_join_alias_expression((Node *)linitial(fexpr->args),
+                                          oldvar);
   } else if (IsA(newnode, RelabelType)) {
     RelabelType *relabel = (RelabelType *)newnode;
 
@@ -1155,7 +1157,7 @@ static void adjust_standard_join_alias_expression(Node *newnode, Var *oldvar) {
 
     Assert(cexpr->args != NIL);
     foreach (lc, cexpr->args) {
-      adjust_standard_join_alias_expression(lfirst(lc), oldvar);
+      adjust_standard_join_alias_expression((Node *)lfirst(lc), oldvar);
     }
   } else
     Assert(false);

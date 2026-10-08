@@ -30,11 +30,11 @@
 #include "utils/typcache.h"
 
 static double calc_rangesel(TypeCacheEntry *typcache, VariableStatData *vardata,
-                            const RangeType *constval, Oid operator);
-static double default_range_selectivity(Oid operator);
+                            const RangeType *constval, Oid operator_);
+static double default_range_selectivity(Oid operator_);
 static double calc_hist_selectivity(TypeCacheEntry *typcache,
                                     VariableStatData *vardata,
-                                    const RangeType *constval, Oid operator);
+                                    const RangeType *constval, Oid operator_);
 static double calc_hist_selectivity_scalar(TypeCacheEntry *typcache,
                                            const RangeBound *constbound,
                                            const RangeBound *hist,
@@ -65,8 +65,8 @@ static double calc_hist_selectivity_contains(
  * Returns a default selectivity estimate for given operator, when we don't
  * have statistics or cannot use them for some reason.
  */
-static double default_range_selectivity(Oid operator) {
-  switch (operator) {
+static double default_range_selectivity(Oid operator_) {
+  switch (operator_) {
   case OID_RANGE_OVERLAP_OP:
     return 0.01;
 
@@ -105,7 +105,7 @@ static double default_range_selectivity(Oid operator) {
  */
 Datum rangesel(PG_FUNCTION_ARGS) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
   int varRelid = PG_GETARG_INT32(3);
   VariableStatData vardata;
@@ -121,14 +121,14 @@ Datum rangesel(PG_FUNCTION_ARGS) {
    */
   if (!get_restriction_variable(root, args, varRelid, &vardata, &other,
                                 &varonleft))
-    PG_RETURN_FLOAT8(default_range_selectivity(operator));
+    PG_RETURN_FLOAT8(default_range_selectivity(operator_));
 
   /*
    * Can't do anything useful if the something is not a constant, either.
    */
   if (!IsA(other, Const)) {
     ReleaseVariableStats(vardata);
-    PG_RETURN_FLOAT8(default_range_selectivity(operator));
+    PG_RETURN_FLOAT8(default_range_selectivity(operator_));
   }
 
   /*
@@ -146,11 +146,11 @@ Datum rangesel(PG_FUNCTION_ARGS) {
    */
   if (!varonleft) {
     /* we have other Op var, commute to make var Op other */
-    operator= get_commutator(operator);
-    if (!operator) {
+    operator_ = get_commutator(operator_);
+    if (!operator_) {
       /* Use default selectivity (should we raise an error instead?) */
       ReleaseVariableStats(vardata);
-      PG_RETURN_FLOAT8(default_range_selectivity(operator));
+      PG_RETURN_FLOAT8(default_range_selectivity(operator_));
     }
   }
 
@@ -165,7 +165,7 @@ Datum rangesel(PG_FUNCTION_ARGS) {
    * only that single point, so that we don't need special handling for that
    * in what follows.
    */
-  if (operator== OID_RANGE_CONTAINS_ELEM_OP) {
+  if (operator_ == OID_RANGE_CONTAINS_ELEM_OP) {
     typcache = range_get_typcache(fcinfo, vardata.vartype);
 
     if (((Const *)other)->consttype == typcache->rngelemtype->type_id) {
@@ -181,7 +181,7 @@ Datum rangesel(PG_FUNCTION_ARGS) {
       upper.lower = false;
       constrange = range_serialize(typcache, &lower, &upper, false, NULL);
     }
-  } else if (operator== OID_RANGE_ELEM_CONTAINED_OP) {
+  } else if (operator_ == OID_RANGE_ELEM_CONTAINED_OP) {
     /*
      * Here, the Var is the elem, not the range.  In typical cases
      * elem_contained_by_range_support will have simplified this case, so
@@ -202,9 +202,9 @@ Datum rangesel(PG_FUNCTION_ARGS) {
    * OID_RANGE_ELEM_CONTAINED_OP.
    */
   if (constrange)
-    selec = calc_rangesel(typcache, &vardata, constrange, operator);
+    selec = calc_rangesel(typcache, &vardata, constrange, operator_);
   else
-    selec = default_range_selectivity(operator);
+    selec = default_range_selectivity(operator_);
 
   ReleaseVariableStats(vardata);
 
@@ -214,7 +214,7 @@ Datum rangesel(PG_FUNCTION_ARGS) {
 }
 
 static double calc_rangesel(TypeCacheEntry *typcache, VariableStatData *vardata,
-                            const RangeType *constval, Oid operator) {
+                            const RangeType *constval, Oid operator_) {
   double hist_selec;
   double selec;
   float4 empty_frac, null_frac;
@@ -257,7 +257,7 @@ static double calc_rangesel(TypeCacheEntry *typcache, VariableStatData *vardata,
      * An empty range matches all ranges, all empty ranges, or nothing,
      * depending on the operator
      */
-    switch (operator) {
+    switch (operator_) {
       /* these return false if either argument is empty */
     case OID_RANGE_OVERLAP_OP:
     case OID_RANGE_OVERLAPS_LEFT_OP:
@@ -291,7 +291,7 @@ static double calc_rangesel(TypeCacheEntry *typcache, VariableStatData *vardata,
       /* an element cannot be empty */
     case OID_RANGE_CONTAINS_ELEM_OP:
     default:
-      elog(ERROR, "unexpected operator %u", operator);
+      elog(ERROR, "unexpected operator %u", operator_);
       selec = 0.0; /* keep compiler quiet */
       break;
     }
@@ -304,16 +304,16 @@ static double calc_rangesel(TypeCacheEntry *typcache, VariableStatData *vardata,
      * because this still takes into account the fraction of empty and
      * NULL tuples, if we had statistics for them.
      */
-    hist_selec = calc_hist_selectivity(typcache, vardata, constval, operator);
+    hist_selec = calc_hist_selectivity(typcache, vardata, constval, operator_);
     if (hist_selec < 0.0)
-      hist_selec = default_range_selectivity(operator);
+      hist_selec = default_range_selectivity(operator_);
 
     /*
      * Now merge the results for the empty ranges and histogram
      * calculations, realizing that the histogram covers only the
      * non-null, non-empty values.
      */
-    if (operator== OID_RANGE_CONTAINED_OP) {
+    if (operator_ == OID_RANGE_CONTAINED_OP) {
       /* empty is contained by anything non-empty */
       selec = (1.0 - empty_frac) * hist_selec + empty_frac;
     } else {
@@ -339,7 +339,7 @@ static double calc_rangesel(TypeCacheEntry *typcache, VariableStatData *vardata,
  */
 static double calc_hist_selectivity(TypeCacheEntry *typcache,
                                     VariableStatData *vardata,
-                                    const RangeType *constval, Oid operator) {
+                                    const RangeType *constval, Oid operator_) {
   AttStatsSlot hslot;
   AttStatsSlot lslot;
   int nhist;
@@ -389,7 +389,8 @@ static double calc_hist_selectivity(TypeCacheEntry *typcache,
   }
 
   /* @> and @< also need a histogram of range lengths */
-  if (operator== OID_RANGE_CONTAINS_OP || operator== OID_RANGE_CONTAINED_OP) {
+  if (operator_ == OID_RANGE_CONTAINS_OP ||
+      operator_ == OID_RANGE_CONTAINED_OP) {
     if (!(HeapTupleIsValid(vardata->statsTuple) &&
           get_attstatsslot(&lslot, vardata->statsTuple,
                            STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM, InvalidOid,
@@ -415,7 +416,7 @@ static double calc_hist_selectivity(TypeCacheEntry *typcache,
    * Calculate selectivity comparing the lower or upper bound of the
    * constant with the histogram of lower or upper bounds.
    */
-  switch (operator) {
+  switch (operator_) {
   case OID_RANGE_LESS_OP:
 
     /*
@@ -515,7 +516,7 @@ static double calc_hist_selectivity(TypeCacheEntry *typcache,
     break;
 
   default:
-    elog(ERROR, "unknown range operator %u", operator);
+    elog(ERROR, "unknown range operator %u", operator_);
     hist_selec = -1.0; /* keep compiler quiet */
     break;
   }

@@ -302,7 +302,7 @@ typedef struct PgStat_KindInfo {
   void (*snapshot_cb)(void);
 
   /* name of the kind of stats */
-  const char *const name;
+  const char *name;
 } PgStat_KindInfo;
 
 /*

@@ -15,12 +15,12 @@
 
 #include "postgres.h"
 
-#include <netdb.h>
-#include <netinet/in.h>
-#include <pwd.h>
 #include <sys/param.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <pwd.h>
 #include <unistd.h>
 
 #include "commands/user.h"
@@ -785,7 +785,7 @@ static int CheckPWChallengeAuth(Port *port, const char **logdetail) {
    * had a password of that type, too, it "blends in" best.
    */
   if (!shadow_pass)
-    pwtype = Password_encryption;
+    pwtype = (PasswordType)Password_encryption;
   else
     pwtype = get_password_type(shadow_pass);
 
@@ -2587,10 +2587,11 @@ static int CheckRADIUSAuth(Port *port) {
   radiusports = list_head(port->hba->radiusports);
   identifiers = list_head(port->hba->radiusidentifiers);
   foreach (server, port->hba->radiusservers) {
-    int ret = PerformRadiusTransaction(lfirst(server), lfirst(secrets),
-                                       radiusports ? lfirst(radiusports) : NULL,
-                                       identifiers ? lfirst(identifiers) : NULL,
-                                       port->user_name, passwd);
+    int ret = PerformRadiusTransaction(
+        (const char *)lfirst(server), (const char *)lfirst(secrets),
+        (const char *)(radiusports ? lfirst(radiusports) : NULL),
+        (const char *)(identifiers ? lfirst(identifiers) : NULL),
+        port->user_name, passwd);
 
     /*------
      * STATUS_OK = Login OK
@@ -2702,7 +2703,7 @@ static int PerformRadiusTransaction(const char *server, const char *secret,
   encryptedpasswordlen =
       ((strlen(passwd) + RADIUS_VECTOR_LENGTH - 1) / RADIUS_VECTOR_LENGTH) *
       RADIUS_VECTOR_LENGTH;
-  cryptvector = palloc(strlen(secret) + RADIUS_VECTOR_LENGTH);
+  cryptvector = (uint8 *)palloc(strlen(secret) + RADIUS_VECTOR_LENGTH);
   memcpy(cryptvector, secret, strlen(secret));
 
   /* for the first iteration, we use the Request Authenticator vector */
@@ -2880,7 +2881,7 @@ static int PerformRadiusTransaction(const char *server, const char *secret,
      * Verify the response authenticator, which is calculated as
      * MD5(Code+ID+Length+RequestAuthenticator+Attributes+Secret)
      */
-    cryptvector = palloc(packetlength + strlen(secret));
+    cryptvector = (uint8 *)palloc(packetlength + strlen(secret));
 
     memcpy(cryptvector, receivepacket, 4); /* code+id+length */
     memcpy(cryptvector + 4, packet->vector,

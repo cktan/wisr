@@ -31,7 +31,7 @@
  */
 char *escape_single_quotes_ascii(const char *src) {
   int len = strlen(src), i, j;
-  char *result = malloc(len * 2 + 1);
+  char *result = (char *)malloc(len * 2 + 1);
 
   if (!result)
     return NULL;

@@ -16,8 +16,8 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <fcntl.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "access/amapi.h"
 #include "access/htup_details.h"
@@ -1009,7 +1009,7 @@ static char *pg_get_triggerdef_worker(Oid trigid, bool pretty) {
 
     appendStringInfoString(&buf, "WHEN (");
 
-    qual = stringToNode(TextDatumGetCString(value));
+    qual = (Node *)stringToNode(TextDatumGetCString(value));
 
     relkind = get_rel_relkind(trigrec->tgrelid);
 
@@ -2290,7 +2290,7 @@ static char *pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
     val = SysCacheGetAttrNotNull(CONSTROID, tup, Anum_pg_constraint_conbin);
 
     conbin = TextDatumGetCString(val);
-    expr = stringToNode(conbin);
+    expr = (Node *)stringToNode(conbin);
 
     /* Set up deparsing context for Var nodes in constraint */
     if (conForm->conrelid != InvalidOid) {
@@ -2508,7 +2508,7 @@ static text *pg_get_expr_worker(text *expr, Oid relid, int prettyFlags) {
    */
   tst = node;
   while (tst && IsA(tst, List))
-    tst = linitial((List *)tst);
+    tst = (Node *)linitial((List *)tst);
   if (tst && IsA(tst, Query))
     ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                     errmsg("input is a query, not an expression")));
@@ -3231,7 +3231,7 @@ Datum pg_get_function_arg_default(PG_FUNCTION_ARGS) {
     ReleaseSysCache(proctup);
     PG_RETURN_NULL();
   }
-  node = list_nth(argdefaults, nth_default);
+  node = (Node *)list_nth(argdefaults, nth_default);
   str = deparse_expression(node, NIL, false, false);
 
   ReleaseSysCache(proctup);
@@ -3254,13 +3254,13 @@ static void print_function_sqlbody(StringInfo buf, HeapTuple proctup) {
   dpns.argnames = argnames;
 
   tmp = SysCacheGetAttrNotNull(PROCOID, proctup, Anum_pg_proc_prosqlbody);
-  n = stringToNode(TextDatumGetCString(tmp));
+  n = (Node *)stringToNode(TextDatumGetCString(tmp));
 
   if (IsA(n, List)) {
     List *stmts;
     ListCell *lc;
 
-    stmts = linitial(castNode(List, n));
+    stmts = (List *)linitial(castNode(List, n));
 
     appendStringInfoString(buf, "BEGIN ATOMIC\n");
 
@@ -3787,7 +3787,7 @@ static bool has_dangerous_join_using(deparse_namespace *dpns, Node *jtnode) {
 
       /* We need only examine the merged columns */
       for (int i = 0; i < jrte->joinmergedcols; i++) {
-        Node *aliasvar = list_nth(jrte->joinaliasvars, i);
+        Node *aliasvar = (Node *)list_nth(jrte->joinaliasvars, i);
 
         if (!IsA(aliasvar, Var))
           return true;
@@ -4678,9 +4678,9 @@ static void set_deparse_plan(deparse_namespace *dpns, Plan *plan) {
    * natural choice.
    */
   if (IsA(plan, Append))
-    dpns->outer_plan = linitial(((Append *)plan)->appendplans);
+    dpns->outer_plan = (Plan *)linitial(((Append *)plan)->appendplans);
   else if (IsA(plan, MergeAppend))
-    dpns->outer_plan = linitial(((MergeAppend *)plan)->mergeplans);
+    dpns->outer_plan = (Plan *)linitial(((MergeAppend *)plan)->mergeplans);
   else
     dpns->outer_plan = outerPlan(plan);
 
@@ -4710,7 +4710,7 @@ static void set_deparse_plan(deparse_namespace *dpns, Plan *plan) {
     dpns->inner_plan = ((SubqueryScan *)plan)->subplan;
   else if (IsA(plan, CteScan))
     dpns->inner_plan =
-        list_nth(dpns->subplans, ((CteScan *)plan)->ctePlanId - 1);
+        (Plan *)list_nth(dpns->subplans, ((CteScan *)plan)->ctePlanId - 1);
   else if (IsA(plan, WorkTableScan))
     dpns->inner_plan = find_recursive_union(dpns, (WorkTableScan *)plan);
   else if (IsA(plan, ModifyTable)) {
@@ -4952,7 +4952,7 @@ static void make_ruledef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
       appendStringInfoString(buf, "\n  ");
     appendStringInfoString(buf, " WHERE ");
 
-    qual = stringToNode(ev_qual);
+    qual = (Node *)stringToNode(ev_qual);
 
     /*
      * We need to make a context for recognizing any Vars in the qual
@@ -5633,7 +5633,7 @@ static void get_basic_select_query(Query *query, deparse_context *context) {
     } else {
       sep = "";
       foreach (l, query->groupingSets) {
-        GroupingSet *grp = lfirst(l);
+        GroupingSet *grp = (GroupingSet *)lfirst(l);
 
         appendStringInfoString(buf, sep);
         get_rule_groupingset(grp, query->targetList, true, context);
@@ -5714,7 +5714,7 @@ static void get_target_list(List *targetList, deparse_context *context) {
        * assigned column name explicitly.  Otherwise, show it only if
        * it's not FigureColname's fallback.
        */
-      attname = context->colNamesVisible ? NULL : "?column?";
+      attname = (char *)(context->colNamesVisible ? NULL : "?column?");
     }
 
     /*
@@ -6054,7 +6054,8 @@ static void get_rule_groupingset(GroupingSet *gset, List *targetlist,
 
   foreach (l, gset->content) {
     appendStringInfoString(buf, sep);
-    get_rule_groupingset(lfirst(l), targetlist, omit_child_parens, context);
+    get_rule_groupingset((GroupingSet *)lfirst(l), targetlist,
+                         omit_child_parens, context);
     sep = ", ";
   }
 
@@ -7449,7 +7450,7 @@ static const char *get_name_for_var_field(Var *var, int fieldno, int levelsup,
         const char *result;
 
         if (!dpns->inner_plan) {
-          char *dummy_name = palloc(32);
+          char *dummy_name = (char *)palloc(32);
 
           Assert(dpns->plan && IsA(dpns->plan, Result));
           snprintf(dummy_name, 32, "f%d", fieldno);
@@ -7567,7 +7568,7 @@ static const char *get_name_for_var_field(Var *var, int fieldno, int levelsup,
         const char *result;
 
         if (!dpns->inner_plan) {
-          char *dummy_name = palloc(32);
+          char *dummy_name = (char *)palloc(32);
 
           Assert(dpns->plan && IsA(dpns->plan, Result));
           snprintf(dummy_name, 32, "f%d", fieldno);
@@ -7894,7 +7895,7 @@ static void get_parameter(Param *param, deparse_context *context) {
    * function argument names.
    */
   if (param->paramkind == PARAM_EXTERN && context->namespaces != NIL) {
-    dpns = llast(context->namespaces);
+    dpns = (deparse_namespace *)llast(context->namespaces);
     if (dpns->argnames && param->paramid > 0 &&
         param->paramid <= dpns->numargs) {
       char *argname = dpns->argnames[param->paramid - 1];
@@ -7910,7 +7911,7 @@ static void get_parameter(Param *param, deparse_context *context) {
          * other cases.
          */
         foreach (lc, context->namespaces) {
-          deparse_namespace *depns = lfirst(lc);
+          deparse_namespace *depns = (deparse_namespace *)lfirst(lc);
 
           if (depns->rtable_names != NIL) {
             should_qualify = true;
@@ -8518,7 +8519,7 @@ static void get_rule_expr(Node *node, deparse_context *context,
 
   case T_BoolExpr: {
     BoolExpr *expr = (BoolExpr *)node;
-    Node *first_arg = linitial(expr->args);
+    Node *first_arg = (Node *)linitial(expr->args);
     ListCell *arg;
 
     switch (expr->boolop) {
@@ -8817,7 +8818,8 @@ static void get_rule_expr(Node *node, deparse_context *context,
           List *args = ((OpExpr *)w)->args;
 
           if (list_length(args) == 2 &&
-              IsA(strip_implicit_coercions(linitial(args)), CaseTestExpr))
+              IsA(strip_implicit_coercions((Node *)linitial(args)),
+                  CaseTestExpr))
             w = (Node *)lsecond(args);
         }
       }
@@ -8939,9 +8941,10 @@ static void get_rule_expr(Node *node, deparse_context *context,
      * be perfect.
      */
     appendStringInfo(buf, ") %s ROW(",
-                     generate_operator_name(linitial_oid(rcexpr->opnos),
-                                            exprType(linitial(rcexpr->largs)),
-                                            exprType(linitial(rcexpr->rargs))));
+                     generate_operator_name(
+                         linitial_oid(rcexpr->opnos),
+                         exprType((const Node *)linitial(rcexpr->largs)),
+                         exprType((const Node *)linitial(rcexpr->rargs))));
     get_rule_list_toplevel(rcexpr->rargs, context, true);
     appendStringInfoString(buf, "))");
   } break;
@@ -9661,7 +9664,7 @@ static void get_func_expr(FuncExpr *expr, deparse_context *context,
    */
   if (expr->funcformat == COERCE_EXPLICIT_CAST ||
       expr->funcformat == COERCE_IMPLICIT_CAST) {
-    Node *arg = linitial(expr->args);
+    Node *arg = (Node *)linitial(expr->args);
     Oid rettype = expr->funcresulttype;
     int32 coercedTypmod;
 
@@ -9843,7 +9846,7 @@ static void get_agg_expr_helper(Aggref *aggref, deparse_context *context,
 static void get_agg_combine_expr(Node *node, deparse_context *context,
                                  void *callback_arg) {
   Aggref *aggref;
-  Aggref *original_aggref = callback_arg;
+  Aggref *original_aggref = (Aggref *)callback_arg;
 
   if (!IsA(node, Aggref))
     elog(ERROR, "combining Aggref does not point to an Aggref");
@@ -10620,10 +10623,10 @@ static void get_sublink_expr(SubLink *sublink, deparse_context *context) {
       /* single combining operator */
       OpExpr *opexpr = (OpExpr *)sublink->testexpr;
 
-      get_rule_expr(linitial(opexpr->args), context, true);
-      opname =
-          generate_operator_name(opexpr->opno, exprType(linitial(opexpr->args)),
-                                 exprType(lsecond(opexpr->args)));
+      get_rule_expr((Node *)linitial(opexpr->args), context, true);
+      opname = generate_operator_name(
+          opexpr->opno, exprType((const Node *)linitial(opexpr->args)),
+          exprType((const Node *)lsecond(opexpr->args)));
     } else if (IsA(sublink->testexpr, BoolExpr)) {
       /* multiple combining operators, = or <> cases */
       char *sep;
@@ -10635,11 +10638,11 @@ static void get_sublink_expr(SubLink *sublink, deparse_context *context) {
         OpExpr *opexpr = lfirst_node(OpExpr, l);
 
         appendStringInfoString(buf, sep);
-        get_rule_expr(linitial(opexpr->args), context, true);
+        get_rule_expr((Node *)linitial(opexpr->args), context, true);
         if (!opname)
-          opname = generate_operator_name(opexpr->opno,
-                                          exprType(linitial(opexpr->args)),
-                                          exprType(lsecond(opexpr->args)));
+          opname = generate_operator_name(
+              opexpr->opno, exprType((const Node *)linitial(opexpr->args)),
+              exprType((const Node *)lsecond(opexpr->args)));
         sep = ", ";
       }
       appendStringInfoChar(buf, ')');
@@ -10649,9 +10652,10 @@ static void get_sublink_expr(SubLink *sublink, deparse_context *context) {
 
       appendStringInfoChar(buf, '(');
       get_rule_expr((Node *)rcexpr->largs, context, true);
-      opname = generate_operator_name(linitial_oid(rcexpr->opnos),
-                                      exprType(linitial(rcexpr->largs)),
-                                      exprType(linitial(rcexpr->rargs)));
+      opname = generate_operator_name(
+          linitial_oid(rcexpr->opnos),
+          exprType((const Node *)linitial(rcexpr->largs)),
+          exprType((const Node *)linitial(rcexpr->rargs)));
       appendStringInfoChar(buf, ')');
     } else
       elog(ERROR, "unrecognized testexpr type: %d",

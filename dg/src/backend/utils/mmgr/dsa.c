@@ -816,9 +816,9 @@ void dsa_free(dsa_area *area, dsa_pointer dp) {
   segment_map = get_segment_by_index(area, DSA_EXTRACT_SEGMENT_NUMBER(dp));
   pageno = DSA_EXTRACT_OFFSET(dp) / FPM_PAGE_SIZE;
   span_pointer = segment_map->pagemap[pageno];
-  span = dsa_get_address(area, span_pointer);
-  superblock = dsa_get_address(area, span->start);
-  object = dsa_get_address(area, dp);
+  span = (dsa_area_span *)dsa_get_address(area, span_pointer);
+  superblock = (char *)dsa_get_address(area, span->start);
+  object = (char *)dsa_get_address(area, dp);
   size_class = span->size_class;
   size = dsa_size_classes[size_class];
 
@@ -1020,7 +1020,8 @@ void dsa_trim(dsa_area *area) {
     LWLockAcquire(DSA_SCLASS_LOCK(area, size_class), LW_EXCLUSIVE);
     span_pointer = pool->spans[1];
     while (DsaPointerIsValid(span_pointer)) {
-      dsa_area_span *span = dsa_get_address(area, span_pointer);
+      dsa_area_span *span =
+          (dsa_area_span *)dsa_get_address(area, span_pointer);
       dsa_pointer next = span->nextspan;
 
       if (span->nallocatable == span->nmax)
@@ -1108,7 +1109,7 @@ void dsa_dump(dsa_area *area) {
           while (DsaPointerIsValid(span_pointer)) {
             dsa_area_span *span;
 
-            span = dsa_get_address(area, span_pointer);
+            span = (dsa_area_span *)dsa_get_address(area, span_pointer);
             fprintf(stderr,
                     "        span descriptor at " DSA_POINTER_FORMAT
                     ", superblock at " DSA_POINTER_FORMAT
@@ -1208,7 +1209,7 @@ static dsa_area *create_internal(void *place, size_t size, int tranche_id,
    * area.  Other backends will need to obtain their own dsa_area object by
    * attaching.
    */
-  area = palloc(sizeof(dsa_area));
+  area = (dsa_area *)palloc(sizeof(dsa_area));
   area->control = control;
   area->resowner = CurrentResourceOwner;
   memset(area->segment_maps, 0, sizeof(dsa_segment_map) * DSA_MAX_SEGMENTS);
@@ -1221,7 +1222,7 @@ static dsa_area *create_internal(void *place, size_t size, int tranche_id,
   /* Set up the segment map for this process's mapping. */
   segment_map = &area->segment_maps[0];
   segment_map->segment = control_segment;
-  segment_map->mapped_address = place;
+  segment_map->mapped_address = (char *)place;
   segment_map->header = (dsa_segment_header *)place;
   segment_map->fpm = (FreePageManager *)(segment_map->mapped_address +
                                          MAXALIGN(sizeof(dsa_area_control)));
@@ -1260,7 +1261,7 @@ static dsa_area *attach_internal(void *place, dsm_segment *segment,
          (DSA_SEGMENT_HEADER_MAGIC ^ handle ^ 0));
 
   /* Build the backend-local area object. */
-  area = palloc(sizeof(dsa_area));
+  area = (dsa_area *)palloc(sizeof(dsa_area));
   area->control = control;
   area->resowner = CurrentResourceOwner;
   memset(&area->segment_maps[0], 0, sizeof(dsa_segment_map) * DSA_MAX_SEGMENTS);
@@ -1269,7 +1270,7 @@ static dsa_area *attach_internal(void *place, dsm_segment *segment,
   /* Set up the segment map for this process's mapping. */
   segment_map = &area->segment_maps[0];
   segment_map->segment = segment; /* NULL for in-place */
-  segment_map->mapped_address = place;
+  segment_map->mapped_address = (char *)place;
   segment_map->header = (dsa_segment_header *)segment_map->mapped_address;
   segment_map->fpm = (FreePageManager *)(segment_map->mapped_address +
                                          MAXALIGN(sizeof(dsa_area_control)));
@@ -1297,7 +1298,7 @@ static dsa_area *attach_internal(void *place, dsm_segment *segment,
 static void init_span(dsa_area *area, dsa_pointer span_pointer,
                       dsa_area_pool *pool, dsa_pointer start, size_t npages,
                       uint16 size_class) {
-  dsa_area_span *span = dsa_get_address(area, span_pointer);
+  dsa_area_span *span = (dsa_area_span *)dsa_get_address(area, span_pointer);
   size_t obsize = dsa_size_classes[size_class];
 
   /*
@@ -1355,7 +1356,7 @@ static bool transfer_first_span(dsa_area *area, dsa_area_pool *pool,
     return false;
 
   /* Remove span from head of source list. */
-  span = dsa_get_address(area, span_pointer);
+  span = (dsa_area_span *)dsa_get_address(area, span_pointer);
   pool->spans[fromclass] = span->nextspan;
   if (DsaPointerIsValid(span->nextspan)) {
     nextspan = (dsa_area_span *)dsa_get_address(area, span->nextspan);
@@ -1415,7 +1416,7 @@ static inline dsa_pointer alloc_object(dsa_area *area, int size_class) {
     size = dsa_size_classes[size_class];
     if (span->firstfree != DSA_SPAN_NOTHING_FREE) {
       result = block + span->firstfree * size;
-      object = dsa_get_address(area, result);
+      object = (char *)dsa_get_address(area, result);
       span->firstfree = NextFreeObjectIndex(object);
     } else {
       result = block + span->ninitialized * size;
@@ -1665,7 +1666,7 @@ static dsa_segment_map *get_segment_by_index(dsa_area *area,
       elog(ERROR, "dsa_area could not attach to segment");
     segment_map = &area->segment_maps[index];
     segment_map->segment = segment;
-    segment_map->mapped_address = dsm_segment_address(segment);
+    segment_map->mapped_address = (char *)dsm_segment_address(segment);
     segment_map->header = (dsa_segment_header *)segment_map->mapped_address;
     segment_map->fpm =
         (FreePageManager *)(segment_map->mapped_address +
@@ -1710,7 +1711,7 @@ static dsa_segment_map *get_segment_by_index(dsa_area *area,
  * The appropriate pool lock must be held.
  */
 static void destroy_superblock(dsa_area *area, dsa_pointer span_pointer) {
-  dsa_area_span *span = dsa_get_address(area, span_pointer);
+  dsa_area_span *span = (dsa_area_span *)dsa_get_address(area, span_pointer);
   int size_class = span->size_class;
   dsa_segment_map *segment_map;
 
@@ -1773,16 +1774,18 @@ static void destroy_superblock(dsa_area *area, dsa_pointer span_pointer) {
 
 static void unlink_span(dsa_area *area, dsa_area_span *span) {
   if (DsaPointerIsValid(span->nextspan)) {
-    dsa_area_span *next = dsa_get_address(area, span->nextspan);
+    dsa_area_span *next =
+        (dsa_area_span *)dsa_get_address(area, span->nextspan);
 
     next->prevspan = span->prevspan;
   }
   if (DsaPointerIsValid(span->prevspan)) {
-    dsa_area_span *prev = dsa_get_address(area, span->prevspan);
+    dsa_area_span *prev =
+        (dsa_area_span *)dsa_get_address(area, span->prevspan);
 
     prev->nextspan = span->nextspan;
   } else {
-    dsa_area_pool *pool = dsa_get_address(area, span->pool);
+    dsa_area_pool *pool = (dsa_area_pool *)dsa_get_address(area, span->pool);
 
     pool->spans[span->fclass] = span->nextspan;
   }
@@ -1790,10 +1793,11 @@ static void unlink_span(dsa_area *area, dsa_area_span *span) {
 
 static void add_span_to_fullness_class(dsa_area *area, dsa_area_span *span,
                                        dsa_pointer span_pointer, int fclass) {
-  dsa_area_pool *pool = dsa_get_address(area, span->pool);
+  dsa_area_pool *pool = (dsa_area_pool *)dsa_get_address(area, span->pool);
 
   if (DsaPointerIsValid(pool->spans[fclass])) {
-    dsa_area_span *head = dsa_get_address(area, pool->spans[fclass]);
+    dsa_area_span *head =
+        (dsa_area_span *)dsa_get_address(area, pool->spans[fclass]);
 
     head->prevspan = span_pointer;
   }
@@ -2064,7 +2068,7 @@ static dsa_segment_map *make_new_segment(dsa_area *area,
   /* Build a segment map for this segment in this backend. */
   segment_map = &area->segment_maps[new_index];
   segment_map->segment = segment;
-  segment_map->mapped_address = dsm_segment_address(segment);
+  segment_map->mapped_address = (char *)dsm_segment_address(segment);
   segment_map->header = (dsa_segment_header *)segment_map->mapped_address;
   segment_map->fpm = (FreePageManager *)(segment_map->mapped_address +
                                          MAXALIGN(sizeof(dsa_segment_header)));

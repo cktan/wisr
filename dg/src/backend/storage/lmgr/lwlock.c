@@ -131,55 +131,55 @@ StaticAssertDecl((LW_VAL_EXCLUSIVE & LW_FLAG_MASK) == 0,
  * All these names are user-visible as wait event names, so choose with care
  * ... and do not forget to update the documentation's list of wait events.
  */
-static const char *const BuiltinTrancheNames[] = {
-#define PG_LWLOCK(id, lockname) [id] = CppAsString(lockname),
+static constexpr auto BuiltinTrancheNames = [] {
+  std::array<const char *, LWTRANCHE_FIRST_USER_DEFINED> a{};
+
+#define PG_LWLOCK(id, lockname) a[id] = CppAsString(lockname);
 #include "storage/lwlocklist.h"
 #undef PG_LWLOCK
-    [LWTRANCHE_XACT_BUFFER] = "XactBuffer",
-    [LWTRANCHE_COMMITTS_BUFFER] = "CommitTsBuffer",
-    [LWTRANCHE_SUBTRANS_BUFFER] = "SubtransBuffer",
-    [LWTRANCHE_MULTIXACTOFFSET_BUFFER] = "MultiXactOffsetBuffer",
-    [LWTRANCHE_MULTIXACTMEMBER_BUFFER] = "MultiXactMemberBuffer",
-    [LWTRANCHE_NOTIFY_BUFFER] = "NotifyBuffer",
-    [LWTRANCHE_SERIAL_BUFFER] = "SerialBuffer",
-    [LWTRANCHE_WAL_INSERT] = "WALInsert",
-    [LWTRANCHE_BUFFER_CONTENT] = "BufferContent",
-    [LWTRANCHE_REPLICATION_ORIGIN_STATE] = "ReplicationOriginState",
-    [LWTRANCHE_REPLICATION_SLOT_IO] = "ReplicationSlotIO",
-    [LWTRANCHE_LOCK_FASTPATH] = "LockFastPath",
-    [LWTRANCHE_BUFFER_MAPPING] = "BufferMapping",
-    [LWTRANCHE_LOCK_MANAGER] = "LockManager",
-    [LWTRANCHE_PREDICATE_LOCK_MANAGER] = "PredicateLockManager",
-    [LWTRANCHE_PARALLEL_HASH_JOIN] = "ParallelHashJoin",
-    [LWTRANCHE_PARALLEL_BTREE_SCAN] = "ParallelBtreeScan",
-    [LWTRANCHE_PARALLEL_QUERY_DSA] = "ParallelQueryDSA",
-    [LWTRANCHE_PER_SESSION_DSA] = "PerSessionDSA",
-    [LWTRANCHE_PER_SESSION_RECORD_TYPE] = "PerSessionRecordType",
-    [LWTRANCHE_PER_SESSION_RECORD_TYPMOD] = "PerSessionRecordTypmod",
-    [LWTRANCHE_SHARED_TUPLESTORE] = "SharedTupleStore",
-    [LWTRANCHE_SHARED_TIDBITMAP] = "SharedTidBitmap",
-    [LWTRANCHE_PARALLEL_APPEND] = "ParallelAppend",
-    [LWTRANCHE_PER_XACT_PREDICATE_LIST] = "PerXactPredicateList",
-    [LWTRANCHE_PGSTATS_DSA] = "PgStatsDSA",
-    [LWTRANCHE_PGSTATS_HASH] = "PgStatsHash",
-    [LWTRANCHE_PGSTATS_DATA] = "PgStatsData",
-    [LWTRANCHE_LAUNCHER_DSA] = "LogicalRepLauncherDSA",
-    [LWTRANCHE_LAUNCHER_HASH] = "LogicalRepLauncherHash",
-    [LWTRANCHE_DSM_REGISTRY_DSA] = "DSMRegistryDSA",
-    [LWTRANCHE_DSM_REGISTRY_HASH] = "DSMRegistryHash",
-    [LWTRANCHE_COMMITTS_SLRU] = "CommitTsSLRU",
-    [LWTRANCHE_MULTIXACTOFFSET_SLRU] = "MultiXactOffsetSLRU",
-    [LWTRANCHE_MULTIXACTMEMBER_SLRU] = "MultiXactMemberSLRU",
-    [LWTRANCHE_NOTIFY_SLRU] = "NotifySLRU",
-    [LWTRANCHE_SERIAL_SLRU] = "SerialSLRU",
-    [LWTRANCHE_SUBTRANS_SLRU] = "SubtransSLRU",
-    [LWTRANCHE_XACT_SLRU] = "XactSLRU",
-    [LWTRANCHE_PARALLEL_VACUUM_DSA] = "ParallelVacuumDSA",
-    [LWTRANCHE_AIO_URING_COMPLETION] = "AioUringCompletion",
-};
-
-StaticAssertDecl(lengthof(BuiltinTrancheNames) == LWTRANCHE_FIRST_USER_DEFINED,
-                 "missing entries in BuiltinTrancheNames[]");
+  a[LWTRANCHE_XACT_BUFFER] = "XactBuffer";
+  a[LWTRANCHE_COMMITTS_BUFFER] = "CommitTsBuffer";
+  a[LWTRANCHE_SUBTRANS_BUFFER] = "SubtransBuffer";
+  a[LWTRANCHE_MULTIXACTOFFSET_BUFFER] = "MultiXactOffsetBuffer";
+  a[LWTRANCHE_MULTIXACTMEMBER_BUFFER] = "MultiXactMemberBuffer";
+  a[LWTRANCHE_NOTIFY_BUFFER] = "NotifyBuffer";
+  a[LWTRANCHE_SERIAL_BUFFER] = "SerialBuffer";
+  a[LWTRANCHE_WAL_INSERT] = "WALInsert";
+  a[LWTRANCHE_BUFFER_CONTENT] = "BufferContent";
+  a[LWTRANCHE_REPLICATION_ORIGIN_STATE] = "ReplicationOriginState";
+  a[LWTRANCHE_REPLICATION_SLOT_IO] = "ReplicationSlotIO";
+  a[LWTRANCHE_LOCK_FASTPATH] = "LockFastPath";
+  a[LWTRANCHE_BUFFER_MAPPING] = "BufferMapping";
+  a[LWTRANCHE_LOCK_MANAGER] = "LockManager";
+  a[LWTRANCHE_PREDICATE_LOCK_MANAGER] = "PredicateLockManager";
+  a[LWTRANCHE_PARALLEL_HASH_JOIN] = "ParallelHashJoin";
+  a[LWTRANCHE_PARALLEL_BTREE_SCAN] = "ParallelBtreeScan";
+  a[LWTRANCHE_PARALLEL_QUERY_DSA] = "ParallelQueryDSA";
+  a[LWTRANCHE_PER_SESSION_DSA] = "PerSessionDSA";
+  a[LWTRANCHE_PER_SESSION_RECORD_TYPE] = "PerSessionRecordType";
+  a[LWTRANCHE_PER_SESSION_RECORD_TYPMOD] = "PerSessionRecordTypmod";
+  a[LWTRANCHE_SHARED_TUPLESTORE] = "SharedTupleStore";
+  a[LWTRANCHE_SHARED_TIDBITMAP] = "SharedTidBitmap";
+  a[LWTRANCHE_PARALLEL_APPEND] = "ParallelAppend";
+  a[LWTRANCHE_PER_XACT_PREDICATE_LIST] = "PerXactPredicateList";
+  a[LWTRANCHE_PGSTATS_DSA] = "PgStatsDSA";
+  a[LWTRANCHE_PGSTATS_HASH] = "PgStatsHash";
+  a[LWTRANCHE_PGSTATS_DATA] = "PgStatsData";
+  a[LWTRANCHE_LAUNCHER_DSA] = "LogicalRepLauncherDSA";
+  a[LWTRANCHE_LAUNCHER_HASH] = "LogicalRepLauncherHash";
+  a[LWTRANCHE_DSM_REGISTRY_DSA] = "DSMRegistryDSA";
+  a[LWTRANCHE_DSM_REGISTRY_HASH] = "DSMRegistryHash";
+  a[LWTRANCHE_COMMITTS_SLRU] = "CommitTsSLRU";
+  a[LWTRANCHE_MULTIXACTOFFSET_SLRU] = "MultiXactOffsetSLRU";
+  a[LWTRANCHE_MULTIXACTMEMBER_SLRU] = "MultiXactMemberSLRU";
+  a[LWTRANCHE_NOTIFY_SLRU] = "NotifySLRU";
+  a[LWTRANCHE_SERIAL_SLRU] = "SerialSLRU";
+  a[LWTRANCHE_SUBTRANS_SLRU] = "SubtransSLRU";
+  a[LWTRANCHE_XACT_SLRU] = "XactSLRU";
+  a[LWTRANCHE_PARALLEL_VACUUM_DSA] = "ParallelVacuumDSA";
+  a[LWTRANCHE_AIO_URING_COMPLETION] = "AioUringCompletion";
+  return a;
+}();
 
 /*
  * This is indexed by tranche ID minus LWTRANCHE_FIRST_USER_DEFINED, and

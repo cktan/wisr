@@ -226,10 +226,10 @@ make_sub_restrictinfos(PlannerInfo *root, Expr *clause, bool is_pushed_down,
 
     foreach (temp, ((BoolExpr *)clause)->args)
       orlist = lappend(
-          orlist,
-          make_sub_restrictinfos(root, lfirst(temp), is_pushed_down, has_clone,
-                                 is_clone, pseudoconstant, security_level, NULL,
-                                 incompatible_relids, outer_relids));
+          orlist, make_sub_restrictinfos(root, (Expr *)lfirst(temp),
+                                         is_pushed_down, has_clone, is_clone,
+                                         pseudoconstant, security_level, NULL,
+                                         incompatible_relids, outer_relids));
     return (Expr *)make_plain_restrictinfo(
         root, clause, make_orclause(orlist), is_pushed_down, has_clone,
         is_clone, pseudoconstant, security_level, required_relids,
@@ -239,11 +239,11 @@ make_sub_restrictinfos(PlannerInfo *root, Expr *clause, bool is_pushed_down,
     ListCell *temp;
 
     foreach (temp, ((BoolExpr *)clause)->args)
-      andlist = lappend(
-          andlist, make_sub_restrictinfos(root, lfirst(temp), is_pushed_down,
-                                          has_clone, is_clone, pseudoconstant,
-                                          security_level, required_relids,
-                                          incompatible_relids, outer_relids));
+      andlist = lappend(andlist, make_sub_restrictinfos(
+                                     root, (Expr *)lfirst(temp), is_pushed_down,
+                                     has_clone, is_clone, pseudoconstant,
+                                     security_level, required_relids,
+                                     incompatible_relids, outer_relids));
     return make_andclause(andlist);
   } else
     return (Expr *)make_plain_restrictinfo(

@@ -669,7 +669,7 @@ void GenerationFree(void *pointer) {
     chunksize = block->endptr - (char *)pointer;
 #endif
   } else {
-    block = MemoryChunkGetBlock(chunk);
+    block = (GenerationBlock *)MemoryChunkGetBlock(chunk);
 
     /*
      * In this path, for speed reasons we just Assert that the referenced
@@ -772,7 +772,7 @@ void *GenerationRealloc(void *pointer, Size size, int flags) {
 
     oldsize = block->endptr - (char *)pointer;
   } else {
-    block = MemoryChunkGetBlock(chunk);
+    block = (GenerationBlock *)MemoryChunkGetBlock(chunk);
 
     /*
      * In this path, for speed reasons we just Assert that the referenced

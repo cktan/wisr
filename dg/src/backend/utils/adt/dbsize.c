@@ -365,7 +365,7 @@ static int64 calculate_toast_table_size(Oid toastrelid) {
   toastRel = relation_open(toastrelid, AccessShareLock);
 
   /* toast heap size, including FSM and VM size */
-  for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
+  for (forkNum = (ForkNumber)0; forkNum <= MAX_FORKNUM; forkNum++)
     size += calculate_relation_size(&(toastRel->rd_locator),
                                     toastRel->rd_backend, forkNum);
 
@@ -377,7 +377,7 @@ static int64 calculate_toast_table_size(Oid toastrelid) {
     Relation toastIdxRel;
 
     toastIdxRel = relation_open(lfirst_oid(lc), AccessShareLock);
-    for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
+    for (forkNum = (ForkNumber)0; forkNum <= MAX_FORKNUM; forkNum++)
       size += calculate_relation_size(&(toastIdxRel->rd_locator),
                                       toastIdxRel->rd_backend, forkNum);
 
@@ -404,7 +404,7 @@ static int64 calculate_table_size(Relation rel) {
   /*
    * heap size, including FSM and VM
    */
-  for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
+  for (forkNum = (ForkNumber)0; forkNum <= MAX_FORKNUM; forkNum++)
     size +=
         calculate_relation_size(&(rel->rd_locator), rel->rd_backend, forkNum);
 
@@ -439,7 +439,7 @@ static int64 calculate_indexes_size(Relation rel) {
 
       idxRel = relation_open(idxOid, AccessShareLock);
 
-      for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
+      for (forkNum = (ForkNumber)0; forkNum <= MAX_FORKNUM; forkNum++)
         size += calculate_relation_size(&(idxRel->rd_locator),
                                         idxRel->rd_backend, forkNum);
 

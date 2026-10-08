@@ -152,7 +152,7 @@ Cost geqo_eval(PlannerInfo *root, Gene *tour, int num_gene) {
  * since there's no provision for un-clumping, this must lead to failure.)
  */
 RelOptInfo *gimme_tree(PlannerInfo *root, Gene *tour, int num_gene) {
-  GeqoPrivateData *private = (GeqoPrivateData *)root->join_search_private;
+  GeqoPrivateData *private_ = (GeqoPrivateData *)root->join_search_private;
   List *clumps;
   int rel_count;
 
@@ -176,7 +176,7 @@ RelOptInfo *gimme_tree(PlannerInfo *root, Gene *tour, int num_gene) {
 
     /* Get the next input relation */
     cur_rel_index = (int)tour[rel_count];
-    cur_rel = (RelOptInfo *)list_nth(private->initial_rels, cur_rel_index - 1);
+    cur_rel = (RelOptInfo *)list_nth(private_->initial_rels, cur_rel_index - 1);
 
     /* Make it into a single-rel clump */
     cur_clump = (Clump *)palloc(sizeof(Clump));

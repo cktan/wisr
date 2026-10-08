@@ -389,7 +389,9 @@ static void *erealloc(void *ptr, size_t size) {
   return memcheck(realloc(ptr, size));
 }
 
-static char *ecpyalloc(char const *str) { return memcheck(strdup(str)); }
+static char *ecpyalloc(char const *str) {
+  return (char *)memcheck(strdup(str));
+}
 
 static void *growalloc(void *ptr, size_t itemsize, ptrdiff_t nitems,
                        ptrdiff_t *nitems_alloc) {
@@ -812,7 +814,7 @@ static char *relname(char const *target, char const *linkname) {
     bool needslash = len && directory[len - 1] != '/';
 
     linksize = len + needslash + strlen(target) + 1;
-    f = result = emalloc(linksize);
+    f = result = (char *)emalloc(linksize);
     strcpy(result, directory);
     result[len] = '/';
     strcpy(result + len + needslash, target);
@@ -826,7 +828,7 @@ static char *relname(char const *target, char const *linkname) {
   dotdotetcsize = 3 * dotdots + taillen + 1;
   if (dotdotetcsize <= linksize) {
     if (!result)
-      result = emalloc(dotdotetcsize);
+      result = (char *)emalloc(dotdotetcsize);
     for (i = 0; i < dotdots; i++)
       memcpy(result + 3 * i, "../", 3);
     memmove(result + 3 * dotdots, f + dir_len, taillen + 1);
@@ -942,7 +944,7 @@ static bool itsdir(char const *name) {
 #endif
   if (res == 0 || errno == EOVERFLOW) {
     size_t n = strlen(name);
-    char *nameslashdot = emalloc(n + 3);
+    char *nameslashdot = (char *)emalloc(n + 3);
     bool dir;
 
     memcpy(nameslashdot, name, n);
@@ -1273,7 +1275,7 @@ static void inrule(char **fields, int nfields) {
   r.r_abbrvar = ecpyalloc(fields[RF_ABBRVAR]);
   if (max_abbrvar_len < strlen(r.r_abbrvar))
     max_abbrvar_len = strlen(r.r_abbrvar);
-  rules = growalloc(rules, sizeof *rules, nrules, &nrules_alloc);
+  rules = (rule *)growalloc(rules, sizeof *rules, nrules, &nrules_alloc);
   rules[nrules++] = r;
 }
 
@@ -1382,7 +1384,7 @@ static bool inzsub(char **fields, int nfields, bool iscont) {
       return false;
     }
   }
-  zones = growalloc(zones, sizeof *zones, nzones, &nzones_alloc);
+  zones = (zone *)growalloc(zones, sizeof *zones, nzones, &nzones_alloc);
   zones[nzones++] = z;
 
   /*
@@ -1518,7 +1520,7 @@ static void inlink(char **fields, int nfields) {
   l.l_linenum = linenum;
   l.l_target = ecpyalloc(fields[LF_TARGET]);
   l.l_linkname = ecpyalloc(fields[LF_LINKNAME]);
-  links = growalloc(links, sizeof *links, nlinks, &nlinks_alloc);
+  links = (struct link *)growalloc(links, sizeof *links, nlinks, &nlinks_alloc);
   links[nlinks++] = l;
 }
 
@@ -1746,7 +1748,7 @@ static void writezone(const char *const name, const char *const string,
   FILE *fp;
   ptrdiff_t i, j;
   int pass;
-  static const struct tzhead tzh0;
+  static const struct tzhead tzh0 = {};
   static struct tzhead tzh;
   bool dir_checked = false;
   zic_t one = 1;
@@ -1757,9 +1759,9 @@ static void writezone(const char *const name, const char *const string,
    * Allocate the ATS and TYPES arrays via a single malloc, as this is a bit
    * faster.
    */
-  zic_t *ats = emalloc(MAXALIGN(size_product(nats, sizeof *ats + 1)));
+  zic_t *ats = (zic_t *)emalloc(MAXALIGN(size_product(nats, sizeof *ats + 1)));
   void *typesptr = ats + nats;
-  unsigned char *types = typesptr;
+  unsigned char *types = (unsigned char *)typesptr;
   struct timerange rangeall, range32, range64;
 
   /*
@@ -2497,9 +2499,9 @@ static void outzone(const struct zone *zpfirst, ptrdiff_t zonecount) {
 
   max_abbr_len = 2 + max_format_len + max_abbrvar_len;
   max_envvar_len = 2 * max_abbr_len + 5 * 9;
-  startbuf = emalloc(max_abbr_len + 1);
-  ab = emalloc(max_abbr_len + 1);
-  envvar = emalloc(max_envvar_len + 1);
+  startbuf = (char *)emalloc(max_abbr_len + 1);
+  ab = (char *)emalloc(max_abbr_len + 1);
+  envvar = (char *)emalloc(max_envvar_len + 1);
   INITIALIZE(untiltime);
   INITIALIZE(starttime);
 
@@ -2804,7 +2806,8 @@ static void outzone(const struct zone *zpfirst, ptrdiff_t zonecount) {
 }
 
 static void addtt(zic_t starttime, int type) {
-  attypes = growalloc(attypes, sizeof *attypes, timecnt, &timecnt_alloc);
+  attypes =
+      (attype *)growalloc(attypes, sizeof *attypes, timecnt, &timecnt_alloc);
   attypes[timecnt].at = starttime;
   attypes[timecnt].dontmerge = false;
   attypes[timecnt].type = type;
@@ -3139,7 +3142,7 @@ static char **getfields(char *cp) {
 
   if (cp == NULL)
     return NULL;
-  array = emalloc(size_product(strlen(cp) + 1, sizeof *array));
+  array = (char **)emalloc(size_product(strlen(cp) + 1, sizeof *array));
   nsubs = 0;
   for (;;) {
     while (is_space(*cp))

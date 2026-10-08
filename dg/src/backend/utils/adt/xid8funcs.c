@@ -348,7 +348,7 @@ Datum pg_current_snapshot(PG_FUNCTION_ARGS) {
 
   /* allocate */
   nxip = cur->xcnt;
-  snap = palloc(PG_SNAPSHOT_SIZE(nxip));
+  snap = (pg_snapshot *)palloc(PG_SNAPSHOT_SIZE(nxip));
 
   /*
    * Fill.  This is the current backend's active snapshot, so MyProc->xmin
@@ -445,7 +445,7 @@ Datum pg_snapshot_recv(PG_FUNCTION_ARGS) {
       FullTransactionIdPrecedes(xmax, xmin))
     goto bad_format;
 
-  snap = palloc(PG_SNAPSHOT_SIZE(nxip));
+  snap = (pg_snapshot *)palloc(PG_SNAPSHOT_SIZE(nxip));
   snap->xmin = xmin;
   snap->xmax = xmax;
 
@@ -550,7 +550,8 @@ Datum pg_snapshot_xip(PG_FUNCTION_ARGS) {
     fctx = SRF_FIRSTCALL_INIT();
 
     /* make a copy of user snapshot */
-    snap = MemoryContextAlloc(fctx->multi_call_memory_ctx, VARSIZE(arg));
+    snap = (pg_snapshot *)MemoryContextAlloc(fctx->multi_call_memory_ctx,
+                                             VARSIZE(arg));
     memcpy(snap, arg, VARSIZE(arg));
 
     fctx->user_fctx = snap;
@@ -558,7 +559,7 @@ Datum pg_snapshot_xip(PG_FUNCTION_ARGS) {
 
   /* return values one-by-one */
   fctx = SRF_PERCALL_SETUP();
-  snap = fctx->user_fctx;
+  snap = (pg_snapshot *)fctx->user_fctx;
   if (fctx->call_cntr < snap->nxip) {
     value = snap->xip[fctx->call_cntr];
     SRF_RETURN_NEXT(fctx, FullTransactionIdGetDatum(value));

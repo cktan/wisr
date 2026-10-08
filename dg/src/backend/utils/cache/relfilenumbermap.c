@@ -151,7 +151,8 @@ Oid RelidByRelfilenumber(Oid reltablespace, RelFileNumber relfilenumber) {
    * since querying invalid values isn't supposed to be a frequent thing,
    * but it's basically free.
    */
-  entry = hash_search(RelfilenumberMapHash, &key, HASH_FIND, &found);
+  entry = (RelfilenumberMapEntry *)hash_search(RelfilenumberMapHash, &key,
+                                               HASH_FIND, &found);
 
   if (found)
     return entry->relid;
@@ -216,7 +217,8 @@ Oid RelidByRelfilenumber(Oid reltablespace, RelFileNumber relfilenumber) {
    * caused cache invalidations to be executed which would have deleted a
    * new entry if we had entered it above.
    */
-  entry = hash_search(RelfilenumberMapHash, &key, HASH_ENTER, &found);
+  entry = (RelfilenumberMapEntry *)hash_search(RelfilenumberMapHash, &key,
+                                               HASH_ENTER, &found);
   if (found)
     elog(ERROR, "corrupted hashtable");
   entry->relid = relid;

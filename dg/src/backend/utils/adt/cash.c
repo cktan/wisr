@@ -18,8 +18,8 @@
 
 #include "postgres.h"
 
-#include <ctype.h>
 #include <limits.h>
+#include <ctype.h>
 #include <math.h>
 
 #include "common/int.h"

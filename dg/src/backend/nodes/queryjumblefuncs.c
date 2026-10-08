@@ -43,8 +43,8 @@
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/queryjumble.h"
-#include "parser/scansup.h"
 #include "utils/lsyscache.h"
+#include "parser/scansup.h"
 
 #define JUMBLE_SIZE				1024 /* query serialization buffer size */
 
@@ -437,7 +437,7 @@ restart:
      * stack size becomes a problem here.)
      */
     foreach (temp, func->args) {
-      Node *arg = lfirst(temp);
+      Node *arg = (Node *)lfirst(temp);
 
       if (!IsA(arg, Const)) {
         if (foreach_current_index(temp) == 0 && stack_is_too_deep())
@@ -473,7 +473,7 @@ static bool IsSquashableConstantList(List *elements) {
     return false;
 
   foreach (temp, elements) {
-    if (!IsSquashableConstant(lfirst(temp)))
+    if (!IsSquashableConstant((Node *)lfirst(temp)))
       return false;
   }
 
@@ -559,7 +559,7 @@ static void _jumbleList(JumbleState *jstate, Node *node) {
   switch (expr->type) {
   case T_List:
     foreach (l, expr)
-      _jumbleNode(jstate, lfirst(l));
+      _jumbleNode(jstate, (Node *)lfirst(l));
     break;
   case T_IntList:
     foreach (l, expr)

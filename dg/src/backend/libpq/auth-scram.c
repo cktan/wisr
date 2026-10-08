@@ -517,7 +517,7 @@ bool scram_verify_plain_password(const char *username, const char *password,
   }
 
   saltlen = pg_b64_dec_len(strlen(encoded_salt));
-  salt = palloc(saltlen);
+  salt = (uint8 *)palloc(saltlen);
   saltlen = pg_b64_decode(encoded_salt, strlen(encoded_salt), salt, saltlen);
   if (saltlen < 0) {
     ereport(LOG, (errmsg("invalid SCRAM secret for user \"%s\"", username)));
@@ -609,7 +609,7 @@ bool parse_scram_secret(const char *secret, int *iterations,
    * although we return the encoded version to the caller.
    */
   decoded_len = pg_b64_dec_len(strlen(salt_str));
-  decoded_salt_buf = palloc(decoded_len);
+  decoded_salt_buf = (uint8 *)palloc(decoded_len);
   decoded_len =
       pg_b64_decode(salt_str, strlen(salt_str), decoded_salt_buf, decoded_len);
   if (decoded_len < 0)
@@ -620,7 +620,7 @@ bool parse_scram_secret(const char *secret, int *iterations,
    * Decode StoredKey and ServerKey.
    */
   decoded_len = pg_b64_dec_len(strlen(storedkey_str));
-  decoded_stored_buf = palloc(decoded_len);
+  decoded_stored_buf = (uint8 *)palloc(decoded_len);
   decoded_len = pg_b64_decode(storedkey_str, strlen(storedkey_str),
                               decoded_stored_buf, decoded_len);
   if (decoded_len != *key_length)
@@ -628,7 +628,7 @@ bool parse_scram_secret(const char *secret, int *iterations,
   memcpy(stored_key, decoded_stored_buf, *key_length);
 
   decoded_len = pg_b64_dec_len(strlen(serverkey_str));
-  decoded_server_buf = palloc(decoded_len);
+  decoded_server_buf = (uint8 *)palloc(decoded_len);
   decoded_len = pg_b64_decode(serverkey_str, strlen(serverkey_str),
                               decoded_server_buf, decoded_len);
   if (decoded_len != *key_length)
@@ -1182,7 +1182,7 @@ static char *build_server_first_message(scram_state *state) {
 
   encoded_len = pg_b64_enc_len(SCRAM_RAW_NONCE_LEN);
   /* don't forget the zero-terminator */
-  state->server_nonce = palloc(encoded_len + 1);
+  state->server_nonce = (char *)palloc(encoded_len + 1);
   encoded_len = pg_b64_encode(raw_nonce, SCRAM_RAW_NONCE_LEN,
                               state->server_nonce, encoded_len);
   if (encoded_len < 0)
@@ -1318,7 +1318,7 @@ static void read_client_final_message(scram_state *state, const char *input) {
   } while (attr != 'p');
 
   client_proof_len = pg_b64_dec_len(strlen(value));
-  client_proof = palloc(client_proof_len);
+  client_proof = (uint8 *)palloc(client_proof_len);
   if (pg_b64_decode(value, strlen(value), client_proof, client_proof_len) !=
       state->key_length)
     ereport(ERROR, (errcode(ERRCODE_PROTOCOL_VIOLATION),
@@ -1333,7 +1333,7 @@ static void read_client_final_message(scram_state *state, const char *input) {
              errmsg("malformed SCRAM message"),
              errdetail("Garbage found at the end of client-final-message.")));
 
-  state->client_final_message_without_proof = palloc(proof - begin + 1);
+  state->client_final_message_without_proof = (char *)palloc(proof - begin + 1);
   memcpy(state->client_final_message_without_proof, input, proof - begin);
   state->client_final_message_without_proof[proof - begin] = '\0';
 }
@@ -1365,7 +1365,7 @@ static char *build_server_final_message(scram_state *state) {
 
   siglen = pg_b64_enc_len(state->key_length);
   /* don't forget the zero-terminator */
-  server_signature_base64 = palloc(siglen + 1);
+  server_signature_base64 = (char *)palloc(siglen + 1);
   siglen = pg_b64_encode(ServerSignature, state->key_length,
                          server_signature_base64, siglen);
   if (siglen < 0)

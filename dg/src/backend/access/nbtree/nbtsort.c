@@ -941,7 +941,7 @@ static void _bt_buildadd(BTWriteState *wstate, BTPageState *state,
    */
   if (last_off == P_HIKEY) {
     Assert(state->btps_lowkey == NULL);
-    state->btps_lowkey = palloc0(sizeof(IndexTupleData));
+    state->btps_lowkey = (IndexTuple)palloc0(sizeof(IndexTupleData));
     state->btps_lowkey->t_info = sizeof(IndexTupleData);
     BTreeTupleSetNAtts(state->btps_lowkey, 0, false);
   }
@@ -1209,7 +1209,7 @@ static void _bt_load(BTWriteState *wstate, BTSpool *btspool,
             MAXALIGN_DOWN((BLCKSZ * 10 / 100)) - sizeof(ItemIdData);
         Assert(dstate->maxpostingsize <= BTMaxItemSize &&
                dstate->maxpostingsize <= INDEX_SIZE_MASK);
-        dstate->htids = palloc(dstate->maxpostingsize);
+        dstate->htids = (ItemPointer)palloc(dstate->maxpostingsize);
 
         /* start new pending posting list with itup copy */
         _bt_dedup_start_pending(dstate, CopyIndexTuple(itup),
@@ -1444,11 +1444,11 @@ static void _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent,
    * Allocate space for each worker's WalUsage and BufferUsage; no need to
    * initialize.
    */
-  walusage =
-      shm_toc_allocate(pcxt->toc, mul_size(sizeof(WalUsage), pcxt->nworkers));
+  walusage = (WalUsage *)shm_toc_allocate(
+      pcxt->toc, mul_size(sizeof(WalUsage), pcxt->nworkers));
   shm_toc_insert(pcxt->toc, PARALLEL_KEY_WAL_USAGE, walusage);
-  bufferusage = shm_toc_allocate(pcxt->toc,
-                                 mul_size(sizeof(BufferUsage), pcxt->nworkers));
+  bufferusage = (BufferUsage *)shm_toc_allocate(
+      pcxt->toc, mul_size(sizeof(BufferUsage), pcxt->nworkers));
   shm_toc_insert(pcxt->toc, PARALLEL_KEY_BUFFER_USAGE, bufferusage);
 
   /* Launch workers, saving status for leader/caller */
@@ -1637,14 +1637,14 @@ void _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc) {
          (MyProc->statusFlags == PROC_IN_SAFE_IC));
 
   /* Set debug_query_string for individual workers first */
-  sharedquery = shm_toc_lookup(toc, PARALLEL_KEY_QUERY_TEXT, true);
+  sharedquery = (char *)shm_toc_lookup(toc, PARALLEL_KEY_QUERY_TEXT, true);
   debug_query_string = sharedquery;
 
   /* Report the query string from leader */
   pgstat_report_activity(STATE_RUNNING, debug_query_string);
 
   /* Look up nbtree shared state */
-  btshared = shm_toc_lookup(toc, PARALLEL_KEY_BTREE_SHARED, false);
+  btshared = (BTShared *)shm_toc_lookup(toc, PARALLEL_KEY_BTREE_SHARED, false);
 
   /* Open relations using lock modes known to be obtained by index.c */
   if (!btshared->isconcurrent) {
@@ -1670,7 +1670,7 @@ void _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc) {
   btspool->nulls_not_distinct = btshared->nulls_not_distinct;
 
   /* Look up shared state private to tuplesort.c */
-  sharedsort = shm_toc_lookup(toc, PARALLEL_KEY_TUPLESORT, false);
+  sharedsort = (Sharedsort *)shm_toc_lookup(toc, PARALLEL_KEY_TUPLESORT, false);
   tuplesort_attach_shared(sharedsort, seg);
   if (!btshared->isunique) {
     btspool2 = NULL;
@@ -1684,7 +1684,8 @@ void _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc) {
     btspool2->index = btspool->index;
     btspool2->isunique = false;
     /* Look up shared state private to tuplesort.c */
-    sharedsort2 = shm_toc_lookup(toc, PARALLEL_KEY_TUPLESORT_SPOOL2, false);
+    sharedsort2 =
+        (Sharedsort *)shm_toc_lookup(toc, PARALLEL_KEY_TUPLESORT_SPOOL2, false);
     tuplesort_attach_shared(sharedsort2, seg);
   }
 
@@ -1697,8 +1698,9 @@ void _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc) {
                              sharedsort2, sortmem, false);
 
   /* Report WAL/buffer usage during parallel execution */
-  bufferusage = shm_toc_lookup(toc, PARALLEL_KEY_BUFFER_USAGE, false);
-  walusage = shm_toc_lookup(toc, PARALLEL_KEY_WAL_USAGE, false);
+  bufferusage =
+      (BufferUsage *)shm_toc_lookup(toc, PARALLEL_KEY_BUFFER_USAGE, false);
+  walusage = (WalUsage *)shm_toc_lookup(toc, PARALLEL_KEY_WAL_USAGE, false);
   InstrEndParallelQuery(&bufferusage[ParallelWorkerNumber],
                         &walusage[ParallelWorkerNumber]);
 
@@ -1737,7 +1739,7 @@ static void _bt_parallel_scan_and_sort(BTSpool *btspool, BTSpool *btspool2,
   IndexInfo *indexInfo;
 
   /* Initialize local tuplesort coordination state */
-  coordinate = palloc0(sizeof(SortCoordinateData));
+  coordinate = (SortCoordinate)palloc0(sizeof(SortCoordinateData));
   coordinate->isWorker = true;
   coordinate->nParticipants = -1;
   coordinate->sharedsort = sharedsort;
@@ -1760,7 +1762,7 @@ static void _bt_parallel_scan_and_sort(BTSpool *btspool, BTSpool *btspool2,
      * worker).  Worker processes are generally permitted to allocate
      * work_mem independently.
      */
-    coordinate2 = palloc0(sizeof(SortCoordinateData));
+    coordinate2 = (SortCoordinate)palloc0(sizeof(SortCoordinateData));
     coordinate2->isWorker = true;
     coordinate2->nParticipants = -1;
     coordinate2->sharedsort = sharedsort2;

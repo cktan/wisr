@@ -422,18 +422,18 @@ Datum oidvectortypes(PG_FUNCTION_ARGS) {
   numargs = oidArray->dim1;
 
   total = 20 * numargs + 1;
-  result = palloc(total);
+  result = (char *)palloc(total);
   result[0] = '\0';
   left = total - 1;
 
   for (num = 0; num < numargs; num++) {
-    char *typename = format_type_extended(oidArray->values[num], -1,
-                                          FORMAT_TYPE_ALLOW_INVALID);
-    size_t slen = strlen(typename);
+    char *typename_ = format_type_extended(oidArray->values[num], -1,
+                                           FORMAT_TYPE_ALLOW_INVALID);
+    size_t slen = strlen(typename_);
 
     if (left < (slen + 2)) {
       total += slen + 2;
-      result = repalloc(result, total);
+      result = (char *)repalloc(result, total);
       left += slen + 2;
     }
 
@@ -441,7 +441,7 @@ Datum oidvectortypes(PG_FUNCTION_ARGS) {
       strcat(result, ", ");
       left -= 2;
     }
-    strcat(result, typename);
+    strcat(result, typename_);
     left -= slen;
   }
 

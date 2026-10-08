@@ -680,12 +680,12 @@ foreach my $n (@node_types)
 	next if $struct_no_copy && $struct_no_equal;
 
 	print $cfs "\t\tcase T_${n}:\n"
-	  . "\t\t\tretval = _copy${n}(from);\n"
+	  . "\t\t\tretval = _copy${n}((const ${n} *) from);\n"
 	  . "\t\t\tbreak;\n"
 	  unless $struct_no_copy;
 
 	print $efs "\t\tcase T_${n}:\n"
-	  . "\t\t\tretval = _equal${n}(a, b);\n"
+	  . "\t\t\tretval = _equal${n}((const ${n} *) a, (const ${n} *) b);\n"
 	  . "\t\t\tbreak;\n"
 	  unless $struct_no_equal;
 
@@ -927,7 +927,7 @@ foreach my $n (@node_types)
 	my $N = uc $n;
 
 	print $ofs "\t\t\tcase T_${n}:\n"
-	  . "\t\t\t\t_out${n}(str, obj);\n"
+	  . "\t\t\t\t_out${n}(str, (const ${n} *) obj);\n"
 	  . "\t\t\t\tbreak;\n";
 
 	print $rfs "\tif (MATCH(\"$N\", "

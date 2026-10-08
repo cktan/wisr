@@ -297,9 +297,9 @@ static bool printCrosstab(const PGresult *result, int num_columns,
   for (i = 0; i < num_columns; i++) {
     char *colname;
 
-    colname = piv_columns[horiz_map[i]].name
-                  ? piv_columns[horiz_map[i]].name
-                  : (popt.nullPrint ? popt.nullPrint : "");
+    colname = (char *)(piv_columns[horiz_map[i]].name
+                           ? piv_columns[horiz_map[i]].name
+                           : (popt.nullPrint ? popt.nullPrint : ""));
 
     printTableAddHeader(&cont, colname, false, col_align);
   }

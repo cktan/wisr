@@ -973,7 +973,7 @@ static bool infer_collation_opclass_match(InferenceElem *elem, Relation idxRel,
       if (((Var *)elem->expr)->varattno == attno)
         return true;
     } else if (attno == 0) {
-      Node *nattExpr = list_nth(idxExprs, (natt - 1) - nplain);
+      Node *nattExpr = (Node *)list_nth(idxExprs, (natt - 1) - nplain);
 
       /*
        * Note that unlike routines like match_index_to_operand() we
@@ -1227,7 +1227,7 @@ static List *get_relation_constraints(PlannerInfo *root, Oid relationObjectId,
       if (constr->check[i].ccnoinherit && !include_noinherit)
         continue;
 
-      cexpr = stringToNode(constr->check[i].ccbin);
+      cexpr = (Node *)stringToNode(constr->check[i].ccbin);
 
       /*
        * Run each expression through const-simplification and
@@ -2211,7 +2211,7 @@ Bitmapset *get_dependent_generated_columns(PlannerInfo *root, Index rti,
         continue;
 
       /* identify columns this generated column depends on */
-      expr = stringToNode(defval->adbin);
+      expr = (Node *)stringToNode(defval->adbin);
       pull_varattnos(expr, 1, &attrs_used);
 
       if (bms_overlap(target_cols, attrs_used))
@@ -2271,7 +2271,7 @@ static PartitionScheme find_partition_scheme(PlannerInfo *root,
 
   /* Search for a matching partition scheme and return if found one. */
   foreach (lc, root->part_schemes) {
-    part_scheme = lfirst(lc);
+    part_scheme = (PartitionScheme)lfirst(lc);
 
     /* Match partitioning strategy and number of keys. */
     if (partkey->strategy != part_scheme->strategy ||

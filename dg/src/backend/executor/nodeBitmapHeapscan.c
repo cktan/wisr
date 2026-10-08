@@ -459,7 +459,7 @@ void ExecBitmapHeapInitializeDSM(BitmapHeapScanState *node,
         size, mul_size(pcxt->nworkers, sizeof(BitmapHeapScanInstrumentation)));
   }
 
-  ptr = shm_toc_allocate(pcxt->toc, size);
+  ptr = (char *)shm_toc_allocate(pcxt->toc, size);
   pstate = (ParallelBitmapHeapState *)ptr;
   ptr += MAXALIGN(sizeof(ParallelBitmapHeapState));
   if (node->ss.ps.instrument && pcxt->nworkers > 0)
@@ -521,7 +521,8 @@ void ExecBitmapHeapInitializeWorker(BitmapHeapScanState *node,
 
   Assert(node->ss.ps.state->es_query_dsa != NULL);
 
-  ptr = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
+  ptr =
+      (char *)shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
 
   node->pstate = (ParallelBitmapHeapState *)ptr;
   ptr += MAXALIGN(sizeof(ParallelBitmapHeapState));
@@ -546,6 +547,6 @@ void ExecBitmapHeapRetrieveInstrumentation(BitmapHeapScanState *node) {
   size = offsetof(SharedBitmapHeapInstrumentation, sinstrument) +
          sinstrument->num_workers * sizeof(BitmapHeapScanInstrumentation);
 
-  node->sinstrument = palloc(size);
+  node->sinstrument = (SharedBitmapHeapInstrumentation *)palloc(size);
   memcpy(node->sinstrument, sinstrument, size);
 }

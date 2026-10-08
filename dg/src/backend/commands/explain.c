@@ -1171,7 +1171,7 @@ static bool plan_is_disabled(Plan *plan) {
      * us the incorrect number of disabled nodes.
      */
     foreach (lc, aplan->appendplans) {
-      Plan *subplan = lfirst(lc);
+      Plan *subplan = (Plan *)lfirst(lc);
 
       child_disabled_nodes += subplan->disabled_nodes;
     }
@@ -1185,7 +1185,7 @@ static bool plan_is_disabled(Plan *plan) {
      * us the incorrect number of disabled nodes.
      */
     foreach (lc, maplan->mergeplans) {
-      Plan *subplan = lfirst(lc);
+      Plan *subplan = (Plan *)lfirst(lc);
 
       child_disabled_nodes += subplan->disabled_nodes;
     }
@@ -1196,7 +1196,7 @@ static bool plan_is_disabled(Plan *plan) {
     CustomScan *cplan = (CustomScan *)plan;
 
     foreach (lc, cplan->custom_plans) {
-      Plan *subplan = lfirst(lc);
+      Plan *subplan = (Plan *)lfirst(lc);
 
       child_disabled_nodes += subplan->disabled_nodes;
     }
@@ -2371,7 +2371,7 @@ static void show_grouping_sets(PlanState *planstate, Agg *agg, List *ancestors,
                          es);
 
   foreach (lc, agg->chain) {
-    Agg *aggnode = lfirst(lc);
+    Agg *aggnode = (Agg *)lfirst(lc);
     Sort *sortnode = (Sort *)aggnode->plan.lefttree;
 
     show_grouping_set_keys(planstate, aggnode, sortnode, context, useprefix,
@@ -2825,7 +2825,7 @@ show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
 
   /* Generate a list of sort methods used across all groups. */
   for (int bit = 0; bit < NUM_TUPLESORTMETHODS; bit++) {
-    TuplesortMethod sortMethod = (1 << bit);
+    TuplesortMethod sortMethod = (TuplesortMethod)(1 << bit);
 
     if (groupInfo->sortMethods & sortMethod) {
       const char *methodName = tuplesort_method_name(sortMethod);
@@ -3877,7 +3877,7 @@ static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es) {
  */
 static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es) {
   char *objectname = NULL;
-  char *namespace = NULL;
+  char *namespace_ = NULL;
   const char *objecttag = NULL;
   RangeTblEntry *rte;
   char *refname;
@@ -3902,7 +3902,7 @@ static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es) {
     Assert(rte->rtekind == RTE_RELATION);
     objectname = get_rel_name(rte->relid);
     if (es->verbose)
-    namespace = get_namespace_name_or_temp(get_rel_namespace(rte->relid));
+      namespace_ = get_namespace_name_or_temp(get_rel_namespace(rte->relid));
     objecttag = "Relation Name";
     break;
   case T_FunctionScan: {
@@ -3926,7 +3926,7 @@ static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es) {
 
         objectname = get_func_name(funcid);
         if (es->verbose)
-        namespace = get_namespace_name_or_temp(get_func_namespace(funcid));
+          namespace_ = get_namespace_name_or_temp(get_func_namespace(funcid));
       }
     }
     objecttag = "Function Name";
@@ -3975,8 +3975,8 @@ static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es) {
 
   if (es->format == EXPLAIN_FORMAT_TEXT) {
     appendStringInfoString(es->str, " on");
-    if (namespace != NULL)
-      appendStringInfo(es->str, " %s.%s", quote_identifier(namespace),
+    if (namespace_ != NULL)
+      appendStringInfo(es->str, " %s.%s", quote_identifier(namespace_),
                        quote_identifier(objectname));
     else if (objectname != NULL)
       appendStringInfo(es->str, " %s", quote_identifier(objectname));
@@ -3985,8 +3985,8 @@ static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es) {
   } else {
     if (objecttag != NULL && objectname != NULL)
       ExplainPropertyText(objecttag, objectname, es);
-    if (namespace != NULL)
-      ExplainPropertyText("Schema", namespace, es);
+    if (namespace_ != NULL)
+      ExplainPropertyText("Schema", namespace_, es);
     ExplainPropertyText("Alias", refname, es);
   }
 }

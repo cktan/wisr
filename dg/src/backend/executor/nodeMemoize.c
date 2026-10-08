@@ -932,7 +932,7 @@ MemoizeState *ExecInitMemoize(Memoize *node, EState *estate, int eflags) {
                                           * data */
   mstate->hashfunctions = (FmgrInfo *)palloc(nkeys * sizeof(FmgrInfo));
 
-  eqfuncoids = palloc(nkeys * sizeof(Oid));
+  eqfuncoids = (Oid *)palloc(nkeys * sizeof(Oid));
 
   for (i = 0; i < nkeys; i++) {
     Oid hashop = node->hashOperators[i];
@@ -1124,7 +1124,7 @@ void ExecMemoizeInitializeDSM(MemoizeState *node, ParallelContext *pcxt) {
 
   size = offsetof(SharedMemoizeInfo, sinstrument) +
          pcxt->nworkers * sizeof(MemoizeInstrumentation);
-  node->shared_info = shm_toc_allocate(pcxt->toc, size);
+  node->shared_info = (SharedMemoizeInfo *)shm_toc_allocate(pcxt->toc, size);
   /* ensure any unfilled slots will contain zeroes */
   memset(node->shared_info, 0, size);
   node->shared_info->num_workers = pcxt->nworkers;
@@ -1139,8 +1139,8 @@ void ExecMemoizeInitializeDSM(MemoizeState *node, ParallelContext *pcxt) {
  */
 void ExecMemoizeInitializeWorker(MemoizeState *node,
                                  ParallelWorkerContext *pwcxt) {
-  node->shared_info =
-      shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
+  node->shared_info = (SharedMemoizeInfo *)shm_toc_lookup(
+      pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
 }
 
 /* ----------------------------------------------------------------
@@ -1158,7 +1158,7 @@ void ExecMemoizeRetrieveInstrumentation(MemoizeState *node) {
 
   size = offsetof(SharedMemoizeInfo, sinstrument) +
          node->shared_info->num_workers * sizeof(MemoizeInstrumentation);
-  si = palloc(size);
+  si = (SharedMemoizeInfo *)palloc(size);
   memcpy(si, node->shared_info, size);
   node->shared_info = si;
 }

@@ -22,8 +22,8 @@
 #include "catalog/indexing.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_attrdef.h"
-#include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
+#include "catalog/pg_auth_members.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_event_trigger.h"
 #include "catalog/pg_namespace.h"
@@ -633,7 +633,7 @@ static List *EventTriggerCommonSetup(Node *parsetree, EventTriggerEvent event,
    * can do much else.
    */
   foreach (lc, cachelist) {
-    EventTriggerCacheItem *item = lfirst(lc);
+    EventTriggerCacheItem *item = (EventTriggerCacheItem *)lfirst(lc);
 
     if (unfiltered || filter_event_trigger(tag, item)) {
       /* We must plan to fire this trigger. */
@@ -1091,7 +1091,8 @@ bool EventTriggerBeginCompleteQuery(void) {
 
   cxt = AllocSetContextCreate(TopMemoryContext, "event trigger state",
                               ALLOCSET_DEFAULT_SIZES);
-  state = MemoryContextAlloc(cxt, sizeof(EventTriggerQueryState));
+  state = (EventTriggerQueryState *)MemoryContextAlloc(
+      cxt, sizeof(EventTriggerQueryState));
   state->cxt = cxt;
   slist_init(&(state->SQLDropList));
   state->in_sql_drop = false;
@@ -1178,7 +1179,7 @@ void EventTriggerSQLDropAddObject(const ObjectAddress *object, bool original,
 
   oldcxt = MemoryContextSwitchTo(currentEventTriggerState->cxt);
 
-  obj = palloc0(sizeof(SQLDropObject));
+  obj = (SQLDropObject *)palloc0(sizeof(SQLDropObject));
   obj->address = *object;
   obj->original = original;
   obj->normal = normal;
@@ -1569,7 +1570,7 @@ void EventTriggerCollectSimpleCommand(ObjectAddress address,
 
   oldcxt = MemoryContextSwitchTo(currentEventTriggerState->cxt);
 
-  command = palloc(sizeof(CollectedCommand));
+  command = (CollectedCommand *)palloc(sizeof(CollectedCommand));
 
   command->type = SCT_Simple;
   command->in_extension = creating_extension;
@@ -1604,7 +1605,7 @@ void EventTriggerAlterTableStart(Node *parsetree) {
 
   oldcxt = MemoryContextSwitchTo(currentEventTriggerState->cxt);
 
-  command = palloc(sizeof(CollectedCommand));
+  command = (CollectedCommand *)palloc(sizeof(CollectedCommand));
 
   command->type = SCT_AlterTable;
   command->in_extension = creating_extension;
@@ -1657,7 +1658,7 @@ void EventTriggerCollectAlterTableSubcmd(Node *subcmd, ObjectAddress address) {
 
   oldcxt = MemoryContextSwitchTo(currentEventTriggerState->cxt);
 
-  newsub = palloc(sizeof(CollectedATSubcmd));
+  newsub = (CollectedATSubcmd *)palloc(sizeof(CollectedATSubcmd));
   newsub->address = address;
   newsub->parsetree = copyObject(subcmd);
 
@@ -1726,7 +1727,7 @@ void EventTriggerCollectGrant(InternalGrant *istmt) {
   /*
    * This is tedious, but necessary.
    */
-  icopy = palloc(sizeof(InternalGrant));
+  icopy = (InternalGrant *)palloc(sizeof(InternalGrant));
   memcpy(icopy, istmt, sizeof(InternalGrant));
   icopy->objects = list_copy(istmt->objects);
   icopy->grantees = list_copy(istmt->grantees);
@@ -1735,7 +1736,7 @@ void EventTriggerCollectGrant(InternalGrant *istmt) {
     icopy->col_privs = lappend(icopy->col_privs, copyObject(lfirst(cell)));
 
   /* Now collect it, using the copied InternalGrant */
-  command = palloc(sizeof(CollectedCommand));
+  command = (CollectedCommand *)palloc(sizeof(CollectedCommand));
   command->type = SCT_Grant;
   command->in_extension = creating_extension;
   command->d.grant.istmt = icopy;
@@ -1764,7 +1765,7 @@ void EventTriggerCollectAlterOpFam(AlterOpFamilyStmt *stmt, Oid opfamoid,
 
   oldcxt = MemoryContextSwitchTo(currentEventTriggerState->cxt);
 
-  command = palloc(sizeof(CollectedCommand));
+  command = (CollectedCommand *)palloc(sizeof(CollectedCommand));
   command->type = SCT_AlterOpFamily;
   command->in_extension = creating_extension;
   ObjectAddressSet(command->d.opfam.address, OperatorFamilyRelationId,
@@ -1795,7 +1796,7 @@ void EventTriggerCollectCreateOpClass(CreateOpClassStmt *stmt, Oid opcoid,
 
   oldcxt = MemoryContextSwitchTo(currentEventTriggerState->cxt);
 
-  command = palloc0(sizeof(CollectedCommand));
+  command = (CollectedCommand *)palloc0(sizeof(CollectedCommand));
   command->type = SCT_CreateOpClass;
   command->in_extension = creating_extension;
   ObjectAddressSet(command->d.createopc.address, OperatorClassRelationId,
@@ -1827,7 +1828,7 @@ void EventTriggerCollectAlterTSConfig(AlterTSConfigurationStmt *stmt, Oid cfgId,
 
   oldcxt = MemoryContextSwitchTo(currentEventTriggerState->cxt);
 
-  command = palloc0(sizeof(CollectedCommand));
+  command = (CollectedCommand *)palloc0(sizeof(CollectedCommand));
   command->type = SCT_AlterTSConfig;
   command->in_extension = creating_extension;
   ObjectAddressSet(command->d.atscfg.address, TSConfigRelationId, cfgId);
@@ -1860,7 +1861,7 @@ void EventTriggerCollectAlterDefPrivs(AlterDefaultPrivilegesStmt *stmt) {
 
   oldcxt = MemoryContextSwitchTo(currentEventTriggerState->cxt);
 
-  command = palloc0(sizeof(CollectedCommand));
+  command = (CollectedCommand *)palloc0(sizeof(CollectedCommand));
   command->type = SCT_AlterDefaultPrivileges;
   command->d.defprivs.objtype = stmt->action->objtype;
   command->in_extension = creating_extension;
@@ -1891,7 +1892,7 @@ Datum pg_event_trigger_ddl_commands(PG_FUNCTION_ARGS) {
   InitMaterializedSRF(fcinfo, 0);
 
   foreach (lc, currentEventTriggerState->commandList) {
-    CollectedCommand *cmd = lfirst(lc);
+    CollectedCommand *cmd = (CollectedCommand *)lfirst(lc);
     Datum values[9];
     bool nulls[9] = {0};
     ObjectAddress addr;

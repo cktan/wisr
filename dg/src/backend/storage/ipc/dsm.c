@@ -204,7 +204,7 @@ void dsm_postmaster_startup(PGShmemHeader *shim) {
                     &dsm_control_mapped_size, ERROR))
       break;
   }
-  dsm_control = dsm_control_address;
+  dsm_control = (dsm_control_header *)dsm_control_address;
   on_shmem_exit(dsm_postmaster_shutdown, PointerGetDatum(shim));
   elog(DEBUG2, "created dynamic shared memory control segment %u (%zu bytes)",
        dsm_control_handle, segsize);
@@ -382,7 +382,7 @@ static void dsm_postmaster_shutdown(int code, Datum arg) {
   dsm_control_address = dsm_control;
   dsm_impl_op(DSM_OP_DESTROY, dsm_control_handle, 0, &dsm_control_impl_private,
               &dsm_control_address, &dsm_control_mapped_size, LOG);
-  dsm_control = dsm_control_address;
+  dsm_control = (dsm_control_header *)dsm_control_address;
   shim->dsm_control = 0;
 }
 
@@ -456,7 +456,7 @@ void dsm_shmem_init(void) {
       ++first_page;
 
     /* Initialize it and give it all the rest of the space. */
-    FreePageManagerInitialize(fpm, dsm_main_space_begin);
+    FreePageManagerInitialize(fpm, (char *)dsm_main_space_begin);
     pages = (size / FPM_PAGE_SIZE) - first_page;
     FreePageManagerPut(fpm, first_page, pages);
   }
@@ -478,7 +478,7 @@ dsm_segment *dsm_create(Size size, int flags) {
   uint32 nitems;
   size_t npages = 0;
   size_t first_page = 0;
-  FreePageManager *dsm_main_space_fpm = dsm_main_space_begin;
+  FreePageManager *dsm_main_space_fpm = (FreePageManager *)dsm_main_space_begin;
   bool using_main_dsm_region = false;
 
   /*
@@ -1035,8 +1035,8 @@ void on_dsm_detach(dsm_segment *seg, on_dsm_detach_callback function,
                    Datum arg) {
   dsm_segment_detach_callback *cb;
 
-  cb =
-      MemoryContextAlloc(TopMemoryContext, sizeof(dsm_segment_detach_callback));
+  cb = (dsm_segment_detach_callback *)MemoryContextAlloc(
+      TopMemoryContext, sizeof(dsm_segment_detach_callback));
   cb->function = function;
   cb->arg = arg;
   slist_push_head(&seg->on_detach, &cb->node);
@@ -1097,7 +1097,8 @@ static dsm_segment *dsm_create_descriptor(void) {
   if (CurrentResourceOwner)
     ResourceOwnerEnlarge(CurrentResourceOwner);
 
-  seg = MemoryContextAlloc(TopMemoryContext, sizeof(dsm_segment));
+  seg =
+      (dsm_segment *)MemoryContextAlloc(TopMemoryContext, sizeof(dsm_segment));
   dlist_push_head(&dsm_segment_list, &seg->node);
 
   /* seg->handle must be initialized by the caller */

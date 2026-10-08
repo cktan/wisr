@@ -15,8 +15,8 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "access/tableam.h"
 #include "commands/copyapi.h"
@@ -103,7 +103,8 @@ typedef struct {
 } DR_copy;
 
 /* NOTE: there's a copy of this in copyfromparse.c */
-static const char BinarySignature[11] = "PGCOPY\n\377\r\n\0";
+/* The eleventh byte is the string's own terminator. */
+static const char BinarySignature[11] = "PGCOPY\n\377\r\n";
 
 /* non-export function prototypes */
 static void EndCopy(CopyToState cstate);
@@ -148,24 +149,24 @@ static void CopySendInt16(CopyToState cstate, int16 val);
 
 /* text format */
 static const CopyToRoutine CopyToRoutineText = {
-    .CopyToStart = CopyToTextLikeStart,
     .CopyToOutFunc = CopyToTextLikeOutFunc,
+    .CopyToStart = CopyToTextLikeStart,
     .CopyToOneRow = CopyToTextOneRow,
     .CopyToEnd = CopyToTextLikeEnd,
 };
 
 /* CSV format */
 static const CopyToRoutine CopyToRoutineCSV = {
-    .CopyToStart = CopyToTextLikeStart,
     .CopyToOutFunc = CopyToTextLikeOutFunc,
+    .CopyToStart = CopyToTextLikeStart,
     .CopyToOneRow = CopyToCSVOneRow,
     .CopyToEnd = CopyToTextLikeEnd,
 };
 
 /* binary format */
 static const CopyToRoutine CopyToRoutineBinary = {
-    .CopyToStart = CopyToBinaryStart,
     .CopyToOutFunc = CopyToBinaryOutFunc,
+    .CopyToStart = CopyToBinaryStart,
     .CopyToOneRow = CopyToBinaryOneRow,
     .CopyToEnd = CopyToBinaryEnd,
 };

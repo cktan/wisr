@@ -72,7 +72,7 @@ static void InvalidateAttoptCacheCallback(Datum arg, int cacheid,
  * Hash function compatible with two-arg system cache hash function.
  */
 static uint32 relatt_cache_syshash(const void *key, Size keysize) {
-  const AttoptCacheKey *ckey = key;
+  const AttoptCacheKey *ckey = (const AttoptCacheKey *)key;
 
   Assert(keysize == sizeof(*ckey));
   return GetSysCacheHashValue2(ATTNUM, ckey->attrelid, ckey->attnum);
@@ -152,7 +152,8 @@ AttributeOpts *get_attribute_options(Oid attrelid, int attnum) {
       else {
         bytea *bytea_opts = attribute_reloptions(datum, false);
 
-        opts = MemoryContextAlloc(CacheMemoryContext, VARSIZE(bytea_opts));
+        opts = (AttributeOpts *)MemoryContextAlloc(CacheMemoryContext,
+                                                   VARSIZE(bytea_opts));
         memcpy(opts, bytea_opts, VARSIZE(bytea_opts));
       }
       ReleaseSysCache(tp);
@@ -170,7 +171,7 @@ AttributeOpts *get_attribute_options(Oid attrelid, int attnum) {
   /* Return results in caller's memory context. */
   if (attopt->opts == NULL)
     return NULL;
-  result = palloc(VARSIZE(attopt->opts));
+  result = (AttributeOpts *)palloc(VARSIZE(attopt->opts));
   memcpy(result, attopt->opts, VARSIZE(attopt->opts));
   return result;
 }

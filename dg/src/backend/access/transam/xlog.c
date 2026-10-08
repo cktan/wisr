@@ -39,11 +39,11 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <fcntl.h>
 #include <math.h>
+#include <time.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "access/clog.h"
@@ -734,7 +734,7 @@ XLogRecPtr XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn, uint8 flags,
   bool inserted;
   XLogRecord *rechdr = (XLogRecord *)rdata->data;
   uint8 info = rechdr->xl_info & ~XLR_INFO_MASK;
-  WalInsertClass class = WALINSERT_NORMAL;
+  WalInsertClass class_ = WALINSERT_NORMAL;
   XLogRecPtr StartPos;
   XLogRecPtr EndPos;
   bool prevDoPageWrites = doPageWrites;
@@ -743,9 +743,9 @@ XLogRecPtr XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn, uint8 flags,
   /* Does this record type require special handling? */
   if (unlikely(rechdr->xl_rmid == RM_XLOG_ID)) {
     if (info == XLOG_SWITCH)
-      class = WALINSERT_SPECIAL_SWITCH;
+      class_ = WALINSERT_SPECIAL_SWITCH;
     else if (info == XLOG_CHECKPOINT_REDO)
-      class = WALINSERT_SPECIAL_CHECKPOINT;
+      class_ = WALINSERT_SPECIAL_CHECKPOINT;
   }
 
   /* we assume that all of the record header is in the first chunk */
@@ -795,7 +795,7 @@ XLogRecPtr XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn, uint8 flags,
    */
   START_CRIT_SECTION();
 
-  if (likely(class == WALINSERT_NORMAL)) {
+  if (likely(class_ == WALINSERT_NORMAL)) {
     WALInsertLockAcquire();
 
     /*
@@ -840,7 +840,7 @@ XLogRecPtr XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn, uint8 flags,
 
     /* Normal records are always inserted. */
     inserted = true;
-  } else if (class == WALINSERT_SPECIAL_SWITCH) {
+  } else if (class_ == WALINSERT_SPECIAL_SWITCH) {
     /*
      * In order to insert an XLOG_SWITCH record, we need to hold all of
      * the WAL insertion locks, not just one, so that no one else can
@@ -856,7 +856,7 @@ XLogRecPtr XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn, uint8 flags,
     WALInsertLockAcquireExclusive();
     inserted = ReserveXLogSwitch(&StartPos, &EndPos, &rechdr->xl_prev);
   } else {
-    Assert(class == WALINSERT_SPECIAL_CHECKPOINT);
+    Assert(class_ == WALINSERT_SPECIAL_CHECKPOINT);
 
     /*
      * We need to update both the local and shared copies of RedoRecPtr,
@@ -887,7 +887,7 @@ XLogRecPtr XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn, uint8 flags,
      * All the record data, including the header, is now ready to be
      * inserted. Copy the record in the space reserved.
      */
-    CopyXLogRecordToWAL(rechdr->xl_tot_len, class == WALINSERT_SPECIAL_SWITCH,
+    CopyXLogRecordToWAL(rechdr->xl_tot_len, class_ == WALINSERT_SPECIAL_SWITCH,
                         rdata, StartPos, EndPos, insertTLI);
 
     /*
@@ -941,7 +941,7 @@ XLogRecPtr XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn, uint8 flags,
    * padding space that fills the rest of the segment, and perform
    * end-of-segment actions (eg, notifying archiver).
    */
-  if (class == WALINSERT_SPECIAL_SWITCH) {
+  if (class_ == WALINSERT_SPECIAL_SWITCH) {
     TRACE_POSTGRESQL_WAL_SWITCH();
     XLogFlush(EndPos);
 
@@ -1198,7 +1198,7 @@ static void CopyXLogRecordToWAL(int write_len, bool isLogSwitch,
   /* Copy record data */
   written = 0;
   while (rdata != NULL) {
-    const char *rdata_data = rdata->data;
+    const char *rdata_data = (const char *)rdata->data;
     int rdata_len = rdata->len;
 
     while (rdata_len > freespace) {
@@ -4450,7 +4450,7 @@ void assign_wal_consistency_checking(const char *newval, void *extra) {
    * because WAL for a custom resource manager can't be written before the
    * module is loaded anyway.
    */
-  wal_consistency_checking = extra;
+  wal_consistency_checking = (bool *)extra;
 }
 
 /*
@@ -4518,7 +4518,7 @@ const char *show_in_hot_standby(void) {
  */
 void LocalProcessControlFile(bool reset) {
   Assert(reset || ControlFile == NULL);
-  ControlFile = palloc(sizeof(ControlFileData));
+  ControlFile = (ControlFileData *)palloc(sizeof(ControlFileData));
   ReadControlFile();
 }
 
@@ -4527,7 +4527,9 @@ void LocalProcessControlFile(bool reset) {
  * considered as its active wal_level, because it may be different from what
  * was originally configured on standby.
  */
-WalLevel GetActiveWalLevelOnStandby(void) { return ControlFile->wal_level; }
+WalLevel GetActiveWalLevelOnStandby(void) {
+  return (WalLevel)ControlFile->wal_level;
+}
 
 /*
  * Initialization of shared memory for XLOG
@@ -4849,7 +4851,7 @@ void BootStrapXLOG(uint32 data_checksum_version) {
 }
 
 static char *str_time(pg_time_t tnow) {
-  char *buf = palloc(128);
+  char *buf = (char *)palloc(128);
 
   pg_strftime(buf, 128, "%Y-%m-%d %H:%M:%S %Z",
               pg_localtime(&tnow, log_timezone));
@@ -8508,7 +8510,7 @@ void do_pg_backup_start(const char *backupidstr, bool fast, List **tablespaces,
         continue;
       }
 
-      ti = palloc(sizeof(tablespaceinfo));
+      ti = (tablespaceinfo *)palloc(sizeof(tablespaceinfo));
       ti->oid = tsoid;
       ti->path = pstrdup(linkpath);
       ti->rpath = relpath;

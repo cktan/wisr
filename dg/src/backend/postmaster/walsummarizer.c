@@ -564,7 +564,7 @@ XLogRecPtr GetOldestUnsummarizedLSN(TimeLineID *tli, bool *lsn_is_exact) {
   (void)GetLatestLSN(&latest_tli);
   tles = readTimeLineHistory(latest_tli);
   for (n = list_length(tles) - 1; n >= 0; --n) {
-    TimeLineHistoryEntry *tle = list_nth(tles, n);
+    TimeLineHistoryEntry *tle = (TimeLineHistoryEntry *)list_nth(tles, n);
     XLogSegNo oldest_segno;
 
     oldest_segno = XLogGetOldestSegno(tle->tli);
@@ -585,7 +585,7 @@ XLogRecPtr GetOldestUnsummarizedLSN(TimeLineID *tli, bool *lsn_is_exact) {
   existing_summaries =
       GetWalSummaries(unsummarized_tli, InvalidXLogRecPtr, InvalidXLogRecPtr);
   foreach (lc, existing_summaries) {
-    WalSummaryFile *ws = lfirst(lc);
+    WalSummaryFile *ws = (WalSummaryFile *)lfirst(lc);
 
     if (ws->end_lsn > unsummarized_lsn) {
       unsummarized_lsn = ws->end_lsn;
@@ -1362,7 +1362,7 @@ static void SummarizeXactRecord(XLogReaderState *xlogreader,
     for (i = 0; i < parsed.nrels; ++i) {
       ForkNumber forknum;
 
-      for (forknum = 0; forknum <= MAX_FORKNUM; ++forknum)
+      for (forknum = (ForkNumber)0; forknum <= MAX_FORKNUM; ++forknum)
         if (forknum != FSM_FORKNUM)
           BlockRefTableSetLimitBlock(brtab, &parsed.xlocators[i], forknum, 0);
     }
@@ -1380,7 +1380,7 @@ static void SummarizeXactRecord(XLogReaderState *xlogreader,
     for (i = 0; i < parsed.nrels; ++i) {
       ForkNumber forknum;
 
-      for (forknum = 0; forknum <= MAX_FORKNUM; ++forknum)
+      for (forknum = (ForkNumber)0; forknum <= MAX_FORKNUM; ++forknum)
         if (forknum != FSM_FORKNUM)
           BlockRefTableSetLimitBlock(brtab, &parsed.xlocators[i], forknum, 0);
     }
@@ -1451,7 +1451,8 @@ static bool SummarizeXlogRecord(XLogReaderState *xlogreader,
 static void summarizer_wal_segment_open(XLogReaderState *state,
                                         XLogSegNo nextSegNo,
                                         TimeLineID *tli_p) {
-  SummarizerReadLocalXLogPrivate *private_data = state->private_data;
+  SummarizerReadLocalXLogPrivate *private_data =
+      (SummarizerReadLocalXLogPrivate *)state->private_data;
   int count = 0;
   TimeLineID tli = *tli_p;
   char path[MAXPGPATH];
@@ -1689,7 +1690,7 @@ static void MaybeRemoveOldWalSummaries(void) {
 
     /* Consider each WAL file on the selected timeline in turn. */
     foreach (lc, wslist) {
-      WalSummaryFile *ws = lfirst(lc);
+      WalSummaryFile *ws = (WalSummaryFile *)lfirst(lc);
 
       ProcessWalSummarizerInterrupts();
 

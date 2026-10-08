@@ -356,7 +356,7 @@ PgStat_StatDBEntry *pgstat_prep_database_pending(Oid dboid) {
   entry_ref =
       pgstat_prep_pending_entry(PGSTAT_KIND_DATABASE, dboid, InvalidOid, NULL);
 
-  return entry_ref->pending;
+  return (PgStat_StatDBEntry *)entry_ref->pending;
 }
 
 /*

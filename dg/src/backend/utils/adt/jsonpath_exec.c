@@ -538,14 +538,14 @@ static Datum jsonb_path_query_internal(FunctionCallInfo fcinfo, bool tz) {
   }
 
   funcctx = SRF_PERCALL_SETUP();
-  found = funcctx->user_fctx;
+  found = (List *)funcctx->user_fctx;
 
   c = list_head(found);
 
   if (c == NULL)
     SRF_RETURN_DONE(funcctx);
 
-  v = lfirst(c);
+  v = (JsonbValue *)lfirst(c);
   funcctx->user_fctx = list_delete_first(found);
 
   SRF_RETURN_NEXT(funcctx, JsonbPGetDatum(JsonbValueToJsonb(v)));
@@ -732,7 +732,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
       break;
     }
 
-    v = hasNext ? &vbuf : palloc(sizeof(*v));
+    v = (JsonbValue *)(hasNext ? &vbuf : palloc(sizeof(*v)));
 
     baseObject = cxt->baseObject;
     getJsonPathItem(cxt, jsp, v);
@@ -999,7 +999,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
   }
 
   case jpiType: {
-    JsonbValue *jbv = palloc(sizeof(*jbv));
+    JsonbValue *jbv = (JsonbValue *)palloc(sizeof(*jbv));
 
     jbv->type = jbvString;
     jbv->val.string.val = pstrdup(JsonbTypeName(jb));
@@ -1026,7 +1026,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
       size = 1;
     }
 
-    jb = palloc(sizeof(*jb));
+    jb = (JsonbValue *)palloc(sizeof(*jb));
 
     jb->type = jbvNumeric;
     jb->val.numeric = int64_to_numeric(size);
@@ -1143,7 +1143,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
     last = cxt->innermostArraySize - 1;
 
-    lastjbv = hasNext ? &tmpjbv : palloc(sizeof(*lastjbv));
+    lastjbv = (JsonbValue *)(hasNext ? &tmpjbv : palloc(sizeof(*lastjbv)));
 
     lastjbv->type = jbvNumeric;
     lastjbv->val.numeric = int64_to_numeric(last);
@@ -1472,7 +1472,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
           DirectFunctionCall1(numeric_out, NumericGetDatum(jb->val.numeric)));
       break;
     case jbvBool:
-      tmp = (jb->val.boolean) ? "true" : "false";
+      tmp = (char *)((jb->val.boolean) ? "true" : "false");
       break;
     case jbvDatetime: {
       char buf[MAXDATELEN + 1];
@@ -1963,7 +1963,7 @@ static JsonPathExecResult executeBinaryArithmExpr(JsonPathExecContext *cxt,
   if (!jspGetNext(jsp, &elem) && !found)
     return jperOk;
 
-  lval = palloc(sizeof(*lval));
+  lval = (JsonbValue *)palloc(sizeof(*lval));
   lval->type = jbvNumeric;
   lval->val.numeric = res;
 
@@ -2059,7 +2059,7 @@ static JsonPathBool executeStartsWith(JsonPathItem *jsp, JsonbValue *whole,
  */
 static JsonPathBool executeLikeRegex(JsonPathItem *jsp, JsonbValue *str,
                                      JsonbValue *rarg, void *param) {
-  JsonLikeRegexContext *cxt = param;
+  JsonLikeRegexContext *cxt = (JsonLikeRegexContext *)param;
 
   if (!(str = getScalar(str, jbvString)))
     return jpbUnknown;
@@ -2106,7 +2106,7 @@ static JsonPathExecResult executeNumericItemMethod(JsonPathExecContext *cxt,
   if (!jspGetNext(jsp, &next) && !found)
     return jperOk;
 
-  jb = palloc(sizeof(*jb));
+  jb = (JsonbValue *)palloc(sizeof(*jb));
   jb->type = jbvNumeric;
   jb->val.numeric = DatumGetNumeric(datum);
 
@@ -2162,7 +2162,7 @@ static JsonPathExecResult executeDateTimeMethod(JsonPathExecContext *cxt,
    * an argument.  So we handle that separately.
    */
   if (jsp->type == jpiDatetime && jsp->content.arg) {
-    text *template;
+    text *template_;
     char *template_str;
     int template_len;
     ErrorSaveContext escontext = {T_ErrorSaveContext};
@@ -2174,10 +2174,10 @@ static JsonPathExecResult executeDateTimeMethod(JsonPathExecContext *cxt,
 
     template_str = jspGetString(&elem, &template_len);
 
-    template = cstring_to_text_with_len(template_str, template_len);
+    template_ = cstring_to_text_with_len(template_str, template_len);
 
     value =
-        parse_datetime(datetime, template, collid, true, &typid, &typmod, &tz,
+        parse_datetime(datetime, template_, collid, true, &typid, &typmod, &tz,
                        jspThrowErrors(cxt) ? NULL : (Node *)&escontext);
 
     if (escontext.error_occurred)
@@ -2524,7 +2524,7 @@ static JsonPathExecResult executeDateTimeMethod(JsonPathExecContext *cxt,
   if (!hasNext && !found)
     return res;
 
-  jb = hasNext ? &jbvbuf : palloc(sizeof(*jb));
+  jb = (JsonbValue *)(hasNext ? &jbvbuf : palloc(sizeof(*jb)));
 
   jb->type = jbvDatetime;
   jb->val.datetime.value = value;
@@ -2726,13 +2726,13 @@ static void getJsonPathItem(JsonPathExecContext *cxt, JsonPathItem *item,
 static JsonbValue *GetJsonPathVar(void *cxt, char *varName, int varNameLen,
                                   JsonbValue *baseObject, int *baseObjectId) {
   JsonPathVariable *var = NULL;
-  List *vars = cxt;
+  List *vars = (List *)cxt;
   ListCell *lc;
   JsonbValue *result;
   int id = 1;
 
   foreach (lc, vars) {
-    JsonPathVariable *curvar = lfirst(lc);
+    JsonPathVariable *curvar = (JsonPathVariable *)lfirst(lc);
 
     if (curvar->namelen == varNameLen &&
         strncmp(curvar->name, varName, varNameLen) == 0) {
@@ -2748,7 +2748,7 @@ static JsonbValue *GetJsonPathVar(void *cxt, char *varName, int varNameLen,
     return NULL;
   }
 
-  result = palloc(sizeof(JsonbValue));
+  result = (JsonbValue *)palloc(sizeof(JsonbValue));
   if (var->isnull) {
     *baseObjectId = 0;
     result->type = jbvNull;
@@ -2885,7 +2885,7 @@ static JsonbValue *getJsonPathVariableFromJsonb(void *varsJsonb, char *varName,
                                                 int varNameLength,
                                                 JsonbValue *baseObject,
                                                 int *baseObjectId) {
-  Jsonb *vars = varsJsonb;
+  Jsonb *vars = (Jsonb *)varsJsonb;
   JsonbValue tmp;
   JsonbValue *result;
 
@@ -2911,7 +2911,7 @@ static JsonbValue *getJsonPathVariableFromJsonb(void *varsJsonb, char *varName,
  * is specified as a jsonb value.
  */
 static int countVariablesFromJsonb(void *varsJsonb) {
-  Jsonb *vars = varsJsonb;
+  Jsonb *vars = (Jsonb *)varsJsonb;
 
   if (vars && !JsonContainerIsObject(&vars->root)) {
     ereport(ERROR, errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -3124,7 +3124,7 @@ static int compareNumeric(Numeric a, Numeric b) {
 }
 
 static JsonbValue *copyJsonbValue(JsonbValue *src) {
-  JsonbValue *dst = palloc(sizeof(*dst));
+  JsonbValue *dst = (JsonbValue *)palloc(sizeof(*dst));
 
   *dst = *src;
 
@@ -3203,7 +3203,7 @@ static bool JsonValueListIsEmpty(JsonValueList *jvl) {
 }
 
 static JsonbValue *JsonValueListHead(JsonValueList *jvl) {
-  return jvl->singleton ? jvl->singleton : linitial(jvl->list);
+  return (JsonbValue *)(jvl->singleton ? jvl->singleton : linitial(jvl->list));
 }
 
 static List *JsonValueListGetList(JsonValueList *jvl) {
@@ -3238,7 +3238,7 @@ static JsonbValue *JsonValueListNext(const JsonValueList *jvl,
   JsonbValue *result = it->value;
 
   if (it->next) {
-    it->value = lfirst(it->next);
+    it->value = (JsonbValue *)lfirst(it->next);
     it->next = lnext(it->list, it->next);
   } else {
     it->value = NULL;
@@ -3717,7 +3717,7 @@ static void JsonTableInitOpaque(TableFuncScanState *state, int natts) {
   JsonExpr *je = castNode(JsonExpr, tf->docexpr);
   List *args = NIL;
 
-  cxt = palloc0(sizeof(JsonTableExecContext));
+  cxt = (JsonTableExecContext *)palloc0(sizeof(JsonTableExecContext));
   cxt->magic = JSON_TABLE_EXEC_CONTEXT_MAGIC;
 
   /*
@@ -3733,7 +3733,7 @@ static void JsonTableInitOpaque(TableFuncScanState *state, int natts) {
     forboth(exprlc, state->passingvalexprs, namelc, je->passing_names) {
       ExprState *state = lfirst_node(ExprState, exprlc);
       String *name = lfirst_node(String, namelc);
-      JsonPathVariable *var = palloc(sizeof(*var));
+      JsonPathVariable *var = (JsonPathVariable *)palloc(sizeof(*var));
 
       var->name = pstrdup(name->sval);
       var->namelen = strlen(var->name);
@@ -3750,8 +3750,8 @@ static void JsonTableInitOpaque(TableFuncScanState *state, int natts) {
     }
   }
 
-  cxt->colplanstates =
-      palloc(sizeof(JsonTablePlanState *) * list_length(tf->colvalexprs));
+  cxt->colplanstates = (JsonTablePlanState **)palloc(
+      sizeof(JsonTablePlanState *) * list_length(tf->colvalexprs));
 
   /*
    * Initialize plan for the root path and, recursively, also any child
@@ -3786,7 +3786,8 @@ static JsonTablePlanState *JsonTableInitPlan(JsonTableExecContext *cxt,
                                              JsonTablePlan *plan,
                                              JsonTablePlanState *parentstate,
                                              List *args, MemoryContext mcxt) {
-  JsonTablePlanState *planstate = palloc0(sizeof(*planstate));
+  JsonTablePlanState *planstate =
+      (JsonTablePlanState *)palloc0(sizeof(*planstate));
 
   planstate->plan = plan;
   planstate->parent = parentstate;
@@ -4021,7 +4022,7 @@ static Datum JsonTableGetValue(TableFuncScanState *state, int colnum, Oid typid,
   JsonTableExecContext *cxt =
       GetJsonTableExecContext(state, "JsonTableGetValue");
   ExprContext *econtext = state->ss.ps.ps_ExprContext;
-  ExprState *estate = list_nth(state->colvalexprs, colnum);
+  ExprState *estate = (ExprState *)list_nth(state->colvalexprs, colnum);
   JsonTablePlanState *planstate = cxt->colplanstates[colnum];
   JsonTablePlanRowSource *current = &planstate->current;
   Datum result;

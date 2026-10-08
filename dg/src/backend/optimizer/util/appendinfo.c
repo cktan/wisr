@@ -258,8 +258,8 @@ adjust_appendrel_attrs_mutator(Node *node,
         if (var->varattno > list_length(appinfo->translated_vars))
           elog(ERROR, "attribute %d of relation \"%s\" does not exist",
                var->varattno, get_rel_name(appinfo->parent_reloid));
-        newnode =
-            copyObject(list_nth(appinfo->translated_vars, var->varattno - 1));
+        newnode = (Node *)copyObject(
+            list_nth(appinfo->translated_vars, var->varattno - 1));
         if (newnode == NULL)
           elog(ERROR, "attribute %d of relation \"%s\" does not exist",
                var->varattno, get_rel_name(appinfo->parent_reloid));
@@ -928,7 +928,7 @@ void distribute_row_identity_vars(PlannerInfo *root) {
   target_rel = find_base_rel(root, result_relation);
 
   foreach (lc, root->processed_tlist) {
-    TargetEntry *tle = lfirst(lc);
+    TargetEntry *tle = (TargetEntry *)lfirst(lc);
     Var *var = (Var *)tle->expr;
 
     if (var && IsA(var, Var) && var->varno == ROWID_VAR) {

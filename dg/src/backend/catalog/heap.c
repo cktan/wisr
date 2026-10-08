@@ -682,7 +682,7 @@ void InsertPgAttributeTuples(Relation pg_attribute_rel, TupleDesc tupdesc,
   /* Initialize the number of slots to use */
   nslots = Min(tupdesc->natts, (MAX_CATALOG_MULTI_INSERT_BYTES /
                                 sizeof(FormData_pg_attribute)));
-  slot = palloc(sizeof(TupleTableSlot *) * nslots);
+  slot = (TupleTableSlot **)palloc(sizeof(TupleTableSlot *) * nslots);
   for (int i = 0; i < nslots; i++)
     slot[i] = MakeSingleTupleTableSlot(td, &TTSOpsHeapTuple);
 
@@ -2315,7 +2315,7 @@ List *AddRelationNewConstraints(Relation rel, List *newColDefaults,
          * Here, we assume the parser will only pass us valid CHECK
          * expressions, so we do no particular checking.
          */
-        expr = stringToNode(cdef->cooked_expr);
+        expr = (Node *)stringToNode(cdef->cooked_expr);
       }
 
       /*
@@ -2911,7 +2911,7 @@ static void SetRelationNumChecks(Relation rel, int numchecks) {
  * Check for references to generated columns
  */
 static bool check_nested_generated_walker(Node *node, void *context) {
-  ParseState *pstate = context;
+  ParseState *pstate = (ParseState *)context;
 
   if (node == NULL)
     return false;
@@ -2993,7 +2993,7 @@ static bool contains_user_functions_checker(Oid func_id, void *context) {
  * one.
  */
 static bool check_virtual_generated_security_walker(Node *node, void *context) {
-  ParseState *pstate = context;
+  ParseState *pstate = (ParseState *)context;
 
   if (node == NULL)
     return false;
@@ -3296,7 +3296,7 @@ void heap_truncate(List *relids) {
 
   /* OK to do it */
   foreach (cell, relations) {
-    Relation rel = lfirst(cell);
+    Relation rel = (Relation)lfirst(cell);
 
     /* Truncate the relation */
     heap_truncate_one_rel(rel);
@@ -3370,7 +3370,7 @@ void heap_truncate_check_FKs(List *relations, bool tempTables) {
    * anyway.
    */
   foreach (cell, relations) {
-    Relation rel = lfirst(cell);
+    Relation rel = (Relation)lfirst(cell);
 
     if (rel->rd_rel->relhastriggers ||
         rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)

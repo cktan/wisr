@@ -518,8 +518,8 @@ void CommitTsShmemInit(void) {
                 LWTRANCHE_COMMITTS_SLRU, SYNC_HANDLER_COMMIT_TS, false);
   SlruPagePrecedesUnitTests(CommitTsCtl, COMMIT_TS_XACTS_PER_PAGE);
 
-  commitTsShared =
-      ShmemInitStruct("CommitTs shared", sizeof(CommitTimestampShared), &found);
+  commitTsShared = (CommitTimestampShared *)ShmemInitStruct(
+      "CommitTs shared", sizeof(CommitTimestampShared), &found);
 
   if (!IsUnderPostmaster) {
     Assert(!found);

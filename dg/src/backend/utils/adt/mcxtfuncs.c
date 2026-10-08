@@ -86,7 +86,8 @@ static void PutMemoryContextsStatsTupleStore(Tuplestorestate *tupstore,
     MemoryContextId *entry;
     bool found;
 
-    entry = hash_search(context_id_lookup, &cur, HASH_FIND, &found);
+    entry = (MemoryContextId *)hash_search(context_id_lookup, &cur, HASH_FIND,
+                                           &found);
 
     if (!found)
       elog(ERROR, "hash table corrupted");

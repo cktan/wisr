@@ -978,12 +978,11 @@ List *transformInsertRow(ParseState *pstate, List *exprlist, List *stmtcols,
    * that could expand '*' into multiple items.
    */
   if (list_length(exprlist) > list_length(icolumns))
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_SYNTAX_ERROR),
-         errmsg("INSERT has more expressions than target columns"),
-         parser_errposition(
-             pstate, exprLocation(list_nth(exprlist, list_length(icolumns))))));
+    ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
+                    errmsg("INSERT has more expressions than target columns"),
+                    parser_errposition(pstate,
+                                       exprLocation((Node *)list_nth(
+                                           exprlist, list_length(icolumns))))));
   if (stmtcols != NIL && list_length(exprlist) < list_length(icolumns)) {
     /*
      * We can get here for cases like INSERT ... SELECT (a,b,c) FROM ...
@@ -999,14 +998,14 @@ List *transformInsertRow(ParseState *pstate, List *exprlist, List *stmtcols,
         (errcode(ERRCODE_SYNTAX_ERROR),
          errmsg("INSERT has more target columns than expressions"),
          ((list_length(exprlist) == 1 &&
-           count_rowexpr_columns(pstate, linitial(exprlist)) ==
+           count_rowexpr_columns(pstate, (Node *)linitial(exprlist)) ==
                list_length(icolumns))
               ? errhint("The insertion source is a row expression containing "
                         "the same number of columns expected by the INSERT. "
                         "Did you accidentally use extra parentheses?")
               : 0),
-         parser_errposition(
-             pstate, exprLocation(list_nth(icolumns, list_length(exprlist))))));
+         parser_errposition(pstate, exprLocation((Node *)list_nth(
+                                        icolumns, list_length(exprlist))))));
   }
 
   /*
@@ -1496,7 +1495,7 @@ static Query *transformValuesClause(ParseState *pstate, SelectStmt *stmt) {
   for (i = 0; i < sublist_length; i++) {
     forboth(lc, colexprs[i], lc2, exprsLists) {
       Node *col = (Node *)lfirst(lc);
-      List *sublist = lfirst(lc2);
+      List *sublist = (List *)lfirst(lc2);
 
       sublist = lappend(sublist, col);
       lfirst(lc2) = sublist;
@@ -1762,7 +1761,7 @@ static Query *transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt) {
                               "expressions or functions."),
                     errhint("Add the expression/function to every SELECT, or "
                             "move the UNION into a FROM clause."),
-                    parser_errposition(pstate, exprLocation(list_nth(
+                    parser_errposition(pstate, exprLocation((Node *)list_nth(
                                                    qry->targetList, tllen)))));
 
   qry->limitOffset = transformLimitClause(pstate, limitOffset, EXPR_KIND_OFFSET,
@@ -2487,7 +2486,7 @@ void transformReturningClause(ParseState *pstate, Query *qry,
   if (qry->returningList == NIL)
     ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
                     errmsg("RETURNING must have at least one column"),
-                    parser_errposition(pstate, exprLocation(linitial(
+                    parser_errposition(pstate, exprLocation((Node *)linitial(
                                                    returningClause->exprs)))));
 
   /* mark column origins */
@@ -2999,7 +2998,7 @@ static Query *transformCallStmt(ParseState *pstate, CallStmt *stmt) {
     inargs = NIL;
     i = 0;
     foreach (lc, fexpr->args) {
-      Node *n = lfirst(lc);
+      Node *n = (Node *)lfirst(lc);
 
       switch (argmodes[i]) {
       case PROARGMODE_IN:

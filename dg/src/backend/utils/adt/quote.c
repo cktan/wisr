@@ -96,10 +96,10 @@ char *quote_literal_cstr(const char *rawstr) {
 
   len = strlen(rawstr);
   /* We make a worst-case result area; wasting a little space is OK */
-  result = palloc((len * 2) /* doubling for every character if each one is
-                             * a quote */
-                  + 3       /* two outer quotes + possibly 'E' if needed */
-                  + 1       /* null terminator */
+  result = (char *)palloc((len * 2) /* doubling for every character if each one
+                                     * is a quote */
+                          + 3 /* two outer quotes + possibly 'E' if needed */
+                          + 1 /* null terminator */
   );
 
   newlen = quote_literal_internal(result, rawstr, len);

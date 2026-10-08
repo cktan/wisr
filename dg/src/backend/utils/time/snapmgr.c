@@ -652,8 +652,8 @@ void PushActiveSnapshotWithLevel(Snapshot snapshot, int snap_level) {
   Assert(snapshot != InvalidSnapshot);
   Assert(ActiveSnapshot == NULL || snap_level >= ActiveSnapshot->as_level);
 
-  newactive =
-      MemoryContextAlloc(TopTransactionContext, sizeof(ActiveSnapshotElt));
+  newactive = (ActiveSnapshotElt *)MemoryContextAlloc(
+      TopTransactionContext, sizeof(ActiveSnapshotElt));
 
   /*
    * Checking SecondarySnapshot is probably useless here, but it seems
@@ -1696,7 +1696,7 @@ Snapshot RestoreSnapshot(char *start_address) {
  * the declaration for PGPROC.
  */
 void RestoreTransactionSnapshot(Snapshot snapshot, void *source_pgproc) {
-  SetTransactionSnapshot(snapshot, NULL, InvalidPid, source_pgproc);
+  SetTransactionSnapshot(snapshot, NULL, InvalidPid, (PGPROC *)source_pgproc);
 }
 
 /*

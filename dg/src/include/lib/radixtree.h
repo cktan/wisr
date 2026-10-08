@@ -756,7 +756,7 @@ static void RT_VERIFY_NODE(RT_NODE *node);
 
 static inline void RT_PTR_SET_LOCAL(RT_RADIX_TREE *tree, RT_CHILD_PTR *node) {
 #ifdef RT_SHMEM
-  node->local = dsa_get_address(tree->dsa, node->alloc);
+  node->local = (shared_ts_node *)dsa_get_address(tree->dsa, node->alloc);
 #endif
 }
 

@@ -384,7 +384,8 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
       new_record_nulls[Anum_pg_authid_rolpassword - 1] = true;
     } else {
       /* Encrypt the password to the requested format. */
-      shadow_pass = encrypt_password(Password_encryption, stmt->role, password);
+      shadow_pass = encrypt_password((PasswordType)Password_encryption,
+                                     stmt->role, password);
       new_record[Anum_pg_authid_rolpassword - 1] =
           CStringGetTextDatum(shadow_pass);
     }
@@ -446,7 +447,7 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
     thisrole->location = -1;
 
     foreach (item, addroleto) {
-      RoleSpec *oldrole = lfirst(item);
+      RoleSpec *oldrole = (RoleSpec *)lfirst(item);
       HeapTuple oldroletup = get_rolespec_tuple(oldrole);
       Form_pg_authid oldroleform = (Form_pg_authid)GETSTRUCT(oldroletup);
       Oid oldroleid = oldroleform->oid;
@@ -818,7 +819,8 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
       new_record_nulls[Anum_pg_authid_rolpassword - 1] = true;
     } else {
       /* Encrypt the password to the requested format. */
-      shadow_pass = encrypt_password(Password_encryption, rolename, password);
+      shadow_pass = encrypt_password((PasswordType)Password_encryption,
+                                     rolename, password);
       new_record[Anum_pg_authid_rolpassword - 1] =
           CStringGetTextDatum(shadow_pass);
     }
@@ -983,7 +985,7 @@ void DropRole(DropRoleStmt *stmt) {
   pg_auth_members_rel = table_open(AuthMemRelationId, RowExclusiveLock);
 
   foreach (item, stmt->roles) {
-    RoleSpec *rolspec = lfirst(item);
+    RoleSpec *rolspec = (RoleSpec *)lfirst(item);
     char *role;
     HeapTuple tuple, tmp_tuple;
     Form_pg_authid roleform;
@@ -1694,7 +1696,7 @@ static void AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
       ReleaseSysCache(authmem_tuple);
     } else {
       Oid objectId;
-      Oid *newmembers = palloc(sizeof(Oid));
+      Oid *newmembers = (Oid *)palloc(sizeof(Oid));
 
       /*
        * The values for these options can be taken directly from 'popt'.
@@ -1795,7 +1797,7 @@ static void DelRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
    * out what to do with each catalog tuple.
    */
   forboth(specitem, memberSpecs, iditem, memberIds) {
-    RoleSpec *memberRole = lfirst(specitem);
+    RoleSpec *memberRole = (RoleSpec *)lfirst(specitem);
     Oid memberid = lfirst_oid(iditem);
 
     if (!plan_single_revoke(memlist, actions, memberid, grantorId, popt,
@@ -2046,7 +2048,8 @@ static RevokeRoleGrantAction *initialize_revoke_actions(CatCList *memlist) {
   if (memlist->n_members == 0)
     return NULL;
 
-  result = palloc(sizeof(RevokeRoleGrantAction) * memlist->n_members);
+  result = (RevokeRoleGrantAction *)palloc(sizeof(RevokeRoleGrantAction) *
+                                           memlist->n_members);
   for (i = 0; i < memlist->n_members; i++)
     result[i] = RRG_NOOP;
   return result;

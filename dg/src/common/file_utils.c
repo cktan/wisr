@@ -524,8 +524,8 @@ PGFileType get_dirent_type(const char *path, const struct dirent *de,
     if (sret < 0) {
       result = PGFILETYPE_ERROR;
 #ifdef FRONTEND
-      pg_log_generic(elevel, PG_LOG_PRIMARY, "could not stat file \"%s\": %m",
-                     path);
+      pg_log_generic((pg_log_level)elevel, PG_LOG_PRIMARY,
+                     "could not stat file \"%s\": %m", path);
 #else
       ereport(elevel, (errcode_for_file_access(),
                        errmsg("could not stat file \"%s\": %m", path)));

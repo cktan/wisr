@@ -18,14 +18,14 @@
 
 #include "postgres.h"
 
-#include <arpa/inet.h>
-#include <ctype.h>
+#include <signal.h>
 #include <fcntl.h>
+#include <ctype.h>
+#include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <signal.h>
-#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #include "libpq/libpq.h"
 #include "miscadmin.h"

@@ -4115,7 +4115,7 @@ unsigned char *PQunescapeBytea(const unsigned char *strtext,
 
   /* Shrink the buffer to be no larger than necessary */
   /* +1 avoids unportable behavior when buflen==0 */
-  tmpbuf = realloc(buffer, buflen + 1);
+  tmpbuf = (unsigned char *)realloc(buffer, buflen + 1);
 
   /* It would only be a very brain-dead realloc that could fail, but... */
   if (!tmpbuf) {

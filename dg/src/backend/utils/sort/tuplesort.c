@@ -1779,7 +1779,8 @@ static void inittapes(Tuplesortstate *state, bool mergeruns) {
   state->nInputTapes = 0;
   state->nInputRuns = 0;
 
-  state->outputTapes = palloc0(state->maxTapes * sizeof(LogicalTape *));
+  state->outputTapes =
+      (LogicalTape **)palloc0(state->maxTapes * sizeof(LogicalTape *));
   state->nOutputTapes = 0;
   state->nOutputRuns = 0;
 
@@ -1857,7 +1858,7 @@ static void init_slab_allocator(Tuplesortstate *state, int numSlots) {
     char *p;
     int i;
 
-    state->slabMemoryBegin = palloc(numSlots * SLAB_SLOT_SIZE);
+    state->slabMemoryBegin = (char *)palloc(numSlots * SLAB_SLOT_SIZE);
     state->slabMemoryEnd = state->slabMemoryBegin + numSlots * SLAB_SLOT_SIZE;
     state->slabFreeHead = (SlabSlot *)state->slabMemoryBegin;
     USEMEM(state, numSlots * SLAB_SLOT_SIZE);
@@ -1987,7 +1988,8 @@ static void mergeruns(Tuplesortstate *state) {
        * created as needed, here we only allocate the array to hold
        * them.
        */
-      state->outputTapes = palloc0(state->nInputTapes * sizeof(LogicalTape *));
+      state->outputTapes =
+          (LogicalTape **)palloc0(state->nInputTapes * sizeof(LogicalTape *));
       state->nOutputTapes = 0;
       state->nOutputRuns = 0;
 
@@ -2868,7 +2870,8 @@ static void leader_takeover_tapes(Tuplesortstate *state) {
   state->nInputTapes = 0;
   state->nInputRuns = 0;
 
-  state->outputTapes = palloc0(nParticipants * sizeof(LogicalTape *));
+  state->outputTapes =
+      (LogicalTape **)palloc0(nParticipants * sizeof(LogicalTape *));
   state->nOutputTapes = nParticipants;
   state->nOutputRuns = nParticipants;
 

@@ -136,7 +136,8 @@ void *GetNamedDSMSegment(const char *name, size_t size,
   /* Connect to the registry. */
   init_dsm_registry();
 
-  entry = dshash_find_or_insert(dsm_registry_table, name, found);
+  entry = (DSMRegistryEntry *)dshash_find_or_insert(dsm_registry_table, name,
+                                                    found);
   if (!(*found)) {
     entry->handle = DSM_HANDLE_INVALID;
     entry->size = size;

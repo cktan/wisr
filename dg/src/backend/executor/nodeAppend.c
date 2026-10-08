@@ -244,7 +244,7 @@ AppendState *ExecInitAppend(Append *node, EState *estate, int eflags) {
     while ((i = bms_next_member(asyncplans, i)) >= 0) {
       AsyncRequest *areq;
 
-      areq = palloc(sizeof(AsyncRequest));
+      areq = (AsyncRequest *)palloc(sizeof(AsyncRequest));
       areq->requestor = (PlanState *)appendstate;
       areq->requestee = appendplanstates[i];
       areq->request_index = i;
@@ -464,7 +464,7 @@ void ExecAppendEstimate(AppendState *node, ParallelContext *pcxt) {
 void ExecAppendInitializeDSM(AppendState *node, ParallelContext *pcxt) {
   ParallelAppendState *pstate;
 
-  pstate = shm_toc_allocate(pcxt->toc, node->pstate_len);
+  pstate = (ParallelAppendState *)shm_toc_allocate(pcxt->toc, node->pstate_len);
   memset(pstate, 0, node->pstate_len);
   LWLockInitialize(&pstate->pa_lock, LWTRANCHE_PARALLEL_APPEND);
   shm_toc_insert(pcxt->toc, node->ps.plan->plan_node_id, pstate);
@@ -495,8 +495,8 @@ void ExecAppendReInitializeDSM(AppendState *node, ParallelContext *pcxt) {
  */
 void ExecAppendInitializeWorker(AppendState *node,
                                 ParallelWorkerContext *pwcxt) {
-  node->as_pstate =
-      shm_toc_lookup(pwcxt->toc, node->ps.plan->plan_node_id, false);
+  node->as_pstate = (ParallelAppendState *)shm_toc_lookup(
+      pwcxt->toc, node->ps.plan->plan_node_id, false);
   node->choose_next_subplan = choose_next_subplan_for_worker;
 }
 

@@ -465,7 +465,7 @@ PgStat_TableStatus *find_tabstat_entry(Oid rel_id) {
   }
 
   tabentry = (PgStat_TableStatus *)entry_ref->pending;
-  tablestatus = palloc(sizeof(PgStat_TableStatus));
+  tablestatus = (PgStat_TableStatus *)palloc(sizeof(PgStat_TableStatus));
   *tablestatus = *tabentry;
 
   /*
@@ -835,7 +835,7 @@ static PgStat_TableStatus *pgstat_prep_relation_pending(Oid rel_id,
 
   entry_ref = pgstat_prep_pending_entry(
       PGSTAT_KIND_RELATION, isshared ? InvalidOid : MyDatabaseId, rel_id, NULL);
-  pending = entry_ref->pending;
+  pending = (PgStat_TableStatus *)entry_ref->pending;
   pending->id = rel_id;
   pending->shared = isshared;
 

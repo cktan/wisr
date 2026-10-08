@@ -145,7 +145,7 @@ void EnumValuesCreate(Oid enumTypeOid, List *vals) {
   /* allocate the slots to use and initialize them */
   nslots =
       Min(num_elems, MAX_CATALOG_MULTI_INSERT_BYTES / sizeof(FormData_pg_enum));
-  slot = palloc(sizeof(TupleTableSlot *) * nslots);
+  slot = (TupleTableSlot **)palloc(sizeof(TupleTableSlot *) * nslots);
   for (int i = 0; i < nslots; i++)
     slot[i] =
         MakeSingleTupleTableSlot(RelationGetDescr(pg_enum), &TTSOpsHeapTuple);
@@ -153,7 +153,7 @@ void EnumValuesCreate(Oid enumTypeOid, List *vals) {
   elemno = 0;
   foreach (lc, vals) {
     char *lab = strVal(lfirst(lc));
-    Name enumlabel = palloc0(NAMEDATALEN);
+    Name enumlabel = (Name)palloc0(NAMEDATALEN);
 
     /*
      * labels are stored in a name field, for easier syscache lookup, so

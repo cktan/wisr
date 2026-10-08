@@ -24,10 +24,10 @@
  */
 #include "postgres.h"
 
-#include <ctype.h>
-#include <float.h>
-#include <limits.h>
 #include <math.h>
+#include <limits.h>
+#include <float.h>
+#include <ctype.h>
 
 #include "libpq/pqformat.h"
 #include "miscadmin.h"

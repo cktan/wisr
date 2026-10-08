@@ -36,8 +36,8 @@
 /*															 */
 /*************************************************************/
 
-#include "optimizer/geqo.h"
 #include "postgres.h"
+#include "optimizer/geqo.h"
 
 #if defined(CX) /* currently used only in CX mode */
 

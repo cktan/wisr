@@ -107,9 +107,9 @@ Oid binary_upgrade_next_array_pg_type_oid = InvalidOid;
 Oid binary_upgrade_next_mrng_pg_type_oid = InvalidOid;
 Oid binary_upgrade_next_mrng_array_pg_type_oid = InvalidOid;
 
-static void makeRangeConstructors(const char *name, Oid namespace, Oid rangeOid,
-                                  Oid subtype);
-static void makeMultirangeConstructors(const char *name, Oid namespace,
+static void makeRangeConstructors(const char *name, Oid namespace_,
+                                  Oid rangeOid, Oid subtype);
+static void makeMultirangeConstructors(const char *name, Oid namespace_,
                                        Oid multirangeOid, Oid rangeOid,
                                        Oid rangeArrayOid, Oid *castFuncOid);
 static Oid findTypeInputFunction(List *procname, Oid typeOid);
@@ -836,7 +836,7 @@ ObjectAddress DefineDomain(ParseState *pstate, CreateDomainStmt *stmt) {
    * conducted by DefineRelation() and friends.
    */
   foreach (listptr, schema) {
-    Constraint *constr = lfirst(listptr);
+    Constraint *constr = (Constraint *)lfirst(listptr);
 
     if (!IsA(constr, Constraint))
       elog(ERROR, "unrecognized node type: %d", (int)nodeTag(constr));
@@ -1004,7 +1004,8 @@ ObjectAddress DefineDomain(ParseState *pstate, CreateDomainStmt *stmt) {
    * adds the dependencies on types.  We are responsible for checking USAGE.
    */
   if (defaultValueBin)
-    CheckUsageOnTypesInExpr(stringToNode(defaultValueBin), NIL, GetUserId());
+    CheckUsageOnTypesInExpr((Node *)stringToNode(defaultValueBin), NIL,
+                            GetUserId());
 
   /* Allocate OID for array type */
   domainArrayOid = AssignTypeArrayOid();
@@ -1092,7 +1093,7 @@ ObjectAddress DefineDomain(ParseState *pstate, CreateDomainStmt *stmt) {
    * Process constraints which refer to the domain ID returned by TypeCreate
    */
   foreach (listptr, schema) {
-    Constraint *constr = lfirst(listptr);
+    Constraint *constr = (Constraint *)lfirst(listptr);
 
     /* it must be a Constraint, per check above */
 
@@ -1250,13 +1251,13 @@ ObjectAddress DefineEnum(CreateEnumStmt *stmt) {
  */
 ObjectAddress AlterEnum(AlterEnumStmt *stmt) {
   Oid enum_type_oid;
-  TypeName *typename;
+  TypeName *typename_;
   HeapTuple tup;
   ObjectAddress address;
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(stmt->typeName);
-  enum_type_oid = typenameTypeId(NULL, typename);
+  typename_ = makeTypeNameFromNameList(stmt->typeName);
+  enum_type_oid = typenameTypeId(NULL, typename_);
 
   tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(enum_type_oid));
   if (!HeapTupleIsValid(tup))
@@ -1685,8 +1686,8 @@ ObjectAddress DefineRange(ParseState *pstate, CreateRangeStmt *stmt) {
  * We actually define 4 functions, with 0 through 3 arguments.  This is just
  * to offer more convenience for the user.
  */
-static void makeRangeConstructors(const char *name, Oid namespace, Oid rangeOid,
-                                  Oid subtype) {
+static void makeRangeConstructors(const char *name, Oid namespace_,
+                                  Oid rangeOid, Oid subtype) {
   static const char *const prosrc[2] = {"range_constructor2",
                                         "range_constructor3"};
   static const int pronargs[2] = {2, 3};
@@ -1709,11 +1710,11 @@ static void makeRangeConstructors(const char *name, Oid namespace, Oid rangeOid,
     constructorArgTypesVector =
         buildoidvector(constructorArgTypes, pronargs[i]);
 
-    myself = ProcedureCreate(name,      /* name: same as range type */
-                             namespace, /* namespace */
-                             false,     /* replace */
-                             false,     /* returns set */
-                             rangeOid,  /* return type */
+    myself = ProcedureCreate(name,       /* name: same as range type */
+                             namespace_, /* namespace */
+                             false,      /* replace */
+                             false,      /* returns set */
+                             rangeOid,   /* return type */
                              BOOTSTRAP_SUPERUSERID,     /* proowner */
                              INTERNALlanguageId,        /* language */
                              F_FMGR_INTERNAL_VALIDATOR, /* language validator */
@@ -1755,7 +1756,7 @@ static void makeRangeConstructors(const char *name, Oid namespace, Oid rangeOid,
  * Sets castFuncOid to the oid of the new constructor that can be used
  * to cast from a range to a multirange.
  */
-static void makeMultirangeConstructors(const char *name, Oid namespace,
+static void makeMultirangeConstructors(const char *name, Oid namespace_,
                                        Oid multirangeOid, Oid rangeOid,
                                        Oid rangeArrayOid, Oid *castFuncOid) {
   ObjectAddress myself, referenced;
@@ -1771,10 +1772,10 @@ static void makeMultirangeConstructors(const char *name, Oid namespace,
 
   /* 0-arg constructor - for empty multiranges */
   argtypes = buildoidvector(NULL, 0);
-  myself = ProcedureCreate(name,             /* name: same as multirange type */
-                           namespace, false, /* replace */
-                           false,            /* returns set */
-                           multirangeOid,    /* return type */
+  myself = ProcedureCreate(name, /* name: same as multirange type */
+                           namespace_, false,     /* replace */
+                           false,                 /* returns set */
+                           multirangeOid,         /* return type */
                            BOOTSTRAP_SUPERUSERID, /* proowner */
                            INTERNALlanguageId,    /* language */
                            F_FMGR_INTERNAL_VALIDATOR,
@@ -1814,10 +1815,10 @@ static void makeMultirangeConstructors(const char *name, Oid namespace,
    * against it.
    */
   argtypes = buildoidvector(&rangeOid, 1);
-  myself = ProcedureCreate(name,             /* name: same as multirange type */
-                           namespace, false, /* replace */
-                           false,            /* returns set */
-                           multirangeOid,    /* return type */
+  myself = ProcedureCreate(name, /* name: same as multirange type */
+                           namespace_, false,     /* replace */
+                           false,                 /* returns set */
+                           multirangeOid,         /* return type */
                            BOOTSTRAP_SUPERUSERID, /* proowner */
                            INTERNALlanguageId,    /* language */
                            F_FMGR_INTERNAL_VALIDATOR,
@@ -1853,7 +1854,7 @@ static void makeMultirangeConstructors(const char *name, Oid namespace,
   parameterModes = construct_array_builtin(&paramModes, 1, CHAROID);
   myself = ProcedureCreate(
       name,                  /* name: same as multirange type */
-      namespace, false,      /* replace */
+      namespace_, false,     /* replace */
       false,                 /* returns set */
       multirangeOid,         /* return type */
       BOOTSTRAP_SUPERUSERID, /* proowner */
@@ -2446,7 +2447,7 @@ ObjectAddress DefineCompositeType(RangeVar *typevar, List *coldeflist) {
  * Returns ObjectAddress of the modified domain.
  */
 ObjectAddress AlterDomainDefault(List *names, Node *defaultRaw) {
-  TypeName *typename;
+  TypeName *typename_;
   Oid domainoid;
   HeapTuple tup;
   ParseState *pstate;
@@ -2461,8 +2462,8 @@ ObjectAddress AlterDomainDefault(List *names, Node *defaultRaw) {
   ObjectAddress address;
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(names);
-  domainoid = typenameTypeId(NULL, typename);
+  typename_ = makeTypeNameFromNameList(names);
+  domainoid = typenameTypeId(NULL, typename_);
 
   /* Look up the domain in the type table */
   rel = table_open(TypeRelationId, RowExclusiveLock);
@@ -2568,7 +2569,7 @@ ObjectAddress AlterDomainDefault(List *names, Node *defaultRaw) {
  * Returns ObjectAddress of the modified domain.
  */
 ObjectAddress AlterDomainNotNull(List *names, bool notNull) {
-  TypeName *typename;
+  TypeName *typename_;
   Oid domainoid;
   Relation typrel;
   HeapTuple tup;
@@ -2576,8 +2577,8 @@ ObjectAddress AlterDomainNotNull(List *names, bool notNull) {
   ObjectAddress address = InvalidObjectAddress;
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(names);
-  domainoid = typenameTypeId(NULL, typename);
+  typename_ = makeTypeNameFromNameList(names);
+  domainoid = typenameTypeId(NULL, typename_);
 
   /* Look up the domain in the type table */
   typrel = table_open(TypeRelationId, RowExclusiveLock);
@@ -2652,7 +2653,7 @@ ObjectAddress AlterDomainNotNull(List *names, bool notNull) {
 ObjectAddress AlterDomainDropConstraint(List *names, const char *constrName,
                                         DropBehavior behavior,
                                         bool missing_ok) {
-  TypeName *typename;
+  TypeName *typename_;
   Oid domainoid;
   HeapTuple tup;
   Relation rel;
@@ -2664,8 +2665,8 @@ ObjectAddress AlterDomainDropConstraint(List *names, const char *constrName,
   ObjectAddress address;
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(names);
-  domainoid = typenameTypeId(NULL, typename);
+  typename_ = makeTypeNameFromNameList(names);
+  domainoid = typenameTypeId(NULL, typename_);
 
   /* Look up the domain in the type table */
   rel = table_open(TypeRelationId, RowExclusiveLock);
@@ -2718,12 +2719,12 @@ ObjectAddress AlterDomainDropConstraint(List *names, const char *constrName,
       ereport(ERROR,
               (errcode(ERRCODE_UNDEFINED_OBJECT),
                errmsg("constraint \"%s\" of domain \"%s\" does not exist",
-                      constrName, TypeNameToString(typename))));
+                      constrName, TypeNameToString(typename_))));
     else
       ereport(
           NOTICE,
           (errmsg("constraint \"%s\" of domain \"%s\" does not exist, skipping",
-                  constrName, TypeNameToString(typename))));
+                  constrName, TypeNameToString(typename_))));
   }
 
   /*
@@ -2749,7 +2750,7 @@ ObjectAddress AlterDomainDropConstraint(List *names, const char *constrName,
 ObjectAddress AlterDomainAddConstraint(List *names, Node *newConstraint,
                                        ObjectAddress *constrAddr,
                                        bool is_readd) {
-  TypeName *typename;
+  TypeName *typename_;
   Oid domainoid;
   Relation typrel;
   HeapTuple tup;
@@ -2759,8 +2760,8 @@ ObjectAddress AlterDomainAddConstraint(List *names, Node *newConstraint,
   ObjectAddress address = InvalidObjectAddress;
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(names);
-  domainoid = typenameTypeId(NULL, typename);
+  typename_ = makeTypeNameFromNameList(names);
+  domainoid = typenameTypeId(NULL, typename_);
 
   /* Look up the domain in the type table */
   typrel = table_open(TypeRelationId, RowExclusiveLock);
@@ -2838,7 +2839,7 @@ ObjectAddress AlterDomainAddConstraint(List *names, Node *newConstraint,
  */
 ObjectAddress AlterDomainValidateConstraint(List *names,
                                             const char *constrName) {
-  TypeName *typename;
+  TypeName *typename_;
   Oid domainoid;
   Relation typrel;
   Relation conrel;
@@ -2854,8 +2855,8 @@ ObjectAddress AlterDomainValidateConstraint(List *names,
   ObjectAddress address;
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(names);
-  domainoid = typenameTypeId(NULL, typename);
+  typename_ = makeTypeNameFromNameList(names);
+  domainoid = typenameTypeId(NULL, typename_);
 
   /* Look up the domain in the type table */
   typrel = table_open(TypeRelationId, AccessShareLock);
@@ -2886,7 +2887,7 @@ ObjectAddress AlterDomainValidateConstraint(List *names,
   if (!HeapTupleIsValid(tuple = systable_getnext(scan)))
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
                     errmsg("constraint \"%s\" of domain \"%s\" does not exist",
-                           constrName, TypeNameToString(typename))));
+                           constrName, TypeNameToString(typename_))));
 
   con = (Form_pg_constraint)GETSTRUCT(tuple);
   if (con->contype != CONSTRAINT_CHECK)
@@ -2894,7 +2895,7 @@ ObjectAddress AlterDomainValidateConstraint(List *names,
         ERROR,
         (errcode(ERRCODE_WRONG_OBJECT_TYPE),
          errmsg("constraint \"%s\" of domain \"%s\" is not a check constraint",
-                constrName, TypeNameToString(typename))));
+                constrName, TypeNameToString(typename_))));
 
   val = SysCacheGetAttrNotNull(CONSTROID, tuple, Anum_pg_constraint_conbin);
   conbin = TextDatumGetCString(val);
@@ -3394,7 +3395,8 @@ static Node *replace_domain_constraint_value(ParseState *pstate,
 
     colname = strVal(field1);
     if (strcmp(colname, "value") == 0) {
-      CoerceToDomainValue *domVal = copyObject(pstate->p_ref_hook_state);
+      CoerceToDomainValue *domVal =
+          (CoerceToDomainValue *)copyObject(pstate->p_ref_hook_state);
 
       /* Propagate location knowledge, if any */
       domVal->location = cref->location;
@@ -3462,7 +3464,7 @@ static void domainAddNotNullConstraint(Oid domainOid, Oid domainNamespace,
 ObjectAddress RenameType(RenameStmt *stmt) {
   List *names = castNode(List, stmt->object);
   const char *newTypeName = stmt->newname;
-  TypeName *typename;
+  TypeName *typename_;
   Oid typeOid;
   Relation rel;
   HeapTuple tup;
@@ -3470,8 +3472,8 @@ ObjectAddress RenameType(RenameStmt *stmt) {
   ObjectAddress address;
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(names);
-  typeOid = typenameTypeId(NULL, typename);
+  typename_ = makeTypeNameFromNameList(names);
+  typeOid = typenameTypeId(NULL, typename_);
 
   /* Look up the type in the type table */
   rel = table_open(TypeRelationId, RowExclusiveLock);
@@ -3535,7 +3537,7 @@ ObjectAddress RenameType(RenameStmt *stmt) {
  */
 ObjectAddress AlterTypeOwner(List *names, Oid newOwnerId,
                              ObjectType objecttype) {
-  TypeName *typename;
+  TypeName *typename_;
   Oid typeOid;
   Relation rel;
   HeapTuple tup;
@@ -3547,14 +3549,14 @@ ObjectAddress AlterTypeOwner(List *names, Oid newOwnerId,
   rel = table_open(TypeRelationId, RowExclusiveLock);
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(names);
+  typename_ = makeTypeNameFromNameList(names);
 
   /* Use LookupTypeName here so that shell types can be processed */
-  tup = LookupTypeName(NULL, typename, NULL, false);
+  tup = LookupTypeName(NULL, typename_, NULL, false);
   if (tup == NULL)
-    ereport(ERROR,
-            (errcode(ERRCODE_UNDEFINED_OBJECT),
-             errmsg("type \"%s\" does not exist", TypeNameToString(typename))));
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                    errmsg("type \"%s\" does not exist",
+                           TypeNameToString(typename_))));
   typeOid = typeTypeId(tup);
 
   /* Copy the syscache entry so we can scribble on it below */
@@ -3749,7 +3751,7 @@ void AlterTypeOwnerInternal(Oid typeOid, Oid newOwnerId) {
  */
 ObjectAddress AlterTypeNamespace(List *names, const char *newschema,
                                  ObjectType objecttype, Oid *oldschema) {
-  TypeName *typename;
+  TypeName *typename_;
   Oid typeOid;
   Oid nspOid;
   Oid oldNspOid;
@@ -3757,8 +3759,8 @@ ObjectAddress AlterTypeNamespace(List *names, const char *newschema,
   ObjectAddress myself;
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(names);
-  typeOid = typenameTypeId(NULL, typename);
+  typename_ = makeTypeNameFromNameList(names);
+  typeOid = typenameTypeId(NULL, typename_);
 
   /* Don't allow ALTER DOMAIN on a non-domain type */
   if (objecttype == OBJECT_DOMAIN && get_typtype(typeOid) != TYPTYPE_DOMAIN)
@@ -3984,7 +3986,7 @@ Oid AlterTypeNamespaceInternal(Oid typeOid, Oid nspOid, bool isImplicitArray,
 ObjectAddress AlterType(AlterTypeStmt *stmt) {
   ObjectAddress address;
   Relation catalog;
-  TypeName *typename;
+  TypeName *typename_;
   HeapTuple tup;
   Oid typeOid;
   Form_pg_type typForm;
@@ -3995,8 +3997,8 @@ ObjectAddress AlterType(AlterTypeStmt *stmt) {
   catalog = table_open(TypeRelationId, RowExclusiveLock);
 
   /* Make a TypeName so we can use standard type lookup machinery */
-  typename = makeTypeNameFromNameList(stmt->typeName);
-  tup = typenameType(NULL, typename, NULL);
+  typename_ = makeTypeNameFromNameList(stmt->typeName);
+  tup = typenameType(NULL, typename_, NULL);
 
   typeOid = typeTypeId(tup);
   typForm = (Form_pg_type)GETSTRUCT(tup);

@@ -35,8 +35,8 @@
 /*															 */
 /*************************************************************/
 
-#include "optimizer/geqo.h"
 #include "postgres.h"
+#include "optimizer/geqo.h"
 
 #if defined(ERX)
 
@@ -265,7 +265,7 @@ static void remove_gene(PlannerInfo *root, Gene gene, Edge edge,
  */
 static Gene gimme_gene(PlannerInfo *root, Edge edge, Edge *edge_table) {
   int i;
-  Gene friend;
+  Gene friend_;
   int minimum_edges;
   int minimum_count = -1;
   int rand_decision;
@@ -280,7 +280,7 @@ static Gene gimme_gene(PlannerInfo *root, Edge edge, Edge *edge_table) {
   /* consider candidate destination points in edge list */
 
   for (i = 0; i < edge.unused_edges; i++) {
-    friend = (Gene)edge.edge_list[i];
+    friend_ = (Gene)edge.edge_list[i];
 
     /*
      * give priority to shared edges that are negative; so return 'em
@@ -290,8 +290,8 @@ static Gene gimme_gene(PlannerInfo *root, Edge edge, Edge *edge_table) {
      * negative values are caught here so we need not worry about
      * converting to absolute values
      */
-    if (friend < 0)
-      return (Gene)abs(friend);
+    if (friend_ < 0)
+      return (Gene)abs(friend_);
 
     /*
      * give priority to candidates with fewest remaining unused edges;
@@ -308,12 +308,12 @@ static Gene gimme_gene(PlannerInfo *root, Edge edge, Edge *edge_table) {
      * fail then the code is in error
      */
 
-    if (edge_table[(int)friend].unused_edges < minimum_edges) {
-      minimum_edges = edge_table[(int)friend].unused_edges;
+    if (edge_table[(int)friend_].unused_edges < minimum_edges) {
+      minimum_edges = edge_table[(int)friend_].unused_edges;
       minimum_count = 1;
     } else if (minimum_count == -1)
       elog(ERROR, "minimum_count not set");
-    else if (edge_table[(int)friend].unused_edges == minimum_edges)
+    else if (edge_table[(int)friend_].unused_edges == minimum_edges)
       minimum_count++;
   } /* for (i=0; i<edge.unused_edges; i++) */
 
@@ -321,14 +321,14 @@ static Gene gimme_gene(PlannerInfo *root, Edge edge, Edge *edge_table) {
   rand_decision = geqo_randint(root, minimum_count - 1, 0);
 
   for (i = 0; i < edge.unused_edges; i++) {
-    friend = (Gene)edge.edge_list[i];
+    friend_ = (Gene)edge.edge_list[i];
 
     /* return the chosen candidate point */
-    if (edge_table[(int)friend].unused_edges == minimum_edges) {
+    if (edge_table[(int)friend_].unused_edges == minimum_edges) {
       minimum_count--;
 
       if (minimum_count == rand_decision)
-        return friend;
+        return friend_;
     }
   }
 

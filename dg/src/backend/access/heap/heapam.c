@@ -290,7 +290,7 @@ static BlockNumber heap_scan_stream_read_next_serial(
 static BlockNumber bitmapheap_stream_read_next(ReadStream *pgsr,
                                                void *private_data,
                                                void *per_buffer_data) {
-  TBMIterateResult *tbmres = per_buffer_data;
+  TBMIterateResult *tbmres = (TBMIterateResult *)per_buffer_data;
   BitmapHeapScanDesc bscan = (BitmapHeapScanDesc)private_data;
   HeapScanDesc hscan = (HeapScanDesc)bscan;
   TableScanDesc sscan = &hscan->rs_base;
@@ -1032,7 +1032,8 @@ TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
    * allocate and initialize scan descriptor
    */
   if (flags & SO_TYPE_BITMAPSCAN) {
-    BitmapHeapScanDesc bscan = palloc(sizeof(BitmapHeapScanDescData));
+    BitmapHeapScanDesc bscan =
+        (BitmapHeapScanDesc)palloc(sizeof(BitmapHeapScanDescData));
 
     /*
      * Bitmap Heap scans do not have any fields that a normal Heap Scan
@@ -1087,8 +1088,8 @@ TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
    * when doing a parallel scan.
    */
   if (parallel_scan != NULL)
-    scan->rs_parallelworkerdata =
-        palloc(sizeof(ParallelBlockTableScanWorkerData));
+    scan->rs_parallelworkerdata = (ParallelBlockTableScanWorkerData *)palloc(
+        sizeof(ParallelBlockTableScanWorkerData));
   else
     scan->rs_parallelworkerdata = NULL;
 
@@ -2218,7 +2219,7 @@ void heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
       RelationGetTargetPageFreeSpace(relation, HEAP_DEFAULT_FILLFACTOR);
 
   /* Toast and set header data in all the slots */
-  heaptuples = palloc(ntuples * sizeof(HeapTuple));
+  heaptuples = (HeapTupleData **)palloc(ntuples * sizeof(HeapTuple));
   for (i = 0; i < ntuples; i++) {
     HeapTuple tuple;
 
@@ -5267,7 +5268,7 @@ l5:
         old_status = MultiXactStatusNoKeyUpdate;
     }
 
-    old_mode = TUPLOCK_from_mxstatus(old_status);
+    old_mode = (LockTupleMode)TUPLOCK_from_mxstatus(old_status);
 
     /*
      * If the lock to be acquired is for the same TransactionId as the
@@ -6558,7 +6559,7 @@ static TransactionId FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
    * even member XIDs >= OldestXmin often won't be kept by second pass.
    */
   nnewmembers = 0;
-  newmembers = palloc(sizeof(MultiXactMember) * nmembers);
+  newmembers = (MultiXactMember *)palloc(sizeof(MultiXactMember) * nmembers);
   has_lockers = false;
   update_xid = InvalidTransactionId;
   update_committed = false;
@@ -7108,7 +7109,7 @@ static void GetMultiXactIdHintBits(MultiXactId multi, uint16 *new_infomask,
      * Remember the strongest lock mode held by any member of the
      * multixact.
      */
-    mode = TUPLOCK_from_mxstatus(members[i].status);
+    mode = (LockTupleMode)TUPLOCK_from_mxstatus(members[i].status);
     if (mode > strongest)
       strongest = mode;
 
@@ -8247,7 +8248,8 @@ static int bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate) {
   Assert(delstate->ndeltids > 0);
 
   /* Calculate per-heap-block count of TIDs */
-  blockgroups = palloc(sizeof(IndexDeleteCounts) * delstate->ndeltids);
+  blockgroups = (IndexDeleteCounts *)palloc(sizeof(IndexDeleteCounts) *
+                                            delstate->ndeltids);
   for (int i = 0; i < delstate->ndeltids; i++) {
     TM_IndexDelete *ideltid = &delstate->deltids[i];
     TM_IndexStatus *istatus = delstate->status + ideltid->id;
@@ -8314,7 +8316,8 @@ static int bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate) {
   /* Sort groups and rearrange caller's deltids array */
   qsort(blockgroups, nblockgroups, sizeof(IndexDeleteCounts),
         bottomup_sort_and_shrink_cmp);
-  reordereddeltids = palloc(delstate->ndeltids * sizeof(TM_IndexDelete));
+  reordereddeltids =
+      (TM_IndexDelete *)palloc(delstate->ndeltids * sizeof(TM_IndexDelete));
 
   nblockgroups = Min(BOTTOMUP_MAX_NBLOCKS, nblockgroups);
   /* Determine number of favorable blocks at the start of final deltids */

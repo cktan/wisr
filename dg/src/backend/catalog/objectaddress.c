@@ -25,8 +25,8 @@
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
 #include "catalog/pg_attrdef.h"
-#include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
+#include "catalog/pg_auth_members.h"
 #include "catalog/pg_cast.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
@@ -137,8 +137,8 @@ static const ObjectPropertyType ObjectProperty[] = {
      InvalidAttrNumber, OBJECT_COLLATION, true},
     {"constraint", ConstraintRelationId, ConstraintOidIndexId, CONSTROID, -1,
      Anum_pg_constraint_oid, Anum_pg_constraint_conname,
-     Anum_pg_constraint_connamespace, InvalidAttrNumber, InvalidAttrNumber, -1,
-     false},
+     Anum_pg_constraint_connamespace, InvalidAttrNumber, InvalidAttrNumber,
+     (ObjectType)-1, false},
     {"conversion", ConversionRelationId, ConversionOidIndexId, CONVOID,
      CONNAMENSP, Anum_pg_conversion_oid, Anum_pg_conversion_conname,
      Anum_pg_conversion_connamespace, Anum_pg_conversion_conowner,
@@ -195,7 +195,7 @@ static const ObjectPropertyType ObjectProperty[] = {
      InvalidAttrNumber, InvalidAttrNumber, OBJECT_ROLE, true},
     {"role membership", AuthMemRelationId, AuthMemOidIndexId, -1, -1,
      Anum_pg_auth_members_oid, InvalidAttrNumber, InvalidAttrNumber,
-     Anum_pg_auth_members_grantor, InvalidAttrNumber, -1, true},
+     Anum_pg_auth_members_grantor, InvalidAttrNumber, (ObjectType)-1, true},
     {"rule", RewriteRelationId, RewriteOidIndexId, -1, -1, Anum_pg_rewrite_oid,
      Anum_pg_rewrite_rulename, InvalidAttrNumber, InvalidAttrNumber,
      InvalidAttrNumber, OBJECT_RULE, false},
@@ -292,18 +292,18 @@ static const struct object_type_map {
 ObjectTypeMap[] = {{"table", OBJECT_TABLE},
                    {"index", OBJECT_INDEX},
                    {"sequence", OBJECT_SEQUENCE},
-                   {"toast table", -1}, /* unmapped */
+                   {"toast table", (ObjectType)-1}, /* unmapped */
                    {"view", OBJECT_VIEW},
                    {"materialized view", OBJECT_MATVIEW},
-                   {"composite type", -1}, /* unmapped */
+                   {"composite type", (ObjectType)-1}, /* unmapped */
                    {"foreign table", OBJECT_FOREIGN_TABLE},
                    {"table column", OBJECT_COLUMN},
-                   {"index column", -1},             /* unmapped */
-                   {"sequence column", -1},          /* unmapped */
-                   {"toast table column", -1},       /* unmapped */
-                   {"view column", -1},              /* unmapped */
-                   {"materialized view column", -1}, /* unmapped */
-                   {"composite type column", -1},    /* unmapped */
+                   {"index column", (ObjectType)-1},             /* unmapped */
+                   {"sequence column", (ObjectType)-1},          /* unmapped */
+                   {"toast table column", (ObjectType)-1},       /* unmapped */
+                   {"view column", (ObjectType)-1},              /* unmapped */
+                   {"materialized view column", (ObjectType)-1}, /* unmapped */
+                   {"composite type column", (ObjectType)-1},    /* unmapped */
                    {"foreign table column", OBJECT_COLUMN},
                    {"aggregate", OBJECT_AGGREGATE},
                    {"function", OBJECT_FUNCTION},
@@ -332,7 +332,7 @@ ObjectTypeMap[] = {{"table", OBJECT_TABLE},
                    {"text search configuration", OBJECT_TSCONFIGURATION},
                    {"role", OBJECT_ROLE},
                    {
-                       "role membership", -1 /* unmapped */
+                       "role membership", (ObjectType)-1 /* unmapped */
                    },
                    {"database", OBJECT_DATABASE},
                    {"tablespace", OBJECT_TABLESPACE},
@@ -371,7 +371,7 @@ static ObjectAddress get_object_address_attrdef(ObjectType objtype,
                                                 LOCKMODE lockmode,
                                                 bool missing_ok);
 static ObjectAddress get_object_address_type(ObjectType objtype,
-                                             TypeName *typename,
+                                             TypeName *typename_,
                                              bool missing_ok);
 static ObjectAddress get_object_address_opcf(ObjectType objtype, List *object,
                                              bool missing_ok);
@@ -577,9 +577,9 @@ ObjectAddress get_object_address(ObjectType objtype, Node *object,
       address.objectSubId = 0;
     } break;
     case OBJECT_TRANSFORM: {
-      TypeName *typename = linitial_node(TypeName, castNode(List, object));
+      TypeName *typename_ = linitial_node(TypeName, castNode(List, object));
       char *langname = strVal(lsecond(castNode(List, object)));
-      Oid type_id = LookupTypeNameOid(NULL, typename, missing_ok);
+      Oid type_id = LookupTypeNameOid(NULL, typename_, missing_ok);
       Oid lang_id = get_language_oid(langname, missing_ok);
 
       address.classId = TransformRelationId;
@@ -1072,7 +1072,7 @@ static ObjectAddress get_object_address_attrdef(ObjectType objtype,
  * Find the ObjectAddress for a type or domain
  */
 static ObjectAddress get_object_address_type(ObjectType objtype,
-                                             TypeName *typename,
+                                             TypeName *typename_,
                                              bool missing_ok) {
   ObjectAddress address;
   Type tup;
@@ -1081,12 +1081,12 @@ static ObjectAddress get_object_address_type(ObjectType objtype,
   address.objectId = InvalidOid;
   address.objectSubId = 0;
 
-  tup = LookupTypeName(NULL, typename, NULL, missing_ok);
+  tup = LookupTypeName(NULL, typename_, NULL, missing_ok);
   if (!HeapTupleIsValid(tup)) {
     if (!missing_ok)
       ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
                       errmsg("type \"%s\" does not exist",
-                             TypeNameToString(typename))));
+                             TypeNameToString(typename_))));
     return address;
   }
   address.objectId = typeTypeId(tup);
@@ -1095,7 +1095,7 @@ static ObjectAddress get_object_address_type(ObjectType objtype,
     if (((Form_pg_type)GETSTRUCT(tup))->typtype != TYPTYPE_DOMAIN)
       ereport(ERROR,
               (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-               errmsg("\"%s\" is not a domain", TypeNameToString(typename))));
+               errmsg("\"%s\" is not a domain", TypeNameToString(typename_))));
   }
 
   ReleaseSysCache(tup);
@@ -1159,8 +1159,9 @@ static ObjectAddress get_object_address_opf_member(ObjectType objtype,
    * number.  We need to strip that out before getting the opclass/family
    * address.  The rest can be used directly by get_object_address_opcf().
    */
-  membernum = atoi(strVal(llast(linitial(object))));
-  copy = list_copy_head(linitial(object), list_length(linitial(object)) - 1);
+  membernum = atoi(strVal(llast((List *)linitial(object))));
+  copy = list_copy_head((const List *)linitial(object),
+                        list_length((const List *)linitial(object)) - 1);
 
   /* no missing_ok support here */
   famaddr = get_object_address_opcf(OBJECT_OPFAMILY, copy, false);
@@ -1169,7 +1170,7 @@ static ObjectAddress get_object_address_opf_member(ObjectType objtype,
   typenames[0] = typenames[1] = NULL;
   typeoids[0] = typeoids[1] = InvalidOid;
   i = 0;
-  foreach (cell, lsecond(object)) {
+  foreach (cell, (List *)lsecond(object)) {
     ObjectAddress typaddr;
 
     typenames[i] = lfirst_node(TypeName, cell);
@@ -1311,7 +1312,7 @@ static ObjectAddress get_object_address_publication_rel(List *object,
 
   ObjectAddressSet(address, PublicationRelRelationId, InvalidOid);
 
-  relname = linitial(object);
+  relname = (List *)linitial(object);
   relation = relation_openrv_extended(makeRangeVarFromNameList(relname),
                                       AccessShareLock, missing_ok);
   if (!relation)
@@ -1527,7 +1528,7 @@ Datum pg_get_object_address(PG_FUNCTION_ARGS) {
   int itype;
   ObjectType type;
   List *name = NIL;
-  TypeName *typename = NULL;
+  TypeName *typename_ = NULL;
   List *args = NIL;
   Node *objnode = NULL;
   ObjectAddress addr;
@@ -1562,7 +1563,7 @@ Datum pg_get_object_address(PG_FUNCTION_ARGS) {
     if (nulls[0])
       ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                       errmsg("name or argument lists may not contain nulls")));
-    typename = typeStringToTypeName(TextDatumGetCString(elems[0]), NULL);
+    typename_ = typeStringToTypeName(TextDatumGetCString(elems[0]), NULL);
   } else if (type == OBJECT_LARGEOBJECT) {
     Datum *elems;
     bool *nulls;
@@ -1700,16 +1701,16 @@ Datum pg_get_object_address(PG_FUNCTION_ARGS) {
     if (list_length(name) != 1)
       ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                       errmsg("name list length must be exactly %d", 1)));
-    objnode = linitial(name);
+    objnode = (Node *)linitial(name);
     break;
   case OBJECT_TYPE:
   case OBJECT_DOMAIN:
-    objnode = (Node *)typename;
+    objnode = (Node *)typename_;
     break;
   case OBJECT_CAST:
   case OBJECT_DOMCONSTRAINT:
   case OBJECT_TRANSFORM:
-    objnode = (Node *)list_make2(typename, linitial(args));
+    objnode = (Node *)list_make2(typename_, linitial(args));
     break;
   case OBJECT_PUBLICATION_REL:
     objnode = (Node *)list_make2(name, linitial(args));
@@ -1871,11 +1872,11 @@ void check_object_ownership(Oid roleid, ObjectType objtype,
                              format_type_be(targettypeid))));
   } break;
   case OBJECT_TRANSFORM: {
-    TypeName *typename = linitial_node(TypeName, castNode(List, object));
-    Oid typeid = typenameTypeId(NULL, typename);
+    TypeName *typename_ = linitial_node(TypeName, castNode(List, object));
+    Oid typeid_ = typenameTypeId(NULL, typename_);
 
-    if (!object_ownercheck(TypeRelationId, typeid, roleid))
-      aclcheck_error_type(ACLCHECK_NOT_OWNER, typeid);
+    if (!object_ownercheck(TypeRelationId, typeid_, roleid))
+      aclcheck_error_type(ACLCHECK_NOT_OWNER, typeid_);
   } break;
   case OBJECT_ROLE:
 
@@ -5049,10 +5050,10 @@ ArrayType *strlist_to_textarray(List *list) {
   oldcxt = MemoryContextSwitchTo(memcxt);
 
   datums = (Datum *)palloc(sizeof(Datum) * list_length(list));
-  nulls = palloc(sizeof(bool) * list_length(list));
+  nulls = (bool *)palloc(sizeof(bool) * list_length(list));
 
   foreach (cell, list) {
-    char *name = lfirst(cell);
+    char *name = (char *)lfirst(cell);
 
     if (name) {
       nulls[j] = false;

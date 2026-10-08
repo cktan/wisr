@@ -81,9 +81,9 @@
 #ifndef WIN32
 #include <sys/mman.h>
 #endif
-#include <fcntl.h>
 #include <limits.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "access/xact.h"
 #include "access/xlog.h"

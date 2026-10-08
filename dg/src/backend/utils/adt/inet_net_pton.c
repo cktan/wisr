@@ -24,11 +24,11 @@ static const char rcsid[] =
 
 #include "postgres.h"
 
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <assert.h>
 #include <ctype.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 
 #include "utils/builtins.h" /* needed on some platforms */
 #include "utils/inet.h"
@@ -59,11 +59,11 @@ static int inet_cidr_pton_ipv6(const char *src, u_char *dst, size_t size);
 int pg_inet_net_pton(int af, const char *src, void *dst, size_t size) {
   switch (af) {
   case PGSQL_AF_INET:
-    return size == -1 ? inet_net_pton_ipv4(src, dst)
-                      : inet_cidr_pton_ipv4(src, dst, size);
+    return size == -1 ? inet_net_pton_ipv4(src, (u_char *)dst)
+                      : inet_cidr_pton_ipv4(src, (u_char *)dst, size);
   case PGSQL_AF_INET6:
-    return size == -1 ? inet_net_pton_ipv6(src, dst)
-                      : inet_cidr_pton_ipv6(src, dst, size);
+    return size == -1 ? inet_net_pton_ipv6(src, (u_char *)dst)
+                      : inet_cidr_pton_ipv6(src, (u_char *)dst, size);
   default:
     errno = EAFNOSUPPORT;
     return -1;

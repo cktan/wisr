@@ -121,7 +121,7 @@ void InitPostmasterChildSlots(void) {
     num_pmchild_slots += pmchild_pools[i].size;
 
   /* Initialize them */
-  slots = palloc(num_pmchild_slots * sizeof(PMChild));
+  slots = (PMChild *)palloc(num_pmchild_slots * sizeof(PMChild));
   slotno = 0;
   for (int btype = 0; btype < BACKEND_NUM_TYPES; btype++) {
     pmchild_pools[btype].first_slotno = slotno + 1;

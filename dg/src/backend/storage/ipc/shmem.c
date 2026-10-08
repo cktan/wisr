@@ -521,7 +521,7 @@ Datum pg_get_shmem_allocations_numa(PG_FUNCTION_ARGS) {
   InitMaterializedSRF(fcinfo, 0);
 
   max_nodes = pg_numa_get_max_node();
-  nodes = palloc(sizeof(Size) * (max_nodes + 2));
+  nodes = (Size *)palloc(sizeof(Size) * (max_nodes + 2));
 
   /*
    * Shared memory allocations can vary in size and may not align with OS
@@ -546,8 +546,8 @@ Datum pg_get_shmem_allocations_numa(PG_FUNCTION_ARGS) {
    * them using only fraction of the total pages.
    */
   shm_total_page_count = (ShmemSegHdr->totalsize / os_page_size) + 1;
-  page_ptrs = palloc0(sizeof(void *) * shm_total_page_count);
-  pages_status = palloc(sizeof(int) * shm_total_page_count);
+  page_ptrs = (void **)palloc0(sizeof(void *) * shm_total_page_count);
+  pages_status = (int *)palloc(sizeof(int) * shm_total_page_count);
 
   if (firstNumaTouch)
     elog(DEBUG1,

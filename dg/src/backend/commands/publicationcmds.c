@@ -304,7 +304,7 @@ bool pub_rf_contains_invalid_column(Oid pubid, Relation relation,
     bms = RelationGetIndexAttrBitmap(relation, INDEX_ATTR_BITMAP_IDENTITY_KEY);
 
     context.bms_replident = bms;
-    rfnode = stringToNode(TextDatumGetCString(rfdatum));
+    rfnode = (Node *)stringToNode(TextDatumGetCString(rfdatum));
     result = contain_invalid_rfcolumn_walker(rfnode, &context);
   }
 
@@ -1184,7 +1184,7 @@ static void AlterPublicationTables(AlterPublicationStmt *stmt, HeapTuple tup,
                             Anum_pg_publication_rel_prqual, &isnull);
         if (!isnull)
           oldrelwhereclause =
-              stringToNode(TextDatumGetCString(whereClauseDatum));
+              (Node *)stringToNode(TextDatumGetCString(whereClauseDatum));
 
         /* Transform the int2vector column list to a bitmap. */
         columnListDatum =
@@ -1235,7 +1235,7 @@ static void AlterPublicationTables(AlterPublicationStmt *stmt, HeapTuple tup,
        * dropped.
        */
       if (!found) {
-        oldrel = palloc(sizeof(PublicationRelInfo));
+        oldrel = (PublicationRelInfo *)palloc(sizeof(PublicationRelInfo));
         oldrel->whereClause = NULL;
         oldrel->columns = NIL;
         oldrel->relation = table_open(oldrelid, ShareUpdateExclusiveLock);
@@ -1590,7 +1590,7 @@ static List *OpenTableList(List *tables) {
       continue;
     }
 
-    pub_rel = palloc(sizeof(PublicationRelInfo));
+    pub_rel = (PublicationRelInfo *)palloc(sizeof(PublicationRelInfo));
     pub_rel->relation = rel;
     pub_rel->whereClause = t->whereClause;
     pub_rel->columns = t->columns;
@@ -1659,7 +1659,7 @@ static List *OpenTableList(List *tables) {
 
         /* find_all_inheritors already got lock */
         rel = table_open(childrelid, NoLock);
-        pub_rel = palloc(sizeof(PublicationRelInfo));
+        pub_rel = (PublicationRelInfo *)palloc(sizeof(PublicationRelInfo));
         pub_rel->relation = rel;
         /* child inherits WHERE clause from parent */
         pub_rel->whereClause = t->whereClause;

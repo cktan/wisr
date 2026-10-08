@@ -13,9 +13,9 @@
 
 #include <fcntl.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "libpq/pqsignal.h"

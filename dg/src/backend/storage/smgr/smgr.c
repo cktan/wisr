@@ -163,9 +163,9 @@ static void smgr_aio_reopen(PgAioHandle *ioh);
 static char *smgr_aio_describe_identity(const PgAioTargetData *sd);
 
 const PgAioTargetInfo aio_smgr_target_info = {
-    .name = "smgr",
     .reopen = smgr_aio_reopen,
     .describe_identity = smgr_aio_describe_identity,
+    .name = "smgr",
 };
 
 /*
@@ -303,7 +303,7 @@ static void smgrdestroy(SMgrRelation reln) {
 
   HOLD_INTERRUPTS();
 
-  for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
+  for (forknum = (ForkNumber)0; forknum <= MAX_FORKNUM; forknum++)
     smgrsw[reln->smgr_which].smgr_close(reln, forknum);
 
   dlist_delete(&reln->node);
@@ -323,7 +323,7 @@ static void smgrdestroy(SMgrRelation reln) {
 void smgrrelease(SMgrRelation reln) {
   HOLD_INTERRUPTS();
 
-  for (ForkNumber forknum = 0; forknum <= MAX_FORKNUM; forknum++) {
+  for (ForkNumber forknum = (ForkNumber)0; forknum <= MAX_FORKNUM; forknum++) {
     smgrsw[reln->smgr_which].smgr_close(reln, forknum);
     reln->smgr_cached_nblocks[forknum] = InvalidBlockNumber;
   }
@@ -464,7 +464,7 @@ void smgrdosyncall(SMgrRelation *rels, int nrels) {
   for (i = 0; i < nrels; i++) {
     int which = rels[i]->smgr_which;
 
-    for (forknum = 0; forknum <= MAX_FORKNUM; forknum++) {
+    for (forknum = (ForkNumber)0; forknum <= MAX_FORKNUM; forknum++) {
       if (smgrsw[which].smgr_exists(rels[i], forknum))
         smgrsw[which].smgr_immedsync(rels[i], forknum);
     }
@@ -508,7 +508,8 @@ void smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo) {
    * create an array which contains all relations to be dropped, and close
    * each relation's forks at the smgr level while at it
    */
-  rlocators = palloc(sizeof(RelFileLocatorBackend) * nrels);
+  rlocators =
+      (RelFileLocatorBackend *)palloc(sizeof(RelFileLocatorBackend) * nrels);
   for (i = 0; i < nrels; i++) {
     RelFileLocatorBackend rlocator = rels[i]->smgr_rlocator;
     int which = rels[i]->smgr_which;
@@ -516,7 +517,7 @@ void smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo) {
     rlocators[i] = rlocator;
 
     /* Close the forks at smgr level */
-    for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
+    for (forknum = (ForkNumber)0; forknum <= MAX_FORKNUM; forknum++)
       smgrsw[which].smgr_close(rels[i], forknum);
   }
 
@@ -542,7 +543,7 @@ void smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo) {
   for (i = 0; i < nrels; i++) {
     int which = rels[i]->smgr_which;
 
-    for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
+    for (forknum = (ForkNumber)0; forknum <= MAX_FORKNUM; forknum++)
       smgrsw[which].smgr_unlink(rlocators[i], forknum, isRedo);
   }
 

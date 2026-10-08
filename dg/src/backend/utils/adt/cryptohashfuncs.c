@@ -99,7 +99,7 @@ static inline bytea *cryptohash_internal(pg_cryptohash_type type,
     break;
   }
 
-  result = palloc0(digest_len + VARHDRSZ);
+  result = (bytea *)palloc0(digest_len + VARHDRSZ);
   len = VARSIZE_ANY_EXHDR(input);
   data = (unsigned char *)VARDATA_ANY(input);
 

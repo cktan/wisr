@@ -37,7 +37,7 @@ static void pcb_error_callback(void *arg);
 ParseState *make_parsestate(ParseState *parentParseState) {
   ParseState *pstate;
 
-  pstate = palloc0(sizeof(ParseState));
+  pstate = (ParseState *)palloc0(sizeof(ParseState));
 
   pstate->parentParseState = parentParseState;
 
@@ -318,7 +318,7 @@ transformContainerSubscripts(ParseState *pstate, Node *containerBase,
 Const *make_const(ParseState *pstate, A_Const *aconst) {
   Const *con;
   Datum val;
-  Oid typeid;
+  Oid typeid_;
   int typelen;
   bool typebyval;
   ParseCallbackState pcbstate;
@@ -334,7 +334,7 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
   case T_Integer:
     val = Int32GetDatum(intVal(&aconst->val));
 
-    typeid = INT4OID;
+    typeid_ = INT4OID;
     typelen = sizeof(int32);
     typebyval = true;
     break;
@@ -357,13 +357,13 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
       if (val64 == (int64)val32) {
         val = Int32GetDatum(val32);
 
-        typeid = INT4OID;
+        typeid_ = INT4OID;
         typelen = sizeof(int32);
         typebyval = true;
       } else {
         val = Int64GetDatum(val64);
 
-        typeid = INT8OID;
+        typeid_ = INT8OID;
         typelen = sizeof(int64);
         typebyval = FLOAT8PASSBYVAL; /* int8 and float8 alike */
       }
@@ -375,7 +375,7 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
           ObjectIdGetDatum(InvalidOid), Int32GetDatum(-1));
       cancel_parser_errposition_callback(&pcbstate);
 
-      typeid = NUMERICOID;
+      typeid_ = NUMERICOID;
       typelen = -1; /* variable len */
       typebyval = false;
     }
@@ -385,7 +385,7 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
   case T_Boolean:
     val = BoolGetDatum(boolVal(&aconst->val));
 
-    typeid = BOOLOID;
+    typeid_ = BOOLOID;
     typelen = 1;
     typebyval = true;
     break;
@@ -398,8 +398,8 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
      */
     val = CStringGetDatum(strVal(&aconst->val));
 
-    typeid = UNKNOWNOID; /* will be coerced later */
-    typelen = -2;        /* cstring-style varwidth type */
+    typeid_ = UNKNOWNOID; /* will be coerced later */
+    typelen = -2;         /* cstring-style varwidth type */
     typebyval = false;
     break;
 
@@ -409,7 +409,7 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
     val = DirectFunctionCall3(bit_in, CStringGetDatum(aconst->val.bsval.bsval),
                               ObjectIdGetDatum(InvalidOid), Int32GetDatum(-1));
     cancel_parser_errposition_callback(&pcbstate);
-    typeid = BITOID;
+    typeid_ = BITOID;
     typelen = -1;
     typebyval = false;
     break;
@@ -419,8 +419,8 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
     return NULL; /* keep compiler quiet */
   }
 
-  con = makeConst(typeid, -1, /* typmod -1 is OK for all cases */
-                  InvalidOid, /* all cases are uncollatable types */
+  con = makeConst(typeid_, -1, /* typmod -1 is OK for all cases */
+                  InvalidOid,  /* all cases are uncollatable types */
                   typelen, val, false, typebyval);
   con->location = aconst->location;
 

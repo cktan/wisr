@@ -25,12 +25,12 @@
 #ifdef WIN32
 #include "win32.h"
 #else
+#include <unistd.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <pwd.h>
 #include <sys/param.h> /* for MAXHOSTNAMELEN on most */
 #include <sys/socket.h>
-#include <unistd.h>
 #ifdef HAVE_SYS_UCRED_H
 #include <sys/ucred.h>
 #endif
@@ -42,9 +42,9 @@
 #include "common/md5.h"
 #include "common/oauth-common.h"
 #include "common/scram-common.h"
-#include "fe-auth-oauth.h"
-#include "fe-auth-sasl.h"
 #include "fe-auth.h"
+#include "fe-auth-sasl.h"
+#include "fe-auth-oauth.h"
 #include "libpq-fe.h"
 
 #ifdef ENABLE_GSS
@@ -627,7 +627,7 @@ static int pg_SASL_continue(PGconn *conn, int payloadlen, bool final,
   SASLStatus status;
 
   /* Read the SASL challenge from the AuthenticationSASLContinue message. */
-  challenge = malloc(payloadlen + 1);
+  challenge = (char *)malloc(payloadlen + 1);
   if (!challenge) {
     libpq_append_conn_error(conn, "out of memory allocating SASL buffer (%d)",
                             payloadlen);
@@ -730,7 +730,7 @@ static int pg_password_sendauth(PGconn *conn, const char *password,
     const char *errstr = NULL;
 
     /* Allocate enough space for two MD5 hashes */
-    crypt_pwd = malloc(2 * (MD5_PASSWD_LEN + 1));
+    crypt_pwd = (char *)malloc(2 * (MD5_PASSWD_LEN + 1));
     if (!crypt_pwd) {
       libpq_append_conn_error(conn, "out of memory");
       return STATUS_ERROR;
@@ -1237,7 +1237,7 @@ char *PQencryptPassword(const char *passwd, const char *user) {
   char *crypt_pwd;
   const char *errstr = NULL;
 
-  crypt_pwd = malloc(MD5_PASSWD_LEN + 1);
+  crypt_pwd = (char *)malloc(MD5_PASSWD_LEN + 1);
   if (!crypt_pwd)
     return NULL;
 
@@ -1338,7 +1338,7 @@ char *PQencryptPasswordConn(PGconn *conn, const char *passwd, const char *user,
     if (!crypt_pwd)
       libpq_append_conn_error(conn, "could not encrypt password: %s", errstr);
   } else if (strcmp(algorithm, "md5") == 0) {
-    crypt_pwd = malloc(MD5_PASSWD_LEN + 1);
+    crypt_pwd = (char *)malloc(MD5_PASSWD_LEN + 1);
     if (crypt_pwd) {
       const char *errstr = NULL;
 

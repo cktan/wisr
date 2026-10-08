@@ -46,9 +46,9 @@
  */
 #include "postgres.h"
 
+#include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "access/heapam.h"
 #include "access/htup_details.h"
@@ -1153,8 +1153,8 @@ bool check_temp_tablespaces(char **newval, void **extra, GucSource source) {
     }
 
     /* Now prepare an "extra" struct for assign_temp_tablespaces */
-    myextra = guc_malloc(LOG, offsetof(temp_tablespaces_extra, tblSpcs) +
-                                  numSpcs * sizeof(Oid));
+    myextra = (temp_tablespaces_extra *)guc_malloc(
+        LOG, offsetof(temp_tablespaces_extra, tblSpcs) + numSpcs * sizeof(Oid));
     if (!myextra)
       return false;
     myextra->numSpcs = numSpcs;

@@ -149,7 +149,8 @@ sts_initialize(SharedTuplestore *sts, int participants,
     sts->participants[i].writing = false;
   }
 
-  accessor = palloc0(sizeof(SharedTuplestoreAccessor));
+  accessor =
+      (SharedTuplestoreAccessor *)palloc0(sizeof(SharedTuplestoreAccessor));
   accessor->participant = my_participant_number;
   accessor->sts = sts;
   accessor->fileset = fileset;
@@ -169,7 +170,8 @@ SharedTuplestoreAccessor *sts_attach(SharedTuplestore *sts,
 
   Assert(my_participant_number < sts->nparticipants);
 
-  accessor = palloc0(sizeof(SharedTuplestoreAccessor));
+  accessor =
+      (SharedTuplestoreAccessor *)palloc0(sizeof(SharedTuplestoreAccessor));
   accessor->participant = my_participant_number;
   accessor->sts = sts;
   accessor->fileset = fileset;
@@ -399,7 +401,7 @@ static MinimalTuple sts_read_tuple(SharedTuplestoreAccessor *accessor,
       pfree(accessor->read_buffer);
     new_read_buffer_size = Max(size, accessor->read_buffer_size * 2);
     accessor->read_buffer =
-        MemoryContextAlloc(accessor->context, new_read_buffer_size);
+        (char *)MemoryContextAlloc(accessor->context, new_read_buffer_size);
     accessor->read_buffer_size = new_read_buffer_size;
   }
   remaining_size = size - sizeof(uint32);

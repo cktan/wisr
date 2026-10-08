@@ -12,8 +12,8 @@
  */
 #include "postgres.h"
 
-#include <signal.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "miscadmin.h"
 #include "pgstat.h"

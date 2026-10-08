@@ -56,17 +56,17 @@
 #ifdef HAVE_POLL_H
 #include <poll.h>
 #endif
+#include <signal.h>
 #include <fcntl.h>
 #include <grp.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <signal.h>
+#include <unistd.h>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <unistd.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <utime.h>
 #ifdef WIN32
 #include <mstcpip.h>
@@ -173,7 +173,7 @@ Port *pq_init(ClientSocket *client_sock) {
   int latch_pos PG_USED_FOR_ASSERTS_ONLY;
 
   /* allocate the Port struct and copy the ClientSocket contents to it */
-  port = palloc0(sizeof(Port));
+  port = (Port *)palloc0(sizeof(Port));
   port->sock = client_sock->sock;
   memcpy(&port->raddr.addr, &client_sock->raddr.addr, client_sock->raddr.salen);
   port->raddr.salen = client_sock->raddr.salen;
@@ -262,7 +262,7 @@ Port *pq_init(ClientSocket *client_sock) {
 
   /* initialize state variables */
   PqSendBufferSize = PQ_SEND_BUFFER_SIZE;
-  PqSendBuffer = MemoryContextAlloc(TopMemoryContext, PqSendBufferSize);
+  PqSendBuffer = (char *)MemoryContextAlloc(TopMemoryContext, PqSendBufferSize);
   PqSendPointer = PqSendStart = PqRecvPointer = PqRecvLength = 0;
   PqCommBusy = false;
   PqCommReadingMsg = false;
@@ -959,7 +959,7 @@ int pq_getbyte_if_available(unsigned char *c) {
  * --------------------------------
  */
 int pq_getbytes(void *b, size_t len) {
-  char *s = b;
+  char *s = (char *)b;
   size_t amount;
 
   Assert(PqCommReadingMsg);
@@ -1141,7 +1141,7 @@ int pq_getmessage(StringInfo s, int maxlen) {
 }
 
 static inline int internal_putbytes(const void *b, size_t len) {
-  const char *s = b;
+  const char *s = (const char *)b;
 
   while (len > 0) {
     /* If buffer is full, then flush it out */
@@ -1375,7 +1375,7 @@ static void socket_putmessage_noblock(char msgtype, const char *s, size_t len) {
    */
   required = PqSendPointer + 1 + 4 + len;
   if (required > PqSendBufferSize) {
-    PqSendBuffer = repalloc(PqSendBuffer, required);
+    PqSendBuffer = (char *)repalloc(PqSendBuffer, required);
     PqSendBufferSize = required;
   }
   res = pq_putmessage(msgtype, s, len);

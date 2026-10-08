@@ -1743,7 +1743,7 @@ FuncCandidateList OpernameGetCandidates(List *names, char oprkind,
 							  2 * sizeof(Oid))
 
   if (catlist->n_members > 0)
-    resultSpace = palloc(catlist->n_members * SPACE_PER_OP);
+    resultSpace = (char *)palloc(catlist->n_members * SPACE_PER_OP);
 
   for (i = 0; i < catlist->n_members; i++) {
     HeapTuple opertup = &catlist->members[i]->tuple;
@@ -2498,7 +2498,7 @@ bool TSParserIsVisible(Oid prsId) { return TSParserIsVisibleExt(prsId, NULL); }
 static bool TSParserIsVisibleExt(Oid prsId, bool *is_missing) {
   HeapTuple tup;
   Form_pg_ts_parser form;
-  Oid namespace;
+  Oid namespace_;
   bool visible;
 
   tup = SearchSysCache1(TSPARSEROID, ObjectIdGetDatum(prsId));
@@ -2518,9 +2518,9 @@ static bool TSParserIsVisibleExt(Oid prsId, bool *is_missing) {
    * the system namespace are surely in the path and so we needn't even do
    * list_member_oid() for them.
    */
-  namespace = form->prsnamespace;
-  if (namespace != PG_CATALOG_NAMESPACE &&
-      !list_member_oid(activeSearchPath, namespace))
+  namespace_ = form->prsnamespace;
+  if (namespace_ != PG_CATALOG_NAMESPACE &&
+      !list_member_oid(activeSearchPath, namespace_))
     visible = false;
   else {
     /*
@@ -2538,7 +2538,7 @@ static bool TSParserIsVisibleExt(Oid prsId, bool *is_missing) {
       if (namespaceId == myTempNamespace)
         continue; /* do not look in temp namespace */
 
-      if (namespaceId == namespace) {
+      if (namespaceId == namespace_) {
         /* Found it first in path */
         visible = true;
         break;
@@ -2625,7 +2625,7 @@ bool TSDictionaryIsVisible(Oid dictId) {
 static bool TSDictionaryIsVisibleExt(Oid dictId, bool *is_missing) {
   HeapTuple tup;
   Form_pg_ts_dict form;
-  Oid namespace;
+  Oid namespace_;
   bool visible;
 
   tup = SearchSysCache1(TSDICTOID, ObjectIdGetDatum(dictId));
@@ -2645,9 +2645,9 @@ static bool TSDictionaryIsVisibleExt(Oid dictId, bool *is_missing) {
    * the system namespace are surely in the path and so we needn't even do
    * list_member_oid() for them.
    */
-  namespace = form->dictnamespace;
-  if (namespace != PG_CATALOG_NAMESPACE &&
-      !list_member_oid(activeSearchPath, namespace))
+  namespace_ = form->dictnamespace;
+  if (namespace_ != PG_CATALOG_NAMESPACE &&
+      !list_member_oid(activeSearchPath, namespace_))
     visible = false;
   else {
     /*
@@ -2665,7 +2665,7 @@ static bool TSDictionaryIsVisibleExt(Oid dictId, bool *is_missing) {
       if (namespaceId == myTempNamespace)
         continue; /* do not look in temp namespace */
 
-      if (namespaceId == namespace) {
+      if (namespaceId == namespace_) {
         /* Found it first in path */
         visible = true;
         break;
@@ -2752,7 +2752,7 @@ bool TSTemplateIsVisible(Oid tmplId) {
 static bool TSTemplateIsVisibleExt(Oid tmplId, bool *is_missing) {
   HeapTuple tup;
   Form_pg_ts_template form;
-  Oid namespace;
+  Oid namespace_;
   bool visible;
 
   tup = SearchSysCache1(TSTEMPLATEOID, ObjectIdGetDatum(tmplId));
@@ -2772,9 +2772,9 @@ static bool TSTemplateIsVisibleExt(Oid tmplId, bool *is_missing) {
    * the system namespace are surely in the path and so we needn't even do
    * list_member_oid() for them.
    */
-  namespace = form->tmplnamespace;
-  if (namespace != PG_CATALOG_NAMESPACE &&
-      !list_member_oid(activeSearchPath, namespace))
+  namespace_ = form->tmplnamespace;
+  if (namespace_ != PG_CATALOG_NAMESPACE &&
+      !list_member_oid(activeSearchPath, namespace_))
     visible = false;
   else {
     /*
@@ -2792,7 +2792,7 @@ static bool TSTemplateIsVisibleExt(Oid tmplId, bool *is_missing) {
       if (namespaceId == myTempNamespace)
         continue; /* do not look in temp namespace */
 
-      if (namespaceId == namespace) {
+      if (namespaceId == namespace_) {
         /* Found it first in path */
         visible = true;
         break;
@@ -2877,7 +2877,7 @@ bool TSConfigIsVisible(Oid cfgid) { return TSConfigIsVisibleExt(cfgid, NULL); }
 static bool TSConfigIsVisibleExt(Oid cfgid, bool *is_missing) {
   HeapTuple tup;
   Form_pg_ts_config form;
-  Oid namespace;
+  Oid namespace_;
   bool visible;
 
   tup = SearchSysCache1(TSCONFIGOID, ObjectIdGetDatum(cfgid));
@@ -2897,9 +2897,9 @@ static bool TSConfigIsVisibleExt(Oid cfgid, bool *is_missing) {
    * the system namespace are surely in the path and so we needn't even do
    * list_member_oid() for them.
    */
-  namespace = form->cfgnamespace;
-  if (namespace != PG_CATALOG_NAMESPACE &&
-      !list_member_oid(activeSearchPath, namespace))
+  namespace_ = form->cfgnamespace;
+  if (namespace_ != PG_CATALOG_NAMESPACE &&
+      !list_member_oid(activeSearchPath, namespace_))
     visible = false;
   else {
     /*
@@ -2917,7 +2917,7 @@ static bool TSConfigIsVisibleExt(Oid cfgid, bool *is_missing) {
       if (namespaceId == myTempNamespace)
         continue; /* do not look in temp namespace */
 
-      if (namespaceId == namespace) {
+      if (namespaceId == namespace_) {
         /* Found it first in path */
         visible = true;
         break;

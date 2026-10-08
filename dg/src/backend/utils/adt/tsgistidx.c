@@ -130,7 +130,7 @@ static void makesign(BITVECP sign, SignTSVector *a, int siglen) {
 
 static SignTSVector *gtsvector_alloc(int flag, int len, BITVECP sign) {
   int size = CALCGTSIZE(flag, len);
-  SignTSVector *res = palloc(size);
+  SignTSVector *res = (SignTSVector *)palloc(size);
 
   SET_VARSIZE(res, size);
   res->flag = flag;
@@ -453,7 +453,7 @@ Datum gtsvector_penalty(PG_FUNCTION_ARGS) {
   *penalty = 0.0;
 
   if (ISARRKEY(newval)) {
-    BITVECP sign = palloc(siglen);
+    BITVECP sign = (BITVECP)palloc(siglen);
 
     makesign(sign, newval, siglen);
 
@@ -536,7 +536,7 @@ Datum gtsvector_picksplit(PG_FUNCTION_ARGS) {
   v->spl_right = (OffsetNumber *)palloc(nbytes);
 
   cache = (CACHESIGN *)palloc(sizeof(CACHESIGN) * (maxoff + 2));
-  cache_sign = palloc(siglen * (maxoff + 2));
+  cache_sign = (char *)palloc(siglen * (maxoff + 2));
 
   for (j = 0; j < maxoff + 2; j++)
     cache[j].sign = &cache_sign[siglen * j];

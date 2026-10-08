@@ -31,7 +31,7 @@
 
 /* Copy a field that is a pointer to some kind of Node or Node tree */
 #define COPY_NODE_FIELD(fldname) \
-	(newnode->fldname = copyObjectImpl(from->fldname))
+	(newnode->fldname = (decltype(newnode->fldname)) copyObjectImpl(from->fldname))
 
 /* Copy a field that is a pointer to a Bitmapset */
 #define COPY_BITMAPSET_FIELD(fldname) \
@@ -51,7 +51,7 @@
 		Size	_size = (sz); \
 		if (_size > 0) \
 		{ \
-			newnode->fldname = palloc(_size); \
+			newnode->fldname = (decltype(newnode->fldname)) palloc(_size); \
 			memcpy(newnode->fldname, from->fldname, _size); \
 		} \
 	} while (0)
@@ -166,7 +166,7 @@ void *copyObjectImpl(const void *from) {
 #include "copyfuncs.switch.c"
 
   case T_List:
-    retval = list_copy_deep(from);
+    retval = list_copy_deep((const List *)from);
     break;
 
     /*
@@ -176,7 +176,7 @@ void *copyObjectImpl(const void *from) {
   case T_IntList:
   case T_OidList:
   case T_XidList:
-    retval = list_copy(from);
+    retval = list_copy((const List *)from);
     break;
 
   default:

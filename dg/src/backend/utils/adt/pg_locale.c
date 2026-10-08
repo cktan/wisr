@@ -1489,7 +1489,7 @@ char *icu_language_tag(const char *loc_str, int elevel) {
    * uloc_toLanguageTag() doesn't always return the ultimate length on the
    * first call, necessitating a loop.
    */
-  langtag = palloc(buflen);
+  langtag = (char *)palloc(buflen);
   while (true) {
     status = U_ZERO_ERROR;
     uloc_toLanguageTag(loc_str, langtag, buflen, strict, &status);
@@ -1499,7 +1499,7 @@ char *icu_language_tag(const char *loc_str, int elevel) {
          status == U_STRING_NOT_TERMINATED_WARNING) &&
         buflen < MaxAllocSize) {
       buflen = Min(buflen * 2, MaxAllocSize);
-      langtag = repalloc(langtag, buflen);
+      langtag = (char *)repalloc(langtag, buflen);
       continue;
     }
 

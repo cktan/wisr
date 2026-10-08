@@ -23,8 +23,8 @@
 
 #include "postgres.h"
 
-#include <limits.h>
 #include <math.h>
+#include <limits.h>
 
 #include "access/htup_details.h"
 #include "access/parallel.h"
@@ -1278,7 +1278,8 @@ static void ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable) {
       ExecParallelHashEnsureBatchAccessors(hashtable);
       ExecParallelHashTableSetCurrentBatch(hashtable, 0);
 
-      old_batches = dsa_get_address(hashtable->area, pstate->old_batches);
+      old_batches = (ParallelHashJoinBatch *)dsa_get_address(
+          hashtable->area, pstate->old_batches);
 
       /* Are any of the new generation of batches exhausted? */
       for (int i = 0; i < hashtable->nbatch; ++i) {
@@ -2620,7 +2621,7 @@ void ExecHashRetrieveInstrumentation(HashState *node) {
   /* Replace node->shared_info with a copy in backend-local memory. */
   size = offsetof(SharedHashInfo, hinstrument) +
          shared_info->num_workers * sizeof(HashInstrumentation);
-  node->shared_info = palloc(size);
+  node->shared_info = (SharedHashInfo *)palloc(size);
   memcpy(node->shared_info, shared_info, size);
 }
 
@@ -2878,7 +2879,8 @@ static void ExecParallelHashJoinSetUpBatches(HashJoinTable hashtable,
   pstate->batches = dsa_allocate0(
       hashtable->area, EstimateParallelHashJoinBatch(hashtable) * nbatch);
   pstate->nbatch = nbatch;
-  batches = dsa_get_address(hashtable->area, pstate->batches);
+  batches = (ParallelHashJoinBatch *)dsa_get_address(hashtable->area,
+                                                     pstate->batches);
 
   /*
    * Use hash join spill memory context to allocate accessors, including
@@ -3079,7 +3081,8 @@ void ExecHashTableDetachBatch(HashJoinTable hashtable) {
 
       /* Free shared chunks and buckets. */
       while (DsaPointerIsValid(batch->chunks)) {
-        HashMemoryChunk chunk = dsa_get_address(hashtable->area, batch->chunks);
+        HashMemoryChunk chunk =
+            (HashMemoryChunk)dsa_get_address(hashtable->area, batch->chunks);
         dsa_pointer next = chunk->next.shared;
 
         dsa_free(hashtable->area, batch->chunks);

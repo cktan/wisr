@@ -401,7 +401,7 @@ TypeCacheEntry *lookup_type_cache(Oid type_id, int flags) {
      * reserve enough in_progress_list slots for many cases
      */
     allocsize = 4;
-    in_progress_list = MemoryContextAlloc(
+    in_progress_list = (Oid *)MemoryContextAlloc(
         CacheMemoryContext, allocsize * sizeof(*in_progress_list));
     in_progress_list_maxlen = allocsize;
   }
@@ -413,8 +413,8 @@ TypeCacheEntry *lookup_type_cache(Oid type_id, int flags) {
     int allocsize;
 
     allocsize = in_progress_list_maxlen * 2;
-    in_progress_list =
-        repalloc(in_progress_list, allocsize * sizeof(*in_progress_list));
+    in_progress_list = (Oid *)repalloc(in_progress_list,
+                                       allocsize * sizeof(*in_progress_list));
     in_progress_list_maxlen = allocsize;
   }
   in_progress_offset = in_progress_list_len++;
@@ -1649,8 +1649,8 @@ static TupleDesc lookup_rowtype_tupdesc_internal(Oid type_id, int32 typmod,
         SharedTypmodTableEntry *entry;
 
         /* Try to find it in the shared typmod index. */
-        entry =
-            dshash_find(CurrentSession->shared_typmod_table, &typmod, false);
+        entry = (SharedTypmodTableEntry *)dshash_find(
+            CurrentSession->shared_typmod_table, &typmod, false);
         if (entry != NULL) {
           TupleDesc tupdesc;
 
@@ -1994,8 +1994,8 @@ void SharedRecordTypmodRegistryInit(SharedRecordTypmodRegistry *registry,
     shared_dp = share_tupledesc(area, tupdesc, typmod);
 
     /* Insert into the typmod table. */
-    typmod_table_entry =
-        dshash_find_or_insert(typmod_table, &tupdesc->tdtypmod, &found);
+    typmod_table_entry = (SharedTypmodTableEntry *)dshash_find_or_insert(
+        typmod_table, &tupdesc->tdtypmod, &found);
     if (found)
       elog(ERROR, "cannot create duplicate shared record typmod");
     typmod_table_entry->typmod = tupdesc->tdtypmod;
@@ -2005,8 +2005,8 @@ void SharedRecordTypmodRegistryInit(SharedRecordTypmodRegistry *registry,
     /* Insert into the record table. */
     record_table_key.shared = false;
     record_table_key.u.local_tupdesc = tupdesc;
-    record_table_entry =
-        dshash_find_or_insert(record_table, &record_table_key, &found);
+    record_table_entry = (SharedRecordTableEntry *)dshash_find_or_insert(
+        record_table, &record_table_key, &found);
     if (!found) {
       record_table_entry->key.shared = true;
       record_table_entry->key.u.shared_tupdesc = shared_dp;
@@ -2582,8 +2582,8 @@ static EnumItem *find_enumitem(TypeCacheEnumData *enumdata, Oid arg) {
     return NULL;
 
   srch.enum_oid = arg;
-  return bsearch(&srch, enumdata->enum_values, enumdata->num_values,
-                 sizeof(EnumItem), enum_oid_cmp);
+  return (EnumItem *)bsearch(&srch, enumdata->enum_values, enumdata->num_values,
+                             sizeof(EnumItem), enum_oid_cmp);
 }
 
 /*

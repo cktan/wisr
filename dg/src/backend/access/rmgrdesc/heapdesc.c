@@ -68,7 +68,7 @@ static void truncate_flags_desc(StringInfo buf, uint8 flags) {
 
 static void plan_elem_desc(StringInfo buf, void *plan, void *data) {
   xlhp_freeze_plan *new_plan = (xlhp_freeze_plan *)plan;
-  OffsetNumber **offsets = data;
+  OffsetNumber **offsets = (OffsetNumber **)data;
 
   appendStringInfo(buf, "{ xmax: %u, infomask: %u, infomask2: %u, ntuples: %u",
                    new_plan->xmax, new_plan->t_infomask, new_plan->t_infomask2,

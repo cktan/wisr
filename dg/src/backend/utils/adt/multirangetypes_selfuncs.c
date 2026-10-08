@@ -32,12 +32,12 @@
 
 static double calc_multirangesel(TypeCacheEntry *typcache,
                                  VariableStatData *vardata,
-                                 const MultirangeType *constval, Oid operator);
-static double default_multirange_selectivity(Oid operator);
+                                 const MultirangeType *constval, Oid operator_);
+static double default_multirange_selectivity(Oid operator_);
 static double calc_hist_selectivity(TypeCacheEntry *typcache,
                                     VariableStatData *vardata,
                                     const MultirangeType *constval,
-                                    Oid operator);
+                                    Oid operator_);
 static double calc_hist_selectivity_scalar(TypeCacheEntry *typcache,
                                            const RangeBound *constbound,
                                            const RangeBound *hist,
@@ -68,8 +68,8 @@ static double calc_hist_selectivity_contains(
  * Returns a default selectivity estimate for given operator, when we don't
  * have statistics or cannot use them for some reason.
  */
-static double default_multirange_selectivity(Oid operator) {
-  switch (operator) {
+static double default_multirange_selectivity(Oid operator_) {
+  switch (operator_) {
   case OID_MULTIRANGE_OVERLAPS_MULTIRANGE_OP:
   case OID_MULTIRANGE_OVERLAPS_RANGE_OP:
   case OID_RANGE_OVERLAPS_MULTIRANGE_OP:
@@ -126,7 +126,7 @@ static double default_multirange_selectivity(Oid operator) {
  */
 Datum multirangesel(PG_FUNCTION_ARGS) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
   int varRelid = PG_GETARG_INT32(3);
   VariableStatData vardata;
@@ -143,14 +143,14 @@ Datum multirangesel(PG_FUNCTION_ARGS) {
    */
   if (!get_restriction_variable(root, args, varRelid, &vardata, &other,
                                 &varonleft))
-    PG_RETURN_FLOAT8(default_multirange_selectivity(operator));
+    PG_RETURN_FLOAT8(default_multirange_selectivity(operator_));
 
   /*
    * Can't do anything useful if the something is not a constant, either.
    */
   if (!IsA(other, Const)) {
     ReleaseVariableStats(vardata);
-    PG_RETURN_FLOAT8(default_multirange_selectivity(operator));
+    PG_RETURN_FLOAT8(default_multirange_selectivity(operator_));
   }
 
   /*
@@ -168,11 +168,11 @@ Datum multirangesel(PG_FUNCTION_ARGS) {
    */
   if (!varonleft) {
     /* we have other Op var, commute to make var Op other */
-    operator= get_commutator(operator);
-    if (!operator) {
+    operator_ = get_commutator(operator_);
+    if (!operator_) {
       /* Use default selectivity (should we raise an error instead?) */
       ReleaseVariableStats(vardata);
-      PG_RETURN_FLOAT8(default_multirange_selectivity(operator));
+      PG_RETURN_FLOAT8(default_multirange_selectivity(operator_));
     }
   }
 
@@ -187,7 +187,7 @@ Datum multirangesel(PG_FUNCTION_ARGS) {
    * that includes only that single point, so that we don't need special
    * handling for that in what follows.
    */
-  if (operator== OID_MULTIRANGE_CONTAINS_ELEM_OP) {
+  if (operator_ == OID_MULTIRANGE_CONTAINS_ELEM_OP) {
     typcache = multirange_get_typcache(fcinfo, vardata.vartype);
 
     if (((Const *)other)->consttype ==
@@ -207,13 +207,13 @@ Datum multirangesel(PG_FUNCTION_ARGS) {
       constmultirange =
           make_multirange(typcache->type_id, typcache->rngtype, 1, &constrange);
     }
-  } else if (operator== OID_RANGE_MULTIRANGE_CONTAINED_OP || operator==
-             OID_MULTIRANGE_CONTAINS_RANGE_OP || operator==
-             OID_MULTIRANGE_OVERLAPS_RANGE_OP || operator==
-             OID_MULTIRANGE_OVERLAPS_LEFT_RANGE_OP || operator==
-             OID_MULTIRANGE_OVERLAPS_RIGHT_RANGE_OP || operator==
-             OID_MULTIRANGE_LEFT_RANGE_OP || operator==
-             OID_MULTIRANGE_RIGHT_RANGE_OP) {
+  } else if (operator_ == OID_RANGE_MULTIRANGE_CONTAINED_OP ||
+             operator_ == OID_MULTIRANGE_CONTAINS_RANGE_OP ||
+             operator_ == OID_MULTIRANGE_OVERLAPS_RANGE_OP ||
+             operator_ == OID_MULTIRANGE_OVERLAPS_LEFT_RANGE_OP ||
+             operator_ == OID_MULTIRANGE_OVERLAPS_RIGHT_RANGE_OP ||
+             operator_ == OID_MULTIRANGE_LEFT_RANGE_OP ||
+             operator_ == OID_MULTIRANGE_RIGHT_RANGE_OP) {
     /*
      * Promote a range in "multirange OP range" just like we do an element
      * in "multirange OP element".
@@ -224,14 +224,14 @@ Datum multirangesel(PG_FUNCTION_ARGS) {
       constmultirange =
           make_multirange(typcache->type_id, typcache->rngtype, 1, &constrange);
     }
-  } else if (operator== OID_RANGE_OVERLAPS_MULTIRANGE_OP || operator==
-             OID_RANGE_OVERLAPS_LEFT_MULTIRANGE_OP || operator==
-             OID_RANGE_OVERLAPS_RIGHT_MULTIRANGE_OP || operator==
-             OID_RANGE_LEFT_MULTIRANGE_OP || operator==
-             OID_RANGE_RIGHT_MULTIRANGE_OP || operator==
-             OID_RANGE_CONTAINS_MULTIRANGE_OP || operator==
-             OID_MULTIRANGE_ELEM_CONTAINED_OP || operator==
-             OID_MULTIRANGE_RANGE_CONTAINED_OP) {
+  } else if (operator_ == OID_RANGE_OVERLAPS_MULTIRANGE_OP ||
+             operator_ == OID_RANGE_OVERLAPS_LEFT_MULTIRANGE_OP ||
+             operator_ == OID_RANGE_OVERLAPS_RIGHT_MULTIRANGE_OP ||
+             operator_ == OID_RANGE_LEFT_MULTIRANGE_OP ||
+             operator_ == OID_RANGE_RIGHT_MULTIRANGE_OP ||
+             operator_ == OID_RANGE_CONTAINS_MULTIRANGE_OP ||
+             operator_ == OID_MULTIRANGE_ELEM_CONTAINED_OP ||
+             operator_ == OID_MULTIRANGE_RANGE_CONTAINED_OP) {
     /*
      * Here, the Var is the elem/range, not the multirange.  For now we
      * just punt and return the default estimate.  In future we could
@@ -252,9 +252,9 @@ Datum multirangesel(PG_FUNCTION_ARGS) {
    * OID_MULTIRANGE_*_CONTAINED_OP.
    */
   if (constmultirange)
-    selec = calc_multirangesel(typcache, &vardata, constmultirange, operator);
+    selec = calc_multirangesel(typcache, &vardata, constmultirange, operator_);
   else
-    selec = default_multirange_selectivity(operator);
+    selec = default_multirange_selectivity(operator_);
 
   ReleaseVariableStats(vardata);
 
@@ -265,7 +265,8 @@ Datum multirangesel(PG_FUNCTION_ARGS) {
 
 static double calc_multirangesel(TypeCacheEntry *typcache,
                                  VariableStatData *vardata,
-                                 const MultirangeType *constval, Oid operator) {
+                                 const MultirangeType *constval,
+                                 Oid operator_) {
   double hist_selec;
   double selec;
   float4 empty_frac, null_frac;
@@ -309,7 +310,7 @@ static double calc_multirangesel(TypeCacheEntry *typcache,
      * An empty multirange matches all multiranges, all empty multiranges,
      * or nothing, depending on the operator
      */
-    switch (operator) {
+    switch (operator_) {
       /* these return false if either argument is empty */
     case OID_MULTIRANGE_OVERLAPS_RANGE_OP:
     case OID_MULTIRANGE_OVERLAPS_MULTIRANGE_OP:
@@ -364,7 +365,7 @@ static double calc_multirangesel(TypeCacheEntry *typcache,
     case OID_MULTIRANGE_RANGE_CONTAINED_OP:
 
     default:
-      elog(ERROR, "unexpected operator %u", operator);
+      elog(ERROR, "unexpected operator %u", operator_);
       selec = 0.0; /* keep compiler quiet */
       break;
     }
@@ -377,17 +378,17 @@ static double calc_multirangesel(TypeCacheEntry *typcache,
      * because this still takes into account the fraction of empty and
      * NULL tuples, if we had statistics for them.
      */
-    hist_selec = calc_hist_selectivity(typcache, vardata, constval, operator);
+    hist_selec = calc_hist_selectivity(typcache, vardata, constval, operator_);
     if (hist_selec < 0.0)
-      hist_selec = default_multirange_selectivity(operator);
+      hist_selec = default_multirange_selectivity(operator_);
 
     /*
      * Now merge the results for the empty multiranges and histogram
      * calculations, realizing that the histogram covers only the
      * non-null, non-empty values.
      */
-    if (operator== OID_RANGE_MULTIRANGE_CONTAINED_OP || operator==
-        OID_MULTIRANGE_MULTIRANGE_CONTAINED_OP) {
+    if (operator_ == OID_RANGE_MULTIRANGE_CONTAINED_OP ||
+        operator_ == OID_MULTIRANGE_MULTIRANGE_CONTAINED_OP) {
       /* empty is contained by anything non-empty */
       selec = (1.0 - empty_frac) * hist_selec + empty_frac;
     } else {
@@ -415,7 +416,7 @@ static double calc_multirangesel(TypeCacheEntry *typcache,
 static double calc_hist_selectivity(TypeCacheEntry *typcache,
                                     VariableStatData *vardata,
                                     const MultirangeType *constval,
-                                    Oid operator) {
+                                    Oid operator_) {
   TypeCacheEntry *rng_typcache = typcache->rngtype;
   AttStatsSlot hslot;
   AttStatsSlot lslot;
@@ -468,10 +469,10 @@ static double calc_hist_selectivity(TypeCacheEntry *typcache,
   }
 
   /* @> and @< also need a histogram of range lengths */
-  if (operator== OID_MULTIRANGE_CONTAINS_RANGE_OP || operator==
-      OID_MULTIRANGE_CONTAINS_MULTIRANGE_OP || operator==
-      OID_MULTIRANGE_RANGE_CONTAINED_OP || operator==
-      OID_MULTIRANGE_MULTIRANGE_CONTAINED_OP) {
+  if (operator_ == OID_MULTIRANGE_CONTAINS_RANGE_OP ||
+      operator_ == OID_MULTIRANGE_CONTAINS_MULTIRANGE_OP ||
+      operator_ == OID_MULTIRANGE_RANGE_CONTAINED_OP ||
+      operator_ == OID_MULTIRANGE_MULTIRANGE_CONTAINED_OP) {
     if (!(HeapTupleIsValid(vardata->statsTuple) &&
           get_attstatsslot(&lslot, vardata->statsTuple,
                            STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM, InvalidOid,
@@ -499,7 +500,7 @@ static double calc_hist_selectivity(TypeCacheEntry *typcache,
    * Calculate selectivity comparing the lower or upper bound of the
    * constant with the histogram of lower or upper bounds.
    */
-  switch (operator) {
+  switch (operator_) {
   case OID_MULTIRANGE_LESS_OP:
 
     /*
@@ -619,7 +620,7 @@ static double calc_hist_selectivity(TypeCacheEntry *typcache,
   case OID_MULTIRANGE_RANGE_CONTAINED_OP:
 
   default:
-    elog(ERROR, "unknown multirange operator %u", operator);
+    elog(ERROR, "unknown multirange operator %u", operator_);
     hist_selec = -1.0; /* keep compiler quiet */
     break;
   }

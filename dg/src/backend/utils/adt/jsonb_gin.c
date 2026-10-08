@@ -147,12 +147,13 @@ static Datum make_scalar_key(const JsonbValue *scalarVal, bool is_key);
 
 static JsonPathGinNode *extract_jsp_bool_expr(JsonPathGinContext *cxt,
                                               JsonPathGinPath path,
-                                              JsonPathItem *jsp, bool not );
+                                              JsonPathItem *jsp, bool not_);
 
 /* Initialize GinEntries struct */
 static void init_gin_entries(GinEntries *entries, int preallocated) {
   entries->allocated = preallocated;
-  entries->buf = preallocated ? palloc(sizeof(Datum) * preallocated) : NULL;
+  entries->buf =
+      (Datum *)(preallocated ? palloc(sizeof(Datum) * preallocated) : NULL);
   entries->count = 0;
 }
 
@@ -163,10 +164,11 @@ static int add_gin_entry(GinEntries *entries, Datum entry) {
   if (entries->count >= entries->allocated) {
     if (entries->allocated) {
       entries->allocated *= 2;
-      entries->buf = repalloc(entries->buf, sizeof(Datum) * entries->allocated);
+      entries->buf =
+          (Datum *)repalloc(entries->buf, sizeof(Datum) * entries->allocated);
     } else {
       entries->allocated = 8;
-      entries->buf = palloc(sizeof(Datum) * entries->allocated);
+      entries->buf = (Datum *)palloc(sizeof(Datum) * entries->allocated);
     }
   }
 
@@ -276,7 +278,7 @@ static bool jsonb_ops__add_path_item(JsonPathGinPath *path, JsonPathItem *jsp) {
     return false;
   }
 
-  pentry = palloc(sizeof(*pentry));
+  pentry = (JsonPathGinPathItem *)palloc(sizeof(*pentry));
 
   pentry->type = jsp->type;
   pentry->keyName = keyName;
@@ -316,7 +318,8 @@ static bool jsonb_path_ops__add_path_item(JsonPathGinPath *path,
 }
 
 static JsonPathGinNode *make_jsp_entry_node(Datum entry) {
-  JsonPathGinNode *node = palloc(offsetof(JsonPathGinNode, args));
+  JsonPathGinNode *node =
+      (JsonPathGinNode *)palloc(offsetof(JsonPathGinNode, args));
 
   node->type = JSP_GIN_ENTRY;
   node->val.entryDatum = entry;
@@ -331,8 +334,8 @@ static JsonPathGinNode *make_jsp_entry_node_scalar(JsonbValue *scalar,
 
 static JsonPathGinNode *make_jsp_expr_node(JsonPathGinNodeType type,
                                            int nargs) {
-  JsonPathGinNode *node =
-      palloc(offsetof(JsonPathGinNode, args) + sizeof(node->args[0]) * nargs);
+  JsonPathGinNode *node = (JsonPathGinNode *)palloc(
+      offsetof(JsonPathGinNode, args) + sizeof(node->args[0]) * nargs);
 
   node->type = type;
   node->val.nargs = nargs;
@@ -347,7 +350,7 @@ static JsonPathGinNode *make_jsp_expr_node_args(JsonPathGinNodeType type,
   int i = 0;
 
   foreach (lc, args)
-    node->args[i++] = lfirst(lc);
+    node->args[i++] = (JsonPathGinNode *)lfirst(lc);
 
   return node;
 }
@@ -514,7 +517,7 @@ static JsonPathGinNode *extract_jsp_path_expr(JsonPathGinContext *cxt,
     return NULL;
 
   if (list_length(nodes) == 1)
-    return linitial(nodes); /* avoid extra AND-node */
+    return (JsonPathGinNode *)linitial(nodes); /* avoid extra AND-node */
 
   /* construct AND-node for path with filters */
   return make_jsp_expr_node_args(JSP_GIN_AND, nodes);
@@ -523,7 +526,7 @@ static JsonPathGinNode *extract_jsp_path_expr(JsonPathGinContext *cxt,
 /* Recursively extract nodes from the boolean jsonpath expression. */
 static JsonPathGinNode *extract_jsp_bool_expr(JsonPathGinContext *cxt,
                                               JsonPathGinPath path,
-                                              JsonPathItem *jsp, bool not ) {
+                                              JsonPathItem *jsp, bool not_) {
   check_stack_depth();
 
   switch (jsp->type) {
@@ -536,10 +539,10 @@ static JsonPathGinNode *extract_jsp_bool_expr(JsonPathGinContext *cxt,
     JsonPathGinNodeType type;
 
     jspGetLeftArg(jsp, &arg);
-    larg = extract_jsp_bool_expr(cxt, path, &arg, not );
+    larg = extract_jsp_bool_expr(cxt, path, &arg, not_);
 
     jspGetRightArg(jsp, &arg);
-    rarg = extract_jsp_bool_expr(cxt, path, &arg, not );
+    rarg = extract_jsp_bool_expr(cxt, path, &arg, not_);
 
     if (!larg || !rarg) {
       if (jsp->type == jpiOr)
@@ -548,7 +551,7 @@ static JsonPathGinNode *extract_jsp_bool_expr(JsonPathGinContext *cxt,
       return larg ? larg : rarg;
     }
 
-    type = not ^(jsp->type == jpiAnd) ? JSP_GIN_AND : JSP_GIN_OR;
+    type = not_ ^ (jsp->type == jpiAnd) ? JSP_GIN_AND : JSP_GIN_OR;
 
     return make_jsp_expr_node_binary(type, larg, rarg);
   }
@@ -560,14 +563,14 @@ static JsonPathGinNode *extract_jsp_bool_expr(JsonPathGinContext *cxt,
     jspGetArg(jsp, &arg);
 
     /* extract child expression inverting 'not' flag */
-    return extract_jsp_bool_expr(cxt, path, &arg, !not );
+    return extract_jsp_bool_expr(cxt, path, &arg, !not_);
   }
 
   case jpiExists: /* EXISTS(path) */
   {
     JsonPathItem arg;
 
-    if (not )
+    if (not_)
       return NULL; /* NOT EXISTS is not supported */
 
     jspGetArg(jsp, &arg);
@@ -600,7 +603,7 @@ static JsonPathGinNode *extract_jsp_bool_expr(JsonPathGinContext *cxt,
     JsonPathItem *scalar_item;
     JsonbValue scalar;
 
-    if (not )
+    if (not_)
       return NULL;
 
     jspGetLeftArg(jsp, &left_item);
@@ -707,7 +710,7 @@ static Datum *extract_jsp_query(JsonPath *jp, StrategyNumber strat,
   if (!*nentries)
     return NULL;
 
-  *extra_data = palloc0(sizeof(**extra_data) * entries.count);
+  *extra_data = (char **)palloc0(sizeof(**extra_data) * entries.count);
   **extra_data = (Pointer)node;
 
   return entries.buf;

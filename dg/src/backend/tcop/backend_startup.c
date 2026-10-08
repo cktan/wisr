@@ -21,8 +21,8 @@
 #include "access/xlogrecovery.h"
 #include "common/ip.h"
 #include "common/string.h"
-#include "libpq/libpq-be.h"
 #include "libpq/libpq.h"
+#include "libpq/libpq-be.h"
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
@@ -30,8 +30,8 @@
 #include "replication/walsender.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
-#include "storage/proc.h"
 #include "storage/procsignal.h"
+#include "storage/proc.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
@@ -73,7 +73,7 @@ static bool validate_log_connections_options(List *elemlist, uint32 *flags);
  * client, and start the main processing loop.
  */
 void BackendMain(const void *startup_data, size_t startup_data_len) {
-  const BackendStartupData *bsdata = startup_data;
+  const BackendStartupData *bsdata = (const BackendStartupData *)startup_data;
 
   Assert(startup_data_len == sizeof(BackendStartupData));
   Assert(MyClientSocket != NULL);
@@ -514,7 +514,7 @@ retry:
    * initialized to be zero.  This ensures we will have null termination of
    * all strings inside the packet.
    */
-  buf = palloc(len + 1);
+  buf = (char *)palloc(len + 1);
   buf[len] = '\0';
 
   if (pq_getbytes(buf, len) == EOF) {
@@ -883,7 +883,7 @@ static void SendNegotiateProtocolVersion(List *unrecognized_protocol_options) {
   pq_sendint32(&buf, FrontendProtocol);
   pq_sendint32(&buf, list_length(unrecognized_protocol_options));
   foreach (lc, unrecognized_protocol_options)
-    pq_sendstring(&buf, lfirst(lc));
+    pq_sendstring(&buf, (const char *)lfirst(lc));
   pq_endmessage(&buf);
 
   /* no need to flush, some other message will follow */
@@ -957,7 +957,7 @@ static bool validate_log_connections_options(List *elemlist, uint32 *flags) {
    * specified on their own, so we error out if the first option is a
    * backwards compatibility option and other options are also specified.
    */
-  item = linitial(elemlist);
+  item = (char *)linitial(elemlist);
 
   for (size_t i = 0; i < lengthof(compat_options); i++) {
     struct config_enum_entry option = compat_options[i];
@@ -986,7 +986,7 @@ static bool validate_log_connections_options(List *elemlist, uint32 *flags) {
         {"all", LOG_CONNECTION_ALL},
     };
 
-    item = lfirst(l);
+    item = (char *)lfirst(l);
     for (size_t i = 0; i < lengthof(options); i++) {
       struct config_enum_entry option = options[i];
 

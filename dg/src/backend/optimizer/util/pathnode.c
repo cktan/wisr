@@ -1633,7 +1633,7 @@ UniquePath *create_unique_path(PlannerInfo *root, RelOptInfo *rel,
 
     uniq_exprs = in_operators = newtlist = sortList = NIL;
     forboth(lc1, sjinfo->semi_rhs_exprs, lc2, sjinfo->semi_operators) {
-      Expr *uniqexpr = lfirst(lc1);
+      Expr *uniqexpr = (Expr *)lfirst(lc1);
       Oid in_oper = lfirst_oid(lc2);
       Oid sortop;
 
@@ -3139,9 +3139,9 @@ GroupingSetsPath *create_groupingsets_path(PlannerInfo *root, RelOptInfo *rel,
   Assert(aggstrategy != AGG_MIXED || list_length(rollups) > 1);
 
   foreach (lc, rollups) {
-    RollupData *rollup = lfirst(lc);
+    RollupData *rollup = (RollupData *)lfirst(lc);
     List *gsets = rollup->gsets;
-    int numGroupCols = list_length(linitial(gsets));
+    int numGroupCols = list_length((const List *)linitial(gsets));
 
     /*
      * In AGG_SORTED or AGG_PLAIN mode, the first rollup takes the
@@ -3920,7 +3920,7 @@ Path *reparameterize_path_by_child(PlannerInfo *root, Path *path,
   Relids required_outer;
 
 #define ADJUST_CHILD_ATTRS(node) \
-	((node) = (void *) adjust_appendrel_attrs_multilevel(root, \
+	((node) = (decltype(node)) adjust_appendrel_attrs_multilevel(root, \
 														 (Node *) (node), \
 														 child_rel, \
 														 child_rel->top_parent))
@@ -4284,7 +4284,8 @@ static List *reparameterize_pathlist_by_child(PlannerInfo *root, List *pathlist,
   List *result = NIL;
 
   foreach (lc, pathlist) {
-    Path *path = reparameterize_path_by_child(root, lfirst(lc), child_rel);
+    Path *path =
+        reparameterize_path_by_child(root, (Path *)lfirst(lc), child_rel);
 
     if (path == NULL) {
       list_free(result);

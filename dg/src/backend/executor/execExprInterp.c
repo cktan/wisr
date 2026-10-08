@@ -301,10 +301,10 @@ void ExecReadyInterpretedExpr(ExprState *state) {
    * patterns occur often enough to be worth optimizing.
    */
   if (state->steps_len == 5) {
-    ExprEvalOp step0 = state->steps[0].opcode;
-    ExprEvalOp step1 = state->steps[1].opcode;
-    ExprEvalOp step2 = state->steps[2].opcode;
-    ExprEvalOp step3 = state->steps[3].opcode;
+    ExprEvalOp step0 = (ExprEvalOp)state->steps[0].opcode;
+    ExprEvalOp step1 = (ExprEvalOp)state->steps[1].opcode;
+    ExprEvalOp step2 = (ExprEvalOp)state->steps[2].opcode;
+    ExprEvalOp step3 = (ExprEvalOp)state->steps[3].opcode;
 
     if (step0 == EEOP_INNER_FETCHSOME && step1 == EEOP_HASHDATUM_SET_INITVAL &&
         step2 == EEOP_INNER_VAR && step3 == EEOP_HASHDATUM_NEXT32) {
@@ -312,9 +312,9 @@ void ExecReadyInterpretedExpr(ExprState *state) {
       return;
     }
   } else if (state->steps_len == 4) {
-    ExprEvalOp step0 = state->steps[0].opcode;
-    ExprEvalOp step1 = state->steps[1].opcode;
-    ExprEvalOp step2 = state->steps[2].opcode;
+    ExprEvalOp step0 = (ExprEvalOp)state->steps[0].opcode;
+    ExprEvalOp step1 = (ExprEvalOp)state->steps[1].opcode;
+    ExprEvalOp step2 = (ExprEvalOp)state->steps[2].opcode;
 
     if (step0 == EEOP_OUTER_FETCHSOME && step1 == EEOP_OUTER_VAR &&
         step2 == EEOP_HASHDATUM_FIRST) {
@@ -330,34 +330,34 @@ void ExecReadyInterpretedExpr(ExprState *state) {
       return;
     }
   } else if (state->steps_len == 3) {
-    ExprEvalOp step0 = state->steps[0].opcode;
-    ExprEvalOp step1 = state->steps[1].opcode;
+    ExprEvalOp step0 = (ExprEvalOp)state->steps[0].opcode;
+    ExprEvalOp step1 = (ExprEvalOp)state->steps[1].opcode;
 
     if (step0 == EEOP_INNER_FETCHSOME && step1 == EEOP_INNER_VAR) {
-      state->evalfunc_private = ExecJustInnerVar;
+      state->evalfunc_private = (void *)ExecJustInnerVar;
       return;
     } else if (step0 == EEOP_OUTER_FETCHSOME && step1 == EEOP_OUTER_VAR) {
-      state->evalfunc_private = ExecJustOuterVar;
+      state->evalfunc_private = (void *)ExecJustOuterVar;
       return;
     } else if (step0 == EEOP_SCAN_FETCHSOME && step1 == EEOP_SCAN_VAR) {
-      state->evalfunc_private = ExecJustScanVar;
+      state->evalfunc_private = (void *)ExecJustScanVar;
       return;
     } else if (step0 == EEOP_INNER_FETCHSOME &&
                step1 == EEOP_ASSIGN_INNER_VAR) {
-      state->evalfunc_private = ExecJustAssignInnerVar;
+      state->evalfunc_private = (void *)ExecJustAssignInnerVar;
       return;
     } else if (step0 == EEOP_OUTER_FETCHSOME &&
                step1 == EEOP_ASSIGN_OUTER_VAR) {
-      state->evalfunc_private = ExecJustAssignOuterVar;
+      state->evalfunc_private = (void *)ExecJustAssignOuterVar;
       return;
     } else if (step0 == EEOP_SCAN_FETCHSOME && step1 == EEOP_ASSIGN_SCAN_VAR) {
-      state->evalfunc_private = ExecJustAssignScanVar;
+      state->evalfunc_private = (void *)ExecJustAssignScanVar;
       return;
     } else if (step0 == EEOP_CASE_TESTVAL &&
                (step1 == EEOP_FUNCEXPR_STRICT ||
                 step1 == EEOP_FUNCEXPR_STRICT_1 ||
                 step1 == EEOP_FUNCEXPR_STRICT_2)) {
-      state->evalfunc_private = ExecJustApplyFuncToCase;
+      state->evalfunc_private = (void *)ExecJustApplyFuncToCase;
       return;
     } else if (step0 == EEOP_INNER_VAR && step1 == EEOP_HASHDATUM_FIRST) {
       state->evalfunc_private = (void *)ExecJustHashInnerVarVirt;
@@ -367,28 +367,28 @@ void ExecReadyInterpretedExpr(ExprState *state) {
       return;
     }
   } else if (state->steps_len == 2) {
-    ExprEvalOp step0 = state->steps[0].opcode;
+    ExprEvalOp step0 = (ExprEvalOp)state->steps[0].opcode;
 
     if (step0 == EEOP_CONST) {
-      state->evalfunc_private = ExecJustConst;
+      state->evalfunc_private = (void *)ExecJustConst;
       return;
     } else if (step0 == EEOP_INNER_VAR) {
-      state->evalfunc_private = ExecJustInnerVarVirt;
+      state->evalfunc_private = (void *)ExecJustInnerVarVirt;
       return;
     } else if (step0 == EEOP_OUTER_VAR) {
-      state->evalfunc_private = ExecJustOuterVarVirt;
+      state->evalfunc_private = (void *)ExecJustOuterVarVirt;
       return;
     } else if (step0 == EEOP_SCAN_VAR) {
-      state->evalfunc_private = ExecJustScanVarVirt;
+      state->evalfunc_private = (void *)ExecJustScanVarVirt;
       return;
     } else if (step0 == EEOP_ASSIGN_INNER_VAR) {
-      state->evalfunc_private = ExecJustAssignInnerVarVirt;
+      state->evalfunc_private = (void *)ExecJustAssignInnerVarVirt;
       return;
     } else if (step0 == EEOP_ASSIGN_OUTER_VAR) {
-      state->evalfunc_private = ExecJustAssignOuterVarVirt;
+      state->evalfunc_private = (void *)ExecJustAssignOuterVarVirt;
       return;
     } else if (step0 == EEOP_ASSIGN_SCAN_VAR) {
-      state->evalfunc_private = ExecJustAssignScanVarVirt;
+      state->evalfunc_private = (void *)ExecJustAssignScanVarVirt;
       return;
     }
   }
@@ -408,7 +408,7 @@ void ExecReadyInterpretedExpr(ExprState *state) {
   state->flags |= EEO_FLAG_DIRECT_THREADED;
 #endif /* EEO_USE_COMPUTED_GOTO */
 
-  state->evalfunc_private = ExecInterpExpr;
+  state->evalfunc_private = (void *)ExecInterpExpr;
 }
 
 /*
@@ -2681,8 +2681,9 @@ ExprEvalOp ExecEvalStepOp(ExprState *state, ExprEvalStep *op) {
     ExprEvalOpLookup *res;
 
     key.opcode = (void *)op->opcode;
-    res = bsearch(&key, reverse_dispatch_table, EEOP_LAST /* nmembers */,
-                  sizeof(ExprEvalOpLookup), dispatch_compare_ptr);
+    res = (ExprEvalOpLookup *)bsearch(
+        &key, reverse_dispatch_table, EEOP_LAST /* nmembers */,
+        sizeof(ExprEvalOpLookup), dispatch_compare_ptr);
     Assert(res); /* unknown ops shouldn't get looked up */
     return res->op;
   }
@@ -2756,7 +2757,7 @@ void ExecEvalParamExec(ExprState *state, ExprEvalStep *op,
   prm = &(econtext->ecxt_param_exec_vals[op->d.param.paramid]);
   if (unlikely(prm->execPlan != NULL)) {
     /* Parameter not evaluated yet, so go do it */
-    ExecSetParamPlan(prm->execPlan, econtext);
+    ExecSetParamPlan((SubPlanState *)prm->execPlan, econtext);
     /* ExecSetParamPlan should have processed this param... */
     Assert(prm->execPlan == NULL);
   }
@@ -3313,7 +3314,7 @@ void ExecEvalMinMax(ExprState *state, ExprEvalStep *op) {
   Datum *values = op->d.minmax.values;
   bool *nulls = op->d.minmax.nulls;
   FunctionCallInfo fcinfo = op->d.minmax.fcinfo_data;
-  MinMaxOp operator= op->d.minmax.op;
+  MinMaxOp operator_ = op->d.minmax.op;
 
   /* set at initialization */
   Assert(fcinfo->args[0].isnull == false);
@@ -3343,9 +3344,9 @@ void ExecEvalMinMax(ExprState *state, ExprEvalStep *op) {
       if (fcinfo->isnull) /* probably should not happen */
         continue;
 
-      if (cmpresult > 0 && operator== IS_LEAST)
+      if (cmpresult > 0 && operator_ == IS_LEAST)
         *op->resvalue = values[off];
-      else if (cmpresult < 0 && operator== IS_GREATEST)
+      else if (cmpresult < 0 && operator_ == IS_GREATEST)
         *op->resvalue = values[off];
     }
   }
@@ -4563,7 +4564,7 @@ static char *ExecGetJsonValueItemString(JsonbValue *item, bool *resnull) {
     return NULL;
 
   case jbvString: {
-    char *str = palloc(item->val.string.len + 1);
+    char *str = (char *)palloc(item->val.string.len + 1);
 
     memcpy(str, item->val.string.val, item->val.string.len);
     str[item->val.string.len] = '\0';

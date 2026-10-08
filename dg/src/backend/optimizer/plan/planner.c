@@ -1280,7 +1280,7 @@ static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode) {
     ListCell *l;
 
     foreach (l, f->fromlist)
-      preprocess_qual_conditions(root, lfirst(l));
+      preprocess_qual_conditions(root, (Node *)lfirst(l));
 
     f->quals = preprocess_expression(root, f->quals, EXPRKIND_QUAL);
   } else if (IsA(jtnode, JoinExpr)) {
@@ -1930,7 +1930,7 @@ static void grouping_planner(PlannerInfo *root, double tuple_fraction,
              * references attribute numbers.
              */
             foreach (l, parse->mergeActionList) {
-              MergeAction *action = lfirst(l),
+              MergeAction *action = (MergeAction *)lfirst(l),
                           *leaf_action = copyObject(action);
 
               leaf_action->qual = adjust_appendrel_attrs_multilevel(
@@ -2070,7 +2070,8 @@ static grouping_sets_data *preprocess_grouping_sets(PlannerInfo *root) {
   List *sets;
   int maxref = 0;
   ListCell *lc_set;
-  grouping_sets_data *gd = palloc0(sizeof(grouping_sets_data));
+  grouping_sets_data *gd =
+      (grouping_sets_data *)palloc0(sizeof(grouping_sets_data));
 
   /*
    * We don't currently make any attempt to optimize the groupClause when
@@ -2760,10 +2761,10 @@ static List *extract_rollup_sets(List *groupingSets) {
    * to leave 0 free for the NIL node in the graph algorithm.
    *----------
    */
-  orig_sets = palloc0((num_sets_raw + 1) * sizeof(List *));
-  set_masks = palloc0((num_sets_raw + 1) * sizeof(Bitmapset *));
-  adjacency = palloc0((num_sets_raw + 1) * sizeof(short *));
-  adjacency_buf = palloc((num_sets_raw + 1) * sizeof(short));
+  orig_sets = (List **)palloc0((num_sets_raw + 1) * sizeof(List *));
+  set_masks = (Bitmapset **)palloc0((num_sets_raw + 1) * sizeof(Bitmapset *));
+  adjacency = (short int **)palloc0((num_sets_raw + 1) * sizeof(short *));
+  adjacency_buf = (short int *)palloc((num_sets_raw + 1) * sizeof(short));
 
   j_size = 0;
   j = 0;
@@ -2813,7 +2814,7 @@ static List *extract_rollup_sets(List *groupingSets) {
 
       if (n_adj > 0) {
         adjacency_buf[0] = n_adj;
-        adjacency[i] = palloc((n_adj + 1) * sizeof(short));
+        adjacency[i] = (short int *)palloc((n_adj + 1) * sizeof(short));
         memcpy(adjacency[i], adjacency_buf, (n_adj + 1) * sizeof(short));
       } else
         adjacency[i] = NULL;
@@ -2835,7 +2836,7 @@ static List *extract_rollup_sets(List *groupingSets) {
    * pair_vu[v] = u (both will be true, but we check both so that we can do
    * it in one pass)
    */
-  chains = palloc0((num_sets + 1) * sizeof(int));
+  chains = (int *)palloc0((num_sets + 1) * sizeof(int));
 
   for (i = 1; i <= num_sets; ++i) {
     int u = state->pair_vu[i];
@@ -2850,7 +2851,7 @@ static List *extract_rollup_sets(List *groupingSets) {
   }
 
   /* build result lists. */
-  results = palloc0((num_chains + 1) * sizeof(List *));
+  results = (List **)palloc0((num_chains + 1) * sizeof(List *));
 
   for (i = 1; i <= num_sets; ++i) {
     int c = chains[i];
@@ -2915,7 +2916,8 @@ static List *reorder_grouping_sets(List *groupingSets, List *sortclause) {
 
     while (list_length(sortclause) > list_length(previous) &&
            new_elems != NIL) {
-      SortGroupClause *sc = list_nth(sortclause, list_length(previous));
+      SortGroupClause *sc =
+          (SortGroupClause *)list_nth(sortclause, list_length(previous));
       int ref = sc->tleSortGroupRef;
 
       if (list_member_int(new_elems, ref)) {
@@ -3980,7 +3982,7 @@ static void consider_groupingsets_paths(PlannerInfo *root,
       double scale;
       int num_rollups = list_length(gd->rollups);
       int k_capacity;
-      int *k_weights = palloc(num_rollups * sizeof(int));
+      int *k_weights = (int *)palloc(num_rollups * sizeof(int));
       Bitmapset *hash_items = NULL;
       int i;
 
@@ -4423,7 +4425,7 @@ static void create_partial_distinct_paths(PlannerInfo *root,
   partial_distinct_rel->useridiscurrent = input_rel->useridiscurrent;
   partial_distinct_rel->fdwroutine = input_rel->fdwroutine;
 
-  cheapest_partial_path = linitial(input_rel->partial_pathlist);
+  cheapest_partial_path = (Path *)linitial(input_rel->partial_pathlist);
 
   distinctExprs = get_sortgrouplist_exprs(root->processed_distinctClause,
                                           parse->targetList);
@@ -4869,7 +4871,7 @@ static RelOptInfo *create_ordered_paths(PlannerInfo *root,
       input_rel->partial_pathlist != NIL) {
     Path *cheapest_partial_path;
 
-    cheapest_partial_path = linitial(input_rel->partial_pathlist);
+    cheapest_partial_path = (Path *)linitial(input_rel->partial_pathlist);
 
     foreach (lc, input_rel->partial_pathlist) {
       Path *input_path = (Path *)lfirst(lc);
@@ -5405,8 +5407,8 @@ static List *select_active_windows(PlannerInfo *root,
   List *result = NIL;
   ListCell *lc;
   int nActive = 0;
-  WindowClauseSortData *actives =
-      palloc(sizeof(WindowClauseSortData) * list_length(windowClause));
+  WindowClauseSortData *actives = (WindowClauseSortData *)palloc(
+      sizeof(WindowClauseSortData) * list_length(windowClause));
 
   /* First, construct an array of the active windows */
   foreach (lc, windowClause) {
@@ -5526,8 +5528,8 @@ static void name_active_windows(List *activeWindows) {
  * reducing the total number of sorts required for the query.
  */
 static int common_prefix_cmp(const void *a, const void *b) {
-  const WindowClauseSortData *wcsa = a;
-  const WindowClauseSortData *wcsb = b;
+  const WindowClauseSortData *wcsa = (const WindowClauseSortData *)a;
+  const WindowClauseSortData *wcsb = (const WindowClauseSortData *)b;
   ListCell *item_a;
   ListCell *item_b;
 
@@ -6658,7 +6660,7 @@ static RelOptInfo *create_partial_grouping_paths(PlannerInfo *root,
    * has no partial paths, then we can't.
    */
   if (grouped_rel->consider_parallel && input_rel->partial_pathlist != NIL)
-    cheapest_partial_path = linitial(input_rel->partial_pathlist);
+    cheapest_partial_path = (Path *)linitial(input_rel->partial_pathlist);
 
   /*
    * If we can't partially aggregate partial paths, and we can't partially
@@ -6923,7 +6925,7 @@ static void gather_grouping_paths(PlannerInfo *root, RelOptInfo *rel) {
   /* Try Gather for unordered paths and Gather Merge for ordered ones. */
   generate_useful_gather_paths(root, rel, true);
 
-  cheapest_partial_path = linitial(rel->partial_pathlist);
+  cheapest_partial_path = (Path *)linitial(rel->partial_pathlist);
 
   /* XXX Shouldn't this also consider the group-key-reordering? */
   foreach (lc, rel->partial_pathlist) {
@@ -7368,11 +7370,11 @@ static bool group_by_has_partkey(RelOptInfo *input_rel, List *targetList,
 
     foreach (lc, partexprs) {
       ListCell *lg;
-      Expr *partexpr = lfirst(lc);
+      Expr *partexpr = (Expr *)lfirst(lc);
       Oid partcoll = input_rel->part_scheme->partcollation[cnt];
 
       foreach (lg, groupexprs) {
-        Expr *groupexpr = lfirst(lg);
+        Expr *groupexpr = (Expr *)lfirst(lg);
         Oid groupcoll = exprCollation((Node *)groupexpr);
 
         /*

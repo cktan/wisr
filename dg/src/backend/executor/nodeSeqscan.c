@@ -317,7 +317,7 @@ void ExecSeqScanInitializeDSM(SeqScanState *node, ParallelContext *pcxt) {
   EState *estate = node->ss.ps.state;
   ParallelTableScanDesc pscan;
 
-  pscan = shm_toc_allocate(pcxt->toc, node->pscan_len);
+  pscan = (ParallelTableScanDesc)shm_toc_allocate(pcxt->toc, node->pscan_len);
   table_parallelscan_initialize(node->ss.ss_currentRelation, pscan,
                                 estate->es_snapshot);
   shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, pscan);
@@ -348,7 +348,8 @@ void ExecSeqScanInitializeWorker(SeqScanState *node,
                                  ParallelWorkerContext *pwcxt) {
   ParallelTableScanDesc pscan;
 
-  pscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
+  pscan = (ParallelTableScanDesc)shm_toc_lookup(
+      pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
   node->ss.ss_currentScanDesc =
       table_beginscan_parallel(node->ss.ss_currentRelation, pscan);
 }

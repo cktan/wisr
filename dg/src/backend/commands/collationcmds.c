@@ -529,8 +529,8 @@ Datum pg_collation_actual_version(PG_FUNCTION_ARGS) {
  * -> "br_FR@euro").  Return true if a new, different name was
  * generated.
  */
-static bool normalize_libc_locale_name(char *new, const char *old) {
-  char *n = new;
+static bool normalize_libc_locale_name(char *new_, const char *old) {
+  char *n = new_;
   const char *o = old;
   bool changed = false;
 
@@ -589,7 +589,7 @@ static char *get_icu_locale_comment(const char *localename) {
   }
 
   /* OK, transcribe */
-  result = palloc(len_uchar + 1);
+  result = (char *)palloc(len_uchar + 1);
   for (i = 0; i < len_uchar; i++)
     result[i] = displayname[i];
   result[len_uchar] = '\0';

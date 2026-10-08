@@ -450,7 +450,7 @@ static void btree_xlog_dedup(XLogReaderState *record) {
     state->base = NULL;
     state->baseoff = InvalidOffsetNumber;
     state->basetupsize = 0;
-    state->htids = palloc(state->maxpostingsize);
+    state->htids = (ItemPointer)palloc(state->maxpostingsize);
     state->nhtids = 0;
     state->nitems = 0;
     state->phystupsize = 0;
@@ -520,8 +520,9 @@ static void btree_xlog_updates(Page page, OffsetNumber *updatedoffsets,
     itemid = PageGetItemId(page, updatedoffsets[i]);
     origtuple = (IndexTuple)PageGetItem(page, itemid);
 
-    vacposting = palloc(offsetof(BTVacuumPostingData, deletetids) +
-                        updates->ndeletedtids * sizeof(uint16));
+    vacposting =
+        (BTVacuumPosting)palloc(offsetof(BTVacuumPostingData, deletetids) +
+                                updates->ndeletedtids * sizeof(uint16));
     vacposting->updatedoffset = updatedoffsets[i];
     vacposting->itup = origtuple;
     vacposting->ndeletedtids = updates->ndeletedtids;

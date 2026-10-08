@@ -50,7 +50,7 @@ static bool valid_variable_name(const char *name) {
 VariableSpace CreateVariableSpace(void) {
   struct _variable *ptr;
 
-  ptr = pg_malloc(sizeof *ptr);
+  ptr = (_variable *)pg_malloc(sizeof *ptr);
   ptr->name = NULL;
   ptr->value = NULL;
   ptr->substitute_hook = NULL;
@@ -317,7 +317,7 @@ bool SetVariable(VariableSpace space, const char *name, const char *value) {
 
   /* not present, make new entry ... unless we were asked to delete */
   if (value) {
-    current = pg_malloc(sizeof *current);
+    current = (_variable *)pg_malloc(sizeof *current);
     current->name = pg_strdup(name);
     current->value = pg_strdup(value);
     current->substitute_hook = NULL;
@@ -373,7 +373,7 @@ void SetVariableHooks(VariableSpace space, const char *name,
   }
 
   /* not present, make new entry */
-  current = pg_malloc(sizeof *current);
+  current = (_variable *)pg_malloc(sizeof *current);
   current->name = pg_strdup(name);
   current->value = NULL;
   current->substitute_hook = shook;

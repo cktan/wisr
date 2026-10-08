@@ -2141,7 +2141,7 @@ static HeapTuple ExecCallTriggerFunc(TriggerData *trigdata, int tgindx,
 void ExecBSInsertTriggers(EState *estate, ResultRelInfo *relinfo) {
   TriggerDesc *trigdesc;
   int i;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
 
   trigdesc = relinfo->ri_TrigDesc;
 
@@ -2196,7 +2196,7 @@ bool ExecBRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
   TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
   HeapTuple newtuple = NULL;
   bool should_free;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
   int i;
 
   LocTriggerData.type = T_TriggerData;
@@ -2288,7 +2288,7 @@ bool ExecIRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
   TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
   HeapTuple newtuple = NULL;
   bool should_free;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
   int i;
 
   LocTriggerData.type = T_TriggerData;
@@ -2336,7 +2336,7 @@ bool ExecIRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 void ExecBSDeleteTriggers(EState *estate, ResultRelInfo *relinfo) {
   TriggerDesc *trigdesc;
   int i;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
 
   trigdesc = relinfo->ri_TrigDesc;
 
@@ -2401,7 +2401,7 @@ bool ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
   TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
   TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
   bool result = true;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
   HeapTuple trigtuple;
   bool should_free = false;
   int i;
@@ -2513,7 +2513,7 @@ bool ExecIRDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
                           HeapTuple trigtuple) {
   TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
   TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
   int i;
 
   LocTriggerData.type = T_TriggerData;
@@ -2551,7 +2551,7 @@ bool ExecIRDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
 void ExecBSUpdateTriggers(EState *estate, ResultRelInfo *relinfo) {
   TriggerDesc *trigdesc;
   int i;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
   Bitmapset *updatedCols;
 
   trigdesc = relinfo->ri_TrigDesc;
@@ -2622,7 +2622,7 @@ bool ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
   HeapTuple trigtuple;
   bool should_free_trig = false;
   bool should_free_new = false;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
   int i;
   Bitmapset *updatedCols;
   LockTupleMode lockmode;
@@ -2826,7 +2826,7 @@ bool ExecIRUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
   TupleTableSlot *oldslot = ExecGetTriggerOldSlot(estate, relinfo);
   HeapTuple newtuple = NULL;
   bool should_free;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
   int i;
 
   LocTriggerData.type = T_TriggerData;
@@ -2878,7 +2878,7 @@ bool ExecIRUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 void ExecBSTruncateTriggers(EState *estate, ResultRelInfo *relinfo) {
   TriggerDesc *trigdesc;
   int i;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
 
   trigdesc = relinfo->ri_TrigDesc;
 
@@ -3107,7 +3107,7 @@ static bool TriggerEnabled(EState *estate, ResultRelInfo *relinfo,
       Node *tgqual;
 
       oldContext = MemoryContextSwitchTo(estate->es_query_cxt);
-      tgqual = stringToNode(trigger->tgqual);
+      tgqual = (Node *)stringToNode(trigger->tgqual);
       tgqual = expand_generated_columns_in_expr(
           tgqual, relinfo->ri_RelationDesc, PRS2_OLD_VARNO);
       tgqual = expand_generated_columns_in_expr(
@@ -3660,7 +3660,8 @@ static void afterTriggerAddEvent(AfterTriggerEventList *events,
         chunksize /= 2; /* too many shared records */
       chunksize = Min(chunksize, MAX_CHUNK_SIZE);
     }
-    chunk = MemoryContextAlloc(afterTriggers.event_cxt, chunksize);
+    chunk = (AfterTriggerEventChunk *)MemoryContextAlloc(
+        afterTriggers.event_cxt, chunksize);
     chunk->next = NULL;
     chunk->freeptr = CHUNK_DATA_START(chunk);
     chunk->endptr = chunk->endfree = (char *)chunk + chunksize;
@@ -3839,7 +3840,7 @@ static void AfterTriggerExecute(
   Relation dst_rel = dst_relInfo->ri_RelationDesc;
   AfterTriggerShared evtshared = GetTriggerSharedData(event);
   Oid tgoid = evtshared->ats_tgoid;
-  TriggerData LocTriggerData = {0};
+  TriggerData LocTriggerData = {(NodeTag)0};
   Oid save_rolid;
   int save_sec_context;
   HeapTuple rettuple;
@@ -5154,7 +5155,7 @@ void AfterTriggerSetState(ConstraintsSetStmt *stmt) {
     conrel = table_open(ConstraintRelationId, AccessShareLock);
 
     foreach (lc, stmt->constraints) {
-      RangeVar *constraint = lfirst(lc);
+      RangeVar *constraint = (RangeVar *)lfirst(lc);
       bool found;
       List *namespacelist;
       ListCell *nslc;

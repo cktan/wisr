@@ -155,7 +155,7 @@ uint64 *pgaio_io_get_handle_data(PgAioHandle *ioh, uint8 *len) {
 
 void pgaio_result_report(PgAioResult result, const PgAioTargetData *target_data,
                          int elevel) {
-  PgAioHandleCallbackID cb_id = result.id;
+  PgAioHandleCallbackID cb_id = (PgAioHandleCallbackID)result.id;
   const PgAioHandleCallbacksEntry *ce = &aio_handle_cbs[cb_id];
 
   Assert(result.status != PGAIO_RS_UNKNOWN);
@@ -181,7 +181,7 @@ void pgaio_io_call_stage(PgAioHandle *ioh) {
   Assert(ioh->op > PGAIO_OP_INVALID && ioh->op < PGAIO_OP_COUNT);
 
   for (int i = ioh->num_callbacks; i > 0; i--) {
-    PgAioHandleCallbackID cb_id = ioh->callbacks[i - 1];
+    PgAioHandleCallbackID cb_id = (PgAioHandleCallbackID)ioh->callbacks[i - 1];
     uint8 cb_data = ioh->callbacks_data[i - 1];
     const PgAioHandleCallbacksEntry *ce = &aio_handle_cbs[cb_id];
 
@@ -216,7 +216,7 @@ void pgaio_io_call_complete_shared(PgAioHandle *ioh) {
    * Each callback can modify the result forwarded to the next callback.
    */
   for (int i = ioh->num_callbacks; i > 0; i--) {
-    PgAioHandleCallbackID cb_id = ioh->callbacks[i - 1];
+    PgAioHandleCallbackID cb_id = (PgAioHandleCallbackID)ioh->callbacks[i - 1];
     uint8 cb_data = ioh->callbacks_data[i - 1];
     const PgAioHandleCallbacksEntry *ce = &aio_handle_cbs[cb_id];
 
@@ -227,8 +227,9 @@ void pgaio_io_call_complete_shared(PgAioHandle *ioh) {
         DEBUG4, ioh,
         "calling cb #%d, id %d/%s->complete_shared(%u) with distilled result: "
         "(status %s, id %u, error_data %d, result %d)",
-        i, cb_id, ce->name, cb_data, pgaio_result_status_string(result.status),
-        result.id, result.error_data, result.result);
+        i, cb_id, ce->name, cb_data,
+        pgaio_result_status_string((PgAioResultStatus)result.status), result.id,
+        result.error_data, result.result);
     result = ce->cb->complete_shared(ioh, result, cb_data);
 
     /* the callback should never transition to unknown */
@@ -240,8 +241,8 @@ void pgaio_io_call_complete_shared(PgAioHandle *ioh) {
   pgaio_debug_io(DEBUG3, ioh,
                  "after shared completion: distilled result: (status %s, id "
                  "%u, error_data: %d, result %d), raw_result: %d",
-                 pgaio_result_status_string(result.status), result.id,
-                 result.error_data, result.result, ioh->result);
+                 pgaio_result_status_string((PgAioResultStatus)result.status),
+                 result.id, result.error_data, result.result, ioh->result);
 
   END_CRIT_SECTION();
 }
@@ -268,7 +269,7 @@ PgAioResult pgaio_io_call_complete_local(PgAioHandle *ioh) {
   Assert(result.status != PGAIO_RS_UNKNOWN);
 
   for (int i = ioh->num_callbacks; i > 0; i--) {
-    PgAioHandleCallbackID cb_id = ioh->callbacks[i - 1];
+    PgAioHandleCallbackID cb_id = (PgAioHandleCallbackID)ioh->callbacks[i - 1];
     uint8 cb_data = ioh->callbacks_data[i - 1];
     const PgAioHandleCallbacksEntry *ce = &aio_handle_cbs[cb_id];
 
@@ -279,8 +280,9 @@ PgAioResult pgaio_io_call_complete_local(PgAioHandle *ioh) {
         DEBUG4, ioh,
         "calling cb #%d, id %d/%s->complete_local(%u) with distilled result: "
         "status %s, id %u, error_data %d, result %d",
-        i, cb_id, ce->name, cb_data, pgaio_result_status_string(result.status),
-        result.id, result.error_data, result.result);
+        i, cb_id, ce->name, cb_data,
+        pgaio_result_status_string((PgAioResultStatus)result.status), result.id,
+        result.error_data, result.result);
     result = ce->cb->complete_local(ioh, result, cb_data);
 
     /* the callback should never transition to unknown */
@@ -296,8 +298,8 @@ PgAioResult pgaio_io_call_complete_local(PgAioHandle *ioh) {
   pgaio_debug_io(DEBUG3, ioh,
                  "after local completion: result: (status %s, id %u, "
                  "error_data %d, result %d), raw_result: %d",
-                 pgaio_result_status_string(result.status), result.id,
-                 result.error_data, result.result, ioh->result);
+                 pgaio_result_status_string((PgAioResultStatus)result.status),
+                 result.id, result.error_data, result.result, ioh->result);
 
   END_CRIT_SECTION();
 

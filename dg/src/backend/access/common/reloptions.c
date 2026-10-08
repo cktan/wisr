@@ -474,8 +474,8 @@ static void initialize_reloptions(void) {
 
   if (relOpts)
     pfree(relOpts);
-  relOpts =
-      MemoryContextAlloc(TopMemoryContext, (j + 1) * sizeof(relopt_gen *));
+  relOpts = (relopt_gen **)MemoryContextAlloc(TopMemoryContext,
+                                              (j + 1) * sizeof(relopt_gen *));
 
   j = 0;
   for (i = 0; boolRelOpts[i].gen.name; i++) {
@@ -555,11 +555,12 @@ static void add_reloption(relopt_gen *newoption) {
 
     if (max_custom_options == 0) {
       max_custom_options = 8;
-      custom_options = palloc(max_custom_options * sizeof(relopt_gen *));
+      custom_options =
+          (relopt_gen **)palloc(max_custom_options * sizeof(relopt_gen *));
     } else {
       max_custom_options *= 2;
-      custom_options =
-          repalloc(custom_options, max_custom_options * sizeof(relopt_gen *));
+      custom_options = (relopt_gen **)repalloc(
+          custom_options, max_custom_options * sizeof(relopt_gen *));
     }
     MemoryContextSwitchTo(oldcxt);
   }
@@ -586,7 +587,7 @@ void init_local_reloptions(local_relopts *relopts, Size relopt_struct_size) {
  */
 void register_reloptions_validator(local_relopts *relopts,
                                    relopts_validator validator) {
-  relopts->validators = lappend(relopts->validators, validator);
+  relopts->validators = lappend(relopts->validators, (void *)validator);
 }
 
 /*
@@ -595,7 +596,7 @@ void register_reloptions_validator(local_relopts *relopts,
  */
 static void add_local_reloption(local_relopts *relopts, relopt_gen *newoption,
                                 int offset) {
-  local_relopt *opt = palloc(sizeof(*opt));
+  local_relopt *opt = (local_relopt *)palloc(sizeof(*opt));
 
   Assert(offset < relopts->relopt_struct_size);
 
@@ -642,7 +643,7 @@ static relopt_gen *allocate_reloption(bits32 kinds, int type, const char *name,
     return NULL; /* keep compiler quiet */
   }
 
-  newoption = palloc(size);
+  newoption = (relopt_gen *)palloc(size);
 
   newoption->name = pstrdup(name);
   if (desc)
@@ -651,7 +652,7 @@ static relopt_gen *allocate_reloption(bits32 kinds, int type, const char *name,
     newoption->desc = NULL;
   newoption->kinds = kinds;
   newoption->namelen = strlen(name);
-  newoption->type = type;
+  newoption->type = (relopt_type)type;
   newoption->lockmode = lockmode;
 
   if (oldcxt != NULL)
@@ -1275,7 +1276,7 @@ static relopt_value *parseRelOptions(Datum options, bool validate,
       numoptions++;
 
   if (numoptions > 0) {
-    reloptions = palloc(numoptions * sizeof(relopt_value));
+    reloptions = (relopt_value *)palloc(numoptions * sizeof(relopt_value));
 
     for (i = 0, j = 0; relOpts[i]; i++) {
       if (relOpts[i]->kinds & kind) {
@@ -1298,12 +1299,12 @@ static relopt_value *parseRelOptions(Datum options, bool validate,
 static relopt_value *parseLocalRelOptions(local_relopts *relopts, Datum options,
                                           bool validate) {
   int nopts = list_length(relopts->options);
-  relopt_value *values = palloc(sizeof(*values) * nopts);
+  relopt_value *values = (relopt_value *)palloc(sizeof(*values) * nopts);
   ListCell *lc;
   int i = 0;
 
   foreach (lc, relopts->options) {
-    local_relopt *opt = lfirst(lc);
+    local_relopt *opt = (local_relopt *)lfirst(lc);
 
     values[i].gen = opt->option;
     values[i].isset = false;
@@ -1683,14 +1684,15 @@ void *build_reloptions(Datum reloptions, bool validate, relopt_kind kind,
 void *build_local_reloptions(local_relopts *relopts, Datum options,
                              bool validate) {
   int noptions = list_length(relopts->options);
-  relopt_parse_elt *elems = palloc(sizeof(*elems) * noptions);
+  relopt_parse_elt *elems =
+      (relopt_parse_elt *)palloc(sizeof(*elems) * noptions);
   relopt_value *vals;
   void *opts;
   int i = 0;
   ListCell *lc;
 
   foreach (lc, relopts->options) {
-    local_relopt *opt = lfirst(lc);
+    local_relopt *opt = (local_relopt *)lfirst(lc);
 
     elems[i].optname = opt->option->name;
     elems[i].opttype = opt->option->type;

@@ -15,8 +15,8 @@
 
 #include "postgres_fe.h"
 
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "access/xlog_internal.h"
 #include "common/archive.h"

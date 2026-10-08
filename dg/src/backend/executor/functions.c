@@ -505,7 +505,7 @@ static SQLFunctionCache *init_sql_fcache(FunctionCallInfo fcinfo,
    * the FmgrInfo, so it goes in fn_mcxt.  Also set up a memory context
    * callback that will be invoked when fn_mcxt is deleted.
    */
-  fcache = finfo->fn_extra;
+  fcache = (SQLFunctionCache *)finfo->fn_extra;
   if (fcache == NULL) {
     fcache = (SQLFunctionCache *)MemoryContextAllocZero(
         finfo->fn_mcxt, sizeof(SQLFunctionCache));
@@ -1051,7 +1051,7 @@ static void sql_compile_callback(FunctionCallInfo fcinfo,
     /* Source queries are already parse-analyzed */
     Node *n;
 
-    n = stringToNode(TextDatumGetCString(tmp));
+    n = (Node *)stringToNode(TextDatumGetCString(tmp));
     if (IsA(n, List))
       source_list = linitial_node(List, castNode(List, n));
     else
@@ -2219,8 +2219,8 @@ tlist_coercion_finished:
 
       if (tle->resjunk)
         continue;
-      colnames =
-          lappend(colnames, makeString(tle->resname ? tle->resname : ""));
+      colnames = lappend(
+          colnames, makeString((char *)(tle->resname ? tle->resname : "")));
     }
 
     /* Build a suitable RTE for the subquery */

@@ -16,16 +16,16 @@
 
 #include "postgres.h"
 
-#include <arpa/inet.h>
-#include <ctype.h>
+#include <sys/stat.h>
+#include <signal.h>
 #include <fcntl.h>
+#include <ctype.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <signal.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include <arpa/inet.h>
 
 #include "common/string.h"
 #include "libpq/libpq.h"

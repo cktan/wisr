@@ -51,7 +51,8 @@ Session *CurrentSession = NULL;
  * Set up CurrentSession to point to an empty Session object.
  */
 void InitializeSession(void) {
-  CurrentSession = MemoryContextAllocZero(TopMemoryContext, sizeof(Session));
+  CurrentSession =
+      (Session *)MemoryContextAllocZero(TopMemoryContext, sizeof(Session));
 }
 
 /*

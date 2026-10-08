@@ -524,7 +524,7 @@ static int tzloadbody(char const *name, char *canonname, struct state *sp,
  * given name is stored there (the buffer must be > TZ_STRLEN_MAX bytes!).
  */
 int tzload(const char *name, char *canonname, struct state *sp, bool doextend) {
-  union local_storage *lsp = malloc(sizeof *lsp);
+  union local_storage *lsp = (local_storage *)malloc(sizeof *lsp);
 
   if (!lsp)
     return errno;

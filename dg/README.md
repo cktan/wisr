@@ -4,7 +4,25 @@ A fork of PostgreSQL that runs on the storage stack in `../sm`.
 `../sm/PART4.md` §10 says how it is to be made, and §9 what it
 calls.
 
-**It does not build yet.** This is the starting copy.
+**It compiles and does not link yet.** `make -j4` generates what
+is generated and compiles every file as strict C++, with no
+`-fpermissive`; `make clean` and `make format` do what they say.
+Nothing is linked: the server still calls what was left out
+below, replication most of all, and 204 built-in functions that
+`pg_proc.dat` lists and no file here defines.
+
+## Building
+
+Each directory has a Makefile of a few lines that includes
+`dg.mk`, which holds the rules; `Makefile` here adds the
+generated sources. A file that is not compiled is named in its
+directory's `SKIP`, with the reason beside it. The TLS and GSSAPI
+files are the ones waiting on a decision.
+
+Two tools made the C compile as C++, and are kept for the code
+still to come from PostgreSQL: `src/tools/cxx_keywords.py`
+renames identifiers that are C++ keywords, and
+`src/tools/cxx_casts.py` writes the casts C does not ask for.
 
 ## Where it came from
 

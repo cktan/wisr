@@ -615,7 +615,7 @@ static void datum_to_jsonb_internal(Datum val, bool is_null,
       break;
     case JSONTYPE_BOOL:
       if (key_scalar) {
-        outputstr = DatumGetBool(val) ? "true" : "false";
+        outputstr = (char *)(DatumGetBool(val) ? "true" : "false");
         jb.type = jbvString;
         jb.val.string.len = strlen(outputstr);
         jb.val.string.val = outputstr;
@@ -1304,7 +1304,7 @@ static JsonbParseState *clone_parse_state(JsonbParseState *state) {
   if (state == NULL)
     return NULL;
 
-  result = palloc(sizeof(JsonbParseState));
+  result = (JsonbParseState *)palloc(sizeof(JsonbParseState));
   icursor = state;
   ocursor = result;
   for (;;) {
@@ -1315,7 +1315,7 @@ static JsonbParseState *clone_parse_state(JsonbParseState *state) {
     icursor = icursor->next;
     if (icursor == NULL)
       break;
-    ocursor->next = palloc(sizeof(JsonbParseState));
+    ocursor->next = (JsonbParseState *)palloc(sizeof(JsonbParseState));
     ocursor = ocursor->next;
   }
   ocursor->next = NULL;
@@ -1351,8 +1351,8 @@ static Datum jsonb_agg_transfn_worker(FunctionCallInfo fcinfo,
                       errmsg("could not determine input data type")));
 
     oldcontext = MemoryContextSwitchTo(aggcontext);
-    state = palloc(sizeof(JsonbAggState));
-    result = palloc0(sizeof(JsonbInState));
+    state = (JsonbAggState *)palloc(sizeof(JsonbAggState));
+    result = (JsonbInState *)palloc0(sizeof(JsonbInState));
     state->res = result;
     result->res = pushJsonbValue(&result->parseState, WJB_BEGIN_ARRAY, NULL);
     MemoryContextSwitchTo(oldcontext);
@@ -1405,7 +1405,7 @@ static Datum jsonb_agg_transfn_worker(FunctionCallInfo fcinfo,
     case WJB_VALUE:
       if (v.type == jbvString) {
         /* copy string values in the aggregate context */
-        char *buf = palloc(v.val.string.len + 1);
+        char *buf = (char *)palloc(v.val.string.len + 1);
 
         snprintf(buf, v.val.string.len + 1, "%s", v.val.string.val);
         v.val.string.val = buf;
@@ -1496,8 +1496,8 @@ static Datum jsonb_object_agg_transfn_worker(FunctionCallInfo fcinfo,
     Oid arg_type;
 
     oldcontext = MemoryContextSwitchTo(aggcontext);
-    state = palloc(sizeof(JsonbAggState));
-    result = palloc0(sizeof(JsonbInState));
+    state = (JsonbAggState *)palloc(sizeof(JsonbAggState));
+    result = (JsonbInState *)palloc0(sizeof(JsonbInState));
     state->res = result;
     result->res = pushJsonbValue(&result->parseState, WJB_BEGIN_OBJECT, NULL);
     result->parseState->unique_keys = unique_keys;
@@ -1581,7 +1581,7 @@ static Datum jsonb_object_agg_transfn_worker(FunctionCallInfo fcinfo,
     case WJB_ELEM:
       if (v.type == jbvString) {
         /* copy string values in the aggregate context */
-        char *buf = palloc(v.val.string.len + 1);
+        char *buf = (char *)palloc(v.val.string.len + 1);
 
         snprintf(buf, v.val.string.len + 1, "%s", v.val.string.val);
         v.val.string.val = buf;
@@ -1638,7 +1638,7 @@ static Datum jsonb_object_agg_transfn_worker(FunctionCallInfo fcinfo,
     case WJB_VALUE:
       if (v.type == jbvString) {
         /* copy string values in the aggregate context */
-        char *buf = palloc(v.val.string.len + 1);
+        char *buf = (char *)palloc(v.val.string.len + 1);
 
         snprintf(buf, v.val.string.len + 1, "%s", v.val.string.val);
         v.val.string.val = buf;

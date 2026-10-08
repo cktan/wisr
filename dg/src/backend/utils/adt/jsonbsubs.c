@@ -305,8 +305,9 @@ static void jsonb_exec_setup(const SubscriptingRef *sbsref,
   char *ptr;
 
   /* Allocate type-specific workspace with space for per-subscript data */
-  workspace = palloc0(MAXALIGN(sizeof(JsonbSubWorkspace)) +
-                      nupper * (sizeof(Datum) + sizeof(Oid)));
+  workspace =
+      (JsonbSubWorkspace *)palloc0(MAXALIGN(sizeof(JsonbSubWorkspace)) +
+                                   nupper * (sizeof(Datum) + sizeof(Oid)));
   workspace->expectArray = false;
   ptr = ((char *)workspace) + MAXALIGN(sizeof(JsonbSubWorkspace));
 
@@ -322,7 +323,7 @@ static void jsonb_exec_setup(const SubscriptingRef *sbsref,
 
   /* Collect subscript data types necessary at execution time */
   foreach (lc, sbsref->refupperindexpr) {
-    Node *expr = lfirst(lc);
+    Node *expr = (Node *)lfirst(lc);
     int i = foreach_current_index(lc);
 
     workspace->indexOid[i] = exprType(expr);

@@ -2775,7 +2775,7 @@ void add_setop_child_rel_equivalences(PlannerInfo *root, RelOptInfo *child_rel,
       elog(ERROR, "too few pathkeys for set operation");
 
     pk = lfirst_node(PathKey, lc2);
-    parent_em = linitial(pk->pk_eclass->ec_members);
+    parent_em = (EquivalenceMember *)linitial(pk->pk_eclass->ec_members);
 
     /*
      * We can safely pass the parent member as the first member in the

@@ -64,7 +64,7 @@ Datum int8out(PG_FUNCTION_ARGS) {
    * Since the length is already known, we do a manual palloc() and memcpy()
    * to avoid the strlen() call that would otherwise be done in pstrdup().
    */
-  result = palloc(len);
+  result = (char *)palloc(len);
   memcpy(result, buf, len);
   PG_RETURN_CSTRING(result);
 }
@@ -727,14 +727,14 @@ Datum int8inc_support(PG_FUNCTION_ARGS) {
        * never decrease, therefore is monotonically increasing
        */
       if (frameOptions & FRAMEOPTION_START_UNBOUNDED_PRECEDING)
-        monotonic |= MONOTONICFUNC_INCREASING;
+        monotonic = (MonotonicFunction)(monotonic | MONOTONICFUNC_INCREASING);
 
       /*
        * Likewise, if the frame bound is the end of the window then the
        * resulting value can never decrease.
        */
       if (frameOptions & FRAMEOPTION_END_UNBOUNDED_FOLLOWING)
-        monotonic |= MONOTONICFUNC_DECREASING;
+        monotonic = (MonotonicFunction)(monotonic | MONOTONICFUNC_DECREASING);
     }
 
     req->monotonic = monotonic;
@@ -1210,7 +1210,7 @@ Datum generate_series_step_int8(PG_FUNCTION_ARGS) {
   /*
    * get the saved state and use current as the result for this iteration
    */
-  fctx = funcctx->user_fctx;
+  fctx = (generate_series_fctx *)funcctx->user_fctx;
   result = fctx->current;
 
   if ((fctx->step > 0 && fctx->current <= fctx->finish) ||
@@ -1246,10 +1246,10 @@ Datum generate_series_int8_support(PG_FUNCTION_ARGS) {
       Node *arg1, *arg2, *arg3;
 
       /* We can use estimated argument values here */
-      arg1 = estimate_expression_value(req->root, linitial(args));
-      arg2 = estimate_expression_value(req->root, lsecond(args));
+      arg1 = estimate_expression_value(req->root, (Node *)linitial(args));
+      arg2 = estimate_expression_value(req->root, (Node *)lsecond(args));
       if (list_length(args) >= 3)
-        arg3 = estimate_expression_value(req->root, lthird(args));
+        arg3 = estimate_expression_value(req->root, (Node *)lthird(args));
       else
         arg3 = NULL;
 

@@ -14,11 +14,11 @@
  */
 #include "postgres.h"
 
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <math.h>
-#include <sys/file.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "access/sysattr.h"
@@ -541,16 +541,16 @@ Datum pg_basetype(PG_FUNCTION_ARGS) {
  * of the argument.
  */
 Datum pg_collation_for(PG_FUNCTION_ARGS) {
-  Oid typeid;
+  Oid typeid_;
   Oid collid;
 
-  typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
-  if (!typeid)
+  typeid_ = get_fn_expr_argtype(fcinfo->flinfo, 0);
+  if (!typeid_)
     PG_RETURN_NULL();
-  if (!type_is_collatable(typeid) && typeid != UNKNOWNOID)
+  if (!type_is_collatable(typeid_) && typeid_ != UNKNOWNOID)
     ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
                     errmsg("collations are not supported by type %s",
-                           format_type_be(typeid))));
+                           format_type_be(typeid_))));
 
   collid = PG_GET_COLLATION();
   if (!collid)

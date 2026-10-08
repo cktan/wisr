@@ -20,8 +20,8 @@
 #include "postgres.h"
 
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "access/genam.h"
 #include "access/heapam.h"
@@ -174,7 +174,7 @@ static void CreateDatabaseUsingWalLog(Oid src_dboid, Oid dst_dboid,
 
   /* Loop over our list of relfilelocators and copy each one. */
   foreach (cell, rlocatorlist) {
-    relinfo = lfirst(cell);
+    relinfo = (CreateDBRelInfo *)lfirst(cell);
     srcrlocator = relinfo->rlocator;
 
     /*

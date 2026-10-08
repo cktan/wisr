@@ -280,7 +280,7 @@ void pg_log_generic_v(enum pg_log_level level, enum pg_log_part part,
   required_len = vsnprintf(NULL, 0, fmt, ap2) + 1;
   va_end(ap2);
 
-  buf = pg_malloc_extended(required_len, MCXT_ALLOC_NO_OOM);
+  buf = (char *)pg_malloc_extended(required_len, MCXT_ALLOC_NO_OOM);
 
   errno = save_errno; /* malloc might change errno */
 

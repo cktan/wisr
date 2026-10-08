@@ -159,7 +159,7 @@ void add_base_rels_to_query(PlannerInfo *root, Node *jtnode) {
     ListCell *l;
 
     foreach (l, f->fromlist)
-      add_base_rels_to_query(root, lfirst(l));
+      add_base_rels_to_query(root, (Node *)lfirst(l));
   } else if (IsA(jtnode, JoinExpr)) {
     JoinExpr *j = (JoinExpr *)jtnode;
 
@@ -424,7 +424,7 @@ void remove_useless_groupby_columns(PlannerInfo *root) {
         bms_add_member(groupbyattnos[relid],
                        var->varattno - FirstLowInvalidHeapAttributeNumber);
 
-    info = palloc(sizeof(GroupByColInfo));
+    info = (GroupByColInfo *)palloc(sizeof(GroupByColInfo));
     info->attno = var->varattno;
     info->eq_opfamilies = get_mergejoin_opfamilies(sgc->eqop);
     info->coll = var->varcollid;
@@ -1149,8 +1149,8 @@ static List *deconstruct_recurse(PlannerInfo *root, Node *jtnode,
       List *sub_joinlist;
       int sub_members;
 
-      sub_joinlist = deconstruct_recurse(root, lfirst(l), parent_domain, jtitem,
-                                         item_list);
+      sub_joinlist = deconstruct_recurse(root, (Node *)lfirst(l), parent_domain,
+                                         jtitem, item_list);
       sub_item = (JoinTreeItem *)llast(*item_list);
       jtitem->qualscope =
           bms_add_members(jtitem->qualscope, sub_item->qualscope);
@@ -1922,8 +1922,8 @@ static void compute_semijoin_info(PlannerInfo *root, SpecialJoinInfo *sjinfo,
 
     /* Extract data from binary opclause */
     opno = op->opno;
-    left_expr = linitial(op->args);
-    right_expr = lsecond(op->args);
+    left_expr = (Node *)linitial(op->args);
+    right_expr = (Node *)lsecond(op->args);
     left_varnos = pull_varnos(root, left_expr);
     right_varnos = pull_varnos(root, right_expr);
     all_varnos = bms_union(left_varnos, right_varnos);
@@ -3401,7 +3401,7 @@ static void check_mergejoinable(RestrictInfo *restrictinfo) {
     return;
 
   opno = ((OpExpr *)clause)->opno;
-  leftarg = linitial(((OpExpr *)clause)->args);
+  leftarg = (Node *)linitial(((OpExpr *)clause)->args);
 
   if (op_mergejoinable(opno, exprType(leftarg)) &&
       !contain_volatile_functions((Node *)restrictinfo))
@@ -3436,7 +3436,7 @@ static void check_hashjoinable(RestrictInfo *restrictinfo) {
     return;
 
   opno = ((OpExpr *)clause)->opno;
-  leftarg = linitial(((OpExpr *)clause)->args);
+  leftarg = (Node *)linitial(((OpExpr *)clause)->args);
 
   if (op_hashjoinable(opno, exprType(leftarg)) &&
       !contain_volatile_functions((Node *)restrictinfo))
@@ -3462,7 +3462,7 @@ static void check_memoizable(RestrictInfo *restrictinfo) {
   if (list_length(((OpExpr *)clause)->args) != 2)
     return;
 
-  lefttype = exprType(linitial(((OpExpr *)clause)->args));
+  lefttype = exprType((const Node *)linitial(((OpExpr *)clause)->args));
 
   typentry =
       lookup_type_cache(lefttype, TYPECACHE_HASH_PROC | TYPECACHE_EQ_OPR);
@@ -3470,7 +3470,7 @@ static void check_memoizable(RestrictInfo *restrictinfo) {
   if (OidIsValid(typentry->hash_proc) && OidIsValid(typentry->eq_opr))
     restrictinfo->left_hasheqoperator = typentry->eq_opr;
 
-  righttype = exprType(lsecond(((OpExpr *)clause)->args));
+  righttype = exprType((const Node *)lsecond(((OpExpr *)clause)->args));
 
   /*
    * Lookup the right type, unless it's the same as the left type, in which

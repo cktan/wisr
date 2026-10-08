@@ -281,7 +281,7 @@ BufFile *BufFileOpenFileSet(FileSet *fileset, const char *name, int mode,
   File *files;
   int nfiles = 0;
 
-  files = palloc(sizeof(File) * capacity);
+  files = (File *)palloc(sizeof(File) * capacity);
 
   /*
    * We don't know how many segments there are, so we'll probe the
@@ -291,7 +291,7 @@ BufFile *BufFileOpenFileSet(FileSet *fileset, const char *name, int mode,
     /* See if we need to expand our file segment array. */
     if (nfiles + 1 > capacity) {
       capacity *= 2;
-      files = repalloc(files, sizeof(File) * capacity);
+      files = (File *)repalloc(files, sizeof(File) * capacity);
     }
     /* Try to load a segment. */
     FileSetSegmentName(segment_name, name, nfiles);

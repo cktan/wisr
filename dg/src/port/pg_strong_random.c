@@ -21,8 +21,8 @@
 #include "c.h"
 
 #include <fcntl.h>
-#include <sys/time.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 /*
  * pg_strong_random & pg_strong_random_init
@@ -122,7 +122,7 @@ void pg_strong_random_init(void) { /* No initialization needed */ }
 
 bool pg_strong_random(void *buf, size_t len) {
   int f;
-  char *p = buf;
+  char *p = (char *)buf;
   ssize_t res;
 
   f = open("/dev/urandom", O_RDONLY, 0);

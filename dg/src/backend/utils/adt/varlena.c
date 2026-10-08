@@ -293,7 +293,7 @@ Datum byteain(PG_FUNCTION_ARGS) {
     size_t len = strlen(inputText);
 
     bc = (len - 2) / 2 + VARHDRSZ; /* maximum possible length */
-    result = palloc(bc);
+    result = (bytea *)palloc(bc);
     bc = hex_decode_safe(inputText + 2, len - 2, VARDATA(result), escontext);
     SET_VARSIZE(result, bc + VARHDRSZ); /* actual length */
 
@@ -368,7 +368,7 @@ Datum byteaout(PG_FUNCTION_ARGS) {
 
   if (bytea_output == BYTEA_OUTPUT_HEX) {
     /* Print hex format */
-    rp = result = palloc(VARSIZE_ANY_EXHDR(vlena) * 2 + 2 + 1);
+    rp = result = (char *)palloc(VARSIZE_ANY_EXHDR(vlena) * 2 + 2 + 1);
     *rp++ = '\\';
     *rp++ = 'x';
     rp += hex_encode(VARDATA_ANY(vlena), VARSIZE_ANY_EXHDR(vlena), rp);
@@ -1855,10 +1855,10 @@ void varstr_sortsupport(SortSupport ssup, Oid typid, Oid collid) {
    * caller), and the abbreviation case requires additional state.
    */
   if (abbreviate || !collate_c) {
-    sss = palloc(sizeof(VarStringSortSupport));
-    sss->buf1 = palloc(TEXTBUFLEN);
+    sss = (VarStringSortSupport *)palloc(sizeof(VarStringSortSupport));
+    sss->buf1 = (char *)palloc(TEXTBUFLEN);
     sss->buflen1 = TEXTBUFLEN;
-    sss->buf2 = palloc(TEXTBUFLEN);
+    sss->buf2 = (char *)palloc(TEXTBUFLEN);
     sss->buflen2 = TEXTBUFLEN;
     /* Start with invalid values */
     sss->last_len1 = -1;
@@ -2048,11 +2048,11 @@ static int varstrfastcmp_locale(char *a1p, int len1, char *a2p, int len2,
 
   if (len1 >= sss->buflen1) {
     sss->buflen1 = Max(len1 + 1, Min(sss->buflen1 * 2, MaxAllocSize));
-    sss->buf1 = repalloc(sss->buf1, sss->buflen1);
+    sss->buf1 = (char *)repalloc(sss->buf1, sss->buflen1);
   }
   if (len2 >= sss->buflen2) {
     sss->buflen2 = Max(len2 + 1, Min(sss->buflen2 * 2, MaxAllocSize));
-    sss->buf2 = repalloc(sss->buf2, sss->buflen2);
+    sss->buf2 = (char *)repalloc(sss->buf2, sss->buflen2);
   }
 
   /*
@@ -2168,7 +2168,7 @@ static Datum varstr_abbrev_convert(Datum original, SortSupport ssup) {
     /* By convention, we use buffer 1 to store and NUL-terminate */
     if (len >= sss->buflen1) {
       sss->buflen1 = Max(len + 1, Min(sss->buflen1 * 2, MaxAllocSize));
-      sss->buf1 = repalloc(sss->buf1, sss->buflen1);
+      sss->buf1 = (char *)repalloc(sss->buf1, sss->buflen1);
     }
 
     /* Might be able to reuse strxfrm() blob from last call */
@@ -2191,7 +2191,7 @@ static Datum varstr_abbrev_convert(Datum original, SortSupport ssup) {
       if (sss->buflen2 < max_prefix_bytes) {
         sss->buflen2 =
             Max(max_prefix_bytes, Min(sss->buflen2 * 2, MaxAllocSize));
-        sss->buf2 = repalloc(sss->buf2, sss->buflen2);
+        sss->buf2 = (char *)repalloc(sss->buf2, sss->buflen2);
       }
 
       bsize = pg_strxfrm_prefix(sss->buf2, sss->buf1, max_prefix_bytes,
@@ -2216,7 +2216,7 @@ static Datum varstr_abbrev_convert(Datum original, SortSupport ssup) {
          * Grow buffer and retry.
          */
         sss->buflen2 = Max(bsize + 1, Min(sss->buflen2 * 2, MaxAllocSize));
-        sss->buf2 = repalloc(sss->buf2, sss->buflen2);
+        sss->buf2 = (char *)repalloc(sss->buf2, sss->buflen2);
       }
     }
 
@@ -3083,7 +3083,7 @@ Datum bytea_reverse(PG_FUNCTION_ARGS) {
   const char *p = VARDATA_ANY(v);
   int len = VARSIZE_ANY_EXHDR(v);
   const char *endp = p + len;
-  bytea *result = palloc(len + VARHDRSZ);
+  bytea *result = (bytea *)palloc(len + VARHDRSZ);
   char *dst = (char *)VARDATA(result) + len;
 
   SET_VARSIZE(result, len + VARHDRSZ);
@@ -3839,7 +3839,7 @@ static int check_replace_text_has_escape(const text *replace_text) {
 
   while (p < p_end) {
     /* Find next escape char, if any. */
-    p = memchr(p, '\\', p_end - p);
+    p = (const char *)memchr(p, '\\', p_end - p);
     if (p == NULL)
       break;
     p++;
@@ -3873,7 +3873,7 @@ static void appendStringInfoRegexpSubstr(StringInfo str, text *replace_text,
     int eo;
 
     /* Find next escape char, if any. */
-    p = memchr(p, '\\', p_end - p);
+    p = (const char *)memchr(p, '\\', p_end - p);
     if (p == NULL)
       p = p_end;
 
@@ -5178,7 +5178,7 @@ Datum text_reverse(PG_FUNCTION_ARGS) {
   text *result;
   char *dst;
 
-  result = palloc(len + VARHDRSZ);
+  result = (text *)palloc(len + VARHDRSZ);
   dst = (char *)VARDATA(result) + len;
   SET_VARSIZE(result, len + VARHDRSZ);
 
@@ -5777,7 +5777,7 @@ const char *getClosestMatch(ClosestMatchState *state) {
 
 static UnicodeNormalizationForm
 unicode_norm_form_from_string(const char *formstr) {
-  UnicodeNormalizationForm form = -1;
+  UnicodeNormalizationForm form = (UnicodeNormalizationForm)-1;
 
   /*
    * Might as well check this while we're here.
@@ -5890,7 +5890,7 @@ Datum unicode_normalize_func(PG_FUNCTION_ARGS) {
     size += pg_utf_mblen(buf);
   }
 
-  result = palloc(size + VARHDRSZ);
+  result = (text *)palloc(size + VARHDRSZ);
   SET_VARSIZE(result, size + VARHDRSZ);
 
   p = (unsigned char *)VARDATA_ANY(result);

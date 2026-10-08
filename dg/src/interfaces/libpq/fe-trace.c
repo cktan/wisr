@@ -547,7 +547,7 @@ static void pqTraceOutput_ReadyForQuery(FILE *f, const char *message,
 void pqTraceOutputMessage(PGconn *conn, const char *message, bool toServer) {
   char id;
   int length;
-  char *prefix = toServer ? "F" : "B";
+  char *prefix = (char *)(toServer ? "F" : "B");
   int logCursor = 0;
   bool regress;
 

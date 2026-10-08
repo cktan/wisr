@@ -16,8 +16,8 @@
 #ifndef FRONTEND
 #include "postgres.h"
 #else
-#include "common/logging.h"
 #include "postgres_fe.h"
+#include "common/logging.h"
 #endif
 
 #include "common/percentrepl.h"

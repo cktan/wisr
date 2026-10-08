@@ -657,7 +657,7 @@ void heap_vacuum_rel(Relation rel, VacuumParams *params,
   vacrel->bstrategy = bstrategy;
   if (instrument && vacrel->nindexes > 0) {
     /* Copy index names used by instrumentation (not error reporting) */
-    indnames = palloc(sizeof(char *) * vacrel->nindexes);
+    indnames = (char **)palloc(sizeof(char *) * vacrel->nindexes);
     for (int i = 0; i < vacrel->nindexes; i++)
       indnames[i] = pstrdup(RelationGetRelationName(vacrel->indrels[i]));
   }
@@ -1508,7 +1508,7 @@ static BlockNumber heap_vac_scan_next_block(ReadStream *stream,
                                             void *callback_private_data,
                                             void *per_buffer_data) {
   BlockNumber next_block;
-  LVRelState *vacrel = callback_private_data;
+  LVRelState *vacrel = (LVRelState *)callback_private_data;
   uint8 blk_info = 0;
 
   /* relies on InvalidBlockNumber + 1 overflowing to 0 on first call */
@@ -2525,7 +2525,7 @@ static bool lazy_vacuum_all_indexes(LVRelState *vacrel) {
 static BlockNumber vacuum_reap_lp_read_stream_next(ReadStream *stream,
                                                    void *callback_private_data,
                                                    void *per_buffer_data) {
-  TidStoreIter *iter = callback_private_data;
+  TidStoreIter *iter = (TidStoreIter *)callback_private_data;
   TidStoreIterResult *iter_result;
 
   iter_result = TidStoreIterateNext(iter);
@@ -3518,7 +3518,7 @@ static void update_relstats_all_indexes(LVRelState *vacrel) {
  * parallel_vacuum_error_callback() as well.
  */
 static void vacuum_error_callback(void *arg) {
-  LVRelState *errinfo = arg;
+  LVRelState *errinfo = (LVRelState *)arg;
 
   switch (errinfo->phase) {
   case VACUUM_ERRCB_PHASE_SCAN_HEAP:
@@ -3588,7 +3588,7 @@ static void update_vacuum_error_info(LVRelState *vacrel,
 
   vacrel->blkno = blkno;
   vacrel->offnum = offnum;
-  vacrel->phase = phase;
+  vacrel->phase = (VacErrPhase)phase;
 }
 
 /*

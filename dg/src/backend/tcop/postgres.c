@@ -22,10 +22,10 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#include <unistd.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/time.h>
-#include <unistd.h>
 
 #ifdef USE_VALGRIND
 #include <valgrind/valgrind.h>
@@ -57,8 +57,8 @@
 #include "postmaster/postmaster.h"
 #include "replication/logicallauncher.h"
 #include "replication/logicalworker.h"
-#include "replication/slot.h"
 #include "replication/slotsync.h"
+#include "replication/slot.h"
 #include "replication/walsender.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/bufmgr.h"

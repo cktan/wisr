@@ -11,11 +11,11 @@
 
 #include "access/xlog.h"
 #include "access/xlogreader.h"
-#include "replication/walreceiver.h"
 #include "storage/condition_variable.h"
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
 #include "storage/spin.h"
+#include "replication/walreceiver.h"
 
 /* directory to store replication slot data in */
 #define PG_REPLSLOT_DIR     "pg_replslot"

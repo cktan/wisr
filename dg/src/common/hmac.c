@@ -74,7 +74,7 @@ struct pg_hmac_ctx {
 pg_hmac_ctx *pg_hmac_create(pg_cryptohash_type type) {
   pg_hmac_ctx *ctx;
 
-  ctx = ALLOC(sizeof(pg_hmac_ctx));
+  ctx = (pg_hmac_ctx *)ALLOC(sizeof(pg_hmac_ctx));
   if (ctx == NULL)
     return NULL;
   memset(ctx, 0, sizeof(pg_hmac_ctx));
@@ -151,7 +151,7 @@ int pg_hmac_init(pg_hmac_ctx *ctx, const uint8 *key, size_t len) {
     pg_cryptohash_ctx *hash_ctx;
 
     /* temporary buffer for one-time shrink */
-    shrinkbuf = ALLOC(digest_size);
+    shrinkbuf = (uint8 *)ALLOC(digest_size);
     if (shrinkbuf == NULL) {
       ctx->error = PG_HMAC_ERROR_OOM;
       return -1;
@@ -229,7 +229,7 @@ int pg_hmac_final(pg_hmac_ctx *ctx, uint8 *dest, size_t len) {
   if (ctx == NULL)
     return -1;
 
-  h = ALLOC(ctx->digest_size);
+  h = (uint8 *)ALLOC(ctx->digest_size);
   if (h == NULL) {
     ctx->error = PG_HMAC_ERROR_OOM;
     return -1;

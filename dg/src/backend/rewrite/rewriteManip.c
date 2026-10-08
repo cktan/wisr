@@ -1580,7 +1580,7 @@ Node *ReplaceVarFromTargetList(Var *var, RangeTblEntry *target_rte,
     rowexpr->location = var->location;
     /* Adjust the generated per-field Vars... */
     foreach (lc, fields) {
-      Node *field = lfirst(lc);
+      Node *field = (Node *)lfirst(lc);
 
       if (field && IsA(field, Var))
         field = ReplaceVarFromTargetList((Var *)field, target_rte, targetlist,

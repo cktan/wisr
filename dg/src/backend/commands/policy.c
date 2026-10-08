@@ -146,7 +146,7 @@ static Datum *policy_role_list_to_array(List *roles, int *num_roles) {
   role_oids = (Datum *)palloc(*num_roles * sizeof(Datum));
 
   foreach (cell, roles) {
-    RoleSpec *spec = lfirst(cell);
+    RoleSpec *spec = (RoleSpec *)lfirst(cell);
 
     /*
      * PUBLIC covers all roles, so it only makes sense alone.
@@ -195,7 +195,8 @@ void RelationBuildRowSecurity(Relation relation) {
                                 ALLOCSET_SMALL_SIZES);
   MemoryContextCopyAndSetIdentifier(rscxt, RelationGetRelationName(relation));
 
-  rsdesc = MemoryContextAllocZero(rscxt, sizeof(RowSecurityDesc));
+  rsdesc =
+      (RowSecurityDesc *)MemoryContextAllocZero(rscxt, sizeof(RowSecurityDesc));
   rsdesc->rscxt = rscxt;
 
   /*
@@ -219,7 +220,8 @@ void RelationBuildRowSecurity(Relation relation) {
     bool isnull;
     char *str_value;
 
-    policy = MemoryContextAllocZero(rscxt, sizeof(RowSecurityPolicy));
+    policy = (RowSecurityPolicy *)MemoryContextAllocZero(
+        rscxt, sizeof(RowSecurityPolicy));
 
     /*
      * Note: we must be sure that pass-by-reference data gets copied into
@@ -893,7 +895,7 @@ ObjectAddress AlterPolicy(AlterPolicyStmt *stmt) {
       qual_pstate = make_parsestate(NULL);
 
       qual_value = TextDatumGetCString(value_datum);
-      qual = stringToNode(qual_value);
+      qual = (Node *)stringToNode(qual_value);
 
       /* Add this rel to the parsestate's rangetable, for dependencies */
       (void)addRangeTableEntryForRelation(qual_pstate, target_table,
@@ -929,7 +931,7 @@ ObjectAddress AlterPolicy(AlterPolicyStmt *stmt) {
       with_check_pstate = make_parsestate(NULL);
 
       with_check_value = TextDatumGetCString(value_datum);
-      with_check_qual = stringToNode(with_check_value);
+      with_check_qual = (Node *)stringToNode(with_check_value);
 
       /* Add this rel to the parsestate's rangetable, for dependencies */
       (void)addRangeTableEntryForRelation(with_check_pstate, target_table,

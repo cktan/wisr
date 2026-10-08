@@ -246,8 +246,8 @@ int lo_read(PGconn *conn, int fd, char *buf, size_t len) {
   argv[1].len = 4;
   argv[1].u.integer = (int)len;
 
-  res = PQnfn(conn, conn->lobjfuncs->fn_lo_read, (void *)buf, len, &result_len,
-              0, argv, 2);
+  res = PQnfn(conn, conn->lobjfuncs->fn_lo_read, (int *)(void *)buf, len,
+              &result_len, 0, argv, 2);
   if (PQresultStatus(res) == PGRES_COMMAND_OK) {
     PQclear(res);
     return result_len;
@@ -370,7 +370,7 @@ int64_t lo_lseek64(PGconn *conn, int fd, int64_t offset, int whence) {
   argv[2].len = 4;
   argv[2].u.integer = whence;
 
-  res = PQnfn(conn, conn->lobjfuncs->fn_lo_lseek64, (void *)&retval,
+  res = PQnfn(conn, conn->lobjfuncs->fn_lo_lseek64, (int *)((void *)&retval),
               sizeof(retval), &result_len, 0, argv, 3);
   if (PQresultStatus(res) == PGRES_COMMAND_OK && result_len == 8) {
     PQclear(res);
@@ -501,7 +501,7 @@ int64_t lo_tell64(PGconn *conn, int fd) {
   argv[0].len = 4;
   argv[0].u.integer = fd;
 
-  res = PQnfn(conn, conn->lobjfuncs->fn_lo_tell64, (void *)&retval,
+  res = PQnfn(conn, conn->lobjfuncs->fn_lo_tell64, (int *)((void *)&retval),
               sizeof(retval), &result_len, 0, argv, 1);
   if (PQresultStatus(res) == PGRES_COMMAND_OK && result_len == 8) {
     PQclear(res);

@@ -147,7 +147,8 @@ Tuplestorestate *ExecMakeTableFunctionResult(SetExprState *setexpr,
   rsinfo.setResult = NULL;
   rsinfo.setDesc = NULL;
 
-  fcinfo = palloc(SizeForFunctionCallInfo(list_length(setexpr->args)));
+  fcinfo = (FunctionCallInfo)palloc(
+      SizeForFunctionCallInfo(list_length(setexpr->args)));
 
   /*
    * Normally the passed expression tree will be a SetExprState, since the

@@ -270,224 +270,216 @@ static bool pgstat_is_shutdown = false;
  * seem to be a great way of doing that, given the split across multiple
  * files.
  */
-static const PgStat_KindInfo
-    pgstat_kind_builtin_infos[PGSTAT_KIND_BUILTIN_SIZE] = {
+static constexpr auto pgstat_kind_builtin_infos = [] {
+  std::array<PgStat_KindInfo, PGSTAT_KIND_BUILTIN_SIZE> a{};
 
-        /* stats kinds for variable-numbered objects */
+  /* stats kinds for variable-numbered objects */
 
-        [PGSTAT_KIND_DATABASE] =
-            {
-                .name = "database",
+  a[PGSTAT_KIND_DATABASE].name = "database";
 
-                .fixed_amount = false,
-                .write_to_file = true,
-                /* so pg_stat_database entries can be seen in all databases */
-                .accessed_across_databases = true,
+  a[PGSTAT_KIND_DATABASE].fixed_amount = false;
+  a[PGSTAT_KIND_DATABASE].write_to_file = true;
+  /* so pg_stat_database entries can be seen in all databases */
+  a[PGSTAT_KIND_DATABASE].accessed_across_databases = true;
 
-                .shared_size = sizeof(PgStatShared_Database),
-                .shared_data_off = offsetof(PgStatShared_Database, stats),
-                .shared_data_len = sizeof(((PgStatShared_Database *)0)->stats),
-                .pending_size = sizeof(PgStat_StatDBEntry),
+  a[PGSTAT_KIND_DATABASE].shared_size = sizeof(PgStatShared_Database);
+  a[PGSTAT_KIND_DATABASE].shared_data_off =
+      offsetof(PgStatShared_Database, stats);
+  a[PGSTAT_KIND_DATABASE].shared_data_len =
+      sizeof(((PgStatShared_Database *)0)->stats);
+  a[PGSTAT_KIND_DATABASE].pending_size = sizeof(PgStat_StatDBEntry);
 
-                .flush_pending_cb = pgstat_database_flush_cb,
-                .reset_timestamp_cb = pgstat_database_reset_timestamp_cb,
-            },
+  a[PGSTAT_KIND_DATABASE].flush_pending_cb = pgstat_database_flush_cb;
+  a[PGSTAT_KIND_DATABASE].reset_timestamp_cb =
+      pgstat_database_reset_timestamp_cb;
 
-        [PGSTAT_KIND_RELATION] =
-            {
-                .name = "relation",
+  a[PGSTAT_KIND_RELATION].name = "relation";
 
-                .fixed_amount = false,
-                .write_to_file = true,
+  a[PGSTAT_KIND_RELATION].fixed_amount = false;
+  a[PGSTAT_KIND_RELATION].write_to_file = true;
 
-                .shared_size = sizeof(PgStatShared_Relation),
-                .shared_data_off = offsetof(PgStatShared_Relation, stats),
-                .shared_data_len = sizeof(((PgStatShared_Relation *)0)->stats),
-                .pending_size = sizeof(PgStat_TableStatus),
+  a[PGSTAT_KIND_RELATION].shared_size = sizeof(PgStatShared_Relation);
+  a[PGSTAT_KIND_RELATION].shared_data_off =
+      offsetof(PgStatShared_Relation, stats);
+  a[PGSTAT_KIND_RELATION].shared_data_len =
+      sizeof(((PgStatShared_Relation *)0)->stats);
+  a[PGSTAT_KIND_RELATION].pending_size = sizeof(PgStat_TableStatus);
 
-                .flush_pending_cb = pgstat_relation_flush_cb,
-                .delete_pending_cb = pgstat_relation_delete_pending_cb,
-            },
+  a[PGSTAT_KIND_RELATION].flush_pending_cb = pgstat_relation_flush_cb;
+  a[PGSTAT_KIND_RELATION].delete_pending_cb = pgstat_relation_delete_pending_cb;
 
-        [PGSTAT_KIND_FUNCTION] =
-            {
-                .name = "function",
+  a[PGSTAT_KIND_FUNCTION].name = "function";
 
-                .fixed_amount = false,
-                .write_to_file = true,
+  a[PGSTAT_KIND_FUNCTION].fixed_amount = false;
+  a[PGSTAT_KIND_FUNCTION].write_to_file = true;
 
-                .shared_size = sizeof(PgStatShared_Function),
-                .shared_data_off = offsetof(PgStatShared_Function, stats),
-                .shared_data_len = sizeof(((PgStatShared_Function *)0)->stats),
-                .pending_size = sizeof(PgStat_FunctionCounts),
+  a[PGSTAT_KIND_FUNCTION].shared_size = sizeof(PgStatShared_Function);
+  a[PGSTAT_KIND_FUNCTION].shared_data_off =
+      offsetof(PgStatShared_Function, stats);
+  a[PGSTAT_KIND_FUNCTION].shared_data_len =
+      sizeof(((PgStatShared_Function *)0)->stats);
+  a[PGSTAT_KIND_FUNCTION].pending_size = sizeof(PgStat_FunctionCounts);
 
-                .flush_pending_cb = pgstat_function_flush_cb,
-            },
+  a[PGSTAT_KIND_FUNCTION].flush_pending_cb = pgstat_function_flush_cb;
 
-        [PGSTAT_KIND_REPLSLOT] =
-            {
-                .name = "replslot",
+  a[PGSTAT_KIND_REPLSLOT].name = "replslot";
 
-                .fixed_amount = false,
-                .write_to_file = true,
+  a[PGSTAT_KIND_REPLSLOT].fixed_amount = false;
+  a[PGSTAT_KIND_REPLSLOT].write_to_file = true;
 
-                .accessed_across_databases = true,
+  a[PGSTAT_KIND_REPLSLOT].accessed_across_databases = true;
 
-                .shared_size = sizeof(PgStatShared_ReplSlot),
-                .shared_data_off = offsetof(PgStatShared_ReplSlot, stats),
-                .shared_data_len = sizeof(((PgStatShared_ReplSlot *)0)->stats),
+  a[PGSTAT_KIND_REPLSLOT].shared_size = sizeof(PgStatShared_ReplSlot);
+  a[PGSTAT_KIND_REPLSLOT].shared_data_off =
+      offsetof(PgStatShared_ReplSlot, stats);
+  a[PGSTAT_KIND_REPLSLOT].shared_data_len =
+      sizeof(((PgStatShared_ReplSlot *)0)->stats);
 
-                .reset_timestamp_cb = pgstat_replslot_reset_timestamp_cb,
-                .to_serialized_name = pgstat_replslot_to_serialized_name_cb,
-                .from_serialized_name = pgstat_replslot_from_serialized_name_cb,
-            },
+  a[PGSTAT_KIND_REPLSLOT].reset_timestamp_cb =
+      pgstat_replslot_reset_timestamp_cb;
+  a[PGSTAT_KIND_REPLSLOT].to_serialized_name =
+      pgstat_replslot_to_serialized_name_cb;
+  a[PGSTAT_KIND_REPLSLOT].from_serialized_name =
+      pgstat_replslot_from_serialized_name_cb;
 
-        [PGSTAT_KIND_SUBSCRIPTION] =
-            {
-                .name = "subscription",
+  a[PGSTAT_KIND_SUBSCRIPTION].name = "subscription";
 
-                .fixed_amount = false,
-                .write_to_file = true,
-                /* so pg_stat_subscription_stats entries can be seen in all
-                   databases */
-                .accessed_across_databases = true,
+  a[PGSTAT_KIND_SUBSCRIPTION].fixed_amount = false;
+  a[PGSTAT_KIND_SUBSCRIPTION].write_to_file = true;
+  /* so pg_stat_subscription_stats entries can be seen in all
+     databases */
+  a[PGSTAT_KIND_SUBSCRIPTION].accessed_across_databases = true;
 
-                .shared_size = sizeof(PgStatShared_Subscription),
-                .shared_data_off = offsetof(PgStatShared_Subscription, stats),
-                .shared_data_len =
-                    sizeof(((PgStatShared_Subscription *)0)->stats),
-                .pending_size = sizeof(PgStat_BackendSubEntry),
+  a[PGSTAT_KIND_SUBSCRIPTION].shared_size = sizeof(PgStatShared_Subscription);
+  a[PGSTAT_KIND_SUBSCRIPTION].shared_data_off =
+      offsetof(PgStatShared_Subscription, stats);
+  a[PGSTAT_KIND_SUBSCRIPTION].shared_data_len =
+      sizeof(((PgStatShared_Subscription *)0)->stats);
+  a[PGSTAT_KIND_SUBSCRIPTION].pending_size = sizeof(PgStat_BackendSubEntry);
 
-                .flush_pending_cb = pgstat_subscription_flush_cb,
-                .reset_timestamp_cb = pgstat_subscription_reset_timestamp_cb,
-            },
+  a[PGSTAT_KIND_SUBSCRIPTION].flush_pending_cb = pgstat_subscription_flush_cb;
+  a[PGSTAT_KIND_SUBSCRIPTION].reset_timestamp_cb =
+      pgstat_subscription_reset_timestamp_cb;
 
-        [PGSTAT_KIND_BACKEND] =
-            {
-                .name = "backend",
+  a[PGSTAT_KIND_BACKEND].name = "backend";
 
-                .fixed_amount = false,
-                .write_to_file = false,
+  a[PGSTAT_KIND_BACKEND].fixed_amount = false;
+  a[PGSTAT_KIND_BACKEND].write_to_file = false;
 
-                .accessed_across_databases = true,
+  a[PGSTAT_KIND_BACKEND].accessed_across_databases = true;
 
-                .shared_size = sizeof(PgStatShared_Backend),
-                .shared_data_off = offsetof(PgStatShared_Backend, stats),
-                .shared_data_len = sizeof(((PgStatShared_Backend *)0)->stats),
+  a[PGSTAT_KIND_BACKEND].shared_size = sizeof(PgStatShared_Backend);
+  a[PGSTAT_KIND_BACKEND].shared_data_off =
+      offsetof(PgStatShared_Backend, stats);
+  a[PGSTAT_KIND_BACKEND].shared_data_len =
+      sizeof(((PgStatShared_Backend *)0)->stats);
 
-                .flush_static_cb = pgstat_backend_flush_cb,
-                .reset_timestamp_cb = pgstat_backend_reset_timestamp_cb,
-            },
+  a[PGSTAT_KIND_BACKEND].flush_static_cb = pgstat_backend_flush_cb;
+  a[PGSTAT_KIND_BACKEND].reset_timestamp_cb = pgstat_backend_reset_timestamp_cb;
 
-        /* stats for fixed-numbered (mostly 1) objects */
+  /* stats for fixed-numbered (mostly 1) objects */
 
-        [PGSTAT_KIND_ARCHIVER] =
-            {
-                .name = "archiver",
+  a[PGSTAT_KIND_ARCHIVER].name = "archiver";
 
-                .fixed_amount = true,
-                .write_to_file = true,
+  a[PGSTAT_KIND_ARCHIVER].fixed_amount = true;
+  a[PGSTAT_KIND_ARCHIVER].write_to_file = true;
 
-                .snapshot_ctl_off = offsetof(PgStat_Snapshot, archiver),
-                .shared_ctl_off = offsetof(PgStat_ShmemControl, archiver),
-                .shared_data_off = offsetof(PgStatShared_Archiver, stats),
-                .shared_data_len = sizeof(((PgStatShared_Archiver *)0)->stats),
+  a[PGSTAT_KIND_ARCHIVER].snapshot_ctl_off =
+      offsetof(PgStat_Snapshot, archiver);
+  a[PGSTAT_KIND_ARCHIVER].shared_ctl_off =
+      offsetof(PgStat_ShmemControl, archiver);
+  a[PGSTAT_KIND_ARCHIVER].shared_data_off =
+      offsetof(PgStatShared_Archiver, stats);
+  a[PGSTAT_KIND_ARCHIVER].shared_data_len =
+      sizeof(((PgStatShared_Archiver *)0)->stats);
 
-                .init_shmem_cb = pgstat_archiver_init_shmem_cb,
-                .reset_all_cb = pgstat_archiver_reset_all_cb,
-                .snapshot_cb = pgstat_archiver_snapshot_cb,
-            },
+  a[PGSTAT_KIND_ARCHIVER].init_shmem_cb = pgstat_archiver_init_shmem_cb;
+  a[PGSTAT_KIND_ARCHIVER].reset_all_cb = pgstat_archiver_reset_all_cb;
+  a[PGSTAT_KIND_ARCHIVER].snapshot_cb = pgstat_archiver_snapshot_cb;
 
-        [PGSTAT_KIND_BGWRITER] =
-            {
-                .name = "bgwriter",
+  a[PGSTAT_KIND_BGWRITER].name = "bgwriter";
 
-                .fixed_amount = true,
-                .write_to_file = true,
+  a[PGSTAT_KIND_BGWRITER].fixed_amount = true;
+  a[PGSTAT_KIND_BGWRITER].write_to_file = true;
 
-                .snapshot_ctl_off = offsetof(PgStat_Snapshot, bgwriter),
-                .shared_ctl_off = offsetof(PgStat_ShmemControl, bgwriter),
-                .shared_data_off = offsetof(PgStatShared_BgWriter, stats),
-                .shared_data_len = sizeof(((PgStatShared_BgWriter *)0)->stats),
+  a[PGSTAT_KIND_BGWRITER].snapshot_ctl_off =
+      offsetof(PgStat_Snapshot, bgwriter);
+  a[PGSTAT_KIND_BGWRITER].shared_ctl_off =
+      offsetof(PgStat_ShmemControl, bgwriter);
+  a[PGSTAT_KIND_BGWRITER].shared_data_off =
+      offsetof(PgStatShared_BgWriter, stats);
+  a[PGSTAT_KIND_BGWRITER].shared_data_len =
+      sizeof(((PgStatShared_BgWriter *)0)->stats);
 
-                .init_shmem_cb = pgstat_bgwriter_init_shmem_cb,
-                .reset_all_cb = pgstat_bgwriter_reset_all_cb,
-                .snapshot_cb = pgstat_bgwriter_snapshot_cb,
-            },
+  a[PGSTAT_KIND_BGWRITER].init_shmem_cb = pgstat_bgwriter_init_shmem_cb;
+  a[PGSTAT_KIND_BGWRITER].reset_all_cb = pgstat_bgwriter_reset_all_cb;
+  a[PGSTAT_KIND_BGWRITER].snapshot_cb = pgstat_bgwriter_snapshot_cb;
 
-        [PGSTAT_KIND_CHECKPOINTER] =
-            {
-                .name = "checkpointer",
+  a[PGSTAT_KIND_CHECKPOINTER].name = "checkpointer";
 
-                .fixed_amount = true,
-                .write_to_file = true,
+  a[PGSTAT_KIND_CHECKPOINTER].fixed_amount = true;
+  a[PGSTAT_KIND_CHECKPOINTER].write_to_file = true;
 
-                .snapshot_ctl_off = offsetof(PgStat_Snapshot, checkpointer),
-                .shared_ctl_off = offsetof(PgStat_ShmemControl, checkpointer),
-                .shared_data_off = offsetof(PgStatShared_Checkpointer, stats),
-                .shared_data_len =
-                    sizeof(((PgStatShared_Checkpointer *)0)->stats),
+  a[PGSTAT_KIND_CHECKPOINTER].snapshot_ctl_off =
+      offsetof(PgStat_Snapshot, checkpointer);
+  a[PGSTAT_KIND_CHECKPOINTER].shared_ctl_off =
+      offsetof(PgStat_ShmemControl, checkpointer);
+  a[PGSTAT_KIND_CHECKPOINTER].shared_data_off =
+      offsetof(PgStatShared_Checkpointer, stats);
+  a[PGSTAT_KIND_CHECKPOINTER].shared_data_len =
+      sizeof(((PgStatShared_Checkpointer *)0)->stats);
 
-                .init_shmem_cb = pgstat_checkpointer_init_shmem_cb,
-                .reset_all_cb = pgstat_checkpointer_reset_all_cb,
-                .snapshot_cb = pgstat_checkpointer_snapshot_cb,
-            },
+  a[PGSTAT_KIND_CHECKPOINTER].init_shmem_cb = pgstat_checkpointer_init_shmem_cb;
+  a[PGSTAT_KIND_CHECKPOINTER].reset_all_cb = pgstat_checkpointer_reset_all_cb;
+  a[PGSTAT_KIND_CHECKPOINTER].snapshot_cb = pgstat_checkpointer_snapshot_cb;
 
-        [PGSTAT_KIND_IO] =
-            {
-                .name = "io",
+  a[PGSTAT_KIND_IO].name = "io";
 
-                .fixed_amount = true,
-                .write_to_file = true,
+  a[PGSTAT_KIND_IO].fixed_amount = true;
+  a[PGSTAT_KIND_IO].write_to_file = true;
 
-                .snapshot_ctl_off = offsetof(PgStat_Snapshot, io),
-                .shared_ctl_off = offsetof(PgStat_ShmemControl, io),
-                .shared_data_off = offsetof(PgStatShared_IO, stats),
-                .shared_data_len = sizeof(((PgStatShared_IO *)0)->stats),
+  a[PGSTAT_KIND_IO].snapshot_ctl_off = offsetof(PgStat_Snapshot, io);
+  a[PGSTAT_KIND_IO].shared_ctl_off = offsetof(PgStat_ShmemControl, io);
+  a[PGSTAT_KIND_IO].shared_data_off = offsetof(PgStatShared_IO, stats);
+  a[PGSTAT_KIND_IO].shared_data_len = sizeof(((PgStatShared_IO *)0)->stats);
 
-                .flush_static_cb = pgstat_io_flush_cb,
-                .init_shmem_cb = pgstat_io_init_shmem_cb,
-                .reset_all_cb = pgstat_io_reset_all_cb,
-                .snapshot_cb = pgstat_io_snapshot_cb,
-            },
+  a[PGSTAT_KIND_IO].flush_static_cb = pgstat_io_flush_cb;
+  a[PGSTAT_KIND_IO].init_shmem_cb = pgstat_io_init_shmem_cb;
+  a[PGSTAT_KIND_IO].reset_all_cb = pgstat_io_reset_all_cb;
+  a[PGSTAT_KIND_IO].snapshot_cb = pgstat_io_snapshot_cb;
 
-        [PGSTAT_KIND_SLRU] =
-            {
-                .name = "slru",
+  a[PGSTAT_KIND_SLRU].name = "slru";
 
-                .fixed_amount = true,
-                .write_to_file = true,
+  a[PGSTAT_KIND_SLRU].fixed_amount = true;
+  a[PGSTAT_KIND_SLRU].write_to_file = true;
 
-                .snapshot_ctl_off = offsetof(PgStat_Snapshot, slru),
-                .shared_ctl_off = offsetof(PgStat_ShmemControl, slru),
-                .shared_data_off = offsetof(PgStatShared_SLRU, stats),
-                .shared_data_len = sizeof(((PgStatShared_SLRU *)0)->stats),
+  a[PGSTAT_KIND_SLRU].snapshot_ctl_off = offsetof(PgStat_Snapshot, slru);
+  a[PGSTAT_KIND_SLRU].shared_ctl_off = offsetof(PgStat_ShmemControl, slru);
+  a[PGSTAT_KIND_SLRU].shared_data_off = offsetof(PgStatShared_SLRU, stats);
+  a[PGSTAT_KIND_SLRU].shared_data_len = sizeof(((PgStatShared_SLRU *)0)->stats);
 
-                .flush_static_cb = pgstat_slru_flush_cb,
-                .init_shmem_cb = pgstat_slru_init_shmem_cb,
-                .reset_all_cb = pgstat_slru_reset_all_cb,
-                .snapshot_cb = pgstat_slru_snapshot_cb,
-            },
+  a[PGSTAT_KIND_SLRU].flush_static_cb = pgstat_slru_flush_cb;
+  a[PGSTAT_KIND_SLRU].init_shmem_cb = pgstat_slru_init_shmem_cb;
+  a[PGSTAT_KIND_SLRU].reset_all_cb = pgstat_slru_reset_all_cb;
+  a[PGSTAT_KIND_SLRU].snapshot_cb = pgstat_slru_snapshot_cb;
 
-        [PGSTAT_KIND_WAL] =
-            {
-                .name = "wal",
+  a[PGSTAT_KIND_WAL].name = "wal";
 
-                .fixed_amount = true,
-                .write_to_file = true,
+  a[PGSTAT_KIND_WAL].fixed_amount = true;
+  a[PGSTAT_KIND_WAL].write_to_file = true;
 
-                .snapshot_ctl_off = offsetof(PgStat_Snapshot, wal),
-                .shared_ctl_off = offsetof(PgStat_ShmemControl, wal),
-                .shared_data_off = offsetof(PgStatShared_Wal, stats),
-                .shared_data_len = sizeof(((PgStatShared_Wal *)0)->stats),
+  a[PGSTAT_KIND_WAL].snapshot_ctl_off = offsetof(PgStat_Snapshot, wal);
+  a[PGSTAT_KIND_WAL].shared_ctl_off = offsetof(PgStat_ShmemControl, wal);
+  a[PGSTAT_KIND_WAL].shared_data_off = offsetof(PgStatShared_Wal, stats);
+  a[PGSTAT_KIND_WAL].shared_data_len = sizeof(((PgStatShared_Wal *)0)->stats);
 
-                .init_backend_cb = pgstat_wal_init_backend_cb,
-                .flush_static_cb = pgstat_wal_flush_cb,
-                .init_shmem_cb = pgstat_wal_init_shmem_cb,
-                .reset_all_cb = pgstat_wal_reset_all_cb,
-                .snapshot_cb = pgstat_wal_snapshot_cb,
-            },
-};
+  a[PGSTAT_KIND_WAL].init_backend_cb = pgstat_wal_init_backend_cb;
+  a[PGSTAT_KIND_WAL].flush_static_cb = pgstat_wal_flush_cb;
+  a[PGSTAT_KIND_WAL].init_shmem_cb = pgstat_wal_init_shmem_cb;
+  a[PGSTAT_KIND_WAL].reset_all_cb = pgstat_wal_reset_all_cb;
+  a[PGSTAT_KIND_WAL].snapshot_cb = pgstat_wal_snapshot_cb;
+  return a;
+}();
 
 /*
  * Information about custom statistics kinds.
@@ -927,7 +919,7 @@ void *pgstat_fetch_entry(PgStat_Kind kind, Oid dboid, uint64 objid) {
       return NULL;
   }
 
-  pgStatLocal.snapshot.mode = pgstat_fetch_consistency;
+  pgStatLocal.snapshot.mode = (PgStat_FetchConsistency)pgstat_fetch_consistency;
 
   entry_ref = pgstat_get_entry_ref(kind, dboid, objid, false, NULL);
 
@@ -1076,7 +1068,7 @@ static void pgstat_build_snapshot(void) {
    * Snapshot all variable stats.
    */
   dshash_seq_init(&hstat, pgStatLocal.shared_hash, false);
-  while ((p = dshash_seq_next(&hstat)) != NULL) {
+  while ((p = (PgStatShared_HashEntry *)dshash_seq_next(&hstat)) != NULL) {
     PgStat_Kind kind = p->key.kind;
     const PgStat_KindInfo *kind_info = pgstat_get_kind_info(kind);
     bool found;
@@ -1099,7 +1091,8 @@ static void pgstat_build_snapshot(void) {
 
     Assert(pg_atomic_read_u32(&p->refcount) > 0);
 
-    stats_data = dsa_get_address(pgStatLocal.dsa, p->body);
+    stats_data =
+        (PgStatShared_Common *)dsa_get_address(pgStatLocal.dsa, p->body);
     Assert(stats_data);
 
     entry = pgstat_snapshot_insert(pgStatLocal.snapshot.stats, p->key, &found);
@@ -1525,7 +1518,8 @@ static void pgstat_write_statsfile(void) {
     if (pgstat_is_kind_builtin(kind))
       ptr = ((char *)&pgStatLocal.snapshot) + info->snapshot_ctl_off;
     else
-      ptr = pgStatLocal.snapshot.custom_data[kind - PGSTAT_KIND_CUSTOM_MIN];
+      ptr = (char *)
+                pgStatLocal.snapshot.custom_data[kind - PGSTAT_KIND_CUSTOM_MIN];
 
     fputc(PGSTAT_FILE_ENTRY_FIXED, fpout);
     write_chunk_s(fpout, &kind);
@@ -1536,7 +1530,7 @@ static void pgstat_write_statsfile(void) {
    * Walk through the stats entries
    */
   dshash_seq_init(&hstat, pgStatLocal.shared_hash, false);
-  while ((ps = dshash_seq_next(&hstat)) != NULL) {
+  while ((ps = (PgStatShared_HashEntry *)dshash_seq_next(&hstat)) != NULL) {
     PgStatShared_Common *shstats;
     const PgStat_KindInfo *kind_info = NULL;
 
@@ -1822,7 +1816,8 @@ static void pgstat_read_statsfile(void) {
        * putting all stats into checkpointer's
        * pgStatEntryRefHash would be wasted effort and memory.
        */
-      p = dshash_find_or_insert(pgStatLocal.shared_hash, &key, &found);
+      p = (PgStatShared_HashEntry *)dshash_find_or_insert(
+          pgStatLocal.shared_hash, &key, &found);
 
       /* don't allow duplicate entries */
       if (found) {

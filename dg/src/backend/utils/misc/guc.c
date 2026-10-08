@@ -615,7 +615,7 @@ char *guc_strdup(int elevel, const char *src) {
   char *data;
   size_t len = strlen(src) + 1;
 
-  data = guc_malloc(elevel, len);
+  data = (char *)guc_malloc(elevel, len);
   if (likely(data != NULL))
     memcpy(data, src, len);
   return data;
@@ -785,7 +785,8 @@ struct config_generic **get_guc_variables(int *num_vars) {
   int i;
 
   *num_vars = hash_get_num_entries(guc_hashtab);
-  result = palloc(sizeof(struct config_generic *) * *num_vars);
+  result =
+      (config_generic **)palloc(sizeof(struct config_generic *) * *num_vars);
 
   /* Extract pointers from the hash table */
   i = 0;
@@ -1007,7 +1008,7 @@ static bool assignable_custom_variable_name(const char *name, bool skip_errors,
     }
     /* ... and it must not match any previously-reserved prefix */
     foreach (lc, reserved_class_prefix) {
-      const char *rcprefix = lfirst(lc);
+      const char *rcprefix = (const char *)lfirst(lc);
 
       if (strlen(rcprefix) == classLen &&
           strncmp(name, rcprefix, classLen) == 0) {
@@ -1596,7 +1597,8 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
     fname = make_absolute_path(ConfigFileName);
     fname_is_malloced = true;
   } else if (configdir) {
-    fname = guc_malloc(FATAL, strlen(configdir) + strlen(CONFIG_FILENAME) + 2);
+    fname = (char *)guc_malloc(FATAL,
+                               strlen(configdir) + strlen(CONFIG_FILENAME) + 2);
     sprintf(fname, "%s/%s", configdir, CONFIG_FILENAME);
     fname_is_malloced = false;
   } else {
@@ -1693,7 +1695,8 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
     fname = make_absolute_path(HbaFileName);
     fname_is_malloced = true;
   } else if (configdir) {
-    fname = guc_malloc(FATAL, strlen(configdir) + strlen(HBA_FILENAME) + 2);
+    fname =
+        (char *)guc_malloc(FATAL, strlen(configdir) + strlen(HBA_FILENAME) + 2);
     sprintf(fname, "%s/%s", configdir, HBA_FILENAME);
     fname_is_malloced = false;
   } else {
@@ -1719,7 +1722,8 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
     fname = make_absolute_path(IdentFileName);
     fname_is_malloced = true;
   } else if (configdir) {
-    fname = guc_malloc(FATAL, strlen(configdir) + strlen(IDENT_FILENAME) + 2);
+    fname = (char *)guc_malloc(FATAL,
+                               strlen(configdir) + strlen(IDENT_FILENAME) + 2);
     sprintf(fname, "%s/%s", configdir, IDENT_FILENAME);
     fname_is_malloced = false;
   } else {
@@ -3969,7 +3973,7 @@ static void replace_auto_config_value(ConfigVariable **head_p,
     return;
 
   /* OK, append a new entry */
-  item = palloc(sizeof *item);
+  item = (ConfigVariable *)palloc(sizeof *item);
   item->name = pstrdup(name);
   item->value = pstrdup(value);
   item->errmsg = NULL;
@@ -4642,8 +4646,8 @@ struct config_generic **get_explain_guc_options(int *num) {
    * While only a fraction of all the GUC variables are marked GUC_EXPLAIN,
    * it doesn't seem worth dynamically resizing this array.
    */
-  result = palloc(sizeof(struct config_generic *) *
-                  hash_get_num_entries(guc_hashtab));
+  result = (config_generic **)palloc(sizeof(struct config_generic *) *
+                                     hash_get_num_entries(guc_hashtab));
 
   /* We need only consider GUCs with source not PGC_S_DEFAULT */
   dlist_foreach(iter, &guc_nondef_list) {
@@ -5538,7 +5542,7 @@ void ParseLongOption(const char *string, char **name, char **value) {
   equal_pos = strcspn(string, "=");
 
   if (string[equal_pos] == '=') {
-    *name = palloc(equal_pos + 1);
+    *name = (char *)palloc(equal_pos + 1);
     strlcpy(*name, string, equal_pos + 1);
 
     *value = pstrdup(&string[equal_pos + 1]);
@@ -5615,8 +5619,8 @@ void ProcessGUCArray(ArrayType *array, GucContext context, GucSource source,
 
   TransformGUCArray(array, &gucNames, &gucValues);
   forboth(lc1, gucNames, lc2, gucValues) {
-    char *name = lfirst(lc1);
-    char *value = lfirst(lc2);
+    char *name = (char *)lfirst(lc1);
+    char *value = (char *)lfirst(lc2);
 
     (void)set_config_option(name, value, context, source, action, true, 0,
                             false);

@@ -1283,7 +1283,7 @@ Oid index_concurrently_create_copy(Relation heapRelation, Oid oldIndexId,
   }
 
   /* Extract opclass options for each attribute */
-  opclassOptions = palloc0(sizeof(Datum) * newInfo->ii_NumIndexAttrs);
+  opclassOptions = (Datum *)palloc0(sizeof(Datum) * newInfo->ii_NumIndexAttrs);
   for (int i = 0; i < newInfo->ii_NumIndexAttrs; i++)
     opclassOptions[i] = get_attoptions(oldIndexId, i + 1);
 
@@ -1816,9 +1816,9 @@ ObjectAddress index_constraint_create(
 
     trigger->replace = false;
     trigger->isconstraint = true;
-    trigger->trigname = (constraintType == CONSTRAINT_PRIMARY)
-                            ? "PK_ConstraintTrigger"
-                            : "Unique_ConstraintTrigger";
+    trigger->trigname = (char *)((constraintType == CONSTRAINT_PRIMARY)
+                                     ? "PK_ConstraintTrigger"
+                                     : "Unique_ConstraintTrigger");
     trigger->relation = NULL;
     trigger->funcname = SystemFuncName("unique_key_recheck");
     trigger->args = NIL;

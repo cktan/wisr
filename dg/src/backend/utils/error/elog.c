@@ -54,11 +54,11 @@
  */
 #include "postgres.h"
 
-#include <ctype.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
+#include <ctype.h>
 #ifdef HAVE_SYSLOG
 #include <syslog.h>
 #endif
@@ -2026,7 +2026,7 @@ bool check_backtrace_functions(char **newval, void **extra, GucSource source) {
    * whitespace chars to save some memory, but it doesn't seem worth the
    * trouble.
    */
-  someval = guc_malloc(LOG, newvallen + 1 + 1);
+  someval = (char *)guc_malloc(LOG, newvallen + 1 + 1);
   if (!someval)
     return false;
   for (i = 0, j = 0; i < newvallen; i++) {

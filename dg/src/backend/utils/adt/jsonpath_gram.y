@@ -120,7 +120,7 @@ static bool makeItemLikeRegex(JsonPathParseItem *expr,
 
 result:
 	mode expr_or_predicate			{
-										*result = palloc(sizeof(JsonPathParseResult));
+										*result = (JsonPathParseResult *) palloc(sizeof(JsonPathParseResult));
 										(*result)->expr = $2;
 										(*result)->lax = $1;
 										(void) yynerrs;
@@ -259,9 +259,9 @@ accessor_op:
 			if (list_length($4) == 0)
 				$$ = makeItemBinary(jpiDecimal, NULL, NULL);
 			else if (list_length($4) == 1)
-				$$ = makeItemBinary(jpiDecimal, linitial($4), NULL);
+				$$ = makeItemBinary(jpiDecimal, (JsonPathParseItem *) linitial($4), NULL);
 			else if (list_length($4) == 2)
-				$$ = makeItemBinary(jpiDecimal, linitial($4), lsecond($4));
+				$$ = makeItemBinary(jpiDecimal, (JsonPathParseItem *) linitial($4), (JsonPathParseItem *) lsecond($4));
 			else
 				ereturn(escontext, false,
 						(errcode(ERRCODE_SYNTAX_ERROR),
@@ -384,7 +384,7 @@ method:
 static JsonPathParseItem *
 makeItemType(JsonPathItemType type)
 {
-	JsonPathParseItem *v = palloc(sizeof(*v));
+	JsonPathParseItem *v = (JsonPathParseItem *) palloc(sizeof(*v));
 
 	CHECK_FOR_INTERRUPTS();
 
@@ -533,12 +533,12 @@ makeIndexArray(List *list)
 	Assert(list != NIL);
 	v->value.array.nelems = list_length(list);
 
-	v->value.array.elems = palloc(sizeof(v->value.array.elems[0]) *
+	v->value.array.elems = (decltype(v->value.array.elems)) palloc(sizeof(v->value.array.elems[0]) *
 								  v->value.array.nelems);
 
 	foreach(cell, list)
 	{
-		JsonPathParseItem *jpi = lfirst(cell);
+		JsonPathParseItem *jpi = (JsonPathParseItem *) lfirst(cell);
 
 		Assert(jpi->type == jpiSubscript);
 

@@ -550,7 +550,7 @@ static void build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
     Path *partial_subpath;
     Path *partial_path;
 
-    partial_subpath = linitial(final_rel->partial_pathlist);
+    partial_subpath = (Path *)linitial(final_rel->partial_pathlist);
     partial_path = (Path *)create_subqueryscan_path(root, rel, partial_subpath,
                                                     trivial_tlist, NIL, NULL);
     add_partial_path(rel, partial_path);
@@ -655,7 +655,7 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
    * paths.
    */
   forthree(lc, rellist, lc2, trivial_tlist_list, lc3, tlist_list) {
-    RelOptInfo *rel = lfirst(lc);
+    RelOptInfo *rel = (RelOptInfo *)lfirst(lc);
     bool trivial_tlist = lfirst_int(lc2);
     List *child_tlist = lfirst_node(List, lc3);
 
@@ -667,7 +667,7 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 
   /* Build path lists and relid set. */
   foreach (lc, rellist) {
-    RelOptInfo *rel = lfirst(lc);
+    RelOptInfo *rel = (RelOptInfo *)lfirst(lc);
     Path *ordered_path;
 
     cheapest_pathlist = lappend(cheapest_pathlist, rel->cheapest_total_path);
@@ -733,7 +733,7 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 
     /* Find the highest number of workers requested for any subpath. */
     foreach (lc, partial_pathlist) {
-      Path *subpath = lfirst(lc);
+      Path *subpath = (Path *)lfirst(lc);
 
       parallel_workers = Max(parallel_workers, subpath->parallel_workers);
     }
@@ -1082,7 +1082,7 @@ static List *plan_union_children(PlannerInfo *root, SetOperationStmt *top_union,
   *istrivial_tlist = NIL;
 
   while (pending_rels != NIL) {
-    Node *setOp = linitial(pending_rels);
+    Node *setOp = (Node *)linitial(pending_rels);
 
     pending_rels = list_delete_first(pending_rels);
 

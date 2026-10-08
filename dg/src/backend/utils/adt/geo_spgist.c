@@ -388,10 +388,10 @@ Datum spg_box_quad_picksplit(PG_FUNCTION_ARGS) {
   spgPickSplitOut *out = (spgPickSplitOut *)PG_GETARG_POINTER(1);
   BOX *centroid;
   int median, i;
-  float8 *lowXs = palloc(sizeof(float8) * in->nTuples);
-  float8 *highXs = palloc(sizeof(float8) * in->nTuples);
-  float8 *lowYs = palloc(sizeof(float8) * in->nTuples);
-  float8 *highYs = palloc(sizeof(float8) * in->nTuples);
+  float8 *lowXs = (float8 *)palloc(sizeof(float8) * in->nTuples);
+  float8 *highXs = (float8 *)palloc(sizeof(float8) * in->nTuples);
+  float8 *lowYs = (float8 *)palloc(sizeof(float8) * in->nTuples);
+  float8 *highYs = (float8 *)palloc(sizeof(float8) * in->nTuples);
 
   /* Calculate median of all 4D coordinates */
   for (i = 0; i < in->nTuples; i++) {
@@ -410,7 +410,7 @@ Datum spg_box_quad_picksplit(PG_FUNCTION_ARGS) {
 
   median = in->nTuples / 2;
 
-  centroid = palloc(sizeof(BOX));
+  centroid = (BOX *)palloc(sizeof(BOX));
 
   centroid->low.x = lowXs[median];
   centroid->high.x = highXs[median];
@@ -424,8 +424,8 @@ Datum spg_box_quad_picksplit(PG_FUNCTION_ARGS) {
   out->nNodes = 16;
   out->nodeLabels = NULL; /* We don't need node labels. */
 
-  out->mapTuplesToNodes = palloc(sizeof(int) * in->nTuples);
-  out->leafTupleDatums = palloc(sizeof(Datum) * in->nTuples);
+  out->mapTuplesToNodes = (int *)palloc(sizeof(int) * in->nTuples);
+  out->leafTupleDatums = (Datum *)palloc(sizeof(Datum) * in->nTuples);
 
   /*
    * Assign ranges to corresponding nodes according to quadrants relative to
@@ -498,7 +498,7 @@ Datum spg_box_quad_inner_consistent(PG_FUNCTION_ARGS) {
    * we have just begun to walk the tree.
    */
   if (in->traversalValue)
-    rect_box = in->traversalValue;
+    rect_box = (RectBox *)in->traversalValue;
   else
     rect_box = initRectBox();
 
@@ -510,7 +510,7 @@ Datum spg_box_quad_inner_consistent(PG_FUNCTION_ARGS) {
       out->nodeNumbers[i] = i;
 
     if (in->norderbys > 0 && in->nNodes > 0) {
-      double *distances = palloc(sizeof(double) * in->norderbys);
+      double *distances = (double *)palloc(sizeof(double) * in->norderbys);
       int j;
 
       for (j = 0; j < in->norderbys; j++) {
@@ -523,7 +523,7 @@ Datum spg_box_quad_inner_consistent(PG_FUNCTION_ARGS) {
       out->distances[0] = distances;
 
       for (i = 1; i < in->nNodes; i++) {
-        out->distances[i] = palloc(sizeof(double) * in->norderbys);
+        out->distances[i] = (double *)palloc(sizeof(double) * in->norderbys);
         memcpy(out->distances[i], distances, sizeof(double) * in->norderbys);
       }
     }
@@ -624,7 +624,7 @@ Datum spg_box_quad_inner_consistent(PG_FUNCTION_ARGS) {
       out->nodeNumbers[out->nNodes] = quadrant;
 
       if (in->norderbys > 0) {
-        double *distances = palloc(sizeof(double) * in->norderbys);
+        double *distances = (double *)palloc(sizeof(double) * in->norderbys);
         int j;
 
         out->distances[out->nNodes] = distances;

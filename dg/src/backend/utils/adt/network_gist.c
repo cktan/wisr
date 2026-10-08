@@ -503,7 +503,7 @@ Datum inet_gist_compress(PG_FUNCTION_ARGS) {
   GISTENTRY *retval;
 
   if (entry->leafkey) {
-    retval = palloc(sizeof(GISTENTRY));
+    retval = (GISTENTRY *)palloc(sizeof(GISTENTRY));
     if (DatumGetPointer(entry->key) != NULL) {
       inet *in = DatumGetInetPP(entry->key);
       GistInetKey *r;
@@ -550,7 +550,7 @@ Datum inet_gist_fetch(PG_FUNCTION_ARGS) {
   memcpy(ip_addr(dst), gk_ip_addr(key), ip_addrsize(dst));
   SET_INET_VARSIZE(dst);
 
-  retval = palloc(sizeof(GISTENTRY));
+  retval = (GISTENTRY *)palloc(sizeof(GISTENTRY));
   gistentryinit(*retval, InetPGetDatum(dst), entry->rel, entry->page,
                 entry->offset, false);
 
@@ -570,14 +570,14 @@ Datum inet_gist_penalty(PG_FUNCTION_ARGS) {
   GISTENTRY *newent = (GISTENTRY *)PG_GETARG_POINTER(1);
   float *penalty = (float *)PG_GETARG_POINTER(2);
   GistInetKey *orig = DatumGetInetKeyP(origent->key),
-              *new = DatumGetInetKeyP(newent->key);
+              *new_ = DatumGetInetKeyP(newent->key);
   int commonbits;
 
-  if (gk_ip_family(orig) == gk_ip_family(new)) {
-    if (gk_ip_minbits(orig) <= gk_ip_minbits(new)) {
+  if (gk_ip_family(orig) == gk_ip_family(new_)) {
+    if (gk_ip_minbits(orig) <= gk_ip_minbits(new_)) {
       commonbits =
-          bitncommon(gk_ip_addr(orig), gk_ip_addr(new),
-                     Min(gk_ip_commonbits(orig), gk_ip_commonbits(new)));
+          bitncommon(gk_ip_addr(orig), gk_ip_addr(new_),
+                     Min(gk_ip_commonbits(orig), gk_ip_commonbits(new_)));
       if (commonbits > 0)
         *penalty = 1.0f / commonbits;
       else

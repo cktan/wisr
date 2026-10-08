@@ -55,7 +55,7 @@ static int extractRemainingColumns(ParseState *pstate,
 static Node *transformJoinUsingClause(ParseState *pstate, List *leftVars,
                                       List *rightVars);
 static Node *transformJoinOnClause(ParseState *pstate, JoinExpr *j,
-                                   List *namespace);
+                                   List *namespace_);
 static ParseNamespaceItem *transformTableEntry(ParseState *pstate, RangeVar *r);
 static ParseNamespaceItem *transformRangeSubselect(ParseState *pstate,
                                                    RangeSubselect *r);
@@ -69,14 +69,14 @@ static ParseNamespaceItem *getNSItemForSpecialRelationTypes(ParseState *pstate,
                                                             RangeVar *rv);
 static Node *transformFromClauseItem(ParseState *pstate, Node *n,
                                      ParseNamespaceItem **top_nsitem,
-                                     List **namespace);
+                                     List **namespace_);
 static Var *buildVarFromNSColumn(ParseState *pstate,
                                  ParseNamespaceColumn *nscol);
 static Node *buildMergedJoinVar(ParseState *pstate, JoinType jointype,
                                 Var *l_colvar, Var *r_colvar);
 static void markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex);
-static void setNamespaceColumnVisibility(List *namespace, bool cols_visible);
-static void setNamespaceLateralState(List *namespace, bool lateral_only,
+static void setNamespaceColumnVisibility(List *namespace_, bool cols_visible);
+static void setNamespaceLateralState(List *namespace_, bool lateral_only,
                                      bool lateral_ok);
 static void checkExprIsVarFree(ParseState *pstate, Node *n,
                                const char *constructName);
@@ -121,19 +121,19 @@ void transformFromClause(ParseState *pstate, List *frmList) {
    * LATERAL references.
    */
   foreach (fl, frmList) {
-    Node *n = lfirst(fl);
+    Node *n = (Node *)lfirst(fl);
     ParseNamespaceItem *nsitem;
-    List *namespace;
+    List *namespace_;
 
-    n = transformFromClauseItem(pstate, n, &nsitem, &namespace);
+    n = transformFromClauseItem(pstate, n, &nsitem, &namespace_);
 
-    checkNameSpaceConflicts(pstate, pstate->p_namespace, namespace);
+    checkNameSpaceConflicts(pstate, pstate->p_namespace, namespace_);
 
     /* Mark the new namespace items as visible only to LATERAL */
-    setNamespaceLateralState(namespace, true, true);
+    setNamespaceLateralState(namespace_, true, true);
 
     pstate->p_joinlist = lappend(pstate->p_joinlist, n);
-    pstate->p_namespace = list_concat(pstate->p_namespace, namespace);
+    pstate->p_namespace = list_concat(pstate->p_namespace, namespace_);
   }
 
   /*
@@ -345,7 +345,7 @@ static Node *transformJoinUsingClause(ParseState *pstate, List *leftVars,
  *	  Result is a transformed qualification expression.
  */
 static Node *transformJoinOnClause(ParseState *pstate, JoinExpr *j,
-                                   List *namespace) {
+                                   List *namespace_) {
   Node *result;
   List *save_namespace;
 
@@ -357,10 +357,10 @@ static Node *transformJoinOnClause(ParseState *pstate, JoinExpr *j,
    * already did.)  All namespace items are marked visible regardless of
    * LATERAL state.
    */
-  setNamespaceLateralState(namespace, false, true);
+  setNamespaceLateralState(namespace_, false, true);
 
   save_namespace = pstate->p_namespace;
-  pstate->p_namespace = namespace;
+  pstate->p_namespace = namespace_;
 
   result = transformWhereClause(pstate, j->quals, EXPR_KIND_JOIN_ON, "JOIN/ON");
 
@@ -687,7 +687,7 @@ static ParseNamespaceItem *transformRangeTableFunc(ParseState *pstate,
   tf->ordinalitycol = -1;
 
   /* Process column specs */
-  names = palloc(sizeof(char *) * list_length(rtf->columns));
+  names = (char **)palloc(sizeof(char *) * list_length(rtf->columns));
 
   colno = 0;
   foreach (col, rtf->columns) {
@@ -971,7 +971,7 @@ static ParseNamespaceItem *getNSItemForSpecialRelationTypes(ParseState *pstate,
  */
 static Node *transformFromClauseItem(ParseState *pstate, Node *n,
                                      ParseNamespaceItem **top_nsitem,
-                                     List **namespace) {
+                                     List **namespace_) {
   /* Guard against stack overflow due to overly deep subtree */
   check_stack_depth();
 
@@ -989,7 +989,7 @@ static Node *transformFromClauseItem(ParseState *pstate, Node *n,
       nsitem = transformTableEntry(pstate, rv);
 
     *top_nsitem = nsitem;
-    *namespace = list_make1(nsitem);
+    *namespace_ = list_make1(nsitem);
     rtr = makeNode(RangeTblRef);
     rtr->rtindex = nsitem->p_rtindex;
     return (Node *)rtr;
@@ -1000,7 +1000,7 @@ static Node *transformFromClauseItem(ParseState *pstate, Node *n,
 
     nsitem = transformRangeSubselect(pstate, (RangeSubselect *)n);
     *top_nsitem = nsitem;
-    *namespace = list_make1(nsitem);
+    *namespace_ = list_make1(nsitem);
     rtr = makeNode(RangeTblRef);
     rtr->rtindex = nsitem->p_rtindex;
     return (Node *)rtr;
@@ -1011,7 +1011,7 @@ static Node *transformFromClauseItem(ParseState *pstate, Node *n,
 
     nsitem = transformRangeFunction(pstate, (RangeFunction *)n);
     *top_nsitem = nsitem;
-    *namespace = list_make1(nsitem);
+    *namespace_ = list_make1(nsitem);
     rtr = makeNode(RangeTblRef);
     rtr->rtindex = nsitem->p_rtindex;
     return (Node *)rtr;
@@ -1026,7 +1026,7 @@ static Node *transformFromClauseItem(ParseState *pstate, Node *n,
       nsitem = transformRangeTableFunc(pstate, (RangeTableFunc *)n);
 
     *top_nsitem = nsitem;
-    *namespace = list_make1(nsitem);
+    *namespace_ = list_make1(nsitem);
     rtr = makeNode(RangeTblRef);
     rtr->rtindex = nsitem->p_rtindex;
     return (Node *)rtr;
@@ -1037,7 +1037,8 @@ static Node *transformFromClauseItem(ParseState *pstate, Node *n,
     RangeTblEntry *rte;
 
     /* Recursively transform the contained relation */
-    rel = transformFromClauseItem(pstate, rts->relation, top_nsitem, namespace);
+    rel =
+        transformFromClauseItem(pstate, rts->relation, top_nsitem, namespace_);
     rte = (*top_nsitem)->p_rte;
     /* We only support this on plain relations and matviews */
     if (rte->rtekind != RTE_RELATION ||
@@ -1461,7 +1462,7 @@ static Node *transformFromClauseItem(ParseState *pstate, Node *n,
     nsitem->p_lateral_ok = true;
 
     *top_nsitem = nsitem;
-    *namespace = lappend(my_namespace, nsitem);
+    *namespace_ = lappend(my_namespace, nsitem);
 
     return (Node *)j;
   } else
@@ -1632,10 +1633,10 @@ static void markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex) {
  *	  Convenience subroutine to update cols_visible flags in a namespace
  *list.
  */
-static void setNamespaceColumnVisibility(List *namespace, bool cols_visible) {
+static void setNamespaceColumnVisibility(List *namespace_, bool cols_visible) {
   ListCell *lc;
 
-  foreach (lc, namespace) {
+  foreach (lc, namespace_) {
     ParseNamespaceItem *nsitem = (ParseNamespaceItem *)lfirst(lc);
 
     nsitem->p_cols_visible = cols_visible;
@@ -1646,11 +1647,11 @@ static void setNamespaceColumnVisibility(List *namespace, bool cols_visible) {
  * setNamespaceLateralState -
  *	  Convenience subroutine to update LATERAL flags in a namespace list.
  */
-static void setNamespaceLateralState(List *namespace, bool lateral_only,
+static void setNamespaceLateralState(List *namespace_, bool lateral_only,
                                      bool lateral_ok) {
   ListCell *lc;
 
-  foreach (lc, namespace) {
+  foreach (lc, namespace_) {
     ParseNamespaceItem *nsitem = (ParseNamespaceItem *)lfirst(lc);
 
     nsitem->p_lateral_only = lateral_only;
@@ -2071,7 +2072,7 @@ static Node *flatten_grouping_sets(Node *expr, bool toplevel,
       return (Node *)NIL;
 
     foreach (l2, gset->content) {
-      Node *n1 = lfirst(l2);
+      Node *n1 = (Node *)lfirst(l2);
       Node *n2 = flatten_grouping_sets(n1, false, NULL);
 
       if (IsA(n1, GroupingSet) &&
@@ -2097,7 +2098,8 @@ static Node *flatten_grouping_sets(Node *expr, bool toplevel,
     ListCell *l;
 
     foreach (l, (List *)expr) {
-      Node *n = flatten_grouping_sets(lfirst(l), toplevel, hasGroupingSets);
+      Node *n =
+          flatten_grouping_sets((Node *)lfirst(l), toplevel, hasGroupingSets);
 
       if (n != (Node *)NIL) {
         if (IsA(n, List))
@@ -2289,7 +2291,7 @@ static Node *transformGroupingSet(List **flatresult, ParseState *pstate,
   Assert(toplevel || gset->kind != GROUPING_SET_SETS);
 
   foreach (gl, gset->content) {
-    Node *n = lfirst(gl);
+    Node *n = (Node *)lfirst(gl);
 
     if (IsA(n, List)) {
       List *l =

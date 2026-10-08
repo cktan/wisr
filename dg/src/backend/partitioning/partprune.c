@@ -235,7 +235,7 @@ int make_partition_pruneinfo(PlannerInfo *root, RelOptInfo *parentrel,
    * that zero can represent an un-filled array entry.
    */
   allpartrelids = NIL;
-  relid_subplan_map = palloc0(sizeof(int) * root->simple_rel_array_size);
+  relid_subplan_map = (int *)palloc0(sizeof(int) * root->simple_rel_array_size);
 
   i = 1;
   foreach (lc, subpaths) {
@@ -438,7 +438,7 @@ static List *make_partitionedrel_pruneinfo(PlannerInfo *root,
    * In this phase we discover whether runtime pruning is needed at all; if
    * not, we can avoid doing further work.
    */
-  relid_subpart_map = palloc0(sizeof(int) * root->simple_rel_array_size);
+  relid_subpart_map = (int *)palloc0(sizeof(int) * root->simple_rel_array_size);
 
   i = 1;
   rti = -1;
@@ -591,7 +591,7 @@ static List *make_partitionedrel_pruneinfo(PlannerInfo *root,
    * PartitionedRelPruneInfo list.
    */
   foreach (lc, pinfolist) {
-    PartitionedRelPruneInfo *pinfo = lfirst(lc);
+    PartitionedRelPruneInfo *pinfo = (PartitionedRelPruneInfo *)lfirst(lc);
     RelOptInfo *subpart = find_base_rel(root, pinfo->rtindex);
     Bitmapset *present_parts;
     int nparts = subpart->nparts;
@@ -809,7 +809,7 @@ Bitmapset *get_matching_partitions(PartitionPruneContext *context,
    */
   results = (PruneStepResult **)palloc0(num_steps * sizeof(PruneStepResult *));
   foreach (lc, pruning_steps) {
-    PartitionPruneStep *step = lfirst(lc);
+    PartitionPruneStep *step = (PartitionPruneStep *)lfirst(lc);
 
     switch (nodeTag(step)) {
     case T_PartitionPruneStepOp:
@@ -984,7 +984,7 @@ static List *gen_partprune_steps_internal(GeneratePruningStepsContext *context,
          * all args, it means the OR expression is false as a whole.
          */
         foreach (lc1, ((BoolExpr *)clause)->args) {
-          Expr *arg = lfirst(lc1);
+          Expr *arg = (Expr *)lfirst(lc1);
           bool arg_contradictory;
           List *argsteps;
 
@@ -1007,7 +1007,7 @@ static List *gen_partprune_steps_internal(GeneratePruningStepsContext *context,
              * the list.  If it just generated one, then the last
              * one in the list is still the one we want.
              */
-            PartitionPruneStep *last = llast(argsteps);
+            PartitionPruneStep *last = (PartitionPruneStep *)llast(argsteps);
 
             arg_stepids = lappend_int(arg_stepids, last->step_id);
           } else {
@@ -1080,7 +1080,7 @@ static List *gen_partprune_steps_internal(GeneratePruningStepsContext *context,
      * See if we can match this clause to any of the partition keys.
      */
     for (i = 0; i < part_scheme->partnatts; i++) {
-      Expr *partkey = linitial(context->rel->partexprs[i]);
+      Expr *partkey = (Expr *)linitial(context->rel->partexprs[i]);
       bool clause_is_not_null = false;
       PartClauseInfo *pc = NULL;
       List *clause_steps = NIL;
@@ -1209,7 +1209,7 @@ static List *gen_partprune_steps_internal(GeneratePruningStepsContext *context,
     PartitionPruneStep *final;
 
     foreach (lc, result) {
-      PartitionPruneStep *step = lfirst(lc);
+      PartitionPruneStep *step = (PartitionPruneStep *)lfirst(lc);
 
       step_ids = lappend_int(step_ids, step->step_id);
     }
@@ -1404,7 +1404,7 @@ static List *gen_prune_steps_from_opexps(GeneratePruningStepsContext *context,
      */
     for (strat = 1; strat <= BTMaxStrategyNumber; strat++) {
       foreach (lc, btree_clauses[strat]) {
-        PartClauseInfo *pc = lfirst(lc);
+        PartClauseInfo *pc = (PartClauseInfo *)lfirst(lc);
         ListCell *eq_start;
         ListCell *le_start;
         ListCell *ge_start;
@@ -1448,7 +1448,7 @@ static List *gen_prune_steps_from_opexps(GeneratePruningStepsContext *context,
            * prefix, provided they're from an earlier key.
            */
           for_each_cell(lc1, eq_clauses, eq_start) {
-            PartClauseInfo *eqpc = lfirst(lc1);
+            PartClauseInfo *eqpc = (PartClauseInfo *)lfirst(lc1);
 
             if (eqpc->keyno == keyno) {
               prefix = lappend(prefix, eqpc);
@@ -1468,7 +1468,7 @@ static List *gen_prune_steps_from_opexps(GeneratePruningStepsContext *context,
           if (strat == BTLessStrategyNumber ||
               strat == BTLessEqualStrategyNumber) {
             for_each_cell(lc1, le_clauses, le_start) {
-              PartClauseInfo *lepc = lfirst(lc1);
+              PartClauseInfo *lepc = (PartClauseInfo *)lfirst(lc1);
 
               if (lepc->keyno == keyno) {
                 prefix = lappend(prefix, lepc);
@@ -1489,7 +1489,7 @@ static List *gen_prune_steps_from_opexps(GeneratePruningStepsContext *context,
           if (strat == BTGreaterStrategyNumber ||
               strat == BTGreaterEqualStrategyNumber) {
             for_each_cell(lc1, ge_clauses, ge_start) {
-              PartClauseInfo *gepc = lfirst(lc1);
+              PartClauseInfo *gepc = (PartClauseInfo *)lfirst(lc1);
 
               if (gepc->keyno == keyno) {
                 prefix = lappend(prefix, gepc);
@@ -1557,7 +1557,7 @@ static List *gen_prune_steps_from_opexps(GeneratePruningStepsContext *context,
        * clause belonging to the last partition key we found a
        * clause for above.
        */
-      pc = llast(eq_clauses);
+      pc = (PartClauseInfo *)llast(eq_clauses);
 
       /*
        * There might be multiple clauses which matched to that
@@ -1566,7 +1566,7 @@ static List *gen_prune_steps_from_opexps(GeneratePruningStepsContext *context,
        */
       last_keyno = pc->keyno;
       foreach (lc, eq_clauses) {
-        pc = lfirst(lc);
+        pc = (PartClauseInfo *)lfirst(lc);
         if (pc->keyno == last_keyno)
           break;
         prefix = lappend(prefix, pc);
@@ -1583,7 +1583,7 @@ static List *gen_prune_steps_from_opexps(GeneratePruningStepsContext *context,
        * get_steps_using_prefix will take care of for us.
        */
       for_each_cell(lc1, eq_clauses, lc) {
-        pc = lfirst(lc1);
+        pc = (PartClauseInfo *)lfirst(lc1);
 
         /*
          * Note that we pass nullkeys for step_nullkeys,
@@ -2170,8 +2170,8 @@ match_clause_to_partition_key(GeneratePruningStepsContext *context,
     foreach (lc1, elem_exprs) {
       Expr *elem_clause;
 
-      elem_clause = make_opclause(saop_op, BOOLOID, false, leftop, lfirst(lc1),
-                                  InvalidOid, saop_coll);
+      elem_clause = make_opclause(saop_op, BOOLOID, false, leftop,
+                                  (Expr *)lfirst(lc1), InvalidOid, saop_coll);
       elem_clauses = lappend(elem_clauses, elem_clause);
     }
 
@@ -2324,7 +2324,7 @@ static List *get_steps_using_prefix_recurse(
      * from that point.
      */
     for_each_cell(lc, prefix, start) {
-      pc = lfirst(lc);
+      pc = (PartClauseInfo *)lfirst(lc);
 
       if (pc->keyno > cur_keyno)
         break;
@@ -2342,7 +2342,7 @@ static List *get_steps_using_prefix_recurse(
       List *moresteps;
       List *step_exprs1, *step_cmpfns1;
 
-      pc = lfirst(lc);
+      pc = (PartClauseInfo *)lfirst(lc);
       if (pc->keyno == cur_keyno) {
         /* Leave the original step_exprs unmodified. */
         step_exprs1 = list_copy(step_exprs);
@@ -2388,7 +2388,7 @@ static List *get_steps_using_prefix_recurse(
            list_length(step_exprs) + 2 + bms_num_members(step_nullkeys) ==
                context->rel->part_scheme->partnatts);
     for_each_cell(lc, prefix, start) {
-      PartClauseInfo *pc = lfirst(lc);
+      PartClauseInfo *pc = (PartClauseInfo *)lfirst(lc);
       PartitionPruneStep *step;
       List *step_exprs1, *step_cmpfns1;
 
@@ -3061,7 +3061,7 @@ static Bitmapset *get_partkey_exec_paramids(List *steps) {
       continue;
 
     foreach (lc2, step->exprs) {
-      Expr *expr = lfirst(lc2);
+      Expr *expr = (Expr *)lfirst(lc2);
 
       /* We can be quick for plain Consts */
       if (!IsA(expr, Const))
@@ -3124,7 +3124,7 @@ perform_pruning_base_step(PartitionPruneContext *context,
       bool isnull;
       Oid cmpfn;
 
-      expr = lfirst(lc1);
+      expr = (Expr *)lfirst(lc1);
       stateidx =
           PruneCxtStateIdx(context->partnatts, opstep->step.step_id, keyno);
       partkey_datum_from_expr(context, expr, stateidx, &datum, &isnull);

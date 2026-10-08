@@ -242,14 +242,15 @@ void _bt_preprocess_keys(IndexScanDesc scan) {
 
     /* Also maintain keyDataMap for remapping so->orderProcs[] later */
     keyDataMap =
-        MemoryContextAlloc(so->arrayContext, numberOfKeys * sizeof(int));
+        (int *)MemoryContextAlloc(so->arrayContext, numberOfKeys * sizeof(int));
 
     /*
      * Also enlarge output array when it might otherwise not have room for
      * a skip array's scan key
      */
     if (numberOfKeys > scan->numberOfKeys)
-      so->keyData = repalloc(so->keyData, numberOfKeys * sizeof(ScanKeyData));
+      so->keyData =
+          (ScanKey)repalloc(so->keyData, numberOfKeys * sizeof(ScanKeyData));
   } else
     inkeys = scan->keyData;
 
@@ -1433,7 +1434,7 @@ static void _bt_unmark_keys(IndexScanDesc scan, int *keyDataMap) {
    * Any requiredness markings that we might leave on later keys/attributes
    * are predicated on there being required = keys on all prior columns.
    */
-  unmarkikey = palloc0(so->numberOfKeys * sizeof(bool));
+  unmarkikey = (bool *)palloc0(so->numberOfKeys * sizeof(bool));
   nunmark = 0;
 
   /* Set things up for first key's attribute */
@@ -1508,13 +1509,15 @@ static void _bt_unmark_keys(IndexScanDesc scan, int *keyDataMap) {
    * Next, allocate temp arrays: one for required keys that'll remain
    * required, the other for all remaining keys
    */
-  unmarkKeys = palloc(nunmark * sizeof(ScanKeyData));
-  keepKeys = palloc((so->numberOfKeys - nunmark) * sizeof(ScanKeyData));
+  unmarkKeys = (ScanKey)palloc(nunmark * sizeof(ScanKeyData));
+  keepKeys =
+      (ScanKey)palloc((so->numberOfKeys - nunmark) * sizeof(ScanKeyData));
   nunmarked = 0;
   nkept = 0;
   if (so->numArrayKeys) {
-    unmarkOrderProcs = palloc(nunmark * sizeof(FmgrInfo));
-    keepOrderProcs = palloc((so->numberOfKeys - nunmark) * sizeof(FmgrInfo));
+    unmarkOrderProcs = (FmgrInfo *)palloc(nunmark * sizeof(FmgrInfo));
+    keepOrderProcs =
+        (FmgrInfo *)palloc((so->numberOfKeys - nunmark) * sizeof(FmgrInfo));
   }
 
   /*

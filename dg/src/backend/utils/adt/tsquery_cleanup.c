@@ -339,7 +339,7 @@ TSQuery cleanup_tsquery_stopwords(TSQuery in, bool noisy) {
     if (noisy)
       ereport(NOTICE, (errmsg("text-search query contains only stop words or "
                               "doesn't contain lexemes, ignored")));
-    out = palloc(HDRSIZETQ);
+    out = (TSQuery)palloc(HDRSIZETQ);
     out->size = 0;
     SET_VARSIZE(out, HDRSIZETQ);
     return out;
@@ -353,7 +353,7 @@ TSQuery cleanup_tsquery_stopwords(TSQuery in, bool noisy) {
   items = plaintree(root, &len);
   commonlen = COMPUTESIZE(len, lenstr);
 
-  out = palloc(commonlen);
+  out = (TSQuery)palloc(commonlen);
   SET_VARSIZE(out, commonlen);
   out->size = len;
 

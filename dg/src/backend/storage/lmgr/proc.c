@@ -30,8 +30,8 @@
 #include "postgres.h"
 
 #include <signal.h>
-#include <sys/time.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "access/transam.h"
 #include "access/twophase.h"
@@ -221,7 +221,7 @@ void InitProcGlobal(void) {
    */
   requestSize = PGProcShmemSize();
 
-  ptr = ShmemInitStruct("PGPROC structures", requestSize, &found);
+  ptr = (char *)ShmemInitStruct("PGPROC structures", requestSize, &found);
 
   MemSet(ptr, 0, requestSize);
 
@@ -261,7 +261,7 @@ void InitProcGlobal(void) {
 
   requestSize = FastPathLockShmemSize();
 
-  fpPtr = ShmemInitStruct("Fast-Path Lock Array", requestSize, &found);
+  fpPtr = (char *)ShmemInitStruct("Fast-Path Lock Array", requestSize, &found);
 
   MemSet(fpPtr, 0, requestSize);
 

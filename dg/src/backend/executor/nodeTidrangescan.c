@@ -100,7 +100,7 @@ static void TidExprListCreate(TidRangeScanState *tidrangestate) {
   ListCell *l;
 
   foreach (l, node->tidrangequals) {
-    OpExpr *opexpr = lfirst(l);
+    OpExpr *opexpr = (OpExpr *)lfirst(l);
     TidOpExpr *tidopexpr;
 
     if (!IsA(opexpr, OpExpr))

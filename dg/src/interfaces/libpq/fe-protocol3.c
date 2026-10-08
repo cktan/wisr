@@ -21,8 +21,8 @@
 #ifdef WIN32
 #include "win32.h"
 #else
-#include <netinet/tcp.h>
 #include <unistd.h>
+#include <netinet/tcp.h>
 #endif
 
 #include "common/int.h"
@@ -1450,7 +1450,7 @@ static int getBackendKeyData(PGconn *conn, int msgLength) {
     return 0;
   }
 
-  conn->be_cancel_key = malloc(cancel_key_len);
+  conn->be_cancel_key = (uint8 *)malloc(cancel_key_len);
   if (conn->be_cancel_key == NULL) {
     libpq_append_conn_error(conn, "out of memory");
     handleFatalError(conn);

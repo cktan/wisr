@@ -2,8 +2,8 @@
  *	qsort_interruptible.c: qsort_arg that includes CHECK_FOR_INTERRUPTS
  */
 
-#include "miscadmin.h"
 #include "postgres.h"
+#include "miscadmin.h"
 
 #define ST_SORT qsort_interruptible
 #define ST_ELEMENT_TYPE_VOID

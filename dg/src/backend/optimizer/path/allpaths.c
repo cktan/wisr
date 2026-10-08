@@ -1264,7 +1264,7 @@ void add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
    * available for the non-dummy member relations.
    */
   foreach (l, live_childrels) {
-    RelOptInfo *childrel = lfirst(l);
+    RelOptInfo *childrel = (RelOptInfo *)lfirst(l);
     ListCell *lcp;
     Path *cheapest_partial_path = NULL;
 
@@ -1309,7 +1309,7 @@ void add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 
     /* Same idea, but for a partial plan. */
     if (childrel->partial_pathlist != NIL) {
-      cheapest_partial_path = linitial(childrel->partial_pathlist);
+      cheapest_partial_path = (Path *)linitial(childrel->partial_pathlist);
       accumulate_append_subpath(cheapest_partial_path, &partial_subpaths, NULL);
     } else
       partial_subpaths_valid = false;
@@ -1430,7 +1430,7 @@ void add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 
     /* Find the highest number of workers requested for any subpath. */
     foreach (lc, partial_subpaths) {
-      Path *path = lfirst(lc);
+      Path *path = (Path *)lfirst(lc);
 
       parallel_workers = Max(parallel_workers, path->parallel_workers);
     }
@@ -1484,7 +1484,7 @@ void add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
      * subpath.
      */
     foreach (lc, pa_partial_subpaths) {
-      Path *path = lfirst(lc);
+      Path *path = (Path *)lfirst(lc);
 
       parallel_workers = Max(parallel_workers, path->parallel_workers);
     }
@@ -2081,9 +2081,9 @@ static bool find_window_run_conditions(Query *subquery, RangeTblEntry *rte,
 
   /* get the Expr from the other side of the OpExpr */
   if (wfunc_left)
-    otherexpr = lsecond(opexpr->args);
+    otherexpr = (Expr *)lsecond(opexpr->args);
   else
-    otherexpr = linitial(opexpr->args);
+    otherexpr = (Expr *)linitial(opexpr->args);
 
   /*
    * The value being compared must not change during the evaluation of the
@@ -2258,9 +2258,10 @@ static bool check_and_push_window_quals(Query *subquery, RangeTblEntry *rte,
    */
 
   /* Check the left side of the OpExpr */
-  var1 = linitial(opexpr->args);
+  var1 = (Var *)linitial(opexpr->args);
   if (IsA(var1, Var) && var1->varattno > 0) {
-    TargetEntry *tle = list_nth(subquery->targetList, var1->varattno - 1);
+    TargetEntry *tle =
+        (TargetEntry *)list_nth(subquery->targetList, var1->varattno - 1);
     WindowFunc *wfunc = (WindowFunc *)tle->expr;
 
     if (find_window_run_conditions(subquery, rte, rti, tle->resno, wfunc,
@@ -2270,9 +2271,10 @@ static bool check_and_push_window_quals(Query *subquery, RangeTblEntry *rte,
   }
 
   /* and check the right side */
-  var2 = lsecond(opexpr->args);
+  var2 = (Var *)lsecond(opexpr->args);
   if (IsA(var2, Var) && var2->varattno > 0) {
-    TargetEntry *tle = list_nth(subquery->targetList, var2->varattno - 1);
+    TargetEntry *tle =
+        (TargetEntry *)list_nth(subquery->targetList, var2->varattno - 1);
     WindowFunc *wfunc = (WindowFunc *)tle->expr;
 
     if (find_window_run_conditions(subquery, rte, rti, tle->resno, wfunc,
@@ -2839,7 +2841,7 @@ void generate_gather_paths(PlannerInfo *root, RelOptInfo *rel,
    * path of interest: the cheapest one.  That will be the one at the front
    * of partial_pathlist because of the way add_partial_path works.
    */
-  cheapest_partial_path = linitial(rel->partial_pathlist);
+  cheapest_partial_path = (Path *)linitial(rel->partial_pathlist);
   rows = compute_gather_rows(cheapest_partial_path);
   simple_gather_path = (Path *)create_gather_path(
       root, rel, cheapest_partial_path, rel->reltarget, NULL, rowsp);
@@ -2972,14 +2974,14 @@ void generate_useful_gather_paths(PlannerInfo *root, RelOptInfo *rel,
   useful_pathkeys_list = get_useful_pathkeys_for_relation(root, rel, true);
 
   /* used for explicit (full) sort paths */
-  cheapest_partial_path = linitial(rel->partial_pathlist);
+  cheapest_partial_path = (Path *)linitial(rel->partial_pathlist);
 
   /*
    * Consider sorted paths for each interesting ordering. We generate both
    * incremental and full sort.
    */
   foreach (lc, useful_pathkeys_list) {
-    List *useful_pathkeys = lfirst(lc);
+    List *useful_pathkeys = (List *)lfirst(lc);
     ListCell *lc2;
     bool is_sorted;
     int presorted_keys;

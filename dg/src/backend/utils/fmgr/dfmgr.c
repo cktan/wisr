@@ -414,7 +414,7 @@ void get_loaded_module_details(DynamicFileList *dfptr,
  */
 static char *expand_dynamic_library_name(const char *name) {
   bool have_slash;
-  char *new;
+  char *new_;
   char *full;
 
   Assert(name);
@@ -433,17 +433,17 @@ static char *expand_dynamic_library_name(const char *name) {
     pfree(full);
   }
 
-  new = psprintf("%s%s", name, DLSUFFIX);
+  new_ = psprintf("%s%s", name, DLSUFFIX);
 
   if (!have_slash) {
-    full = find_in_path(new, Dynamic_library_path, "dynamic_library_path",
+    full = find_in_path(new_, Dynamic_library_path, "dynamic_library_path",
                         "$libdir", pkglib_path);
-    pfree(new);
+    pfree(new_);
     if (full)
       return full;
   } else {
-    full = substitute_path_macro(new, "$libdir", pkglib_path);
-    pfree(new);
+    full = substitute_path_macro(new_, "$libdir", pkglib_path);
+    pfree(new_);
     if (pg_file_exists(full))
       return full;
     pfree(full);
@@ -543,7 +543,7 @@ char *find_in_path(const char *basename, const char *path,
     else
       len = piece - p;
 
-    piece = palloc(len + 1);
+    piece = (char *)palloc(len + 1);
     strlcpy(piece, p, len + 1);
 
     mangled = substitute_path_macro(piece, macro, macro_val);
@@ -558,7 +558,7 @@ char *find_in_path(const char *basename, const char *path,
                errmsg("component in parameter \"%s\" is not an absolute path",
                       path_param)));
 
-    full = palloc(strlen(mangled) + 1 + baselen + 1);
+    full = (char *)palloc(strlen(mangled) + 1 + baselen + 1);
     sprintf(full, "%s/%s", mangled, basename);
     pfree(mangled);
 

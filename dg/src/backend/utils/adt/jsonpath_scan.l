@@ -448,7 +448,7 @@ checkKeyword(yyscan_t yyscanner)
 			   *StopMiddle;
 
 	if (yyextra->scanstring.len > keywords[lengthof(keywords) - 1].len)
-		return res;
+		return (yytokentype) res;
 
 	while (StopLow < StopHigh)
 	{
@@ -477,7 +477,7 @@ checkKeyword(yyscan_t yyscanner)
 		}
 	}
 
-	return res;
+	return (yytokentype) res;
 }
 
 /*
@@ -499,7 +499,7 @@ resizeString(bool init, int appendLen, yyscan_t yyscanner)
 		{
 			while (yyextra->scanstring.len + appendLen >= yyextra->scanstring.total)
 				yyextra->scanstring.total *= 2;
-			yyextra->scanstring.val = repalloc(yyextra->scanstring.val, yyextra->scanstring.total);
+			yyextra->scanstring.val = (char *) repalloc(yyextra->scanstring.val, yyextra->scanstring.total);
 		}
 	}
 }

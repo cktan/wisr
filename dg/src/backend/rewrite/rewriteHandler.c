@@ -679,7 +679,7 @@ static List *adjustJoinTreeList(Query *parsetree, bool removert, int rt_index) {
 
   if (removert) {
     foreach (l, newjointree) {
-      RangeTblRef *rtr = lfirst(l);
+      RangeTblRef *rtr = (RangeTblRef *)lfirst(l);
 
       if (IsA(rtr, RangeTblRef) && rtr->rtindex == rt_index) {
         newjointree = foreach_delete_current(newjointree, l);
@@ -1324,7 +1324,7 @@ static bool rewriteValuesRTE(Query *parsetree, RangeTblEntry *rte, int rti,
    * VALUES RTE should contain DEFAULT items (except possibly for unused
    * columns), and we complain if such a thing does occur.
    */
-  numattrs = list_length(linitial(rte->values_lists));
+  numattrs = list_length((const List *)linitial(rte->values_lists));
   attrnos = (int *)palloc0(numattrs * sizeof(int));
 
   foreach (lc, parsetree->targetList) {
@@ -1650,7 +1650,7 @@ static Query *ApplyRetrieveRule(Query *parsetree, RewriteRule *rule,
    * the relations it mentions.  Force at least RowShareLock for all such
    * rels if there's a FOR [KEY] UPDATE/SHARE clause affecting this view.
    */
-  rule_action = copyObject(linitial(rule->actions));
+  rule_action = (Query *)copyObject(linitial(rule->actions));
 
   AcquireRewriteLocks(rule_action, true, (rc != NULL));
 
@@ -1749,7 +1749,8 @@ static void markQueryForLocking(Query *qry, Node *jtnode,
     ListCell *l;
 
     foreach (l, f->fromlist)
-      markQueryForLocking(qry, lfirst(l), strength, waitPolicy, pushedDown);
+      markQueryForLocking(qry, (Node *)lfirst(l), strength, waitPolicy,
+                          pushedDown);
   } else if (IsA(jtnode, JoinExpr)) {
     JoinExpr *j = (JoinExpr *)jtnode;
 
@@ -1942,7 +1943,7 @@ static Query *fireRIRrules(Query *parsetree, List *activeRIRs) {
         activeRIRs = lappend_oid(activeRIRs, RelationGetRelid(rel));
 
         foreach (l, locks) {
-          rule = lfirst(l);
+          rule = (RewriteRule *)lfirst(l);
 
           parsetree =
               ApplyRetrieveRule(parsetree, rule, rt_index, rel, activeRIRs);
@@ -2245,7 +2246,7 @@ static List *fireRules(Query *parsetree, int rt_index, CmdType event,
 
     /* Now process the rule's actions and add them to the result list */
     foreach (r, actions) {
-      Query *rule_action = lfirst(r);
+      Query *rule_action = (Query *)lfirst(r);
 
       if (rule_action->commandType == CMD_NOTHING)
         continue;

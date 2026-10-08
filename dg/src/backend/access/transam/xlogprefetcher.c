@@ -200,7 +200,8 @@ static inline LsnReadQueue *lrq_alloc(uint32 max_distance, uint32 max_inflight,
   Assert(max_distance >= max_inflight);
 
   size = max_distance + 1; /* full ring buffer has a gap */
-  lrq = palloc(offsetof(LsnReadQueue, queue) + sizeof(lrq->queue[0]) * size);
+  lrq = (LsnReadQueue *)palloc(offsetof(LsnReadQueue, queue) +
+                               sizeof(lrq->queue[0]) * size);
   lrq->lrq_private = lrq_private;
   lrq->max_inflight = max_inflight;
   lrq->size = size;
@@ -315,7 +316,7 @@ XLogPrefetcher *XLogPrefetcherAllocate(XLogReaderState *reader) {
   XLogPrefetcher *prefetcher;
   HASHCTL ctl;
 
-  prefetcher = palloc0(sizeof(XLogPrefetcher));
+  prefetcher = (XLogPrefetcher *)palloc0(sizeof(XLogPrefetcher));
   prefetcher->reader = reader;
 
   ctl.keysize = sizeof(RelFileLocator);
@@ -759,7 +760,8 @@ static inline void XLogPrefetcherAddFilter(XLogPrefetcher *prefetcher,
   XLogPrefetcherFilter *filter;
   bool found;
 
-  filter = hash_search(prefetcher->filter_table, &rlocator, HASH_ENTER, &found);
+  filter = (XLogPrefetcherFilter *)hash_search(prefetcher->filter_table,
+                                               &rlocator, HASH_ENTER, &found);
   if (!found) {
     /*
      * Don't allow any prefetching of this block or higher until replayed.
@@ -815,7 +817,8 @@ static inline bool XLogPrefetcherIsFiltered(XLogPrefetcher *prefetcher,
     XLogPrefetcherFilter *filter;
 
     /* See if the block range is filtered. */
-    filter = hash_search(prefetcher->filter_table, &rlocator, HASH_FIND, NULL);
+    filter = (XLogPrefetcherFilter *)hash_search(prefetcher->filter_table,
+                                                 &rlocator, HASH_FIND, NULL);
     if (filter && filter->filter_from_block <= blockno) {
 #ifdef XLOGPREFETCHER_DEBUG_LEVEL
       elog(XLOGPREFETCHER_DEBUG_LEVEL,
@@ -831,7 +834,8 @@ static inline bool XLogPrefetcherIsFiltered(XLogPrefetcher *prefetcher,
     /* See if the whole database is filtered. */
     rlocator.relNumber = InvalidRelFileNumber;
     rlocator.spcOid = InvalidOid;
-    filter = hash_search(prefetcher->filter_table, &rlocator, HASH_FIND, NULL);
+    filter = (XLogPrefetcherFilter *)hash_search(prefetcher->filter_table,
+                                                 &rlocator, HASH_FIND, NULL);
     if (filter) {
 #ifdef XLOGPREFETCHER_DEBUG_LEVEL
       elog(XLOGPREFETCHER_DEBUG_LEVEL,

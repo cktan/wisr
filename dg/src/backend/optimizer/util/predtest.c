@@ -815,7 +815,7 @@ static Node *list_next_fn(PredIterInfo info) {
 
   if (l == NULL)
     return NULL;
-  n = lfirst(l);
+  n = (Node *)lfirst(l);
   info->state = lnext(info->state_list, l);
   return n;
 }
@@ -1003,10 +1003,10 @@ static bool predicate_implied_by_simple_clause(Expr *predicate, Node *clause,
       Node *rightop;
 
       Assert(list_length(op->args) == 2);
-      rightop = lsecond(op->args);
+      rightop = (Node *)lsecond(op->args);
       /* We might never see null Consts here, but better check */
       if (rightop && IsA(rightop, Const) && !((Const *)rightop)->constisnull) {
-        Node *leftop = linitial(op->args);
+        Node *leftop = (Node *)linitial(op->args);
 
         if (DatumGetBool(((Const *)rightop)->constvalue)) {
           /* X = true implies X */
@@ -1504,12 +1504,17 @@ static const CompareType RC_implic_table[6][6] = {
      *			The predicate operator:
      *	 LT    LE	 EQ    GE	 GT    NE
      */
-    {RCGE, RCGE, none, none, none, RCGE}, /* LT */
-    {RCGT, RCGE, none, none, none, RCGT}, /* LE */
+    {RCGE, RCGE, (CompareType)none, (CompareType)none, (CompareType)none,
+     RCGE}, /* LT */
+    {RCGT, RCGE, (CompareType)none, (CompareType)none, (CompareType)none,
+     RCGT},                               /* LE */
     {RCGT, RCGE, RCEQ, RCLE, RCLT, RCNE}, /* EQ */
-    {none, none, none, RCLE, RCLT, RCLT}, /* GE */
-    {none, none, none, RCLE, RCLE, RCLE}, /* GT */
-    {none, none, none, none, none, RCEQ}  /* NE */
+    {(CompareType)none, (CompareType)none, (CompareType)none, RCLE, RCLT,
+     RCLT}, /* GE */
+    {(CompareType)none, (CompareType)none, (CompareType)none, RCLE, RCLE,
+     RCLE}, /* GT */
+    {(CompareType)none, (CompareType)none, (CompareType)none, (CompareType)none,
+     (CompareType)none, RCEQ} /* NE */
 };
 
 static const CompareType RC_refute_table[6][6] = {
@@ -1517,12 +1522,17 @@ static const CompareType RC_refute_table[6][6] = {
      *			The predicate operator:
      *	 LT    LE	 EQ    GE	 GT    NE
      */
-    {none, none, RCGE, RCGE, RCGE, none}, /* LT */
-    {none, none, RCGT, RCGT, RCGE, none}, /* LE */
+    {(CompareType)none, (CompareType)none, RCGE, RCGE, RCGE,
+     (CompareType)none}, /* LT */
+    {(CompareType)none, (CompareType)none, RCGT, RCGT, RCGE,
+     (CompareType)none},                  /* LE */
     {RCLE, RCLT, RCNE, RCGT, RCGE, RCEQ}, /* EQ */
-    {RCLE, RCLT, RCLT, none, none, none}, /* GE */
-    {RCLE, RCLE, RCLE, none, none, none}, /* GT */
-    {none, none, RCEQ, none, none, none}  /* NE */
+    {RCLE, RCLT, RCLT, (CompareType)none, (CompareType)none,
+     (CompareType)none}, /* GE */
+    {RCLE, RCLE, RCLE, (CompareType)none, (CompareType)none,
+     (CompareType)none}, /* GT */
+    {(CompareType)none, (CompareType)none, RCEQ, (CompareType)none,
+     (CompareType)none, (CompareType)none} /* NE */
 };
 
 /*
@@ -1923,11 +1933,12 @@ static OprProofCacheEntry *lookup_proof_cache(Oid pred_op, Oid clause_op,
     pred_op_infos = NIL;
 
   foreach (lcp, pred_op_infos) {
-    OpIndexInterpretation *pred_op_info = lfirst(lcp);
+    OpIndexInterpretation *pred_op_info = (OpIndexInterpretation *)lfirst(lcp);
     Oid opfamily_id = pred_op_info->opfamily_id;
 
     foreach (lcc, clause_op_infos) {
-      OpIndexInterpretation *clause_op_info = lfirst(lcc);
+      OpIndexInterpretation *clause_op_info =
+          (OpIndexInterpretation *)lfirst(lcc);
       CompareType pred_cmptype, clause_cmptype, test_cmptype;
 
       /* Must find them in same opfamily */

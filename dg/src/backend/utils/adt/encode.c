@@ -73,7 +73,7 @@ Datum binary_encode(PG_FUNCTION_ARGS) {
     ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
                     errmsg("result of encoding conversion is too large")));
 
-  result = palloc(VARHDRSZ + resultlen);
+  result = (text *)palloc(VARHDRSZ + resultlen);
 
   res = enc->encode(dataptr, datalen, VARDATA(result));
 
@@ -117,7 +117,7 @@ Datum binary_decode(PG_FUNCTION_ARGS) {
     ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
                     errmsg("result of decoding conversion is too large")));
 
-  result = palloc(VARHDRSZ + resultlen);
+  result = (bytea *)palloc(VARHDRSZ + resultlen);
 
   res = enc->decode(dataptr, datalen, VARDATA(result));
 
@@ -137,7 +137,7 @@ Datum binary_decode(PG_FUNCTION_ARGS) {
 /*
  * The hex expansion of each possible byte value (two chars per value).
  */
-static const char hextbl[512] = "000102030405060708090a0b0c0d0e0f"
+static const char hextbl[513] = "000102030405060708090a0b0c0d0e0f"
                                 "101112131415161718191a1b1c1d1e1f"
                                 "202122232425262728292a2b2c2d2e2f"
                                 "303132333435363738393a3b3c3d3e3f"

@@ -91,7 +91,7 @@ static TupleTableSlot *IndexNext(IndexScanState *node) {
    * Determine which direction to scan the index in based on the plan's scan
    * direction and the current direction of execution.
    */
-  direction = ScanDirectionCombine(
+  direction = (ScanDirection)ScanDirectionCombine(
       estate->es_direction, ((IndexScan *)node->ss.ps.plan)->indexorderdir);
   scandesc = node->iss_ScanDesc;
   econtext = node->ss.ps.ps_ExprContext;
@@ -1519,7 +1519,8 @@ void ExecIndexScanInitializeDSM(IndexScanState *node, ParallelContext *pcxt) {
     return;
   }
 
-  piscan = shm_toc_allocate(pcxt->toc, node->iss_PscanLen);
+  piscan =
+      (ParallelIndexScanDesc)shm_toc_allocate(pcxt->toc, node->iss_PscanLen);
   index_parallelscan_initialize(node->ss.ss_currentRelation,
                                 node->iss_RelationDesc, estate->es_snapshot,
                                 instrument, parallel_aware, pcxt->nworkers,
@@ -1573,7 +1574,8 @@ void ExecIndexScanInitializeWorker(IndexScanState *node,
     return;
   }
 
-  piscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
+  piscan = (ParallelIndexScanDesc)shm_toc_lookup(
+      pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
 
   if (instrument)
     node->iss_SharedInfo = (SharedIndexScanInstrumentation *)OffsetToPointer(
@@ -1614,6 +1616,6 @@ void ExecIndexScanRetrieveInstrumentation(IndexScanState *node) {
   /* Create a copy of SharedInfo in backend-local memory */
   size = offsetof(SharedIndexScanInstrumentation, winstrument) +
          SharedInfo->num_workers * sizeof(IndexScanInstrumentation);
-  node->iss_SharedInfo = palloc(size);
+  node->iss_SharedInfo = (SharedIndexScanInstrumentation *)palloc(size);
   memcpy(node->iss_SharedInfo, SharedInfo, size);
 }

@@ -21,11 +21,12 @@
 /*
  * Registry for entities that can be the target of AIO.
  */
+static const PgAioTargetInfo aio_invalid_target_info = {
+    .name = "invalid",
+};
+
 static const PgAioTargetInfo *pgaio_target_info[] = {
-    [PGAIO_TID_INVALID] =
-        &(PgAioTargetInfo){
-            .name = "invalid",
-        },
+    [PGAIO_TID_INVALID] = &aio_invalid_target_info,
     [PGAIO_TID_SMGR] = &aio_smgr_target_info,
 };
 

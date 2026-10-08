@@ -65,17 +65,17 @@
 
 #include "postgres.h"
 
-#include <ctype.h>
-#include <fcntl.h>
-#include <limits.h>
-#include <netdb.h>
-#include <signal.h>
-#include <sys/param.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
+#include <signal.h>
+#include <time.h>
+#include <sys/wait.h>
+#include <ctype.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <sys/param.h>
+#include <netdb.h>
+#include <limits.h>
 
 #ifdef USE_BONJOUR
 #include <dns_sd.h>
@@ -149,37 +149,30 @@ static inline BackendTypeMask btmask(BackendType t) {
   return mask;
 }
 
-static inline BackendTypeMask btmask_add_n(BackendTypeMask mask, int nargs,
-                                           BackendType *t) {
-  for (int i = 0; i < nargs; i++)
-    mask.mask |= 1 << t[i];
+static inline BackendTypeMask
+btmask_add_n(BackendTypeMask mask, std::initializer_list<BackendType> types) {
+  for (BackendType t : types)
+    mask.mask |= 1 << t;
   return mask;
 }
 
-#define btmask_add(mask, ...) \
-	btmask_add_n(mask, \
-		lengthof(((BackendType[]){__VA_ARGS__})), \
-		(BackendType[]){__VA_ARGS__} \
-	)
+#define btmask_add(mask, ...) btmask_add_n(mask, {__VA_ARGS__})
 
 static inline BackendTypeMask btmask_del(BackendTypeMask mask, BackendType t) {
   mask.mask &= ~(1 << t);
   return mask;
 }
 
-static inline BackendTypeMask btmask_all_except_n(int nargs, BackendType *t) {
+static inline BackendTypeMask
+btmask_all_except_n(std::initializer_list<BackendType> types) {
   BackendTypeMask mask = BTYPE_MASK_ALL;
 
-  for (int i = 0; i < nargs; i++)
-    mask = btmask_del(mask, t[i]);
+  for (BackendType t : types)
+    mask = btmask_del(mask, t);
   return mask;
 }
 
-#define btmask_all_except(...) \
-	btmask_all_except_n( \
-		lengthof(((BackendType[]){__VA_ARGS__})), \
-		(BackendType[]){__VA_ARGS__} \
-	)
+#define btmask_all_except(...) btmask_all_except_n({__VA_ARGS__})
 
 static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
   return (mask.mask & (1 << t)) != 0;
@@ -1067,7 +1060,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * First set up an on_proc_exit function that's charged with closing the
    * sockets again at postmaster shutdown.
    */
-  ListenSockets = palloc(MAXLISTEN * sizeof(pgsocket));
+  ListenSockets = (pgsocket *)palloc(MAXLISTEN * sizeof(pgsocket));
   on_proc_exit(CloseServerPorts, 0);
 
   if (ListenAddresses) {

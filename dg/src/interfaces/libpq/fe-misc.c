@@ -36,9 +36,9 @@
 #ifdef WIN32
 #include "win32.h"
 #else
+#include <unistd.h>
 #include <sys/select.h>
 #include <sys/time.h>
-#include <unistd.h>
 #endif
 
 #ifdef HAVE_POLL_H
@@ -273,7 +273,7 @@ int pqCheckOutBufferSpace(size_t bytes_needed, PGconn *conn) {
   } while (newsize > 0 && bytes_needed > (size_t)newsize);
 
   if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-    newbuf = realloc(conn->outBuffer, newsize);
+    newbuf = (char *)realloc(conn->outBuffer, newsize);
     if (newbuf) {
       /* realloc succeeded */
       conn->outBuffer = newbuf;
@@ -288,7 +288,7 @@ int pqCheckOutBufferSpace(size_t bytes_needed, PGconn *conn) {
   } while (newsize > 0 && bytes_needed > (size_t)newsize);
 
   if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-    newbuf = realloc(conn->outBuffer, newsize);
+    newbuf = (char *)realloc(conn->outBuffer, newsize);
     if (newbuf) {
       /* realloc succeeded */
       conn->outBuffer = newbuf;
@@ -355,7 +355,7 @@ int pqCheckInBufferSpace(size_t bytes_needed, PGconn *conn) {
   } while (newsize > 0 && bytes_needed > (size_t)newsize);
 
   if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-    newbuf = realloc(conn->inBuffer, newsize);
+    newbuf = (char *)realloc(conn->inBuffer, newsize);
     if (newbuf) {
       /* realloc succeeded */
       conn->inBuffer = newbuf;
@@ -370,7 +370,7 @@ int pqCheckInBufferSpace(size_t bytes_needed, PGconn *conn) {
   } while (newsize > 0 && bytes_needed > (size_t)newsize);
 
   if (newsize > 0 && bytes_needed <= (size_t)newsize) {
-    newbuf = realloc(conn->inBuffer, newsize);
+    newbuf = (char *)realloc(conn->inBuffer, newsize);
     if (newbuf) {
       /* realloc succeeded */
       conn->inBuffer = newbuf;

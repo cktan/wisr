@@ -207,7 +207,8 @@ Datum pg_stat_get_backend_idset(PG_FUNCTION_ARGS) {
     /* create a function context for cross-call persistence */
     funcctx = SRF_FIRSTCALL_INIT();
 
-    fctx = MemoryContextAlloc(funcctx->multi_call_memory_ctx, sizeof(int));
+    fctx =
+        (int *)MemoryContextAlloc(funcctx->multi_call_memory_ctx, sizeof(int));
     funcctx->user_fctx = fctx;
 
     fctx[0] = 0;
@@ -215,7 +216,7 @@ Datum pg_stat_get_backend_idset(PG_FUNCTION_ARGS) {
 
   /* stuff done on every call of the function */
   funcctx = SRF_PERCALL_SETUP();
-  fctx = funcctx->user_fctx;
+  fctx = (int *)funcctx->user_fctx;
 
   fctx[0] += 1;
 
@@ -1304,10 +1305,11 @@ static void pg_stat_io_build_tuples(ReturnSetInfo *rsinfo,
   Datum bktype_desc = CStringGetTextDatum(GetBackendTypeDesc(bktype));
 
   for (int io_obj = 0; io_obj < IOOBJECT_NUM_TYPES; io_obj++) {
-    const char *obj_name = pgstat_get_io_object_name(io_obj);
+    const char *obj_name = pgstat_get_io_object_name((IOObject)io_obj);
 
     for (int io_context = 0; io_context < IOCONTEXT_NUM_TYPES; io_context++) {
-      const char *context_name = pgstat_get_io_context_name(io_context);
+      const char *context_name =
+          pgstat_get_io_context_name((IOContext)io_context);
 
       Datum values[IO_NUM_COLUMNS] = {0};
       bool nulls[IO_NUM_COLUMNS] = {0};
@@ -1317,7 +1319,8 @@ static void pg_stat_io_build_tuples(ReturnSetInfo *rsinfo,
        * not valid for any type of IOOp. In such cases, omit the entire
        * row from the view.
        */
-      if (!pgstat_tracks_io_object(bktype, io_obj, io_context))
+      if (!pgstat_tracks_io_object(bktype, (IOObject)io_obj,
+                                   (IOContext)io_context))
         continue;
 
       values[IO_COL_BACKEND_TYPE] = bktype_desc;
@@ -1329,16 +1332,17 @@ static void pg_stat_io_build_tuples(ReturnSetInfo *rsinfo,
         nulls[IO_COL_RESET_TIME] = true;
 
       for (int io_op = 0; io_op < IOOP_NUM_TYPES; io_op++) {
-        int op_idx = pgstat_get_io_op_index(io_op);
-        int time_idx = pgstat_get_io_time_index(io_op);
-        int byte_idx = pgstat_get_io_byte_index(io_op);
+        int op_idx = pgstat_get_io_op_index((IOOp)io_op);
+        int time_idx = pgstat_get_io_time_index((IOOp)io_op);
+        int byte_idx = pgstat_get_io_byte_index((IOOp)io_op);
 
         /*
          * Some combinations of BackendType and IOOp, of IOContext and
          * IOOp, and of IOObject and IOOp are not tracked. Set these
          * cells in the view NULL.
          */
-        if (pgstat_tracks_io_op(bktype, io_obj, io_context, io_op)) {
+        if (pgstat_tracks_io_op(bktype, (IOObject)io_obj, (IOContext)io_context,
+                                (IOOp)io_op)) {
           PgStat_Counter count =
               bktype_stats->counts[io_obj][io_context][io_op];
 
@@ -1404,11 +1408,11 @@ Datum pg_stat_get_io(PG_FUNCTION_ARGS) {
      * For those BackendTypes without IO Operation stats, skip
      * representing them in the view altogether.
      */
-    if (!pgstat_tracks_io_bktype(bktype))
+    if (!pgstat_tracks_io_bktype((BackendType)bktype))
       continue;
 
     /* save tuples with data from this PgStat_BktypeIO */
-    pg_stat_io_build_tuples(rsinfo, bktype_stats, bktype,
+    pg_stat_io_build_tuples(rsinfo, bktype_stats, (BackendType)bktype,
                             backends_io_stats->stat_reset_timestamp);
   }
 

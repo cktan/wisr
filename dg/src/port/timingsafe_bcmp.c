@@ -30,7 +30,8 @@ int timingsafe_bcmp(const void *b1, const void *b2, size_t n) {
 #ifdef USE_SSL
   return CRYPTO_memcmp(b1, b2, n);
 #else
-  const unsigned char *p1 = b1, *p2 = b2;
+  const unsigned char *p1 = (const unsigned char *)b1,
+                      *p2 = (const unsigned char *)b2;
   int ret = 0;
 
   for (; n > 0; n--)

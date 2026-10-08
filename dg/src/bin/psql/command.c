@@ -8,20 +8,20 @@
 #include "postgres_fe.h"
 
 #include <ctype.h>
-#include <pwd.h>
 #include <time.h>
+#include <pwd.h>
 #include <utime.h>
 #ifndef WIN32
-#include <fcntl.h>    /* open() flags */
 #include <sys/stat.h> /* for stat() */
 #include <sys/time.h> /* for setitimer() */
+#include <fcntl.h>    /* open() flags */
 #include <unistd.h>   /* for geteuid(), getpid(), stat() */
 #else
-#include <direct.h>
-#include <fcntl.h>
-#include <io.h>
-#include <sys/stat.h> /* for stat() */
 #include <win32.h>
+#include <io.h>
+#include <fcntl.h>
+#include <direct.h>
+#include <sys/stat.h> /* for stat() */
 #endif
 
 #include "catalog/pg_class_d.h"
@@ -872,12 +872,13 @@ static backslashResult exec_command_conninfo(PsqlScanState scan_state,
 
   /* Password Used */
   printTableAddCell(&cont, _("Password Used"), false, false);
-  printTableAddCell(&cont, password_used ? _("true") : _("false"), false,
-                    false);
+  printTableAddCell(&cont, (char *)(password_used ? _("true") : _("false")),
+                    false, false);
 
   /* GSSAPI Authenticated */
   printTableAddCell(&cont, _("GSSAPI Authenticated"), false, false);
-  printTableAddCell(&cont, gssapi_used ? _("true") : _("false"), false, false);
+  printTableAddCell(&cont, (char *)(gssapi_used ? _("true") : _("false")),
+                    false, false);
 
   /* Backend PID */
   printTableAddCell(&cont, _("Backend PID"), false, false);
@@ -885,7 +886,8 @@ static backslashResult exec_command_conninfo(PsqlScanState scan_state,
 
   /* SSL Connection */
   printTableAddCell(&cont, _("SSL Connection"), false, false);
-  printTableAddCell(&cont, ssl_in_use ? _("true") : _("false"), false, false);
+  printTableAddCell(&cont, (char *)(ssl_in_use ? _("true") : _("false")), false,
+                    false);
 
   /* SSL Information */
   if (ssl_in_use) {
@@ -899,36 +901,43 @@ static backslashResult exec_command_conninfo(PsqlScanState scan_state,
     alpn = (char *)PQsslAttribute(pset.db, "alpn");
 
     printTableAddCell(&cont, _("SSL Library"), false, false);
-    printTableAddCell(&cont, library ? library : _("unknown"), false, false);
+    printTableAddCell(&cont, (char *)(library ? library : _("unknown")), false,
+                      false);
 
     printTableAddCell(&cont, _("SSL Protocol"), false, false);
-    printTableAddCell(&cont, protocol ? protocol : _("unknown"), false, false);
+    printTableAddCell(&cont, (char *)(protocol ? protocol : _("unknown")),
+                      false, false);
 
     printTableAddCell(&cont, _("SSL Key Bits"), false, false);
-    printTableAddCell(&cont, key_bits ? key_bits : _("unknown"), false, false);
+    printTableAddCell(&cont, (char *)(key_bits ? key_bits : _("unknown")),
+                      false, false);
 
     printTableAddCell(&cont, _("SSL Cipher"), false, false);
-    printTableAddCell(&cont, cipher ? cipher : _("unknown"), false, false);
+    printTableAddCell(&cont, (char *)(cipher ? cipher : _("unknown")), false,
+                      false);
 
     printTableAddCell(&cont, _("SSL Compression"), false, false);
     printTableAddCell(&cont,
-                      (compression && strcmp(compression, "off") != 0)
-                          ? _("true")
-                          : _("false"),
+                      (char *)((compression && strcmp(compression, "off") != 0)
+                                   ? _("true")
+                                   : _("false")),
                       false, false);
 
     printTableAddCell(&cont, _("ALPN"), false, false);
-    printTableAddCell(&cont, (alpn && alpn[0] != '\0') ? alpn : _("none"),
+    printTableAddCell(&cont,
+                      (char *)((alpn && alpn[0] != '\0') ? alpn : _("none")),
                       false, false);
   }
 
   paramval = (char *)PQparameterStatus(pset.db, "is_superuser");
   printTableAddCell(&cont, "Superuser", false, false);
-  printTableAddCell(&cont, paramval ? paramval : _("unknown"), false, false);
+  printTableAddCell(&cont, (char *)(paramval ? paramval : _("unknown")), false,
+                    false);
 
   paramval = (char *)PQparameterStatus(pset.db, "in_hot_standby");
   printTableAddCell(&cont, "Hot Standby", false, false);
-  printTableAddCell(&cont, paramval ? paramval : _("unknown"), false, false);
+  printTableAddCell(&cont, (char *)(paramval ? paramval : _("unknown")), false,
+                    false);
 
   printTable(&cont, pset.queryFout, false, pset.logfile);
   printTableCleanup(&cont);
@@ -2641,7 +2650,7 @@ static backslashResult exec_command_set(PsqlScanState scan_state,
 
       while (
           (opt = psql_scan_slash_option(scan_state, OT_NORMAL, NULL, false))) {
-        newval = pg_realloc(newval, strlen(newval) + strlen(opt) + 1);
+        newval = (char *)pg_realloc(newval, strlen(newval) + strlen(opt) + 1);
         strcat(newval, opt);
         free(opt);
       }
@@ -3700,8 +3709,10 @@ static bool do_connect(enum trivalue reuse_previous_specification, char *dbname,
 
   /* Loop till we have a connection or fail, which we might've already */
   while (success) {
-    const char **keywords = pg_malloc((nconnopts + 1) * sizeof(*keywords));
-    const char **values = pg_malloc((nconnopts + 1) * sizeof(*values));
+    const char **keywords =
+        (const char **)pg_malloc((nconnopts + 1) * sizeof(*keywords));
+    const char **values =
+        (const char **)pg_malloc((nconnopts + 1) * sizeof(*values));
     int paramnum = 0;
     PQconninfoOption *ci;
 
@@ -5045,7 +5056,7 @@ void restorePsetInfo(printQueryOpt *popt, printQueryOpt *save) {
 static const char *pset_bool_string(bool val) { return val ? "on" : "off"; }
 
 static char *pset_quoted_string(const char *str) {
-  char *ret = pg_malloc(strlen(str) * 2 + 3);
+  char *ret = (char *)pg_malloc(strlen(str) * 2 + 3);
   char *r = ret;
 
   *r++ = '\'';
@@ -5304,7 +5315,7 @@ static bool do_watch(PQExpBuffer query_buf, double sleep, int iter,
    */
   user_title = myopt.title;
   title_len = (user_title ? strlen(user_title) : 0) + 256;
-  title = pg_malloc(title_len);
+  title = (char *)pg_malloc(title_len);
 
   /* Loop to run query and then sleep awhile */
   while (!done) {

@@ -16,8 +16,8 @@
 
 #include <ctype.h>
 #include <float.h>
-#include <limits.h>
 #include <math.h>
+#include <limits.h>
 
 #include "catalog/pg_type.h"
 #include "common/int.h"

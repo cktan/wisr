@@ -668,7 +668,7 @@ void outNode(StringInfo str, const void *obj) {
     appendStringInfoString(str, "<>");
   else if (IsA(obj, List) || IsA(obj, IntList) || IsA(obj, OidList) ||
            IsA(obj, XidList))
-    _outList(str, obj);
+    _outList(str, (const List *)obj);
   /* nodeRead does not want to see { } around these! */
   else if (IsA(obj, Integer))
     _outInteger(str, (Integer *)obj);

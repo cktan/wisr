@@ -102,7 +102,7 @@ void pgstat_init_function_usage(FunctionCallInfo fcinfo,
     }
   }
 
-  pending = entry_ref->pending;
+  pending = (PgStat_FunctionCounts *)entry_ref->pending;
 
   fcu->fs = pending;
 
@@ -203,7 +203,7 @@ PgStat_FunctionCounts *find_funcstat_entry(Oid func_id) {
       pgstat_fetch_pending_entry(PGSTAT_KIND_FUNCTION, MyDatabaseId, func_id);
 
   if (entry_ref)
-    return entry_ref->pending;
+    return (PgStat_FunctionCounts *)entry_ref->pending;
   return NULL;
 }
 

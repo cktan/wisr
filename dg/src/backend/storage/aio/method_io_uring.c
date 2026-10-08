@@ -37,10 +37,10 @@
 #include "miscadmin.h"
 #include "storage/aio_internal.h"
 #include "storage/fd.h"
-#include "storage/lwlock.h"
 #include "storage/proc.h"
-#include "storage/procnumber.h"
 #include "storage/shmem.h"
+#include "storage/lwlock.h"
+#include "storage/procnumber.h"
 #include "utils/wait_event.h"
 
 /* number of completions processed at once */

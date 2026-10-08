@@ -729,7 +729,7 @@ no_match:
  * not like the results.
  */
 char *make_absolute_path(const char *path) {
-  char *new;
+  char *new_;
 
   /* Returning null for null input is convenient for some callers */
   if (path == NULL)
@@ -741,7 +741,7 @@ char *make_absolute_path(const char *path) {
 
     buflen = MAXPGPATH;
     for (;;) {
-      buf = malloc(buflen);
+      buf = (char *)malloc(buflen);
       if (!buf) {
 #ifndef FRONTEND
         ereport(ERROR,
@@ -772,8 +772,8 @@ char *make_absolute_path(const char *path) {
       }
     }
 
-    new = malloc(strlen(buf) + strlen(path) + 2);
-    if (!new) {
+    new_ = (char *)malloc(strlen(buf) + strlen(path) + 2);
+    if (!new_) {
       free(buf);
 #ifndef FRONTEND
       ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
@@ -782,11 +782,11 @@ char *make_absolute_path(const char *path) {
       return NULL;
 #endif
     }
-    sprintf(new, "%s/%s", buf, path);
+    sprintf(new_, "%s/%s", buf, path);
     free(buf);
   } else {
-    new = strdup(path);
-    if (!new) {
+    new_ = strdup(path);
+    if (!new_) {
 #ifndef FRONTEND
       ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
 #else
@@ -797,9 +797,9 @@ char *make_absolute_path(const char *path) {
   }
 
   /* Make sure punctuation is canonical, too */
-  canonicalize_path(new);
+  canonicalize_path(new_);
 
-  return new;
+  return new_;
 }
 
 /*

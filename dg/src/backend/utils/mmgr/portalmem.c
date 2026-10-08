@@ -552,7 +552,7 @@ void PortalHashTableDeleteAll(void) {
     return;
 
   hash_seq_init(&status, PortalHashTable);
-  while ((hentry = hash_seq_search(&status)) != NULL) {
+  while ((hentry = (PortalHashEnt *)hash_seq_search(&status)) != NULL) {
     Portal portal = hentry->portal;
 
     /* Can't close the active portal (the one running the command) */
@@ -1032,7 +1032,7 @@ Datum pg_cursor(PG_FUNCTION_ARGS) {
   InitMaterializedSRF(fcinfo, 0);
 
   hash_seq_init(&hash_seq, PortalHashTable);
-  while ((hentry = hash_seq_search(&hash_seq)) != NULL) {
+  while ((hentry = (PortalHashEnt *)hash_seq_search(&hash_seq)) != NULL) {
     Portal portal = hentry->portal;
     Datum values[6];
     bool nulls[6] = {0};

@@ -125,8 +125,8 @@
 #include "postgres.h"
 
 #include <limits.h>
-#include <signal.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "access/parallel.h"
 #include "access/slru.h"

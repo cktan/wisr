@@ -21,8 +21,8 @@
 #ifdef WIN32
 #include "win32.h"
 #else
-#include <sys/ioctl.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #endif
 
 #ifdef HAVE_TERMIOS_H
@@ -412,7 +412,7 @@ static char *do_header(FILE *fout, const PQprintOpt *po, const int nFields,
     if (pg_add_size_overflow(tot, 1, &tot)) /* terminator */
       goto overflow;
 
-    border = malloc(tot);
+    border = (char *)malloc(tot);
     if (!border) {
       fprintf(stderr, libpq_gettext("out of memory\n"));
       return NULL;

@@ -254,7 +254,7 @@ List *transformCreateStmt(CreateStmt *stmt, const char *queryString) {
    * column defs from constraints, and do preliminary analysis.
    */
   foreach (elements, stmt->tableElts) {
-    Node *element = lfirst(elements);
+    Node *element = (Node *)lfirst(elements);
 
     switch (nodeTag(element)) {
     case T_ColumnDef:
@@ -1363,8 +1363,8 @@ List *expandTableLikeClause(RangeVar *heapRel,
       Constraint *n;
       AlterTableCmd *atsubcmd;
 
-      ccbin_node = map_variable_attnos(stringToNode(ccbin), 1, 0, attmap,
-                                       InvalidOid, &found_whole_row);
+      ccbin_node = map_variable_attnos((Node *)stringToNode(ccbin), 1, 0,
+                                       attmap, InvalidOid, &found_whole_row);
 
       /*
        * We reject whole-row variables because the whole point of LIKE
@@ -1385,7 +1385,7 @@ List *expandTableLikeClause(RangeVar *heapRel,
        * AddRelationNewConstraints(), so we must check for USAGE on
        * types here.
        */
-      CheckUsageOnTypesInSingleRelExpr(stringToNode(ccbin),
+      CheckUsageOnTypesInSingleRelExpr((Node *)stringToNode(ccbin),
                                        RelationGetRelid(relation), GetUserId());
 
       n = makeNode(Constraint);
@@ -2116,14 +2116,14 @@ static void transformIndexConstraints(CreateStmtContext *cxt) {
     bool keep = true;
     ListCell *k;
 
-    index = lfirst(lc);
+    index = (IndexStmt *)lfirst(lc);
 
     /* if it's pkey, it's already in finalindexlist */
     if (index == cxt->pkey)
       continue;
 
     foreach (k, finalindexlist) {
-      IndexStmt *priorindex = lfirst(k);
+      IndexStmt *priorindex = (IndexStmt *)lfirst(k);
 
       if (equal(index->indexParams, priorindex->indexParams) &&
           equal(index->indexIncludingParams,
@@ -2202,8 +2202,9 @@ static IndexStmt *transformIndexConstraint(Constraint *constraint,
     index->idxname = NULL; /* DefineIndex will choose name */
 
   index->relation = cxt->relation;
-  index->accessMethod = constraint->access_method ? constraint->access_method
-                                                  : DEFAULT_INDEX_TYPE;
+  index->accessMethod =
+      (char *)(constraint->access_method ? constraint->access_method
+                                         : DEFAULT_INDEX_TYPE);
   index->options = constraint->options;
   index->tableSpace = constraint->indexspace;
   index->whereClause = constraint->where_clause;
@@ -3800,7 +3801,7 @@ List *transformCreateSchemaStmtElements(List *schemaElts,
    * statements by type, and do preliminary analysis.
    */
   foreach (elements, schemaElts) {
-    Node *element = lfirst(elements);
+    Node *element = (Node *)lfirst(elements);
 
     switch (nodeTag(element)) {
     case T_CreateSeqStmt: {
@@ -4018,7 +4019,7 @@ PartitionBoundSpec *transformPartitionBound(ParseState *pstate, Relation parent,
 
     result_spec->listdatums = NIL;
     foreach (cell, spec->listdatums) {
-      Node *expr = lfirst(cell);
+      Node *expr = (Node *)lfirst(cell);
       Const *value;
       ListCell *cell2;
       bool duplicate;
@@ -4090,7 +4091,7 @@ static List *transformPartitionRangeBounds(ParseState *pstate, List *blist,
 
   j = 0;
   foreach (lc, blist) {
-    Node *expr = lfirst(lc);
+    Node *expr = (Node *)lfirst(lc);
     PartitionRangeDatum *prd = NULL;
 
     i = foreach_current_index(lc);

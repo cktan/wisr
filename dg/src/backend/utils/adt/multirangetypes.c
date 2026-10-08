@@ -119,7 +119,8 @@ Datum multirange_in(PG_FUNCTION_ARGS) {
   int32 range_count = 0;
   int32 range_capacity = 8;
   RangeType *range;
-  RangeType **ranges = palloc(range_capacity * sizeof(RangeType *));
+  RangeType **ranges =
+      (RangeType **)palloc(range_capacity * sizeof(RangeType *));
   MultirangeIOData *cache;
   MultirangeType *ret;
   MultirangeParseState parse_state;
@@ -592,7 +593,7 @@ MultirangeType *make_multirange(Oid mltrngtypoid, TypeCacheEntry *rangetyp,
 
   /* Note: zero-fill is required here, just as in heap tuples */
   size = multirange_size_estimate(rangetyp, range_count, ranges);
-  multirange = palloc0(size);
+  multirange = (MultirangeType *)palloc0(size);
   SET_VARSIZE(multirange, size);
 
   /* Now fill in the datum */
@@ -657,7 +658,7 @@ RangeType *multirange_get_range(TypeCacheEntry *rangetyp,
   }
   len = (ptr - begin) + sizeof(RangeType) + sizeof(uint8);
 
-  range = palloc0(len);
+  range = (RangeType *)palloc0(len);
   SET_VARSIZE(range, len);
   range->rangetypid = rangetyp->type_id;
 
@@ -994,7 +995,7 @@ Datum multirange_union(PG_FUNCTION_ARGS) {
   multirange_deserialize(typcache->rngtype, mr2, &range_count2, &ranges2);
 
   range_count3 = range_count1 + range_count2;
-  ranges3 = palloc0(range_count3 * sizeof(RangeType *));
+  ranges3 = (RangeType **)palloc0(range_count3 * sizeof(RangeType *));
   memcpy(ranges3, ranges1, range_count1 * sizeof(RangeType *));
   memcpy(ranges3 + range_count1, ranges2, range_count2 * sizeof(RangeType *));
   PG_RETURN_MULTIRANGE_P(make_multirange(typcache->type_id, typcache->rngtype,
@@ -1041,7 +1042,8 @@ multirange_minus_internal(Oid mltrngtypoid, TypeCacheEntry *rangetyp,
    * Worst case: every range in ranges1 makes a different cut to some range
    * in ranges2.
    */
-  ranges3 = palloc0((range_count1 + range_count2) * sizeof(RangeType *));
+  ranges3 = (RangeType **)palloc0((range_count1 + range_count2) *
+                                  sizeof(RangeType *));
   range_count3 = 0;
 
   /*
@@ -1152,7 +1154,8 @@ multirange_intersect_internal(Oid mltrngtypoid, TypeCacheEntry *rangetyp,
    * but one extra won't hurt.
    *-----------------------------------------------
    */
-  ranges3 = palloc0((range_count1 + range_count2) * sizeof(RangeType *));
+  ranges3 = (RangeType **)palloc0((range_count1 + range_count2) *
+                                  sizeof(RangeType *));
   range_count3 = 0;
 
   /*
@@ -1256,7 +1259,7 @@ Datum range_agg_finalfn(PG_FUNCTION_ARGS) {
   mltrngtypoid = get_fn_expr_rettype(fcinfo->flinfo);
   typcache = multirange_get_typcache(fcinfo, mltrngtypoid);
 
-  ranges = palloc0(range_count * sizeof(RangeType *));
+  ranges = (RangeType **)palloc0(range_count * sizeof(RangeType *));
   for (i = 0; i < range_count; i++)
     ranges[i] = DatumGetRangeTypeP(state->dvalues[i]);
 
@@ -2409,7 +2412,7 @@ Datum multirange_unnest(PG_FUNCTION_ARGS) {
 
   /* stuff done on every call of the function */
   funcctx = SRF_PERCALL_SETUP();
-  fctx = funcctx->user_fctx;
+  fctx = (multirange_unnest_fctx *)funcctx->user_fctx;
 
   if (fctx->index < fctx->mr->rangeCount) {
     RangeType *range;

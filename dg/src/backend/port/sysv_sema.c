@@ -15,11 +15,11 @@
 #include "postgres.h"
 
 #include <signal.h>
+#include <unistd.h>
 #include <sys/file.h>
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "miscadmin.h"
 #include "storage/ipc.h"

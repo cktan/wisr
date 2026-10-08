@@ -39,7 +39,8 @@ bool pgstat_bktype_io_stats_valid(PgStat_BktypeIO *backend_io,
     for (int io_context = 0; io_context < IOCONTEXT_NUM_TYPES; io_context++) {
       for (int io_op = 0; io_op < IOOP_NUM_TYPES; io_op++) {
         /* we do track it */
-        if (pgstat_tracks_io_op(bktype, io_object, io_context, io_op)) {
+        if (pgstat_tracks_io_op(bktype, (IOObject)io_object,
+                                (IOContext)io_context, (IOOp)io_op)) {
           /* ensure that if IO times are non-zero, counts are > 0 */
           if (backend_io->times[io_object][io_context][io_op] != 0 &&
               backend_io->counts[io_object][io_context][io_op] <= 0)

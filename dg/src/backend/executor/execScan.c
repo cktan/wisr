@@ -18,8 +18,8 @@
  */
 #include "postgres.h"
 
-#include "executor/execScan.h"
 #include "executor/executor.h"
+#include "executor/execScan.h"
 #include "miscadmin.h"
 
 /* ----------------------------------------------------------------

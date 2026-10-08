@@ -1916,12 +1916,12 @@ static bool have_partkey_equi_join(PlannerInfo *root, RelOptInfo *joinrel,
     /* Match the operands to the relation. */
     if (bms_is_subset(rinfo->left_relids, rel1->relids) &&
         bms_is_subset(rinfo->right_relids, rel2->relids)) {
-      expr1 = linitial(opexpr->args);
-      expr2 = lsecond(opexpr->args);
+      expr1 = (Expr *)linitial(opexpr->args);
+      expr2 = (Expr *)lsecond(opexpr->args);
     } else if (bms_is_subset(rinfo->left_relids, rel2->relids) &&
                bms_is_subset(rinfo->right_relids, rel1->relids)) {
-      expr1 = lsecond(opexpr->args);
-      expr2 = linitial(opexpr->args);
+      expr1 = (Expr *)lsecond(opexpr->args);
+      expr2 = (Expr *)linitial(opexpr->args);
     } else
       continue;
 

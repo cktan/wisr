@@ -66,7 +66,7 @@ static int build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
   for (index_attoff = 0;
        index_attoff < IndexRelationGetNumberOfKeyAttributes(idxrel);
        index_attoff++) {
-    Oid operator;
+    Oid operator_;
     Oid optype;
     Oid opfamily;
     RegProcedure regop;
@@ -89,13 +89,13 @@ static int build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
     opfamily = get_opclass_family(opclass->values[index_attoff]);
     eq_strategy = IndexAmTranslateCompareType(COMPARE_EQ, idxrel->rd_rel->relam,
                                               opfamily, false);
-    operator= get_opfamily_member(opfamily, optype, optype, eq_strategy);
+    operator_ = get_opfamily_member(opfamily, optype, optype, eq_strategy);
 
-    if (!OidIsValid(operator))
+    if (!OidIsValid(operator_))
       elog(ERROR, "missing operator %d(%u,%u) in opfamily %u", eq_strategy,
            optype, optype, opfamily);
 
-    regop = get_opcode(operator);
+    regop = get_opcode(operator_);
 
     /* Initialize the scankey. */
     ScanKeyInit(&skey[skey_attoff], index_attoff + 1, eq_strategy, regop,
@@ -201,7 +201,8 @@ retry:
      */
     if (!isIdxSafeToSkipDuplicates) {
       if (eq == NULL)
-        eq = palloc0(sizeof(*eq) * outslot->tts_tupleDescriptor->natts);
+        eq = (TypeCacheEntry **)palloc0(sizeof(*eq) *
+                                        outslot->tts_tupleDescriptor->natts);
 
       if (!tuples_equal(outslot, searchslot, eq))
         continue;
@@ -333,7 +334,8 @@ bool RelationFindReplTupleSeq(Relation rel, LockTupleMode lockmode,
 
   Assert(equalTupleDescs(desc, outslot->tts_tupleDescriptor));
 
-  eq = palloc0(sizeof(*eq) * outslot->tts_tupleDescriptor->natts);
+  eq = (TypeCacheEntry **)palloc0(sizeof(*eq) *
+                                  outslot->tts_tupleDescriptor->natts);
 
   /* Start a heap scan. */
   InitDirtySnapshot(snap);

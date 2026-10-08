@@ -1519,7 +1519,7 @@ int pg_verify_mbstr_len(int encoding, const char *mbstr, int len,
    * In single-byte encodings, we need only reject nulls (\0).
    */
   if (pg_encoding_max_length(encoding) <= 1) {
-    const char *nullpos = memchr(mbstr, 0, len);
+    const char *nullpos = (const char *)memchr(mbstr, 0, len);
 
     if (nullpos == NULL)
       return len;

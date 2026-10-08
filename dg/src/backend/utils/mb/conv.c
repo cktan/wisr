@@ -10,8 +10,8 @@
  *
  *-------------------------------------------------------------------------
  */
-#include "mb/pg_wchar.h"
 #include "postgres.h"
+#include "mb/pg_wchar.h"
 
 /*
  * local2local: a generic single byte charset encoding
@@ -521,8 +521,8 @@ int UtfToLocal(const unsigned char *utf, int len, unsigned char *iso,
         cutf[0] = iutf;
         cutf[1] = iutf2;
 
-        cp = bsearch(cutf, cmap, cmapsize, sizeof(pg_utf_to_local_combined),
-                     compare3);
+        cp = (const pg_utf_to_local_combined *)bsearch(
+            cutf, cmap, cmapsize, sizeof(pg_utf_to_local_combined), compare3);
 
         if (cp) {
           iso = store_coded_char(iso, cp->code);
@@ -663,8 +663,8 @@ int LocalToUtf(const unsigned char *iso, int len, unsigned char *utf,
 
       /* If there's a combined character map, try that */
       if (cmap) {
-        cp = bsearch(&iiso, cmap, cmapsize, sizeof(pg_local_to_utf_combined),
-                     compare4);
+        cp = (const pg_local_to_utf_combined *)bsearch(
+            &iiso, cmap, cmapsize, sizeof(pg_local_to_utf_combined), compare4);
 
         if (cp) {
           utf = store_coded_char(utf, cp->utf1);

@@ -82,7 +82,7 @@ Datum pg_get_aios(PG_FUNCTION_ARGS) {
      */
   retry:
     pg_read_barrier();
-    start_state = live_ioh->state;
+    start_state = (PgAioHandleState)live_ioh->state;
 
     if (start_state == PGAIO_HS_IDLE)
       continue;
@@ -200,8 +200,8 @@ Datum pg_get_aios(PG_FUNCTION_ARGS) {
      * column: result in the higher level representation (unknown if not
      * finished)
      */
-    values[10] = CStringGetTextDatum(
-        pgaio_result_status_string(ioh_copy.distilled_result.status));
+    values[10] = CStringGetTextDatum(pgaio_result_status_string(
+        (PgAioResultStatus)ioh_copy.distilled_result.status));
 
     /* column: target description */
     values[11] =

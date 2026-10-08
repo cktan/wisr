@@ -1042,7 +1042,7 @@ void AllocSetFree(void *pointer) {
 #endif
     free(block);
   } else {
-    AllocBlock block = MemoryChunkGetBlock(chunk);
+    AllocBlock block = (AllocBlock)MemoryChunkGetBlock(chunk);
     int fidx;
     AllocFreeListLink *link;
 
@@ -1249,7 +1249,7 @@ void *AllocSetRealloc(void *pointer, Size size, int flags) {
     return pointer;
   }
 
-  block = MemoryChunkGetBlock(chunk);
+  block = (AllocBlock)MemoryChunkGetBlock(chunk);
 
   /*
    * In this path, for speed reasons we just Assert that the referenced

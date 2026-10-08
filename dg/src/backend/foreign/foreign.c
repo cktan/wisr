@@ -461,7 +461,7 @@ Datum pg_options_to_table(PG_FUNCTION_ARGS) {
   InitMaterializedSRF(fcinfo, MAT_SRF_USE_EXPECTED_DESC);
 
   foreach (cell, options) {
-    DefElem *def = lfirst(cell);
+    DefElem *def = (DefElem *)lfirst(cell);
     Datum values[2];
     bool nulls[2];
 
@@ -544,7 +544,7 @@ Datum postgresql_fdw_validator(PG_FUNCTION_ARGS) {
   ListCell *cell;
 
   foreach (cell, options_list) {
-    DefElem *def = lfirst(cell);
+    DefElem *def = (DefElem *)lfirst(cell);
 
     if (!is_conninfo_option(def->defname, catalog)) {
       const struct ConnectionOption *opt;

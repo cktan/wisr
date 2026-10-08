@@ -53,7 +53,7 @@ pg_stack_base_t set_stack_base(void) {
    * with address sanitizer, see comment in stack_is_too_deep().
    */
 #ifdef HAVE__BUILTIN_FRAME_ADDRESS
-  stack_base_ptr = __builtin_frame_address(0);
+  stack_base_ptr = (char *)__builtin_frame_address(0);
 #else
   stack_base_ptr = &stack_base;
 #endif

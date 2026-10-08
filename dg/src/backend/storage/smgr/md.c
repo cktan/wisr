@@ -21,9 +21,9 @@
  */
 #include "postgres.h"
 
+#include <unistd.h>
 #include <fcntl.h>
 #include <sys/file.h>
-#include <unistd.h>
 
 #include "access/xlogutils.h"
 #include "commands/tablespace.h"
@@ -306,7 +306,7 @@ void mdcreate(SMgrRelation reln, ForkNumber forknum, bool isRedo) {
 void mdunlink(RelFileLocatorBackend rlocator, ForkNumber forknum, bool isRedo) {
   /* Now do the per-fork work */
   if (forknum == InvalidForkNumber) {
-    for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
+    for (forknum = (ForkNumber)0; forknum <= MAX_FORKNUM; forknum++)
       mdunlinkfork(rlocator, forknum, isRedo);
   } else
     mdunlinkfork(rlocator, forknum, isRedo);
@@ -1453,14 +1453,14 @@ void DropRelationFiles(RelFileLocator *delrels, int ndelrels, bool isRedo) {
   SMgrRelation *srels;
   int i;
 
-  srels = palloc(sizeof(SMgrRelation) * ndelrels);
+  srels = (SMgrRelationData **)palloc(sizeof(SMgrRelation) * ndelrels);
   for (i = 0; i < ndelrels; i++) {
     SMgrRelation srel = smgropen(delrels[i], INVALID_PROC_NUMBER);
 
     if (isRedo) {
       ForkNumber fork;
 
-      for (fork = 0; fork <= MAX_FORKNUM; fork++)
+      for (fork = (ForkNumber)0; fork <= MAX_FORKNUM; fork++)
         XLogDropRelation(delrels[i], fork);
     }
     srels[i] = srel;
@@ -1484,7 +1484,7 @@ static void _fdvec_resize(SMgrRelation reln, ForkNumber forknum, int nseg) {
     }
   } else if (reln->md_num_open_segs[forknum] == 0) {
     reln->md_seg_fds[forknum] =
-        MemoryContextAlloc(MdCxt, sizeof(MdfdVec) * nseg);
+        (_MdfdVec *)MemoryContextAlloc(MdCxt, sizeof(MdfdVec) * nseg);
   } else if (nseg > reln->md_num_open_segs[forknum]) {
     /*
      * It doesn't seem worthwhile complicating the code to amortize
@@ -1493,7 +1493,7 @@ static void _fdvec_resize(SMgrRelation reln, ForkNumber forknum, int nseg) {
      * doing an actual reallocation.
      */
     reln->md_seg_fds[forknum] =
-        repalloc(reln->md_seg_fds[forknum], sizeof(MdfdVec) * nseg);
+        (_MdfdVec *)repalloc(reln->md_seg_fds[forknum], sizeof(MdfdVec) * nseg);
   } else {
     /*
      * We don't reallocate a smaller array, because we want mdtruncate()
@@ -1636,7 +1636,7 @@ static MdfdVec *_mdfd_getseg(SMgrRelation reln, ForkNumber forknum,
        */
       if (nblocks < ((BlockNumber)RELSEG_SIZE)) {
         char *zerobuf =
-            palloc_aligned(BLCKSZ, PG_IO_ALIGN_SIZE, MCXT_ALLOC_ZERO);
+            (char *)palloc_aligned(BLCKSZ, PG_IO_ALIGN_SIZE, MCXT_ALLOC_ZERO);
 
         mdextend(reln, forknum, nextsegno * ((BlockNumber)RELSEG_SIZE) - 1,
                  zerobuf, skipFsync);
@@ -1719,7 +1719,7 @@ int mdsyncfiletag(const FileTag *ftag, char *path) {
   } else {
     MdPathStr p;
 
-    p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
+    p = _mdfd_segpath(reln, (ForkNumber)ftag->forknum, ftag->segno);
     strlcpy(path, p.str, MD_PATH_STR_MAXLEN);
 
     file = PathNameOpenFile(path, _mdfd_open_flags());

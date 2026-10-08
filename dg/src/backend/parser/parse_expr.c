@@ -430,7 +430,7 @@ static Node *transformIndirection(ParseState *pstate, A_Indirection *ind) {
    * multidimensional subscript operation.
    */
   foreach (i, ind->indirection) {
-    Node *n = lfirst(i);
+    Node *n = (Node *)lfirst(i);
 
     if (IsA(n, A_Indices))
       subscripts = lappend(subscripts, n);
@@ -1011,7 +1011,7 @@ static Node *transformAExprIn(ParseState *pstate, A_Expr *a) {
   lexpr = transformExprRecurse(pstate, a->lexpr);
   rexprs = rvars = rnonvars = NIL;
   foreach (l, (List *)a->rexpr) {
-    Node *rexpr = transformExprRecurse(pstate, lfirst(l));
+    Node *rexpr = transformExprRecurse(pstate, (Node *)lfirst(l));
 
     rexprs = lappend(rexprs, rexpr);
     if (contain_vars_of_level(rexpr, 0)) {
@@ -2572,7 +2572,7 @@ static Node *make_row_comparison_op(ParseState *pstate, List *opname,
      */
     this_cmptypes = NULL;
     foreach (j, opinfo_lists[i]) {
-      OpIndexInterpretation *opinfo = lfirst(j);
+      OpIndexInterpretation *opinfo = (OpIndexInterpretation *)lfirst(j);
 
       this_cmptypes = bms_add_member(this_cmptypes, opinfo->cmptype);
     }
@@ -2622,7 +2622,7 @@ static Node *make_row_comparison_op(ParseState *pstate, List *opname,
     ListCell *j;
 
     foreach (j, opinfo_lists[i]) {
-      OpIndexInterpretation *opinfo = lfirst(j);
+      OpIndexInterpretation *opinfo = (OpIndexInterpretation *)lfirst(j);
 
       if (opinfo->cmptype == cmptype) {
         opfamily = opinfo->opfamily_id;
@@ -2868,7 +2868,7 @@ const char *ParseExprKindName(ParseExprKind exprKind) {
 static Const *getJsonEncodingConst(JsonFormat *format) {
   JsonEncoding encoding;
   const char *enc;
-  Name encname = palloc(sizeof(NameData));
+  Name encname = (Name)palloc(sizeof(NameData));
 
   if (!format || format->format_type == JS_FORMAT_DEFAULT ||
       format->encoding == JS_ENC_DEFAULT)
@@ -3169,7 +3169,7 @@ static JsonReturning *transformJsonConstructorOutput(ParseState *pstate,
     bool have_jsonb = false;
 
     foreach (lc, args) {
-      Node *expr = lfirst(lc);
+      Node *expr = (Node *)lfirst(lc);
       Oid typid = exprType(expr);
 
       have_jsonb |= typid == JSONBOID;
@@ -4325,7 +4325,7 @@ static JsonBehavior *transformJsonBehavior(ParseState *pstate, JsonExpr *jsexpr,
        * boolean.
        */
       if (exprType(expr) == BOOLOID) {
-        char *val = btype == JSON_BEHAVIOR_TRUE ? "true" : "false";
+        char *val = (char *)(btype == JSON_BEHAVIOR_TRUE ? "true" : "false");
 
         expr = (Node *)makeConst(
             JSONBOID, -1, InvalidOid, -1,

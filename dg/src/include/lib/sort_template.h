@@ -315,11 +315,11 @@ loop:
     if (n > 40) {
       size_t d = (n / 8) * ST_POINTER_STEP;
 
-      pl = DO_MED3(pl, pl + d, pl + 2 * d);
-      pm = DO_MED3(pm - d, pm, pm + d);
-      pn = DO_MED3(pn - 2 * d, pn - d, pn);
+      pl = (ST_POINTER_TYPE *)DO_MED3(pl, pl + d, pl + 2 * d);
+      pm = (ST_POINTER_TYPE *)DO_MED3(pm - d, pm, pm + d);
+      pn = (ST_POINTER_TYPE *)DO_MED3(pn - 2 * d, pn - d, pn);
     }
-    pm = DO_MED3(pl, pm, pn);
+    pm = (ST_POINTER_TYPE *)DO_MED3(pl, pm, pn);
   }
   DO_SWAP(a, pm);
   pa = pb = a + ST_POINTER_STEP;

@@ -226,7 +226,7 @@ bool equal(const void *a, const void *b) {
   case T_IntList:
   case T_OidList:
   case T_XidList:
-    retval = _equalList(a, b);
+    retval = _equalList((const List *)a, (const List *)b);
     break;
 
   default:

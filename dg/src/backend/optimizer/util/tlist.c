@@ -938,9 +938,9 @@ static void split_pathtarget_at_srfs_extended(
         lappend(context.level_input_srfs, context.current_input_srfs);
   } else {
     lc = list_nth_cell(context.level_input_vars, max_depth);
-    lfirst(lc) = list_concat(lfirst(lc), context.current_input_vars);
+    lfirst(lc) = list_concat((List *)lfirst(lc), context.current_input_vars);
     lc = list_nth_cell(context.level_input_srfs, max_depth);
-    lfirst(lc) = list_concat(lfirst(lc), context.current_input_srfs);
+    lfirst(lc) = list_concat((List *)lfirst(lc), context.current_input_srfs);
   }
 
   /*
@@ -981,7 +981,7 @@ static void split_pathtarget_at_srfs_extended(
         ListCell *lcx;
 
         foreach (lcx, input_srfs) {
-          split_pathtarget_item *item = lfirst(lcx);
+          split_pathtarget_item *item = (split_pathtarget_item *)lfirst(lcx);
 
           if (list_member(prev_level_tlist, item->expr))
             add_sp_item_to_pathtarget(ntarget, item);
@@ -1036,7 +1036,8 @@ static bool split_pathtarget_walker(Node *node,
    * any expressions that appear as sortgrouprefs in input_target.)
    */
   if (list_member(context->input_target_exprs, sanitized_node)) {
-    split_pathtarget_item *item = palloc(sizeof(split_pathtarget_item));
+    split_pathtarget_item *item =
+        (split_pathtarget_item *)palloc(sizeof(split_pathtarget_item));
 
     item->expr = node;
     item->sortgroupref = context->current_sgref;
@@ -1051,7 +1052,8 @@ static bool split_pathtarget_walker(Node *node,
    */
   if (IsA(node, Var) || IsA(node, PlaceHolderVar) || IsA(node, Aggref) ||
       IsA(node, GroupingFunc) || IsA(node, WindowFunc)) {
-    split_pathtarget_item *item = palloc(sizeof(split_pathtarget_item));
+    split_pathtarget_item *item =
+        (split_pathtarget_item *)palloc(sizeof(split_pathtarget_item));
 
     item->expr = node;
     item->sortgroupref = context->current_sgref;
@@ -1064,7 +1066,8 @@ static bool split_pathtarget_walker(Node *node,
    * make appropriate entries in the output lists.
    */
   if (IS_SRF_CALL(node)) {
-    split_pathtarget_item *item = palloc(sizeof(split_pathtarget_item));
+    split_pathtarget_item *item =
+        (split_pathtarget_item *)palloc(sizeof(split_pathtarget_item));
     List *save_input_vars = context->current_input_vars;
     List *save_input_srfs = context->current_input_srfs;
     int save_current_depth = context->current_depth;
@@ -1093,13 +1096,13 @@ static bool split_pathtarget_walker(Node *node,
 
     /* Record this SRF as needing to be evaluated at appropriate level */
     lc = list_nth_cell(context->level_srfs, srf_depth);
-    lfirst(lc) = lappend(lfirst(lc), item);
+    lfirst(lc) = lappend((List *)lfirst(lc), item);
 
     /* Record its inputs as being needed at the same level */
     lc = list_nth_cell(context->level_input_vars, srf_depth);
-    lfirst(lc) = list_concat(lfirst(lc), context->current_input_vars);
+    lfirst(lc) = list_concat((List *)lfirst(lc), context->current_input_vars);
     lc = list_nth_cell(context->level_input_srfs, srf_depth);
-    lfirst(lc) = list_concat(lfirst(lc), context->current_input_srfs);
+    lfirst(lc) = list_concat((List *)lfirst(lc), context->current_input_srfs);
 
     /*
      * Restore caller-level state and update it for presence of this SRF.
@@ -1179,7 +1182,7 @@ static void add_sp_items_to_pathtarget(PathTarget *target, List *items) {
   ListCell *lc;
 
   foreach (lc, items) {
-    split_pathtarget_item *item = lfirst(lc);
+    split_pathtarget_item *item = (split_pathtarget_item *)lfirst(lc);
 
     add_sp_item_to_pathtarget(target, item);
   }

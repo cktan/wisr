@@ -118,7 +118,7 @@ char *encrypt_password(PasswordType target_type, const char *role,
   } else {
     switch (target_type) {
     case PASSWORD_TYPE_MD5:
-      encrypted_password = palloc(MD5_PASSWD_LEN + 1);
+      encrypted_password = (char *)palloc(MD5_PASSWD_LEN + 1);
 
       if (!pg_md5_encrypt(password, (uint8 *)role, strlen(role),
                           encrypted_password, &errstr))

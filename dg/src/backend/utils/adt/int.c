@@ -1335,7 +1335,7 @@ Datum generate_series_step_int4(PG_FUNCTION_ARGS) {
   /*
    * get the saved state and use current as the result for this iteration
    */
-  fctx = funcctx->user_fctx;
+  fctx = (generate_series_fctx *)funcctx->user_fctx;
   result = fctx->current;
 
   if ((fctx->step > 0 && fctx->current <= fctx->finish) ||
@@ -1371,10 +1371,10 @@ Datum generate_series_int4_support(PG_FUNCTION_ARGS) {
       Node *arg1, *arg2, *arg3;
 
       /* We can use estimated argument values here */
-      arg1 = estimate_expression_value(req->root, linitial(args));
-      arg2 = estimate_expression_value(req->root, lsecond(args));
+      arg1 = estimate_expression_value(req->root, (Node *)linitial(args));
+      arg2 = estimate_expression_value(req->root, (Node *)lsecond(args));
       if (list_length(args) >= 3)
-        arg3 = estimate_expression_value(req->root, lthird(args));
+        arg3 = estimate_expression_value(req->root, (Node *)lthird(args));
       else
         arg3 = NULL;
 

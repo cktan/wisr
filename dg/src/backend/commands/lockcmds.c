@@ -169,7 +169,7 @@ static bool LockViewRecurse_walker(Node *node,
     ListCell *rtable;
 
     foreach (rtable, query->rtable) {
-      RangeTblEntry *rte = lfirst(rtable);
+      RangeTblEntry *rte = (RangeTblEntry *)lfirst(rtable);
       AclResult aclresult;
 
       Oid relid = rte->relid;

@@ -156,8 +156,8 @@ static RawStmt *makeRawStmt(Node *stmt, int stmt_location);
 static void updateRawStmtEnd(RawStmt *rs, int end_location);
 static Node *makeColumnRef(char *colname, List *indirection,
 						   int location, core_yyscan_t yyscanner);
-static Node *makeTypeCast(Node *arg, TypeName *typename, int location);
-static Node *makeStringConstCast(char *str, int location, TypeName *typename);
+static Node *makeTypeCast(Node *arg, TypeName *typename_, int location);
+static Node *makeStringConstCast(char *str, int location, TypeName *typename_);
 static Node *makeIntConst(int val, int location);
 static Node *makeFloatConst(char *str, int location);
 static Node *makeBoolAConst(bool state, int location);
@@ -1786,7 +1786,7 @@ set_rest_more:	/* Generic SET syntaxes: */
 
 					n->kind = VAR_SET_VALUE;
 					n->name = "xmloption";
-					n->args = list_make1(makeStringConst($3 == XMLOPTION_DOCUMENT ? "DOCUMENT" : "CONTENT", @3));
+					n->args = list_make1(makeStringConst((char *) ($3 == XMLOPTION_DOCUMENT ? "DOCUMENT" : "CONTENT"), @3));
 					n->jumble_args = true;
 					n->location = -1;
 					$$ = n;
@@ -4330,7 +4330,7 @@ ConstraintElem:
 						n->fk_attrs = lappend(n->fk_attrs, $5);
 						n->fk_with_period = true;
 					}
-					n->pk_attrs = linitial($9);
+					n->pk_attrs = (List *) linitial($9);
 					if (lsecond($9))
 					{
 						n->pk_attrs = lappend(n->pk_attrs, lsecond($9));
@@ -4490,19 +4490,19 @@ OptWhereClause:
 key_actions:
 			key_update
 				{
-					KeyActions *n = palloc(sizeof(KeyActions));
+					KeyActions *n = (KeyActions *) palloc(sizeof(KeyActions));
 
 					n->updateAction = $1;
-					n->deleteAction = palloc(sizeof(KeyAction));
+					n->deleteAction = (KeyAction *) palloc(sizeof(KeyAction));
 					n->deleteAction->action = FKCONSTR_ACTION_NOACTION;
 					n->deleteAction->cols = NIL;
 					$$ = n;
 				}
 			| key_delete
 				{
-					KeyActions *n = palloc(sizeof(KeyActions));
+					KeyActions *n = (KeyActions *) palloc(sizeof(KeyActions));
 
-					n->updateAction = palloc(sizeof(KeyAction));
+					n->updateAction = (KeyAction *) palloc(sizeof(KeyAction));
 					n->updateAction->action = FKCONSTR_ACTION_NOACTION;
 					n->updateAction->cols = NIL;
 					n->deleteAction = $1;
@@ -4510,7 +4510,7 @@ key_actions:
 				}
 			| key_update key_delete
 				{
-					KeyActions *n = palloc(sizeof(KeyActions));
+					KeyActions *n = (KeyActions *) palloc(sizeof(KeyActions));
 
 					n->updateAction = $1;
 					n->deleteAction = $2;
@@ -4518,7 +4518,7 @@ key_actions:
 				}
 			| key_delete key_update
 				{
-					KeyActions *n = palloc(sizeof(KeyActions));
+					KeyActions *n = (KeyActions *) palloc(sizeof(KeyActions));
 
 					n->updateAction = $2;
 					n->deleteAction = $1;
@@ -4526,12 +4526,12 @@ key_actions:
 				}
 			| /*EMPTY*/
 				{
-					KeyActions *n = palloc(sizeof(KeyActions));
+					KeyActions *n = (KeyActions *) palloc(sizeof(KeyActions));
 
-					n->updateAction = palloc(sizeof(KeyAction));
+					n->updateAction = (KeyAction *) palloc(sizeof(KeyAction));
 					n->updateAction->action = FKCONSTR_ACTION_NOACTION;
 					n->updateAction->cols = NIL;
-					n->deleteAction = palloc(sizeof(KeyAction));
+					n->deleteAction = (KeyAction *) palloc(sizeof(KeyAction));
 					n->deleteAction->action = FKCONSTR_ACTION_NOACTION;
 					n->deleteAction->cols = NIL;
 					$$ = n;
@@ -4559,7 +4559,7 @@ key_delete: ON DELETE_P key_action
 key_action:
 			NO ACTION
 				{
-					KeyAction *n = palloc(sizeof(KeyAction));
+					KeyAction *n = (KeyAction *) palloc(sizeof(KeyAction));
 
 					n->action = FKCONSTR_ACTION_NOACTION;
 					n->cols = NIL;
@@ -4567,7 +4567,7 @@ key_action:
 				}
 			| RESTRICT
 				{
-					KeyAction *n = palloc(sizeof(KeyAction));
+					KeyAction *n = (KeyAction *) palloc(sizeof(KeyAction));
 
 					n->action = FKCONSTR_ACTION_RESTRICT;
 					n->cols = NIL;
@@ -4575,7 +4575,7 @@ key_action:
 				}
 			| CASCADE
 				{
-					KeyAction *n = palloc(sizeof(KeyAction));
+					KeyAction *n = (KeyAction *) palloc(sizeof(KeyAction));
 
 					n->action = FKCONSTR_ACTION_CASCADE;
 					n->cols = NIL;
@@ -4583,7 +4583,7 @@ key_action:
 				}
 			| SET NULL_P opt_column_list
 				{
-					KeyAction *n = palloc(sizeof(KeyAction));
+					KeyAction *n = (KeyAction *) palloc(sizeof(KeyAction));
 
 					n->action = FKCONSTR_ACTION_SETNULL;
 					n->cols = $3;
@@ -4591,7 +4591,7 @@ key_action:
 				}
 			| SET DEFAULT opt_column_list
 				{
-					KeyAction *n = palloc(sizeof(KeyAction));
+					KeyAction *n = (KeyAction *) palloc(sizeof(KeyAction));
 
 					n->action = FKCONSTR_ACTION_SETDEFAULT;
 					n->cols = $3;
@@ -5790,7 +5790,7 @@ import_qualification:
 			{
 				ImportQual *n = (ImportQual *) palloc(sizeof(ImportQual));
 
-				n->type = $1;
+				n->type = (ImportForeignSchemaType) $1;
 				n->table_names = $3;
 				$$ = n;
 			}
@@ -8135,7 +8135,7 @@ DefACLAction:
 					n->is_grant = true;
 					n->privileges = $2;
 					n->targtype = ACL_TARGET_DEFAULTS;
-					n->objtype = $4;
+					n->objtype = (ObjectType) $4;
 					n->objects = NIL;
 					n->grantees = $6;
 					n->grant_option = $7;
@@ -8150,7 +8150,7 @@ DefACLAction:
 					n->grant_option = false;
 					n->privileges = $2;
 					n->targtype = ACL_TARGET_DEFAULTS;
-					n->objtype = $4;
+					n->objtype = (ObjectType) $4;
 					n->objects = NIL;
 					n->grantees = $6;
 					n->behavior = $7;
@@ -8165,7 +8165,7 @@ DefACLAction:
 					n->grant_option = true;
 					n->privileges = $5;
 					n->targtype = ACL_TARGET_DEFAULTS;
-					n->objtype = $7;
+					n->objtype = (ObjectType) $7;
 					n->objects = NIL;
 					n->grantees = $9;
 					n->behavior = $10;
@@ -8283,8 +8283,8 @@ index_elem_options:
 			$$->collation = $1;
 			$$->opclass = $2;
 			$$->opclassopts = NIL;
-			$$->ordering = $3;
-			$$->nulls_ordering = $4;
+			$$->ordering = (SortByDir) $3;
+			$$->nulls_ordering = (SortByNulls) $4;
 		}
 	| opt_collate any_name reloptions opt_asc_desc opt_nulls_order
 		{
@@ -8295,8 +8295,8 @@ index_elem_options:
 			$$->collation = $1;
 			$$->opclass = $2;
 			$$->opclassopts = $3;
-			$$->ordering = $4;
-			$$->nulls_ordering = $5;
+			$$->ordering = (SortByDir) $4;
+			$$->nulls_ordering = (SortByNulls) $5;
 		}
 	;
 
@@ -9248,8 +9248,8 @@ CreateTransformStmt: CREATE opt_or_replace TRANSFORM FOR Typename LANGUAGE name 
 					n->replace = $2;
 					n->type_name = $5;
 					n->lang = $7;
-					n->fromsql = linitial($9);
-					n->tosql = lsecond($9);
+					n->fromsql = (ObjectWithArgs *) linitial($9);
+					n->tosql = (ObjectWithArgs *) lsecond($9);
 					$$ = (Node *) n;
 				}
 		;
@@ -9299,7 +9299,7 @@ ReindexStmt:
 				{
 					ReindexStmt *n = makeNode(ReindexStmt);
 
-					n->kind = $3;
+					n->kind = (ReindexObjectType) $3;
 					n->relation = $5;
 					n->name = NULL;
 					n->params = $2;
@@ -9325,7 +9325,7 @@ ReindexStmt:
 				{
 					ReindexStmt *n = makeNode(ReindexStmt);
 
-					n->kind = $3;
+					n->kind = (ReindexObjectType) $3;
 					n->relation = NULL;
 					n->name = $5;
 					n->params = $2;
@@ -10979,7 +10979,7 @@ RuleStmt:	CREATE opt_or_replace RULE name AS
 					n->relation = $9;
 					n->rulename = $4;
 					n->whereClause = $10;
-					n->event = $7;
+					n->event = (CmdType) $7;
 					n->instead = $12;
 					n->actions = $13;
 					$$ = (Node *) n;
@@ -11294,7 +11294,7 @@ ViewStmt: CREATE OptTemp VIEW qualified_name opt_column_list opt_reloptions
 					n->query = $8;
 					n->replace = false;
 					n->options = $6;
-					n->withCheckOption = $9;
+					n->withCheckOption = (ViewCheckOption) $9;
 					$$ = (Node *) n;
 				}
 		| CREATE OR REPLACE OptTemp VIEW qualified_name opt_column_list opt_reloptions
@@ -11308,7 +11308,7 @@ ViewStmt: CREATE OptTemp VIEW qualified_name opt_column_list opt_reloptions
 					n->query = $10;
 					n->replace = true;
 					n->options = $8;
-					n->withCheckOption = $11;
+					n->withCheckOption = (ViewCheckOption) $11;
 					$$ = (Node *) n;
 				}
 		| CREATE OptTemp RECURSIVE VIEW qualified_name '(' columnList ')' opt_reloptions
@@ -11322,7 +11322,7 @@ ViewStmt: CREATE OptTemp VIEW qualified_name opt_column_list opt_reloptions
 					n->query = makeRecursiveViewSelect(n->view->relname, n->aliases, $11);
 					n->replace = false;
 					n->options = $9;
-					n->withCheckOption = $12;
+					n->withCheckOption = (ViewCheckOption) $12;
 					if (n->withCheckOption != NO_CHECK_OPTION)
 						ereport(ERROR,
 								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -11341,7 +11341,7 @@ ViewStmt: CREATE OptTemp VIEW qualified_name opt_column_list opt_reloptions
 					n->query = makeRecursiveViewSelect(n->view->relname, n->aliases, $13);
 					n->replace = true;
 					n->options = $11;
-					n->withCheckOption = $14;
+					n->withCheckOption = (ViewCheckOption) $14;
 					if (n->withCheckOption != NO_CHECK_OPTION)
 						ereport(ERROR,
 								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -12277,7 +12277,7 @@ insert_rest:
 				{
 					$$ = makeNode(InsertStmt);
 					$$->cols = NIL;
-					$$->override = $2;
+					$$->override = (OverridingKind) $2;
 					$$->selectStmt = $4;
 				}
 			| '(' insert_column_list ')' SelectStmt
@@ -12290,7 +12290,7 @@ insert_rest:
 				{
 					$$ = makeNode(InsertStmt);
 					$$->cols = $2;
-					$$->override = $5;
+					$$->override = (OverridingKind) $5;
 					$$->selectStmt = $7;
 				}
 			| DEFAULT VALUES
@@ -12700,7 +12700,7 @@ merge_insert:
 				{
 					MergeWhenClause *n = makeNode(MergeWhenClause);
 					n->commandType = CMD_INSERT;
-					n->override = $3;
+					n->override = (OverridingKind) $3;
 					n->targetList = NIL;
 					n->values = $5;
 					$$ = n;
@@ -12718,7 +12718,7 @@ merge_insert:
 				{
 					MergeWhenClause *n = makeNode(MergeWhenClause);
 					n->commandType = CMD_INSERT;
-					n->override = $6;
+					n->override = (OverridingKind) $6;
 					n->targetList = $3;
 					n->values = $8;
 					$$ = n;
@@ -13043,7 +13043,7 @@ common_table_expr:  name opt_name_list AS opt_materialized '(' PreparableStmt ')
 
 				n->ctename = $1;
 				n->aliascolnames = $2;
-				n->ctematerialized = $4;
+				n->ctematerialized = (CTEMaterialize) $4;
 				n->ctequery = $6;
 				n->search_clause = castNode(CTESearchClause, $8);
 				n->cycle_clause = castNode(CTECycleClause, $9);
@@ -13242,7 +13242,7 @@ sortby:		a_expr USING qual_all_Op opt_nulls_order
 					$$ = makeNode(SortBy);
 					$$->node = $1;
 					$$->sortby_dir = SORTBY_USING;
-					$$->sortby_nulls = $4;
+					$$->sortby_nulls = (SortByNulls) $4;
 					$$->useOp = $3;
 					$$->location = @3;
 				}
@@ -13250,8 +13250,8 @@ sortby:		a_expr USING qual_all_Op opt_nulls_order
 				{
 					$$ = makeNode(SortBy);
 					$$->node = $1;
-					$$->sortby_dir = $2;
-					$$->sortby_nulls = $3;
+					$$->sortby_dir = (SortByDir) $2;
+					$$->sortby_nulls = (SortByNulls) $3;
 					$$->useOp = NIL;
 					$$->location = -1;		/* no operator */
 				}
@@ -13545,8 +13545,8 @@ for_locking_item:
 					LockingClause *n = makeNode(LockingClause);
 
 					n->lockedRels = $2;
-					n->strength = $1;
-					n->waitPolicy = $3;
+					n->strength = (LockClauseStrength) $1;
+					n->waitPolicy = (LockWaitPolicy) $3;
 					$$ = (Node *) n;
 				}
 		;
@@ -13626,8 +13626,8 @@ table_ref:	relation_expr opt_alias_clause
 				{
 					RangeFunction *n = (RangeFunction *) $1;
 
-					n->alias = linitial($2);
-					n->coldeflist = lsecond($2);
+					n->alias = (Alias *) linitial($2);
+					n->coldeflist = (List *) lsecond($2);
 					$$ = (Node *) n;
 				}
 			| LATERAL_P func_table func_alias_clause
@@ -13635,8 +13635,8 @@ table_ref:	relation_expr opt_alias_clause
 					RangeFunction *n = (RangeFunction *) $2;
 
 					n->lateral = true;
-					n->alias = linitial($3);
-					n->coldeflist = lsecond($3);
+					n->alias = (Alias *) linitial($3);
+					n->coldeflist = (List *) lsecond($3);
 					$$ = (Node *) n;
 				}
 			| xmltable opt_alias_clause
@@ -14363,8 +14363,8 @@ json_table_column_definition:
 					n->typeName = $2;
 					n->format = makeJsonFormat(JS_FORMAT_DEFAULT, JS_ENC_DEFAULT, -1);
 					n->pathspec = (JsonTablePathSpec *) $3;
-					n->wrapper = $4;
-					n->quotes = $5;
+					n->wrapper = (JsonWrapper) $4;
+					n->quotes = (JsonQuotes) $5;
 					n->on_empty = (JsonBehavior *) linitial($6);
 					n->on_error = (JsonBehavior *) lsecond($6);
 					n->location = @1;
@@ -14383,8 +14383,8 @@ json_table_column_definition:
 					n->typeName = $2;
 					n->format = (JsonFormat *) $3;
 					n->pathspec = (JsonTablePathSpec *) $4;
-					n->wrapper = $5;
-					n->quotes = $6;
+					n->wrapper = (JsonWrapper) $5;
+					n->quotes = (JsonQuotes) $6;
 					n->on_empty = (JsonBehavior *) linitial($7);
 					n->on_error = (JsonBehavior *) lsecond($7);
 					n->location = @1;
@@ -14688,7 +14688,7 @@ BitWithLength:
 				{
 					char *typname;
 
-					typname = $2 ? "varbit" : "bit";
+					typname = (char *) ($2 ? "varbit" : "bit");
 					$$ = SystemTypeName(typname);
 					$$->typmods = $4;
 					$$->location = @1;
@@ -14763,17 +14763,17 @@ CharacterWithoutLength:	 character
 		;
 
 character:	CHARACTER opt_varying
-										{ $$ = $2 ? "varchar": "bpchar"; }
+										{ $$ = (char *) ($2 ? "varchar": "bpchar"); }
 			| CHAR_P opt_varying
-										{ $$ = $2 ? "varchar": "bpchar"; }
+										{ $$ = (char *) ($2 ? "varchar": "bpchar"); }
 			| VARCHAR
 										{ $$ = "varchar"; }
 			| NATIONAL CHARACTER opt_varying
-										{ $$ = $3 ? "varchar": "bpchar"; }
+										{ $$ = (char *) ($3 ? "varchar": "bpchar"); }
 			| NATIONAL CHAR_P opt_varying
-										{ $$ = $3 ? "varchar": "bpchar"; }
+										{ $$ = (char *) ($3 ? "varchar": "bpchar"); }
 			| NCHAR opt_varying
-										{ $$ = $2 ? "varchar": "bpchar"; }
+										{ $$ = (char *) ($2 ? "varchar": "bpchar"); }
 		;
 
 opt_varying:
@@ -15319,7 +15319,7 @@ a_expr:		c_expr									{ $$ = $1; }
 				{
 					SubLink	   *n = makeNode(SubLink);
 
-					n->subLinkType = $3;
+					n->subLinkType = (SubLinkType) $3;
 					n->subLinkId = 0;
 					n->testexpr = $1;
 					n->operName = $2;
@@ -15396,7 +15396,7 @@ a_expr:		c_expr									{ $$ = $1; }
 				{
 					JsonFormat *format = makeJsonFormat(JS_FORMAT_DEFAULT, JS_ENC_DEFAULT, -1);
 
-					$$ = makeJsonIsPredicate($1, format, $3, $4, @1);
+					$$ = makeJsonIsPredicate($1, format, (JsonValueType) $3, $4, @1);
 				}
 			/*
 			 * Required by SQL/JSON, but there are conflicts
@@ -15414,7 +15414,7 @@ a_expr:		c_expr									{ $$ = $1; }
 				{
 					JsonFormat *format = makeJsonFormat(JS_FORMAT_DEFAULT, JS_ENC_DEFAULT, -1);
 
-					$$ = makeNotExpr(makeJsonIsPredicate($1, format, $4, $5, @1), @1);
+					$$ = makeNotExpr(makeJsonIsPredicate($1, format, (JsonValueType) $4, $5, @1), @1);
 				}
 			/*
 			 * Required by SQL/JSON, but there are conflicts
@@ -16077,7 +16077,7 @@ func_expr_common_subexpr:
 									list_make2($4, makeBoolAConst($5, -1)),
 									@1);
 
-					x->xmloption = $3;
+					x->xmloption = (XmlOptionType) $3;
 					$$ = (Node *) x;
 				}
 			| XMLPI '(' NAME_P ColLabel ')'
@@ -16097,7 +16097,7 @@ func_expr_common_subexpr:
 				{
 					XmlSerialize *n = makeNode(XmlSerialize);
 
-					n->xmloption = $3;
+					n->xmloption = (XmlOptionType) $3;
 					n->expr = $4;
 					n->typeName = $6;
 					n->indent = $7;
@@ -16228,8 +16228,8 @@ func_expr_common_subexpr:
 					n->pathspec = $5;
 					n->passing = $6;
 					n->output = (JsonOutput *) $7;
-					n->wrapper = $8;
-					n->quotes = $9;
+					n->wrapper = (JsonWrapper) $8;
+					n->quotes = (JsonQuotes) $9;
 					n->on_empty = (JsonBehavior *) linitial($10);
 					n->on_error = (JsonBehavior *) lsecond($10);
 					n->location = @1;
@@ -17022,7 +17022,7 @@ json_behavior:
 			DEFAULT a_expr
 				{ $$ = (Node *) makeJsonBehavior(JSON_BEHAVIOR_DEFAULT, $2, @1); }
 			| json_behavior_type
-				{ $$ = (Node *) makeJsonBehavior($1, NULL, @1); }
+				{ $$ = (Node *) makeJsonBehavior((JsonBehaviorType) $1, NULL, @1); }
 		;
 
 json_behavior_type:
@@ -17081,7 +17081,7 @@ json_format_clause:
 								 errmsg("unrecognized JSON encoding: %s", $4),
 								 parser_errposition(@4)));
 
-					$$ = (Node *) makeJsonFormat(JS_FORMAT_JSON, encoding, @1);
+					$$ = (Node *) makeJsonFormat(JS_FORMAT_JSON, (JsonEncoding) encoding, @1);
 				}
 			| FORMAT_LA JSON
 				{
@@ -18774,22 +18774,22 @@ makeColumnRef(char *colname, List *indirection,
 }
 
 static Node *
-makeTypeCast(Node *arg, TypeName *typename, int location)
+makeTypeCast(Node *arg, TypeName *typename_, int location)
 {
 	TypeCast   *n = makeNode(TypeCast);
 
 	n->arg = arg;
-	n->typeName = typename;
+	n->typeName = typename_;
 	n->location = location;
 	return (Node *) n;
 }
 
 static Node *
-makeStringConstCast(char *str, int location, TypeName *typename)
+makeStringConstCast(char *str, int location, TypeName *typename_)
 {
 	Node	   *s = makeStringConst(str, location);
 
-	return makeTypeCast(s, typename, -1);
+	return makeTypeCast(s, typename_, -1);
 }
 
 static Node *

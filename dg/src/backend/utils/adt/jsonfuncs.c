@@ -590,12 +590,12 @@ Datum jsonb_object_keys(PG_FUNCTION_ARGS) {
     funcctx = SRF_FIRSTCALL_INIT();
     oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-    state = palloc(sizeof(OkeysState));
+    state = (OkeysState *)palloc(sizeof(OkeysState));
 
     state->result_size = JB_ROOT_COUNT(jb);
     state->result_count = 0;
     state->sent_count = 0;
-    state->result = palloc(state->result_size * sizeof(char *));
+    state->result = (char **)palloc(state->result_size * sizeof(char *));
 
     it = JsonbIteratorInit(&jb->root);
 
@@ -605,7 +605,7 @@ Datum jsonb_object_keys(PG_FUNCTION_ARGS) {
       if (r == WJB_KEY) {
         char *cstr;
 
-        cstr = palloc(v.val.string.len + 1 * sizeof(char));
+        cstr = (char *)palloc(v.val.string.len + 1 * sizeof(char));
         memcpy(cstr, v.val.string.val, v.val.string.len);
         cstr[v.val.string.len] = '\0';
         state->result[state->result_count++] = cstr;
@@ -696,7 +696,7 @@ static int report_json_context(JsonLexContext *lex) {
 
   /* Get a null-terminated copy of the data to present */
   ctxtlen = context_end - context_start;
-  ctxt = palloc(ctxtlen + 1);
+  ctxt = (char *)palloc(ctxtlen + 1);
   memcpy(ctxt, context_start, ctxtlen);
   ctxt[ctxtlen] = '\0';
 
@@ -728,14 +728,14 @@ Datum json_object_keys(PG_FUNCTION_ARGS) {
     funcctx = SRF_FIRSTCALL_INIT();
     oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-    state = palloc(sizeof(OkeysState));
-    sem = palloc0(sizeof(JsonSemAction));
+    state = (OkeysState *)palloc(sizeof(OkeysState));
+    sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
 
     state->lex = makeJsonLexContext(&lex, json, true);
     state->result_size = 256;
     state->result_count = 0;
     state->sent_count = 0;
-    state->result = palloc(256 * sizeof(char *));
+    state->result = (char **)palloc(256 * sizeof(char *));
 
     sem->semstate = state;
     sem->array_start = okeys_array_start;
@@ -990,8 +990,8 @@ static Datum get_path_all(FunctionCallInfo fcinfo, bool as_text) {
 
   deconstruct_array_builtin(path, TEXTOID, &pathtext, &pathnulls, &npath);
 
-  tpath = palloc(npath * sizeof(char *));
-  ipath = palloc(npath * sizeof(int));
+  tpath = (char **)palloc(npath * sizeof(char *));
+  ipath = (int *)palloc(npath * sizeof(int));
 
   for (i = 0; i < npath; i++) {
     Assert(!pathnulls[i]);
@@ -1043,8 +1043,8 @@ static Datum get_path_all(FunctionCallInfo fcinfo, bool as_text) {
  */
 static text *get_worker(text *json, char **tpath, int *ipath, int npath,
                         bool normalize_results) {
-  JsonSemAction *sem = palloc0(sizeof(JsonSemAction));
-  GetState *state = palloc0(sizeof(GetState));
+  JsonSemAction *sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
+  GetState *state = (GetState *)palloc0(sizeof(GetState));
 
   Assert(npath >= 0);
 
@@ -1055,8 +1055,8 @@ static text *get_worker(text *json, char **tpath, int *ipath, int npath,
   state->npath = npath;
   state->path_names = tpath;
   state->path_indexes = ipath;
-  state->pathok = palloc0(sizeof(bool) * npath);
-  state->array_cur_index = palloc(sizeof(int) * npath);
+  state->pathok = (bool *)palloc0(sizeof(bool) * npath);
+  state->array_cur_index = (int *)palloc(sizeof(int) * npath);
 
   if (npath > 0)
     state->pathok[0] = true;
@@ -1516,7 +1516,7 @@ Datum jsonb_set_element(Jsonb *jb, Datum *path, int path_len,
   JsonbValue *res;
   JsonbParseState *state = NULL;
   JsonbIterator *it;
-  bool *path_nulls = palloc0(path_len * sizeof(bool));
+  bool *path_nulls = (bool *)palloc0(path_len * sizeof(bool));
 
   if (newval->type == jbvArray && newval->val.array.rawScalar)
     *newval = newval->val.array.elems[0];
@@ -1557,7 +1557,8 @@ static void push_path(JsonbParseState **st, int level, Datum *path_elems,
    * it contains only information about path slice from level to the end,
    * the access index must be normalized by level.
    */
-  enum jbvType *tpath = palloc0((path_len - level) * sizeof(enum jbvType));
+  enum jbvType *tpath =
+      (jbvType *)palloc0((path_len - level) * sizeof(enum jbvType));
   JsonbValue newkey;
 
   /*
@@ -1667,14 +1668,14 @@ Datum json_array_length(PG_FUNCTION_ARGS) {
   JsonLexContext lex;
   JsonSemAction *sem;
 
-  state = palloc0(sizeof(AlenState));
+  state = (AlenState *)palloc0(sizeof(AlenState));
   state->lex = makeJsonLexContext(&lex, json, false);
   /* palloc0 does this for us */
 #if 0
 	state->count = 0;
 #endif
 
-  sem = palloc0(sizeof(JsonSemAction));
+  sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
   sem->semstate = state;
   sem->object_start = alen_object_start;
   sem->scalar = alen_scalar;
@@ -1836,8 +1837,8 @@ static Datum each_worker(FunctionCallInfo fcinfo, bool as_text) {
   ReturnSetInfo *rsi;
   EachState *state;
 
-  state = palloc0(sizeof(EachState));
-  sem = palloc0(sizeof(JsonSemAction));
+  state = (EachState *)palloc0(sizeof(EachState));
+  sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
 
   rsi = (ReturnSetInfo *)fcinfo->resultinfo;
 
@@ -2054,8 +2055,8 @@ static Datum elements_worker(FunctionCallInfo fcinfo, const char *funcname,
   /* elements only needs escaped strings when as_text */
   makeJsonLexContext(&lex, json, as_text);
 
-  state = palloc0(sizeof(ElementsState));
-  sem = palloc0(sizeof(JsonSemAction));
+  state = (ElementsState *)palloc0(sizeof(ElementsState));
+  sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
 
   InitMaterializedSRF(fcinfo, MAT_SRF_USE_EXPECTED_DESC | MAT_SRF_BLESS);
   rsi = (ReturnSetInfo *)fcinfo->resultinfo;
@@ -2276,8 +2277,8 @@ static bool populate_array_assign_ndims(PopulateArrayContext *ctx, int ndims) {
   }
 
   ctx->ndims = ndims;
-  ctx->dims = palloc(sizeof(int) * ndims);
-  ctx->sizes = palloc0(sizeof(int) * ndims);
+  ctx->dims = (int *)palloc(sizeof(int) * ndims);
+  ctx->sizes = (int *)palloc0(sizeof(int) * ndims);
 
   for (i = 0; i < ndims; i++)
     ctx->dims[i] = -1; /* dimensions are unknown yet */
@@ -2617,7 +2618,7 @@ static Datum populate_array(ArrayIOData *aio, const char *colname,
 
   Assert(ctx.ndims > 0);
 
-  lbs = palloc(sizeof(int) * ctx.ndims);
+  lbs = (int *)palloc(sizeof(int) * ctx.ndims);
 
   for (i = 0; i < ctx.ndims; i++)
     lbs[i] = 1;
@@ -2776,7 +2777,7 @@ static Datum populate_scalar(ScalarIOData *io, Oid typid, int32 typmod,
       str = buf.data;
     } else if (len >= 0) {
       /* create a NUL-terminated version */
-      str = palloc(len + 1);
+      str = (char *)palloc(len + 1);
       memcpy(str, json, len);
       str[len] = '\0';
     } else {
@@ -2889,7 +2890,7 @@ static void prepare_column_cache(ColumnIOData *column, Oid typid, int32 typmod,
       column->io.domain.base_typid = base_typid;
       column->io.domain.base_typmod = base_typmod;
       column->io.domain.base_io =
-          MemoryContextAllocZero(mcxt, sizeof(ColumnIOData));
+          (ColumnIOData *)MemoryContextAllocZero(mcxt, sizeof(ColumnIOData));
       column->io.domain.domain_info = NULL;
     }
   } else if (type->typtype == TYPTYPE_COMPOSITE || typid == RECORDOID) {
@@ -2902,7 +2903,7 @@ static void prepare_column_cache(ColumnIOData *column, Oid typid, int32 typmod,
   } else if (IsTrueArrayType(type)) {
     column->typcat = TYPECAT_ARRAY;
     column->io.array.element_info =
-        MemoryContextAllocZero(mcxt, sizeof(ColumnIOData));
+        (ColumnIOData *)MemoryContextAllocZero(mcxt, sizeof(ColumnIOData));
     column->io.array.element_type = type->typelem;
     /* array element typemod stored in attribute's typmod */
     column->io.array.element_typmod = typmod;
@@ -2973,9 +2974,9 @@ Datum json_populate_type(Datum json_val, Oid json_type, Oid typid, int32 typmod,
   if (*cache == NULL)
     *cache = MemoryContextAllocZero(mcxt, sizeof(ColumnIOData));
 
-  return populate_record_field(*cache, typid, typmod, NULL, mcxt,
-                               PointerGetDatum(NULL), &jsv, isnull, escontext,
-                               omit_quotes);
+  return populate_record_field((ColumnIOData *)*cache, typid, typmod, NULL,
+                               mcxt, PointerGetDatum(NULL), &jsv, isnull,
+                               escontext, omit_quotes);
 }
 
 /* recursively populate a record field or an array element from a json/jsonb
@@ -3052,8 +3053,8 @@ static bool JsObjectGetField(JsObject *obj, char *field, JsValue *jsv) {
   jsv->is_json = obj->is_json;
 
   if (jsv->is_json) {
-    JsonHashEntry *hashentry =
-        hash_search(obj->val.json_hash, field, HASH_FIND, NULL);
+    JsonHashEntry *hashentry = (JsonHashEntry *)hash_search(
+        obj->val.json_hash, field, HASH_FIND, NULL);
 
     jsv->val.json.type = hashentry ? hashentry->type : JSON_TOKEN_NULL;
     jsv->val.json.str =
@@ -3235,7 +3236,7 @@ static Datum populate_record_worker(FunctionCallInfo fcinfo,
   bool isnull;
   JsonbValue jbv;
   MemoryContext fnmcxt = fcinfo->flinfo->fn_mcxt;
-  PopulateRecordCache *cache = fcinfo->flinfo->fn_extra;
+  PopulateRecordCache *cache = (PopulateRecordCache *)fcinfo->flinfo->fn_extra;
 
   /*
    * If first time through, identify input/result record type.  Note that
@@ -3244,7 +3245,7 @@ static Datum populate_record_worker(FunctionCallInfo fcinfo,
    */
   if (!cache) {
     fcinfo->flinfo->fn_extra = cache =
-        MemoryContextAllocZero(fnmcxt, sizeof(*cache));
+        (PopulateRecordCache *)MemoryContextAllocZero(fnmcxt, sizeof(*cache));
     cache->fn_mcxt = fnmcxt;
 
     if (have_record_arg)
@@ -3337,8 +3338,8 @@ static HTAB *get_json_object_as_hash(const char *json, int len,
   tab = hash_create("json object hashtable", 100, &ctl,
                     HASH_ELEM | HASH_STRINGS | HASH_CONTEXT);
 
-  state = palloc0(sizeof(JHashState));
-  sem = palloc0(sizeof(JsonSemAction));
+  state = (JHashState *)palloc0(sizeof(JHashState));
+  sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
 
   state->function_name = funcname;
   state->hash = tab;
@@ -3405,7 +3406,8 @@ static JsonParseErrorType hash_object_field_end(void *state, char *fname,
   if (strlen(fname) >= NAMEDATALEN)
     return JSON_SUCCESS;
 
-  hashentry = hash_search(_state->hash, fname, HASH_ENTER, &found);
+  hashentry =
+      (JsonHashEntry *)hash_search(_state->hash, fname, HASH_ENTER, &found);
 
   /*
    * found being true indicates a duplicate. We don't do anything about
@@ -3417,7 +3419,7 @@ static JsonParseErrorType hash_object_field_end(void *state, char *fname,
 
   if (_state->save_json_start != NULL) {
     int len = _state->lex->prev_token_terminator - _state->save_json_start;
-    char *val = palloc((len + 1) * sizeof(char));
+    char *val = (char *)palloc((len + 1) * sizeof(char));
 
     memcpy(val, _state->save_json_start, len);
     val[len] = '\0';
@@ -3527,7 +3529,7 @@ static Datum populate_recordset_worker(FunctionCallInfo fcinfo,
   ReturnSetInfo *rsi;
   MemoryContext old_cxt;
   HeapTupleHeader rec;
-  PopulateRecordCache *cache = fcinfo->flinfo->fn_extra;
+  PopulateRecordCache *cache = (PopulateRecordCache *)fcinfo->flinfo->fn_extra;
   PopulateRecordsetState *state;
 
   rsi = (ReturnSetInfo *)fcinfo->resultinfo;
@@ -3551,7 +3553,8 @@ static Datum populate_recordset_worker(FunctionCallInfo fcinfo,
    */
   if (!cache) {
     fcinfo->flinfo->fn_extra = cache =
-        MemoryContextAllocZero(fcinfo->flinfo->fn_mcxt, sizeof(*cache));
+        (PopulateRecordCache *)MemoryContextAllocZero(fcinfo->flinfo->fn_mcxt,
+                                                      sizeof(*cache));
     cache->fn_mcxt = fcinfo->flinfo->fn_mcxt;
 
     if (have_record_arg)
@@ -3598,7 +3601,7 @@ static Datum populate_recordset_worker(FunctionCallInfo fcinfo,
    */
   update_cached_tupdesc(&cache->c.io.composite, cache->fn_mcxt);
 
-  state = palloc0(sizeof(PopulateRecordsetState));
+  state = (PopulateRecordsetState *)palloc0(sizeof(PopulateRecordsetState));
 
   /* make tuplestore in a sufficiently long-lived memory context */
   old_cxt = MemoryContextSwitchTo(rsi->econtext->ecxt_per_query_memory);
@@ -3615,7 +3618,7 @@ static Datum populate_recordset_worker(FunctionCallInfo fcinfo,
     JsonLexContext lex;
     JsonSemAction *sem;
 
-    sem = palloc0(sizeof(JsonSemAction));
+    sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
 
     makeJsonLexContext(&lex, json, true);
 
@@ -3797,7 +3800,8 @@ populate_recordset_object_field_end(void *state, char *fname, bool isnull) {
   if (strlen(fname) >= NAMEDATALEN)
     return JSON_SUCCESS;
 
-  hashentry = hash_search(_state->json_hash, fname, HASH_ENTER, &found);
+  hashentry = (JsonHashEntry *)hash_search(_state->json_hash, fname, HASH_ENTER,
+                                           &found);
 
   /*
    * found being true indicates a duplicate. We don't do anything about
@@ -3809,7 +3813,7 @@ populate_recordset_object_field_end(void *state, char *fname, bool isnull) {
 
   if (_state->save_json_start != NULL) {
     int len = _state->lex->prev_token_terminator - _state->save_json_start;
-    char *val = palloc((len + 1) * sizeof(char));
+    char *val = (char *)palloc((len + 1) * sizeof(char));
 
     memcpy(val, _state->save_json_start, len);
     val[len] = '\0';
@@ -3937,8 +3941,8 @@ Datum json_strip_nulls(PG_FUNCTION_ARGS) {
   JsonLexContext lex;
   JsonSemAction *sem;
 
-  state = palloc0(sizeof(StripnullState));
-  sem = palloc0(sizeof(JsonSemAction));
+  state = (StripnullState *)palloc0(sizeof(StripnullState));
+  sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
 
   state->lex = makeJsonLexContext(&lex, json, true);
   state->strval = makeStringInfo();
@@ -5033,9 +5037,9 @@ void iterate_jsonb_values(Jsonb *jb, uint32 flags, void *state,
 void iterate_json_values(text *json, uint32 flags, void *action_state,
                          JsonIterateStringValuesAction action) {
   JsonLexContext lex;
-  JsonSemAction *sem = palloc0(sizeof(JsonSemAction));
-  IterateJsonStringValuesState *state =
-      palloc0(sizeof(IterateJsonStringValuesState));
+  JsonSemAction *sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
+  IterateJsonStringValuesState *state = (IterateJsonStringValuesState *)palloc0(
+      sizeof(IterateJsonStringValuesState));
 
   state->lex = makeJsonLexContext(&lex, json, true);
   state->action = action;
@@ -5145,9 +5149,10 @@ text *
 transform_json_string_values(text *json, void *action_state,
                              JsonTransformStringValuesAction transform_action) {
   JsonLexContext lex;
-  JsonSemAction *sem = palloc0(sizeof(JsonSemAction));
+  JsonSemAction *sem = (JsonSemAction *)palloc0(sizeof(JsonSemAction));
   TransformJsonStringValuesState *state =
-      palloc0(sizeof(TransformJsonStringValuesState));
+      (TransformJsonStringValuesState *)palloc0(
+          sizeof(TransformJsonStringValuesState));
 
   state->lex = makeJsonLexContext(&lex, json, true);
   state->strval = makeStringInfo();

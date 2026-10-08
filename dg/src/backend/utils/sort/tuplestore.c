@@ -714,7 +714,7 @@ void tuplestore_puttuple(Tuplestorestate *state, HeapTuple tuple) {
    * Copy the tuple.  (Must do this even in WRITEFILE case.  Note that
    * COPYTUP includes USEMEM, so we needn't do that here.)
    */
-  tuple = COPYTUP(state, tuple);
+  tuple = (HeapTuple)COPYTUP(state, tuple);
 
   tuplestore_puttuple_common(state, tuple);
 

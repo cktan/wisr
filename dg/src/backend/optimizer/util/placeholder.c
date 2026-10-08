@@ -208,7 +208,7 @@ static void find_placeholders_recurse(PlannerInfo *root, Node *jtnode) {
      * First, recurse to handle child joins.
      */
     foreach (l, f->fromlist) {
-      find_placeholders_recurse(root, lfirst(l));
+      find_placeholders_recurse(root, (Node *)lfirst(l));
     }
 
     /*

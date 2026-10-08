@@ -173,7 +173,7 @@ const Size shm_mq_minimum_size =
  * Initialize a new shared message queue.
  */
 shm_mq *shm_mq_create(void *address, Size size) {
-  shm_mq *mq = address;
+  shm_mq *mq = (shm_mq *)address;
   Size data_offset = MAXALIGN(offsetof(shm_mq, mq_ring));
 
   /* If the size isn't MAXALIGN'd, just discard the odd bytes. */
@@ -277,7 +277,7 @@ PGPROC *shm_mq_get_sender(shm_mq *mq) {
  */
 shm_mq_handle *shm_mq_attach(shm_mq *mq, dsm_segment *seg,
                              BackgroundWorkerHandle *handle) {
-  shm_mq_handle *mqh = palloc(sizeof(shm_mq_handle));
+  shm_mq_handle *mqh = (shm_mq_handle *)palloc(sizeof(shm_mq_handle));
 
   Assert(mq->mq_receiver == MyProc || mq->mq_sender == MyProc);
   mqh->mqh_queue = mq;
@@ -315,7 +315,7 @@ shm_mq_result shm_mq_send(shm_mq_handle *mqh, Size nbytes, const void *data,
                           bool nowait, bool force_flush) {
   shm_mq_iovec iov;
 
-  iov.data = data;
+  iov.data = (const char *)data;
   iov.len = nbytes;
 
   return shm_mq_sendv(mqh, &iov, 1, nowait, force_flush);
@@ -634,7 +634,7 @@ shm_mq_result shm_mq_receive(shm_mq_handle *mqh, Size *nbytesp, void **datap,
       /* Message word is split; need buffer to reassemble. */
       if (mqh->mqh_buffer == NULL) {
         mqh->mqh_buffer =
-            MemoryContextAlloc(mqh->mqh_context, MQH_INITIAL_BUFSIZE);
+            (char *)MemoryContextAlloc(mqh->mqh_context, MQH_INITIAL_BUFSIZE);
         mqh->mqh_buflen = MQH_INITIAL_BUFSIZE;
       }
       Assert(mqh->mqh_buflen >= sizeof(Size));
@@ -707,7 +707,7 @@ shm_mq_result shm_mq_receive(shm_mq_handle *mqh, Size *nbytesp, void **datap,
         mqh->mqh_buffer = NULL;
         mqh->mqh_buflen = 0;
       }
-      mqh->mqh_buffer = MemoryContextAlloc(mqh->mqh_context, newbuflen);
+      mqh->mqh_buffer = (char *)MemoryContextAlloc(mqh->mqh_context, newbuflen);
       mqh->mqh_buflen = newbuflen;
     }
   }

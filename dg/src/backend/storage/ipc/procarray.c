@@ -1091,7 +1091,8 @@ void ProcArrayApplyRecoveryInfo(RunningTransactions running) {
    * Allocate a temporary array to avoid modifying the array passed as
    * argument.
    */
-  xids = palloc(sizeof(TransactionId) * (running->xcnt + running->subxcnt));
+  xids = (TransactionId *)palloc(sizeof(TransactionId) *
+                                 (running->xcnt + running->subxcnt));
 
   /*
    * Add to the temp array any xids which have not already completed.

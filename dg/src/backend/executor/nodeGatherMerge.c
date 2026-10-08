@@ -14,8 +14,8 @@
 
 #include "postgres.h"
 
-#include "executor/execParallel.h"
 #include "executor/executor.h"
+#include "executor/execParallel.h"
 #include "executor/nodeGatherMerge.h"
 #include "executor/tqueue.h"
 #include "lib/binaryheap.h"
@@ -140,7 +140,8 @@ GatherMergeState *ExecInitGatherMerge(GatherMerge *node, EState *estate,
     int i;
 
     gm_state->gm_nkeys = node->numCols;
-    gm_state->gm_sortkeys = palloc0(sizeof(SortSupportData) * node->numCols);
+    gm_state->gm_sortkeys =
+        (SortSupport)palloc0(sizeof(SortSupportData) * node->numCols);
 
     for (i = 0; i < node->numCols; i++) {
       SortSupport sortKey = gm_state->gm_sortkeys + i;

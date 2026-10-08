@@ -51,9 +51,9 @@
  *-------------------------------------------------------------------------
  */
 
+#include "postgres.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
-#include "postgres.h"
 
 #include "utils/freepage.h"
 #include "utils/relptr.h"
@@ -305,11 +305,12 @@ static Size FreePageManagerLargestContiguous(FreePageManager *fpm) {
   if (!relptr_is_null(fpm->freelist[FPM_NUM_FREELISTS - 1])) {
     FreePageSpanLeader *candidate;
 
-    candidate = relptr_access(base, fpm->freelist[FPM_NUM_FREELISTS - 1]);
+    candidate = (FreePageSpanLeader *)relptr_access(
+        base, fpm->freelist[FPM_NUM_FREELISTS - 1]);
     do {
       if (candidate->npages > largest)
         largest = candidate->npages;
-      candidate = relptr_access(base, candidate->next);
+      candidate = (FreePageSpanLeader *)relptr_access(base, candidate->next);
     } while (candidate != NULL);
   } else {
     Size f = FPM_NUM_FREELISTS - 1;
@@ -401,7 +402,7 @@ char *FreePageManagerDump(FreePageManager *fpm) {
     FreePageBtree *root;
 
     appendStringInfo(&buf, "btree depth %u:\n", fpm->btree_depth);
-    root = relptr_access(base, fpm->btree_root);
+    root = (FreePageBtree *)relptr_access(base, fpm->btree_root);
     FreePageManagerDumpBtree(fpm, root, NULL, 0, &buf);
   } else if (fpm->singleton_npages > 0) {
     appendStringInfo(&buf, "singleton: %zu(%zu)\n", fpm->singleton_first_page,
@@ -409,7 +410,7 @@ char *FreePageManagerDump(FreePageManager *fpm) {
   }
 
   /* Dump btree recycle list. */
-  recycle = relptr_access(base, fpm->btree_recycle);
+  recycle = (FreePageSpanLeader *)relptr_access(base, fpm->btree_recycle);
   if (recycle != NULL) {
     appendStringInfoString(&buf, "btree recycle:");
     FreePageManagerDumpSpans(fpm, recycle, 1, &buf);
@@ -426,7 +427,7 @@ char *FreePageManagerDump(FreePageManager *fpm) {
       dumped_any_freelist = true;
     }
     appendStringInfo(&buf, "  %zu:", f + 1);
-    span = relptr_access(base, fpm->freelist[f]);
+    span = (FreePageSpanLeader *)relptr_access(base, fpm->freelist[f]);
     FreePageManagerDumpSpans(fpm, span, f + 1, &buf);
   }
 
@@ -473,7 +474,7 @@ static void FreePageBtreeAdjustAncestorKeys(FreePageManager *fpm,
   for (;;) {
     Size s;
 
-    parent = relptr_access(base, child->hdr.parent);
+    parent = (FreePageBtree *)relptr_access(base, child->hdr.parent);
     if (parent == NULL)
       break;
     s = FreePageBtreeSearchInternal(parent, first_page);
@@ -485,7 +486,8 @@ static void FreePageBtreeAdjustAncestorKeys(FreePageManager *fpm,
     } else {
       FreePageBtree *check;
 
-      check = relptr_access(base, parent->u.internal_key[s].child);
+      check =
+          (FreePageBtree *)relptr_access(base, parent->u.internal_key[s].child);
       if (check != child) {
         Assert(s > 0);
         --s;
@@ -526,7 +528,7 @@ static Size FreePageBtreeCleanup(FreePageManager *fpm) {
 
   /* Attempt to shrink the depth of the btree. */
   while (!relptr_is_null(fpm->btree_root)) {
-    FreePageBtree *root = relptr_access(base, fpm->btree_root);
+    FreePageBtree *root = (FreePageBtree *)relptr_access(base, fpm->btree_root);
 
     /* If the root contains only one key, reduce depth by one. */
     if (root->hdr.nused == 1) {
@@ -544,7 +546,7 @@ static Size FreePageBtreeCleanup(FreePageManager *fpm) {
         /* If root is an internal page, make only child the root. */
         Assert(root->hdr.magic == FREE_PAGE_INTERNAL_MAGIC);
         relptr_copy(fpm->btree_root, root->u.internal_key[0].child);
-        newroot = relptr_access(base, fpm->btree_root);
+        newroot = (FreePageBtree *)relptr_access(base, fpm->btree_root);
         relptr_store(base, newroot->hdr.parent, (FreePageBtree *)NULL);
       }
       FreePageBtreeRecycle(fpm, fpm_pointer_to_page(base, root));
@@ -696,7 +698,7 @@ static FreePageBtree *FreePageBtreeFindLeftSibling(char *base,
     Size index;
 
     first_page = FreePageBtreeFirstKey(p);
-    p = relptr_access(base, p->hdr.parent);
+    p = (FreePageBtree *)relptr_access(base, p->hdr.parent);
 
     if (p == NULL)
       return NULL; /* we were passed the rightmost page */
@@ -704,7 +706,8 @@ static FreePageBtree *FreePageBtreeFindLeftSibling(char *base,
     index = FreePageBtreeSearchInternal(p, first_page);
     if (index > 0) {
       Assert(p->u.internal_key[index].first_page == first_page);
-      p = relptr_access(base, p->u.internal_key[index - 1].child);
+      p = (FreePageBtree *)relptr_access(base,
+                                         p->u.internal_key[index - 1].child);
       break;
     }
     Assert(index == 0);
@@ -714,7 +717,8 @@ static FreePageBtree *FreePageBtreeFindLeftSibling(char *base,
   /* Descend left. */
   while (levels > 0) {
     Assert(p->hdr.magic == FREE_PAGE_INTERNAL_MAGIC);
-    p = relptr_access(base, p->u.internal_key[p->hdr.nused - 1].child);
+    p = (FreePageBtree *)relptr_access(
+        base, p->u.internal_key[p->hdr.nused - 1].child);
     --levels;
   }
   Assert(p->hdr.magic == btp->hdr.magic);
@@ -737,7 +741,7 @@ static FreePageBtree *FreePageBtreeFindRightSibling(char *base,
     Size index;
 
     first_page = FreePageBtreeFirstKey(p);
-    p = relptr_access(base, p->hdr.parent);
+    p = (FreePageBtree *)relptr_access(base, p->hdr.parent);
 
     if (p == NULL)
       return NULL; /* we were passed the rightmost page */
@@ -745,7 +749,8 @@ static FreePageBtree *FreePageBtreeFindRightSibling(char *base,
     index = FreePageBtreeSearchInternal(p, first_page);
     if (index < p->hdr.nused - 1) {
       Assert(p->u.internal_key[index].first_page == first_page);
-      p = relptr_access(base, p->u.internal_key[index + 1].child);
+      p = (FreePageBtree *)relptr_access(base,
+                                         p->u.internal_key[index + 1].child);
       break;
     }
     Assert(index == p->hdr.nused - 1);
@@ -755,7 +760,7 @@ static FreePageBtree *FreePageBtreeFindRightSibling(char *base,
   /* Descend left. */
   while (levels > 0) {
     Assert(p->hdr.magic == FREE_PAGE_INTERNAL_MAGIC);
-    p = relptr_access(base, p->u.internal_key[0].child);
+    p = (FreePageBtree *)relptr_access(base, p->u.internal_key[0].child);
     --levels;
   }
   Assert(p->hdr.magic == btp->hdr.magic);
@@ -782,11 +787,12 @@ static Size FreePageBtreeFirstKey(FreePageBtree *btp) {
  */
 static FreePageBtree *FreePageBtreeGetRecycled(FreePageManager *fpm) {
   char *base = fpm_segment_base(fpm);
-  FreePageSpanLeader *victim = relptr_access(base, fpm->btree_recycle);
+  FreePageSpanLeader *victim =
+      (FreePageSpanLeader *)relptr_access(base, fpm->btree_recycle);
   FreePageSpanLeader *newhead;
 
   Assert(victim != NULL);
-  newhead = relptr_access(base, victim->next);
+  newhead = (FreePageSpanLeader *)relptr_access(base, victim->next);
   if (newhead != NULL)
     relptr_copy(newhead->prev, victim->prev);
   relptr_store(base, fpm->btree_recycle, newhead);
@@ -831,7 +837,8 @@ static void FreePageBtreeInsertLeaf(FreePageBtree *btp, Size index,
  */
 static void FreePageBtreeRecycle(FreePageManager *fpm, Size pageno) {
   char *base = fpm_segment_base(fpm);
-  FreePageSpanLeader *head = relptr_access(base, fpm->btree_recycle);
+  FreePageSpanLeader *head =
+      (FreePageSpanLeader *)relptr_access(base, fpm->btree_recycle);
   FreePageSpanLeader *span;
 
   span = (FreePageSpanLeader *)fpm_page_to_pointer(base, pageno);
@@ -886,7 +893,7 @@ static void FreePageBtreeRemovePage(FreePageManager *fpm, FreePageBtree *btp) {
 
   for (;;) {
     /* Find parent page. */
-    parent = relptr_access(base, btp->hdr.parent);
+    parent = (FreePageBtree *)relptr_access(base, btp->hdr.parent);
     if (parent == NULL) {
       /* We are removing the root page. */
       relptr_store(base, fpm->btree_root, (FreePageBtree *)NULL);
@@ -948,7 +955,7 @@ static void FreePageBtreeRemovePage(FreePageManager *fpm, FreePageBtree *btp) {
 static void FreePageBtreeSearch(FreePageManager *fpm, Size first_page,
                                 FreePageBtreeSearchResult *result) {
   char *base = fpm_segment_base(fpm);
-  FreePageBtree *btp = relptr_access(base, fpm->btree_root);
+  FreePageBtree *btp = (FreePageBtree *)relptr_access(base, fpm->btree_root);
   Size index;
 
   result->split_pages = 1;
@@ -986,7 +993,8 @@ static void FreePageBtreeSearch(FreePageManager *fpm, Size first_page,
 
     /* Descend to appropriate child page. */
     Assert(index < btp->hdr.nused);
-    child = relptr_access(base, btp->u.internal_key[index].child);
+    child =
+        (FreePageBtree *)relptr_access(base, btp->u.internal_key[index].child);
     Assert(relptr_access(base, child->hdr.parent) == btp);
     btp = child;
   }
@@ -1102,7 +1110,7 @@ static void FreePageBtreeUpdateParentPointers(char *base, FreePageBtree *btp) {
   for (i = 0; i < btp->hdr.nused; ++i) {
     FreePageBtree *child;
 
-    child = relptr_access(base, btp->u.internal_key[i].child);
+    child = (FreePageBtree *)relptr_access(base, btp->u.internal_key[i].child);
     relptr_store(base, child->hdr.parent, btp);
   }
 }
@@ -1119,7 +1127,7 @@ static void FreePageManagerDumpBtree(FreePageManager *fpm, FreePageBtree *btp,
   FreePageBtree *check_parent;
 
   check_stack_depth();
-  check_parent = relptr_access(base, btp->hdr.parent);
+  check_parent = (FreePageBtree *)relptr_access(base, btp->hdr.parent);
   appendStringInfo(buf, "  %zu@%d %c", pageno, level,
                    btp->hdr.magic == FREE_PAGE_INTERNAL_MAGIC ? 'i' : 'l');
   if (parent != check_parent)
@@ -1142,7 +1150,8 @@ static void FreePageManagerDumpBtree(FreePageManager *fpm, FreePageBtree *btp,
     for (index = 0; index < btp->hdr.nused; ++index) {
       FreePageBtree *child;
 
-      child = relptr_access(base, btp->u.internal_key[index].child);
+      child = (FreePageBtree *)relptr_access(base,
+                                             btp->u.internal_key[index].child);
       FreePageManagerDumpBtree(fpm, child, btp, level + 1, buf);
     }
   }
@@ -1162,7 +1171,7 @@ static void FreePageManagerDumpSpans(FreePageManager *fpm,
                        span->npages);
     else
       appendStringInfo(buf, " %zu", fpm_pointer_to_page(base, span));
-    span = relptr_access(base, span->next);
+    span = (FreePageSpanLeader *)relptr_access(base, span->next);
   }
 
   appendStringInfoChar(buf, '\n');
@@ -1205,11 +1214,11 @@ static bool FreePageManagerGetInternal(FreePageManager *fpm, Size npages,
      * need to search the list.
      */
     if (f < FPM_NUM_FREELISTS - 1)
-      victim = relptr_access(base, fpm->freelist[f]);
+      victim = (FreePageSpanLeader *)relptr_access(base, fpm->freelist[f]);
     else {
       FreePageSpanLeader *candidate;
 
-      candidate = relptr_access(base, fpm->freelist[f]);
+      candidate = (FreePageSpanLeader *)relptr_access(base, fpm->freelist[f]);
       do {
         if (candidate->npages >= npages &&
             (victim == NULL || victim->npages > candidate->npages)) {
@@ -1217,7 +1226,7 @@ static bool FreePageManagerGetInternal(FreePageManager *fpm, Size npages,
           if (victim->npages == npages)
             break;
         }
-        candidate = relptr_access(base, candidate->next);
+        candidate = (FreePageSpanLeader *)relptr_access(base, candidate->next);
       } while (candidate != NULL);
     }
     break;
@@ -1229,8 +1238,8 @@ static bool FreePageManagerGetInternal(FreePageManager *fpm, Size npages,
 
   /* Remove span from free list. */
   Assert(victim->magic == FREE_PAGE_SPAN_LEADER_MAGIC);
-  prev = relptr_access(base, victim->prev);
-  next = relptr_access(base, victim->next);
+  prev = (FreePageSpanLeader *)relptr_access(base, victim->prev);
+  next = (FreePageSpanLeader *)relptr_access(base, victim->next);
   if (prev != NULL)
     relptr_copy(prev->next, victim->next);
   else
@@ -1543,7 +1552,7 @@ static Size FreePageManagerPutInternal(FreePageManager *fpm, Size first_page,
         FreePageBtree *parent;
 
         /* Identify parent page, which must receive downlink. */
-        parent = relptr_access(base, split_target->hdr.parent);
+        parent = (FreePageBtree *)relptr_access(base, split_target->hdr.parent);
 
         /* Split the page - downlink not added yet. */
         newsibling = FreePageBtreeSplitPage(fpm, split_target);
@@ -1658,8 +1667,8 @@ static void FreePagePopSpanLeader(FreePageManager *fpm, Size pageno) {
 
   span = (FreePageSpanLeader *)fpm_page_to_pointer(base, pageno);
 
-  next = relptr_access(base, span->next);
-  prev = relptr_access(base, span->prev);
+  next = (FreePageSpanLeader *)relptr_access(base, span->next);
+  prev = (FreePageSpanLeader *)relptr_access(base, span->prev);
   if (next != NULL)
     relptr_copy(next->prev, span->prev);
   if (prev != NULL)
@@ -1679,7 +1688,8 @@ static void FreePagePushSpanLeader(FreePageManager *fpm, Size first_page,
                                    Size npages) {
   char *base = fpm_segment_base(fpm);
   Size f = Min(npages, FPM_NUM_FREELISTS) - 1;
-  FreePageSpanLeader *head = relptr_access(base, fpm->freelist[f]);
+  FreePageSpanLeader *head =
+      (FreePageSpanLeader *)relptr_access(base, fpm->freelist[f]);
   FreePageSpanLeader *span;
 
   span = (FreePageSpanLeader *)fpm_page_to_pointer(base, first_page);

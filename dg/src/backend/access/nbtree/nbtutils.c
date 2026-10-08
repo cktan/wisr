@@ -116,8 +116,8 @@ BTScanInsert _bt_mkscankey(Relation rel, IndexTuple itup) {
    * Truncated attributes and non-key attributes are omitted from the final
    * scan key.
    */
-  key = palloc(offsetof(BTScanInsertData, scankeys) +
-               sizeof(ScanKeyData) * indnkeyatts);
+  key = (BTScanInsert)palloc(offsetof(BTScanInsertData, scankeys) +
+                             sizeof(ScanKeyData) * indnkeyatts);
   if (itup)
     _bt_metaversion(rel, &key->heapkeyspace, &key->allequalimage);
   else {
@@ -943,7 +943,7 @@ static bool _bt_advance_array_keys_increment(IndexScanDesc scan,
    * returns false, which'll effectively invalidate the scan's array keys.
    * That hasn't happened yet, though -- and in general it may never happen.
    */
-  _bt_start_array_keys(scan, -dir);
+  _bt_start_array_keys(scan, (ScanDirection)-dir);
 
   return false;
 }
@@ -2174,7 +2174,7 @@ static bool _bt_oppodir_checkkeys(IndexScanDesc scan, ScanDirection dir,
   BTScanOpaque so = (BTScanOpaque)scan->opaque;
   int nfinaltupatts = BTreeTupleGetNAtts(finaltup, rel);
   bool continuescan;
-  ScanDirection flipped = -dir;
+  ScanDirection flipped = (ScanDirection)-dir;
   int ikey = 0;
 
   Assert(so->numArrayKeys);
@@ -3549,7 +3549,7 @@ IndexTuple _bt_truncate(Relation rel, IndexTuple lastleft,
    * possible posting list/non-key attribute values removed at this point.
    */
   newsize = MAXALIGN(IndexTupleSize(pivot)) + MAXALIGN(sizeof(ItemPointerData));
-  tidpivot = palloc0(newsize);
+  tidpivot = (IndexTuple)palloc0(newsize);
   memcpy(tidpivot, pivot, MAXALIGN(IndexTupleSize(pivot)));
   /* Cannot leak memory here */
   pfree(pivot);

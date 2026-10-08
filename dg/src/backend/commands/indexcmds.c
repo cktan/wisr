@@ -2397,7 +2397,7 @@ char *makeObjectName(const char *name1, const char *name2, const char *label) {
     name2chars = pg_mbcliplen(name2, name2chars, name2chars);
 
   /* Now construct the string using the chosen lengths */
-  name = palloc(name1chars + name2chars + overhead + 1);
+  name = (char *)palloc(name1chars + name2chars + overhead + 1);
   memcpy(name, name1, name1chars);
   ndx = name1chars;
   if (name2) {
@@ -2757,7 +2757,7 @@ static void ReindexIndex(const ReindexStmt *stmt, const ReindexParams *params,
 static void RangeVarCallbackForReindexIndex(const RangeVar *relation, Oid relId,
                                             Oid oldRelId, void *arg) {
   char relkind;
-  struct ReindexIndexCallbackState *state = arg;
+  struct ReindexIndexCallbackState *state = (ReindexIndexCallbackState *)arg;
   LOCKMODE table_lockmode;
   Oid table_oid;
 
@@ -3600,7 +3600,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
 
   foreach (lc, indexIds) {
     char *concurrentName;
-    ReindexIndexInfo *idx = lfirst(lc);
+    ReindexIndexInfo *idx = (ReindexIndexInfo *)lfirst(lc);
     ReindexIndexInfo *newidx;
     Oid newIndexId;
     Relation indexRel;
@@ -3789,7 +3789,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
   CommitTransactionCommand();
 
   foreach (lc, newIndexIds) {
-    ReindexIndexInfo *newidx = lfirst(lc);
+    ReindexIndexInfo *newidx = (ReindexIndexInfo *)lfirst(lc);
 
     /* Start new transaction for this index's concurrent build */
     StartTransactionCommand();
@@ -3850,7 +3850,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
   CommitTransactionCommand();
 
   foreach (lc, newIndexIds) {
-    ReindexIndexInfo *newidx = lfirst(lc);
+    ReindexIndexInfo *newidx = (ReindexIndexInfo *)lfirst(lc);
     TransactionId limitXmin;
     Snapshot snapshot;
 
@@ -3942,8 +3942,8 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
   set_indexsafe_procflags();
 
   forboth(lc, indexIds, lc2, newIndexIds) {
-    ReindexIndexInfo *oldidx = lfirst(lc);
-    ReindexIndexInfo *newidx = lfirst(lc2);
+    ReindexIndexInfo *oldidx = (ReindexIndexInfo *)lfirst(lc);
+    ReindexIndexInfo *newidx = (ReindexIndexInfo *)lfirst(lc2);
     char *oldName;
 
     /*
@@ -4011,7 +4011,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
   WaitForLockersMultiple(lockTags, AccessExclusiveLock, true);
 
   foreach (lc, indexIds) {
-    ReindexIndexInfo *oldidx = lfirst(lc);
+    ReindexIndexInfo *oldidx = (ReindexIndexInfo *)lfirst(lc);
 
     /*
      * Check for user-requested abort.  This is inside a transaction so as
@@ -4057,7 +4057,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
     ObjectAddresses *objects = new_object_addresses();
 
     foreach (lc, indexIds) {
-      ReindexIndexInfo *idx = lfirst(lc);
+      ReindexIndexInfo *idx = (ReindexIndexInfo *)lfirst(lc);
       ObjectAddress object;
 
       object.classId = RelationRelationId;
@@ -4099,7 +4099,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
                      errdetail("%s.", pg_rusage_show(&ru0))));
     else {
       foreach (lc, newIndexIds) {
-        ReindexIndexInfo *idx = lfirst(lc);
+        ReindexIndexInfo *idx = (ReindexIndexInfo *)lfirst(lc);
         Oid indOid = idx->indexId;
 
         ereport(INFO, (errmsg("index \"%s.%s\" was reindexed",

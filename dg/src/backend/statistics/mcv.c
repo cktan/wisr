@@ -467,8 +467,8 @@ static SortItem **build_column_frequencies(SortItem *groups, int ngroups,
   Assert(ncounts);
 
   /* allocate arrays for all columns as a single chunk */
-  ptr = palloc(MAXALIGN(sizeof(SortItem *) * mss->ndims) +
-               mss->ndims * MAXALIGN(sizeof(SortItem) * ngroups));
+  ptr = (char *)palloc(MAXALIGN(sizeof(SortItem *) * mss->ndims) +
+                       mss->ndims * MAXALIGN(sizeof(SortItem) * ngroups));
 
   /* initial array of pointers */
   result = (SortItem **)ptr;
@@ -1038,7 +1038,7 @@ MCVList *statext_mcv_deserialize(bytea *data) {
   ptr += (sizeof(Oid) * ndims);
 
   /* Now it's safe to access the dimension info. */
-  info = palloc(ndims * sizeof(DimensionInfo));
+  info = (DimensionInfo *)palloc(ndims * sizeof(DimensionInfo));
 
   memcpy(info, ptr, ndims * sizeof(DimensionInfo));
   ptr += (ndims * sizeof(DimensionInfo));
@@ -1103,7 +1103,7 @@ MCVList *statext_mcv_deserialize(bytea *data) {
   mcvlen += MAXALIGN(datalen);
 
   /* now resize the deserialized MCV list, and compute pointers to parts */
-  mcvlist = repalloc(mcvlist, mcvlen);
+  mcvlist = (MCVList *)repalloc(mcvlist, mcvlen);
 
   /* pointer to the beginning of values/isnull arrays */
   valuesptr = (char *)mcvlist +
@@ -1495,7 +1495,7 @@ static bool *mcv_get_match_bitmap(PlannerInfo *root, List *clauses,
   Assert(mcvlist->nitems > 0);
   Assert(mcvlist->nitems <= STATS_MCVLIST_MAX_ITEMS);
 
-  matches = palloc(sizeof(bool) * mcvlist->nitems);
+  matches = (bool *)palloc(sizeof(bool) * mcvlist->nitems);
   memset(matches, !is_or, sizeof(bool) * mcvlist->nitems);
 
   /*
@@ -1979,7 +1979,7 @@ Selectivity mcv_clause_selectivity_or(PlannerInfo *root, StatisticExtInfo *stat,
 
   /* build the OR-matches bitmap, if not built already */
   if (*or_matches == NULL)
-    *or_matches = palloc0(sizeof(bool) * mcv->nitems);
+    *or_matches = (bool *)palloc0(sizeof(bool) * mcv->nitems);
 
   /* build the match bitmap for the new clause */
   new_matches = mcv_get_match_bitmap(root, list_make1(clause), stat->keys,

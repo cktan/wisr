@@ -128,7 +128,7 @@ ObjectAddress ExecSecLabelStmt(SecLabelStmt *stmt) {
     provider = (LabelProvider *)linitial(label_provider_list);
   } else {
     foreach (lc, label_provider_list) {
-      LabelProvider *lp = lfirst(lc);
+      LabelProvider *lp = (LabelProvider *)lfirst(lc);
 
       if (strcmp(stmt->provider, lp->provider_name) == 0) {
         provider = lp;
@@ -496,7 +496,7 @@ void register_label_provider(const char *provider_name,
   MemoryContext oldcxt;
 
   oldcxt = MemoryContextSwitchTo(TopMemoryContext);
-  provider = palloc(sizeof(LabelProvider));
+  provider = (LabelProvider *)palloc(sizeof(LabelProvider));
   provider->provider_name = pstrdup(provider_name);
   provider->hook = hook;
   label_provider_list = lappend(label_provider_list, provider);

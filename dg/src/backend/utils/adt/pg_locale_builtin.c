@@ -11,8 +11,8 @@
 
 #include "postgres.h"
 
-#include "catalog/pg_collation.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_collation.h"
 #include "common/unicode_case.h"
 #include "common/unicode_category.h"
 #include "mb/pg_wchar.h"
@@ -142,7 +142,8 @@ pg_locale_t create_pg_locale_builtin(Oid collid, MemoryContext context) {
 
   builtin_validate_locale(GetDatabaseEncoding(), locstr);
 
-  result = MemoryContextAllocZero(context, sizeof(struct pg_locale_struct));
+  result = (pg_locale_t)MemoryContextAllocZero(context,
+                                               sizeof(struct pg_locale_struct));
 
   result->info.builtin.locale = MemoryContextStrdup(context, locstr);
   result->info.builtin.casemap_full = (strcmp(locstr, "PG_UNICODE_FAST") == 0);

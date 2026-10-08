@@ -14,18 +14,18 @@
  */
 #include "postgres.h"
 
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <grp.h>
-#include <netinet/in.h>
-#include <pwd.h>
-#include <signal.h>
-#include <sys/file.h>
 #include <sys/param.h>
+#include <signal.h>
+#include <time.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <time.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <grp.h>
+#include <pwd.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <utime.h>
 
 #include "access/htup_details.h"
@@ -410,15 +410,15 @@ void checkDataDir(void) {
  * never set DataDir directly.
  */
 void SetDataDir(const char *dir) {
-  char *new;
+  char *new_;
 
   Assert(dir);
 
   /* If presented path is relative, convert to absolute */
-  new = make_absolute_path(dir);
+  new_ = make_absolute_path(dir);
 
   free(DataDir);
-  DataDir = new;
+  DataDir = new_;
 }
 
 /*

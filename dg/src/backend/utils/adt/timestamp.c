@@ -16,8 +16,8 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <limits.h>
 #include <math.h>
+#include <limits.h>
 #include <sys/time.h>
 
 #include "access/xact.h"
@@ -1177,7 +1177,7 @@ Datum interval_scale(PG_FUNCTION_ARGS) {
   int32 typmod = PG_GETARG_INT32(1);
   Interval *result;
 
-  result = palloc(sizeof(Interval));
+  result = (Interval *)palloc(sizeof(Interval));
   *result = *interval;
 
   AdjustIntervalForTypmod(result, typmod, NULL);
@@ -5857,7 +5857,7 @@ Datum generate_series_timestamp(PG_FUNCTION_ARGS) {
   /*
    * get the saved state and use current as the result for this iteration
    */
-  fctx = funcctx->user_fctx;
+  fctx = (generate_series_timestamp_fctx *)funcctx->user_fctx;
   result = fctx->current;
 
   if (fctx->step_sign > 0 ? timestamp_cmp_internal(result, fctx->finish) <= 0
@@ -5934,7 +5934,7 @@ static Datum generate_series_timestamptz_internal(FunctionCallInfo fcinfo) {
   /*
    * get the saved state and use current as the result for this iteration
    */
-  fctx = funcctx->user_fctx;
+  fctx = (generate_series_timestamptz_fctx *)funcctx->user_fctx;
   result = fctx->current;
 
   if (fctx->step_sign > 0 ? timestamp_cmp_internal(result, fctx->finish) <= 0
@@ -5976,9 +5976,9 @@ Datum generate_series_timestamp_support(PG_FUNCTION_ARGS) {
       Node *arg1, *arg2, *arg3;
 
       /* We can use estimated argument values here */
-      arg1 = estimate_expression_value(req->root, linitial(args));
-      arg2 = estimate_expression_value(req->root, lsecond(args));
-      arg3 = estimate_expression_value(req->root, lthird(args));
+      arg1 = estimate_expression_value(req->root, (Node *)linitial(args));
+      arg2 = estimate_expression_value(req->root, (Node *)lsecond(args));
+      arg3 = estimate_expression_value(req->root, (Node *)lthird(args));
 
       /*
        * If any argument is constant NULL, we can safely assume that

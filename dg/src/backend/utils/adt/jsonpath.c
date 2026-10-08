@@ -891,7 +891,7 @@ static int operationPriority(JsonPathItemType op) {
  */
 
 #define read_byte(v, b, p) do {			\
-	(v) = *(uint8*)((b) + (p));			\
+	(v) = (decltype(v)) *(uint8*)((b) + (p));			\
 	(p) += 1;							\
 } while(0)
 
@@ -901,7 +901,7 @@ static int operationPriority(JsonPathItemType op) {
 } while(0)
 
 #define read_int32_n(v, b, p, n) do {	\
-	(v) = (void *)((b) + (p));			\
+	(v) = (decltype(v))((b) + (p));			\
 	(p) += sizeof(int32) * (n);			\
 } while(0)
 
@@ -1118,7 +1118,7 @@ struct JsonPathMutableContext {
   List *varexprs;                      /* list of variable expressions */
   enum JsonPathDatatypeStatus current; /* status of @ item */
   bool lax;                            /* jsonpath is lax or strict */
-  bool mutable;                        /* resulting mutability status */
+  bool mutable_;                       /* resulting mutability status */
 };
 
 static enum JsonPathDatatypeStatus
@@ -1136,12 +1136,12 @@ bool jspIsMutable(JsonPath *path, List *varnames, List *varexprs) {
   cxt.varexprs = varexprs;
   cxt.current = jpdsNonDateTime;
   cxt.lax = (path->header & JSONPATH_LAX) != 0;
-  cxt.mutable = false;
+  cxt.mutable_ = false;
 
   jspInit(&jpi, path);
   (void)jspIsMutableWalker(&jpi, &cxt);
 
-  return cxt.mutable;
+  return cxt.mutable_;
 }
 
 /*
@@ -1152,7 +1152,7 @@ jspIsMutableWalker(JsonPathItem *jpi, struct JsonPathMutableContext *cxt) {
   JsonPathItem next;
   enum JsonPathDatatypeStatus status = jpdsNonDateTime;
 
-  while (!cxt->mutable) {
+  while (!cxt->mutable_) {
     JsonPathItem arg;
     enum JsonPathDatatypeStatus leftStatus;
     enum JsonPathDatatypeStatus rightStatus;
@@ -1188,7 +1188,7 @@ jspIsMutableWalker(JsonPathItem *jpi, struct JsonPathMutableContext *cxt) {
 
       forboth(lc1, cxt->varnames, lc2, cxt->varexprs) {
         String *varname = lfirst_node(String, lc1);
-        Node *varexpr = lfirst(lc2);
+        Node *varexpr = (Node *)lfirst(lc2);
 
         if (strncmp(varname->sval, name, len))
           continue;
@@ -1235,7 +1235,7 @@ jspIsMutableWalker(JsonPathItem *jpi, struct JsonPathMutableContext *cxt) {
       if (leftStatus != jpdsNonDateTime && rightStatus != jpdsNonDateTime &&
           (leftStatus == jpdsUnknownDateTime ||
            rightStatus == jpdsUnknownDateTime || leftStatus != rightStatus))
-        cxt->mutable = true;
+        cxt->mutable_ = true;
       break;
 
     case jpiNot:
@@ -1287,7 +1287,7 @@ jspIsMutableWalker(JsonPathItem *jpi, struct JsonPathMutableContext *cxt) {
 
     case jpiDatetime:
       if (jpi->content.arg) {
-        char *template;
+        char *template_;
 
         jspGetArg(jpi, &arg);
         if (arg.type != jpiString) {
@@ -1295,8 +1295,8 @@ jspIsMutableWalker(JsonPathItem *jpi, struct JsonPathMutableContext *cxt) {
           break; /* there will be runtime error */
         }
 
-        template = jspGetString(&arg, NULL);
-        if (datetime_format_has_tz(template))
+        template_ = jspGetString(&arg, NULL);
+        if (datetime_format_has_tz(template_))
           status = jpdsDateTimeZoned;
         else
           status = jpdsDateTimeNonZoned;
@@ -1344,13 +1344,13 @@ jspIsMutableWalker(JsonPathItem *jpi, struct JsonPathMutableContext *cxt) {
     case jpiDate:
     case jpiTimestamp:
       status = jpdsDateTimeNonZoned;
-      cxt->mutable = true;
+      cxt->mutable_ = true;
       break;
 
     case jpiTimeTz:
     case jpiTimestampTz:
       status = jpdsDateTimeNonZoned;
-      cxt->mutable = true;
+      cxt->mutable_ = true;
       break;
     }
 

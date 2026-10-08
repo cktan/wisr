@@ -281,7 +281,8 @@ List *find_all_inheritors(Oid parentrelId, LOCKMODE lockmode,
       bool found;
       SeenRelsEntry *hash_entry;
 
-      hash_entry = hash_search(seen_rels, &child_oid, HASH_ENTER, &found);
+      hash_entry = (SeenRelsEntry *)hash_search(seen_rels, &child_oid,
+                                                HASH_ENTER, &found);
       if (found) {
         /* if the rel is already there, bump number-of-parents counter */
         ListCell *numparents_cell;

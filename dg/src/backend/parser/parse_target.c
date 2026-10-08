@@ -603,7 +603,7 @@ Node *transformAssignmentIndirection(ParseState *pstate, Node *basenode,
    * multidimensional subscript operation.
    */
   for_each_cell(i, indirection, indirection_cell) {
-    Node *n = lfirst(i);
+    Node *n = (Node *)lfirst(i);
 
     if (IsA(n, A_Indices))
       subscripts = lappend(subscripts, n);
@@ -1497,7 +1497,7 @@ static int FigureColnameInternal(Node *node, char **name) {
 
     /* find last field name, if any, ignoring "*" */
     foreach (l, ((ColumnRef *)node)->fields) {
-      Node *i = lfirst(l);
+      Node *i = (Node *)lfirst(l);
 
       if (IsA(i, String))
         fname = strVal(i);
@@ -1514,7 +1514,7 @@ static int FigureColnameInternal(Node *node, char **name) {
 
     /* find last field name, if any, ignoring "*" and subscripts */
     foreach (l, ind->indirection) {
-      Node *i = lfirst(l);
+      Node *i = (Node *)lfirst(l);
 
       if (IsA(i, String))
         fname = strVal(i);

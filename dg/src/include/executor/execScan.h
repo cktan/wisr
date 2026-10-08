@@ -13,8 +13,8 @@
 #ifndef EXECSCAN_H
 #define EXECSCAN_H
 
-#include "executor/executor.h"
 #include "miscadmin.h"
+#include "executor/executor.h"
 #include "nodes/execnodes.h"
 
 /*

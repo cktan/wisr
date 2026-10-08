@@ -23,8 +23,8 @@
 #include "common/hmac.h"
 #include "common/jsonapi.h"
 #include "common/oauth-common.h"
-#include "fe-auth-oauth.h"
 #include "fe-auth.h"
+#include "fe-auth-oauth.h"
 #include "mb/pg_wchar.h"
 #include "pg_config_paths.h"
 
@@ -59,7 +59,7 @@ static void *oauth_init(PGconn *conn, const char *password,
   Assert(sasl_mechanism != NULL);
   Assert(strcmp(sasl_mechanism, OAUTHBEARER_NAME) == 0);
 
-  state = calloc(1, sizeof(*state));
+  state = (fe_oauth_state *)calloc(1, sizeof(*state));
   if (!state)
     return NULL;
 
@@ -78,7 +78,7 @@ static void *oauth_init(PGconn *conn, const char *password,
  * failure. See pg_fe_cleanup_oauth_flow() and cleanup_user_oauth_flow().
  */
 static void oauth_free(void *opaq) {
-  fe_oauth_state *state = opaq;
+  fe_oauth_state *state = (fe_oauth_state *)opaq;
 
   /* Any async authentication state should have been cleaned up already. */
   Assert(!state->async_ctx);
@@ -185,7 +185,7 @@ struct json_ctx {
 	} while (0)
 
 static JsonParseErrorType oauth_json_object_start(void *state) {
-  struct json_ctx *ctx = state;
+  struct json_ctx *ctx = (json_ctx *)state;
 
   if (ctx->target_field) {
     Assert(ctx->nested == 1);
@@ -202,7 +202,7 @@ static JsonParseErrorType oauth_json_object_start(void *state) {
 }
 
 static JsonParseErrorType oauth_json_object_end(void *state) {
-  struct json_ctx *ctx = state;
+  struct json_ctx *ctx = (json_ctx *)state;
 
   --ctx->nested;
   return JSON_SUCCESS;
@@ -210,7 +210,7 @@ static JsonParseErrorType oauth_json_object_end(void *state) {
 
 static JsonParseErrorType oauth_json_object_field_start(void *state, char *name,
                                                         bool isnull) {
-  struct json_ctx *ctx = state;
+  struct json_ctx *ctx = (json_ctx *)state;
 
   /* Only top-level keys are considered. */
   if (ctx->nested == 1) {
@@ -230,7 +230,7 @@ static JsonParseErrorType oauth_json_object_field_start(void *state, char *name,
 }
 
 static JsonParseErrorType oauth_json_array_start(void *state) {
-  struct json_ctx *ctx = state;
+  struct json_ctx *ctx = (json_ctx *)state;
 
   if (!ctx->nested) {
     oauth_json_set_error(ctx, "top-level element must be an object");
@@ -249,7 +249,7 @@ static JsonParseErrorType oauth_json_array_start(void *state) {
 }
 
 static JsonParseErrorType oauth_json_array_end(void *state) {
-  struct json_ctx *ctx = state;
+  struct json_ctx *ctx = (json_ctx *)state;
 
   --ctx->nested;
   return JSON_SUCCESS;
@@ -257,7 +257,7 @@ static JsonParseErrorType oauth_json_array_end(void *state) {
 
 static JsonParseErrorType oauth_json_scalar(void *state, char *token,
                                             JsonTokenType type) {
-  struct json_ctx *ctx = state;
+  struct json_ctx *ctx = (json_ctx *)state;
 
   if (!ctx->nested) {
     oauth_json_set_error(ctx, "top-level element must be an object");
@@ -612,8 +612,8 @@ cleanup:
  * statuses for use by PQconnectPoll().
  */
 static PostgresPollingStatusType run_user_oauth_flow(PGconn *conn) {
-  fe_oauth_state *state = conn->sasl_state;
-  PGoauthBearerRequest *request = state->async_ctx;
+  fe_oauth_state *state = (fe_oauth_state *)conn->sasl_state;
+  PGoauthBearerRequest *request = (PGoauthBearerRequest *)state->async_ctx;
   PostgresPollingStatusType status;
 
   if (!request->async) {
@@ -662,8 +662,8 @@ static PostgresPollingStatusType run_user_oauth_flow(PGconn *conn) {
  * user-provided cleanup implementation, then disconnects the altsock.
  */
 static void cleanup_user_oauth_flow(PGconn *conn) {
-  fe_oauth_state *state = conn->sasl_state;
-  PGoauthBearerRequest *request = state->async_ctx;
+  fe_oauth_state *state = (fe_oauth_state *)conn->sasl_state;
+  PGoauthBearerRequest *request = (PGoauthBearerRequest *)state->async_ctx;
 
   Assert(request);
 
@@ -916,7 +916,7 @@ static bool setup_token_request(PGconn *conn, fe_oauth_state *state) {
       return true;
     }
 
-    request_copy = malloc(sizeof(*request_copy));
+    request_copy = (PGoauthBearerRequest *)malloc(sizeof(*request_copy));
     if (!request_copy) {
       libpq_append_conn_error(conn, "out of memory");
       goto fail;
@@ -1029,7 +1029,7 @@ static bool setup_oauth_parameters(PGconn *conn) {
  */
 static SASLStatus oauth_exchange(void *opaq, bool final, char *input,
                                  int inputlen, char **output, int *outputlen) {
-  fe_oauth_state *state = opaq;
+  fe_oauth_state *state = (fe_oauth_state *)opaq;
   PGconn *conn = state->conn;
   bool discover = false;
 

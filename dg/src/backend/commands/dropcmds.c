@@ -54,7 +54,7 @@ void RemoveObjects(DropStmt *stmt) {
 
   foreach (cell1, stmt->objects) {
     ObjectAddress address;
-    Node *object = lfirst(cell1);
+    Node *object = (Node *)lfirst(cell1);
     Relation relation = NULL;
     Oid namespaceId;
 

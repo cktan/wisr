@@ -20,8 +20,8 @@
 #include <unistd.h>
 
 #include "access/timeline.h"
-#include "access/xlog_internal.h"
 #include "access/xlogrecovery.h"
+#include "access/xlog_internal.h"
 #include "access/xlogutils.h"
 #include "miscadmin.h"
 #include "storage/fd.h"
@@ -536,7 +536,7 @@ Relation CreateFakeRelcacheEntry(RelFileLocator rlocator) {
   Relation rel;
 
   /* Allocate the Relation struct and all related space in one block. */
-  fakeentry = palloc0(sizeof(FakeRelCacheEntryData));
+  fakeentry = (FakeRelCacheEntry)palloc0(sizeof(FakeRelCacheEntryData));
   rel = (Relation)fakeentry;
 
   rel->rd_rel = &fakeentry->pgc;

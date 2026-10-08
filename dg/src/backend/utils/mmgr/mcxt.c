@@ -39,99 +39,103 @@ static Size BogusGetChunkSpace(void *pointer);
  **
  *****************************************************************************/
 #define BOGUS_MCTX(id) \
-	[id].free_p = BogusFree, \
-	[id].realloc = BogusRealloc, \
-	[id].get_chunk_context = BogusGetChunkContext, \
-	[id].get_chunk_space = BogusGetChunkSpace
+	a[id].free_p = BogusFree; \
+	a[id].realloc = BogusRealloc; \
+	a[id].get_chunk_context = BogusGetChunkContext; \
+	a[id].get_chunk_space = BogusGetChunkSpace
 
-static const MemoryContextMethods mcxt_methods[] = {
-    /* aset.c */
-    [MCTX_ASET_ID].alloc = AllocSetAlloc,
-    [MCTX_ASET_ID].free_p = AllocSetFree,
-    [MCTX_ASET_ID].realloc = AllocSetRealloc,
-    [MCTX_ASET_ID].reset = AllocSetReset,
-    [MCTX_ASET_ID].delete_context = AllocSetDelete,
-    [MCTX_ASET_ID].get_chunk_context = AllocSetGetChunkContext,
-    [MCTX_ASET_ID].get_chunk_space = AllocSetGetChunkSpace,
-    [MCTX_ASET_ID].is_empty = AllocSetIsEmpty,
-    [MCTX_ASET_ID].stats = AllocSetStats,
+static constexpr auto mcxt_methods = [] {
+  std::array<MemoryContextMethods, MEMORY_CONTEXT_METHODID_MASK + 1> a{};
+
+  /* aset.c */
+  a[MCTX_ASET_ID].alloc = AllocSetAlloc;
+  a[MCTX_ASET_ID].free_p = AllocSetFree;
+  a[MCTX_ASET_ID].realloc = AllocSetRealloc;
+  a[MCTX_ASET_ID].reset = AllocSetReset;
+  a[MCTX_ASET_ID].delete_context = AllocSetDelete;
+  a[MCTX_ASET_ID].get_chunk_context = AllocSetGetChunkContext;
+  a[MCTX_ASET_ID].get_chunk_space = AllocSetGetChunkSpace;
+  a[MCTX_ASET_ID].is_empty = AllocSetIsEmpty;
+  a[MCTX_ASET_ID].stats = AllocSetStats;
 #ifdef MEMORY_CONTEXT_CHECKING
-    [MCTX_ASET_ID].check = AllocSetCheck,
+  a[MCTX_ASET_ID].check = AllocSetCheck;
 #endif
 
-    /* generation.c */
-    [MCTX_GENERATION_ID].alloc = GenerationAlloc,
-    [MCTX_GENERATION_ID].free_p = GenerationFree,
-    [MCTX_GENERATION_ID].realloc = GenerationRealloc,
-    [MCTX_GENERATION_ID].reset = GenerationReset,
-    [MCTX_GENERATION_ID].delete_context = GenerationDelete,
-    [MCTX_GENERATION_ID].get_chunk_context = GenerationGetChunkContext,
-    [MCTX_GENERATION_ID].get_chunk_space = GenerationGetChunkSpace,
-    [MCTX_GENERATION_ID].is_empty = GenerationIsEmpty,
-    [MCTX_GENERATION_ID].stats = GenerationStats,
+  /* generation.c */
+  a[MCTX_GENERATION_ID].alloc = GenerationAlloc;
+  a[MCTX_GENERATION_ID].free_p = GenerationFree;
+  a[MCTX_GENERATION_ID].realloc = GenerationRealloc;
+  a[MCTX_GENERATION_ID].reset = GenerationReset;
+  a[MCTX_GENERATION_ID].delete_context = GenerationDelete;
+  a[MCTX_GENERATION_ID].get_chunk_context = GenerationGetChunkContext;
+  a[MCTX_GENERATION_ID].get_chunk_space = GenerationGetChunkSpace;
+  a[MCTX_GENERATION_ID].is_empty = GenerationIsEmpty;
+  a[MCTX_GENERATION_ID].stats = GenerationStats;
 #ifdef MEMORY_CONTEXT_CHECKING
-    [MCTX_GENERATION_ID].check = GenerationCheck,
+  a[MCTX_GENERATION_ID].check = GenerationCheck;
 #endif
 
-    /* slab.c */
-    [MCTX_SLAB_ID].alloc = SlabAlloc,
-    [MCTX_SLAB_ID].free_p = SlabFree,
-    [MCTX_SLAB_ID].realloc = SlabRealloc,
-    [MCTX_SLAB_ID].reset = SlabReset,
-    [MCTX_SLAB_ID].delete_context = SlabDelete,
-    [MCTX_SLAB_ID].get_chunk_context = SlabGetChunkContext,
-    [MCTX_SLAB_ID].get_chunk_space = SlabGetChunkSpace,
-    [MCTX_SLAB_ID].is_empty = SlabIsEmpty,
-    [MCTX_SLAB_ID].stats = SlabStats,
+  /* slab.c */
+  a[MCTX_SLAB_ID].alloc = SlabAlloc;
+  a[MCTX_SLAB_ID].free_p = SlabFree;
+  a[MCTX_SLAB_ID].realloc = SlabRealloc;
+  a[MCTX_SLAB_ID].reset = SlabReset;
+  a[MCTX_SLAB_ID].delete_context = SlabDelete;
+  a[MCTX_SLAB_ID].get_chunk_context = SlabGetChunkContext;
+  a[MCTX_SLAB_ID].get_chunk_space = SlabGetChunkSpace;
+  a[MCTX_SLAB_ID].is_empty = SlabIsEmpty;
+  a[MCTX_SLAB_ID].stats = SlabStats;
 #ifdef MEMORY_CONTEXT_CHECKING
-    [MCTX_SLAB_ID].check = SlabCheck,
+  a[MCTX_SLAB_ID].check = SlabCheck;
 #endif
 
-    /* alignedalloc.c */
-    [MCTX_ALIGNED_REDIRECT_ID].alloc = NULL, /* not required */
-    [MCTX_ALIGNED_REDIRECT_ID].free_p = AlignedAllocFree,
-    [MCTX_ALIGNED_REDIRECT_ID].realloc = AlignedAllocRealloc,
-    [MCTX_ALIGNED_REDIRECT_ID].reset = NULL,          /* not required */
-    [MCTX_ALIGNED_REDIRECT_ID].delete_context = NULL, /* not required */
-    [MCTX_ALIGNED_REDIRECT_ID].get_chunk_context = AlignedAllocGetChunkContext,
-    [MCTX_ALIGNED_REDIRECT_ID].get_chunk_space = AlignedAllocGetChunkSpace,
-    [MCTX_ALIGNED_REDIRECT_ID].is_empty = NULL, /* not required */
-    [MCTX_ALIGNED_REDIRECT_ID].stats = NULL,    /* not required */
+  /* alignedalloc.c */
+  a[MCTX_ALIGNED_REDIRECT_ID].alloc = NULL; /* not required */
+  a[MCTX_ALIGNED_REDIRECT_ID].free_p = AlignedAllocFree;
+  a[MCTX_ALIGNED_REDIRECT_ID].realloc = AlignedAllocRealloc;
+  a[MCTX_ALIGNED_REDIRECT_ID].reset = NULL;          /* not required */
+  a[MCTX_ALIGNED_REDIRECT_ID].delete_context = NULL; /* not required */
+  a[MCTX_ALIGNED_REDIRECT_ID].get_chunk_context = AlignedAllocGetChunkContext;
+  a[MCTX_ALIGNED_REDIRECT_ID].get_chunk_space = AlignedAllocGetChunkSpace;
+  a[MCTX_ALIGNED_REDIRECT_ID].is_empty = NULL; /* not required */
+  a[MCTX_ALIGNED_REDIRECT_ID].stats = NULL;    /* not required */
 #ifdef MEMORY_CONTEXT_CHECKING
-    [MCTX_ALIGNED_REDIRECT_ID].check = NULL, /* not required */
+  a[MCTX_ALIGNED_REDIRECT_ID].check = NULL; /* not required */
 #endif
 
-    /* bump.c */
-    [MCTX_BUMP_ID].alloc = BumpAlloc,
-    [MCTX_BUMP_ID].free_p = BumpFree,
-    [MCTX_BUMP_ID].realloc = BumpRealloc,
-    [MCTX_BUMP_ID].reset = BumpReset,
-    [MCTX_BUMP_ID].delete_context = BumpDelete,
-    [MCTX_BUMP_ID].get_chunk_context = BumpGetChunkContext,
-    [MCTX_BUMP_ID].get_chunk_space = BumpGetChunkSpace,
-    [MCTX_BUMP_ID].is_empty = BumpIsEmpty,
-    [MCTX_BUMP_ID].stats = BumpStats,
+  /* bump.c */
+  a[MCTX_BUMP_ID].alloc = BumpAlloc;
+  a[MCTX_BUMP_ID].free_p = BumpFree;
+  a[MCTX_BUMP_ID].realloc = BumpRealloc;
+  a[MCTX_BUMP_ID].reset = BumpReset;
+  a[MCTX_BUMP_ID].delete_context = BumpDelete;
+  a[MCTX_BUMP_ID].get_chunk_context = BumpGetChunkContext;
+  a[MCTX_BUMP_ID].get_chunk_space = BumpGetChunkSpace;
+  a[MCTX_BUMP_ID].is_empty = BumpIsEmpty;
+  a[MCTX_BUMP_ID].stats = BumpStats;
 #ifdef MEMORY_CONTEXT_CHECKING
-    [MCTX_BUMP_ID].check = BumpCheck,
+  a[MCTX_BUMP_ID].check = BumpCheck;
 #endif
 
-    /*
-     * Reserved and unused IDs should have dummy entries here.  This allows us
-     * to fail cleanly if a bogus pointer is passed to pfree or the like.  It
-     * seems sufficient to provide routines for the methods that might get
-     * invoked from inspection of a chunk (see MCXT_METHOD calls below).
-     */
-    BOGUS_MCTX(MCTX_1_RESERVED_GLIBC_ID),
-    BOGUS_MCTX(MCTX_2_RESERVED_GLIBC_ID),
-    BOGUS_MCTX(MCTX_8_UNUSED_ID),
-    BOGUS_MCTX(MCTX_9_UNUSED_ID),
-    BOGUS_MCTX(MCTX_10_UNUSED_ID),
-    BOGUS_MCTX(MCTX_11_UNUSED_ID),
-    BOGUS_MCTX(MCTX_12_UNUSED_ID),
-    BOGUS_MCTX(MCTX_13_UNUSED_ID),
-    BOGUS_MCTX(MCTX_14_UNUSED_ID),
-    BOGUS_MCTX(MCTX_0_RESERVED_UNUSEDMEM_ID),
-    BOGUS_MCTX(MCTX_15_RESERVED_WIPEDMEM_ID)};
+  /*
+   * Reserved and unused IDs should have dummy entries here.  This allows us
+   * to fail cleanly if a bogus pointer is passed to pfree or the like.  It
+   * seems sufficient to provide routines for the methods that might get
+   * invoked from inspection of a chunk (see MCXT_METHOD calls below).
+   */
+  BOGUS_MCTX(MCTX_1_RESERVED_GLIBC_ID);
+  BOGUS_MCTX(MCTX_2_RESERVED_GLIBC_ID);
+  BOGUS_MCTX(MCTX_8_UNUSED_ID);
+  BOGUS_MCTX(MCTX_9_UNUSED_ID);
+  BOGUS_MCTX(MCTX_10_UNUSED_ID);
+  BOGUS_MCTX(MCTX_11_UNUSED_ID);
+  BOGUS_MCTX(MCTX_12_UNUSED_ID);
+  BOGUS_MCTX(MCTX_13_UNUSED_ID);
+  BOGUS_MCTX(MCTX_14_UNUSED_ID);
+  BOGUS_MCTX(MCTX_0_RESERVED_UNUSEDMEM_ID);
+  BOGUS_MCTX(MCTX_15_RESERVED_WIPEDMEM_ID);
+  return a;
+}();
 
 #undef BOGUS_MCTX
 
@@ -1705,7 +1709,7 @@ char *pnstrdup(const char *in, Size len) {
 
   len = strnlen(in, len);
 
-  out = palloc(len + 1);
+  out = (char *)palloc(len + 1);
   memcpy(out, in, len);
   out[len] = '\0';
 

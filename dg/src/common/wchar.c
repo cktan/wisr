@@ -546,8 +546,8 @@ static int mbbisearch(pg_wchar ucs, const struct mbinterval *table, int max) {
  */
 
 static int ucs_wcwidth(pg_wchar ucs) {
-#include "common/unicode_east_asian_fw_table.h"
 #include "common/unicode_nonspacing_table.h"
+#include "common/unicode_east_asian_fw_table.h"
 
   /* test for 8-bit control characters */
   if (ucs == 0)
@@ -923,7 +923,7 @@ static int pg_gb18030_dsplen(const unsigned char *s) {
 static int pg_ascii_verifychar(const unsigned char *s, int len) { return 1; }
 
 static int pg_ascii_verifystr(const unsigned char *s, int len) {
-  const unsigned char *nullpos = memchr(s, 0, len);
+  const unsigned char *nullpos = (const unsigned char *)memchr(s, 0, len);
 
   if (nullpos == NULL)
     return len;
@@ -1211,7 +1211,7 @@ static int pg_mule_verifystr(const unsigned char *s, int len) {
 static int pg_latin1_verifychar(const unsigned char *s, int len) { return 1; }
 
 static int pg_latin1_verifystr(const unsigned char *s, int len) {
-  const unsigned char *nullpos = memchr(s, 0, len);
+  const unsigned char *nullpos = (const unsigned char *)memchr(s, 0, len);
 
   if (nullpos == NULL)
     return len;

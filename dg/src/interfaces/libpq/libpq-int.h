@@ -66,8 +66,8 @@ typedef struct {
 #endif /* ENABLE_SSPI */
 
 #ifdef USE_OPENSSL
-#include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #ifndef OPENSSL_NO_ENGINE
 #define USE_SSL_ENGINE

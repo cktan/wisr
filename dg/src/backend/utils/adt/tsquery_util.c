@@ -366,7 +366,7 @@ QTNode *QTNCopy(QTNode *in) {
   out->flags |= QTN_NEEDFREE;
 
   if (in->valnode->type == QI_VAL) {
-    out->word = palloc(in->valnode->qoperand.length + 1);
+    out->word = (char *)palloc(in->valnode->qoperand.length + 1);
     memcpy(out->word, in->word, in->valnode->qoperand.length);
     out->word[in->valnode->qoperand.length] = '\0';
     out->flags |= QTN_WORDFREE;

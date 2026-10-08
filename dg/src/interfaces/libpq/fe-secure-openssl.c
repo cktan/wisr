@@ -22,25 +22,25 @@
 
 #include "postgres_fe.h"
 
-#include <ctype.h>
-#include <fcntl.h>
-#include <limits.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <ctype.h>
+#include <limits.h>
 
+#include "libpq-fe.h"
 #include "fe-auth.h"
 #include "fe-secure-common.h"
-#include "libpq-fe.h"
 #include "libpq-int.h"
 
 #ifdef WIN32
 #include "win32.h"
 #else
-#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include <arpa/inet.h>
 #endif
 
 #include <sys/stat.h>
@@ -58,8 +58,8 @@
  * include <wincrypt.h>, but some other Windows headers do.)
  */
 #include "common/openssl.h"
-#include <openssl/conf.h>
 #include <openssl/ssl.h>
+#include <openssl/conf.h>
 #ifdef USE_SSL_ENGINE
 #include <openssl/engine.h>
 #endif

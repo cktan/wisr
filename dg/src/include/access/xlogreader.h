@@ -108,7 +108,14 @@ typedef struct XLogReaderRoutine {
   WALSegmentCloseCB segment_close;
 } XLogReaderRoutine;
 
-#define XL_ROUTINE(...) &(XLogReaderRoutine){__VA_ARGS__}
+/*
+ * The routine lives until the end of the statement, which is long enough:
+ * XLogReaderAllocate() copies it.
+ */
+static inline XLogReaderRoutine *xl_routine(XLogReaderRoutine &&routine) {
+  return &routine;
+}
+#define XL_ROUTINE(...) xl_routine(XLogReaderRoutine{__VA_ARGS__})
 
 typedef struct {
   /* Is this block ref in use? */

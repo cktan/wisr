@@ -1151,7 +1151,7 @@ static bool rel_is_distinct_for(PlannerInfo *root, RelOptInfo *rel,
           var->varlevelsup != 0)
         continue;
 
-      dcinfo = palloc(sizeof(DistinctColInfo));
+      dcinfo = (DistinctColInfo *)palloc(sizeof(DistinctColInfo));
       dcinfo->colno = var->varattno;
       dcinfo->opid = opexpr->opno;
       dcinfo->collid = opexpr->inputcollid;
@@ -1207,7 +1207,8 @@ bool query_is_distinct_for(Query *query, List *colnos, List *opids) {
   Assert(list_length(colnos) == list_length(opids));
 
   forboth(lc1, colnos, lc2, opids) {
-    DistinctColInfo *dcinfo = palloc(sizeof(DistinctColInfo));
+    DistinctColInfo *dcinfo =
+        (DistinctColInfo *)palloc(sizeof(DistinctColInfo));
 
     dcinfo->colno = lfirst_int(lc1);
     dcinfo->opid = lfirst_oid(lc2);
@@ -1964,7 +1965,7 @@ static void remove_self_join_rel(PlannerInfo *root, PlanRowMark *kmark,
    */
 
   foreach (lc, toRemove->reltarget->exprs) {
-    Node *node = lfirst(lc);
+    Node *node = (Node *)lfirst(lc);
 
     ChangeVarNodesExtended(node, toRemove->relid, toKeep->relid, 0,
                            replace_relid_callback);

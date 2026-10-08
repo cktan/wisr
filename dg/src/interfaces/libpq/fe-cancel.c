@@ -103,7 +103,7 @@ PGcancelConn *PQcancelCreate(PGconn *conn) {
    */
   cancelConn->be_pid = conn->be_pid;
   if (conn->be_cancel_key != NULL) {
-    cancelConn->be_cancel_key = malloc(conn->be_cancel_key_len);
+    cancelConn->be_cancel_key = (uint8 *)malloc(conn->be_cancel_key_len);
     if (cancelConn->be_cancel_key == NULL)
       goto oom_error;
     memcpy(cancelConn->be_cancel_key, conn->be_cancel_key,
@@ -123,7 +123,8 @@ PGcancelConn *PQcancelCreate(PGconn *conn) {
   cancelConn->nconnhost = 1;
   cancelConn->naddr = 1;
 
-  cancelConn->connhost = calloc(cancelConn->nconnhost, sizeof(pg_conn_host));
+  cancelConn->connhost =
+      (pg_conn_host *)calloc(cancelConn->nconnhost, sizeof(pg_conn_host));
   if (!cancelConn->connhost)
     goto oom_error;
 
@@ -150,7 +151,7 @@ PGcancelConn *PQcancelCreate(PGconn *conn) {
       goto oom_error;
   }
 
-  cancelConn->addr = calloc(cancelConn->naddr, sizeof(AddrInfo));
+  cancelConn->addr = (AddrInfo *)calloc(cancelConn->naddr, sizeof(AddrInfo));
   if (!cancelConn->addr)
     goto oom_error;
 
@@ -357,12 +358,12 @@ PGcancel *PQgetCancel(PGconn *conn) {
      * The returned dummy object has cancel_pkt_len == 0; we check for
      * that in PQcancel() to identify it as a dummy.
      */
-    return calloc(1, sizeof(PGcancel));
+    return (PGcancel *)calloc(1, sizeof(PGcancel));
   }
 
   cancel_req_len =
       offsetof(CancelRequestPacket, cancelAuthCode) + conn->be_cancel_key_len;
-  cancel = malloc(offsetof(PGcancel, cancel_req) + cancel_req_len);
+  cancel = (PGcancel *)malloc(offsetof(PGcancel, cancel_req) + cancel_req_len);
   if (cancel == NULL)
     return NULL;
 

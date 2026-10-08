@@ -15,7 +15,8 @@
  * create stack
  */
 ConditionalStack conditional_stack_create(void) {
-  ConditionalStack cstack = pg_malloc(sizeof(ConditionalStackData));
+  ConditionalStack cstack =
+      (ConditionalStack)pg_malloc(sizeof(ConditionalStackData));
 
   cstack->head = NULL;
   return cstack;

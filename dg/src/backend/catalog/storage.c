@@ -94,7 +94,8 @@ static void AddPendingSync(const RelFileLocator *rlocator) {
                                   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
   }
 
-  pending = hash_search(pendingSyncHash, rlocator, HASH_ENTER, &found);
+  pending = (PendingRelSync *)hash_search(pendingSyncHash, rlocator, HASH_ENTER,
+                                          &found);
   Assert(!found);
   pending->is_truncated = false;
 }
@@ -425,9 +426,9 @@ void RelationPreTruncate(Relation rel) {
   if (!pendingSyncHash)
     return;
 
-  pending = hash_search(pendingSyncHash,
-                        &(RelationGetSmgr(rel)->smgr_rlocator.locator),
-                        HASH_FIND, NULL);
+  pending = (PendingRelSync *)hash_search(
+      pendingSyncHash, &(RelationGetSmgr(rel)->smgr_rlocator.locator),
+      HASH_FIND, NULL);
   if (pending)
     pending->is_truncated = true;
 }
@@ -560,7 +561,7 @@ void SerializePendingSyncs(Size maxSize, char *startAddress) {
   HASHCTL ctl;
   HASH_SEQ_STATUS scan;
   PendingRelSync *sync;
-  PendingRelDelete *delete;
+  PendingRelDelete *delete_;
   RelFileLocator *src;
   RelFileLocator *dest = (RelFileLocator *)startAddress;
 
@@ -581,9 +582,9 @@ void SerializePendingSyncs(Size maxSize, char *startAddress) {
     (void)hash_search(tmphash, &sync->rlocator, HASH_ENTER, NULL);
 
   /* remove deleted rnodes */
-  for (delete = pendingDeletes; delete != NULL; delete = delete->next)
-    if (delete->atCommit)
-      (void)hash_search(tmphash, &delete->rlocator, HASH_REMOVE, NULL);
+  for (delete_ = pendingDeletes; delete_ != NULL; delete_ = delete_->next)
+    if (delete_->atCommit)
+      (void)hash_search(tmphash, &delete_->rlocator, HASH_REMOVE, NULL);
 
   hash_seq_init(&scan, tmphash);
   while ((src = (RelFileLocator *)hash_seq_search(&scan)))
@@ -652,10 +653,11 @@ void smgrDoPendingDeletes(bool isCommit) {
         /* allocate the initial array, or extend it, if needed */
         if (maxrels == 0) {
           maxrels = 8;
-          srels = palloc(sizeof(SMgrRelation) * maxrels);
+          srels = (SMgrRelationData **)palloc(sizeof(SMgrRelation) * maxrels);
         } else if (maxrels <= nrels) {
           maxrels *= 2;
-          srels = repalloc(srels, sizeof(SMgrRelation) * maxrels);
+          srels = (SMgrRelationData **)repalloc(srels,
+                                                sizeof(SMgrRelation) * maxrels);
         }
 
         srels[nrels++] = srel;
@@ -728,7 +730,7 @@ void smgrDoPendingSyncs(bool isCommit, bool isParallelWorker) {
      * commit.  The threshold is defined by the GUC wal_skip_threshold.
      */
     if (!pendingsync->is_truncated) {
-      for (fork = 0; fork <= MAX_FORKNUM; fork++) {
+      for (fork = (ForkNumber)0; fork <= MAX_FORKNUM; fork++) {
         if (smgrexists(srel, fork)) {
           BlockNumber n = smgrnblocks(srel, fork);
 
@@ -758,16 +760,17 @@ void smgrDoPendingSyncs(bool isCommit, bool isParallelWorker) {
       /* allocate the initial array, or extend it, if needed */
       if (maxrels == 0) {
         maxrels = 8;
-        srels = palloc(sizeof(SMgrRelation) * maxrels);
+        srels = (SMgrRelationData **)palloc(sizeof(SMgrRelation) * maxrels);
       } else if (maxrels <= nrels) {
         maxrels *= 2;
-        srels = repalloc(srels, sizeof(SMgrRelation) * maxrels);
+        srels = (SMgrRelationData **)repalloc(srels,
+                                              sizeof(SMgrRelation) * maxrels);
       }
 
       srels[nrels++] = srel;
     } else {
       /* Emit WAL records for all blocks.  The file is small enough. */
-      for (fork = 0; fork <= MAX_FORKNUM; fork++) {
+      for (fork = (ForkNumber)0; fork <= MAX_FORKNUM; fork++) {
         int n = nblocks[fork];
         Relation rel;
 

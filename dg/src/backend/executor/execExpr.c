@@ -319,7 +319,7 @@ List *ExecInitExprList(List *nodes, PlanState *parent) {
   ListCell *lc;
 
   foreach (lc, nodes) {
-    Expr *e = lfirst(lc);
+    Expr *e = (Expr *)lfirst(lc);
 
     result = lappend(result, ExecInitExpr(e, parent));
   }
@@ -1198,8 +1198,8 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
     }
 
     /* Set up the primary fmgr lookup information */
-    finfo = palloc0(sizeof(FmgrInfo));
-    fcinfo = palloc0(SizeForFunctionCallInfo(2));
+    finfo = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+    fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(2));
     fmgr_info(cmpfuncid, finfo);
     fmgr_info_set_expr((Node *)node, finfo);
     InitFunctionCallInfoData(*fcinfo, finfo, 2, opexpr->inputcollid, NULL,
@@ -1395,7 +1395,7 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
     nulls = (bool *)palloc(sizeof(bool) * ncolumns);
 
     /* create shared composite-type-lookup cache struct */
-    rowcachep = palloc(sizeof(ExprEvalRowtypeCache));
+    rowcachep = (ExprEvalRowtypeCache *)palloc(sizeof(ExprEvalRowtypeCache));
     rowcachep->cacheptr = NULL;
 
     /* emit code to evaluate the composite input value */
@@ -1498,8 +1498,9 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
       scratch.opcode = EEOP_IOCOERCE_SAFE;
 
     /* lookup the source type's output function */
-    scratch.d.iocoerce.finfo_out = palloc0(sizeof(FmgrInfo));
-    scratch.d.iocoerce.fcinfo_data_out = palloc0(SizeForFunctionCallInfo(1));
+    scratch.d.iocoerce.finfo_out = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+    scratch.d.iocoerce.fcinfo_data_out =
+        (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(1));
 
     getTypeOutputInfo(exprType((Node *)iocoerce->arg), &iofunc, &typisvarlena);
     fmgr_info(iofunc, scratch.d.iocoerce.finfo_out);
@@ -1509,8 +1510,9 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
                              NULL);
 
     /* lookup the result type's input function */
-    scratch.d.iocoerce.finfo_in = palloc0(sizeof(FmgrInfo));
-    scratch.d.iocoerce.fcinfo_data_in = palloc0(SizeForFunctionCallInfo(3));
+    scratch.d.iocoerce.finfo_in = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+    scratch.d.iocoerce.fcinfo_data_in =
+        (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(3));
 
     getTypeInputInfo(iocoerce->resulttype, &iofunc, &typioparam);
     fmgr_info(iofunc, scratch.d.iocoerce.finfo_in);
@@ -1599,7 +1601,8 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
     ExprEvalRowtypeCache *rowcachep;
 
     /* cache structs must be out-of-line for space reasons */
-    rowcachep = palloc(2 * sizeof(ExprEvalRowtypeCache));
+    rowcachep =
+        (ExprEvalRowtypeCache *)palloc(2 * sizeof(ExprEvalRowtypeCache));
     rowcachep[0].cacheptr = NULL;
     rowcachep[1].cacheptr = NULL;
 
@@ -1633,8 +1636,8 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
      */
     if (caseExpr->arg != NULL) {
       /* Evaluate testexpr into caseval/casenull workspace */
-      caseval = palloc(sizeof(Datum));
-      casenull = palloc(sizeof(bool));
+      caseval = (Datum *)palloc(sizeof(Datum));
+      casenull = (bool *)palloc(sizeof(bool));
 
       ExecInitExprRec(caseExpr->arg, state, caseval, casenull);
 
@@ -1920,8 +1923,8 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
              BTORDER_PROC, lefttype, righttype, opfamily);
 
       /* Set up the primary fmgr lookup information */
-      finfo = palloc0(sizeof(FmgrInfo));
-      fcinfo = palloc0(SizeForFunctionCallInfo(2));
+      finfo = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+      fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(2));
       fmgr_info(proc, finfo);
       fmgr_info_set_expr((Node *)node, finfo);
       InitFunctionCallInfoData(*fcinfo, finfo, 2, inputcollid, NULL, NULL);
@@ -2053,8 +2056,8 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
      */
 
     /* Perform function lookup */
-    finfo = palloc0(sizeof(FmgrInfo));
-    fcinfo = palloc0(SizeForFunctionCallInfo(2));
+    finfo = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+    fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(2));
     fmgr_info(typentry->cmp_proc, finfo);
     fmgr_info_set_expr((Node *)node, finfo);
     InitFunctionCallInfoData(*fcinfo, finfo, 2, minmaxexpr->inputcollid, NULL,
@@ -2169,11 +2172,12 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
     } else if ((ctor->type == JSCTOR_JSON_PARSE && !ctor->unique) ||
                ctor->type == JSCTOR_JSON_SERIALIZE) {
       /* Use the value of the first argument as result */
-      ExecInitExprRec(linitial(args), state, resv, resnull);
+      ExecInitExprRec((Expr *)linitial(args), state, resv, resnull);
     } else {
       JsonConstructorExprState *jcstate;
 
-      jcstate = palloc0(sizeof(JsonConstructorExprState));
+      jcstate =
+          (JsonConstructorExprState *)palloc0(sizeof(JsonConstructorExprState));
 
       scratch.opcode = EEOP_JSON_CONSTRUCTOR;
       scratch.d.json_constructor.jcstate = jcstate;
@@ -2206,8 +2210,8 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
       if (ctor->type == JSCTOR_JSON_SCALAR) {
         bool is_jsonb = ctor->returning->format->format_type == JS_FORMAT_JSONB;
 
-        jcstate->arg_type_cache =
-            palloc(sizeof(*jcstate->arg_type_cache) * nargs);
+        jcstate->arg_type_cache = (decltype(jcstate->arg_type_cache))palloc(
+            sizeof(*jcstate->arg_type_cache) * nargs);
 
         for (int i = 0; i < nargs; i++) {
           JsonTypeCategory category;
@@ -2419,10 +2423,11 @@ static void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
 void ExprEvalPushStep(ExprState *es, const ExprEvalStep *s) {
   if (es->steps_alloc == 0) {
     es->steps_alloc = 16;
-    es->steps = palloc(sizeof(ExprEvalStep) * es->steps_alloc);
+    es->steps = (ExprEvalStep *)palloc(sizeof(ExprEvalStep) * es->steps_alloc);
   } else if (es->steps_alloc == es->steps_len) {
     es->steps_alloc *= 2;
-    es->steps = repalloc(es->steps, sizeof(ExprEvalStep) * es->steps_alloc);
+    es->steps = (ExprEvalStep *)repalloc(es->steps, sizeof(ExprEvalStep) *
+                                                        es->steps_alloc);
   }
 
   memcpy(&es->steps[es->steps_len++], s, sizeof(ExprEvalStep));
@@ -2466,8 +2471,9 @@ static void ExecInitFunc(ExprEvalStep *scratch, Expr *node, List *args,
                            FUNC_MAX_ARGS, FUNC_MAX_ARGS)));
 
   /* Allocate function lookup data and parameter workspace for this call */
-  scratch->d.func.finfo = palloc0(sizeof(FmgrInfo));
-  scratch->d.func.fcinfo_data = palloc0(SizeForFunctionCallInfo(nargs));
+  scratch->d.func.finfo = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+  scratch->d.func.fcinfo_data =
+      (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(nargs));
   flinfo = scratch->d.func.finfo;
   fcinfo = scratch->d.func.fcinfo_data;
 
@@ -2767,7 +2773,7 @@ static bool ExecComputeSlotInfo(ExprState *state, ExprEvalStep *op) {
   TupleDesc desc = NULL;
   const TupleTableSlotOps *tts_ops = NULL;
   bool isfixed = false;
-  ExprEvalOp opcode = op->opcode;
+  ExprEvalOp opcode = (ExprEvalOp)op->opcode;
 
   Assert(opcode == EEOP_INNER_FETCHSOME || opcode == EEOP_OUTER_FETCHSOME ||
          opcode == EEOP_SCAN_FETCHSOME || opcode == EEOP_OLD_FETCHSOME ||
@@ -2935,8 +2941,9 @@ static void ExecInitSubscriptingRef(ExprEvalStep *scratch,
                            : 0));
 
   /* Allocate sbsrefstate, with enough space for per-subscript arrays too */
-  sbsrefstate = palloc0(MAXALIGN(sizeof(SubscriptingRefState)) +
-                        (nupper + nlower) * (sizeof(Datum) + 2 * sizeof(bool)));
+  sbsrefstate = (SubscriptingRefState *)palloc0(
+      MAXALIGN(sizeof(SubscriptingRefState)) +
+      (nupper + nlower) * (sizeof(Datum) + 2 * sizeof(bool)));
 
   /* Fill constant fields of SubscriptingRefState */
   sbsrefstate->isassignment = isAssignment;
@@ -3723,7 +3730,7 @@ ExprState *ExecBuildHash32FromAttrs(TupleDesc desc,
    * one column to hash or an initial value plus one column.
    */
   if ((int64)numCols + (init_value != 0) > 1)
-    iresult = palloc(sizeof(NullableDatum));
+    iresult = (NullableDatum *)palloc(sizeof(NullableDatum));
 
   /* find the highest attnum so we deform the tuple to that point */
   for (int i = 0; i < numCols; i++)
@@ -3771,7 +3778,7 @@ ExprState *ExecBuildHash32FromAttrs(TupleDesc desc,
     AttrNumber attnum = keyColIdx[i] - 1;
 
     finfo = &hashfunctions[i];
-    fcinfo = palloc0(SizeForFunctionCallInfo(1));
+    fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(1));
 
     /* Initialize function call parameter structure too */
     InitFunctionCallInfoData(*fcinfo, finfo, 1, inputcollid, NULL, NULL);
@@ -3881,7 +3888,7 @@ ExprState *ExecBuildHash32Expr(TupleDesc desc, const TupleTableSlotOps *ops,
    * than one expression to hash or an initial value plus one expression.
    */
   if ((int64)num_exprs + (init_value != 0) > 1)
-    iresult = palloc(sizeof(NullableDatum));
+    iresult = (NullableDatum *)palloc(sizeof(NullableDatum));
 
   if (init_value == 0) {
     /*
@@ -3923,8 +3930,8 @@ ExprState *ExecBuildHash32Expr(TupleDesc desc, const TupleTableSlotOps *ops,
     funcid = hashfunc_oids[i];
 
     /* Allocate hash function lookup data. */
-    finfo = palloc0(sizeof(FmgrInfo));
-    fcinfo = palloc0(SizeForFunctionCallInfo(1));
+    finfo = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+    fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(1));
 
     fmgr_info(funcid, finfo);
 
@@ -4082,8 +4089,8 @@ ExprState *ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
     InvokeFunctionExecuteHook(foid);
 
     /* Set up the primary fmgr lookup information */
-    finfo = palloc0(sizeof(FmgrInfo));
-    fcinfo = palloc0(SizeForFunctionCallInfo(2));
+    finfo = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+    fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(2));
     fmgr_info(foid, finfo);
     fmgr_info_set_expr(NULL, finfo);
     InitFunctionCallInfoData(*fcinfo, finfo, 2, collid, NULL, NULL);
@@ -4210,8 +4217,8 @@ ExprState *ExecBuildParamSetEqual(TupleDesc desc, const TupleTableSlotOps *lops,
     InvokeFunctionExecuteHook(foid);
 
     /* Set up the primary fmgr lookup information */
-    finfo = palloc0(sizeof(FmgrInfo));
-    fcinfo = palloc0(SizeForFunctionCallInfo(2));
+    finfo = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+    fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(2));
     fmgr_info(foid, finfo);
     fmgr_info_set_expr(NULL, finfo);
     InitFunctionCallInfoData(*fcinfo, finfo, 2, collid, NULL, NULL);
@@ -4277,7 +4284,7 @@ ExprState *ExecBuildParamSetEqual(TupleDesc desc, const TupleTableSlotOps *lops,
  */
 static void ExecInitJsonExpr(JsonExpr *jsexpr, ExprState *state, Datum *resv,
                              bool *resnull, ExprEvalStep *scratch) {
-  JsonExprState *jsestate = palloc0(sizeof(JsonExprState));
+  JsonExprState *jsestate = (JsonExprState *)palloc0(sizeof(JsonExprState));
   ListCell *argexprlc;
   ListCell *argnamelc;
   List *jumps_return_null = NIL;
@@ -4325,7 +4332,7 @@ static void ExecInitJsonExpr(JsonExpr *jsexpr, ExprState *state, Datum *resv,
   forboth(argexprlc, jsexpr->passing_values, argnamelc, jsexpr->passing_names) {
     Expr *argexpr = (Expr *)lfirst(argexprlc);
     String *argname = lfirst_node(String, argnamelc);
-    JsonPathVariable *var = palloc(sizeof(*var));
+    JsonPathVariable *var = (JsonPathVariable *)palloc(sizeof(*var));
 
     var->name = argname->sval;
     var->namelen = strlen(var->name);
@@ -4395,8 +4402,8 @@ static void ExecInitJsonExpr(JsonExpr *jsexpr, ExprState *state, Datum *resv,
     FunctionCallInfo fcinfo;
 
     getTypeInputInfo(jsexpr->returning->typid, &typinput, &typioparam);
-    finfo = palloc0(sizeof(FmgrInfo));
-    fcinfo = palloc0(SizeForFunctionCallInfo(3));
+    finfo = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
+    fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(3));
     fmgr_info(typinput, finfo);
     fmgr_info_set_expr((Node *)jsexpr->returning, finfo);
     InitFunctionCallInfoData(*fcinfo, finfo, 3, InvalidOid, NULL, NULL);

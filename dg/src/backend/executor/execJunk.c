@@ -93,7 +93,7 @@ JunkFilter *ExecInitJunkFilter(List *targetList, TupleTableSlot *slot) {
     cleanMap = (AttrNumber *)palloc(cleanLength * sizeof(AttrNumber));
     cleanResno = 0;
     foreach (t, targetList) {
-      TargetEntry *tle = lfirst(t);
+      TargetEntry *tle = (TargetEntry *)lfirst(t);
 
       if (!tle->resjunk) {
         cleanMap[cleanResno] = tle->resno;
@@ -162,7 +162,7 @@ JunkFilter *ExecInitJunkFilterConversion(List *targetList,
       if (TupleDescCompactAttr(cleanTupType, i)->attisdropped)
         continue; /* map entry is already zero */
       for (;;) {
-        TargetEntry *tle = lfirst(t);
+        TargetEntry *tle = (TargetEntry *)lfirst(t);
 
         t = lnext(targetList, t);
         if (!tle->resjunk) {
@@ -208,7 +208,7 @@ AttrNumber ExecFindJunkAttributeInTlist(List *targetlist,
   ListCell *t;
 
   foreach (t, targetlist) {
-    TargetEntry *tle = lfirst(t);
+    TargetEntry *tle = (TargetEntry *)lfirst(t);
 
     if (tle->resjunk && tle->resname && (strcmp(tle->resname, attrName) == 0)) {
       /* We found it ! */

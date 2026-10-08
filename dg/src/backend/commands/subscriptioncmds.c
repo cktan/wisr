@@ -835,7 +835,7 @@ static void AlterSubscription_refresh(Subscription *sub, bool copy_data,
      * potentially contain all tables in the database so speed of lookup
      * is important.
      */
-    subrel_local_oids = palloc(subrel_count * sizeof(Oid));
+    subrel_local_oids = (Oid *)palloc(subrel_count * sizeof(Oid));
     off = 0;
     foreach (lc, subrel_states) {
       SubscriptionRelState *relstate = (SubscriptionRelState *)lfirst(lc);
@@ -851,7 +851,8 @@ static void AlterSubscription_refresh(Subscription *sub, bool copy_data,
      * Rels that we want to remove from subscription and drop any slots
      * and origins corresponding to them.
      */
-    sub_remove_rels = palloc(subrel_count * sizeof(SubRemoveRels));
+    sub_remove_rels =
+        (SubRemoveRels *)palloc(subrel_count * sizeof(SubRemoveRels));
 
     /*
      * Walk over the remote tables and try to match them to locally known
@@ -861,7 +862,7 @@ static void AlterSubscription_refresh(Subscription *sub, bool copy_data,
      * Also builds array of local oids of remote tables for the next step.
      */
     off = 0;
-    pubrel_local_oids = palloc(list_length(pubrel_names) * sizeof(Oid));
+    pubrel_local_oids = (Oid *)palloc(list_length(pubrel_names) * sizeof(Oid));
 
     foreach (lc, pubrel_names) {
       RangeVar *rv = (RangeVar *)lfirst(lc);

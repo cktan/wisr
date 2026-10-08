@@ -1482,8 +1482,8 @@ static Memoize *create_memoize_plan(PlannerInfo *root, MemoizePath *best_path,
 
   nkeys = list_length(param_exprs);
   Assert(nkeys > 0);
-  operators = palloc(nkeys * sizeof(Oid));
-  collations = palloc(nkeys * sizeof(Oid));
+  operators = (Oid *)palloc(nkeys * sizeof(Oid));
+  collations = (Oid *)palloc(nkeys * sizeof(Oid));
 
   i = 0;
   forboth(lc, param_exprs, lc2, best_path->hash_operators) {
@@ -1560,7 +1560,7 @@ static Plan *create_unique_plan(PlannerInfo *root, UniquePath *best_path,
   newitems = false;
 
   foreach (l, uniq_exprs) {
-    Expr *uniqexpr = lfirst(l);
+    Expr *uniqexpr = (Expr *)lfirst(l);
     TargetEntry *tle;
 
     tle = tlist_member(uniqexpr, newtlist);
@@ -1590,7 +1590,7 @@ static Plan *create_unique_plan(PlannerInfo *root, UniquePath *best_path,
 
   groupColPos = 0;
   foreach (l, uniq_exprs) {
-    Expr *uniqexpr = lfirst(l);
+    Expr *uniqexpr = (Expr *)lfirst(l);
     TargetEntry *tle;
 
     tle = tlist_member(uniqexpr, newtlist);
@@ -2086,11 +2086,12 @@ static AttrNumber *remap_groupColIdx(PlannerInfo *root, List *groupClause) {
 
   Assert(grouping_map);
 
-  new_grpColIdx = palloc0(sizeof(AttrNumber) * list_length(groupClause));
+  new_grpColIdx =
+      (AttrNumber *)palloc0(sizeof(AttrNumber) * list_length(groupClause));
 
   i = 0;
   foreach (lc, groupClause) {
-    SortGroupClause *clause = lfirst(lc);
+    SortGroupClause *clause = (SortGroupClause *)lfirst(lc);
 
     new_grpColIdx[i++] = grouping_map[clause->tleSortGroupRef];
   }
@@ -2174,7 +2175,7 @@ static Plan *create_groupingsets_plan(PlannerInfo *root,
     bool is_first_sort = ((RollupData *)linitial(rollups))->is_hashed;
 
     for_each_from(lc, rollups, 1) {
-      RollupData *rollup = lfirst(lc);
+      RollupData *rollup = (RollupData *)lfirst(lc);
       AttrNumber *new_grpColIdx;
       Plan *sort_plan = NULL;
       Plan *agg_plan;
@@ -2221,7 +2222,7 @@ static Plan *create_groupingsets_plan(PlannerInfo *root,
    * Now make the real Agg node
    */
   {
-    RollupData *rollup = linitial(rollups);
+    RollupData *rollup = (RollupData *)linitial(rollups);
     AttrNumber *top_grpColIdx;
     int numGroupCols;
 
@@ -4627,7 +4628,7 @@ static Node *fix_indexqual_clause(PlannerInfo *root, IndexOptInfo *index,
 
     /* Replace the indexkey expression with an index Var. */
     linitial(op->args) =
-        fix_indexqual_operand(linitial(op->args), index, indexcol);
+        fix_indexqual_operand((Node *)linitial(op->args), index, indexcol);
   } else if (IsA(clause, RowCompareExpr)) {
     RowCompareExpr *rc = (RowCompareExpr *)clause;
     ListCell *lca, *lcai;
@@ -4635,14 +4636,15 @@ static Node *fix_indexqual_clause(PlannerInfo *root, IndexOptInfo *index,
     /* Replace the indexkey expressions with index Vars. */
     Assert(list_length(rc->largs) == list_length(indexcolnos));
     forboth(lca, rc->largs, lcai, indexcolnos) {
-      lfirst(lca) = fix_indexqual_operand(lfirst(lca), index, lfirst_int(lcai));
+      lfirst(lca) =
+          fix_indexqual_operand((Node *)lfirst(lca), index, lfirst_int(lcai));
     }
   } else if (IsA(clause, ScalarArrayOpExpr)) {
     ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *)clause;
 
     /* Replace the indexkey expression with an index Var. */
     linitial(saop->args) =
-        fix_indexqual_operand(linitial(saop->args), index, indexcol);
+        fix_indexqual_operand((Node *)linitial(saop->args), index, indexcol);
   } else if (IsA(clause, NullTest)) {
     NullTest *nt = (NullTest *)clause;
 
@@ -4710,8 +4712,9 @@ static Node *fix_indexqual_operand(Node *node, IndexOptInfo *index,
           indexkey = (Node *)((RelabelType *)indexkey)->arg;
         if (equal(node, indexkey)) {
           result =
-              makeVar(INDEX_VAR, indexcol + 1, exprType(lfirst(indexpr_item)),
-                      -1, exprCollation(lfirst(indexpr_item)), 0);
+              makeVar(INDEX_VAR, indexcol + 1,
+                      exprType((const Node *)lfirst(indexpr_item)), -1,
+                      exprCollation((const Node *)lfirst(indexpr_item)), 0);
           return (Node *)result;
         } else
           elog(ERROR, "index key does not match expected index column");
@@ -4977,10 +4980,12 @@ static void label_incrementalsort_with_costsize(PlannerInfo *root,
  */
 static void bitmap_subplan_mark_shared(Plan *plan) {
   if (IsA(plan, BitmapAnd))
-    bitmap_subplan_mark_shared(linitial(((BitmapAnd *)plan)->bitmapplans));
+    bitmap_subplan_mark_shared(
+        (Plan *)linitial(((BitmapAnd *)plan)->bitmapplans));
   else if (IsA(plan, BitmapOr)) {
     ((BitmapOr *)plan)->isshared = true;
-    bitmap_subplan_mark_shared(linitial(((BitmapOr *)plan)->bitmapplans));
+    bitmap_subplan_mark_shared(
+        (Plan *)linitial(((BitmapOr *)plan)->bitmapplans));
   } else if (IsA(plan, BitmapIndexScan))
     ((BitmapIndexScan *)plan)->isshared = true;
   else

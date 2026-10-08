@@ -198,16 +198,16 @@ Selectivity clauselist_selectivity_ext(PlannerInfo *root, List *clauses,
 
       if (rinfo) {
         ok = (rinfo->num_base_rels == 1) &&
-             (is_pseudo_constant_clause_relids(lsecond(expr->args),
+             (is_pseudo_constant_clause_relids((Node *)lsecond(expr->args),
                                                rinfo->right_relids) ||
               (varonleft = false,
-               is_pseudo_constant_clause_relids(linitial(expr->args),
+               is_pseudo_constant_clause_relids((Node *)linitial(expr->args),
                                                 rinfo->left_relids)));
       } else {
         ok = (NumRelids(root, clause) == 1) &&
-             (is_pseudo_constant_clause(lsecond(expr->args)) ||
+             (is_pseudo_constant_clause((Node *)lsecond(expr->args)) ||
               (varonleft = false,
-               is_pseudo_constant_clause(linitial(expr->args))));
+               is_pseudo_constant_clause((Node *)linitial(expr->args))));
       }
 
       if (ok) {

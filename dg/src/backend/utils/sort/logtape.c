@@ -480,7 +480,7 @@ static void ltsReleaseBlock(LogicalTapeSet *lts, int64 blocknum) {
  */
 static void ltsInitReadBuffer(LogicalTape *lt) {
   Assert(lt->buffer_size > 0);
-  lt->buffer = palloc(lt->buffer_size);
+  lt->buffer = (char *)palloc(lt->buffer_size);
 
   /* Read the first block, or reset if tape is empty */
   lt->nextBlockNumber = lt->firstBlockNumber;
@@ -645,7 +645,7 @@ static LogicalTape *ltsCreateTape(LogicalTapeSet *lts) {
   /*
    * Create per-tape struct.  Note we allocate the I/O buffer lazily.
    */
-  lt = palloc(sizeof(LogicalTape));
+  lt = (LogicalTape *)palloc(sizeof(LogicalTape));
   lt->tapeSet = lts;
   lt->writing = true;
   lt->frozen = false;
@@ -937,7 +937,7 @@ void LogicalTapeFreeze(LogicalTape *lt, TapeShare *share) {
   if (!lt->buffer || lt->buffer_size != BLCKSZ) {
     if (lt->buffer)
       pfree(lt->buffer);
-    lt->buffer = palloc(BLCKSZ);
+    lt->buffer = (char *)palloc(BLCKSZ);
     lt->buffer_size = BLCKSZ;
   }
 

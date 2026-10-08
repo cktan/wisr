@@ -80,11 +80,6 @@ static inline void tts_buffer_heap_store_tuple(TupleTableSlot *slot,
 static void tts_heap_store_tuple(TupleTableSlot *slot, HeapTuple tuple,
                                  bool shouldFree);
 
-const TupleTableSlotOps TTSOpsVirtual;
-const TupleTableSlotOps TTSOpsHeapTuple;
-const TupleTableSlotOps TTSOpsMinimalTuple;
-const TupleTableSlotOps TTSOpsBufferHeapTuple;
-
 /*
  * TupleTableSlotOps implementations.
  */
@@ -196,7 +191,7 @@ static void tts_virtual_materialize(TupleTableSlot *slot) {
     return;
 
   /* allocate memory */
-  vslot->data = data = MemoryContextAlloc(slot->tts_mcxt, sz);
+  vslot->data = data = (char *)MemoryContextAlloc(slot->tts_mcxt, sz);
   slot->tts_flags |= TTS_FLAG_SHOULDFREE;
 
   /* and copy all attributes into the pre-allocated space */
@@ -1055,8 +1050,8 @@ const TupleTableSlotOps TTSOpsVirtual = {
     .clear = tts_virtual_clear,
     .getsomeattrs = tts_virtual_getsomeattrs,
     .getsysattr = tts_virtual_getsysattr,
-    .materialize = tts_virtual_materialize,
     .is_current_xact_tuple = tts_virtual_is_current_xact_tuple,
+    .materialize = tts_virtual_materialize,
     .copyslot = tts_virtual_copyslot,
 
     /*
@@ -1066,7 +1061,8 @@ const TupleTableSlotOps TTSOpsVirtual = {
     .get_heap_tuple = NULL,
     .get_minimal_tuple = NULL,
     .copy_heap_tuple = tts_virtual_copy_heap_tuple,
-    .copy_minimal_tuple = tts_virtual_copy_minimal_tuple};
+    .copy_minimal_tuple = tts_virtual_copy_minimal_tuple,
+};
 
 const TupleTableSlotOps TTSOpsHeapTuple = {
     .base_slot_size = sizeof(HeapTupleTableSlot),
@@ -1083,7 +1079,8 @@ const TupleTableSlotOps TTSOpsHeapTuple = {
     /* A heap tuple table slot can not "own" a minimal tuple. */
     .get_minimal_tuple = NULL,
     .copy_heap_tuple = tts_heap_copy_heap_tuple,
-    .copy_minimal_tuple = tts_heap_copy_minimal_tuple};
+    .copy_minimal_tuple = tts_heap_copy_minimal_tuple,
+};
 
 const TupleTableSlotOps TTSOpsMinimalTuple = {
     .base_slot_size = sizeof(MinimalTupleTableSlot),
@@ -1100,7 +1097,8 @@ const TupleTableSlotOps TTSOpsMinimalTuple = {
     .get_heap_tuple = NULL,
     .get_minimal_tuple = tts_minimal_get_minimal_tuple,
     .copy_heap_tuple = tts_minimal_copy_heap_tuple,
-    .copy_minimal_tuple = tts_minimal_copy_minimal_tuple};
+    .copy_minimal_tuple = tts_minimal_copy_minimal_tuple,
+};
 
 const TupleTableSlotOps TTSOpsBufferHeapTuple = {
     .base_slot_size = sizeof(BufferHeapTupleTableSlot),
@@ -1117,7 +1115,8 @@ const TupleTableSlotOps TTSOpsBufferHeapTuple = {
     /* A buffer heap tuple table slot can not "own" a minimal tuple. */
     .get_minimal_tuple = NULL,
     .copy_heap_tuple = tts_buffer_heap_copy_heap_tuple,
-    .copy_minimal_tuple = tts_buffer_heap_copy_minimal_tuple};
+    .copy_minimal_tuple = tts_buffer_heap_copy_minimal_tuple,
+};
 
 /* ----------------------------------------------------------------
  *				  tuple table create/delete functions
@@ -1150,7 +1149,7 @@ TupleTableSlot *MakeTupleTableSlot(TupleDesc tupleDesc,
   else
     allocsz = basesz;
 
-  slot = palloc0(allocsz);
+  slot = (TupleTableSlot *)palloc0(allocsz);
   /* const for optimization purposes, OK to modify at allocation time */
   *((const TupleTableSlotOps **)&slot->tts_ops) = tts_ops;
   slot->type = T_TupleTableSlot;
@@ -1900,7 +1899,7 @@ static TupleDesc ExecTypeFromTLInternal(List *targetList, bool skipjunk) {
   typeInfo = CreateTemplateTupleDesc(len);
 
   foreach (l, targetList) {
-    TargetEntry *tle = lfirst(l);
+    TargetEntry *tle = (TargetEntry *)lfirst(l);
 
     if (skipjunk && tle->resjunk)
       continue;
@@ -1929,7 +1928,7 @@ TupleDesc ExecTypeFromExprList(List *exprList) {
   typeInfo = CreateTemplateTupleDesc(list_length(exprList));
 
   foreach (lc, exprList) {
-    Node *e = lfirst(lc);
+    Node *e = (Node *)lfirst(lc);
 
     TupleDescInitEntry(typeInfo, cur_resno, NULL, exprType(e), exprTypmod(e),
                        0);

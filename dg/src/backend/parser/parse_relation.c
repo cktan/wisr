@@ -894,7 +894,8 @@ static FuzzyAttrMatchState *searchRangeTableForCol(ParseState *pstate,
                                                    const char *colname,
                                                    int location) {
   ParseState *orig_pstate = pstate;
-  FuzzyAttrMatchState *fuzzystate = palloc(sizeof(FuzzyAttrMatchState));
+  FuzzyAttrMatchState *fuzzystate =
+      (FuzzyAttrMatchState *)palloc(sizeof(FuzzyAttrMatchState));
 
   fuzzystate->distance = MAX_FUZZY_DISTANCE + 1;
   fuzzystate->rfirst = NULL;
@@ -1638,7 +1639,7 @@ ParseNamespaceItem *addRangeTableEntryForFunction(
   if (alias)
     aliasname = alias->aliasname;
   else
-    aliasname = linitial(funcnames);
+    aliasname = (char *)linitial(funcnames);
 
   eref = makeAlias(aliasname, NIL);
   rte->eref = eref;
@@ -2380,7 +2381,7 @@ ParseNamespaceItem *addRangeTableEntryForGroup(ParseState *pstate,
   coltypes = coltypmods = colcollations = NIL;
   foreach (lc, groupClauses) {
     TargetEntry *te = (TargetEntry *)lfirst(lc);
-    char *colname = te->resname ? pstrdup(te->resname) : "?column?";
+    char *colname = (char *)(te->resname ? pstrdup(te->resname) : "?column?");
 
     eref->colnames = lappend(eref->colnames, makeString(colname));
 
@@ -2899,7 +2900,7 @@ List *expandNSItemVars(ParseState *pstate, ParseNamespaceItem *nsitem,
     *colnames = NIL;
   colindex = 0;
   foreach (lc, nsitem->p_names->colnames) {
-    String *colnameval = lfirst(lc);
+    String *colnameval = (String *)lfirst(lc);
     const char *colname = strVal(colnameval);
     ParseNamespaceColumn *nscol = nsitem->p_nscolumns + colindex;
 
@@ -3519,7 +3520,7 @@ static bool isQueryUsingTempRelation_walker(Node *node, void *context) {
     ListCell *rtable;
 
     foreach (rtable, query->rtable) {
-      RangeTblEntry *rte = lfirst(rtable);
+      RangeTblEntry *rte = (RangeTblEntry *)lfirst(rtable);
 
       if (rte->rtekind == RTE_RELATION) {
         Relation rel = table_open(rte->relid, AccessShareLock);

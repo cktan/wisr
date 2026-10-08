@@ -68,8 +68,8 @@ typedef enum {
  * If PT_ERR is returned then a soft error has occurred.  If state->escontext
  * isn't already filled then this should be reported as a generic parse error.
  */
-typedef ts_tokentype (*ts_tokenizer)(TSQueryParserState state, int8 *operator,
-                                     int * lenval, char **strval, int16 *weight,
+typedef ts_tokentype (*ts_tokenizer)(TSQueryParserState state, int8 *operator_,
+                                     int *lenval, char **strval, int16 *weight,
                                      bool *prefix);
 
 struct TSQueryParserStateData {
@@ -262,7 +262,7 @@ static bool parse_or_operator(TSQueryParserState pstate) {
 }
 
 static ts_tokentype gettoken_query_standard(TSQueryParserState state,
-                                            int8 *operator, int * lenval,
+                                            int8 *operator_, int *lenval,
                                             char **strval, int16 *weight,
                                             bool *prefix) {
   *weight = 0;
@@ -275,7 +275,7 @@ static ts_tokentype gettoken_query_standard(TSQueryParserState state,
       if (t_iseq(state->buf, '!')) {
         state->buf++;
         state->state = WAITOPERAND;
-        *operator= OP_NOT;
+        *operator_ = OP_NOT;
         return PT_OPR;
       } else if (t_iseq(state->buf, '(')) {
         state->buf++;
@@ -312,17 +312,17 @@ static ts_tokentype gettoken_query_standard(TSQueryParserState state,
       if (t_iseq(state->buf, '&')) {
         state->buf++;
         state->state = WAITOPERAND;
-        *operator= OP_AND;
+        *operator_ = OP_AND;
         return PT_OPR;
       } else if (t_iseq(state->buf, '|')) {
         state->buf++;
         state->state = WAITOPERAND;
-        *operator= OP_OR;
+        *operator_ = OP_OR;
         return PT_OPR;
       } else if (parse_phrase_operator(state, weight)) {
         /* weight var is used as storage for distance */
         state->state = WAITOPERAND;
-        *operator= OP_PHRASE;
+        *operator_ = OP_PHRASE;
         return PT_OPR;
       } else if (SOFT_ERROR_OCCURRED(state->escontext)) {
         /* parse_phrase_operator reported a soft error */
@@ -344,7 +344,7 @@ static ts_tokentype gettoken_query_standard(TSQueryParserState state,
 }
 
 static ts_tokentype gettoken_query_websearch(TSQueryParserState state,
-                                             int8 *operator, int * lenval,
+                                             int8 *operator_, int *lenval,
                                              char **strval, int16 *weight,
                                              bool *prefix) {
   *weight = 0;
@@ -358,7 +358,7 @@ static ts_tokentype gettoken_query_websearch(TSQueryParserState state,
         state->buf++;
         state->state = WAITOPERAND;
 
-        *operator= OP_NOT;
+        *operator_ = OP_NOT;
         return PT_OPR;
       } else if (t_iseq(state->buf, '"')) {
         /* Everything in quotes is processed as a single token */
@@ -412,7 +412,7 @@ static ts_tokentype gettoken_query_websearch(TSQueryParserState state,
         return PT_END;
       } else if (parse_or_operator(state)) {
         state->state = WAITOPERAND;
-        *operator= OP_OR;
+        *operator_ = OP_OR;
         return PT_OPR;
       } else if (ISOPERATOR(state->buf)) {
         /* ignore other operators in this state too */
@@ -421,7 +421,7 @@ static ts_tokentype gettoken_query_websearch(TSQueryParserState state,
       } else if (!isspace((unsigned char)*state->buf)) {
         /* insert implicit AND between operands */
         state->state = WAITOPERAND;
-        *operator= OP_AND;
+        *operator_ = OP_AND;
         return PT_OPR;
       }
       break;
@@ -432,7 +432,7 @@ static ts_tokentype gettoken_query_websearch(TSQueryParserState state,
 }
 
 static ts_tokentype gettoken_query_plain(TSQueryParserState state,
-                                         int8 *operator, int * lenval,
+                                         int8 *operator_, int *lenval,
                                          char **strval, int16 *weight,
                                          bool *prefix) {
   *weight = 0;
@@ -579,7 +579,7 @@ static void cleanOpStack(TSQueryParserState state, OperatorElement *stack,
  */
 static void makepol(TSQueryParserState state, PushFunction pushval,
                     Datum opaque) {
-  int8 operator= 0;
+  int8 operator_ = 0;
   ts_tokentype type;
   int lenval = 0;
   char *strval = NULL;
@@ -591,15 +591,15 @@ static void makepol(TSQueryParserState state, PushFunction pushval,
   /* since this function recurses, it could be driven to stack overflow */
   check_stack_depth();
 
-  while ((type = state->gettoken(state, &operator, & lenval, &strval, &weight,
+  while ((type = state->gettoken(state, &operator_, &lenval, &strval, &weight,
                                  &prefix)) != PT_END) {
     switch (type) {
     case PT_VAL:
       pushval(opaque, state, strval, lenval, weight, prefix);
       break;
     case PT_OPR:
-      cleanOpStack(state, opstack, &lenstack, operator);
-      pushOpStack(opstack, &lenstack, operator, weight);
+      cleanOpStack(state, opstack, &lenstack, operator_);
+      pushOpStack(opstack, &lenstack, operator_, weight);
       break;
     case PT_OPEN:
       makepol(state, pushval, opaque);
@@ -995,7 +995,7 @@ Datum tsqueryout(PG_FUNCTION_ARGS) {
   INFIX nrm;
 
   if (query->size == 0) {
-    char *b = palloc(1);
+    char *b = (char *)palloc(1);
 
     *b = '\0';
     PG_RETURN_POINTER(b);
@@ -1080,7 +1080,7 @@ Datum tsqueryrecv(PG_FUNCTION_ARGS) {
     elog(ERROR, "invalid size of tsquery");
 
   /* Allocate space to temporarily hold operand strings */
-  operands = palloc(size * sizeof(char *));
+  operands = (const char **)palloc(size * sizeof(char *));
 
   /* Allocate space for all the QueryItems. */
   len = HDRSIZETQ + sizeof(QueryItem) * size;

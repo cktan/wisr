@@ -1147,7 +1147,7 @@ static List *group_similar_or_args(PlannerInfo *root, RelOptInfo *rel,
   i = -1;
   matches = (OrArgIndexMatch *)palloc(sizeof(OrArgIndexMatch) * n);
   foreach (lc, orargs) {
-    Node *arg = lfirst(lc);
+    Node *arg = (Node *)lfirst(lc);
     RestrictInfo *argrinfo;
     OpExpr *clause;
     Oid opno;
@@ -1332,7 +1332,7 @@ static List *group_similar_or_args(PlannerInfo *root, RelOptInfo *rel,
 
         /* Construct the list of nested OR arguments */
         for (j = group_start; j < i; j++) {
-          Node *arg = list_nth(orargs, matches[j].argindex);
+          Node *arg = (Node *)list_nth(orargs, matches[j].argindex);
 
           rargs = lappend(rargs, arg);
           if (IsA(arg, RestrictInfo))
@@ -3265,8 +3265,8 @@ static IndexClause *expand_indexqual_rowcompare(PlannerInfo *root,
       iclause->indexcols = NIL;
 
       op = make_opclause(linitial_oid(new_ops), BOOLOID, false,
-                         copyObject(linitial(var_args)),
-                         copyObject(linitial(non_var_args)), InvalidOid,
+                         (Expr *)copyObject(linitial(var_args)),
+                         (Expr *)copyObject(linitial(non_var_args)), InvalidOid,
                          linitial_oid(clause->inputcollids));
       iclause->indexquals = list_make1(make_simple_restrictinfo(root, op));
     }

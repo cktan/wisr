@@ -14,8 +14,8 @@
 #ifndef VACUUM_H
 #define VACUUM_H
 
-#include "access/genam.h"
 #include "access/htup.h"
+#include "access/genam.h"
 #include "access/parallel.h"
 #include "access/tidstore.h"
 #include "catalog/pg_class.h"

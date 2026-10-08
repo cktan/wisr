@@ -62,7 +62,8 @@ List *EventCacheLookup(EventTriggerEvent event) {
 
   if (EventTriggerCacheState != ETCS_VALID)
     BuildEventTriggerCache();
-  entry = hash_search(EventTriggerCache, &event, HASH_FIND, NULL);
+  entry = (EventTriggerCacheEntry *)hash_search(EventTriggerCache, &event,
+                                                HASH_FIND, NULL);
   return entry != NULL ? entry->triggerlist : NIL;
 }
 
@@ -159,7 +160,7 @@ static void BuildEventTriggerCache(void) {
       continue;
 
     /* Allocate new cache item. */
-    item = palloc0(sizeof(EventTriggerCacheItem));
+    item = (EventTriggerCacheItem *)palloc0(sizeof(EventTriggerCacheItem));
     item->fnoid = form->evtfoid;
     item->enabled = form->evtenabled;
 
@@ -170,7 +171,8 @@ static void BuildEventTriggerCache(void) {
       item->tagset = DecodeTextArrayToBitmapset(evttags);
 
     /* Add to cache entry. */
-    entry = hash_search(cache, &event, HASH_ENTER, &found);
+    entry = (EventTriggerCacheEntry *)hash_search(cache, &event, HASH_ENTER,
+                                                  &found);
     if (found)
       entry->triggerlist = lappend(entry->triggerlist, item);
     else

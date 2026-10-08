@@ -1159,8 +1159,9 @@ pgstat_get_local_beentry_by_proc_number(ProcNumber procNumber) {
    * use bsearch() to search it efficiently.
    */
   key.proc_number = procNumber;
-  return bsearch(&key, localBackendStatusTable, localNumBackends,
-                 sizeof(LocalPgBackendStatus), cmp_lbestatus);
+  return (LocalPgBackendStatus *)bsearch(
+      &key, localBackendStatusTable, localNumBackends,
+      sizeof(LocalPgBackendStatus), cmp_lbestatus);
 }
 
 /* ----------

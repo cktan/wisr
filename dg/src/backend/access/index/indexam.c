@@ -988,5 +988,5 @@ bytea *index_opclass_options(Relation indrel, AttrNumber attnum,
 
   (void)FunctionCall1(procinfo, PointerGetDatum(&relopts));
 
-  return build_local_reloptions(&relopts, attoptions, validate);
+  return (bytea *)build_local_reloptions(&relopts, attoptions, validate);
 }

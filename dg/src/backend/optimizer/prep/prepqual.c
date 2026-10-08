@@ -147,7 +147,7 @@ Node *negate_clause(Node *node) {
       ListCell *lc;
 
       foreach (lc, expr->args) {
-        nargs = lappend(nargs, negate_clause(lfirst(lc)));
+        nargs = lappend(nargs, negate_clause((Node *)lfirst(lc)));
       }
       return (Node *)make_orclause(nargs);
     } break;
@@ -156,7 +156,7 @@ Node *negate_clause(Node *node) {
       ListCell *lc;
 
       foreach (lc, expr->args) {
-        nargs = lappend(nargs, negate_clause(lfirst(lc)));
+        nargs = lappend(nargs, negate_clause((Node *)lfirst(lc)));
       }
       return (Node *)make_andclause(nargs);
     } break;

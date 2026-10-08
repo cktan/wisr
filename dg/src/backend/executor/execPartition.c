@@ -539,7 +539,7 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
      * this partition should have the same columns, so we should be able
      * to map attributes successfully.
      */
-    wcoList = linitial(node->withCheckOptionLists);
+    wcoList = (List *)linitial(node->withCheckOptionLists);
 
     /*
      * Convert Vars in it to contain this partition's attribute numbers.
@@ -592,7 +592,7 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
      * the comment above for WCO lists for more details on why this is
      * okay.
      */
-    returningList = linitial(node->returningLists);
+    returningList = (List *)linitial(node->returningLists);
 
     /*
      * Convert Vars in it to contain this partition's attribute numbers.
@@ -794,7 +794,7 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
    * changes there, look here too.
    */
   if (node && node->operation == CMD_MERGE) {
-    List *firstMergeActionList = linitial(node->mergeActionLists);
+    List *firstMergeActionList = (List *)linitial(node->mergeActionLists);
     ListCell *lc;
     ExprContext *econtext = mtstate->ps.ps_ExprContext;
     Node *joinCondition;
@@ -808,7 +808,7 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
 
     /* Initialize state for join condition checking. */
     joinCondition = map_variable_attnos(
-        linitial(node->mergeJoinConditions), firstVarno, 0, part_attmap,
+        (Node *)linitial(node->mergeJoinConditions), firstVarno, 0, part_attmap,
         RelationGetForm(partrel)->reltype, &found_whole_row);
     /* We ignore the value of found_whole_row. */
     leaf_part_rri->ri_MergeJoinCondition =
@@ -816,7 +816,7 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
 
     foreach (lc, firstMergeActionList) {
       /* Make a copy for this relation to be safe.  */
-      MergeAction *action = copyObject(lfirst(lc));
+      MergeAction *action = (MergeAction *)copyObject(lfirst(lc));
       MergeActionState *action_state;
 
       /* Generate the action's state for this relation */
@@ -1698,7 +1698,8 @@ ExecInitPartitionExecPruning(PlanState *planstate, int n_total_subplans,
    * ExecDoInitialPruning() and stored as the part_prune_index'th element of
    * EState.es_part_prune_states.
    */
-  prunestate = list_nth(estate->es_part_prune_states, part_prune_index);
+  prunestate = (PartitionPruneState *)list_nth(estate->es_part_prune_states,
+                                               part_prune_index);
   Assert(prunestate != NULL);
 
   /* Use the result of initial pruning done by ExecDoInitialPruning(). */
@@ -1867,7 +1868,7 @@ CreatePartitionPruneState(EState *estate, PartitionPruneInfo *pruneinfo,
        * arrays are in partition bounds order.
        */
       pprune->nparts = partdesc->nparts;
-      pprune->subplan_map = palloc(sizeof(int) * partdesc->nparts);
+      pprune->subplan_map = (int *)palloc(sizeof(int) * partdesc->nparts);
 
       if (partdesc->nparts == pinfo->nparts &&
           memcmp(partdesc->oids, pinfo->relid_map,
@@ -1891,8 +1892,9 @@ CreatePartitionPruneState(EState *estate, PartitionPruneInfo *pruneinfo,
          * attached.  Cope with that by creating a map that skips any
          * mismatches.
          */
-        pprune->subpart_map = palloc(sizeof(int) * partdesc->nparts);
-        pprune->leafpart_rti_map = palloc(sizeof(int) * partdesc->nparts);
+        pprune->subpart_map = (int *)palloc(sizeof(int) * partdesc->nparts);
+        pprune->leafpart_rti_map =
+            (int *)palloc(sizeof(int) * partdesc->nparts);
 
         for (pp_idx = 0; pp_idx < partdesc->nparts; pp_idx++) {
           /* Skip any InvalidOid relid_map entries */
@@ -2052,7 +2054,7 @@ InitPartitionPruneContext(PartitionPruneContext *context, List *pruning_steps,
         continue;
 
       if (lc2 != NULL) {
-        Expr *expr = lfirst(lc2);
+        Expr *expr = (Expr *)lfirst(lc2);
 
         /* not needed for Consts */
         if (!IsA(expr, Const)) {

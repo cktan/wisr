@@ -73,7 +73,8 @@ static const TupleTableSlotOps *heapam_slot_callbacks(Relation relation) {
  */
 
 static IndexFetchTableData *heapam_index_fetch_begin(Relation rel) {
-  IndexFetchHeapData *hscan = palloc0(sizeof(IndexFetchHeapData));
+  IndexFetchHeapData *hscan =
+      (IndexFetchHeapData *)palloc0(sizeof(IndexFetchHeapData));
 
   hscan->xs_base.rel = rel;
   hscan->xs_cbuf = InvalidBuffer;
@@ -593,8 +594,8 @@ static void heapam_relation_copy_data(Relation rel,
                       rel->rd_rel->relpersistence);
 
   /* copy those extra forks that exist */
-  for (ForkNumber forkNum = MAIN_FORKNUM + 1; forkNum <= MAX_FORKNUM;
-       forkNum++) {
+  for (ForkNumber forkNum = (ForkNumber)(MAIN_FORKNUM + 1);
+       forkNum <= MAX_FORKNUM; forkNum++) {
     if (smgrexists(RelationGetSmgr(rel), forkNum)) {
       smgrcreate(dstrel, forkNum, false);
 
@@ -2244,7 +2245,7 @@ static bool BitmapHeapScanNextBlock(TableScanDesc scan, bool *recheck,
 
   Assert(per_buffer_data);
 
-  tbmres = per_buffer_data;
+  tbmres = (TBMIterateResult *)per_buffer_data;
 
   Assert(BlockNumberIsValid(tbmres->blockno));
   Assert(BufferGetBlockNumber(hscan->rs_cbuf) == tbmres->blockno);
@@ -2377,6 +2378,12 @@ static const TableAmRoutine heapam_methods = {
     .index_fetch_end = heapam_index_fetch_end,
     .index_fetch_tuple = heapam_index_fetch_tuple,
 
+    .tuple_fetch_row_version = heapam_fetch_row_version,
+    .tuple_tid_valid = heapam_tuple_tid_valid,
+    .tuple_get_latest_tid = heap_get_latest_tid,
+    .tuple_satisfies_snapshot = heapam_tuple_satisfies_snapshot,
+    .index_delete_tuples = heap_index_delete_tuples,
+
     .tuple_insert = heapam_tuple_insert,
     .tuple_insert_speculative = heapam_tuple_insert_speculative,
     .tuple_complete_speculative = heapam_tuple_complete_speculative,
@@ -2384,12 +2391,6 @@ static const TableAmRoutine heapam_methods = {
     .tuple_delete = heapam_tuple_delete,
     .tuple_update = heapam_tuple_update,
     .tuple_lock = heapam_tuple_lock,
-
-    .tuple_fetch_row_version = heapam_fetch_row_version,
-    .tuple_get_latest_tid = heap_get_latest_tid,
-    .tuple_tid_valid = heapam_tuple_tid_valid,
-    .tuple_satisfies_snapshot = heapam_tuple_satisfies_snapshot,
-    .index_delete_tuples = heap_index_delete_tuples,
 
     .relation_set_new_filelocator = heapam_relation_set_new_filelocator,
     .relation_nontransactional_truncate =
@@ -2411,7 +2412,8 @@ static const TableAmRoutine heapam_methods = {
 
     .scan_bitmap_next_tuple = heapam_scan_bitmap_next_tuple,
     .scan_sample_next_block = heapam_scan_sample_next_block,
-    .scan_sample_next_tuple = heapam_scan_sample_next_tuple};
+    .scan_sample_next_tuple = heapam_scan_sample_next_tuple,
+};
 
 const TableAmRoutine *GetHeapamTableAmRoutine(void) { return &heapam_methods; }
 

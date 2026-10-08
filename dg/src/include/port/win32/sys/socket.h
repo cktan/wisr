@@ -11,9 +11,9 @@
  *
  * Note: Don't include <wingdi.h> directly.  It causes compile errors.
  */
-#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 
 #undef ERROR
 #undef small

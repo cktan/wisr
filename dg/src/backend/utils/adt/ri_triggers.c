@@ -157,8 +157,8 @@ typedef struct RI_QueryHashEntry {
  * The key identifying an entry showing how to compare two values
  */
 typedef struct RI_CompareKey {
-  Oid eq_opr; /* the equality operator to apply */
-  Oid typeid; /* the data type to apply it to */
+  Oid eq_opr;  /* the equality operator to apply */
+  Oid typeid_; /* the data type to apply it to */
 } RI_CompareKey;
 
 /*
@@ -200,7 +200,7 @@ static void ri_BuildQueryKey(RI_QueryKey *key, const RI_ConstraintInfo *riinfo,
 static bool ri_KeysEqual(Relation rel, TupleTableSlot *oldslot,
                          TupleTableSlot *newslot,
                          const RI_ConstraintInfo *riinfo, bool rel_is_pk);
-static bool ri_CompareWithCast(Oid eq_opr, Oid typeid, Oid collid, Datum lhs,
+static bool ri_CompareWithCast(Oid eq_opr, Oid typeid_, Oid collid, Datum lhs,
                                Datum rhs);
 
 static void ri_InitHashTables(void);
@@ -208,7 +208,7 @@ static void InvalidateConstraintCacheCallBack(Datum arg, int cacheid,
                                               uint32 hashvalue);
 static SPIPlanPtr ri_FetchPreparedPlan(RI_QueryKey *key);
 static void ri_HashPreparedPlan(RI_QueryKey *key, SPIPlanPtr plan);
-static RI_CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid);
+static RI_CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid_);
 
 static void ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname,
                             int tgkind);
@@ -765,7 +765,9 @@ static Datum ri_restrict(TriggerData *trigdata, bool is_no_action) {
       StringInfoData intersectbuf;
       StringInfoData replacementsbuf;
       char *pk_only =
-          pk_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE ? "" : "ONLY ";
+          (char *)(pk_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE
+                       ? ""
+                       : "ONLY ");
 
       quoteOneName(attname,
                    RIAttName(fk_rel, riinfo->fk_attnums[riinfo->nkeys - 1]));
@@ -2791,9 +2793,9 @@ static bool ri_KeysEqual(Relation rel, TupleTableSlot *oldslot,
  *
  * NB: we have already checked that neither value is null.
  */
-static bool ri_CompareWithCast(Oid eq_opr, Oid typeid, Oid collid, Datum lhs,
+static bool ri_CompareWithCast(Oid eq_opr, Oid typeid_, Oid collid, Datum lhs,
                                Datum rhs) {
-  RI_CompareHashEntry *entry = ri_HashCompareOp(eq_opr, typeid);
+  RI_CompareHashEntry *entry = ri_HashCompareOp(eq_opr, typeid_);
 
   /* Do we need to cast the values? */
   if (OidIsValid(entry->cast_func_finfo.fn_oid)) {
@@ -2833,7 +2835,7 @@ static bool ri_CompareWithCast(Oid eq_opr, Oid typeid, Oid collid, Datum lhs,
  * See if we know how to compare two values, and create a new hash entry
  * if not.
  */
-static RI_CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid) {
+static RI_CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid_) {
   RI_CompareKey key;
   RI_CompareHashEntry *entry;
   bool found;
@@ -2849,7 +2851,7 @@ static RI_CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid) {
    * contains no struct padding.
    */
   key.eq_opr = eq_opr;
-  key.typeid = typeid;
+  key.typeid_ = typeid_;
   entry = (RI_CompareHashEntry *)hash_search(ri_compare_cache, &key, HASH_ENTER,
                                              &found);
   if (!found)
@@ -2881,11 +2883,11 @@ static RI_CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid) {
      */
     op_input_types(eq_opr, &lefttype, &righttype);
     Assert(lefttype == righttype);
-    if (typeid == lefttype)
+    if (typeid_ == lefttype)
       castfunc = InvalidOid; /* simplest case */
     else {
-      pathtype =
-          find_coercion_pathway(lefttype, typeid, COERCION_IMPLICIT, &castfunc);
+      pathtype = find_coercion_pathway(lefttype, typeid_, COERCION_IMPLICIT,
+                                       &castfunc);
       if (pathtype != COERCION_PATH_FUNC &&
           pathtype != COERCION_PATH_RELABELTYPE) {
         /*
@@ -2894,9 +2896,9 @@ static RI_CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid) {
          * special cases such as RECORD; find_coercion_pathway
          * currently doesn't subsume these special cases.
          */
-        if (!IsBinaryCoercible(typeid, lefttype))
+        if (!IsBinaryCoercible(typeid_, lefttype))
           elog(ERROR, "no conversion function from %s to %s",
-               format_type_be(typeid), format_type_be(lefttype));
+               format_type_be(typeid_), format_type_be(lefttype));
       }
     }
     if (OidIsValid(castfunc))

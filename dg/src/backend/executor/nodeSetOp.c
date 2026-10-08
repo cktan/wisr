@@ -390,7 +390,8 @@ static void setop_fill_hash_table(SetOpState *setopstate) {
     /* Find or build hashtable entry for this tuple's group */
     entry = LookupTupleHashEntry(hashtable, outerslot, &isnew, NULL);
 
-    pergroup = TupleHashEntryGetAdditional(hashtable, entry);
+    pergroup =
+        (SetOpStatePerGroup)TupleHashEntryGetAdditional(hashtable, entry);
     /* If new tuple group, initialize counts to zero */
     if (isnew) {
       pergroup->numLeft = 0;
@@ -428,7 +429,7 @@ static void setop_fill_hash_table(SetOpState *setopstate) {
       /* Advance the counts if entry is already present */
       if (entry) {
         SetOpStatePerGroup pergroup =
-            TupleHashEntryGetAdditional(hashtable, entry);
+            (SetOpStatePerGroup)TupleHashEntryGetAdditional(hashtable, entry);
 
         pergroup->numRight++;
       }
@@ -478,7 +479,8 @@ static TupleTableSlot *setop_retrieve_hash_table(SetOpState *setopstate) {
      * See if we should emit any copies of this tuple, and if so return
      * the first copy.
      */
-    pergroup = TupleHashEntryGetAdditional(hashtable, entry);
+    pergroup =
+        (SetOpStatePerGroup)TupleHashEntryGetAdditional(hashtable, entry);
     set_output_count(setopstate, pergroup);
 
     if (setopstate->numOutput > 0) {

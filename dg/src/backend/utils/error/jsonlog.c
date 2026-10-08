@@ -16,8 +16,8 @@
 #include "postgres.h"
 
 #include "access/xact.h"
-#include "lib/stringinfo.h"
 #include "libpq/libpq-be.h"
+#include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "postmaster/syslogger.h"
 #include "storage/lock.h"

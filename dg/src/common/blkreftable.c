@@ -224,7 +224,7 @@ static void BlockRefTableFileTerminate(BlockRefTableBuffer *buffer);
  * Create an empty block reference table.
  */
 BlockRefTable *CreateEmptyBlockRefTable(void) {
-  BlockRefTable *brtab = palloc(sizeof(BlockRefTable));
+  BlockRefTable *brtab = (BlockRefTable *)palloc(sizeof(BlockRefTable));
 
   /*
    * Even completely empty database has a few hundred relation forks, so it
@@ -542,7 +542,7 @@ BlockRefTableReader *CreateBlockRefTableReader(io_callback_fn read_callback,
   uint32 magic;
 
   /* Initialize data structure. */
-  reader = palloc0(sizeof(BlockRefTableReader));
+  reader = (BlockRefTableReader *)palloc0(sizeof(BlockRefTableReader));
   reader->buffer.io_callback = read_callback;
   reader->buffer.io_callback_arg = read_callback_arg;
   reader->error_filename = error_filename;
@@ -763,7 +763,7 @@ BlockRefTableWriter *CreateBlockRefTableWriter(io_callback_fn write_callback,
   uint32 magic = BLOCKREFTABLE_MAGIC;
 
   /* Prepare buffer and CRC check and save callbacks. */
-  writer = palloc0(sizeof(BlockRefTableWriter));
+  writer = (BlockRefTableWriter *)palloc0(sizeof(BlockRefTableWriter));
   writer->buffer.io_callback = write_callback;
   writer->buffer.io_callback_arg = write_callback_arg;
   INIT_CRC32C(writer->buffer.crc);
@@ -838,7 +838,8 @@ void DestroyBlockRefTableWriter(BlockRefTableWriter *writer) {
  */
 BlockRefTableEntry *CreateBlockRefTableEntry(RelFileLocator rlocator,
                                              ForkNumber forknum) {
-  BlockRefTableEntry *entry = palloc0(sizeof(BlockRefTableEntry));
+  BlockRefTableEntry *entry =
+      (BlockRefTableEntry *)palloc0(sizeof(BlockRefTableEntry));
 
   memcpy(&entry->key.rlocator, &rlocator, sizeof(RelFileLocator));
   entry->key.forknum = forknum;
@@ -955,15 +956,15 @@ void BlockRefTableEntryMarkBlockModified(BlockRefTableEntry *entry,
       entry->chunk_data = palloc0_array(BlockRefTableChunk, max_chunks);
     } else {
       entry->chunk_size =
-          repalloc(entry->chunk_size, sizeof(uint16) * max_chunks);
+          (uint16 *)repalloc(entry->chunk_size, sizeof(uint16) * max_chunks);
       memset(&entry->chunk_size[entry->nchunks], 0,
              extra_chunks * sizeof(uint16));
       entry->chunk_usage =
-          repalloc(entry->chunk_usage, sizeof(uint16) * max_chunks);
+          (uint16 *)repalloc(entry->chunk_usage, sizeof(uint16) * max_chunks);
       memset(&entry->chunk_usage[entry->nchunks], 0,
              extra_chunks * sizeof(uint16));
-      entry->chunk_data =
-          repalloc(entry->chunk_data, sizeof(BlockRefTableChunk) * max_chunks);
+      entry->chunk_data = (uint16 **)repalloc(
+          entry->chunk_data, sizeof(BlockRefTableChunk) * max_chunks);
       memset(&entry->chunk_data[entry->nchunks], 0,
              extra_chunks * sizeof(BlockRefTableChunk));
     }
@@ -1016,7 +1017,8 @@ void BlockRefTableEntryMarkBlockModified(BlockRefTableEntry *entry,
     unsigned j;
 
     /* Allocate a new chunk. */
-    newchunk = palloc0(MAX_ENTRIES_PER_CHUNK * sizeof(uint16));
+    newchunk =
+        (BlockRefTableChunk)palloc0(MAX_ENTRIES_PER_CHUNK * sizeof(uint16));
 
     /* Set the bit for each existing entry. */
     for (j = 0; j < entry->chunk_usage[chunkno]; ++j) {
@@ -1046,8 +1048,8 @@ void BlockRefTableEntryMarkBlockModified(BlockRefTableEntry *entry,
     unsigned newsize = entry->chunk_size[chunkno] * 2;
 
     Assert(newsize <= MAX_ENTRIES_PER_CHUNK);
-    entry->chunk_data[chunkno] =
-        repalloc(entry->chunk_data[chunkno], newsize * sizeof(uint16));
+    entry->chunk_data[chunkno] = (BlockRefTableChunk)repalloc(
+        entry->chunk_data[chunkno], newsize * sizeof(uint16));
     entry->chunk_size[chunkno] = newsize;
   }
 
@@ -1086,8 +1088,10 @@ void BlockRefTableFreeEntry(BlockRefTableEntry *entry) {
  * the on-disk tree structure.
  */
 static int BlockRefTableComparator(const void *a, const void *b) {
-  const BlockRefTableSerializedEntry *sa = a;
-  const BlockRefTableSerializedEntry *sb = b;
+  const BlockRefTableSerializedEntry *sa =
+      (const BlockRefTableSerializedEntry *)a;
+  const BlockRefTableSerializedEntry *sb =
+      (const BlockRefTableSerializedEntry *)b;
 
   if (sa->rlocator.spcOid > sb->rlocator.spcOid)
     return 1;

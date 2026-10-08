@@ -13,8 +13,8 @@
 #include "access/xlogreader.h"
 #include "lib/stringinfo.h"
 #include "nodes/execnodes.h"
-#include "storage/block.h"
 #include "storage/shm_toc.h"
+#include "storage/block.h"
 #include "utils/relcache.h"
 
 /*

@@ -240,8 +240,8 @@ Size TwoPhaseShmemSize(void) {
 void TwoPhaseShmemInit(void) {
   bool found;
 
-  TwoPhaseState = ShmemInitStruct("Prepared Transaction Table",
-                                  TwoPhaseShmemSize(), &found);
+  TwoPhaseState = (TwoPhaseStateData *)ShmemInitStruct(
+      "Prepared Transaction Table", TwoPhaseShmemSize(), &found);
   if (!IsUnderPostmaster) {
     GlobalTransaction gxacts;
     int i;
@@ -946,14 +946,14 @@ static void save_state_data(const void *data, uint32 len) {
   uint32 padlen = MAXALIGN(len);
 
   if (padlen > records.bytes_free) {
-    records.tail->next = palloc0(sizeof(StateFileChunk));
+    records.tail->next = (StateFileChunk *)palloc0(sizeof(StateFileChunk));
     records.tail = records.tail->next;
     records.tail->len = 0;
     records.tail->next = NULL;
     records.num_chunks++;
 
     records.bytes_free = Max(padlen, 512);
-    records.tail->data = palloc(records.bytes_free);
+    records.tail->data = (char *)palloc(records.bytes_free);
   }
 
   memcpy(((char *)records.tail->data) + records.tail->len, data, len);
@@ -979,12 +979,12 @@ void StartPrepare(GlobalTransaction gxact) {
   SharedInvalidationMessage *invalmsgs;
 
   /* Initialize linked list */
-  records.head = palloc0(sizeof(StateFileChunk));
+  records.head = (StateFileChunk *)palloc0(sizeof(StateFileChunk));
   records.head->len = 0;
   records.head->next = NULL;
 
   records.bytes_free = Max(sizeof(TwoPhaseFileHeader), 512);
-  records.head->data = palloc(records.bytes_free);
+  records.head->data = (char *)palloc(records.bytes_free);
 
   records.tail = records.head;
   records.num_chunks = 1;
@@ -1327,7 +1327,7 @@ static void XlogReadTwoPhaseData(XLogRecPtr lsn, char **buf, int *len) {
   if (len != NULL)
     *len = XLogRecGetDataLen(xlogreader);
 
-  *buf = palloc(sizeof(char) * XLogRecGetDataLen(xlogreader));
+  *buf = (char *)palloc(sizeof(char) * XLogRecGetDataLen(xlogreader));
   memcpy(*buf, XLogRecGetData(xlogreader),
          sizeof(char) * XLogRecGetDataLen(xlogreader));
 
@@ -1825,10 +1825,11 @@ TransactionId PrescanPreparedTransactions(TransactionId **xids_p,
       if (nxids == allocsize) {
         if (nxids == 0) {
           allocsize = 10;
-          xids = palloc(allocsize * sizeof(TransactionId));
+          xids = (TransactionId *)palloc(allocsize * sizeof(TransactionId));
         } else {
           allocsize = allocsize * 2;
-          xids = repalloc(xids, allocsize * sizeof(TransactionId));
+          xids = (TransactionId *)repalloc(xids,
+                                           allocsize * sizeof(TransactionId));
         }
       }
       xids[nxids++] = xid;

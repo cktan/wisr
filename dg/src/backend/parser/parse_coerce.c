@@ -2813,7 +2813,7 @@ CoercionPathType find_coercion_pathway(Oid targetTypeId, Oid sourceTypeId,
       break;
     default:
       elog(ERROR, "unrecognized castcontext: %d", (int)castForm->castcontext);
-      castcontext = 0; /* keep compiler quiet */
+      castcontext = (CoercionContext)0; /* keep compiler quiet */
       break;
     }
 

@@ -64,7 +64,7 @@ static Datum optionListToArray(List *options) {
   ListCell *cell;
 
   foreach (cell, options) {
-    DefElem *def = lfirst(cell);
+    DefElem *def = (DefElem *)lfirst(cell);
     const char *name;
     const char *value;
     Size len;
@@ -82,7 +82,7 @@ static Datum optionListToArray(List *options) {
 
     len = VARHDRSZ + strlen(name) + 1 + strlen(value);
     /* +1 leaves room for sprintf's trailing null */
-    t = palloc(len + 1);
+    t = (text *)palloc(len + 1);
     SET_VARSIZE(t, len);
     sprintf(VARDATA(t), "%s=%s", name, value);
 
@@ -116,7 +116,7 @@ Datum transformGenericOptions(Oid catalogId, Datum oldOptions, List *options,
   Datum result;
 
   foreach (optcell, options) {
-    DefElem *od = lfirst(optcell);
+    DefElem *od = (DefElem *)lfirst(optcell);
     ListCell *cell;
 
     /*
@@ -124,7 +124,7 @@ Datum transformGenericOptions(Oid catalogId, Datum oldOptions, List *options,
      * all cases.
      */
     foreach (cell, resultOptions) {
-      DefElem *def = lfirst(cell);
+      DefElem *def = (DefElem *)lfirst(cell);
 
       if (strcmp(def->defname, od->defname) == 0)
         break;

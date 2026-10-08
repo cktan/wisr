@@ -22,8 +22,8 @@
 
 #include <sys/time.h>
 #ifdef USE_OPENSSL
-#include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <openssl/err.h>
 #endif
 #include <netinet/tcp.h>
 

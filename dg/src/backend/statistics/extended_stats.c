@@ -421,7 +421,7 @@ static List *fetch_statentries_for_relation(Relation pg_statext, Oid relid) {
     Form_pg_statistic_ext staForm;
     List *exprs = NIL;
 
-    entry = palloc0(sizeof(StatExtEntry));
+    entry = (StatExtEntry *)palloc0(sizeof(StatExtEntry));
     staForm = (Form_pg_statistic_ext)GETSTRUCT(htup);
     entry->statOid = staForm->oid;
     entry->schema = get_namespace_name(staForm->stxnamespace);
@@ -930,7 +930,7 @@ SortItem *build_sorted_items(StatsBuildData *data, int *nitems,
         nvalues * (sizeof(Datum) + sizeof(bool));
 
   /* Allocate the memory and split it into the pieces. */
-  ptr = palloc0(len);
+  ptr = (char *)palloc0(len);
 
   /* items to sort */
   items = (SortItem *)ptr;
@@ -1893,8 +1893,8 @@ bool examine_opclause_args(List *args, Node **exprp, Const **cstp,
   /* enforced by statext_is_compatible_clause_internal */
   Assert(list_length(args) == 2);
 
-  leftop = linitial(args);
-  rightop = lsecond(args);
+  leftop = (Node *)linitial(args);
+  rightop = (Node *)lsecond(args);
 
   /* strip RelabelType from either side of the expression */
   if (IsA(leftop, RelabelType))
@@ -2283,7 +2283,7 @@ static StatsBuildData *make_build_data(Relation rel, StatExtEntry *stat,
   len += MAXALIGN(sizeof(bool *) * nkeys);
   len += nkeys * MAXALIGN(sizeof(bool) * numrows);
 
-  ptr = palloc(len);
+  ptr = (char *)palloc(len);
 
   /* set the pointers */
   result = (StatsBuildData *)ptr;

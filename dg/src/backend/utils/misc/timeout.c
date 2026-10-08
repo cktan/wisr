@@ -443,7 +443,7 @@ void InitializeTimeouts(void) {
   num_active_timeouts = 0;
 
   for (i = 0; i < MAX_TIMEOUTS; i++) {
-    all_timeouts[i].index = i;
+    all_timeouts[i].index = (TimeoutId)i;
     all_timeouts[i].active = false;
     all_timeouts[i].indicator = false;
     all_timeouts[i].timeout_handler = NULL;

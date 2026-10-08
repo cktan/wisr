@@ -451,8 +451,9 @@ void LockManagerShmemInit(void) {
    * Allocate fast-path structures.
    */
   FastPathStrongRelationLocks =
-      ShmemInitStruct("Fast Path Strong Relation Lock Data",
-                      sizeof(FastPathStrongRelationLockData), &found);
+      (volatile FastPathStrongRelationLockData *)ShmemInitStruct(
+          "Fast Path Strong Relation Lock Data",
+          sizeof(FastPathStrongRelationLockData), &found);
   if (!found)
     SpinLockInit(&FastPathStrongRelationLocks->mutex);
 }
@@ -3775,7 +3776,8 @@ xl_standby_lock *GetRunningTransactionLocks(int *nlocks) {
    * Allocating enough space for all locks in the lock table is overkill,
    * but it's more convenient and faster than having to enlarge the array.
    */
-  accessExclusiveLocks = palloc(els * sizeof(xl_standby_lock));
+  accessExclusiveLocks =
+      (xl_standby_lock *)palloc(els * sizeof(xl_standby_lock));
 
   /* Now scan the tables to copy the data */
   hash_seq_init(&seqstat, LockMethodProcLockHash);

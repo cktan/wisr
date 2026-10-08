@@ -20,11 +20,11 @@
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
-#include "catalog/partition.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_depend.h"
 #include "catalog/pg_extension.h"
 #include "catalog/pg_type.h"
+#include "catalog/partition.h"
 #include "commands/extension.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
@@ -84,7 +84,7 @@ void recordMultipleDependencies(const ObjectAddress *depender,
    */
   max_slots = Min(nreferenced,
                   MAX_CATALOG_MULTI_INSERT_BYTES / sizeof(FormData_pg_depend));
-  slot = palloc(sizeof(TupleTableSlot *) * max_slots);
+  slot = (TupleTableSlot **)palloc(sizeof(TupleTableSlot *) * max_slots);
 
   /* Don't open indexes unless we need to make an update */
   indstate = NULL;

@@ -76,7 +76,7 @@ static const astreamer_ops astreamer_extractor_ops = {
 astreamer *astreamer_plain_writer_new(char *pathname, FILE *file) {
   astreamer_plain_writer *streamer;
 
-  streamer = palloc0(sizeof(astreamer_plain_writer));
+  streamer = (astreamer_plain_writer *)palloc0(sizeof(astreamer_plain_writer));
   *((const astreamer_ops **)&streamer->base.bbs_ops) =
       &astreamer_plain_writer_ops;
 
@@ -172,7 +172,7 @@ astreamer *astreamer_extractor_new(const char *basepath,
                                    void (*report_output_file)(const char *)) {
   astreamer_extractor *streamer;
 
-  streamer = palloc0(sizeof(astreamer_extractor));
+  streamer = (astreamer_extractor *)palloc0(sizeof(astreamer_extractor));
   *((const astreamer_ops **)&streamer->base.bbs_ops) = &astreamer_extractor_ops;
   streamer->basepath = pstrdup(basepath);
   streamer->link_map = link_map;

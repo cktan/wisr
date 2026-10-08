@@ -124,7 +124,8 @@ DestReceiver *CreateTupleQueueDestReceiver(shm_mq_handle *handle) {
  * Create a tuple queue reader.
  */
 TupleQueueReader *CreateTupleQueueReader(shm_mq_handle *handle) {
-  TupleQueueReader *reader = palloc0(sizeof(TupleQueueReader));
+  TupleQueueReader *reader =
+      (TupleQueueReader *)palloc0(sizeof(TupleQueueReader));
 
   reader->queue = handle;
 

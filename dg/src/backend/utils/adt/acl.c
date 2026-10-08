@@ -122,7 +122,7 @@ static Oid convert_server_name(text *servername);
 static AclMode convert_server_priv_string(text *priv_type_text);
 static Oid convert_tablespace_name(text *tablespacename);
 static AclMode convert_tablespace_priv_string(text *priv_type_text);
-static Oid convert_type_name(text *typename);
+static Oid convert_type_name(text *typename_);
 static AclMode convert_type_priv_string(text *priv_type_text);
 static AclMode convert_parameter_priv_string(text *priv_text);
 static AclMode convert_largeobject_priv_string(text *priv_type_text);
@@ -586,7 +586,8 @@ Datum aclitemout(PG_FUNCTION_ARGS) {
   HeapTuple htup;
   unsigned i;
 
-  out = palloc(strlen("=/") + 2 * N_ACL_RIGHTS + 2 * (2 * NAMEDATALEN + 2) + 1);
+  out = (char *)palloc(strlen("=/") + 2 * N_ACL_RIGHTS +
+                       2 * (2 * NAMEDATALEN + 2) + 1);
 
   p = out;
   *p = '\0';
@@ -825,7 +826,7 @@ Acl *acldefault(ObjectType objtype, Oid ownerId) {
 Datum acldefault_sql(PG_FUNCTION_ARGS) {
   char objtypec = PG_GETARG_CHAR(0);
   Oid owner = PG_GETARG_OID(1);
-  ObjectType objtype = 0;
+  ObjectType objtype = (ObjectType)0;
 
   switch (objtypec) {
   case 'c':
@@ -1380,7 +1381,7 @@ int aclmembers(const Acl *acl, Oid **roleids) {
   check_acl(acl);
 
   /* Allocate the worst-case space requirement */
-  list = palloc(ACL_NUM(acl) * 2 * sizeof(Oid));
+  list = (Oid *)palloc(ACL_NUM(acl) * 2 * sizeof(Oid));
   acldat = ACL_DAT(acl);
 
   /*
@@ -3954,7 +3955,7 @@ static AclMode convert_tablespace_priv_string(text *priv_type_text) {
  */
 Datum has_type_privilege_name_name(PG_FUNCTION_ARGS) {
   Name username = PG_GETARG_NAME(0);
-  text *typename = PG_GETARG_TEXT_PP(1);
+  text *typename_ = PG_GETARG_TEXT_PP(1);
   text *priv_type_text = PG_GETARG_TEXT_PP(2);
   Oid roleid;
   Oid typeoid;
@@ -3962,7 +3963,7 @@ Datum has_type_privilege_name_name(PG_FUNCTION_ARGS) {
   AclResult aclresult;
 
   roleid = get_role_oid_or_public(NameStr(*username));
-  typeoid = convert_type_name(typename);
+  typeoid = convert_type_name(typename_);
   mode = convert_type_priv_string(priv_type_text);
 
   aclresult = object_aclcheck(TypeRelationId, typeoid, roleid, mode);
@@ -3977,7 +3978,7 @@ Datum has_type_privilege_name_name(PG_FUNCTION_ARGS) {
  *		current_user is assumed
  */
 Datum has_type_privilege_name(PG_FUNCTION_ARGS) {
-  text *typename = PG_GETARG_TEXT_PP(0);
+  text *typename_ = PG_GETARG_TEXT_PP(0);
   text *priv_type_text = PG_GETARG_TEXT_PP(1);
   Oid roleid;
   Oid typeoid;
@@ -3985,7 +3986,7 @@ Datum has_type_privilege_name(PG_FUNCTION_ARGS) {
   AclResult aclresult;
 
   roleid = GetUserId();
-  typeoid = convert_type_name(typename);
+  typeoid = convert_type_name(typename_);
   mode = convert_type_priv_string(priv_type_text);
 
   aclresult = object_aclcheck(TypeRelationId, typeoid, roleid, mode);
@@ -4052,13 +4053,13 @@ Datum has_type_privilege_id(PG_FUNCTION_ARGS) {
  */
 Datum has_type_privilege_id_name(PG_FUNCTION_ARGS) {
   Oid roleid = PG_GETARG_OID(0);
-  text *typename = PG_GETARG_TEXT_PP(1);
+  text *typename_ = PG_GETARG_TEXT_PP(1);
   text *priv_type_text = PG_GETARG_TEXT_PP(2);
   Oid typeoid;
   AclMode mode;
   AclResult aclresult;
 
-  typeoid = convert_type_name(typename);
+  typeoid = convert_type_name(typename_);
   mode = convert_type_priv_string(priv_type_text);
 
   aclresult = object_aclcheck(TypeRelationId, typeoid, roleid, mode);
@@ -4097,8 +4098,8 @@ Datum has_type_privilege_id_id(PG_FUNCTION_ARGS) {
 /*
  * Given a type name expressed as a string, look it up and return Oid
  */
-static Oid convert_type_name(text *typename) {
-  char *typname = text_to_cstring(typename);
+static Oid convert_type_name(text *typename_) {
+  char *typname = text_to_cstring(typename_);
   Oid oid;
 
   oid = DatumGetObjectId(

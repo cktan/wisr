@@ -149,7 +149,7 @@ Node *ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
    */
   nargs = 0;
   foreach (l, fargs) {
-    Node *arg = lfirst(l);
+    Node *arg = (Node *)lfirst(l);
     Oid argtype = exprType(arg);
 
     if (argtype == VOIDOID && IsA(arg, Param) && !is_column &&
@@ -171,7 +171,7 @@ Node *ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
    */
   argnames = NIL;
   foreach (l, fargs) {
-    Node *arg = lfirst(l);
+    Node *arg = (Node *)lfirst(l);
 
     if (IsA(arg, NamedArgExpr)) {
       NamedArgExpr *na = (NamedArgExpr *)arg;
@@ -196,7 +196,7 @@ Node *ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
   }
 
   if (fargs) {
-    first_arg = linitial(fargs);
+    first_arg = (Node *)linitial(fargs);
     Assert(first_arg != NULL);
   }
 
@@ -496,8 +496,9 @@ Node *ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
      * We interpreted it as a type coercion. coerce_type can handle these
      * cases, so why duplicate code...
      */
-    return coerce_type(pstate, linitial(fargs), actual_arg_types[0], rettype,
-                       -1, COERCION_EXPLICIT, COERCE_EXPLICIT_CALL, location);
+    return coerce_type(pstate, (Node *)linitial(fargs), actual_arg_types[0],
+                       rettype, -1, COERCION_EXPLICIT, COERCE_EXPLICIT_CALL,
+                       location);
   } else if (fdresult == FUNCDETAIL_MULTIPLE) {
     /*
      * We found multiple possible functional matches.  If we are dealing
@@ -1403,7 +1404,7 @@ FuncDetailCode func_get_detail(List *funcname, List *fargs, List *fargnames,
 
       if (OidIsValid(targetType)) {
         Oid sourceType = argtypes[0];
-        Node *arg1 = linitial(fargs);
+        Node *arg1 = (Node *)linitial(fargs);
         bool iscoercion;
 
         if (sourceType == UNKNOWNOID && IsA(arg1, Const)) {

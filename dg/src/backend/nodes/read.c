@@ -191,7 +191,7 @@ const char *pg_strtok(int *length) {
  *	  any protective backslashes in the token are removed.
  */
 char *debackslash(const char *token, int length) {
-  char *result = palloc(length + 1);
+  char *result = (char *)palloc(length + 1);
   char *ptr = result;
 
   while (length > 0) {
@@ -253,11 +253,11 @@ static NodeTag nodeTokenType(const char *token, int length) {
    * always treat them as single-byte tokens
    */
   else if (*token == '(')
-    retval = LEFT_PAREN;
+    retval = (NodeTag)LEFT_PAREN;
   else if (*token == ')')
-    retval = RIGHT_PAREN;
+    retval = (NodeTag)RIGHT_PAREN;
   else if (*token == '{')
-    retval = LEFT_BRACE;
+    retval = (NodeTag)LEFT_BRACE;
   else if ((length == 4 && strncmp(token, "true", 4) == 0) ||
            (length == 5 && strncmp(token, "false", 5) == 0))
     retval = T_Boolean;
@@ -266,7 +266,7 @@ static NodeTag nodeTokenType(const char *token, int length) {
   else if (*token == 'b' || *token == 'x')
     retval = T_BitString;
   else
-    retval = OTHER_TOKEN;
+    retval = (NodeTag)OTHER_TOKEN;
   return retval;
 }
 

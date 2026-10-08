@@ -894,7 +894,7 @@ static void rebuild_database_list(Oid newdb) {
     entry = pgstat_fetch_stat_dbentry(newdb);
     if (entry != NULL) {
       /* we assume it isn't found because the hash was just created */
-      db = hash_search(dbhash, &newdb, HASH_ENTER, NULL);
+      db = (avl_dbase *)hash_search(dbhash, &newdb, HASH_ENTER, NULL);
 
       /* hash_search already filled in the key */
       db->adl_score = score++;
@@ -917,7 +917,8 @@ static void rebuild_database_list(Oid newdb) {
     if (entry == NULL)
       continue;
 
-    db = hash_search(dbhash, &(avdb->adl_datid), HASH_ENTER, &found);
+    db = (avl_dbase *)hash_search(dbhash, &(avdb->adl_datid), HASH_ENTER,
+                                  &found);
 
     if (!found) {
       /* hash_search already filled in the key */
@@ -929,7 +930,7 @@ static void rebuild_database_list(Oid newdb) {
   /* finally, insert all qualifying databases not previously inserted */
   dblist = get_database_list();
   foreach (cell, dblist) {
-    avw_dbase *avdb = lfirst(cell);
+    avw_dbase *avdb = (avw_dbase *)lfirst(cell);
     avl_dbase *db;
     bool found;
     PgStat_StatDBEntry *entry;
@@ -939,7 +940,8 @@ static void rebuild_database_list(Oid newdb) {
     if (entry == NULL)
       continue;
 
-    db = hash_search(dbhash, &(avdb->adw_datid), HASH_ENTER, &found);
+    db = (avl_dbase *)hash_search(dbhash, &(avdb->adw_datid), HASH_ENTER,
+                                  &found);
     /* only update the score if the database was not already on the hash */
     if (!found) {
       /* hash_search already filled in the key */
@@ -962,11 +964,11 @@ static void rebuild_database_list(Oid newdb) {
     int i;
 
     /* put all the hash elements into an array */
-    dbary = palloc(nelems * sizeof(avl_dbase));
+    dbary = (avl_dbase *)palloc(nelems * sizeof(avl_dbase));
 
     i = 0;
     hash_seq_init(&seq, dbhash);
-    while ((db = hash_seq_search(&seq)) != NULL)
+    while ((db = (avl_dbase *)hash_seq_search(&seq)) != NULL)
       memcpy(&(dbary[i++]), db, sizeof(avl_dbase));
 
     /* sort the array */
@@ -1103,7 +1105,7 @@ static Oid do_start_worker(void) {
   for_multi_wrap = false;
   current_time = GetCurrentTimestamp();
   foreach (cell, dblist) {
-    avw_dbase *tmp = lfirst(cell);
+    avw_dbase *tmp = (avw_dbase *)lfirst(cell);
     dlist_iter iter;
 
     /* Check to see if this one is at risk of wraparound */
@@ -1929,8 +1931,8 @@ static void do_autovacuum(void) {
       av_relation *hentry;
       bool found;
 
-      hentry = hash_search(table_toast_map, &classForm->reltoastrelid,
-                           HASH_ENTER, &found);
+      hentry = (av_relation *)hash_search(
+          table_toast_map, &classForm->reltoastrelid, HASH_ENTER, &found);
 
       if (!found) {
         /* hash_search already filled in the key */
@@ -1986,7 +1988,8 @@ static void do_autovacuum(void) {
       av_relation *hentry;
       bool found;
 
-      hentry = hash_search(table_toast_map, &relid, HASH_FIND, &found);
+      hentry = (av_relation *)hash_search(table_toast_map, &relid, HASH_FIND,
+                                          &found);
       if (found && hentry->ar_hasrelopts)
         relopts = &hentry->ar_reloptions;
     }
@@ -2572,7 +2575,7 @@ static AutoVacOpts *extract_autovac_opts(HeapTuple tup,
   if (relopts == NULL)
     return NULL;
 
-  av = palloc(sizeof(AutoVacOpts));
+  av = (AutoVacOpts *)palloc(sizeof(AutoVacOpts));
   memcpy(av, &(((StdRdOptions *)relopts)->autovacuum), sizeof(AutoVacOpts));
   pfree(relopts);
 
@@ -2617,7 +2620,8 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map, TupleDesc pg_class_desc,
     av_relation *hentry;
     bool found;
 
-    hentry = hash_search(table_toast_map, &relid, HASH_FIND, &found);
+    hentry =
+        (av_relation *)hash_search(table_toast_map, &relid, HASH_FIND, &found);
     if (found && hentry->ar_hasrelopts)
       avopts = &hentry->ar_reloptions;
   }
@@ -2664,7 +2668,7 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map, TupleDesc pg_class_desc,
             ? avopts->multixact_freeze_table_age
             : default_multixact_freeze_table_age;
 
-    tab = palloc(sizeof(autovac_table));
+    tab = (autovac_table *)palloc(sizeof(autovac_table));
     tab->at_relid = relid;
     tab->at_sharedrel = classForm->relisshared;
 

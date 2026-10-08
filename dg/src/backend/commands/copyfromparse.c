@@ -59,8 +59,8 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "commands/copyapi.h"
 #include "commands/copyfrom_internal.h"
@@ -139,7 +139,8 @@ if (1) \
 } else ((void) 0)
 
 /* NOTE: there's a copy of this in copyto.c */
-static const char BinarySignature[11] = "PGCOPY\n\377\r\n\0";
+/* The eleventh byte is the string's own terminator. */
+static const char BinarySignature[11] = "PGCOPY\n\377\r\n";
 
 /* non-export function prototypes */
 static bool CopyReadLine(CopyFromState cstate, bool is_csv);
@@ -1472,8 +1473,8 @@ static int CopyReadAttributesText(CopyFromState cstate) {
     /* Make sure there is enough space for the next value */
     if (fieldno >= cstate->max_fields) {
       cstate->max_fields *= 2;
-      cstate->raw_fields =
-          repalloc(cstate->raw_fields, cstate->max_fields * sizeof(char *));
+      cstate->raw_fields = (char **)repalloc(
+          cstate->raw_fields, cstate->max_fields * sizeof(char *));
     }
 
     /* Remember start of field on both input and output sides */
@@ -1700,8 +1701,8 @@ static int CopyReadAttributesCSV(CopyFromState cstate) {
     /* Make sure there is enough space for the next value */
     if (fieldno >= cstate->max_fields) {
       cstate->max_fields *= 2;
-      cstate->raw_fields =
-          repalloc(cstate->raw_fields, cstate->max_fields * sizeof(char *));
+      cstate->raw_fields = (char **)repalloc(
+          cstate->raw_fields, cstate->max_fields * sizeof(char *));
     }
 
     /* Remember start of field on both input and output sides */

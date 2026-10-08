@@ -15,10 +15,10 @@
  */
 #include "postgres.h"
 
-#include <dirent.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include "access/htup_details.h"
 #include "access/xlog_internal.h"

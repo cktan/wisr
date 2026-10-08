@@ -1341,7 +1341,7 @@ static char *_bt_delitems_update(BTVacuumPosting *updatable, int nupdatable,
     Size offset = 0;
 
     /* Allocate, set final size for caller */
-    updatedbuf = palloc(buflen);
+    updatedbuf = (char *)palloc(buflen);
     *updatedbuflen = buflen;
     for (int i = 0; i < nupdatable; i++) {
       BTVacuumPosting vacposting = updatable[i];
@@ -1529,8 +1529,8 @@ void _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 
       /* Exact match for deletable deltids entry -- ptid gets deleted */
       if (vacposting == NULL) {
-        vacposting = palloc(offsetof(BTVacuumPostingData, deletetids) +
-                            nitem * sizeof(uint16));
+        vacposting = (BTVacuumPosting)palloc(
+            offsetof(BTVacuumPostingData, deletetids) + nitem * sizeof(uint16));
         vacposting->itup = itup;
         vacposting->updatedoffset = idxoffnum;
         vacposting->ndeletedtids = 0;
@@ -2822,7 +2822,8 @@ void _bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly) {
   vstate->maxbufsize = (int)maxbufsize;
 
   /* Allocate buffer, indicate that there are currently 0 pending pages */
-  vstate->pendingpages = palloc(sizeof(BTPendingFSM) * vstate->bufsize);
+  vstate->pendingpages =
+      (BTPendingFSM *)palloc(sizeof(BTPendingFSM) * vstate->bufsize);
   vstate->npendingpages = 0;
 }
 
@@ -2938,8 +2939,8 @@ static void _bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
       newbufsize = vstate->maxbufsize;
 
     vstate->bufsize = newbufsize;
-    vstate->pendingpages =
-        repalloc(vstate->pendingpages, sizeof(BTPendingFSM) * vstate->bufsize);
+    vstate->pendingpages = (BTPendingFSM *)repalloc(
+        vstate->pendingpages, sizeof(BTPendingFSM) * vstate->bufsize);
   }
 
   /* Save metadata for newly deleted page */

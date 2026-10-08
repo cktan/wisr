@@ -184,7 +184,7 @@ static void preparePresortedCols(IncrementalSortState *node) {
     fmgr_info_cxt(equalityFunc, &key->flinfo, CurrentMemoryContext);
 
     /* We can initialize the callinfo just once and re-use it */
-    key->fcinfo = palloc0(SizeForFunctionCallInfo(2));
+    key->fcinfo = (FunctionCallInfo)palloc0(SizeForFunctionCallInfo(2));
     InitFunctionCallInfoData(*key->fcinfo, &key->flinfo, 2,
                              plannode->sort.collations[i], NULL, NULL);
     key->fcinfo->args[0].isnull = false;
@@ -1140,7 +1140,8 @@ void ExecIncrementalSortInitializeDSM(IncrementalSortState *node,
 
   size = offsetof(SharedIncrementalSortInfo, sinfo) +
          pcxt->nworkers * sizeof(IncrementalSortInfo);
-  node->shared_info = shm_toc_allocate(pcxt->toc, size);
+  node->shared_info =
+      (SharedIncrementalSortInfo *)shm_toc_allocate(pcxt->toc, size);
   /* ensure any unfilled slots will contain zeroes */
   memset(node->shared_info, 0, size);
   node->shared_info->num_workers = pcxt->nworkers;
@@ -1155,8 +1156,8 @@ void ExecIncrementalSortInitializeDSM(IncrementalSortState *node,
  */
 void ExecIncrementalSortInitializeWorker(IncrementalSortState *node,
                                          ParallelWorkerContext *pwcxt) {
-  node->shared_info =
-      shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
+  node->shared_info = (SharedIncrementalSortInfo *)shm_toc_lookup(
+      pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
   node->am_worker = true;
 }
 
@@ -1175,7 +1176,7 @@ void ExecIncrementalSortRetrieveInstrumentation(IncrementalSortState *node) {
 
   size = offsetof(SharedIncrementalSortInfo, sinfo) +
          node->shared_info->num_workers * sizeof(IncrementalSortInfo);
-  si = palloc(size);
+  si = (SharedIncrementalSortInfo *)palloc(size);
   memcpy(si, node->shared_info, size);
   node->shared_info = si;
 }

@@ -432,7 +432,7 @@ static struct varlena *toast_decompress_datum(struct varlena *attr) {
    * Fetch the compression method id stored in the compression header and
    * decompress the data using the appropriate decompression routine.
    */
-  cmid = TOAST_COMPRESS_METHOD(attr);
+  cmid = (ToastCompressionId)TOAST_COMPRESS_METHOD(attr);
   switch (cmid) {
   case TOAST_PGLZ_COMPRESSION_ID:
     return pglz_decompress_datum(attr);
@@ -472,7 +472,7 @@ static struct varlena *toast_decompress_datum_slice(struct varlena *attr,
    * Fetch the compression method id stored in the compression header and
    * decompress the data slice using the appropriate decompression routine.
    */
-  cmid = TOAST_COMPRESS_METHOD(attr);
+  cmid = (ToastCompressionId)TOAST_COMPRESS_METHOD(attr);
   switch (cmid) {
   case TOAST_PGLZ_COMPRESSION_ID:
     return pglz_decompress_datum_slice(attr, slicelength);

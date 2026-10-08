@@ -27,8 +27,8 @@
  */
 #include "postgres.h"
 
-#include <fcntl.h>
 #include <sys/file.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "access/htup_details.h"
@@ -508,7 +508,7 @@ static void RelationParseRelOptions(Relation relation, HeapTuple tuple) {
    */
   if (options) {
     relation->rd_options =
-        MemoryContextAlloc(CacheMemoryContext, VARSIZE(options));
+        (bytea *)MemoryContextAlloc(CacheMemoryContext, VARSIZE(options));
     memcpy(relation->rd_options, options, VARSIZE(options));
     pfree(options);
   }
@@ -779,7 +779,7 @@ static void RelationBuildRuleLock(Relation relation) {
 
     rule->ruleId = rewrite_form->oid;
 
-    rule->event = rewrite_form->ev_type - '0';
+    rule->event = (CmdType)(rewrite_form->ev_type - '0');
     rule->enabled = rewrite_form->ev_enabled;
     rule->isInstead = rewrite_form->is_instead;
 
@@ -1036,8 +1036,8 @@ static Relation RelationBuildDesc(Oid targetRelId, bool insertIt) {
     int allocsize;
 
     allocsize = in_progress_list_maxlen * 2;
-    in_progress_list =
-        repalloc(in_progress_list, allocsize * sizeof(*in_progress_list));
+    in_progress_list = (InProgressEnt *)repalloc(
+        in_progress_list, allocsize * sizeof(*in_progress_list));
     in_progress_list_maxlen = allocsize;
   }
   in_progress_offset = in_progress_list_len++;
@@ -3717,8 +3717,8 @@ void RelationCacheInitialize(void) {
    * reserve enough in_progress_list slots for many cases
    */
   allocsize = 4;
-  in_progress_list = MemoryContextAlloc(CacheMemoryContext,
-                                        allocsize * sizeof(*in_progress_list));
+  in_progress_list = (InProgressEnt *)MemoryContextAlloc(
+      CacheMemoryContext, allocsize * sizeof(*in_progress_list));
   in_progress_list_maxlen = allocsize;
 
   /*
@@ -4984,14 +4984,14 @@ restart:
     datum = heap_getattr(indexDesc->rd_indextuple, Anum_pg_index_indexprs,
                          GetPgIndexDescriptor(), &isnull);
     if (!isnull)
-      indexExpressions = stringToNode(TextDatumGetCString(datum));
+      indexExpressions = (Node *)stringToNode(TextDatumGetCString(datum));
     else
       indexExpressions = NULL;
 
     datum = heap_getattr(indexDesc->rd_indextuple, Anum_pg_index_indpred,
                          GetPgIndexDescriptor(), &isnull);
     if (!isnull)
-      indexPredicate = stringToNode(TextDatumGetCString(datum));
+      indexPredicate = (Node *)stringToNode(TextDatumGetCString(datum));
     else
       indexPredicate = NULL;
 
@@ -5504,13 +5504,13 @@ void RelationBuildPublicationDesc(Relation relation, PublicationDesc *pubdesc) {
 
   /* Now save copy of the descriptor in the relcache entry. */
   oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
-  relation->rd_pubdesc = palloc(sizeof(PublicationDesc));
+  relation->rd_pubdesc = (PublicationDesc *)palloc(sizeof(PublicationDesc));
   memcpy(relation->rd_pubdesc, pubdesc, sizeof(PublicationDesc));
   MemoryContextSwitchTo(oldcxt);
 }
 
 static bytea **CopyIndexAttOptions(bytea **srcopts, int natts) {
-  bytea **opts = palloc(sizeof(*opts) * natts);
+  bytea **opts = (bytea **)palloc(sizeof(*opts) * natts);
 
   for (int i = 0; i < natts; i++) {
     bytea *opt = srcopts[i];
@@ -5542,7 +5542,7 @@ bytea **RelationGetIndexAttOptions(Relation relation, bool copy) {
     return copy ? CopyIndexAttOptions(opts, natts) : opts;
 
   /* Get and parse opclass options. */
-  opts = palloc0(sizeof(*opts) * natts);
+  opts = (bytea **)palloc0(sizeof(*opts) * natts);
 
   for (i = 0; i < natts; i++) {
     if (criticalRelcachesBuilt && relid != AttributeRelidNumIndexId) {
@@ -5797,7 +5797,7 @@ static bool load_relcache_init_file(bool shared) {
     if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
       goto read_failed;
     if (len > 0) {
-      rel->rd_options = palloc(len);
+      rel->rd_options = (bytea *)palloc(len);
       if (fread(rel->rd_options, 1, len, fp) != len)
         goto read_failed;
       if (len != VARSIZE(rel->rd_options))

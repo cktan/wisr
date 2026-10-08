@@ -507,7 +507,7 @@ Datum tsvector_delete_arr(PG_FUNCTION_ARGS) {
    * here we optimize things for that scenario: iterate through lexarr
    * performing binary search of each lexeme from lexarr in tsvector.
    */
-  skip_indices = palloc0(nlex * sizeof(int));
+  skip_indices = (int *)palloc0(nlex * sizeof(int));
   for (i = skip_count = 0; i < nlex; i++) {
     char *lex;
     int lex_len, lex_pos;
@@ -590,8 +590,8 @@ Datum tsvector_unnest(PG_FUNCTION_ARGS) {
        * that in two separate arrays.
        */
       posv = _POSVECPTR(tsin, arrin + i);
-      positions = palloc(posv->npos * sizeof(Datum));
-      weights = palloc(posv->npos * sizeof(Datum));
+      positions = (Datum *)palloc(posv->npos * sizeof(Datum));
+      weights = (Datum *)palloc(posv->npos * sizeof(Datum));
       for (j = 0; j < posv->npos; j++) {
         positions[j] = Int16GetDatum(WEP_GETPOS(posv->pos[j]));
         weight = 'D' - WEP_GETWEIGHT(posv->pos[j]);
@@ -1051,7 +1051,8 @@ static TSTernaryValue checkclass_str(CHKVAL *chkval, WordEntry *entry,
       /*
        * Filter position information by weights
        */
-      dptr = data->pos = palloc(sizeof(WordEntryPos) * posvec->npos);
+      dptr = data->pos =
+          (WordEntryPos *)palloc(sizeof(WordEntryPos) * posvec->npos);
       data->allocated = true;
 
       /* Is there a position with a matching weight? */
@@ -1199,10 +1200,11 @@ static TSTernaryValue checkcondition_str(void *checkval, QueryOperand *val,
           while (npos + data->npos > totalpos) {
             if (totalpos == 0) {
               totalpos = 256;
-              allpos = palloc(sizeof(WordEntryPos) * totalpos);
+              allpos = (WordEntryPos *)palloc(sizeof(WordEntryPos) * totalpos);
             } else {
               totalpos *= 2;
-              allpos = repalloc(allpos, sizeof(WordEntryPos) * totalpos);
+              allpos = (WordEntryPos *)repalloc(allpos, sizeof(WordEntryPos) *
+                                                            totalpos);
             }
           }
 
@@ -2025,7 +2027,8 @@ static void insertStatEntry(MemoryContext persistentContext, TSVectorStat *stat,
     stat->maxdepth = depth;
 
   if (node == NULL) {
-    node = MemoryContextAlloc(persistentContext, STATENTRYHDRSZ + we->len);
+    node = (StatEntry *)MemoryContextAlloc(persistentContext,
+                                           STATENTRYHDRSZ + we->len);
     node->left = node->right = NULL;
     node->ndoc = 1;
     node->nentry = n;
@@ -2083,7 +2086,8 @@ static TSVectorStat *ts_accum(MemoryContext persistentContext,
   uint32 i, nbit = 0, offset;
 
   if (stat == NULL) { /* Init in first */
-    stat = MemoryContextAllocZero(persistentContext, sizeof(TSVectorStat));
+    stat = (TSVectorStat *)MemoryContextAllocZero(persistentContext,
+                                                  sizeof(TSVectorStat));
     stat->maxdepth = 1;
   }
 
@@ -2117,7 +2121,8 @@ static void ts_setup_firstcall(FunctionCallInfo fcinfo,
 
   oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-  stat->stack = palloc0(sizeof(StatEntry *) * (stat->maxdepth + 1));
+  stat->stack =
+      (StatEntry **)palloc0(sizeof(StatEntry *) * (stat->maxdepth + 1));
   stat->stackpos = 0;
 
   node = stat->root;
@@ -2194,7 +2199,7 @@ static Datum ts_process_call(FuncCallContext *funcctx) {
     char nentry[16];
     HeapTuple tuple;
 
-    values[0] = palloc(entry->lenlexeme + 1);
+    values[0] = (char *)palloc(entry->lenlexeme + 1);
     memcpy(values[0], entry->lexeme, entry->lenlexeme);
     (values[0])[entry->lenlexeme] = '\0';
     sprintf(ndoc, "%d", entry->ndoc);
@@ -2239,7 +2244,8 @@ static TSVectorStat *ts_stat_sql(MemoryContext persistentContext, text *txt,
     ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                     errmsg("ts_stat query must return one tsvector column")));
 
-  stat = MemoryContextAllocZero(persistentContext, sizeof(TSVectorStat));
+  stat = (TSVectorStat *)MemoryContextAllocZero(persistentContext,
+                                                sizeof(TSVectorStat));
   stat->maxdepth = 1;
 
   if (ws) {

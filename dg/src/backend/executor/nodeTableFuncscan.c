@@ -176,8 +176,9 @@ TableFuncScanState *ExecInitTableFuncScan(TableFuncScan *node, EState *estate,
   scanstate->notnulls = tf->notnulls;
 
   /* these are allocated now and initialized later */
-  scanstate->in_functions = palloc(sizeof(FmgrInfo) * tupdesc->natts);
-  scanstate->typioparams = palloc(sizeof(Oid) * tupdesc->natts);
+  scanstate->in_functions =
+      (FmgrInfo *)palloc(sizeof(FmgrInfo) * tupdesc->natts);
+  scanstate->typioparams = (Oid *)palloc(sizeof(Oid) * tupdesc->natts);
 
   /*
    * Fill in the necessary fmgr infos.
@@ -370,7 +371,7 @@ static void tfuncInitialize(TableFuncScanState *tstate, ExprContext *econtext,
     Form_pg_attribute att = TupleDescAttr(tupdesc, colno);
 
     if (colno != ordinalitycol) {
-      ExprState *colexpr = lfirst(lc1);
+      ExprState *colexpr = (ExprState *)lfirst(lc1);
 
       if (colexpr != NULL) {
         value = ExecEvalExpr(colexpr, econtext, &isnull);

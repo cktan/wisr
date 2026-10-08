@@ -31,7 +31,7 @@
 static void setNamespaceForMergeWhen(ParseState *pstate,
                                      MergeWhenClause *mergeWhenClause,
                                      Index targetRTI, Index sourceRTI);
-static void setNamespaceVisibilityForRTE(List *namespace, RangeTblEntry *rte,
+static void setNamespaceVisibilityForRTE(List *namespace_, RangeTblEntry *rte,
                                          bool rel_visible, bool cols_visible);
 
 /*
@@ -374,11 +374,11 @@ Query *transformMergeStmt(ParseState *pstate, MergeStmt *stmt) {
   return qry;
 }
 
-static void setNamespaceVisibilityForRTE(List *namespace, RangeTblEntry *rte,
+static void setNamespaceVisibilityForRTE(List *namespace_, RangeTblEntry *rte,
                                          bool rel_visible, bool cols_visible) {
   ListCell *lc;
 
-  foreach (lc, namespace) {
+  foreach (lc, namespace_) {
     ParseNamespaceItem *nsitem = (ParseNamespaceItem *)lfirst(lc);
 
     if (nsitem->p_rte == rte) {

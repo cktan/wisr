@@ -20,8 +20,8 @@
 #include "postgres.h"
 
 #include <signal.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "miscadmin.h"
 #ifdef PROFILE_PID_DIR

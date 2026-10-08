@@ -25,8 +25,8 @@
  */
 #include "postgres.h"
 
-#include <sys/stat.h>
 #include <time.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "access/xlog.h"
@@ -39,8 +39,8 @@
 #include "postmaster/auxprocess.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/pgarch.h"
-#include "storage/aio_subsys.h"
 #include "storage/condition_variable.h"
+#include "storage/aio_subsys.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
@@ -239,7 +239,7 @@ void PgArchiverMain(const void *startup_data, size_t startup_data_len) {
   PgArch->pgprocno = MyProcNumber;
 
   /* Create workspace for pgarch_readyXlog() */
-  arch_files = palloc(sizeof(struct arch_files_state));
+  arch_files = (arch_files_state *)palloc(sizeof(struct arch_files_state));
   arch_files->arch_files_size = 0;
 
   /* Initialize our max-heap for prioritizing files to archive. */

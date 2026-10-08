@@ -45,8 +45,8 @@
 #include "catalog/partition.h"
 #include "commands/matview.h"
 #include "commands/trigger.h"
-#include "executor/execPartition.h"
 #include "executor/executor.h"
+#include "executor/execPartition.h"
 #include "executor/nodeSubplan.h"
 #include "foreign/fdwapi.h"
 #include "mb/pg_wchar.h"
@@ -1262,7 +1262,7 @@ ResultRelInfo *ExecGetTriggerResultRel(EState *estate, Oid relid,
 
   /* Search through the query result relations */
   foreach (l, estate->es_opened_result_relations) {
-    rInfo = lfirst(l);
+    rInfo = (ResultRelInfo *)lfirst(l);
     if (RelationGetRelid(rInfo->ri_RelationDesc) == relid &&
         rInfo->ri_RootResultRelInfo == rootRelInfo)
       return rInfo;
@@ -1468,12 +1468,12 @@ void ExecCloseResultRelations(EState *estate) {
    * ri_ancestorResultRels.
    */
   foreach (l, estate->es_opened_result_relations) {
-    ResultRelInfo *resultRelInfo = lfirst(l);
+    ResultRelInfo *resultRelInfo = (ResultRelInfo *)lfirst(l);
     ListCell *lc;
 
     ExecCloseIndices(resultRelInfo);
     foreach (lc, resultRelInfo->ri_ancestorResultRels) {
-      ResultRelInfo *rInfo = lfirst(lc);
+      ResultRelInfo *rInfo = (ResultRelInfo *)lfirst(lc);
 
       /*
        * Ancestors with RTI > 0 (should only be the root ancestor) are
@@ -1676,7 +1676,7 @@ static const char *ExecRelCheck(ResultRelInfo *resultRelInfo,
       if (!check[i].ccenforced)
         continue;
 
-      checkconstr = stringToNode(check[i].ccbin);
+      checkconstr = (Expr *)stringToNode(check[i].ccbin);
       checkconstr =
           (Expr *)expand_generated_columns_in_expr((Node *)checkconstr, rel, 1);
       resultRelInfo->ri_CheckConstraintExprs[i] =

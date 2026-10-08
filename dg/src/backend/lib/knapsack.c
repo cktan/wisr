@@ -24,8 +24,8 @@
  */
 #include "postgres.h"
 
-#include <limits.h>
 #include <math.h>
+#include <limits.h>
 
 #include "lib/knapsack.h"
 #include "nodes/bitmapset.h"
@@ -61,8 +61,8 @@ Bitmapset *DiscreteKnapsack(int max_weight, int num_items, int *item_weights,
   Assert(max_weight >= 0);
   Assert(num_items > 0 && item_weights);
 
-  values = palloc((1 + max_weight) * sizeof(double));
-  sets = palloc((1 + max_weight) * sizeof(Bitmapset *));
+  values = (double *)palloc((1 + max_weight) * sizeof(double));
+  sets = (Bitmapset **)palloc((1 + max_weight) * sizeof(Bitmapset *));
 
   for (i = 0; i <= max_weight; ++i) {
     values[i] = 0;

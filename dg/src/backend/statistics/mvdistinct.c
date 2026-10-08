@@ -89,8 +89,8 @@ MVNDistinct *statext_ndistinct_build(double totalrows, StatsBuildData *data) {
   int numattrs = data->nattnums;
   int numcombs = num_combinations(numattrs);
 
-  result =
-      palloc(offsetof(MVNDistinct, items) + numcombs * sizeof(MVNDistinctItem));
+  result = (MVNDistinct *)palloc(offsetof(MVNDistinct, items) +
+                                 numcombs * sizeof(MVNDistinctItem));
   result->magic = STATS_NDISTINCT_MAGIC;
   result->type = STATS_NDISTINCT_TYPE_BASIC;
   result->nitems = numcombs;
@@ -107,7 +107,7 @@ MVNDistinct *statext_ndistinct_build(double totalrows, StatsBuildData *data) {
       MVNDistinctItem *item = &result->items[itemcnt];
       int j;
 
-      item->attributes = palloc(sizeof(AttrNumber) * k);
+      item->attributes = (AttrNumber *)palloc(sizeof(AttrNumber) * k);
       item->nattributes = k;
 
       /* translate the indexes to attnums */
@@ -280,8 +280,8 @@ MVNDistinct *statext_ndistinct_deserialize(bytea *data) {
    * Allocate space for the ndistinct items (no space for each item's
    * attnos: those live in bitmapsets allocated separately)
    */
-  ndistinct = palloc0(MAXALIGN(offsetof(MVNDistinct, items)) +
-                      (ndist.nitems * sizeof(MVNDistinctItem)));
+  ndistinct = (MVNDistinct *)palloc0(MAXALIGN(offsetof(MVNDistinct, items)) +
+                                     (ndist.nitems * sizeof(MVNDistinctItem)));
   ndistinct->magic = ndist.magic;
   ndistinct->type = ndist.type;
   ndistinct->nitems = ndist.nitems;

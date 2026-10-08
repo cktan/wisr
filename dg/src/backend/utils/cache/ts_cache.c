@@ -230,7 +230,7 @@ TSDictionaryCacheEntry *lookup_ts_dictionary_cache(Oid dictId) {
      */
     HeapTuple tpdict, tptmpl;
     Form_pg_ts_dict dict;
-    Form_pg_ts_template template;
+    Form_pg_ts_template template_;
     MemoryContext saveCtx;
 
     tpdict = SearchSysCache1(TSDICTOID, ObjectIdGetDatum(dictId));
@@ -252,14 +252,14 @@ TSDictionaryCacheEntry *lookup_ts_dictionary_cache(Oid dictId) {
     if (!HeapTupleIsValid(tptmpl))
       elog(ERROR, "cache lookup failed for text search template %u",
            dict->dicttemplate);
-    template = (Form_pg_ts_template)GETSTRUCT(tptmpl);
+    template_ = (Form_pg_ts_template)GETSTRUCT(tptmpl);
 
     /*
      * Sanity checks
      */
-    if (!OidIsValid(template->tmpllexize))
+    if (!OidIsValid(template_->tmpllexize))
       elog(ERROR, "text search template %u has no lexize method",
-           template->tmpllexize);
+           template_->tmpllexize);
 
     /*
      * OK, create or clear out the hashtable entry
@@ -296,9 +296,9 @@ TSDictionaryCacheEntry *lookup_ts_dictionary_cache(Oid dictId) {
       MemoryContextCopyAndSetIdentifier(saveCtx, NameStr(dict->dictname));
     }
 
-    entry->lexizeOid = template->tmpllexize;
+    entry->lexizeOid = template_->tmpllexize;
 
-    if (OidIsValid(template->tmplinit)) {
+    if (OidIsValid(template_->tmplinit)) {
       List *dictoptions;
       Datum opt;
       bool isnull;
@@ -318,7 +318,7 @@ TSDictionaryCacheEntry *lookup_ts_dictionary_cache(Oid dictId) {
         dictoptions = deserialize_deflist(opt);
 
       entry->dictData = DatumGetPointer(
-          OidFunctionCall1(template->tmplinit, PointerGetDatum(dictoptions)));
+          OidFunctionCall1(template_->tmplinit, PointerGetDatum(dictoptions)));
 
       MemoryContextSwitchTo(oldcontext);
     }

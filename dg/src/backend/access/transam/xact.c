@@ -621,7 +621,8 @@ static void AssignTransactionId(TransactionState s) {
     TransactionState *parents;
     size_t parentOffset = 0;
 
-    parents = palloc(sizeof(TransactionState) * s->nestingLevel);
+    parents = (TransactionStateData **)palloc(sizeof(TransactionState) *
+                                              s->nestingLevel);
     while (p != NULL && !FullTransactionIdIsValid(p->fullTransactionId)) {
       parents[parentOffset++] = p;
       p = p->parent;
@@ -1566,11 +1567,11 @@ static void AtSubCommit_childXids(void) {
      * bytes of grandchild XIDs.
      */
     if (s->parent->childXids == NULL)
-      new_childXids = MemoryContextAlloc(
+      new_childXids = (TransactionId *)MemoryContextAlloc(
           TopTransactionContext, new_maxChildXids * sizeof(TransactionId));
     else
-      new_childXids = repalloc(s->parent->childXids,
-                               new_maxChildXids * sizeof(TransactionId));
+      new_childXids = (TransactionId *)repalloc(
+          s->parent->childXids, new_maxChildXids * sizeof(TransactionId));
 
     s->parent->childXids = new_childXids;
     s->parent->maxChildXids = new_maxChildXids;
@@ -5206,7 +5207,7 @@ void SerializeTransactionState(Size maxsize, char *start_address) {
          maxsize);
 
   /* Copy them to our scratch space. */
-  workspace = palloc(nxids * sizeof(TransactionId));
+  workspace = (TransactionId *)palloc(nxids * sizeof(TransactionId));
   for (s = CurrentTransactionState; s != NULL; s = s->parent) {
     if (FullTransactionIdIsValid(s->fullTransactionId))
       workspace[i++] = XidFromFullTransactionId(s->fullTransactionId);

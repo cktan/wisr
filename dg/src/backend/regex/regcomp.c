@@ -417,10 +417,10 @@ int pg_regcomp(regex_t *re, const chr *string, size_t len, int flags,
   re->re_csize = sizeof(chr);
   re->re_collation = collation;
   re->re_guts = NULL;
-  re->re_fns = VS(&functions);
+  re->re_fns = (char *)VS(&functions);
 
   /* more complex setup, malloced things */
-  re->re_guts = VS(MALLOC(sizeof(struct guts)));
+  re->re_guts = (char *)VS(MALLOC(sizeof(struct guts)));
   if (re->re_guts == NULL)
     return freev(v, REG_ESPACE);
   g = (struct guts *)re->re_guts;
@@ -2416,9 +2416,9 @@ stid(struct subre *t, char *buf, size_t bufsize) {
 }
 #endif /* REG_DEBUG */
 
-#include "regc_color.c"
-#include "regc_cvec.c"
 #include "regc_lex.c"
-#include "regc_locale.c"
+#include "regc_color.c"
 #include "regc_nfa.c"
+#include "regc_cvec.c"
 #include "regc_pg_locale.c"
+#include "regc_locale.c"

@@ -3658,7 +3658,7 @@ Datum hash_array(PG_FUNCTION_ARGS) {
        * modify typentry, since that points directly into the type
        * cache.
        */
-      record_typentry = palloc0(sizeof(*record_typentry));
+      record_typentry = (TypeCacheEntry *)palloc0(sizeof(*record_typentry));
       record_typentry->type_id = element_type;
 
       /* fill in what we need below */
@@ -4011,7 +4011,7 @@ Datum arraycontained(PG_FUNCTION_ARGS) {
  */
 ArrayIterator array_create_iterator(ArrayType *arr, int slice_ndim,
                                     ArrayMetaState *mstate) {
-  ArrayIterator iterator = palloc0(sizeof(ArrayIteratorData));
+  ArrayIterator iterator = (ArrayIterator)palloc0(sizeof(ArrayIteratorData));
 
   /*
    * Sanity-check inputs --- caller should have got this right already
@@ -5164,7 +5164,7 @@ Datum generate_subscripts(PG_FUNCTION_ARGS) {
 
   funcctx = SRF_PERCALL_SETUP();
 
-  fctx = funcctx->user_fctx;
+  fctx = (generate_subscripts_fctx *)funcctx->user_fctx;
 
   if (fctx->lower <= fctx->upper) {
     if (!fctx->reverse)
@@ -5481,7 +5481,7 @@ Datum array_unnest(PG_FUNCTION_ARGS) {
 
   /* stuff done on every call of the function */
   funcctx = SRF_PERCALL_SETUP();
-  fctx = funcctx->user_fctx;
+  fctx = (array_unnest_fctx *)funcctx->user_fctx;
 
   if (fctx->nextelem < fctx->numelems) {
     int offset = fctx->nextelem++;
@@ -5517,7 +5517,7 @@ Datum array_unnest_support(PG_FUNCTION_ARGS) {
       Node *arg1;
 
       /* We can use estimated argument values here */
-      arg1 = estimate_expression_value(req->root, linitial(args));
+      arg1 = estimate_expression_value(req->root, (Node *)linitial(args));
 
       req->rows = estimate_array_length(req->root, arg1);
       ret = (Node *)req;

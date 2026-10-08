@@ -17,8 +17,8 @@
 #include "postgres_fe.h"
 #endif
 
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "common/file_utils.h"
 
@@ -78,7 +78,8 @@ bool rmtree(const char *path, bool rmtopdir) {
        * avoid using more than one file descriptor at a time.
        */
       if (dirnames_size == dirnames_capacity) {
-        dirnames = repalloc(dirnames, sizeof(char *) * dirnames_capacity * 2);
+        dirnames =
+            (char **)repalloc(dirnames, sizeof(char *) * dirnames_capacity * 2);
         dirnames_capacity *= 2;
       }
       dirnames[dirnames_size++] = pstrdup(pathbuf);

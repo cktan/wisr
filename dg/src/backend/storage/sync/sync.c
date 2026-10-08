@@ -14,9 +14,9 @@
  */
 #include "postgres.h"
 
+#include <unistd.h>
 #include <fcntl.h>
 #include <sys/file.h>
-#include <unistd.h>
 
 #include "access/clog.h"
 #include "access/commit_ts.h"
@@ -474,7 +474,7 @@ void RememberSyncRequest(const FileTag *ftag, SyncRequestType type) {
     MemoryContext oldcxt = MemoryContextSwitchTo(pendingOpsCxt);
     PendingUnlinkEntry *entry;
 
-    entry = palloc(sizeof(PendingUnlinkEntry));
+    entry = (PendingUnlinkEntry *)palloc(sizeof(PendingUnlinkEntry));
     entry->tag = *ftag;
     entry->cycle_ctr = checkpoint_cycle_ctr;
     entry->canceled = false;

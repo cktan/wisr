@@ -256,7 +256,7 @@ void transform_MERGE_to_join(Query *parse) {
 
   /* source rel (expect exactly one -- see transformMergeStmt()) */
   Assert(list_length(parse->jointree->fromlist) == 1);
-  source = linitial(parse->jointree->fromlist);
+  source = (Node *)linitial(parse->jointree->fromlist);
 
   /*
    * index of source rel (expect either a RangeTblRef or a JoinExpr -- see
@@ -490,8 +490,8 @@ static Node *pull_up_sublinks_jointree_recurse(PlannerInfo *root, Node *jtnode,
       Node *newchild;
       Relids childrelids;
 
-      newchild =
-          pull_up_sublinks_jointree_recurse(root, lfirst(l), &childrelids);
+      newchild = pull_up_sublinks_jointree_recurse(root, (Node *)lfirst(l),
+                                                   &childrelids);
       newfromlist = lappend(newfromlist, newchild);
       frelids = bms_join(frelids, childrelids);
     }
@@ -930,7 +930,8 @@ Query *expand_virtual_generated_columns(PlannerInfo *root) {
       /* this flag will be set below, if needed */
       rvcontext.wrap_option = REPLACE_WRAP_NONE;
       /* initialize cache array with indexes 0 .. length(tlist) */
-      rvcontext.rv_cache = palloc0((list_length(tlist) + 1) * sizeof(Node *));
+      rvcontext.rv_cache =
+          (Node **)palloc0((list_length(tlist) + 1) * sizeof(Node *));
 
       /*
        * If the query uses grouping sets, we need a PlaceHolderVar for
@@ -1080,8 +1081,8 @@ static Node *pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
     Assert(containing_appendrel == NULL);
     /* Recursively transform all the child nodes */
     foreach (l, f->fromlist) {
-      lfirst(l) =
-          pull_up_subqueries_recurse(root, lfirst(l), lowest_outer_join, NULL);
+      lfirst(l) = pull_up_subqueries_recurse(root, (Node *)lfirst(l),
+                                             lowest_outer_join, NULL);
     }
   } else if (IsA(jtnode, JoinExpr)) {
     JoinExpr *j = (JoinExpr *)jtnode;
@@ -1308,8 +1309,8 @@ static Node *pull_up_simple_subquery(PlannerInfo *root, Node *jtnode,
   /* this flag will be set below, if needed */
   rvcontext.wrap_option = REPLACE_WRAP_NONE;
   /* initialize cache array with indexes 0 .. length(tlist) */
-  rvcontext.rv_cache =
-      palloc0((list_length(subquery->targetList) + 1) * sizeof(Node *));
+  rvcontext.rv_cache = (Node **)palloc0(
+      (list_length(subquery->targetList) + 1) * sizeof(Node *));
 
   /*
    * If the parent query uses grouping sets, we need a PlaceHolderVar for
@@ -1779,7 +1780,7 @@ static Node *pull_up_simple_values(PlannerInfo *root, Node *jtnode,
    * Need a modifiable copy of the VALUES list to hack on, just in case it's
    * multiply referenced.
    */
-  values_list = copyObject(linitial(rte->values_lists));
+  values_list = (List *)copyObject(linitial(rte->values_lists));
 
   /*
    * The VALUES RTE can't contain any Vars of level zero, let alone any that
@@ -1808,7 +1809,8 @@ static Node *pull_up_simple_values(PlannerInfo *root, Node *jtnode,
   rvcontext.varno = varno;
   rvcontext.wrap_option = REPLACE_WRAP_NONE;
   /* initialize cache array with indexes 0 .. length(tlist) */
-  rvcontext.rv_cache = palloc0((list_length(tlist) + 1) * sizeof(Node *));
+  rvcontext.rv_cache =
+      (Node **)palloc0((list_length(tlist) + 1) * sizeof(Node *));
 
   /*
    * Replace all of the top query's references to the RTE's outputs with
@@ -1970,8 +1972,8 @@ static Node *pull_up_constant_function(PlannerInfo *root, Node *jtnode,
   /* this flag will be set below, if needed */
   rvcontext.wrap_option = REPLACE_WRAP_NONE;
   /* initialize cache array with indexes 0 .. length(tlist) */
-  rvcontext.rv_cache =
-      palloc0((list_length(rvcontext.targetlist) + 1) * sizeof(Node *));
+  rvcontext.rv_cache = (Node **)palloc0(
+      (list_length(rvcontext.targetlist) + 1) * sizeof(Node *));
 
   /*
    * If the parent query uses grouping sets, we need a PlaceHolderVar for
@@ -2102,7 +2104,7 @@ static bool is_safe_append_member(Query *subquery) {
       return false;
     if (list_length(jtnode->fromlist) != 1)
       return false;
-    jtnode = linitial(jtnode->fromlist);
+    jtnode = (FromExpr *)linitial(jtnode->fromlist);
   }
   if (!IsA(jtnode, RangeTblRef))
     return false;
@@ -2133,8 +2135,8 @@ static bool jointree_contains_lateral_outer_refs(PlannerInfo *root,
 
     /* First, recurse to check child joins */
     foreach (l, f->fromlist) {
-      if (jointree_contains_lateral_outer_refs(root, lfirst(l), restricted,
-                                               safe_upper_varnos))
+      if (jointree_contains_lateral_outer_refs(root, (Node *)lfirst(l),
+                                               restricted, safe_upper_varnos))
         return true;
     }
 
@@ -2228,7 +2230,7 @@ static void perform_pullup_replace_vars(PlannerInfo *root,
   }
   if (parse->mergeActionList) {
     foreach (lc, parse->mergeActionList) {
-      MergeAction *action = lfirst(lc);
+      MergeAction *action = (MergeAction *)lfirst(lc);
 
       action->qual = pullup_replace_vars(action->qual, rvcontext);
       action->targetList =
@@ -2330,7 +2332,7 @@ static void replace_vars_in_jointree(Node *jtnode,
     ListCell *l;
 
     foreach (l, f->fromlist)
-      replace_vars_in_jointree(lfirst(l), context);
+      replace_vars_in_jointree((Node *)lfirst(l), context);
     f->quals = pullup_replace_vars(f->quals, context);
   } else if (IsA(jtnode, JoinExpr)) {
     JoinExpr *j = (JoinExpr *)jtnode;
@@ -2829,7 +2831,8 @@ void reduce_outer_joins(PlannerInfo *root) {
    * they'll each need a different setting of except_relids.
    */
   foreach (lc, state2.partial_reduced) {
-    reduce_outer_joins_partial_state *statep = lfirst(lc);
+    reduce_outer_joins_partial_state *statep =
+        (reduce_outer_joins_partial_state *)lfirst(lc);
     Relids full_join_relids = bms_make_singleton(statep->full_join_rti);
 
     root->parse = (Query *)remove_nulling_relids(
@@ -2867,7 +2870,7 @@ static reduce_outer_joins_pass1_state *reduce_outer_joins_pass1(Node *jtnode) {
     foreach (l, f->fromlist) {
       reduce_outer_joins_pass1_state *sub_state;
 
-      sub_state = reduce_outer_joins_pass1(lfirst(l));
+      sub_state = reduce_outer_joins_pass1((Node *)lfirst(l));
       result->relids = bms_add_members(result->relids, sub_state->relids);
       result->contains_outer |= sub_state->contains_outer;
       result->sub_states = lappend(result->sub_states, sub_state);
@@ -2940,10 +2943,11 @@ static void reduce_outer_joins_pass2(Node *jtnode,
     /* And recurse --- but only into interesting subtrees */
     Assert(list_length(f->fromlist) == list_length(state1->sub_states));
     forboth(l, f->fromlist, s, state1->sub_states) {
-      reduce_outer_joins_pass1_state *sub_state = lfirst(s);
+      reduce_outer_joins_pass1_state *sub_state =
+          (reduce_outer_joins_pass1_state *)lfirst(s);
 
       if (sub_state->contains_outer)
-        reduce_outer_joins_pass2(lfirst(l), sub_state, state2, root,
+        reduce_outer_joins_pass2((Node *)lfirst(l), sub_state, state2, root,
                                  pass_nonnullable_rels, pass_forced_null_vars);
     }
     bms_free(pass_nonnullable_rels);
@@ -2952,8 +2956,10 @@ static void reduce_outer_joins_pass2(Node *jtnode,
     JoinExpr *j = (JoinExpr *)jtnode;
     int rtindex = j->rtindex;
     JoinType jointype = j->jointype;
-    reduce_outer_joins_pass1_state *left_state = linitial(state1->sub_states);
-    reduce_outer_joins_pass1_state *right_state = lsecond(state1->sub_states);
+    reduce_outer_joins_pass1_state *left_state =
+        (reduce_outer_joins_pass1_state *)linitial(state1->sub_states);
+    reduce_outer_joins_pass1_state *right_state =
+        (reduce_outer_joins_pass1_state *)lsecond(state1->sub_states);
 
     /* Can we simplify this join? */
     switch (jointype) {
@@ -3013,8 +3019,10 @@ static void reduce_outer_joins_pass2(Node *jtnode,
       j->larg = j->rarg;
       j->rarg = tmparg;
       jointype = JOIN_LEFT;
-      right_state = linitial(state1->sub_states);
-      left_state = lsecond(state1->sub_states);
+      right_state =
+          (reduce_outer_joins_pass1_state *)linitial(state1->sub_states);
+      left_state =
+          (reduce_outer_joins_pass1_state *)lsecond(state1->sub_states);
     }
 
     /*
@@ -3147,7 +3155,8 @@ static void report_reduced_full_join(reduce_outer_joins_pass2_state *state2,
                                      int rtindex, Relids relids) {
   reduce_outer_joins_partial_state *statep;
 
-  statep = palloc(sizeof(reduce_outer_joins_partial_state));
+  statep = (reduce_outer_joins_partial_state *)palloc(
+      sizeof(reduce_outer_joins_partial_state));
   statep->full_join_rti = rtindex;
   statep->unreduced_side = relids;
   state2->partial_reduced = lappend(state2->partial_reduced, statep);
@@ -3825,9 +3834,9 @@ Relids get_relids_in_jointree(Node *jtnode, bool include_outer_joins,
     ListCell *l;
 
     foreach (l, f->fromlist) {
-      result = bms_join(result,
-                        get_relids_in_jointree(lfirst(l), include_outer_joins,
-                                               include_inner_joins));
+      result = bms_join(result, get_relids_in_jointree((Node *)lfirst(l),
+                                                       include_outer_joins,
+                                                       include_inner_joins));
     }
   } else if (IsA(jtnode, JoinExpr)) {
     JoinExpr *j = (JoinExpr *)jtnode;
@@ -3881,7 +3890,7 @@ static Node *find_jointree_node_for_rel(Node *jtnode, int relid) {
     ListCell *l;
 
     foreach (l, f->fromlist) {
-      jtnode = find_jointree_node_for_rel(lfirst(l), relid);
+      jtnode = find_jointree_node_for_rel((Node *)lfirst(l), relid);
       if (jtnode)
         return jtnode;
     }
@@ -3939,7 +3948,7 @@ static void get_nullingrels_recurse(Node *jtnode, Relids upper_nullingrels,
     ListCell *l;
 
     foreach (l, f->fromlist) {
-      get_nullingrels_recurse(lfirst(l), upper_nullingrels, info);
+      get_nullingrels_recurse((Node *)lfirst(l), upper_nullingrels, info);
     }
   } else if (IsA(jtnode, JoinExpr)) {
     JoinExpr *j = (JoinExpr *)jtnode;

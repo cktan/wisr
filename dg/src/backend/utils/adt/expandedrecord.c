@@ -885,8 +885,8 @@ void deconstruct_expanded_record(ExpandedRecordHeader *erh) {
      * To save a palloc cycle, we allocate both the Datum and isnull
      * arrays in one palloc chunk.
      */
-    chunk = MemoryContextAlloc(erh->hdr.eoh_context,
-                               nfields * (sizeof(Datum) + sizeof(bool)));
+    chunk = (char *)MemoryContextAlloc(
+        erh->hdr.eoh_context, nfields * (sizeof(Datum) + sizeof(bool)));
     dvalues = (Datum *)chunk;
     dnulls = (bool *)(chunk + nfields * sizeof(Datum));
     erh->dvalues = dvalues;

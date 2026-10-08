@@ -227,7 +227,7 @@ Datum eqsel(PG_FUNCTION_ARGS) {
  */
 static double eqsel_internal(PG_FUNCTION_ARGS, bool negate) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
   int varRelid = PG_GETARG_INT32(3);
   Oid collation = PG_GET_COLLATION();
@@ -241,8 +241,8 @@ static double eqsel_internal(PG_FUNCTION_ARGS, bool negate) {
    * operator, then convert to <> via "1.0 - eq_selectivity - nullfrac".
    */
   if (negate) {
-    operator= get_negator(operator);
-    if (!OidIsValid(operator)) {
+    operator_ = get_negator(operator_);
+    if (!OidIsValid(operator_)) {
       /* Use default selectivity (should we raise an error instead?) */
       return 1.0 - DEFAULT_EQ_SEL;
     }
@@ -262,11 +262,11 @@ static double eqsel_internal(PG_FUNCTION_ARGS, bool negate) {
    * in the query.)
    */
   if (IsA(other, Const))
-    selec = var_eq_const(&vardata, operator, collation,
+    selec = var_eq_const(&vardata, operator_, collation,
                          ((Const *)other)->constvalue,
                          ((Const *)other)->constisnull, varonleft, negate);
   else
-    selec = var_eq_non_const(&vardata, operator, collation, other, varonleft,
+    selec = var_eq_non_const(&vardata, operator_, collation, other, varonleft,
                              negate);
 
   ReleaseVariableStats(vardata);
@@ -536,7 +536,7 @@ Datum neqsel(PG_FUNCTION_ARGS) {
  * it will return an approximate estimate based on assuming that the constant
  * value falls in the middle of the bin identified by binary search.
  */
-static double scalarineqsel(PlannerInfo *root, Oid operator, bool isgt,
+static double scalarineqsel(PlannerInfo *root, Oid operator_, bool isgt,
                             bool iseq, Oid collation, VariableStatData *vardata,
                             Datum constval, Oid consttype) {
   Form_pg_statistic stats;
@@ -624,7 +624,7 @@ static double scalarineqsel(PlannerInfo *root, Oid operator, bool isgt,
   }
   stats = (Form_pg_statistic)GETSTRUCT(vardata->statsTuple);
 
-  fmgr_info(get_opcode(operator), &opproc);
+  fmgr_info(get_opcode(operator_), &opproc);
 
   /*
    * If we have most-common-values info, add up the fractions of the MCV
@@ -640,7 +640,7 @@ static double scalarineqsel(PlannerInfo *root, Oid operator, bool isgt,
    * compute the resulting contribution to selectivity.
    */
   hist_selec =
-      ineq_histogram_selectivity(root, vardata, operator, & opproc, isgt, iseq,
+      ineq_histogram_selectivity(root, vardata, operator_, &opproc, isgt, iseq,
                                  collation, constval, consttype);
 
   /*
@@ -1280,7 +1280,7 @@ double ineq_histogram_selectivity(PlannerInfo *root, VariableStatData *vardata,
  */
 static Datum scalarineqsel_wrapper(PG_FUNCTION_ARGS, bool isgt, bool iseq) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
   int varRelid = PG_GETARG_INT32(3);
   Oid collation = PG_GET_COLLATION();
@@ -1322,8 +1322,8 @@ static Datum scalarineqsel_wrapper(PG_FUNCTION_ARGS, bool isgt, bool iseq) {
    * Force the var to be on the left to simplify logic in scalarineqsel.
    */
   if (!varonleft) {
-    operator= get_commutator(operator);
-    if (!operator) {
+    operator_ = get_commutator(operator_);
+    if (!operator_) {
       /* Use default selectivity (should we raise an error instead?) */
       ReleaseVariableStats(vardata);
       PG_RETURN_FLOAT8(DEFAULT_INEQ_SEL);
@@ -1332,7 +1332,7 @@ static Datum scalarineqsel_wrapper(PG_FUNCTION_ARGS, bool isgt, bool iseq) {
   }
 
   /* The rest of the work is done by scalarineqsel(). */
-  selec = scalarineqsel(root, operator, isgt, iseq, collation, &vardata,
+  selec = scalarineqsel(root, operator_, isgt, iseq, collation, &vardata,
                         constval, consttype);
 
   ReleaseVariableStats(vardata);
@@ -1645,7 +1645,7 @@ static Node *strip_array_coercion(Node *node) {
 Selectivity scalararraysel(PlannerInfo *root, ScalarArrayOpExpr *clause,
                            bool is_join_clause, int varRelid, JoinType jointype,
                            SpecialJoinInfo *sjinfo) {
-  Oid operator= clause->opno;
+  Oid operator_ = clause->opno;
   bool useOr = clause->useOr;
   bool isEquality = false;
   bool isInequality = false;
@@ -1684,9 +1684,9 @@ Selectivity scalararraysel(PlannerInfo *root, ScalarArrayOpExpr *clause,
    */
   typentry = lookup_type_cache(nominal_element_type, TYPECACHE_EQ_OPR);
   if (OidIsValid(typentry->eq_opr)) {
-    if (operator== typentry->eq_opr)
+    if (operator_ == typentry->eq_opr)
       isEquality = true;
-    else if (get_negator(operator) == typentry->eq_opr)
+    else if (get_negator(operator_) == typentry->eq_opr)
       isInequality = true;
   }
 
@@ -1708,9 +1708,9 @@ Selectivity scalararraysel(PlannerInfo *root, ScalarArrayOpExpr *clause,
    * hasn't got one.
    */
   if (is_join_clause)
-    oprsel = get_oprjoin(operator);
+    oprsel = get_oprjoin(operator_);
   else
-    oprsel = get_oprrest(operator);
+    oprsel = get_oprrest(operator_);
   if (!oprsel)
     return (Selectivity)0.5;
   fmgr_info(oprsel, &oprselproc);
@@ -1785,13 +1785,13 @@ Selectivity scalararraysel(PlannerInfo *root, ScalarArrayOpExpr *clause,
       if (is_join_clause)
         s2 = DatumGetFloat8(FunctionCall5Coll(
             &oprselproc, clause->inputcollid, PointerGetDatum(root),
-            ObjectIdGetDatum(operator), PointerGetDatum(args),
+            ObjectIdGetDatum(operator_), PointerGetDatum(args),
             Int16GetDatum(jointype), PointerGetDatum(sjinfo)));
       else
-        s2 = DatumGetFloat8(
-            FunctionCall4Coll(&oprselproc, clause->inputcollid,
-                              PointerGetDatum(root), ObjectIdGetDatum(operator),
-                              PointerGetDatum(args), Int32GetDatum(varRelid)));
+        s2 = DatumGetFloat8(FunctionCall4Coll(
+            &oprselproc, clause->inputcollid, PointerGetDatum(root),
+            ObjectIdGetDatum(operator_), PointerGetDatum(args),
+            Int32GetDatum(varRelid)));
 
       if (useOr) {
         s1 = s1 + s2 - s1 * s2;
@@ -1840,13 +1840,13 @@ Selectivity scalararraysel(PlannerInfo *root, ScalarArrayOpExpr *clause,
       if (is_join_clause)
         s2 = DatumGetFloat8(FunctionCall5Coll(
             &oprselproc, clause->inputcollid, PointerGetDatum(root),
-            ObjectIdGetDatum(operator), PointerGetDatum(args),
+            ObjectIdGetDatum(operator_), PointerGetDatum(args),
             Int16GetDatum(jointype), PointerGetDatum(sjinfo)));
       else
-        s2 = DatumGetFloat8(
-            FunctionCall4Coll(&oprselproc, clause->inputcollid,
-                              PointerGetDatum(root), ObjectIdGetDatum(operator),
-                              PointerGetDatum(args), Int32GetDatum(varRelid)));
+        s2 = DatumGetFloat8(FunctionCall4Coll(
+            &oprselproc, clause->inputcollid, PointerGetDatum(root),
+            ObjectIdGetDatum(operator_), PointerGetDatum(args),
+            Int32GetDatum(varRelid)));
 
       if (useOr) {
         s1 = s1 + s2 - s1 * s2;
@@ -1882,12 +1882,12 @@ Selectivity scalararraysel(PlannerInfo *root, ScalarArrayOpExpr *clause,
     if (is_join_clause)
       s2 = DatumGetFloat8(FunctionCall5Coll(
           &oprselproc, clause->inputcollid, PointerGetDatum(root),
-          ObjectIdGetDatum(operator), PointerGetDatum(args),
+          ObjectIdGetDatum(operator_), PointerGetDatum(args),
           Int16GetDatum(jointype), PointerGetDatum(sjinfo)));
     else
       s2 = DatumGetFloat8(
           FunctionCall4Coll(&oprselproc, clause->inputcollid,
-                            PointerGetDatum(root), ObjectIdGetDatum(operator),
+                            PointerGetDatum(root), ObjectIdGetDatum(operator_),
                             PointerGetDatum(args), Int32GetDatum(varRelid)));
     s1 = useOr ? 0.0 : 1.0;
 
@@ -2039,7 +2039,7 @@ Selectivity rowcomparesel(PlannerInfo *root, RowCompareExpr *clause,
  */
 Datum eqjoinsel(PG_FUNCTION_ARGS) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
 
 #ifdef NOT_USED
@@ -2072,7 +2072,7 @@ Datum eqjoinsel(PG_FUNCTION_ARGS) {
   nd1 = get_variable_numdistinct(&vardata1, &isdefault1);
   nd2 = get_variable_numdistinct(&vardata2, &isdefault2);
 
-  opfuncoid = get_opcode(operator);
+  opfuncoid = get_opcode(operator_);
 
   memset(&sslot1, 0, sizeof(sslot1));
   memset(&sslot2, 0, sizeof(sslot2));
@@ -2133,7 +2133,7 @@ Datum eqjoinsel(PG_FUNCTION_ARGS) {
                              nd2, isdefault1, isdefault2, &sslot1, &sslot2,
                              stats1, stats2, have_mcvs1, have_mcvs2, inner_rel);
     else {
-      Oid commop = get_commutator(operator);
+      Oid commop = get_commutator(operator_);
       Oid commopfuncoid = OidIsValid(commop) ? get_opcode(commop) : InvalidOid;
 
       selec = eqjoinsel_semi(commopfuncoid, collation, &vardata2, &vardata1,
@@ -2521,7 +2521,7 @@ static double eqjoinsel_semi(Oid opfuncoid, Oid collation,
  */
 Datum neqjoinsel(PG_FUNCTION_ARGS) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
   JoinType jointype = (JoinType)PG_GETARG_INT16(3);
   SpecialJoinInfo *sjinfo = (SpecialJoinInfo *)PG_GETARG_POINTER(4);
@@ -2565,7 +2565,7 @@ Datum neqjoinsel(PG_FUNCTION_ARGS) {
      * We want 1 - eqjoinsel() where the equality operator is the one
      * associated with this != operator, that is, its negator.
      */
-    Oid eqop = get_negator(operator);
+    Oid eqop = get_negator(operator_);
 
     if (eqop) {
       result = DatumGetFloat8(DirectFunctionCall5Coll(
@@ -2875,14 +2875,14 @@ fail:
 
 Datum matchingsel(PG_FUNCTION_ARGS) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
   int varRelid = PG_GETARG_INT32(3);
   Oid collation = PG_GET_COLLATION();
   double selec;
 
   /* Use generic restriction selectivity logic. */
-  selec = generic_restriction_selectivity(root, operator, collation, args,
+  selec = generic_restriction_selectivity(root, operator_, collation, args,
                                           varRelid, DEFAULT_MATCHING_SEL);
 
   PG_RETURN_FLOAT8((float8)selec);
@@ -3538,7 +3538,7 @@ List *estimate_multivariate_bucketsize(PlannerInfo *root, RelOptInfo *inner,
 
     /* Collect unmatched clauses as otherclauses. */
     forboth(lc1, origin_varinfos, lc2, origin_rinfos) {
-      GroupVarInfo *vinfo = lfirst(lc1);
+      GroupVarInfo *vinfo = (GroupVarInfo *)lfirst(lc1);
 
       if (!list_member_ptr(varinfos, vinfo))
         /* Already estimated */
@@ -5206,7 +5206,7 @@ static void examine_simple_variable(PlannerInfo *root, Var *var,
       plan_id = list_nth_int(cteroot->cte_plan_ids, ndx);
       if (plan_id <= 0)
         elog(ERROR, "no plan was made for CTE \"%s\"", rte->ctename);
-      subroot = list_nth(root->glob->subroots, plan_id - 1);
+      subroot = (PlannerInfo *)list_nth(root->glob->subroots, plan_id - 1);
     }
 
     /* If the subquery hasn't been planned yet, we have to punt */
@@ -6023,8 +6023,8 @@ static bool get_actual_variable_range(PlannerInfo *root,
       if (max && have_data) {
         /* scan in the opposite direction; all else is the same */
         have_data = get_actual_variable_endpoint(
-            heapRel, indexRel, -indexscandir, scankeys, typLen, typByVal, slot,
-            oldcontext, max);
+            heapRel, indexRel, (ScanDirection)-indexscandir, scankeys, typLen,
+            typByVal, slot, oldcontext, max);
       }
 
       /* Clean everything up */
@@ -6344,7 +6344,8 @@ void genericcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 
       if (IsA(rinfo->clause, ScalarArrayOpExpr)) {
         ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *)rinfo->clause;
-        double alength = estimate_array_length(root, lsecond(saop->args));
+        double alength =
+            estimate_array_length(root, (Node *)lsecond(saop->args));
 
         if (alength > 1)
           num_sa_scans *= alength;

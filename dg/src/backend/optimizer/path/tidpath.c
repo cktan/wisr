@@ -81,8 +81,8 @@ static bool IsBinaryTidClause(RestrictInfo *rinfo, RelOptInfo *rel) {
   /* OpExpr must have two arguments */
   if (list_length(node->args) != 2)
     return false;
-  arg1 = linitial(node->args);
-  arg2 = lsecond(node->args);
+  arg1 = (Node *)linitial(node->args);
+  arg2 = (Node *)lsecond(node->args);
 
   /* Look for CTID as either argument */
   other = NULL;
@@ -168,8 +168,8 @@ static bool IsTidEqualAnyClause(PlannerInfo *root, RestrictInfo *rinfo,
   if (!node->useOr)
     return false;
   Assert(list_length(node->args) == 2);
-  arg1 = linitial(node->args);
-  arg2 = lsecond(node->args);
+  arg1 = (Node *)linitial(node->args);
+  arg2 = (Node *)lsecond(node->args);
 
   /* CTID must be first argument */
   if (arg1 && IsA(arg1, Var) && IsCTIDVar((Var *)arg1, rel)) {

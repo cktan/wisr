@@ -331,7 +331,7 @@ static bool check_uescapechar(unsigned char escape) {
 static char *str_udeescape(const char *str, char escape, int position,
                            core_yyscan_t yyscanner) {
   const char *in;
-  char *new, *out;
+  char *new_, *out;
   size_t new_len;
   pg_wchar pair_first = 0;
   ScannerCallbackState scbstate;
@@ -341,18 +341,18 @@ static char *str_udeescape(const char *str, char escape, int position,
    * padding for Unicode conversion.
    */
   new_len = strlen(str) + MAX_UNICODE_EQUIVALENT_STRING + 1;
-  new = palloc(new_len);
+  new_ = (char *)palloc(new_len);
 
   in = str;
-  out = new;
+  out = new_;
   while (*in) {
     /* Enlarge string if needed */
-    size_t out_dist = out - new;
+    size_t out_dist = out - new_;
 
     if (out_dist > new_len - (MAX_UNICODE_EQUIVALENT_STRING + 1)) {
       new_len *= 2;
-      new = repalloc(new, new_len);
-      out = new + out_dist;
+      new_ = (char *)repalloc(new_, new_len);
+      out = new_ + out_dist;
     }
 
     if (in[0] == escape) {
@@ -440,7 +440,7 @@ static char *str_udeescape(const char *str, char escape, int position,
     goto invalid_pair;
 
   *out = '\0';
-  return new;
+  return new_;
 
   /*
    * We might get here with the error callback active, or not.  Call

@@ -666,7 +666,7 @@ void SlabFree(void *pointer) {
   /* Allow access to the chunk header. */
   VALGRIND_MAKE_MEM_DEFINED(chunk, Slab_CHUNKHDRSZ);
 
-  block = MemoryChunkGetBlock(chunk);
+  block = (SlabBlock *)MemoryChunkGetBlock(chunk);
 
   /*
    * For speed reasons we just Assert that the referenced block is good.
@@ -789,7 +789,7 @@ void *SlabRealloc(void *pointer, Size size, int flags) {
   /* Allow access to the chunk header. */
   VALGRIND_MAKE_MEM_DEFINED(chunk, Slab_CHUNKHDRSZ);
 
-  block = MemoryChunkGetBlock(chunk);
+  block = (SlabBlock *)MemoryChunkGetBlock(chunk);
 
   /* Disallow access to the chunk header. */
   VALGRIND_MAKE_MEM_NOACCESS(chunk, Slab_CHUNKHDRSZ);
@@ -823,7 +823,7 @@ MemoryContext SlabGetChunkContext(void *pointer) {
   /* Allow access to the chunk header. */
   VALGRIND_MAKE_MEM_DEFINED(chunk, Slab_CHUNKHDRSZ);
 
-  block = MemoryChunkGetBlock(chunk);
+  block = (SlabBlock *)MemoryChunkGetBlock(chunk);
 
   /* Disallow access to the chunk header. */
   VALGRIND_MAKE_MEM_NOACCESS(chunk, Slab_CHUNKHDRSZ);
@@ -846,7 +846,7 @@ Size SlabGetChunkSpace(void *pointer) {
   /* Allow access to the chunk header. */
   VALGRIND_MAKE_MEM_DEFINED(chunk, Slab_CHUNKHDRSZ);
 
-  block = MemoryChunkGetBlock(chunk);
+  block = (SlabBlock *)MemoryChunkGetBlock(chunk);
 
   /* Disallow access to the chunk header. */
   VALGRIND_MAKE_MEM_NOACCESS(chunk, Slab_CHUNKHDRSZ);

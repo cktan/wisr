@@ -212,7 +212,7 @@ void StatsShmemInit(void) {
         Assert(kind_info->shared_size != 0);
         ctl->custom_data[idx] = p;
         p += MAXALIGN(kind_info->shared_size);
-        ptr = ctl->custom_data[idx];
+        ptr = (char *)ctl->custom_data[idx];
       }
 
       kind_info->init_shmem_cb(ptr);
@@ -298,7 +298,7 @@ PgStatShared_Common *pgstat_init_entry(PgStat_Kind kind,
   if (chunk == InvalidDsaPointer)
     return NULL;
 
-  shheader = dsa_get_address(pgStatLocal.dsa, chunk);
+  shheader = (PgStatShared_Common *)dsa_get_address(pgStatLocal.dsa, chunk);
   shheader->magic = 0xdeadbeef;
 
   /* Link the new entry from the hash entry. */
@@ -313,7 +313,8 @@ static PgStatShared_Common *
 pgstat_reinit_entry(PgStat_Kind kind, PgStatShared_HashEntry *shhashent) {
   PgStatShared_Common *shheader;
 
-  shheader = dsa_get_address(pgStatLocal.dsa, shhashent->body);
+  shheader =
+      (PgStatShared_Common *)dsa_get_address(pgStatLocal.dsa, shhashent->body);
 
   /* mark as not dropped anymore */
   pg_atomic_fetch_add_u32(&shhashent->refcount, 1);
@@ -379,8 +380,8 @@ static bool pgstat_get_entry_ref_cached(PgStat_HashKey key,
   if (!found || !cache_entry->entry_ref) {
     PgStat_EntryRef *entry_ref;
 
-    cache_entry->entry_ref = entry_ref =
-        MemoryContextAlloc(pgStatSharedRefContext, sizeof(PgStat_EntryRef));
+    cache_entry->entry_ref = entry_ref = (PgStat_EntryRef *)MemoryContextAlloc(
+        pgStatSharedRefContext, sizeof(PgStat_EntryRef));
     entry_ref->shared_stats = NULL;
     entry_ref->shared_entry = NULL;
     entry_ref->pending = NULL;
@@ -464,7 +465,8 @@ PgStat_EntryRef *pgstat_get_entry_ref(PgStat_Kind kind, Oid dboid, uint64 objid,
    * Do a lookup in the hash table first - it's quite likely that the entry
    * already exists, and that way we only need a shared lock.
    */
-  shhashent = dshash_find(pgStatLocal.shared_hash, &key, false);
+  shhashent = (PgStatShared_HashEntry *)dshash_find(pgStatLocal.shared_hash,
+                                                    &key, false);
 
   if (create && !shhashent) {
     bool shfound;
@@ -474,7 +476,8 @@ PgStat_EntryRef *pgstat_get_entry_ref(PgStat_Kind kind, Oid dboid, uint64 objid,
      * lookup. If so, fall through to the same path as if we'd have if it
      * already had been created before the dshash_find() calls.
      */
-    shhashent = dshash_find_or_insert(pgStatLocal.shared_hash, &key, &shfound);
+    shhashent = (PgStatShared_HashEntry *)dshash_find_or_insert(
+        pgStatLocal.shared_hash, &key, &shfound);
     if (!shfound) {
       shheader = pgstat_init_entry(kind, shhashent);
       if (shheader == NULL) {
@@ -539,7 +542,8 @@ PgStat_EntryRef *pgstat_get_entry_ref(PgStat_Kind kind, Oid dboid, uint64 objid,
 
       return NULL;
     } else {
-      shheader = dsa_get_address(pgStatLocal.dsa, shhashent->body);
+      shheader = (PgStatShared_Common *)dsa_get_address(pgStatLocal.dsa,
+                                                        shhashent->body);
       pgstat_acquire_entry_ref(entry_ref, shhashent, shheader);
 
       return entry_ref;
@@ -577,8 +581,8 @@ static void pgstat_release_entry_ref(PgStat_HashKey key,
       /* only dropped entries can reach a 0 refcount */
       Assert(entry_ref->shared_entry->dropped);
 
-      shent = dshash_find(pgStatLocal.shared_hash,
-                          &entry_ref->shared_entry->key, true);
+      shent = (PgStatShared_HashEntry *)dshash_find(
+          pgStatLocal.shared_hash, &entry_ref->shared_entry->key, true);
       if (!shent)
         elog(ERROR, "could not find just referenced shared stats entry");
 
@@ -849,7 +853,7 @@ static void pgstat_drop_database_and_contents(Oid dboid) {
 
   /* some of the dshash entries are to be removed, take exclusive lock. */
   dshash_seq_init(&hstat, pgStatLocal.shared_hash, true);
-  while ((p = dshash_seq_next(&hstat)) != NULL) {
+  while ((p = (PgStatShared_HashEntry *)dshash_seq_next(&hstat)) != NULL) {
     if (p->dropped)
       continue;
 
@@ -919,7 +923,8 @@ bool pgstat_drop_entry_ext(PgStat_Kind kind, Oid dboid, uint64 objid,
   }
 
   /* mark entry in shared hashtable as deleted, drop if possible */
-  shent = dshash_find(pgStatLocal.shared_hash, &key, true);
+  shent = (PgStatShared_HashEntry *)dshash_find(pgStatLocal.shared_hash, &key,
+                                                true);
   if (shent) {
     if (shent->dropped) {
       if (!missing_ok)
@@ -961,7 +966,7 @@ void pgstat_drop_matching_entries(bool (*do_drop)(PgStatShared_HashEntry *,
 
   /* entries are removed, take an exclusive lock */
   dshash_seq_init(&hstat, pgStatLocal.shared_hash, true);
-  while ((ps = dshash_seq_next(&hstat)) != NULL) {
+  while ((ps = (PgStatShared_HashEntry *)dshash_seq_next(&hstat)) != NULL) {
     if (ps->dropped)
       continue;
 
@@ -1032,7 +1037,7 @@ void pgstat_reset_matching_entries(bool (*do_reset)(PgStatShared_HashEntry *,
 
   /* dshash entry is not modified, take shared lock */
   dshash_seq_init(&hstat, pgStatLocal.shared_hash, false);
-  while ((p = dshash_seq_next(&hstat)) != NULL) {
+  while ((p = (PgStatShared_HashEntry *)dshash_seq_next(&hstat)) != NULL) {
     PgStatShared_Common *header;
 
     if (p->dropped)
@@ -1041,7 +1046,7 @@ void pgstat_reset_matching_entries(bool (*do_reset)(PgStatShared_HashEntry *,
     if (!do_reset(p, match_data))
       continue;
 
-    header = dsa_get_address(pgStatLocal.dsa, p->body);
+    header = (PgStatShared_Common *)dsa_get_address(pgStatLocal.dsa, p->body);
 
     LWLockAcquire(&header->lock, LW_EXCLUSIVE);
 

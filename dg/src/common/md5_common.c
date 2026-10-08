@@ -79,7 +79,8 @@ bool pg_md5_hash(const void *buff, size_t len, char *hexsum,
     return false;
   }
 
-  if (pg_cryptohash_init(ctx) < 0 || pg_cryptohash_update(ctx, buff, len) < 0 ||
+  if (pg_cryptohash_init(ctx) < 0 ||
+      pg_cryptohash_update(ctx, (const uint8 *)buff, len) < 0 ||
       pg_cryptohash_final(ctx, sum, sizeof(sum)) < 0) {
     *errstr = pg_cryptohash_error(ctx);
     pg_cryptohash_free(ctx);
@@ -108,7 +109,8 @@ bool pg_md5_binary(const void *buff, size_t len, uint8 *outbuf,
     return false;
   }
 
-  if (pg_cryptohash_init(ctx) < 0 || pg_cryptohash_update(ctx, buff, len) < 0 ||
+  if (pg_cryptohash_init(ctx) < 0 ||
+      pg_cryptohash_update(ctx, (const uint8 *)buff, len) < 0 ||
       pg_cryptohash_final(ctx, outbuf, MD5_DIGEST_LENGTH) < 0) {
     *errstr = pg_cryptohash_error(ctx);
     pg_cryptohash_free(ctx);
@@ -134,7 +136,7 @@ bool pg_md5_encrypt(const char *passwd, const uint8 *salt, size_t salt_len,
   size_t passwd_len = strlen(passwd);
 
   /* +1 here is just to avoid risk of unportable malloc(0) */
-  char *crypt_buf = malloc(passwd_len + salt_len + 1);
+  char *crypt_buf = (char *)malloc(passwd_len + salt_len + 1);
   bool ret;
 
   if (!crypt_buf) {

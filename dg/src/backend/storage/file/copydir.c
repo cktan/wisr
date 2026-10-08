@@ -143,7 +143,7 @@ void copy_file(const char *fromfile, const char *tofile) {
 #endif
 
   /* Use palloc to ensure we get a maxaligned buffer */
-  buffer = palloc(COPY_BUF_SIZE);
+  buffer = (char *)palloc(COPY_BUF_SIZE);
 
   /*
    * Open the files

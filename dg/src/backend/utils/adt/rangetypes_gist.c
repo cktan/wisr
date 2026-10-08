@@ -238,7 +238,7 @@ Datum multirange_gist_compress(PG_FUNCTION_ARGS) {
     MultirangeType *mr = DatumGetMultirangeTypeP(entry->key);
     RangeType *r;
     TypeCacheEntry *typcache;
-    GISTENTRY *retval = palloc(sizeof(GISTENTRY));
+    GISTENTRY *retval = (GISTENTRY *)palloc(sizeof(GISTENTRY));
 
     typcache = multirange_get_typcache(fcinfo, MultirangeTypeGetOid(mr));
     r = multirange_get_union_range(typcache->rngtype, mr);
@@ -342,13 +342,13 @@ Datum range_gist_penalty(PG_FUNCTION_ARGS) {
   GISTENTRY *newentry = (GISTENTRY *)PG_GETARG_POINTER(1);
   float *penalty = (float *)PG_GETARG_POINTER(2);
   RangeType *orig = DatumGetRangeTypeP(origentry->key);
-  RangeType *new = DatumGetRangeTypeP(newentry->key);
+  RangeType *new_ = DatumGetRangeTypeP(newentry->key);
   TypeCacheEntry *typcache;
   bool has_subtype_diff;
   RangeBound orig_lower, new_lower, orig_upper, new_upper;
   bool orig_empty, new_empty;
 
-  if (RangeTypeGetOid(orig) != RangeTypeGetOid(new))
+  if (RangeTypeGetOid(orig) != RangeTypeGetOid(new_))
     elog(ERROR, "range types do not match");
 
   typcache = range_get_typcache(fcinfo, RangeTypeGetOid(orig));
@@ -356,7 +356,7 @@ Datum range_gist_penalty(PG_FUNCTION_ARGS) {
   has_subtype_diff = OidIsValid(typcache->rng_subdiff_finfo.fn_oid);
 
   range_deserialize(typcache, orig, &orig_lower, &orig_upper, &orig_empty);
-  range_deserialize(typcache, new, &new_lower, &new_upper, &new_empty);
+  range_deserialize(typcache, new_, &new_lower, &new_upper, &new_empty);
 
   /*
    * Distinct branches for handling distinct classes of ranges.  Note that
@@ -1047,16 +1047,16 @@ static void range_gist_class_split(TypeCacheEntry *typcache,
   v->spl_nright = 0;
   for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i)) {
     RangeType *range = DatumGetRangeTypeP(entryvec->vector[i].key);
-    int class;
+    int class_;
 
     /* Get class of range */
-    class = get_gist_range_class(range);
+    class_ = get_gist_range_class(range);
 
     /* Place range to appropriate page */
-    if (classes_groups[class] == SPLIT_LEFT)
+    if (classes_groups[class_] == SPLIT_LEFT)
       PLACE_LEFT(range, i);
     else {
-      Assert(classes_groups[class] == SPLIT_RIGHT);
+      Assert(classes_groups[class_] == SPLIT_RIGHT);
       PLACE_RIGHT(range, i);
     }
   }

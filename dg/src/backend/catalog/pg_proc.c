@@ -815,9 +815,9 @@ Datum fmgr_sql_validator(PG_FUNCTION_ARGS) {
       Node *n;
       List *stored_query_list;
 
-      n = stringToNode(TextDatumGetCString(tmp));
+      n = (Node *)stringToNode(TextDatumGetCString(tmp));
       if (IsA(n, List))
-        stored_query_list = linitial(castNode(List, n));
+        stored_query_list = (List *)linitial(castNode(List, n));
       else
         stored_query_list = list_make1(n);
 

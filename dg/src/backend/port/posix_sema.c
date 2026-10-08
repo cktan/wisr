@@ -28,8 +28,8 @@
 #include <fcntl.h>
 #include <semaphore.h>
 #include <signal.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "miscadmin.h"
 #include "storage/ipc.h"

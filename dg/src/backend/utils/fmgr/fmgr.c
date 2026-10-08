@@ -358,8 +358,8 @@ static void fmgr_info_C_lang(Oid functionId, FmgrInfo *finfo,
     probinstring = TextDatumGetCString(probinattr);
 
     /* Look up the function itself */
-    user_fn = load_external_function(probinstring, prosrcstring, true,
-                                     &libraryhandle);
+    user_fn = (PGFunction)load_external_function(probinstring, prosrcstring,
+                                                 true, &libraryhandle);
 
     /* Get the function information record (real or default) */
     inforec = fetch_finfo_record(libraryhandle, prosrcstring);
@@ -594,7 +594,8 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS) {
     bool isnull;
     MemoryContext oldcxt;
 
-    fcache = MemoryContextAllocZero(fcinfo->flinfo->fn_mcxt, sizeof(*fcache));
+    fcache = (fmgr_security_definer_cache *)MemoryContextAllocZero(
+        fcinfo->flinfo->fn_mcxt, sizeof(*fcache));
 
     fmgr_info_cxt_security(fcinfo->flinfo->fn_oid, &fcache->flinfo,
                            fcinfo->flinfo->fn_mcxt, true);
@@ -634,7 +635,7 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS) {
 
     fcinfo->flinfo->fn_extra = fcache;
   } else
-    fcache = fcinfo->flinfo->fn_extra;
+    fcache = (fmgr_security_definer_cache *)fcinfo->flinfo->fn_extra;
 
   /* GetUserIdAndSecContext is cheap enough that no harm in a wasted call */
   GetUserIdAndSecContext(&save_userid, &save_sec_context);
@@ -652,9 +653,9 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS) {
     GucContext context = superuser() ? PGC_SUSET : PGC_USERSET;
     GucSource source = PGC_S_SESSION;
     GucAction action = GUC_ACTION_SAVE;
-    char *name = lfirst(lc1);
-    config_handle *handle = lfirst(lc2);
-    char *value = lfirst(lc3);
+    char *name = (char *)lfirst(lc1);
+    config_handle *handle = (config_handle *)lfirst(lc2);
+    char *value = (char *)lfirst(lc3);
 
     (void)set_config_with_handle(name, handle, value, context, source,
                                  GetUserId(), action, true, 0, false);

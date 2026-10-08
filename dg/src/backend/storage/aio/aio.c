@@ -514,7 +514,7 @@ void pgaio_io_process_completion(PgAioHandle *ioh, int result) {
  */
 bool pgaio_io_was_recycled(PgAioHandle *ioh, uint64 ref_generation,
                            PgAioHandleState *state) {
-  *state = ioh->state;
+  *state = (PgAioHandleState)ioh->state;
 
   /*
    * Ensure that we don't see an earlier state of the handle than ioh->state
@@ -646,7 +646,8 @@ static void pgaio_io_reclaim(PgAioHandle *ioh) {
   pgaio_debug_io(DEBUG4, ioh,
                  "reclaiming: distilled_result: (status %s, id %u, error_data "
                  "%d), raw_result: %d",
-                 pgaio_result_status_string(ioh->distilled_result.status),
+                 pgaio_result_status_string(
+                     (PgAioResultStatus)ioh->distilled_result.status),
                  ioh->distilled_result.id, ioh->distilled_result.error_data,
                  ioh->result);
 
@@ -858,7 +859,7 @@ static const char *pgaio_io_state_get_name(PgAioHandleState s) {
 }
 
 const char *pgaio_io_get_state_name(PgAioHandle *ioh) {
-  return pgaio_io_state_get_name(ioh->state);
+  return pgaio_io_state_get_name((PgAioHandleState)ioh->state);
 }
 
 const char *pgaio_result_status_string(PgAioResultStatus rs) {

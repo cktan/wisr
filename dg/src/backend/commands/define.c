@@ -41,7 +41,7 @@ char *defGetString(DefElem *def) {
   case T_Float:
     return castNode(Float, def->arg)->fval;
   case T_Boolean:
-    return boolVal(def->arg) ? "true" : "false";
+    return (char *)(boolVal(def->arg) ? "true" : "false");
   case T_String:
     return strVal(def->arg);
   case T_TypeName:

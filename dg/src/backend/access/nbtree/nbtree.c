@@ -1564,8 +1564,8 @@ static BTVacuumPosting btreevacuumposting(BTVacState *vstate,
        * TIDs, so start maintaining metadata describing how to update
        * existing posting list tuple.
        */
-      vacposting = palloc(offsetof(BTVacuumPostingData, deletetids) +
-                          nitem * sizeof(uint16));
+      vacposting = (BTVacuumPosting)palloc(
+          offsetof(BTVacuumPostingData, deletetids) + nitem * sizeof(uint16));
 
       vacposting->itup = posting;
       vacposting->updatedoffset = updatedoffset;

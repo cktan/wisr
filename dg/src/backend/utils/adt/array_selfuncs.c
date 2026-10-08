@@ -32,27 +32,27 @@
 #define DEFAULT_OVERLAP_SEL 0.01
 
 /* Default selectivity for given operator */
-#define DEFAULT_SEL(operator) \
-	((operator) == OID_ARRAY_OVERLAP_OP ? \
+#define DEFAULT_SEL(operator_) \
+	((operator_) == OID_ARRAY_OVERLAP_OP ? \
 		DEFAULT_OVERLAP_SEL : DEFAULT_CONTAIN_SEL)
 
 static Selectivity calc_arraycontsel(VariableStatData *vardata, Datum constval,
-                                     Oid elemtype, Oid operator);
+                                     Oid elemtype, Oid operator_);
 static Selectivity mcelem_array_selec(ArrayType *array,
                                       TypeCacheEntry *typentry, Datum *mcelem,
                                       int nmcelem, float4 *numbers,
                                       int nnumbers, float4 *hist, int nhist,
-                                      Oid operator);
+                                      Oid operator_);
 static Selectivity
 mcelem_array_contain_overlap_selec(Datum *mcelem, int nmcelem, float4 *numbers,
                                    int nnumbers, Datum *array_data, int nitems,
-                                   Oid operator, TypeCacheEntry * typentry);
+                                   Oid operator_, TypeCacheEntry *typentry);
 static Selectivity mcelem_array_contained_selec(Datum *mcelem, int nmcelem,
                                                 float4 *numbers, int nnumbers,
                                                 Datum *array_data, int nitems,
                                                 float4 *hist, int nhist,
-                                                Oid operator,
-                                                TypeCacheEntry * typentry);
+                                                Oid operator_,
+                                                TypeCacheEntry *typentry);
 static float *calc_hist(const float4 *hist, int nhist, int n);
 static float *calc_distr(const float *p, int n, int m, float rest);
 static int floor_log2(uint32 n);
@@ -202,7 +202,7 @@ Selectivity scalararraysel_containment(PlannerInfo *root, Node *leftop,
  */
 Datum arraycontsel(PG_FUNCTION_ARGS) {
   PlannerInfo *root = (PlannerInfo *)PG_GETARG_POINTER(0);
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
   List *args = (List *)PG_GETARG_POINTER(2);
   int varRelid = PG_GETARG_INT32(3);
   VariableStatData vardata;
@@ -217,14 +217,14 @@ Datum arraycontsel(PG_FUNCTION_ARGS) {
    */
   if (!get_restriction_variable(root, args, varRelid, &vardata, &other,
                                 &varonleft))
-    PG_RETURN_FLOAT8(DEFAULT_SEL(operator));
+    PG_RETURN_FLOAT8(DEFAULT_SEL(operator_));
 
   /*
    * Can't do anything useful if the something is not a constant, either.
    */
   if (!IsA(other, Const)) {
     ReleaseVariableStats(vardata);
-    PG_RETURN_FLOAT8(DEFAULT_SEL(operator));
+    PG_RETURN_FLOAT8(DEFAULT_SEL(operator_));
   }
 
   /*
@@ -241,10 +241,10 @@ Datum arraycontsel(PG_FUNCTION_ARGS) {
    * var is on the left in what follows.
    */
   if (!varonleft) {
-    if (operator== OID_ARRAY_CONTAINS_OP)
-      operator= OID_ARRAY_CONTAINED_OP;
-    else if (operator== OID_ARRAY_CONTAINED_OP)
-      operator= OID_ARRAY_CONTAINS_OP;
+    if (operator_ == OID_ARRAY_CONTAINS_OP)
+      operator_ = OID_ARRAY_CONTAINED_OP;
+    else if (operator_ == OID_ARRAY_CONTAINED_OP)
+      operator_ = OID_ARRAY_CONTAINS_OP;
   }
 
   /*
@@ -257,9 +257,9 @@ Datum arraycontsel(PG_FUNCTION_ARGS) {
   if (element_typeid != InvalidOid &&
       element_typeid == get_base_element_type(vardata.vartype)) {
     selec = calc_arraycontsel(&vardata, ((Const *)other)->constvalue,
-                              element_typeid, operator);
+                              element_typeid, operator_);
   } else {
-    selec = DEFAULT_SEL(operator);
+    selec = DEFAULT_SEL(operator_);
   }
 
   ReleaseVariableStats(vardata);
@@ -274,9 +274,9 @@ Datum arraycontsel(PG_FUNCTION_ARGS) {
  */
 Datum arraycontjoinsel(PG_FUNCTION_ARGS) {
   /* For the moment this is just a stub */
-  Oid operator= PG_GETARG_OID(1);
+  Oid operator_ = PG_GETARG_OID(1);
 
-  PG_RETURN_FLOAT8(DEFAULT_SEL(operator));
+  PG_RETURN_FLOAT8(DEFAULT_SEL(operator_));
 }
 
 /*
@@ -287,7 +287,7 @@ Datum arraycontjoinsel(PG_FUNCTION_ARGS) {
  * to be used; we then pass the problem on to mcelem_array_selec().
  */
 static Selectivity calc_arraycontsel(VariableStatData *vardata, Datum constval,
-                                     Oid elemtype, Oid operator) {
+                                     Oid elemtype, Oid operator_) {
   Selectivity selec;
   TypeCacheEntry *typentry;
   FmgrInfo *cmpfunc;
@@ -296,7 +296,7 @@ static Selectivity calc_arraycontsel(VariableStatData *vardata, Datum constval,
   /* Get element type's default comparison function */
   typentry = lookup_type_cache(elemtype, TYPECACHE_CMP_PROC_FINFO);
   if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-    return DEFAULT_SEL(operator);
+    return DEFAULT_SEL(operator_);
   cmpfunc = &typentry->cmp_proc_finfo;
 
   /*
@@ -321,22 +321,22 @@ static Selectivity calc_arraycontsel(VariableStatData *vardata, Datum constval,
        * For "array <@ const" case we also need histogram of distinct
        * element counts.
        */
-      if (operator!= OID_ARRAY_CONTAINED_OP || !get_attstatsslot(
-              &hslot, vardata->statsTuple, STATISTIC_KIND_DECHIST, InvalidOid,
-              ATTSTATSSLOT_NUMBERS))
+      if (operator_ != OID_ARRAY_CONTAINED_OP ||
+          !get_attstatsslot(&hslot, vardata->statsTuple, STATISTIC_KIND_DECHIST,
+                            InvalidOid, ATTSTATSSLOT_NUMBERS))
         memset(&hslot, 0, sizeof(hslot));
 
       /* Use the most-common-elements slot for the array Var. */
       selec = mcelem_array_selec(array, typentry, sslot.values, sslot.nvalues,
                                  sslot.numbers, sslot.nnumbers, hslot.numbers,
-                                 hslot.nnumbers, operator);
+                                 hslot.nnumbers, operator_);
 
       free_attstatsslot(&hslot);
       free_attstatsslot(&sslot);
     } else {
       /* No most-common-elements info, so do without */
-      selec = mcelem_array_selec(array, typentry, NULL, 0, NULL, 0, NULL,
-                                 0, operator);
+      selec = mcelem_array_selec(array, typentry, NULL, 0, NULL, 0, NULL, 0,
+                                 operator_);
     }
 
     /*
@@ -345,8 +345,8 @@ static Selectivity calc_arraycontsel(VariableStatData *vardata, Datum constval,
     selec *= (1.0 - stats->stanullfrac);
   } else {
     /* No stats at all, so do without */
-    selec = mcelem_array_selec(array, typentry, NULL, 0, NULL, 0, NULL,
-                               0, operator);
+    selec = mcelem_array_selec(array, typentry, NULL, 0, NULL, 0, NULL, 0,
+                               operator_);
     /* we assume no nulls here, so no stanullfrac correction */
   }
 
@@ -368,7 +368,7 @@ static Selectivity mcelem_array_selec(ArrayType *array,
                                       TypeCacheEntry *typentry, Datum *mcelem,
                                       int nmcelem, float4 *numbers,
                                       int nnumbers, float4 *hist, int nhist,
-                                      Oid operator) {
+                                      Oid operator_) {
   Selectivity selec;
   int num_elems;
   Datum *elem_values;
@@ -399,7 +399,7 @@ static Selectivity mcelem_array_selec(ArrayType *array,
    * Query "column @> '{anything, null}'" matches nothing.  For the other
    * two operators, presence of a null in the constant can be ignored.
    */
-  if (null_present && operator== OID_ARRAY_CONTAINS_OP) {
+  if (null_present && operator_ == OID_ARRAY_CONTAINS_OP) {
     pfree(elem_values);
     pfree(elem_nulls);
     return (Selectivity)0.0;
@@ -410,16 +410,16 @@ static Selectivity mcelem_array_selec(ArrayType *array,
             typentry);
 
   /* Separate cases according to operator */
-  if (operator== OID_ARRAY_CONTAINS_OP || operator== OID_ARRAY_OVERLAP_OP)
+  if (operator_ == OID_ARRAY_CONTAINS_OP || operator_ == OID_ARRAY_OVERLAP_OP)
     selec = mcelem_array_contain_overlap_selec(
-        mcelem, nmcelem, numbers, nnumbers, elem_values,
-        nonnull_nitems, operator, typentry);
-  else if (operator== OID_ARRAY_CONTAINED_OP)
+        mcelem, nmcelem, numbers, nnumbers, elem_values, nonnull_nitems,
+        operator_, typentry);
+  else if (operator_ == OID_ARRAY_CONTAINED_OP)
     selec = mcelem_array_contained_selec(mcelem, nmcelem, numbers, nnumbers,
                                          elem_values, nonnull_nitems, hist,
-                                         nhist, operator, typentry);
+                                         nhist, operator_, typentry);
   else {
-    elog(ERROR, "arraycontsel called for unrecognized operator %u", operator);
+    elog(ERROR, "arraycontsel called for unrecognized operator %u", operator_);
     selec = 0.0; /* keep compiler quiet */
   }
 
@@ -448,7 +448,7 @@ static Selectivity mcelem_array_selec(ArrayType *array,
 static Selectivity
 mcelem_array_contain_overlap_selec(Datum *mcelem, int nmcelem, float4 *numbers,
                                    int nnumbers, Datum *array_data, int nitems,
-                                   Oid operator, TypeCacheEntry * typentry) {
+                                   Oid operator_, TypeCacheEntry *typentry) {
   Selectivity selec, elem_selec;
   int mcelem_index, i;
   bool use_bsearch;
@@ -479,7 +479,7 @@ mcelem_array_contain_overlap_selec(Datum *mcelem, int nmcelem, float4 *numbers,
   else
     use_bsearch = false;
 
-  if (operator== OID_ARRAY_CONTAINS_OP) {
+  if (operator_ == OID_ARRAY_CONTAINS_OP) {
     /*
      * Initial selectivity for "column @> const" query is 1.0, and it will
      * be decreased with each element of constant array.
@@ -538,7 +538,7 @@ mcelem_array_contain_overlap_selec(Datum *mcelem, int nmcelem, float4 *numbers,
      * Update overall selectivity using the current element's selectivity
      * and an assumption of element occurrence independence.
      */
-    if (operator== OID_ARRAY_CONTAINS_OP)
+    if (operator_ == OID_ARRAY_CONTAINS_OP)
       selec *= elem_selec;
     else
       selec = selec + elem_selec - selec * elem_selec;
@@ -603,8 +603,8 @@ static Selectivity mcelem_array_contained_selec(Datum *mcelem, int nmcelem,
                                                 float4 *numbers, int nnumbers,
                                                 Datum *array_data, int nitems,
                                                 float4 *hist, int nhist,
-                                                Oid operator,
-                                                TypeCacheEntry * typentry) {
+                                                Oid operator_,
+                                                TypeCacheEntry *typentry) {
   int mcelem_index, i, unique_nitems = 0;
   float selec, minfreq, nullelem_freq;
   float *dist, *mcelem_dist, *hist_part;

@@ -508,9 +508,9 @@ MVDependencies *statext_dependencies_deserialize(bytea *data) {
          VARSIZE_ANY_EXHDR(data), min_expected_size);
 
   /* allocate space for the MCV items */
-  dependencies = repalloc(dependencies,
-                          offsetof(MVDependencies, deps) +
-                              (dependencies->ndeps * sizeof(MVDependency *)));
+  dependencies = (MVDependencies *)repalloc(
+      dependencies, offsetof(MVDependencies, deps) +
+                        (dependencies->ndeps * sizeof(MVDependency *)));
 
   for (i = 0; i < dependencies->ndeps; i++) {
     double degree;
@@ -716,10 +716,10 @@ static bool dependency_is_compatible_clause(Node *clause, Index relid,
       return false;
 
     /* Make sure non-selected argument is a pseudoconstant. */
-    if (is_pseudo_constant_clause(lsecond(expr->args)))
-      clause_expr = linitial(expr->args);
-    else if (is_pseudo_constant_clause(linitial(expr->args)))
-      clause_expr = lsecond(expr->args);
+    if (is_pseudo_constant_clause((Node *)lsecond(expr->args)))
+      clause_expr = (Node *)linitial(expr->args);
+    else if (is_pseudo_constant_clause((Node *)linitial(expr->args)))
+      clause_expr = (Node *)lsecond(expr->args);
     else
       return false;
 
@@ -760,10 +760,10 @@ static bool dependency_is_compatible_clause(Node *clause, Index relid,
      * We know it's always (Var IN Const), so we assume the var is the
      * first argument, and pseudoconstant is the second one.
      */
-    if (!is_pseudo_constant_clause(lsecond(expr->args)))
+    if (!is_pseudo_constant_clause((Node *)lsecond(expr->args)))
       return false;
 
-    clause_expr = linitial(expr->args);
+    clause_expr = (Node *)linitial(expr->args);
 
     /*
      * If it's not an "=" operator, just ignore the clause, as it's not
@@ -1116,10 +1116,10 @@ static bool dependency_is_compatible_expression(Node *clause, Index relid,
       return false;
 
     /* Make sure non-selected argument is a pseudoconstant. */
-    if (is_pseudo_constant_clause(lsecond(expr->args)))
-      clause_expr = linitial(expr->args);
-    else if (is_pseudo_constant_clause(linitial(expr->args)))
-      clause_expr = lsecond(expr->args);
+    if (is_pseudo_constant_clause((Node *)lsecond(expr->args)))
+      clause_expr = (Node *)linitial(expr->args);
+    else if (is_pseudo_constant_clause((Node *)linitial(expr->args)))
+      clause_expr = (Node *)lsecond(expr->args);
     else
       return false;
 
@@ -1160,10 +1160,10 @@ static bool dependency_is_compatible_expression(Node *clause, Index relid,
      * We know it's always (Var IN Const), so we assume the var is the
      * first argument, and pseudoconstant is the second one.
      */
-    if (!is_pseudo_constant_clause(lsecond(expr->args)))
+    if (!is_pseudo_constant_clause((Node *)lsecond(expr->args)))
       return false;
 
-    clause_expr = linitial(expr->args);
+    clause_expr = (Node *)linitial(expr->args);
 
     /*
      * If it's not an "=" operator, just ignore the clause, as it's not

@@ -394,6 +394,6 @@ void ExecBitmapIndexScanRetrieveInstrumentation(BitmapIndexScanState *node) {
   /* Create a copy of SharedInfo in backend-local memory */
   size = offsetof(SharedIndexScanInstrumentation, winstrument) +
          SharedInfo->num_workers * sizeof(IndexScanInstrumentation);
-  node->biss_SharedInfo = palloc(size);
+  node->biss_SharedInfo = (SharedIndexScanInstrumentation *)palloc(size);
   memcpy(node->biss_SharedInfo, SharedInfo, size);
 }

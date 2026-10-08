@@ -15,8 +15,8 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "access/sysattr.h"
 #include "access/table.h"
@@ -681,10 +681,10 @@ void ProcessCopyOptions(ParseState *pstate, CopyFormatOptions *opts_out,
 
   /* Set defaults for omitted options */
   if (!opts_out->delim)
-    opts_out->delim = opts_out->csv_mode ? "," : "\t";
+    opts_out->delim = (char *)(opts_out->csv_mode ? "," : "\t");
 
   if (!opts_out->null_print)
-    opts_out->null_print = opts_out->csv_mode ? "" : "\\N";
+    opts_out->null_print = (char *)(opts_out->csv_mode ? "" : "\\N");
   opts_out->null_print_len = strlen(opts_out->null_print);
 
   if (opts_out->csv_mode) {

@@ -26,9 +26,9 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "access/timeline.h"
@@ -61,10 +61,10 @@
 #include "utils/datetime.h"
 #include "utils/fmgrprotos.h"
 #include "utils/guc_hooks.h"
-#include "utils/pg_lsn.h"
-#include "utils/pg_rusage.h"
 #include "utils/pgstat_internal.h"
+#include "utils/pg_lsn.h"
 #include "utils/ps_status.h"
+#include "utils/pg_rusage.h"
 
 /* Unsupported old recovery command file names (relative to $PGDATA) */
 #define RECOVERY_COMMAND_FILE	"recovery.conf"
@@ -508,7 +508,7 @@ static void EnableStandbyMode(void) {
  */
 void InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
                      bool *haveBackupLabel_ptr, bool *haveTblspcMap_ptr) {
-  XLogPageReadPrivate *private;
+  XLogPageReadPrivate *private_;
   struct stat st;
   bool wasShutdown;
   XLogRecord *record;
@@ -556,12 +556,12 @@ void InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
    * Set the WAL reading processor now, as it will be needed when reading
    * the checkpoint record required (backup_label or not).
    */
-  private = palloc0(sizeof(XLogPageReadPrivate));
+  private_ = (XLogPageReadPrivate *)palloc0(sizeof(XLogPageReadPrivate));
   xlogreader = XLogReaderAllocate(
       wal_segment_size, NULL,
       XL_ROUTINE(.page_read = &XLogPageRead, .segment_open = NULL,
                  .segment_close = wal_segment_close),
-      private);
+      private_);
   if (!xlogreader)
     ereport(ERROR,
             (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory"),
@@ -677,7 +677,7 @@ void InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
       ListCell *lc;
 
       foreach (lc, tablespaces) {
-        tablespaceinfo *ti = lfirst(lc);
+        tablespaceinfo *ti = (tablespaceinfo *)lfirst(lc);
         char *linkloc;
 
         linkloc = psprintf("%s/%u", PG_TBLSPC_DIR, ti->oid);
@@ -1349,7 +1349,7 @@ static bool read_tablespace_map(List **tablespaces) {
                         errmsg("invalid data in file \"%s\"", TABLESPACE_MAP)));
       str[n++] = '\0';
 
-      ti = palloc0(sizeof(tablespaceinfo));
+      ti = (tablespaceinfo *)palloc0(sizeof(tablespaceinfo));
       errno = 0;
       ti->oid = strtoul(str, &endp, 10);
       if (*endp != '\0' || errno == EINVAL || errno == ERANGE)
@@ -1392,7 +1392,8 @@ static bool read_tablespace_map(List **tablespaces) {
  * other things. See the EndOfWalRecoveryInfo struct for details.
  */
 EndOfWalRecoveryInfo *FinishWalRecovery(void) {
-  EndOfWalRecoveryInfo *result = palloc(sizeof(EndOfWalRecoveryInfo));
+  EndOfWalRecoveryInfo *result =
+      (EndOfWalRecoveryInfo *)palloc(sizeof(EndOfWalRecoveryInfo));
   XLogRecPtr lastRec;
   TimeLineID lastRecTLI;
   XLogRecPtr endOfLog;
@@ -1498,7 +1499,7 @@ EndOfWalRecoveryInfo *FinishWalRecovery(void) {
 
     /* Copy the valid part of the last block */
     len = endOfLog % XLOG_BLCKSZ;
-    page = palloc(len);
+    page = (char *)palloc(len);
     memcpy(page, xlogreader->readBuf, len);
 
     result->lastPageBeginPtr = pageBeginPtr;
@@ -2907,14 +2908,14 @@ static XLogRecord *ReadRecord(XLogPrefetcher *xlogprefetcher, int emode,
                               bool fetching_ckpt, TimeLineID replayTLI) {
   XLogRecord *record;
   XLogReaderState *xlogreader = XLogPrefetcherGetReader(xlogprefetcher);
-  XLogPageReadPrivate *private =
+  XLogPageReadPrivate *private_ =
       (XLogPageReadPrivate *)xlogreader->private_data;
 
   /* Pass through parameters to XLogPageRead */
-  private->fetching_ckpt = fetching_ckpt;
-  private->emode = emode;
-  private->randAccess = (xlogreader->ReadRecPtr == InvalidXLogRecPtr);
-  private->replayTLI = replayTLI;
+  private_->fetching_ckpt = fetching_ckpt;
+  private_->emode = emode;
+  private_->randAccess = (xlogreader->ReadRecPtr == InvalidXLogRecPtr);
+  private_->replayTLI = replayTLI;
 
   /* This is the first attempt to read this page. */
   lastSourceFailed = false;
@@ -3060,9 +3061,9 @@ static XLogRecord *ReadRecord(XLogPrefetcher *xlogprefetcher, int emode,
  */
 static int XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
                         int reqLen, XLogRecPtr targetRecPtr, char *readBuf) {
-  XLogPageReadPrivate *private =
+  XLogPageReadPrivate *private_ =
       (XLogPageReadPrivate *)xlogreader->private_data;
-  int emode = private->emode;
+  int emode = private_->emode;
   uint32 targetPageOff;
   XLogSegNo targetSegNo PG_USED_FOR_ASSERTS_ONLY;
   int r;
@@ -3105,8 +3106,8 @@ retry:
       return XLREAD_WOULDBLOCK;
 
     switch (WaitForWALToBecomeAvailable(
-        targetPagePtr + reqLen, private->randAccess, private->fetching_ckpt,
-        targetRecPtr, private->replayTLI, xlogreader->EndRecPtr,
+        targetPagePtr + reqLen, private_->randAccess, private_->fetching_ckpt,
+        targetRecPtr, private_->replayTLI, xlogreader->EndRecPtr,
         xlogreader->nonblocking)) {
     case XLREAD_WOULDBLOCK:
       return XLREAD_WOULDBLOCK;

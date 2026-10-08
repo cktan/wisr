@@ -231,7 +231,7 @@ void print_rt(const List *rtable) {
   printf("resno\trefname  \trelid\tinFromCl\n");
   printf("-----\t---------\t-----\t--------\n");
   foreach (l, rtable) {
-    RangeTblEntry *rte = lfirst(l);
+    RangeTblEntry *rte = (RangeTblEntry *)lfirst(l);
 
     switch (rte->rtekind) {
     case RTE_RELATION:
@@ -349,7 +349,7 @@ void print_expr(const Node *expr, const List *rtable) {
     funcname = get_func_name(e->funcid);
     printf("%s(", ((funcname != NULL) ? funcname : "(invalid function)"));
     foreach (l, e->args) {
-      print_expr(lfirst(l), rtable);
+      print_expr((const Node *)lfirst(l), rtable);
       if (lnext(e->args, l))
         printf(",");
     }

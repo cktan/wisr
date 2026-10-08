@@ -1478,8 +1478,10 @@ static void find_hash_columns(AggState *aggstate) {
      */
     maxCols = bms_num_members(colnos) + perhash->numCols;
 
-    perhash->hashGrpColIdxInput = palloc(maxCols * sizeof(AttrNumber));
-    perhash->hashGrpColIdxHash = palloc(perhash->numCols * sizeof(AttrNumber));
+    perhash->hashGrpColIdxInput =
+        (AttrNumber *)palloc(maxCols * sizeof(AttrNumber));
+    perhash->hashGrpColIdxHash =
+        (AttrNumber *)palloc(perhash->numCols * sizeof(AttrNumber));
 
     /* Add all the grouping columns to colnos */
     for (i = 0; i < perhash->numCols; i++)
@@ -1732,7 +1734,8 @@ static void hash_agg_enter_spill_mode(AggState *aggstate) {
 
     aggstate->hash_tapeset = LogicalTapeSetCreate(true, NULL, -1);
 
-    aggstate->hash_spills = palloc(sizeof(HashAggSpill) * aggstate->num_hashes);
+    aggstate->hash_spills =
+        (HashAggSpill *)palloc(sizeof(HashAggSpill) * aggstate->num_hashes);
 
     for (int setno = 0; setno < aggstate->num_hashes; setno++) {
       AggStatePerHash perhash = &aggstate->perhash[setno];
@@ -1995,7 +1998,8 @@ static void lookup_hash_entries(AggState *aggstate) {
     if (entry != NULL) {
       if (isnew)
         initialize_hash_entry(aggstate, hashtable, entry);
-      pergroup[setno] = TupleHashEntryGetAdditional(hashtable, entry);
+      pergroup[setno] =
+          (AggStatePerGroup)TupleHashEntryGetAdditional(hashtable, entry);
     } else {
       HashAggSpill *spill = &aggstate->hash_spills[setno];
       TupleTableSlot *slot = aggstate->tmpcontext->ecxt_outertuple;
@@ -2428,7 +2432,7 @@ static bool agg_refill_hash_table(AggState *aggstate) {
     return false;
 
   /* hash_batches is a stack, with the top item at the end of the list */
-  batch = llast(aggstate->hash_batches);
+  batch = (HashAggBatch *)llast(aggstate->hash_batches);
   aggstate->hash_batches = list_delete_last(aggstate->hash_batches);
 
   hash_agg_set_limits(aggstate->hashentrysize, batch->input_card,
@@ -2504,7 +2508,7 @@ static bool agg_refill_hash_table(AggState *aggstate) {
       if (isnew)
         initialize_hash_entry(aggstate, hashtable, entry);
       aggstate->hash_pergroup[batch->setno] =
-          TupleHashEntryGetAdditional(hashtable, entry);
+          (AggStatePerGroup)TupleHashEntryGetAdditional(hashtable, entry);
       advance_aggregates(aggstate);
     } else {
       if (!spill_initialized) {
@@ -2712,9 +2716,11 @@ static void hashagg_spill_init(HashAggSpill *spill, LogicalTapeSet *tapeset,
   }
 #endif
 
-  spill->partitions = palloc0(sizeof(LogicalTape *) * npartitions);
-  spill->ntuples = palloc0(sizeof(int64) * npartitions);
-  spill->hll_card = palloc0(sizeof(hyperLogLogState) * npartitions);
+  spill->partitions =
+      (LogicalTape **)palloc0(sizeof(LogicalTape *) * npartitions);
+  spill->ntuples = (int64 *)palloc0(sizeof(int64) * npartitions);
+  spill->hll_card =
+      (hyperLogLogState *)palloc0(sizeof(hyperLogLogState) * npartitions);
 
   for (int i = 0; i < npartitions; i++)
     spill->partitions[i] = LogicalTapeCreate(tapeset);
@@ -2802,7 +2808,7 @@ static Size hashagg_spill_tuple(AggState *aggstate, HashAggSpill *spill,
 static HashAggBatch *hashagg_batch_new(LogicalTape *input_tape, int setno,
                                        int64 input_tuples, double input_card,
                                        int used_bits) {
-  HashAggBatch *batch = palloc0(sizeof(HashAggBatch));
+  HashAggBatch *batch = (HashAggBatch *)palloc0(sizeof(HashAggBatch));
 
   batch->setno = setno;
   batch->used_bits = used_bits;
@@ -3041,7 +3047,7 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
     numGroupingSets = list_length(node->groupingSets);
 
     foreach (l, node->chain) {
-      Agg *agg = lfirst(l);
+      Agg *agg = (Agg *)lfirst(l);
 
       numGroupingSets = Max(numGroupingSets, list_length(agg->groupingSets));
 
@@ -3178,14 +3184,17 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
    * For each phase, prepare grouping set data and fmgr lookup data for
    * compare functions.  Accumulate all_grouped_cols in passing.
    */
-  aggstate->phases = palloc0(numPhases * sizeof(AggStatePerPhaseData));
+  aggstate->phases =
+      (AggStatePerPhase)palloc0(numPhases * sizeof(AggStatePerPhaseData));
 
   aggstate->num_hashes = numHashes;
   if (numHashes) {
-    aggstate->perhash = palloc0(sizeof(AggStatePerHashData) * numHashes);
+    aggstate->perhash =
+        (AggStatePerHash)palloc0(sizeof(AggStatePerHashData) * numHashes);
     aggstate->phases[0].numsets = 0;
-    aggstate->phases[0].gset_lengths = palloc(numHashes * sizeof(int));
-    aggstate->phases[0].grouped_cols = palloc(numHashes * sizeof(Bitmapset *));
+    aggstate->phases[0].gset_lengths = (int *)palloc(numHashes * sizeof(int));
+    aggstate->phases[0].grouped_cols =
+        (Bitmapset **)palloc(numHashes * sizeof(Bitmapset *));
   }
 
   phase = 0;
@@ -3236,12 +3245,13 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
       phasedata->numsets = num_sets = list_length(aggnode->groupingSets);
 
       if (num_sets) {
-        phasedata->gset_lengths = palloc(num_sets * sizeof(int));
-        phasedata->grouped_cols = palloc(num_sets * sizeof(Bitmapset *));
+        phasedata->gset_lengths = (int *)palloc(num_sets * sizeof(int));
+        phasedata->grouped_cols =
+            (Bitmapset **)palloc(num_sets * sizeof(Bitmapset *));
 
         i = 0;
         foreach (l, aggnode->groupingSets) {
-          int current_length = list_length(lfirst(l));
+          int current_length = list_length((const List *)lfirst(l));
           Bitmapset *cols = NULL;
 
           /* planner forces this to be correct */
@@ -3406,7 +3416,7 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
    * unchanging fields of the per-agg and per-trans data.
    */
   foreach (l, aggstate->aggs) {
-    Aggref *aggref = lfirst(l);
+    Aggref *aggref = (Aggref *)lfirst(l);
     AggStatePerAgg peragg;
     AggStatePerTrans pertrans;
     Oid aggTransFnInputTypes[FUNC_MAX_ARGS];
@@ -3930,7 +3940,7 @@ static void build_pertrans_for_aggref(AggStatePerTrans pertrans,
     Assert(numArguments > 0);
     Assert(list_length(aggref->aggdistinct) == numDistinctCols);
 
-    ops = palloc(numDistinctCols * sizeof(Oid));
+    ops = (Oid *)palloc(numDistinctCols * sizeof(Oid));
 
     i = 0;
     foreach (lc, aggref->aggdistinct)
@@ -4335,7 +4345,7 @@ void ExecAggInitializeDSM(AggState *node, ParallelContext *pcxt) {
 
   size = offsetof(SharedAggInfo, sinstrument) +
          pcxt->nworkers * sizeof(AggregateInstrumentation);
-  node->shared_info = shm_toc_allocate(pcxt->toc, size);
+  node->shared_info = (SharedAggInfo *)shm_toc_allocate(pcxt->toc, size);
   /* ensure any unfilled slots will contain zeroes */
   memset(node->shared_info, 0, size);
   node->shared_info->num_workers = pcxt->nworkers;
@@ -4349,8 +4359,8 @@ void ExecAggInitializeDSM(AggState *node, ParallelContext *pcxt) {
  * ----------------------------------------------------------------
  */
 void ExecAggInitializeWorker(AggState *node, ParallelWorkerContext *pwcxt) {
-  node->shared_info =
-      shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
+  node->shared_info = (SharedAggInfo *)shm_toc_lookup(
+      pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
 }
 
 /* ----------------------------------------------------------------
@@ -4368,7 +4378,7 @@ void ExecAggRetrieveInstrumentation(AggState *node) {
 
   size = offsetof(SharedAggInfo, sinstrument) +
          node->shared_info->num_workers * sizeof(AggregateInstrumentation);
-  si = palloc(size);
+  si = (SharedAggInfo *)palloc(size);
   memcpy(si, node->shared_info, size);
   node->shared_info = si;
 }

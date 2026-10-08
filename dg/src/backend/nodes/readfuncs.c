@@ -141,7 +141,7 @@
 #define READ_NODE_FIELD(fldname) \
 	token = pg_strtok(&length); /* skip :fldname */ \
 	(void) token; /* in case not used elsewhere */ \
-	local_node->fldname = nodeRead(NULL, 0)
+	local_node->fldname = (decltype(local_node->fldname)) nodeRead(NULL, 0)
 
 /* Read a bitmapset field */
 #define READ_BITMAPSET_FIELD(fldname) \
@@ -298,7 +298,7 @@ static A_Const *_readA_Const(void) {
   if (length == 4 && strncmp(token, "NULL", 4) == 0)
     local_node->isnull = true;
   else {
-    union ValUnion *tmp = nodeRead(NULL, 0);
+    union ValUnion *tmp = (ValUnion *)nodeRead(NULL, 0);
 
     /* To forestall valgrind complaints, copy only the valid data */
     switch (nodeTag(tmp)) {
@@ -464,7 +464,7 @@ static A_Expr *_readA_Expr(void) {
     READ_NODE_FIELD(name);
   } else if (length == 5 && strncmp(token, ":name", 5) == 0) {
     local_node->kind = AEXPR_OP;
-    local_node->name = nodeRead(NULL, 0);
+    local_node->name = (List *)nodeRead(NULL, 0);
   } else
     elog(ERROR, "unrecognized A_Expr kind: \"%.*s\"", length, token);
 

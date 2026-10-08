@@ -83,9 +83,9 @@ char *pg_clean_ascii(const char *str, int alloc_flags) {
   dstlen = strlen(str) * 4 + 1;
 
 #ifdef FRONTEND
-  dst = malloc(dstlen);
+  dst = (char *)malloc(dstlen);
 #else
-  dst = palloc_extended(dstlen, alloc_flags);
+  dst = (char *)palloc_extended(dstlen, alloc_flags);
 #endif
 
   if (!dst)

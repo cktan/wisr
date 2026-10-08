@@ -16,14 +16,14 @@
  */
 #include "postgres.h"
 
-#include <arpa/inet.h>
 #include <ctype.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <pwd.h>
+#include <fcntl.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 
 #include "catalog/pg_collation.h"
@@ -279,7 +279,7 @@ static int regcomp_auth_token(AuthToken *token, char *filename, int line_num,
     return 0; /* nothing to compile */
 
   token->regex = (regex_t *)palloc0(sizeof(regex_t));
-  wstr = palloc((strlen(token->string + 1) + 1) * sizeof(pg_wchar));
+  wstr = (pg_wchar *)palloc((strlen(token->string + 1) + 1) * sizeof(pg_wchar));
   wlen =
       pg_mb2wchar_with_len(token->string + 1, wstr, strlen(token->string + 1));
 
@@ -316,7 +316,7 @@ static int regexec_auth_token(const char *match, AuthToken *token,
 
   Assert(token->string[0] == '/' && token->regex);
 
-  wmatchstr = palloc((strlen(match) + 1) * sizeof(pg_wchar));
+  wmatchstr = (pg_wchar *)palloc((strlen(match) + 1) * sizeof(pg_wchar));
   wmatchlen = pg_mb2wchar_with_len(match, wmatchstr, strlen(match));
 
   r = pg_regexec(token->regex, wmatchstr, wmatchlen, 0, NULL, nmatch, pmatch,
@@ -480,11 +480,11 @@ static List *tokenize_expand_file(List *tokens, const char *outer_filename,
     }
 
     foreach (inc_field, tok_line->fields) {
-      List *inc_tokens = lfirst(inc_field);
+      List *inc_tokens = (List *)lfirst(inc_field);
       ListCell *inc_token;
 
       foreach (inc_token, inc_tokens) {
-        AuthToken *token = lfirst(inc_token);
+        AuthToken *token = (AuthToken *)lfirst(inc_token);
         MemoryContext oldcxt;
 
         /*
@@ -719,8 +719,8 @@ void tokenize_auth_file(const char *filename, FILE *file, List **tok_lines,
     if (err_msg == NULL && list_length(current_line) == 2) {
       AuthToken *first, *second;
 
-      first = linitial(linitial_node(List, current_line));
-      second = linitial(lsecond_node(List, current_line));
+      first = (AuthToken *)linitial(linitial_node(List, current_line));
+      second = (AuthToken *)linitial(lsecond_node(List, current_line));
 
       if (strcmp(first->string, "include") == 0) {
         tokenize_include_file(filename, second->string, tok_lines, elevel,
@@ -857,7 +857,7 @@ static bool check_role(const char *role, Oid roleid, List *tokens,
   AuthToken *tok;
 
   foreach (cell, tokens) {
-    tok = lfirst(cell);
+    tok = (AuthToken *)lfirst(cell);
     if (token_is_member_check(tok)) {
       if (is_member(roleid, tok->string + 1))
         return true;
@@ -888,7 +888,7 @@ static bool check_db(const char *dbname, const char *role, Oid roleid,
   AuthToken *tok;
 
   foreach (cell, tokens) {
-    tok = lfirst(cell);
+    tok = (AuthToken *)lfirst(cell);
     if (am_walsender && !am_db_walsender) {
       /*
        * physical replication walsender connections can only match
@@ -1190,7 +1190,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
   AuthToken *token;
   HbaLine *parsedline;
 
-  parsedline = palloc0(sizeof(HbaLine));
+  parsedline = (HbaLine *)palloc0(sizeof(HbaLine));
   parsedline->sourcefile = pstrdup(file_name);
   parsedline->linenumber = line_num;
   parsedline->rawline = pstrdup(tok_line->raw_line);
@@ -1198,7 +1198,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
   /* Check the record type. */
   Assert(tok_line->fields != NIL);
   field = list_head(tok_line->fields);
-  tokens = lfirst(field);
+  tokens = (List *)lfirst(field);
   if (tokens->length > 1) {
     ereport(elevel, (errcode(ERRCODE_CONFIG_FILE_ERROR),
                      errmsg("multiple values specified for connection type"),
@@ -1208,7 +1208,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
     *err_msg = "multiple values specified for connection type";
     return NULL;
   }
-  token = linitial(tokens);
+  token = (AuthToken *)linitial(tokens);
   if (strcmp(token->string, "local") == 0) {
     parsedline->conntype = ctLocal;
   } else if (strcmp(token->string, "host") == 0 ||
@@ -1281,9 +1281,9 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
     return NULL;
   }
   parsedline->databases = NIL;
-  tokens = lfirst(field);
+  tokens = (List *)lfirst(field);
   foreach (tokencell, tokens) {
-    AuthToken *tok = copy_auth_token(lfirst(tokencell));
+    AuthToken *tok = copy_auth_token((AuthToken *)lfirst(tokencell));
 
     /* Compile a regexp for the database token, if necessary */
     if (regcomp_auth_token(tok, file_name, line_num, err_msg, elevel))
@@ -1303,9 +1303,9 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
     return NULL;
   }
   parsedline->roles = NIL;
-  tokens = lfirst(field);
+  tokens = (List *)lfirst(field);
   foreach (tokencell, tokens) {
-    AuthToken *tok = copy_auth_token(lfirst(tokencell));
+    AuthToken *tok = copy_auth_token((AuthToken *)lfirst(tokencell));
 
     /* Compile a regexp from the role token, if necessary */
     if (regcomp_auth_token(tok, file_name, line_num, err_msg, elevel))
@@ -1325,7 +1325,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
       *err_msg = "end-of-line before IP address specification";
       return NULL;
     }
-    tokens = lfirst(field);
+    tokens = (List *)lfirst(field);
     if (tokens->length > 1) {
       ereport(elevel, (errcode(ERRCODE_CONFIG_FILE_ERROR),
                        errmsg("multiple values specified for host address"),
@@ -1335,7 +1335,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
       *err_msg = "multiple values specified for host address";
       return NULL;
     }
-    token = linitial(tokens);
+    token = (AuthToken *)linitial(tokens);
 
     if (token_is_keyword(token, "all")) {
       parsedline->ip_cmp_method = ipCmpAll;
@@ -1432,7 +1432,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
           *err_msg = "end-of-line before netmask specification";
           return NULL;
         }
-        tokens = lfirst(field);
+        tokens = (List *)lfirst(field);
         if (tokens->length > 1) {
           ereport(elevel, (errcode(ERRCODE_CONFIG_FILE_ERROR),
                            errmsg("multiple values specified for netmask"),
@@ -1441,7 +1441,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
           *err_msg = "multiple values specified for netmask";
           return NULL;
         }
-        token = linitial(tokens);
+        token = (AuthToken *)linitial(tokens);
 
         ret = pg_getaddrinfo_all(token->string, NULL, &hints, &gai_result);
         if (ret || !gai_result) {
@@ -1483,7 +1483,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
     *err_msg = "end-of-line before authentication method";
     return NULL;
   }
-  tokens = lfirst(field);
+  tokens = (List *)lfirst(field);
   if (tokens->length > 1) {
     ereport(elevel,
             (errcode(ERRCODE_CONFIG_FILE_ERROR),
@@ -1494,7 +1494,7 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
     *err_msg = "multiple values specified for authentication type";
     return NULL;
   }
-  token = linitial(tokens);
+  token = (AuthToken *)linitial(tokens);
 
   unsupauth = NULL;
   if (strcmp(token->string, "trust") == 0)
@@ -1642,11 +1642,11 @@ HbaLine *parse_hba_line(TokenizedAuthLine *tok_line, int elevel) {
 
   /* Parse remaining arguments */
   while ((field = lnext(tok_line->fields, field)) != NULL) {
-    tokens = lfirst(field);
+    tokens = (List *)lfirst(field);
     foreach (tokencell, tokens) {
       char *val;
 
-      token = lfirst(tokencell);
+      token = (AuthToken *)lfirst(tokencell);
 
       str = pstrdup(token->string);
       val = strchr(str, '=');
@@ -2132,7 +2132,7 @@ static bool parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline,
     }
 
     foreach (l, parsed_ports) {
-      if (atoi(lfirst(l)) == 0) {
+      if (atoi((const char *)lfirst(l)) == 0) {
         ereport(elevel, (errcode(ERRCODE_CONFIG_FILE_ERROR),
                          errmsg("invalid RADIUS port number: \"%s\"", val),
                          errcontext("line %d of configuration file \"%s\"",
@@ -2289,7 +2289,7 @@ static void check_hba(hbaPort *port) {
   }
 
   /* If no matching entry was found, then implicitly reject. */
-  hba = palloc0(sizeof(HbaLine));
+  hba = (HbaLine *)palloc0(sizeof(HbaLine));
   hba->auth_method = uaImplicitReject;
   port->hba = hba;
 }
@@ -2412,21 +2412,21 @@ IdentLine *parse_ident_line(TokenizedAuthLine *tok_line, int elevel) {
   Assert(tok_line->fields != NIL);
   field = list_head(tok_line->fields);
 
-  parsedline = palloc0(sizeof(IdentLine));
+  parsedline = (IdentLine *)palloc0(sizeof(IdentLine));
   parsedline->linenumber = line_num;
 
   /* Get the map token (must exist) */
-  tokens = lfirst(field);
+  tokens = (List *)lfirst(field);
   IDENT_MULTI_VALUE(tokens);
-  token = linitial(tokens);
+  token = (AuthToken *)linitial(tokens);
   parsedline->usermap = pstrdup(token->string);
 
   /* Get the ident user token */
   field = lnext(tok_line->fields, field);
   IDENT_FIELD_ABSENT(field);
-  tokens = lfirst(field);
+  tokens = (List *)lfirst(field);
   IDENT_MULTI_VALUE(tokens);
-  token = linitial(tokens);
+  token = (AuthToken *)linitial(tokens);
 
   /* Copy the ident user token */
   parsedline->system_user = copy_auth_token(token);
@@ -2434,9 +2434,9 @@ IdentLine *parse_ident_line(TokenizedAuthLine *tok_line, int elevel) {
   /* Get the PG rolename token */
   field = lnext(tok_line->fields, field);
   IDENT_FIELD_ABSENT(field);
-  tokens = lfirst(field);
+  tokens = (List *)lfirst(field);
   IDENT_MULTI_VALUE(tokens);
-  token = linitial(tokens);
+  token = (AuthToken *)linitial(tokens);
   parsedline->pg_user = copy_auth_token(token);
 
   /*
@@ -2534,8 +2534,9 @@ static void check_ident_usermap(IdentLine *identLine, const char *usermap_name,
        * length: original length minus length of \1 plus length of match
        * plus null terminator
        */
-      expanded_pg_user = palloc0(strlen(identLine->pg_user->string) - 2 +
-                                 (matches[1].rm_eo - matches[1].rm_so) + 1);
+      expanded_pg_user =
+          (char *)palloc0(strlen(identLine->pg_user->string) - 2 +
+                          (matches[1].rm_eo - matches[1].rm_so) + 1);
       offset = ofs - identLine->pg_user->string;
       memcpy(expanded_pg_user, identLine->pg_user->string, offset);
       memcpy(expanded_pg_user + offset, system_user + matches[1].rm_so,
@@ -2615,8 +2616,8 @@ int check_usermap(const char *usermap_name, const char *pg_user,
     ListCell *line_cell;
 
     foreach (line_cell, parsed_ident_lines) {
-      check_ident_usermap(lfirst(line_cell), usermap_name, pg_user, system_user,
-                          case_insensitive, &found_entry, &error);
+      check_ident_usermap((IdentLine *)lfirst(line_cell), usermap_name, pg_user,
+                          system_user, case_insensitive, &found_entry, &error);
       if (found_entry || error)
         break;
     }

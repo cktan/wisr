@@ -323,7 +323,8 @@ Datum macaddr_sortsupport(PG_FUNCTION_ARGS) {
 
     oldcontext = MemoryContextSwitchTo(ssup->ssup_cxt);
 
-    uss = palloc(sizeof(macaddr_sortsupport_state));
+    uss =
+        (macaddr_sortsupport_state *)palloc(sizeof(macaddr_sortsupport_state));
     uss->input_count = 0;
     uss->estimating = true;
     initHyperLogLog(&uss->abbr_card, 10);
@@ -359,7 +360,8 @@ static int macaddr_fast_cmp(Datum x, Datum y, SortSupport ssup) {
  * there is no equality fast-path within authoritative macaddr comparator.
  */
 static bool macaddr_abbrev_abort(int memtupcount, SortSupport ssup) {
-  macaddr_sortsupport_state *uss = ssup->ssup_extra;
+  macaddr_sortsupport_state *uss =
+      (macaddr_sortsupport_state *)ssup->ssup_extra;
   double abbr_card;
 
   if (memtupcount < 10000 || uss->input_count < 10000 || !uss->estimating)
@@ -418,7 +420,8 @@ static bool macaddr_abbrev_abort(int memtupcount, SortSupport ssup) {
  * endianness to facilitate easy comparison.
  */
 static Datum macaddr_abbrev_convert(Datum original, SortSupport ssup) {
-  macaddr_sortsupport_state *uss = ssup->ssup_extra;
+  macaddr_sortsupport_state *uss =
+      (macaddr_sortsupport_state *)ssup->ssup_extra;
   macaddr *authoritative = DatumGetMacaddrP(original);
   Datum res;
 

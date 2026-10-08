@@ -19,13 +19,13 @@
 
 #include "postgres.h"
 
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/file.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "libpq/ifaddr.h"
 #include "port/pg_bswap.h"
@@ -268,8 +268,8 @@ int pg_foreach_ifaddr(PgIfAddrCallback callback, void *cb_data) {
 }
 #else /* !HAVE_GETIFADDRS && !WIN32 */
 
-#include <net/if.h>
 #include <sys/ioctl.h>
+#include <net/if.h>
 
 #if defined(SIOCGIFCONF)
 

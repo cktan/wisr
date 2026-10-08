@@ -1162,7 +1162,7 @@ static bool CompactCheckpointerRequestQueue(void) {
     return false;
 
   /* Initialize skip_slot array */
-  skip_slot = palloc0(sizeof(bool) * CheckpointerShmem->num_requests);
+  skip_slot = (bool *)palloc0(sizeof(bool) * CheckpointerShmem->num_requests);
 
   /* Initialize temporary hash table */
   ctl.keysize = sizeof(CheckpointerRequest);
@@ -1198,7 +1198,8 @@ static bool CompactCheckpointerRequestQueue(void) {
      * contain no pad bytes.
      */
     request = &CheckpointerShmem->requests[n];
-    slotmap = hash_search(htab, request, HASH_ENTER, &found);
+    slotmap = (struct CheckpointerSlotMapping *)hash_search(htab, request,
+                                                            HASH_ENTER, &found);
     if (found) {
       /* Duplicate, so mark the previous occurrence as skippable */
       skip_slot[slotmap->slot] = true;

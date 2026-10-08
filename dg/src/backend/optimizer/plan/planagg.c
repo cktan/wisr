@@ -119,7 +119,7 @@ void preprocess_minmax_aggregates(PlannerInfo *root) {
   while (IsA(jtnode, FromExpr)) {
     if (list_length(jtnode->fromlist) != 1)
       return;
-    jtnode = linitial(jtnode->fromlist);
+    jtnode = (FromExpr *)linitial(jtnode->fromlist);
   }
   if (!IsA(jtnode, RangeTblRef))
     return;

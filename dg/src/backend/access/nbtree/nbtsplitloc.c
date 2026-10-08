@@ -177,7 +177,7 @@ OffsetNumber _bt_findsplitloc(Relation rel, Page origpage,
    * between tuples will be legal).
    */
   state.maxsplits = maxoff;
-  state.splits = palloc(sizeof(SplitPoint) * state.maxsplits);
+  state.splits = (SplitPoint *)palloc(sizeof(SplitPoint) * state.maxsplits);
   state.nsplits = 0;
 
   /*

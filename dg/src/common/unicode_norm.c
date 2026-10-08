@@ -93,8 +93,9 @@ static const pg_unicode_decomposition *get_code_entry(pg_wchar code) {
   /* Success! */
   return &decompinfo.decomps[h];
 #else
-  return bsearch(&(code), UnicodeDecompMain, lengthof(UnicodeDecompMain),
-                 sizeof(pg_unicode_decomposition), conv_compare);
+  return (const pg_unicode_decomposition *)bsearch(
+      &(code), UnicodeDecompMain, lengthof(UnicodeDecompMain),
+      sizeof(pg_unicode_decomposition), conv_compare);
 #endif
 }
 
@@ -555,7 +556,7 @@ static UnicodeNormalizationQC qc_is_allowed(UnicodeNormalizationForm form,
   }
 
   if (found)
-    return found->quickcheck;
+    return (UnicodeNormalizationQC)found->quickcheck;
   else
     return UNICODE_NORM_QC_YES;
 }

@@ -14,9 +14,9 @@
  */
 #include "postgres.h"
 
-#include <ctype.h>
-#include <limits.h>
 #include <math.h>
+#include <limits.h>
+#include <ctype.h>
 
 #include "common/int.h"
 #include "port/pg_bitutils.h"
@@ -26,7 +26,7 @@
  * A table of all two-digit numbers. This is used to speed up decimal digit
  * generation by copying pairs of digits into the final output.
  */
-static const char DIGIT_TABLE[200] = "00"
+static const char DIGIT_TABLE[201] = "00"
                                      "01"
                                      "02"
                                      "03"

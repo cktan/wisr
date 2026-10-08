@@ -74,8 +74,8 @@
 #include "miscadmin.h"
 #include "storage/aio.h"
 #include "storage/fd.h"
-#include "storage/read_stream.h"
 #include "storage/smgr.h"
+#include "storage/read_stream.h"
 #include "utils/memdebug.h"
 #include "utils/rel.h"
 #include "utils/spccache.h"
@@ -158,7 +158,8 @@ static inline void *get_per_buffer_data(ReadStream *stream,
 BlockNumber block_range_read_stream_cb(ReadStream *stream,
                                        void *callback_private_data,
                                        void *per_buffer_data) {
-  BlockRangeReadStreamPrivate *p = callback_private_data;
+  BlockRangeReadStreamPrivate *p =
+      (BlockRangeReadStreamPrivate *)callback_private_data;
 
   if (p->current_blocknum < p->last_exclusive)
     return p->current_blocknum++;

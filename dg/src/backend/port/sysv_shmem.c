@@ -20,12 +20,12 @@
 #include "postgres.h"
 
 #include <signal.h>
+#include <unistd.h>
 #include <sys/file.h>
 #include <sys/ipc.h>
 #include <sys/mman.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "miscadmin.h"
 #include "port/pg_bitutils.h"

@@ -64,10 +64,10 @@
 #include "postgres.h"
 
 #include <ctype.h>
+#include <unistd.h>
+#include <math.h>
 #include <float.h>
 #include <limits.h>
-#include <math.h>
-#include <unistd.h>
 #include <wctype.h>
 
 #ifdef USE_ICU
@@ -890,7 +890,7 @@ static const KeyWord DCH_keywords[] = {
     {"y", 1, DCH_Y, true, FROM_CHAR_DATE_GREGORIAN},
 
     /* last */
-    {NULL, 0, 0, 0, 0}};
+    {NULL, 0, 0, 0, FROM_CHAR_DATE_NONE}};
 
 /* ----------
  * KeyWords for NUMBER version
@@ -1589,13 +1589,13 @@ char *str_tolower(const char *buff, size_t nbytes, Oid collid) {
 
     /* first try buffer of equal size plus terminating NUL */
     dstsize = srclen + 1;
-    dst = palloc(dstsize);
+    dst = (char *)palloc(dstsize);
 
     needed = pg_strlower(dst, dstsize, src, srclen, mylocale);
     if (needed + 1 > dstsize) {
       /* grow buffer if needed and retry */
       dstsize = needed + 1;
-      dst = repalloc(dst, dstsize);
+      dst = (char *)repalloc(dst, dstsize);
       needed = pg_strlower(dst, dstsize, src, srclen, mylocale);
       Assert(needed + 1 <= dstsize);
     }
@@ -1647,13 +1647,13 @@ char *str_toupper(const char *buff, size_t nbytes, Oid collid) {
 
     /* first try buffer of equal size plus terminating NUL */
     dstsize = srclen + 1;
-    dst = palloc(dstsize);
+    dst = (char *)palloc(dstsize);
 
     needed = pg_strupper(dst, dstsize, src, srclen, mylocale);
     if (needed + 1 > dstsize) {
       /* grow buffer if needed and retry */
       dstsize = needed + 1;
-      dst = repalloc(dst, dstsize);
+      dst = (char *)repalloc(dst, dstsize);
       needed = pg_strupper(dst, dstsize, src, srclen, mylocale);
       Assert(needed + 1 <= dstsize);
     }
@@ -1705,13 +1705,13 @@ char *str_initcap(const char *buff, size_t nbytes, Oid collid) {
 
     /* first try buffer of equal size plus terminating NUL */
     dstsize = srclen + 1;
-    dst = palloc(dstsize);
+    dst = (char *)palloc(dstsize);
 
     needed = pg_strtitle(dst, dstsize, src, srclen, mylocale);
     if (needed + 1 > dstsize) {
       /* grow buffer if needed and retry */
       dstsize = needed + 1;
-      dst = repalloc(dst, dstsize);
+      dst = (char *)repalloc(dst, dstsize);
       needed = pg_strtitle(dst, dstsize, src, srclen, mylocale);
       Assert(needed + 1 <= dstsize);
     }
@@ -1768,13 +1768,13 @@ char *str_casefold(const char *buff, size_t nbytes, Oid collid) {
 
     /* first try buffer of equal size plus terminating NUL */
     dstsize = srclen + 1;
-    dst = palloc(dstsize);
+    dst = (char *)palloc(dstsize);
 
     needed = pg_strfold(dst, dstsize, src, srclen, mylocale);
     if (needed + 1 > dstsize) {
       /* grow buffer if needed and retry */
       dstsize = needed + 1;
-      dst = repalloc(dst, dstsize);
+      dst = (char *)repalloc(dst, dstsize);
       needed = pg_strfold(dst, dstsize, src, srclen, mylocale);
       Assert(needed + 1 <= dstsize);
     }
@@ -3776,7 +3776,7 @@ static text *datetime_to_char_body(TmToChar *tmtc, text *fmt, bool is_interval,
   /*
    * Allocate workspace for result as C string
    */
-  result = palloc(mul_size(fmt_len, DCH_MAX_ITEM_SIZ) + 1);
+  result = (char *)palloc(mul_size(fmt_len, DCH_MAX_ITEM_SIZ) + 1);
   *result = '\0';
 
   if (fmt_len > DCH_CACHE_SIZE) {
@@ -4098,7 +4098,7 @@ Datum parse_datetime(text *date_txt, text *fmt, Oid collid, bool strict,
     }
   } else if (flags & DCH_TIMED) {
     if (flags & DCH_ZONED) {
-      TimeTzADT *result = palloc(sizeof(TimeTzADT));
+      TimeTzADT *result = (TimeTzADT *)palloc(sizeof(TimeTzADT));
 
       if (ftz.has_tz) {
         *tz = ftz.gmtoffset;

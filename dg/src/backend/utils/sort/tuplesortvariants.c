@@ -789,7 +789,7 @@ void tuplesort_putbrintuple(Tuplesortstate *state, BrinTuple *tuple,
   Size tuplen;
 
   /* allocate space for the whole BRIN sort tuple */
-  bstup = palloc(BRINSORTTUPLE_SIZE(size));
+  bstup = (BrinSortTuple *)palloc(BRINSORTTUPLE_SIZE(size));
 
   bstup->tuplen = size;
   memcpy(&bstup->tuple, tuple, size);
@@ -820,7 +820,7 @@ void tuplesort_putgintuple(Tuplesortstate *state, GinTuple *tuple, Size size) {
   Size tuplen;
 
   /* copy the GinTuple into the right memory context */
-  ctup = palloc(size);
+  ctup = (GinTuple *)palloc(size);
   memcpy(ctup, tuple, size);
 
   stup.tuple = ctup;
@@ -948,7 +948,7 @@ HeapTuple tuplesort_getheaptuple(Tuplesortstate *state, bool forward) {
 
   MemoryContextSwitchTo(oldcontext);
 
-  return stup.tuple;
+  return (HeapTuple)stup.tuple;
 }
 
 /*
@@ -1396,7 +1396,7 @@ static void removeabbrev_index(Tuplesortstate *state, SortTuple *stups,
   for (i = 0; i < count; i++) {
     IndexTuple tuple;
 
-    tuple = stups[i].tuple;
+    tuple = (IndexTuple)stups[i].tuple;
     stups[i].datum1 = index_getattr(tuple, 1, RelationGetDescr(arg->indexRel),
                                     &stups[i].isnull1);
   }
@@ -1656,7 +1656,7 @@ static void removeabbrev_index_brin(Tuplesortstate *state, SortTuple *stups,
   for (i = 0; i < count; i++) {
     BrinSortTuple *tuple;
 
-    tuple = stups[i].tuple;
+    tuple = (BrinSortTuple *)stups[i].tuple;
     stups[i].datum1 = tuple->tuple.bt_blkno;
   }
 }

@@ -793,7 +793,7 @@ static void interpret_AS_clause(Oid languageOid, const char *languageName,
       List *transformed_stmts = NIL;
 
       foreach (lc, stmts) {
-        Node *stmt = lfirst(lc);
+        Node *stmt = (Node *)lfirst(lc);
         Query *q;
         ParseState *pstate = make_parsestate(NULL);
 
@@ -983,13 +983,13 @@ ObjectAddress CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt) {
     ListCell *lc;
 
     foreach (lc, castNode(List, transformDefElem)) {
-      Oid typeid = typenameTypeId(NULL, lfirst_node(TypeName, lc));
-      Oid elt = get_base_element_type(typeid);
+      Oid typeid_ = typenameTypeId(NULL, lfirst_node(TypeName, lc));
+      Oid elt = get_base_element_type(typeid_);
       Oid transformid;
 
-      typeid = elt ? elt : typeid;
-      transformid = get_transform_oid(typeid, languageOid, false);
-      trftypes_list = lappend_oid(trftypes_list, typeid);
+      typeid_ = elt ? elt : typeid_;
+      transformid = get_transform_oid(typeid_, languageOid, false);
+      trftypes_list = lappend_oid(trftypes_list, typeid_);
       trfoids_list = lappend_oid(trfoids_list, transformid);
     }
   }
@@ -1036,7 +1036,7 @@ ObjectAddress CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt) {
     Datum *arr;
     int i;
 
-    arr = palloc(list_length(trftypes_list) * sizeof(Datum));
+    arr = (Datum *)palloc(list_length(trftypes_list) * sizeof(Datum));
     i = 0;
     foreach (lc, trftypes_list)
       arr[i++] = ObjectIdGetDatum(lfirst_oid(lc));
@@ -1569,7 +1569,7 @@ static void check_transform_function(Form_pg_proc procstruct) {
  * CREATE TRANSFORM
  */
 ObjectAddress CreateTransform(CreateTransformStmt *stmt) {
-  Oid typeid;
+  Oid typeid_;
   char typtype;
   Oid langid;
   Oid fromsqlfuncid;
@@ -1590,8 +1590,8 @@ ObjectAddress CreateTransform(CreateTransformStmt *stmt) {
   /*
    * Get the type
    */
-  typeid = typenameTypeId(NULL, stmt->type_name);
-  typtype = get_typtype(typeid);
+  typeid_ = typenameTypeId(NULL, stmt->type_name);
+  typtype = get_typtype(typeid_);
 
   if (typtype == TYPTYPE_PSEUDO)
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -1603,12 +1603,12 @@ ObjectAddress CreateTransform(CreateTransformStmt *stmt) {
                     errmsg("data type %s is a domain",
                            TypeNameToString(stmt->type_name))));
 
-  if (!object_ownercheck(TypeRelationId, typeid, GetUserId()))
-    aclcheck_error_type(ACLCHECK_NOT_OWNER, typeid);
+  if (!object_ownercheck(TypeRelationId, typeid_, GetUserId()))
+    aclcheck_error_type(ACLCHECK_NOT_OWNER, typeid_);
 
-  aclresult = object_aclcheck(TypeRelationId, typeid, GetUserId(), ACL_USAGE);
+  aclresult = object_aclcheck(TypeRelationId, typeid_, GetUserId(), ACL_USAGE);
   if (aclresult != ACLCHECK_OK)
-    aclcheck_error_type(aclresult, typeid);
+    aclcheck_error_type(aclresult, typeid_);
 
   /*
    * Get the language
@@ -1666,7 +1666,7 @@ ObjectAddress CreateTransform(CreateTransformStmt *stmt) {
     if (!HeapTupleIsValid(tuple))
       elog(ERROR, "cache lookup failed for function %u", tosqlfuncid);
     procstruct = (Form_pg_proc)GETSTRUCT(tuple);
-    if (procstruct->prorettype != typeid)
+    if (procstruct->prorettype != typeid_)
       ereport(ERROR, (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
                       errmsg("return data type of TO SQL function must be the "
                              "transform data type")));
@@ -1678,14 +1678,14 @@ ObjectAddress CreateTransform(CreateTransformStmt *stmt) {
   /*
    * Ready to go
    */
-  values[Anum_pg_transform_trftype - 1] = ObjectIdGetDatum(typeid);
+  values[Anum_pg_transform_trftype - 1] = ObjectIdGetDatum(typeid_);
   values[Anum_pg_transform_trflang - 1] = ObjectIdGetDatum(langid);
   values[Anum_pg_transform_trffromsql - 1] = ObjectIdGetDatum(fromsqlfuncid);
   values[Anum_pg_transform_trftosql - 1] = ObjectIdGetDatum(tosqlfuncid);
 
   relation = table_open(TransformRelationId, RowExclusiveLock);
 
-  tuple = SearchSysCache2(TRFTYPELANG, ObjectIdGetDatum(typeid),
+  tuple = SearchSysCache2(TRFTYPELANG, ObjectIdGetDatum(typeid_),
                           ObjectIdGetDatum(langid));
   if (HeapTupleIsValid(tuple)) {
     Form_pg_transform form = (Form_pg_transform)GETSTRUCT(tuple);
@@ -1694,7 +1694,7 @@ ObjectAddress CreateTransform(CreateTransformStmt *stmt) {
       ereport(ERROR,
               (errcode(ERRCODE_DUPLICATE_OBJECT),
                errmsg("transform for type %s language \"%s\" already exists",
-                      format_type_be(typeid), stmt->lang)));
+                      format_type_be(typeid_), stmt->lang)));
 
     replaces[Anum_pg_transform_trffromsql - 1] = true;
     replaces[Anum_pg_transform_trftosql - 1] = true;
@@ -1728,7 +1728,7 @@ ObjectAddress CreateTransform(CreateTransformStmt *stmt) {
   add_exact_object_address(&referenced, addrs);
 
   /* dependency on type */
-  ObjectAddressSet(referenced, TypeRelationId, typeid);
+  ObjectAddressSet(referenced, TypeRelationId, typeid_);
   add_exact_object_address(&referenced, addrs);
 
   /* dependencies on functions */
@@ -2006,7 +2006,7 @@ void ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic,
     Datum val;
     bool isnull;
 
-    exprstate = ExecPrepareExpr(lfirst(lc), estate);
+    exprstate = ExecPrepareExpr((Expr *)lfirst(lc), estate);
 
     val = ExecEvalExprSwitchContext(exprstate, econtext, &isnull);
 

@@ -76,7 +76,7 @@ void initHyperLogLog(hyperLogLogState *cState, uint8 bwidth) {
    * Initialize hashes array to zero, not negative infinity, per discussion
    * of the coupon collector problem in the HyperLogLog paper
    */
-  cState->hashesArr = palloc0(cState->arrSize);
+  cState->hashesArr = (uint8 *)palloc0(cState->arrSize);
 
   /*
    * "alpha" is a value that for each possible number of registers (m) is

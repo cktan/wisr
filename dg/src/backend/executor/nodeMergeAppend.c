@@ -37,8 +37,8 @@
 
 #include "postgres.h"
 
-#include "executor/execPartition.h"
 #include "executor/executor.h"
+#include "executor/execPartition.h"
 #include "executor/nodeMergeAppend.h"
 #include "lib/binaryheap.h"
 #include "miscadmin.h"
@@ -162,7 +162,8 @@ MergeAppendState *ExecInitMergeAppend(MergeAppend *node, EState *estate,
    * initialize sort-key information
    */
   mergestate->ms_nkeys = node->numCols;
-  mergestate->ms_sortkeys = palloc0(sizeof(SortSupportData) * node->numCols);
+  mergestate->ms_sortkeys =
+      (SortSupport)palloc0(sizeof(SortSupportData) * node->numCols);
 
   for (i = 0; i < node->numCols; i++) {
     SortSupport sortKey = mergestate->ms_sortkeys + i;

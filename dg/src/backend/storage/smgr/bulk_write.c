@@ -95,7 +95,7 @@ BulkWriteState *smgr_bulk_start_smgr(SMgrRelation smgr, ForkNumber forknum,
                                      bool use_wal) {
   BulkWriteState *state;
 
-  state = palloc(sizeof(BulkWriteState));
+  state = (BulkWriteState *)palloc(sizeof(BulkWriteState));
   state->smgr = smgr;
   state->forknum = forknum;
   state->use_wal = use_wal;
@@ -316,6 +316,6 @@ void smgr_bulk_write(BulkWriteState *bulkstate, BlockNumber blocknum,
  * using a ring buffer or larger chunks in the future, so don't rely on it.
  */
 BulkWriteBuffer smgr_bulk_get_buf(BulkWriteState *bulkstate) {
-  return MemoryContextAllocAligned(bulkstate->memcxt, BLCKSZ, PG_IO_ALIGN_SIZE,
-                                   0);
+  return (BulkWriteBuffer)MemoryContextAllocAligned(bulkstate->memcxt, BLCKSZ,
+                                                    PG_IO_ALIGN_SIZE, 0);
 }

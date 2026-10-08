@@ -1219,10 +1219,10 @@ static void process_startup_options(Port *port, bool am_superuser) {
     char *name;
     char *value;
 
-    name = lfirst(gucopts);
+    name = (char *)lfirst(gucopts);
     gucopts = lnext(port->guc_options, gucopts);
 
-    value = lfirst(gucopts);
+    value = (char *)lfirst(gucopts);
     gucopts = lnext(port->guc_options, gucopts);
 
     SetConfigOption(name, value, gucctx, PGC_S_CLIENT);

@@ -827,7 +827,7 @@ HashJoinState *ExecInitHashJoin(HashJoin *node, EState *estate, int eflags) {
      * first key's hash function Oid.
      */
     if (OidIsValid(hash->skewTable)) {
-      hashstate->skew_hashfunction = palloc0(sizeof(FmgrInfo));
+      hashstate->skew_hashfunction = (FmgrInfo *)palloc0(sizeof(FmgrInfo));
       hashstate->skew_collation = linitial_oid(node->hashcollations);
       fmgr_info(outer_hashfuncid[0], hashstate->skew_hashfunction);
     }
@@ -1519,7 +1519,8 @@ void ExecHashJoinInitializeDSM(HashJoinState *state, ParallelContext *pcxt) {
    * Set up the state needed to coordinate access to the shared hash
    * table(s), using the plan node ID as the toc key.
    */
-  pstate = shm_toc_allocate(pcxt->toc, sizeof(ParallelHashJoinState));
+  pstate = (ParallelHashJoinState *)shm_toc_allocate(
+      pcxt->toc, sizeof(ParallelHashJoinState));
   shm_toc_insert(pcxt->toc, plan_node_id, pstate);
 
   /*
@@ -1564,7 +1565,8 @@ void ExecHashJoinReInitializeDSM(HashJoinState *state, ParallelContext *pcxt) {
   if (pcxt->seg == NULL)
     return;
 
-  pstate = shm_toc_lookup(pcxt->toc, plan_node_id, false);
+  pstate =
+      (ParallelHashJoinState *)shm_toc_lookup(pcxt->toc, plan_node_id, false);
 
   /*
    * It would be possible to reuse the shared hash table in single-batch
@@ -1596,7 +1598,7 @@ void ExecHashJoinInitializeWorker(HashJoinState *state,
   HashState *hashNode;
   int plan_node_id = state->js.ps.plan->plan_node_id;
   ParallelHashJoinState *pstate =
-      shm_toc_lookup(pwcxt->toc, plan_node_id, false);
+      (ParallelHashJoinState *)shm_toc_lookup(pwcxt->toc, plan_node_id, false);
 
   /* Attach to the space for shared temporary files. */
   SharedFileSetAttach(&pstate->fileset, pwcxt->seg);

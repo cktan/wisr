@@ -56,6 +56,6 @@ extern bool parseTypeString(const char *str, Oid *typeid_p, int32 *typmod_p,
                             Node *escontext);
 
 /* true if typeid is composite, or domain over composite, but not RECORD */
-#define ISCOMPLEX(typeid) (typeOrDomainTypeRelid(typeid) != InvalidOid)
+#define ISCOMPLEX(typeid_) (typeOrDomainTypeRelid(typeid_) != InvalidOid)
 
 #endif /* PARSE_TYPE_H */

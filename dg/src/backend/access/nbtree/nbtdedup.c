@@ -86,7 +86,7 @@ void _bt_dedup_pass(Relation rel, Buffer buf, IndexTuple newitem,
   state->baseoff = InvalidOffsetNumber;
   state->basetupsize = 0;
   /* Metadata about current pending posting list TIDs */
-  state->htids = palloc(state->maxpostingsize);
+  state->htids = (ItemPointer)palloc(state->maxpostingsize);
   state->nhtids = 0;
   state->nitems = 0;
   /* Size of all physical tuples to be replaced by pending posting list */
@@ -306,7 +306,7 @@ bool _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
   state->base = NULL;
   state->baseoff = InvalidOffsetNumber;
   state->basetupsize = 0;
-  state->htids = palloc(state->maxpostingsize);
+  state->htids = (ItemPointer)palloc(state->maxpostingsize);
   state->nhtids = 0;
   state->nitems = 0;
   state->phystupsize = 0;
@@ -333,8 +333,10 @@ bool _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
   delstate.bottomup = true;
   delstate.bottomupfreespace = Max(BLCKSZ / 16, newitemsz);
   delstate.ndeltids = 0;
-  delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
-  delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
+  delstate.deltids =
+      (TM_IndexDelete *)palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
+  delstate.status =
+      (TM_IndexStatus *)palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
 
   minoff = P_FIRSTDATAKEY(opaque);
   maxoff = PageGetMaxOffsetNumber(page);
@@ -817,7 +819,7 @@ IndexTuple _bt_form_posting(IndexTuple base, ItemPointer htids, int nhtids) {
   Assert(newsize == MAXALIGN(newsize));
 
   /* Allocate memory using palloc0() (matches index_form_tuple()) */
-  itup = palloc0(newsize);
+  itup = (IndexTuple)palloc0(newsize);
   memcpy(itup, base, keysize);
   itup->t_info &= ~INDEX_SIZE_MASK;
   itup->t_info |= newsize;
@@ -876,7 +878,7 @@ void _bt_update_posting(BTVacuumPosting vacposting) {
   Assert(newsize == MAXALIGN(newsize));
 
   /* Allocate memory using palloc0() (matches index_form_tuple()) */
-  itup = palloc0(newsize);
+  itup = (IndexTuple)palloc0(newsize);
   memcpy(itup, origtuple, keysize);
   itup->t_info &= ~INDEX_SIZE_MASK;
   itup->t_info |= newsize;

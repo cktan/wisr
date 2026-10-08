@@ -27,8 +27,8 @@
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
 #include "catalog/pg_attrdef.h"
-#include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
+#include "catalog/pg_auth_members.h"
 #include "catalog/pg_cast.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
@@ -1448,7 +1448,7 @@ void recordDependencyOnSingleRelExpr(const ObjectAddress *depender, Node *expr,
                                      DependencyType self_behavior,
                                      bool reverse_self) {
   find_expr_references_context context;
-  RangeTblEntry rte = {0};
+  RangeTblEntry rte = {(NodeTag)0};
 
   context.addrs = new_object_addresses();
 
@@ -1574,7 +1574,7 @@ void CheckUsageOnTypesInExpr(Node *expr, List *rtable, Oid roleid) {
  */
 void CheckUsageOnTypesInSingleRelExpr(Node *expr, Oid relId, Oid roleid) {
   find_expr_references_context context;
-  RangeTblEntry rte = {0};
+  RangeTblEntry rte = {(NodeTag)0};
 
   context.addrs = new_object_addresses();
 
@@ -1988,7 +1988,7 @@ static bool find_expr_references_walker(Node *node,
          */
         context->rtables = lcons(query->rtable, context->rtables);
         for (int i = 0; i < rte->joinmergedcols; i++) {
-          Node *aliasvar = list_nth(rte->joinaliasvars, i);
+          Node *aliasvar = (Node *)list_nth(rte->joinaliasvars, i);
 
           if (!IsA(aliasvar, Var))
             find_expr_references_walker(aliasvar, context);
@@ -2262,7 +2262,7 @@ static int object_address_comparator(const void *a, const void *b) {
 ObjectAddresses *new_object_addresses(void) {
   ObjectAddresses *addrs;
 
-  addrs = palloc(sizeof(ObjectAddresses));
+  addrs = (ObjectAddresses *)palloc(sizeof(ObjectAddresses));
 
   addrs->numrefs = 0;
   addrs->maxrefs = 32;

@@ -937,7 +937,7 @@ static Plan *set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset) {
        * we don't have to do set_returning_clause_references()
        * twice on identical targetlists.
        */
-      splan->plan.targetlist = copyObject(linitial(newRL));
+      splan->plan.targetlist = (List *)copyObject(linitial(newRL));
     }
 
     /*
@@ -1003,8 +1003,8 @@ static Plan *set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset) {
 
       forthree(lca, splan->mergeActionLists, lcj, splan->mergeJoinConditions,
                lcr, splan->resultRelations) {
-        List *mergeActionList = lfirst(lca);
-        Node *mergeJoinCondition = lfirst(lcj);
+        List *mergeActionList = (List *)lfirst(lca);
+        Node *mergeJoinCondition = (Node *)lfirst(lcj);
         Index resultrel = lfirst_int(lcr);
 
         foreach (l, mergeActionList) {
@@ -1462,11 +1462,11 @@ static int register_partpruneinfo(PlannerInfo *root, int part_prune_index,
 
   pinfo->relids = offset_relid_set(pinfo->relids, rtoffset);
   foreach (l, pinfo->prune_infos) {
-    List *prune_infos = lfirst(l);
+    List *prune_infos = (List *)lfirst(l);
     ListCell *l2;
 
     foreach (l2, prune_infos) {
-      PartitionedRelPruneInfo *prelinfo = lfirst(l2);
+      PartitionedRelPruneInfo *prelinfo = (PartitionedRelPruneInfo *)lfirst(l2);
       int i;
 
       prelinfo->rtindex += rtoffset;
@@ -1769,7 +1769,7 @@ static Node *fix_param_node(PlannerInfo *root, Param *p) {
     params = (List *)list_nth(root->multiexpr_params, subqueryid - 1);
     if (colno <= 0 || colno > list_length(params))
       elog(ERROR, "unexpected PARAM_MULTIEXPR ID: %d", p->paramid);
-    return copyObject(list_nth(params, colno - 1));
+    return (Node *)copyObject(list_nth(params, colno - 1));
   }
   return (Node *)copyObject(p);
 }

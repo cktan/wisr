@@ -20,10 +20,10 @@
 #include "postgres_fe.h"
 #endif
 
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <time.h>
 
 #include "access/xlog_internal.h"
 #include "catalog/pg_control.h"

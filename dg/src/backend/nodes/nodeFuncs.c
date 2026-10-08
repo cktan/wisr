@@ -634,7 +634,7 @@ Node *strip_implicit_coercions(Node *node) {
     FuncExpr *f = (FuncExpr *)node;
 
     if (f->funcformat == COERCE_IMPLICIT_CAST)
-      return strip_implicit_coercions(linitial(f->args));
+      return strip_implicit_coercions((Node *)linitial(f->args));
   } else if (IsA(node, RelabelType)) {
     RelabelType *r = (RelabelType *)node;
 
@@ -4168,7 +4168,7 @@ bool planstate_tree_walker_impl(PlanState *planstate,
     break;
   case T_CustomScan:
     foreach (lc, ((CustomScanState *)planstate)->custom_ps) {
-      if (PSWALK(lfirst(lc)))
+      if (PSWALK((PlanState *)lfirst(lc)))
         return true;
     }
     break;

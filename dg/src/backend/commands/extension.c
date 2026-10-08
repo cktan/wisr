@@ -96,10 +96,9 @@ typedef struct ExtensionControlFile {
   bool superuser;        /* must be superuser to install? */
   bool trusted;          /* allow becoming superuser on the fly? */
   int encoding;          /* encoding of the script file, or -1 */
-  List *
-    requires;        /* names of prerequisite extensions */
-  List *no_relocate; /* names of prerequisite extensions that
-                      * should not be relocated */
+  List *requires_;       /* names of prerequisite extensions */
+  List *no_relocate;     /* names of prerequisite extensions that
+                          * should not be relocated */
 } ExtensionControlFile;
 
 /*
@@ -153,7 +152,7 @@ static Oid get_required_extension(char *reqExtensionName, char *extensionName,
 static void get_available_versions_for_extension(ExtensionControlFile *pcontrol,
                                                  Tuplestorestate *tupstore,
                                                  TupleDesc tupdesc);
-static Datum convert_requires_to_datum(List *requires);
+static Datum convert_requires_to_datum(List *requires_);
 static void ApplyExtensionUpdates(Oid extensionOid,
                                   ExtensionControlFile *pcontrol,
                                   const char *initialVersion,
@@ -459,7 +458,7 @@ static List *get_extension_control_directories(void) {
         len = piece - ecp;
 
       /* Copy the next path found on ecp */
-      piece = palloc(len + 1);
+      piece = (char *)palloc(len + 1);
       strlcpy(piece, ecp, len + 1);
 
       /*
@@ -695,7 +694,7 @@ static void parse_extension_control_file(ExtensionControlFile *control,
       char *rawnames = pstrdup(item->value);
 
       /* Parse string into list of identifiers */
-      if (!SplitIdentifierString(rawnames, ',', &control->requires)) {
+      if (!SplitIdentifierString(rawnames, ',', &control->requires_)) {
         /* syntax error in name list */
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1256,8 +1255,8 @@ static void execute_extension_script(Oid extensionOid,
      * Likewise, substitute required extensions' schema names for
      * occurrences of @extschema:extension_name@.
      */
-    Assert(list_length(control->requires) == list_length(requiredSchemas));
-    forboth(lc, control->requires, lc2, requiredSchemas) {
+    Assert(list_length(control->requires_) == list_length(requiredSchemas));
+    forboth(lc, control->requires_, lc2, requiredSchemas) {
       Datum old = t_sql;
       char *reqextname = (char *)lfirst(lc);
       Oid reqschema = lfirst_oid(lc2);
@@ -1770,7 +1769,7 @@ static ObjectAddress CreateExtensionInternal(char *extensionName,
    */
   requiredExtensions = NIL;
   requiredSchemas = NIL;
-  foreach (lc, control->requires) {
+  foreach (lc, control->requires_) {
     char *curreq = (char *)lfirst(lc);
     Oid reqext;
     Oid reqschema;
@@ -2288,10 +2287,10 @@ static void get_available_versions_for_extension(ExtensionControlFile *pcontrol,
     else
       values[5] = DirectFunctionCall1(namein, CStringGetDatum(control->schema));
     /* requires */
-    if (control->requires == NIL)
+    if (control->requires_ == NIL)
       nulls[6] = true;
     else
-      values[6] = convert_requires_to_datum(control->requires);
+      values[6] = convert_requires_to_datum(control->requires_);
     /* comment */
     if (control->comment == NULL)
       nulls[7] = true;
@@ -2328,10 +2327,10 @@ static void get_available_versions_for_extension(ExtensionControlFile *pcontrol,
         values[4] = BoolGetDatum(control->relocatable);
         /* schema stays the same */
         /* requires */
-        if (control->requires == NIL)
+        if (control->requires_ == NIL)
           nulls[6] = true;
         else {
-          values[6] = convert_requires_to_datum(control->requires);
+          values[6] = convert_requires_to_datum(control->requires_);
           nulls[6] = false;
         }
         /* comment stays the same */
@@ -2401,16 +2400,16 @@ bool extension_file_exists(const char *extensionName) {
 /*
  * Convert a list of extension names to a name[] Datum
  */
-static Datum convert_requires_to_datum(List *requires) {
+static Datum convert_requires_to_datum(List *requires_) {
   Datum *datums;
   int ndatums;
   ArrayType *a;
   ListCell *lc;
 
-  ndatums = list_length(requires);
+  ndatums = list_length(requires_);
   datums = (Datum *)palloc(ndatums * sizeof(Datum));
   ndatums = 0;
-  foreach (lc, requires) {
+  foreach (lc, requires_) {
     char *curreq = (char *)lfirst(lc);
 
     datums[ndatums++] = DirectFunctionCall1(namein, CStringGetDatum(curreq));
@@ -3252,7 +3251,7 @@ static void ApplyExtensionUpdates(Oid extensionOid,
      */
     requiredExtensions = NIL;
     requiredSchemas = NIL;
-    foreach (lc, control->requires) {
+    foreach (lc, control->requires_) {
       char *curreq = (char *)lfirst(lc);
       Oid reqext;
       Oid reqschema;
@@ -3605,7 +3604,7 @@ char *find_in_paths(const char *basename, List *paths) {
   ListCell *cell;
 
   foreach (cell, paths) {
-    char *path = lfirst(cell);
+    char *path = (char *)lfirst(cell);
     char *full;
 
     Assert(path != NULL);

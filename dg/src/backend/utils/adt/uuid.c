@@ -107,7 +107,7 @@ Datum uuid_out(PG_FUNCTION_ARGS) {
   int i;
 
   /* counts for the four hyphens and the zero-terminator */
-  buf = palloc(2 * UUID_LEN + 5);
+  buf = (char *)palloc(2 * UUID_LEN + 5);
   p = buf;
   for (i = 0; i < UUID_LEN; i++) {
     int hi;
@@ -271,7 +271,7 @@ Datum uuid_sortsupport(PG_FUNCTION_ARGS) {
 
     oldcontext = MemoryContextSwitchTo(ssup->ssup_cxt);
 
-    uss = palloc(sizeof(uuid_sortsupport_state));
+    uss = (uuid_sortsupport_state *)palloc(sizeof(uuid_sortsupport_state));
     uss->input_count = 0;
     uss->estimating = true;
     initHyperLogLog(&uss->abbr_card, 10);
@@ -306,7 +306,7 @@ static int uuid_fast_cmp(Datum x, Datum y, SortSupport ssup) {
  * there is no equality fast-path within authoritative uuid comparator.
  */
 static bool uuid_abbrev_abort(int memtupcount, SortSupport ssup) {
-  uuid_sortsupport_state *uss = ssup->ssup_extra;
+  uuid_sortsupport_state *uss = (uuid_sortsupport_state *)ssup->ssup_extra;
   double abbr_card;
 
   if (memtupcount < 10000 || uss->input_count < 10000 || !uss->estimating)
@@ -362,7 +362,7 @@ static bool uuid_abbrev_abort(int memtupcount, SortSupport ssup) {
  * unsigned integer.
  */
 static Datum uuid_abbrev_convert(Datum original, SortSupport ssup) {
-  uuid_sortsupport_state *uss = ssup->ssup_extra;
+  uuid_sortsupport_state *uss = (uuid_sortsupport_state *)ssup->ssup_extra;
   pg_uuid_t *authoritative = DatumGetUUIDP(original);
   Datum res;
 
@@ -438,8 +438,8 @@ static Datum uuid_increment(Relation rel, Datum existing, bool *overflow) {
 
 Datum uuid_skipsupport(PG_FUNCTION_ARGS) {
   SkipSupport sksup = (SkipSupport)PG_GETARG_POINTER(0);
-  pg_uuid_t *uuid_min = palloc(UUID_LEN);
-  pg_uuid_t *uuid_max = palloc(UUID_LEN);
+  pg_uuid_t *uuid_min = (pg_uuid_t *)palloc(UUID_LEN);
+  pg_uuid_t *uuid_max = (pg_uuid_t *)palloc(UUID_LEN);
 
   memset(uuid_min->data, 0x00, UUID_LEN);
   memset(uuid_max->data, 0xFF, UUID_LEN);
@@ -483,7 +483,7 @@ static inline void uuid_set_version(pg_uuid_t *uuid, unsigned char version) {
  * variant bits.
  */
 Datum gen_random_uuid(PG_FUNCTION_ARGS) {
-  pg_uuid_t *uuid = palloc(UUID_LEN);
+  pg_uuid_t *uuid = (pg_uuid_t *)palloc(UUID_LEN);
 
   if (!pg_strong_random(uuid, UUID_LEN))
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -555,7 +555,7 @@ static inline int64 get_real_time_ns_ascending() {
  * NB: all numbers here are unsigned, unix_ts_ms cannot be negative per RFC.
  */
 static pg_uuid_t *generate_uuidv7(uint64 unix_ts_ms, uint32 sub_ms) {
-  pg_uuid_t *uuid = palloc(UUID_LEN);
+  pg_uuid_t *uuid = (pg_uuid_t *)palloc(UUID_LEN);
   uint32 increased_clock_precision;
 
   /* Fill in time part */

@@ -252,47 +252,51 @@ typedef struct {
 
 #define TD_ENTRY(PROD) { sizeof(PROD) - 1, (PROD) }
 
-static td_entry td_parser_table[JSON_NUM_NONTERMINALS][JSON_NUM_TERMINALS] = {
-    /* JSON */
-    [OFS(JSON_NT_JSON)][JSON_TOKEN_STRING] = TD_ENTRY(JSON_PROD_SCALAR_STRING),
-    [OFS(JSON_NT_JSON)][JSON_TOKEN_NUMBER] = TD_ENTRY(JSON_PROD_SCALAR_NUMBER),
-    [OFS(JSON_NT_JSON)][JSON_TOKEN_TRUE] = TD_ENTRY(JSON_PROD_SCALAR_TRUE),
-    [OFS(JSON_NT_JSON)][JSON_TOKEN_FALSE] = TD_ENTRY(JSON_PROD_SCALAR_FALSE),
-    [OFS(JSON_NT_JSON)][JSON_TOKEN_NULL] = TD_ENTRY(JSON_PROD_SCALAR_NULL),
-    [OFS(JSON_NT_JSON)][JSON_TOKEN_ARRAY_START] = TD_ENTRY(JSON_PROD_ARRAY),
-    [OFS(JSON_NT_JSON)][JSON_TOKEN_OBJECT_START] = TD_ENTRY(JSON_PROD_OBJECT),
-    /* ARRAY_ELEMENTS */
-    [OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_ARRAY_START] =
-        TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS),
-    [OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_OBJECT_START] =
-        TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS),
-    [OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_STRING] =
-        TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS),
-    [OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_NUMBER] =
-        TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS),
-    [OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_TRUE] =
-        TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS),
-    [OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_FALSE] =
-        TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS),
-    [OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_NULL] =
-        TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS),
-    [OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_ARRAY_END] =
-        TD_ENTRY(JSON_PROD_EPSILON),
-    /* MORE_ARRAY_ELEMENTS */
-    [OFS(JSON_NT_MORE_ARRAY_ELEMENTS)][JSON_TOKEN_COMMA] =
-        TD_ENTRY(JSON_PROD_MORE_ARRAY_ELEMENTS),
-    [OFS(JSON_NT_MORE_ARRAY_ELEMENTS)][JSON_TOKEN_ARRAY_END] =
-        TD_ENTRY(JSON_PROD_EPSILON),
-    /* KEY_PAIRS */
-    [OFS(JSON_NT_KEY_PAIRS)][JSON_TOKEN_STRING] = TD_ENTRY(JSON_PROD_KEY_PAIRS),
-    [OFS(JSON_NT_KEY_PAIRS)][JSON_TOKEN_OBJECT_END] =
-        TD_ENTRY(JSON_PROD_EPSILON),
-    /* MORE_KEY_PAIRS */
-    [OFS(JSON_NT_MORE_KEY_PAIRS)][JSON_TOKEN_COMMA] =
-        TD_ENTRY(JSON_PROD_MORE_KEY_PAIRS),
-    [OFS(JSON_NT_MORE_KEY_PAIRS)][JSON_TOKEN_OBJECT_END] =
-        TD_ENTRY(JSON_PROD_EPSILON),
-};
+static constexpr auto td_parser_table = [] {
+  std::array<std::array<td_entry, JSON_NUM_TERMINALS>, JSON_NUM_NONTERMINALS>
+      a{};
+
+  /* JSON */
+  a[OFS(JSON_NT_JSON)][JSON_TOKEN_STRING] = TD_ENTRY(JSON_PROD_SCALAR_STRING);
+  a[OFS(JSON_NT_JSON)][JSON_TOKEN_NUMBER] = TD_ENTRY(JSON_PROD_SCALAR_NUMBER);
+  a[OFS(JSON_NT_JSON)][JSON_TOKEN_TRUE] = TD_ENTRY(JSON_PROD_SCALAR_TRUE);
+  a[OFS(JSON_NT_JSON)][JSON_TOKEN_FALSE] = TD_ENTRY(JSON_PROD_SCALAR_FALSE);
+  a[OFS(JSON_NT_JSON)][JSON_TOKEN_NULL] = TD_ENTRY(JSON_PROD_SCALAR_NULL);
+  a[OFS(JSON_NT_JSON)][JSON_TOKEN_ARRAY_START] = TD_ENTRY(JSON_PROD_ARRAY);
+  a[OFS(JSON_NT_JSON)][JSON_TOKEN_OBJECT_START] = TD_ENTRY(JSON_PROD_OBJECT);
+  /* ARRAY_ELEMENTS */
+  a[OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_ARRAY_START] =
+      TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS);
+  a[OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_OBJECT_START] =
+      TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS);
+  a[OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_STRING] =
+      TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS);
+  a[OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_NUMBER] =
+      TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS);
+  a[OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_TRUE] =
+      TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS);
+  a[OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_FALSE] =
+      TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS);
+  a[OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_NULL] =
+      TD_ENTRY(JSON_PROD_ARRAY_ELEMENTS);
+  a[OFS(JSON_NT_ARRAY_ELEMENTS)][JSON_TOKEN_ARRAY_END] =
+      TD_ENTRY(JSON_PROD_EPSILON);
+  /* MORE_ARRAY_ELEMENTS */
+  a[OFS(JSON_NT_MORE_ARRAY_ELEMENTS)][JSON_TOKEN_COMMA] =
+      TD_ENTRY(JSON_PROD_MORE_ARRAY_ELEMENTS);
+  a[OFS(JSON_NT_MORE_ARRAY_ELEMENTS)][JSON_TOKEN_ARRAY_END] =
+      TD_ENTRY(JSON_PROD_EPSILON);
+  /* KEY_PAIRS */
+  a[OFS(JSON_NT_KEY_PAIRS)][JSON_TOKEN_STRING] = TD_ENTRY(JSON_PROD_KEY_PAIRS);
+  a[OFS(JSON_NT_KEY_PAIRS)][JSON_TOKEN_OBJECT_END] =
+      TD_ENTRY(JSON_PROD_EPSILON);
+  /* MORE_KEY_PAIRS */
+  a[OFS(JSON_NT_MORE_KEY_PAIRS)][JSON_TOKEN_COMMA] =
+      TD_ENTRY(JSON_PROD_MORE_KEY_PAIRS);
+  a[OFS(JSON_NT_MORE_KEY_PAIRS)][JSON_TOKEN_OBJECT_END] =
+      TD_ENTRY(JSON_PROD_EPSILON);
+  return a;
+}();
 
 /* the GOAL production. Not stored in the table, but will be the initial
  * contents of the prediction stack */
@@ -415,7 +419,7 @@ JsonLexContext *makeJsonLexContextCstringLen(JsonLexContext *lex,
                                              const char *json, size_t len,
                                              int encoding, bool need_escapes) {
   if (lex == NULL) {
-    lex = ALLOC0(sizeof(JsonLexContext));
+    lex = (JsonLexContext *)ALLOC0(sizeof(JsonLexContext));
     if (!lex)
       return &failed_oom;
     lex->flags |= JSONLEX_FREE_STRUCT;
@@ -452,7 +456,7 @@ JsonLexContext *makeJsonLexContextCstringLen(JsonLexContext *lex,
 static bool allocate_incremental_state(JsonLexContext *lex) {
   void *pstack, *prediction, *fnames, *fnull;
 
-  lex->inc_state = ALLOC0(sizeof(JsonIncrementalState));
+  lex->inc_state = (JsonIncrementalState *)ALLOC0(sizeof(JsonIncrementalState));
   pstack = ALLOC0(sizeof(JsonParserStack));
   prediction = ALLOC(JS_STACK_CHUNK_SIZE * JS_MAX_PROD_LEN);
   fnames = ALLOC(JS_STACK_CHUNK_SIZE * sizeof(char *));
@@ -472,11 +476,11 @@ static bool allocate_incremental_state(JsonLexContext *lex) {
 #endif
 
   jsonapi_initStringInfo(&(lex->inc_state->partial_token));
-  lex->pstack = pstack;
+  lex->pstack = (JsonParserStack *)pstack;
   lex->pstack->stack_size = JS_STACK_CHUNK_SIZE;
-  lex->pstack->prediction = prediction;
-  lex->pstack->fnames = fnames;
-  lex->pstack->fnull = fnull;
+  lex->pstack->prediction = (char *)prediction;
+  lex->pstack->fnames = (char **)fnames;
+  lex->pstack->fnull = (bool *)fnull;
 
   /*
    * fnames between 0 and lex_level must always be defined so that
@@ -505,7 +509,7 @@ static bool allocate_incremental_state(JsonLexContext *lex) {
 JsonLexContext *makeJsonLexContextIncremental(JsonLexContext *lex, int encoding,
                                               bool need_escapes) {
   if (lex == NULL) {
-    lex = ALLOC0(sizeof(JsonLexContext));
+    lex = (JsonLexContext *)ALLOC0(sizeof(JsonLexContext));
     if (!lex)
       return &failed_oom;
 
@@ -565,22 +569,24 @@ static inline bool inc_lex_level(JsonLexContext *lex) {
 
     new_stack_size = lex->pstack->stack_size + JS_STACK_CHUNK_SIZE;
 
-    new_prediction =
-        REALLOC(lex->pstack->prediction, new_stack_size * JS_MAX_PROD_LEN);
+    new_prediction = (char *)REALLOC(lex->pstack->prediction,
+                                     new_stack_size * JS_MAX_PROD_LEN);
 #ifdef JSONAPI_USE_PQEXPBUFFER
     if (!new_prediction)
       return false;
 #endif
     lex->pstack->prediction = new_prediction;
 
-    new_fnames = REALLOC(lex->pstack->fnames, new_stack_size * sizeof(char *));
+    new_fnames =
+        (char **)REALLOC(lex->pstack->fnames, new_stack_size * sizeof(char *));
 #ifdef JSONAPI_USE_PQEXPBUFFER
     if (!new_fnames)
       return false;
 #endif
     lex->pstack->fnames = new_fnames;
 
-    new_fnull = REALLOC(lex->pstack->fnull, new_stack_size * sizeof(bool));
+    new_fnull =
+        (bool *)REALLOC(lex->pstack->fnull, new_stack_size * sizeof(bool));
 #ifdef JSONAPI_USE_PQEXPBUFFER
     if (!new_fnull)
       return false;
@@ -1041,7 +1047,7 @@ JsonParseErrorType pg_parse_json_incremental(JsonLexContext *lex,
           } else {
             ptrdiff_t tlen = (lex->token_terminator - lex->token_start);
 
-            pstack->scalar_val = ALLOC(tlen + 1);
+            pstack->scalar_val = (char *)ALLOC(tlen + 1);
             if (pstack->scalar_val == NULL)
               return JSON_OUT_OF_MEMORY;
 
@@ -1189,7 +1195,7 @@ static inline JsonParseErrorType parse_scalar(JsonLexContext *lex,
   } else {
     int len = (lex->token_terminator - lex->token_start);
 
-    val = ALLOC(len + 1);
+    val = (char *)ALLOC(len + 1);
     if (val == NULL)
       return JSON_OUT_OF_MEMORY;
 

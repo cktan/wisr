@@ -1161,7 +1161,7 @@ static int range_fast_cmp(Datum a, Datum b, SortSupport ssup) {
     ssup->ssup_extra =
         lookup_type_cache(RangeTypeGetOid(range_a), TYPECACHE_RANGE_INFO);
   }
-  typcache = ssup->ssup_extra;
+  typcache = (TypeCacheEntry *)ssup->ssup_extra;
 
   range_deserialize(typcache, range_a, &lower1, &upper1, &empty1);
   range_deserialize(typcache, range_b, &lower2, &upper2, &empty2);
@@ -2004,8 +2004,8 @@ Datum elem_contained_by_range_support(PG_FUNCTION_ARGS) {
     Expr *leftop, *rightop;
 
     Assert(list_length(fexpr->args) == 2);
-    leftop = linitial(fexpr->args);
-    rightop = lsecond(fexpr->args);
+    leftop = (Expr *)linitial(fexpr->args);
+    rightop = (Expr *)lsecond(fexpr->args);
 
     ret = find_simplified_clause(req->root, rightop, leftop);
   }
@@ -2026,8 +2026,8 @@ Datum range_contains_elem_support(PG_FUNCTION_ARGS) {
     Expr *leftop, *rightop;
 
     Assert(list_length(fexpr->args) == 2);
-    leftop = linitial(fexpr->args);
-    rightop = lsecond(fexpr->args);
+    leftop = (Expr *)linitial(fexpr->args);
+    rightop = (Expr *)lsecond(fexpr->args);
 
     ret = find_simplified_clause(req->root, leftop, rightop);
   }

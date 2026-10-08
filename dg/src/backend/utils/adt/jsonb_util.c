@@ -113,7 +113,7 @@ Jsonb *JsonbValueToJsonb(JsonbValue *val) {
     out = convertToJsonb(val);
   } else {
     Assert(val->type == jbvBinary);
-    out = palloc(VARHDRSZ + val->val.binary.len);
+    out = (Jsonb *)palloc(VARHDRSZ + val->val.binary.len);
     SET_VARSIZE(out, VARHDRSZ + val->val.binary.len);
     memcpy(VARDATA(out), val->val.binary.data, val->val.binary.len);
   }
@@ -327,7 +327,7 @@ JsonbValue *findJsonbValueFromContainer(JsonbContainer *container, uint32 flags,
     return NULL;
 
   if ((flags & JB_FARRAY) && JsonContainerIsArray(container)) {
-    JsonbValue *result = palloc(sizeof(JsonbValue));
+    JsonbValue *result = (JsonbValue *)palloc(sizeof(JsonbValue));
     char *base_addr = (char *)(children + count);
     uint32 offset = 0;
     int i;
@@ -402,7 +402,7 @@ JsonbValue *getKeyJsonValueFromContainer(JsonbContainer *container,
       int index = stopMiddle + count;
 
       if (!res)
-        res = palloc(sizeof(JsonbValue));
+        res = (JsonbValue *)palloc(sizeof(JsonbValue));
 
       fillJsonbValue(container, index, baseAddr,
                      getJsonbOffset(container, index), res);
@@ -439,7 +439,7 @@ JsonbValue *getIthJsonbValueFromContainer(JsonbContainer *container, uint32 i) {
   if (i >= nelements)
     return NULL;
 
-  result = palloc(sizeof(JsonbValue));
+  result = (JsonbValue *)palloc(sizeof(JsonbValue));
 
   fillJsonbValue(container, i, base_addr, getJsonbOffset(container, i), result);
 
@@ -597,7 +597,7 @@ static JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
       (*pstate)->size = 4;
     }
     (*pstate)->contVal.val.array.elems =
-        palloc(sizeof(JsonbValue) * (*pstate)->size);
+        (JsonbValue *)palloc(sizeof(JsonbValue) * (*pstate)->size);
     break;
   case WJB_BEGIN_OBJECT:
     Assert(!scalarVal);
@@ -607,7 +607,7 @@ static JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
     (*pstate)->contVal.val.object.nPairs = 0;
     (*pstate)->size = 4;
     (*pstate)->contVal.val.object.pairs =
-        palloc(sizeof(JsonbPair) * (*pstate)->size);
+        (JsonbPair *)palloc(sizeof(JsonbPair) * (*pstate)->size);
     break;
   case WJB_KEY:
     Assert(scalarVal->type == jbvString);
@@ -659,7 +659,7 @@ static JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
  * pushJsonbValue() worker:  Iteration-like forming of Jsonb
  */
 static JsonbParseState *pushState(JsonbParseState **pstate) {
-  JsonbParseState *ns = palloc(sizeof(JsonbParseState));
+  JsonbParseState *ns = (JsonbParseState *)palloc(sizeof(JsonbParseState));
 
   ns->next = *pstate;
   ns->unique_keys = false;
@@ -687,8 +687,8 @@ static void appendKey(JsonbParseState *pstate, JsonbValue *string) {
 
   if (object->val.object.nPairs >= pstate->size) {
     pstate->size *= 2;
-    object->val.object.pairs =
-        repalloc(object->val.object.pairs, sizeof(JsonbPair) * pstate->size);
+    object->val.object.pairs = (JsonbPair *)repalloc(
+        object->val.object.pairs, sizeof(JsonbPair) * pstate->size);
   }
 
   object->val.object.pairs[object->val.object.nPairs].key = *string;
@@ -726,8 +726,8 @@ static void appendElement(JsonbParseState *pstate, JsonbValue *scalarVal) {
 
   if (array->val.array.nElems >= pstate->size) {
     pstate->size *= 2;
-    array->val.array.elems =
-        repalloc(array->val.array.elems, sizeof(JsonbValue) * pstate->size);
+    array->val.array.elems = (JsonbValue *)repalloc(
+        array->val.array.elems, sizeof(JsonbValue) * pstate->size);
   }
 
   array->val.array.elems[array->val.array.nElems++] = *scalarVal;
@@ -914,7 +914,7 @@ static JsonbIterator *iteratorFromContainer(JsonbContainer *container,
                                             JsonbIterator *parent) {
   JsonbIterator *it;
 
-  it = palloc0(sizeof(JsonbIterator));
+  it = (JsonbIterator *)palloc0(sizeof(JsonbIterator));
   it->container = container;
   it->parent = parent;
   it->nElems = JsonContainerSize(container);
@@ -1131,7 +1131,7 @@ bool JsonbDeepContains(JsonbIterator **val, JsonbIterator **mContained) {
           uint32 j = 0;
 
           /* Make room for all possible values */
-          lhsConts = palloc(sizeof(JsonbValue) * nLhsElems);
+          lhsConts = (JsonbValue *)palloc(sizeof(JsonbValue) * nLhsElems);
 
           for (i = 0; i < nLhsElems; i++) {
             /* Store all lhs elements in temp array */

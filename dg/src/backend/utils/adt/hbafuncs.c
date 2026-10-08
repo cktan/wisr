@@ -259,7 +259,7 @@ static void fill_hba_line(Tuplestorestate *tuple_store, TupleDesc tupdesc,
       List *names = NIL;
 
       foreach (lc, hba->databases) {
-        AuthToken *tok = lfirst(lc);
+        AuthToken *tok = (AuthToken *)lfirst(lc);
 
         names = lappend(names, tok->string);
       }
@@ -273,7 +273,7 @@ static void fill_hba_line(Tuplestorestate *tuple_store, TupleDesc tupdesc,
       List *roles = NIL;
 
       foreach (lc, hba->roles) {
-        AuthToken *tok = lfirst(lc);
+        AuthToken *tok = (AuthToken *)lfirst(lc);
 
         roles = lappend(roles, tok->string);
       }

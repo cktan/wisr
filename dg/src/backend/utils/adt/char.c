@@ -194,7 +194,7 @@ Datum text_char(PG_FUNCTION_ARGS) {
 
 Datum char_text(PG_FUNCTION_ARGS) {
   char arg1 = PG_GETARG_CHAR(0);
-  text *result = palloc(VARHDRSZ + 4);
+  text *result = (text *)palloc(VARHDRSZ + 4);
 
   /*
    * Conversion rules are the same as in charout(), but here we need to be

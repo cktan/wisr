@@ -278,7 +278,7 @@ static void datum_to_json_internal(Datum val, bool is_null, StringInfo result,
  */
 char *JsonEncodeDateTime(char *buf, Datum value, Oid typid, const int *tzp) {
   if (!buf)
-    buf = palloc(MAXDATELEN + 1);
+    buf = (char *)palloc(MAXDATELEN + 1);
 
   switch (typid) {
   case DATEOID: {
@@ -1549,14 +1549,14 @@ void escape_json_text(StringInfo buf, const text *txt) {
 
 /* Semantic actions for key uniqueness check */
 static JsonParseErrorType json_unique_object_start(void *_state) {
-  JsonUniqueParsingState *state = _state;
+  JsonUniqueParsingState *state = (JsonUniqueParsingState *)_state;
   JsonUniqueStackEntry *entry;
 
   if (!state->unique)
     return JSON_SUCCESS;
 
   /* push object entry to stack */
-  entry = palloc(sizeof(*entry));
+  entry = (JsonUniqueStackEntry *)palloc(sizeof(*entry));
   entry->object_id = state->id_counter++;
   entry->parent = state->stack;
   state->stack = entry;
@@ -1565,7 +1565,7 @@ static JsonParseErrorType json_unique_object_start(void *_state) {
 }
 
 static JsonParseErrorType json_unique_object_end(void *_state) {
-  JsonUniqueParsingState *state = _state;
+  JsonUniqueParsingState *state = (JsonUniqueParsingState *)_state;
   JsonUniqueStackEntry *entry;
 
   if (!state->unique)
@@ -1579,7 +1579,7 @@ static JsonParseErrorType json_unique_object_end(void *_state) {
 
 static JsonParseErrorType
 json_unique_object_field_start(void *_state, char *field, bool isnull) {
-  JsonUniqueParsingState *state = _state;
+  JsonUniqueParsingState *state = (JsonUniqueParsingState *)_state;
   JsonUniqueStackEntry *entry;
 
   if (!state->unique)

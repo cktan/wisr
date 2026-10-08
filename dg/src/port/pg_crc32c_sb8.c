@@ -22,7 +22,7 @@
 
 #include "port/pg_crc32c.h"
 
-static const uint32 pg_crc32c_table[8][256];
+extern const uint32 pg_crc32c_table[8][256];
 
 /* Accumulate one input byte */
 #ifdef WORDS_BIGENDIAN
@@ -32,7 +32,7 @@ static const uint32 pg_crc32c_table[8][256];
 #endif
 
 pg_crc32c pg_comp_crc32c_sb8(pg_crc32c crc, const void *data, size_t len) {
-  const unsigned char *p = data;
+  const unsigned char *p = (const unsigned char *)data;
   const uint32 *p4;
 
   /*
@@ -100,7 +100,7 @@ pg_crc32c pg_comp_crc32c_sb8(pg_crc32c crc, const void *data, size_t len) {
  * order (IOW, the tables are stored in little-endian order even on big-endian
  * systems).
  */
-static const uint32 pg_crc32c_table[8][256] = {
+const uint32 pg_crc32c_table[8][256] = {
 #ifndef WORDS_BIGENDIAN
     {0x00000000, 0xF26B8303, 0xE13B70F7, 0x1350F3F4, 0xC79A971F, 0x35F1141C,
      0x26A1E7E8, 0xD4CA64EB, 0x8AD958CF, 0x78B2DBCC, 0x6BE22838, 0x9989AB3B,

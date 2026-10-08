@@ -200,8 +200,8 @@ Datum spg_range_quad_picksplit(PG_FUNCTION_ARGS) {
       fcinfo, RangeTypeGetOid(DatumGetRangeTypeP(in->datums[0])));
 
   /* Allocate memory for bounds */
-  lowerBounds = palloc(sizeof(RangeBound) * in->nTuples);
-  upperBounds = palloc(sizeof(RangeBound) * in->nTuples);
+  lowerBounds = (RangeBound *)palloc(sizeof(RangeBound) * in->nTuples);
+  upperBounds = (RangeBound *)palloc(sizeof(RangeBound) * in->nTuples);
   j = 0;
 
   /* Deserialize bounds of ranges, count non-empty ranges */
@@ -225,8 +225,8 @@ Datum spg_range_quad_picksplit(PG_FUNCTION_ARGS) {
     out->prefixDatum = PointerGetDatum(NULL);
     out->nodeLabels = NULL;
 
-    out->mapTuplesToNodes = palloc(sizeof(int) * in->nTuples);
-    out->leafTupleDatums = palloc(sizeof(Datum) * in->nTuples);
+    out->mapTuplesToNodes = (int *)palloc(sizeof(int) * in->nTuples);
+    out->leafTupleDatums = (Datum *)palloc(sizeof(Datum) * in->nTuples);
 
     /* Place all ranges into node 0 */
     for (i = 0; i < in->nTuples; i++) {
@@ -254,8 +254,8 @@ Datum spg_range_quad_picksplit(PG_FUNCTION_ARGS) {
   out->nNodes = (in->level == 0) ? 5 : 4;
   out->nodeLabels = NULL; /* we don't need node labels */
 
-  out->mapTuplesToNodes = palloc(sizeof(int) * in->nTuples);
-  out->leafTupleDatums = palloc(sizeof(Datum) * in->nTuples);
+  out->mapTuplesToNodes = (int *)palloc(sizeof(int) * in->nTuples);
+  out->leafTupleDatums = (Datum *)palloc(sizeof(Datum) * in->nTuples);
 
   /*
    * Assign ranges to corresponding nodes according to quadrants relative to
@@ -515,7 +515,7 @@ Datum spg_range_quad_inner_consistent(PG_FUNCTION_ARGS) {
          * previous centroid range if present for checking this.
          */
         if (in->traversalValue) {
-          prevCentroid = in->traversalValue;
+          prevCentroid = (RangeType *)in->traversalValue;
           range_deserialize(typcache, prevCentroid, &prevLower, &prevUpper,
                             &prevEmpty);
         }

@@ -959,7 +959,7 @@ PartitionBoundInfo partition_bounds_copy(PartitionBoundInfo src,
    */
   hash_part = (key->strategy == PARTITION_STRATEGY_HASH);
   natts = hash_part ? 2 : partnatts;
-  boundDatums = palloc(ndatums * natts * sizeof(Datum));
+  boundDatums = (Datum *)palloc(ndatums * natts * sizeof(Datum));
 
   for (i = 0; i < ndatums; i++) {
     int j;
@@ -2232,7 +2232,7 @@ build_merged_partition_bounds(char strategy, List *merged_datums,
   ListCell *lc;
 
   merged_bounds = (PartitionBoundInfo)palloc(sizeof(PartitionBoundInfoData));
-  merged_bounds->strategy = strategy;
+  merged_bounds->strategy = (PartitionStrategy)strategy;
   merged_bounds->ndatums = ndatums;
 
   merged_bounds->datums = (Datum **)palloc(sizeof(Datum *) * ndatums);
@@ -2774,7 +2774,8 @@ void check_new_partition_bound(char *relname, Relation parent,
     Assert(cmpval != 0);
     if (cmpval > 0) {
       /* Point to problematic key in the lower datums list. */
-      PartitionRangeDatum *datum = list_nth(spec->lowerdatums, cmpval - 1);
+      PartitionRangeDatum *datum =
+          (PartitionRangeDatum *)list_nth(spec->lowerdatums, cmpval - 1);
 
       ereport(ERROR, (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
                       errmsg("empty range bound specified for partition \"%s\"",
@@ -2836,8 +2837,8 @@ void check_new_partition_bound(char *relname, Relation parent,
              * Point to problematic key in the upper
              * datums list.
              */
-            PartitionRangeDatum *datum =
-                list_nth(spec->upperdatums, abs(cmpval) - 1);
+            PartitionRangeDatum *datum = (PartitionRangeDatum *)list_nth(
+                spec->upperdatums, abs(cmpval) - 1);
 
             /*
              * The new partition overlaps with the
@@ -2860,8 +2861,10 @@ void check_new_partition_bound(char *relname, Relation parent,
          * Point to problematic key in the lower datums list;
          * if we have equality, point to the first one.
          */
-        datum = cmpval == 0 ? linitial(spec->lowerdatums)
-                            : list_nth(spec->lowerdatums, abs(cmpval) - 1);
+        datum =
+            (PartitionRangeDatum *)(cmpval == 0 ? linitial(spec->lowerdatums)
+                                                : list_nth(spec->lowerdatums,
+                                                           abs(cmpval) - 1));
         overlap = true;
         overlap_location = datum->location;
         with = boundinfo->indexes[offset + 1];
@@ -3490,15 +3493,15 @@ static Expr *make_partition_op_expr(PartitionKey key, int keynum,
       ListCell *lc;
 
       foreach (lc, elems) {
-        Expr *elem = lfirst(lc), *elemop;
+        Expr *elem = (Expr *)lfirst(lc), *elemop;
 
         elemop = make_opclause(operoid, BOOLOID, false, arg1, elem, InvalidOid,
                                key->partcollation[keynum]);
         elemops = lappend(elemops, elemop);
       }
 
-      result =
-          nelems > 1 ? makeBoolExpr(OR_EXPR, elemops, -1) : linitial(elemops);
+      result = (Expr *)(nelems > 1 ? makeBoolExpr(OR_EXPR, elemops, -1)
+                                   : linitial(elemops));
     }
     break;
   }
@@ -3700,10 +3703,10 @@ static List *get_qual_for_list(Relation parent, PartitionBoundSpec *spec) {
     nulltest->location = -1;
 
     if (opexpr) {
-      Expr * or ;
+      Expr *or_;
 
-      or = makeBoolExpr(OR_EXPR, list_make2(nulltest, opexpr), -1);
-      result = list_make1(or);
+      or_ = makeBoolExpr(OR_EXPR, list_make2(nulltest, opexpr), -1);
+      result = list_make1(or_);
     } else
       result = list_make1(nulltest);
   }
@@ -4096,7 +4099,7 @@ static void get_range_key_properties(PartitionKey key, int keynum,
   } else {
     if (*partexprs_item == NULL)
       elog(ERROR, "wrong number of partition key expressions");
-    *keyCol = copyObject(lfirst(*partexprs_item));
+    *keyCol = (Expr *)copyObject(lfirst(*partexprs_item));
     *partexprs_item = lnext(key->partexprs, *partexprs_item);
   }
 
@@ -4134,7 +4137,7 @@ static List *get_range_nulltest(PartitionKey key) {
     } else {
       if (partexprs_item == NULL)
         elog(ERROR, "wrong number of partition key expressions");
-      keyCol = copyObject(lfirst(partexprs_item));
+      keyCol = (Expr *)copyObject(lfirst(partexprs_item));
       partexprs_item = lnext(key->partexprs, partexprs_item);
     }
 

@@ -191,13 +191,13 @@ void parse_compress_specification(pg_compress_algorithm algorithm,
     }
 
     /* Extract keyword and value as separate C strings. */
-    keyword = palloc(kwlen + 1);
+    keyword = (char *)palloc(kwlen + 1);
     memcpy(keyword, kwstart, kwlen);
     keyword[kwlen] = '\0';
     if (!has_value)
       value = NULL;
     else {
-      value = palloc(vlen + 1);
+      value = (char *)palloc(vlen + 1);
       memcpy(value, vstart, vlen);
       value[vlen] = '\0';
     }
@@ -427,7 +427,7 @@ void parse_compress_options(const char *option, char **algorithm,
   } else {
     char *alg;
 
-    alg = palloc((sep - option) + 1);
+    alg = (char *)palloc((sep - option) + 1);
     memcpy(alg, option, sep - option);
     alg[sep - option] = '\0';
 

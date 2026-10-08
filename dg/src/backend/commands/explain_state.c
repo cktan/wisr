@@ -251,7 +251,7 @@ void SetExplainExtensionState(ExplainState *es, int extension_id,
   if (es->extension_state == NULL) {
     es->extension_state_allocated = Max(16, pg_nextpower2_32(extension_id + 1));
     es->extension_state =
-        palloc0(es->extension_state_allocated * sizeof(void *));
+        (void **)palloc0(es->extension_state_allocated * sizeof(void *));
   }
 
   /* If there's an array but it's currently full, expand it. */

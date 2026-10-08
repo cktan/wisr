@@ -564,7 +564,7 @@ uint64 table_block_relation_size(Relation rel, ForkNumber forkNumber) {
   /* InvalidForkNumber indicates returning the size for all forks */
   if (forkNumber == InvalidForkNumber) {
     for (int i = 0; i < MAX_FORKNUM; i++)
-      nblocks += smgrnblocks(RelationGetSmgr(rel), i);
+      nblocks += smgrnblocks(RelationGetSmgr(rel), (ForkNumber)i);
   } else
     nblocks = smgrnblocks(RelationGetSmgr(rel), forkNumber);
 

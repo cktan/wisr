@@ -16,10 +16,10 @@
 #ifndef PQCOMM_H
 #define PQCOMM_H
 
-#include <netdb.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <netdb.h>
+#include <netinet/in.h>
 
 /*
  * The definitions for the request/response codes are kept in a separate file

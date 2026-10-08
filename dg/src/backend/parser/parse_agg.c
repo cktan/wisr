@@ -1103,11 +1103,12 @@ void parseCheckAggregates(ParseState *pstate, Query *qry) {
      * The intersection will often be empty, so help things along by
      * seeding the intersect with the smallest set.
      */
-    gset_common = linitial(gsets);
+    gset_common = (List *)linitial(gsets);
 
     if (gset_common) {
       for_each_from(l, gsets, 1) {
-        gset_common = list_intersection_int(gset_common, lfirst(l));
+        gset_common =
+            list_intersection_int(gset_common, (const List *)lfirst(l));
         if (!gset_common)
           break;
       }
@@ -1192,7 +1193,7 @@ void parseCheckAggregates(ParseState *pstate, Query *qry) {
    */
   have_non_var_grouping = false;
   foreach (l, groupClauses) {
-    TargetEntry *tle = lfirst(l);
+    TargetEntry *tle = (TargetEntry *)lfirst(l);
 
     if (!IsA(tle->expr, Var)) {
       have_non_var_grouping = true;
@@ -1550,7 +1551,7 @@ finalize_grouping_exprs_walker(Node *node,
       List *ref_list = NIL;
 
       foreach (lc, grp->args) {
-        Node *expr = lfirst(lc);
+        Node *expr = (Node *)lfirst(lc);
         Index ref = 0;
 
         if (context->hasJoinRTEs)
@@ -1567,7 +1568,7 @@ finalize_grouping_exprs_walker(Node *node,
 
           if (var->varlevelsup == context->sublevels_up) {
             foreach (gl, context->groupClauses) {
-              TargetEntry *tle = lfirst(gl);
+              TargetEntry *tle = (TargetEntry *)lfirst(gl);
               Var *gvar = (Var *)tle->expr;
 
               if (IsA(gvar, Var) && gvar->varno == var->varno &&
@@ -1580,7 +1581,7 @@ finalize_grouping_exprs_walker(Node *node,
         } else if (context->have_non_var_grouping &&
                    context->sublevels_up == 0) {
           foreach (gl, context->groupClauses) {
-            TargetEntry *tle = lfirst(gl);
+            TargetEntry *tle = (TargetEntry *)lfirst(gl);
 
             if (equal(expr, tle->expr)) {
               ref = tle->ressortgroupref;
@@ -1731,7 +1732,7 @@ static List *expand_groupingset_node(GroupingSet *gs) {
     ListCell *lc;
 
     foreach (lc, gs->content) {
-      List *current_result = expand_groupingset_node(lfirst(lc));
+      List *current_result = expand_groupingset_node((GroupingSet *)lfirst(lc));
 
       result = list_concat(result, current_result);
     }
@@ -1791,7 +1792,7 @@ List *expand_grouping_sets(List *groupingSets, bool groupDistinct, int limit) {
 
   foreach (lc, groupingSets) {
     List *current_result = NIL;
-    GroupingSet *gs = lfirst(lc);
+    GroupingSet *gs = (GroupingSet *)lfirst(lc);
 
     current_result = expand_groupingset_node(gs);
 
@@ -1816,12 +1817,12 @@ List *expand_grouping_sets(List *groupingSets, bool groupDistinct, int limit) {
   }
 
   for_each_from(lc, expanded_groups, 1) {
-    List *p = lfirst(lc);
+    List *p = (List *)lfirst(lc);
     List *new_result = NIL;
     ListCell *lc2;
 
     foreach (lc2, result) {
-      List *q = lfirst(lc2);
+      List *q = (List *)lfirst(lc2);
       ListCell *lc3;
 
       foreach (lc3, p) {
@@ -1841,18 +1842,18 @@ List *expand_grouping_sets(List *groupingSets, bool groupDistinct, int limit) {
 
     /* Sort each groupset individually */
     foreach (cell, result)
-      list_sort(lfirst(cell), list_int_cmp);
+      list_sort((List *)lfirst(cell), list_int_cmp);
 
     /* Now sort the list of groupsets by length and contents */
     list_sort(result, cmp_list_len_contents_asc);
 
     /* Finally, remove duplicates */
-    prev = linitial(result);
+    prev = (List *)linitial(result);
     for_each_from(cell, result, 1) {
       if (equal(lfirst(cell), prev))
         result = foreach_delete_current(result, cell);
       else
-        prev = lfirst(cell);
+        prev = (List *)lfirst(cell);
     }
   }
 

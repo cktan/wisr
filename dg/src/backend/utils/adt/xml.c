@@ -344,7 +344,7 @@ Datum xml_out(PG_FUNCTION_ARGS) {
    * different client encoding, so we'd do more harm than good by including
    * it.
    */
-  PG_RETURN_CSTRING(xml_out_internal(x, 0));
+  PG_RETURN_CSTRING(xml_out_internal(x, (pg_enc)0));
 }
 
 Datum xml_recv(PG_FUNCTION_ARGS) {
@@ -419,7 +419,7 @@ Datum xml_send(PG_FUNCTION_ARGS) {
    * xml_out_internal doesn't convert the encoding, it just prints the right
    * declaration. pq_sendtext will do the conversion.
    */
-  outval = xml_out_internal(x, pg_get_client_encoding());
+  outval = xml_out_internal(x, (pg_enc)pg_get_client_encoding());
 
   pq_begintypsend(&buf);
   pq_sendtext(&buf, outval, strlen(outval));
@@ -576,7 +576,7 @@ Datum xmlconcat2(PG_FUNCTION_ARGS) {
 Datum texttoxml(PG_FUNCTION_ARGS) {
   text *data = PG_GETARG_TEXT_PP(0);
 
-  PG_RETURN_XML_P(xmlparse(data, xmloption, true));
+  PG_RETURN_XML_P(xmlparse(data, (XmlOptionType)xmloption, true));
 }
 
 Datum xmltotext(PG_FUNCTION_ARGS) {
@@ -2428,7 +2428,7 @@ char *escape_xml(const char *str) {
 
 static char *_SPI_strdup(const char *s) {
   size_t len = strlen(s) + 1;
-  char *ret = SPI_palloc(len);
+  char *ret = (char *)SPI_palloc(len);
 
   memcpy(ret, s, len);
   return ret;
@@ -3456,7 +3456,7 @@ static const char *map_sql_typecoll_to_xmlschema_types(List *tupdesc_list) {
  */
 static const char *map_sql_type_to_xmlschema_type(Oid typeoid, int typmod) {
   StringInfoData result;
-  const char *typename = map_sql_type_to_xml_name(typeoid, typmod);
+  const char *typename_ = map_sql_type_to_xml_name(typeoid, typmod);
 
   initStringInfo(&result);
 
@@ -3469,7 +3469,7 @@ static const char *map_sql_type_to_xmlschema_type(Oid typeoid, int typmod) {
                  "  </xsd:sequence>\n"
                  "</xsd:complexType>\n");
   } else {
-    appendStringInfo(&result, "<xsd:simpleType name=\"%s\">\n", typename);
+    appendStringInfo(&result, "<xsd:simpleType name=\"%s\">\n", typename_);
 
     switch (typeoid) {
     case BPCHAROID:

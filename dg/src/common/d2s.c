@@ -57,10 +57,10 @@
 #define HAS_64_BIT_INTRINSICS
 #endif
 
+#include "ryu_common.h"
+#include "digit_table.h"
 #include "d2s_full_table.h"
 #include "d2s_intrinsics.h"
-#include "digit_table.h"
-#include "ryu_common.h"
 
 #define DOUBLE_MANTISSA_BITS 52
 #define DOUBLE_EXPONENT_BITS 11

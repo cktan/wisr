@@ -396,7 +396,7 @@ void ExecSortInitializeDSM(SortState *node, ParallelContext *pcxt) {
 
   size = offsetof(SharedSortInfo, sinstrument) +
          pcxt->nworkers * sizeof(TuplesortInstrumentation);
-  node->shared_info = shm_toc_allocate(pcxt->toc, size);
+  node->shared_info = (SharedSortInfo *)shm_toc_allocate(pcxt->toc, size);
   /* ensure any unfilled slots will contain zeroes */
   memset(node->shared_info, 0, size);
   node->shared_info->num_workers = pcxt->nworkers;
@@ -410,8 +410,8 @@ void ExecSortInitializeDSM(SortState *node, ParallelContext *pcxt) {
  * ----------------------------------------------------------------
  */
 void ExecSortInitializeWorker(SortState *node, ParallelWorkerContext *pwcxt) {
-  node->shared_info =
-      shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
+  node->shared_info = (SharedSortInfo *)shm_toc_lookup(
+      pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
   node->am_worker = true;
 }
 
@@ -430,7 +430,7 @@ void ExecSortRetrieveInstrumentation(SortState *node) {
 
   size = offsetof(SharedSortInfo, sinstrument) +
          node->shared_info->num_workers * sizeof(TuplesortInstrumentation);
-  si = palloc(size);
+  si = (SharedSortInfo *)palloc(size);
   memcpy(si, node->shared_info, size);
   node->shared_info = si;
 }

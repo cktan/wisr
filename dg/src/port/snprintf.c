@@ -695,7 +695,7 @@ static bool find_arguments(const char *format, va_list args,
   int fmtpos;
   int i;
   int last_dollar = 0; /* Init to "no dollar arguments known" */
-  PrintfArgType argtypes[PG_NL_ARGMAX + 1] = {0};
+  PrintfArgType argtypes[PG_NL_ARGMAX + 1] = {(PrintfArgType)0};
 
   /*
    * This loop must accept the same format strings as the one in dopr().

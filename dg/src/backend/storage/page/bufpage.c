@@ -1380,8 +1380,8 @@ char *PageSetChecksumCopy(Page page, BlockNumber blkno) {
    * and second to avoid wasting space in processes that never call this.
    */
   if (pageCopy == NULL)
-    pageCopy = MemoryContextAllocAligned(TopMemoryContext, BLCKSZ,
-                                         PG_IO_ALIGN_SIZE, 0);
+    pageCopy = (char *)MemoryContextAllocAligned(TopMemoryContext, BLCKSZ,
+                                                 PG_IO_ALIGN_SIZE, 0);
 
   memcpy(pageCopy, page, BLCKSZ);
   ((PageHeader)pageCopy)->pd_checksum = pg_checksum_page(pageCopy, blkno);

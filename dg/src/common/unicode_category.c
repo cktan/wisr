@@ -89,7 +89,7 @@ pg_unicode_category unicode_category(pg_wchar code) {
   Assert(code <= 0x10ffff);
 
   if (code < 0x80)
-    return unicode_opt_ascii[code].category;
+    return (pg_unicode_category)unicode_opt_ascii[code].category;
 
   while (max >= min) {
     mid = (min + max) / 2;
@@ -98,7 +98,7 @@ pg_unicode_category unicode_category(pg_wchar code) {
     else if (code < unicode_categories[mid].first)
       max = mid - 1;
     else
-      return unicode_categories[mid].category;
+      return (pg_unicode_category)unicode_categories[mid].category;
   }
 
   return PG_U_UNASSIGNED;

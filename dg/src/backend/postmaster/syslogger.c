@@ -26,10 +26,10 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
-#include <sys/stat.h>
-#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 
 #include "common/file_perm.h"
 #include "lib/stringinfo.h"
@@ -878,7 +878,7 @@ static void process_pipe_input(char *logbuffer, int *bytes_in_logbuffer) {
              * Need a free slot, but there isn't one in the list,
              * so create a new one and extend the list with it.
              */
-            free_slot = palloc(sizeof(save_buffer));
+            free_slot = (save_buffer *)palloc(sizeof(save_buffer));
             buffer_list = lappend(buffer_list, free_slot);
             buffer_lists[p.pid % NBUFFER_LISTS] = buffer_list;
           }
@@ -1284,7 +1284,7 @@ static char *logfile_getname(pg_time_t timestamp, const char *suffix) {
   char *filename;
   int len;
 
-  filename = palloc(MAXPGPATH);
+  filename = (char *)palloc(MAXPGPATH);
 
   snprintf(filename, MAXPGPATH, "%s/", Log_directory);
 

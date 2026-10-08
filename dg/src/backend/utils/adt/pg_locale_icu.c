@@ -29,8 +29,8 @@
 #endif
 
 #include "access/htup_details.h"
-#include "catalog/pg_collation.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_collation.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -182,7 +182,8 @@ pg_locale_t create_pg_locale_icu(Oid collid, MemoryContext context) {
 
   collator = make_icu_collator(iculocstr, icurules);
 
-  result = MemoryContextAllocZero(context, sizeof(struct pg_locale_struct));
+  result = (pg_locale_t)MemoryContextAllocZero(context,
+                                               sizeof(struct pg_locale_struct));
   result->info.icu.locale = MemoryContextStrdup(context, iculocstr);
   result->info.icu.ucol = collator;
   result->provider = COLLPROVIDER_ICU;
@@ -249,7 +250,7 @@ UCollator *pg_ucol_open(const char *loc_str) {
     if (strcmp(lang, "und") == 0) {
       const char *remainder = loc_str + strlen("und");
 
-      fixed_str = palloc(strlen("root") + strlen(remainder) + 1);
+      fixed_str = (char *)palloc(strlen("root") + strlen(remainder) + 1);
       strcpy(fixed_str, "root");
       strcat(fixed_str, remainder);
 
@@ -833,7 +834,7 @@ pg_attribute_unused() static void icu_set_collation_attributes(
    */
   *status = U_ZERO_ERROR;
   len = uloc_canonicalize(loc, NULL, 0, status);
-  icu_locale_id = palloc(len + 1);
+  icu_locale_id = (char *)palloc(len + 1);
   *status = U_ZERO_ERROR;
   len = uloc_canonicalize(loc, icu_locale_id, len + 1, status);
   if (U_FAILURE(*status) || *status == U_STRING_NOT_TERMINATED_WARNING)

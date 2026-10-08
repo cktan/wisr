@@ -272,7 +272,7 @@ pid_t postmaster_child_launch(BackendType child_type, int child_slot,
 
     MyPMChildSlot = child_slot;
     if (client_sock) {
-      MyClientSocket = palloc(sizeof(ClientSocket));
+      MyClientSocket = (ClientSocket *)palloc(sizeof(ClientSocket));
       memcpy(MyClientSocket, client_sock, sizeof(ClientSocket));
     }
 

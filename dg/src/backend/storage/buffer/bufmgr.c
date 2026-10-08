@@ -70,7 +70,7 @@
 
 /* Note: these two macros only work on shared buffers, not local ones! */
 #define BufHdrGetBlock(bufHdr)	((Block) (BufferBlocks + ((Size) (bufHdr)->buf_id) * BLCKSZ))
-#define BufferGetLSN(bufHdr)	(PageGetLSN(BufHdrGetBlock(bufHdr)))
+#define BufferGetLSN(bufHdr)	(PageGetLSN((Page) BufHdrGetBlock(bufHdr)))
 
 /* Note: this macro only works on local buffers, not shared ones! */
 #define LocalBufHdrGetBlock(bufHdr) \
@@ -293,8 +293,9 @@ static void ReservePrivateRefCountEntry(void) {
     Assert(ReservedRefCountEntry->buffer != InvalidBuffer);
 
     /* enter victim array entry into hashtable */
-    hashent = hash_search(PrivateRefCountHash, &(ReservedRefCountEntry->buffer),
-                          HASH_ENTER, &found);
+    hashent = (PrivateRefCountEntry *)hash_search(
+        PrivateRefCountHash, &(ReservedRefCountEntry->buffer), HASH_ENTER,
+        &found);
     Assert(!found);
     hashent->refcount = ReservedRefCountEntry->refcount;
 
@@ -362,7 +363,8 @@ static PrivateRefCountEntry *GetPrivateRefCountEntry(Buffer buffer,
   if (PrivateRefCountOverflowed == 0)
     return NULL;
 
-  res = hash_search(PrivateRefCountHash, &buffer, HASH_FIND, NULL);
+  res = (PrivateRefCountEntry *)hash_search(PrivateRefCountHash, &buffer,
+                                            HASH_FIND, NULL);
 
   if (res == NULL)
     return NULL;
@@ -1451,7 +1453,7 @@ static inline bool ReadBuffersCanStartIO(Buffer buffer, bool nowait) {
  */
 static void ProcessReadBuffersResult(ReadBuffersOperation *operation) {
   PgAioReturn *aio_ret = &operation->io_return;
-  PgAioResultStatus rs = aio_ret->result.status;
+  PgAioResultStatus rs = (PgAioResultStatus)aio_ret->result.status;
   int newly_read_blocks = 0;
 
   Assert(pgaio_wref_valid(&operation->io_wref));
@@ -1776,7 +1778,7 @@ static bool AsyncReadBuffers(ReadBuffersOperation *operation,
                                     : PGAIO_HCB_SHARED_BUFFER_READV,
                                 flags);
 
-    pgaio_io_set_flag(ioh, ioh_flags);
+    pgaio_io_set_flag(ioh, (PgAioHandleFlags)ioh_flags);
 
     /* ---
      * Even though we're trying to issue IO asynchronously, track the time
@@ -4326,7 +4328,8 @@ void DropRelationsAllBuffers(SMgrRelation *smgr_reln, int nlocators) {
   if (nlocators == 0)
     return;
 
-  rels = palloc(sizeof(SMgrRelation) * nlocators); /* non-local relations */
+  rels = (SMgrRelationData **)palloc(sizeof(SMgrRelation) *
+                                     nlocators); /* non-local relations */
 
   /* If it's a local relation, it's localbuf.c's problem. */
   for (i = 0; i < nlocators; i++) {
@@ -4360,11 +4363,11 @@ void DropRelationsAllBuffers(SMgrRelation *smgr_reln, int nlocators) {
   for (i = 0; i < n && cached; i++) {
     for (int j = 0; j <= MAX_FORKNUM; j++) {
       /* Get the number of blocks for a relation's fork. */
-      block[i][j] = smgrnblocks_cached(rels[i], j);
+      block[i][j] = smgrnblocks_cached(rels[i], (ForkNumber)j);
 
       /* We need to only consider the relation forks that exists. */
       if (block[i][j] == InvalidBlockNumber) {
-        if (!smgrexists(rels[i], j))
+        if (!smgrexists(rels[i], (ForkNumber)j))
           continue;
         cached = false;
         break;
@@ -4387,8 +4390,8 @@ void DropRelationsAllBuffers(SMgrRelation *smgr_reln, int nlocators) {
           continue;
 
         /* drop all the buffers for a particular relation fork */
-        FindAndDropRelationBuffers(rels[i]->smgr_rlocator.locator, j,
-                                   block[i][j], 0);
+        FindAndDropRelationBuffers(rels[i]->smgr_rlocator.locator,
+                                   (ForkNumber)j, block[i][j], 0);
       }
     }
 
@@ -4398,7 +4401,8 @@ void DropRelationsAllBuffers(SMgrRelation *smgr_reln, int nlocators) {
   }
 
   pfree(block);
-  locators = palloc(sizeof(RelFileLocator) * n); /* non-local relations */
+  locators = (RelFileLocator *)palloc(sizeof(RelFileLocator) *
+                                      n); /* non-local relations */
   for (i = 0; i < n; i++)
     locators[i] = rels[i]->smgr_rlocator.locator;
 
@@ -4437,8 +4441,8 @@ void DropRelationsAllBuffers(SMgrRelation *smgr_reln, int nlocators) {
       RelFileLocator locator;
 
       locator = BufTagGetRelFileLocator(&bufHdr->tag);
-      rlocator = bsearch(&locator, locators, n, sizeof(RelFileLocator),
-                         rlocator_comparator);
+      rlocator = (RelFileLocator *)bsearch(
+          &locator, locators, n, sizeof(RelFileLocator), rlocator_comparator);
     }
 
     /* buffer doesn't belong to any of the given relfilelocators; skip it */
@@ -4659,7 +4663,7 @@ void FlushRelationsAllBuffers(SMgrRelation *smgrs, int nrels) {
     return;
 
   /* fill-in array for qsort */
-  srels = palloc(sizeof(SMgrSortArray) * nrels);
+  srels = (SMgrSortArray *)palloc(sizeof(SMgrSortArray) * nrels);
 
   for (i = 0; i < nrels; i++) {
     Assert(!RelFileLocatorBackendIsTemp(smgrs[i]->smgr_rlocator));
@@ -4701,8 +4705,8 @@ void FlushRelationsAllBuffers(SMgrRelation *smgrs, int nrels) {
       RelFileLocator rlocator;
 
       rlocator = BufTagGetRelFileLocator(&bufHdr->tag);
-      srelent = bsearch(&rlocator, srels, nrels, sizeof(SMgrSortArray),
-                        rlocator_comparator);
+      srelent = (SMgrSortArray *)bsearch(
+          &rlocator, srels, nrels, sizeof(SMgrSortArray), rlocator_comparator);
     }
 
     /* buffer doesn't belong to any of the given relfilelocators; skip it */
@@ -4868,8 +4872,8 @@ void CreateAndCopyRelationData(RelFileLocator src_rlocator,
                                  permanent);
 
   /* copy those extra forks that exist */
-  for (ForkNumber forkNum = MAIN_FORKNUM + 1; forkNum <= MAX_FORKNUM;
-       forkNum++) {
+  for (ForkNumber forkNum = (ForkNumber)(MAIN_FORKNUM + 1);
+       forkNum <= MAX_FORKNUM; forkNum++) {
     if (smgrexists(src_rel, forkNum)) {
       smgrcreate(dst_rel, forkNum, false);
 
@@ -6488,7 +6492,7 @@ buffer_readv_complete_one(PgAioTargetData *td, uint8 buf_off, Buffer buffer,
   BufferDesc *buf_hdr = is_temp ? GetLocalBufferDescriptor(-buffer - 1)
                                 : GetBufferDescriptor(buffer - 1);
   BufferTag tag = buf_hdr->tag;
-  char *bufdata = BufferGetBlock(buffer);
+  char *bufdata = (char *)BufferGetBlock(buffer);
   uint32 set_flag_bits;
   int piv_flags;
 

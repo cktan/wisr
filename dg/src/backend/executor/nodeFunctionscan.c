@@ -303,7 +303,8 @@ FunctionScanState *ExecInitFunctionScan(FunctionScan *node, EState *estate,
    */
   ExecAssignExprContext(estate, &scanstate->ss.ps);
 
-  scanstate->funcstates = palloc(nfuncs * sizeof(FunctionScanPerFuncState));
+  scanstate->funcstates = (FunctionScanPerFuncState *)palloc(
+      nfuncs * sizeof(FunctionScanPerFuncState));
 
   natts = 0;
   i = 0;

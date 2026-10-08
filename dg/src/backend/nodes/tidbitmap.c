@@ -308,23 +308,24 @@ void tbm_free(TIDBitmap *tbm) {
  * is becomes 0.
  */
 void tbm_free_shared_area(dsa_area *dsa, dsa_pointer dp) {
-  TBMSharedIteratorState *istate = dsa_get_address(dsa, dp);
+  TBMSharedIteratorState *istate =
+      (TBMSharedIteratorState *)dsa_get_address(dsa, dp);
   PTEntryArray *ptbase;
   PTIterationArray *ptpages;
   PTIterationArray *ptchunks;
 
   if (DsaPointerIsValid(istate->pagetable)) {
-    ptbase = dsa_get_address(dsa, istate->pagetable);
+    ptbase = (PTEntryArray *)dsa_get_address(dsa, istate->pagetable);
     if (pg_atomic_sub_fetch_u32(&ptbase->refcount, 1) == 0)
       dsa_free(dsa, istate->pagetable);
   }
   if (DsaPointerIsValid(istate->spages)) {
-    ptpages = dsa_get_address(dsa, istate->spages);
+    ptpages = (PTIterationArray *)dsa_get_address(dsa, istate->spages);
     if (pg_atomic_sub_fetch_u32(&ptpages->refcount, 1) == 0)
       dsa_free(dsa, istate->spages);
   }
   if (DsaPointerIsValid(istate->schunks)) {
-    ptchunks = dsa_get_address(dsa, istate->schunks);
+    ptchunks = (PTIterationArray *)dsa_get_address(dsa, istate->schunks);
     if (pg_atomic_sub_fetch_u32(&ptchunks->refcount, 1) == 0)
       dsa_free(dsa, istate->schunks);
   }
@@ -681,7 +682,7 @@ dsa_pointer tbm_prepare_shared_iterate(TIDBitmap *tbm) {
    * lock, this will also be used by multiple worker for shared iterate.
    */
   dp = dsa_allocate0(tbm->dsa, sizeof(TBMSharedIteratorState));
-  istate = dsa_get_address(tbm->dsa, dp);
+  istate = (TBMSharedIteratorState *)dsa_get_address(tbm->dsa, dp);
 
   /*
    * If we're not already iterating, create and fill the sorted page lists.
@@ -702,13 +703,13 @@ dsa_pointer tbm_prepare_shared_iterate(TIDBitmap *tbm) {
     if (tbm->npages) {
       tbm->ptpages = dsa_allocate(tbm->dsa, sizeof(PTIterationArray) +
                                                 tbm->npages * sizeof(int));
-      ptpages = dsa_get_address(tbm->dsa, tbm->ptpages);
+      ptpages = (PTIterationArray *)dsa_get_address(tbm->dsa, tbm->ptpages);
       pg_atomic_init_u32(&ptpages->refcount, 0);
     }
     if (tbm->nchunks) {
       tbm->ptchunks = dsa_allocate(tbm->dsa, sizeof(PTIterationArray) +
                                                  tbm->nchunks * sizeof(int));
-      ptchunks = dsa_get_address(tbm->dsa, tbm->ptchunks);
+      ptchunks = (PTIterationArray *)dsa_get_address(tbm->dsa, tbm->ptchunks);
       pg_atomic_init_u32(&ptchunks->refcount, 0);
     }
 
@@ -720,7 +721,7 @@ dsa_pointer tbm_prepare_shared_iterate(TIDBitmap *tbm) {
      */
     npages = nchunks = 0;
     if (tbm->status == TBM_HASH) {
-      ptbase = dsa_get_address(tbm->dsa, tbm->dsapagetable);
+      ptbase = (PTEntryArray *)dsa_get_address(tbm->dsa, tbm->dsapagetable);
 
       pagetable_start_iterate(tbm->pagetable, &i);
       while ((page = pagetable_iterate(tbm->pagetable, &i)) != NULL) {
@@ -741,7 +742,7 @@ dsa_pointer tbm_prepare_shared_iterate(TIDBitmap *tbm) {
        */
       tbm->dsapagetable =
           dsa_allocate(tbm->dsa, sizeof(PTEntryArray) + sizeof(PagetableEntry));
-      ptbase = dsa_get_address(tbm->dsa, tbm->dsapagetable);
+      ptbase = (PTEntryArray *)dsa_get_address(tbm->dsa, tbm->dsapagetable);
       memcpy(ptbase->ptentry, &tbm->entry1, sizeof(PagetableEntry));
       ptpages->index[0] = 0;
     }
@@ -768,9 +769,9 @@ dsa_pointer tbm_prepare_shared_iterate(TIDBitmap *tbm) {
   istate->spages = tbm->ptpages;
   istate->schunks = tbm->ptchunks;
 
-  ptbase = dsa_get_address(tbm->dsa, tbm->dsapagetable);
-  ptpages = dsa_get_address(tbm->dsa, tbm->ptpages);
-  ptchunks = dsa_get_address(tbm->dsa, tbm->ptchunks);
+  ptbase = (PTEntryArray *)dsa_get_address(tbm->dsa, tbm->dsapagetable);
+  ptpages = (PTIterationArray *)dsa_get_address(tbm->dsa, tbm->ptpages);
+  ptchunks = (PTIterationArray *)dsa_get_address(tbm->dsa, tbm->ptchunks);
 
   /*
    * For every shared iterator referring to pagetable and iterator array,
@@ -806,7 +807,7 @@ dsa_pointer tbm_prepare_shared_iterate(TIDBitmap *tbm) {
  */
 int tbm_extract_page_tuple(TBMIterateResult *iteritem, OffsetNumber *offsets,
                            uint32 max_offsets) {
-  PagetableEntry *page = iteritem->internal_page;
+  PagetableEntry *page = (PagetableEntry *)iteritem->internal_page;
   int wordnum;
   int ntuples = 0;
 
@@ -1326,12 +1327,14 @@ TBMSharedIterator *tbm_attach_shared_iterate(dsa_area *dsa, dsa_pointer dp) {
 
   iterator->state = istate;
 
-  iterator->ptbase = dsa_get_address(dsa, istate->pagetable);
+  iterator->ptbase = (PTEntryArray *)dsa_get_address(dsa, istate->pagetable);
 
   if (istate->npages)
-    iterator->ptpages = dsa_get_address(dsa, istate->spages);
+    iterator->ptpages =
+        (PTIterationArray *)dsa_get_address(dsa, istate->spages);
   if (istate->nchunks)
-    iterator->ptchunks = dsa_get_address(dsa, istate->schunks);
+    iterator->ptchunks =
+        (PTIterationArray *)dsa_get_address(dsa, istate->schunks);
 
   return iterator;
 }
@@ -1357,7 +1360,7 @@ static inline void *pagetable_allocate(pagetable_hash *pagetable, Size size) {
   tbm->dsapagetableold = tbm->dsapagetable;
   tbm->dsapagetable = dsa_allocate_extended(
       tbm->dsa, sizeof(PTEntryArray) + size, DSA_ALLOC_HUGE | DSA_ALLOC_ZERO);
-  ptbase = dsa_get_address(tbm->dsa, tbm->dsapagetable);
+  ptbase = (PTEntryArray *)dsa_get_address(tbm->dsa, tbm->dsapagetable);
 
   return ptbase->ptentry;
 }

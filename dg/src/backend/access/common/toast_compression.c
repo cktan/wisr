@@ -240,9 +240,10 @@ ToastCompressionId toast_get_compression_id(struct varlena *attr) {
     VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 
     if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
-      cmid = VARATT_EXTERNAL_GET_COMPRESS_METHOD(toast_pointer);
+      cmid = (ToastCompressionId)VARATT_EXTERNAL_GET_COMPRESS_METHOD(
+          toast_pointer);
   } else if (VARATT_IS_COMPRESSED(attr))
-    cmid = VARDATA_COMPRESSED_GET_COMPRESS_METHOD(attr);
+    cmid = (ToastCompressionId)VARDATA_COMPRESSED_GET_COMPRESS_METHOD(attr);
 
   return cmid;
 }

@@ -15,8 +15,8 @@
 #include <wctype.h>
 
 #include "access/htup_details.h"
-#include "catalog/pg_collation.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_collation.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -195,7 +195,7 @@ static size_t strlower_libc_mb(char *dest, size_t destsize, const char *src,
    * Make result large enough; case change might change number of bytes
    */
   max_size = curr_char * pg_database_encoding_max_length();
-  result = palloc(max_size + 1);
+  result = (char *)palloc(max_size + 1);
 
   result_size = wchar2char(result, workspace, max_size + 1, locale);
 
@@ -283,7 +283,7 @@ static size_t strtitle_libc_mb(char *dest, size_t destsize, const char *src,
    * Make result large enough; case change might change number of bytes
    */
   max_size = curr_char * pg_database_encoding_max_length();
-  result = palloc(max_size + 1);
+  result = (char *)palloc(max_size + 1);
 
   result_size = wchar2char(result, workspace, max_size + 1, locale);
 
@@ -356,7 +356,7 @@ static size_t strupper_libc_mb(char *dest, size_t destsize, const char *src,
    * Make result large enough; case change might change number of bytes
    */
   max_size = curr_char * pg_database_encoding_max_length();
-  result = palloc(max_size + 1);
+  result = (char *)palloc(max_size + 1);
 
   result_size = wchar2char(result, workspace, max_size + 1, locale);
 
@@ -409,7 +409,8 @@ pg_locale_t create_pg_locale_libc(Oid collid, MemoryContext context) {
 
   loc = make_libc_collator(collate, ctype);
 
-  result = MemoryContextAllocZero(context, sizeof(struct pg_locale_struct));
+  result = (pg_locale_t)MemoryContextAllocZero(context,
+                                               sizeof(struct pg_locale_struct));
   result->provider = COLLPROVIDER_LIBC;
   result->deterministic = true;
   result->collate_is_c =
@@ -510,7 +511,7 @@ int strncoll_libc(const char *arg1, ssize_t len1, const char *arg2,
   Assert(locale->provider == COLLPROVIDER_LIBC);
 
   if (bufsize1 + bufsize2 > TEXTBUFLEN)
-    buf = palloc(bufsize1 + bufsize2);
+    buf = (char *)palloc(bufsize1 + bufsize2);
 
   /* nul-terminate arguments if necessary */
   if (len1 == -1) {
@@ -561,7 +562,7 @@ size_t strnxfrm_libc(char *dest, size_t destsize, const char *src,
     return strxfrm_l(dest, src, destsize, locale->info.lt);
 
   if (bufsize > TEXTBUFLEN)
-    buf = palloc(bufsize);
+    buf = (char *)palloc(bufsize);
 
   /* nul-terminate argument */
   memcpy(buf, src, srclen);

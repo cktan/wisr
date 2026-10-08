@@ -23,14 +23,14 @@
 #include "postgres_fe.h"
 #endif
 
-#include <arpa/inet.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <arpa/inet.h>
 #include <sys/file.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "common/ip.h"
 
@@ -150,11 +150,11 @@ static int getaddrinfo_unix(const char *path, const struct addrinfo *hintsp,
     return EAI_FAIL;
   }
 
-  aip = calloc(1, sizeof(struct addrinfo));
+  aip = (addrinfo *)calloc(1, sizeof(struct addrinfo));
   if (aip == NULL)
     return EAI_MEMORY;
 
-  unp = calloc(1, sizeof(struct sockaddr_un));
+  unp = (sockaddr_un *)calloc(1, sizeof(struct sockaddr_un));
   if (unp == NULL) {
     free(aip);
     return EAI_MEMORY;
