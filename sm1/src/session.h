@@ -104,6 +104,13 @@ struct sm1::session_t {
    */
   std::atomic<int> doomed{0};
 
+  /*
+   * Set by sm1::cancel, from any thread: every wait the session
+   * makes for another transaction fails with SM_ERR_CANCELLED,
+   * until it next begins a statement or a transaction (§5.1).
+   */
+  std::atomic<bool> cancel{false};
+
   /* Locks, row and OID (§5.1); guarded by the database's lock_mu. */
   struct lockref_t {
     std::string key;                            /* the lock table key */
@@ -241,8 +248,9 @@ int lock_write_check(sm1::session_t *session, uint64_t storeid,
  * that conflicts with mode, taking nothing, and checking for
  * deadlock (§5.1). Returns 0; -1 without an error set if the
  * transaction was doomed while waiting, the caller then failing
- * it with s->doomed; or 1 at once for a qa_nowait session, the
- * caller reporting SM_ERR_BLOCKED.
+ * it with s->doomed; 1 at once for a qa_nowait session, the
+ * caller reporting SM_ERR_BLOCKED; or 2 if the wait was cancelled,
+ * the caller reporting SM_ERR_CANCELLED (lock_wait_error).
  */
 int lock_wait(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
               rocksdb::Slice key, sm1::lockmode_t mode);
@@ -288,6 +296,16 @@ void lock_transfer(db_t *db, sm1::session_t *s, sm1::session_t *g);
 
 /* Put a restored transaction's locks back in the table (§9.1). */
 void lock_restore(db_t *db, sm1::session_t *g);
+
+/*
+ * Fail the call for a wait that returned waited, not 0: with the
+ * transaction's doom, retryable, or with SM_ERR_CANCELLED or
+ * SM_ERR_BLOCKED, which leave the transaction active.
+ */
+int lock_wait_error(sm1::session_t *session, int waited);
+
+/* Set the session's cancel, and wake it if it is waiting. */
+void lock_cancel(sm1::session_t *session);
 
 /* Release every lock the session's transaction holds. */
 void lock_release_all(sm1::session_t *session);

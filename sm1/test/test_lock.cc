@@ -589,6 +589,72 @@ TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
   sm1::closedb(s);
 }
 
+TEST_CASE("a wait for another transaction can be cancelled") {
+  // Verify sm1::cancel cancels a statement and leaves the transaction.
+  // 1. A updates "x" and does not commit. B updates "x" in a thread:
+  //    it waits. A third thread cancels B: B's update fails with
+  //    SM_ERR_CANCELLED, which is not retryable.
+  // 2. B's transaction is still active: it writes "y", which waits
+  //    for no one.
+  // 3. The statement stays cancelled: B's next wait, on a lock A
+  //    holds, fails at once, with no second cancel.
+  // 4. B begins its next statement, which is not cancelled: it
+  //    waits again, until A commits, and its update goes through.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open();
+  sm1::session_t *b = f.open();
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(set(a, "x", "a") == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_EX) ==
+          0);
+
+  std::atomic<bool> returned{false};
+  int rc = 0, err = 0, again = 0;
+  std::thread tb([&] {
+    rc = set(b, "x", "b");
+    err = sm1::errnum();
+    again = sm1::retryable();
+    returned = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  CHECK_FALSE(returned);
+  REQUIRE(sm1::cancel(b) == 0);
+  tb.join();
+  CHECK(rc == -1);
+  CHECK(err == sm1::SM_ERR_CANCELLED);
+  CHECK(again == 0);
+  REQUIRE(set(b, "y", "b") == 0);
+
+  for (int i = 0; i < 2; i++) {
+    CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
+          -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_CANCELLED);
+    CHECK(std::string(sm1::errname()) == "ERR_CANCELLED");
+  }
+
+  REQUIRE(sm1::stmt_begin(b) == 0);
+  returned = false;
+  std::thread tb2([&] {
+    rc = set(b, "x", "b");
+    err = sm1::errnum();
+    returned = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  CHECK_FALSE(returned);
+  REQUIRE(sm1::commit(a) == 0);
+  tb2.join();
+  // At READ COMMITTED the row changed under it: read it, write again.
+  CHECK(rc == -1);
+  CHECK(err == sm1::SM_ERR_UPDATED);
+  std::string_view v;
+  REQUIRE(sm1::read_latest(b, g_store, "x", v) == 0);
+  REQUIRE(set(b, "x", "b") == 0);
+  REQUIRE(sm1::commit(b) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+}
+
 TEST_CASE(
     "a qa_nowait session is told a write would block, and may repeat it") {
   // Verify a write that would wait fails with SM_ERR_BLOCKED instead.

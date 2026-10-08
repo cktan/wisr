@@ -1834,6 +1834,68 @@ TEST_CASE("a pending index is building only while a worker fills it") {
   CHECK(state_of(f, jobs_state2) == sm3::index_state_t::valid);
 }
 
+TEST_CASE("a build that waits on a transaction holds no one else up") {
+  // Verify the builder's waits can be cut short.
+  // 1. A row is committed and an index made on its table, pending.
+  //    A then updates the row and does not commit.
+  // 2. The catalog is attached and the index queued: its build
+  //    reaches the row and waits for A.
+  // 3. The catalog is detached. The detach returns, though A has
+  //    not ended: it cancels the build's wait. The index is still
+  //    pending, not failed.
+  // 4. Attached and queued again, the build waits for A again. B
+  //    waits for the build, in a thread, with a test of its own
+  //    for giving up; when that says so the wait ends with
+  //    SM_ERR_CANCELLED.
+  // 5. A commits: the build ends, and waiting for it returns 0.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t r1 = put(t, 1, "free", "a");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t jobs_owner = late_on(f, "jobs_owner", 2);
+
+  start(f.a);
+  t = f.write(f.a);
+  REQUIRE_MESSAGE(set(t, r1, 1, "free", "b") == 0, sm1::errmsg());
+  sm3::tbl_close(t);
+
+  auto build_waits = [&] {
+    f.builder(1, 10);
+    while (!sm3::builder_building(f.cat, jobs_owner)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    // Time for the batch to reach the row A holds.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  };
+  build_waits();
+  sm3::builder_detach(f.cat);
+  CHECK_FALSE(sm3::builder_building(f.cat, jobs_owner));
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::pending);
+
+  build_waits();
+  std::atomic<bool> returned{false}, give_up{false};
+  int rc = 0, err = 0;
+  std::thread tb([&] {
+    rc = sm3::builder_wait(f.b, f.jobs, jobs_owner,
+                           [&] { return give_up.load(); });
+    err = sm1::errnum();
+    returned = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  CHECK_FALSE(returned);
+  give_up = true;
+  tb.join();
+  CHECK(rc == -1);
+  CHECK(err == sm1::SM_ERR_CANCELLED);
+
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE_MESSAGE(sm3::builder_wait(f.b, f.jobs, jobs_owner) == 0,
+                  sm1::errmsg());
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::valid);
+}
+
 TEST_CASE("more builds than workers all end, a few at a time") {
   // Verify the queue holds what the workers cannot take yet.
   // 1. The builder is started with two workers. 60 rows are committed.

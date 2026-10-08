@@ -9,23 +9,33 @@ has sm3's own order of work.
 
 ## 1. Next
 
-The rest of `sm3/SM3_DESIGN.md` §8.1 step 5. The order
-between them is not settled.
+**The highest priority is to bring the stack to where work on
+hooking it up to PostgreSQL can begin** (`PART4.md` §7). What
+is listed here is ordered by that, and what does not serve it
+waits.
+
+The rest of `sm3/SM3_DESIGN.md` §8.1 step 5.
 
 1. **Statistics for a planner.** It has a strategy,
-   `STATISTICS.md`, and no design yet: `SM3_DESIGN.md` §6 is
-   still to be written. The stack analyzes: `sm_analyze`
-   samples a table and records statistics of an LSM in sm3's
-   catalog, and the host fits them to the planner. The
-   strategy's first step is to measure how good RocksDB's size
-   estimates are, which nothing has done.
+   `STATISTICS.md`, whose measurements are done (§6 there):
+   RocksDB's size estimates are exact once flushed and
+   compacted, and as much as 7x high for rows still
+   unflushed. It has no design yet: `SM3_DESIGN.md` §6 is the
+   next thing to write, from the strategy and what was
+   measured (`STATISTICS.md` §8, step 2). The stack analyzes:
+   `sm_analyze` samples a table and records statistics of an
+   LSM in sm3's catalog, and the host fits them to the
+   planner.
+
+Low priority, and after it:
+
 2. **Bulk load**: a path that batches within sm1's memory
    bound. It has a design, `BULKLOAD.md`, and is not built. A
    load is one transaction in one of three modes: mini-batch,
    100 rows a write under IX, keeping no row locks;
    batch mode, a chunk a write under SIX; and file mode,
    sorted files that RocksDB ingests. Its checks against
-   RocksDB are done, and batch mode is next.
+   RocksDB are done, and batch mode is its first piece.
 
 ---
 
@@ -54,13 +64,8 @@ Owed, and blocking nothing above:
   `set_qa_nowait` is for QA only (`sm1/SM1_DESIGN.md` §5.1).
   PostgreSQL passes a wait policy with each call, and sm1 is to
   take one the same way, through sm2, sm3 and `include/sm.h`,
-  `sm_tbl_lock` first among the calls.
-  `lock_timeout` needs a timed wait besides.
-- **A lock wait cannot be cancelled.** A build's worker that
-  waits on a lock held by a prepared, in-doubt transaction
-  holds up `builder_detach`, and so a detach of the
-  environment, until that transaction is resolved. sm1 needs a
-  way to cancel a wait.
+  `sm_tbl_lock` first among the calls. `lock_timeout` needs
+  no more than a timer in the host that calls `sm_cancel`.
 - **The evaluator's cost is unmeasured**: what a call a row
   adds to a write on a table with a partial or an expression
   index.
@@ -84,8 +89,11 @@ Owed, and blocking nothing above:
   store, its definition in the session's own temporary catalog
   and never written to store 0.
 - **Dependency checks**, such as refusing `DROP COLLATION` in
-  use and `DROP SCHEMA … CASCADE`, and the unmeasured startup
-  cost for thousands of tables — open in `sm3/CATALOG.md` §7.
+  use and `DROP SCHEMA … CASCADE`: low priority. They wait
+  for the dependency index of `sm3/CATALOG3.md` §0.5, and
+  nothing is waiting for them.
+- **The unmeasured startup cost for thousands of tables** —
+  open in `sm3/CATALOG.md` §7.
 - **The rest of the catalog's layout** (`sm3/CATALOG3.md`). A
   key for each column and each index is built. Still
   proposed: an index's own key, include and read columns as

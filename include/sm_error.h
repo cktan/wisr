@@ -88,8 +88,15 @@ typedef enum sm_errnum_t {
      */
     SM_ERR_READONLY      = 27,  /* the transaction was declared read-only */
 
+    /*
+     * sm1's, and not an abort: a wait for another transaction that
+     * sm1::cancel cut short (SM1_DESIGN.md §5.1). The transaction
+     * stays active and holds what it held.
+     */
+    SM_ERR_CANCELLED     = 28,  /* the wait was cancelled */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_READONLY
+    SM_ERR_LAST          = SM_ERR_CANCELLED
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

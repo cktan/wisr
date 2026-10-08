@@ -192,6 +192,7 @@ const char *errname() {
       "ERR_UNDOLIMIT",
       "ERR_SELFMODIFIED",
       "ERR_READONLY",
+      "ERR_CANCELLED",
   };
   static_assert(sizeof(names) / sizeof(names[0]) == sm1::SM_ERR_LAST + 1,
                 "every error code needs its name");

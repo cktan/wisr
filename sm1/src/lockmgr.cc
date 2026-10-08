@@ -23,6 +23,7 @@
  * once, so the search walks a graph, not a chain.
  */
 
+#include "error.h"
 #include "session.h"
 #include "sm1_codec.h"
 
@@ -365,6 +366,12 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
       s->waiting_for.clear();
       return 1;
     }
+    // Cancelled, before the wait or during it: stop waiting. The
+    // cancel stands until the next statement or transaction begins.
+    if (s->cancel) {
+      s->waiting_for.clear();
+      return 2;
+    }
     wait_once(db, s, guard, &deadline);
   }
 }
@@ -405,6 +412,12 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
       s->waiting_for.clear();
       return 1;
     }
+    // Cancelled, before the wait or during it: stop waiting. The
+    // cancel stands until the next statement or transaction begins.
+    if (s->cancel) {
+      s->waiting_for.clear();
+      return 2;
+    }
     // Our edge in the waits-for graph: to the transaction itself.
     s->waiting_for.clear();
     if (owner && owner != s) {
@@ -412,6 +425,27 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
     }
     wait_once(db, s, guard, &deadline);
   }
+}
+
+/* Fail the call for a wait that did not succeed; see session.h. */
+int lock_wait_error(sm1::session_t *s, int waited) {
+  if (waited == 2) {
+    return set_error(sm1::SM_ERR_CANCELLED, "the wait was cancelled");
+  }
+  if (waited > 0) {
+    return set_error(sm1::SM_ERR_BLOCKED, "the row is locked by another");
+  }
+  return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
+                            "chosen as a deadlock victim");
+}
+
+/* Cut the session's wait short; see session.h. */
+void lock_cancel(sm1::session_t *s) {
+  s->cancel = true;
+  // Under lock_mu, so a waiter between its check and its sleep is
+  // not missed; every waiter wakes, and only this one stops.
+  std::lock_guard<std::mutex> guard(s->db->lock_mu);
+  s->db->lock_cv.notify_all();
 }
 
 /* Wake every waiter: a transaction ended, or rolled back. */

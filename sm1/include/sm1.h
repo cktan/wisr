@@ -488,6 +488,30 @@ int abort(session_t* session);
 int on_commit(session_t* session, std::function<void()> fn);
 
 /*
+ * Cut short the session's wait for another transaction: the wait
+ * under way, on a lock or on a row another is writing, fails with
+ * SM_ERR_CANCELLED. That is not an abort and not retryable: the
+ * transaction stays active, holding what it held, and the caller
+ * decides whether to abort it. This is what a host's query cancel,
+ * statement timeout and lock timeout are made of.
+ *
+ * It is the one call on a session that another thread may make
+ * while the session's own thread is inside a call. The session
+ * must stay open until it returns.
+ *
+ * A cancelled statement stays cancelled. The cancel is not used
+ * up by the wait it ends: every wait the session makes fails the
+ * same way, one begun later included, until the session begins its
+ * next statement (sm1::stmt_begin) or its next transaction
+ * (sm1::begin). So a cancel sent just before a wait begins is not
+ * lost, a caller that goes on after SM_ERR_CANCELLED cannot wait
+ * again by mistake, and nothing has to be cleared by hand.
+ *
+ * Errors: SM_ERR_INVALID (no session).
+ */
+int cancel(session_t* session);
+
+/*
  * Whether session prepared a transaction that no session has
  * resolved yet: then sm1::commit and sm1::abort on it resolve
  * that prepared transaction, not an active one. A caller that

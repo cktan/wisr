@@ -103,6 +103,31 @@ What this changes above:
   thread-safe. §4's effort figures do not include that, and
   it makes tracking upstream releases harder than the version
   lag §4 already counts as a liability.
+- **The fork is compiled as C++.** `include/sm.h` passes
+  `std::string` and `std::vector` across the boundary for
+  owned data, and the fork calls it as it is; there is no
+  plain C header to keep beside it.
+- **A row handed out is good until the next call.** A row or
+  an index entry the stack returns points into its own
+  memory and stays valid until the next `sm_` call on that
+  session, so the executor can use it in place and copies
+  only what it must keep longer.
+- **Every wait can be cancelled.** A backend thread waiting
+  inside the stack never reaches PostgreSQL's interrupt
+  check, so the stack gives the fork a call for it:
+  `sm_cancel(session)`, from any thread, fails the wait with
+  `SM_ERR_CANCELLED` and leaves the transaction to the
+  caller. A cancelled statement stays cancelled, until the
+  session begins its next one. Query cancel,
+  `statement_timeout` and `lock_timeout` are that call
+  (`sm1/SM1_DESIGN.md` §5.1). The wait for an index build is
+  not a statement's wait for a transaction, and takes the
+  fork's own test of whether its query was cancelled.
+- **The fork has no `longjmp`.** PostgreSQL raises an error by
+  jumping out of wherever it is. That goes with the rest of
+  its error handling, so the stack does not have to defend
+  against a jump through one of its calls, or out of a
+  callback it makes, such as the index evaluator's.
 
 ---
 

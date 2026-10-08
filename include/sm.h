@@ -199,6 +199,19 @@ int sm_stmt_begin_inner(sm_session_t* session, sm_stmt_t** outer);
 int sm_stmt_end(sm_session_t* session, sm_stmt_t* outer);
 
 /*
+ * Cancel the session's statement: the call that is waiting for
+ * another transaction, on a lock or on a row another is writing,
+ * fails with SM_ERR_CANCELLED, and so does every wait the session
+ * makes after it, until it begins its next statement or
+ * transaction. A cancelled statement stays cancelled. That is not
+ * an abort: the transaction stays active and the caller decides.
+ * It is what query cancel, statement_timeout and lock_timeout are
+ * made of, and the one call another thread may make on a session
+ * while its own thread is inside a call (sm1::cancel).
+ */
+int sm_cancel(sm_session_t* session);
+
+/*
  * FOR QA ONLY (rel's scripts); not how NOWAIT or SKIP LOCKED is
  * asked for, which is to be a flag on the calls that can wait.
  * Set whether the session waits for locks. On, a call that would
@@ -566,8 +579,16 @@ int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
  * failed it fails with the build's own error, code and message,
  * as the index keeps them; SM_ERR_INTRANS inside a transaction;
  * SM_ERR_NOTFOUND if there is no such table or index.
+ *
+ * It is not a wait for another transaction, so sm_cancel does not
+ * end it. cancelled, if not NULL, is called with arg on the
+ * waiting thread every little while, and ends the wait with
+ * SM_ERR_CANCELLED by returning true: the host's own test of
+ * whether its query was cancelled.
  */
-int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index);
+int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index,
+                      bool (*cancelled)(void* arg) = nullptr,
+                      void* arg = nullptr);
 
 /*
  * The host's evaluator of partial and expression indexes

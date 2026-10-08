@@ -10,8 +10,10 @@
 
 #include "../catalog/internal.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -53,7 +55,9 @@ struct builder_t {
   std::deque<task_t> queue;
   std::set<index_key_t> active;   /* queued or being built */
   std::set<index_key_t> building; /* being built */
-  size_t running = 0;             /* workers alive */
+  /* Each running build's session, for a detach to cancel its wait. */
+  std::map<index_key_t, sm1::session_t *> sessions;
+  size_t running = 0; /* workers alive */
   std::vector<std::thread> threads;
   std::vector<std::thread::id> finished; /* workers to join */
 };
@@ -150,6 +154,11 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
       if (again) {
         continue;
       }
+      // Cut short by a detach, which cancels a build's wait: the
+      // index stays pending, for the next attach.
+      if (error == sm1::SM_ERR_CANCELLED || stopping(cat)) {
+        return;
+      }
       // A table that would not open has gone; anything else is the
       // build's failure, kept for whoever asks why.
       if (opened) {
@@ -202,12 +211,20 @@ void work() {
       ws = nullptr;
     }
     if (ws) {
+      {
+        // Known to a detach while the build runs, so that a wait
+        // on another transaction does not hold the detach up.
+        std::lock_guard lock(b.mu);
+        b.sessions[{task.cat, task.index}] = s;
+      }
       try {
         build_one(task.cat, ws, task.table, task.index, batch_rows);
       } catch (...) {
         // Out of memory, most likely: give the build up.
         sm3::abort(ws);
       }
+      std::lock_guard lock(b.mu);
+      b.sessions.erase({task.cat, task.index});
     }
     sm3::session_close(ws);
     if (s) {
@@ -294,8 +311,18 @@ void builder_detach(catalog_t *cat) {
       return true;
     });
     changed(b);
-    // Each of its builds ends after the batch it is in.
-    b.cv.wait(lock, [&] { return b.catalogs.at(cat).busy == 0; });
+    // Each of its builds ends after the batch it is in. One that
+    // waits on another transaction, a prepared one perhaps, is
+    // cancelled, and again each time round: a cancel sent just
+    // before a batch begins is forgotten by its begin.
+    while (b.catalogs.at(cat).busy != 0) {
+      for (const auto &[key, s] : b.sessions) {
+        if (key.first == cat) {
+          sm1::cancel(s);
+        }
+      }
+      b.cv.wait_for(lock, std::chrono::milliseconds(50));
+    }
     b.catalogs.erase(cat);
     // With no catalog left the queue is empty and every worker is
     // ending: join them, so none outlives the process's builder.
@@ -331,7 +358,8 @@ bool builder_building(const catalog_t *cat, uint64_t oid) {
 }
 
 /* Wait for a build to end; see sm3.h. */
-int builder_wait(session_t *session, uint64_t table, uint64_t oid) {
+int builder_wait(session_t *session, uint64_t table, uint64_t oid,
+                 const std::function<bool()> &cancelled) {
   return catch_nomem([&] {
     if (session->in_txn) {
       return sm1::seterr(sm1::SM_ERR_INTRANS,
@@ -380,7 +408,15 @@ int builder_wait(session_t *session, uint64_t table, uint64_t oid) {
         return sm1::seterr(sm1::SM_ERR_INVALID,
                            "index wait: no build of the index is running");
       }
-      b.cv.wait(lock, [&] { return b.gen != gen; });
+      // In short sleeps, asking the caller between them whether
+      // to give up: this is its wait to cancel, not a statement's.
+      while (b.gen == gen) {
+        b.cv.wait_for(lock, std::chrono::milliseconds(50));
+        if (b.gen == gen && cancelled && cancelled()) {
+          return sm1::seterr(sm1::SM_ERR_CANCELLED,
+                             "index wait: the wait was cancelled");
+        }
+      }
     }
   });
 }

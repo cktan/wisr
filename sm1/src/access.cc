@@ -313,12 +313,8 @@ int lock_name(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
     }
     // Wait for the holders that conflict.
     int waited = lock_wait(s, type, storeid, k, mode);
-    if (waited > 0) {
-      return set_error(sm1::SM_ERR_BLOCKED, "the lock is held by another");
-    }
     if (waited != 0) {
-      return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
-                                "chosen as a deadlock victim");
+      return lock_wait_error(s, waited);
     }
   }
 }
@@ -381,12 +377,8 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
     int waited = inflight != 0
                      ? lock_wait_xact(s, inflight)
                      : lock_wait(s, sm1::LOCKTYPE_ROW, storeid, k, mode);
-    if (waited > 0) {
-      return set_error(sm1::SM_ERR_BLOCKED, "the lock is held by another");
-    }
     if (waited != 0) {
-      return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
-                                "chosen as a deadlock victim");
+      return lock_wait_error(s, waited);
     }
   }
   // Read committed does not fail here: the caller reads the
@@ -852,12 +844,8 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       latch.unlock();
       waited = lock_wait_xact(s, inflight);
     }
-    if (waited > 0) {
-      return set_error(sm1::SM_ERR_BLOCKED, "the row is locked by another");
-    }
     if (waited != 0) {
-      return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
-                                "chosen as a deadlock victim");
+      return lock_wait_error(s, waited);
     }
     // Look again from the start.
     latch.lock();

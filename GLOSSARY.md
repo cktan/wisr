@@ -428,6 +428,7 @@ One namespace for the whole stack, defined in
 | `SM_ERR_UPDATED` | the same at READ COMMITTED; does not abort — re-read and write again |
 | `SM_ERR_DEADLOCK` | chosen as a deadlock victim; retryable |
 | `SM_ERR_BLOCKED` | would have waited, under the no-wait test setting |
+| `SM_ERR_CANCELLED` | a wait was cut short by `sm1::cancel`; does not abort |
 | `SM_ERR_DUPKEY` | an insert found the key already there |
 | `SM_ERR_NOTFOUND` | no such store, key, or object |
 | `SM_ERR_EXISTS` | the object is already there |
