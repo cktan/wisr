@@ -12,7 +12,4 @@
 
 [
 
-{ oid => '3748', descr => 'simple configuration',
-  cfgname => 'simple', cfgparser => 'default' },
-
 ]

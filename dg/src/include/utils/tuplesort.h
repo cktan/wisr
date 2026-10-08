@@ -420,9 +420,6 @@ extern Tuplesortstate *tuplesort_begin_index_hash(
     Relation heapRel, Relation indexRel, uint32 high_mask, uint32 low_mask,
     uint32 max_buckets, int workMem, SortCoordinate coordinate, int sortopt);
 extern Tuplesortstate *
-tuplesort_begin_index_gist(Relation heapRel, Relation indexRel, int workMem,
-                           SortCoordinate coordinate, int sortopt);
-extern Tuplesortstate *
 tuplesort_begin_index_brin(int workMem, SortCoordinate coordinate, int sortopt);
 extern Tuplesortstate *tuplesort_begin_index_gin(Relation heapRel,
                                                  Relation indexRel, int workMem,

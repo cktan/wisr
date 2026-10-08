@@ -2495,11 +2495,6 @@ static void perform_work_item(AutoVacuumWorkItem *workitem) {
      * user switch and sandbox.
      */
     switch (workitem->avw_type) {
-    case AVW_BRINSummarizeRange:
-      DirectFunctionCall2(brin_summarize_range,
-                          ObjectIdGetDatum(workitem->avw_relation),
-                          Int64GetDatum((int64)workitem->avw_blockNumber));
-      break;
     default:
       elog(WARNING, "unrecognized work item found: type %d",
            workitem->avw_type);

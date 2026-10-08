@@ -443,62 +443,6 @@ Tuplesortstate *tuplesort_begin_index_hash(Relation heapRel, Relation indexRel,
   return state;
 }
 
-Tuplesortstate *tuplesort_begin_index_gist(Relation heapRel, Relation indexRel,
-                                           int workMem,
-                                           SortCoordinate coordinate,
-                                           int sortopt) {
-  Tuplesortstate *state = tuplesort_begin_common(workMem, coordinate, sortopt);
-  TuplesortPublic *base = TuplesortstateGetPublic(state);
-  MemoryContext oldcontext;
-  TuplesortIndexBTreeArg *arg;
-  int i;
-
-  oldcontext = MemoryContextSwitchTo(base->maincontext);
-  arg = (TuplesortIndexBTreeArg *)palloc(sizeof(TuplesortIndexBTreeArg));
-
-  if (trace_sort)
-    elog(LOG, "begin index sort: workMem = %d, randomAccess = %c", workMem,
-         sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
-
-  base->nKeys = IndexRelationGetNumberOfKeyAttributes(indexRel);
-
-  base->removeabbrev = removeabbrev_index;
-  base->comparetup = comparetup_index_btree;
-  base->comparetup_tiebreak = comparetup_index_btree_tiebreak;
-  base->writetup = writetup_index;
-  base->readtup = readtup_index;
-  base->haveDatum1 = true;
-  base->arg = arg;
-
-  arg->index.heapRel = heapRel;
-  arg->index.indexRel = indexRel;
-  arg->enforceUnique = false;
-  arg->uniqueNullsNotDistinct = false;
-
-  /* Prepare SortSupport data for each column */
-  base->sortKeys = (SortSupport)palloc0(base->nKeys * sizeof(SortSupportData));
-
-  for (i = 0; i < base->nKeys; i++) {
-    SortSupport sortKey = base->sortKeys + i;
-
-    sortKey->ssup_cxt = CurrentMemoryContext;
-    sortKey->ssup_collation = indexRel->rd_indcollation[i];
-    sortKey->ssup_nulls_first = false;
-    sortKey->ssup_attno = i + 1;
-    /* Convey if abbreviation optimization is applicable in principle */
-    sortKey->abbreviate = (i == 0 && base->haveDatum1);
-
-    Assert(sortKey->ssup_attno != 0);
-
-    /* Look for a sort support function */
-    PrepareSortSupportFromGistIndexRel(indexRel, sortKey);
-  }
-
-  MemoryContextSwitchTo(oldcontext);
-
-  return state;
-}
-
 Tuplesortstate *tuplesort_begin_index_brin(int workMem,
                                            SortCoordinate coordinate,
                                            int sortopt) {

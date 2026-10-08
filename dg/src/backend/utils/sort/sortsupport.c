@@ -158,33 +158,3 @@ void PrepareSortSupportFromIndexRel(Relation indexRel, bool reverse,
   FinishSortSupportFunction(opfamily, opcintype, ssup);
 }
 
-/*
- * Fill in SortSupport given a GiST index relation
- *
- * Caller must previously have zeroed the SortSupportData structure and then
- * filled in ssup_cxt, ssup_attno, ssup_collation, and ssup_nulls_first.  This
- * will fill in ssup_reverse (always false for GiST index build), as well as
- * the comparator function pointer.
- */
-void PrepareSortSupportFromGistIndexRel(Relation indexRel, SortSupport ssup) {
-  Oid opfamily = indexRel->rd_opfamily[ssup->ssup_attno - 1];
-  Oid opcintype = indexRel->rd_opcintype[ssup->ssup_attno - 1];
-  Oid sortSupportFunction;
-
-  Assert(ssup->comparator == NULL);
-
-  if (indexRel->rd_rel->relam != GIST_AM_OID)
-    elog(ERROR, "unexpected non-gist AM: %u", indexRel->rd_rel->relam);
-  ssup->ssup_reverse = false;
-
-  /*
-   * Look up the sort support function. This is simpler than for B-tree
-   * indexes because we don't support the old-style btree comparators.
-   */
-  sortSupportFunction =
-      get_opfamily_proc(opfamily, opcintype, opcintype, GIST_SORTSUPPORT_PROC);
-  if (!OidIsValid(sortSupportFunction))
-    elog(ERROR, "missing support function %d(%u,%u) in opfamily %u",
-         GIST_SORTSUPPORT_PROC, opcintype, opcintype, opfamily);
-  OidFunctionCall1(sortSupportFunction, PointerGetDatum(ssup));
-}

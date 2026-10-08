@@ -249,13 +249,6 @@ static List *match_pattern_prefix(Node *leftop, Node *rightop,
       ltopr = TextPatternLessOperator;
       geopr = TextPatternGreaterEqualOperator;
       collation_aware = false;
-    } else if (opfamily == TEXT_SPGIST_FAM_OID) {
-      eqopr = TextEqualOperator;
-      ltopr = TextPatternLessOperator;
-      geopr = TextPatternGreaterEqualOperator;
-      /* This opfamily has direct support for prefixing */
-      preopr = TextPrefixOperator;
-      collation_aware = false;
     } else {
       eqopr = TextEqualOperator;
       ltopr = TextLessOperator;
