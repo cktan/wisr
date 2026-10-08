@@ -173,6 +173,89 @@ TEST_CASE("a table dropped while a reader waited is not found") {
   REQUIRE(sm3::abort(f.a) == 0);
 }
 
+TEST_CASE("a namespace's drop waits for a create in it, and then refuses") {
+  // Verify a drop cannot miss a table made in its namespace, even
+  // from a snapshot that is older than the table.
+  // 1. A namespace is committed. B begins at REPEATABLE READ, which
+  //    takes its snapshot before the table exists.
+  // 2. A creates a table in the namespace, holding it shared.
+  // 3. B drops the namespace, in a thread: it waits.
+  // 4. A commits: B's drop fails with SM_ERR_INUSE, though B's
+  //    snapshot shows the namespace empty.
+  locks_t f;
+  uint64_t app = 0, oid = 0;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_create_namespace(f.a, "app", app) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_create_table(f.a, app, "orders", cols, oid) == 0);
+
+  std::atomic<bool> returned{false};
+  int rc = 0, err = 0;
+  std::thread tb([&] {
+    rc = sm3::cat_drop_namespace(f.b, app);
+    err = sm1::errnum();
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+
+  REQUIRE(sm3::commit(f.a) == 0);
+  tb.join();
+  CHECK(rc == -1);
+  CHECK(err == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::abort(f.b) == 0);
+}
+
+TEST_CASE("a create waits for its namespace's drop, and then finds none") {
+  // Verify a table cannot be made in a namespace dropped under it.
+  // 1. A namespace is committed. A begins at REPEATABLE READ, which
+  //    takes its snapshot while the namespace exists.
+  // 2. B drops the namespace, holding it exclusive.
+  // 3. A creates a table in it, in a thread: it waits.
+  // 4. B commits: A's create fails with SM_ERR_NOTFOUND, though A's
+  //    snapshot still shows the namespace.
+  // 5. Two creates in one namespace do not wait for each other.
+  locks_t f;
+  uint64_t app = 0, oid = 0, o2 = 0;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_create_namespace(f.a, "app", app) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_drop_namespace(f.b, app) == 0);
+
+  std::atomic<bool> returned{false};
+  int rc = 0, err = 0;
+  std::thread ta([&] {
+    rc = sm3::cat_create_table(f.a, app, "orders", cols, oid);
+    err = sm1::errnum();
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+
+  REQUIRE(sm3::commit(f.b) == 0);
+  ta.join();
+  CHECK(rc == -1);
+  CHECK(err == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "one", cols, oid) == 0);
+  REQUIRE(sm3::cat_create_table(f.b, sm3::nsp_public, "two", cols, o2) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE(sm3::commit(f.b) == 0);
+}
+
 TEST_CASE("two DDL on one table run one after the other") {
   // Verify the second DDL waits for the first, then reads its change.
   // 1. A adds column y to t.

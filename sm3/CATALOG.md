@@ -240,9 +240,34 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
   **`cat_index(ss, nspoid, name, table, index)`** finds an index
   and its table, by a scan of the tables' indexes, since no map
   of index names is kept.
+- **`cat_get_namespace(ss, name, oid)`** finds a namespace by
+  name as the session's transaction sees it, by a look at
+  each, since they are few and no map by name is kept, and
+  **`cat_list_namespaces(ss)`** lists their names, sorted.
 - **`prepare(ss, gid)`** prepares as sm1 does, but refuses a
   transaction that made DDL: its overlay would have to outlive
   the session.
+- **`cat_create_namespace(session, name, oid)`** makes a
+  namespace, SQL's schema, as a table is made: it takes an
+  oid, inserts the name — under namespace oid 0, so a
+  namespace's name is unique in the database and a taken one
+  is `SM_ERR_DUPKEY` — and writes its blob. It makes no store.
+- **`cat_drop_namespace(session, oid)`** erases an empty
+  namespace's name and blob. One that holds a table or a
+  collation is `SM_ERR_INUSE`, and the two built in are
+  `SM_ERR_INVALID`. A namespace has a lock, its oid's, as a
+  table's schema lock is its table's: a create in it takes
+  the lock shared and the drop takes it exclusive, both to
+  the end of the transaction, so the drop waits out the
+  creates and they it, while two creates do not wait for each
+  other. Whether the namespace is there, and whether it is
+  empty, are then read from the catalog in memory, which has
+  every commit by the time the lock is granted; the
+  transaction's own snapshot may be older than a table just
+  made or a drop just committed. For that the catalog keeps
+  each collation's namespace in memory, found at `cat_open`
+  by one scan of the names. There is no `cat_drop_collation`,
+  so a namespace that has held a collation stays.
 - **`cat_create_table(session, nspoid, name, columns, oid)`**
   checks the name, the column names and each column's type
   code and typmod (`SM_ERR_INVALID`) and the namespace
@@ -373,8 +398,9 @@ Settled, and next:
   lives only in the session's own temporary catalog, in the
   session's temporary namespace, never written to store 0.
 
-Open: namespaces beyond the two built in (`CREATE SCHEMA` is a
-`NAMESPACE` blob and a `NAME` key; search paths are the SQL
-layer's); dependencies, such as refusing `DROP COLLATION` in
-use, by a scan of the table blobs until it earns a key kind; and
-startup cost for thousands of tables, unmeasured.
+Open: `DROP SCHEMA … CASCADE`, which waits for the
+dependencies (search paths are the SQL layer's);
+dependencies, such as refusing `DROP COLLATION` in use, by a
+scan of the table blobs until it earns a key kind; and
+startup cost for thousands of tables, unmeasured, to which
+`cat_open`'s scan of every name now adds.

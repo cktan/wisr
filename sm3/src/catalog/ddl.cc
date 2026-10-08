@@ -81,6 +81,28 @@ int get_entity(sm2::catkv_t *kv, sm3::kind_t kind, uint64_t oid,
 }
 
 /*
+ * Take the lock of the namespace nspoid in mode -- its oid's, as a
+ * table's schema lock is its table's -- and check it is there. A
+ * creator takes it shared and a drop exclusive, so a drop waits
+ * out the creators and they it; and the check reads the catalog
+ * in memory, which has every commit by then, where the
+ * transaction's snapshot may not (CATALOG.md §5). name is set to
+ * the namespace's.
+ */
+int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
+               std::string &name) {
+  // Held to the end of the transaction, as a schema lock is.
+  if (sm3::lock_table(session->sm1, nspoid, mode) != 0) {
+    return -1;
+  }
+  return sm3::session_nspace(session, nspoid, name)
+             ? 0
+             : sm1::seterr(sm1::SM_ERR_NOTFOUND, "namespace " +
+                                                     std::to_string(nspoid) +
+                                                     " does not exist");
+}
+
+/*
  * Open session's catalog store into kv, take the table oid's
  * schema lock X, and read its record under an X lock on its TABLE
  * key too: the newest committed one, which no other DDL can
@@ -255,6 +277,74 @@ int cat_init(sm1::env_t *env, std::string_view dbname,
   });
 }
 
+/* Create a namespace; see sm3.h. */
+int cat_create_namespace(session_t *session, std::string_view name,
+                         uint64_t &oid) {
+  return catch_nomem([&] {
+    if (name.empty()) {
+      return invalid("create namespace: no name");
+    }
+    kv_ptr kv(nullptr, &sm2::catkv_close);
+    std::string blob;
+    uint64_t n;
+    // The oid first, then the name, so a taken one fails before
+    // the namespace is written.
+    if (open_kv(session->sm1, kv) != 0 ||
+        sm1::nextseq(session->sm1, oid_seq, n) != 0 ||
+        insert_name(kv.get(), nsp_of_namespaces, name,
+                    {kind_t::nspace, n, std::nullopt}) != 0 ||
+        encode_nspace({std::string(name)}, blob) != 0 ||
+        insert_entity(kv.get(), kind_t::nspace, n, blob) != 0) {
+      return -1;
+    }
+    overlay_nspace(session, n, name);
+    oid = n;
+    return 0;
+  });
+}
+
+/* Drop a namespace; see sm3.h. */
+int cat_drop_namespace(session_t *session, uint64_t oid) {
+  return catch_nomem([&] {
+    if (oid == nsp_pg_catalog || oid == nsp_public) {
+      return invalid("drop namespace: a built-in namespace cannot be dropped");
+    }
+    kv_ptr kv(nullptr, &sm2::catkv_close);
+    std::string name, key;
+    std::string_view v;
+    // Exclusive: this waits out every transaction creating in it.
+    if (open_kv(session->sm1, kv) != 0 ||
+        use_nspace(session, oid, sm1::SM_LOCKMODE_EX, name) != 0) {
+      return -1;
+    }
+    if (nspace_in_use(session, oid)) {
+      return sm1::seterr(sm1::SM_ERR_INUSE,
+                         "drop namespace: " + name + " is not empty");
+    }
+    // Its record under an X lock on its key, as a table's is read:
+    // the newest committed one, which this may then erase.
+    if (entity_key(kind_t::nspace, oid, key) != 0 ||
+        sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX) != 0) {
+      return -1;
+    }
+    int rc = session->level == sm1::xctlevel_t::read_committed
+                 ? sm2::catkv_get_latest(kv.get(), key, v)
+                 : sm2::catkv_get(kv.get(), key, v);
+    if (rc != 0) {
+      return rc == 1 ? sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                                   "namespace " + std::to_string(oid) +
+                                       " does not exist")
+                     : -1;
+    }
+    if (sm2::catkv_erase(kv.get(), key) != 0 ||
+        erase_name(kv.get(), nsp_of_namespaces, name) != 0) {
+      return -1;
+    }
+    overlay_nspace(session, oid, std::nullopt);
+    return 0;
+  });
+}
+
 /* Create a table; see sm3.h. */
 int cat_create_table(session_t *session, uint64_t nspoid, std::string_view name,
                      std::span<const column_spec_t> columns, uint64_t &oid) {
@@ -267,17 +357,9 @@ int cat_create_table(session_t *session, uint64_t nspoid, std::string_view name,
     }
     kv_ptr kv(nullptr, &sm2::catkv_close);
     std::string key, blob;
-    std::string_view v;
     if (open_kv(session->sm1, kv) != 0 ||
-        entity_key(kind_t::nspace, nspoid, key) != 0) {
+        use_nspace(session, nspoid, sm1::SM_LOCKMODE_SH, blob) != 0) {
       return -1;
-    }
-    int rc = sm2::catkv_get(kv.get(), key, v);
-    if (rc != 0) {
-      return rc == 1 ? sm1::seterr(sm1::SM_ERR_NOTFOUND,
-                                   "create table: no namespace " +
-                                       std::to_string(nspoid))
-                     : -1;
     }
     // The oid first: the name's entry says what it names.
     uint64_t t;
@@ -699,7 +781,7 @@ int cat_create_collation(session_t *session, uint64_t nspoid,
     kv_ptr kv(nullptr, &sm2::catkv_close);
     std::string blob;
     if (open_kv(session->sm1, kv) != 0 ||
-        get_entity(kv.get(), kind_t::nspace, nspoid, blob, "namespace") != 0) {
+        use_nspace(session, nspoid, sm1::SM_LOCKMODE_SH, blob) != 0) {
       return -1;
     }
     // Opening it checks the locale and gives the version to record.
@@ -721,7 +803,7 @@ int cat_create_collation(session_t *session, uint64_t nspoid,
       return -1;
     }
     // The overlay holds it open, for this transaction's DDL to use.
-    overlay_collation(session, i, c.release());
+    overlay_collation(session, i, nspoid, c.release());
     oid = i;
     return 0;
   });

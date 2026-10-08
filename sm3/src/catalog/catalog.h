@@ -62,6 +62,9 @@ int name_key(uint64_t nspoid, std::string_view name, std::string &key);
 /* The key of the entity oid of kind: a namespace, table or collation. */
 int entity_key(kind_t kind, uint64_t oid, std::string &key);
 
+/* The namespace the NAME key is in. */
+int name_nspoid(std::string_view key, uint64_t &nspoid);
+
 /* The prefix every key of kind begins with, for a scan of them all. */
 int kind_prefix(kind_t kind, std::string &prefix);
 

@@ -56,6 +56,21 @@ int name_key(uint64_t nspoid, std::string_view name, std::string &key) {
   });
 }
 
+/* The namespace a NAME key is in. */
+int name_nspoid(std::string_view key, uint64_t &nspoid) {
+  return catch_nomem([&] {
+    std::vector<std::optional<std::string>> cols;
+    if (sm2::decode_key(name_cols, key, cols) != 0 || !cols[1]) {
+      return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not a name key");
+    }
+    // The column comes back as its native bytes, little-endian.
+    int64_t n;
+    std::memcpy(&n, cols[1]->data(), sizeof(n));
+    nspoid = static_cast<uint64_t>(n);
+    return 0;
+  });
+}
+
 /* The key of an entity by its oid. */
 int entity_key(kind_t kind, uint64_t oid, std::string &key) {
   return catch_nomem([&] {

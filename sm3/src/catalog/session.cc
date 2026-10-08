@@ -8,6 +8,7 @@
 
 #include "internal.h"
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 
@@ -25,6 +26,15 @@ void drop_from(sm3::session_t *s, int d) {
     sm2::collation_close(s->collations.back().collation);
     s->collations.pop_back();
   }
+  while (!s->nspaces.empty() && s->nspaces.back().depth >= d) {
+    s->nspaces.pop_back();
+  }
+}
+
+/* Whether s's transaction has made any DDL. */
+bool made_ddl(const sm3::session_t *s) {
+  return !s->tables.empty() || !s->names.empty() || !s->collations.empty() ||
+         !s->nspaces.empty();
 }
 
 /*
@@ -35,8 +45,17 @@ void publish(sm3::session_t *s) {
   sm3::catalog_t *cat = s->cat;
   for (sm3::collation_change_t &c : s->collations) {
     cat->collations[c.oid] = c.collation;
+    cat->collation_nsp[c.oid] = c.nspoid;
   }
   s->collations.clear();
+  for (sm3::nspace_change_t &n : s->nspaces) {
+    if (n.name) {
+      cat->nspaces[n.oid] = std::move(*n.name);
+    } else {
+      cat->nspaces.erase(n.oid);
+    }
+  }
+  s->nspaces.clear();
   // One more publish; an index it makes valid dates from it.
   uint64_t seq = cat->seq.load() + 1;
   for (sm3::table_change_t &t : s->tables) {
@@ -93,7 +112,8 @@ int session_open(catalog_t *cat, sm1::session_t *s, session_t *&out) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
                          "session_open: no catalog or no sm1 session");
     }
-    out = new session_t{s, cat, sm1::xctlevel_t::read_committed, 0, {}, {}, {}};
+    out = new session_t{s,  cat, sm1::xctlevel_t::read_committed, 0, {}, {},
+                        {}, {}};
     return 0;
   });
 }
@@ -247,6 +267,9 @@ int forget(session_t *s, int depth) {
   for (collation_change_t &c : s->collations) {
     c.depth = std::min(c.depth, depth - 1);
   }
+  for (nspace_change_t &c : s->nspaces) {
+    c.depth = std::min(c.depth, depth - 1);
+  }
   s->depth = depth - 1;
   return 0;
 }
@@ -261,7 +284,7 @@ int forget(session_t *s, int depth) {
 int commit(session_t *s) {
   // Committed or not, the transaction is over.
   s->in_txn = false;
-  if (s->tables.empty() && s->names.empty() && s->collations.empty()) {
+  if (!made_ddl(s)) {
     return sm1::commit(s->sm1);
   }
   // Readers of the catalog wait from here until the change is in.
@@ -276,7 +299,7 @@ int commit(session_t *s) {
 
 /* Prepare, if s's transaction made no DDL; see sm3.h. */
 int prepare(session_t *s, std::string_view gid) {
-  if (!s->tables.empty() || !s->names.empty() || !s->collations.empty()) {
+  if (made_ddl(s)) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "prepare: a transaction that made DDL cannot be "
                        "prepared");
@@ -309,9 +332,104 @@ void overlay_name(session_t *s, uint64_t nspoid, std::string_view name,
 }
 
 /* Record a collation created, which the overlay now owns. */
-void overlay_collation(session_t *s, uint64_t oid,
+void overlay_collation(session_t *s, uint64_t oid, uint64_t nspoid,
                        sm2::collation_t *collation) {
-  s->collations.push_back({s->depth, oid, collation});
+  s->collations.push_back({s->depth, oid, nspoid, collation});
+}
+
+/* Record a namespace created, or dropped. */
+void overlay_nspace(session_t *s, uint64_t oid,
+                    std::optional<std::string_view> name) {
+  s->nspaces.push_back(
+      {s->depth, oid, name ? std::optional<std::string>(*name) : std::nullopt});
+}
+
+/*
+ * The namespaces as s sees them, oid to name: the shared ones with
+ * its own changes over them, the newest of each winning.
+ */
+static std::map<uint64_t, std::string> nspaces_of(const session_t *s) {
+  std::map<uint64_t, std::string> out;
+  {
+    const catalog_t *cat = s->cat;
+    std::shared_lock lock(cat->mu);
+    out.insert(cat->nspaces.begin(), cat->nspaces.end());
+  }
+  for (const nspace_change_t &c : s->nspaces) {
+    if (c.name) {
+      out[c.oid] = *c.name;
+    } else {
+      out.erase(c.oid);
+    }
+  }
+  return out;
+}
+
+/* A namespace by name as s sees it; see sm3.h. */
+bool cat_get_namespace(const session_t *s, std::string_view name,
+                       uint64_t &oid) {
+  // Few namespaces, and no map by name: look at each.
+  for (const auto &[o, n] : nspaces_of(s)) {
+    if (n == name) {
+      oid = o;
+      return true;
+    }
+  }
+  return false;
+}
+
+/* The namespaces' names as s sees them, sorted; see sm3.h. */
+std::vector<std::string> cat_list_namespaces(const session_t *s) {
+  std::vector<std::string> out;
+  for (const auto &[oid, name] : nspaces_of(s)) {
+    out.push_back(name);
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+/* A namespace by oid as s sees it; see internal.h. */
+bool session_nspace(const session_t *s, uint64_t oid, std::string &name) {
+  std::map<uint64_t, std::string> all = nspaces_of(s);
+  auto it = all.find(oid);
+  if (it == all.end()) {
+    return false;
+  }
+  name = it->second;
+  return true;
+}
+
+/* Whether a namespace holds anything, as s sees it; see internal.h. */
+bool nspace_in_use(const session_t *s, uint64_t oid) {
+  // Its own collations, and its own tables as they now stand.
+  for (const collation_change_t &c : s->collations) {
+    if (c.nspoid == oid) {
+      return true;
+    }
+  }
+  std::map<uint64_t, bool> own; /* table oid -> in the namespace */
+  for (const table_change_t &c : s->tables) {
+    own[c.oid] = c.def && c.def->nspoid == oid;
+  }
+  for (const auto &[t, in] : own) {
+    if (in) {
+      return true;
+    }
+  }
+  // The shared ones, but for the tables it has changed.
+  const catalog_t *cat = s->cat;
+  std::shared_lock lock(cat->mu);
+  for (const auto &[c, nsp] : cat->collation_nsp) {
+    if (nsp == oid) {
+      return true;
+    }
+  }
+  for (const auto &[t, def] : cat->tables) {
+    if (def->nspoid == oid && !own.count(t)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /* A collation as s sees it: its own first, then the shared ones. */

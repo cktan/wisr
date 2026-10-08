@@ -127,6 +127,157 @@ TEST_CASE("columns, indexes and collations are added and load back") {
   CHECK(x.include[0].type == &sm2::type_int4);
 }
 
+TEST_CASE("a namespace is created like a table, and found by name") {
+  // Verify cat_create_namespace, cat_get_namespace and
+  // cat_list_namespaces.
+  // 1. The built-in namespaces are found by name at their fixed
+  //    oids, and an unknown name is not found.
+  // 2. A namespace created and aborted is not there afterwards.
+  // 3. One made under a savepoint goes with a rollback to it; one
+  //    made before it stays, and its transaction finds and lists
+  //    it at once while another session does not until the commit.
+  // 4. A table is created in it, and the same table name in public
+  //    does not clash.
+  // 5. A name already taken is SM_ERR_DUPKEY, and no name
+  //    SM_ERR_INVALID.
+  // 6. After a restart it is still found, with the same oid, and
+  //    its table is in it.
+  cat_db_t db;
+  uint64_t oid = 0, app = 0, tmp = 0, t = 0, u = 0;
+  db.begin();
+  CHECK(sm3::cat_get_namespace(db.ss, "public", oid));
+  CHECK(oid == sm3::nsp_public);
+  CHECK(sm3::cat_get_namespace(db.ss, "pg_catalog", oid));
+  CHECK(oid == sm3::nsp_pg_catalog);
+  CHECK_FALSE(sm3::cat_get_namespace(db.ss, "app", oid));
+
+  REQUIRE(sm3::cat_create_namespace(db.ss, "app", app) == 0);
+  CHECK(sm3::cat_get_namespace(db.ss, "app", oid));
+  REQUIRE(sm3::abort(db.ss) == 0);
+  CHECK_FALSE(sm3::cat_get_namespace(db.ss, "app", oid));
+
+  sm3::session_t *other = nullptr;
+  REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
+  db.begin();
+  REQUIRE_MESSAGE(sm3::cat_create_namespace(db.ss, "app", app) == 0,
+                  sm1::errmsg());
+  CHECK(app >= 1000);
+  REQUIRE(sm3::savepoint(db.ss) == 1);
+  REQUIRE(sm3::cat_create_namespace(db.ss, "tmp", tmp) == 0);
+  CHECK(sm3::cat_get_namespace(db.ss, "tmp", oid));
+  REQUIRE(sm3::rollback(db.ss, 1) == 0);
+  CHECK_FALSE(sm3::cat_get_namespace(db.ss, "tmp", oid));
+  CHECK(sm3::cat_get_namespace(db.ss, "app", oid));
+  CHECK(oid == app);
+  CHECK_FALSE(sm3::cat_get_namespace(other, "app", oid));
+  using names_t = std::vector<std::string>;
+  CHECK(sm3::cat_list_namespaces(db.ss) ==
+        names_t{"app", "pg_catalog", "public"});
+  CHECK(sm3::cat_list_namespaces(other) == names_t{"pg_catalog", "public"});
+
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  REQUIRE_MESSAGE(sm3::cat_create_table(db.ss, app, "orders", cols, t) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::cat_create_table(db.ss, sm3::nsp_public, "orders", cols, u) ==
+          0);
+  CHECK(t != u);
+  CHECK(sm3::cat_create_namespace(db.ss, "app", oid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  db.commit();
+  CHECK(sm3::cat_get_namespace(other, "app", oid));
+  CHECK(oid == app);
+  CHECK(sm3::cat_list_namespaces(other) ==
+        names_t{"app", "pg_catalog", "public"});
+  sm3::session_close(other);
+
+  db.begin();
+  CHECK(sm3::cat_create_namespace(db.ss, "", oid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::cat_create_namespace(db.ss, "public", oid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  db.reload();
+  CHECK(sm3::cat_get_namespace(db.ss, "app", oid));
+  CHECK(oid == app);
+  auto d = sm3::cat_table(db.cat, app, "orders");
+  REQUIRE(d != nullptr);
+  CHECK(d->oid == t);
+  CHECK(d->nspoid == app);
+}
+
+TEST_CASE("a namespace is dropped only when it is empty") {
+  // Verify cat_drop_namespace.
+  // 1. The built-in namespaces are SM_ERR_INVALID to drop, and an
+  //    unknown oid SM_ERR_NOTFOUND.
+  // 2. A namespace holding a table is SM_ERR_INUSE; once the table
+  //    is dropped, in the same transaction, it can be dropped.
+  // 3. Dropped, it is not found or listed by its transaction, a
+  //    table cannot be created in it, and its name can be taken
+  //    again; a rollback to a savepoint brings it back.
+  // 4. Another session still finds it until the drop commits, and
+  //    after a restart it is gone.
+  // 5. A namespace holding a collation is SM_ERR_INUSE, before and
+  //    after a restart.
+  cat_db_t db;
+  uint64_t oid = 0, app = 0, lang = 0, t = 0, c = 0;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  db.begin();
+  REQUIRE(sm3::cat_create_namespace(db.ss, "app", app) == 0);
+  REQUIRE(sm3::cat_create_namespace(db.ss, "lang", lang) == 0);
+  REQUIRE(sm3::cat_create_table(db.ss, app, "orders", cols, t) == 0);
+  REQUIRE_MESSAGE(
+      sm3::cat_create_collation(db.ss, lang, "plain", "en-US", true, c) == 0,
+      sm1::errmsg());
+  db.commit();
+
+  db.begin();
+  CHECK(sm3::cat_drop_namespace(db.ss, sm3::nsp_public) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::cat_drop_namespace(db.ss, sm3::nsp_pg_catalog) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::cat_drop_namespace(db.ss, app + 999) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  CHECK(sm3::cat_drop_namespace(db.ss, app) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  CHECK(sm3::cat_drop_namespace(db.ss, lang) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+
+  REQUIRE(sm3::cat_drop_table(db.ss, t) == 0);
+  REQUIRE(sm3::savepoint(db.ss) == 1);
+  REQUIRE_MESSAGE(sm3::cat_drop_namespace(db.ss, app) == 0, sm1::errmsg());
+  using names_t = std::vector<std::string>;
+  CHECK_FALSE(sm3::cat_get_namespace(db.ss, "app", oid));
+  CHECK(sm3::cat_list_namespaces(db.ss) ==
+        names_t{"lang", "pg_catalog", "public"});
+  CHECK(sm3::cat_create_table(db.ss, app, "late", cols, oid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE_MESSAGE(sm3::cat_create_namespace(db.ss, "app", oid) == 0,
+                  sm1::errmsg());
+  CHECK(oid != app);
+  REQUIRE(sm3::rollback(db.ss, 1) == 0);
+  CHECK(sm3::cat_get_namespace(db.ss, "app", oid));
+  CHECK(oid == app);
+
+  sm3::session_t *other = nullptr;
+  REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
+  REQUIRE(sm3::cat_drop_namespace(db.ss, app) == 0);
+  CHECK(sm3::cat_get_namespace(other, "app", oid));
+  db.commit();
+  CHECK_FALSE(sm3::cat_get_namespace(other, "app", oid));
+  sm3::session_close(other);
+
+  db.reload();
+  CHECK(sm3::cat_list_namespaces(db.ss) ==
+        names_t{"lang", "pg_catalog", "public"});
+  db.begin();
+  CHECK(sm3::cat_drop_namespace(db.ss, lang) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::abort(db.ss) == 0);
+}
+
 TEST_CASE("columns, indexes and tables are dropped and renamed") {
   // Verify cat_drop_column, cat_drop_index, cat_rename_table and
   // cat_drop_table.

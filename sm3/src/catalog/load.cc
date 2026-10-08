@@ -46,6 +46,31 @@ int scan_kind(sm2::catkv_t *kv, sm3::kind_t kind,
   return rc == 1 ? 0 : -1;
 }
 
+/* Set cat's collation_nsp from the NAME entries, in one scan of them. */
+int collation_nspaces(sm2::catkv_t *kv, sm3::catalog_t &cat) {
+  std::string prefix;
+  sm2::catkv_scan_t *c = nullptr;
+  if (sm3::kind_prefix(sm3::kind_t::name, prefix) != 0 ||
+      sm2::catkv_scan(kv, prefix, c) != 0) {
+    return -1;
+  }
+  std::unique_ptr<sm2::catkv_scan_t, decltype(&sm2::catkv_scanend)> guard(
+      c, &sm2::catkv_scanend);
+  std::string_view k, v;
+  int rc;
+  while ((rc = sm2::catkv_scannxt(c, k, v)) == 0) {
+    sm3::name_rec_t rec;
+    uint64_t nspoid;
+    if (sm3::decode_name(v, rec) != 0 || sm3::name_nspoid(k, nspoid) != 0) {
+      return -1;
+    }
+    if (rec.kind == sm3::kind_t::collation) {
+      cat.collation_nsp[rec.oid] = nspoid;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
 /* The collation oid names, or nullptr for none; false if unknown. */
 bool collation_of(const sm3::collation_lookup_t &lookup,
                   std::optional<uint64_t> oid, const sm2::collation_t *&out) {
@@ -187,6 +212,10 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
       return -1;
     }
     cat.collations[oid] = c;
+  }
+  // The namespace of each collation, which only its name records.
+  if (collation_nspaces(kv, cat) != 0) {
+    return -1;
   }
   entries.clear();
   if (scan_kind(kv, sm3::kind_t::table, entries) != 0) {

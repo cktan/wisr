@@ -246,6 +246,16 @@ std::shared_ptr<const table_def_t> cat_table(const session_t* s,
 std::vector<std::string> cat_tables(const session_t* s, uint64_t nspoid);
 
 /*
+ * Whether there is a namespace named name, as s's transaction
+ * sees it; its oid is set in oid.
+ */
+bool cat_get_namespace(const session_t* s, std::string_view name,
+                       uint64_t& oid);
+
+/* The names of the namespaces s's transaction sees, sorted. */
+std::vector<std::string> cat_list_namespaces(const session_t* s);
+
+/*
  * The index named name in nspoid, as s's transaction sees it:
  * true with its table's oid and its own set. A scan of every
  * table's indexes, since the catalog keeps no map of their names.
@@ -329,6 +339,27 @@ int cat_add_column(session_t* session, uint64_t oid,
  */
 int cat_drop_column(session_t* session, uint64_t oid,
                     std::string_view name);
+
+/*
+ * Create a namespace named name, SQL's schema: a container that
+ * scopes the names of the tables and collations made in it. Its
+ * oid is set in oid. Like any DDL it is made in session's
+ * transaction, which sees it at once and no other does until the
+ * commit. A name another namespace has fails with SM_ERR_DUPKEY;
+ * no name, with SM_ERR_INVALID.
+ */
+int cat_create_namespace(session_t* session, std::string_view name,
+                         uint64_t& oid);
+
+/*
+ * Drop the namespace oid. One that still holds a table or a
+ * collation is refused with SM_ERR_INUSE, and the two built in,
+ * pg_catalog and public, with SM_ERR_INVALID. It waits for every
+ * transaction that is creating something in the namespace, and
+ * one that tries after it has committed finds no namespace
+ * (CATALOG.md §5).
+ */
+int cat_drop_namespace(session_t* session, uint64_t oid);
 
 /*
  * Create an index named name on the table, keyed by keys, with the

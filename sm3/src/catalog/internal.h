@@ -48,6 +48,8 @@ struct sm3::catalog_t {
       table_names;
   std::unordered_map<uint64_t, std::string> nspaces;
   std::unordered_map<uint64_t, sm2::collation_t *> collations; /* owned */
+  /* The namespace of each collation, for a namespace's drop to ask. */
+  std::unordered_map<uint64_t, uint64_t> collation_nsp;
 
   /*
    * How many times a transaction's DDL has been published, and, for
@@ -89,7 +91,13 @@ struct name_change_t {
 struct collation_change_t {
   int depth;
   uint64_t oid;
+  uint64_t nspoid;
   sm2::collation_t *collation; /* owned until published */
+};
+struct nspace_change_t {
+  int depth;
+  uint64_t oid;
+  std::optional<std::string> name; /* nullopt: dropped */
 };
 
 } // namespace sm3
@@ -107,6 +115,7 @@ struct sm3::session_t {
   std::vector<table_change_t> tables;
   std::vector<name_change_t> names;
   std::vector<collation_change_t> collations;
+  std::vector<nspace_change_t> nspaces;
   bool in_txn = false;      /* between begin and commit or abort */
   uint64_t snap_seq = 0;    /* cat->seq, noted before the snapshot */
   bool stmt_pinned = false; /* stmt_begin was called: statement snapshots */
@@ -176,7 +185,20 @@ void overlay_table(session_t *s, uint64_t oid,
                    std::shared_ptr<const table_def_t> def);
 void overlay_name(session_t *s, uint64_t nspoid, std::string_view name,
                   std::optional<uint64_t> oid);
-void overlay_collation(session_t *s, uint64_t oid, sm2::collation_t *collation);
+void overlay_collation(session_t *s, uint64_t oid, uint64_t nspoid,
+                       sm2::collation_t *collation);
+void overlay_nspace(session_t *s, uint64_t oid,
+                    std::optional<std::string_view> name);
+
+/*
+ * Whether there is a namespace oid as session sees it, its name
+ * set in name; and whether a table or a collation is in it. Both
+ * read the catalog in memory, which holds every commit published
+ * so far, not what the transaction's snapshot shows (CATALOG.md
+ * §5).
+ */
+bool session_nspace(const session_t *s, uint64_t oid, std::string &name);
+bool nspace_in_use(const session_t *s, uint64_t oid);
 
 } // namespace sm3
 
