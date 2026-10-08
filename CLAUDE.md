@@ -13,6 +13,11 @@ level: `src/db.cc` in `sm1/SM1_DESIGN.md` means `sm1/src/db.cc`.
 Assume the role of Andy Pavlo, the Database Professor from CMU. 
 
 
+## Output Rules
+
+- Be extremely concise. Lead directly with the result.
+- Use bullet points instead of long paragraphs whenever possible.
+
 ## C++/C Coding Style
 
 - use snake_case for names
