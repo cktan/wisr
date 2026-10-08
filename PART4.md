@@ -617,3 +617,63 @@ here, and one it no longer does:
   a slot as it is.
 
 Nothing in this target waits on the stack.
+
+---
+
+## 10. digres: how the fork is to be made
+
+The fork is named **digres**, `dg` for short. These are the
+decisions taken so far about how it is made; they override
+§4 and §7 where they differ.
+
+**Where it lives.** In this repository. Everything that is
+here today moves under `sm/`, and the fork goes in `dg/`
+beside it, so that a change to `sm.h` and to its caller is one
+commit.
+
+**It is a copy, not a branch of PostgreSQL's history.** The
+core of PostgreSQL 18.6 (commit `724edf9`) is copied in, with
+its `COPYRIGHT` notice. With threads, no `longjmp`, C++ and
+what is cut below, an upstream change would not merge anyway;
+the cost, accepted, is that every upstream fix wanted later
+is ported by hand.
+
+**PostgreSQL's catalog is cut completely**: its catalog
+tables, their bootstrap (BKI), and the three caches over them
+— the relation cache, the syscache and the catcache — with
+the invalidation machinery that keeps those caches honest.
+What replaces it:
+
+- **A thin lookup layer.** The rest of the backend does not
+  call `sm_*` at each of its three thousand catalog lookups.
+  It goes on calling a narrow interface, in the manner of
+  `lsyscache.h`'s helpers and a slim `Relation`, and that
+  interface is implemented anew. Measured in 18.6: 1,141 raw
+  `SearchSysCache*` calls in 152 files, about 1,500 calls to
+  `lsyscache` helpers, 804 relation opens, 242 direct catalog
+  scans and 350 catalog writes, over 65 catalogs.
+- **Built-ins are compiled in, and immutable.** Types,
+  functions, operators, casts, operator classes and
+  aggregates are read-only tables generated from
+  PostgreSQL's `src/include/catalog/*.dat`. There is no
+  `CREATE TYPE`, `CREATE FUNCTION` or `CREATE OPERATOR`, so
+  nothing about them is stored, locked or invalidated.
+- **What a user creates is in sm3**: namespaces, tables,
+  columns, indexes and collations today; sequences,
+  constraints and defaults when they are built
+  (`sm3/CATALOG3.md` §10).
+
+**An oid is 64 bits**, in digres as in sm3.
+
+**Left out of the copy from the start**: PL/pgSQL and every
+other procedural language, and BKI. More is to be cut; the
+list is being drawn up.
+
+**Order of work.** Cutting the catalog puts the spike of §7
+behind its replacement, so the first things to run are:
+
+1. `dg/` compiles.
+2. `SELECT 1 + 1` runs, from the compiled-in tables alone:
+   the parser, planner and executor with no storage.
+3. `CREATE TABLE`, `INSERT` and a scan of a table of integer
+   columns, through sm3 (§9.5).
