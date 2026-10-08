@@ -29,14 +29,14 @@ is the analyzer's work, which is still in `../dg`.
 | Part | Source, under `../dg/src` | Lines |
 | --- | --- | --- |
 | The grammar and scanner | `backend/parser`: `gram.y`, `scan.l`, `parser.c`, `scansup.c` | 22k |
-| Parse and plan trees | `backend/nodes` | 14k |
-| Memory contexts | `backend/utils/mmgr` | 9k |
-| Error reporting | `backend/utils/error` | 5k |
+| Parse and plan trees | `backend/nodes` | 10k, and as much again generated |
+| Memory contexts | `backend/utils/mmgr` | 12k |
+| Error reporting | `backend/utils/error` | 4k |
 | Encodings | `backend/utils/mb` | 3k |
 | Hash tables and lists | `backend/utils/hash`, `backend/lib` | 6k |
-| Shared code | `common`, `port` | 30k |
+| Shared code | `common`, `port` | 28k |
 
-and nine files that the above call into and that need nothing
+and ten files that the above call into and that need nothing
 else: `globals.c`, `datum.c`, `expandeddatum.c`, `numutils.c`,
 `stack_depth.c`, `define.c`, `s_lock.c`, `pqformat.c`, and the
 time zone code's `localtime.c` and `strftime.c`. `Makefile` has
@@ -68,14 +68,15 @@ So the order is:
 
 Linked with one section a function, so that only what the parser
 reaches is kept, the sources above need 51 names from the rest
-of the server. The nine files named above supply 17 of them.
-`src/host.c` answers the other 34 for `sqparse`, as a process
+of the server. The ten files named above supply about half of
+them, and ask for a few more. `src/host.c` answers the 32 that
+are left for `sqparse`, as a process
 with no client, no transaction and no log file would. Each is a
 dependency to cut or to turn around:
 
 | Who asks | What for | Names |
 | --- | --- | --- |
-| Error reporting | who and where the process is, to prefix a log line and to decide whether to send to a client | 26: `MyProc`, `MyBackendType`, `whereToSendOutput`, `log_min_messages`, `proc_exit`, `ProcessInterrupts` and the like |
+| Error reporting | who and where the process is, to prefix a log line and to decide whether to send to a client | 24: `MyProc`, `MyBackendType`, `whereToSendOutput`, `log_min_messages`, `proc_exit`, `ProcessInterrupts` and the like |
 | Encodings | the conversion function between two encodings, from the catalog, called through fmgr | 4: `FindDefaultConversionProc`, `FunctionCall6Coll`, `OidFunctionCall6Coll`, `IsTransactionState` |
 | The log's formats | JSON quoting, and the log's time zone | 3: `escape_json`, `pg_open_tzfile`, `log_timezone` |
 | The grammar | one catalog function, to print a qualified name in a message | 1: `NameListToString`, which reads no catalog and belongs with the node functions |

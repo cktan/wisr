@@ -147,10 +147,10 @@ code to be run rather than only compiled.
   step.
 - **The name `sq`** and its place beside `sm/` and `dg/` are as
   `DGWORK.md` proposed.
-- **`sq/src/host.c` answers 34 names** that the parser's layers
+- **`sq/src/host.c` answers 32 names** that the parser's layers
   ask of the server, as a process with no client and no
   transaction would. They are stand-ins for a test program, and
-  the list of what to cut. Error reporting asks for 26 of them.
+  the list of what to cut. Error reporting asks for 24 of them.
 - **The link keeps only what is reached** (`-ffunction-sections`
   and `--gc-sections`). Without that, the same objects need 124
   names, most of them from code the parser never runs.
