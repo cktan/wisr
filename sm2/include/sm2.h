@@ -174,15 +174,21 @@ using datum_t = uintptr_t;
 /* int8, float8 and the 8-byte time types are passed by value. */
 static_assert(sizeof(datum_t) == 8, "a datum_t must hold 8 bytes");
 
+/*
+ * A by-value datum narrower than 8 bytes is sign-extended, as
+ * PostgreSQL's Int16GetDatum and Int32GetDatum extend theirs, so
+ * that a datum built here is bit for bit the one PostgreSQL would
+ * build: -1 is all ones at any width. Code that compares datums
+ * whole, as PostgreSQL's datumIsEqual does, then sees one value
+ * and not two. A float4 is extended as the int4 its bits make,
+ * which is what Float4GetDatum does; a bool is 0 or 1. Reading a
+ * datum takes its low bytes and is the same either way.
+ */
 inline datum_t datum_from_int16(int16_t val) {
-    datum_t d = 0;
-    std::memcpy(&d, &val, sizeof(val));
-    return d;
+    return static_cast<datum_t>(static_cast<int64_t>(val));
 }
 inline datum_t datum_from_int32(int32_t val) {
-    datum_t d = 0;
-    std::memcpy(&d, &val, sizeof(val));
-    return d;
+    return static_cast<datum_t>(static_cast<int64_t>(val));
 }
 inline datum_t datum_from_int64(int64_t val) {
     datum_t d = 0;
@@ -199,9 +205,9 @@ inline datum_t datum_from_bool(bool val) {
     return d;
 }
 inline datum_t datum_from_float(float val) {
-    datum_t d = 0;
-    std::memcpy(&d, &val, sizeof(val));
-    return d;
+    int32_t bits;
+    std::memcpy(&bits, &val, sizeof(val));
+    return datum_from_int32(bits);
 }
 inline datum_t datum_from_double(double val) {
     datum_t d = 0;

@@ -395,7 +395,9 @@ should become a dependency.
 3. **Spike the fork early, and throw it away.** A prototype
    that runs `SELECT` and `INSERT` on one table through sm3,
    built to find which of §2's and §4's walls bites first —
-   not to be kept. The formats of `sm2/SM2_DESIGN.md` §8.2,
+   not to be kept. Its first target is narrower still: insert
+   into, and scan, a table whose columns are all integers
+   (§9.5). The formats of `sm2/SM2_DESIGN.md` §8.2,
    steps 2 and 3, are permanent once data exists; the spike is
    how to learn what they must carry *before* that happens.
 4. Only then decide whether the full program is worth its
@@ -421,9 +423,9 @@ Stated so none of it is repeated as fact:
 - **The exact size of OrioleDB's core patch set.** The named
   patches were read; the complete delta against upstream was
   not enumerated.
-- **RocksDB's approximate-statistics accuracy** for planner
-  purposes. Not measured, and §6's statistics row depends on
-  it.
+- ~~**RocksDB's approximate-statistics accuracy**~~ has since
+  been measured: exact once flushed and compacted, as much as
+  7x high for rows still unflushed (`STATISTICS.md` §6).
 - **The cost of converting PostgreSQL to threads** (§2's
   decision). Not estimated, and not in §4's figures, which
   assume the process model stays.
@@ -440,3 +442,178 @@ Stated so none of it is repeated as fact:
 - **The effort figures in §4** are calibrated judgment against
   the precedents, not measurements. Treat the ordering as
   sound and the absolute numbers as loose.
+
+---
+
+## 9. The stack's API against the executor's calls
+
+Before the spike of §7, `include/sm.h` was read against what
+PostgreSQL 18.6's executor calls to reach storage: the 44
+callbacks of `TableAmRoutine` (`access/tableam.h`), the index
+calls of `access/genam.h`, and the places `nodeSeqscan.c`,
+`nodeIndexscan.c`, `nodeModifyTable.c` and `nodeLockRows.c`
+make them. The question for each path: is there a call here
+of the right shape, and what does the fork have to bridge.
+
+This is a reading, not a run. The spike is what tests it.
+
+### 9.1 Path by path
+
+| Path | The executor calls | The stack's calls | Fit |
+| --- | --- | --- | --- |
+| Open a relation | `table_open` with a lock mode | `sm_tbl_open(session, oid, IS or IX)` | fits; the lock is the table-oid lock |
+| Sequential scan | `table_beginscan`, `table_scan_getnextslot`, `table_rescan`, `table_endscan` | `sm_tbl_scan`, `sm_rel_scannxt`, `sm_rel_scanend`, then `sm_tbl_deform` into the slot | fits, forward only; a rescan is a new cursor |
+| Index scan | `index_beginscan`, `index_rescan` with scan keys, `index_getnext_slot`: a TID from the index, then `table_index_fetch_tuple` | `sm_tbl_idx_scan` with a low and a high bound, `sm_idx_scannxt` for a rowno, then `sm_tbl_read` | fits for ranges on a key prefix; see gaps 2, 5, 6 |
+| Insert | `table_tuple_insert`, then `ExecInsertIndexTuples` calling `index_insert` on each index | `sm_tbl_insert`, which writes the heap row and every index | fits, and simpler: the fork skips its own index maintenance |
+| Update | `table_tuple_update`, returning a `TM_Result` and saying which indexes to update | `sm_tbl_update` | fits; results map as in §9.2 |
+| Delete | `table_tuple_delete` | `sm_tbl_delete` | fits |
+| Re-check after a concurrent update, READ COMMITTED | `table_tuple_lock` to fetch the newest version, then `EvalPlanQual` | `SM_ERR_UPDATED`, then `sm_tbl_read_latest`, then the write again | fits; built for this (§5a) |
+| Row lock | `table_tuple_lock` in one of four modes, with a wait policy | `sm_tbl_lock` in two modes, always waiting | partly; gaps 3, 4 |
+| Statement boundary | `CommandCounterIncrement`, a snapshot a statement | `sm_stmt_begin` | fits |
+| Transaction | start, commit, abort; subtransactions; two-phase | `sm_begin`, `sm_commit`, `sm_abort`; `sm_savepoint`, `sm_rollback`, `sm_forget`; `sm_prepare` and the rest | fits |
+| Cancel | `CHECK_FOR_INTERRUPTS` | `sm_cancel`, and the callback on `sm_cat_index_wait` | fits |
+| Create and drop | `heap_create_with_catalog`, `index_create`, and their drops | `sm_cat_create_table`, `sm_cat_create_index`, `sm_cat_drop_table`, `sm_cat_drop_index`, `sm_tbl_truncate` | fits for these; gaps 7, 8 |
+| Sequence | `nextval`, `setval`, `currval` | `sm_mkseq`, `sm_nextseq`, `sm_rmseq` | `nextval` only; gap 9 |
+
+Not needed by the stack, and so left out of the table: vacuum,
+freezing, the visibility map, HOT, and `index_build_range_scan`
+— the stack maintains and builds its own indexes.
+
+### 9.2 Write results
+
+| `TM_Result` | From the stack |
+| --- | --- |
+| `TM_Ok` | 0 |
+| `TM_SelfModified` | `SM_ERR_SELFMODIFIED` |
+| `TM_Updated` | `SM_ERR_UPDATED` at READ COMMITTED; `SM_ERR_CONFLICT`, which has already aborted, above it |
+| `TM_Deleted` | `SM_ERR_UPDATED`, and `sm_tbl_read_latest` then finds no row |
+| `TM_BeingModified`, `TM_WouldBlock` | nothing yet: gap 4 |
+| `TM_Invisible` | does not arise: a rowno comes from a scan at the same snapshot |
+
+One difference in kind: a retryable error from the stack has
+already aborted the transaction, where PostgreSQL returns a
+result and lets the executor raise the error. The fork raises
+the same error either way, and must not abort twice.
+
+### 9.3 Gaps
+
+**In the way of the spike itself:**
+
+1. ~~**A scanned row is promised for too short a time.**~~
+   **Closed.** `sm.h` said a row is valid until the next call
+   on the *session*. The executor keeps a scan's current row
+   while it makes other calls on the same session: the inner
+   side of a join, an index's heap fetch, the insert of
+   `INSERT … SELECT`. By that promise every such row had to
+   be copied. The stack in fact did better, and the header
+   now promises it: a row from `sm_rel_scannxt` or
+   `sm_idx_scannxt` lasts until the next call on that
+   *cursor*, which is exactly what a scan slot needs, and a
+   test holds it to that. A row from `sm_tbl_read` is the
+   session's, and the fork copies that one or uses it at
+   once.
+2. **The identity of a row is 64 bits and a TID is 48.**
+   Known (§3): the fork widens `ctid`. The spike can pack a
+   small `rowno` into a TID and defer that.
+
+**Not in the way of `SELECT` and `INSERT` on one table, but
+the next things the fork would hit:**
+
+3. **Two lock modes, where PostgreSQL has four.** `FOR KEY
+   SHARE` and `FOR NO KEY UPDATE` have nothing to map to, so
+   an update of a parent row that leaves its key alone waits
+   for a child's foreign-key check (`NEXT.md`).
+4. **No wait policy.** `NOWAIT` and `SKIP LOCKED` need a flag
+   on the calls that can wait; there is only the QA setting.
+5. **An index entry does not give back its key columns.** It
+   holds the rowno and the `INCLUDE` columns. An index-only
+   scan needs the key values, so it works only for columns
+   also listed in `INCLUDE`.
+6. **No mark and restore on an index cursor.** A merge join
+   backs its inner side up to a mark. A cursor only goes
+   forward, so the fork puts a Materialize node there, as it
+   does for a scrollable cursor (§5).
+7. **A collation cannot be given to an index through
+   `sm.h`.** sm3's index key takes a collation oid;
+   `sm_index_key_spec_t` has no field for it, and there is no
+   `sm_cat_create_collation`. Text keys made through the C
+   API sort by bytes.
+8. **`ALTER TABLE` is not in `sm.h`.** `add_column`,
+   `drop_column` and `rename_table` exist in sm3 only.
+9. **A sequence only goes forward.** No `setval`, no
+   `ALTER SEQUENCE`, and none of a sequence's options: the
+   stack's sequences are a name and a counter.
+10. **A row is at most 64 KB.** TOAST is the unbuilt part of
+    sm2, so a larger row is `SM_ERR_ROWTOOLONG`.
+11. **Nothing for the planner.** `relation_estimate_size`,
+    `relation_size` and the analyze callbacks have no
+    counterpart until statistics are built (`STATISTICS.md`).
+    The planner runs on its defaults meanwhile.
+
+**The fork's own, with nothing to change here:**
+
+- **A table's oid.** The stack hands out a 64-bit oid of its
+  own; PostgreSQL's is 32 bits and comes from its catalog.
+  The spike keeps a map from one to the other. It goes away
+  when the catalogs move into sm3 (§4).
+- **Types.** A table of PostgreSQL type oids to sm2's type
+  codes. `numeric` is the one that does not carry over:
+  sm2's decimal is its own format, and PostgreSQL's numeric
+  functions do not read it. The spike avoids it.
+- **Scans the stack has no shape for**: bitmap scans, which
+  want block locality; `TABLESAMPLE`; parallel scans. The
+  fork's planner does not choose them.
+- **`INSERT … ON CONFLICT`.** PostgreSQL inserts
+  speculatively and then confirms. The stack reports a taken
+  key as `SM_ERR_DUPKEY` after the heap row is written, so
+  the fork needs a savepoint a row, or a call that says which
+  row holds the key. Open.
+
+### 9.4 What this says about readiness
+
+For the spike — `SELECT` and `INSERT` on one table, one
+backend — the stack needed one thing changed, gap 1, and that
+was a promise to write down, not code. Everything else in the
+way is the fork's: the slot, the oid map, the type map.
+
+Gaps 3 to 11 are the order of work after the spike, to be
+re-ranked by what it finds.
+
+### 9.5 The first target: insert and scan, integers only
+
+The spike starts narrower than §7 says: one table whose
+columns are all `int2`, `int4` or `int8`, an `INSERT` into it
+and a sequential scan of it, from one backend. Integers are
+passed by value, so the target leaves out everything that is
+about bytes owned by someone: varlenas, collations, TOAST,
+`numeric`, and how long a pointer into a row is good for.
+Indexes, updates and deletes come after it.
+
+What the fork calls, start to finish:
+
+| Step | Call |
+| --- | --- |
+| once a server | `sm_init`, `sm_attach`, `sm_mkdb` |
+| once a backend | `sm_opendb` |
+| `CREATE TABLE` | `sm_begin`, `sm_cat_create_table` with type codes 2, 3 or 4 (`sm2/TYPE.md` §3), `sm_commit`; the fork keeps the oid it gets back |
+| `INSERT` | `sm_begin`, `sm_stmt_begin`, `sm_tbl_open` in IX, `sm_tbl_insert` with the slot's values and null flags, `sm_tbl_close`, `sm_commit` |
+| `SELECT` | `sm_begin`, `sm_stmt_begin`, `sm_tbl_open` in IS, `sm_tbl_scan` over every rowno, then for each row `sm_rel_scannxt` and `sm_tbl_deform` into the slot, `sm_rel_scanend`, `sm_tbl_close`, `sm_commit` |
+
+Every call in it exists. One thing the fork has to mind even
+here, and one it no longer does:
+
+- **A row's identity.** The slot's `tts_tid` is 48 bits and a
+  `rowno` is 64 (gap 2). For this target the fork packs a
+  small `rowno` into it.
+- **An integer's unused bits are PostgreSQL's.** Both sides
+  hold a by-value integer in an 8-byte datum. PostgreSQL's
+  `Int32GetDatum` sign-extends, so -1 is all ones; the stack
+  used to zero-extend, so that -1 as an `int4` had its upper
+  half clear, and code that compares datums whole, as
+  `datumIsEqual` does, would have seen two values for one
+  negative number. sm2 now sign-extends too, where it builds
+  a datum and where it deforms a row, a `float4` by its bits
+  as `Float4GetDatum` does. A datum from the stack goes into
+  a slot as it is.
+
+Nothing in this target waits on the stack.

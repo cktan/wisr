@@ -12,7 +12,11 @@ has sm3's own order of work.
 **The highest priority is to bring the stack to where work on
 hooking it up to PostgreSQL can begin** (`PART4.md` §7). What
 is listed here is ordered by that, and what does not serve it
-waits.
+waits. The first target is a spike that inserts into and
+scans a table of integer columns, from one backend, and
+`PART4.md` §9 has the stack's API read against the executor
+for it: nothing in that target waits on the stack, and §9.3
+there lists what the fork would meet next.
 
 The rest of `sm3/SM3_DESIGN.md` §8.1 step 5.
 

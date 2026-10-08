@@ -165,6 +165,55 @@ TEST_CASE("every tuple round trips, and any one column decodes alone") {
   }
 }
 
+TEST_CASE("a by-value datum is sign-extended, as PostgreSQL's is") {
+  // Verify a datum built here is bit for bit PostgreSQL's.
+  // 1. A negative int2, int4 and date, and a float4 whose bits have
+  //    the top one set, each make a datum with every upper bit set:
+  //    what Int16GetDatum and Int32GetDatum give. A positive one,
+  //    and a bool, have them clear. An int8 is its own 8 bytes.
+  // 2. A row of them, encoded and deformed, gives back the same
+  //    datums, whole: deforming extends as building does.
+  // 3. Each still reads as the value it was made from.
+  const sm2::datum_t ones = ~sm2::datum_t{0};
+  CHECK(sm2::datum_from_int16(-1) == ones);
+  CHECK(sm2::datum_from_int32(-1) == ones);
+  CHECK(sm2::datum_from_int32(-2) == ones - 1);
+  CHECK(sm2::datum_from_int16(7) == sm2::datum_t{7});
+  CHECK(sm2::datum_from_int32(7) == sm2::datum_t{7});
+  CHECK(sm2::datum_from_bool(true) == sm2::datum_t{1});
+  CHECK(sm2::datum_from_int64(-1) == ones);
+  // -1.5f is 0xbfc00000: its bits as an int4 are negative.
+  CHECK(sm2::datum_from_float(-1.5f) == sm2::datum_t{0xffffffffbfc00000ULL});
+  CHECK(sm2::datum_from_float(1.5f) == sm2::datum_t{0x3fc00000ULL});
+
+  // The layout views its columns: they are kept alive beside it.
+  std::vector<sm2::attribute_t> cols = {
+      attr(sm2::type_int2),   attr(sm2::type_int4), attr(sm2::type_date),
+      attr(sm2::type_float4), attr(sm2::type_bool), attr(sm2::type_int8),
+      attr(sm2::type_int4)};
+  sm2::tup_desc_t schema(cols);
+  sm2::datum_t in[7] = {
+      sm2::datum_from_int16(-3),  sm2::datum_from_int32(-4),
+      sm2::datum_from_int32(-5),  sm2::datum_from_float(-1.5f),
+      sm2::datum_from_bool(true), sm2::datum_from_int64(-6),
+      sm2::datum_from_int32(8)};
+  bool isnull[7] = {false, false, false, false, false, false, false};
+  std::string t;
+  REQUIRE_MESSAGE(sm2::tup_encode(schema, in, isnull, t) == 0,
+                  std::string(sm1::errmsg()));
+  sm2::datum_t out[7];
+  bool out_null[7];
+  REQUIRE(sm2::tup_deform(schema, t, out, out_null) == 0);
+  for (int i = 0; i < 7; i++) {
+    CAPTURE(i);
+    CHECK(out[i] == in[i]);
+  }
+  CHECK(sm2::datum_to_int16(out[0]) == -3);
+  CHECK(sm2::datum_to_int32(out[1]) == -4);
+  CHECK(sm2::datum_to_float(out[3]) == -1.5f);
+  CHECK(sm2::datum_to_int64(out[5]) == -6);
+}
+
 TEST_CASE("a tuple is at most 65535 bytes, so its slots are 2 bytes") {
   // Verify the tuple length limit, which is what keeps every slot
   // at 2 bytes.

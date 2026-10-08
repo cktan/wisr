@@ -776,6 +776,55 @@ TEST_CASE("an inserter that began before its rival committed, at every level") {
   }
 }
 
+TEST_CASE("a scanned row outlives other calls on its session") {
+  // Verify how long a cursor's row is good for (include/sm.h).
+  // 1. Three rows are committed. A cursor over the heap is opened,
+  //    and one over an index, and each gives its first row.
+  // 2. The session then reads another row, inserts one, and moves a
+  //    second heap cursor: none of them is a call on the first two.
+  // 3. The two rows are still, byte for byte, what they were.
+  // 4. Moving a cursor on gives its next row, as before.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "a");
+  uint64_t r2 = put(t, 2, "taken", "b");
+  put(t, 3, "free", "c");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  t = f.write(f.a);
+  sm2::rel_scan_t *heap = nullptr, *other = nullptr;
+  sm2::index_scan_t *idx = nullptr;
+  REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, heap) == 0);
+  REQUIRE(sm3::tbl_idx_scan(t, f.jobs_id, nullptr, nullptr, idx) == 0);
+  uint64_t rowno = 0, xrow = 0, orow = 0;
+  bool cut = false;
+  std::string_view row, entry, tmp;
+  REQUIRE(sm2::rel_scannxt(heap, rowno, row) == 0);
+  REQUIRE(sm2::idx_scannxt(idx, xrow, cut, entry) == 0);
+  const std::string row_was(row), entry_was(entry);
+
+  REQUIRE(sm3::tbl_read(t, r2, tmp) == 0);
+  put(t, 4, "free", "d");
+  REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, other) == 0);
+  REQUIRE(sm2::rel_scannxt(other, orow, tmp) == 0);
+  REQUIRE(sm2::rel_scannxt(other, orow, tmp) == 0);
+
+  CHECK(row == row_was);
+  CHECK(entry == entry_was);
+
+  uint64_t next = 0;
+  REQUIRE(sm2::rel_scannxt(heap, next, row) == 0);
+  CHECK(next > rowno);
+  sm2::rel_scanend(heap);
+  sm2::rel_scanend(other);
+  sm2::idx_scanend(idx);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
 TEST_CASE("while an index is pending, rows it has not reached are written") {
   // Verify maintenance of a pending index (SM3_DESIGN.md §3).
   // 1. Rows 7, 8 and 10 are committed; then an index on owner is

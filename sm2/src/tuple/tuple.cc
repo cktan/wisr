@@ -272,12 +272,27 @@ std::string_view datum_at(const parsed_t &t, const sm2::tup_desc_t &desc,
   return t.tuple.substr(start, len);
 }
 
-/* Convert bytes of attribute to datum_t representation. */
+/*
+ * Convert bytes of attribute to datum_t representation. A by-value
+ * one of 2 or 4 bytes is sign-extended, as every datum built here
+ * is (sm2.h, datum_from_int32): an int2, an int4, a date, and a
+ * float4 by its bits. One byte is a bool, 0 or 1.
+ */
 void bytes_to_datum(const sm2::attribute_t &attr, std::string_view bytes,
                     sm2::datum_t &val) {
   if (attr.type && attr.type->byval) {
-    val = 0;
-    std::memcpy(&val, bytes.data(), bytes.size());
+    if (bytes.size() == sizeof(int32_t)) {
+      int32_t v;
+      std::memcpy(&v, bytes.data(), sizeof(v));
+      val = sm2::datum_from_int32(v);
+    } else if (bytes.size() == sizeof(int16_t)) {
+      int16_t v;
+      std::memcpy(&v, bytes.data(), sizeof(v));
+      val = sm2::datum_from_int16(v);
+    } else {
+      val = 0;
+      std::memcpy(&val, bytes.data(), bytes.size());
+    }
   } else {
     val = reinterpret_cast<sm2::datum_t>(bytes.data());
   }

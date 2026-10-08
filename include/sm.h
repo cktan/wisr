@@ -22,8 +22,19 @@
  *   - Names are NUL-terminated strings; data is a pointer and a
  *     length. Both are read during the call and never retained.
  *   - A row or an index entry handed out points into engine
- *     memory, is not NUL-terminated, must not be freed, and stays
- *     valid until the next call on the same session.
+ *     memory, is not NUL-terminated and must not be freed. How
+ *     long it stays valid depends on what handed it out, so that
+ *     a caller can use it in place and copy only what it keeps:
+ *       - from a cursor (sm_rel_scannxt, sm_idx_scannxt), until
+ *         the next call on that cursor, or until the cursor is
+ *         closed, as the end of its transaction closes it. Calls
+ *         on the session, on its tables and on its other cursors
+ *         leave it alone: a scan's current row outlives the inner
+ *         side of a join, a heap fetch and an insert.
+ *       - from a point read (sm_tbl_read, sm_tbl_read_latest),
+ *         until the next call on the same session.
+ *     What sm_tbl_deform and sm_tbl_idx_deform hand out points
+ *     into the row given to them, and lasts as long as it does.
  *   - Anything else handed out is the caller's own: a list is a
  *     std::vector and bytes are a std::string, filled by the call.
  *     Nothing is freed by hand.
@@ -308,8 +319,13 @@ const char* sm_collation_version(const sm_collation_t* collation);
  */
 typedef uintptr_t sm_datum_t;
 
-#define SM_DATUM_FROM_INT16(v) ((sm_datum_t)(uint16_t)(v))
-#define SM_DATUM_FROM_INT32(v) ((sm_datum_t)(uint32_t)(v))
+/*
+ * A value narrower than the datum is sign-extended, as PostgreSQL's
+ * Int16GetDatum and Int32GetDatum extend theirs, so a datum from
+ * here and one from there are the same bits: -1 is all ones.
+ */
+#define SM_DATUM_FROM_INT16(v) ((sm_datum_t)(int64_t)(int16_t)(v))
+#define SM_DATUM_FROM_INT32(v) ((sm_datum_t)(int64_t)(int32_t)(v))
 #define SM_DATUM_FROM_INT64(v) ((sm_datum_t)(uint64_t)(v))
 #define SM_DATUM_FROM_BOOL(v)  ((sm_datum_t)((v) ? 1 : 0))
 #define SM_DATUM_FROM_PTR(p)   ((sm_datum_t)(const void*)(p))
@@ -321,9 +337,9 @@ typedef uintptr_t sm_datum_t;
 #define SM_DATUM_TO_PTR(d)     ((const void*)(uintptr_t)(d))
 
 static inline sm_datum_t sm_datum_from_float(float f) {
-    sm_datum_t d = 0;
-    memcpy(&d, &f, sizeof(float));
-    return d;
+    int32_t bits;
+    memcpy(&bits, &f, sizeof(float));
+    return SM_DATUM_FROM_INT32(bits);
 }
 static inline sm_datum_t sm_datum_from_double(double f) {
     sm_datum_t d = 0;
@@ -407,7 +423,10 @@ struct sm_bound_t {
 /* A cursor over a table's rows, in rowno order; sm_tbl_scan opens one. */
 typedef struct sm_rel_scan_t sm_rel_scan_t;
 
-/* The next row: 0 with it, 1 at the end, or -1. */
+/*
+ * The next row: 0 with it, 1 at the end, or -1. The tuple is valid
+ * until the next call on this cursor.
+ */
 int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* rowno, const void** tuple,
                    size_t* len);
 
@@ -428,7 +447,10 @@ int sm_tup_encode(const std::vector<sm_attribute_t>& schema,
  */
 typedef struct sm_idx_scan_t sm_idx_scan_t;
 
-/* The next entry: 0 with it, 1 at the end, or -1. */
+/*
+ * The next entry: 0 with it, 1 at the end, or -1. The value is
+ * valid until the next call on this cursor.
+ */
 int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* rowno, bool* cut,
                    const void** value, size_t* len);
 
