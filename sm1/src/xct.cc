@@ -55,6 +55,26 @@ void publish_commit(sm1::session_t *s, uint64_t xid,
 int resolve(db_t *db, const std::string &gid, bool commit_it);
 
 /*
+ * The on_commit functions of the transaction this thread has just
+ * committed, kept by the commit for its entry point to run once it
+ * has left sm1.
+ */
+thread_local std::vector<std::function<void()>> committed_fns;
+
+/*
+ * Run what the commit kept, newest first, as the caller's code:
+ * outside sm1 and outside any transaction.
+ */
+void run_committed_fns() {
+  // Take them first: one may commit a transaction of its own.
+  std::vector<std::function<void()>> fns;
+  fns.swap(committed_fns);
+  for (auto fn = fns.rbegin(); fn != fns.rend(); ++fn) {
+    (*fn)();
+  }
+}
+
+/*
  * Resolve the session's own prepared transaction, from its
  * sm1::commit or sm1::abort. Another session may resolve it first,
  * even between the caller's check and this call; the session
@@ -197,6 +217,8 @@ void reset(sm1::session_t *s) {
   s->dropped_seqs.clear();
   s->undo.clear();
   s->undo_bytes = 0;
+  // Its on_commit functions go with it, run or not.
+  s->on_commit.clear();
   // The savepoints end with the transaction.
   s->savepoints.clear();
   s->lost_marks = 0;
@@ -298,6 +320,7 @@ int savepoint(sm1::session_t *s) {
   m.dropped = s->dropped.size();
   m.dropped_seqs = s->dropped_seqs.size();
   m.scan_id = s->next_scan_id;
+  m.on_commit = s->on_commit.size();
   {
     // Hold lock_mu while reading the lock list.
     std::lock_guard<std::mutex> guard(s->db->lock_mu);
@@ -405,6 +428,8 @@ int rollback(sm1::session_t *s, int depth) {
   s->created.resize(m.created);
   s->dropped.resize(m.dropped);           // the undo restored their rows
   s->dropped_seqs.resize(m.dropped_seqs); // and their sequences
+  // Drop the on_commit functions added after the mark.
+  s->on_commit.resize(m.on_commit);
 
   // Stop counting the entries undone.
   for (size_t i = m.undo; i < s->undo.size(); i++) {
@@ -509,6 +534,8 @@ int commit(sm1::session_t *s) {
     // Release its row locks: a transaction that never wrote can
     // still hold them, through sm1::lock (§5.1).
     lock_release_all(s);
+    // Keep its on_commit functions for the entry point to run.
+    committed_fns.swap(s->on_commit);
     // Forget the transaction.
     reset(s);
     return 0;
@@ -589,6 +616,8 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
                      "write commit record (outcome unknown): {}",
                      st.ToString().c_str());
   }
+  // Keep its on_commit functions for the entry point to run.
+  committed_fns.swap(s->on_commit);
   // Past the commit point: publish, and report success.
   publish_commit(s, xid, commit_ts);
   return 0;
@@ -728,6 +757,8 @@ sm1::session_t *detach_prepared(sm1::session_t *s, const std::string &gid,
   // Move the SSI node over.
   g->ssi = s->ssi;
   s->ssi = nullptr;
+  // Its on_commit functions go with it, for whoever commits it.
+  g->on_commit.swap(s->on_commit);
   // Hand every held lock, in its mode, to the new owner.
   lock_transfer(s->db, s, g);
   if (g->xid != 0) {
@@ -1384,11 +1415,33 @@ int sm1::begin(sm1::session_t *session, sm1::xctlevel_t level, bool read_only) {
   return ::begin(session, level, read_only);
 }
 
-/* Commit the active transaction. */
+/* Commit the active transaction, then run its on_commit functions. */
 int sm1::commit(sm1::session_t *session) {
+  int rc;
+  {
+    // Inside sm1: running out of memory is fatal.
+    in_sm1_t in_sm1;
+    rc = ::commit(session);
+  }
+  run_committed_fns();
+  return rc;
+}
+
+/* Have fn run once the active transaction has committed. */
+int sm1::on_commit(sm1::session_t *session, std::function<void()> fn) {
   // Inside sm1: running out of memory is fatal.
   in_sm1_t in_sm1;
-  return ::commit(session);
+  // Require an active, non-prepared transaction.
+  if (xct_check_active(session) != 0) {
+    return -1;
+  }
+  // Reject an empty function.
+  if (!fn) {
+    return set_error(sm1::SM_ERR_INVALID, "on_commit: no function");
+  }
+  // Last added runs first.
+  session->on_commit.push_back(std::move(fn));
+  return 0;
 }
 
 /* Read the rest of this statement at one snapshot. */
@@ -1451,10 +1504,9 @@ int sm1::list_prepared(sm1::session_t *session,
   return ::list_prepared(session, out);
 }
 
-/* Commit a prepared transaction by gid, from any session. */
-int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
+/* sm1::commit_prepared, minus the out-of-memory guard. */
+static int commit_prepared_gid(sm1::session_t *session,
+                               std::string_view gid_arg) {
   // Take the name as a C string, as the engine uses it.
   std::string gid_str;
   if (copy_name(gid_arg, "gid", gid_str) != 0) {
@@ -1467,6 +1519,18 @@ int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
   }
   // Commit it by gid.
   return resolve(session->db, gid, true);
+}
+
+/* Commit a prepared transaction by gid, then run its on_commit functions. */
+int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
+  int rc;
+  {
+    // Inside sm1: running out of memory is fatal.
+    in_sm1_t in_sm1;
+    rc = commit_prepared_gid(session, gid_arg);
+  }
+  run_committed_fns();
+  return rc;
 }
 
 /* Abort a prepared transaction by gid, from any session. */

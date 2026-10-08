@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include <atomic>
+#include <functional>
 #include <list>
 #include <memory>
 #include <string>
@@ -26,6 +27,8 @@ struct sm1::session_t {
 
   /* The transaction; meaningful only while active. */
   bool active = false;
+  /* What sm1::on_commit added, in the order added; run from the back. */
+  std::vector<std::function<void()>> on_commit;
   sm1::xctlevel_t level = sm1::xctlevel_t::read_committed;
   bool read_only = false; /* declared at sm1::begin (§7.4) */
   uint64_t snapshot_ts = 0;
@@ -85,6 +88,7 @@ struct sm1::session_t {
     size_t dropped = 0;      /* dropped.size() at the mark */
     size_t dropped_seqs = 0; /* dropped_seqs.size() at the mark */
     uint64_t scan_id = 0;    /* cursors with a larger id came later */
+    size_t on_commit = 0;    /* on_commit.size() at the mark */
   };
   std::vector<mark_t> savepoints;
   /*

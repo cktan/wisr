@@ -713,6 +713,41 @@ aborted the transaction.
 
 Errors: `SM_ERR_NOTRANS`.
 
+### int sm1::on_commit(sm1::session_t* session, std::function<void()> fn)
+
+Have `fn` run once the active transaction has committed: at
+the end of the call that commits it, on that call's thread,
+outside any transaction. It runs once, and must not throw.
+It does not run if the transaction aborts or its commit
+fails.
+
+Functions run newest first: after `on_commit(A)` and
+`on_commit(B)`, B runs before A. A rollback to a savepoint
+drops the functions added since it.
+
+The commit is durable before `fn` runs, and `fn` is not: if
+the machine crashes right after the commit, `fn` never runs,
+though the transaction committed. The caller must account
+for that, by finding the work `fn` would have done when it
+next starts.
+
+A **prepared** transaction keeps its functions, and whichever
+call commits it runs them: `sm1::commit` on the session that
+prepared it, or `sm1::commit_prepared` on any session. They
+are memory, not part of the prepared record, so a
+transaction committed after a restart runs none. What a
+function does must therefore be something the caller can
+also find to do again when it starts.
+
+There is no function that runs before the commit. After a
+prepare the outcome is no longer the transaction's to
+change, so the last moment such a function could act is
+before the prepare; that would be an `on_prepare`, which
+is not built.
+
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+`SM_ERR_INVALID` (no function).
+
 ### bool sm1::in_doubt(sm1::session_t* session)
 
 Whether `session` prepared a transaction that no session has

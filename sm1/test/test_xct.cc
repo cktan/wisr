@@ -68,6 +68,79 @@ int commit_one(sm1::session_t *s, uint64_t store, const std::string &key) {
 
 } // namespace
 
+TEST_CASE("on_commit functions run after the commit, newest first, once") {
+  // Verify when sm1::on_commit's functions run, and when they do not.
+  // 1. A then B are added and the transaction commits: B ran before
+  //    A, each outside any transaction, since each could begin one.
+  // 2. The next commit runs nothing: a function runs once.
+  // 3. A transaction that aborts runs none.
+  // 4. A function added after a savepoint is dropped by a rollback
+  //    to it; the one added before still runs.
+  // 5. Outside a transaction it is SM_ERR_NOTRANS, and an empty
+  //    function SM_ERR_INVALID.
+  // 6. A prepared transaction keeps its functions: one runs when
+  //    the session that prepared commits, another when a second
+  //    session commits by gid, and neither before.
+  xct_fixture_t f;
+  sm1::session_t *s = f.first();
+  std::string ran;
+  auto add = [&](char c) {
+    return sm1::on_commit(s, [&ran, s, c] {
+      ran += c;
+      if (sm1::begin(s, sm1::xctlevel_t::read_committed) == 0 &&
+          sm1::abort(s) == 0) {
+        ran += '.';
+      }
+    });
+  };
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(add('A') == 0);
+  REQUIRE(add('B') == 0);
+  CHECK(ran.empty());
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(ran == "B.A.");
+
+  REQUIRE(commit_one(s, f.store(), "k1") == 0);
+  CHECK(ran == "B.A.");
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(add('C') == 0);
+  REQUIRE(sm1::abort(s) == 0);
+  REQUIRE(commit_one(s, f.store(), "k2") == 0);
+  CHECK(ran == "B.A.");
+
+  ran.clear();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(add('D') == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  REQUIRE(add('E') == 0);
+  REQUIRE(sm1::rollback(s, 1) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(ran == "D.");
+
+  CHECK(add('F') == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTRANS);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(sm1::on_commit(s, nullptr) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm1::abort(s) == 0);
+
+  ran.clear();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(add('G') == 0);
+  REQUIRE(sm1::prepare(s, "own") == 0);
+  CHECK(ran.empty());
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(ran == "G.");
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(add('H') == 0);
+  REQUIRE(sm1::prepare(s, "other") == 0);
+  sm1::session_t *t = f.open();
+  REQUIRE(sm1::commit_prepared(t, "other") == 0);
+  CHECK(ran == "G.H.");
+  REQUIRE(sm1::closedb(t) == 0);
+}
+
 TEST_CASE("a stalled commit holds back every later commit's visibility") {
   // Verify the sequencer publishes in commit_ts order (§4.3).
   // 1. Session A commits "a" but stalls after claiming its

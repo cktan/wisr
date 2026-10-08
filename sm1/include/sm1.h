@@ -49,6 +49,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -458,6 +459,33 @@ int commit(session_t* session);
  * Errors: SM_ERR_NOTRANS.
  */
 int abort(session_t* session);
+
+/*
+ * Have fn run once the active transaction has committed: at the
+ * end of the call that commits it, on that call's thread, outside
+ * any transaction. It runs once, and must not throw. It does not
+ * run if the transaction aborts or its commit fails.
+ *
+ * Functions run newest first: after on_commit(A) and on_commit(B),
+ * B runs before A. A rollback to a savepoint drops the functions
+ * added since it.
+ *
+ * The commit is durable before fn runs, and fn is not: if the
+ * machine crashes right after the commit, fn never runs, though
+ * the transaction committed. The caller must account for that,
+ * by finding the work fn would have done when it next starts.
+ *
+ * A prepared transaction keeps its functions, and whichever call
+ * commits it runs them: sm1::commit on the session that prepared
+ * it, or sm1::commit_prepared on any session. They are memory, not
+ * part of the prepared record: a transaction committed after a
+ * restart runs none, so what a function does must be something
+ * the caller can also find to do again when it starts.
+ *
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID (no
+ * function).
+ */
+int on_commit(session_t* session, std::function<void()> fn);
 
 /*
  * Whether session prepared a transaction that no session has
