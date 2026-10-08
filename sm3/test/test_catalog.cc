@@ -23,12 +23,10 @@ std::vector<sm3::column_spec_t> order_columns() {
           {"amount", sm2::type_decimal64.code, decimal_typmod(10, 2), false}};
 }
 
-/* Load s's catalog in a transaction of its own; it must load. */
-sm3::catalog_t *load(sm1::session_t *s) {
+/* Load db's catalog; it must load. */
+sm3::catalog_t *load(db_t &db) {
   sm3::catalog_t *cat = nullptr;
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE_MESSAGE(sm3::cat_open(s, cat) == 0, sm1::errmsg());
-  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE_MESSAGE(sm3::cat_open(db.env(), "db", cat) == 0, sm1::errmsg());
   return cat;
 }
 
@@ -36,29 +34,19 @@ sm3::catalog_t *load(sm1::session_t *s) {
 
 TEST_CASE("a catalog is made once, and loaded only once made") {
   // Verify cat_init and cat_open on a new database.
-  // 1. Before cat_init, cat_open fails with SM_ERR_NOTFOUND.
-  // 2. cat_init commits; a second fails with SM_ERR_EXISTS.
+  // 1. Before cat_init, cat_open fails with SM_ERR_NOTFOUND. Neither
+  //    call is given a session: the test opens none.
+  // 2. cat_init makes the catalog; a second fails with SM_ERR_EXISTS.
   // 3. The loaded catalog has no tables.
-  // 4. An aborted cat_init leaves no catalog behind.
   db_t db;
-  sm1::session_t *s = db.open();
   sm3::catalog_t *cat = nullptr;
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(sm3::cat_open(s, cat) == -1);
+  CHECK(sm3::cat_open(db.env(), "db", cat) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  REQUIRE(sm3::cat_init(s) == 0);
-  REQUIRE(sm1::abort(s) == 0);
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(sm3::cat_open(s, cat) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  REQUIRE_MESSAGE(sm3::cat_init(s) == 0, sm1::errmsg());
-  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE_MESSAGE(sm3::cat_init(db.env(), "db") == 0, sm1::errmsg());
 
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  CHECK(sm3::cat_init(s) == -1);
+  CHECK(sm3::cat_init(db.env(), "db") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
-  REQUIRE(sm1::commit(s) == 0);
-  cat = load(s);
+  cat = load(db);
   CHECK(sm3::cat_table(cat, sm3::nsp_public, "anything") == nullptr);
   sm3::cat_close(cat);
 }
@@ -75,12 +63,10 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   // 4. A table created and aborted is not there.
   db_t db;
   sm1::session_t *s = db.open();
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_init(s) == 0);
-  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm3::cat_init(db.env(), "db") == 0);
   std::vector<sm3::column_spec_t> cols = order_columns();
   uint64_t oid = 0, gone = 0;
-  sm3::catalog_t *first = load(s);
+  sm3::catalog_t *first = load(db);
   sm3::session_t *ss = nullptr;
   REQUIRE(sm3::session_open(first, s, ss) == 0);
   REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
@@ -96,7 +82,7 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
 
   db.restart();
   s = db.open();
-  sm3::catalog_t *cat = load(s);
+  sm3::catalog_t *cat = load(db);
   auto t = sm3::cat_table(cat, sm3::nsp_public, "orders");
   REQUIRE(t != nullptr);
   CHECK(sm3::cat_table(cat, oid) == t);
@@ -143,13 +129,11 @@ TEST_CASE("cat_create_table refuses what it cannot make") {
   //    SM_ERR_VERSION to cat_open.
   db_t db;
   sm1::session_t *s = db.open();
-  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_init(s) == 0);
-  // Load the catalog in the same transaction, which sees its init.
-  sm3::catalog_t *loaded = nullptr;
+  REQUIRE(sm3::cat_init(db.env(), "db") == 0);
+  sm3::catalog_t *loaded = load(db);
   sm3::session_t *ss = nullptr;
-  REQUIRE(sm3::cat_open(s, loaded) == 0);
   REQUIRE(sm3::session_open(loaded, s, ss) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   std::vector<sm3::column_spec_t> cols = order_columns();
   uint64_t oid;
   REQUIRE(sm3::cat_create_table(ss, sm3::nsp_public, "t", cols, oid) == 0);
@@ -172,17 +156,21 @@ TEST_CASE("cat_create_table refuses what it cannot make") {
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
 
+  REQUIRE(sm3::abort(ss) == 0);
+
+  // cat_open reads what is committed: commit the other format.
   sm2::catkv_t *kv = nullptr;
   std::string key, value;
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm2::catkv_open(s, kv) == 0);
   REQUIRE(sm3::meta_key(key) == 0);
   REQUIRE(sm3::encode_meta(sm3::format_version + 1, value) == 0);
   REQUIRE(sm2::catkv_update(kv, key, value) == 0);
   sm2::catkv_close(kv);
+  REQUIRE(sm1::commit(s) == 0);
   sm3::catalog_t *cat = nullptr;
-  CHECK(sm3::cat_open(s, cat) == -1);
+  CHECK(sm3::cat_open(db.env(), "db", cat) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_VERSION);
-  REQUIRE(sm3::abort(ss) == 0);
   sm3::session_close(ss);
   sm3::cat_close(loaded);
 }

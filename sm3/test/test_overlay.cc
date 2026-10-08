@@ -19,10 +19,8 @@ public:
   /* Initialize and load the catalog; open a and b over it. */
   two_t() {
     sm1::session_t *s = open(), *t = open();
-    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-    REQUIRE(sm3::cat_init(s) == 0);
-    REQUIRE(sm3::cat_open(s, cat) == 0);
-    REQUIRE(sm1::commit(s) == 0);
+    REQUIRE(sm3::cat_init(env(), "db") == 0);
+    REQUIRE(sm3::cat_open(env(), "db", cat) == 0);
     REQUIRE(sm3::session_open(cat, s, a) == 0);
     REQUIRE(sm3::session_open(cat, t, b) == 0);
   }

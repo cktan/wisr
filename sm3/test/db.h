@@ -50,6 +50,9 @@ public:
     return sm1::opendb(m_env, "db", s) == 0 ? s : nullptr;
   }
 
+  /* The home's environment, for a call that opens its own session. */
+  sm1::env_t *env() { return m_env; }
+
   /* Close every session and reattach the home, as a restart does. */
   void restart() {
     REQUIRE(sm1::detach(m_env, 1) == 0);

@@ -217,20 +217,24 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
 namespace sm3 {
 
 /* Load a database's catalog; see sm3.h. */
-int cat_open(sm1::session_t *session, catalog_t *&out) {
-  return catch_nomem([&] {
-    sm2::catkv_t *raw = nullptr;
-    if (sm2::catkv_open(session, raw) != 0) {
-      return -1;
-    }
-    kv_ptr kv(raw, &sm2::catkv_close);
-    auto cat = std::make_unique<catalog_t>();
-    if (load(kv.get(), *cat) != 0) {
-      return -1;
-    }
-    out = cat.release();
-    return 0;
+int cat_open(sm1::env_t *env, std::string_view dbname, catalog_t *&out) {
+  std::unique_ptr<catalog_t> cat;
+  int rc = in_own_txn(env, dbname, nullptr, [&](sm1::session_t *session) {
+    return catch_nomem([&] {
+      sm2::catkv_t *raw = nullptr;
+      if (sm2::catkv_open(session, raw) != 0) {
+        return -1;
+      }
+      kv_ptr kv(raw, &sm2::catkv_close);
+      cat = std::make_unique<catalog_t>();
+      return load(kv.get(), *cat);
+    });
   });
+  // Hand it over only once its transaction has committed.
+  if (rc == 0) {
+    out = cat.release();
+  }
+  return rc;
 }
 
 /* Give the catalog its evaluator; see sm3.h. */

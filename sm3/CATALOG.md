@@ -190,15 +190,20 @@ table blob = table | column × natts | (index | key × nkey | include × ninclud
 
 ## 5. Calls
 
-`cat_init` and `cat_open` take an sm1 session; the rest take an
-sm3 session and work in its transaction. Each reports failure
-as sm1 does (`DESIGN.md` §5).
+`cat_init` and `cat_open` need no session: each names its
+database by environment and name, opens an sm1 session of its
+own, works in a transaction of its own, and closes the
+session. The rest take an sm3 session and work in its
+transaction. Each reports failure as sm1 does (`DESIGN.md`
+§5).
 
-- **`cat_init(session)`** makes a new database's catalog:
-  `META`, the `sm3.oid` sequence, and the `pg_catalog` and
-  `public` namespaces at their fixed oids. A database with a
-  catalog fails with `SM_ERR_EXISTS`.
-- **`cat_open(session, cat)`** reads `META` first — none is
+- **`cat_init(env, dbname, opt)`** makes a new database's
+  catalog: `META`, the `sm3.oid` sequence, and the
+  `pg_catalog` and `public` namespaces at their fixed oids,
+  whole or not at all. `opt` is the options its session opens
+  the database with, as `sm1::opendb` takes them. A database
+  with a catalog fails with `SM_ERR_EXISTS`.
+- **`cat_open(env, dbname, cat)`** reads `META` first — none is
   `SM_ERR_NOTFOUND`, another format `SM_ERR_VERSION` — then
   scans namespaces, collations and tables, one kind each, and
   builds every definition. A definition that contradicts itself

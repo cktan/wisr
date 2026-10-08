@@ -478,23 +478,12 @@ int sm_mkdb(sm_env_t *env, const char *dbname, const sm_options_t *opt) {
     if (sm1::mkdb(env->env, name_of(dbname), &o) != 0) {
       return -1;
     }
-    // Make the catalog in a transaction of its own.
-    sm1::session_t *s = nullptr;
-    int rc = sm1::opendb(env->env, name_of(dbname), s, &o);
-    if (rc == 0) {
-      rc = sm1::begin(s, sm1::xctlevel_t::read_committed) != 0 ||
-                   sm3::cat_init(s) != 0 || sm1::commit(s) != 0
-               ? -1
-               : 0;
-    }
-    if (rc != 0) {
-      keeping_error([&] {
-        sm1::closedb(s);
-        sm1::rmdb(env->env, name_of(dbname));
-      });
+    // Make its catalog, whole or not at all.
+    if (sm3::cat_init(env->env, name_of(dbname), &o) != 0) {
+      keeping_error([&] { sm1::rmdb(env->env, name_of(dbname)); });
       return -1;
     }
-    return sm1::closedb(s);
+    return 0;
   });
 }
 
@@ -549,10 +538,7 @@ int sm_opendb(sm_env_t *env, const char *dbname, const sm_options_t *opt,
     sm_session_t *session = nullptr;
     int rc = 0;
     if (cat == nullptr) {
-      rc = sm1::begin(s, sm1::xctlevel_t::read_committed) != 0 ||
-                   sm3::cat_open(s, cat) != 0 || sm1::commit(s) != 0
-               ? -1
-               : 0;
+      rc = sm3::cat_open(env->env, name_of(dbname), cat);
       // Build its indexes in the background from here on, and
       // queue what a restart left unbuilt; the evaluator first,
       // for a build may need it at once.

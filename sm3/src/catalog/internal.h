@@ -114,6 +114,32 @@ struct sm3::session_t {
 
 namespace sm3 {
 
+/*
+ * Run f on a session of its own on dbname, opened with opt, in a
+ * READ COMMITTED transaction of its own: committed if f returns 0,
+ * aborted if not, and the session closed either way, with the
+ * error as it was met.
+ */
+template <typename F>
+int in_own_txn(sm1::env_t *env, std::string_view dbname,
+               const sm1::options_t *opt, F f) {
+  sm1::session_t *s = nullptr;
+  // A session of its own, so that the caller needs none.
+  if (sm1::opendb(env, dbname, s, opt) != 0) {
+    return -1;
+  }
+  if (sm1::begin(s, sm1::xctlevel_t::read_committed) != 0 || f(s) != 0 ||
+      sm1::commit(s) != 0) {
+    // Keep the error as it was met: the abort and the close may not.
+    sm1::errnum_t error = sm1::errnum();
+    std::string reason = sm1::errmsg();
+    sm1::abort(s);
+    sm1::closedb(s);
+    return sm1::seterr(error, reason);
+  }
+  return sm1::closedb(s);
+}
+
 /* The collation oid names, as session sees it; false if unknown. */
 using collation_lookup_t =
     std::function<bool(uint64_t, const sm2::collation_t *&)>;

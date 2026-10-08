@@ -137,21 +137,24 @@ struct catalog_t;
 struct session_t;
 
 /*
- * Make the catalog of a new database, in session's transaction:
- * its format version, the oid sequence, and the pg_catalog and
- * public namespaces. A database that has one already fails with
- * SM_ERR_EXISTS.
+ * Make the catalog of the new database dbname of env: its format
+ * version, the oid sequence, and the pg_catalog and public
+ * namespaces. It needs no session: it opens one of its own, with
+ * opt as sm1::opendb takes it, and works in a transaction of its
+ * own, so the catalog is made whole or not at all. A database
+ * that has one already fails with SM_ERR_EXISTS.
  */
-int cat_init(sm1::session_t* session);
+int cat_init(sm1::env_t* env, std::string_view dbname,
+             const sm1::options_t* opt = nullptr);
 
 /*
- * Load the catalog of session's database, in session's
- * transaction, with one scan of each kind, and open every
- * collation it names at its recorded ICU version. A database
- * without one fails with SM_ERR_NOTFOUND; one whose format this
- * code does not read, with SM_ERR_VERSION.
+ * Load the catalog of the database dbname of env, on a session
+ * and in a transaction of its own, with one scan of each kind,
+ * and open every collation it names at its recorded ICU version.
+ * A database without one fails with SM_ERR_NOTFOUND; one whose
+ * format this code does not read, with SM_ERR_VERSION.
  */
-int cat_open(sm1::session_t* session, catalog_t*& out);
+int cat_open(sm1::env_t* env, std::string_view dbname, catalog_t*& out);
 
 /* Close a catalog and its collations; nullptr is a no-op. */
 void cat_close(catalog_t* cat);

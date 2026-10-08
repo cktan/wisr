@@ -27,9 +27,7 @@ public:
   /* Initialize the catalog of "db", load it, and open a session. */
   cat_db_t() {
     s = open();
-    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-    REQUIRE(sm3::cat_init(s) == 0);
-    REQUIRE(sm1::commit(s) == 0);
+    REQUIRE(sm3::cat_init(env(), "db") == 0);
     load();
   }
 
@@ -60,11 +58,9 @@ public:
   sm3::catalog_t *cat = nullptr;
 
 private:
-  /* Load the catalog in a transaction of its own; open ss over s. */
+  /* Load the catalog; open ss over s. */
   void load() {
-    REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
-    REQUIRE_MESSAGE(sm3::cat_open(s, cat) == 0, sm1::errmsg());
-    REQUIRE(sm1::commit(s) == 0);
+    REQUIRE_MESSAGE(sm3::cat_open(env(), "db", cat) == 0, sm1::errmsg());
     REQUIRE(sm3::session_open(cat, s, ss) == 0);
   }
 };

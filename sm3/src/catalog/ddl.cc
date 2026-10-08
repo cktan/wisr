@@ -213,42 +213,45 @@ int record_table(sm3::session_t *s, uint64_t oid, const sm3::table_rec_t &rec) {
 namespace sm3 {
 
 /* Make a new database's catalog; see sm3.h. */
-int cat_init(sm1::session_t *session) {
-  return catch_nomem([&] {
-    kv_ptr kv(nullptr, &sm2::catkv_close);
-    std::string key, value;
-    std::string_view v;
-    if (open_kv(session, kv) != 0 || meta_key(key) != 0) {
-      return -1;
-    }
-    // A database is initialized once.
-    int rc = sm2::catkv_get(kv.get(), key, v);
-    if (rc != 1) {
-      return rc == 0 ? sm1::seterr(sm1::SM_ERR_EXISTS,
-                                   "catalog: the database has one already")
-                     : -1;
-    }
-    if (encode_meta(format_version, value) != 0 ||
-        sm2::catkv_insert(kv.get(), key, value) != 0) {
-      return -1;
-    }
-    // Oids for everything made from now on.
-    if (sm1::mkseq(session, oid_seq, first_oid, 1) != 0) {
-      return -1;
-    }
-    // The built-in namespaces, at their fixed oids.
-    for (auto [oid, name] :
-         {std::pair<uint64_t, const char *>{nsp_pg_catalog, "pg_catalog"},
-          {nsp_public, "public"}}) {
-      std::string blob;
-      if (insert_name(kv.get(), nsp_of_namespaces, name,
-                      {kind_t::nspace, oid, std::nullopt}) != 0 ||
-          encode_nspace({name}, blob) != 0 ||
-          insert_entity(kv.get(), kind_t::nspace, oid, blob) != 0) {
+int cat_init(sm1::env_t *env, std::string_view dbname,
+             const sm1::options_t *opt) {
+  return in_own_txn(env, dbname, opt, [&](sm1::session_t *session) {
+    return catch_nomem([&] {
+      kv_ptr kv(nullptr, &sm2::catkv_close);
+      std::string key, value;
+      std::string_view v;
+      if (open_kv(session, kv) != 0 || meta_key(key) != 0) {
         return -1;
       }
-    }
-    return 0;
+      // A database is initialized once.
+      int rc = sm2::catkv_get(kv.get(), key, v);
+      if (rc != 1) {
+        return rc == 0 ? sm1::seterr(sm1::SM_ERR_EXISTS,
+                                     "catalog: the database has one already")
+                       : -1;
+      }
+      if (encode_meta(format_version, value) != 0 ||
+          sm2::catkv_insert(kv.get(), key, value) != 0) {
+        return -1;
+      }
+      // Oids for everything made from now on.
+      if (sm1::mkseq(session, oid_seq, first_oid, 1) != 0) {
+        return -1;
+      }
+      // The built-in namespaces, at their fixed oids.
+      for (auto [oid, name] :
+           {std::pair<uint64_t, const char *>{nsp_pg_catalog, "pg_catalog"},
+            {nsp_public, "public"}}) {
+        std::string blob;
+        if (insert_name(kv.get(), nsp_of_namespaces, name,
+                        {kind_t::nspace, oid, std::nullopt}) != 0 ||
+            encode_nspace({name}, blob) != 0 ||
+            insert_entity(kv.get(), kind_t::nspace, oid, blob) != 0) {
+          return -1;
+        }
+      }
+      return 0;
+    });
   });
 }
 
