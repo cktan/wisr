@@ -1,12 +1,20 @@
 ## Before Starting Any Work
 
-Read `README.md` for the layout of the levels, then the design
-document of the level you are working in — `sm1/SM1_DESIGN.md`
-for the MVCC storage manager, `sm2/SM2_DESIGN.md` for types
-and tuples, `sm3/SM3_DESIGN.md` for schema and index maintenance.
+The repository has two parts: `sm/`, the storage stack, and
+`dg/`, digres, the fork of PostgreSQL that runs on it
+(`sm/PART4.md` §10).
 
+Read `sm/README.md` for the layout of the stack's levels, then
+the design document of the level you are working in —
+`sm/sm1/SM1_DESIGN.md` for the MVCC storage manager,
+`sm/sm2/SM2_DESIGN.md` for types and tuples,
+`sm/sm3/SM3_DESIGN.md` for schema and index maintenance.
+
+Paths written inside the stack's documents are relative to
+`sm/`: `sm1/SM1_DESIGN.md` there means `sm/sm1/SM1_DESIGN.md`.
 Paths written inside a level's documents are relative to that
-level: `src/db.cc` in `sm1/SM1_DESIGN.md` means `sm1/src/db.cc`.
+level: `src/db.cc` in `sm1/SM1_DESIGN.md` means
+`sm/sm1/src/db.cc`.
 
 ## Expert Persona
 
@@ -60,7 +68,7 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 - **Verification:** Always run full test suite before committing.
 
 - **The isolation scenarios are the specification:** Change
-  the tests in `sm1/mvcc` very reluctantly. They define what
+  the tests in `sm/sm1/mvcc` very reluctantly. They define what
   sm1's concurrency control must do, so a change to sm1 that
   makes one fail is presumed wrong, not the test. Adding a
   scenario is fine. Changing or removing an existing one, or
@@ -74,11 +82,12 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 - **Git Merges:** Always merge branches using `git merge --squash`.
 
 - **Building:** Always use `make -j4` (never plain `make`).
-  Run it in the level you are changing (`cd sm1 && make -j4`,
-  or `make -C sm1 -j4`); the top-level Makefile delegates to
+  Run it in the level you are changing (`cd sm/sm1 && make -j4`,
+  or `make -C sm/sm1 -j4`); `sm/Makefile` delegates to
   the levels, and builds only the C wrapper itself.
 
-- **Code Formatting:** Always run `make format` before committing.
+- **Code Formatting:** Always run `make format` in `sm/` before
+  committing.
 
 ### 2. Think Before Coding
 
