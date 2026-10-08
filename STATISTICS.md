@@ -155,7 +155,7 @@ Three properties of how they are used shape everything below.
    are estimates, a sample of 30,000 rows scaled up. The aim is
    an error the planner already tolerates, not exactness.
 5. **No new hot key.** Nothing here may make every writer
-   update one shared row. The schema lock is already the
+   update one shared row. The table-oid lock is already the
    contended key of a table (`sm3/SM3_DESIGN.md` §3).
 6. **Forward only.** A sample is taken with forward seeks, as
    every scan in the stack is (`sm1/SM1_OBJECTIVE.md`).
@@ -395,7 +395,7 @@ what is recorded.
 definition is corruption: read last week's column list after a
 `DROP COLUMN` committed and a row is decoded wrong. A stale
 histogram is a worse plan and nothing else. The catalog pays
-for correctness with the schema lock and a session overlay;
+for correctness with the table-oid lock and a session overlay;
 statistics need neither, and most of what follows is the
 saving.
 
@@ -443,7 +443,7 @@ bytes. `CATALOG.md` §7 lists startup cost for thousands of
 tables as unmeasured and open; loading statistics eagerly
 would be most of it, and none of it is wanted until something
 plans against that table. The definition must be there
-eagerly, because the schema lock is taken before it is read.
+eagerly, because the table-oid lock is taken before it is read.
 Statistics are under no such rule.
 
 **Not in the session overlay.** The overlay exists to give a
@@ -455,7 +455,7 @@ needed two versions turns out not to.
 
 **Written in the transaction, published after it commits.**
 The in-memory publish and the sm1 commit are two steps and
-cannot be one. For a definition the schema lock covers the
+cannot be one. For a definition the table-oid lock covers the
 gap, holding readers out until the publish is done. For
 statistics there is nothing to cover: publish after the commit
 returns, and the window where the store is new and the cache
@@ -488,7 +488,7 @@ catalog behaves. Two reasons not to.
   would put the snapshot sensitivity back.
 
 **What a `TRUNCATE` does, and why it needs no versioning.**
-`cat_truncate_table` makes a new empty store, writes the new
+`truncate_table` makes a new empty store, writes the new
 storeid into the table's record, publishes the rebuilt
 definition to the session's overlay, and drops the old store
 at commit (`src/catalog/ddl.cc`, `SM3_DESIGN.md` §4). A
@@ -609,7 +609,7 @@ would need the stack to decide when, and nothing here does.
 | sm3 | on an open table: the heap's size, an index's size, and the rowno limit `N` | §3.1, §3.2 |
 | sm3 | the sampler over runs of rownos | §3.3 |
 | sm3 | the estimators, ported from PostgreSQL | §3.4 |
-| sm3 | catalog kind 8 for statistics, one entry a table, outside the `TABLE` blob and the schema lock | §3.6 |
+| sm3 | catalog kind 8 for statistics, one entry a table, outside the `TABLE` blob and the table-oid lock | §3.6 |
 | sm3 | the in-memory statistics map, beside the catalog: immutable, lazily loaded, published after commit | §3.6 |
 | sm3 | `analyze`, over those four | §3.6 |
 | top | `sm_analyze`, and the calls that read, in `include/sm.h` | all |

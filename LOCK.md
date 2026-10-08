@@ -110,7 +110,7 @@ something the caller is not writing.
 | 7 | a sequence as an object | `(oid)` | `CREATE` / `DROP SEQUENCE` | no sm3 sequence object yet |
 
 Every name in use today is **fixed-width**: 9 bytes for a
-schema lock, 11 for a heap row, 13 for the catalog keys DDL
+table-oid lock, 11 for a heap row, 13 for the catalog keys DDL
 locks. Nothing in sm1 requires that; `max_keylen` 4096 bounds
 a name.
 
@@ -171,14 +171,14 @@ T2  retry -> the key is there committed -> SM_ERR_DUPKEY
   (`has_null`), so several NULLs coexist, as in PostgreSQL —
   and such an entry behaves like a non-unique one.
 
-### 4.2 Why the schema lock is a type, not a key
+### 4.2 Why the table-oid lock is a type, not a key
 
 DDL and a reader need ordering on a table's **definition**,
 which lives in memory. There is no row to wait on, so the lock
 table is the only mechanism — subject 1.
 
-The trap is which name to lock. Lock the `tbl:` key, which
-every `ALTER TABLE` rewrites, and §1.1's check fires:
+The trap is which name to lock. Lock the `tbl:` key, which an
+`ALTER TABLE` may rewrite, and §1.1's check fires:
 
 ```
 T2  begins (snapshot S2)
@@ -195,8 +195,12 @@ to notice. `LOCKTYPE_OID` makes it structural: no version
 of that name can exist, so the check cannot fire, at any
 isolation level.
 
-**Both locks are still taken**, and they do different jobs.
-`open_table` calls two wrappers; each is one `sm1::lock`:
+**The table-oid lock orders, and row locks guard what is
+written.** DDL takes two kinds of lock, at two moments.
+
+First it takes the table's oid lock exclusive, in
+`cat_get_table_rec`, and reads the table's record from the
+catalog in memory, not from the store:
 
 ```
 sm3::lock_table(s, 16384, X)
@@ -206,12 +210,24 @@ sm3::lock_table(s, 16384, X)
      // Take the lock named 16384 in the schema namespace;
      // nothing writes that name, so no store is read and no
      // version checked.
+```
 
-sm2::catkv_lock(kv, entity_key(table, 16384), X)
-  // Hold the catalog row that stores table 16384's definition,
-  // so what this transaction reads from it next is current.
-  -> sm1::lock(s, LOCKTYPE_ROW, 0, "U" | kind(4) | be64(16384),
-               SM_LOCKMODE_EX)
+Memory has every commit by the time the lock is granted, so
+the record is the table as it now is, at any isolation level.
+A read of the store would not do: at REPEATABLE READ it shows
+the snapshot's table, without the column another transaction
+has just added.
+
+Then, in `cat_put_table`, it locks each catalog key it is
+about to write, and only those — a table's own fields, one
+column, one index each have a key (`sm3/CATALOG.md` §2):
+
+```
+sm2::catkv_lock(kv, part_key(column, 16384, 3), X)
+  // Hold the catalog row of column 3 of table 16384, so the
+  // write that follows goes over its newest version.
+  -> sm1::lock(s, LOCKTYPE_ROW, 0, "U" | kind(8) | be64(16384)
+               | be64(3), SM_LOCKMODE_EX)
      // Take the row lock on that key in store 0, failing if
      // another transaction committed a version of it after our
      // snapshot.
@@ -220,12 +236,19 @@ sm2::catkv_lock(kv, entity_key(table, 16384), X)
 The pair reads twice over because the wrapper says *which
 object* and `sm1::lock` says *which bytes*. That gap is
 inherent to sm1 not knowing what a table is; the type tag
-narrows it — a schema lock no longer pretends to be a row —
+narrows it — a table-oid lock no longer pretends to be a row —
 but does not close it.
 
-At READ COMMITTED the second one lets the DDL overwrite a
-newer version after a `catkv_get_latest`; at REPEATABLE READ
-it is the correct `CONFLICT`.
+At READ COMMITTED the row lock lets the DDL overwrite a newer
+version after a `catkv_get_latest`; at REPEATABLE READ it is
+the correct `CONFLICT`, and now only when the DDL writes the
+very key another transaction changed after its snapshot. Two
+DDL that write different keys of one table meet in no row
+lock at all: the table-oid lock alone puts them in order.
+
+A namespace has the same kind of lock, on its oid: shared by a
+transaction putting a table or a collation in it, exclusive by
+the one that drops it (`sm3/CATALOG.md` §5.1).
 
 ### 4.3 `FOR UPDATE` against a writer
 
@@ -309,13 +332,13 @@ of waiting at all.
 
 ### 4.7 `TRUNCATE` and why the lock name is the oid
 
-`cat_truncate_table` makes a new store, points the table's
-record at it, and drops the old one — under the schema lock X.
+`truncate_table` makes a new store, points the table's
+record at it, and drops the old one — under the table-oid lock X.
 
 A lock named by **storeid** would move under it: a stale
 reader could hold `(old storeid, …)` while a DDL holds `(new
 storeid, …)`, and both would believe they had the table's
-schema lock. The oid is the only identity stable for the
+table-oid lock. The oid is the only identity stable for the
 table's whole life, so it is the name.
 
 This is also why the lock cannot live *in* the table's store:
@@ -327,13 +350,13 @@ since `CREATE TABLE` inserts the name before making the store.
 
 ### 4.8 Publishing under the lock
 
-Releasing the schema lock is not enough. sm1's commit releases
+Releasing the table-oid lock is not enough. sm1's commit releases
 it, and a waiter could then read the shared catalog before the
 DDL's new definition was published into it.
 
 So `commit` holds the catalog's mutex **exclusive across both**
 sm1's commit and the publish. A transaction that then gets the
-schema lock waits on that mutex, and so sees the new
+table-oid lock waits on that mutex, and so sees the new
 definition, never the old.
 
 ---
@@ -355,4 +378,4 @@ definition, never the old.
   and the caller retries.
 - **Subjects 4 to 7 are not built.** `DROP COLLATION` in use
   is `CATALOG.md` §7's open item, and `DROP INDEX` leans on
-  the table's schema lock.
+  the table's oid lock.

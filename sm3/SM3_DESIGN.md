@@ -19,7 +19,7 @@ decisions in `SM3_OBJECTIVE.md`:
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
 **Status: the catalog is implemented** — its keys, values,
-load, DDL, a session's overlay and the schema locks of §2
+load, DDL, a session's overlay and the table-oid locks of §2
 (`CATALOG.md`), and §4's object mapping with them: a store
 per table, index relids allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
@@ -303,7 +303,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   lock, then `tbl_insert`, `tbl_update` and `tbl_delete`, with
   `tbl_read`, `tbl_read_latest` and the two scans beside them
   (`include/sm3.h`). A handle is good for one transaction, the
-  schema lock ending with it.
+  table-oid lock ending with it.
 - **A write sets no savepoint.** It is the heap write and then
   a write or two per index, and one that fails after its first
   step — a duplicate in a unique index, an over-long key —
@@ -362,9 +362,9 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   writes no entry. PostgreSQL's `CREATE INDEX CONCURRENTLY`
   meets it by entering the index as not ready and not valid,
   waiting out older transactions, scanning the table twice and
-  waiting again. Here the schema lock does the waiting and the
+  waiting again. Here the table-oid lock does the waiting and the
   row lock stands in for the second scan:
-  1. **Create.** `cat_create_index` takes the schema lock X,
+  1. **Create.** `create_index` takes the table-oid lock X,
      as every DDL does, and records the index as pending. A
      writer holds that lock IX to the end of its transaction,
      so when this commits no writer is left that does not know
@@ -377,7 +377,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
      row. A row a writer touches is covered from then on.
   3. **Backfill.** A background task walks the heap in `rowno`
      order, in batches, each a short READ COMMITTED
-     transaction that holds the schema lock IX. For each row
+     transaction that holds the table-oid lock IX. For each row
      it takes the row's lock shared, reads the row's newest
      committed version, and adds its entry if it is not there.
   4. **Validate.** When the walk reaches the end of the heap,
@@ -428,10 +428,10 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     not usable. A session's statements begin through sm3,
     `stmt_begin`, since that is where the count is noted. The
     guard is for a transaction that has not yet touched the
-    table: marking the index valid takes the schema lock X,
+    table: marking the index valid takes the table-oid lock X,
     which waits out every one that has.
   - **A table made in the same transaction** is seen by no one
-    else, so `cat_create_index` runs the backfill itself, over
+    else, so `create_index` runs the backfill itself, over
     the rows the transaction has written, and records the
     index valid at once. It is the same routine, called from a
     second place, not a second build.
@@ -463,20 +463,24 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     any other fails the build.
   - **The builder is a caller of the catalog.** It reads and
     changes one through the catalog's own calls
-    (`CATALOG.md` §5). The catalog knows its queue and nothing
-    else of it: `cat_create_index` gives `sm1::on_commit` a
-    function that puts the pending index on the queue, so it
-    is queued once its transaction has committed and never if
-    that aborts. The function runs before the commit publishes
-    the new definition; a worker that takes the index at once
-    waits for the publish when it opens the table.
-    `builder_attach` queues every index pending in a catalog
-    already, which is how a build survives a restart, and
-    nothing is queued twice. `builder_detach` drops what is
-    queued for a catalog and waits for its builds to end, each
-    after the batch it is in; it comes before `cat_close`, so
-    no transaction on a table being built may be open then. A
-    thread
+    (`CATALOG.md` §5), and the catalog knows nothing of it.
+    The DDL knows its queue: `create_index` gives
+    `sm1::on_commit` a function that puts the pending index on
+    the queue, so it is queued once its transaction has
+    committed and never if that aborts. The function runs
+    before the commit publishes the new definition; a worker
+    that takes the index at once waits for the publish when it
+    opens the table.
+    The builder does not look for work: it is given a table
+    and an index, checks the index is still pending, and fills
+    it. So after a restart, which loses those functions, the
+    DDL's `enqueue_pending_indexes` walks the catalog and
+    queues every index still pending, which is how a build
+    survives one; nothing is queued twice. `builder_detach`
+    drops what is queued for a catalog and waits for its
+    builds to end, each after the batch it is in; it comes
+    before `cat_close`, so no transaction on a table being
+    built may be open then. A thread
     per build was the alternative: less code, but a restore
     that creates hundreds of indexes would start hundreds of
     threads, and nothing would restart a build after a crash.
@@ -502,14 +506,14 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     a benchmark will point.
 
   The alternative was the build this section first described:
-  the builder takes the schema lock S for the whole build,
+  the builder takes the table-oid lock S for the whole build,
   which shuts writers out and lets readers on, as PostgreSQL's
   plain `CREATE INDEX` does, and fills the index in one
   transaction. It is simpler, but it would have been a second
   build to keep beside this one, and its one transaction
   holds a lock and an undo entry in memory for every row
   (`sm1/SM1_DESIGN.md` §13). `sm1::lock` is used all the same:
-  the schema lock, and the shared row lock of step 3.
+  the table-oid lock, and the shared row lock of step 3.
 - **Partial and expression indexes are evaluated by the host,
   through a callback.** Maintaining one means deciding whether
   a row belongs in the index and computing its key, from the
@@ -809,9 +813,9 @@ and sm3 never encodes a key itself.
 
 - **`DROP TABLE` is one `sm1::rmstore`**, sm1's O(1) column
   family drop, and takes the indexes and TOAST data with it.
-- **`TRUNCATE` swaps the store.** `cat_truncate_table` makes a
+- **`TRUNCATE` swaps the store.** `truncate_table` makes a
   new, empty store, points the table's record at it and drops
-  the old one with `sm1::rmstore`, under the schema lock X.
+  the old one with `sm1::rmstore`, under the table-oid lock X.
   All three are transactional, so an abort, or a rollback to
   a savepoint before it, brings the rows back, and it costs
   the same whatever the table holds. The columns, the index
@@ -969,7 +973,7 @@ that matter most are the ones with two sessions in them.
    (`CATALOG.md` §4).
    Verified: DDL rolls back with its transaction, the
    in-memory copy included; a transaction holding the shared
-   schema lock never sees a definition change under it; two
+   table-oid lock never sees a definition change under it; two
    sessions doing concurrent DDL behave as sm1's isolation
    says they must.
 2. **Object mapping** is inside the catalog's DDL

@@ -578,7 +578,7 @@ int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
 /*
  * ---- tables: a row and its index entries, sm3's ----
  *
- * An open table: its definition under the schema lock, its heap
+ * An open table: its definition under the table-oid lock, its heap
  * and its indexes. A write through it keeps every index of the
  * table in step with the heap (sm3/SM3_DESIGN.md section 3).
  */
@@ -586,7 +586,7 @@ typedef struct sm_tbl_t sm_tbl_t;
 
 /*
  * Open the table oid in the session's transaction, taking its
- * schema lock in mode, held to the end of the transaction:
+ * table-oid lock in mode, held to the end of the transaction:
  * SM_LOCKMODE_IS to read its rows, SM_LOCKMODE_IX
  * to write them. Its definition cannot change until then. A table
  * dropped while the caller waited is SM_ERR_NOTFOUND. The handle

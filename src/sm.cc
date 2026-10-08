@@ -352,16 +352,26 @@ int sm_init(const char *homedir) {
 
 /*
  * Attach dbname's catalog to the builder, whose workers open sm1
- * sessions of their own on that database.
+ * sessions of their own on that database, and queue the indexes a
+ * restart left pending: the builder is given its work, it does not
+ * look for it.
  */
 static int start_builder(sm_env_t *env, std::string_view dbname,
                          sm3::catalog_t *cat) {
   sm1::env_t *e = env->env;
   std::string name(dbname);
-  return sm3::builder_attach(cat, [e, name]() -> sm1::session_t * {
-    sm1::session_t *s = nullptr;
-    return sm1::opendb(e, name, s) == 0 ? s : nullptr;
-  });
+  if (sm3::builder_attach(cat, [e, name]() -> sm1::session_t * {
+        sm1::session_t *s = nullptr;
+        return sm1::opendb(e, name, s) == 0 ? s : nullptr;
+      }) != 0) {
+    return -1;
+  }
+  if (sm3::enqueue_pending_indexes(cat) != 0) {
+    // Not half started: the caller is told it failed.
+    keeping_error([&] { sm3::builder_detach(cat); });
+    return -1;
+  }
+  return 0;
 }
 
 /*
@@ -909,7 +919,7 @@ int sm_cat_table_oid(sm_session_t *session, uint64_t nspoid, const char *name,
     if (!oid) {
       return null_arg("sm_cat_table_oid", "oid");
     }
-    auto def = sm3::cat_table(session->sm3, nspoid, name_of(name));
+    auto def = sm3::cat_get_table(session->sm3, nspoid, name_of(name));
     if (!def) {
       return 1;
     }
@@ -922,7 +932,7 @@ int sm_cat_table_oid(sm_session_t *session, uint64_t nspoid, const char *name,
 int sm_cat_list_tables(sm_session_t *session, uint64_t nspoid,
                        std::vector<std::string> &names) {
   return guard(session, [&] {
-    names = sm3::cat_tables(session->sm3, nspoid);
+    names = sm3::cat_list_tables(session->sm3, nspoid);
     return 0;
   });
 }
@@ -1213,14 +1223,13 @@ int sm_cat_create_table(sm_session_t *session, uint64_t nspoid,
       cols.push_back(
           {std::string(name_of(c.name)), c.type_code, c.typmod, c.not_null});
     }
-    return sm3::cat_create_table(session->sm3, nspoid, name_of(name), cols,
-                                 *oid);
+    return sm3::create_table(session->sm3, nspoid, name_of(name), cols, *oid);
   });
 }
 
 /* Drop a table in the session's transaction. */
 int sm_cat_drop_table(sm_session_t *session, uint64_t oid) {
-  return guard(session, [&] { return sm3::cat_drop_table(session->sm3, oid); });
+  return guard(session, [&] { return sm3::drop_table(session->sm3, oid); });
 }
 
 /* Create an index in the session's transaction. */
@@ -1238,13 +1247,13 @@ int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
       k.push_back({key.attnum, key.desc, key.nulls_first, std::nullopt,
                    key.type_code, key.typmod});
     }
-    return sm3::cat_create_index(session->sm3, table, name_of(name), k,
-                                 includes, unique, eval, reads, *oid);
+    return sm3::create_index(session->sm3, table, name_of(name), k, includes,
+                             unique, eval, reads, *oid);
   });
 }
 
 /* Drop an index in the session's transaction. */
 int sm_cat_drop_index(sm_session_t *session, uint64_t table, uint64_t index) {
   return guard(session,
-               [&] { return sm3::cat_drop_index(session->sm3, table, index); });
+               [&] { return sm3::drop_index(session->sm3, table, index); });
 }

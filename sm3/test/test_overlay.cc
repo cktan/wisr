@@ -46,15 +46,14 @@ uint64_t create(sm3::session_t *s, const char *name) {
   std::vector<sm3::column_spec_t> cols = {
       {"x", sm2::type_int4.code, -1, false}};
   uint64_t oid = 0;
-  REQUIRE_MESSAGE(sm3::cat_create_table(s, sm3::nsp_public, name, cols, oid) ==
-                      0,
+  REQUIRE_MESSAGE(sm3::create_table(s, sm3::nsp_public, name, cols, oid) == 0,
                   sm1::errmsg());
   return oid;
 }
 
 /* True if s sees a table name in public. */
 bool sees(sm3::session_t *s, const char *name) {
-  return sm3::cat_table(s, sm3::nsp_public, name) != nullptr;
+  return sm3::cat_get_table(s, sm3::nsp_public, name) != nullptr;
 }
 
 } // namespace
@@ -70,14 +69,14 @@ TEST_CASE("a transaction sees its own DDL, others only once it commits") {
   CHECK(sees(db.a, "t"));
   begin(db.b);
   CHECK_FALSE(sees(db.b, "t"));
-  CHECK(sm3::cat_table(db.cat, t) == nullptr);
-  REQUIRE(sm3::cat_add_column(db.a, t, {"y", sm2::type_text.code, -1, false},
-                              std::nullopt) == 0);
-  CHECK(sm3::cat_table(db.a, t)->columns.size() == 2);
+  CHECK(sm3::cat_get_table(db.cat, t) == nullptr);
+  REQUIRE(sm3::add_column(db.a, t, {"y", sm2::type_text.code, -1, false},
+                          std::nullopt) == 0);
+  CHECK(sm3::cat_get_table(db.a, t)->columns.size() == 2);
   REQUIRE(sm3::commit(db.a) == 0);
   CHECK(sees(db.b, "t"));
-  CHECK(sm3::cat_table(db.b, t)->columns.size() == 2);
-  CHECK(sm3::cat_table(db.cat, sm3::nsp_public, "t")->oid == t);
+  CHECK(sm3::cat_get_table(db.b, t)->columns.size() == 2);
+  CHECK(sm3::cat_get_table(db.cat, sm3::nsp_public, "t")->oid == t);
   REQUIRE(sm3::commit(db.b) == 0);
 }
 
@@ -92,16 +91,16 @@ TEST_CASE("an abort drops the overlay, leaving the catalog as it was") {
   uint64_t t = create(db.a, "t");
   REQUIRE(sm3::commit(db.a) == 0);
   begin(db.a);
-  REQUIRE(sm3::cat_drop_table(db.a, t) == 0);
+  REQUIRE(sm3::drop_table(db.a, t) == 0);
   CHECK_FALSE(sees(db.a, "t"));
-  CHECK(sm3::cat_table(db.a, t) == nullptr);
+  CHECK(sm3::cat_get_table(db.a, t) == nullptr);
   begin(db.b);
   CHECK(sees(db.b, "t"));
   REQUIRE(sm3::commit(db.b) == 0);
   REQUIRE(sm3::abort(db.a) == 0);
   begin(db.a);
   CHECK(sees(db.a, "t"));
-  CHECK(sm3::cat_table(db.cat, t) != nullptr);
+  CHECK(sm3::cat_get_table(db.cat, t) != nullptr);
   REQUIRE(sm3::commit(db.a) == 0);
 }
 
@@ -116,20 +115,20 @@ TEST_CASE("a rollback to a savepoint undoes only the DDL made under it") {
   create(db.a, "a");
   int sp = sm3::savepoint(db.a);
   REQUIRE(sp > 0);
-  uint64_t a = sm3::cat_table(db.a, sm3::nsp_public, "a")->oid;
+  uint64_t a = sm3::cat_get_table(db.a, sm3::nsp_public, "a")->oid;
   create(db.a, "b");
-  REQUIRE(sm3::cat_rename_table(db.a, a, "a2") == 0);
+  REQUIRE(sm3::rename_table(db.a, a, "a2") == 0);
   CHECK(sees(db.a, "a2"));
   CHECK_FALSE(sees(db.a, "a"));
   REQUIRE(sm3::rollback(db.a, sp) == 0);
   CHECK(sees(db.a, "a"));
   CHECK_FALSE(sees(db.a, "a2"));
   CHECK_FALSE(sees(db.a, "b"));
-  CHECK(sm3::cat_table(db.a, a)->name == "a");
+  CHECK(sm3::cat_get_table(db.a, a)->name == "a");
   REQUIRE(sm3::commit(db.a) == 0);
-  CHECK(sm3::cat_table(db.cat, sm3::nsp_public, "a") != nullptr);
-  CHECK(sm3::cat_table(db.cat, sm3::nsp_public, "b") == nullptr);
-  CHECK(sm3::cat_table(db.cat, sm3::nsp_public, "a2") == nullptr);
+  CHECK(sm3::cat_get_table(db.cat, sm3::nsp_public, "a") != nullptr);
+  CHECK(sm3::cat_get_table(db.cat, sm3::nsp_public, "b") == nullptr);
+  CHECK(sm3::cat_get_table(db.cat, sm3::nsp_public, "a2") == nullptr);
 }
 
 TEST_CASE("DDL kept by forget survives a later mark at the same depth") {
@@ -150,7 +149,7 @@ TEST_CASE("DDL kept by forget survives a later mark at the same depth") {
   CHECK(sees(db.a, "x"));
   CHECK_FALSE(sees(db.a, "y"));
   REQUIRE(sm3::commit(db.a) == 0);
-  CHECK(sm3::cat_table(db.cat, sm3::nsp_public, "x") != nullptr);
+  CHECK(sm3::cat_get_table(db.cat, sm3::nsp_public, "x") != nullptr);
 }
 
 TEST_CASE("a collation made in a transaction serves its DDL at once") {
@@ -165,24 +164,24 @@ TEST_CASE("a collation made in a transaction serves its DDL at once") {
     CAPTURE(keep);
     begin(db.a);
     uint64_t ci = 0, ix = 0, t = 0;
-    REQUIRE(sm3::cat_create_collation(db.a, sm3::nsp_public, "ci",
-                                      "und-u-ks-level2", false, ci) == 0);
+    REQUIRE(sm3::create_collation(db.a, sm3::nsp_public, "ci",
+                                  "und-u-ks-level2", false, ci) == 0);
     std::vector<sm3::column_spec_t> cols = {
         {"s", sm2::type_text.code, -1, false}};
-    REQUIRE(sm3::cat_create_table(db.a, sm3::nsp_public, "w", cols, t) == 0);
+    REQUIRE(sm3::create_table(db.a, sm3::nsp_public, "w", cols, t) == 0);
     std::vector<sm3::index_key_spec_t> keys = {{0, false, false, ci}};
-    REQUIRE(sm3::cat_create_index(db.a, t, "w_s", keys, {}, false, ix) == 0);
-    auto def = sm3::cat_table(db.a, t);
+    REQUIRE(sm3::create_index(db.a, t, "w_s", keys, {}, false, ix) == 0);
+    auto def = sm3::cat_get_table(db.a, t);
     REQUIRE(def->indexes.size() == 1);
     CHECK(def->indexes[0].key[0].collation != nullptr);
     if (!keep) {
       REQUIRE(sm3::abort(db.a) == 0);
-      CHECK(sm3::cat_table(db.cat, t) == nullptr);
+      CHECK(sm3::cat_get_table(db.cat, t) == nullptr);
       continue;
     }
     REQUIRE(sm3::commit(db.a) == 0);
     begin(db.b);
-    auto seen = sm3::cat_table(db.b, t);
+    auto seen = sm3::cat_get_table(db.b, t);
     REQUIRE(seen != nullptr);
     CHECK(seen->indexes[0].key[0].collation != nullptr);
     REQUIRE(sm3::commit(db.b) == 0);
@@ -203,7 +202,7 @@ TEST_CASE("a transaction that made DDL cannot be prepared") {
   begin(db.a);
   REQUIRE(sm3::prepare(db.a, "g2") == 0);
   REQUIRE(sm1::commit_prepared(sm3::session_sm1(db.b), "g2") == 0);
-  CHECK(sm3::cat_table(db.cat, sm3::nsp_public, "x") == nullptr);
+  CHECK(sm3::cat_get_table(db.cat, sm3::nsp_public, "x") == nullptr);
 }
 
 TEST_CASE("an index is found by name as the session sees it") {
@@ -215,7 +214,7 @@ TEST_CASE("an index is found by name as the session sees it") {
   begin(db.a);
   uint64_t t = create(db.a, "x"), ix = 0, table = 0, index = 0;
   std::vector<sm3::index_key_spec_t> keys = {{0, false, false, std::nullopt}};
-  REQUIRE(sm3::cat_create_index(db.a, t, "x_i", keys, {}, false, ix) == 0);
+  REQUIRE(sm3::create_index(db.a, t, "x_i", keys, {}, false, ix) == 0);
   CHECK(sm3::cat_index(db.a, sm3::nsp_public, "x_i", table, index));
   CHECK(table == t);
   CHECK(index == ix);
@@ -232,7 +231,7 @@ TEST_CASE("an index is found by name as the session sees it") {
   REQUIRE(sm3::commit(db.b) == 0);
 
   begin(db.a);
-  REQUIRE(sm3::cat_drop_table(db.a, t) == 0);
+  REQUIRE(sm3::drop_table(db.a, t) == 0);
   CHECK_FALSE(sm3::cat_index(db.a, sm3::nsp_public, "x_i", table, index));
   begin(db.b);
   CHECK(sm3::cat_index(db.b, sm3::nsp_public, "x_i", table, index));
@@ -241,7 +240,7 @@ TEST_CASE("an index is found by name as the session sees it") {
 }
 
 TEST_CASE("a session lists the tables its transaction sees") {
-  // Verify cat_tables merges the overlay's names over the shared ones.
+  // Verify cat_list_tables merges the overlay's names over the shared ones.
   // 1. A creates b and a and commits: both list them, sorted.
   // 2. A creates c, renames a to d and drops b, uncommitted: A lists
   //    c and d; B still lists a and b.
@@ -251,17 +250,17 @@ TEST_CASE("a session lists the tables its transaction sees") {
   uint64_t tb = create(db.a, "b"), ta = create(db.a, "a");
   REQUIRE(sm3::commit(db.a) == 0);
   using names = std::vector<std::string>;
-  CHECK(sm3::cat_tables(db.a, sm3::nsp_public) == names{"a", "b"});
-  CHECK(sm3::cat_tables(db.b, sm3::nsp_public) == names{"a", "b"});
+  CHECK(sm3::cat_list_tables(db.a, sm3::nsp_public) == names{"a", "b"});
+  CHECK(sm3::cat_list_tables(db.b, sm3::nsp_public) == names{"a", "b"});
 
   begin(db.a);
   create(db.a, "c");
-  REQUIRE(sm3::cat_rename_table(db.a, ta, "d") == 0);
-  REQUIRE(sm3::cat_drop_table(db.a, tb) == 0);
-  CHECK(sm3::cat_tables(db.a, sm3::nsp_public) == names{"c", "d"});
-  CHECK(sm3::cat_tables(db.b, sm3::nsp_public) == names{"a", "b"});
-  CHECK(sm3::cat_tables(db.a, sm3::nsp_pg_catalog).empty());
+  REQUIRE(sm3::rename_table(db.a, ta, "d") == 0);
+  REQUIRE(sm3::drop_table(db.a, tb) == 0);
+  CHECK(sm3::cat_list_tables(db.a, sm3::nsp_public) == names{"c", "d"});
+  CHECK(sm3::cat_list_tables(db.b, sm3::nsp_public) == names{"a", "b"});
+  CHECK(sm3::cat_list_tables(db.a, sm3::nsp_pg_catalog).empty());
 
   REQUIRE(sm3::abort(db.a) == 0);
-  CHECK(sm3::cat_tables(db.a, sm3::nsp_public) == names{"a", "b"});
+  CHECK(sm3::cat_list_tables(db.a, sm3::nsp_public) == names{"a", "b"});
 }

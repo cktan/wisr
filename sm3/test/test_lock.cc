@@ -1,5 +1,5 @@
 /*
- * test_lock.cc -- schema locks (SM3_DESIGN.md §2, CATALOG.md §5):
+ * test_lock.cc -- table-oid locks (SM3_DESIGN.md §2, CATALOG.md §5):
  * readers and writers of a table coexist, and DDL waits for them
  * and they for it.
  */
@@ -33,7 +33,7 @@ public:
     std::vector<sm3::column_spec_t> cols = {
         {"x", sm2::type_int4.code, -1, false}};
     REQUIRE(sm3::begin(a, sm1::xctlevel_t::read_committed) == 0);
-    REQUIRE(sm3::cat_create_table(a, sm3::nsp_public, "t", cols, t) == 0);
+    REQUIRE(sm3::create_table(a, sm3::nsp_public, "t", cols, t) == 0);
     REQUIRE(sm3::commit(a) == 0);
   }
 
@@ -50,7 +50,7 @@ public:
   uint64_t t = 0;
 };
 
-/* A column y int4, nullable, for cat_add_column. */
+/* A column y int4, nullable, for add_column. */
 const sm3::column_spec_t col_y = {"y", sm2::type_int4.code, -1, false};
 
 /* Give a blocking call time to reach its wait. */
@@ -58,7 +58,7 @@ void settle() { std::this_thread::sleep_for(std::chrono::milliseconds(150)); }
 
 } // namespace
 
-TEST_CASE("readers and writers of a table hold its schema lock together") {
+TEST_CASE("readers and writers of a table hold its table-oid lock together") {
   // Verify IS and IX on one table coexist, and each gets its definition.
   // 1. A locks t IS, B locks t IX, C locks t IS: none waits.
   // 2. Each sees t with its one column.
@@ -95,7 +95,7 @@ TEST_CASE("DDL waits for the table's readers and writers") {
   int rc = -1;
   REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
   std::thread tc([&] {
-    rc = sm3::cat_add_column(f.c, f.t, col_y, std::nullopt);
+    rc = sm3::add_column(f.c, f.t, col_y, std::nullopt);
     returned = true;
   });
   settle();
@@ -124,7 +124,7 @@ TEST_CASE("a reader waits for DDL, then reads the new definition") {
     locks_t f;
     REQUIRE(sm3::begin(f.a, level) == 0);
     REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
-    REQUIRE(sm3::cat_add_column(f.b, f.t, col_y, std::nullopt) == 0);
+    REQUIRE(sm3::add_column(f.b, f.t, col_y, std::nullopt) == 0);
 
     std::atomic<bool> returned{false};
     int rc = -1;
@@ -152,7 +152,7 @@ TEST_CASE("a table dropped while a reader waited is not found") {
   locks_t f;
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_drop_table(f.b, f.t) == 0);
+  REQUIRE(sm3::drop_table(f.b, f.t) == 0);
 
   std::atomic<bool> returned{false};
   int rc = 0, err = 0;
@@ -173,6 +173,40 @@ TEST_CASE("a table dropped while a reader waited is not found") {
   REQUIRE(sm3::abort(f.a) == 0);
 }
 
+TEST_CASE("DDL changes the table as it now is, not as its snapshot shows") {
+  // Verify DDL works on the latest record, whatever its snapshot.
+  // 1. A begins at REPEATABLE READ: its snapshot shows t with x.
+  // 2. B adds y to t, and commits.
+  // 3. A adds z to t: it is added after y, not in y's place, though
+  //    A's snapshot is older than y.
+  // 4. After A commits, t has x, y and z, here and after the
+  //    catalog is loaded again.
+  locks_t f;
+  const sm3::column_spec_t col_z = {"z", sm2::type_int4.code, -1, false};
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::add_column(f.b, f.t, col_y, std::nullopt) == 0);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  REQUIRE_MESSAGE(sm3::add_column(f.a, f.t, col_z, std::nullopt) == 0,
+                  sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::commit(f.a) == 0, sm1::errmsg());
+  auto names = [](const def_ptr &d) {
+    std::vector<std::string> out;
+    for (const sm3::column_def_t &c : d->columns) {
+      out.push_back(c.name);
+    }
+    return out;
+  };
+  using names_t = std::vector<std::string>;
+  CHECK(names(sm3::cat_get_table(f.cat, f.t)) == names_t{"x", "y", "z"});
+
+  sm3::catalog_t *again = nullptr;
+  REQUIRE_MESSAGE(sm3::cat_open(f.env(), "db", again) == 0, sm1::errmsg());
+  CHECK(names(sm3::cat_get_table(again, f.t)) == names_t{"x", "y", "z"});
+  sm3::cat_close(again);
+}
+
 TEST_CASE("a namespace's drop waits for a create in it, and then refuses") {
   // Verify a drop cannot miss a table made in its namespace, even
   // from a snapshot that is older than the table.
@@ -187,17 +221,17 @@ TEST_CASE("a namespace's drop waits for a create in it, and then refuses") {
   std::vector<sm3::column_spec_t> cols = {
       {"x", sm2::type_int4.code, -1, false}};
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_create_namespace(f.a, "app", app) == 0);
+  REQUIRE(sm3::create_namespace(f.a, "app", app) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
 
   REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_create_table(f.a, app, "orders", cols, oid) == 0);
+  REQUIRE(sm3::create_table(f.a, app, "orders", cols, oid) == 0);
 
   std::atomic<bool> returned{false};
   int rc = 0, err = 0;
   std::thread tb([&] {
-    rc = sm3::cat_drop_namespace(f.b, app);
+    rc = sm3::drop_namespace(f.b, app);
     err = sm1::errnum();
     returned = true;
   });
@@ -225,17 +259,17 @@ TEST_CASE("a create waits for its namespace's drop, and then finds none") {
   std::vector<sm3::column_spec_t> cols = {
       {"x", sm2::type_int4.code, -1, false}};
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_create_namespace(f.a, "app", app) == 0);
+  REQUIRE(sm3::create_namespace(f.a, "app", app) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
 
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
   REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_drop_namespace(f.b, app) == 0);
+  REQUIRE(sm3::drop_namespace(f.b, app) == 0);
 
   std::atomic<bool> returned{false};
   int rc = 0, err = 0;
   std::thread ta([&] {
-    rc = sm3::cat_create_table(f.a, app, "orders", cols, oid);
+    rc = sm3::create_table(f.a, app, "orders", cols, oid);
     err = sm1::errnum();
     returned = true;
   });
@@ -250,8 +284,8 @@ TEST_CASE("a create waits for its namespace's drop, and then finds none") {
 
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "one", cols, oid) == 0);
-  REQUIRE(sm3::cat_create_table(f.b, sm3::nsp_public, "two", cols, o2) == 0);
+  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "one", cols, oid) == 0);
+  REQUIRE(sm3::create_table(f.b, sm3::nsp_public, "two", cols, o2) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE(sm3::commit(f.b) == 0);
 }
@@ -264,13 +298,13 @@ TEST_CASE("two DDL on one table run one after the other") {
   locks_t f;
   REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_add_column(f.a, f.t, col_y, std::nullopt) == 0);
+  REQUIRE(sm3::add_column(f.a, f.t, col_y, std::nullopt) == 0);
 
   std::atomic<bool> returned{false};
   int rc = -1;
   sm3::column_spec_t z = {"z", sm2::type_int4.code, -1, false};
   std::thread tb([&] {
-    rc = sm3::cat_add_column(f.b, f.t, z, std::nullopt);
+    rc = sm3::add_column(f.b, f.t, z, std::nullopt);
     returned = true;
   });
   settle();
@@ -280,7 +314,7 @@ TEST_CASE("two DDL on one table run one after the other") {
   tb.join();
   REQUIRE(rc == 0);
   REQUIRE(sm3::commit(f.b) == 0);
-  def_ptr d = sm3::cat_table(f.cat, f.t);
+  def_ptr d = sm3::cat_get_table(f.cat, f.t);
   REQUIRE(d != nullptr);
   CHECK(d->columns.size() == 3);
 }

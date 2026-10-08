@@ -53,9 +53,10 @@ is *one* catalog object and *several* rels.
   layout of a row, with the `tup_desc_t` built over it.
 - SQL's **`SCHEMA`** — a **namespace** in this stack's words:
   a container that scopes object names.
-- a table's **schema lock** — a lock on the table's
-  *definition*, sm2's sense, and nothing to do with a
-  namespace (`sm3/CATALOG3.md` §0.4).
+- a table's oid lock was once called its *schema lock*, in
+  sm2's sense: a lock on the table's *definition*, and
+  nothing to do with a namespace. It is the **table-oid
+  lock** now (`sm3/CATALOG3.md` §0.4).
 
 **version.** Three things: a **row version**, one entry in a
 key's MVCC chain; the catalog's **format version**, in its
@@ -370,11 +371,15 @@ itself sits in namespace 0.
 added reads for that column. Not a `DEFAULT`, which serves an
 insert that omits the column.
 
-**schema lock** — one sm1 row lock per table, taken in Gray's
-modes before a transaction reads or writes the table's
-definition and held to the end of the transaction. It is what
-makes an in-memory catalog safe, and the key it names is one
-no DDL ever writes (`sm3/CATALOG3.md` §0.4).
+**table-oid lock** — a table's lock: one sm1 lock of type
+`LOCKTYPE_OID` on the table's oid, taken in Gray's modes
+before a transaction reads or writes the table's definition
+and held to the end of the transaction. It is what makes an
+in-memory catalog safe. The name it locks is a key in no
+store, which nothing writes, so the lock only orders and
+never fails as a row lock can (`LOCK.md` §4.2,
+`sm3/CATALOG3.md` §0.4). A namespace has the same kind of
+lock on its own oid. It was called the schema lock.
 
 **overlay** — a session's own uncommitted DDL, tagged with the
 savepoint depth it was made at, so the transaction sees its

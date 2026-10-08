@@ -209,7 +209,7 @@ static std::unique_ptr<table_def_t> view_of(const std::string &name,
 static table_def_t *lock_into(session_ctx_t *s, const std::string &name,
                               uint64_t oid, sm_lockmode_t mode) {
   sm_tbl_t *tbl = nullptr;
-  // The schema lock, held to the end of the transaction, with the
+  // The table-oid lock, held to the end of the transaction, with the
   // table's heap and indexes opened under it.
   if (sm_tbl_open(s->session, oid, mode, &tbl) != 0) {
     return nullptr;

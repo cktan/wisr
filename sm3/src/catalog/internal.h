@@ -170,7 +170,7 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
                 std::shared_ptr<const table_def_t> &out);
 
 /*
- * Take the schema lock of the table oid in mode (SM3_DESIGN.md
+ * Take the table-oid lock of the table oid in mode (SM3_DESIGN.md
  * §2): sm1's row lock on its LOCK key, which no one writes, so
  * the lock waits on DDL but never fails as a stale read would.
  */

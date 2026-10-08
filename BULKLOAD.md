@@ -140,7 +140,7 @@ it will stay.
 
 ### 3.1 A table lock stands in for the row locks
 
-A writer holds its table's schema lock IX, and a reader IS
+A writer holds its table's oid lock IX, and a reader IS
 (`sm3/SM3_DESIGN.md` §2). A loader in batch or file mode takes
 it **SIX**. One in file mode filling an empty table holds it
 **X** already (§5.1); X covers SIX, so all that follows holds
@@ -273,12 +273,12 @@ larger half of the work, and sorting an index into files is
 what §5.3 builds. Giving the build the same streams is the
 natural next step and is not part of this design.
 
-A backfill batch holds the schema lock IX. So a load waits
+A backfill batch holds the table-oid lock IX. So a load waits
 for the batch in flight, and the build waits for the load.
 
 `TRUNCATE` and then `COPY` in one transaction is the other
 common way to fill a table. The truncate gives the table a new,
-empty store under the schema lock X (`sm3/SM3_DESIGN.md` §4),
+empty store under the table-oid lock X (`sm3/SM3_DESIGN.md` §4),
 which is exactly what file mode requires (§5.1).
 
 ---
@@ -352,7 +352,7 @@ Nothing here is new.
 - **A crash** before commit leaves no status record, which is
   an abort.
 - **Prepare** records the locks the transaction holds, with
-  their modes. The SIX schema lock is one of them, so after a
+  their modes. The SIX table-oid lock is one of them, so after a
   restart an in-doubt load still keeps writers out, as the
   row locks would have. A mini-batch load's locks on unique
   keys are recorded like any others.

@@ -1,5 +1,5 @@
 /*
- * test_ddl.cc -- the DDL beyond cat_create_table (CATALOG.md §5):
+ * test_ddl.cc -- the DDL beyond create_table (CATALOG.md §5):
  * each change written, then read back after a restart.
  */
 
@@ -71,14 +71,14 @@ uint64_t make_t(cat_db_t &db) {
       {"a", sm2::type_int4.code, -1, true},
       {"b", sm2::type_text.code, -1, false}};
   uint64_t oid = 0;
-  REQUIRE(sm3::cat_create_table(db.ss, sm3::nsp_public, "t", cols, oid) == 0);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "t", cols, oid) == 0);
   return oid;
 }
 
 } // namespace
 
 TEST_CASE("columns, indexes and collations are added and load back") {
-  // Verify cat_add_column, cat_create_collation, cat_create_index.
+  // Verify add_column, create_collation, create_index.
   // 1. Add c int8 NOT NULL with missing 7, and d text with none.
   // 2. Create a non-deterministic collation, and a unique index on
   //    (b, under it, DESC NULLS FIRST) INCLUDE (a).
@@ -88,20 +88,20 @@ TEST_CASE("columns, indexes and collations are added and load back") {
   cat_db_t db;
   db.begin();
   uint64_t t = make_t(db), ci = 0, ix = 0;
-  REQUIRE(sm3::cat_add_column(db.ss, t, {"c", sm2::type_int8.code, -1, true},
-                              le(int64_t{7})) == 0);
-  REQUIRE(sm3::cat_add_column(db.ss, t, {"d", sm2::type_text.code, -1, false},
-                              std::nullopt) == 0);
-  REQUIRE_MESSAGE(sm3::cat_create_collation(db.ss, sm3::nsp_public, "ci",
-                                            "und-u-ks-level2", false, ci) == 0,
+  REQUIRE(sm3::add_column(db.ss, t, {"c", sm2::type_int8.code, -1, true},
+                          le(int64_t{7})) == 0);
+  REQUIRE(sm3::add_column(db.ss, t, {"d", sm2::type_text.code, -1, false},
+                          std::nullopt) == 0);
+  REQUIRE_MESSAGE(sm3::create_collation(db.ss, sm3::nsp_public, "ci",
+                                        "und-u-ks-level2", false, ci) == 0,
                   sm1::errmsg());
   std::vector<sm3::index_key_spec_t> keys = {{1, true, true, ci}};
   std::vector<int32_t> inc = {0};
-  REQUIRE(sm3::cat_create_index(db.ss, t, "t_b", keys, inc, true, ix) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "t_b", keys, inc, true, ix) == 0);
   db.commit();
 
   sm3::catalog_t *cat = db.reload();
-  auto d = sm3::cat_table(cat, t);
+  auto d = sm3::cat_get_table(cat, t);
   REQUIRE(d != nullptr);
   REQUIRE(d->columns.size() == 4);
   CHECK(d->columns[2].name == "c");
@@ -127,8 +127,93 @@ TEST_CASE("columns, indexes and collations are added and load back") {
   CHECK(x.include[0].type == &sm2::type_int4);
 }
 
+TEST_CASE("the catalog stores a table's record and makes nothing else") {
+  // Verify cat_put_table, cat_get_table_rec and cat_del_table work
+  // on records alone.
+  // 1. A record is put under a new oid, with a store id that names
+  //    no store: the catalog takes it, since it makes and checks no
+  //    store. The table is then found by name and by oid.
+  // 2. cat_get_table_rec reads it back as it was put.
+  // 3. Another oid with the same name is SM_ERR_DUPKEY, and a
+  //    record in a namespace that is not there SM_ERR_NOTFOUND.
+  // 4. Put again under a new name, it frees the old name and takes
+  //    the new.
+  // 5. cat_del_table erases it and its name; reading it after is
+  //    SM_ERR_NOTFOUND.
+  cat_db_t db;
+  uint64_t oid = 0, other = 0;
+  sm3::table_rec_t rec{
+      sm3::nsp_public,        "raw", 424242, "no.such.sequence",
+      sm3::first_index_relid, {},    {}};
+  rec.columns.push_back(
+      {"x", sm2::type_int4.code, -1, false, false, std::nullopt, std::nullopt});
+  db.begin();
+  REQUIRE(sm3::cat_new_oid(db.ss, oid) == 0);
+  REQUIRE(sm3::cat_new_oid(db.ss, other) == 0);
+  CHECK(other != oid);
+  REQUIRE_MESSAGE(sm3::cat_put_table(db.ss, oid, rec) == 0, sm1::errmsg());
+  auto d = sm3::cat_get_table(db.ss, sm3::nsp_public, "raw");
+  REQUIRE(d != nullptr);
+  CHECK(d->oid == oid);
+  CHECK(d->storeid == 424242);
+  CHECK(sm3::cat_get_table(db.ss, oid) == d);
+
+  sm3::table_rec_t back;
+  REQUIRE(sm3::cat_get_table_rec(db.ss, oid, back) == 0);
+  CHECK(back.name == "raw");
+  CHECK(back.storeid == 424242);
+  CHECK(back.rowno_seq == "no.such.sequence");
+  CHECK(back.columns.size() == 1);
+
+  CHECK(sm3::cat_put_table(db.ss, other, rec) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  sm3::table_rec_t lost = rec;
+  lost.nspoid = 999;
+  CHECK(sm3::cat_put_table(db.ss, other, lost) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  back.name = "cooked";
+  REQUIRE(sm3::cat_put_table(db.ss, oid, back) == 0);
+  CHECK(sm3::cat_get_table(db.ss, sm3::nsp_public, "raw") == nullptr);
+  d = sm3::cat_get_table(db.ss, sm3::nsp_public, "cooked");
+  REQUIRE(d != nullptr);
+  CHECK(d->oid == oid);
+
+  REQUIRE(sm3::cat_del_table(db.ss, oid) == 0);
+  CHECK(sm3::cat_get_table(db.ss, sm3::nsp_public, "cooked") == nullptr);
+  CHECK(sm3::cat_get_table_rec(db.ss, oid, back) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  db.commit();
+}
+
+TEST_CASE("a create that fails leaves no store behind") {
+  // Verify create_table takes back what it made when the catalog
+  // refuses the record.
+  // 1. A table is created, then another of the same name, which is
+  //    SM_ERR_DUPKEY, and one in a namespace that is not there,
+  //    which is SM_ERR_NOTFOUND. The transaction goes on to commit.
+  // 2. The database has one store more than before, not three.
+  cat_db_t db;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  std::vector<uint64_t> before, after;
+  uint64_t t = 0, u = 0;
+  db.begin();
+  REQUIRE(sm1::lsstore(db.s, before) == 0);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "t", cols, t) == 0);
+  CHECK(sm3::create_table(db.ss, sm3::nsp_public, "t", cols, u) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(sm3::create_table(db.ss, 999, "v", cols, u) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  db.commit();
+  db.begin();
+  REQUIRE(sm1::lsstore(db.s, after) == 0);
+  CHECK(after.size() == before.size() + 1);
+  db.commit();
+}
+
 TEST_CASE("a namespace is created like a table, and found by name") {
-  // Verify cat_create_namespace, cat_get_namespace and
+  // Verify create_namespace, cat_get_namespace and
   // cat_list_namespaces.
   // 1. The built-in namespaces are found by name at their fixed
   //    oids, and an unknown name is not found.
@@ -137,7 +222,9 @@ TEST_CASE("a namespace is created like a table, and found by name") {
   //    made before it stays, and its transaction finds and lists
   //    it at once while another session does not until the commit.
   // 4. A table is created in it, and the same table name in public
-  //    does not clash.
+  //    does not clash. The catalog's own listings, which need no
+  //    session, show the namespace and its table only once the
+  //    transaction has committed.
   // 5. A name already taken is SM_ERR_DUPKEY, and no name
   //    SM_ERR_INVALID.
   // 6. After a restart it is still found, with the same oid, and
@@ -151,7 +238,7 @@ TEST_CASE("a namespace is created like a table, and found by name") {
   CHECK(oid == sm3::nsp_pg_catalog);
   CHECK_FALSE(sm3::cat_get_namespace(db.ss, "app", oid));
 
-  REQUIRE(sm3::cat_create_namespace(db.ss, "app", app) == 0);
+  REQUIRE(sm3::create_namespace(db.ss, "app", app) == 0);
   CHECK(sm3::cat_get_namespace(db.ss, "app", oid));
   REQUIRE(sm3::abort(db.ss) == 0);
   CHECK_FALSE(sm3::cat_get_namespace(db.ss, "app", oid));
@@ -159,11 +246,10 @@ TEST_CASE("a namespace is created like a table, and found by name") {
   sm3::session_t *other = nullptr;
   REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
   db.begin();
-  REQUIRE_MESSAGE(sm3::cat_create_namespace(db.ss, "app", app) == 0,
-                  sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::create_namespace(db.ss, "app", app) == 0, sm1::errmsg());
   CHECK(app >= 1000);
   REQUIRE(sm3::savepoint(db.ss) == 1);
-  REQUIRE(sm3::cat_create_namespace(db.ss, "tmp", tmp) == 0);
+  REQUIRE(sm3::create_namespace(db.ss, "tmp", tmp) == 0);
   CHECK(sm3::cat_get_namespace(db.ss, "tmp", oid));
   REQUIRE(sm3::rollback(db.ss, 1) == 0);
   CHECK_FALSE(sm3::cat_get_namespace(db.ss, "tmp", oid));
@@ -174,41 +260,49 @@ TEST_CASE("a namespace is created like a table, and found by name") {
   CHECK(sm3::cat_list_namespaces(db.ss) ==
         names_t{"app", "pg_catalog", "public"});
   CHECK(sm3::cat_list_namespaces(other) == names_t{"pg_catalog", "public"});
+  CHECK(sm3::cat_list_namespaces(db.cat) == names_t{"pg_catalog", "public"});
+  CHECK_FALSE(sm3::cat_get_namespace(db.cat, "app", oid));
 
   std::vector<sm3::column_spec_t> cols = {
       {"x", sm2::type_int4.code, -1, false}};
-  REQUIRE_MESSAGE(sm3::cat_create_table(db.ss, app, "orders", cols, t) == 0,
+  REQUIRE_MESSAGE(sm3::create_table(db.ss, app, "orders", cols, t) == 0,
                   sm1::errmsg());
-  REQUIRE(sm3::cat_create_table(db.ss, sm3::nsp_public, "orders", cols, u) ==
-          0);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "orders", cols, u) == 0);
   CHECK(t != u);
-  CHECK(sm3::cat_create_namespace(db.ss, "app", oid) == -1);
+  CHECK(sm3::create_namespace(db.ss, "app", oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   db.commit();
   CHECK(sm3::cat_get_namespace(other, "app", oid));
   CHECK(oid == app);
   CHECK(sm3::cat_list_namespaces(other) ==
         names_t{"app", "pg_catalog", "public"});
+  CHECK(sm3::cat_list_namespaces(db.cat) ==
+        names_t{"app", "pg_catalog", "public"});
+  CHECK(sm3::cat_get_namespace(db.cat, "app", oid));
+  CHECK(oid == app);
+  CHECK(sm3::cat_list_tables(db.cat, app) == names_t{"orders"});
+  CHECK(sm3::cat_list_tables(db.cat, sm3::nsp_public) == names_t{"orders"});
+  CHECK(sm3::cat_list_tables(db.cat, sm3::nsp_pg_catalog).empty());
   sm3::session_close(other);
 
   db.begin();
-  CHECK(sm3::cat_create_namespace(db.ss, "", oid) == -1);
+  CHECK(sm3::create_namespace(db.ss, "", oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_create_namespace(db.ss, "public", oid) == -1);
+  CHECK(sm3::create_namespace(db.ss, "public", oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   REQUIRE(sm3::abort(db.ss) == 0);
 
   db.reload();
   CHECK(sm3::cat_get_namespace(db.ss, "app", oid));
   CHECK(oid == app);
-  auto d = sm3::cat_table(db.cat, app, "orders");
+  auto d = sm3::cat_get_table(db.cat, app, "orders");
   REQUIRE(d != nullptr);
   CHECK(d->oid == t);
   CHECK(d->nspoid == app);
 }
 
 TEST_CASE("a namespace is dropped only when it is empty") {
-  // Verify cat_drop_namespace.
+  // Verify drop_namespace.
   // 1. The built-in namespaces are SM_ERR_INVALID to drop, and an
   //    unknown oid SM_ERR_NOTFOUND.
   // 2. A namespace holding a table is SM_ERR_INUSE; once the table
@@ -225,37 +319,36 @@ TEST_CASE("a namespace is dropped only when it is empty") {
   std::vector<sm3::column_spec_t> cols = {
       {"x", sm2::type_int4.code, -1, false}};
   db.begin();
-  REQUIRE(sm3::cat_create_namespace(db.ss, "app", app) == 0);
-  REQUIRE(sm3::cat_create_namespace(db.ss, "lang", lang) == 0);
-  REQUIRE(sm3::cat_create_table(db.ss, app, "orders", cols, t) == 0);
+  REQUIRE(sm3::create_namespace(db.ss, "app", app) == 0);
+  REQUIRE(sm3::create_namespace(db.ss, "lang", lang) == 0);
+  REQUIRE(sm3::create_table(db.ss, app, "orders", cols, t) == 0);
   REQUIRE_MESSAGE(
-      sm3::cat_create_collation(db.ss, lang, "plain", "en-US", true, c) == 0,
+      sm3::create_collation(db.ss, lang, "plain", "en-US", true, c) == 0,
       sm1::errmsg());
   db.commit();
 
   db.begin();
-  CHECK(sm3::cat_drop_namespace(db.ss, sm3::nsp_public) == -1);
+  CHECK(sm3::drop_namespace(db.ss, sm3::nsp_public) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_drop_namespace(db.ss, sm3::nsp_pg_catalog) == -1);
+  CHECK(sm3::drop_namespace(db.ss, sm3::nsp_pg_catalog) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_drop_namespace(db.ss, app + 999) == -1);
+  CHECK(sm3::drop_namespace(db.ss, app + 999) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm3::cat_drop_namespace(db.ss, app) == -1);
+  CHECK(sm3::drop_namespace(db.ss, app) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
-  CHECK(sm3::cat_drop_namespace(db.ss, lang) == -1);
+  CHECK(sm3::drop_namespace(db.ss, lang) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
 
-  REQUIRE(sm3::cat_drop_table(db.ss, t) == 0);
+  REQUIRE(sm3::drop_table(db.ss, t) == 0);
   REQUIRE(sm3::savepoint(db.ss) == 1);
-  REQUIRE_MESSAGE(sm3::cat_drop_namespace(db.ss, app) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::drop_namespace(db.ss, app) == 0, sm1::errmsg());
   using names_t = std::vector<std::string>;
   CHECK_FALSE(sm3::cat_get_namespace(db.ss, "app", oid));
   CHECK(sm3::cat_list_namespaces(db.ss) ==
         names_t{"lang", "pg_catalog", "public"});
-  CHECK(sm3::cat_create_table(db.ss, app, "late", cols, oid) == -1);
+  CHECK(sm3::create_table(db.ss, app, "late", cols, oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  REQUIRE_MESSAGE(sm3::cat_create_namespace(db.ss, "app", oid) == 0,
-                  sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::create_namespace(db.ss, "app", oid) == 0, sm1::errmsg());
   CHECK(oid != app);
   REQUIRE(sm3::rollback(db.ss, 1) == 0);
   CHECK(sm3::cat_get_namespace(db.ss, "app", oid));
@@ -263,7 +356,7 @@ TEST_CASE("a namespace is dropped only when it is empty") {
 
   sm3::session_t *other = nullptr;
   REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
-  REQUIRE(sm3::cat_drop_namespace(db.ss, app) == 0);
+  REQUIRE(sm3::drop_namespace(db.ss, app) == 0);
   CHECK(sm3::cat_get_namespace(other, "app", oid));
   db.commit();
   CHECK_FALSE(sm3::cat_get_namespace(other, "app", oid));
@@ -273,14 +366,14 @@ TEST_CASE("a namespace is dropped only when it is empty") {
   CHECK(sm3::cat_list_namespaces(db.ss) ==
         names_t{"lang", "pg_catalog", "public"});
   db.begin();
-  CHECK(sm3::cat_drop_namespace(db.ss, lang) == -1);
+  CHECK(sm3::drop_namespace(db.ss, lang) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
   REQUIRE(sm3::abort(db.ss) == 0);
 }
 
 TEST_CASE("columns, indexes and tables are dropped and renamed") {
-  // Verify cat_drop_column, cat_drop_index, cat_rename_table and
-  // cat_drop_table.
+  // Verify drop_column, drop_index, rename_table and
+  // drop_table.
   // 1. A dropped column keeps its place, marked dropped; its name
   //    can be added again as a new column.
   // 2. A dropped index frees its name, and one made after it takes
@@ -293,19 +386,19 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
   db.begin();
   uint64_t t = make_t(db), ix = 0, ix2 = 0;
   std::vector<sm3::index_key_spec_t> keys = {{0, false, false, std::nullopt}};
-  REQUIRE(sm3::cat_create_index(db.ss, t, "t_a", keys, {}, false, ix) == 0);
-  REQUIRE(sm3::cat_drop_column(db.ss, t, "b") == 0);
-  REQUIRE(sm3::cat_add_column(db.ss, t, {"b", sm2::type_int8.code, -1, false},
-                              std::nullopt) == 0);
-  REQUIRE(sm3::cat_drop_index(db.ss, t, ix) == 0);
-  REQUIRE(sm3::cat_create_index(db.ss, t, "t_a", keys, {}, false, ix2) == 0);
-  REQUIRE(sm3::cat_rename_table(db.ss, t, "t2") == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "t_a", keys, {}, false, ix) == 0);
+  REQUIRE(sm3::drop_column(db.ss, t, "b") == 0);
+  REQUIRE(sm3::add_column(db.ss, t, {"b", sm2::type_int8.code, -1, false},
+                          std::nullopt) == 0);
+  REQUIRE(sm3::drop_index(db.ss, t, ix) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "t_a", keys, {}, false, ix2) == 0);
+  REQUIRE(sm3::rename_table(db.ss, t, "t2") == 0);
   db.commit();
 
   sm3::catalog_t *cat = db.reload();
-  auto d = sm3::cat_table(cat, sm3::nsp_public, "t2");
+  auto d = sm3::cat_get_table(cat, sm3::nsp_public, "t2");
   REQUIRE(d != nullptr);
-  CHECK(sm3::cat_table(cat, sm3::nsp_public, "t") == nullptr);
+  CHECK(sm3::cat_get_table(cat, sm3::nsp_public, "t") == nullptr);
   REQUIRE(d->columns.size() == 3);
   CHECK(d->columns[1].dropped);
   CHECK(d->columns[2].name == "b");
@@ -317,13 +410,13 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
   std::string seq = d->rowno_seq;
 
   db.begin();
-  REQUIRE(sm3::cat_drop_table(db.ss, t) == 0);
+  REQUIRE(sm3::drop_table(db.ss, t) == 0);
   REQUIRE(sm3::abort(db.ss) == 0);
   db.begin();
-  REQUIRE(sm3::cat_drop_table(db.ss, t) == 0);
+  REQUIRE(sm3::drop_table(db.ss, t) == 0);
   db.commit();
   cat = db.reload();
-  CHECK(sm3::cat_table(cat, t) == nullptr);
+  CHECK(sm3::cat_get_table(cat, t) == nullptr);
   db.begin();
   std::vector<uint64_t> stores;
   REQUIRE(sm1::lsstore(db.s, stores) == 0);
@@ -337,7 +430,7 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
 }
 
 TEST_CASE("dropping an index erases its entries and nothing else") {
-  // Verify cat_drop_index clears the index's relid.
+  // Verify drop_index clears the index's relid.
   // 1. Put a row under the heap's relid and entries under the
   //    relids of two indexes in the table's store.
   // 2. Drop the first index: its entries are gone; the row and the
@@ -346,11 +439,11 @@ TEST_CASE("dropping an index erases its entries and nothing else") {
   db.begin();
   uint64_t t = make_t(db), i1 = 0, i2 = 0;
   std::vector<sm3::index_key_spec_t> keys = {{0, false, false, std::nullopt}};
-  REQUIRE(sm3::cat_create_index(db.ss, t, "i1", keys, {}, false, i1) == 0);
-  REQUIRE(sm3::cat_create_index(db.ss, t, "i2", keys, {}, false, i2) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "i1", keys, {}, false, i1) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "i2", keys, {}, false, i2) == 0);
   db.commit();
   sm3::catalog_t *cat = db.reload();
-  uint64_t storeid = sm3::cat_table(cat, t)->storeid;
+  uint64_t storeid = sm3::cat_get_table(cat, t)->storeid;
 
   db.begin();
   auto key = [](uint16_t relid, char tail) {
@@ -361,7 +454,7 @@ TEST_CASE("dropping an index erases its entries and nothing else") {
   REQUIRE(sm1::insert(db.s, storeid, key(2, 'a'), "e") == 0);
   REQUIRE(sm1::insert(db.s, storeid, key(2, 'b'), "e") == 0);
   REQUIRE(sm1::insert(db.s, storeid, key(3, 'a'), "e") == 0);
-  REQUIRE(sm3::cat_drop_index(db.ss, t, i1) == 0);
+  REQUIRE(sm3::drop_index(db.ss, t, i1) == 0);
   std::string_view v;
   CHECK(sm1::read(db.s, storeid, key(sm3::heap_relid, 'r'), v) == 0);
   CHECK(sm1::read(db.s, storeid, key(2, 'a'), v) == 1);
@@ -387,63 +480,60 @@ TEST_CASE("the DDL refuses what the catalog cannot hold") {
   db.begin();
   uint64_t t = make_t(db), ix = 0, other = 0;
   using col = sm3::column_spec_t;
-  CHECK(sm3::cat_add_column(db.ss, t, col{"a", sm2::type_int8.code, -1, false},
-                            std::nullopt) == -1);
+  CHECK(sm3::add_column(db.ss, t, col{"a", sm2::type_int8.code, -1, false},
+                        std::nullopt) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_add_column(db.ss, t, col{"x", sm2::type_int8.code, -1, true},
-                            std::nullopt) == -1);
+  CHECK(sm3::add_column(db.ss, t, col{"x", sm2::type_int8.code, -1, true},
+                        std::nullopt) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_add_column(db.ss, t, col{"x", sm2::type_int8.code, -1, false},
-                            le(int32_t{1})) == -1);
+  CHECK(sm3::add_column(db.ss, t, col{"x", sm2::type_int8.code, -1, false},
+                        le(int32_t{1})) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_add_column(db.ss, t, col{"x", sm2::type_text.code, -1, false},
-                            std::string_view("\x09"
-                                             "ab")) == -1);
+  CHECK(sm3::add_column(db.ss, t, col{"x", sm2::type_text.code, -1, false},
+                        std::string_view("\x09"
+                                         "ab")) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_add_column(db.ss, 999,
-                            col{"x", sm2::type_int8.code, -1, false},
-                            std::nullopt) == -1);
+  CHECK(sm3::add_column(db.ss, 999, col{"x", sm2::type_int8.code, -1, false},
+                        std::nullopt) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
-  REQUIRE(sm3::cat_create_index(db.ss, t, "t_a", on_a, {}, false, ix) == 0);
-  CHECK(sm3::cat_drop_column(db.ss, t, "zz") == -1);
+  REQUIRE(sm3::create_index(db.ss, t, "t_a", on_a, {}, false, ix) == 0);
+  CHECK(sm3::drop_column(db.ss, t, "zz") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm3::cat_drop_column(db.ss, t, "a") == -1);
+  CHECK(sm3::drop_column(db.ss, t, "a") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  REQUIRE(sm3::cat_drop_column(db.ss, t, "b") == 0);
+  REQUIRE(sm3::drop_column(db.ss, t, "b") == 0);
 
   std::vector<sm3::index_key_spec_t> on_b = {{1, false, false, std::nullopt}};
   std::vector<sm3::index_key_spec_t> on_7 = {{7, false, false, std::nullopt}};
   std::vector<sm3::index_key_spec_t> a_coll = {{0, false, false, 1000}};
-  CHECK(sm3::cat_create_index(db.ss, t, "x", on_b, {}, false, other) == -1);
+  CHECK(sm3::create_index(db.ss, t, "x", on_b, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_create_index(db.ss, t, "x", on_7, {}, false, other) == -1);
+  CHECK(sm3::create_index(db.ss, t, "x", on_7, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_create_index(db.ss, t, "x", a_coll, {}, false, other) == -1);
+  CHECK(sm3::create_index(db.ss, t, "x", a_coll, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::cat_create_index(db.ss, t, "t_a", on_a, {}, false, other) == -1);
+  CHECK(sm3::create_index(db.ss, t, "t_a", on_a, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
-  REQUIRE(sm3::cat_add_column(db.ss, t,
-                              col{"s", sm2::type_text.code, -1, false},
-                              std::nullopt) == 0);
+  REQUIRE(sm3::add_column(db.ss, t, col{"s", sm2::type_text.code, -1, false},
+                          std::nullopt) == 0);
   std::vector<sm3::index_key_spec_t> s_unknown = {{2, false, false, 999999}};
-  CHECK(sm3::cat_create_index(db.ss, t, "x", s_unknown, {}, false, other) ==
-        -1);
+  CHECK(sm3::create_index(db.ss, t, "x", s_unknown, {}, false, other) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
-  CHECK(sm3::cat_drop_index(db.ss, t, 999999) == -1);
+  CHECK(sm3::drop_index(db.ss, t, 999999) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm3::cat_drop_table(db.ss, 999999) == -1);
+  CHECK(sm3::drop_table(db.ss, 999999) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   std::vector<sm3::column_spec_t> one = {{"a", sm2::type_int4.code, -1, false}};
   uint64_t u = 0;
-  REQUIRE(sm3::cat_create_table(db.ss, sm3::nsp_public, "u", one, u) == 0);
-  CHECK(sm3::cat_rename_table(db.ss, t, "u") == -1);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "u", one, u) == 0);
+  CHECK(sm3::rename_table(db.ss, t, "u") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   uint64_t co = 0;
-  CHECK(sm3::cat_create_collation(db.ss, sm3::nsp_public, "bad", "zz-QQ-bogus!",
-                                  true, co) == -1);
+  CHECK(sm3::create_collation(db.ss, sm3::nsp_public, "bad", "zz-QQ-bogus!",
+                              true, co) == -1);
   REQUIRE(sm3::abort(db.ss) == 0);
 }
 
@@ -452,7 +542,7 @@ TEST_CASE("an index's state is recorded, and survives a restart") {
   // 1. An index made in the transaction that made its table is valid.
   // 2. One made on a table committed earlier is pending.
   // 3. Both states load back after a restart.
-  // 4. cat_set_index_state changes one, seen at once by its own
+  // 4. set_index_state changes one, seen at once by its own
   //    transaction, and that loads back too.
   // 5. An index the table does not have is SM_ERR_NOTFOUND.
   cat_db_t db;
@@ -460,39 +550,37 @@ TEST_CASE("an index's state is recorded, and survives a restart") {
   uint64_t fresh = 0, late = 0;
   db.begin();
   uint64_t t = make_t(db);
-  REQUIRE(sm3::cat_create_index(db.ss, t, "fresh", on_a, {}, false, fresh) ==
-          0);
+  REQUIRE(sm3::create_index(db.ss, t, "fresh", on_a, {}, false, fresh) == 0);
   db.commit();
   db.begin();
-  REQUIRE(sm3::cat_create_index(db.ss, t, "late", on_a, {}, false, late) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "late", on_a, {}, false, late) == 0);
   db.commit();
 
   sm3::catalog_t *cat = db.reload();
-  auto d = sm3::cat_table(cat, t);
+  auto d = sm3::cat_get_table(cat, t);
   REQUIRE(d != nullptr);
   REQUIRE(d->indexes.size() == 2);
   CHECK(d->indexes[0].state == sm3::index_state_t::valid);
   CHECK(d->indexes[1].state == sm3::index_state_t::pending);
 
   db.begin();
-  REQUIRE(sm3::cat_set_index_state(db.ss, t, late, sm3::index_state_t::valid) ==
-          0);
-  REQUIRE(sm3::cat_set_index_state(db.ss, t, fresh, sm3::index_state_t::failed,
-                                   sm1::SM_ERR_DUPKEY, "two rows") == 0);
-  d = sm3::cat_table(db.ss, t);
+  REQUIRE(sm3::set_index_state(db.ss, t, late, sm3::index_state_t::valid) == 0);
+  REQUIRE(sm3::set_index_state(db.ss, t, fresh, sm3::index_state_t::failed,
+                               sm1::SM_ERR_DUPKEY, "two rows") == 0);
+  d = sm3::cat_get_table(db.ss, t);
   CHECK(d->indexes[0].state == sm3::index_state_t::failed);
   CHECK(d->indexes[0].error == sm1::SM_ERR_DUPKEY);
   CHECK(d->indexes[0].reason == "two rows");
   CHECK(d->indexes[1].state == sm3::index_state_t::valid);
   CHECK(d->indexes[1].error == sm1::SM_OK);
   CHECK(d->indexes[1].reason.empty());
-  CHECK(sm3::cat_set_index_state(db.ss, t, late + 999,
-                                 sm3::index_state_t::valid) == -1);
+  CHECK(sm3::set_index_state(db.ss, t, late + 999, sm3::index_state_t::valid) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   db.commit();
 
   cat = db.reload();
-  d = sm3::cat_table(cat, t);
+  d = sm3::cat_get_table(cat, t);
   REQUIRE(d != nullptr);
   CHECK(d->indexes[0].state == sm3::index_state_t::failed);
   CHECK(d->indexes[0].error == sm1::SM_ERR_DUPKEY);
@@ -501,10 +589,10 @@ TEST_CASE("an index's state is recorded, and survives a restart") {
 
   // A state other than failed keeps no reason.
   db.begin();
-  REQUIRE(sm3::cat_set_index_state(db.ss, t, fresh,
-                                   sm3::index_state_t::pending) == 0);
+  REQUIRE(sm3::set_index_state(db.ss, t, fresh, sm3::index_state_t::pending) ==
+          0);
   db.commit();
-  d = sm3::cat_table(db.reload(), t);
+  d = sm3::cat_get_table(db.reload(), t);
   CHECK(d->indexes[0].state == sm3::index_state_t::pending);
   CHECK(d->indexes[0].error == sm1::SM_OK);
   CHECK(d->indexes[0].reason.empty());
@@ -548,16 +636,15 @@ TEST_CASE("an evaluated index keeps its blob, its columns and its types") {
   std::vector<int32_t> reads = {1, 0}, reads_b = {1};
   uint64_t expr = 0, partial = 0, plain = 0;
   db.begin();
-  REQUIRE_MESSAGE(sm3::cat_create_index(db.ss, t, "t_expr", expr_then_a, {},
-                                        false, blob, reads, expr) == 0,
+  REQUIRE_MESSAGE(sm3::create_index(db.ss, t, "t_expr", expr_then_a, {}, false,
+                                    blob, reads, expr) == 0,
                   sm1::errmsg());
-  REQUIRE(sm3::cat_create_index(db.ss, t, "t_partial", on_a, {}, true,
-                                "b is not null", reads_b, partial) == 0);
-  REQUIRE(sm3::cat_create_index(db.ss, t, "t_plain", on_a, {}, false, plain) ==
-          0);
+  REQUIRE(sm3::create_index(db.ss, t, "t_partial", on_a, {}, true,
+                            "b is not null", reads_b, partial) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "t_plain", on_a, {}, false, plain) == 0);
   db.commit();
 
-  auto d = sm3::cat_table(db.reload(), t);
+  auto d = sm3::cat_get_table(db.reload(), t);
   REQUIRE(d != nullptr);
   REQUIRE(d->indexes.size() == 3);
   const sm3::index_def_t &x = d->indexes[0];
@@ -579,7 +666,7 @@ TEST_CASE("an evaluated index keeps its blob, its columns and its types") {
 }
 
 TEST_CASE("the catalog refuses an evaluated index it cannot keep") {
-  // Verify cat_create_index's errors for partial and expression
+  // Verify create_index's errors for partial and expression
   // indexes; each is SM_ERR_INVALID.
   // 1. With no evaluator given to the catalog, any index with a blob.
   // 2. An expression key column, or columns read, with no blob.
@@ -591,8 +678,8 @@ TEST_CASE("the catalog refuses an evaluated index it cannot keep") {
   cat_db_t db;
   db.begin();
   uint64_t t = make_t(db), ci = 0, ix = 0;
-  REQUIRE(sm3::cat_create_collation(db.ss, sm3::nsp_public, "ci",
-                                    "und-u-ks-level2", false, ci) == 0);
+  REQUIRE(sm3::create_collation(db.ss, sm3::nsp_public, "ci", "und-u-ks-level2",
+                                false, ci) == 0);
   db.commit();
   std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
   std::vector<sm3::index_key_spec_t> expr = {
@@ -604,8 +691,7 @@ TEST_CASE("the catalog refuses an evaluated index it cannot keep") {
   std::vector<int32_t> reads_b = {1}, reads_far = {7};
   auto refused = [&](std::span<const sm3::index_key_spec_t> keys,
                      std::string_view blob, std::span<const int32_t> reads) {
-    int rc =
-        sm3::cat_create_index(db.ss, t, "x", keys, {}, false, blob, reads, ix);
+    int rc = sm3::create_index(db.ss, t, "x", keys, {}, false, blob, reads, ix);
     return rc == -1 && sm1::errnum() == sm1::SM_ERR_INVALID;
   };
 
@@ -623,10 +709,10 @@ TEST_CASE("the catalog refuses an evaluated index it cannot keep") {
   CHECK(refused(int_expr_coll, "f(b)", reads_b));
   CHECK(refused(on_a, "c > 0", reads_far));
 
-  REQUIRE_MESSAGE(sm3::cat_create_index(db.ss, t, "t_partial", on_a, {}, false,
-                                        "b is not null", reads_b, ix) == 0,
+  REQUIRE_MESSAGE(sm3::create_index(db.ss, t, "t_partial", on_a, {}, false,
+                                    "b is not null", reads_b, ix) == 0,
                   sm1::errmsg());
-  CHECK(sm3::cat_drop_column(db.ss, t, "b") == -1);
+  CHECK(sm3::drop_column(db.ss, t, "b") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   db.commit();
 }

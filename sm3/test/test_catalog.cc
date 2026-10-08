@@ -47,12 +47,12 @@ TEST_CASE("a catalog is made once, and loaded only once made") {
   CHECK(sm3::cat_init(db.env(), "db") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
   cat = load(db);
-  CHECK(sm3::cat_table(cat, sm3::nsp_public, "anything") == nullptr);
+  CHECK(sm3::cat_get_table(cat, sm3::nsp_public, "anything") == nullptr);
   sm3::cat_close(cat);
 }
 
 TEST_CASE("a created table loads back, across a restart, as it was made") {
-  // Verify cat_create_table and cat_open together.
+  // Verify create_table and cat_open together.
   // 1. Create a table of int8, text and decimal64(10, 2) in public,
   //    and commit.
   // 2. After a restart, the loaded catalog finds it by name and by
@@ -70,12 +70,12 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   sm3::session_t *ss = nullptr;
   REQUIRE(sm3::session_open(first, s, ss) == 0);
   REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE_MESSAGE(
-      sm3::cat_create_table(ss, sm3::nsp_public, "orders", cols, oid) == 0,
-      sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::create_table(ss, sm3::nsp_public, "orders", cols, oid) ==
+                      0,
+                  sm1::errmsg());
   REQUIRE(sm3::commit(ss) == 0);
   REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm3::cat_create_table(ss, sm3::nsp_public, "gone", cols, gone) == 0);
+  REQUIRE(sm3::create_table(ss, sm3::nsp_public, "gone", cols, gone) == 0);
   REQUIRE(sm3::abort(ss) == 0);
   sm3::session_close(ss);
   sm3::cat_close(first);
@@ -83,9 +83,9 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   db.restart();
   s = db.open();
   sm3::catalog_t *cat = load(db);
-  auto t = sm3::cat_table(cat, sm3::nsp_public, "orders");
+  auto t = sm3::cat_get_table(cat, sm3::nsp_public, "orders");
   REQUIRE(t != nullptr);
-  CHECK(sm3::cat_table(cat, oid) == t);
+  CHECK(sm3::cat_get_table(cat, oid) == t);
   CHECK(t->oid == oid);
   CHECK(oid >= 1000);
   CHECK(t->storeid >= 1000);
@@ -103,7 +103,7 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   CHECK(t->desc.bad == SIZE_MAX);
   CHECK(t->desc.schema.size() == 3);
   CHECK(t->indexes.empty());
-  CHECK(sm3::cat_table(cat, sm3::nsp_public, "gone") == nullptr);
+  CHECK(sm3::cat_get_table(cat, sm3::nsp_public, "gone") == nullptr);
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   sm1::scan_t *c = nullptr;
@@ -118,8 +118,8 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   sm3::cat_close(cat);
 }
 
-TEST_CASE("cat_create_table refuses what it cannot make") {
-  // Verify cat_create_table's errors.
+TEST_CASE("create_table refuses what it cannot make") {
+  // Verify create_table's errors.
   // 1. A name already taken in the namespace is SM_ERR_DUPKEY; the
   //    same name in another namespace is not.
   // 2. An unknown namespace is SM_ERR_NOTFOUND.
@@ -136,11 +136,11 @@ TEST_CASE("cat_create_table refuses what it cannot make") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   std::vector<sm3::column_spec_t> cols = order_columns();
   uint64_t oid;
-  REQUIRE(sm3::cat_create_table(ss, sm3::nsp_public, "t", cols, oid) == 0);
-  CHECK(sm3::cat_create_table(ss, sm3::nsp_public, "t", cols, oid) == -1);
+  REQUIRE(sm3::create_table(ss, sm3::nsp_public, "t", cols, oid) == 0);
+  CHECK(sm3::create_table(ss, sm3::nsp_public, "t", cols, oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
-  CHECK(sm3::cat_create_table(ss, sm3::nsp_pg_catalog, "t", cols, oid) == 0);
-  CHECK(sm3::cat_create_table(ss, 999, "u", cols, oid) == -1);
+  CHECK(sm3::create_table(ss, sm3::nsp_pg_catalog, "t", cols, oid) == 0);
+  CHECK(sm3::create_table(ss, 999, "u", cols, oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
 
   std::vector<std::vector<sm3::column_spec_t>> bad = {
@@ -149,10 +149,10 @@ TEST_CASE("cat_create_table refuses what it cannot make") {
       {{"a", 7, -1, false}},
       {{"a", sm2::type_decimal64.code, -1, false}},
   };
-  CHECK(sm3::cat_create_table(ss, sm3::nsp_public, "", cols, oid) == -1);
+  CHECK(sm3::create_table(ss, sm3::nsp_public, "", cols, oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   for (const auto &b : bad) {
-    CHECK(sm3::cat_create_table(ss, sm3::nsp_public, "v", b, oid) == -1);
+    CHECK(sm3::create_table(ss, sm3::nsp_public, "v", b, oid) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   }
 
@@ -173,4 +173,72 @@ TEST_CASE("cat_create_table refuses what it cannot make") {
   CHECK(sm1::errnum() == sm1::SM_ERR_VERSION);
   sm3::session_close(ss);
   sm3::cat_close(loaded);
+}
+
+namespace {
+
+/* How many keys of kind the catalog store holds, as s's transaction sees. */
+size_t count_keys(sm1::session_t *s, sm3::kind_t kind) {
+  sm2::catkv_t *kv = nullptr;
+  sm2::catkv_scan_t *c = nullptr;
+  std::string prefix;
+  REQUIRE(sm2::catkv_open(s, kv) == 0);
+  REQUIRE(sm3::kind_prefix(kind, prefix) == 0);
+  REQUIRE(sm2::catkv_scan(kv, prefix, c) == 0);
+  std::string_view k, v;
+  size_t n = 0;
+  while (sm2::catkv_scannxt(c, k, v) == 0) {
+    n++;
+  }
+  sm2::catkv_scanend(c);
+  sm2::catkv_close(kv);
+  return n;
+}
+
+} // namespace
+
+TEST_CASE("a table's columns and indexes each have a key of their own") {
+  // Verify the layout of a table's record (CATALOG.md §2).
+  // 1. A table of three columns is created: the catalog holds one
+  //    table key, three column keys and no index key.
+  // 2. A column is added, and an index created: one more of each.
+  // 3. A column is dropped: it keeps its key, as it keeps its place.
+  // 4. The index is dropped: its key goes, the columns' stay.
+  // 5. The table is dropped: none of its keys is left.
+  db_t db;
+  REQUIRE(sm3::cat_init(db.env(), "db") == 0);
+  sm3::catalog_t *cat = load(db);
+  sm1::session_t *s = db.open();
+  sm3::session_t *ss = nullptr;
+  REQUIRE(sm3::session_open(cat, s, ss) == 0);
+  REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
+  size_t tables = count_keys(s, sm3::kind_t::table);
+  uint64_t t = 0, x = 0;
+  REQUIRE(sm3::create_table(ss, sm3::nsp_public, "orders", order_columns(),
+                            t) == 0);
+  CHECK(count_keys(s, sm3::kind_t::table) == tables + 1);
+  CHECK(count_keys(s, sm3::kind_t::column) == 3);
+  CHECK(count_keys(s, sm3::kind_t::index) == 0);
+
+  std::vector<sm3::index_key_spec_t> on_id = {{0, false, false, std::nullopt}};
+  REQUIRE(sm3::add_column(ss, t, {"extra", sm2::type_int4.code, -1, false},
+                          std::nullopt) == 0);
+  REQUIRE(sm3::create_index(ss, t, "orders_id", on_id, {}, false, x) == 0);
+  CHECK(count_keys(s, sm3::kind_t::column) == 4);
+  CHECK(count_keys(s, sm3::kind_t::index) == 1);
+
+  REQUIRE(sm3::drop_column(ss, t, "note") == 0);
+  CHECK(count_keys(s, sm3::kind_t::column) == 4);
+
+  REQUIRE(sm3::drop_index(ss, t, x) == 0);
+  CHECK(count_keys(s, sm3::kind_t::column) == 4);
+  CHECK(count_keys(s, sm3::kind_t::index) == 0);
+
+  REQUIRE(sm3::drop_table(ss, t) == 0);
+  CHECK(count_keys(s, sm3::kind_t::table) == tables);
+  CHECK(count_keys(s, sm3::kind_t::column) == 0);
+  CHECK(count_keys(s, sm3::kind_t::index) == 0);
+  REQUIRE(sm3::commit(ss) == 0);
+  sm3::session_close(ss);
+  sm3::cat_close(cat);
 }

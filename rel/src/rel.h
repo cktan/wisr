@@ -53,7 +53,7 @@ struct index_def_t {
 };
 
 /*
- * A table a statement opened, under its schema lock: sm3's
+ * A table a statement opened, under its table-oid lock: sm3's
  * definition, rel's view of its columns and indexes, and its
  * handle once opened. The session keeps it until its next
  * statement begins.

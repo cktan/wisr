@@ -60,6 +60,82 @@ struct index_key_spec_t {
     int32_t                 typmod = -1;    /* an expression's */
 };
 
+/*
+ * Where an index's build stands (SM3_DESIGN.md §3). A pending
+ * index is maintained by every write but not yet filled from the
+ * rows that were there before it: it waits for the builder, or is
+ * being built by it (builder_building). A failed one is not
+ * maintained and can only be dropped.
+ */
+enum class index_state_t : uint8_t { pending = 0, valid = 1, failed = 2 };
+
+/*
+ * ---- records: what the catalog stores of a table ----
+ *
+ * A table's record is the table as the catalog keeps it: plain
+ * values, with types and collations by code and oid. A caller that
+ * changes a table reads its record, changes it, and puts it back
+ * (cat_get_table_rec, cat_put_table). A definition, table_def_t
+ * below, is the same table resolved for use, and is only read.
+ *
+ * A record is stored as a key and a value for the table's own
+ * fields, one for each column, by its place, and one for each
+ * index, by its oid (CATALOG.md §2); a put writes only the ones
+ * that changed. A column keeps its place for good, and the
+ * indexes are in the order of their oids, which is the order they
+ * were made in.
+ */
+
+/* A column, as its table's blob holds it. */
+struct column_rec_t {
+  std::string name;
+  uint8_t type_code;
+  int32_t typmod;
+  bool not_null;
+  bool dropped;
+  std::optional<std::string> missing; /* its bytes; a varlena if variable */
+  std::optional<uint64_t> collation;
+  bool operator==(const column_rec_t&) const = default;
+};
+
+/* One key column of an index; attnum is the column's 0-based place. */
+struct index_key_rec_t {
+  int32_t attnum;
+  bool desc;
+  bool nulls_first;
+  std::optional<uint64_t> collation;
+  uint8_t type_code = 0; /* an expression's, attnum -1 (TYPE.md §3) */
+  int32_t typmod = -1;   /* an expression's */
+  bool operator==(const index_key_rec_t&) const = default;
+};
+
+/* An index, as its table's blob holds it. */
+struct index_rec_t {
+  uint64_t oid;
+  std::string name;
+  uint16_t relid;
+  bool unique;
+  std::vector<index_key_rec_t> keys;
+  std::vector<int32_t> includes; /* 0-based attnums */
+  index_state_t state = index_state_t::valid;
+  sm1::errnum_t error = sm1::SM_OK; /* why its build failed */
+  std::string reason;               /* that error's message */
+  std::string eval;                 /* the host's blob; empty: plain */
+  std::vector<int32_t> reads;       /* the columns it reads, 0-based */
+  bool operator==(const index_rec_t&) const = default;
+};
+
+/* A table, its columns and its indexes: one blob. */
+struct table_rec_t {
+  uint64_t nspoid;
+  std::string name;
+  uint64_t storeid;
+  std::string rowno_seq;
+  uint16_t next_relid;
+  std::vector<column_rec_t> columns;
+  std::vector<index_rec_t> indexes;
+};
+
 /* A column of a loaded table. */
 struct column_def_t {
     std::string                name;
@@ -70,15 +146,6 @@ struct column_def_t {
     std::optional<std::string> missing;   /* its bytes, as sm2 holds it */
     const sm2::collation_t*    collation; /* nullptr: none */
 };
-
-/*
- * Where an index's build stands (SM3_DESIGN.md §3). A pending
- * index is maintained by every write but not yet filled from the
- * rows that were there before it: it waits for the builder, or is
- * being built by it (builder_building). A failed one is not
- * maintained and can only be dropped.
- */
-enum class index_state_t : uint8_t { pending = 0, valid = 1, failed = 2 };
 
 /* An index of a loaded table. */
 struct index_def_t {
@@ -124,6 +191,7 @@ struct table_def_t {
     std::vector<sm2::attribute_t> schema;
     sm2::tup_desc_t               desc;    /* over schema */
     std::vector<index_def_t>      indexes;
+    table_rec_t                   rec;     /* the record it was built from */
 };
 
 /* A database's catalog, loaded into memory, shared by sessions. */
@@ -160,16 +228,27 @@ int cat_open(sm1::env_t* env, std::string_view dbname, catalog_t*& out);
 void cat_close(catalog_t* cat);
 
 /* The committed table with oid, or nullptr. */
-std::shared_ptr<const table_def_t> cat_table(const catalog_t* cat,
+std::shared_ptr<const table_def_t> cat_get_table(const catalog_t* cat,
                                              uint64_t oid);
 
 /* The committed table named name in namespace nspoid, or nullptr. */
-std::shared_ptr<const table_def_t> cat_table(const catalog_t* cat,
+std::shared_ptr<const table_def_t> cat_get_table(const catalog_t* cat,
                                              uint64_t nspoid,
                                              std::string_view name);
 
-/* Every committed table, in no order. */
-std::vector<std::shared_ptr<const table_def_t>> cat_tables(const catalog_t* cat);
+/* The names of the committed tables in namespace nspoid, sorted. */
+std::vector<std::string> cat_list_tables(const catalog_t* cat,
+                                         uint64_t nspoid);
+
+/*
+ * Whether there is a committed namespace named name; its oid is
+ * set in oid.
+ */
+bool cat_get_namespace(const catalog_t* cat, std::string_view name,
+                       uint64_t& oid);
+
+/* The names of the committed namespaces, sorted. */
+std::vector<std::string> cat_list_namespaces(const catalog_t* cat);
 
 /*
  * Open a session over sm1's session s, reading the catalog cat;
@@ -234,16 +313,16 @@ int abort(session_t* s);
 int prepare(session_t* s, std::string_view gid);
 
 /* The table with oid, or nullptr, as s's transaction sees it. */
-std::shared_ptr<const table_def_t> cat_table(const session_t* s,
+std::shared_ptr<const table_def_t> cat_get_table(const session_t* s,
                                              uint64_t oid);
 
 /* The table named name in nspoid, as s's transaction sees it. */
-std::shared_ptr<const table_def_t> cat_table(const session_t* s,
+std::shared_ptr<const table_def_t> cat_get_table(const session_t* s,
                                              uint64_t nspoid,
                                              std::string_view name);
 
 /* The names of the tables in nspoid, sorted, as s's transaction sees them. */
-std::vector<std::string> cat_tables(const session_t* s, uint64_t nspoid);
+std::vector<std::string> cat_list_tables(const session_t* s, uint64_t nspoid);
 
 /*
  * Whether there is a namespace named name, as s's transaction
@@ -264,7 +343,7 @@ bool cat_index(const session_t* s, uint64_t nspoid, std::string_view name,
                uint64_t& table, uint64_t& index);
 
 /*
- * Take the schema lock of the table oid in mode, held to the end
+ * Take the table-oid lock of the table oid in mode, held to the end
  * of s's transaction, then set out to its definition as s sees
  * it (SM3_DESIGN.md §2). A transaction reading the table takes
  * it intent_shared, one writing it intent_exclusive; DDL takes it
@@ -277,6 +356,91 @@ int cat_lock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
                    std::shared_ptr<const table_def_t>& out);
 
 /*
+ * ---- the catalog's writes: put and del ----
+ *
+ * The catalog is a repository: it stores what it is given, finds
+ * it again, and forgets it. It makes no store and no sequence,
+ * fills no index, and checks no more than that its own records
+ * agree with each other: a name is taken once, a table's
+ * namespace is there, a namespace that is dropped is empty. What
+ * a CREATE or a DROP has to do besides is the DDL's, below, which
+ * calls these. Each works in s's transaction, which sees the
+ * change at once; others see it once it commits.
+ */
+
+/* Take the next oid; one is never handed out twice. */
+int cat_new_oid(session_t* s, uint64_t& oid);
+
+/*
+ * Read the record of the table table_oid in order to change it:
+ * take its table-oid lock exclusive, which waits out its readers and
+ * writers and holds to the end of the transaction, and set rec to
+ * its newest committed record, or the one s's transaction last
+ * put. No such table fails with SM_ERR_NOTFOUND.
+ */
+int cat_get_table_rec(session_t* s, uint64_t table_oid, table_rec_t& rec);
+
+/*
+ * Store rec as the record of the table table_oid. A table that is
+ * not there is added: its namespace must be, or SM_ERR_NOTFOUND,
+ * and is held against a drop to the end of the transaction. One
+ * that is there is replaced, under its table-oid lock exclusive; it
+ * does not change namespace. Either way the names in rec -- the
+ * table's, and each index's -- are made to be the names taken,
+ * the new ones first, so that one another object has fails with
+ * SM_ERR_DUPKEY and leaves the table as it was. A record that
+ * names a type, a collation or a column that is not there fails
+ * with SM_ERR_CORRUPT.
+ */
+int cat_put_table(session_t* s, uint64_t table_oid, const table_rec_t& rec);
+
+/*
+ * Erase the record of the table table_oid and the names it took,
+ * under its table-oid lock exclusive. Its store and its sequence are
+ * the caller's to drop. No such table fails with SM_ERR_NOTFOUND.
+ */
+int cat_del_table(session_t* s, uint64_t table_oid);
+
+/*
+ * Store a namespace named name as namespace_oid, which must be
+ * new. A name another namespace has fails with SM_ERR_DUPKEY.
+ */
+int cat_put_namespace(session_t* s, uint64_t namespace_oid,
+                      std::string_view name);
+
+/*
+ * Erase the namespace namespace_oid. One that still holds a table
+ * or a collation is refused with SM_ERR_INUSE, and the two built
+ * in, pg_catalog and public, with SM_ERR_INVALID. It waits for
+ * every transaction that is putting something in the namespace,
+ * and one that tries after it has committed finds no namespace
+ * (CATALOG.md §5).
+ */
+int cat_del_namespace(session_t* s, uint64_t namespace_oid);
+
+/*
+ * Store a collation named name in namespace_oid as collation_oid,
+ * which must be new, for locale, recording the ICU version it
+ * opens at. The catalog opens it and keeps it open, for a table's
+ * definition to point at. A locale ICU has no data for fails as
+ * sm2::collation_open does; a taken name with SM_ERR_DUPKEY; no
+ * such namespace with SM_ERR_NOTFOUND.
+ */
+int cat_put_collation(session_t* s, uint64_t collation_oid,
+                      uint64_t namespace_oid, std::string_view name,
+                      std::string_view locale, bool deterministic);
+
+/*
+ * ---- DDL: what a CREATE, a DROP or an ALTER does ----
+ *
+ * Each call below is one statement's work: it makes or drops what
+ * the object needs outside the catalog -- a store, a sequence, an
+ * index's entries -- and puts the object's record in the catalog
+ * or takes it out. They are callers of the catalog, not part of
+ * it.
+ */
+
+/*
  * Create a table named name in namespace nspoid, with columns,
  * in session's transaction: its store, its rowno sequence, its
  * name and its definition. Its oid is set in oid. A name already
@@ -287,13 +451,12 @@ int cat_lock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
  * The session's transaction sees it at once; others once it
  * commits.
  */
-int cat_create_table(session_t* session, uint64_t nspoid,
-                     std::string_view name,
-                     std::span<const column_spec_t> columns, uint64_t& oid);
+int create_table(session_t* session, uint64_t nspoid, std::string_view name,
+                 std::span<const column_spec_t> columns, uint64_t& oid);
 
 /*
  * The rest of the DDL, each in session's transaction and, as
- * cat_create_table, seen by it at once and by others at commit. A table, index or
+ * create_table, seen by it at once and by others at commit. A table, index or
  * collation that is not there fails with SM_ERR_NOTFOUND; a name
  * already taken in its namespace with SM_ERR_DUPKEY; anything the
  * definition cannot hold with SM_ERR_INVALID.
@@ -304,7 +467,7 @@ int cat_create_table(session_t* session, uint64_t nspoid,
  * definition, its store with its rows and index entries, and its
  * rowno sequence.
  */
-int cat_drop_table(session_t* session, uint64_t oid);
+int drop_table(session_t* session, uint64_t oid);
 
 /* Rename the table oid to name, in its namespace. */
 /*
@@ -317,10 +480,10 @@ int cat_drop_table(session_t* session, uint64_t oid);
  * before it committed and first reads the table after finds it
  * empty, as in PostgreSQL.
  */
-int cat_truncate_table(session_t* session, uint64_t oid);
+int truncate_table(session_t* session, uint64_t oid);
 
-int cat_rename_table(session_t* session, uint64_t oid,
-                     std::string_view name);
+int rename_table(session_t* session, uint64_t oid,
+                 std::string_view name);
 
 /*
  * Append col to the table oid. A row written before it reads it as
@@ -328,17 +491,17 @@ int cat_rename_table(session_t* session, uint64_t oid,
  * variable-width type -- or as null without one, so a NOT NULL
  * column needs one.
  */
-int cat_add_column(session_t* session, uint64_t oid,
-                   const column_spec_t& col,
-                   std::optional<std::string_view> missing);
+int add_column(session_t* session, uint64_t oid,
+               const column_spec_t& col,
+               std::optional<std::string_view> missing);
 
 /*
  * Drop the column name of the table oid. It keeps its place, read
  * as null from then on (SM2_DESIGN.md §4); one an index uses is
  * refused.
  */
-int cat_drop_column(session_t* session, uint64_t oid,
-                    std::string_view name);
+int drop_column(session_t* session, uint64_t oid,
+                std::string_view name);
 
 /*
  * Create a namespace named name, SQL's schema: a container that
@@ -348,8 +511,8 @@ int cat_drop_column(session_t* session, uint64_t oid,
  * commit. A name another namespace has fails with SM_ERR_DUPKEY;
  * no name, with SM_ERR_INVALID.
  */
-int cat_create_namespace(session_t* session, std::string_view name,
-                         uint64_t& oid);
+int create_namespace(session_t* session, std::string_view name,
+                     uint64_t& oid);
 
 /*
  * Drop the namespace oid. One that still holds a table or a
@@ -359,7 +522,7 @@ int cat_create_namespace(session_t* session, std::string_view name,
  * one that tries after it has committed finds no namespace
  * (CATALOG.md §5).
  */
-int cat_drop_namespace(session_t* session, uint64_t oid);
+int drop_namespace(session_t* session, uint64_t oid);
 
 /*
  * Create an index named name on the table, keyed by keys, with the
@@ -371,14 +534,14 @@ int cat_drop_namespace(session_t* session, uint64_t oid);
  * transaction has written, and records it valid; two of those
  * rows with one key fail a unique index with SM_ERR_DUPKEY.
  */
-int cat_create_index(session_t* session, uint64_t table,
-                     std::string_view name,
-                     std::span<const index_key_spec_t> keys,
-                     std::span<const int32_t> includes, bool unique,
-                     uint64_t& oid);
+int create_index(session_t* session, uint64_t table,
+                 std::string_view name,
+                 std::span<const index_key_spec_t> keys,
+                 std::span<const int32_t> includes, bool unique,
+                 uint64_t& oid);
 
 /*
- * As cat_create_index, for a partial or an expression index
+ * As create_index, for a partial or an expression index
  * (SM3_DESIGN.md §3). eval is its predicate and its expressions,
  * serialized as the host likes: sm3 keeps the bytes and hands them
  * to the catalog's evaluator, which decides whether a row belongs
@@ -389,12 +552,12 @@ int cat_create_index(session_t* session, uint64_t table,
  * then may have neither. Fails with SM_ERR_INVALID if the catalog
  * has no evaluator.
  */
-int cat_create_index(session_t* session, uint64_t table,
-                     std::string_view name,
-                     std::span<const index_key_spec_t> keys,
-                     std::span<const int32_t> includes, bool unique,
-                     std::string_view eval, std::span<const int32_t> reads,
-                     uint64_t& oid);
+int create_index(session_t* session, uint64_t table,
+                 std::string_view name,
+                 std::span<const index_key_spec_t> keys,
+                 std::span<const int32_t> includes, bool unique,
+                 std::string_view eval, std::span<const int32_t> reads,
+                 uint64_t& oid);
 
 /*
  * The host's evaluator of partial and expression indexes
@@ -430,31 +593,41 @@ int cat_set_evaluator(catalog_t* cat, index_eval_fn eval);
  * Drop the index oid of the table: its name, its place in the
  * table's definition, and its entries.
  */
-int cat_drop_index(session_t* session, uint64_t table, uint64_t oid);
+int drop_index(session_t* session, uint64_t table, uint64_t oid);
+
+/*
+ * Queue every index of cat that is pending, for the builder. An
+ * index is queued by its create_index once that has committed, in
+ * a function that a crash loses (sm1::on_commit); this finds what
+ * was lost, and is called when a database is opened, after its
+ * catalog is attached to the builder. One queued already is not
+ * queued twice.
+ */
+int enqueue_pending_indexes(catalog_t* cat);
 
 /*
  * Set the state of the table's index oid, as the build does when
  * it ends: valid, or failed. A failed index keeps why, error and
  * reason, in its record; any other state clears them.
  */
-int cat_set_index_state(session_t* session, uint64_t table, uint64_t oid,
-                        index_state_t state,
-                        sm1::errnum_t error = sm1::SM_OK,
-                        std::string_view reason = {});
+int set_index_state(session_t* session, uint64_t table, uint64_t oid,
+                    index_state_t state,
+                    sm1::errnum_t error = sm1::SM_OK,
+                    std::string_view reason = {});
 
 /*
  * Create a collation named name in namespace nspoid for locale,
  * recording the ICU version it opens at; its oid is set in oid. A
  * locale ICU has no data for fails as sm2::collation_open does.
  */
-int cat_create_collation(session_t* session, uint64_t nspoid,
-                         std::string_view name, std::string_view locale,
-                         bool deterministic, uint64_t& oid);
+int create_collation(session_t* session, uint64_t nspoid,
+                     std::string_view name, std::string_view locale,
+                     bool deterministic, uint64_t& oid);
 
 /*
  * ---- tables: a row and its index entries (SM3_DESIGN.md §3) ----
  *
- * An open table: its definition under the schema lock, its heap,
+ * An open table: its definition under the table-oid lock, its heap,
  * and its indexes. It is the one way to write a row, and each
  * write keeps every index of the table in step with the heap.
  */
@@ -558,7 +731,7 @@ int tbl_lock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
 
 /*
  * Empty the table: its rows and every index's entries, in the
- * table's transaction (cat_truncate_table). The table must be
+ * table's transaction (truncate_table). The table must be
  * opened exclusive, SM_ERR_INVALID if not. The handle stays open
  * on the emptied table.
  */
@@ -613,16 +786,17 @@ std::span<const sm2::attribute_t> tbl_idx_value_schema(const table_t* table,
  *
  * One per process: a queue of pending indexes and the workers
  * that fill them. It is no part of the catalog, which it reads
- * and changes as any caller does. cat_create_index puts an index
+ * and changes as any caller does. create_index puts an index
  * it leaves pending on the queue once its transaction has
  * committed (sm1::on_commit).
  */
 
 /*
- * Attach cat to the builder. From now on the queue takes cat's
- * indexes, and every index pending now -- left so by a restart --
- * is queued at once. A worker takes an index from the
- * queue and fills it in batches of batch_rows rows, each a
+ * Attach cat to the builder: from now on the queue takes cat's
+ * indexes. The builder does not look for work. It is given a
+ * table and an index, by builder_enqueue; a worker takes them
+ * from the queue, checks the index is still pending, and fills
+ * it in batches of batch_rows rows, each a
  * transaction, on an sm1 session of its own from open, which
  * returns one on the catalog's database or nullptr, and which the
  * worker closes with sm1::closedb. Then it marks the index valid;

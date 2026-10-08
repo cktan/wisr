@@ -29,11 +29,12 @@ enum class kind_t : int16_t {
   meta = 1,      /* the catalog's format version */
   name = 2,      /* a name, and what it names */
   nspace = 3,    /* a namespace */
-  table = 4,     /* a table, its columns and indexes */
+  table = 4,     /* a table: its own fields */
   collation = 5, /* a collation */
-  index = 6,     /* an index: only named, kept in its table's blob */
-  /* 7 was a table's schema lock, now an sm1 LOCKTYPE_OID lock
+  index = 6,     /* an index, keyed by its table's oid and its own */
+  /* 7 was a table's oid lock, now an sm1 LOCKTYPE_OID lock
      and no key at all; the value stays retired. */
+  column = 8, /* a column, keyed by its table's oid and its attnum */
 };
 
 /*
@@ -49,7 +50,7 @@ template <typename F> int catch_nomem(F f) {
 }
 
 /* The catalog's format version, which META holds. */
-constexpr int32_t format_version = 1;
+constexpr int32_t format_version = 2;
 
 /* ---- keys (CATALOG.md §2) ---- */
 
@@ -61,6 +62,20 @@ int name_key(uint64_t nspoid, std::string_view name, std::string &key);
 
 /* The key of the entity oid of kind: a namespace, table or collation. */
 int entity_key(kind_t kind, uint64_t oid, std::string &key);
+
+/*
+ * The key of a part of the table table_oid: a column, with n its
+ * attnum, or an index, with n its oid. A table's parts of one kind
+ * are together and in the order of n.
+ */
+int part_key(kind_t kind, uint64_t table_oid, uint64_t n, std::string &key);
+
+/*
+ * The table and the n a part key of kind names; fails with
+ * SM_ERR_CORRUPT if key is not one.
+ */
+int part_ids(kind_t kind, std::string_view key, uint64_t &table_oid,
+             uint64_t &n);
 
 /* The namespace the NAME key is in. */
 int name_nspoid(std::string_view key, uint64_t &nspoid);
@@ -81,53 +96,6 @@ struct name_rec_t {
   kind_t kind;
   uint64_t oid;
   std::optional<uint64_t> table; /* an index's table */
-};
-
-/* A column, as its table's blob holds it. */
-struct column_rec_t {
-  std::string name;
-  uint8_t type_code;
-  int32_t typmod;
-  bool not_null;
-  bool dropped;
-  std::optional<std::string> missing; /* its bytes; a varlena if variable */
-  std::optional<uint64_t> collation;
-};
-
-/* One key column of an index; attnum is the column's 0-based place. */
-struct index_key_rec_t {
-  int32_t attnum;
-  bool desc;
-  bool nulls_first;
-  std::optional<uint64_t> collation;
-  uint8_t type_code = 0; /* an expression's, attnum -1 (TYPE.md §3) */
-  int32_t typmod = -1;   /* an expression's */
-};
-
-/* An index, as its table's blob holds it. */
-struct index_rec_t {
-  uint64_t oid;
-  std::string name;
-  uint16_t relid;
-  bool unique;
-  std::vector<index_key_rec_t> keys;
-  std::vector<int32_t> includes; /* 0-based attnums */
-  index_state_t state = index_state_t::valid;
-  sm1::errnum_t error = sm1::SM_OK; /* why its build failed */
-  std::string reason;               /* that error's message */
-  std::string eval;                 /* the host's blob; empty: plain */
-  std::vector<int32_t> reads;       /* the columns it reads, 0-based */
-};
-
-/* A table, its columns and its indexes: one blob. */
-struct table_rec_t {
-  uint64_t nspoid;
-  std::string name;
-  uint64_t storeid;
-  std::string rowno_seq;
-  uint16_t next_relid;
-  std::vector<column_rec_t> columns;
-  std::vector<index_rec_t> indexes;
 };
 
 /* A namespace's blob. */
@@ -152,8 +120,14 @@ int encode_meta(int32_t version, std::string &value);
 int decode_meta(std::string_view value, int32_t &version);
 int encode_name(const name_rec_t &rec, std::string &value);
 int decode_name(std::string_view value, name_rec_t &rec);
+/* A table's value holds its own fields; its columns and indexes
+   have a key and a value each. */
 int encode_table(const table_rec_t &rec, std::string &blob);
 int decode_table(std::string_view blob, table_rec_t &rec);
+int encode_column(const column_rec_t &rec, std::string &blob);
+int decode_column(std::string_view blob, column_rec_t &rec);
+int encode_index(const index_rec_t &rec, std::string &blob);
+int decode_index(std::string_view blob, index_rec_t &rec);
 int encode_nspace(const nspace_rec_t &rec, std::string &blob);
 int decode_nspace(std::string_view blob, nspace_rec_t &rec);
 int encode_collation(const collation_rec_t &rec, std::string &blob);

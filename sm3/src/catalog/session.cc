@@ -277,7 +277,7 @@ int forget(session_t *s, int depth) {
 /*
  * Commit in sm1 and publish the overlay; a failed commit drops it.
  * With DDL to publish, the shared catalog's mutex is held across
- * both: sm1's commit releases the schema locks, and a transaction
+ * both: sm1's commit releases the table-oid locks, and a transaction
  * that gets one then waits on the mutex to read the definition,
  * so it sees the new one, never the old (CATALOG.md §4).
  */
@@ -448,13 +448,14 @@ bool session_collation(const session_t *s, uint64_t oid,
 }
 
 /* A table as s sees it: its newest change, else the shared one. */
-std::shared_ptr<const table_def_t> cat_table(const session_t *s, uint64_t oid) {
+std::shared_ptr<const table_def_t> cat_get_table(const session_t *s,
+                                                 uint64_t oid) {
   for (auto it = s->tables.rbegin(); it != s->tables.rend(); ++it) {
     if (it->oid == oid) {
       return it->def;
     }
   }
-  return cat_table(s->cat, oid);
+  return cat_get_table(s->cat, oid);
 }
 
 /* Lock a table's schema, then read its definition; see sm3.h. */
@@ -466,7 +467,7 @@ int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
     }
     // Under the lock, the definition cannot change until commit;
     // one dropped while this waited is gone.
-    out = cat_table(s, oid);
+    out = cat_get_table(s, oid);
     return out ? 0
                : sm1::seterr(sm1::SM_ERR_NOTFOUND, "table " +
                                                        std::to_string(oid) +
@@ -475,7 +476,7 @@ int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
 }
 
 /* The table names in nspoid as s sees them: its changes over the shared. */
-std::vector<std::string> cat_tables(const session_t *s, uint64_t nspoid) {
+std::vector<std::string> cat_list_tables(const session_t *s, uint64_t nspoid) {
   std::map<std::string, bool> seen; /* name -> taken */
   for (const name_change_t &c : s->names) {
     if (c.name.first == nspoid) {
@@ -530,10 +531,10 @@ bool cat_index(const session_t *s, uint64_t nspoid, std::string_view name,
 
 /* A table by name as s sees it: its newest name change first. */
 std::shared_ptr<const table_def_t>
-cat_table(const session_t *s, uint64_t nspoid, std::string_view name) {
+cat_get_table(const session_t *s, uint64_t nspoid, std::string_view name) {
   for (auto it = s->names.rbegin(); it != s->names.rend(); ++it) {
     if (it->name.first == nspoid && it->name.second == name) {
-      return it->oid ? cat_table(s, *it->oid) : nullptr;
+      return it->oid ? cat_get_table(s, *it->oid) : nullptr;
     }
   }
   uint64_t oid;
@@ -545,7 +546,7 @@ cat_table(const session_t *s, uint64_t nspoid, std::string_view name) {
     }
     oid = it->second;
   }
-  return cat_table(s, oid);
+  return cat_get_table(s, oid);
 }
 
 } // namespace sm3

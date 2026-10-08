@@ -337,10 +337,11 @@ included, another session's not. It takes no lock.
 ```
 
 ### `(describe-table name [:include-indices])`
-Returns a struct describing table `name`, under its schema lock
-intent-shared, as a read takes it. `:columns` holds each live
-column in the form `table-create` takes it: its name, type, the
-numbers after the type, and `:not-null`. A decimal always shows
+Returns a struct describing table `name`, under its table-oid
+lock intent-shared, as a read takes it. `:columns` holds each
+live column in the form `table-create` takes it: its name,
+type, the numbers after the type, and `:not-null`. A decimal
+always shows
 both numbers: `(price :decimal64 10)` comes back as
 `[price :decimal64 10 0]`. With `:include-indices`, `:indexes`
 holds each index as a struct of its `index-create` clauses,
@@ -436,7 +437,7 @@ and cannot be scanned; it can only be dropped.
 
 CRUD operations and ordered scans on tables and indexes.
 All DML operations require an active transaction. Each one
-first takes its table's schema lock -- intent-shared to read,
+first takes its table's oid lock -- intent-shared to read,
 intent-exclusive to write -- held to the end of the transaction,
 so DDL on the table waits for it and it for DDL. A table that
 does not exist, or that another session has created but not

@@ -267,8 +267,9 @@ own.
    rows and index entries, and its rowno sequence.
 
 #### `(index-create <idx_name> (table <table>) (key ...) [:unique bool] [:include ...])`
-1. Opens the table under its schema lock X, as the DDL takes it,
-   to resolve the key and INCLUDE column names to their places.
+1. Opens the table under its table-oid lock X, as the DDL takes
+   it, to resolve the key and INCLUDE column names to their
+   places.
 2. Calls `sm_cat_create_index(s, table, name, keys, nkey,
    includes, ninclude, unique, &oid)`, which records the index
    under the table's next relid. On a table made in the same
@@ -302,7 +303,7 @@ forms back.
    fails with the build's own error if it failed.
 
 #### `(index-state <idx_name>)`
-1. Opens the index's table under its schema lock IS.
+1. Opens the index's table under its table-oid lock IS.
 2. Returns `:pending`, `:building`, `:valid` or `:failed`
    from the `state` of its `sm_index_def_t`.
 
@@ -317,7 +318,7 @@ forms back.
 2. Returns the names, sorted, as an array of strings.
 
 #### `(describe-table <name> [:include-indices])`
-1. Opens the table under its schema lock IS, as a read does.
+1. Opens the table under its table-oid lock IS, as a read does.
 2. Renders each live column of its `sm_table_def_t` in
    `table-create`'s form, its typmod as the numbers after the
    type, and with the flag each index as a struct of
@@ -328,7 +329,7 @@ forms back.
 Each statement first opens its table by name: `sm_cat_table_oid`,
 then `sm_tbl_open` -- `SM_LOCKMODE_IS` to read,
 `SM_LOCKMODE_IX` to write -- which holds the table's
-schema lock to the end of the transaction and opens its heap
+table-oid lock to the end of the transaction and opens its heap
 and its indexes under it. `sm_tbl_def` gives its definition.
 The handle is closed when the session's next statement begins.
 

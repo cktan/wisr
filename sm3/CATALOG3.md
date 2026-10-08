@@ -1,11 +1,12 @@
 # CATALOG3 — the catalog's layout
 
-`CATALOG.md` is the catalog **as built**: seven key kinds, and
-a value that is a sequence of hand-framed sm2 tuples with a
-table's columns and indexes nested inside one of them.
-`CATALOG2.md` is the inventory of what a catalog has to hold,
-and it ends by saying the layout comes after. This is that
-layout.
+`CATALOG.md` is the catalog **as built**: eight key kinds, and
+values that are hand-framed sm2 tuples. A table's columns and
+indexes have keys of their own there since format 2, as §3
+below proposed; an index's own columns are still nested in its
+value, and the keys are still sm2-encoded, not the words of §3.
+§10 is the inventory this layout was drawn from: what a
+catalog has yet to hold.
 
 **Status: proposed.** None of it is built. The format sm3
 writes is "the one format sm3 writes that lasts"
@@ -42,7 +43,7 @@ things come first.
   its owner, and it means nothing apart from it.
 - **Bookkeeping keys** are neither. The format version, the
   name index and the dependency index describe objects without
-  being any. A table's schema lock is not even a key: it is an
+  being any. A table's oid lock is not even a key: it is an
   sm1 locktype (§0.4).
 
 This division is why §3's keys nest. An object gets a key
@@ -96,7 +97,7 @@ is the SQL layer's, not sm3's (`CATALOG.md` §7).
   is detected instead of silently reordering an index
   (`sm2/SM2_DESIGN.md` §3).
 
-### 0.4 A table's schema lock
+### 0.4 A table's oid lock
 
 **What it is.** One sm1 row lock per table, taken in Gray's
 modes before a transaction reads or writes that table's
@@ -111,7 +112,7 @@ from happening under a reader. Without it DDL has nothing to
 wait on.
 
 **It is not a key.** `sm1::lock` takes a **locktype**, and a
-schema lock is `LOCKTYPE_OID`: a name in a namespace of its
+table-oid lock is `LOCKTYPE_OID`: a name in a namespace of its
 own, in no store, which nothing ever writes. sm1 reads no
 store for it and checks no version, because none can exist. So
 the catalog holds nothing for it — no `lock:` key, no entry,
@@ -199,15 +200,15 @@ Three choices, taken here so the rest reads as one design.
   against eight to twenty, the key already says what the
   object is, and a frozen tag is what gives the value the
   evolution rule of §4.
-- **Scope stays open.** `CATALOG2.md` §0 asks how far down
+- **Scope stays open.** §10.1 asks how far down
   `pg_catalog` the catalog is meant to go and says to decide
   that first. This layout is built so the answer changes §5's
   field tables and not the shape: a new object kind is a new
   key word, nothing nests inside anything else, and no enum
-  has to widen. §5 fills in what `CATALOG2.md` §1 to §7 holds
-  today, plus the eight gaps §8 calls live bugs rather than
-  missing features. A sixty-kind `pg_catalog` adds key words
-  beside them and changes nothing above.
+  has to widen. §5 fills in what `CATALOG.md` holds today,
+  plus the eight gaps §10.3 numbers, five of them live bugs
+  rather than missing features. A sixty-kind `pg_catalog`
+  adds key words beside them and changes nothing above.
 
 ---
 
@@ -274,7 +275,7 @@ scan per kind and a blob to take apart. The bounds cost
 nothing new: `catkv_scan` already raises a prefix's last byte,
 and the bound on `tbl:` is `tbl;`, since `;` is `:` + 1.
 
-**A schema lock sits outside its table's range**, for the
+**A table-oid lock sits outside its table's range**, for the
 two reasons §0.4 gives: the key must be one no DDL writes,
 and a scan of a table's parts should not have to skip it.
 
@@ -340,14 +341,14 @@ the table, `nkey`, `ninclude` and `nread` from each index
 (`CATALOG.md` §3) exist only to frame a nested blob. With a
 key per part there is nothing to frame, and no count can
 disagree with the number of keys present —
-`CATALOG2.md` §10's "whether that is caught is luck".
+§10.5's "whether that is caught is luck".
 
 **The 64 KB part ceiling stops mattering.** A column's
 missing value, a DEFAULT and a generation expression each sit
 in their own key's value, bounded by sm1's 64 MB, so
 `SM3_DESIGN.md` §2's worry about a wide table's defaults
 overflowing one part is gone. That is the reason
-`CATALOG2.md` §4 wants a key per column, and it is paid here.
+§10.5 wants a key per column, and it is paid here.
 
 ---
 
@@ -365,7 +366,7 @@ written in. "Req" is whether the field must be present.
 The oid allocator is not here: it is the sm1 sequence
 `sm3.oid` (`CATALOG.md` §1). Bootstrap — how the catalog's own
 schemas are known before it is loaded — is still open
-(`CATALOG2.md` §1).
+(§10.2).
 
 ### 5.2 `ns:<oid>` — a namespace
 
@@ -398,7 +399,7 @@ schemas are known before it is loaded — is still open
 | `s` | namespace oid | oid | yes | |
 | `t` | storeid | oid | yes | sm1's store |
 
-`k`, `a`, `h`, `j` and `b` are `CATALOG2.md` §8's items 1 and
+`k`, `a`, `h`, `j` and `b` are §10.3's items 1 and
 5. What is inside `j` and `b` is not settled here: they are
 the host's bytes, as an index's `eval` is, and sm3 does not
 read them. Persistence is deliberately absent — a temporary
@@ -422,7 +423,7 @@ unlogged tables and matviews are unsupported.
 | `y` | statistics target | int4 | — | `STATISTICS.md` §3.3 |
 
 The attnum is in the key, not a field. `d`, `g`, `q` and `y`
-are `CATALOG2.md` §8's items 4, 6 and 7. A dropped column
+are §10.3's items 4, 6 and 7. A dropped column
 keeping its place is now literal: its key stays, with `X` set
 and its name free to be taken again. Type code 7, the retired
 `decimal`, is never written.
@@ -440,7 +441,7 @@ and its name free to be taken again. Type code 7, the retired
 | `u` | ON UPDATE action | int2 | — | |
 | `x` | CHECK expression | bytea | — | host-serialized |
 
-`CATALOG2.md` §8's items 2 and 3, and the second half of §10's
+§10.3's items 2 and 3, and the second half of §10.5's
 "a row per column and a row per constraint". A constraint is
 the clearest case for a key of its own: it is the part of a
 table whose count is least bounded.
@@ -461,7 +462,7 @@ table whose count is least bounded.
 State 0 is building, 1 valid, 2 failed (`SM3_DESIGN.md` §3);
 absent reads as valid, which keeps `CATALOG.md` §3's rule, so
 a building or failed index writes `s` and a plain one does
-not. `m` is `CATALOG2.md` §5's access method, true as "btree
+not. `m` is §10.2's access method, true as "btree
 implicitly" until the first hash, GiST or GIN index.
 
 ### 5.8 An index's columns
@@ -484,7 +485,7 @@ each hold one field, `a`, the attnum.
 
 ### 5.9 `name:…`, `dep:…`
 
-A table's schema lock is not here: it is an
+A table's oid lock is not here: it is an
 `sm1::LOCKTYPE_OID` lock on the oid, storing nothing
 (§0.4).
 
@@ -513,13 +514,13 @@ A table's schema lock is not here: it is an
 | 05 | constraint |
 
 06 sequence, 07 type and 08 materialized view are reserved for
-`CATALOG2.md` §7. `META` and `NAME` are no longer kinds at
+§10.2. `META` and `NAME` are no longer kinds at
 all — they were key kinds and are key words now — and `LOCK`
-is not even that: a schema lock is an sm1 locktype and stores
+is not even that: a table-oid lock is an sm1 locktype and stores
 nothing. Only `name:` and `dep:` need a code for an object
 kind.
 
-Nothing in `CATALOG2.md` §9 is here: the sm2 `schema`, its
+Nothing in §10.4 is here: the sm2 `schema`, its
 `tup_desc_t`, and an index's `key_column_t` and `attribute_t`
 vectors are built from the columns at `cat_open` and never
 stored.
@@ -534,14 +535,14 @@ stored.
   definition is built in one pass with no counts to trust.
 - **`ALTER TABLE ADD COLUMN` writes one key.** Not a rewrite
   of the whole table value. `DROP COLUMN` writes one key.
-  `cat_set_index_state`, which the build calls when it ends,
+  `set_index_state`, which the build calls when it ends,
   rewrites one index's key and leaves the table alone.
-- **The schema lock now does all the serializing.** Today
+- **The table-oid lock now does all the serializing.** Today
   every DDL rewrites the `TABLE` entry, so two concurrent
   DDLs on one table also collide in sm1's write-write
   conflict. With the parts split, two sessions adding
   different columns to one table write different keys and
-  collide nowhere — the IX schema lock is what stops them.
+  collide nowhere — the IX table-oid lock is what stops them.
   That was already the mechanism of record (`CATALOG.md` §2,
   `SM3_DESIGN.md` §2), so the outcome is unchanged, but the
   belt is gone and only the braces are left. It belongs in a
@@ -551,9 +552,9 @@ stored.
   index names is kept; `name:` entries already carry the
   index's table oid, so the lookup is a `catkv_get`, and the
   scan goes away if that is wanted.
-- **`cat_drop_table` erases more keys.** Its columns, its
+- **`drop_table` erases more keys.** Its columns, its
   constraints, its indexes and their columns, by one scan of
-  `tbl:<oid>:` and an erase per key, the way `cat_drop_index`
+  `tbl:<oid>:` and an erase per key, the way `drop_index`
   already walks its keys because sm1 has no range delete.
 
 ---
@@ -578,7 +579,7 @@ stored.
 
 ## 8. Open
 
-- **`CATALOG2.md` §0's scope**, which §1 above leaves where it
+- **§10.1's scope**, which §1 above leaves where it
   found it.
 - **Bootstrap**: how the catalog's own schemas are known
   before it is loaded. With tagged fields a reader needs the
@@ -589,9 +590,269 @@ stored.
   whether sm3 reads either or treats both as the host's bytes
   the way it treats `eval`.
 - **NULLS NOT DISTINCT, reloptions, and which constraint an
-  index implements** (`CATALOG2.md` §5), left out rather than
+  index implements** (§10.2), left out rather than
   guessed at.
 - **Owner, ACL and comment**, on every kind
-  (`CATALOG2.md` §2 to §6). Each is a lowercase tag in the
+  (§10.2). Each is a lowercase tag in the
   kind that owns it when it arrives, and needs nothing from
   this layout.
+
+---
+
+## 9. The calls
+
+The layout above is what the catalog stores. This is what it
+is asked: the calls of `sm3/include/sm3.h`, each with one line
+of what it does. Unlike the layout they are built, and
+`CATALOG.md` §5 says how each works. `ss` is an sm3 session,
+and a trailing `&` marks an output.
+
+Every oid comes from the one sequence `sm3.oid`, so an oid
+alone does not say what it names. Each argument below is
+therefore named for the kind of object it must be:
+`namespace_oid`, `table_oid`, `index_oid` or `collation_oid`.
+The header's own parameter names are shorter — `oid`,
+`nspoid`, `table`, `index` — and mean the same.
+
+They are in two layers. The catalog's own calls, `cat_*`, are
+a repository's — `get`, `list`, `put`, `del` — so its
+interface reads as a REST API's would. What a statement does,
+`create_*` and `drop_*` and the rest, is the DDL above it,
+which calls the catalog.
+
+### 9.1 Lifecycle
+
+| Call | Synopsis |
+| --- | --- |
+| `cat_init(env, dbname, opt = nullptr)` | Makes a new database's catalog: format version, oid sequence, and the `pg_catalog` and `public` namespaces. Runs on its own session and transaction. Fails with `SM_ERR_EXISTS` if one is there. |
+| `cat_open(env, dbname, cat&)` | Loads the whole catalog into memory and opens every collation. Runs on its own session and transaction. |
+| `cat_close(cat)` | Frees the catalog and its collations. A catalog attached to the builder must be detached first. |
+| `cat_set_evaluator(cat, eval)` | Gives the catalog the host's evaluator for partial and expression indexes. Set once. |
+
+### 9.2 Session and transaction
+
+| Call | Synopsis |
+| --- | --- |
+| `session_open(cat, s, ss&)` | Opens an sm3 session over the sm1 session `s`, with an empty overlay. |
+| `session_close(ss)` | Drops the overlay and frees the sm3 session. Does not close `s`. |
+| `session_sm1(ss)` | Returns the sm1 session under `ss`. |
+| `session_cat(ss)` | Returns the catalog `ss` reads. |
+| `begin(ss, level, read_only = false)` | Begins a transaction, noting how far the catalog had got before the snapshot. |
+| `stmt_begin(ss)` | Begins a statement, which decides the indexes that statement may scan. |
+| `stmt_begin(ss, outer&)` | Begins a statement inside another, saving the outer one. |
+| `stmt_end(ss, outer)` | Ends an inner statement and resumes the outer one. |
+| `savepoint(ss)` | Sets a savepoint; DDL from now on is tagged with its depth. |
+| `rollback(ss, depth)` | Rolls back to a savepoint, dropping the DDL made since. |
+| `forget(ss, depth)` | Forgets a savepoint, keeping its DDL. |
+| `commit(ss)` | Commits in sm1, then publishes the transaction's DDL into the shared catalog. |
+| `abort(ss)` | Aborts and drops the overlay. |
+| `prepare(ss, gid)` | Prepares as sm1 does; refuses a transaction that made DDL. |
+
+### 9.3 The catalog: get, list, put, del
+
+The catalog is a repository: it stores a record, finds it, and
+forgets it. It makes no store and no sequence, and fills no
+index. Its reads return a definition, `table_def_t`, which is a
+table resolved for use; its writes take a record,
+`table_rec_t`, which is the table as stored.
+
+| Call | Synopsis |
+| --- | --- |
+| `cat_new_oid(ss, oid&)` | Takes the next oid from the one sequence every kind of object shares. |
+| `cat_get_namespace(cat, name, namespace_oid&)` | Returns whether a committed namespace of that name exists, and sets its oid. |
+| `cat_get_namespace(ss, name, namespace_oid&)` | Returns whether a namespace of that name exists as the session sees it, and sets its oid. |
+| `cat_list_namespaces(cat)` | Returns the committed namespace names, sorted. |
+| `cat_list_namespaces(ss)` | Returns the namespace names the session sees, sorted. |
+| `cat_put_namespace(ss, namespace_oid, name)` | Stores a new namespace. A taken name is `SM_ERR_DUPKEY`. |
+| `cat_del_namespace(ss, namespace_oid)` | Erases an empty namespace. One holding a table or collation is `SM_ERR_INUSE`; the two built-ins are `SM_ERR_INVALID`. Waits out any put in it. |
+| `cat_get_table(cat, table_oid)` | Returns a committed table's definition by oid, or null. |
+| `cat_get_table(cat, namespace_oid, name)` | Returns a committed table's definition by name, or null. |
+| `cat_get_table(ss, table_oid)` | Returns a table's definition by oid as the session's transaction sees it. |
+| `cat_get_table(ss, namespace_oid, name)` | Returns a table's definition by name as the session's transaction sees it. |
+| `cat_list_tables(cat, namespace_oid)` | Returns the names of the committed tables in a namespace, sorted. |
+| `cat_list_tables(ss, namespace_oid)` | Returns the table names in a namespace as the session sees them, sorted. |
+| `cat_lock_table(ss, table_oid, mode, def&)` | Takes the table's oid lock to the end of the transaction and returns its definition. |
+| `cat_get_table_rec(ss, table_oid, rec&)` | Reads a table's record in order to change it: takes the table-oid lock exclusive and returns the newest record. |
+| `cat_put_table(ss, table_oid, rec)` | Stores a table's record, new or replacing the old, and makes the names in it the names taken. A taken name is `SM_ERR_DUPKEY`; no such namespace is `SM_ERR_NOTFOUND`. |
+| `cat_del_table(ss, table_oid)` | Erases a table's record and its names. Its store and sequence are the caller's to drop. |
+| `cat_index(ss, namespace_oid, name, table_oid&, index_oid&)` | Finds an index and its table by name as the session sees it. |
+| `cat_put_collation(ss, collation_oid, namespace_oid, name, locale, deterministic)` | Stores a new collation, recording the ICU version it opens at, and keeps it open. |
+
+A table's columns and indexes are parts of its record, so they
+have no put or del of their own: a caller changes the record
+and puts the table.
+
+### 9.4 DDL: create, drop, alter
+
+Each is one statement's work, and a caller of the catalog: it
+makes or drops what the object needs outside the catalog — a
+store, a sequence, an index's entries — and puts the record or
+dels it.
+
+| Call | Synopsis |
+| --- | --- |
+| `create_namespace(ss, name, namespace_oid&)` | Takes an oid and puts the namespace (SQL's schema). |
+| `drop_namespace(ss, namespace_oid)` | Dels the namespace. |
+| `create_table(ss, namespace_oid, name, columns, table_oid&)` | Makes the table's store and rowno sequence and puts its record; takes both back if the put fails. |
+| `drop_table(ss, table_oid)` | Dels the record and drops the store, with all rows and index entries, and the sequence. |
+| `rename_table(ss, table_oid, name)` | Puts the record back under the new name. |
+| `truncate_table(ss, table_oid)` | Empties the table by swapping in a new store; keeps columns, indexes and the rowno sequence. |
+| `add_column(ss, table_oid, col, missing)` | Appends a column. Rows written earlier read it as `missing`, or as null if none is given. |
+| `drop_column(ss, table_oid, name)` | Marks a column dropped; it keeps its place and reads as null. Refused if an index uses it. |
+| `create_index(ss, table_oid, name, keys, includes, unique, index_oid&)` | Adds an index to the record as `pending` and queues it for the builder at commit. On a table made in the same transaction, fills it at once and records it `valid`. |
+| `create_index(ss, table_oid, name, keys, includes, unique, eval, reads, index_oid&)` | The same for a partial or expression index: `eval` is the host's blob, `reads` the columns it reads. |
+| `enqueue_pending_indexes(cat)` | Queues every pending index for the builder; called when a database is opened, for what a crash left unqueued. |
+| `set_index_state(ss, table_oid, index_oid, state, error = SM_OK, reason = {})` | Sets an index to `pending`, `valid` or `failed`, keeping the error and message for a failed one. |
+| `drop_index(ss, table_oid, index_oid)` | Erases the index's entries and takes it out of the record. |
+| `create_collation(ss, namespace_oid, name, locale, deterministic, collation_oid&)` | Takes an oid and puts the collation. |
+
+### 9.5 The builder, which is not the catalog
+
+The builder fills pending indexes. It is one per process and a
+caller of the catalog, not a part of it (`SM3_DESIGN.md` §3);
+its calls are listed here because an index's life runs through
+both.
+
+| Call | Synopsis |
+| --- | --- |
+| `builder_attach(cat, open, batch_rows = 1000)` | Attaches a catalog to the process-wide builder, which from then on takes its indexes. It does not look for work. |
+| `builder_detach(cat)` | Drops what is queued for the catalog and waits for its running builds to stop. |
+| `builder_enqueue(cat, table_oid, index_oid)` | Gives the builder its work: puts a pending index on the queue. A duplicate or an unattached catalog is ignored. A worker checks the index is still pending, then fills it. |
+| `builder_set_max_workers(max_workers)` | Sets how many builds run at once across all catalogs; default 4. |
+| `builder_building(cat, index_oid)` | Returns whether a worker is filling the index now. |
+| `builder_wait(ss, table_oid, index_oid)` | Waits outside a transaction until the index is valid, or returns the build's error. |
+
+### 9.6 Not there yet
+
+There is no call to rename a namespace, to del a collation,
+or to get or list collations. `cat_index` keeps its older
+name where the others would have it `cat_get_index`.
+
+---
+
+## 10. What a catalog has yet to hold
+
+The layout above was drawn from an inventory: what a catalog
+has to hold, kind by kind, and which of it sm3's holds. The
+inventory was a file of its own, `CATALOG2.md`. What it held
+that is already built is in `CATALOG.md`; what is left of it
+is here — the things not held, and why each matters.
+
+### 10.1 The question of scope
+
+`PART4.md` §4 commits the catalog to **replacing**
+PostgreSQL's heap catalogs, and names the cost as "the code
+that reads the catalogs — the relation cache, syscache and
+system-table scans". Read strictly, that is the whole of
+`pg_catalog` in time: `pg_proc`, `pg_type`, `pg_operator`,
+`pg_constraint`, `pg_depend`, `pg_amop` and the rest — some
+sixty object kinds, not the handful here.
+
+Nothing has decided how far down that list the catalog is
+meant to go, and the answer changes the design rather than
+sizing it. The gaps of §10.3 are a format change to one
+subsystem. The whole `pg_catalog` surface is a different
+shape entirely.
+
+### 10.2 What is not held, kind by kind
+
+| Kind | Not held today |
+| --- | --- |
+| catalog-wide | **bootstrap**: how the catalog's own schemas are known before it is loaded — open in `SM3_DESIGN.md` §2; PostgreSQL hard-codes its bootstrap catalogs |
+| namespace | owner, ACL, comment |
+| table | relkind (table, matview, partitioned); the partitioning strategy, key, bounds, and parent and child links; constraints — CHECK expressions, FOREIGN KEY columns, referenced table and actions, EXCLUSION; reloptions such as fillfactor; row-level security policies; triggers; rules; owner, ACL, comment |
+| column | the **DEFAULT expression**, which is not `missing` — that only serves rows written before the column was added; a generated or identity expression and the sequence it owns; the per-column statistics target (`ALTER TABLE … SET STATISTICS`), which `STATISTICS.md` §3.3 needs; storage mode and compression method; comment, ACL |
+| index | the access method — btree implicitly, which is true while `FEATURELIST.md` §2 marks only B-tree supported; the operator class of each key column, for which sm2's type and collation stand in; NULLS NOT DISTINCT; reloptions; which constraint it implements |
+| collation | provider (ICU or libc), owner |
+
+Persistence — permanent, unlogged, temporary — needs no
+storing yet: a temporary table is never written to store 0,
+and unlogged tables and matviews are unsupported.
+
+Some objects have no kind at all:
+
+| Object | Why it is needed |
+| --- | --- |
+| **sequence**, as an sm3 object | `CREATE SEQUENCE` needs an oid, a namespace, a name, start, increment, min, max, cache, cycle, and the column it is owned by. sm1's sequences are keyed by a bare name under `"S"` and carry none of it |
+| **type** | domains (base type, constraints, default), **enums** (their labels and the order of them), composites, ranges. sm2's frozen type codes cover its built-ins only |
+| **dependencies** | `CATALOG.md` §7's open item: refusing `DROP COLLATION` in use. `DROP … RESTRICT` and `CASCADE` need it; a namespace's drop gets by on a walk of the catalog in memory |
+| **materialized view** | its storage and its refresh state; `FEATURELIST.md` §4 wants storage and refresh, no query semantics |
+
+### 10.3 The gaps that are not speculative
+
+Sorted by what is already true, since that is what decides
+whether a gap blocks anything.
+
+**A feature `FEATURELIST.md` marks supported has nowhere to
+put its definition.** These are the ones that are wrong
+today, not merely unbuilt.
+
+1. partition strategy, key and bounds (range, list, hash)
+2. CHECK expressions
+3. FOREIGN KEY definitions and their actions
+4. generated and identity column expressions
+5. relkind, enough to tell a partitioned parent from a leaf,
+   which item 1 needs anyway
+
+Persistence is **not** on that list, though it looks as though
+it should be, for the reason §10.2 gives.
+
+**Something already written needs it.**
+
+6. column DEFAULT expressions. `missing` is not it: `missing`
+   serves rows written before a column was added, and a
+   DEFAULT serves inserts that omit it.
+7. the per-column statistics target, which
+   `STATISTICS.md` §3.3 passes to `sm_analyze` and nothing can
+   record.
+8. dependencies, enough to refuse a `DROP` that would break
+   one — `CATALOG.md` §7's own open item.
+
+**Needed only once a feature arrives.** Listed to be designed
+for, not to be built: an index's access method and the
+operator class of each of its keys, which stop being implicit
+with the first hash, GiST or GIN index; the objects with no
+kind; and the owner, ACL and comment of every kind.
+
+### 10.4 Derived, and not to be stored
+
+Stated so a redesign does not persist them. `table_def_t`
+holds them in memory and the store holds none:
+
+- the sm2 `schema` vector and its `tup_desc_t`, built from
+  the columns;
+- an index's `key_column_t` and `attribute_t` vectors, built
+  from its attnums and the column types;
+- the count of publishes and the count at which each index
+  became valid (`CATALOG.md` §4), which only compare against
+  live snapshots, and no snapshot survives a restart.
+
+### 10.5 What the inventory showed
+
+**The table entry was where the first design broke.** Most of
+§10.2's gaps hang off a table: partitions, constraints,
+policies, triggers, defaults, generation expressions,
+statistics targets. Under one value a table, each of them
+would inflate the single value that every `ALTER TABLE`
+rewrote and that had to stay inside the 64 KB a part is held
+to (`sm2/TUPLE.md` §1). That was the argument for a row per
+column and a row per constraint. The row per column, and one
+per index, is built; the row per constraint waits for
+constraints.
+
+**Five gaps are live bugs, not missing features.** §10.3's
+first group: a table can be partitioned, carry a CHECK or a
+foreign key, or hold a generated column, and the catalog has
+nowhere to write any of it down. Two more block work in
+flight: the per-column statistics target, without which
+statistics cannot honour `SET STATISTICS`, and a column
+DEFAULT.
+
+**The framing is the lesser problem, and the cheaper one.**
+A value's parts carry no tag, and how many of each follows is
+read from count fields in an earlier part. A table's counts of
+columns and indexes went when those got keys of their own;
+`nkey`, `ninclude` and `nread` in each index part remain
+(`src/catalog/blob.cc`). A reader that has a count wrong reads
+one kind of part as another, and whether that is caught is
+luck. §4's tagged fields are what removes them.

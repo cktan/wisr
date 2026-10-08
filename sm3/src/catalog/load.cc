@@ -7,6 +7,8 @@
 
 #include "internal.h"
 
+#include <algorithm>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -42,6 +44,31 @@ int scan_kind(sm2::catkv_t *kv, sm3::kind_t kind,
       return -1;
     }
     out.emplace_back(oid, std::string(v));
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+/*
+ * Every part of kind, in key order, handed to f as its table's
+ * oid, its place or oid, and its value, which lasts only for the
+ * call.
+ */
+template <typename F> int scan_parts(sm2::catkv_t *kv, sm3::kind_t kind, F f) {
+  std::string prefix;
+  sm2::catkv_scan_t *c = nullptr;
+  if (sm3::kind_prefix(kind, prefix) != 0 ||
+      sm2::catkv_scan(kv, prefix, c) != 0) {
+    return -1;
+  }
+  std::unique_ptr<sm2::catkv_scan_t, decltype(&sm2::catkv_scanend)> guard(
+      c, &sm2::catkv_scanend);
+  std::string_view k, v;
+  int rc;
+  while ((rc = sm2::catkv_scannxt(c, k, v)) == 0) {
+    uint64_t table, n;
+    if (sm3::part_ids(kind, k, table, n) != 0 || f(table, n, v) != 0) {
+      return -1;
+    }
   }
   return rc == 1 ? 0 : -1;
 }
@@ -93,6 +120,7 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
   t->storeid = rec.storeid;
   t->rowno_seq = rec.rowno_seq;
   t->next_relid = rec.next_relid;
+  t->rec = rec;
   for (const sm3::column_rec_t &c : rec.columns) {
     const sm2::type_t *type = sm2::type_by_code(c.type_code);
     const sm2::collation_t *coll;
@@ -217,12 +245,44 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
   if (collation_nspaces(kv, cat) != 0) {
     return -1;
   }
+  // Each table's own fields, then its columns and its indexes,
+  // which have a key each and arrive in the order of their place.
   entries.clear();
   if (scan_kind(kv, sm3::kind_t::table, entries) != 0) {
     return -1;
   }
+  std::map<uint64_t, sm3::table_rec_t> recs;
   for (auto &[oid, blob] : entries) {
-    sm3::table_rec_t rec;
+    if (sm3::decode_table(blob, recs[oid]) != 0) {
+      return -1;
+    }
+  }
+  if (scan_parts(kv, sm3::kind_t::column,
+                 [&](uint64_t table, uint64_t attnum, std::string_view v) {
+                   auto it = recs.find(table);
+                   // A column is at the place its key says.
+                   if (it == recs.end() ||
+                       attnum != it->second.columns.size()) {
+                     return corrupt("a column of no table, or out of place");
+                   }
+                   it->second.columns.emplace_back();
+                   return sm3::decode_column(v, it->second.columns.back());
+                 }) != 0 ||
+      scan_parts(kv, sm3::kind_t::index,
+                 [&](uint64_t table, uint64_t oid, std::string_view v) {
+                   auto it = recs.find(table);
+                   sm3::index_rec_t x;
+                   if (it == recs.end() || sm3::decode_index(v, x) != 0 ||
+                       x.oid != oid) {
+                     return corrupt("an index of no table, or under "
+                                    "another's key");
+                   }
+                   it->second.indexes.push_back(std::move(x));
+                   return 0;
+                 }) != 0) {
+    return -1;
+  }
+  for (auto &[oid, rec] : recs) {
     std::shared_ptr<const sm3::table_def_t> def;
     // Collations from cat, which has them all by now.
     sm3::collation_lookup_t lookup = [&](uint64_t c,
@@ -231,8 +291,7 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
       o = it == cat.collations.end() ? nullptr : it->second;
       return o != nullptr;
     };
-    if (sm3::decode_table(blob, rec) != 0 ||
-        sm3::build_table(lookup, oid, rec, def) != 0) {
+    if (sm3::build_table(lookup, oid, rec, def) != 0) {
       return -1;
     }
     cat.table_names[{rec.nspoid, rec.name}] = oid;
@@ -279,21 +338,52 @@ int cat_set_evaluator(catalog_t *cat, index_eval_fn eval) {
 /* Close a catalog; nullptr is a no-op. */
 void cat_close(catalog_t *cat) { delete cat; }
 
-/* Every committed table; see sm3.h. */
-std::vector<std::shared_ptr<const table_def_t>>
-cat_tables(const catalog_t *cat) {
-  std::shared_lock lock(cat->mu);
-  std::vector<std::shared_ptr<const table_def_t>> out;
-  out.reserve(cat->tables.size());
-  for (const auto &[oid, def] : cat->tables) {
-    out.push_back(def);
+/* The committed tables' names in a namespace, sorted; see sm3.h. */
+std::vector<std::string> cat_list_tables(const catalog_t *cat,
+                                         uint64_t nspoid) {
+  std::vector<std::string> out;
+  {
+    std::shared_lock lock(cat->mu);
+    for (const auto &[name, oid] : cat->table_names) {
+      if (name.first == nspoid) {
+        out.push_back(name.second);
+      }
+    }
   }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+/* A committed namespace by name; see sm3.h. */
+bool cat_get_namespace(const catalog_t *cat, std::string_view name,
+                       uint64_t &oid) {
+  std::shared_lock lock(cat->mu);
+  // Few namespaces, and no map by name: look at each.
+  for (const auto &[o, n] : cat->nspaces) {
+    if (n == name) {
+      oid = o;
+      return true;
+    }
+  }
+  return false;
+}
+
+/* The committed namespaces' names, sorted; see sm3.h. */
+std::vector<std::string> cat_list_namespaces(const catalog_t *cat) {
+  std::vector<std::string> out;
+  {
+    std::shared_lock lock(cat->mu);
+    for (const auto &[oid, name] : cat->nspaces) {
+      out.push_back(name);
+    }
+  }
+  std::sort(out.begin(), out.end());
   return out;
 }
 
 /* A committed table by oid, or nullptr. */
-std::shared_ptr<const table_def_t> cat_table(const catalog_t *cat,
-                                             uint64_t oid) {
+std::shared_ptr<const table_def_t> cat_get_table(const catalog_t *cat,
+                                                 uint64_t oid) {
   std::shared_lock lock(cat->mu);
   auto it = cat->tables.find(oid);
   return it == cat->tables.end() ? nullptr : it->second;
@@ -301,7 +391,7 @@ std::shared_ptr<const table_def_t> cat_table(const catalog_t *cat,
 
 /* A committed table by namespace and name, or nullptr. */
 std::shared_ptr<const table_def_t>
-cat_table(const catalog_t *cat, uint64_t nspoid, std::string_view name) {
+cat_get_table(const catalog_t *cat, uint64_t nspoid, std::string_view name) {
   uint64_t oid;
   {
     std::shared_lock lock(cat->mu);
@@ -311,7 +401,7 @@ cat_table(const catalog_t *cat, uint64_t nspoid, std::string_view name) {
     }
     oid = it->second;
   }
-  return cat_table(cat, oid);
+  return cat_get_table(cat, oid);
 }
 
 } // namespace sm3

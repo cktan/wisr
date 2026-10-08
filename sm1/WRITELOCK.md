@@ -29,7 +29,7 @@ unchanged (`CLAUDE.md`).
   still running lets the latch go, waits for that transaction,
   and starts again.
 - **Explicit locks stay as they are.** `sm1::lock`, which sm3
-  uses for schema locks and `tbl_lock`, keeps its entries in
+  uses for table-oid locks and `tbl_lock`, keeps its entries in
   the lock table. A write still waits for a conflicting one,
   and an explicit lock waits for an uncommitted version.
 - **A write adds nothing to the lock list or the lock table.**
@@ -129,7 +129,7 @@ if the newest version of the key was written by another
 transaction still running, it waits for that transaction, as
 `FOR UPDATE` in PostgreSQL waits for an uncommitted update.
 
-The check costs a seek. sm3's schema locks are explicit locks
+The check costs a seek. sm3's table-oid locks are explicit locks
 on keys that are never written, so the seek finds nothing, and
 a bloom filter usually answers it. Skipping it for such keys,
 with sm2 saying so in `catkv_lock`, was designed and is not

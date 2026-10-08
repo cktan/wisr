@@ -13,7 +13,7 @@
 
 struct sm3::table_t {
   session_t *session;
-  std::shared_ptr<const table_def_t> def; /* held under the schema lock */
+  std::shared_ptr<const table_def_t> def; /* held under the table-oid lock */
   bool writable;                          /* the lock covers intent_exclusive */
   bool exclusive;                         /* the lock is exclusive */
   bool fresh;                             /* made by this transaction */
@@ -326,7 +326,7 @@ int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
              table_t *&out) {
   return catch_nomem([&] {
     std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
-    // Take the schema lock, so the definition holds to commit.
+    // Take the table-oid lock, so the definition holds to commit.
     if (cat_lock_table(session, oid, mode, t->def) != 0) {
       return -1;
     }
@@ -335,7 +335,7 @@ int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
     t->exclusive = mode == sm1::SM_LOCKMODE_EX;
     // No committed definition: this transaction made the table, and
     // no other can see it or its rows.
-    t->fresh = cat_table(session->cat, oid) == nullptr;
+    t->fresh = cat_get_table(session->cat, oid) == nullptr;
     if (open_rels(t.get()) != 0) {
       return -1;
     }
@@ -344,7 +344,7 @@ int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
   });
 }
 
-/* Close the heap and the indexes; the schema lock stays to commit. */
+/* Close the heap and the indexes; the table-oid lock stays to commit. */
 void tbl_close(table_t *table) {
   if (!table) {
     return;
@@ -526,7 +526,7 @@ int tbl_truncate(table_t *table) {
     }
     const uint64_t oid = table->def->oid;
     std::shared_ptr<const table_def_t> def;
-    if (cat_truncate_table(table->session, oid) != 0 ||
+    if (truncate_table(table->session, oid) != 0 ||
         cat_lock_table(table->session, oid, sm1::SM_LOCKMODE_EX, def) != 0) {
       return -1;
     }

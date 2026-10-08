@@ -986,7 +986,7 @@ static Janet index_form(const sm_table_def_t &def, const sm_index_def_t &x) {
 /*
  * (describe-table name [:include-indices]): the table's columns in
  * table-create's form, and with the flag its indexes, under its
- * schema lock IS.
+ * table-oid lock IS.
  */
 static Janet cfun_describe_table(int32_t argc, Janet *argv) {
   janet_arity(argc, 1, 2);

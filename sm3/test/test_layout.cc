@@ -59,33 +59,6 @@ sm3::table_rec_t sample_table() {
   return t;
 }
 
-/* True if two table records hold the same fields. */
-bool same(const sm3::table_rec_t &a, const sm3::table_rec_t &b) {
-  auto col_eq = [](const sm3::column_rec_t &x, const sm3::column_rec_t &y) {
-    return x.name == y.name && x.type_code == y.type_code &&
-           x.typmod == y.typmod && x.not_null == y.not_null &&
-           x.dropped == y.dropped && x.missing == y.missing &&
-           x.collation == y.collation;
-  };
-  auto key_eq = [](const sm3::index_key_rec_t &x,
-                   const sm3::index_key_rec_t &y) {
-    return x.attnum == y.attnum && x.desc == y.desc &&
-           x.nulls_first == y.nulls_first && x.collation == y.collation;
-  };
-  auto idx_eq = [&](const sm3::index_rec_t &x, const sm3::index_rec_t &y) {
-    return x.oid == y.oid && x.name == y.name && x.relid == y.relid &&
-           x.unique == y.unique && x.includes == y.includes &&
-           std::equal(x.keys.begin(), x.keys.end(), y.keys.begin(),
-                      y.keys.end(), key_eq);
-  };
-  return a.nspoid == b.nspoid && a.name == b.name && a.storeid == b.storeid &&
-         a.rowno_seq == b.rowno_seq && a.next_relid == b.next_relid &&
-         std::equal(a.columns.begin(), a.columns.end(), b.columns.begin(),
-                    b.columns.end(), col_eq) &&
-         std::equal(a.indexes.begin(), a.indexes.end(), b.indexes.begin(),
-                    b.indexes.end(), idx_eq);
-}
-
 } // namespace
 
 TEST_CASE("catalog keys group by kind and order by their columns") {
@@ -96,6 +69,10 @@ TEST_CASE("catalog keys group by kind and order by their columns") {
   //    name, bytewise.
   // 3. entity_oid gives back the oid of an entity key, and refuses
   //    a key of another kind or one that is not a key.
+  // 4. A table's columns have keys of their own, in attnum order,
+  //    and its indexes in oid order, each kind apart from the
+  //    tables' keys and from another table's parts; part_ids gives
+  //    back the table and the place.
   using sm3::kind_t;
   std::string table_p =
       key_of([](auto &k) { return sm3::kind_prefix(kind_t::table, k); });
@@ -130,14 +107,39 @@ TEST_CASE("catalog keys group by kind and order by their columns") {
   CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
   CHECK(sm3::entity_oid(kind_t::table, "junk", oid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
+
+  auto part = [](kind_t kind, uint64_t table, uint64_t n) {
+    return key_of([&](auto &k) { return sm3::part_key(kind, table, n, k); });
+  };
+  std::string column_p =
+      key_of([](auto &k) { return sm3::kind_prefix(kind_t::column, k); });
+  std::string index_p =
+      key_of([](auto &k) { return sm3::kind_prefix(kind_t::index, k); });
+  CHECK(part(kind_t::column, 1000, 0).starts_with(column_p));
+  CHECK_FALSE(part(kind_t::column, 1000, 0).starts_with(table_p));
+  CHECK(part(kind_t::index, 1000, 1100).starts_with(index_p));
+  CHECK(part(kind_t::column, 1000, 0) < part(kind_t::column, 1000, 1));
+  CHECK(part(kind_t::column, 1000, 9) < part(kind_t::column, 1000, 10));
+  CHECK(part(kind_t::column, 1000, 300) < part(kind_t::column, 1001, 0));
+  CHECK(part(kind_t::index, 1000, 1100) < part(kind_t::index, 1000, 1101));
+  uint64_t table = 0, n = 0;
+  REQUIRE(sm3::part_ids(kind_t::column, part(kind_t::column, 1000, 7), table,
+                        n) == 0);
+  CHECK(table == 1000);
+  CHECK(n == 7);
+  CHECK(sm3::part_ids(kind_t::column, part(kind_t::index, 1000, 7), table, n) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
+  CHECK(sm3::part_ids(kind_t::column, t5, table, n) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
 }
 
 TEST_CASE("every catalog entity round trips through its value") {
   // Verify the blob codec of CATALOG.md §3.
-  // 1. META, a NAME value with and without its table, a table
-  //    with nullable, missing and dropped columns and two indexes,
-  //    a table with none, a namespace and a collation each decode
-  //    to what was encoded.
+  // 1. META, a NAME value with and without its table, a table's
+  //    own fields, each of its columns -- nullable, with a missing
+  //    value, dropped -- each of its two indexes, a namespace and a
+  //    collation each decode to what was encoded.
   // 2. A value cut short, or with a byte added, is SM_ERR_CORRUPT.
   std::string v;
   int32_t version = 0;
@@ -156,15 +158,30 @@ TEST_CASE("every catalog entity round trips through its value") {
     CHECK(back.table == n.table);
   }
 
+  // A table's value is its own fields: its parts have their own.
   sm3::table_rec_t t = sample_table(), back;
   std::string blob;
-  REQUIRE(sm3::encode_table(t, blob) == 0);
-  REQUIRE(sm3::decode_table(blob, back) == 0);
-  CHECK(same(t, back));
-  sm3::table_rec_t empty{1, "e", 1002, "e_rowno", 1, {}, {}};
-  REQUIRE(sm3::encode_table(empty, v) == 0);
+  REQUIRE(sm3::encode_table(t, v) == 0);
   REQUIRE(sm3::decode_table(v, back) == 0);
-  CHECK(same(empty, back));
+  CHECK(back.nspoid == t.nspoid);
+  CHECK(back.name == t.name);
+  CHECK(back.storeid == t.storeid);
+  CHECK(back.rowno_seq == t.rowno_seq);
+  CHECK(back.next_relid == t.next_relid);
+  CHECK(back.columns.empty());
+  CHECK(back.indexes.empty());
+  for (const sm3::column_rec_t &c : t.columns) {
+    sm3::column_rec_t c_back;
+    REQUIRE(sm3::encode_column(c, v) == 0);
+    REQUIRE(sm3::decode_column(v, c_back) == 0);
+    CHECK(c_back == c);
+  }
+  for (const sm3::index_rec_t &x : t.indexes) {
+    sm3::index_rec_t x_back;
+    REQUIRE(sm3::encode_index(x, blob) == 0);
+    REQUIRE(sm3::decode_index(blob, x_back) == 0);
+    CHECK(x_back == x);
+  }
 
   sm3::nspace_rec_t ns{"public"}, ns_back;
   REQUIRE(sm3::encode_nspace(ns, v) == 0);
@@ -181,10 +198,12 @@ TEST_CASE("every catalog entity round trips through its value") {
 
   for (size_t n : {size_t{0}, size_t{1}, blob.size() / 2, blob.size() - 1}) {
     CAPTURE(n);
-    CHECK(sm3::decode_table(blob.substr(0, n), back) == -1);
+    sm3::index_rec_t x_back;
+    CHECK(sm3::decode_index(blob.substr(0, n), x_back) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
   }
-  CHECK(sm3::decode_table(blob + "x", back) == -1);
+  sm3::index_rec_t x_back;
+  CHECK(sm3::decode_index(blob + "x", x_back) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
 }
 

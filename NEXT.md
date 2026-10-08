@@ -60,7 +60,7 @@ Owed, and blocking nothing above:
   waits on a lock held by a prepared, in-doubt transaction
   holds up `cat_close`, and so a detach, until that transaction
   is resolved. sm1 needs a way to cancel a wait.
-- **Marking an index valid takes the schema lock X**, as every
+- **Marking an index valid takes the table-oid lock X**, as every
   catalog change does, so a long transaction on the table
   delays it. The step only flips a state writers do not depend
   on; a weaker lock would do.

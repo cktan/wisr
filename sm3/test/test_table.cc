@@ -110,11 +110,11 @@ public:
         {0, false, false, std::nullopt}};
     std::vector<int32_t> owner = {2};
     REQUIRE(sm3::begin(a, sm1::xctlevel_t::read_committed) == 0);
-    REQUIRE(sm3::cat_create_table(a, sm3::nsp_public, "jobs", cols, jobs) == 0);
-    REQUIRE(sm3::cat_create_index(a, jobs, "jobs_state", by_state, owner, false,
-                                  jobs_state) == 0);
-    REQUIRE(sm3::cat_create_index(a, jobs, "jobs_id", by_id, {}, true,
-                                  jobs_id) == 0);
+    REQUIRE(sm3::create_table(a, sm3::nsp_public, "jobs", cols, jobs) == 0);
+    REQUIRE(sm3::create_index(a, jobs, "jobs_state", by_state, owner, false,
+                              jobs_state) == 0);
+    REQUIRE(sm3::create_index(a, jobs, "jobs_id", by_id, {}, true, jobs_id) ==
+            0);
     REQUIRE(sm3::commit(a) == 0);
   }
 
@@ -145,11 +145,15 @@ public:
     }
   }
 
-  /* Attach the catalog to the builder, with sessions from this database. */
+  /*
+   * Attach the catalog to the builder, with sessions from this
+   * database, and queue what is pending, as opening a database does.
+   */
   void builder(size_t max_workers = 4, size_t batch_rows = 1000) {
     sm3::builder_set_max_workers(max_workers);
     REQUIRE(sm3::builder_attach(
                 cat, [this] { return try_open(); }, batch_rows) == 0);
+    REQUIRE(sm3::enqueue_pending_indexes(cat) == 0);
   }
 
   /* jobs, opened to write in s's transaction; it must open. */
@@ -798,8 +802,8 @@ TEST_CASE("while an index is building, rows it has not reached are written") {
       {2, false, false, std::nullopt}};
   uint64_t jobs_owner = 0;
   start(f.a);
-  REQUIRE(sm3::cat_create_index(f.a, f.jobs, "jobs_owner", by_owner, {}, false,
-                                jobs_owner) == 0);
+  REQUIRE(sm3::create_index(f.a, f.jobs, "jobs_owner", by_owner, {}, false,
+                            jobs_owner) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.a);
@@ -813,8 +817,8 @@ TEST_CASE("while an index is building, rows it has not reached are written") {
   CHECK(under(t, jobs_owner, "y") == std::vector<uint64_t>{r9});
   CHECK(under(t, jobs_owner, "c").empty());
   sm3::tbl_close(t);
-  REQUIRE(sm3::cat_set_index_state(f.a, f.jobs, jobs_owner,
-                                   sm3::index_state_t::valid) == 0);
+  REQUIRE(sm3::set_index_state(f.a, f.jobs, jobs_owner,
+                               sm3::index_state_t::valid) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.a);
@@ -836,8 +840,8 @@ TEST_CASE("a failed index is not maintained, and cannot be scanned") {
   sm3::table_t *t = f.write(f.a);
   put(t, 7, "free", std::nullopt);
   sm3::tbl_close(t);
-  REQUIRE(sm3::cat_set_index_state(f.a, f.jobs, f.jobs_id,
-                                   sm3::index_state_t::failed) == 0);
+  REQUIRE(sm3::set_index_state(f.a, f.jobs, f.jobs_id,
+                               sm3::index_state_t::failed) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.a);
@@ -860,8 +864,8 @@ uint64_t late_index(jobs_t &f, bool unique = false) {
       {2, false, false, std::nullopt}};
   uint64_t oid = 0;
   start(f.a);
-  REQUIRE(sm3::cat_create_index(f.a, f.jobs, "jobs_owner", by_owner, {}, unique,
-                                oid) == 0);
+  REQUIRE(sm3::create_index(f.a, f.jobs, "jobs_owner", by_owner, {}, unique,
+                            oid) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
   return oid;
 }
@@ -869,8 +873,7 @@ uint64_t late_index(jobs_t &f, bool unique = false) {
 /* Mark index oid of jobs valid, in a transaction of s's own. */
 void validate(jobs_t &f, sm3::session_t *s, uint64_t oid) {
   start(s);
-  REQUIRE(sm3::cat_set_index_state(s, f.jobs, oid, sm3::index_state_t::valid) ==
-          0);
+  REQUIRE(sm3::set_index_state(s, f.jobs, oid, sm3::index_state_t::valid) == 0);
   REQUIRE(sm3::commit(s) == 0);
 }
 
@@ -1115,19 +1118,18 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
         {1, false, false, std::nullopt}};
     uint64_t tasks = 0, tasks_owner = 0, tasks_state = 0;
     start(f.a, level);
-    REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
-            0);
+    REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) == 0);
     sm3::table_t *t = nullptr;
     REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     put(t, 1, "free", "a");
     put(t, 2, "free", "b");
     put(t, 3, "done", "c");
     sm3::tbl_close(t);
-    REQUIRE_MESSAGE(sm3::cat_create_index(f.a, tasks, "tasks_owner", by_owner,
-                                          {}, true, tasks_owner) == 0,
+    REQUIRE_MESSAGE(sm3::create_index(f.a, tasks, "tasks_owner", by_owner, {},
+                                      true, tasks_owner) == 0,
                     sm1::errmsg());
-    CHECK(sm3::cat_create_index(f.a, tasks, "tasks_state", by_state, {}, true,
-                                tasks_state) == -1);
+    CHECK(sm3::create_index(f.a, tasks, "tasks_state", by_state, {}, true,
+                            tasks_state) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   }
   for (sm1::xctlevel_t level : all_levels) {
@@ -1141,15 +1143,14 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
         {2, false, false, std::nullopt}};
     uint64_t tasks = 0, tasks_owner = 0;
     start(f.a, level);
-    REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
-            0);
+    REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) == 0);
     sm3::table_t *t = nullptr;
     REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     put(t, 1, "free", "a");
     put(t, 2, "free", "b");
     sm3::tbl_close(t);
-    REQUIRE(sm3::cat_create_index(f.a, tasks, "tasks_owner", by_owner, {}, true,
-                                  tasks_owner) == 0);
+    REQUIRE(sm3::create_index(f.a, tasks, "tasks_owner", by_owner, {}, true,
+                              tasks_owner) == 0);
     REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     CHECK(sm3::tbl_def(t).indexes[0].state == sm3::index_state_t::valid);
     check_agree(t);
@@ -1379,7 +1380,7 @@ TEST_CASE("a snapshot older than a build is kept off the index") {
   // 1. Two rows are committed; an index on owner is building.
   // 2. A begins, which takes its snapshot, and does not touch the
   //    table: marking an index valid waits out every transaction
-  //    that holds the table's schema lock, so the guard is for those
+  //    that holds the table's oid lock, so the guard is for those
   //    that do not hold it yet. B builds the index and marks it valid.
   // 3. A opens the table and is given the valid index, but may not
   //    use it: read at A's snapshot it holds nothing, though the heap
@@ -1427,7 +1428,7 @@ TEST_CASE("read committed may use an index from its next statement on") {
   // Verify the guard at READ COMMITTED, statement by statement.
   // 1. An index on owner is building. A begins a statement and reads
   //    another table, which takes the statement's snapshot without
-  //    the schema lock of jobs. B builds the index and marks it valid.
+  //    the table-oid lock of jobs. B builds the index and marks it valid.
   // 2. In that statement A may not use it. In its next statement,
   //    begun after the index became valid, it may.
   // 3. A transaction that begins no statements reads each call at a
@@ -1443,7 +1444,7 @@ TEST_CASE("read committed may use an index from its next statement on") {
       {"x", sm2::type_int4.code, -1, false}};
   uint64_t pin = 0;
   start(f.a);
-  REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "pin", cols, pin) == 0);
+  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "pin", cols, pin) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.a);
@@ -1511,8 +1512,8 @@ TEST_CASE("an index is usable by its state, and by who made it valid") {
   t = f.write(f.b);
   REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) == 0);
   sm3::tbl_close(t);
-  REQUIRE(sm3::cat_set_index_state(f.b, f.jobs, jobs_owner,
-                                   sm3::index_state_t::valid) == 0);
+  REQUIRE(sm3::set_index_state(f.b, f.jobs, jobs_owner,
+                               sm3::index_state_t::valid) == 0);
   t = f.write(f.b);
   CHECK(sm3::tbl_index_usable(t, jobs_owner));
   CHECK(scanned(t, jobs_owner) == 1);
@@ -1520,8 +1521,8 @@ TEST_CASE("an index is usable by its state, and by who made it valid") {
   REQUIRE(sm3::commit(f.b) == 0);
 
   start(f.b);
-  REQUIRE(sm3::cat_set_index_state(f.b, f.jobs, jobs_owner,
-                                   sm3::index_state_t::failed) == 0);
+  REQUIRE(sm3::set_index_state(f.b, f.jobs, jobs_owner,
+                               sm3::index_state_t::failed) == 0);
   t = f.write(f.b);
   CHECK_FALSE(sm3::tbl_index_usable(t, jobs_owner));
   CHECK(scanned(t, jobs_owner) == -1);
@@ -1540,13 +1541,12 @@ TEST_CASE("an index is usable by its state, and by who made it valid") {
         {2, false, false, std::nullopt}};
     uint64_t tasks = 0, tasks_owner = 0;
     start(g.a, level);
-    REQUIRE(sm3::cat_create_table(g.a, sm3::nsp_public, "tasks", cols, tasks) ==
-            0);
+    REQUIRE(sm3::create_table(g.a, sm3::nsp_public, "tasks", cols, tasks) == 0);
     REQUIRE(sm3::tbl_open(g.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     put(t, 1, "free", "a");
     sm3::tbl_close(t);
-    REQUIRE(sm3::cat_create_index(g.a, tasks, "tasks_owner", by_owner, {},
-                                  false, tasks_owner) == 0);
+    REQUIRE(sm3::create_index(g.a, tasks, "tasks_owner", by_owner, {}, false,
+                              tasks_owner) == 0);
     REQUIRE(sm3::tbl_open(g.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
     CHECK(sm3::tbl_index_usable(t, tasks_owner));
     CHECK(scanned(t, tasks_owner) == 1);
@@ -1588,14 +1588,14 @@ uint64_t late_on(jobs_t &f, const std::string &name, int32_t att,
   std::vector<sm3::index_key_spec_t> key = {{att, false, false, std::nullopt}};
   uint64_t oid = 0;
   start(f.a);
-  REQUIRE(sm3::cat_create_index(f.a, f.jobs, name, key, {}, unique, oid) == 0);
+  REQUIRE(sm3::create_index(f.a, f.jobs, name, key, {}, unique, oid) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
   return oid;
 }
 
 /* The state of index oid of jobs in the committed catalog. */
 sm3::index_state_t state_of(jobs_t &f, uint64_t oid) {
-  auto d = sm3::cat_table(f.cat, f.jobs);
+  auto d = sm3::cat_get_table(f.cat, f.jobs);
   REQUIRE(d != nullptr);
   for (const sm3::index_def_t &x : d->indexes) {
     if (x.oid == oid) {
@@ -1665,12 +1665,12 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   CHECK(why.find("jobs_owner") != std::string::npos);
   CHECK(why.find("two rows of jobs") != std::string::npos);
   CHECK(state_of(f, jobs_owner) == sm3::index_state_t::failed);
-  auto d = sm3::cat_table(f.cat, f.jobs);
+  auto d = sm3::cat_get_table(f.cat, f.jobs);
   CHECK(d->indexes[2].error == sm1::SM_ERR_DUPKEY);
   CHECK(d->indexes[2].reason == why);
 
   f.reload();
-  d = sm3::cat_table(f.cat, f.jobs);
+  d = sm3::cat_get_table(f.cat, f.jobs);
   CHECK(d->indexes[2].state == sm3::index_state_t::failed);
   CHECK(d->indexes[2].error == sm1::SM_ERR_DUPKEY);
   CHECK(d->indexes[2].reason == why);
@@ -1701,7 +1701,7 @@ TEST_CASE("a build fails on any error the rows cause, and says which") {
   CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
   std::string why = sm1::errmsg();
   CHECK_FALSE(why.empty());
-  auto d = sm3::cat_table(f.cat, f.jobs);
+  auto d = sm3::cat_get_table(f.cat, f.jobs);
   CHECK(d->indexes[2].state == sm3::index_state_t::failed);
   CHECK(d->indexes[2].error == sm1::SM_ERR_KEYTOOLONG);
   CHECK(d->indexes[2].reason == why);
@@ -1769,7 +1769,9 @@ TEST_CASE("a pending index is building only while a worker fills it") {
   //    valid. Once the catalog is detached nothing is building.
   // 4. Detached, a second index stays pending, and waiting for it
   //    is SM_ERR_INVALID.
-  // 5. Attached again, the index found pending is built.
+  // 5. Attached again, it is still not built, and waiting is still
+  //    SM_ERR_INVALID: the builder does not look for work. Once the
+  //    pending indexes are queued for it, it is built.
   jobs_t f;
   start(f.a);
   sm3::table_t *t = f.write(f.a);
@@ -1804,7 +1806,10 @@ TEST_CASE("a pending index is building only while a worker fills it") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(state_of(f, jobs_state2) == sm3::index_state_t::pending);
 
-  f.builder();
+  REQUIRE(sm3::builder_attach(f.cat, [&f] { return f.try_open(); }) == 0);
+  CHECK(sm3::builder_wait(f.a, f.jobs, jobs_state2) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::enqueue_pending_indexes(f.cat) == 0);
   REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_state2) == 0,
                   sm1::errmsg());
   CHECK(state_of(f, jobs_state2) == sm3::index_state_t::valid);
@@ -1910,8 +1915,8 @@ uint64_t late_eval(jobs_t &f, const std::string &name, const std::string &blob,
                    std::vector<int32_t> reads, bool unique = false) {
   uint64_t oid = 0;
   start(f.a);
-  REQUIRE_MESSAGE(sm3::cat_create_index(f.a, f.jobs, name, keys, {}, unique,
-                                        blob, reads, oid) == 0,
+  REQUIRE_MESSAGE(sm3::create_index(f.a, f.jobs, name, keys, {}, unique, blob,
+                                    reads, oid) == 0,
                   sm1::errmsg());
   REQUIRE(sm3::commit(f.a) == 0);
   return oid;
@@ -2126,16 +2131,14 @@ TEST_CASE("an evaluated index is built in the background, and inline") {
       {"owner", sm2::type_text.code, -1, false}};
   uint64_t tasks = 0, tasks_lower = 0;
   start(f.a);
-  REQUIRE(sm3::cat_create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) ==
-          0);
+  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "tasks", cols, tasks) == 0);
   REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
   put(t, 1, "free", "Dee");
   put(t, 2, "free", "Eve");
   put(t, 3, "free", std::nullopt);
   sm3::tbl_close(t);
-  REQUIRE_MESSAGE(sm3::cat_create_index(f.a, tasks, "tasks_lower", by_lower_key,
-                                        {}, true, "lower", {{2}},
-                                        tasks_lower) == 0,
+  REQUIRE_MESSAGE(sm3::create_index(f.a, tasks, "tasks_lower", by_lower_key, {},
+                                    true, "lower", {{2}}, tasks_lower) == 0,
                   sm1::errmsg());
   REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
   CHECK(sm3::tbl_def(t).indexes[0].state == sm3::index_state_t::valid);

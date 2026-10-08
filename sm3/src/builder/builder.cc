@@ -1,10 +1,11 @@
 /*
  * builder.cc -- the builder (SM3_DESIGN.md §3): one queue of
  * pending indexes for the process, the workers that fill them a
- * batch at a time, and the wait for a build to end. It is no part
- * of the catalog: it reads and changes one through the catalog's
- * own calls, and cat_create_index puts a pending index on the
- * queue once its transaction has committed.
+ * batch at a time, and the wait for a build to end. It does not
+ * look for work: it is given a table and an index, checks the
+ * index is still pending, and fills it. It is no part of the
+ * catalog, which it reads and changes through the catalog's own
+ * calls.
  */
 
 #include "../catalog/internal.h"
@@ -85,8 +86,8 @@ void set_state(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
     if (sm3::begin(ws, sm1::xctlevel_t::read_committed) != 0) {
       return;
     }
-    // The schema lock X: this waits out every user of the table.
-    if (sm3::cat_set_index_state(ws, table, index, state, error, reason) == 0 &&
+    // The table-oid lock X: this waits out every user of the table.
+    if (sm3::set_index_state(ws, table, index, state, error, reason) == 0 &&
         sm3::commit(ws) == 0) {
       return;
     }
@@ -113,7 +114,7 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
     if (stopping(cat) || sm3::begin(ws, sm1::xctlevel_t::read_committed) != 0) {
       return;
     }
-    // The schema lock IX, as any writer takes: DDL waits for the
+    // The table-oid lock IX, as any writer takes: DDL waits for the
     // batch, and the batch sees the table as DDL left it.
     sm3::table_t *t = nullptr;
     uint64_t next = from;
@@ -250,7 +251,7 @@ void enqueue(catalog_t *cat, uint64_t table, uint64_t index) {
 
 namespace sm3 {
 
-/* Attach a catalog, and queue what a restart left; see sm3.h. */
+/* Attach a catalog; see sm3.h. */
 int builder_attach(catalog_t *cat, std::function<sm1::session_t *()> open,
                    size_t batch_rows) {
   return catch_nomem([&] {
@@ -265,20 +266,6 @@ int builder_attach(catalog_t *cat, std::function<sm1::session_t *()> open,
         return sm1::seterr(sm1::SM_ERR_INVALID, "builder: attached already");
       }
       g_builder.catalogs[cat] = {std::move(open), batch_rows};
-    }
-    // What a restart left pending; nothing is queued twice.
-    try {
-      for (const auto &def : cat_tables(cat)) {
-        for (const index_def_t &x : def->indexes) {
-          if (x.state == index_state_t::pending) {
-            enqueue(cat, def->oid, x.oid);
-          }
-        }
-      }
-    } catch (...) {
-      // Not half attached: the caller is told it failed.
-      builder_detach(cat);
-      throw;
     }
     return 0;
   });
@@ -358,7 +345,7 @@ int builder_wait(session_t *session, uint64_t table, uint64_t oid) {
         gen = b.gen;
         active = b.active.count({cat, oid}) != 0;
       }
-      std::shared_ptr<const table_def_t> d = cat_table(cat, table);
+      std::shared_ptr<const table_def_t> d = cat_get_table(cat, table);
       const index_def_t *x = nullptr;
       if (d) {
         for (const index_def_t &i : d->indexes) {

@@ -54,7 +54,7 @@ adds the API a secondary-index layer built on top of it needs
 `sm1::lsstore`, which came with naming stores by storeid (§11);
 `sm1::stmt_begin`, for read-committed statement snapshots
 (§6.2); the savepoint stack with `sm1::forget` (§6.5);
-`sm1::lock`, whose modes carry sm3's schema locks and the row
+`sm1::lock`, whose modes carry sm3's table-oid locks and the row
 lock of its index build (§5.1); `sm1::scan_seek`, which
 repositions a cursor instead of reopening it (§10.2); and the
 old row returned by `sm1::update` and `sm1::erase` (§5.3).
