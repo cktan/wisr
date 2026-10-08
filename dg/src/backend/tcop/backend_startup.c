@@ -27,7 +27,6 @@
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
-#include "replication/walsender.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/procsignal.h"
@@ -360,8 +359,6 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
    * title for ps.  It's good to do this as early as possible in startup.
    */
   initStringInfo(&ps_data);
-  if (am_walsender)
-    appendStringInfo(&ps_data, "%s ", GetBackendTypeDesc(B_WAL_SENDER));
   appendStringInfo(&ps_data, "%s ", port->user_name);
   if (port->database_name[0] != '\0')
     appendStringInfo(&ps_data, "%s ", port->database_name);
@@ -728,22 +725,12 @@ retry:
       else if (strcmp(nameptr, "options") == 0)
         port->cmdline_options = pstrdup(valptr);
       else if (strcmp(nameptr, "replication") == 0) {
-        /*
-         * Due to backward compatibility concerns the replication
-         * parameter is a hybrid beast which allows the value to be
-         * either boolean or the string 'database'. The latter
-         * connects to a specific database which is e.g. required for
-         * logical decoding while.
-         */
-        if (strcmp(valptr, "database") == 0) {
-          am_walsender = true;
-          am_db_walsender = true;
-        } else if (!parse_bool(valptr, &am_walsender))
-          ereport(FATAL, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                          errmsg("invalid value for parameter \"%s\": \"%s\"",
-                                 "replication", valptr),
-                          errhint("Valid values are: \"false\", 0, \"true\", "
-                                  "1, \"database\".")));
+        bool wanted = true;
+
+        /* digres has no replication: only "false" is taken. */
+        if (!parse_bool(valptr, &wanted) || wanted)
+          ereport(FATAL, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          errmsg("replication connections are not supported")));
       } else if (strncmp(nameptr, "_pq_.", 5) == 0) {
         /*
          * Any option beginning with _pq_. is reserved for use as a
@@ -809,21 +796,7 @@ retry:
   if (strlen(port->user_name) >= NAMEDATALEN)
     port->user_name[NAMEDATALEN - 1] = '\0';
 
-  if (am_walsender)
-    MyBackendType = B_WAL_SENDER;
-  else
-    MyBackendType = B_BACKEND;
-
-  /*
-   * Normal walsender backends, e.g. for streaming replication, are not
-   * connected to a particular database. But walsenders used for logical
-   * replication need to connect to a specific database. We allow streaming
-   * replication commands to be issued even if connected to a database as it
-   * can make sense to first make a basebackup and then stream changes
-   * starting from that.
-   */
-  if (am_walsender && !am_db_walsender)
-    port->database_name[0] = '\0';
+  MyBackendType = B_BACKEND;
 
   /*
    * Done filling the Port structure

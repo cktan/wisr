@@ -30,7 +30,6 @@
 #endif
 
 #include "access/commit_ts.h"
-#include "access/gin.h"
 #include "access/slru.h"
 #include "access/toast_compression.h"
 #include "access/twophase.h"
@@ -50,7 +49,6 @@
 #include "commands/vacuum.h"
 #include "common/file_utils.h"
 #include "common/scram-common.h"
-#include "jit/jit.h"
 #include "libpq/auth.h"
 #include "libpq/libpq.h"
 #include "libpq/oauth.h"
@@ -70,13 +68,7 @@
 #include "postmaster/postmaster.h"
 #include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
-#include "postmaster/walsummarizer.h"
 #include "postmaster/walwriter.h"
-#include "replication/logical.h"
-#include "replication/logicallauncher.h"
-#include "replication/slot.h"
-#include "replication/slotsync.h"
-#include "replication/syncrep.h"
 #include "storage/aio.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
@@ -90,7 +82,6 @@
 #include "storage/standby.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
-#include "tsearch/ts_cache.h"
 #include "utils/builtins.h"
 #include "utils/bytea.h"
 #include "utils/float.h"
@@ -386,12 +377,6 @@ static const struct config_enum_entry ssl_protocol_versions_info[] = {
     {"TLSv1.2", PG_TLS1_2_VERSION, false},
     {"TLSv1.3", PG_TLS1_3_VERSION, false},
     {NULL, 0, false}};
-
-static const struct config_enum_entry
-    debug_logical_replication_streaming_options[] = {
-        {"buffered", DEBUG_LOGICAL_REP_STREAMING_BUFFERED, false},
-        {"immediate", DEBUG_LOGICAL_REP_STREAMING_IMMEDIATE, false},
-        {NULL, 0, false}};
 
 StaticAssertDecl(lengthof(ssl_protocol_versions_info) ==
                      (PG_TLS1_3_VERSION + 2),
@@ -1154,13 +1139,6 @@ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL,
      NULL},
-    {{"log_replication_commands", PGC_SUSET, LOGGING_WHAT,
-      gettext_noop("Logs each replication command."), NULL},
-     &log_replication_commands,
-     false,
-     NULL,
-     NULL,
-     NULL},
     {{"debug_assertions", PGC_INTERNAL, PRESET_OPTIONS,
       gettext_noop(
           "Shows whether the running server has assertion checks enabled."),
@@ -1699,30 +1677,10 @@ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{"summarize_wal", PGC_SIGHUP, WAL_SUMMARIZATION,
-      gettext_noop(
-          "Starts the WAL summarizer process to enable incremental backup."),
-      NULL},
-     &summarize_wal,
-     false,
-     NULL,
-     NULL,
-     NULL},
-
     {{"hot_standby", PGC_POSTMASTER, REPLICATION_STANDBY,
       gettext_noop("Allows connections and queries during recovery."), NULL},
      &EnableHotStandby,
      true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"hot_standby_feedback", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop("Allows feedback from a hot standby to the primary that "
-                   "will avoid query conflicts."),
-      NULL},
-     &hot_standby_feedback,
-     false,
      NULL,
      NULL,
      NULL},
@@ -1833,71 +1791,6 @@ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{"jit", PGC_USERSET, QUERY_TUNING_OTHER,
-      gettext_noop("Allow JIT compilation."), NULL, GUC_EXPLAIN},
-     &jit_enabled,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"jit_debugging_support", PGC_SU_BACKEND, DEVELOPER_OPTIONS,
-      gettext_noop("Register JIT-compiled functions with debugger."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &jit_debugging_support,
-     false,
-
-     /*
-      * This is not guaranteed to be available, but given it's a developer
-      * oriented option, it doesn't seem worth adding code checking
-      * availability.
-      */
-     NULL,
-     NULL,
-     NULL},
-
-    {{"jit_dump_bitcode", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Write out LLVM bitcode to facilitate JIT debugging."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &jit_dump_bitcode,
-     false,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"jit_expressions", PGC_USERSET, DEVELOPER_OPTIONS,
-      gettext_noop("Allow JIT compilation of expressions."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &jit_expressions,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"jit_profiling_support", PGC_SU_BACKEND, DEVELOPER_OPTIONS,
-      gettext_noop("Register JIT-compiled functions with perf profiler."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &jit_profiling_support,
-     false,
-
-     /*
-      * This is not guaranteed to be available, but given it's a developer
-      * oriented option, it doesn't seem worth adding code checking
-      * availability.
-      */
-     NULL,
-     NULL,
-     NULL},
-
-    {{"jit_tuple_deforming", PGC_USERSET, DEVELOPER_OPTIONS,
-      gettext_noop("Allow JIT compilation of tuple deforming."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &jit_tuple_deforming,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
     {{
          "data_sync_retry",
          PGC_POSTMASTER,
@@ -1906,19 +1799,6 @@ struct config_bool ConfigureNamesBool[] = {
              "Whether to continue running after a failure to sync data files."),
      },
      &data_sync_retry,
-     false,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "wal_receiver_create_temp_slot",
-         PGC_SIGHUP,
-         REPLICATION_STANDBY,
-         gettext_noop("Sets whether a WAL receiver should create a temporary "
-                      "replication slot if no permanent slot is configured."),
-     },
-     &wal_receiver_create_temp_slot,
      false,
      NULL,
      NULL,
@@ -1934,19 +1814,6 @@ struct config_bool ConfigureNamesBool[] = {
      },
      &event_triggers,
      true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "sync_replication_slots",
-         PGC_SIGHUP,
-         REPLICATION_STANDBY,
-         gettext_noop("Enables a physical standby to synchronize logical "
-                      "failover replication slots from the primary server."),
-     },
-     &sync_replication_slots,
-     false,
      NULL,
      NULL,
      NULL},
@@ -2123,42 +1990,6 @@ struct config_int ConfigureNamesInt[] = {
      &max_standby_streaming_delay,
      30 * 1000,
      -1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"recovery_min_apply_delay", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop(
-          "Sets the minimum delay for applying changes during recovery."),
-      NULL, GUC_UNIT_MS},
-     &recovery_min_apply_delay,
-     0,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_receiver_status_interval", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop("Sets the maximum interval between WAL receiver status "
-                   "reports to the sending server."),
-      NULL, GUC_UNIT_S},
-     &wal_receiver_status_interval,
-     10,
-     0,
-     INT_MAX / 1000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_receiver_timeout", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop("Sets the maximum wait time to receive data from the "
-                   "sending server."),
-      gettext_noop("0 disables the timeout."), GUC_UNIT_MS},
-     &wal_receiver_timeout,
-     60 * 1000,
-     0,
      INT_MAX,
      NULL,
      NULL,
@@ -2463,24 +2294,6 @@ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"logical_decoding_work_mem", PGC_USERSET, RESOURCES_MEM,
-      gettext_noop("Sets the maximum memory to be used for logical decoding."),
-      gettext_noop("This much memory can be used by each internal "
-                   "reorder buffer before spilling to disk."),
-      GUC_UNIT_KB},
-     &logical_decoding_work_mem,
-     65536,
-     64,
-     MAX_KILOBYTES,
-     NULL,
-     NULL,
-     NULL},
-
-    /*
-     * We use the hopefully-safely-small value of 100kB as the compiled-in
-     * default for max_stack_depth.  InitializeGUCOptions will increase it if
-     * possible, depending on the actual platform-specific stack limit.
-     */
     {{"max_stack_depth", PGC_SUSET, RESOURCES_MEM,
       gettext_noop("Sets the maximum stack depth, in kilobytes."), NULL,
       GUC_UNIT_KB},
@@ -2974,31 +2787,6 @@ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"max_wal_senders", PGC_POSTMASTER, REPLICATION_SENDING,
-      gettext_noop("Sets the maximum number of simultaneously running WAL "
-                   "sender processes."),
-      NULL},
-     &max_wal_senders,
-     10,
-     0,
-     MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-
-    {/* see max_wal_senders */
-     {"max_replication_slots", PGC_POSTMASTER, REPLICATION_SENDING,
-      gettext_noop("Sets the maximum number of simultaneously defined "
-                   "replication slots."),
-      NULL},
-     &max_replication_slots,
-     10,
-     0,
-     MAX_BACKENDS /* XXX? */,
-     NULL,
-     NULL,
-     NULL},
-
     {{"max_slot_wal_keep_size", PGC_SIGHUP, REPLICATION_SENDING,
       gettext_noop("Sets the maximum WAL size that can be reserved by "
                    "replication slots."),
@@ -3012,30 +2800,6 @@ struct config_int ConfigureNamesInt[] = {
      -1,
      -1,
      MAX_KILOBYTES,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_sender_timeout", PGC_USERSET, REPLICATION_SENDING,
-      gettext_noop("Sets the maximum time to wait for WAL replication."), NULL,
-      GUC_UNIT_MS},
-     &wal_sender_timeout,
-     60 * 1000,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"idle_replication_slot_timeout", PGC_SIGHUP, REPLICATION_SENDING,
-      gettext_noop(
-          "Sets the duration a replication slot can remain idle before "
-          "it is invalidated."),
-      NULL, GUC_UNIT_S},
-     &idle_replication_slot_timeout_secs,
-     0,
-     0,
-     INT_MAX,
      NULL,
      NULL,
      NULL},
@@ -3289,65 +3053,6 @@ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{
-         "max_logical_replication_workers",
-         PGC_POSTMASTER,
-         REPLICATION_SUBSCRIBERS,
-         gettext_noop(
-             "Maximum number of logical replication worker processes."),
-         NULL,
-     },
-     &max_logical_replication_workers,
-     4,
-     0,
-     MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "max_sync_workers_per_subscription",
-         PGC_SIGHUP,
-         REPLICATION_SUBSCRIBERS,
-         gettext_noop("Maximum number of table synchronization workers per "
-                      "subscription."),
-         NULL,
-     },
-     &max_sync_workers_per_subscription,
-     2,
-     0,
-     MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "max_parallel_apply_workers_per_subscription",
-         PGC_SIGHUP,
-         REPLICATION_SUBSCRIBERS,
-         gettext_noop(
-             "Maximum number of parallel apply workers per subscription."),
-         NULL,
-     },
-     &max_parallel_apply_workers_per_subscription,
-     2,
-     0,
-     MAX_PARALLEL_WORKER_LIMIT,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_active_replication_origins", PGC_POSTMASTER, REPLICATION_SUBSCRIBERS,
-      gettext_noop("Sets the maximum number of active replication origins."),
-      NULL},
-     &max_active_replication_origins,
-     10,
-     0,
-     MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-
     {{"log_rotation_age", PGC_SIGHUP, LOGGING_WHERE,
       gettext_noop("Sets the amount of time to wait before forcing "
                    "log file rotation."),
@@ -3461,22 +3166,6 @@ struct config_int ConfigureNamesInt[] = {
      WalSegMinSize,
      WalSegMaxSize,
      check_wal_segment_size,
-     NULL,
-     NULL},
-
-    {{
-         "wal_summary_keep_time",
-         PGC_SIGHUP,
-         WAL_SUMMARIZATION,
-         gettext_noop("Time for which WAL summary files should be kept."),
-         gettext_noop("0 disables automatic summary file deletion."),
-         GUC_UNIT_MIN,
-     },
-     &wal_summary_keep_time,
-     10 * HOURS_PER_DAY *MINS_PER_HOUR, /* 10 days */
-     0,
-     INT_MAX / SECS_PER_MINUTE,
-     NULL,
      NULL,
      NULL},
 
@@ -3689,22 +3378,6 @@ struct config_int ConfigureNamesInt[] = {
      show_tcp_keepalives_count},
 
     {{
-         "gin_fuzzy_search_limit",
-         PGC_USERSET,
-         CLIENT_CONN_OTHER,
-         gettext_noop(
-             "Sets the maximum allowed result for exact search by GIN."),
-         gettext_noop("0 means no limit."),
-     },
-     &GinFuzzySearchLimit,
-     0,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
          "effective_cache_size",
          PGC_USERSET,
          QUERY_TUNING_COST,
@@ -3796,17 +3469,6 @@ struct config_int ConfigureNamesInt[] = {
      1024,
      100,
      1048576,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"gin_pending_list_limit", PGC_USERSET, CLIENT_CONN_STATEMENT,
-      gettext_noop("Sets the maximum size of the pending list for GIN index."),
-      NULL, GUC_UNIT_KB},
-     &gin_pending_list_limit,
-     4096,
-     64,
-     MAX_KILOBYTES,
      NULL,
      NULL,
      NULL},
@@ -3981,40 +3643,6 @@ struct config_real ConfigureNamesReal[] = {
      &parallel_setup_cost,
      DEFAULT_PARALLEL_SETUP_COST,
      0,
-     DBL_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"jit_above_cost", PGC_USERSET, QUERY_TUNING_COST,
-      gettext_noop("Perform JIT compilation if query is more expensive."),
-      gettext_noop("-1 disables JIT compilation."), GUC_EXPLAIN},
-     &jit_above_cost,
-     100000,
-     -1,
-     DBL_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"jit_optimize_above_cost", PGC_USERSET, QUERY_TUNING_COST,
-      gettext_noop(
-          "Optimize JIT-compiled functions if query is more expensive."),
-      gettext_noop("-1 disables optimization."), GUC_EXPLAIN},
-     &jit_optimize_above_cost,
-     500000,
-     -1,
-     DBL_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"jit_inline_above_cost", PGC_USERSET, QUERY_TUNING_COST,
-      gettext_noop("Perform JIT inlining if query is more expensive."),
-      gettext_noop("-1 disables inlining."), GUC_EXPLAIN},
-     &jit_inline_above_cost,
-     500000,
-     -1,
      DBL_MAX,
      NULL,
      NULL,
@@ -4322,26 +3950,6 @@ struct config_string ConfigureNamesString[] = {
      "",
      check_recovery_target_lsn,
      assign_recovery_target_lsn,
-     NULL},
-
-    {{"primary_conninfo", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop("Sets the connection string to be used to connect to the "
-                   "sending server."),
-      NULL, GUC_SUPERUSER_ONLY},
-     &PrimaryConnInfo,
-     "",
-     NULL,
-     NULL,
-     NULL},
-
-    {{"primary_slot_name", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop("Sets the name of the replication slot to use on the "
-                   "sending server."),
-      NULL},
-     &PrimarySlotName,
-     "",
-     check_primary_slot_name,
-     NULL,
      NULL},
 
     {{"client_encoding", PGC_USERSET, CLIENT_CONN_LOCALE,
@@ -4789,16 +4397,6 @@ struct config_string ConfigureNamesString[] = {
      NULL,
      NULL},
 
-    {{"synchronous_standby_names", PGC_SIGHUP, REPLICATION_PRIMARY,
-      gettext_noop("Number of synchronous standbys and list of names of "
-                   "potential synchronous ones."),
-      NULL, GUC_LIST_INPUT},
-     &SyncRepStandbyNames,
-     "",
-     check_synchronous_standby_names,
-     assign_synchronous_standby_names,
-     NULL},
-
     {{"ssl_tls13_ciphers", PGC_SIGHUP, CONN_AUTH_SSL,
       gettext_noop("Sets the list of allowed TLSv1.3 cipher suites."),
       gettext_noop("An empty string means use the default cipher suites."),
@@ -4890,14 +4488,6 @@ struct config_string ConfigureNamesString[] = {
      assign_wal_consistency_checking,
      NULL},
 
-    {{"jit_provider", PGC_POSTMASTER, CLIENT_CONN_PRELOAD,
-      gettext_noop("JIT provider to use."), NULL, GUC_SUPERUSER_ONLY},
-     &jit_provider,
-     "llvmjit",
-     NULL,
-     NULL,
-     NULL},
-
     {{"backtrace_functions", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Log backtrace for errors in these functions."), NULL,
       GUC_NOT_IN_SAMPLE},
@@ -4917,20 +4507,6 @@ struct config_string ConfigureNamesString[] = {
      assign_debug_io_direct,
      NULL},
 
-    {{"synchronized_standby_slots", PGC_SIGHUP, REPLICATION_PRIMARY,
-      gettext_noop(
-          "Lists streaming replication standby server replication slot "
-          "names that logical WAL sender processes will wait for."),
-      gettext_noop("Logical WAL sender processes will send decoded "
-                   "changes to output plugins only after the specified "
-                   "replication slots have confirmed receiving WAL."),
-      GUC_LIST_INPUT},
-     &synchronized_standby_slots,
-     "",
-     check_synchronized_standby_slots,
-     assign_synchronized_standby_slots,
-     NULL},
-
     {{"restrict_nonsystem_relation_kind", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop(
           "Prohibits access to non-system relations of specified kinds."),
@@ -4947,19 +4523,6 @@ struct config_string ConfigureNamesString[] = {
       NULL, GUC_LIST_INPUT | GUC_LIST_QUOTE | GUC_SUPERUSER_ONLY},
      &oauth_validator_libraries_string,
      "",
-     NULL,
-     NULL,
-     NULL},
-
-    {{"output_plugin_libraries", PGC_SUSET, REPLICATION_SENDING,
-      gettext_noop("Lists libraries that may be named as logical decoding "
-                   "output plugins."),
-      gettext_noop("Users with REPLICATION privileges may only use plugins in "
-                   "this list when creating logical replication slots."),
-      /* note: src/bin/pg_upgrade/check.c assumes GUC_LIST_QUOTE here */
-      GUC_LIST_INPUT | GUC_LIST_QUOTE | GUC_SUPERUSER_ONLY},
-     &output_plugin_libraries_string,
-     "pgoutput, test_decoding",
      NULL,
      NULL,
      NULL},
@@ -5161,7 +4724,7 @@ struct config_enum ConfigureNamesEnum[] = {
      SYNCHRONOUS_COMMIT_ON,
      synchronous_commit_options,
      NULL,
-     assign_synchronous_commit,
+     NULL,
      NULL},
 
     {{"archive_mode", PGC_POSTMASTER, WAL_ARCHIVING,
@@ -5395,23 +4958,6 @@ struct config_enum ConfigureNamesEnum[] = {
      &recovery_init_sync_method,
      DATA_DIR_SYNC_METHOD_FSYNC,
      recovery_init_sync_method_options,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"debug_logical_replication_streaming", PGC_USERSET, DEVELOPER_OPTIONS,
-      gettext_noop("Forces immediate streaming or serialization of changes in "
-                   "large transactions."),
-      gettext_noop("On the publisher, it allows streaming or serializing each "
-                   "change in logical decoding. "
-                   "On the subscriber, it allows serialization of all changes "
-                   "to files and notifies the "
-                   "parallel apply workers to read and apply them at the end "
-                   "of the transaction."),
-      GUC_NOT_IN_SAMPLE},
-     &debug_logical_replication_streaming,
-     DEBUG_LOGICAL_REP_STREAMING_BUFFERED,
-     debug_logical_replication_streaming_options,
      NULL,
      NULL,
      NULL},

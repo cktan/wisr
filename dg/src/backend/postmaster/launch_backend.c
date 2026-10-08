@@ -43,10 +43,7 @@
 #include "postmaster/postmaster.h"
 #include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
-#include "postmaster/walsummarizer.h"
 #include "postmaster/walwriter.h"
-#include "replication/slotsync.h"
-#include "replication/walreceiver.h"
 #include "storage/dsm.h"
 #include "storage/io_worker.h"
 #include "storage/pg_shmem.h"
@@ -190,7 +187,7 @@ static child_process_kind child_process_kinds[] = {
      * here for PostmasterChildName() but cannot launch them directly.
      */
     [B_WAL_SENDER] = {"wal sender", NULL, true},
-    [B_SLOTSYNC_WORKER] = {"slot sync worker", ReplSlotSyncWorkerMain, true},
+    [B_SLOTSYNC_WORKER] = {"slot sync worker", NULL, true},
 
     [B_STANDALONE_BACKEND] = {"standalone backend", NULL, false},
 
@@ -199,8 +196,8 @@ static child_process_kind child_process_kinds[] = {
     [B_CHECKPOINTER] = {"checkpointer", CheckpointerMain, true},
     [B_IO_WORKER] = {"io_worker", IoWorkerMain, true},
     [B_STARTUP] = {"startup", StartupProcessMain, true},
-    [B_WAL_RECEIVER] = {"wal_receiver", WalReceiverMain, true},
-    [B_WAL_SUMMARIZER] = {"wal_summarizer", WalSummarizerMain, true},
+    [B_WAL_RECEIVER] = {"wal_receiver", NULL, true},
+    [B_WAL_SUMMARIZER] = {"wal_summarizer", NULL, true},
     [B_WAL_WRITER] = {"wal_writer", WalWriterMain, true},
 
     [B_LOGGER] = {"syslogger", SysLoggerMain, false},

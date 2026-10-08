@@ -66,9 +66,6 @@ extern void ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into,
 extern void ExplainPrintPlan(struct ExplainState *es, QueryDesc *queryDesc);
 extern void ExplainPrintTriggers(struct ExplainState *es, QueryDesc *queryDesc);
 
-extern void ExplainPrintJITSummary(struct ExplainState *es,
-                                   QueryDesc *queryDesc);
-
 extern void ExplainQueryText(struct ExplainState *es, QueryDesc *queryDesc);
 extern void ExplainQueryParameters(struct ExplainState *es,
                                    ParamListInfo params, int maxlen);

@@ -26,12 +26,12 @@
 #endif
 
 #include "access/transam.h"
+#include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogreader.h"
 #include "access/xlogrecord.h"
 #include "catalog/pg_control.h"
 #include "common/pg_lzcompress.h"
-#include "replication/origin.h"
 
 #ifndef FRONTEND
 #include "pgstat.h"

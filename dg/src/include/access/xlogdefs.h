@@ -64,6 +64,7 @@ typedef uint32 TimeLineID;
  * include origin.h in a bunch of xlog related places.
  */
 typedef uint16 RepOriginId;
+#define InvalidRepOriginId 0
 
 /*
  * This chunk of hackery attempts to determine which file sync methods

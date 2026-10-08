@@ -1,7 +1,8 @@
 # dg -- build digres.
 #
-#   make -j12          generate what is generated, then compile
-#   make -k -j12       the same, going on past a file that fails
+#   make -j4           generate what is generated, compile, and link
+#                      the server, build/postgres
+#   make -k -j4        the same, going on past a file that fails
 #   make gen           only generate
 #   make clean         remove objects and generated files
 #   make format        clang-format every .c and .h
@@ -17,6 +18,7 @@ include $(top)/dg.mk
 I := src/include
 B := src/backend
 PERL := perl
+LDLIBS := -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
 # Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
@@ -42,6 +44,15 @@ GEN := $(I)/catalog/.stamp $(B)/nodes/.stamp $(B)/utils/.fmgr-stamp \
 .PHONY: gen
 gen: $(GEN)
 src: gen
+
+# The server: every object under src/, into one program. It is
+# relinked every time, since the objects are built by the Makefiles
+# below and this one cannot tell which of them changed.
+all: build/postgres
+.PHONY: build/postgres
+build/postgres: src
+	@mkdir -p build
+	$(CXX) -o $@ $$(find src -name '*.o') $(LDLIBS)
 
 # The catalogs' #defines: pg_*_d.h and the syscache tables.
 $(I)/catalog/.stamp: $(CATALOG_HEADERS) $(wildcard $(I)/catalog/*.dat) \
@@ -118,6 +129,7 @@ format-include:
 clean: clean-gen
 .PHONY: clean-gen
 clean-gen:
+	rm -rf build
 	rm -f $(GEN) $(I)/catalog/pg_*_d.h $(I)/catalog/schemapg.h \
 	    $(I)/catalog/syscache_ids.h $(I)/catalog/syscache_info.h \
 	    $(I)/catalog/system_fk_info.h $(I)/catalog/postgres.bki \

@@ -253,16 +253,6 @@ struct PGPROC {
                       * ProcGlobal->statusFlags[pgxactoff] */
 
   /*
-   * Info to allow us to wait for synchronous replication, if needed.
-   * waitLSN is InvalidXLogRecPtr if not waiting; set only by user backend.
-   * syncRepState must not be touched except by owning process or WALSender.
-   * syncRepLinks used only while holding SyncRepLock.
-   */
-  XLogRecPtr waitLSN;      /* waiting for this LSN or higher */
-  int syncRepState;        /* wait state for sync rep */
-  dlist_node syncRepLinks; /* list link if process is in syncrep queue */
-
-  /*
    * All PROCLOCK objects for locks held or awaited by this backend are
    * linked into one of these lists, according to the partition number of
    * their lock.

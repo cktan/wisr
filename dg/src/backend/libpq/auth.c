@@ -36,7 +36,6 @@
 #include "miscadmin.h"
 #include "port/pg_bswap.h"
 #include "postmaster/postmaster.h"
-#include "replication/walsender.h"
 #include "storage/ipc.h"
 #include "tcop/backend_startup.h"
 #include "utils/memutils.h"
@@ -422,19 +421,12 @@ void ClientAuthentication(Port *port) {
 #endif
                            _("no encryption");
 
-      if (am_walsender && !am_db_walsender)
-        ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-                        /* translator: last %s describes encryption state */
-                        errmsg("pg_hba.conf rejects replication connection for "
-                               "host \"%s\", user \"%s\", %s",
-                               hostinfo, port->user_name, encryption_state)));
-      else
-        ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-                        /* translator: last %s describes encryption state */
-                        errmsg("pg_hba.conf rejects connection for host "
-                               "\"%s\", user \"%s\", database \"%s\", %s",
-                               hostinfo, port->user_name, port->database_name,
-                               encryption_state)));
+      ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                      /* translator: last %s describes encryption state */
+                      errmsg("pg_hba.conf rejects connection for host "
+                             "\"%s\", user \"%s\", database \"%s\", %s",
+                             hostinfo, port->user_name, port->database_name,
+                             encryption_state)));
       break;
     }
 
@@ -486,21 +478,13 @@ void ClientAuthentication(Port *port) {
 								  gai_strerror(port->remote_hostname_errcode)) : \
 					0))
 
-      if (am_walsender && !am_db_walsender)
-        ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-                        /* translator: last %s describes encryption state */
-                        errmsg("no pg_hba.conf entry for replication "
-                               "connection from host \"%s\", user \"%s\", %s",
-                               hostinfo, port->user_name, encryption_state),
-                        HOSTNAME_LOOKUP_DETAIL(port)));
-      else
-        ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-                        /* translator: last %s describes encryption state */
-                        errmsg("no pg_hba.conf entry for host \"%s\", user "
-                               "\"%s\", database \"%s\", %s",
-                               hostinfo, port->user_name, port->database_name,
-                               encryption_state),
-                        HOSTNAME_LOOKUP_DETAIL(port)));
+      ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                      /* translator: last %s describes encryption state */
+                      errmsg("no pg_hba.conf entry for host \"%s\", user "
+                             "\"%s\", database \"%s\", %s",
+                             hostinfo, port->user_name, port->database_name,
+                             encryption_state),
+                      HOSTNAME_LOOKUP_DETAIL(port)));
       break;
     }
 

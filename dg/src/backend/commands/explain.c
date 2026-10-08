@@ -23,7 +23,6 @@
 #include "commands/explain_state.h"
 #include "commands/prepare.h"
 #include "foreign/fdwapi.h"
-#include "jit/jit.h"
 #include "libpq/pqformat.h"
 #include "libpq/protocol.h"
 #include "nodes/extensible.h"
@@ -64,8 +63,6 @@ explain_per_node_hook_type explain_per_node_hook = NULL;
 static void ExplainOneQuery(Query *query, int cursorOptions, IntoClause *into,
                             ExplainState *es, ParseState *pstate,
                             ParamListInfo params);
-static void ExplainPrintJIT(ExplainState *es, int jit_flags,
-                            JitInstrumentation *ji);
 static void ExplainPrintSerialize(ExplainState *es, SerializeMetrics *metrics);
 static void report_triggers(ResultRelInfo *rInfo, bool show_relname,
                             ExplainState *es);
@@ -585,15 +582,6 @@ void ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into,
   if (es->analyze)
     ExplainPrintTriggers(es, queryDesc);
 
-  /*
-   * Print info about JITing. Tied to es->costs because we don't want to
-   * display this in regression tests, as it'd cause output differences
-   * depending on build options.  Might want to separate that out from COSTS
-   * at a later stage.
-   */
-  if (es->costs)
-    ExplainPrintJITSummary(es, queryDesc);
-
   /* Print info about serialization of output */
   if (es->serialize != EXPLAIN_SERIALIZE_NONE)
     ExplainPrintSerialize(es, &serializeMetrics);
@@ -799,124 +787,6 @@ void ExplainPrintTriggers(ExplainState *es, QueryDesc *queryDesc) {
   }
 
   ExplainCloseGroup("Triggers", "Triggers", false, es);
-}
-
-/*
- * ExplainPrintJITSummary -
- *    Print summarized JIT instrumentation from leader and workers
- */
-void ExplainPrintJITSummary(ExplainState *es, QueryDesc *queryDesc) {
-  JitInstrumentation ji = {0};
-
-  if (!(queryDesc->estate->es_jit_flags & PGJIT_PERFORM))
-    return;
-
-  /*
-   * Work with a copy instead of modifying the leader state, since this
-   * function may be called twice
-   */
-  if (queryDesc->estate->es_jit)
-    InstrJitAgg(&ji, &queryDesc->estate->es_jit->instr);
-
-  /* If this process has done JIT in parallel workers, merge stats */
-  if (queryDesc->estate->es_jit_worker_instr)
-    InstrJitAgg(&ji, queryDesc->estate->es_jit_worker_instr);
-
-  ExplainPrintJIT(es, queryDesc->estate->es_jit_flags, &ji);
-}
-
-/*
- * ExplainPrintJIT -
- *	  Append information about JITing to es->str.
- */
-static void ExplainPrintJIT(ExplainState *es, int jit_flags,
-                            JitInstrumentation *ji) {
-  instr_time total_time;
-
-  /* don't print information if no JITing happened */
-  if (!ji || ji->created_functions == 0)
-    return;
-
-  /* calculate total time */
-  INSTR_TIME_SET_ZERO(total_time);
-  /* don't add deform_counter, it's included in generation_counter */
-  INSTR_TIME_ADD(total_time, ji->generation_counter);
-  INSTR_TIME_ADD(total_time, ji->inlining_counter);
-  INSTR_TIME_ADD(total_time, ji->optimization_counter);
-  INSTR_TIME_ADD(total_time, ji->emission_counter);
-
-  ExplainOpenGroup("JIT", "JIT", true, es);
-
-  /* for higher density, open code the text output format */
-  if (es->format == EXPLAIN_FORMAT_TEXT) {
-    ExplainIndentText(es);
-    appendStringInfoString(es->str, "JIT:\n");
-    es->indent++;
-
-    ExplainPropertyInteger("Functions", NULL, ji->created_functions, es);
-
-    ExplainIndentText(es);
-    appendStringInfo(es->str, "Options: %s %s, %s %s, %s %s, %s %s\n",
-                     "Inlining", jit_flags & PGJIT_INLINE ? "true" : "false",
-                     "Optimization", jit_flags & PGJIT_OPT3 ? "true" : "false",
-                     "Expressions", jit_flags & PGJIT_EXPR ? "true" : "false",
-                     "Deforming", jit_flags & PGJIT_DEFORM ? "true" : "false");
-
-    if (es->analyze && es->timing) {
-      ExplainIndentText(es);
-      appendStringInfo(
-          es->str,
-          "Timing: %s %.3f ms (%s %.3f ms), %s %.3f ms, %s %.3f ms, %s %.3f "
-          "ms, %s %.3f ms\n",
-          "Generation", 1000.0 * INSTR_TIME_GET_DOUBLE(ji->generation_counter),
-          "Deform", 1000.0 * INSTR_TIME_GET_DOUBLE(ji->deform_counter),
-          "Inlining", 1000.0 * INSTR_TIME_GET_DOUBLE(ji->inlining_counter),
-          "Optimization",
-          1000.0 * INSTR_TIME_GET_DOUBLE(ji->optimization_counter), "Emission",
-          1000.0 * INSTR_TIME_GET_DOUBLE(ji->emission_counter), "Total",
-          1000.0 * INSTR_TIME_GET_DOUBLE(total_time));
-    }
-
-    es->indent--;
-  } else {
-    ExplainPropertyInteger("Functions", NULL, ji->created_functions, es);
-
-    ExplainOpenGroup("Options", "Options", true, es);
-    ExplainPropertyBool("Inlining", jit_flags & PGJIT_INLINE, es);
-    ExplainPropertyBool("Optimization", jit_flags & PGJIT_OPT3, es);
-    ExplainPropertyBool("Expressions", jit_flags & PGJIT_EXPR, es);
-    ExplainPropertyBool("Deforming", jit_flags & PGJIT_DEFORM, es);
-    ExplainCloseGroup("Options", "Options", true, es);
-
-    if (es->analyze && es->timing) {
-      ExplainOpenGroup("Timing", "Timing", true, es);
-
-      ExplainOpenGroup("Generation", "Generation", true, es);
-      ExplainPropertyFloat("Deform", "ms",
-                           1000.0 * INSTR_TIME_GET_DOUBLE(ji->deform_counter),
-                           3, es);
-      ExplainPropertyFloat(
-          "Total", "ms", 1000.0 * INSTR_TIME_GET_DOUBLE(ji->generation_counter),
-          3, es);
-      ExplainCloseGroup("Generation", "Generation", true, es);
-
-      ExplainPropertyFloat("Inlining", "ms",
-                           1000.0 * INSTR_TIME_GET_DOUBLE(ji->inlining_counter),
-                           3, es);
-      ExplainPropertyFloat(
-          "Optimization", "ms",
-          1000.0 * INSTR_TIME_GET_DOUBLE(ji->optimization_counter), 3, es);
-      ExplainPropertyFloat("Emission", "ms",
-                           1000.0 * INSTR_TIME_GET_DOUBLE(ji->emission_counter),
-                           3, es);
-      ExplainPropertyFloat("Total", "ms",
-                           1000.0 * INSTR_TIME_GET_DOUBLE(total_time), 3, es);
-
-      ExplainCloseGroup("Timing", "Timing", true, es);
-    }
-  }
-
-  ExplainCloseGroup("JIT", "JIT", true, es);
 }
 
 /*
@@ -2037,22 +1907,6 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
     break;
   default:
     break;
-  }
-
-  /*
-   * Prepare per-worker JIT instrumentation.  As with the overall JIT
-   * summary, this is printed only if printing costs is enabled.
-   */
-  if (es->workers_state && es->costs && es->verbose) {
-    SharedJitInstrumentation *w = planstate->worker_jit_instrument;
-
-    if (w) {
-      for (int n = 0; n < w->num_workers; n++) {
-        ExplainOpenWorker(n, es);
-        ExplainPrintJIT(es, planstate->state->es_jit_flags, &w->jit_instr[n]);
-        ExplainCloseWorker(n, es);
-      }
-    }
   }
 
   /* Show buffer/WAL usage */

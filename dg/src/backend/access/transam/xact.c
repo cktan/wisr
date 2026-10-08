@@ -45,12 +45,6 @@
 #include "miscadmin.h"
 #include "pg_trace.h"
 #include "pgstat.h"
-#include "replication/logical.h"
-#include "replication/logicallauncher.h"
-#include "replication/logicalworker.h"
-#include "replication/origin.h"
-#include "replication/snapbuild.h"
-#include "replication/syncrep.h"
 #include "storage/aio_subsys.h"
 #include "storage/condition_variable.h"
 #include "storage/fd.h"
@@ -1288,15 +1282,6 @@ static TransactionId RecordTransactionCommit(void) {
     if (!wrote_xlog)
       goto cleanup;
   } else {
-    bool replorigin;
-
-    /*
-     * Are we using the replication origins feature?  Or, in other words,
-     * are we replaying remote actions?
-     */
-    replorigin = (replorigin_session_origin != InvalidRepOriginId &&
-                  replorigin_session_origin != DoNotReplicateId);
-
     /*
      * Mark ourselves as within our "commit critical section".  This
      * forces any concurrent checkpoint to wait until we've updated
@@ -1327,27 +1312,13 @@ static TransactionId RecordTransactionCommit(void) {
                         MyXactFlags, InvalidTransactionId,
                         NULL /* plain commit */);
 
-    if (replorigin)
-      /* Move LSNs forward for this replication origin */
-      replorigin_session_advance(replorigin_session_origin_lsn, XactLastRecEnd);
-
     /*
-     * Record commit timestamp.  The value comes from plain commit
-     * timestamp if there's no replication origin; otherwise, the
-     * timestamp was already set in replorigin_session_origin_timestamp by
-     * replication.
-     *
-     * We don't need to WAL-log anything here, as the commit record
-     * written above already contains the data.
+     * Record commit timestamp.  We don't need to WAL-log anything here, as
+     * the commit record written above already contains the data.
      */
-
-    if (!replorigin || replorigin_session_origin_timestamp == 0)
-      replorigin_session_origin_timestamp =
-          GetCurrentTransactionStopTimestamp();
-
     TransactionTreeSetCommitTsData(xid, nchildren, children,
-                                   replorigin_session_origin_timestamp,
-                                   replorigin_session_origin);
+                                   GetCurrentTransactionStopTimestamp(),
+                                   InvalidRepOriginId);
   }
 
   /*
@@ -1429,9 +1400,6 @@ static TransactionId RecordTransactionCommit(void) {
    * Note that at this stage we have marked clog, but still show as running
    * in the procarray and continue to hold locks.
    */
-  if (wrote_xlog && markXidCommitted)
-    SyncRepWaitForLSN(XactLastRecEnd, true);
-
   /* remember end of last commit record */
   XactLastCommitEnd = XactLastRecEnd;
 
@@ -1625,7 +1593,6 @@ static TransactionId RecordTransactionAbort(bool isSubXact) {
   int nchildren;
   TransactionId *children;
   TimestampTz xact_time;
-  bool replorigin;
 
   /*
    * If we haven't been assigned an XID, nobody will care whether we aborted
@@ -1654,13 +1621,6 @@ static TransactionId RecordTransactionAbort(bool isSubXact) {
   if (TransactionIdDidCommit(xid))
     elog(PANIC, "cannot abort transaction %u, it was already committed", xid);
 
-  /*
-   * Are we using the replication origins feature?  Or, in other words, are
-   * we replaying remote actions?
-   */
-  replorigin = (replorigin_session_origin != InvalidRepOriginId &&
-                replorigin_session_origin != DoNotReplicateId);
-
   /* Fetch the data we need for the abort record */
   nrels = smgrGetPendingDeletes(false, &rels);
   nchildren = xactGetCommittedChildren(&children);
@@ -1678,10 +1638,6 @@ static TransactionId RecordTransactionAbort(bool isSubXact) {
 
   XactLogAbortRecord(xact_time, nchildren, children, nrels, rels, ndroppedstats,
                      droppedstats, MyXactFlags, InvalidTransactionId, NULL);
-
-  if (replorigin)
-    /* Move LSNs forward for this replication origin */
-    replorigin_session_advance(replorigin_session_origin_lsn, XactLastRecEnd);
 
   /*
    * Report the latest async abort LSN, so that the WAL writer knows to
@@ -2295,8 +2251,6 @@ static void CommitTransaction(void) {
   AtEOXact_HashTables(true);
   AtEOXact_PgStat(true, is_parallel_worker);
   AtEOXact_Snapshot(true, false);
-  AtEOXact_ApplyLauncher(true);
-  AtEOXact_LogicalRepWorkers(true);
   pgstat_report_xact_timestamp(0);
 
   ResourceOwnerDelete(TopTransactionResourceOwner);
@@ -2583,9 +2537,6 @@ static void PrepareTransaction(void) {
   AtEOXact_HashTables(true);
   /* don't call AtEOXact_PgStat here; we fixed pgstat state above */
   AtEOXact_Snapshot(true, true);
-  /* we treat PREPARE as ROLLBACK so far as waking workers goes */
-  AtEOXact_ApplyLauncher(false);
-  AtEOXact_LogicalRepWorkers(false);
   pgstat_report_xact_timestamp(0);
 
   CurrentResourceOwner = NULL;
@@ -2710,12 +2661,6 @@ static void AbortTransaction(void) {
   /* Forget about any active REINDEX. */
   ResetReindexState(s->nestingLevel);
 
-  /* Reset logical streaming state. */
-  ResetLogicalStreamingState();
-
-  /* Reset snapshot export state. */
-  SnapBuildResetExportedSnapshotState();
-
   /*
    * If this xact has started any unfinished parallel operation, clean up
    * its workers and exit parallel mode.  Don't warn about leaked resources.
@@ -2798,8 +2743,6 @@ static void AbortTransaction(void) {
     AtEOXact_ComboCid();
     AtEOXact_HashTables(false);
     AtEOXact_PgStat(false, is_parallel_worker);
-    AtEOXact_ApplyLauncher(false);
-    AtEOXact_LogicalRepWorkers(false);
     pgstat_report_xact_timestamp(0);
   }
 
@@ -4940,9 +4883,6 @@ static void AbortSubTransaction(void) {
   /* Forget about any active REINDEX. */
   ResetReindexState(s->nestingLevel);
 
-  /* Reset logical streaming state. */
-  ResetLogicalStreamingState();
-
   /*
    * No need for SnapBuildResetExportedSnapshotState() here, snapshot
    * exports are not supported in subtransactions.
@@ -5427,7 +5367,6 @@ XLogRecPtr XactLogCommitRecord(
   xl_xact_stats_items xl_dropped_stats;
   xl_xact_invals xl_invals;
   xl_xact_twophase xl_twophase;
-  xl_xact_origin xl_origin;
   uint8 info;
 
   Assert(CritSectionCount > 0);
@@ -5498,14 +5437,6 @@ XLogRecPtr XactLogCommitRecord(
       xl_xinfo.xinfo |= XACT_XINFO_HAS_GID;
   }
 
-  /* dump transaction origin information */
-  if (replorigin_session_origin != InvalidRepOriginId) {
-    xl_xinfo.xinfo |= XACT_XINFO_HAS_ORIGIN;
-
-    xl_origin.origin_lsn = replorigin_session_origin_lsn;
-    xl_origin.origin_timestamp = replorigin_session_origin_timestamp;
-  }
-
   if (xl_xinfo.xinfo != 0)
     info |= XLOG_XACT_HAS_INFO;
 
@@ -5547,9 +5478,6 @@ XLogRecPtr XactLogCommitRecord(
       XLogRegisterData(twophase_gid, strlen(twophase_gid) + 1);
   }
 
-  if (xl_xinfo.xinfo & XACT_XINFO_HAS_ORIGIN)
-    XLogRegisterData(&xl_origin, sizeof(xl_xact_origin));
-
   /* we allow filtering by xacts */
   XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
 
@@ -5575,7 +5503,6 @@ XLogRecPtr XactLogAbortRecord(TimestampTz abort_time, int nsubxacts,
   xl_xact_stats_items xl_dropped_stats;
   xl_xact_twophase xl_twophase;
   xl_xact_dbinfo xl_dbinfo;
-  xl_xact_origin xl_origin;
 
   uint8 info;
 
@@ -5627,17 +5554,6 @@ XLogRecPtr XactLogAbortRecord(TimestampTz abort_time, int nsubxacts,
     xl_dbinfo.tsId = MyDatabaseTableSpace;
   }
 
-  /*
-   * Dump transaction origin information. We need this during recovery to
-   * update the replication origin progress.
-   */
-  if (replorigin_session_origin != InvalidRepOriginId) {
-    xl_xinfo.xinfo |= XACT_XINFO_HAS_ORIGIN;
-
-    xl_origin.origin_lsn = replorigin_session_origin_lsn;
-    xl_origin.origin_timestamp = replorigin_session_origin_timestamp;
-  }
-
   if (xl_xinfo.xinfo != 0)
     info |= XLOG_XACT_HAS_INFO;
 
@@ -5673,9 +5589,6 @@ XLogRecPtr XactLogAbortRecord(TimestampTz abort_time, int nsubxacts,
     if (xl_xinfo.xinfo & XACT_XINFO_HAS_GID)
       XLogRegisterData(twophase_gid, strlen(twophase_gid) + 1);
   }
-
-  if (xl_xinfo.xinfo & XACT_XINFO_HAS_ORIGIN)
-    XLogRegisterData(&xl_origin, sizeof(xl_xact_origin));
 
   /* Include the replication origin */
   XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
@@ -5764,12 +5677,6 @@ static void xact_redo_commit(xl_xact_parsed_commit *parsed, TransactionId xid,
       StandbyReleaseLockTree(xid, parsed->nsubxacts, parsed->subxacts);
   }
 
-  if (parsed->xinfo & XACT_XINFO_HAS_ORIGIN) {
-    /* recover apply progress */
-    replorigin_advance(origin_id, parsed->origin_lsn, lsn, false /* backward */,
-                       false /* WAL */);
-  }
-
   /* Make sure files supposed to be dropped are dropped */
   if (parsed->nrels > 0) {
     /*
@@ -5814,14 +5721,6 @@ static void xact_redo_commit(xl_xact_parsed_commit *parsed, TransactionId xid,
    */
   if (XactCompletionForceSyncCommit(parsed->xinfo))
     XLogFlush(lsn);
-
-  /*
-   * If asked by the primary (because someone is waiting for a synchronous
-   * commit = remote_apply), we will need to ask walreceiver to send a reply
-   * immediately.
-   */
-  if (XactCompletionApplyFeedback(parsed->xinfo))
-    XLogRequestWalReceiverReply();
 }
 
 /*
@@ -5876,12 +5775,6 @@ static void xact_redo_abort(xl_xact_parsed_abort *parsed, TransactionId xid,
      */
     if (parsed->xinfo & XACT_XINFO_HAS_AE_LOCKS)
       StandbyReleaseLockTree(xid, parsed->nsubxacts, parsed->subxacts);
-  }
-
-  if (parsed->xinfo & XACT_XINFO_HAS_ORIGIN) {
-    /* recover apply progress */
-    replorigin_advance(origin_id, parsed->origin_lsn, lsn, false /* backward */,
-                       false /* WAL */);
   }
 
   /* Make sure files supposed to be dropped are dropped */

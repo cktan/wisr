@@ -24,7 +24,6 @@
 
 #include "executor/executor.h"
 #include "executor/nodeValuesscan.h"
-#include "jit/jit.h"
 #include "optimizer/clauses.h"
 #include "utils/expandeddatum.h"
 
@@ -271,21 +270,7 @@ ValuesScanState *ExecInitValuesScan(ValuesScan *node, EState *estate,
      * case where there are no SubPlans anywhere.
      */
     if (estate->es_subplanstates && contain_subplans((Node *)exprs)) {
-      int saved_jit_flags;
-
-      /*
-       * As these expressions are only used once, disable JIT for them.
-       * This is worthwhile because it's common to insert significant
-       * amounts of data via VALUES().  Note that this doesn't prevent
-       * use of JIT *within* a subplan, since that's initialized
-       * separately; this just affects the upper-level subexpressions.
-       */
-      saved_jit_flags = estate->es_jit_flags;
-      estate->es_jit_flags = PGJIT_NONE;
-
       scanstate->exprstatelists[i] = ExecInitExprList(exprs, &scanstate->ss.ps);
-
-      estate->es_jit_flags = saved_jit_flags;
     }
     i++;
   }

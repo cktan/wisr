@@ -31,6 +31,7 @@
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "utils/typcache.h"
 
 #define DEFAULT_NULL_FRAC      Float4GetDatum(0.0)
 #define DEFAULT_AVG_WIDTH      Int32GetDatum(0)     /* unknown */

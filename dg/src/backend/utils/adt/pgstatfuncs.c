@@ -25,7 +25,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/bgworker.h"
-#include "replication/logicallauncher.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/acl.h"
@@ -441,13 +440,6 @@ Datum pg_stat_get_activity(PG_FUNCTION_ARGS) {
         if (leader && leader->pid != beentry->st_procpid) {
           values[29] = Int32GetDatum(leader->pid);
           nulls[29] = false;
-        } else if (beentry->st_backendType == B_BG_WORKER) {
-          int leader_pid = GetLeaderApplyWorkerPid(beentry->st_procpid);
-
-          if (leader_pid != InvalidPid) {
-            values[29] = Int32GetDatum(leader_pid);
-            nulls[29] = false;
-          }
         }
       }
 
@@ -1801,39 +1793,6 @@ Datum pg_stat_reset_slru(PG_FUNCTION_ARGS) {
   PG_RETURN_VOID();
 }
 
-/* Reset replication slots stats (a specific one or all of them). */
-Datum pg_stat_reset_replication_slot(PG_FUNCTION_ARGS) {
-  char *target = NULL;
-
-  if (PG_ARGISNULL(0))
-    pgstat_reset_of_kind(PGSTAT_KIND_REPLSLOT);
-  else {
-    target = text_to_cstring(PG_GETARG_TEXT_PP(0));
-    pgstat_reset_replslot(target);
-  }
-
-  PG_RETURN_VOID();
-}
-
-/* Reset subscription stats (a specific one or all of them) */
-Datum pg_stat_reset_subscription_stats(PG_FUNCTION_ARGS) {
-  Oid subid;
-
-  if (PG_ARGISNULL(0)) {
-    /* Clear all subscription stats */
-    pgstat_reset_of_kind(PGSTAT_KIND_SUBSCRIPTION);
-  } else {
-    subid = PG_GETARG_OID(0);
-
-    if (!OidIsValid(subid))
-      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                      errmsg("invalid subscription OID %u", subid)));
-    pgstat_reset(PGSTAT_KIND_SUBSCRIPTION, InvalidOid, subid);
-  }
-
-  PG_RETURN_VOID();
-}
-
 Datum pg_stat_get_archiver(PG_FUNCTION_ARGS) {
   TupleDesc tupdesc;
   Datum values[7] = {0};
@@ -1886,138 +1845,6 @@ Datum pg_stat_get_archiver(PG_FUNCTION_ARGS) {
     nulls[6] = true;
   else
     values[6] = TimestampTzGetDatum(archiver_stats->stat_reset_timestamp);
-
-  /* Returns the record as Datum */
-  PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
-}
-
-/*
- * Get the statistics for the replication slot. If the slot statistics is not
- * available, return all-zeroes stats.
- */
-Datum pg_stat_get_replication_slot(PG_FUNCTION_ARGS) {
-#define PG_STAT_GET_REPLICATION_SLOT_COLS 10
-  text *slotname_text = PG_GETARG_TEXT_P(0);
-  NameData slotname;
-  TupleDesc tupdesc;
-  Datum values[PG_STAT_GET_REPLICATION_SLOT_COLS] = {0};
-  bool nulls[PG_STAT_GET_REPLICATION_SLOT_COLS] = {0};
-  PgStat_StatReplSlotEntry *slotent;
-  PgStat_StatReplSlotEntry allzero;
-
-  /* Initialise attributes information in the tuple descriptor */
-  tupdesc = CreateTemplateTupleDesc(PG_STAT_GET_REPLICATION_SLOT_COLS);
-  TupleDescInitEntry(tupdesc, (AttrNumber)1, "slot_name", TEXTOID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)2, "spill_txns", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)3, "spill_count", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)4, "spill_bytes", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)5, "stream_txns", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)6, "stream_count", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)7, "stream_bytes", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)8, "total_txns", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)9, "total_bytes", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)10, "stats_reset", TIMESTAMPTZOID, -1,
-                     0);
-  BlessTupleDesc(tupdesc);
-
-  namestrcpy(&slotname, text_to_cstring(slotname_text));
-  slotent = pgstat_fetch_replslot(slotname);
-  if (!slotent) {
-    /*
-     * If the slot is not found, initialise its stats. This is possible if
-     * the create slot message is lost.
-     */
-    memset(&allzero, 0, sizeof(PgStat_StatReplSlotEntry));
-    slotent = &allzero;
-  }
-
-  values[0] = CStringGetTextDatum(NameStr(slotname));
-  values[1] = Int64GetDatum(slotent->spill_txns);
-  values[2] = Int64GetDatum(slotent->spill_count);
-  values[3] = Int64GetDatum(slotent->spill_bytes);
-  values[4] = Int64GetDatum(slotent->stream_txns);
-  values[5] = Int64GetDatum(slotent->stream_count);
-  values[6] = Int64GetDatum(slotent->stream_bytes);
-  values[7] = Int64GetDatum(slotent->total_txns);
-  values[8] = Int64GetDatum(slotent->total_bytes);
-
-  if (slotent->stat_reset_timestamp == 0)
-    nulls[9] = true;
-  else
-    values[9] = TimestampTzGetDatum(slotent->stat_reset_timestamp);
-
-  /* Returns the record as Datum */
-  PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
-}
-
-/*
- * Get the subscription statistics for the given subscription. If the
- * subscription statistics is not available, return all-zeros stats.
- */
-Datum pg_stat_get_subscription_stats(PG_FUNCTION_ARGS) {
-#define PG_STAT_GET_SUBSCRIPTION_STATS_COLS	11
-  Oid subid = PG_GETARG_OID(0);
-  TupleDesc tupdesc;
-  Datum values[PG_STAT_GET_SUBSCRIPTION_STATS_COLS] = {0};
-  bool nulls[PG_STAT_GET_SUBSCRIPTION_STATS_COLS] = {0};
-  PgStat_StatSubEntry *subentry;
-  PgStat_StatSubEntry allzero;
-  int i = 0;
-
-  /* Get subscription stats */
-  subentry = pgstat_fetch_stat_subscription(subid);
-
-  /* Initialise attributes information in the tuple descriptor */
-  tupdesc = CreateTemplateTupleDesc(PG_STAT_GET_SUBSCRIPTION_STATS_COLS);
-  TupleDescInitEntry(tupdesc, (AttrNumber)1, "subid", OIDOID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)2, "apply_error_count", INT8OID, -1,
-                     0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)3, "sync_error_count", INT8OID, -1,
-                     0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)4, "confl_insert_exists", INT8OID, -1,
-                     0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)5, "confl_update_origin_differs",
-                     INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)6, "confl_update_exists", INT8OID, -1,
-                     0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)7, "confl_update_missing", INT8OID,
-                     -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)8, "confl_delete_origin_differs",
-                     INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)9, "confl_delete_missing", INT8OID,
-                     -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)10, "confl_multiple_unique_conflicts",
-                     INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)11, "stats_reset", TIMESTAMPTZOID, -1,
-                     0);
-  BlessTupleDesc(tupdesc);
-
-  if (!subentry) {
-    /* If the subscription is not found, initialise its stats */
-    memset(&allzero, 0, sizeof(PgStat_StatSubEntry));
-    subentry = &allzero;
-  }
-
-  /* subid */
-  values[i++] = ObjectIdGetDatum(subid);
-
-  /* apply_error_count */
-  values[i++] = Int64GetDatum(subentry->apply_error_count);
-
-  /* sync_error_count */
-  values[i++] = Int64GetDatum(subentry->sync_error_count);
-
-  /* conflict count */
-  for (int nconflict = 0; nconflict < CONFLICT_NUM_TYPES; nconflict++)
-    values[i++] = Int64GetDatum(subentry->conflict_count[nconflict]);
-
-  /* stats_reset */
-  if (subentry->stat_reset_timestamp == 0)
-    nulls[i] = true;
-  else
-    values[i] = TimestampTzGetDatum(subentry->stat_reset_timestamp);
-
-  Assert(i + 1 == PG_STAT_GET_SUBSCRIPTION_STATS_COLS);
 
   /* Returns the record as Datum */
   PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));

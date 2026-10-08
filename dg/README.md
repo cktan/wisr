@@ -4,12 +4,12 @@ A fork of PostgreSQL that runs on the storage stack in `../sm`.
 `../sm/PART4.md` §10 says how it is to be made, and §9 what it
 calls.
 
-**It compiles and does not link yet.** `make -j4` generates what
-is generated and compiles every file as strict C++, with no
-`-fpermissive`; `make clean` and `make format` do what they say.
-Nothing is linked: the server still calls what was left out
-below, replication most of all, and 204 built-in functions that
-`pg_proc.dat` lists and no file here defines.
+**It links, and cannot run a database yet.** `make -j4` generates
+what is generated, compiles every file as strict C++ with no
+`-fpermissive`, and links `build/postgres`. The server has no
+bootstrap and so no catalog to start from: its catalog is to be
+replaced, not created (`../sm/PART4.md` §10). `DGWORK.md` is the
+plan and `WORKNOTE.md` the decisions taken along the way.
 
 ## Building
 
@@ -23,6 +23,8 @@ Two tools made the C compile as C++, and are kept for the code
 still to come from PostgreSQL: `src/tools/cxx_keywords.py`
 renames identifiers that are C++ keywords, and
 `src/tools/cxx_casts.py` writes the casts C does not ask for.
+`src/tools/cut_builtins.py` takes built-in functions out of the
+catalog data, with every row that refers to them.
 
 ## Where it came from
 
@@ -49,14 +51,15 @@ to travel with the code.
 - The time zone compiler `zic` and the time zone data: the
   server reads the system's, in `/usr/share/zoneinfo`.
 - From the server: the catalog bootstrap (`bootstrap`), full-text
-  search (`snowball`, `tsearch`), the JIT, replication and base
-  backup, and the index methods the stack does not have: `gin`,
-  `gist`, `spgist`, `brin`, `hash`.
+  search (`snowball`, `tsearch`, and the `tsvector` and `tsquery`
+  types), the JIT, replication and base backup, and the index
+  methods the stack does not have: `gin`, `gist`, `spgist`,
+  `brin`, `hash`. Their callers, headers and built-in functions
+  are removed too.
 - The translations, and PostgreSQL's build files: autoconf, meson
   and every `Makefile`. digres gets Makefiles of its own.
 
-Headers for what was left out are still in `src/include`. More
-is to be cut, a piece at a time.
+More is to be cut, a piece at a time.
 
 ## Formatting
 

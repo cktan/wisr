@@ -99,8 +99,6 @@ extern bool check_multixact_member_buffers(int *newval, void **extra,
 extern bool check_multixact_offset_buffers(int *newval, void **extra,
                                            GucSource source);
 extern bool check_notify_buffers(int *newval, void **extra, GucSource source);
-extern bool check_primary_slot_name(char **newval, void **extra,
-                                    GucSource source);
 extern bool check_random_seed(double *newval, void **extra, GucSource source);
 extern void assign_random_seed(double newval, void *extra);
 extern const char *show_random_seed(void);
@@ -143,10 +141,6 @@ extern void assign_stats_fetch_consistency(int newval, void *extra);
 extern bool check_ssl(bool *newval, void **extra, GucSource source);
 extern bool check_stage_log_stats(bool *newval, void **extra, GucSource source);
 extern bool check_subtrans_buffers(int *newval, void **extra, GucSource source);
-extern bool check_synchronous_standby_names(char **newval, void **extra,
-                                            GucSource source);
-extern void assign_synchronous_standby_names(const char *newval, void *extra);
-extern void assign_synchronous_commit(int newval, void *extra);
 extern void assign_syslog_facility(int newval, void *extra);
 extern void assign_syslog_ident(const char *newval, void *extra);
 extern void assign_tcp_keepalives_count(int newval, void *extra);
@@ -183,8 +177,5 @@ extern bool check_wal_consistency_checking(char **newval, void **extra,
 extern void assign_wal_consistency_checking(const char *newval, void *extra);
 extern bool check_wal_segment_size(int *newval, void **extra, GucSource source);
 extern void assign_wal_sync_method(int new_wal_sync_method, void *extra);
-extern bool check_synchronized_standby_slots(char **newval, void **extra,
-                                             GucSource source);
-extern void assign_synchronized_standby_slots(const char *newval, void *extra);
 
 #endif /* GUC_HOOKS_H */

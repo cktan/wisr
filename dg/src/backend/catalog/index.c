@@ -33,7 +33,6 @@
 #include "access/transam.h"
 #include "access/visibilitymap.h"
 #include "access/xact.h"
-#include "bootstrap/bootstrap.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -1137,9 +1136,7 @@ Oid index_create(Relation heapRelation, const char *indexRelationName,
    * with this).  Otherwise, we call the AM routine that constructs the
    * index.
    */
-  if (IsBootstrapProcessingMode()) {
-    index_register(heapRelationId, indexRelationId, indexInfo);
-  } else if ((flags & INDEX_CREATE_SKIP_BUILD) != 0) {
+  if ((flags & INDEX_CREATE_SKIP_BUILD) != 0) {
     /*
      * Caller is responsible for filling the index later on.  However,
      * we'd better make sure that the heap relation is correctly marked as

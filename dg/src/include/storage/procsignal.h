@@ -27,13 +27,11 @@
  * defined so that no harm is done if a process mistakenly receives one.
  */
 typedef enum {
-  PROCSIG_CATCHUP_INTERRUPT,    /* sinval catchup interrupt */
-  PROCSIG_NOTIFY_INTERRUPT,     /* listen/notify interrupt */
-  PROCSIG_PARALLEL_MESSAGE,     /* message from cooperating parallel backend */
-  PROCSIG_WALSND_INIT_STOPPING, /* ask walsenders to prepare for shutdown  */
-  PROCSIG_BARRIER,              /* global barrier interrupt  */
-  PROCSIG_LOG_MEMORY_CONTEXT,   /* ask backend to log the memory contexts */
-  PROCSIG_PARALLEL_APPLY_MESSAGE, /* Message from parallel apply workers */
+  PROCSIG_CATCHUP_INTERRUPT,  /* sinval catchup interrupt */
+  PROCSIG_NOTIFY_INTERRUPT,   /* listen/notify interrupt */
+  PROCSIG_PARALLEL_MESSAGE,   /* message from cooperating parallel backend */
+  PROCSIG_BARRIER,            /* global barrier interrupt  */
+  PROCSIG_LOG_MEMORY_CONTEXT, /* ask backend to log the memory contexts */
 
   /* Recovery conflict reasons */
   PROCSIG_RECOVERY_CONFLICT_FIRST,
@@ -45,11 +43,9 @@ typedef enum {
   PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
   PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
   PROCSIG_RECOVERY_CONFLICT_LAST = PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
-
-  PROCSIG_SLOTSYNC_MESSAGE, /* ask slot synchronization to stop */
 } ProcSignalReason;
 
-#define NUM_PROCSIGNALS (PROCSIG_SLOTSYNC_MESSAGE + 1)
+#define NUM_PROCSIGNALS (PROCSIG_RECOVERY_CONFLICT_LAST + 1)
 
 typedef enum {
   PROCSIGNAL_BARRIER_SMGRRELEASE, /* ask smgr to close files */

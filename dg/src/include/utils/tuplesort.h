@@ -21,8 +21,6 @@
 #ifndef TUPLESORT_H
 #define TUPLESORT_H
 
-#include "access/brin_tuple.h"
-#include "access/gin_tuple.h"
 #include "access/itup.h"
 #include "executor/tuptable.h"
 #include "storage/dsm.h"
@@ -416,15 +414,6 @@ tuplesort_begin_index_btree(Relation heapRel, Relation indexRel,
                             bool enforceUnique, bool uniqueNullsNotDistinct,
                             int workMem, SortCoordinate coordinate,
                             int sortopt);
-extern Tuplesortstate *tuplesort_begin_index_hash(
-    Relation heapRel, Relation indexRel, uint32 high_mask, uint32 low_mask,
-    uint32 max_buckets, int workMem, SortCoordinate coordinate, int sortopt);
-extern Tuplesortstate *
-tuplesort_begin_index_brin(int workMem, SortCoordinate coordinate, int sortopt);
-extern Tuplesortstate *tuplesort_begin_index_gin(Relation heapRel,
-                                                 Relation indexRel, int workMem,
-                                                 SortCoordinate coordinate,
-                                                 int sortopt);
 extern Tuplesortstate *tuplesort_begin_datum(Oid datumType, Oid sortOperator,
                                              Oid sortCollation,
                                              bool nullsFirstFlag, int workMem,
@@ -436,10 +425,6 @@ extern void tuplesort_putheaptuple(Tuplesortstate *state, HeapTuple tup);
 extern void tuplesort_putindextuplevalues(Tuplesortstate *state, Relation rel,
                                           ItemPointer self, const Datum *values,
                                           const bool *isnull);
-extern void tuplesort_putbrintuple(Tuplesortstate *state, BrinTuple *tuple,
-                                   Size size);
-extern void tuplesort_putgintuple(Tuplesortstate *state, GinTuple *tuple,
-                                  Size size);
 extern void tuplesort_putdatum(Tuplesortstate *state, Datum val, bool isNull);
 
 extern bool tuplesort_gettupleslot(Tuplesortstate *state, bool forward,
@@ -447,10 +432,6 @@ extern bool tuplesort_gettupleslot(Tuplesortstate *state, bool forward,
                                    Datum *abbrev);
 extern HeapTuple tuplesort_getheaptuple(Tuplesortstate *state, bool forward);
 extern IndexTuple tuplesort_getindextuple(Tuplesortstate *state, bool forward);
-extern BrinTuple *tuplesort_getbrintuple(Tuplesortstate *state, Size *len,
-                                         bool forward);
-extern GinTuple *tuplesort_getgintuple(Tuplesortstate *state, Size *len,
-                                       bool forward);
 extern bool tuplesort_getdatum(Tuplesortstate *state, bool forward, bool copy,
                                Datum *val, bool *isNull, Datum *abbrev);
 

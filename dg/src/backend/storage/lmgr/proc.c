@@ -39,8 +39,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
-#include "replication/slotsync.h"
-#include "replication/syncrep.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
@@ -417,11 +415,6 @@ void InitProcess(void) {
      * in the autovacuum case?
      */
     SpinLockRelease(ProcStructLock);
-    if (AmWalSenderProcess())
-      ereport(FATAL, (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
-                      errmsg("number of requested standby connections exceeds "
-                             "\"max_wal_senders\" (currently %d)",
-                             max_wal_senders)));
     ereport(FATAL, (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
                     errmsg("sorry, too many clients already")));
   }
@@ -471,11 +464,6 @@ void InitProcess(void) {
   }
 #endif
   MyProc->recoveryConflictPending = false;
-
-  /* Initialize fields for sync rep */
-  MyProc->waitLSN = 0;
-  MyProc->syncRepState = SYNC_REP_NOT_WAITING;
-  dlist_node_init(&MyProc->syncRepLinks);
 
   /* Initialize fields for group XID clearing. */
   MyProc->procArrayGroupMember = false;
@@ -872,9 +860,6 @@ static void ProcKill(int code, Datum arg) {
   /* not safe if forked by system(), etc. */
   if (MyProc->pid != (int)getpid())
     elog(PANIC, "ProcKill() called in child process");
-
-  /* Make sure we're out of the sync rep lists */
-  SyncRepCleanupAtProcExit();
 
 #ifdef USE_ASSERT_CHECKING
   {

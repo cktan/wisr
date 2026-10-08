@@ -37,7 +37,6 @@
 #include "executor/execExpr.h"
 #include "executor/nodeSubplan.h"
 #include "funcapi.h"
-#include "jit/jit.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -838,12 +837,7 @@ bool ExecCheck(ExprState *state, ExprContext *econtext) {
  * Therefore this should be used instead of directly calling
  * ExecReadyInterpretedExpr().
  */
-static void ExecReadyExpr(ExprState *state) {
-  if (jit_compile_expr(state))
-    return;
-
-  ExecReadyInterpretedExpr(state);
-}
+static void ExecReadyExpr(ExprState *state) { ExecReadyInterpretedExpr(state); }
 
 /*
  * Append the steps necessary for the evaluation of node to ExprState->steps,

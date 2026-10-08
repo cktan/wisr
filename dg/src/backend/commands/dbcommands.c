@@ -53,7 +53,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/bgwriter.h"
-#include "replication/slot.h"
 #include "storage/copydir.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
@@ -1573,7 +1572,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
   Form_pg_database datform;
   int notherbackends;
   int npreparedxacts;
-  int nslots, nslots_active;
   int nsubscriptions;
 
   /*
@@ -1622,24 +1620,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
   if (db_id == MyDatabaseId)
     ereport(ERROR, (errcode(ERRCODE_OBJECT_IN_USE),
                     errmsg("cannot drop the currently open database")));
-
-  /*
-   * Check whether there are active logical slots that refer to the
-   * to-be-dropped database. The database lock we are holding prevents the
-   * creation of new slots using the database or existing slots becoming
-   * active.
-   */
-  (void)ReplicationSlotsCountDBSlots(db_id, &nslots, &nslots_active);
-  if (nslots_active) {
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_OBJECT_IN_USE),
-         errmsg("database \"%s\" is used by an active logical replication slot",
-                dbname),
-         errdetail_plural("There is %d active slot.",
-                          "There are %d active slots.", nslots_active,
-                          nslots_active)));
-  }
 
   /*
    * Check if there are subscriptions defined in the target database.
@@ -1724,11 +1704,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
    */
   CatalogTupleDelete(pgdbrel, &tup->t_self);
   heap_freetuple(tup);
-
-  /*
-   * Drop db-specific replication slots.
-   */
-  ReplicationSlotsDropDBSlots(db_id);
 
   /*
    * Drop pages for this database that are in the shared buffer cache. This
@@ -3164,9 +3139,6 @@ void dbase_redo(XLogReaderState *record) {
                                  AccessExclusiveLock);
       ResolveRecoveryConflictWithDatabase(xlrec->db_id);
     }
-
-    /* Drop any database-specific replication slots */
-    ReplicationSlotsDropDBSlots(xlrec->db_id);
 
     /* Drop pages for this database that are in the shared buffer cache */
     DropDatabaseBuffers(xlrec->db_id);

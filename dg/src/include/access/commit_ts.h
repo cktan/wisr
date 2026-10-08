@@ -13,7 +13,6 @@
 
 #include "access/xlog.h"
 #include "datatype/timestamp.h"
-#include "replication/origin.h"
 #include "storage/sync.h"
 
 extern PGDLLIMPORT bool track_commit_timestamp;

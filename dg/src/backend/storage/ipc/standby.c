@@ -19,12 +19,12 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
+#include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "access/xlogrecovery.h"
 #include "access/xlogutils.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "replication/slot.h"
 #include "storage/bufmgr.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -450,16 +450,6 @@ void ResolveRecoveryConflictWithSnapshot(TransactionId snapshotConflictHorizon,
   ResolveRecoveryConflictWithVirtualXIDs(
       backends, PROCSIG_RECOVERY_CONFLICT_SNAPSHOT,
       WAIT_EVENT_RECOVERY_CONFLICT_SNAPSHOT, true);
-
-  /*
-   * Note that WaitExceedsMaxStandbyDelay() is not taken into account here
-   * (as opposed to ResolveRecoveryConflictWithVirtualXIDs() above). That
-   * seems OK, given that this kind of conflict should not normally be
-   * reached, e.g. due to using a physical replication slot.
-   */
-  if (wal_level >= WAL_LEVEL_LOGICAL && isCatalogRel)
-    InvalidateObsoleteReplicationSlots(RS_INVAL_HORIZON, 0, locator.dbOid,
-                                       snapshotConflictHorizon);
 }
 
 /*

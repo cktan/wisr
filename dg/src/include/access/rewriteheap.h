@@ -30,28 +30,4 @@ extern void rewrite_heap_tuple(RewriteState state, HeapTuple old_tuple,
                                HeapTuple new_tuple);
 extern bool rewrite_heap_dead_tuple(RewriteState state, HeapTuple old_tuple);
 
-/*
- * On-Disk data format for an individual logical rewrite mapping.
- */
-typedef struct LogicalRewriteMappingData {
-  RelFileLocator old_locator;
-  RelFileLocator new_locator;
-  ItemPointerData old_tid;
-  ItemPointerData new_tid;
-} LogicalRewriteMappingData;
-
-/* ---
- * The filename consists of the following, dash separated,
- * components:
- * 1) database oid or InvalidOid for shared relations
- * 2) the oid of the relation
- * 3) upper 32bit of the LSN at which a rewrite started
- * 4) lower 32bit of the LSN at which a rewrite started
- * 5) xid we are mapping for
- * 6) xid of the xact performing the mapping
- * ---
- */
-#define LOGICAL_REWRITE_FORMAT "map-%x-%x-%X_%X-%x-%x"
-extern void CheckPointLogicalRewriteHeap(void);
-
 #endif /* REWRITE_HEAP_H */

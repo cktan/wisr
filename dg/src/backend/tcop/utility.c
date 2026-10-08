@@ -1637,19 +1637,10 @@ static void ProcessUtilitySlow(ParseState *pstate, PlannedStmt *pstmt,
       break;
 
     case T_CreateSubscriptionStmt:
-      address = CreateSubscription(pstate, (CreateSubscriptionStmt *)parsetree,
-                                   isTopLevel);
-      break;
-
     case T_AlterSubscriptionStmt:
-      address = AlterSubscription(pstate, (AlterSubscriptionStmt *)parsetree,
-                                  isTopLevel);
-      break;
-
     case T_DropSubscriptionStmt:
-      DropSubscription((DropSubscriptionStmt *)parsetree, isTopLevel);
-      /* no commands stashed for DROP */
-      commandCollected = true;
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("subscriptions are not supported")));
       break;
 
     case T_CreateStatsStmt: {

@@ -76,9 +76,6 @@ typedef struct PlannedStmt
 	/* parallel mode required to execute? */
 	bool		parallelModeNeeded;
 
-	/* which forms of JIT should be performed */
-	int			jitFlags;
-
 	/* tree of Plan nodes */
 	struct Plan *planTree;
 

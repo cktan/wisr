@@ -29,7 +29,6 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/syslogger.h"
-#include "replication/slot.h"
 #include "storage/fd.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -597,50 +596,4 @@ Datum pg_ls_tmpdir_1arg(PG_FUNCTION_ARGS) {
  */
 Datum pg_ls_archive_statusdir(PG_FUNCTION_ARGS) {
   return pg_ls_dir_files(fcinfo, XLOGDIR "/archive_status", true);
-}
-
-/*
- * Function to return the list of files in the WAL summaries directory.
- */
-Datum pg_ls_summariesdir(PG_FUNCTION_ARGS) {
-  return pg_ls_dir_files(fcinfo, XLOGDIR "/summaries", true);
-}
-
-/*
- * Function to return the list of files in the PG_LOGICAL_SNAPSHOTS_DIR
- * directory.
- */
-Datum pg_ls_logicalsnapdir(PG_FUNCTION_ARGS) {
-  return pg_ls_dir_files(fcinfo, PG_LOGICAL_SNAPSHOTS_DIR, false);
-}
-
-/*
- * Function to return the list of files in the PG_LOGICAL_MAPPINGS_DIR
- * directory.
- */
-Datum pg_ls_logicalmapdir(PG_FUNCTION_ARGS) {
-  return pg_ls_dir_files(fcinfo, PG_LOGICAL_MAPPINGS_DIR, false);
-}
-
-/*
- * Function to return the list of files in the PG_REPLSLOT_DIR/<slot_name>
- * directory.
- */
-Datum pg_ls_replslotdir(PG_FUNCTION_ARGS) {
-  text *slotname_t;
-  char path[MAXPGPATH];
-  char *slotname;
-
-  slotname_t = PG_GETARG_TEXT_PP(0);
-
-  slotname = text_to_cstring(slotname_t);
-
-  if (!SearchNamedReplicationSlot(slotname, true))
-    ereport(ERROR,
-            (errcode(ERRCODE_UNDEFINED_OBJECT),
-             errmsg("replication slot \"%s\" does not exist", slotname)));
-
-  snprintf(path, sizeof(path), "%s/%s", PG_REPLSLOT_DIR, slotname);
-
-  return pg_ls_dir_files(fcinfo, path, false);
 }

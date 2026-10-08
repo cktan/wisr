@@ -1,4 +1,5 @@
 # Built
+build/
 *.o
 *.d
 .stamp

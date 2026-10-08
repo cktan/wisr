@@ -35,7 +35,6 @@
 #include "common/pg_lzcompress.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
-#include "replication/origin.h"
 #include "storage/bufmgr.h"
 #include "storage/proc.h"
 #include "utils/memutils.h"
@@ -779,15 +778,6 @@ static XLogRecData *XLogRecordAssemble(RmgrId rmid, uint8 info,
     }
     memcpy(scratch, &regbuf->block, sizeof(BlockNumber));
     scratch += sizeof(BlockNumber);
-  }
-
-  /* followed by the record's origin, if any */
-  if ((curinsert_flags & XLOG_INCLUDE_ORIGIN) &&
-      replorigin_session_origin != InvalidRepOriginId) {
-    *(scratch++) = (char)XLR_BLOCK_ID_ORIGIN;
-    memcpy(scratch, &replorigin_session_origin,
-           sizeof(replorigin_session_origin));
-    scratch += sizeof(replorigin_session_origin);
   }
 
   /* followed by toplevel XID, if not already included in previous record */

@@ -322,45 +322,6 @@ static constexpr auto pgstat_kind_builtin_infos = [] {
 
   a[PGSTAT_KIND_FUNCTION].flush_pending_cb = pgstat_function_flush_cb;
 
-  a[PGSTAT_KIND_REPLSLOT].name = "replslot";
-
-  a[PGSTAT_KIND_REPLSLOT].fixed_amount = false;
-  a[PGSTAT_KIND_REPLSLOT].write_to_file = true;
-
-  a[PGSTAT_KIND_REPLSLOT].accessed_across_databases = true;
-
-  a[PGSTAT_KIND_REPLSLOT].shared_size = sizeof(PgStatShared_ReplSlot);
-  a[PGSTAT_KIND_REPLSLOT].shared_data_off =
-      offsetof(PgStatShared_ReplSlot, stats);
-  a[PGSTAT_KIND_REPLSLOT].shared_data_len =
-      sizeof(((PgStatShared_ReplSlot *)0)->stats);
-
-  a[PGSTAT_KIND_REPLSLOT].reset_timestamp_cb =
-      pgstat_replslot_reset_timestamp_cb;
-  a[PGSTAT_KIND_REPLSLOT].to_serialized_name =
-      pgstat_replslot_to_serialized_name_cb;
-  a[PGSTAT_KIND_REPLSLOT].from_serialized_name =
-      pgstat_replslot_from_serialized_name_cb;
-
-  a[PGSTAT_KIND_SUBSCRIPTION].name = "subscription";
-
-  a[PGSTAT_KIND_SUBSCRIPTION].fixed_amount = false;
-  a[PGSTAT_KIND_SUBSCRIPTION].write_to_file = true;
-  /* so pg_stat_subscription_stats entries can be seen in all
-     databases */
-  a[PGSTAT_KIND_SUBSCRIPTION].accessed_across_databases = true;
-
-  a[PGSTAT_KIND_SUBSCRIPTION].shared_size = sizeof(PgStatShared_Subscription);
-  a[PGSTAT_KIND_SUBSCRIPTION].shared_data_off =
-      offsetof(PgStatShared_Subscription, stats);
-  a[PGSTAT_KIND_SUBSCRIPTION].shared_data_len =
-      sizeof(((PgStatShared_Subscription *)0)->stats);
-  a[PGSTAT_KIND_SUBSCRIPTION].pending_size = sizeof(PgStat_BackendSubEntry);
-
-  a[PGSTAT_KIND_SUBSCRIPTION].flush_pending_cb = pgstat_subscription_flush_cb;
-  a[PGSTAT_KIND_SUBSCRIPTION].reset_timestamp_cb =
-      pgstat_subscription_reset_timestamp_cb;
-
   a[PGSTAT_KIND_BACKEND].name = "backend";
 
   a[PGSTAT_KIND_BACKEND].fixed_amount = false;

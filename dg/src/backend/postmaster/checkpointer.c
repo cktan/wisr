@@ -48,7 +48,6 @@
 #include "postmaster/auxprocess.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/interrupt.h"
-#include "replication/syncrep.h"
 #include "storage/aio_subsys.h"
 #include "storage/bufmgr.h"
 #include "storage/condition_variable.h"
@@ -1292,9 +1291,6 @@ void AbsorbSyncRequests(void) {
  * Update any shared memory configurations based on config parameters
  */
 static void UpdateSharedMemoryConfig(void) {
-  /* update global shmem state for sync rep */
-  SyncRepUpdateSyncStandbysDefined();
-
   /*
    * If full_page_writes has been changed by SIGHUP, we update it in shared
    * memory and write an XLOG_FPW_CHANGE record.

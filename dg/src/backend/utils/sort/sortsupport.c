@@ -15,7 +15,6 @@
 
 #include "postgres.h"
 
-#include "access/gist.h"
 #include "access/nbtree.h"
 #include "fmgr.h"
 #include "utils/lsyscache.h"
@@ -157,4 +156,3 @@ void PrepareSortSupportFromIndexRel(Relation indexRel, bool reverse,
 
   FinishSortSupportFunction(opfamily, opcintype, ssup);
 }
-

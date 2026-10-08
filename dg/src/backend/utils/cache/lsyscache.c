@@ -17,7 +17,6 @@
 
 #include "access/hash.h"
 #include "access/htup_details.h"
-#include "bootstrap/bootstrap.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
@@ -2323,30 +2322,6 @@ void get_type_io_data(Oid typid, IOFuncSelector which_func, int16 *typlen,
                       Oid *typioparam, Oid *func) {
   HeapTuple typeTuple;
   Form_pg_type typeStruct;
-
-  /*
-   * In bootstrap mode, pass it off to bootstrap.c.  This hack allows us to
-   * use array_in and array_out during bootstrap.
-   */
-  if (IsBootstrapProcessingMode()) {
-    Oid typinput;
-    Oid typoutput;
-
-    boot_get_type_io_data(typid, typlen, typbyval, typalign, typdelim,
-                          typioparam, &typinput, &typoutput);
-    switch (which_func) {
-    case IOFunc_input:
-      *func = typinput;
-      break;
-    case IOFunc_output:
-      *func = typoutput;
-      break;
-    default:
-      elog(ERROR, "binary I/O not supported during bootstrap");
-      break;
-    }
-    return;
-  }
 
   typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
   if (!HeapTupleIsValid(typeTuple))

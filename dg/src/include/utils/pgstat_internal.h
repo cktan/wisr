@@ -411,16 +411,6 @@ typedef struct PgStatShared_Function {
   PgStat_StatFuncEntry stats;
 } PgStatShared_Function;
 
-typedef struct PgStatShared_Subscription {
-  PgStatShared_Common header;
-  PgStat_StatSubEntry stats;
-} PgStatShared_Subscription;
-
-typedef struct PgStatShared_ReplSlot {
-  PgStatShared_Common header;
-  PgStat_StatReplSlotEntry stats;
-} PgStatShared_ReplSlot;
-
 typedef struct PgStatShared_Backend {
   PgStatShared_Common header;
   PgStat_Backend stats;
@@ -650,19 +640,6 @@ extern bool pgstat_relation_flush_cb(PgStat_EntryRef *entry_ref, bool nowait);
 extern void pgstat_relation_delete_pending_cb(PgStat_EntryRef *entry_ref);
 
 /*
- * Functions in pgstat_replslot.c
- */
-
-extern void pgstat_replslot_reset_timestamp_cb(PgStatShared_Common *header,
-                                               TimestampTz ts);
-extern void
-pgstat_replslot_to_serialized_name_cb(const PgStat_HashKey *key,
-                                      const PgStatShared_Common *header,
-                                      NameData *name);
-extern bool pgstat_replslot_from_serialized_name_cb(const NameData *name,
-                                                    PgStat_HashKey *key);
-
-/*
  * Functions in pgstat_shmem.c
  */
 
@@ -713,15 +690,6 @@ extern bool pgstat_wal_flush_cb(bool nowait);
 extern void pgstat_wal_init_shmem_cb(void *stats);
 extern void pgstat_wal_reset_all_cb(TimestampTz ts);
 extern void pgstat_wal_snapshot_cb(void);
-
-/*
- * Functions in pgstat_subscription.c
- */
-
-extern bool pgstat_subscription_flush_cb(PgStat_EntryRef *entry_ref,
-                                         bool nowait);
-extern void pgstat_subscription_reset_timestamp_cb(PgStatShared_Common *header,
-                                                   TimestampTz ts);
 
 /*
  * Functions in pgstat_xact.c

@@ -19,8 +19,6 @@
 #include "port/atomics.h"
 #include "postmaster/bgworker_internals.h"
 #include "postmaster/postmaster.h"
-#include "replication/logicallauncher.h"
-#include "replication/logicalworker.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/lwlock.h"
@@ -113,11 +111,7 @@ static const struct {
   bgworker_main_type fn_addr;
 } InternalBGWorkers[] =
 
-    {{"ParallelWorkerMain", ParallelWorkerMain},
-     {"ApplyLauncherMain", ApplyLauncherMain},
-     {"ApplyWorkerMain", ApplyWorkerMain},
-     {"ParallelApplyWorkerMain", ParallelApplyWorkerMain},
-     {"TablesyncWorkerMain", TablesyncWorkerMain}};
+    {{"ParallelWorkerMain", ParallelWorkerMain}};
 
 /* Private functions. */
 static bgworker_main_type

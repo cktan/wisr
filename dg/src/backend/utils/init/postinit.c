@@ -40,9 +40,6 @@
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
 #include "postmaster/postmaster.h"
-#include "replication/slot.h"
-#include "replication/slotsync.h"
-#include "replication/walsender.h"
 #include "storage/aio_subsys.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
@@ -245,14 +242,9 @@ static void PerformAuthentication(Port *port) {
     StringInfoData logmsg;
 
     initStringInfo(&logmsg);
-    if (am_walsender)
-      appendStringInfo(&logmsg, _("replication connection authorized: user=%s"),
-                       port->user_name);
-    else
-      appendStringInfo(&logmsg, _("connection authorized: user=%s"),
-                       port->user_name);
-    if (!am_walsender)
-      appendStringInfo(&logmsg, _(" database=%s"), port->database_name);
+    appendStringInfo(&logmsg, _("connection authorized: user=%s"),
+                     port->user_name);
+    appendStringInfo(&logmsg, _(" database=%s"), port->database_name);
 
     if (port->application_name != NULL)
       appendStringInfo(&logmsg, _(" application_name=%s"),
@@ -528,20 +520,18 @@ void InitializeMaxBackends(void) {
 
   /* Note that this does not include "auxiliary" processes */
   MaxBackends = MaxConnections + autovacuum_worker_slots +
-                max_worker_processes + max_wal_senders +
-                NUM_SPECIAL_WORKER_PROCS;
+                max_worker_processes + NUM_SPECIAL_WORKER_PROCS;
 
   if (MaxBackends > MAX_BACKENDS)
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-         errmsg("too many server processes configured"),
-         errdetail("\"max_connections\" (%d) plus \"autovacuum_worker_slots\" "
-                   "(%d) plus \"max_worker_processes\" (%d) plus "
-                   "\"max_wal_senders\" (%d) must be less than %d.",
-                   MaxConnections, autovacuum_worker_slots,
-                   max_worker_processes, max_wal_senders,
-                   MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
+    ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+             errmsg("too many server processes configured"),
+             errdetail(
+                 "\"max_connections\" (%d) plus \"autovacuum_worker_slots\" "
+                 "(%d) plus \"max_worker_processes\" (%d) must be less "
+                 "than %d.",
+                 MaxConnections, autovacuum_worker_slots, max_worker_processes,
+                 MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
 }
 
 /*
@@ -628,12 +618,6 @@ void BaseInit(void) {
 
   /* Initialize lock manager's local structs */
   InitLockManagerAccess();
-
-  /*
-   * Initialize replication slots after pgstat. The exit hook might need to
-   * drop ephemeral slots, which in turn triggers stats reporting.
-   */
-  ReplicationSlotInitialize();
 }
 
 /* --------------------------------
@@ -901,45 +885,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
                       errmsg("remaining connection slots are reserved for "
                              "roles with privileges of the \"%s\" role",
                              "pg_use_reserved_connections")));
-  }
-
-  /* Check replication permissions needed for walsender processes. */
-  if (am_walsender) {
-    Assert(!bootstrap);
-
-    if (!has_rolreplication(GetUserId()))
-      ereport(FATAL, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      errmsg("permission denied to start WAL sender"),
-                      errdetail("Only roles with the %s attribute may start a "
-                                "WAL sender process.",
-                                "REPLICATION")));
-  }
-
-  /*
-   * If this is a plain walsender only supporting physical replication, we
-   * don't want to connect to any particular database. Just finish the
-   * backend startup by processing any options from the startup packet, and
-   * we're done.
-   */
-  if (am_walsender && !am_db_walsender) {
-    /* process any options passed in the startup packet */
-    if (MyProcPort != NULL)
-      process_startup_options(MyProcPort, am_superuser);
-
-    /* Apply PostAuthDelay as soon as we've read all options */
-    if (PostAuthDelay > 0)
-      pg_usleep(PostAuthDelay * 1000000L);
-
-    /* initialize client encoding */
-    InitializeClientEncoding();
-
-    /* fill in the remainder of this entry in the PgBackendStatus array */
-    pgstat_bestart_final();
-
-    /* close the transaction we started above */
-    CommitTransactionCommand();
-
-    return;
   }
 
   /*

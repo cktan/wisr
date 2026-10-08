@@ -34,13 +34,13 @@
 #include "access/timeline.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogarchive.h"
 #include "access/xlogprefetcher.h"
 #include "access/xlogreader.h"
 #include "access/xlogrecovery.h"
 #include "access/xlogutils.h"
-#include "backup/basebackup.h"
 #include "catalog/pg_control.h"
 #include "commands/tablespace.h"
 #include "common/file_utils.h"
@@ -49,9 +49,7 @@
 #include "pgstat.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/startup.h"
-#include "replication/slot.h"
-#include "replication/slotsync.h"
-#include "replication/walreceiver.h"
+#include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
@@ -94,9 +92,6 @@ XLogRecPtr recoveryTargetLSN;
 int recovery_min_apply_delay = 0;
 
 /* options formerly taken from recovery.conf for XLOG streaming */
-char *PrimaryConnInfo = NULL;
-char *PrimarySlotName = NULL;
-bool wal_receiver_create_temp_slot = false;
 
 /*
  * recoveryTargetTimeLineGoal: what the user requested, if any
@@ -184,7 +179,6 @@ static bool LocalHotStandbyActive = false;
 static bool LocalPromoteIsTriggered = false;
 
 /* Has the recovery code requested a walreceiver wakeup? */
-static bool doRequestWalReceiverReply;
 
 /* XLogReader object used to parse the WAL records */
 static XLogReaderState *xlogreader = NULL;
@@ -240,13 +234,9 @@ static XLogSource readSource = XLOG_FROM_ANY;
  * currently have a WAL file open. If lastSourceFailed is set, our last
  * attempt to read from currentSource failed, and we should try another source
  * next.
- *
- * pendingWalRcvRestart is set when a config change occurs that requires a
- * walreceiver restart.  This is only valid in XLOG_FROM_STREAM state.
  */
 static XLogSource currentSource = XLOG_FROM_ANY;
 static bool lastSourceFailed = false;
-static bool pendingWalRcvRestart = false;
 
 /*
  * These variables track when we last obtained some WAL data to process,
@@ -258,10 +248,6 @@ static bool pendingWalRcvRestart = false;
  */
 static TimestampTz XLogReceiptTime = 0;
 static XLogSource XLogReceiptSource = XLOG_FROM_ANY;
-
-/* Local copy of WalRcv->flushedUpto */
-static XLogRecPtr flushedUpto = 0;
-static TimeLineID receiveTLI = 0;
 
 /*
  * Copy of minRecoveryPoint and backupEndPoint from the control file.
@@ -396,7 +382,6 @@ static void validateRecoveryParameters(void);
 static bool read_backup_label(XLogRecPtr *checkPointLoc,
                               TimeLineID *backupLabelTLI,
                               bool *backupEndRequired, bool *backupFromStandby);
-static bool read_tablespace_map(List **tablespaces);
 
 static void xlogrecovery_redo(XLogReaderState *record, TimeLineID replayTLI);
 static void CheckRecoveryConsistency(void);
@@ -594,7 +579,6 @@ void InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
    */
   if (read_backup_label(&CheckPointLoc, &CheckPointTLI, &backupEndRequired,
                         &backupFromStandby)) {
-    List *tablespaces = NIL;
 
     /*
      * Archive recovery was requested, and thanks to the backup label
@@ -670,35 +654,6 @@ void InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
                        "in a corrupt cluster if restoring from a backup.",
                        DataDir, DataDir, DataDir, DataDir)));
       wasShutdown = false; /* keep compiler quiet */
-    }
-
-    /* Read the tablespace_map file if present and create symlinks. */
-    if (read_tablespace_map(&tablespaces)) {
-      ListCell *lc;
-
-      foreach (lc, tablespaces) {
-        tablespaceinfo *ti = (tablespaceinfo *)lfirst(lc);
-        char *linkloc;
-
-        linkloc = psprintf("%s/%u", PG_TBLSPC_DIR, ti->oid);
-
-        /*
-         * Remove the existing symlink if any and Create the symlink
-         * under PGDATA.
-         */
-        remove_tablespace_symlink(linkloc);
-
-        if (symlink(ti->path, linkloc) < 0)
-          ereport(ERROR, (errcode_for_file_access(),
-                          errmsg("could not create symbolic link \"%s\": %m",
-                                 linkloc)));
-
-        pfree(ti->path);
-        pfree(ti);
-      }
-
-      /* tell the caller to delete it later */
-      haveTblspcMap = true;
     }
 
     /* tell the caller to delete it later */
@@ -1087,12 +1042,10 @@ static void validateRecoveryParameters(void) {
    * Check for compulsory parameters
    */
   if (StandbyModeRequested) {
-    if ((PrimaryConnInfo == NULL || strcmp(PrimaryConnInfo, "") == 0) &&
-        (recoveryRestoreCommand == NULL ||
-         strcmp(recoveryRestoreCommand, "") == 0))
+    if (recoveryRestoreCommand == NULL ||
+        strcmp(recoveryRestoreCommand, "") == 0)
       ereport(WARNING,
-              (errmsg("specified neither \"primary_conninfo\" nor "
-                      "\"restore_command\""),
+              (errmsg("\"restore_command\" is not specified"),
                errhint("The database server will regularly poll the pg_wal "
                        "subdirectory to check for files placed there.")));
   } else {
@@ -1292,95 +1245,6 @@ static bool read_backup_label(XLogRecPtr *checkPointLoc,
 }
 
 /*
- * read_tablespace_map: check to see if a tablespace_map file is present
- *
- * If we see a tablespace_map file during recovery, we assume that we are
- * recovering from a backup dump file, and we therefore need to create symlinks
- * as per the information present in tablespace_map file.
- *
- * Returns true if a tablespace_map file was found (and fills *tablespaces
- * with a tablespaceinfo struct for each tablespace listed in the file);
- * returns false if not.
- */
-static bool read_tablespace_map(List **tablespaces) {
-  tablespaceinfo *ti;
-  FILE *lfp;
-  char str[MAXPGPATH];
-  int ch, i, n;
-  bool was_backslash;
-
-  /*
-   * See if tablespace_map file is present
-   */
-  lfp = AllocateFile(TABLESPACE_MAP, "r");
-  if (!lfp) {
-    if (errno != ENOENT)
-      ereport(FATAL,
-              (errcode_for_file_access(),
-               errmsg("could not read file \"%s\": %m", TABLESPACE_MAP)));
-    return false; /* it's not there, all is fine */
-  }
-
-  /*
-   * Read and parse the link name and path lines from tablespace_map file
-   * (this code is pretty crude, but we are not expecting any variability in
-   * the file format).  De-escape any backslashes that were inserted.
-   */
-  i = 0;
-  was_backslash = false;
-  while ((ch = fgetc(lfp)) != EOF) {
-    if (!was_backslash && (ch == '\n' || ch == '\r')) {
-      char *endp;
-
-      if (i == 0)
-        continue; /* \r immediately followed by \n */
-
-      /*
-       * The de-escaped line should contain an OID followed by exactly
-       * one space followed by a path.  The path might start with
-       * spaces, so don't be too liberal about parsing.
-       */
-      str[i] = '\0';
-      n = 0;
-      while (str[n] && str[n] != ' ')
-        n++;
-      if (n < 1 || n >= i - 1)
-        ereport(FATAL, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                        errmsg("invalid data in file \"%s\"", TABLESPACE_MAP)));
-      str[n++] = '\0';
-
-      ti = (tablespaceinfo *)palloc0(sizeof(tablespaceinfo));
-      errno = 0;
-      ti->oid = strtoul(str, &endp, 10);
-      if (*endp != '\0' || errno == EINVAL || errno == ERANGE)
-        ereport(FATAL, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                        errmsg("invalid data in file \"%s\"", TABLESPACE_MAP)));
-      ti->path = pstrdup(str + n);
-      *tablespaces = lappend(*tablespaces, ti);
-
-      i = 0;
-      continue;
-    } else if (!was_backslash && ch == '\\')
-      was_backslash = true;
-    else {
-      if (i < sizeof(str) - 1)
-        str[i++] = ch;
-      was_backslash = false;
-    }
-  }
-
-  if (i != 0 || was_backslash) /* last line not terminated? */
-    ereport(FATAL, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    errmsg("invalid data in file \"%s\"", TABLESPACE_MAP)));
-
-  if (ferror(lfp) || FreeFile(lfp))
-    ereport(FATAL, (errcode_for_file_access(),
-                    errmsg("could not read file \"%s\": %m", TABLESPACE_MAP)));
-
-  return true;
-}
-
-/*
  * Finish WAL recovery.
  *
  * This does not close the 'xlogreader' yet, because in some cases the caller
@@ -1399,37 +1263,10 @@ EndOfWalRecoveryInfo *FinishWalRecovery(void) {
   XLogRecPtr endOfLog;
 
   /*
-   * Kill WAL receiver, if it's still running, before we continue to write
-   * the startup checkpoint and aborted-contrecord records. It will trump
-   * over these records and subsequent ones if it's still alive when we
-   * start writing WAL.
-   */
-  XLogShutdownWalRcv();
-
-  /*
-   * Shutdown the slot sync worker to drop any temporary slots acquired by
-   * it and to prevent it from keep trying to fetch the failover slots.
-   *
-   * We do not update the 'synced' column in 'pg_replication_slots' system
-   * view from true to false here, as any failed update could leave 'synced'
-   * column false for some slots. This could cause issues during slot sync
-   * after restarting the server as a standby. While updating the 'synced'
-   * column after switching to the new timeline is an option, it does not
-   * simplify the handling for the 'synced' column. Therefore, we retain the
-   * 'synced' column as true after promotion as it may provide useful
-   * information about the slot origin.
-   */
-  ShutDownSlotSync();
-
-  /*
    * We are now done reading the xlog from stream. Turn off streaming
    * recovery to force fetching the files (which would be required at end of
    * recovery, e.g., timeline history file) from archive or pg_wal.
-   *
-   * Note that standby mode must be turned off after killing WAL receiver,
-   * i.e., calling XLogShutdownWalRcv().
    */
-  Assert(!WalRcvStreaming());
   StandbyMode = false;
 
   /*
@@ -1931,19 +1768,6 @@ static void ApplyWalRecord(XLogReaderState *xlogreader, XLogRecord *record,
    *    be created otherwise)
    * ------
    */
-  if (AllowCascadeReplication())
-    WalSndWakeup(switchedTLI, true);
-
-  /*
-   * If rm_redo called XLogRequestWalReceiverReply, then we wake up the
-   * receiver so that it notices the updated lastReplayedEndRecPtr and sends
-   * a reply to the primary.
-   */
-  if (doRequestWalReceiverReply) {
-    doRequestWalReceiverReply = false;
-    WalRcvForceReply();
-  }
-
   /* Allow read-only connections if we're consistent now */
   CheckRecoveryConsistency();
 
@@ -3099,12 +2923,7 @@ static int XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
 
 retry:
   /* See if we need to retrieve more data */
-  if (readFile < 0 || (readSource == XLOG_FROM_STREAM &&
-                       flushedUpto < targetPagePtr + reqLen)) {
-    if (readFile >= 0 && xlogreader->nonblocking &&
-        readSource == XLOG_FROM_STREAM && flushedUpto < targetPagePtr + reqLen)
-      return XLREAD_WOULDBLOCK;
-
+  if (readFile < 0) {
     switch (WaitForWALToBecomeAvailable(
         targetPagePtr + reqLen, private_->randAccess, private_->fetching_ckpt,
         targetRecPtr, private_->replayTLI, xlogreader->EndRecPtr,
@@ -3135,14 +2954,7 @@ retry:
    * requested record has been received, but this is for the benefit of
    * future calls, to allow quick exit at the top of this function.
    */
-  if (readSource == XLOG_FROM_STREAM) {
-    if (((targetPagePtr) / XLOG_BLCKSZ) != (flushedUpto / XLOG_BLCKSZ))
-      readLen = XLOG_BLCKSZ;
-    else
-      readLen =
-          XLogSegmentOffset(flushedUpto, wal_segment_size) - targetPageOff;
-  } else
-    readLen = XLOG_BLCKSZ;
+  readLen = XLOG_BLCKSZ;
 
   /* Read the requested page */
   readOff = targetPageOff;
@@ -3305,7 +3117,6 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
                             bool nonblocking) {
   static TimestampTz last_fail_time = 0;
   TimestampTz now;
-  bool streaming_reply_sent = false;
 
   /*-------
    * Standby mode is implemented by a state machine:
@@ -3343,7 +3154,6 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 
   for (;;) {
     XLogSource oldSource = currentSource;
-    bool startWalReceiver = false;
 
     /*
      * First check if we failed to read from the current source, and
@@ -3370,10 +3180,8 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
          * finish replaying as much as we can from archive and
          * pg_wal before failover.
          */
-        if (StandbyMode && CheckForStandbyTrigger()) {
-          XLogShutdownWalRcv();
+        if (StandbyMode && CheckForStandbyTrigger())
           return XLREAD_FAIL;
-        }
 
         /*
          * Not in standby mode, and we've now tried the archive
@@ -3387,7 +3195,6 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
          * walreceiver if necessary.
          */
         currentSource = XLOG_FROM_STREAM;
-        startWalReceiver = true;
         break;
 
       case XLOG_FROM_STREAM:
@@ -3424,11 +3231,7 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
          * divergence), we only need to reset the install flag to
          * allow archive restoration.
          */
-        if (WalRcvStreaming())
-          XLogShutdownWalRcv();
-        else {
-          ResetInstallXLogFileSegmentActive();
-        }
+        ResetInstallXLogFileSegmentActive();
 
         /*
          * Before we sleep, re-scan for possible new timelines if
@@ -3505,12 +3308,6 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
     case XLOG_FROM_ARCHIVE:
     case XLOG_FROM_PG_WAL:
 
-      /*
-       * WAL receiver must not be running when reading WAL from
-       * archive or pg_wal.
-       */
-      Assert(!WalRcvStreaming());
-
       /* Close any old file we might have open. */
       if (readFile >= 0) {
         close(readFile);
@@ -3536,192 +3333,17 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
       lastSourceFailed = true;
       break;
 
-    case XLOG_FROM_STREAM: {
-      bool havedata;
+    case XLOG_FROM_STREAM:
 
       /*
        * We should be able to move to XLOG_FROM_STREAM only in
-       * standby mode.
+       * standby mode.  digres has no WAL receiver, so there is nothing
+       * to read here: fail, and the state machine sleeps and goes back
+       * to the archive.
        */
       Assert(StandbyMode);
-
-      /*
-       * First, shutdown walreceiver if its restart has been
-       * requested -- but no point if we're already slated for
-       * starting it.
-       */
-      if (pendingWalRcvRestart && !startWalReceiver) {
-        XLogShutdownWalRcv();
-
-        /*
-         * Re-scan for possible new timelines if we were
-         * requested to recover to the latest timeline.
-         */
-        if (recoveryTargetTimeLineGoal == RECOVERY_TARGET_TIMELINE_LATEST)
-          rescanLatestTimeLine(replayTLI, replayLSN);
-
-        startWalReceiver = true;
-      }
-      pendingWalRcvRestart = false;
-
-      /*
-       * Launch walreceiver if needed.
-       *
-       * If fetching_ckpt is true, RecPtr points to the initial
-       * checkpoint location. In that case, we use RedoStartLSN
-       * as the streaming start position instead of RecPtr, so
-       * that when we later jump backwards to start redo at
-       * RedoStartLSN, we will have the logs streamed already.
-       */
-      if (startWalReceiver && PrimaryConnInfo &&
-          strcmp(PrimaryConnInfo, "") != 0) {
-        XLogRecPtr ptr;
-        TimeLineID tli;
-
-        if (fetching_ckpt) {
-          ptr = RedoStartLSN;
-          tli = RedoStartTLI;
-        } else {
-          ptr = RecPtr;
-
-          /*
-           * Use the record begin position to determine the
-           * TLI, rather than the position we're reading.
-           */
-          tli = tliOfPointInHistory(tliRecPtr, expectedTLEs);
-
-          if (curFileTLI > 0 && tli < curFileTLI)
-            elog(ERROR,
-                 "according to history file, WAL location %X/%X belongs to "
-                 "timeline %u, but previous recovered WAL file came from "
-                 "timeline %u",
-                 LSN_FORMAT_ARGS(tliRecPtr), tli, curFileTLI);
-        }
-        curFileTLI = tli;
-        SetInstallXLogFileSegmentActive();
-        RequestXLogStreaming(tli, ptr, PrimaryConnInfo, PrimarySlotName,
-                             wal_receiver_create_temp_slot);
-        flushedUpto = 0;
-      }
-
-      /*
-       * Check if WAL receiver is active or wait to start up.
-       */
-      if (!WalRcvStreaming()) {
-        lastSourceFailed = true;
-        break;
-      }
-
-      /*
-       * Walreceiver is active, so see if new data has arrived.
-       *
-       * We only advance XLogReceiptTime when we obtain fresh
-       * WAL from walreceiver and observe that we had already
-       * processed everything before the most recent "chunk"
-       * that it flushed to disk.  In steady state where we are
-       * keeping up with the incoming data, XLogReceiptTime will
-       * be updated on each cycle. When we are behind,
-       * XLogReceiptTime will not advance, so the grace time
-       * allotted to conflicting queries will decrease.
-       */
-      if (RecPtr < flushedUpto)
-        havedata = true;
-      else {
-        XLogRecPtr latestChunkStart;
-
-        flushedUpto = GetWalRcvFlushRecPtr(&latestChunkStart, &receiveTLI);
-        if (RecPtr < flushedUpto && receiveTLI == curFileTLI) {
-          havedata = true;
-          if (latestChunkStart <= RecPtr) {
-            XLogReceiptTime = GetCurrentTimestamp();
-            SetCurrentChunkStartTime(XLogReceiptTime);
-          }
-        } else
-          havedata = false;
-      }
-      if (havedata) {
-        /*
-         * Great, streamed far enough.  Open the file if it's
-         * not open already.  Also read the timeline history
-         * file if we haven't initialized timeline history
-         * yet; it should be streamed over and present in
-         * pg_wal by now.  Use XLOG_FROM_STREAM so that source
-         * info is set correctly and XLogReceiptTime isn't
-         * changed.
-         *
-         * NB: We must set readTimeLineHistory based on
-         * recoveryTargetTLI, not receiveTLI. Normally they'll
-         * be the same, but if recovery_target_timeline is
-         * 'latest' and archiving is configured, then it's
-         * possible that we managed to retrieve one or more
-         * new timeline history files from the archive,
-         * updating recoveryTargetTLI.
-         */
-        if (readFile < 0) {
-          if (!expectedTLEs)
-            expectedTLEs = readTimeLineHistory(recoveryTargetTLI);
-          readFile =
-              XLogFileRead(readSegNo, receiveTLI, XLOG_FROM_STREAM, false);
-          Assert(readFile >= 0);
-        } else {
-          /* just make sure source info is correct... */
-          readSource = XLOG_FROM_STREAM;
-          XLogReceiptSource = XLOG_FROM_STREAM;
-          return XLREAD_SUCCESS;
-        }
-        break;
-      }
-
-      /* In nonblocking mode, return rather than sleeping. */
-      if (nonblocking)
-        return XLREAD_WOULDBLOCK;
-
-      /*
-       * Data not here yet. Check for trigger, then wait for
-       * walreceiver to wake us up when new WAL arrives.
-       */
-      if (CheckForStandbyTrigger()) {
-        /*
-         * Note that we don't return XLREAD_FAIL immediately
-         * here. After being triggered, we still want to
-         * replay all the WAL that was already streamed. It's
-         * in pg_wal now, so we just treat this as a failure,
-         * and the state machine will move on to replay the
-         * streamed WAL from pg_wal, and then recheck the
-         * trigger and exit replay.
-         */
-        lastSourceFailed = true;
-        break;
-      }
-
-      /*
-       * Since we have replayed everything we have received so
-       * far and are about to start waiting for more WAL, let's
-       * tell the upstream server our replay location now so
-       * that pg_stat_replication doesn't show stale
-       * information.
-       */
-      if (!streaming_reply_sent) {
-        WalRcvForceReply();
-        streaming_reply_sent = true;
-      }
-
-      /* Do any background tasks that might benefit us later. */
-      KnownAssignedTransactionIdsIdleMaintenance();
-
-      /* Update pg_stat_recovery_prefetch before sleeping. */
-      XLogPrefetcherComputeStats(xlogprefetcher);
-
-      /*
-       * Wait for more WAL to arrive, when we will be woken
-       * immediately by the WAL receiver.
-       */
-      (void)WaitLatch(&XLogRecoveryCtl->recoveryWakeupLatch,
-                      WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, -1L,
-                      WAIT_EVENT_RECOVERY_WAL_STREAM);
-      ResetLatch(&XLogRecoveryCtl->recoveryWakeupLatch);
+      lastSourceFailed = true;
       break;
-    }
 
     default:
       elog(ERROR, "unexpected WAL source %d", currentSource);
@@ -4057,18 +3679,6 @@ static int XLogFileReadAnyTLI(XLogSegNo segno, XLogSource source) {
 }
 
 /*
- * Set flag to signal the walreceiver to restart.  (The startup process calls
- * this on noticing a relevant configuration change.)
- */
-void StartupRequestWalReceiverRestart(void) {
-  if (currentSource == XLOG_FROM_STREAM && WalRcvRunning()) {
-    ereport(LOG, (errmsg("WAL receiver process shutdown requested")));
-
-    pendingWalRcvRestart = true;
-  }
-}
-
-/*
  * Has a standby promotion already been triggered?
  *
  * Unlike CheckForStandbyTrigger(), this works in any process
@@ -4146,11 +3756,6 @@ bool CheckPromoteSignal(void) {
  * failover has been requested.
  */
 void WakeupRecovery(void) { SetLatch(&XLogRecoveryCtl->recoveryWakeupLatch); }
-
-/*
- * Schedule a walreceiver wakeup in the main recovery loop.
- */
-void XLogRequestWalReceiverReply(void) { doRequestWalReceiverReply = true; }
 
 /*
  * Is HotStandby active yet? This is only important in special backends
@@ -4370,27 +3975,6 @@ void RecoveryRequiresIntParameter(const char *param_name, int currValue,
          errhint("You can restart the server after making the necessary "
                  "configuration changes.")));
   }
-}
-
-/*
- * GUC check_hook for primary_slot_name
- */
-bool check_primary_slot_name(char **newval, void **extra, GucSource source) {
-  int err_code;
-  char *err_msg = NULL;
-  char *err_hint = NULL;
-
-  if (*newval && strcmp(*newval, "") != 0 &&
-      !ReplicationSlotValidateNameInternal(*newval, &err_code, &err_msg,
-                                           &err_hint)) {
-    GUC_check_errcode(err_code);
-    GUC_check_errdetail("%s", err_msg);
-    if (err_hint != NULL)
-      GUC_check_errhint("%s", err_hint);
-    return false;
-  }
-
-  return true;
 }
 
 /*

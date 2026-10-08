@@ -30,7 +30,6 @@
 #include <sys/param.h>
 #endif
 
-#include "bootstrap/bootstrap.h"
 #include "common/username.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
@@ -196,10 +195,9 @@ int main(int argc, char *argv[]) {
 
   switch (dispatch_option) {
   case DISPATCH_CHECK:
-    BootstrapModeMain(argc, argv, true);
-    break;
   case DISPATCH_BOOT:
-    BootstrapModeMain(argc, argv, false);
+    write_stderr("%s: there is no bootstrap mode\n", progname);
+    exit(1);
     break;
   case DISPATCH_FORKCHILD:
 #ifdef EXEC_BACKEND

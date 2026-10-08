@@ -49,8 +49,6 @@ typedef enum RecoveryPauseState {
 extern PGDLLIMPORT bool recoveryTargetInclusive;
 extern PGDLLIMPORT int recoveryTargetAction;
 extern PGDLLIMPORT int recovery_min_apply_delay;
-extern PGDLLIMPORT char *PrimaryConnInfo;
-extern PGDLLIMPORT char *PrimarySlotName;
 extern PGDLLIMPORT char *recoveryRestoreCommand;
 extern PGDLLIMPORT char *recoveryEndCommand;
 extern PGDLLIMPORT char *archiveCleanupCommand;
@@ -62,7 +60,6 @@ extern PGDLLIMPORT TimestampTz recoveryTargetTime;
 extern PGDLLIMPORT const char *recoveryTargetName;
 extern PGDLLIMPORT XLogRecPtr recoveryTargetLSN;
 extern PGDLLIMPORT RecoveryTargetType recoveryTarget;
-extern PGDLLIMPORT bool wal_receiver_create_temp_slot;
 extern PGDLLIMPORT RecoveryTargetTimeLineGoal recoveryTargetTimeLineGoal;
 extern PGDLLIMPORT TimeLineID recoveryTargetTLIRequested;
 extern PGDLLIMPORT TimeLineID recoveryTargetTLI;
@@ -142,9 +139,6 @@ extern XLogRecPtr GetCurrentReplayRecPtr(TimeLineID *replayEndTLI);
 extern bool PromoteIsTriggered(void);
 extern bool CheckPromoteSignal(void);
 extern void WakeupRecovery(void);
-
-extern void StartupRequestWalReceiverRestart(void);
-extern void XLogRequestWalReceiverReply(void);
 
 extern void RecoveryRequiresIntParameter(const char *param_name, int currValue,
                                          int minValue);

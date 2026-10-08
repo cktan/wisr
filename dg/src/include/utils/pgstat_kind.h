@@ -24,20 +24,18 @@
 #define PGSTAT_KIND_INVALID 0
 
 /* stats for variable-numbered objects */
-#define PGSTAT_KIND_DATABASE	1     /* database-wide statistics */
-#define PGSTAT_KIND_RELATION	2     /* per-table statistics */
-#define PGSTAT_KIND_FUNCTION	3     /* per-function statistics */
-#define PGSTAT_KIND_REPLSLOT	4     /* per-slot statistics */
-#define PGSTAT_KIND_SUBSCRIPTION	5 /* per-subscription statistics */
-#define PGSTAT_KIND_BACKEND	6      /* per-backend statistics */
+#define PGSTAT_KIND_DATABASE	1 /* database-wide statistics */
+#define PGSTAT_KIND_RELATION	2 /* per-table statistics */
+#define PGSTAT_KIND_FUNCTION	3 /* per-function statistics */
+#define PGSTAT_KIND_BACKEND	4  /* per-backend statistics */
 
 /* stats for fixed-numbered objects */
-#define PGSTAT_KIND_ARCHIVER	7
-#define PGSTAT_KIND_BGWRITER	8
-#define PGSTAT_KIND_CHECKPOINTER	9
-#define PGSTAT_KIND_IO	10
-#define PGSTAT_KIND_SLRU	11
-#define PGSTAT_KIND_WAL	12
+#define PGSTAT_KIND_ARCHIVER	5
+#define PGSTAT_KIND_BGWRITER	6
+#define PGSTAT_KIND_CHECKPOINTER	7
+#define PGSTAT_KIND_IO	8
+#define PGSTAT_KIND_SLRU	9
+#define PGSTAT_KIND_WAL	10
 
 #define PGSTAT_KIND_BUILTIN_MIN PGSTAT_KIND_DATABASE
 #define PGSTAT_KIND_BUILTIN_MAX PGSTAT_KIND_WAL

@@ -34,7 +34,6 @@
 #include "miscadmin.h"
 #include "postmaster/autovacuum.h"
 #include "postmaster/postmaster.h"
-#include "replication/walsender.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 
@@ -92,7 +91,7 @@ void InitPostmasterChildSlots(void) {
    *
    * WAL senders start out as regular backends, so they share the same pool.
    */
-  pmchild_pools[B_BACKEND].size = 2 * (MaxConnections + max_wal_senders);
+  pmchild_pools[B_BACKEND].size = 2 * MaxConnections;
 
   pmchild_pools[B_AUTOVAC_WORKER].size = autovacuum_worker_slots;
   pmchild_pools[B_BG_WORKER].size = max_worker_processes;

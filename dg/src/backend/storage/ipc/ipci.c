@@ -30,13 +30,6 @@
 #include "postmaster/autovacuum.h"
 #include "postmaster/bgworker_internals.h"
 #include "postmaster/bgwriter.h"
-#include "postmaster/walsummarizer.h"
-#include "replication/logicallauncher.h"
-#include "replication/origin.h"
-#include "replication/slot.h"
-#include "replication/slotsync.h"
-#include "replication/walreceiver.h"
-#include "replication/walsender.h"
 #include "storage/aio_subsys.h"
 #include "storage/bufmgr.h"
 #include "storage/dsm.h"
@@ -133,20 +126,13 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, ProcSignalShmemSize());
   size = add_size(size, CheckpointerShmemSize());
   size = add_size(size, AutoVacuumShmemSize());
-  size = add_size(size, ReplicationSlotsShmemSize());
-  size = add_size(size, ReplicationOriginShmemSize());
-  size = add_size(size, WalSndShmemSize());
-  size = add_size(size, WalRcvShmemSize());
-  size = add_size(size, WalSummarizerShmemSize());
   size = add_size(size, PgArchShmemSize());
-  size = add_size(size, ApplyLauncherShmemSize());
   size = add_size(size, BTreeShmemSize());
   size = add_size(size, SyncScanShmemSize());
   size = add_size(size, AsyncShmemSize());
   size = add_size(size, StatsShmemSize());
   size = add_size(size, WaitEventCustomShmemSize());
   size = add_size(size, InjectionPointShmemSize());
-  size = add_size(size, SlotSyncShmemSize());
   size = add_size(size, AioShmemSize());
 
   /* include additional requested shmem from preload libraries */
@@ -318,14 +304,7 @@ static void CreateOrAttachShmemStructs(void) {
   ProcSignalShmemInit();
   CheckpointerShmemInit();
   AutoVacuumShmemInit();
-  ReplicationSlotsShmemInit();
-  ReplicationOriginShmemInit();
-  WalSndShmemInit();
-  WalRcvShmemInit();
-  WalSummarizerShmemInit();
   PgArchShmemInit();
-  ApplyLauncherShmemInit();
-  SlotSyncShmemInit();
 
   /*
    * Set up other modules that need some shared memory space

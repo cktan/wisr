@@ -57,7 +57,6 @@
 #include "commands/typecmds.h"
 #include "commands/user.h"
 #include "miscadmin.h"
-#include "replication/logicalworker.h"
 #include "rewrite/rewriteDefine.h"
 #include "storage/lmgr.h"
 #include "utils/acl.h"
@@ -282,9 +281,6 @@ static void AlterObjectRename_internal(Relation rel, Oid objectId,
       elog(WARNING, "subscriptions created by regression test cases should "
                     "have names starting with \"regress_\"");
 #endif
-
-    /* Wake up related replication workers to handle this change quickly */
-    LogicalRepWorkersWakeupAtCommit(objectId);
   } else if (nameCacheId >= 0) {
     if (OidIsValid(namespaceId)) {
       if (SearchSysCacheExists2(nameCacheId, CStringGetDatum(new_name),
@@ -782,7 +778,9 @@ ObjectAddress ExecAlterOwnerStmt(AlterOwnerStmt *stmt) {
     return AlterPublicationOwner(strVal(stmt->object), newowner);
 
   case OBJECT_SUBSCRIPTION:
-    return AlterSubscriptionOwner(strVal(stmt->object), newowner);
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("subscriptions are not supported")));
+    break;
 
     /* Generic cases */
   case OBJECT_AGGREGATE:

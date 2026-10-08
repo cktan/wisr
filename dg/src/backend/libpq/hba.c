@@ -35,7 +35,6 @@
 #include "libpq/oauth.h"
 #include "postmaster/postmaster.h"
 #include "regex/regex.h"
-#include "replication/walsender.h"
 #include "storage/fd.h"
 #include "utils/acl.h"
 #include "utils/conffiles.h"
@@ -889,14 +888,7 @@ static bool check_db(const char *dbname, const char *role, Oid roleid,
 
   foreach (cell, tokens) {
     tok = (AuthToken *)lfirst(cell);
-    if (am_walsender && !am_db_walsender) {
-      /*
-       * physical replication walsender connections can only match
-       * replication keyword
-       */
-      if (token_is_keyword(tok, "replication"))
-        return true;
-    } else if (token_is_keyword(tok, "all"))
+    if (token_is_keyword(tok, "all"))
       return true;
     else if (token_is_keyword(tok, "sameuser")) {
       if (strcmp(dbname, role) == 0)
@@ -1095,8 +1087,8 @@ static bool check_same_host_or_net(SockAddr *raddr, IPCompareMethod method) {
 #define INVALID_AUTH_OPTION(optname, validmethods) \
 do { \
 	ereport(elevel, \
-			(errcode(ERRCODE_CONFIG_FILE_ERROR), /* translator: the second %s \
-                                      is a list of auth methods */ \
+			(errcode(ERRCODE_CONFIG_FILE_ERROR), /* translator: the    \
+                                  second %s is a list of auth methods */ \
 			 errmsg("authentication option \"%s\" is only valid for authentication methods %s", \
 					optname, _(validmethods)), \
 			 errcontext("line %d of configuration file \"%s\"", \

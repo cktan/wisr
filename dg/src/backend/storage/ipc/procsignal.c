@@ -22,9 +22,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "port/pg_bitutils.h"
-#include "replication/logicalworker.h"
-#include "replication/slotsync.h"
-#include "replication/walsender.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
@@ -639,20 +636,11 @@ void procsignal_sigusr1_handler(SIGNAL_ARGS) {
   if (CheckProcSignal(PROCSIG_PARALLEL_MESSAGE))
     HandleParallelMessageInterrupt();
 
-  if (CheckProcSignal(PROCSIG_WALSND_INIT_STOPPING))
-    HandleWalSndInitStopping();
-
   if (CheckProcSignal(PROCSIG_BARRIER))
     HandleProcSignalBarrierInterrupt();
 
   if (CheckProcSignal(PROCSIG_LOG_MEMORY_CONTEXT))
     HandleLogMemoryContextInterrupt();
-
-  if (CheckProcSignal(PROCSIG_PARALLEL_APPLY_MESSAGE))
-    HandleParallelApplyMessageInterrupt();
-
-  if (CheckProcSignal(PROCSIG_SLOTSYNC_MESSAGE))
-    HandleSlotSyncMessageInterrupt();
 
   if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_DATABASE))
     HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_DATABASE);

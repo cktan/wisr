@@ -34,12 +34,12 @@
 #include "access/parallel.h"
 #include "access/printtup.h"
 #include "access/xact.h"
+#include "access/xlog.h"
 #include "catalog/pg_type.h"
 #include "commands/async.h"
 #include "commands/event_trigger.h"
 #include "commands/prepare.h"
 #include "common/pg_prng.h"
-#include "jit/jit.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
@@ -55,11 +55,6 @@
 #include "pgstat.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
-#include "replication/logicallauncher.h"
-#include "replication/logicalworker.h"
-#include "replication/slotsync.h"
-#include "replication/slot.h"
-#include "replication/walsender.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
@@ -170,7 +165,6 @@ static int InteractiveBackend(StringInfo inBuf);
 static int interactive_getc(void);
 static int SocketBackend(StringInfo inBuf);
 static int ReadCommand(StringInfo inBuf);
-static void forbidden_in_wal_sender(char firstchar);
 static bool check_log_statement(List *stmt_list);
 static int errdetail_execute(List *raw_parsetree_list);
 static int errdetail_params(ParamListInfo params);
@@ -3017,23 +3011,6 @@ void ProcessInterrupts(void) {
           (errcode(ERRCODE_ADMIN_SHUTDOWN),
            errmsg(
                "terminating autovacuum process due to administrator command")));
-    else if (IsLogicalWorker())
-      ereport(FATAL, (errcode(ERRCODE_ADMIN_SHUTDOWN),
-                      errmsg("terminating logical replication worker due to "
-                             "administrator command")));
-    else if (IsLogicalLauncher()) {
-      ereport(DEBUG1,
-              (errmsg_internal("logical replication launcher shutting down")));
-
-      /*
-       * The logical replication launcher can be stopped at any time.
-       * Use exit status 1 so the background worker is restarted.
-       */
-      proc_exit(1);
-    } else if (AmWalReceiverProcess())
-      ereport(FATAL, (errcode(ERRCODE_ADMIN_SHUTDOWN),
-                      errmsg("terminating walreceiver process due to "
-                             "administrator command")));
     else if (AmBackgroundWorkerProcess())
       ereport(FATAL, (errcode(ERRCODE_ADMIN_SHUTDOWN),
                       errmsg("terminating background worker \"%s\" due to "
@@ -3209,12 +3186,6 @@ void ProcessInterrupts(void) {
 
   if (LogMemoryContextPending)
     ProcessLogMemoryContextInterrupt();
-
-  if (ParallelApplyMessagePending)
-    ProcessParallelApplyMessages();
-
-  if (SlotSyncShutdownPending)
-    ProcessSlotSyncMessage();
 }
 
 /*
@@ -3835,9 +3806,7 @@ void PostgresMain(const char *dbname, const char *username) {
    * an issue for signals that are locally generated, such as SIGALRM and
    * SIGPIPE.)
    */
-  if (am_walsender)
-    WalSndSignals();
-  else {
+  {
     pqsignal(SIGHUP, SignalHandlerForConfigReload);
     pqsignal(SIGINT, StatementCancelHandler); /* cancel current query */
     pqsignal(SIGTERM, die); /* cancel current query and exit */
@@ -3908,10 +3877,9 @@ void PostgresMain(const char *dbname, const char *username) {
    *
    * Honor session_preload_libraries if not dealing with a WAL sender.
    */
-  InitPostgres(dbname, InvalidOid,   /* database to connect to */
-               username, InvalidOid, /* role to connect as */
-               (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
-               NULL); /* no out_dbname */
+  InitPostgres(dbname, InvalidOid,               /* database to connect to */
+               username, InvalidOid,             /* role to connect as */
+               INIT_PG_LOAD_SESSION_LIBS, NULL); /* no out_dbname */
 
   /*
    * If the PostmasterContext is still around, recycle the space; we don't
@@ -3938,10 +3906,6 @@ void PostgresMain(const char *dbname, const char *username) {
     on_proc_exit(log_disconnections, 0);
 
   pgstat_report_connect(MyDatabaseId);
-
-  /* Perform initialization specific to a WAL sender process. */
-  if (am_walsender)
-    InitWalSender();
 
   /*
    * Send this backend's cancellation info to the frontend.
@@ -4065,25 +4029,7 @@ void PostgresMain(const char *dbname, const char *username) {
      */
     AbortCurrentTransaction();
 
-    if (am_walsender)
-      WalSndErrorCleanup();
-
     PortalErrorCleanup();
-
-    /*
-     * We can't release replication slots inside AbortTransaction() as we
-     * need to be able to start and abort transactions while having a slot
-     * acquired. But we never need to hold them across top level errors,
-     * so releasing here is fine. There also is a before_shmem_exit()
-     * callback ensuring correct cleanup on FATAL errors.
-     */
-    if (MyReplicationSlot != NULL)
-      ReplicationSlotRelease();
-
-    /* We also want to cleanup temporary slots on error. */
-    ReplicationSlotCleanup(false);
-
-    jit_reset_after_error();
 
     /*
      * Now return to normal top-level context and clear ErrorContext for
@@ -4350,11 +4296,7 @@ void PostgresMain(const char *dbname, const char *username) {
       query_string = pq_getmsgstring(&input_message);
       pq_getmsgend(&input_message);
 
-      if (am_walsender) {
-        if (!exec_replication_command(query_string))
-          exec_simple_query(query_string);
-      } else
-        exec_simple_query(query_string);
+      exec_simple_query(query_string);
 
       valgrind_report_error_query(query_string);
 
@@ -4366,8 +4308,6 @@ void PostgresMain(const char *dbname, const char *username) {
       const char *query_string;
       int numParams;
       Oid *paramTypes = NULL;
-
-      forbidden_in_wal_sender(firstchar);
 
       /* Set statement_timestamp() */
       SetCurrentStatementStartTimestamp();
@@ -4388,7 +4328,6 @@ void PostgresMain(const char *dbname, const char *username) {
     } break;
 
     case PqMsg_Bind:
-      forbidden_in_wal_sender(firstchar);
 
       /* Set statement_timestamp() */
       SetCurrentStatementStartTimestamp();
@@ -4406,8 +4345,6 @@ void PostgresMain(const char *dbname, const char *username) {
       const char *portal_name;
       int max_rows;
 
-      forbidden_in_wal_sender(firstchar);
-
       /* Set statement_timestamp() */
       SetCurrentStatementStartTimestamp();
 
@@ -4421,7 +4358,6 @@ void PostgresMain(const char *dbname, const char *username) {
     } break;
 
     case PqMsg_FunctionCall:
-      forbidden_in_wal_sender(firstchar);
 
       /* Set statement_timestamp() */
       SetCurrentStatementStartTimestamp();
@@ -4459,8 +4395,6 @@ void PostgresMain(const char *dbname, const char *username) {
       int close_type;
       const char *close_target;
 
-      forbidden_in_wal_sender(firstchar);
-
       close_type = pq_getmsgbyte(&input_message);
       close_target = pq_getmsgstring(&input_message);
       pq_getmsgend(&input_message);
@@ -4497,8 +4431,6 @@ void PostgresMain(const char *dbname, const char *username) {
     case PqMsg_Describe: {
       int describe_type;
       const char *describe_target;
-
-      forbidden_in_wal_sender(firstchar);
 
       /* Set statement_timestamp() (needed for xact) */
       SetCurrentStatementStartTimestamp();
@@ -4590,26 +4522,6 @@ void PostgresMain(const char *dbname, const char *username) {
                       errmsg("invalid frontend message type %d", firstchar)));
     }
   } /* end of input-reading loop */
-}
-
-/*
- * Throw an error if we're a WAL sender process.
- *
- * This is used to forbid anything else than simple query protocol messages
- * in a WAL sender process.  'firstchar' specifies what kind of a forbidden
- * message was received, and is used to construct the error message.
- */
-static void forbidden_in_wal_sender(char firstchar) {
-  if (am_walsender) {
-    if (firstchar == PqMsg_FunctionCall)
-      ereport(ERROR, (errcode(ERRCODE_PROTOCOL_VIOLATION),
-                      errmsg("fastpath function calls not supported in a "
-                             "replication connection")));
-    else
-      ereport(ERROR, (errcode(ERRCODE_PROTOCOL_VIOLATION),
-                      errmsg("extended query protocol not supported in a "
-                             "replication connection")));
-  }
 }
 
 static struct rusage Save_r;

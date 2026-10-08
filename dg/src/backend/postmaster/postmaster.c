@@ -105,10 +105,6 @@
 #include "postmaster/pgarch.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/syslogger.h"
-#include "postmaster/walsummarizer.h"
-#include "replication/logicallauncher.h"
-#include "replication/slotsync.h"
-#include "replication/walsender.h"
 #include "storage/aio_subsys.h"
 #include "storage/fd.h"
 #include "storage/io_worker.h"
@@ -805,13 +801,6 @@ void PostmasterMain(int argc, char *argv[]) {
   if (XLogArchiveMode > ARCHIVE_MODE_OFF && wal_level == WAL_LEVEL_MINIMAL)
     ereport(ERROR, (errmsg("WAL archival cannot be enabled when \"wal_level\" "
                            "is \"minimal\"")));
-  if (max_wal_senders > 0 && wal_level == WAL_LEVEL_MINIMAL)
-    ereport(ERROR, (errmsg("WAL streaming (\"max_wal_senders\" > 0) requires "
-                           "\"wal_level\" to be \"replica\" or \"logical\"")));
-  if (summarize_wal && wal_level == WAL_LEVEL_MINIMAL)
-    ereport(
-        ERROR,
-        (errmsg("WAL cannot be summarized when \"wal_level\" is \"minimal\"")));
 
   /*
    * Other one-time internal sanity checks can go here, if they are fast.
@@ -875,12 +864,6 @@ void PostmasterMain(int argc, char *argv[]) {
    * repeat the test.
    */
   LocalProcessControlFile(false);
-
-  /*
-   * Register the apply launcher.  It's probably a good idea to call this
-   * before any modules had a chance to take the background worker slots.
-   */
-  ApplyLauncherRegister();
 
   /*
    * process any libraries that should be preloaded at postmaster start
@@ -3041,49 +3024,6 @@ static void LaunchMissingBackgroundProcesses(void) {
         (pmState == PM_RECOVERY || pmState == PM_HOT_STANDBY))) &&
       PgArchCanRestart())
     PgArchPMChild = StartChildProcess(B_ARCHIVER);
-
-  /*
-   * If we need to start a slot sync worker, try to do that now
-   *
-   * We allow to start the slot sync worker when we are on a hot standby,
-   * fast or immediate shutdown is not in progress, slot sync parameters are
-   * configured correctly, and it is the first time of worker's launch, or
-   * enough time has passed since the worker was launched last.
-   */
-  if (SlotSyncWorkerPMChild == NULL && pmState == PM_HOT_STANDBY &&
-      Shutdown <= SmartShutdown && sync_replication_slots &&
-      ValidateSlotSyncParams(LOG) && SlotSyncWorkerCanRestart())
-    SlotSyncWorkerPMChild = StartChildProcess(B_SLOTSYNC_WORKER);
-
-  /*
-   * If we need to start a WAL receiver, try to do that now
-   *
-   * Note: if a walreceiver process is already running, it might seem that
-   * we should clear WalReceiverRequested.  However, there's a race
-   * condition if the walreceiver terminates and the startup process
-   * immediately requests a new one: it's quite possible to get the signal
-   * for the request before reaping the dead walreceiver process.  Better to
-   * risk launching an extra walreceiver than to miss launching one we need.
-   * (The walreceiver code has logic to recognize that it should go away if
-   * not needed.)
-   */
-  if (WalReceiverRequested) {
-    if (WalReceiverPMChild == NULL &&
-        (pmState == PM_STARTUP || pmState == PM_RECOVERY ||
-         pmState == PM_HOT_STANDBY) &&
-        Shutdown <= SmartShutdown) {
-      WalReceiverPMChild = StartChildProcess(B_WAL_RECEIVER);
-      if (WalReceiverPMChild != 0)
-        WalReceiverRequested = false;
-      /* else leave the flag set, so we'll try again later */
-    }
-  }
-
-  /* If we need to start a WAL summarizer, try to do that now */
-  if (summarize_wal && WalSummarizerPMChild == NULL &&
-      (pmState == PM_RUN || pmState == PM_HOT_STANDBY) &&
-      Shutdown <= SmartShutdown)
-    WalSummarizerPMChild = StartChildProcess(B_WAL_SUMMARIZER);
 
   /* Get other worker processes running, if needed */
   if (StartWorkerNeeded || HaveCrashedWorker)

@@ -17,13 +17,11 @@
 
 #include <float.h>
 
-#include "access/gist_private.h"
 #include "access/hash.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "access/reloptions.h"
-#include "access/spgist_private.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/tablespace.h"
@@ -92,9 +90,6 @@
  */
 
 static relopt_bool boolRelOpts[] = {
-    {{"autosummarize", "Enables automatic summarization on this BRIN index",
-      RELOPT_KIND_BRIN, AccessExclusiveLock},
-     false},
     {{"autovacuum_enabled", "Enables autovacuum in this relation",
       RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
      true},
@@ -103,9 +98,6 @@ static relopt_bool boolRelOpts[] = {
       "logical replication",
       RELOPT_KIND_HEAP, AccessExclusiveLock},
      false},
-    {{"fastupdate", "Enables \"fast update\" feature for this GIN index",
-      RELOPT_KIND_GIN, AccessExclusiveLock},
-     true},
     {{"security_barrier", "View acts as a row security barrier",
       RELOPT_KIND_VIEW, AccessExclusiveLock},
      false},
@@ -152,22 +144,6 @@ static relopt_int intRelOpts[] = {
      },
      HASH_DEFAULT_FILLFACTOR,
      HASH_MIN_FILLFACTOR,
-     100},
-    {{
-         "fillfactor", "Packs gist index pages only to this percentage",
-         RELOPT_KIND_GIST, ShareUpdateExclusiveLock /* since it applies only to
-                                                     * later inserts */
-     },
-     GIST_DEFAULT_FILLFACTOR,
-     GIST_MIN_FILLFACTOR,
-     100},
-    {{
-         "fillfactor", "Packs spgist index pages only to this percentage",
-         RELOPT_KIND_SPGIST, ShareUpdateExclusiveLock /* since it applies only
-                                                       * to later inserts */
-     },
-     SPGIST_DEFAULT_FILLFACTOR,
-     SPGIST_MIN_FILLFACTOR,
      100},
     {{"autovacuum_vacuum_threshold",
       "Minimum number of tuple updates or deletes prior to vacuum",
@@ -253,18 +229,6 @@ static relopt_int intRelOpts[] = {
      TOAST_TUPLE_TARGET,
      128,
      TOAST_TUPLE_TARGET_MAIN},
-    {{"pages_per_range",
-      "Number of pages that each page range covers in a BRIN index",
-      RELOPT_KIND_BRIN, AccessExclusiveLock},
-     128,
-     1,
-     131072},
-    {{"gin_pending_list_limit",
-      "Maximum size of the pending list for this GIN index, in kilobytes.",
-      RELOPT_KIND_GIN, AccessExclusiveLock},
-     -1,
-     64,
-     MAX_KILOBYTES},
     {{"effective_io_concurrency",
       "Number of simultaneous requests that can be handled efficiently by the "
       "disk subsystem.",
@@ -375,14 +339,6 @@ static relopt_enum_elt_def StdRdOptIndexCleanupValues[] = {
     {(const char *)NULL} /* list terminator */
 };
 
-/* values from GistOptBufferingMode */
-static relopt_enum_elt_def gistBufferingOptValues[] = {
-    {"auto", GIST_OPTION_BUFFERING_AUTO},
-    {"on", GIST_OPTION_BUFFERING_ON},
-    {"off", GIST_OPTION_BUFFERING_OFF},
-    {(const char *)NULL} /* list terminator */
-};
-
 /* values from ViewOptCheckOption */
 static relopt_enum_elt_def viewCheckOptValues[] = {
     /* no value for NOT_SET */
@@ -396,11 +352,6 @@ static relopt_enum enumRelOpts[] = {
       RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
      StdRdOptIndexCleanupValues,
      STDRD_OPTION_VACUUM_INDEX_CLEANUP_AUTO,
-     gettext_noop("Valid values are \"on\", \"off\", and \"auto\".")},
-    {{"buffering", "Enables buffering build for this GiST index",
-      RELOPT_KIND_GIST, AccessExclusiveLock},
-     gistBufferingOptValues,
-     GIST_OPTION_BUFFERING_AUTO,
      gettext_noop("Valid values are \"on\", \"off\", and \"auto\".")},
     {{"check_option", "View has WITH CHECK OPTION defined (local or cascaded).",
       RELOPT_KIND_VIEW, AccessExclusiveLock},

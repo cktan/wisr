@@ -235,7 +235,6 @@ void standard_ExecutorStart(QueryDesc *queryDesc, int eflags) {
       RegisterSnapshot(queryDesc->crosscheck_snapshot);
   estate->es_top_eflags = eflags;
   estate->es_instrument = queryDesc->instrument_options;
-  estate->es_jit_flags = queryDesc->plannedstmt->jitFlags;
 
   /*
    * Set up an AFTER-trigger statement context, unless told not to, or
@@ -990,23 +989,6 @@ void CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation,
   switch (resultRel->rd_rel->relkind) {
   case RELKIND_RELATION:
   case RELKIND_PARTITIONED_TABLE:
-
-    /*
-     * For MERGE, check that the target relation supports each action.
-     * For other operations, just check the operation itself.
-     */
-    if (operation == CMD_MERGE)
-      foreach_node(MergeAction, action, mergeActions)
-          CheckCmdReplicaIdentity(resultRel, action->commandType);
-    else
-      CheckCmdReplicaIdentity(resultRel, operation);
-
-    /*
-     * For INSERT ON CONFLICT DO UPDATE, additionally check that the
-     * target relation supports UPDATE.
-     */
-    if (onConflictAction == ONCONFLICT_UPDATE)
-      CheckCmdReplicaIdentity(resultRel, CMD_UPDATE);
     break;
   case RELKIND_SEQUENCE:
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),

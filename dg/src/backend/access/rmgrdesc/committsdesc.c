@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/commit_ts.h"
+#include "access/xlogreader.h"
 
 void commit_ts_desc(StringInfo buf, XLogReaderState *record) {
   char *rec = XLogRecGetData(record);

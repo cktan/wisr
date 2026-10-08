@@ -1512,10 +1512,6 @@ static void shdepReassignOwned_Owner(Form_pg_shdepend sdepForm, Oid newrole) {
     AlterPublicationOwner_oid(sdepForm->objid, newrole);
     break;
 
-  case SubscriptionRelationId:
-    AlterSubscriptionOwner_oid(sdepForm->objid, newrole);
-    break;
-
     /* Generic alter owner cases */
   case CollationRelationId:
   case ConversionRelationId:

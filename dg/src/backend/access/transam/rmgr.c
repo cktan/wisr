@@ -19,13 +19,9 @@
 
 /* includes needed for "access/rmgrlist.h" */
 /* IWYU pragma: begin_keep */
-#include "access/brin_xlog.h"
 #include "access/clog.h"
 #include "access/commit_ts.h"
 #include "access/generic_xlog.h"
-#include "access/ginxlog.h"
-#include "access/gistxlog.h"
-#include "access/hash_xlog.h"
 #include "access/heapam_xlog.h"
 #include "access/multixact.h"
 #include "access/nbtxlog.h"
@@ -35,9 +31,6 @@
 #include "commands/dbcommands_xlog.h"
 #include "commands/sequence.h"
 #include "commands/tablespace.h"
-#include "replication/decode.h"
-#include "replication/message.h"
-#include "replication/origin.h"
 #include "storage/standby.h"
 #include "utils/relmapper.h"
 /* IWYU pragma: end_keep */

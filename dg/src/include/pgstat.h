@@ -15,7 +15,6 @@
 #include "datatype/timestamp.h"
 #include "portability/instr_time.h"
 #include "postmaster/pgarch.h" /* for MAX_XFN_CHARS */
-#include "replication/conflict.h"
 #include "utils/backend_progress.h" /* for backward compatibility */ /* IWYU pragma: export */
 #include "utils/backend_status.h" /* for backward compatibility */ /* IWYU pragma: export */
 #include "utils/pgstat_kind.h"
@@ -93,16 +92,6 @@ typedef struct PgStat_FunctionCallUsage {
   /* system clock as of function start */
   instr_time start;
 } PgStat_FunctionCallUsage;
-
-/* ----------
- * PgStat_BackendSubEntry	Non-flushed subscription stats.
- * ----------
- */
-typedef struct PgStat_BackendSubEntry {
-  PgStat_Counter apply_error_count;
-  PgStat_Counter sync_error_count;
-  PgStat_Counter conflict_count[CONFLICT_NUM_TYPES];
-} PgStat_BackendSubEntry;
 
 /* ----------
  * PgStat_TableCounts			The actual per-table counts kept by a
@@ -366,18 +355,6 @@ typedef struct PgStat_StatFuncEntry {
   PgStat_Counter self_time;
 } PgStat_StatFuncEntry;
 
-typedef struct PgStat_StatReplSlotEntry {
-  PgStat_Counter spill_txns;
-  PgStat_Counter spill_count;
-  PgStat_Counter spill_bytes;
-  PgStat_Counter stream_txns;
-  PgStat_Counter stream_count;
-  PgStat_Counter stream_bytes;
-  PgStat_Counter total_txns;
-  PgStat_Counter total_bytes;
-  TimestampTz stat_reset_timestamp;
-} PgStat_StatReplSlotEntry;
-
 typedef struct PgStat_SLRUStats {
   PgStat_Counter blocks_zeroed;
   PgStat_Counter blocks_hit;
@@ -388,13 +365,6 @@ typedef struct PgStat_SLRUStats {
   PgStat_Counter truncate;
   TimestampTz stat_reset_timestamp;
 } PgStat_SLRUStats;
-
-typedef struct PgStat_StatSubEntry {
-  PgStat_Counter apply_error_count;
-  PgStat_Counter sync_error_count;
-  PgStat_Counter conflict_count[CONFLICT_NUM_TYPES];
-  TimestampTz stat_reset_timestamp;
-} PgStat_StatSubEntry;
 
 typedef struct PgStat_StatTabEntry {
   PgStat_Counter numscans;
@@ -695,19 +665,6 @@ extern PgStat_StatTabEntry *pgstat_fetch_stat_tabentry_ext(bool shared,
 extern PgStat_TableStatus *find_tabstat_entry(Oid rel_id);
 
 /*
- * Functions in pgstat_replslot.c
- */
-
-extern void pgstat_reset_replslot(const char *name);
-struct ReplicationSlot;
-extern void pgstat_report_replslot(struct ReplicationSlot *slot,
-                                   const PgStat_StatReplSlotEntry *repSlotStat);
-extern void pgstat_create_replslot(struct ReplicationSlot *slot);
-extern void pgstat_acquire_replslot(struct ReplicationSlot *slot);
-extern void pgstat_drop_replslot(struct ReplicationSlot *slot);
-extern PgStat_StatReplSlotEntry *pgstat_fetch_replslot(NameData slotname);
-
-/*
  * Functions in pgstat_slru.c
  */
 
@@ -722,16 +679,6 @@ extern void pgstat_count_slru_truncate(int slru_idx);
 extern const char *pgstat_get_slru_name(int slru_idx);
 extern int pgstat_get_slru_index(const char *name);
 extern PgStat_SLRUStats *pgstat_fetch_slru(void);
-
-/*
- * Functions in pgstat_subscription.c
- */
-
-extern void pgstat_report_subscription_error(Oid subid, bool is_apply_error);
-extern void pgstat_report_subscription_conflict(Oid subid, ConflictType type);
-extern void pgstat_create_subscription(Oid subid);
-extern void pgstat_drop_subscription(Oid subid);
-extern PgStat_StatSubEntry *pgstat_fetch_stat_subscription(Oid subid);
 
 /*
  * Functions in pgstat_xact.c

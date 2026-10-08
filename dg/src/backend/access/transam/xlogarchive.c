@@ -29,7 +29,6 @@
 #include "pgstat.h"
 #include "postmaster/pgarch.h"
 #include "postmaster/startup.h"
-#include "replication/walsender.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 
@@ -334,7 +333,6 @@ void ExecuteRecoveryCommand(const char *command, const char *commandName,
  */
 void KeepFileRestoredFromArchive(const char *path, const char *xlogfname) {
   char xlogfpath[MAXPGPATH];
-  bool reload = false;
   struct stat statbuf;
 
   snprintf(xlogfpath, MAXPGPATH, XLOGDIR "/%s", xlogfname);
@@ -368,7 +366,6 @@ void KeepFileRestoredFromArchive(const char *path, const char *xlogfname) {
     if (unlink(oldpath) != 0)
       ereport(FATAL, (errcode_for_file_access(),
                       errmsg("could not remove file \"%s\": %m", xlogfpath)));
-    reload = true;
   }
 
   durable_rename(path, xlogfpath, ERROR);
@@ -381,23 +378,6 @@ void KeepFileRestoredFromArchive(const char *path, const char *xlogfname) {
     XLogArchiveForceDone(xlogfname);
   else
     XLogArchiveNotify(xlogfname);
-
-  /*
-   * If the existing file was replaced, since walsenders might have it open,
-   * request them to reload a currently-open segment. This is only required
-   * for WAL segments, walsenders don't hold other files open, but there's
-   * no harm in doing this too often, and we don't know what kind of a file
-   * we're dealing with here.
-   */
-  if (reload)
-    WalSndRqstFileReload();
-
-  /*
-   * Signal walsender that new WAL has arrived. Again, this isn't necessary
-   * if we restored something other than a WAL segment, but it does no harm
-   * either.
-   */
-  WalSndWakeup(true, false);
 }
 
 /*
