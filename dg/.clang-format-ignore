@@ -26,5 +26,3 @@ src/include/nodes/replnodes.h
 src/include/nodes/supportnodes.h
 src/include/nodes/value.h
 src/include/utils/rel.h
-# gen_tabcomplete.pl reads this one the same way.
-src/bin/psql/tab-complete.in.c

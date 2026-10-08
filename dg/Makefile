@@ -17,7 +17,7 @@ include $(top)/dg.mk
 I := src/include
 B := src/backend
 PERL := perl
-# Where digres is installed, which the server and psql are built knowing.
+# Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
 # The headers gen_node_support.pl reads, in the order it insists on.
@@ -37,9 +37,7 @@ GEN := $(I)/catalog/.stamp $(B)/nodes/.stamp $(B)/utils/.fmgr-stamp \
     $(B)/utils/activity/.stamp $(I)/utils/probes.h \
     $(I)/pg_config_paths.h src/common/kwlist_d.h \
     $(B)/parser/gram.c $(B)/parser/scan.c $(B)/utils/adt/jsonpath_gram.c \
-    $(B)/utils/adt/jsonpath_scan.c $(B)/utils/misc/guc-file.c \
-    src/fe_utils/psqlscan.c src/bin/psql/psqlscanslash.c \
-    src/bin/psql/tab-complete.c
+    $(B)/utils/adt/jsonpath_scan.c $(B)/utils/misc/guc-file.c
 
 .PHONY: gen
 gen: $(GEN)
@@ -110,12 +108,6 @@ $(B)/utils/adt/jsonpath_scan.c: $(B)/utils/adt/jsonpath_scan.l
 	flex -CF -p -p -o $@ $<
 $(B)/utils/misc/guc-file.c: $(B)/utils/misc/guc-file.l
 	flex -o $@ $<
-src/fe_utils/psqlscan.c: src/fe_utils/psqlscan.l
-	flex -Cfe -p -p -o $@ $<
-src/bin/psql/psqlscanslash.c: src/bin/psql/psqlscanslash.l
-	flex -Cfe -p -p -o $@ $<
-src/bin/psql/tab-complete.c: src/bin/psql/tab-complete.in.c
-	$(PERL) src/bin/psql/gen_tabcomplete.pl $< --outfile $@
 
 # Headers are formatted here: src/include has no Makefile.
 format: format-include

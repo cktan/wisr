@@ -1,3 +1,3 @@
 top := ..
-SUBDIRS := port common backend timezone interfaces fe_utils bin
+SUBDIRS := port common backend timezone
 include $(top)/dg.mk

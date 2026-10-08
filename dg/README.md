@@ -38,14 +38,16 @@ to travel with the code.
 | `src/backend` | the server |
 | `src/include` | its headers, and the catalog data, `catalog/*.dat` |
 | `src/common`, `src/port` | code the server and the clients share |
-| `src/interfaces/libpq` | the client library |
-| `src/bin/psql`, `src/fe_utils` | the terminal client |
-| `src/timezone` | the time zone code and data |
+| `src/timezone` | the time zone code |
 
 ## What was left out
 
 - Every procedural language (`src/pl`), `contrib`, `ecpg`, the
-  tests, the documentation, and every client tool but `psql`.
+  tests, the documentation, and every client: `libpq` and `psql`
+  came with the copy and were removed, since PostgreSQL's own
+  `psql` speaks to digres as it is.
+- The time zone compiler `zic` and the time zone data: the
+  server reads the system's, in `/usr/share/zoneinfo`.
 - From the server: the catalog bootstrap (`bootstrap`), full-text
   search (`snowball`, `tsearch`), the JIT, replication and base
   backup, and the index methods the stack does not have: `gin`,

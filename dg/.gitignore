@@ -40,7 +40,4 @@ src/backend/utils/adt/jsonpath_gram.h
 src/backend/utils/adt/jsonpath_scan.c
 src/backend/utils/misc/guc-file.c
 src/common/kwlist_d.h
-src/fe_utils/psqlscan.c
-src/bin/psql/psqlscanslash.c
-src/bin/psql/tab-complete.c
 .cxx_casts

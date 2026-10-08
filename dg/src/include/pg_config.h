@@ -693,6 +693,9 @@
 /* #undef USE_BSD_AUTH */
 
 /* Define to build with ICU support. (--with-icu) */
+/* The time zone database is the system's: digres ships none. */
+#define SYSTEMTZDIR "/usr/share/zoneinfo"
+
 #define USE_ICU 1
 
 /* Define to 1 to build with injection points. (--enable-injection-points) */
