@@ -1,0 +1,28 @@
+# Headers that PostgreSQL's Perl generators read line by line:
+# genbki.pl and Gen_fmgrtab.pl the catalog headers, and
+# gen_node_support.pl the node headers. Reformatting them breaks
+# the generators, so clang-format leaves them as they were.
+src/include/catalog/pg_*.h
+src/include/nodes/nodes.h
+src/include/nodes/primnodes.h
+src/include/nodes/parsenodes.h
+src/include/nodes/pathnodes.h
+src/include/nodes/plannodes.h
+src/include/nodes/execnodes.h
+src/include/access/amapi.h
+src/include/access/cmptype.h
+src/include/access/sdir.h
+src/include/access/tableam.h
+src/include/access/tsmapi.h
+src/include/commands/event_trigger.h
+src/include/commands/trigger.h
+src/include/executor/tuptable.h
+src/include/foreign/fdwapi.h
+src/include/nodes/bitmapset.h
+src/include/nodes/extensible.h
+src/include/nodes/lockoptions.h
+src/include/nodes/miscnodes.h
+src/include/nodes/replnodes.h
+src/include/nodes/supportnodes.h
+src/include/nodes/value.h
+src/include/utils/rel.h
