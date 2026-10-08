@@ -70,6 +70,18 @@ struct index_key_spec_t {
 enum class index_state_t : uint8_t { pending = 0, valid = 1, failed = 2 };
 
 /*
+ * An index's state, with why its build failed: the error's code
+ * and message, SM_OK and empty unless failed. It is no part of the
+ * table's record or of its definition: it is kept by index, and
+ * changes without the table being changed (cat_put_index_state).
+ */
+struct index_status_t {
+  index_state_t state = index_state_t::pending;
+  sm1::errnum_t error = sm1::SM_OK;
+  std::string reason;
+};
+
+/*
  * ---- records: what the catalog stores of a table ----
  *
  * A table's record is the table as the catalog keeps it: plain
@@ -117,9 +129,6 @@ struct index_rec_t {
   bool unique;
   std::vector<index_key_rec_t> keys;
   std::vector<int32_t> includes; /* 0-based attnums */
-  index_state_t state = index_state_t::valid;
-  sm1::errnum_t error = sm1::SM_OK; /* why its build failed */
-  std::string reason;               /* that error's message */
   std::string eval;                 /* the host's blob; empty: plain */
   std::vector<int32_t> reads;       /* the columns it reads, 0-based */
   bool operator==(const index_rec_t&) const = default;
@@ -157,10 +166,6 @@ struct index_def_t {
     std::vector<int32_t>              include_attnums; /* 0-based */
     std::vector<sm2::key_column_t>    key;             /* for sm2 */
     std::vector<sm2::attribute_t>     include;         /* for sm2 */
-    index_state_t                     state = index_state_t::valid;
-    /* Why its build failed, as the build met it; SM_OK unless failed. */
-    sm1::errnum_t                     error = sm1::SM_OK;
-    std::string                       reason;
     /*
      * A partial or an expression index (SM3_DESIGN.md §3): eval is
      * its predicate and its expressions as the host serialized
@@ -395,6 +400,31 @@ int cat_get_table_rec(session_t* s, uint64_t table_oid, table_rec_t& rec);
 int cat_put_table(session_t* s, uint64_t table_oid, const table_rec_t& rec);
 
 /*
+ * The state of the index index_oid: as committed, or as s's
+ * transaction sees it, its own change included. An index that has
+ * none recorded, or is not there, is pending.
+ */
+index_status_t cat_get_index_state(const catalog_t* cat, uint64_t index_oid);
+index_status_t cat_get_index_state(const session_t* s, uint64_t index_oid);
+
+/*
+ * Store the state of the index index_oid of the table table_oid,
+ * which must be pending: a state is set once, to valid or to
+ * failed, and one that is no longer pending fails with
+ * SM_ERR_INVALID. Setting a pending index pending changes nothing.
+ * It takes the table-oid lock IX, as a writer of the table does,
+ * and not exclusive: no reader or writer of the table waits for
+ * it or it for them, and only DDL on the table is kept out. A
+ * transaction that sees the state late sees pending, which is
+ * always safe -- it maintains the index and does not scan it. The
+ * state is published with the commit, so the catalog in memory and
+ * the store never differ. No such table or index fails with
+ * SM_ERR_NOTFOUND.
+ */
+int cat_put_index_state(session_t* s, uint64_t table_oid, uint64_t index_oid,
+                        const index_status_t& status);
+
+/*
  * Erase the record of the table table_oid and the names it took,
  * under its table-oid lock exclusive. Its store and its sequence are
  * the caller's to drop. No such table fails with SM_ERR_NOTFOUND.
@@ -606,9 +636,10 @@ int drop_index(session_t* session, uint64_t table, uint64_t oid);
 int enqueue_pending_indexes(catalog_t* cat);
 
 /*
- * Set the state of the table's index oid, as the build does when
- * it ends: valid, or failed. A failed index keeps why, error and
- * reason, in its record; any other state clears them.
+ * Set the state of the table's index oid, which must be pending,
+ * as the build does when it ends: valid, or failed. A failed index
+ * keeps why, error and reason. It is cat_put_index_state,
+ * and like it does not wait for the table's readers or writers.
  */
 int set_index_state(session_t* session, uint64_t table, uint64_t oid,
                     index_state_t state,
@@ -662,6 +693,13 @@ session_t* tbl_session(const table_t* table);
  * an index whether it is usable or not.
  */
 bool tbl_index_usable(const table_t* table, uint64_t index);
+
+/*
+ * The state of the table's index oid as the handle has it: as its
+ * session saw it when the table was opened, which is what its
+ * writes go by. No such index is failed.
+ */
+index_state_t tbl_index_state(const table_t* table, uint64_t index);
 
 /*
  * The writes. Each is the heap write, then a write or two to every

@@ -199,6 +199,7 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       /* nspace */ {att(type_text)},
       /* collation */
       {att(type_text), att(type_text), att(type_bool), att(type_text)},
+      /* index_state */ {att(type_int2), att(type_int2), att(type_text)},
   };
   return schemas[static_cast<size_t>(part)];
 }
@@ -224,7 +225,7 @@ const sm2::tup_desc_t &part_desc(part_t part) {
       schema_of(part_t::table),     schema_of(part_t::column),
       schema_of(part_t::index),     schema_of(part_t::index_key),
       schema_of(part_t::include),   schema_of(part_t::nspace),
-      schema_of(part_t::collation),
+      schema_of(part_t::collation), schema_of(part_t::index_state),
   };
   return descs[static_cast<size_t>(part)];
 }
@@ -387,12 +388,8 @@ int encode_index(const index_rec_t &x, std::string &blob) {
     w.b(3, x.unique);
     w.i4(4, static_cast<int32_t>(x.keys.size()));
     w.i4(5, static_cast<int32_t>(x.includes.size()));
-    w.i2(6, static_cast<int16_t>(x.state));
-    // Only a failed index has a reason to keep.
-    if (x.state == index_state_t::failed) {
-      w.i2(7, static_cast<int16_t>(x.error));
-      w.bytes(8, x.reason);
-    }
+    // Attributes 6 to 8 held the index's state, which has an
+    // entry of its own now; they are left null.
     // Only a partial or an expression index has a blob, and
     // columns it reads, which follow its INCLUDE parts.
     if (!x.eval.empty()) {
@@ -450,18 +447,9 @@ int decode_index(std::string_view blob, index_rec_t &x) {
     x.relid = static_cast<uint16_t>(r.i2(2));
     x.unique = r.b(3);
     int32_t nkey = r.i4(4), ninclude = r.i4(5);
-    // An index written before the state was kept is valid.
-    int16_t state =
-        r.opt_i2(6).value_or(static_cast<int16_t>(index_state_t::valid));
     if (!r.ok || nkey < 0 || ninclude < 0) {
       return corrupt("an index part cut short");
     }
-    if (state < 0 || state > static_cast<int16_t>(index_state_t::failed)) {
-      return corrupt("an index in no known state");
-    }
-    x.state = static_cast<index_state_t>(state);
-    x.error = static_cast<sm1::errnum_t>(r.opt_i2(7).value_or(sm1::SM_OK));
-    x.reason = r.opt_bytes(8).value_or("");
     x.eval = r.opt_bytes(9).value_or("");
     int32_t nread = r.opt_i4(10).value_or(0);
     if (nread < 0) {
@@ -499,6 +487,41 @@ int decode_index(std::string_view blob, index_rec_t &x) {
         return corrupt("a column an index reads cut short");
       }
     }
+    return at_end(blob, pos);
+  });
+}
+
+/* An index's state: the state, and why its build failed. */
+int encode_index_state(const index_status_t &rec, std::string &blob) {
+  return catch_nomem([&] {
+    writer_t w(3);
+    w.i2(0, static_cast<int16_t>(rec.state));
+    // Only a failed index has a reason to keep.
+    if (rec.state == index_state_t::failed) {
+      w.i2(1, static_cast<int16_t>(rec.error));
+      w.bytes(2, rec.reason);
+    }
+    blob.clear();
+    return w.append(part_desc(part_t::index_state), blob);
+  });
+}
+
+/* Read an index's state. */
+int decode_index_state(std::string_view blob, index_status_t &rec) {
+  return catch_nomem([&] {
+    reader_t r;
+    size_t pos = 0;
+    if (r.read(blob, pos, part_t::index_state) != 0) {
+      return -1;
+    }
+    int16_t state = r.i2(0);
+    if (!r.ok || state < 0 ||
+        state > static_cast<int16_t>(index_state_t::failed)) {
+      return corrupt("an index in no known state");
+    }
+    rec.state = static_cast<index_state_t>(state);
+    rec.error = static_cast<sm1::errnum_t>(r.opt_i2(1).value_or(sm1::SM_OK));
+    rec.reason = r.opt_bytes(2).value_or("");
     return at_end(blob, pos);
   });
 }

@@ -675,6 +675,9 @@ table resolved for use; its writes take a record,
 | `cat_get_table_rec(ss, table_oid, rec&)` | Reads a table's record in order to change it: takes the table-oid lock exclusive and returns the newest record. |
 | `cat_put_table(ss, table_oid, rec)` | Stores a table's record, new or replacing the old, and makes the names in it the names taken. A taken name is `SM_ERR_DUPKEY`; no such namespace is `SM_ERR_NOTFOUND`. |
 | `cat_del_table(ss, table_oid)` | Erases a table's record and its names. Its store and sequence are the caller's to drop. |
+| `cat_get_index_state(cat, index_oid)` | Returns an index's committed state, with the error and reason of a failed one. None recorded is pending. |
+| `cat_get_index_state(ss, index_oid)` | Returns an index's state as the session's transaction sees it. |
+| `cat_put_index_state(ss, table_oid, index_oid, status)` | Stores a pending index's state, valid or failed, under the table's lock IX, so it waits for no reader or writer of the table. A state is set once: an index no longer pending is `SM_ERR_INVALID`. |
 | `cat_get_index(ss, namespace_oid, name, table_oid&, index_oid&)` | Finds an index and its table by name as the session sees it. |
 | `cat_put_collation(ss, collation_oid, namespace_oid, name, locale, deterministic)` | Stores a new collation, recording the ICU version it opens at, and keeps it open. |
 
@@ -702,7 +705,7 @@ dels it.
 | `create_index(ss, table_oid, name, keys, includes, unique, index_oid&)` | Adds an index to the record as `pending` and queues it for the builder at commit. On a table made in the same transaction, fills it at once and records it `valid`. |
 | `create_index(ss, table_oid, name, keys, includes, unique, eval, reads, index_oid&)` | The same for a partial or expression index: `eval` is the host's blob, `reads` the columns it reads. |
 | `enqueue_pending_indexes(cat)` | Queues every pending index for the builder; called when a database is opened, for what a crash left unqueued. |
-| `set_index_state(ss, table_oid, index_oid, state, error = SM_OK, reason = {})` | Sets an index to `pending`, `valid` or `failed`, keeping the error and message for a failed one. |
+| `set_index_state(ss, table_oid, index_oid, state, error = SM_OK, reason = {})` | Puts a pending index's state, `valid` or `failed`, keeping the error and message for a failed one. Does not wait for the table's users. |
 | `drop_index(ss, table_oid, index_oid)` | Erases the index's entries and takes it out of the record. |
 | `create_collation(ss, namespace_oid, name, locale, deterministic, collation_oid&)` | Takes an oid and puts the collation. |
 
@@ -866,13 +869,15 @@ indexes, as the catalog stores it today (`CATALOG.md` §2,
 1010 in the order they were made, and its store is sm1's
 store 7. `public` is namespace oid 2.
 
-It takes **1,022 entries** in the catalog store:
+Once its ten indexes are built it takes **1,032 entries** in
+the catalog store:
 
 | Kind | Entries | One for |
 | --- | --- | --- |
 | `TABLE` | 1 | the table's own fields |
 | `COLUMN` | 1,000 | each column |
 | `INDEX` | 10 | each index |
+| `INDEX_STATE` | 10 | each index that is valid or failed; a pending one has none |
 | `NAME` | 11 | the table's name and each index's name |
 
 That is what the table **adds**. Its namespace was there
@@ -890,7 +895,7 @@ the 2 in each of its `NAME` keys. A second table in `public`
 adds its own entries and no more; a table in a new namespace
 costs the two entries of making that namespace, once.
 
-So a new database holding just this table has **1,027
+So a new database holding just this table has **1,037
 entries** in its catalog store:
 
 | Entries | Count | What |
@@ -898,7 +903,7 @@ entries** in its catalog store:
 | `META` | 1 | the format version |
 | `NAMESPACE` | 2 | `pg_catalog` and `public`, made by `cat_init` |
 | `NAME` under namespace oid 0 | 2 | those two namespaces' names |
-| the table | 1,022 | as above |
+| the table | 1,032 | as above |
 
 ### 11.1 The entries
 
@@ -943,11 +948,11 @@ is never given to another.
 
 ```
 INDEX | 1000 | 1001  →  oid 1001, name "orders_pkey", relid 2,
-                        unique, state valid,
+                        unique,
                         key columns: (attnum 0, ascending,
                                       nulls last)
 INDEX | 1000 | 1002  →  oid 1002, name "orders_note", relid 3,
-                        not unique, state pending,
+                        not unique,
                         key columns: (attnum 1, descending,
                                       nulls first,
                                       collation oid 1500),
@@ -963,6 +968,23 @@ it. Its key columns, include columns and the columns its
 predicate reads are parts of the index and live inside its one
 value. Entries sort by index oid, which is the order the
 indexes were made in.
+
+**`INDEX_STATE`**, keyed as its index is, by the table's oid
+and the index's:
+
+```
+INDEX_STATE | 1000 | 1001  →  valid
+INDEX_STATE | 1000 | 1003  →  failed, error SM_ERR_DUPKEY,
+                              reason "two rows of orders …"
+```
+
+An index's state is not in its `INDEX` entry. It changes when
+a build ends, while transactions are using the table, and
+without the table's definition being replaced; so it has an
+entry of its own, written under the table's lock IX
+(`CATALOG.md` §5.1). An index that is pending has no entry
+here at all: 1002 above is still waiting for its build, and
+no entry is what says so.
 
 **`NAME`**, keyed by a namespace's oid and a name:
 
@@ -1033,12 +1055,12 @@ changed, and then erases the ones no longer there. So:
 | --- | --- |
 | create the table | 1 `TABLE`, 1,000 `COLUMN`, 1 `NAME` |
 | create one index | 1 `INDEX`, 1 `NAME`, and the `TABLE` entry, for its next relid |
-| an index's build ends | that 1 `INDEX`, for its state |
+| an index's build ends | 1 `INDEX_STATE`, valid or failed |
 | add a column | 1 `COLUMN` |
 | drop a column | that 1 `COLUMN`, marked dropped |
 | rename the table | the `TABLE` entry, 2 `NAME` |
 | truncate | the `TABLE` entry, for its new storeid |
-| drop the table | all 1,022 erased, one by one |
+| drop the table | all 1,032 erased, one by one |
 
 ### 11.4 The same table under §3's keys
 

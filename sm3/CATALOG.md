@@ -75,6 +75,7 @@ kinds' values are on disk, so frozen.
 | `INDEX` | 6 | table oid `int8`, index oid `int8` | one index of the table, with its key, include and read columns |
 | — | 7 | — | retired: a table's oid lock was a key here, and is now an `sm1::LOCKTYPE_OID` lock on its oid |
 | `COLUMN` | 8 | table oid `int8`, attnum `int8` | one column of the table |
+| `INDEX_STATE` | 9 | table oid `int8`, index oid `int8` | one index's state, with why its build failed; none for a pending index |
 
 - **A table is several entries.** Its own fields are under
   its `TABLE` key, each column under a `COLUMN` key, and each
@@ -89,7 +90,13 @@ kinds' values are on disk, so frozen.
   writes one `COLUMN` key, and a build that ends rewrites one
   `INDEX` key. Two DDL on one table may then write different
   keys and meet in no write-write conflict: the table's
-  table-oid lock is what puts them one after the other.
+  oid lock is what puts them one after the other.
+- **An index's state is not in its entry.** It has an entry of
+  its own, `INDEX_STATE`, written without the table being
+  changed and under the table's lock IX, not X (§5.1). A
+  pending index has none: no entry is what pending means, so
+  only valid and failed are ever stored. It goes with its
+  index.
 - **Names are keys.** Every named object owns a `NAME` key, so a
   name taken in its namespace fails with sm1's `SM_ERR_DUPKEY`,
   and two sessions taking it at once meet in sm1's write-write
@@ -114,9 +121,10 @@ schema sm3 fixes for it, preceded by its length as a varint
 (`src/catalog/blob.cc`):
 
 ```
-TABLE value  = table
-COLUMN value = column
-INDEX value  = index | key × nkey | include × ninclude | read × nread
+TABLE value       = table
+COLUMN value      = column
+INDEX value       = index | key × nkey | include × ninclude | read × nread
+INDEX_STATE value = index state
 ```
 
 | Part | Fields |
@@ -125,7 +133,8 @@ INDEX value  = index | key × nkey | include × ninclude | read × nread
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index relid `int2` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null |
-| index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, state `int2`, error `int2` or null, reason `text` or null, eval `bytea` or null, nread `int4` or null |
+| index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null |
+| index state | state `int2`, error `int2` or null, reason `text` or null |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
 | include | attnum `int4` |
 | read | attnum `int4` |
@@ -136,11 +145,13 @@ INDEX value  = index | key × nkey | include × ninclude | read × nread
   part's schema reads as its missing value in a value written
   before it (`sm2/TUPLE.md` §2), so a value needs no version of
   its own. `META`'s version changes only if a key's layout, or
-  the framing, does: it is 2 since a table's columns and
-  indexes left its blob for keys of their own.
+  the framing, does: it was 2 when a table's columns and
+  indexes left its blob for keys of their own, and is 3 since
+  an index's state left the index part for one too.
 - **An index's state** is 0 pending, 1 valid or 2 failed
-  (`SM3_DESIGN.md` §3). It was appended to the index part, so
-  an index written before it has none, and reads as valid.
+  (`SM3_DESIGN.md` §3), in the index state part. The index
+  part's three attributes that once held it are retired and
+  left null.
 - **A partial or an expression index keeps a blob.** Its eval
   is its predicate and its expressions as the host serialized
   them, bytes sm3 does not read, and its read parts are the
@@ -148,9 +159,9 @@ INDEX value  = index | key × nkey | include × ninclude | read × nread
   neither. A key that is an expression has attnum -1 and gives
   its own type code and typmod, which a column's key leaves
   null.
-- **A failed index keeps why.** Its error is the code its build
-  failed with and its reason that error's message, both null
-  in any other state.
+- **A failed index keeps why**, in its state: its error is the
+  code its build failed with and its reason that error's
+  message, both null in any other state.
 - **Type codes are sm2's frozen codes** (`sm2/TYPE.md` §3); code
   7, the retired `decimal`, is never written. A declared
   `decimal(p, s)` is stored as the sm2 type it maps to
@@ -200,6 +211,14 @@ INDEX value  = index | key × nkey | include × ninclude | read × nread
   takes a snapshot, and may scan an index only if it was valid
   by then (`SM3_DESIGN.md` §3). Neither is on disk: no
   snapshot survives a restart.
+- **Each index's state**, in a map by index oid beside the
+  definitions and not in them. A definition is immutable and
+  is replaced whole, under the table's lock X; a state changes
+  under IX, while transactions hold the definition, and two
+  indexes of one table may change at once. A session's
+  overlay holds the states its transaction has set, and
+  `commit` publishes them with everything else, under the
+  catalog's mutex, so the map and the store never differ.
 - The builder's queue and workers are not here: they are the
   process's, not a catalog's (`SM3_DESIGN.md` §3).
 
@@ -317,6 +336,29 @@ few, and named for what a repository does.
 - **`cat_del_table(ss, table_oid)`** erases a table's record
   and the names it took. Its store and its sequence are the
   caller's to drop.
+- **`cat_get_index_state(cat, index_oid)`** and
+  **`cat_get_index_state(ss, index_oid)`** give an index's
+  state, with the error and reason of a failed one: as
+  committed, or as the session's transaction sees it. An
+  index with none recorded is pending.
+- **`cat_put_index_state(ss, table_oid, index_oid, status)`**
+  stores an index's state. It takes the table's lock IX, as a
+  writer of the table does, so it waits for no reader or
+  writer and none waits for it; only DDL on the table is kept
+  out, which is what stops the index being dropped under it.
+  That is enough because a state seen late is seen as
+  pending, and pending is always safe: the index is
+  maintained and not scanned. A table opened before the
+  change goes on with the state it saw (`tbl_index_state`),
+  and a snapshot older than the index's last entries is kept
+  off it by the count of publishes (§4), whether or not its
+  transaction had opened the table. Because that rests on a
+  state only ever leaving pending, a state is set once: an
+  index that is valid or failed is `SM_ERR_INVALID` to set
+  again, and of two transactions setting one index's state
+  the second waits for the first and is then refused.
+  Erasing an index, in `cat_put_table` or `cat_del_table`,
+  erases its state.
 - **`cat_put_namespace(ss, namespace_oid, name)`** stores a new
   namespace: its name — under namespace oid 0, so a
   namespace's name is unique in the database and a taken one
@@ -399,8 +441,10 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   the columns it reads. It needs the catalog to have an
   evaluator, **`cat_set_evaluator(cat, eval)`**, given once.
 - **`set_index_state(session, table, oid, state, error,
-  reason)`** rewrites an index's state, as the build does when
-  it ends, with the error and its message for a failed one.
+  reason)`** puts an index's state, as the build does when it
+  ends, with the error and its message for a failed one. It
+  is `cat_put_index_state` and nothing more, so it does not
+  wait for the table's users.
 - **`drop_index(session, table, oid)`** erases the index's
   entries, one by one over its relid in the table's store,
   since sm1 has no range delete, and takes it out of the

@@ -272,10 +272,11 @@ sm_attribute_t api_attribute(const sm2::attribute_t &a) {
 }
 
 /*
- * sm3's definition d, of a table in cat, as the API's, which owns
- * all it holds. A pending index a worker is filling is building.
+ * sm3's definition d as the API's, which owns all it holds, with
+ * each index's state as ss sees it. A pending index a worker is
+ * filling is building.
  */
-sm_table_def_t api_def(const sm3::catalog_t *cat, const sm3::table_def_t &d) {
+sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   sm_table_def_t out{d.oid, d.nspoid, d.name, {}, {}, {}};
   for (const sm3::column_def_t &c : d.columns) {
     out.columns.push_back(
@@ -285,13 +286,16 @@ sm_table_def_t api_def(const sm3::catalog_t *cat, const sm3::table_def_t &d) {
     out.schema.push_back(api_attribute(a));
   }
   for (const sm3::index_def_t &x : d.indexes) {
-    sm_index_state_t state = x.state == sm3::index_state_t::pending &&
-                                     sm3::builder_building(cat, x.oid)
-                                 ? SM_INDEX_BUILDING
-                                 : static_cast<sm_index_state_t>(x.state);
+    // Its state is kept by index, not in the definition.
+    sm3::index_status_t st = sm3::cat_get_index_state(ss, x.oid);
+    sm_index_state_t state =
+        st.state == sm3::index_state_t::pending &&
+                sm3::builder_building(sm3::session_cat(ss), x.oid)
+            ? SM_INDEX_BUILDING
+            : static_cast<sm_index_state_t>(st.state);
     sm_index_def_t i{
         x.oid, x.name, x.unique, x.key_attnums, {},     x.include_attnums,
-        {},    state,  x.error,  x.reason,      x.eval, x.reads};
+        {},    state,  st.error, st.reason,     x.eval, x.reads};
     for (const sm2::key_column_t &k : x.key) {
       i.key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
                        reinterpret_cast<const sm_collation_t *>(k.collation),
@@ -1055,7 +1059,7 @@ int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
     if (sm3::tbl_open(session->sm3, oid, mode, t->table) != 0) {
       return -1;
     }
-    t->def = api_def(sm3::session_cat(session->sm3), sm3::tbl_def(t->table));
+    t->def = api_def(session->sm3, sm3::tbl_def(t->table));
     *out = t.release();
     return 0;
   });
@@ -1153,8 +1157,7 @@ int sm_tbl_truncate(sm_tbl_t *tbl) {
       return -1;
     }
     // The table now lives in another store.
-    tbl->def =
-        api_def(sm3::session_cat(tbl->session->sm3), sm3::tbl_def(tbl->table));
+    tbl->def = api_def(tbl->session->sm3, sm3::tbl_def(tbl->table));
     return 0;
   });
 }

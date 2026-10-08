@@ -39,9 +39,6 @@ sm3::table_rec_t sample_table() {
        true,
        {{1, false, false, std::nullopt}},
        {},
-       sm3::index_state_t::valid,
-       sm1::SM_OK,
-       {},
        {},
        {}},
       {1101,
@@ -50,9 +47,6 @@ sm3::table_rec_t sample_table() {
        false,
        {{2, true, true, 1000}, {1, false, false, std::nullopt}},
        {3},
-       sm3::index_state_t::valid,
-       sm1::SM_OK,
-       {},
        {},
        {}},
   };
@@ -138,8 +132,9 @@ TEST_CASE("every catalog entity round trips through its value") {
   // Verify the blob codec of CATALOG.md §3.
   // 1. META, a NAME value with and without its table, a table's
   //    own fields, each of its columns -- nullable, with a missing
-  //    value, dropped -- each of its two indexes, a namespace and a
-  //    collation each decode to what was encoded.
+  //    value, dropped -- each of its two indexes, an index's state,
+  //    valid and failed with its reason, a namespace and a collation
+  //    each decode to what was encoded.
   // 2. A value cut short, or with a byte added, is SM_ERR_CORRUPT.
   std::string v;
   int32_t version = 0;
@@ -181,6 +176,18 @@ TEST_CASE("every catalog entity round trips through its value") {
     REQUIRE(sm3::encode_index(x, blob) == 0);
     REQUIRE(sm3::decode_index(blob, x_back) == 0);
     CHECK(x_back == x);
+  }
+
+  for (const sm3::index_status_t &st :
+       {sm3::index_status_t{sm3::index_state_t::valid, sm1::SM_OK, {}},
+        sm3::index_status_t{sm3::index_state_t::failed, sm1::SM_ERR_DUPKEY,
+                            "two rows"}}) {
+    sm3::index_status_t st_back;
+    REQUIRE(sm3::encode_index_state(st, v) == 0);
+    REQUIRE(sm3::decode_index_state(v, st_back) == 0);
+    CHECK(st_back.state == st.state);
+    CHECK(st_back.error == st.error);
+    CHECK(st_back.reason == st.reason);
   }
 
   sm3::nspace_rec_t ns{"public"}, ns_back;

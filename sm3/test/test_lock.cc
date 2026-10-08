@@ -173,6 +173,114 @@ TEST_CASE("a table dropped while a reader waited is not found") {
   REQUIRE(sm3::abort(f.a) == 0);
 }
 
+TEST_CASE("an index's state is set without waiting for the table's users") {
+  // Verify marking an index valid takes the table's lock IX, not X.
+  // 1. Three indexes are made on t, which is committed: all pending.
+  // 2. A reads t and B writes it, both in open transactions that
+  //    hold its lock, and A's handle has the first index pending.
+  // 3. C marks the first index valid and commits, waiting for
+  //    neither: it does not need the table to itself.
+  // 4. C marks the third failed and B the second valid, in
+  //    transactions open at once, and both commit: each has taken
+  //    effect, neither undoing the other.
+  // 5. A's handle, opened before, still has the index pending, and
+  //    may not scan it. A table A opens now has it valid, but A,
+  //    at REPEATABLE READ with a snapshot older than the index's
+  //    last entries, still may not scan it. A new transaction may.
+  locks_t f;
+  std::vector<sm3::index_key_spec_t> on_x = {{0, false, false, std::nullopt}};
+  uint64_t x1 = 0, x2 = 0, x3 = 0;
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_index(f.c, f.t, "t_x1", on_x, {}, false, x1) == 0);
+  REQUIRE(sm3::create_index(f.c, f.t, "t_x2", on_x, {}, false, x2) == 0);
+  REQUIRE(sm3::create_index(f.c, f.t, "t_x3", on_x, {}, false, x3) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+  using sm3::index_state_t;
+  CHECK(sm3::cat_get_index_state(f.cat, x1).state == index_state_t::pending);
+
+  sm3::table_t *ta = nullptr, *tb = nullptr;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.a, f.t, sm1::SM_LOCKMODE_IS, ta) == 0);
+  REQUIRE(sm3::tbl_open(f.b, f.t, sm1::SM_LOCKMODE_IX, tb) == 0);
+  CHECK(sm3::tbl_index_state(ta, x1) == index_state_t::pending);
+  sm3::tbl_close(tb);
+
+  // With A and B holding the table, this returns at once.
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE_MESSAGE(sm3::set_index_state(f.c, f.t, x1, index_state_t::valid) == 0,
+                  sm1::errmsg());
+  CHECK(sm3::cat_get_index_state(f.c, x1).state == index_state_t::valid);
+  CHECK(sm3::cat_get_index_state(f.cat, x1).state == index_state_t::pending);
+  REQUIRE(sm3::commit(f.c) == 0);
+  CHECK(sm3::cat_get_index_state(f.cat, x1).state == index_state_t::valid);
+
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::set_index_state(f.c, f.t, x3, index_state_t::failed,
+                               sm1::SM_ERR_DUPKEY, "two rows") == 0);
+  REQUIRE(sm3::set_index_state(f.b, f.t, x2, index_state_t::valid) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+  REQUIRE(sm3::commit(f.b) == 0);
+  CHECK(sm3::cat_get_index_state(f.cat, x3).state == index_state_t::failed);
+  CHECK(sm3::cat_get_index_state(f.cat, x3).reason == "two rows");
+  CHECK(sm3::cat_get_index_state(f.cat, x1).state == index_state_t::valid);
+  CHECK(sm3::cat_get_index_state(f.cat, x2).state == index_state_t::valid);
+
+  CHECK(sm3::tbl_index_state(ta, x2) == index_state_t::pending);
+  CHECK_FALSE(sm3::tbl_index_usable(ta, x2));
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::tbl_open(f.a, f.t, sm1::SM_LOCKMODE_IS, ta) == 0);
+  CHECK(sm3::tbl_index_state(ta, x2) == index_state_t::valid);
+  CHECK_FALSE(sm3::tbl_index_usable(ta, x2));
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm3::tbl_open(f.a, f.t, sm1::SM_LOCKMODE_IS, ta) == 0);
+  CHECK(sm3::tbl_index_usable(ta, x2));
+  CHECK_FALSE(sm3::tbl_index_usable(ta, x3));
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("an index's state is set once, by whoever is first") {
+  // Verify two transactions cannot both set one index's state.
+  // 1. An index is made on t, pending. C marks it valid and does
+  //    not commit.
+  // 2. B marks it failed, in a thread: it waits for C.
+  // 3. C commits: B is refused with SM_ERR_INVALID, and the index
+  //    is valid, as C left it.
+  locks_t f;
+  std::vector<sm3::index_key_spec_t> on_x = {{0, false, false, std::nullopt}};
+  uint64_t x = 0;
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_index(f.c, f.t, "t_x", on_x, {}, false, x) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+
+  using sm3::index_state_t;
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::set_index_state(f.c, f.t, x, index_state_t::valid) == 0);
+
+  std::atomic<bool> returned{false};
+  int rc = 0, err = 0;
+  std::thread tb([&] {
+    rc = sm3::set_index_state(f.b, f.t, x, index_state_t::failed,
+                              sm1::SM_ERR_DUPKEY, "two rows");
+    err = sm1::errnum();
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+
+  REQUIRE(sm3::commit(f.c) == 0);
+  tb.join();
+  CHECK(rc == -1);
+  CHECK(err == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::abort(f.b) == 0);
+  CHECK(sm3::cat_get_index_state(f.cat, x).state == index_state_t::valid);
+}
+
 TEST_CASE("DDL changes the table as it now is, not as its snapshot shows") {
   // Verify DDL works on the latest record, whatever its snapshot.
   // 1. A begins at REPEATABLE READ: its snapshot shows t with x.

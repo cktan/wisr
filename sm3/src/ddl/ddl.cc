@@ -312,7 +312,6 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
     x.name = std::string(name);
     x.relid = rec.next_relid;
     x.unique = unique;
-    x.state = index_state_t::pending;
     x.eval = std::string(eval);
     for (int32_t a : reads) {
       if (!live_attnum(rec, a)) {
@@ -387,8 +386,8 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
       if (rc != 0) {
         return -1;
       }
-      rec.indexes.back().state = index_state_t::valid;
-      if (cat_put_table(session, table, rec) != 0) {
+      if (cat_put_index_state(session, table, i,
+                              {index_state_t::valid, sm1::SM_OK, {}}) != 0) {
         return -1;
       }
     } else {
@@ -463,8 +462,9 @@ int enqueue_pending_indexes(catalog_t *cat) {
         std::shared_ptr<const table_def_t> def =
             cat_get_table(cat, nspoid, name);
         for (size_t i = 0; def && i < def->indexes.size(); i++) {
-          if (def->indexes[i].state == index_state_t::pending) {
-            builder_enqueue(cat, def->oid, def->indexes[i].oid);
+          uint64_t x = def->indexes[i].oid;
+          if (cat_get_index_state(cat, x).state == index_state_t::pending) {
+            builder_enqueue(cat, def->oid, x);
           }
         }
       }
@@ -478,21 +478,8 @@ int set_index_state(session_t *session, uint64_t table, uint64_t oid,
                     index_state_t state, sm1::errnum_t error,
                     std::string_view reason) {
   return catch_nomem([&] {
-    table_rec_t rec;
-    if (cat_get_table_rec(session, table, rec) != 0) {
-      return -1;
-    }
-    auto it = std::find_if(rec.indexes.begin(), rec.indexes.end(),
-                           [&](const index_rec_t &x) { return x.oid == oid; });
-    if (it == rec.indexes.end()) {
-      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
-                         "index state: no index " + std::to_string(oid));
-    }
-    it->state = state;
-    bool failed = state == index_state_t::failed;
-    it->error = failed ? error : sm1::SM_OK;
-    it->reason = failed ? std::string(reason) : std::string();
-    return cat_put_table(session, table, rec);
+    return cat_put_index_state(session, table, oid,
+                               {state, error, std::string(reason)});
   });
 }
 

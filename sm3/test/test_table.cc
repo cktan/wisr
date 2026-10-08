@@ -290,7 +290,7 @@ void check_agree(sm3::table_t *t) {
   for (const sm3::index_def_t &x : def.indexes) {
     CAPTURE(x.name);
     // A failed index is not maintained, and cannot be scanned.
-    if (x.state == sm3::index_state_t::failed) {
+    if (sm3::tbl_index_state(t, x.oid) == sm3::index_state_t::failed) {
       continue;
     }
     // The entry's value: rowno, cut, then the INCLUDE columns.
@@ -808,7 +808,8 @@ TEST_CASE("while an index is pending, rows it has not reached are written") {
 
   start(f.a);
   t = f.write(f.a);
-  CHECK(sm3::tbl_def(t).indexes[2].state == sm3::index_state_t::pending);
+  CHECK(sm3::tbl_index_state(t, sm3::tbl_def(t).indexes[2].oid) ==
+        sm3::index_state_t::pending);
   CHECK(under(t, jobs_owner, "a").empty());
   REQUIRE_MESSAGE(set(t, r7, 7, "free", "z") == 0, sm1::errmsg());
   CHECK(under(t, jobs_owner, "z") == std::vector<uint64_t>{r7});
@@ -831,25 +832,38 @@ TEST_CASE("while an index is pending, rows it has not reached are written") {
 
 TEST_CASE("a failed index is not maintained, and cannot be scanned") {
   // Verify what a failed build leaves behind (SM3_DESIGN.md §3).
-  // 1. Row 7 is committed; jobs_id, unique on id, is marked failed.
-  // 2. A second row with id 7 inserts: jobs_id no longer refuses it.
-  // 3. Scanning jobs_id fails with SM_ERR_INVALID.
+  // 1. Row 7 is committed, owned by "a"; a unique index on owner is
+  //    made, pending, and is marked failed.
+  // 2. A second row owned by "a" inserts: the index no longer
+  //    refuses it.
+  // 3. Scanning the index fails with SM_ERR_INVALID.
   // 4. jobs_state is maintained as before, and agrees with the heap.
+  // 5. A failed index's state cannot be set again.
   jobs_t f;
   start(f.a);
   sm3::table_t *t = f.write(f.a);
-  put(t, 7, "free", std::nullopt);
+  put(t, 7, "free", "a");
   sm3::tbl_close(t);
-  REQUIRE(sm3::set_index_state(f.a, f.jobs, f.jobs_id,
+  REQUIRE(sm3::commit(f.a) == 0);
+  std::vector<sm3::index_key_spec_t> by_owner = {
+      {2, false, false, std::nullopt}};
+  uint64_t owner_u = 0;
+  start(f.a);
+  REQUIRE(sm3::create_index(f.a, f.jobs, "jobs_owner_u", by_owner, {}, true,
+                            owner_u) == 0);
+  REQUIRE(sm3::set_index_state(f.a, f.jobs, owner_u,
                                sm3::index_state_t::failed) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
 
   start(f.a);
   t = f.write(f.a);
-  put(t, 7, "free", std::nullopt);
+  put(t, 8, "free", "a");
   CHECK(rows(t).size() == 2);
   sm2::index_scan_t *scan = nullptr;
-  CHECK(sm3::tbl_idx_scan(t, f.jobs_id, nullptr, nullptr, scan) == -1);
+  CHECK(sm3::tbl_idx_scan(t, owner_u, nullptr, nullptr, scan) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::set_index_state(f.a, f.jobs, owner_u, sm3::index_state_t::valid) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   check_agree(t);
   sm3::tbl_close(t);
@@ -1152,7 +1166,8 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
     REQUIRE(sm3::create_index(f.a, tasks, "tasks_owner", by_owner, {}, true,
                               tasks_owner) == 0);
     REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
-    CHECK(sm3::tbl_def(t).indexes[0].state == sm3::index_state_t::valid);
+    CHECK(sm3::tbl_index_state(t, sm3::tbl_def(t).indexes[0].oid) ==
+          sm3::index_state_t::valid);
     check_agree(t);
     REQUIRE(set(t, 1, 1, "taken", "z") == 0);
     check_agree(t);
@@ -1402,7 +1417,8 @@ TEST_CASE("a snapshot older than a build is kept off the index") {
     build(f, jobs_owner);
 
     t = f.write(f.a);
-    CHECK(sm3::tbl_def(t).indexes[2].state == sm3::index_state_t::valid);
+    CHECK(sm3::tbl_index_state(t, sm3::tbl_def(t).indexes[2].oid) ==
+          sm3::index_state_t::valid);
     CHECK_FALSE(sm3::tbl_index_usable(t, jobs_owner));
     CHECK(scanned(t, jobs_owner) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
@@ -1520,12 +1536,18 @@ TEST_CASE("an index is usable by its state, and by who made it valid") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.b) == 0);
 
+  // A second index, pending, to mark failed: a state is set once.
+  std::vector<sm3::index_key_spec_t> by_state = {
+      {1, false, false, std::nullopt}};
+  uint64_t bad = 0;
   start(f.b);
-  REQUIRE(sm3::set_index_state(f.b, f.jobs, jobs_owner,
-                               sm3::index_state_t::failed) == 0);
+  REQUIRE(sm3::create_index(f.b, f.jobs, "jobs_state2", by_state, {}, false,
+                            bad) == 0);
+  REQUIRE(sm3::set_index_state(f.b, f.jobs, bad, sm3::index_state_t::failed) ==
+          0);
   t = f.write(f.b);
-  CHECK_FALSE(sm3::tbl_index_usable(t, jobs_owner));
-  CHECK(scanned(t, jobs_owner) == -1);
+  CHECK_FALSE(sm3::tbl_index_usable(t, bad));
+  CHECK(scanned(t, bad) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.b) == 0);
@@ -1595,15 +1617,7 @@ uint64_t late_on(jobs_t &f, const std::string &name, int32_t att,
 
 /* The state of index oid of jobs in the committed catalog. */
 sm3::index_state_t state_of(jobs_t &f, uint64_t oid) {
-  auto d = sm3::cat_get_table(f.cat, f.jobs);
-  REQUIRE(d != nullptr);
-  for (const sm3::index_def_t &x : d->indexes) {
-    if (x.oid == oid) {
-      return x.state;
-    }
-  }
-  FAIL("no such index");
-  return sm3::index_state_t::failed;
+  return sm3::cat_get_index_state(f.cat, oid).state;
 }
 
 } // namespace
@@ -1666,14 +1680,17 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   CHECK(why.find("two rows of jobs") != std::string::npos);
   CHECK(state_of(f, jobs_owner) == sm3::index_state_t::failed);
   auto d = sm3::cat_get_table(f.cat, f.jobs);
-  CHECK(d->indexes[2].error == sm1::SM_ERR_DUPKEY);
-  CHECK(d->indexes[2].reason == why);
+  CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).error ==
+        sm1::SM_ERR_DUPKEY);
+  CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).reason == why);
 
   f.reload();
   d = sm3::cat_get_table(f.cat, f.jobs);
-  CHECK(d->indexes[2].state == sm3::index_state_t::failed);
-  CHECK(d->indexes[2].error == sm1::SM_ERR_DUPKEY);
-  CHECK(d->indexes[2].reason == why);
+  CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).state ==
+        sm3::index_state_t::failed);
+  CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).error ==
+        sm1::SM_ERR_DUPKEY);
+  CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).reason == why);
   sm1::reseterr();
   CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
@@ -1702,9 +1719,11 @@ TEST_CASE("a build fails on any error the rows cause, and says which") {
   std::string why = sm1::errmsg();
   CHECK_FALSE(why.empty());
   auto d = sm3::cat_get_table(f.cat, f.jobs);
-  CHECK(d->indexes[2].state == sm3::index_state_t::failed);
-  CHECK(d->indexes[2].error == sm1::SM_ERR_KEYTOOLONG);
-  CHECK(d->indexes[2].reason == why);
+  CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).state ==
+        sm3::index_state_t::failed);
+  CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).error ==
+        sm1::SM_ERR_KEYTOOLONG);
+  CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).reason == why);
   start(f.a);
   t = f.write(f.a, sm1::SM_LOCKMODE_IS);
   check_agree(t);
@@ -2141,7 +2160,8 @@ TEST_CASE("an evaluated index is built in the background, and inline") {
                                     true, "lower", {{2}}, tasks_lower) == 0,
                   sm1::errmsg());
   REQUIRE(sm3::tbl_open(f.a, tasks, sm1::SM_LOCKMODE_IX, t) == 0);
-  CHECK(sm3::tbl_def(t).indexes[0].state == sm3::index_state_t::valid);
+  CHECK(sm3::tbl_index_state(t, sm3::tbl_def(t).indexes[0].oid) ==
+        sm3::index_state_t::valid);
   CHECK(under(t, tasks_lower, "dee") == std::vector<uint64_t>{1});
   check_agree(t);
   sm3::tbl_close(t);

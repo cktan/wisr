@@ -61,14 +61,6 @@ Owed, and blocking nothing above:
   holds up `builder_detach`, and so a detach of the
   environment, until that transaction is resolved. sm1 needs a
   way to cancel a wait.
-- **Marking an index valid takes the table-oid lock X**, as every
-  catalog change does, so a long transaction on the table
-  delays it. The step only flips a state writers do not depend
-  on; a weaker lock would do. An index's state is one catalog
-  entry of its own now (`sm3/CATALOG.md` §2), so the step need
-  change only that entry and the definition in memory; what a
-  reader holding the old definition may then see is to be
-  written down first.
 - **The evaluator's cost is unmeasured**: what a call a row
   adds to a write on a table with a partial or an expression
   index.

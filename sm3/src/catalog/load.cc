@@ -143,9 +143,6 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
     d.name = x.name;
     d.relid = x.relid;
     d.unique = x.unique;
-    d.state = x.state;
-    d.error = x.error;
-    d.reason = x.reason;
     d.eval = x.eval;
     for (const sm3::index_key_rec_t &k : x.keys) {
       const sm2::collation_t *coll;
@@ -279,6 +276,14 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
                    }
                    it->second.indexes.push_back(std::move(x));
                    return 0;
+                 }) != 0) {
+    return -1;
+  }
+  // Each index's state, for those that have one; the rest are
+  // pending.
+  if (scan_parts(kv, sm3::kind_t::index_state,
+                 [&](uint64_t, uint64_t index, std::string_view v) {
+                   return sm3::decode_index_state(v, cat.index_states[index]);
                  }) != 0) {
     return -1;
   }

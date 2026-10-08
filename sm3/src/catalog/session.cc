@@ -29,12 +29,15 @@ void drop_from(sm3::session_t *s, int d) {
   while (!s->nspaces.empty() && s->nspaces.back().depth >= d) {
     s->nspaces.pop_back();
   }
+  while (!s->states.empty() && s->states.back().depth >= d) {
+    s->states.pop_back();
+  }
 }
 
 /* Whether s's transaction has made any DDL. */
 bool made_ddl(const sm3::session_t *s) {
   return !s->tables.empty() || !s->names.empty() || !s->collations.empty() ||
-         !s->nspaces.empty();
+         !s->nspaces.empty() || !s->states.empty();
 }
 
 /*
@@ -58,32 +61,25 @@ void publish(sm3::session_t *s) {
   s->nspaces.clear();
   // One more publish; an index it makes valid dates from it.
   uint64_t seq = cat->seq.load() + 1;
-  for (sm3::table_change_t &t : s->tables) {
-    auto old = cat->tables.find(t.oid);
-    // An index valid now and not before became valid here; one
-    // that is gone needs its count no longer.
-    auto was_valid = [&](uint64_t oid) {
-      if (old == cat->tables.end()) {
-        return false;
-      }
-      for (const sm3::index_def_t &x : old->second->indexes) {
-        if (x.oid == oid) {
-          return x.state == sm3::index_state_t::valid;
-        }
-      }
-      return false;
-    };
-    if (old != cat->tables.end()) {
-      for (const sm3::index_def_t &x : old->second->indexes) {
-        cat->valid_seq.erase(x.oid);
-      }
+  for (sm3::state_change_t &c : s->states) {
+    auto old = cat->index_states.find(c.index);
+    bool was_valid = old != cat->index_states.end() &&
+                     old->second.state == sm3::index_state_t::valid;
+    if (!c.status) {
+      // The index has gone, and its count with it.
+      cat->index_states.erase(c.index);
+      cat->valid_seq.erase(c.index);
+      continue;
     }
+    // An index valid now and not before became valid here.
+    if (c.status->state == sm3::index_state_t::valid && !was_valid) {
+      cat->valid_seq[c.index] = seq;
+    }
+    cat->index_states[c.index] = std::move(*c.status);
+  }
+  s->states.clear();
+  for (sm3::table_change_t &t : s->tables) {
     if (t.def) {
-      for (const sm3::index_def_t &x : t.def->indexes) {
-        if (x.state == sm3::index_state_t::valid && !was_valid(x.oid)) {
-          cat->valid_seq[x.oid] = seq;
-        }
-      }
       cat->tables[t.oid] = std::move(t.def);
     } else {
       cat->tables.erase(t.oid);
@@ -200,21 +196,15 @@ bool index_usable(const session_t *session, const table_def_t &def,
       x = &i;
     }
   }
-  if (!x || x->state != index_state_t::valid) {
+  if (!x || cat_get_index_state(session, oid).state != index_state_t::valid) {
     return false;
   }
   const catalog_t *cat = session->cat;
   std::shared_lock lock(cat->mu);
   // Not valid in the committed catalog: this transaction made it
   // valid, and reads what it wrote.
-  auto t = cat->tables.find(def.oid);
-  bool committed = false;
-  if (t != cat->tables.end()) {
-    for (const index_def_t &i : t->second->indexes) {
-      committed |= i.oid == oid && i.state == index_state_t::valid;
-    }
-  }
-  if (!committed) {
+  auto c = cat->index_states.find(oid);
+  if (c == cat->index_states.end() || c->second.state != index_state_t::valid) {
     return true;
   }
   // READ COMMITTED without statements reads each call at a fresh
@@ -268,6 +258,9 @@ int forget(session_t *s, int depth) {
     c.depth = std::min(c.depth, depth - 1);
   }
   for (nspace_change_t &c : s->nspaces) {
+    c.depth = std::min(c.depth, depth - 1);
+  }
+  for (state_change_t &c : s->states) {
     c.depth = std::min(c.depth, depth - 1);
   }
   s->depth = depth - 1;
@@ -335,6 +328,29 @@ void overlay_name(session_t *s, uint64_t nspoid, std::string_view name,
 void overlay_collation(session_t *s, uint64_t oid, uint64_t nspoid,
                        sm2::collation_t *collation) {
   s->collations.push_back({s->depth, oid, nspoid, collation});
+}
+
+/* Record an index's state set, or its going with its index. */
+void overlay_state(session_t *s, uint64_t index,
+                   std::optional<index_status_t> status) {
+  s->states.push_back({s->depth, index, std::move(status)});
+}
+
+/* An index's committed state; see sm3.h. */
+index_status_t cat_get_index_state(const catalog_t *cat, uint64_t index_oid) {
+  std::shared_lock lock(cat->mu);
+  auto it = cat->index_states.find(index_oid);
+  return it == cat->index_states.end() ? index_status_t{} : it->second;
+}
+
+/* An index's state as s sees it: its own change first; see sm3.h. */
+index_status_t cat_get_index_state(const session_t *s, uint64_t index_oid) {
+  for (auto it = s->states.rbegin(); it != s->states.rend(); ++it) {
+    if (it->index == index_oid) {
+      return it->status ? *it->status : index_status_t{};
+    }
+  }
+  return cat_get_index_state(s->cat, index_oid);
 }
 
 /* Record a namespace created, or dropped. */

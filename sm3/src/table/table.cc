@@ -19,6 +19,12 @@ struct sm3::table_t {
   bool fresh;                             /* made by this transaction */
   sm2::rel_t *rel = nullptr;
   std::vector<sm2::index_t *> indexes; /* one per def->indexes, in order */
+  /*
+   * Each index's state as the session saw it when the table was
+   * opened. One that has changed since is seen late, as pending,
+   * which is always safe: the index is maintained, and not scanned.
+   */
+  std::vector<sm3::index_state_t> states;
 };
 
 namespace {
@@ -155,9 +161,17 @@ int unchanged(const sm3::table_def_t &def, const sm3::index_def_t &x,
   return rc;
 }
 
+/* Note the state of each index of t, as its session sees it now. */
+void load_states(sm3::table_t *t) {
+  t->states.clear();
+  for (const sm3::index_def_t &x : t->def->indexes) {
+    t->states.push_back(sm3::cat_get_index_state(t->session, x.oid).state);
+  }
+}
+
 /* Whether writes maintain index i of t: all but one whose build failed. */
 bool maintained(const sm3::table_t *t, size_t i) {
-  return t->def->indexes[i].state != sm3::index_state_t::failed;
+  return t->states[i] != sm3::index_state_t::failed;
 }
 
 /*
@@ -278,7 +292,7 @@ int remove_entry(sm3::table_t *t, size_t i, const entry_t &e, uint64_t rowno) {
   if (sm2::idx_delete(t->indexes[i], e.d(), e.null(), rowno) == 0) {
     return 0;
   }
-  return t->def->indexes[i].state == sm3::index_state_t::pending &&
+  return t->states[i] == sm3::index_state_t::pending &&
                  sm1::errnum() == sm1::SM_ERR_NOTFOUND
              ? 0
              : -1;
@@ -336,6 +350,7 @@ int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
     // No committed definition: this transaction made the table, and
     // no other can see it or its rows.
     t->fresh = cat_get_table(session->cat, oid) == nullptr;
+    load_states(t.get());
     if (open_rels(t.get()) != 0) {
       return -1;
     }
@@ -360,6 +375,16 @@ const table_def_t &tbl_def(const table_t *table) { return *table->def; }
 session_t *tbl_session(const table_t *table) { return table->session; }
 
 /* Whether the table's session may scan index now; see sm3.h. */
+/* An index's state as the handle has it; see sm3.h. */
+index_state_t tbl_index_state(const table_t *table, uint64_t index) {
+  for (size_t i = 0; i < table->def->indexes.size(); i++) {
+    if (table->def->indexes[i].oid == index) {
+      return table->states[i];
+    }
+  }
+  return index_state_t::failed;
+}
+
 bool tbl_index_usable(const table_t *table, uint64_t index) {
   return index_usable(table->session, *table->def, index);
 }
@@ -533,6 +558,7 @@ int tbl_truncate(table_t *table) {
     // The handle's heap and indexes are on the old store.
     close_rels(table);
     table->def = std::move(def);
+    load_states(table);
     return open_rels(table);
   });
 }
@@ -579,7 +605,7 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
                          "table: no index " + std::to_string(index));
     }
     const index_def_t &x = def.indexes[i];
-    if (x.state != index_state_t::pending) {
+    if (table->states[i] != index_state_t::pending) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
                          "index build: index " + x.name + " is not pending");
     }

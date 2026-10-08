@@ -411,8 +411,8 @@ crash with it, and sm3 writes no undo of its own.
   statistics into it would make `sm_analyze` contend with DDL
   for the same key under first-committer-wins, and mutate the
   definition its readers hold. `CATALOG.md` §2's kinds run to
-  7 and are frozen because they are on disk; statistics are
-  kind 8, and that document has to say so.
+  9 and are frozen because they are on disk; statistics are
+  kind 10, and that document has to say so.
 - **One entry a table**, not one a column. `sm_analyze` writes
   every column at once and a plan reads every column at once.
   PostgreSQL's per-column granularity suits a `pg_statistic`
@@ -609,7 +609,7 @@ would need the stack to decide when, and nothing here does.
 | sm3 | on an open table: the heap's size, an index's size, and the rowno limit `N` | §3.1, §3.2 |
 | sm3 | the sampler over runs of rownos | §3.3 |
 | sm3 | the estimators, ported from PostgreSQL | §3.4 |
-| sm3 | catalog kind 8 for statistics, one entry a table, outside the `TABLE` blob and the table-oid lock | §3.6 |
+| sm3 | catalog kind 10 for statistics, one entry a table, outside the `TABLE` blob and the table-oid lock | §3.6 |
 | sm3 | the in-memory statistics map, beside the catalog: immutable, lazily loaded, published after commit | §3.6 |
 | sm3 | `analyze`, over those four | §3.6 |
 | top | `sm_analyze`, and the calls that read, in `include/sm.h` | all |

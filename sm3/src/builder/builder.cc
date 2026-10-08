@@ -86,7 +86,8 @@ void set_state(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
     if (sm3::begin(ws, sm1::xctlevel_t::read_committed) != 0) {
       return;
     }
-    // The table-oid lock X: this waits out every user of the table.
+    // The table-oid lock IX, as a batch takes: no reader or writer
+    // of the table is waited for, only DDL on it.
     if (sm3::set_index_state(ws, table, index, state, error, reason) == 0 &&
         sm3::commit(ws) == 0) {
       return;
@@ -123,7 +124,9 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
     bool opened = rc == 0;
     if (rc == 0) {
       for (const sm3::index_def_t &x : sm3::tbl_def(t).indexes) {
-        pending |= x.oid == index && x.state == index_state_t::pending;
+        pending |=
+            x.oid == index &&
+            sm3::cat_get_index_state(ws, index).state == index_state_t::pending;
       }
       if (pending) {
         rc = sm3::tbl_index_backfill(t, index, from, batch_rows, next, done);
@@ -359,13 +362,14 @@ int builder_wait(session_t *session, uint64_t table, uint64_t oid) {
                            "index wait: no index " + std::to_string(oid) +
                                " on table " + std::to_string(table));
       }
-      if (x->state == index_state_t::valid) {
+      index_status_t st = cat_get_index_state(cat, oid);
+      if (st.state == index_state_t::valid) {
         return 0;
       }
-      if (x->state == index_state_t::failed) {
-        // The build's own error, as the index's record keeps it.
-        if (x->error != sm1::SM_OK) {
-          return sm1::seterr(x->error, x->reason);
+      if (st.state == index_state_t::failed) {
+        // The build's own error, as the index's state keeps it.
+        if (st.error != sm1::SM_OK) {
+          return sm1::seterr(st.error, st.reason);
         }
         return sm1::seterr(sm1::SM_ERR_INVALID, "index wait: the build failed");
       }

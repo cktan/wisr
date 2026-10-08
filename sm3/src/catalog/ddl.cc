@@ -184,6 +184,24 @@ int put_index(sm3::session_t *session, sm2::catkv_t *kv, uint64_t oid,
   return put_key(session, kv, key, blob);
 }
 
+/*
+ * Erase the state of the index x of the table oid, if it has one:
+ * its entry, and in session's view. A pending index has none.
+ */
+int del_index_state(sm3::session_t *session, sm2::catkv_t *kv, uint64_t oid,
+                    uint64_t x) {
+  std::string key;
+  if (sm3::part_key(sm3::kind_t::index_state, oid, x, key) != 0) {
+    return -1;
+  }
+  int rc = latest_key(session, kv, key);
+  if (rc < 0 || (rc == 0 && sm2::catkv_erase(kv, key) != 0)) {
+    return -1;
+  }
+  sm3::overlay_state(session, x, std::nullopt);
+  return 0;
+}
+
 /* Erase the part n of kind of the table oid. */
 int del_part(sm3::session_t *session, sm2::catkv_t *kv, sm3::kind_t kind,
              uint64_t oid, uint64_t n) {
@@ -453,8 +471,10 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
       }
     }
     for (const index_rec_t &x : old.indexes) {
+      // An index no longer in the record goes, and its state with it.
       if (index_of(rec, x.oid) == rec.indexes.end() &&
-          del_part(session, kv.get(), kind_t::index, oid, x.oid) != 0) {
+          (del_part(session, kv.get(), kind_t::index, oid, x.oid) != 0 ||
+           del_index_state(session, kv.get(), oid, x.oid) != 0)) {
         return -1;
       }
     }
@@ -465,6 +485,70 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
       overlay_name(session, rec.nspoid, old.name, std::nullopt);
       overlay_name(session, rec.nspoid, rec.name, oid);
     }
+    return 0;
+  });
+}
+
+/* Store an index's state, under the table's lock IX; see sm3.h. */
+int cat_put_index_state(session_t *session, uint64_t table_oid,
+                        uint64_t index_oid, const index_status_t &status) {
+  return catch_nomem([&] {
+    // As a writer of the table takes it: readers and writers go
+    // on, and DDL on the table is kept out until this commits.
+    std::shared_ptr<const table_def_t> d;
+    if (cat_lock_table(session, table_oid, sm1::SM_LOCKMODE_IX, d) != 0) {
+      return -1;
+    }
+    bool there = false;
+    for (const index_def_t &x : d->indexes) {
+      there |= x.oid == index_oid;
+    }
+    if (!there) {
+      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                         "index state: no index " + std::to_string(index_oid));
+    }
+    // A state only ever leaves pending: that is what makes one seen
+    // late safe (SM3_DESIGN.md §3.3). Setting a pending index
+    // pending changes nothing.
+    index_state_t now = cat_get_index_state(session, index_oid).state;
+    if (now != index_state_t::pending) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "index state: index " + std::to_string(index_oid) +
+                             " is no longer pending, and its state is set "
+                             "once");
+    }
+    if (status.state == index_state_t::pending) {
+      return 0;
+    }
+    // Only a failed index keeps why.
+    index_status_t st{status.state, sm1::SM_OK, {}};
+    if (status.state == index_state_t::failed) {
+      st.error = status.error;
+      st.reason = status.reason;
+    }
+    kv_ptr kv(nullptr, &sm2::catkv_close);
+    std::string key, blob;
+    if (open_kv(session->sm1, kv) != 0 ||
+        part_key(kind_t::index_state, table_oid, index_oid, key) != 0) {
+      return -1;
+    }
+    // Under the key's lock, so that of two transactions setting one
+    // index's state the second finds the first's and is refused.
+    int rc = latest_key(session, kv.get(), key);
+    if (rc < 0) {
+      return -1;
+    }
+    if (rc == 0) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "index state: index " + std::to_string(index_oid) +
+                             " is no longer pending, and its state is set "
+                             "once");
+    }
+    if (encode_index_state(st, blob) != 0 ||
+        sm2::catkv_insert(kv.get(), key, blob) != 0) {
+      return -1;
+    }
+    overlay_state(session, index_oid, std::move(st));
     return 0;
   });
 }
@@ -486,7 +570,8 @@ int cat_del_table(session_t *session, uint64_t oid) {
     }
     for (const index_rec_t &x : rec.indexes) {
       if (erase_name(kv.get(), rec.nspoid, x.name) != 0 ||
-          del_part(session, kv.get(), kind_t::index, oid, x.oid) != 0) {
+          del_part(session, kv.get(), kind_t::index, oid, x.oid) != 0 ||
+          del_index_state(session, kv.get(), oid, x.oid) != 0) {
         return -1;
       }
     }

@@ -34,7 +34,8 @@ enum class kind_t : int16_t {
   index = 6,     /* an index, keyed by its table's oid and its own */
   /* 7 was a table's oid lock, now an sm1 LOCKTYPE_OID lock
      and no key at all; the value stays retired. */
-  column = 8, /* a column, keyed by its table's oid and its attnum */
+  column = 8,      /* a column, keyed by its table's oid and its attnum */
+  index_state = 9, /* an index's state, keyed as its index is */
 };
 
 /*
@@ -50,7 +51,7 @@ template <typename F> int catch_nomem(F f) {
 }
 
 /* The catalog's format version, which META holds. */
-constexpr int32_t format_version = 2;
+constexpr int32_t format_version = 3;
 
 /* ---- keys (CATALOG.md §2) ---- */
 
@@ -128,6 +129,8 @@ int encode_column(const column_rec_t &rec, std::string &blob);
 int decode_column(std::string_view blob, column_rec_t &rec);
 int encode_index(const index_rec_t &rec, std::string &blob);
 int decode_index(std::string_view blob, index_rec_t &rec);
+int encode_index_state(const index_status_t &rec, std::string &blob);
+int decode_index_state(std::string_view blob, index_status_t &rec);
 int encode_nspace(const nspace_rec_t &rec, std::string &blob);
 int decode_nspace(std::string_view blob, nspace_rec_t &rec);
 int encode_collation(const collation_rec_t &rec, std::string &blob);
@@ -146,6 +149,7 @@ enum class part_t {
   include,
   nspace,
   collation,
+  index_state,
 };
 
 /* A part's schema, and its layout, which the codec encodes by. */

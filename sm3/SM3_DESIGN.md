@@ -356,10 +356,11 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
 - **Building an index on a populated relation.** There is one
   build and it is concurrent: neither writers nor readers are
   shut out for longer than a catalog change takes. An index
-  has a state, *pending*, *valid* or *failed*, kept in its
-  record (`CATALOG.md` §3). A pending index a worker is
-  filling is *building*, which only the builder knows and
-  nothing records. The danger is a writer that does
+  has a state, *pending*, *valid* or *failed*, kept by index
+  and outside the table's definition (`CATALOG.md` §2, §4).
+  A pending index a worker is filling is *building*, which
+  only the builder knows and nothing records. The danger is a
+  writer that does
   not know the index exists, changes the base relation and
   writes no entry. PostgreSQL's `CREATE INDEX CONCURRENTLY`
   meets it by entering the index as not ready and not valid,
@@ -383,8 +384,11 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
      it takes the row's lock shared, reads the row's newest
      committed version, and adds its entry if it is not there.
   4. **Validate.** When the walk reaches the end of the heap,
-     the task marks the index valid, a catalog change like any
-     other.
+     the index is whole: there is nothing to catch up, since
+     writers have maintained it all along. The task marks it
+     valid in a transaction of its own, under the table-oid
+     lock IX, as a batch holds it, so it waits for no one
+     using the table.
 
   Step 3 is safe because of the order a writer works in. It
   changes the heap row before any index, and its uncommitted
@@ -411,7 +415,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   - **A failed build keeps its reason.** Any error from a
     batch that is not retryable fails the build: a duplicate,
     a key too long for a unique index, or anything else. The
-    index's record keeps the error's code and its message,
+    index's state keeps the error's code and its message,
     across restarts, and `builder_wait` returns them to
     whoever waits.
   - **A reader with an older snapshot is kept off the index.**
@@ -431,9 +435,12 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     for a planner, and `tbl_idx_scan` refuses an index that is
     not usable. A session's statements begin through sm3,
     `stmt_begin`, since that is where the count is noted. The
-    guard is for a transaction that has not yet touched the
-    table: marking the index valid takes the table-oid lock X,
-    which waits out every one that has.
+    guard covers every transaction, one that has opened the
+    table included: marking the index valid waits for none of
+    them.
+  - **Marking it valid waits for no one.** An index's state is
+    kept by index and set under the table-oid lock IX, for the
+    reasons §3.3 gives.
   - **A table made in the same transaction** is seen by no one
     else, so `create_index` runs the backfill itself, over
     the rows the transaction has written, and records the
@@ -780,6 +787,133 @@ against the PostgreSQL source before the fork relies on it.
   `test_build.rel`, `test_partial.rel`).
 
 ---
+
+### 3.3 An index's state, and why setting it takes no one's turn
+
+**The states.** An index is *pending*, *valid* or *failed*.
+
+| State | A write to the table | A scan |
+| --- | --- | --- |
+| pending | maintains the index; an entry to remove that is not there is no error | may not use it |
+| valid | maintains the index; a missing entry is an error | may use it, if its snapshot is new enough |
+| failed | leaves the index alone | may not use it |
+
+*Building* is not a fourth: it is a pending index a worker is
+filling at this moment, which the builder knows and nothing
+records.
+
+**Who sets it.** `create_index` leaves an index pending, or
+valid if it filled it itself on a table its own transaction
+made. The builder sets valid or failed when a build ends.
+Dropping the index, or its table, erases the state with it.
+
+**There is nothing to catch up.** Some designs build an index
+beside the table, log the writes made meanwhile, and at the
+end lock the table exclusively to apply the log and switch
+the index in. There the exclusive lock does real work, and
+the state changes under it. This build has no such phase.
+Every writer has maintained the index since `create_index`
+committed, and the backfill and a writer never work on one
+row at once (step 3 above). So when the walk reaches the end
+of the heap the index is whole, and marking it valid changes
+one fact about it and nothing in it.
+
+It used to take the table-oid lock X all the same, only
+because every catalog change did. That made the last step of
+every build wait for the longest transaction using the
+table. It now takes IX, as each batch of the build does.
+
+**Seen late, a state does no harm.** In this an index's state
+is like a statistic and unlike a definition. A stale
+definition is corruption: a row decoded by last week's
+columns. A stale state is not, because a state only ever
+leaves pending:
+
+| The index is | A transaction still sees | What it does | Harm |
+| --- | --- | --- | --- |
+| valid | pending | maintains it, tolerates a missing entry, does not scan it | none: a plan it could have had |
+| failed | pending | goes on maintaining it | none: entries no one reads |
+
+Pending is the reading that is always safe, and it is the
+only stale reading there is. So no transaction has to be
+waited out before a state is set.
+
+A table handle makes this concrete. It notes each index's
+state when the table is opened and goes by that until it is
+closed (`tbl_index_state`); a state set meanwhile reaches it
+at its next open.
+
+**The other direction is the count's.** One reader could be
+harmed: one whose snapshot is older than the index's last
+entries, which would find the index partly filled. That is
+not a stale state but a state newer than the snapshot, and
+no lock was ever what stopped it. The count of publishes
+does (above): an index may be scanned only by a snapshot
+taken at or after the publish that made it valid. Under X
+that guard was needed only for a transaction that had not
+yet opened the table; now it stands for every one, and it
+needed no change to do so.
+
+**Why the state is kept by index.** A table's definition is
+immutable and is replaced whole, by a transaction holding the
+table's lock X. A state is set under IX, while other
+transactions hold the definition, so it cannot be a field of
+it. And two builds may end on two indexes of one table at
+once: were the state part of the table's record, the second
+to commit would write the first one's old state back. So:
+
+- on disk an index's state has an entry of its own, under the
+  table's oid and the index's, apart from the index's entry
+  (`CATALOG.md` §2). A pending index has none: no entry is
+  what pending means, so `create_index` writes nothing for
+  it;
+- in memory it is in a map by index oid, beside the
+  definitions and not in them (`CATALOG.md` §4).
+
+**Why IX, and not no lock at all.** IX admits every reader
+and writer of the table and keeps out only DDL, which takes
+X. That is what stops the index, or its table, being dropped
+while its state is written, and an entry being left behind
+for an index that is gone.
+
+**Memory and the store never differ.** Statistics are
+published after their commit returns, and may lag the store;
+a state is not allowed to. The transaction that sets it
+holds the change in its session's overlay, where it sees it
+at once, and `commit` publishes it under the catalog's mutex
+with the rest of the transaction's DDL. No reader of the
+catalog can see the one without the other. If the process
+dies between the two, the next `cat_open` reads the store.
+
+**What X bought, and what has it now.**
+
+| X at the end gave | Now given by |
+| --- | --- |
+| no transaction held a stale state | a stale state is pending, which is safe |
+| no old snapshot scanned the new index | the count of publishes, for every transaction |
+| the index was not dropped meanwhile | IX against DDL's X |
+| two state changes did not overwrite each other | a state per index, not per table |
+
+**A state is set once.** The argument rests on a state only
+leaving pending, so `cat_put_index_state` enforces it: an
+index that is valid or failed is `SM_ERR_INVALID` to set
+again, whatever to. Otherwise a change from valid to failed,
+or back to pending, would be seen late as *valid*, which is
+not the safe reading. Two transactions that set one pending
+index at once meet on its state's key: the second waits for
+the first, finds a state there when that commits, and is
+refused. An index whose build failed is dropped and made
+again; it is not reset.
+
+**Tested by** `test_lock.cc`: with a reader and a writer
+holding the table, marking an index valid returns at once;
+two sessions setting two indexes of one table in
+transactions open together both take effect; a handle opened
+before still has the index pending; a REPEATABLE READ
+transaction that opens the table again sees it valid and
+still may not scan it; and of two transactions setting one
+index's state the second waits and is refused. `test_ddl.cc`
+has every refused transition.
 
 ## 4. Object mapping
 

@@ -538,64 +538,76 @@ TEST_CASE("the DDL refuses what the catalog cannot hold") {
 }
 
 TEST_CASE("an index's state is recorded, and survives a restart") {
-  // Verify the state in an index's record (SM3_DESIGN.md §3).
+  // Verify an index's state, kept by index (SM3_DESIGN.md §3.3).
   // 1. An index made in the transaction that made its table is valid.
-  // 2. One made on a table committed earlier is pending.
-  // 3. Both states load back after a restart.
-  // 4. set_index_state changes one, seen at once by its own
-  //    transaction, and that loads back too.
-  // 5. An index the table does not have is SM_ERR_NOTFOUND.
+  // 2. Two made on a table committed earlier are pending.
+  // 3. The states load back after a restart.
+  // 4. set_index_state marks one valid and one failed, seen at once
+  //    by its own transaction and by the catalog only at commit,
+  //    and those load back too, the failed one with its reason.
+  // 5. A state is set once: an index that is valid or failed is
+  //    SM_ERR_INVALID to set again, whatever to; setting a pending
+  //    one pending changes nothing.
+  // 6. An index the table does not have is SM_ERR_NOTFOUND.
   cat_db_t db;
   std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
-  uint64_t fresh = 0, late = 0;
+  uint64_t fresh = 0, late = 0, bad = 0, idle = 0;
   db.begin();
   uint64_t t = make_t(db);
   REQUIRE(sm3::create_index(db.ss, t, "fresh", on_a, {}, false, fresh) == 0);
   db.commit();
   db.begin();
   REQUIRE(sm3::create_index(db.ss, t, "late", on_a, {}, false, late) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "bad", on_a, {}, false, bad) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "idle", on_a, {}, false, idle) == 0);
   db.commit();
 
+  using sm3::index_state_t;
   sm3::catalog_t *cat = db.reload();
-  auto d = sm3::cat_get_table(cat, t);
-  REQUIRE(d != nullptr);
-  REQUIRE(d->indexes.size() == 2);
-  CHECK(d->indexes[0].state == sm3::index_state_t::valid);
-  CHECK(d->indexes[1].state == sm3::index_state_t::pending);
+  CHECK(sm3::cat_get_index_state(cat, fresh).state == index_state_t::valid);
+  CHECK(sm3::cat_get_index_state(cat, late).state == index_state_t::pending);
+  CHECK(sm3::cat_get_index_state(cat, bad).state == index_state_t::pending);
 
   db.begin();
-  REQUIRE(sm3::set_index_state(db.ss, t, late, sm3::index_state_t::valid) == 0);
-  REQUIRE(sm3::set_index_state(db.ss, t, fresh, sm3::index_state_t::failed,
+  REQUIRE(sm3::set_index_state(db.ss, t, late, index_state_t::valid) == 0);
+  REQUIRE(sm3::set_index_state(db.ss, t, bad, index_state_t::failed,
                                sm1::SM_ERR_DUPKEY, "two rows") == 0);
-  d = sm3::cat_get_table(db.ss, t);
-  CHECK(d->indexes[0].state == sm3::index_state_t::failed);
-  CHECK(d->indexes[0].error == sm1::SM_ERR_DUPKEY);
-  CHECK(d->indexes[0].reason == "two rows");
-  CHECK(d->indexes[1].state == sm3::index_state_t::valid);
-  CHECK(d->indexes[1].error == sm1::SM_OK);
-  CHECK(d->indexes[1].reason.empty());
-  CHECK(sm3::set_index_state(db.ss, t, late + 999, sm3::index_state_t::valid) ==
-        -1);
+  REQUIRE(sm3::set_index_state(db.ss, t, idle, index_state_t::pending) == 0);
+  sm3::index_status_t st = sm3::cat_get_index_state(db.ss, bad);
+  CHECK(st.state == index_state_t::failed);
+  CHECK(st.error == sm1::SM_ERR_DUPKEY);
+  CHECK(st.reason == "two rows");
+  st = sm3::cat_get_index_state(db.ss, late);
+  CHECK(st.state == index_state_t::valid);
+  CHECK(st.error == sm1::SM_OK);
+  CHECK(st.reason.empty());
+  // Not yet committed: the catalog still has them as they were.
+  CHECK(sm3::cat_get_index_state(cat, late).state == index_state_t::pending);
+  // Set once, even by the transaction that set it.
+  CHECK(sm3::set_index_state(db.ss, t, late, index_state_t::failed) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::set_index_state(db.ss, t, late + 999, index_state_t::valid) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   db.commit();
+  CHECK(sm3::cat_get_index_state(cat, late).state == index_state_t::valid);
 
   cat = db.reload();
-  d = sm3::cat_get_table(cat, t);
-  REQUIRE(d != nullptr);
-  CHECK(d->indexes[0].state == sm3::index_state_t::failed);
-  CHECK(d->indexes[0].error == sm1::SM_ERR_DUPKEY);
-  CHECK(d->indexes[0].reason == "two rows");
-  CHECK(d->indexes[1].state == sm3::index_state_t::valid);
+  st = sm3::cat_get_index_state(cat, bad);
+  CHECK(st.state == index_state_t::failed);
+  CHECK(st.error == sm1::SM_ERR_DUPKEY);
+  CHECK(st.reason == "two rows");
+  CHECK(sm3::cat_get_index_state(cat, late).state == index_state_t::valid);
+  CHECK(sm3::cat_get_index_state(cat, idle).state == index_state_t::pending);
 
-  // A state other than failed keeps no reason.
   db.begin();
-  REQUIRE(sm3::set_index_state(db.ss, t, fresh, sm3::index_state_t::pending) ==
-          0);
+  for (uint64_t x : {fresh, late, bad}) {
+    for (index_state_t to : {index_state_t::pending, index_state_t::valid,
+                             index_state_t::failed}) {
+      CHECK(sm3::set_index_state(db.ss, t, x, to) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    }
+  }
   db.commit();
-  d = sm3::cat_get_table(db.reload(), t);
-  CHECK(d->indexes[0].state == sm3::index_state_t::pending);
-  CHECK(d->indexes[0].error == sm1::SM_OK);
-  CHECK(d->indexes[0].reason.empty());
 }
 
 namespace {
