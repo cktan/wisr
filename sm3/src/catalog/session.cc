@@ -501,8 +501,8 @@ std::vector<std::string> cat_list_tables(const session_t *s, uint64_t nspoid) {
 }
 
 /* An index by name as s sees it: its tables, overlay first. */
-bool cat_index(const session_t *s, uint64_t nspoid, std::string_view name,
-               uint64_t &table, uint64_t &index) {
+bool cat_get_index(const session_t *s, uint64_t nspoid, std::string_view name,
+                   uint64_t &table, uint64_t &index) {
   // The session's own definitions, newest last, over the shared ones.
   std::map<uint64_t, std::shared_ptr<const table_def_t>> seen;
   for (const table_change_t &c : s->tables) {

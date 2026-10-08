@@ -547,7 +547,7 @@ stored.
   `SM3_DESIGN.md` §2), so the outcome is unchanged, but the
   belt is gone and only the braces are left. It belongs in a
   test.
-- **`cat_index` can stay a scan.** It looks an index up by
+- **`cat_get_index` can stay a scan.** It looks an index up by
   name through its table's indexes today, since no map of
   index names is kept; `name:` entries already carry the
   index's table oid, so the lookup is a `catkv_get`, and the
@@ -675,7 +675,7 @@ table resolved for use; its writes take a record,
 | `cat_get_table_rec(ss, table_oid, rec&)` | Reads a table's record in order to change it: takes the table-oid lock exclusive and returns the newest record. |
 | `cat_put_table(ss, table_oid, rec)` | Stores a table's record, new or replacing the old, and makes the names in it the names taken. A taken name is `SM_ERR_DUPKEY`; no such namespace is `SM_ERR_NOTFOUND`. |
 | `cat_del_table(ss, table_oid)` | Erases a table's record and its names. Its store and sequence are the caller's to drop. |
-| `cat_index(ss, namespace_oid, name, table_oid&, index_oid&)` | Finds an index and its table by name as the session sees it. |
+| `cat_get_index(ss, namespace_oid, name, table_oid&, index_oid&)` | Finds an index and its table by name as the session sees it. |
 | `cat_put_collation(ss, collation_oid, namespace_oid, name, locale, deterministic)` | Stores a new collation, recording the ICU version it opens at, and keeps it open. |
 
 A table's columns and indexes are parts of its record, so they
@@ -725,8 +725,7 @@ both.
 ### 9.6 Not there yet
 
 There is no call to rename a namespace, to del a collation,
-or to get or list collations. `cat_index` keeps its older
-name where the others would have it `cat_get_index`.
+or to get or list collations.
 
 ---
 
@@ -875,6 +874,31 @@ It takes **1,022 entries** in the catalog store:
 | `COLUMN` | 1,000 | each column |
 | `INDEX` | 10 | each index |
 | `NAME` | 11 | the table's name and each index's name |
+
+That is what the table **adds**. Its namespace was there
+before it and has entries of its own, counted once for the
+namespace and not once for each table in it:
+
+```
+NAMESPACE | 2        →  name "public"
+NAME | 0 | "public"  →  a namespace, oid 2
+```
+
+The table adds nothing to those. It only points at its
+namespace: by the namespace oid in its `TABLE` value, and by
+the 2 in each of its `NAME` keys. A second table in `public`
+adds its own entries and no more; a table in a new namespace
+costs the two entries of making that namespace, once.
+
+So a new database holding just this table has **1,027
+entries** in its catalog store:
+
+| Entries | Count | What |
+| --- | --- | --- |
+| `META` | 1 | the format version |
+| `NAMESPACE` | 2 | `pg_catalog` and `public`, made by `cat_init` |
+| `NAME` under namespace oid 0 | 2 | those two namespaces' names |
+| the table | 1,022 | as above |
 
 ### 11.1 The entries
 

@@ -510,6 +510,36 @@ struct sm_table_def_t {
 };
 
 /*
+ * Create the namespace name, SQL's schema, in the session's
+ * transaction, which sees it at once and others at commit; its oid
+ * is set in oid. A name another namespace has fails with
+ * SM_ERR_DUPKEY.
+ */
+int sm_cat_create_namespace(sm_session_t* session, const char* name,
+                            uint64_t* oid);
+
+/*
+ * Drop the namespace oid. One that still holds a table or a
+ * collation fails with SM_ERR_INUSE, and SM_NSP_PG_CATALOG and
+ * SM_NSP_PUBLIC with SM_ERR_INVALID.
+ */
+int sm_cat_drop_namespace(sm_session_t* session, uint64_t oid);
+
+/*
+ * The oid of the namespace named name, as the session's transaction
+ * sees it: 0, or 1 if there is none.
+ */
+int sm_cat_namespace_oid(sm_session_t* session, const char* name,
+                         uint64_t* oid);
+
+/*
+ * The names of the namespaces, sorted, as the session's transaction
+ * sees them, into names, which it replaces.
+ */
+int sm_cat_list_namespaces(sm_session_t* session,
+                           std::vector<std::string>& names);
+
+/*
  * The oid of the table named name in nspoid, as the session's
  * transaction sees it: 0, or 1 if there is none. It takes no
  * lock: sm_tbl_open then finds a table dropped since.

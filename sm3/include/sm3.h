@@ -339,8 +339,8 @@ std::vector<std::string> cat_list_namespaces(const session_t* s);
  * true with its table's oid and its own set. A scan of every
  * table's indexes, since the catalog keeps no map of their names.
  */
-bool cat_index(const session_t* s, uint64_t nspoid, std::string_view name,
-               uint64_t& table, uint64_t& index);
+bool cat_get_index(const session_t* s, uint64_t nspoid,
+                   std::string_view name, uint64_t& table, uint64_t& index);
 
 /*
  * Take the table-oid lock of the table oid in mode, held to the end

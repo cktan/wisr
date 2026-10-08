@@ -907,6 +907,51 @@ static Janet cfun_index_create(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (namespace-create name) */
+static Janet cfun_namespace_create(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string name = identifier_of(argv[0]);
+  uint64_t oid = 0;
+  if (sm_cat_create_namespace(s->session, name.c_str(), &oid) != 0) {
+    panic_sm_error("namespace-create");
+  }
+  return janet_wrap_nil();
+}
+
+/* (namespace-drop name) */
+static Janet cfun_namespace_drop(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string name = identifier_of(argv[0]);
+  uint64_t oid = 0;
+  int rc = sm_cat_namespace_oid(s->session, name.c_str(), &oid);
+  if (rc == 1) {
+    janet_panicf("namespace-drop: namespace '%s' does not exist", name.c_str());
+  }
+  // It must be empty, and not one of the two built in.
+  if (rc != 0 || sm_cat_drop_namespace(s->session, oid) != 0) {
+    panic_sm_error("namespace-drop");
+  }
+  return janet_wrap_nil();
+}
+
+/* (list-namespaces): the namespace names, sorted. */
+static Janet cfun_list_namespaces(int32_t argc, Janet *argv) {
+  (void)argv;
+  janet_fixarity(argc, 0);
+  session_ctx_t *s = require_session();
+  std::vector<std::string> names;
+  if (sm_cat_list_namespaces(s->session, names) != 0) {
+    panic_sm_error("list-namespaces");
+  }
+  JanetArray *out = janet_array(static_cast<int32_t>(names.size()));
+  for (const std::string &name : names) {
+    janet_array_push(out, janet_cstringv(name.c_str()));
+  }
+  return janet_wrap_array(out);
+}
+
 /* (list-tables): the table names in public, sorted. */
 static Janet cfun_list_tables(int32_t argc, Janet *argv) {
   (void)argv;
@@ -1662,6 +1707,10 @@ static const JanetReg s_rel_cfuns[] = {
 
     {"_table-create", cfun_table_create, "internal"},
     {"_table-drop", cfun_table_drop, "internal"},
+    {"_namespace-create", cfun_namespace_create, "internal"},
+    {"_namespace-drop", cfun_namespace_drop, "internal"},
+    {"list-namespaces", cfun_list_namespaces,
+     "(list-namespaces) -- the namespace names, sorted"},
     {"_seq-create", cfun_seq_create, "internal"},
     {"_seq-drop", cfun_seq_drop, "internal"},
     {"_nextseq", cfun_nextseq, "internal"},
@@ -1705,6 +1754,12 @@ static const char *s_prelude = R"janet(
 
 (defmacro table-drop [name]
   ~(_table-drop (string ',name)))
+
+(defmacro namespace-create [name]
+  ~(_namespace-create (string ',name)))
+
+(defmacro namespace-drop [name]
+  ~(_namespace-drop (string ',name)))
 
 (defmacro seq-create [name & rest]
   ~(_seq-create (string ',name) ,;rest))

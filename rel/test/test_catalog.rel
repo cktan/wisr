@@ -156,6 +156,44 @@
 (table-drop o)
 (commit)
 
+# 8. Namespaces are created and dropped as tables are.
+# 8.1 The two built in are listed; a new one is seen by its own
+#     transaction at once, and by another session only at commit.
+# 8.2 One aborted is not there afterwards.
+# 8.3 A taken name is ERR_DUPKEY; a built-in namespace cannot be
+#     dropped; one that is not there cannot be either.
+# 8.4 Dropped and committed, it is gone, and its name is free.
+(session-use default)
+(begin :rc)
+(assert-eq (list-namespaces) @["pg_catalog" "public"])
+(namespace-create app)
+(assert-eq (list-namespaces) @["app" "pg_catalog" "public"])
+(abort)
+(begin :rc)
+(assert-eq (list-namespaces) @["pg_catalog" "public"])
+(namespace-create app)
+(session-use s2)
+(begin :rc)
+(assert-eq (list-namespaces) @["pg_catalog" "public"])
+(commit)
+(session-use default)
+(commit)
+(session-use s2)
+(begin :rc)
+(assert-eq (list-namespaces) @["app" "pg_catalog" "public"])
+(assert-err :err-dupkey (namespace-create app))
+(assert-err :err-invalid (namespace-drop public))
+(assert-eq (fails? (fn [] (namespace-drop nosuch))) true)
+(namespace-drop app)
+(assert-eq (list-namespaces) @["pg_catalog" "public"])
+(commit)
+(session-use default)
+(begin :rc)
+(assert-eq (list-namespaces) @["pg_catalog" "public"])
+(namespace-create app)
+(namespace-drop app)
+(commit)
+
 (db-close)
 (session-close s2)
 (env-detach :force true)

@@ -206,7 +206,7 @@ TEST_CASE("a transaction that made DDL cannot be prepared") {
 }
 
 TEST_CASE("an index is found by name as the session sees it") {
-  // Verify cat_index finds an index through the overlay, then shared.
+  // Verify cat_get_index finds an index through the overlay, then shared.
   // 1. A creates table x and index x_i: A finds it, B does not.
   // 2. A commits: B finds it, with its table.
   // 3. A drops x, uncommitted: A no longer finds x_i; B still does.
@@ -215,26 +215,26 @@ TEST_CASE("an index is found by name as the session sees it") {
   uint64_t t = create(db.a, "x"), ix = 0, table = 0, index = 0;
   std::vector<sm3::index_key_spec_t> keys = {{0, false, false, std::nullopt}};
   REQUIRE(sm3::create_index(db.a, t, "x_i", keys, {}, false, ix) == 0);
-  CHECK(sm3::cat_index(db.a, sm3::nsp_public, "x_i", table, index));
+  CHECK(sm3::cat_get_index(db.a, sm3::nsp_public, "x_i", table, index));
   CHECK(table == t);
   CHECK(index == ix);
   begin(db.b);
-  CHECK_FALSE(sm3::cat_index(db.b, sm3::nsp_public, "x_i", table, index));
+  CHECK_FALSE(sm3::cat_get_index(db.b, sm3::nsp_public, "x_i", table, index));
   REQUIRE(sm3::commit(db.b) == 0);
   REQUIRE(sm3::commit(db.a) == 0);
 
   begin(db.b);
   table = index = 0;
-  CHECK(sm3::cat_index(db.b, sm3::nsp_public, "x_i", table, index));
+  CHECK(sm3::cat_get_index(db.b, sm3::nsp_public, "x_i", table, index));
   CHECK(table == t);
   CHECK(index == ix);
   REQUIRE(sm3::commit(db.b) == 0);
 
   begin(db.a);
   REQUIRE(sm3::drop_table(db.a, t) == 0);
-  CHECK_FALSE(sm3::cat_index(db.a, sm3::nsp_public, "x_i", table, index));
+  CHECK_FALSE(sm3::cat_get_index(db.a, sm3::nsp_public, "x_i", table, index));
   begin(db.b);
-  CHECK(sm3::cat_index(db.b, sm3::nsp_public, "x_i", table, index));
+  CHECK(sm3::cat_get_index(db.b, sm3::nsp_public, "x_i", table, index));
   REQUIRE(sm3::commit(db.b) == 0);
   REQUIRE(sm3::abort(db.a) == 0);
 }

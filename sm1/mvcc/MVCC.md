@@ -32,16 +32,18 @@ it sees afterwards, except its own writes.
 **Reads never block.** A read takes no lock and waits for
 nobody. It cannot fail with a conflict.
 
-**Writes take a row lock.** A write takes the exclusive lock
-on its row for the rest of the transaction, so a second
-writer of the same row waits, rather than producing a
-version nobody asked for. This is what makes a dirty write
-impossible. Two writers that wait on each other's rows
+**Writers of one row wait their turn.** A write leaves its
+version uncommitted until the transaction ends, and a second
+writer of the same row waits for that transaction, rather
+than producing a version nobody asked for. This is what
+makes a dirty write impossible. No lock is recorded for it:
+the uncommitted version is what the second writer waits on
+(`../WRITELOCK.md`). Two writers that wait on each other's rows
 would wait forever, so the engine breaks the cycle itself:
 the youngest transaction on it fails with
 `SM_ERR_DEADLOCK`, and the others go on.
 
-**First-committer-wins.** Once the lock is granted, the
+**First-committer-wins.** Once its wait is over, the
 writer compares the row's newest committed version against
 its own snapshot. If that version committed after the
 snapshot, the write fails with `SM_ERR_CONFLICT`, which is
@@ -97,7 +99,7 @@ otherwise. **P** is a predicate: the key range of a scan.
 | `CONFLICT` | `SM_ERR_CONFLICT` at the write: first-committer-wins. Retryable, and it aborts the transaction |
 | `UPDATED` | `SM_ERR_UPDATED` at a READ COMMITTED write: the row changed after the transaction began. Not retryable, and the transaction stays active; `readlatest` reads the newest version |
 | `SERIALIZATION` | `SM_ERR_SERIALIZATION` at commit: the dangerous structure. Retryable |
-| `BLOCK` | the call waits on a row lock until the holder ends |
+| `BLOCK` | the call waits for another transaction, the writer of its row or the holder of a lock on it, until that one ends |
 | `DEADLOCK` | `SM_ERR_DEADLOCK` at the write: the transaction was the youngest on a cycle of waits. Retryable, and it aborts the transaction |
 | `DUPKEY` | `SM_ERR_DUPKEY`: the row exists in this transaction's own snapshot. Not retryable |
 | `NOTFOUND` | `SM_ERR_NOTFOUND`: the row does not exist in this transaction's own snapshot. Not retryable |
@@ -215,8 +217,8 @@ is family C.
 
 Two transactions writing one row. Detection here is
 level-independent between REPEATABLE READ and SERIALIZABLE:
-the row lock and first-committer-wins run at both, so the RR,
-RR+S and S+S columns agree throughout. READ COMMITTED has its
+the wait on a writer and first-committer-wins run at both, so
+the RR, RR+S and S+S columns agree throughout. READ COMMITTED has its
 own family, F. This is the part of the design that needs no
 SSI.
 
@@ -292,7 +294,7 @@ them wrong would be invisible in ordinary use:
   commit would hand T1 a first-committer-wins CONFLICT, which
   is b19's point, not b21's.
 - **A lock is a lock, whoever takes it** (b26 to b29):
-  `sm1::lock` shares the row locks writes take, so a shared
+  `sm1::lock` meets a write as another write does, so a shared
   holder stops a writer, a writer stops a shared request, and
   a lock taken over a row committed since the snapshot fails
   with CONFLICT rather than handing back something stale.

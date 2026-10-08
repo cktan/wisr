@@ -51,6 +51,35 @@ TEST_CASE("a catalog is made once, and loaded only once made") {
   sm3::cat_close(cat);
 }
 
+TEST_CASE("a cat_init that fails partway leaves no catalog behind") {
+  // Verify cat_init makes the catalog whole or not at all.
+  // 1. The sequence cat_init would make, sm3.oid, is made first, so
+  //    cat_init fails on it after it has written the format version.
+  // 2. cat_init fails, and the database still has no catalog:
+  //    cat_open is SM_ERR_NOTFOUND, not a catalog half made.
+  // 3. With the sequence out of the way cat_init succeeds, and the
+  //    catalog loads with its two namespaces.
+  db_t db;
+  sm1::session_t *s = db.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::mkseq(s, "sm3.oid", 1, 1) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+
+  CHECK(sm3::cat_init(db.env(), "db") == -1);
+  sm3::catalog_t *cat = nullptr;
+  CHECK(sm3::cat_open(db.env(), "db", cat) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::rmseq(s, "sm3.oid") == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE_MESSAGE(sm3::cat_init(db.env(), "db") == 0, sm1::errmsg());
+  cat = load(db);
+  CHECK(sm3::cat_list_namespaces(cat) ==
+        std::vector<std::string>{"pg_catalog", "public"});
+  sm3::cat_close(cat);
+}
+
 TEST_CASE("a created table loads back, across a restart, as it was made") {
   // Verify create_table and cat_open together.
   // 1. Create a table of int8, text and decimal64(10, 2) in public,

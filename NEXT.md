@@ -58,12 +58,17 @@ Owed, and blocking nothing above:
   `lock_timeout` needs a timed wait besides.
 - **A lock wait cannot be cancelled.** A build's worker that
   waits on a lock held by a prepared, in-doubt transaction
-  holds up `cat_close`, and so a detach, until that transaction
-  is resolved. sm1 needs a way to cancel a wait.
+  holds up `builder_detach`, and so a detach of the
+  environment, until that transaction is resolved. sm1 needs a
+  way to cancel a wait.
 - **Marking an index valid takes the table-oid lock X**, as every
   catalog change does, so a long transaction on the table
   delays it. The step only flips a state writers do not depend
-  on; a weaker lock would do.
+  on; a weaker lock would do. An index's state is one catalog
+  entry of its own now (`sm3/CATALOG.md` §2), so the step need
+  change only that entry and the definition in memory; what a
+  reader holding the old definition may then see is to be
+  written down first.
 - **The evaluator's cost is unmeasured**: what a call a row
   adds to a write on a table with a partial or an expression
   index.
@@ -86,10 +91,18 @@ Owed, and blocking nothing above:
 - **Temporary tables** (`sm3/CATALOG.md` §7): a temporary
   store, its definition in the session's own temporary catalog
   and never written to store 0.
-- **Namespaces past the two built in**, dependency checks such
-  as refusing `DROP COLLATION` in use, and the unmeasured
-  startup cost for thousands of tables — all three open in
-  `sm3/CATALOG.md` §7.
+- **Dependency checks**, such as refusing `DROP COLLATION` in
+  use and `DROP SCHEMA … CASCADE`, and the unmeasured startup
+  cost for thousands of tables — open in `sm3/CATALOG.md` §7.
+- **The rest of the catalog's layout** (`sm3/CATALOG3.md`). A
+  key for each column and each index is built. Still
+  proposed: an index's own key, include and read columns as
+  entries, which removes the last counted framing; the
+  dependency index, which the checks above wait for; and keys
+  as words with tagged values.
+- **A table in a namespace other than `public`, from `rel`.**
+  `rel` creates and drops namespaces but has no way to name
+  one for a table.
 - **Savepoints without an undo list** (`sm1/SAVEPOINT.md`):
   a rollback would mark the `seq` range it undid as dead and
   delete nothing. Designed, and not to be built for now: we

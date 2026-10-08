@@ -261,9 +261,9 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
   name)`** find a table as the session's transaction sees it,
   and **`cat_list_tables(ss, nspoid)`** lists the names of its
   tables, sorted;
-  **`cat_index(ss, nspoid, name, table, index)`** finds an index
-  and its table, by a scan of the tables' indexes, since no map
-  of index names is kept.
+  **`cat_get_index(ss, nspoid, name, table, index)`** finds an
+  index and its table, by a scan of the tables' indexes, since
+  no map of index names is kept.
 - **`cat_get_namespace(ss, name, oid)`** finds a namespace by
   name as the session's transaction sees it, by a look at
   each, since they are few and no map by name is kept, and

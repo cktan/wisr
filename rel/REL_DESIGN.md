@@ -312,6 +312,18 @@ forms back.
 2. Calls `sm_cat_drop_index(s, table, index)`, which erases the
    index and its entries.
 
+#### `(namespace-create <name>)`
+1. Calls `sm_cat_create_namespace(s, name, &oid)`.
+
+#### `(namespace-drop <name>)`
+1. Calls `sm_cat_namespace_oid` for the namespace's oid.
+2. Calls `sm_cat_drop_namespace(s, oid)`, which refuses one
+   that is not empty and the two built in.
+
+#### `(list-namespaces)`
+1. Calls `sm_cat_list_namespaces(s, &names)`.
+2. Returns the names, sorted, as an array of strings.
+
 #### `(list-tables)`
 1. Calls `sm_cat_list_tables(s, SM_NSP_PUBLIC, &names, &n)`,
    which takes no lock.

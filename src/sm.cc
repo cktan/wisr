@@ -913,6 +913,42 @@ void sm_idx_scanend(sm_idx_scan_t *scan) {
 }
 
 /* A table's oid by name, as the session sees it; 1 if none. */
+/* Create a namespace. */
+int sm_cat_create_namespace(sm_session_t *session, const char *name,
+                            uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_create_namespace", "oid");
+    }
+    return sm3::create_namespace(session->sm3, name_of(name), *oid);
+  });
+}
+
+/* Drop a namespace. */
+int sm_cat_drop_namespace(sm_session_t *session, uint64_t oid) {
+  return guard(session, [&] { return sm3::drop_namespace(session->sm3, oid); });
+}
+
+/* A namespace's oid by its name: 0, or 1 if there is none. */
+int sm_cat_namespace_oid(sm_session_t *session, const char *name,
+                         uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_namespace_oid", "oid");
+    }
+    return sm3::cat_get_namespace(session->sm3, name_of(name), *oid) ? 0 : 1;
+  });
+}
+
+/* The namespaces' names, sorted. */
+int sm_cat_list_namespaces(sm_session_t *session,
+                           std::vector<std::string> &names) {
+  return guard(session, [&] {
+    names = sm3::cat_list_namespaces(session->sm3);
+    return 0;
+  });
+}
+
 int sm_cat_table_oid(sm_session_t *session, uint64_t nspoid, const char *name,
                      uint64_t *oid) {
   return guard(session, [&] {
@@ -944,7 +980,8 @@ int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
     if (!table || !index) {
       return null_arg("sm_cat_index_oid", !table ? "table" : "index");
     }
-    return sm3::cat_index(session->sm3, nspoid, name_of(name), *table, *index)
+    return sm3::cat_get_index(session->sm3, nspoid, name_of(name), *table,
+                              *index)
                ? 0
                : 1;
   });

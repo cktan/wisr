@@ -1,8 +1,8 @@
 /*
  * run.cc -- running a parsed script (DRIVER.md §2.4, §4).
  *
- * Each session gets a thread, because a step may block on a
- * row lock and the driver must carry on with the next step
+ * Each session gets a thread, because a step may block on
+ * another transaction and the driver must carry on with the next step
  * rather than wait forever. The controller thread dispatches
  * one step at a time, waits a little for it, and reports it as
  * blocked if it has not finished; a blocked step is printed

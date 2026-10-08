@@ -254,7 +254,8 @@ reachable at all without giving every verb a store operand,
 which is what naming them would have cost. A scenario needing
 a third store needs the grammar change this avoided.
 
-**`blocks`** says the step must wait on a row lock. Only a
+**`blocks`** says the step must wait for another
+transaction, on its write or its lock. Only a
 step marked this way may be reported blocked; every other
 step is waited for however slow the machine is, so a
 transcript never depends on timing. A marked step that

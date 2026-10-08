@@ -326,6 +326,34 @@ associated row sequence.
 (table-drop users)
 ```
 
+### `(namespace-create name)`
+Creates the namespace `name`, SQL's schema, in the active
+transaction. A name another namespace has is refused.
+
+```janet
+(namespace-create app)
+```
+
+Tables are still made in `public`: `rel` has no way to name
+another namespace for one.
+
+### `(namespace-drop name)`
+Drops the namespace `name`. One that holds a table or a
+collation is refused, and so are `public` and `pg_catalog`.
+
+```janet
+(namespace-drop app)
+```
+
+### `(list-namespaces)`
+Returns an array of the names of the namespaces, sorted, as
+the active transaction sees them.
+
+```janet
+(list-namespaces)
+# => @["app" "pg_catalog" "public"]
+```
+
 ### `(list-tables)`
 Returns an array of the names of the tables in `public`, sorted,
 as the active transaction sees them: its own uncommitted DDL
