@@ -1,0 +1,6 @@
+# sq: the repository's style, with one difference. An #include
+# block keeps the order it was written in: PostgreSQL's sources
+# need postgres.h, postgres_fe.h or c.h first, and sorting moved
+# them down.
+BasedOnStyle: InheritParentConfig
+SortIncludes: Never

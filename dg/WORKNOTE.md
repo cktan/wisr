@@ -128,3 +128,39 @@ limits, `max_active_replication_origins`,
   parsed, never written.
 - The catalogs `pg_replication_origin`, `pg_subscription`,
   `pg_subscription_rel` and `pg_publication*`.
+
+## Step 3: sq, the base and the raw parser
+
+`../sq` exists: `make -C ../sq test` builds `sqparse`, which
+parses SQL with PostgreSQL's raw parser and prints the tree, and
+runs eight tests through it. It is the first of the converted
+code to be run rather than only compiled.
+
+- **The sources were not moved.** sq compiles them from
+  `dg/src` in place. They include 285 of the 763 headers, from
+  every directory, some generated from the catalog data; moving
+  the `.c` files alone would make sq need digres to compile.
+  Guess: a boundary with tests, and an honest list of what
+  crosses it, is worth more tonight than a move that leaves the
+  two projects needing each other. `../sq/README.md` gives the
+  order to finish it in. `dg/` is therefore no slimmer for this
+  step.
+- **The name `sq`** and its place beside `sm/` and `dg/` are as
+  `DGWORK.md` proposed.
+- **`sq/src/host.c` answers 34 names** that the parser's layers
+  ask of the server, as a process with no client and no
+  transaction would. They are stand-ins for a test program, and
+  the list of what to cut. Error reporting asks for 26 of them.
+- **The link keeps only what is reached** (`-ffunction-sections`
+  and `--gc-sections`). Without that, the same objects need 124
+  names, most of them from code the parser never runs.
+- **The expected trees were checked by reading**, not against a
+  running PostgreSQL, which does not print the raw parse tree.
+- sq has its own `.clang-format`, a copy of digres's: includes
+  are not sorted, because `postgres.h` must come first.
+
+## Step 4: what was left alone
+
+As `DGWORK.md` says: `src/timezone` and `regex` are not carved
+out, the planner is not touched, and the TLS and GSSAPI files
+are still skipped.
