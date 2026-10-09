@@ -1,5 +1,5 @@
 /*
- * test_scan.cc -- what test/tokens.sh cannot show of the scanner: it
+ * test_scan.cc -- what test/run.sh cannot show of the scanner: it
  * compares sq's tokens with PostgreSQL's, which covers every rule,
  * but not the notice hook, the options, or what is freed when a scan
  * ends in an error.

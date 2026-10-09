@@ -1,253 +1,271 @@
-# DESIGN — sq, the SQL front end
+# DESIGN — sq, the SQL parser
 
-What sq is, where its edge is and why it is there, and what it
-still takes from the server it was cut out of. `README.md` says
-how to build and test it, and carries the counts; this document
-argues the decisions and does not repeat the lists.
+sq is a library that parses PostgreSQL 18's SQL: text in, a tree
+of nodes out. It is what digres parses with. `README.md` says
+how to build and test it and `include/sq.h` is the interface;
+this document says how it is put together, and why.
 
-sq is PostgreSQL 18.6's raw parser and the layers under it. The
-code is PostgreSQL's, unchanged in what it does. What is
-designed here is the cut.
+sq knows the grammar and nothing else. It reads no catalog, so
+it does not know what a name names, and it has no notion of what
+its caller supports: every statement PostgreSQL's parser
+accepts, sq accepts and builds the whole tree for.
 
 ---
 
-## 1. What sq does
+## 1. The shape of it
 
 ```
-        SQL text
+        SQL text, and options
            │
   ┌────────┴─────────────────────────────────────┐
-  │  scanner            scan.l, scansup.c        │
-  │  text → tokens; keywords from common/        │
+  │  scanner            src/scan.l               │
+  │  text → tokens; keywords by a perfect hash   │
   ├──────────────────────────────────────────────┤
-  │  lookahead filter   parser.c                 │
-  │  NOT, NULLS, WITH, WITHOUT, FORMAT           │
-  │  renamed by the token that follows           │
+  │  lookahead filter   src/parser.cc            │
+  │  NOT, NULLS, WITH, WITHOUT, FORMAT renamed   │
+  │  by the token that follows; U& de-escaped    │
   ├──────────────────────────────────────────────┤
-  │  grammar            gram.y                   │
-  │  tokens → one RawStmt a statement            │
+  │  grammar            src/gram.y               │
+  │  tokens → nodes, made in the tree            │
   └────────┬─────────────────────────────────────┘
            │
-     parse tree, a List of RawStmt
+     sq_tree_t: the statements, and every node
+     and string they are made of
 ```
 
-- **One entry point**: `raw_parser(text, mode)`, in
-  `parser/parser.h`. It returns a `List` of `RawStmt`, one for
-  each statement in the text.
-- **The output is a node tree**, the same structures the rest of
-  PostgreSQL passes about. `nodeToString()` writes one as text,
-  and that text is what the tests compare.
-- **No catalog is read.** The raw parser knows the grammar and
-  nothing about what a name names. `SELECT a FROM t` parses
-  whether or not `t` exists; `a` is a `ColumnRef` holding a
-  string.
-- **A parse is all or nothing.** The whole text is parsed before
-  anything is returned, so one error anywhere means no tree for
-  any statement in it. `test/err_syntax.sql` holds this.
+Two calls go down it, `sq_parse` for a list of statements and
+`sq_parse_type_name` for one type name. A third, `sq_to_string`,
+prints a node as PostgreSQL's `nodeToString()` would.
 
-The modes other than `RAW_PARSE_DEFAULT` parse a type name, or
-an expression or assignment for PL/pgSQL. The type name mode
-has a caller in `../dg`, `parse_type.c`. The PL/pgSQL ones are
-still compiled and nothing asks for them: digres has no
-procedural language (`../sm/PART4.md` §10).
+The interface is C in style, as `../sm/include/sm.h` is: an
+`int` result, 0 or -1; the error read back from the calling
+thread; names prefixed `sq_`. Three C++ types cross it and no
+others: `std::string_view` for text in, `std::string` for text
+out, `std::vector` for a node's lists.
 
-## 2. Where the edge is
+## 2. What is PostgreSQL's, and what is sq's
 
-sq ends at the raw parse tree. The analyzer, which turns that
-tree into a `Query`, stays in `../dg`.
+sq is PostgreSQL's parser, kept as close to PostgreSQL's source
+as its interface allows, so that a fix upstream can be carried
+over by reading two files side by side.
 
-- **The raw parser can stand alone.** What it needs is under it:
-  nodes, memory, errors, encodings. The link in §5 measures how
-  little it reaches above itself.
-- **The analyzer cannot.** It is catalog lookups from end to
-  end: every name it resolves is a question to the catalog. It
-  needs about 300 names from 21 parts of the server
-  (`../dg/DGWORK.md`). It moves when there is a catalog
-  interface to move it onto, and that waits on sm3's catalog
-  being what digres reads (`../sm/PART4.md` §10).
-- **The cut has an obvious test**: text in, tree out, compared
-  as text. No other piece of the server has one so cheap, which
-  is why this was the first carved out.
-- **It is known to work.** libpg_query makes the same cut.
-
-So sq is two things in one directory, and only the second is
-its purpose:
-
-| Layer | What it is | Why it is in sq |
+| What | Where | How it relates to PostgreSQL |
 | --- | --- | --- |
-| The base | nodes, memory contexts, error reporting, encodings, hash tables and lists, `common`, `port` | the parser cannot run without it; so can nothing else in digres |
-| The front end | scanner, lookahead filter, grammar | what sq is for |
+| The node definitions | `spec/*.h` | PostgreSQL's headers, unedited |
+| The keyword list | `spec/kwlist.h` | PostgreSQL's, unedited |
+| The scanner | `src/scan.l` | a fork: the rules are PostgreSQL's, untouched |
+| The grammar | `src/gram.y` | a fork: the rules are PostgreSQL's, untouched |
+| The lookahead filter | `src/parser.cc` | PostgreSQL's `parser.c`, line for line |
+| Node constructors | `src/makefuncs.cc` | PostgreSQL's `makefuncs.c`, renamed |
+| The nodes, their printer, copy and equality | generated | written by `gen/gen_nodes.py` from `spec/` |
+| The keyword hash | generated | `gen/gen_keywords.py`: PostgreSQL's `PerfectHash.pm` in Python |
+| The tree, errors, lists, UTF-8 | `src/tree.cc`, `error.cc`, `list.cc`, `utf8.cc` | sq's own |
 
-The base is the larger part by far, and digres needs it whether
-or not it ever parses. It is in sq because it has to be in
-whichever project is lowest, and today that is sq. If a second
-project is cut out beside sq, the base becomes its own.
+What a fork changes is the code around the rules, never a rule:
 
-## 3. The layers under the parser
+- A node is one of sq's. `SelectStmt` is `sq_select_stmt_t`,
+  its `targetList` is `target_list`, and the helpers have names
+  to match.
+- An error is raised sq's way (§5), not with `ereport`.
+- Everything is made in the tree being built (§4), where
+  PostgreSQL allocates in its current memory context.
+- The text is UTF-8. PostgreSQL asks what the encoding is; sq
+  never does.
 
-What each is for, as the parser uses it.
+**Porting to a later PostgreSQL** is, in order: replace the
+headers in `spec/` and run `make nodes`; carry the changes to
+`scan.l`, `gram.y`, `parser.c` and `makefuncs.c` into the forks
+by hand; make new expected files with that PostgreSQL (§8).
 
-- **Nodes** (`backend/nodes`). The tree's structures, their
-  constructors, and `copy`, `equal`, `out` and `read` over every
-  node type, generated from the headers. sq compiles all of
-  them, plan nodes included: the node headers are one closure
-  and the generator makes one file of each kind. The link drops
-  what the parser does not reach.
-- **Memory contexts** (`backend/utils/mmgr`). Every node is
-  allocated in the current context. A caller frees a parse tree
-  by resetting the context it parsed in, never node by node.
-- **Error reporting** (`backend/utils/error`). The scanner and
-  grammar raise with `ereport`, which unwinds to the caller's
-  `PG_TRY` by `longjmp`. The message and its position are read
-  from the error state afterwards.
-- **Encodings** (`backend/utils/mb`, `common/wchar.c`). The
-  scanner asks how long a character is, and an error's position
-  is counted in characters, not bytes. sq is UTF-8 only, as
-  digres is; nothing is ever converted.
-- **Keywords** (`common/keywords.c`, `kwlookup.c`). The keyword
-  list and its perfect hash, shared with whatever else has to
-  quote an identifier.
+## 3. The tree
 
-**What a caller must do first** is two calls, and `oracle`'s
-`main` is the whole example:
+`include/sq_nodes.h` has a struct for each node PostgreSQL's
+grammar can build, 216 of them, and it is generated. The
+generator reads PostgreSQL's own headers, the way PostgreSQL's
+`gen_node_support.pl` does, so that a node's fields, their order
+and what each is are PostgreSQL's by construction and not by
+transcription. The header is committed, so that it can be read,
+and the tests fail if it is not what the generator writes.
 
-1. `MemoryContextInit()`, so that there is a context to allocate
-   in and an error context to raise through.
-2. `SetDatabaseEncoding(PG_UTF8)`, so that the scanner can
-   measure a character.
+What changes on the way from PostgreSQL's struct to sq's:
 
-## 4. The sources are compiled in place
+- **Names.** Types end `_t` and carry `sq_`; fields are
+  snake_case; an enum's values carry `SQ_`, which keeps them
+  apart from PostgreSQL's own where digres includes both.
+- **A list is a `std::vector<sq_node_t*>`**, empty where
+  PostgreSQL has `NIL`. PostgreSQL also puts a list where any
+  node may go — an element of another list, a field typed
+  `Node *`. There it is an `sq_list_t`, a node holding a vector.
+- **Text is a `const char*`**, owned by the tree. NULL is
+  absent, which PostgreSQL tells apart from empty: `COMMENT ...
+  IS NULL` and `IS ''` are different trees.
+- **Every node derives from `sq_node_t`**, which holds the tag,
+  and sets its own tag when made.
+- **An `sq_a_const_t` points at its value node**; PostgreSQL's
+  holds a union of them.
 
-sq's `Makefile` compiles the files from `../dg/src` into
-`build/`. What is in `sq/` is the boundary: the list of what
-belongs to it, `src/host.c`, and the tests.
+Fields that only PostgreSQL's analyzer fills are kept, zero or
+NULL from the parser: a node is PostgreSQL's node, whole.
 
-The alternatives, and why this one:
+**The printer writes PostgreSQL's names**, not sq's:
+`sq_select_stmt_t` prints as `{SELECTSTMT :distinctClause ...`.
+Its text is `nodeToString()`'s byte for byte, with locations
+hidden as PostgreSQL hides them. That is what makes PostgreSQL's
+own output a test of sq (§8), and it is what the printer is for.
 
-| Choice | For | Against |
-| --- | --- | --- |
-| Move the `.c` files, leave the headers | `dg/` gets smaller at once | sq then needs digres's include tree to compile, and digres needs sq's objects: each needs the other |
-| Move the `.c` files and every header they include | a real cut | the sources include well over a third of digres's headers, from `storage`, `access`, `catalog`, `executor`; each one is a decision about which side owns it, and several are generated from the catalog data |
-| **Compile in place** | the boundary and its tests exist now, and nothing depends the wrong way | nothing has moved; `dg/` is no smaller, and sq cannot be built without `dg/` beside it |
+## 4. Ownership
 
-The third was chosen because the dependency's direction is the
-thing that is hard to undo. A boundary with tests and an honest
-list of what crosses it can be tightened a header at a time. A
-move that leaves the two needing each other has to be unpicked
-first.
+**A tree owns everything.** `sq_tree_t` keeps a store of every
+node and every string made for it and frees them all in its
+destructor. Nothing in a tree is freed by hand, and nothing
+points outside it: text is copied in, so a tree outlives what it
+was parsed from. A tree moves and does not copy.
 
-What ends it, in order:
+This is what makes cleanup after an error one line. A parse that
+fails halfway has made hundreds of nodes, some reachable from
+bison's stack and some from nowhere. The tree owns them all the
+same, and emptying it frees them.
 
-1. Shrink the header closure, until what sq includes is what sq
-   owns.
-2. Move the sources and those headers here; `../dg` then
-   compiles against `sq/include` and links sq's objects.
+- **The grammar's actions make nodes in "the current tree"**, a
+  per-thread pointer that `sq_parse` sets for as long as it
+  runs. PostgreSQL's actions do the same with its current memory
+  context. The alternative, passing the tree to each of some 800
+  calls, would have rewritten every action and gained nothing: a
+  parse is on one thread and builds one tree.
+- **bison's stacks** come from the parse, not from `malloc`, and
+  go with it. bison would free its own on a normal return, which
+  an error raised from an action is not.
+- **flex's state** is held by `scanner_t`, whose destructor
+  releases it however the scan ends.
 
-Until then sq's generated files — `gram.c`, `scan.c`, the node
-functions and the node tags — are digres's to make: sq's build
-runs `make -C ../dg gen` first.
+So RAII reaches everything, and `sq.h` has no free function.
 
-## 5. The link measures the boundary
+## 5. Errors
 
-Every source is compiled with one section a function
-(`-ffunction-sections -fdata-sections`) and linked with
-`--gc-sections`. This is a design choice, not an optimisation.
+A failed call returns -1 and leaves the error for the calling
+thread to read: a code, a message, PostgreSQL's SQLSTATE, the
+position in characters, and PostgreSQL's detail and hint where
+it has them. A server sends those to its client as they are.
 
-- **Without it** the objects need everything any function in
-  them names, reached or not: `dsa.c` wants shared memory,
-  `portalmem.c` wants the executor. That list says what the
-  files touch, which is not the question.
-- **With it** the link keeps what `main` reaches and reports
-  only what that needs. The undefined names are then exactly
-  what the parser's own path asks of the server. `README.md`
-  has both counts; the second is less than half the first.
+- **Three codes.** `SQ_ERR_PARSE` is the SQL's fault, and the
+  SQLSTATE says how; `SQ_ERR_NOMEM` and `SQ_ERR_EXCEPTION` are
+  not.
+- **The message is formatted into a fixed per-thread buffer**,
+  with no allocation, so that running out of memory can be
+  reported.
+- **Inside a parse, an error is a private exception.** A raise
+  records the thread's error and throws; the call catches it
+  and returns -1. PostgreSQL leaves from wherever it is by
+  `longjmp`, and its helpers are written to: this keeps them the
+  shape they are upstream. flex's own fatal path, which would
+  call `exit()`, leaves the same way. No exception crosses the
+  interface.
+- **A notice is not an error.** An identifier cut to 63 bytes,
+  or a warning about escapes, goes to the caller's hook as it
+  happens and the parse goes on. With no hook it is dropped.
 
-The cost is that the boundary is drawn by reachability from one
-program. A second caller that reaches further — one that prints
-errors as JSON, say — will find names `oracle` never needed.
-That is the right answer: it has found a dependency that is
-real for it.
+**Settings come in `sq_options_t`**: PostgreSQL's three that
+change how a string literal is read, and the notice hook. NULL
+is PostgreSQL's defaults.
 
-## 6. host.c: what still comes from the server
+## 6. Lists in the grammar
 
-`src/host.c` defines the 32 names that the link in §5 leaves
-undefined, each answered as a process with no client, no
-transaction and no log file would answer it. It is not a layer.
-It is the list of what stands between sq and being a library,
-and it should shrink to nothing.
+A node's list is a vector, but the grammar builds lists
+piecemeal across many rules, passes them about, appends to them
+and nests them, as PostgreSQL does with `List *`. In the grammar
+a list is therefore a handle, `list_ref_t`: NIL, or the name of
+an `sq_list_t` in the tree. PostgreSQL's list functions are kept
+over it by their own names, so an action reads as it does
+upstream.
 
-What each group becomes:
+**Assigning a handle to a node's field copies the list** into
+the field's vector. The handle can go on being used; the node
+has its own.
 
-| Who asks | Names | What it should become |
-| --- | --- | --- |
-| Error reporting | 24 | a small context the host fills in — who is asking, where output goes, what level to report — in place of globals read from all over the server |
-| Encodings | 4 | nothing: with one encoding there is no conversion to look up, and the calls go |
-| The log's formats | 3 | nothing in sq: formatting a log line is the server's work, not the parser's |
-| The grammar | 1 | `NameListToString` moves in with the node functions; it reads no catalog and was only filed with it |
+## 7. Threads
 
-- **Error reporting is nearly all of it**, and it is one
-  problem, not twenty-four. `elog.c` both raises an error and
-  writes the log line, and the second half is what asks for the
-  process, the client and the log's settings. Splitting the two
-  is the cut: sq keeps the raise, the server keeps the log.
-- **The same globals have to become per-thread** for a threaded
-  server (`../sm/PART4.md` §2), so that work is owed already.
-- `host.c`'s `NameListToString` is a copy of the one in
-  `../dg`, the only duplicated code in sq. It goes when the
-  original moves.
+Any number of threads may parse at once, each into its own tree.
+Nothing is shared between two parses: the scanner and grammar
+keep their state in the call, and the three things that are per
+thread — the error, the current tree, and a notice hook's
+arguments — are thread-local or the caller's.
 
-## 7. Testing
+A tree, once made, may be read from any number of threads.
 
-`test/NAME.sql` is run through `build/oracle` and what it
-prints is compared with `test/expected/NAME.out`.
+## 8. How it is known to be right
 
-- **The tree's text is the assertion.** Any change to what the
-  parser builds shows as a difference, including one nobody
-  meant to make: a field added to a node changes every tree that
-  has that node.
-- **That makes the tests wide and brittle together**, which is
-  the trade wanted here. sq's code is not supposed to change
-  what it does, so a difference is either an upstream port or a
-  mistake, and either should be read.
-- **Errors are tested by message and position**, the two things
-  a client sees.
-- **The expected trees were checked by reading**, not against a
-  running PostgreSQL, which does not print the raw tree. They
-  are therefore a record of what sq does, verified once by eye,
-  and a guard against change after that. A wrong tree accepted
-  at the start would still pass.
+sq's claim is that it parses as PostgreSQL does, so the test is
+PostgreSQL: what its scanner and parser print for a text is what
+sq must print.
 
-## 8. Known trade-offs
+Until sq could stand alone it was built beside PostgreSQL's own
+parser, compiled from `../dg`, and compared with it directly.
+That parser is no longer built here. Its answers are:
 
-- **sq is not yet a library.** It builds one program. There is
-  no `libsq.a` and no `sq/include`, because of §4.
-- **It depends on `dg/` to build**, for the sources and for the
-  generated files. The dependency runs one way only, and it is
-  the wrong way for where this is going.
-- **Errors unwind by `longjmp`.** The fork is to have none
-  (`../sm/PART4.md` §2), and sq, compiled as C++, still raises
-  as PostgreSQL does. A destructor between a raise and its
-  `PG_TRY` does not run. Nothing in sq has one today; the
-  decision of what replaces `ereport`'s unwinding is the
-  fork's, and sq takes whatever it is.
-- **Nothing is per-thread.** The current memory context, the
-  error stack and the error state are process globals. Two
-  threads cannot parse at once. The scanner and grammar
-  themselves are reentrant and keep their state in the call.
-- **More is compiled than is used**: plan nodes, `read`
-  functions, shared-memory allocators, the PL/pgSQL parse modes.
-  The link drops them, so the cost is build time, and trimming
-  the lists by hand would have to be redone at each upstream
-  port.
-- **The base is carried by the wrong owner** (§2).
+- **`test/*/expected/`**: for each SQL file here, what
+  PostgreSQL's parser printed — the trees, or the error with its
+  position, detail and hint — and for some, what its scanner
+  printed. 93 files: statements of every family, one for each
+  error the scanner raises, one for each error an action of the
+  grammar raises, and type names.
+- **`test/regress.digest`**: for each of the 233 scripts of
+  PostgreSQL's regression SQL, a digest of what its scanner
+  printed for the whole script, and of what its parser printed
+  for each of the script's pieces. Over 700,000 tokens and
+  49,034 pieces, which include the SQL that is wrong on purpose.
+  `make corpus-test` holds sq to it, given the scripts.
 
-## 9. What is deliberately not here
+Neither can be made again without PostgreSQL's parser. They are
+to be remade when sq is ported to a later one, with that one.
 
-- **The analyzer, rewriter and planner.** They need a catalog
-  interface that does not exist yet.
-- **Deparsing**, a tree back to SQL text. PostgreSQL's
-  `ruleutils.c` works on analyzed trees and reads the catalog.
-- **A C++ interface.** sq is PostgreSQL's C compiled as C++;
-  its callers are PostgreSQL's code. Nothing wraps it.
-- **Other encodings**, and the conversion procedures between
-  them.
+What PostgreSQL cannot show is tested by hand, in `test/*.cc`:
+the notice hook, the options, positions in characters,
+ownership, and that nothing leaks. Those tests are linked with a
+leak checker, so a node or string a tree failed to free fails
+them; `make tsan` runs them under the thread sanitizer.
+
+Two checks are on sq's own consistency: `test/nodes.sh`, that
+the committed node header is what the generator writes; and
+`test/alone.sh`, that nothing sq is built from is outside `sq/`.
+
+## 9. Known trade-offs
+
+- **A tree holds more than its nodes need.** A list assigned to
+  a field is copied (§6), and the list it came from stays in the
+  tree until the tree is freed, as do the scanner's strings that
+  no node kept. Moving a list where it is not used again would
+  recover most of it, a rule at a time.
+- **A field's list and the handle it was copied from are
+  separate.** An action that appended to a list after assigning
+  it would, in PostgreSQL, change the node, and here would not.
+  None was found that does, and the comparison in §8 agrees, but
+  the compiler cannot show it.
+- **Text is assumed to be UTF-8 and is not checked.** Text that
+  is not is scanned as PostgreSQL's scanner would scan it; a
+  server is expected to have checked what a client sent, as
+  PostgreSQL does before it parses. A NUL byte is refused.
+- **The forks are forks.** A change upstream is carried over by
+  hand. What sq changed is confined to the code around the
+  rules, which is what keeps that tractable.
+- **PostgreSQL's naming survives in two places**: the grammar's
+  symbols, which are grammar and not code, and the list
+  functions, kept by PostgreSQL's names so that actions read as
+  they do upstream.
+- **An `Oid` field is 32 bits**, as in PostgreSQL; digres's is
+  to be 64 (`../sm/PART4.md` §10). Every such field in a parse
+  tree is the analyzer's to fill, and zero from sq.
+
+## 10. What is deliberately not here
+
+- **Analysis.** Turning a tree into a query is catalog lookups
+  from end to end. It is digres's.
+- **Any notion of "supported".** sq parses `CREATE FUNCTION` as
+  it parses anything. digres refuses what it does not handle,
+  when it meets the node.
+- **PostgreSQL's nodes.** digres's analyzer reads PostgreSQL's
+  own node structs; a converter in `../dg` turns sq's tree into
+  those (`PLAN.md` step 7). sq does not know them.
+- **Deparsing**, a tree back to SQL text.
+- **Other encodings**, and the PL/pgSQL parse modes: their rules
+  are in the grammar, as they are in PostgreSQL's, with no call
+  that reaches them.

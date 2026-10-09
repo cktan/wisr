@@ -1,6 +1,5 @@
-# sq: the repository's style, with one difference. An #include
-# block keeps the order it was written in: PostgreSQL's sources
-# need postgres.h, postgres_fe.h or c.h first, and sorting moved
-# them down.
+# sq: the repository's style, with one difference. An #include block
+# keeps the order it was written in: a file's own header comes first,
+# and sorting would move it.
 BasedOnStyle: InheritParentConfig
 SortIncludes: Never

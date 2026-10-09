@@ -1,0 +1,2 @@
+ERROR: LIMIT #,# syntax is not supported at character 247
+HINT: Use separate LIMIT and OFFSET clauses.

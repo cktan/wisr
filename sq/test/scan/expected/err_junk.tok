@@ -1,0 +1,2 @@
+651 103 select
+ERROR: trailing junk after numeric literal at or near "1.5e" at character 111

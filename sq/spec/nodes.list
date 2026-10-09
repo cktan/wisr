@@ -7,8 +7,6 @@
 # value nodes, and every struct a field of one of those points at.
 # Query and FuncExpr are left out: the analyzer fills the two
 # fields that point at them, and the parser leaves both NULL.
-# test/spec.sh checks this list against the grammar for as long as
-# the grammar is in ../dg.
 Integer
 Float
 Boolean

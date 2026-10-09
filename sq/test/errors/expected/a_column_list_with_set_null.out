@@ -1,0 +1,1 @@
+ERROR: a column list with SET NULL is only supported for ON DELETE actions at character 317

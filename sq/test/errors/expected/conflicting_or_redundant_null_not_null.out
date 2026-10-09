@@ -1,0 +1,1 @@
+ERROR: conflicting or redundant NULL / NOT NULL declarations for column "a" at character 323

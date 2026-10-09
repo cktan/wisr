@@ -436,6 +436,38 @@ Known, and accepted:
 The oracle is deleted here and not sooner. After this the
 comparison lives in `../dg`, in step 7.
 
+**Done.** sq compiles nothing from `../dg/src`: built and tested
+from clean in a directory with neither `dg/` nor `sm/` beside
+it, it passes.
+
+- **The oracle's answers were kept, not the oracle.** Before it
+  went, what PostgreSQL's parser and scanner printed was written
+  down, and sq is held to that:
+  - `test/*/expected/`, for the 93 SQL files here. The eight
+    that were there did not change.
+  - `test/regress.digest`, for the 233 regression scripts: a
+    digest of the scanner's output for each, and of the
+    parser's over the script's pieces. `make corpus-test`
+    compares sq with it, given the scripts. sq was checked
+    against it the moment it was written, all 49,034 pieces.
+- This is more than the plan had, which was to lose the corpus
+  comparison here and get it back in `../dg`.
+- **Neither can be made again without PostgreSQL's parser.**
+  They are remade when sq is ported to a later PostgreSQL, with
+  that one. `test/run.sh --accept` takes sq's own output as
+  expected, and says so.
+- **Gone**: `src/oracle.c`, `src/host.c`, and the checks that
+  read `../dg` — that `spec/` was its headers, that the node
+  list was what its grammar makes, that the generated printer's
+  fields and the keyword hash were its own. Each passed on the
+  last run before it went. `spec/` is now the source.
+- **`make corpus`**, the oracle's splitting of scripts into
+  statements, went with it: the pieces `test/corpus.py` cuts
+  cover the same statements and the wrong ones as well.
+- The tool that prints a tree is `build/sq_parse`, a test's
+  tool. There is no `sqparse` program.
+- `README.md` and `DESIGN.md` are rewritten for the library.
+
 ## 7. The converter, in dg
 
 - `../dg` gains one file: an sq tree in, PostgreSQL's nodes

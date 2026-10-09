@@ -1,0 +1,1 @@
+ERROR: an ordered-set aggregate with a VARIADIC direct argument must have one VARIADIC aggregated argument of the same data type at character 311

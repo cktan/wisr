@@ -4,8 +4,8 @@
  *   sq_tokens < file.sql     one token a line, or the error
  *
  * A line is the token's number, the byte offset it begins at, and its
- * value if it has one. `oracle --tokens` prints the same for
- * PostgreSQL's scanner, and test/tokens.sh compares the two.
+ * value if it has one. test/run.sh and test/corpus.py compare it with
+ * what PostgreSQL's scanner gave for the same text.
  */
 
 #include <stdio.h>
@@ -20,7 +20,7 @@
 #include "scan.h"
 #include "sq.h"
 
-/* Print one token as `oracle --tokens` prints it. */
+/* Print one token: its number, where it begins, and its value. */
 static void print_token(int token, int location, const sq::scan_value_t &v) {
   printf("%d %d", token, location);
   switch (token) {
@@ -47,7 +47,7 @@ static void print_token(int token, int location, const sq::scan_value_t &v) {
   printf("\n");
 }
 
-/* Print the thread's error as the oracle prints PostgreSQL's. */
+/* Print the thread's error, with its position, detail and hint. */
 static void print_error(void) {
   printf("ERROR: %s", sq_errmsg());
   if (sq_errpos() > 0) {

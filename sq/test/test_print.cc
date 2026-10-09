@@ -1,8 +1,8 @@
 /*
  * test_print.cc -- sq_to_string: trees built by hand print as
  * PostgreSQL's nodeToString() prints the same statement. The
- * expected text in each test is the oracle's output for the SQL
- * named in it (PLAN.md step 2).
+ * expected text in each test is what PostgreSQL's parser printed for
+ * the SQL named in it (PLAN.md step 2).
  */
 
 #include "doctest.h"
@@ -84,7 +84,7 @@ const char *const select_tail =
 TEST_CASE("SELECT 1 + 1 prints as PostgreSQL prints it") {
   // Verify a generated node, a hand-printed node and a list print right.
   // 1. Build SELECT 1 + 1: a SelectStmt, a ResTarget, an A_Expr.
-  // 2. Print it and compare with the oracle's text.
+  // 2. Print it and compare with PostgreSQL's text.
   sq_tree_t t;
   sq_a_expr_t *plus = sq::make_node<sq_a_expr_t>(t);
   plus->kind = SQ_AEXPR_OP;
@@ -110,7 +110,7 @@ TEST_CASE("constants of every kind, a qualified table, and AND and NOT") {
   // 1. Build the five constants: NULL, String, Float, Boolean, BitString.
   // 2. Build s.t, with no catalog name and the default persistence.
   // 3. Build x AND NOT y.
-  // 4. Print the statement and compare with the oracle's text.
+  // 4. Print the statement and compare with PostgreSQL's text.
   sq_tree_t t;
   sq_select_stmt_t *sel = sq::make_node<sq_select_stmt_t>(t);
 
@@ -185,7 +185,7 @@ TEST_CASE("a list of lists prints nested") {
   // Verify lists nest, as DROP's list of qualified names does.
   // DROP TABLE a, b.c;
   // 1. Build the statement with two name lists as its objects.
-  // 2. Print it and compare with the oracle's text.
+  // 2. Print it and compare with PostgreSQL's text.
   sq_tree_t t;
   sq_drop_stmt_t *d = sq::make_node<sq_drop_stmt_t>(t);
   d->objects.push_back(name_list(t, {"a"}));

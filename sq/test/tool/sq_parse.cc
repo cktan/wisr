@@ -4,8 +4,8 @@
  *   sq_parse < file.sql          one tree a statement, or the error
  *   sq_parse --type-name < file  the text parsed as one type name
  *
- * What it prints is what `oracle` prints for PostgreSQL's parser, and
- * the tests compare the two.
+ * What it prints is what test/run.sh and test/corpus.py compare with
+ * PostgreSQL's parser's answer for the same text.
  */
 
 #include <stdio.h>
@@ -17,7 +17,7 @@
 
 #include "sq.h"
 
-/* Print one tree as the oracle prints PostgreSQL's. */
+/* Print one tree, in PostgreSQL's nodeToString() text. */
 static int print_tree(const sq_node_t *node) {
   std::string text;
   if (sq_to_string(node, text) != 0) {

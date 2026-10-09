@@ -1,0 +1,2 @@
+ERROR: unterminated dollar-quoted string at or near "$a$ text $b$;
+" at character 134

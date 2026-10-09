@@ -1,139 +1,109 @@
 # sq
 
-The SQL front end, cut out of digres: text in, parse tree out.
-It is PostgreSQL 18.6's raw parser and the layers under it,
-built and tested with no server around them.
+The SQL parser: PostgreSQL 18's SQL in, a tree of nodes out. It
+is a library, `build/libsq.a`, with its interface in
+`include/sq.h`, and it is what digres parses with.
 
 ```
-make -j4         build build/libsq.a, its tests, and build/oracle
+make -j4         build build/libsq.a, its tests, and their tools
 make test        build, and run the tests in test/
-make corpus      split PostgreSQL's regression SQL into build/corpus
-make corpus-test compare with the oracle over all of that SQL
+make corpus-test check sq over PostgreSQL's regression SQL
 make tsan        the unit tests under the thread sanitizer
 make clean       remove build/
 make format      clang-format src/ and test/
 make nodes       rewrite include/sq_nodes.h from spec/
 ```
 
-Two things are built, and `PLAN.md` says how the first replaces
-the second:
+It needs a C++20 compiler, flex, bison and Python 3, and nothing
+else: nothing sq is built from is outside this directory.
 
-- **The library**, `build/libsq.a`, from `src/*.cc`, with its
-  API in `include/sq.h`: `sq_parse` parses PostgreSQL 18's SQL
-  into a tree of the nodes in `include/sq_nodes.h`,
-  `sq_parse_type_name` parses a type name, and `sq_to_string`
-  prints a node. It uses nothing of digres's or of
-  `../sm`.
-  - `src/scan.l` and `src/gram.y` are PostgreSQL's scanner and
-    grammar, forked: the rules are PostgreSQL's, and the code
-    around them is sq's.
-  - `spec/` is PostgreSQL's node headers, unedited, and the list
-    of the structs its grammar can make.
-  - `gen/gen_nodes.py` writes `include/sq_nodes.h` from them,
-    which is committed, and the printer, which is built.
-- **The oracle**, `build/oracle`, from `src/*.c`: PostgreSQL's
-  own parser, which the library is checked against. The rest of
-  this file describes it.
+`DESIGN.md` says how it is put together and why. `PLAN.md` is
+the record of how it was made, and of what is left.
 
-`build/oracle` reads SQL on standard input and prints one parse
-tree a statement, as PostgreSQL's `nodeToString()` writes it, or
-the error with its position:
+## Using it
 
-```
-$ echo 'select 1 + 1;' | build/oracle
-{SELECTSTMT ... :val {A_EXPR :name ("+") :lexpr {A_CONST :val 1 ...
+```cpp
+#include "sq.h"
+
+sq_tree_t tree;
+if (sq_parse("SELECT a FROM t WHERE b = 1;", nullptr, tree) != 0) {
+    fprintf(stderr, "%s at character %d\n", sq_errmsg(), sq_errpos());
+    return;
+}
+for (const sq_raw_stmt_t* raw : tree.stmts) {
+    if (raw->stmt->tag == SQ_T_SELECT_STMT) {
+        auto* sel = static_cast<const sq_select_stmt_t*>(raw->stmt);
+        /* sel->target_list, sel->from_clause, sel->where_clause ... */
+    }
+}
 ```
 
-The raw parser reads no catalog: it knows the grammar, and
-nothing about what a name names. Turning its tree into a query
-is the analyzer's work, which is still in `../dg`.
+- **`sq_parse`** parses a list of statements into a tree.
+  **`sq_parse_type_name`** parses one type name.
+  **`sq_to_string`** prints a node as PostgreSQL's
+  `nodeToString()` would.
+- **A call returns 0 or -1.** After -1 the calling thread reads
+  what went wrong: `sq_errmsg`, `sq_sqlstate`, `sq_errpos`, and
+  PostgreSQL's `sq_errdetail` and `sq_errhint`.
+- **The tree owns every node and string in it** and frees them
+  when it is destroyed. Nothing is freed by hand.
+- **The nodes are PostgreSQL's**, in `include/sq_nodes.h`, by
+  sq's names: `SelectStmt` is `sq_select_stmt_t` and its
+  `targetList` is `target_list`. A list is a
+  `std::vector<sq_node_t*>`; text is a `const char*`, NULL where
+  absent.
+- **Options** are an `sq_options_t`, or NULL for PostgreSQL's
+  defaults: its three settings that change how a string literal
+  is read, and a hook for notices.
+- **Any number of threads** may parse at once.
+
+sq parses and no more. It reads no catalog, and it has no notion
+of what its caller supports: `CREATE FUNCTION` parses to its
+nodes like any other statement.
 
 ## What is in it
 
-| Part | Source, under `../dg/src` | Lines |
-| --- | --- | --- |
-| The grammar and scanner | `backend/parser`: `gram.y`, `scan.l`, `parser.c`, `scansup.c` | 22k |
-| Parse and plan trees | `backend/nodes` | 10k, and as much again generated |
-| Memory contexts | `backend/utils/mmgr` | 12k |
-| Error reporting | `backend/utils/error` | 4k |
-| Encodings | `backend/utils/mb` | 3k |
-| Hash tables and lists | `backend/utils/hash`, `backend/lib` | 6k |
-| Shared code | `common`, `port` | 28k |
-
-and ten files that the above call into and that need nothing
-else: `globals.c`, `datum.c`, `expandeddatum.c`, `numutils.c`,
-`stack_depth.c`, `define.c`, `s_lock.c`, `pqformat.c`, and the
-time zone code's `localtime.c` and `strftime.c`. `Makefile` has
-the list.
-
-## The sources have not moved
-
-They are compiled from `../dg/src` into `build/`. What is here
-is the boundary — the list of what belongs to sq, the tests, and
-`src/host.c` — and not yet the files.
-
-The reason is the headers. Those sources include 285 of the 763
-headers in `../dg/src/include`, from every directory there:
-`storage`, `access`, `catalog`, `executor`. Several are
-generated from the catalog data. A node header includes a
-catalog header, which includes a storage header, and so on. To
-move the `.c` files and leave the headers would make sq depend
-on digres to compile, which is the wrong way round; to move the
-headers is to decide, for each of 285, which side it is on.
-
-So the order is:
-
-1. Shrink the header closure, until what sq includes is what sq
-   owns. The link below shows how little of it is real.
-2. Move the sources and those headers here, and have `../dg`
-   compile against `sq/include` and link `sq`'s objects.
-
-## What sq still needs from the server
-
-Linked with one section a function, so that only what the parser
-reaches is kept, the sources above need 51 names from the rest
-of the server. The ten files named above supply about half of
-them, and ask for a few more. `src/host.c` answers the 32 that
-are left for `oracle`, as a process
-with no client, no transaction and no log file would. Each is a
-dependency to cut or to turn around:
-
-| Who asks | What for | Names |
-| --- | --- | --- |
-| Error reporting | who and where the process is, to prefix a log line and to decide whether to send to a client | 24: `MyProc`, `MyBackendType`, `whereToSendOutput`, `log_min_messages`, `proc_exit`, `ProcessInterrupts` and the like |
-| Encodings | the conversion function between two encodings, from the catalog, called through fmgr | 4: `FindDefaultConversionProc`, `FunctionCall6Coll`, `OidFunctionCall6Coll`, `IsTransactionState` |
-| The log's formats | JSON quoting, and the log's time zone | 3: `escape_json`, `pg_open_tzfile`, `log_timezone` |
-| The grammar | one catalog function, to print a qualified name in a message | 1: `NameListToString`, which reads no catalog and belongs with the node functions |
-
-Error reporting is nearly all of it, and it is the same list
-that has to become per-thread for a threaded server
-(`../sm/PART4.md` §2).
+| Where | What |
+| --- | --- |
+| `include/sq.h`, `sq_error.h` | the interface |
+| `include/sq_nodes.h` | the nodes; generated, and committed |
+| `spec/` | PostgreSQL 18.6's node headers and keyword list, unedited, and the list of the nodes its grammar can build |
+| `gen/` | the generators: the nodes and the functions over them, and the keyword hash |
+| `src/scan.l`, `src/gram.y` | PostgreSQL's scanner and grammar, forked: the rules are PostgreSQL's, the code around them is sq's |
+| `src/parser.cc` | the two parsing calls, and the filter between scanner and grammar |
+| `src/tree.cc`, `error.cc`, `list.cc`, `utf8.cc` | what a tree owns, the thread's error, lists while the grammar builds them, UTF-8 |
+| `src/makefuncs.cc`, `scansup.cc`, `keywords.cc` | PostgreSQL's helpers for the grammar and the scanner |
 
 ## Tests
 
-`build/test_sq` holds the library's tests, written with doctest
-and linked with a leak checker. Around it:
+sq is right if it parses as PostgreSQL does, so the tests hold
+it to what PostgreSQL's own scanner and parser printed.
 
-- `test/alone.sh`: neither the tests nor the library are built
-  from anything outside `sq/`.
-- `test/nodes.sh`: `include/sq_nodes.h` is what the generator
-  writes today.
-- `test/spec.sh`: `spec/` and the generated printer agree with
-  PostgreSQL as it is in `../dg`.
-- `test/tokens.sh`: sq's scanner and the oracle's find the same
-  tokens, and the same errors, in `test/*.sql` and
-  `test/scan/*.sql`.
-- `test/trees.sh`: sq's parser and the oracle build the same
-  trees, and refuse the same text the same way, for those
-  files and for `test/errors/*.sql`, one for each error the
-  grammar's actions raise. `make corpus-test` does both over all
-  of PostgreSQL's regression SQL.
+- **`test/run.sh`**: each SQL file here is parsed, and for some
+  scanned, and what sq prints is compared with
+  `expected/NAME.out` or `NAME.tok` beside it. 93 files:
+  - `test/*.sql`: statements of every family, and three errors;
+  - `test/scan/`: literals and operators, and one file for each
+    error the scanner raises;
+  - `test/errors/`: one statement for each error an action of
+    the grammar raises;
+  - `test/types/`: type names.
+- **`test/corpus.py`**, by `make corpus-test`: all 233 scripts
+  of PostgreSQL 18.6's regression SQL, over 700,000 tokens and
+  49,034 pieces, against `test/regress.digest`. It needs the
+  scripts, which are not here: `PG_SQL` says where they are.
+- **`build/test_sq`**: the unit tests, written with doctest and
+  linked with a leak checker, for what PostgreSQL cannot show:
+  ownership, the notice hook, the options, threads.
+- **`test/nodes.sh`**: `include/sq_nodes.h` is what the
+  generator writes today.
+- **`test/alone.sh`**: nothing sq is built from is outside
+  `sq/`.
 
-`test/*.sql` are run through `build/oracle` and compared with
-`test/expected/*.out`. `test/run.sh --accept` rewrites the
-expected output from what is printed now; read the difference
-before committing it.
-
-The expected trees were checked by reading, not against a
-running PostgreSQL: the raw parse tree is not something
-PostgreSQL prints.
+**The expected files and the digests are PostgreSQL's answers,
+not sq's.** They were written by PostgreSQL's parser, which was
+built here beside sq's until sq could stand alone, and they
+cannot be made again without it. `test/run.sh --accept` would
+replace them with sq's own output, which checks nothing: use it
+only for a difference that has been read and is known to be
+PostgreSQL's too.
