@@ -588,6 +588,43 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
                      "table: no index " + std::to_string(index));
 }
 
+/* The heap's bytes, in files and in memtables. */
+int tbl_size(table_t *table, uint64_t &disk, uint64_t &mem) {
+  return sm2::relid_size(table->session->sm1, table->def->storeid, heap_relid,
+                         disk, mem);
+}
+
+/* One index's bytes, in files and in memtables. */
+int tbl_idx_size(table_t *table, uint64_t index, uint64_t &disk,
+                 uint64_t &mem) {
+  for (const index_def_t &x : table->def->indexes) {
+    if (x.oid == index) {
+      return sm2::relid_size(table->session->sm1, table->def->storeid, x.relid,
+                             disk, mem);
+    }
+  }
+  return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                     "table: no index " + std::to_string(index));
+}
+
+/* N, the last rowno the table's sequence handed out, 0 if none. */
+int tbl_rowno_limit(table_t *table, uint64_t &n) {
+  return catch_nomem([&] {
+    int rc = sm1::lastseq(table->session->sm1, table->def->rowno_seq, n);
+    // A sequence that never handed out a rowno: no row ever was.
+    if (rc == 1) {
+      n = 0;
+      return 0;
+    }
+    return rc;
+  });
+}
+
+/* The sorted runs a lookup in the table's store may visit. */
+int tbl_probes(table_t *table, uint64_t &n) {
+  return sm1::probes(table->session->sm1, table->def->storeid, n);
+}
+
 /* One batch of an index's build; see sm3.h. */
 int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
                        size_t max_rows, uint64_t &next, bool &done) {

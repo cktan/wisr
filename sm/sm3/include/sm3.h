@@ -797,6 +797,25 @@ int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
                  bool* widened = nullptr);
 
 /*
+ * What the table's LSM looks like now (SM3_DESIGN.md §6.2, §6.3),
+ * read live, through whichever store the handle's definition
+ * names, so a transaction that truncated the table sizes the new
+ * one. None reads a row.
+ *
+ * tbl_size sets the heap's bytes, and tbl_idx_size the index
+ * oid's, as sm2::relid_size gives them: in sorted files and in
+ * memtables, apart (SM_ERR_NOTFOUND if the table has no such
+ * index). tbl_rowno_limit sets N, the last rowno handed out, 0
+ * if none, as sm1::lastseq gives it. tbl_probes sets the sorted
+ * runs a lookup in the table's store may visit, as sm1::probes.
+ */
+int tbl_size(table_t* table, uint64_t& disk, uint64_t& mem);
+int tbl_idx_size(table_t* table, uint64_t index, uint64_t& disk,
+                 uint64_t& mem);
+int tbl_rowno_limit(table_t* table, uint64_t& n);
+int tbl_probes(table_t* table, uint64_t& n);
+
+/*
  * One batch of the build of the table's index oid, which must be
  * pending (SM3_DESIGN.md §3): cover up to max_rows rows from
  * rowno from on. For each it takes the row's lock shared, reads

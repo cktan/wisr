@@ -2790,3 +2790,97 @@ TEST_CASE("a statement inside another sees the outer's table writes, and the "
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE("a table's sizes, rowno limit and probes are read live") {
+  // Verify the live statistics follow the rows and the store.
+  // 1. A new table: N is 0, the heap and an index are 0 bytes,
+  //    and there is nothing to probe.
+  // 2. Commit 20,000 rows: N is the last rowno, nothing is on
+  //    disk yet, the memtable is a probe, and the heap's and an
+  //    index's sizes are their relids' in the table's store.
+  //    The memtable amounts are not checked: RocksDB's estimate
+  //    of one rel among others is an order of magnitude, and
+  //    was measured at 0 (sm1/API.md).
+  // 3. An index the table does not have fails with SM_ERR_NOTFOUND.
+  // 4. Truncate: the handle sizes the new store, 0 bytes and no
+  //    probe, and N carries over.
+  // 5. Abort: a new handle sizes the old store again.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t n = 1, disk = 1, mem = 1, probes = 1;
+  REQUIRE(sm3::tbl_rowno_limit(t, n) == 0);
+  CHECK(n == 0);
+  REQUIRE(sm3::tbl_size(t, disk, mem) == 0);
+  CHECK(disk == 0);
+  CHECK(mem == 0);
+  REQUIRE(sm3::tbl_idx_size(t, f.jobs_id, disk, mem) == 0);
+  CHECK(mem == 0);
+  REQUIRE(sm3::tbl_probes(t, probes) == 0);
+  CHECK(probes == 0);
+
+  // 2. Load and commit.
+  uint64_t last = 0;
+  for (int i = 0; i < 20000; i++) {
+    last = put(t, i, "free", std::nullopt);
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  start(f.a);
+  t = f.write(f.a);
+  sm1::session_t *s1 = sm3::session_sm1(f.a);
+  const uint64_t old_store = sm3::tbl_def(t).storeid;
+  REQUIRE(sm3::tbl_rowno_limit(t, n) == 0);
+  CHECK(n == last);
+  uint64_t d2 = 1, m2 = 1;
+  REQUIRE(sm3::tbl_size(t, disk, mem) == 0);
+  REQUIRE(sm2::relid_size(s1, old_store, sm3::heap_relid, d2, m2) == 0);
+  CHECK(disk == 0);
+  CHECK(disk == d2);
+  CHECK(mem == m2);
+  uint16_t id_relid = 0;
+  for (const sm3::index_def_t &x : sm3::tbl_def(t).indexes) {
+    if (x.oid == f.jobs_id) {
+      id_relid = x.relid;
+    }
+  }
+  REQUIRE(sm3::tbl_idx_size(t, f.jobs_id, disk, mem) == 0);
+  REQUIRE(sm2::relid_size(s1, old_store, id_relid, d2, m2) == 0);
+  CHECK(disk == 0);
+  CHECK(mem == m2);
+  REQUIRE(sm3::tbl_probes(t, probes) == 0);
+  CHECK(probes == 1);
+
+  // 3. No such index.
+  CHECK(sm3::tbl_idx_size(t, f.jobs + 1000, disk, mem) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  // 4. Truncate, uncommitted.
+  start(f.a);
+  t = f.write(f.a, sm1::SM_LOCKMODE_EX);
+  REQUIRE(sm3::tbl_truncate(t) == 0);
+  REQUIRE(sm3::tbl_size(t, disk, mem) == 0);
+  CHECK(disk == 0);
+  CHECK(mem == 0);
+  REQUIRE(sm3::tbl_probes(t, probes) == 0);
+  CHECK(probes == 0);
+  REQUIRE(sm3::tbl_rowno_limit(t, n) == 0);
+  CHECK(n == last);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  // 5. The old store, after the abort.
+  start(f.b);
+  t = f.write(f.b, sm1::SM_LOCKMODE_IS);
+  CHECK(sm3::tbl_def(t).storeid == old_store);
+  REQUIRE(sm3::tbl_size(t, disk, mem) == 0);
+  REQUIRE(sm2::relid_size(sm3::session_sm1(f.b), old_store, sm3::heap_relid, d2,
+                          m2) == 0);
+  CHECK(mem == m2);
+  REQUIRE(sm3::tbl_probes(t, probes) == 0);
+  CHECK(probes == 1);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.b) == 0);
+}

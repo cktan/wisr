@@ -1208,10 +1208,12 @@ that end open. Neither part is corrected, and they are not to
 be added as they stand: rows not yet flushed are counted at
 full size, several times what they take once flushed
 (`STATISTICS.md` §6 at the stack's root). `mem` is RocksDB's
-estimate from sampling its memtables: 0 for an empty range, from
-0.4 to 1.05 times the bytes over a whole store of 100 to 100,000
-rows, and noise for a small range, measured both at 0 and above
-a range two hundred times larger.
+estimate from sampling its memtables, an order of magnitude and
+no better: 0 for an empty range, 0.4 to 1.05 times the bytes over
+a whole store of 100 to 100,000 rows, and for a range among
+others measured from 0 to 4 times — for a third of a store, 0 in
+one trial of thirty, and a hundred rows beside 20,000 once
+estimated above them.
 
 It reads RocksDB's estimates, not rows, so it needs no
 transaction, takes no lock and sees no snapshot. A store

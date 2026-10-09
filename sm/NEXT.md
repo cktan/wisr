@@ -25,8 +25,9 @@ The rest of `sm3/SM3_DESIGN.md` §8.1 step 5.
    RocksDB's size estimates are exact once flushed and
    compacted, and as much as 7x high for rows still
    unflushed. Its design is `SM3_DESIGN.md` §6, and is not
-   built; §6.9 there is the order of work, sm1's size,
-   sequence and probe calls first. The stack analyzes:
+   built but for its first step, the live sizes, rowno limit
+   and probes; §6.9 there is the order of work, the catalog's
+   kind 10 next. The stack analyzes:
    `sm_analyze` samples a table and records statistics of an
    LSM in sm3's catalog, and the host fits them to the
    planner.

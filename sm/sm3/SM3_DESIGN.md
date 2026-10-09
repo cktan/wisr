@@ -1086,13 +1086,17 @@ add them.
   never flushed is then charged its uncompressed size, which
   is what it occupies, and a flushed one is charged its rows
   in memory at its own compression.
-- **`mem` is itself an estimate.** RocksDB samples its
+- **`mem` is an order of magnitude.** RocksDB samples its
   memtables. Over a whole store it was measured from 0.4 to
-  1.05 times the bytes, and for a rel of a hundred rows beside
-  a large one both at 0 and above a rel two hundred times
-  larger (`sm1/API.md`). The host's rule above is within about
-  2x for a large rel, where it matters, and a small one costs
-  little either way (`STATISTICS.md` §5).
+  1.05 times the bytes, but for one rel among others, however
+  large, from 0 to 4 times (`sm1/API.md`). Accepted, not
+  corrected: `mem` is bounded by the store's memtables, 64 MB
+  each by default, so for a large table it is a small share of
+  the total and its error moves little; it dominates only for
+  a table that is mostly unflushed, which is small and cheap
+  whichever plan is chosen (`STATISTICS.md` §5). If it bites,
+  an exact count by reading the memtables alone belongs in
+  `tbl_analyze`, not at plan time.
 - **The rejected alternative** was to flush before measuring.
   It would make the number exact, and costs a flush per plan,
   or per analyze for a number that is stale by the next plan.
@@ -1335,21 +1339,24 @@ and nothing of the truncate.
 | sm1 | `approxsize(store, lo, hi, disk, mem)` | §6.2's two parts for a key range |
 | sm1 | `lastseq(name, out)` | a sequence's last value, drawing none |
 | sm1 | `probes(store, out)` | §6.3's probe count |
-| sm2 | the same size, by a rel's relid | §6.2 |
+| sm2 | `relid_size(session, store, relid, disk, mem)`, the same by a rel's relid | §6.2 |
 | sm3 | `tbl_size`, `tbl_idx_size`, `tbl_rowno_limit`, `tbl_probes` | live, on an open table |
 | sm3 | `tbl_analyze(table, target)` | §6.4 to §6.7 |
 | sm3 | `cat_get_stats(session, table oid, out)` | the published `shared_ptr<const stats_t>`, loading it on first use; null if never analyzed |
 | top | `sm_tbl_analyze`, `sm_tbl_stats`, and the four live calls | the same, in `include/sm.h` |
 | `rel` | `analyze`, and a verb that prints a table's statistics | testing |
 
-The names are proposals, to be settled when each is built.
+The calls of sm1, sm2 and the live four of sm3 are built
+(§6.9, step 1); the rest are proposals, to be settled when
+each is built.
 
 ### 6.9 Order of work
 
 `STATISTICS.md` §8, steps 3 to 7, with what this section
 settled:
 
-1. The sm1 calls of §6.8, and sm2's and sm3's over them.
+1. ~~The sm1 calls of §6.8, and sm2's and sm3's over
+   them.~~ **Built.**
    → verify: `disk` and `mem` follow a load before and after
    a flush; `N` is the sequence's last value; probes rise with
    level-0 files and fall after compaction.
