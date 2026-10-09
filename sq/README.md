@@ -9,6 +9,7 @@ make -j4         build build/libsq.a, its tests, and build/oracle
 make test        build, and run the tests in test/
 make corpus      split PostgreSQL's regression SQL into build/corpus
 make corpus-test compare with the oracle over all of that SQL
+make tsan        the unit tests under the thread sanitizer
 make clean       remove build/
 make format      clang-format src/ and test/
 make nodes       rewrite include/sq_nodes.h from spec/
@@ -19,8 +20,9 @@ the second:
 
 - **The library**, `build/libsq.a`, from `src/*.cc`, with its
   API in `include/sq.h`: `sq_parse` parses PostgreSQL 18's SQL
-  into a tree of the nodes in `include/sq_nodes.h`, and
-  `sq_to_string` prints one. It uses nothing of digres's or of
+  into a tree of the nodes in `include/sq_nodes.h`,
+  `sq_parse_type_name` parses a type name, and `sq_to_string`
+  prints a node. It uses nothing of digres's or of
   `../sm`.
   - `src/scan.l` and `src/gram.y` are PostgreSQL's scanner and
     grammar, forked: the rules are PostgreSQL's, and the code
@@ -124,8 +126,8 @@ and linked with a leak checker. Around it:
 - `test/trees.sh`: sq's parser and the oracle build the same
   trees, and refuse the same text the same way, for those
   files and for `test/errors/*.sql`, one for each error the
-  grammar's actions raise. `make corpus-test` does both over all of PostgreSQL's
-  regression SQL.
+  grammar's actions raise. `make corpus-test` does both over all
+  of PostgreSQL's regression SQL.
 
 `test/*.sql` are run through `build/oracle` and compared with
 `test/expected/*.out`. `test/run.sh --accept` rewrites the

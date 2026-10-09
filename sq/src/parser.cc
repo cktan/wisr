@@ -1,10 +1,12 @@
 /*
- * parser.cc -- sq_parse: the scanner, the filter that looks one token
- * ahead, and the grammar, run over one text.
+ * parser.cc -- sq_parse and sq_parse_type_name: the scanner, the
+ * filter that looks one token ahead, and the grammar, run over one
+ * text.
  *
  * This is PostgreSQL 18.6's src/backend/parser/parser.c. The filter,
  * sq_base_yylex, and the Unicode de-escaping below it are PostgreSQL's
- * line for line; sq_parse stands where raw_parser() does.
+ * line for line; the two calls stand where raw_parser() does, one for
+ * each of its modes that digres uses.
  */
 
 #include <ctype.h>
@@ -368,38 +370,51 @@ int sq_base_yylex(SQ_BASE_YYSTYPE *lvalp, int *llocp, core_yyscan_t yyscanner) {
   return cur_token;
 }
 
-/* Run the scanner and the grammar over sql, into the tree given. */
-static void parse_into(std::string_view sql, const sq_options_t &options,
-                       sq_tree_t &tree) {
+/*
+ * Run the scanner and the grammar over text, making nodes in tree.
+ * mode_token is 0 for a list of statements, or the token that tells
+ * the grammar what else the text is. Returns what the grammar built.
+ */
+static list_ref_t run_grammar(std::string_view text,
+                              const sq_options_t &options, sq_tree_t &tree,
+                              int mode_token) {
   // The grammar's actions make their nodes in the current tree.
   current_tree_t current(tree);
   parse_state_t state;
-  scanner_t scanner(sql, options, tree);
+  scanner_t scanner(text, options, tree);
   scanner.extra().parse = &state;
+
+  // The grammar is told what to parse by a token put before the text.
+  if (mode_token != 0) {
+    state.have_lookahead = true;
+    state.lookahead_token = mode_token;
+    state.lookahead_yylloc = 0;
+    state.lookahead_end = nullptr;
+  }
 
   // The grammar raises on anything it refuses, so a result other than
   // success is bison's own failure, which is memory.
   if (sq_base_yyparse(scanner.handle()) != 0) {
     throw std::bad_alloc();
   }
-
-  list_cell_t cell;
-  foreach (cell, state.parsetree) {
-    tree.stmts.push_back(static_cast<sq_raw_stmt_t *>(lfirst(cell)));
-  }
+  return state.parsetree;
 }
 
-/* Parse sql into out, or leave out empty and say why. */
-int sq_parse(std::string_view sql, const sq_options_t *opt, sq_tree_t &out) {
+/*
+ * Run fill, which parses into tree, as a call of the API: tree is
+ * emptied first and again if fill fails, and whatever fill throws
+ * becomes the calling thread's error and -1.
+ */
+template <typename Fill> static int parse_call(sq_tree_t &tree, Fill fill) {
   try {
-    // A parse is all or nothing, so what out held goes first.
-    out = sq_tree_t();
+    // A parse is all or nothing, so what the tree held goes first.
+    tree = sq_tree_t();
     try {
-      parse_into(sql, opt ? *opt : sq_options_t(), out);
+      fill();
       return 0;
     } catch (...) {
       // Whatever was made before the error goes with it.
-      out = sq_tree_t();
+      tree = sq_tree_t();
       throw;
     }
   } catch (const parse_error_t &) {
@@ -409,9 +424,30 @@ int sq_parse(std::string_view sql, const sq_options_t *opt, sq_tree_t &out) {
     return set_error(SQ_ERR_NOMEM, sqlstate_out_of_memory, 0, "out of memory");
   } catch (const std::exception &e) {
     return set_error(SQ_ERR_EXCEPTION, sqlstate_internal_error, 0,
-                     "unexpected exception in sq_parse: {}", e.what());
+                     "unexpected exception in sq: {}", e.what());
   } catch (...) {
     return set_error(SQ_ERR_EXCEPTION, sqlstate_internal_error, 0,
-                     "unexpected exception in sq_parse");
+                     "unexpected exception in sq");
   }
+}
+
+/* Parse sql into out, or leave out empty and say why. */
+int sq_parse(std::string_view sql, const sq_options_t *opt, sq_tree_t &out) {
+  return parse_call(out, [&] {
+    list_ref_t stmts = run_grammar(sql, opt ? *opt : sq_options_t(), out, 0);
+    list_cell_t cell;
+    foreach (cell, stmts) {
+      out.stmts.push_back(static_cast<sq_raw_stmt_t *>(lfirst(cell)));
+    }
+  });
+}
+
+/* Parse text as one type name, into tree, and hand the type back. */
+int sq_parse_type_name(std::string_view text, const sq_options_t *opt,
+                       sq_tree_t &tree, sq_type_name_t **out) {
+  return parse_call(tree, [&] {
+    list_ref_t result =
+        run_grammar(text, opt ? *opt : sq_options_t(), tree, MODE_TYPE_NAME);
+    *out = static_cast<sq_type_name_t *>(linitial(result));
+  });
 }

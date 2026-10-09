@@ -6,6 +6,7 @@
  *   oracle --split DIR < file.sql  the same, and each statement's text
  *                                  to DIR/NNNNN.sql, its tree to
  *                                  DIR/NNNNN.out
+ *   oracle --type-name < file      the text parsed as one type name
  *   oracle --tokens < file.sql     one token a line from the scanner
  *                                  alone: its number, the byte offset
  *                                  it begins at, and its value
@@ -114,6 +115,7 @@ static void print_tokens(const char *sql) {
 int main(int argc, char **argv) {
   const char *split_dir = NULL;
   bool tokens = false;
+  bool type_name = false;
   char *sql;
   int status = 0;
 
@@ -121,8 +123,12 @@ int main(int argc, char **argv) {
     split_dir = argv[2];
   else if (argc == 2 && strcmp(argv[1], "--tokens") == 0)
     tokens = true;
+  else if (argc == 2 && strcmp(argv[1], "--type-name") == 0)
+    type_name = true;
   else if (argc != 1) {
-    fprintf(stderr, "usage: oracle [--split DIR | --tokens] < file.sql\n");
+    fprintf(
+        stderr,
+        "usage: oracle [--split DIR | --tokens | --type-name] < file.sql\n");
     return 2;
   }
 
@@ -135,12 +141,16 @@ int main(int argc, char **argv) {
 
   PG_TRY();
   {
-    List *stmts = tokens ? NIL : raw_parser(sql, RAW_PARSE_DEFAULT);
+    List *stmts =
+        tokens || type_name ? NIL : raw_parser(sql, RAW_PARSE_DEFAULT);
     ListCell *lc;
     int n = 0;
 
     if (tokens)
       print_tokens(sql);
+    if (type_name)
+      printf("%s\n",
+             nodeToString(linitial(raw_parser(sql, RAW_PARSE_TYPE_NAME))));
     foreach (lc, stmts) {
       RawStmt *raw = lfirst_node(RawStmt, lc);
       char *tree = nodeToString(raw->stmt);

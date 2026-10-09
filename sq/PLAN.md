@@ -107,6 +107,8 @@ struct sq_tree_t {                   // owns every node; move-only
 
 int sq_parse(std::string_view sql, const sq_options_t* opt,
              sq_tree_t& out);        // 0, or -1
+int sq_parse_type_name(std::string_view text, const sq_options_t* opt,
+                       sq_tree_t& tree, sq_type_name_t** out);
 sq_errnum_t sq_errnum(void);         // the calling thread's last error
 const char* sq_errmsg(void);
 const char* sq_sqlstate(void);       // five characters
@@ -117,9 +119,10 @@ int sq_to_string(const sq_node_t* node, std::string& out);
 ```
 
 `sq_parse` takes a list of statements. digres also parses a type
-name by itself (`parse_type.c`), so a second entry,
-`sq_parse_type_name`, is owed by step 5. PostgreSQL's parse
-modes for PL/pgSQL are not ported.
+name by itself (`parse_type.c`), which is `sq_parse_type_name`.
+PostgreSQL's parse modes for PL/pgSQL have no entry: their rules
+are in the grammar, as they are in PostgreSQL's, and nothing
+reaches them.
 
 - A function returning `int` returns 0 on success and -1 on
   error, as `sm.h`'s do.
@@ -405,6 +408,21 @@ Known, and accepted:
   `sm.h`'s does.
 - Verify: a test parses from several threads at once, under the
   thread sanitizer; each thread reads its own error.
+
+**Done.**
+
+- `sq_parse_type_name` parses one type name and hands back an
+  `sq_type_name_t`, owned by the tree given. `test/types/` has
+  eight texts on which sq and the oracle agree, three of them
+  refused.
+- `sq.h`'s comment states every convention a caller relies on:
+  what is returned, who owns what, that a parse is all or
+  nothing, what the text must be, and what threads may share.
+- `make tsan` builds the unit tests with the library under the
+  thread sanitizer and runs them: 38 pass, and it reports
+  nothing. It is a target of its own: the grammar is slow to
+  compile that way. It runs with address randomisation off,
+  which this compiler's sanitizer needs on this kernel.
 
 ## 6. The old boundary goes
 

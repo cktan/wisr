@@ -3,6 +3,7 @@
 # PostgreSQL's parser builds for it, or refuses it the same way.
 #
 #   test/trees.sh DIR          DIR holds *.sql: compare with the oracle
+#   test/trees.sh DIR --type-name   each file is one type name
 #   test/trees.sh --corpus     every statement of build/corpus, against
 #                              the tree `make corpus` wrote beside it
 #   test/trees.sh --chunks     every piece of build/chunks, which
@@ -39,8 +40,8 @@ else
   for sql in "$src"/*.sql; do
     name=$(basename "$sql" .sql)
     files=$((files + 1))
-    build/oracle < "$sql" > "$out/$name.want" 2> /dev/null
-    build/sq_parse < "$sql" > "$out/$name.got" 2>&1
+    build/oracle $2 < "$sql" > "$out/$name.want" 2> /dev/null
+    build/sq_parse $2 < "$sql" > "$out/$name.got" 2>&1
     if ! cmp -s "$out/$name.want" "$out/$name.got"; then
       echo "trees: $name differs ($out/$name.want, $out/$name.got)"
       failed=$((failed + 1))

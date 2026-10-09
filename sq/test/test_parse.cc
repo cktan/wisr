@@ -10,6 +10,7 @@
 
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -192,4 +193,40 @@ TEST_CASE("a parse that fails deep in a statement frees what it built") {
   sq_tree_t tree;
   CHECK(sq_parse(sql, nullptr, tree) == -1);
   CHECK(tree.stmts.empty());
+}
+
+TEST_CASE("a type name is handed back, owned by its tree") {
+  // Verify sq_parse_type_name's own promises.
+  // 1. Parse a type name into a tree that holds a statement.
+  // 2. Confirm the type comes back, printable, and the statement is gone.
+  // 3. Move the tree, and confirm the type is still valid: the tree owns
+  //    it.
+  sq_tree_t tree;
+  REQUIRE(sq_parse("SELECT 1", nullptr, tree) == 0);
+  sq_type_name_t *type = nullptr;
+  REQUIRE(sq_parse_type_name("varchar(20)[]", nullptr, tree, &type) == 0);
+  REQUIRE(type != nullptr);
+  CHECK(type->tag == SQ_T_TYPE_NAME);
+  CHECK(tree.stmts.empty());
+
+  sq_tree_t moved(std::move(tree));
+  std::string out;
+  REQUIRE(sq_to_string(type, out) == 0);
+  CHECK(out.starts_with("{TYPENAME :names (\"pg_catalog\" \"varchar\")"));
+  CHECK(type->array_bounds.size() == 1);
+}
+
+TEST_CASE("a refused type name leaves the caller's pointer alone") {
+  // Verify the out parameter is set only on success.
+  // 1. Point the out parameter at a marker.
+  // 2. Parse text that is no type name.
+  // 3. Confirm -1, the error, and that the pointer still holds the marker.
+  sq_tree_t tree;
+  sq_type_name_t marker;
+  sq_type_name_t *type = &marker;
+  CHECK(sq_parse_type_name("int4 extra", nullptr, tree, &type) == -1);
+  CHECK(sq_errnum() == SQ_ERR_PARSE);
+  CHECK(std::string(sq_errmsg()) == "syntax error at or near \"extra\"");
+  CHECK(sq_errpos() == 6);
+  CHECK(type == &marker);
 }

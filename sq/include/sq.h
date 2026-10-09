@@ -12,9 +12,17 @@
  *     them, with sq_errdetail() and sq_errhint(). A successful
  *     call leaves them untouched.
  *   - Text is a std::string_view, read during the call and never
- *     retained: a tree holds copies of what it needs.
+ *     retained: a tree holds copies of what it needs. It must be
+ *     UTF-8, which is not checked, and may not hold a NUL byte,
+ *     which is.
  *   - A tree owns its nodes and their text. Both are valid for as
  *     long as the tree is, and nothing is freed by hand.
+ *   - A call that parses empties the tree it is given first, and
+ *     leaves it empty if it fails: a parse is all or nothing.
+ *   - A call that yields a node hands it back through its last
+ *     parameter, set only on success.
+ *   - Options are a const sq_options_t*, NULL meaning PostgreSQL's
+ *     defaults.
  *   - Anything else handed out is the caller's own: bytes are a
  *     std::string, filled by the call.
  *   - No C++ exception crosses this boundary. Every call catches
@@ -22,7 +30,13 @@
  *     else SQ_ERR_EXCEPTION.
  *
  * Threading: any number of threads may parse at once, each into
- * its own tree. The error state is per thread.
+ * its own tree. The error state is per thread. A tree, once made,
+ * may be read from any number of threads, and changed or destroyed
+ * by one at a time.
+ *
+ * What a tree holds is in sq_nodes.h: PostgreSQL's parse nodes, by
+ * sq's names. sq knows the grammar and nothing of what a name names:
+ * it reads no catalog, and has no notion of what a caller supports.
  */
 #ifndef SQ_H
 #define SQ_H
@@ -146,6 +160,14 @@ struct sq_options_t {
  * empty.
  */
 int sq_parse(std::string_view sql, const sq_options_t* opt, sq_tree_t& out);
+
+/*
+ * Parse text as one type name, such as "numeric(10,2)" or
+ * "pg_catalog.int4[]", making it in tree and handing it back in
+ * *out. The tree's own list of statements is left empty.
+ */
+int sq_parse_type_name(std::string_view text, const sq_options_t* opt,
+                       sq_tree_t& tree, sq_type_name_t** out);
 
 /* ---- printing ---- */
 

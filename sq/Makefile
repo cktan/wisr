@@ -4,6 +4,7 @@
 #   make test        build, and run the tests in test/
 #   make corpus      split PG_SQL's files into build/corpus
 #   make corpus-test compare with the oracle over all of PG_SQL
+#   make tsan        the unit tests under the thread sanitizer
 #   make clean       remove build/
 #   make format      clang-format src/ and test/
 #   make nodes       rewrite include/sq_nodes.h from spec/
@@ -105,6 +106,20 @@ build/test/%.o: test/%.cc | build/gen/gram.hh
 	@mkdir -p $(dir $@)
 	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
 
+# The tests again, with the library built into them under the thread
+# sanitizer: slow to build, so it is a target of its own. What it is
+# for is the test that parses on eight threads at once.
+build/test_sq_tsan: $(LIB_SRCS) $(TEST_SRCS) $(LIB) | build/gen/gram.hh
+	$(CXX) $(GEN_CXXFLAGS) -MF build/test_sq_tsan.d -O1 -fsanitize=thread \
+	    -o $@ $(LIB_SRCS) $(TEST_SRCS) build/gen/print_nodes.cc \
+	    build/gen/node_funcs.cc build/gen/scan.cc build/gen/gram.cc -lpthread
+
+# Run with address randomisation off: this compiler's sanitizer cannot
+# place its shadow memory under the kernel's randomisation, and stops
+# with "unexpected memory mapping" before a test has run.
+tsan: build/test_sq_tsan
+	setarch $$(uname -m) -R build/test_sq_tsan
+
 # Programs the shell tests run, each one source file over the library.
 build/%: test/tool/%.cc $(LIB) | build/gen/gram.hh
 	$(CXX) $(LIB_CXXFLAGS) -o $@ $< $(LIB)
@@ -150,7 +165,7 @@ DG_SRCS := \
 DG_OBJS := $(patsubst $(SRC)/%.c,build/dg/%.o,$(DG_SRCS))
 OBJS    := build/oracle.o build/host.o $(DG_OBJS)
 
-.PHONY: all test corpus corpus-test clean format gen nodes
+.PHONY: all test corpus corpus-test tsan clean format gen nodes
 all: $(LIB) $(TEST_BIN) $(TOOLS) build/oracle
 
 # The generated sources and headers are digres's to make.
@@ -181,6 +196,7 @@ test: all
 	test/trees.sh test
 	test/trees.sh test/scan
 	test/trees.sh test/errors
+	test/trees.sh test/types --type-name
 	test/run.sh
 	test/split.sh
 
