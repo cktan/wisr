@@ -26,6 +26,18 @@ renames identifiers that are C++ keywords, and
 `src/tools/cut_builtins.py` takes built-in functions out of the
 catalog data, with every row that refers to them.
 
+## The parser
+
+digres parses with `../sq`, a library of its own: PostgreSQL
+18's grammar and scanner, which know nothing of the server.
+`make` builds it and links it in. `src/backend/parser/parser.c`
+is what joins the two, and `sq_convert.c`, which is generated,
+turns sq's tree into the nodes the analyzer reads.
+
+`make test` checks it. `build/postgres --parse` parses standard
+input and prints the trees, with no server started, and sq's
+tests hold what it prints to what PostgreSQL's parser printed.
+
 ## Where it came from
 
 PostgreSQL 18.6, commit `724edf9bde9d356724ad384a2e196edc3c9f80f7`,
@@ -56,6 +68,8 @@ to travel with the code.
   methods the stack does not have: `gin`, `gist`, `spgist`,
   `brin`, `hash`. Their callers, headers and built-in functions
   are removed too.
+- The grammar and scanner for SQL, `gram.y` and `scan.l`: sq has
+  them.
 - The translations, and PostgreSQL's build files: autoconf, meson
   and every `Makefile`. digres gets Makefiles of its own.
 

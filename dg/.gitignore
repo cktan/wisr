@@ -14,7 +14,7 @@ src/include/catalog/system_fk_info.h
 src/include/catalog/postgres.bki
 src/include/catalog/system_constraints.sql
 src/include/nodes/nodetags.h
-src/include/parser/gram.h
+src/backend/parser/sq_convert.c
 src/include/storage/lwlocknames.h
 src/include/utils/errcodes.h
 src/include/utils/fmgroids.h
@@ -27,9 +27,6 @@ src/include/pg_config_paths.h
 src/backend/nodes/*.funcs.c
 src/backend/nodes/*.switch.c
 src/backend/nodes/nodetags.h
-src/backend/parser/gram.c
-src/backend/parser/gram.h
-src/backend/parser/scan.c
 src/backend/utils/fmgroids.h
 src/backend/utils/fmgrprotos.h
 src/backend/utils/fmgrtab.c

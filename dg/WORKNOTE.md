@@ -164,3 +164,48 @@ code to be run rather than only compiled.
 As `DGWORK.md` says: `src/timezone` and `regex` are not carved
 out, the planner is not touched, and the TLS and GSSAPI files
 are still skipped.
+
+## Step 5: the parser is sq
+
+`../sq` became a library of its own (`../sq/PLAN.md`): it
+compiles nothing of digres's, and builds a tree of its own
+nodes. digres now parses with it and has no grammar or scanner
+of its own for SQL. This supersedes what step 3 says of sq.
+
+- **`raw_parser()` is still the way in**, with the signature
+  it had, so its five callers did not change. `parser.c` is new:
+  it hands sq the text and the session's three settings, and
+  turns sq's tree into PostgreSQL's nodes.
+- **The converter is generated**: `sq_convert.c`, written at
+  `make gen` by sq's generator from the node headers sq keeps.
+  One function a node, field by field.
+- **Deleted**: `gram.y`, `scan.l`, `gramparse.h`,
+  `parser/scanner.h` and `check_keywords.pl`.
+- **`scansup.c` stayed.** Twelve files outside the parser call
+  it, to fold or cut an identifier. sq has a copy of what its
+  scanner needs.
+- **The three settings** that change how a string is read are
+  defined in `parser.c` now, where `scan.l` had them, and so are
+  `SystemFuncName` and `SystemTypeName`, which the analyzer
+  calls.
+- **An error from sq is raised as the server's own**, with its
+  SQLSTATE, position, detail and hint. A notice is kept until
+  sq has returned and reported then: reported from sq's hook, an
+  error while reporting would jump out through sq.
+- **sq's tree is C++ and an error here is a `longjmp`**, which
+  runs no destructor. The tree is therefore held on the heap and
+  deleted in a `PG_FINALLY`.
+- **The PL/pgSQL parse modes are refused.** Nothing asks for
+  them: digres has no procedural language.
+- **`postgres --parse`** parses standard input and prints the
+  trees, with no server started. It is how the parser is tested:
+  `make test` gives it to sq's tests, which keep what
+  PostgreSQL's parser printed for each of their files.
+- **Checked before the old parser went**: PostgreSQL's parser
+  and sq with the converter, run in one process over 49,119
+  texts, the regression scripts cut into pieces and sq's own
+  test files. They agreed on every tree with its locations, and
+  on every error's code, position, detail and hint.
+- `spi.c` still passes whatever parse mode its plan holds; a
+  PL/pgSQL one would now be an error. Not cut, since nothing
+  sets one.

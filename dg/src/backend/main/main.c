@@ -32,6 +32,7 @@
 
 #include "common/username.h"
 #include "miscadmin.h"
+#include "parser/parse_tool.h"
 #include "postmaster/postmaster.h"
 #include "tcop/tcopprot.h"
 #include "utils/help_config.h"
@@ -107,6 +108,13 @@ int main(int argc, char *argv[]) {
    */
   MyProcPid = getpid();
   MemoryContextInit();
+
+  /*
+   * "postgres --parse" is not a server: it parses what it is given and
+   * prints the trees. It needs nothing started but what is above.
+   */
+  if (argc > 1 && strcmp(argv[1], "--parse") == 0)
+    exit(parse_tool_main(argc, argv));
 
   /*
    * Set reference point for stack-depth checking.  (There's no point in

@@ -4,6 +4,7 @@
 #                      the server, build/postgres
 #   make -k -j4        the same, going on past a file that fails
 #   make gen           only generate
+#   make test          check the parser: sq's tests, given this server
 #   make clean         remove objects and generated files
 #   make format        clang-format every .c and .h
 #
@@ -19,6 +20,9 @@ I := src/include
 B := src/backend
 PERL := perl
 LDLIBS := -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
+# The parser, a library of its own (../sq).
+SQ := ../sq
+LIBSQ := $(SQ)/build/libsq.a
 # Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
@@ -38,7 +42,7 @@ GEN := $(I)/catalog/.stamp $(B)/nodes/.stamp $(B)/utils/.fmgr-stamp \
     $(I)/utils/errcodes.h $(I)/storage/lwlocknames.h \
     $(B)/utils/activity/.stamp $(I)/utils/probes.h \
     $(I)/pg_config_paths.h src/common/kwlist_d.h \
-    $(B)/parser/gram.c $(B)/parser/scan.c $(B)/utils/adt/jsonpath_gram.c \
+    $(B)/parser/sq_convert.c $(B)/utils/adt/jsonpath_gram.c \
     $(B)/utils/adt/jsonpath_scan.c $(B)/utils/misc/guc-file.c
 
 .PHONY: gen
@@ -50,9 +54,25 @@ src: gen
 # below and this one cannot tell which of them changed.
 all: build/postgres
 .PHONY: build/postgres
-build/postgres: src
+build/postgres: src $(LIBSQ)
 	@mkdir -p build
-	$(CXX) -o $@ $$(find src -name '*.o') $(LDLIBS)
+	$(CXX) -o $@ $$(find src -name '*.o') $(LIBSQ) $(LDLIBS)
+
+# The parser is sq and a converter (src/backend/parser/parser.c). sq's
+# tests keep what PostgreSQL's parser printed for each of their files;
+# "postgres --parse" prints the same for raw_parser(), so they check
+# that digres still parses to PostgreSQL's nodes.
+# The server is built by a make of its own: a goal named here is passed
+# down to every directory, and none of them has a "test".
+.PHONY: test
+test:
+	$(MAKE) all
+	SQ_PARSE="$(CURDIR)/build/postgres --parse" $(SQ)/test/run.sh
+
+# sq builds its own library; whether it is up to date is sq's to say.
+.PHONY: $(LIBSQ)
+$(LIBSQ):
+	$(MAKE) -C $(SQ) build/libsq.a
 
 # The catalogs' #defines: pg_*_d.h and the syscache tables.
 $(I)/catalog/.stamp: $(CATALOG_HEADERS) $(wildcard $(I)/catalog/*.dat) \
@@ -107,12 +127,13 @@ src/common/kwlist_d.h: $(I)/parser/kwlist.h src/tools/gen_keywordlist.pl
 	$(PERL) -Isrc/tools src/tools/gen_keywordlist.pl --extern \
 	    -o src/common $<
 
-# Grammars and scanners.
-$(B)/parser/gram.c: $(B)/parser/gram.y
-	bison -Wno-deprecated -d -o $@ $<
-	cp $(B)/parser/gram.h $(I)/parser/gram.h
-$(B)/parser/scan.c: $(B)/parser/scan.l
-	flex -CF -p -p -o $@ $<
+# sq's tree as PostgreSQL's nodes, written by sq's generator from the
+# node headers it has: one function a node, as its other output is.
+$(B)/parser/sq_convert.c: $(SQ)/gen/gen_nodes.py $(SQ)/gen/nodespec.py \
+        $(wildcard $(SQ)/spec/*)
+	python3 $(SQ)/gen/gen_nodes.py converter > $@
+
+# Grammars and scanners. SQL's own are sq's.
 $(B)/utils/adt/jsonpath_gram.c: $(B)/utils/adt/jsonpath_gram.y
 	bison -Wno-deprecated -d -o $@ $<
 $(B)/utils/adt/jsonpath_scan.c: $(B)/utils/adt/jsonpath_scan.l
@@ -142,5 +163,5 @@ clean-gen:
 	    $(B)/utils/activity/pgstat_wait_event.c \
 	    $(B)/utils/activity/wait_event_funcs_data.c \
 	    $(I)/utils/wait_event_types.h $(I)/utils/pgstat_wait_event.c \
-	    $(I)/utils/wait_event_funcs_data.c $(B)/parser/gram.h \
-	    $(I)/parser/gram.h $(B)/utils/adt/jsonpath_gram.h
+	    $(I)/utils/wait_event_funcs_data.c \
+	    $(B)/utils/adt/jsonpath_gram.h

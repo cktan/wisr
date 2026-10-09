@@ -481,6 +481,35 @@ it, it passes.
   are deleted from `../dg`.
 - Verify: `make -C ../dg -j4` links.
 
+**Done.** digres parses with sq and has no grammar or scanner
+for SQL of its own. `../dg/WORKNOTE.md` step 5 has the decisions
+taken on that side.
+
+- **The converter is generated**, by `gen/gen_nodes.py`, into
+  `../dg/src/backend/parser/sq_convert.c` when digres is built.
+  It is digres's file and names both sets of nodes; it is
+  written here because it is the same walk over the same fields
+  as the printer.
+- **`raw_parser()` kept its name and signature**, so digres's
+  callers did not change. It is now sq and the converter.
+- **Checked while both parsers were in one program**:
+  PostgreSQL's and sq's with the converter, over 49,119 texts —
+  the 49,034 pieces and sq's test files. Every tree was the
+  same with its locations, and every error with its code,
+  position, detail and hint. This is the first check of
+  locations: sq's own printer hides them, as PostgreSQL's does.
+- **The check that stays** is sq's own tests, given
+  `postgres --parse` as the parser: `make -C ../dg test` for the
+  93 files, and `test/corpus.py --parse` for the regression
+  scripts. Both hold digres to what PostgreSQL's parser printed.
+  They do not check locations.
+- **`scansup.c` was not deleted from `../dg`**, as this step
+  said it would be: twelve files there that are not the parser
+  use it.
+- **Nothing is refused as "not supported" in the converter.**
+  It converts every node; digres refuses a statement where it
+  already did, in the analyzer or in the command's own code.
+
 ## 8. Documents
 
 A step is not done while a document says what is no longer

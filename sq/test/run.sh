@@ -18,8 +18,15 @@
 # own (PLAN.md step 6). --accept replaces them with sq's, which is to
 # say with nothing to check sq against: read the difference first.
 #
+# SQ_PARSE names another program to parse with, in place of
+# build/sq_parse: one that prints what it does, and takes --type-name.
+# digres checks its own parser this way, which is sq and a converter.
+# Step 2 is then left out: it is sq's scanner alone, and needs sq's
+# own tools built.
+#
 # What differs is left in build/test/DIR/NAME.out or .tok, and .diff.
 cd "$(dirname "$0")/.." || exit 1
+parse=${SQ_PARSE:-build/sq_parse}
 failed=0
 count=0
 
@@ -44,12 +51,14 @@ check() {
 }
 
 [ "$1" = "--accept" ] && accept=1
-check test out build/sq_parse
-check test/scan out build/sq_parse
-check test/errors out build/sq_parse
-check test/types out build/sq_parse --type-name
-check test tok build/sq_tokens
-check test/scan tok build/sq_tokens
+check test out $parse
+check test/scan out $parse
+check test/errors out $parse
+check test/types out $parse --type-name
+if [ -z "$SQ_PARSE" ]; then
+  check test tok build/sq_tokens
+  check test/scan tok build/sq_tokens
+fi
 
 if [ "$accept" = 1 ]; then
   echo "run: accepted $count files as expected"
