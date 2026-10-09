@@ -1,5 +1,5 @@
 #!/bin/bash
-# run.sh -- run each test/NAME.sql with "postgres --parse --run", which
+# run.sh -- run each test/NAME.sql with "digres --parse --run", which
 # starts no server, and compare what it prints with
 # test/expected/NAME.out.
 #
@@ -13,7 +13,7 @@ failed=0
 count=0
 for sql in test/*.sql; do
   name=$(basename "$sql" .sql)
-  build/postgres --parse --run < "$sql" > "build/test/$name.out" 2>&1
+  build/digres --parse --run < "$sql" > "build/test/$name.out" 2>&1
   count=$((count + 1))
   if [ "$1" = "--accept" ]; then
     cp "build/test/$name.out" "test/expected/$name.out"

@@ -1,19 +1,19 @@
 /*-------------------------------------------------------------------------
  *
  * parse_tool.c
- *		"postgres --parse": parse standard input, and print the trees
+ *		"digres --parse": parse standard input, and print the trees
  *
- *   postgres --parse < file.sql              one tree a statement, or
+ *   digres --parse < file.sql              one tree a statement, or
  *                                            the error
- *   postgres --parse --type-name < file      the text parsed as one
+ *   digres --parse --type-name < file      the text parsed as one
  *                                            type name
- *   postgres --parse --locations < file.sql  each statement whole, with
+ *   digres --parse --locations < file.sql  each statement whole, with
  *                                            every location shown
- *   postgres --parse --analyze < file.sql    each statement analyzed: the
+ *   digres --parse --analyze < file.sql    each statement analyzed: the
  *                                            Query, or the error
- *   postgres --parse --plan < file.sql       each statement planned: the
+ *   digres --parse --plan < file.sql       each statement planned: the
  *                                            PlannedStmt, or the error
- *   postgres --parse --run < file.sql        each statement run, and its
+ *   digres --parse --run < file.sql        each statement run, and its
  *                                            rows printed
  *
  * This runs raw_parser() with no server around it. A tree is printed

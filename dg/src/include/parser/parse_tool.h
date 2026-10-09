@@ -1,6 +1,6 @@
 /*
  * parse_tool.h
- *	  "postgres --parse": the parser run by hand.
+ *	  "digres --parse": the parser run by hand.
  *
  * src/include/parser/parse_tool.h
  */

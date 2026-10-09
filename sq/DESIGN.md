@@ -302,7 +302,7 @@ conversion finishes or raises.
   exception inside sq, which catches everything and would report
   it as its own.
 
-digres is checked with sq's own tests. `postgres --parse` prints
+digres is checked with sq's own tests. `digres --parse` prints
 what `build/sq_parse` prints, for `raw_parser()`, so the
 expected files and digests of §8 hold digres's parser, converter
 included, to what PostgreSQL's printed, locations among it.

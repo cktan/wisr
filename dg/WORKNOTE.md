@@ -27,7 +27,7 @@ reversed. Newest step last.
 
 ## Step 2: getting the server to link
 
-`make -j4` now links `build/postgres`, with no undefined symbol.
+`make -j4` now links `build/digres`, with no undefined symbol.
 It prints its version and nothing more useful: there is no
 bootstrap, so no catalog and no database to start. That is the
 state `../sm/PART4.md` §10 expects before the lookup layer.
@@ -197,7 +197,7 @@ of its own for SQL. This supersedes what step 3 says of sq.
   deleted in a `PG_FINALLY`.
 - **The PL/pgSQL parse modes are refused.** Nothing asks for
   them: digres has no procedural language.
-- **`postgres --parse`** parses standard input and prints the
+- **`digres --parse`** parses standard input and prints the
   trees, with no server started. It is how the parser is tested:
   `make test` gives it to sq's tests, which keep what
   PostgreSQL's parser printed for each of their files.
@@ -213,7 +213,7 @@ of its own for SQL. This supersedes what step 3 says of sq.
 ## Step 6: `SELECT 1 + 1` runs
 
 The second thing `../sm/PART4.md` §10 says must run does:
-`echo 'select 1 + 1;' | build/postgres --parse --run` prints 2,
+`echo 'select 1 + 1;' | build/digres --parse --run` prints 2,
 with no server started and no catalog table read. The operator,
 its function and the type are found compiled in.
 
@@ -311,3 +311,41 @@ C++ exception, `pg_error_t`, and what catches it is a `catch`.
   `PG_TRY` path is exercised, by `--parse` and `--run`.
   `test/select_error.sql` raises from the executor and
   `test/select_overflow.sql` from the planner.
+
+## Step 8: initdb
+
+`build/initdb`, or `build/digres --init`, makes a data
+directory. It is the server under another name: PostgreSQL's
+`initdb` runs the server in bootstrap mode to load the catalog,
+and digres has no catalog to load.
+
+- **A data directory is an sm home directory**, with one
+  database, `postgres`, and two files of digres's: `PG_VERSION`,
+  and `superuser`, which holds the superuser's name and, on a
+  second line, the SCRAM secret of its password if one was
+  given.
+- **This is the first code in digres that calls sm.** The server
+  now links `../sm/build/libsm.a` and RocksDB.
+- **Authentication is not configured**, so there is no
+  `pg_hba.conf`: peer on the local socket, SCRAM-SHA-256 over
+  TCP. A superuser given no password can connect only locally.
+- **One superuser, and no other roles yet.** `-U` names it, the
+  OS user if it is absent. The server is to give that name to
+  the built-in role with oid 10.
+- **The encoding is UTF8 and the default collation C.** `-E` and
+  `--locale` accept only those, and store nothing.
+- **Every other option of PostgreSQL's `initdb` is rejected**,
+  not ignored: `--auth`, `-k`, `--no-sync`, `-X` and the rest.
+- **A failed run removes what it made.** There is no
+  `--no-clean`.
+- **The secret is built by the server's own SCRAM code**, called
+  directly; PostgreSQL's `initdb` sends an `ALTER USER` to a
+  bootstrap backend.
+- **`src/common/sprompt.c` came back** from PostgreSQL for the
+  password prompt, allocating with `palloc`.
+- **`initdb -V` prints `initdb (digres) 18.6`**, where
+  PostgreSQL's prints `initdb (PostgreSQL) 18.6`.
+- **The two files and the directory are synced to disk.**
+- **Not done**: an interrupt does not clean up; and the server
+  does not read the directory yet, so nothing can start on it.
+  `test/initdb.sh` checks what is made and what is refused.

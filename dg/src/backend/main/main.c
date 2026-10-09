@@ -33,6 +33,7 @@
 #include "common/username.h"
 #include "miscadmin.h"
 #include "parser/parse_tool.h"
+#include "postmaster/initdb.h"
 #include "postmaster/postmaster.h"
 #include "tcop/tcopprot.h"
 #include "utils/help_config.h"
@@ -110,11 +111,19 @@ int main(int argc, char *argv[]) {
   MemoryContextInit();
 
   /*
-   * "postgres --parse" is not a server: it parses what it is given and
+   * "digres --parse" is not a server: it parses what it is given and
    * prints the trees. It needs nothing started but what is above.
    */
   if (argc > 1 && strcmp(argv[1], "--parse") == 0)
     exit(parse_tool_main(argc, argv));
+
+  /*
+   * Nor is "initdb", which is this program under another name, or
+   * "digres --init": it makes a data directory.
+   */
+  if (strcmp(progname, "initdb") == 0 ||
+      (argc > 1 && strcmp(argv[1], "--init") == 0))
+    exit(initdb_main(argc, argv));
 
   /*
    * Set reference point for stack-depth checking.  (There's no point in

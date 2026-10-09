@@ -6,9 +6,10 @@ calls.
 
 **It links, and cannot run a database yet.** It can run a
 statement over constants, with no server: `echo 'select 1 + 1;'
-| build/postgres --parse --run`. `make -j4` generates
+| build/digres --parse --run`. `make -j4` generates
 what is generated, compiles every file as strict C++ with no
-`-fpermissive`, and links `build/postgres`. The server has no
+`-fpermissive`, and links `build/digres` with `../sq` and
+`../sm`. The server has no
 bootstrap and so no catalog to start from: its catalog is to be
 replaced, not created (`../sm/PART4.md` §10). `DGWORK.md` is the
 plan and `WORKNOTE.md` the decisions taken along the way.
@@ -36,7 +37,7 @@ digres parses with `../sq`, a library of its own: PostgreSQL
 is what joins the two, and `sq_convert.c`, which is generated,
 turns sq's tree into the nodes the analyzer reads.
 
-`make test` checks it. `build/postgres --parse` parses standard
+`make test` checks it. `build/digres --parse` parses standard
 input and prints the trees, with no server started, and sq's
 tests hold what it prints to what PostgreSQL's parser printed.
 
@@ -49,11 +50,24 @@ types, functions, operators — is compiled in:
 catalog data, and a caller gets a row with `cat_type(oid)`,
 `cat_proc(oid)` and the like, and keeps the pointer.
 
-`build/postgres --parse --analyze`, `--plan` and `--run` take a
+`build/digres --parse --analyze`, `--plan` and `--run` take a
 statement through the analyzer, the planner or the executor with
 no server. A lookup that has not been moved to the new rows
 stops it, and says which. `make test` runs the statements in
 `test/` this way.
+
+## The data directory
+
+`build/initdb DIR`, or `build/digres --init DIR`, makes a data
+directory: an sm home directory holding the database
+`postgres`, a `PG_VERSION` file, and a `superuser` file with
+the superuser's name and the SCRAM secret of its password.
+`initdb` is the server under another name, and `--help` lists
+its options, which are few: the encoding is UTF8, the default
+collation is C, and authentication is peer on the local socket
+and SCRAM-SHA-256 over TCP. PostgreSQL's other options are
+rejected (`WORKNOTE.md` step 8). The server does not read the
+directory yet.
 
 ## Where it came from
 

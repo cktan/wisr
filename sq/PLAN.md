@@ -505,7 +505,7 @@ taken on that side.
   position, detail and hint. This is the first check of
   locations: sq's own printer hides them, as PostgreSQL's does.
 - **The check that stays** is sq's own tests, given
-  `postgres --parse` as the parser: `make -C ../dg test` for the
+  `digres --parse` as the parser: `make -C ../dg test` for the
   93 files, and `test/corpus.py --parse` for the regression
   scripts. Both hold digres to what PostgreSQL's parser printed.
   They do not check locations.
@@ -562,7 +562,7 @@ and written where it was made:
   `test/regress.digest` hold what PostgreSQL's parser gave, for
   the 25 files of statements here and the 49,034 pieces. That
   parser was built again from this repository's history to
-  write them. digres's `postgres --parse --locations` is held to
+  write them. digres's `digres --parse --locations` is held to
   the same files.
 - **The expected files and digests cannot be remade** without
   PostgreSQL's parser. Porting sq to a later PostgreSQL begins

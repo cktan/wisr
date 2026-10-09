@@ -1,7 +1,7 @@
 # dg -- build digres.
 #
 #   make -j4           generate what is generated, compile, and link
-#                      the server, build/postgres
+#                      the server, build/digres, which is initdb too
 #   make -k -j4        the same, going on past a file that fails
 #   make gen           only generate
 #   make test          check the parser, with sq's tests given this
@@ -20,10 +20,13 @@ include $(top)/dg.mk
 I := src/include
 B := src/backend
 PERL := perl
-LDLIBS := -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
+LDLIBS := -lrocksdb -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
 # The parser, a library of its own (../sq).
 SQ := ../sq
 LIBSQ := $(SQ)/build/libsq.a
+# The storage stack, a library of its own too (../sm).
+SM := ../sm
+LIBSM := $(SM)/build/libsm.a
 # Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
@@ -54,28 +57,35 @@ src: gen
 # The server: every object under src/, into one program. It is
 # relinked every time, since the objects are built by the Makefiles
 # below and this one cannot tell which of them changed.
-all: build/postgres
-.PHONY: build/postgres
-build/postgres: src $(LIBSQ)
+all: build/digres
+.PHONY: build/digres
+build/digres: src $(LIBSQ) $(LIBSM)
 	@mkdir -p build
-	$(CXX) -o $@ $$(find src -name '*.o') $(LIBSQ) $(LDLIBS)
+	$(CXX) -o $@ $$(find src -name '*.o') $(LIBSQ) $(LIBSM) $(LDLIBS)
+	ln -sf digres build/initdb
 
 # The parser is sq and a converter (src/backend/parser/parser.c). sq's
 # tests keep what PostgreSQL's parser printed for each of their files;
-# "postgres --parse" prints the same for raw_parser(), so they check
+# "digres --parse" prints the same for raw_parser(), so they check
 # that digres still parses to PostgreSQL's nodes.
 # The server is built by a make of its own: a goal named here is passed
 # down to every directory, and none of them has a "test".
 .PHONY: test
 test:
 	$(MAKE) all
-	SQ_PARSE="$(CURDIR)/build/postgres --parse" $(SQ)/test/run.sh
+	SQ_PARSE="$(CURDIR)/build/digres --parse" $(SQ)/test/run.sh
 	test/run.sh
+	test/initdb.sh
 
 # sq builds its own library; whether it is up to date is sq's to say.
 .PHONY: $(LIBSQ)
 $(LIBSQ):
 	$(MAKE) -C $(SQ) build/libsq.a
+
+# So does sm.
+.PHONY: $(LIBSM)
+$(LIBSM):
+	$(MAKE) -C $(SM)
 
 # The catalogs' #defines: pg_*_d.h and the syscache tables.
 $(I)/catalog/.stamp: $(CATALOG_HEADERS) $(wildcard $(I)/catalog/*.dat) \
