@@ -123,7 +123,8 @@ and linked with a leak checker. Around it:
   `test/scan/*.sql`.
 - `test/trees.sh`: sq's parser and the oracle build the same
   trees, and refuse the same text the same way, for those
-  files. `make corpus-test` does both over all of PostgreSQL's
+  files and for `test/errors/*.sql`, one for each error the
+  grammar's actions raise. `make corpus-test` does both over all of PostgreSQL's
   regression SQL.
 
 `test/*.sql` are run through `build/oracle` and compared with

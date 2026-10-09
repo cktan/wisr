@@ -356,7 +356,13 @@ check below covers them all.
     scripts at semicolons, cruder than a statement and enough to
     compare by. This is where the SQL that is wrong on purpose
     is, which the corpus cannot hold (step 0);
-  - the 25 files here, on every `make test`.
+  - the 25 files here, on every `make test`;
+  - `test/errors/`, 60 statements, each refused by one of the
+    grammar's own actions. The regression scripts reach only 23
+    of the grammar's 75 distinct messages; these reach the
+    rest but one, an internal error nothing can provoke. sq and
+    the oracle give the same message, position, detail and hint
+    for each.
 - **A list in the grammar is a handle**, `list_ref_t`, where
   PostgreSQL has a `List *`. Assigned to a node's field it is
   copied into the field's vector. PostgreSQL's list functions

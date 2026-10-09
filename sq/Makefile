@@ -180,6 +180,7 @@ test: all
 	test/tokens.sh test/scan
 	test/trees.sh test
 	test/trees.sh test/scan
+	test/trees.sh test/errors
 	test/run.sh
 	test/split.sh
 
