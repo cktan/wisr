@@ -5,12 +5,23 @@ It is PostgreSQL 18.6's raw parser and the layers under it,
 built and tested with no server around them.
 
 ```
-make -j4         build build/oracle
+make -j4         build build/libsq.a, its tests, and build/oracle
 make test        build, and run the tests in test/
 make corpus      split PostgreSQL's regression SQL into build/corpus
 make clean       remove build/
-make format      clang-format src/
+make format      clang-format src/ and test/
 ```
+
+Two things are built, and `PLAN.md` says how the first replaces
+the second:
+
+- **The library**, `build/libsq.a`, from `src/*.cc`, with its
+  API in `include/sq.h`. It is being written and parses nothing
+  yet: `sq_parse` refuses every input. It uses nothing of
+  digres's or of `../sm`.
+- **The oracle**, `build/oracle`, from `src/*.c`: PostgreSQL's
+  own parser, which the library is checked against. The rest of
+  this file describes it.
 
 `build/oracle` reads SQL on standard input and prints one parse
 tree a statement, as PostgreSQL's `nodeToString()` writes it, or
@@ -87,6 +98,10 @@ that has to become per-thread for a threaded server
 (`../sm/PART4.md` §2).
 
 ## Tests
+
+`build/test_sq` holds the library's tests, written with doctest,
+and `test/alone.sh` checks that neither it nor the library is
+built from anything outside `sq/`.
 
 `test/*.sql` are run through `build/oracle` and compared with
 `test/expected/*.out`. `test/run.sh --accept` rewrites the

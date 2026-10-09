@@ -52,18 +52,14 @@ exposing only C++ vector, C++ string and C++ string-view.
 - **sq is a library digres links**, `libsq.a`, and it is how
   digres parses PostgreSQL's SQL. digres has no other parser
   after step 7.
-- **The whole of PostgreSQL's grammar is ported.** Every
-  statement PostgreSQL accepts, sq accepts; every one it refuses
-  as a syntax error, sq refuses.
-- **A statement digres does not support parses to
-  `sq_unsupported_stmt_t`**, which names the statement:
-  `CREATE FUNCTION` is one. Its syntax is still checked in full.
-  It is a node, not an error from `sq_parse`: the other
-  statements in the same text still parse, and digres raises
-  "not supported", SQLSTATE `0A000`, when it reaches that one —
-  as PostgreSQL raises such errors a statement at a time. No
-  node struct, printer or converter is written for what is
-  under it.
+- **sq is a full parser of PostgreSQL 18's SQL.** Every
+  statement PostgreSQL accepts, sq accepts, and builds the whole
+  tree for; every one it refuses as a syntax error, sq refuses.
+  Its output is a bag of nodes and nothing more.
+- **sq knows nothing of what digres supports.** There is no
+  "unsupported" in sq: `CREATE FUNCTION` parses to its nodes
+  like any other statement. digres decides, when it meets a
+  node it does not handle, and the error is digres's to raise.
 - **sq parses what a server is sent, and nothing else.**
   - psql's backslash commands are psql's. It runs them itself
     and splits its input into statements with its own scanner;
@@ -158,10 +154,27 @@ byte.
   `build/libsq.a`. Tests use doctest, as sm1's do, beside the
   `.sql` files.
 - The thread-local error state, and `sq_parse` returning -1 with
-  "not supported" for every input.
+  "not implemented" for every input.
 - The oracle keeps building beside it, from the old list.
 - Verify: `libsq.a` and its test link with no object and no
-  header from `../dg`.
+  header from outside `sq/`.
+
+**Done.** `test/alone.sh` holds the verification, and runs with
+the tests.
+
+- **Three error codes**, and no more: `SQ_ERR_PARSE`,
+  `SQ_ERR_NOMEM`, `SQ_ERR_EXCEPTION`. What was wrong with the
+  SQL is in the SQLSTATE, of which the grammar and scanner raise
+  nine.
+- **Owed to the error state, and not built**: PostgreSQL's
+  detail and hint, which the grammar and scanner attach to some
+  errors and a client is shown. They are added when the first
+  ported rule needs them, in step 3 or 4.
+- The library is `src/*.cc`, the oracle `src/*.c`: they share
+  the directory until step 6.
+- sq is independent of `sm/` as well as of `../dg`: it has its
+  own copy of `doctest.h`, in `test/`, and `test/alone.sh` fails
+  on a dependency on any file outside `sq/`.
 
 ## 2. The tree
 
@@ -199,11 +212,10 @@ The order, and each is its own cycle of port, test, commit:
 1. Expressions and `SELECT`.
 2. `INSERT`, `UPDATE`, `DELETE`, `MERGE`.
 3. Table and index DDL.
-4. Transactions, `SET`, `EXPLAIN`, `COPY`, and whatever else
-   digres runs. The list is drawn up at the start of this step
-   from what `../dg` has cut.
-5. Every remaining statement, with its rules in full and its
-   actions building nothing, as `sq_unsupported_stmt_t`.
+4. Transactions, `SET`, `EXPLAIN`, `COPY`, cursors, `VACUUM`
+   and the other utility statements.
+5. Every remaining statement: functions, types, operators,
+   roles and privileges, publications and the rest.
 
 In each:
 
@@ -215,10 +227,8 @@ In each:
   equals the oracle's; for every statement the oracle refuses,
   sq refuses with the same message and position; a failed parse
   leaks nothing.
-- Verify, at the end of 5: sq accepts all 13,179 corpus
-  statements; each parses to the oracle's text or to
-  `sq_unsupported_stmt_t`, and the list of which is in
-  `README.md`.
+- Verify, at the end of 5: for all 13,179 corpus statements,
+  sq's text equals the oracle's.
 
 ## 5. The surface
 
@@ -242,7 +252,9 @@ comparison lives in `../dg`, in step 7.
 ## 7. The converter, in dg
 
 - `../dg` gains one file: an sq tree in, PostgreSQL's nodes
-  out. It is the only code that knows both.
+  out. It is the only code that knows both. A node digres does
+  not handle is refused there or in the analyzer, with
+  "not supported", SQLSTATE `0A000`.
 - Verify: over the corpus, `nodeToString` of the converted tree
   equals `nodeToString` of what `raw_parser` returns.
 - Then digres's callers of `raw_parser` call sq and the

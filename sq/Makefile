@@ -1,22 +1,57 @@
-# sq -- the SQL front end, cut out of digres: text in, parse tree out.
+# sq -- the SQL front end: text in, parse tree out.
 #
-#   make -j4         build build/oracle
+#   make -j4         build build/libsq.a, its tests, and build/oracle
 #   make test        build, and run the tests in test/
 #   make corpus      split PG_SQL's files into build/corpus
 #   make clean       remove build/
-#   make format      clang-format src/
+#   make format      clang-format src/ and test/
 #
-# The sources are still in ../dg/src, and are compiled from there
-# into build/: README.md says why they have not moved yet. What is
-# here is the boundary: the list of what belongs to sq, src/host.c
-# for what that list still needs from the server, and the tests.
+# Two things are built here (PLAN.md).
+#
+# The library, build/libsq.a, from src/*.cc and include/. It uses
+# nothing of digres's and nothing of sm's. include/sq.h and sq_error.h are aligned by
+# hand and are not formatted.
+#
+# The oracle, build/oracle, from src/*.c and PostgreSQL's own parser,
+# whose sources are still in ../dg/src and are compiled from there
+# into build/dg. It is what the library is checked against, and goes
+# when the library can do without it.
+
+# ---- the library ----
+
+CXX ?= g++
+OPT ?= -O0 -g
+LIB_CXXFLAGS := -std=c++20 -Wall -Wextra $(OPT) -Iinclude -Isrc -MMD -MP
+
+LIB_SRCS  := $(wildcard src/*.cc)
+LIB_OBJS  := $(LIB_SRCS:src/%.cc=build/src/%.o)
+TEST_SRCS := $(wildcard test/*.cc)
+TEST_OBJS := $(TEST_SRCS:test/%.cc=build/test/%.o)
+LIB       := build/libsq.a
+TEST_BIN  := build/test_sq
+
+# Rebuilt from scratch, so an object whose source is gone leaves it.
+$(LIB): $(LIB_OBJS)
+	rm -f $@
+	$(AR) rcs $@ $^
+
+$(TEST_BIN): $(TEST_OBJS) $(LIB)
+	$(CXX) $(LIB_CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) -lpthread
+
+build/src/%.o: src/%.cc
+	@mkdir -p $(dir $@)
+	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
+
+build/test/%.o: test/%.cc
+	@mkdir -p $(dir $@)
+	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
+
+# ---- the oracle ----
 
 DG  := ../dg
 SRC := $(DG)/src
 B   := $(SRC)/backend
 
-CXX ?= g++
-OPT ?= -O0 -g
 # One section a function, so that the link keeps only what the
 # parser reaches, and reports only what that needs.
 CXXFLAGS = -x c++ -std=gnu++20 -w $(OPT) -ffunction-sections \
@@ -52,7 +87,7 @@ DG_OBJS := $(patsubst $(SRC)/%.c,build/dg/%.o,$(DG_SRCS))
 OBJS    := build/oracle.o build/host.o $(DG_OBJS)
 
 .PHONY: all test corpus clean format gen
-all: build/oracle
+all: $(LIB) $(TEST_BIN) build/oracle
 
 # The generated sources and headers are digres's to make.
 gen:
@@ -72,7 +107,9 @@ build/%.o: src/%.c | gen
 build/oracle: $(OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
-test: build/oracle
+test: all
+	$(TEST_BIN)
+	test/alone.sh
 	test/run.sh
 	test/split.sh
 
@@ -85,6 +122,6 @@ clean:
 	rm -rf build
 
 format:
-	clang-format -i src/*.c
+	clang-format -i src/*.c src/*.cc src/*.h test/*.cc
 
--include $(OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d)
