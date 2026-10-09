@@ -678,6 +678,37 @@ int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
   return 0;
 }
 
+/* The last value seqid handed out, or its upper bound. */
+int db_last_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
+                uint64_t *out) {
+  // Hold alloc_mu, which guards every lease.
+  std::lock_guard<std::mutex> guard(db->alloc_mu);
+  auto it = db->seqs.find(seqid);
+  // In use in this process: the state knows exactly.
+  if (it != db->seqs.end()) {
+    const db_t::seq_state_t &st = it->second;
+    // An exhausted sequence's next is the last value it gave.
+    if (st.exhausted) {
+      *out = st.next;
+      return 0;
+    }
+    // Still at start: its first lease failed to persist.
+    if (st.next == start) {
+      return 1;
+    }
+    *out = st.next - st.increment;
+    return 0;
+  }
+  uint64_t limit;
+  // No lease persisted: no value was ever handed out.
+  if (!read_meta(db, seq_meta_key(seqid), &limit)) {
+    return 1;
+  }
+  // Values below the lease may have been handed out.
+  *out = limit - increment;
+  return 0;
+}
+
 /* Drop seqid's in-memory state and its persisted lease. */
 void db_forget_seq(db_t *db, uint64_t seqid) {
   // Hold alloc_mu while dropping the state.

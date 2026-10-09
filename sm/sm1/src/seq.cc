@@ -1,6 +1,6 @@
 /*
- * seq.cc -- named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq
- * (SM1_DESIGN.md §11).
+ * seq.cc -- named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq,
+ * sm1::lastseq (SM1_DESIGN.md §11).
  *
  * A sequence's definition is a catalog row, keyed "S" | name in
  * CF:store.0 and holding { seqid, start, increment }, so creating
@@ -171,6 +171,34 @@ int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
   return db_next_seq(s->db, def.seqid, def.start, def.increment, out);
 }
 
+/* sm1::lastseq, minus the out-of-memory guard. */
+int lastseq(sm1::session_t *s, const char *name, uint64_t *out) {
+  // Require a valid name.
+  if (check_name(name, sm1::max_seqname, "sequence") != 0) {
+    return -1;
+  }
+  // A session holding a prepared transaction does nothing else.
+  if (!s->active && !s->prepared_gid.empty()) {
+    return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
+                     s->prepared_gid.c_str());
+  }
+  // Read the definition as sm1::nextseq does.
+  view_t view =
+      s->active ? xct_view(s) : view_t{s->db->visible_ts.load(), 0, 0};
+  seqdef_t def;
+  int r = seq_lookup(s, view, name, &def);
+  // Fail on a lookup error.
+  if (r < 0) {
+    return -1;
+  }
+  // Report an unknown sequence.
+  if (r == 1) {
+    return set_error(sm1::SM_ERR_NOTFOUND, "sequence {} does not exist", name);
+  }
+  // Read the position, drawing nothing.
+  return db_last_seq(s->db, def.seqid, def.start, def.increment, out);
+}
+
 } // namespace
 
 /* Create a sequence. */
@@ -224,4 +252,22 @@ int sm1::nextseq(sm1::session_t *session, std::string_view name_arg,
     return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: session is NULL");
   }
   return ::nextseq(session, name, &out);
+}
+
+/* Report a sequence's last value without drawing one. */
+int sm1::lastseq(sm1::session_t *session, std::string_view name_arg,
+                 uint64_t &out) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  // Take the name as a C string, as the engine uses it.
+  std::string name_str;
+  if (copy_name(name_arg, "sequence", name_str) != 0) {
+    return -1;
+  }
+  const char *name = name_str.c_str();
+  // Require a session; sm1::lastseq needs no transaction.
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_lastseq: session is NULL");
+  }
+  return ::lastseq(session, name, &out);
 }

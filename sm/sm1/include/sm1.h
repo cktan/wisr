@@ -396,6 +396,25 @@ int nextseq(session_t* session, std::string_view name,
             uint64_t& out);
 
 /*
+ * Report the last value the sequence handed out in out, drawing
+ * none: no lease is extended and nothing is written.
+ *
+ * Exact once the sequence has handed out a value in this process.
+ * Before that it is the value below the block reserved last, an
+ * upper bound, since a restart skips the rest of that block.
+ * Like sm1::nextseq it needs no transaction, and inside one reads
+ * the definition at its snapshot.
+ *
+ * Returns 0 with the value in out, 1 if the sequence never
+ * handed one out, leaving out untouched, or -1.
+ *
+ * Errors: SM_ERR_NOTFOUND (no such sequence), SM_ERR_INVALID,
+ * SM_ERR_PREPARED, SM_ERR_CORRUPT, SM_ERR_IO.
+ */
+int lastseq(session_t* session, std::string_view name,
+            uint64_t& out);
+
+/*
  * Close a session. Open cursors are closed, and an active
  * transaction is forcibly aborted -- but a PREPARED one is
  * not: it stays in doubt and awaits its coordinator.
@@ -904,6 +923,39 @@ int rmstore(session_t* session, uint64_t storeid);
  * SM_ERR_NOMEM, SM_ERR_CORRUPT, SM_ERR_IO.
  */
 int lsstore(session_t* session, std::vector<uint64_t>& out);
+
+/*
+ * Estimate the bytes of the userkeys from lo up to but excluding
+ * hi in the store, every version and tombstone of them counted:
+ * in disk, those in sorted files, compressed, and in mem, those
+ * in memtables, uncompressed. A NULL lo or hi leaves that end
+ * open. Neither part is corrected, and they are not to be added
+ * as they stand: rows not yet flushed are counted at full size.
+ *
+ * Reads RocksDB's estimates, not the rows: it needs no
+ * transaction, takes no lock and sees no snapshot. A store
+ * created by a transaction not yet committed, and one dropped
+ * and not yet reclaimed, are measured all the same.
+ *
+ * Errors: SM_ERR_NOTFOUND (no such store), SM_ERR_INVALID,
+ * SM_ERR_PREPARED, SM_ERR_IO.
+ */
+int approxsize(session_t* session, uint64_t storeid,
+               const char* lo, size_t lolen,
+               const char* hi, size_t hilen,
+               uint64_t& disk, uint64_t& mem);
+
+/*
+ * Count in out the sorted runs a point lookup in the store may
+ * visit now: the active memtable if it holds anything, each
+ * immutable memtable, each file of level 0, and each level
+ * below it that has a file. Needs no transaction, as
+ * sm1::approxsize().
+ *
+ * Errors: SM_ERR_NOTFOUND (no such store), SM_ERR_INVALID,
+ * SM_ERR_PREPARED.
+ */
+int probes(session_t* session, uint64_t storeid, uint64_t& out);
 
 /*
  * Write one row. All three calls require an active,

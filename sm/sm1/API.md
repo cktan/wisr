@@ -20,9 +20,10 @@ interface, and the handles are opaque.
 
 - A call returns an `int`: **0 on success** and **-1 on
   error**, except where a positive return is documented for
-  that specific call. Exactly two have one: `sm1::read` and
-  `sm1::scannxt` both return 1 to mean "no row", which is not
-  an error.
+  that specific call. Exactly three have one: `sm1::read` and
+  `sm1::scannxt` both return 1 to mean "no row", and
+  `sm1::lastseq` 1 to mean "no value handed out yet", which are
+  not errors.
 - A call that yields a handle — `sm1::attach`, `sm1::opendb`,
   `sm1::scan` — returns 0 or -1 like any other, and hands the
   handle back through its last parameter, set only on success.
@@ -1197,6 +1198,38 @@ Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_INVALID`, `SM_ERR_NOMEM`, `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
+### int sm1::approxsize(sm1::session_t* session, uint64_t storeid, const char* lo, size_t lolen, const char* hi, size_t hilen, uint64_t& disk, uint64_t& mem)
+
+Estimate the bytes of the userkeys from `lo` up to but
+excluding `hi`, every version and tombstone counted, in two
+parts: `disk`, those in sorted files, compressed, and `mem`,
+those in memtables, uncompressed. A NULL `lo` or `hi` leaves
+that end open. Neither part is corrected, and they are not to
+be added as they stand: rows not yet flushed are counted at
+full size, several times what they take once flushed
+(`STATISTICS.md` §6 at the stack's root).
+
+It reads RocksDB's estimates, not rows, so it needs no
+transaction, takes no lock and sees no snapshot. A store
+created by a transaction not yet committed, and one dropped and
+not yet reclaimed, are measured all the same: the caller names
+the store it means.
+
+Errors: `SM_ERR_NOTFOUND` (no such store), `SM_ERR_INVALID`,
+`SM_ERR_PREPARED`, `SM_ERR_IO`.
+
+### int sm1::probes(sm1::session_t* session, uint64_t storeid, uint64_t& out)
+
+Count the sorted runs a point lookup in the store may visit
+now: the active memtable if it holds anything, each immutable
+memtable, each file of level 0, whose files overlap, and each
+level below that has a file. It is what the store knows of a
+lookup's cost, in place of a B-tree's height. Needs no
+transaction, as `sm1::approxsize`.
+
+Errors: `SM_ERR_NOTFOUND` (no such store), `SM_ERR_INVALID`,
+`SM_ERR_PREPARED`.
+
 ---
 
 ## Sequence API
@@ -1217,6 +1250,8 @@ int mkseq(session_t* session, std::string_view name,
           uint64_t start, uint64_t increment);
 int rmseq(session_t* session, std::string_view name);
 int nextseq(session_t* session, std::string_view name,
+            uint64_t& out);
+int lastseq(session_t* session, std::string_view name,
             uint64_t& out);
 ```
 
@@ -1249,6 +1284,17 @@ Errors for `sm1::mkseq`: `SM_ERR_EXISTS`, `SM_ERR_NOTRANS`,
 `SM_ERR_PREPARED`, `SM_ERR_CORRUPT`, `SM_ERR_IO` (the
 database has stopped, or persisting the next block failed),
 `SM_ERR_DISKFULL`.
+
+`sm1::lastseq` reports the last value handed out, drawing none:
+no lease is extended and nothing is written. It returns 1 if
+the sequence never handed one out. It is exact once the
+sequence has handed out a value in this process; before that it
+is the value below the block reserved last, an upper bound,
+since a restart skips the rest of that block. It needs no
+transaction, and inside one reads the definition at its
+snapshot, as `sm1::nextseq` does. Errors: `SM_ERR_NOTFOUND`,
+`SM_ERR_INVALID`, `SM_ERR_PREPARED`, `SM_ERR_CORRUPT`,
+`SM_ERR_IO`.
 
 ---
 

@@ -379,3 +379,55 @@ TEST_CASE("values handed out before a kill are never handed out again") {
   CHECK(next(s) > highest);
   sm1::closedb(s);
 }
+
+TEST_CASE("sm1_lastseq reports the last value without drawing one") {
+  // Verify that sm1::lastseq reads the position and never moves it.
+  // 1. An unknown sequence fails with SM_ERR_NOTFOUND, and one
+  //    that never handed out a value returns 1.
+  // 2. After values are drawn it reports the last one, with or
+  //    without a transaction, and the next draw follows it.
+  // 3. A value drawn in a transaction that aborts stays drawn.
+  // 4. After a reopen it reports the value below the reserved
+  //    block, which the next draw is one increment above.
+  // 5. A reopen with no draw since leaves it where it was:
+  //    sm1::lastseq persists no lease of its own.
+  seq_fixture_t f;
+  sm1::session_t *s = f.s();
+  uint64_t out = 0;
+  CHECK(sm1::lastseq(s, "nope", out) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  commit_mkseq(s, SEQ, 1, 1);
+  CHECK(sm1::lastseq(s, SEQ, out) == 1);
+
+  // 2. Draw three, then read it both ways.
+  for (int i = 0; i < 3; i++) {
+    next(s);
+  }
+  REQUIRE(sm1::lastseq(s, SEQ, out) == 0);
+  CHECK(out == 3);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::lastseq(s, SEQ, out) == 0);
+  CHECK(out == 3);
+  CHECK(next(s) == 4);
+
+  // 3. Abort the transaction that drew 4.
+  REQUIRE(sm1::abort(s) == 0);
+  REQUIRE(sm1::lastseq(s, SEQ, out) == 0);
+  CHECK(out == 4);
+
+  // 4. Reopen: the rest of the block is skipped.
+  f.reopen();
+  s = f.s();
+  uint64_t bound = 0;
+  REQUIRE(sm1::lastseq(s, SEQ, bound) == 0);
+  CHECK(bound >= 4);
+
+  // 5. Reopen again without drawing, then draw.
+  f.reopen();
+  s = f.s();
+  REQUIRE(sm1::lastseq(s, SEQ, out) == 0);
+  CHECK(out == bound);
+  CHECK(next(s) == bound + 1);
+  REQUIRE(sm1::lastseq(s, SEQ, out) == 0);
+  CHECK(out == bound + 1);
+}
