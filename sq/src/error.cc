@@ -1,6 +1,7 @@
 /*
  * error.cc -- the per-thread error state behind sq_errnum(),
- * sq_errmsg(), sq_sqlstate() and sq_errpos().
+ * sq_errmsg(), sq_sqlstate(), sq_errpos(), sq_errdetail() and
+ * sq_errhint().
  *
  * The message is formatted straight into a thread-local buffer
  * through a bounded output iterator: nothing is allocated, so an
@@ -18,12 +19,27 @@
 namespace {
 
 constexpr size_t errmsg_size = 1024;
+constexpr size_t errextra_size = 256;
 constexpr size_t sqlstate_len = 5;
 
 thread_local sq_errnum_t t_errnum = SQ_OK;
 thread_local char t_errmsg[errmsg_size] = "no error";
 thread_local char t_sqlstate[sqlstate_len + 1] = "00000";
 thread_local int t_errpos = 0;
+thread_local char t_errdetail[errextra_size] = "";
+thread_local char t_errhint[errextra_size] = "";
+
+/* Copy text into a buffer of size bytes, cut to fit; NULL is "". */
+void copy_text(char *buf, size_t size, const char *text) {
+  size_t n = text ? strlen(text) : 0;
+  if (n > size - 1) {
+    n = size - 1;
+  }
+  if (n > 0) {
+    memcpy(buf, text, n);
+  }
+  buf[n] = '\0';
+}
 
 /*
  * An output iterator writing into a fixed buffer and silently
@@ -75,10 +91,19 @@ int set_error_v(sq_errnum_t e, const char *sqlstate, int pos,
   // A SQLSTATE is always five characters.
   memcpy(t_sqlstate, sqlstate, sqlstate_len);
   t_sqlstate[sqlstate_len] = '\0';
+  // An error has no detail or hint until it is given one.
+  t_errdetail[0] = '\0';
+  t_errhint[0] = '\0';
   // Record the code and the position.
   t_errpos = pos;
   t_errnum = e;
   return -1;
+}
+
+/* Record the detail and hint of the error just set. */
+void set_error_extra(const char *detail, const char *hint) {
+  copy_text(t_errdetail, sizeof(t_errdetail), detail);
+  copy_text(t_errhint, sizeof(t_errhint), hint);
 }
 
 } // namespace sq
@@ -94,3 +119,9 @@ const char *sq_sqlstate(void) { return t_sqlstate; }
 
 /* The position of the last error raised on this thread, or 0. */
 int sq_errpos(void) { return t_errpos; }
+
+/* The detail of the last error raised on this thread, or "". */
+const char *sq_errdetail(void) { return t_errdetail; }
+
+/* The hint of the last error raised on this thread, or "". */
+const char *sq_errhint(void) { return t_errhint; }

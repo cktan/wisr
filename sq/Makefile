@@ -3,6 +3,7 @@
 #   make -j4         build build/libsq.a, its tests, and build/oracle
 #   make test        build, and run the tests in test/
 #   make corpus      split PG_SQL's files into build/corpus
+#   make corpus-test compare with the oracle over all of PG_SQL
 #   make clean       remove build/
 #   make format      clang-format src/ and test/
 #   make nodes       rewrite include/sq_nodes.h from spec/
@@ -22,10 +23,16 @@
 
 CXX ?= g++
 OPT ?= -O0 -g
-LIB_CXXFLAGS := -std=c++20 -Wall -Wextra $(OPT) -Iinclude -Isrc -MMD -MP
+LIB_CXXFLAGS := -std=c++20 -Wall -Wextra $(OPT) -Iinclude -Isrc -Ibuild/gen \
+                -Ispec -MMD -MP
+# What flex and bison write is not held to -Wall.
+GEN_CXXFLAGS := $(filter-out -Wall -Wextra,$(LIB_CXXFLAGS)) -w
 
 LIB_SRCS  := $(wildcard src/*.cc)
-LIB_OBJS  := $(LIB_SRCS:src/%.cc=build/src/%.o) build/gen/print_nodes.o
+LIB_OBJS  := $(LIB_SRCS:src/%.cc=build/src/%.o) build/gen/print_nodes.o \
+             build/gen/scan.o
+TOOL_SRCS := $(wildcard test/tool/*.cc)
+TOOLS     := $(TOOL_SRCS:test/tool/%.cc=build/%)
 TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=build/test/%.o)
 LIB       := build/libsq.a
@@ -54,16 +61,41 @@ build/gen/print_nodes.cc: $(GEN_NODES)
 	@mkdir -p $(dir $@)
 	python3 gen/gen_nodes.py printer > $@
 
-build/gen/%.o: build/gen/%.cc
+# The perfect hash the scanner finds a keyword with.
+build/gen/keyword_hash.h: gen/gen_keywords.py spec/kwlist.h
+	@mkdir -p $(dir $@)
+	python3 gen/gen_keywords.py > $@
+
+build/src/keywords.o: build/gen/keyword_hash.h
+
+# The grammar's tokens, which the scanner returns. Only the header is
+# used until the grammar has rules.
+build/gen/gram.hh: src/gram.y
+	@mkdir -p $(dir $@)
+	bison -d -o build/gen/gram.cc $<
+
+# The flags are PostgreSQL's for its scanner: a full table, for speed.
+build/gen/scan.cc: src/scan.l
+	@mkdir -p $(dir $@)
+	flex -CF -p -p -o $@ $<
+
+build/gen/print_nodes.o: build/gen/print_nodes.cc
 	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
 
-build/src/%.o: src/%.cc
+build/gen/scan.o: build/gen/scan.cc build/gen/gram.hh
+	$(CXX) $(GEN_CXXFLAGS) -c -o $@ $<
+
+build/src/%.o: src/%.cc | build/gen/gram.hh
 	@mkdir -p $(dir $@)
 	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
 
-build/test/%.o: test/%.cc
+build/test/%.o: test/%.cc | build/gen/gram.hh
 	@mkdir -p $(dir $@)
 	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
+
+# Programs the shell tests run, each one source file over the library.
+build/%: test/tool/%.cc $(LIB) | build/gen/gram.hh
+	$(CXX) $(LIB_CXXFLAGS) -o $@ $< $(LIB)
 
 # ---- the oracle ----
 
@@ -74,7 +106,8 @@ B   := $(SRC)/backend
 # One section a function, so that the link keeps only what the
 # parser reaches, and reports only what that needs.
 CXXFLAGS = -x c++ -std=gnu++20 -w $(OPT) -ffunction-sections \
-            -fdata-sections -I$(SRC)/include -D_GNU_SOURCE -MMD -MP
+            -fdata-sections -I$(SRC)/include -I$(B)/parser -D_GNU_SOURCE \
+            -MMD -MP
 LDFLAGS  := -Wl,--gc-sections
 LDLIBS   := -licui18n -licuuc -licudata -lm -lpthread
 
@@ -105,8 +138,8 @@ DG_SRCS := \
 DG_OBJS := $(patsubst $(SRC)/%.c,build/dg/%.o,$(DG_SRCS))
 OBJS    := build/oracle.o build/host.o $(DG_OBJS)
 
-.PHONY: all test corpus clean format gen nodes
-all: $(LIB) $(TEST_BIN) build/oracle
+.PHONY: all test corpus corpus-test clean format gen nodes
+all: $(LIB) $(TEST_BIN) $(TOOLS) build/oracle
 
 # The generated sources and headers are digres's to make.
 gen:
@@ -131,6 +164,8 @@ test: all
 	test/alone.sh
 	test/nodes.sh
 	test/spec.sh
+	test/tokens.sh test
+	test/tokens.sh test/scan
 	test/run.sh
 	test/split.sh
 
@@ -139,10 +174,14 @@ PG_SQL ?= $(HOME)/p/postgres18/src/test/regress/sql
 corpus: build/oracle
 	test/corpus.sh $(PG_SQL)
 
+# The checks that run over all of it, and are too large for `make test`.
+corpus-test: all
+	test/tokens.sh $(PG_SQL)
+
 clean:
 	rm -rf build
 
 format:
-	clang-format -i src/*.c src/*.cc src/*.h test/*.cc
+	clang-format -i src/*.c src/*.cc src/*.h test/*.cc test/tool/*.cc
 
--include $(OBJS:.o=.d) $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(TOOLS:=.d)

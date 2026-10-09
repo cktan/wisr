@@ -4,6 +4,7 @@
 # 1. Confirm spec/'s headers are ../dg's.
 # 2. Confirm spec/nodes.list is what the grammar can make.
 # 3. Confirm the generated printer's fields are PostgreSQL's.
+# 4. Confirm the keyword hash is PostgreSQL's.
 cd "$(dirname "$0")/.." || exit 1
 if ! python3 gen/check_pg.py ../dg/src; then
   echo "spec: FAILED"

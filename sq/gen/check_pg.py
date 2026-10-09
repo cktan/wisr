@@ -10,6 +10,8 @@ step 6): it is the oracle's check on the generator.
 2. spec/nodes.list names every struct the grammar can make.
 3. For every struct the generated printer prints, the fields, their
    order and their kinds are those of PostgreSQL's generated printer.
+4. The keyword hash is PostgreSQL's: the same table and the same two
+   multipliers and seeds.
 """
 
 import re
@@ -39,9 +41,12 @@ PG_KIND = {
 def check_headers(dg):
     """Compare each spec header with the one in ../dg."""
     bad = 0
-    for h in gen_nodes.HEADERS:
+    theirs = {h: f"nodes/{h}" for h in gen_nodes.HEADERS}
+    # The keyword list is the scanner's, and is checked with the rest.
+    theirs["kwlist.h"] = "parser/kwlist.h"
+    for h, path in theirs.items():
         ours = (gen_nodes.ROOT / "spec" / h).read_bytes()
-        if ours != (dg / "include" / "nodes" / h).read_bytes():
+        if ours != (dg / "include" / path).read_bytes():
             print(f"spec/{h} differs from ../dg's")
             bad += 1
     return bad
@@ -113,13 +118,37 @@ def check_fields(dg, model):
     return bad
 
 
+def check_keyword_hash(dg):
+    """Compare the generated keyword hash with PostgreSQL's kwlist_d.h."""
+    import gen_keywords
+
+    mult1, mult2, seed1, seed2, table = gen_keywords.find_hash(
+        gen_keywords.read_keywords()
+    )
+    text = (dg / "common/kwlist_d.h").read_text()
+    theirs = re.search(r"h\[\d+\] = \{(.*?)\}", text, flags=re.S).group(1)
+    want = (
+        f"uint32 a = {seed1};",
+        f"uint32 b = {seed2};",
+        f"a = a * {mult1} + c;",
+        f"b = b * {mult2} + c;",
+    )
+    if [int(x) for x in re.findall(r"-?\d+", theirs)] != table or not all(
+        w in text for w in want
+    ):
+        print("the keyword hash differs from PostgreSQL's")
+        return 1
+    return 0
+
+
 def main():
-    """Run the three checks; exit 1 if any found a difference."""
+    """Run the checks; exit 1 if any found a difference."""
     if len(sys.argv) != 2:
         sys.exit("usage: check_pg.py DG_SRC")
     dg = Path(sys.argv[1])
     model = gen_nodes.model_t()
     bad = check_headers(dg) + check_list(dg, model) + check_fields(dg, model)
+    bad += check_keyword_hash(dg)
     printed = len(model.structs) - len(gen_nodes.CUSTOM_PRINT)
     print(f"spec: {len(model.structs)} structs, {printed} printed by the generator")
     sys.exit(1 if bad else 0)

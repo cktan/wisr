@@ -46,8 +46,11 @@ template <typename T> T *make_node(sq_tree_t &tree) {
   return node;
 }
 
-/* Copy text into tree, NUL-terminated. */
-const char *dup_string(sq_tree_t &tree, std::string_view text);
+/*
+ * Copy text into tree, NUL-terminated. The copy is the caller's to
+ * change until it is put in a node.
+ */
+char *dup_string(sq_tree_t &tree, std::string_view text);
 
 } // namespace sq
 

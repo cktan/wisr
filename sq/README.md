@@ -8,6 +8,7 @@ built and tested with no server around them.
 make -j4         build build/libsq.a, its tests, and build/oracle
 make test        build, and run the tests in test/
 make corpus      split PostgreSQL's regression SQL into build/corpus
+make corpus-test compare with the oracle over all of that SQL
 make clean       remove build/
 make format      clang-format src/ and test/
 make nodes       rewrite include/sq_nodes.h from spec/
@@ -19,8 +20,10 @@ the second:
 - **The library**, `build/libsq.a`, from `src/*.cc`, with its
   API in `include/sq.h`. It is being written and parses nothing
   yet: `sq_parse` refuses every input. It has the nodes of a
-  parse tree and prints them. It uses nothing of digres's or of
-  `../sm`.
+  parse tree and prints them, and it has the scanner. It uses
+  nothing of digres's or of `../sm`.
+  - `src/scan.l` is PostgreSQL's scanner, forked; `src/gram.y`
+    has the grammar's tokens and no rules yet.
   - `spec/` is PostgreSQL's node headers, unedited, and the list
     of the structs its grammar can make.
   - `gen/gen_nodes.py` writes `include/sq_nodes.h` from them,
@@ -114,6 +117,9 @@ and linked with a leak checker. Around it:
   writes today.
 - `test/spec.sh`: `spec/` and the generated printer agree with
   PostgreSQL as it is in `../dg`.
+- `test/tokens.sh`: sq's scanner and the oracle's find the same
+  tokens, and the same errors, in `test/*.sql` and
+  `test/scan/*.sql`.
 
 `test/*.sql` are run through `build/oracle` and compared with
 `test/expected/*.out`. `test/run.sh --accept` rewrites the

@@ -16,7 +16,7 @@ TEST_CASE("sq_parse refuses its input and leaves the tree empty") {
   // 3. Confirm -1, the error, and that the tree is empty.
   sq_tree_t tree;
   tree.stmts.push_back(nullptr);
-  CHECK(sq_parse("SELECT 1;", tree) == -1);
+  CHECK(sq_parse("SELECT 1;", nullptr, tree) == -1);
   CHECK(sq_errnum() == SQ_ERR_PARSE);
   CHECK(std::string(sq_sqlstate()) == "0A000");
   CHECK(std::string(sq_errmsg()) == "sq_parse is not implemented");

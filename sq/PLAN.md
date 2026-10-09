@@ -37,6 +37,21 @@ exposing only C++ vector, C++ string and C++ string-view.
 - **Memory is RAII first.** An `sq_tree_t` owns every node of a
   parse and destroys them in its destructor. Where RAII cannot
   reach, there is a free function. None is foreseen in `sq.h`.
+- **Inside a parse, an error is a private exception.** A raise
+  records the thread's error and throws; `sq_parse` catches it
+  and returns -1. It is how the scanner and grammar leave from
+  wherever they are, as PostgreSQL's leave by `longjmp`, and it
+  keeps their helpers shaped as PostgreSQL's are. flex's own
+  fatal path, which would `exit()`, leaves the same way. None
+  is ever seen outside sq.
+- **A notice goes to a callback.** PostgreSQL's parser says
+  things that are not errors: an identifier cut to 63 bytes,
+  warnings about escapes. The caller's hook is called for each
+  as it happens; with no hook they are dropped.
+- **Settings come in an options struct**, `sq_options_t`:
+  PostgreSQL's `standard_conforming_strings`, `backslash_quote`
+  and `escape_string_warning`, and the notice hook. NULL is the
+  defaults.
 - **Bison keeps its `%union` of plain pointers.** The values on
   the parser's stack point at nodes the `sq_tree_t` already owns,
   so a parse that fails halfway is cleaned up by one destructor
@@ -90,11 +105,14 @@ struct sq_tree_t {                   // owns every node; move-only
     ~sq_tree_t();
 };
 
-int sq_parse(std::string_view sql, sq_tree_t& out);   // 0, or -1
+int sq_parse(std::string_view sql, const sq_options_t* opt,
+             sq_tree_t& out);        // 0, or -1
 sq_errnum_t sq_errnum(void);         // the calling thread's last error
 const char* sq_errmsg(void);
 const char* sq_sqlstate(void);       // five characters
 int sq_errpos(void);                 // character position, or 0
+const char* sq_errdetail(void);      // PostgreSQL's detail, or ""
+const char* sq_errhint(void);        // PostgreSQL's hint, or ""
 int sq_to_string(const sq_node_t* node, std::string& out);
 ```
 
@@ -245,6 +263,48 @@ Owed to later steps:
 - Verify: a token-dump test over the corpus; the
   unterminated-string test reports the same message and
   position as the oracle.
+
+**Done.** `src/scan.l` is sq's fork; its rules are PostgreSQL's
+and unchanged. A raise throws, as decided above, and does not
+return an error token.
+
+- **Checked against PostgreSQL's scanner**, not by reading:
+  `oracle --tokens` and `build/sq_tokens` print each token's
+  number, position and value, or the error with its position,
+  detail and hint. They agree on all 233 files of the regression
+  SQL, 716,066 tokens (`make corpus-test`), and on the 25 files
+  here (`make test`). The scanner reads any text, so the 122
+  files the parser cannot split are in this.
+- `test/scan/` holds one file for each of the scanner's errors,
+  since a scan stops at its first.
+- **What the oracle cannot show is in `test/test_scan.cc`**: the
+  notice hook, the three settings, positions in characters, and
+  that a scan ended by an error frees everything.
+- **The tokens are declared in `src/gram.y`** already, with no
+  rules: the scanner returns the grammar's numbers. They are in
+  PostgreSQL's order, so each has PostgreSQL's number.
+- **Keywords are found with a perfect hash**, as PostgreSQL
+  finds them: one hash and one comparison, with no probing and
+  no collisions. `gen/gen_keywords.py` is PostgreSQL's
+  `PerfectHash.pm` in Python, and what it writes from
+  `spec/kwlist.h` is PostgreSQL's own table, number for number
+  (`test/spec.sh`). Measured at `-O2` on keywords and plain
+  identifiers in equal parts: 8 ns a lookup, against 39 ns for
+  the binary search it replaced.
+- **Text with a NUL byte is refused**, as PostgreSQL refuses it
+  from a client. Text that is not valid UTF-8 is not refused: sq
+  scans it as PostgreSQL's scanner would, and digres is expected
+  to have checked what a client sent.
+- `scansup.c` and the pieces of `wchar.c`, `mbutils.c` and
+  `numutils.c` the scanner calls are in `src/scansup.cc` and
+  `src/utf8.cc`, for UTF-8 only.
+- flex and bison are now needed to build sq.
+
+Owed to later steps:
+
+- **The lookahead filter** of PostgreSQL's `parser.c`, between
+  scanner and grammar, comes with the grammar in step 4.
+- `sq_parse` takes its options and still refuses every input.
 
 ## 4. The grammar, one family at a time
 

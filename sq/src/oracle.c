@@ -6,6 +6,9 @@
  *   oracle --split DIR < file.sql  the same, and each statement's text
  *                                  to DIR/NNNNN.sql, its tree to
  *                                  DIR/NNNNN.out
+ *   oracle --tokens < file.sql     one token a line from the scanner
+ *                                  alone: its number, the byte offset
+ *                                  it begins at, and its value
  *
  * This is what sq's own parser is checked against (PLAN.md step 0):
  * text in, the raw parse tree out, as nodeToString() writes it. No
@@ -20,6 +23,8 @@
 #include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
 #include "parser/parser.h"
+#include "gramparse.h"
+#include "common/keywords.h"
 #include "utils/memutils.h"
 
 /* Read all of standard input into a string. */
@@ -65,16 +70,58 @@ static void write_split(const char *dir, int n, const char *sql, RawStmt *raw,
   fclose(f);
 }
 
+/* Scan sql with PostgreSQL's scanner alone and print each token. */
+static void print_tokens(const char *sql) {
+  core_yy_extra_type extra;
+  core_yyscan_t scanner;
+
+  scanner = scanner_init(sql, &extra, &ScanKeywords, ScanKeywordTokens);
+  for (;;) {
+    core_YYSTYPE value;
+    YYLTYPE location = 0;
+    int token = core_yylex(&value, &location, scanner);
+
+    if (token == 0)
+      break;
+    printf("%d %d", token, location);
+    switch (token) {
+    case IDENT:
+    case UIDENT:
+    case FCONST:
+    case SCONST:
+    case USCONST:
+    case BCONST:
+    case XCONST:
+    case Op:
+      printf(" %s", value.str);
+      break;
+    case ICONST:
+    case PARAM:
+      printf(" %d", value.ival);
+      break;
+    default:
+      if (token >= ABORT_P && token <= ZONE)
+        printf(" %s", value.keyword);
+      break;
+    }
+    printf("\n");
+  }
+  scanner_finish(scanner);
+}
+
 /* Parse the input and print each statement's tree, or the error. */
 int main(int argc, char **argv) {
   const char *split_dir = NULL;
+  bool tokens = false;
   char *sql;
   int status = 0;
 
   if (argc == 3 && strcmp(argv[1], "--split") == 0)
     split_dir = argv[2];
+  else if (argc == 2 && strcmp(argv[1], "--tokens") == 0)
+    tokens = true;
   else if (argc != 1) {
-    fprintf(stderr, "usage: oracle [--split DIR] < file.sql\n");
+    fprintf(stderr, "usage: oracle [--split DIR | --tokens] < file.sql\n");
     return 2;
   }
 
@@ -87,10 +134,12 @@ int main(int argc, char **argv) {
 
   PG_TRY();
   {
-    List *stmts = raw_parser(sql, RAW_PARSE_DEFAULT);
+    List *stmts = tokens ? NIL : raw_parser(sql, RAW_PARSE_DEFAULT);
     ListCell *lc;
     int n = 0;
 
+    if (tokens)
+      print_tokens(sql);
     foreach (lc, stmts) {
       RawStmt *raw = lfirst_node(RawStmt, lc);
       char *tree = nodeToString(raw->stmt);
@@ -111,6 +160,10 @@ int main(int argc, char **argv) {
     if (err->cursorpos > 0)
       printf(" at character %d", err->cursorpos);
     printf("\n");
+    if (tokens && err->detail)
+      printf("DETAIL: %s\n", err->detail);
+    if (tokens && err->hint)
+      printf("HINT: %s\n", err->hint);
     status = 1;
   }
   PG_END_TRY();

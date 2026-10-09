@@ -73,6 +73,6 @@ TEST_CASE("a failed parse frees the tree it was given") {
   sq_tree_t t;
   t.stmts.push_back(sq::make_node<sq_select_stmt_t>(t));
   sq::dup_string(t, "text");
-  CHECK(sq_parse("SELECT 1;", t) == -1);
+  CHECK(sq_parse("SELECT 1;", nullptr, t) == -1);
   CHECK(t.stmts.empty());
 }

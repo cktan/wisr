@@ -24,7 +24,7 @@ store_t &tree_access_t::store(sq_tree_t &tree) {
 }
 
 /* Copy text into tree's store and return the copy. */
-const char *dup_string(sq_tree_t &tree, std::string_view text) {
+char *dup_string(sq_tree_t &tree, std::string_view text) {
   store_t &store = tree_access_t::store(tree);
   auto copy = std::make_unique<char[]>(text.size() + 1);
   memcpy(copy.get(), text.data(), text.size());
