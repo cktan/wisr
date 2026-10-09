@@ -10,6 +10,7 @@ make test        build, and run the tests in test/
 make corpus      split PostgreSQL's regression SQL into build/corpus
 make clean       remove build/
 make format      clang-format src/ and test/
+make nodes       rewrite include/sq_nodes.h from spec/
 ```
 
 Two things are built, and `PLAN.md` says how the first replaces
@@ -17,8 +18,13 @@ the second:
 
 - **The library**, `build/libsq.a`, from `src/*.cc`, with its
   API in `include/sq.h`. It is being written and parses nothing
-  yet: `sq_parse` refuses every input. It uses nothing of
-  digres's or of `../sm`.
+  yet: `sq_parse` refuses every input. It has the nodes of a
+  parse tree and prints them. It uses nothing of digres's or of
+  `../sm`.
+  - `spec/` is PostgreSQL's node headers, unedited, and the list
+    of the structs its grammar can make.
+  - `gen/gen_nodes.py` writes `include/sq_nodes.h` from them,
+    which is committed, and the printer, which is built.
 - **The oracle**, `build/oracle`, from `src/*.c`: PostgreSQL's
   own parser, which the library is checked against. The rest of
   this file describes it.
@@ -99,9 +105,15 @@ that has to become per-thread for a threaded server
 
 ## Tests
 
-`build/test_sq` holds the library's tests, written with doctest,
-and `test/alone.sh` checks that neither it nor the library is
-built from anything outside `sq/`.
+`build/test_sq` holds the library's tests, written with doctest
+and linked with a leak checker. Around it:
+
+- `test/alone.sh`: neither the tests nor the library are built
+  from anything outside `sq/`.
+- `test/nodes.sh`: `include/sq_nodes.h` is what the generator
+  writes today.
+- `test/spec.sh`: `spec/` and the generated printer agree with
+  PostgreSQL as it is in `../dg`.
 
 `test/*.sql` are run through `build/oracle` and compared with
 `test/expected/*.out`. `test/run.sh --accept` rewrites the

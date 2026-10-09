@@ -11,8 +11,10 @@
  *     sq_errpos(). A successful call leaves them untouched.
  *   - Text is a std::string_view, read during the call and never
  *     retained: a tree holds copies of what it needs.
- *   - A tree owns its nodes. A node is valid for as long as its
- *     tree is, and nothing is freed by hand.
+ *   - A tree owns its nodes and their text. Both are valid for as
+ *     long as the tree is, and nothing is freed by hand.
+ *   - Anything else handed out is the caller's own: bytes are a
+ *     std::string, filled by the call.
  *   - No C++ exception crosses this boundary. Every call catches
  *     everything: std::bad_alloc becomes SQ_ERR_NOMEM, anything
  *     else SQ_ERR_EXCEPTION.
@@ -23,17 +25,22 @@
 #ifndef SQ_H
 #define SQ_H
 
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "sq_error.h"
+#include "sq_nodes.h"
 
-/* One node of a parse tree. */
-struct sq_node_t;
+namespace sq {
+struct store_t;
+struct tree_access_t;
+} // namespace sq
 
 /*
- * The result of one parse, which owns every node in it. It can be
- * moved and not copied; destroying it destroys the nodes.
+ * The result of one parse, which owns every node in it and every
+ * piece of text a node points at. It can be moved and not copied;
+ * destroying it destroys them all. The nodes are in sq_nodes.h.
  */
 struct sq_tree_t {
     /* The statements, in the order written. */
@@ -45,6 +52,12 @@ struct sq_tree_t {
     sq_tree_t& operator=(sq_tree_t&& other) noexcept;
     sq_tree_t(const sq_tree_t&) = delete;
     sq_tree_t& operator=(const sq_tree_t&) = delete;
+
+private:
+    friend struct sq::tree_access_t;
+
+    /* What the tree owns; NULL until something is made for it. */
+    sq::store_t* m_store = nullptr;
 };
 
 /* ---- errors: the calling thread's error state ---- */
@@ -72,5 +85,16 @@ int sq_errpos(void);
  * out is empty.
  */
 int sq_parse(std::string_view sql, sq_tree_t& out);
+
+/* ---- printing ---- */
+
+/*
+ * Write node, and everything under it, into out as PostgreSQL's
+ * nodeToString() writes its own: "{SELECTSTMT :distinctClause <>
+ * ...}". The names in the text are PostgreSQL's, and every location
+ * is written as -1, so that two parses of the same statement print
+ * the same. A NULL node is "<>".
+ */
+int sq_to_string(const sq_node_t* node, std::string& out);
 
 #endif /* SQ_H */

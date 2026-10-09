@@ -5,6 +5,7 @@
 #   make corpus      split PG_SQL's files into build/corpus
 #   make clean       remove build/
 #   make format      clang-format src/ and test/
+#   make nodes       rewrite include/sq_nodes.h from spec/
 #
 # Two things are built here (PLAN.md).
 #
@@ -24,7 +25,7 @@ OPT ?= -O0 -g
 LIB_CXXFLAGS := -std=c++20 -Wall -Wextra $(OPT) -Iinclude -Isrc -MMD -MP
 
 LIB_SRCS  := $(wildcard src/*.cc)
-LIB_OBJS  := $(LIB_SRCS:src/%.cc=build/src/%.o)
+LIB_OBJS  := $(LIB_SRCS:src/%.cc=build/src/%.o) build/gen/print_nodes.o
 TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=build/test/%.o)
 LIB       := build/libsq.a
@@ -35,8 +36,26 @@ $(LIB): $(LIB_OBJS)
 	rm -f $@
 	$(AR) rcs $@ $^
 
+# Linked with the address sanitizer's runtime for its leak checker: a
+# node or a string that a tree fails to free fails the tests.
 $(TEST_BIN): $(TEST_OBJS) $(LIB)
-	$(CXX) $(LIB_CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) -lpthread
+	$(CXX) $(LIB_CXXFLAGS) -fsanitize=address -o $@ $(TEST_OBJS) $(LIB) -lpthread
+
+# The nodes are PostgreSQL's, generated from its headers in spec/.
+# include/sq_nodes.h is committed, so that the API can be read: `make
+# nodes` rewrites it, and test/nodes.sh fails when it is out of date.
+# The printer over the nodes is built and not committed.
+GEN_NODES := gen/gen_nodes.py gen/nodespec.py $(wildcard spec/*)
+
+nodes:
+	python3 gen/gen_nodes.py header > include/sq_nodes.h
+
+build/gen/print_nodes.cc: $(GEN_NODES)
+	@mkdir -p $(dir $@)
+	python3 gen/gen_nodes.py printer > $@
+
+build/gen/%.o: build/gen/%.cc
+	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
 
 build/src/%.o: src/%.cc
 	@mkdir -p $(dir $@)
@@ -86,7 +105,7 @@ DG_SRCS := \
 DG_OBJS := $(patsubst $(SRC)/%.c,build/dg/%.o,$(DG_SRCS))
 OBJS    := build/oracle.o build/host.o $(DG_OBJS)
 
-.PHONY: all test corpus clean format gen
+.PHONY: all test corpus clean format gen nodes
 all: $(LIB) $(TEST_BIN) build/oracle
 
 # The generated sources and headers are digres's to make.
@@ -110,6 +129,8 @@ build/oracle: $(OBJS)
 test: all
 	$(TEST_BIN)
 	test/alone.sh
+	test/nodes.sh
+	test/spec.sh
 	test/run.sh
 	test/split.sh
 

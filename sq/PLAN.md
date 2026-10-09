@@ -69,14 +69,21 @@ exposing only C++ vector, C++ string and C++ string-view.
     rows that follow are not SQL: the client sends them as
     protocol messages, and digres's `COPY` code reads them.
     `\copy` is psql's.
-- **Node structs are written by hand to begin with.** Whether to
-  generate them, and the printer, is decided in step 2 after the
-  first dozen.
+- **The nodes are generated from PostgreSQL's own headers.**
+  `spec/` holds `parsenodes.h`, `primnodes.h` and `value.h`
+  unedited; `gen/gen_nodes.py` writes `include/sq_nodes.h` and
+  the printer from them, and is to write digres's converter.
+  Porting to a later PostgreSQL is replacing the headers.
+- **The node header is committed**, so the API can be read. The
+  tests fail when it is not what the generator writes.
+- **Text in a node is a `const char*`**, owned by the tree. NULL
+  means absent, which PostgreSQL tells apart from empty:
+  `COMMENT ... IS NULL` and `IS ''` are different trees.
 
 ## The interface, in outline
 
 ```cpp
-struct sq_node_t { sq_nodetag_t tag; int location; };
+struct sq_node_t { sq_nodetag_t tag; };   // sq_nodes.h has the rest
 
 struct sq_tree_t {                   // owns every node; move-only
     std::vector<sq_node_t*> stmts;   // one per statement
@@ -88,7 +95,7 @@ sq_errnum_t sq_errnum(void);         // the calling thread's last error
 const char* sq_errmsg(void);
 const char* sq_sqlstate(void);       // five characters
 int sq_errpos(void);                 // character position, or 0
-std::string sq_to_string(const sq_node_t* node);
+int sq_to_string(const sq_node_t* node, std::string& out);
 ```
 
 `sq_parse` takes a list of statements. digres also parses a type
@@ -182,7 +189,7 @@ the tests.
   needs: constants, column references, operators, function
   calls, `sq_select_stmt_t` and what hangs from it.
 - A list is a `std::vector<sq_node_t*>`; text is a
-  `std::string`.
+  `const char*`.
 - `sq_tree_t` records each node as it is made and destroys them
   all.
 - The printer, with its table of PostgreSQL's names.
@@ -190,6 +197,40 @@ the tests.
 - Verify: tests build a tree by hand, print it, and compare with
   the oracle's text for the same statement; a leak checker finds
   nothing after the tree is destroyed.
+
+**Done**, and for every node, not the first slice: generating
+them made all 216 cost what a dozen would.
+
+- **216 structs and 55 enums**, in `include/sq_nodes.h`. They
+  are the structs the grammar can make and all those point at,
+  listed in `spec/nodes.list`.
+- **The printer is checked two ways.** Trees built by hand print
+  as the oracle prints the same statements. And for each of the
+  208 structs the generator prints, its fields, their order and
+  their kinds are those of PostgreSQL's own generated printer
+  (`test/spec.sh`). The other eight are printed by hand, as
+  PostgreSQL prints them by hand.
+- **The tests are linked with a leak checker.** Made to leak on
+  purpose, the tree failed them.
+- `sq_to_string` fills a `std::string` and returns `int`, as
+  every other call does: it can run out of memory.
+- A list that stands where any node may — an element of another
+  list, or a field typed `sq_node_t*` — is an `sq_list_t`.
+- `test/spec.sh` and `gen/check_pg.py` read `../dg`. They go
+  with the oracle in step 6.
+
+Owed to later steps:
+
+- **PostgreSQL's `#define` constants** that the grammar stores
+  in nodes — `CURSOR_OPT_`, `FRAMEOPTION_` and the like — are
+  not generated yet. Step 4 needs them.
+- **`sq_tree_t::stmts` holds statements, not `RawStmt`s.**
+  digres wants each statement's position and length, which
+  `sq_raw_stmt_t` has. Settled when the grammar's top rule is
+  ported.
+- **An `Oid` field is 32 bits**, as in PostgreSQL. digres's is
+  to be 64 (`../sm/PART4.md` §10). Every such field in a parse
+  tree is the analyzer's to fill and zero from sq.
 
 ## 3. The scanner
 

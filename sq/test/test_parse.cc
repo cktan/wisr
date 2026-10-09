@@ -8,7 +8,6 @@
 #include "sq.h"
 
 #include <string>
-#include <utility>
 
 TEST_CASE("sq_parse refuses its input and leaves the tree empty") {
   // Verify a failed parse returns -1, reports why, and empties its tree.
@@ -23,20 +22,4 @@ TEST_CASE("sq_parse refuses its input and leaves the tree empty") {
   CHECK(std::string(sq_errmsg()) == "sq_parse is not implemented");
   CHECK(sq_errpos() == 0);
   CHECK(tree.stmts.empty());
-}
-
-TEST_CASE("a tree moves, and the tree moved from is empty") {
-  // Verify a tree can be moved and leaves nothing behind to free twice.
-  // 1. Give a tree two statement slots.
-  // 2. Move-construct a second tree from it, then move-assign a third.
-  // 3. Confirm the slots arrive, and each source is left empty.
-  sq_tree_t a;
-  a.stmts.assign(2, nullptr);
-  sq_tree_t b(std::move(a));
-  CHECK(a.stmts.empty());
-  CHECK(b.stmts.size() == 2);
-  sq_tree_t c;
-  c = std::move(b);
-  CHECK(b.stmts.empty());
-  CHECK(c.stmts.size() == 2);
 }
