@@ -190,6 +190,19 @@ struct entry_t {
 };
 
 /*
+ * Ask the host's evaluator about a row of values r. The evaluator
+ * may not throw, and its type, a std::function, cannot say so:
+ * asked from here, one that throws ends the process, where it
+ * would otherwise unwind through a write or a build.
+ */
+int ask_evaluator(const sm3::index_eval_fn &eval, const sm3::table_def_t &def,
+                  const sm3::index_def_t &x, const vals_t &r, bool &belongs,
+                  std::vector<std::string> &own,
+                  std::span<bool> own_null) noexcept {
+  return eval(def, x, r.d, r.null, belongs, own, own_null);
+}
+
+/*
  * Index i's entry for a row of values r. A plain key column is
  * read from r; whether the row belongs, and each key column that
  * is an expression, are the evaluator's, which is shown r
@@ -214,8 +227,8 @@ int make_entry(const sm3::table_t *t, size_t i, const vals_t &r, entry_t &e) {
     }
     e.own.assign(nexpr, std::string());
     // The host's answer; its failure is this call's.
-    if (eval(*t->def, x, r.d, r.null, e.belongs, e.own,
-             {own_null.get(), nexpr}) != 0) {
+    if (ask_evaluator(eval, *t->def, x, r, e.belongs, e.own,
+                      {own_null.get(), nexpr}) != 0) {
       return -1;
     }
     if (!e.belongs) {

@@ -394,7 +394,8 @@ static int set_evaluator(sm_env_t *env, sm3::catalog_t *cat) {
       [fn, ctx](const sm3::table_def_t &table, const sm3::index_def_t &index,
                 std::span<const sm2::datum_t> values,
                 std::span<const bool> isnull, bool &belongs,
-                std::vector<std::string> &out, std::span<bool> out_isnull) {
+                std::vector<std::string> &out,
+                std::span<bool> out_isnull) noexcept {
         return fn(ctx, table.oid, index.oid, index.eval, values.data(),
                   isnull.data(), values.size(), &belongs, out,
                   out_isnull.data());

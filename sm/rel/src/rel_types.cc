@@ -373,7 +373,8 @@ bool parse_index_eval(const std::string &blob, index_eval_t &e) {
 /* rel's evaluator; see rel.h. */
 int index_eval(void *, uint64_t, uint64_t, const std::string &eval,
                const sm_datum_t *values, const bool *isnull, size_t n,
-               bool *belongs, std::vector<std::string> &out, bool *out_isnull) {
+               bool *belongs, std::vector<std::string> &out,
+               bool *out_isnull) noexcept {
   index_eval_t e;
   if (!parse_index_eval(eval, e)) {
     return sm_seterr(SM_ERR_INVALID, "rel: an index's blob is not rel's");

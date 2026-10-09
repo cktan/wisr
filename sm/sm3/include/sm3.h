@@ -610,7 +610,10 @@ int create_index(session_t* session, uint64_t table,
  * by-reference value of the row points at memory good only for
  * the call. It returns 0, or -1 with the error set (sm1::seterr).
  *
- * It must not throw nor longjmp out; it must give the same answer
+ * It must not throw: it fails by returning -1. A std::function's
+ * type cannot say noexcept, as sm.h's evaluator does, so sm3 calls
+ * it from a function that is, and one that throws ends the
+ * process. It must give the same answer
  * for the same row image every time; it may be called from any
  * thread, the build's workers among them; and it must not call the
  * storage manager on the session that is writing.

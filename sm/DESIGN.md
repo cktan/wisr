@@ -264,9 +264,10 @@ design:
   glue is a C++ file, as `rel` is. It stays C in shape: free
   functions named `sm_*`, opaque handles, an `int` result with
   the thread-local error, callbacks that return a code and
-  never throw. The log hook, which returns nothing and runs
-  where an error has nowhere to go, is `noexcept` in its type:
-  one that throws ends the process. Four C++ types may cross
+  never throw. The two callbacks, the log hook and the index
+  evaluator, run where an error has nowhere to go, and are
+  `noexcept` in their types: one that throws ends the
+  process. Four C++ types may cross
   it and no others.
   `std::string` and `std::vector`, of plain C types, of
   `sm_datum_t` or of strings, carry owned data only: a

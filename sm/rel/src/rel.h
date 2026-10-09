@@ -206,7 +206,7 @@ bool parse_index_eval(const std::string &blob, index_eval_t &e);
 int index_eval(void *ctx, uint64_t table, uint64_t index,
                const std::string &eval, const sm_datum_t *values,
                const bool *isnull, size_t n, bool *belongs,
-               std::vector<std::string> &out, bool *out_isnull);
+               std::vector<std::string> &out, bool *out_isnull) noexcept;
 
 /* Construct a varlena buffer from raw string bytes. */
 void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out);

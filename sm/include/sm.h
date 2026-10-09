@@ -634,8 +634,12 @@ int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index,
  * sets its flag in out_isnull; both come sized to the count of
  * expression columns. It returns 0, or -1 with the error set.
  *
- * It must not throw nor longjmp out. It must give the same answer
- * for the same row every time. It may be called from any thread,
+ * It is noexcept: it runs on the index build's workers and
+ * inside a write, where what it throws has nowhere to go. It
+ * fails by returning -1; an evaluator not declared noexcept is
+ * not accepted, and one that throws all the same ends the
+ * process. It must give the same answer for the same row every
+ * time. It may be called from any thread,
  * the index build's workers among them, and must not call this
  * API on the session that is writing.
  */
@@ -644,7 +648,7 @@ typedef int (*sm_index_eval_fn)(void* ctx, uint64_t table, uint64_t index,
                                 const sm_datum_t* values, const bool* isnull,
                                 size_t n, bool* belongs,
                                 std::vector<std::string>& out,
-                                bool* out_isnull);
+                                bool* out_isnull) noexcept;
 
 /*
  * Give env its evaluator: once, before any database is opened,

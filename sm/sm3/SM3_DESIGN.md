@@ -623,7 +623,13 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   it. The build shows it each row's newest image under the
   row's lock, as it reads any row. An evaluator that fails
   fails the write with its error, and fails a build, which
-  keeps the error as its reason. In the C API the host gives
+  keeps the error as its reason. It fails by returning, never
+  by throwing: it runs inside a write and on the build's
+  workers, where what it threw would have nowhere to go, so
+  one that throws ends the process. The C API's evaluator is
+  `noexcept` in its type; sm3's own is a `std::function`,
+  whose type cannot say so, and is called from a function
+  that is. In the C API the host gives
   its evaluator to an environment with
   `sm_set_index_evaluator`, and fails from it with
   `sm_seterr`. `rel` has one of its own, for a predicate that
