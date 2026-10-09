@@ -1,5 +1,11 @@
 # PLAN — sq
 
+**Every step below is done.** sq is a library with the interface
+the objective asks for, and digres parses with it. Each step's
+section keeps what was planned and, under **Done**, what was
+built and where it differed; `DESIGN.md` describes the result.
+What is left is in "What is left", at the end.
+
 Objective: make this a module with clear C-like interface,
 exposing only C++ vector, C++ string and C++ string-view.
 
@@ -520,6 +526,12 @@ true.
   both describes the boundary that step ends.
 - Step 7: `../dg/README.md`, and the root `README.md`.
 
+**Done**, with the steps: each changed the documents it made
+untrue. `README.md` and `DESIGN.md` here were rewritten in step
+6 and brought up to date after step 7; `../dg/README.md` and
+`../dg/WORKNOTE.md` say what digres's parser now is; the root
+`README.md` and `CLAUDE.md` name sq as a part of the repository.
+
 ## Not planned
 
 - **The analyzer.** It stays in `../dg`, reading PostgreSQL's
@@ -532,6 +544,24 @@ true.
 ## Against the spike
 
 The first target is `SELECT 1 + 1` running in digres
-(`../sm/PART4.md` §10). Nothing here is on that path until step
-7, and digres can run on its own parser until then. This plan
-gives way to the spike whenever the two compete.
+(`../sm/PART4.md` §10). Nothing here was on that path until step
+7. It is now: what digres parses that statement with is sq.
+
+## What is left
+
+None of it is owed to a step. Each is a choice made on the way
+and written where it was made:
+
+- **A tree holds more memory than its nodes need**, since a
+  list assigned to a field is copied (`DESIGN.md` §9).
+- **The locations in a tree are not held by a test that stays.**
+  They were compared with PostgreSQL's once, in step 7.
+- **The expected files and digests cannot be remade** without
+  PostgreSQL's parser. Porting sq to a later PostgreSQL begins
+  with making them from that one (`DESIGN.md` §2, §8).
+- **`make corpus-test` needs PostgreSQL 18.6's regression SQL**,
+  which is not in this repository.
+- **An `Oid` field is 32 bits**; digres's is to be 64.
+- **Text is not checked to be UTF-8.**
+- **`spi.c` in digres** can still be handed a PL/pgSQL parse
+  mode, which `raw_parser()` now refuses.

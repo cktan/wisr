@@ -1,8 +1,9 @@
 ## Before Starting Any Work
 
-The repository has two parts: `sm/`, the storage stack, and
+The repository has three parts: `sm/`, the storage stack;
 `dg/`, digres, the fork of PostgreSQL that runs on it
-(`sm/PART4.md` §10).
+(`sm/PART4.md` §10); and `sq/`, the SQL parser digres links,
+a library of its own (`sq/DESIGN.md`).
 
 Read `sm/README.md` for the layout of the stack's levels, then
 the design document of the level you are working in —

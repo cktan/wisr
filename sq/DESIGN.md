@@ -59,6 +59,7 @@ over by reading two files side by side.
 | Node constructors | `src/makefuncs.cc` | PostgreSQL's `makefuncs.c`, renamed |
 | The nodes, their printer, copy and equality | generated | written by `gen/gen_nodes.py` from `spec/` |
 | The keyword hash | generated | `gen/gen_keywords.py`: PostgreSQL's `PerfectHash.pm` in Python |
+| digres's converter | generated, into `../dg` | by `gen/gen_nodes.py`: sq's nodes to PostgreSQL's own (§11) |
 | The tree, errors, lists, UTF-8 | `src/tree.cc`, `error.cc`, `list.cc`, `utf8.cc` | sq's own |
 
 What a fork changes is the code around the rules, never a rule:
@@ -263,9 +264,42 @@ the committed node header is what the generator writes; and
   it parses anything. digres refuses what it does not handle,
   when it meets the node.
 - **PostgreSQL's nodes.** digres's analyzer reads PostgreSQL's
-  own node structs; a converter in `../dg` turns sq's tree into
-  those (`PLAN.md` step 7). sq does not know them.
+  own node structs. sq does not know them: turning its tree into
+  those is digres's (§11).
 - **Deparsing**, a tree back to SQL text.
 - **Other encodings**, and the PL/pgSQL parse modes: their rules
   are in the grammar, as they are in PostgreSQL's, with no call
   that reaches them.
+
+## 11. How digres uses it
+
+digres links `build/libsq.a` and has no grammar or scanner for
+SQL of its own. Its `raw_parser()` is sq's one caller there
+(`../dg/src/backend/parser/parser.c`):
+
+- It passes the session's three settings in `sq_options_t`.
+- It turns sq's tree into PostgreSQL's nodes with a converter,
+  `sq_convert.c`. The converter is digres's code, and the only
+  code that names both sets of nodes; sq's generator writes it,
+  when digres is built, because it is the same walk over the
+  same fields as the printer.
+- It raises sq's error as the server's own, with its SQLSTATE,
+  position, detail and hint.
+
+Two things there follow from sq being C++ under a server that
+leaves an error by `longjmp`, which runs no destructor:
+
+- **The tree is deleted by hand**, in a `PG_FINALLY`, after it
+  has been converted.
+- **A notice is kept and reported after sq returns.** Reported
+  from sq's hook, an error raised while reporting would jump out
+  through sq.
+
+digres is checked with sq's own tests. `postgres --parse` prints
+what `build/sq_parse` prints, for `raw_parser()`, so the
+expected files and digests of §8 hold digres's parser, converter
+included, to what PostgreSQL's printed. They do not hold it to
+the locations in a tree, which the printed text hides. Those
+were compared once, PostgreSQL's parser against sq and the
+converter in one process, over every text of §8, before
+PostgreSQL's parser was removed from digres.

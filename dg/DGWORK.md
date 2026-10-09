@@ -39,6 +39,11 @@ The link has 383 undefined symbols.
 
 Make it `sq/`, beside `sm/`.
 
+*Done, and further than this says: sq is the parser alone, with
+its own nodes and no base under it, and digres links it.
+`WORKNOTE.md` step 5 and `../sq/PLAN.md` have what was built.
+The base stayed in digres.*
+
 - Contents: `src/common`, `src/port`, and from the server
   `nodes`, `utils/mmgr`, `utils/error`, `utils/mb`, and the four
   raw-parser files, `gram.y`, `scan.l`, `parser.c` and
