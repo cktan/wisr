@@ -1,0 +1,2 @@
+ERROR: invalid Unicode escape at character 147
+HINT: Unicode escapes must be \uXXXX or \UXXXXXXXX.

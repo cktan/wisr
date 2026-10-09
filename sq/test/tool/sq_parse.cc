@@ -3,6 +3,9 @@
  *
  *   sq_parse < file.sql          one tree a statement, or the error
  *   sq_parse --type-name < file  the text parsed as one type name
+ *   sq_parse --locations < file.sql
+ *                                each statement whole, with where it
+ *                                was written, and every location shown
  *
  * What it prints is what test/run.sh and test/corpus.py compare with
  * PostgreSQL's parser's answer for the same text.
@@ -18,9 +21,11 @@
 #include "sq.h"
 
 /* Print one tree, in PostgreSQL's nodeToString() text. */
-static int print_tree(const sq_node_t *node) {
+static int print_tree(const sq_node_t *node, bool locations = false) {
   std::string text;
-  if (sq_to_string(node, text) != 0) {
+  int rc = locations ? sq_to_string_with_locations(node, text)
+                     : sq_to_string(node, text);
+  if (rc != 0) {
     printf("ERROR: %s\n", sq_errmsg());
     return 1;
   }
@@ -33,6 +38,7 @@ int main(int argc, char **argv) {
   std::string sql((std::istreambuf_iterator<char>(std::cin)),
                   std::istreambuf_iterator<char>());
   bool type_name = argc == 2 && strcmp(argv[1], "--type-name") == 0;
+  bool locations = argc == 2 && strcmp(argv[1], "--locations") == 0;
   sq_tree_t tree;
   sq_type_name_t *type = nullptr;
   int rc = type_name ? sq_parse_type_name(sql, nullptr, tree, &type)
@@ -56,7 +62,8 @@ int main(int argc, char **argv) {
     return print_tree(type);
   }
   for (const sq_raw_stmt_t *raw : tree.stmts) {
-    if (print_tree(raw->stmt) != 0) {
+    // With locations, the statement's own place in the text is shown too.
+    if (print_tree(locations ? raw : raw->stmt, locations) != 0) {
       return 1;
     }
   }

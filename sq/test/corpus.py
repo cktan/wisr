@@ -3,21 +3,26 @@
 
     test/corpus.py DIR                    compare with test/regress.digest
     test/corpus.py DIR --write            write test/regress.digest
-    test/corpus.py DIR --tokens CMD --parse CMD
-                                          the scanner and parser to run
+    test/corpus.py DIR --tokens CMD --parse CMD --locations CMD
+                                          the programs to run
 
 DIR is PostgreSQL 18.6's src/test/regress/sql. For each script in it
-this takes two digests:
+this takes three digests:
 
-  tokens  of what the scanner prints for the whole script: every
-          token's number, where it begins and its value, or the error;
-  pieces  of what the parser prints for each piece of the script, one
-          after another: the trees, or the error with its position,
-          detail and hint.
+  tokens     of what the scanner prints for the whole script: every
+             token's number, where it begins and its value, or the
+             error;
+  pieces     of what the parser prints for each piece of the script,
+             one after another: the trees, or the error with its
+             position, detail and hint;
+  locations  of the same trees printed whole, with where each
+             statement was written and every location in it shown.
 
-test/regress.digest holds both for every script, as PostgreSQL's own
-scanner and parser gave them: it was written from them, before sq
-stopped building them beside its own (PLAN.md step 6). A digest that differs names
+test/regress.digest holds all three for every script, as PostgreSQL's
+own scanner and parser gave them: the first two were written from
+them before sq stopped building them beside its own (PLAN.md step 6),
+and the third from PostgreSQL's parser as it is in this repository's
+history, built again for the purpose. A digest that differs names
 the script; to see what differs, run the tools on its pieces in
 build/pieces.
 
@@ -70,7 +75,7 @@ def cut(text, tokens):
     return pieces
 
 
-def digest_script(path, tokens_cmd, parse_cmd, keep):
+def digest_script(path, tokens_cmd, parse_cmd, locations_cmd, keep):
     """One script's line of the digest file."""
     whole = path.read_bytes()
     tokens = hashlib.sha256(run(tokens_cmd, whole)).hexdigest()
@@ -79,6 +84,7 @@ def digest_script(path, tokens_cmd, parse_cmd, keep):
     text = b"\n".join(l for l in lines if not l.startswith(b"\\"))
     pieces = cut(text, run(tokens_cmd, text))
     trees = hashlib.sha256()
+    locations = hashlib.sha256()
     for n, piece in enumerate(pieces, 1):
         piece += b"\n"
         if keep:
@@ -86,7 +92,11 @@ def digest_script(path, tokens_cmd, parse_cmd, keep):
             where.mkdir(parents=True, exist_ok=True)
             (where / f"{n:05d}.sql").write_bytes(piece)
         trees.update(run(parse_cmd, piece))
-    return f"{path.stem} {len(pieces)} {tokens} {trees.hexdigest()}"
+        locations.update(run(locations_cmd, piece))
+    return (
+        f"{path.stem} {len(pieces)} {tokens} {trees.hexdigest()} "
+        f"{locations.hexdigest()}"
+    )
 
 
 def main():
@@ -96,8 +106,11 @@ def main():
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--tokens", default=str(ROOT / "build" / "sq_tokens"))
     ap.add_argument("--parse", default=str(ROOT / "build" / "sq_parse"))
+    ap.add_argument("--locations", default=None)
     args = ap.parse_args()
 
+    if args.locations is None:
+        args.locations = args.parse + " --locations"
     scripts = sorted(args.dir.glob("*.sql"))
     if not scripts:
         sys.exit(f"corpus: no *.sql in {args.dir}")
@@ -105,7 +118,13 @@ def main():
     with ThreadPoolExecutor(max_workers=4) as pool:
         got = list(
             pool.map(
-                lambda p: digest_script(p, args.tokens.split(), args.parse.split(), keep),
+                lambda p: digest_script(
+                    p,
+                    args.tokens.split(),
+                    args.parse.split(),
+                    args.locations.split(),
+                    keep,
+                ),
                 scripts,
             )
         )

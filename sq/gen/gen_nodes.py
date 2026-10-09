@@ -345,10 +345,7 @@ def print_calls(model, struct, access, prefix, out):
             print_calls(model, f.ctype, member + ".", label + ".", out)
             continue
         out.write(f'  s += " :{label} ";\n')
-        if kind == "location":
-            # nodeToString() hides locations, so that trees compare equal.
-            out.write('  s += "-1";\n')
-        elif kind == "enum":
+        if kind == "enum":
             out.write(f"  out_int(s, static_cast<int>({member}));\n")
         else:
             out.write(f"  out_{kind}(s, {member});\n")

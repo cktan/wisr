@@ -552,10 +552,18 @@ The first target is `SELECT 1 + 1` running in digres
 None of it is owed to a step. Each is a choice made on the way
 and written where it was made:
 
-- **A tree holds more memory than its nodes need**, since a
-  list assigned to a field is copied (`DESIGN.md` §9).
-- **The locations in a tree are not held by a test that stays.**
-  They were compared with PostgreSQL's once, in step 7.
+- **A tree holds 6% more memory than its nodes need**, since a
+  list assigned to a field is copied (`DESIGN.md` §9). Measured,
+  and left: moving the lists would recover part of 6% and make
+  an action that uses a list twice a bug.
+- ~~The locations in a tree are not held by a test that
+  stays.~~ They are now. `sq_to_string_with_locations` prints
+  them; `expected/*.loc` and a third digest in
+  `test/regress.digest` hold what PostgreSQL's parser gave, for
+  the 25 files of statements here and the 49,034 pieces. That
+  parser was built again from this repository's history to
+  write them. digres's `postgres --parse --locations` is held to
+  the same files.
 - **The expected files and digests cannot be remade** without
   PostgreSQL's parser. Porting sq to a later PostgreSQL begins
   with making them from that one (`DESIGN.md` §2, §8).

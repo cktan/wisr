@@ -42,7 +42,8 @@ for (const sq_raw_stmt_t* raw : tree.stmts) {
 - **`sq_parse`** parses a list of statements into a tree.
   **`sq_parse_type_name`** parses one type name.
   **`sq_to_string`** prints a node as PostgreSQL's
-  `nodeToString()` would.
+  `nodeToString()` would, and
+  **`sq_to_string_with_locations`** with every location shown.
 - **A call returns 0 or -1.** After -1 the calling thread reads
   what went wrong: `sq_errmsg`, `sq_sqlstate`, `sq_errpos`, and
   PostgreSQL's `sq_errdetail` and `sq_errhint`.
@@ -82,7 +83,8 @@ it to what PostgreSQL's own scanner and parser printed.
 
 - **`test/run.sh`**: each SQL file here is parsed, and for some
   scanned, and what sq prints is compared with
-  `expected/NAME.out` or `NAME.tok` beside it. 93 files:
+  `expected/NAME.out`, or `NAME.loc` for trees with their
+  locations, or `NAME.tok` for tokens. 93 files:
   - `test/*.sql`: statements of every family, and three errors;
   - `test/scan/`: literals and operators, and one file for each
     error the scanner raises;

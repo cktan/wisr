@@ -9,19 +9,23 @@
 #    DIR/expected/NAME.out: one tree a statement in PostgreSQL's
 #    nodeToString() text, or the error with its position, detail and
 #    hint. The files of test/types are each parsed as one type name.
-# 2. Scan each file of test and test/scan with build/sq_tokens, and
+# 2. Parse each file of test and test/scan again and print each
+#    statement whole, with every location shown, and confirm it prints
+#    DIR/expected/NAME.loc.
+# 3. Scan each file of test and test/scan with build/sq_tokens, and
 #    confirm it prints DIR/expected/NAME.tok: every token's number,
 #    where it begins and its value, or the error.
 #
 # The expected files are PostgreSQL's own answers: each was written by
 # its parser and scanner, before sq stopped building them beside its
-# own (PLAN.md step 6). --accept replaces them with sq's, which is to
+# own (PLAN.md step 6); the .loc files by its parser as it is in this
+# repository's history, built again for the purpose. --accept replaces them with sq's, which is to
 # say with nothing to check sq against: read the difference first.
 #
 # SQ_PARSE names another program to parse with, in place of
 # build/sq_parse: one that prints what it does, and takes --type-name.
 # digres checks its own parser this way, which is sq and a converter.
-# Step 2 is then left out: it is sq's scanner alone, and needs sq's
+# Step 3 is then left out: it is sq's scanner alone, and needs sq's
 # own tools built.
 #
 # What differs is left in build/test/DIR/NAME.out or .tok, and .diff.
@@ -55,6 +59,8 @@ check test out $parse
 check test/scan out $parse
 check test/errors out $parse
 check test/types out $parse --type-name
+check test loc $parse --locations
+check test/scan loc $parse --locations
 if [ -z "$SQ_PARSE" ]; then
   check test tok build/sq_tokens
   check test/scan tok build/sq_tokens

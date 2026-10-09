@@ -15,7 +15,19 @@
 #include "error.h"
 #include "sq.h"
 
+namespace {
+
+/* Whether the calling thread's print is to show locations. */
+thread_local bool t_write_locations = false;
+
+} // namespace
+
 namespace sq {
+
+/* Write a location, or -1 in its place. */
+void out_location(std::string &s, int location) {
+  out_int(s, t_write_locations ? location : -1);
+}
 
 /* Write text as a token that PostgreSQL's node reader would read back. */
 void out_string(std::string &s, const char *text) {
@@ -97,7 +109,8 @@ void out_a_const(std::string &s, const sq_a_const_t &n) {
     s += " :val ";
     out_node(s, n.val);
   }
-  s += " :location -1";
+  s += " :location ";
+  out_location(s, n.location);
 }
 
 /* The word PostgreSQL prints before an A_Expr's name, for its kind. */
@@ -145,7 +158,12 @@ void out_a_expr(std::string &s, const sq_a_expr_t &n) {
   out_node(s, n.lexpr);
   s += " :rexpr ";
   out_node(s, n.rexpr);
-  s += " :rexpr_list_start -1 :rexpr_list_end -1 :location -1";
+  s += " :rexpr_list_start ";
+  out_location(s, n.rexpr_list_start);
+  s += " :rexpr_list_end ";
+  out_location(s, n.rexpr_list_end);
+  s += " :location ";
+  out_location(s, n.location);
 }
 
 /* Write a BoolExpr: its operator as a word, not a number. */
@@ -164,7 +182,8 @@ void out_bool_expr(std::string &s, const sq_bool_expr_t &n) {
   }
   s += " :args ";
   out_list(s, n.args);
-  s += " :location -1";
+  s += " :location ";
+  out_location(s, n.location);
 }
 
 } // namespace
@@ -226,19 +245,33 @@ void out_node(std::string &s, const sq_node_t *node) {
 
 } // namespace sq
 
-/* Write node into out as PostgreSQL's nodeToString() would. */
-int sq_to_string(const sq_node_t *node, std::string &out) {
+/* Write node into out, with or without its locations. */
+static int to_string(const sq_node_t *node, std::string &out, bool locations) {
   try {
     out.clear();
+    t_write_locations = locations;
     sq::out_node(out, node);
+    t_write_locations = false;
     return 0;
   } catch (const std::bad_alloc &) {
+    t_write_locations = false;
     out.clear();
     return sq::set_error(SQ_ERR_NOMEM, sq::sqlstate_out_of_memory, 0,
                          "out of memory");
   } catch (...) {
+    t_write_locations = false;
     out.clear();
     return sq::set_error(SQ_ERR_EXCEPTION, sq::sqlstate_internal_error, 0,
                          "unexpected exception in sq_to_string");
   }
+}
+
+/* Write node into out as PostgreSQL's nodeToString() would. */
+int sq_to_string(const sq_node_t *node, std::string &out) {
+  return to_string(node, out, false);
+}
+
+/* Write node into out as PostgreSQL's nodeToStringWithLocations() would. */
+int sq_to_string_with_locations(const sq_node_t *node, std::string &out) {
+  return to_string(node, out, true);
 }

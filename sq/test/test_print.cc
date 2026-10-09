@@ -212,6 +212,32 @@ TEST_CASE("text is escaped as PostgreSQL's node reader needs") {
         "{A_CONST :val \"\\<a>\" :location -1}");
 }
 
+TEST_CASE("locations are hidden, or shown when asked for") {
+  // Verify the two printing calls differ only in the locations.
+  // 1. Build a column reference inside a statement, each with a location.
+  // 2. Print it the plain way: every location is -1, and so is the
+  //    statement's length, which PostgreSQL counts as one.
+  // 3. Print it with locations: each is the one it was given.
+  // 4. Print the plain way again: asking once does not stick.
+  sq_tree_t t;
+  sq_column_ref_t *col = sq::make_node<sq_column_ref_t>(t);
+  col->fields.push_back(string_node(t, "a"));
+  col->location = 7;
+  sq_raw_stmt_t *raw = sq::make_node<sq_raw_stmt_t>(t);
+  raw->stmt = col;
+  raw->stmt_location = 3;
+  raw->stmt_len = 12;
+
+  const std::string hidden = "{RAWSTMT :stmt {COLUMNREF :fields (\"a\") "
+                             ":location -1} :stmt_location -1 :stmt_len -1}";
+  CHECK(text_of(raw) == hidden);
+  std::string shown;
+  REQUIRE(sq_to_string_with_locations(raw, shown) == 0);
+  CHECK(shown == "{RAWSTMT :stmt {COLUMNREF :fields (\"a\") :location 7} "
+                 ":stmt_location 3 :stmt_len 12}");
+  CHECK(text_of(raw) == hidden);
+}
+
 TEST_CASE("an absent node prints as <>") {
   // Verify NULL is printable, as the statement of an empty tree is.
   // 1. Print a null node.

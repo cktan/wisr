@@ -111,8 +111,10 @@ NULL from the parser: a node is PostgreSQL's node, whole.
 **The printer writes PostgreSQL's names**, not sq's:
 `sq_select_stmt_t` prints as `{SELECTSTMT :distinctClause ...`.
 Its text is `nodeToString()`'s byte for byte, with locations
-hidden as PostgreSQL hides them. That is what makes PostgreSQL's
-own output a test of sq (§8), and it is what the printer is for.
+hidden as PostgreSQL hides them, or shown, as its
+`nodeToStringWithLocations()` shows them. That is what makes
+PostgreSQL's own output a test of sq (§8), and it is what the
+printer is for.
 
 ## 4. Ownership
 
@@ -205,16 +207,18 @@ That parser is no longer built here. Its answers are:
 
 - **`test/*/expected/`**: for each SQL file here, what
   PostgreSQL's parser printed — the trees, or the error with its
-  position, detail and hint — and for some, what its scanner
-  printed. 93 files: statements of every family, one for each
-  error the scanner raises, one for each error an action of the
-  grammar raises, and type names.
+  position, detail and hint — and for some, the trees again with
+  every location shown, and what its scanner printed. 93 files:
+  statements of every family, one for each error the scanner
+  raises, one for each error an action of the grammar raises,
+  and type names.
 - **`test/regress.digest`**: for each of the 233 scripts of
   PostgreSQL's regression SQL, a digest of what its scanner
-  printed for the whole script, and of what its parser printed
-  for each of the script's pieces. Over 700,000 tokens and
-  49,034 pieces, which include the SQL that is wrong on purpose.
-  `make corpus-test` holds sq to it, given the scripts.
+  printed for the whole script, of what its parser printed for
+  each of the script's pieces, and of the same trees with their
+  locations. Over 700,000 tokens and 49,034 pieces, which
+  include the SQL that is wrong on purpose. `make corpus-test`
+  holds sq to it, given the scripts.
 
 Neither can be made again without PostgreSQL's parser. They are
 to be remade when sq is ported to a later one, with that one.
@@ -231,11 +235,14 @@ the committed node header is what the generator writes; and
 
 ## 9. Known trade-offs
 
-- **A tree holds more than its nodes need.** A list assigned to
-  a field is copied (§6), and the list it came from stays in the
-  tree until the tree is freed, as do the scanner's strings that
-  no node kept. Moving a list where it is not used again would
-  recover most of it, a rule at a time.
+- **A tree holds a little more than its nodes need.** A list
+  assigned to a field is copied (§6), and the list it came from
+  stays in the tree until the tree is freed, as do the scanner's
+  strings that no node kept. Measured over the 48,369 pieces of
+  the regression SQL that parse: a tree holds 1.06 times what a
+  copy of it holding only its nodes does. Moving a list where it
+  is not used again would recover part of that 6%, at the price
+  of the next point becoming a thing that can go wrong.
 - **A field's list and the handle it was copied from are
   separate.** An action that appended to a list after assigning
   it would, in PostgreSQL, change the node, and here would not.
@@ -298,8 +305,4 @@ leaves an error by `longjmp`, which runs no destructor:
 digres is checked with sq's own tests. `postgres --parse` prints
 what `build/sq_parse` prints, for `raw_parser()`, so the
 expected files and digests of §8 hold digres's parser, converter
-included, to what PostgreSQL's printed. They do not hold it to
-the locations in a tree, which the printed text hides. Those
-were compared once, PostgreSQL's parser against sq and the
-converter in one process, over every text of §8, before
-PostgreSQL's parser was removed from digres.
+included, to what PostgreSQL's printed, locations among it.

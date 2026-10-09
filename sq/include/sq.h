@@ -180,4 +180,11 @@ int sq_parse_type_name(std::string_view text, const sq_options_t* opt,
  */
 int sq_to_string(const sq_node_t* node, std::string& out);
 
+/*
+ * The same, with every location written as it is: a byte offset into
+ * the text parsed, or -1. This is PostgreSQL's
+ * nodeToStringWithLocations().
+ */
+int sq_to_string_with_locations(const sq_node_t* node, std::string& out);
+
 #endif /* SQ_H */

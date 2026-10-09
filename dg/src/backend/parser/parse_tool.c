@@ -7,6 +7,8 @@
  *                                            the error
  *   postgres --parse --type-name < file      the text parsed as one
  *                                            type name
+ *   postgres --parse --locations < file.sql  each statement whole, with
+ *                                            every location shown
  *
  * This runs raw_parser() with no server around it. A tree is printed
  * as nodeToString() writes it, and an error as its message, position,
@@ -61,6 +63,7 @@ static void print_error(void) {
 /* Parse standard input and print it: see the head of this file. */
 int parse_tool_main(int argc, char **argv) {
   bool type_name = argc > 2 && strcmp(argv[2], "--type-name") == 0;
+  bool locations = argc > 2 && strcmp(argv[2], "--locations") == 0;
   char *sql;
   int status = 0;
 
@@ -79,9 +82,13 @@ int parse_tool_main(int argc, char **argv) {
       Node *node = (Node *)lfirst(lc);
 
       /* A statement comes wrapped in where it was written. */
-      if (IsA(node, RawStmt))
-        node = ((RawStmt *)node)->stmt;
-      printf("%s\n", nodeToString(node));
+      if (locations)
+        printf("%s\n", nodeToStringWithLocations(node));
+      else {
+        if (IsA(node, RawStmt))
+          node = ((RawStmt *)node)->stmt;
+        printf("%s\n", nodeToString(node));
+      }
     }
   }
   PG_CATCH();

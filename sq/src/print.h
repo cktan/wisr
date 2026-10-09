@@ -37,6 +37,13 @@ void out_char(std::string &s, char c);
 /* Write true or false. */
 void out_bool(std::string &s, bool b);
 
+/*
+ * Write a location: -1, as nodeToString() does so that two parses of
+ * a statement print the same, or the location itself when the text is
+ * being written with locations.
+ */
+void out_location(std::string &s, int location);
+
 /* Write a number in decimal. */
 void out_int(std::string &s, int v);
 void out_uint(std::string &s, uint32_t v);
