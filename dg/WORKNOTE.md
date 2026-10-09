@@ -346,6 +346,84 @@ and digres has no catalog to load.
 - **`initdb -V` prints `initdb (digres) 18.6`**, where
   PostgreSQL's prints `initdb (PostgreSQL) 18.6`.
 - **The two files and the directory are synced to disk.**
-- **Not done**: an interrupt does not clean up; and the server
-  does not read the directory yet, so nothing can start on it.
+- **Not done**: an interrupt does not clean up.
   `test/initdb.sh` checks what is made and what is refused.
+
+## Step 9: psql connects
+
+`build/digres -D DIR` starts on a directory `initdb` made, and
+PostgreSQL's `psql` connects and runs `SELECT 1 + 1`. It is
+still a postmaster that forks a process a connection.
+
+- **The server needs no installation.** The check for the
+  library directory is gone, and it runs from where it was built.
+- **It runs with no configuration file**, on the defaults; one
+  that is there is read. A reload with none logs a complaint.
+- **Time zone abbreviations are not loaded**, since they are
+  read from an installed share directory. `EST` and the like
+  are not known; a zone is named in full or by its offset.
+- **There is no `pg_control`.** `ReadControlFile()` makes the
+  structure in memory, as a bootstrap would, for one run of the
+  server; nothing writes it.
+- **There is no WAL.** `StartupXLOG()` gives the transaction
+  counters their first values and declares recovery over.
+  `CreateCheckPoint()` and `ShutdownXLOG()` do nothing, and
+  `XLogInsertRecord()` refuses with an error. PostgreSQL's
+  transactions still run a statement, and begin afresh at each
+  start.
+- **The rest of `xlog.c` and `xlogrecovery.c` is still there**,
+  unreached. The 11 functions the cuts left unused in `xlog.c`
+  were removed; the files go when sm's transactions come in.
+- **The postmaster makes PostgreSQL's directories** at start
+  (`make_legacy_dirs()`): `pg_wal`, `pg_xact`, `pg_notify` and
+  the others its `initdb` makes. A name leaves the list when
+  its subsystem is cut. `initdb` does not make them, so that a
+  data directory is not left holding them.
+- **Autovacuum is off by default.** Its launcher reads catalog
+  tables, and sm collects its own garbage.
+- **`pg_hba.conf` and `pg_ident.conf` are not read.**
+  `check_hba()` is the fixed rule: peer on the local socket,
+  SCRAM-SHA-256 over TCP. The parser of the files is still in
+  `hba.c`, unreached; the 8 functions that matched a line were
+  removed.
+- **`utils/init/datadir.c` is what the server reads from the
+  directory**: the `superuser` file, and the names of sm's
+  databases.
+- **The databases are listed once, by a child process** of the
+  postmaster. Attaching sm leaves RocksDB's threads in the
+  process that did it, and a postmaster that forks must have
+  none. A backend cannot ask sm either (`../sm/PART4.md` §2):
+  until connections are threads, the databases are the ones
+  there were at start.
+- **A database's oid is its place in sm's list**, from 16384.
+  sm does not hand one out. It holds for one run of the server.
+- **The one role is oid 10.** `InitializeSessionUserId()`
+  accepts the name in the `superuser` file and no other,
+  `get_role_password()` returns the secret from it, and
+  `superuser_arg(10)` is true. `current_user` is that name.
+- **A backend loads no catalog.** The two relcache phases, the
+  ACL cache, the `pg_database` row and its recheck, and the
+  per-database settings are gone from `InitPostgres()`.
+  `CheckMyDatabase()` sets UTF8 and the C locale.
+- **The default collation is not set up.**
+  `init_database_collation()` reads `pg_database`. Nothing
+  that compares text can run until it is.
+- **Opening a catalog table is an error**, raised in
+  `ScanPgRelation()`: it used to recurse until the stack ran
+  out, which took the server down. A lookup not yet moved to
+  the compiled-in rows (step 6) now fails the statement, and
+  the session carries on.
+- **What runs is what ran in step 6**, now over the protocol.
+  A function call or a table name still fails: the search
+  path's `"$user"` is looked up in `pg_authid`.
+- **The error loop has run.** `test/server.sh` raises an error
+  in a session and runs a statement after it. A backend killed
+  by a signal makes the postmaster reinitialize, and the server
+  takes connections again; that was tried by hand, not in the
+  test.
+- **`digres --parse --run` crashes on a function call**, as it
+  did before this step: it does not set up the catalog caches,
+  and a lookup dereferences a null one. Not fixed here.
+- `test/server.sh` starts a server and checks both transports,
+  the refusals, an error, and a clean shutdown. It needs `psql`
+  on the path and skips itself without one.

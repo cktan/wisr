@@ -1375,7 +1375,9 @@ struct config_bool ConfigureNamesBool[] = {
     {{"autovacuum", PGC_SIGHUP, VACUUM_AUTOVACUUM,
       gettext_noop("Starts the autovacuum subprocess."), NULL},
      &autovacuum_start_daemon,
-     true,
+     /* off in digres: sm collects its own garbage, and the launcher reads
+      * catalog tables that are not there */
+     false,
      NULL,
      NULL,
      NULL},

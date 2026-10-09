@@ -48,6 +48,7 @@
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/builtins.h"
+#include "utils/datadir.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
@@ -682,11 +683,6 @@ bool has_rolreplication(Oid roleid) {
  */
 void InitializeSessionUserId(const char *rolename, Oid roleid,
                              bool bypass_login_check) {
-  HeapTuple roleTup;
-  Form_pg_authid rform;
-  char *rname;
-  bool is_superuser;
-
   /*
    * In a parallel worker, we don't have to do anything here.
    * ParallelWorkerMain already set our output variables, and we aren't
@@ -706,88 +702,26 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
   Assert(!IsBootstrapProcessingMode());
 
   /*
-   * Make sure syscache entries are flushed for recent catalog changes. This
-   * allows us to find roles that were created on-the-fly during
-   * authentication.
-   */
-  AcceptInvalidationMessages();
-
-  /*
-   * Look up the role, either by name if that's given or by OID if not.
+   * digres has one role, the superuser that initdb named
+   * (utils/init/datadir.c): it is the built-in role with the bootstrap
+   * superuser's oid, and nothing limits its logging in.
    */
   if (rolename != NULL) {
-    roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(rolename));
-    if (!HeapTupleIsValid(roleTup))
+    if (strcmp(rolename, datadir_superuser()) != 0)
       ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
                       errmsg("role \"%s\" does not exist", rolename)));
-  } else {
-    roleTup = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
-    if (!HeapTupleIsValid(roleTup))
-      ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-                      errmsg("role with OID %u does not exist", roleid)));
-  }
+  } else if (roleid != BOOTSTRAP_SUPERUSERID)
+    ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                    errmsg("role with OID %u does not exist", roleid)));
 
-  rform = (Form_pg_authid)GETSTRUCT(roleTup);
-  roleid = rform->oid;
-  rname = NameStr(rform->rolname);
-  is_superuser = rform->rolsuper;
-
-  SetAuthenticatedUserId(roleid);
+  SetAuthenticatedUserId(BOOTSTRAP_SUPERUSERID);
 
   /*
-   * Set SessionUserId and related variables, including "role", via the GUC
-   * mechanisms.
-   *
-   * Note: ideally we would use PGC_S_DYNAMIC_DEFAULT here, so that
-   * session_authorization could subsequently be changed from
-   * pg_db_role_setting entries.  Instead, session_authorization in
-   * pg_db_role_setting has no effect.  Changing that would require solving
-   * two problems:
-   *
-   * 1. If pg_db_role_setting has values for both session_authorization and
-   * role, we could not be sure which order those would be applied in, and
-   * it would matter.
-   *
-   * 2. Sites may have years-old session_authorization entries.  There's not
-   * been any particular reason to remove them.  Ending the dormancy of
-   * those entries could seriously change application behavior, so only a
-   * major release should do that.
+   * As InitializeSessionUserIdStandalone() does, and for its reason: the
+   * "session_authorization" setting would look the role up by name.
    */
-  SetConfigOption("session_authorization", rname, PGC_BACKEND, PGC_S_OVERRIDE);
-
-  /*
-   * These next checks are not enforced when in standalone mode, so that
-   * there is a way to recover from sillinesses like "UPDATE pg_authid SET
-   * rolcanlogin = false;".
-   */
-  if (IsUnderPostmaster) {
-    /*
-     * Is role allowed to login at all?  (But background workers can
-     * override this by setting bypass_login_check.)
-     */
-    if (!bypass_login_check && !rform->rolcanlogin)
-      ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-                      errmsg("role \"%s\" is not permitted to log in", rname)));
-
-    /*
-     * Check connection limit for this role.  We enforce the limit only
-     * for regular backends, since other process types have their own
-     * PGPROC pools.
-     *
-     * There is a race condition here --- we create our PGPROC before
-     * checking for other PGPROCs.  If two backends did this at about the
-     * same time, they might both think they were over the limit, while
-     * ideally one should succeed and one fail.  Getting that to work
-     * exactly seems more trouble than it is worth, however; instead we
-     * just document that the connection limit is approximate.
-     */
-    if (rform->rolconnlimit >= 0 && AmRegularBackendProcess() &&
-        !is_superuser && CountUserBackends(roleid) > rform->rolconnlimit)
-      ereport(FATAL, (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
-                      errmsg("too many connections for role \"%s\"", rname)));
-  }
-
-  ReleaseSysCache(roleTup);
+  SetSessionAuthorization(BOOTSTRAP_SUPERUSERID, true);
+  SetCurrentRoleId(InvalidOid, false);
 }
 
 /*
@@ -929,6 +863,10 @@ void SetCurrentRoleId(Oid roleid, bool is_superuser) {
 char *GetUserNameFromId(Oid roleid, bool noerr) {
   HeapTuple tuple;
   char *result;
+
+  /* The superuser's name is the one initdb gave it (utils/init/datadir.c). */
+  if (roleid == BOOTSTRAP_SUPERUSERID && datadir_superuser() != NULL)
+    return pstrdup(datadir_superuser());
 
   tuple = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
   if (!HeapTupleIsValid(tuple)) {

@@ -222,7 +222,6 @@ ClientAuthentication_hook_type ClientAuthentication_hook = NULL;
  */
 static void auth_failed(Port *port, int status, const char *logdetail) {
   const char *errstr;
-  char *cdetail;
   int errcode_return = ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION;
 
   /*
@@ -290,13 +289,7 @@ static void auth_failed(Port *port, int status, const char *logdetail) {
     break;
   }
 
-  cdetail = psprintf(_("Connection matched file \"%s\" line %d: \"%s\""),
-                     port->hba->sourcefile, port->hba->linenumber,
-                     port->hba->rawline);
-  if (logdetail)
-    logdetail = psprintf("%s\n%s", logdetail, cdetail);
-  else
-    logdetail = cdetail;
+  /* No pg_hba.conf line to name: digres's rule is fixed (hba.c). */
 
   ereport(FATAL, (errcode(errcode_return), errmsg(errstr, port->user_name),
                   logdetail ? errdetail_log("%s", logdetail) : 0));

@@ -21,6 +21,7 @@
 #include "libpq/crypt.h"
 #include "libpq/scram.h"
 #include "utils/builtins.h"
+#include "utils/datadir.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 
@@ -35,44 +36,19 @@ bool md5_password_warnings = true;
  * sent to the client, to avoid giving away user information!
  */
 char *get_role_password(const char *role, const char **logdetail) {
-  TimestampTz vuntil = 0;
-  HeapTuple roleTup;
-  Datum datum;
-  bool isnull;
-  char *shadow_pass;
-
-  /* Get role info from pg_authid */
-  roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(role));
-  if (!HeapTupleIsValid(roleTup)) {
+  /*
+   * digres has one role, the superuser that initdb named, and keeps its
+   * secret in the data directory's superuser file (utils/init/datadir.c).
+   */
+  if (strcmp(role, datadir_superuser()) != 0) {
     *logdetail = psprintf(_("Role \"%s\" does not exist."), role);
     return NULL; /* no such user */
   }
-
-  datum =
-      SysCacheGetAttr(AUTHNAME, roleTup, Anum_pg_authid_rolpassword, &isnull);
-  if (isnull) {
-    ReleaseSysCache(roleTup);
+  if (datadir_superuser_secret() == NULL) {
     *logdetail = psprintf(_("User \"%s\" has no password assigned."), role);
     return NULL; /* user has no password */
   }
-  shadow_pass = TextDatumGetCString(datum);
-
-  datum =
-      SysCacheGetAttr(AUTHNAME, roleTup, Anum_pg_authid_rolvaliduntil, &isnull);
-  if (!isnull)
-    vuntil = DatumGetTimestampTz(datum);
-
-  ReleaseSysCache(roleTup);
-
-  /*
-   * Password OK, but check to be sure we are not past rolvaliduntil
-   */
-  if (!isnull && vuntil < GetCurrentTimestamp()) {
-    *logdetail = psprintf(_("User \"%s\" has an expired password."), role);
-    return NULL;
-  }
-
-  return shadow_pass;
+  return pstrdup(datadir_superuser_secret());
 }
 
 /*

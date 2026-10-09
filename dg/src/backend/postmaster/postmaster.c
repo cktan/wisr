@@ -113,6 +113,7 @@
 #include "storage/proc.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
+#include "utils/datadir.h"
 #include "utils/datetime.h"
 #include "utils/memutils.h"
 #include "utils/pidfile.h"
@@ -388,7 +389,7 @@ static PMChild *io_worker_children[MAX_IO_WORKERS];
 static void CloseServerPorts(int status, Datum arg);
 static void unlink_external_pid_file(int status, Datum arg);
 static void getInstallationPaths(const char *argv0);
-static void checkControlFile(void);
+static void make_legacy_dirs(void);
 static void handle_pm_pmsignal_signal(SIGNAL_ARGS);
 static void handle_pm_child_exit_signal(SIGNAL_ARGS);
 static void handle_pm_reload_request_signal(SIGNAL_ARGS);
@@ -781,11 +782,14 @@ void PostmasterMain(int argc, char *argv[]) {
   /* Verify that DataDir looks reasonable */
   checkDataDir();
 
-  /* Check that pg_control exists */
-  checkControlFile();
-
   /* And switch working directory into it */
   ChangeToDataDir();
+
+  /* Make the directories PostgreSQL's storage still looks for */
+  make_legacy_dirs();
+
+  /* Read the superuser and the databases, which every backend inherits */
+  datadir_load();
 
   /*
    * Check for invalid combinations of GUC settings.
@@ -1220,25 +1224,9 @@ void PostmasterMain(int argc, char *argv[]) {
   autovac_init();
 
   /*
-   * Load configuration files for client authentication.
+   * There are no configuration files for client authentication to load:
+   * how a client is authenticated is fixed (WORKNOTE.md step 8).
    */
-  if (!load_hba()) {
-    /*
-     * It makes no sense to continue if we fail to load the HBA file,
-     * since there is no way to connect to the database in this case.
-     */
-    ereport(FATAL,
-            /* translator: %s is a configuration file */
-            (errmsg("could not load %s", HbaFileName)));
-  }
-  if (!load_ident()) {
-    /*
-     * We can start up without the IDENT file, although it means that you
-     * cannot log in using any of the authentication methods that need a
-     * user name mapping. load_ident() already logged the details of error
-     * to the log.
-     */
-  }
 
 #ifdef HAVE_PTHREAD_IS_THREADED_NP
 
@@ -1347,8 +1335,6 @@ static void unlink_external_pid_file(int status, Datum arg) {
  * installation (as deduced from the postgres executable's own location)
  */
 static void getInstallationPaths(const char *argv0) {
-  DIR *pdir;
-
   /* Locate the postgres executable itself */
   if (find_my_exec(argv0, my_exec_path) < 0)
     ereport(FATAL,
@@ -1369,51 +1355,45 @@ static void getInstallationPaths(const char *argv0) {
   get_pkglib_path(my_exec_path, pkglib_path);
 
   /*
-   * Verify that there's a readable directory there; otherwise the Postgres
-   * installation is incomplete or corrupt.  (A typical cause of this
-   * failure is that the postgres executable has been moved or hardlinked to
-   * some directory that's not a sibling of the installation lib/
-   * directory.)
-   */
-  pdir = AllocateDir(pkglib_path);
-  if (pdir == NULL)
-    ereport(
-        ERROR,
-        (errcode_for_file_access(),
-         errmsg("could not open directory \"%s\": %m", pkglib_path),
-         errhint(
-             "This may indicate an incomplete PostgreSQL installation, or that "
-             "the file \"%s\" has been moved away from its proper location.",
-             my_exec_path)));
-  FreeDir(pdir);
-
-  /*
-   * It's not worth checking the share/ directory.  If the lib/ directory is
-   * there, then share/ probably is too.
+   * digres does not look for the directory: it is one program, and runs
+   * from where it was built.
    */
 }
 
 /*
- * Check that pg_control exists in the correct location in the data directory.
- *
- * No attempt is made to validate the contents of pg_control here.  This is
- * just a sanity check to see if we are looking at a real data directory.
+ * Make, in the data directory, the directories that PostgreSQL's initdb
+ * makes and digres's does not. The subsystems that open them at startup
+ * are still here, though sm is to replace them (sm/PART4.md section 10);
+ * a name leaves this list when its subsystem is cut.
  */
-static void checkControlFile(void) {
-  char path[MAXPGPATH];
-  FILE *fp;
+static void make_legacy_dirs(void) {
+  static const char *const dirs[] = {"pg_wal",
+                                     "pg_wal/archive_status",
+                                     "pg_wal/summaries",
+                                     "pg_commit_ts",
+                                     "pg_dynshmem",
+                                     "pg_notify",
+                                     "pg_serial",
+                                     "pg_snapshots",
+                                     "pg_subtrans",
+                                     "pg_twophase",
+                                     "pg_multixact",
+                                     "pg_multixact/members",
+                                     "pg_multixact/offsets",
+                                     "pg_replslot",
+                                     "pg_tblspc",
+                                     "pg_stat",
+                                     "pg_stat_tmp",
+                                     "pg_xact",
+                                     "pg_logical",
+                                     "pg_logical/snapshots",
+                                     "pg_logical/mappings"};
 
-  snprintf(path, sizeof(path), "%s/%s", DataDir, XLOG_CONTROL_FILE);
-
-  fp = AllocateFile(path, PG_BINARY_R);
-  if (fp == NULL) {
-    write_stderr("%s: could not find the database system\n"
-                 "Expected to find it in the directory \"%s\",\n"
-                 "but could not open file \"%s\": %m\n",
-                 progname, DataDir, path);
-    ExitPostmaster(2);
-  }
-  FreeFile(fp);
+  for (int i = 0; i < lengthof(dirs); i++)
+    if (mkdir(dirs[i], pg_dir_create_mode) != 0 && errno != EEXIST)
+      ereport(FATAL,
+              (errcode_for_file_access(),
+               errmsg("could not create directory \"%s\": %m", dirs[i])));
 }
 
 /*
@@ -1837,15 +1817,6 @@ static void process_pm_reload_request(void) {
     ereport(LOG, (errmsg("received SIGHUP, reloading configuration files")));
     ProcessConfigFile(PGC_SIGHUP);
     SignalChildren(SIGHUP, btmask_all_except(B_DEAD_END_BACKEND));
-
-    /* Reload authentication config files too */
-    if (!load_hba())
-      ereport(LOG,
-              /* translator: %s is a configuration file */
-              (errmsg("%s was not reloaded", HbaFileName)));
-
-    if (!load_ident())
-      ereport(LOG, (errmsg("%s was not reloaded", IdentFileName)));
 
 #ifdef USE_SSL
     /* Reload SSL configuration as well */

@@ -353,6 +353,17 @@ static HeapTuple ScanPgRelation(Oid targetRelId, bool indexOK,
   Snapshot snapshot = NULL;
 
   /*
+   * digres has no pg_class to scan, and opening it to look would come
+   * back here without end. A table of sm's is not reached this way yet,
+   * and a lookup in a catalog table is to be moved to the rows compiled
+   * in (WORKNOTE.md step 6).
+   */
+  ereport(ERROR,
+          (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+           errmsg("relation %u cannot be opened: digres has no catalog tables",
+                  targetRelId)));
+
+  /*
    * If something goes wrong during backend startup, we might find ourselves
    * trying to read pg_class before we've selected a database.  That ain't
    * gonna work, so bail out with a useful error message.  If this happens,

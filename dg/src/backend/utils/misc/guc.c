@@ -1569,6 +1569,7 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
   char *configdir;
   char *fname;
   bool fname_is_malloced;
+  bool have_config_file;
   struct stat stat_buf;
   struct config_string *data_directory_rec;
 
@@ -1622,22 +1623,15 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
     guc_free(fname);
 
   /*
-   * Now read the config file for the first time.
+   * Read the configuration file for the first time, if there is one:
+   * digres's initdb writes none, and the server then runs on defaults.
+   * This time only the data_directory parameter is picked up to determine
+   * the data directory, so that we can read the PG_AUTOCONF_FILENAME file
+   * next time.
    */
-  if (stat(ConfigFileName, &stat_buf) != 0) {
-    write_stderr(
-        "%s: could not access the server configuration file \"%s\": %m\n",
-        progname, ConfigFileName);
-    free(configdir);
-    return false;
-  }
-
-  /*
-   * Read the configuration file for the first time.  This time only the
-   * data_directory parameter is picked up to determine the data directory,
-   * so that we can read the PG_AUTOCONF_FILENAME file next time.
-   */
-  ProcessConfigFile(PGC_POSTMASTER);
+  have_config_file = stat(ConfigFileName, &stat_buf) == 0;
+  if (have_config_file)
+    ProcessConfigFile(PGC_POSTMASTER);
 
   /*
    * If the data_directory GUC variable has been set, use that as DataDir;
@@ -1677,16 +1671,14 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    * since we have to determine the DataDir before we can find the autoconf
    * file, the alternatives seem worse.)
    */
-  ProcessConfigFile(PGC_POSTMASTER);
+  if (have_config_file)
+    ProcessConfigFile(PGC_POSTMASTER);
 
   /*
-   * If timezone_abbreviations wasn't set in the configuration file, install
-   * the default value.  We do it this way because we can't safely install a
-   * "real" value until my_exec_path is set, which may not have happened
-   * when InitializeGUCOptions runs, so the bootstrap default value cannot
-   * be the real desired default.
+   * The time zone abbreviations are not loaded: they are read from the
+   * installation's share directory, and digres has no installation yet.
+   * Until it does, a time zone is named in full or by its offset.
    */
-  pg_timezone_abbrev_initialize();
 
   /*
    * Figure out where pg_hba.conf is, and make sure the path is absolute.

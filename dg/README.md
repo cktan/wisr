@@ -4,14 +4,16 @@ A fork of PostgreSQL that runs on the storage stack in `../sm`.
 `../sm/PART4.md` §10 says how it is to be made, and §9 what it
 calls.
 
-**It links, and cannot run a database yet.** It can run a
-statement over constants, with no server: `echo 'select 1 + 1;'
-| build/digres --parse --run`. `make -j4` generates
-what is generated, compiles every file as strict C++ with no
-`-fpermissive`, and links `build/digres` with `../sq` and
-`../sm`. The server has no
-bootstrap and so no catalog to start from: its catalog is to be
-replaced, not created (`../sm/PART4.md` §10). `DGWORK.md` is the
+**It starts, and `psql` connects to it, but it has no tables
+yet.** `build/initdb DIR` makes a data directory,
+`build/digres -D DIR` serves it, and PostgreSQL's own `psql`
+runs `select 1 + 1` on it. A statement over constants also runs
+with no server: `echo 'select 1 + 1;' | build/digres --parse
+--run`. `make -j4` generates what is generated, compiles every
+file as strict C++ with no `-fpermissive`, and links
+`build/digres` with `../sq` and `../sm`. The server has no
+catalog tables: its catalog is being replaced, not created
+(`../sm/PART4.md` §10). `DGWORK.md` is the
 plan and `WORKNOTE.md` the decisions taken along the way.
 
 ## Building
@@ -66,8 +68,21 @@ the superuser's name and the SCRAM secret of its password.
 its options, which are few: the encoding is UTF8, the default
 collation is C, and authentication is peer on the local socket
 and SCRAM-SHA-256 over TCP. PostgreSQL's other options are
-rejected (`WORKNOTE.md` step 8). The server does not read the
-directory yet.
+rejected (`WORKNOTE.md` step 8).
+
+## The server
+
+`build/digres -D DIR` starts on such a directory, with no
+configuration file and no installation, and listens on TCP and
+on a local socket (`-p PORT`, `-k SOCKETDIR`). It reads the
+superuser and the list of databases from the directory. There
+is no `pg_hba.conf`: a local socket connection is admitted if
+the OS user is the superuser, and a TCP connection by the
+superuser's password. `WORKNOTE.md` step 9 lists what was cut
+to get here and what does not work yet: a statement that needs
+a catalog table, which is most of them, fails with an error.
+`make test` starts a server and connects with `psql`, if there
+is one on the path.
 
 ## Where it came from
 

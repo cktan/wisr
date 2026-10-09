@@ -5,7 +5,8 @@
 #   make -k -j4        the same, going on past a file that fails
 #   make gen           only generate
 #   make test          check the parser, with sq's tests given this
-#                      server, and run the statements in test/
+#                      server, run the statements in test/, and check
+#                      initdb and a server that psql connects to
 #   make clean         remove objects and generated files
 #   make format        clang-format every .c and .h
 #
@@ -76,6 +77,7 @@ test:
 	SQ_PARSE="$(CURDIR)/build/digres --parse" $(SQ)/test/run.sh
 	test/run.sh
 	test/initdb.sh
+	test/server.sh
 
 # sq builds its own library; whether it is up to date is sq's to say.
 .PHONY: $(LIBSQ)

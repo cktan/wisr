@@ -54,8 +54,8 @@ bool superuser_arg(Oid roleid) {
   if (OidIsValid(last_roleid) && last_roleid == roleid)
     return last_roleid_is_super;
 
-  /* Special escape path in case you deleted all your users. */
-  if (!IsUnderPostmaster && roleid == BOOTSTRAP_SUPERUSERID)
+  /* The one role digres has: the superuser, whatever initdb named it. */
+  if (roleid == BOOTSTRAP_SUPERUSERID)
     return true;
 
   /* OK, look up the information in pg_authid */

@@ -56,6 +56,7 @@
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/datadir.h"
 #include "utils/fmgroids.h"
 #include "utils/guc_hooks.h"
 #include "utils/injection_point.h"
@@ -67,8 +68,6 @@
 #include "utils/syscache.h"
 #include "utils/timeout.h"
 
-static HeapTuple GetDatabaseTuple(const char *dbname);
-static HeapTuple GetDatabaseTupleByOid(Oid dboid);
 static void PerformAuthentication(Port *port);
 static void CheckMyDatabase(const char *name, bool am_superuser,
                             bool override_allow_connections);
@@ -82,91 +81,8 @@ static void IdleStatsUpdateTimeoutHandler(void);
 static void ClientCheckTimeoutHandler(void);
 static bool ThereIsAtLeastOneRole(void);
 static void process_startup_options(Port *port, bool am_superuser);
-static void process_settings(Oid databaseid, Oid roleid);
 
 /*** InitPostgres support ***/
-
-/*
- * GetDatabaseTuple -- fetch the pg_database row for a database
- *
- * This is used during backend startup when we don't yet have any access to
- * system catalogs in general.  In the worst case, we can seqscan pg_database
- * using nothing but the hard-wired descriptor that relcache.c creates for
- * pg_database.  In more typical cases, relcache.c was able to load
- * descriptors for both pg_database and its indexes from the shared relcache
- * cache file, and so we can do an indexscan.  criticalSharedRelcachesBuilt
- * tells whether we got the cached descriptors.
- */
-static HeapTuple GetDatabaseTuple(const char *dbname) {
-  HeapTuple tuple;
-  Relation relation;
-  SysScanDesc scan;
-  ScanKeyData key[1];
-
-  /*
-   * form a scan key
-   */
-  ScanKeyInit(&key[0], Anum_pg_database_datname, BTEqualStrategyNumber,
-              F_NAMEEQ, CStringGetDatum(dbname));
-
-  /*
-   * Open pg_database and fetch a tuple.  Force heap scan if we haven't yet
-   * built the critical shared relcache entries (i.e., we're starting up
-   * without a shared relcache cache file).
-   */
-  relation = table_open(DatabaseRelationId, AccessShareLock);
-  scan = systable_beginscan(relation, DatabaseNameIndexId,
-                            criticalSharedRelcachesBuilt, NULL, 1, key);
-
-  tuple = systable_getnext(scan);
-
-  /* Must copy tuple before releasing buffer */
-  if (HeapTupleIsValid(tuple))
-    tuple = heap_copytuple(tuple);
-
-  /* all done */
-  systable_endscan(scan);
-  table_close(relation, AccessShareLock);
-
-  return tuple;
-}
-
-/*
- * GetDatabaseTupleByOid -- as above, but search by database OID
- */
-static HeapTuple GetDatabaseTupleByOid(Oid dboid) {
-  HeapTuple tuple;
-  Relation relation;
-  SysScanDesc scan;
-  ScanKeyData key[1];
-
-  /*
-   * form a scan key
-   */
-  ScanKeyInit(&key[0], Anum_pg_database_oid, BTEqualStrategyNumber, F_OIDEQ,
-              ObjectIdGetDatum(dboid));
-
-  /*
-   * Open pg_database and fetch a tuple.  Force heap scan if we haven't yet
-   * built the critical shared relcache entries (i.e., we're starting up
-   * without a shared relcache cache file).
-   */
-  relation = table_open(DatabaseRelationId, AccessShareLock);
-  scan = systable_beginscan(relation, DatabaseOidIndexId,
-                            criticalSharedRelcachesBuilt, NULL, 1, key);
-
-  tuple = systable_getnext(scan);
-
-  /* Must copy tuple before releasing buffer */
-  if (HeapTupleIsValid(tuple))
-    tuple = heap_copytuple(tuple);
-
-  /* all done */
-  systable_endscan(scan);
-  table_close(relation, AccessShareLock);
-
-  return tuple;
-}
 
 /*
  * PerformAuthentication -- authenticate a remote client
@@ -293,83 +209,13 @@ static void PerformAuthentication(Port *port) {
  */
 static void CheckMyDatabase(const char *name, bool am_superuser,
                             bool override_allow_connections) {
-  HeapTuple tup;
-  Form_pg_database dbform;
-  Datum datum;
-  bool isnull;
-  char *collate;
-  char *ctype;
-
-  /* Fetch our pg_database row normally, via syscache */
-  tup = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(MyDatabaseId));
-  if (!HeapTupleIsValid(tup))
-    elog(ERROR, "cache lookup failed for database %u", MyDatabaseId);
-  dbform = (Form_pg_database)GETSTRUCT(tup);
-
-  /* This recheck is strictly paranoia */
-  if (strcmp(name, NameStr(dbform->datname)) != 0)
-    ereport(FATAL,
-            (errcode(ERRCODE_UNDEFINED_DATABASE),
-             errmsg("database \"%s\" has disappeared from pg_database", name),
-             errdetail("Database OID %u now seems to belong to \"%s\".",
-                       MyDatabaseId, NameStr(dbform->datname))));
-
   /*
-   * Check permissions to connect to the database.
-   *
-   * These checks are not enforced when in standalone mode, so that there is
-   * a way to recover from disabling all access to all databases, for
-   * example "UPDATE pg_database SET datallowconn = false;".
+   * digres keeps no pg_database row to check. A database takes connections
+   * from the one role there is; its encoding is UTF8, and its collation
+   * and character classification are C (WORKNOTE.md step 8).
    */
-  if (IsUnderPostmaster) {
-    /*
-     * Check that the database is currently allowing connections.
-     * (Background processes can override this test and the next one by
-     * setting override_allow_connections.)
-     */
-    if (!dbform->datallowconn && !override_allow_connections)
-      ereport(FATAL,
-              (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-               errmsg("database \"%s\" is not currently accepting connections",
-                      name)));
+  SetDatabaseEncoding(PG_UTF8);
 
-    /*
-     * Check privilege to connect to the database.  (The am_superuser test
-     * is redundant, but since we have the flag, might as well check it
-     * and save a few cycles.)
-     */
-    if (!am_superuser && !override_allow_connections &&
-        object_aclcheck(DatabaseRelationId, MyDatabaseId, GetUserId(),
-                        ACL_CONNECT) != ACLCHECK_OK)
-      ereport(FATAL, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      errmsg("permission denied for database \"%s\"", name),
-                      errdetail("User does not have CONNECT privilege.")));
-
-    /*
-     * Check connection limit for this database.  We enforce the limit
-     * only for regular backends, since other process types have their own
-     * PGPROC pools.
-     *
-     * There is a race condition here --- we create our PGPROC before
-     * checking for other PGPROCs.  If two backends did this at about the
-     * same time, they might both think they were over the limit, while
-     * ideally one should succeed and one fail.  Getting that to work
-     * exactly seems more trouble than it is worth, however; instead we
-     * just document that the connection limit is approximate.
-     */
-    if (dbform->datconnlimit >= 0 && AmRegularBackendProcess() &&
-        !am_superuser &&
-        CountDBConnections(MyDatabaseId) > dbform->datconnlimit)
-      ereport(FATAL,
-              (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
-               errmsg("too many connections for database \"%s\"", name)));
-  }
-
-  /*
-   * OK, we're golden.  Next to-do item is to save the encoding info out of
-   * the pg_database tuple.
-   */
-  SetDatabaseEncoding(dbform->encoding);
   /* Record it as a GUC internal option, too */
   SetConfigOption("server_encoding", GetDatabaseEncodingName(), PGC_INTERNAL,
                   PGC_S_DYNAMIC_DEFAULT);
@@ -378,78 +224,15 @@ static void CheckMyDatabase(const char *name, bool am_superuser,
                   PGC_S_DYNAMIC_DEFAULT);
 
   /* assign locale variables */
-  datum = SysCacheGetAttrNotNull(DATABASEOID, tup, Anum_pg_database_datcollate);
-  collate = TextDatumGetCString(datum);
-  datum = SysCacheGetAttrNotNull(DATABASEOID, tup, Anum_pg_database_datctype);
-  ctype = TextDatumGetCString(datum);
-
-  if (pg_perm_setlocale(LC_COLLATE, collate) == NULL)
-    ereport(FATAL,
-            (errmsg("database locale is incompatible with operating system"),
-             errdetail("The database was initialized with LC_COLLATE \"%s\", "
-                       " which is not recognized by setlocale().",
-                       collate),
-             errhint("Recreate the database with another locale or install the "
-                     "missing locale.")));
-
-  if (pg_perm_setlocale(LC_CTYPE, ctype) == NULL)
-    ereport(FATAL,
-            (errmsg("database locale is incompatible with operating system"),
-             errdetail("The database was initialized with LC_CTYPE \"%s\", "
-                       " which is not recognized by setlocale().",
-                       ctype),
-             errhint("Recreate the database with another locale or install the "
-                     "missing locale.")));
-
-  if (strcmp(ctype, "C") == 0 || strcmp(ctype, "POSIX") == 0)
-    database_ctype_is_c = true;
-
-  init_database_collation();
+  if (pg_perm_setlocale(LC_COLLATE, "C") == NULL ||
+      pg_perm_setlocale(LC_CTYPE, "C") == NULL)
+    ereport(FATAL, (errmsg("could not set the C locale")));
+  database_ctype_is_c = true;
 
   /*
-   * Check collation version.  See similar code in
-   * pg_newlocale_from_collation().  Note that here we warn instead of error
-   * in any case, so that we don't prevent connecting.
+   * The default collation is not set up yet: init_database_collation()
+   * reads pg_database. Nothing that compares text can run until it is.
    */
-  datum = SysCacheGetAttr(DATABASEOID, tup, Anum_pg_database_datcollversion,
-                          &isnull);
-  if (!isnull) {
-    char *actual_versionstr;
-    char *collversionstr;
-    char *locale;
-
-    collversionstr = TextDatumGetCString(datum);
-
-    if (dbform->datlocprovider == COLLPROVIDER_LIBC)
-      locale = collate;
-    else {
-      datum =
-          SysCacheGetAttrNotNull(DATABASEOID, tup, Anum_pg_database_datlocale);
-      locale = TextDatumGetCString(datum);
-    }
-
-    actual_versionstr =
-        get_collation_actual_version(dbform->datlocprovider, locale);
-    if (!actual_versionstr)
-      /* should not happen */
-      elog(WARNING,
-           "database \"%s\" has no actual collation version, but a version was "
-           "recorded",
-           name);
-    else if (strcmp(actual_versionstr, collversionstr) != 0)
-      ereport(WARNING,
-              (errmsg("database \"%s\" has a collation version mismatch", name),
-               errdetail("The database was created using collation version %s, "
-                         "but the operating system provides version %s.",
-                         collversionstr, actual_versionstr),
-               errhint("Rebuild all objects in this database that use the "
-                       "default collation and run "
-                       "ALTER DATABASE %s REFRESH COLLATION VERSION, "
-                       "or build PostgreSQL with the right library version.",
-                       quote_identifier(name))));
-  }
-
-  ReleaseSysCache(tup);
 }
 
 /*
@@ -760,10 +543,10 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   EnablePortalManager();
 
   /*
-   * Load relcache entries for the shared system catalogs.  This must create
-   * at least entries for pg_database and catalogs used for authentication.
+   * No relcache entries are loaded for the shared system catalogs: digres
+   * has no catalog tables, and what was read from them here comes from
+   * the data directory (utils/init/datadir.c).
    */
-  RelationCacheInitializePhase2();
 
   /*
    * Set up process-exit callback to do pre-shutdown cleanup.  This is the
@@ -898,15 +681,11 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
     dboid = Template1DbOid;
     MyDatabaseTableSpace = DEFAULTTABLESPACE_OID;
   } else if (in_dbname != NULL) {
-    HeapTuple tuple;
-    Form_pg_database dbform;
-
-    tuple = GetDatabaseTuple(in_dbname);
-    if (!HeapTupleIsValid(tuple))
+    /* The databases are sm's, listed when the server started. */
+    dboid = datadir_database_oid(in_dbname);
+    if (!OidIsValid(dboid))
       ereport(FATAL, (errcode(ERRCODE_UNDEFINED_DATABASE),
                       errmsg("database \"%s\" does not exist", in_dbname)));
-    dbform = (Form_pg_database)GETSTRUCT(tuple);
-    dboid = dbform->oid;
   } else if (!OidIsValid(dboid)) {
     /*
      * If this is a background worker not bound to any particular
@@ -946,40 +725,17 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
     LockSharedObject(DatabaseRelationId, dboid, 0, RowExclusiveLock);
 
   /*
-   * Recheck pg_database to make sure the target database hasn't gone away.
-   * If there was a concurrent DROP DATABASE, this ensures we will die
-   * cleanly without creating a mess.
+   * There is no pg_database row to recheck, and no DROP DATABASE to race
+   * with. A database is named by whoever connects to it; every one is in
+   * the default tablespace.
    */
   if (!bootstrap) {
-    HeapTuple tuple;
-    Form_pg_database datform;
+    if (in_dbname == NULL)
+      ereport(FATAL, (errcode(ERRCODE_UNDEFINED_DATABASE),
+                      errmsg("database %u does not exist", dboid)));
+    strlcpy(dbname, in_dbname, sizeof(dbname));
+    MyDatabaseTableSpace = DEFAULTTABLESPACE_OID;
 
-    tuple = GetDatabaseTupleByOid(dboid);
-    if (HeapTupleIsValid(tuple))
-      datform = (Form_pg_database)GETSTRUCT(tuple);
-
-    if (!HeapTupleIsValid(tuple) ||
-        (in_dbname && namestrcmp(&datform->datname, in_dbname))) {
-      if (in_dbname)
-        ereport(FATAL,
-                (errcode(ERRCODE_UNDEFINED_DATABASE),
-                 errmsg("database \"%s\" does not exist", in_dbname),
-                 errdetail("It seems to have just been dropped or renamed.")));
-      else
-        ereport(FATAL, (errcode(ERRCODE_UNDEFINED_DATABASE),
-                        errmsg("database %u does not exist", dboid)));
-    }
-
-    strlcpy(dbname, NameStr(datform->datname), sizeof(dbname));
-
-    if (database_is_invalid_form(datform)) {
-      ereport(FATAL, errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-              errmsg("cannot connect to invalid database \"%s\"", dbname),
-              errhint("Use DROP DATABASE to drop invalid databases."));
-    }
-
-    MyDatabaseTableSpace = datform->dattablespace;
-    MyDatabaseHasLoginEventTriggers = datform->dathasloginevt;
     /* pass the database name back to the caller */
     if (out_dbname)
       strcpy(out_dbname, dbname);
@@ -1021,41 +777,19 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   InvalidateCatalogSnapshot();
 
   /*
-   * Now we should be able to access the database directory safely. Verify
-   * it's there and looks reasonable.
+   * The database's directory is sm's, under a name of sm's choosing, so
+   * the one PostgreSQL would have made is not looked for.
    */
   fullpath = GetDatabasePath(MyDatabaseId, MyDatabaseTableSpace);
-
-  if (!bootstrap) {
-    if (access(fullpath, F_OK) == -1) {
-      if (errno == ENOENT)
-        ereport(FATAL,
-                (errcode(ERRCODE_UNDEFINED_DATABASE),
-                 errmsg("database \"%s\" does not exist", dbname),
-                 errdetail("The database subdirectory \"%s\" is missing.",
-                           fullpath)));
-      else
-        ereport(FATAL,
-                (errcode_for_file_access(),
-                 errmsg("could not access directory \"%s\": %m", fullpath)));
-    }
-
-    ValidatePgVersion(fullpath);
-  }
-
   SetDatabasePath(fullpath);
   pfree(fullpath);
 
-  /*
-   * It's now possible to do real access to the system catalogs.
-   *
-   * Load relcache entries for the system catalogs.  This must create at
-   * least the minimum set of "nailed-in" cache entries.
-   */
-  RelationCacheInitializePhase3();
+  /* No relcache entries are loaded for the system catalogs: see above. */
 
-  /* set up ACL framework (so CheckMyDatabase can check permissions) */
-  initialize_acl();
+  /*
+   * The ACL framework is not set up: it caches role memberships read from
+   * catalog tables, and digres has one role, a superuser.
+   */
 
   /*
    * Re-read the pg_database row for our database, check permissions and set
@@ -1075,8 +809,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   if (MyProcPort != NULL)
     process_startup_options(MyProcPort, am_superuser);
 
-  /* Process pg_db_role_setting options */
-  process_settings(MyDatabaseId, GetSessionUserId());
+  /* No pg_db_role_setting options: there is no such catalog table. */
 
   /* Apply PostAuthDelay as soon as we've read all options */
   if (PostAuthDelay > 0)
@@ -1172,34 +905,6 @@ static void process_startup_options(Port *port, bool am_superuser) {
 
     SetConfigOption(name, value, gucctx, PGC_S_CLIENT);
   }
-}
-
-/*
- * Load GUC settings from pg_db_role_setting.
- *
- * We try specific settings for the database/role combination, as well as
- * general for this database and for this user.
- */
-static void process_settings(Oid databaseid, Oid roleid) {
-  Relation relsetting;
-  Snapshot snapshot;
-
-  if (!IsUnderPostmaster)
-    return;
-
-  relsetting = table_open(DbRoleSettingRelationId, AccessShareLock);
-
-  /* read all the settings under the same snapshot for efficiency */
-  snapshot = RegisterSnapshot(GetCatalogSnapshot(DbRoleSettingRelationId));
-
-  /* Later settings are ignored if set earlier. */
-  ApplySetting(snapshot, databaseid, roleid, relsetting, PGC_S_DATABASE_USER);
-  ApplySetting(snapshot, InvalidOid, roleid, relsetting, PGC_S_USER);
-  ApplySetting(snapshot, databaseid, InvalidOid, relsetting, PGC_S_DATABASE);
-  ApplySetting(snapshot, InvalidOid, InvalidOid, relsetting, PGC_S_GLOBAL);
-
-  UnregisterSnapshot(snapshot);
-  table_close(relsetting, AccessShareLock);
 }
 
 /*
