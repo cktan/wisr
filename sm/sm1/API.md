@@ -1207,7 +1207,11 @@ those in memtables, uncompressed. A NULL `lo` or `hi` leaves
 that end open. Neither part is corrected, and they are not to
 be added as they stand: rows not yet flushed are counted at
 full size, several times what they take once flushed
-(`STATISTICS.md` §6 at the stack's root).
+(`STATISTICS.md` §6 at the stack's root). `mem` is RocksDB's
+estimate from sampling its memtables: 0 for an empty range, from
+0.4 to 1.05 times the bytes over a whole store of 100 to 100,000
+rows, and noise for a small range, measured both at 0 and above
+a range two hundred times larger.
 
 It reads RocksDB's estimates, not rows, so it needs no
 transaction, takes no lock and sees no snapshot. A store

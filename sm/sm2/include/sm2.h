@@ -542,6 +542,15 @@ int rel_scan_seek(rel_scan_t* scan, uint64_t rowno);
 void rel_scanend(rel_scan_t* scan);
 
 /*
+ * Estimate the bytes of the rel under relid in storeid, a heap's
+ * or an index's alike: in disk, those in sorted files, and in
+ * mem, those in memtables, as sm1::approxsize() reports them and
+ * with its caveats. Needs no open rel and no transaction.
+ */
+int relid_size(sm1::session_t* session, uint64_t storeid, uint16_t relid,
+               uint64_t& disk, uint64_t& mem);
+
+/*
  * An index rel (SM2_DESIGN.md §5): a table's index entries in the
  * table's sm1 store, under the index's 2-byte relid, keyed by
  * the encoded key columns it is opened with. An entry's key is

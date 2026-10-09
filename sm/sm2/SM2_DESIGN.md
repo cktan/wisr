@@ -867,6 +867,7 @@ The operations, and what each one is over:
 | `rel_update`, `rel_delete` | by `rowno`; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is | `sm1::update`, `sm1::erase` |
 | `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest` |
 | `rel_scan`, `rel_scan_seek` | tuples in `rowno` order, forward only | `sm1::scan`, `sm1::scan_seek` |
+| `relid_size` | the bytes under a relid, a heap's or an index's, in files and in memtables apart; no open rel and no transaction (`sm3/SM3_DESIGN.md` §6.2) | `sm1::approxsize` |
 
 **Decision: two kinds of `rel`, over the same sm1 store, told
 apart by their relid.** Index entries are keyed by encoded

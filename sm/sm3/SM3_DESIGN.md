@@ -1086,6 +1086,13 @@ add them.
   never flushed is then charged its uncompressed size, which
   is what it occupies, and a flushed one is charged its rows
   in memory at its own compression.
+- **`mem` is itself an estimate.** RocksDB samples its
+  memtables. Over a whole store it was measured from 0.4 to
+  1.05 times the bytes, and for a rel of a hundred rows beside
+  a large one both at 0 and above a rel two hundred times
+  larger (`sm1/API.md`). The host's rule above is within about
+  2x for a large rel, where it matters, and a small one costs
+  little either way (`STATISTICS.md` §5).
 - **The rejected alternative** was to flush before measuring.
   It would make the number exact, and costs a flush per plan,
   or per analyze for a number that is stale by the next plan.

@@ -931,6 +931,9 @@ int lsstore(session_t* session, std::vector<uint64_t>& out);
  * in memtables, uncompressed. A NULL lo or hi leaves that end
  * open. Neither part is corrected, and they are not to be added
  * as they stand: rows not yet flushed are counted at full size.
+ * mem is RocksDB's estimate from sampling its memtables: 0 for an
+ * empty range, within about 2x for a large one, and noise for a
+ * small one, measured both at 0 and above a range far larger.
  *
  * Reads RocksDB's estimates, not the rows: it needs no
  * transaction, takes no lock and sees no snapshot. A store
