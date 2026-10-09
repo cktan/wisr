@@ -359,7 +359,7 @@ bool builder_building(const catalog_t *cat, uint64_t oid) {
 
 /* Wait for a build to end; see sm3.h. */
 int builder_wait(session_t *session, uint64_t table, uint64_t oid,
-                 const std::function<bool()> &cancelled) {
+                 const std::atomic<int> *cancelled) {
   return catch_nomem([&] {
     if (session->in_txn) {
       return sm1::seterr(sm1::SM_ERR_INTRANS,
@@ -408,11 +408,12 @@ int builder_wait(session_t *session, uint64_t table, uint64_t oid,
         return sm1::seterr(sm1::SM_ERR_INVALID,
                            "index wait: no build of the index is running");
       }
-      // In short sleeps, asking the caller between them whether
-      // to give up: this is its wait to cancel, not a statement's.
+      // In short sleeps, reading the caller's flag between them
+      // for whether to give up: this is its wait to cancel, not a
+      // statement's.
       while (b.gen == gen) {
         b.cv.wait_for(lock, std::chrono::milliseconds(50));
-        if (b.gen == gen && cancelled && cancelled()) {
+        if (b.gen == gen && cancelled && cancelled->load() != 0) {
           return sm1::seterr(sm1::SM_ERR_CANCELLED,
                              "index wait: the wait was cancelled");
         }

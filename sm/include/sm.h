@@ -1,9 +1,11 @@
 /*
  * sm.h -- wisr's API: the one entry into the stack, for
  * PostgreSQL to call (DESIGN.md sections 1 and 5). It is C in
- * style and compiled as C++: std::string and std::vector may
- * cross it, for owned data only, and no other C++ type does
- * (DESIGN.md section 5).
+ * style and compiled as C++: four C++ types may cross it and no
+ * others (DESIGN.md section 5). std::string and std::vector
+ * carry owned data. std::string_view is bytes that are someone
+ * else's, read where they are. std::atomic is a value the host
+ * owns and another thread may change while the stack reads it.
  *
  * Every call is the sm1, sm2 or sm3 call of the same name with
  * sm_ in front, given a C signature: sm_commit is sm3::commit,
@@ -52,6 +54,7 @@
 #ifndef SM_H
 #define SM_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -111,10 +114,12 @@ enum sm_loglevel_t {
  * the call, and the arg given to sm_set_log().
  *
  * It may run on sm1's own threads, the garbage collector's among
- * them, and inside engine calls: it must return normally, never
- * longjmp, and so must not raise a PostgreSQL ERROR.
+ * them, and inside engine calls, where an error has nowhere to
+ * go: so it is noexcept. A hook not declared so is not accepted,
+ * and one that throws all the same ends the process.
  */
-typedef void (*sm_log_fn)(void* arg, sm_loglevel_t level, const char* msg);
+typedef void (*sm_log_fn)(void* arg, sm_loglevel_t level,
+                          const char* msg) noexcept;
 
 /* Install fn as the process-wide log hook; NULL removes it. */
 int sm_set_log(sm_log_fn fn, void* arg);
@@ -603,14 +608,15 @@ int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
  * SM_ERR_NOTFOUND if there is no such table or index.
  *
  * It is not a wait for another transaction, so sm_cancel does not
- * end it. cancelled, if not NULL, is called with arg on the
- * waiting thread every little while, and ends the wait with
- * SM_ERR_CANCELLED by returning true: the host's own test of
- * whether its query was cancelled.
+ * end it. cancelled, if not NULL, is the host's own word on
+ * whether its query was cancelled: a flag the host owns, read
+ * every little while, that ends the wait with SM_ERR_CANCELLED
+ * once it is not 0. Any thread may set it, or a signal handler.
+ * It is only read, never cleared, and need live only as long as
+ * the call.
  */
 int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index,
-                      bool (*cancelled)(void* arg) = nullptr,
-                      void* arg = nullptr);
+                      const std::atomic<int>* cancelled = nullptr);
 
 /*
  * The host's evaluator of partial and expression indexes

@@ -1893,9 +1893,9 @@ TEST_CASE("a build that waits on a transaction holds no one else up") {
   //    not ended: it cancels the build's wait. The index is still
   //    pending, not failed.
   // 4. Attached and queued again, the build waits for A again. B
-  //    waits for the build, in a thread, with a test of its own
-  //    for giving up; when that says so the wait ends with
-  //    SM_ERR_CANCELLED.
+  //    waits for the build, in a thread, with a flag of its own
+  //    for giving up; when that is set the wait ends with
+  //    SM_ERR_CANCELLED, and the flag is left as it was set.
   // 5. A commits: the build ends, and waiting for it returns 0.
   jobs_t f;
   start(f.a);
@@ -1924,20 +1924,22 @@ TEST_CASE("a build that waits on a transaction holds no one else up") {
   CHECK(state_of(f, jobs_owner) == sm3::index_state_t::pending);
 
   build_waits();
-  std::atomic<bool> returned{false}, give_up{false};
+  std::atomic<bool> returned{false};
+  std::atomic<int> give_up{0};
   int rc = 0, err = 0;
   std::thread tb([&] {
-    rc = sm3::builder_wait(f.b, f.jobs, jobs_owner,
-                           [&] { return give_up.load(); });
+    rc = sm3::builder_wait(f.b, f.jobs, jobs_owner, &give_up);
     err = sm1::errnum();
     returned = true;
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   CHECK_FALSE(returned);
-  give_up = true;
+  give_up = 1;
   tb.join();
   CHECK(rc == -1);
   CHECK(err == sm1::SM_ERR_CANCELLED);
+  // The flag is the caller's: the wait reads it and leaves it set.
+  CHECK(give_up.load() == 1);
 
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE_MESSAGE(sm3::builder_wait(f.b, f.jobs, jobs_owner) == 0,

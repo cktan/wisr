@@ -15,6 +15,7 @@
 #include "sm2.h"
 
 #include <cstdint>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -900,12 +901,12 @@ bool builder_building(const catalog_t* cat, uint64_t oid);
  *
  * The wait is not for another transaction and not inside one, so
  * sm1::cancel, which cancels a statement, is not what ends it.
- * The caller says when to give up: cancelled, if given, is asked
- * every little while and ends the wait by returning true. It is
- * called on the waiting thread, and must not call the builder.
+ * The caller says when to give up: cancelled, if given, is a flag
+ * of the caller's, read every little while, that ends the wait
+ * once it is not 0. It is only read; any thread may set it.
  */
 int builder_wait(session_t* session, uint64_t table, uint64_t oid,
-                 const std::function<bool()>& cancelled = {});
+                 const std::atomic<int>* cancelled = nullptr);
 
 } // namespace sm3
 

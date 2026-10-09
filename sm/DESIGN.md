@@ -264,19 +264,29 @@ design:
   glue is a C++ file, as `rel` is. It stays C in shape: free
   functions named `sm_*`, opaque handles, an `int` result with
   the thread-local error, callbacks that return a code and
-  never throw. Two C++ types may cross it and no others,
+  never throw. The log hook, which returns nothing and runs
+  where an error has nowhere to go, is `noexcept` in its type:
+  one that throws ends the process. Four C++ types may cross
+  it and no others.
   `std::string` and `std::vector`, of plain C types, of
-  `sm_datum_t` or of strings. They carry owned data only: a
+  `sm_datum_t` or of strings, carry owned data only: a
   result the caller keeps, or a list passed in, as an
   out-parameter or a const reference, filled inside the
-  wrapper's catch-all. A row or an index entry on a scan stays
-  a pointer and a length into session memory, since a copy a
-  row would be an allocation a row. No `optional`, `function`
+  wrapper's catch-all. `std::string_view` is bytes that are
+  not the receiver's: read during the call, or pointing into
+  session memory for as long as the call says. `std::atomic`
+  is a value the host owns and the stack reads while another
+  thread may change it, such as a flag that says give up; it
+  is how the host is asked something without a callback into
+  it: `sm_cat_index_wait` takes one, where it took a function
+  to call. No call takes a `std::string_view` yet: a row or
+  an index entry on a scan is still a pointer and a length
+  into session memory. No `optional`, `function`
   or `shared_ptr`, and no class of the stack's own: that line
   is what keeps the header from growing abstractions. A plain
-  struct may hold the two types, and a vector may hold such
-  structs: a table's definition is one, of its columns and its
-  indexes. What it replaced is what the header did to stay C:
+  struct may hold the first two types, and a vector may hold
+  such structs: a table's definition is one, of its columns and
+  its indexes. What it replaced is what the header did to stay C:
   lists as one malloc'd block freed by hand, owned results
   that lived "until the next call", and a C mirror of each
   table definition, seven parallel arrays built and kept by

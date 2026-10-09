@@ -724,7 +724,7 @@ both.
 | `builder_enqueue(cat, table_oid, index_oid)` | Gives the builder its work: puts a pending index on the queue. A duplicate or an unattached catalog is ignored. A worker checks the index is still pending, then fills it. |
 | `builder_set_max_workers(max_workers)` | Sets how many builds run at once across all catalogs; default 4. |
 | `builder_building(cat, index_oid)` | Returns whether a worker is filling the index now. |
-| `builder_wait(ss, table_oid, index_oid)` | Waits outside a transaction until the index is valid, or returns the build's error. |
+| `builder_wait(ss, table_oid, index_oid, cancelled)` | Waits outside a transaction until the index is valid, or returns the build's error. `cancelled`, if given, is a flag of the caller's that ends the wait once it is not 0. |
 
 ### 9.6 Not there yet
 

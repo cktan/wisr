@@ -166,9 +166,12 @@ enum class loglevel_t {
 /*
  * A log hook: receives level and a NUL-terminated message
  * valid only for the duration of the call, plus the arg given
- * to sm1::set_log().
+ * to sm1::set_log(). It is noexcept: it is called from wisr's
+ * own threads and with a library lock held, where an error has
+ * nowhere to go, so a hook that throws ends the process.
  */
-using log_fn = void (*)(void* arg, loglevel_t level, const char* msg);
+using log_fn = void (*)(void* arg, loglevel_t level,
+                        const char* msg) noexcept;
 
 /*
  * Install fn as the process-wide log hook, replacing any

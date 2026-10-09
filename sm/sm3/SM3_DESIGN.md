@@ -452,7 +452,9 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     for a build another session or an earlier run of the
     process began. It is called outside a transaction, so that
     the caller's next snapshot is new enough to scan the
-    index.
+    index. The caller may hand it a flag, a `std::atomic<int>`
+    of its own, which ends the wait once it is not 0: the
+    stack reads it and calls nothing of the caller's.
   - **Restart.** A build unfinished at a restart starts again
     from the first row. Adding only what is absent makes that
     safe, and no progress is kept on disk.
@@ -593,7 +595,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     an old image's values and a new one's together when it
     compares them. It costs a copy of each value a call.
     `std::string` and `std::vector` are the two C++ types that
-    may cross `include/sm.h` (`DESIGN.md` §5).
+    may cross `include/sm.h` with owned data (`DESIGN.md` §5).
   - **An update leaves such an index alone by its columns.**
     The host lists the columns the predicate and the
     expressions read, when the index is created, and the

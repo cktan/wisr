@@ -352,10 +352,16 @@ enum class loglevel_t {
     info  = 2    /* a notable event, such as recovery */
 };
 
-using log_fn = void (*)(void* arg, loglevel_t level, const char* msg);
+using log_fn = void (*)(void* arg, loglevel_t level,
+                        const char* msg) noexcept;
 
 void set_log(log_fn fn, void* arg);   /* nullptr removes it */
 ```
+
+The hook is `noexcept`. It is called from wisr's own threads and
+with a library lock held, where an error has nowhere to go: a
+hook not declared `noexcept` does not compile as one, and one
+that throws ends the process.
 
 wisr never writes a log of its own. `sm1::set_log` installs a
 process-wide hook, in the manner of SQLite's

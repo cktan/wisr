@@ -54,7 +54,7 @@ public:
 
 private:
   /* The hook: record the message under the capture's mutex. */
-  static void hook(void *arg, sm1::loglevel_t level, const char *msg) {
+  static void hook(void *arg, sm1::loglevel_t level, const char *msg) noexcept {
     log_capture_t *self = static_cast<log_capture_t *>(arg);
     std::lock_guard<std::mutex> guard(self->m_mu);
     self->m_msgs.emplace_back(level, msg);

@@ -181,7 +181,8 @@ struct log_hook_t {
 };
 
 /* sm1's log hook: pass the call on to the C one in arg. */
-void log_trampoline(void *arg, sm1::loglevel_t level, const char *msg) {
+void log_trampoline(void *arg, sm1::loglevel_t level,
+                    const char *msg) noexcept {
   const log_hook_t *hook = static_cast<const log_hook_t *>(arg);
   hook->fn(hook->arg, static_cast<sm_loglevel_t>(level), msg);
 }
@@ -1004,16 +1005,12 @@ int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
 
 /* Wait for an index's build to end. */
 int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index,
-                      bool (*cancelled)(void *arg), void *arg) {
+                      const std::atomic<int> *cancelled) {
   return guard(nullptr, [&] {
     if (!session) {
       return null_arg("sm_cat_index_wait", "session");
     }
-    std::function<bool()> ask;
-    if (cancelled) {
-      ask = [cancelled, arg] { return cancelled(arg); };
-    }
-    return sm3::builder_wait(session->sm3, table, index, ask);
+    return sm3::builder_wait(session->sm3, table, index, cancelled);
   });
 }
 

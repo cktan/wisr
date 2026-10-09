@@ -105,8 +105,9 @@ What this changes above:
   lag §4 already counts as a liability.
 - **The fork is compiled as C++.** `include/sm.h` passes
   `std::string` and `std::vector` across the boundary for
-  owned data, and the fork calls it as it is; there is no
-  plain C header to keep beside it.
+  owned data, and may pass `std::string_view` and
+  `std::atomic` (`DESIGN.md` §5); the fork calls it as it
+  is, and there is no plain C header to keep beside it.
 - **A row handed out is good until the next call.** A row or
   an index entry the stack returns points into its own
   memory and stays valid until the next `sm_` call on that
@@ -121,13 +122,17 @@ What this changes above:
   session begins its next one. Query cancel,
   `statement_timeout` and `lock_timeout` are that call
   (`sm1/SM1_DESIGN.md` §5.1). The wait for an index build is
-  not a statement's wait for a transaction, and takes the
-  fork's own test of whether its query was cancelled.
+  not a statement's wait for a transaction, and reads a flag
+  of the fork's own that says whether its query was cancelled.
 - **The fork has no `longjmp`.** PostgreSQL raises an error by
   jumping out of wherever it is. That goes with the rest of
   its error handling, so the stack does not have to defend
   against a jump through one of its calls, or out of a
-  callback it makes, such as the index evaluator's.
+  callback it makes, such as the index evaluator's. Done:
+  digres raises an error as a C++ exception
+  (`../dg/WORKNOTE.md` step 7). An exception out of a callback
+  the stack makes is therefore the thing to settle next:
+  `sm.h` says no exception crosses it.
 
 ---
 
@@ -471,7 +476,7 @@ This is a reading, not a run. The spike is what tests it.
 | Row lock | `table_tuple_lock` in one of four modes, with a wait policy | `sm_tbl_lock` in two modes, always waiting | partly; gaps 3, 4 |
 | Statement boundary | `CommandCounterIncrement`, a snapshot a statement | `sm_stmt_begin` | fits |
 | Transaction | start, commit, abort; subtransactions; two-phase | `sm_begin`, `sm_commit`, `sm_abort`; `sm_savepoint`, `sm_rollback`, `sm_forget`; `sm_prepare` and the rest | fits |
-| Cancel | `CHECK_FOR_INTERRUPTS` | `sm_cancel`, and the callback on `sm_cat_index_wait` | fits |
+| Cancel | `CHECK_FOR_INTERRUPTS` | `sm_cancel`, and the flag `sm_cat_index_wait` reads | fits |
 | Create and drop | `heap_create_with_catalog`, `index_create`, and their drops | `sm_cat_create_table`, `sm_cat_create_index`, `sm_cat_drop_table`, `sm_cat_drop_index`, `sm_tbl_truncate` | fits for these; gaps 7, 8 |
 | Sequence | `nextval`, `setval`, `currval` | `sm_mkseq`, `sm_nextseq`, `sm_rmseq` | `nextval` only; gap 9 |
 
