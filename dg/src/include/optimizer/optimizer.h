@@ -143,7 +143,7 @@ extern Expr *evaluate_expr(Expr *expr, Oid result_type, int32 result_typmod,
 
 extern List *expand_function_arguments(List *args, bool include_out_arguments,
                                        Oid result_type,
-                                       struct HeapTupleData *func_tuple);
+                                       const struct cat_proc_t *func_tuple);
 
 extern ScalarArrayOpExpr *make_SAOP_expr(Oid oper, Node *leftexpr, Oid coltype,
                                          Oid arraycollid, Oid inputcollid,
@@ -174,7 +174,7 @@ extern SortGroupClause *get_sortgroupref_clause_noerr(Index sortref,
 /* Bits that can be OR'd into the flags argument of pull_var_clause() */
 #define PVC_INCLUDE_AGGREGATES	0x0001  /* include Aggrefs in output list */
 #define PVC_RECURSE_AGGREGATES	0x0002  /* recurse into Aggref arguments */
-#define PVC_INCLUDE_WINDOWFUNCS 0x0004 /* include WindowFuncs in output list   \
+#define PVC_INCLUDE_WINDOWFUNCS 0x0004                               /* include WindowFuncs in output list   \
                                         */
 #define PVC_RECURSE_WINDOWFUNCS 0x0008 /* recurse into WindowFunc arguments */
 #define PVC_INCLUDE_PLACEHOLDERS	0x0010                               /* include PlaceHolderVars in           \

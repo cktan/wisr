@@ -18,8 +18,4 @@
 { oid => '13', oid_symbol => 'ClanguageId',
   descr => 'dynamically-loaded C functions',
   lanname => 'c', lanvalidator => 'fmgr_c_validator' },
-{ oid => '14', oid_symbol => 'SQLlanguageId',
-  descr => 'SQL-language functions',
-  lanname => 'sql', lanpltrusted => 't', lanvalidator => 'fmgr_sql_validator' },
-
 ]

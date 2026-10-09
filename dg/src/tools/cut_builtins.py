@@ -12,6 +12,11 @@ the handler of, and on from there.
                              names, one a line; each pg_proc row
                              with that prosrc is removed, then
                              whatever no longer resolves
+    cut_builtins.py --language NAME
+                             the same, for every pg_proc row
+                             written in the language NAME, such as
+                             sql: a function with no C function at
+                             all
 
 It does not work out what refers to what. genbki.pl does, and
 says "unresolved OID reference" for each row left dangling, so
@@ -118,15 +123,22 @@ def genbki():
     return found
 
 
-def main(listing):
-    """Remove the listed functions' rows, then every dangling row."""
-    with open(listing) as f:
-        gone = set(f.read().split())
-    removed = remove_rows(
-        "pg_proc",
-        lambda text, _: True if set(
-            re.findall(r"prosrc => '(\w+)'", text)) & gone else None,
-        "no C function")
+def main(listing, language=None):
+    """Remove the chosen functions' rows, then every dangling row."""
+    if language is not None:
+        removed = remove_rows(
+            "pg_proc",
+            lambda text, _: True if re.search(
+                rf"\bprolang => '{language}'", text) else None,
+            f"language {language}")
+    else:
+        with open(listing) as f:
+            gone = set(f.read().split())
+        removed = remove_rows(
+            "pg_proc",
+            lambda text, _: True if set(
+                re.findall(r"prosrc => '(\w+)'", text)) & gone else None,
+            "no C function")
     while True:
         unresolved = genbki()
         if not unresolved:
@@ -151,6 +163,9 @@ def main(listing):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) == 3 and sys.argv[1] == "--language":
+        main(None, sys.argv[2])
+    elif len(sys.argv) == 2:
+        main(sys.argv[1])
+    else:
         sys.exit(__doc__)
-    main(sys.argv[1])

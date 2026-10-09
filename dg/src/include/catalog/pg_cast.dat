@@ -417,9 +417,6 @@
   castcontext => 'e', castmethod => 'f' },
 { castsource => 'circle', casttarget => 'box', castfunc => 'box(circle)',
   castcontext => 'e', castmethod => 'f' },
-{ castsource => 'circle', casttarget => 'polygon',
-  castfunc => 'polygon(circle)', castcontext => 'e', castmethod => 'f' },
-
 # MAC address category
 { castsource => 'macaddr', casttarget => 'macaddr8', castfunc => 'macaddr8',
   castcontext => 'i', castmethod => 'f' },

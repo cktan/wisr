@@ -49,7 +49,6 @@
 #include "commands/extension.h"
 #include "commands/proclang.h"
 #include "executor/executor.h"
-#include "executor/functions.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
@@ -94,14 +93,9 @@ static void compute_return_type(TypeName *returnType, Oid languageOid,
 
   if (typtup) {
     if (!((Form_pg_type)GETSTRUCT(typtup))->typisdefined) {
-      if (languageOid == SQLlanguageId)
-        ereport(ERROR, (errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-                        errmsg("SQL function cannot return shell type %s",
-                               TypeNameToString(returnType))));
-      else
-        ereport(NOTICE, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-                         errmsg("return type %s is only a shell",
-                                TypeNameToString(returnType))));
+      ereport(NOTICE, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                       errmsg("return type %s is only a shell",
+                              TypeNameToString(returnType))));
     }
     rettype = typeTypeId(typtup);
     ReleaseSysCache(typtup);
@@ -213,14 +207,8 @@ void interpret_function_parameter_list(
     typtup = LookupTypeName(pstate, t, NULL, false);
     if (typtup) {
       if (!((Form_pg_type)GETSTRUCT(typtup))->typisdefined) {
-        /* As above, hard error if language is SQL */
-        if (languageOid == SQLlanguageId)
-          ereport(ERROR, (errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-                          errmsg("SQL function cannot accept shell type %s",
-                                 TypeNameToString(t)),
-                          parser_errposition(pstate, t->location)));
-        /* We don't allow creating aggregates on shell types either */
-        else if (objtype == OBJECT_AGGREGATE)
+        /* We don't allow creating aggregates on shell types */
+        if (objtype == OBJECT_AGGREGATE)
           ereport(ERROR, (errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
                           errmsg("aggregate cannot accept shell type %s",
                                  TypeNameToString(t)),
@@ -739,10 +727,10 @@ static void interpret_AS_clause(Oid languageOid, const char *languageName,
     ereport(ERROR, (errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
                     errmsg("duplicate function body specified")));
 
-  if (sql_body_in && languageOid != SQLlanguageId)
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-             errmsg("inline SQL function body only valid for language SQL")));
+  /* There is no SQL-language function for a body in SQL to be the body of. */
+  if (sql_body_in)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("SQL function bodies are not supported")));
 
   *sql_body_out = NULL;
 
@@ -763,80 +751,6 @@ static void interpret_AS_clause(Oid languageOid, const char *languageName,
       if (strcmp(*prosrc_str_p, "-") == 0)
         *prosrc_str_p = funcname;
     }
-  } else if (sql_body_in) {
-    SQLFunctionParseInfoPtr pinfo;
-
-    pinfo = (SQLFunctionParseInfoPtr)palloc0(sizeof(SQLFunctionParseInfo));
-
-    pinfo->fname = funcname;
-    pinfo->nargs = list_length(parameterTypes);
-    pinfo->argtypes = (Oid *)palloc(pinfo->nargs * sizeof(Oid));
-    pinfo->argnames = (char **)palloc(pinfo->nargs * sizeof(char *));
-    for (int i = 0; i < list_length(parameterTypes); i++) {
-      char *s = strVal(list_nth(inParameterNames, i));
-
-      pinfo->argtypes[i] = list_nth_oid(parameterTypes, i);
-      if (IsPolymorphicType(pinfo->argtypes[i]))
-        ereport(ERROR, (errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-                        errmsg("SQL function with unquoted function body "
-                               "cannot have polymorphic arguments")));
-
-      if (s[0] != '\0')
-        pinfo->argnames[i] = s;
-      else
-        pinfo->argnames[i] = NULL;
-    }
-
-    if (IsA(sql_body_in, List)) {
-      List *stmts = linitial_node(List, castNode(List, sql_body_in));
-      ListCell *lc;
-      List *transformed_stmts = NIL;
-
-      foreach (lc, stmts) {
-        Node *stmt = (Node *)lfirst(lc);
-        Query *q;
-        ParseState *pstate = make_parsestate(NULL);
-
-        pstate->p_sourcetext = queryString;
-        sql_fn_parser_setup(pstate, pinfo);
-        q = transformStmt(pstate, stmt);
-        if (q->commandType == CMD_UTILITY)
-          ereport(
-              ERROR, errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-              errmsg("%s is not yet supported in unquoted SQL function body",
-                     GetCommandTagName(CreateCommandTag(q->utilityStmt))));
-        transformed_stmts = lappend(transformed_stmts, q);
-        free_parsestate(pstate);
-      }
-
-      *sql_body_out = (Node *)list_make1(transformed_stmts);
-    } else {
-      Query *q;
-      ParseState *pstate = make_parsestate(NULL);
-
-      pstate->p_sourcetext = queryString;
-      sql_fn_parser_setup(pstate, pinfo);
-      q = transformStmt(pstate, sql_body_in);
-      if (q->commandType == CMD_UTILITY)
-        ereport(ERROR, errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                errmsg("%s is not yet supported in unquoted SQL function body",
-                       GetCommandTagName(CreateCommandTag(q->utilityStmt))));
-      free_parsestate(pstate);
-
-      *sql_body_out = (Node *)q;
-    }
-
-    /*
-     * We must put something in prosrc.  For the moment, just record an
-     * empty string.  It might be useful to store the original text of the
-     * CREATE FUNCTION statement --- but to make actual use of that in
-     * error reports, we'd also have to adjust readfuncs.c to not throw
-     * away node location fields when reading prosqlbody.
-     */
-    *prosrc_str_p = pstrdup("");
-
-    /* But we definitely don't need probin. */
-    *probin_str_p = NULL;
   } else {
     /* Everything else wants the given string in prosrc. */
     *prosrc_str_p = strVal(linitial(as));

@@ -4,7 +4,8 @@
 #                      the server, build/postgres
 #   make -k -j4        the same, going on past a file that fails
 #   make gen           only generate
-#   make test          check the parser: sq's tests, given this server
+#   make test          check the parser, with sq's tests given this
+#                      server, and run the statements in test/
 #   make clean         remove objects and generated files
 #   make format        clang-format every .c and .h
 #
@@ -42,7 +43,8 @@ GEN := $(I)/catalog/.stamp $(B)/nodes/.stamp $(B)/utils/.fmgr-stamp \
     $(I)/utils/errcodes.h $(I)/storage/lwlocknames.h \
     $(B)/utils/activity/.stamp $(I)/utils/probes.h \
     $(I)/pg_config_paths.h src/common/kwlist_d.h \
-    $(B)/parser/sq_convert.c $(B)/utils/adt/jsonpath_gram.c \
+    $(B)/parser/sq_convert.c $(I)/catalog/cat_builtin.h \
+    $(B)/catalog/cat_builtin.c $(B)/utils/adt/jsonpath_gram.c \
     $(B)/utils/adt/jsonpath_scan.c $(B)/utils/misc/guc-file.c
 
 .PHONY: gen
@@ -68,6 +70,7 @@ build/postgres: src $(LIBSQ)
 test:
 	$(MAKE) all
 	SQ_PARSE="$(CURDIR)/build/postgres --parse" $(SQ)/test/run.sh
+	test/run.sh
 
 # sq builds its own library; whether it is up to date is sq's to say.
 .PHONY: $(LIBSQ)
@@ -126,6 +129,13 @@ $(I)/pg_config_paths.h: Makefile
 src/common/kwlist_d.h: $(I)/parser/kwlist.h src/tools/gen_keywordlist.pl
 	$(PERL) -Isrc/tools src/tools/gen_keywordlist.pl --extern \
 	    -o src/common $<
+
+# The built-in catalog rows, compiled in (sm/PART4.md section 10): from
+# postgres.bki, where genbki.pl has resolved every reference to an oid.
+$(I)/catalog/cat_builtin.h: $(I)/catalog/.stamp $(B)/catalog/gen_cat.py
+	python3 $(B)/catalog/gen_cat.py $(I)/catalog/postgres.bki header > $@
+$(B)/catalog/cat_builtin.c: $(I)/catalog/.stamp $(B)/catalog/gen_cat.py
+	python3 $(B)/catalog/gen_cat.py $(I)/catalog/postgres.bki source > $@
 
 # sq's tree as PostgreSQL's nodes, written by sq's generator from the
 # node headers it has: one function a node, as its other output is.

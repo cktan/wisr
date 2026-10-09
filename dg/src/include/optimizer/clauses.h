@@ -59,9 +59,6 @@ extern int NumRelids(PlannerInfo *root, Node *clause);
 
 extern void CommuteOpExpr(OpExpr *clause);
 
-extern Query *inline_set_returning_function(PlannerInfo *root,
-                                            RangeTblEntry *rte);
-
 extern Bitmapset *pull_paramids(Expr *expr);
 
 extern bool expression_has_grouping_conflict(Node *expr,

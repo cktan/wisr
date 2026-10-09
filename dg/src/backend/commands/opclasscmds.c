@@ -1051,14 +1051,12 @@ static void processTypesSpec(List *args, Oid *lefttype, Oid *righttype) {
  * and do any validity checking we can manage.
  */
 static void assignOperTypes(OpFamilyMember *member, Oid amoid, Oid typeoid) {
-  Operator optup;
-  Form_pg_operator opform;
+  Operator opform;
 
   /* Fetch the operator definition */
-  optup = SearchSysCache1(OPEROID, ObjectIdGetDatum(member->object));
-  if (!HeapTupleIsValid(optup))
+  opform = cat_operator(member->object);
+  if (opform == NULL)
     elog(ERROR, "cache lookup failed for operator %u", member->object);
-  opform = (Form_pg_operator)GETSTRUCT(optup);
 
   /*
    * Opfamily operators must be binary.
@@ -1102,8 +1100,6 @@ static void assignOperTypes(OpFamilyMember *member, Oid amoid, Oid typeoid) {
     member->lefttype = opform->oprleft;
   if (!OidIsValid(member->righttype))
     member->righttype = opform->oprright;
-
-  ReleaseSysCache(optup);
 }
 
 /*

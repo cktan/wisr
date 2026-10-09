@@ -9,6 +9,12 @@
  *                                            type name
  *   postgres --parse --locations < file.sql  each statement whole, with
  *                                            every location shown
+ *   postgres --parse --analyze < file.sql    each statement analyzed: the
+ *                                            Query, or the error
+ *   postgres --parse --plan < file.sql       each statement planned: the
+ *                                            PlannedStmt, or the error
+ *   postgres --parse --run < file.sql        each statement run, and its
+ *                                            rows printed
  *
  * This runs raw_parser() with no server around it. A tree is printed
  * as nodeToString() writes it, and an error as its message, position,
@@ -25,10 +31,17 @@
 
 #include "lib/stringinfo.h"
 #include "mb/pg_wchar.h"
+#include "miscadmin.h"
 #include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
+#include "executor/executor.h"
+#include "parser/analyze.h"
 #include "parser/parse_tool.h"
 #include "parser/parser.h"
+#include "tcop/dest.h"
+#include "tcop/tcopprot.h"
+#include "utils/guc.h"
+#include "utils/resowner.h"
 #include "utils/memutils.h"
 
 /* Read all of standard input into a string. */
@@ -60,15 +73,60 @@ static void print_error(void) {
     printf("HINT: %s\n", err->hint);
 }
 
+/*
+ * Take one statement through the analyzer, the rewriter and the planner,
+ * and print each plan; or, if run is set, execute each and print its rows.
+ */
+static void plan_or_run(RawStmt *raw, const char *sql, bool run) {
+  List *queries = pg_analyze_and_rewrite_fixedparams(raw, sql, NULL, 0, NULL);
+  ListCell *lc;
+
+  foreach (lc, queries) {
+    PlannedStmt *stmt = pg_plan_query((Query *)lfirst(lc), sql, 0, NULL);
+    QueryDesc *desc;
+
+    if (!run) {
+      printf("%s\n", nodeToString(stmt));
+      continue;
+    }
+
+    /* The executor keeps what it opens in the current resource owner. */
+    if (CurrentResourceOwner == NULL)
+      CurrentResourceOwner = ResourceOwnerCreate(NULL, "parse tool");
+
+    desc = CreateQueryDesc(stmt, sql, InvalidSnapshot, InvalidSnapshot,
+                           CreateDestReceiver(DestDebug), NULL, NULL, 0);
+    ExecutorStart(desc, 0);
+    ExecutorRun(desc, ForwardScanDirection, 0);
+    ExecutorFinish(desc);
+    ExecutorEnd(desc);
+    FreeQueryDesc(desc);
+  }
+}
+
 /* Parse standard input and print it: see the head of this file. */
 int parse_tool_main(int argc, char **argv) {
   bool type_name = argc > 2 && strcmp(argv[2], "--type-name") == 0;
   bool locations = argc > 2 && strcmp(argv[2], "--locations") == 0;
+  bool analyze = argc > 2 && strcmp(argv[2], "--analyze") == 0;
+  bool plan = argc > 2 && strcmp(argv[2], "--plan") == 0;
+  bool run = argc > 2 && strcmp(argv[2], "--run") == 0;
   char *sql;
   int status = 0;
 
   /* The parser asks the encoding how long a character is. */
   SetDatabaseEncoding(PG_UTF8);
+
+  /*
+   * A statement that is planned or run is checked against a user. With
+   * no server there is none, so it is the bootstrap superuser, as it is
+   * in a standalone backend.
+   */
+  if (plan || run) {
+    /* Setting the user sets a setting: the settings come first. */
+    InitializeGUCOptions();
+    InitializeSessionUserIdStandalone();
+  }
 
   sql = read_stdin();
 
@@ -82,7 +140,12 @@ int parse_tool_main(int argc, char **argv) {
       Node *node = (Node *)lfirst(lc);
 
       /* A statement comes wrapped in where it was written. */
-      if (locations)
+      if (analyze)
+        printf("%s\n", nodeToString(parse_analyze_fixedparams(
+                           (RawStmt *)node, sql, NULL, 0, NULL)));
+      else if (plan || run)
+        plan_or_run((RawStmt *)node, sql, run);
+      else if (locations)
         printf("%s\n", nodeToStringWithLocations(node));
       else {
         if (IsA(node, RawStmt))

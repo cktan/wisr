@@ -15,10 +15,16 @@
 #define PARSE_OPER_H
 
 #include "access/htup.h"
+#include "catalog/cat_builtin.h"
 #include "nodes/parsenodes.h"
 #include "parser/parse_node.h"
 
-typedef HeapTuple Operator;
+/*
+ * An operator the parser has resolved: its row in the catalog. Every
+ * operator is built in, so the row is compiled in and lives for ever,
+ * and there is nothing to release.
+ */
+typedef const cat_operator_t *Operator;
 
 /* Routines to look up an operator given name and exact input type(s) */
 extern Oid LookupOperName(ParseState *pstate, List *opername, Oid oprleft,

@@ -19,7 +19,6 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
-#include "executor/functions.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -233,11 +232,6 @@ static void fmgr_info_cxt_security(Oid functionId, FmgrInfo *finfo,
     finfo->fn_stats = TRACK_FUNC_PL; /* ie, track if ALL */
     break;
 
-  case SQLlanguageId:
-    finfo->fn_addr = fmgr_sql;
-    finfo->fn_stats = TRACK_FUNC_PL; /* ie, track if ALL */
-    break;
-
   default:
     fmgr_info_other_lang(functionId, finfo, procedureTuple);
     finfo->fn_stats = TRACK_FUNC_OFF; /* ie, track if not OFF */
@@ -306,11 +300,6 @@ void fmgr_symbol(Oid functionId, char **mod, char **fn) {
      */
     *mod = TextDatumGetCString(probinattr);
     *fn = TextDatumGetCString(prosrcattr);
-    break;
-
-  case SQLlanguageId:
-    *mod = NULL; /* core binary */
-    *fn = pstrdup("fmgr_sql");
     break;
 
   default:

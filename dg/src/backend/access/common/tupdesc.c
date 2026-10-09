@@ -23,6 +23,7 @@
 #include "access/toast_compression.h"
 #include "access/tupdesc_details.h"
 #include "catalog/catalog.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
@@ -775,8 +776,8 @@ uint32 hashRowType(TupleDesc desc) {
 void TupleDescInitEntry(TupleDesc desc, AttrNumber attributeNumber,
                         const char *attributeName, Oid oidtypeid, int32 typmod,
                         int attdim) {
-  HeapTuple tuple;
-  Form_pg_type typeForm;
+  const cat_type_t *tuple;
+  const cat_type_t *typeForm;
   Form_pg_attribute att;
 
   /*
@@ -820,10 +821,10 @@ void TupleDescInitEntry(TupleDesc desc, AttrNumber attributeNumber,
   att->attinhcount = 0;
   /* variable-length fields are not present in tupledescs */
 
-  tuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(oidtypeid));
-  if (!HeapTupleIsValid(tuple))
+  tuple = cat_type(oidtypeid);
+  if (tuple == NULL)
     elog(ERROR, "cache lookup failed for type %u", oidtypeid);
-  typeForm = (Form_pg_type)GETSTRUCT(tuple);
+  typeForm = tuple;
 
   att->atttypid = oidtypeid;
   att->attlen = typeForm->typlen;
@@ -834,8 +835,6 @@ void TupleDescInitEntry(TupleDesc desc, AttrNumber attributeNumber,
   att->attcollation = typeForm->typcollation;
 
   populate_compact_attribute(desc, attributeNumber - 1);
-
-  ReleaseSysCache(tuple);
 }
 
 /*

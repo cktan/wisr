@@ -4,7 +4,9 @@ A fork of PostgreSQL that runs on the storage stack in `../sm`.
 `../sm/PART4.md` §10 says how it is to be made, and §9 what it
 calls.
 
-**It links, and cannot run a database yet.** `make -j4` generates
+**It links, and cannot run a database yet.** It can run a
+statement over constants, with no server: `echo 'select 1 + 1;'
+| build/postgres --parse --run`. `make -j4` generates
 what is generated, compiles every file as strict C++ with no
 `-fpermissive`, and links `build/postgres`. The server has no
 bootstrap and so no catalog to start from: its catalog is to be
@@ -37,6 +39,21 @@ turns sq's tree into the nodes the analyzer reads.
 `make test` checks it. `build/postgres --parse` parses standard
 input and prints the trees, with no server started, and sq's
 tests hold what it prints to what PostgreSQL's parser printed.
+
+## The catalog
+
+PostgreSQL's catalog is being replaced, a lookup at a time
+(`../sm/PART4.md` §10, `WORKNOTE.md` step 6). What is built in —
+types, functions, operators — is compiled in:
+`src/backend/catalog/gen_cat.py` writes `cat_builtin.c` from the
+catalog data, and a caller gets a row with `cat_type(oid)`,
+`cat_proc(oid)` and the like, and keeps the pointer.
+
+`build/postgres --parse --analyze`, `--plan` and `--run` take a
+statement through the analyzer, the planner or the executor with
+no server. A lookup that has not been moved to the new rows
+stops it, and says which. `make test` runs the statements in
+`test/` this way.
 
 ## Where it came from
 

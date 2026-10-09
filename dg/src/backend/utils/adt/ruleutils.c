@@ -367,7 +367,6 @@ static int print_function_arguments(StringInfo buf, HeapTuple proctup,
                                     bool print_table_args, bool print_defaults);
 static void print_function_rettype(StringInfo buf, HeapTuple proctup);
 static void print_function_trftypes(StringInfo buf, HeapTuple proctup);
-static void print_function_sqlbody(StringInfo buf, HeapTuple proctup);
 static void set_rtable_names(deparse_namespace *dpns, List *parent_namespaces,
                              Bitmapset *rels_used);
 static void set_deparse_for_query(deparse_namespace *dpns, Query *query,
@@ -2850,10 +2849,8 @@ Datum pg_get_functiondef(PG_FUNCTION_ARGS) {
   }
 
   /* And finally the function definition ... */
-  (void)SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_prosqlbody, &isnull);
-  if (proc->prolang == SQLlanguageId && !isnull) {
-    print_function_sqlbody(&buf, proctup);
-  } else {
+  /* The body is its source text; no function here has a SQL body. */
+  {
     appendStringInfoString(&buf, "AS ");
 
     tmp = SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_probin, &isnull);
@@ -3237,79 +3234,6 @@ Datum pg_get_function_arg_default(PG_FUNCTION_ARGS) {
   ReleaseSysCache(proctup);
 
   PG_RETURN_TEXT_P(string_to_text(str));
-}
-
-static void print_function_sqlbody(StringInfo buf, HeapTuple proctup) {
-  int numargs;
-  Oid *argtypes;
-  char **argnames;
-  char *argmodes;
-  deparse_namespace dpns = {0};
-  Datum tmp;
-  Node *n;
-
-  dpns.funcname = pstrdup(NameStr(((Form_pg_proc)GETSTRUCT(proctup))->proname));
-  numargs = get_func_arg_info(proctup, &argtypes, &argnames, &argmodes);
-  dpns.numargs = numargs;
-  dpns.argnames = argnames;
-
-  tmp = SysCacheGetAttrNotNull(PROCOID, proctup, Anum_pg_proc_prosqlbody);
-  n = (Node *)stringToNode(TextDatumGetCString(tmp));
-
-  if (IsA(n, List)) {
-    List *stmts;
-    ListCell *lc;
-
-    stmts = (List *)linitial(castNode(List, n));
-
-    appendStringInfoString(buf, "BEGIN ATOMIC\n");
-
-    foreach (lc, stmts) {
-      Query *query = lfirst_node(Query, lc);
-
-      /* It seems advisable to get at least AccessShareLock on rels */
-      AcquireRewriteLocks(query, false, false);
-      get_query_def(query, buf, list_make1(&dpns), NULL, false,
-                    PRETTYFLAG_INDENT, WRAP_COLUMN_DEFAULT, 1);
-      appendStringInfoChar(buf, ';');
-      appendStringInfoChar(buf, '\n');
-    }
-
-    appendStringInfoString(buf, "END");
-  } else {
-    Query *query = castNode(Query, n);
-
-    /* It seems advisable to get at least AccessShareLock on rels */
-    AcquireRewriteLocks(query, false, false);
-    get_query_def(query, buf, list_make1(&dpns), NULL, false, 0,
-                  WRAP_COLUMN_DEFAULT, 0);
-  }
-}
-
-Datum pg_get_function_sqlbody(PG_FUNCTION_ARGS) {
-  Oid funcid = PG_GETARG_OID(0);
-  StringInfoData buf;
-  HeapTuple proctup;
-  bool isnull;
-
-  initStringInfo(&buf);
-
-  /* Look up the function */
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(proctup))
-    PG_RETURN_NULL();
-
-  (void)SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_prosqlbody, &isnull);
-  if (isnull) {
-    ReleaseSysCache(proctup);
-    PG_RETURN_NULL();
-  }
-
-  print_function_sqlbody(&buf, proctup);
-
-  ReleaseSysCache(proctup);
-
-  PG_RETURN_TEXT_P(cstring_to_text_with_len(buf.data, buf.len));
 }
 
 /*
@@ -9994,18 +9918,9 @@ static bool get_func_sql_syntax(FuncExpr *expr, deparse_context *context) {
     appendStringInfoString(buf, " AT LOCAL)");
     return true;
 
-  case F_OVERLAPS_TIMESTAMPTZ_INTERVAL_TIMESTAMPTZ_INTERVAL:
-  case F_OVERLAPS_TIMESTAMPTZ_INTERVAL_TIMESTAMPTZ_TIMESTAMPTZ:
-  case F_OVERLAPS_TIMESTAMPTZ_TIMESTAMPTZ_TIMESTAMPTZ_INTERVAL:
   case F_OVERLAPS_TIMESTAMPTZ_TIMESTAMPTZ_TIMESTAMPTZ_TIMESTAMPTZ:
-  case F_OVERLAPS_TIMESTAMP_INTERVAL_TIMESTAMP_INTERVAL:
-  case F_OVERLAPS_TIMESTAMP_INTERVAL_TIMESTAMP_TIMESTAMP:
-  case F_OVERLAPS_TIMESTAMP_TIMESTAMP_TIMESTAMP_INTERVAL:
   case F_OVERLAPS_TIMESTAMP_TIMESTAMP_TIMESTAMP_TIMESTAMP:
   case F_OVERLAPS_TIMETZ_TIMETZ_TIMETZ_TIMETZ:
-  case F_OVERLAPS_TIME_INTERVAL_TIME_INTERVAL:
-  case F_OVERLAPS_TIME_INTERVAL_TIME_TIME:
-  case F_OVERLAPS_TIME_TIME_TIME_INTERVAL:
   case F_OVERLAPS_TIME_TIME_TIME_TIME:
     /* (x1, x2) OVERLAPS (y1, y2) */
     appendStringInfoString(buf, "((");
@@ -10121,17 +10036,6 @@ static bool get_func_sql_syntax(FuncExpr *expr, deparse_context *context) {
       appendStringInfoString(buf, " FOR ");
       get_rule_expr((Node *)lthird(expr->args), context, false);
     }
-    appendStringInfoChar(buf, ')');
-    return true;
-
-  case F_SUBSTRING_TEXT_TEXT_TEXT:
-    /* SUBSTRING SIMILAR/ESCAPE */
-    appendStringInfoString(buf, "SUBSTRING(");
-    get_rule_expr((Node *)linitial(expr->args), context, false);
-    appendStringInfoString(buf, " SIMILAR ");
-    get_rule_expr((Node *)lsecond(expr->args), context, false);
-    appendStringInfoString(buf, " ESCAPE ");
-    get_rule_expr((Node *)lthird(expr->args), context, false);
     appendStringInfoChar(buf, ')');
     return true;
 
@@ -12002,9 +11906,6 @@ static char *generate_operator_name(Oid operid, Oid arg1, Oid arg2) {
 
   if (nspname)
     appendStringInfoChar(&buf, ')');
-
-  if (p_result != NULL)
-    ReleaseSysCache(p_result);
 
   ReleaseSysCache(opertup);
 

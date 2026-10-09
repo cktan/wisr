@@ -209,3 +209,61 @@ of its own for SQL. This supersedes what step 3 says of sq.
 - `spi.c` still passes whatever parse mode its plan holds; a
   PL/pgSQL one would now be an error. Not cut, since nothing
   sets one.
+
+## Step 6: `SELECT 1 + 1` runs
+
+The second thing `../sm/PART4.md` §10 says must run does:
+`echo 'select 1 + 1;' | build/postgres --parse --run` prints 2,
+with no server started and no catalog table read. The operator,
+its function and the type are found compiled in.
+
+- **The built-in catalog rows are C tables.** `gen_cat.py` writes
+  them from `postgres.bki`, where `genbki.pl` has already
+  resolved every reference to an oid: a struct a catalog, the
+  rows in oid order, and a lookup by oid and one by name. Four
+  catalogs so far: `pg_proc`, `pg_operator`, `pg_type`,
+  `pg_namespace`. A row is read-only and lives for ever, so a
+  caller has nothing to release.
+- **Callers are rewritten as they are reached**, not served by a
+  cache made to look like the old one. `--parse --analyze`,
+  `--plan` and `--run` take a statement as far as each says,
+  and stop at the next lookup that has not been rewritten, which
+  names it.
+- **Rewritten so far**: the lookup of an operator by name
+  (`OpernameGetOprid`); the parser's `Operator`, which is now a
+  pointer to a row; 47 one-row helpers in `lsyscache.c`; the
+  expression simplifier in `clauses.c`; `TupleDescInitEntry`.
+  The other 1,000 or so calls still go to the syscache, which
+  nothing initializes: each raises "invalid cache ID" when
+  reached.
+- **Every operator is in `pg_catalog`.** There is no
+  `CREATE OPERATOR`, so the operator lookup needs no search
+  path, and the parser's operator cache is keyed on name and
+  argument types alone and never invalidated.
+- **SQL-language functions are cut.** PostgreSQL gives its 50
+  built-in ones their bodies at `initdb`, from
+  `system_functions.sql`, and digres has no `initdb`; and there
+  is no `CREATE FUNCTION`. Gone: those 50 rows, the language
+  itself, `executor/functions.c`, the inlining of SQL functions
+  in the planner, the SQL body in `CREATE FUNCTION`'s code, and
+  `pg_get_function_sqlbody`.
+- **That took more than functions with it.** Thirteen operators
+  and a cast were implemented by one of the 50, and went as
+  dangling: the forms of `+` with the date or time on the right
+  (`interval + date`, `int4 + date` and the like), `text ||
+  anynonarray` and `anynonarray || text`, `path @> point`, and
+  the cast from `circle` to `polygon`. So did the functions
+  behind `OVERLAPS` with an interval, `SUBSTRING ... SIMILAR`,
+  two-argument `lpad` and `rpad`, `log(numeric)`, `age` and
+  others. Each is a few lines of C to bring back. None is
+  brought back yet.
+- **The user is the bootstrap superuser** in `--plan` and
+  `--run`, as in a standalone backend. digres has no roles yet;
+  that is what lets the permission check on a function pass
+  without one.
+- **What runs is small**: integer arithmetic and comparison
+  where the operator matches its arguments exactly. A function
+  call, a cast, or an operator that needs a coercion stops at a
+  lookup not yet rewritten.
+- `make test` runs `test/*.sql` this way and compares with
+  `test/expected`.

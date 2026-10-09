@@ -1,0 +1,26 @@
+	 1: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+	 1: ?column? = "2"	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+	 1: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
+	 2: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
+	 3: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+	 1: ?column? = "6"	(typeid = 23, len = 4, typmod = -1, byval = t)
+	 2: ?column? = "3"	(typeid = 23, len = 4, typmod = -1, byval = t)
+	 3: ?column? = "-2"	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+	 1: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 2: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 3: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
+	----
+	 1: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 2: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 3: ?column? = "f"	(typeid = 16, len = 1, typmod = -1, byval = t)
+	----
+	 1: two	(typeid = 23, len = 4, typmod = -1, byval = t)
+	 2: four	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+	 1: two = "2"	(typeid = 23, len = 4, typmod = -1, byval = t)
+	 2: four = "4"	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----

@@ -25,6 +25,7 @@
 #include "postgres.h"
 
 #include "access/sysattr.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -2968,8 +2969,8 @@ static Query *transformCallStmt(ParseState *pstate, CallStmt *stmt) {
    * planning, but a CallStmt doesn't go through planning, and there seems
    * no good reason not to do it here.
    */
-  fexpr->args = expand_function_arguments(fexpr->args, true,
-                                          fexpr->funcresulttype, proctup);
+  fexpr->args = expand_function_arguments(
+      fexpr->args, true, fexpr->funcresulttype, cat_proc(fexpr->funcid));
 
   /* Fetch proargmodes; if it's null, there are no output args */
   proargmodes =

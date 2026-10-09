@@ -35,7 +35,6 @@
 #include "commands/createas.h"
 #include "commands/explain_dr.h"
 #include "commands/matview.h"
-#include "executor/functions.h"
 #include "executor/tqueue.h"
 #include "executor/tstoreReceiver.h"
 #include "libpq/libpq.h"
@@ -129,9 +128,6 @@ DestReceiver *CreateDestReceiver(CommandDest dest) {
   case DestCopyOut:
     return CreateCopyDestReceiver();
 
-  case DestSQLFunction:
-    return CreateSQLFunctionDestReceiver();
-
   case DestTransientRel:
     return CreateTransientRelDestReceiver(InvalidOid);
 
@@ -170,7 +166,6 @@ void EndCommand(const QueryCompletion *qc, CommandDest dest,
   case DestTuplestore:
   case DestIntoRel:
   case DestCopyOut:
-  case DestSQLFunction:
   case DestTransientRel:
   case DestTupleQueue:
   case DestExplainSerialize:
@@ -212,7 +207,6 @@ void NullCommand(CommandDest dest) {
   case DestTuplestore:
   case DestIntoRel:
   case DestCopyOut:
-  case DestSQLFunction:
   case DestTransientRel:
   case DestTupleQueue:
   case DestExplainSerialize:
@@ -253,7 +247,6 @@ void ReadyForQuery(CommandDest dest) {
   case DestTuplestore:
   case DestIntoRel:
   case DestCopyOut:
-  case DestSQLFunction:
   case DestTransientRel:
   case DestTupleQueue:
   case DestExplainSerialize:

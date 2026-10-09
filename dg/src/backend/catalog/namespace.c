@@ -23,6 +23,7 @@
 #include "access/parallel.h"
 #include "access/xact.h"
 #include "access/xlog.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
@@ -1614,74 +1615,26 @@ static bool FunctionIsVisibleExt(Oid funcid, bool *is_missing) {
 Oid OpernameGetOprid(List *names, Oid oprleft, Oid oprright) {
   char *schemaname;
   char *opername;
-  CatCList *catlist;
-  ListCell *l;
+  const cat_operator_t *const *rows;
+  int count;
 
   /* deconstruct the name list */
   DeconstructQualifiedName(names, &schemaname, &opername);
 
-  if (schemaname) {
-    /* search only in exact schema given */
-    Oid namespaceId;
-
-    namespaceId = LookupExplicitNamespace(schemaname, true);
-    if (OidIsValid(namespaceId)) {
-      HeapTuple opertup;
-
-      opertup = SearchSysCache4(
-          OPERNAMENSP, CStringGetDatum(opername), ObjectIdGetDatum(oprleft),
-          ObjectIdGetDatum(oprright), ObjectIdGetDatum(namespaceId));
-      if (HeapTupleIsValid(opertup)) {
-        Form_pg_operator operclass = (Form_pg_operator)GETSTRUCT(opertup);
-        Oid result = operclass->oid;
-
-        ReleaseSysCache(opertup);
-        return result;
-      }
-    }
-
-    return InvalidOid;
-  }
-
-  /* Search syscache by name and argument types */
-  catlist = SearchSysCacheList3(OPERNAMENSP, CStringGetDatum(opername),
-                                ObjectIdGetDatum(oprleft),
-                                ObjectIdGetDatum(oprright));
-
-  if (catlist->n_members == 0) {
-    /* no hope, fall out early */
-    ReleaseSysCacheList(catlist);
-    return InvalidOid;
-  }
-
   /*
-   * We have to find the list member that is first in the search path, if
-   * there's more than one.  This doubly-nested loop looks ugly, but in
-   * practice there should usually be few catlist members.
+   * Every operator is built in, and so is in pg_catalog: there is no
+   * CREATE OPERATOR. A name qualified with any other schema names none.
    */
-  recomputeNamespacePath();
+  if (schemaname && strcmp(schemaname, "pg_catalog") != 0)
+    return InvalidOid;
 
-  foreach (l, activeSearchPath) {
-    Oid namespaceId = lfirst_oid(l);
-    int i;
-
-    if (namespaceId == myTempNamespace)
-      continue; /* do not look in temp namespace */
-
-    for (i = 0; i < catlist->n_members; i++) {
-      HeapTuple opertup = &catlist->members[i]->tuple;
-      Form_pg_operator operform = (Form_pg_operator)GETSTRUCT(opertup);
-
-      if (operform->oprnamespace == namespaceId) {
-        Oid result = operform->oid;
-
-        ReleaseSysCacheList(catlist);
-        return result;
-      }
-    }
+  /* Search the built-in operators by name and argument types */
+  rows = cat_operators_named(opername, &count);
+  for (int i = 0; i < count; i++) {
+    if (rows[i]->oprleft == oprleft && rows[i]->oprright == oprright)
+      return rows[i]->oid;
   }
 
-  ReleaseSysCacheList(catlist);
   return InvalidOid;
 }
 
