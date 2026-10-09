@@ -33,11 +33,6 @@
 #include "access/slru.h"
 #include "access/toast_compression.h"
 #include "access/twophase.h"
-#include "access/xlog_internal.h"
-#include "access/xlogprefetcher.h"
-#include "access/xlogrecovery.h"
-#include "access/xlogutils.h"
-#include "archive/archive_module.h"
 #include "catalog/namespace.h"
 #include "catalog/storage.h"
 #include "commands/async.h"
@@ -67,7 +62,6 @@
 #include "postmaster/postmaster.h"
 #include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
-#include "postmaster/walwriter.h"
 #include "storage/aio.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
@@ -79,7 +73,6 @@
 #include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procnumber.h"
-#include "storage/standby.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
@@ -301,24 +294,6 @@ static const struct config_enum_entry constraint_exclusion_options[] = {
     {NULL, 0, false}};
 
 /*
- * Although only "on", "off", "remote_apply", "remote_write", and "local" are
- * documented, we accept all the likely variants of "on" and "off".
- */
-static const struct config_enum_entry synchronous_commit_options[] = {
-    {"local", SYNCHRONOUS_COMMIT_LOCAL_FLUSH, false},
-    {"remote_write", SYNCHRONOUS_COMMIT_REMOTE_WRITE, false},
-    {"remote_apply", SYNCHRONOUS_COMMIT_REMOTE_APPLY, false},
-    {"on", SYNCHRONOUS_COMMIT_ON, false},
-    {"off", SYNCHRONOUS_COMMIT_OFF, false},
-    {"true", SYNCHRONOUS_COMMIT_ON, true},
-    {"false", SYNCHRONOUS_COMMIT_OFF, true},
-    {"yes", SYNCHRONOUS_COMMIT_ON, true},
-    {"no", SYNCHRONOUS_COMMIT_OFF, true},
-    {"1", SYNCHRONOUS_COMMIT_ON, true},
-    {"0", SYNCHRONOUS_COMMIT_OFF, true},
-    {NULL, 0, false}};
-
-/*
  * Although only "on", "off", "try" are documented, we accept all the likely
  * variants of "on" and "off".
  */
@@ -333,18 +308,6 @@ static const struct config_enum_entry huge_pages_status_options[] = {
     {"off", HUGE_PAGES_OFF, false},
     {"on", HUGE_PAGES_ON, false},
     {"unknown", HUGE_PAGES_UNKNOWN, false},
-    {NULL, 0, false}};
-
-static const struct config_enum_entry recovery_prefetch_options[] = {
-    {"off", RECOVERY_PREFETCH_OFF, false},
-    {"on", RECOVERY_PREFETCH_ON, false},
-    {"try", RECOVERY_PREFETCH_TRY, false},
-    {"true", RECOVERY_PREFETCH_ON, true},
-    {"false", RECOVERY_PREFETCH_OFF, true},
-    {"yes", RECOVERY_PREFETCH_ON, true},
-    {"no", RECOVERY_PREFETCH_OFF, true},
-    {"1", RECOVERY_PREFETCH_ON, true},
-    {"0", RECOVERY_PREFETCH_OFF, true},
     {NULL, 0, false}};
 
 static const struct config_enum_entry plan_cache_mode_options[] = {
@@ -396,24 +359,6 @@ static const struct config_enum_entry default_toast_compression_options[] = {
 #endif
     {NULL, 0, false}};
 
-static const struct config_enum_entry wal_compression_options[] = {
-    {"pglz", WAL_COMPRESSION_PGLZ, false},
-#ifdef USE_LZ4
-    {"lz4", WAL_COMPRESSION_LZ4, false},
-#endif
-#ifdef USE_ZSTD
-    {"zstd", WAL_COMPRESSION_ZSTD, false},
-#endif
-    {"on", WAL_COMPRESSION_PGLZ, false},
-    {"off", WAL_COMPRESSION_NONE, false},
-    {"true", WAL_COMPRESSION_PGLZ, true},
-    {"false", WAL_COMPRESSION_NONE, true},
-    {"yes", WAL_COMPRESSION_PGLZ, true},
-    {"no", WAL_COMPRESSION_NONE, true},
-    {"1", WAL_COMPRESSION_PGLZ, true},
-    {"0", WAL_COMPRESSION_NONE, true},
-    {NULL, 0, false}};
-
 static const struct config_enum_entry file_copy_method_options[] = {
     {"copy", FILE_COPY_METHOD_COPY, false},
 #if defined(HAVE_COPYFILE) && defined(COPYFILE_CLONE_FORCE) ||                 \
@@ -432,10 +377,6 @@ static const struct config_enum_entry file_extend_method_options[] = {
 /*
  * Options for enum values stored in other modules
  */
-extern const struct config_enum_entry wal_level_options[];
-extern const struct config_enum_entry archive_mode_options[];
-extern const struct config_enum_entry recovery_target_action_options[];
-extern const struct config_enum_entry wal_sync_method_options[];
 extern const struct config_enum_entry dynamic_shared_memory_options[];
 
 /*
@@ -564,17 +505,8 @@ static thread_local bool integer_datetimes;
 #endif
 static thread_local bool assert_enabled = DEFAULT_ASSERT_ENABLED;
 
-static thread_local char *recovery_target_timeline_string;
-static thread_local char *recovery_target_string;
-static thread_local char *recovery_target_xid_string;
-static thread_local char *recovery_target_name_string;
-static thread_local char *recovery_target_lsn_string;
-
 /* should be static, but commands/variable.c needs to get at this */
 thread_local char *role_string;
-
-/* should be static, but guc.c needs to get at this */
-thread_local bool in_hot_standby_guc;
 
 /*
  * Displayable names for context types (enum GucContext)
@@ -638,14 +570,9 @@ const char *const config_group_names[] = {
         gettext_noop("Resource Usage / Worker Processes"),
     [WAL_SETTINGS] = gettext_noop("Write-Ahead Log / Settings"),
     [WAL_CHECKPOINTS] = gettext_noop("Write-Ahead Log / Checkpoints"),
-    [WAL_ARCHIVING] = gettext_noop("Write-Ahead Log / Archiving"),
-    [WAL_RECOVERY] = gettext_noop("Write-Ahead Log / Recovery"),
-    [WAL_ARCHIVE_RECOVERY] = gettext_noop("Write-Ahead Log / Archive Recovery"),
-    [WAL_RECOVERY_TARGET] = gettext_noop("Write-Ahead Log / Recovery Target"),
     [WAL_SUMMARIZATION] = gettext_noop("Write-Ahead Log / Summarization"),
     [REPLICATION_SENDING] = gettext_noop("Replication / Sending Servers"),
     [REPLICATION_PRIMARY] = gettext_noop("Replication / Primary Server"),
-    [REPLICATION_STANDBY] = gettext_noop("Replication / Standby Servers"),
     [REPLICATION_SUBSCRIBERS] = gettext_noop("Replication / Subscribers"),
     [QUERY_TUNING_METHOD] =
         gettext_noop("Query Tuning / Planner Method Configuration"),
@@ -1018,65 +945,6 @@ thread_local struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL,
      NULL},
-    {{"ignore_invalid_pages", PGC_POSTMASTER, DEVELOPER_OPTIONS,
-      gettext_noop("Continues recovery after an invalid pages failure."),
-      gettext_noop("Detection of WAL records having references to "
-                   "invalid pages during recovery causes PostgreSQL to "
-                   "raise a PANIC-level error, aborting the recovery. "
-                   "Setting \"ignore_invalid_pages\" to true causes "
-                   "the system to ignore invalid page references "
-                   "in WAL records (but still report a warning), "
-                   "and continue recovery. This behavior may cause "
-                   "crashes, data loss, propagate or hide corruption, "
-                   "or other serious problems. Only has an effect "
-                   "during recovery or in standby mode."),
-      GUC_NOT_IN_SAMPLE},
-     &ignore_invalid_pages,
-     false,
-     NULL,
-     NULL,
-     NULL},
-    {{"full_page_writes", PGC_SIGHUP, WAL_SETTINGS,
-      gettext_noop(
-          "Writes full pages to WAL when first modified after a checkpoint."),
-      gettext_noop(
-          "A page write in process during an operating system crash might be "
-          "only partially written to disk.  During recovery, the row changes "
-          "stored in WAL are not enough to recover.  This option writes "
-          "pages when first modified after a checkpoint to WAL so full "
-          "recovery "
-          "is possible.")},
-     &fullPageWrites,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_log_hints", PGC_POSTMASTER, WAL_SETTINGS,
-      gettext_noop("Writes full pages to WAL when first modified after a "
-                   "checkpoint, even for a non-critical modification."),
-      NULL},
-     &wal_log_hints,
-     false,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_init_zero", PGC_SUSET, WAL_SETTINGS,
-      gettext_noop("Writes zeroes to new WAL files before first use."), NULL},
-     &wal_init_zero,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_recycle", PGC_SUSET, WAL_SETTINGS,
-      gettext_noop("Recycles WAL files by renaming them."), NULL},
-     &wal_recycle,
-     true,
-     NULL,
-     NULL,
-     NULL},
 
     {{"log_checkpoints", PGC_SIGHUP, LOGGING_WHAT,
       gettext_noop("Logs each checkpoint."), NULL},
@@ -1315,13 +1183,6 @@ thread_local struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL,
      NULL},
-    {{"track_wal_io_timing", PGC_SUSET, STATS_CUMULATIVE,
-      gettext_noop("Collects timing statistics for WAL I/O activity."), NULL},
-     &track_wal_io_timing,
-     false,
-     NULL,
-     NULL,
-     NULL},
 
     {{"update_process_title", PGC_SUSET, PROCESS_TITLE,
       gettext_noop("Updates the process title to show the active SQL command."),
@@ -1388,13 +1249,6 @@ thread_local struct config_bool ConfigureNamesBool[] = {
     {{"log_lock_failures", PGC_SUSET, LOGGING_WHAT,
       gettext_noop("Logs lock failures."), NULL},
      &log_lock_failures,
-     false,
-     NULL,
-     NULL,
-     NULL},
-    {{"log_recovery_conflict_waits", PGC_SIGHUP, LOGGING_WHAT,
-      gettext_noop("Logs standby recovery conflict waits."), NULL},
-     &log_recovery_conflict_waits,
      false,
      NULL,
      NULL,
@@ -1620,33 +1474,6 @@ thread_local struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{"recovery_target_inclusive", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
-      gettext_noop("Sets whether to include or exclude transaction with "
-                   "recovery target."),
-      NULL},
-     &recoveryTargetInclusive,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"hot_standby", PGC_POSTMASTER, REPLICATION_STANDBY,
-      gettext_noop("Allows connections and queries during recovery."), NULL},
-     &EnableHotStandby,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"in_hot_standby", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Shows whether hot standby is currently active."), NULL,
-      GUC_REPORT | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE},
-     &in_hot_standby_guc,
-     false,
-     NULL,
-     NULL,
-     show_in_hot_standby},
-
     {{"allow_system_table_mods", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Allows modifications of the structure of system tables."),
       NULL, GUC_NOT_IN_SAMPLE},
@@ -1780,17 +1607,6 @@ thread_local struct config_bool ConfigureNamesBool[] = {
      NULL}};
 
 thread_local struct config_int ConfigureNamesInt[] = {
-    {{"archive_timeout", PGC_SIGHUP, WAL_ARCHIVING,
-      gettext_noop("Sets the amount of time to wait before forcing a "
-                   "switch to the next WAL file."),
-      gettext_noop("0 disables the timeout."), GUC_UNIT_S},
-     &XLogArchiveTimeout,
-     0,
-     0,
-     INT_MAX / 2,
-     NULL,
-     NULL,
-     NULL},
     {{"post_auth_delay", PGC_BACKEND, DEVELOPER_OPTIONS,
       gettext_noop("Sets the amount of time to wait after "
                    "authentication on connection startup."),
@@ -1894,30 +1710,6 @@ thread_local struct config_int ConfigureNamesInt[] = {
      &DeadlockTimeout,
      1000,
      1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_standby_archive_delay", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop("Sets the maximum delay before canceling queries when a hot "
-                   "standby server is processing archived WAL data."),
-      gettext_noop("-1 means wait forever."), GUC_UNIT_MS},
-     &max_standby_archive_delay,
-     30 * 1000,
-     -1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_standby_streaming_delay", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop("Sets the maximum delay before canceling queries when a hot "
-                   "standby server is processing streamed WAL data."),
-      gettext_noop("-1 means wait forever."), GUC_UNIT_MS},
-     &max_standby_streaming_delay,
-     30 * 1000,
-     -1,
      INT_MAX,
      NULL,
      NULL,
@@ -2501,52 +2293,6 @@ thread_local struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"wal_decode_buffer_size", PGC_POSTMASTER, WAL_RECOVERY,
-      gettext_noop("Buffer size for reading ahead in the WAL during recovery."),
-      gettext_noop("Maximum distance to read ahead in the WAL to prefetch "
-                   "referenced data blocks."),
-      GUC_UNIT_BYTE},
-     &wal_decode_buffer_size,
-     512 * 1024,
-     64 * 1024,
-     MaxAllocSize,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_keep_size", PGC_SIGHUP, REPLICATION_SENDING,
-      gettext_noop("Sets the size of WAL files held for standby servers."),
-      NULL, GUC_UNIT_MB},
-     &wal_keep_size_mb,
-     0,
-     0,
-     MAX_KILOBYTES,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"min_wal_size", PGC_SIGHUP, WAL_CHECKPOINTS,
-      gettext_noop("Sets the minimum size to shrink the WAL to."), NULL,
-      GUC_UNIT_MB},
-     &min_wal_size_mb,
-     DEFAULT_MIN_WAL_SEGS *(DEFAULT_XLOG_SEG_SIZE / (1024 * 1024)),
-     2,
-     MAX_KILOBYTES,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_wal_size", PGC_SIGHUP, WAL_CHECKPOINTS,
-      gettext_noop("Sets the WAL size that triggers a checkpoint."), NULL,
-      GUC_UNIT_MB},
-     &max_wal_size_mb,
-     DEFAULT_MAX_WAL_SEGS *(DEFAULT_XLOG_SEG_SIZE / (1024 * 1024)),
-     2,
-     MAX_KILOBYTES,
-     NULL,
-     assign_max_wal_size,
-     NULL},
-
     {{"checkpoint_timeout", PGC_SIGHUP, WAL_CHECKPOINTS,
       gettext_noop("Sets the maximum time between automatic WAL checkpoints."),
       NULL, GUC_UNIT_S},
@@ -2554,22 +2300,6 @@ thread_local struct config_int ConfigureNamesInt[] = {
      300,
      30,
      86400,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"checkpoint_warning", PGC_SIGHUP, WAL_CHECKPOINTS,
-      gettext_noop("Sets the maximum time before warning if checkpoints "
-                   "triggered by WAL volume happen too frequently."),
-      gettext_noop("Write a message to the server log if checkpoints "
-                   "caused by the filling of WAL segment files happen more "
-                   "frequently than this amount of time. "
-                   "0 disables the warning."),
-      GUC_UNIT_S},
-     &CheckPointWarning,
-     30,
-     0,
-     INT_MAX,
      NULL,
      NULL,
      NULL},
@@ -2582,98 +2312,6 @@ thread_local struct config_int ConfigureNamesInt[] = {
      DEFAULT_CHECKPOINT_FLUSH_AFTER,
      0,
      WRITEBACK_MAX_PENDING_FLUSHES,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_buffers", PGC_POSTMASTER, WAL_SETTINGS,
-      gettext_noop(
-          "Sets the number of disk-page buffers in shared memory for WAL."),
-      gettext_noop("-1 means use a fraction of \"shared_buffers\"."),
-      GUC_UNIT_XBLOCKS},
-     &XLOGbuffers,
-     -1,
-     -1,
-     (INT_MAX / XLOG_BLCKSZ),
-     check_wal_buffers,
-     NULL,
-     NULL},
-
-    {{"wal_writer_delay", PGC_SIGHUP, WAL_SETTINGS,
-      gettext_noop("Time between WAL flushes performed in the WAL writer."),
-      NULL, GUC_UNIT_MS},
-     &WalWriterDelay,
-     200,
-     1,
-     10000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_writer_flush_after", PGC_SIGHUP, WAL_SETTINGS,
-      gettext_noop(
-          "Amount of WAL written out by WAL writer that triggers a flush."),
-      NULL, GUC_UNIT_XBLOCKS},
-     &WalWriterFlushAfter,
-     DEFAULT_WAL_WRITER_FLUSH_AFTER,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_skip_threshold", PGC_USERSET, WAL_SETTINGS,
-      gettext_noop("Minimum size of new file to fsync instead of writing WAL."),
-      NULL, GUC_UNIT_KB},
-     &wal_skip_threshold,
-     2048,
-     0,
-     MAX_KILOBYTES,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_slot_wal_keep_size", PGC_SIGHUP, REPLICATION_SENDING,
-      gettext_noop("Sets the maximum WAL size that can be reserved by "
-                   "replication slots."),
-      gettext_noop(
-          "Replication slots will be marked as failed, and segments released "
-          "for deletion or recycling, if this much space is occupied by WAL on "
-          "disk. "
-          "-1 means no maximum."),
-      GUC_UNIT_MB},
-     &max_slot_wal_keep_size_mb,
-     -1,
-     -1,
-     MAX_KILOBYTES,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "commit_delay", PGC_SUSET, WAL_SETTINGS,
-         gettext_noop(
-             "Sets the delay in microseconds between transaction commit and "
-             "flushing WAL to disk."),
-         NULL
-         /* we have no microseconds designation, so can't supply units here */
-     },
-     &CommitDelay,
-     0,
-     0,
-     100000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"commit_siblings", PGC_USERSET, WAL_SETTINGS,
-      gettext_noop("Sets the minimum number of concurrent open transactions "
-                   "required before performing \"commit_delay\"."),
-      NULL},
-     &CommitSiblings,
-     5,
-     0,
-     1000,
      NULL,
      NULL,
      NULL},
@@ -2974,30 +2612,6 @@ thread_local struct config_int ConfigureNamesInt[] = {
      XLOG_BLCKSZ,
      XLOG_BLCKSZ,
      NULL,
-     NULL,
-     NULL},
-
-    {{"wal_retrieve_retry_interval", PGC_SIGHUP, REPLICATION_STANDBY,
-      gettext_noop("Sets the time to wait before retrying to retrieve WAL "
-                   "after a failed attempt."),
-      NULL, GUC_UNIT_MS},
-     &wal_retrieve_retry_interval,
-     5000,
-     1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_segment_size", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Shows the size of write ahead log segments."), NULL,
-      GUC_UNIT_BYTE | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE |
-          GUC_RUNTIME_COMPUTED},
-     &wal_segment_size,
-     DEFAULT_XLOG_SEG_SIZE,
-     WalSegMinSize,
-     WalSegMaxSize,
-     check_wal_segment_size,
      NULL,
      NULL},
 
@@ -3365,7 +2979,7 @@ thread_local struct config_real ConfigureNamesReal[] = {
      0.0,
      1.0,
      NULL,
-     assign_checkpoint_completion_target,
+     NULL,
      NULL},
 
     {{"log_statement_sample_rate", PGC_SUSET, LOGGING_WHEN,
@@ -3405,108 +3019,6 @@ thread_local struct config_real ConfigureNamesReal[] = {
      NULL}};
 
 thread_local struct config_string ConfigureNamesString[] = {
-    {{"archive_command", PGC_SIGHUP, WAL_ARCHIVING,
-      gettext_noop(
-          "Sets the shell command that will be called to archive a WAL file."),
-      gettext_noop("An empty string means use \"archive_library\".")},
-     &XLogArchiveCommand,
-     "",
-     NULL,
-     NULL,
-     show_archive_command},
-
-    {{"archive_library", PGC_SIGHUP, WAL_ARCHIVING,
-      gettext_noop(
-          "Sets the library that will be called to archive a WAL file."),
-      gettext_noop("An empty string means use \"archive_command\".")},
-     &XLogArchiveLibrary,
-     "",
-     NULL,
-     NULL,
-     NULL},
-
-    {{"restore_command", PGC_SIGHUP, WAL_ARCHIVE_RECOVERY,
-      gettext_noop("Sets the shell command that will be called to retrieve an "
-                   "archived WAL file."),
-      NULL},
-     &recoveryRestoreCommand,
-     "",
-     NULL,
-     NULL,
-     NULL},
-
-    {{"archive_cleanup_command", PGC_SIGHUP, WAL_ARCHIVE_RECOVERY,
-      gettext_noop("Sets the shell command that will be executed at every "
-                   "restart point."),
-      NULL},
-     &archiveCleanupCommand,
-     "",
-     NULL,
-     NULL,
-     NULL},
-
-    {{"recovery_end_command", PGC_SIGHUP, WAL_ARCHIVE_RECOVERY,
-      gettext_noop("Sets the shell command that will be executed once at the "
-                   "end of recovery."),
-      NULL},
-     &recoveryEndCommand,
-     "",
-     NULL,
-     NULL,
-     NULL},
-
-    {{"recovery_target_timeline", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
-      gettext_noop("Specifies the timeline to recover into."), NULL},
-     &recovery_target_timeline_string,
-     "latest",
-     check_recovery_target_timeline,
-     assign_recovery_target_timeline,
-     NULL},
-
-    {{"recovery_target", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
-      gettext_noop("Set to \"immediate\" to end recovery as soon as a "
-                   "consistent state is reached."),
-      NULL},
-     &recovery_target_string,
-     "",
-     check_recovery_target,
-     assign_recovery_target,
-     NULL},
-    {{"recovery_target_xid", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
-      gettext_noop(
-          "Sets the transaction ID up to which recovery will proceed."),
-      NULL},
-     &recovery_target_xid_string,
-     "",
-     check_recovery_target_xid,
-     assign_recovery_target_xid,
-     NULL},
-    {{"recovery_target_time", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
-      gettext_noop("Sets the time stamp up to which recovery will proceed."),
-      NULL},
-     &recovery_target_time_string,
-     "",
-     check_recovery_target_time,
-     assign_recovery_target_time,
-     NULL},
-    {{"recovery_target_name", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
-      gettext_noop(
-          "Sets the named restore point up to which recovery will proceed."),
-      NULL},
-     &recovery_target_name_string,
-     "",
-     check_recovery_target_name,
-     assign_recovery_target_name,
-     NULL},
-    {{"recovery_target_lsn", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
-      gettext_noop("Sets the LSN of the write-ahead log location up to which "
-                   "recovery will proceed."),
-      NULL},
-     &recovery_target_lsn_string,
-     "",
-     check_recovery_target_lsn,
-     assign_recovery_target_lsn,
-     NULL},
 
     {{"client_encoding", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the client's character set encoding."), NULL,
@@ -4032,18 +3544,6 @@ thread_local struct config_string ConfigureNamesString[] = {
      NULL,
      NULL},
 
-    {{"wal_consistency_checking", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Sets the WAL resource managers for which WAL consistency "
-                   "checks are done."),
-      gettext_noop("Full-page images will be logged for all data blocks and "
-                   "cross-checked against the results of WAL replay."),
-      GUC_LIST_INPUT | GUC_NOT_IN_SAMPLE},
-     &wal_consistency_checking_string,
-     "",
-     check_wal_consistency_checking,
-     assign_wal_consistency_checking,
-     NULL},
-
     {{"backtrace_functions", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Log backtrace for errors in these functions."), NULL,
       GUC_NOT_IN_SAMPLE},
@@ -4273,37 +3773,6 @@ thread_local struct config_enum ConfigureNamesEnum[] = {
      assign_session_replication_role,
      NULL},
 
-    {{"synchronous_commit", PGC_USERSET, WAL_SETTINGS,
-      gettext_noop("Sets the current transaction's synchronization level."),
-      NULL},
-     &synchronous_commit,
-     SYNCHRONOUS_COMMIT_ON,
-     synchronous_commit_options,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"archive_mode", PGC_POSTMASTER, WAL_ARCHIVING,
-      gettext_noop("Allows archiving of WAL files using \"archive_command\"."),
-      NULL},
-     &XLogArchiveMode,
-     ARCHIVE_MODE_OFF,
-     archive_mode_options,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"recovery_target_action", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
-      gettext_noop(
-          "Sets the action to perform upon reaching the recovery target."),
-      NULL},
-     &recoveryTargetAction,
-     RECOVERY_TARGET_ACTION_PAUSE,
-     recovery_target_action_options,
-     NULL,
-     NULL,
-     NULL},
-
     {{"track_functions", PGC_SUSET, STATS_CUMULATIVE,
       gettext_noop("Collects function-level statistics on database activity."),
       NULL},
@@ -4322,26 +3791,6 @@ thread_local struct config_enum ConfigureNamesEnum[] = {
      stats_fetch_consistency,
      NULL,
      assign_stats_fetch_consistency,
-     NULL},
-
-    {{"wal_compression", PGC_SUSET, WAL_SETTINGS,
-      gettext_noop("Compresses full-page writes written in WAL file with "
-                   "specified method."),
-      NULL},
-     &wal_compression,
-     WAL_COMPRESSION_NONE,
-     wal_compression_options,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"wal_level", PGC_POSTMASTER, WAL_SETTINGS,
-      gettext_noop("Sets the level of information written to the WAL."), NULL},
-     &wal_level,
-     WAL_LEVEL_REPLICA,
-     wal_level_options,
-     NULL,
-     NULL,
      NULL},
 
     {{"dynamic_shared_memory_type", PGC_POSTMASTER, RESOURCES_MEM,
@@ -4383,16 +3832,6 @@ thread_local struct config_enum ConfigureNamesEnum[] = {
      NULL,
      NULL},
 
-    {{"wal_sync_method", PGC_SIGHUP, WAL_SETTINGS,
-      gettext_noop("Selects the method used for forcing WAL updates to disk."),
-      NULL},
-     &wal_sync_method,
-     DEFAULT_WAL_SYNC_METHOD,
-     wal_sync_method_options,
-     NULL,
-     assign_wal_sync_method,
-     NULL},
-
     {{"xmlbinary", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets how binary values are to be encoded in XML."), NULL},
      &xmlbinary,
@@ -4431,17 +3870,6 @@ thread_local struct config_enum ConfigureNamesEnum[] = {
      huge_pages_status_options,
      NULL,
      NULL,
-     NULL},
-
-    {{"recovery_prefetch", PGC_SIGHUP, WAL_RECOVERY,
-      gettext_noop("Prefetch referenced blocks during recovery."),
-      gettext_noop(
-          "Look ahead in the WAL to find references to uncached data.")},
-     &recovery_prefetch,
-     RECOVERY_PREFETCH_TRY,
-     recovery_prefetch_options,
-     check_recovery_prefetch,
-     assign_recovery_prefetch,
      NULL},
 
     {{"password_encryption", PGC_USERSET, CONN_AUTH_AUTH,

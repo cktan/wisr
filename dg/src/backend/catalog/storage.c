@@ -22,12 +22,10 @@
 #include "access/visibilitymap.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "access/xloginsert.h"
-#include "access/xlogutils.h"
 #include "catalog/storage.h"
-#include "catalog/storage_xlog.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "storage/bufpage.h"
 #include "storage/bulk_write.h"
 #include "storage/freespace.h"
 #include "storage/proc.h"
@@ -35,9 +33,6 @@
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
-
-/* GUC variables */
-thread_local int wal_skip_threshold = 2048; /* in kilobytes */
 
 /*
  * We keep a list of all relations (represented as RelFileLocator values)
@@ -69,7 +64,6 @@ typedef struct PendingRelDelete {
 
 typedef struct PendingRelSync {
   RelFileLocator rlocator;
-  bool is_truncated; /* Has the file experienced truncation? */
 } PendingRelSync;
 
 static thread_local PendingRelDelete *pendingDeletes =
@@ -81,7 +75,6 @@ static thread_local HTAB *pendingSyncHash = NULL;
  *		Queue an at-commit fsync.
  */
 static void AddPendingSync(const RelFileLocator *rlocator) {
-  PendingRelSync *pending;
   bool found;
 
   /* create the hash if not yet */
@@ -95,10 +88,8 @@ static void AddPendingSync(const RelFileLocator *rlocator) {
                                   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
   }
 
-  pending = (PendingRelSync *)hash_search(pendingSyncHash, rlocator, HASH_ENTER,
-                                          &found);
+  (void)hash_search(pendingSyncHash, rlocator, HASH_ENTER, &found);
   Assert(!found);
-  pending->is_truncated = false;
 }
 
 /*
@@ -118,20 +109,14 @@ SMgrRelation RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
                                    bool register_delete) {
   SMgrRelation srel;
   ProcNumber procNumber;
-  bool needs_wal;
 
   switch (relpersistence) {
   case RELPERSISTENCE_TEMP:
     procNumber = ProcNumberForTempRelations();
-    needs_wal = false;
     break;
   case RELPERSISTENCE_UNLOGGED:
-    procNumber = INVALID_PROC_NUMBER;
-    needs_wal = false;
-    break;
   case RELPERSISTENCE_PERMANENT:
     procNumber = INVALID_PROC_NUMBER;
-    needs_wal = true;
     break;
   default:
     elog(ERROR, "invalid relpersistence: %c", relpersistence);
@@ -140,9 +125,6 @@ SMgrRelation RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
 
   srel = smgropen(rlocator, procNumber);
   smgrcreate(srel, MAIN_FORKNUM, false);
-
-  if (needs_wal)
-    log_smgrcreate(&srel->smgr_rlocator.locator, MAIN_FORKNUM);
 
   /*
    * Add the relation to the list of stuff to delete at abort, if we are
@@ -161,29 +143,12 @@ SMgrRelation RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
     pendingDeletes = pending;
   }
 
-  if (relpersistence == RELPERSISTENCE_PERMANENT && !XLogIsNeeded()) {
+  if (relpersistence == RELPERSISTENCE_PERMANENT) {
     Assert(procNumber == INVALID_PROC_NUMBER);
     AddPendingSync(&rlocator);
   }
 
   return srel;
-}
-
-/*
- * Perform XLogInsert of an XLOG_SMGR_CREATE record to WAL.
- */
-void log_smgrcreate(const RelFileLocator *rlocator, ForkNumber forkNum) {
-  xl_smgr_create xlrec;
-
-  /*
-   * Make an XLOG entry reporting the file creation.
-   */
-  xlrec.rlocator = *rlocator;
-  xlrec.forkNum = forkNum;
-
-  XLogBeginInsert();
-  XLogRegisterData(&xlrec, sizeof(xlrec));
-  XLogInsert(RM_SMGR_ID, XLOG_SMGR_CREATE | XLR_SPECIAL_REL_UPDATE);
 }
 
 /*
@@ -313,8 +278,6 @@ void RelationTruncate(Relation rel, BlockNumber nblocks) {
     }
   }
 
-  RelationPreTruncate(rel);
-
   /*
    * The code which follows can interact with concurrent checkpoints in two
    * separate ways.
@@ -360,33 +323,6 @@ void RelationTruncate(Relation rel, BlockNumber nblocks) {
    */
   START_CRIT_SECTION();
 
-  if (RelationNeedsWAL(rel)) {
-    /*
-     * Make an XLOG entry reporting the file truncation.
-     */
-    XLogRecPtr lsn;
-    xl_smgr_truncate xlrec;
-
-    xlrec.blkno = nblocks;
-    xlrec.rlocator = rel->rd_locator;
-    xlrec.flags = SMGR_TRUNCATE_ALL;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, sizeof(xlrec));
-
-    lsn = XLogInsert(RM_SMGR_ID, XLOG_SMGR_TRUNCATE | XLR_SPECIAL_REL_UPDATE);
-
-    /*
-     * Flush, because otherwise the truncation of the main relation might
-     * hit the disk before the WAL record, and the truncation of the FSM
-     * or visibility map. If we crashed during that window, we'd be left
-     * with a truncated heap, but the FSM or visibility map would still
-     * contain entries for the non-existent heap pages, and standbys would
-     * also never replay the truncation.
-     */
-    XLogFlush(lsn);
-  }
-
   /*
    * This will first remove any buffers from the buffer pool that should no
    * longer exist after truncation is complete, and then truncate the
@@ -413,26 +349,6 @@ void RelationTruncate(Relation rel, BlockNumber nblocks) {
 }
 
 /*
- * RelationPreTruncate
- *		Perform AM-independent work before a physical truncation.
- *
- * If an access method's relation_nontransactional_truncate does not call
- * RelationTruncate(), it must call this before decreasing the table size.
- */
-void RelationPreTruncate(Relation rel) {
-  PendingRelSync *pending;
-
-  if (!pendingSyncHash)
-    return;
-
-  pending = (PendingRelSync *)hash_search(
-      pendingSyncHash, &(RelationGetSmgr(rel)->smgr_rlocator.locator),
-      HASH_FIND, NULL);
-  if (pending)
-    pending->is_truncated = true;
-}
-
-/*
  * Copy a fork's data, block by block.
  *
  * Note that this requires that there is no dirty data in shared buffers. If
@@ -441,36 +357,17 @@ void RelationPreTruncate(Relation rel) {
  *
  * Also note that this is frequently called via locutions such as
  *		RelationCopyStorage(RelationGetSmgr(rel), ...);
- * That's safe only because we perform only smgr and WAL operations here.
+ * That's safe only because we perform only smgr operations here.
  * If we invoked anything else, a relcache flush could cause our SMgrRelation
  * argument to become a dangling pointer.
  */
-void RelationCopyStorage(SMgrRelation src, SMgrRelation dst, ForkNumber forkNum,
-                         char relpersistence) {
-  bool use_wal;
-  bool copying_initfork;
+void RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
+                         ForkNumber forkNum) {
   BlockNumber nblocks;
   BlockNumber blkno;
   BulkWriteState *bulkstate;
 
-  /*
-   * The init fork for an unlogged relation in many respects has to be
-   * treated the same as normal relation, changes need to be WAL logged and
-   * it needs to be synced to disk.
-   */
-  copying_initfork =
-      relpersistence == RELPERSISTENCE_UNLOGGED && forkNum == INIT_FORKNUM;
-
-  /*
-   * We need to log the copied data in WAL iff WAL archiving/streaming is
-   * enabled AND it's a permanent relation.  This gives the same answer as
-   * "RelationNeedsWAL(rel) || copying_initfork", because we know the
-   * current operation created new relation storage.
-   */
-  use_wal = XLogIsNeeded() &&
-            (relpersistence == RELPERSISTENCE_PERMANENT || copying_initfork);
-
-  bulkstate = smgr_bulk_start_smgr(dst, forkNum, use_wal);
+  bulkstate = smgr_bulk_start_smgr(dst, forkNum);
 
   nblocks = smgrnblocks(src, forkNum);
 
@@ -513,11 +410,7 @@ void RelationCopyStorage(SMgrRelation src, SMgrRelation dst, ForkNumber forkNum,
                              blkno, relpath.str)));
     }
 
-    /*
-     * Queue the page for WAL-logging and writing out.  Unfortunately we
-     * don't know what kind of a page this is, so we have to log the full
-     * page including any unused space.
-     */
+    /* Queue the page for writing out */
     smgr_bulk_write(bulkstate, blkno, buf, false);
   }
   smgr_bulk_finish(bulkstate);
@@ -635,80 +528,25 @@ void smgrDoPendingSyncs(bool isCommit) {
 
   hash_seq_init(&scan, pendingSyncHash);
   while ((pendingsync = (PendingRelSync *)hash_seq_search(&scan))) {
-    ForkNumber fork;
-    BlockNumber nblocks[MAX_FORKNUM + 1];
-    uint64 total_blocks = 0;
     SMgrRelation srel;
 
     srel = smgropen(pendingsync->rlocator, INVALID_PROC_NUMBER);
 
     /*
-     * We emit newpage WAL records for smaller relations.
-     *
-     * Small WAL records have a chance to be flushed along with other
-     * backends' WAL records.  We emit WAL records instead of syncing for
-     * files that are smaller than a certain threshold, expecting faster
-     * commit.  The threshold is defined by the GUC wal_skip_threshold.
+     * Sync the file: there is no WAL to write its contents to instead.
      */
-    if (!pendingsync->is_truncated) {
-      for (fork = (ForkNumber)0; fork <= MAX_FORKNUM; fork++) {
-        if (smgrexists(srel, fork)) {
-          BlockNumber n = smgrnblocks(srel, fork);
 
-          /* we shouldn't come here for unlogged relations */
-          Assert(fork != INIT_FORKNUM);
-          nblocks[fork] = n;
-          total_blocks += n;
-        } else
-          nblocks[fork] = InvalidBlockNumber;
-      }
+    /* allocate the initial array, or extend it, if needed */
+    if (maxrels == 0) {
+      maxrels = 8;
+      srels = (SMgrRelationData **)palloc(sizeof(SMgrRelation) * maxrels);
+    } else if (maxrels <= nrels) {
+      maxrels *= 2;
+      srels =
+          (SMgrRelationData **)repalloc(srels, sizeof(SMgrRelation) * maxrels);
     }
 
-    /*
-     * Sync file or emit WAL records for its contents.
-     *
-     * Although we emit WAL record if the file is small enough, do file
-     * sync regardless of the size if the file has experienced a
-     * truncation. It is because the file would be followed by trailing
-     * garbage blocks after a crash recovery if, while a past longer file
-     * had been flushed out, we omitted syncing-out of the file and
-     * emitted WAL instead.  You might think that we could choose WAL if
-     * the current main fork is longer than ever, but there's a case where
-     * main fork is longer than ever but FSM fork gets shorter.
-     */
-    if (pendingsync->is_truncated ||
-        total_blocks >= wal_skip_threshold * (uint64)1024 / BLCKSZ) {
-      /* allocate the initial array, or extend it, if needed */
-      if (maxrels == 0) {
-        maxrels = 8;
-        srels = (SMgrRelationData **)palloc(sizeof(SMgrRelation) * maxrels);
-      } else if (maxrels <= nrels) {
-        maxrels *= 2;
-        srels = (SMgrRelationData **)repalloc(srels,
-                                              sizeof(SMgrRelation) * maxrels);
-      }
-
-      srels[nrels++] = srel;
-    } else {
-      /* Emit WAL records for all blocks.  The file is small enough. */
-      for (fork = (ForkNumber)0; fork <= MAX_FORKNUM; fork++) {
-        int n = nblocks[fork];
-        Relation rel;
-
-        if (!BlockNumberIsValid(n))
-          continue;
-
-        /*
-         * Emit WAL for the whole file.  Unfortunately we don't know
-         * what kind of a page this is, so we have to log the full
-         * page including any unused space.  ReadBufferExtended()
-         * counts some pgstat events; unfortunately, we discard them.
-         */
-        rel = CreateFakeRelcacheEntry(srel->smgr_rlocator.locator);
-        log_newpage_range(rel, fork, 0, n, false);
-        FreeFakeRelcacheEntry(rel);
-      }
-    }
+    srels[nrels++] = srel;
   }
 
   pendingSyncHash = NULL;
@@ -765,25 +603,6 @@ int smgrGetPendingDeletes(bool forCommit, RelFileLocator **ptr) {
 }
 
 /*
- *	PostPrepare_smgr -- Clean up after a successful PREPARE
- *
- * What we have to do here is throw away the in-memory state about pending
- * relation deletes.  It's all been recorded in the 2PC state file and
- * it's no longer smgr's job to worry about it.
- */
-void PostPrepare_smgr(void) {
-  PendingRelDelete *pending;
-  PendingRelDelete *next;
-
-  for (pending = pendingDeletes; pending != NULL; pending = next) {
-    next = pending->next;
-    pendingDeletes = next;
-    /* must explicitly free the list entry */
-    pfree(pending);
-  }
-}
-
-/*
  * AtSubCommit_smgr() --- Take care of subtransaction commit.
  *
  * Reassign all items in the pending-deletes list to the parent transaction.
@@ -806,107 +625,3 @@ void AtSubCommit_smgr(void) {
  * subtransaction will not commit.
  */
 void AtSubAbort_smgr(void) { smgrDoPendingDeletes(false); }
-
-void smgr_redo(XLogReaderState *record) {
-  XLogRecPtr lsn = record->EndRecPtr;
-  uint8 info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
-
-  /* Backup blocks are not used in smgr records */
-  Assert(!XLogRecHasAnyBlockRefs(record));
-
-  if (info == XLOG_SMGR_CREATE) {
-    xl_smgr_create *xlrec = (xl_smgr_create *)XLogRecGetData(record);
-    SMgrRelation reln;
-
-    reln = smgropen(xlrec->rlocator, INVALID_PROC_NUMBER);
-    smgrcreate(reln, xlrec->forkNum, true);
-  } else if (info == XLOG_SMGR_TRUNCATE) {
-    xl_smgr_truncate *xlrec = (xl_smgr_truncate *)XLogRecGetData(record);
-    SMgrRelation reln;
-    Relation rel;
-    ForkNumber forks[MAX_FORKNUM];
-    BlockNumber blocks[MAX_FORKNUM];
-    BlockNumber old_blocks[MAX_FORKNUM];
-    int nforks = 0;
-    bool need_fsm_vacuum = false;
-
-    reln = smgropen(xlrec->rlocator, INVALID_PROC_NUMBER);
-
-    /*
-     * Forcibly create relation if it doesn't exist (which suggests that
-     * it was dropped somewhere later in the WAL sequence).  As in
-     * XLogReadBufferForRedo, we prefer to recreate the rel and replay the
-     * log as best we can until the drop is seen.
-     */
-    smgrcreate(reln, MAIN_FORKNUM, true);
-
-    /*
-     * Before we perform the truncation, update minimum recovery point to
-     * cover this WAL record. Once the relation is truncated, there's no
-     * going back. The buffer manager enforces the WAL-first rule for
-     * normal updates to relation files, so that the minimum recovery
-     * point is always updated before the corresponding change in the data
-     * file is flushed to disk. We have to do the same manually here.
-     *
-     * Doing this before the truncation means that if the truncation fails
-     * for some reason, you cannot start up the system even after restart,
-     * until you fix the underlying situation so that the truncation will
-     * succeed. Alternatively, we could update the minimum recovery point
-     * after truncation, but that would leave a small window where the
-     * WAL-first rule could be violated.
-     */
-    XLogFlush(lsn);
-
-    /* Prepare for truncation of MAIN fork */
-    if ((xlrec->flags & SMGR_TRUNCATE_HEAP) != 0) {
-      forks[nforks] = MAIN_FORKNUM;
-      old_blocks[nforks] = smgrnblocks(reln, MAIN_FORKNUM);
-      blocks[nforks] = xlrec->blkno;
-      nforks++;
-
-      /* Also tell xlogutils.c about it */
-      XLogTruncateRelation(xlrec->rlocator, MAIN_FORKNUM, xlrec->blkno);
-    }
-
-    /* Prepare for truncation of FSM and VM too */
-    rel = CreateFakeRelcacheEntry(xlrec->rlocator);
-
-    if ((xlrec->flags & SMGR_TRUNCATE_FSM) != 0 &&
-        smgrexists(reln, FSM_FORKNUM)) {
-      blocks[nforks] = FreeSpaceMapPrepareTruncateRel(rel, xlrec->blkno);
-      if (BlockNumberIsValid(blocks[nforks])) {
-        forks[nforks] = FSM_FORKNUM;
-        old_blocks[nforks] = smgrnblocks(reln, FSM_FORKNUM);
-        nforks++;
-        need_fsm_vacuum = true;
-      }
-    }
-    if ((xlrec->flags & SMGR_TRUNCATE_VM) != 0 &&
-        smgrexists(reln, VISIBILITYMAP_FORKNUM)) {
-      blocks[nforks] = visibilitymap_prepare_truncate(rel, xlrec->blkno);
-      if (BlockNumberIsValid(blocks[nforks])) {
-        forks[nforks] = VISIBILITYMAP_FORKNUM;
-        old_blocks[nforks] = smgrnblocks(reln, VISIBILITYMAP_FORKNUM);
-        nforks++;
-      }
-    }
-
-    /* Do the real work to truncate relation forks */
-    if (nforks > 0) {
-      START_CRIT_SECTION();
-      smgrtruncate(reln, forks, nforks, old_blocks, blocks);
-      END_CRIT_SECTION();
-    }
-
-    /*
-     * Update upper-level FSM pages to account for the truncation. This is
-     * important because the just-truncated pages were likely marked as
-     * all-free, and would be preferentially selected.
-     */
-    if (need_fsm_vacuum)
-      FreeSpaceMapVacuumRange(rel, xlrec->blkno, InvalidBlockNumber);
-
-    FreeFakeRelcacheEntry(rel);
-  } else
-    elog(PANIC, "smgr_redo: unknown op code %u", info);
-}

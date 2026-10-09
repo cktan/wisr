@@ -104,6 +104,17 @@ local_psql -c 'vacuum' -c 'vacuum (full, analyze) no_such_table' \
 grep -q "ERROR" "$work/vacuum.out" && fail "vacuum reported an error"
 grep -qx 8 "$work/vacuum.out" || fail "statement after vacuum"
 
+# Verify that PREPARE TRANSACTION is refused, since a prepared transaction's
+# state was kept in WAL and there is none.
+# 1. Prepare a transaction, roll back the block the refusal aborted, then
+#    run a statement, in one session.
+# 2. Confirm the refusal was reported and the last statement answered.
+local_psql -c "begin; prepare transaction 'x'" -c 'rollback' \
+  -c 'select 5 + 5' > "$work/prepare.out" 2>&1
+grep -q "PREPARE TRANSACTION is not supported" "$work/prepare.out" ||
+  fail "prepare refused"
+grep -qx 10 "$work/prepare.out" || fail "statement after prepare"
+
 # Verify that the server stops when asked, with no process lost on the way.
 # 1. Interrupt the server, and wait for it.
 # 2. Confirm it exited with status 0.

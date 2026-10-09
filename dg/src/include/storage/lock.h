@@ -553,8 +553,6 @@ extern bool LockHasWaiters(const LOCKTAG *locktag, LOCKMODE lockmode,
                            bool sessionLock);
 extern VirtualTransactionId *GetLockConflicts(const LOCKTAG *locktag,
                                               LOCKMODE lockmode, int *countp);
-extern void AtPrepare_Locks(void);
-extern void PostPrepare_Locks(TransactionId xid);
 extern bool LockCheckConflicts(LockMethod lockMethodTable, LOCKMODE lockmode,
                                LOCK *lock, PROCLOCK *proclock);
 extern void GrantLock(LOCK *lock, PROCLOCK *proclock, LOCKMODE lockmode);
@@ -566,17 +564,7 @@ extern void RemoveFromWaitQueue(PGPROC *proc, uint32 hashcode);
 extern LockData *GetLockStatusData(void);
 extern BlockedProcsData *GetBlockerStatusData(int blocked_pid);
 
-extern xl_standby_lock *GetRunningTransactionLocks(int *nlocks);
 extern const char *GetLockmodeName(LOCKMETHODID lockmethodid, LOCKMODE mode);
-
-extern void lock_twophase_recover(TransactionId xid, uint16 info, void *recdata,
-                                  uint32 len);
-extern void lock_twophase_postcommit(TransactionId xid, uint16 info,
-                                     void *recdata, uint32 len);
-extern void lock_twophase_postabort(TransactionId xid, uint16 info,
-                                    void *recdata, uint32 len);
-extern void lock_twophase_standby_recover(TransactionId xid, uint16 info,
-                                          void *recdata, uint32 len);
 
 extern DeadLockState DeadLockCheck(PGPROC *proc);
 pg_noreturn extern void DeadLockReport(void);

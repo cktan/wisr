@@ -40,8 +40,6 @@
 #include <time.h>
 
 #include "access/xlog.h"
-#include "access/xlog_internal.h"
-#include "access/xlogrecovery.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -139,7 +137,6 @@ static PG_SHARED CheckpointerShmemStruct *CheckpointerShmem;
  * GUC parameters
  */
 thread_local int CheckPointTimeout = 300;
-thread_local int CheckPointWarning = 30;
 thread_local double CheckPointCompletionTarget = 0.9;
 
 /*
@@ -150,16 +147,13 @@ static thread_local volatile sig_atomic_t ShutdownXLOGPending = false;
 
 /* these values are valid when ckpt_active is true: */
 static thread_local pg_time_t ckpt_start_time;
-static thread_local XLogRecPtr ckpt_start_recptr;
 static thread_local double ckpt_cached_elapsed;
 
 static thread_local pg_time_t last_checkpoint_time;
-static thread_local pg_time_t last_xlog_switch_time;
 
 /* Prototypes for private functions */
 
 static void ProcessCheckpointerInterrupts(void);
-static void CheckArchiveTimeout(void);
 static bool IsCheckpointOnSchedule(double progress);
 static bool ImmediateCheckpointRequested(void);
 static bool CompactCheckpointerRequestQueue(void);
@@ -209,7 +203,7 @@ void CheckpointerMain(const void *startup_data, size_t startup_data_len) {
   /*
    * Initialize so that first time-driven event happens at the correct time.
    */
-  last_checkpoint_time = last_xlog_switch_time = (pg_time_t)time(NULL);
+  last_checkpoint_time = (pg_time_t)time(NULL);
 
   /*
    * Write out stats after shutdown. This needs to be called by exactly one
@@ -386,12 +380,6 @@ void CheckpointerMain(const void *startup_data, size_t startup_data_len) {
      * Do a checkpoint if requested.
      */
     if (do_checkpoint) {
-      bool ckpt_performed = false;
-      bool do_restartpoint;
-
-      /* Check if we should perform a checkpoint or a restartpoint. */
-      do_restartpoint = RecoveryInProgress();
-
       /*
        * Atomically fetch the request flags to figure out what kind of a
        * checkpoint we should perform, and increase the started-counter
@@ -405,66 +393,28 @@ void CheckpointerMain(const void *startup_data, size_t startup_data_len) {
 
       ConditionVariableBroadcast(&CheckpointerShmem->start_cv);
 
-      /*
-       * The end-of-recovery checkpoint is a real checkpoint that's
-       * performed while we're still in recovery.
-       */
-      if (flags & CHECKPOINT_END_OF_RECOVERY)
-        do_restartpoint = false;
-
       if (chkpt_or_rstpt_timed) {
         chkpt_or_rstpt_timed = false;
-        if (do_restartpoint)
-          PendingCheckpointerStats.restartpoints_timed++;
-        else
-          PendingCheckpointerStats.num_timed++;
+        PendingCheckpointerStats.num_timed++;
       }
 
       if (chkpt_or_rstpt_requested) {
         chkpt_or_rstpt_requested = false;
-        if (do_restartpoint)
-          PendingCheckpointerStats.restartpoints_requested++;
-        else
-          PendingCheckpointerStats.num_requested++;
+        PendingCheckpointerStats.num_requested++;
       }
-
-      /*
-       * We will warn if (a) too soon since last checkpoint (whatever
-       * caused it) and (b) somebody set the CHECKPOINT_CAUSE_XLOG flag
-       * since the last checkpoint start.  Note in particular that this
-       * implementation will not generate warnings caused by
-       * CheckPointTimeout < CheckPointWarning.
-       */
-      if (!do_restartpoint && (flags & CHECKPOINT_CAUSE_XLOG) &&
-          elapsed_secs < CheckPointWarning)
-        ereport(
-            LOG,
-            (errmsg_plural(
-                 "checkpoints are occurring too frequently (%d second apart)",
-                 "checkpoints are occurring too frequently (%d seconds apart)",
-                 elapsed_secs, elapsed_secs),
-             errhint("Consider increasing the configuration parameter \"%s\".",
-                     "max_wal_size")));
 
       /*
        * Initialize checkpointer-private variables used during
        * checkpoint.
        */
       ckpt_active = true;
-      if (do_restartpoint)
-        ckpt_start_recptr = GetXLogReplayRecPtr(NULL);
-      else
-        ckpt_start_recptr = GetInsertRecPtr();
       ckpt_start_time = now;
       ckpt_cached_elapsed = 0;
 
       /*
-       * Do the checkpoint.
+       * There is nothing to checkpoint: digres has no WAL (see
+       * StartupXLOG()).
        */
-      if (!do_restartpoint)
-        ckpt_performed = CreateCheckPoint(flags);
-      else
-        ckpt_performed = CreateRestartPoint(flags);
 
       /*
        * After any checkpoint, free all smgr objects.  Otherwise we
@@ -483,36 +433,12 @@ void CheckpointerMain(const void *startup_data, size_t startup_data_len) {
 
       ConditionVariableBroadcast(&CheckpointerShmem->done_cv);
 
-      if (!do_restartpoint) {
-        /*
-         * Note we record the checkpoint start time not end time as
-         * last_checkpoint_time.  This is so that time-driven
-         * checkpoints happen at a predictable spacing.
-         */
-        last_checkpoint_time = now;
-
-        if (ckpt_performed)
-          PendingCheckpointerStats.num_performed++;
-      } else {
-        if (ckpt_performed) {
-          /*
-           * The same as for checkpoint. Please see the
-           * corresponding comment.
-           */
-          last_checkpoint_time = now;
-
-          PendingCheckpointerStats.restartpoints_performed++;
-        } else {
-          /*
-           * We were not able to perform the restartpoint
-           * (checkpoints throw an ERROR in case of error).  Most
-           * likely because we have not received any new checkpoint
-           * WAL records since the last restartpoint. Try again in
-           * 15 s.
-           */
-          last_checkpoint_time = now - CheckPointTimeout + 15;
-        }
-      }
+      /*
+       * Note we record the checkpoint start time not end time as
+       * last_checkpoint_time.  This is so that time-driven checkpoints
+       * happen at a predictable spacing.
+       */
+      last_checkpoint_time = now;
 
       ckpt_active = false;
 
@@ -524,9 +450,6 @@ void CheckpointerMain(const void *startup_data, size_t startup_data_len) {
       if (ShutdownXLOGPending || ShutdownRequestPending)
         break;
     }
-
-    /* Check for archive_timeout and switch xlog files if necessary. */
-    CheckArchiveTimeout();
 
     /* Report pending statistics to the cumulative stats system */
     pgstat_report_checkpointer();
@@ -540,20 +463,13 @@ void CheckpointerMain(const void *startup_data, size_t startup_data_len) {
       continue;
 
     /*
-     * Sleep until we are signaled or it's time for another checkpoint or
-     * xlog file switch.
+     * Sleep until we are signaled or it's time for another checkpoint.
      */
     now = (pg_time_t)time(NULL);
     elapsed_secs = now - last_checkpoint_time;
     if (elapsed_secs >= CheckPointTimeout)
       continue; /* no sleep for us ... */
     cur_timeout = CheckPointTimeout - elapsed_secs;
-    if (XLogArchiveTimeout > 0 && !RecoveryInProgress()) {
-      elapsed_secs = now - last_xlog_switch_time;
-      if (elapsed_secs >= XLogArchiveTimeout)
-        continue; /* no sleep for us ... */
-      cur_timeout = Min(cur_timeout, XLogArchiveTimeout - elapsed_secs);
-    }
 
     (void)WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
                     cur_timeout * 1000L /* convert to ms */,
@@ -640,70 +556,6 @@ static void ProcessCheckpointerInterrupts(void) {
 }
 
 /*
- * CheckArchiveTimeout -- check for archive_timeout and switch xlog files
- *
- * This will switch to a new WAL file and force an archive file write if
- * meaningful activity is recorded in the current WAL file. This includes most
- * writes, including just a single checkpoint record, but excludes WAL records
- * that were inserted with the XLOG_MARK_UNIMPORTANT flag being set (like
- * snapshots of running transactions).  Such records, depending on
- * configuration, occur on regular intervals and don't contain important
- * information.  This avoids generating archives with a few unimportant
- * records.
- */
-static void CheckArchiveTimeout(void) {
-  pg_time_t now;
-  pg_time_t last_time;
-  XLogRecPtr last_switch_lsn;
-
-  if (XLogArchiveTimeout <= 0 || RecoveryInProgress())
-    return;
-
-  now = (pg_time_t)time(NULL);
-
-  /* First we do a quick check using possibly-stale local state. */
-  if ((int)(now - last_xlog_switch_time) < XLogArchiveTimeout)
-    return;
-
-  /*
-   * Update local state ... note that last_xlog_switch_time is the last time
-   * a switch was performed *or requested*.
-   */
-  last_time = GetLastSegSwitchData(&last_switch_lsn);
-
-  last_xlog_switch_time = Max(last_xlog_switch_time, last_time);
-
-  /* Now we can do the real checks */
-  if ((int)(now - last_xlog_switch_time) >= XLogArchiveTimeout) {
-    /*
-     * Switch segment only when "important" WAL has been logged since the
-     * last segment switch (last_switch_lsn points to end of segment
-     * switch occurred in).
-     */
-    if (GetLastImportantRecPtr() > last_switch_lsn) {
-      XLogRecPtr switchpoint;
-
-      /* mark switch as unimportant, avoids triggering checkpoints */
-      switchpoint = RequestXLogSwitch(true);
-
-      /*
-       * If the returned pointer points exactly to a segment boundary,
-       * assume nothing happened.
-       */
-      if (XLogSegmentOffset(switchpoint, wal_segment_size) != 0)
-        elog(DEBUG1, "write-ahead log switch forced (\"archive_timeout\"=%d)",
-             XLogArchiveTimeout);
-    }
-
-    /*
-     * Update state in any case, so we don't retry constantly when the
-     * system is idle.
-     */
-    last_xlog_switch_time = now;
-  }
-}
-
-/*
  * Returns true if an immediate checkpoint request is pending.  (Note that
  * this does not check the *current* checkpoint's IMMEDIATE flag, but whether
  * there is one pending behind it.)
@@ -757,8 +609,6 @@ void CheckpointWriteDelay(int flags, double progress) {
     AbsorbSyncRequests();
     absorb_counter = WRITES_PER_ABSORB;
 
-    CheckArchiveTimeout();
-
     /* Report interim statistics to the cumulative stats system */
     pgstat_report_checkpointer();
 
@@ -788,16 +638,15 @@ void CheckpointWriteDelay(int flags, double progress) {
 
 /*
  * IsCheckpointOnSchedule -- are we on schedule to finish this checkpoint
- *		 (or restartpoint) in time?
+ *		 in time?
  *
- * Compares the current progress against the time/segments elapsed since last
+ * Compares the current progress against the time elapsed since last
  * checkpoint, and returns true if the progress we've made this far is greater
- * than the elapsed time/segments.
+ * than the elapsed time.
  */
 static bool IsCheckpointOnSchedule(double progress) {
-  XLogRecPtr recptr;
   struct timeval now;
-  double elapsed_xlogs, elapsed_time;
+  double elapsed_time;
 
   Assert(ckpt_active);
 
@@ -807,43 +656,11 @@ static bool IsCheckpointOnSchedule(double progress) {
   /*
    * Check against the cached value first. Only do the more expensive
    * calculations once we reach the target previously calculated. Since
-   * neither time or WAL insert pointer moves backwards, a freshly
+   * time does not move backwards, a freshly
    * calculated value can only be greater than or equal to the cached value.
    */
   if (progress < ckpt_cached_elapsed)
     return false;
-
-  /*
-   * Check progress against WAL segments written and CheckPointSegments.
-   *
-   * We compare the current WAL insert location against the location
-   * computed before calling CreateCheckPoint. The code in XLogInsert that
-   * actually triggers a checkpoint when CheckPointSegments is exceeded
-   * compares against RedoRecPtr, so this is not completely accurate.
-   * However, it's good enough for our purposes, we're only calculating an
-   * estimate anyway.
-   *
-   * During recovery, we compare last replayed WAL record's location with
-   * the location computed before calling CreateRestartPoint. That maintains
-   * the same pacing as we have during checkpoints in normal operation, but
-   * we might exceed max_wal_size by a fair amount. That's because there can
-   * be a large gap between a checkpoint's redo-pointer and the checkpoint
-   * record itself, and we only start the restartpoint after we've seen the
-   * checkpoint record. (The gap is typically up to CheckPointSegments *
-   * checkpoint_completion_target where checkpoint_completion_target is the
-   * value that was in effect when the WAL was generated).
-   */
-  if (RecoveryInProgress())
-    recptr = GetXLogReplayRecPtr(NULL);
-  else
-    recptr = GetInsertRecPtr();
-  elapsed_xlogs = (((double)(recptr - ckpt_start_recptr)) / wal_segment_size) /
-                  CheckPointSegments;
-
-  if (progress < elapsed_xlogs) {
-    ckpt_cached_elapsed = elapsed_xlogs;
-    return false;
-  }
 
   /*
    * Check progress against time elapsed and checkpoint_timeout.
@@ -936,9 +753,6 @@ void CheckpointerShmemInit(void) {
  *		CHECKPOINT_END_OF_RECOVERY).
  *	CHECKPOINT_WAIT: wait for completion before returning (otherwise,
  *		just signal checkpointer to do it, and return).
- *	CHECKPOINT_CAUSE_XLOG: checkpoint is requested due to xlog filling.
- *		(This affects logging, and in particular enables
- *CheckPointWarning.)
  */
 void RequestCheckpoint(int flags) {
   int ntries;
@@ -949,12 +763,9 @@ void RequestCheckpoint(int flags) {
    */
   if (!IsPostmasterEnvironment) {
     /*
-     * There's no point in doing slow checkpoints in a standalone backend,
-     * because there's no other backends the checkpoint could disrupt.
+     * There is nothing to checkpoint (see CheckpointerMain()).  Free all
+     * smgr objects, as CheckpointerMain() normally would.
      */
-    CreateCheckPoint(flags | CHECKPOINT_IMMEDIATE);
-
-    /* Free all smgr objects, as CheckpointerMain() normally would. */
     smgrdestroyall();
 
     return;
@@ -1291,12 +1102,6 @@ void AbsorbSyncRequests(void) {
  * Update any shared memory configurations based on config parameters
  */
 static void UpdateSharedMemoryConfig(void) {
-  /*
-   * If full_page_writes has been changed by SIGHUP, we update it in shared
-   * memory and write an XLOG_FPW_CHANGE record.
-   */
-  UpdateFullPageWrites();
-
   elog(DEBUG2, "checkpointer updated shared memory configuration values");
 }
 

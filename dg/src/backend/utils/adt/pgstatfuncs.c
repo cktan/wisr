@@ -16,7 +16,6 @@
 
 #include "access/htup_details.h"
 #include "access/xlog.h"
-#include "access/xlogprefetcher.h"
 #include "catalog/catalog.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
@@ -1687,11 +1686,9 @@ Datum pg_stat_reset_shared(PG_FUNCTION_ARGS) {
 
   if (PG_ARGISNULL(0)) {
     /* Reset all the statistics when nothing is specified */
-    pgstat_reset_of_kind(PGSTAT_KIND_ARCHIVER);
     pgstat_reset_of_kind(PGSTAT_KIND_BGWRITER);
     pgstat_reset_of_kind(PGSTAT_KIND_CHECKPOINTER);
     pgstat_reset_of_kind(PGSTAT_KIND_IO);
-    XLogPrefetchResetStats();
     pgstat_reset_of_kind(PGSTAT_KIND_SLRU);
     pgstat_reset_of_kind(PGSTAT_KIND_WAL);
 
@@ -1700,27 +1697,22 @@ Datum pg_stat_reset_shared(PG_FUNCTION_ARGS) {
 
   target = text_to_cstring(PG_GETARG_TEXT_PP(0));
 
-  if (strcmp(target, "archiver") == 0)
-    pgstat_reset_of_kind(PGSTAT_KIND_ARCHIVER);
-  else if (strcmp(target, "bgwriter") == 0)
+  if (strcmp(target, "bgwriter") == 0)
     pgstat_reset_of_kind(PGSTAT_KIND_BGWRITER);
   else if (strcmp(target, "checkpointer") == 0)
     pgstat_reset_of_kind(PGSTAT_KIND_CHECKPOINTER);
   else if (strcmp(target, "io") == 0)
     pgstat_reset_of_kind(PGSTAT_KIND_IO);
-  else if (strcmp(target, "recovery_prefetch") == 0)
-    XLogPrefetchResetStats();
   else if (strcmp(target, "slru") == 0)
     pgstat_reset_of_kind(PGSTAT_KIND_SLRU);
   else if (strcmp(target, "wal") == 0)
     pgstat_reset_of_kind(PGSTAT_KIND_WAL);
   else
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-         errmsg("unrecognized reset target: \"%s\"", target),
-         errhint("Target must be \"archiver\", \"bgwriter\", \"checkpointer\", "
-                 "\"io\", \"recovery_prefetch\", \"slru\", or \"wal\".")));
+    ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+             errmsg("unrecognized reset target: \"%s\"", target),
+             errhint("Target must be \"bgwriter\", \"checkpointer\", \"io\", "
+                     "\"slru\", or \"wal\".")));
 
   PG_RETURN_VOID();
 }
@@ -1791,63 +1783,6 @@ Datum pg_stat_reset_slru(PG_FUNCTION_ARGS) {
   }
 
   PG_RETURN_VOID();
-}
-
-Datum pg_stat_get_archiver(PG_FUNCTION_ARGS) {
-  TupleDesc tupdesc;
-  Datum values[7] = {0};
-  bool nulls[7] = {0};
-  PgStat_ArchiverStats *archiver_stats;
-
-  /* Initialise attributes information in the tuple descriptor */
-  tupdesc = CreateTemplateTupleDesc(7);
-  TupleDescInitEntry(tupdesc, (AttrNumber)1, "archived_count", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)2, "last_archived_wal", TEXTOID, -1,
-                     0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)3, "last_archived_time",
-                     TIMESTAMPTZOID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)4, "failed_count", INT8OID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)5, "last_failed_wal", TEXTOID, -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)6, "last_failed_time", TIMESTAMPTZOID,
-                     -1, 0);
-  TupleDescInitEntry(tupdesc, (AttrNumber)7, "stats_reset", TIMESTAMPTZOID, -1,
-                     0);
-
-  BlessTupleDesc(tupdesc);
-
-  /* Get statistics about the archiver process */
-  archiver_stats = pgstat_fetch_stat_archiver();
-
-  /* Fill values and NULLs */
-  values[0] = Int64GetDatum(archiver_stats->archived_count);
-  if (*(archiver_stats->last_archived_wal) == '\0')
-    nulls[1] = true;
-  else
-    values[1] = CStringGetTextDatum(archiver_stats->last_archived_wal);
-
-  if (archiver_stats->last_archived_timestamp == 0)
-    nulls[2] = true;
-  else
-    values[2] = TimestampTzGetDatum(archiver_stats->last_archived_timestamp);
-
-  values[3] = Int64GetDatum(archiver_stats->failed_count);
-  if (*(archiver_stats->last_failed_wal) == '\0')
-    nulls[4] = true;
-  else
-    values[4] = CStringGetTextDatum(archiver_stats->last_failed_wal);
-
-  if (archiver_stats->last_failed_timestamp == 0)
-    nulls[5] = true;
-  else
-    values[5] = TimestampTzGetDatum(archiver_stats->last_failed_timestamp);
-
-  if (archiver_stats->stat_reset_timestamp == 0)
-    nulls[6] = true;
-  else
-    values[6] = TimestampTzGetDatum(archiver_stats->stat_reset_timestamp);
-
-  /* Returns the record as Datum */
-  PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
 }
 
 /*

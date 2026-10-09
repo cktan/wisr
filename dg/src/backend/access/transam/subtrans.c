@@ -195,7 +195,7 @@ static int SUBTRANSShmemBuffers(void) {
  * Initialization of shared memory for SUBTRANS
  */
 Size SUBTRANSShmemSize(void) {
-  return SimpleLruShmemSize(SUBTRANSShmemBuffers(), 0);
+  return SimpleLruShmemSize(SUBTRANSShmemBuffers());
 }
 
 void SUBTRANSShmemInit(void) {
@@ -220,7 +220,7 @@ void SUBTRANSShmemInit(void) {
   Assert(subtransaction_buffers != 0);
 
   SubTransCtl->PagePrecedes = SubTransPagePrecedes;
-  SimpleLruInit(SubTransCtl, "subtransaction", SUBTRANSShmemBuffers(), 0,
+  SimpleLruInit(SubTransCtl, "subtransaction", SUBTRANSShmemBuffers(),
                 "pg_subtrans", LWTRANCHE_SUBTRANS_BUFFER,
                 LWTRANCHE_SUBTRANS_SLRU, SYNC_HANDLER_NONE, false);
   SlruPagePrecedesUnitTests(SubTransCtl, SUBTRANS_XACTS_PER_PAGE);
@@ -231,32 +231,6 @@ void SUBTRANSShmemInit(void) {
  */
 bool check_subtrans_buffers(int *newval, void **extra, GucSource source) {
   return check_slru_buffers("subtransaction_buffers", newval);
-}
-
-/*
- * This func must be called ONCE on system install.  It creates
- * the initial SUBTRANS segment.  (The SUBTRANS directory is assumed to
- * have been created by the initdb shell script, and SUBTRANSShmemInit
- * must have been called already.)
- *
- * Note: it's not really necessary to create the initial segment now,
- * since slru.c would create it on first write anyway.  But we may as well
- * do it to be sure the directory is set up correctly.
- */
-void BootStrapSUBTRANS(void) {
-  int slotno;
-  LWLock *lock = SimpleLruGetBankLock(SubTransCtl, 0);
-
-  LWLockAcquire(lock, LW_EXCLUSIVE);
-
-  /* Create and zero the first page of the subtrans log */
-  slotno = ZeroSUBTRANSPage(0);
-
-  /* Make sure it's written out */
-  SimpleLruWritePage(SubTransCtl, slotno);
-  Assert(!SubTransCtl->shared->page_dirty[slotno]);
-
-  LWLockRelease(lock);
 }
 
 /*

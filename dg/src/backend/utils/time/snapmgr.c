@@ -236,22 +236,6 @@ static inline void ResourceOwnerForgetSnapshot(ResourceOwner owner,
 }
 
 /*
- * Snapshot fields to be serialized.
- *
- * Only these fields need to be sent to the cooperating backend; the
- * remaining ones can (and must) be set by the receiver upon restore.
- */
-typedef struct SerializedSnapshotData {
-  TransactionId xmin;
-  TransactionId xmax;
-  uint32 xcnt;
-  int32 subxcnt;
-  bool suboverflowed;
-  bool takenDuringRecovery;
-  CommandId curcid;
-} SerializedSnapshotData;
-
-/*
  * GetTransactionSnapshot
  *		Get the appropriate snapshot for a new query in a transaction.
  *
@@ -503,7 +487,6 @@ static void SetTransactionSnapshot(Snapshot sourcesnap,
     memcpy(CurrentSnapshot->subxip, sourcesnap->subxip,
            sourcesnap->subxcnt * sizeof(TransactionId));
   CurrentSnapshot->suboverflowed = sourcesnap->suboverflowed;
-  CurrentSnapshot->takenDuringRecovery = sourcesnap->takenDuringRecovery;
   /* NB: curcid should NOT be copied, it's a local matter */
 
   CurrentSnapshot->snapXactCompletionCount = 0;
@@ -589,12 +572,9 @@ static Snapshot CopySnapshot(Snapshot snapshot) {
 
   /*
    * Setup subXID array. Don't bother to copy it if it had overflowed,
-   * though, because it's not used anywhere in that case. Except if it's a
-   * snapshot taken during recovery; all the top-level XIDs are in subxip as
-   * well in that case, so we mustn't lose them.
+   * though, because it's not used anywhere in that case.
    */
-  if (snapshot->subxcnt > 0 &&
-      (!snapshot->suboverflowed || snapshot->takenDuringRecovery)) {
+  if (snapshot->subxcnt > 0 && !snapshot->suboverflowed) {
     newsnap->subxip = (TransactionId *)((char *)newsnap + subxipoff);
     memcpy(newsnap->subxip, snapshot->subxip,
            snapshot->subxcnt * sizeof(TransactionId));
@@ -1131,7 +1111,6 @@ char *ExportSnapshot(Snapshot snapshot) {
     for (i = 0; i < nchildren; i++)
       appendStringInfo(&buf, "sxp:%u\n", children[i]);
   }
-  appendStringInfo(&buf, "rec:%u\n", snapshot->takenDuringRecovery);
 
   /*
    * Now write the text representation into a file.  We first write to a
@@ -1377,8 +1356,6 @@ void ImportSnapshot(const char *idstr) {
     snapshot.subxip = NULL;
   }
 
-  snapshot.takenDuringRecovery = parseIntFromText("rec:", &filebuf, path);
-
   /*
    * Do some additional sanity checking, just to protect ourselves.  We
    * don't trouble to check the array elements, just the most critical
@@ -1425,12 +1402,6 @@ void ImportSnapshot(const char *idstr) {
   /* OK, install the snapshot */
   SetTransactionSnapshot(&snapshot, &src_vxid, src_pid, NULL);
 }
-
-/*
- * XactHasExportedSnapshots
- *		Test whether current transaction has exported any snapshots.
- */
-bool XactHasExportedSnapshots(void) { return (exportedSnapshots != NIL); }
 
 /*
  * DeleteAllExportedSnapshotFiles
@@ -1562,73 +1533,36 @@ bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot) {
     return true;
 
   /*
-   * Snapshot information is stored slightly differently in snapshots taken
-   * during recovery.
+   * If the snapshot contains full subxact data, the fastest way to
+   * check things is just to compare the given XID against both subxact
+   * XIDs and top-level XIDs.  If the snapshot overflowed, we have to
+   * use pg_subtrans to convert a subxact XID to its parent XID, but
+   * then we need only look at top-level XIDs not subxacts.
    */
-  if (!snapshot->takenDuringRecovery) {
-    /*
-     * If the snapshot contains full subxact data, the fastest way to
-     * check things is just to compare the given XID against both subxact
-     * XIDs and top-level XIDs.  If the snapshot overflowed, we have to
-     * use pg_subtrans to convert a subxact XID to its parent XID, but
-     * then we need only look at top-level XIDs not subxacts.
-     */
-    if (!snapshot->suboverflowed) {
-      /* we have full data, so search subxip */
-      if (pg_lfind32(xid, snapshot->subxip, snapshot->subxcnt))
-        return true;
-
-      /* not there, fall through to search xip[] */
-    } else {
-      /*
-       * Snapshot overflowed, so convert xid to top-level.  This is safe
-       * because we eliminated too-old XIDs above.
-       */
-      xid = SubTransGetTopmostTransaction(xid);
-
-      /*
-       * If xid was indeed a subxact, we might now have an xid < xmin,
-       * so recheck to avoid an array scan.  No point in rechecking
-       * xmax.
-       */
-      if (TransactionIdPrecedes(xid, snapshot->xmin))
-        return false;
-    }
-
-    if (pg_lfind32(xid, snapshot->xip, snapshot->xcnt))
-      return true;
-  } else {
-    /*
-     * In recovery we store all xids in the subxip array because it is by
-     * far the bigger array, and we mostly don't know which xids are
-     * top-level and which are subxacts. The xip array is empty.
-     *
-     * We start by searching subtrans, if we overflowed.
-     */
-    if (snapshot->suboverflowed) {
-      /*
-       * Snapshot overflowed, so convert xid to top-level.  This is safe
-       * because we eliminated too-old XIDs above.
-       */
-      xid = SubTransGetTopmostTransaction(xid);
-
-      /*
-       * If xid was indeed a subxact, we might now have an xid < xmin,
-       * so recheck to avoid an array scan.  No point in rechecking
-       * xmax.
-       */
-      if (TransactionIdPrecedes(xid, snapshot->xmin))
-        return false;
-    }
-
-    /*
-     * We now have either a top-level xid higher than xmin or an
-     * indeterminate xid. We don't know whether it's top level or subxact
-     * but it doesn't matter. If it's present, the xid is visible.
-     */
+  if (!snapshot->suboverflowed) {
+    /* we have full data, so search subxip */
     if (pg_lfind32(xid, snapshot->subxip, snapshot->subxcnt))
       return true;
+
+    /* not there, fall through to search xip[] */
+  } else {
+    /*
+     * Snapshot overflowed, so convert xid to top-level.  This is safe
+     * because we eliminated too-old XIDs above.
+     */
+    xid = SubTransGetTopmostTransaction(xid);
+
+    /*
+     * If xid was indeed a subxact, we might now have an xid < xmin,
+     * so recheck to avoid an array scan.  No point in rechecking
+     * xmax.
+     */
+    if (TransactionIdPrecedes(xid, snapshot->xmin))
+      return false;
   }
+
+  if (pg_lfind32(xid, snapshot->xip, snapshot->xcnt))
+    return true;
 
   return false;
 }

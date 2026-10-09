@@ -32,7 +32,6 @@
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/storage.h"
-#include "catalog/storage_xlog.h"
 #include "commands/progress.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
@@ -557,7 +556,6 @@ static void heapam_relation_set_new_filelocator(
     Assert(rel->rd_rel->relkind == RELKIND_RELATION ||
            rel->rd_rel->relkind == RELKIND_TOASTVALUE);
     smgrcreate(srel, INIT_FORKNUM, false);
-    log_smgrcreate(newrlocator, INIT_FORKNUM);
   }
 
   smgrclose(srel);
@@ -590,8 +588,7 @@ static void heapam_relation_copy_data(Relation rel,
       RelationCreateStorage(*newrlocator, rel->rd_rel->relpersistence, true);
 
   /* copy main fork */
-  RelationCopyStorage(RelationGetSmgr(rel), dstrel, MAIN_FORKNUM,
-                      rel->rd_rel->relpersistence);
+  RelationCopyStorage(RelationGetSmgr(rel), dstrel, MAIN_FORKNUM);
 
   /* copy those extra forks that exist */
   for (ForkNumber forkNum = (ForkNumber)(MAIN_FORKNUM + 1);
@@ -599,16 +596,7 @@ static void heapam_relation_copy_data(Relation rel,
     if (smgrexists(RelationGetSmgr(rel), forkNum)) {
       smgrcreate(dstrel, forkNum, false);
 
-      /*
-       * WAL log creation if the relation is persistent, or this is the
-       * init fork of an unlogged relation.
-       */
-      if (RelationIsPermanent(rel) ||
-          (rel->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED &&
-           forkNum == INIT_FORKNUM))
-        log_smgrcreate(newrlocator, forkNum);
-      RelationCopyStorage(RelationGetSmgr(rel), dstrel, forkNum,
-                          rel->rd_rel->relpersistence);
+      RelationCopyStorage(RelationGetSmgr(rel), dstrel, forkNum);
     }
   }
 
@@ -2016,8 +2004,7 @@ static bool heapam_scan_sample_next_tuple(TableScanDesc scan,
     LockBuffer(hscan->rs_cbuf, BUFFER_LOCK_SHARE);
 
   page = (Page)BufferGetPage(hscan->rs_cbuf);
-  all_visible =
-      PageIsAllVisible(page) && !scan->rs_snapshot->takenDuringRecovery;
+  all_visible = PageIsAllVisible(page);
   maxoffset = PageGetMaxOffsetNumber(page);
 
   for (;;) {

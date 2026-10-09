@@ -19,18 +19,14 @@
 #include "storage/smgr.h"
 #include "utils/relcache.h"
 
-/* GUC variables */
-extern thread_local PGDLLIMPORT int wal_skip_threshold;
-
 extern SMgrRelation RelationCreateStorage(RelFileLocator rlocator,
                                           char relpersistence,
                                           bool register_delete);
 extern void RelationDropStorage(Relation rel);
 extern void RelationPreserveStorage(RelFileLocator rlocator, bool atCommit);
-extern void RelationPreTruncate(Relation rel);
 extern void RelationTruncate(Relation rel, BlockNumber nblocks);
 extern void RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
-                                ForkNumber forkNum, char relpersistence);
+                                ForkNumber forkNum);
 extern bool RelFileLocatorSkippingWAL(RelFileLocator rlocator);
 
 /*
@@ -42,6 +38,5 @@ extern void smgrDoPendingSyncs(bool isCommit);
 extern int smgrGetPendingDeletes(bool forCommit, RelFileLocator **ptr);
 extern void AtSubCommit_smgr(void);
 extern void AtSubAbort_smgr(void);
-extern void PostPrepare_smgr(void);
 
 #endif /* STORAGE_H */

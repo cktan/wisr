@@ -3718,12 +3718,6 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
   InitializeShmemGUCs();
 
   /*
-   * Now that modules have been loaded, we can process any custom resource
-   * managers specified in the wal_consistency_checking GUC.
-   */
-  InitializeWalConsistencyChecking();
-
-  /*
    * Create shared memory etc.  (Nothing's really "shared" in single-user
    * mode, but we must have these data structures anyway.)
    */

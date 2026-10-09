@@ -757,34 +757,3 @@ IOContext IOContextForStrategy(BufferAccessStrategy strategy) {
   elog(ERROR, "unrecognized BufferAccessStrategyType: %d", strategy->btype);
   pg_unreachable();
 }
-
-/*
- * StrategyRejectBuffer -- consider rejecting a dirty buffer
- *
- * When a nondefault strategy is used, the buffer manager calls this function
- * when it turns out that the buffer selected by StrategyGetBuffer needs to
- * be written out and doing so would require flushing WAL too.  This gives us
- * a chance to choose a different victim.
- *
- * Returns true if buffer manager should ask for a new victim, and false
- * if this buffer should be written and re-used.
- */
-bool StrategyRejectBuffer(BufferAccessStrategy strategy, BufferDesc *buf,
-                          bool from_ring) {
-  /* We only do this in bulkread mode */
-  if (strategy->btype != BAS_BULKREAD)
-    return false;
-
-  /* Don't muck with behavior of normal buffer-replacement strategy */
-  if (!from_ring ||
-      strategy->buffers[strategy->current] != BufferDescriptorGetBuffer(buf))
-    return false;
-
-  /*
-   * Remove the dirty buffer from the ring; necessary to prevent infinite
-   * loop if all ring members are dirty.
-   */
-  strategy->buffers[strategy->current] = InvalidBuffer;
-
-  return true;
-}

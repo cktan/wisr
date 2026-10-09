@@ -87,11 +87,6 @@ static bool relation_statistics_update(FunctionCallInfo fcinfo) {
   nspname = TextDatumGetCString(PG_GETARG_DATUM(RELSCHEMA_ARG));
   relname = TextDatumGetCString(PG_GETARG_DATUM(RELNAME_ARG));
 
-  if (RecoveryInProgress())
-    ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    errmsg("recovery is in progress"),
-                    errhint("Statistics cannot be modified during recovery.")));
-
   reloid = RangeVarGetRelidExtended(makeRangeVar(nspname, relname, -1),
                                     ShareUpdateExclusiveLock, 0,
                                     RangeVarCallbackForStats, &locked_table);

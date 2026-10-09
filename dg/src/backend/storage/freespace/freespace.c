@@ -24,9 +24,8 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
-#include "access/xloginsert.h"
-#include "access/xlogutils.h"
 #include "miscadmin.h"
+#include "storage/bufmgr.h"
 #include "storage/freespace.h"
 #include "storage/fsm_internals.h"
 #include "storage/smgr.h"
@@ -194,47 +193,6 @@ void RecordPageWithFreeSpace(Relation rel, BlockNumber heapBlk,
 }
 
 /*
- * XLogRecordPageWithFreeSpace - like RecordPageWithFreeSpace, for use in
- *		WAL replay
- */
-void XLogRecordPageWithFreeSpace(RelFileLocator rlocator, BlockNumber heapBlk,
-                                 Size spaceAvail) {
-  int new_cat = fsm_space_avail_to_cat(spaceAvail);
-  FSMAddress addr;
-  uint16 slot;
-  BlockNumber blkno;
-  Buffer buf;
-  Page page;
-
-  /* Get the location of the FSM byte representing the heap block */
-  addr = fsm_get_location(heapBlk, &slot);
-  blkno = fsm_logical_to_physical(addr);
-
-  /* If the page doesn't exist already, extend */
-  buf = XLogReadBufferExtended(rlocator, FSM_FORKNUM, blkno, RBM_ZERO_ON_ERROR,
-                               InvalidBuffer);
-  LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
-
-  page = BufferGetPage(buf);
-  if (PageIsNew(page))
-    PageInit(page, BLCKSZ, 0);
-
-  /*
-   * Changes to FSM are usually marked as changed using MarkBufferDirtyHint;
-   * however, during recovery, it does nothing if checksums are enabled. It
-   * is assumed that the page should not be dirtied during recovery while
-   * modifying hints to prevent torn pages, since no new WAL data can be
-   * generated at this point to store FPI. This is not relevant to the FSM
-   * case, as its blocks are zeroed when a checksum mismatch occurs. So, we
-   * need to use regular MarkBufferDirty here to mark the FSM block as
-   * modified during recovery, otherwise changes to the FSM may be lost.
-   */
-  if (fsm_set_avail(page, slot, new_cat))
-    MarkBufferDirty(buf);
-  UnlockReleaseBuffer(buf);
-}
-
-/*
  * FreeSpaceMapPrepareTruncateRel - prepare for truncation of a relation.
  *
  * nblocks is the new size of the heap.
@@ -287,20 +245,6 @@ BlockNumber FreeSpaceMapPrepareTruncateRel(Relation rel, BlockNumber nblocks) {
      * MarkBufferDirty(), not MarkBufferDirtyHint().
      */
     MarkBufferDirty(buf);
-
-    /*
-     * WAL-log like MarkBufferDirtyHint() might have done, just to avoid
-     * differing from the rest of the file in this respect.  This is
-     * optional; see README mention of full page images.  XXX consider
-     * XLogSaveBufferForHint() for even closer similarity.
-     *
-     * A higher-level operation calls us at WAL replay.  If we crash
-     * before the XLOG_SMGR_TRUNCATE flushes to disk, main fork length has
-     * not changed, and our fork remains valid.  If we crash after that
-     * flush, redo will return here.
-     */
-    if (!InRecovery && RelationNeedsWAL(rel) && XLogHintBitIsNeeded())
-      log_newpage_buffer(buf, false);
 
     END_CRIT_SECTION();
 

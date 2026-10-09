@@ -37,9 +37,9 @@ PG_LWLOCK(3, XidGen)
 PG_LWLOCK(4, ProcArray)
 PG_LWLOCK(5, SInvalRead)
 PG_LWLOCK(6, SInvalWrite)
-PG_LWLOCK(7, WALBufMapping)
-PG_LWLOCK(8, WALWrite)
-PG_LWLOCK(9, ControlFile)
+/* 7 was WALBufMappingLock */
+/* 8 was WALWriteLock */
+/* 9 was ControlFileLock */
 /* 10 was CheckpointLock */
 /* 11 was XactSLRULock */
 /* 12 was SubtransSLRULock */

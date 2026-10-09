@@ -538,3 +538,67 @@ ANALYZE stays.
   counters in the statistics, always 0.
 - `test/server.sh` checks that `VACUUM` succeeds and the
   session carries on. `make test` passes as before.
+
+## Step 12: WAL is gone
+
+Step 9 had stopped WAL being written: `XLogInsertRecord()`
+refused, and `StartupXLOG()` only gave the transaction counters
+their first values. This step removes the WAL code itself. 68
+files went, and about 44,000 lines. sm keeps what is durable.
+
+- **What went**: everything that writes, reads, replays,
+  archives or describes WAL: `xloginsert.c`, `xlogreader.c`,
+  `xlogrecovery.c`, `xlogprefetcher.c`, `xlogarchive.c`,
+  `xlogfuncs.c`, `xlogstats.c`, `xlogutils.c`, `timeline.c`,
+  `generic_xlog.c`, `rmgr.c`, all of `rmgrdesc/`, the heap and
+  b-tree redo files, `standby.c`, `walwriter.c`, `pgarch.c`,
+  `archive/`, every redo, desc and mask function, and the
+  record headers (`heapam_xlog.h`, `nbtxlog.h` and the rest).
+- **`xlog.c` is rewritten**, about 150 lines: the control
+  record, made in memory for one run of the server, which
+  keeps the authentication nonce and the checksum version, and
+  the start and shutdown of the transaction counters.
+  `pg_control.h` holds only that record.
+- **The callers no longer write records.** The 61 blocks that
+  built one went; where a page change sat in a critical section
+  with its record, the change stays. Tests for
+  `RelationNeedsWAL()`, `XLogIsNeeded()`, `wal_level` and the
+  logical-decoding variants were always false, and were folded
+  away by a script.
+- **There is no recovery.** `RecoveryInProgress()`,
+  `InRecovery`, `InHotStandby` and `standbyState` are gone, and
+  with them hot standby: the known-assigned-xids machinery in
+  `procarray.c`, recovery conflicts, and a snapshot's
+  `takenDuringRecovery`.
+- **Commit and abort mark `pg_xact` and nothing else.** There is
+  no commit record, no asynchronous commit, and no LSN kept for
+  a `pg_xact` page; `synchronous_commit` is gone.
+- **`PREPARE TRANSACTION` is refused**: a prepared transaction's
+  state was kept in WAL. `COMMIT PREPARED` finds nothing to
+  commit, as before. The shared array of prepared transactions
+  stays, always empty.
+- **CREATE DATABASE copies file by file**: the `wal_log`
+  strategy is refused. Bulk writes and relation copies are
+  synced as PostgreSQL syncs them with `wal_level=minimal`.
+- **Checkpoints still do nothing**, as since step 9; the
+  checkpointer keeps its loop, requests and statistics, without
+  restartpoints or WAL-based pacing. The startup process gives
+  the counters their values and exits.
+- **The WAL writer and the archiver are gone** as process
+  types, with their statistics; the stats file format id
+  changed.
+- **45 settings and 27 SQL functions are gone**: `wal_*`,
+  `archive_*`, `recovery_*`, `hot_standby`, `full_page_writes`,
+  `max_wal_size`, `synchronous_commit`, `commit_delay`,
+  `checkpoint_warning`, `in_hot_standby` and the like;
+  `pg_current_wal_lsn()`, `pg_is_in_recovery()`,
+  `pg_switch_wal()`, `pg_control_*()`, `pg_ls_waldir()` and the
+  like. `postgresql.conf.sample` still lists the settings.
+- **`pg_wal` and `pg_twophase` are no longer made.**
+- **Left in place**: `XLogRecPtr` and page LSNs, which are
+  always 0; the heap's conflict horizons, which nothing reads;
+  the checkpoint work functions (`CheckPointBuffers()` and
+  the rest) and `ProcessSyncRequests()`, which no checkpoint
+  calls; the postmaster's recovery states, for step 4.
+- `test/server.sh` checks that `PREPARE TRANSACTION` is refused
+  and the session carries on. `make test` passes as before.

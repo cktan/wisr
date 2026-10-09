@@ -37,7 +37,6 @@ extern void AtCommit_Notify(void);
 extern void AtAbort_Notify(void);
 extern void AtSubCommit_Notify(void);
 extern void AtSubAbort_Notify(void);
-extern void AtPrepare_Notify(void);
 
 /* signal handler for inbound notifies (PROCSIG_NOTIFY_INTERRUPT) */
 extern void HandleNotifyInterrupt(void);

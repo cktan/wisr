@@ -29,9 +29,6 @@
 #include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/xact.h"
-#include "access/xloginsert.h"
-#include "access/xlogrecovery.h"
-#include "access/xlogutils.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -44,7 +41,6 @@
 #include "catalog/pg_tablespace.h"
 #include "commands/comment.h"
 #include "commands/dbcommands.h"
-#include "commands/dbcommands_xlog.h"
 #include "commands/defrem.h"
 #include "commands/seclabel.h"
 #include "commands/tablespace.h"
@@ -59,6 +55,7 @@
 #include "storage/lmgr.h"
 #include "storage/md.h"
 #include "storage/procarray.h"
+#include "storage/procsignal.h"
 #include "storage/smgr.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -68,40 +65,15 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
-/*
- * Create database strategy.
- *
- * CREATEDB_WAL_LOG will copy the database at the block level and WAL log each
- * copied block.
- *
- * CREATEDB_FILE_COPY will simply perform a file system level copy of the
- * database and log a single record for each tablespace copied. To make this
- * safe, it also triggers checkpoints before and after the operation.
- */
-typedef enum CreateDBStrategy {
-  CREATEDB_WAL_LOG,
-  CREATEDB_FILE_COPY,
-} CreateDBStrategy;
-
 typedef struct {
-  Oid src_dboid;             /* source (template) DB */
-  Oid dest_dboid;            /* DB we are trying to create */
-  CreateDBStrategy strategy; /* create db strategy */
+  Oid src_dboid;  /* source (template) DB */
+  Oid dest_dboid; /* DB we are trying to create */
 } createdb_failure_params;
 
 typedef struct {
   Oid dest_dboid; /* DB we are trying to move */
   Oid dest_tsoid; /* tablespace we are trying to move to */
 } movedb_failure_params;
-
-/*
- * Information about a relation to be copied when creating a database.
- */
-typedef struct CreateDBRelInfo {
-  RelFileLocator rlocator; /* physical relation identifier */
-  Oid reloid;              /* relation oid */
-  bool permanent;          /* relation is permanent or unlogged */
-} CreateDBRelInfo;
 
 /* non-export function prototypes */
 static void createdb_failure_callback(int code, Datum arg);
@@ -117,398 +89,8 @@ static bool get_db_info(const char *name, LOCKMODE lockmode, Oid *dbIdP,
 static void remove_dbtablespaces(Oid db_id);
 static bool check_db_file_conflict(Oid db_id);
 static int errdetail_busy_db(int notherbackends, int npreparedxacts);
-static void CreateDatabaseUsingWalLog(Oid src_dboid, Oid dst_dboid,
-                                      Oid src_tsid, Oid dst_tsid);
-static List *ScanSourceDatabasePgClass(Oid tbid, Oid dbid, char *srcpath);
-static List *ScanSourceDatabasePgClassPage(Page page, Buffer buf, Oid tbid,
-                                           Oid dbid, char *srcpath,
-                                           List *rlocatorlist,
-                                           Snapshot snapshot);
-static CreateDBRelInfo *ScanSourceDatabasePgClassTuple(HeapTupleData *tuple,
-                                                       Oid tbid, Oid dbid,
-                                                       char *srcpath);
-static void CreateDirAndVersionFile(char *dbpath, Oid dbid, Oid tsid,
-                                    bool isRedo);
 static void CreateDatabaseUsingFileCopy(Oid src_dboid, Oid dst_dboid,
                                         Oid src_tsid, Oid dst_tsid);
-static void recovery_create_dbdir(char *path, bool only_tblspc);
-
-/*
- * Create a new database using the WAL_LOG strategy.
- *
- * Each copied block is separately written to the write-ahead log.
- */
-static void CreateDatabaseUsingWalLog(Oid src_dboid, Oid dst_dboid,
-                                      Oid src_tsid, Oid dst_tsid) {
-  char *srcpath;
-  char *dstpath;
-  List *rlocatorlist = NULL;
-  ListCell *cell;
-  LockRelId srcrelid;
-  LockRelId dstrelid;
-  RelFileLocator srcrlocator;
-  RelFileLocator dstrlocator;
-  CreateDBRelInfo *relinfo;
-
-  /* Get source and destination database paths. */
-  srcpath = GetDatabasePath(src_dboid, src_tsid);
-  dstpath = GetDatabasePath(dst_dboid, dst_tsid);
-
-  /* Create database directory and write PG_VERSION file. */
-  CreateDirAndVersionFile(dstpath, dst_dboid, dst_tsid, false);
-
-  /* Copy relmap file from source database to the destination database. */
-  RelationMapCopy(dst_dboid, dst_tsid, srcpath, dstpath);
-
-  /* Get list of relfilelocators to copy from the source database. */
-  rlocatorlist = ScanSourceDatabasePgClass(src_tsid, src_dboid, srcpath);
-  Assert(rlocatorlist != NIL);
-
-  /*
-   * Database IDs will be the same for all relations so set them before
-   * entering the loop.
-   */
-  srcrelid.dbId = src_dboid;
-  dstrelid.dbId = dst_dboid;
-
-  /* Loop over our list of relfilelocators and copy each one. */
-  foreach (cell, rlocatorlist) {
-    relinfo = (CreateDBRelInfo *)lfirst(cell);
-    srcrlocator = relinfo->rlocator;
-
-    /*
-     * If the relation is from the source db's default tablespace then we
-     * need to create it in the destination db's default tablespace.
-     * Otherwise, we need to create in the same tablespace as it is in the
-     * source database.
-     */
-    if (srcrlocator.spcOid == src_tsid)
-      dstrlocator.spcOid = dst_tsid;
-    else
-      dstrlocator.spcOid = srcrlocator.spcOid;
-
-    dstrlocator.dbOid = dst_dboid;
-    dstrlocator.relNumber = srcrlocator.relNumber;
-
-    /*
-     * Acquire locks on source and target relations before copying.
-     *
-     * We typically do not read relation data into shared_buffers without
-     * holding a relation lock. It's unclear what could go wrong if we
-     * skipped it in this case, because nobody can be modifying either the
-     * source or destination database at this point, and we have locks on
-     * both databases, too, but let's take the conservative route.
-     */
-    dstrelid.relId = srcrelid.relId = relinfo->reloid;
-    LockRelationId(&srcrelid, AccessShareLock);
-    LockRelationId(&dstrelid, AccessShareLock);
-
-    /* Copy relation storage from source to the destination. */
-    CreateAndCopyRelationData(srcrlocator, dstrlocator, relinfo->permanent);
-
-    /* Release the relation locks. */
-    UnlockRelationId(&srcrelid, AccessShareLock);
-    UnlockRelationId(&dstrelid, AccessShareLock);
-  }
-
-  pfree(srcpath);
-  pfree(dstpath);
-  list_free_deep(rlocatorlist);
-}
-
-/*
- * Scan the pg_class table in the source database to identify the relations
- * that need to be copied to the destination database.
- *
- * This is an exception to the usual rule that cross-database access is
- * not possible. We can make it work here because we know that there are no
- * connections to the source database and (since there can't be prepared
- * transactions touching that database) no in-doubt tuples either. This
- * means that we don't need to worry about pruning removing anything from
- * under us, and we don't need to be too picky about our snapshot either.
- * As long as it sees all previously-committed XIDs as committed and all
- * aborted XIDs as aborted, we should be fine: nothing else is possible
- * here.
- *
- * We can't rely on the relcache for anything here, because that only knows
- * about the database to which we are connected, and can't handle access to
- * other databases. That also means we can't rely on the heap scan
- * infrastructure, which would be a bad idea anyway since it might try
- * to do things like HOT pruning which we definitely can't do safely in
- * a database to which we're not even connected.
- */
-static List *ScanSourceDatabasePgClass(Oid tbid, Oid dbid, char *srcpath) {
-  RelFileLocator rlocator;
-  BlockNumber nblocks;
-  BlockNumber blkno;
-  Buffer buf;
-  RelFileNumber relfilenumber;
-  Page page;
-  List *rlocatorlist = NIL;
-  LockRelId relid;
-  Snapshot snapshot;
-  SMgrRelation smgr;
-  BufferAccessStrategy bstrategy;
-
-  /* Get pg_class relfilenumber. */
-  relfilenumber =
-      RelationMapOidToFilenumberForDatabase(srcpath, RelationRelationId);
-
-  /* Don't read data into shared_buffers without holding a relation lock. */
-  relid.dbId = dbid;
-  relid.relId = RelationRelationId;
-  LockRelationId(&relid, AccessShareLock);
-
-  /* Prepare a RelFileLocator for the pg_class relation. */
-  rlocator.spcOid = tbid;
-  rlocator.dbOid = dbid;
-  rlocator.relNumber = relfilenumber;
-
-  smgr = smgropen(rlocator, INVALID_PROC_NUMBER);
-  nblocks = smgrnblocks(smgr, MAIN_FORKNUM);
-  smgrclose(smgr);
-
-  /* Use a buffer access strategy since this is a bulk read operation. */
-  bstrategy = GetAccessStrategy(BAS_BULKREAD);
-
-  /*
-   * As explained in the function header comments, we need a snapshot that
-   * will see all committed transactions as committed, and our transaction
-   * snapshot - or the active snapshot - might not be new enough for that,
-   * but the return value of GetLatestSnapshot() should work fine.
-   */
-  snapshot = RegisterSnapshot(GetLatestSnapshot());
-
-  /* Process the relation block by block. */
-  for (blkno = 0; blkno < nblocks; blkno++) {
-    CHECK_FOR_INTERRUPTS();
-
-    buf = ReadBufferWithoutRelcache(rlocator, MAIN_FORKNUM, blkno, RBM_NORMAL,
-                                    bstrategy, true);
-
-    LockBuffer(buf, BUFFER_LOCK_SHARE);
-    page = BufferGetPage(buf);
-    if (PageIsNew(page) || PageIsEmpty(page)) {
-      UnlockReleaseBuffer(buf);
-      continue;
-    }
-
-    /* Append relevant pg_class tuples for current page to rlocatorlist. */
-    rlocatorlist = ScanSourceDatabasePgClassPage(page, buf, tbid, dbid, srcpath,
-                                                 rlocatorlist, snapshot);
-
-    UnlockReleaseBuffer(buf);
-  }
-  UnregisterSnapshot(snapshot);
-
-  /* Release relation lock. */
-  UnlockRelationId(&relid, AccessShareLock);
-
-  return rlocatorlist;
-}
-
-/*
- * Scan one page of the source database's pg_class relation and add relevant
- * entries to rlocatorlist. The return value is the updated list.
- */
-static List *ScanSourceDatabasePgClassPage(Page page, Buffer buf, Oid tbid,
-                                           Oid dbid, char *srcpath,
-                                           List *rlocatorlist,
-                                           Snapshot snapshot) {
-  BlockNumber blkno = BufferGetBlockNumber(buf);
-  OffsetNumber offnum;
-  OffsetNumber maxoff;
-  HeapTupleData tuple;
-
-  maxoff = PageGetMaxOffsetNumber(page);
-
-  /* Loop over offsets. */
-  for (offnum = FirstOffsetNumber; offnum <= maxoff;
-       offnum = OffsetNumberNext(offnum)) {
-    ItemId itemid;
-
-    itemid = PageGetItemId(page, offnum);
-
-    /* Nothing to do if slot is empty or already dead. */
-    if (!ItemIdIsUsed(itemid) || ItemIdIsDead(itemid) ||
-        ItemIdIsRedirected(itemid))
-      continue;
-
-    Assert(ItemIdIsNormal(itemid));
-    ItemPointerSet(&(tuple.t_self), blkno, offnum);
-
-    /* Initialize a HeapTupleData structure. */
-    tuple.t_data = (HeapTupleHeader)PageGetItem(page, itemid);
-    tuple.t_len = ItemIdGetLength(itemid);
-    tuple.t_tableOid = RelationRelationId;
-
-    /* Skip tuples that are not visible to this snapshot. */
-    if (HeapTupleSatisfiesVisibility(&tuple, snapshot, buf)) {
-      CreateDBRelInfo *relinfo;
-
-      /*
-       * ScanSourceDatabasePgClassTuple is in charge of constructing a
-       * CreateDBRelInfo object for this tuple, but can also decide that
-       * this tuple isn't something we need to copy. If we do need to
-       * copy the relation, add it to the list.
-       */
-      relinfo = ScanSourceDatabasePgClassTuple(&tuple, tbid, dbid, srcpath);
-      if (relinfo != NULL)
-        rlocatorlist = lappend(rlocatorlist, relinfo);
-    }
-  }
-
-  return rlocatorlist;
-}
-
-/*
- * Decide whether a certain pg_class tuple represents something that
- * needs to be copied from the source database to the destination database,
- * and if so, construct a CreateDBRelInfo for it.
- *
- * Visibility checks are handled by the caller, so our job here is just
- * to assess the data stored in the tuple.
- */
-CreateDBRelInfo *ScanSourceDatabasePgClassTuple(HeapTupleData *tuple, Oid tbid,
-                                                Oid dbid, char *srcpath) {
-  CreateDBRelInfo *relinfo;
-  Form_pg_class classForm;
-  RelFileNumber relfilenumber = InvalidRelFileNumber;
-
-  classForm = (Form_pg_class)GETSTRUCT(tuple);
-
-  /*
-   * Return NULL if this object does not need to be copied.
-   *
-   * Shared objects don't need to be copied, because they are shared.
-   * Objects without storage can't be copied, because there's nothing to
-   * copy. Temporary relations don't need to be copied either, because they
-   * are inaccessible outside of the session that created them, which must
-   * be gone already, and couldn't connect to a different database if it
-   * still existed. autovacuum will eventually remove the pg_class entries
-   * as well.
-   */
-  if (classForm->reltablespace == GLOBALTABLESPACE_OID ||
-      !RELKIND_HAS_STORAGE(classForm->relkind) ||
-      classForm->relpersistence == RELPERSISTENCE_TEMP)
-    return NULL;
-
-  /*
-   * If relfilenumber is valid then directly use it.  Otherwise, consult the
-   * relmap.
-   */
-  if (RelFileNumberIsValid(classForm->relfilenode))
-    relfilenumber = classForm->relfilenode;
-  else
-    relfilenumber =
-        RelationMapOidToFilenumberForDatabase(srcpath, classForm->oid);
-
-  /* We must have a valid relfilenumber. */
-  if (!RelFileNumberIsValid(relfilenumber))
-    elog(ERROR, "relation with OID %u does not have a valid relfilenumber",
-         classForm->oid);
-
-  /* Prepare a rel info element and add it to the list. */
-  relinfo = (CreateDBRelInfo *)palloc(sizeof(CreateDBRelInfo));
-  if (OidIsValid(classForm->reltablespace))
-    relinfo->rlocator.spcOid = classForm->reltablespace;
-  else
-    relinfo->rlocator.spcOid = tbid;
-
-  relinfo->rlocator.dbOid = dbid;
-  relinfo->rlocator.relNumber = relfilenumber;
-  relinfo->reloid = classForm->oid;
-
-  /* Temporary relations were rejected above. */
-  Assert(classForm->relpersistence != RELPERSISTENCE_TEMP);
-  relinfo->permanent =
-      (classForm->relpersistence == RELPERSISTENCE_PERMANENT) ? true : false;
-
-  return relinfo;
-}
-
-/*
- * Create database directory and write out the PG_VERSION file in the database
- * path.  If isRedo is true, it's okay for the database directory to exist
- * already.
- */
-static void CreateDirAndVersionFile(char *dbpath, Oid dbid, Oid tsid,
-                                    bool isRedo) {
-  int fd;
-  int nbytes;
-  char versionfile[MAXPGPATH];
-  char buf[16];
-
-  /*
-   * Note that we don't have to copy version data from the source database;
-   * there's only one legal value.
-   */
-  sprintf(buf, "%s\n", PG_MAJORVERSION);
-  nbytes = strlen(PG_MAJORVERSION) + 1;
-
-  /* Create database directory. */
-  if (MakePGDirectory(dbpath) < 0) {
-    /* Failure other than already exists or not in WAL replay? */
-    if (errno != EEXIST || !isRedo)
-      ereport(ERROR, (errcode_for_file_access(),
-                      errmsg("could not create directory \"%s\": %m", dbpath)));
-  }
-
-  /*
-   * Create PG_VERSION file in the database path.  If the file already
-   * exists and we are in WAL replay then try again to open it in write
-   * mode.
-   */
-  snprintf(versionfile, sizeof(versionfile), "%s/%s", dbpath, "PG_VERSION");
-
-  fd = OpenTransientFile(versionfile, O_WRONLY | O_CREAT | O_EXCL | PG_BINARY);
-  if (fd < 0 && errno == EEXIST && isRedo)
-    fd = OpenTransientFile(versionfile, O_WRONLY | O_TRUNC | PG_BINARY);
-
-  if (fd < 0)
-    ereport(ERROR, (errcode_for_file_access(),
-                    errmsg("could not create file \"%s\": %m", versionfile)));
-
-  /* Write PG_MAJORVERSION in the PG_VERSION file. */
-  pgstat_report_wait_start(WAIT_EVENT_VERSION_FILE_WRITE);
-  errno = 0;
-  if ((int)write(fd, buf, nbytes) != nbytes) {
-    /* If write didn't set errno, assume problem is no disk space. */
-    if (errno == 0)
-      errno = ENOSPC;
-    ereport(ERROR, (errcode_for_file_access(),
-                    errmsg("could not write to file \"%s\": %m", versionfile)));
-  }
-  pgstat_report_wait_end();
-
-  pgstat_report_wait_start(WAIT_EVENT_VERSION_FILE_SYNC);
-  if (pg_fsync(fd) != 0)
-    ereport(data_sync_elevel(ERROR),
-            (errcode_for_file_access(),
-             errmsg("could not fsync file \"%s\": %m", versionfile)));
-  fsync_fname(dbpath, true);
-  pgstat_report_wait_end();
-
-  /* Close the version file. */
-  CloseTransientFile(fd);
-
-  /* If we are not in WAL replay then write the WAL. */
-  if (!isRedo) {
-    xl_dbase_create_wal_log_rec xlrec;
-
-    START_CRIT_SECTION();
-
-    xlrec.db_id = dbid;
-    xlrec.tablespace_id = tsid;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, sizeof(xl_dbase_create_wal_log_rec));
-
-    (void)XLogInsert(RM_DBASE_ID, XLOG_DBASE_CREATE_WAL_LOG);
-
-    END_CRIT_SECTION();
-  }
-}
 
 /*
  * Create a new database using the FILE_COPY strategy.
@@ -583,21 +165,6 @@ static void CreateDatabaseUsingFileCopy(Oid src_dboid, Oid dst_dboid,
      */
     copydir(srcpath, dstpath, false);
 
-    /* Record the filesystem change in XLOG */
-    {
-      xl_dbase_create_file_copy_rec xlrec;
-
-      xlrec.db_id = dst_dboid;
-      xlrec.tablespace_id = dsttablespace;
-      xlrec.src_db_id = src_dboid;
-      xlrec.src_tablespace_id = srctablespace;
-
-      XLogBeginInsert();
-      XLogRegisterData(&xlrec, sizeof(xl_dbase_create_file_copy_rec));
-
-      (void)XLogInsert(RM_DBASE_ID,
-                       XLOG_DBASE_CREATE_FILE_COPY | XLR_SPECIAL_REL_UPDATE);
-    }
     pfree(srcpath);
     pfree(dstpath);
   }
@@ -634,9 +201,6 @@ static void CreateDatabaseUsingFileCopy(Oid src_dboid, Oid dst_dboid,
    * these problems applies: we don't ever replay the WAL generated during
    * pg_upgrade, and we don't support taking base backups during pg_upgrade
    * (not to mention that we don't concurrently modify template0, either).
-   *
-   * See CreateDatabaseUsingWalLog() for a less cheesy CREATE DATABASE
-   * strategy that avoids these problems.
    */
   if (!IsBinaryUpgrade)
     RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE |
@@ -702,7 +266,6 @@ Oid createdb(ParseState *pstate, const CreatedbStmt *stmt) {
   char *dbcollversion = NULL;
   int notherbackends;
   int npreparedxacts;
-  CreateDBStrategy dbstrategy = CREATEDB_WAL_LOG;
   createdb_failure_params fparms;
 
   /* Extract options from the statement node tree */
@@ -934,20 +497,20 @@ Oid createdb(ParseState *pstate, const CreatedbStmt *stmt) {
                              dbtemplate)));
   }
 
-  /* Validate the database creation strategy. */
+  /*
+   * Validate the database creation strategy.  The database is copied file
+   * by file: wal_log, which copies it block by block through WAL, needs
+   * WAL, and digres has none.
+   */
   if (strategyEl && strategyEl->arg) {
     char *strategy;
 
     strategy = defGetString(strategyEl);
-    if (pg_strcasecmp(strategy, "wal_log") == 0)
-      dbstrategy = CREATEDB_WAL_LOG;
-    else if (pg_strcasecmp(strategy, "file_copy") == 0)
-      dbstrategy = CREATEDB_FILE_COPY;
-    else
+    if (pg_strcasecmp(strategy, "file_copy") != 0)
       ereport(ERROR,
               (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                errmsg("invalid create database strategy \"%s\"", strategy),
-               errhint("Valid strategies are \"wal_log\" and \"file_copy\".")));
+               errhint("The only valid strategy is \"file_copy\".")));
   }
 
   /* If encoding or locales are defaulted, use source's setting */
@@ -1411,20 +974,6 @@ Oid createdb(ParseState *pstate, const CreatedbStmt *stmt) {
   InvokeObjectPostCreateHook(DatabaseRelationId, dboid, 0);
 
   /*
-   * If we're going to be reading data for the to-be-created database into
-   * shared_buffers, take a lock on it. Nobody should know that this
-   * database exists yet, but it's good to maintain the invariant that an
-   * AccessExclusiveLock on the database is sufficient to drop all of its
-   * buffers without worrying about more being read later.
-   *
-   * Note that we need to do this before entering the
-   * PG_ENSURE_ERROR_CLEANUP block below, because createdb_failure_callback
-   * expects this lock to be held already.
-   */
-  if (dbstrategy == CREATEDB_WAL_LOG)
-    LockSharedObject(DatabaseRelationId, dboid, 0, AccessShareLock);
-
-  /*
    * Once we start copying subdirectories, we need to be able to clean 'em
    * up if we fail.  Use an ENSURE block to make sure this happens.  (This
    * is not a 100% solution, because of the possibility of failure during
@@ -1433,36 +982,17 @@ Oid createdb(ParseState *pstate, const CreatedbStmt *stmt) {
    */
   fparms.src_dboid = src_dboid;
   fparms.dest_dboid = dboid;
-  fparms.strategy = dbstrategy;
 
   PG_ENSURE_ERROR_CLEANUP(createdb_failure_callback, PointerGetDatum(&fparms));
   {
-    /*
-     * If the user has asked to create a database with WAL_LOG strategy
-     * then call CreateDatabaseUsingWalLog, which will copy the database
-     * at the block level and it will WAL log each copied block.
-     * Otherwise, call CreateDatabaseUsingFileCopy that will copy the
-     * database file by file.
-     */
-    if (dbstrategy == CREATEDB_WAL_LOG)
-      CreateDatabaseUsingWalLog(src_dboid, dboid, src_deftablespace,
+    /* Copy the database file by file */
+    CreateDatabaseUsingFileCopy(src_dboid, dboid, src_deftablespace,
                                 dst_deftablespace);
-    else
-      CreateDatabaseUsingFileCopy(src_dboid, dboid, src_deftablespace,
-                                  dst_deftablespace);
 
     /*
      * Close pg_database, but keep lock till commit.
      */
     table_close(pg_database_rel, NoLock);
-
-    /*
-     * Force synchronous commit, thus minimizing the window between
-     * creation of the database files and committal of the transaction. If
-     * we crash before committing, we'll have a DB that's taking up disk
-     * space but is not in pg_database, which is not good.
-     */
-    ForceSyncCommit();
   }
   PG_END_ENSURE_ERROR_CLEANUP(createdb_failure_callback,
                               PointerGetDatum(&fparms));
@@ -1529,24 +1059,6 @@ void check_encoding_locale_matches(int encoding, const char *collate,
 static void createdb_failure_callback(int code, Datum arg) {
   createdb_failure_params *fparms =
       (createdb_failure_params *)DatumGetPointer(arg);
-
-  /*
-   * If we were copying database at block levels then drop pages for the
-   * destination database that are in the shared buffer cache.  And tell
-   * checkpointer to forget any pending fsync and unlink requests for files
-   * in the database.  The reasoning behind doing this is same as explained
-   * in dropdb function.  But unlike dropdb we don't need to call
-   * pgstat_drop_database because this database is still not created so
-   * there should not be any stat for this.
-   */
-  if (fparms->strategy == CREATEDB_WAL_LOG) {
-    DropDatabaseBuffers(fparms->dest_dboid);
-    ForgetDatabaseSyncRequests(fparms->dest_dboid);
-
-    /* Release lock on the target database. */
-    UnlockSharedObject(DatabaseRelationId, fparms->dest_dboid, 0,
-                       AccessShareLock);
-  }
 
   /*
    * Release lock on source database before doing recursive remove. This is
@@ -1682,10 +1194,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
    * buffers). But we might crash or get interrupted below. To prevent
    * accesses to a database with invalid contents, mark the database as
    * invalid using an in-place update.
-   *
-   * We need to flush the WAL before continuing, to guarantee the
-   * modification is durable before performing irreversible filesystem
-   * operations.
    */
   ScanKeyInit(&scankey, Anum_pg_database_datname, BTEqualStrategyNumber,
               F_NAMEEQ, CStringGetDatum(dbname));
@@ -1696,7 +1204,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
   datform = (Form_pg_database)GETSTRUCT(tup);
   datform->datconnlimit = DATCONNLIMIT_INVALID_DB;
   systable_inplace_update_finish(inplace_state, tup);
-  XLogFlush(XactLastRecEnd);
 
   /*
    * Also delete the tuple - transactionally. If this transaction commits,
@@ -1739,14 +1246,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
    * Close pg_database, but keep lock till commit.
    */
   table_close(pgdbrel, NoLock);
-
-  /*
-   * Force synchronous commit, thus minimizing the window between removal of
-   * the database files and committal of the transaction. If we crash before
-   * committing, we'll have a DB that's gone on disk but still there
-   * according to pg_database, which is not good.
-   */
-  ForceSyncCommit();
 }
 
 /*
@@ -2034,24 +1533,6 @@ static void movedb(const char *dbname, const char *tblspcname) {
     copydir(src_dbpath, dst_dbpath, false);
 
     /*
-     * Record the filesystem change in XLOG
-     */
-    {
-      xl_dbase_create_file_copy_rec xlrec;
-
-      xlrec.db_id = db_id;
-      xlrec.tablespace_id = dst_tblspcoid;
-      xlrec.src_db_id = db_id;
-      xlrec.src_tablespace_id = src_tblspcoid;
-
-      XLogBeginInsert();
-      XLogRegisterData(&xlrec, sizeof(xl_dbase_create_file_copy_rec));
-
-      (void)XLogInsert(RM_DBASE_ID,
-                       XLOG_DBASE_CREATE_FILE_COPY | XLR_SPECIAL_REL_UPDATE);
-    }
-
-    /*
      * Update the database's pg_database tuple
      */
     ScanKeyInit(&scankey, Anum_pg_database_datname, BTEqualStrategyNumber,
@@ -2088,14 +1569,6 @@ static void movedb(const char *dbname, const char *tblspcname) {
                       CHECKPOINT_WAIT);
 
     /*
-     * Force synchronous commit, thus minimizing the window between
-     * copying the database files and committal of the transaction. If we
-     * crash before committing, we'll leave an orphaned set of files on
-     * disk, which is not fatal but not good either.
-     */
-    ForceSyncCommit();
-
-    /*
      * Close pg_database, but keep lock till commit.
      */
     table_close(pgdbrel, NoLock);
@@ -2127,22 +1600,6 @@ static void movedb(const char *dbname, const char *tblspcname) {
     ereport(WARNING, (errmsg("some useless files may be left behind in old "
                              "database directory \"%s\"",
                              src_dbpath)));
-
-  /*
-   * Record the filesystem change in XLOG
-   */
-  {
-    xl_dbase_drop_rec xlrec;
-
-    xlrec.db_id = db_id;
-    xlrec.ntablespaces = 1;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, sizeof(xl_dbase_drop_rec));
-    XLogRegisterData(&src_tblspcoid, sizeof(Oid));
-
-    (void)XLogInsert(RM_DBASE_ID, XLOG_DBASE_DROP | XLR_SPECIAL_REL_UPDATE);
-  }
 
   /* Now it's safe to release the database lock */
   UnlockSharedObjectForSession(DatabaseRelationId, db_id, 0,
@@ -2762,11 +2219,6 @@ static void remove_dbtablespaces(Oid db_id) {
   Relation rel;
   TableScanDesc scan;
   HeapTuple tuple;
-  List *ltblspc = NIL;
-  ListCell *cell;
-  int ntblspc;
-  int i;
-  Oid *tablespace_ids;
 
   rel = table_open(TableSpaceRelationId, AccessShareLock);
   scan = table_beginscan_catalog(rel, 0, NULL);
@@ -2793,38 +2245,8 @@ static void remove_dbtablespaces(Oid db_id) {
                                "database directory \"%s\"",
                                dstpath)));
 
-    ltblspc = lappend_oid(ltblspc, dsttablespace);
     pfree(dstpath);
   }
-
-  ntblspc = list_length(ltblspc);
-  if (ntblspc == 0) {
-    table_endscan(scan);
-    table_close(rel, AccessShareLock);
-    return;
-  }
-
-  tablespace_ids = (Oid *)palloc(ntblspc * sizeof(Oid));
-  i = 0;
-  foreach (cell, ltblspc)
-    tablespace_ids[i++] = lfirst_oid(cell);
-
-  /* Record the filesystem change in XLOG */
-  {
-    xl_dbase_drop_rec xlrec;
-
-    xlrec.db_id = db_id;
-    xlrec.ntablespaces = ntblspc;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, MinSizeOfDbaseDropRec);
-    XLogRegisterData(tablespace_ids, ntblspc * sizeof(Oid));
-
-    (void)XLogInsert(RM_DBASE_ID, XLOG_DBASE_DROP | XLR_SPECIAL_REL_UPDATE);
-  }
-
-  list_free(ltblspc);
-  pfree(tablespace_ids);
 
   table_endscan(scan);
   table_close(rel, AccessShareLock);
@@ -2989,192 +2411,4 @@ bool database_is_invalid_oid(Oid dboid) {
   ReleaseSysCache(dbtup);
 
   return invalid;
-}
-
-/*
- * recovery_create_dbdir()
- *
- * During recovery, there's a case where we validly need to recover a missing
- * tablespace directory so that recovery can continue.  This happens when
- * recovery wants to create a database but the holding tablespace has been
- * removed before the server stopped.  Since we expect that the directory will
- * be gone before reaching recovery consistency, and we have no knowledge about
- * the tablespace other than its OID here, we create a real directory under
- * pg_tblspc here instead of restoring the symlink.
- *
- * If only_tblspc is true, then the requested directory must be in pg_tblspc/
- */
-static void recovery_create_dbdir(char *path, bool only_tblspc) {
-  struct stat st;
-
-  Assert(RecoveryInProgress());
-
-  if (stat(path, &st) == 0)
-    return;
-
-  if (only_tblspc && strstr(path, PG_TBLSPC_DIR_SLASH) == NULL)
-    elog(PANIC, "requested to created invalid directory: %s", path);
-
-  if (reachedConsistency && !allow_in_place_tablespaces)
-    ereport(PANIC, errmsg("missing directory \"%s\"", path));
-
-  elog(reachedConsistency ? WARNING : DEBUG1, "creating missing directory: %s",
-       path);
-
-  if (pg_mkdir_p(path, pg_dir_create_mode) != 0)
-    ereport(PANIC,
-            errmsg("could not create missing directory \"%s\": %m", path));
-}
-
-/*
- * DATABASE resource manager's routines
- */
-void dbase_redo(XLogReaderState *record) {
-  uint8 info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
-
-  /* Backup blocks are not used in dbase records */
-  Assert(!XLogRecHasAnyBlockRefs(record));
-
-  if (info == XLOG_DBASE_CREATE_FILE_COPY) {
-    xl_dbase_create_file_copy_rec *xlrec =
-        (xl_dbase_create_file_copy_rec *)XLogRecGetData(record);
-    char *src_path;
-    char *dst_path;
-    char *parent_path;
-    struct stat st;
-
-    src_path = GetDatabasePath(xlrec->src_db_id, xlrec->src_tablespace_id);
-    dst_path = GetDatabasePath(xlrec->db_id, xlrec->tablespace_id);
-
-    /*
-     * Our theory for replaying a CREATE is to forcibly drop the target
-     * subdirectory if present, then re-copy the source data. This may be
-     * more work than needed, but it is simple to implement.
-     */
-    if (stat(dst_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-      if (!rmtree(dst_path, true))
-        /* If this failed, copydir() below is going to error. */
-        ereport(WARNING, (errmsg("some useless files may be left behind in old "
-                                 "database directory \"%s\"",
-                                 dst_path)));
-    }
-
-    /*
-     * If the parent of the target path doesn't exist, create it now. This
-     * enables us to create the target underneath later.
-     */
-    parent_path = pstrdup(dst_path);
-    get_parent_directory(parent_path);
-    if (stat(parent_path, &st) < 0) {
-      if (errno != ENOENT)
-        ereport(FATAL, errmsg("could not stat directory \"%s\": %m", dst_path));
-
-      /* create the parent directory if needed and valid */
-      recovery_create_dbdir(parent_path, true);
-    }
-    pfree(parent_path);
-
-    /*
-     * There's a case where the copy source directory is missing for the
-     * same reason above.  Create the empty source directory so that
-     * copydir below doesn't fail.  The directory will be dropped soon by
-     * recovery.
-     */
-    if (stat(src_path, &st) < 0 && errno == ENOENT)
-      recovery_create_dbdir(src_path, false);
-
-    /*
-     * Force dirty buffers out to disk, to ensure source database is
-     * up-to-date for the copy.
-     */
-    FlushDatabaseBuffers(xlrec->src_db_id);
-
-    /* Close all smgr fds in all backends. */
-    WaitForProcSignalBarrier(
-        EmitProcSignalBarrier(PROCSIGNAL_BARRIER_SMGRRELEASE));
-
-    /*
-     * Copy this subdirectory to the new location
-     *
-     * We don't need to copy subdirectories
-     */
-    copydir(src_path, dst_path, false);
-
-    pfree(src_path);
-    pfree(dst_path);
-  } else if (info == XLOG_DBASE_CREATE_WAL_LOG) {
-    xl_dbase_create_wal_log_rec *xlrec =
-        (xl_dbase_create_wal_log_rec *)XLogRecGetData(record);
-    char *dbpath;
-    char *parent_path;
-
-    dbpath = GetDatabasePath(xlrec->db_id, xlrec->tablespace_id);
-
-    /* create the parent directory if needed and valid */
-    parent_path = pstrdup(dbpath);
-    get_parent_directory(parent_path);
-    recovery_create_dbdir(parent_path, true);
-    pfree(parent_path);
-
-    /* Create the database directory with the version file. */
-    CreateDirAndVersionFile(dbpath, xlrec->db_id, xlrec->tablespace_id, true);
-    pfree(dbpath);
-  } else if (info == XLOG_DBASE_DROP) {
-    xl_dbase_drop_rec *xlrec = (xl_dbase_drop_rec *)XLogRecGetData(record);
-    char *dst_path;
-    int i;
-
-    if (InHotStandby) {
-      /*
-       * Lock database while we resolve conflicts to ensure that
-       * InitPostgres() cannot fully re-execute concurrently. This
-       * avoids backends re-connecting automatically to same database,
-       * which can happen in some cases.
-       *
-       * This will lock out walsenders trying to connect to db-specific
-       * slots for logical decoding too, so it's safe for us to drop
-       * slots.
-       */
-      LockSharedObjectForSession(DatabaseRelationId, xlrec->db_id, 0,
-                                 AccessExclusiveLock);
-      ResolveRecoveryConflictWithDatabase(xlrec->db_id);
-    }
-
-    /* Drop pages for this database that are in the shared buffer cache */
-    DropDatabaseBuffers(xlrec->db_id);
-
-    /* Also, clean out any fsync requests that might be pending in md.c */
-    ForgetDatabaseSyncRequests(xlrec->db_id);
-
-    /* Clean out the xlog relcache too */
-    XLogDropDatabase(xlrec->db_id);
-
-    /* Close all smgr fds in all backends. */
-    WaitForProcSignalBarrier(
-        EmitProcSignalBarrier(PROCSIGNAL_BARRIER_SMGRRELEASE));
-
-    for (i = 0; i < xlrec->ntablespaces; i++) {
-      dst_path = GetDatabasePath(xlrec->db_id, xlrec->tablespace_ids[i]);
-
-      /* And remove the physical files */
-      if (!rmtree(dst_path, true))
-        ereport(WARNING, (errmsg("some useless files may be left behind in old "
-                                 "database directory \"%s\"",
-                                 dst_path)));
-      pfree(dst_path);
-    }
-
-    if (InHotStandby) {
-      /*
-       * Release locks prior to commit. XXX There is a race condition
-       * here that may allow backends to reconnect, but the window for
-       * this is small because the gap between here and commit is mostly
-       * fairly small and it is unlikely that people will be dropping
-       * databases that we are trying to connect to anyway.
-       */
-      UnlockSharedObjectForSession(DatabaseRelationId, xlrec->db_id, 0,
-                                   AccessExclusiveLock);
-    }
-  } else
-    elog(PANIC, "dbase_redo: unknown op code %u", info);
 }

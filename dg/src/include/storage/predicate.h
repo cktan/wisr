@@ -70,11 +70,4 @@ extern void CheckTableForSerializableConflictIn(Relation relation);
 /* final rollback checking */
 extern void PreCommit_CheckForSerializationFailure(void);
 
-/* two-phase commit support */
-extern void AtPrepare_PredicateLocks(void);
-extern void PostPrepare_PredicateLocks(TransactionId xid);
-extern void PredicateLockTwoPhaseFinish(TransactionId xid, bool isCommit);
-extern void predicatelock_twophase_recover(TransactionId xid, uint16 info,
-                                           void *recdata, uint32 len);
-
 #endif /* PREDICATE_H */

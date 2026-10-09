@@ -76,7 +76,6 @@
  *   creation and dropping of stats entries
  *
  * Each statistics kind is handled in a dedicated file:
- * - pgstat_archiver.c
  * - pgstat_backend.c
  * - pgstat_bgwriter.c
  * - pgstat_checkpointer.c
@@ -339,24 +338,6 @@ static constexpr auto pgstat_kind_builtin_infos = [] {
   a[PGSTAT_KIND_BACKEND].reset_timestamp_cb = pgstat_backend_reset_timestamp_cb;
 
   /* stats for fixed-numbered (mostly 1) objects */
-
-  a[PGSTAT_KIND_ARCHIVER].name = "archiver";
-
-  a[PGSTAT_KIND_ARCHIVER].fixed_amount = true;
-  a[PGSTAT_KIND_ARCHIVER].write_to_file = true;
-
-  a[PGSTAT_KIND_ARCHIVER].snapshot_ctl_off =
-      offsetof(PgStat_Snapshot, archiver);
-  a[PGSTAT_KIND_ARCHIVER].shared_ctl_off =
-      offsetof(PgStat_ShmemControl, archiver);
-  a[PGSTAT_KIND_ARCHIVER].shared_data_off =
-      offsetof(PgStatShared_Archiver, stats);
-  a[PGSTAT_KIND_ARCHIVER].shared_data_len =
-      sizeof(((PgStatShared_Archiver *)0)->stats);
-
-  a[PGSTAT_KIND_ARCHIVER].init_shmem_cb = pgstat_archiver_init_shmem_cb;
-  a[PGSTAT_KIND_ARCHIVER].reset_all_cb = pgstat_archiver_reset_all_cb;
-  a[PGSTAT_KIND_ARCHIVER].snapshot_cb = pgstat_archiver_snapshot_cb;
 
   a[PGSTAT_KIND_BGWRITER].name = "bgwriter";
 

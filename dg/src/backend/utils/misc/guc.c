@@ -2223,17 +2223,6 @@ void BeginReportingGUCOptions(void) {
 
   reporting_enabled = true;
 
-  /*
-   * Hack for in_hot_standby: set the GUC value true if appropriate.  This
-   * is kind of an ugly place to do it, but there's few better options.
-   *
-   * (This could be out of date by the time we actually send it, in which
-   * case the next ReportChangedGUCOptions call will send a duplicate
-   * report.)
-   */
-  if (RecoveryInProgress())
-    SetConfigOption("in_hot_standby", "true", PGC_INTERNAL, PGC_S_OVERRIDE);
-
   /* Transmit initial values of interesting variables */
   hash_seq_init(&status, guc_hashtab);
   while ((hentry = (GUCHashEntry *)hash_seq_search(&status)) != NULL) {
@@ -2263,15 +2252,6 @@ void ReportChangedGUCOptions(void) {
   /* Quick exit if not (yet) enabled */
   if (!reporting_enabled)
     return;
-
-  /*
-   * Since in_hot_standby isn't actually changed by normal GUC actions, we
-   * need a hack to check whether a new value needs to be reported to the
-   * client.  For speed, we rely on the assumption that it can never
-   * transition from false to true.
-   */
-  if (in_hot_standby_guc && !RecoveryInProgress())
-    SetConfigOption("in_hot_standby", "false", PGC_INTERNAL, PGC_S_OVERRIDE);
 
   /* Transmit new values of interesting variables */
   slist_foreach_modify(iter, &guc_report_list) {

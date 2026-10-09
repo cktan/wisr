@@ -17,7 +17,6 @@
 #include "access/attmap.h"
 #include "access/genam.h"
 #include "access/heapam.h"
-#include "access/heapam_xlog.h"
 #include "access/multixact.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
@@ -26,7 +25,6 @@
 #include "access/toast_compression.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "access/xloginsert.h"
 #include "catalog/catalog.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -52,7 +50,6 @@
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage.h"
-#include "catalog/storage_xlog.h"
 #include "catalog/toasting.h"
 #include "commands/cluster.h"
 #include "commands/comment.h"
@@ -1790,7 +1787,6 @@ static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
 void ExecuteTruncate(TruncateStmt *stmt) {
   List *rels = NIL;
   List *relids = NIL;
-  List *relids_logged = NIL;
   ListCell *cell;
 
   /*
@@ -1821,10 +1817,6 @@ void ExecuteTruncate(TruncateStmt *stmt) {
 
     rels = lappend(rels, rel);
     relids = lappend_oid(relids, myrelid);
-
-    /* Log this relation only if needed for logical decoding */
-    if (RelationIsLogicallyLogged(rel))
-      relids_logged = lappend_oid(relids_logged, myrelid);
 
     if (recurse) {
       ListCell *child;
@@ -1866,10 +1858,6 @@ void ExecuteTruncate(TruncateStmt *stmt) {
 
         rels = lappend(rels, rel);
         relids = lappend_oid(relids, childrelid);
-
-        /* Log this relation only if needed for logical decoding */
-        if (RelationIsLogicallyLogged(rel))
-          relids_logged = lappend_oid(relids_logged, childrelid);
       }
     } else if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
       ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -1878,8 +1866,7 @@ void ExecuteTruncate(TruncateStmt *stmt) {
                               "TRUNCATE ONLY on the partitions directly.")));
   }
 
-  ExecuteTruncateGuts(rels, relids, relids_logged, stmt->behavior,
-                      stmt->restart_seqs, false);
+  ExecuteTruncateGuts(rels, relids, stmt->behavior, stmt->restart_seqs, false);
 
   /* And close the rels */
   foreach (cell, rels) {
@@ -1898,11 +1885,10 @@ void ExecuteTruncate(TruncateStmt *stmt) {
  *
  * explicit_rels is the list of Relations to truncate that the command
  * specified.  relids is the list of Oids corresponding to explicit_rels.
- * relids_logged is the list of Oids (a subset of relids) that require
- * WAL-logging.  This is all a bit redundant, but the existing callers have
- * this information handy in this form.
+ * This is a bit redundant, but the existing callers have this information
+ * handy in this form.
  */
-void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
+void ExecuteTruncateGuts(List *explicit_rels, List *relids,
                          DropBehavior behavior, bool restart_seqs,
                          bool run_as_table_owner) {
   List *rels;
@@ -1913,7 +1899,6 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
   ResultRelInfo *resultRelInfo;
   SubTransactionId mySubid;
   ListCell *cell;
-  Oid *logrelids;
 
   /*
    * Check the explicitly-specified relations.
@@ -1946,10 +1931,6 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
         truncate_check_activity(rel);
         rels = lappend(rels, rel);
         relids = lappend_oid(relids, relid);
-
-        /* Log this relation only if needed for logical decoding */
-        if (RelationIsLogicallyLogged(rel))
-          relids_logged = lappend_oid(relids_logged, relid);
       }
     }
   }
@@ -2179,41 +2160,6 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
     Oid seq_relid = lfirst_oid(cell);
 
     ResetSequence(seq_relid);
-  }
-
-  /*
-   * Write a WAL record to allow this set of actions to be logically
-   * decoded.
-   *
-   * Assemble an array of relids so we can write a single WAL record for the
-   * whole action.
-   */
-  if (relids_logged != NIL) {
-    xl_heap_truncate xlrec;
-    int i = 0;
-
-    /* should only get here if wal_level >= logical */
-    Assert(XLogLogicalInfoActive());
-
-    logrelids = (Oid *)palloc(list_length(relids_logged) * sizeof(Oid));
-    foreach (cell, relids_logged)
-      logrelids[i++] = lfirst_oid(cell);
-
-    xlrec.dbId = MyDatabaseId;
-    xlrec.nrelids = list_length(relids_logged);
-    xlrec.flags = 0;
-    if (behavior == DROP_CASCADE)
-      xlrec.flags |= XLH_TRUNCATE_CASCADE;
-    if (restart_seqs)
-      xlrec.flags |= XLH_TRUNCATE_RESTART_SEQS;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, SizeOfHeapTruncate);
-    XLogRegisterData(logrelids, list_length(relids_logged) * sizeof(Oid));
-
-    XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
-
-    (void)XLogInsert(RM_HEAP_ID, XLOG_HEAP_TRUNCATE);
   }
 
   /*
@@ -15803,8 +15749,7 @@ static void index_copy_data(Relation rel, RelFileLocator newrlocator) {
       RelationCreateStorage(newrlocator, rel->rd_rel->relpersistence, true);
 
   /* copy main fork */
-  RelationCopyStorage(RelationGetSmgr(rel), dstrel, MAIN_FORKNUM,
-                      rel->rd_rel->relpersistence);
+  RelationCopyStorage(RelationGetSmgr(rel), dstrel, MAIN_FORKNUM);
 
   /* copy those extra forks that exist */
   for (ForkNumber forkNum = (ForkNumber)(MAIN_FORKNUM + 1);
@@ -15812,16 +15757,7 @@ static void index_copy_data(Relation rel, RelFileLocator newrlocator) {
     if (smgrexists(RelationGetSmgr(rel), forkNum)) {
       smgrcreate(dstrel, forkNum, false);
 
-      /*
-       * WAL log creation if the relation is persistent, or this is the
-       * init fork of an unlogged relation.
-       */
-      if (RelationIsPermanent(rel) ||
-          (rel->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED &&
-           forkNum == INIT_FORKNUM))
-        log_smgrcreate(&newrlocator, forkNum);
-      RelationCopyStorage(RelationGetSmgr(rel), dstrel, forkNum,
-                          rel->rd_rel->relpersistence);
+      RelationCopyStorage(RelationGetSmgr(rel), dstrel, forkNum);
     }
   }
 

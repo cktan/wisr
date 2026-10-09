@@ -14,7 +14,6 @@
 #include "access/transam.h" /* for FullTransactionId */
 #include "datatype/timestamp.h"
 #include "portability/instr_time.h"
-#include "postmaster/pgarch.h" /* for MAX_XFN_CHARS */
 #include "utils/backend_progress.h" /* for backward compatibility */ /* IWYU pragma: export */
 #include "utils/backend_status.h" /* for backward compatibility */ /* IWYU pragma: export */
 #include "utils/pgstat_kind.h"
@@ -190,19 +189,7 @@ typedef struct PgStat_TableXactStatus {
  * ------------------------------------------------------------
  */
 
-#define PGSTAT_FILE_FORMAT_ID	0x01A5BCB8
-
-typedef struct PgStat_ArchiverStats {
-  PgStat_Counter archived_count;             /* archival successes */
-  char last_archived_wal[MAX_XFN_CHARS + 1]; /* last WAL file
-                                              * archived */
-  TimestampTz last_archived_timestamp;       /* last archival success time */
-  PgStat_Counter failed_count;               /* failed archival attempts */
-  char last_failed_wal[MAX_XFN_CHARS + 1];   /* WAL file involved in
-                                              * last failure */
-  TimestampTz last_failed_timestamp;         /* last archival failure time */
-  TimestampTz stat_reset_timestamp;
-} PgStat_ArchiverStats;
+#define PGSTAT_FILE_FORMAT_ID	0x01A5BCB9
 
 /* ---------
  * PgStat_BgWriterStats			Background Writer statistics
@@ -480,13 +467,6 @@ extern PgStat_Kind pgstat_get_kind_from_str(char *kind_str);
 extern bool pgstat_have_entry(PgStat_Kind kind, Oid dboid, uint64 objid);
 
 /*
- * Functions in pgstat_archiver.c
- */
-
-extern void pgstat_report_archiver(const char *xlog, bool failed);
-extern PgStat_ArchiverStats *pgstat_fetch_stat_archiver(void);
-
-/*
  * Functions in pgstat_backend.c
  */
 
@@ -646,11 +626,6 @@ extern void pgstat_count_heap_delete(Relation rel);
 extern void pgstat_count_truncate(Relation rel);
 extern void pgstat_update_heap_dead_tuples(Relation rel, int delta);
 
-extern void pgstat_twophase_postcommit(TransactionId xid, uint16 info,
-                                       void *recdata, uint32 len);
-extern void pgstat_twophase_postabort(TransactionId xid, uint16 info,
-                                      void *recdata, uint32 len);
-
 extern PgStat_StatTabEntry *pgstat_fetch_stat_tabentry(Oid relid);
 extern PgStat_StatTabEntry *pgstat_fetch_stat_tabentry_ext(bool shared,
                                                            Oid reloid);
@@ -678,14 +653,9 @@ extern PgStat_SLRUStats *pgstat_fetch_slru(void);
 
 extern void AtEOXact_PgStat(bool isCommit);
 extern void AtEOSubXact_PgStat(bool isCommit, int nestDepth);
-extern void AtPrepare_PgStat(void);
-extern void PostPrepare_PgStat(void);
 struct xl_xact_stats_item;
 extern int pgstat_get_transactional_drops(bool isCommit,
                                           struct xl_xact_stats_item **items);
-extern void pgstat_execute_transactional_drops(int ndrops,
-                                               struct xl_xact_stats_item *items,
-                                               bool is_redo);
 
 /*
  * Functions in pgstat_wal.c

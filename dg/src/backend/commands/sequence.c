@@ -14,7 +14,6 @@
  */
 #include "postgres.h"
 
-#include "access/bufmask.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/relation.h"
@@ -23,15 +22,12 @@
 #include "access/transam.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "access/xloginsert.h"
-#include "access/xlogutils.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_sequence.h"
 #include "catalog/pg_type.h"
-#include "catalog/storage_xlog.h"
 #include "commands/defrem.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
@@ -39,6 +35,7 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
+#include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/smgr.h"
@@ -332,7 +329,6 @@ static void fill_seq_with_data(Relation rel, HeapTuple tuple) {
 
     srel = smgropen(rel->rd_locator, INVALID_PROC_NUMBER);
     smgrcreate(srel, INIT_FORKNUM, false);
-    log_smgrcreate(&rel->rd_locator, INIT_FORKNUM);
     fill_seq_fork_with_data(rel, tuple, INIT_FORKNUM);
     FlushRelationBuffers(rel);
     smgrclose(srel);
@@ -377,10 +373,6 @@ static void fill_seq_fork_with_data(Relation rel, HeapTuple tuple,
   tuple->t_data->t_infomask |= HEAP_XMAX_INVALID;
   ItemPointerSet(&tuple->t_data->t_ctid, 0, FirstOffsetNumber);
 
-  /* check the comment above nextval_internal()'s equivalent call. */
-  if (RelationNeedsWAL(rel))
-    GetTopTransactionId();
-
   START_CRIT_SECTION();
 
   MarkBufferDirty(buf);
@@ -389,24 +381,6 @@ static void fill_seq_fork_with_data(Relation rel, HeapTuple tuple,
                        InvalidOffsetNumber, false, false);
   if (offnum != FirstOffsetNumber)
     elog(ERROR, "failed to add sequence tuple to page");
-
-  /* XLOG stuff */
-  if (RelationNeedsWAL(rel) || forkNum == INIT_FORKNUM) {
-    xl_seq_rec xlrec;
-    XLogRecPtr recptr;
-
-    XLogBeginInsert();
-    XLogRegisterBuffer(0, buf, REGBUF_WILL_INIT);
-
-    xlrec.locator = rel->rd_locator;
-
-    XLogRegisterData(&xlrec, sizeof(xl_seq_rec));
-    XLogRegisterData(tuple->t_data, tuple->t_len);
-
-    recptr = XLogInsert(RM_SEQ_ID, XLOG_SEQ_LOG);
-
-    PageSetLSN(page, recptr);
-  }
 
   END_CRIT_SECTION();
 
@@ -467,9 +441,6 @@ ObjectAddress AlterSequence(ParseState *pstate, AlterSeqStmt *stmt) {
 
   /* If needed, rewrite the sequence relation itself */
   if (need_seq_rewrite) {
-    /* check the comment above nextval_internal()'s equivalent call. */
-    if (RelationNeedsWAL(seqrel))
-      GetTopTransactionId();
 
     /*
      * Create a new storage file for the sequence, making the state
@@ -526,10 +497,6 @@ void SequenceChangePersistence(Oid relid, char newrelpersistence) {
    */
   LockRelationOid(relid, AccessExclusiveLock);
   init_sequence(relid, &elm, &seqrel);
-
-  /* check the comment above nextval_internal()'s equivalent call. */
-  if (RelationNeedsWAL(seqrel))
-    GetTopTransactionId();
 
   (void)read_seq_tuple(seqrel, &buf, &seqdatatuple);
   RelationSetNewRelfilenumber(seqrel, newrelpersistence);
@@ -590,7 +557,6 @@ int64 nextval_internal(Oid relid, bool check_permissions) {
   SeqTable elm;
   Relation seqrel;
   Buffer buf;
-  Page page;
   HeapTuple pgstuple;
   Form_pg_sequence pgsform;
   HeapTupleData seqdatatuple;
@@ -598,7 +564,6 @@ int64 nextval_internal(Oid relid, bool check_permissions) {
   int64 incby, maxv, minv, cache, log, fetch, last;
   int64 result, next, rescnt = 0;
   bool cycle;
-  bool logit = false;
 
   /* open and lock sequence */
   init_sequence(relid, &elm, &seqrel);
@@ -637,7 +602,6 @@ int64 nextval_internal(Oid relid, bool check_permissions) {
 
   /* lock page buffer and read tuple */
   seq = read_seq_tuple(seqrel, &buf, &seqdatatuple);
-  page = BufferGetPage(buf);
 
   last = next = result = seq->last_value;
   fetch = cache;
@@ -649,28 +613,11 @@ int64 nextval_internal(Oid relid, bool check_permissions) {
   }
 
   /*
-   * Decide whether we should emit a WAL log record.  If so, force up the
-   * fetch count to grab SEQ_LOG_VALS more values than we actually need to
-   * cache.  (These will then be usable without logging.)
-   *
-   * If this is the first nextval after a checkpoint, we must force a new
-   * WAL record to be written anyway, else replay starting from the
-   * checkpoint would fail to advance the sequence past the logged values.
-   * In this case we may as well fetch extra values.
+   * When the values counted ahead in log_cnt run out, force up the fetch
+   * count to grab SEQ_LOG_VALS more values than we actually need to cache.
    */
-  if (log < fetch || !seq->is_called) {
-    /* forced log to satisfy local demand for values */
+  if (log < fetch || !seq->is_called)
     fetch = log = fetch + SEQ_LOG_VALS;
-    logit = true;
-  } else {
-    XLogRecPtr redoptr = GetRedoRecPtr();
-
-    if (PageGetLSN(page) <= redoptr) {
-      /* last update of seq was before checkpoint */
-      fetch = log = fetch + SEQ_LOG_VALS;
-      logit = true;
-    }
-  }
 
   while (fetch) /* try to fetch cache [+ log ] numbers */
   {
@@ -734,21 +681,11 @@ int64 nextval_internal(Oid relid, bool check_permissions) {
 
   last_used_seq = elm;
 
-  /*
-   * If something needs to be WAL logged, acquire an xid, so this
-   * transaction's commit will trigger a WAL flush and wait for syncrep.
-   * It's sufficient to ensure the toplevel transaction has an xid, no need
-   * to assign xids subxacts, that'll already trigger an appropriate wait.
-   * (Have to do that here, so we're outside the critical section)
-   */
-  if (logit && RelationNeedsWAL(seqrel))
-    GetTopTransactionId();
-
   /* ready to change the on-disk (or really, in-buffer) tuple */
   START_CRIT_SECTION();
 
   /*
-   * We must mark the buffer dirty before doing XLogInsert(); see notes in
+   * We mark the buffer dirty before changing the tuple; see notes in
    * SyncOneBuffer().  However, we don't apply the desired changes just yet.
    * This looks like a violation of the buffer update protocol, but it is in
    * fact safe because we hold exclusive lock on the buffer.  Any other
@@ -757,35 +694,6 @@ int64 nextval_internal(Oid relid, bool check_permissions) {
    * final state that we install below.
    */
   MarkBufferDirty(buf);
-
-  /* XLOG stuff */
-  if (logit && RelationNeedsWAL(seqrel)) {
-    xl_seq_rec xlrec;
-    XLogRecPtr recptr;
-
-    /*
-     * We don't log the current state of the tuple, but rather the state
-     * as it would appear after "log" more fetches.  This lets us skip
-     * that many future WAL records, at the cost that we lose those
-     * sequence values if we crash.
-     */
-    XLogBeginInsert();
-    XLogRegisterBuffer(0, buf, REGBUF_WILL_INIT);
-
-    /* set values that will be saved in xlog */
-    seq->last_value = next;
-    seq->is_called = true;
-    seq->log_cnt = 0;
-
-    xlrec.locator = seqrel->rd_locator;
-
-    XLogRegisterData(&xlrec, sizeof(xl_seq_rec));
-    XLogRegisterData(seqdatatuple.t_data, seqdatatuple.t_len);
-
-    recptr = XLogInsert(RM_SEQ_ID, XLOG_SEQ_LOG);
-
-    PageSetLSN(page, recptr);
-  }
 
   /* Now update sequence tuple to the intended final state */
   seq->last_value = last; /* last fetched number */
@@ -922,10 +830,6 @@ static void do_setval(Oid relid, int64 next, bool iscalled) {
   /* In any case, forget any future cached numbers */
   elm->cached = elm->last;
 
-  /* check the comment above nextval_internal()'s equivalent call. */
-  if (RelationNeedsWAL(seqrel))
-    GetTopTransactionId();
-
   /* ready to change the on-disk (or really, in-buffer) tuple */
   START_CRIT_SECTION();
 
@@ -934,24 +838,6 @@ static void do_setval(Oid relid, int64 next, bool iscalled) {
   seq->log_cnt = 0;
 
   MarkBufferDirty(buf);
-
-  /* XLOG stuff */
-  if (RelationNeedsWAL(seqrel)) {
-    xl_seq_rec xlrec;
-    XLogRecPtr recptr;
-    Page page = BufferGetPage(buf);
-
-    XLogBeginInsert();
-    XLogRegisterBuffer(0, buf, REGBUF_WILL_INIT);
-
-    xlrec.locator = seqrel->rd_locator;
-    XLogRegisterData(&xlrec, sizeof(xl_seq_rec));
-    XLogRegisterData(seqdatatuple.t_data, seqdatatuple.t_len);
-
-    recptr = XLogInsert(RM_SEQ_ID, XLOG_SEQ_LOG);
-
-    PageSetLSN(page, recptr);
-  }
 
   END_CRIT_SECTION();
 
@@ -1119,8 +1005,8 @@ static Form_pg_sequence_data read_seq_tuple(Relation rel, Buffer *buf,
    * a sequence, which would leave a non-frozen XID in the sequence tuple's
    * xmax, which eventually leads to clog access failures or worse. If we
    * see this has happened, clean up after it.  We treat this like a hint
-   * bit update, ie, don't bother to WAL-log it, since we can certainly do
-   * this again if the update gets lost.
+   * bit update, since we can certainly do this again if the update gets
+   * lost.
    */
   Assert(!(seqdatatuple->t_data->t_infomask & HEAP_XMAX_IS_MULTI));
   if (HeapTupleHeaderGetRawXmax(seqdatatuple->t_data) != InvalidTransactionId) {
@@ -1655,8 +1541,7 @@ Datum pg_get_sequence_data(PG_FUNCTION_ARGS) {
    */
   if (seqrel && seqrel->rd_rel->relkind == RELKIND_SEQUENCE &&
       pg_class_aclcheck(relid, GetUserId(), ACL_SELECT) == ACLCHECK_OK &&
-      !RELATION_IS_OTHER_TEMP(seqrel) &&
-      (RelationIsPermanent(seqrel) || !RecoveryInProgress())) {
+      !RELATION_IS_OTHER_TEMP(seqrel)) {
     Buffer buf;
     HeapTupleData seqtuple;
     Form_pg_sequence_data seq;
@@ -1705,8 +1590,7 @@ Datum pg_sequence_last_value(PG_FUNCTION_ARGS) {
    */
   if (pg_class_aclcheck(relid, GetUserId(), ACL_SELECT | ACL_USAGE) ==
           ACLCHECK_OK &&
-      !RELATION_IS_OTHER_TEMP(seqrel) &&
-      (RelationIsPermanent(seqrel) || !RecoveryInProgress())) {
+      !RELATION_IS_OTHER_TEMP(seqrel)) {
     Buffer buf;
     HeapTupleData seqtuple;
     Form_pg_sequence_data seq;
@@ -1726,55 +1610,6 @@ Datum pg_sequence_last_value(PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
 }
 
-void seq_redo(XLogReaderState *record) {
-  XLogRecPtr lsn = record->EndRecPtr;
-  uint8 info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
-  Buffer buffer;
-  Page page;
-  Page localpage;
-  char *item;
-  Size itemsz;
-  xl_seq_rec *xlrec = (xl_seq_rec *)XLogRecGetData(record);
-  sequence_magic *sm;
-
-  if (info != XLOG_SEQ_LOG)
-    elog(PANIC, "seq_redo: unknown op code %u", info);
-
-  buffer = XLogInitBufferForRedo(record, 0);
-  page = (Page)BufferGetPage(buffer);
-
-  /*
-   * We always reinit the page.  However, since this WAL record type is also
-   * used for updating sequences, it's possible that a hot-standby backend
-   * is examining the page concurrently; so we mustn't transiently trash the
-   * buffer.  The solution is to build the correct new page contents in
-   * local workspace and then memcpy into the buffer.  Then only bytes that
-   * are supposed to change will change, even transiently. We must palloc
-   * the local page for alignment reasons.
-   */
-  localpage = (Page)palloc(BufferGetPageSize(buffer));
-
-  PageInit(localpage, BufferGetPageSize(buffer), sizeof(sequence_magic));
-  sm = (sequence_magic *)PageGetSpecialPointer(localpage);
-  sm->magic = SEQ_MAGIC;
-
-  item = (char *)xlrec + sizeof(xl_seq_rec);
-  itemsz = XLogRecGetDataLen(record) - sizeof(xl_seq_rec);
-
-  if (PageAddItem(localpage, (Item)item, itemsz, FirstOffsetNumber, false,
-                  false) == InvalidOffsetNumber)
-    elog(PANIC, "seq_redo: failed to add item to page");
-
-  PageSetLSN(localpage, lsn);
-
-  memcpy(page, localpage, BufferGetPageSize(buffer));
-  MarkBufferDirty(buffer);
-  XLogFlushBufferForRedoIfInit(record, 0, buffer);
-  UnlockReleaseBuffer(buffer);
-
-  pfree(localpage);
-}
-
 /*
  * Flush cached sequence information.
  */
@@ -1785,13 +1620,4 @@ void ResetSequenceCaches(void) {
   }
 
   last_used_seq = NULL;
-}
-
-/*
- * Mask a Sequence page before performing consistency checks on it.
- */
-void seq_mask(char *page, BlockNumber blkno) {
-  mask_page_lsn_and_checksum(page);
-
-  mask_unused_space(page);
 }

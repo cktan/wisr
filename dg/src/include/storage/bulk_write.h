@@ -32,7 +32,7 @@ struct SMgrRelationData;
 
 extern BulkWriteState *smgr_bulk_start_rel(Relation rel, ForkNumber forknum);
 extern BulkWriteState *smgr_bulk_start_smgr(struct SMgrRelationData *smgr,
-                                            ForkNumber forknum, bool use_wal);
+                                            ForkNumber forknum);
 
 extern BulkWriteBuffer smgr_bulk_get_buf(BulkWriteState *bulkstate);
 extern void smgr_bulk_write(BulkWriteState *bulkstate, BlockNumber blocknum,

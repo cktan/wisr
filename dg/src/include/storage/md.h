@@ -57,8 +57,6 @@ extern int mdfd(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
                 uint32 *off);
 
 extern void ForgetDatabaseSyncRequests(Oid dbid);
-extern void DropRelationFiles(RelFileLocator *delrels, int ndelrels,
-                              bool isRedo);
 
 /* md sync callbacks */
 extern int mdsyncfiletag(const FileTag *ftag, char *path);

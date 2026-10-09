@@ -25,7 +25,6 @@
 #include <fcntl.h>
 #include <sys/file.h>
 
-#include "access/xlogutils.h"
 #include "commands/tablespace.h"
 #include "common/file_utils.h"
 #include "miscadmin.h"
@@ -102,8 +101,6 @@ static thread_local MemoryContext MdCxt; /* context for all MdfdVec objects */
 #define EXTENSION_RETURN_NULL		(1 << 1)
 /* create new segments as needed */
 #define EXTENSION_CREATE			(1 << 2)
-/* create new segments if needed during recovery */
-#define EXTENSION_CREATE_RECOVERY	(1 << 3)
 /* don't try to open a segment, if not already open */
 #define EXTENSION_DONT_OPEN			(1 << 5)
 
@@ -183,8 +180,7 @@ bool mdexists(SMgrRelation reln, ForkNumber forknum) {
    * since we opened it.  As an optimization, we can skip that in recovery,
    * which already closes relations when dropping them.
    */
-  if (!InRecovery)
-    mdclose(reln, forknum);
+  mdclose(reln, forknum);
 
   return (mdopenfork(reln, forknum, EXTENSION_RETURN_NULL) != NULL);
 }
@@ -678,8 +674,7 @@ bool mdprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
     MdfdVec *v;
     int nblocks_this_segment;
 
-    v = _mdfd_getseg(reln, forknum, blocknum, false,
-                     InRecovery ? EXTENSION_RETURN_NULL : EXTENSION_FAIL);
+    v = _mdfd_getseg(reln, forknum, blocknum, false, EXTENSION_FAIL);
     if (v == NULL)
       return false;
 
@@ -773,8 +768,7 @@ void mdreadv(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
     size_t transferred_this_segment;
     size_t size_this_segment;
 
-    v = _mdfd_getseg(reln, forknum, blocknum, false,
-                     EXTENSION_FAIL | EXTENSION_CREATE_RECOVERY);
+    v = _mdfd_getseg(reln, forknum, blocknum, false, EXTENSION_FAIL);
 
     seekpos = (off_t)BLCKSZ * (blocknum % ((BlockNumber)RELSEG_SIZE));
 
@@ -848,7 +842,7 @@ void mdreadv(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
          * continuing to work in production builds). Afterwards we
          * plan to remove this code entirely.
          */
-        if (zero_damaged_pages || InRecovery) {
+        if (zero_damaged_pages) {
           Assert(false); /* see comment above */
 
           for (BlockNumber i = transferred_this_segment / BLCKSZ;
@@ -893,8 +887,7 @@ void mdstartreadv(PgAioHandle *ioh, SMgrRelation reln, ForkNumber forknum,
   int iovcnt;
   int ret;
 
-  v = _mdfd_getseg(reln, forknum, blocknum, false,
-                   EXTENSION_FAIL | EXTENSION_CREATE_RECOVERY);
+  v = _mdfd_getseg(reln, forknum, blocknum, false, EXTENSION_FAIL);
 
   seekpos = (off_t)BLCKSZ * (blocknum % ((BlockNumber)RELSEG_SIZE));
 
@@ -967,8 +960,7 @@ void mdwritev(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
     size_t transferred_this_segment;
     size_t size_this_segment;
 
-    v = _mdfd_getseg(reln, forknum, blocknum, skipFsync,
-                     EXTENSION_FAIL | EXTENSION_CREATE_RECOVERY);
+    v = _mdfd_getseg(reln, forknum, blocknum, skipFsync, EXTENSION_FAIL);
 
     seekpos = (off_t)BLCKSZ * (blocknum % ((BlockNumber)RELSEG_SIZE));
 
@@ -1161,8 +1153,7 @@ BlockNumber mdnblocks(SMgrRelation reln, ForkNumber forknum) {
  * sure we have opened all active segments, so that truncate loop will get
  * them all!
  *
- * If nblocks > curnblk, the request is ignored when we are InRecovery,
- * otherwise, an error is raised.
+ * If nblocks > curnblk, an error is raised.
  */
 void mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber curnblk,
                 BlockNumber nblocks) {
@@ -1170,9 +1161,7 @@ void mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber curnblk,
   int curopensegs;
 
   if (nblocks > curnblk) {
-    /* Bogus request ... but no complaint if InRecovery */
-    if (InRecovery)
-      return;
+    /* Bogus request */
     ereport(ERROR, (errmsg("could not truncate file \"%s\" to %u blocks: it's "
                            "only %u blocks now",
                            relpath(reln->smgr_rlocator, forknum).str, nblocks,
@@ -1447,33 +1436,6 @@ void ForgetDatabaseSyncRequests(Oid dbid) {
 }
 
 /*
- * DropRelationFiles -- drop files of all given relations
- */
-void DropRelationFiles(RelFileLocator *delrels, int ndelrels, bool isRedo) {
-  SMgrRelation *srels;
-  int i;
-
-  srels = (SMgrRelationData **)palloc(sizeof(SMgrRelation) * ndelrels);
-  for (i = 0; i < ndelrels; i++) {
-    SMgrRelation srel = smgropen(delrels[i], INVALID_PROC_NUMBER);
-
-    if (isRedo) {
-      ForkNumber fork;
-
-      for (fork = (ForkNumber)0; fork <= MAX_FORKNUM; fork++)
-        XLogDropRelation(delrels[i], fork);
-    }
-    srels[i] = srel;
-  }
-
-  smgrdounlinkall(srels, ndelrels, isRedo);
-
-  for (i = 0; i < ndelrels; i++)
-    smgrclose(srels[i]);
-  pfree(srels);
-}
-
-/*
  * _fdvec_resize() -- Resize the fork's open segments array
  */
 static void _fdvec_resize(SMgrRelation reln, ForkNumber forknum, int nseg) {
@@ -1618,21 +1580,16 @@ static MdfdVec *_mdfd_getseg(SMgrRelation reln, ForkNumber forknum,
     if (nblocks > ((BlockNumber)RELSEG_SIZE))
       elog(FATAL, "segment too big");
 
-    if ((behavior & EXTENSION_CREATE) ||
-        (InRecovery && (behavior & EXTENSION_CREATE_RECOVERY))) {
+    if (behavior & EXTENSION_CREATE) {
       /*
-       * Normally we will create new segments only if authorized by the
-       * caller (i.e., we are doing mdextend()).  But when doing WAL
-       * recovery, create segments anyway; this allows cases such as
-       * replaying WAL data that has a write into a high-numbered
-       * segment of a relation that was later deleted. We want to go
-       * ahead and create the segments so we can finish out the replay.
+       * We create new segments only if authorized by the caller (i.e.,
+       * we are doing mdextend()).
        *
        * We have to maintain the invariant that segments before the last
        * active segment are of size RELSEG_SIZE; therefore, if
        * extending, pad them out with zeroes if needed.  (This only
-       * matters if in recovery, or if the caller is extending the
-       * relation discontiguously, but that can happen in hash indexes.)
+       * matters if the caller is extending the relation discontiguously,
+       * but that can happen in hash indexes.)
        */
       if (nblocks < ((BlockNumber)RELSEG_SIZE)) {
         char *zerobuf =

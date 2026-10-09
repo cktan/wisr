@@ -95,17 +95,6 @@ typedef struct SlruSharedData {
   int *bank_cur_lru_count;
 
   /*
-   * Optional array of WAL flush LSNs associated with entries in the SLRU
-   * pages.  If not zero/NULL, we must flush WAL before writing pages (true
-   * for pg_xact, false for everything else).  group_lsn[] has
-   * lsn_groups_per_page entries per buffer slot, each containing the
-   * highest LSN known for a contiguous group of SLRU entries on that slot's
-   * page.
-   */
-  XLogRecPtr *group_lsn;
-  int lsn_groups_per_page;
-
-  /*
    * latest_page_number is the page number of the current end of the log;
    * this is not critical data, since we use it only to avoid swapping out
    * the latest page.
@@ -175,9 +164,9 @@ static inline LWLock *SimpleLruGetBankLock(SlruCtl ctl, int64 pageno) {
   return &(ctl->shared->bank_locks[bankno].lock);
 }
 
-extern Size SimpleLruShmemSize(int nslots, int nlsns);
+extern Size SimpleLruShmemSize(int nslots);
 extern int SimpleLruAutotuneBuffers(int divisor, int max);
-extern void SimpleLruInit(SlruCtl ctl, const char *name, int nslots, int nlsns,
+extern void SimpleLruInit(SlruCtl ctl, const char *name, int nslots,
                           const char *subdir, int buffer_tranche_id,
                           int bank_tranche_id, SyncRequestHandler sync_handler,
                           bool long_segment_names);
@@ -200,7 +189,6 @@ typedef bool (*SlruScanCallback)(SlruCtl ctl, char *filename, int64 segpage,
                                  void *data);
 extern bool SlruScanDirectory(SlruCtl ctl, SlruScanCallback callback,
                               void *data);
-extern void SlruDeleteSegment(SlruCtl ctl, int64 segno);
 
 extern int SlruSyncFileTag(SlruCtl ctl, const FileTag *ftag, char *path);
 

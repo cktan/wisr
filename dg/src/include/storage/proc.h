@@ -285,8 +285,6 @@ struct PGPROC {
                                        * group member */
   int64 clogGroupMemberPage;          /* clog page corresponding to
                                        * transaction id of clog group member */
-  XLogRecPtr clogGroupMemberLsn;      /* WAL location of commit record for clog
-                                       * group member */
 
   /* Lock manager data, recording fast-path locks taken by this backend. */
   LWLock fpInfoLock;  /* protects per-backend fast-path state */
@@ -467,7 +465,6 @@ extern void InitProcess(void);
 extern void InitProcessPhase2(void);
 extern void InitAuxiliaryProcess(void);
 
-extern void SetStartupBufferPinWaitBufId(int bufid);
 extern int GetStartupBufferPinWaitBufId(void);
 
 extern bool HaveNFreeProcs(int n, int *nfree);

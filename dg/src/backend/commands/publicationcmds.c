@@ -896,12 +896,9 @@ ObjectAddress CreatePublication(ParseState *pstate,
 
   InvokeObjectPostCreateHook(PublicationRelationId, puboid, 0);
 
-  if (wal_level != WAL_LEVEL_LOGICAL)
-    ereport(WARNING,
-            (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-             errmsg("\"wal_level\" is insufficient to publish logical changes"),
-             errhint("Set \"wal_level\" to \"logical\" before creating "
-                     "subscriptions.")));
+  /* Logical changes are decoded from WAL, and digres has none */
+  ereport(WARNING, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    errmsg("there is no WAL to publish logical changes from")));
 
   return myself;
 }

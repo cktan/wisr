@@ -25,7 +25,6 @@
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "access/xloginsert.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
@@ -388,12 +387,6 @@ void BaseInit(void) {
    * file shutdown hook can report temporary file statistics.
    */
   InitTemporaryFileAccess();
-
-  /*
-   * Initialize local buffers for WAL record construction, in case we ever
-   * try to insert XLOG.
-   */
-  InitXLogInsert();
 
   /* Initialize lock manager's local structs */
   InitLockManagerAccess();

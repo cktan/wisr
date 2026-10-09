@@ -14,7 +14,6 @@
 #ifndef HEAPAM_H
 #define HEAPAM_H
 
-#include "access/heapam_xlog.h"
 #include "access/relation.h" /* for backward compatibility */
 #include "access/relscan.h"
 #include "access/sdir.h"
@@ -122,6 +121,10 @@ typedef enum {
  */
 #define HEAP_FREEZE_CHECK_XMIN_COMMITTED	0x01
 #define HEAP_FREEZE_CHECK_XMAX_ABORTED		0x02
+
+/* HeapTupleFreeze.frzflags: how to freeze a tuple's xvac */
+#define XLH_FREEZE_XVAC		0x02
+#define XLH_INVALID_XVAC	0x04
 
 /* heap_prepare_freeze_tuple state describing how to freeze a tuple */
 typedef struct HeapTupleFreeze {
@@ -334,6 +337,9 @@ extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 
 extern void heap_pre_freeze_checks(Buffer buffer, HeapTupleFreeze *tuples,
                                    int ntuples);
+extern void
+HeapTupleHeaderAdvanceConflictHorizon(HeapTupleHeader tuple,
+                                      TransactionId *snapshotConflictHorizon);
 extern void heap_freeze_prepared_tuples(Buffer buffer, HeapTupleFreeze *tuples,
                                         int ntuples);
 extern bool heap_freeze_tuple(HeapTupleHeader tuple, TransactionId relfrozenxid,
@@ -366,13 +372,6 @@ extern void heap_page_prune_execute(Buffer buffer, bool lp_truncate_only,
                                     OffsetNumber *nowdead, int ndead,
                                     OffsetNumber *nowunused, int nunused);
 extern void heap_get_root_tuples(Page page, OffsetNumber *root_offsets);
-extern void log_heap_prune_and_freeze(Relation relation, Buffer buffer,
-                                      TransactionId conflict_xid,
-                                      bool cleanup_lock, PruneReason reason,
-                                      HeapTupleFreeze *frozen, int nfrozen,
-                                      OffsetNumber *redirected, int nredirected,
-                                      OffsetNumber *dead, int ndead,
-                                      OffsetNumber *unused, int nunused);
 
 /* in heap/heapam_visibility.c */
 extern bool HeapTupleSatisfiesVisibility(HeapTuple htup, Snapshot snapshot,

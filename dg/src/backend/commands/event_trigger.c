@@ -859,8 +859,7 @@ void EventTriggerOnLogin(void) {
    * pg_database flag ourselves; it will be cleared via WAL replay once the
    * primary's next login event trigger run clears it on the primary.
    */
-  else if (!RecoveryInProgress() &&
-           ConditionalLockSharedObject(DatabaseRelationId, MyDatabaseId, 0,
+  else if (ConditionalLockSharedObject(DatabaseRelationId, MyDatabaseId, 0,
                                        AccessExclusiveLock)) {
     /*
      * The lock is held.  Now we need to recheck that login event triggers

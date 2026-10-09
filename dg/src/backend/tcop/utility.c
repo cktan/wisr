@@ -392,12 +392,7 @@ void PreventCommandIfReadOnly(const char *cmdname) {
  * commands that are allowed in "read-only" xacts but cannot be allowed
  * in Hot Standby mode.  Those commands should call this function.
  */
-void PreventCommandDuringRecovery(const char *cmdname) {
-  if (RecoveryInProgress())
-    ereport(ERROR, (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                    /* translator: %s is name of a SQL command, eg CREATE */
-                    errmsg("cannot execute %s during recovery", cmdname)));
-}
+void PreventCommandDuringRecovery(const char *cmdname) {}
 
 /*
  * CheckRestrictedOperation: throw error for hazardous command if we're
@@ -852,7 +847,7 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
                          "pg_checkpoint")));
 
     RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_WAIT |
-                      (RecoveryInProgress() ? 0 : CHECKPOINT_FORCE));
+                      CHECKPOINT_FORCE);
     break;
 
     /*

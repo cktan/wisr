@@ -313,10 +313,10 @@ void btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
    *
    * When we drop pins eagerly, the mechanism that marks so->killedItems[]
    * index tuples LP_DEAD has to deal with concurrent TID recycling races.
-   * The scheme used to detect unsafe TID recycling won't work when scanning
-   * unlogged relations (since it involves saving an affected page's LSN).
-   * Opt out of eager pin dropping during unlogged relation scans for now
-   * (this is preferable to opting out of kill_prior_tuple LP_DEAD setting).
+   * The scheme used to detect unsafe TID recycling won't work without WAL
+   * (since it involves saving an affected page's LSN), and digres has none:
+   * never drop pins eagerly (this is preferable to opting out of
+   * kill_prior_tuple LP_DEAD setting).
    *
    * Also opt out of dropping leaf page pins eagerly during bitmap scans.
    * Pins cannot be held for more than an instant during bitmap scans either
@@ -326,9 +326,7 @@ void btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
    *
    * Note: so->dropPin should never change across rescans.
    */
-  so->dropPin =
-      (!scan->xs_want_itup && IsMVCCSnapshot(scan->xs_snapshot) &&
-       RelationNeedsWAL(scan->indexRelation) && scan->heapRelation != NULL);
+  so->dropPin = false;
 
   so->markItemIndex = -1;
   so->needPrimScan = false;

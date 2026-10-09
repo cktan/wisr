@@ -16,9 +16,7 @@
 #include "postgres.h"
 
 #include "access/nbtree.h"
-#include "access/nbtxlog.h"
 #include "access/transam.h"
-#include "access/xloginsert.h"
 #include "common/int.h"
 #include "common/pg_prng.h"
 #include "lib/qunique.h"
@@ -1218,82 +1216,6 @@ static void _bt_insertonpg(Relation rel, Relation heaprel,
       MarkBufferDirty(cbuf);
     }
 
-    /* XLOG stuff */
-    if (RelationNeedsWAL(rel)) {
-      xl_btree_insert xlrec;
-      xl_btree_metadata xlmeta;
-      uint8 xlinfo;
-      XLogRecPtr recptr;
-      uint16 upostingoff;
-
-      xlrec.offnum = newitemoff;
-
-      XLogBeginInsert();
-      XLogRegisterData(&xlrec, SizeOfBtreeInsert);
-
-      if (isleaf && postingoff == 0) {
-        /* Simple leaf insert */
-        xlinfo = XLOG_BTREE_INSERT_LEAF;
-      } else if (postingoff != 0) {
-        /*
-         * Leaf insert with posting list split.  Must include
-         * postingoff field before newitem/orignewitem.
-         */
-        Assert(isleaf);
-        xlinfo = XLOG_BTREE_INSERT_POST;
-      } else {
-        /* Internal page insert, which finishes a split on cbuf */
-        xlinfo = XLOG_BTREE_INSERT_UPPER;
-        XLogRegisterBuffer(1, cbuf, REGBUF_STANDARD);
-
-        if (BufferIsValid(metabuf)) {
-          /* Actually, it's an internal page insert + meta update */
-          xlinfo = XLOG_BTREE_INSERT_META;
-
-          Assert(metad->btm_version >= BTREE_NOVAC_VERSION);
-          xlmeta.version = metad->btm_version;
-          xlmeta.root = metad->btm_root;
-          xlmeta.level = metad->btm_level;
-          xlmeta.fastroot = metad->btm_fastroot;
-          xlmeta.fastlevel = metad->btm_fastlevel;
-          xlmeta.last_cleanup_num_delpages =
-              metad->btm_last_cleanup_num_delpages;
-          xlmeta.allequalimage = metad->btm_allequalimage;
-
-          XLogRegisterBuffer(2, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
-          XLogRegisterBufData(2, &xlmeta, sizeof(xl_btree_metadata));
-        }
-      }
-
-      XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
-      if (postingoff == 0) {
-        /* Just log itup from caller */
-        XLogRegisterBufData(0, itup, IndexTupleSize(itup));
-      } else {
-        /*
-         * Insert with posting list split (XLOG_BTREE_INSERT_POST
-         * record) case.
-         *
-         * Log postingoff.  Also log origitup, not itup.  REDO routine
-         * must reconstruct final itup (as well as nposting) using
-         * _bt_swap_posting().
-         */
-        upostingoff = postingoff;
-
-        XLogRegisterBufData(0, &upostingoff, sizeof(uint16));
-        XLogRegisterBufData(0, origitup, IndexTupleSize(origitup));
-      }
-
-      recptr = XLogInsert(RM_BTREE_ID, xlinfo);
-
-      if (BufferIsValid(metabuf))
-        PageSetLSN(metapg, recptr);
-      if (!isleaf)
-        PageSetLSN(BufferGetPage(cbuf), recptr);
-
-      PageSetLSN(page, recptr);
-    }
-
     END_CRIT_SECTION();
 
     /* Release subsidiary buffers */
@@ -1826,101 +1748,6 @@ static Buffer _bt_split(Relation rel, Relation heaprel, BTScanInsert itup_key,
     MarkBufferDirty(cbuf);
   }
 
-  /* XLOG stuff */
-  if (RelationNeedsWAL(rel)) {
-    xl_btree_split xlrec;
-    uint8 xlinfo;
-    XLogRecPtr recptr;
-
-    xlrec.level = ropaque->btpo_level;
-    /* See comments below on newitem, orignewitem, and posting lists */
-    xlrec.firstrightoff = firstrightoff;
-    xlrec.newitemoff = newitemoff;
-    xlrec.postingoff = 0;
-    if (postingoff != 0 && origpagepostingoff < firstrightoff)
-      xlrec.postingoff = postingoff;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, SizeOfBtreeSplit);
-
-    XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
-    XLogRegisterBuffer(1, rbuf, REGBUF_WILL_INIT);
-    /* Log original right sibling, since we've changed its prev-pointer */
-    if (!isrightmost)
-      XLogRegisterBuffer(2, sbuf, REGBUF_STANDARD);
-    if (!isleaf)
-      XLogRegisterBuffer(3, cbuf, REGBUF_STANDARD);
-
-    /*
-     * Log the new item, if it was inserted on the left page. (If it was
-     * put on the right page, we don't need to explicitly WAL log it
-     * because it's included with all the other items on the right page.)
-     * Show the new item as belonging to the left page buffer, so that it
-     * is not stored if XLogInsert decides it needs a full-page image of
-     * the left page.  We always store newitemoff in the record, though.
-     *
-     * The details are sometimes slightly different for page splits that
-     * coincide with a posting list split.  If both the replacement
-     * posting list and newitem go on the right page, then we don't need
-     * to log anything extra, just like the simple !newitemonleft
-     * no-posting-split case (postingoff is set to zero in the WAL record,
-     * so recovery doesn't need to process a posting list split at all).
-     * Otherwise, we set postingoff and log orignewitem instead of
-     * newitem, despite having actually inserted newitem.  REDO routine
-     * must reconstruct nposting and newitem using _bt_swap_posting().
-     *
-     * Note: It's possible that our page split point is the point that
-     * makes the posting list lastleft and newitem firstright.  This is
-     * the only case where we log orignewitem/newitem despite newitem
-     * going on the right page.  If XLogInsert decides that it can omit
-     * orignewitem due to logging a full-page image of the left page,
-     * everything still works out, since recovery only needs to log
-     * orignewitem for items on the left page (just like the regular
-     * newitem-logged case).
-     */
-    if (newitemonleft && xlrec.postingoff == 0)
-      XLogRegisterBufData(0, newitem, newitemsz);
-    else if (xlrec.postingoff != 0) {
-      Assert(isleaf);
-      Assert(newitemonleft || firstrightoff == newitemoff);
-      Assert(newitemsz == IndexTupleSize(orignewitem));
-      XLogRegisterBufData(0, orignewitem, newitemsz);
-    }
-
-    /* Log the left page's new high key */
-    if (!isleaf) {
-      /* lefthighkey isn't local copy, get current pointer */
-      itemid = PageGetItemId(origpage, P_HIKEY);
-      lefthighkey = (IndexTuple)PageGetItem(origpage, itemid);
-    }
-    XLogRegisterBufData(0, lefthighkey, MAXALIGN(IndexTupleSize(lefthighkey)));
-
-    /*
-     * Log the contents of the right page in the format understood by
-     * _bt_restore_page().  The whole right page will be recreated.
-     *
-     * Direct access to page is not good but faster - we should implement
-     * some new func in page API.  Note we only store the tuples
-     * themselves, knowing that they were inserted in item-number order
-     * and so the line pointers can be reconstructed.  See comments for
-     * _bt_restore_page().
-     */
-    XLogRegisterBufData(1,
-                        (char *)rightpage + ((PageHeader)rightpage)->pd_upper,
-                        ((PageHeader)rightpage)->pd_special -
-                            ((PageHeader)rightpage)->pd_upper);
-
-    xlinfo = newitemonleft ? XLOG_BTREE_SPLIT_L : XLOG_BTREE_SPLIT_R;
-    recptr = XLogInsert(RM_BTREE_ID, xlinfo);
-
-    PageSetLSN(origpage, recptr);
-    PageSetLSN(rightpage, recptr);
-    if (!isrightmost)
-      PageSetLSN(spage, recptr);
-    if (!isleaf)
-      PageSetLSN(BufferGetPage(cbuf), recptr);
-  }
-
   END_CRIT_SECTION();
 
   /* release the old right sibling */
@@ -2381,48 +2208,6 @@ static Buffer _bt_newlevel(Relation rel, Relation heaprel, Buffer lbuf,
 
   MarkBufferDirty(rootbuf);
   MarkBufferDirty(metabuf);
-
-  /* XLOG stuff */
-  if (RelationNeedsWAL(rel)) {
-    xl_btree_newroot xlrec;
-    XLogRecPtr recptr;
-    xl_btree_metadata md;
-
-    xlrec.rootblk = rootblknum;
-    xlrec.level = metad->btm_level;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, SizeOfBtreeNewroot);
-
-    XLogRegisterBuffer(0, rootbuf, REGBUF_WILL_INIT);
-    XLogRegisterBuffer(1, lbuf, REGBUF_STANDARD);
-    XLogRegisterBuffer(2, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
-
-    Assert(metad->btm_version >= BTREE_NOVAC_VERSION);
-    md.version = metad->btm_version;
-    md.root = rootblknum;
-    md.level = metad->btm_level;
-    md.fastroot = rootblknum;
-    md.fastlevel = metad->btm_level;
-    md.last_cleanup_num_delpages = metad->btm_last_cleanup_num_delpages;
-    md.allequalimage = metad->btm_allequalimage;
-
-    XLogRegisterBufData(2, &md, sizeof(xl_btree_metadata));
-
-    /*
-     * Direct access to page is not good but faster - we should implement
-     * some new func in page API.
-     */
-    XLogRegisterBufData(0, (char *)rootpage + ((PageHeader)rootpage)->pd_upper,
-                        ((PageHeader)rootpage)->pd_special -
-                            ((PageHeader)rootpage)->pd_upper);
-
-    recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_NEWROOT);
-
-    PageSetLSN(lpage, recptr);
-    PageSetLSN(rootpage, recptr);
-    PageSetLSN(metapg, recptr);
-  }
 
   END_CRIT_SECTION();
 

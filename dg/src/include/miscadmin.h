@@ -353,14 +353,12 @@ typedef enum BackendType {
    * If you modify these, make sure to update NUM_AUXILIARY_PROCS and the
    * glossary in the docs.
    */
-  B_ARCHIVER,
   B_BG_WRITER,
   B_CHECKPOINTER,
   B_IO_WORKER,
   B_STARTUP,
   B_WAL_RECEIVER,
   B_WAL_SUMMARIZER,
-  B_WAL_WRITER,
 
   /*
    * Logger is not connected to shared memory and does not have a PGPROC
@@ -377,13 +375,11 @@ extern thread_local PGDLLIMPORT BackendType MyBackendType;
 #define AmBackgroundWorkerProcess() (MyBackendType == B_BG_WORKER)
 #define AmWalSenderProcess()        (MyBackendType == B_WAL_SENDER)
 #define AmLogicalSlotSyncWorkerProcess() (MyBackendType == B_SLOTSYNC_WORKER)
-#define AmArchiverProcess()			(MyBackendType == B_ARCHIVER)
 #define AmBackgroundWriterProcess() (MyBackendType == B_BG_WRITER)
 #define AmCheckpointerProcess()		(MyBackendType == B_CHECKPOINTER)
 #define AmStartupProcess()			(MyBackendType == B_STARTUP)
 #define AmWalReceiverProcess()		(MyBackendType == B_WAL_RECEIVER)
 #define AmWalSummarizerProcess()	(MyBackendType == B_WAL_SUMMARIZER)
-#define AmWalWriterProcess()		(MyBackendType == B_WAL_WRITER)
 #define AmIoWorkerProcess()			(MyBackendType == B_IO_WORKER)
 
 #define AmSpecialWorkerProcess() \

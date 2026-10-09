@@ -21,7 +21,6 @@
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "access/xlogprefetcher.h"
 #include "catalog/pg_authid.h"
 #include "common/string.h"
 #include "mb/pg_wchar.h"
@@ -491,13 +490,6 @@ bool check_transaction_read_only(bool *newval, void **extra, GucSource source) {
           "transaction read-write mode must be set before any query");
       return false;
     }
-    /* Can't go to r/w mode while recovery is still active */
-    if (RecoveryInProgress()) {
-      GUC_check_errcode(ERRCODE_FEATURE_NOT_SUPPORTED);
-      GUC_check_errmsg(
-          "cannot set transaction read-write mode during recovery");
-      return false;
-    }
   }
 
   return true;
@@ -526,13 +518,6 @@ bool check_transaction_isolation(int *newval, void **extra, GucSource source) {
       GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
       GUC_check_errmsg("SET TRANSACTION ISOLATION LEVEL must not be called in "
                        "a subtransaction");
-      return false;
-    }
-    /* Can't go to serializable mode while recovery is still active */
-    if (newXactIsoLevel == XACT_SERIALIZABLE && RecoveryInProgress()) {
-      GUC_check_errcode(ERRCODE_FEATURE_NOT_SUPPORTED);
-      GUC_check_errmsg("cannot use serializable mode in a hot standby");
-      GUC_check_errhint("You can use REPEATABLE READ instead.");
       return false;
     }
   }
@@ -949,13 +934,7 @@ bool check_cluster_name(char **newval, void **extra, GucSource source) {
  * GUC assign_hook for maintenance_io_concurrency
  */
 void assign_maintenance_io_concurrency(int newval, void *extra) {
-  /*
-   * Reconfigure recovery prefetching, because a setting it depends on
-   * changed.
-   */
   maintenance_io_concurrency = newval;
-  if (AmStartupProcess())
-    XLogPrefetchReconfigure();
 }
 
 /*

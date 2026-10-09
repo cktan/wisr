@@ -251,9 +251,6 @@ extern void FlushOneBuffer(Buffer buffer);
 extern void FlushRelationBuffers(Relation rel);
 extern void FlushRelationsAllBuffers(struct SMgrRelationData **smgrs,
                                      int nrels);
-extern void CreateAndCopyRelationData(RelFileLocator src_rlocator,
-                                      RelFileLocator dst_rlocator,
-                                      bool permanent);
 extern void FlushDatabaseBuffers(Oid dbid);
 extern void DropRelationBuffers(struct SMgrRelationData *smgr_reln,
                                 ForkNumber *forkNum, int nforks,

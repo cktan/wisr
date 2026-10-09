@@ -1287,34 +1287,6 @@ static void RelationInitPhysicalAddr(Relation relation) {
     relation->rd_locator.dbOid = MyDatabaseId;
 
   if (relation->rd_rel->relfilenode) {
-    /*
-     * Even if we are using a decoding snapshot that doesn't represent the
-     * current state of the catalog we need to make sure the filenode
-     * points to the current file since the older file will be gone (or
-     * truncated). The new file will still contain older rows so lookups
-     * in them will work correctly. This wouldn't work correctly if
-     * rewrites were allowed to change the schema in an incompatible way,
-     * but those are prevented both on catalog tables and on user tables
-     * declared as additional catalog tables.
-     */
-    if (HistoricSnapshotActive() &&
-        RelationIsAccessibleInLogicalDecoding(relation) &&
-        IsTransactionState()) {
-      HeapTuple phys_tuple;
-      Form_pg_class physrel;
-
-      phys_tuple =
-          ScanPgRelation(RelationGetRelid(relation),
-                         RelationGetRelid(relation) != ClassOidIndexId, true);
-      if (!HeapTupleIsValid(phys_tuple))
-        elog(ERROR, "could not find pg_class entry for %u",
-             RelationGetRelid(relation));
-      physrel = (Form_pg_class)GETSTRUCT(phys_tuple);
-
-      relation->rd_rel->reltablespace = physrel->reltablespace;
-      relation->rd_rel->relfilenode = physrel->relfilenode;
-      heap_freetuple(phys_tuple);
-    }
 
     relation->rd_locator.relNumber = relation->rd_rel->relfilenode;
   } else {

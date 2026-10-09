@@ -334,21 +334,13 @@ static const char *const slru_names[] = {
  * compatible with that (another backend needs to write), we don't scribble on
  * shared stats while resetting. Instead, just record the current counter
  * values in a copy of the stats data, which is protected by ->lock. See
- * pgstat_fetch_stat_(archiver|bgwriter|checkpointer) for the reader side.
+ * pgstat_fetch_stat_(bgwriter|checkpointer) for the reader side.
  *
  * The only exception to that is the stat_reset_timestamp in these structs,
  * which is protected by ->lock, because it has to be written by another
  * backend while resetting.
  * ----------
  */
-
-typedef struct PgStatShared_Archiver {
-  /* lock protects ->reset_offset as well as stats->stat_reset_timestamp */
-  LWLock lock;
-  uint32 changecount;
-  PgStat_ArchiverStats stats;
-  PgStat_ArchiverStats reset_offset;
-} PgStatShared_Archiver;
 
 typedef struct PgStatShared_BgWriter {
   /* lock protects ->reset_offset as well as stats->stat_reset_timestamp */
@@ -447,7 +439,6 @@ typedef struct PgStat_ShmemControl {
   /*
    * Stats data for fixed-numbered objects.
    */
-  PgStatShared_Archiver archiver;
   PgStatShared_BgWriter bgwriter;
   PgStatShared_Checkpointer checkpointer;
   PgStatShared_IO io;
@@ -472,8 +463,6 @@ typedef struct PgStat_Snapshot {
   TimestampTz snapshot_timestamp;
 
   bool fixed_valid[PGSTAT_KIND_BUILTIN_SIZE];
-
-  PgStat_ArchiverStats archiver;
 
   PgStat_BgWriterStats bgwriter;
 
@@ -557,14 +546,6 @@ extern void *pgstat_fetch_entry(PgStat_Kind kind, Oid dboid, uint64 objid);
 extern void pgstat_snapshot_fixed(PgStat_Kind kind);
 
 /*
- * Functions in pgstat_archiver.c
- */
-
-extern void pgstat_archiver_init_shmem_cb(void *stats);
-extern void pgstat_archiver_reset_all_cb(TimestampTz ts);
-extern void pgstat_archiver_snapshot_cb(void);
-
-/*
  * Functions in pgstat_backend.c
  */
 
@@ -633,8 +614,6 @@ extern void AtEOXact_PgStat_Relations(PgStat_SubXactStatus *xact_state,
                                       bool isCommit);
 extern void AtEOSubXact_PgStat_Relations(PgStat_SubXactStatus *xact_state,
                                          bool isCommit, int nestDepth);
-extern void AtPrepare_PgStat_Relations(PgStat_SubXactStatus *xact_state);
-extern void PostPrepare_PgStat_Relations(PgStat_SubXactStatus *xact_state);
 
 extern bool pgstat_relation_flush_cb(PgStat_EntryRef *entry_ref, bool nowait);
 extern void pgstat_relation_delete_pending_cb(PgStat_EntryRef *entry_ref);

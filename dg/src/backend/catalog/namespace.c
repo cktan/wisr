@@ -3859,20 +3859,6 @@ static void InitTempTableNamespace(void) {
              "permission denied to create temporary tables in database \"%s\"",
              get_database_name(MyDatabaseId))));
 
-  /*
-   * Do not allow a Hot Standby session to make temp tables.  Aside from
-   * problems with modifying the system catalogs, there is a naming
-   * conflict: pg_temp_N belongs to the session with proc number N on the
-   * primary, not to a hot standby session with the same proc number.  We
-   * should not be able to get here anyway due to XactReadOnly checks, but
-   * let's just make real sure.  Note that this also backstops various
-   * operations that allow XactReadOnly transactions to modify temp tables;
-   * they'd need RecoveryInProgress checks if not for this.
-   */
-  if (RecoveryInProgress())
-    ereport(ERROR, (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                    errmsg("cannot create temporary tables during recovery")));
-
   snprintf(namespaceName, sizeof(namespaceName), "pg_temp_%d", MyProcNumber);
 
   namespaceId = get_namespace_oid(namespaceName, true);

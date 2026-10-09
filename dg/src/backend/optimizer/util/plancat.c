@@ -138,14 +138,6 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
                errdetail_relkind_not_supported(relation->rd_rel->relkind)));
   }
 
-  /* Temporary and unlogged relations are inaccessible during recovery. */
-  if (!RelationIsPermanent(relation) && RecoveryInProgress())
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-         errmsg(
-             "cannot access temporary or unlogged relations during recovery")));
-
   rel->min_attr = FirstLowInvalidHeapAttributeNumber + 1;
   rel->max_attr = RelationGetNumberOfAttributes(relation);
   rel->reltablespace = RelationGetForm(relation)->reltablespace;

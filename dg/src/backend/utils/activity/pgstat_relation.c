@@ -17,7 +17,6 @@
 
 #include "postgres.h"
 
-#include "access/twophase_rmgr.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "utils/memutils.h"
@@ -544,114 +543,6 @@ void AtEOSubXact_PgStat_Relations(PgStat_SubXactStatus *xact_state,
       pfree(trans);
     }
   }
-}
-
-/*
- * Generate 2PC records for all the pending transaction-dependent relation
- * stats.
- */
-void AtPrepare_PgStat_Relations(PgStat_SubXactStatus *xact_state) {
-  PgStat_TableXactStatus *trans;
-
-  for (trans = xact_state->first; trans != NULL; trans = trans->next) {
-    PgStat_TableStatus *tabstat PG_USED_FOR_ASSERTS_ONLY;
-    TwoPhasePgStatRecord record;
-
-    Assert(trans->nest_level == 1);
-    Assert(trans->upper == NULL);
-    tabstat = trans->parent;
-    Assert(tabstat->trans == trans);
-
-    record.tuples_inserted = trans->tuples_inserted;
-    record.tuples_updated = trans->tuples_updated;
-    record.tuples_deleted = trans->tuples_deleted;
-    record.inserted_pre_truncdrop = trans->inserted_pre_truncdrop;
-    record.updated_pre_truncdrop = trans->updated_pre_truncdrop;
-    record.deleted_pre_truncdrop = trans->deleted_pre_truncdrop;
-    record.id = tabstat->id;
-    record.shared = tabstat->shared;
-    record.truncdropped = trans->truncdropped;
-
-    RegisterTwoPhaseRecord(TWOPHASE_RM_PGSTAT_ID, 0, &record,
-                           sizeof(TwoPhasePgStatRecord));
-  }
-}
-
-/*
- * All we need do here is unlink the transaction stats state from the
- * nontransactional state.  The nontransactional action counts will be
- * reported to the stats system immediately, while the effects on live and
- * dead tuple counts are preserved in the 2PC state file.
- *
- * Note: AtEOXact_PgStat_Relations is not called during PREPARE.
- */
-void PostPrepare_PgStat_Relations(PgStat_SubXactStatus *xact_state) {
-  PgStat_TableXactStatus *trans;
-
-  for (trans = xact_state->first; trans != NULL; trans = trans->next) {
-    PgStat_TableStatus *tabstat;
-
-    tabstat = trans->parent;
-    tabstat->trans = NULL;
-  }
-}
-
-/*
- * 2PC processing routine for COMMIT PREPARED case.
- *
- * Load the saved counts into our local pgstats state.
- */
-void pgstat_twophase_postcommit(TransactionId xid, uint16 info, void *recdata,
-                                uint32 len) {
-  TwoPhasePgStatRecord *rec = (TwoPhasePgStatRecord *)recdata;
-  PgStat_TableStatus *pgstat_info;
-
-  /* Find or create a tabstat entry for the rel */
-  pgstat_info = pgstat_prep_relation_pending(rec->id, rec->shared);
-
-  /* Same math as in AtEOXact_PgStat, commit case */
-  pgstat_info->counts.tuples_inserted += rec->tuples_inserted;
-  pgstat_info->counts.tuples_updated += rec->tuples_updated;
-  pgstat_info->counts.tuples_deleted += rec->tuples_deleted;
-  pgstat_info->counts.truncdropped = rec->truncdropped;
-  if (rec->truncdropped) {
-    /* forget live/dead stats seen by backend thus far */
-    pgstat_info->counts.delta_live_tuples = 0;
-    pgstat_info->counts.delta_dead_tuples = 0;
-  }
-  pgstat_info->counts.delta_live_tuples +=
-      rec->tuples_inserted - rec->tuples_deleted;
-  pgstat_info->counts.delta_dead_tuples +=
-      rec->tuples_updated + rec->tuples_deleted;
-  pgstat_info->counts.changed_tuples +=
-      rec->tuples_inserted + rec->tuples_updated + rec->tuples_deleted;
-}
-
-/*
- * 2PC processing routine for ROLLBACK PREPARED case.
- *
- * Load the saved counts into our local pgstats state, but treat them
- * as aborted.
- */
-void pgstat_twophase_postabort(TransactionId xid, uint16 info, void *recdata,
-                               uint32 len) {
-  TwoPhasePgStatRecord *rec = (TwoPhasePgStatRecord *)recdata;
-  PgStat_TableStatus *pgstat_info;
-
-  /* Find or create a tabstat entry for the rel */
-  pgstat_info = pgstat_prep_relation_pending(rec->id, rec->shared);
-
-  /* Same math as in AtEOXact_PgStat, abort case */
-  if (rec->truncdropped) {
-    rec->tuples_inserted = rec->inserted_pre_truncdrop;
-    rec->tuples_updated = rec->updated_pre_truncdrop;
-    rec->tuples_deleted = rec->deleted_pre_truncdrop;
-  }
-  pgstat_info->counts.tuples_inserted += rec->tuples_inserted;
-  pgstat_info->counts.tuples_updated += rec->tuples_updated;
-  pgstat_info->counts.tuples_deleted += rec->tuples_deleted;
-  pgstat_info->counts.delta_dead_tuples +=
-      rec->tuples_inserted + rec->tuples_updated;
 }
 
 /*

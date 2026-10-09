@@ -312,7 +312,6 @@ bool pgstat_tracks_io_bktype(BackendType bktype) {
   switch (bktype) {
   case B_INVALID:
   case B_DEAD_END_BACKEND:
-  case B_ARCHIVER:
   case B_LOGGER:
     return false;
 
@@ -327,7 +326,6 @@ bool pgstat_tracks_io_bktype(BackendType bktype) {
   case B_WAL_RECEIVER:
   case B_WAL_SENDER:
   case B_WAL_SUMMARIZER:
-  case B_WAL_WRITER:
     return true;
   }
 
@@ -376,8 +374,7 @@ bool pgstat_tracks_io_object(BackendType bktype, IOObject io_object,
    */
   no_temp_rel = bktype == B_BG_WRITER || bktype == B_CHECKPOINTER ||
                 bktype == B_STANDALONE_BACKEND || bktype == B_STARTUP ||
-                bktype == B_WAL_SUMMARIZER || bktype == B_WAL_WRITER ||
-                bktype == B_WAL_RECEIVER;
+                bktype == B_WAL_SUMMARIZER || bktype == B_WAL_RECEIVER;
 
   if (no_temp_rel && io_context == IOCONTEXT_NORMAL &&
       io_object == IOOBJECT_TEMP_RELATION)
@@ -387,8 +384,7 @@ bool pgstat_tracks_io_object(BackendType bktype, IOObject io_object,
    * Some BackendTypes only perform IO under IOOBJECT_WAL, hence exclude all
    * rows for all the other objects for these.
    */
-  if ((bktype == B_WAL_SUMMARIZER || bktype == B_WAL_RECEIVER ||
-       bktype == B_WAL_WRITER) &&
+  if ((bktype == B_WAL_SUMMARIZER || bktype == B_WAL_RECEIVER) &&
       io_object != IOOBJECT_WAL)
     return false;
 
@@ -441,8 +437,7 @@ bool pgstat_tracks_io_op(BackendType bktype, IOObject io_object,
    * Some BackendTypes do not perform reads with IOOBJECT_WAL.
    */
   if (io_object == IOOBJECT_WAL && io_op == IOOP_READ &&
-      (bktype == B_WAL_RECEIVER || bktype == B_BG_WRITER ||
-       bktype == B_WAL_WRITER))
+      (bktype == B_WAL_RECEIVER || bktype == B_BG_WRITER))
     return false;
 
   /*

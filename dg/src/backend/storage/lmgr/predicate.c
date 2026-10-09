@@ -190,7 +190,6 @@
 #include "access/slru.h"
 #include "access/transam.h"
 #include "access/twophase.h"
-#include "access/twophase_rmgr.h"
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "miscadmin.h"
@@ -757,7 +756,7 @@ static void SerialInit(void) {
    * Set up SLRU management of the pg_serial data.
    */
   SerialSlruCtl->PagePrecedes = SerialPagePrecedesLogically;
-  SimpleLruInit(SerialSlruCtl, "serializable", serializable_buffers, 0,
+  SimpleLruInit(SerialSlruCtl, "serializable", serializable_buffers,
                 "pg_serial", LWTRANCHE_SERIAL_BUFFER, LWTRANCHE_SERIAL_SLRU,
                 SYNC_HANDLER_NONE, false);
 #ifdef USE_ASSERT_CHECKING
@@ -927,22 +926,6 @@ static void SerialSetActiveSerXmin(TransactionId xid) {
   if (!TransactionIdIsValid(xid)) {
     serialControl->tailXid = InvalidTransactionId;
     serialControl->headXid = InvalidTransactionId;
-    LWLockRelease(SerialControlLock);
-    return;
-  }
-
-  /*
-   * When we're recovering prepared transactions, the global xmin might move
-   * backwards depending on the order they're recovered. Normally that's not
-   * OK, but during recovery no serializable transactions will commit, so
-   * the SLRU is empty and we can get away with it.
-   */
-  if (RecoveryInProgress()) {
-    Assert(serialControl->headPage < 0);
-    if (!TransactionIdIsValid(serialControl->tailXid) ||
-        TransactionIdPrecedes(xid, serialControl->tailXid)) {
-      serialControl->tailXid = xid;
-    }
     LWLockRelease(SerialControlLock);
     return;
   }
@@ -1286,7 +1269,7 @@ Size PredicateLockShmemSize(void) {
 
   /* Shared memory structures for SLRU tracking of old committed xids. */
   size = add_size(size, sizeof(SerialControlData));
-  size = add_size(size, SimpleLruShmemSize(serializable_buffers, 0));
+  size = add_size(size, SimpleLruShmemSize(serializable_buffers));
 
   return size;
 }
@@ -1547,22 +1530,6 @@ Snapshot GetSerializableTransactionSnapshot(Snapshot snapshot) {
   Assert(IsolationIsSerializable());
 
   /*
-   * Can't use serializable mode while recovery is still active, as it is,
-   * for example, on a hot standby.  We could get here despite the check in
-   * check_transaction_isolation() if default_transaction_isolation is set
-   * to serializable, so phrase the hint accordingly.
-   */
-  if (RecoveryInProgress())
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-         errmsg("cannot use serializable mode in a hot standby"),
-         errdetail(
-             "\"default_transaction_isolation\" is set to \"serializable\"."),
-         errhint("You can use \"SET default_transaction_isolation = "
-                 "'repeatable read'\" to change the default.")));
-
-  /*
    * A special optimization is available for SERIALIZABLE READ ONLY
    * DEFERRABLE transactions -- we can wait for a suitable snapshot and
    * thereby avoid all SSI overhead once it's running.
@@ -1619,8 +1586,6 @@ static Snapshot GetSerializableTransactionSnapshotInt(
 
   /* We only do this for serializable transactions.  Once. */
   Assert(MySerializableXact == InvalidSerializableXact);
-
-  Assert(!RecoveryInProgress());
 
   proc = MyProc;
   Assert(proc != NULL);
@@ -4210,234 +4175,3 @@ void PreCommit_CheckForSerializationFailure(void) {
 /*
  * Two-phase commit support
  */
-
-/*
- * AtPrepare_Locks
- *		Do the preparatory work for a PREPARE: make 2PC state file
- *		records for all predicate locks currently held.
- */
-void AtPrepare_PredicateLocks(void) {
-  SERIALIZABLEXACT *sxact;
-  TwoPhasePredicateRecord record;
-  TwoPhasePredicateXactRecord *xactRecord;
-  TwoPhasePredicateLockRecord *lockRecord;
-  dlist_iter iter;
-
-  sxact = MySerializableXact;
-  xactRecord = &(record.data.xactRecord);
-  lockRecord = &(record.data.lockRecord);
-
-  if (MySerializableXact == InvalidSerializableXact)
-    return;
-
-  /* Generate an xact record for our SERIALIZABLEXACT */
-  record.type = TWOPHASEPREDICATERECORD_XACT;
-  xactRecord->xmin = MySerializableXact->xmin;
-  xactRecord->flags = MySerializableXact->flags;
-
-  /*
-   * Note that we don't include the list of conflicts in our out in the
-   * statefile, because new conflicts can be added even after the
-   * transaction prepares. We'll just make a conservative assumption during
-   * recovery instead.
-   */
-
-  RegisterTwoPhaseRecord(TWOPHASE_RM_PREDICATELOCK_ID, 0, &record,
-                         sizeof(record));
-
-  /*
-   * Generate a lock record for each lock.
-   *
-   * To do this, we need to walk the predicate lock list in our sxact rather
-   * than using the local predicate lock table because the latter is not
-   * guaranteed to be accurate.
-   */
-  LWLockAcquire(SerializablePredicateListLock, LW_SHARED);
-
-  dlist_foreach(iter, &sxact->predicateLocks) {
-    PREDICATELOCK *predlock =
-        dlist_container(PREDICATELOCK, xactLink, iter.cur);
-
-    record.type = TWOPHASEPREDICATERECORD_LOCK;
-    lockRecord->target = predlock->tag.myTarget->tag;
-
-    RegisterTwoPhaseRecord(TWOPHASE_RM_PREDICATELOCK_ID, 0, &record,
-                           sizeof(record));
-  }
-
-  LWLockRelease(SerializablePredicateListLock);
-}
-
-/*
- * PostPrepare_Locks
- *		Clean up after successful PREPARE. Unlike the non-predicate
- *		lock manager, we do not need to transfer locks to a dummy
- *		PGPROC because our SERIALIZABLEXACT will stay around
- *		anyway. We only need to clean up our local state.
- */
-void PostPrepare_PredicateLocks(TransactionId xid) {
-  if (MySerializableXact == InvalidSerializableXact)
-    return;
-
-  Assert(SxactIsPrepared(MySerializableXact));
-
-  MySerializableXact->pid = 0;
-  MySerializableXact->pgprocno = INVALID_PROC_NUMBER;
-
-  hash_destroy(LocalPredicateLockHash);
-  LocalPredicateLockHash = NULL;
-
-  MySerializableXact = InvalidSerializableXact;
-  MyXactDidWrite = false;
-}
-
-/*
- * PredicateLockTwoPhaseFinish
- *		Release a prepared transaction's predicate locks once it
- *		commits or aborts.
- */
-void PredicateLockTwoPhaseFinish(TransactionId xid, bool isCommit) {
-  SERIALIZABLEXID *sxid;
-  SERIALIZABLEXIDTAG sxidtag;
-
-  sxidtag.xid = xid;
-
-  LWLockAcquire(SerializableXactHashLock, LW_SHARED);
-  sxid = (SERIALIZABLEXID *)hash_search(SerializableXidHash, &sxidtag,
-                                        HASH_FIND, NULL);
-  LWLockRelease(SerializableXactHashLock);
-
-  /* xid will not be found if it wasn't a serializable transaction */
-  if (sxid == NULL)
-    return;
-
-  /* Release its locks */
-  MySerializableXact = sxid->myXact;
-  MyXactDidWrite = true; /* conservatively assume that we wrote
-                          * something */
-  ReleasePredicateLocks(isCommit, false);
-}
-
-/*
- * Re-acquire a predicate lock belonging to a transaction that was prepared.
- */
-void predicatelock_twophase_recover(TransactionId xid, uint16 info,
-                                    void *recdata, uint32 len) {
-  TwoPhasePredicateRecord *record;
-
-  Assert(len == sizeof(TwoPhasePredicateRecord));
-
-  record = (TwoPhasePredicateRecord *)recdata;
-
-  Assert((record->type == TWOPHASEPREDICATERECORD_XACT) ||
-         (record->type == TWOPHASEPREDICATERECORD_LOCK));
-
-  if (record->type == TWOPHASEPREDICATERECORD_XACT) {
-    /* Per-transaction record. Set up a SERIALIZABLEXACT. */
-    TwoPhasePredicateXactRecord *xactRecord;
-    SERIALIZABLEXACT *sxact;
-    SERIALIZABLEXID *sxid;
-    SERIALIZABLEXIDTAG sxidtag;
-    bool found;
-
-    xactRecord = (TwoPhasePredicateXactRecord *)&record->data.xactRecord;
-
-    LWLockAcquire(SerializableXactHashLock, LW_EXCLUSIVE);
-    sxact = CreatePredXact();
-    if (!sxact)
-      ereport(ERROR,
-              (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of shared memory")));
-
-    /* vxid for a prepared xact is INVALID_PROC_NUMBER/xid; no pid */
-    sxact->vxid.procNumber = INVALID_PROC_NUMBER;
-    sxact->vxid.localTransactionId = (LocalTransactionId)xid;
-    sxact->pid = 0;
-    sxact->pgprocno = INVALID_PROC_NUMBER;
-
-    /* a prepared xact hasn't committed yet */
-    sxact->prepareSeqNo = RecoverySerCommitSeqNo;
-    sxact->commitSeqNo = InvalidSerCommitSeqNo;
-    sxact->finishedBefore = InvalidTransactionId;
-
-    sxact->SeqNo.lastCommitBeforeSnapshot = RecoverySerCommitSeqNo;
-
-    /*
-     * Don't need to track this; no transactions running at the time the
-     * recovered xact started are still active, except possibly other
-     * prepared xacts and we don't care whether those are RO_SAFE or not.
-     */
-    dlist_init(&(sxact->possibleUnsafeConflicts));
-
-    dlist_init(&(sxact->predicateLocks));
-    dlist_node_init(&sxact->finishedLink);
-
-    sxact->topXid = xid;
-    sxact->xmin = xactRecord->xmin;
-    sxact->flags = xactRecord->flags;
-    Assert(SxactIsPrepared(sxact));
-    if (!SxactIsReadOnly(sxact)) {
-      ++(PredXact->WritableSxactCount);
-      Assert(PredXact->WritableSxactCount <=
-             (MaxBackends + max_prepared_xacts));
-    }
-
-    /*
-     * We don't know whether the transaction had any conflicts or not, so
-     * we'll conservatively assume that it had both a conflict in and a
-     * conflict out, and represent that with the summary conflict flags.
-     */
-    dlist_init(&(sxact->outConflicts));
-    dlist_init(&(sxact->inConflicts));
-    sxact->flags |= SXACT_FLAG_SUMMARY_CONFLICT_IN;
-    sxact->flags |= SXACT_FLAG_SUMMARY_CONFLICT_OUT;
-
-    /* Register the transaction's xid */
-    sxidtag.xid = xid;
-    sxid = (SERIALIZABLEXID *)hash_search(SerializableXidHash, &sxidtag,
-                                          HASH_ENTER, &found);
-    Assert(sxid != NULL);
-    Assert(!found);
-    sxid->myXact = (SERIALIZABLEXACT *)sxact;
-
-    /*
-     * Update global xmin. Note that this is a special case compared to
-     * registering a normal transaction, because the global xmin might go
-     * backwards. That's OK, because until recovery is over we're not
-     * going to complete any transactions or create any non-prepared
-     * transactions, so there's no danger of throwing away.
-     */
-    if ((!TransactionIdIsValid(PredXact->SxactGlobalXmin)) ||
-        (TransactionIdFollows(PredXact->SxactGlobalXmin, sxact->xmin))) {
-      PredXact->SxactGlobalXmin = sxact->xmin;
-      PredXact->SxactGlobalXminCount = 1;
-      SerialSetActiveSerXmin(sxact->xmin);
-    } else if (TransactionIdEquals(sxact->xmin, PredXact->SxactGlobalXmin)) {
-      Assert(PredXact->SxactGlobalXminCount > 0);
-      PredXact->SxactGlobalXminCount++;
-    }
-
-    LWLockRelease(SerializableXactHashLock);
-  } else if (record->type == TWOPHASEPREDICATERECORD_LOCK) {
-    /* Lock record. Recreate the PREDICATELOCK */
-    TwoPhasePredicateLockRecord *lockRecord;
-    SERIALIZABLEXID *sxid;
-    SERIALIZABLEXACT *sxact;
-    SERIALIZABLEXIDTAG sxidtag;
-    uint32 targettaghash;
-
-    lockRecord = (TwoPhasePredicateLockRecord *)&record->data.lockRecord;
-    targettaghash = PredicateLockTargetTagHashCode(&lockRecord->target);
-
-    LWLockAcquire(SerializableXactHashLock, LW_SHARED);
-    sxidtag.xid = xid;
-    sxid = (SERIALIZABLEXID *)hash_search(SerializableXidHash, &sxidtag,
-                                          HASH_FIND, NULL);
-    LWLockRelease(SerializableXactHashLock);
-
-    Assert(sxid != NULL);
-    sxact = sxid->myXact;
-    Assert(sxact != InvalidSerializableXact);
-
-    CreatePredicateLock(&lockRecord->target, targettaghash, sxact);
-  }
-}

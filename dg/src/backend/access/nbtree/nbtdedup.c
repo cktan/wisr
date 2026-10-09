@@ -15,8 +15,6 @@
 #include "postgres.h"
 
 #include "access/nbtree.h"
-#include "access/nbtxlog.h"
-#include "access/xloginsert.h"
 #include "miscadmin.h"
 #include "utils/rel.h"
 
@@ -224,30 +222,6 @@ void _bt_dedup_pass(Relation rel, Buffer buf, IndexTuple newitem,
 
   PageRestoreTempPage(newpage, page);
   MarkBufferDirty(buf);
-
-  /* XLOG stuff */
-  if (RelationNeedsWAL(rel)) {
-    XLogRecPtr recptr;
-    xl_btree_dedup xlrec_dedup;
-
-    xlrec_dedup.nintervals = state->nintervals;
-
-    XLogBeginInsert();
-    XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
-    XLogRegisterData(&xlrec_dedup, SizeOfBtreeDedup);
-
-    /*
-     * The intervals array is not in the buffer, but pretend that it is.
-     * When XLogInsert stores the whole buffer, the array need not be
-     * stored too.
-     */
-    XLogRegisterBufData(0, state->intervals,
-                        state->nintervals * sizeof(BTDedupInterval));
-
-    recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_DEDUP);
-
-    PageSetLSN(page, recptr);
-  }
 
   END_CRIT_SECTION();
 

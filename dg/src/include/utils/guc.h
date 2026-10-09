@@ -291,7 +291,6 @@ extern thread_local PGDLLIMPORT int tcp_keepalives_count;
 extern thread_local PGDLLIMPORT int tcp_user_timeout;
 
 extern thread_local PGDLLIMPORT char *role_string;
-extern thread_local PGDLLIMPORT bool in_hot_standby_guc;
 extern thread_local PGDLLIMPORT bool trace_sort;
 
 #ifdef DEBUG_BOUNDED_SORT

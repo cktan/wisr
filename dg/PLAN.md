@@ -30,7 +30,8 @@ been started.
 - Almost no statement runs beyond integer constants. A lookup
   in a catalog table fails with an error; the lookups are being
   moved to rows compiled in (`WORKNOTE.md` step 6).
-- There is no WAL and no `pg_control`. PostgreSQL's
+- There is no WAL, no recovery and no `pg_control`; the WAL
+  code is gone (`WORKNOTE.md` step 12). PostgreSQL's
   transactions still run a statement, and write nothing.
 
 ## 2. The goal, and the order
@@ -249,13 +250,14 @@ process; and the three items above are gone.
 - **Then delete the process-only subsystems**: the postmaster
   state machine and crash restart, shared memory setup (the
   structures become ordinary allocations), `EXEC_BACKEND`, and
-  the auxiliary processes: startup, checkpointer, background
-  writer, WAL writer. Autovacuum is already gone (`WORKNOTE.md`
-  step 11).
-- **What step 9 stubbed goes with them**: `xlog.c` and
-  `xlogrecovery.c`, the in-memory control record, and
-  `make_legacy_dirs()` in `postmaster.c`, whose list of
-  directories shrinks as each subsystem is cut.
+  the auxiliary processes: startup, checkpointer and background
+  writer. Autovacuum, the WAL writer and the archiver are
+  already gone (`WORKNOTE.md` steps 11 and 12).
+- **What step 9 stubbed goes with them**: what is left of
+  `xlog.c` (the in-memory control record, and the start of the
+  transaction counters), the hot standby states of the
+  postmaster, and `make_legacy_dirs()` in `postmaster.c`, whose
+  list of directories shrinks as each subsystem is cut.
 
 Success for this step: no `kill()` between sessions, no
 signal handler that touches session state, and the files above
@@ -288,6 +290,9 @@ Do not reopen these without the owner:
   files stay serial.
 - **No VACUUM.** sm collects its own garbage. `VACUUM`
   succeeds and does nothing; `ANALYZE` stays.
+- **No WAL.** sm keeps what is durable. There is no recovery,
+  archiving or hot standby, and `PREPARE TRANSACTION` is
+  refused.
 
 ## 8. Working in this tree
 

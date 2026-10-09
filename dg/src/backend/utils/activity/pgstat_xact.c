@@ -162,46 +162,6 @@ static void AtEOSubXact_PgStat_DroppedStats(PgStat_SubXactStatus *xact_state,
 }
 
 /*
- * Save the transactional stats state at 2PC transaction prepare.
- */
-void AtPrepare_PgStat(void) {
-  PgStat_SubXactStatus *xact_state;
-
-  xact_state = pgStatXactStack;
-  if (xact_state != NULL) {
-    Assert(xact_state->nest_level == 1);
-    Assert(xact_state->prev == NULL);
-
-    AtPrepare_PgStat_Relations(xact_state);
-  }
-}
-
-/*
- * Clean up after successful PREPARE.
- *
- * Note: AtEOXact_PgStat is not called during PREPARE.
- */
-void PostPrepare_PgStat(void) {
-  PgStat_SubXactStatus *xact_state;
-
-  /*
-   * We don't bother to free any of the transactional state, since it's all
-   * in TopTransactionContext and will go away anyway.
-   */
-  xact_state = pgStatXactStack;
-  if (xact_state != NULL) {
-    Assert(xact_state->nest_level == 1);
-    Assert(xact_state->prev == NULL);
-
-    PostPrepare_PgStat_Relations(xact_state);
-  }
-  pgStatXactStack = NULL;
-
-  /* Make sure any stats snapshot is thrown away */
-  pgstat_clear_snapshot();
-}
-
-/*
  * Ensure (sub)transaction stack entry for the given nest_level exists, adding
  * it if needed.
  */
@@ -267,31 +227,6 @@ int pgstat_get_transactional_drops(bool isCommit, xl_xact_stats_item **items) {
   }
 
   return nitems;
-}
-
-/*
- * Execute scheduled drops post-commit. Called from xact_redo_commit() /
- * xact_redo_abort() during recovery, and from FinishPreparedTransaction()
- * during normal 2PC COMMIT/ABORT PREPARED processing.
- */
-void pgstat_execute_transactional_drops(int ndrops,
-                                        struct xl_xact_stats_item *items,
-                                        bool is_redo) {
-  int not_freed_count = 0;
-
-  if (ndrops == 0)
-    return;
-
-  for (int i = 0; i < ndrops; i++) {
-    xl_xact_stats_item *it = &items[i];
-    uint64 objid = ((uint64)it->objid_hi) << 32 | it->objid_lo;
-
-    if (!pgstat_drop_entry_ext(it->kind, it->dboid, objid, true))
-      not_freed_count++;
-  }
-
-  if (not_freed_count > 0)
-    pgstat_request_entry_refs_gc();
 }
 
 static void create_drop_transactional_internal(PgStat_Kind kind, Oid dboid,

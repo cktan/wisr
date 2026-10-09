@@ -18,15 +18,11 @@
 #include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/xact.h"
-#include "access/xlogutils.h"
 #include "commands/dbcommands.h"
 #include "miscadmin.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "utils/syscache.h"
-
-/* Number of OIDs to prefetch (preallocate) per XLOG write */
-#define VAR_OID_PREFETCH		8192
 
 /* pointer to variables struct in shared memory */
 PG_SHARED TransamVariablesData *TransamVariables = NULL;
@@ -75,10 +71,6 @@ FullTransactionId GetNewTransactionId(bool isSubXact) {
     ProcGlobal->xids[MyProc->pgxactoff] = BootstrapTransactionId;
     return FullTransactionIdFromEpochAndXid(0, BootstrapTransactionId);
   }
-
-  /* safety check, we should never get this far in a HS standby */
-  if (RecoveryInProgress())
-    elog(ERROR, "cannot assign TransactionIds during recovery");
 
   LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
 
@@ -235,68 +227,6 @@ FullTransactionId ReadNextFullTransactionId(void) {
 }
 
 /*
- * Advance nextXid to the value after a given xid.  The epoch is inferred.
- * This must only be called during recovery or from two-phase start-up code.
- */
-void AdvanceNextFullTransactionIdPastXid(TransactionId xid) {
-  FullTransactionId newNextFullXid;
-  TransactionId next_xid;
-  uint32 epoch;
-
-  /*
-   * It is safe to read nextXid without a lock, because this is only called
-   * from the startup process or single-process mode, meaning that no other
-   * process can modify it.
-   */
-  Assert(AmStartupProcess() || !IsUnderPostmaster);
-
-  /* Fast return if this isn't an xid high enough to move the needle. */
-  next_xid = XidFromFullTransactionId(TransamVariables->nextXid);
-  if (!TransactionIdFollowsOrEquals(xid, next_xid))
-    return;
-
-  /*
-   * Compute the FullTransactionId that comes after the given xid.  To do
-   * this, we preserve the existing epoch, but detect when we've wrapped
-   * into a new epoch.  This is necessary because WAL records and 2PC state
-   * currently contain 32 bit xids.  The wrap logic is safe in those cases
-   * because the span of active xids cannot exceed one epoch at any given
-   * point in the WAL stream.
-   */
-  TransactionIdAdvance(xid);
-  epoch = EpochFromFullTransactionId(TransamVariables->nextXid);
-  if (unlikely(xid < next_xid))
-    ++epoch;
-  newNextFullXid = FullTransactionIdFromEpochAndXid(epoch, xid);
-
-  /*
-   * We still need to take a lock to modify the value when there are
-   * concurrent readers.
-   */
-  LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
-  TransamVariables->nextXid = newNextFullXid;
-  LWLockRelease(XidGenLock);
-}
-
-/*
- * Advance the cluster-wide value for the oldest valid clog entry.
- *
- * We must acquire XactTruncationLock to advance the oldestClogXid. It's not
- * necessary to hold the lock during the actual clog truncation, only when we
- * advance the limit, as code looking up arbitrary xids is required to hold
- * XactTruncationLock from when it tests oldestClogXid through to when it
- * completes the clog lookup.
- */
-void AdvanceOldestClogXid(TransactionId oldest_datfrozenxid) {
-  LWLockAcquire(XactTruncationLock, LW_EXCLUSIVE);
-  if (TransactionIdPrecedes(TransamVariables->oldestClogXid,
-                            oldest_datfrozenxid)) {
-    TransamVariables->oldestClogXid = oldest_datfrozenxid;
-  }
-  LWLockRelease(XactTruncationLock);
-}
-
-/*
  * Determine the last safe XID to allocate using the currently oldest
  * datfrozenxid (ie, the oldest XID that might exist in any database
  * of our cluster), and the OID of the (or a) database with that value.
@@ -364,10 +294,6 @@ void SetTransactionIdLimit(TransactionId oldest_datfrozenxid,
 Oid GetNewObjectId(void) {
   Oid result;
 
-  /* safety check, we should never get this far in a HS standby */
-  if (RecoveryInProgress())
-    elog(ERROR, "cannot assign OIDs during recovery");
-
   LWLockAcquire(OidGenLock, LW_EXCLUSIVE);
 
   /*
@@ -388,27 +314,18 @@ Oid GetNewObjectId(void) {
     if (IsPostmasterEnvironment) {
       /* wraparound, or first post-initdb assignment, in normal mode */
       TransamVariables->nextOid = FirstNormalObjectId;
-      TransamVariables->oidCount = 0;
     } else {
       /* we may be bootstrapping, so don't enforce the full range */
       if (TransamVariables->nextOid < ((Oid)FirstGenbkiObjectId)) {
         /* wraparound in standalone mode (unlikely but possible) */
         TransamVariables->nextOid = FirstNormalObjectId;
-        TransamVariables->oidCount = 0;
       }
     }
-  }
-
-  /* If we run out of logged for use oids then we must log more */
-  if (TransamVariables->oidCount == 0) {
-    XLogPutNextOid(TransamVariables->nextOid + VAR_OID_PREFETCH);
-    TransamVariables->oidCount = VAR_OID_PREFETCH;
   }
 
   result = TransamVariables->nextOid;
 
   (TransamVariables->nextOid)++;
-  (TransamVariables->oidCount)--;
 
   LWLockRelease(OidGenLock);
 
@@ -434,7 +351,6 @@ static void SetNextObjectId(Oid nextOid) {
          TransamVariables->nextOid);
 
   TransamVariables->nextOid = nextOid;
-  TransamVariables->oidCount = 0;
 
   LWLockRelease(OidGenLock);
 }

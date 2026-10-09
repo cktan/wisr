@@ -21,7 +21,6 @@
 #include <dirent.h>
 
 #include "access/htup_details.h"
-#include "access/xlog_internal.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_tablespace_d.h"
 #include "catalog/pg_type.h"
@@ -556,11 +555,6 @@ Datum pg_ls_logdir(PG_FUNCTION_ARGS) {
   return pg_ls_dir_files(fcinfo, Log_directory, false);
 }
 
-/* Function to return the list of files in the WAL directory */
-Datum pg_ls_waldir(PG_FUNCTION_ARGS) {
-  return pg_ls_dir_files(fcinfo, XLOGDIR, false);
-}
-
 /*
  * Generic function to return the list of files in pgsql_tmp
  */
@@ -589,11 +583,4 @@ Datum pg_ls_tmpdir_noargs(PG_FUNCTION_ARGS) {
  */
 Datum pg_ls_tmpdir_1arg(PG_FUNCTION_ARGS) {
   return pg_ls_tmpdir(fcinfo, PG_GETARG_OID(0));
-}
-
-/*
- * Function to return the list of files in the WAL archive status directory.
- */
-Datum pg_ls_archive_statusdir(PG_FUNCTION_ARGS) {
-  return pg_ls_dir_files(fcinfo, XLOGDIR "/archive_status", true);
 }

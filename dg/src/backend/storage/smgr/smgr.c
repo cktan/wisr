@@ -63,7 +63,6 @@
  */
 #include "postgres.h"
 
-#include "access/xlogutils.h"
 #include "lib/ilist.h"
 #include "miscadmin.h"
 #include "storage/aio.h"
@@ -771,12 +770,10 @@ BlockNumber smgrnblocks(SMgrRelation reln, ForkNumber forknum) {
  */
 BlockNumber smgrnblocks_cached(SMgrRelation reln, ForkNumber forknum) {
   /*
-   * For now, this function uses cached values only in recovery due to lack
-   * of a shared invalidation mechanism for changes in file size.  Code
-   * elsewhere reads smgr_cached_nblocks and copes with stale data.
+   * PostgreSQL used cached values only in recovery, for lack of a shared
+   * invalidation mechanism for changes in file size.  There is no recovery,
+   * so the size is never known from the cache.
    */
-  if (InRecovery && reln->smgr_cached_nblocks[forknum] != InvalidBlockNumber)
-    return reln->smgr_cached_nblocks[forknum];
 
   return InvalidBlockNumber;
 }

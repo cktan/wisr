@@ -54,7 +54,7 @@ static thread_local WalUsage prevBackendWalUsage;
  */
 void pgstat_count_backend_io_op_time(IOObject io_object, IOContext io_context,
                                      IOOp io_op, instr_time io_time) {
-  Assert(track_io_timing || track_wal_io_timing);
+  Assert(track_io_timing);
 
   if (!pgstat_tracks_backend_bktype(MyBackendType))
     return;
@@ -345,7 +345,6 @@ bool pgstat_tracks_backend_bktype(BackendType bktype) {
   switch (bktype) {
   case B_INVALID:
   case B_DEAD_END_BACKEND:
-  case B_ARCHIVER:
   case B_LOGGER:
   case B_BG_WRITER:
   case B_CHECKPOINTER:
@@ -360,7 +359,6 @@ bool pgstat_tracks_backend_bktype(BackendType bktype) {
   case B_WAL_RECEIVER:
   case B_WAL_SENDER:
   case B_WAL_SUMMARIZER:
-  case B_WAL_WRITER:
     return true;
   }
 

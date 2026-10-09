@@ -35,8 +35,6 @@ extern void ForgetInplace_Inval(void);
 
 extern void AtEOSubXact_Inval(bool isCommit);
 
-extern void PostPrepare_Inval(void);
-
 extern void CommandEndInvalidationMessages(void);
 
 extern void CacheInvalidateHeapTuple(Relation relation, HeapTuple tuple,
@@ -79,5 +77,4 @@ extern void CallRelSyncCallbacks(Oid relid);
 extern void InvalidateSystemCaches(void);
 extern void InvalidateSystemCachesExtended(bool debug_discard);
 
-extern void LogLogicalInvalidations(void);
 #endif /* INVAL_H */

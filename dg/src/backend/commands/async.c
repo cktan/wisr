@@ -466,7 +466,7 @@ Size AsyncShmemSize(void) {
   size = mul_size(MaxBackends, sizeof(QueueBackendStatus));
   size = add_size(size, offsetof(AsyncQueueControl, backend));
 
-  size = add_size(size, SimpleLruShmemSize(notify_buffers, 0));
+  size = add_size(size, SimpleLruShmemSize(notify_buffers));
 
   return size;
 }
@@ -507,7 +507,7 @@ void AsyncShmemInit(void) {
    * names are used in order to avoid wraparound.
    */
   NotifyCtl->PagePrecedes = asyncQueuePagePrecedes;
-  SimpleLruInit(NotifyCtl, "notify", notify_buffers, 0, "pg_notify",
+  SimpleLruInit(NotifyCtl, "notify", notify_buffers, "pg_notify",
                 LWTRANCHE_NOTIFY_BUFFER, LWTRANCHE_NOTIFY_SLRU,
                 SYNC_HANDLER_NONE, true);
 
@@ -761,20 +761,6 @@ Datum pg_listening_channels(PG_FUNCTION_ARGS) {
 static void Async_UnlistenOnExit(int code, Datum arg) {
   Exec_UnlistenAllCommit();
   asyncQueueUnregister();
-}
-
-/*
- * AtPrepare_Notify
- *
- *		This is called at the prepare phase of a two-phase
- *		transaction.  Save the state for possible commit later.
- */
-void AtPrepare_Notify(void) {
-  /* It's not allowed to have any pending LISTEN/UNLISTEN/NOTIFY actions */
-  if (pendingActions || pendingNotifies)
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("cannot PREPARE a transaction that has executed "
-                           "LISTEN, UNLISTEN, or NOTIFY")));
 }
 
 /*

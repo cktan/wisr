@@ -105,12 +105,10 @@
 #include <unistd.h>
 
 #include "access/heapam.h"
-#include "access/heapam_xlog.h"
 #include "access/heaptoast.h"
 #include "access/rewriteheap.h"
 #include "access/transam.h"
 #include "access/xact.h"
-#include "access/xloginsert.h"
 #include "common/file_utils.h"
 #include "lib/ilist.h"
 #include "miscadmin.h"

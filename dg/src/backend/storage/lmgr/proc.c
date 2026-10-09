@@ -35,7 +35,6 @@
 
 #include "access/transam.h"
 #include "access/twophase.h"
-#include "access/xlogutils.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/condition_variable.h"
@@ -46,7 +45,6 @@
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/spin.h"
-#include "storage/standby.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 
@@ -475,7 +473,6 @@ void InitProcess(void) {
   MyProc->clogGroupMemberXid = InvalidTransactionId;
   MyProc->clogGroupMemberXidStatus = TRANSACTION_STATUS_IN_PROGRESS;
   MyProc->clogGroupMemberPage = -1;
-  MyProc->clogGroupMemberLsn = InvalidXLogRecPtr;
   Assert(pg_atomic_read_u32(&MyProc->clogGroupNext) == INVALID_PROC_NUMBER);
 
   /*
@@ -685,20 +682,6 @@ void InitAuxiliaryProcess(void) {
   if (IsUnderPostmaster)
     AttachSharedMemoryStructs();
 #endif
-}
-
-/*
- * Used from bufmgr to share the value of the buffer that Startup waits on,
- * or to reset the value to "not waiting" (-1). This allows processing
- * of recovery conflicts for buffer pins. Set is made before backends look
- * at this value, so locking not required, especially since the set is
- * an atomic integer set operation.
- */
-void SetStartupBufferPinWaitBufId(int bufid) {
-  /* use volatile pointer to prevent code rearrangement */
-  volatile PROC_HDR *procglobal = ProcGlobal;
-
-  procglobal->startupBufferPinWaitBufId = bufid;
 }
 
 /*
@@ -1236,22 +1219,11 @@ ProcWaitStatus ProcSleep(LOCALLOCK *locallock) {
   LOCKMODE lockmode = locallock->tag.mode;
   uint32 hashcode = locallock->hashcode;
   LWLock *partitionLock = LockHashPartitionLock(hashcode);
-  TimestampTz standbyWaitStart = 0;
-  bool logged_recovery_conflict = false;
   ProcWaitStatus myWaitStatus;
 
   /* The caller must've armed the on-error cleanup mechanism */
   Assert(GetAwaitedLock() == locallock);
   Assert(!LWLockHeldByMe(partitionLock));
-
-  /*
-   * Now that we will successfully clean up after an ereport, it's safe to
-   * check to see if there's a buffer pin deadlock against the Startup
-   * process.  Of course, that's only necessary if we're doing Hot Standby
-   * and are not the Startup process ourselves.
-   */
-  if (RecoveryInProgress() && !InRecovery)
-    CheckRecoveryConflictDeadlock();
 
   /* Reset deadlock_state before enabling the timeout handler */
   deadlock_state = DS_NOT_YET_CHECKED;
@@ -1272,43 +1244,35 @@ ProcWaitStatus ProcSleep(LOCALLOCK *locallock) {
    * If InHotStandby we set lock waits slightly later for clarity with other
    * code.
    */
-  if (!InHotStandby) {
-    if (LockTimeout > 0) {
-      EnableTimeoutParams timeouts[2];
+  if (LockTimeout > 0) {
+    EnableTimeoutParams timeouts[2];
 
-      timeouts[0].id = DEADLOCK_TIMEOUT;
-      timeouts[0].type = TMPARAM_AFTER;
-      timeouts[0].delay_ms = DeadlockTimeout;
-      timeouts[1].id = LOCK_TIMEOUT;
-      timeouts[1].type = TMPARAM_AFTER;
-      timeouts[1].delay_ms = LockTimeout;
-      enable_timeouts(timeouts, 2);
-    } else
-      enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
+    timeouts[0].id = DEADLOCK_TIMEOUT;
+    timeouts[0].type = TMPARAM_AFTER;
+    timeouts[0].delay_ms = DeadlockTimeout;
+    timeouts[1].id = LOCK_TIMEOUT;
+    timeouts[1].type = TMPARAM_AFTER;
+    timeouts[1].delay_ms = LockTimeout;
+    enable_timeouts(timeouts, 2);
+  } else
+    enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
 
-    /*
-     * Use the current time obtained for the deadlock timeout timer as
-     * waitStart (i.e., the time when this process started waiting for the
-     * lock). Since getting the current time newly can cause overhead, we
-     * reuse the already-obtained time to avoid that overhead.
-     *
-     * Note that waitStart is updated without holding the lock table's
-     * partition lock, to avoid the overhead by additional lock
-     * acquisition. This can cause "waitstart" in pg_locks to become NULL
-     * for a very short period of time after the wait started even though
-     * "granted" is false. This is OK in practice because we can assume
-     * that users are likely to look at "waitstart" when waiting for the
-     * lock for a long time.
-     */
-    pg_atomic_write_u64(&MyProc->waitStart,
-                        get_timeout_start_time(DEADLOCK_TIMEOUT));
-  } else if (log_recovery_conflict_waits) {
-    /*
-     * Set the wait start timestamp if logging is enabled and in hot
-     * standby.
-     */
-    standbyWaitStart = GetCurrentTimestamp();
-  }
+  /*
+   * Use the current time obtained for the deadlock timeout timer as
+   * waitStart (i.e., the time when this process started waiting for the
+   * lock). Since getting the current time newly can cause overhead, we
+   * reuse the already-obtained time to avoid that overhead.
+   *
+   * Note that waitStart is updated without holding the lock table's
+   * partition lock, to avoid the overhead by additional lock
+   * acquisition. This can cause "waitstart" in pg_locks to become NULL
+   * for a very short period of time after the wait started even though
+   * "granted" is false. This is OK in practice because we can assume
+   * that users are likely to look at "waitstart" when waiting for the
+   * lock for a long time.
+   */
+  pg_atomic_write_u64(&MyProc->waitStart,
+                      get_timeout_start_time(DEADLOCK_TIMEOUT));
 
   /*
    * If somebody wakes us between LWLockRelease and WaitLatch, the latch
@@ -1325,51 +1289,15 @@ ProcWaitStatus ProcSleep(LOCALLOCK *locallock) {
    * error, LockErrorCleanup will fix that up.
    */
   do {
-    if (InHotStandby) {
-      bool maybe_log_conflict =
-          (standbyWaitStart != 0 && !logged_recovery_conflict);
-
-      /* Set a timer and wait for that or for the lock to be granted */
-      ResolveRecoveryConflictWithLock(locallock->tag.lock, maybe_log_conflict);
-
-      /*
-       * Emit the log message if the startup process is waiting longer
-       * than deadlock_timeout for recovery conflict on lock.
-       */
-      if (maybe_log_conflict) {
-        TimestampTz now = GetCurrentTimestamp();
-
-        if (TimestampDifferenceExceeds(standbyWaitStart, now,
-                                       DeadlockTimeout)) {
-          VirtualTransactionId *vxids;
-          int cnt;
-
-          vxids =
-              GetLockConflicts(&locallock->tag.lock, AccessExclusiveLock, &cnt);
-
-          /*
-           * Log the recovery conflict and the list of PIDs of
-           * backends holding the conflicting lock. Note that we do
-           * logging even if there are no such backends right now
-           * because the startup process here has already waited
-           * longer than deadlock_timeout.
-           */
-          LogRecoveryConflict(PROCSIG_RECOVERY_CONFLICT_LOCK, standbyWaitStart,
-                              now, cnt > 0 ? vxids : NULL, true);
-          logged_recovery_conflict = true;
-        }
-      }
-    } else {
-      (void)WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0,
-                      PG_WAIT_LOCK | locallock->tag.lock.locktag_type);
-      ResetLatch(MyLatch);
-      /* check for deadlocks first, as that's probably log-worthy */
-      if (got_deadlock_timeout) {
-        CheckDeadLock();
-        got_deadlock_timeout = false;
-      }
-      CHECK_FOR_INTERRUPTS();
+    (void)WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0,
+                    PG_WAIT_LOCK | locallock->tag.lock.locktag_type);
+    ResetLatch(MyLatch);
+    /* check for deadlocks first, as that's probably log-worthy */
+    if (got_deadlock_timeout) {
+      CheckDeadLock();
+      got_deadlock_timeout = false;
     }
+    CHECK_FOR_INTERRUPTS();
 
     /*
      * waitStatus could change from PROC_WAIT_STATUS_WAITING to something
@@ -1490,26 +1418,16 @@ ProcWaitStatus ProcSleep(LOCALLOCK *locallock) {
    * already caused QueryCancelPending to become set, we want the cancel to
    * be reported as a lock timeout, not a user cancel.
    */
-  if (!InHotStandby) {
-    if (LockTimeout > 0) {
-      DisableTimeoutParams timeouts[2];
+  if (LockTimeout > 0) {
+    DisableTimeoutParams timeouts[2];
 
-      timeouts[0].id = DEADLOCK_TIMEOUT;
-      timeouts[0].keep_indicator = false;
-      timeouts[1].id = LOCK_TIMEOUT;
-      timeouts[1].keep_indicator = true;
-      disable_timeouts(timeouts, 2);
-    } else
-      disable_timeout(DEADLOCK_TIMEOUT, false);
-  }
-
-  /*
-   * Emit the log message if recovery conflict on lock was resolved but the
-   * startup process waited longer than deadlock_timeout for it.
-   */
-  if (InHotStandby && logged_recovery_conflict)
-    LogRecoveryConflict(PROCSIG_RECOVERY_CONFLICT_LOCK, standbyWaitStart,
-                        GetCurrentTimestamp(), NULL, false);
+    timeouts[0].id = DEADLOCK_TIMEOUT;
+    timeouts[0].keep_indicator = false;
+    timeouts[1].id = LOCK_TIMEOUT;
+    timeouts[1].keep_indicator = true;
+    disable_timeouts(timeouts, 2);
+  } else
+    disable_timeout(DEADLOCK_TIMEOUT, false);
 
   /*
    * We don't have to do anything else, because the awaker did all the

@@ -90,8 +90,6 @@
 #endif
 
 #include "access/xlog.h"
-#include "access/xlog_internal.h"
-#include "access/xlogrecovery.h"
 #include "common/file_perm.h"
 #include "common/pg_prng.h"
 #include "lib/ilist.h"
@@ -101,7 +99,6 @@
 #include "pgstat.h"
 #include "port/pg_bswap.h"
 #include "postmaster/bgworker_internals.h"
-#include "postmaster/pgarch.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/syslogger.h"
 #include "storage/aio_subsys.h"
@@ -235,10 +232,9 @@ thread_local bool send_abort_for_kill = false;
 
 /* special child processes; NULL when not running */
 static PG_SHARED PMChild *StartupPMChild = NULL, *BgWriterPMChild = NULL,
-                         *CheckpointerPMChild = NULL, *WalWriterPMChild = NULL,
+                         *CheckpointerPMChild = NULL,
                          *WalReceiverPMChild = NULL,
-                         *WalSummarizerPMChild = NULL, *PgArchPMChild = NULL,
-                         *SysLoggerPMChild = NULL,
+                         *WalSummarizerPMChild = NULL, *SysLoggerPMChild = NULL,
                          *SlotSyncWorkerPMChild = NULL;
 
 /* Startup process's status */
@@ -797,9 +793,6 @@ void PostmasterMain(int argc, char *argv[]) {
                  MaxConnections);
     ExitPostmaster(1);
   }
-  if (XLogArchiveMode > ARCHIVE_MODE_OFF && wal_level == WAL_LEVEL_MINIMAL)
-    ereport(ERROR, (errmsg("WAL archival cannot be enabled when \"wal_level\" "
-                           "is \"minimal\"")));
 
   /*
    * Other one-time internal sanity checks can go here, if they are fast.
@@ -905,12 +898,6 @@ void PostmasterMain(int argc, char *argv[]) {
   InitializeShmemGUCs();
 
   /*
-   * Now that modules have been loaded, we can process any custom resource
-   * managers specified in the wal_consistency_checking GUC.
-   */
-  InitializeWalConsistencyChecking();
-
-  /*
    * If -C was specified with a runtime-computed GUC, we held off printing
    * the value earlier, as the GUC was not yet initialized.  We handle -C
    * for most GUCs before we lock the data directory so that the option may
@@ -976,26 +963,7 @@ void PostmasterMain(int argc, char *argv[]) {
   RemovePgTempFilesInDir(PG_TEMP_FILES_DIR, true, false);
 #endif
 
-  /*
-   * Forcibly remove the files signaling a standby promotion request.
-   * Otherwise, the existence of those files triggers a promotion too early,
-   * whether a user wants that or not.
-   *
-   * This removal of files is usually unnecessary because they can exist
-   * only during a few moments during a standby promotion. However there is
-   * a race condition: if pg_ctl promote is executed and creates the files
-   * during a promotion, the files can stay around even after the server is
-   * brought up to be the primary.  Then, if a new standby starts by using
-   * the backup taken from the new primary, the files can exist at server
-   * startup and must be removed in order to avoid an unexpected promotion.
-   *
-   * Note that promotion signal files need to be removed before the startup
-   * process is invoked. Because, after that, they can be used by
-   * postmaster's SIGUSR1 signal handler.
-   */
-  RemovePromoteSignalFiles();
-
-  /* Do the same for logrotate signal file */
+  /* Remove the logrotate signal file */
   RemoveLogrotateSignalFiles();
 
   /* Remove any outdated file holding the current log filenames. */
@@ -1357,16 +1325,12 @@ static void getInstallationPaths(const char *argv0) {
  * a name leaves this list when its subsystem is cut.
  */
 static void make_legacy_dirs(void) {
-  static const char *const dirs[] = {"pg_wal",
-                                     "pg_wal/archive_status",
-                                     "pg_wal/summaries",
-                                     "pg_commit_ts",
+  static const char *const dirs[] = {"pg_commit_ts",
                                      "pg_dynshmem",
                                      "pg_notify",
                                      "pg_serial",
                                      "pg_snapshots",
                                      "pg_subtrans",
-                                     "pg_twophase",
                                      "pg_multixact",
                                      "pg_multixact/members",
                                      "pg_multixact/offsets",
@@ -1770,7 +1734,7 @@ void InitProcessGlobals(void) {
 
 /*
  * Child processes use SIGUSR1 to notify us of 'pmsignals'.  pg_ctl uses
- * SIGUSR1 to ask postmaster to check for logrotate and promote files.
+ * SIGUSR1 to ask postmaster to check for the logrotate file.
  */
 static void handle_pm_pmsignal_signal(SIGNAL_ARGS) {
   pending_pm_pmsignal = true;
@@ -2129,19 +2093,6 @@ static void process_pm_child_exit(void) {
     }
 
     /*
-     * Was it the wal writer?  Normal exit can be ignored; we'll start a
-     * new one at the next iteration of the postmaster's main loop, if
-     * necessary.  Any other exit condition is treated as a crash.
-     */
-    if (WalWriterPMChild && pid == WalWriterPMChild->pid) {
-      ReleasePostmasterChildSlot(WalWriterPMChild);
-      WalWriterPMChild = NULL;
-      if (!EXIT_STATUS_0(exitstatus))
-        HandleChildCrash(pid, exitstatus, _("WAL writer process"));
-      continue;
-    }
-
-    /*
      * Was it the wal receiver?  If exit status is zero (normal) or one
      * (FATAL exit), we assume everything is all right just like normal
      * backends.  (If we need a new wal receiver, we'll start one at the
@@ -2165,20 +2116,6 @@ static void process_pm_child_exit(void) {
       WalSummarizerPMChild = NULL;
       if (!EXIT_STATUS_0(exitstatus))
         HandleChildCrash(pid, exitstatus, _("WAL summarizer process"));
-      continue;
-    }
-
-    /*
-     * Was it the archiver?  If exit status is zero (normal) or one (FATAL
-     * exit), we assume everything is all right just like normal backends
-     * and just try to start a new one on the next cycle of the
-     * postmaster's main loop, to retry archiving remaining files.
-     */
-    if (PgArchPMChild && pid == PgArchPMChild->pid) {
-      ReleasePostmasterChildSlot(PgArchPMChild);
-      PgArchPMChild = NULL;
-      if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
-        HandleChildCrash(pid, exitstatus, _("archiver process"));
       continue;
     }
 
@@ -2454,7 +2391,7 @@ static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
 
 /*
  * HandleChildCrash -- cleanup after failed backend, bgwriter, checkpointer,
- * walwriter, autovacuum, archiver, slot sync worker, or background worker.
+ * slot sync worker, or background worker.
  *
  * The objectives here are to clean up our local state about the child
  * process, and to signal all other remaining children to quickdie.
@@ -2584,25 +2521,25 @@ static void PostmasterStateMachine(void) {
     targetMask = btmask_add(targetMask, B_BACKEND, B_BG_WORKER);
 
     /*
-     * No walwriter, bgwriter, slot sync worker, or WAL summarizer either.
+     * No bgwriter, slot sync worker, or WAL summarizer either.
      */
-    targetMask = btmask_add(targetMask, B_WAL_WRITER, B_BG_WRITER,
-                            B_SLOTSYNC_WORKER, B_WAL_SUMMARIZER);
+    targetMask = btmask_add(targetMask, B_BG_WRITER, B_SLOTSYNC_WORKER,
+                            B_WAL_SUMMARIZER);
 
     /* If we're in recovery, also stop startup and walreceiver procs */
     targetMask = btmask_add(targetMask, B_STARTUP, B_WAL_RECEIVER);
 
     /*
      * If we are doing crash recovery or an immediate shutdown then we
-     * expect archiver, checkpointer, io workers and walsender to exit as
-     * well, otherwise not.
+     * expect checkpointer, io workers and walsender to exit as well,
+     * otherwise not.
      */
     if (FatalError || Shutdown >= ImmediateShutdown)
-      targetMask = btmask_add(targetMask, B_CHECKPOINTER, B_ARCHIVER,
-                              B_IO_WORKER, B_WAL_SENDER);
+      targetMask =
+          btmask_add(targetMask, B_CHECKPOINTER, B_IO_WORKER, B_WAL_SENDER);
 
       /*
-       * Normally archiver, checkpointer, IO workers and walsenders will
+       * Normally checkpointer, IO workers and walsenders will
        * continue running; they will be terminated later after writing the
        * checkpoint record.  We also let dead-end children to keep running
        * for now.  The syslogger process exits last.
@@ -2618,11 +2555,11 @@ static void PostmasterStateMachine(void) {
       remainMask = btmask_add(remainMask, B_DEAD_END_BACKEND, B_LOGGER);
 
       /*
-       * Archiver, checkpointer, IO workers, and walsender may or may
-       * not be in targetMask already.
+       * Checkpointer, IO workers, and walsender may or may not be in
+       * targetMask already.
        */
-      remainMask = btmask_add(remainMask, B_ARCHIVER, B_CHECKPOINTER,
-                              B_IO_WORKER, B_WAL_SENDER);
+      remainMask =
+          btmask_add(remainMask, B_CHECKPOINTER, B_IO_WORKER, B_WAL_SENDER);
 
       /* these are not real postmaster children */
       remainMask = btmask_add(remainMask, B_INVALID, B_STANDALONE_BACKEND);
@@ -2767,7 +2704,6 @@ static void PostmasterStateMachine(void) {
       Assert(WalSummarizerPMChild == NULL);
       Assert(BgWriterPMChild == NULL);
       Assert(CheckpointerPMChild == NULL);
-      Assert(WalWriterPMChild == NULL);
       Assert(SlotSyncWorkerPMChild == NULL);
       /* syslogger is not considered here */
       UpdatePMState(PM_NO_CHILDREN);
@@ -2929,24 +2865,6 @@ static void LaunchMissingBackgroundProcesses(void) {
     if (BgWriterPMChild == NULL)
       BgWriterPMChild = StartChildProcess(B_BG_WRITER);
   }
-
-  /*
-   * WAL writer is needed only in normal operation (else we cannot be
-   * writing any new WAL).
-   */
-  if (WalWriterPMChild == NULL && pmState == PM_RUN)
-    WalWriterPMChild = StartChildProcess(B_WAL_WRITER);
-
-  /*
-   * If WAL archiving is enabled always, we are allowed to start archiver
-   * even during recovery.
-   */
-  if (PgArchPMChild == NULL &&
-      ((XLogArchivingActive() && pmState == PM_RUN) ||
-       (XLogArchivingAlways() &&
-        (pmState == PM_RECOVERY || pmState == PM_HOT_STANDBY))) &&
-      PgArchCanRestart())
-    PgArchPMChild = StartChildProcess(B_ARCHIVER);
 
   /* Get other worker processes running, if needed */
   if (StartWorkerNeeded || HaveCrashedWorker)
@@ -3209,7 +3127,7 @@ static void ExitPostmaster(int status) {
 
 /*
  * Handle pmsignal conditions representing requests from backends,
- * and check for promote and logrotate requests from pg_ctl.
+ * and check for logrotate requests from pg_ctl.
  */
 static void process_pm_pmsignal(void) {
   bool request_state_update = false;
@@ -3217,66 +3135,6 @@ static void process_pm_pmsignal(void) {
   pending_pm_pmsignal = false;
 
   ereport(DEBUG2, (errmsg_internal("postmaster received pmsignal signal")));
-
-  /*
-   * RECOVERY_STARTED and BEGIN_HOT_STANDBY signals are ignored in
-   * unexpected states. If the startup process quickly starts up, completes
-   * recovery, exits, we might process the death of the startup process
-   * first. We don't want to go back to recovery in that case.
-   */
-  if (CheckPostmasterSignal(PMSIGNAL_RECOVERY_STARTED) &&
-      pmState == PM_STARTUP && Shutdown == NoShutdown) {
-    /* WAL redo has started. We're out of reinitialization. */
-    FatalError = false;
-    AbortStartTime = 0;
-    reachedConsistency = false;
-
-    /*
-     * Start the archiver if we're responsible for (re-)archiving received
-     * files.
-     */
-    Assert(PgArchPMChild == NULL);
-    if (XLogArchivingAlways())
-      PgArchPMChild = StartChildProcess(B_ARCHIVER);
-
-    /*
-     * If we aren't planning to enter hot standby mode later, treat
-     * RECOVERY_STARTED as meaning we're out of startup, and report status
-     * accordingly.
-     */
-    if (!EnableHotStandby) {
-      AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_STANDBY);
-#ifdef USE_SYSTEMD
-      sd_notify(0, "READY=1");
-#endif
-    }
-
-    UpdatePMState(PM_RECOVERY);
-  }
-
-  if (CheckPostmasterSignal(PMSIGNAL_RECOVERY_CONSISTENT) &&
-      pmState == PM_RECOVERY && Shutdown == NoShutdown) {
-    reachedConsistency = true;
-  }
-
-  if (CheckPostmasterSignal(PMSIGNAL_BEGIN_HOT_STANDBY) &&
-      (pmState == PM_RECOVERY && Shutdown == NoShutdown)) {
-    ereport(
-        LOG,
-        (errmsg("database system is ready to accept read-only connections")));
-
-    /* Report status */
-    AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_READY);
-#ifdef USE_SYSTEMD
-    sd_notify(0, "READY=1");
-#endif
-
-    UpdatePMState(PM_HOT_STANDBY);
-    connsAllowed = true;
-
-    /* Some workers may be scheduled to start now */
-    StartWorkerNeeded = true;
-  }
 
   /* Process background worker state changes. */
   if (CheckPostmasterSignal(PMSIGNAL_BACKGROUND_WORKER_CHANGE)) {
@@ -3304,15 +3162,10 @@ static void process_pm_pmsignal(void) {
     /* Checkpointer completed the shutdown checkpoint */
     if (pmState == PM_WAIT_XLOG_SHUTDOWN) {
       /*
-       * If we have an archiver subprocess, tell it to do a last archive
-       * cycle and quit. Likewise, if we have walsender processes, tell
-       * them to send any remaining WAL and quit.
+       * If we have walsender processes, tell them to send any remaining
+       * WAL and quit.
        */
       Assert(Shutdown > NoShutdown);
-
-      /* Waken archiver for the last time */
-      if (PgArchPMChild != NULL)
-        signal_child(PgArchPMChild, SIGUSR2);
 
       /*
        * Waken walsenders for the last time. No regular backends should
@@ -3364,19 +3217,6 @@ static void process_pm_pmsignal(void) {
    */
   if (request_state_update) {
     PostmasterStateMachine();
-  }
-
-  if (StartupPMChild != NULL &&
-      (pmState == PM_STARTUP || pmState == PM_RECOVERY ||
-       pmState == PM_HOT_STANDBY) &&
-      CheckPromoteSignal()) {
-    /*
-     * Tell startup process to finish recovery.
-     *
-     * Leave the promote signal file in place and let the Startup process
-     * do the unlink.
-     */
-    signal_child(StartupPMChild, SIGUSR2);
   }
 }
 

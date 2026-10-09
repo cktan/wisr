@@ -55,8 +55,6 @@
 #include "access/reloptions.h"
 #include "access/tableam.h"
 #include "access/xact.h"
-#include "access/xloginsert.h"
-#include "access/xlogutils.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -70,7 +68,7 @@
 #include "miscadmin.h"
 #include "postmaster/bgwriter.h"
 #include "storage/fd.h"
-#include "storage/standby.h"
+#include "storage/procsignal.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -334,27 +332,6 @@ Oid CreateTableSpace(CreateTableSpaceStmt *stmt) {
 
   create_tablespace_directories(location, tablespaceoid);
 
-  /* Record the filesystem change in XLOG */
-  {
-    xl_tblspc_create_rec xlrec;
-
-    xlrec.ts_id = tablespaceoid;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, offsetof(xl_tblspc_create_rec, ts_path));
-    XLogRegisterData(location, strlen(location) + 1);
-
-    (void)XLogInsert(RM_TBLSPC_ID, XLOG_TBLSPC_CREATE);
-  }
-
-  /*
-   * Force synchronous commit, to minimize the window between creating the
-   * symlink on-disk and marking the transaction committed.  It's not great
-   * that there is any window at all, but definitely we don't want to make
-   * it larger than necessary.
-   */
-  ForceSyncCommit();
-
   pfree(location);
 
   /* We keep the lock on pg_tablespace until commit */
@@ -490,31 +467,11 @@ void DropTableSpace(DropTableSpaceStmt *stmt) {
     }
   }
 
-  /* Record the filesystem change in XLOG */
-  {
-    xl_tblspc_drop_rec xlrec;
-
-    xlrec.ts_id = tablespaceoid;
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, sizeof(xl_tblspc_drop_rec));
-
-    (void)XLogInsert(RM_TBLSPC_ID, XLOG_TBLSPC_DROP);
-  }
-
   /*
    * Note: because we checked that the tablespace was empty, there should be
    * no need to worry about flushing shared buffers or free space map
    * entries for relations in the tablespace.
    */
-
-  /*
-   * Force synchronous commit, to minimize the window between removing the
-   * files on-disk and marking the transaction committed.  It's not great
-   * that there is any window at all, but definitely we don't want to make
-   * it larger than necessary.
-   */
-  ForceSyncCommit();
 
   /*
    * Allow TablespaceCreateDbspace again.
@@ -565,13 +522,8 @@ static void create_tablespace_directories(const char *location,
    */
   if (!in_place && chmod(location, pg_dir_create_mode) != 0) {
     if (errno == ENOENT)
-      ereport(ERROR,
-              (errcode(ERRCODE_UNDEFINED_FILE),
-               errmsg("directory \"%s\" does not exist", location),
-               InRecovery
-                   ? errhint("Create this directory for the tablespace before "
-                             "restarting the server.")
-                   : 0));
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_FILE),
+                      errmsg("directory \"%s\" does not exist", location)));
     else
       ereport(ERROR,
               (errcode_for_file_access(),
@@ -599,16 +551,10 @@ static void create_tablespace_directories(const char *location,
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                     errmsg("\"%s\" exists but is not a directory",
                            location_with_version_dir)));
-  else if (!InRecovery)
+  else
     ereport(ERROR, (errcode(ERRCODE_OBJECT_IN_USE),
                     errmsg("directory \"%s\" already in use as a tablespace",
                            location_with_version_dir)));
-
-  /*
-   * In recovery, remove old symlink, in case it points to the wrong place.
-   */
-  if (!in_place && InRecovery)
-    remove_tablespace_symlink(linkloc);
 
   /*
    * Create the symlink under PGDATA
@@ -789,47 +735,6 @@ bool directory_is_empty(const char *path) {
 
   FreeDir(dirdesc);
   return true;
-}
-
-/*
- *	remove_tablespace_symlink
- *
- * This function removes symlinks in pg_tblspc.  On Windows, junction points
- * act like directories so we must be able to apply rmdir.  This function
- * works like the symlink removal code in destroy_tablespace_directories,
- * except that failure to remove is always an ERROR.  But if the file doesn't
- * exist at all, that's OK.
- */
-void remove_tablespace_symlink(const char *linkloc) {
-  struct stat st;
-
-  if (lstat(linkloc, &st) < 0) {
-    if (errno == ENOENT)
-      return;
-    ereport(ERROR, (errcode_for_file_access(),
-                    errmsg("could not stat file \"%s\": %m", linkloc)));
-  }
-
-  if (S_ISDIR(st.st_mode)) {
-    /*
-     * This will fail if the directory isn't empty, but not if it's a
-     * junction point.
-     */
-    if (rmdir(linkloc) < 0 && errno != ENOENT)
-      ereport(ERROR,
-              (errcode_for_file_access(),
-               errmsg("could not remove directory \"%s\": %m", linkloc)));
-  } else if (S_ISLNK(st.st_mode)) {
-    if (unlink(linkloc) < 0 && errno != ENOENT)
-      ereport(ERROR,
-              (errcode_for_file_access(),
-               errmsg("could not remove symbolic link \"%s\": %m", linkloc)));
-  } else {
-    /* Refuse to remove anything that's not a directory or symlink */
-    ereport(ERROR,
-            (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-             errmsg("\"%s\" is not a directory or symbolic link", linkloc)));
-  }
 }
 
 /*
@@ -1351,64 +1256,4 @@ char *get_tablespace_name(Oid spc_oid) {
   table_close(rel, AccessShareLock);
 
   return result;
-}
-
-/*
- * TABLESPACE resource manager's routines
- */
-void tblspc_redo(XLogReaderState *record) {
-  uint8 info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
-
-  /* Backup blocks are not used in tblspc records */
-  Assert(!XLogRecHasAnyBlockRefs(record));
-
-  if (info == XLOG_TBLSPC_CREATE) {
-    xl_tblspc_create_rec *xlrec =
-        (xl_tblspc_create_rec *)XLogRecGetData(record);
-    char *location = xlrec->ts_path;
-
-    create_tablespace_directories(location, xlrec->ts_id);
-  } else if (info == XLOG_TBLSPC_DROP) {
-    xl_tblspc_drop_rec *xlrec = (xl_tblspc_drop_rec *)XLogRecGetData(record);
-
-    /* Close all smgr fds in all backends. */
-    WaitForProcSignalBarrier(
-        EmitProcSignalBarrier(PROCSIGNAL_BARRIER_SMGRRELEASE));
-
-    /*
-     * If we issued a WAL record for a drop tablespace it implies that
-     * there were no files in it at all when the DROP was done. That means
-     * that no permanent objects can exist in it at this point.
-     *
-     * It is possible for standby users to be using this tablespace as a
-     * location for their temporary files, so if we fail to remove all
-     * files then do conflict processing and try again, if currently
-     * enabled.
-     *
-     * Other possible reasons for failure include bollixed file
-     * permissions on a standby server when they were okay on the primary,
-     * etc etc. There's not much we can do about that, so just remove what
-     * we can and press on.
-     */
-    if (!destroy_tablespace_directories(xlrec->ts_id, true)) {
-      ResolveRecoveryConflictWithTablespace(xlrec->ts_id);
-
-      /*
-       * If we did recovery processing then hopefully the backends who
-       * wrote temp files should have cleaned up and exited by now.  So
-       * retry before complaining.  If we fail again, this is just a LOG
-       * condition, because it's not worth throwing an ERROR for (as
-       * that would crash the database and require manual intervention
-       * before we could get past this WAL record on restart).
-       */
-      if (!destroy_tablespace_directories(xlrec->ts_id, true))
-        ereport(
-            LOG,
-            (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-             errmsg("directories for tablespace %u could not be removed",
-                    xlrec->ts_id),
-             errhint("You can remove the directories manually if necessary.")));
-    }
-  } else
-    elog(PANIC, "tblspc_redo: unknown op code %u", info);
 }

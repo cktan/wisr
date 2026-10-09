@@ -22,8 +22,6 @@
 #include "access/syncscan.h"
 #include "access/transam.h"
 #include "access/twophase.h"
-#include "access/xlogprefetcher.h"
-#include "access/xlogrecovery.h"
 #include "commands/async.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -107,10 +105,8 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, LockManagerShmemSize());
   size = add_size(size, PredicateLockShmemSize());
   size = add_size(size, ProcGlobalShmemSize());
-  size = add_size(size, XLogPrefetchShmemSize());
   size = add_size(size, VarsupShmemSize());
   size = add_size(size, XLOGShmemSize());
-  size = add_size(size, XLogRecoveryShmemSize());
   size = add_size(size, CLOGShmemSize());
   size = add_size(size, CommitTsShmemSize());
   size = add_size(size, SUBTRANSShmemSize());
@@ -124,7 +120,6 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, PMSignalShmemSize());
   size = add_size(size, ProcSignalShmemSize());
   size = add_size(size, CheckpointerShmemSize());
-  size = add_size(size, PgArchShmemSize());
   size = add_size(size, BTreeShmemSize());
   size = add_size(size, SyncScanShmemSize());
   size = add_size(size, AsyncShmemSize());
@@ -262,8 +257,6 @@ static void CreateOrAttachShmemStructs(void) {
    */
   VarsupShmemInit();
   XLOGShmemInit();
-  XLogPrefetchShmemInit();
-  XLogRecoveryShmemInit();
   CLOGShmemInit();
   CommitTsShmemInit();
   SUBTRANSShmemInit();
@@ -301,7 +294,6 @@ static void CreateOrAttachShmemStructs(void) {
   PMSignalShmemInit();
   ProcSignalShmemInit();
   CheckpointerShmemInit();
-  PgArchShmemInit();
 
   /*
    * Set up other modules that need some shared memory space

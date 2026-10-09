@@ -200,8 +200,7 @@ typedef struct TransamVariablesData {
   /*
    * These fields are protected by OidGenLock.
    */
-  Oid nextOid;     /* next OID to assign */
-  uint32 oidCount; /* OIDs available before must do XLOG work */
+  Oid nextOid; /* next OID to assign */
 
   /*
    * These fields are protected by XidGenLock.
@@ -246,9 +245,6 @@ typedef struct TransamVariablesData {
  * ----------------
  */
 
-/* in transam/xact.c */
-extern bool TransactionStartedDuringRecovery(void);
-
 /* in transam/varsup.c */
 extern PG_SHARED PGDLLIMPORT TransamVariablesData *TransamVariables;
 
@@ -259,8 +255,6 @@ extern bool TransactionIdDidCommit(TransactionId transactionId);
 extern bool TransactionIdDidAbort(TransactionId transactionId);
 extern void TransactionIdCommitTree(TransactionId xid, int nxids,
                                     TransactionId *xids);
-extern void TransactionIdAsyncCommitTree(TransactionId xid, int nxids,
-                                         TransactionId *xids, XLogRecPtr lsn);
 extern void TransactionIdAbortTree(TransactionId xid, int nxids,
                                    TransactionId *xids);
 extern bool TransactionIdPrecedes(TransactionId id1, TransactionId id2);
@@ -269,17 +263,14 @@ extern bool TransactionIdFollows(TransactionId id1, TransactionId id2);
 extern bool TransactionIdFollowsOrEquals(TransactionId id1, TransactionId id2);
 extern TransactionId TransactionIdLatest(TransactionId mainxid, int nxids,
                                          const TransactionId *xids);
-extern XLogRecPtr TransactionIdGetCommitLSN(TransactionId xid);
 
 /* in transam/varsup.c */
 extern Size VarsupShmemSize(void);
 extern void VarsupShmemInit(void);
 extern FullTransactionId GetNewTransactionId(bool isSubXact);
-extern void AdvanceNextFullTransactionIdPastXid(TransactionId xid);
 extern FullTransactionId ReadNextFullTransactionId(void);
 extern void SetTransactionIdLimit(TransactionId oldest_datfrozenxid,
                                   Oid oldest_datoid);
-extern void AdvanceOldestClogXid(TransactionId oldest_datfrozenxid);
 extern Oid GetNewObjectId(void);
 extern void StopGeneratingPinnedObjectIds(void);
 

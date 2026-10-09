@@ -177,11 +177,6 @@ static bool attribute_statistics_update(FunctionCallInfo fcinfo) {
   nspname = TextDatumGetCString(PG_GETARG_DATUM(ATTRELSCHEMA_ARG));
   relname = TextDatumGetCString(PG_GETARG_DATUM(ATTRELNAME_ARG));
 
-  if (RecoveryInProgress())
-    ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    errmsg("recovery is in progress"),
-                    errhint("Statistics cannot be modified during recovery.")));
-
   /* lock before looking up attribute */
   reloid = RangeVarGetRelidExtended(makeRangeVar(nspname, relname, -1),
                                     ShareUpdateExclusiveLock, 0,
@@ -820,11 +815,6 @@ Datum pg_clear_attribute_stats(PG_FUNCTION_ARGS) {
 
   nspname = TextDatumGetCString(PG_GETARG_DATUM(C_ATTRELSCHEMA_ARG));
   relname = TextDatumGetCString(PG_GETARG_DATUM(C_ATTRELNAME_ARG));
-
-  if (RecoveryInProgress())
-    ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    errmsg("recovery is in progress"),
-                    errhint("Statistics cannot be modified during recovery.")));
 
   reloid = RangeVarGetRelidExtended(makeRangeVar(nspname, relname, -1),
                                     ShareUpdateExclusiveLock, 0,

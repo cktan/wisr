@@ -15,12 +15,10 @@
 #include "postgres.h"
 
 #include "access/heapam.h"
-#include "access/heapam_xlog.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/transam.h"
 #include "access/xlog.h"
-#include "access/xloginsert.h"
 #include "commands/vacuum.h"
 #include "executor/instrument.h"
 #include "miscadmin.h"
@@ -201,14 +199,6 @@ void heap_page_prune_opt(Relation relation, Buffer buffer) {
   Size minfree;
 
   /*
-   * We can't write WAL in recovery mode, so there's no point trying to
-   * clean the page. The primary will likely issue a cleaning WAL record
-   * soon anyway, so this is no particular loss.
-   */
-  if (RecoveryInProgress())
-    return;
-
-  /*
    * First check whether there's any chance there's something to prune,
    * determining the appropriate horizon is a waste if there's no prune_xid
    * (i.e. no updates/deletes left potentially dead tuples around).
@@ -360,8 +350,6 @@ void heap_page_prune_and_freeze(Relation relation, Buffer buffer,
   bool do_freeze;
   bool do_prune;
   bool do_hint;
-  bool hint_bit_fpi;
-  int64 fpi_before = pgWalUsage.wal_fpi;
 
   /* Copy parameters to prstate */
   prstate.vistest = vistest;
@@ -534,12 +522,6 @@ void heap_page_prune_and_freeze(Relation relation, Buffer buffer,
   }
 
   /*
-   * If checksums are enabled, heap_prune_satisfies_vacuum() may have caused
-   * an FPI to be emitted.
-   */
-  hint_bit_fpi = fpi_before != pgWalUsage.wal_fpi;
-
-  /*
    * Process HOT chains.
    *
    * We added the items to the array starting from 'maxoff', so by
@@ -642,49 +624,12 @@ void heap_page_prune_and_freeze(Relation relation, Buffer buffer,
 
   /*
    * Decide if we want to go ahead with freezing according to the freeze
-   * plans we prepared, or not.
+   * plans we prepared, or not.  We freeze only when
+   * heap_prepare_freeze_tuple indicated that at least one XID/MXID from
+   * before FreezeLimit/MultiXactCutoff is present: there are no full-page
+   * images to freeze opportunistically along with.
    */
-  do_freeze = false;
-  if (prstate.freeze) {
-    if (prstate.pagefrz.freeze_required) {
-      /*
-       * heap_prepare_freeze_tuple indicated that at least one XID/MXID
-       * from before FreezeLimit/MultiXactCutoff is present.  Must
-       * freeze to advance relfrozenxid/relminmxid.
-       */
-      do_freeze = true;
-    } else {
-      /*
-       * Opportunistically freeze the page if we are generating an FPI
-       * anyway and if doing so means that we can set the page
-       * all-frozen afterwards (might not happen until VACUUM's final
-       * heap pass).
-       *
-       * XXX: Previously, we knew if pruning emitted an FPI by checking
-       * pgWalUsage.wal_fpi before and after pruning.  Once the freeze
-       * and prune records were combined, this heuristic couldn't be
-       * used anymore.  The opportunistic freeze heuristic must be
-       * improved; however, for now, try to approximate the old logic.
-       */
-      if (prstate.all_visible && prstate.all_frozen && prstate.nfrozen > 0) {
-        /*
-         * Freezing would make the page all-frozen.  Have already
-         * emitted an FPI or will do so anyway?
-         */
-        if (RelationNeedsWAL(relation)) {
-          if (hint_bit_fpi)
-            do_freeze = true;
-          else if (do_prune) {
-            if (XLogCheckBufferNeedsBackup(buffer))
-              do_freeze = true;
-          } else if (do_hint) {
-            if (XLogHintBitIsNeeded() && XLogCheckBufferNeedsBackup(buffer))
-              do_freeze = true;
-          }
-        }
-      }
-    }
-  }
+  do_freeze = prstate.freeze && prstate.pagefrz.freeze_required;
 
   if (do_freeze) {
     /*
@@ -748,51 +693,6 @@ void heap_page_prune_and_freeze(Relation relation, Buffer buffer,
       heap_freeze_prepared_tuples(buffer, prstate.frozen, prstate.nfrozen);
 
     MarkBufferDirty(buffer);
-
-    /*
-     * Emit a WAL XLOG_HEAP2_PRUNE_FREEZE record showing what we did
-     */
-    if (RelationNeedsWAL(relation)) {
-      /*
-       * The snapshotConflictHorizon for the whole record should be the
-       * most conservative of all the horizons calculated for any of the
-       * possible modifications.  If this record will prune tuples, any
-       * transactions on the standby older than the youngest xmax of the
-       * most recently removed tuple this record will prune will
-       * conflict.  If this record will freeze tuples, any transactions
-       * on the standby with xids older than the youngest tuple this
-       * record will freeze will conflict.
-       */
-      TransactionId frz_conflict_horizon = InvalidTransactionId;
-      TransactionId conflict_xid;
-
-      /*
-       * We can use the visibility_cutoff_xid as our cutoff for
-       * conflicts when the whole page is eligible to become all-frozen
-       * in the VM once we're done with it.  Otherwise we generate a
-       * conservative cutoff by stepping back from OldestXmin.
-       */
-      if (do_freeze) {
-        if (prstate.all_visible && prstate.all_frozen)
-          frz_conflict_horizon = prstate.visibility_cutoff_xid;
-        else {
-          /* Avoids false conflicts when hot_standby_feedback in use */
-          frz_conflict_horizon = prstate.cutoffs->OldestXmin;
-          TransactionIdRetreat(frz_conflict_horizon);
-        }
-      }
-
-      if (TransactionIdFollows(frz_conflict_horizon,
-                               prstate.latest_xid_removed))
-        conflict_xid = frz_conflict_horizon;
-      else
-        conflict_xid = prstate.latest_xid_removed;
-
-      log_heap_prune_and_freeze(
-          relation, buffer, conflict_xid, true, reason, prstate.frozen,
-          prstate.nfrozen, prstate.redirected, prstate.nredirected,
-          prstate.nowdead, prstate.ndead, prstate.nowunused, prstate.nunused);
-    }
   }
 
   END_CRIT_SECTION();
@@ -1757,255 +1657,4 @@ void heap_get_root_tuples(Page page, OffsetNumber *root_offsets) {
       priorXmax = HeapTupleHeaderGetUpdateXid(htup);
     }
   }
-}
-
-/*
- * Compare fields that describe actions required to freeze tuple with caller's
- * open plan.  If everything matches then the frz tuple plan is equivalent to
- * caller's plan.
- */
-static inline bool heap_log_freeze_eq(xlhp_freeze_plan *plan,
-                                      HeapTupleFreeze *frz) {
-  if (plan->xmax == frz->xmax && plan->t_infomask2 == frz->t_infomask2 &&
-      plan->t_infomask == frz->t_infomask && plan->frzflags == frz->frzflags)
-    return true;
-
-  /* Caller must call heap_log_freeze_new_plan again for frz */
-  return false;
-}
-
-/*
- * Comparator used to deduplicate the freeze plans used in WAL records.
- */
-static int heap_log_freeze_cmp(const void *arg1, const void *arg2) {
-  HeapTupleFreeze *frz1 = (HeapTupleFreeze *)arg1;
-  HeapTupleFreeze *frz2 = (HeapTupleFreeze *)arg2;
-
-  if (frz1->xmax < frz2->xmax)
-    return -1;
-  else if (frz1->xmax > frz2->xmax)
-    return 1;
-
-  if (frz1->t_infomask2 < frz2->t_infomask2)
-    return -1;
-  else if (frz1->t_infomask2 > frz2->t_infomask2)
-    return 1;
-
-  if (frz1->t_infomask < frz2->t_infomask)
-    return -1;
-  else if (frz1->t_infomask > frz2->t_infomask)
-    return 1;
-
-  if (frz1->frzflags < frz2->frzflags)
-    return -1;
-  else if (frz1->frzflags > frz2->frzflags)
-    return 1;
-
-  /*
-   * heap_log_freeze_eq would consider these tuple-wise plans to be equal.
-   * (So the tuples will share a single canonical freeze plan.)
-   *
-   * We tiebreak on page offset number to keep each freeze plan's page
-   * offset number array individually sorted. (Unnecessary, but be tidy.)
-   */
-  if (frz1->offset < frz2->offset)
-    return -1;
-  else if (frz1->offset > frz2->offset)
-    return 1;
-
-  Assert(false);
-  return 0;
-}
-
-/*
- * Start new plan initialized using tuple-level actions.  At least one tuple
- * will have steps required to freeze described by caller's plan during REDO.
- */
-static inline void heap_log_freeze_new_plan(xlhp_freeze_plan *plan,
-                                            HeapTupleFreeze *frz) {
-  plan->xmax = frz->xmax;
-  plan->t_infomask2 = frz->t_infomask2;
-  plan->t_infomask = frz->t_infomask;
-  plan->frzflags = frz->frzflags;
-  plan->ntuples = 1; /* for now */
-}
-
-/*
- * Deduplicate tuple-based freeze plans so that each distinct set of
- * processing steps is only stored once in the WAL record.
- * Called during original execution of freezing (for logged relations).
- *
- * Return value is number of plans set in *plans_out for caller.  Also writes
- * an array of offset numbers into *offsets_out output argument for caller
- * (actually there is one array per freeze plan, but that's not of immediate
- * concern to our caller).
- */
-static int heap_log_freeze_plan(HeapTupleFreeze *tuples, int ntuples,
-                                xlhp_freeze_plan *plans_out,
-                                OffsetNumber *offsets_out) {
-  int nplans = 0;
-
-  /* Sort tuple-based freeze plans in the order required to deduplicate */
-  qsort(tuples, ntuples, sizeof(HeapTupleFreeze), heap_log_freeze_cmp);
-
-  for (int i = 0; i < ntuples; i++) {
-    HeapTupleFreeze *frz = tuples + i;
-
-    if (i == 0) {
-      /* New canonical freeze plan starting with first tup */
-      heap_log_freeze_new_plan(plans_out, frz);
-      nplans++;
-    } else if (heap_log_freeze_eq(plans_out, frz)) {
-      /* tup matches open canonical plan -- include tup in it */
-      Assert(offsets_out[i - 1] < frz->offset);
-      plans_out->ntuples++;
-    } else {
-      /* Tup doesn't match current plan -- done with it now */
-      plans_out++;
-
-      /* New canonical freeze plan starting with this tup */
-      heap_log_freeze_new_plan(plans_out, frz);
-      nplans++;
-    }
-
-    /*
-     * Save page offset number in dedicated buffer in passing.
-     *
-     * REDO routine relies on the record's offset numbers array grouping
-     * offset numbers by freeze plan.  The sort order within each grouping
-     * is ascending offset number order, just to keep things tidy.
-     */
-    offsets_out[i] = frz->offset;
-  }
-
-  Assert(nplans > 0 && nplans <= ntuples);
-
-  return nplans;
-}
-
-/*
- * Write an XLOG_HEAP2_PRUNE_FREEZE WAL record
- *
- * This is used for several different page maintenance operations:
- *
- * - Page pruning, in VACUUM's 1st pass or on access: Some items are
- *   redirected, some marked dead, and some removed altogether.
- *
- * - Freezing: Items are marked as 'frozen'.
- *
- * - Vacuum, 2nd pass: Items that are already LP_DEAD are marked as unused.
- *
- * They have enough commonalities that we use a single WAL record for them
- * all.
- *
- * If replaying the record requires a cleanup lock, pass cleanup_lock = true.
- * Replaying 'redirected' or 'dead' items always requires a cleanup lock, but
- * replaying 'unused' items depends on whether they were all previously marked
- * as dead.
- *
- * Note: This function scribbles on the 'frozen' array.
- *
- * Note: This is called in a critical section, so careful what you do here.
- */
-void log_heap_prune_and_freeze(Relation relation, Buffer buffer,
-                               TransactionId conflict_xid, bool cleanup_lock,
-                               PruneReason reason, HeapTupleFreeze *frozen,
-                               int nfrozen, OffsetNumber *redirected,
-                               int nredirected, OffsetNumber *dead, int ndead,
-                               OffsetNumber *unused, int nunused) {
-  xl_heap_prune xlrec;
-  XLogRecPtr recptr;
-  uint8 info;
-
-  /* The following local variables hold data registered in the WAL record: */
-  xlhp_freeze_plan plans[MaxHeapTuplesPerPage];
-  xlhp_freeze_plans freeze_plans;
-  xlhp_prune_items redirect_items;
-  xlhp_prune_items dead_items;
-  xlhp_prune_items unused_items;
-  OffsetNumber frz_offsets[MaxHeapTuplesPerPage];
-
-  xlrec.flags = 0;
-
-  /*
-   * Prepare data for the buffer.  The arrays are not actually in the
-   * buffer, but we pretend that they are.  When XLogInsert stores a full
-   * page image, the arrays can be omitted.
-   */
-  XLogBeginInsert();
-  XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
-  if (nfrozen > 0) {
-    int nplans;
-
-    xlrec.flags |= XLHP_HAS_FREEZE_PLANS;
-
-    /*
-     * Prepare deduplicated representation for use in the WAL record. This
-     * destructively sorts frozen tuples array in-place.
-     */
-    nplans = heap_log_freeze_plan(frozen, nfrozen, plans, frz_offsets);
-
-    freeze_plans.nplans = nplans;
-    XLogRegisterBufData(0, &freeze_plans, offsetof(xlhp_freeze_plans, plans));
-    XLogRegisterBufData(0, plans, sizeof(xlhp_freeze_plan) * nplans);
-  }
-  if (nredirected > 0) {
-    xlrec.flags |= XLHP_HAS_REDIRECTIONS;
-
-    redirect_items.ntargets = nredirected;
-    XLogRegisterBufData(0, &redirect_items, offsetof(xlhp_prune_items, data));
-    XLogRegisterBufData(0, redirected, sizeof(OffsetNumber[2]) * nredirected);
-  }
-  if (ndead > 0) {
-    xlrec.flags |= XLHP_HAS_DEAD_ITEMS;
-
-    dead_items.ntargets = ndead;
-    XLogRegisterBufData(0, &dead_items, offsetof(xlhp_prune_items, data));
-    XLogRegisterBufData(0, dead, sizeof(OffsetNumber) * ndead);
-  }
-  if (nunused > 0) {
-    xlrec.flags |= XLHP_HAS_NOW_UNUSED_ITEMS;
-
-    unused_items.ntargets = nunused;
-    XLogRegisterBufData(0, &unused_items, offsetof(xlhp_prune_items, data));
-    XLogRegisterBufData(0, unused, sizeof(OffsetNumber) * nunused);
-  }
-  if (nfrozen > 0)
-    XLogRegisterBufData(0, frz_offsets, sizeof(OffsetNumber) * nfrozen);
-
-  /*
-   * Prepare the main xl_heap_prune record.  We already set the XLHP_HAS_*
-   * flag above.
-   */
-  if (RelationIsAccessibleInLogicalDecoding(relation))
-    xlrec.flags |= XLHP_IS_CATALOG_REL;
-  if (TransactionIdIsValid(conflict_xid))
-    xlrec.flags |= XLHP_HAS_CONFLICT_HORIZON;
-  if (cleanup_lock)
-    xlrec.flags |= XLHP_CLEANUP_LOCK;
-  else {
-    Assert(nredirected == 0 && ndead == 0);
-    /* also, any items in 'unused' must've been LP_DEAD previously */
-  }
-  XLogRegisterData(&xlrec, SizeOfHeapPrune);
-  if (TransactionIdIsValid(conflict_xid))
-    XLogRegisterData(&conflict_xid, sizeof(TransactionId));
-
-  switch (reason) {
-  case PRUNE_ON_ACCESS:
-    info = XLOG_HEAP2_PRUNE_ON_ACCESS;
-    break;
-  case PRUNE_VACUUM_SCAN:
-    info = XLOG_HEAP2_PRUNE_VACUUM_SCAN;
-    break;
-  case PRUNE_VACUUM_CLEANUP:
-    info = XLOG_HEAP2_PRUNE_VACUUM_CLEANUP;
-    break;
-  default:
-    elog(ERROR, "unrecognized prune reason: %d", (int)reason);
-    break;
-  }
-  recptr = XLogInsert(RM_HEAP2_ID, info);
-
-  PageSetLSN(BufferGetPage(buffer), recptr);
 }

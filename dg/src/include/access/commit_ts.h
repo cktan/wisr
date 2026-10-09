@@ -28,42 +28,11 @@ extern TransactionId GetLatestCommitTsData(TimestampTz *ts,
 
 extern Size CommitTsShmemSize(void);
 extern void CommitTsShmemInit(void);
-extern void BootStrapCommitTs(void);
 extern void StartupCommitTs(void);
-extern void CommitTsParameterChange(bool newvalue, bool oldvalue);
 extern void CompleteCommitTsInitialization(void);
 extern void CheckPointCommitTs(void);
 extern void ExtendCommitTs(TransactionId newestXact);
-extern void SetCommitTsLimit(TransactionId oldestXact,
-                             TransactionId newestXact);
-extern void AdvanceOldestCommitTsXid(TransactionId oldestXact);
 
 extern int committssyncfiletag(const FileTag *ftag, char *path);
-
-/* XLOG stuff */
-#define COMMIT_TS_ZEROPAGE		0x00
-#define COMMIT_TS_TRUNCATE		0x10
-
-typedef struct xl_commit_ts_set {
-  TimestampTz timestamp;
-  RepOriginId nodeid;
-  TransactionId mainxid;
-  /* subxact Xids follow */
-} xl_commit_ts_set;
-
-#define SizeOfCommitTsSet	(offsetof(xl_commit_ts_set, mainxid) + \
-							 sizeof(TransactionId))
-
-typedef struct xl_commit_ts_truncate {
-  int64 pageno;
-  TransactionId oldestXid;
-} xl_commit_ts_truncate;
-
-#define SizeOfCommitTsTruncate	(offsetof(xl_commit_ts_truncate, oldestXid) + \
-								 sizeof(TransactionId))
-
-extern void commit_ts_redo(XLogReaderState *record);
-extern void commit_ts_desc(StringInfo buf, XLogReaderState *record);
-extern const char *commit_ts_identify(uint8 info);
 
 #endif /* COMMIT_TS_H */

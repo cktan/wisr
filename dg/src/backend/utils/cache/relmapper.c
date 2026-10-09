@@ -45,11 +45,11 @@
 
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "access/xloginsert.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/storage.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "port/pg_crc32c.h"
 #include "storage/fd.h"
 #include "storage/lwlock.h"
 #include "utils/inval.h"
@@ -137,9 +137,9 @@ static void merge_map_updates(RelMapFile *map, const RelMapFile *updates,
 static void load_relmap_file(bool shared, bool lock_held);
 static void read_relmap_file(RelMapFile *map, char *dbpath, bool lock_held,
                              int elevel);
-static void write_relmap_file(RelMapFile *newmap, bool write_wal,
-                              bool send_sinval, bool preserve_files, Oid dbid,
-                              Oid tsid, const char *dbpath);
+static void write_relmap_file(RelMapFile *newmap, bool send_sinval,
+                              bool preserve_files, Oid dbid, Oid tsid,
+                              const char *dbpath);
 static void perform_relmap_update(bool shared, const RelMapFile *updates);
 
 /*
@@ -229,60 +229,6 @@ Oid RelationMapFilenumberToOid(RelFileNumber filenumber, bool shared) {
   }
 
   return InvalidOid;
-}
-
-/*
- * RelationMapOidToFilenumberForDatabase
- *
- * Like RelationMapOidToFilenumber, but reads the mapping from the indicated
- * path instead of using the one for the current database.
- */
-RelFileNumber RelationMapOidToFilenumberForDatabase(char *dbpath,
-                                                    Oid relationId) {
-  RelMapFile map;
-  int i;
-
-  /* Read the relmap file from the source database. */
-  read_relmap_file(&map, dbpath, false, ERROR);
-
-  /* Iterate over the relmap entries to find the input relation OID. */
-  for (i = 0; i < map.num_mappings; i++) {
-    if (relationId == map.mappings[i].mapoid)
-      return map.mappings[i].mapfilenumber;
-  }
-
-  return InvalidRelFileNumber;
-}
-
-/*
- * RelationMapCopy
- *
- * Copy relmapfile from source db path to the destination db path and WAL log
- * the operation. This is intended for use in creating a new relmap file
- * for a database that doesn't have one yet, not for replacing an existing
- * relmap file.
- */
-void RelationMapCopy(Oid dbid, Oid tsid, char *srcdbpath, char *dstdbpath) {
-  RelMapFile map;
-
-  /*
-   * Read the relmap file from the source database.
-   */
-  read_relmap_file(&map, srcdbpath, false, ERROR);
-
-  /*
-   * Write the same data into the destination database's relmap file.
-   *
-   * No sinval is needed because no one can be connected to the destination
-   * database yet.
-   *
-   * There's no point in trying to preserve files here. The new database
-   * isn't usable yet anyway, and won't ever be if we can't install a relmap
-   * file.
-   */
-  LWLockAcquire(RelationMappingLock, LW_EXCLUSIVE);
-  write_relmap_file(&map, true, false, false, dbid, tsid, dstdbpath);
-  LWLockRelease(RelationMappingLock);
 }
 
 /*
@@ -498,25 +444,6 @@ void AtEOXact_RelationMap(bool isCommit) {
 }
 
 /*
- * AtPrepare_RelationMap
- *
- * Handle relation mapping at PREPARE.
- *
- * Currently, we don't support preparing any transaction that changes the map.
- */
-void AtPrepare_RelationMap(void) {
-  if (active_shared_updates.num_mappings != 0 ||
-      active_local_updates.num_mappings != 0 ||
-      pending_shared_updates.num_mappings != 0 ||
-      pending_local_updates.num_mappings != 0)
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-         errmsg(
-             "cannot PREPARE a transaction that modified relation mapping")));
-}
-
-/*
  * CheckPointRelationMap
  *
  * This is called during a checkpoint.  It must ensure that any relation map
@@ -550,9 +477,9 @@ void RelationMapFinishBootstrap(void) {
 
   /* Write the files; no WAL or sinval needed */
   LWLockAcquire(RelationMappingLock, LW_EXCLUSIVE);
-  write_relmap_file(&shared_map, false, false, false, InvalidOid,
-                    GLOBALTABLESPACE_OID, "global");
-  write_relmap_file(&local_map, false, false, false, MyDatabaseId,
+  write_relmap_file(&shared_map, false, false, InvalidOid, GLOBALTABLESPACE_OID,
+                    "global");
+  write_relmap_file(&local_map, false, false, MyDatabaseId,
                     MyDatabaseTableSpace, DatabasePath);
   LWLockRelease(RelationMappingLock);
 }
@@ -718,25 +645,21 @@ static void read_relmap_file(RelMapFile *map, char *dbpath, bool lock_held,
  * The magic number and CRC are automatically updated in *newmap.  On
  * success, we copy the data to the appropriate permanent static variable.
  *
- * If write_wal is true then an appropriate WAL message is emitted.
- * (It will be false for bootstrap and WAL replay cases.)
- *
  * If send_sinval is true then a SI invalidation message is sent.
  * (This should be true except in bootstrap case.)
  *
  * If preserve_files is true then the storage manager is warned not to
  * delete the files listed in the map.
  *
- * Because this may be called during WAL replay when MyDatabaseId,
- * DatabasePath, etc aren't valid, we require the caller to pass in suitable
- * values. Pass dbpath as "global" for the shared map.
+ * We require the caller to pass in the database and tablespace OIDs and
+ * the path. Pass dbpath as "global" for the shared map.
  *
  * The caller is also responsible for being sure no concurrent map update
  * could be happening.
  */
-static void write_relmap_file(RelMapFile *newmap, bool write_wal,
-                              bool send_sinval, bool preserve_files, Oid dbid,
-                              Oid tsid, const char *dbpath) {
+static void write_relmap_file(RelMapFile *newmap, bool send_sinval,
+                              bool preserve_files, Oid dbid, Oid tsid,
+                              const char *dbpath) {
   int fd;
   char mapfilename[MAXPGPATH];
   char maptempfilename[MAXPGPATH];
@@ -799,27 +722,6 @@ static void write_relmap_file(RelMapFile *newmap, bool write_wal,
             (errcode_for_file_access(),
              errmsg("could not close file \"%s\": %m", maptempfilename)));
 
-  if (write_wal) {
-    xl_relmap_update xlrec;
-    XLogRecPtr lsn;
-
-    /* now errors are fatal ... */
-    START_CRIT_SECTION();
-
-    xlrec.dbid = dbid;
-    xlrec.tsid = tsid;
-    xlrec.nbytes = sizeof(RelMapFile);
-
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, MinSizeOfRelmapUpdate);
-    XLogRegisterData(newmap, sizeof(RelMapFile));
-
-    lsn = XLogInsert(RM_RELMAP_ID, XLOG_RELMAP_UPDATE);
-
-    /* As always, WAL must hit the disk before the data update does */
-    XLogFlush(lsn);
-  }
-
   /*
    * durable_rename() does all the hard work of making sure that we rename
    * the temporary file into place in a crash-safe manner.
@@ -864,10 +766,6 @@ static void write_relmap_file(RelMapFile *newmap, bool write_wal,
       RelationPreserveStorage(rlocator, false);
     }
   }
-
-  /* Critical section done */
-  if (write_wal)
-    END_CRIT_SECTION();
 }
 
 /*
@@ -909,8 +807,7 @@ static void perform_relmap_update(bool shared, const RelMapFile *updates) {
   merge_map_updates(&newmap, updates, allowSystemTableMods);
 
   /* Write out the updated map and do other necessary tasks */
-  write_relmap_file(&newmap, true, true, true,
-                    (shared ? InvalidOid : MyDatabaseId),
+  write_relmap_file(&newmap, true, true, (shared ? InvalidOid : MyDatabaseId),
                     (shared ? GLOBALTABLESPACE_OID : MyDatabaseTableSpace),
                     (shared ? "global" : DatabasePath));
 
@@ -925,51 +822,4 @@ static void perform_relmap_update(bool shared, const RelMapFile *updates) {
 
   /* Now we can release the lock */
   LWLockRelease(RelationMappingLock);
-}
-
-/*
- * RELMAP resource manager's routines
- */
-void relmap_redo(XLogReaderState *record) {
-  uint8 info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
-
-  /* Backup blocks are not used in relmap records */
-  Assert(!XLogRecHasAnyBlockRefs(record));
-
-  if (info == XLOG_RELMAP_UPDATE) {
-    xl_relmap_update *xlrec = (xl_relmap_update *)XLogRecGetData(record);
-    RelMapFile newmap;
-    char *dbpath;
-
-    if (xlrec->nbytes != sizeof(RelMapFile))
-      elog(PANIC, "relmap_redo: wrong size %u in relmap update record",
-           xlrec->nbytes);
-    memcpy(&newmap, xlrec->data, sizeof(newmap));
-
-    /* We need to construct the pathname for this database */
-    dbpath = GetDatabasePath(xlrec->dbid, xlrec->tsid);
-
-    /*
-     * Write out the new map and send sinval, but of course don't write a
-     * new WAL entry.  There's no surrounding transaction to tell to
-     * preserve files, either.
-     *
-     * There shouldn't be anyone else updating relmaps during WAL replay,
-     * but grab the lock to interlock against load_relmap_file().
-     *
-     * Note that we use the same WAL record for updating the relmap of an
-     * existing database as we do for creating a new database. In the
-     * latter case, taking the relmap log and sending sinval messages is
-     * unnecessary, but harmless. If we wanted to avoid it, we could add a
-     * flag to the WAL record to indicate which operation is being
-     * performed.
-     */
-    LWLockAcquire(RelationMappingLock, LW_EXCLUSIVE);
-    write_relmap_file(&newmap, false, true, false, xlrec->dbid, xlrec->tsid,
-                      dbpath);
-    LWLockRelease(RelationMappingLock);
-
-    pfree(dbpath);
-  } else
-    elog(PANIC, "relmap_redo: unknown op code %u", info);
 }

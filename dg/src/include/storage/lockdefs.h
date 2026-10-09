@@ -50,11 +50,4 @@ typedef int LOCKMODE;
 /* See README.tuplock section "Locking to write inplace-updated tables" */
 #define InplaceUpdateTupleLock ExclusiveLock
 
-/* WAL representation of an AccessExclusiveLock on a table */
-typedef struct xl_standby_lock {
-  TransactionId xid; /* xid of holder of AccessExclusiveLock */
-  Oid dbOid;         /* DB containing table */
-  Oid relOid;        /* OID of table */
-} xl_standby_lock;
-
 #endif /* LOCKDEFS_H_ */

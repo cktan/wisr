@@ -579,19 +579,6 @@ RelationCloseSmgr(Relation relation)
 	((relation)->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT)
 
 /*
- * RelationNeedsWAL
- *		True if relation needs WAL.
- *
- * Returns false if wal_level = minimal and this relation is created or
- * truncated in the current transaction.  See "Skipping WAL for New
- * RelFileLocator" in src/backend/access/transam/README.
- */
-#define RelationNeedsWAL(relation)										\
-	(RelationIsPermanent(relation) && (XLogIsNeeded() ||				\
-	  (relation->rd_createSubid == InvalidSubTransactionId &&			\
-	   relation->rd_firstRelfilelocatorSubid == InvalidSubTransactionId)))
-
-/*
  * RelationUsesLocalBuffers
  *		True if relation's pages are stored in local buffers.
  */
@@ -645,34 +632,6 @@ RelationCloseSmgr(Relation relation)
  *		Hence, use the appropriate one of these macros in code tests.
  */
 #define RelationIsPopulated(relation) ((relation)->rd_rel->relispopulated)
-
-/*
- * RelationIsAccessibleInLogicalDecoding
- *		True if we need to log enough information to have access via
- *		decoding snapshot.
- */
-#define RelationIsAccessibleInLogicalDecoding(relation) \
-	(XLogLogicalInfoActive() && \
-	 RelationNeedsWAL(relation) && \
-	 (IsCatalogRelation(relation) || RelationIsUsedAsCatalogTable(relation)))
-
-/*
- * RelationIsLogicallyLogged
- *		True if we need to log enough information to extract the data from the
- *		WAL stream.
- *
- * We don't log information for unlogged tables (since they don't WAL log
- * anyway), for foreign tables (since they don't WAL log, either),
- * and for system tables (their content is hard to make sense of, and
- * it would complicate decoding slightly for little gain). Note that we *do*
- * log information for user defined catalog tables since they presumably are
- * interesting to the user...
- */
-#define RelationIsLogicallyLogged(relation) \
-	(XLogLogicalInfoActive() && \
-	 RelationNeedsWAL(relation) && \
-	 (relation)->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&	\
-	 !IsCatalogRelation(relation))
 
 /* routines in utils/cache/relcache.c */
 extern void RelationIncrementReferenceCount(Relation rel);

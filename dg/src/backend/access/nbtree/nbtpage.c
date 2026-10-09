@@ -23,11 +23,9 @@
 #include "postgres.h"
 
 #include "access/nbtree.h"
-#include "access/nbtxlog.h"
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xlog.h"
-#include "access/xloginsert.h"
 #include "common/int.h"
 #include "miscadmin.h"
 #include "storage/indexfsm.h"
@@ -39,13 +37,10 @@
 
 static BTMetaPageData *_bt_getmeta(Relation rel, Buffer metabuf);
 static void _bt_delitems_delete(Relation rel, Buffer buf,
-                                TransactionId snapshotConflictHorizon,
-                                bool isCatalogRel, OffsetNumber *deletable,
-                                int ndeletable, BTVacuumPosting *updatable,
-                                int nupdatable);
-static char *_bt_delitems_update(BTVacuumPosting *updatable, int nupdatable,
-                                 OffsetNumber *updatedoffsets,
-                                 Size *updatedbuflen, bool needswal);
+                                OffsetNumber *deletable, int ndeletable,
+                                BTVacuumPosting *updatable, int nupdatable);
+static void _bt_delitems_update(BTVacuumPosting *updatable, int nupdatable,
+                                OffsetNumber *updatedoffsets);
 static bool _bt_mark_page_halfdead(Relation rel, Relation heaprel,
                                    Buffer leafbuf, BTStack stack);
 static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
@@ -267,30 +262,6 @@ void _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages) {
   metad->btm_last_cleanup_num_heap_tuples = -1.0;
   MarkBufferDirty(metabuf);
 
-  /* write wal record if needed */
-  if (RelationNeedsWAL(rel)) {
-    xl_btree_metadata md;
-    XLogRecPtr recptr;
-
-    XLogBeginInsert();
-    XLogRegisterBuffer(0, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
-
-    Assert(metad->btm_version >= BTREE_NOVAC_VERSION);
-    md.version = metad->btm_version;
-    md.root = metad->btm_root;
-    md.level = metad->btm_level;
-    md.fastroot = metad->btm_fastroot;
-    md.fastlevel = metad->btm_fastlevel;
-    md.last_cleanup_num_delpages = num_delpages;
-    md.allequalimage = metad->btm_allequalimage;
-
-    XLogRegisterBufData(0, &md, sizeof(xl_btree_metadata));
-
-    recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_META_CLEANUP);
-
-    PageSetLSN(metapg, recptr);
-  }
-
   END_CRIT_SECTION();
 
   _bt_relbuf(rel, metabuf);
@@ -442,38 +413,6 @@ Buffer _bt_getroot(Relation rel, Relation heaprel, int access) {
 
     MarkBufferDirty(rootbuf);
     MarkBufferDirty(metabuf);
-
-    /* XLOG stuff */
-    if (RelationNeedsWAL(rel)) {
-      xl_btree_newroot xlrec;
-      XLogRecPtr recptr;
-      xl_btree_metadata md;
-
-      XLogBeginInsert();
-      XLogRegisterBuffer(0, rootbuf, REGBUF_WILL_INIT);
-      XLogRegisterBuffer(2, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
-
-      Assert(metad->btm_version >= BTREE_NOVAC_VERSION);
-      md.version = metad->btm_version;
-      md.root = rootblkno;
-      md.level = 0;
-      md.fastroot = rootblkno;
-      md.fastlevel = 0;
-      md.last_cleanup_num_delpages = 0;
-      md.allequalimage = metad->btm_allequalimage;
-
-      XLogRegisterBufData(2, &md, sizeof(xl_btree_metadata));
-
-      xlrec.rootblk = rootblkno;
-      xlrec.level = 0;
-
-      XLogRegisterData(&xlrec, SizeOfBtreeNewroot);
-
-      recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_NEWROOT);
-
-      PageSetLSN(rootpage, recptr);
-      PageSetLSN(metapg, recptr);
-    }
 
     END_CRIT_SECTION();
 
@@ -866,33 +805,6 @@ Buffer _bt_allocbuf(Relation rel, Relation heaprel) {
       }
 
       if (BTPageIsRecyclable(page, heaprel)) {
-        /*
-         * If we are generating WAL for Hot Standby then create a WAL
-         * record that will allow us to conflict with queries running
-         * on standby, in case they have snapshots older than safexid
-         * value
-         */
-        if (RelationNeedsWAL(rel) && XLogStandbyInfoActive()) {
-          xl_btree_reuse_page xlrec_reuse;
-
-          /*
-           * Note that we don't register the buffer with the record,
-           * because this operation doesn't modify the page (that
-           * already happened, back when VACUUM deleted the page).
-           * This record only exists to provide a conflict point for
-           * Hot Standby.  See record REDO routine comments.
-           */
-          xlrec_reuse.locator = rel->rd_locator;
-          xlrec_reuse.block = blkno;
-          xlrec_reuse.snapshotConflictHorizon = BTPageGetDeleteXid(page);
-          xlrec_reuse.isCatalogRel =
-              RelationIsAccessibleInLogicalDecoding(heaprel);
-
-          XLogBeginInsert();
-          XLogRegisterData(&xlrec_reuse, SizeOfBtreeReusePage);
-
-          XLogInsert(RM_BTREE_ID, XLOG_BTREE_REUSE_PAGE);
-        }
 
         /* Okay to use page.  Re-initialize and return it. */
         _bt_pageinit(page, BufferGetPageSize(buf));
@@ -1069,21 +981,13 @@ void _bt_pageinit(Page page, Size size) {
  * updating/overwriting an existing item with caller's new version of the item
  * (a version that lacks the TIDs that are to be deleted).
  *
- * We record VACUUMs and b-tree deletes differently in WAL.  Deletes must
- * generate their own snapshotConflictHorizon directly from the tableam,
- * whereas VACUUMs rely on the initial VACUUM table scan performing
- * WAL-logging that takes care of the issue for the table's indexes
- * indirectly.  Also, we remove the VACUUM cycle ID from pages, which b-tree
- * deletes don't do.
+ * Unlike b-tree deletes, we remove the VACUUM cycle ID from pages.
  */
 void _bt_delitems_vacuum(Relation rel, Buffer buf, OffsetNumber *deletable,
                          int ndeletable, BTVacuumPosting *updatable,
                          int nupdatable) {
   Page page = BufferGetPage(buf);
   BTPageOpaque opaque;
-  bool needswal = RelationNeedsWAL(rel);
-  char *updatedbuf = NULL;
-  Size updatedbuflen = 0;
   OffsetNumber updatedoffsets[MaxIndexTuplesPerPage];
 
   /* Shouldn't be called unless there's something to do */
@@ -1091,10 +995,9 @@ void _bt_delitems_vacuum(Relation rel, Buffer buf, OffsetNumber *deletable,
 
   /* Generate new version of posting lists without deleted TIDs */
   if (nupdatable > 0)
-    updatedbuf = _bt_delitems_update(updatable, nupdatable, updatedoffsets,
-                                     &updatedbuflen, needswal);
+    _bt_delitems_update(updatable, nupdatable, updatedoffsets);
 
-  /* No ereport(ERROR) until changes are logged */
+  /* No ereport(ERROR) while the page is half-changed */
   START_CRIT_SECTION();
 
   /*
@@ -1145,36 +1048,8 @@ void _bt_delitems_vacuum(Relation rel, Buffer buf, OffsetNumber *deletable,
 
   MarkBufferDirty(buf);
 
-  /* XLOG stuff */
-  if (needswal) {
-    XLogRecPtr recptr;
-    xl_btree_vacuum xlrec_vacuum;
-
-    xlrec_vacuum.ndeleted = ndeletable;
-    xlrec_vacuum.nupdated = nupdatable;
-
-    XLogBeginInsert();
-    XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
-    XLogRegisterData(&xlrec_vacuum, SizeOfBtreeVacuum);
-
-    if (ndeletable > 0)
-      XLogRegisterBufData(0, deletable, ndeletable * sizeof(OffsetNumber));
-
-    if (nupdatable > 0) {
-      XLogRegisterBufData(0, updatedoffsets, nupdatable * sizeof(OffsetNumber));
-      XLogRegisterBufData(0, updatedbuf, updatedbuflen);
-    }
-
-    recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_VACUUM);
-
-    PageSetLSN(page, recptr);
-  }
-
   END_CRIT_SECTION();
 
-  /* can't leak memory here */
-  if (updatedbuf != NULL)
-    pfree(updatedbuf);
   /* free tuples allocated within _bt_delitems_update() */
   for (int i = 0; i < nupdatable; i++)
     pfree(updatable[i]->itup);
@@ -1193,21 +1068,14 @@ void _bt_delitems_vacuum(Relation rel, Buffer buf, OffsetNumber *deletable,
  * (a version that lacks the TIDs that are to be deleted).
  *
  * This is nearly the same as _bt_delitems_vacuum as far as what it does to
- * the page, but it needs its own snapshotConflictHorizon and isCatalogRel
- * (from the tableam).  This is used by the REDO routine to generate recovery
- * conflicts.  The other difference is that only _bt_delitems_vacuum will
- * clear page's VACUUM cycle ID.
+ * the page.  The difference is that only _bt_delitems_vacuum will clear
+ * page's VACUUM cycle ID.
  */
 static void _bt_delitems_delete(Relation rel, Buffer buf,
-                                TransactionId snapshotConflictHorizon,
-                                bool isCatalogRel, OffsetNumber *deletable,
-                                int ndeletable, BTVacuumPosting *updatable,
-                                int nupdatable) {
+                                OffsetNumber *deletable, int ndeletable,
+                                BTVacuumPosting *updatable, int nupdatable) {
   Page page = BufferGetPage(buf);
   BTPageOpaque opaque;
-  bool needswal = RelationNeedsWAL(rel);
-  char *updatedbuf = NULL;
-  Size updatedbuflen = 0;
   OffsetNumber updatedoffsets[MaxIndexTuplesPerPage];
 
   /* Shouldn't be called unless there's something to do */
@@ -1215,10 +1083,9 @@ static void _bt_delitems_delete(Relation rel, Buffer buf,
 
   /* Generate new versions of posting lists without deleted TIDs */
   if (nupdatable > 0)
-    updatedbuf = _bt_delitems_update(updatable, nupdatable, updatedoffsets,
-                                     &updatedbuflen, needswal);
+    _bt_delitems_update(updatable, nupdatable, updatedoffsets);
 
-  /* No ereport(ERROR) until changes are logged */
+  /* No ereport(ERROR) while the page is half-changed */
   START_CRIT_SECTION();
 
   /* Handle updates and deletes just like _bt_delitems_vacuum */
@@ -1255,38 +1122,8 @@ static void _bt_delitems_delete(Relation rel, Buffer buf,
 
   MarkBufferDirty(buf);
 
-  /* XLOG stuff */
-  if (needswal) {
-    XLogRecPtr recptr;
-    xl_btree_delete xlrec_delete;
-
-    xlrec_delete.snapshotConflictHorizon = snapshotConflictHorizon;
-    xlrec_delete.ndeleted = ndeletable;
-    xlrec_delete.nupdated = nupdatable;
-    xlrec_delete.isCatalogRel = isCatalogRel;
-
-    XLogBeginInsert();
-    XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
-    XLogRegisterData(&xlrec_delete, SizeOfBtreeDelete);
-
-    if (ndeletable > 0)
-      XLogRegisterBufData(0, deletable, ndeletable * sizeof(OffsetNumber));
-
-    if (nupdatable > 0) {
-      XLogRegisterBufData(0, updatedoffsets, nupdatable * sizeof(OffsetNumber));
-      XLogRegisterBufData(0, updatedbuf, updatedbuflen);
-    }
-
-    recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_DELETE);
-
-    PageSetLSN(page, recptr);
-  }
-
   END_CRIT_SECTION();
 
-  /* can't leak memory here */
-  if (updatedbuf != NULL)
-    pfree(updatedbuf);
   /* free tuples allocated within _bt_delitems_update() */
   for (int i = 0; i < nupdatable; i++)
     pfree(updatable[i]->itup);
@@ -1303,62 +1140,22 @@ static void _bt_delitems_delete(Relation rel, Buffer buf,
  * version in palloc()'d memory.  Caller should free the tuples when its done.
  *
  * The first nupdatable entries from updatedoffsets are set to the page offset
- * number for posting list tuples that caller updates.  This is mostly useful
- * because caller may need to WAL-log the page offsets (though we always do
- * this for caller out of convenience).
- *
- * Returns buffer consisting of an array of xl_btree_update structs that
- * describe the steps we perform here for caller (though only when needswal is
- * true).  Also sets *updatedbuflen to the final size of the buffer.  This
- * buffer is used by caller when WAL logging is required.
+ * number for posting list tuples that caller updates.
  */
-static char *_bt_delitems_update(BTVacuumPosting *updatable, int nupdatable,
-                                 OffsetNumber *updatedoffsets,
-                                 Size *updatedbuflen, bool needswal) {
-  char *updatedbuf = NULL;
-  Size buflen = 0;
-
+static void _bt_delitems_update(BTVacuumPosting *updatable, int nupdatable,
+                                OffsetNumber *updatedoffsets) {
   /* Shouldn't be called unless there's something to do */
   Assert(nupdatable > 0);
 
   for (int i = 0; i < nupdatable; i++) {
     BTVacuumPosting vacposting = updatable[i];
-    Size itemsz;
 
     /* Replace work area IndexTuple with updated version */
     _bt_update_posting(vacposting);
 
-    /* Keep track of size of xl_btree_update for updatedbuf in passing */
-    itemsz = SizeOfBtreeUpdate + vacposting->ndeletedtids * sizeof(uint16);
-    buflen += itemsz;
-
     /* Build updatedoffsets buffer in passing */
     updatedoffsets[i] = vacposting->updatedoffset;
   }
-
-  /* XLOG stuff */
-  if (needswal) {
-    Size offset = 0;
-
-    /* Allocate, set final size for caller */
-    updatedbuf = (char *)palloc(buflen);
-    *updatedbuflen = buflen;
-    for (int i = 0; i < nupdatable; i++) {
-      BTVacuumPosting vacposting = updatable[i];
-      Size itemsz;
-      xl_btree_update update;
-
-      update.ndeletedtids = vacposting->ndeletedtids;
-      memcpy(updatedbuf + offset, &update.ndeletedtids, SizeOfBtreeUpdate);
-      offset += SizeOfBtreeUpdate;
-
-      itemsz = update.ndeletedtids * sizeof(uint16);
-      memcpy(updatedbuf + offset, vacposting->deletetids, itemsz);
-      offset += itemsz;
-    }
-  }
-
-  return updatedbuf;
 }
 
 /*
@@ -1415,20 +1212,13 @@ static int _bt_delitems_cmp(const void *a, const void *b) {
 void _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
                                TM_IndexDeleteOp *delstate) {
   Page page = BufferGetPage(buf);
-  TransactionId snapshotConflictHorizon;
-  bool isCatalogRel;
   OffsetNumber postingidxoffnum = InvalidOffsetNumber;
   int ndeletable = 0, nupdatable = 0;
   OffsetNumber deletable[MaxIndexTuplesPerPage];
   BTVacuumPosting updatable[MaxIndexTuplesPerPage];
 
   /* Use tableam interface to determine which tuples to delete first */
-  snapshotConflictHorizon = table_index_delete_tuples(heapRel, delstate);
-  isCatalogRel = RelationIsAccessibleInLogicalDecoding(heapRel);
-
-  /* Should not WAL-log snapshotConflictHorizon unless it's required */
-  if (!XLogStandbyInfoActive())
-    snapshotConflictHorizon = InvalidTransactionId;
+  (void)table_index_delete_tuples(heapRel, delstate);
 
   /*
    * Construct a leaf-page-wise description of what _bt_delitems_delete()
@@ -1555,8 +1345,7 @@ void _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
   }
 
   /* Physically delete tuples (or TIDs) using deletable (or updatable) */
-  _bt_delitems_delete(rel, buf, snapshotConflictHorizon, isCatalogRel,
-                      deletable, ndeletable, updatable, nupdatable);
+  _bt_delitems_delete(rel, buf, deletable, ndeletable, updatable, nupdatable);
 
   /* be tidy */
   for (int i = 0; i < nupdatable; i++)
@@ -2064,7 +1853,7 @@ static bool _bt_mark_page_halfdead(Relation rel, Relation heaprel,
    */
   PredicateLockPageCombine(rel, leafblkno, leafrightsib);
 
-  /* No ereport(ERROR) until changes are logged */
+  /* No ereport(ERROR) while the page is half-changed */
   START_CRIT_SECTION();
 
   /*
@@ -2114,37 +1903,6 @@ static bool _bt_mark_page_halfdead(Relation rel, Relation heaprel,
   MarkBufferDirty(subtreeparent);
   MarkBufferDirty(leafbuf);
 
-  /* XLOG stuff */
-  if (RelationNeedsWAL(rel)) {
-    xl_btree_mark_page_halfdead xlrec;
-    XLogRecPtr recptr;
-
-    xlrec.poffset = poffset;
-    xlrec.leafblk = leafblkno;
-    if (topparent != leafblkno)
-      xlrec.topparent = topparent;
-    else
-      xlrec.topparent = InvalidBlockNumber;
-
-    XLogBeginInsert();
-    XLogRegisterBuffer(0, leafbuf, REGBUF_WILL_INIT);
-    XLogRegisterBuffer(1, subtreeparent, REGBUF_STANDARD);
-
-    page = BufferGetPage(leafbuf);
-    opaque = BTPageGetOpaque(page);
-    xlrec.leftblk = opaque->btpo_prev;
-    xlrec.rightblk = opaque->btpo_next;
-
-    XLogRegisterData(&xlrec, SizeOfBtreeMarkPageHalfDead);
-
-    recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_MARK_PAGE_HALFDEAD);
-
-    page = BufferGetPage(subtreeparent);
-    PageSetLSN(page, recptr);
-    page = BufferGetPage(leafbuf);
-    PageSetLSN(page, recptr);
-  }
-
   END_CRIT_SECTION();
 
   _bt_relbuf(rel, subtreeparent);
@@ -2182,7 +1940,6 @@ static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
   BlockNumber leafblkno = BufferGetBlockNumber(leafbuf);
   IndexBulkDeleteResult *stats = vstate->stats;
   BlockNumber leafleftsib;
-  BlockNumber leafrightsib;
   BlockNumber target;
   BlockNumber leftsib;
   BlockNumber rightsib;
@@ -2213,7 +1970,6 @@ static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
   leafhikey = (IndexTuple)PageGetItem(page, itemid);
   target = BTreeTupleGetTopParent(leafhikey);
   leafleftsib = opaque->btpo_prev;
-  leafrightsib = opaque->btpo_next;
 
   _bt_unlockbuf(rel, leafbuf);
 
@@ -2450,7 +2206,7 @@ static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
    * Here we begin doing the deletion.
    */
 
-  /* No ereport(ERROR) until changes are logged */
+  /* No ereport(ERROR) while the page is half-changed */
   START_CRIT_SECTION();
 
   /*
@@ -2522,71 +2278,6 @@ static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
     MarkBufferDirty(lbuf);
   if (target != leafblkno)
     MarkBufferDirty(leafbuf);
-
-  /* XLOG stuff */
-  if (RelationNeedsWAL(rel)) {
-    xl_btree_unlink_page xlrec;
-    xl_btree_metadata xlmeta;
-    uint8 xlinfo;
-    XLogRecPtr recptr;
-
-    XLogBeginInsert();
-
-    XLogRegisterBuffer(0, buf, REGBUF_WILL_INIT);
-    if (BufferIsValid(lbuf))
-      XLogRegisterBuffer(1, lbuf, REGBUF_STANDARD);
-    XLogRegisterBuffer(2, rbuf, REGBUF_STANDARD);
-    if (target != leafblkno)
-      XLogRegisterBuffer(3, leafbuf, REGBUF_WILL_INIT);
-
-    /* information stored on the target/to-be-unlinked block */
-    xlrec.leftsib = leftsib;
-    xlrec.rightsib = rightsib;
-    xlrec.level = targetlevel;
-    xlrec.safexid = safexid;
-
-    /* information needed to recreate the leaf block (if not the target) */
-    xlrec.leafleftsib = leafleftsib;
-    xlrec.leafrightsib = leafrightsib;
-    xlrec.leaftopparent = leaftopparent;
-
-    XLogRegisterData(&xlrec, SizeOfBtreeUnlinkPage);
-
-    if (BufferIsValid(metabuf)) {
-      XLogRegisterBuffer(4, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
-
-      Assert(metad->btm_version >= BTREE_NOVAC_VERSION);
-      xlmeta.version = metad->btm_version;
-      xlmeta.root = metad->btm_root;
-      xlmeta.level = metad->btm_level;
-      xlmeta.fastroot = metad->btm_fastroot;
-      xlmeta.fastlevel = metad->btm_fastlevel;
-      xlmeta.last_cleanup_num_delpages = metad->btm_last_cleanup_num_delpages;
-      xlmeta.allequalimage = metad->btm_allequalimage;
-
-      XLogRegisterBufData(4, &xlmeta, sizeof(xl_btree_metadata));
-      xlinfo = XLOG_BTREE_UNLINK_PAGE_META;
-    } else
-      xlinfo = XLOG_BTREE_UNLINK_PAGE;
-
-    recptr = XLogInsert(RM_BTREE_ID, xlinfo);
-
-    if (BufferIsValid(metabuf)) {
-      PageSetLSN(metapg, recptr);
-    }
-    page = BufferGetPage(rbuf);
-    PageSetLSN(page, recptr);
-    page = BufferGetPage(buf);
-    PageSetLSN(page, recptr);
-    if (BufferIsValid(lbuf)) {
-      page = BufferGetPage(lbuf);
-      PageSetLSN(page, recptr);
-    }
-    if (target != leafblkno) {
-      page = BufferGetPage(leafbuf);
-      PageSetLSN(page, recptr);
-    }
-  }
 
   END_CRIT_SECTION();
 

@@ -6,12 +6,6 @@
  * This module is a pg_xact-like system that stores the commit timestamp
  * for each transaction.
  *
- * XLOG interactions: this module generates an XLOG record whenever a new
- * CommitTs page is initialized to zeroes.  Other writes of CommitTS come
- * from recording of transaction commit in xact.c, which generates its own
- * XLOG records for these events and will re-perform the status update on
- * redo; so we need make no additional XLOG entry here.
- *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -25,8 +19,6 @@
 #include "access/htup_details.h"
 #include "access/slru.h"
 #include "access/transam.h"
-#include "access/xloginsert.h"
-#include "access/xlogutils.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "storage/shmem.h"
@@ -108,11 +100,10 @@ static void SetXidCommitTsInPage(TransactionId xid, int nsubxids,
 static void TransactionIdSetCommitTs(TransactionId xid, TimestampTz ts,
                                      RepOriginId nodeid, int slotno);
 static void error_commit_ts_disabled(void);
-static int ZeroCommitTsPage(int64 pageno, bool writeXlog);
+static int ZeroCommitTsPage(int64 pageno);
 static bool CommitTsPagePrecedes(int64 page1, int64 page2);
 static void ActivateCommitTs(void);
 static void DeactivateCommitTs(void);
-static void WriteZeroPageXlogRec(int64 pageno);
 
 /*
  * TransactionTreeSetCommitTsData
@@ -361,12 +352,8 @@ static void error_commit_ts_disabled(void) {
   ereport(ERROR,
           (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
            errmsg("could not get commit timestamp data"),
-           RecoveryInProgress()
-               ? errhint("Make sure the configuration parameter \"%s\" is set "
-                         "on the primary server.",
-                         "track_commit_timestamp")
-               : errhint("Make sure the configuration parameter \"%s\" is set.",
-                         "track_commit_timestamp")));
+           errhint("Make sure the configuration parameter \"%s\" is set.",
+                   "track_commit_timestamp")));
 }
 
 /*
@@ -480,7 +467,7 @@ static int CommitTsShmemBuffers(void) {
  * Shared memory sizing for CommitTs
  */
 Size CommitTsShmemSize(void) {
-  return SimpleLruShmemSize(CommitTsShmemBuffers(), 0) +
+  return SimpleLruShmemSize(CommitTsShmemBuffers()) +
          sizeof(CommitTimestampShared);
 }
 
@@ -512,7 +499,7 @@ void CommitTsShmemInit(void) {
   Assert(commit_timestamp_buffers != 0);
 
   CommitTsCtl->PagePrecedes = CommitTsPagePrecedes;
-  SimpleLruInit(CommitTsCtl, "commit_timestamp", CommitTsShmemBuffers(), 0,
+  SimpleLruInit(CommitTsCtl, "commit_timestamp", CommitTsShmemBuffers(),
                 "pg_commit_ts", LWTRANCHE_COMMITTS_BUFFER,
                 LWTRANCHE_COMMITTS_SLRU, SYNC_HANDLER_COMMIT_TS, false);
   SlruPagePrecedesUnitTests(CommitTsCtl, COMMIT_TS_XACTS_PER_PAGE);
@@ -539,35 +526,17 @@ bool check_commit_ts_buffers(int *newval, void **extra, GucSource source) {
 }
 
 /*
- * This function must be called ONCE on system install.
- *
- * (The CommitTs directory is assumed to have been created by initdb, and
- * CommitTsShmemInit must have been called already.)
- */
-void BootStrapCommitTs(void) {
-  /*
-   * Nothing to do here at present, unlike most other SLRU modules; segments
-   * are created when the server is started with this module enabled. See
-   * ActivateCommitTs.
-   */
-}
-
-/*
  * Initialize (or reinitialize) a page of CommitTs to zeroes.
- * If writeXlog is true, also emit an XLOG record saying we did this.
  *
  * The page is not actually written, just set up in shared memory.
  * The slot number of the new page is returned.
  *
  * Control lock must be held at entry, and will be held at exit.
  */
-static int ZeroCommitTsPage(int64 pageno, bool writeXlog) {
+static int ZeroCommitTsPage(int64 pageno) {
   int slotno;
 
   slotno = SimpleLruZeroPage(CommitTsCtl, pageno);
-
-  if (writeXlog)
-    WriteZeroPageXlogRec(pageno);
 
   return slotno;
 }
@@ -596,31 +565,6 @@ void CompleteCommitTsInitialization(void) {
     DeactivateCommitTs();
   else
     ActivateCommitTs();
-}
-
-/*
- * Activate or deactivate CommitTs' upon reception of a XLOG_PARAMETER_CHANGE
- * XLog record during recovery.
- */
-void CommitTsParameterChange(bool newvalue, bool oldvalue) {
-  /*
-   * If the commit_ts module is disabled in this server and we get word from
-   * the primary server that it is enabled there, activate it so that we can
-   * replay future WAL records involving it; also mark it as active on
-   * pg_control.  If the old value was already set, we already did this, so
-   * don't do anything.
-   *
-   * If the module is disabled in the primary, disable it here too, unless
-   * the module is enabled locally.
-   *
-   * Note this only runs in the recovery process, so an unlocked read is
-   * fine.
-   */
-  if (newvalue) {
-    if (!commitTsShared->commitTsActive)
-      ActivateCommitTs();
-  } else if (commitTsShared->commitTsActive)
-    DeactivateCommitTs();
 }
 
 /*
@@ -692,7 +636,7 @@ static void ActivateCommitTs(void) {
     int slotno;
 
     LWLockAcquire(lock, LW_EXCLUSIVE);
-    slotno = ZeroCommitTsPage(pageno, false);
+    slotno = ZeroCommitTsPage(pageno);
     SimpleLruWritePage(CommitTsCtl, slotno);
     Assert(!CommitTsCtl->shared->page_dirty[slotno]);
     LWLockRelease(lock);
@@ -783,7 +727,6 @@ void ExtendCommitTs(TransactionId newestXact) {
    * the flag here, which is okay because this routine is only called from
    * GetNewTransactionId, which is never called in a standby.
    */
-  Assert(!InRecovery);
   if (!commitTsShared->commitTsActive)
     return;
 
@@ -801,43 +744,10 @@ void ExtendCommitTs(TransactionId newestXact) {
 
   LWLockAcquire(lock, LW_EXCLUSIVE);
 
-  /* Zero the page and make an XLOG entry about it */
-  ZeroCommitTsPage(pageno, !InRecovery);
+  /* Zero the page */
+  ZeroCommitTsPage(pageno);
 
   LWLockRelease(lock);
-}
-
-/*
- * Set the limit values between which commit TS can be consulted.
- */
-void SetCommitTsLimit(TransactionId oldestXact, TransactionId newestXact) {
-  /*
-   * Be careful not to overwrite values that are either further into the
-   * "future" or signal a disabled committs.
-   */
-  LWLockAcquire(CommitTsLock, LW_EXCLUSIVE);
-  if (TransamVariables->oldestCommitTsXid != InvalidTransactionId) {
-    if (TransactionIdPrecedes(TransamVariables->oldestCommitTsXid, oldestXact))
-      TransamVariables->oldestCommitTsXid = oldestXact;
-    if (TransactionIdPrecedes(newestXact, TransamVariables->newestCommitTsXid))
-      TransamVariables->newestCommitTsXid = newestXact;
-  } else {
-    Assert(TransamVariables->newestCommitTsXid == InvalidTransactionId);
-    TransamVariables->oldestCommitTsXid = oldestXact;
-    TransamVariables->newestCommitTsXid = newestXact;
-  }
-  LWLockRelease(CommitTsLock);
-}
-
-/*
- * Move forwards the oldest commitTS value that can be consulted
- */
-void AdvanceOldestCommitTsXid(TransactionId oldestXact) {
-  LWLockAcquire(CommitTsLock, LW_EXCLUSIVE);
-  if (TransamVariables->oldestCommitTsXid != InvalidTransactionId &&
-      TransactionIdPrecedes(TransamVariables->oldestCommitTsXid, oldestXact))
-    TransamVariables->oldestCommitTsXid = oldestXact;
-  LWLockRelease(CommitTsLock);
 }
 
 /*
@@ -874,57 +784,6 @@ static bool CommitTsPagePrecedes(int64 page1, int64 page2) {
 
   return (TransactionIdPrecedes(xid1, xid2) &&
           TransactionIdPrecedes(xid1, xid2 + COMMIT_TS_XACTS_PER_PAGE - 1));
-}
-
-/*
- * Write a ZEROPAGE xlog record
- */
-static void WriteZeroPageXlogRec(int64 pageno) {
-  XLogBeginInsert();
-  XLogRegisterData(&pageno, sizeof(pageno));
-  (void)XLogInsert(RM_COMMIT_TS_ID, COMMIT_TS_ZEROPAGE);
-}
-
-/*
- * CommitTS resource manager's routines
- */
-void commit_ts_redo(XLogReaderState *record) {
-  uint8 info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
-
-  /* Backup blocks are not used in commit_ts records */
-  Assert(!XLogRecHasAnyBlockRefs(record));
-
-  if (info == COMMIT_TS_ZEROPAGE) {
-    int64 pageno;
-    int slotno;
-    LWLock *lock;
-
-    memcpy(&pageno, XLogRecGetData(record), sizeof(pageno));
-
-    lock = SimpleLruGetBankLock(CommitTsCtl, pageno);
-    LWLockAcquire(lock, LW_EXCLUSIVE);
-
-    slotno = ZeroCommitTsPage(pageno, false);
-    SimpleLruWritePage(CommitTsCtl, slotno);
-    Assert(!CommitTsCtl->shared->page_dirty[slotno]);
-
-    LWLockRelease(lock);
-  } else if (info == COMMIT_TS_TRUNCATE) {
-    xl_commit_ts_truncate *trunc =
-        (xl_commit_ts_truncate *)XLogRecGetData(record);
-
-    AdvanceOldestCommitTsXid(trunc->oldestXid);
-
-    /*
-     * During XLOG replay, latest_page_number isn't set up yet; insert a
-     * suitable value to bypass the sanity test in SimpleLruTruncate.
-     */
-    pg_atomic_write_u64(&CommitTsCtl->shared->latest_page_number,
-                        trunc->pageno);
-
-    SimpleLruTruncate(CommitTsCtl, trunc->pageno);
-  } else
-    elog(PANIC, "commit_ts_redo: unknown op code %u", info);
 }
 
 /*

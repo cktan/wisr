@@ -478,12 +478,9 @@ bool index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot) {
   /*
    * If we scanned a whole HOT chain and found only dead tuples, tell index
    * AM to kill its entry for that TID (this will take effect in the next
-   * amgettuple call, in index_getnext_tid).  We do not do this when in
-   * recovery because it may violate MVCC to do so.  See comments in
-   * RelationGetIndexScan().
+   * amgettuple call, in index_getnext_tid).
    */
-  if (!scan->xactStartedInRecovery)
-    scan->kill_prior_tuple = all_dead;
+  scan->kill_prior_tuple = all_dead;
 
   return found;
 }

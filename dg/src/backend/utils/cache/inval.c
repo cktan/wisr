@@ -116,7 +116,6 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
-#include "access/xloginsert.h"
 #include "catalog/catalog.h"
 #include "catalog/pg_constraint.h"
 #include "miscadmin.h"
@@ -894,20 +893,6 @@ void AcceptInvalidationMessages(void) {
 }
 
 /*
- * PostPrepare_Inval
- *		Clean up after successful PREPARE.
- *
- * Here, we want to act as though the transaction aborted, so that we will
- * undo any syscache changes it made, thereby bringing us into sync with the
- * outside world, which doesn't believe the transaction committed yet.
- *
- * If the prepared transaction is later aborted, there is nothing more to
- * do; if it commits, we will receive the consequent inval messages just
- * like everyone else.
- */
-void PostPrepare_Inval(void) { AtEOXact_Inval(false); }
-
-/*
  * xactGetCommittedInvalidationMessages() is called by
  * RecordTransactionCommit() to collect invalidation messages to add to the
  * commit record. This applies only to commit message types, never to
@@ -972,43 +957,6 @@ int xactGetCommittedInvalidationMessages(SharedInvalidationMessage **msgs,
        nmsgs += n));
   ProcessMessageSubGroupMulti(
       &transInvalInfo->ii.CurrentCmdInvalidMsgs, RelCacheMsgs,
-      (memcpy(msgarray + nmsgs, msgs, n * sizeof(SharedInvalidationMessage)),
-       nmsgs += n));
-  Assert(nmsgs == nummsgs);
-
-  return nmsgs;
-}
-
-/*
- * inplaceGetInvalidationMessages() is called by the inplace update to collect
- * invalidation messages to add to its WAL record.  Like the previous
- * function, we might still fail.
- */
-int inplaceGetInvalidationMessages(SharedInvalidationMessage **msgs,
-                                   bool *RelcacheInitFileInval) {
-  SharedInvalidationMessage *msgarray;
-  int nummsgs;
-  int nmsgs;
-
-  /* Quick exit if we haven't done anything with invalidation messages. */
-  if (inplaceInvalInfo == NULL) {
-    *RelcacheInitFileInval = false;
-    *msgs = NULL;
-    return 0;
-  }
-
-  *RelcacheInitFileInval = inplaceInvalInfo->RelcacheInitFileInval;
-  nummsgs = NumMessagesInGroup(&inplaceInvalInfo->CurrentCmdInvalidMsgs);
-  *msgs = msgarray = (SharedInvalidationMessage *)palloc(
-      nummsgs * sizeof(SharedInvalidationMessage));
-
-  nmsgs = 0;
-  ProcessMessageSubGroupMulti(
-      &inplaceInvalInfo->CurrentCmdInvalidMsgs, CatCacheMsgs,
-      (memcpy(msgarray + nmsgs, msgs, n * sizeof(SharedInvalidationMessage)),
-       nmsgs += n));
-  ProcessMessageSubGroupMulti(
-      &inplaceInvalInfo->CurrentCmdInvalidMsgs, RelCacheMsgs,
       (memcpy(msgarray + nmsgs, msgs, n * sizeof(SharedInvalidationMessage)),
        nmsgs += n));
   Assert(nmsgs == nummsgs);
@@ -1290,10 +1238,6 @@ void CommandEndInvalidationMessages(void) {
 
   ProcessInvalidationMessages(&transInvalInfo->ii.CurrentCmdInvalidMsgs,
                               LocalExecuteInvalidationMessage);
-
-  /* WAL Log per-command invalidation messages for wal_level=logical */
-  if (XLogLogicalInfoActive())
-    LogLogicalInvalidations();
 
   AppendInvalidationMessages(&transInvalInfo->PriorCmdInvalidMsgs,
                              &transInvalInfo->ii.CurrentCmdInvalidMsgs);
@@ -1736,43 +1680,5 @@ void CallRelSyncCallbacks(Oid relid) {
     struct RELSYNCCALLBACK *ccitem = relsync_callback_list + i;
 
     ccitem->function(ccitem->arg, relid);
-  }
-}
-
-/*
- * LogLogicalInvalidations
- *
- * Emit WAL for invalidations caused by the current command.
- *
- * This is currently only used for logging invalidations at the command end
- * or at commit time if any invalidations are pending.
- */
-void LogLogicalInvalidations(void) {
-  xl_xact_invals xlrec;
-  InvalidationMsgsGroup *group;
-  int nmsgs;
-
-  /* Quick exit if we haven't done anything with invalidation messages. */
-  if (transInvalInfo == NULL)
-    return;
-
-  group = &transInvalInfo->ii.CurrentCmdInvalidMsgs;
-  nmsgs = NumMessagesInGroup(group);
-
-  if (nmsgs > 0) {
-    /* prepare record */
-    memset(&xlrec, 0, MinSizeOfXactInvals);
-    xlrec.nmsgs = nmsgs;
-
-    /* perform insertion */
-    XLogBeginInsert();
-    XLogRegisterData(&xlrec, MinSizeOfXactInvals);
-    ProcessMessageSubGroupMulti(
-        group, CatCacheMsgs,
-        XLogRegisterData(msgs, n * sizeof(SharedInvalidationMessage)));
-    ProcessMessageSubGroupMulti(
-        group, RelCacheMsgs,
-        XLogRegisterData(msgs, n * sizeof(SharedInvalidationMessage)));
-    XLogInsert(RM_XACT_ID, XLOG_XACT_INVALIDATIONS);
   }
 }

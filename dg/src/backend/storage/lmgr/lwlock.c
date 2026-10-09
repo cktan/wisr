@@ -144,7 +144,6 @@ static constexpr auto BuiltinTrancheNames = [] {
   a[LWTRANCHE_MULTIXACTMEMBER_BUFFER] = "MultiXactMemberBuffer";
   a[LWTRANCHE_NOTIFY_BUFFER] = "NotifyBuffer";
   a[LWTRANCHE_SERIAL_BUFFER] = "SerialBuffer";
-  a[LWTRANCHE_WAL_INSERT] = "WALInsert";
   a[LWTRANCHE_BUFFER_CONTENT] = "BufferContent";
   a[LWTRANCHE_REPLICATION_ORIGIN_STATE] = "ReplicationOriginState";
   a[LWTRANCHE_REPLICATION_SLOT_IO] = "ReplicationSlotIO";

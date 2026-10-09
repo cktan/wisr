@@ -248,9 +248,6 @@ const char *GetBackendTypeDesc(BackendType backendType) {
   case B_INVALID:
     backendDesc = gettext_noop("not initialized");
     break;
-  case B_ARCHIVER:
-    backendDesc = gettext_noop("archiver");
-    break;
   case B_BACKEND:
     backendDesc = gettext_noop("client backend");
     break;
@@ -289,9 +286,6 @@ const char *GetBackendTypeDesc(BackendType backendType) {
     break;
   case B_WAL_SUMMARIZER:
     backendDesc = gettext_noop("walsummarizer");
-    break;
-  case B_WAL_WRITER:
-    backendDesc = gettext_noop("walwriter");
     break;
   }
 
