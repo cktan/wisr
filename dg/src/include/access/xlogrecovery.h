@@ -46,29 +46,30 @@ typedef enum RecoveryPauseState {
 } RecoveryPauseState;
 
 /* User-settable GUC parameters */
-extern PGDLLIMPORT bool recoveryTargetInclusive;
-extern PGDLLIMPORT int recoveryTargetAction;
-extern PGDLLIMPORT int recovery_min_apply_delay;
-extern PGDLLIMPORT char *recoveryRestoreCommand;
-extern PGDLLIMPORT char *recoveryEndCommand;
-extern PGDLLIMPORT char *archiveCleanupCommand;
+extern thread_local PGDLLIMPORT bool recoveryTargetInclusive;
+extern thread_local PGDLLIMPORT int recoveryTargetAction;
+extern thread_local PGDLLIMPORT int recovery_min_apply_delay;
+extern thread_local PGDLLIMPORT char *recoveryRestoreCommand;
+extern thread_local PGDLLIMPORT char *recoveryEndCommand;
+extern thread_local PGDLLIMPORT char *archiveCleanupCommand;
 
 /* indirectly set via GUC system */
-extern PGDLLIMPORT TransactionId recoveryTargetXid;
-extern PGDLLIMPORT char *recovery_target_time_string;
-extern PGDLLIMPORT TimestampTz recoveryTargetTime;
-extern PGDLLIMPORT const char *recoveryTargetName;
-extern PGDLLIMPORT XLogRecPtr recoveryTargetLSN;
-extern PGDLLIMPORT RecoveryTargetType recoveryTarget;
-extern PGDLLIMPORT RecoveryTargetTimeLineGoal recoveryTargetTimeLineGoal;
-extern PGDLLIMPORT TimeLineID recoveryTargetTLIRequested;
-extern PGDLLIMPORT TimeLineID recoveryTargetTLI;
+extern thread_local PGDLLIMPORT TransactionId recoveryTargetXid;
+extern thread_local PGDLLIMPORT char *recovery_target_time_string;
+extern thread_local PGDLLIMPORT TimestampTz recoveryTargetTime;
+extern thread_local PGDLLIMPORT const char *recoveryTargetName;
+extern thread_local PGDLLIMPORT XLogRecPtr recoveryTargetLSN;
+extern thread_local PGDLLIMPORT RecoveryTargetType recoveryTarget;
+extern thread_local PGDLLIMPORT RecoveryTargetTimeLineGoal
+    recoveryTargetTimeLineGoal;
+extern thread_local PGDLLIMPORT TimeLineID recoveryTargetTLIRequested;
+extern thread_local PGDLLIMPORT TimeLineID recoveryTargetTLI;
 
 /* Have we already reached a consistent database state? */
-extern PGDLLIMPORT bool reachedConsistency;
+extern thread_local PGDLLIMPORT bool reachedConsistency;
 
 /* Are we currently in standby mode? */
-extern PGDLLIMPORT bool StandbyMode;
+extern thread_local PGDLLIMPORT bool StandbyMode;
 
 extern Size XLogRecoveryShmemSize(void);
 extern void XLogRecoveryShmemInit(void);

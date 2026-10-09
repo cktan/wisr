@@ -176,7 +176,7 @@ typedef struct InvalMessageArray {
   int maxmsgs;                     /* current allocated size of array */
 } InvalMessageArray;
 
-static InvalMessageArray InvalMessageArrays[2];
+static thread_local InvalMessageArray InvalMessageArrays[2];
 
 /* Control information for one logical group of messages */
 typedef struct InvalidationMsgsGroup {
@@ -246,12 +246,12 @@ typedef struct TransInvalidationInfo {
   int my_level;
 } TransInvalidationInfo;
 
-static TransInvalidationInfo *transInvalInfo = NULL;
+static thread_local TransInvalidationInfo *transInvalInfo = NULL;
 
-static InvalidationInfo *inplaceInvalInfo = NULL;
+static thread_local InvalidationInfo *inplaceInvalInfo = NULL;
 
 /* GUC storage */
-int debug_discard_caches = 0;
+thread_local int debug_discard_caches = 0;
 
 /*
  * Dynamically-registered callback functions.  Current implementation
@@ -267,30 +267,30 @@ int debug_discard_caches = 0;
 #define MAX_RELCACHE_CALLBACKS 10
 #define MAX_RELSYNC_CALLBACKS 10
 
-static struct SYSCACHECALLBACK {
+static thread_local struct SYSCACHECALLBACK {
   int16 id;   /* cache number */
   int16 link; /* next callback index+1 for same cache */
   SyscacheCallbackFunction function;
   Datum arg;
 } syscache_callback_list[MAX_SYSCACHE_CALLBACKS];
 
-static int16 syscache_callback_links[SysCacheSize];
+static thread_local int16 syscache_callback_links[SysCacheSize];
 
-static int syscache_callback_count = 0;
+static thread_local int syscache_callback_count = 0;
 
-static struct RELCACHECALLBACK {
+static thread_local struct RELCACHECALLBACK {
   RelcacheCallbackFunction function;
   Datum arg;
 } relcache_callback_list[MAX_RELCACHE_CALLBACKS];
 
-static int relcache_callback_count = 0;
+static thread_local int relcache_callback_count = 0;
 
-static struct RELSYNCCALLBACK {
+static thread_local struct RELSYNCCALLBACK {
   RelSyncCallbackFunction function;
   Datum arg;
 } relsync_callback_list[MAX_RELSYNC_CALLBACKS];
 
-static int relsync_callback_count = 0;
+static thread_local int relsync_callback_count = 0;
 
 /* ----------------------------------------------------------------
  *				Invalidation subgroup support functions

@@ -28,7 +28,7 @@ extern char **environ;
 #endif
 
 /* GUC variable */
-bool update_process_title = DEFAULT_UPDATE_PROCESS_TITLE;
+thread_local bool update_process_title = DEFAULT_UPDATE_PROCESS_TITLE;
 
 /*
  * Alternative ways of updating ps display:
@@ -76,28 +76,30 @@ bool update_process_title = DEFAULT_UPDATE_PROCESS_TITLE;
 static char ps_buffer[PS_BUFFER_SIZE];
 static const size_t ps_buffer_size = PS_BUFFER_SIZE;
 #else  /* PS_USE_CLOBBER_ARGV */
-static char *ps_buffer;        /* will point to argv area */
-static size_t ps_buffer_size;  /* space determined at run time */
-static size_t last_status_len; /* use to minimize length of clobber */
+static thread_local char *ps_buffer;       /* will point to argv area */
+static thread_local size_t ps_buffer_size; /* space determined at run time */
+static thread_local size_t
+    last_status_len; /* use to minimize length of clobber */
 #endif /* PS_USE_CLOBBER_ARGV */
 
-static size_t ps_buffer_cur_len; /* nominal strlen(ps_buffer) */
+static thread_local size_t ps_buffer_cur_len; /* nominal strlen(ps_buffer) */
 
-static size_t ps_buffer_fixed_size; /* size of the constant prefix */
+static thread_local size_t
+    ps_buffer_fixed_size; /* size of the constant prefix */
 
 /*
  * Length of ps_buffer before the suffix was appended to the end, or 0 if we
  * didn't set a suffix.
  */
-static size_t ps_buffer_nosuffix_len;
+static thread_local size_t ps_buffer_nosuffix_len;
 
 static void flush_ps_display(void);
 
 #endif /* not PS_USE_NONE */
 
 /* save the original argv[] location here */
-static int save_argc;
-static char **save_argv;
+static PG_SHARED int save_argc;
+static PG_SHARED char **save_argv;
 
 /*
  * Call this early in startup to save the original argc/argv values.

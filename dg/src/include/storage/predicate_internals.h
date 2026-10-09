@@ -93,13 +93,6 @@ typedef struct SERIALIZABLEXACT {
   dlist_node xactLink;       /* PredXact->activeList/availableList */
 
   /*
-   * perXactPredicateListLock is only used in parallel queries: it protects
-   * this SERIALIZABLEXACT's predicate lock list against other workers of
-   * the same session.
-   */
-  LWLock perXactPredicateListLock;
-
-  /*
    * for r/o transactions: list of concurrent r/w transactions that we could
    * potentially have conflicts with, and vice versa for r/w transactions
    */
@@ -132,12 +125,6 @@ typedef struct SERIALIZABLEXACT {
 #define SXACT_FLAG_RO_UNSAFE			0x00000100
 #define SXACT_FLAG_SUMMARY_CONFLICT_IN	0x00000200
 #define SXACT_FLAG_SUMMARY_CONFLICT_OUT 0x00000400
-/*
- * The following flag means the transaction has been partially released
- * already, but is being preserved because parallel workers might have a
- * reference to it.  It'll be recycled by the leader at end-of-transaction.
- */
-#define SXACT_FLAG_PARTIALLY_RELEASED	0x00000800
 
 typedef struct PredXactListData {
   dlist_head availableList;

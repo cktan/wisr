@@ -600,7 +600,7 @@ extern void pgstat_checkpointer_snapshot_cb(void);
 
 extern void pgstat_report_disconnect(Oid dboid);
 extern void pgstat_update_dbstats(TimestampTz ts);
-extern void AtEOXact_PgStat_Database(bool isCommit, bool parallel);
+extern void AtEOXact_PgStat_Database(bool isCommit);
 
 extern PgStat_StatDBEntry *pgstat_prep_database_pending(Oid dboid);
 extern void pgstat_reset_database_timestamp(Oid dboid, TimestampTz ts);
@@ -718,10 +718,10 @@ extern void pgstat_create_transactional(PgStat_Kind kind, Oid dboid,
  * Statistics callbacks should never reset this flag; pgstat_report_stat()
  * is in charge of doing that.
  */
-extern PGDLLIMPORT bool pgstat_report_fixed;
+extern thread_local PGDLLIMPORT bool pgstat_report_fixed;
 
 /* Backend-local stats state */
-extern PGDLLIMPORT PgStat_LocalState pgStatLocal;
+extern thread_local PGDLLIMPORT PgStat_LocalState pgStatLocal;
 
 /*
  * Implementation of inline functions declared above.

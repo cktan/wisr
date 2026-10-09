@@ -16,13 +16,6 @@
 #include "lib/ilist.h"
 #include "postmaster/bgworker.h"
 
-/* GUC options */
-
-/*
- * Maximum possible value of parallel workers.
- */
-#define MAX_PARALLEL_WORKER_LIMIT 1024
-
 /*
  * List of background workers, private to postmaster.
  *
@@ -38,7 +31,7 @@ typedef struct RegisteredBgWorker {
   dlist_node rw_lnode; /* list link */
 } RegisteredBgWorker;
 
-extern PGDLLIMPORT dlist_head BackgroundWorkerList;
+extern PG_SHARED PGDLLIMPORT dlist_head BackgroundWorkerList;
 
 extern Size BackgroundWorkerShmemSize(void);
 extern void BackgroundWorkerShmemInit(void);

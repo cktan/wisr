@@ -38,8 +38,8 @@
 #define XACT_REPEATABLE_READ	2
 #define XACT_SERIALIZABLE		3
 
-extern PGDLLIMPORT int DefaultXactIsoLevel;
-extern PGDLLIMPORT int XactIsoLevel;
+extern thread_local PGDLLIMPORT int DefaultXactIsoLevel;
+extern thread_local PGDLLIMPORT int XactIsoLevel;
 
 /*
  * We implement three isolation levels internally.
@@ -52,18 +52,18 @@ extern PGDLLIMPORT int XactIsoLevel;
 #define IsolationIsSerializable() (XactIsoLevel == XACT_SERIALIZABLE)
 
 /* Xact read-only state */
-extern PGDLLIMPORT bool DefaultXactReadOnly;
-extern PGDLLIMPORT bool XactReadOnly;
+extern thread_local PGDLLIMPORT bool DefaultXactReadOnly;
+extern thread_local PGDLLIMPORT bool XactReadOnly;
 
 /* flag for logging statements in this transaction */
-extern PGDLLIMPORT bool xact_is_sampled;
+extern thread_local PGDLLIMPORT bool xact_is_sampled;
 
 /*
  * Xact is deferrable -- only meaningful (currently) for read only
  * SERIALIZABLE transactions
  */
-extern PGDLLIMPORT bool DefaultXactDeferrable;
-extern PGDLLIMPORT bool XactDeferrable;
+extern thread_local PGDLLIMPORT bool DefaultXactDeferrable;
+extern thread_local PGDLLIMPORT bool XactDeferrable;
 
 typedef enum {
   SYNCHRONOUS_COMMIT_OFF,          /* asynchronous commit */
@@ -79,11 +79,11 @@ typedef enum {
 #define SYNCHRONOUS_COMMIT_ON	SYNCHRONOUS_COMMIT_REMOTE_FLUSH
 
 /* Synchronous commit level */
-extern PGDLLIMPORT int synchronous_commit;
+extern thread_local PGDLLIMPORT int synchronous_commit;
 
 /* used during logical streaming of a transaction */
-extern PGDLLIMPORT TransactionId CheckXidAlive;
-extern PGDLLIMPORT bool bsysscan;
+extern thread_local PGDLLIMPORT TransactionId CheckXidAlive;
+extern thread_local PGDLLIMPORT bool bsysscan;
 
 /*
  * Miscellaneous flag bits to record events which occur on the top level
@@ -92,7 +92,7 @@ extern PGDLLIMPORT bool bsysscan;
  * globally accessible, so can be set from anywhere in the code which requires
  * recording flags.
  */
-extern PGDLLIMPORT int MyXactFlags;
+extern thread_local PGDLLIMPORT int MyXactFlags;
 
 /*
  * XACT_FLAGS_ACCESSEDTEMPNAMESPACE - set when a temporary object is accessed.
@@ -124,12 +124,9 @@ extern PGDLLIMPORT int MyXactFlags;
  */
 typedef enum {
   XACT_EVENT_COMMIT,
-  XACT_EVENT_PARALLEL_COMMIT,
   XACT_EVENT_ABORT,
-  XACT_EVENT_PARALLEL_ABORT,
   XACT_EVENT_PREPARE,
   XACT_EVENT_PRE_COMMIT,
-  XACT_EVENT_PARALLEL_PRE_COMMIT,
   XACT_EVENT_PRE_PREPARE,
 } XactEvent;
 
@@ -430,8 +427,6 @@ extern FullTransactionId GetCurrentFullTransactionIdIfAny(void);
 extern void MarkCurrentTransactionIdLoggedIfAny(void);
 extern bool SubTransactionIsActive(SubTransactionId subxid);
 extern CommandId GetCurrentCommandId(bool used);
-extern void SetParallelStartTimestamps(TimestampTz xact_ts,
-                                       TimestampTz stmt_ts);
 extern TimestampTz GetCurrentTransactionStartTimestamp(void);
 extern TimestampTz GetCurrentStatementStartTimestamp(void);
 extern TimestampTz GetCurrentTransactionStopTimestamp(void);
@@ -459,10 +454,6 @@ extern void BeginInternalSubTransaction(const char *name);
 extern void ReleaseCurrentSubTransaction(void);
 extern void RollbackAndReleaseCurrentSubTransaction(void);
 extern bool IsSubTransaction(void);
-extern Size EstimateTransactionStateSpace(void);
-extern void SerializeTransactionState(Size maxsize, char *start_address);
-extern void StartParallelWorkerTransaction(char *tstatespace);
-extern void EndParallelWorkerTransaction(void);
 extern bool IsTransactionBlock(void);
 extern bool IsTransactionOrTransactionBlock(void);
 extern char TransactionBlockStatusCode(void);
@@ -506,9 +497,5 @@ extern void ParseAbortRecord(uint8 info, xl_xact_abort *xlrec,
                              xl_xact_parsed_abort *parsed);
 extern void ParsePrepareRecord(uint8 info, xl_xact_prepare *xlrec,
                                xl_xact_parsed_prepare *parsed);
-
-extern void EnterParallelMode(void);
-extern void ExitParallelMode(void);
-extern bool IsInParallelMode(void);
 
 #endif /* XACT_H */

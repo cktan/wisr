@@ -38,14 +38,6 @@ extern void ExplainOpenGroup(const char *objtype, const char *labelname,
 extern void ExplainCloseGroup(const char *objtype, const char *labelname,
                               bool labeled, struct ExplainState *es);
 
-extern void ExplainOpenSetAsideGroup(const char *objtype, const char *labelname,
-                                     bool labeled, int depth,
-                                     struct ExplainState *es);
-extern void ExplainSaveGroup(struct ExplainState *es, int depth,
-                             int *state_save);
-extern void ExplainRestoreGroup(struct ExplainState *es, int depth,
-                                int *state_save);
-
 extern void ExplainDummyGroup(const char *objtype, const char *labelname,
                               struct ExplainState *es);
 

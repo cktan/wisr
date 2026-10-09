@@ -94,7 +94,6 @@ extern ReadStream *read_stream_begin_smgr_relation(
     int flags, BufferAccessStrategy strategy, SMgrRelation smgr,
     char smgr_persistence, ForkNumber forknum, ReadStreamBlockNumberCB callback,
     void *callback_private_data, size_t per_buffer_data_size);
-extern void read_stream_clear_strategy(ReadStream *stream);
 extern void read_stream_reset(ReadStream *stream);
 extern void read_stream_end(ReadStream *stream);
 

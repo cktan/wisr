@@ -20,7 +20,6 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
-#include "access/parallel.h"
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "catalog/cat_builtin.h"
@@ -50,6 +49,7 @@
 #include "nodes/makefuncs.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
+#include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -133,36 +133,36 @@
 
 /* These variables define the actually active state: */
 
-static List *activeSearchPath = NIL;
+static thread_local List *activeSearchPath = NIL;
 
 /* default place to create stuff; if InvalidOid, no default */
-static Oid activeCreationNamespace = InvalidOid;
+static thread_local Oid activeCreationNamespace = InvalidOid;
 
 /* if true, activeCreationNamespace is wrong, it should be temp namespace */
-static bool activeTempCreationPending = false;
+static thread_local bool activeTempCreationPending = false;
 
 /* current generation counter; make sure this is never zero */
-static uint64 activePathGeneration = 1;
+static thread_local uint64 activePathGeneration = 1;
 
 /* These variables are the values last derived from namespace_search_path: */
 
-static List *baseSearchPath = NIL;
+static thread_local List *baseSearchPath = NIL;
 
-static Oid baseCreationNamespace = InvalidOid;
+static thread_local Oid baseCreationNamespace = InvalidOid;
 
-static bool baseTempCreationPending = false;
+static thread_local bool baseTempCreationPending = false;
 
-static Oid namespaceUser = InvalidOid;
+static thread_local Oid namespaceUser = InvalidOid;
 
 /* The above four values are valid only if baseSearchPathValid */
-static bool baseSearchPathValid = true;
+static thread_local bool baseSearchPathValid = true;
 
 /*
  * Storage for search path cache.  Clear searchPathCacheValid as a simple
  * way to invalidate *all* the cache entries, not just the active one.
  */
-static bool searchPathCacheValid = false;
-static MemoryContext SearchPathCacheContext = NULL;
+static thread_local bool searchPathCacheValid = false;
+static thread_local MemoryContext SearchPathCacheContext = NULL;
 
 typedef struct SearchPathCacheKey {
   const char *searchPath;
@@ -196,17 +196,18 @@ typedef struct SearchPathCacheEntry {
  * we either haven't made the TEMP namespace yet, or have successfully
  * committed its creation, depending on whether myTempNamespace is valid.
  */
-static Oid myTempNamespace = InvalidOid;
+static thread_local Oid myTempNamespace = InvalidOid;
 
-static Oid myTempToastNamespace = InvalidOid;
+static thread_local Oid myTempToastNamespace = InvalidOid;
 
-static SubTransactionId myTempNamespaceSubID = InvalidSubTransactionId;
+static thread_local SubTransactionId myTempNamespaceSubID =
+    InvalidSubTransactionId;
 
 /*
  * This is the user's textual search path specification --- it's the value
  * of the GUC variable 'search_path'.
  */
-char *namespace_search_path = NULL;
+thread_local char *namespace_search_path = NULL;
 
 /* Local functions */
 static bool RelationIsVisibleExt(Oid relid, bool *is_missing);
@@ -289,8 +290,8 @@ static inline bool spcachekey_equal(SearchPathCacheKey a,
  */
 #define SPCACHE_RESET_THRESHOLD		256
 
-static nsphash_hash *SearchPathCache = NULL;
-static SearchPathCacheEntry *LastSearchPathCacheEntry = NULL;
+static thread_local nsphash_hash *SearchPathCache = NULL;
+static thread_local SearchPathCacheEntry *LastSearchPathCacheEntry = NULL;
 
 /*
  * Create or reset search_path cache as necessary.
@@ -3267,44 +3268,6 @@ bool isOtherTempNamespace(Oid namespaceId) {
 }
 
 /*
- * checkTempNamespaceStatus - is the given namespace owned and actively used
- * by a backend?
- *
- * Note: this can be used while scanning relations in pg_class to detect
- * orphaned temporary tables or namespaces with a backend connected to a
- * given database.  The result may be out of date quickly, so the caller
- * must be careful how to handle this information.
- */
-TempNamespaceStatus checkTempNamespaceStatus(Oid namespaceId) {
-  PGPROC *proc;
-  ProcNumber procNumber;
-
-  Assert(OidIsValid(MyDatabaseId));
-
-  procNumber = GetTempNamespaceProcNumber(namespaceId);
-
-  /* No such namespace, or its name shows it's not temp? */
-  if (procNumber == INVALID_PROC_NUMBER)
-    return TEMP_NAMESPACE_NOT_TEMP;
-
-  /* Is the backend alive? */
-  proc = ProcNumberGetProc(procNumber);
-  if (proc == NULL)
-    return TEMP_NAMESPACE_IDLE;
-
-  /* Is the backend connected to the same database we are looking at? */
-  if (proc->databaseId != MyDatabaseId)
-    return TEMP_NAMESPACE_IDLE;
-
-  /* Does the backend own the temporary namespace? */
-  if (proc->tempNamespaceId != namespaceId)
-    return TEMP_NAMESPACE_IDLE;
-
-  /* Yup, so namespace is busy */
-  return TEMP_NAMESPACE_IN_USE;
-}
-
-/*
  * GetTempNamespaceProcNumber - if the given namespace is a temporary-table
  * namespace (either my own, or another backend's), return the proc number
  * that owns it.  Temporary-toast-table namespaces are included, too.
@@ -3910,13 +3873,6 @@ static void InitTempTableNamespace(void) {
     ereport(ERROR, (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
                     errmsg("cannot create temporary tables during recovery")));
 
-  /* Parallel workers can't create temporary tables, either. */
-  if (IsParallelWorker())
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-         errmsg("cannot create temporary tables during a parallel operation")));
-
   snprintf(namespaceName, sizeof(namespaceName), "pg_temp_%d", MyProcNumber);
 
   namespaceId = get_namespace_oid(namespaceName, true);
@@ -3986,7 +3942,7 @@ static void InitTempTableNamespace(void) {
 /*
  * End-of-transaction cleanup for namespaces.
  */
-void AtEOXact_Namespace(bool isCommit, bool parallel) {
+void AtEOXact_Namespace(bool isCommit) {
   /*
    * If we abort the transaction in which a temp namespace was selected,
    * we'll have to do any creation or cleanout work over again.  So, just
@@ -3995,7 +3951,7 @@ void AtEOXact_Namespace(bool isCommit, bool parallel) {
    * at backend shutdown.  (We only want to register the callback once per
    * session, so this is a good place to do it.)
    */
-  if (myTempNamespaceSubID != InvalidSubTransactionId && !parallel) {
+  if (myTempNamespaceSubID != InvalidSubTransactionId) {
     if (isCommit)
       before_shmem_exit(RemoveTempRelationsCallback, 0);
     else {

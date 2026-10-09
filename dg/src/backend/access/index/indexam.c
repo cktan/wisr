@@ -19,10 +19,6 @@
  *- end a scan index_insert	- insert an index tuple into a relation
  *		index_markpos	- mark a scan position
  *		index_restrpos	- restore a scan position
- *		index_parallelscan_estimate - estimate shared memory for
- *parallel scan index_parallelscan_initialize - initialize parallel scan
- *		index_parallelrescan  - (re)start a parallel scan of an index
- *		index_beginscan_parallel - join parallel index scan
  *		index_getnext_tid	- get the next TID from a scan
  *		index_fetch_heap		- get the scan's next heap tuple
  *		index_getnext_slot	- get the next tuple from a scan
@@ -104,7 +100,6 @@ do { \
 
 static IndexScanDesc index_beginscan_internal(Relation indexRelation, int nkeys,
                                               int norderbys, Snapshot snapshot,
-                                              ParallelIndexScanDesc pscan,
                                               bool temp_snap);
 static inline void validate_relation_kind(Relation r);
 
@@ -238,7 +233,7 @@ IndexScanDesc index_beginscan(Relation heapRelation, Relation indexRelation,
   Assert(snapshot != InvalidSnapshot);
 
   scan = index_beginscan_internal(indexRelation, nkeys, norderbys, snapshot,
-                                  NULL, false);
+                                  false);
 
   /*
    * Save additional parameters into the scandesc.  Everything else was set
@@ -267,8 +262,7 @@ IndexScanDesc index_beginscan_bitmap(Relation indexRelation, Snapshot snapshot,
 
   Assert(snapshot != InvalidSnapshot);
 
-  scan =
-      index_beginscan_internal(indexRelation, nkeys, 0, snapshot, NULL, false);
+  scan = index_beginscan_internal(indexRelation, nkeys, 0, snapshot, false);
 
   /*
    * Save additional parameters into the scandesc.  Everything else was set
@@ -285,7 +279,6 @@ IndexScanDesc index_beginscan_bitmap(Relation indexRelation, Snapshot snapshot,
  */
 static IndexScanDesc index_beginscan_internal(Relation indexRelation, int nkeys,
                                               int norderbys, Snapshot snapshot,
-                                              ParallelIndexScanDesc pscan,
                                               bool temp_snap) {
   IndexScanDesc scan;
 
@@ -304,8 +297,6 @@ static IndexScanDesc index_beginscan_internal(Relation indexRelation, int nkeys,
    * Tell the AM to open a scan.
    */
   scan = indexRelation->rd_indam->ambeginscan(indexRelation, nkeys, norderbys);
-  /* Initialize information for parallel scan. */
-  scan->parallel_scan = pscan;
   scan->xs_temp_snap = temp_snap;
 
   return scan;
@@ -409,154 +400,6 @@ void index_restrpos(IndexScanDesc scan) {
   scan->xs_heap_continue = false;
 
   scan->indexRelation->rd_indam->amrestrpos(scan);
-}
-
-/*
- * index_parallelscan_estimate - estimate shared memory for parallel scan
- *
- * When instrument=true, estimate includes SharedIndexScanInstrumentation
- * space.  When parallel_aware=true, estimate includes whatever space the
- * index AM's amestimateparallelscan routine requested when called.
- */
-Size index_parallelscan_estimate(Relation indexRelation, int nkeys,
-                                 int norderbys, Snapshot snapshot,
-                                 bool instrument, bool parallel_aware,
-                                 int nworkers) {
-  Size nbytes;
-
-  Assert(instrument || parallel_aware);
-
-  RELATION_CHECKS;
-
-  nbytes = offsetof(ParallelIndexScanDescData, ps_snapshot_data);
-  nbytes = add_size(nbytes, EstimateSnapshotSpace(snapshot));
-  nbytes = MAXALIGN(nbytes);
-
-  if (instrument) {
-    Size sharedinfosz;
-
-    sharedinfosz = offsetof(SharedIndexScanInstrumentation, winstrument) +
-                   nworkers * sizeof(IndexScanInstrumentation);
-    nbytes = add_size(nbytes, sharedinfosz);
-    nbytes = MAXALIGN(nbytes);
-  }
-
-  /*
-   * If parallel scan index AM interface can't be used (or index AM provides
-   * no such interface), assume there is no AM-specific data needed
-   */
-  if (parallel_aware && indexRelation->rd_indam->amestimateparallelscan != NULL)
-    nbytes = add_size(nbytes, indexRelation->rd_indam->amestimateparallelscan(
-                                  indexRelation, nkeys, norderbys));
-
-  return nbytes;
-}
-
-/*
- * index_parallelscan_initialize - initialize parallel scan
- *
- * We initialize both the ParallelIndexScanDesc proper and the AM-specific
- * information which follows it.
- *
- * This function calls access method specific initialization routine to
- * initialize am specific information.  Call this just once in the leader
- * process; then, individual workers attach via index_beginscan_parallel.
- */
-void index_parallelscan_initialize(Relation heapRelation,
-                                   Relation indexRelation, Snapshot snapshot,
-                                   bool instrument, bool parallel_aware,
-                                   int nworkers,
-                                   SharedIndexScanInstrumentation **sharedinfo,
-                                   ParallelIndexScanDesc target) {
-  Size offset;
-
-  Assert(instrument || parallel_aware);
-
-  RELATION_CHECKS;
-
-  offset = add_size(offsetof(ParallelIndexScanDescData, ps_snapshot_data),
-                    EstimateSnapshotSpace(snapshot));
-  offset = MAXALIGN(offset);
-
-  target->ps_locator = heapRelation->rd_locator;
-  target->ps_indexlocator = indexRelation->rd_locator;
-  target->ps_offset_ins = 0;
-  target->ps_offset_am = 0;
-  SerializeSnapshot(snapshot, target->ps_snapshot_data);
-
-  if (instrument) {
-    Size sharedinfosz;
-
-    target->ps_offset_ins = offset;
-    sharedinfosz = offsetof(SharedIndexScanInstrumentation, winstrument) +
-                   nworkers * sizeof(IndexScanInstrumentation);
-    offset = add_size(offset, sharedinfosz);
-    offset = MAXALIGN(offset);
-
-    /* Set leader's *sharedinfo pointer, and initialize stats */
-    *sharedinfo = (SharedIndexScanInstrumentation *)OffsetToPointer(
-        target, target->ps_offset_ins);
-    memset(*sharedinfo, 0, sharedinfosz);
-    (*sharedinfo)->num_workers = nworkers;
-  }
-
-  /* aminitparallelscan is optional; assume no-op if not provided by AM */
-  if (parallel_aware && indexRelation->rd_indam->aminitparallelscan != NULL) {
-    void *amtarget;
-
-    target->ps_offset_am = offset;
-    amtarget = OffsetToPointer(target, target->ps_offset_am);
-    indexRelation->rd_indam->aminitparallelscan(amtarget);
-  }
-}
-
-/* ----------------
- *		index_parallelrescan  - (re)start a parallel scan of an index
- * ----------------
- */
-void index_parallelrescan(IndexScanDesc scan) {
-  SCAN_CHECKS;
-
-  if (scan->xs_heapfetch)
-    table_index_fetch_reset(scan->xs_heapfetch);
-
-  /* amparallelrescan is optional; assume no-op if not provided by AM */
-  if (scan->indexRelation->rd_indam->amparallelrescan != NULL)
-    scan->indexRelation->rd_indam->amparallelrescan(scan);
-}
-
-/*
- * index_beginscan_parallel - join parallel index scan
- *
- * Caller must be holding suitable locks on the heap and the index.
- */
-IndexScanDesc index_beginscan_parallel(Relation heaprel, Relation indexrel,
-                                       IndexScanInstrumentation *instrument,
-                                       int nkeys, int norderbys,
-                                       ParallelIndexScanDesc pscan) {
-  Snapshot snapshot;
-  IndexScanDesc scan;
-
-  Assert(RelFileLocatorEquals(heaprel->rd_locator, pscan->ps_locator));
-  Assert(RelFileLocatorEquals(indexrel->rd_locator, pscan->ps_indexlocator));
-
-  snapshot = RestoreSnapshot(pscan->ps_snapshot_data);
-  RegisterSnapshot(snapshot);
-  scan = index_beginscan_internal(indexrel, nkeys, norderbys, snapshot, pscan,
-                                  true);
-
-  /*
-   * Save additional parameters into the scandesc.  Everything else was set
-   * up by index_beginscan_internal.
-   */
-  scan->heapRelation = heaprel;
-  scan->xs_snapshot = snapshot;
-  scan->instrument = instrument;
-
-  /* prepare to fetch index matches from table */
-  scan->xs_heapfetch = table_index_fetch_begin(heaprel);
-
-  return scan;
 }
 
 /* ----------------

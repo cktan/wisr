@@ -20,7 +20,7 @@
 #include "utils/relcache.h"
 
 /* GUC variables */
-extern PGDLLIMPORT int wal_skip_threshold;
+extern thread_local PGDLLIMPORT int wal_skip_threshold;
 
 extern SMgrRelation RelationCreateStorage(RelFileLocator rlocator,
                                           char relpersistence,
@@ -32,16 +32,13 @@ extern void RelationTruncate(Relation rel, BlockNumber nblocks);
 extern void RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
                                 ForkNumber forkNum, char relpersistence);
 extern bool RelFileLocatorSkippingWAL(RelFileLocator rlocator);
-extern Size EstimatePendingSyncsSpace(void);
-extern void SerializePendingSyncs(Size maxSize, char *startAddress);
-extern void RestorePendingSyncs(char *startAddress);
 
 /*
  * These functions used to be in storage/smgr/smgr.c, which explains the
  * naming
  */
 extern void smgrDoPendingDeletes(bool isCommit);
-extern void smgrDoPendingSyncs(bool isCommit, bool isParallelWorker);
+extern void smgrDoPendingSyncs(bool isCommit);
 extern int smgrGetPendingDeletes(bool forCommit, RelFileLocator **ptr);
 extern void AtSubCommit_smgr(void);
 extern void AtSubAbort_smgr(void);

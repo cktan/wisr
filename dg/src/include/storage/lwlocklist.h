@@ -52,8 +52,8 @@ PG_LWLOCK(18, TwoPhaseState)
 PG_LWLOCK(19, TablespaceCreate)
 PG_LWLOCK(20, BtreeVacuum)
 PG_LWLOCK(21, AddinShmemInit)
-PG_LWLOCK(22, Autovacuum)
-PG_LWLOCK(23, AutovacuumSchedule)
+/* 22 was AutovacuumLock */
+/* 23 was AutovacuumScheduleLock */
 PG_LWLOCK(24, SyncScan)
 PG_LWLOCK(25, RelationMapping)
 /* 26 was NotifySLRULock */
@@ -76,7 +76,7 @@ PG_LWLOCK(41, MultiXactTruncation)
 PG_LWLOCK(43, LogicalRepWorker)
 PG_LWLOCK(44, XactTruncation)
 /* 45 was XactTruncationLock until removal of BackendRandomLock */
-PG_LWLOCK(46, WrapLimitsVacuum)
+/* 46 was WrapLimitsVacuumLock */
 PG_LWLOCK(47, NotifyQueueTail)
 PG_LWLOCK(48, WaitEventCustom)
 PG_LWLOCK(49, WALSummarizer)

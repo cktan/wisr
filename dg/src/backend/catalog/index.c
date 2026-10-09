@@ -63,7 +63,6 @@
 #include "optimizer/optimizer.h"
 #include "parser/parser.h"
 #include "pgstat.h"
-#include "postmaster/autovacuum.h"
 #include "rewrite/rewriteManip.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
@@ -82,20 +81,9 @@
 #include "utils/tuplesort.h"
 
 /* Potentially set by pg_upgrade_support functions */
-Oid binary_upgrade_next_index_pg_class_oid = InvalidOid;
-RelFileNumber binary_upgrade_next_index_pg_class_relfilenumber =
+thread_local Oid binary_upgrade_next_index_pg_class_oid = InvalidOid;
+thread_local RelFileNumber binary_upgrade_next_index_pg_class_relfilenumber =
     InvalidRelFileNumber;
-
-/*
- * Pointer-free representation of variables used when reindexing system
- * catalogs; we use this to propagate those values to parallel workers.
- */
-typedef struct {
-  Oid currentlyReindexedHeap;
-  Oid currentlyReindexedIndex;
-  int numPendingReindexedIndexes;
-  Oid pendingReindexedIndexes[FLEXIBLE_ARRAY_MEMBER];
-} SerializedReindexState;
 
 /* non-export function prototypes */
 static bool relationHasPrimaryKey(Relation rel);
@@ -1146,7 +1134,7 @@ Oid index_create(Relation heapRelation, const char *indexRelationName,
     /* Make the above update visible */
     CommandCounterIncrement();
   } else {
-    index_build(heapRelation, indexRelation, indexInfo, false, true);
+    index_build(heapRelation, indexRelation, indexInfo, false);
   }
 
   /*
@@ -1376,7 +1364,7 @@ void index_concurrently_build(Oid heapRelationId, Oid indexRelationId) {
   indexInfo->ii_BrokenHotChain = false;
 
   /* Now build the index */
-  index_build(heapRel, indexRelation, indexInfo, false, true);
+  index_build(heapRel, indexRelation, indexInfo, false);
 
   /* Roll back any GUC changes executed by index functions */
   AtEOXact_GUC(false, save_nestlevel);
@@ -2584,22 +2572,15 @@ static void index_update_stats(Relation rel, bool hasindex, double reltuples) {
   update_stats = reltuples >= 0 && !IsBinaryUpgrade;
 
   /*
-   * If autovacuum is off, user may not be expecting table relstats to
-   * change.  This can be important when restoring a dump that includes
+   * There is no autovacuum, so the user may not be expecting table relstats
+   * to change.  This can be important when restoring a dump that includes
    * statistics, as the table statistics may be restored before the index is
    * created, and we want to preserve the restored table statistics.
    */
   if (rel->rd_rel->relkind == RELKIND_RELATION ||
       rel->rd_rel->relkind == RELKIND_TOASTVALUE ||
-      rel->rd_rel->relkind == RELKIND_MATVIEW) {
-    if (AutoVacuumingActive()) {
-      StdRdOptions *options = (StdRdOptions *)rel->rd_options;
-
-      if (options != NULL && !options->autovacuum.enabled)
-        update_stats = false;
-    } else
-      update_stats = false;
-  }
+      rel->rd_rel->relkind == RELKIND_MATVIEW)
+    update_stats = false;
 
   /*
    * Finish I/O and visibility map buffer locks before
@@ -2718,14 +2699,13 @@ static void index_update_stats(Relation rel, bool hasindex, double reltuples) {
  * returned by ambuild as well as data passed by the caller.
  *
  * isreindex indicates we are recreating a previously-existing index.
- * parallel indicates if parallelism may be useful.
  *
  * Note: before Postgres 8.2, the passed-in heap and index Relations
  * were automatically closed by this routine.  This is no longer the case.
  * The caller opened 'em, and the caller should close 'em.
  */
 void index_build(Relation heapRelation, Relation indexRelation,
-                 IndexInfo *indexInfo, bool isreindex, bool parallel) {
+                 IndexInfo *indexInfo, bool isreindex) {
   IndexBuildResult *stats;
   Oid save_userid;
   int save_sec_context;
@@ -2739,28 +2719,9 @@ void index_build(Relation heapRelation, Relation indexRelation,
   Assert(PointerIsValid(indexRelation->rd_indam->ambuild));
   Assert(PointerIsValid(indexRelation->rd_indam->ambuildempty));
 
-  /*
-   * Determine worker process details for parallel CREATE INDEX.  Currently,
-   * only btree, GIN, and BRIN have support for parallel builds.
-   *
-   * Note that planner considers parallel safety for us.
-   */
-  if (parallel && IsNormalProcessingMode() &&
-      indexRelation->rd_indam->amcanbuildparallel)
-    indexInfo->ii_ParallelWorkers = plan_create_index_workers(
-        RelationGetRelid(heapRelation), RelationGetRelid(indexRelation));
-
-  if (indexInfo->ii_ParallelWorkers == 0)
-    ereport(DEBUG1,
-            (errmsg_internal("building index \"%s\" on table \"%s\" serially",
-                             RelationGetRelationName(indexRelation),
-                             RelationGetRelationName(heapRelation))));
-  else
-    ereport(DEBUG1, (errmsg_internal("building index \"%s\" on table \"%s\" "
-                                     "with request for %d parallel workers",
-                                     RelationGetRelationName(indexRelation),
-                                     RelationGetRelationName(heapRelation),
-                                     indexInfo->ii_ParallelWorkers)));
+  ereport(DEBUG1, (errmsg_internal("building index \"%s\" on table \"%s\"",
+                                   RelationGetRelationName(indexRelation),
+                                   RelationGetRelationName(heapRelation))));
 
   /*
    * Switch to the table owner's userid, so that any index functions are run
@@ -3109,7 +3070,7 @@ void validate_index(Oid heapId, Oid indexId, Snapshot snapshot) {
    */
   state.tuplesort =
       tuplesort_begin_datum(INT8OID, Int8LessOperator, InvalidOid, false,
-                            maintenance_work_mem, NULL, TUPLESORT_NONE);
+                            maintenance_work_mem, TUPLESORT_NONE);
   state.htups = state.itups = state.tups_inserted = 0;
 
   /* ambulkdelete updates progress metrics */
@@ -3464,7 +3425,7 @@ void reindex_index(const ReindexStmt *stmt, Oid indexId,
 
   /* Initialize the index and rebuild */
   /* Note: we do not need to re-establish pkey setting */
-  index_build(heapRelation, iRel, indexInfo, true, true);
+  index_build(heapRelation, iRel, indexInfo, true);
 
   /* Re-allow use of target index */
   ResetReindexProcessing();
@@ -3738,15 +3699,14 @@ bool reindex_relation(const ReindexStmt *stmt, Oid relid, int flags,
  * When we are busy reindexing a system index, this code provides support
  * for preventing catalog lookups from using that index.  We also make use
  * of this to catch attempted uses of user indexes during reindexing of
- * those indexes.  This information is propagated to parallel workers;
- * attempting to change it during a parallel operation is not permitted.
+ * those indexes.
  * ----------------------------------------------------------------
  */
 
-static Oid currentlyReindexedHeap = InvalidOid;
-static Oid currentlyReindexedIndex = InvalidOid;
-static List *pendingReindexedIndexes = NIL;
-static int reindexingNestLevel = 0;
+static thread_local Oid currentlyReindexedHeap = InvalidOid;
+static thread_local Oid currentlyReindexedIndex = InvalidOid;
+static thread_local List *pendingReindexedIndexes = NIL;
+static thread_local int reindexingNestLevel = 0;
 
 /*
  * ReindexIsProcessingHeap
@@ -3811,8 +3771,6 @@ static void SetReindexPending(List *indexes) {
   /* Reindexing is not re-entrant. */
   if (pendingReindexedIndexes)
     elog(ERROR, "cannot reindex while reindexing");
-  if (IsInParallelMode())
-    elog(ERROR, "cannot modify reindex state during a parallel operation");
   pendingReindexedIndexes = list_copy(indexes);
   reindexingNestLevel = GetCurrentTransactionNestLevel();
 }
@@ -3822,8 +3780,6 @@ static void SetReindexPending(List *indexes) {
  *		Remove the given index from the pending list.
  */
 static void RemoveReindexPending(Oid indexOid) {
-  if (IsInParallelMode())
-    elog(ERROR, "cannot modify reindex state during a parallel operation");
   pendingReindexedIndexes = list_delete_oid(pendingReindexedIndexes, indexOid);
 }
 
@@ -3851,53 +3807,4 @@ void ResetReindexState(int nestLevel) {
 
     reindexingNestLevel = 0;
   }
-}
-
-/*
- * EstimateReindexStateSpace
- *		Estimate space needed to pass reindex state to parallel workers.
- */
-Size EstimateReindexStateSpace(void) {
-  return offsetof(SerializedReindexState, pendingReindexedIndexes) +
-         mul_size(sizeof(Oid), list_length(pendingReindexedIndexes));
-}
-
-/*
- * SerializeReindexState
- *		Serialize reindex state for parallel workers.
- */
-void SerializeReindexState(Size maxsize, char *start_address) {
-  SerializedReindexState *sistate = (SerializedReindexState *)start_address;
-  int c = 0;
-  ListCell *lc;
-
-  sistate->currentlyReindexedHeap = currentlyReindexedHeap;
-  sistate->currentlyReindexedIndex = currentlyReindexedIndex;
-  sistate->numPendingReindexedIndexes = list_length(pendingReindexedIndexes);
-  foreach (lc, pendingReindexedIndexes)
-    sistate->pendingReindexedIndexes[c++] = lfirst_oid(lc);
-}
-
-/*
- * RestoreReindexState
- *		Restore reindex state in a parallel worker.
- */
-void RestoreReindexState(const void *reindexstate) {
-  const SerializedReindexState *sistate =
-      (const SerializedReindexState *)reindexstate;
-  int c = 0;
-  MemoryContext oldcontext;
-
-  currentlyReindexedHeap = sistate->currentlyReindexedHeap;
-  currentlyReindexedIndex = sistate->currentlyReindexedIndex;
-
-  Assert(pendingReindexedIndexes == NIL);
-  oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-  for (c = 0; c < sistate->numPendingReindexedIndexes; ++c)
-    pendingReindexedIndexes = lappend_oid(pendingReindexedIndexes,
-                                          sistate->pendingReindexedIndexes[c]);
-  MemoryContextSwitchTo(oldcontext);
-
-  /* Note the worker has its own transaction nesting level */
-  reindexingNestLevel = GetCurrentTransactionNestLevel();
 }

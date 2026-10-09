@@ -55,10 +55,10 @@
 #include "utils/syscache.h"
 
 /* GUC parameter */
-int constraint_exclusion = CONSTRAINT_EXCLUSION_PARTITION;
+thread_local int constraint_exclusion = CONSTRAINT_EXCLUSION_PARTITION;
 
 /* Hook for plugins to get control in get_relation_info() */
-get_relation_info_hook_type get_relation_info_hook = NULL;
+PG_SHARED get_relation_info_hook_type get_relation_info_hook = NULL;
 
 static void get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
                                       Relation relation, bool inhparent);
@@ -92,8 +92,7 @@ static void set_baserel_partition_constraint(Relation relation,
  *	statlist	list of StatisticExtInfo for relation's statistic
  *objects serverid	if it's a foreign table, the server OID fdwroutine
  *if it's a foreign table, the FDW function pointers pages		number
- *of pages tuples		number of tuples rel_parallel_workers
- *user-defined number of parallel workers
+ *of pages tuples		number of tuples
  *
  * Also, add information about the relation's foreign keys to root->fkey_list.
  *
@@ -193,9 +192,6 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
   if (!inhparent)
     estimate_rel_size(relation, rel->attr_widths - rel->min_attr, &rel->pages,
                       &rel->tuples, &rel->allvisfrac);
-
-  /* Retrieve the parallel_workers reloption, or -1 if not set. */
-  rel->rel_parallel_workers = RelationGetParallelWorkers(relation, -1);
 
   /*
    * Make list of indexes.  Ignore indexes on system catalogs if told to.
@@ -307,7 +303,6 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         info->amoptionalkey = amroutine->amoptionalkey;
         info->amsearcharray = amroutine->amsearcharray;
         info->amsearchnulls = amroutine->amsearchnulls;
-        info->amcanparallel = amroutine->amcanparallel;
         info->amhasgettuple = (amroutine->amgettuple != NULL);
         info->amhasgetbitmap =
             amroutine->amgetbitmap != NULL &&
@@ -393,7 +388,6 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         info->amoptionalkey = false;
         info->amsearcharray = false;
         info->amsearchnulls = false;
-        info->amcanparallel = false;
         info->amhasgettuple = false;
         info->amhasgetbitmap = false;
         info->amcanmarkpos = false;

@@ -76,7 +76,7 @@ static inline int64 TransactionIdToCTsPage(TransactionId xid) {
 /*
  * Link to shared-memory data structures for CommitTs control
  */
-static SlruCtlData CommitTsCtlData;
+static PG_SHARED SlruCtlData CommitTsCtlData;
 
 #define CommitTsCtl (&CommitTsCtlData)
 
@@ -97,10 +97,10 @@ typedef struct CommitTimestampShared {
   bool commitTsActive;
 } CommitTimestampShared;
 
-static CommitTimestampShared *commitTsShared;
+static PG_SHARED CommitTimestampShared *commitTsShared;
 
 /* GUC variable */
-bool track_commit_timestamp;
+thread_local bool track_commit_timestamp;
 
 static void SetXidCommitTsInPage(TransactionId xid, int nsubxids,
                                  TransactionId *subxids, TimestampTz ts,
@@ -113,7 +113,6 @@ static bool CommitTsPagePrecedes(int64 page1, int64 page2);
 static void ActivateCommitTs(void);
 static void DeactivateCommitTs(void);
 static void WriteZeroPageXlogRec(int64 pageno);
-static void WriteTruncateXlogRec(int64 pageno, TransactionId oldestXid);
 
 /*
  * TransactionTreeSetCommitTsData
@@ -809,32 +808,6 @@ void ExtendCommitTs(TransactionId newestXact) {
 }
 
 /*
- * Remove all CommitTs segments before the one holding the passed
- * transaction ID.
- *
- * Note that we don't need to flush XLOG here.
- */
-void TruncateCommitTs(TransactionId oldestXact) {
-  int64 cutoffPage;
-
-  /*
-   * The cutoff point is the start of the segment containing oldestXact. We
-   * pass the *page* containing oldestXact to SimpleLruTruncate.
-   */
-  cutoffPage = TransactionIdToCTsPage(oldestXact);
-
-  /* Check to see if there's any files that could be removed */
-  if (!SlruScanDirectory(CommitTsCtl, SlruScanDirCbReportPresence, &cutoffPage))
-    return; /* nothing to remove */
-
-  /* Write XLOG record */
-  WriteTruncateXlogRec(cutoffPage, oldestXact);
-
-  /* Now we can remove the old CommitTs segment(s) */
-  SimpleLruTruncate(CommitTsCtl, cutoffPage);
-}
-
-/*
  * Set the limit values between which commit TS can be consulted.
  */
 void SetCommitTsLimit(TransactionId oldestXact, TransactionId newestXact) {
@@ -910,20 +883,6 @@ static void WriteZeroPageXlogRec(int64 pageno) {
   XLogBeginInsert();
   XLogRegisterData(&pageno, sizeof(pageno));
   (void)XLogInsert(RM_COMMIT_TS_ID, COMMIT_TS_ZEROPAGE);
-}
-
-/*
- * Write a TRUNCATE xlog record
- */
-static void WriteTruncateXlogRec(int64 pageno, TransactionId oldestXid) {
-  xl_commit_ts_truncate xlrec;
-
-  xlrec.pageno = pageno;
-  xlrec.oldestXid = oldestXid;
-
-  XLogBeginInsert();
-  XLogRegisterData(&xlrec, SizeOfCommitTsTruncate);
-  (void)XLogInsert(RM_COMMIT_TS_ID, COMMIT_TS_TRUNCATE);
 }
 
 /*

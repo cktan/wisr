@@ -112,7 +112,7 @@ extern void FormIndexDatum(IndexInfo *indexInfo, TupleTableSlot *slot,
                            EState *estate, Datum *values, bool *isnull);
 
 extern void index_build(Relation heapRelation, Relation indexRelation,
-                        IndexInfo *indexInfo, bool isreindex, bool parallel);
+                        IndexInfo *indexInfo, bool isreindex);
 
 extern void validate_index(Oid heapId, Oid indexId, Snapshot snapshot);
 
@@ -138,9 +138,6 @@ extern bool ReindexIsProcessingHeap(Oid heapOid);
 extern bool ReindexIsProcessingIndex(Oid indexOid);
 
 extern void ResetReindexState(int nestLevel);
-extern Size EstimateReindexStateSpace(void);
-extern void SerializeReindexState(Size maxsize, char *start_address);
-extern void RestoreReindexState(const void *reindexstate);
 
 extern void IndexSetParentIndex(Relation partitionIdx, Oid parentOid);
 

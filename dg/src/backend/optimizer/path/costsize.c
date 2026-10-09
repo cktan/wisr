@@ -11,9 +11,7 @@
  *	cpu_tuple_cost		Cost of typical CPU time to process a tuple
  *	cpu_index_tuple_cost  Cost of typical CPU time to process an index tuple
  *	cpu_operator_cost	Cost of CPU time to execute an operator or
- *function parallel_tuple_cost Cost of CPU time to pass a tuple from worker to
- *leader backend parallel_setup_cost Cost of setting up shared memory for
- *parallelism
+ *function
  *
  * We expect that the kernel will typically do some amount of read-ahead
  * optimization; this in conjunction with seek costs means that seq_page_cost
@@ -126,42 +124,36 @@
  */
 #define MAXIMUM_ROWCOUNT 1e100
 
-double seq_page_cost = DEFAULT_SEQ_PAGE_COST;
-double random_page_cost = DEFAULT_RANDOM_PAGE_COST;
-double cpu_tuple_cost = DEFAULT_CPU_TUPLE_COST;
-double cpu_index_tuple_cost = DEFAULT_CPU_INDEX_TUPLE_COST;
-double cpu_operator_cost = DEFAULT_CPU_OPERATOR_COST;
-double parallel_tuple_cost = DEFAULT_PARALLEL_TUPLE_COST;
-double parallel_setup_cost = DEFAULT_PARALLEL_SETUP_COST;
-double recursive_worktable_factor = DEFAULT_RECURSIVE_WORKTABLE_FACTOR;
+thread_local double seq_page_cost = DEFAULT_SEQ_PAGE_COST;
+thread_local double random_page_cost = DEFAULT_RANDOM_PAGE_COST;
+thread_local double cpu_tuple_cost = DEFAULT_CPU_TUPLE_COST;
+thread_local double cpu_index_tuple_cost = DEFAULT_CPU_INDEX_TUPLE_COST;
+thread_local double cpu_operator_cost = DEFAULT_CPU_OPERATOR_COST;
+thread_local double recursive_worktable_factor =
+    DEFAULT_RECURSIVE_WORKTABLE_FACTOR;
 
-int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
+thread_local int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
 
-Cost disable_cost = 1.0e10;
+thread_local Cost disable_cost = 1.0e10;
 
-int max_parallel_workers_per_gather = 2;
-
-bool enable_seqscan = true;
-bool enable_indexscan = true;
-bool enable_indexonlyscan = true;
-bool enable_bitmapscan = true;
-bool enable_tidscan = true;
-bool enable_sort = true;
-bool enable_incremental_sort = true;
-bool enable_hashagg = true;
-bool enable_nestloop = true;
-bool enable_material = true;
-bool enable_memoize = true;
-bool enable_mergejoin = true;
-bool enable_hashjoin = true;
-bool enable_gathermerge = true;
-bool enable_partitionwise_join = false;
-bool enable_partitionwise_aggregate = false;
-bool enable_parallel_append = true;
-bool enable_parallel_hash = true;
-bool enable_partition_pruning = true;
-bool enable_presorted_aggregate = true;
-bool enable_async_append = true;
+thread_local bool enable_seqscan = true;
+thread_local bool enable_indexscan = true;
+thread_local bool enable_indexonlyscan = true;
+thread_local bool enable_bitmapscan = true;
+thread_local bool enable_tidscan = true;
+thread_local bool enable_sort = true;
+thread_local bool enable_incremental_sort = true;
+thread_local bool enable_hashagg = true;
+thread_local bool enable_nestloop = true;
+thread_local bool enable_material = true;
+thread_local bool enable_memoize = true;
+thread_local bool enable_mergejoin = true;
+thread_local bool enable_hashjoin = true;
+thread_local bool enable_partitionwise_join = false;
+thread_local bool enable_partitionwise_aggregate = false;
+thread_local bool enable_partition_pruning = true;
+thread_local bool enable_presorted_aggregate = true;
+thread_local bool enable_async_append = true;
 
 typedef struct {
   PlannerInfo *root;
@@ -192,13 +184,10 @@ static Selectivity get_foreign_key_join_selectivity(PlannerInfo *root,
                                                     Relids inner_relids,
                                                     SpecialJoinInfo *sjinfo,
                                                     List **restrictlist);
-static Cost append_nonpartial_cost(List *subpaths, int numpaths,
-                                   int parallel_workers);
 static void set_rel_width(PlannerInfo *root, RelOptInfo *rel);
 static int32 get_expr_width(PlannerInfo *root, const Node *expr);
 static double relation_byte_size(double tuples, int width);
 static double page_size(double tuples, int width);
-static double get_parallel_divisor(Path *path);
 
 /*
  * clamp_row_est
@@ -316,27 +305,6 @@ void cost_seqscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   startup_cost += path->pathtarget->cost.startup;
   cpu_run_cost += path->pathtarget->cost.per_tuple * path->rows;
 
-  /* Adjust costing for parallelism, if used. */
-  if (path->parallel_workers > 0) {
-    double parallel_divisor = get_parallel_divisor(path);
-
-    /* The CPU cost is divided among all the workers. */
-    cpu_run_cost /= parallel_divisor;
-
-    /*
-     * It may be possible to amortize some of the I/O cost, but probably
-     * not very much, because most operating systems already do aggressive
-     * prefetching.  For now, we assume that the disk run cost can't be
-     * amortized at all.
-     */
-
-    /*
-     * In the case of a parallel plan, the row count needs to represent
-     * the number of tuples processed per worker.
-     */
-    path->rows = clamp_row_est(path->rows / parallel_divisor);
-  }
-
   path->disabled_nodes = enable_seqscan ? 0 : 1;
   path->startup_cost = startup_cost;
   path->total_cost = startup_cost + cpu_run_cost + disk_run_cost;
@@ -411,106 +379,6 @@ void cost_samplescan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 }
 
 /*
- * cost_gather
- *	  Determines and returns the cost of gather path.
- *
- * 'rel' is the relation to be operated upon
- * 'param_info' is the ParamPathInfo if this is a parameterized path, else NULL
- * 'rows' may be used to point to a row estimate; if non-NULL, it overrides
- * both 'rel' and 'param_info'.  This is useful when the path doesn't exactly
- * correspond to any particular RelOptInfo.
- */
-void cost_gather(GatherPath *path, PlannerInfo *root, RelOptInfo *rel,
-                 ParamPathInfo *param_info, double *rows) {
-  Cost startup_cost = 0;
-  Cost run_cost = 0;
-
-  /* Mark the path with the correct row estimate */
-  if (rows)
-    path->path.rows = *rows;
-  else if (param_info)
-    path->path.rows = param_info->ppi_rows;
-  else
-    path->path.rows = rel->rows;
-
-  startup_cost = path->subpath->startup_cost;
-
-  run_cost = path->subpath->total_cost - path->subpath->startup_cost;
-
-  /* Parallel setup and communication cost. */
-  startup_cost += parallel_setup_cost;
-  run_cost += parallel_tuple_cost * path->path.rows;
-
-  path->path.disabled_nodes = path->subpath->disabled_nodes;
-  path->path.startup_cost = startup_cost;
-  path->path.total_cost = (startup_cost + run_cost);
-}
-
-/*
- * cost_gather_merge
- *	  Determines and returns the cost of gather merge path.
- *
- * GatherMerge merges several pre-sorted input streams, using a heap that at
- * any given instant holds the next tuple from each stream. If there are N
- * streams, we need about N*log2(N) tuple comparisons to construct the heap at
- * startup, and then for each output tuple, about log2(N) comparisons to
- * replace the top heap entry with the next tuple from the same stream.
- */
-void cost_gather_merge(GatherMergePath *path, PlannerInfo *root,
-                       RelOptInfo *rel, ParamPathInfo *param_info,
-                       int input_disabled_nodes, Cost input_startup_cost,
-                       Cost input_total_cost, double *rows) {
-  Cost startup_cost = 0;
-  Cost run_cost = 0;
-  Cost comparison_cost;
-  double N;
-  double logN;
-
-  /* Mark the path with the correct row estimate */
-  if (rows)
-    path->path.rows = *rows;
-  else if (param_info)
-    path->path.rows = param_info->ppi_rows;
-  else
-    path->path.rows = rel->rows;
-
-  /*
-   * Add one to the number of workers to account for the leader.  This might
-   * be overgenerous since the leader will do less work than other workers
-   * in typical cases, but we'll go with it for now.
-   */
-  Assert(path->num_workers > 0);
-  N = (double)path->num_workers + 1;
-  logN = LOG2(N);
-
-  /* Assumed cost per tuple comparison */
-  comparison_cost = 2.0 * cpu_operator_cost;
-
-  /* Heap creation cost */
-  startup_cost += comparison_cost * N * logN;
-
-  /* Per-tuple heap maintenance cost */
-  run_cost += path->path.rows * comparison_cost * logN;
-
-  /* small cost for heap management, like cost_merge_append */
-  run_cost += cpu_operator_cost * path->path.rows;
-
-  /*
-   * Parallel setup and communication cost.  Since Gather Merge, unlike
-   * Gather, requires us to block until a tuple is available from every
-   * worker, we bump the IPC cost up a little bit as compared with Gather.
-   * For lack of a better idea, charge an extra 5%.
-   */
-  startup_cost += parallel_setup_cost;
-  run_cost += parallel_tuple_cost * path->path.rows * 1.05;
-
-  path->path.disabled_nodes =
-      input_disabled_nodes + (enable_gathermerge ? 0 : 1);
-  path->path.startup_cost = startup_cost + input_startup_cost;
-  path->path.total_cost = (startup_cost + run_cost + input_total_cost);
-}
-
-/*
  * cost_index
  *	  Determines and returns the cost of scanning a relation using an index.
  *
@@ -528,8 +396,7 @@ void cost_gather_merge(GatherMergePath *path, PlannerInfo *root,
  * number of returned tuples, but they won't reduce the number of tuples
  * we have to fetch from the table, so they don't reduce the scan cost.
  */
-void cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
-                bool partial_path) {
+void cost_index(IndexPath *path, PlannerInfo *root, double loop_count) {
   IndexOptInfo *index = path->indexinfo;
   RelOptInfo *baserel = index->rel;
   bool indexonly = (path->path.pathtype == T_IndexOnlyScan);
@@ -548,7 +415,6 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
   Cost cpu_per_tuple;
   double tuples_fetched;
   double pages_fetched;
-  double rand_heap_pages;
   double index_pages;
 
   /* Should only be applied to base relations */
@@ -654,8 +520,6 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
     if (indexonly)
       pages_fetched = ceil(pages_fetched * (1.0 - baserel->allvisfrac));
 
-    rand_heap_pages = pages_fetched;
-
     max_IO_cost = (pages_fetched * spc_random_page_cost) / loop_count;
 
     /*
@@ -688,8 +552,6 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
     if (indexonly)
       pages_fetched = ceil(pages_fetched * (1.0 - baserel->allvisfrac));
 
-    rand_heap_pages = pages_fetched;
-
     /* max_IO_cost is for the perfectly uncorrelated case (csquared=0) */
     max_IO_cost = pages_fetched * spc_random_page_cost;
 
@@ -705,35 +567,6 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
         min_IO_cost += (pages_fetched - 1) * spc_seq_page_cost;
     } else
       min_IO_cost = 0;
-  }
-
-  if (partial_path) {
-    /*
-     * For index only scans compute workers based on number of index pages
-     * fetched; the number of heap pages we fetch might be so small as to
-     * effectively rule out parallelism, which we don't want to do.
-     */
-    if (indexonly)
-      rand_heap_pages = -1;
-
-    /*
-     * Estimate the number of parallel workers required to scan index. Use
-     * the number of heap pages computed considering heap fetches won't be
-     * sequential as for parallel scans the pages are accessed in random
-     * order.
-     */
-    path->path.parallel_workers = compute_parallel_worker(
-        baserel, rand_heap_pages, index_pages, max_parallel_workers_per_gather);
-
-    /*
-     * Fall out if workers can't be assigned for parallel scan, because in
-     * such a case this path will be rejected.  So there is no benefit in
-     * doing extra computation.
-     */
-    if (path->path.parallel_workers <= 0)
-      return;
-
-    path->path.parallel_aware = true;
   }
 
   /*
@@ -760,16 +593,6 @@ void cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
   /* tlist eval costs are paid per output row, not per tuple scanned */
   startup_cost += path->path.pathtarget->cost.startup;
   cpu_run_cost += path->path.pathtarget->cost.per_tuple * path->path.rows;
-
-  /* Adjust costing for parallelism, if used. */
-  if (path->path.parallel_workers > 0) {
-    double parallel_divisor = get_parallel_divisor(&path->path);
-
-    path->path.rows = clamp_row_est(path->path.rows / parallel_divisor);
-
-    /* The CPU cost is divided among all the workers. */
-    cpu_run_cost /= parallel_divisor;
-  }
 
   run_cost += cpu_run_cost;
 
@@ -1007,16 +830,6 @@ void cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
   startup_cost += qpqual_cost.startup;
   cpu_per_tuple = cpu_tuple_cost + qpqual_cost.per_tuple;
   cpu_run_cost = cpu_per_tuple * tuples_fetched;
-
-  /* Adjust costing for parallelism, if used. */
-  if (path->parallel_workers > 0) {
-    double parallel_divisor = get_parallel_divisor(path);
-
-    /* The CPU cost is divided among all the workers. */
-    cpu_run_cost /= parallel_divisor;
-
-    path->rows = clamp_row_est(path->rows / parallel_divisor);
-  }
 
   run_cost += cpu_run_cost;
 
@@ -1356,8 +1169,7 @@ void cost_subqueryscan(SubqueryScanPath *path, PlannerInfo *root,
   /*
    * We compute the rowcount estimate as the subplan's estimate times the
    * selectivity of relevant restriction clauses.  In simple cases this will
-   * come out the same as baserel->rows; but when dealing with parallelized
-   * paths we must do it like this to get the right answer.
+   * come out the same as baserel->rows.
    */
   if (param_info)
     qpquals =
@@ -2008,84 +1820,12 @@ void cost_sort(Path *path, PlannerInfo *root, List *pathkeys,
 }
 
 /*
- * append_nonpartial_cost
- *	  Estimate the cost of the non-partial paths in a Parallel Append.
- *	  The non-partial paths are assumed to be the first "numpaths" paths
- *	  from the subpaths list, and to be in order of decreasing cost.
- */
-static Cost append_nonpartial_cost(List *subpaths, int numpaths,
-                                   int parallel_workers) {
-  Cost *costarr;
-  int arrlen;
-  ListCell *l;
-  ListCell *cell;
-  int path_index;
-  int min_index;
-  int max_index;
-
-  if (numpaths == 0)
-    return 0;
-
-  /*
-   * Array length is number of workers or number of relevant paths,
-   * whichever is less.
-   */
-  arrlen = Min(parallel_workers, numpaths);
-  costarr = (Cost *)palloc(sizeof(Cost) * arrlen);
-
-  /* The first few paths will each be claimed by a different worker. */
-  path_index = 0;
-  foreach (cell, subpaths) {
-    Path *subpath = (Path *)lfirst(cell);
-
-    if (path_index == arrlen)
-      break;
-    costarr[path_index++] = subpath->total_cost;
-  }
-
-  /*
-   * Since subpaths are sorted by decreasing cost, the last one will have
-   * the minimum cost.
-   */
-  min_index = arrlen - 1;
-
-  /*
-   * For each of the remaining subpaths, add its cost to the array element
-   * with minimum cost.
-   */
-  for_each_cell(l, subpaths, cell) {
-    Path *subpath = (Path *)lfirst(l);
-
-    /* Consider only the non-partial paths */
-    if (path_index++ == numpaths)
-      break;
-
-    costarr[min_index] += subpath->total_cost;
-
-    /* Update the new min cost array index */
-    min_index = 0;
-    for (int i = 0; i < arrlen; i++) {
-      if (costarr[i] < costarr[min_index])
-        min_index = i;
-    }
-  }
-
-  /* Return the highest cost from the array */
-  max_index = 0;
-  for (int i = 0; i < arrlen; i++) {
-    if (costarr[i] > costarr[max_index])
-      max_index = i;
-  }
-
-  return costarr[max_index];
-}
-
-/*
  * cost_append
  *	  Determines and returns the cost of an Append node.
  */
 void cost_append(AppendPath *apath) {
   ListCell *l;
+  List *pathkeys;
 
   apath->path.disabled_nodes = 0;
   apath->path.startup_cost = 0;
@@ -2095,123 +1835,69 @@ void cost_append(AppendPath *apath) {
   if (apath->subpaths == NIL)
     return;
 
-  if (!apath->path.parallel_aware) {
-    List *pathkeys = apath->path.pathkeys;
+  pathkeys = apath->path.pathkeys;
+  if (pathkeys == NIL) {
+    Path *firstsubpath = (Path *)linitial(apath->subpaths);
 
-    if (pathkeys == NIL) {
-      Path *firstsubpath = (Path *)linitial(apath->subpaths);
+    /*
+     * For an unordered Append we take the startup
+     * cost as the startup cost of the first subpath.
+     */
+    apath->path.startup_cost = firstsubpath->startup_cost;
 
-      /*
-       * For an unordered, non-parallel-aware Append we take the startup
-       * cost as the startup cost of the first subpath.
-       */
-      apath->path.startup_cost = firstsubpath->startup_cost;
-
-      /*
-       * Compute rows, number of disabled nodes, and total cost as sums
-       * of underlying subplan values.
-       */
-      foreach (l, apath->subpaths) {
-        Path *subpath = (Path *)lfirst(l);
-
-        apath->path.rows += subpath->rows;
-        apath->path.disabled_nodes += subpath->disabled_nodes;
-        apath->path.total_cost += subpath->total_cost;
-      }
-    } else {
-      /*
-       * For an ordered, non-parallel-aware Append we take the startup
-       * cost as the sum of the subpath startup costs.  This ensures
-       * that we don't underestimate the startup cost when a query's
-       * LIMIT is such that several of the children have to be run to
-       * satisfy it.  This might be overkill --- another plausible hack
-       * would be to take the Append's startup cost as the maximum of
-       * the child startup costs.  But we don't want to risk believing
-       * that an ORDER BY LIMIT query can be satisfied at small cost
-       * when the first child has small startup cost but later ones
-       * don't.  (If we had the ability to deal with nonlinear cost
-       * interpolation for partial retrievals, we would not need to be
-       * so conservative about this.)
-       *
-       * This case is also different from the above in that we have to
-       * account for possibly injecting sorts into subpaths that aren't
-       * natively ordered.
-       */
-      foreach (l, apath->subpaths) {
-        Path *subpath = (Path *)lfirst(l);
-        Path sort_path; /* dummy for result of cost_sort */
-
-        if (!pathkeys_contained_in(pathkeys, subpath->pathkeys)) {
-          /*
-           * We'll need to insert a Sort node, so include costs for
-           * that.  We can use the parent's LIMIT if any, since we
-           * certainly won't pull more than that many tuples from
-           * any child.
-           */
-          cost_sort(&sort_path, NULL, /* doesn't currently need root */
-                    pathkeys, subpath->disabled_nodes, subpath->total_cost,
-                    subpath->rows, subpath->pathtarget->width, 0.0, work_mem,
-                    apath->limit_tuples);
-          subpath = &sort_path;
-        }
-
-        apath->path.rows += subpath->rows;
-        apath->path.disabled_nodes += subpath->disabled_nodes;
-        apath->path.startup_cost += subpath->startup_cost;
-        apath->path.total_cost += subpath->total_cost;
-      }
-    }
-  } else /* parallel-aware */
-  {
-    int i = 0;
-    double parallel_divisor = get_parallel_divisor(&apath->path);
-
-    /* Parallel-aware Append never produces ordered output. */
-    Assert(apath->path.pathkeys == NIL);
-
-    /* Calculate startup cost. */
+    /*
+     * Compute rows, number of disabled nodes, and total cost as sums
+     * of underlying subplan values.
+     */
     foreach (l, apath->subpaths) {
       Path *subpath = (Path *)lfirst(l);
 
-      /*
-       * Append will start returning tuples when the child node having
-       * lowest startup cost is done setting up. We consider only the
-       * first few subplans that immediately get a worker assigned.
-       */
-      if (i == 0)
-        apath->path.startup_cost = subpath->startup_cost;
-      else if (i < apath->path.parallel_workers)
-        apath->path.startup_cost =
-            Min(apath->path.startup_cost, subpath->startup_cost);
+      apath->path.rows += subpath->rows;
+      apath->path.disabled_nodes += subpath->disabled_nodes;
+      apath->path.total_cost += subpath->total_cost;
+    }
+  } else {
+    /*
+     * For an ordered Append we take the startup
+     * cost as the sum of the subpath startup costs.  This ensures
+     * that we don't underestimate the startup cost when a query's
+     * LIMIT is such that several of the children have to be run to
+     * satisfy it.  This might be overkill --- another plausible hack
+     * would be to take the Append's startup cost as the maximum of
+     * the child startup costs.  But we don't want to risk believing
+     * that an ORDER BY LIMIT query can be satisfied at small cost
+     * when the first child has small startup cost but later ones
+     * don't.  (If we had the ability to deal with nonlinear cost
+     * interpolation for partial retrievals, we would not need to be
+     * so conservative about this.)
+     *
+     * This case is also different from the above in that we have to
+     * account for possibly injecting sorts into subpaths that aren't
+     * natively ordered.
+     */
+    foreach (l, apath->subpaths) {
+      Path *subpath = (Path *)lfirst(l);
+      Path sort_path; /* dummy for result of cost_sort */
 
-      /*
-       * Apply parallel divisor to subpaths.  Scale the number of rows
-       * for each partial subpath based on the ratio of the parallel
-       * divisor originally used for the subpath to the one we adopted.
-       * Also add the cost of partial paths to the total cost, but
-       * ignore non-partial paths for now.
-       */
-      if (i < apath->first_partial_path)
-        apath->path.rows += subpath->rows / parallel_divisor;
-      else {
-        double subpath_parallel_divisor;
-
-        subpath_parallel_divisor = get_parallel_divisor(subpath);
-        apath->path.rows +=
-            subpath->rows * (subpath_parallel_divisor / parallel_divisor);
-        apath->path.total_cost += subpath->total_cost;
+      if (!pathkeys_contained_in(pathkeys, subpath->pathkeys)) {
+        /*
+         * We'll need to insert a Sort node, so include costs for
+         * that.  We can use the parent's LIMIT if any, since we
+         * certainly won't pull more than that many tuples from
+         * any child.
+         */
+        cost_sort(&sort_path, NULL, /* doesn't currently need root */
+                  pathkeys, subpath->disabled_nodes, subpath->total_cost,
+                  subpath->rows, subpath->pathtarget->width, 0.0, work_mem,
+                  apath->limit_tuples);
+        subpath = &sort_path;
       }
 
+      apath->path.rows += subpath->rows;
       apath->path.disabled_nodes += subpath->disabled_nodes;
-      apath->path.rows = clamp_row_est(apath->path.rows);
-
-      i++;
+      apath->path.startup_cost += subpath->startup_cost;
+      apath->path.total_cost += subpath->total_cost;
     }
-
-    /* Add cost for non-partial subpaths. */
-    apath->path.total_cost +=
-        append_nonpartial_cost(apath->subpaths, apath->first_partial_path,
-                               apath->path.parallel_workers);
   }
 
   /*
@@ -3102,14 +2788,6 @@ void final_cost_nestloop(PlannerInfo *root, NestPath *path,
   else
     path->jpath.path.rows = path->jpath.path.parent->rows;
 
-  /* For partial paths, scale row estimate. */
-  if (path->jpath.path.parallel_workers > 0) {
-    double parallel_divisor = get_parallel_divisor(&path->jpath.path);
-
-    path->jpath.path.rows =
-        clamp_row_est(path->jpath.path.rows / parallel_divisor);
-  }
-
   /* cost of inner-relation source data (we already dealt with outer rel) */
 
   if (path->jpath.jointype == JOIN_SEMI || path->jpath.jointype == JOIN_ANTI ||
@@ -3544,14 +3222,6 @@ void final_cost_mergejoin(PlannerInfo *root, MergePath *path,
   else
     path->jpath.path.rows = path->jpath.path.parent->rows;
 
-  /* For partial paths, scale row estimate. */
-  if (path->jpath.path.parallel_workers > 0) {
-    double parallel_divisor = get_parallel_divisor(&path->jpath.path);
-
-    path->jpath.path.rows =
-        clamp_row_est(path->jpath.path.rows / parallel_divisor);
-  }
-
   /*
    * Compute cost of the mergequals and qpquals (other restriction clauses)
    * separately.
@@ -3810,19 +3480,16 @@ static MergeScanSelCache *cached_scansel(PlannerInfo *root, RestrictInfo *rinfo,
  * 'outer_path' is the outer input to the join
  * 'inner_path' is the inner input to the join
  * 'extra' contains miscellaneous information about the join
- * 'parallel_hash' indicates that inner_path is partial and that a shared
- *		hash table will be built in parallel
  */
 void initial_cost_hashjoin(PlannerInfo *root, JoinCostWorkspace *workspace,
                            JoinType jointype, List *hashclauses,
                            Path *outer_path, Path *inner_path,
-                           JoinPathExtraData *extra, bool parallel_hash) {
+                           JoinPathExtraData *extra) {
   int disabled_nodes;
   Cost startup_cost = 0;
   Cost run_cost = 0;
   double outer_path_rows = outer_path->rows;
   double inner_path_rows = inner_path->rows;
-  double inner_path_rows_total = inner_path_rows;
   int num_hashclauses = list_length(hashclauses);
   int numbuckets;
   int numbatches;
@@ -3854,15 +3521,6 @@ void initial_cost_hashjoin(PlannerInfo *root, JoinCostWorkspace *workspace,
   run_cost += cpu_operator_cost * num_hashclauses * outer_path_rows;
 
   /*
-   * If this is a parallel hash build, then the value we have for
-   * inner_rows_total currently refers only to the rows returned by each
-   * participant.  For shared hash table size estimation, we need the total
-   * number, so we need to undo the division.
-   */
-  if (parallel_hash)
-    inner_path_rows_total *= get_parallel_divisor(inner_path);
-
-  /*
    * Get hash table size that executor would use for inner relation.
    *
    * XXX for the moment, always assume that skew optimization will be
@@ -3872,11 +3530,9 @@ void initial_cost_hashjoin(PlannerInfo *root, JoinCostWorkspace *workspace,
    * XXX at some point it might be interesting to try to account for skew
    * optimization in the cost estimate, but for now, we don't.
    */
-  ExecChooseHashTableSize(inner_path_rows_total, inner_path->pathtarget->width,
-                          true,          /* useskew */
-                          parallel_hash, /* try_combined_hash_mem */
-                          outer_path->parallel_workers, &space_allowed,
-                          &numbuckets, &numbatches, &num_skew_mcvs);
+  ExecChooseHashTableSize(
+      inner_path_rows, inner_path->pathtarget->width, true, /* useskew */
+      &space_allowed, &numbuckets, &numbatches, &num_skew_mcvs);
 
   /*
    * If inner relation is too big then we will need to "batch" the join,
@@ -3905,7 +3561,6 @@ void initial_cost_hashjoin(PlannerInfo *root, JoinCostWorkspace *workspace,
   workspace->run_cost = run_cost;
   workspace->numbuckets = numbuckets;
   workspace->numbatches = numbatches;
-  workspace->inner_rows_total = inner_path_rows_total;
 }
 
 /*
@@ -3926,7 +3581,6 @@ void final_cost_hashjoin(PlannerInfo *root, HashPath *path,
   Path *inner_path = path->jpath.innerjoinpath;
   double outer_path_rows = outer_path->rows;
   double inner_path_rows = inner_path->rows;
-  double inner_path_rows_total = workspace->inner_rows_total;
   List *hashclauses = path->path_hashclauses;
   Cost startup_cost = workspace->startup_cost;
   Cost run_cost = workspace->run_cost;
@@ -3950,19 +3604,8 @@ void final_cost_hashjoin(PlannerInfo *root, HashPath *path,
   else
     path->jpath.path.rows = path->jpath.path.parent->rows;
 
-  /* For partial paths, scale row estimate. */
-  if (path->jpath.path.parallel_workers > 0) {
-    double parallel_divisor = get_parallel_divisor(&path->jpath.path);
-
-    path->jpath.path.rows =
-        clamp_row_est(path->jpath.path.rows / parallel_divisor);
-  }
-
   /* mark the path with estimated # of batches */
   path->num_batches = numbatches;
-
-  /* store the total number of tuples (sum of partial row estimates) */
-  path->inner_rows_total = inner_path_rows_total;
 
   /* and compute the number of "virtual" buckets in the whole join */
   virtualbuckets = (double)numbuckets * (double)numbatches;
@@ -5865,35 +5508,6 @@ static double page_size(double tuples, int width) {
 }
 
 /*
- * Estimate the fraction of the work that each worker will do given the
- * number of workers budgeted for the path.
- */
-static double get_parallel_divisor(Path *path) {
-  double parallel_divisor = path->parallel_workers;
-
-  /*
-   * Early experience with parallel query suggests that when there is only
-   * one worker, the leader often makes a very substantial contribution to
-   * executing the parallel portion of the plan, but as more workers are
-   * added, it does less and less, because it's busy reading tuples from the
-   * workers and doing whatever non-parallel post-processing is needed.  By
-   * the time we reach 4 workers, the leader no longer makes a meaningful
-   * contribution.  Thus, for now, estimate that the leader spends 30% of
-   * its time servicing each worker, and the remainder executing the
-   * parallel plan.
-   */
-  if (parallel_leader_participation) {
-    double leader_contribution;
-
-    leader_contribution = 1.0 - (0.3 * path->parallel_workers);
-    if (leader_contribution > 0)
-      parallel_divisor += leader_contribution;
-  }
-
-  return parallel_divisor;
-}
-
-/*
  * compute_bitmap_pages
  *	  Estimate number of pages fetched from heap in a bitmap heap scan.
  *
@@ -5998,20 +5612,4 @@ double compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel,
     *tuples_p = tuples_fetched;
 
   return pages_fetched;
-}
-
-/*
- * compute_gather_rows
- *	  Estimate number of rows for gather (merge) nodes.
- *
- * In a parallel plan, each worker's row estimate is determined by dividing the
- * total number of rows by parallel_divisor, which accounts for the leader's
- * contribution in addition to the number of workers.  Accordingly, when
- * estimating the number of rows for gather (merge) nodes, we multiply the rows
- * per worker by the same parallel_divisor to undo the division.
- */
-double compute_gather_rows(Path *path) {
-  Assert(path->parallel_workers > 0);
-
-  return clamp_row_est(path->rows * get_parallel_divisor(path));
 }

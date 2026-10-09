@@ -82,7 +82,7 @@ struct XidCache {
  * lock table.  This eases contention on the lock manager LWLocks.  See
  * storage/lmgr/README for additional details.
  */
-extern PGDLLIMPORT int FastPathLockGroupsPerBackend;
+extern PG_SHARED PGDLLIMPORT int FastPathLockGroupsPerBackend;
 
 /*
  * Define the maximum number of fast-path locking groups per backend.
@@ -307,7 +307,7 @@ struct PGPROC {
 
 /* NOTE: "typedef struct PGPROC PGPROC" appears in storage/lock.h. */
 
-extern PGDLLIMPORT PGPROC *MyProc;
+extern thread_local PGDLLIMPORT PGPROC *MyProc;
 
 /*
  * There is one ProcGlobal struct for the whole database cluster.
@@ -386,8 +386,8 @@ typedef struct PROC_HDR {
   uint32 allProcCount;
   /* Head of list of free PGPROC structures */
   dlist_head freeProcs;
-  /* Head of list of autovacuum & special worker free PGPROC structures */
-  dlist_head autovacFreeProcs;
+  /* Head of list of special worker free PGPROC structures */
+  dlist_head specialWorkerFreeProcs;
   /* Head of list of bgworker free PGPROC structures */
   dlist_head bgworkerFreeProcs;
   /* Head of list of walsender free PGPROC structures */
@@ -410,9 +410,9 @@ typedef struct PROC_HDR {
   int startupBufferPinWaitBufId;
 } PROC_HDR;
 
-extern PGDLLIMPORT PROC_HDR *ProcGlobal;
+extern PG_SHARED PGDLLIMPORT PROC_HDR *ProcGlobal;
 
-extern PGDLLIMPORT PGPROC *PreparedXactProcs;
+extern PG_SHARED PGDLLIMPORT PGPROC *PreparedXactProcs;
 
 /*
  * Accessors for getting PGPROC given a ProcNumber and vice versa.
@@ -424,10 +424,9 @@ extern PGDLLIMPORT PGPROC *PreparedXactProcs;
  * We set aside some extra PGPROC structures for "special worker" processes,
  * which are full-fledged backends (they can run transactions)
  * but are unique animals that there's never more than one of.
- * Currently there are two such processes: the autovacuum launcher
- * and the slotsync worker.
+ * Currently there is one such process: the slotsync worker.
  */
-#define NUM_SPECIAL_WORKER_PROCS	2
+#define NUM_SPECIAL_WORKER_PROCS	1
 
 /*
  * We set aside some extra PGPROC structures for auxiliary processes,
@@ -445,13 +444,13 @@ extern PGDLLIMPORT PGPROC *PreparedXactProcs;
 #define FIRST_PREPARED_XACT_PROC_NUMBER	(MaxBackends + NUM_AUXILIARY_PROCS)
 
 /* configurable options */
-extern PGDLLIMPORT int DeadlockTimeout;
-extern PGDLLIMPORT int StatementTimeout;
-extern PGDLLIMPORT int LockTimeout;
-extern PGDLLIMPORT int IdleInTransactionSessionTimeout;
-extern PGDLLIMPORT int TransactionTimeout;
-extern PGDLLIMPORT int IdleSessionTimeout;
-extern PGDLLIMPORT bool log_lock_waits;
+extern thread_local PGDLLIMPORT int DeadlockTimeout;
+extern thread_local PGDLLIMPORT int StatementTimeout;
+extern thread_local PGDLLIMPORT int LockTimeout;
+extern thread_local PGDLLIMPORT int IdleInTransactionSessionTimeout;
+extern thread_local PGDLLIMPORT int TransactionTimeout;
+extern thread_local PGDLLIMPORT int IdleSessionTimeout;
+extern thread_local PGDLLIMPORT bool log_lock_waits;
 
 #ifdef EXEC_BACKEND
 extern PGDLLIMPORT slock_t *ProcStructLock;
@@ -490,8 +489,5 @@ extern void ProcWaitForSignal(uint32 wait_event_info);
 extern void ProcSendSignal(ProcNumber procNumber);
 
 extern PGPROC *AuxiliaryPidGetProc(int pid);
-
-extern void BecomeLockGroupLeader(void);
-extern bool BecomeLockGroupMember(PGPROC *leader, int pid);
 
 #endif /* _PROC_H_ */

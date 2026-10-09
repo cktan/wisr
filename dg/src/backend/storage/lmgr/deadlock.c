@@ -93,33 +93,33 @@ static void PrintLockQueue(LOCK *lock, const char *info);
  */
 
 /* Workspace for FindLockCycle */
-static PGPROC **visitedProcs; /* Array of visited procs */
-static int nVisitedProcs;
+static thread_local PGPROC **visitedProcs; /* Array of visited procs */
+static thread_local int nVisitedProcs;
 
 /* Workspace for TopoSort */
-static PGPROC **topoProcs;     /* Array of not-yet-output procs */
-static int *beforeConstraints; /* Counts of remaining before-constraints */
-static int *afterConstraints;  /* List head for after-constraints */
+static thread_local PGPROC **topoProcs; /* Array of not-yet-output procs */
+static thread_local int
+    *beforeConstraints; /* Counts of remaining before-constraints */
+static thread_local int *afterConstraints; /* List head for after-constraints */
 
 /* Output area for ExpandConstraints */
-static WAIT_ORDER *waitOrders; /* Array of proposed queue rearrangements */
-static int nWaitOrders;
-static PGPROC **waitOrderProcs; /* Space for waitOrders queue contents */
+static thread_local WAIT_ORDER
+    *waitOrders; /* Array of proposed queue rearrangements */
+static thread_local int nWaitOrders;
+static thread_local PGPROC *
+    *waitOrderProcs; /* Space for waitOrders queue contents */
 
 /* Current list of constraints being considered */
-static EDGE *curConstraints;
-static int nCurConstraints;
-static int maxCurConstraints;
+static thread_local EDGE *curConstraints;
+static thread_local int nCurConstraints;
+static thread_local int maxCurConstraints;
 
 /* Storage space for results from FindLockCycle */
-static EDGE *possibleConstraints;
-static int nPossibleConstraints;
-static int maxPossibleConstraints;
-static DEADLOCK_INFO *deadlockDetails;
-static int nDeadlockDetails;
-
-/* PGPROC pointer of any blocking autovacuum worker found */
-static PGPROC *blocking_autovacuum_proc = NULL;
+static thread_local EDGE *possibleConstraints;
+static thread_local int nPossibleConstraints;
+static thread_local int maxPossibleConstraints;
+static thread_local DEADLOCK_INFO *deadlockDetails;
+static thread_local int nDeadlockDetails;
 
 /*
  * InitDeadLockChecking -- initialize deadlock checker during backend startup
@@ -211,9 +211,6 @@ DeadLockState DeadLockCheck(PGPROC *proc) {
   nPossibleConstraints = 0;
   nWaitOrders = 0;
 
-  /* Initialize to not blocked by an autovacuum worker */
-  blocking_autovacuum_proc = NULL;
-
   /* Search for deadlocks and possible fixes */
   if (DeadLockCheckRecurse(proc)) {
     /*
@@ -260,24 +257,8 @@ DeadLockState DeadLockCheck(PGPROC *proc) {
   /* Return code tells caller if we had to escape a deadlock or not */
   if (nWaitOrders > 0)
     return DS_SOFT_DEADLOCK;
-  else if (blocking_autovacuum_proc != NULL)
-    return DS_BLOCKED_BY_AUTOVACUUM;
   else
     return DS_NO_DEADLOCK;
-}
-
-/*
- * Return the PGPROC of the autovacuum that's blocking a process.
- *
- * We reset the saved pointer as soon as we pass it back.
- */
-PGPROC *GetBlockingAutoVacuumPgproc(void) {
-  PGPROC *ptr;
-
-  ptr = blocking_autovacuum_proc;
-  blocking_autovacuum_proc = NULL;
-
-  return ptr;
 }
 
 /*
@@ -545,31 +526,6 @@ static bool FindLockCycleRecurseMember(PGPROC *checkProc,
 
             return true;
           }
-
-          /*
-           * No deadlock here, but see if this proc is an autovacuum
-           * that is directly hard-blocking our own proc.  If so,
-           * report it so that the caller can send a cancel signal
-           * to it, if appropriate.  If there's more than one such
-           * proc, it's indeterminate which one will be reported.
-           *
-           * We don't touch autovacuums that are indirectly blocking
-           * us; it's up to the direct blockee to take action.  This
-           * rule simplifies understanding the behavior and ensures
-           * that an autovacuum won't be canceled with less than
-           * deadlock_timeout grace period.
-           *
-           * Note we read statusFlags without any locking.  This is
-           * OK only for checking the PROC_IS_AUTOVACUUM flag,
-           * because that flag is set at process start and never
-           * reset.  There is logic elsewhere to avoid canceling an
-           * autovacuum that is working to prevent XID wraparound
-           * problems (which needs to read a different statusFlags
-           * bit), but we don't do that here to avoid grabbing
-           * ProcArrayLock.
-           */
-          if (checkProc == MyProc && proc->statusFlags & PROC_IS_AUTOVACUUM)
-            blocking_autovacuum_proc = proc;
 
           /* We're done looking at this proclock */
           break;

@@ -753,17 +753,6 @@ void systable_inplace_update_begin(Relation relation, Oid indexId, bool indexOK,
   BufferHeapTupleTableSlot *bslot;
 
   /*
-   * For now, we don't allow parallel updates.  Unlike a regular update,
-   * this should never create a combo CID, so it might be possible to relax
-   * this restriction, but not without more thought and testing.  It's not
-   * clear that it would be useful, anyway.
-   */
-  if (IsInParallelMode())
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_TRANSACTION_STATE),
-             errmsg("cannot update tuples during a parallel operation")));
-
-  /*
    * Accept a snapshot argument, for symmetry, but this function advances
    * its snapshot as needed to reach the tail of the updated tuple chain.
    */

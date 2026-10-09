@@ -96,7 +96,7 @@ typedef struct {
   Datum value;
 } missing_cache_key;
 
-static HTAB *missing_cache = NULL;
+static thread_local HTAB *missing_cache = NULL;
 
 static uint32 missing_hash(const void *key, Size keysize) {
   const missing_cache_key *entry = (missing_cache_key *)key;

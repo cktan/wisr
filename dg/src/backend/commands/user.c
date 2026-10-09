@@ -66,7 +66,7 @@ typedef enum {
 } RevokeRoleGrantAction;
 
 /* Potentially set by pg_upgrade_support functions */
-Oid binary_upgrade_next_pg_authid_oid = InvalidOid;
+thread_local Oid binary_upgrade_next_pg_authid_oid = InvalidOid;
 
 typedef struct {
   unsigned specified;
@@ -80,13 +80,13 @@ typedef struct {
 #define GRANT_ROLE_SPECIFIED_SET			0x0004
 
 /* GUC parameters */
-int Password_encryption = PASSWORD_TYPE_SCRAM_SHA_256;
-char *createrole_self_grant = "";
-static bool createrole_self_grant_enabled = false;
-static GrantRoleOptions createrole_self_grant_options;
+thread_local int Password_encryption = PASSWORD_TYPE_SCRAM_SHA_256;
+thread_local char *createrole_self_grant = "";
+static thread_local bool createrole_self_grant_enabled = false;
+static thread_local GrantRoleOptions createrole_self_grant_options;
 
 /* Hook to check passwords in CreateRole() and AlterRole() */
-check_password_hook_type check_password_hook = NULL;
+PG_SHARED check_password_hook_type check_password_hook = NULL;
 
 static void AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
                         List *memberSpecs, List *memberIds, Oid grantorId,

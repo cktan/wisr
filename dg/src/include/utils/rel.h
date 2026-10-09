@@ -307,53 +307,12 @@ typedef struct ForeignKeyCacheInfo
  * be applied to relations that use this format or a superset for
  * private options data.
  */
- /* autovacuum-related reloptions. */
-typedef struct AutoVacOpts
-{
-	bool		enabled;
-	int			vacuum_threshold;
-	int			vacuum_max_threshold;
-	int			vacuum_ins_threshold;
-	int			analyze_threshold;
-	int			vacuum_cost_limit;
-	int			freeze_min_age;
-	int			freeze_max_age;
-	int			freeze_table_age;
-	int			multixact_freeze_min_age;
-	int			multixact_freeze_max_age;
-	int			multixact_freeze_table_age;
-	int			log_min_duration;
-	float8		vacuum_cost_delay;
-	float8		vacuum_scale_factor;
-	float8		vacuum_ins_scale_factor;
-	float8		analyze_scale_factor;
-} AutoVacOpts;
-
-/* StdRdOptions->vacuum_index_cleanup values */
-typedef enum StdRdOptIndexCleanup
-{
-	STDRD_OPTION_VACUUM_INDEX_CLEANUP_AUTO = 0,
-	STDRD_OPTION_VACUUM_INDEX_CLEANUP_OFF,
-	STDRD_OPTION_VACUUM_INDEX_CLEANUP_ON,
-} StdRdOptIndexCleanup;
-
 typedef struct StdRdOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
 	int			toast_tuple_target; /* target for tuple toasting */
-	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */
-	int			parallel_workers;	/* max number of parallel workers */
-	StdRdOptIndexCleanup vacuum_index_cleanup;	/* controls index vacuuming */
-	bool		vacuum_truncate;	/* enables vacuum to truncate a relation */
-	bool		vacuum_truncate_set;	/* whether vacuum_truncate is set */
-
-	/*
-	 * Fraction of pages in a relation that vacuum can eagerly scan and fail
-	 * to freeze. 0 if disabled, -1 if unspecified.
-	 */
-	double		vacuum_max_eager_freeze_failure_rate;
 } StdRdOptions;
 
 #define HEAP_MIN_FILLFACTOR			10
@@ -399,15 +358,6 @@ typedef struct StdRdOptions
 	 ((relation)->rd_rel->relkind == RELKIND_RELATION || \
 	  (relation)->rd_rel->relkind == RELKIND_MATVIEW) ? \
 	 ((StdRdOptions *) (relation)->rd_options)->user_catalog_table : false)
-
-/*
- * RelationGetParallelWorkers
- *		Returns the relation's parallel_workers reloption setting.
- *		Note multiple eval of argument!
- */
-#define RelationGetParallelWorkers(relation, defaultpw) \
-	((relation)->rd_options ? \
-	 ((StdRdOptions *) (relation)->rd_options)->parallel_workers : (defaultpw))
 
 /* ViewOptions->check_option values */
 typedef enum ViewOptCheckOption

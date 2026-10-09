@@ -260,45 +260,46 @@ typedef enum KAXCompressReason {
   KAX_STARTUP_PROCESS_IDLE, /* startup process is about to sleep */
 } KAXCompressReason;
 
-static ProcArrayStruct *procArray;
+static PG_SHARED ProcArrayStruct *procArray;
 
-static PGPROC *allProcs;
+static PG_SHARED PGPROC *allProcs;
 
 /*
  * Cache to reduce overhead of repeated calls to TransactionIdIsInProgress()
  */
-static TransactionId cachedXidIsNotInProgress = InvalidTransactionId;
+static thread_local TransactionId cachedXidIsNotInProgress =
+    InvalidTransactionId;
 
 /*
  * Bookkeeping for tracking emulated transactions in recovery
  */
-static TransactionId *KnownAssignedXids;
-static bool *KnownAssignedXidsValid;
-static TransactionId latestObservedXid = InvalidTransactionId;
+static PG_SHARED TransactionId *KnownAssignedXids;
+static PG_SHARED bool *KnownAssignedXidsValid;
+static thread_local TransactionId latestObservedXid = InvalidTransactionId;
 
 /*
  * If we're in STANDBY_SNAPSHOT_PENDING state, standbySnapshotPendingXmin is
  * the highest xid that might still be running that we don't have in
  * KnownAssignedXids.
  */
-static TransactionId standbySnapshotPendingXmin;
+static thread_local TransactionId standbySnapshotPendingXmin;
 
 /*
  * State for visibility checks on different types of relations. See struct
  * GlobalVisState for details. As shared, catalog, normal and temporary
  * relations can have different horizons, one such state exists for each.
  */
-static GlobalVisState GlobalVisSharedRels;
-static GlobalVisState GlobalVisCatalogRels;
-static GlobalVisState GlobalVisDataRels;
-static GlobalVisState GlobalVisTempRels;
+static thread_local GlobalVisState GlobalVisSharedRels;
+static thread_local GlobalVisState GlobalVisCatalogRels;
+static thread_local GlobalVisState GlobalVisDataRels;
+static thread_local GlobalVisState GlobalVisTempRels;
 
 /*
  * This backend's RecentXmin at the last time the accurate xmin horizon was
  * recomputed, or InvalidTransactionId if it has not. Used to limit how many
  * times accurate horizons are recomputed. See GlobalVisTestShouldUpdate().
  */
-static TransactionId ComputeXidHorizonsResultLastXmin;
+static thread_local TransactionId ComputeXidHorizonsResultLastXmin;
 
 #ifdef XIDCACHE_DEBUG
 
@@ -1316,8 +1317,8 @@ void ProcArrayApplyXidAssignment(TransactionId topxid, int nsubxids,
  * ProcGlobal->xids[] again anyway; see GetNewTransactionId).
  */
 bool TransactionIdIsInProgress(TransactionId xid) {
-  static TransactionId *xids = NULL;
-  static TransactionId *other_xids;
+  static thread_local TransactionId *xids = NULL;
+  static thread_local TransactionId *other_xids;
   XidCacheStatus *other_subxidstates;
   int nxids = 0;
   ProcArrayStruct *arrayP = procArray;
@@ -2516,7 +2517,7 @@ bool ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc) {
  */
 RunningTransactions GetRunningTransactionData(void) {
   /* result workspace */
-  static RunningTransactionsData CurrentRunningXactsData;
+  static thread_local RunningTransactionsData CurrentRunningXactsData;
 
   ProcArrayStruct *arrayP = procArray;
   TransactionId *other_xids = ProcGlobal->xids;
@@ -3195,7 +3196,7 @@ VirtualTransactionId *GetCurrentVirtualXIDs(TransactionId limitXmin,
  */
 VirtualTransactionId *GetConflictingVirtualXIDs(TransactionId limitXmin,
                                                 Oid dbOid) {
-  static VirtualTransactionId *vxids;
+  static thread_local VirtualTransactionId *vxids;
   ProcArrayStruct *arrayP = procArray;
   int count = 0;
   int index;
@@ -4351,8 +4352,8 @@ static void KnownAssignedXidsCompress(KAXCompressReason reason, bool haveLock) {
   int i;
 
   /* Counters for compression heuristics */
-  static unsigned int transactionEndsCounter;
-  static TimestampTz lastCompressTs;
+  static thread_local unsigned int transactionEndsCounter;
+  static thread_local TimestampTz lastCompressTs;
 
   /* Tuning constants */
 #define KAX_COMPRESS_FREQUENCY 128      /* in transactions */

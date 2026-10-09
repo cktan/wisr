@@ -22,7 +22,6 @@
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
-#include "access/session.h"
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "access/xlog.h"
@@ -38,7 +37,6 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/autovacuum.h"
 #include "postmaster/postmaster.h"
 #include "storage/aio_subsys.h"
 #include "storage/bufmgr.h"
@@ -302,19 +300,17 @@ void InitializeMaxBackends(void) {
   Assert(MaxBackends == 0);
 
   /* Note that this does not include "auxiliary" processes */
-  MaxBackends = MaxConnections + autovacuum_worker_slots +
-                max_worker_processes + NUM_SPECIAL_WORKER_PROCS;
+  MaxBackends =
+      MaxConnections + max_worker_processes + NUM_SPECIAL_WORKER_PROCS;
 
   if (MaxBackends > MAX_BACKENDS)
     ereport(ERROR,
             (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
              errmsg("too many server processes configured"),
-             errdetail(
-                 "\"max_connections\" (%d) plus \"autovacuum_worker_slots\" "
-                 "(%d) plus \"max_worker_processes\" (%d) must be less "
-                 "than %d.",
-                 MaxConnections, autovacuum_worker_slots, max_worker_processes,
-                 MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
+             errdetail("\"max_connections\" (%d) plus \"max_worker_processes\" "
+                       "(%d) must be less than %d.",
+                       MaxConnections, max_worker_processes,
+                       MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
 }
 
 /*
@@ -427,17 +423,11 @@ void BaseInit(void) {
  * or by OID using the useroid parameter.
  *
  * In bootstrap mode the database and username parameters are NULL/InvalidOid.
- * The autovacuum launcher process doesn't specify these parameters either,
- * because it only goes far enough to be able to read pg_database; it doesn't
- * connect to any particular database.  An autovacuum worker specifies a
- * database but not a username; conversely, a physical walsender specifies
- * username but not database.
+ * A physical walsender specifies username but not database.
  *
  * By convention, INIT_PG_LOAD_SESSION_LIBS should be passed in "flags" in
  * "interactive" sessions (including standalone backends), but not in
- * background processes such as autovacuum.  Note in particular that it
- * shouldn't be true in parallel worker processes; those have another
- * mechanism for replicating their leader's set of loaded libraries.
+ * background processes.
  *
  * We expect that InitProcess() was already called, so we already have a
  * PGPROC struct ... but it's not completely filled in yet.
@@ -559,14 +549,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    */
   before_shmem_exit(ShutdownPostgres, 0);
 
-  /* The autovacuum launcher is done here */
-  if (AmAutoVacuumLauncherProcess()) {
-    /* fill in the remainder of this entry in the PgBackendStatus array */
-    pgstat_bestart_final();
-
-    return;
-  }
-
   /*
    * Start a new transaction here before first access to db.
    */
@@ -588,12 +570,10 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    * Perform client authentication if necessary, then figure out our
    * postgres user ID, and see if we are a superuser.
    *
-   * In standalone mode, autovacuum worker processes and slot sync worker
-   * process, we use a fixed ID, otherwise we figure it out from the
-   * authenticated user name.
+   * In standalone mode and slot sync worker process, we use a fixed ID,
+   * otherwise we figure it out from the authenticated user name.
    */
-  if (bootstrap || AmAutoVacuumWorkerProcess() ||
-      AmLogicalSlotSyncWorkerProcess()) {
+  if (bootstrap || AmLogicalSlotSyncWorkerProcess()) {
     InitializeSessionUserIdStandalone();
     am_superuser = true;
   } else if (!IsUnderPostmaster) {
@@ -749,8 +729,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    * target database can no longer be concurrently dropped or renamed.  For
    * example, without this guarantee, pgstat_update_dbstats() could create
    * entries for databases that were just dropped in the pgstat shutdown
-   * callback, which could confuse other code paths like the autovacuum
-   * scheduler.
+   * callback, which could confuse other code paths.
    */
   MyDatabaseId = dboid;
 
@@ -825,9 +804,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 
   /* initialize client encoding */
   InitializeClientEncoding();
-
-  /* Initialize this backend's session state. */
-  InitializeSession();
 
   /*
    * If this is an interactive session, load any libraries that should be

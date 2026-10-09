@@ -35,7 +35,6 @@
 
 #include "libpq/libpq-be.h"
 #include "miscadmin.h"
-#include "postmaster/autovacuum.h"
 #include "postmaster/bgworker_internals.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/fork_process.h"
@@ -172,13 +171,11 @@ typedef struct {
   bool shmem_attach;
 } child_process_kind;
 
-static child_process_kind child_process_kinds[] = {
+static PG_SHARED child_process_kind child_process_kinds[] = {
     [B_INVALID] = {"invalid", NULL, false},
 
     [B_BACKEND] = {"backend", BackendMain, true},
     [B_DEAD_END_BACKEND] = {"dead-end backend", BackendMain, true},
-    [B_AUTOVAC_LAUNCHER] = {"autovacuum launcher", AutoVacLauncherMain, true},
-    [B_AUTOVAC_WORKER] = {"autovacuum worker", AutoVacWorkerMain, true},
     [B_BG_WORKER] = {"bgworker", BackgroundWorkerMain, true},
 
     /*

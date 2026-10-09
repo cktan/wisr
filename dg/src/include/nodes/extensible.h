@@ -14,7 +14,6 @@
 #ifndef EXTENSIBLE_H
 #define EXTENSIBLE_H
 
-#include "access/parallel.h"
 #include "commands/explain_state.h"
 #include "nodes/execnodes.h"
 #include "nodes/pathnodes.h"
@@ -137,18 +136,7 @@ typedef struct CustomExecMethods
 	void		(*MarkPosCustomScan) (CustomScanState *node);
 	void		(*RestrPosCustomScan) (CustomScanState *node);
 
-	/* Optional methods: needed if parallel execution is supported */
-	Size		(*EstimateDSMCustomScan) (CustomScanState *node,
-										  ParallelContext *pcxt);
-	void		(*InitializeDSMCustomScan) (CustomScanState *node,
-											ParallelContext *pcxt,
-											void *coordinate);
-	void		(*ReInitializeDSMCustomScan) (CustomScanState *node,
-											  ParallelContext *pcxt,
-											  void *coordinate);
-	void		(*InitializeWorkerCustomScan) (CustomScanState *node,
-											   shm_toc *toc,
-											   void *coordinate);
+	/* Optional: release resources at the end of the scan */
 	void		(*ShutdownCustomScan) (CustomScanState *node);
 
 	/* Optional: print additional information in EXPLAIN */

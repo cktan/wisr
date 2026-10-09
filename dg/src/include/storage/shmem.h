@@ -25,7 +25,7 @@
 #include "utils/hsearch.h"
 
 /* shmem.c */
-extern PGDLLIMPORT slock_t *ShmemLock;
+extern PG_SHARED PGDLLIMPORT slock_t *ShmemLock;
 struct PGShmemHeader; /* avoid including storage/pg_shmem.h here */
 extern void InitShmemAccess(struct PGShmemHeader *seghdr);
 extern void InitShmemAllocation(void);

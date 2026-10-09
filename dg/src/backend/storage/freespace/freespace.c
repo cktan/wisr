@@ -101,7 +101,6 @@ static Buffer fsm_extend(Relation rel, BlockNumber fsm_nblocks);
 /* functions to convert amount of free space to a FSM category */
 static uint8 fsm_space_avail_to_cat(Size avail);
 static uint8 fsm_space_needed_to_cat(Size needed);
-static Size fsm_space_cat_to_avail(uint8 cat);
 
 /* workhorse functions for various operations */
 static int fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
@@ -233,28 +232,6 @@ void XLogRecordPageWithFreeSpace(RelFileLocator rlocator, BlockNumber heapBlk,
   if (fsm_set_avail(page, slot, new_cat))
     MarkBufferDirty(buf);
   UnlockReleaseBuffer(buf);
-}
-
-/*
- * GetRecordedFreeSpace - return the amount of free space on a particular page,
- *		according to the FSM.
- */
-Size GetRecordedFreeSpace(Relation rel, BlockNumber heapBlk) {
-  FSMAddress addr;
-  uint16 slot;
-  Buffer buf;
-  uint8 cat;
-
-  /* Get the location of the FSM byte representing the heap block */
-  addr = fsm_get_location(heapBlk, &slot);
-
-  buf = fsm_readbuf(rel, addr, false);
-  if (!BufferIsValid(buf))
-    return 0;
-  cat = fsm_get_avail(BufferGetPage(buf), slot);
-  ReleaseBuffer(buf);
-
-  return fsm_space_cat_to_avail(cat);
 }
 
 /*
@@ -393,18 +370,6 @@ static uint8 fsm_space_avail_to_cat(Size avail) {
     cat = 254;
 
   return (uint8)cat;
-}
-
-/*
- * Return the lower bound of the range of free space represented by given
- * category.
- */
-static Size fsm_space_cat_to_avail(uint8 cat) {
-  /* The highest category represents exactly MaxFSMRequestSize bytes. */
-  if (cat == 255)
-    return MaxFSMRequestSize;
-  else
-    return cat * FSM_CAT_STEP;
 }
 
 /*

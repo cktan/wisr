@@ -62,7 +62,7 @@ typedef struct {
   Oid reloid;
 } SelfJoinCandidate;
 
-bool enable_self_join_elimination;
+thread_local bool enable_self_join_elimination;
 
 /* local functions */
 static bool join_is_removable(PlannerInfo *root, SpecialJoinInfo *sjinfo);

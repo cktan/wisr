@@ -90,18 +90,18 @@ typedef struct PgArchData {
   pg_atomic_uint32 force_dir_scan;
 } PgArchData;
 
-char *XLogArchiveLibrary = "";
-char *arch_module_check_errdetail_string;
+thread_local char *XLogArchiveLibrary = "";
+thread_local char *arch_module_check_errdetail_string;
 
 /* ----------
  * Local data
  * ----------
  */
-static time_t last_sigterm_time = 0;
-static PgArchData *PgArch = NULL;
-static const ArchiveModuleCallbacks *ArchiveCallbacks;
-static ArchiveModuleState *archive_module_state;
-static MemoryContext archive_context;
+static thread_local time_t last_sigterm_time = 0;
+static PG_SHARED PgArchData *PgArch = NULL;
+static thread_local const ArchiveModuleCallbacks *ArchiveCallbacks;
+static thread_local ArchiveModuleState *archive_module_state;
+static thread_local MemoryContext archive_context;
 
 /*
  * Stuff for tracking multiple files to archive from each scan of
@@ -125,12 +125,12 @@ struct arch_files_state {
   char arch_filenames[NUM_FILES_PER_DIRECTORY_SCAN][MAX_XFN_CHARS + 1];
 };
 
-static struct arch_files_state *arch_files = NULL;
+static thread_local struct arch_files_state *arch_files = NULL;
 
 /*
  * Flags set by interrupt handlers for later service in the main loop.
  */
-static volatile sig_atomic_t ready_to_stop = false;
+static thread_local volatile sig_atomic_t ready_to_stop = false;
 
 /* ----------
  * Local function forward declarations
@@ -185,7 +185,7 @@ void PgArchShmemInit(void) {
  * chance later.
  */
 bool PgArchCanRestart(void) {
-  static time_t last_pgarch_start_time = 0;
+  static thread_local time_t last_pgarch_start_time = 0;
   time_t curtime = time(NULL);
 
   /*

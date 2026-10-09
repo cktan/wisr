@@ -29,7 +29,6 @@
 #include <utime.h>
 
 #include "access/htup_details.h"
-#include "access/parallel.h"
 #include "catalog/pg_authid.h"
 #include "common/file_perm.h"
 #include "libpq/libpq.h"
@@ -37,7 +36,6 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/autovacuum.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "storage/fd.h"
@@ -58,14 +56,14 @@
 
 #define DIRECTORY_LOCK_FILE		"postmaster.pid"
 
-ProcessingMode Mode = InitProcessing;
+thread_local ProcessingMode Mode = InitProcessing;
 
-BackendType MyBackendType;
+thread_local BackendType MyBackendType;
 
 /* List of lock files to be removed at proc exit */
-static List *lock_files = NIL;
+static PG_SHARED List *lock_files = NIL;
 
-static Latch LocalLatchData;
+static thread_local Latch LocalLatchData;
 
 /* ----------------------------------------------------------------
  *		ignoring system indexes support stuff
@@ -77,7 +75,7 @@ static Latch LocalLatchData;
  * ----------------------------------------------------------------
  */
 
-bool IgnoreSystemIndexes = false;
+thread_local bool IgnoreSystemIndexes = false;
 
 /* ----------------------------------------------------------------
  *	common process startup code
@@ -252,12 +250,6 @@ const char *GetBackendTypeDesc(BackendType backendType) {
     break;
   case B_ARCHIVER:
     backendDesc = gettext_noop("archiver");
-    break;
-  case B_AUTOVAC_LAUNCHER:
-    backendDesc = gettext_noop("autovacuum launcher");
-    break;
-  case B_AUTOVAC_WORKER:
-    backendDesc = gettext_noop("autovacuum worker");
     break;
   case B_BACKEND:
     backendDesc = gettext_noop("client backend");
@@ -464,19 +456,19 @@ void ChangeToDataDir(void) {
  * convenient way to do it.
  * ----------------------------------------------------------------
  */
-static Oid AuthenticatedUserId = InvalidOid;
-static Oid SessionUserId = InvalidOid;
-static Oid OuterUserId = InvalidOid;
-static Oid CurrentUserId = InvalidOid;
-static const char *SystemUser = NULL;
+static thread_local Oid AuthenticatedUserId = InvalidOid;
+static thread_local Oid SessionUserId = InvalidOid;
+static thread_local Oid OuterUserId = InvalidOid;
+static thread_local Oid CurrentUserId = InvalidOid;
+static thread_local const char *SystemUser = NULL;
 
 /* We also have to remember the superuser state of the session user */
-static bool SessionUserIsSuperuser = false;
+static thread_local bool SessionUserIsSuperuser = false;
 
-static int SecurityRestrictionContext = 0;
+static thread_local int SecurityRestrictionContext = 0;
 
 /* We also remember if a SET ROLE is currently active */
-static bool SetRoleIsActive = false;
+static thread_local bool SetRoleIsActive = false;
 
 /*
  * GetUserId - get the current effective user ID.
@@ -515,11 +507,6 @@ static void SetOuterUserId(Oid userid, bool is_superuser) {
 Oid GetSessionUserId(void) {
   Assert(OidIsValid(SessionUserId));
   return SessionUserId;
-}
-
-bool GetSessionUserIsSuperuser(void) {
-  Assert(OidIsValid(SessionUserId));
-  return SessionUserIsSuperuser;
 }
 
 static void SetSessionUserId(Oid userid, bool is_superuser) {
@@ -684,18 +671,6 @@ bool has_rolreplication(Oid roleid) {
 void InitializeSessionUserId(const char *rolename, Oid roleid,
                              bool bypass_login_check) {
   /*
-   * In a parallel worker, we don't have to do anything here.
-   * ParallelWorkerMain already set our output variables, and we aren't
-   * going to enforce either rolcanlogin or rolconnlimit.  Furthermore, we
-   * don't really want to perform a catalog lookup for the role: we don't
-   * want to fail if it's been dropped.
-   */
-  if (InitializingParallelWorker) {
-    Assert(bypass_login_check);
-    return;
-  }
-
-  /*
    * Don't do scans if we're bootstrapping, none of the system catalogs
    * exist yet, and they should be owned by postgres anyway.
    */
@@ -729,11 +704,11 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
  */
 void InitializeSessionUserIdStandalone(void) {
   /*
-   * This function should only be called in single-user mode, in autovacuum
-   * workers, in slot sync worker and in background workers.
+   * This function should only be called in single-user mode, in slot sync
+   * worker and in background workers.
    */
-  Assert(!IsUnderPostmaster || AmAutoVacuumWorkerProcess() ||
-         AmLogicalSlotSyncWorkerProcess() || AmBackgroundWorkerProcess());
+  Assert(!IsUnderPostmaster || AmLogicalSlotSyncWorkerProcess() ||
+         AmBackgroundWorkerProcess());
 
   /* call only once */
   Assert(!OidIsValid(AuthenticatedUserId));
@@ -890,7 +865,7 @@ char *GetUserNameFromId(Oid roleid, bool noerr) {
  *-------------------------------------------------------------------------
  */
 
-ClientConnectionInfo MyClientConnectionInfo;
+thread_local ClientConnectionInfo MyClientConnectionInfo;
 
 /*
  * Intermediate representation of ClientConnectionInfo for easier
@@ -901,70 +876,6 @@ typedef struct SerializedClientConnectionInfo {
   int32 authn_id_len; /* strlen(authn_id), or -1 if NULL */
   UserAuth auth_method;
 } SerializedClientConnectionInfo;
-
-/*
- * Calculate the space needed to serialize MyClientConnectionInfo.
- */
-Size EstimateClientConnectionInfoSpace(void) {
-  Size size = 0;
-
-  size = add_size(size, sizeof(SerializedClientConnectionInfo));
-
-  if (MyClientConnectionInfo.authn_id)
-    size = add_size(size, strlen(MyClientConnectionInfo.authn_id) + 1);
-
-  return size;
-}
-
-/*
- * Serialize MyClientConnectionInfo for use by parallel workers.
- */
-void SerializeClientConnectionInfo(Size maxsize PG_USED_FOR_ASSERTS_ONLY,
-                                   char *start_address) {
-  SerializedClientConnectionInfo serialized = {0};
-
-  serialized.authn_id_len = -1;
-  serialized.auth_method = MyClientConnectionInfo.auth_method;
-
-  if (MyClientConnectionInfo.authn_id)
-    serialized.authn_id_len = strlen(MyClientConnectionInfo.authn_id);
-
-  /* Copy serialized representation to buffer */
-  Assert(maxsize >= sizeof(serialized));
-  memcpy(start_address, &serialized, sizeof(serialized));
-
-  maxsize -= sizeof(serialized);
-  start_address += sizeof(serialized);
-
-  /* Copy authn_id into the space after the struct */
-  if (serialized.authn_id_len >= 0) {
-    Assert(maxsize >= (serialized.authn_id_len + 1));
-    memcpy(start_address, MyClientConnectionInfo.authn_id,
-           /* include the NULL terminator to ease deserialization */
-           serialized.authn_id_len + 1);
-  }
-}
-
-/*
- * Restore MyClientConnectionInfo from its serialized representation.
- */
-void RestoreClientConnectionInfo(char *conninfo) {
-  SerializedClientConnectionInfo serialized;
-
-  memcpy(&serialized, conninfo, sizeof(serialized));
-
-  /* Copy the fields back into place */
-  MyClientConnectionInfo.authn_id = NULL;
-  MyClientConnectionInfo.auth_method = serialized.auth_method;
-
-  if (serialized.authn_id_len >= 0) {
-    char *authn_id;
-
-    authn_id = conninfo + sizeof(serialized);
-    MyClientConnectionInfo.authn_id =
-        MemoryContextStrdup(TopMemoryContext, authn_id);
-  }
-}
 
 /*-------------------------------------------------------------------------
  *				Interlock-file support
@@ -1572,16 +1483,16 @@ void ValidatePgVersion(const char *path) {
  * GUC variables: lists of library names to be preloaded at postmaster
  * start and at backend start
  */
-char *session_preload_libraries_string = NULL;
-char *shared_preload_libraries_string = NULL;
-char *local_preload_libraries_string = NULL;
+thread_local char *session_preload_libraries_string = NULL;
+thread_local char *shared_preload_libraries_string = NULL;
+thread_local char *local_preload_libraries_string = NULL;
 
 /* Flag telling that we are loading shared_preload_libraries */
-bool process_shared_preload_libraries_in_progress = false;
-bool process_shared_preload_libraries_done = false;
+PG_SHARED bool process_shared_preload_libraries_in_progress = false;
+PG_SHARED bool process_shared_preload_libraries_done = false;
 
-shmem_request_hook_type shmem_request_hook = NULL;
-bool process_shmem_requests_in_progress = false;
+PG_SHARED shmem_request_hook_type shmem_request_hook = NULL;
+thread_local bool process_shmem_requests_in_progress = false;
 
 /*
  * load the shared libraries listed in 'libraries'

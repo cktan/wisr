@@ -25,8 +25,6 @@
 #define DEFAULT_CPU_TUPLE_COST	0.01
 #define DEFAULT_CPU_INDEX_TUPLE_COST 0.005
 #define DEFAULT_CPU_OPERATOR_COST  0.0025
-#define DEFAULT_PARALLEL_TUPLE_COST 0.1
-#define DEFAULT_PARALLEL_SETUP_COST  1000.0
 
 /* defaults for non-Cost parameters */
 #define DEFAULT_RECURSIVE_WORKTABLE_FACTOR  10.0
@@ -44,30 +42,26 @@ typedef enum {
  */
 
 /* parameter variables and flags (see also optimizer.h) */
-extern PGDLLIMPORT Cost disable_cost;
-extern PGDLLIMPORT int max_parallel_workers_per_gather;
-extern PGDLLIMPORT bool enable_seqscan;
-extern PGDLLIMPORT bool enable_indexscan;
-extern PGDLLIMPORT bool enable_indexonlyscan;
-extern PGDLLIMPORT bool enable_bitmapscan;
-extern PGDLLIMPORT bool enable_tidscan;
-extern PGDLLIMPORT bool enable_sort;
-extern PGDLLIMPORT bool enable_incremental_sort;
-extern PGDLLIMPORT bool enable_hashagg;
-extern PGDLLIMPORT bool enable_nestloop;
-extern PGDLLIMPORT bool enable_material;
-extern PGDLLIMPORT bool enable_memoize;
-extern PGDLLIMPORT bool enable_mergejoin;
-extern PGDLLIMPORT bool enable_hashjoin;
-extern PGDLLIMPORT bool enable_gathermerge;
-extern PGDLLIMPORT bool enable_partitionwise_join;
-extern PGDLLIMPORT bool enable_partitionwise_aggregate;
-extern PGDLLIMPORT bool enable_parallel_append;
-extern PGDLLIMPORT bool enable_parallel_hash;
-extern PGDLLIMPORT bool enable_partition_pruning;
-extern PGDLLIMPORT bool enable_presorted_aggregate;
-extern PGDLLIMPORT bool enable_async_append;
-extern PGDLLIMPORT int constraint_exclusion;
+extern thread_local PGDLLIMPORT Cost disable_cost;
+extern thread_local PGDLLIMPORT bool enable_seqscan;
+extern thread_local PGDLLIMPORT bool enable_indexscan;
+extern thread_local PGDLLIMPORT bool enable_indexonlyscan;
+extern thread_local PGDLLIMPORT bool enable_bitmapscan;
+extern thread_local PGDLLIMPORT bool enable_tidscan;
+extern thread_local PGDLLIMPORT bool enable_sort;
+extern thread_local PGDLLIMPORT bool enable_incremental_sort;
+extern thread_local PGDLLIMPORT bool enable_hashagg;
+extern thread_local PGDLLIMPORT bool enable_nestloop;
+extern thread_local PGDLLIMPORT bool enable_material;
+extern thread_local PGDLLIMPORT bool enable_memoize;
+extern thread_local PGDLLIMPORT bool enable_mergejoin;
+extern thread_local PGDLLIMPORT bool enable_hashjoin;
+extern thread_local PGDLLIMPORT bool enable_partitionwise_join;
+extern thread_local PGDLLIMPORT bool enable_partitionwise_aggregate;
+extern thread_local PGDLLIMPORT bool enable_partition_pruning;
+extern thread_local PGDLLIMPORT bool enable_presorted_aggregate;
+extern thread_local PGDLLIMPORT bool enable_async_append;
+extern thread_local PGDLLIMPORT int constraint_exclusion;
 
 extern double index_pages_fetched(double tuples_fetched, BlockNumber pages,
                                   double index_pages, PlannerInfo *root);
@@ -75,8 +69,7 @@ extern void cost_seqscan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
                          ParamPathInfo *param_info);
 extern void cost_samplescan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
                             ParamPathInfo *param_info);
-extern void cost_index(IndexPath *path, PlannerInfo *root, double loop_count,
-                       bool partial_path);
+extern void cost_index(IndexPath *path, PlannerInfo *root, double loop_count);
 extern void cost_bitmap_heap_scan(Path *path, PlannerInfo *root,
                                   RelOptInfo *baserel,
                                   ParamPathInfo *param_info, Path *bitmapqual,
@@ -155,16 +148,10 @@ extern void initial_cost_hashjoin(PlannerInfo *root,
                                   JoinCostWorkspace *workspace,
                                   JoinType jointype, List *hashclauses,
                                   Path *outer_path, Path *inner_path,
-                                  JoinPathExtraData *extra, bool parallel_hash);
+                                  JoinPathExtraData *extra);
 extern void final_cost_hashjoin(PlannerInfo *root, HashPath *path,
                                 JoinCostWorkspace *workspace,
                                 JoinPathExtraData *extra);
-extern void cost_gather(GatherPath *path, PlannerInfo *root, RelOptInfo *rel,
-                        ParamPathInfo *param_info, double *rows);
-extern void cost_gather_merge(GatherMergePath *path, PlannerInfo *root,
-                              RelOptInfo *rel, ParamPathInfo *param_info,
-                              int input_disabled_nodes, Cost input_startup_cost,
-                              Cost input_total_cost, double *rows);
 extern void cost_subplan(PlannerInfo *root, SubPlan *subplan, Plan *plan);
 extern void cost_qual_eval(QualCost *cost, List *quals, PlannerInfo *root);
 extern void cost_qual_eval_node(QualCost *cost, Node *qual, PlannerInfo *root);
@@ -199,6 +186,5 @@ extern PathTarget *set_pathtarget_cost_width(PlannerInfo *root,
 extern double compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel,
                                    Path *bitmapqual, double loop_count,
                                    Cost *cost_p, double *tuples_p);
-extern double compute_gather_rows(Path *path);
 
 #endif /* COST_H */

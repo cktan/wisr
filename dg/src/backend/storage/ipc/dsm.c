@@ -101,10 +101,10 @@ static inline dsm_handle make_main_region_dsm_handle(int slot);
 static inline bool is_main_region_dsm_handle(dsm_handle handle);
 
 /* Has this backend initialized the dynamic shared memory system yet? */
-static bool dsm_init_done = false;
+static PG_SHARED bool dsm_init_done = false;
 
 /* Preallocated DSM space in the main shared memory region. */
-static void *dsm_main_space_begin = NULL;
+static PG_SHARED void *dsm_main_space_begin = NULL;
 
 /*
  * List of dynamic shared memory segments used by this backend.
@@ -123,7 +123,8 @@ static void *dsm_main_space_begin = NULL;
  * each new mapping would require an update to the control segment,
  * which requires locking, in which the postmaster must not be involved.
  */
-static dlist_head dsm_segment_list = DLIST_STATIC_INIT(dsm_segment_list);
+static thread_local dlist_head dsm_segment_list =
+    DLIST_STATIC_INIT(dsm_segment_list);
 
 /*
  * Control segment information.
@@ -132,10 +133,10 @@ static dlist_head dsm_segment_list = DLIST_STATIC_INIT(dsm_segment_list);
  * reference counted; instead, it lasts for the postmaster's entire
  * life cycle.  For simplicity, it doesn't have a dsm_segment object either.
  */
-static dsm_handle dsm_control_handle;
-static dsm_control_header *dsm_control;
-static Size dsm_control_mapped_size = 0;
-static void *dsm_control_impl_private = NULL;
+static PG_SHARED dsm_handle dsm_control_handle;
+static PG_SHARED dsm_control_header *dsm_control;
+static PG_SHARED Size dsm_control_mapped_size = 0;
+static PG_SHARED void *dsm_control_impl_private = NULL;
 
 /* ResourceOwner callbacks to hold DSM segments */
 static void ResOwnerReleaseDSM(Datum res);

@@ -1323,6 +1323,16 @@ extern int fdatasync(int fildes);
 #endif
 
 /*
+ * A session is a thread, so every writable global and static is
+ * thread_local, one copy a thread. PG_SHARED marks one that every
+ * session shares instead: a pointer into shared memory, a table filled
+ * once at startup, or what the postmaster sets and a session reads.
+ * The section lets the build see the mark in the objects
+ * (src/tools/cxx_thread_local.py --check).
+ */
+#define PG_SHARED __attribute__((section(".pg_shared")))
+
+/*
  * Use "extern PGDLLEXPORT ..." to declare functions that are defined in
  * loadable modules and need to be callable by the core backend or other
  * loadable modules.

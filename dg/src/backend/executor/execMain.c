@@ -64,13 +64,13 @@
 #include "utils/snapmgr.h"
 
 /* Hooks for plugins to get control in ExecutorStart/Run/Finish/End */
-ExecutorStart_hook_type ExecutorStart_hook = NULL;
-ExecutorRun_hook_type ExecutorRun_hook = NULL;
-ExecutorFinish_hook_type ExecutorFinish_hook = NULL;
-ExecutorEnd_hook_type ExecutorEnd_hook = NULL;
+PG_SHARED ExecutorStart_hook_type ExecutorStart_hook = NULL;
+PG_SHARED ExecutorRun_hook_type ExecutorRun_hook = NULL;
+PG_SHARED ExecutorFinish_hook_type ExecutorFinish_hook = NULL;
+PG_SHARED ExecutorEnd_hook_type ExecutorEnd_hook = NULL;
 
 /* Hook for plugin to get control in ExecCheckPermissions() */
-ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook = NULL;
+PG_SHARED ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook = NULL;
 
 /* decls for local routines only used within this module */
 static void InitPlan(QueryDesc *queryDesc, int eflags);
@@ -144,20 +144,8 @@ void standard_ExecutorStart(QueryDesc *queryDesc, int eflags) {
   /*
    * If the transaction is read-only, we need to check if any writes are
    * planned to non-temporary tables.  EXPLAIN is considered read-only.
-   *
-   * Don't allow writes in parallel mode.  Supporting UPDATE and DELETE
-   * would require (a) storing the combo CID hash in shared memory, rather
-   * than synchronizing it just once at the start of parallelism, and (b) an
-   * alternative to heap_update()'s reliance on xmax for mutual exclusion.
-   * INSERT may have no such troubles, but we forbid it to simplify the
-   * checks.
-   *
-   * We have lower-level defenses in CommandCounterIncrement and elsewhere
-   * against performing unsafe operations in parallel mode, but this gives a
-   * more user-friendly error message.
    */
-  if ((XactReadOnly || IsInParallelMode()) &&
-      !(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+  if (XactReadOnly && !(eflags & EXEC_FLAG_EXPLAIN_ONLY))
     ExecCheckXactReadOnly(queryDesc->plannedstmt);
 
   /*
@@ -453,11 +441,6 @@ void standard_ExecutorEnd(QueryDesc *queryDesc) {
   estate = queryDesc->estate;
 
   Assert(estate != NULL);
-
-  if (estate->es_parallel_workers_to_launch > 0)
-    pgstat_update_parallel_workers_stats(
-        (PgStat_Counter)estate->es_parallel_workers_to_launch,
-        (PgStat_Counter)estate->es_parallel_workers_launched);
 
   /*
    * Check that ExecutorFinish was called, unless in EXPLAIN-only mode. This
@@ -758,9 +741,6 @@ static void ExecCheckXactReadOnly(PlannedStmt *plannedstmt) {
 
     PreventCommandIfReadOnly(CreateCommandName((Node *)plannedstmt));
   }
-
-  if (plannedstmt->commandType != CMD_SELECT || plannedstmt->hasModifyingCTE)
-    PreventCommandIfParallelMode(CreateCommandName((Node *)plannedstmt));
 }
 
 /* ----------------------------------------------------------------
@@ -1517,7 +1497,6 @@ static void ExecutePlan(QueryDesc *queryDesc, CmdType operation,
                         ScanDirection direction, DestReceiver *dest) {
   EState *estate = queryDesc->estate;
   PlanState *planstate = queryDesc->planstate;
-  bool use_parallel_mode;
   TupleTableSlot *slot;
   uint64 current_tuple_count;
 
@@ -1530,23 +1509,6 @@ static void ExecutePlan(QueryDesc *queryDesc, CmdType operation,
    * Set the direction.
    */
   estate->es_direction = direction;
-
-  /*
-   * Set up parallel mode if appropriate.
-   *
-   * Parallel mode only supports complete execution of a plan.  If we've
-   * already partially executed it, or if the caller asks us to exit early,
-   * we must force the plan to run without parallelism.
-   */
-  if (queryDesc->already_executed || numberTuples != 0)
-    use_parallel_mode = false;
-  else
-    use_parallel_mode = queryDesc->plannedstmt->parallelModeNeeded;
-  queryDesc->already_executed = true;
-
-  estate->es_use_parallel_mode = use_parallel_mode;
-  if (use_parallel_mode)
-    EnterParallelMode();
 
   /*
    * Loop until we've processed the proper number of tuples from the plan.
@@ -1616,9 +1578,6 @@ static void ExecutePlan(QueryDesc *queryDesc, CmdType operation,
    */
   if (!(estate->es_top_eflags & EXEC_FLAG_BACKWARD))
     ExecShutdownNode(planstate);
-
-  if (use_parallel_mode)
-    ExitParallelMode();
 }
 
 /*

@@ -24,7 +24,6 @@
 
 #include "access/htup_details.h"
 #include "storage/itemptr.h"
-#include "utils/dsa.h"
 
 /*
  * The maximum number of tuples per page is not large (typically 256 with
@@ -42,18 +41,12 @@ typedef struct TIDBitmap TIDBitmap;
 
 /* Likewise, TBMPrivateIterator is private */
 typedef struct TBMPrivateIterator TBMPrivateIterator;
-typedef struct TBMSharedIterator TBMSharedIterator;
 
 /*
- * Callers with both private and shared implementations can use this unified
- * API.
+ * Callers use this API, which wraps a TBMPrivateIterator.
  */
 typedef struct TBMIterator {
-  bool shared;
-  union {
-    TBMPrivateIterator *private_iterator;
-    TBMSharedIterator *shared_iterator;
-  } i;
+  TBMPrivateIterator *private_iterator;
 } TBMIterator;
 
 /* Result structure for tbm_iterate */
@@ -78,9 +71,8 @@ typedef struct TBMIterateResult {
 
 /* function prototypes in nodes/tidbitmap.c */
 
-extern TIDBitmap *tbm_create(Size maxbytes, dsa_area *dsa);
+extern TIDBitmap *tbm_create(Size maxbytes);
 extern void tbm_free(TIDBitmap *tbm);
-extern void tbm_free_shared_area(dsa_area *dsa, dsa_pointer dp);
 
 extern void tbm_add_tuples(TIDBitmap *tbm, const ItemPointer tids, int ntids,
                            bool recheck);
@@ -95,29 +87,19 @@ extern int tbm_extract_page_tuple(TBMIterateResult *iteritem,
 extern bool tbm_is_empty(const TIDBitmap *tbm);
 
 extern TBMPrivateIterator *tbm_begin_private_iterate(TIDBitmap *tbm);
-extern dsa_pointer tbm_prepare_shared_iterate(TIDBitmap *tbm);
 extern bool tbm_private_iterate(TBMPrivateIterator *iterator,
                                 TBMIterateResult *tbmres);
-extern bool tbm_shared_iterate(TBMSharedIterator *iterator,
-                               TBMIterateResult *tbmres);
 extern void tbm_end_private_iterate(TBMPrivateIterator *iterator);
-extern void tbm_end_shared_iterate(TBMSharedIterator *iterator);
-extern TBMSharedIterator *tbm_attach_shared_iterate(dsa_area *dsa,
-                                                    dsa_pointer dp);
 extern int tbm_calculate_entries(Size maxbytes);
 
-extern TBMIterator tbm_begin_iterate(TIDBitmap *tbm, dsa_area *dsa,
-                                     dsa_pointer dsp);
+extern TBMIterator tbm_begin_iterate(TIDBitmap *tbm);
 extern void tbm_end_iterate(TBMIterator *iterator);
 
 extern bool tbm_iterate(TBMIterator *iterator, TBMIterateResult *tbmres);
 
 static inline bool tbm_exhausted(TBMIterator *iterator) {
-  /*
-   * It doesn't matter if we check the private or shared iterator here. If
-   * tbm_end_iterate() was called, they will be NULL
-   */
-  return !iterator->i.private_iterator;
+  /* If tbm_end_iterate() was called, it will be NULL */
+  return !iterator->private_iterator;
 }
 
 #endif /* TIDBITMAP_H */

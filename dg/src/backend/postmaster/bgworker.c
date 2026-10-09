@@ -12,7 +12,6 @@
 
 #include "postgres.h"
 
-#include "access/parallel.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -35,7 +34,8 @@
 /*
  * The postmaster's list of registered background workers, in private memory.
  */
-dlist_head BackgroundWorkerList = DLIST_STATIC_INIT(BackgroundWorkerList);
+PG_SHARED dlist_head BackgroundWorkerList =
+    DLIST_STATIC_INIT(BackgroundWorkerList);
 
 /*
  * BackgroundWorkerSlots exist in shared memory and can be accessed (via
@@ -77,21 +77,8 @@ typedef struct BackgroundWorkerSlot {
   BackgroundWorker worker;
 } BackgroundWorkerSlot;
 
-/*
- * In order to limit the total number of parallel workers (according to
- * max_parallel_workers GUC), we maintain the number of active parallel
- * workers.  Since the postmaster cannot take locks, two variables are used for
- * this purpose: the number of registered parallel workers (modified by the
- * backends, protected by BackgroundWorkerLock) and the number of terminated
- * parallel workers (modified only by the postmaster, lockless).  The active
- * number of parallel workers is the number of registered workers minus the
- * terminated ones.  These counters can of course overflow, but it's not
- * important here since the subtraction will still give the right number.
- */
 typedef struct BackgroundWorkerArray {
   int total_slots;
-  uint32 parallel_register_count;
-  uint32 parallel_terminate_count;
   BackgroundWorkerSlot slot[FLEXIBLE_ARRAY_MEMBER];
 } BackgroundWorkerArray;
 
@@ -100,18 +87,7 @@ struct BackgroundWorkerHandle {
   uint64 generation;
 };
 
-static BackgroundWorkerArray *BackgroundWorkerData;
-
-/*
- * List of internal background worker entry points.  We need this for
- * reasons explained in LookupBackgroundWorkerFunction(), below.
- */
-static const struct {
-  const char *fn_name;
-  bgworker_main_type fn_addr;
-} InternalBGWorkers[] =
-
-    {{"ParallelWorkerMain", ParallelWorkerMain}};
+static PG_SHARED BackgroundWorkerArray *BackgroundWorkerData;
 
 /* Private functions. */
 static bgworker_main_type
@@ -144,8 +120,6 @@ void BackgroundWorkerShmemInit(void) {
     int slotno = 0;
 
     BackgroundWorkerData->total_slots = max_worker_processes;
-    BackgroundWorkerData->parallel_register_count = 0;
-    BackgroundWorkerData->parallel_terminate_count = 0;
 
     /*
      * Copy contents of worker list into shared memory.  Record the shared
@@ -283,12 +257,9 @@ void BackgroundWorkerStateChange(bool allow_new_workers) {
 
       /*
        * We need a memory barrier here to make sure that the load of
-       * bgw_notify_pid and the update of parallel_terminate_count
-       * complete before the store to in_use.
+       * bgw_notify_pid completes before the store to in_use.
        */
       notify_pid = slot->worker.bgw_notify_pid;
-      if ((slot->worker.bgw_flags & BGWORKER_CLASS_PARALLEL) != 0)
-        BackgroundWorkerData->parallel_terminate_count++;
       slot->pid = 0;
 
       pg_memory_barrier();
@@ -384,13 +355,6 @@ void ForgetBackgroundWorker(RegisteredBgWorker *rw) {
   Assert(rw->rw_shmem_slot < max_worker_processes);
   slot = &BackgroundWorkerData->slot[rw->rw_shmem_slot];
   Assert(slot->in_use);
-
-  /*
-   * We need a memory barrier here to make sure that the update of
-   * parallel_terminate_count completes before the store to in_use.
-   */
-  if ((rw->rw_worker.bgw_flags & BGWORKER_CLASS_PARALLEL) != 0)
-    BackgroundWorkerData->parallel_terminate_count++;
 
   pg_memory_barrier();
   slot->in_use = false;
@@ -523,22 +487,10 @@ void ResetBackgroundWorkerCrashTimes(void) {
     if (rw->rw_worker.bgw_restart_time == BGW_NEVER_RESTART) {
       /*
        * Workers marked BGW_NEVER_RESTART shouldn't get relaunched after
-       * the crash, so forget about them.  (If we wait until after the
-       * crash to forget about them, and they are parallel workers,
-       * parallel_terminate_count will get incremented after we've
-       * already zeroed parallel_register_count, which would be bad.)
+       * the crash, so forget about them.
        */
       ForgetBackgroundWorker(rw);
     } else {
-      /*
-       * The accounting which we do via parallel_register_count and
-       * parallel_terminate_count would get messed up if a worker marked
-       * parallel could survive a crash and restart cycle. All such
-       * workers should be marked BGW_NEVER_RESTART, and thus control
-       * should never reach this branch.
-       */
-      Assert((rw->rw_worker.bgw_flags & BGWORKER_CLASS_PARALLEL) == 0);
-
       /*
        * Allow this worker to be restarted immediately after we finish
        * resetting.
@@ -595,20 +547,6 @@ static bool SanityCheckBackgroundWorker(BackgroundWorker *worker, int elevel) {
             (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
              errmsg("background worker \"%s\": invalid restart interval",
                     worker->bgw_name)));
-    return false;
-  }
-
-  /*
-   * Parallel workers may not be configured for restart, because the
-   * parallel_register_count/parallel_terminate_count accounting can't
-   * handle parallel workers lasting through a crash-and-restart cycle.
-   */
-  if (worker->bgw_restart_time != BGW_NEVER_RESTART &&
-      (worker->bgw_flags & BGWORKER_CLASS_PARALLEL) != 0) {
-    ereport(elevel, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                     errmsg("background worker \"%s\": parallel workers may "
-                            "not be configured for restart",
-                            worker->bgw_name)));
     return false;
   }
 
@@ -708,13 +646,12 @@ void BackgroundWorkerMain(const void *startup_data, size_t startup_data_len) {
     HOLD_INTERRUPTS();
 
     /*
-     * sigsetjmp will have blocked all signals, but we may need to accept
-     * signals while communicating with our parallel leader.  Once we've
-     * done HOLD_INTERRUPTS() it should be safe to unblock signals.
+     * sigsetjmp will have blocked all signals.  Once we've done
+     * HOLD_INTERRUPTS() it should be safe to unblock signals.
      */
     BackgroundWorkerUnblockSignals();
 
-    /* Report the error to the parallel leader and the server log */
+    /* Report the error to the server log */
     EmitErrorReport();
 
     /*
@@ -846,7 +783,7 @@ void BackgroundWorkerUnblockSignals(void) {
  */
 void RegisterBackgroundWorker(BackgroundWorker *worker) {
   RegisteredBgWorker *rw;
-  static int numworkers = 0;
+  static PG_SHARED int numworkers = 0;
 
   /*
    * Static background workers can only be registered in the postmaster
@@ -947,7 +884,6 @@ bool RegisterDynamicBackgroundWorker(BackgroundWorker *worker,
                                      BackgroundWorkerHandle **handle) {
   int slotno;
   bool success = false;
-  bool parallel;
   uint64 generation = 0;
 
   /*
@@ -964,28 +900,7 @@ bool RegisterDynamicBackgroundWorker(BackgroundWorker *worker,
   if (!SanityCheckBackgroundWorker(worker, ERROR))
     return false;
 
-  parallel = (worker->bgw_flags & BGWORKER_CLASS_PARALLEL) != 0;
-
   LWLockAcquire(BackgroundWorkerLock, LW_EXCLUSIVE);
-
-  /*
-   * If this is a parallel worker, check whether there are already too many
-   * parallel workers; if so, don't register another one.  Our view of
-   * parallel_terminate_count may be slightly stale, but that doesn't really
-   * matter: we would have gotten the same result if we'd arrived here
-   * slightly earlier anyway.  There's no help for it, either, since the
-   * postmaster must not take locks; a memory barrier wouldn't guarantee
-   * anything useful.
-   */
-  if (parallel && (BackgroundWorkerData->parallel_register_count -
-                   BackgroundWorkerData->parallel_terminate_count) >=
-                      max_parallel_workers) {
-    Assert(BackgroundWorkerData->parallel_register_count -
-               BackgroundWorkerData->parallel_terminate_count <=
-           MAX_PARALLEL_WORKER_LIMIT);
-    LWLockRelease(BackgroundWorkerLock);
-    return false;
-  }
 
   /*
    * Look for an unused slot.  If we find one, grab it.
@@ -999,8 +914,6 @@ bool RegisterDynamicBackgroundWorker(BackgroundWorker *worker,
       slot->generation++;
       slot->terminate = false;
       generation = slot->generation;
-      if (parallel)
-        BackgroundWorkerData->parallel_register_count++;
 
       /*
        * Make sure postmaster doesn't see the slot as in use before it
@@ -1202,38 +1115,20 @@ void TerminateBackgroundWorker(BackgroundWorkerHandle *handle) {
 /*
  * Look up (and possibly load) a bgworker entry point function.
  *
- * For functions contained in the core code, we use library name "postgres"
- * and consult the InternalBGWorkers array.  External functions are
- * looked up, and loaded if necessary, using load_external_function().
+ * The core code has no background worker entry points, so library name
+ * "postgres" is an error.  External functions are looked up, and loaded if
+ * necessary, using load_external_function().
  *
  * The point of this is to pass function names as strings across process
  * boundaries.  We can't pass actual function addresses because of the
  * possibility that the function has been loaded at a different address
- * in a different process.  This is obviously a hazard for functions in
- * loadable libraries, but it can happen even for functions in the core code
- * on platforms using EXEC_BACKEND (e.g., Windows).
- *
- * At some point it might be worthwhile to get rid of InternalBGWorkers[]
- * in favor of applying load_external_function() for core functions too;
- * but that raises portability issues that are not worth addressing now.
+ * in a different process.
  */
 static bgworker_main_type
 LookupBackgroundWorkerFunction(const char *libraryname, const char *funcname) {
-  /*
-   * If the function is to be loaded from postgres itself, search the
-   * InternalBGWorkers array.
-   */
-  if (strcmp(libraryname, "postgres") == 0) {
-    int i;
-
-    for (i = 0; i < lengthof(InternalBGWorkers); i++) {
-      if (strcmp(InternalBGWorkers[i].fn_name, funcname) == 0)
-        return InternalBGWorkers[i].fn_addr;
-    }
-
-    /* We can only reach this by programming error. */
+  /* We can only reach this by programming error. */
+  if (strcmp(libraryname, "postgres") == 0)
     elog(ERROR, "internal function \"%s\" not found", funcname);
-  }
 
   /* Otherwise load from external library. */
   return (bgworker_main_type)load_external_function(libraryname, funcname, true,
@@ -1251,7 +1146,7 @@ LookupBackgroundWorkerFunction(const char *libraryname, const char *funcname) {
 const char *GetBackgroundWorkerTypeByPid(pid_t pid) {
   int slotno;
   bool found = false;
-  static char result[BGW_MAXLEN];
+  static thread_local char result[BGW_MAXLEN];
 
   LWLockAcquire(BackgroundWorkerLock, LW_SHARED);
 

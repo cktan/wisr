@@ -42,13 +42,10 @@ extern void UnlockRelationId(LockRelId *relid, LOCKMODE lockmode);
 extern void UnlockRelationOid(Oid relid, LOCKMODE lockmode);
 
 extern void LockRelation(Relation relation, LOCKMODE lockmode);
-extern bool ConditionalLockRelation(Relation relation, LOCKMODE lockmode);
-extern void UnlockRelation(Relation relation, LOCKMODE lockmode);
 extern bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
                                     bool orstronger);
 extern bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode,
                                        bool orstronger);
-extern bool LockHasWaitersRelation(Relation relation, LOCKMODE lockmode);
 
 extern void LockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode);
 extern void UnlockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode);
@@ -59,9 +56,6 @@ extern void UnlockRelationForExtension(Relation relation, LOCKMODE lockmode);
 extern bool ConditionalLockRelationForExtension(Relation relation,
                                                 LOCKMODE lockmode);
 extern int RelationExtensionLockWaiterCount(Relation relation);
-
-/* Lock to recompute pg_database.datfrozenxid in the current database */
-extern void LockDatabaseFrozenIds(LOCKMODE lockmode);
 
 /* Lock a page (currently only used within indexes) */
 extern void LockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode);
@@ -97,8 +91,6 @@ extern void SpeculativeInsertionWait(TransactionId xid, uint32 token);
 /* Lock a general object (other than a relation) of the current database */
 extern void LockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
                                LOCKMODE lockmode);
-extern bool ConditionalLockDatabaseObject(Oid classid, Oid objid,
-                                          uint16 objsubid, LOCKMODE lockmode);
 extern void UnlockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
                                  LOCKMODE lockmode);
 

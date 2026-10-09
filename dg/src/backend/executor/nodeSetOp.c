@@ -94,7 +94,7 @@ static void build_hash_table(SetOpState *setopstate) {
       node->numCols, node->cmpColIdx, setopstate->eqfuncoids,
       setopstate->hashfunctions, node->cmpCollations, node->numGroups,
       sizeof(SetOpStatePerGroupData), setopstate->ps.state->es_query_cxt,
-      setopstate->tableContext, econtext->ecxt_per_tuple_memory, false);
+      setopstate->tableContext, econtext->ecxt_per_tuple_memory);
 }
 
 /*

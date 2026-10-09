@@ -136,9 +136,8 @@ typedef struct {
 Tuplesortstate *tuplesort_begin_heap(TupleDesc tupDesc, int nkeys,
                                      AttrNumber *attNums, Oid *sortOperators,
                                      Oid *sortCollations, bool *nullsFirstFlags,
-                                     int workMem, SortCoordinate coordinate,
-                                     int sortopt) {
-  Tuplesortstate *state = tuplesort_begin_common(workMem, coordinate, sortopt);
+                                     int workMem, int sortopt) {
+  Tuplesortstate *state = tuplesort_begin_common(workMem, sortopt);
   TuplesortPublic *base = TuplesortstateGetPublic(state);
   MemoryContext oldcontext;
   int i;
@@ -155,7 +154,7 @@ Tuplesortstate *tuplesort_begin_heap(TupleDesc tupDesc, int nkeys,
 
   TRACE_POSTGRESQL_SORT_START(HEAP_SORT, false, /* no unique check */
                               nkeys, workMem, sortopt & TUPLESORT_RANDOMACCESS,
-                              PARALLEL_SORT(coordinate));
+                              0 /* not parallel */);
 
   base->removeabbrev = removeabbrev_heap;
   base->comparetup = comparetup_heap;
@@ -199,9 +198,8 @@ Tuplesortstate *tuplesort_begin_heap(TupleDesc tupDesc, int nkeys,
 }
 
 Tuplesortstate *tuplesort_begin_cluster(TupleDesc tupDesc, Relation indexRel,
-                                        int workMem, SortCoordinate coordinate,
-                                        int sortopt) {
-  Tuplesortstate *state = tuplesort_begin_common(workMem, coordinate, sortopt);
+                                        int workMem, int sortopt) {
+  Tuplesortstate *state = tuplesort_begin_common(workMem, sortopt);
   TuplesortPublic *base = TuplesortstateGetPublic(state);
   BTScanInsert indexScanKey;
   MemoryContext oldcontext;
@@ -223,7 +221,7 @@ Tuplesortstate *tuplesort_begin_cluster(TupleDesc tupDesc, Relation indexRel,
   TRACE_POSTGRESQL_SORT_START(CLUSTER_SORT, false, /* no unique check */
                               base->nKeys, workMem,
                               sortopt & TUPLESORT_RANDOMACCESS,
-                              PARALLEL_SORT(coordinate));
+                              0 /* not parallel */);
 
   base->removeabbrev = removeabbrev_cluster;
   base->comparetup = comparetup_cluster;
@@ -296,10 +294,8 @@ Tuplesortstate *tuplesort_begin_cluster(TupleDesc tupDesc, Relation indexRel,
 Tuplesortstate *tuplesort_begin_index_btree(Relation heapRel, Relation indexRel,
                                             bool enforceUnique,
                                             bool uniqueNullsNotDistinct,
-                                            int workMem,
-                                            SortCoordinate coordinate,
-                                            int sortopt) {
-  Tuplesortstate *state = tuplesort_begin_common(workMem, coordinate, sortopt);
+                                            int workMem, int sortopt) {
+  Tuplesortstate *state = tuplesort_begin_common(workMem, sortopt);
   TuplesortPublic *base = TuplesortstateGetPublic(state);
   BTScanInsert indexScanKey;
   TuplesortIndexBTreeArg *arg;
@@ -318,7 +314,7 @@ Tuplesortstate *tuplesort_begin_index_btree(Relation heapRel, Relation indexRel,
 
   TRACE_POSTGRESQL_SORT_START(INDEX_SORT, enforceUnique, base->nKeys, workMem,
                               sortopt & TUPLESORT_RANDOMACCESS,
-                              PARALLEL_SORT(coordinate));
+                              0 /* not parallel */);
 
   base->removeabbrev = removeabbrev_index;
   base->comparetup = comparetup_index_btree;
@@ -366,9 +362,8 @@ Tuplesortstate *tuplesort_begin_index_btree(Relation heapRel, Relation indexRel,
 
 Tuplesortstate *tuplesort_begin_datum(Oid datumType, Oid sortOperator,
                                       Oid sortCollation, bool nullsFirstFlag,
-                                      int workMem, SortCoordinate coordinate,
-                                      int sortopt) {
-  Tuplesortstate *state = tuplesort_begin_common(workMem, coordinate, sortopt);
+                                      int workMem, int sortopt) {
+  Tuplesortstate *state = tuplesort_begin_common(workMem, sortopt);
   TuplesortPublic *base = TuplesortstateGetPublic(state);
   TuplesortDatumArg *arg;
   MemoryContext oldcontext;
@@ -386,7 +381,7 @@ Tuplesortstate *tuplesort_begin_datum(Oid datumType, Oid sortOperator,
 
   TRACE_POSTGRESQL_SORT_START(DATUM_SORT, false, /* no unique check */
                               1, workMem, sortopt & TUPLESORT_RANDOMACCESS,
-                              PARALLEL_SORT(coordinate));
+                              0 /* not parallel */);
 
   base->removeabbrev = removeabbrev_datum;
   base->comparetup = comparetup_datum;

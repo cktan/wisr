@@ -504,7 +504,7 @@ Datum gen_random_uuid(PG_FUNCTION_ARGS) {
  * than the previous returned timestamp (on this backend).
  */
 static inline int64 get_real_time_ns_ascending() {
-  static int64 previous_ns = 0;
+  static thread_local int64 previous_ns = 0;
   int64 ns;
 
   /* Get the current real timestamp */

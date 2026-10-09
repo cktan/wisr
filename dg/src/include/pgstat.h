@@ -190,7 +190,7 @@ typedef struct PgStat_TableXactStatus {
  * ------------------------------------------------------------
  */
 
-#define PGSTAT_FILE_FORMAT_ID	0x01A5BCB7
+#define PGSTAT_FILE_FORMAT_ID	0x01A5BCB8
 
 typedef struct PgStat_ArchiverStats {
   PgStat_Counter archived_count;             /* archival successes */
@@ -544,15 +544,11 @@ extern bool pgstat_tracks_io_op(BackendType bktype, IOObject io_object,
  */
 
 extern void pgstat_drop_database(Oid databaseid);
-extern void pgstat_report_autovac(Oid dboid);
 extern void pgstat_report_recovery_conflict(int reason);
 extern void pgstat_report_deadlock(void);
 extern void pgstat_prepare_report_checksum_failure(Oid dboid);
 extern void pgstat_report_checksum_failures_in_db(Oid dboid, int failurecount);
 extern void pgstat_report_connect(Oid dboid);
-extern void
-pgstat_update_parallel_workers_stats(PgStat_Counter workers_to_launch,
-                                     PgStat_Counter workers_launched);
 
 #define pgstat_count_buffer_read_time(n)							\
 	(pgStatBlockReadTime += (n))
@@ -593,10 +589,6 @@ extern void pgstat_init_relation(Relation rel);
 extern void pgstat_assoc_relation(Relation rel);
 extern void pgstat_unlink_relation(Relation rel);
 
-extern void pgstat_report_vacuum(Oid tableoid, bool shared,
-                                 PgStat_Counter livetuples,
-                                 PgStat_Counter deadtuples,
-                                 TimestampTz starttime);
 extern void pgstat_report_analyze(Relation rel, PgStat_Counter livetuples,
                                   PgStat_Counter deadtuples, bool resetcounter,
                                   TimestampTz starttime);
@@ -684,7 +676,7 @@ extern PgStat_SLRUStats *pgstat_fetch_slru(void);
  * Functions in pgstat_xact.c
  */
 
-extern void AtEOXact_PgStat(bool isCommit, bool parallel);
+extern void AtEOXact_PgStat(bool isCommit);
 extern void AtEOSubXact_PgStat(bool isCommit, int nestDepth);
 extern void AtPrepare_PgStat(void);
 extern void PostPrepare_PgStat(void);
@@ -707,16 +699,16 @@ extern PgStat_WalStats *pgstat_fetch_stat_wal(void);
  */
 
 /* GUC parameters */
-extern PGDLLIMPORT bool pgstat_track_counts;
-extern PGDLLIMPORT int pgstat_track_functions;
-extern PGDLLIMPORT int pgstat_fetch_consistency;
+extern thread_local PGDLLIMPORT bool pgstat_track_counts;
+extern thread_local PGDLLIMPORT int pgstat_track_functions;
+extern thread_local PGDLLIMPORT int pgstat_fetch_consistency;
 
 /*
  * Variables in pgstat_bgwriter.c
  */
 
 /* updated directly by bgwriter and bufmgr */
-extern PGDLLIMPORT PgStat_BgWriterStats PendingBgWriterStats;
+extern thread_local PGDLLIMPORT PgStat_BgWriterStats PendingBgWriterStats;
 
 /*
  * Variables in pgstat_checkpointer.c
@@ -726,24 +718,25 @@ extern PGDLLIMPORT PgStat_BgWriterStats PendingBgWriterStats;
  * Checkpointer statistics counters are updated directly by checkpointer and
  * bufmgr.
  */
-extern PGDLLIMPORT PgStat_CheckpointerStats PendingCheckpointerStats;
+extern thread_local PGDLLIMPORT PgStat_CheckpointerStats
+    PendingCheckpointerStats;
 
 /*
  * Variables in pgstat_database.c
  */
 
 /* Updated by pgstat_count_buffer_*_time macros */
-extern PGDLLIMPORT PgStat_Counter pgStatBlockReadTime;
-extern PGDLLIMPORT PgStat_Counter pgStatBlockWriteTime;
+extern thread_local PGDLLIMPORT PgStat_Counter pgStatBlockReadTime;
+extern thread_local PGDLLIMPORT PgStat_Counter pgStatBlockWriteTime;
 
 /*
  * Updated by pgstat_count_conn_*_time macros, called by
  * pgstat_report_activity().
  */
-extern PGDLLIMPORT PgStat_Counter pgStatActiveTime;
-extern PGDLLIMPORT PgStat_Counter pgStatTransactionIdleTime;
+extern thread_local PGDLLIMPORT PgStat_Counter pgStatActiveTime;
+extern thread_local PGDLLIMPORT PgStat_Counter pgStatTransactionIdleTime;
 
 /* updated by the traffic cop and in errfinish() */
-extern PGDLLIMPORT SessionEndType pgStatSessionEndCause;
+extern thread_local PGDLLIMPORT SessionEndType pgStatSessionEndCause;
 
 #endif /* PGSTAT_H */

@@ -2192,7 +2192,7 @@ static JsonPathExecResult executeDateTimeMethod(JsonPathExecContext *cxt,
      * We also support ISO 8601 format (with "T") for timestamps, because
      * to_json[b]() functions use this format.
      */
-    static const char *fmt_str[] = {
+    static thread_local const char *fmt_str[] = {
         "yyyy-mm-dd",      /* date */
         "HH24:MI:SS.USTZ", /* timetz */
         "HH24:MI:SSTZ",
@@ -2208,7 +2208,7 @@ static JsonPathExecResult executeDateTimeMethod(JsonPathExecContext *cxt,
         "yyyy-mm-dd\"T\"HH24:MI:SS"};
 
     /* cache for format texts */
-    static text *fmt_txt[lengthof(fmt_str)] = {0};
+    static thread_local text *fmt_txt[lengthof(fmt_str)] = {0};
     int i;
 
     /*

@@ -94,7 +94,6 @@ extern void *dshash_find(dshash_table *hash_table, const void *key,
                          bool exclusive);
 extern void *dshash_find_or_insert(dshash_table *hash_table, const void *key,
                                    bool *found);
-extern bool dshash_delete_key(dshash_table *hash_table, const void *key);
 extern void dshash_delete_entry(dshash_table *hash_table, void *entry);
 extern void dshash_release_lock(dshash_table *hash_table, void *entry);
 

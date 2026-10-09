@@ -41,15 +41,6 @@ static void ShowAllGUCConfig(DestReceiver *dest);
 void ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel) {
   GucAction action = stmt->is_local ? GUC_ACTION_LOCAL : GUC_ACTION_SET;
 
-  /*
-   * Workers synchronize these parameters at the start of the parallel
-   * operation; then, we block SET during the operation.
-   */
-  if (IsInParallelMode())
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_TRANSACTION_STATE),
-             errmsg("cannot set parameters during a parallel operation")));
-
   switch (stmt->kind) {
   case VAR_SET_VALUE:
   case VAR_SET_CURRENT:

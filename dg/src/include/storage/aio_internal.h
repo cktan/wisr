@@ -390,8 +390,8 @@ extern PGDLLIMPORT const IoMethodOps pgaio_worker_ops;
 extern PGDLLIMPORT const IoMethodOps pgaio_uring_ops;
 #endif
 
-extern PGDLLIMPORT const IoMethodOps *pgaio_method_ops;
-extern PGDLLIMPORT PgAioCtl *pgaio_ctl;
-extern PGDLLIMPORT PgAioBackend *pgaio_my_backend;
+extern thread_local PGDLLIMPORT const IoMethodOps *pgaio_method_ops;
+extern PG_SHARED PGDLLIMPORT PgAioCtl *pgaio_ctl;
+extern thread_local PGDLLIMPORT PgAioBackend *pgaio_my_backend;
 
 #endif /* AIO_INTERNAL_H */

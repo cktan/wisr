@@ -31,7 +31,7 @@
 #include "utils/varlena.h"
 
 /* GUC */
-char *oauth_validator_libraries_string = NULL;
+thread_local char *oauth_validator_libraries_string = NULL;
 
 static void oauth_get_mechanisms(Port *port, StringInfo buf);
 static void *oauth_init(Port *port, const char *selected_mech,
@@ -43,8 +43,8 @@ static int oauth_exchange(void *opaq, const char *input, int inputlen,
 static void load_validator_library(const char *libname);
 static void shutdown_validator_library(void *arg);
 
-static ValidatorModuleState *validator_module_state;
-static const OAuthValidatorCallbacks *ValidatorCallbacks;
+static thread_local ValidatorModuleState *validator_module_state;
+static thread_local const OAuthValidatorCallbacks *ValidatorCallbacks;
 
 /* Mechanism declaration */
 const pg_be_sasl_mech pg_be_oauth_mech = {
@@ -292,7 +292,7 @@ static int oauth_exchange(void *opaq, const char *input, int inputlen,
  * The returned pointer points to a static buffer.
  */
 static char *sanitize_char(char c) {
-  static char buf[5];
+  static thread_local char buf[5];
 
   if (c >= 0x21 && c <= 0x7E)
     snprintf(buf, sizeof(buf), "'%c'", c);
@@ -311,8 +311,9 @@ static void validate_kvpair(const char *key, const char *val) {
    * From Sec 3.1:
    *     key            = 1*(ALPHA)
    */
-  static const char *key_allowed_set = "abcdefghijklmnopqrstuvwxyz"
-                                       "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  static thread_local const char *key_allowed_set =
+      "abcdefghijklmnopqrstuvwxyz"
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
   size_t span;
 

@@ -44,14 +44,12 @@
 #include "utils/hsearch.h"
 #include "utils/queryenvironment.h"
 #include "utils/reltrigger.h"
-#include "utils/sharedtuplestore.h"
 #include "utils/snapshot.h"
 #include "utils/sortsupport.h"
 #include "utils/tuplesort.h"
 #include "utils/tuplestore.h"
 
 struct PlanState;				/* forward references in this file */
-struct ParallelHashJoinState;
 struct ExecRowMark;
 struct ExprState;
 struct ExprContext;
@@ -182,12 +180,11 @@ typedef struct ExprState
  *		BrokenHotChain		did we detect any broken HOT chains?
  *		WithoutOverlaps		is it a WITHOUT OVERLAPS index?
  *		Summarizing			is it a summarizing index?
- *		ParallelWorkers		# of workers requested (excludes leader)
  *		Am					Oid of index AM
  *		AmCache				private cache area for index AM
  *		Context				memory context holding this IndexInfo
  *
- * ii_Concurrent, ii_BrokenHotChain, and ii_ParallelWorkers are used only
+ * ii_Concurrent and ii_BrokenHotChain are used only
  * during index build; they're conventionally zeroed otherwise.
  * ----------------
  */
@@ -216,7 +213,6 @@ typedef struct IndexInfo
 	bool		ii_BrokenHotChain;
 	bool		ii_Summarizing;
 	bool		ii_WithoutOverlaps;
-	int			ii_ParallelWorkers;
 	Oid			ii_Am;
 	void	   *ii_AmCache;
 	MemoryContext ii_Context;
@@ -737,15 +733,8 @@ typedef struct EState
 	 */
 	struct EPQState *es_epq_active;
 
-	bool		es_use_parallel_mode;	/* can we use parallel workers? */
 
-	int			es_parallel_workers_to_launch;	/* number of workers to
-												 * launch. */
-	int			es_parallel_workers_launched;	/* number of workers actually
-												 * launched. */
 
-	/* The per-query shared memory area to use for parallel execution. */
-	struct dsa_area *es_query_dsa;
 
 	/*
 	 * Lists of ResultRelInfos for foreign tables on which batch-inserts are
@@ -1151,7 +1140,6 @@ typedef struct PlanState
 										 * wrapper */
 
 	Instrumentation *instrument;	/* Optional runtime stats for this node */
-	WorkerInstrumentation *worker_instrument;	/* per-worker instrumentation */
 
 	/*
 	 * Common structural data for all Plan types.  These links to subsidiary
@@ -1462,8 +1450,6 @@ typedef struct ModifyTableState
 
 struct AppendState;
 typedef struct AppendState AppendState;
-struct ParallelAppendState;
-typedef struct ParallelAppendState ParallelAppendState;
 struct PartitionPruneState;
 
 struct AppendState
@@ -1484,15 +1470,10 @@ struct AppendState
 	Bitmapset  *as_needrequest; /* asynchronous plans needing a new request */
 	struct WaitEventSet *as_eventset;	/* WaitEventSet used to configure file
 										 * descriptor wait events */
-	int			as_first_partial_plan;	/* Index of 'appendplans' containing
-										 * the first partial plan */
-	ParallelAppendState *as_pstate; /* parallel coordination info */
-	Size		pstate_len;		/* size of parallel coordination info */
 	struct PartitionPruneState *as_prune_state;
 	bool		as_valid_subplans_identified;	/* is as_valid_subplans valid? */
 	Bitmapset  *as_valid_subplans;
 	Bitmapset  *as_valid_asyncplans;	/* valid asynchronous plans indexes */
-	bool		(*choose_next_subplan) (AppendState *);
 };
 
 /* ----------------
@@ -1606,7 +1587,6 @@ typedef struct ScanState
 typedef struct SeqScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
-	Size		pscan_len;		/* size of parallel heap scan descriptor */
 } SeqScanState;
 
 /* ----------------
@@ -1668,7 +1648,6 @@ typedef struct
  *		RelationDesc	   index relation descriptor
  *		ScanDesc		   index scan descriptor
  *		Instrument		   local index scan instrumentation
- *		SharedInfo		   parallel worker instrumentation (no leader entry)
  *
  *		ReorderQueue	   tuples that need reordering due to re-check
  *		ReachedEnd		   have we fetched all tuples from index already?
@@ -1677,7 +1656,6 @@ typedef struct
  *		SortSupport		   for reordering ORDER BY exprs
  *		OrderByTypByVals   is the datatype of order by expression pass-by-value?
  *		OrderByTypLens	   typlens of the datatypes of order by expressions
- *		PscanLen		   size of parallel index scan descriptor
  * ----------------
  */
 typedef struct IndexScanState
@@ -1696,7 +1674,6 @@ typedef struct IndexScanState
 	Relation	iss_RelationDesc;
 	struct IndexScanDescData *iss_ScanDesc;
 	IndexScanInstrumentation iss_Instrument;
-	SharedIndexScanInstrumentation *iss_SharedInfo;
 
 	/* These are needed for re-checking ORDER BY expr ordering */
 	pairingheap *iss_ReorderQueue;
@@ -1724,10 +1701,8 @@ typedef struct IndexScanState
  *		RelationDesc	   index relation descriptor
  *		ScanDesc		   index scan descriptor
  *		Instrument		   local index scan instrumentation
- *		SharedInfo		   parallel worker instrumentation (no leader entry)
  *		TableSlot		   slot for holding tuples fetched from the table
  *		VMBuffer		   buffer in use for visibility map testing, if any
- *		PscanLen		   size of parallel index-only scan descriptor
  *		NameCStringAttNums attnums of name typed columns to pad to NAMEDATALEN
  *		NameCStringCount   number of elements in the NameCStringAttNums array
  * ----------------
@@ -1747,7 +1722,6 @@ typedef struct IndexOnlyScanState
 	Relation	ioss_RelationDesc;
 	struct IndexScanDescData *ioss_ScanDesc;
 	IndexScanInstrumentation ioss_Instrument;
-	SharedIndexScanInstrumentation *ioss_SharedInfo;
 	TupleTableSlot *ioss_TableSlot;
 	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
@@ -1770,7 +1744,6 @@ typedef struct IndexOnlyScanState
  *		RelationDesc	   index relation descriptor
  *		ScanDesc		   index scan descriptor
  *		Instrument		   local index scan instrumentation
- *		SharedInfo		   parallel worker instrumentation (no leader entry)
  * ----------------
  */
 typedef struct BitmapIndexScanState
@@ -1788,7 +1761,6 @@ typedef struct BitmapIndexScanState
 	Relation	biss_RelationDesc;
 	struct IndexScanDescData *biss_ScanDesc;
 	IndexScanInstrumentation biss_Instrument;
-	SharedIndexScanInstrumentation *biss_SharedInfo;
 } BitmapIndexScanState;
 
 /* ----------------
@@ -1805,64 +1777,12 @@ typedef struct BitmapHeapScanInstrumentation
 } BitmapHeapScanInstrumentation;
 
 /* ----------------
- *	 SharedBitmapState information
- *
- *		BM_INITIAL		TIDBitmap creation is not yet started, so first worker
- *						to see this state will set the state to BM_INPROGRESS
- *						and that process will be responsible for creating
- *						TIDBitmap.
- *		BM_INPROGRESS	TIDBitmap creation is in progress; workers need to
- *						sleep until it's finished.
- *		BM_FINISHED		TIDBitmap creation is done, so now all workers can
- *						proceed to iterate over TIDBitmap.
- * ----------------
- */
-typedef enum
-{
-	BM_INITIAL,
-	BM_INPROGRESS,
-	BM_FINISHED,
-} SharedBitmapState;
-
-/* ----------------
- *	 ParallelBitmapHeapState information
- *		tbmiterator				iterator for scanning current pages
- *		mutex					mutual exclusion for state
- *		state					current state of the TIDBitmap
- *		cv						conditional wait variable
- * ----------------
- */
-typedef struct ParallelBitmapHeapState
-{
-	dsa_pointer tbmiterator;
-	slock_t		mutex;
-	SharedBitmapState state;
-	ConditionVariable cv;
-} ParallelBitmapHeapState;
-
-/* ----------------
- *	 Instrumentation data for a parallel bitmap heap scan.
- *
- * A shared memory struct that each parallel worker copies its
- * BitmapHeapScanInstrumentation information into at executor shutdown to
- * allow the leader to display the information in EXPLAIN ANALYZE.
- * ----------------
- */
-typedef struct SharedBitmapHeapInstrumentation
-{
-	int			num_workers;
-	BitmapHeapScanInstrumentation sinstrument[FLEXIBLE_ARRAY_MEMBER];
-} SharedBitmapHeapInstrumentation;
-
-/* ----------------
  *	 BitmapHeapScanState information
  *
  *		bitmapqualorig	   execution state for bitmapqualorig expressions
  *		tbm				   bitmap obtained from child index scan(s)
  *		stats			   execution statistics
  *		initialized		   is node is ready to iterate
- *		pstate			   shared state for parallel bitmap scan
- *		sinstrument		   statistics for parallel workers
  *		recheck			   do current page's tuples need recheck
  * ----------------
  */
@@ -1873,8 +1793,6 @@ typedef struct BitmapHeapScanState
 	TIDBitmap  *tbm;
 	BitmapHeapScanInstrumentation stats;
 	bool		initialized;
-	ParallelBitmapHeapState *pstate;
-	SharedBitmapHeapInstrumentation *sinstrument;
 	bool		recheck;
 } BitmapHeapScanState;
 
@@ -2085,7 +2003,6 @@ typedef struct ForeignScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	ExprState  *fdw_recheck_quals;	/* original quals not in ss.ps.qual */
-	Size		pscan_len;		/* size of parallel coordination information */
 	ResultRelInfo *resultRelInfo;	/* result rel info, if UPDATE or DELETE */
 	/* use struct pointer to avoid including fdwapi.h here */
 	struct FdwRoutine *fdwroutine;
@@ -2113,7 +2030,6 @@ typedef struct CustomScanState
 	uint32		flags;			/* mask of CUSTOMPATH_* flags, see
 								 * nodes/extensible.h */
 	List	   *custom_ps;		/* list of child PlanState nodes, if any */
-	Size		pscan_len;		/* size of parallel coordination information */
 	const struct CustomExecMethods *methods;
 	const struct TupleTableSlotOps *slotOps;
 } CustomScanState;
@@ -2294,16 +2210,6 @@ typedef struct MemoizeInstrumentation
 } MemoizeInstrumentation;
 
 /* ----------------
- *	 Shared memory container for per-worker memoize information
- * ----------------
- */
-typedef struct SharedMemoizeInfo
-{
-	int			num_workers;
-	MemoizeInstrumentation sinstrument[FLEXIBLE_ARRAY_MEMBER];
-} SharedMemoizeInfo;
-
-/* ----------------
  *	 MemoizeState information
  *
  *		memoize nodes are used to cache recent and commonly seen results from
@@ -2339,7 +2245,6 @@ typedef struct MemoizeState
 	bool		binary_mode;	/* true when cache key should be compared bit
 								 * by bit, false when using hash equality ops */
 	MemoizeInstrumentation stats;	/* execution statistics */
-	SharedMemoizeInfo *shared_info; /* statistics for parallel workers */
 	Bitmapset  *keyparamids;	/* Param->paramids of expressions belonging to
 								 * param_exprs */
 } MemoizeState;
@@ -2359,16 +2264,6 @@ typedef struct PresortedKeyData
 } PresortedKeyData;
 
 /* ----------------
- *	 Shared memory container for per-worker sort information
- * ----------------
- */
-typedef struct SharedSortInfo
-{
-	int			num_workers;
-	TuplesortInstrumentation sinstrument[FLEXIBLE_ARRAY_MEMBER];
-} SharedSortInfo;
-
-/* ----------------
  *	 SortState information
  * ----------------
  */
@@ -2382,9 +2277,7 @@ typedef struct SortState
 	bool		bounded_Done;	/* value of bounded we did the sort with */
 	int64		bound_Done;		/* value of bound we did the sort with */
 	void	   *tuplesortstate; /* private state of tuplesort.c */
-	bool		am_worker;		/* are we a worker? */
 	bool		datumSort;		/* Datum sort instead of tuple sort? */
-	SharedSortInfo *shared_info;	/* one entry per worker */
 } SortState;
 
 /* ----------------
@@ -2406,16 +2299,6 @@ typedef struct IncrementalSortInfo
 	IncrementalSortGroupInfo fullsortGroupInfo;
 	IncrementalSortGroupInfo prefixsortGroupInfo;
 } IncrementalSortInfo;
-
-/* ----------------
- *	 Shared memory container for per-worker incremental sort information
- * ----------------
- */
-typedef struct SharedIncrementalSortInfo
-{
-	int			num_workers;
-	IncrementalSortInfo sinfo[FLEXIBLE_ARRAY_MEMBER];
-} SharedIncrementalSortInfo;
 
 /* ----------------
  *	 IncrementalSortState information
@@ -2448,8 +2331,6 @@ typedef struct IncrementalSortState
 	/* slot for pivot tuple defining values of presorted keys within group */
 	TupleTableSlot *group_pivot;
 	TupleTableSlot *transfer_tuple;
-	bool		am_worker;		/* are we a worker? */
-	SharedIncrementalSortInfo *shared_info; /* one entry per worker */
 } IncrementalSortState;
 
 /* ---------------------
@@ -2473,16 +2354,6 @@ typedef struct AggregateInstrumentation
 	uint64		hash_disk_used; /* kB of disk space used */
 	int			hash_batches_used;	/* batches used during entire execution */
 } AggregateInstrumentation;
-
-/* ----------------
- *	 Shared memory container for per-worker aggregate information
- * ----------------
- */
-typedef struct SharedAggInfo
-{
-	int			num_workers;
-	AggregateInstrumentation sinstrument[FLEXIBLE_ARRAY_MEMBER];
-} SharedAggInfo;
 
 /* ---------------------
  *	AggState information
@@ -2577,7 +2448,6 @@ typedef struct AggState
 #define FIELDNO_AGGSTATE_ALL_PERGROUPS 54
 	AggStatePerGroup *all_pergroups;	/* array of first ->pergroups, than
 										 * ->hash_pergroup */
-	SharedAggInfo *shared_info; /* one entry per worker */
 } AggState;
 
 /* ----------------
@@ -2706,61 +2576,6 @@ typedef struct UniqueState
 } UniqueState;
 
 /* ----------------
- * GatherState information
- *
- *		Gather nodes launch 1 or more parallel workers, run a subplan
- *		in those workers, and collect the results.
- * ----------------
- */
-typedef struct GatherState
-{
-	PlanState	ps;				/* its first field is NodeTag */
-	bool		initialized;	/* workers launched? */
-	bool		need_to_scan_locally;	/* need to read from local plan? */
-	int64		tuples_needed;	/* tuple bound, see ExecSetTupleBound */
-	/* these fields are set up once: */
-	TupleTableSlot *funnel_slot;
-	struct ParallelExecutorInfo *pei;
-	/* all remaining fields are reinitialized during a rescan: */
-	int			nworkers_launched;	/* original number of workers */
-	int			nreaders;		/* number of still-active workers */
-	int			nextreader;		/* next one to try to read from */
-	struct TupleQueueReader **reader;	/* array with nreaders active entries */
-} GatherState;
-
-/* ----------------
- * GatherMergeState information
- *
- *		Gather merge nodes launch 1 or more parallel workers, run a
- *		subplan which produces sorted output in each worker, and then
- *		merge the results into a single sorted stream.
- * ----------------
- */
-struct GMReaderTupleBuffer;		/* private in nodeGatherMerge.c */
-
-typedef struct GatherMergeState
-{
-	PlanState	ps;				/* its first field is NodeTag */
-	bool		initialized;	/* workers launched? */
-	bool		gm_initialized; /* gather_merge_init() done? */
-	bool		need_to_scan_locally;	/* need to read from local plan? */
-	int64		tuples_needed;	/* tuple bound, see ExecSetTupleBound */
-	/* these fields are set up once: */
-	TupleDesc	tupDesc;		/* descriptor for subplan result tuples */
-	int			gm_nkeys;		/* number of sort columns */
-	SortSupport gm_sortkeys;	/* array of length gm_nkeys */
-	struct ParallelExecutorInfo *pei;
-	/* all remaining fields are reinitialized during a rescan */
-	/* (but the arrays are not reallocated, just cleared) */
-	int			nworkers_launched;	/* original number of workers */
-	int			nreaders;		/* number of active workers */
-	TupleTableSlot **gm_slots;	/* array with nreaders+1 entries */
-	struct TupleQueueReader **reader;	/* array with nreaders active entries */
-	struct GMReaderTupleBuffer *gm_tuple_buffers;	/* nreaders tuple buffers */
-	struct binaryheap *gm_heap; /* binary heap of slot indices */
-} GatherMergeState;
-
-/* ----------------
  *	 Values displayed by EXPLAIN ANALYZE
  * ----------------
  */
@@ -2772,16 +2587,6 @@ typedef struct HashInstrumentation
 	int			nbatch_original;	/* planned number of batches */
 	Size		space_peak;		/* peak memory usage in bytes */
 } HashInstrumentation;
-
-/* ----------------
- *	 Shared memory container for per-worker hash information
- * ----------------
- */
-typedef struct SharedHashInfo
-{
-	int			num_workers;
-	HashInstrumentation hinstrument[FLEXIBLE_ARRAY_MEMBER];
-} SharedHashInfo;
 
 /* ----------------
  *	 HashState information
@@ -2797,22 +2602,12 @@ typedef struct HashState
 	Oid			skew_collation; /* collation to call skew_hashfunction with */
 
 	/*
-	 * In a parallelized hash join, the leader retains a pointer to the
-	 * shared-memory stats area in its shared_info field, and then copies the
-	 * shared-memory info back to local storage before DSM shutdown.  The
-	 * shared_info field remains NULL in workers, or in non-parallel joins.
-	 */
-	SharedHashInfo *shared_info;
-
-	/*
 	 * If we are collecting hash stats, this points to an initially-zeroed
 	 * collection area, which could be either local storage or in shared
 	 * memory; either way it's for just one process.
 	 */
 	HashInstrumentation *hinstrument;
 
-	/* Parallel hash state. */
-	struct ParallelHashJoinState *parallel_state;
 } HashState;
 
 /* ----------------

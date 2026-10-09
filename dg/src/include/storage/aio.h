@@ -340,7 +340,7 @@ extern bool pgaio_have_staged(void);
 extern void pgaio_closing_fd(int fd);
 
 /* GUCs */
-extern PGDLLIMPORT int io_method;
-extern PGDLLIMPORT int io_max_concurrency;
+extern thread_local PGDLLIMPORT int io_method;
+extern thread_local PGDLLIMPORT int io_max_concurrency;
 
 #endif /* AIO_H */

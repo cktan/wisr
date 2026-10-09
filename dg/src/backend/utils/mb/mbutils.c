@@ -59,28 +59,31 @@ typedef struct ConvProcInfo {
   FmgrInfo to_client_info;
 } ConvProcInfo;
 
-static List *ConvProcList = NIL; /* List of ConvProcInfo */
+static thread_local List *ConvProcList = NIL; /* List of ConvProcInfo */
 
 /*
  * These variables point to the currently active conversion functions,
  * or are NULL when no conversion is needed.
  */
-static FmgrInfo *ToServerConvProc = NULL;
-static FmgrInfo *ToClientConvProc = NULL;
+static thread_local FmgrInfo *ToServerConvProc = NULL;
+static thread_local FmgrInfo *ToClientConvProc = NULL;
 
 /*
  * This variable stores the conversion function to convert from UTF-8
  * to the server encoding.  It's NULL if the server encoding *is* UTF-8,
  * or if we lack a conversion function for this.
  */
-static FmgrInfo *Utf8ToServerConvProc = NULL;
+static thread_local FmgrInfo *Utf8ToServerConvProc = NULL;
 
 /*
  * These variables track the currently-selected encodings.
  */
-static const pg_enc2name *ClientEncoding = &pg_enc2name_tbl[PG_SQL_ASCII];
-static const pg_enc2name *DatabaseEncoding = &pg_enc2name_tbl[PG_SQL_ASCII];
-static const pg_enc2name *MessageEncoding = &pg_enc2name_tbl[PG_SQL_ASCII];
+static thread_local const pg_enc2name *ClientEncoding =
+    &pg_enc2name_tbl[PG_SQL_ASCII];
+static thread_local const pg_enc2name *DatabaseEncoding =
+    &pg_enc2name_tbl[PG_SQL_ASCII];
+static thread_local const pg_enc2name *MessageEncoding =
+    &pg_enc2name_tbl[PG_SQL_ASCII];
 
 /*
  * During backend startup we can't set client encoding because we (a)
@@ -88,8 +91,8 @@ static const pg_enc2name *MessageEncoding = &pg_enc2name_tbl[PG_SQL_ASCII];
  * encoding yet either.  So SetClientEncoding() just accepts anything and
  * remembers it for InitializeClientEncoding() to apply later.
  */
-static bool backend_startup_complete = false;
-static int pending_client_encoding = PG_SQL_ASCII;
+static thread_local bool backend_startup_complete = false;
+static thread_local int pending_client_encoding = PG_SQL_ASCII;
 
 /* Internal functions */
 static char *perform_default_encoding_conversion(const char *src, int len,

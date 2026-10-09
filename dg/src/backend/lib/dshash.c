@@ -172,8 +172,6 @@ static void insert_item_into_bucket(dshash_table *hash_table,
 static dshash_table_item *insert_into_bucket(dshash_table *hash_table,
                                              const void *key,
                                              dsa_pointer *bucket);
-static bool delete_key_from_bucket(dshash_table *hash_table, const void *key,
-                                   dsa_pointer *bucket_head);
 static bool delete_item_from_bucket(dshash_table *hash_table,
                                     dshash_table_item *item,
                                     dsa_pointer *bucket_head);
@@ -458,40 +456,6 @@ restart:
 
   /* The caller must release the lock with dshash_release_lock. */
   return ENTRY_FROM_ITEM(item);
-}
-
-/*
- * Remove an entry by key.  Returns true if the key was found and the
- * corresponding entry was removed.
- *
- * To delete an entry that you already have a pointer to, see
- * dshash_delete_entry.
- */
-bool dshash_delete_key(dshash_table *hash_table, const void *key) {
-  dshash_hash hash;
-  size_t partition;
-  bool found;
-
-  Assert(hash_table->control->magic == DSHASH_MAGIC);
-  ASSERT_NO_PARTITION_LOCKS_HELD_BY_ME(hash_table);
-
-  hash = hash_key(hash_table, key);
-  partition = PARTITION_FOR_HASH(hash);
-
-  LWLockAcquire(PARTITION_LOCK(hash_table, partition), LW_EXCLUSIVE);
-  ensure_valid_bucket_pointers(hash_table);
-
-  if (delete_key_from_bucket(hash_table, key,
-                             &BUCKET_FOR_HASH(hash_table, hash))) {
-    Assert(hash_table->control->partitions[partition].count > 0);
-    found = true;
-    --hash_table->control->partitions[partition].count;
-  } else
-    found = false;
-
-  LWLockRelease(PARTITION_LOCK(hash_table, partition));
-
-  return found;
 }
 
 /*
@@ -901,30 +865,6 @@ static dshash_table_item *insert_into_bucket(dshash_table *hash_table,
   copy_key(hash_table, ENTRY_FROM_ITEM(item), key);
   insert_item_into_bucket(hash_table, item_pointer, item, bucket);
   return item;
-}
-
-/*
- * Search a bucket for a matching key and delete it.
- */
-static bool delete_key_from_bucket(dshash_table *hash_table, const void *key,
-                                   dsa_pointer *bucket_head) {
-  while (DsaPointerIsValid(*bucket_head)) {
-    dshash_table_item *item;
-
-    item = (dshash_table_item *)dsa_get_address(hash_table->area, *bucket_head);
-
-    if (equal_keys(hash_table, key, ENTRY_FROM_ITEM(item))) {
-      dsa_pointer next;
-
-      next = item->next;
-      dsa_free(hash_table->area, *bucket_head);
-      *bucket_head = next;
-
-      return true;
-    }
-    bucket_head = &item->next;
-  }
-  return false;
 }
 
 /*

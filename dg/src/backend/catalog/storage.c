@@ -37,7 +37,7 @@
 #include "utils/rel.h"
 
 /* GUC variables */
-int wal_skip_threshold = 2048; /* in kilobytes */
+thread_local int wal_skip_threshold = 2048; /* in kilobytes */
 
 /*
  * We keep a list of all relations (represented as RelFileLocator values)
@@ -72,8 +72,9 @@ typedef struct PendingRelSync {
   bool is_truncated; /* Has the file experienced truncation? */
 } PendingRelSync;
 
-static PendingRelDelete *pendingDeletes = NULL; /* head of linked list */
-static HTAB *pendingSyncHash = NULL;
+static thread_local PendingRelDelete *pendingDeletes =
+    NULL; /* head of linked list */
+static thread_local HTAB *pendingSyncHash = NULL;
 
 /*
  * AddPendingSync
@@ -118,8 +119,6 @@ SMgrRelation RelationCreateStorage(RelFileLocator rlocator, char relpersistence,
   SMgrRelation srel;
   ProcNumber procNumber;
   bool needs_wal;
-
-  Assert(!IsInParallelMode()); /* couldn't update pendingSyncHash */
 
   switch (relpersistence) {
   case RELPERSISTENCE_TEMP:
@@ -542,78 +541,6 @@ bool RelFileLocatorSkippingWAL(RelFileLocator rlocator) {
 }
 
 /*
- * EstimatePendingSyncsSpace
- *		Estimate space needed to pass syncs to parallel workers.
- */
-Size EstimatePendingSyncsSpace(void) {
-  long entries;
-
-  entries = pendingSyncHash ? hash_get_num_entries(pendingSyncHash) : 0;
-  return mul_size(1 + entries, sizeof(RelFileLocator));
-}
-
-/*
- * SerializePendingSyncs
- *		Serialize syncs for parallel workers.
- */
-void SerializePendingSyncs(Size maxSize, char *startAddress) {
-  HTAB *tmphash;
-  HASHCTL ctl;
-  HASH_SEQ_STATUS scan;
-  PendingRelSync *sync;
-  PendingRelDelete *delete_;
-  RelFileLocator *src;
-  RelFileLocator *dest = (RelFileLocator *)startAddress;
-
-  if (!pendingSyncHash)
-    goto terminate;
-
-  /* Create temporary hash to collect active relfilelocators */
-  ctl.keysize = sizeof(RelFileLocator);
-  ctl.entrysize = sizeof(RelFileLocator);
-  ctl.hcxt = CurrentMemoryContext;
-  tmphash =
-      hash_create("tmp relfilelocators", hash_get_num_entries(pendingSyncHash),
-                  &ctl, HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
-
-  /* collect all rlocator from pending syncs */
-  hash_seq_init(&scan, pendingSyncHash);
-  while ((sync = (PendingRelSync *)hash_seq_search(&scan)))
-    (void)hash_search(tmphash, &sync->rlocator, HASH_ENTER, NULL);
-
-  /* remove deleted rnodes */
-  for (delete_ = pendingDeletes; delete_ != NULL; delete_ = delete_->next)
-    if (delete_->atCommit)
-      (void)hash_search(tmphash, &delete_->rlocator, HASH_REMOVE, NULL);
-
-  hash_seq_init(&scan, tmphash);
-  while ((src = (RelFileLocator *)hash_seq_search(&scan)))
-    *dest++ = *src;
-
-  hash_destroy(tmphash);
-
-terminate:
-  MemSet(dest, 0, sizeof(RelFileLocator));
-}
-
-/*
- * RestorePendingSyncs
- *		Restore syncs within a parallel worker.
- *
- * RelationNeedsWAL() and RelFileLocatorSkippingWAL() must offer the correct
- * answer to parallel workers.  Only smgrDoPendingSyncs() reads the
- * is_truncated field, at end of transaction.  Hence, don't restore it.
- */
-void RestorePendingSyncs(char *startAddress) {
-  RelFileLocator *rlocator;
-
-  Assert(pendingSyncHash == NULL);
-  for (rlocator = (RelFileLocator *)startAddress; rlocator->relNumber != 0;
-       rlocator++)
-    AddPendingSync(rlocator);
-}
-
-/*
  *	smgrDoPendingDeletes() -- Take care of relation deletes at end of xact.
  *
  * This also runs when aborting a subxact; we want to clean up a failed
@@ -681,7 +608,7 @@ void smgrDoPendingDeletes(bool isCommit) {
 /*
  *	smgrDoPendingSyncs() -- Take care of relation syncs at end of xact.
  */
-void smgrDoPendingSyncs(bool isCommit, bool isParallelWorker) {
+void smgrDoPendingSyncs(bool isCommit) {
   PendingRelDelete *pending;
   int nrels = 0, maxrels = 0;
   SMgrRelation *srels = NULL;
@@ -700,12 +627,6 @@ void smgrDoPendingSyncs(bool isCommit, bool isParallelWorker) {
   }
 
   AssertPendingSyncs_RelationCache();
-
-  /* Parallel worker -- just throw away all pending syncs */
-  if (isParallelWorker) {
-    pendingSyncHash = NULL;
-    return;
-  }
 
   /* Skip syncing nodes that smgrDoPendingDeletes() will delete. */
   for (pending = pendingDeletes; pending != NULL; pending = pending->next)

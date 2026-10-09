@@ -743,7 +743,6 @@ IndexInfo *makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid,
 
   /* initialize index-build state to default */
   n->ii_BrokenHotChain = false;
-  n->ii_ParallelWorkers = 0;
 
   /* set up for possible use by index AM */
   n->ii_Am = amoid;

@@ -27,7 +27,6 @@
 #include "storage/dsm.h"
 #include "storage/lockdefs.h"
 #include "storage/read_stream.h"
-#include "storage/shm_toc.h"
 #include "utils/relcache.h"
 #include "utils/snapshot.h"
 
@@ -83,12 +82,6 @@ typedef struct HeapScanDescData {
    */
   ScanDirection rs_dir;
   BlockNumber rs_prefetch_block;
-
-  /*
-   * For parallel scans to store page allocation data.  NULL when not
-   * performing a parallel scan.
-   */
-  ParallelBlockTableScanWorkerData *rs_parallelworkerdata;
 
   /* these fields only used in page-at-a-time mode and for bitmap scans */
   uint32 rs_cindex;  /* current tuple's index in vistuples */
@@ -276,9 +269,7 @@ typedef enum {
 #define HeapScanIsValid(scan) PointerIsValid(scan)
 
 extern TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot,
-                                    int nkeys, ScanKey key,
-                                    ParallelTableScanDesc parallel_scan,
-                                    uint32 flags);
+                                    int nkeys, ScanKey key, uint32 flags);
 extern void heap_setscanlimits(TableScanDesc sscan, BlockNumber startBlk,
                                BlockNumber numBlks);
 extern void heap_prepare_pagescan(TableScanDesc sscan);
@@ -353,7 +344,6 @@ extern bool heap_tuple_should_freeze(HeapTupleHeader tuple,
                                      const struct VacuumCutoffs *cutoffs,
                                      TransactionId *NoFreezePageRelfrozenXid,
                                      MultiXactId *NoFreezePageRelminMxid);
-extern bool heap_tuple_needs_eventual_freeze(HeapTupleHeader tuple);
 
 extern void simple_heap_insert(Relation relation, HeapTuple tup);
 extern void simple_heap_delete(Relation relation, ItemPointer tid);
@@ -383,11 +373,6 @@ extern void log_heap_prune_and_freeze(Relation relation, Buffer buffer,
                                       OffsetNumber *redirected, int nredirected,
                                       OffsetNumber *dead, int ndead,
                                       OffsetNumber *unused, int nunused);
-
-/* in heap/vacuumlazy.c */
-struct VacuumParams;
-extern void heap_vacuum_rel(Relation rel, struct VacuumParams *params,
-                            BufferAccessStrategy bstrategy);
 
 /* in heap/heapam_visibility.c */
 extern bool HeapTupleSatisfiesVisibility(HeapTuple htup, Snapshot snapshot,

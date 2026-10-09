@@ -308,7 +308,7 @@ typedef struct ErrorContextCallback {
   void *arg;
 } ErrorContextCallback;
 
-extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
+extern thread_local PGDLLIMPORT ErrorContextCallback *error_context_stack;
 
 /*----------
  * API for catching ereport(ERROR) exits.  Use these macros like so:
@@ -477,7 +477,7 @@ struct pg_error_t {};
  * of a session.  With none, an ERROR is promoted to FATAL, as it is in
  * PostgreSQL when its PG_exception_stack is NULL.
  */
-extern PGDLLIMPORT bool PG_exception_handled;
+extern thread_local PGDLLIMPORT bool PG_exception_handled;
 
 /* Stuff that error handlers might want to use */
 
@@ -532,7 +532,7 @@ extern char *GetErrorContextStack(void);
 
 /* Hook for intercepting messages before they are sent to the server log */
 typedef void (*emit_log_hook_type)(ErrorData *edata);
-extern PGDLLIMPORT emit_log_hook_type emit_log_hook;
+extern PG_SHARED PGDLLIMPORT emit_log_hook_type emit_log_hook;
 
 /* GUC-configurable parameters */
 
@@ -542,12 +542,12 @@ typedef enum {
   PGERROR_VERBOSE, /* all the facts, ma'am */
 } PGErrorVerbosity;
 
-extern PGDLLIMPORT int Log_error_verbosity;
-extern PGDLLIMPORT char *Log_line_prefix;
-extern PGDLLIMPORT int Log_destination;
-extern PGDLLIMPORT char *Log_destination_string;
-extern PGDLLIMPORT bool syslog_sequence_numbers;
-extern PGDLLIMPORT bool syslog_split_messages;
+extern thread_local PGDLLIMPORT int Log_error_verbosity;
+extern thread_local PGDLLIMPORT char *Log_line_prefix;
+extern thread_local PGDLLIMPORT int Log_destination;
+extern thread_local PGDLLIMPORT char *Log_destination_string;
+extern thread_local PGDLLIMPORT bool syslog_sequence_numbers;
+extern thread_local PGDLLIMPORT bool syslog_split_messages;
 
 /* Log destination bitmap */
 #define LOG_DESTINATION_STDERR	 1

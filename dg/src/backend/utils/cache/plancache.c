@@ -84,12 +84,13 @@
  * We use a dlist instead of separate List cells so that we can guarantee
  * to save a CachedPlanSource without error.
  */
-static dlist_head saved_plan_list = DLIST_STATIC_INIT(saved_plan_list);
+static thread_local dlist_head saved_plan_list =
+    DLIST_STATIC_INIT(saved_plan_list);
 
 /*
  * This is the head of the backend's list of CachedExpressions.
  */
-static dlist_head cached_expression_list =
+static thread_local dlist_head cached_expression_list =
     DLIST_STATIC_INIT(cached_expression_list);
 
 static void ReleaseGenericPlan(CachedPlanSource *plansource);
@@ -137,7 +138,7 @@ static inline void ResourceOwnerForgetPlanCacheRef(ResourceOwner owner,
 }
 
 /* GUC parameter */
-int plan_cache_mode = PLAN_CACHE_MODE_AUTO;
+thread_local int plan_cache_mode = PLAN_CACHE_MODE_AUTO;
 
 /*
  * InitPlanCache: initialize module during InitPostgres.

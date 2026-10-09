@@ -20,7 +20,7 @@
 #include "utils/memutils.h"
 #include "utils/pgstat_internal.h"
 
-PgStat_CheckpointerStats PendingCheckpointerStats = {0};
+thread_local PgStat_CheckpointerStats PendingCheckpointerStats = {0};
 
 /*
  * Report checkpointer and IO statistics

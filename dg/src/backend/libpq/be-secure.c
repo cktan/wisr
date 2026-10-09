@@ -33,32 +33,32 @@
 #include "utils/injection_point.h"
 #include "utils/wait_event.h"
 
-char *ssl_library;
-char *ssl_cert_file;
-char *ssl_key_file;
-char *ssl_ca_file;
-char *ssl_crl_file;
-char *ssl_crl_dir;
-char *ssl_dh_params_file;
-char *ssl_passphrase_command;
-bool ssl_passphrase_command_supports_reload;
+thread_local char *ssl_library;
+thread_local char *ssl_cert_file;
+thread_local char *ssl_key_file;
+thread_local char *ssl_ca_file;
+thread_local char *ssl_crl_file;
+thread_local char *ssl_crl_dir;
+thread_local char *ssl_dh_params_file;
+thread_local char *ssl_passphrase_command;
+thread_local bool ssl_passphrase_command_supports_reload;
 
 #ifdef USE_SSL
 bool ssl_loaded_verify_locations = false;
 #endif
 
 /* GUC variable controlling SSL cipher list */
-char *SSLCipherSuites = NULL;
-char *SSLCipherList = NULL;
+thread_local char *SSLCipherSuites = NULL;
+thread_local char *SSLCipherList = NULL;
 
 /* GUC variable for default ECHD curve. */
-char *SSLECDHCurve;
+thread_local char *SSLECDHCurve;
 
 /* GUC variable: if false, prefer client ciphers */
-bool SSLPreferServerCiphers;
+thread_local bool SSLPreferServerCiphers;
 
-int ssl_min_protocol_version = PG_TLS1_2_VERSION;
-int ssl_max_protocol_version = PG_TLS_ANY;
+thread_local int ssl_min_protocol_version = PG_TLS1_2_VERSION;
+thread_local int ssl_max_protocol_version = PG_TLS_ANY;
 
 /* ------------------------------------------------------------ */
 /*			 Procedures common to all secure sessions

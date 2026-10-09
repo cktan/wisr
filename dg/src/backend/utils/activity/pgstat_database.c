@@ -23,47 +23,21 @@
 
 static bool pgstat_should_report_connstat(void);
 
-PgStat_Counter pgStatBlockReadTime = 0;
-PgStat_Counter pgStatBlockWriteTime = 0;
-PgStat_Counter pgStatActiveTime = 0;
-PgStat_Counter pgStatTransactionIdleTime = 0;
-SessionEndType pgStatSessionEndCause = DISCONNECT_NORMAL;
+thread_local PgStat_Counter pgStatBlockReadTime = 0;
+thread_local PgStat_Counter pgStatBlockWriteTime = 0;
+thread_local PgStat_Counter pgStatActiveTime = 0;
+thread_local PgStat_Counter pgStatTransactionIdleTime = 0;
+thread_local SessionEndType pgStatSessionEndCause = DISCONNECT_NORMAL;
 
-static int pgStatXactCommit = 0;
-static int pgStatXactRollback = 0;
-static PgStat_Counter pgLastSessionReportTime = 0;
+static thread_local int pgStatXactCommit = 0;
+static thread_local int pgStatXactRollback = 0;
+static thread_local PgStat_Counter pgLastSessionReportTime = 0;
 
 /*
  * Remove entry for the database being dropped.
  */
 void pgstat_drop_database(Oid databaseid) {
   pgstat_drop_transactional(PGSTAT_KIND_DATABASE, databaseid, InvalidOid);
-}
-
-/*
- * Called from autovacuum.c to report startup of an autovacuum process.
- * We are called before InitPostgres is done, so can't rely on MyDatabaseId;
- * the db OID must be passed in, instead.
- */
-void pgstat_report_autovac(Oid dboid) {
-  PgStat_EntryRef *entry_ref;
-  PgStatShared_Database *dbentry;
-
-  /* can't get here in single user mode */
-  Assert(IsUnderPostmaster);
-
-  /*
-   * End-of-vacuum is reported instantly. Report the start the same way for
-   * consistency. Vacuum doesn't run frequently and is a long-lasting
-   * operation so it doesn't matter if we get blocked here a little.
-   */
-  entry_ref = pgstat_get_entry_ref_locked(PGSTAT_KIND_DATABASE, dboid,
-                                          InvalidOid, false);
-
-  dbentry = (PgStatShared_Database *)entry_ref->shared_stats;
-  dbentry->stats.last_autovac_time = GetCurrentTimestamp();
-
-  pgstat_unlock_entry(entry_ref);
 }
 
 /*
@@ -253,33 +227,15 @@ PgStat_StatDBEntry *pgstat_fetch_stat_dbentry(Oid dboid) {
                                                   InvalidOid);
 }
 
-void AtEOXact_PgStat_Database(bool isCommit, bool parallel) {
-  /* Don't count parallel worker transaction stats */
-  if (!parallel) {
-    /*
-     * Count transaction commit or abort.  (We use counters, not just
-     * bools, in case the reporting message isn't sent right away.)
-     */
-    if (isCommit)
-      pgStatXactCommit++;
-    else
-      pgStatXactRollback++;
-  }
-}
-
-/*
- * Notify the stats system about parallel worker information.
- */
-void pgstat_update_parallel_workers_stats(PgStat_Counter workers_to_launch,
-                                          PgStat_Counter workers_launched) {
-  PgStat_StatDBEntry *dbentry;
-
-  if (!OidIsValid(MyDatabaseId))
-    return;
-
-  dbentry = pgstat_prep_database_pending(MyDatabaseId);
-  dbentry->parallel_workers_to_launch += workers_to_launch;
-  dbentry->parallel_workers_launched += workers_launched;
+void AtEOXact_PgStat_Database(bool isCommit) {
+  /*
+   * Count transaction commit or abort.  (We use counters, not just bools, in
+   * case the reporting message isn't sent right away.)
+   */
+  if (isCommit)
+    pgStatXactCommit++;
+  else
+    pgStatXactRollback++;
 }
 
 /*
@@ -331,9 +287,8 @@ void pgstat_update_dbstats(TimestampTz ts) {
 }
 
 /*
- * We report session statistics only for normal backend processes.  Parallel
- * workers run in parallel, so they don't contribute to session times, even
- * though they use CPU time. Walsender processes could be considered here,
+ * We report session statistics only for normal backend processes.
+ * Walsender processes could be considered here,
  * but they have different session characteristics from normal backends (for
  * example, they are always "active"), so they would skew session statistics.
  */

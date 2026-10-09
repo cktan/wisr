@@ -37,8 +37,8 @@
  * reported within critical sections so we use static memory in order to avoid
  * memory allocation.
  */
-static PgStat_BackendPending PendingBackendStats;
-static bool backend_has_iostats = false;
+static thread_local PgStat_BackendPending PendingBackendStats;
+static thread_local bool backend_has_iostats = false;
 
 /*
  * WAL usage counters saved from pgWalUsage at the previous call to
@@ -46,7 +46,7 @@ static bool backend_has_iostats = false;
  * happens between pgstat_flush_backend() calls, by subtracting the
  * previous counters from the current ones.
  */
-static WalUsage prevBackendWalUsage;
+static thread_local WalUsage prevBackendWalUsage;
 
 /*
  * Utility routines to report I/O stats for backends, kept here to avoid
@@ -328,7 +328,7 @@ void pgstat_create_backend(ProcNumber procnum) {
  * The following BackendTypes do not participate in the backend stats
  * subsystem:
  * - The same and for the same reasons as in pgstat_tracks_io_bktype().
- * - B_BG_WRITER, B_CHECKPOINTER, B_STARTUP and B_AUTOVAC_LAUNCHER because their
+ * - B_BG_WRITER, B_CHECKPOINTER and B_STARTUP because their
  * I/O stats are already visible in pg_stat_io and there is only one of those.
  *
  * Function returns true if BackendType participates in the backend stats
@@ -344,7 +344,6 @@ bool pgstat_tracks_backend_bktype(BackendType bktype) {
    */
   switch (bktype) {
   case B_INVALID:
-  case B_AUTOVAC_LAUNCHER:
   case B_DEAD_END_BACKEND:
   case B_ARCHIVER:
   case B_LOGGER:
@@ -354,7 +353,6 @@ bool pgstat_tracks_backend_bktype(BackendType bktype) {
   case B_STARTUP:
     return false;
 
-  case B_AUTOVAC_WORKER:
   case B_BACKEND:
   case B_BG_WORKER:
   case B_STANDALONE_BACKEND:

@@ -78,21 +78,9 @@
  * new improved plans in any case. So we allow existing queries to continue
  * and existing plans to survive, a small price to pay for allowing better
  * plans to be introduced concurrently without interfering with users.
- *
- * Setting parallel_workers at ShareUpdateExclusiveLock is safe, since it acts
- * the same as max_parallel_workers_per_gather which is a USERSET parameter
- * that doesn't affect existing plans or queries.
- *
- * vacuum_truncate can be set at ShareUpdateExclusiveLock because it
- * is only used during VACUUM, which uses a ShareUpdateExclusiveLock,
- * so the VACUUM will not be affected by in-flight changes. Changing its
- * value has no effect until the next VACUUM, so no need for stronger lock.
  */
 
-static relopt_bool boolRelOpts[] = {
-    {{"autovacuum_enabled", "Enables autovacuum in this relation",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     true},
+static thread_local relopt_bool boolRelOpts[] = {
     {{"user_catalog_table",
       "Declare a table as an additional catalog table, e.g. for the purpose of "
       "logical replication",
@@ -106,10 +94,6 @@ static relopt_bool boolRelOpts[] = {
       "not the view owner",
       RELOPT_KIND_VIEW, AccessExclusiveLock},
      false},
-    {{"vacuum_truncate",
-      "Enables vacuum to truncate empty pages at the end of this table",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     true},
     {{
          "deduplicate_items",
          "Enables \"deduplicate items\" feature for this btree index",
@@ -120,7 +104,7 @@ static relopt_bool boolRelOpts[] = {
     /* list terminator */
     {{NULL}}};
 
-static relopt_int intRelOpts[] = {
+static thread_local relopt_int intRelOpts[] = {
     {{
          "fillfactor", "Packs table pages only to this percentage",
          RELOPT_KIND_HEAP, ShareUpdateExclusiveLock /* since it applies only to
@@ -145,84 +129,6 @@ static relopt_int intRelOpts[] = {
      HASH_DEFAULT_FILLFACTOR,
      HASH_MIN_FILLFACTOR,
      100},
-    {{"autovacuum_vacuum_threshold",
-      "Minimum number of tuple updates or deletes prior to vacuum",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     INT_MAX},
-    {{"autovacuum_vacuum_max_threshold",
-      "Maximum number of tuple updates or deletes prior to vacuum",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -2,
-     -1,
-     INT_MAX},
-    {{"autovacuum_vacuum_insert_threshold",
-      "Minimum number of tuple inserts prior to vacuum, or -1 to disable "
-      "insert vacuums",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -2,
-     -1,
-     INT_MAX},
-    {{"autovacuum_analyze_threshold",
-      "Minimum number of tuple inserts, updates or deletes prior to analyze",
-      RELOPT_KIND_HEAP, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     INT_MAX},
-    {{"autovacuum_vacuum_cost_limit",
-      "Vacuum cost amount available before napping, for autovacuum",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     1,
-     10000},
-    {{"autovacuum_freeze_min_age",
-      "Minimum age at which VACUUM should freeze a table row, for autovacuum",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     1000000000},
-    {{"autovacuum_multixact_freeze_min_age",
-      "Minimum multixact age at which VACUUM should freeze a row multixact's, "
-      "for autovacuum",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     1000000000},
-    {{"autovacuum_freeze_max_age",
-      "Age at which to autovacuum a table to prevent transaction ID wraparound",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     100000,
-     2000000000},
-    {{"autovacuum_multixact_freeze_max_age",
-      "Multixact age at which to autovacuum a table to prevent multixact "
-      "wraparound",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     10000,
-     2000000000},
-    {{"autovacuum_freeze_table_age",
-      "Age at which VACUUM should perform a full table sweep to freeze row "
-      "versions",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     2000000000},
-    {{"autovacuum_multixact_freeze_table_age",
-      "Age of multixact at which VACUUM should perform a full table sweep to "
-      "freeze row versions",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     2000000000},
-    {{"log_autovacuum_min_duration",
-      "Sets the minimum execution time above which autovacuum actions will be "
-      "logged",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     -1,
-     INT_MAX},
     {{"toast_tuple_target",
       "Sets the target tuple length at which external columns will be toasted",
       RELOPT_KIND_HEAP, ShareUpdateExclusiveLock},
@@ -243,51 +149,11 @@ static relopt_int intRelOpts[] = {
      -1,
      0,
      MAX_IO_CONCURRENCY},
-    {{"parallel_workers",
-      "Number of parallel processes that can be used per executor node for "
-      "this relation.",
-      RELOPT_KIND_HEAP, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     1024},
 
     /* list terminator */
     {{NULL}}};
 
-static relopt_real realRelOpts[] = {
-    {{"autovacuum_vacuum_cost_delay",
-      "Vacuum cost delay in milliseconds, for autovacuum",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0.0,
-     100.0},
-    {{"autovacuum_vacuum_scale_factor",
-      "Number of tuple updates or deletes prior to vacuum as a fraction of "
-      "reltuples",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0.0,
-     100.0},
-    {{"autovacuum_vacuum_insert_scale_factor",
-      "Number of tuple inserts prior to vacuum as a fraction of reltuples",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0.0,
-     100.0},
-    {{"autovacuum_analyze_scale_factor",
-      "Number of tuple inserts, updates or deletes prior to analyze as a "
-      "fraction of reltuples",
-      RELOPT_KIND_HEAP, ShareUpdateExclusiveLock},
-     -1,
-     0.0,
-     100.0},
-    {{"vacuum_max_eager_freeze_failure_rate",
-      "Fraction of pages in a relation vacuum can scan and fail to freeze "
-      "before disabling eager scanning.",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     -1,
-     0.0,
-     1.0},
+static thread_local relopt_real realRelOpts[] = {
 
     {{"seq_page_cost",
       "Sets the planner's estimate of the cost of a sequentially fetched disk "
@@ -325,34 +191,15 @@ static relopt_real realRelOpts[] = {
     /* list terminator */
     {{NULL}}};
 
-/* values from StdRdOptIndexCleanup */
-static relopt_enum_elt_def StdRdOptIndexCleanupValues[] = {
-    {"auto", STDRD_OPTION_VACUUM_INDEX_CLEANUP_AUTO},
-    {"on", STDRD_OPTION_VACUUM_INDEX_CLEANUP_ON},
-    {"off", STDRD_OPTION_VACUUM_INDEX_CLEANUP_OFF},
-    {"true", STDRD_OPTION_VACUUM_INDEX_CLEANUP_ON},
-    {"false", STDRD_OPTION_VACUUM_INDEX_CLEANUP_OFF},
-    {"yes", STDRD_OPTION_VACUUM_INDEX_CLEANUP_ON},
-    {"no", STDRD_OPTION_VACUUM_INDEX_CLEANUP_OFF},
-    {"1", STDRD_OPTION_VACUUM_INDEX_CLEANUP_ON},
-    {"0", STDRD_OPTION_VACUUM_INDEX_CLEANUP_OFF},
-    {(const char *)NULL} /* list terminator */
-};
-
 /* values from ViewOptCheckOption */
-static relopt_enum_elt_def viewCheckOptValues[] = {
+static thread_local relopt_enum_elt_def viewCheckOptValues[] = {
     /* no value for NOT_SET */
     {"local", VIEW_OPTION_CHECK_OPTION_LOCAL},
     {"cascaded", VIEW_OPTION_CHECK_OPTION_CASCADED},
     {(const char *)NULL} /* list terminator */
 };
 
-static relopt_enum enumRelOpts[] = {
-    {{"vacuum_index_cleanup", "Controls index vacuuming and index cleanup",
-      RELOPT_KIND_HEAP | RELOPT_KIND_TOAST, ShareUpdateExclusiveLock},
-     StdRdOptIndexCleanupValues,
-     STDRD_OPTION_VACUUM_INDEX_CLEANUP_AUTO,
-     gettext_noop("Valid values are \"on\", \"off\", and \"auto\".")},
+static thread_local relopt_enum enumRelOpts[] = {
     {{"check_option", "View has WITH CHECK OPTION defined (local or cascaded).",
       RELOPT_KIND_VIEW, AccessExclusiveLock},
      viewCheckOptValues,
@@ -361,16 +208,16 @@ static relopt_enum enumRelOpts[] = {
     /* list terminator */
     {{NULL}}};
 
-static relopt_string stringRelOpts[] = {
+static thread_local relopt_string stringRelOpts[] = {
     /* list terminator */
     {{NULL}}};
 
-static relopt_gen **relOpts = NULL;
-static bits32 last_assigned_kind = RELOPT_KIND_LAST_DEFAULT;
+static thread_local relopt_gen **relOpts = NULL;
+static thread_local bits32 last_assigned_kind = RELOPT_KIND_LAST_DEFAULT;
 
-static int num_custom_options = 0;
-static relopt_gen **custom_options = NULL;
-static bool need_initialization = true;
+static thread_local int num_custom_options = 0;
+static thread_local relopt_gen **custom_options = NULL;
+static thread_local bool need_initialization = true;
 
 static void initialize_reloptions(void);
 static void parse_one_reloption(relopt_value *option, char *text_str,
@@ -497,7 +344,7 @@ relopt_kind add_reloption_kind(void) {
  *recompute the main parser table.
  */
 static void add_reloption(relopt_gen *newoption) {
-  static int max_custom_options = 0;
+  static thread_local int max_custom_options = 0;
 
   if (num_custom_options >= max_custom_options) {
     MemoryContext oldcxt;
@@ -1515,69 +1362,10 @@ static void fillRelOptions(void *rdopts, Size basesize, relopt_value *options,
 bytea *default_reloptions(Datum reloptions, bool validate, relopt_kind kind) {
   static const relopt_parse_elt tab[] = {
       {"fillfactor", RELOPT_TYPE_INT, offsetof(StdRdOptions, fillfactor)},
-      {"autovacuum_enabled", RELOPT_TYPE_BOOL,
-       offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, enabled)},
-      {"autovacuum_vacuum_threshold", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, vacuum_threshold)},
-      {"autovacuum_vacuum_max_threshold", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, vacuum_max_threshold)},
-      {"autovacuum_vacuum_insert_threshold", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, vacuum_ins_threshold)},
-      {"autovacuum_analyze_threshold", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, analyze_threshold)},
-      {"autovacuum_vacuum_cost_limit", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, vacuum_cost_limit)},
-      {"autovacuum_freeze_min_age", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, freeze_min_age)},
-      {"autovacuum_freeze_max_age", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, freeze_max_age)},
-      {"autovacuum_freeze_table_age", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, freeze_table_age)},
-      {"autovacuum_multixact_freeze_min_age", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, multixact_freeze_min_age)},
-      {"autovacuum_multixact_freeze_max_age", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, multixact_freeze_max_age)},
-      {"autovacuum_multixact_freeze_table_age", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, multixact_freeze_table_age)},
-      {"log_autovacuum_min_duration", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, log_min_duration)},
       {"toast_tuple_target", RELOPT_TYPE_INT,
        offsetof(StdRdOptions, toast_tuple_target)},
-      {"autovacuum_vacuum_cost_delay", RELOPT_TYPE_REAL,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, vacuum_cost_delay)},
-      {"autovacuum_vacuum_scale_factor", RELOPT_TYPE_REAL,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, vacuum_scale_factor)},
-      {"autovacuum_vacuum_insert_scale_factor", RELOPT_TYPE_REAL,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, vacuum_ins_scale_factor)},
-      {"autovacuum_analyze_scale_factor", RELOPT_TYPE_REAL,
-       offsetof(StdRdOptions, autovacuum) +
-           offsetof(AutoVacOpts, analyze_scale_factor)},
       {"user_catalog_table", RELOPT_TYPE_BOOL,
-       offsetof(StdRdOptions, user_catalog_table)},
-      {"parallel_workers", RELOPT_TYPE_INT,
-       offsetof(StdRdOptions, parallel_workers)},
-      {"vacuum_index_cleanup", RELOPT_TYPE_ENUM,
-       offsetof(StdRdOptions, vacuum_index_cleanup)},
-      {"vacuum_truncate", RELOPT_TYPE_BOOL,
-       offsetof(StdRdOptions, vacuum_truncate),
-       offsetof(StdRdOptions, vacuum_truncate_set)},
-      {"vacuum_max_eager_freeze_failure_rate", RELOPT_TYPE_REAL,
-       offsetof(StdRdOptions, vacuum_max_eager_freeze_failure_rate)}};
+       offsetof(StdRdOptions, user_catalog_table)}};
 
   return (bytea *)build_reloptions(reloptions, validate, kind,
                                    sizeof(StdRdOptions), tab, lengthof(tab));
@@ -1708,8 +1496,6 @@ bytea *heap_reloptions(char relkind, Datum reloptions, bool validate) {
     if (rdopts != NULL) {
       /* adjust default-only parameters for TOAST relations */
       rdopts->fillfactor = 100;
-      rdopts->autovacuum.analyze_threshold = -1;
-      rdopts->autovacuum.analyze_scale_factor = -1;
     }
     return (bytea *)rdopts;
   case RELKIND_RELATION:

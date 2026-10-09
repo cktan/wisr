@@ -14,7 +14,6 @@
  */
 #include "postgres.h"
 
-#include "access/parallel.h"
 #include "common/hashfn.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
@@ -138,7 +137,6 @@ void execTuplesHashPrepare(int numCols, const Oid *eqOperators,
  *entry metacxt: memory context for long-lived allocation, but not per-entry
  *data tablecxt: memory context in which to store table entries tempcxt:
  *short-lived context for evaluation hash and comparison functions
- *	use_variable_hash_iv: if true, adjust hash IV per-parallel-worker
  *
  * The hashfunctions array may be made with execTuplesHashPrepare().  Note they
  * are not cross-type functions, but expect to see the table datatype(s)
@@ -153,12 +151,13 @@ void execTuplesHashPrepare(int numCols, const Oid *eqOperators,
  * than managing an extra context within the hashtable, because in many cases
  * the caller can specify a tempcxt that it needs to reset per-tuple anyway.)
  */
-TupleHashTable BuildTupleHashTable(
-    PlanState *parent, TupleDesc inputDesc, const TupleTableSlotOps *inputOps,
-    int numCols, AttrNumber *keyColIdx, const Oid *eqfuncoids,
-    FmgrInfo *hashfunctions, Oid *collations, long nbuckets,
-    Size additionalsize, MemoryContext metacxt, MemoryContext tablecxt,
-    MemoryContext tempcxt, bool use_variable_hash_iv) {
+TupleHashTable
+BuildTupleHashTable(PlanState *parent, TupleDesc inputDesc,
+                    const TupleTableSlotOps *inputOps, int numCols,
+                    AttrNumber *keyColIdx, const Oid *eqfuncoids,
+                    FmgrInfo *hashfunctions, Oid *collations, long nbuckets,
+                    Size additionalsize, MemoryContext metacxt,
+                    MemoryContext tablecxt, MemoryContext tempcxt) {
   TupleHashTable hashtable;
   Size entrysize;
   Size hash_mem_limit;
@@ -189,17 +188,6 @@ TupleHashTable BuildTupleHashTable(
   hashtable->inputslot = NULL;
   hashtable->in_hash_expr = NULL;
   hashtable->cur_eq_func = NULL;
-
-  /*
-   * If parallelism is in use, even if the leader backend is performing the
-   * scan itself, we don't want to create the hashtable exactly the same way
-   * in all workers. As hashtables are iterated over in keyspace-order,
-   * doing so in all processes in the same way is likely to lead to
-   * "unbalanced" hashtables when the table size initially is
-   * underestimated.
-   */
-  if (use_variable_hash_iv)
-    hash_iv = murmurhash32(ParallelWorkerNumber);
 
   hashtable->hashtab = tuplehash_create(metacxt, nbuckets, hashtable);
 

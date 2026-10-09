@@ -19,8 +19,8 @@
 
 /* GUC parameters */
 #define DEFAULT_CURSOR_TUPLE_FRACTION 0.1
-extern PGDLLIMPORT double cursor_tuple_fraction;
-extern PGDLLIMPORT bool enable_self_join_elimination;
+extern thread_local PGDLLIMPORT double cursor_tuple_fraction;
+extern thread_local PGDLLIMPORT bool enable_self_join_elimination;
 
 /* query_planner callback to compute query_pathkeys */
 typedef void (*query_pathkeys_callback)(PlannerInfo *root, void *extra);
@@ -45,8 +45,7 @@ extern ForeignScan *make_foreignscan(List *qptlist, List *qpqual,
                                      Index scanrelid, List *fdw_exprs,
                                      List *fdw_private, List *fdw_scan_tlist,
                                      List *fdw_recheck_quals, Plan *outer_plan);
-extern Plan *change_plan_targetlist(Plan *subplan, List *tlist,
-                                    bool tlist_parallel_safe);
+extern Plan *change_plan_targetlist(Plan *subplan, List *tlist);
 extern Plan *materialize_finished_plan(Plan *subplan);
 extern bool is_projection_capable_path(Path *path);
 extern bool is_projection_capable_plan(Plan *plan);
@@ -66,8 +65,8 @@ extern Limit *make_limit(Plan *lefttree, Node *limitOffset, Node *limitCount,
 /*
  * prototypes for plan/initsplan.c
  */
-extern PGDLLIMPORT int from_collapse_limit;
-extern PGDLLIMPORT int join_collapse_limit;
+extern thread_local PGDLLIMPORT int from_collapse_limit;
+extern thread_local PGDLLIMPORT int join_collapse_limit;
 
 extern void add_base_rels_to_query(PlannerInfo *root, Node *jtnode);
 extern void add_other_rels_to_query(PlannerInfo *root);

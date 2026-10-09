@@ -70,15 +70,13 @@ extern Selectivity clauselist_selectivity_ext(PlannerInfo *root, List *clauses,
 /* in path/costsize.c: */
 
 /* widely used cost parameters */
-extern PGDLLIMPORT double seq_page_cost;
-extern PGDLLIMPORT double random_page_cost;
-extern PGDLLIMPORT double cpu_tuple_cost;
-extern PGDLLIMPORT double cpu_index_tuple_cost;
-extern PGDLLIMPORT double cpu_operator_cost;
-extern PGDLLIMPORT double parallel_tuple_cost;
-extern PGDLLIMPORT double parallel_setup_cost;
-extern PGDLLIMPORT double recursive_worktable_factor;
-extern PGDLLIMPORT int effective_cache_size;
+extern thread_local PGDLLIMPORT double seq_page_cost;
+extern thread_local PGDLLIMPORT double random_page_cost;
+extern thread_local PGDLLIMPORT double cpu_tuple_cost;
+extern thread_local PGDLLIMPORT double cpu_index_tuple_cost;
+extern thread_local PGDLLIMPORT double cpu_operator_cost;
+extern thread_local PGDLLIMPORT double recursive_worktable_factor;
+extern thread_local PGDLLIMPORT int effective_cache_size;
 
 extern double clamp_row_est(double nrows);
 extern int32 clamp_width_est(int64 tuple_width);
@@ -91,17 +89,8 @@ extern bool is_pseudo_constant_for_index(PlannerInfo *root, Node *expr,
 
 /* in plan/planner.c: */
 
-/* possible values for debug_parallel_query */
-typedef enum {
-  DEBUG_PARALLEL_OFF,
-  DEBUG_PARALLEL_ON,
-  DEBUG_PARALLEL_REGRESS,
-} DebugParallelMode;
-
 /* GUC parameters */
-extern PGDLLIMPORT int debug_parallel_query;
-extern PGDLLIMPORT bool parallel_leader_participation;
-extern PGDLLIMPORT bool enable_distinct_reordering;
+extern thread_local PGDLLIMPORT bool enable_distinct_reordering;
 
 extern struct PlannedStmt *planner(Query *parse, const char *query_string,
                                    int cursorOptions,
@@ -112,7 +101,6 @@ extern Expr *expression_planner_with_deps(Expr *expr, List **relationOids,
                                           List **invalItems);
 
 extern bool plan_cluster_use_sort(Oid tableOid, Oid indexOid);
-extern int plan_create_index_workers(Oid tableOid, Oid indexOid);
 
 /* in plan/setrefs.c: */
 

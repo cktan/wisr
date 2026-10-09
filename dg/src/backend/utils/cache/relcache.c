@@ -33,7 +33,6 @@
 
 #include "access/htup_details.h"
 #include "access/multixact.h"
-#include "access/parallel.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
 #include "access/table.h"
@@ -76,6 +75,7 @@
 #include "pgstat.h"
 #include "rewrite/rewriteDefine.h"
 #include "rewrite/rowsecurity.h"
+#include "storage/fd.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
 #include "utils/array.h"
@@ -142,19 +142,19 @@ typedef struct relidcacheent {
   Relation reldesc;
 } RelIdCacheEnt;
 
-static HTAB *RelationIdCache;
+static thread_local HTAB *RelationIdCache;
 
 /*
  * This flag is false until we have prepared the critical relcache entries
  * that are needed to do indexscans on the tables read by relcache building.
  */
-bool criticalRelcachesBuilt = false;
+thread_local bool criticalRelcachesBuilt = false;
 
 /*
  * This flag is false until we have prepared the critical relcache entries
  * for shared catalogs (which are the tables needed for login).
  */
-bool criticalSharedRelcachesBuilt = false;
+thread_local bool criticalSharedRelcachesBuilt = false;
 
 /*
  * This counter counts relcache inval events received since backend startup
@@ -162,7 +162,7 @@ bool criticalSharedRelcachesBuilt = false;
  * to detect whether data about to be written by write_relcache_init_file()
  * might already be obsolete.
  */
-static long relcacheInvalsReceived = 0L;
+static thread_local long relcacheInvalsReceived = 0L;
 
 /*
  * in_progress_list is a stack of ongoing RelationBuildDesc() calls.  CREATE
@@ -177,9 +177,9 @@ typedef struct inprogressent {
   bool invalidated; /* whether an invalidation arrived for it */
 } InProgressEnt;
 
-static InProgressEnt *in_progress_list;
-static int in_progress_list_len;
-static int in_progress_list_maxlen;
+static thread_local InProgressEnt *in_progress_list;
+static thread_local int in_progress_list_len;
+static thread_local int in_progress_list_maxlen;
 
 /*
  * eoxact_list[] stores the OIDs of relations that (might) need AtEOXact
@@ -192,9 +192,9 @@ static int in_progress_list_maxlen;
  * cleanup processing must be idempotent.
  */
 #define MAX_EOXACT_LIST 32
-static Oid eoxact_list[MAX_EOXACT_LIST];
-static int eoxact_list_len = 0;
-static bool eoxact_list_overflowed = false;
+static thread_local Oid eoxact_list[MAX_EOXACT_LIST];
+static thread_local int eoxact_list_len = 0;
+static thread_local bool eoxact_list_overflowed = false;
 
 #define EOXactListAdd(rel) \
 	do { \
@@ -209,9 +209,9 @@ static bool eoxact_list_overflowed = false;
  * cleanup work.  The array expands as needed; there is no hashtable because
  * we don't need to access individual items except at EOXact.
  */
-static TupleDesc *EOXactTupleDescArray;
-static int NextEOXactTupleDescNum = 0;
-static int EOXactTupleDescArrayLen = 0;
+static thread_local TupleDesc *EOXactTupleDescArray;
+static thread_local int NextEOXactTupleDescNum = 0;
+static thread_local int EOXactTupleDescArrayLen = 0;
 
 /*
  *		macros to manipulate the lookup hashtable
@@ -276,7 +276,7 @@ typedef struct opclasscacheent {
   RegProcedure *supportProcs; /* OIDs of support procedures */
 } OpClassCacheEnt;
 
-static HTAB *OpClassCache = NULL;
+static thread_local HTAB *OpClassCache = NULL;
 
 /* non-export function prototypes */
 
@@ -1273,8 +1273,6 @@ retry:
  * look at relisshared here.
  */
 static void RelationInitPhysicalAddr(Relation relation) {
-  RelFileNumber oldnumber = relation->rd_locator.relNumber;
-
   /* these relations kinds never have storage */
   if (!RELKIND_HAS_STORAGE(relation->rd_rel->relkind))
     return;
@@ -1326,18 +1324,6 @@ static void RelationInitPhysicalAddr(Relation relation) {
     if (!RelFileNumberIsValid(relation->rd_locator.relNumber))
       elog(ERROR, "could not find relation mapping for relation \"%s\", OID %u",
            RelationGetRelationName(relation), relation->rd_id);
-  }
-
-  /*
-   * For RelationNeedsWAL() to answer correctly on parallel workers, restore
-   * rd_firstRelfilelocatorSubid.  No subtransactions start or end while in
-   * parallel mode, so the specific SubTransactionId does not matter.
-   */
-  if (IsParallelWorker() && oldnumber != relation->rd_locator.relNumber) {
-    if (RelFileLocatorSkippingWAL(relation->rd_locator))
-      relation->rd_firstRelfilelocatorSubid = TopSubTransactionId;
-    else
-      relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
   }
 }
 
@@ -4128,7 +4114,7 @@ static TupleDesc BuildHardcodedDescriptor(int natts,
 }
 
 static TupleDesc GetPgClassDescriptor(void) {
-  static TupleDesc pgclassdesc = NULL;
+  static thread_local TupleDesc pgclassdesc = NULL;
 
   /* Already done? */
   if (pgclassdesc == NULL)
@@ -4138,7 +4124,7 @@ static TupleDesc GetPgClassDescriptor(void) {
 }
 
 static TupleDesc GetPgIndexDescriptor(void) {
-  static TupleDesc pgindexdesc = NULL;
+  static thread_local TupleDesc pgindexdesc = NULL;
 
   /* Already done? */
   if (pgindexdesc == NULL)

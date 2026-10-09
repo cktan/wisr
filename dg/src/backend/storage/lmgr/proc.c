@@ -38,7 +38,6 @@
 #include "access/xlogutils.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/autovacuum.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
@@ -52,16 +51,16 @@
 #include "utils/timestamp.h"
 
 /* GUC variables */
-int DeadlockTimeout = 1000;
-int StatementTimeout = 0;
-int LockTimeout = 0;
-int IdleInTransactionSessionTimeout = 0;
-int TransactionTimeout = 0;
-int IdleSessionTimeout = 0;
-bool log_lock_waits = false;
+thread_local int DeadlockTimeout = 1000;
+thread_local int StatementTimeout = 0;
+thread_local int LockTimeout = 0;
+thread_local int IdleInTransactionSessionTimeout = 0;
+thread_local int TransactionTimeout = 0;
+thread_local int IdleSessionTimeout = 0;
+thread_local bool log_lock_waits = false;
 
 /* Pointer to this process's PGPROC struct, if any */
-PGPROC *MyProc = NULL;
+thread_local PGPROC *MyProc = NULL;
 
 /*
  * This spinlock protects the freelist of recycled PGPROC structures.
@@ -70,17 +69,17 @@ PGPROC *MyProc = NULL;
  * relatively infrequently (only at backend startup or shutdown) and not for
  * very long, so a spinlock is okay.
  */
-NON_EXEC_STATIC slock_t *ProcStructLock = NULL;
+PG_SHARED NON_EXEC_STATIC slock_t *ProcStructLock = NULL;
 
 /* Pointers to shared-memory structures */
-PROC_HDR *ProcGlobal = NULL;
-NON_EXEC_STATIC PGPROC *AuxiliaryProcs = NULL;
-PGPROC *PreparedXactProcs = NULL;
+PG_SHARED PROC_HDR *ProcGlobal = NULL;
+PG_SHARED NON_EXEC_STATIC PGPROC *AuxiliaryProcs = NULL;
+PG_SHARED PGPROC *PreparedXactProcs = NULL;
 
-static DeadLockState deadlock_state = DS_NOT_YET_CHECKED;
+static thread_local DeadLockState deadlock_state = DS_NOT_YET_CHECKED;
 
 /* Is a deadlock check pending? */
-static volatile sig_atomic_t got_deadlock_timeout;
+static thread_local volatile sig_atomic_t got_deadlock_timeout;
 
 static void RemoveProcFromArray(int code, Datum arg);
 static void ProcKill(int code, Datum arg);
@@ -146,7 +145,7 @@ Size ProcGlobalShmemSize(void) {
  */
 int ProcGlobalSemas(void) {
   /*
-   * We need a sema per backend (including autovacuum), plus one for each
+   * We need a sema per backend, plus one for each
    * auxiliary process.
    */
   return MaxBackends + NUM_AUXILIARY_PROCS;
@@ -165,8 +164,8 @@ int ProcGlobalSemas(void) {
  *	  running out when trying to start another backend is a common failure.
  *	  So, now we grab enough semaphores to support the desired max number
  *	  of backends immediately at initialization --- if the sysadmin has set
- *	  MaxConnections, max_worker_processes, max_wal_senders, or
- *	  autovacuum_worker_slots higher than his kernel will support, he'll
+ *	  MaxConnections, max_worker_processes, or max_wal_senders
+ *	  higher than his kernel will support, he'll
  *	  find out sooner rather than later.
  *
  *	  Another reason for creating semaphores here is that the semaphore
@@ -199,7 +198,7 @@ void InitProcGlobal(void) {
    */
   ProcGlobal->spins_per_delay = DEFAULT_SPINS_PER_DELAY;
   dlist_init(&ProcGlobal->freeProcs);
-  dlist_init(&ProcGlobal->autovacFreeProcs);
+  dlist_init(&ProcGlobal->specialWorkerFreeProcs);
   dlist_init(&ProcGlobal->bgworkerFreeProcs);
   dlist_init(&ProcGlobal->walsenderFreeProcs);
   ProcGlobal->startupBufferPinWaitBufId = -1;
@@ -210,12 +209,10 @@ void InitProcGlobal(void) {
 
   /*
    * Create and initialize all the PGPROC structures we'll need.  There are
-   * six separate consumers: (1) normal backends, (2) autovacuum workers and
-   * special workers, (3) background workers, (4) walsenders, (5) auxiliary
-   * processes, and (6) prepared transactions.  (For largely-historical
-   * reasons, we combine autovacuum and special workers into one category
-   * with a single freelist.)  Each PGPROC structure is dedicated to exactly
-   * one of these purposes, and they do not move between groups.
+   * six separate consumers: (1) normal backends, (2) special workers,
+   * (3) background workers, (4) walsenders, (5) auxiliary processes, and
+   * (6) prepared transactions.  Each PGPROC structure is dedicated to
+   * exactly one of these purposes, and they do not move between groups.
    */
   requestSize = PGProcShmemSize();
 
@@ -295,8 +292,8 @@ void InitProcGlobal(void) {
     }
 
     /*
-     * Newly created PGPROCs for normal backends, autovacuum workers,
-     * special workers, bgworkers, and walsenders must be queued up on the
+     * Newly created PGPROCs for normal backends, special workers,
+     * bgworkers, and walsenders must be queued up on the
      * appropriate free list.  Because there can only ever be a small,
      * fixed number of auxiliary processes, no free list is used in that
      * case; InitAuxiliaryProcess() instead uses a linear search.  PGPROCs
@@ -307,13 +304,12 @@ void InitProcGlobal(void) {
       /* PGPROC for normal backend, add to freeProcs list */
       dlist_push_tail(&ProcGlobal->freeProcs, &proc->links);
       proc->procgloballist = &ProcGlobal->freeProcs;
-    } else if (i < MaxConnections + autovacuum_worker_slots +
-                       NUM_SPECIAL_WORKER_PROCS) {
-      /* PGPROC for AV or special worker, add to autovacFreeProcs list */
-      dlist_push_tail(&ProcGlobal->autovacFreeProcs, &proc->links);
-      proc->procgloballist = &ProcGlobal->autovacFreeProcs;
-    } else if (i < MaxConnections + autovacuum_worker_slots +
-                       NUM_SPECIAL_WORKER_PROCS + max_worker_processes) {
+    } else if (i < MaxConnections + NUM_SPECIAL_WORKER_PROCS) {
+      /* PGPROC for special worker, add to specialWorkerFreeProcs list */
+      dlist_push_tail(&ProcGlobal->specialWorkerFreeProcs, &proc->links);
+      proc->procgloballist = &ProcGlobal->specialWorkerFreeProcs;
+    } else if (i < MaxConnections + NUM_SPECIAL_WORKER_PROCS +
+                       max_worker_processes) {
       /* PGPROC for bgworker, add to bgworkerFreeProcs list */
       dlist_push_tail(&ProcGlobal->bgworkerFreeProcs, &proc->links);
       proc->procgloballist = &ProcGlobal->bgworkerFreeProcs;
@@ -383,8 +379,8 @@ void InitProcess(void) {
    * Decide which list should supply our PGPROC.  This logic must match the
    * way the freelists were constructed in InitProcGlobal().
    */
-  if (AmAutoVacuumWorkerProcess() || AmSpecialWorkerProcess())
-    procgloballist = &ProcGlobal->autovacFreeProcs;
+  if (AmSpecialWorkerProcess())
+    procgloballist = &ProcGlobal->specialWorkerFreeProcs;
   else if (AmBackgroundWorkerProcess())
     procgloballist = &ProcGlobal->bgworkerFreeProcs;
   else if (AmWalSenderProcess())
@@ -411,8 +407,7 @@ void InitProcess(void) {
     /*
      * If we reach here, all the PGPROCs are in use.  This is one of the
      * possible places to detect "too many backends", so give the standard
-     * error message.  XXX do we need to give a different failure message
-     * in the autovacuum case?
+     * error message.
      */
     SpinLockRelease(ProcStructLock);
     ereport(FATAL, (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
@@ -446,9 +441,6 @@ void InitProcess(void) {
   MyProc->isRegularBackend = AmRegularBackendProcess();
   MyProc->delayChkptFlags = 0;
   MyProc->statusFlags = 0;
-  /* NB -- autovac launcher intentionally does not set IS_AUTOVACUUM */
-  if (AmAutoVacuumWorkerProcess())
-    MyProc->statusFlags |= PROC_IS_AUTOVACUUM;
   MyProc->lwWaiting = LW_WS_NOT_WAITING;
   MyProc->lwWaitMode = 0;
   MyProc->waitLock = NULL;
@@ -978,10 +970,6 @@ static void ProcKill(int code, Datum arg) {
       update_spins_per_delay(ProcGlobal->spins_per_delay);
 
   SpinLockRelease(ProcStructLock);
-
-  /* wake autovac launcher if needed -- see comments in FreeWorkerInfo */
-  if (AutovacuumLauncherPid != 0)
-    kill(AutovacuumLauncherPid, SIGUSR2);
 }
 
 /*
@@ -1246,11 +1234,9 @@ ProcWaitStatus JoinWaitQueue(LOCALLOCK *locallock, LockMethod lockMethodTable,
  */
 ProcWaitStatus ProcSleep(LOCALLOCK *locallock) {
   LOCKMODE lockmode = locallock->tag.mode;
-  LOCK *lock = locallock->lock;
   uint32 hashcode = locallock->hashcode;
   LWLock *partitionLock = LockHashPartitionLock(hashcode);
   TimestampTz standbyWaitStart = 0;
-  bool allow_autovacuum_cancel = true;
   bool logged_recovery_conflict = false;
   ProcWaitStatus myWaitStatus;
 
@@ -1391,82 +1377,6 @@ ProcWaitStatus ProcSleep(LOCALLOCK *locallock) {
      * surprising behavior (such as missing log messages).
      */
     myWaitStatus = *((volatile ProcWaitStatus *)&MyProc->waitStatus);
-
-    /*
-     * If we are not deadlocked, but are waiting on an autovacuum-induced
-     * task, send a signal to interrupt it.
-     */
-    if (deadlock_state == DS_BLOCKED_BY_AUTOVACUUM && allow_autovacuum_cancel) {
-      PGPROC *autovac = GetBlockingAutoVacuumPgproc();
-      uint8 statusFlags;
-      uint8 lockmethod_copy;
-      LOCKTAG locktag_copy;
-
-      /*
-       * Grab info we need, then release lock immediately.  Note this
-       * coding means that there is a tiny chance that the process
-       * terminates its current transaction and starts a different one
-       * before we have a change to send the signal; the worst possible
-       * consequence is that a for-wraparound vacuum is canceled.  But
-       * that could happen in any case unless we were to do kill() with
-       * the lock held, which is much more undesirable.
-       */
-      LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-      statusFlags = ProcGlobal->statusFlags[autovac->pgxactoff];
-      lockmethod_copy = lock->tag.locktag_lockmethodid;
-      locktag_copy = lock->tag;
-      LWLockRelease(ProcArrayLock);
-
-      /*
-       * Only do it if the worker is not working to protect against Xid
-       * wraparound.
-       */
-      if ((statusFlags & PROC_IS_AUTOVACUUM) &&
-          !(statusFlags & PROC_VACUUM_FOR_WRAPAROUND)) {
-        int pid = autovac->pid;
-
-        /* report the case, if configured to do so */
-        if (message_level_is_interesting(DEBUG1)) {
-          StringInfoData locktagbuf;
-          StringInfoData logbuf; /* errdetail for server log */
-
-          initStringInfo(&locktagbuf);
-          initStringInfo(&logbuf);
-          DescribeLockTag(&locktagbuf, &locktag_copy);
-          appendStringInfo(&logbuf, "Process %d waits for %s on %s.", MyProcPid,
-                           GetLockmodeName(lockmethod_copy, lockmode),
-                           locktagbuf.data);
-
-          ereport(DEBUG1,
-                  (errmsg_internal(
-                       "sending cancel to blocking autovacuum PID %d", pid),
-                   errdetail_log("%s", logbuf.data)));
-
-          pfree(locktagbuf.data);
-          pfree(logbuf.data);
-        }
-
-        /* send the autovacuum worker Back to Old Kent Road */
-        if (kill(pid, SIGINT) < 0) {
-          /*
-           * There's a race condition here: once we release the
-           * ProcArrayLock, it's possible for the autovac worker to
-           * close up shop and exit before we can do the kill().
-           * Therefore, we do not whinge about no-such-process.
-           * Other errors such as EPERM could conceivably happen if
-           * the kernel recycles the PID fast enough, but such cases
-           * seem improbable enough that it's probably best to issue
-           * a warning if we see some other errno.
-           */
-          if (errno != ESRCH)
-            ereport(WARNING,
-                    (errmsg("could not send signal to process %d: %m", pid)));
-        }
-      }
-
-      /* prevent signal from being sent again more than once */
-      allow_autovacuum_cancel = false;
-    }
 
     /*
      * If awoken after the deadlock check interrupt has run, and
@@ -1875,72 +1785,4 @@ void ProcSendSignal(ProcNumber procNumber) {
     elog(ERROR, "procNumber out of range");
 
   SetLatch(&ProcGlobal->allProcs[procNumber].procLatch);
-}
-
-/*
- * BecomeLockGroupLeader - designate process as lock group leader
- *
- * Once this function has returned, other processes can join the lock group
- * by calling BecomeLockGroupMember.
- */
-void BecomeLockGroupLeader(void) {
-  LWLock *leader_lwlock;
-
-  /* If we already did it, we don't need to do it again. */
-  if (MyProc->lockGroupLeader == MyProc)
-    return;
-
-  /* We had better not be a follower. */
-  Assert(MyProc->lockGroupLeader == NULL);
-
-  /* Create single-member group, containing only ourselves. */
-  leader_lwlock = LockHashPartitionLockByProc(MyProc);
-  LWLockAcquire(leader_lwlock, LW_EXCLUSIVE);
-  MyProc->lockGroupLeader = MyProc;
-  dlist_push_head(&MyProc->lockGroupMembers, &MyProc->lockGroupLink);
-  LWLockRelease(leader_lwlock);
-}
-
-/*
- * BecomeLockGroupMember - designate process as lock group member
- *
- * This is pretty straightforward except for the possibility that the leader
- * whose group we're trying to join might exit before we manage to do so;
- * and the PGPROC might get recycled for an unrelated process.  To avoid
- * that, we require the caller to pass the PID of the intended PGPROC as
- * an interlock.  Returns true if we successfully join the intended lock
- * group, and false if not.
- */
-bool BecomeLockGroupMember(PGPROC *leader, int pid) {
-  LWLock *leader_lwlock;
-  bool ok = false;
-
-  /* Group leader can't become member of group */
-  Assert(MyProc != leader);
-
-  /* Can't already be a member of a group */
-  Assert(MyProc->lockGroupLeader == NULL);
-
-  /* PID must be valid. */
-  Assert(pid != 0);
-
-  /*
-   * Get lock protecting the group fields.  Note LockHashPartitionLockByProc
-   * calculates the proc number based on the PGPROC slot without looking at
-   * its contents, so we will acquire the correct lock even if the leader
-   * PGPROC is in process of being recycled.
-   */
-  leader_lwlock = LockHashPartitionLockByProc(leader);
-  LWLockAcquire(leader_lwlock, LW_EXCLUSIVE);
-
-  /* Is this the leader we're looking for? */
-  if (leader->pid == pid && leader->lockGroupLeader == leader) {
-    /* OK, join the group */
-    ok = true;
-    MyProc->lockGroupLeader = leader;
-    dlist_push_tail(&leader->lockGroupMembers, &MyProc->lockGroupLink);
-  }
-  LWLockRelease(leader_lwlock);
-
-  return ok;
 }

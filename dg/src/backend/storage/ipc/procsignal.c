@@ -17,14 +17,15 @@
 #include <signal.h>
 #include <unistd.h>
 
-#include "access/parallel.h"
 #include "commands/async.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "port/atomics.h"
 #include "port/pg_bitutils.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
+#include "storage/proc.h"
 #include "storage/shmem.h"
 #include "storage/sinval.h"
 #include "storage/smgr.h"
@@ -98,8 +99,8 @@ struct ProcSignalHeader {
 #define BARRIER_CLEAR_BIT(flags, type) \
 	((flags) &= ~(((uint32) 1) << (uint32) (type)))
 
-NON_EXEC_STATIC ProcSignalHeader *ProcSignal = NULL;
-static ProcSignalSlot *MyProcSignalSlot = NULL;
+PG_SHARED NON_EXEC_STATIC ProcSignalHeader *ProcSignal = NULL;
+static thread_local ProcSignalSlot *MyProcSignalSlot = NULL;
 
 static bool CheckProcSignal(ProcSignalReason reason);
 static void CleanupProcSignalState(int status, Datum arg);
@@ -632,9 +633,6 @@ void procsignal_sigusr1_handler(SIGNAL_ARGS) {
 
   if (CheckProcSignal(PROCSIG_NOTIFY_INTERRUPT))
     HandleNotifyInterrupt();
-
-  if (CheckProcSignal(PROCSIG_PARALLEL_MESSAGE))
-    HandleParallelMessageInterrupt();
 
   if (CheckProcSignal(PROCSIG_BARRIER))
     HandleProcSignalBarrierInterrupt();

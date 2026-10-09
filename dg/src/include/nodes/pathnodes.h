@@ -168,15 +168,6 @@ typedef struct PlannerGlobal
 	/* is plan specific to current role? */
 	bool		dependsOnRole;
 
-	/* parallel mode potentially OK? */
-	bool		parallelModeOK;
-
-	/* parallel mode actually required? */
-	bool		parallelModeNeeded;
-
-	/* worst PROPARALLEL hazard level */
-	char		maxParallelHazard;
-
 	/* partition descriptors */
 	PartitionDirectory partition_directory pg_node_attr(read_write_ignore);
 } PlannerGlobal;
@@ -907,8 +898,6 @@ typedef struct RelOptInfo
 	bool		consider_startup;
 	/* ditto, for parameterized paths? */
 	bool		consider_param_startup;
-	/* consider parallel paths? */
-	bool		consider_parallel;
 
 	/*
 	 * default result targetlist for Paths scanning this relation; list of
@@ -921,7 +910,6 @@ typedef struct RelOptInfo
 	 */
 	List	   *pathlist;		/* Path structures */
 	List	   *ppilist;		/* ParamPathInfos used in pathlist */
-	List	   *partial_pathlist;	/* partial Paths */
 	struct Path *cheapest_startup_path;
 	struct Path *cheapest_total_path;
 	struct Path *cheapest_unique_path;
@@ -976,8 +964,6 @@ typedef struct RelOptInfo
 	Bitmapset  *eclass_indexes;
 	PlannerInfo *subroot;		/* if subquery */
 	List	   *subplan_params; /* if subquery */
-	/* wanted number of parallel workers */
-	int			rel_parallel_workers;
 	/* Bitmask of optional features supported by the table AM */
 	uint32		amflags;
 
@@ -1230,7 +1216,6 @@ struct IndexOptInfo
 	bool		amhasgettuple;
 	/* does AM have amgetbitmap interface? */
 	bool		amhasgetbitmap;
-	bool		amcanparallel;
 	/* does AM have ammarkpos interface? */
 	bool		amcanmarkpos;
 	/* AM's cost estimator */
@@ -1783,12 +1768,6 @@ typedef struct Path
 	 */
 	ParamPathInfo *param_info pg_node_attr(write_only_req_outer);
 
-	/* engage parallel-aware logic? */
-	bool		parallel_aware;
-	/* OK to use as part of parallel plan? */
-	bool		parallel_safe;
-	/* desired # of workers; 0 = not parallel */
-	int			parallel_workers;
 
 	/* estimated size/costs for path (see costsize.c for more info) */
 	Cardinality rows;			/* estimated number of result tuples */
@@ -2050,9 +2029,6 @@ typedef struct CustomPath
  * AppendPath represents an Append plan, ie, successive execution of
  * several member plans.
  *
- * For partial Append, 'subpaths' contains non-partial subpaths followed by
- * partial subpaths.
- *
  * Note: it is possible for "subpaths" to contain only one, or even no,
  * elements.  These cases are optimized during create_append_plan.
  * In particular, an AppendPath with no subpaths is a "dummy" path that
@@ -2065,8 +2041,6 @@ typedef struct AppendPath
 {
 	Path		path;
 	List	   *subpaths;		/* list of component Paths */
-	/* Index of first partial path in subpaths; list_length(subpaths) if none */
-	int			first_partial_path;
 	Cardinality limit_tuples;	/* hard limit on output tuples, or -1 */
 } AppendPath;
 
@@ -2165,31 +2139,6 @@ typedef struct UniquePath
 	List	   *in_operators;	/* equality operators of the IN clause */
 	List	   *uniq_exprs;		/* expressions to be made unique */
 } UniquePath;
-
-/*
- * GatherPath runs several copies of a plan in parallel and collects the
- * results.  The parallel leader may also execute the plan, unless the
- * single_copy flag is set.
- */
-typedef struct GatherPath
-{
-	Path		path;
-	Path	   *subpath;		/* path for each worker */
-	bool		single_copy;	/* don't execute path more than once */
-	int			num_workers;	/* number of workers sought to help */
-} GatherPath;
-
-/*
- * GatherMergePath runs several copies of a plan in parallel and collects
- * the results, preserving their common sort order.
- */
-typedef struct GatherMergePath
-{
-	Path		path;
-	Path	   *subpath;		/* path for each worker */
-	int			num_workers;	/* number of workers sought to help */
-} GatherMergePath;
-
 
 /*
  * All join-type paths share these fields.
@@ -2294,7 +2243,6 @@ typedef struct HashPath
 	JoinPath	jpath;
 	List	   *path_hashclauses;	/* join clauses used for hashing */
 	int			num_batches;	/* number of batches expected */
-	Cardinality inner_rows_total;	/* total inner rows expected */
 } HashPath;
 
 /*
@@ -3422,7 +3370,6 @@ typedef enum
  * 		have been initialized.
  * agg_partial_costs gives partial aggregation costs.
  * agg_final_costs gives finalization costs.
- * target_parallel_safe is true if target is parallel safe.
  * havingQual gives list of quals to be applied after aggregation.
  * targetList gives list of columns to be projected.
  * patype is the type of partitionwise aggregation that is being performed.
@@ -3436,7 +3383,6 @@ typedef struct
 	AggClauseCosts agg_final_costs;
 
 	/* Data which may differ across partitions. */
-	bool		target_parallel_safe;
 	Node	   *havingQual;
 	List	   *targetList;
 	PartitionwiseAggregateType patype;
@@ -3495,7 +3441,6 @@ typedef struct JoinCostWorkspace
 	/* private for cost_hashjoin code */
 	int			numbuckets;
 	int			numbatches;
-	Cardinality inner_rows_total;
 } JoinCostWorkspace;
 
 /*

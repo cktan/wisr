@@ -18,8 +18,6 @@
 #include "storage/relfilelocator.h"
 #include "utils/relcache.h"
 
-/* prototypes for public functions in freespace.c */
-extern Size GetRecordedFreeSpace(Relation rel, BlockNumber heapBlk);
 extern BlockNumber GetPageWithFreeSpace(Relation rel, Size spaceNeeded);
 extern BlockNumber RecordAndGetPageWithFreeSpace(Relation rel,
                                                  BlockNumber oldPage,

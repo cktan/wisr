@@ -194,8 +194,7 @@ static inline void FullTransactionIdAdvance(FullTransactionId *dest) {
  * LWLocks.
  *
  * Note: xidWrapLimit and oldestXidDB are not "active" values, but are
- * used just to generate useful messages when xidWarnLimit or xidStopLimit
- * are exceeded.
+ * used just to generate useful messages when xidStopLimit is exceeded.
  */
 typedef struct TransamVariablesData {
   /*
@@ -210,8 +209,6 @@ typedef struct TransamVariablesData {
   FullTransactionId nextXid; /* next XID to assign */
 
   TransactionId oldestXid;    /* cluster-wide minimum datfrozenxid */
-  TransactionId xidVacLimit;  /* start forcing autovacuums here */
-  TransactionId xidWarnLimit; /* start complaining here */
   TransactionId xidStopLimit; /* refuse to advance nextXid beyond here */
   TransactionId xidWrapLimit; /* where the world ends */
   Oid oldestXidDB;            /* database with minimum datfrozenxid */
@@ -253,7 +250,7 @@ typedef struct TransamVariablesData {
 extern bool TransactionStartedDuringRecovery(void);
 
 /* in transam/varsup.c */
-extern PGDLLIMPORT TransamVariablesData *TransamVariables;
+extern PG_SHARED PGDLLIMPORT TransamVariablesData *TransamVariables;
 
 /*
  * prototypes for functions in transam/transam.c
@@ -283,7 +280,6 @@ extern FullTransactionId ReadNextFullTransactionId(void);
 extern void SetTransactionIdLimit(TransactionId oldest_datfrozenxid,
                                   Oid oldest_datoid);
 extern void AdvanceOldestClogXid(TransactionId oldest_datfrozenxid);
-extern bool ForceTransactionIdLimitUpdate(void);
 extern Oid GetNewObjectId(void);
 extern void StopGeneratingPinnedObjectIds(void);
 

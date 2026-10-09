@@ -49,8 +49,6 @@ typedef enum {
 #define STD_FUZZ_FACTOR 1.01
 
 static List *translate_sub_tlist(List *tlist, int relid);
-static int append_total_cost_compare(const ListCell *a, const ListCell *b);
-static int append_startup_cost_compare(const ListCell *a, const ListCell *b);
 static List *reparameterize_pathlist_by_child(PlannerInfo *root, List *pathlist,
                                               RelOptInfo *child_rel);
 static bool pathlist_is_reparameterizable_by_child(List *pathlist,
@@ -233,11 +231,7 @@ static PathCostComparison compare_path_costs_fuzzily(Path *path1, Path *path2,
  * The cheapest_parameterized_paths list collects all parameterized paths
  * that have survived the add_path() tournament for this relation.  (Since
  * add_path ignores pathkeys for a parameterized path, these will be paths
- * that have best cost or best row count for their parameterization.  We
- * may also have both a parallel-safe and a non-parallel-safe path in some
- * cases for the same parameterization in some cases, but this should be
- * relatively rare since, most typically, all paths for the same relation
- * will be parallel-safe or none of them will.)
+ * that have best cost or best row count for their parameterization.)
  *
  * cheapest_parameterized_paths always includes the cheapest-total
  * unparameterized path, too, if there is one; the users of that list find
@@ -361,8 +355,7 @@ void set_cheapest(RelOptInfo *parent_rel) {
  *
  *	  A path is worthy if it has a better sort order (better pathkeys) or
  *	  cheaper cost (as defined below), or generates fewer rows, than any
- *    existing path that has the same or superset parameterization rels.  We
- *    also consider parallel-safe paths more worthy than others.
+ *    existing path that has the same or superset parameterization rels.
  *
  *    Cheaper cost can mean either a cheaper total cost or a cheaper startup
  *    cost; if one path is cheaper in one of these aspects and another is
@@ -379,8 +372,7 @@ void set_cheapest(RelOptInfo *parent_rel) {
  *	  In addition to possibly adding new_path, we also remove from the rel's
  *    pathlist any old paths that are dominated by new_path --- that is,
  *    new_path is cheaper, at least as well ordered, generates no more rows,
- *    requires no outer rels not required by the old path, and is no less
- *    parallel-safe.
+ *    and requires no outer rels not required by the old path.
  *
  *	  In most cases, a path with a superset parameterization will generate
  *	  fewer rows (since it has more join clauses to apply), so that those
@@ -483,13 +475,11 @@ void add_path(RelOptInfo *parent_rel, Path *new_path) {
                                         PATH_REQ_OUTER(old_path));
           if (keyscmp == PATHKEYS_BETTER1) {
             if ((outercmp == BMS_EQUAL || outercmp == BMS_SUBSET1) &&
-                new_path->rows <= old_path->rows &&
-                new_path->parallel_safe >= old_path->parallel_safe)
+                new_path->rows <= old_path->rows)
               remove_old = true; /* new dominates old */
           } else if (keyscmp == PATHKEYS_BETTER2) {
             if ((outercmp == BMS_EQUAL || outercmp == BMS_SUBSET2) &&
-                new_path->rows >= old_path->rows &&
-                new_path->parallel_safe <= old_path->parallel_safe)
+                new_path->rows >= old_path->rows)
               accept_new = false; /* old dominates new */
           } else                  /* keyscmp == PATHKEYS_EQUAL */
           {
@@ -497,8 +487,8 @@ void add_path(RelOptInfo *parent_rel, Path *new_path) {
               /*
                * Same pathkeys and outer rels, and fuzzily
                * the same cost, so keep just one; to decide
-               * which, first check parallel-safety, then
-               * rows, then do a fuzzy cost comparison with
+               * which, first check rows, then do a fuzzy
+               * cost comparison with
                * very small fuzz limit.  (We used to do an
                * exact cost comparison, but that results in
                * annoying platform-specific plan variations
@@ -509,11 +499,7 @@ void add_path(RelOptInfo *parent_rel, Path *new_path) {
                * less-fuzzy comparison decides the startup
                * and total costs compare differently.
                */
-              if (new_path->parallel_safe > old_path->parallel_safe)
-                remove_old = true; /* new dominates old */
-              else if (new_path->parallel_safe < old_path->parallel_safe)
-                accept_new = false; /* old dominates new */
-              else if (new_path->rows < old_path->rows)
+              if (new_path->rows < old_path->rows)
                 remove_old = true; /* new dominates old */
               else if (new_path->rows > old_path->rows)
                 accept_new = false; /* old dominates new */
@@ -524,12 +510,10 @@ void add_path(RelOptInfo *parent_rel, Path *new_path) {
                 accept_new = false; /* old equals or
                                      * dominates new */
             } else if (outercmp == BMS_SUBSET1 &&
-                       new_path->rows <= old_path->rows &&
-                       new_path->parallel_safe >= old_path->parallel_safe)
+                       new_path->rows <= old_path->rows)
               remove_old = true; /* new dominates old */
             else if (outercmp == BMS_SUBSET2 &&
-                     new_path->rows >= old_path->rows &&
-                     new_path->parallel_safe <= old_path->parallel_safe)
+                     new_path->rows >= old_path->rows)
               accept_new = false; /* old dominates new */
             /* else different parameterizations, keep both */
           }
@@ -539,8 +523,7 @@ void add_path(RelOptInfo *parent_rel, Path *new_path) {
             outercmp = bms_subset_compare(PATH_REQ_OUTER(new_path),
                                           PATH_REQ_OUTER(old_path));
             if ((outercmp == BMS_EQUAL || outercmp == BMS_SUBSET1) &&
-                new_path->rows <= old_path->rows &&
-                new_path->parallel_safe >= old_path->parallel_safe)
+                new_path->rows <= old_path->rows)
               remove_old = true; /* new dominates old */
           }
           break;
@@ -549,8 +532,7 @@ void add_path(RelOptInfo *parent_rel, Path *new_path) {
             outercmp = bms_subset_compare(PATH_REQ_OUTER(new_path),
                                           PATH_REQ_OUTER(old_path));
             if ((outercmp == BMS_EQUAL || outercmp == BMS_SUBSET2) &&
-                new_path->rows >= old_path->rows &&
-                new_path->parallel_safe <= old_path->parallel_safe)
+                new_path->rows >= old_path->rows)
               accept_new = false; /* old dominates new */
           }
           break;
@@ -683,196 +665,6 @@ bool add_path_precheck(RelOptInfo *parent_rel, int disabled_nodes,
   return true;
 }
 
-/*
- * add_partial_path
- *	  Like add_path, our goal here is to consider whether a path is worthy
- *	  of being kept around, but the considerations here are a bit different.
- *	  A partial path is one which can be executed in any number of workers
- *in parallel such that each worker will generate a subset of the path's overall
- *result.
- *
- *	  As in add_path, the partial_pathlist is kept sorted with the cheapest
- *	  total path in front.  This is depended on by multiple places, which
- *	  just take the front entry as the cheapest path without searching.
- *
- *	  We don't generate parameterized partial paths for several reasons.
- *Most importantly, they're not safe to execute, because there's nothing to make
- *sure that a parallel scan within the parameterized portion of the plan is
- *running with the same value in every worker at the same time. Fortunately, it
- *seems unlikely to be worthwhile anyway, because having each worker scan the
- *entire outer relation and a subset of the inner relation will generally be a
- *terrible plan.  The inner (parameterized) side of the plan will be small
- *anyway.  There could be rare cases where this wins big - e.g. if join order
- *constraints put a 1-row relation on the outer side of the topmost join with a
- *parameterized plan on the inner side - but we'll have to be content not to
- *handle such cases until somebody builds an executor infrastructure that can
- *cope with them.
- *
- *	  Because we don't consider parameterized paths here, we also don't
- *	  need to consider the row counts as a measure of quality: every path
- *will produce the same number of rows.  Neither do we need to consider startup
- *	  costs: parallelism is only used for plans that will be run to
- *completion. Therefore, this routine is much simpler than add_path: it needs to
- *	  consider only disabled nodes, pathkeys and total cost.
- *
- *	  As with add_path, we pfree paths that are found to be dominated by
- *	  another partial path; this requires that there be no other references
- *to such paths yet.  Hence, GatherPaths must not be created for a rel until
- *	  we're done creating all partial paths for it.  Unlike add_path, we
- *don't take an exception for IndexPaths as partial index paths won't be
- *	  referenced by partial BitmapHeapPaths.
- */
-void add_partial_path(RelOptInfo *parent_rel, Path *new_path) {
-  bool accept_new = true; /* unless we find a superior old path */
-  int insert_at = 0;      /* where to insert new item */
-  ListCell *p1;
-
-  /* Check for query cancel. */
-  CHECK_FOR_INTERRUPTS();
-
-  /* Path to be added must be parallel safe. */
-  Assert(new_path->parallel_safe);
-
-  /* Relation should be OK for parallelism, too. */
-  Assert(parent_rel->consider_parallel);
-
-  /*
-   * As in add_path, throw out any paths which are dominated by the new
-   * path, but throw out the new path if some existing path dominates it.
-   */
-  foreach (p1, parent_rel->partial_pathlist) {
-    Path *old_path = (Path *)lfirst(p1);
-    bool remove_old = false; /* unless new proves superior */
-    PathKeysComparison keyscmp;
-
-    /* Compare pathkeys. */
-    keyscmp = compare_pathkeys(new_path->pathkeys, old_path->pathkeys);
-
-    /* Unless pathkeys are incompatible, keep just one of the two paths. */
-    if (keyscmp != PATHKEYS_DIFFERENT) {
-      if (unlikely(new_path->disabled_nodes != old_path->disabled_nodes)) {
-        if (new_path->disabled_nodes > old_path->disabled_nodes)
-          accept_new = false;
-        else
-          remove_old = true;
-      } else if (new_path->total_cost >
-                 old_path->total_cost * STD_FUZZ_FACTOR) {
-        /* New path costs more; keep it only if pathkeys are better. */
-        if (keyscmp != PATHKEYS_BETTER1)
-          accept_new = false;
-      } else if (old_path->total_cost >
-                 new_path->total_cost * STD_FUZZ_FACTOR) {
-        /* Old path costs more; keep it only if pathkeys are better. */
-        if (keyscmp != PATHKEYS_BETTER2)
-          remove_old = true;
-      } else if (keyscmp == PATHKEYS_BETTER1) {
-        /* Costs are about the same, new path has better pathkeys. */
-        remove_old = true;
-      } else if (keyscmp == PATHKEYS_BETTER2) {
-        /* Costs are about the same, old path has better pathkeys. */
-        accept_new = false;
-      } else if (old_path->total_cost > new_path->total_cost * 1.0000000001) {
-        /* Pathkeys are the same, and the old path costs more. */
-        remove_old = true;
-      } else {
-        /*
-         * Pathkeys are the same, and new path isn't materially
-         * cheaper.
-         */
-        accept_new = false;
-      }
-    }
-
-    /*
-     * Remove current element from partial_pathlist if dominated by new.
-     */
-    if (remove_old) {
-      parent_rel->partial_pathlist =
-          foreach_delete_current(parent_rel->partial_pathlist, p1);
-      pfree(old_path);
-    } else {
-      /* new belongs after this old path if it has cost >= old's */
-      if (new_path->total_cost >= old_path->total_cost)
-        insert_at = foreach_current_index(p1) + 1;
-    }
-
-    /*
-     * If we found an old path that dominates new_path, we can quit
-     * scanning the partial_pathlist; we will not add new_path, and we
-     * assume new_path cannot dominate any later path.
-     */
-    if (!accept_new)
-      break;
-  }
-
-  if (accept_new) {
-    /* Accept the new path: insert it at proper place */
-    parent_rel->partial_pathlist =
-        list_insert_nth(parent_rel->partial_pathlist, insert_at, new_path);
-  } else {
-    /* Reject and recycle the new path */
-    pfree(new_path);
-  }
-}
-
-/*
- * add_partial_path_precheck
- *	  Check whether a proposed new partial path could possibly get accepted.
- *
- * Unlike add_path_precheck, we can ignore startup cost and parameterization,
- * since they don't matter for partial paths (see add_partial_path).  But
- * we do want to make sure we don't add a partial path if there's already
- * a complete path that dominates it, since in that case the proposed path
- * is surely a loser.
- */
-bool add_partial_path_precheck(RelOptInfo *parent_rel, int disabled_nodes,
-                               Cost total_cost, List *pathkeys) {
-  ListCell *p1;
-
-  /*
-   * Our goal here is twofold.  First, we want to find out whether this path
-   * is clearly inferior to some existing partial path.  If so, we want to
-   * reject it immediately.  Second, we want to find out whether this path
-   * is clearly superior to some existing partial path -- at least, modulo
-   * final cost computations.  If so, we definitely want to consider it.
-   *
-   * Unlike add_path(), we always compare pathkeys here.  This is because we
-   * expect partial_pathlist to be very short, and getting a definitive
-   * answer at this stage avoids the need to call add_path_precheck.
-   */
-  foreach (p1, parent_rel->partial_pathlist) {
-    Path *old_path = (Path *)lfirst(p1);
-    PathKeysComparison keyscmp;
-
-    keyscmp = compare_pathkeys(pathkeys, old_path->pathkeys);
-    if (keyscmp != PATHKEYS_DIFFERENT) {
-      if (total_cost > old_path->total_cost * STD_FUZZ_FACTOR &&
-          keyscmp != PATHKEYS_BETTER1)
-        return false;
-      if (old_path->total_cost > total_cost * STD_FUZZ_FACTOR &&
-          keyscmp != PATHKEYS_BETTER2)
-        return true;
-    }
-  }
-
-  /*
-   * This path is neither clearly inferior to an existing partial path nor
-   * clearly good enough that it might replace one.  Compare it to
-   * non-parallel plans.  If it loses even before accounting for the cost of
-   * the Gather node, we should definitely reject it.
-   *
-   * Note that we pass the total_cost to add_path_precheck twice.  This is
-   * because it's never advantageous to consider the startup cost of a
-   * partial path; the resulting plans, if run in parallel, will be run to
-   * completion.
-   */
-  if (!add_path_precheck(parent_rel, disabled_nodes, total_cost, total_cost,
-                         pathkeys, NULL))
-    return false;
-
-  return true;
-}
-
 /*****************************************************************************
  *		PATH NODE CREATION ROUTINES
  *****************************************************************************/
@@ -883,16 +675,13 @@ bool add_partial_path_precheck(RelOptInfo *parent_rel, int disabled_nodes,
  *	  pathnode.
  */
 Path *create_seqscan_path(PlannerInfo *root, RelOptInfo *rel,
-                          Relids required_outer, int parallel_workers) {
+                          Relids required_outer) {
   Path *pathnode = makeNode(Path);
 
   pathnode->pathtype = T_SeqScan;
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = (parallel_workers > 0);
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = parallel_workers;
   pathnode->pathkeys = NIL; /* seqscan has unordered result */
 
   cost_seqscan(pathnode, root, rel, pathnode->param_info);
@@ -912,9 +701,6 @@ Path *create_samplescan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = false;
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = 0;
   pathnode->pathkeys = NIL; /* samplescan has unordered result */
 
   cost_samplescan(pathnode, root, rel, pathnode->param_info);
@@ -939,7 +725,6 @@ Path *create_samplescan_path(PlannerInfo *root, RelOptInfo *rel,
  * 'required_outer' is the set of outer relids for a parameterized path.
  * 'loop_count' is the number of repetitions of the indexscan to factor into
  *		estimates of caching behavior.
- * 'partial_path' is true if constructing a parallel index scan path.
  *
  * Returns the new path node.
  */
@@ -947,8 +732,7 @@ IndexPath *create_index_path(PlannerInfo *root, IndexOptInfo *index,
                              List *indexclauses, List *indexorderbys,
                              List *indexorderbycols, List *pathkeys,
                              ScanDirection indexscandir, bool indexonly,
-                             Relids required_outer, double loop_count,
-                             bool partial_path) {
+                             Relids required_outer, double loop_count) {
   IndexPath *pathnode = makeNode(IndexPath);
   RelOptInfo *rel = index->rel;
 
@@ -957,9 +741,6 @@ IndexPath *create_index_path(PlannerInfo *root, IndexOptInfo *index,
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info =
       get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.pathkeys = pathkeys;
 
   pathnode->indexinfo = index;
@@ -968,7 +749,7 @@ IndexPath *create_index_path(PlannerInfo *root, IndexOptInfo *index,
   pathnode->indexorderbycols = indexorderbycols;
   pathnode->indexscandir = indexscandir;
 
-  cost_index(pathnode, root, loop_count, partial_path);
+  cost_index(pathnode, root, loop_count);
 
   return pathnode;
 }
@@ -987,8 +768,7 @@ IndexPath *create_index_path(PlannerInfo *root, IndexOptInfo *index,
  */
 BitmapHeapPath *create_bitmap_heap_path(PlannerInfo *root, RelOptInfo *rel,
                                         Path *bitmapqual, Relids required_outer,
-                                        double loop_count,
-                                        int parallel_degree) {
+                                        double loop_count) {
   BitmapHeapPath *pathnode = makeNode(BitmapHeapPath);
 
   pathnode->path.pathtype = T_BitmapHeapScan;
@@ -996,9 +776,6 @@ BitmapHeapPath *create_bitmap_heap_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info =
       get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->path.parallel_aware = (parallel_degree > 0);
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = parallel_degree;
   pathnode->path.pathkeys = NIL; /* always unordered */
 
   pathnode->bitmapqual = bitmapqual;
@@ -1036,16 +813,6 @@ BitmapAndPath *create_bitmap_and_path(PlannerInfo *root, RelOptInfo *rel,
   }
   pathnode->path.param_info =
       get_baserel_parampathinfo(root, rel, required_outer);
-
-  /*
-   * Currently, a BitmapHeapPath, BitmapAndPath, or BitmapOrPath will be
-   * parallel-safe if and only if rel->consider_parallel is set.  So, we can
-   * set the flag for this path based only on the relation-level flag,
-   * without actually iterating over the list of children.
-   */
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
 
   pathnode->path.pathkeys = NIL; /* always unordered */
 
@@ -1085,16 +852,6 @@ BitmapOrPath *create_bitmap_or_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.param_info =
       get_baserel_parampathinfo(root, rel, required_outer);
 
-  /*
-   * Currently, a BitmapHeapPath, BitmapAndPath, or BitmapOrPath will be
-   * parallel-safe if and only if rel->consider_parallel is set.  So, we can
-   * set the flag for this path based only on the relation-level flag,
-   * without actually iterating over the list of children.
-   */
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
-
   pathnode->path.pathkeys = NIL; /* always unordered */
 
   pathnode->bitmapquals = bitmapquals;
@@ -1118,9 +875,6 @@ TidPath *create_tidscan_path(PlannerInfo *root, RelOptInfo *rel, List *tidquals,
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info =
       get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.pathkeys = NIL; /* always unordered */
 
   pathnode->tidquals = tidquals;
@@ -1145,9 +899,6 @@ TidRangePath *create_tidrangescan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info =
       get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.pathkeys = NIL; /* always unordered */
 
   pathnode->tidrangequals = tidrangequals;
@@ -1171,14 +922,10 @@ TidRangePath *create_tidrangescan_path(PlannerInfo *root, RelOptInfo *rel,
  * by totalling the row estimates from the 'subpaths' list.
  */
 AppendPath *create_append_path(PlannerInfo *root, RelOptInfo *rel,
-                               List *subpaths, List *partial_subpaths,
-                               List *pathkeys, Relids required_outer,
-                               int parallel_workers, bool parallel_aware,
-                               double rows) {
+                               List *subpaths, List *pathkeys,
+                               Relids required_outer, double rows) {
   AppendPath *pathnode = makeNode(AppendPath);
   ListCell *l;
-
-  Assert(!parallel_aware || parallel_workers > 0);
 
   pathnode->path.pathtype = T_Append;
   pathnode->path.parent = rel;
@@ -1202,33 +949,8 @@ AppendPath *create_append_path(PlannerInfo *root, RelOptInfo *rel,
     pathnode->path.param_info =
         get_appendrel_parampathinfo(rel, required_outer);
 
-  pathnode->path.parallel_aware = parallel_aware;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = parallel_workers;
   pathnode->path.pathkeys = pathkeys;
-
-  /*
-   * For parallel append, non-partial paths are sorted by descending total
-   * costs. That way, the total time to finish all non-partial paths is
-   * minimized.  Also, the partial paths are sorted by descending startup
-   * costs.  There may be some paths that require to do startup work by a
-   * single worker.  In such case, it's better for workers to choose the
-   * expensive ones first, whereas the leader should choose the cheapest
-   * startup plan.
-   */
-  if (pathnode->path.parallel_aware) {
-    /*
-     * We mustn't fiddle with the order of subpaths when the Append has
-     * pathkeys.  The order they're listed in is critical to keeping the
-     * pathkeys valid.
-     */
-    Assert(pathkeys == NIL);
-
-    list_sort(subpaths, append_total_cost_compare);
-    list_sort(partial_subpaths, append_startup_cost_compare);
-  }
-  pathnode->first_partial_path = list_length(subpaths);
-  pathnode->subpaths = list_concat(subpaths, partial_subpaths);
+  pathnode->subpaths = subpaths;
 
   /*
    * Apply query-wide LIMIT if known and path is for sole base relation.
@@ -1240,37 +962,26 @@ AppendPath *create_append_path(PlannerInfo *root, RelOptInfo *rel,
     pathnode->limit_tuples = -1.0;
 
   foreach (l, pathnode->subpaths) {
-    Path *subpath = (Path *)lfirst(l);
-
-    pathnode->path.parallel_safe =
-        pathnode->path.parallel_safe && subpath->parallel_safe;
+    Path *subpath PG_USED_FOR_ASSERTS_ONLY = (Path *)lfirst(l);
 
     /* All child paths must have same parameterization */
     Assert(bms_equal(PATH_REQ_OUTER(subpath), required_outer));
   }
 
-  Assert(!parallel_aware || pathnode->path.parallel_safe);
-
   /*
    * If there's exactly one child path then the output of the Append is
    * necessarily ordered the same as the child's, so we can inherit the
    * child's pathkeys if any, overriding whatever the caller might've said.
-   * Furthermore, if the child's parallel awareness matches the Append's,
-   * then the Append is a no-op and will be discarded later (in setrefs.c).
-   * Then we can inherit the child's size and cost too, effectively charging
-   * zero for the Append.  Otherwise, we must do the normal costsize
-   * calculation.
+   * Furthermore, the Append is a no-op and will be discarded later (in
+   * setrefs.c).  Then we can inherit the child's size and cost too,
+   * effectively charging zero for the Append.
    */
   if (list_length(pathnode->subpaths) == 1) {
     Path *child = (Path *)linitial(pathnode->subpaths);
 
-    if (child->parallel_aware == parallel_aware) {
-      pathnode->path.rows = child->rows;
-      pathnode->path.startup_cost = child->startup_cost;
-      pathnode->path.total_cost = child->total_cost;
-    } else
-      cost_append(pathnode);
-    /* Must do this last, else cost_append complains */
+    pathnode->path.rows = child->rows;
+    pathnode->path.startup_cost = child->startup_cost;
+    pathnode->path.total_cost = child->total_cost;
     pathnode->path.pathkeys = child->pathkeys;
   } else
     cost_append(pathnode);
@@ -1280,46 +991,6 @@ AppendPath *create_append_path(PlannerInfo *root, RelOptInfo *rel,
     pathnode->path.rows = rows;
 
   return pathnode;
-}
-
-/*
- * append_total_cost_compare
- *	  list_sort comparator for sorting append child paths
- *	  by total_cost descending
- *
- * For equal total costs, we fall back to comparing startup costs; if those
- * are equal too, break ties using bms_compare on the paths' relids.
- * (This is to avoid getting unpredictable results from list_sort.)
- */
-static int append_total_cost_compare(const ListCell *a, const ListCell *b) {
-  Path *path1 = (Path *)lfirst(a);
-  Path *path2 = (Path *)lfirst(b);
-  int cmp;
-
-  cmp = compare_path_costs(path1, path2, TOTAL_COST);
-  if (cmp != 0)
-    return -cmp;
-  return bms_compare(path1->parent->relids, path2->parent->relids);
-}
-
-/*
- * append_startup_cost_compare
- *	  list_sort comparator for sorting append child paths
- *	  by startup_cost descending
- *
- * For equal startup costs, we fall back to comparing total costs; if those
- * are equal too, break ties using bms_compare on the paths' relids.
- * (This is to avoid getting unpredictable results from list_sort.)
- */
-static int append_startup_cost_compare(const ListCell *a, const ListCell *b) {
-  Path *path1 = (Path *)lfirst(a);
-  Path *path2 = (Path *)lfirst(b);
-  int cmp;
-
-  cmp = compare_path_costs(path1, path2, STARTUP_COST);
-  if (cmp != 0)
-    return -cmp;
-  return bms_compare(path1->parent->relids, path2->parent->relids);
 }
 
 /*
@@ -1346,9 +1017,6 @@ MergeAppendPath *create_merge_append_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.pathkeys = pathkeys;
   pathnode->subpaths = subpaths;
 
@@ -1375,8 +1043,6 @@ MergeAppendPath *create_merge_append_path(PlannerInfo *root, RelOptInfo *rel,
     Assert(bms_is_empty(PATH_REQ_OUTER(subpath)));
 
     pathnode->path.rows += subpath->rows;
-    pathnode->path.parallel_safe =
-        pathnode->path.parallel_safe && subpath->parallel_safe;
 
     if (pathkeys_contained_in(pathkeys, subpath->pathkeys)) {
       /* Subpath is adequately ordered, we won't need to sort it */
@@ -1398,13 +1064,10 @@ MergeAppendPath *create_merge_append_path(PlannerInfo *root, RelOptInfo *rel,
 
   /*
    * Now we can compute total costs of the MergeAppend.  If there's exactly
-   * one child path and its parallel awareness matches that of the
-   * MergeAppend, then the MergeAppend is a no-op and will be discarded
+   * one child path, then the MergeAppend is a no-op and will be discarded
    * later (in setrefs.c); otherwise we do the normal cost calculation.
    */
-  if (list_length(subpaths) == 1 &&
-      ((Path *)linitial(subpaths))->parallel_aware ==
-          pathnode->path.parallel_aware) {
+  if (list_length(subpaths) == 1) {
     pathnode->path.disabled_nodes = input_disabled_nodes;
     pathnode->path.startup_cost = input_startup_cost;
     pathnode->path.total_cost = input_total_cost;
@@ -1432,9 +1095,6 @@ GroupResultPath *create_group_result_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = target;
   pathnode->path.param_info = NULL; /* there are no other rels... */
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.pathkeys = NIL;
   pathnode->quals = havingqual;
 
@@ -1478,10 +1138,6 @@ MaterialPath *create_material_path(RelOptInfo *rel, Path *subpath) {
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info = subpath->param_info;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   pathnode->path.pathkeys = subpath->pathkeys;
 
   pathnode->subpath = subpath;
@@ -1509,10 +1165,6 @@ MemoizePath *create_memoize_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info = subpath->param_info;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   pathnode->path.pathkeys = subpath->pathkeys;
 
   pathnode->subpath = subpath;
@@ -1724,10 +1376,6 @@ UniquePath *create_unique_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info = subpath->param_info;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
 
   /*
    * Assume the output is unsorted, since we don't necessarily have pathkeys
@@ -1873,56 +1521,6 @@ UniquePath *create_unique_path(PlannerInfo *root, RelOptInfo *rel,
 }
 
 /*
- * create_gather_merge_path
- *
- *	  Creates a path corresponding to a gather merge scan, returning
- *	  the pathnode.
- */
-GatherMergePath *create_gather_merge_path(PlannerInfo *root, RelOptInfo *rel,
-                                          Path *subpath, PathTarget *target,
-                                          List *pathkeys, Relids required_outer,
-                                          double *rows) {
-  GatherMergePath *pathnode = makeNode(GatherMergePath);
-  int input_disabled_nodes = 0;
-  Cost input_startup_cost = 0;
-  Cost input_total_cost = 0;
-
-  Assert(subpath->parallel_safe);
-  Assert(pathkeys);
-
-  /*
-   * The subpath should guarantee that it is adequately ordered either by
-   * adding an explicit sort node or by using presorted input.  We cannot
-   * add an explicit Sort node for the subpath in createplan.c on additional
-   * pathkeys, because we can't guarantee the sort would be safe.  For
-   * example, expressions may be volatile or otherwise parallel unsafe.
-   */
-  if (!pathkeys_contained_in(pathkeys, subpath->pathkeys))
-    elog(ERROR, "gather merge input not sufficiently sorted");
-
-  pathnode->path.pathtype = T_GatherMerge;
-  pathnode->path.parent = rel;
-  pathnode->path.param_info =
-      get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->path.parallel_aware = false;
-
-  pathnode->subpath = subpath;
-  pathnode->num_workers = subpath->parallel_workers;
-  pathnode->path.pathkeys = pathkeys;
-  pathnode->path.pathtarget = target ? target : rel->reltarget;
-
-  input_disabled_nodes += subpath->disabled_nodes;
-  input_startup_cost += subpath->startup_cost;
-  input_total_cost += subpath->total_cost;
-
-  cost_gather_merge(pathnode, root, rel, pathnode->path.param_info,
-                    input_disabled_nodes, input_startup_cost, input_total_cost,
-                    rows);
-
-  return pathnode;
-}
-
-/*
  * translate_sub_tlist - get subquery column numbers represented by tlist
  *
  * The given targetlist usually contains only Vars referencing the given relid.
@@ -1949,45 +1547,6 @@ static List *translate_sub_tlist(List *tlist, int relid) {
 }
 
 /*
- * create_gather_path
- *	  Creates a path corresponding to a gather scan, returning the
- *	  pathnode.
- *
- * 'rows' may optionally be set to override row estimates from other sources.
- */
-GatherPath *create_gather_path(PlannerInfo *root, RelOptInfo *rel,
-                               Path *subpath, PathTarget *target,
-                               Relids required_outer, double *rows) {
-  GatherPath *pathnode = makeNode(GatherPath);
-
-  Assert(subpath->parallel_safe);
-
-  pathnode->path.pathtype = T_Gather;
-  pathnode->path.parent = rel;
-  pathnode->path.pathtarget = target;
-  pathnode->path.param_info =
-      get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = false;
-  pathnode->path.parallel_workers = 0;
-  pathnode->path.pathkeys = NIL; /* Gather has unordered result */
-
-  pathnode->subpath = subpath;
-  pathnode->num_workers = subpath->parallel_workers;
-  pathnode->single_copy = false;
-
-  if (pathnode->num_workers == 0) {
-    pathnode->path.pathkeys = subpath->pathkeys;
-    pathnode->num_workers = 1;
-    pathnode->single_copy = true;
-  }
-
-  cost_gather(pathnode, root, rel, pathnode->path.param_info, rows);
-
-  return pathnode;
-}
-
-/*
  * create_subqueryscan_path
  *	  Creates a path corresponding to a scan of a subquery,
  *	  returning the pathnode.
@@ -2009,10 +1568,6 @@ SubqueryScanPath *create_subqueryscan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = rel->reltarget;
   pathnode->path.param_info =
       get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   pathnode->path.pathkeys = pathkeys;
   pathnode->subpath = subpath;
 
@@ -2035,9 +1590,6 @@ Path *create_functionscan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = false;
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = 0;
   pathnode->pathkeys = pathkeys;
 
   cost_functionscan(pathnode, root, rel, pathnode->param_info);
@@ -2058,9 +1610,6 @@ Path *create_tablefuncscan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = false;
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = 0;
   pathnode->pathkeys = NIL; /* result is always unordered */
 
   cost_tablefuncscan(pathnode, root, rel, pathnode->param_info);
@@ -2081,9 +1630,6 @@ Path *create_valuesscan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = false;
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = 0;
   pathnode->pathkeys = NIL; /* result is always unordered */
 
   cost_valuesscan(pathnode, root, rel, pathnode->param_info);
@@ -2104,9 +1650,6 @@ Path *create_ctescan_path(PlannerInfo *root, RelOptInfo *rel, List *pathkeys,
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = false;
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = 0;
   pathnode->pathkeys = pathkeys;
 
   cost_ctescan(pathnode, root, rel, pathnode->param_info);
@@ -2127,9 +1670,6 @@ Path *create_namedtuplestorescan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = false;
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = 0;
   pathnode->pathkeys = NIL; /* result is always unordered */
 
   cost_namedtuplestorescan(pathnode, root, rel, pathnode->param_info);
@@ -2150,9 +1690,6 @@ Path *create_resultscan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = false;
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = 0;
   pathnode->pathkeys = NIL; /* result is always unordered */
 
   cost_resultscan(pathnode, root, rel, pathnode->param_info);
@@ -2173,9 +1710,6 @@ Path *create_worktablescan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->parent = rel;
   pathnode->pathtarget = rel->reltarget;
   pathnode->param_info = get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->parallel_aware = false;
-  pathnode->parallel_safe = rel->consider_parallel;
-  pathnode->parallel_workers = 0;
   pathnode->pathkeys = NIL; /* result is always unordered */
 
   /* Cost is the same as for a regular CTE scan */
@@ -2212,9 +1746,6 @@ ForeignPath *create_foreignscan_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = target ? target : rel->reltarget;
   pathnode->path.param_info =
       get_baserel_parampathinfo(root, rel, required_outer);
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.rows = rows;
   pathnode->path.disabled_nodes = disabled_nodes;
   pathnode->path.startup_cost = startup_cost;
@@ -2261,9 +1792,6 @@ create_foreign_join_path(PlannerInfo *root, RelOptInfo *rel, PathTarget *target,
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = target ? target : rel->reltarget;
   pathnode->path.param_info = NULL; /* XXX see above */
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.rows = rows;
   pathnode->path.disabled_nodes = disabled_nodes;
   pathnode->path.startup_cost = startup_cost;
@@ -2304,9 +1832,6 @@ ForeignPath *create_foreign_upper_path(
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = target ? target : rel->reltarget;
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.rows = rows;
   pathnode->path.disabled_nodes = disabled_nodes;
   pathnode->path.startup_cost = startup_cost;
@@ -2448,12 +1973,6 @@ NestPath *create_nestloop_path(PlannerInfo *root, RelOptInfo *joinrel,
   pathnode->jpath.path.param_info = get_joinrel_parampathinfo(
       root, joinrel, outer_path, inner_path, extra->sjinfo, required_outer,
       &restrict_clauses);
-  pathnode->jpath.path.parallel_aware = false;
-  pathnode->jpath.path.parallel_safe = joinrel->consider_parallel &&
-                                       outer_path->parallel_safe &&
-                                       inner_path->parallel_safe;
-  /* This is a foolish way to estimate parallel_workers, but for now... */
-  pathnode->jpath.path.parallel_workers = outer_path->parallel_workers;
   pathnode->jpath.path.pathkeys = pathkeys;
   pathnode->jpath.jointype = jointype;
   pathnode->jpath.inner_unique = extra->inner_unique;
@@ -2500,12 +2019,6 @@ MergePath *create_mergejoin_path(
   pathnode->jpath.path.param_info = get_joinrel_parampathinfo(
       root, joinrel, outer_path, inner_path, extra->sjinfo, required_outer,
       &restrict_clauses);
-  pathnode->jpath.path.parallel_aware = false;
-  pathnode->jpath.path.parallel_safe = joinrel->consider_parallel &&
-                                       outer_path->parallel_safe &&
-                                       inner_path->parallel_safe;
-  /* This is a foolish way to estimate parallel_workers, but for now... */
-  pathnode->jpath.path.parallel_workers = outer_path->parallel_workers;
   pathnode->jpath.path.pathkeys = pathkeys;
   pathnode->jpath.jointype = jointype;
   pathnode->jpath.inner_unique = extra->inner_unique;
@@ -2534,7 +2047,6 @@ MergePath *create_mergejoin_path(
  * 'extra' contains various information about the join
  * 'outer_path' is the cheapest outer path
  * 'inner_path' is the cheapest inner path
- * 'parallel_hash' to select Parallel Hash of inner path (shared hash table)
  * 'restrict_clauses' are the RestrictInfo nodes to apply at the join
  * 'required_outer' is the set of required outer rels
  * 'hashclauses' are the RestrictInfo nodes to use as hash clauses
@@ -2543,9 +2055,8 @@ MergePath *create_mergejoin_path(
 HashPath *create_hashjoin_path(PlannerInfo *root, RelOptInfo *joinrel,
                                JoinType jointype, JoinCostWorkspace *workspace,
                                JoinPathExtraData *extra, Path *outer_path,
-                               Path *inner_path, bool parallel_hash,
-                               List *restrict_clauses, Relids required_outer,
-                               List *hashclauses) {
+                               Path *inner_path, List *restrict_clauses,
+                               Relids required_outer, List *hashclauses) {
   HashPath *pathnode = makeNode(HashPath);
 
   pathnode->jpath.path.pathtype = T_HashJoin;
@@ -2554,13 +2065,6 @@ HashPath *create_hashjoin_path(PlannerInfo *root, RelOptInfo *joinrel,
   pathnode->jpath.path.param_info = get_joinrel_parampathinfo(
       root, joinrel, outer_path, inner_path, extra->sjinfo, required_outer,
       &restrict_clauses);
-  pathnode->jpath.path.parallel_aware =
-      joinrel->consider_parallel && parallel_hash;
-  pathnode->jpath.path.parallel_safe = joinrel->consider_parallel &&
-                                       outer_path->parallel_safe &&
-                                       inner_path->parallel_safe;
-  /* This is a foolish way to estimate parallel_workers, but for now... */
-  pathnode->jpath.path.parallel_workers = outer_path->parallel_workers;
 
   /*
    * A hashjoin never has pathkeys, since its output ordering is
@@ -2620,11 +2124,6 @@ ProjectionPath *create_projection_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = target;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel &&
-                                 subpath->parallel_safe &&
-                                 is_parallel_safe(root, (Node *)target->exprs);
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   /* Projection does not change the sort order */
   pathnode->path.pathkeys = subpath->pathkeys;
 
@@ -2686,10 +2185,6 @@ ProjectionPath *create_projection_path(PlannerInfo *root, RelOptInfo *rel,
  * knows that the given path isn't referenced elsewhere and so can be modified
  * in-place.
  *
- * If the input path is a GatherPath or GatherMergePath, we try to push the
- * new target down to its input as well; this is a yet more invasive
- * modification of the input path, which create_projection_path() can't do.
- *
  * Note that we mustn't change the source path's parent link; so when it is
  * add_path'd to "rel" things will be a bit inconsistent.  So far that has
  * not caused any trouble.
@@ -2720,45 +2215,6 @@ Path *apply_projection_to_path(PlannerInfo *root, RelOptInfo *rel, Path *path,
   path->total_cost += target->cost.startup - oldcost.startup +
                       (target->cost.per_tuple - oldcost.per_tuple) * path->rows;
 
-  /*
-   * If the path happens to be a Gather or GatherMerge path, we'd like to
-   * arrange for the subpath to return the required target list so that
-   * workers can help project.  But if there is something that is not
-   * parallel-safe in the target expressions, then we can't.
-   */
-  if ((IsA(path, GatherPath) || IsA(path, GatherMergePath)) &&
-      is_parallel_safe(root, (Node *)target->exprs)) {
-    /*
-     * We always use create_projection_path here, even if the subpath is
-     * projection-capable, so as to avoid modifying the subpath in place.
-     * It seems unlikely at present that there could be any other
-     * references to the subpath, but better safe than sorry.
-     *
-     * Note that we don't change the parallel path's cost estimates; it
-     * might be appropriate to do so, to reflect the fact that the bulk of
-     * the target evaluation will happen in workers.
-     */
-    if (IsA(path, GatherPath)) {
-      GatherPath *gpath = (GatherPath *)path;
-
-      gpath->subpath = (Path *)create_projection_path(
-          root, gpath->subpath->parent, gpath->subpath, target);
-    } else {
-      GatherMergePath *gmpath = (GatherMergePath *)path;
-
-      gmpath->subpath = (Path *)create_projection_path(
-          root, gmpath->subpath->parent, gmpath->subpath, target);
-    }
-  } else if (path->parallel_safe &&
-             !is_parallel_safe(root, (Node *)target->exprs)) {
-    /*
-     * We're inserting a parallel-restricted target list into a path
-     * currently marked parallel-safe, so we have to mark it as no longer
-     * safe.
-     */
-    path->parallel_safe = false;
-  }
-
   return path;
 }
 
@@ -2782,11 +2238,6 @@ ProjectSetPath *create_set_projection_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = target;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel &&
-                                 subpath->parallel_safe &&
-                                 is_parallel_safe(root, (Node *)target->exprs);
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   /* Projection does not change the sort order XXX? */
   pathnode->path.pathkeys = subpath->pathkeys;
 
@@ -2849,10 +2300,6 @@ IncrementalSortPath *create_incremental_sort_path(PlannerInfo *root,
   pathnode->path.pathtarget = subpath->pathtarget;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   pathnode->path.pathkeys = pathkeys;
 
   pathnode->subpath = subpath;
@@ -2888,10 +2335,6 @@ SortPath *create_sort_path(PlannerInfo *root, RelOptInfo *rel, Path *subpath,
   pathnode->path.pathtarget = subpath->pathtarget;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   pathnode->path.pathkeys = pathkeys;
 
   pathnode->subpath = subpath;
@@ -2926,10 +2369,6 @@ GroupPath *create_group_path(PlannerInfo *root, RelOptInfo *rel, Path *subpath,
   pathnode->path.pathtarget = target;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   /* Group doesn't change sort ordering */
   pathnode->path.pathkeys = subpath->pathkeys;
 
@@ -2977,10 +2416,6 @@ UpperUniquePath *create_upper_unique_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = subpath->pathtarget;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   /* Unique doesn't change the input ordering */
   pathnode->path.pathkeys = subpath->pathkeys;
 
@@ -3026,10 +2461,6 @@ AggPath *create_agg_path(PlannerInfo *root, RelOptInfo *rel, Path *subpath,
   pathnode->path.pathtarget = target;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
 
   if (aggstrategy == AGG_SORTED) {
     /*
@@ -3102,10 +2533,6 @@ GroupingSetsPath *create_groupingsets_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = target;
   pathnode->path.param_info = subpath->param_info;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   pathnode->subpath = subpath;
 
   /*
@@ -3224,10 +2651,7 @@ MinMaxAggPath *create_minmaxagg_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.parent = rel;
   pathnode->path.pathtarget = target;
   /* For now, assume we are above any joins, so no parameterization */
-  pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = true; /* might change below */
-  pathnode->path.parallel_workers = 0;
+  pathnode->path.param_info = NULL; /* might change below */
   /* Result is one unordered row */
   pathnode->path.rows = 1;
   pathnode->path.pathkeys = NIL;
@@ -3235,15 +2659,13 @@ MinMaxAggPath *create_minmaxagg_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->mmaggregates = mmaggregates;
   pathnode->quals = quals;
 
-  /* Calculate cost of all the initplans, and check parallel safety */
+  /* Calculate cost of all the initplans */
   initplan_cost = 0;
   foreach (lc, mmaggregates) {
     MinMaxAggInfo *mminfo = (MinMaxAggInfo *)lfirst(lc);
 
     initplan_disabled_nodes += mminfo->path->disabled_nodes;
     initplan_cost += mminfo->pathcost;
-    if (!mminfo->path->parallel_safe)
-      pathnode->path.parallel_safe = false;
   }
 
   /* add tlist eval cost for each output row, plus cpu_tuple_cost */
@@ -3263,17 +2685,6 @@ MinMaxAggPath *create_minmaxagg_path(PlannerInfo *root, RelOptInfo *rel,
     pathnode->path.startup_cost += qual_cost.startup;
     pathnode->path.total_cost += qual_cost.startup + qual_cost.per_tuple;
   }
-
-  /*
-   * If the initplans were all parallel-safe, also check safety of the
-   * target and quals.  (The Result node itself isn't parallelizable, but if
-   * we are in a subquery then it can be useful for the outer query to know
-   * that this one is parallel-safe.)
-   */
-  if (pathnode->path.parallel_safe)
-    pathnode->path.parallel_safe =
-        is_parallel_safe(root, (Node *)target->exprs) &&
-        is_parallel_safe(root, (Node *)quals);
 
   return pathnode;
 }
@@ -3311,10 +2722,6 @@ WindowAggPath *create_windowagg_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = target;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   /* WindowAgg preserves the input sort order */
   pathnode->path.pathkeys = subpath->pathkeys;
 
@@ -3370,12 +2777,6 @@ SetOpPath *create_setop_path(PlannerInfo *root, RelOptInfo *rel, Path *leftpath,
   pathnode->path.pathtarget = rel->reltarget;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel &&
-                                 leftpath->parallel_safe &&
-                                 rightpath->parallel_safe;
-  pathnode->path.parallel_workers =
-      leftpath->parallel_workers + rightpath->parallel_workers;
   /* SetOp preserves the input sort order if in sort mode */
   pathnode->path.pathkeys =
       (strategy == SETOP_SORTED) ? leftpath->pathkeys : NIL;
@@ -3481,12 +2882,7 @@ create_recursiveunion_path(PlannerInfo *root, RelOptInfo *rel, Path *leftpath,
   pathnode->path.pathtarget = target;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = rel->consider_parallel &&
-                                 leftpath->parallel_safe &&
-                                 rightpath->parallel_safe;
   /* Foolish, but we'll do it like joins for now: */
-  pathnode->path.parallel_workers = leftpath->parallel_workers;
   /* RecursiveUnion result is always unsorted */
   pathnode->path.pathkeys = NIL;
 
@@ -3521,9 +2917,6 @@ LockRowsPath *create_lockrows_path(PlannerInfo *root, RelOptInfo *rel,
   pathnode->path.pathtarget = subpath->pathtarget;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = false;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.rows = subpath->rows;
 
   /*
@@ -3596,9 +2989,6 @@ ModifyTablePath *create_modifytable_path(
   pathnode->path.pathtarget = rel->reltarget;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe = false;
-  pathnode->path.parallel_workers = 0;
   pathnode->path.pathkeys = NIL;
 
   /*
@@ -3677,10 +3067,6 @@ LimitPath *create_limit_path(PlannerInfo *root, RelOptInfo *rel, Path *subpath,
   pathnode->path.pathtarget = subpath->pathtarget;
   /* For now, assume we are above any joins, so no parameterization */
   pathnode->path.param_info = NULL;
-  pathnode->path.parallel_aware = false;
-  pathnode->path.parallel_safe =
-      rel->consider_parallel && subpath->parallel_safe;
-  pathnode->path.parallel_workers = subpath->parallel_workers;
   pathnode->path.rows = subpath->rows;
   pathnode->path.disabled_nodes = subpath->disabled_nodes;
   pathnode->path.startup_cost = subpath->startup_cost;
@@ -3785,7 +3171,7 @@ Path *reparameterize_path(PlannerInfo *root, Path *path, Relids required_outer,
     return NULL;
   switch (path->pathtype) {
   case T_SeqScan:
-    return create_seqscan_path(root, rel, required_outer, 0);
+    return create_seqscan_path(root, rel, required_outer);
   case T_SampleScan:
     return (Path *)create_samplescan_path(root, rel, required_outer);
   case T_IndexScan:
@@ -3803,14 +3189,14 @@ Path *reparameterize_path(PlannerInfo *root, Path *path, Relids required_outer,
     memcpy(newpath, ipath, sizeof(IndexPath));
     newpath->path.param_info =
         get_baserel_parampathinfo(root, rel, required_outer);
-    cost_index(newpath, root, loop_count, false);
+    cost_index(newpath, root, loop_count);
     return (Path *)newpath;
   }
   case T_BitmapHeapScan: {
     BitmapHeapPath *bpath = (BitmapHeapPath *)path;
 
     return (Path *)create_bitmap_heap_path(root, rel, bpath->bitmapqual,
-                                           required_outer, loop_count, 0);
+                                           required_outer, loop_count);
   }
   case T_SubqueryScan: {
     SubqueryScanPath *spath = (SubqueryScanPath *)path;
@@ -3838,29 +3224,19 @@ Path *reparameterize_path(PlannerInfo *root, Path *path, Relids required_outer,
   case T_Append: {
     AppendPath *apath = (AppendPath *)path;
     List *childpaths = NIL;
-    List *partialpaths = NIL;
-    int i;
     ListCell *lc;
 
     /* Reparameterize the children */
-    i = 0;
     foreach (lc, apath->subpaths) {
       Path *spath = (Path *)lfirst(lc);
 
       spath = reparameterize_path(root, spath, required_outer, loop_count);
       if (spath == NULL)
         return NULL;
-      /* We have to re-split the regular and partial paths */
-      if (i < apath->first_partial_path)
-        childpaths = lappend(childpaths, spath);
-      else
-        partialpaths = lappend(partialpaths, spath);
-      i++;
+      childpaths = lappend(childpaths, spath);
     }
-    return (Path *)create_append_path(root, rel, childpaths, partialpaths,
-                                      apath->path.pathkeys, required_outer,
-                                      apath->path.parallel_workers,
-                                      apath->path.parallel_aware, -1);
+    return (Path *)create_append_path(root, rel, childpaths,
+                                      apath->path.pathkeys, required_outer, -1);
   }
   case T_Material: {
     MaterialPath *mpath = (MaterialPath *)path;
@@ -3898,7 +3274,7 @@ Path *reparameterize_path(PlannerInfo *root, Path *path, Relids required_outer,
  * recursively reparameterized.  Other fields that refer to specific relids
  * also need adjustment.
  *
- * The cost, number of rows, width and parallel path properties depend upon
+ * The cost, number of rows and width depend upon
  * path->parent, which does not change during the translation.  So we need
  * not change those.
  *
@@ -4095,13 +3471,6 @@ do { \
     new_path = (Path *)mpath;
   } break;
 
-  case T_GatherPath: {
-    GatherPath *gpath = (GatherPath *)path;
-
-    REPARAMETERIZE_CHILD_PATH(gpath->subpath);
-    new_path = (Path *)gpath;
-  } break;
-
   default:
     /* We don't know how to reparameterize this path. */
     return NULL;
@@ -4255,12 +3624,6 @@ do { \
     MemoizePath *mpath = (MemoizePath *)path;
 
     REJECT_IF_PATH_NOT_REPARAMETERIZABLE(mpath->subpath);
-  } break;
-
-  case T_GatherPath: {
-    GatherPath *gpath = (GatherPath *)path;
-
-    REJECT_IF_PATH_NOT_REPARAMETERIZABLE(gpath->subpath);
   } break;
 
   default:

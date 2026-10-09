@@ -79,10 +79,10 @@ typedef struct EventTriggerQueryState {
   struct EventTriggerQueryState *previous;
 } EventTriggerQueryState;
 
-static EventTriggerQueryState *currentEventTriggerState = NULL;
+static thread_local EventTriggerQueryState *currentEventTriggerState = NULL;
 
 /* GUC parameter */
-bool event_triggers = true;
+thread_local bool event_triggers = true;
 
 /* Support for dropped objects */
 typedef struct SQLDropObject {

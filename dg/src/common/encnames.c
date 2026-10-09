@@ -195,7 +195,7 @@ const pg_enc2name pg_enc2name_tbl[] = {
  * This covers all encodings except MULE_INTERNAL, which is alien to gettext.
  * ----------
  */
-const char *pg_enc2gettext_tbl[] = {
+PG_SHARED const char *pg_enc2gettext_tbl[] = {
     [PG_SQL_ASCII] = "US-ASCII",
     [PG_EUC_JP] = "EUC-JP",
     [PG_EUC_CN] = "EUC-CN",

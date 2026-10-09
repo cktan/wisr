@@ -26,7 +26,7 @@
  * happens between pgstat_report_wal() calls, by subtracting
  * the previous counters from the current ones.
  */
-static WalUsage prevWalUsage;
+static thread_local WalUsage prevWalUsage;
 
 /*
  * Calculate how much WAL usage counters have increased and update

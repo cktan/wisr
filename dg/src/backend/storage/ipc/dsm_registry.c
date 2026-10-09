@@ -37,7 +37,7 @@ typedef struct DSMRegistryCtxStruct {
   dshash_table_handle dshh;
 } DSMRegistryCtxStruct;
 
-static DSMRegistryCtxStruct *DSMRegistryCtx;
+static PG_SHARED DSMRegistryCtxStruct *DSMRegistryCtx;
 
 typedef struct DSMRegistryEntry {
   char name[64];
@@ -52,8 +52,8 @@ static const dshash_parameters dsh_params = {offsetof(DSMRegistryEntry, handle),
                                              dshash_strcpy,
                                              LWTRANCHE_DSM_REGISTRY_HASH};
 
-static dsa_area *dsm_registry_dsa;
-static dshash_table *dsm_registry_table;
+static thread_local dsa_area *dsm_registry_dsa;
+static thread_local dshash_table *dsm_registry_table;
 
 Size DSMRegistryShmemSize(void) {
   return MAXALIGN(sizeof(DSMRegistryCtxStruct));

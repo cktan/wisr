@@ -427,3 +427,114 @@ still a postmaster that forks a process a connection.
 - `test/server.sh` starts a server and checks both transports,
   the refusals, an error, and a clean shutdown. It needs `psql`
   on the path and skips itself without one.
+
+## Step 10: the parallel backend is gone
+
+Parallel query, parallel index build and parallel vacuum are
+removed, with the planner's side of them. 28 files went, and
+about 27,000 lines. A worker was a forked process that attached
+the leader's shared memory; with sessions as threads, the
+machinery would have had to be rebuilt, and nothing needs it
+before sm's own scans exist.
+
+- **What went**: `access/parallel.c`, `execParallel.c`, Gather
+  and Gather Merge, the tuple queues (`tqueue.c`, `shm_mq.c`,
+  `pqmq.c`), `shm_toc.c`, `barrier.c`, `sharedtuplestore.c`,
+  `fileset.c`, `sharedfileset.c`, `vacuumparallel.c` and
+  `access/common/session.c`.
+- **The executor**: each node's DSM and worker functions,
+  parallel hash join, parallel append, the shared bitmap of a
+  bitmap heap scan, and the per-worker instrumentation. EXPLAIN
+  prints no workers and no "Parallel" label.
+- **The planner**: partial paths, the Gather paths and plans,
+  `parallel_aware` and `parallel_safe` on plans and paths,
+  `consider_parallel` on rels, and the parallel costs. Partial
+  aggregation stays, since partitionwise aggregation uses it.
+  Async append is now considered without a parallel-safety
+  test.
+- **Access methods**: the parallel scan descriptors and
+  callbacks, heap's parallel scan, B-tree's parallel scan and
+  build. `index_build()` and `scan_begin` lost their parallel
+  arguments.
+- **Sorting and temporary files keep their serial paths.** What
+  went is the part only a worker used: `SortCoordinate`, the
+  leader/worker merge, a tape imported from another process,
+  and the file sets of `buffile.c` and `fd.c`.
+- **Transactions**: parallel mode, the serialisation of
+  transaction, snapshot, combo CID, GUC and library state for a
+  worker, and SSI's sharing of a transaction with workers.
+  `RestoreGUCState()` is among what went.
+- **12 settings are gone**: the `max_parallel_*` and
+  `min_parallel_*` ones, `parallel_setup_cost`,
+  `parallel_tuple_cost`, `parallel_leader_participation`,
+  `enable_gathermerge`, `enable_parallel_append`,
+  `enable_parallel_hash` and `debug_parallel_query`; so is the
+  `parallel_workers` reloption.
+- **The grammar is not touched**, and neither is sq: `VACUUM
+  (PARALLEL n)` parses and then fails with "parallel vacuum is
+  not supported", and `PARALLEL SAFE` on a function is still
+  stored.
+- **11 LWLock tranches and 25 wait events** used only by the
+  parallel code were removed.
+- **Left in place, inert**: the lock-group code in `lock.c`,
+  `proc.c` and `deadlock.c`, which only a worker joined; the
+  `parallel_workers_to_launch` and `_launched` statistics,
+  always 0; and `contain_context_dependent_node()` in
+  `clauses.c`, unused before this step.
+- `make test` passes as before.
+
+## Step 11: VACUUM is gone
+
+sm collects its own garbage (`../sm/PART4.md`), so VACUUM,
+autovacuum, freezing and the wraparound defences built around
+them are removed. 5 files went, and about 11,000 lines.
+ANALYZE stays.
+
+- **`VACUUM` does nothing and succeeds**, whatever its
+  options and tables, which are not looked at; `VACUUM
+  (PARALLEL n)` no longer fails either. The grammar and sq are
+  not touched.
+- **`ANALYZE` runs through what is left of `vacuum.c`**:
+  `ExecVacuum()` takes ANALYZE's options (`VERBOSE`,
+  `SKIP_LOCKED`, `BUFFER_USAGE_LIMIT`), and `vacuum()` runs
+  `analyze_rel()` on each table. `VacuumParams` keeps only
+  `options`. The cost-based delay settings stay, since ANALYZE
+  uses them.
+- **What went**: `vacuumlazy.c`, `autovacuum.c` and its
+  header, `tidstore.c` and its header, the table AM's
+  `relation_vacuum` callback, and the functions only they
+  called: the clog, commit timestamp and multixact
+  truncations, `vac_update_datfrozenxid()`, and a dozen in
+  `lmgr.c`, `freespace.c` and elsewhere.
+- **Autovacuum's two process types are gone**, with their
+  child slots, their PGPROCs, the deadlock detector's cancel of
+  a blocking autovacuum, and the `pg_signal_autovacuum_worker`
+  check. The free list they shared with the slot sync worker
+  is now `specialWorkerFreeProcs`. The statistics file format
+  id changed, since its per-type arrays are shorter.
+- **The wraparound limits keep only the stop.** The limits that
+  launched autovacuum and the "must be vacuumed" warnings are
+  gone. Past the stop limit a new XID or MultiXactId is still
+  refused, so the counters cannot wrap; the hint to run VACUUM
+  is gone from the message.
+- **CLUSTER computes its own cutoffs**: `OldestXmin` and the
+  oldest multixact, which is what `vacuum_get_cutoffs()` gave
+  it.
+- **45 settings are gone**: 25 server settings
+  (`autovacuum*`, `vacuum_freeze_*`, `vacuum_multixact_*`,
+  `vacuum_failsafe_age`, `vacuum_truncate`,
+  `vacuum_max_eager_freeze_failure_rate`,
+  `log_autovacuum_min_duration`) and 20 table options
+  (`autovacuum_*`, `vacuum_truncate`, `vacuum_index_cleanup`
+  and the like). `postgresql.conf.sample` still lists them,
+  as it lists the parallel settings: it is not maintained.
+- **3 LWLocks and 2 wait events** went: `Autovacuum`,
+  `AutovacuumSchedule`, `WrapLimitsVacuum`, `AUTOVACUUM_MAIN`
+  and `VACUUM_TRUNCATE`.
+- **Left in place, inert**: the index AMs' `ambulkdelete` and
+  `amvacuumcleanup` (ANALYZE still calls the second); heap
+  pruning, HOT and the visibility map, which go with the heap;
+  CLUSTER's code for VACUUM FULL; the vacuum and autovacuum
+  counters in the statistics, always 0.
+- `test/server.sh` checks that `VACUUM` succeeds and the
+  session carries on. `make test` passes as before.

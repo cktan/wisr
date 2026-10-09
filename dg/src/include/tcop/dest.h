@@ -90,7 +90,6 @@ typedef enum {
   DestIntoRel,          /* results sent to relation (SELECT INTO) */
   DestCopyOut,          /* results sent to COPY TO code */
   DestTransientRel,     /* results sent to transient relation */
-  DestTupleQueue,       /* results sent to tuple queue */
   DestExplainSerialize, /* results are serialized and discarded */
 } CommandDest;
 
@@ -120,8 +119,8 @@ struct _DestReceiver {
   /* Private fields might appear beyond this point... */
 };
 
-extern PGDLLIMPORT DestReceiver *None_Receiver; /* permanent receiver for
-                                                 * DestNone */
+extern PG_SHARED PGDLLIMPORT DestReceiver *None_Receiver; /* permanent receiver
+                                                           * for DestNone */
 
 /* The primary destination management functions */
 

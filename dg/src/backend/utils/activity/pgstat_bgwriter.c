@@ -20,7 +20,7 @@
 #include "utils/memutils.h"
 #include "utils/pgstat_internal.h"
 
-PgStat_BgWriterStats PendingBgWriterStats = {0};
+thread_local PgStat_BgWriterStats PendingBgWriterStats = {0};
 
 /*
  * Report bgwriter and IO statistics

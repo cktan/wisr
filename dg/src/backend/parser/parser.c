@@ -39,9 +39,9 @@
  * They are PostgreSQL's, and it is a wart of PostgreSQL's that the
  * parser depends on them: raw_parser() hands them to sq.
  */
-int backslash_quote = BACKSLASH_QUOTE_SAFE_ENCODING;
-bool escape_string_warning = true;
-bool standard_conforming_strings = true;
+thread_local int backslash_quote = BACKSLASH_QUOTE_SAFE_ENCODING;
+thread_local bool escape_string_warning = true;
+thread_local bool standard_conforming_strings = true;
 
 /* Something sq had to say that was not an error, kept until it is safe to
  * say it. */

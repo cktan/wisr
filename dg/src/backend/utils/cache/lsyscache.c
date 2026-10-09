@@ -51,7 +51,7 @@
 #include "utils/typcache.h"
 
 /* Hook for plugins to get control in get_attavgwidth() */
-get_attavgwidth_hook_type get_attavgwidth_hook = NULL;
+PG_SHARED get_attavgwidth_hook_type get_attavgwidth_hook = NULL;
 
 /*				---------- AMOP CACHES ----------
  */
@@ -1832,22 +1832,6 @@ char func_volatile(Oid funcid) {
     elog(ERROR, "cache lookup failed for function %u", funcid);
 
   result = (tp)->provolatile;
-  return result;
-}
-
-/*
- * func_parallel
- *		Given procedure id, return the function's proparallel flag.
- */
-char func_parallel(Oid funcid) {
-  const cat_proc_t *tp;
-  char result;
-
-  tp = cat_proc(funcid);
-  if (tp == NULL)
-    elog(ERROR, "cache lookup failed for function %u", funcid);
-
-  result = (tp)->proparallel;
   return result;
 }
 

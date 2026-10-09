@@ -153,9 +153,6 @@ typedef struct ParamsErrorCbData {
 /* Functions found in src/backend/nodes/params.c */
 extern ParamListInfo makeParamList(int numParams);
 extern ParamListInfo copyParamList(ParamListInfo from);
-extern Size EstimateParamListSpace(ParamListInfo paramLI);
-extern void SerializeParamList(ParamListInfo paramLI, char **start_address);
-extern ParamListInfo RestoreParamList(char **start_address);
 extern char *BuildParamLogString(ParamListInfo params, char **knownTextValues,
                                  int maxlen);
 extern void ParamsErrorCallback(void *arg);

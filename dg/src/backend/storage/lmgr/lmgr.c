@@ -41,7 +41,7 @@
  * particularly bad happens: in the worst case they deadlock, causing one of
  * the transactions to abort.
  */
-static uint32 speculativeInsertionToken = 0;
+static thread_local uint32 speculativeInsertionToken = 0;
 
 /*
  * Struct to hold context info for transaction lock waits.
@@ -244,54 +244,6 @@ void LockRelation(Relation relation, LOCKMODE lockmode) {
 }
 
 /*
- *		ConditionalLockRelation
- *
- * This is a convenience routine for acquiring an additional lock on an
- * already-open relation.  Never try to do "relation_open(foo, NoLock)"
- * and then lock with this.
- */
-bool ConditionalLockRelation(Relation relation, LOCKMODE lockmode) {
-  LOCKTAG tag;
-  LOCALLOCK *locallock;
-  LockAcquireResult res;
-
-  SET_LOCKTAG_RELATION(tag, relation->rd_lockInfo.lockRelId.dbId,
-                       relation->rd_lockInfo.lockRelId.relId);
-
-  res =
-      LockAcquireExtended(&tag, lockmode, false, true, true, &locallock, false);
-
-  if (res == LOCKACQUIRE_NOT_AVAIL)
-    return false;
-
-  /*
-   * Now that we have the lock, check for invalidation messages; see notes
-   * in LockRelationOid.
-   */
-  if (res != LOCKACQUIRE_ALREADY_CLEAR) {
-    AcceptInvalidationMessages();
-    MarkLockClear(locallock);
-  }
-
-  return true;
-}
-
-/*
- *		UnlockRelation
- *
- * This is a convenience routine for unlocking a relation without also
- * closing it.
- */
-void UnlockRelation(Relation relation, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_RELATION(tag, relation->rd_lockInfo.lockRelId.dbId,
-                       relation->rd_lockInfo.lockRelId.relId);
-
-  LockRelease(&tag, lockmode, false);
-}
-
-/*
  *		CheckRelationLockedByMe
  *
  * Returns true if current transaction holds a lock on 'relation' of mode
@@ -320,21 +272,6 @@ bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
   SetLocktagRelationOid(&tag, relid);
 
   return LockHeldByMe(&tag, lockmode, orstronger);
-}
-
-/*
- *		LockHasWaitersRelation
- *
- * This is a function to check whether someone else is waiting for a
- * lock which we are currently holding.
- */
-bool LockHasWaitersRelation(Relation relation, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_RELATION(tag, relation->rd_lockInfo.lockRelId.dbId,
-                       relation->rd_lockInfo.lockRelId.relId);
-
-  return LockHasWaiters(&tag, lockmode, false);
 }
 
 /*
@@ -426,19 +363,6 @@ void UnlockRelationForExtension(Relation relation, LOCKMODE lockmode) {
                               relation->rd_lockInfo.lockRelId.relId);
 
   LockRelease(&tag, lockmode, false);
-}
-
-/*
- *		LockDatabaseFrozenIds
- *
- * This allows one backend per database to execute vac_update_datfrozenxid().
- */
-void LockDatabaseFrozenIds(LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_DATABASE_FROZEN_IDS(tag, MyDatabaseId);
-
-  (void)LockAcquire(&tag, lockmode, false, false);
 }
 
 /*
@@ -902,38 +826,6 @@ void LockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
 
   /* Make sure syscaches are up-to-date with any changes we waited for */
   AcceptInvalidationMessages();
-}
-
-/*
- *		ConditionalLockDatabaseObject
- *
- * As above, but only lock if we can get the lock without blocking.
- * Returns true iff the lock was acquired.
- */
-bool ConditionalLockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
-                                   LOCKMODE lockmode) {
-  LOCKTAG tag;
-  LOCALLOCK *locallock;
-  LockAcquireResult res;
-
-  SET_LOCKTAG_OBJECT(tag, MyDatabaseId, classid, objid, objsubid);
-
-  res =
-      LockAcquireExtended(&tag, lockmode, false, true, true, &locallock, false);
-
-  if (res == LOCKACQUIRE_NOT_AVAIL)
-    return false;
-
-  /*
-   * Now that we have the lock, check for invalidation messages; see notes
-   * in LockRelationOid.
-   */
-  if (res != LOCKACQUIRE_ALREADY_CLEAR) {
-    AcceptInvalidationMessages();
-    MarkLockClear(locallock);
-  }
-
-  return true;
 }
 
 /*

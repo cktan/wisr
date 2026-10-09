@@ -30,7 +30,7 @@
 #endif
 
 /* process-wide state vector */
-pg_prng_state pg_global_prng_state;
+thread_local pg_prng_state pg_global_prng_state;
 
 /*
  * 64-bit rotate left

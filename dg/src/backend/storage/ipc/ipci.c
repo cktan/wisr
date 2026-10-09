@@ -27,7 +27,6 @@
 #include "commands/async.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/autovacuum.h"
 #include "postmaster/bgworker_internals.h"
 #include "postmaster/bgwriter.h"
 #include "storage/aio_subsys.h"
@@ -46,11 +45,11 @@
 #include "utils/injection_point.h"
 
 /* GUCs */
-int shared_memory_type = DEFAULT_SHARED_MEMORY_TYPE;
+thread_local int shared_memory_type = DEFAULT_SHARED_MEMORY_TYPE;
 
-shmem_startup_hook_type shmem_startup_hook = NULL;
+PG_SHARED shmem_startup_hook_type shmem_startup_hook = NULL;
 
-static Size total_addin_request = 0;
+static PG_SHARED Size total_addin_request = 0;
 
 static void CreateOrAttachShmemStructs(void);
 
@@ -125,7 +124,6 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, PMSignalShmemSize());
   size = add_size(size, ProcSignalShmemSize());
   size = add_size(size, CheckpointerShmemSize());
-  size = add_size(size, AutoVacuumShmemSize());
   size = add_size(size, PgArchShmemSize());
   size = add_size(size, BTreeShmemSize());
   size = add_size(size, SyncScanShmemSize());
@@ -303,7 +301,6 @@ static void CreateOrAttachShmemStructs(void) {
   PMSignalShmemInit();
   ProcSignalShmemInit();
   CheckpointerShmemInit();
-  AutoVacuumShmemInit();
   PgArchShmemInit();
 
   /*

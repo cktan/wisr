@@ -189,69 +189,6 @@ void pgstat_drop_relation(Relation rel) {
 }
 
 /*
- * Report that the table was just vacuumed and flush IO statistics.
- */
-void pgstat_report_vacuum(Oid tableoid, bool shared, PgStat_Counter livetuples,
-                          PgStat_Counter deadtuples, TimestampTz starttime) {
-  PgStat_EntryRef *entry_ref;
-  PgStatShared_Relation *shtabentry;
-  PgStat_StatTabEntry *tabentry;
-  Oid dboid = (shared ? InvalidOid : MyDatabaseId);
-  TimestampTz ts;
-  PgStat_Counter elapsedtime;
-
-  if (!pgstat_track_counts)
-    return;
-
-  /* Store the data in the table's hash table entry. */
-  ts = GetCurrentTimestamp();
-  elapsedtime = TimestampDifferenceMilliseconds(starttime, ts);
-
-  /* block acquiring lock for the same reason as pgstat_report_autovac() */
-  entry_ref =
-      pgstat_get_entry_ref_locked(PGSTAT_KIND_RELATION, dboid, tableoid, false);
-
-  shtabentry = (PgStatShared_Relation *)entry_ref->shared_stats;
-  tabentry = &shtabentry->stats;
-
-  tabentry->live_tuples = livetuples;
-  tabentry->dead_tuples = deadtuples;
-
-  /*
-   * It is quite possible that a non-aggressive VACUUM ended up skipping
-   * various pages, however, we'll zero the insert counter here regardless.
-   * It's currently used only to track when we need to perform an "insert"
-   * autovacuum, which are mainly intended to freeze newly inserted tuples.
-   * Zeroing this may just mean we'll not try to vacuum the table again
-   * until enough tuples have been inserted to trigger another insert
-   * autovacuum.  An anti-wraparound autovacuum will catch any persistent
-   * stragglers.
-   */
-  tabentry->ins_since_vacuum = 0;
-
-  if (AmAutoVacuumWorkerProcess()) {
-    tabentry->last_autovacuum_time = ts;
-    tabentry->autovacuum_count++;
-    tabentry->total_autovacuum_time += elapsedtime;
-  } else {
-    tabentry->last_vacuum_time = ts;
-    tabentry->vacuum_count++;
-    tabentry->total_vacuum_time += elapsedtime;
-  }
-
-  pgstat_unlock_entry(entry_ref);
-
-  /*
-   * Flush IO statistics now. pgstat_report_stat() will flush IO stats,
-   * however this will not be called until after an entire autovacuum cycle
-   * is done -- which will likely vacuum many relations -- or until the
-   * VACUUM command has processed all tables and committed.
-   */
-  pgstat_flush_io(false);
-  (void)pgstat_flush_backend(false, PGSTAT_BACKEND_FLUSH_IO);
-}
-
-/*
  * Report that the table was just analyzed and flush IO statistics.
  *
  * Caller must provide new live- and dead-tuples estimates, as well as a
@@ -321,15 +258,9 @@ void pgstat_report_analyze(Relation rel, PgStat_Counter livetuples,
   if (resetcounter)
     tabentry->mod_since_analyze = 0;
 
-  if (AmAutoVacuumWorkerProcess()) {
-    tabentry->last_autoanalyze_time = ts;
-    tabentry->autoanalyze_count++;
-    tabentry->total_autoanalyze_time += elapsedtime;
-  } else {
-    tabentry->last_analyze_time = ts;
-    tabentry->analyze_count++;
-    tabentry->total_analyze_time += elapsedtime;
-  }
+  tabentry->last_analyze_time = ts;
+  tabentry->analyze_count++;
+  tabentry->total_analyze_time += elapsedtime;
 
   pgstat_unlock_entry(entry_ref);
 

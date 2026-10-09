@@ -94,6 +94,16 @@ local_psql -c 'select * from pg_class' > "$work/catalog.out" 2>&1
 [ "$(local_psql -c 'select 3 - 1' 2> "$work/after.err")" = 2 ] ||
   fail "server after a failed lookup"
 
+# Verify that VACUUM succeeds and does nothing, since sm collects its own
+# garbage.
+# 1. Run VACUUM, with and without options, then a statement after them.
+# 2. Confirm psql exited with success and reported no error.
+# 3. Confirm the statement after them answered.
+local_psql -c 'vacuum' -c 'vacuum (full, analyze) no_such_table' \
+  -c 'select 4 + 4' > "$work/vacuum.out" 2>&1 || fail "vacuum succeeds"
+grep -q "ERROR" "$work/vacuum.out" && fail "vacuum reported an error"
+grep -qx 8 "$work/vacuum.out" || fail "statement after vacuum"
+
 # Verify that the server stops when asked, with no process lost on the way.
 # 1. Interrupt the server, and wait for it.
 # 2. Confirm it exited with status 0.

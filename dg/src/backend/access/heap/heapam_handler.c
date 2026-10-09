@@ -657,8 +657,8 @@ static void heapam_relation_copy_for_cluster(
 
   /* Set up sorting if wanted */
   if (use_sort)
-    tuplesort = tuplesort_begin_cluster(
-        oldTupDesc, OldIndex, maintenance_work_mem, NULL, TUPLESORT_NONE);
+    tuplesort = tuplesort_begin_cluster(oldTupDesc, OldIndex,
+                                        maintenance_work_mem, TUPLESORT_NONE);
   else
     tuplesort = NULL;
 
@@ -1071,8 +1071,8 @@ static bool heapam_scan_analyze_next_tuple(TableScanDesc scan,
 static double heapam_index_build_range_scan(
     Relation heapRelation, Relation indexRelation, IndexInfo *indexInfo,
     bool allow_sync, bool anyvisible, bool progress, BlockNumber start_blockno,
-    BlockNumber numblocks, IndexBuildCallback callback, void *callback_state,
-    TableScanDesc scan) {
+    BlockNumber numblocks, IndexBuildCallback callback, void *callback_state) {
+  TableScanDesc scan;
   HeapScanDesc hscan;
   bool is_system_catalog;
   bool checking_uniqueness;
@@ -1136,45 +1136,28 @@ static double heapam_index_build_range_scan(
   if (!IsBootstrapProcessingMode() && !indexInfo->ii_Concurrent)
     OldestXmin = GetOldestNonRemovableTransactionId(heapRelation);
 
-  if (!scan) {
-    /*
-     * Serial index build.
-     *
-     * Must begin our own heap scan in this case.  We may also need to
-     * register a snapshot whose lifetime is under our direct control.
-     */
-    if (!TransactionIdIsValid(OldestXmin)) {
-      snapshot = RegisterSnapshot(GetTransactionSnapshot());
-      need_unregister_snapshot = true;
-    } else
-      snapshot = SnapshotAny;
+  /*
+   * Begin our own heap scan.  We may also need to register a snapshot whose
+   * lifetime is under our direct control.
+   */
+  if (!TransactionIdIsValid(OldestXmin)) {
+    snapshot = RegisterSnapshot(GetTransactionSnapshot());
+    need_unregister_snapshot = true;
+  } else
+    snapshot = SnapshotAny;
 
-    scan = table_beginscan_strat(heapRelation, /* relation */
-                                 snapshot,     /* snapshot */
-                                 0,            /* number of keys */
-                                 NULL,         /* scan key */
-                                 true,         /* buffer access strategy OK */
-                                 allow_sync);  /* syncscan OK? */
-  } else {
-    /*
-     * Parallel index build.
-     *
-     * Parallel case never registers/unregisters own snapshot.  Snapshot
-     * is taken from parallel heap scan, and is SnapshotAny or an MVCC
-     * snapshot, based on same criteria as serial case.
-     */
-    Assert(!IsBootstrapProcessingMode());
-    Assert(allow_sync);
-    snapshot = scan->rs_snapshot;
-  }
+  scan = table_beginscan_strat(heapRelation, /* relation */
+                               snapshot,     /* snapshot */
+                               0,            /* number of keys */
+                               NULL,         /* scan key */
+                               true,         /* buffer access strategy OK */
+                               allow_sync);  /* syncscan OK? */
 
   hscan = (HeapScanDesc)scan;
 
   /*
    * Must have called GetOldestNonRemovableTransactionId() if using
-   * SnapshotAny.  Shouldn't have for an MVCC snapshot. (It's especially
-   * worth checking this for parallel builds, since ambuild routines that
-   * support parallel builds must work these details out for themselves.)
+   * SnapshotAny.  Shouldn't have for an MVCC snapshot.
    */
   Assert(snapshot == SnapshotAny || IsMVCCSnapshot(snapshot));
   Assert(snapshot == SnapshotAny ? TransactionIdIsValid(OldestXmin)
@@ -1185,13 +1168,7 @@ static double heapam_index_build_range_scan(
   if (progress) {
     BlockNumber nblocks;
 
-    if (hscan->rs_base.rs_parallel != NULL) {
-      ParallelBlockTableScanDesc pbscan;
-
-      pbscan = (ParallelBlockTableScanDesc)hscan->rs_base.rs_parallel;
-      nblocks = pbscan->phs_nblocks;
-    } else
-      nblocks = hscan->rs_nblocks;
+    nblocks = hscan->rs_nblocks;
 
     pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_TOTAL, nblocks);
   }
@@ -1557,13 +1534,7 @@ static double heapam_index_build_range_scan(
   if (progress) {
     BlockNumber blks_done;
 
-    if (hscan->rs_base.rs_parallel != NULL) {
-      ParallelBlockTableScanDesc pbscan;
-
-      pbscan = (ParallelBlockTableScanDesc)hscan->rs_base.rs_parallel;
-      blks_done = pbscan->phs_nblocks;
-    } else
-      blks_done = hscan->rs_nblocks;
+    blks_done = hscan->rs_nblocks;
 
     pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, blks_done);
   }
@@ -1800,20 +1771,13 @@ static void heapam_index_validate_scan(Relation heapRelation,
 
 /*
  * Return the number of blocks that have been read by this scan since
- * starting.  This is meant for progress reporting rather than be fully
- * accurate: in a parallel scan, workers can be concurrently reading blocks
- * further ahead than what we report.
+ * starting.  This is meant for progress reporting.
  */
 static BlockNumber heapam_scan_get_blocks_done(HeapScanDesc hscan) {
-  ParallelBlockTableScanDesc bpscan = NULL;
   BlockNumber startblock;
   BlockNumber blocks_done;
 
-  if (hscan->rs_base.rs_parallel != NULL) {
-    bpscan = (ParallelBlockTableScanDesc)hscan->rs_base.rs_parallel;
-    startblock = bpscan->phs_startblock;
-  } else
-    startblock = hscan->rs_startblock;
+  startblock = hscan->rs_startblock;
 
   /*
    * Might have wrapped around the end of the relation, if startblock was
@@ -1822,10 +1786,7 @@ static BlockNumber heapam_scan_get_blocks_done(HeapScanDesc hscan) {
   if (hscan->rs_cblock > startblock)
     blocks_done = hscan->rs_cblock - startblock;
   else {
-    BlockNumber nblocks;
-
-    nblocks = bpscan != NULL ? bpscan->phs_nblocks : hscan->rs_nblocks;
-    blocks_done = nblocks - startblock + hscan->rs_cblock;
+    blocks_done = hscan->rs_nblocks - startblock + hscan->rs_cblock;
   }
 
   return blocks_done;
@@ -2369,10 +2330,6 @@ static const TableAmRoutine heapam_methods = {
     .scan_set_tidrange = heap_set_tidrange,
     .scan_getnextslot_tidrange = heap_getnextslot_tidrange,
 
-    .parallelscan_estimate = table_block_parallelscan_estimate,
-    .parallelscan_initialize = table_block_parallelscan_initialize,
-    .parallelscan_reinitialize = table_block_parallelscan_reinitialize,
-
     .index_fetch_begin = heapam_index_fetch_begin,
     .index_fetch_reset = heapam_index_fetch_reset,
     .index_fetch_end = heapam_index_fetch_end,
@@ -2397,7 +2354,6 @@ static const TableAmRoutine heapam_methods = {
         heapam_relation_nontransactional_truncate,
     .relation_copy_data = heapam_relation_copy_data,
     .relation_copy_for_cluster = heapam_relation_copy_for_cluster,
-    .relation_vacuum = heap_vacuum_rel,
     .scan_analyze_next_block = heapam_scan_analyze_next_block,
     .scan_analyze_next_tuple = heapam_scan_analyze_next_tuple,
     .index_build_range_scan = heapam_index_build_range_scan,

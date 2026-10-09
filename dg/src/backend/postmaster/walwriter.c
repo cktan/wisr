@@ -66,8 +66,8 @@
 /*
  * GUC parameters
  */
-int WalWriterDelay = 200;
-int WalWriterFlushAfter = DEFAULT_WAL_WRITER_FLUSH_AFTER;
+thread_local int WalWriterDelay = 200;
+thread_local int WalWriterFlushAfter = DEFAULT_WAL_WRITER_FLUSH_AFTER;
 
 /*
  * Number of do-nothing loops before lengthening the delay time, and the

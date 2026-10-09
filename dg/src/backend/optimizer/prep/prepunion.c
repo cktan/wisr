@@ -290,19 +290,6 @@ static RelOptInfo *recurse_set_operations(Node *setOp, PlannerInfo *root,
         if (path != subpath)
           lfirst(lc) = path;
       }
-
-      /* Apply projection to each partial path */
-      foreach (lc, rel->partial_pathlist) {
-        Path *subpath = (Path *)lfirst(lc);
-        Path *path;
-
-        Assert(subpath->param_info == NULL);
-
-        /* avoid apply_projection_to_path, in case of multiple refs */
-        path = (Path *)create_projection_path(root, subpath->parent, subpath,
-                                              target);
-        lfirst(lc) = path;
-      }
     }
     postprocess_setop_rel(root, rel);
   } else {
@@ -449,12 +436,7 @@ static void build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
    */
   set_subquery_size_estimates(root, rel);
 
-  /*
-   * Since we may want to add a partial path to this relation, we must set
-   * its consider_parallel flag correctly.
-   */
   final_rel = fetch_upper_rel(rel->subroot, UPPERREL_FINAL, NULL);
-  rel->consider_parallel = final_rel->consider_parallel;
 
   /* Generate subquery scan paths for any interesting path in final_rel */
   foreach (lc, final_rel->pathlist) {
@@ -537,25 +519,6 @@ static void build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
     }
   }
 
-  /* if consider_parallel is false, there should be no partial paths */
-  Assert(final_rel->consider_parallel || final_rel->partial_pathlist == NIL);
-
-  /*
-   * If we have a partial path for the child relation, we can use that to
-   * build a partial path for this relation.  But there's no point in
-   * considering any path but the cheapest.
-   */
-  if (rel->consider_parallel && bms_is_empty(rel->lateral_relids) &&
-      final_rel->partial_pathlist != NIL) {
-    Path *partial_subpath;
-    Path *partial_path;
-
-    partial_subpath = (Path *)linitial(final_rel->partial_pathlist);
-    partial_path = (Path *)create_subqueryscan_path(root, rel, partial_subpath,
-                                                    trivial_tlist, NIL, NULL);
-    add_partial_path(rel, partial_path);
-  }
-
   postprocess_setop_rel(root, rel);
 
   /*
@@ -603,16 +566,12 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
   ListCell *lc3;
   List *cheapest_pathlist = NIL;
   List *ordered_pathlist = NIL;
-  List *partial_pathlist = NIL;
-  bool partial_paths_valid = true;
-  bool consider_parallel = true;
   List *rellist;
   List *tlist_list;
   List *trivial_tlist_list;
   List *tlist;
   List *groupList = NIL;
   Path *apath;
-  Path *gpath = NULL;
   bool try_sorted = false;
   List *union_pathkeys = NIL;
 
@@ -674,7 +633,7 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 
     if (try_sorted) {
       ordered_path = get_cheapest_path_for_pathkeys(
-          rel->pathlist, union_pathkeys, NULL, TOTAL_COST, false);
+          rel->pathlist, union_pathkeys, NULL, TOTAL_COST);
 
       if (ordered_path != NULL)
         ordered_pathlist = lappend(ordered_pathlist, ordered_path);
@@ -689,24 +648,12 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
       }
     }
 
-    if (consider_parallel) {
-      if (!rel->consider_parallel) {
-        consider_parallel = false;
-        partial_paths_valid = false;
-      } else if (rel->partial_pathlist == NIL)
-        partial_paths_valid = false;
-      else
-        partial_pathlist =
-            lappend(partial_pathlist, linitial(rel->partial_pathlist));
-    }
-
     relids = bms_union(relids, rel->relids);
   }
 
   /* Build result relation. */
   result_rel = fetch_upper_rel(root, UPPERREL_SETOP, relids);
   result_rel->reltarget = create_pathtarget(root, tlist);
-  result_rel->consider_parallel = consider_parallel;
   result_rel->consider_startup = (root->tuple_fraction > 0);
 
   /*
@@ -714,7 +661,7 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
    * union child.
    */
   apath = (Path *)create_append_path(root, result_rel, cheapest_pathlist, NIL,
-                                     NIL, NULL, 0, false, -1);
+                                     NULL, -1);
 
   /*
    * Estimate number of groups.  For now we just assume the output is unique
@@ -722,44 +669,6 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
    * estimates anyway.
    */
   result_rel->rows = apath->rows;
-
-  /*
-   * Now consider doing the same thing using the partial paths plus Append
-   * plus Gather.
-   */
-  if (partial_paths_valid) {
-    Path *papath;
-    int parallel_workers = 0;
-
-    /* Find the highest number of workers requested for any subpath. */
-    foreach (lc, partial_pathlist) {
-      Path *subpath = (Path *)lfirst(lc);
-
-      parallel_workers = Max(parallel_workers, subpath->parallel_workers);
-    }
-    Assert(parallel_workers > 0);
-
-    /*
-     * If the use of parallel append is permitted, always request at least
-     * log2(# of children) paths.  We assume it can be useful to have
-     * extra workers in this case because they will be spread out across
-     * the children.  The precise formula is just a guess; see
-     * add_paths_to_append_rel.
-     */
-    if (enable_parallel_append) {
-      parallel_workers =
-          Max(parallel_workers,
-              pg_leftmost_one_pos32(list_length(partial_pathlist)) + 1);
-      parallel_workers = Min(parallel_workers, max_parallel_workers_per_gather);
-    }
-    Assert(parallel_workers > 0);
-
-    papath = (Path *)create_append_path(root, result_rel, NIL, partial_pathlist,
-                                        NIL, NULL, parallel_workers,
-                                        enable_parallel_append, -1);
-    gpath = (Path *)create_gather_path(root, result_rel, papath,
-                                       result_rel->reltarget, NULL, NULL);
-  }
 
   if (!op->all) {
     double dNumGroups;
@@ -787,15 +696,6 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
           root, result_rel, apath, create_pathtarget(root, tlist), AGG_HASHED,
           AGGSPLIT_SIMPLE, groupList, NIL, NULL, dNumGroups);
       add_path(result_rel, path);
-
-      /* Try hash aggregate on the Gather path, if valid */
-      if (gpath != NULL) {
-        /* Hashed aggregate plan --- no sort needed */
-        path = (Path *)create_agg_path(
-            root, result_rel, gpath, create_pathtarget(root, tlist), AGG_HASHED,
-            AGGSPLIT_SIMPLE, groupList, NIL, NULL, dNumGroups);
-        add_path(result_rel, path);
-      }
     }
 
     if (can_sort) {
@@ -811,19 +711,6 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
           root, result_rel, path, list_length(path->pathkeys), dNumGroups);
 
       add_path(result_rel, path);
-
-      /* Try Sort -> Unique on the Gather path, if set */
-      if (gpath != NULL) {
-        path = gpath;
-
-        path = (Path *)create_sort_path(
-            root, result_rel, path,
-            make_pathkeys_for_sortclauses(root, groupList, tlist), -1.0);
-
-        path = (Path *)create_upper_unique_path(
-            root, result_rel, path, list_length(path->pathkeys), dNumGroups);
-        add_path(result_rel, path);
-      }
     }
 
     /*
@@ -845,9 +732,6 @@ static RelOptInfo *generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
   } else {
     /* UNION ALL */
     add_path(result_rel, apath);
-
-    if (gpath != NULL)
-      add_path(result_rel, gpath);
   }
 
   return result_rel;
@@ -1029,7 +913,7 @@ static RelOptInfo *generate_nonunion_paths(SetOperationStmt *op,
       slpath = lpath; /* cheapest path is already sorted */
     else {
       slpath = get_cheapest_path_for_pathkeys(lrel->pathlist, nonunion_pathkeys,
-                                              NULL, TOTAL_COST, false);
+                                              NULL, TOTAL_COST);
       /* Subquery failed to produce any presorted paths? */
       if (slpath == NULL)
         slpath = (Path *)create_sort_path(root, lpath->parent, lpath, pathkeys,
@@ -1042,7 +926,7 @@ static RelOptInfo *generate_nonunion_paths(SetOperationStmt *op,
       srpath = rpath; /* cheapest path is already sorted */
     else {
       srpath = get_cheapest_path_for_pathkeys(rrel->pathlist, nonunion_pathkeys,
-                                              NULL, TOTAL_COST, false);
+                                              NULL, TOTAL_COST);
       /* Subquery failed to produce any presorted paths? */
       if (srpath == NULL)
         srpath = (Path *)create_sort_path(root, rpath->parent, rpath, pathkeys,

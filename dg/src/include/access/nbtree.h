@@ -23,7 +23,6 @@
 #include "catalog/pg_index.h"
 #include "lib/stringinfo.h"
 #include "storage/bufmgr.h"
-#include "storage/shm_toc.h"
 #include "utils/skipsupport.h"
 
 /* There's room for a 16-bit vacuum cycle ID in BTPageOpaqueData */
@@ -1135,13 +1134,10 @@ extern bool btinsert(Relation rel, Datum *values, bool *isnull,
                      IndexUniqueCheck checkUnique, bool indexUnchanged,
                      struct IndexInfo *indexInfo);
 extern IndexScanDesc btbeginscan(Relation rel, int nkeys, int norderbys);
-extern Size btestimateparallelscan(Relation rel, int nkeys, int norderbys);
-extern void btinitparallelscan(void *target);
 extern bool btgettuple(IndexScanDesc scan, ScanDirection dir);
 extern int64 btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
 extern void btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
                      ScanKey orderbys, int norderbys);
-extern void btparallelrescan(IndexScanDesc scan);
 extern void btendscan(IndexScanDesc scan);
 extern void btmarkpos(IndexScanDesc scan);
 extern void btrestrpos(IndexScanDesc scan);
@@ -1156,17 +1152,6 @@ extern int btgettreeheight(Relation rel);
 
 extern CompareType bttranslatestrategy(StrategyNumber strategy, Oid opfamily);
 extern StrategyNumber bttranslatecmptype(CompareType cmptype, Oid opfamily);
-
-/*
- * prototypes for internal functions in nbtree.c
- */
-extern bool _bt_parallel_seize(IndexScanDesc scan, BlockNumber *next_scan_page,
-                               BlockNumber *last_curr_page, bool first);
-extern void _bt_parallel_release(IndexScanDesc scan, BlockNumber next_scan_page,
-                                 BlockNumber curr_page);
-extern void _bt_parallel_done(IndexScanDesc scan);
-extern void _bt_parallel_primscan_schedule(IndexScanDesc scan,
-                                           BlockNumber curr_page);
 
 /*
  * prototypes for functions in nbtdedup.c
@@ -1305,6 +1290,5 @@ extern void btadjustmembers(Oid opfamilyoid, Oid opclassoid, List *operators,
  */
 extern IndexBuildResult *btbuild(Relation heap, Relation index,
                                  struct IndexInfo *indexInfo);
-extern void _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc);
 
 #endif /* NBTREE_H */

@@ -13,6 +13,7 @@
 #include "datatype/timestamp.h"
 #include "libpq/pqcomm.h"
 #include "miscadmin.h" /* for BackendType */
+#include "port/atomics.h"
 #include "storage/procnumber.h"
 #include "utils/backend_progress.h"
 
@@ -276,14 +277,14 @@ typedef struct LocalPgBackendStatus {
  * GUC parameters
  * ----------
  */
-extern PGDLLIMPORT bool pgstat_track_activities;
-extern PGDLLIMPORT int pgstat_track_activity_query_size;
+extern thread_local PGDLLIMPORT bool pgstat_track_activities;
+extern thread_local PGDLLIMPORT int pgstat_track_activity_query_size;
 
 /* ----------
  * Other global variables
  * ----------
  */
-extern PGDLLIMPORT PgBackendStatus *MyBEEntry;
+extern thread_local PGDLLIMPORT PgBackendStatus *MyBEEntry;
 
 /* ----------
  * Functions called from postmaster
@@ -317,8 +318,6 @@ extern const char *pgstat_get_crashed_backend_activity(int pid, char *buffer,
                                                        int buflen);
 extern int64 pgstat_get_my_query_id(void);
 extern int64 pgstat_get_my_plan_id(void);
-extern BackendType
-pgstat_get_backend_type_by_proc_number(ProcNumber procNumber);
 
 /* ----------
  * Support functions for the SQL-callable functions to

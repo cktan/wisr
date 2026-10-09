@@ -222,7 +222,6 @@ typedef enum {
 #define GUC_DISALLOW_IN_AUTO_FILE \
 							   0x002000                              /* can't set in PG_AUTOCONF_FILENAME */
 #define GUC_RUNTIME_COMPUTED   0x004000   /* delay processing in 'postgres -C' */
-#define GUC_ALLOW_IN_PARALLEL  0x008000  /* allow setting in parallel mode */
 
 #define GUC_UNIT_KB			 0x01000000      /* value is in kilobytes */
 #define GUC_UNIT_BLOCKS		 0x02000000  /* value is in blocks */
@@ -239,10 +238,10 @@ typedef enum {
 #define GUC_UNIT			 (GUC_UNIT_MEMORY | GUC_UNIT_TIME)
 
 /* GUC vars that are actually defined in guc_tables.c, rather than elsewhere */
-extern PGDLLIMPORT bool Debug_print_plan;
-extern PGDLLIMPORT bool Debug_print_parse;
-extern PGDLLIMPORT bool Debug_print_rewritten;
-extern PGDLLIMPORT bool Debug_pretty_print;
+extern thread_local PGDLLIMPORT bool Debug_print_plan;
+extern thread_local PGDLLIMPORT bool Debug_print_parse;
+extern thread_local PGDLLIMPORT bool Debug_print_rewritten;
+extern thread_local PGDLLIMPORT bool Debug_pretty_print;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 extern PGDLLIMPORT bool Debug_copy_parse_plan_trees;
@@ -250,50 +249,50 @@ extern PGDLLIMPORT bool Debug_write_read_parse_plan_trees;
 extern PGDLLIMPORT bool Debug_raw_expression_coverage_test;
 #endif
 
-extern PGDLLIMPORT bool log_parser_stats;
-extern PGDLLIMPORT bool log_planner_stats;
-extern PGDLLIMPORT bool log_executor_stats;
-extern PGDLLIMPORT bool log_statement_stats;
-extern PGDLLIMPORT bool log_btree_build_stats;
-extern PGDLLIMPORT char *event_source;
+extern thread_local PGDLLIMPORT bool log_parser_stats;
+extern thread_local PGDLLIMPORT bool log_planner_stats;
+extern thread_local PGDLLIMPORT bool log_executor_stats;
+extern thread_local PGDLLIMPORT bool log_statement_stats;
+extern thread_local PGDLLIMPORT bool log_btree_build_stats;
+extern thread_local PGDLLIMPORT char *event_source;
 
-extern PGDLLIMPORT bool check_function_bodies;
-extern PGDLLIMPORT bool current_role_is_superuser;
+extern thread_local PGDLLIMPORT bool check_function_bodies;
+extern thread_local PGDLLIMPORT bool current_role_is_superuser;
 
-extern PGDLLIMPORT bool AllowAlterSystem;
-extern PGDLLIMPORT bool log_duration;
-extern PGDLLIMPORT int log_parameter_max_length;
-extern PGDLLIMPORT int log_parameter_max_length_on_error;
-extern PGDLLIMPORT int log_min_error_statement;
-extern PGDLLIMPORT int log_min_messages;
-extern PGDLLIMPORT int client_min_messages;
-extern PGDLLIMPORT int log_min_duration_sample;
-extern PGDLLIMPORT int log_min_duration_statement;
-extern PGDLLIMPORT int log_temp_files;
-extern PGDLLIMPORT double log_statement_sample_rate;
-extern PGDLLIMPORT double log_xact_sample_rate;
-extern PGDLLIMPORT char *backtrace_functions;
+extern thread_local PGDLLIMPORT bool AllowAlterSystem;
+extern thread_local PGDLLIMPORT bool log_duration;
+extern thread_local PGDLLIMPORT int log_parameter_max_length;
+extern thread_local PGDLLIMPORT int log_parameter_max_length_on_error;
+extern thread_local PGDLLIMPORT int log_min_error_statement;
+extern thread_local PGDLLIMPORT int log_min_messages;
+extern thread_local PGDLLIMPORT int client_min_messages;
+extern thread_local PGDLLIMPORT int log_min_duration_sample;
+extern thread_local PGDLLIMPORT int log_min_duration_statement;
+extern thread_local PGDLLIMPORT int log_temp_files;
+extern thread_local PGDLLIMPORT double log_statement_sample_rate;
+extern thread_local PGDLLIMPORT double log_xact_sample_rate;
+extern thread_local PGDLLIMPORT char *backtrace_functions;
 
-extern PGDLLIMPORT int temp_file_limit;
+extern thread_local PGDLLIMPORT int temp_file_limit;
 
-extern PGDLLIMPORT int num_temp_buffers;
+extern thread_local PGDLLIMPORT int num_temp_buffers;
 
-extern PGDLLIMPORT char *cluster_name;
-extern PGDLLIMPORT char *ConfigFileName;
-extern PGDLLIMPORT char *HbaFileName;
-extern PGDLLIMPORT char *IdentFileName;
-extern PGDLLIMPORT char *external_pid_file;
+extern thread_local PGDLLIMPORT char *cluster_name;
+extern thread_local PGDLLIMPORT char *ConfigFileName;
+extern thread_local PGDLLIMPORT char *HbaFileName;
+extern thread_local PGDLLIMPORT char *IdentFileName;
+extern thread_local PGDLLIMPORT char *external_pid_file;
 
-extern PGDLLIMPORT char *application_name;
+extern thread_local PGDLLIMPORT char *application_name;
 
-extern PGDLLIMPORT int tcp_keepalives_idle;
-extern PGDLLIMPORT int tcp_keepalives_interval;
-extern PGDLLIMPORT int tcp_keepalives_count;
-extern PGDLLIMPORT int tcp_user_timeout;
+extern thread_local PGDLLIMPORT int tcp_keepalives_idle;
+extern thread_local PGDLLIMPORT int tcp_keepalives_interval;
+extern thread_local PGDLLIMPORT int tcp_keepalives_count;
+extern thread_local PGDLLIMPORT int tcp_user_timeout;
 
-extern PGDLLIMPORT char *role_string;
-extern PGDLLIMPORT bool in_hot_standby_guc;
-extern PGDLLIMPORT bool trace_sort;
+extern thread_local PGDLLIMPORT char *role_string;
+extern thread_local PGDLLIMPORT bool in_hot_standby_guc;
+extern thread_local PGDLLIMPORT bool trace_sort;
 
 #ifdef DEBUG_BOUNDED_SORT
 extern PGDLLIMPORT bool optimize_bounded_sort;
@@ -425,11 +424,6 @@ extern void write_nondefault_variables(GucContext context);
 extern void read_nondefault_variables(void);
 #endif
 
-/* GUC serialization */
-extern Size EstimateGUCStateSpace(void);
-extern void SerializeGUCState(Size maxsize, char *start_address);
-extern void RestoreGUCState(void *gucstate);
-
 /* Functions exported by guc_funcs.c */
 extern void ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel);
 extern char *ExtractSetVariableArgs(VariableSetStmt *stmt);
@@ -439,9 +433,9 @@ extern TupleDesc GetPGVariableResultDesc(const char *name);
 
 /* Support for messages reported from GUC check hooks */
 
-extern PGDLLIMPORT char *GUC_check_errmsg_string;
-extern PGDLLIMPORT char *GUC_check_errdetail_string;
-extern PGDLLIMPORT char *GUC_check_errhint_string;
+extern thread_local PGDLLIMPORT char *GUC_check_errmsg_string;
+extern thread_local PGDLLIMPORT char *GUC_check_errdetail_string;
+extern thread_local PGDLLIMPORT char *GUC_check_errhint_string;
 
 extern void GUC_check_errcode(int sqlerrcode);
 

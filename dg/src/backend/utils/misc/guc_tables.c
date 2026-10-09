@@ -62,7 +62,6 @@
 #include "parser/parse_expr.h"
 #include "parser/parser.h"
 #include "pgstat.h"
-#include "postmaster/autovacuum.h"
 #include "postmaster/bgworker_internals.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/postmaster.h"
@@ -78,6 +77,7 @@
 #include "storage/large_object.h"
 #include "storage/pg_shmem.h"
 #include "storage/predicate.h"
+#include "storage/proc.h"
 #include "storage/procnumber.h"
 #include "storage/standby.h"
 #include "tcop/backend_startup.h"
@@ -347,18 +347,6 @@ static const struct config_enum_entry recovery_prefetch_options[] = {
     {"0", RECOVERY_PREFETCH_OFF, true},
     {NULL, 0, false}};
 
-static const struct config_enum_entry debug_parallel_query_options[] = {
-    {"off", DEBUG_PARALLEL_OFF, false},
-    {"on", DEBUG_PARALLEL_ON, false},
-    {"regress", DEBUG_PARALLEL_REGRESS, false},
-    {"true", DEBUG_PARALLEL_ON, true},
-    {"false", DEBUG_PARALLEL_OFF, true},
-    {"yes", DEBUG_PARALLEL_ON, true},
-    {"no", DEBUG_PARALLEL_OFF, true},
-    {"1", DEBUG_PARALLEL_ON, true},
-    {"0", DEBUG_PARALLEL_OFF, true},
-    {NULL, 0, false}};
-
 static const struct config_enum_entry plan_cache_mode_options[] = {
     {"auto", PLAN_CACHE_MODE_AUTO, false},
     {"force_generic_plan", PLAN_CACHE_MODE_FORCE_GENERIC_PLAN, false},
@@ -453,12 +441,12 @@ extern const struct config_enum_entry dynamic_shared_memory_options[];
 /*
  * GUC option variables that are exported from this module
  */
-bool AllowAlterSystem = true;
-bool log_duration = false;
-bool Debug_print_plan = false;
-bool Debug_print_parse = false;
-bool Debug_print_rewritten = false;
-bool Debug_pretty_print = true;
+thread_local bool AllowAlterSystem = true;
+thread_local bool log_duration = false;
+thread_local bool Debug_print_plan = false;
+thread_local bool Debug_print_parse = false;
+thread_local bool Debug_print_rewritten = false;
+thread_local bool Debug_pretty_print = true;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 bool Debug_copy_parse_plan_trees;
@@ -466,53 +454,53 @@ bool Debug_write_read_parse_plan_trees;
 bool Debug_raw_expression_coverage_test;
 #endif
 
-bool log_parser_stats = false;
-bool log_planner_stats = false;
-bool log_executor_stats = false;
-bool log_statement_stats = false; /* this is sort of all three above
-                                   * together */
-bool log_btree_build_stats = false;
-char *event_source;
+thread_local bool log_parser_stats = false;
+thread_local bool log_planner_stats = false;
+thread_local bool log_executor_stats = false;
+thread_local bool log_statement_stats = false; /* this is sort of all three
+                                                * above together */
+thread_local bool log_btree_build_stats = false;
+thread_local char *event_source;
 
-bool row_security;
-bool check_function_bodies = true;
+thread_local bool row_security;
+thread_local bool check_function_bodies = true;
 
 /*
  * This GUC exists solely for backward compatibility, check its definition for
  * details.
  */
-static bool default_with_oids = false;
+static thread_local bool default_with_oids = false;
 
-bool current_role_is_superuser;
+thread_local bool current_role_is_superuser;
 
-int log_min_error_statement = ERROR;
-int log_min_messages = WARNING;
-int client_min_messages = NOTICE;
-int log_min_duration_sample = -1;
-int log_min_duration_statement = -1;
-int log_parameter_max_length = -1;
-int log_parameter_max_length_on_error = 0;
-int log_temp_files = -1;
-double log_statement_sample_rate = 1.0;
-double log_xact_sample_rate = 0;
-char *backtrace_functions;
+thread_local int log_min_error_statement = ERROR;
+thread_local int log_min_messages = WARNING;
+thread_local int client_min_messages = NOTICE;
+thread_local int log_min_duration_sample = -1;
+thread_local int log_min_duration_statement = -1;
+thread_local int log_parameter_max_length = -1;
+thread_local int log_parameter_max_length_on_error = 0;
+thread_local int log_temp_files = -1;
+thread_local double log_statement_sample_rate = 1.0;
+thread_local double log_xact_sample_rate = 0;
+thread_local char *backtrace_functions;
 
-int temp_file_limit = -1;
+thread_local int temp_file_limit = -1;
 
-int num_temp_buffers = 1024;
+thread_local int num_temp_buffers = 1024;
 
-char *cluster_name = "";
-char *ConfigFileName;
-char *HbaFileName;
-char *IdentFileName;
-char *external_pid_file;
+thread_local char *cluster_name = "";
+thread_local char *ConfigFileName;
+thread_local char *HbaFileName;
+thread_local char *IdentFileName;
+thread_local char *external_pid_file;
 
-char *application_name;
+thread_local char *application_name;
 
-int tcp_keepalives_idle;
-int tcp_keepalives_interval;
-int tcp_keepalives_count;
-int tcp_user_timeout;
+thread_local int tcp_keepalives_idle;
+thread_local int tcp_keepalives_interval;
+thread_local int tcp_keepalives_count;
+thread_local int tcp_user_timeout;
 
 /*
  * SSL renegotiation was been removed in PostgreSQL 9.5, but we tolerate it
@@ -520,73 +508,73 @@ int tcp_user_timeout;
  * This avoids breaking compatibility with clients that have never supported
  * renegotiation and therefore always try to zero it.
  */
-static int ssl_renegotiation_limit;
+static thread_local int ssl_renegotiation_limit;
 
 /*
  * This really belongs in pg_shmem.c, but is defined here so that it doesn't
  * need to be duplicated in all the different implementations of pg_shmem.c.
  */
-int huge_pages = HUGE_PAGES_TRY;
-int huge_page_size;
-int huge_pages_status = HUGE_PAGES_UNKNOWN;
+thread_local int huge_pages = HUGE_PAGES_TRY;
+thread_local int huge_page_size;
+thread_local int huge_pages_status = HUGE_PAGES_UNKNOWN;
 
 /*
  * These variables are all dummies that don't do anything, except in some
  * cases provide the value for SHOW to display.  The real state is elsewhere
  * and is kept in sync by assign_hooks.
  */
-static char *syslog_ident_str;
-static double phony_random_seed;
-static char *client_encoding_string;
-static char *datestyle_string;
-static char *server_encoding_string;
-static char *server_version_string;
-static int server_version_num;
-static char *debug_io_direct_string;
-static char *restrict_nonsystem_relation_kind_string;
+static thread_local char *syslog_ident_str;
+static thread_local double phony_random_seed;
+static thread_local char *client_encoding_string;
+static thread_local char *datestyle_string;
+static thread_local char *server_encoding_string;
+static thread_local char *server_version_string;
+static thread_local int server_version_num;
+static thread_local char *debug_io_direct_string;
+static thread_local char *restrict_nonsystem_relation_kind_string;
 
 #ifdef HAVE_SYSLOG
 #define DEFAULT_SYSLOG_FACILITY LOG_LOCAL0
 #else
 #define DEFAULT_SYSLOG_FACILITY 0
 #endif
-static int syslog_facility = DEFAULT_SYSLOG_FACILITY;
+static thread_local int syslog_facility = DEFAULT_SYSLOG_FACILITY;
 
-static char *timezone_string;
-static char *log_timezone_string;
-static char *timezone_abbreviations_string;
-static char *data_directory;
-static char *session_authorization_string;
-static int max_function_args;
-static int max_index_keys;
-static int max_identifier_length;
-static int block_size;
-static int segment_size;
-static int shared_memory_size_mb;
-static int shared_memory_size_in_huge_pages;
-static int wal_block_size;
-static int num_os_semaphores;
-static bool data_checksums;
-static bool integer_datetimes;
+static thread_local char *timezone_string;
+static thread_local char *log_timezone_string;
+static thread_local char *timezone_abbreviations_string;
+static thread_local char *data_directory;
+static thread_local char *session_authorization_string;
+static thread_local int max_function_args;
+static thread_local int max_index_keys;
+static thread_local int max_identifier_length;
+static thread_local int block_size;
+static thread_local int segment_size;
+static thread_local int shared_memory_size_mb;
+static thread_local int shared_memory_size_in_huge_pages;
+static thread_local int wal_block_size;
+static thread_local int num_os_semaphores;
+static thread_local bool data_checksums;
+static thread_local bool integer_datetimes;
 
 #ifdef USE_ASSERT_CHECKING
 #define DEFAULT_ASSERT_ENABLED true
 #else
 #define DEFAULT_ASSERT_ENABLED false
 #endif
-static bool assert_enabled = DEFAULT_ASSERT_ENABLED;
+static thread_local bool assert_enabled = DEFAULT_ASSERT_ENABLED;
 
-static char *recovery_target_timeline_string;
-static char *recovery_target_string;
-static char *recovery_target_xid_string;
-static char *recovery_target_name_string;
-static char *recovery_target_lsn_string;
+static thread_local char *recovery_target_timeline_string;
+static thread_local char *recovery_target_string;
+static thread_local char *recovery_target_xid_string;
+static thread_local char *recovery_target_name_string;
+static thread_local char *recovery_target_lsn_string;
 
 /* should be static, but commands/variable.c needs to get at this */
-char *role_string;
+thread_local char *role_string;
 
 /* should be static, but guc.c needs to get at this */
-bool in_hot_standby_guc;
+thread_local bool in_hot_standby_guc;
 
 /*
  * Displayable names for context types (enum GucContext)
@@ -672,10 +660,7 @@ const char *const config_group_names[] = {
     [STATS_MONITORING] = gettext_noop("Statistics / Monitoring"),
     [STATS_CUMULATIVE] =
         gettext_noop("Statistics / Cumulative Query and Index Statistics"),
-    [VACUUM_AUTOVACUUM] = gettext_noop("Vacuuming / Automatic Vacuuming"),
     [VACUUM_COST_DELAY] = gettext_noop("Vacuuming / Cost-Based Vacuum Delay"),
-    [VACUUM_DEFAULT] = gettext_noop("Vacuuming / Default Behavior"),
-    [VACUUM_FREEZING] = gettext_noop("Vacuuming / Freezing"),
     [CLIENT_CONN_STATEMENT] =
         gettext_noop("Client Connection Defaults / Statement Behavior"),
     [CLIENT_CONN_LOCALE] =
@@ -738,7 +723,7 @@ StaticAssertDecl(lengthof(config_type_names) == (PGC_ENUM + 1),
  *	  variable_is_guc_list_quote() in src/bin/pg_dump/dumputils.c.
  */
 
-struct config_bool ConfigureNamesBool[] = {
+thread_local struct config_bool ConfigureNamesBool[] = {
     {{"enable_seqscan", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of sequential-scan plans."), NULL,
       GUC_EXPLAIN},
@@ -843,14 +828,6 @@ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL,
      NULL},
-    {{"enable_gathermerge", PGC_USERSET, QUERY_TUNING_METHOD,
-      gettext_noop("Enables the planner's use of gather merge plans."), NULL,
-      GUC_EXPLAIN},
-     &enable_gathermerge,
-     true,
-     NULL,
-     NULL,
-     NULL},
     {{"enable_partitionwise_join", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables partitionwise join."), NULL, GUC_EXPLAIN},
      &enable_partitionwise_join,
@@ -863,22 +840,6 @@ struct config_bool ConfigureNamesBool[] = {
       GUC_EXPLAIN},
      &enable_partitionwise_aggregate,
      false,
-     NULL,
-     NULL,
-     NULL},
-    {{"enable_parallel_append", PGC_USERSET, QUERY_TUNING_METHOD,
-      gettext_noop("Enables the planner's use of parallel append plans."), NULL,
-      GUC_EXPLAIN},
-     &enable_parallel_append,
-     true,
-     NULL,
-     NULL,
-     NULL},
-    {{"enable_parallel_hash", PGC_USERSET, QUERY_TUNING_METHOD,
-      gettext_noop("Enables the planner's use of parallel hash plans."), NULL,
-      GUC_EXPLAIN},
-     &enable_parallel_hash,
-     true,
      NULL,
      NULL,
      NULL},
@@ -953,7 +914,7 @@ struct config_bool ConfigureNamesBool[] = {
      {"is_superuser", PGC_INTERNAL, UNGROUPED,
       gettext_noop("Shows whether the current user is a superuser."), NULL,
       GUC_REPORT | GUC_NO_SHOW_ALL | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
-          GUC_DISALLOW_IN_FILE | GUC_ALLOW_IN_PARALLEL},
+          GUC_DISALLOW_IN_FILE},
      &current_role_is_superuser,
      false,
      NULL,
@@ -1372,16 +1333,6 @@ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{"autovacuum", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Starts the autovacuum subprocess."), NULL},
-     &autovacuum_start_daemon,
-     /* off in digres: sm collects its own garbage, and the launcher reads
-      * catalog tables that are not there */
-     false,
-     NULL,
-     NULL,
-     NULL},
-
     {{"trace_notify", PGC_USERSET, DEVELOPER_OPTIONS,
       gettext_noop("Generates debugging output for LISTEN and NOTIFY."), NULL,
       GUC_NOT_IN_SAMPLE},
@@ -1781,18 +1732,6 @@ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{"parallel_leader_participation", PGC_USERSET, RESOURCES_WORKER_PROCESSES,
-      gettext_noop(
-          "Controls whether Gather and Gather Merge also run subplans."),
-      gettext_noop(
-          "Should gather nodes also run subplans or just gather tuples?"),
-      GUC_EXPLAIN},
-     &parallel_leader_participation,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
     {{
          "data_sync_retry",
          PGC_POSTMASTER,
@@ -1832,19 +1771,6 @@ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{
-         "vacuum_truncate",
-         PGC_USERSET,
-         VACUUM_DEFAULT,
-         gettext_noop(
-             "Enables vacuum to truncate empty pages at the end of the table."),
-     },
-     &vacuum_truncate,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
     /* End-of-list marker */
     {{NULL, (GucContext)0, (config_group)0, NULL, NULL},
      NULL,
@@ -1853,7 +1779,7 @@ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL}};
 
-struct config_int ConfigureNamesInt[] = {
+thread_local struct config_int ConfigureNamesInt[] = {
     {{"archive_timeout", PGC_SIGHUP, WAL_ARCHIVING,
       gettext_noop("Sets the amount of time to wait before forcing a "
                    "switch to the next WAL file."),
@@ -2360,18 +2286,6 @@ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"autovacuum_vacuum_cost_limit", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop(
-          "Vacuum cost amount available before napping, for autovacuum."),
-      gettext_noop("-1 means use \"vacuum_cost_limit\".")},
-     &autovacuum_vac_cost_limit,
-     -1,
-     -1,
-     10000,
-     NULL,
-     NULL,
-     NULL},
-
     {{"max_files_per_process", PGC_POSTMASTER, RESOURCES_KERNEL,
       gettext_noop("Sets the maximum number of files each server process is "
                    "allowed to open simultaneously."),
@@ -2478,76 +2392,6 @@ struct config_int ConfigureNamesInt[] = {
      0,
      0,
      INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"vacuum_freeze_min_age", PGC_USERSET, VACUUM_FREEZING,
-      gettext_noop("Minimum age at which VACUUM should freeze a table row."),
-      NULL},
-     &vacuum_freeze_min_age,
-     50000000,
-     0,
-     1000000000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"vacuum_freeze_table_age", PGC_USERSET, VACUUM_FREEZING,
-      gettext_noop(
-          "Age at which VACUUM should scan whole table to freeze tuples."),
-      NULL},
-     &vacuum_freeze_table_age,
-     150000000,
-     0,
-     2000000000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"vacuum_multixact_freeze_min_age", PGC_USERSET, VACUUM_FREEZING,
-      gettext_noop("Minimum age at which VACUUM should freeze a MultiXactId in "
-                   "a table row."),
-      NULL},
-     &vacuum_multixact_freeze_min_age,
-     5000000,
-     0,
-     1000000000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"vacuum_multixact_freeze_table_age", PGC_USERSET, VACUUM_FREEZING,
-      gettext_noop("Multixact age at which VACUUM should scan whole table to "
-                   "freeze tuples."),
-      NULL},
-     &vacuum_multixact_freeze_table_age,
-     150000000,
-     0,
-     2000000000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"vacuum_failsafe_age", PGC_USERSET, VACUUM_FREEZING,
-      gettext_noop("Age at which VACUUM should trigger failsafe to avoid a "
-                   "wraparound outage."),
-      NULL},
-     &vacuum_failsafe_age,
-     1600000000,
-     0,
-     2100000000,
-     NULL,
-     NULL,
-     NULL},
-    {{"vacuum_multixact_failsafe_age", PGC_USERSET, VACUUM_FREEZING,
-      gettext_noop("Multixact age at which VACUUM should trigger failsafe to "
-                   "avoid a wraparound outage."),
-      NULL},
-     &vacuum_multixact_failsafe_age,
-     1600000000,
-     0,
-     2100000000,
      NULL,
      NULL,
      NULL},
@@ -2878,20 +2722,6 @@ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"log_autovacuum_min_duration", PGC_SIGHUP, LOGGING_WHAT,
-      gettext_noop("Sets the minimum execution time above which "
-                   "autovacuum actions will be logged."),
-      gettext_noop("-1 disables logging autovacuum actions. 0 means log all "
-                   "autovacuum actions."),
-      GUC_UNIT_MS},
-     &Log_autovacuum_min_duration,
-     600000,
-     -1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
     {{"log_parameter_max_length", PGC_SUSET, LOGGING_WHAT,
       gettext_noop("Sets the maximum length in bytes of data logged for bind "
                    "parameter values when logging statements."),
@@ -3171,158 +3001,6 @@ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"autovacuum_naptime", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Time to sleep between autovacuum runs."), NULL, GUC_UNIT_S},
-     &autovacuum_naptime,
-     60,
-     1,
-     INT_MAX / 1000,
-     NULL,
-     NULL,
-     NULL},
-    {{"autovacuum_vacuum_threshold", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop(
-          "Minimum number of tuple updates or deletes prior to vacuum."),
-      NULL},
-     &autovacuum_vac_thresh,
-     50,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-    {{"autovacuum_vacuum_max_threshold", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop(
-          "Maximum number of tuple updates or deletes prior to vacuum."),
-      gettext_noop("-1 disables the maximum threshold.")},
-     &autovacuum_vac_max_thresh,
-     100000000,
-     -1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-    {{"autovacuum_vacuum_insert_threshold", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Minimum number of tuple inserts prior to vacuum."),
-      gettext_noop("-1 disables insert vacuums.")},
-     &autovacuum_vac_ins_thresh,
-     1000,
-     -1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-    {{"autovacuum_analyze_threshold", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Minimum number of tuple inserts, updates, or deletes prior "
-                   "to analyze."),
-      NULL},
-     &autovacuum_anl_thresh,
-     50,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-    {/* see varsup.c for why this is PGC_POSTMASTER not PGC_SIGHUP */
-     {"autovacuum_freeze_max_age", PGC_POSTMASTER, VACUUM_AUTOVACUUM,
-      gettext_noop("Age at which to autovacuum a table to prevent transaction "
-                   "ID wraparound."),
-      NULL},
-     &autovacuum_freeze_max_age,
-
-     /* see vacuum_failsafe_age if you change the upper-limit value. */
-     200000000,
-     100000,
-     2000000000,
-     NULL,
-     NULL,
-     NULL},
-    {/* see multixact.c for why this is PGC_POSTMASTER not PGC_SIGHUP */
-     {"autovacuum_multixact_freeze_max_age", PGC_POSTMASTER, VACUUM_AUTOVACUUM,
-      gettext_noop("Multixact age at which to autovacuum a table to prevent "
-                   "multixact wraparound."),
-      NULL},
-     &autovacuum_multixact_freeze_max_age,
-     400000000,
-     10000,
-     2000000000,
-     NULL,
-     NULL,
-     NULL},
-    {/* see max_connections */
-     {"autovacuum_worker_slots", PGC_POSTMASTER, VACUUM_AUTOVACUUM,
-      gettext_noop("Sets the number of backend slots to allocate for "
-                   "autovacuum workers."),
-      NULL},
-     &autovacuum_worker_slots,
-     16,
-     1,
-     MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-    {{"autovacuum_max_workers", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Sets the maximum number of simultaneously running "
-                   "autovacuum worker processes."),
-      NULL},
-     &autovacuum_max_workers,
-     3,
-     1,
-     MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_parallel_maintenance_workers", PGC_USERSET,
-      RESOURCES_WORKER_PROCESSES,
-      gettext_noop("Sets the maximum number of parallel processes per "
-                   "maintenance operation."),
-      NULL},
-     &max_parallel_maintenance_workers,
-     2,
-     0,
-     MAX_PARALLEL_WORKER_LIMIT,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_parallel_workers_per_gather", PGC_USERSET,
-      RESOURCES_WORKER_PROCESSES,
-      gettext_noop(
-          "Sets the maximum number of parallel processes per executor node."),
-      NULL, GUC_EXPLAIN},
-     &max_parallel_workers_per_gather,
-     2,
-     0,
-     MAX_PARALLEL_WORKER_LIMIT,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_parallel_workers", PGC_USERSET, RESOURCES_WORKER_PROCESSES,
-      gettext_noop("Sets the maximum number of parallel workers that can be "
-                   "active at one time."),
-      NULL, GUC_EXPLAIN},
-     &max_parallel_workers,
-     8,
-     0,
-     MAX_PARALLEL_WORKER_LIMIT,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"autovacuum_work_mem", PGC_SIGHUP, RESOURCES_MEM,
-      gettext_noop("Sets the maximum memory to be used by each autovacuum "
-                   "worker process."),
-      gettext_noop("-1 means use \"maintenance_work_mem\"."), GUC_UNIT_KB},
-     &autovacuum_work_mem,
-     -1,
-     -1,
-     MAX_KILOBYTES,
-     check_autovacuum_work_mem,
-     NULL,
-     NULL},
-
     {{"tcp_keepalives_idle", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("Time between issuing TCP keepalives."),
       gettext_noop("0 means use the system default."), GUC_UNIT_S},
@@ -3395,44 +3073,6 @@ struct config_int ConfigureNamesInt[] = {
      DEFAULT_EFFECTIVE_CACHE_SIZE,
      1,
      INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "min_parallel_table_scan_size",
-         PGC_USERSET,
-         QUERY_TUNING_COST,
-         gettext_noop(
-             "Sets the minimum amount of table data for a parallel scan."),
-         gettext_noop("If the planner estimates that it will read a number of "
-                      "table pages too small to reach this limit, a parallel "
-                      "scan will not be considered."),
-         GUC_UNIT_BLOCKS | GUC_EXPLAIN,
-     },
-     &min_parallel_table_scan_size,
-     (8 * 1024 * 1024) / BLCKSZ,
-     0,
-     INT_MAX / 3,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "min_parallel_index_scan_size",
-         PGC_USERSET,
-         QUERY_TUNING_COST,
-         gettext_noop(
-             "Sets the minimum amount of index data for a parallel scan."),
-         gettext_noop("If the planner estimates that it will read a number of "
-                      "index pages too small to reach this limit, a parallel "
-                      "scan will not be considered."),
-         GUC_UNIT_BLOCKS | GUC_EXPLAIN,
-     },
-     &min_parallel_index_scan_size,
-     (512 * 1024) / BLCKSZ,
-     0,
-     INT_MAX / 3,
      NULL,
      NULL,
      NULL},
@@ -3571,7 +3211,7 @@ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL}};
 
-struct config_real ConfigureNamesReal[] = {
+thread_local struct config_real ConfigureNamesReal[] = {
     {{"seq_page_cost", PGC_USERSET, QUERY_TUNING_COST,
       gettext_noop("Sets the planner's estimate of the cost of a "
                    "sequentially fetched disk page."),
@@ -3622,28 +3262,6 @@ struct config_real ConfigureNamesReal[] = {
       NULL, GUC_EXPLAIN},
      &cpu_operator_cost,
      DEFAULT_CPU_OPERATOR_COST,
-     0,
-     DBL_MAX,
-     NULL,
-     NULL,
-     NULL},
-    {{"parallel_tuple_cost", PGC_USERSET, QUERY_TUNING_COST,
-      gettext_noop("Sets the planner's estimate of the cost of "
-                   "passing each tuple (row) from worker to leader backend."),
-      NULL, GUC_EXPLAIN},
-     &parallel_tuple_cost,
-     DEFAULT_PARALLEL_TUPLE_COST,
-     0,
-     DBL_MAX,
-     NULL,
-     NULL,
-     NULL},
-    {{"parallel_setup_cost", PGC_USERSET, QUERY_TUNING_COST,
-      gettext_noop("Sets the planner's estimate of the cost of "
-                   "starting up worker processes for parallel query."),
-      NULL, GUC_EXPLAIN},
-     &parallel_setup_cost,
-     DEFAULT_PARALLEL_SETUP_COST,
      0,
      DBL_MAX,
      NULL,
@@ -3738,53 +3356,6 @@ struct config_real ConfigureNamesReal[] = {
      NULL,
      NULL},
 
-    {{"autovacuum_vacuum_cost_delay", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Vacuum cost delay in milliseconds, for autovacuum."),
-      gettext_noop("-1 means use \"vacuum_cost_delay\"."), GUC_UNIT_MS},
-     &autovacuum_vac_cost_delay,
-     2,
-     -1,
-     100,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"autovacuum_vacuum_scale_factor", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Number of tuple updates or deletes prior to vacuum as a "
-                   "fraction of reltuples."),
-      NULL},
-     &autovacuum_vac_scale,
-     0.2,
-     0.0,
-     100.0,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"autovacuum_vacuum_insert_scale_factor", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Number of tuple inserts prior to vacuum as a fraction of "
-                   "reltuples."),
-      NULL},
-     &autovacuum_vac_ins_scale,
-     0.2,
-     0.0,
-     100.0,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"autovacuum_analyze_scale_factor", PGC_SIGHUP, VACUUM_AUTOVACUUM,
-      gettext_noop("Number of tuple inserts, updates, or deletes prior to "
-                   "analyze as a fraction of reltuples."),
-      NULL},
-     &autovacuum_anl_scale,
-     0.1,
-     0.0,
-     100.0,
-     NULL,
-     NULL,
-     NULL},
-
     {{"checkpoint_completion_target", PGC_SIGHUP, WAL_CHECKPOINTS,
       gettext_noop("Time spent flushing dirty buffers during checkpoint, as "
                    "fraction of checkpoint interval."),
@@ -3823,23 +3394,6 @@ struct config_real ConfigureNamesReal[] = {
      NULL,
      NULL},
 
-    {{"vacuum_max_eager_freeze_failure_rate", PGC_USERSET, VACUUM_FREEZING,
-      gettext_noop("Fraction of pages in a relation vacuum can scan and fail "
-                   "to freeze before disabling eager scanning."),
-      gettext_noop(
-          "A value of 0.0 disables eager scanning and a value of 1.0 will "
-          "eagerly scan up to 100 percent of the all-visible pages in the "
-          "relation. If vacuum successfully freezes these pages, the cap is "
-          "lower than 100 percent, because the goal is to amortize page "
-          "freezing across multiple vacuums.")},
-     &vacuum_max_eager_freeze_failure_rate,
-     0.03,
-     0.0,
-     1.0,
-     NULL,
-     NULL,
-     NULL},
-
     /* End-of-list marker */
     {{NULL, (GucContext)0, (config_group)0, NULL, NULL},
      NULL,
@@ -3850,7 +3404,7 @@ struct config_real ConfigureNamesReal[] = {
      NULL,
      NULL}};
 
-struct config_string ConfigureNamesString[] = {
+thread_local struct config_string ConfigureNamesString[] = {
     {{"archive_command", PGC_SIGHUP, WAL_ARCHIVING,
       gettext_noop(
           "Sets the shell command that will be called to archive a WAL file."),
@@ -4547,7 +4101,7 @@ struct config_string ConfigureNamesString[] = {
      NULL,
      NULL}};
 
-struct config_enum ConfigureNamesEnum[] = {
+thread_local struct config_enum ConfigureNamesEnum[] = {
     {{"backslash_quote", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
       gettext_noop("Sets whether \"\\'\" is allowed in string literals."),
       NULL},
@@ -4888,21 +4442,6 @@ struct config_enum ConfigureNamesEnum[] = {
      recovery_prefetch_options,
      check_recovery_prefetch,
      assign_recovery_prefetch,
-     NULL},
-
-    {{"debug_parallel_query", PGC_USERSET, DEVELOPER_OPTIONS,
-      gettext_noop("Forces the planner's use parallel query nodes."),
-      gettext_noop(
-          "This can be useful for testing the parallel query infrastructure "
-          "by forcing the planner to generate plans that contain nodes "
-          "that perform tuple communication between workers and the main "
-          "process."),
-      GUC_NOT_IN_SAMPLE | GUC_EXPLAIN},
-     &debug_parallel_query,
-     DEBUG_PARALLEL_OFF,
-     debug_parallel_query_options,
-     NULL,
-     NULL,
      NULL},
 
     {{"password_encryption", PGC_USERSET, CONN_AUTH_AUTH,

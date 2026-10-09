@@ -45,14 +45,14 @@
 #include "utils/xml.h"
 
 /* Hook for plugins to get control in ExplainOneQuery() */
-ExplainOneQuery_hook_type ExplainOneQuery_hook = NULL;
+PG_SHARED ExplainOneQuery_hook_type ExplainOneQuery_hook = NULL;
 
 /* Hook for plugins to get control in explain_get_index_name() */
-explain_get_index_name_hook_type explain_get_index_name_hook = NULL;
+PG_SHARED explain_get_index_name_hook_type explain_get_index_name_hook = NULL;
 
 /* per-plan and per-node hooks for plugins to print additional info */
-explain_per_plan_hook_type explain_per_plan_hook = NULL;
-explain_per_node_hook_type explain_per_node_hook = NULL;
+PG_SHARED explain_per_plan_hook_type explain_per_plan_hook = NULL;
+PG_SHARED explain_per_node_hook_type explain_per_node_hook = NULL;
 
 /*
  * Various places within need to convert bytes to kilobytes.  Round these up
@@ -155,10 +155,6 @@ static void ExplainSubPlans(List *plans, List *ancestors,
                             const char *relationship, ExplainState *es);
 static void ExplainCustomChildren(CustomScanState *css, List *ancestors,
                                   ExplainState *es);
-static ExplainWorkersState *ExplainCreateWorkersState(int num_workers);
-static void ExplainOpenWorker(int n, ExplainState *es);
-static void ExplainCloseWorker(int n, ExplainState *es);
-static void ExplainFlushWorkersState(ExplainState *es);
 
 /*
  * ExplainQuery -
@@ -690,7 +686,6 @@ static void ExplainPrintSettings(ExplainState *es) {
  */
 void ExplainPrintPlan(ExplainState *es, QueryDesc *queryDesc) {
   Bitmapset *rels_used = NULL;
-  PlanState *ps;
   ListCell *lc;
 
   /* Set up ExplainState fields associated with this plan tree */
@@ -712,21 +707,7 @@ void ExplainPrintPlan(ExplainState *es, QueryDesc *queryDesc) {
     }
   }
 
-  /*
-   * Sometimes we mark a Gather node as "invisible", which means that it's
-   * not to be displayed in EXPLAIN output.  The purpose of this is to allow
-   * running regression tests with debug_parallel_query=regress to get the
-   * same results as running the same tests with debug_parallel_query=off.
-   * Such marking is currently only supported on a Gather at the top of the
-   * plan.  We skip that node, and we must also hide per-worker detail data
-   * further down in the plan tree.
-   */
-  ps = queryDesc->planstate;
-  if (IsA(ps, GatherState) && ((Gather *)ps->plan)->invisible) {
-    ps = outerPlanState(ps);
-    es->hide_workers = true;
-  }
-  ExplainNode(ps, NIL, NULL, NULL, es);
+  ExplainNode(queryDesc->planstate, NIL, NULL, NULL, es);
 
   /*
    * If requested, include information about GUC parameters with values that
@@ -1121,20 +1102,9 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
   const char *partialmode = NULL;
   const char *operation = NULL;
   const char *custom_name = NULL;
-  ExplainWorkersState *save_workers_state = es->workers_state;
   int save_indent = es->indent;
   bool haschildren;
   bool isdisabled;
-
-  /*
-   * Prepare per-worker output buffers, if needed.  We'll append the data in
-   * these to the main output string further down.
-   */
-  if (planstate->worker_instrument && es->analyze && !es->hide_workers)
-    es->workers_state =
-        ExplainCreateWorkersState(planstate->worker_instrument->num_workers);
-  else
-    es->workers_state = NULL;
 
   /* Identify plan node type, and print generic details */
   switch (nodeTag(plan)) {
@@ -1195,12 +1165,6 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
     break;
   case T_SampleScan:
     pname = sname = "Sample Scan";
-    break;
-  case T_Gather:
-    pname = sname = "Gather";
-    break;
-  case T_GatherMerge:
-    pname = sname = "Gather Merge";
     break;
   case T_IndexScan:
     pname = sname = "Index Scan";
@@ -1374,8 +1338,6 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
       appendStringInfoString(es->str, "->  ");
       es->indent += 2;
     }
-    if (plan->parallel_aware)
-      appendStringInfoString(es->str, "Parallel ");
     if (plan->async_capable)
       appendStringInfoString(es->str, "Async ");
     appendStringInfoString(es->str, pname);
@@ -1394,7 +1356,6 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
       ExplainPropertyText("Subplan Name", plan_name, es);
     if (custom_name)
       ExplainPropertyText("Custom Plan Provider", custom_name, es);
-    ExplainPropertyBool("Parallel Aware", plan->parallel_aware, es);
     ExplainPropertyBool("Async Capable", plan->async_capable, es);
   }
 
@@ -1586,46 +1547,6 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
   if (es->format != EXPLAIN_FORMAT_TEXT || isdisabled)
     ExplainPropertyBool("Disabled", isdisabled, es);
 
-  /* prepare per-worker general execution details */
-  if (es->workers_state && es->verbose) {
-    WorkerInstrumentation *w = planstate->worker_instrument;
-
-    for (int n = 0; n < w->num_workers; n++) {
-      Instrumentation *instrument = &w->instrument[n];
-      double nloops = instrument->nloops;
-      double startup_ms;
-      double total_ms;
-      double rows;
-
-      if (nloops <= 0)
-        continue;
-      startup_ms = 1000.0 * instrument->startup / nloops;
-      total_ms = 1000.0 * instrument->total / nloops;
-      rows = instrument->ntuples / nloops;
-
-      ExplainOpenWorker(n, es);
-
-      if (es->format == EXPLAIN_FORMAT_TEXT) {
-        ExplainIndentText(es);
-        appendStringInfoString(es->str, "actual ");
-        if (es->timing)
-          appendStringInfo(es->str, "time=%.3f..%.3f ", startup_ms, total_ms);
-
-        appendStringInfo(es->str, "rows=%.2f loops=%.0f\n", rows, nloops);
-      } else {
-        if (es->timing) {
-          ExplainPropertyFloat("Actual Startup Time", "ms", startup_ms, 3, es);
-          ExplainPropertyFloat("Actual Total Time", "ms", total_ms, 3, es);
-        }
-
-        ExplainPropertyFloat("Actual Rows", NULL, rows, 2, es);
-        ExplainPropertyFloat("Actual Loops", NULL, nloops, 0, es);
-      }
-
-      ExplainCloseWorker(n, es);
-    }
-  }
-
   /* target list */
   if (es->verbose)
     show_plan_tlist(planstate, ancestors, es);
@@ -1708,39 +1629,6 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
     if (IsA(plan, CteScan))
       show_ctescan_info(castNode(CteScanState, planstate), es);
     break;
-  case T_Gather: {
-    Gather *gather = (Gather *)plan;
-
-    show_scan_qual(plan->qual, "Filter", planstate, ancestors, es);
-    if (plan->qual)
-      show_instrumentation_count("Rows Removed by Filter", 1, planstate, es);
-    ExplainPropertyInteger("Workers Planned", NULL, gather->num_workers, es);
-
-    if (es->analyze) {
-      int nworkers;
-
-      nworkers = ((GatherState *)planstate)->nworkers_launched;
-      ExplainPropertyInteger("Workers Launched", NULL, nworkers, es);
-    }
-
-    if (gather->single_copy || es->format != EXPLAIN_FORMAT_TEXT)
-      ExplainPropertyBool("Single Copy", gather->single_copy, es);
-  } break;
-  case T_GatherMerge: {
-    GatherMerge *gm = (GatherMerge *)plan;
-
-    show_scan_qual(plan->qual, "Filter", planstate, ancestors, es);
-    if (plan->qual)
-      show_instrumentation_count("Rows Removed by Filter", 1, planstate, es);
-    ExplainPropertyInteger("Workers Planned", NULL, gm->num_workers, es);
-
-    if (es->analyze) {
-      int nworkers;
-
-      nworkers = ((GatherMergeState *)planstate)->nworkers_launched;
-      ExplainPropertyInteger("Workers Launched", NULL, nworkers, es);
-    }
-  } break;
   case T_FunctionScan:
     if (es->verbose) {
       List *fexprs = NIL;
@@ -1914,31 +1802,6 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
     show_buffer_usage(es, &planstate->instrument->bufusage);
   if (es->wal && planstate->instrument)
     show_wal_usage(es, &planstate->instrument->walusage);
-
-  /* Prepare per-worker buffer/WAL usage */
-  if (es->workers_state && (es->buffers || es->wal) && es->verbose) {
-    WorkerInstrumentation *w = planstate->worker_instrument;
-
-    for (int n = 0; n < w->num_workers; n++) {
-      Instrumentation *instrument = &w->instrument[n];
-      double nloops = instrument->nloops;
-
-      if (nloops <= 0)
-        continue;
-
-      ExplainOpenWorker(n, es);
-      if (es->buffers)
-        show_buffer_usage(es, &instrument->bufusage);
-      if (es->wal)
-        show_wal_usage(es, &instrument->walusage);
-      ExplainCloseWorker(n, es);
-    }
-  }
-
-  /* Show per-worker details for this plan node, then pop that stack */
-  if (es->workers_state)
-    ExplainFlushWorkersState(es);
-  es->workers_state = save_workers_state;
 
   /* Allow plugins to print additional information */
   if (explain_per_node_hook)
@@ -2617,58 +2480,12 @@ static void show_sort_info(SortState *sortstate, ExplainState *es) {
       ExplainPropertyText("Sort Space Type", spaceType, es);
     }
   }
-
-  /*
-   * You might think we should just skip this stanza entirely when
-   * es->hide_workers is true, but then we'd get no sort-method output at
-   * all.  We have to make it look like worker 0's data is top-level data.
-   * This is easily done by just skipping the OpenWorker/CloseWorker calls.
-   * Currently, we don't worry about the possibility that there are multiple
-   * workers in such a case; if there are, duplicate output fields will be
-   * emitted.
-   */
-  if (sortstate->shared_info != NULL) {
-    int n;
-
-    for (n = 0; n < sortstate->shared_info->num_workers; n++) {
-      TuplesortInstrumentation *sinstrument;
-      const char *sortMethod;
-      const char *spaceType;
-      int64 spaceUsed;
-
-      sinstrument = &sortstate->shared_info->sinstrument[n];
-      if (sinstrument->sortMethod == SORT_TYPE_STILL_IN_PROGRESS)
-        continue; /* ignore any unfilled slots */
-      sortMethod = tuplesort_method_name(sinstrument->sortMethod);
-      spaceType = tuplesort_space_type_name(sinstrument->spaceType);
-      spaceUsed = sinstrument->spaceUsed;
-
-      if (es->workers_state)
-        ExplainOpenWorker(n, es);
-
-      if (es->format == EXPLAIN_FORMAT_TEXT) {
-        ExplainIndentText(es);
-        appendStringInfo(es->str, "Sort Method: %s  %s: " INT64_FORMAT "kB\n",
-                         sortMethod, spaceType, spaceUsed);
-      } else {
-        ExplainPropertyText("Sort Method", sortMethod, es);
-        ExplainPropertyInteger("Sort Space Used", "kB", spaceUsed, es);
-        ExplainPropertyText("Sort Space Type", spaceType, es);
-      }
-
-      if (es->workers_state)
-        ExplainCloseWorker(n, es);
-    }
-  }
 }
 
 /*
  * Incremental sort nodes sort in (a potentially very large number of) batches,
  * so EXPLAIN ANALYZE needs to roll up the tuplesort stats from each batch into
  * an intelligible summary.
- *
- * This function is used for both a non-parallel node and each worker in a
- * parallel incremental sort node.
  */
 static void
 show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
@@ -2792,9 +2609,6 @@ static void show_incremental_sort_info(IncrementalSortState *incrsortstate,
    * groups and transitioned modes (copying the tuples into a prefix group),
    * we don't need to do anything if there were 0 full groups.
    *
-   * We still have to continue after this block if there are no full groups,
-   * though, since it's possible that we have workers that did real work
-   * even if the leader didn't participate.
    */
   if (fullsortGroupInfo->groupCount > 0) {
     show_incremental_sort_group_info(fullsortGroupInfo, "Full-sort", true, es);
@@ -2808,50 +2622,6 @@ static void show_incremental_sort_info(IncrementalSortState *incrsortstate,
     if (es->format == EXPLAIN_FORMAT_TEXT)
       appendStringInfoChar(es->str, '\n');
   }
-
-  if (incrsortstate->shared_info != NULL) {
-    int n;
-    bool indent_first_line;
-
-    for (n = 0; n < incrsortstate->shared_info->num_workers; n++) {
-      IncrementalSortInfo *incsort_info = &incrsortstate->shared_info->sinfo[n];
-
-      /*
-       * If a worker hasn't processed any sort groups at all, then
-       * exclude it from output since it either didn't launch or didn't
-       * contribute anything meaningful.
-       */
-      fullsortGroupInfo = &incsort_info->fullsortGroupInfo;
-
-      /*
-       * Since we never have any prefix groups unless we've first sorted
-       * a full groups and transitioned modes (copying the tuples into a
-       * prefix group), we don't need to do anything if there were 0
-       * full groups.
-       */
-      if (fullsortGroupInfo->groupCount == 0)
-        continue;
-
-      if (es->workers_state)
-        ExplainOpenWorker(n, es);
-
-      indent_first_line = es->workers_state == NULL || es->verbose;
-      show_incremental_sort_group_info(fullsortGroupInfo, "Full-sort",
-                                       indent_first_line, es);
-      prefixsortGroupInfo = &incsort_info->prefixsortGroupInfo;
-      if (prefixsortGroupInfo->groupCount > 0) {
-        if (es->format == EXPLAIN_FORMAT_TEXT)
-          appendStringInfoChar(es->str, '\n');
-        show_incremental_sort_group_info(prefixsortGroupInfo, "Pre-sorted",
-                                         true, es);
-      }
-      if (es->format == EXPLAIN_FORMAT_TEXT)
-        appendStringInfoChar(es->str, '\n');
-
-      if (es->workers_state)
-        ExplainCloseWorker(n, es);
-    }
-  }
 }
 
 /*
@@ -2860,43 +2630,9 @@ static void show_incremental_sort_info(IncrementalSortState *incrsortstate,
 static void show_hash_info(HashState *hashstate, ExplainState *es) {
   HashInstrumentation hinstrument = {0};
 
-  /*
-   * Collect stats from the local process, even when it's a parallel query.
-   * In a parallel query, the leader process may or may not have run the
-   * hash join, and even if it did it may not have built a hash table due to
-   * timing (if it started late it might have seen no tuples in the outer
-   * relation and skipped building the hash table).  Therefore we have to be
-   * prepared to get instrumentation data from all participants.
-   */
+  /* Collect stats from the local process. */
   if (hashstate->hinstrument)
     memcpy(&hinstrument, hashstate->hinstrument, sizeof(HashInstrumentation));
-
-  /*
-   * Merge results from workers.  In the parallel-oblivious case, the
-   * results from all participants should be identical, except where
-   * participants didn't run the join at all so have no data.  In the
-   * parallel-aware case, we need to consider all the results.  Each worker
-   * may have seen a different subset of batches and we want to report the
-   * highest memory usage across all batches.  We take the maxima of other
-   * values too, for the same reasons as in ExecHashAccumInstrumentation.
-   */
-  if (hashstate->shared_info) {
-    SharedHashInfo *shared_info = hashstate->shared_info;
-    int i;
-
-    for (i = 0; i < shared_info->num_workers; ++i) {
-      HashInstrumentation *worker_hi = &shared_info->hinstrument[i];
-
-      hinstrument.nbuckets = Max(hinstrument.nbuckets, worker_hi->nbuckets);
-      hinstrument.nbuckets_original =
-          Max(hinstrument.nbuckets_original, worker_hi->nbuckets_original);
-      hinstrument.nbatch = Max(hinstrument.nbatch, worker_hi->nbatch);
-      hinstrument.nbatch_original =
-          Max(hinstrument.nbatch_original, worker_hi->nbatch_original);
-      hinstrument.space_peak =
-          Max(hinstrument.space_peak, worker_hi->space_peak);
-    }
-  }
 
   if (hinstrument.nbatch > 0) {
     uint64 spacePeakKb = BYTES_TO_KILOBYTES(hinstrument.space_peak);
@@ -3107,54 +2843,6 @@ static void show_memoize_info(MemoizeState *mstate, List *ancestors,
                        mstate->stats.cache_overflows, memPeakKb);
     }
   }
-
-  if (mstate->shared_info == NULL)
-    return;
-
-  /* Show details from parallel workers */
-  for (int n = 0; n < mstate->shared_info->num_workers; n++) {
-    MemoizeInstrumentation *si;
-
-    si = &mstate->shared_info->sinstrument[n];
-
-    /*
-     * Skip workers that didn't do any work.  We needn't bother checking
-     * for cache hits as a miss will always occur before a cache hit.
-     */
-    if (si->cache_misses == 0)
-      continue;
-
-    if (es->workers_state)
-      ExplainOpenWorker(n, es);
-
-    /*
-     * Since the worker's MemoizeState.mem_used field is unavailable to
-     * us, ExecEndMemoize will have set the
-     * MemoizeInstrumentation.mem_peak field for us.  No need to do the
-     * zero checks like we did for the serial case above.
-     */
-    memPeakKb = BYTES_TO_KILOBYTES(si->mem_peak);
-
-    if (es->format == EXPLAIN_FORMAT_TEXT) {
-      ExplainIndentText(es);
-      appendStringInfo(es->str,
-                       "Hits: " UINT64_FORMAT "  Misses: " UINT64_FORMAT
-                       "  Evictions: " UINT64_FORMAT
-                       "  Overflows: " UINT64_FORMAT
-                       "  Memory Usage: " INT64_FORMAT "kB\n",
-                       si->cache_hits, si->cache_misses, si->cache_evictions,
-                       si->cache_overflows, memPeakKb);
-    } else {
-      ExplainPropertyInteger("Cache Hits", NULL, si->cache_hits, es);
-      ExplainPropertyInteger("Cache Misses", NULL, si->cache_misses, es);
-      ExplainPropertyInteger("Cache Evictions", NULL, si->cache_evictions, es);
-      ExplainPropertyInteger("Cache Overflows", NULL, si->cache_overflows, es);
-      ExplainPropertyInteger("Peak Memory Usage", "kB", memPeakKb, es);
-    }
-
-    if (es->workers_state)
-      ExplainCloseWorker(n, es);
-  }
 }
 
 /*
@@ -3173,9 +2861,8 @@ static void show_hashagg_info(AggState *aggstate, ExplainState *es) {
                              aggstate->hash_planned_partitions, es);
 
     /*
-     * During parallel query the leader may have not helped out.  We
-     * detect this by checking how much memory it used.  If we find it
-     * didn't do any work then we don't show its properties.
+     * If the node didn't do any work, which we detect by checking how
+     * much memory it used, then we don't show its properties.
      */
     if (es->analyze && aggstate->hash_mem_peak > 0) {
       ExplainPropertyInteger("HashAgg Batches", NULL,
@@ -3194,9 +2881,8 @@ static void show_hashagg_info(AggState *aggstate, ExplainState *es) {
     }
 
     /*
-     * During parallel query the leader may have not helped out.  We
-     * detect this by checking how much memory it used.  If we find it
-     * didn't do any work then we don't show its properties.
+     * If the node didn't do any work, which we detect by checking how
+     * much memory it used, then we don't show its properties.
      */
     if (es->analyze && aggstate->hash_mem_peak > 0) {
       if (!gotone)
@@ -3218,47 +2904,6 @@ static void show_hashagg_info(AggState *aggstate, ExplainState *es) {
     if (gotone)
       appendStringInfoChar(es->str, '\n');
   }
-
-  /* Display stats for each parallel worker */
-  if (es->analyze && aggstate->shared_info != NULL) {
-    for (int n = 0; n < aggstate->shared_info->num_workers; n++) {
-      AggregateInstrumentation *sinstrument;
-      uint64 hash_disk_used;
-      int hash_batches_used;
-
-      sinstrument = &aggstate->shared_info->sinstrument[n];
-      /* Skip workers that didn't do anything */
-      if (sinstrument->hash_mem_peak == 0)
-        continue;
-      hash_disk_used = sinstrument->hash_disk_used;
-      hash_batches_used = sinstrument->hash_batches_used;
-      memPeakKb = BYTES_TO_KILOBYTES(sinstrument->hash_mem_peak);
-
-      if (es->workers_state)
-        ExplainOpenWorker(n, es);
-
-      if (es->format == EXPLAIN_FORMAT_TEXT) {
-        ExplainIndentText(es);
-
-        appendStringInfo(es->str,
-                         "Batches: %d  Memory Usage: " INT64_FORMAT "kB",
-                         hash_batches_used, memPeakKb);
-
-        /* Only display disk usage if we spilled to disk */
-        if (hash_batches_used > 1)
-          appendStringInfo(es->str, "  Disk Usage: " UINT64_FORMAT "kB",
-                           hash_disk_used);
-        appendStringInfoChar(es->str, '\n');
-      } else {
-        ExplainPropertyInteger("HashAgg Batches", NULL, hash_batches_used, es);
-        ExplainPropertyInteger("Peak Memory Usage", "kB", memPeakKb, es);
-        ExplainPropertyInteger("Disk Usage", "kB", hash_disk_used, es);
-      }
-
-      if (es->workers_state)
-        ExplainCloseWorker(n, es);
-    }
-  }
 }
 
 /*
@@ -3267,46 +2912,33 @@ static void show_hashagg_info(AggState *aggstate, ExplainState *es) {
  */
 static void show_indexsearches_info(PlanState *planstate, ExplainState *es) {
   Plan *plan = planstate->plan;
-  SharedIndexScanInstrumentation *SharedInfo = NULL;
   uint64 nsearches = 0;
 
   if (!es->analyze)
     return;
 
-  /* Initialize counters with stats from the local process first */
+  /* Get the counters from the local process */
   switch (nodeTag(plan)) {
   case T_IndexScan: {
     IndexScanState *indexstate = ((IndexScanState *)planstate);
 
     nsearches = indexstate->iss_Instrument.nsearches;
-    SharedInfo = indexstate->iss_SharedInfo;
     break;
   }
   case T_IndexOnlyScan: {
     IndexOnlyScanState *indexstate = ((IndexOnlyScanState *)planstate);
 
     nsearches = indexstate->ioss_Instrument.nsearches;
-    SharedInfo = indexstate->ioss_SharedInfo;
     break;
   }
   case T_BitmapIndexScan: {
     BitmapIndexScanState *indexstate = ((BitmapIndexScanState *)planstate);
 
     nsearches = indexstate->biss_Instrument.nsearches;
-    SharedInfo = indexstate->biss_SharedInfo;
     break;
   }
   default:
     break;
-  }
-
-  /* Next get the sum of the counters set within each and every process */
-  if (SharedInfo) {
-    for (int i = 0; i < SharedInfo->num_workers; ++i) {
-      IndexScanInstrumentation *winstrument = &SharedInfo->winstrument[i];
-
-      nsearches += winstrument->nsearches;
-    }
   }
 
   ExplainPropertyUInteger("Index Searches", NULL, nsearches, es);
@@ -3336,36 +2968,6 @@ static void show_tidbitmap_info(BitmapHeapScanState *planstate,
         appendStringInfo(es->str, " lossy=" UINT64_FORMAT,
                          planstate->stats.lossy_pages);
       appendStringInfoChar(es->str, '\n');
-    }
-  }
-
-  /* Display stats for each parallel worker */
-  if (planstate->pstate != NULL) {
-    for (int n = 0; n < planstate->sinstrument->num_workers; n++) {
-      BitmapHeapScanInstrumentation *si =
-          &planstate->sinstrument->sinstrument[n];
-
-      if (si->exact_pages == 0 && si->lossy_pages == 0)
-        continue;
-
-      if (es->workers_state)
-        ExplainOpenWorker(n, es);
-
-      if (es->format == EXPLAIN_FORMAT_TEXT) {
-        ExplainIndentText(es);
-        appendStringInfoString(es->str, "Heap Blocks:");
-        if (si->exact_pages > 0)
-          appendStringInfo(es->str, " exact=" UINT64_FORMAT, si->exact_pages);
-        if (si->lossy_pages > 0)
-          appendStringInfo(es->str, " lossy=" UINT64_FORMAT, si->lossy_pages);
-        appendStringInfoChar(es->str, '\n');
-      } else {
-        ExplainPropertyUInteger("Exact Heap Blocks", NULL, si->exact_pages, es);
-        ExplainPropertyUInteger("Lossy Heap Blocks", NULL, si->lossy_pages, es);
-      }
-
-      if (es->workers_state)
-        ExplainCloseWorker(n, es);
     }
   }
 }
@@ -4150,140 +3752,4 @@ static void ExplainCustomChildren(CustomScanState *css, List *ancestors,
 
   foreach (cell, css->custom_ps)
     ExplainNode((PlanState *)lfirst(cell), ancestors, label, NULL, es);
-}
-
-/*
- * Create a per-plan-node workspace for collecting per-worker data.
- *
- * Output related to each worker will be temporarily "set aside" into a
- * separate buffer, which we'll merge into the main output stream once
- * we've processed all data for the plan node.  This makes it feasible to
- * generate a coherent sub-group of fields for each worker, even though the
- * code that produces the fields is in several different places in this file.
- * Formatting of such a set-aside field group is managed by
- * ExplainOpenSetAsideGroup and ExplainSaveGroup/ExplainRestoreGroup.
- */
-static ExplainWorkersState *ExplainCreateWorkersState(int num_workers) {
-  ExplainWorkersState *wstate;
-
-  wstate = (ExplainWorkersState *)palloc(sizeof(ExplainWorkersState));
-  wstate->num_workers = num_workers;
-  wstate->worker_inited = (bool *)palloc0(num_workers * sizeof(bool));
-  wstate->worker_str =
-      (StringInfoData *)palloc0(num_workers * sizeof(StringInfoData));
-  wstate->worker_state_save = (int *)palloc(num_workers * sizeof(int));
-  return wstate;
-}
-
-/*
- * Begin or resume output into the set-aside group for worker N.
- */
-static void ExplainOpenWorker(int n, ExplainState *es) {
-  ExplainWorkersState *wstate = es->workers_state;
-
-  Assert(wstate);
-  Assert(n >= 0 && n < wstate->num_workers);
-
-  /* Save prior output buffer pointer */
-  wstate->prev_str = es->str;
-
-  if (!wstate->worker_inited[n]) {
-    /* First time through, so create the buffer for this worker */
-    initStringInfo(&wstate->worker_str[n]);
-    es->str = &wstate->worker_str[n];
-
-    /*
-     * Push suitable initial formatting state for this worker's field
-     * group.  We allow one extra logical nesting level, since this group
-     * will eventually be wrapped in an outer "Workers" group.
-     */
-    ExplainOpenSetAsideGroup("Worker", NULL, true, 2, es);
-
-    /*
-     * In non-TEXT formats we always emit a "Worker Number" field, even if
-     * there's no other data for this worker.
-     */
-    if (es->format != EXPLAIN_FORMAT_TEXT)
-      ExplainPropertyInteger("Worker Number", NULL, n, es);
-
-    wstate->worker_inited[n] = true;
-  } else {
-    /* Resuming output for a worker we've already emitted some data for */
-    es->str = &wstate->worker_str[n];
-
-    /* Restore formatting state saved by last ExplainCloseWorker() */
-    ExplainRestoreGroup(es, 2, &wstate->worker_state_save[n]);
-  }
-
-  /*
-   * In TEXT format, prefix the first output line for this worker with
-   * "Worker N:".  Then, any additional lines should be indented one more
-   * stop than the "Worker N" line is.
-   */
-  if (es->format == EXPLAIN_FORMAT_TEXT) {
-    if (es->str->len == 0) {
-      ExplainIndentText(es);
-      appendStringInfo(es->str, "Worker %d:  ", n);
-    }
-
-    es->indent++;
-  }
-}
-
-/*
- * End output for worker N --- must pair with previous ExplainOpenWorker call
- */
-static void ExplainCloseWorker(int n, ExplainState *es) {
-  ExplainWorkersState *wstate = es->workers_state;
-
-  Assert(wstate);
-  Assert(n >= 0 && n < wstate->num_workers);
-  Assert(wstate->worker_inited[n]);
-
-  /*
-   * Save formatting state in case we do another ExplainOpenWorker(), then
-   * pop the formatting stack.
-   */
-  ExplainSaveGroup(es, 2, &wstate->worker_state_save[n]);
-
-  /*
-   * In TEXT format, if we didn't actually produce any output line(s) then
-   * truncate off the partial line emitted by ExplainOpenWorker.  (This is
-   * to avoid bogus output if, say, show_buffer_usage chooses not to print
-   * anything for the worker.)  Also fix up the indent level.
-   */
-  if (es->format == EXPLAIN_FORMAT_TEXT) {
-    while (es->str->len > 0 && es->str->data[es->str->len - 1] != '\n')
-      es->str->data[--(es->str->len)] = '\0';
-
-    es->indent--;
-  }
-
-  /* Restore prior output buffer pointer */
-  es->str = wstate->prev_str;
-}
-
-/*
- * Print per-worker info for current node, then free the ExplainWorkersState.
- */
-static void ExplainFlushWorkersState(ExplainState *es) {
-  ExplainWorkersState *wstate = es->workers_state;
-
-  ExplainOpenGroup("Workers", "Workers", false, es);
-  for (int i = 0; i < wstate->num_workers; i++) {
-    if (wstate->worker_inited[i]) {
-      /* This must match previous ExplainOpenSetAsideGroup call */
-      ExplainOpenGroup("Worker", NULL, true, es);
-      appendStringInfoString(es->str, wstate->worker_str[i].data);
-      ExplainCloseGroup("Worker", NULL, true, es);
-
-      pfree(wstate->worker_str[i].data);
-    }
-  }
-  ExplainCloseGroup("Workers", "Workers", false, es);
-
-  pfree(wstate->worker_inited);
-  pfree(wstate->worker_str);
-  pfree(wstate->worker_state_save);
-  pfree(wstate);
 }

@@ -50,47 +50,20 @@
 
 static void BitmapTableScanSetup(BitmapHeapScanState *node);
 static TupleTableSlot *BitmapHeapNext(BitmapHeapScanState *node);
-static inline void
-BitmapDoneInitializingSharedState(ParallelBitmapHeapState *pstate);
-static bool BitmapShouldInitializeSharedState(ParallelBitmapHeapState *pstate);
 
 /*
- * Do the underlying index scan, build the bitmap, set up the parallel state
- * needed for parallel workers to iterate through the bitmap, and set up the
- * underlying table scan descriptor.
+ * Do the underlying index scan, build the bitmap, and set up the underlying
+ * table scan descriptor.
  */
 static void BitmapTableScanSetup(BitmapHeapScanState *node) {
   TBMIterator tbmiterator = {0};
-  ParallelBitmapHeapState *pstate = node->pstate;
-  dsa_area *dsa = node->ss.ps.state->es_query_dsa;
 
-  if (!pstate) {
-    node->tbm = (TIDBitmap *)MultiExecProcNode(outerPlanState(node));
+  node->tbm = (TIDBitmap *)MultiExecProcNode(outerPlanState(node));
 
-    if (!node->tbm || !IsA(node->tbm, TIDBitmap))
-      elog(ERROR, "unrecognized result from subplan");
-  } else if (BitmapShouldInitializeSharedState(pstate)) {
-    /*
-     * The leader will immediately come out of the function, but others
-     * will be blocked until leader populates the TBM and wakes them up.
-     */
-    node->tbm = (TIDBitmap *)MultiExecProcNode(outerPlanState(node));
-    if (!node->tbm || !IsA(node->tbm, TIDBitmap))
-      elog(ERROR, "unrecognized result from subplan");
+  if (!node->tbm || !IsA(node->tbm, TIDBitmap))
+    elog(ERROR, "unrecognized result from subplan");
 
-    /*
-     * Prepare to iterate over the TBM. This will return the dsa_pointer
-     * of the iterator state which will be used by multiple processes to
-     * iterate jointly.
-     */
-    pstate->tbmiterator = tbm_prepare_shared_iterate(node->tbm);
-
-    /* We have initialized the shared state so wake up others. */
-    BitmapDoneInitializingSharedState(pstate);
-  }
-
-  tbmiterator = tbm_begin_iterate(
-      node->tbm, dsa, pstate ? pstate->tbmiterator : InvalidDsaPointer);
+  tbmiterator = tbm_begin_iterate(node->tbm);
 
   /*
    * If this is the first scan of the underlying table, create the table
@@ -153,20 +126,6 @@ static TupleTableSlot *BitmapHeapNext(BitmapHeapScanState *node) {
    * if we get here it means we are at the end of the scan..
    */
   return ExecClearTuple(slot);
-}
-
-/*
- *	BitmapDoneInitializingSharedState - Shared state is initialized
- *
- *	By this time the leader has already populated the TBM and initialized
- *the shared state so wake up other processes.
- */
-static inline void
-BitmapDoneInitializingSharedState(ParallelBitmapHeapState *pstate) {
-  SpinLockAcquire(&pstate->mutex);
-  pstate->state = BM_FINISHED;
-  SpinLockRelease(&pstate->mutex);
-  ConditionVariableBroadcast(&pstate->cv);
 }
 
 /*
@@ -242,28 +201,6 @@ void ExecEndBitmapHeapScan(BitmapHeapScanState *node) {
   TableScanDesc scanDesc;
 
   /*
-   * When ending a parallel worker, copy the statistics gathered by the
-   * worker back into shared memory so that it can be picked up by the main
-   * process to report in EXPLAIN ANALYZE.
-   */
-  if (node->sinstrument != NULL && IsParallelWorker()) {
-    BitmapHeapScanInstrumentation *si;
-
-    Assert(ParallelWorkerNumber < node->sinstrument->num_workers);
-    si = &node->sinstrument->sinstrument[ParallelWorkerNumber];
-
-    /*
-     * Here we accumulate the stats rather than performing memcpy on
-     * node->stats into si.  When a Gather/GatherMerge node finishes it
-     * will perform planner shutdown on the workers.  On rescan it will
-     * spin up new workers which will have a new BitmapHeapScanState and
-     * zeroed stats.
-     */
-    si->exact_pages += node->stats.exact_pages;
-    si->lossy_pages += node->stats.lossy_pages;
-  }
-
-  /*
    * extract information from the node
    */
   scanDesc = node->ss.ss_currentScanDesc;
@@ -328,7 +265,6 @@ BitmapHeapScanState *ExecInitBitmapHeapScan(BitmapHeapScan *node,
   memset(&scanstate->stats, 0, sizeof(BitmapHeapScanInstrumentation));
 
   scanstate->initialized = false;
-  scanstate->pstate = NULL;
   scanstate->recheck = true;
 
   /*
@@ -375,178 +311,4 @@ BitmapHeapScanState *ExecInitBitmapHeapScan(BitmapHeapScan *node,
    * all done.
    */
   return scanstate;
-}
-
-/*----------------
- *		BitmapShouldInitializeSharedState
- *
- *		The first process to come here and see the state to the
- *BM_INITIAL will become the leader for the parallel bitmap scan and will be
- *		responsible for populating the TIDBitmap.  The other processes
- *will be blocked by the condition variable until the leader wakes them up.
- * ---------------
- */
-static bool BitmapShouldInitializeSharedState(ParallelBitmapHeapState *pstate) {
-  SharedBitmapState state;
-
-  while (1) {
-    SpinLockAcquire(&pstate->mutex);
-    state = pstate->state;
-    if (pstate->state == BM_INITIAL)
-      pstate->state = BM_INPROGRESS;
-    SpinLockRelease(&pstate->mutex);
-
-    /* Exit if bitmap is done, or if we're the leader. */
-    if (state != BM_INPROGRESS)
-      break;
-
-    /* Wait for the leader to wake us up. */
-    ConditionVariableSleep(&pstate->cv, WAIT_EVENT_PARALLEL_BITMAP_SCAN);
-  }
-
-  ConditionVariableCancelSleep();
-
-  return (state == BM_INITIAL);
-}
-
-/* ----------------------------------------------------------------
- *		ExecBitmapHeapEstimate
- *
- *		Compute the amount of space we'll need in the parallel
- *		query DSM, and inform pcxt->estimator about our needs.
- * ----------------------------------------------------------------
- */
-void ExecBitmapHeapEstimate(BitmapHeapScanState *node, ParallelContext *pcxt) {
-  Size size;
-
-  size = MAXALIGN(sizeof(ParallelBitmapHeapState));
-
-  /* account for instrumentation, if required */
-  if (node->ss.ps.instrument && pcxt->nworkers > 0) {
-    size =
-        add_size(size, offsetof(SharedBitmapHeapInstrumentation, sinstrument));
-    size = add_size(
-        size, mul_size(pcxt->nworkers, sizeof(BitmapHeapScanInstrumentation)));
-  }
-
-  shm_toc_estimate_chunk(&pcxt->estimator, size);
-  shm_toc_estimate_keys(&pcxt->estimator, 1);
-}
-
-/* ----------------------------------------------------------------
- *		ExecBitmapHeapInitializeDSM
- *
- *		Set up a parallel bitmap heap scan descriptor.
- * ----------------------------------------------------------------
- */
-void ExecBitmapHeapInitializeDSM(BitmapHeapScanState *node,
-                                 ParallelContext *pcxt) {
-  ParallelBitmapHeapState *pstate;
-  SharedBitmapHeapInstrumentation *sinstrument = NULL;
-  dsa_area *dsa = node->ss.ps.state->es_query_dsa;
-  char *ptr;
-  Size size;
-
-  /* If there's no DSA, there are no workers; initialize nothing. */
-  if (dsa == NULL)
-    return;
-
-  size = MAXALIGN(sizeof(ParallelBitmapHeapState));
-  if (node->ss.ps.instrument && pcxt->nworkers > 0) {
-    size =
-        add_size(size, offsetof(SharedBitmapHeapInstrumentation, sinstrument));
-    size = add_size(
-        size, mul_size(pcxt->nworkers, sizeof(BitmapHeapScanInstrumentation)));
-  }
-
-  ptr = (char *)shm_toc_allocate(pcxt->toc, size);
-  pstate = (ParallelBitmapHeapState *)ptr;
-  ptr += MAXALIGN(sizeof(ParallelBitmapHeapState));
-  if (node->ss.ps.instrument && pcxt->nworkers > 0)
-    sinstrument = (SharedBitmapHeapInstrumentation *)ptr;
-
-  pstate->tbmiterator = 0;
-
-  /* Initialize the mutex */
-  SpinLockInit(&pstate->mutex);
-  pstate->state = BM_INITIAL;
-
-  ConditionVariableInit(&pstate->cv);
-
-  if (sinstrument) {
-    sinstrument->num_workers = pcxt->nworkers;
-
-    /* ensure any unfilled slots will contain zeroes */
-    memset(sinstrument->sinstrument, 0,
-           pcxt->nworkers * sizeof(BitmapHeapScanInstrumentation));
-  }
-
-  shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, pstate);
-  node->pstate = pstate;
-  node->sinstrument = sinstrument;
-}
-
-/* ----------------------------------------------------------------
- *		ExecBitmapHeapReInitializeDSM
- *
- *		Reset shared state before beginning a fresh scan.
- * ----------------------------------------------------------------
- */
-void ExecBitmapHeapReInitializeDSM(BitmapHeapScanState *node,
-                                   ParallelContext *pcxt) {
-  ParallelBitmapHeapState *pstate = node->pstate;
-  dsa_area *dsa = node->ss.ps.state->es_query_dsa;
-
-  /* If there's no DSA, there are no workers; do nothing. */
-  if (dsa == NULL)
-    return;
-
-  pstate->state = BM_INITIAL;
-
-  if (DsaPointerIsValid(pstate->tbmiterator))
-    tbm_free_shared_area(dsa, pstate->tbmiterator);
-
-  pstate->tbmiterator = InvalidDsaPointer;
-}
-
-/* ----------------------------------------------------------------
- *		ExecBitmapHeapInitializeWorker
- *
- *		Copy relevant information from TOC into planstate.
- * ----------------------------------------------------------------
- */
-void ExecBitmapHeapInitializeWorker(BitmapHeapScanState *node,
-                                    ParallelWorkerContext *pwcxt) {
-  char *ptr;
-
-  Assert(node->ss.ps.state->es_query_dsa != NULL);
-
-  ptr =
-      (char *)shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
-
-  node->pstate = (ParallelBitmapHeapState *)ptr;
-  ptr += MAXALIGN(sizeof(ParallelBitmapHeapState));
-
-  if (node->ss.ps.instrument)
-    node->sinstrument = (SharedBitmapHeapInstrumentation *)ptr;
-}
-
-/* ----------------------------------------------------------------
- *		ExecBitmapHeapRetrieveInstrumentation
- *
- *		Transfer bitmap heap scan statistics from DSM to private memory.
- * ----------------------------------------------------------------
- */
-void ExecBitmapHeapRetrieveInstrumentation(BitmapHeapScanState *node) {
-  SharedBitmapHeapInstrumentation *sinstrument = node->sinstrument;
-  Size size;
-
-  if (sinstrument == NULL)
-    return;
-
-  size = offsetof(SharedBitmapHeapInstrumentation, sinstrument) +
-         sinstrument->num_workers * sizeof(BitmapHeapScanInstrumentation);
-
-  node->sinstrument = (SharedBitmapHeapInstrumentation *)palloc(size);
-  memcpy(node->sinstrument, sinstrument, size);
 }

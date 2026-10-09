@@ -40,7 +40,7 @@
                 decode) \
 	{ name, redo, desc, identify, startup, cleanup, mask, decode },
 
-RmgrData RmgrTable[RM_MAX_ID + 1] = {
+PG_SHARED RmgrData RmgrTable[RM_MAX_ID + 1] = {
 #include "access/rmgrlist.h"
 };
 

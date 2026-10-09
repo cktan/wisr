@@ -43,7 +43,7 @@ static void build_hash_table(RecursiveUnionState *rustate) {
       node->numCols, node->dupColIdx, rustate->eqfuncoids,
       rustate->hashfunctions, node->dupCollations, node->numGroups, 0,
       rustate->ps.state->es_query_cxt, rustate->tableContext,
-      rustate->tempContext, false);
+      rustate->tempContext);
 }
 
 /* ----------------------------------------------------------------

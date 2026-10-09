@@ -56,11 +56,6 @@
  *when not found ExecInitMemoize		- initialize node and subnodes
  *		ExecEndMemoize		- shutdown node and subnodes
  *		ExecReScanMemoize	- rescan the memoize node
- *
- *		ExecMemoizeEstimate		estimates DSM space needed for
- *parallel plan ExecMemoizeInitializeDSM initialize DSM for parallel plan
- *		ExecMemoizeInitializeWorker attach to DSM info in parallel
- *worker ExecMemoizeRetrieveInstrumentation get instrumentation from worker
  *-------------------------------------------------------------------------
  */
 
@@ -1024,23 +1019,6 @@ void ExecEndMemoize(MemoizeState *node) {
   }
 #endif
 
-  /*
-   * When ending a parallel worker, copy the statistics gathered by the
-   * worker back into shared memory so that it can be picked up by the main
-   * process to report in EXPLAIN ANALYZE.
-   */
-  if (node->shared_info != NULL && IsParallelWorker()) {
-    MemoizeInstrumentation *si;
-
-    /* Make mem_peak available for EXPLAIN */
-    if (node->stats.mem_peak == 0)
-      node->stats.mem_peak = node->mem_used;
-
-    Assert(ParallelWorkerNumber < node->shared_info->num_workers);
-    si = &node->shared_info->sinstrument[ParallelWorkerNumber];
-    memcpy(si, &node->stats, sizeof(MemoizeInstrumentation));
-  }
-
   /* Remove the cache context */
   MemoryContextDelete(node->tableContext);
 
@@ -1089,76 +1067,3 @@ double ExecEstimateCacheEntryOverheadBytes(double ntuples) {
  *						Parallel Query Support
  * ----------------------------------------------------------------
  */
-
-/* ----------------------------------------------------------------
- *		ExecMemoizeEstimate
- *
- *		Estimate space required to propagate memoize statistics.
- * ----------------------------------------------------------------
- */
-void ExecMemoizeEstimate(MemoizeState *node, ParallelContext *pcxt) {
-  Size size;
-
-  /* don't need this if not instrumenting or no workers */
-  if (!node->ss.ps.instrument || pcxt->nworkers == 0)
-    return;
-
-  size = mul_size(pcxt->nworkers, sizeof(MemoizeInstrumentation));
-  size = add_size(size, offsetof(SharedMemoizeInfo, sinstrument));
-  shm_toc_estimate_chunk(&pcxt->estimator, size);
-  shm_toc_estimate_keys(&pcxt->estimator, 1);
-}
-
-/* ----------------------------------------------------------------
- *		ExecMemoizeInitializeDSM
- *
- *		Initialize DSM space for memoize statistics.
- * ----------------------------------------------------------------
- */
-void ExecMemoizeInitializeDSM(MemoizeState *node, ParallelContext *pcxt) {
-  Size size;
-
-  /* don't need this if not instrumenting or no workers */
-  if (!node->ss.ps.instrument || pcxt->nworkers == 0)
-    return;
-
-  size = offsetof(SharedMemoizeInfo, sinstrument) +
-         pcxt->nworkers * sizeof(MemoizeInstrumentation);
-  node->shared_info = (SharedMemoizeInfo *)shm_toc_allocate(pcxt->toc, size);
-  /* ensure any unfilled slots will contain zeroes */
-  memset(node->shared_info, 0, size);
-  node->shared_info->num_workers = pcxt->nworkers;
-  shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, node->shared_info);
-}
-
-/* ----------------------------------------------------------------
- *		ExecMemoizeInitializeWorker
- *
- *		Attach worker to DSM space for memoize statistics.
- * ----------------------------------------------------------------
- */
-void ExecMemoizeInitializeWorker(MemoizeState *node,
-                                 ParallelWorkerContext *pwcxt) {
-  node->shared_info = (SharedMemoizeInfo *)shm_toc_lookup(
-      pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
-}
-
-/* ----------------------------------------------------------------
- *		ExecMemoizeRetrieveInstrumentation
- *
- *		Transfer memoize statistics from DSM to private memory.
- * ----------------------------------------------------------------
- */
-void ExecMemoizeRetrieveInstrumentation(MemoizeState *node) {
-  Size size;
-  SharedMemoizeInfo *si;
-
-  if (node->shared_info == NULL)
-    return;
-
-  size = offsetof(SharedMemoizeInfo, sinstrument) +
-         node->shared_info->num_workers * sizeof(MemoizeInstrumentation);
-  si = (SharedMemoizeInfo *)palloc(size);
-  memcpy(si, node->shared_info, size);
-  node->shared_info = si;
-}

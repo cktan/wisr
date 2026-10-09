@@ -73,9 +73,6 @@ typedef struct PlannedStmt
 	/* is plan specific to current role? */
 	bool		dependsOnRole;
 
-	/* parallel mode required to execute? */
-	bool		parallelModeNeeded;
-
 	/* tree of Plan nodes */
 	struct Plan *planTree;
 
@@ -175,14 +172,6 @@ typedef struct Plan
 	Cardinality plan_rows;
 	/* average row width in bytes */
 	int			plan_width;
-
-	/*
-	 * information needed for parallel query
-	 */
-	/* engage parallel-aware logic? */
-	bool		parallel_aware;
-	/* OK to use as part of parallel plan? */
-	bool		parallel_safe;
 
 	/*
 	 * information needed for asynchronous execution
@@ -345,12 +334,6 @@ typedef struct Append
 	int			nasyncplans;
 
 	/*
-	 * All 'appendplans' preceding this index are non-partial plans. All
-	 * 'appendplans' from this index onwards are partial plans.
-	 */
-	int			first_partial_plan;
-
-	/*
 	 * Index into PlannedStmt.partPruneInfos and parallel lists in EState:
 	 * es_part_prune_states and es_part_prune_results. Set to -1 if no
 	 * run-time pruning is used.
@@ -453,7 +436,6 @@ typedef struct BitmapAnd
 typedef struct BitmapOr
 {
 	Plan		plan;
-	bool		isshared;
 	List	   *bitmapplans;
 } BitmapOr;
 
@@ -619,8 +601,6 @@ typedef struct BitmapIndexScan
 	Scan		scan;
 	/* OID of index to scan */
 	Oid			indexid;
-	/* Create shared bitmap if set */
-	bool		isshared;
 	/* list of index quals (OpExprs) */
 	List	   *indexqual;
 	/* the same in original form */
@@ -1261,74 +1241,6 @@ typedef struct Unique
 	Oid		   *uniqCollations pg_node_attr(array_size(numCols));
 } Unique;
 
-/* ------------
- *		gather node
- *
- * Note: rescan_param is the ID of a PARAM_EXEC parameter slot.  That slot
- * will never actually contain a value, but the Gather node must flag it as
- * having changed whenever it is rescanned.  The child parallel-aware scan
- * nodes are marked as depending on that parameter, so that the rescan
- * machinery is aware that their output is likely to change across rescans.
- * In some cases we don't need a rescan Param, so rescan_param is set to -1.
- * ------------
- */
-typedef struct Gather
-{
-	Plan		plan;
-	/* planned number of worker processes */
-	int			num_workers;
-	/* ID of Param that signals a rescan, or -1 */
-	int			rescan_param;
-	/* don't execute plan more than once */
-	bool		single_copy;
-	/* suppress EXPLAIN display (for testing)? */
-	bool		invisible;
-
-	/*
-	 * param id's of initplans which are referred at gather or one of its
-	 * child nodes
-	 */
-	Bitmapset  *initParam;
-} Gather;
-
-/* ------------
- *		gather merge node
- * ------------
- */
-typedef struct GatherMerge
-{
-	Plan		plan;
-
-	/* planned number of worker processes */
-	int			num_workers;
-
-	/* ID of Param that signals a rescan, or -1 */
-	int			rescan_param;
-
-	/* remaining fields are just like the sort-key info in struct Sort */
-
-	/* number of sort-key columns */
-	int			numCols;
-
-	/* their indexes in the target list */
-	AttrNumber *sortColIdx pg_node_attr(array_size(numCols));
-
-	/* OIDs of operators to sort them by */
-	Oid		   *sortOperators pg_node_attr(array_size(numCols));
-
-	/* OIDs of collations */
-	Oid		   *collations pg_node_attr(array_size(numCols));
-
-	/* NULLS FIRST/LAST directions */
-	bool	   *nullsFirst pg_node_attr(array_size(numCols));
-
-	/*
-	 * param id's of initplans which are referred at gather merge or one of
-	 * its child nodes
-	 */
-	Bitmapset  *initParam;
-} GatherMerge;
-
 /* ----------------
  *		hash build node
  *
@@ -1354,8 +1266,6 @@ typedef struct Hash
 	/* is outer join rel an inheritance tree? */
 	bool		skewInherit;
 	/* all other info is in the parent HashJoin node */
-	/* estimate total rows if parallel_aware */
-	Cardinality rows_total;
 } Hash;
 
 /* ----------------

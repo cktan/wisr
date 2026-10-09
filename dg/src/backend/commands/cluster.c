@@ -45,6 +45,7 @@
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "storage/procarray.h"
 #include "utils/acl.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
@@ -766,7 +767,6 @@ static void copy_table_data(Relation NewHeap, Relation OldHeap,
   Form_pg_class relform;
   TupleDesc oldTupDesc PG_USED_FOR_ASSERTS_ONLY;
   TupleDesc newTupDesc PG_USED_FOR_ASSERTS_ONLY;
-  VacuumParams params;
   struct VacuumCutoffs cutoffs;
   bool use_sort;
   double num_tuples = 0, tups_vacuumed = 0, tups_recently_dead = 0;
@@ -839,10 +839,15 @@ static void copy_table_data(Relation NewHeap, Relation OldHeap,
   /*
    * Compute xids used to freeze and weed out dead tuples and multixacts.
    * Since we're going to rewrite the whole table anyway, there's no reason
-   * not to be aggressive about this.
+   * not to be aggressive about this: freeze whatever no running transaction
+   * can still see.
    */
-  memset(&params, 0, sizeof(VacuumParams));
-  vacuum_get_cutoffs(OldHeap, &params, &cutoffs);
+  cutoffs.relfrozenxid = OldHeap->rd_rel->relfrozenxid;
+  cutoffs.relminmxid = OldHeap->rd_rel->relminmxid;
+  cutoffs.OldestXmin = GetOldestNonRemovableTransactionId(OldHeap);
+  cutoffs.OldestMxact = GetOldestMultiXactId();
+  cutoffs.FreezeLimit = cutoffs.OldestXmin;
+  cutoffs.MultiXactCutoff = cutoffs.OldestMxact;
 
   /*
    * FreezeXid will become the table's new relfrozenxid, and that mustn't go

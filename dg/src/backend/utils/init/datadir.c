@@ -39,12 +39,12 @@
 #include "utils/memutils.h"
 
 /* The superuser's name, and its SCRAM secret or NULL. */
-static char *superuser_name = NULL;
-static char *superuser_secret = NULL;
+static PG_SHARED char *superuser_name = NULL;
+static PG_SHARED char *superuser_secret = NULL;
 
 /* The databases' names, in the order sm listed them. */
-static char **database_names = NULL;
-static int database_count = 0;
+static PG_SHARED char **database_names = NULL;
+static PG_SHARED int database_count = 0;
 
 /* Read the superuser file of the data directory, which is the current one. */
 static void load_superuser(void) {

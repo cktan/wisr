@@ -66,27 +66,27 @@
  * GUC parameters.  Logging_collector cannot be changed after postmaster
  * start, but the rest can change at SIGHUP.
  */
-bool Logging_collector = false;
-int Log_RotationAge = HOURS_PER_DAY * MINS_PER_HOUR;
-int Log_RotationSize = 10 * 1024;
-char *Log_directory = NULL;
-char *Log_filename = NULL;
-bool Log_truncate_on_rotation = false;
-int Log_file_mode = S_IRUSR | S_IWUSR;
+thread_local bool Logging_collector = false;
+thread_local int Log_RotationAge = HOURS_PER_DAY * MINS_PER_HOUR;
+thread_local int Log_RotationSize = 10 * 1024;
+thread_local char *Log_directory = NULL;
+thread_local char *Log_filename = NULL;
+thread_local bool Log_truncate_on_rotation = false;
+thread_local int Log_file_mode = S_IRUSR | S_IWUSR;
 
 /*
  * Private state
  */
-static pg_time_t next_rotation_time;
-static bool pipe_eof_seen = false;
-static bool rotation_disabled = false;
-static FILE *syslogFile = NULL;
-static FILE *csvlogFile = NULL;
-static FILE *jsonlogFile = NULL;
-NON_EXEC_STATIC pg_time_t first_syslogger_file_time = 0;
-static char *last_sys_file_name = NULL;
-static char *last_csv_file_name = NULL;
-static char *last_json_file_name = NULL;
+static thread_local pg_time_t next_rotation_time;
+static thread_local bool pipe_eof_seen = false;
+static thread_local bool rotation_disabled = false;
+static thread_local FILE *syslogFile = NULL;
+static thread_local FILE *csvlogFile = NULL;
+static thread_local FILE *jsonlogFile = NULL;
+PG_SHARED NON_EXEC_STATIC pg_time_t first_syslogger_file_time = 0;
+static thread_local char *last_sys_file_name = NULL;
+static thread_local char *last_csv_file_name = NULL;
+static thread_local char *last_json_file_name = NULL;
 
 /*
  * Buffers for saving partial messages from different backends.
@@ -105,11 +105,11 @@ typedef struct {
 } save_buffer;
 
 #define NBUFFER_LISTS 256
-static List *buffer_lists[NBUFFER_LISTS];
+static thread_local List *buffer_lists[NBUFFER_LISTS];
 
 /* These must be exported for EXEC_BACKEND case ... annoying */
 #ifndef WIN32
-int syslogPipe[2] = {-1, -1};
+PG_SHARED int syslogPipe[2] = {-1, -1};
 #else
 HANDLE syslogPipe[2] = {0, 0};
 #endif
@@ -122,7 +122,7 @@ static CRITICAL_SECTION sysloggerSection;
 /*
  * Flags set by interrupt handlers for later service in the main loop.
  */
-static volatile sig_atomic_t rotation_requested = false;
+static thread_local volatile sig_atomic_t rotation_requested = false;
 
 /* Local subroutines */
 #ifdef EXEC_BACKEND

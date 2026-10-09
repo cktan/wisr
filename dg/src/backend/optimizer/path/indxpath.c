@@ -313,12 +313,8 @@ void create_index_paths(PlannerInfo *root, RelOptInfo *rel) {
 
     bitmapqual = choose_bitmap_and(root, rel, bitindexpaths);
     bpath = create_bitmap_heap_path(root, rel, bitmapqual, rel->lateral_relids,
-                                    1.0, 0);
+                                    1.0);
     add_path(rel, (Path *)bpath);
-
-    /* create a partial bitmap heap path */
-    if (rel->consider_parallel && rel->lateral_relids == NULL)
-      create_partial_bitmap_paths(root, rel, bitmapqual);
   }
 
   /*
@@ -375,7 +371,7 @@ void create_index_paths(PlannerInfo *root, RelOptInfo *rel) {
       required_outer = PATH_REQ_OUTER(bitmapqual);
       loop_count = get_loop_count(root, rel->relid, required_outer);
       bpath = create_bitmap_heap_path(root, rel, bitmapqual, required_outer,
-                                      loop_count, 0);
+                                      loop_count);
       add_path(rel, (Path *)bpath);
     }
   }
@@ -871,29 +867,8 @@ static List *build_index_paths(PlannerInfo *root, RelOptInfo *rel,
     ipath = create_index_path(root, index, index_clauses, orderbyclauses,
                               orderbyclausecols, useful_pathkeys,
                               ForwardScanDirection, index_only_scan,
-                              outer_relids, loop_count, false);
+                              outer_relids, loop_count);
     result = lappend(result, ipath);
-
-    /*
-     * If appropriate, consider parallel index scan.  We don't allow
-     * parallel index scan for bitmap index scans.
-     */
-    if (index->amcanparallel && rel->consider_parallel &&
-        outer_relids == NULL && scantype != ST_BITMAPSCAN) {
-      ipath = create_index_path(root, index, index_clauses, orderbyclauses,
-                                orderbyclausecols, useful_pathkeys,
-                                ForwardScanDirection, index_only_scan,
-                                outer_relids, loop_count, true);
-
-      /*
-       * if, after costing the path, we find that it's not worth using
-       * parallel workers, just free it.
-       */
-      if (ipath->path.parallel_workers > 0)
-        add_partial_path(rel, (Path *)ipath);
-      else
-        pfree(ipath);
-    }
   }
 
   /*
@@ -903,29 +878,10 @@ static List *build_index_paths(PlannerInfo *root, RelOptInfo *rel,
     index_pathkeys = build_index_pathkeys(root, index, BackwardScanDirection);
     useful_pathkeys = truncate_useless_pathkeys(root, rel, index_pathkeys);
     if (useful_pathkeys != NIL) {
-      ipath =
-          create_index_path(root, index, index_clauses, NIL, NIL,
-                            useful_pathkeys, BackwardScanDirection,
-                            index_only_scan, outer_relids, loop_count, false);
+      ipath = create_index_path(root, index, index_clauses, NIL, NIL,
+                                useful_pathkeys, BackwardScanDirection,
+                                index_only_scan, outer_relids, loop_count);
       result = lappend(result, ipath);
-
-      /* If appropriate, consider parallel index scan */
-      if (index->amcanparallel && rel->consider_parallel &&
-          outer_relids == NULL && scantype != ST_BITMAPSCAN) {
-        ipath =
-            create_index_path(root, index, index_clauses, NIL, NIL,
-                              useful_pathkeys, BackwardScanDirection,
-                              index_only_scan, outer_relids, loop_count, true);
-
-        /*
-         * if, after costing the path, we find that it's not worth
-         * using parallel workers, just free it.
-         */
-        if (ipath->path.parallel_workers > 0)
-          add_partial_path(rel, (Path *)ipath);
-        else
-          pfree(ipath);
-      }
     }
   }
 
@@ -1812,7 +1768,6 @@ static Cost bitmap_scan_cost_est(PlannerInfo *root, RelOptInfo *rel,
    * Check the cost of temporary path without considering parallelism.
    * Parallel bitmap heap path will be considered at later stage.
    */
-  bpath.path.parallel_workers = 0;
 
   /* Now we can do cost_bitmap_heap_scan */
   cost_bitmap_heap_scan(

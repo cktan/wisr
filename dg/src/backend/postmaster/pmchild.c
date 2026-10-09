@@ -8,8 +8,7 @@
  * child process is allocated a PMChild struct from a fixed pool of structs.
  * The size of the pool is determined by various settings that configure how
  * many worker processes and backend connections are allowed, i.e.
- * autovacuum_worker_slots, max_worker_processes, max_wal_senders, and
- * max_connections.
+ * max_worker_processes, max_wal_senders, and max_connections.
  *
  * Dead-end backends are handled slightly differently.  There is no limit
  * on the number of dead-end backends, and they do not need unique IDs, so
@@ -32,7 +31,6 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
-#include "postmaster/autovacuum.h"
 #include "postmaster/postmaster.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
@@ -40,7 +38,7 @@
 /*
  * Freelists for different kinds of child processes.  We maintain separate
  * pools for each, so that for example launching a lot of regular backends
- * cannot prevent autovacuum or an aux process from launching.
+ * cannot prevent an aux process from launching.
  */
 typedef struct PMChildPool {
   int size;            /* number of PMChild slots reserved for this
@@ -49,13 +47,13 @@ typedef struct PMChildPool {
   dlist_head freelist; /* currently unused PMChild entries */
 } PMChildPool;
 
-static PMChildPool pmchild_pools[BACKEND_NUM_TYPES];
-NON_EXEC_STATIC int num_pmchild_slots = 0;
+static PG_SHARED PMChildPool pmchild_pools[BACKEND_NUM_TYPES];
+PG_SHARED NON_EXEC_STATIC int num_pmchild_slots = 0;
 
 /*
  * List of active child processes.  This includes dead-end children.
  */
-dlist_head ActiveChildList;
+PG_SHARED dlist_head ActiveChildList;
 
 /*
  * MaxLivePostmasterChildren
@@ -93,7 +91,6 @@ void InitPostmasterChildSlots(void) {
    */
   pmchild_pools[B_BACKEND].size = 2 * MaxConnections;
 
-  pmchild_pools[B_AUTOVAC_WORKER].size = autovacuum_worker_slots;
   pmchild_pools[B_BG_WORKER].size = max_worker_processes;
   pmchild_pools[B_IO_WORKER].size = MAX_IO_WORKERS;
 
@@ -101,7 +98,6 @@ void InitPostmasterChildSlots(void) {
    * There can be only one of each of these running at a time.  They each
    * get their own pool of just one entry.
    */
-  pmchild_pools[B_AUTOVAC_LAUNCHER].size = 1;
   pmchild_pools[B_SLOTSYNC_WORKER].size = 1;
   pmchild_pools[B_ARCHIVER].size = 1;
   pmchild_pools[B_BG_WRITER].size = 1;

@@ -39,8 +39,8 @@
 #endif
 
 /* GUC. */
-extern PGDLLIMPORT int dynamic_shared_memory_type;
-extern PGDLLIMPORT int min_dynamic_shared_memory;
+extern thread_local PGDLLIMPORT int dynamic_shared_memory_type;
+extern thread_local PGDLLIMPORT int min_dynamic_shared_memory;
 
 /*
  * Directory for on-disk state.

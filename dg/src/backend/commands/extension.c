@@ -72,11 +72,11 @@
 #include "utils/varlena.h"
 
 /* GUC */
-char *Extension_control_path;
+thread_local char *Extension_control_path;
 
 /* Globally visible state variables */
-bool creating_extension = false;
-Oid CurrentExtensionObject = InvalidOid;
+thread_local bool creating_extension = false;
+thread_local Oid CurrentExtensionObject = InvalidOid;
 
 /*
  * Internal data structure to hold the results of parsing a control file
@@ -139,7 +139,7 @@ typedef struct ExtensionSiblingCache {
 } ExtensionSiblingCache;
 
 /* Head of linked list of ExtensionSiblingCache structs */
-static ExtensionSiblingCache *ext_sibling_list = NULL;
+static thread_local ExtensionSiblingCache *ext_sibling_list = NULL;
 
 /* Local functions */
 static void ext_sibling_callback(Datum arg, int cacheid, uint32 hashvalue);

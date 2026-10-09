@@ -36,6 +36,7 @@
 #include "miscadmin.h"
 #include "port/atomics.h"
 #include "storage/bufmgr.h"
+#include "storage/fd.h"
 #include "storage/shmem.h"
 #include "storage/smgr.h"
 #include "utils/fmgrprotos.h"
@@ -65,7 +66,7 @@
 /* #define XLOGPREFETCHER_DEBUG_LEVEL LOG */
 
 /* GUCs */
-int recovery_prefetch = RECOVERY_PREFETCH_TRY;
+thread_local int recovery_prefetch = RECOVERY_PREFETCH_TRY;
 
 #ifdef USE_PREFETCH
 #define RecoveryPrefetchEnabled() \
@@ -75,7 +76,7 @@ int recovery_prefetch = RECOVERY_PREFETCH_TRY;
 #define RecoveryPrefetchEnabled() false
 #endif
 
-static int XLogPrefetchReconfigureCount = 0;
+static thread_local int XLogPrefetchReconfigureCount = 0;
 
 /*
  * Enum used to report whether an IO should be started.
@@ -189,7 +190,7 @@ static inline void XLogPrefetcherCompleteFilters(XLogPrefetcher *prefetcher,
 static LsnReadQueueNextStatus XLogPrefetcherNextBlock(uintptr_t pgsr_private,
                                                       XLogRecPtr *lsn);
 
-static XLogPrefetchStats *SharedStats;
+static PG_SHARED XLogPrefetchStats *SharedStats;
 
 static inline LsnReadQueue *lrq_alloc(uint32 max_distance, uint32 max_inflight,
                                       uintptr_t lrq_private,

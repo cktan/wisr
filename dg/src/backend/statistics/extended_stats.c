@@ -31,7 +31,6 @@
 #include "optimizer/optimizer.h"
 #include "parser/parsetree.h"
 #include "pgstat.h"
-#include "postmaster/autovacuum.h"
 #include "statistics/extended_stats_internal.h"
 #include "statistics/statistics.h"
 #include "utils/acl.h"
@@ -153,20 +152,19 @@ void BuildRelationExtStatistics(Relation onerel, bool inh, double totalrows,
 
     /*
      * Check if we can build these stats based on the column analyzed. If
-     * not, report this fact (except in autovacuum) and move on.
+     * not, report this fact and move on.
      */
     stats =
         lookup_var_attr_stats(stat->columns, stat->exprs, natts, vacattrstats);
     if (!stats) {
-      if (!AmAutoVacuumWorkerProcess())
-        ereport(WARNING,
-                (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-                 errmsg("statistics object \"%s.%s\" could not be computed for "
-                        "relation \"%s.%s\"",
-                        stat->schema, stat->name,
-                        get_namespace_name(onerel->rd_rel->relnamespace),
-                        RelationGetRelationName(onerel)),
-                 errtable(onerel)));
+      ereport(WARNING,
+              (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+               errmsg("statistics object \"%s.%s\" could not be computed for "
+                      "relation \"%s.%s\"",
+                      stat->schema, stat->name,
+                      get_namespace_name(onerel->rd_rel->relnamespace),
+                      RelationGetRelationName(onerel)),
+               errtable(onerel)));
       continue;
     }
 

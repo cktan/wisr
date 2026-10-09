@@ -53,8 +53,8 @@ struct DynamicFileList {
   char filename[FLEXIBLE_ARRAY_MEMBER]; /* Full pathname of file */
 };
 
-static DynamicFileList *file_list = NULL;
-static DynamicFileList *file_tail = NULL;
+static PG_SHARED DynamicFileList *file_list = NULL;
+static PG_SHARED DynamicFileList *file_tail = NULL;
 
 /* stat() call under Win32 returns an st_ino field, but it has no meaning */
 #ifndef WIN32
@@ -63,7 +63,7 @@ static DynamicFileList *file_tail = NULL;
 #define SAME_INODE(A, B) false
 #endif
 
-char *Dynamic_library_path;
+thread_local char *Dynamic_library_path;
 
 static void *internal_load_library(const char *libname);
 pg_noreturn static void
@@ -594,7 +594,7 @@ char *find_in_path(const char *basename, const char *path,
  * on the variable name and the data it will point to.
  */
 void **find_rendezvous_variable(const char *varName) {
-  static HTAB *rendezvousHash = NULL;
+  static thread_local HTAB *rendezvousHash = NULL;
 
   rendezvousHashEntry *hentry;
   bool found;
@@ -618,47 +618,4 @@ void **find_rendezvous_variable(const char *varName) {
     hentry->varValue = NULL;
 
   return &hentry->varValue;
-}
-
-/*
- * Estimate the amount of space needed to serialize the list of libraries
- * we have loaded.
- */
-Size EstimateLibraryStateSpace(void) {
-  DynamicFileList *file_scanner;
-  Size size = 1;
-
-  for (file_scanner = file_list; file_scanner != NULL;
-       file_scanner = file_scanner->next)
-    size = add_size(size, strlen(file_scanner->filename) + 1);
-
-  return size;
-}
-
-/*
- * Serialize the list of libraries we have loaded to a chunk of memory.
- */
-void SerializeLibraryState(Size maxsize, char *start_address) {
-  DynamicFileList *file_scanner;
-
-  for (file_scanner = file_list; file_scanner != NULL;
-       file_scanner = file_scanner->next) {
-    Size len;
-
-    len = strlcpy(start_address, file_scanner->filename, maxsize) + 1;
-    Assert(len < maxsize);
-    maxsize -= len;
-    start_address += len;
-  }
-  start_address[0] = '\0';
-}
-
-/*
- * Load every library the serializing backend had loaded.
- */
-void RestoreLibraryState(char *start_address) {
-  while (*start_address != '\0') {
-    internal_load_library(start_address);
-    start_address += strlen(start_address) + 1;
-  }
 }

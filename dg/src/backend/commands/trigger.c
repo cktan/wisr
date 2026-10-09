@@ -60,10 +60,10 @@
 #include "utils/tuplestore.h"
 
 /* GUC variables */
-int SessionReplicationRole = SESSION_REPLICATION_ROLE_ORIGIN;
+thread_local int SessionReplicationRole = SESSION_REPLICATION_ROLE_ORIGIN;
 
 /* How many levels deep into trigger execution are we? */
-static int MyTriggerDepth = 0;
+static thread_local int MyTriggerDepth = 0;
 
 /* Local function prototypes */
 static void renametrig_internal(Relation tgrel, Relation targetrel,
@@ -3472,7 +3472,7 @@ struct AfterTriggersTableData {
   TupleTableSlot *storeslot; /* for converting to tuplestore's format */
 };
 
-static AfterTriggersData afterTriggers;
+static thread_local AfterTriggersData afterTriggers;
 
 static void AfterTriggerExecute(
     EState *estate, AfterTriggerEvent event, ResultRelInfo *relInfo,

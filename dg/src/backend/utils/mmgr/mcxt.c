@@ -143,25 +143,25 @@ static constexpr auto mcxt_methods = [] {
  * CurrentMemoryContext
  *		Default memory context for allocations.
  */
-MemoryContext CurrentMemoryContext = NULL;
+thread_local MemoryContext CurrentMemoryContext = NULL;
 
 /*
  * Standard top-level contexts. For a description of the purpose of each
  * of these contexts, refer to src/backend/utils/mmgr/README
  */
-MemoryContext TopMemoryContext = NULL;
-MemoryContext ErrorContext = NULL;
-MemoryContext PostmasterContext = NULL;
-MemoryContext CacheMemoryContext = NULL;
-MemoryContext MessageContext = NULL;
-MemoryContext TopTransactionContext = NULL;
-MemoryContext CurTransactionContext = NULL;
+thread_local MemoryContext TopMemoryContext = NULL;
+thread_local MemoryContext ErrorContext = NULL;
+thread_local MemoryContext PostmasterContext = NULL;
+thread_local MemoryContext CacheMemoryContext = NULL;
+thread_local MemoryContext MessageContext = NULL;
+thread_local MemoryContext TopTransactionContext = NULL;
+thread_local MemoryContext CurTransactionContext = NULL;
 
 /* This is a transient link to the active portal's memory context: */
-MemoryContext PortalContext = NULL;
+thread_local MemoryContext PortalContext = NULL;
 
 /* Is memory context logging currently in progress? */
-static bool LogMemoryContextInProgress = false;
+static thread_local bool LogMemoryContextInProgress = false;
 
 static void MemoryContextDeleteOnly(MemoryContext context);
 static void MemoryContextCallResetCallbacks(MemoryContext context);

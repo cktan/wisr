@@ -47,7 +47,6 @@ extern void StartupCLOG(void);
 extern void TrimCLOG(void);
 extern void CheckPointCLOG(void);
 extern void ExtendCLOG(TransactionId newestXact);
-extern void TruncateCLOG(TransactionId oldestXact, Oid oldestxid_datoid);
 
 extern int clogsyncfiletag(const FileTag *ftag, char *path);
 

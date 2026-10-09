@@ -29,7 +29,7 @@
 #include "utils/lsyscache.h"
 
 /* Consider reordering of GROUP BY keys? */
-bool enable_group_by_reordering = true;
+thread_local bool enable_group_by_reordering = true;
 
 static bool pathkey_is_redundant(PathKey *new_pathkey, List *pathkeys);
 static bool matches_boolean_partition_clause(RestrictInfo *rinfo,
@@ -536,28 +536,22 @@ bool pathkeys_count_contained_in(List *keys1, List *keys2, int *n_common) {
 /*
  * get_cheapest_path_for_pathkeys
  *	  Find the cheapest path (according to the specified criterion) that
- *	  satisfies the given pathkeys and parameterization, and is
- *parallel-safe if required. Return NULL if no such path.
+ *	  satisfies the given pathkeys and parameterization.  Return NULL if
+ *	  no such path.
  *
  * 'paths' is a list of possible paths that all generate the same relation
  * 'pathkeys' represents a required ordering (in canonical form!)
  * 'required_outer' denotes allowable outer relations for parameterized paths
  * 'cost_criterion' is STARTUP_COST or TOTAL_COST
- * 'require_parallel_safe' causes us to consider only parallel-safe paths
  */
 Path *get_cheapest_path_for_pathkeys(List *paths, List *pathkeys,
                                      Relids required_outer,
-                                     CostSelector cost_criterion,
-                                     bool require_parallel_safe) {
+                                     CostSelector cost_criterion) {
   Path *matched_path = NULL;
   ListCell *l;
 
   foreach (l, paths) {
     Path *path = (Path *)lfirst(l);
-
-    /* If required, reject paths that are not parallel-safe */
-    if (require_parallel_safe && !path->parallel_safe)
-      continue;
 
     /*
      * Since cost comparison is a lot cheaper than pathkey comparison, do
@@ -610,23 +604,6 @@ Path *get_cheapest_fractional_path_for_pathkeys(List *paths, List *pathkeys,
       matched_path = path;
   }
   return matched_path;
-}
-
-/*
- * get_cheapest_parallel_safe_total_inner
- *	  Find the unparameterized parallel-safe path with the least total cost.
- */
-Path *get_cheapest_parallel_safe_total_inner(List *paths) {
-  ListCell *l;
-
-  foreach (l, paths) {
-    Path *innerpath = (Path *)lfirst(l);
-
-    if (innerpath->parallel_safe && bms_is_empty(PATH_REQ_OUTER(innerpath)))
-      return innerpath;
-  }
-
-  return NULL;
 }
 
 /****************************************************************************

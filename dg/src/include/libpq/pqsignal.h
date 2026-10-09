@@ -44,9 +44,9 @@ extern int pqsigaction(int signum, const struct sigaction *act,
 #define sigdelset(set, signum)	(*(set) &= ~(sigmask(signum)))
 #endif /* WIN32 */
 
-extern PGDLLIMPORT sigset_t UnBlockSig;
-extern PGDLLIMPORT sigset_t BlockSig;
-extern PGDLLIMPORT sigset_t StartupBlockSig;
+extern PG_SHARED PGDLLIMPORT sigset_t UnBlockSig;
+extern PG_SHARED PGDLLIMPORT sigset_t BlockSig;
+extern PG_SHARED PGDLLIMPORT sigset_t StartupBlockSig;
 
 extern void pqinitmask(void);
 

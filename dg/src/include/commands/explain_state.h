@@ -30,14 +30,6 @@ typedef enum ExplainFormat {
   EXPLAIN_FORMAT_YAML,
 } ExplainFormat;
 
-typedef struct ExplainWorkersState {
-  int num_workers;            /* # of worker processes the plan used */
-  bool *worker_inited;        /* per-worker state-initialized flags */
-  StringInfoData *worker_str; /* per-worker transient output buffers */
-  int *worker_state_save;     /* per-worker grouping state save areas */
-  StringInfo prev_str;        /* saved output buffer while redirecting */
-} ExplainWorkersState;
-
 typedef struct ExplainState {
   StringInfo str; /* output buffer */
   /* options */
@@ -62,11 +54,9 @@ typedef struct ExplainState {
   List *rtable_names;          /* alias names for RTEs */
   List *deparse_cxt;           /* context list for deparsing expressions */
   Bitmapset *printed_subplans; /* ids of SubPlans we've printed */
-  bool hide_workers;           /* set if we find an invisible Gather */
   int rtable_size;             /* length of rtable excluding the RTE_GROUP
                                 * entry */
   /* state related to the current plan node */
-  ExplainWorkersState *workers_state; /* needed if parallel plan */
   /* extensions */
   void **extension_state;
   int extension_state_allocated;
@@ -78,7 +68,7 @@ typedef void (*ExplainOptionHandler)(ExplainState *, DefElem *, ParseState *);
 typedef void (*explain_validate_options_hook_type)(struct ExplainState *es,
                                                    List *options,
                                                    ParseState *pstate);
-extern PGDLLIMPORT explain_validate_options_hook_type
+extern PG_SHARED PGDLLIMPORT explain_validate_options_hook_type
     explain_validate_options_hook;
 
 extern ExplainState *NewExplainState(void);

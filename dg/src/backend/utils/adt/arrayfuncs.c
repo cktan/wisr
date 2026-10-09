@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 
 #include "catalog/pg_type.h"
@@ -39,7 +40,7 @@
 /*
  * GUC parameter
  */
-bool Array_nulls = true;
+thread_local bool Array_nulls = true;
 
 /*
  * Local definitions

@@ -96,7 +96,7 @@ static bool typesequiv(struct state const *sp, int a, int b);
  * Thanks to Paul Eggert for noting this.
  */
 
-static struct pg_tm tm;
+static thread_local struct pg_tm tm;
 
 /* Initialize *S to a value based on UTOFF, ISDST, and DESIGIDX.  */
 static void init_ttinfo(struct ttinfo *s, int32 utoff, bool isdst,
@@ -1182,7 +1182,7 @@ static struct pg_tm *gmtsub(pg_time_t const *timep, int32 offset,
   struct pg_tm *result;
 
   /* GMT timezone state data is kept here */
-  static struct state *gmtptr = NULL;
+  static thread_local struct state *gmtptr = NULL;
 
   if (gmtptr == NULL) {
     /* Allocate on first use */

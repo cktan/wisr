@@ -210,20 +210,6 @@ typedef void (*ammarkpos_function) (IndexScanDesc scan);
 typedef void (*amrestrpos_function) (IndexScanDesc scan);
 
 /*
- * Callback function signatures - for parallel index scans.
- */
-
-/* estimate size of parallel scan descriptor */
-typedef Size (*amestimateparallelscan_function) (Relation indexRelation,
-												 int nkeys, int norderbys);
-
-/* prepare for parallel index scan */
-typedef void (*aminitparallelscan_function) (void *target);
-
-/* (re)start parallel index scan */
-typedef void (*amparallelrescan_function) (IndexScanDesc scan);
-
-/*
  * API struct for an index AM.  Note this must be stored in a single palloc'd
  * chunk of memory.
  */
@@ -268,18 +254,12 @@ typedef struct IndexAmRoutine
 	bool		amclusterable;
 	/* does AM handle predicate locks? */
 	bool		ampredlocks;
-	/* does AM support parallel scan? */
-	bool		amcanparallel;
-	/* does AM support parallel build? */
-	bool		amcanbuildparallel;
 	/* does AM support columns included with clause INCLUDE? */
 	bool		amcaninclude;
 	/* does AM use maintenance_work_mem? */
 	bool		amusemaintenanceworkmem;
 	/* does AM store tuple information only at block granularity? */
 	bool		amsummarizing;
-	/* OR of parallel vacuum flags.  See vacuum.h for flags. */
-	uint8		amparallelvacuumoptions;
 	/* type of data stored in index, or InvalidOid if variable */
 	Oid			amkeytype;
 
@@ -312,10 +292,6 @@ typedef struct IndexAmRoutine
 	ammarkpos_function ammarkpos;	/* can be NULL */
 	amrestrpos_function amrestrpos; /* can be NULL */
 
-	/* interface functions to support parallel index scans */
-	amestimateparallelscan_function amestimateparallelscan; /* can be NULL */
-	aminitparallelscan_function aminitparallelscan; /* can be NULL */
-	amparallelrescan_function amparallelrescan; /* can be NULL */
 
 	/* interface functions to support planning */
 	amtranslate_strategy_function amtranslatestrategy;	/* can be NULL */

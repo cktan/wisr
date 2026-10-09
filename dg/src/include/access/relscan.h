@@ -23,8 +23,6 @@
 #include "storage/spin.h"
 #include "utils/relcache.h"
 
-struct ParallelTableScanDescData;
-
 /*
  * Generic descriptor for table scans. This is the base-class for table scans,
  * which needs to be embedded in the scans of individual AMs.
@@ -59,52 +57,8 @@ typedef struct TableScanDescData {
    */
   uint32 rs_flags;
 
-  struct ParallelTableScanDescData *rs_parallel; /* parallel scan
-                                                  * information */
 } TableScanDescData;
 typedef struct TableScanDescData *TableScanDesc;
-
-/*
- * Shared state for parallel table scan.
- *
- * Each backend participating in a parallel table scan has its own
- * TableScanDesc in backend-private memory, and those objects all contain a
- * pointer to this structure.  The information here must be sufficient to
- * properly initialize each new TableScanDesc as workers join the scan, and it
- * must act as a information what to scan for those workers.
- */
-typedef struct ParallelTableScanDescData {
-  RelFileLocator phs_locator; /* physical relation to scan */
-  bool phs_syncscan;          /* report location to syncscan logic? */
-  bool phs_snapshot_any;      /* SnapshotAny, not phs_snapshot_data? */
-  Size phs_snapshot_off;      /* data for snapshot */
-} ParallelTableScanDescData;
-typedef struct ParallelTableScanDescData *ParallelTableScanDesc;
-
-/*
- * Shared state for parallel table scans, for block oriented storage.
- */
-typedef struct ParallelBlockTableScanDescData {
-  ParallelTableScanDescData base;
-
-  BlockNumber phs_nblocks;         /* # blocks in relation at start of scan */
-  slock_t phs_mutex;               /* mutual exclusion for setting startblock */
-  BlockNumber phs_startblock;      /* starting block number */
-  pg_atomic_uint64 phs_nallocated; /* number of blocks allocated to
-                                    * workers so far. */
-} ParallelBlockTableScanDescData;
-typedef struct ParallelBlockTableScanDescData *ParallelBlockTableScanDesc;
-
-/*
- * Per backend state for parallel table scan, for block-oriented storage.
- */
-typedef struct ParallelBlockTableScanWorkerData {
-  uint64 phsw_nallocated;      /* Current # of blocks into the scan */
-  uint32 phsw_chunk_remaining; /* # blocks left in this chunk */
-  uint32 phsw_chunk_size;      /* The number of blocks to allocate in
-                                * each I/O chunk for the scan */
-} ParallelBlockTableScanWorkerData;
-typedef struct ParallelBlockTableScanWorkerData *ParallelBlockTableScanWorker;
 
 /*
  * Base class for fetches from a table via an index. This is the base-class
@@ -178,18 +132,7 @@ typedef struct IndexScanDescData {
   bool *xs_orderbynulls;
   bool xs_recheckorderby;
 
-  /* parallel index scan information, in shared memory */
-  struct ParallelIndexScanDescData *parallel_scan;
 } IndexScanDescData;
-
-/* Generic structure for parallel scans */
-typedef struct ParallelIndexScanDescData {
-  RelFileLocator ps_locator;      /* physical table relation to scan */
-  RelFileLocator ps_indexlocator; /* physical index relation to scan */
-  Size ps_offset_ins;             /* Offset to SharedIndexScanInstrumentation */
-  Size ps_offset_am;              /* Offset to am-specific structure */
-  char ps_snapshot_data[FLEXIBLE_ARRAY_MEMBER];
-} ParallelIndexScanDescData;
 
 struct TupleTableSlot;
 

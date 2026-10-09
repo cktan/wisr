@@ -15,9 +15,9 @@
 
 #include <signal.h>
 
-extern PGDLLIMPORT bool Trace_notify;
-extern PGDLLIMPORT int max_notify_queue_pages;
-extern PGDLLIMPORT volatile sig_atomic_t notifyInterruptPending;
+extern thread_local PGDLLIMPORT bool Trace_notify;
+extern thread_local PGDLLIMPORT int max_notify_queue_pages;
+extern thread_local PGDLLIMPORT volatile sig_atomic_t notifyInterruptPending;
 
 extern Size AsyncShmemSize(void);
 extern void AsyncShmemInit(void);
@@ -44,8 +44,5 @@ extern void HandleNotifyInterrupt(void);
 
 /* process interrupts */
 extern void ProcessNotifyInterrupt(bool flush);
-
-/* freeze old transaction IDs in notify queue (called by VACUUM) */
-extern void AsyncNotifyFreezeXids(TransactionId newFrozenXid);
 
 #endif /* ASYNC_H */

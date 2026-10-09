@@ -77,11 +77,11 @@
 #include "utils/syscache.h"
 
 /* Potentially set by pg_upgrade_support functions */
-Oid binary_upgrade_next_heap_pg_class_oid = InvalidOid;
-Oid binary_upgrade_next_toast_pg_class_oid = InvalidOid;
-RelFileNumber binary_upgrade_next_heap_pg_class_relfilenumber =
+thread_local Oid binary_upgrade_next_heap_pg_class_oid = InvalidOid;
+thread_local Oid binary_upgrade_next_toast_pg_class_oid = InvalidOid;
+thread_local RelFileNumber binary_upgrade_next_heap_pg_class_relfilenumber =
     InvalidRelFileNumber;
-RelFileNumber binary_upgrade_next_toast_pg_class_relfilenumber =
+thread_local RelFileNumber binary_upgrade_next_toast_pg_class_relfilenumber =
     InvalidRelFileNumber;
 
 static void AddNewRelationTuple(Relation pg_class_desc, Relation new_rel_desc,
@@ -3262,7 +3262,7 @@ static void RelationTruncateIndexes(Relation heapRelation) {
 
     /* Initialize the index and rebuild */
     /* Note: we do not need to re-establish pkey setting */
-    index_build(heapRelation, currentIndex, indexInfo, true, false);
+    index_build(heapRelation, currentIndex, indexInfo, true);
 
     /* We're done with this index */
     index_close(currentIndex, NoLock);

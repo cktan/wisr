@@ -124,7 +124,7 @@ static uint8 get_canonical_class(pg_wchar code) {
  */
 static const pg_wchar *
 get_code_decomposition(const pg_unicode_decomposition *entry, int *dec_size) {
-  static pg_wchar x;
+  static thread_local pg_wchar x;
 
   if (DECOMPOSITION_IS_INLINE(entry)) {
     Assert(DECOMPOSITION_SIZE(entry) == 1);

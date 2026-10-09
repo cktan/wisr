@@ -18,15 +18,15 @@
 #include "utils/resowner.h"
 #include "utils/snapshot.h"
 
-extern PGDLLIMPORT bool FirstSnapshotSet;
+extern thread_local PGDLLIMPORT bool FirstSnapshotSet;
 
-extern PGDLLIMPORT TransactionId TransactionXmin;
-extern PGDLLIMPORT TransactionId RecentXmin;
+extern thread_local PGDLLIMPORT TransactionId TransactionXmin;
+extern thread_local PGDLLIMPORT TransactionId RecentXmin;
 
 /* Variables representing various special snapshot semantics */
-extern PGDLLIMPORT SnapshotData SnapshotSelfData;
-extern PGDLLIMPORT SnapshotData SnapshotAnyData;
-extern PGDLLIMPORT SnapshotData SnapshotToastData;
+extern thread_local PGDLLIMPORT SnapshotData SnapshotSelfData;
+extern thread_local PGDLLIMPORT SnapshotData SnapshotAnyData;
+extern thread_local PGDLLIMPORT SnapshotData SnapshotToastData;
 
 #define SnapshotSelf		(&SnapshotSelfData)
 #define SnapshotAny			(&SnapshotAnyData)
@@ -116,10 +116,5 @@ extern void SetupHistoricSnapshot(Snapshot historic_snapshot,
                                   struct HTAB *tuplecids);
 extern void TeardownHistoricSnapshot(bool is_error);
 extern bool HistoricSnapshotActive(void);
-
-extern Size EstimateSnapshotSpace(Snapshot snapshot);
-extern void SerializeSnapshot(Snapshot snapshot, char *start_address);
-extern Snapshot RestoreSnapshot(char *start_address);
-extern void RestoreTransactionSnapshot(Snapshot snapshot, void *source_pgproc);
 
 #endif /* SNAPMGR_H */

@@ -143,39 +143,40 @@ struct WritebackContext;
 struct SMgrRelationData;
 
 /* in globals.c ... this duplicates miscadmin.h */
-extern PGDLLIMPORT int NBuffers;
+extern thread_local PGDLLIMPORT int NBuffers;
 
 /* in bufmgr.c */
-extern PGDLLIMPORT bool zero_damaged_pages;
-extern PGDLLIMPORT int bgwriter_lru_maxpages;
-extern PGDLLIMPORT double bgwriter_lru_multiplier;
-extern PGDLLIMPORT bool track_io_timing;
+extern thread_local PGDLLIMPORT bool zero_damaged_pages;
+extern thread_local PGDLLIMPORT int bgwriter_lru_maxpages;
+extern thread_local PGDLLIMPORT double bgwriter_lru_multiplier;
+extern thread_local PGDLLIMPORT bool track_io_timing;
 
 #define DEFAULT_EFFECTIVE_IO_CONCURRENCY 16
 #define DEFAULT_MAINTENANCE_IO_CONCURRENCY 16
-extern PGDLLIMPORT int effective_io_concurrency;
-extern PGDLLIMPORT int maintenance_io_concurrency;
+extern thread_local PGDLLIMPORT int effective_io_concurrency;
+extern thread_local PGDLLIMPORT int maintenance_io_concurrency;
 
 #define MAX_IO_COMBINE_LIMIT PG_IOV_MAX
 #define DEFAULT_IO_COMBINE_LIMIT Min(MAX_IO_COMBINE_LIMIT, (128 * 1024) / BLCKSZ)
-extern PGDLLIMPORT int io_combine_limit; /* min of the two GUCs below */
-extern PGDLLIMPORT int io_combine_limit_guc;
-extern PGDLLIMPORT int io_max_combine_limit;
+extern thread_local PGDLLIMPORT int
+    io_combine_limit; /* min of the two GUCs below */
+extern thread_local PGDLLIMPORT int io_combine_limit_guc;
+extern thread_local PGDLLIMPORT int io_max_combine_limit;
 
-extern PGDLLIMPORT int checkpoint_flush_after;
-extern PGDLLIMPORT int backend_flush_after;
-extern PGDLLIMPORT int bgwriter_flush_after;
+extern thread_local PGDLLIMPORT int checkpoint_flush_after;
+extern thread_local PGDLLIMPORT int backend_flush_after;
+extern thread_local PGDLLIMPORT int bgwriter_flush_after;
 
 extern PGDLLIMPORT const PgAioHandleCallbacks aio_shared_buffer_readv_cb;
 extern PGDLLIMPORT const PgAioHandleCallbacks aio_local_buffer_readv_cb;
 
 /* in buf_init.c */
-extern PGDLLIMPORT char *BufferBlocks;
+extern PG_SHARED PGDLLIMPORT char *BufferBlocks;
 
 /* in localbuf.c */
-extern PGDLLIMPORT int NLocBuffer;
-extern PGDLLIMPORT Block *LocalBufferBlockPointers;
-extern PGDLLIMPORT int32 *LocalRefCount;
+extern thread_local PGDLLIMPORT int NLocBuffer;
+extern thread_local PGDLLIMPORT Block *LocalBufferBlockPointers;
+extern thread_local PGDLLIMPORT int32 *LocalRefCount;
 
 /* upper limit for effective_io_concurrency */
 #define MAX_IO_CONCURRENCY 1000

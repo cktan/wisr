@@ -35,7 +35,7 @@
 #include "utils/timestamp.h"
 
 /* Session-level context for the SQL-callable backup functions */
-static MemoryContext backupcontext = NULL;
+static thread_local MemoryContext backupcontext = NULL;
 
 /*
  * pg_switch_wal: switch to next xlog file

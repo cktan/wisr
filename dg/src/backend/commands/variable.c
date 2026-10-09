@@ -19,7 +19,6 @@
 #include <ctype.h>
 
 #include "access/htup_details.h"
-#include "access/parallel.h"
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "access/xlogprefetcher.h"
@@ -475,12 +474,9 @@ void assign_timezone_abbreviations(const char *newval, void *extra) {
  * nothing since XactReadOnly will be reset by the next StartTransaction().
  * The IsTransactionState() test protects us against trying to check
  * RecoveryInProgress() in contexts where shared memory is not accessible.
- * (Similarly, if we're restoring state in a parallel worker, just allow
- * the change.)
  */
 bool check_transaction_read_only(bool *newval, void **extra, GucSource source) {
-  if (*newval == false && XactReadOnly && IsTransactionState() &&
-      !InitializingParallelWorker) {
+  if (*newval == false && XactReadOnly && IsTransactionState()) {
     /* Can't go to r/w mode inside a r/o transaction */
     if (IsSubTransaction()) {
       GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
@@ -513,14 +509,12 @@ bool check_transaction_read_only(bool *newval, void **extra, GucSource source) {
  * We allow idempotent changes at any time, but otherwise this can only be
  * changed in a toplevel transaction that has not yet taken a snapshot.
  *
- * As in check_transaction_read_only, allow it if not inside a transaction,
- * or if restoring state in a parallel worker.
+ * As in check_transaction_read_only, allow it if not inside a transaction.
  */
 bool check_transaction_isolation(int *newval, void **extra, GucSource source) {
   int newXactIsoLevel = *newval;
 
-  if (newXactIsoLevel != XactIsoLevel && IsTransactionState() &&
-      !InitializingParallelWorker) {
+  if (newXactIsoLevel != XactIsoLevel && IsTransactionState()) {
     if (FirstSnapshotSet) {
       GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
       GUC_check_errmsg(
@@ -552,10 +546,6 @@ bool check_transaction_isolation(int *newval, void **extra, GucSource source) {
 
 bool check_transaction_deferrable(bool *newval, void **extra,
                                   GucSource source) {
-  /* Just accept the value when restoring state in a parallel worker */
-  if (InitializingParallelWorker)
-    return true;
-
   if (IsSubTransaction()) {
     GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
     GUC_check_errmsg("SET TRANSACTION [NOT] DEFERRABLE cannot be called within "
@@ -617,24 +607,6 @@ bool check_client_encoding(char **newval, void **extra, GucSource source) {
   canonical_name = pg_encoding_to_char(encoding);
 
   /*
-   * Parallel workers send data to the leader, not the client.  They always
-   * send data using the database encoding; therefore, we should never
-   * actually change the client encoding in a parallel worker.  However,
-   * during parallel worker startup, we want to accept the leader's
-   * client_encoding setting so that anyone who looks at the value in the
-   * worker sees the same value that they would see in the leader.  A change
-   * other than during startup, for example due to a SET clause attached to
-   * a function definition, should be rejected, as there is nothing we can
-   * do inside the worker to make it take effect.
-   */
-  if (IsParallelWorker() && !InitializingParallelWorker) {
-    GUC_check_errcode(ERRCODE_INVALID_TRANSACTION_STATE);
-    GUC_check_errdetail(
-        "Cannot change \"client_encoding\" during a parallel operation.");
-    return false;
-  }
-
-  /*
    * If we are not within a transaction then PrepareClientEncoding will not
    * be able to look up the necessary conversion procs.  If we are still
    * starting up, it will return "OK" anyway, and InitializeClientEncoding
@@ -644,14 +616,11 @@ bool check_client_encoding(char **newval, void **extra, GucSource source) {
    * It seems like a bad idea for client_encoding to change that way anyhow,
    * so we don't go out of our way to support it.
    *
-   * In a parallel worker, we might as well skip PrepareClientEncoding since
-   * we're not going to use its results.
-   *
    * Note: in the postmaster, or any other process that never calls
    * InitializeClientEncoding, PrepareClientEncoding will always succeed,
    * and so will SetClientEncoding; but they won't do anything, which is OK.
    */
-  if (!IsParallelWorker() && PrepareClientEncoding(encoding) < 0) {
+  if (PrepareClientEncoding(encoding) < 0) {
     if (IsTransactionState()) {
       /* Must be a genuine no-such-conversion problem */
       GUC_check_errcode(ERRCODE_FEATURE_NOT_SUPPORTED);
@@ -695,13 +664,6 @@ bool check_client_encoding(char **newval, void **extra, GucSource source) {
 void assign_client_encoding(const char *newval, void *extra) {
   int encoding = *((int *)extra);
 
-  /*
-   * In a parallel worker, we never override the client encoding that was
-   * set by ParallelWorkerMain().
-   */
-  if (IsParallelWorker())
-    return;
-
   /* We do not expect an error if PrepareClientEncoding succeeded */
   if (SetClientEncoding(encoding) < 0)
     elog(LOG, "SetClientEncoding(%d) failed", encoding);
@@ -729,68 +691,58 @@ bool check_session_authorization(char **newval, void **extra,
   if (*newval == NULL)
     return true;
 
-  if (InitializingParallelWorker) {
+  if (!IsTransactionState()) {
     /*
-     * In parallel worker initialization, we want to copy the leader's
-     * state even if it no longer matches the catalogs. ParallelWorkerMain
-     * already installed the correct role OID and superuser state.
+     * Can't do catalog lookups, so fail.  The result of this is that
+     * session_authorization cannot be set in postgresql.conf, which
+     * seems like a good thing anyway, so we don't work hard to avoid
+     * it.
      */
-    roleid = GetSessionUserId();
-    is_superuser = GetSessionUserIsSuperuser();
-  } else {
-    if (!IsTransactionState()) {
-      /*
-       * Can't do catalog lookups, so fail.  The result of this is that
-       * session_authorization cannot be set in postgresql.conf, which
-       * seems like a good thing anyway, so we don't work hard to avoid
-       * it.
-       */
-      return false;
+    return false;
+  }
+
+  /*
+   * When source == PGC_S_TEST, we don't throw a hard error for a
+   * nonexistent user name or insufficient privileges, only a NOTICE.
+   * See comments in guc.h.
+   */
+
+  /* Look up the username */
+  roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(*newval));
+  if (!HeapTupleIsValid(roleTup)) {
+    if (source == PGC_S_TEST) {
+      ereport(NOTICE, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                       errmsg("role \"%s\" does not exist", *newval)));
+      return true;
     }
+    GUC_check_errmsg("role \"%s\" does not exist", *newval);
+    return false;
+  }
 
-    /*
-     * When source == PGC_S_TEST, we don't throw a hard error for a
-     * nonexistent user name or insufficient privileges, only a NOTICE.
-     * See comments in guc.h.
-     */
+  roleform = (Form_pg_authid)GETSTRUCT(roleTup);
+  roleid = roleform->oid;
+  is_superuser = roleform->rolsuper;
 
-    /* Look up the username */
-    roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(*newval));
-    if (!HeapTupleIsValid(roleTup)) {
-      if (source == PGC_S_TEST) {
-        ereport(NOTICE, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                         errmsg("role \"%s\" does not exist", *newval)));
-        return true;
-      }
-      GUC_check_errmsg("role \"%s\" does not exist", *newval);
-      return false;
+  ReleaseSysCache(roleTup);
+
+  /*
+   * Only superusers may SET SESSION AUTHORIZATION a role other than
+   * itself. Note that in case of multiple SETs in a single session, the
+   * original authenticated user's superuserness is what matters.
+   */
+  if (roleid != GetAuthenticatedUserId() &&
+      !superuser_arg(GetAuthenticatedUserId())) {
+    if (source == PGC_S_TEST) {
+      ereport(NOTICE, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                       errmsg("permission will be denied to set session "
+                              "authorization \"%s\"",
+                              *newval)));
+      return true;
     }
-
-    roleform = (Form_pg_authid)GETSTRUCT(roleTup);
-    roleid = roleform->oid;
-    is_superuser = roleform->rolsuper;
-
-    ReleaseSysCache(roleTup);
-
-    /*
-     * Only superusers may SET SESSION AUTHORIZATION a role other than
-     * itself. Note that in case of multiple SETs in a single session, the
-     * original authenticated user's superuserness is what matters.
-     */
-    if (roleid != GetAuthenticatedUserId() &&
-        !superuser_arg(GetAuthenticatedUserId())) {
-      if (source == PGC_S_TEST) {
-        ereport(NOTICE, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                         errmsg("permission will be denied to set session "
-                                "authorization \"%s\"",
-                                *newval)));
-        return true;
-      }
-      GUC_check_errcode(ERRCODE_INSUFFICIENT_PRIVILEGE);
-      GUC_check_errmsg("permission denied to set session authorization \"%s\"",
-                       *newval);
-      return false;
-    }
+    GUC_check_errcode(ERRCODE_INSUFFICIENT_PRIVILEGE);
+    GUC_check_errmsg("permission denied to set session authorization \"%s\"",
+                     *newval);
+    return false;
   }
 
   /* Set up "extra" struct for assign_session_authorization to use */
@@ -833,14 +785,6 @@ bool check_role(char **newval, void **extra, GucSource source) {
     /* hardwired translation */
     roleid = InvalidOid;
     is_superuser = false;
-  } else if (InitializingParallelWorker) {
-    /*
-     * In parallel worker initialization, we want to copy the leader's
-     * state even if it no longer matches the catalogs. ParallelWorkerMain
-     * already installed the correct role OID and superuser state.
-     */
-    roleid = GetCurrentRoleId();
-    is_superuser = current_role_is_superuser;
   } else {
     if (!IsTransactionState()) {
       /*
@@ -1035,7 +979,7 @@ void assign_io_combine_limit(int newval, void *extra) {
  * GUC show_hook for data_directory_mode
  */
 const char *show_data_directory_mode(void) {
-  static char buf[12];
+  static thread_local char buf[12];
 
   snprintf(buf, sizeof(buf), "%04o", data_directory_mode);
   return buf;
@@ -1045,7 +989,7 @@ const char *show_data_directory_mode(void) {
  * GUC show_hook for log_file_mode
  */
 const char *show_log_file_mode(void) {
-  static char buf[12];
+  static thread_local char buf[12];
 
   snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
   return buf;
@@ -1055,7 +999,7 @@ const char *show_log_file_mode(void) {
  * GUC show_hook for unix_socket_permissions
  */
 const char *show_unix_socket_permissions(void) {
-  static char buf[12];
+  static thread_local char buf[12];
 
   snprintf(buf, sizeof(buf), "%04o", Unix_socket_permissions);
   return buf;

@@ -32,7 +32,7 @@
 #include "varatt.h"
 
 /* Hash table for information about each tablespace */
-static HTAB *TableSpaceCacheHash = NULL;
+static thread_local HTAB *TableSpaceCacheHash = NULL;
 
 typedef struct {
   Oid oid;              /* lookup key - must be first */

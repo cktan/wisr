@@ -42,7 +42,7 @@
 #include "utils/xml.h"
 
 /* GUC parameters */
-bool Transform_null_equals = false;
+thread_local bool Transform_null_equals = false;
 
 static Node *transformExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformParamRef(ParseState *pstate, ParamRef *pref);

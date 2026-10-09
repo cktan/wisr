@@ -22,16 +22,16 @@
 #include "utils/guc_hooks.h"
 
 /* GUC variable for maximum stack depth (measured in kilobytes) */
-int max_stack_depth = 100;
+thread_local int max_stack_depth = 100;
 
 /* max_stack_depth converted to bytes for speed of checking */
-static ssize_t max_stack_depth_bytes = 100 * (ssize_t)1024;
+static thread_local ssize_t max_stack_depth_bytes = 100 * (ssize_t)1024;
 
 /*
  * Stack base pointer -- initialized by set_stack_base(), which
  * should be called from main().
  */
-static char *stack_base_ptr = NULL;
+static thread_local char *stack_base_ptr = NULL;
 
 /*
  * set_stack_base: set up reference point for stack depth checking
@@ -172,7 +172,7 @@ void assign_max_stack_depth(int newval, void *extra) {
  */
 ssize_t get_stack_depth_rlimit(void) {
 #if defined(HAVE_GETRLIMIT)
-  static ssize_t val = 0;
+  static thread_local ssize_t val = 0;
 
   /* This won't change after process launch, so check just once */
   if (val == 0) {

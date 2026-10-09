@@ -62,6 +62,9 @@ all: build/digres
 .PHONY: build/digres
 build/digres: src $(LIBSQ) $(LIBSM)
 	@mkdir -p build
+	# A session is to be a thread: no writable global may be left
+	# neither thread_local nor PG_SHARED (PLAN.md section 3).
+	python3 -B src/tools/cxx_thread_local.py --check src
 	$(CXX) -o $@ $$(find src -name '*.o') $(LIBSQ) $(LIBSM) $(LDLIBS)
 	ln -sf digres build/initdb
 
@@ -160,6 +163,9 @@ $(B)/utils/adt/jsonpath_gram.c: $(B)/utils/adt/jsonpath_gram.y
 	bison -Wno-deprecated -d -o $@ $<
 $(B)/utils/adt/jsonpath_scan.c: $(B)/utils/adt/jsonpath_scan.l
 	flex -CF -p -p -o $@ $<
+# flex leaves this table writable, and it is never written: const
+# keeps it out of the variables each thread copies.
+	sed -i 's/\*yy_start_state_list\[/*const yy_start_state_list[/' $@
 $(B)/utils/misc/guc-file.c: $(B)/utils/misc/guc-file.l
 	flex -o $@ $<
 

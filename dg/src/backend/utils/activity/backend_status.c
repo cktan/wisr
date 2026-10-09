@@ -37,17 +37,17 @@
  * GUC parameters
  * ----------
  */
-bool pgstat_track_activities = false;
-int pgstat_track_activity_query_size = 1024;
+thread_local bool pgstat_track_activities = false;
+thread_local int pgstat_track_activity_query_size = 1024;
 
 /* exposed so that backend_progress.c can access it */
-PgBackendStatus *MyBEEntry = NULL;
+thread_local PgBackendStatus *MyBEEntry = NULL;
 
-static PgBackendStatus *BackendStatusArray = NULL;
-static char *BackendAppnameBuffer = NULL;
-static char *BackendClientHostnameBuffer = NULL;
-static char *BackendActivityBuffer = NULL;
-static Size BackendActivityBufferSize = 0;
+static PG_SHARED PgBackendStatus *BackendStatusArray = NULL;
+static PG_SHARED char *BackendAppnameBuffer = NULL;
+static PG_SHARED char *BackendClientHostnameBuffer = NULL;
+static PG_SHARED char *BackendActivityBuffer = NULL;
+static PG_SHARED Size BackendActivityBufferSize = 0;
 #ifdef USE_SSL
 static PgBackendSSLStatus *BackendSslStatusBuffer = NULL;
 #endif
@@ -56,12 +56,12 @@ static PgBackendGSSStatus *BackendGssStatusBuffer = NULL;
 #endif
 
 /* Status for backends including auxiliary */
-static LocalPgBackendStatus *localBackendStatusTable = NULL;
+static thread_local LocalPgBackendStatus *localBackendStatusTable = NULL;
 
 /* Total number of backends including auxiliary */
-static int localNumBackends = 0;
+static thread_local int localNumBackends = 0;
 
-static MemoryContext backendStatusSnapContext;
+static thread_local MemoryContext backendStatusSnapContext;
 
 static void pgstat_beshutdown_hook(int code, Datum arg);
 static void pgstat_read_current_status(void);
@@ -1072,29 +1072,6 @@ int64 pgstat_get_my_plan_id(void) {
 
   /* No need for a lock, for roughly the same reasons as above. */
   return MyBEEntry->st_plan_id;
-}
-
-/* ----------
- * pgstat_get_backend_type_by_proc_number() -
- *
- *	Return the type of the backend with the specified ProcNumber.  This
- *looks directly at the BackendStatusArray, so the return value may be out of
- *date. The only current use of this function is in pg_signal_backend(), which
- *is inherently racy, so we don't worry too much about this.
- *
- *	It is the caller's responsibility to use this wisely; at minimum,
- *callers should ensure that procNumber is valid and perform the required
- *permissions checks.
- * ----------
- */
-BackendType pgstat_get_backend_type_by_proc_number(ProcNumber procNumber) {
-  volatile PgBackendStatus *status = &BackendStatusArray[procNumber];
-
-  /*
-   * We bypass the changecount mechanism since fetching and storing an int
-   * is almost certainly atomic.
-   */
-  return status->st_backendType;
 }
 
 /* ----------

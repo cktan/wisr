@@ -1218,9 +1218,6 @@ bool _bt_start_prim_scan(IndexScanDesc scan, ScanDirection dir) {
   }
 
   /* The top-level index scan ran out of tuples in this scan direction */
-  if (scan->parallel_scan != NULL)
-    _bt_parallel_done(scan);
-
   return false;
 }
 
@@ -1890,9 +1887,6 @@ new_prim_scan:
    */
   pstate->continuescan = false; /* Tell _bt_readpage we're done... */
   so->needPrimScan = true;      /* ...but call _bt_first again */
-
-  if (scan->parallel_scan)
-    _bt_parallel_primscan_schedule(scan, so->currPos.currPage);
 
   /* Caller's tuple doesn't match the new qual */
   return false;
@@ -3247,7 +3241,7 @@ typedef struct BTVacInfo {
   BTOneVacInfo vacuums[FLEXIBLE_ARRAY_MEMBER];
 } BTVacInfo;
 
-static BTVacInfo *btvacinfo;
+static PG_SHARED BTVacInfo *btvacinfo;
 
 /*
  * _bt_vacuum_cycleid --- get the active vacuum cycle ID for an index,

@@ -15,7 +15,7 @@
 #include "datatype/timestamp.h"
 #include "storage/sync.h"
 
-extern PGDLLIMPORT bool track_commit_timestamp;
+extern thread_local PGDLLIMPORT bool track_commit_timestamp;
 
 extern void TransactionTreeSetCommitTsData(TransactionId xid, int nsubxids,
                                            TransactionId *subxids,
@@ -34,7 +34,6 @@ extern void CommitTsParameterChange(bool newvalue, bool oldvalue);
 extern void CompleteCommitTsInitialization(void);
 extern void CheckPointCommitTs(void);
 extern void ExtendCommitTs(TransactionId newestXact);
-extern void TruncateCommitTs(TransactionId oldestXact);
 extern void SetCommitTsLimit(TransactionId oldestXact,
                              TransactionId newestXact);
 extern void AdvanceOldestCommitTsXid(TransactionId oldestXact);

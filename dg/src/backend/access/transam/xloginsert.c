@@ -84,21 +84,22 @@ typedef struct {
   char compressed_page[COMPRESS_BUFSIZE];
 } registered_buffer;
 
-static registered_buffer *registered_buffers;
-static int max_registered_buffers;      /* allocated size */
-static int max_registered_block_id = 0; /* highest block_id + 1 currently
-                                         * registered */
+static thread_local registered_buffer *registered_buffers;
+static thread_local int max_registered_buffers;      /* allocated size */
+static thread_local int max_registered_block_id = 0; /* highest block_id + 1
+                                                      * currently registered */
 
 /*
  * A chain of XLogRecDatas to hold the "main data" of a WAL record, registered
  * with XLogRegisterData(...).
  */
-static XLogRecData *mainrdata_head;
-static XLogRecData *mainrdata_last = (XLogRecData *)&mainrdata_head;
-static uint64 mainrdata_len; /* total # of bytes in chain */
+static thread_local XLogRecData *mainrdata_head;
+static thread_local XLogRecData *mainrdata_last =
+    (XLogRecData *)&mainrdata_head;
+static thread_local uint64 mainrdata_len; /* total # of bytes in chain */
 
 /* flags for the in-progress insertion */
-static uint8 curinsert_flags = 0;
+static thread_local uint8 curinsert_flags = 0;
 
 /*
  * These are used to hold the record header while constructing a record.
@@ -108,8 +109,8 @@ static uint8 curinsert_flags = 0;
  * For simplicity, it's allocated large enough to hold the headers for any
  * WAL record.
  */
-static XLogRecData hdr_rdt;
-static char *hdr_scratch = NULL;
+static thread_local XLogRecData hdr_rdt;
+static thread_local char *hdr_scratch = NULL;
 
 #define SizeOfXlogOrigin	(sizeof(RepOriginId) + sizeof(char))
 #define SizeOfXLogTransactionId	(sizeof(TransactionId) + sizeof(char))
@@ -123,14 +124,14 @@ static char *hdr_scratch = NULL;
 /*
  * An array of XLogRecData structs, to hold registered data.
  */
-static XLogRecData *rdatas;
-static int num_rdatas; /* entries currently used */
-static int max_rdatas; /* allocated size */
+static thread_local XLogRecData *rdatas;
+static thread_local int num_rdatas; /* entries currently used */
+static thread_local int max_rdatas; /* allocated size */
 
-static bool begininsert_called = false;
+static thread_local bool begininsert_called = false;
 
 /* Memory context to hold the registered buffer and data references. */
-static MemoryContext xloginsert_cxt;
+static thread_local MemoryContext xloginsert_cxt;
 
 static XLogRecData *XLogRecordAssemble(RmgrId rmid, uint8 info,
                                        XLogRecPtr RedoRecPtr, bool doPageWrites,

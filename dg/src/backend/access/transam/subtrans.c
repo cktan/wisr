@@ -65,7 +65,7 @@ static inline int64 TransactionIdToPage(TransactionId xid) {
 /*
  * Link to shared-memory data structures for SUBTRANS control
  */
-static SlruCtlData SubTransCtlData;
+static PG_SHARED SlruCtlData SubTransCtlData;
 
 #define SubTransCtl  (&SubTransCtlData)
 

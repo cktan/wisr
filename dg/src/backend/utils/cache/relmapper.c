@@ -105,8 +105,8 @@ typedef struct SerializedActiveRelMaps {
  * local map file are stored here.  These can be reloaded from disk
  * immediately whenever we receive an update sinval message.
  */
-static RelMapFile shared_map;
-static RelMapFile local_map;
+static thread_local RelMapFile shared_map;
+static thread_local RelMapFile local_map;
 
 /*
  * We use the same RelMapFile data structure to track uncommitted local
@@ -124,10 +124,10 @@ static RelMapFile local_map;
  * Active shared and active local updates are serialized by the parallel
  * infrastructure, and deserialized within parallel workers.
  */
-static RelMapFile active_shared_updates;
-static RelMapFile active_local_updates;
-static RelMapFile pending_shared_updates;
-static RelMapFile pending_local_updates;
+static thread_local RelMapFile active_shared_updates;
+static thread_local RelMapFile active_local_updates;
+static thread_local RelMapFile pending_shared_updates;
+static thread_local RelMapFile pending_local_updates;
 
 /* non-export function prototypes */
 static void apply_map_update(RelMapFile *map, Oid relationId,
@@ -307,15 +307,12 @@ void RelationMapUpdateMap(Oid relationId, RelFileNumber fileNumber, bool shared,
       map = &local_map;
   } else {
     /*
-     * We don't currently support map changes within subtransactions, or
-     * when in parallel mode.  This could be done with more bookkeeping
+     * We don't currently support map changes within subtransactions.
+     * This could be done with more bookkeeping
      * infrastructure, but it doesn't presently seem worth it.
      */
     if (GetCurrentTransactionNestLevel() > 1)
       elog(ERROR, "cannot change relation mapping within subtransaction");
-
-    if (IsInParallelMode())
-      elog(ERROR, "cannot change relation mapping in parallel mode");
 
     if (immediate) {
       /* Make it active, but only locally */
@@ -469,12 +466,9 @@ void AtCCI_RelationMap(void) {
  *
  * During abort, we just have to throw away any pending map changes.
  * Normal post-abort cleanup will take care of fixing relcache entries.
- * Parallel worker commit/abort is handled by resetting active mappings
- * that may have been received from the leader process.  (There should be
- * no pending updates in parallel workers.)
  */
-void AtEOXact_RelationMap(bool isCommit, bool isParallelWorker) {
-  if (isCommit && !isParallelWorker) {
+void AtEOXact_RelationMap(bool isCommit) {
+  if (isCommit) {
     /*
      * We should not get here with any "pending" updates.  (We could
      * logically choose to treat such as committed, but in the current
@@ -495,10 +489,7 @@ void AtEOXact_RelationMap(bool isCommit, bool isParallelWorker) {
       active_local_updates.num_mappings = 0;
     }
   } else {
-    /* Abort or parallel worker --- drop all local and pending updates */
-    Assert(!isParallelWorker || pending_shared_updates.num_mappings == 0);
-    Assert(!isParallelWorker || pending_local_updates.num_mappings == 0);
-
+    /* Abort --- drop all local and pending updates */
     active_shared_updates.num_mappings = 0;
     active_local_updates.num_mappings = 0;
     pending_shared_updates.num_mappings = 0;
@@ -620,48 +611,6 @@ void RelationMapInitializePhase3(void) {
    * Load the local map file, die on error.
    */
   load_relmap_file(false, false);
-}
-
-/*
- * EstimateRelationMapSpace
- *
- * Estimate space needed to pass active shared and local relmaps to parallel
- * workers.
- */
-Size EstimateRelationMapSpace(void) { return sizeof(SerializedActiveRelMaps); }
-
-/*
- * SerializeRelationMap
- *
- * Serialize active shared and local relmap state for parallel workers.
- */
-void SerializeRelationMap(Size maxSize, char *startAddress) {
-  SerializedActiveRelMaps *relmaps;
-
-  Assert(maxSize >= EstimateRelationMapSpace());
-
-  relmaps = (SerializedActiveRelMaps *)startAddress;
-  relmaps->active_shared_updates = active_shared_updates;
-  relmaps->active_local_updates = active_local_updates;
-}
-
-/*
- * RestoreRelationMap
- *
- * Restore active shared and local relmap state within a parallel worker.
- */
-void RestoreRelationMap(char *startAddress) {
-  SerializedActiveRelMaps *relmaps;
-
-  if (active_shared_updates.num_mappings != 0 ||
-      active_local_updates.num_mappings != 0 ||
-      pending_shared_updates.num_mappings != 0 ||
-      pending_local_updates.num_mappings != 0)
-    elog(ERROR, "parallel worker has existing mappings");
-
-  relmaps = (SerializedActiveRelMaps *)startAddress;
-  active_shared_updates = relmaps->active_shared_updates;
-  active_local_updates = relmaps->active_local_updates;
 }
 
 /*

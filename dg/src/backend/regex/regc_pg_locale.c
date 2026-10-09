@@ -68,8 +68,8 @@ typedef enum {
   PG_REGEX_STRATEGY_ICU,        /* Use ICU uchar.h functions */
 } PG_Locale_Strategy;
 
-static PG_Locale_Strategy pg_regex_strategy;
-static pg_locale_t pg_regex_locale;
+static thread_local PG_Locale_Strategy pg_regex_strategy;
+static thread_local pg_locale_t pg_regex_locale;
 
 /*
  * Hard-wired character properties for C locale
@@ -581,7 +581,7 @@ typedef struct pg_ctype_cache {
   struct pg_ctype_cache *next; /* chain link */
 } pg_ctype_cache;
 
-static pg_ctype_cache *pg_ctype_cache_list = NULL;
+static thread_local pg_ctype_cache *pg_ctype_cache_list = NULL;
 
 /*
  * Add a chr or range to pcc->cv; return false if run out of memory

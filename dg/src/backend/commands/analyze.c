@@ -65,11 +65,11 @@ typedef struct AnlIndexData {
 } AnlIndexData;
 
 /* Default statistics target (GUC parameter) */
-int default_statistics_target = 100;
+thread_local int default_statistics_target = 100;
 
 /* A few variables that don't seem worth passing around as parameters */
-static MemoryContext anl_context = NULL;
-static BufferAccessStrategy vac_strategy;
+static thread_local MemoryContext anl_context = NULL;
+static thread_local BufferAccessStrategy vac_strategy;
 
 static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
                            AcquireSampleRowsFunc acquirefunc,
@@ -129,12 +129,9 @@ void analyze_rel(Oid relid, RangeVar *relation, VacuumParams *params,
    * concurrent VACUUM, which doesn't matter much at the moment but might
    * matter if we ever try to accumulate stats on dead tuples.) If the rel
    * has been dropped since we last saw it, we don't need to process it.
-   *
-   * Make sure to generate only logs for ANALYZE in this case.
    */
-  onerel = vacuum_open_relation(
-      relid, relation, params->options & ~(VACOPT_VACUUM),
-      params->log_min_duration >= 0, ShareUpdateExclusiveLock);
+  onerel = vacuum_open_relation(relid, relation, params->options,
+                                ShareUpdateExclusiveLock);
 
   /* leave if relation could not be opened or locked */
   if (!onerel)
@@ -145,11 +142,10 @@ void analyze_rel(Oid relid, RangeVar *relation, VacuumParams *params,
    * happens also when building the relation list to analyze for a manual
    * operation, and needs to be done additionally here as ANALYZE could
    * happen across multiple transactions where privileges could have changed
-   * in-between.  Make sure to generate only logs for ANALYZE in this case.
+   * in-between.
    */
   if (!vacuum_is_permitted_for_relation(RelationGetRelid(onerel),
-                                        onerel->rd_rel,
-                                        params->options & ~VACOPT_VACUUM)) {
+                                        onerel->rd_rel, params->options)) {
     relation_close(onerel, ShareUpdateExclusiveLock);
     return;
   }
@@ -207,11 +203,9 @@ void analyze_rel(Oid relid, RangeVar *relation, VacuumParams *params,
      * For partitioned tables, we want to do the recursive ANALYZE below.
      */
   } else {
-    /* No need for a WARNING if we already complained during VACUUM */
-    if (!(params->options & VACOPT_VACUUM))
-      ereport(WARNING, (errmsg("skipping \"%s\" --- cannot analyze non-tables "
-                               "or special system tables",
-                               RelationGetRelationName(onerel))));
+    ereport(WARNING, (errmsg("skipping \"%s\" --- cannot analyze non-tables "
+                             "or special system tables",
+                             RelationGetRelationName(onerel))));
     relation_close(onerel, ShareUpdateExclusiveLock);
     return;
   }
@@ -281,8 +275,7 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
   PgStat_Counter startwritetime = 0;
 
   verbose = (params->options & VACOPT_VERBOSE) != 0;
-  instrument = (verbose ||
-                (AmAutoVacuumWorkerProcess() && params->log_min_duration >= 0));
+  instrument = verbose;
   if (inh)
     ereport(elevel, (errmsg("analyzing \"%s.%s\" inheritance tree",
                             get_namespace_name(RelationGetNamespace(onerel)),
@@ -615,30 +608,28 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
     pgstat_report_analyze(onerel, 0, 0, (va_cols == NIL), starttime);
 
   /*
-   * If this isn't part of VACUUM ANALYZE, let index AMs do cleanup.
+   * Let index AMs do cleanup.
    *
    * Note that most index AMs perform a no-op as a matter of policy for
    * amvacuumcleanup() when called in ANALYZE-only mode.  The only exception
    * among core index AMs is GIN/ginvacuumcleanup().
    */
-  if (!(params->options & VACOPT_VACUUM)) {
-    for (ind = 0; ind < nindexes; ind++) {
-      IndexBulkDeleteResult *stats;
-      IndexVacuumInfo ivinfo;
+  for (ind = 0; ind < nindexes; ind++) {
+    IndexBulkDeleteResult *stats;
+    IndexVacuumInfo ivinfo;
 
-      ivinfo.index = Irel[ind];
-      ivinfo.heaprel = onerel;
-      ivinfo.analyze_only = true;
-      ivinfo.estimated_count = true;
-      ivinfo.message_level = elevel;
-      ivinfo.num_heap_tuples = onerel->rd_rel->reltuples;
-      ivinfo.strategy = vac_strategy;
+    ivinfo.index = Irel[ind];
+    ivinfo.heaprel = onerel;
+    ivinfo.analyze_only = true;
+    ivinfo.estimated_count = true;
+    ivinfo.message_level = elevel;
+    ivinfo.num_heap_tuples = onerel->rd_rel->reltuples;
+    ivinfo.strategy = vac_strategy;
 
-      stats = index_vacuum_cleanup(&ivinfo, NULL);
+    stats = index_vacuum_cleanup(&ivinfo, NULL);
 
-      if (stats)
-        pfree(stats);
-    }
+    if (stats)
+      pfree(stats);
   }
 
   /* Done with indexes */
@@ -648,112 +639,103 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
   if (instrument) {
     TimestampTz endtime = GetCurrentTimestamp();
 
-    if (verbose || params->log_min_duration == 0 ||
-        TimestampDifferenceExceeds(starttime, endtime,
-                                   params->log_min_duration)) {
-      long delay_in_ms;
-      WalUsage walusage;
-      double read_rate = 0;
-      double write_rate = 0;
-      char *msgfmt;
-      StringInfoData buf;
-      int64 total_blks_hit;
-      int64 total_blks_read;
-      int64 total_blks_dirtied;
+    long delay_in_ms;
+    WalUsage walusage;
+    double read_rate = 0;
+    double write_rate = 0;
+    char *msgfmt;
+    StringInfoData buf;
+    int64 total_blks_hit;
+    int64 total_blks_read;
+    int64 total_blks_dirtied;
 
-      memset(&bufferusage, 0, sizeof(BufferUsage));
-      BufferUsageAccumDiff(&bufferusage, &pgBufferUsage, &startbufferusage);
-      memset(&walusage, 0, sizeof(WalUsage));
-      WalUsageAccumDiff(&walusage, &pgWalUsage, &startwalusage);
+    memset(&bufferusage, 0, sizeof(BufferUsage));
+    BufferUsageAccumDiff(&bufferusage, &pgBufferUsage, &startbufferusage);
+    memset(&walusage, 0, sizeof(WalUsage));
+    WalUsageAccumDiff(&walusage, &pgWalUsage, &startwalusage);
 
-      total_blks_hit = bufferusage.shared_blks_hit + bufferusage.local_blks_hit;
-      total_blks_read =
-          bufferusage.shared_blks_read + bufferusage.local_blks_read;
-      total_blks_dirtied =
-          bufferusage.shared_blks_dirtied + bufferusage.local_blks_dirtied;
+    total_blks_hit = bufferusage.shared_blks_hit + bufferusage.local_blks_hit;
+    total_blks_read =
+        bufferusage.shared_blks_read + bufferusage.local_blks_read;
+    total_blks_dirtied =
+        bufferusage.shared_blks_dirtied + bufferusage.local_blks_dirtied;
 
-      /*
-       * We do not expect an analyze to take > 25 days and it simplifies
-       * things a bit to use TimestampDifferenceMilliseconds.
-       */
-      delay_in_ms = TimestampDifferenceMilliseconds(starttime, endtime);
+    /*
+     * We do not expect an analyze to take > 25 days and it simplifies
+     * things a bit to use TimestampDifferenceMilliseconds.
+     */
+    delay_in_ms = TimestampDifferenceMilliseconds(starttime, endtime);
 
-      /*
-       * Note that we are reporting these read/write rates in the same
-       * manner as VACUUM does, which means that while the 'average read
-       * rate' here actually corresponds to page misses and resulting
-       * reads which are also picked up by track_io_timing, if enabled,
-       * the 'average write rate' is actually talking about the rate of
-       * pages being dirtied, not being written out, so it's typical to
-       * have a non-zero 'avg write rate' while I/O timings only reports
-       * reads.
-       *
-       * It's not clear that an ANALYZE will ever result in
-       * FlushBuffer() being called, but we track and support reporting
-       * on I/O write time in case that changes as it's practically free
-       * to do so anyway.
-       */
+    /*
+     * Note that we are reporting these read/write rates in the same
+     * manner as VACUUM does, which means that while the 'average read
+     * rate' here actually corresponds to page misses and resulting
+     * reads which are also picked up by track_io_timing, if enabled,
+     * the 'average write rate' is actually talking about the rate of
+     * pages being dirtied, not being written out, so it's typical to
+     * have a non-zero 'avg write rate' while I/O timings only reports
+     * reads.
+     *
+     * It's not clear that an ANALYZE will ever result in
+     * FlushBuffer() being called, but we track and support reporting
+     * on I/O write time in case that changes as it's practically free
+     * to do so anyway.
+     */
 
-      if (delay_in_ms > 0) {
-        read_rate = (double)BLCKSZ * total_blks_read / (1024 * 1024) /
-                    (delay_in_ms / 1000.0);
-        write_rate = (double)BLCKSZ * total_blks_dirtied / (1024 * 1024) /
-                     (delay_in_ms / 1000.0);
-      }
-
-      /*
-       * We split this up so we don't emit empty I/O timing values when
-       * track_io_timing isn't enabled.
-       */
-
-      initStringInfo(&buf);
-
-      if (AmAutoVacuumWorkerProcess())
-        msgfmt = _("automatic analyze of table \"%s.%s.%s\"\n");
-      else
-        msgfmt = _("finished analyzing table \"%s.%s.%s\"\n");
-
-      appendStringInfo(&buf, msgfmt, get_database_name(MyDatabaseId),
-                       get_namespace_name(RelationGetNamespace(onerel)),
-                       RelationGetRelationName(onerel));
-      if (track_cost_delay_timing) {
-        /*
-         * We bypass the changecount mechanism because this value is
-         * only updated by the calling process.
-         */
-        appendStringInfo(
-            &buf, _("delay time: %.3f ms\n"),
-            (double)MyBEEntry->st_progress_param[PROGRESS_ANALYZE_DELAY_TIME] /
-                1000000.0);
-      }
-      if (track_io_timing) {
-        double read_ms = (double)(pgStatBlockReadTime - startreadtime) / 1000;
-        double write_ms =
-            (double)(pgStatBlockWriteTime - startwritetime) / 1000;
-
-        appendStringInfo(&buf,
-                         _("I/O timings: read: %.3f ms, write: %.3f ms\n"),
-                         read_ms, write_ms);
-      }
-      appendStringInfo(
-          &buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
-          read_rate, write_rate);
-      appendStringInfo(&buf,
-                       _("buffer usage: %" PRId64 " hits, %" PRId64
-                         " reads, %" PRId64 " dirtied\n"),
-                       total_blks_hit, total_blks_read, total_blks_dirtied);
-      appendStringInfo(&buf,
-                       _("WAL usage: %" PRId64 " records, %" PRId64
-                         " full page images, %" PRIu64 " bytes, %" PRId64
-                         " buffers full\n"),
-                       walusage.wal_records, walusage.wal_fpi,
-                       walusage.wal_bytes, walusage.wal_buffers_full);
-      appendStringInfo(&buf, _("system usage: %s"), pg_rusage_show(&ru0));
-
-      ereport(verbose ? INFO : LOG, (errmsg_internal("%s", buf.data)));
-
-      pfree(buf.data);
+    if (delay_in_ms > 0) {
+      read_rate = (double)BLCKSZ * total_blks_read / (1024 * 1024) /
+                  (delay_in_ms / 1000.0);
+      write_rate = (double)BLCKSZ * total_blks_dirtied / (1024 * 1024) /
+                   (delay_in_ms / 1000.0);
     }
+
+    /*
+     * We split this up so we don't emit empty I/O timing values when
+     * track_io_timing isn't enabled.
+     */
+
+    initStringInfo(&buf);
+
+    msgfmt = _("finished analyzing table \"%s.%s.%s\"\n");
+
+    appendStringInfo(&buf, msgfmt, get_database_name(MyDatabaseId),
+                     get_namespace_name(RelationGetNamespace(onerel)),
+                     RelationGetRelationName(onerel));
+    if (track_cost_delay_timing) {
+      /*
+       * We bypass the changecount mechanism because this value is
+       * only updated by the calling process.
+       */
+      appendStringInfo(
+          &buf, _("delay time: %.3f ms\n"),
+          (double)MyBEEntry->st_progress_param[PROGRESS_ANALYZE_DELAY_TIME] /
+              1000000.0);
+    }
+    if (track_io_timing) {
+      double read_ms = (double)(pgStatBlockReadTime - startreadtime) / 1000;
+      double write_ms = (double)(pgStatBlockWriteTime - startwritetime) / 1000;
+
+      appendStringInfo(&buf, _("I/O timings: read: %.3f ms, write: %.3f ms\n"),
+                       read_ms, write_ms);
+    }
+    appendStringInfo(&buf,
+                     _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
+                     read_rate, write_rate);
+    appendStringInfo(&buf,
+                     _("buffer usage: %" PRId64 " hits, %" PRId64
+                       " reads, %" PRId64 " dirtied\n"),
+                     total_blks_hit, total_blks_read, total_blks_dirtied);
+    appendStringInfo(&buf,
+                     _("WAL usage: %" PRId64 " records, %" PRId64
+                       " full page images, %" PRIu64 " bytes, %" PRId64
+                       " buffers full\n"),
+                     walusage.wal_records, walusage.wal_fpi, walusage.wal_bytes,
+                     walusage.wal_buffers_full);
+    appendStringInfo(&buf, _("system usage: %s"), pg_rusage_show(&ru0));
+
+    ereport(verbose ? INFO : LOG, (errmsg_internal("%s", buf.data)));
+
+    pfree(buf.data);
   }
 
   /* Roll back any GUC changes executed by index functions */

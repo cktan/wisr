@@ -152,16 +152,6 @@ static constexpr auto BuiltinTrancheNames = [] {
   a[LWTRANCHE_BUFFER_MAPPING] = "BufferMapping";
   a[LWTRANCHE_LOCK_MANAGER] = "LockManager";
   a[LWTRANCHE_PREDICATE_LOCK_MANAGER] = "PredicateLockManager";
-  a[LWTRANCHE_PARALLEL_HASH_JOIN] = "ParallelHashJoin";
-  a[LWTRANCHE_PARALLEL_BTREE_SCAN] = "ParallelBtreeScan";
-  a[LWTRANCHE_PARALLEL_QUERY_DSA] = "ParallelQueryDSA";
-  a[LWTRANCHE_PER_SESSION_DSA] = "PerSessionDSA";
-  a[LWTRANCHE_PER_SESSION_RECORD_TYPE] = "PerSessionRecordType";
-  a[LWTRANCHE_PER_SESSION_RECORD_TYPMOD] = "PerSessionRecordTypmod";
-  a[LWTRANCHE_SHARED_TUPLESTORE] = "SharedTupleStore";
-  a[LWTRANCHE_SHARED_TIDBITMAP] = "SharedTidBitmap";
-  a[LWTRANCHE_PARALLEL_APPEND] = "ParallelAppend";
-  a[LWTRANCHE_PER_XACT_PREDICATE_LIST] = "PerXactPredicateList";
   a[LWTRANCHE_PGSTATS_DSA] = "PgStatsDSA";
   a[LWTRANCHE_PGSTATS_HASH] = "PgStatsHash";
   a[LWTRANCHE_PGSTATS_DATA] = "PgStatsData";
@@ -176,7 +166,6 @@ static constexpr auto BuiltinTrancheNames = [] {
   a[LWTRANCHE_SERIAL_SLRU] = "SerialSLRU";
   a[LWTRANCHE_SUBTRANS_SLRU] = "SubtransSLRU";
   a[LWTRANCHE_XACT_SLRU] = "XactSLRU";
-  a[LWTRANCHE_PARALLEL_VACUUM_DSA] = "ParallelVacuumDSA";
   a[LWTRANCHE_AIO_URING_COMPLETION] = "AioUringCompletion";
   return a;
 }();
@@ -186,15 +175,15 @@ static constexpr auto BuiltinTrancheNames = [] {
  * stores the names of all dynamically-created tranches known to the current
  * process.  Any unused entries in the array will contain NULL.
  */
-static const char **LWLockTrancheNames = NULL;
-static int LWLockTrancheNamesAllocated = 0;
+static thread_local const char **LWLockTrancheNames = NULL;
+static thread_local int LWLockTrancheNamesAllocated = 0;
 
 /*
  * This points to the main array of LWLocks in shared memory.  Backends inherit
  * the pointer by fork from the postmaster (except in the EXEC_BACKEND case,
  * where we have special measures to pass it down).
  */
-LWLockPadded *MainLWLockArray = NULL;
+PG_SHARED LWLockPadded *MainLWLockArray = NULL;
 
 /*
  * We use this structure to keep track of locked LWLocks for release
@@ -210,8 +199,8 @@ typedef struct LWLockHandle {
   LWLockMode mode;
 } LWLockHandle;
 
-static int num_held_lwlocks = 0;
-static LWLockHandle held_lwlocks[MAX_SIMUL_LWLOCKS];
+static thread_local int num_held_lwlocks = 0;
+static thread_local LWLockHandle held_lwlocks[MAX_SIMUL_LWLOCKS];
 
 /* struct representing the LWLock tranche request for named tranche */
 typedef struct NamedLWLockTrancheRequest {
@@ -219,8 +208,9 @@ typedef struct NamedLWLockTrancheRequest {
   int num_lwlocks;
 } NamedLWLockTrancheRequest;
 
-static NamedLWLockTrancheRequest *NamedLWLockTrancheRequestArray = NULL;
-static int NamedLWLockTrancheRequestsAllocated = 0;
+static PG_SHARED NamedLWLockTrancheRequest *NamedLWLockTrancheRequestArray =
+    NULL;
+static PG_SHARED int NamedLWLockTrancheRequestsAllocated = 0;
 
 /*
  * NamedLWLockTrancheRequests is both the valid length of the request array,
@@ -228,10 +218,10 @@ static int NamedLWLockTrancheRequestsAllocated = 0;
  * This variable and NamedLWLockTrancheArray are non-static so that
  * postmaster.c can copy them to child processes in EXEC_BACKEND builds.
  */
-int NamedLWLockTrancheRequests = 0;
+PG_SHARED int NamedLWLockTrancheRequests = 0;
 
 /* points to data in shared memory: */
-NamedLWLockTranche *NamedLWLockTrancheArray = NULL;
+PG_SHARED NamedLWLockTranche *NamedLWLockTrancheArray = NULL;
 
 static void InitializeLWLocks(void);
 static inline void LWLockReportWaitStart(LWLock *lock);

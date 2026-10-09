@@ -112,7 +112,7 @@
 #define TWOPHASE_DIR "pg_twophase"
 
 /* GUC variable, can't be changed after startup */
-int max_prepared_xacts = 0;
+thread_local int max_prepared_xacts = 0;
 
 /*
  * This struct describes one global transaction that is in prepared state
@@ -183,7 +183,7 @@ typedef struct TwoPhaseStateData {
   GlobalTransaction prepXacts[FLEXIBLE_ARRAY_MEMBER];
 } TwoPhaseStateData;
 
-static TwoPhaseStateData *TwoPhaseState;
+static PG_SHARED TwoPhaseStateData *TwoPhaseState;
 
 /*
  * Global transaction entry currently locked by us, if any.  Note that any
@@ -191,9 +191,9 @@ static TwoPhaseStateData *TwoPhaseState;
  * TwoPhaseStateLock, though obviously the pointer itself doesn't need to be
  * (since it's just local memory).
  */
-static GlobalTransaction MyLockedGxact = NULL;
+static thread_local GlobalTransaction MyLockedGxact = NULL;
 
-static bool twophaseExitRegistered = false;
+static thread_local bool twophaseExitRegistered = false;
 
 static void RecordTransactionCommitPrepared(
     TransactionId xid, int nchildren, TransactionId *children, int nrels,
@@ -740,8 +740,8 @@ static GlobalTransaction TwoPhaseGetGXact(TransactionId xid, bool lock_held) {
   GlobalTransaction result = NULL;
   int i;
 
-  static TransactionId cached_xid = InvalidTransactionId;
-  static GlobalTransaction cached_gxact = NULL;
+  static thread_local TransactionId cached_xid = InvalidTransactionId;
+  static thread_local GlobalTransaction cached_gxact = NULL;
 
   Assert(!lock_held || LWLockHeldByMe(TwoPhaseStateLock));
 
@@ -924,7 +924,7 @@ typedef struct StateFileChunk {
   struct StateFileChunk *next;
 } StateFileChunk;
 
-static struct xllist {
+static thread_local struct xllist {
   StateFileChunk *head; /* first data block in the chain */
   StateFileChunk *tail; /* last block in chain */
   uint32 num_chunks;
@@ -1499,7 +1499,7 @@ void FinishPreparedTransaction(const char *gid, bool isCommit) {
   LWLockRelease(TwoPhaseStateLock);
 
   /* Count the prepared xact as committed or aborted */
-  AtEOXact_PgStat(isCommit, false);
+  AtEOXact_PgStat(isCommit);
 
   /*
    * And now we can clean up any files we may have left.

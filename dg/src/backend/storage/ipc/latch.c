@@ -25,7 +25,7 @@
 #include "utils/resowner.h"
 
 /* A common WaitEventSet used to implement WaitLatch() */
-static WaitEventSet *LatchWaitSet;
+static thread_local WaitEventSet *LatchWaitSet;
 
 /* The positions of the latch and PM death events in LatchWaitSet */
 #define LatchWaitSetLatchPos 0

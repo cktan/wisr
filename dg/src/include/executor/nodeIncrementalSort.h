@@ -12,22 +12,11 @@
 #ifndef NODEINCREMENTALSORT_H
 #define NODEINCREMENTALSORT_H
 
-#include "access/parallel.h"
 #include "nodes/execnodes.h"
 
 extern IncrementalSortState *
 ExecInitIncrementalSort(IncrementalSort *node, EState *estate, int eflags);
 extern void ExecEndIncrementalSort(IncrementalSortState *node);
 extern void ExecReScanIncrementalSort(IncrementalSortState *node);
-
-/* parallel instrumentation support */
-extern void ExecIncrementalSortEstimate(IncrementalSortState *node,
-                                        ParallelContext *pcxt);
-extern void ExecIncrementalSortInitializeDSM(IncrementalSortState *node,
-                                             ParallelContext *pcxt);
-extern void ExecIncrementalSortInitializeWorker(IncrementalSortState *node,
-                                                ParallelWorkerContext *pwcxt);
-extern void
-ExecIncrementalSortRetrieveInstrumentation(IncrementalSortState *node);
 
 #endif /* NODEINCREMENTALSORT_H */

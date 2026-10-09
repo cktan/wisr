@@ -71,26 +71,27 @@
 
 /* Hook for plugins to get control in ExecutorStart() */
 typedef void (*ExecutorStart_hook_type)(QueryDesc *queryDesc, int eflags);
-extern PGDLLIMPORT ExecutorStart_hook_type ExecutorStart_hook;
+extern PG_SHARED PGDLLIMPORT ExecutorStart_hook_type ExecutorStart_hook;
 
 /* Hook for plugins to get control in ExecutorRun() */
 typedef void (*ExecutorRun_hook_type)(QueryDesc *queryDesc,
                                       ScanDirection direction, uint64 count);
-extern PGDLLIMPORT ExecutorRun_hook_type ExecutorRun_hook;
+extern PG_SHARED PGDLLIMPORT ExecutorRun_hook_type ExecutorRun_hook;
 
 /* Hook for plugins to get control in ExecutorFinish() */
 typedef void (*ExecutorFinish_hook_type)(QueryDesc *queryDesc);
-extern PGDLLIMPORT ExecutorFinish_hook_type ExecutorFinish_hook;
+extern PG_SHARED PGDLLIMPORT ExecutorFinish_hook_type ExecutorFinish_hook;
 
 /* Hook for plugins to get control in ExecutorEnd() */
 typedef void (*ExecutorEnd_hook_type)(QueryDesc *queryDesc);
-extern PGDLLIMPORT ExecutorEnd_hook_type ExecutorEnd_hook;
+extern PG_SHARED PGDLLIMPORT ExecutorEnd_hook_type ExecutorEnd_hook;
 
 /* Hook for plugins to get control in ExecCheckPermissions() */
 typedef bool (*ExecutorCheckPerms_hook_type)(List *rangeTable,
                                              List *rtePermInfos,
                                              bool ereport_on_violation);
-extern PGDLLIMPORT ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook;
+extern PG_SHARED PGDLLIMPORT ExecutorCheckPerms_hook_type
+    ExecutorCheckPerms_hook;
 
 /*
  * prototypes from functions in execAmi.c
@@ -120,12 +121,13 @@ extern ExprState *execTuplesMatchPrepare(TupleDesc desc, int numCols,
                                          PlanState *parent);
 extern void execTuplesHashPrepare(int numCols, const Oid *eqOperators,
                                   Oid **eqFuncOids, FmgrInfo **hashFunctions);
-extern TupleHashTable BuildTupleHashTable(
-    PlanState *parent, TupleDesc inputDesc, const TupleTableSlotOps *inputOps,
-    int numCols, AttrNumber *keyColIdx, const Oid *eqfuncoids,
-    FmgrInfo *hashfunctions, Oid *collations, long nbuckets,
-    Size additionalsize, MemoryContext metacxt, MemoryContext tablecxt,
-    MemoryContext tempcxt, bool use_variable_hash_iv);
+extern TupleHashTable
+BuildTupleHashTable(PlanState *parent, TupleDesc inputDesc,
+                    const TupleTableSlotOps *inputOps, int numCols,
+                    AttrNumber *keyColIdx, const Oid *eqfuncoids,
+                    FmgrInfo *hashfunctions, Oid *collations, long nbuckets,
+                    Size additionalsize, MemoryContext metacxt,
+                    MemoryContext tablecxt, MemoryContext tempcxt);
 extern TupleHashEntry LookupTupleHashEntry(TupleHashTable hashtable,
                                            TupleTableSlot *slot, bool *isnew,
                                            uint32 *hash);

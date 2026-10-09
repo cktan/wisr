@@ -14,7 +14,6 @@
 #ifndef NODEFOREIGNSCAN_H
 #define NODEFOREIGNSCAN_H
 
-#include "access/parallel.h"
 #include "nodes/execnodes.h"
 
 extern ForeignScanState *ExecInitForeignScan(ForeignScan *node, EState *estate,
@@ -22,14 +21,6 @@ extern ForeignScanState *ExecInitForeignScan(ForeignScan *node, EState *estate,
 extern void ExecEndForeignScan(ForeignScanState *node);
 extern void ExecReScanForeignScan(ForeignScanState *node);
 
-extern void ExecForeignScanEstimate(ForeignScanState *node,
-                                    ParallelContext *pcxt);
-extern void ExecForeignScanInitializeDSM(ForeignScanState *node,
-                                         ParallelContext *pcxt);
-extern void ExecForeignScanReInitializeDSM(ForeignScanState *node,
-                                           ParallelContext *pcxt);
-extern void ExecForeignScanInitializeWorker(ForeignScanState *node,
-                                            ParallelWorkerContext *pwcxt);
 extern void ExecShutdownForeignScan(ForeignScanState *node);
 
 extern void ExecAsyncForeignScanRequest(AsyncRequest *areq);

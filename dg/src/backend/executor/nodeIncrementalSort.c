@@ -98,20 +98,8 @@
 #define INSTRUMENT_SORT_GROUP(node, groupName) \
 	do { \
 		if ((node)->ss.ps.instrument != NULL) \
-		{ \
-			if ((node)->shared_info && (node)->am_worker) \
-			{ \
-				Assert(IsParallelWorker()); \
-				Assert(ParallelWorkerNumber < (node)->shared_info->num_workers); \
-				instrumentSortedGroup(&(node)->shared_info->sinfo[ParallelWorkerNumber].groupName##GroupInfo, \
-									  (node)->groupName##_state); \
-			} \
-			else \
-			{ \
-				instrumentSortedGroup(&(node)->incsort_info.groupName##GroupInfo, \
-									  (node)->groupName##_state); \
-			} \
-		} \
+			instrumentSortedGroup(&(node)->incsort_info.groupName##GroupInfo, \
+								  (node)->groupName##_state); \
 	} while (0)
 
 /* ----------------------------------------------------------------
@@ -293,7 +281,7 @@ static void switchToPresortedPrefixMode(PlanState *pstate) {
         &(plannode->sort.sortColIdx[nPresortedCols]),
         &(plannode->sort.sortOperators[nPresortedCols]),
         &(plannode->sort.collations[nPresortedCols]),
-        &(plannode->sort.nullsFirst[nPresortedCols]), work_mem, NULL,
+        &(plannode->sort.nullsFirst[nPresortedCols]), work_mem,
         node->bounded ? TUPLESORT_ALLOWBOUNDED : TUPLESORT_NONE);
     node->prefixsort_state = prefixsort_state;
   } else {
@@ -578,7 +566,7 @@ static TupleTableSlot *ExecIncrementalSort(PlanState *pstate) {
       fullsort_state = tuplesort_begin_heap(
           tupDesc, plannode->sort.numCols, plannode->sort.sortColIdx,
           plannode->sort.sortOperators, plannode->sort.collations,
-          plannode->sort.nullsFirst, work_mem, NULL,
+          plannode->sort.nullsFirst, work_mem,
           node->bounded ? TUPLESORT_ALLOWBOUNDED : TUPLESORT_NONE);
       node->fullsort_state = fullsort_state;
     } else {
@@ -1103,80 +1091,3 @@ void ExecReScanIncrementalSort(IncrementalSortState *node) {
  *						Parallel Query Support
  * ----------------------------------------------------------------
  */
-
-/* ----------------------------------------------------------------
- *		ExecSortEstimate
- *
- *		Estimate space required to propagate sort statistics.
- * ----------------------------------------------------------------
- */
-void ExecIncrementalSortEstimate(IncrementalSortState *node,
-                                 ParallelContext *pcxt) {
-  Size size;
-
-  /* don't need this if not instrumenting or no workers */
-  if (!node->ss.ps.instrument || pcxt->nworkers == 0)
-    return;
-
-  size = mul_size(pcxt->nworkers, sizeof(IncrementalSortInfo));
-  size = add_size(size, offsetof(SharedIncrementalSortInfo, sinfo));
-  shm_toc_estimate_chunk(&pcxt->estimator, size);
-  shm_toc_estimate_keys(&pcxt->estimator, 1);
-}
-
-/* ----------------------------------------------------------------
- *		ExecSortInitializeDSM
- *
- *		Initialize DSM space for sort statistics.
- * ----------------------------------------------------------------
- */
-void ExecIncrementalSortInitializeDSM(IncrementalSortState *node,
-                                      ParallelContext *pcxt) {
-  Size size;
-
-  /* don't need this if not instrumenting or no workers */
-  if (!node->ss.ps.instrument || pcxt->nworkers == 0)
-    return;
-
-  size = offsetof(SharedIncrementalSortInfo, sinfo) +
-         pcxt->nworkers * sizeof(IncrementalSortInfo);
-  node->shared_info =
-      (SharedIncrementalSortInfo *)shm_toc_allocate(pcxt->toc, size);
-  /* ensure any unfilled slots will contain zeroes */
-  memset(node->shared_info, 0, size);
-  node->shared_info->num_workers = pcxt->nworkers;
-  shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, node->shared_info);
-}
-
-/* ----------------------------------------------------------------
- *		ExecSortInitializeWorker
- *
- *		Attach worker to DSM space for sort statistics.
- * ----------------------------------------------------------------
- */
-void ExecIncrementalSortInitializeWorker(IncrementalSortState *node,
-                                         ParallelWorkerContext *pwcxt) {
-  node->shared_info = (SharedIncrementalSortInfo *)shm_toc_lookup(
-      pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
-  node->am_worker = true;
-}
-
-/* ----------------------------------------------------------------
- *		ExecSortRetrieveInstrumentation
- *
- *		Transfer sort statistics from DSM to private memory.
- * ----------------------------------------------------------------
- */
-void ExecIncrementalSortRetrieveInstrumentation(IncrementalSortState *node) {
-  Size size;
-  SharedIncrementalSortInfo *si;
-
-  if (node->shared_info == NULL)
-    return;
-
-  size = offsetof(SharedIncrementalSortInfo, sinfo) +
-         node->shared_info->num_workers * sizeof(IncrementalSortInfo);
-  si = (SharedIncrementalSortInfo *)palloc(size);
-  memcpy(si, node->shared_info, size);
-  node->shared_info = si;
-}

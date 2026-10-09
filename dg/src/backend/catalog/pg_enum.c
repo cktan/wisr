@@ -33,7 +33,7 @@
 #include "utils/syscache.h"
 
 /* Potentially set by pg_upgrade_support functions */
-Oid binary_upgrade_next_pg_enum_oid = InvalidOid;
+thread_local Oid binary_upgrade_next_pg_enum_oid = InvalidOid;
 
 /*
  * We keep two transaction-lifespan hash tables, one containing the OIDs
@@ -59,8 +59,8 @@ Oid binary_upgrade_next_pg_enum_oid = InvalidOid;
  * pg_dump.  We could track subtransaction nesting of the commands to
  * analyze things more precisely, but for now we don't bother.
  */
-static HTAB *uncommitted_enum_types = NULL;
-static HTAB *uncommitted_enum_values = NULL;
+static thread_local HTAB *uncommitted_enum_types = NULL;
+static thread_local HTAB *uncommitted_enum_values = NULL;
 
 static void init_uncommitted_enum_types(void);
 static void init_uncommitted_enum_values(void);
@@ -717,87 +717,4 @@ static int sort_order_cmp(const void *p1, const void *p2) {
     return 1;
   else
     return 0;
-}
-
-Size EstimateUncommittedEnumsSpace(void) {
-  size_t entries = 0;
-
-  if (uncommitted_enum_types)
-    entries += hash_get_num_entries(uncommitted_enum_types);
-  if (uncommitted_enum_values)
-    entries += hash_get_num_entries(uncommitted_enum_values);
-
-  /* Add two for the terminators. */
-  return sizeof(Oid) * (entries + 2);
-}
-
-void SerializeUncommittedEnums(void *space, Size size) {
-  Oid *serialized = (Oid *)space;
-
-  /*
-   * Make sure the hash tables haven't changed in size since the caller
-   * reserved the space.
-   */
-  Assert(size == EstimateUncommittedEnumsSpace());
-
-  /* Write out all the OIDs from the types hash table, if there is one. */
-  if (uncommitted_enum_types) {
-    HASH_SEQ_STATUS status;
-    Oid *value;
-
-    hash_seq_init(&status, uncommitted_enum_types);
-    while ((value = (Oid *)hash_seq_search(&status)))
-      *serialized++ = *value;
-  }
-
-  /* Write out the terminator. */
-  *serialized++ = InvalidOid;
-
-  /* Write out all the OIDs from the values hash table, if there is one. */
-  if (uncommitted_enum_values) {
-    HASH_SEQ_STATUS status;
-    Oid *value;
-
-    hash_seq_init(&status, uncommitted_enum_values);
-    while ((value = (Oid *)hash_seq_search(&status)))
-      *serialized++ = *value;
-  }
-
-  /* Write out the terminator. */
-  *serialized++ = InvalidOid;
-
-  /*
-   * Make sure the amount of space we actually used matches what was
-   * estimated.
-   */
-  Assert((char *)serialized == ((char *)space) + size);
-}
-
-void RestoreUncommittedEnums(void *space) {
-  Oid *serialized = (Oid *)space;
-
-  Assert(!uncommitted_enum_types);
-  Assert(!uncommitted_enum_values);
-
-  /*
-   * If either list is empty then don't even bother to create that hash
-   * table.  This is the common case, since most transactions don't create
-   * or alter enums.
-   */
-  if (OidIsValid(*serialized)) {
-    /* Read all the types into a new hash table. */
-    init_uncommitted_enum_types();
-    do {
-      (void)hash_search(uncommitted_enum_types, serialized++, HASH_ENTER, NULL);
-    } while (OidIsValid(*serialized));
-  }
-  serialized++;
-  if (OidIsValid(*serialized)) {
-    /* Read all the values into a new hash table. */
-    init_uncommitted_enum_values();
-    do {
-      (void)hash_search(uncommitted_enum_values, serialized++, HASH_ENTER,
-                        NULL);
-    } while (OidIsValid(*serialized));
-  }
 }

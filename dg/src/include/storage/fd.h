@@ -65,16 +65,16 @@ enum FileExtendMethod {
 #define DEFAULT_FILE_EXTEND_METHOD 0
 
 /* GUC parameter */
-extern PGDLLIMPORT int max_files_per_process;
-extern PGDLLIMPORT bool data_sync_retry;
-extern PGDLLIMPORT int recovery_init_sync_method;
-extern PGDLLIMPORT int io_direct_flags;
-extern PGDLLIMPORT int file_extend_method;
+extern thread_local PGDLLIMPORT int max_files_per_process;
+extern thread_local PGDLLIMPORT bool data_sync_retry;
+extern thread_local PGDLLIMPORT int recovery_init_sync_method;
+extern thread_local PGDLLIMPORT int io_direct_flags;
+extern thread_local PGDLLIMPORT int file_extend_method;
 
 /*
  * This is private to fd.c, but exported for save/restore_backend_variables()
  */
-extern PGDLLIMPORT int max_safe_fds;
+extern PG_SHARED PGDLLIMPORT int max_safe_fds;
 
 /*
  * On Windows, we have to interpret EACCES as possibly meaning the same as
@@ -141,15 +141,6 @@ extern int FileGetRawDesc(File file);
 extern int FileGetRawFlags(File file);
 extern mode_t FileGetRawMode(File file);
 
-/* Operations used for sharing named temporary files */
-extern File PathNameCreateTemporaryFile(const char *path,
-                                        bool error_on_failure);
-extern File PathNameOpenTemporaryFile(const char *path, int mode);
-extern bool PathNameDeleteTemporaryFile(const char *path,
-                                        bool error_on_failure);
-extern void PathNameCreateTemporaryDir(const char *basedir,
-                                       const char *directory);
-extern void PathNameDeleteTemporaryDir(const char *dirname);
 extern void TempTablespacePath(char *path, Oid tablespace);
 
 /* Operations that allow use of regular stdio --- USE WITH CAUTION */
@@ -193,7 +184,6 @@ extern void set_max_safe_fds(void);
 extern void closeAllVfds(void);
 extern void SetTempTablespaces(Oid *tableSpaces, int numSpaces);
 extern bool TempTablespacesAreSet(void);
-extern int GetTempTablespaces(Oid *tableSpaces, int numSpaces);
 extern Oid GetNextTempTableSpace(void);
 extern void AtEOXact_Files(bool isCommit);
 extern void AtEOSubXact_Files(bool isCommit, SubTransactionId mySubid,

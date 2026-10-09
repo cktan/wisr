@@ -29,8 +29,8 @@
 #define DEFAULT_TABLE_ACCESS_METHOD	"heap"
 
 /* GUCs */
-extern PGDLLIMPORT char *default_table_access_method;
-extern PGDLLIMPORT bool synchronize_seqscans;
+extern thread_local PGDLLIMPORT char *default_table_access_method;
+extern thread_local PGDLLIMPORT bool synchronize_seqscans;
 
 
 struct BulkInsertStateData;
@@ -313,10 +313,6 @@ typedef struct TableAmRoutine
 	 *
 	 * If nkeys != 0, the results need to be filtered by those scan keys.
 	 *
-	 * pscan, if not NULL, will have already been initialized with
-	 * parallelscan_initialize(), and has to be for the same relation. Will
-	 * only be set coming from table_beginscan_parallel().
-	 *
 	 * `flags` is a bitmask indicating the type of scan (ScanOptions's
 	 * SO_TYPE_*, currently only one may be specified), options controlling
 	 * the scan's behaviour (ScanOptions's SO_ALLOW_*, several may be
@@ -326,7 +322,6 @@ typedef struct TableAmRoutine
 	TableScanDesc (*scan_begin) (Relation rel,
 								 Snapshot snapshot,
 								 int nkeys, struct ScanKeyData *key,
-								 ParallelTableScanDesc pscan,
 								 uint32 flags);
 
 	/*
@@ -378,33 +373,6 @@ typedef struct TableAmRoutine
 	bool		(*scan_getnextslot_tidrange) (TableScanDesc scan,
 											  ScanDirection direction,
 											  TupleTableSlot *slot);
-
-	/* ------------------------------------------------------------------------
-	 * Parallel table scan related functions.
-	 * ------------------------------------------------------------------------
-	 */
-
-	/*
-	 * Estimate the size of shared memory needed for a parallel scan of this
-	 * relation. The snapshot does not need to be accounted for.
-	 */
-	Size		(*parallelscan_estimate) (Relation rel);
-
-	/*
-	 * Initialize ParallelTableScanDesc for a parallel scan of this relation.
-	 * `pscan` will be sized according to parallelscan_estimate() for the same
-	 * relation.
-	 */
-	Size		(*parallelscan_initialize) (Relation rel,
-											ParallelTableScanDesc pscan);
-
-	/*
-	 * Reinitialize `pscan` for a new scan. `rel` will be the same relation as
-	 * when `pscan` was initialized by parallelscan_initialize.
-	 */
-	void		(*parallelscan_reinitialize) (Relation rel,
-											  ParallelTableScanDesc pscan);
-
 
 	/* ------------------------------------------------------------------------
 	 * Index Scan Callbacks
@@ -635,25 +603,6 @@ typedef struct TableAmRoutine
 											  double *tups_recently_dead);
 
 	/*
-	 * React to VACUUM command on the relation. The VACUUM can be triggered by
-	 * a user or by autovacuum. The specific actions performed by the AM will
-	 * depend heavily on the individual AM.
-	 *
-	 * On entry a transaction is already established, and the relation is
-	 * locked with a ShareUpdateExclusive lock.
-	 *
-	 * Note that neither VACUUM FULL (and CLUSTER), nor ANALYZE go through
-	 * this routine, even if (for ANALYZE) it is part of the same VACUUM
-	 * command.
-	 *
-	 * There probably, in the future, needs to be a separate callback to
-	 * integrate with autovacuum's scheduling.
-	 */
-	void		(*relation_vacuum) (Relation rel,
-									struct VacuumParams *params,
-									BufferAccessStrategy bstrategy);
-
-	/*
 	 * Prepare to analyze block `blockno` of `scan`. The scan has been started
 	 * with table_beginscan_analyze().  See also
 	 * table_scan_analyze_next_block().
@@ -677,9 +626,7 @@ typedef struct TableAmRoutine
 	 * See table_scan_analyze_next_tuple().
 	 *
 	 * Not every AM might have a meaningful concept of dead rows, in which
-	 * case it's OK to not increment *deadrows - but note that that may
-	 * influence autovacuum scheduling (see comment for relation_vacuum
-	 * callback).
+	 * case it's OK to not increment *deadrows.
 	 */
 	bool		(*scan_analyze_next_tuple) (TableScanDesc scan,
 											TransactionId OldestXmin,
@@ -697,8 +644,7 @@ typedef struct TableAmRoutine
 										   BlockNumber start_blockno,
 										   BlockNumber numblocks,
 										   IndexBuildCallback callback,
-										   void *callback_state,
-										   TableScanDesc scan);
+										   void *callback_state);
 
 	/* see table_index_validate_scan for reference about parameters */
 	void		(*index_validate_scan) (Relation table_rel,
@@ -878,7 +824,7 @@ table_beginscan(Relation rel, Snapshot snapshot,
 	uint32		flags = SO_TYPE_SEQSCAN |
 		SO_ALLOW_STRAT | SO_ALLOW_SYNC | SO_ALLOW_PAGEMODE;
 
-	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, NULL, flags);
+	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, flags);
 }
 
 /*
@@ -907,7 +853,7 @@ table_beginscan_strat(Relation rel, Snapshot snapshot,
 	if (allow_sync)
 		flags |= SO_ALLOW_SYNC;
 
-	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, NULL, flags);
+	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, flags);
 }
 
 /*
@@ -922,8 +868,7 @@ table_beginscan_bm(Relation rel, Snapshot snapshot,
 {
 	uint32		flags = SO_TYPE_BITMAPSCAN | SO_ALLOW_PAGEMODE;
 
-	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key,
-									   NULL, flags);
+	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, flags);
 }
 
 /*
@@ -948,7 +893,7 @@ table_beginscan_sampling(Relation rel, Snapshot snapshot,
 	if (allow_pagemode)
 		flags |= SO_ALLOW_PAGEMODE;
 
-	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, NULL, flags);
+	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, flags);
 }
 
 /*
@@ -961,7 +906,7 @@ table_beginscan_tid(Relation rel, Snapshot snapshot)
 {
 	uint32		flags = SO_TYPE_TIDSCAN;
 
-	return rel->rd_tableam->scan_begin(rel, snapshot, 0, NULL, NULL, flags);
+	return rel->rd_tableam->scan_begin(rel, snapshot, 0, NULL, flags);
 }
 
 /*
@@ -974,7 +919,7 @@ table_beginscan_analyze(Relation rel)
 {
 	uint32		flags = SO_TYPE_ANALYZE;
 
-	return rel->rd_tableam->scan_begin(rel, NULL, 0, NULL, NULL, flags);
+	return rel->rd_tableam->scan_begin(rel, NULL, 0, NULL, flags);
 }
 
 /*
@@ -1053,7 +998,7 @@ table_beginscan_tidrange(Relation rel, Snapshot snapshot,
 	TableScanDesc sscan;
 	uint32		flags = SO_TYPE_TIDRANGESCAN | SO_ALLOW_PAGEMODE;
 
-	sscan = rel->rd_tableam->scan_begin(rel, snapshot, 0, NULL, NULL, flags);
+	sscan = rel->rd_tableam->scan_begin(rel, snapshot, 0, NULL, flags);
 
 	/* Set the range of TIDs to scan */
 	sscan->rs_rd->rd_tableam->scan_set_tidrange(sscan, mintid, maxtid);
@@ -1103,44 +1048,6 @@ table_scan_getnextslot_tidrange(TableScanDesc sscan, ScanDirection direction,
  * Parallel table scan related functions.
  * ----------------------------------------------------------------------------
  */
-
-/*
- * Estimate the size of shared memory needed for a parallel scan of this
- * relation.
- */
-extern Size table_parallelscan_estimate(Relation rel, Snapshot snapshot);
-
-/*
- * Initialize ParallelTableScanDesc for a parallel scan of this
- * relation. `pscan` needs to be sized according to parallelscan_estimate()
- * for the same relation.  Call this just once in the leader process; then,
- * individual workers attach via table_beginscan_parallel.
- */
-extern void table_parallelscan_initialize(Relation rel,
-										  ParallelTableScanDesc pscan,
-										  Snapshot snapshot);
-
-/*
- * Begin a parallel scan. `pscan` needs to have been initialized with
- * table_parallelscan_initialize(), for the same relation. The initialization
- * does not need to have happened in this backend.
- *
- * Caller must hold a suitable lock on the relation.
- */
-extern TableScanDesc table_beginscan_parallel(Relation relation,
-											  ParallelTableScanDesc pscan);
-
-/*
- * Restart a parallel scan.  Call this in the leader process.  Caller is
- * responsible for making sure that all workers have finished the scan
- * beforehand.
- */
-static inline void
-table_parallelscan_reinitialize(Relation rel, ParallelTableScanDesc pscan)
-{
-	rel->rd_tableam->parallelscan_reinitialize(rel, pscan);
-}
-
 
 /* ----------------------------------------------------------------------------
  *  Index scan related functions.
@@ -1630,7 +1537,7 @@ table_relation_copy_data(Relation rel, const RelFileLocator *newrlocator)
  *   in that index's order; if false and OldIndex is InvalidOid, no sorting is
  *   performed
  * - OldIndex - see use_sort
- * - OldestXmin - computed by vacuum_get_cutoffs(), even when
+ * - OldestXmin - computed by the caller, even when
  *   not needed for the relation's AM
  * - *xid_cutoff - ditto
  * - *multi_cutoff - ditto
@@ -1657,24 +1564,6 @@ table_relation_copy_for_cluster(Relation OldTable, Relation NewTable,
 													xid_cutoff, multi_cutoff,
 													num_tuples, tups_vacuumed,
 													tups_recently_dead);
-}
-
-/*
- * Perform VACUUM on the relation. The VACUUM can be triggered by a user or by
- * autovacuum. The specific actions performed by the AM will depend heavily on
- * the individual AM.
- *
- * On entry a transaction needs to already been established, and the
- * table is locked with a ShareUpdateExclusive lock.
- *
- * Note that neither VACUUM FULL (and CLUSTER), nor ANALYZE go through this
- * routine, even if (for ANALYZE) it is part of the same VACUUM command.
- */
-static inline void
-table_relation_vacuum(Relation rel, struct VacuumParams *params,
-					  BufferAccessStrategy bstrategy)
-{
-	rel->rd_tableam->relation_vacuum(rel, params, bstrategy);
 }
 
 /*
@@ -1745,8 +1634,7 @@ table_index_build_scan(Relation table_rel,
 					   bool allow_sync,
 					   bool progress,
 					   IndexBuildCallback callback,
-					   void *callback_state,
-					   TableScanDesc scan)
+					   void *callback_state)
 {
 	return table_rel->rd_tableam->index_build_range_scan(table_rel,
 														 index_rel,
@@ -1757,8 +1645,7 @@ table_index_build_scan(Relation table_rel,
 														 0,
 														 InvalidBlockNumber,
 														 callback,
-														 callback_state,
-														 scan);
+														 callback_state);
 }
 
 /*
@@ -1781,8 +1668,7 @@ table_index_build_range_scan(Relation table_rel,
 							 BlockNumber start_blockno,
 							 BlockNumber numblocks,
 							 IndexBuildCallback callback,
-							 void *callback_state,
-							 TableScanDesc scan)
+							 void *callback_state)
 {
 	return table_rel->rd_tableam->index_build_range_scan(table_rel,
 														 index_rel,
@@ -1793,8 +1679,7 @@ table_index_build_range_scan(Relation table_rel,
 														 start_blockno,
 														 numblocks,
 														 callback,
-														 callback_state,
-														 scan);
+														 callback_state);
 }
 
 /*
@@ -2009,24 +1894,6 @@ extern void simple_table_tuple_delete(Relation rel, ItemPointer tid,
 extern void simple_table_tuple_update(Relation rel, ItemPointer otid,
 									  TupleTableSlot *slot, Snapshot snapshot,
 									  TU_UpdateIndexes *update_indexes);
-
-
-/* ----------------------------------------------------------------------------
- * Helper functions to implement parallel scans for block oriented AMs.
- * ----------------------------------------------------------------------------
- */
-
-extern Size table_block_parallelscan_estimate(Relation rel);
-extern Size table_block_parallelscan_initialize(Relation rel,
-												ParallelTableScanDesc pscan);
-extern void table_block_parallelscan_reinitialize(Relation rel,
-												  ParallelTableScanDesc pscan);
-extern BlockNumber table_block_parallelscan_nextpage(Relation rel,
-													 ParallelBlockTableScanWorker pbscanwork,
-													 ParallelBlockTableScanDesc pbscan);
-extern void table_block_parallelscan_startblock_init(Relation rel,
-													 ParallelBlockTableScanWorker pbscanwork,
-													 ParallelBlockTableScanDesc pbscan);
 
 
 /* ----------------------------------------------------------------------------

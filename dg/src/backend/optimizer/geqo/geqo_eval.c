@@ -245,15 +245,6 @@ static List *merge_clump(PlannerInfo *root, List *clumps, Clump *new_clump,
         /* Create paths for partitionwise joins. */
         generate_partitionwise_join_paths(root, joinrel);
 
-        /*
-         * Except for the topmost scan/join rel, consider gathering
-         * partial paths.  We'll do the same for the topmost scan/join
-         * rel once we know the final targetlist (see
-         * grouping_planner).
-         */
-        if (!bms_equal(joinrel->relids, root->all_query_rels))
-          generate_useful_gather_paths(root, joinrel, false);
-
         /* Find and save the cheapest paths for this joinrel */
         set_cheapest(joinrel);
 

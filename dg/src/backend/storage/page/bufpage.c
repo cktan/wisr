@@ -23,7 +23,7 @@
 #include "utils/memutils.h"
 
 /* GUC variable */
-bool ignore_checksum_failure = false;
+thread_local bool ignore_checksum_failure = false;
 
 /* ----------------------------------------------------------------
  *						Page support functions
@@ -1367,7 +1367,7 @@ bool PageIndexTupleOverwrite(Page page, OffsetNumber offnum, Item newtup,
  * returned page and not refer to it again.
  */
 char *PageSetChecksumCopy(Page page, BlockNumber blkno) {
-  static char *pageCopy = NULL;
+  static thread_local char *pageCopy = NULL;
 
   /* If we don't need a checksum, just return the passed-in data */
   if (PageIsNew(page) || !DataChecksumsEnabled())

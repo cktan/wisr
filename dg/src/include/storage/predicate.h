@@ -22,15 +22,9 @@
 /*
  * GUC variables
  */
-extern PGDLLIMPORT int max_predicate_locks_per_xact;
-extern PGDLLIMPORT int max_predicate_locks_per_relation;
-extern PGDLLIMPORT int max_predicate_locks_per_page;
-
-/*
- * A handle used for sharing SERIALIZABLEXACT objects between the participants
- * in a parallel query.
- */
-typedef void *SerializableXactHandle;
+extern thread_local PGDLLIMPORT int max_predicate_locks_per_xact;
+extern thread_local PGDLLIMPORT int max_predicate_locks_per_relation;
+extern thread_local PGDLLIMPORT int max_predicate_locks_per_page;
 
 /*
  * function prototypes
@@ -82,9 +76,5 @@ extern void PostPrepare_PredicateLocks(TransactionId xid);
 extern void PredicateLockTwoPhaseFinish(TransactionId xid, bool isCommit);
 extern void predicatelock_twophase_recover(TransactionId xid, uint16 info,
                                            void *recdata, uint32 len);
-
-/* parallel query support */
-extern SerializableXactHandle ShareSerializableXact(void);
-extern void AttachSerializableXact(SerializableXactHandle handle);
 
 #endif /* PREDICATE_H */

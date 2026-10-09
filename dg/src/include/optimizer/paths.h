@@ -19,41 +19,31 @@
 /*
  * allpaths.c
  */
-extern PGDLLIMPORT bool enable_geqo;
-extern PGDLLIMPORT int geqo_threshold;
-extern PGDLLIMPORT int min_parallel_table_scan_size;
-extern PGDLLIMPORT int min_parallel_index_scan_size;
-extern PGDLLIMPORT bool enable_group_by_reordering;
+extern thread_local PGDLLIMPORT bool enable_geqo;
+extern thread_local PGDLLIMPORT int geqo_threshold;
+extern thread_local PGDLLIMPORT bool enable_group_by_reordering;
 
 /* Hook for plugins to get control in set_rel_pathlist() */
 typedef void (*set_rel_pathlist_hook_type)(PlannerInfo *root, RelOptInfo *rel,
                                            Index rti, RangeTblEntry *rte);
-extern PGDLLIMPORT set_rel_pathlist_hook_type set_rel_pathlist_hook;
+extern PG_SHARED PGDLLIMPORT set_rel_pathlist_hook_type set_rel_pathlist_hook;
 
 /* Hook for plugins to get control in add_paths_to_joinrel() */
 typedef void (*set_join_pathlist_hook_type)(
     PlannerInfo *root, RelOptInfo *joinrel, RelOptInfo *outerrel,
     RelOptInfo *innerrel, JoinType jointype, JoinPathExtraData *extra);
-extern PGDLLIMPORT set_join_pathlist_hook_type set_join_pathlist_hook;
+extern PG_SHARED PGDLLIMPORT set_join_pathlist_hook_type set_join_pathlist_hook;
 
 /* Hook for plugins to replace standard_join_search() */
 typedef RelOptInfo *(*join_search_hook_type)(PlannerInfo *root,
                                              int levels_needed,
                                              List *initial_rels);
-extern PGDLLIMPORT join_search_hook_type join_search_hook;
+extern PG_SHARED PGDLLIMPORT join_search_hook_type join_search_hook;
 
 extern RelOptInfo *make_one_rel(PlannerInfo *root, List *joinlist);
 extern RelOptInfo *standard_join_search(PlannerInfo *root, int levels_needed,
                                         List *initial_rels);
 
-extern void generate_gather_paths(PlannerInfo *root, RelOptInfo *rel,
-                                  bool override_rows);
-extern void generate_useful_gather_paths(PlannerInfo *root, RelOptInfo *rel,
-                                         bool override_rows);
-extern int compute_parallel_worker(RelOptInfo *rel, double heap_pages,
-                                   double index_pages, int max_workers);
-extern void create_partial_bitmap_paths(PlannerInfo *root, RelOptInfo *rel,
-                                        Path *bitmapqual);
 extern void generate_partitionwise_join_paths(PlannerInfo *root,
                                               RelOptInfo *rel);
 
@@ -131,11 +121,7 @@ extern EquivalenceMember *
 find_ec_member_matching_expr(EquivalenceClass *ec, Expr *expr, Relids relids);
 extern EquivalenceMember *find_computable_ec_member(PlannerInfo *root,
                                                     EquivalenceClass *ec,
-                                                    List *exprs, Relids relids,
-                                                    bool require_parallel_safe);
-extern bool relation_can_be_sorted_early(PlannerInfo *root, RelOptInfo *rel,
-                                         EquivalenceClass *ec,
-                                         bool require_parallel_safe);
+                                                    List *exprs, Relids relids);
 extern void generate_base_implied_equalities(PlannerInfo *root);
 extern List *generate_join_implied_equalities(PlannerInfo *root,
                                               Relids join_relids,
@@ -204,13 +190,11 @@ extern bool pathkeys_count_contained_in(List *keys1, List *keys2,
 extern List *get_useful_group_keys_orderings(PlannerInfo *root, Path *path);
 extern Path *get_cheapest_path_for_pathkeys(List *paths, List *pathkeys,
                                             Relids required_outer,
-                                            CostSelector cost_criterion,
-                                            bool require_parallel_safe);
+                                            CostSelector cost_criterion);
 extern Path *get_cheapest_fractional_path_for_pathkeys(List *paths,
                                                        List *pathkeys,
                                                        Relids required_outer,
                                                        double fraction);
-extern Path *get_cheapest_parallel_safe_total_inner(List *paths);
 extern List *build_index_pathkeys(PlannerInfo *root, IndexOptInfo *index,
                                   ScanDirection scandir);
 extern List *build_partition_pathkeys(PlannerInfo *root, RelOptInfo *partrel,

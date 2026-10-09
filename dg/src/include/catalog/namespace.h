@@ -149,7 +149,6 @@ extern bool isTempToastNamespace(Oid namespaceId);
 extern bool isTempOrTempToastNamespace(Oid namespaceId);
 extern bool isAnyTempNamespace(Oid namespaceId);
 extern bool isOtherTempNamespace(Oid namespaceId);
-extern TempNamespaceStatus checkTempNamespaceStatus(Oid namespaceId);
 extern ProcNumber GetTempNamespaceProcNumber(Oid namespaceId);
 extern Oid GetTempToastNamespace(void);
 extern void GetTempNamespaceState(Oid *tempNamespaceId,
@@ -168,12 +167,12 @@ extern Oid FindDefaultConversionProc(int32 for_encoding, int32 to_encoding);
 
 /* initialization & transaction cleanup code */
 extern void InitializeSearchPath(void);
-extern void AtEOXact_Namespace(bool isCommit, bool parallel);
+extern void AtEOXact_Namespace(bool isCommit);
 extern void AtEOSubXact_Namespace(bool isCommit, SubTransactionId mySubid,
                                   SubTransactionId parentSubid);
 
 /* stuff for search_path GUC variable */
-extern PGDLLIMPORT char *namespace_search_path;
+extern thread_local PGDLLIMPORT char *namespace_search_path;
 
 extern List *fetch_search_path(bool includeImplicit);
 extern int fetch_search_path_array(Oid *sarray, int sarray_len);

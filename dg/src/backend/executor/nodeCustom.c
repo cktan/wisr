@@ -10,7 +10,6 @@
  */
 #include "postgres.h"
 
-#include "access/parallel.h"
 #include "executor/executor.h"
 #include "executor/nodeCustom.h"
 #include "miscadmin.h"
@@ -135,55 +134,6 @@ void ExecCustomRestrPos(CustomScanState *node) {
                     errmsg("custom scan \"%s\" does not support MarkPos",
                            node->methods->CustomName)));
   node->methods->RestrPosCustomScan(node);
-}
-
-void ExecCustomScanEstimate(CustomScanState *node, ParallelContext *pcxt) {
-  const CustomExecMethods *methods = node->methods;
-
-  if (methods->EstimateDSMCustomScan) {
-    node->pscan_len = methods->EstimateDSMCustomScan(node, pcxt);
-    shm_toc_estimate_chunk(&pcxt->estimator, node->pscan_len);
-    shm_toc_estimate_keys(&pcxt->estimator, 1);
-  }
-}
-
-void ExecCustomScanInitializeDSM(CustomScanState *node, ParallelContext *pcxt) {
-  const CustomExecMethods *methods = node->methods;
-
-  if (methods->InitializeDSMCustomScan) {
-    int plan_node_id = node->ss.ps.plan->plan_node_id;
-    void *coordinate;
-
-    coordinate = shm_toc_allocate(pcxt->toc, node->pscan_len);
-    methods->InitializeDSMCustomScan(node, pcxt, coordinate);
-    shm_toc_insert(pcxt->toc, plan_node_id, coordinate);
-  }
-}
-
-void ExecCustomScanReInitializeDSM(CustomScanState *node,
-                                   ParallelContext *pcxt) {
-  const CustomExecMethods *methods = node->methods;
-
-  if (methods->ReInitializeDSMCustomScan) {
-    int plan_node_id = node->ss.ps.plan->plan_node_id;
-    void *coordinate;
-
-    coordinate = shm_toc_lookup(pcxt->toc, plan_node_id, false);
-    methods->ReInitializeDSMCustomScan(node, pcxt, coordinate);
-  }
-}
-
-void ExecCustomScanInitializeWorker(CustomScanState *node,
-                                    ParallelWorkerContext *pwcxt) {
-  const CustomExecMethods *methods = node->methods;
-
-  if (methods->InitializeWorkerCustomScan) {
-    int plan_node_id = node->ss.ps.plan->plan_node_id;
-    void *coordinate;
-
-    coordinate = shm_toc_lookup(pwcxt->toc, plan_node_id, false);
-    methods->InitializeWorkerCustomScan(node, pwcxt->toc, coordinate);
-  }
 }
 
 void ExecShutdownCustomScan(CustomScanState *node) {

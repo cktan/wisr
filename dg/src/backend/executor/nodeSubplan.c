@@ -478,7 +478,7 @@ static void buildSubPlanHash(SubPlanState *node, ExprContext *econtext) {
         node->parent, node->descRight, &TTSOpsVirtual, ncols, node->keyColIdx,
         node->tab_eq_funcoids, node->tab_hash_funcs, node->tab_collations,
         nbuckets, 0, node->planstate->state->es_query_cxt, node->hashtablecxt,
-        node->hashtempcxt, false);
+        node->hashtempcxt);
 
   if (!subplan->unknownEqFalse) {
     if (ncols == 1)
@@ -496,7 +496,7 @@ static void buildSubPlanHash(SubPlanState *node, ExprContext *econtext) {
           node->parent, node->descRight, &TTSOpsVirtual, ncols, node->keyColIdx,
           node->tab_eq_funcoids, node->tab_hash_funcs, node->tab_collations,
           nbuckets, 0, node->planstate->state->es_query_cxt, node->hashtablecxt,
-          node->hashtempcxt, false);
+          node->hashtempcxt);
   } else
     node->hashnulls = NULL;
 

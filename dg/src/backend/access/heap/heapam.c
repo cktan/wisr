@@ -48,6 +48,7 @@
 #include "port/pg_bitutils.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/datum.h"
 #include "utils/injection_point.h"
@@ -233,37 +234,6 @@ static inline void AssertHasSnapshotForToast(Relation rel) {
  */
 
 /*
- * Streaming read API callback for parallel sequential scans. Returns the next
- * block the caller wants from the read stream or InvalidBlockNumber when done.
- */
-static BlockNumber heap_scan_stream_read_next_parallel(
-    ReadStream *stream, void *callback_private_data, void *per_buffer_data) {
-  HeapScanDesc scan = (HeapScanDesc)callback_private_data;
-
-  Assert(ScanDirectionIsForward(scan->rs_dir));
-  Assert(scan->rs_base.rs_parallel);
-
-  if (unlikely(!scan->rs_inited)) {
-    /* parallel scan */
-    table_block_parallelscan_startblock_init(
-        scan->rs_base.rs_rd, scan->rs_parallelworkerdata,
-        (ParallelBlockTableScanDesc)scan->rs_base.rs_parallel);
-
-    /* may return InvalidBlockNumber if there are no more blocks */
-    scan->rs_prefetch_block = table_block_parallelscan_nextpage(
-        scan->rs_base.rs_rd, scan->rs_parallelworkerdata,
-        (ParallelBlockTableScanDesc)scan->rs_base.rs_parallel);
-    scan->rs_inited = true;
-  } else {
-    scan->rs_prefetch_block = table_block_parallelscan_nextpage(
-        scan->rs_base.rs_rd, scan->rs_parallelworkerdata,
-        (ParallelBlockTableScanDesc)scan->rs_base.rs_parallel);
-  }
-
-  return scan->rs_prefetch_block;
-}
-
-/*
  * Streaming read API callback for serial sequential and TID range scans.
  * Returns the next block the caller wants from the read stream or
  * InvalidBlockNumber when done.
@@ -325,7 +295,6 @@ static BlockNumber bitmapheap_stream_read_next(ReadStream *pgsr,
  * ----------------
  */
 static void initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock) {
-  ParallelBlockTableScanDesc bpscan = NULL;
   bool allow_strat;
   bool allow_sync;
 
@@ -340,11 +309,7 @@ static void initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock) {
    * results for a non-MVCC snapshot, the caller must hold some higher-level
    * lock that ensures the interesting tuple(s) won't change.)
    */
-  if (scan->rs_base.rs_parallel != NULL) {
-    bpscan = (ParallelBlockTableScanDesc)scan->rs_base.rs_parallel;
-    scan->rs_nblocks = bpscan->phs_nblocks;
-  } else
-    scan->rs_nblocks = RelationGetNumberOfBlocks(scan->rs_base.rs_rd);
+  scan->rs_nblocks = RelationGetNumberOfBlocks(scan->rs_base.rs_rd);
 
   /*
    * If the table is large relative to NBuffers, use a bulk-read access
@@ -354,9 +319,6 @@ static void initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock) {
    * (However, some callers need to be able to disable one or both of these
    * behaviors, independently of the size of the table; also there is a GUC
    * variable that can disable synchronized scanning.)
-   *
-   * Note that table_block_parallelscan_initialize has a very similar test;
-   * if you change this, consider changing that one, too.
    */
   if (!RelationUsesLocalBuffers(scan->rs_base.rs_rd) &&
       scan->rs_nblocks > NBuffers / 4) {
@@ -375,13 +337,7 @@ static void initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock) {
     scan->rs_strategy = NULL;
   }
 
-  if (scan->rs_base.rs_parallel != NULL) {
-    /* For parallel scan, believe whatever ParallelTableScanDesc says. */
-    if (scan->rs_base.rs_parallel->phs_syncscan)
-      scan->rs_base.rs_flags |= SO_ALLOW_SYNC;
-    else
-      scan->rs_base.rs_flags &= ~SO_ALLOW_SYNC;
-  } else if (keep_startblock) {
+  if (keep_startblock) {
     /*
      * When rescanning, we want to keep the previous startblock setting,
      * so that rewinding a cursor doesn't generate surprising results.
@@ -631,13 +587,11 @@ static inline void heap_fetch_next_buffer(HeapScanDesc scan,
  * heapgettup_initial_block - return the first BlockNumber to scan
  *
  * Returns InvalidBlockNumber when there are no blocks to scan.  This can
- * occur with empty tables and in parallel scans when parallel workers get all
- * of the pages before we can get a chance to get our first page.
+ * occur with empty tables.
  */
 static pg_noinline BlockNumber heapgettup_initial_block(HeapScanDesc scan,
                                                         ScanDirection dir) {
   Assert(!scan->rs_inited);
-  Assert(scan->rs_base.rs_parallel == NULL);
 
   /* When there are no pages to scan, return InvalidBlockNumber */
   if (scan->rs_nblocks == 0 || scan->rs_numblocks == 0)
@@ -750,8 +704,6 @@ static inline Page heapgettup_continue_page(HeapScanDesc scan,
 static inline BlockNumber heapgettup_advance_block(HeapScanDesc scan,
                                                    BlockNumber block,
                                                    ScanDirection dir) {
-  Assert(scan->rs_base.rs_parallel == NULL);
-
   if (likely(ScanDirectionIsForward(dir))) {
     block++;
 
@@ -1015,8 +967,7 @@ static void heapgettup_pagemode(HeapScanDesc scan, ScanDirection dir, int nkeys,
  */
 
 TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
-                             ScanKey key, ParallelTableScanDesc parallel_scan,
-                             uint32 flags) {
+                             ScanKey key, uint32 flags) {
   HeapScanDesc scan;
 
   /*
@@ -1047,7 +998,6 @@ TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
   scan->rs_base.rs_snapshot = snapshot;
   scan->rs_base.rs_nkeys = nkeys;
   scan->rs_base.rs_flags = flags;
-  scan->rs_base.rs_parallel = parallel_scan;
   scan->rs_strategy = NULL; /* set in initscan */
   scan->rs_cbuf = InvalidBuffer;
 
@@ -1084,16 +1034,6 @@ TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
   scan->rs_ctup.t_tableOid = RelationGetRelid(relation);
 
   /*
-   * Allocate memory to keep track of page allocation for parallel workers
-   * when doing a parallel scan.
-   */
-  if (parallel_scan != NULL)
-    scan->rs_parallelworkerdata = (ParallelBlockTableScanWorkerData *)palloc(
-        sizeof(ParallelBlockTableScanWorkerData));
-  else
-    scan->rs_parallelworkerdata = NULL;
-
-  /*
    * we do this here instead of in initscan() because heap_rescan also calls
    * initscan() and we don't want to allocate memory again
    */
@@ -1113,23 +1053,15 @@ TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
    */
   if (scan->rs_base.rs_flags & SO_TYPE_SEQSCAN ||
       scan->rs_base.rs_flags & SO_TYPE_TIDRANGESCAN) {
-    ReadStreamBlockNumberCB cb;
-
-    if (scan->rs_base.rs_parallel)
-      cb = heap_scan_stream_read_next_parallel;
-    else
-      cb = heap_scan_stream_read_next_serial;
-
     /* ---
-     * It is safe to use batchmode as the only locks taken by `cb`
-     * are never taken while waiting for IO:
-     * - SyncScanLock is used in the non-parallel case
-     * - in the parallel case, only spinlocks and atomics are used
+     * It is safe to use batchmode as the only lock taken by the
+     * callback, SyncScanLock, is never taken while waiting for IO.
      * ---
      */
     scan->rs_read_stream = read_stream_begin_relation(
         READ_STREAM_SEQUENTIAL | READ_STREAM_USE_BATCHING, scan->rs_strategy,
-        scan->rs_base.rs_rd, MAIN_FORKNUM, cb, scan, 0);
+        scan->rs_base.rs_rd, MAIN_FORKNUM, heap_scan_stream_read_next_serial,
+        scan, 0);
   } else if (scan->rs_base.rs_flags & SO_TYPE_BITMAPSCAN) {
     scan->rs_read_stream = read_stream_begin_relation(
         READ_STREAM_DEFAULT | READ_STREAM_USE_BATCHING, scan->rs_strategy,
@@ -1216,9 +1148,6 @@ void heap_endscan(TableScanDesc sscan) {
 
   if (scan->rs_strategy != NULL)
     FreeAccessStrategy(scan->rs_strategy);
-
-  if (scan->rs_parallelworkerdata != NULL)
-    pfree(scan->rs_parallelworkerdata);
 
   if (scan->rs_base.rs_flags & SO_TEMP_SNAPSHOT)
     UnregisterSnapshot(scan->rs_base.rs_snapshot);
@@ -2122,16 +2051,6 @@ void heap_insert(Relation relation, HeapTuple tup, CommandId cid, int options,
 static HeapTuple heap_prepare_insert(Relation relation, HeapTuple tup,
                                      TransactionId xid, CommandId cid,
                                      int options) {
-  /*
-   * To allow parallel inserts, we need to ensure that they are safe to be
-   * performed in workers. We have the infrastructure to allow parallel
-   * inserts in general except for the cases where inserts generate a new
-   * CommandId (eg. inserts into a table having a foreign key column).
-   */
-  if (IsParallelWorker())
-    ereport(ERROR, (errcode(ERRCODE_INVALID_TRANSACTION_STATE),
-                    errmsg("cannot insert tuples in a parallel worker")));
-
   tup->t_data->t_infomask &= ~(HEAP_XACT_MASK);
   tup->t_data->t_infomask2 &= ~(HEAP2_XACT_MASK);
   tup->t_data->t_infomask |= HEAP_XMAX_INVALID;
@@ -2639,16 +2558,6 @@ TM_Result heap_delete(Relation relation, ItemPointer tid, CommandId cid,
 
   AssertHasSnapshotForToast(relation);
 
-  /*
-   * Forbid this during a parallel operation, lest it allocate a combo CID.
-   * Other workers might need that combo CID for visibility checks, and we
-   * have no provision for broadcasting it to them.
-   */
-  if (IsInParallelMode())
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_TRANSACTION_STATE),
-             errmsg("cannot delete tuples during a parallel operation")));
-
   block = ItemPointerGetBlockNumber(tid);
   buffer = ReadBuffer(relation, block);
   page = BufferGetPage(buffer);
@@ -3123,16 +3032,6 @@ TM_Result heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
          RelationGetNumberOfAttributes(relation));
 
   AssertHasSnapshotForToast(relation);
-
-  /*
-   * Forbid this during a parallel operation, lest it allocate a combo CID.
-   * Other workers might need that combo CID for visibility checks, and we
-   * have no provision for broadcasting it to them.
-   */
-  if (IsInParallelMode())
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_TRANSACTION_STATE),
-             errmsg("cannot update tuples during a parallel operation")));
 
 #ifdef USE_ASSERT_CHECKING
   check_lock_if_inplace_updateable_rel(relation, otid, newtup);
@@ -7414,47 +7313,6 @@ static bool ConditionalMultiXactIdWait(MultiXactId multi,
                                        bool logLockFailure) {
   return Do_MultiXactIdWait(multi, status, infomask, true, rel, NULL, XLTW_None,
                             remaining, logLockFailure);
-}
-
-/*
- * heap_tuple_needs_eventual_freeze
- *
- * Check to see whether any of the XID fields of a tuple (xmin, xmax, xvac)
- * will eventually require freezing (if tuple isn't removed by pruning first).
- */
-bool heap_tuple_needs_eventual_freeze(HeapTupleHeader tuple) {
-  TransactionId xid;
-
-  /*
-   * If xmin is a normal transaction ID, this tuple is definitely not
-   * frozen.
-   */
-  xid = HeapTupleHeaderGetXmin(tuple);
-  if (TransactionIdIsNormal(xid))
-    return true;
-
-  /*
-   * If xmax is a valid xact or multixact, this tuple is also not frozen.
-   */
-  if (tuple->t_infomask & HEAP_XMAX_IS_MULTI) {
-    MultiXactId multi;
-
-    multi = HeapTupleHeaderGetRawXmax(tuple);
-    if (MultiXactIdIsValid(multi))
-      return true;
-  } else {
-    xid = HeapTupleHeaderGetRawXmax(tuple);
-    if (TransactionIdIsNormal(xid))
-      return true;
-  }
-
-  if (tuple->t_infomask & HEAP_MOVED) {
-    xid = HeapTupleHeaderGetXvac(tuple);
-    if (TransactionIdIsNormal(xid))
-      return true;
-  }
-
-  return false;
 }
 
 /*

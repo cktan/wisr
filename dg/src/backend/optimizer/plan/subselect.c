@@ -89,7 +89,7 @@ static Query *convert_EXISTS_to_ANY(PlannerInfo *root, Query *subselect,
 static Node *replace_correlation_vars_mutator(Node *node, PlannerInfo *root);
 static Node *process_sublinks_mutator(Node *node,
                                       process_sublinks_context *context);
-static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan, int gather_param,
+static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan,
                                 Bitmapset *valid_params,
                                 Bitmapset *scan_params);
 static bool finalize_primnode(Node *node, finalize_primnode_context *context);
@@ -311,7 +311,6 @@ static Node *build_subplan(PlannerInfo *root, Plan *plan, Path *path,
                      &splan->firstColCollation);
   splan->useHashTable = false;
   splan->unknownEqFalse = unknownEqFalse;
-  splan->parallel_safe = plan->parallel_safe;
   splan->setParam = NIL;
   splan->parParam = NIL;
   splan->args = NIL;
@@ -903,7 +902,6 @@ void SS_process_ctes(PlannerInfo *root) {
      * CTE scans are not considered for parallelism (cf
      * set_rel_consider_parallel).
      */
-    splan->parallel_safe = false;
     splan->setParam = NIL;
     splan->parParam = NIL;
     splan->args = NIL;
@@ -2021,18 +2019,15 @@ void SS_identify_outer_params(PlannerInfo *root) {
  *
  * If any initPlans have been created in the current query level, they will
  * get attached to the Plan tree created from whichever Path we select from
- * the given rel.  Increment all that rel's Paths' costs to account for them,
- * and if any of the initPlans are parallel-unsafe, mark all the rel's Paths
- * parallel-unsafe as well.
+ * the given rel.  Increment all that rel's Paths' costs to account for them.
  *
  * This is separate from SS_attach_initplans because we might conditionally
  * create more initPlans during create_plan(), depending on which Path we
  * select.  However, Paths that would generate such initPlans are expected
- * to have included their cost and parallel-safety effects already.
+ * to have included their cost already.
  */
 void SS_charge_for_initplans(PlannerInfo *root, RelOptInfo *final_rel) {
   Cost initplan_cost;
-  bool unsafe_initplans;
   ListCell *lc;
 
   /* Nothing to do if no initPlans */
@@ -2041,36 +2036,18 @@ void SS_charge_for_initplans(PlannerInfo *root, RelOptInfo *final_rel) {
 
   /*
    * Compute the cost increment just once, since it will be the same for all
-   * Paths.  Also check for parallel-unsafe initPlans.
+   * Paths.
    */
-  SS_compute_initplan_cost(root->init_plans, &initplan_cost, &unsafe_initplans);
+  SS_compute_initplan_cost(root->init_plans, &initplan_cost);
 
   /*
-   * Now adjust the costs and parallel_safe flags.
+   * Now adjust the costs.
    */
   foreach (lc, final_rel->pathlist) {
     Path *path = (Path *)lfirst(lc);
 
     path->startup_cost += initplan_cost;
     path->total_cost += initplan_cost;
-    if (unsafe_initplans)
-      path->parallel_safe = false;
-  }
-
-  /*
-   * Adjust partial paths' costs too, or forget them entirely if we must
-   * consider the rel parallel-unsafe.
-   */
-  if (unsafe_initplans) {
-    final_rel->partial_pathlist = NIL;
-    final_rel->consider_parallel = false;
-  } else {
-    foreach (lc, final_rel->partial_pathlist) {
-      Path *path = (Path *)lfirst(lc);
-
-      path->startup_cost += initplan_cost;
-      path->total_cost += initplan_cost;
-    }
   }
 
   /* We needn't do set_cheapest() here, caller will do it */
@@ -2081,15 +2058,12 @@ void SS_charge_for_initplans(PlannerInfo *root, RelOptInfo *final_rel) {
  *
  * The total cost returned in *initplan_cost_p should be added to both the
  * startup and total costs of the plan node the initplans get attached to.
- * We also report whether any of the initplans are not parallel-safe.
  *
  * The primary user of this is SS_charge_for_initplans, but it's also
  * used in adjusting costs when we move initplans to another plan node.
  */
-void SS_compute_initplan_cost(List *init_plans, Cost *initplan_cost_p,
-                              bool *unsafe_initplans_p) {
+void SS_compute_initplan_cost(List *init_plans, Cost *initplan_cost_p) {
   Cost initplan_cost;
-  bool unsafe_initplans;
   ListCell *lc;
 
   /*
@@ -2098,16 +2072,12 @@ void SS_compute_initplan_cost(List *init_plans, Cost *initplan_cost_p,
    * executed later than plan startup, or even not at all.
    */
   initplan_cost = 0;
-  unsafe_initplans = false;
   foreach (lc, init_plans) {
     SubPlan *initsubplan = lfirst_node(SubPlan, lc);
 
     initplan_cost += initsubplan->startup_cost + initsubplan->per_call_cost;
-    if (!initsubplan->parallel_safe)
-      unsafe_initplans = true;
   }
   *initplan_cost_p = initplan_cost;
-  *unsafe_initplans_p = unsafe_initplans;
 }
 
 /*
@@ -2119,7 +2089,7 @@ void SS_compute_initplan_cost(List *init_plans, Cost *initplan_cost_p,
  * referenced; but there seems no reason to put them any lower than the
  * topmost node, so we don't bother to track exactly where they came from.)
  *
- * We do not touch the plan node's cost or parallel_safe flag.  The initplans
+ * We do not touch the plan node's cost.  The initplans
  * must have been accounted for in SS_charge_for_initplans, or by any later
  * code that adds initplans via SS_make_initplan_from_plan.
  */
@@ -2138,14 +2108,11 @@ void SS_attach_initplans(PlannerInfo *root, Plan *plan) {
  */
 void SS_finalize_plan(PlannerInfo *root, Plan *plan) {
   /* No setup needed, just recurse through plan tree. */
-  (void)finalize_plan(root, plan, -1, root->outer_params, NULL);
+  (void)finalize_plan(root, plan, root->outer_params, NULL);
 }
 
 /*
  * Recursive processing of all nodes in the plan tree
- *
- * gather_param is the rescan_param of an ancestral Gather/GatherMerge,
- * or -1 if there is none.
  *
  * valid_params is the set of param IDs supplied by outer plan levels
  * that are valid to reference in this plan node or its children.
@@ -2172,7 +2139,7 @@ void SS_finalize_plan(PlannerInfo *root, Plan *plan) {
  * doesn't arise.  If we ever merge this processing into setrefs.c, maybe it
  * can be handled more cleanly.
  */
-static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan, int gather_param,
+static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan,
                                 Bitmapset *valid_params,
                                 Bitmapset *scan_params) {
   finalize_primnode_context context;
@@ -2222,16 +2189,6 @@ static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan, int gather_param,
   /* Find params in targetlist and qual */
   finalize_primnode((Node *)plan->targetlist, &context);
   finalize_primnode((Node *)plan->qual, &context);
-
-  /*
-   * If it's a parallel-aware scan node, mark it as dependent on the parent
-   * Gather/GatherMerge's rescan Param.
-   */
-  if (plan->parallel_aware) {
-    if (gather_param < 0)
-      elog(ERROR, "parallel-aware plan node is not below a Gather");
-    context.paramids = bms_add_member(context.paramids, gather_param);
-  }
 
   /* Check additional node-type-specific fields */
   switch (nodeTag(plan)) {
@@ -2304,10 +2261,7 @@ static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan, int gather_param,
     /* We must run finalize_plan on the subquery */
     rel = find_base_rel(root, sscan->scan.scanrelid);
     subquery_params = rel->subroot->outer_params;
-    if (gather_param >= 0)
-      subquery_params = bms_add_member(bms_copy(subquery_params), gather_param);
-    finalize_plan(rel->subroot, sscan->subplan, gather_param, subquery_params,
-                  NULL);
+    finalize_plan(rel->subroot, sscan->subplan, subquery_params, NULL);
 
     /* Now we can add its extParams to the parent's params */
     context.paramids =
@@ -2417,10 +2371,9 @@ static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan, int gather_param,
 
     /* child nodes if any */
     foreach (lc, cscan->custom_plans) {
-      context.paramids =
-          bms_add_members(context.paramids,
-                          finalize_plan(root, (Plan *)lfirst(lc), gather_param,
-                                        valid_params, scan_params));
+      context.paramids = bms_add_members(
+          context.paramids,
+          finalize_plan(root, (Plan *)lfirst(lc), valid_params, scan_params));
     }
   } break;
 
@@ -2440,32 +2393,32 @@ static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan, int gather_param,
   case T_Append: {
     foreach (l, ((Append *)plan)->appendplans) {
       context.paramids = bms_add_members(
-          context.paramids, finalize_plan(root, (Plan *)lfirst(l), gather_param,
-                                          valid_params, scan_params));
+          context.paramids,
+          finalize_plan(root, (Plan *)lfirst(l), valid_params, scan_params));
     }
   } break;
 
   case T_MergeAppend: {
     foreach (l, ((MergeAppend *)plan)->mergeplans) {
       context.paramids = bms_add_members(
-          context.paramids, finalize_plan(root, (Plan *)lfirst(l), gather_param,
-                                          valid_params, scan_params));
+          context.paramids,
+          finalize_plan(root, (Plan *)lfirst(l), valid_params, scan_params));
     }
   } break;
 
   case T_BitmapAnd: {
     foreach (l, ((BitmapAnd *)plan)->bitmapplans) {
       context.paramids = bms_add_members(
-          context.paramids, finalize_plan(root, (Plan *)lfirst(l), gather_param,
-                                          valid_params, scan_params));
+          context.paramids,
+          finalize_plan(root, (Plan *)lfirst(l), valid_params, scan_params));
     }
   } break;
 
   case T_BitmapOr: {
     foreach (l, ((BitmapOr *)plan)->bitmapplans) {
       context.paramids = bms_add_members(
-          context.paramids, finalize_plan(root, (Plan *)lfirst(l), gather_param,
-                                          valid_params, scan_params));
+          context.paramids,
+          finalize_plan(root, (Plan *)lfirst(l), valid_params, scan_params));
     }
   } break;
 
@@ -2535,44 +2488,6 @@ static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan, int gather_param,
     finalize_primnode(((WindowAgg *)plan)->endOffset, &context);
     break;
 
-  case T_Gather:
-    /* child nodes are allowed to reference rescan_param, if any */
-    locally_added_param = ((Gather *)plan)->rescan_param;
-    if (locally_added_param >= 0) {
-      valid_params =
-          bms_add_member(bms_copy(valid_params), locally_added_param);
-
-      /*
-       * We currently don't support nested Gathers.  The issue so
-       * far as this function is concerned would be how to identify
-       * which child nodes depend on which Gather.
-       */
-      Assert(gather_param < 0);
-      /* Pass down rescan_param to child parallel-aware nodes */
-      gather_param = locally_added_param;
-    }
-    /* rescan_param does *not* get added to scan_params */
-    break;
-
-  case T_GatherMerge:
-    /* child nodes are allowed to reference rescan_param, if any */
-    locally_added_param = ((GatherMerge *)plan)->rescan_param;
-    if (locally_added_param >= 0) {
-      valid_params =
-          bms_add_member(bms_copy(valid_params), locally_added_param);
-
-      /*
-       * We currently don't support nested Gathers.  The issue so
-       * far as this function is concerned would be how to identify
-       * which child nodes depend on which Gather.
-       */
-      Assert(gather_param < 0);
-      /* Pass down rescan_param to child parallel-aware nodes */
-      gather_param = locally_added_param;
-    }
-    /* rescan_param does *not* get added to scan_params */
-    break;
-
   case T_Memoize:
     finalize_primnode((Node *)((Memoize *)plan)->param_exprs, &context);
     break;
@@ -2592,22 +2507,21 @@ static Bitmapset *finalize_plan(PlannerInfo *root, Plan *plan, int gather_param,
   }
 
   /* Process left and right child plans, if any */
-  child_params = finalize_plan(root, plan->lefttree, gather_param, valid_params,
-                               scan_params);
+  child_params = finalize_plan(root, plan->lefttree, valid_params, scan_params);
   context.paramids = bms_add_members(context.paramids, child_params);
 
   if (nestloop_params) {
     /* right child can reference nestloop_params as well as valid_params */
     child_params =
-        finalize_plan(root, plan->righttree, gather_param,
+        finalize_plan(root, plan->righttree,
                       bms_union(nestloop_params, valid_params), scan_params);
     /* ... and they don't count as parameters used at my level */
     child_params = bms_difference(child_params, nestloop_params);
     bms_free(nestloop_params);
   } else {
     /* easy case */
-    child_params = finalize_plan(root, plan->righttree, gather_param,
-                                 valid_params, scan_params);
+    child_params =
+        finalize_plan(root, plan->righttree, valid_params, scan_params);
   }
   context.paramids = bms_add_members(context.paramids, child_params);
 
@@ -2783,7 +2697,6 @@ void SS_make_initplan_from_plan(PlannerInfo *root, PlannerInfo *subroot,
   node->plan_name = psprintf("InitPlan %d", node->plan_id);
   get_first_col_type(plan, &node->firstColType, &node->firstColTypmod,
                      &node->firstColCollation);
-  node->parallel_safe = plan->parallel_safe;
   node->setParam = list_make1_int(prm->paramid);
 
   root->init_plans = lappend(root->init_plans, node);

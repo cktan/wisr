@@ -28,15 +28,15 @@ static void AtEOXact_PgStat_DroppedStats(PgStat_SubXactStatus *xact_state,
 static void AtEOSubXact_PgStat_DroppedStats(PgStat_SubXactStatus *xact_state,
                                             bool isCommit, int nestDepth);
 
-static PgStat_SubXactStatus *pgStatXactStack = NULL;
+static thread_local PgStat_SubXactStatus *pgStatXactStack = NULL;
 
 /*
  * Called from access/transam/xact.c at top-level transaction commit/abort.
  */
-void AtEOXact_PgStat(bool isCommit, bool parallel) {
+void AtEOXact_PgStat(bool isCommit) {
   PgStat_SubXactStatus *xact_state;
 
-  AtEOXact_PgStat_Database(isCommit, parallel);
+  AtEOXact_PgStat_Database(isCommit);
 
   /* handle transactional stats information */
   xact_state = pgStatXactStack;

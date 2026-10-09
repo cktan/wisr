@@ -35,7 +35,6 @@
 #include "commands/createas.h"
 #include "commands/explain_dr.h"
 #include "commands/matview.h"
-#include "executor/tqueue.h"
 #include "executor/tstoreReceiver.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
@@ -81,7 +80,7 @@ static const DestReceiver spi_printtupDR = {spi_printtup, spi_dest_startup,
  * It's ok to cast the constness away as any modification of the none receiver
  * would be a bug (which gets easier to catch this way).
  */
-DestReceiver *None_Receiver = (DestReceiver *)&donothingDR;
+PG_SHARED DestReceiver *None_Receiver = (DestReceiver *)&donothingDR;
 
 /* ----------------
  *		BeginCommand - initialize the destination at start of command
@@ -131,9 +130,6 @@ DestReceiver *CreateDestReceiver(CommandDest dest) {
   case DestTransientRel:
     return CreateTransientRelDestReceiver(InvalidOid);
 
-  case DestTupleQueue:
-    return CreateTupleQueueDestReceiver(NULL);
-
   case DestExplainSerialize:
     return CreateExplainSerializeDestReceiver(NULL);
   }
@@ -167,7 +163,6 @@ void EndCommand(const QueryCompletion *qc, CommandDest dest,
   case DestIntoRel:
   case DestCopyOut:
   case DestTransientRel:
-  case DestTupleQueue:
   case DestExplainSerialize:
     break;
   }
@@ -208,7 +203,6 @@ void NullCommand(CommandDest dest) {
   case DestIntoRel:
   case DestCopyOut:
   case DestTransientRel:
-  case DestTupleQueue:
   case DestExplainSerialize:
     break;
   }
@@ -248,7 +242,6 @@ void ReadyForQuery(CommandDest dest) {
   case DestIntoRel:
   case DestCopyOut:
   case DestTransientRel:
-  case DestTupleQueue:
   case DestExplainSerialize:
     break;
   }

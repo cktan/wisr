@@ -15,7 +15,6 @@
  */
 #include "postgres.h"
 
-#include "access/parallel.h"
 #include "executor/instrument.h"
 #include "pgstat.h"
 #include "storage/aio.h"
@@ -39,18 +38,18 @@ typedef struct {
 #define LocalBufHdrGetBlock(bufHdr) \
 	LocalBufferBlockPointers[-((bufHdr)->buf_id + 2)]
 
-int NLocBuffer = 0; /* until buffers are initialized */
+thread_local int NLocBuffer = 0; /* until buffers are initialized */
 
-BufferDesc *LocalBufferDescriptors = NULL;
-Block *LocalBufferBlockPointers = NULL;
-int32 *LocalRefCount = NULL;
+thread_local BufferDesc *LocalBufferDescriptors = NULL;
+thread_local Block *LocalBufferBlockPointers = NULL;
+thread_local int32 *LocalRefCount = NULL;
 
-static int nextFreeLocalBufId = 0;
+static thread_local int nextFreeLocalBufId = 0;
 
-static HTAB *LocalBufHash = NULL;
+static thread_local HTAB *LocalBufHash = NULL;
 
 /* number of local buffers pinned at least once */
-static int NLocalPinnedBuffers = 0;
+static thread_local int NLocalPinnedBuffers = 0;
 
 static void InitLocalBuffers(void);
 static Block GetLocalBufferStorage(void);
@@ -658,20 +657,6 @@ static void InitLocalBuffers(void) {
   HASHCTL info;
   int i;
 
-  /*
-   * Parallel workers can't access data in temporary tables, because they
-   * have no visibility into the local buffers of their leader.  This is a
-   * convenient, low-cost place to provide a backstop check for that.  Note
-   * that we don't wish to prevent a parallel worker from accessing catalog
-   * metadata about a temp table, so checks at higher levels would be
-   * inappropriate.
-   */
-  if (IsParallelWorker())
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_INVALID_TRANSACTION_STATE),
-         errmsg("cannot access temporary tables during a parallel operation")));
-
   /* Allocate and zero buffer headers and auxiliary arrays */
   LocalBufferDescriptors = (BufferDesc *)calloc(nbufs, sizeof(BufferDesc));
   LocalBufferBlockPointers = (Block *)calloc(nbufs, sizeof(Block));
@@ -810,11 +795,11 @@ bool check_temp_buffers(int *newval, void **extra, GucSource source) {
  * managed chunks.
  */
 static Block GetLocalBufferStorage(void) {
-  static char *cur_block = NULL;
-  static int next_buf_in_block = 0;
-  static int num_bufs_in_block = 0;
-  static int total_bufs_allocated = 0;
-  static MemoryContext LocalBufferContext = NULL;
+  static thread_local char *cur_block = NULL;
+  static thread_local int next_buf_in_block = 0;
+  static thread_local int num_bufs_in_block = 0;
+  static thread_local int total_bufs_allocated = 0;
+  static thread_local MemoryContext LocalBufferContext = NULL;
 
   char *this_buf;
 

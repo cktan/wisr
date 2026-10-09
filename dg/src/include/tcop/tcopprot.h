@@ -20,10 +20,10 @@
 #include "utils/guc.h"
 #include "utils/queryenvironment.h"
 
-extern PGDLLIMPORT CommandDest whereToSendOutput;
-extern PGDLLIMPORT const char *debug_query_string;
-extern PGDLLIMPORT int PostAuthDelay;
-extern PGDLLIMPORT int client_connection_check_interval;
+extern thread_local PGDLLIMPORT CommandDest whereToSendOutput;
+extern thread_local PGDLLIMPORT const char *debug_query_string;
+extern thread_local PGDLLIMPORT int PostAuthDelay;
+extern thread_local PGDLLIMPORT int client_connection_check_interval;
 
 /* GUC-configurable parameters */
 
@@ -34,14 +34,14 @@ typedef enum {
   LOGSTMT_ALL,  /* log all statements */
 } LogStmtLevel;
 
-extern PGDLLIMPORT bool Log_disconnections;
-extern PGDLLIMPORT int log_statement;
+extern thread_local PGDLLIMPORT bool Log_disconnections;
+extern thread_local PGDLLIMPORT int log_statement;
 
 /* Flags for restrict_nonsystem_relation_kind value */
 #define RESTRICT_RELKIND_VIEW			0x01
 #define RESTRICT_RELKIND_FOREIGN_TABLE	0x02
 
-extern PGDLLIMPORT int restrict_nonsystem_relation_kind;
+extern thread_local PGDLLIMPORT int restrict_nonsystem_relation_kind;
 
 extern List *pg_parse_query(const char *query_string);
 extern List *pg_rewrite_query(Query *query);

@@ -334,108 +334,6 @@ void ExplainCloseGroup(const char *objtype, const char *labelname, bool labeled,
 }
 
 /*
- * Open a group of related objects, without emitting actual data.
- *
- * Prepare the formatting state as though we were beginning a group with
- * the identified properties, but don't actually emit anything.  Output
- * subsequent to this call can be redirected into a separate output buffer,
- * and then eventually appended to the main output buffer after doing a
- * regular ExplainOpenGroup call (with the same parameters).
- *
- * The extra "depth" parameter is the new group's depth compared to current.
- * It could be more than one, in case the eventual output will be enclosed
- * in additional nesting group levels.  We assume we don't need to track
- * formatting state for those levels while preparing this group's output.
- *
- * There is no ExplainCloseSetAsideGroup --- in current usage, we always
- * pop this state with ExplainSaveGroup.
- */
-void ExplainOpenSetAsideGroup(const char *objtype, const char *labelname,
-                              bool labeled, int depth, ExplainState *es) {
-  switch (es->format) {
-  case EXPLAIN_FORMAT_TEXT:
-    /* nothing to do */
-    break;
-
-  case EXPLAIN_FORMAT_XML:
-    es->indent += depth;
-    break;
-
-  case EXPLAIN_FORMAT_JSON:
-    es->grouping_stack = lcons_int(0, es->grouping_stack);
-    es->indent += depth;
-    break;
-
-  case EXPLAIN_FORMAT_YAML:
-    if (labelname)
-      es->grouping_stack = lcons_int(1, es->grouping_stack);
-    else
-      es->grouping_stack = lcons_int(0, es->grouping_stack);
-    es->indent += depth;
-    break;
-  }
-}
-
-/*
- * Pop one level of grouping state, allowing for a re-push later.
- *
- * This is typically used after ExplainOpenSetAsideGroup; pass the
- * same "depth" used for that.
- *
- * This should not emit any output.  If state needs to be saved,
- * save it at *state_save.  Currently, an integer save area is sufficient
- * for all formats, but we might need to revisit that someday.
- */
-void ExplainSaveGroup(ExplainState *es, int depth, int *state_save) {
-  switch (es->format) {
-  case EXPLAIN_FORMAT_TEXT:
-    /* nothing to do */
-    break;
-
-  case EXPLAIN_FORMAT_XML:
-    es->indent -= depth;
-    break;
-
-  case EXPLAIN_FORMAT_JSON:
-    es->indent -= depth;
-    *state_save = linitial_int(es->grouping_stack);
-    es->grouping_stack = list_delete_first(es->grouping_stack);
-    break;
-
-  case EXPLAIN_FORMAT_YAML:
-    es->indent -= depth;
-    *state_save = linitial_int(es->grouping_stack);
-    es->grouping_stack = list_delete_first(es->grouping_stack);
-    break;
-  }
-}
-
-/*
- * Re-push one level of grouping state, undoing the effects of ExplainSaveGroup.
- */
-void ExplainRestoreGroup(ExplainState *es, int depth, int *state_save) {
-  switch (es->format) {
-  case EXPLAIN_FORMAT_TEXT:
-    /* nothing to do */
-    break;
-
-  case EXPLAIN_FORMAT_XML:
-    es->indent += depth;
-    break;
-
-  case EXPLAIN_FORMAT_JSON:
-    es->grouping_stack = lcons_int(*state_save, es->grouping_stack);
-    es->indent += depth;
-    break;
-
-  case EXPLAIN_FORMAT_YAML:
-    es->grouping_stack = lcons_int(*state_save, es->grouping_stack);
-    es->indent += depth;
-    break;
-  }
-}
-
-/*
  * Emit a "dummy" group that never has any members.
  *
  * objtype is the type of the group object, labelname is its label within
@@ -584,9 +482,8 @@ static void ExplainXMLTag(const char *tagname, int flags, ExplainState *es) {
 /*
  * Indent a text-format line.
  *
- * We indent by two spaces per indentation level.  However, when emitting
- * data for a parallel worker there might already be data on the current line
- * (cf. ExplainOpenWorker); in that case, don't indent any more.
+ * We indent by two spaces per indentation level.  If there is already data
+ * on the current line, don't indent any more.
  */
 void ExplainIndentText(ExplainState *es) {
   Assert(es->format == EXPLAIN_FORMAT_TEXT);

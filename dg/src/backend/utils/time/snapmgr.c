@@ -136,29 +136,29 @@
  * These SnapshotData structs are static to simplify memory allocation
  * (see the hack in GetSnapshotData to avoid repeated malloc/free).
  */
-static SnapshotData CurrentSnapshotData = {SNAPSHOT_MVCC};
-static SnapshotData SecondarySnapshotData = {SNAPSHOT_MVCC};
-static SnapshotData CatalogSnapshotData = {SNAPSHOT_MVCC};
-SnapshotData SnapshotSelfData = {SNAPSHOT_SELF};
-SnapshotData SnapshotAnyData = {SNAPSHOT_ANY};
-SnapshotData SnapshotToastData = {SNAPSHOT_TOAST};
+static thread_local SnapshotData CurrentSnapshotData = {SNAPSHOT_MVCC};
+static thread_local SnapshotData SecondarySnapshotData = {SNAPSHOT_MVCC};
+static thread_local SnapshotData CatalogSnapshotData = {SNAPSHOT_MVCC};
+thread_local SnapshotData SnapshotSelfData = {SNAPSHOT_SELF};
+thread_local SnapshotData SnapshotAnyData = {SNAPSHOT_ANY};
+thread_local SnapshotData SnapshotToastData = {SNAPSHOT_TOAST};
 
 /* Pointers to valid snapshots */
-static Snapshot CurrentSnapshot = NULL;
-static Snapshot SecondarySnapshot = NULL;
-static Snapshot CatalogSnapshot = NULL;
-static Snapshot HistoricSnapshot = NULL;
+static thread_local Snapshot CurrentSnapshot = NULL;
+static thread_local Snapshot SecondarySnapshot = NULL;
+static thread_local Snapshot CatalogSnapshot = NULL;
+static thread_local Snapshot HistoricSnapshot = NULL;
 
 /*
  * These are updated by GetSnapshotData.  We initialize them this way
  * for the convenience of TransactionIdIsInProgress: even in bootstrap
  * mode, we don't want it to say that BootstrapTransactionId is in progress.
  */
-TransactionId TransactionXmin = FirstNormalTransactionId;
-TransactionId RecentXmin = FirstNormalTransactionId;
+thread_local TransactionId TransactionXmin = FirstNormalTransactionId;
+thread_local TransactionId RecentXmin = FirstNormalTransactionId;
 
 /* (table, ctid) => (cmin, cmax) mapping during timetravel */
-static HTAB *tuplecid_data = NULL;
+static thread_local HTAB *tuplecid_data = NULL;
 
 /*
  * Elements of the active snapshot stack.
@@ -175,7 +175,7 @@ typedef struct ActiveSnapshotElt {
 } ActiveSnapshotElt;
 
 /* Top of the stack of active snapshots */
-static ActiveSnapshotElt *ActiveSnapshot = NULL;
+static thread_local ActiveSnapshotElt *ActiveSnapshot = NULL;
 
 /*
  * Currently registered Snapshots.  Ordered in a heap by xmin, so that we can
@@ -184,17 +184,17 @@ static ActiveSnapshotElt *ActiveSnapshot = NULL;
 static int xmin_cmp(const pairingheap_node *a, const pairingheap_node *b,
                     void *arg);
 
-static pairingheap RegisteredSnapshots = {&xmin_cmp, NULL, NULL};
+static thread_local pairingheap RegisteredSnapshots = {&xmin_cmp, NULL, NULL};
 
 /* first GetTransactionSnapshot call in a transaction? */
-bool FirstSnapshotSet = false;
+thread_local bool FirstSnapshotSet = false;
 
 /*
  * Remember the serializable transaction snapshot, if any.  We cannot trust
  * FirstSnapshotSet in combination with IsolationUsesXactSnapshot(), because
  * GUC may be reset before us, changing the value of IsolationUsesXactSnapshot.
  */
-static Snapshot FirstXactSnapshot = NULL;
+static thread_local Snapshot FirstXactSnapshot = NULL;
 
 /* Define pathname of exported-snapshot files */
 #define SNAPSHOT_EXPORT_DIR "pg_snapshots"
@@ -206,7 +206,7 @@ typedef struct ExportedSnapshot {
 } ExportedSnapshot;
 
 /* Current xact's exported snapshots (a list of ExportedSnapshot structs) */
-static List *exportedSnapshots = NIL;
+static thread_local List *exportedSnapshots = NIL;
 
 /* Prototypes for local functions */
 static Snapshot CopySnapshot(Snapshot snapshot);
@@ -290,9 +290,6 @@ Snapshot GetTransactionSnapshot(void) {
     Assert(pairingheap_is_empty(&RegisteredSnapshots));
     Assert(FirstXactSnapshot == NULL);
 
-    if (IsInParallelMode())
-      elog(ERROR, "cannot take query snapshot during a parallel operation");
-
     /*
      * In transaction-snapshot mode, the first snapshot must live until
      * end of xact regardless of what the caller does with it, so we must
@@ -337,13 +334,6 @@ Snapshot GetTransactionSnapshot(void) {
  *		even if we are executing in transaction-snapshot mode.
  */
 Snapshot GetLatestSnapshot(void) {
-  /*
-   * We might be able to relax this, but nothing that could otherwise work
-   * needs it.
-   */
-  if (IsInParallelMode())
-    elog(ERROR, "cannot update SecondarySnapshot during a parallel operation");
-
   /*
    * So far there are no cases requiring support for GetLatestSnapshot()
    * during logical decoding, but it wouldn't be hard to add if required.
@@ -692,25 +682,13 @@ void PushCopiedSnapshot(Snapshot snapshot) {
  * to a snapshot that is not referenced elsewhere.
  */
 void UpdateActiveSnapshotCommandId(void) {
-  CommandId save_curcid, curcid;
+  CommandId curcid;
 
   Assert(ActiveSnapshot != NULL);
   Assert(ActiveSnapshot->as_snap->active_count == 1);
   Assert(ActiveSnapshot->as_snap->regd_count == 0);
 
-  /*
-   * Don't allow modification of the active snapshot during parallel
-   * operation.  We share the snapshot to worker backends at the beginning
-   * of parallel operation, so any change to the snapshot can lead to
-   * inconsistencies.  We have other defenses against
-   * CommandCounterIncrement, but there are a few places that call this
-   * directly, so we put an additional guard here.
-   */
-  save_curcid = ActiveSnapshot->as_snap->curcid;
   curcid = GetCurrentCommandId(false);
-  if (IsInParallelMode() && save_curcid != curcid)
-    elog(ERROR, "cannot modify commandid in active snapshot during a parallel "
-                "operation");
   ActiveSnapshot->as_snap->curcid = curcid;
 }
 
@@ -1555,148 +1533,6 @@ bool HistoricSnapshotActive(void) { return HistoricSnapshot != NULL; }
 HTAB *HistoricSnapshotGetTupleCids(void) {
   Assert(HistoricSnapshotActive());
   return tuplecid_data;
-}
-
-/*
- * EstimateSnapshotSpace
- *		Returns the size needed to store the given snapshot.
- *
- * We are exporting only required fields from the Snapshot, stored in
- * SerializedSnapshotData.
- */
-Size EstimateSnapshotSpace(Snapshot snapshot) {
-  Size size;
-
-  Assert(snapshot != InvalidSnapshot);
-  Assert(snapshot->snapshot_type == SNAPSHOT_MVCC);
-
-  /* We allocate any XID arrays needed in the same palloc block. */
-  size = add_size(sizeof(SerializedSnapshotData),
-                  mul_size(snapshot->xcnt, sizeof(TransactionId)));
-  if (snapshot->subxcnt > 0 &&
-      (!snapshot->suboverflowed || snapshot->takenDuringRecovery))
-    size = add_size(size, mul_size(snapshot->subxcnt, sizeof(TransactionId)));
-
-  return size;
-}
-
-/*
- * SerializeSnapshot
- *		Dumps the serialized snapshot (extracted from given snapshot)
- *onto the memory location at start_address.
- */
-void SerializeSnapshot(Snapshot snapshot, char *start_address) {
-  SerializedSnapshotData serialized_snapshot;
-
-  Assert(snapshot->subxcnt >= 0);
-
-  /* Copy all required fields */
-  serialized_snapshot.xmin = snapshot->xmin;
-  serialized_snapshot.xmax = snapshot->xmax;
-  serialized_snapshot.xcnt = snapshot->xcnt;
-  serialized_snapshot.subxcnt = snapshot->subxcnt;
-  serialized_snapshot.suboverflowed = snapshot->suboverflowed;
-  serialized_snapshot.takenDuringRecovery = snapshot->takenDuringRecovery;
-  serialized_snapshot.curcid = snapshot->curcid;
-
-  /*
-   * Ignore the SubXID array if it has overflowed, unless the snapshot was
-   * taken during recovery - in that case, top-level XIDs are in subxip as
-   * well, and we mustn't lose them.
-   */
-  if (serialized_snapshot.suboverflowed && !snapshot->takenDuringRecovery)
-    serialized_snapshot.subxcnt = 0;
-
-  /* Copy struct to possibly-unaligned buffer */
-  memcpy(start_address, &serialized_snapshot, sizeof(SerializedSnapshotData));
-
-  /* Copy XID array */
-  if (snapshot->xcnt > 0)
-    memcpy((TransactionId *)(start_address + sizeof(SerializedSnapshotData)),
-           snapshot->xip, snapshot->xcnt * sizeof(TransactionId));
-
-  /*
-   * Copy SubXID array. Don't bother to copy it if it had overflowed,
-   * though, because it's not used anywhere in that case. Except if it's a
-   * snapshot taken during recovery; all the top-level XIDs are in subxip as
-   * well in that case, so we mustn't lose them.
-   */
-  if (serialized_snapshot.subxcnt > 0) {
-    Size subxipoff =
-        sizeof(SerializedSnapshotData) + snapshot->xcnt * sizeof(TransactionId);
-
-    memcpy((TransactionId *)(start_address + subxipoff), snapshot->subxip,
-           snapshot->subxcnt * sizeof(TransactionId));
-  }
-}
-
-/*
- * RestoreSnapshot
- *		Restore a serialized snapshot from the specified address.
- *
- * The copy is palloc'd in TopTransactionContext and has initial refcounts set
- * to 0.  The returned snapshot has the copied flag set.
- */
-Snapshot RestoreSnapshot(char *start_address) {
-  SerializedSnapshotData serialized_snapshot;
-  Size size;
-  Snapshot snapshot;
-  TransactionId *serialized_xids;
-
-  memcpy(&serialized_snapshot, start_address, sizeof(SerializedSnapshotData));
-  serialized_xids =
-      (TransactionId *)(start_address + sizeof(SerializedSnapshotData));
-
-  /* We allocate any XID arrays needed in the same palloc block. */
-  size = sizeof(SnapshotData) +
-         serialized_snapshot.xcnt * sizeof(TransactionId) +
-         serialized_snapshot.subxcnt * sizeof(TransactionId);
-
-  /* Copy all required fields */
-  snapshot = (Snapshot)MemoryContextAlloc(TopTransactionContext, size);
-  snapshot->snapshot_type = SNAPSHOT_MVCC;
-  snapshot->xmin = serialized_snapshot.xmin;
-  snapshot->xmax = serialized_snapshot.xmax;
-  snapshot->xip = NULL;
-  snapshot->xcnt = serialized_snapshot.xcnt;
-  snapshot->subxip = NULL;
-  snapshot->subxcnt = serialized_snapshot.subxcnt;
-  snapshot->suboverflowed = serialized_snapshot.suboverflowed;
-  snapshot->takenDuringRecovery = serialized_snapshot.takenDuringRecovery;
-  snapshot->curcid = serialized_snapshot.curcid;
-  snapshot->snapXactCompletionCount = 0;
-
-  /* Copy XIDs, if present. */
-  if (serialized_snapshot.xcnt > 0) {
-    snapshot->xip = (TransactionId *)(snapshot + 1);
-    memcpy(snapshot->xip, serialized_xids,
-           serialized_snapshot.xcnt * sizeof(TransactionId));
-  }
-
-  /* Copy SubXIDs, if present. */
-  if (serialized_snapshot.subxcnt > 0) {
-    snapshot->subxip =
-        ((TransactionId *)(snapshot + 1)) + serialized_snapshot.xcnt;
-    memcpy(snapshot->subxip, serialized_xids + serialized_snapshot.xcnt,
-           serialized_snapshot.subxcnt * sizeof(TransactionId));
-  }
-
-  /* Set the copied flag so that the caller will set refcounts correctly. */
-  snapshot->regd_count = 0;
-  snapshot->active_count = 0;
-  snapshot->copied = true;
-
-  return snapshot;
-}
-
-/*
- * Install a restored snapshot as the transaction snapshot.
- *
- * The second argument is of type void * so that snapmgr.h need not include
- * the declaration for PGPROC.
- */
-void RestoreTransactionSnapshot(Snapshot snapshot, void *source_pgproc) {
-  SetTransactionSnapshot(snapshot, NULL, InvalidPid, (PGPROC *)source_pgproc);
 }
 
 /*

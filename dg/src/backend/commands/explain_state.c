@@ -38,20 +38,21 @@
 #include "commands/explain_state.h"
 
 /* Hook to perform additional EXPLAIN options validation */
-explain_validate_options_hook_type explain_validate_options_hook = NULL;
+PG_SHARED explain_validate_options_hook_type explain_validate_options_hook =
+    NULL;
 
 typedef struct {
   const char *option_name;
   ExplainOptionHandler option_handler;
 } ExplainExtensionOption;
 
-static const char **ExplainExtensionNameArray = NULL;
-static int ExplainExtensionNamesAssigned = 0;
-static int ExplainExtensionNamesAllocated = 0;
+static PG_SHARED const char **ExplainExtensionNameArray = NULL;
+static PG_SHARED int ExplainExtensionNamesAssigned = 0;
+static PG_SHARED int ExplainExtensionNamesAllocated = 0;
 
-static ExplainExtensionOption *ExplainExtensionOptionArray = NULL;
-static int ExplainExtensionOptionsAssigned = 0;
-static int ExplainExtensionOptionsAllocated = 0;
+static PG_SHARED ExplainExtensionOption *ExplainExtensionOptionArray = NULL;
+static PG_SHARED int ExplainExtensionOptionsAssigned = 0;
+static PG_SHARED int ExplainExtensionOptionsAllocated = 0;
 
 /*
  * Create a new ExplainState struct initialized with default options.

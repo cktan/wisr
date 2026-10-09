@@ -26,8 +26,6 @@
 #include "executor/nodeCustom.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
-#include "executor/nodeGather.h"
-#include "executor/nodeGatherMerge.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
 #include "executor/nodeHashjoin.h"
@@ -161,14 +159,6 @@ void ExecReScan(PlanState *node) {
 
   case T_SampleScanState:
     ExecReScanSampleScan((SampleScanState *)node);
-    break;
-
-  case T_GatherState:
-    ExecReScanGather((GatherState *)node);
-    break;
-
-  case T_GatherMergeState:
-    ExecReScanGatherMerge((GatherMergeState *)node);
     break;
 
   case T_IndexScanState:
@@ -491,14 +481,6 @@ bool ExecSupportsBackwardScan(Plan *node) {
   if (node == NULL)
     return false;
 
-  /*
-   * Parallel-aware nodes return a subset of the tuples in each worker, and
-   * in general we can't expect to have enough bookkeeping state to know
-   * which ones we returned in this worker as opposed to some other worker.
-   */
-  if (node->parallel_aware)
-    return false;
-
   switch (nodeTag(node)) {
   case T_Result:
     if (outerPlan(node) != NULL)
@@ -523,9 +505,6 @@ bool ExecSupportsBackwardScan(Plan *node) {
 
   case T_SampleScan:
     /* Simplify life for tablesample methods by disallowing this */
-    return false;
-
-  case T_Gather:
     return false;
 
   case T_IndexScan:

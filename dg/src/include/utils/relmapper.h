@@ -49,7 +49,7 @@ extern void RelationMapInvalidate(bool shared);
 extern void RelationMapInvalidateAll(void);
 
 extern void AtCCI_RelationMap(void);
-extern void AtEOXact_RelationMap(bool isCommit, bool isParallelWorker);
+extern void AtEOXact_RelationMap(bool isCommit);
 extern void AtPrepare_RelationMap(void);
 
 extern void CheckPointRelationMap(void);
@@ -59,10 +59,6 @@ extern void RelationMapFinishBootstrap(void);
 extern void RelationMapInitialize(void);
 extern void RelationMapInitializePhase2(void);
 extern void RelationMapInitializePhase3(void);
-
-extern Size EstimateRelationMapSpace(void);
-extern void SerializeRelationMap(Size maxSize, char *startAddress);
-extern void RestoreRelationMap(char *startAddress);
 
 extern void relmap_redo(XLogReaderState *record);
 extern void relmap_desc(StringInfo buf, XLogReaderState *record);

@@ -29,8 +29,8 @@
 typedef struct PGPROC PGPROC;
 
 /* GUC variables */
-extern PGDLLIMPORT int max_locks_per_xact;
-extern PGDLLIMPORT bool log_lock_failures;
+extern thread_local PGDLLIMPORT int max_locks_per_xact;
+extern thread_local PGDLLIMPORT bool log_lock_failures;
 
 #ifdef LOCK_DEBUG
 extern PGDLLIMPORT int Trace_lock_oidmin;
@@ -488,12 +488,10 @@ typedef enum {
 
 /* Deadlock states identified by DeadLockCheck() */
 typedef enum {
-  DS_NOT_YET_CHECKED,       /* no deadlock check has run yet */
-  DS_NO_DEADLOCK,           /* no deadlock detected */
-  DS_SOFT_DEADLOCK,         /* deadlock avoided by queue rearrangement */
-  DS_HARD_DEADLOCK,         /* deadlock, no way out but ERROR */
-  DS_BLOCKED_BY_AUTOVACUUM, /* no deadlock; queue blocked by autovacuum
-                             * worker */
+  DS_NOT_YET_CHECKED, /* no deadlock check has run yet */
+  DS_NO_DEADLOCK,     /* no deadlock detected */
+  DS_SOFT_DEADLOCK,   /* deadlock avoided by queue rearrangement */
+  DS_HARD_DEADLOCK,   /* deadlock, no way out but ERROR */
 } DeadLockState;
 
 /*
@@ -581,7 +579,6 @@ extern void lock_twophase_standby_recover(TransactionId xid, uint16 info,
                                           void *recdata, uint32 len);
 
 extern DeadLockState DeadLockCheck(PGPROC *proc);
-extern PGPROC *GetBlockingAutoVacuumPgproc(void);
 pg_noreturn extern void DeadLockReport(void);
 extern void RememberSimpleDeadLock(PGPROC *proc1, LOCKMODE lockmode, LOCK *lock,
                                    PGPROC *proc2);

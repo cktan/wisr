@@ -12,7 +12,6 @@
 #ifndef FDWAPI_H
 #define FDWAPI_H
 
-#include "access/parallel.h"
 #include "nodes/execnodes.h"
 #include "nodes/pathnodes.h"
 
@@ -164,21 +163,7 @@ typedef void (*ExecForeignTruncate_function) (List *rels,
 											  DropBehavior behavior,
 											  bool restart_seqs);
 
-typedef Size (*EstimateDSMForeignScan_function) (ForeignScanState *node,
-												 ParallelContext *pcxt);
-typedef void (*InitializeDSMForeignScan_function) (ForeignScanState *node,
-												   ParallelContext *pcxt,
-												   void *coordinate);
-typedef void (*ReInitializeDSMForeignScan_function) (ForeignScanState *node,
-													 ParallelContext *pcxt,
-													 void *coordinate);
-typedef void (*InitializeWorkerForeignScan_function) (ForeignScanState *node,
-													  shm_toc *toc,
-													  void *coordinate);
 typedef void (*ShutdownForeignScan_function) (ForeignScanState *node);
-typedef bool (*IsForeignScanParallelSafe_function) (PlannerInfo *root,
-													RelOptInfo *rel,
-													RangeTblEntry *rte);
 typedef List *(*ReparameterizeForeignPathByChild_function) (PlannerInfo *root,
 															List *fdw_private,
 															RelOptInfo *child_rel);
@@ -262,12 +247,7 @@ typedef struct FdwRoutine
 	/* Support functions for TRUNCATE */
 	ExecForeignTruncate_function ExecForeignTruncate;
 
-	/* Support functions for parallelism under Gather node */
-	IsForeignScanParallelSafe_function IsForeignScanParallelSafe;
-	EstimateDSMForeignScan_function EstimateDSMForeignScan;
-	InitializeDSMForeignScan_function InitializeDSMForeignScan;
-	ReInitializeDSMForeignScan_function ReInitializeDSMForeignScan;
-	InitializeWorkerForeignScan_function InitializeWorkerForeignScan;
+	/* Release resources at the end of the scan */
 	ShutdownForeignScan_function ShutdownForeignScan;
 
 	/* Support functions for path reparameterization. */

@@ -14,7 +14,7 @@
 #define RLS_H
 
 /* GUC variable */
-extern PGDLLIMPORT bool row_security;
+extern thread_local PGDLLIMPORT bool row_security;
 
 /*
  * Used by callers of check_enable_rls.

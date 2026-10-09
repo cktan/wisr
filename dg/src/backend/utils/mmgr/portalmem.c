@@ -49,7 +49,7 @@ typedef struct portalhashent {
   Portal portal;
 } PortalHashEnt;
 
-static HTAB *PortalHashTable = NULL;
+static thread_local HTAB *PortalHashTable = NULL;
 
 #define PortalHashTableLookup(NAME, PORTAL) \
 do { \
@@ -86,7 +86,7 @@ do { \
 		elog(WARNING, "trying to delete portal name that does not exist"); \
 } while(0)
 
-static MemoryContext TopPortalContext = NULL;
+static thread_local MemoryContext TopPortalContext = NULL;
 
 /* ----------------------------------------------------------------
  *				   public portal interface functions
@@ -215,7 +215,7 @@ Portal CreatePortal(const char *name, bool allowDup, bool dupSilent) {
  *		Create a new portal, assigning it a random nonconflicting name.
  */
 Portal CreateNewPortal(void) {
-  static unsigned int unnamed_portal_count = 0;
+  static thread_local unsigned int unnamed_portal_count = 0;
 
   char portalname[MAX_PORTALNAME_LEN];
 

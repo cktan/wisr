@@ -20,8 +20,8 @@
 #include "storage/bufmgr.h"
 #include "utils/pgstat_internal.h"
 
-static PgStat_PendingIO PendingIOStats;
-static bool have_iostats = false;
+static thread_local PgStat_PendingIO PendingIOStats;
+static thread_local bool have_iostats = false;
 
 /*
  * Check that stats have not been counted for any combination of IOObject,
@@ -316,8 +316,6 @@ bool pgstat_tracks_io_bktype(BackendType bktype) {
   case B_LOGGER:
     return false;
 
-  case B_AUTOVAC_LAUNCHER:
-  case B_AUTOVAC_WORKER:
   case B_BACKEND:
   case B_BG_WORKER:
   case B_BG_WRITER:
@@ -376,8 +374,7 @@ bool pgstat_tracks_io_object(BackendType bktype, IOObject io_object,
    * have no such limitation, so track IO on IOOBJECT_TEMP_RELATION for
    * BackendType B_BG_WORKER.
    */
-  no_temp_rel = bktype == B_AUTOVAC_LAUNCHER || bktype == B_BG_WRITER ||
-                bktype == B_CHECKPOINTER || bktype == B_AUTOVAC_WORKER ||
+  no_temp_rel = bktype == B_BG_WRITER || bktype == B_CHECKPOINTER ||
                 bktype == B_STANDALONE_BACKEND || bktype == B_STARTUP ||
                 bktype == B_WAL_SUMMARIZER || bktype == B_WAL_WRITER ||
                 bktype == B_WAL_RECEIVER;
@@ -403,13 +400,6 @@ bool pgstat_tracks_io_object(BackendType bktype, IOObject io_object,
   if ((bktype == B_CHECKPOINTER || bktype == B_BG_WRITER) &&
       (io_context == IOCONTEXT_BULKREAD || io_context == IOCONTEXT_BULKWRITE ||
        io_context == IOCONTEXT_VACUUM))
-    return false;
-
-  if (bktype == B_AUTOVAC_LAUNCHER && io_context == IOCONTEXT_VACUUM)
-    return false;
-
-  if ((bktype == B_AUTOVAC_WORKER || bktype == B_AUTOVAC_LAUNCHER) &&
-      io_context == IOCONTEXT_BULKWRITE)
     return false;
 
   return true;
@@ -443,8 +433,7 @@ bool pgstat_tracks_io_op(BackendType bktype, IOObject io_object,
        (io_op == IOOP_EVICT || io_op == IOOP_HIT)))
     return false;
 
-  if ((bktype == B_AUTOVAC_LAUNCHER || bktype == B_BG_WRITER ||
-       bktype == B_CHECKPOINTER) &&
+  if ((bktype == B_BG_WRITER || bktype == B_CHECKPOINTER) &&
       io_op == IOOP_EXTEND)
     return false;
 
@@ -453,7 +442,6 @@ bool pgstat_tracks_io_op(BackendType bktype, IOObject io_object,
    */
   if (io_object == IOOBJECT_WAL && io_op == IOOP_READ &&
       (bktype == B_WAL_RECEIVER || bktype == B_BG_WRITER ||
-       bktype == B_AUTOVAC_LAUNCHER || bktype == B_AUTOVAC_WORKER ||
        bktype == B_WAL_WRITER))
     return false;
 

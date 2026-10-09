@@ -160,41 +160,6 @@ bool bms_equal(const Bitmapset *a, const Bitmapset *b) {
 }
 
 /*
- * bms_compare - qsort-style comparator for bitmapsets
- *
- * This guarantees to report values as equal iff bms_equal would say they are
- * equal.  Otherwise, the highest-numbered bit that is set in one value but
- * not the other determines the result.  (This rule means that, for example,
- * {6} is greater than {5}, which seems plausible.)
- */
-int bms_compare(const Bitmapset *a, const Bitmapset *b) {
-  int i;
-
-  Assert(bms_is_valid_set(a));
-  Assert(bms_is_valid_set(b));
-
-  /* Handle cases where either input is NULL */
-  if (a == NULL)
-    return (b == NULL) ? 0 : -1;
-  else if (b == NULL)
-    return +1;
-
-  /* the set with the most words must be greater */
-  if (a->nwords != b->nwords)
-    return (a->nwords > b->nwords) ? +1 : -1;
-
-  i = a->nwords - 1;
-  do {
-    bitmapword aw = a->words[i];
-    bitmapword bw = b->words[i];
-
-    if (aw != bw)
-      return (aw > bw) ? +1 : -1;
-  } while (--i >= 0);
-  return 0;
-}
-
-/*
  * bms_make_singleton - build a bitmapset containing a single member
  */
 Bitmapset *bms_make_singleton(int x) {

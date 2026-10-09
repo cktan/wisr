@@ -41,8 +41,8 @@
 #include "utils/pg_locale.h"
 #include "utils/ps_status.h"
 
-const char *progname;
-static bool reached_main = false;
+PG_SHARED const char *progname;
+static PG_SHARED bool reached_main = false;
 
 /* names of special must-be-first options for dispatching to subprograms */
 static const char *const DispatchOptionNames[] = {

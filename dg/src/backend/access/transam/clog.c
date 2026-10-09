@@ -102,15 +102,13 @@ static inline int64 TransactionIdToPage(TransactionId xid) {
 /*
  * Link to shared-memory data structures for CLOG control
  */
-static SlruCtlData XactCtlData;
+static PG_SHARED SlruCtlData XactCtlData;
 
 #define XactCtl (&XactCtlData)
 
 static int ZeroCLOGPage(int64 pageno, bool writeXlog);
 static bool CLOGPagePrecedes(int64 page1, int64 page2);
 static void WriteZeroPageXlogRec(int64 pageno);
-static void WriteTruncateXlogRec(int64 pageno, TransactionId oldestXact,
-                                 Oid oldestXactDb);
 static void TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
                                        TransactionId *subxids, XidStatus status,
                                        XLogRecPtr lsn, int64 pageno,
@@ -919,55 +917,6 @@ void ExtendCLOG(TransactionId newestXact) {
 }
 
 /*
- * Remove all CLOG segments before the one holding the passed transaction ID
- *
- * Before removing any CLOG data, we must flush XLOG to disk, to ensure that
- * any recently-emitted records with freeze plans have reached disk; otherwise
- * a crash and restart might leave us with some unfrozen tuples referencing
- * removed CLOG data.  We choose to emit a special TRUNCATE XLOG record too.
- * Replaying the deletion from XLOG is not critical, since the files could
- * just as well be removed later, but doing so prevents a long-running hot
- * standby server from acquiring an unreasonably bloated CLOG directory.
- *
- * Since CLOG segments hold a large number of transactions, the opportunity to
- * actually remove a segment is fairly rare, and so it seems best not to do
- * the XLOG flush unless we have confirmed that there is a removable segment.
- */
-void TruncateCLOG(TransactionId oldestXact, Oid oldestxid_datoid) {
-  int64 cutoffPage;
-
-  /*
-   * The cutoff point is the start of the segment containing oldestXact. We
-   * pass the *page* containing oldestXact to SimpleLruTruncate.
-   */
-  cutoffPage = TransactionIdToPage(oldestXact);
-
-  /* Check to see if there's any files that could be removed */
-  if (!SlruScanDirectory(XactCtl, SlruScanDirCbReportPresence, &cutoffPage))
-    return; /* nothing to remove */
-
-  /*
-   * Advance oldestClogXid before truncating clog, so concurrent xact status
-   * lookups can ensure they don't attempt to access truncated-away clog.
-   *
-   * It's only necessary to do this if we will actually truncate away clog
-   * pages.
-   */
-  AdvanceOldestClogXid(oldestXact);
-
-  /*
-   * Write XLOG record and flush XLOG to disk. We record the oldest xid
-   * we're keeping information about here so we can ensure that it's always
-   * ahead of clog truncation in case we crash, and so a standby finds out
-   * the new valid xid before the next checkpoint.
-   */
-  WriteTruncateXlogRec(cutoffPage, oldestXact, oldestxid_datoid);
-
-  /* Now we can remove the old CLOG segment(s) */
-  SimpleLruTruncate(XactCtl, cutoffPage);
-}
-
-/*
  * Decide whether a CLOG page number is "older" for truncation purposes.
  *
  * We need to use comparison of TransactionIds here in order to do the right
@@ -1005,27 +954,6 @@ static void WriteZeroPageXlogRec(int64 pageno) {
   XLogBeginInsert();
   XLogRegisterData(&pageno, sizeof(pageno));
   (void)XLogInsert(RM_CLOG_ID, CLOG_ZEROPAGE);
-}
-
-/*
- * Write a TRUNCATE xlog record
- *
- * We must flush the xlog record to disk before returning --- see notes
- * in TruncateCLOG().
- */
-static void WriteTruncateXlogRec(int64 pageno, TransactionId oldestXact,
-                                 Oid oldestXactDb) {
-  XLogRecPtr recptr;
-  xl_clog_truncate xlrec;
-
-  xlrec.pageno = pageno;
-  xlrec.oldestXact = oldestXact;
-  xlrec.oldestXactDb = oldestXactDb;
-
-  XLogBeginInsert();
-  XLogRegisterData(&xlrec, sizeof(xl_clog_truncate));
-  recptr = XLogInsert(RM_CLOG_ID, CLOG_TRUNCATE);
-  XLogFlush(recptr);
 }
 
 /*

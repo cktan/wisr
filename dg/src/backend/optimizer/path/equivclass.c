@@ -900,15 +900,12 @@ EquivalenceMember *find_ec_member_matching_expr(EquivalenceClass *ec,
  * matches of Vars to the source tlist.
  *
  * Child EC members are ignored unless they belong to given 'relids'.
- * Also, non-parallel-safe expressions are ignored if 'require_parallel_safe'.
  *
- * Note: some callers pass root == NULL for notational reasons.  This is OK
- * when require_parallel_safe is false.
+ * Note: some callers pass root == NULL for notational reasons.
  */
 EquivalenceMember *find_computable_ec_member(PlannerInfo *root,
                                              EquivalenceClass *ec, List *exprs,
-                                             Relids relids,
-                                             bool require_parallel_safe) {
+                                             Relids relids) {
   List *exprvars;
   EquivalenceMemberIterator it;
   EquivalenceMember *em;
@@ -956,93 +953,10 @@ EquivalenceMember *find_computable_ec_member(PlannerInfo *root,
     if (lc2)
       continue; /* we hit a non-available Var */
 
-    /*
-     * If requested, reject expressions that are not parallel-safe.  We
-     * check this last because it's a rather expensive test.
-     */
-    if (require_parallel_safe && !is_parallel_safe(root, (Node *)em->em_expr))
-      continue;
-
     return em; /* found usable expression */
   }
 
   return NULL;
-}
-
-/*
- * relation_can_be_sorted_early
- *		Can this relation be sorted on this EC before the final output
- *step?
- *
- * To succeed, we must find an EC member that prepare_sort_from_pathkeys knows
- * how to sort on, given the rel's reltarget as input.  There are also a few
- * additional constraints based on the fact that the desired sort will be done
- * "early", within the scan/join part of the plan.  Also, non-parallel-safe
- * expressions are ignored if 'require_parallel_safe'.
- *
- * At some point we might want to return the identified EquivalenceMember,
- * but for now, callers only want to know if there is one.
- */
-bool relation_can_be_sorted_early(PlannerInfo *root, RelOptInfo *rel,
-                                  EquivalenceClass *ec,
-                                  bool require_parallel_safe) {
-  PathTarget *target = rel->reltarget;
-  EquivalenceMember *em;
-  ListCell *lc;
-
-  /*
-   * Reject volatile ECs immediately; such sorts must always be postponed.
-   */
-  if (ec->ec_has_volatile)
-    return false;
-
-  /*
-   * Try to find an EM directly matching some reltarget member.
-   */
-  foreach (lc, target->exprs) {
-    Expr *targetexpr = (Expr *)lfirst(lc);
-
-    em = find_ec_member_matching_expr(ec, targetexpr, rel->relids);
-    if (!em)
-      continue;
-
-    /*
-     * Reject expressions involving set-returning functions, as those
-     * can't be computed early either.  (Note: this test and the following
-     * one are effectively checking properties of targetexpr, so there's
-     * no point in asking whether some other EC member would be better.)
-     */
-    if (expression_returns_set((Node *)em->em_expr))
-      continue;
-
-    /*
-     * If requested, reject expressions that are not parallel-safe.  We
-     * check this last because it's a rather expensive test.
-     */
-    if (require_parallel_safe && !is_parallel_safe(root, (Node *)em->em_expr))
-      continue;
-
-    return true;
-  }
-
-  /*
-   * Try to find an expression computable from the reltarget.
-   */
-  em = find_computable_ec_member(root, ec, target->exprs, rel->relids,
-                                 require_parallel_safe);
-  if (!em)
-    return false;
-
-  /*
-   * Reject expressions involving set-returning functions, as those can't be
-   * computed early either.  (There's no point in looking for another EC
-   * member in this case; since SRFs can't appear in WHERE, they cannot
-   * belong to multi-member ECs.)
-   */
-  if (expression_returns_set((Node *)em->em_expr))
-    return false;
-
-  return true;
 }
 
 /*

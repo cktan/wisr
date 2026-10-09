@@ -278,11 +278,11 @@ static OSAPerGroupState *ordered_set_startup(FunctionCallInfo fcinfo,
     osastate->sortstate = tuplesort_begin_heap(
         qstate->tupdesc, qstate->numSortCols, qstate->sortColIdx,
         qstate->sortOperators, qstate->sortCollations, qstate->sortNullsFirsts,
-        work_mem, NULL, tuplesortopt);
+        work_mem, tuplesortopt);
   else
     osastate->sortstate = tuplesort_begin_datum(
         qstate->sortColType, qstate->sortOperator, qstate->sortCollation,
-        qstate->sortNullsFirst, work_mem, NULL, tuplesortopt);
+        qstate->sortNullsFirst, work_mem, tuplesortopt);
 
   osastate->number_of_rows = 0;
   osastate->sort_done = false;

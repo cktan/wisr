@@ -82,8 +82,6 @@
 #include "executor/nodeCustom.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
-#include "executor/nodeGather.h"
-#include "executor/nodeGatherMerge.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
 #include "executor/nodeHashjoin.h"
@@ -329,15 +327,6 @@ PlanState *ExecInitNode(Plan *node, EState *estate, int eflags) {
     result = (PlanState *)ExecInitUnique((Unique *)node, estate, eflags);
     break;
 
-  case T_Gather:
-    result = (PlanState *)ExecInitGather((Gather *)node, estate, eflags);
-    break;
-
-  case T_GatherMerge:
-    result =
-        (PlanState *)ExecInitGatherMerge((GatherMerge *)node, estate, eflags);
-    break;
-
   case T_Hash:
     result = (PlanState *)ExecInitHash((Hash *)node, estate, eflags);
     break;
@@ -581,14 +570,6 @@ void ExecEndNode(PlanState *node) {
     ExecEndSampleScan((SampleScanState *)node);
     break;
 
-  case T_GatherState:
-    ExecEndGather((GatherState *)node);
-    break;
-
-  case T_GatherMergeState:
-    ExecEndGatherMerge((GatherMergeState *)node);
-    break;
-
   case T_IndexScanState:
     ExecEndIndexScan((IndexScanState *)node);
     break;
@@ -733,13 +714,8 @@ static bool ExecShutdownNode_walker(PlanState *node, void *context) {
 
   /*
    * Treat the node as running while we shut it down, but only if it's run
-   * at least once already.  We don't expect much CPU consumption during
-   * node shutdown, but in the case of Gather or Gather Merge, we may shut
-   * down workers at this stage.  If so, their buffer usage will get
-   * propagated into pgBufferUsage at this point, and we want to make sure
-   * that it gets associated with the Gather node.  We skip this if the node
-   * has never been executed, so as to avoid incorrectly making it appear
-   * that it has.
+   * at least once already.  We skip this if the node has never been
+   * executed, so as to avoid incorrectly making it appear that it has.
    */
   if (node->instrument && node->instrument->running)
     InstrStartNode(node->instrument);
@@ -747,23 +723,14 @@ static bool ExecShutdownNode_walker(PlanState *node, void *context) {
   planstate_tree_walker(node, ExecShutdownNode_walker, context);
 
   switch (nodeTag(node)) {
-  case T_GatherState:
-    ExecShutdownGather((GatherState *)node);
-    break;
   case T_ForeignScanState:
     ExecShutdownForeignScan((ForeignScanState *)node);
     break;
   case T_CustomScanState:
     ExecShutdownCustomScan((CustomScanState *)node);
     break;
-  case T_GatherMergeState:
-    ExecShutdownGatherMerge((GatherMergeState *)node);
-    break;
   case T_HashState:
     ExecShutdownHash((HashState *)node);
-    break;
-  case T_HashJoinState:
-    ExecShutdownHashJoin((HashJoinState *)node);
     break;
   default:
     break;
@@ -879,28 +846,6 @@ void ExecSetTupleBound(int64 tuples_needed, PlanState *child_node) {
 
     if (subqueryState->ss.ps.qual == NULL)
       ExecSetTupleBound(tuples_needed, subqueryState->subplan);
-  } else if (IsA(child_node, GatherState)) {
-    /*
-     * A Gather node can propagate the bound to its workers.  As with
-     * MergeAppend, no one worker could possibly need to return more
-     * tuples than the Gather itself needs to.
-     *
-     * Note: As with Sort, the Gather node is responsible for reacting
-     * properly to changes to this parameter.
-     */
-    GatherState *gstate = (GatherState *)child_node;
-
-    gstate->tuples_needed = tuples_needed;
-
-    /* Also pass down the bound to our own copy of the child plan */
-    ExecSetTupleBound(tuples_needed, outerPlanState(child_node));
-  } else if (IsA(child_node, GatherMergeState)) {
-    /* Same comments as for Gather */
-    GatherMergeState *gstate = (GatherMergeState *)child_node;
-
-    gstate->tuples_needed = tuples_needed;
-
-    ExecSetTupleBound(tuples_needed, outerPlanState(child_node));
   }
 
   /*

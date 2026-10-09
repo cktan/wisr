@@ -1214,11 +1214,10 @@ void mark_dummy_rel(RelOptInfo *rel) {
 
   /* Evict any previously chosen paths */
   rel->pathlist = NIL;
-  rel->partial_pathlist = NIL;
 
   /* Set up the dummy path */
-  add_path(rel, (Path *)create_append_path(NULL, rel, NIL, NIL, NIL,
-                                           rel->lateral_relids, 0, false, -1));
+  add_path(rel, (Path *)create_append_path(NULL, rel, NIL, NIL,
+                                           rel->lateral_relids, -1));
 
   /* Set or update cheapest_total_path and related fields */
   set_cheapest(rel);

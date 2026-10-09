@@ -31,7 +31,6 @@
 #include <valgrind/valgrind.h>
 #endif
 
-#include "access/parallel.h"
 #include "access/printtup.h"
 #include "access/xact.h"
 #include "access/xlog.h"
@@ -53,10 +52,12 @@
 #include "pg_getopt.h"
 #include "pg_trace.h"
 #include "pgstat.h"
+#include "postmaster/bgworker.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/bufmgr.h"
+#include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
@@ -81,24 +82,24 @@
  *		global variables
  * ----------------
  */
-const char *debug_query_string; /* client-supplied query string */
+thread_local const char *debug_query_string; /* client-supplied query string */
 
 /* Note: whereToSendOutput is initialized for the bootstrap/standalone case */
-CommandDest whereToSendOutput = DestDebug;
+thread_local CommandDest whereToSendOutput = DestDebug;
 
 /* flag for logging end of session */
-bool Log_disconnections = false;
+thread_local bool Log_disconnections = false;
 
-int log_statement = LOGSTMT_NONE;
+thread_local int log_statement = LOGSTMT_NONE;
 
 /* wait N seconds to allow attach from a debugger */
-int PostAuthDelay = 0;
+thread_local int PostAuthDelay = 0;
 
 /* Time between checks that the client is still connected. */
-int client_connection_check_interval = 0;
+thread_local int client_connection_check_interval = 0;
 
 /* flags for non-system relation kinds to restrict use */
-int restrict_nonsystem_relation_kind;
+thread_local int restrict_nonsystem_relation_kind;
 
 /* ----------------
  *		private typedefs etc
@@ -121,41 +122,42 @@ typedef struct BindParamCbData {
  * Flag to keep track of whether we have started a transaction.
  * For extended query protocol this has to be remembered across messages.
  */
-static bool xact_started = false;
+static thread_local bool xact_started = false;
 
 /*
  * Flag to indicate that we are doing the outer loop's read-from-client,
  * as opposed to any random read from client that might happen within
  * commands like COPY FROM STDIN.
  */
-static bool DoingCommandRead = false;
+static thread_local bool DoingCommandRead = false;
 
 /*
  * Flags to implement skip-till-Sync-after-error behavior for messages of
  * the extended query protocol.
  */
-static bool doing_extended_query_message = false;
-static bool ignore_till_sync = false;
+static thread_local bool doing_extended_query_message = false;
+static thread_local bool ignore_till_sync = false;
 
 /*
  * If an unnamed prepared statement exists, it's stored here.
  * We keep it separate from the hashtable kept by commands/prepare.c
  * in order to reduce overhead for short-lived queries.
  */
-static CachedPlanSource *unnamed_stmt_psrc = NULL;
+static thread_local CachedPlanSource *unnamed_stmt_psrc = NULL;
 
 /* assorted command-line switches */
-static const char *userDoption = NULL;     /* -D switch */
-static bool EchoQuery = false;             /* -E switch */
-static bool UseSemiNewlineNewline = false; /* -j switch */
+static thread_local const char *userDoption = NULL;     /* -D switch */
+static thread_local bool EchoQuery = false;             /* -E switch */
+static thread_local bool UseSemiNewlineNewline = false; /* -j switch */
 
 /* whether or not, and why, we were canceled by conflict with recovery */
-static volatile sig_atomic_t RecoveryConflictPending = false;
-static volatile sig_atomic_t RecoveryConflictPendingReasons[NUM_PROCSIGNALS];
+static thread_local volatile sig_atomic_t RecoveryConflictPending = false;
+static thread_local volatile sig_atomic_t
+    RecoveryConflictPendingReasons[NUM_PROCSIGNALS];
 
 /* reused buffer to pass to SendRowDescriptionMessage() */
-static MemoryContext row_description_context = NULL;
-static StringInfoData row_description_buf;
+static thread_local MemoryContext row_description_context = NULL;
+static thread_local StringInfoData row_description_buf;
 
 /* ----------------------------------------------------------------
  *		decls for routines only used in this file
@@ -3005,12 +3007,6 @@ void ProcessInterrupts(void) {
     if (ClientAuthInProgress)
       ereport(FATAL, (errcode(ERRCODE_QUERY_CANCELED),
                       errmsg("canceling authentication due to timeout")));
-    else if (AmAutoVacuumWorkerProcess())
-      ereport(
-          FATAL,
-          (errcode(ERRCODE_ADMIN_SHUTDOWN),
-           errmsg(
-               "terminating autovacuum process due to administrator command")));
     else if (AmBackgroundWorkerProcess())
       ereport(FATAL, (errcode(ERRCODE_ADMIN_SHUTDOWN),
                       errmsg("terminating background worker \"%s\" due to "
@@ -3107,11 +3103,6 @@ void ProcessInterrupts(void) {
       ereport(ERROR, (errcode(ERRCODE_QUERY_CANCELED),
                       errmsg("canceling statement due to statement timeout")));
     }
-    if (AmAutoVacuumWorkerProcess()) {
-      LockErrorCleanup();
-      ereport(ERROR, (errcode(ERRCODE_QUERY_CANCELED),
-                      errmsg("canceling autovacuum task")));
-    }
 
     /*
      * If we are reading a command from the client, just ignore the cancel
@@ -3180,9 +3171,6 @@ void ProcessInterrupts(void) {
 
   if (ProcSignalBarrierPending)
     ProcessProcSignalBarrier();
-
-  if (ParallelMessagePending)
-    ProcessParallelMessages();
 
   if (LogMemoryContextPending)
     ProcessLogMemoryContextInterrupt();
@@ -4524,8 +4512,8 @@ void PostgresMain(const char *dbname, const char *username) {
   PG_ERROR_LOOP_END();
 }
 
-static struct rusage Save_r;
-static struct timeval Save_t;
+static thread_local struct rusage Save_r;
+static thread_local struct timeval Save_t;
 
 void ResetUsage(void) {
   getrusage(RUSAGE_SELF, &Save_r);

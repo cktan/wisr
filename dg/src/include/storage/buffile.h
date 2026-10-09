@@ -26,8 +26,6 @@
 #ifndef BUFFILE_H
 #define BUFFILE_H
 
-#include "storage/fileset.h"
-
 /* BufFile is an opaque type whose details are not known outside buffile.c. */
 
 typedef struct BufFile BufFile;
@@ -47,14 +45,5 @@ extern int BufFileSeek(BufFile *file, int fileno, off_t offset, int whence);
 extern void BufFileTell(BufFile *file, int *fileno, off_t *offset);
 extern int BufFileSeekBlock(BufFile *file, int64 blknum);
 extern int64 BufFileSize(BufFile *file);
-extern int64 BufFileAppend(BufFile *target, BufFile *source);
-
-extern BufFile *BufFileCreateFileSet(FileSet *fileset, const char *name);
-extern void BufFileExportFileSet(BufFile *file);
-extern BufFile *BufFileOpenFileSet(FileSet *fileset, const char *name, int mode,
-                                   bool missing_ok);
-extern void BufFileDeleteFileSet(FileSet *fileset, const char *name,
-                                 bool missing_ok);
-extern void BufFileTruncateFileSet(BufFile *file, int fileno, off_t offset);
 
 #endif /* BUFFILE_H */
