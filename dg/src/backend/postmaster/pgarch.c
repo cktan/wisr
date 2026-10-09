@@ -479,7 +479,6 @@ static void pgarch_ArchiverCopyLoop(void) {
  * Returns true if successful
  */
 static bool pgarch_archiveXlog(char *xlog) {
-  sigjmp_buf local_sigjmp_buf;
   MemoryContext oldcontext;
   char pathname[MAXPGPATH];
   char activitymsg[MAXFNAMELEN + 16];
@@ -508,7 +507,21 @@ static bool pgarch_archiveXlog(char *xlog) {
    * PgArchiverMain() and use PG_TRY/PG_CATCH here, but the extra code to
    * avoid the odd archiver restart doesn't seem worth it.
    */
-  if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+  try {
+    /* Enable our exception handler */
+    PG_exception_handled = true;
+
+    /* Archive the file! */
+    ret =
+        ArchiveCallbacks->archive_file_cb(archive_module_state, xlog, pathname);
+
+    /* Remove our exception handler */
+    PG_exception_handled = false;
+
+    /* Reset our memory context and switch back to the original one */
+    MemoryContextSwitchTo(oldcontext);
+    MemoryContextReset(archive_context);
+  } catch (const pg_error_t &) {
     /* Since not using PG_TRY, must reset error stack by hand */
     error_context_stack = NULL;
 
@@ -547,27 +560,13 @@ static bool pgarch_archiveXlog(char *xlog) {
     MemoryContextReset(archive_context);
 
     /* Remove our exception handler */
-    PG_exception_stack = NULL;
+    PG_exception_handled = false;
 
     /* Now we can allow interrupts again */
     RESUME_INTERRUPTS();
 
     /* Report failure so that the archiver retries this file */
     ret = false;
-  } else {
-    /* Enable our exception handler */
-    PG_exception_stack = &local_sigjmp_buf;
-
-    /* Archive the file! */
-    ret =
-        ArchiveCallbacks->archive_file_cb(archive_module_state, xlog, pathname);
-
-    /* Remove our exception handler */
-    PG_exception_stack = NULL;
-
-    /* Reset our memory context and switch back to the original one */
-    MemoryContextSwitchTo(oldcontext);
-    MemoryContextReset(archive_context);
   }
 
   if (ret)

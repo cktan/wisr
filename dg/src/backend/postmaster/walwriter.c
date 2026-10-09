@@ -84,7 +84,6 @@ int WalWriterFlushAfter = DEFAULT_WAL_WRITER_FLUSH_AFTER;
  * basic execution environment, but not enabled signals yet.
  */
 void WalWriterMain(const void *startup_data, size_t startup_data_len) {
-  sigjmp_buf local_sigjmp_buf;
   MemoryContext walwriter_context;
   int left_till_hibernate;
   bool hibernating;
@@ -142,7 +141,7 @@ void WalWriterMain(const void *startup_data, size_t startup_data_len) {
    * call redundant, but it is not since InterruptPending might be set
    * already.
    */
-  if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+  PG_ERROR_LOOP_BEGIN() {
     /* Since not using PG_TRY, must reset error stack by hand */
     error_context_stack = NULL;
 
@@ -190,7 +189,7 @@ void WalWriterMain(const void *startup_data, size_t startup_data_len) {
   }
 
   /* We can now handle ereport(ERROR) */
-  PG_exception_stack = &local_sigjmp_buf;
+  PG_exception_handled = true;
 
   /*
    * Unblock signals (they were blocked when the postmaster forked us)
@@ -261,4 +260,5 @@ void WalWriterMain(const void *startup_data, size_t startup_data_len) {
     (void)WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
                     cur_timeout, WAIT_EVENT_WAL_WRITER_MAIN);
   }
+  PG_ERROR_LOOP_END();
 }

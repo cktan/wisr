@@ -84,7 +84,6 @@ static XLogRecPtr last_snapshot_lsn = InvalidXLogRecPtr;
  * basic execution environment, but not enabled signals yet.
  */
 void BackgroundWriterMain(const void *startup_data, size_t startup_data_len) {
-  sigjmp_buf local_sigjmp_buf;
   MemoryContext bgwriter_context;
   bool prev_hibernate;
   WritebackContext wb_context;
@@ -147,7 +146,7 @@ void BackgroundWriterMain(const void *startup_data, size_t startup_data_len) {
    * call redundant, but it is not since InterruptPending might be set
    * already.
    */
-  if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+  PG_ERROR_LOOP_BEGIN() {
     /* Since not using PG_TRY, must reset error stack by hand */
     error_context_stack = NULL;
 
@@ -200,7 +199,7 @@ void BackgroundWriterMain(const void *startup_data, size_t startup_data_len) {
   }
 
   /* We can now handle ereport(ERROR) */
-  PG_exception_stack = &local_sigjmp_buf;
+  PG_exception_handled = true;
 
   /*
    * Unblock signals (they were blocked when the postmaster forked us)
@@ -328,4 +327,5 @@ void BackgroundWriterMain(const void *startup_data, size_t startup_data_len) {
 
     prev_hibernate = can_hibernate;
   }
+  PG_ERROR_LOOP_END();
 }

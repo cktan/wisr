@@ -3779,7 +3779,6 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
  * ----------------------------------------------------------------
  */
 void PostgresMain(const char *dbname, const char *username) {
-  sigjmp_buf local_sigjmp_buf;
 
   /* these must be volatile to ensure state is preserved across longjmp: */
   volatile bool send_ready_for_query = true;
@@ -3972,7 +3971,7 @@ void PostgresMain(const char *dbname, const char *username) {
    * were inside a transaction.
    */
 
-  if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+  PG_ERROR_LOOP_BEGIN() {
     /*
      * NOTE: if you are tempted to add more code in this if-block,
      * consider the high probability that it should be in
@@ -4067,7 +4066,7 @@ void PostgresMain(const char *dbname, const char *username) {
   }
 
   /* We can now handle ereport(ERROR) */
-  PG_exception_stack = &local_sigjmp_buf;
+  PG_exception_handled = true;
 
   if (!ignore_till_sync)
     send_ready_for_query = true; /* initially, or after error */
@@ -4522,6 +4521,7 @@ void PostgresMain(const char *dbname, const char *username) {
                       errmsg("invalid frontend message type %d", firstchar)));
     }
   } /* end of input-reading loop */
+  PG_ERROR_LOOP_END();
 }
 
 static struct rusage Save_r;

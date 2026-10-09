@@ -92,7 +92,7 @@
 /* Global variables */
 ErrorContextCallback *error_context_stack = NULL;
 
-sigjmp_buf *PG_exception_stack = NULL;
+bool PG_exception_handled = false;
 
 /*
  * Hook for intercepting messages before they are sent to the server log.
@@ -342,7 +342,7 @@ bool errstart(int elevel, const char *domain) {
      * infinite recursion!)
      */
     if (elevel == ERROR) {
-      if (PG_exception_stack == NULL || ExitOnAnyError || proc_exit_inprogress)
+      if (!PG_exception_handled || ExitOnAnyError || proc_exit_inprogress)
         elevel = FATAL;
     }
 
@@ -518,7 +518,7 @@ void errfinish(const char *filename, int lineno, const char *funcname) {
      * If we just reported a startup failure, the client will disconnect
      * on receiving it, so don't send any more to the client.
      */
-    if (PG_exception_stack == NULL && whereToSendOutput == DestRemote)
+    if (!PG_exception_handled && whereToSendOutput == DestRemote)
       whereToSendOutput = DestNone;
 
     /*
@@ -922,8 +922,8 @@ int errcode_for_socket_access(void) {
 		if ((appendval) && edata->targetfield) { \
 			appendStringInfoString(&buf, edata->targetfield); \
 			appendStringInfoChar(&buf, '\n'); \
-		}   /* Generate actual output --- have to                \
-                                                    use appendStringInfoVA */ \
+		}        /* Generate actual output --- have to                \
+                                                          use appendStringInfoVA */ \
 		for (;;) \
 		{ \
 			va_list		args; \
@@ -959,8 +959,8 @@ int errcode_for_socket_access(void) {
 		if ((appendval) && edata->targetfield) { \
 			appendStringInfoString(&buf, edata->targetfield); \
 			appendStringInfoChar(&buf, '\n'); \
-		}   /* Generate actual output --- have to                \
-                                                    use appendStringInfoVA */ \
+		} /* Generate actual output --- have  \
+                                              to use appendStringInfoVA */ \
 		for (;;) \
 		{ \
 			va_list		args; \
@@ -1850,13 +1850,13 @@ void ReThrowError(ErrorData *edata) {
  * pg_re_throw --- out-of-line implementation of PG_RE_THROW() macro
  */
 void pg_re_throw(void) {
-  /* If possible, throw the error to the next outer setjmp handler */
-  if (PG_exception_stack != NULL)
-    siglongjmp(*PG_exception_stack, 1);
+  /* If possible, throw the error to the next outer handler */
+  if (PG_exception_handled)
+    throw pg_error_t();
   else {
     /*
      * If we get here, elog(ERROR) was thrown inside a PG_TRY block, which
-     * we have now exited only to discover that there is no outer setjmp
+     * we have now exited only to discover that there is no outer
      * handler to pass the error to.  Had the error been thrown outside
      * the block to begin with, we'd have promoted the error to FATAL, so
      * the correct behavior is to make it FATAL now; that is, emit it and

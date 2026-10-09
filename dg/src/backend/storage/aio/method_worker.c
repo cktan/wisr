@@ -326,7 +326,6 @@ static void pgaio_worker_error_callback(void *arg) {
 }
 
 void IoWorkerMain(const void *startup_data, size_t startup_data_len) {
-  sigjmp_buf local_sigjmp_buf;
   PgAioHandle *volatile error_ioh = NULL;
   ErrorContextCallback errcallback = {0};
   volatile int error_errno = 0;
@@ -360,7 +359,7 @@ void IoWorkerMain(const void *startup_data, size_t startup_data_len) {
   error_context_stack = &errcallback;
 
   /* see PostgresMain() */
-  if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+  PG_ERROR_LOOP_BEGIN() {
     error_context_stack = NULL;
     HOLD_INTERRUPTS();
 
@@ -390,7 +389,7 @@ void IoWorkerMain(const void *startup_data, size_t startup_data_len) {
   }
 
   /* We can now handle ereport(ERROR) */
-  PG_exception_stack = &local_sigjmp_buf;
+  PG_exception_handled = true;
 
   sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
 
@@ -513,6 +512,7 @@ void IoWorkerMain(const void *startup_data, size_t startup_data_len) {
 
   error_context_stack = errcallback.previous;
   proc_exit(0);
+  PG_ERROR_LOOP_END();
 }
 
 bool pgaio_workers_enabled(void) { return io_method == IOMETHOD_WORKER; }

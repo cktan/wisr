@@ -1,0 +1,5 @@
+	 1: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+	 1: ?column? = "42"	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+ERROR: division by zero

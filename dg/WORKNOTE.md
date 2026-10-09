@@ -267,3 +267,47 @@ its function and the type are found compiled in.
   lookup not yet rewritten.
 - `make test` runs `test/*.sql` this way and compares with
   `test/expected`.
+
+## Step 7: an error is an exception
+
+The first step toward threads (`../sm/PART4.md` §2): digres no
+longer leaves an error by `longjmp`. `ereport(ERROR)` throws a
+C++ exception, `pg_error_t`, and what catches it is a `catch`.
+
+- **The 6,450 places that raise did not change.** They end in
+  `pg_re_throw()`, which threw by `siglongjmp` and now throws by
+  `throw`.
+- **`PG_TRY`, `PG_CATCH`, `PG_FINALLY` and `PG_END_TRY` are a
+  `try` and a `catch`**, so the 44 blocks that use them did not
+  change either.
+- **The exception carries nothing.** The error is where it was,
+  on `elog.c`'s stack, for `CopyErrorData()` and the rest.
+- **`PG_exception_handled`, a flag, replaces
+  `PG_exception_stack`**, the pointer to a jump buffer. Both
+  say whether an ERROR has a handler; with none it is promoted
+  to FATAL, as before.
+- **Ten functions carried on after an error by jumping back to a
+  `sigsetjmp`** at their top: the session's main loop, and the
+  loops of the background writer, checkpointer, WAL writer,
+  autovacuum launcher and worker, background worker, archiver
+  and I/O worker. Nine are now wrapped in `PG_ERROR_LOOP_BEGIN`
+  and `PG_ERROR_LOOP_END`, which run the recovery and then the
+  function again from where the `sigsetjmp` was, and put the
+  signal mask back as `sigsetjmp(..., 1)` did. The archiver's
+  guarded one call, and is a plain `try`.
+- **Destructors now run on an error.** `raw_parser()` held
+  sq's tree on the heap and deleted it in a `PG_FINALLY`,
+  because a `longjmp` runs none; it holds it on the stack now.
+- **Two uses of `setjmp` are left**, neither of them
+  PostgreSQL's errors: the configuration file's scanner jumps
+  out of flex's fatal error, inside one function; and
+  `pg_get_line.c` jumps out of a prompt that was interrupted.
+- **What an exception cannot cross** is a frame compiled as C
+  with no unwinding tables: a callback from a C library that
+  raises would end the process. PostgreSQL's own `qsort` and
+  its flex and bison output are compiled here as C++, and none
+  was met.
+- **Not run**: the nine loops. No server starts, so only the
+  `PG_TRY` path is exercised, by `--parse` and `--run`.
+  `test/select_error.sql` raises from the executor and
+  `test/select_overflow.sql` from the planner.

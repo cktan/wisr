@@ -293,14 +293,14 @@ SQL of its own. Its `raw_parser()` is sq's one caller there
 - It raises sq's error as the server's own, with its SQLSTATE,
   position, detail and hint.
 
-Two things there follow from sq being C++ under a server that
-leaves an error by `longjmp`, which runs no destructor:
+digres raises an error as a C++ exception, so the tree is an
+ordinary object there, freed by its destructor whether the
+conversion finishes or raises.
 
-- **The tree is deleted by hand**, in a `PG_FINALLY`, after it
-  has been converted.
 - **A notice is kept and reported after sq returns.** Reported
-  from sq's hook, an error raised while reporting would jump out
-  through sq.
+  from sq's hook, an error raised while reporting would be an
+  exception inside sq, which catches everything and would report
+  it as its own.
 
 digres is checked with sq's own tests. `postgres --parse` prints
 what `build/sq_parse` prints, for `raw_parser()`, so the

@@ -639,7 +639,6 @@ static void bgworker_die(SIGNAL_ARGS) {
  * Main entry point for background worker processes.
  */
 void BackgroundWorkerMain(const void *startup_data, size_t startup_data_len) {
-  sigjmp_buf local_sigjmp_buf;
   BackgroundWorker *worker;
   bgworker_main_type entrypt;
 
@@ -701,7 +700,7 @@ void BackgroundWorkerMain(const void *startup_data, size_t startup_data_len) {
    *
    * We just need to clean up, report the error, and go away.
    */
-  if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+  PG_ERROR_LOOP_BEGIN() {
     /* Since not using PG_TRY, must reset error stack by hand */
     error_context_stack = NULL;
 
@@ -729,7 +728,7 @@ void BackgroundWorkerMain(const void *startup_data, size_t startup_data_len) {
   }
 
   /* We can now handle ereport(ERROR) */
-  PG_exception_stack = &local_sigjmp_buf;
+  PG_exception_handled = true;
 
   /*
    * Create a per-backend PGPROC struct in shared memory.  We must do this
@@ -762,6 +761,7 @@ void BackgroundWorkerMain(const void *startup_data, size_t startup_data_len) {
 
   /* ... and if it returns, we're done */
   proc_exit(0);
+  PG_ERROR_LOOP_END();
 }
 
 /*

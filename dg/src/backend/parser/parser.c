@@ -25,7 +25,6 @@
  * before postgres.h defines macros over names of its own. */
 #include "sq.h"
 
-#include <new>
 #include <string>
 #include <vector>
 
@@ -56,9 +55,9 @@ struct pending_notice_t {
 };
 
 /*
- * One parse's tree and notices. They are C++ objects, and an error here
- * leaves by longjmp, which runs no destructor: so the two are kept
- * together on the heap and deleted by hand on every way out.
+ * One parse's tree and notices. They are C++ objects, freed by their
+ * destructors: an ERROR raised while they are held is an exception, and
+ * unwinds through them.
  */
 struct parse_job_t {
   sq_tree_t tree;
@@ -118,7 +117,7 @@ static void report_error(void) {
  */
 List *raw_parser(const char *str, RawParseMode mode) {
   sq_options_t options;
-  parse_job_t *job;
+  parse_job_t job;
   sq_type_name_t *type_name = NULL;
   List *result = NIL;
   int rc;
@@ -128,44 +127,32 @@ List *raw_parser(const char *str, RawParseMode mode) {
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("PL/pgSQL parse modes are not supported")));
 
-  job = new (std::nothrow) parse_job_t;
-  if (job == NULL)
-    ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
-
   /* The settings are the session's; their values are PostgreSQL's. */
   options.standard_conforming_strings = standard_conforming_strings;
   options.backslash_quote = (sq_backslash_quote_t)backslash_quote;
   options.escape_string_warning = escape_string_warning;
   options.notice = keep_notice;
-  options.notice_arg = job;
+  options.notice_arg = &job;
 
   /* Nothing in sq raises a server error, or throws: it returns. */
   if (mode == RAW_PARSE_TYPE_NAME)
-    rc = sq_parse_type_name(str, &options, job->tree, &type_name);
+    rc = sq_parse_type_name(str, &options, job.tree, &type_name);
   else
-    rc = sq_parse(str, &options, job->tree);
+    rc = sq_parse(str, &options, job.tree);
 
-  PG_TRY();
-  {
-    /* What sq said on the way comes before what stopped it. */
-    report_notices(job);
-    if (rc != 0)
-      report_error();
+  /* What sq said on the way comes before what stopped it. */
+  report_notices(&job);
+  if (rc != 0)
+    report_error();
 
-    /* The analyzer reads PostgreSQL's nodes, not sq's. */
-    if (mode == RAW_PARSE_TYPE_NAME)
-      result = list_make1(sq_convert(type_name));
-    else
-      for (const sq_raw_stmt_t *raw : job->tree.stmts)
-        result = lappend(result, sq_convert(raw));
-  }
-  PG_FINALLY();
-  {
-    /* Free sq's tree, which no memory context knows of. */
-    delete job;
-  }
-  PG_END_TRY();
+  /* The analyzer reads PostgreSQL's nodes, not sq's. */
+  if (mode == RAW_PARSE_TYPE_NAME)
+    result = list_make1(sq_convert(type_name));
+  else
+    for (const sq_raw_stmt_t *raw : job.tree.stmts)
+      result = lappend(result, sq_convert(raw));
 
+  /* sq's tree, which no memory context knows of, goes with job. */
   return result;
 }
 

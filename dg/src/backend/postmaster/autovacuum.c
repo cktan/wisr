@@ -354,7 +354,6 @@ static void check_av_worker_gucs(void);
  * Main entry point for the autovacuum launcher process.
  */
 void AutoVacLauncherMain(const void *startup_data, size_t startup_data_len) {
-  sigjmp_buf local_sigjmp_buf;
 
   Assert(startup_data_len == 0);
 
@@ -426,7 +425,7 @@ void AutoVacLauncherMain(const void *startup_data, size_t startup_data_len) {
    * call redundant, but it is not since InterruptPending might be set
    * already.
    */
-  if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+  PG_ERROR_LOOP_BEGIN() {
     /* since not using PG_TRY, must reset error stack by hand */
     error_context_stack = NULL;
 
@@ -488,7 +487,7 @@ void AutoVacLauncherMain(const void *startup_data, size_t startup_data_len) {
   }
 
   /* We can now handle ereport(ERROR) */
-  PG_exception_stack = &local_sigjmp_buf;
+  PG_exception_handled = true;
 
   /* must unblock signals before calling rebuild_database_list */
   sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
@@ -706,6 +705,7 @@ void AutoVacLauncherMain(const void *startup_data, size_t startup_data_len) {
   }
 
   AutoVacLauncherShutdown();
+  PG_ERROR_LOOP_END();
 }
 
 /*
@@ -1289,7 +1289,6 @@ static void avl_sigusr2_handler(SIGNAL_ARGS) {
  * Main entry point for autovacuum worker processes.
  */
 void AutoVacWorkerMain(const void *startup_data, size_t startup_data_len) {
-  sigjmp_buf local_sigjmp_buf;
   Oid dbid;
 
   Assert(startup_data_len == 0);
@@ -1350,7 +1349,7 @@ void AutoVacWorkerMain(const void *startup_data, size_t startup_data_len) {
    * seem that this policy makes the HOLD_INTERRUPTS() call redundant, but
    * it is not since InterruptPending might be set already.
    */
-  if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+  PG_ERROR_LOOP_BEGIN() {
     /* since not using PG_TRY, must reset error stack by hand */
     error_context_stack = NULL;
 
@@ -1369,7 +1368,7 @@ void AutoVacWorkerMain(const void *startup_data, size_t startup_data_len) {
   }
 
   /* We can now handle ereport(ERROR) */
-  PG_exception_stack = &local_sigjmp_buf;
+  PG_exception_handled = true;
 
   sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
 
@@ -1503,6 +1502,7 @@ void AutoVacWorkerMain(const void *startup_data, size_t startup_data_len) {
 
   /* All done, go away */
   proc_exit(0);
+  PG_ERROR_LOOP_END();
 }
 
 /*

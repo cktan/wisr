@@ -15,6 +15,7 @@
 #define ELOG_H
 
 #include <setjmp.h>
+#include <signal.h>
 
 #include "lib/stringinfo.h"
 
@@ -360,12 +361,17 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
  * The PG_ENSURE_ERROR_CLEANUP macros provided by storage/ipc.h may be
  * helpful in such cases.
  *
- * Note: if a local variable of the function containing PG_TRY is modified
- * in the PG_TRY section and used in the PG_CATCH section, that variable
- * must be declared "volatile" for POSIX compliance.  This is not mere
- * pedantry; we have seen bugs from compilers improperly optimizing code
- * away when such a variable was not marked.  Beware that gcc's -Wclobbered
- * warnings are just about entirely useless for catching such oversights.
+ * Note: digres raises ereport(ERROR) as a C++ exception, pg_error_t, where
+ * PostgreSQL jumps with siglongjmp (sm/PART4.md section 2).  These macros
+ * are a try and a catch of it.  So a local variable modified in the PG_TRY
+ * section and used in the PG_CATCH section need not be "volatile", as
+ * PostgreSQL requires, and the destructors of whatever is between the
+ * error and its handler run.  The exception carries nothing: the error is
+ * where it always was, on elog.c's own stack, for CopyErrorData() and
+ * the rest to read.
+ *
+ * Note: as in PostgreSQL, do not leave a PG_TRY section with return, break,
+ * continue or goto: what PG_END_TRY restores would be skipped.
  *
  * Each of these macros accepts an optional argument which can be specified
  * to apply a suffix to the variables declared within the macros.  This suffix
@@ -378,41 +384,100 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
  */
 #define PG_TRY(...)  \
 	do { \
-		sigjmp_buf *_save_exception_stack##__VA_ARGS__ = PG_exception_stack; \
+		bool _save_exception_handled##__VA_ARGS__ = PG_exception_handled; \
 		ErrorContextCallback *_save_context_stack##__VA_ARGS__ = error_context_stack; \
-		sigjmp_buf _local_sigjmp_buf##__VA_ARGS__; \
 		bool _do_rethrow##__VA_ARGS__ = false; \
-		if (sigsetjmp(_local_sigjmp_buf##__VA_ARGS__, 0) == 0) \
+		try \
 		{ \
-			PG_exception_stack = &_local_sigjmp_buf##__VA_ARGS__
+			PG_exception_handled = true
 
 #define PG_CATCH(...)	\
 		} \
-		else \
+		catch (const pg_error_t &) \
 		{ \
-			PG_exception_stack = _save_exception_stack##__VA_ARGS__; \
+			PG_exception_handled = _save_exception_handled##__VA_ARGS__; \
 			error_context_stack = _save_context_stack##__VA_ARGS__
 
 #define PG_FINALLY(...) \
 		} \
-		else \
-			_do_rethrow##__VA_ARGS__ = true; \
+		catch (const pg_error_t &) \
 		{ \
-			PG_exception_stack = _save_exception_stack##__VA_ARGS__; \
+			_do_rethrow##__VA_ARGS__ = true; \
+		} \
+		{ \
+			PG_exception_handled = _save_exception_handled##__VA_ARGS__; \
 			error_context_stack = _save_context_stack##__VA_ARGS__
 
 #define PG_END_TRY(...)  \
 		} \
 		if (_do_rethrow##__VA_ARGS__) \
 				PG_RE_THROW(); \
-		PG_exception_stack = _save_exception_stack##__VA_ARGS__; \
+		PG_exception_handled = _save_exception_handled##__VA_ARGS__; \
 		error_context_stack = _save_context_stack##__VA_ARGS__; \
 	} while (0)
 
 #define PG_RE_THROW()  \
 	pg_re_throw()
 
-extern PGDLLIMPORT sigjmp_buf *PG_exception_stack;
+/*
+ * A function that goes on after an ERROR, as the loop at the top of a session
+ * does: PostgreSQL's
+ *
+ *		if (sigsetjmp(local_sigjmp_buf, 1) != 0)
+ *		{
+ *			... error recovery ...
+ *		}
+ *		PG_exception_stack = &local_sigjmp_buf;
+ *		... the rest of the function ...
+ *
+ * is, here,
+ *
+ *		PG_ERROR_LOOP_BEGIN()
+ *		{
+ *			... error recovery ...
+ *		}
+ *		PG_exception_handled = true;
+ *		... the rest of the function ...
+ *		PG_ERROR_LOOP_END();
+ *
+ * An ERROR in the rest of the function runs the recovery and then the rest of
+ * the function again from its top, as the jump back to the sigsetjmp did.
+ * The signal mask is put back to what it was at PG_ERROR_LOOP_BEGIN, as
+ * sigsetjmp(..., 1) and siglongjmp did.  PG_ERROR_LOOP_END goes just before
+ * the function's closing brace.
+ */
+#define PG_ERROR_LOOP_BEGIN() \
+	sigset_t _error_loop_sigmask; \
+	bool _error_loop_caught = false; \
+	pthread_sigmask(SIG_SETMASK, NULL, &_error_loop_sigmask); \
+	for (;;) \
+	{ \
+		try \
+		{ \
+			if (_error_loop_caught && !(_error_loop_caught = false))
+
+#define PG_ERROR_LOOP_END() \
+			break; \
+		} \
+		catch (const pg_error_t &) \
+		{ \
+			pthread_sigmask(SIG_SETMASK, &_error_loop_sigmask, NULL); \
+			_error_loop_caught = true; \
+		} \
+	}
+
+/*
+ * What ereport(ERROR) throws.  It is empty: the error itself is on elog.c's
+ * stack.
+ */
+struct pg_error_t {};
+
+/*
+ * Whether an ERROR has a handler to go to: a PG_TRY, or the loop at the top
+ * of a session.  With none, an ERROR is promoted to FATAL, as it is in
+ * PostgreSQL when its PG_exception_stack is NULL.
+ */
+extern PGDLLIMPORT bool PG_exception_handled;
 
 /* Stuff that error handlers might want to use */
 
