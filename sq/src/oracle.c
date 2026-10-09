@@ -23,7 +23,8 @@
 #include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
 #include "parser/parser.h"
-#include "gramparse.h"
+/* PostgreSQL's, by its path: sq has a gramparse.h of its own beside this. */
+#include "../../dg/src/backend/parser/gramparse.h"
 #include "common/keywords.h"
 #include "utils/memutils.h"
 
@@ -160,9 +161,9 @@ int main(int argc, char **argv) {
     if (err->cursorpos > 0)
       printf(" at character %d", err->cursorpos);
     printf("\n");
-    if (tokens && err->detail)
+    if (err->detail)
       printf("DETAIL: %s\n", err->detail);
-    if (tokens && err->hint)
+    if (err->hint)
       printf("HINT: %s\n", err->hint);
     status = 1;
   }

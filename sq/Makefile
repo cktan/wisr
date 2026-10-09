@@ -30,7 +30,7 @@ GEN_CXXFLAGS := $(filter-out -Wall -Wextra,$(LIB_CXXFLAGS)) -w
 
 LIB_SRCS  := $(wildcard src/*.cc)
 LIB_OBJS  := $(LIB_SRCS:src/%.cc=build/src/%.o) build/gen/print_nodes.o \
-             build/gen/scan.o
+             build/gen/node_funcs.o build/gen/scan.o build/gen/gram.o
 TOOL_SRCS := $(wildcard test/tool/*.cc)
 TOOLS     := $(TOOL_SRCS:test/tool/%.cc=build/%)
 TEST_SRCS := $(wildcard test/*.cc)
@@ -61,6 +61,10 @@ build/gen/print_nodes.cc: $(GEN_NODES)
 	@mkdir -p $(dir $@)
 	python3 gen/gen_nodes.py printer > $@
 
+build/gen/node_funcs.cc: $(GEN_NODES)
+	@mkdir -p $(dir $@)
+	python3 gen/gen_nodes.py funcs > $@
+
 # The perfect hash the scanner finds a keyword with.
 build/gen/keyword_hash.h: gen/gen_keywords.py spec/kwlist.h
 	@mkdir -p $(dir $@)
@@ -68,11 +72,16 @@ build/gen/keyword_hash.h: gen/gen_keywords.py spec/kwlist.h
 
 build/src/keywords.o: build/gen/keyword_hash.h
 
-# The grammar's tokens, which the scanner returns. Only the header is
-# used until the grammar has rules.
+# The grammar. Its header has the tokens the scanner returns. bison
+# writes both files at once; the header is the one make follows.
 build/gen/gram.hh: src/gram.y
 	@mkdir -p $(dir $@)
-	bison -d -o build/gen/gram.cc $<
+	bison -Wno-deprecated -d -o build/gen/gram.cc $<
+
+build/gen/gram.cc: build/gen/gram.hh ;
+
+build/gen/gram.o: build/gen/gram.cc
+	$(CXX) $(GEN_CXXFLAGS) -c -o $@ $<
 
 # The flags are PostgreSQL's for its scanner: a full table, for speed.
 build/gen/scan.cc: src/scan.l
@@ -80,6 +89,9 @@ build/gen/scan.cc: src/scan.l
 	flex -CF -p -p -o $@ $<
 
 build/gen/print_nodes.o: build/gen/print_nodes.cc
+	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
+
+build/gen/node_funcs.o: build/gen/node_funcs.cc | build/gen/gram.hh
 	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
 
 build/gen/scan.o: build/gen/scan.cc build/gen/gram.hh
@@ -166,6 +178,8 @@ test: all
 	test/spec.sh
 	test/tokens.sh test
 	test/tokens.sh test/scan
+	test/trees.sh test
+	test/trees.sh test/scan
 	test/run.sh
 	test/split.sh
 
@@ -174,9 +188,16 @@ PG_SQL ?= $(HOME)/p/postgres18/src/test/regress/sql
 corpus: build/oracle
 	test/corpus.sh $(PG_SQL)
 
-# The checks that run over all of it, and are too large for `make test`.
-corpus-test: all
+# The checks that run over all of it, and are too large for `make test`:
+# the scanner's tokens in every file, the parser's tree for every
+# statement that can be split off, and what the parser says of every
+# piece of every file, the wrong ones among them.
+corpus-test: all corpus
 	test/tokens.sh $(PG_SQL)
+	test/trees.sh --corpus
+	rm -rf build/chunks
+	test/chunks.py $(PG_SQL) build/chunks
+	test/trees.sh --chunks
 
 clean:
 	rm -rf build

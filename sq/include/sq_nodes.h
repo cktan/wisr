@@ -23,6 +23,7 @@
 #ifndef SQ_NODES_H
 #define SQ_NODES_H
 
+#include <climits>
 #include <cstdint>
 #include <vector>
 
@@ -246,6 +247,27 @@ enum sq_nodetag_t {
     SQ_T_CREATE_SUBSCRIPTION_STMT,
     SQ_T_ALTER_SUBSCRIPTION_STMT,
     SQ_T_DROP_SUBSCRIPTION_STMT,
+};
+
+/* PostgreSQL's SetQuantifier. */
+enum sq_set_quantifier_t {
+    SQ_SET_QUANTIFIER_DEFAULT,
+    SQ_SET_QUANTIFIER_ALL,
+    SQ_SET_QUANTIFIER_DISTINCT,
+};
+
+/* PostgreSQL's TableLikeOption. */
+enum sq_table_like_option_t {
+    SQ_CREATE_TABLE_LIKE_COMMENTS = 1 << 0,
+    SQ_CREATE_TABLE_LIKE_COMPRESSION = 1 << 1,
+    SQ_CREATE_TABLE_LIKE_CONSTRAINTS = 1 << 2,
+    SQ_CREATE_TABLE_LIKE_DEFAULTS = 1 << 3,
+    SQ_CREATE_TABLE_LIKE_GENERATED = 1 << 4,
+    SQ_CREATE_TABLE_LIKE_IDENTITY = 1 << 5,
+    SQ_CREATE_TABLE_LIKE_INDEXES = 1 << 6,
+    SQ_CREATE_TABLE_LIKE_STATISTICS = 1 << 7,
+    SQ_CREATE_TABLE_LIKE_STORAGE = 1 << 8,
+    SQ_CREATE_TABLE_LIKE_ALL = INT32_MAX,
 };
 
 /* PostgreSQL's OnCommitAction. */
@@ -848,6 +870,73 @@ enum sq_alter_subscription_type_t {
     SQ_ALTER_SUBSCRIPTION_ENABLED,
     SQ_ALTER_SUBSCRIPTION_SKIP,
 };
+
+/*
+ * PostgreSQL's constants for fields of the nodes below, which are
+ * #defines in its parsenodes.h.
+ */
+inline constexpr int SQ_ACL_INSERT = (1<<0);
+inline constexpr int SQ_ACL_SELECT = (1<<1);
+inline constexpr int SQ_ACL_UPDATE = (1<<2);
+inline constexpr int SQ_ACL_DELETE = (1<<3);
+inline constexpr int SQ_ACL_TRUNCATE = (1<<4);
+inline constexpr int SQ_ACL_REFERENCES = (1<<5);
+inline constexpr int SQ_ACL_TRIGGER = (1<<6);
+inline constexpr int SQ_ACL_EXECUTE = (1<<7);
+inline constexpr int SQ_ACL_USAGE = (1<<8);
+inline constexpr int SQ_ACL_CREATE = (1<<9);
+inline constexpr int SQ_ACL_CREATE_TEMP = (1<<10);
+inline constexpr int SQ_ACL_CONNECT = (1<<11);
+inline constexpr int SQ_ACL_SET = (1<<12);
+inline constexpr int SQ_ACL_ALTER_SYSTEM = (1<<13);
+inline constexpr int SQ_ACL_MAINTAIN = (1<<14);
+inline constexpr int SQ_N_ACL_RIGHTS = 15;
+inline constexpr int SQ_ACL_NO_RIGHTS = 0;
+inline constexpr int SQ_ACL_SELECT_FOR_UPDATE = SQ_ACL_UPDATE;
+inline constexpr int SQ_FRAMEOPTION_NONDEFAULT = 0x00001;
+inline constexpr int SQ_FRAMEOPTION_RANGE = 0x00002;
+inline constexpr int SQ_FRAMEOPTION_ROWS = 0x00004;
+inline constexpr int SQ_FRAMEOPTION_GROUPS = 0x00008;
+inline constexpr int SQ_FRAMEOPTION_BETWEEN = 0x00010;
+inline constexpr int SQ_FRAMEOPTION_START_UNBOUNDED_PRECEDING = 0x00020;
+inline constexpr int SQ_FRAMEOPTION_END_UNBOUNDED_PRECEDING = 0x00040;
+inline constexpr int SQ_FRAMEOPTION_START_UNBOUNDED_FOLLOWING = 0x00080;
+inline constexpr int SQ_FRAMEOPTION_END_UNBOUNDED_FOLLOWING = 0x00100;
+inline constexpr int SQ_FRAMEOPTION_START_CURRENT_ROW = 0x00200;
+inline constexpr int SQ_FRAMEOPTION_END_CURRENT_ROW = 0x00400;
+inline constexpr int SQ_FRAMEOPTION_START_OFFSET_PRECEDING = 0x00800;
+inline constexpr int SQ_FRAMEOPTION_END_OFFSET_PRECEDING = 0x01000;
+inline constexpr int SQ_FRAMEOPTION_START_OFFSET_FOLLOWING = 0x02000;
+inline constexpr int SQ_FRAMEOPTION_END_OFFSET_FOLLOWING = 0x04000;
+inline constexpr int SQ_FRAMEOPTION_EXCLUDE_CURRENT_ROW = 0x08000;
+inline constexpr int SQ_FRAMEOPTION_EXCLUDE_GROUP = 0x10000;
+inline constexpr int SQ_FRAMEOPTION_EXCLUDE_TIES = 0x20000;
+inline constexpr int SQ_FRAMEOPTION_START_OFFSET = (SQ_FRAMEOPTION_START_OFFSET_PRECEDING | SQ_FRAMEOPTION_START_OFFSET_FOLLOWING);
+inline constexpr int SQ_FRAMEOPTION_END_OFFSET = (SQ_FRAMEOPTION_END_OFFSET_PRECEDING | SQ_FRAMEOPTION_END_OFFSET_FOLLOWING);
+inline constexpr int SQ_FRAMEOPTION_EXCLUSION = (SQ_FRAMEOPTION_EXCLUDE_CURRENT_ROW | SQ_FRAMEOPTION_EXCLUDE_GROUP | SQ_FRAMEOPTION_EXCLUDE_TIES);
+inline constexpr int SQ_FRAMEOPTION_DEFAULTS = (SQ_FRAMEOPTION_RANGE | SQ_FRAMEOPTION_START_UNBOUNDED_PRECEDING | SQ_FRAMEOPTION_END_CURRENT_ROW);
+inline constexpr char SQ_FKCONSTR_ACTION_NOACTION = 'a';
+inline constexpr char SQ_FKCONSTR_ACTION_RESTRICT = 'r';
+inline constexpr char SQ_FKCONSTR_ACTION_CASCADE = 'c';
+inline constexpr char SQ_FKCONSTR_ACTION_SETNULL = 'n';
+inline constexpr char SQ_FKCONSTR_ACTION_SETDEFAULT = 'd';
+inline constexpr char SQ_FKCONSTR_MATCH_FULL = 'f';
+inline constexpr char SQ_FKCONSTR_MATCH_PARTIAL = 'p';
+inline constexpr char SQ_FKCONSTR_MATCH_SIMPLE = 's';
+inline constexpr int SQ_OPCLASS_ITEM_OPERATOR = 1;
+inline constexpr int SQ_OPCLASS_ITEM_FUNCTION = 2;
+inline constexpr int SQ_OPCLASS_ITEM_STORAGETYPE = 3;
+inline constexpr int SQ_CURSOR_OPT_BINARY = 0x0001;
+inline constexpr int SQ_CURSOR_OPT_SCROLL = 0x0002;
+inline constexpr int SQ_CURSOR_OPT_NO_SCROLL = 0x0004;
+inline constexpr int SQ_CURSOR_OPT_INSENSITIVE = 0x0008;
+inline constexpr int SQ_CURSOR_OPT_ASENSITIVE = 0x0010;
+inline constexpr int SQ_CURSOR_OPT_HOLD = 0x0020;
+inline constexpr int SQ_CURSOR_OPT_FAST_PLAN = 0x0100;
+inline constexpr int SQ_CURSOR_OPT_GENERIC_PLAN = 0x0200;
+inline constexpr int SQ_CURSOR_OPT_CUSTOM_PLAN = 0x0400;
+inline constexpr int SQ_CURSOR_OPT_PARALLEL_OK = 0x0800;
+inline constexpr long SQ_FETCH_ALL = LONG_MAX;
 
 /* What every node begins with. */
 struct sq_node_t {

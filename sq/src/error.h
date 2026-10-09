@@ -30,6 +30,11 @@ inline constexpr char sqlstate_character_not_in_repertoire[] = "22021";
 inline constexpr char sqlstate_invalid_escape_sequence[] = "22025";
 inline constexpr char sqlstate_nonstandard_use_of_escape_character[] = "22P06";
 inline constexpr char sqlstate_name_too_long[] = "42622";
+inline constexpr char sqlstate_invalid_parameter_value[] = "22023";
+inline constexpr char sqlstate_windowing_error[] = "42P20";
+inline constexpr char sqlstate_reserved_name[] = "42939";
+inline constexpr char sqlstate_duplicate_object[] = "42710";
+inline constexpr char sqlstate_warning[] = "01000";
 
 /*
  * Record e with its SQLSTATE, a position in characters from 1 or 0

@@ -18,12 +18,13 @@ Two things are built, and `PLAN.md` says how the first replaces
 the second:
 
 - **The library**, `build/libsq.a`, from `src/*.cc`, with its
-  API in `include/sq.h`. It is being written and parses nothing
-  yet: `sq_parse` refuses every input. It has the nodes of a
-  parse tree and prints them, and it has the scanner. It uses
-  nothing of digres's or of `../sm`.
-  - `src/scan.l` is PostgreSQL's scanner, forked; `src/gram.y`
-    has the grammar's tokens and no rules yet.
+  API in `include/sq.h`: `sq_parse` parses PostgreSQL 18's SQL
+  into a tree of the nodes in `include/sq_nodes.h`, and
+  `sq_to_string` prints one. It uses nothing of digres's or of
+  `../sm`.
+  - `src/scan.l` and `src/gram.y` are PostgreSQL's scanner and
+    grammar, forked: the rules are PostgreSQL's, and the code
+    around them is sq's.
   - `spec/` is PostgreSQL's node headers, unedited, and the list
     of the structs its grammar can make.
   - `gen/gen_nodes.py` writes `include/sq_nodes.h` from them,
@@ -120,6 +121,10 @@ and linked with a leak checker. Around it:
 - `test/tokens.sh`: sq's scanner and the oracle's find the same
   tokens, and the same errors, in `test/*.sql` and
   `test/scan/*.sql`.
+- `test/trees.sh`: sq's parser and the oracle build the same
+  trees, and refuse the same text the same way, for those
+  files. `make corpus-test` does both over all of PostgreSQL's
+  regression SQL.
 
 `test/*.sql` are run through `build/oracle` and compared with
 `test/expected/*.out`. `test/run.sh --accept` rewrites the

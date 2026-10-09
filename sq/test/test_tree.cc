@@ -50,7 +50,9 @@ TEST_CASE("a moved tree keeps its nodes, and frees them once") {
   sq_string_t *name = sq::make_node<sq_string_t>(a);
   name->sval = sq::dup_string(a, "x");
   col->fields.push_back(name);
-  a.stmts.push_back(col);
+  sq_raw_stmt_t *raw = sq::make_node<sq_raw_stmt_t>(a);
+  raw->stmt = col;
+  a.stmts.push_back(raw);
 
   sq_tree_t b(std::move(a));
   CHECK(a.stmts.empty());
@@ -61,7 +63,7 @@ TEST_CASE("a moved tree keeps its nodes, and frees them once") {
   REQUIRE(c.stmts.size() == 1);
 
   std::string out;
-  CHECK(sq_to_string(c.stmts[0], out) == 0);
+  CHECK(sq_to_string(c.stmts[0]->stmt, out) == 0);
   CHECK(out == "{COLUMNREF :fields (\"x\") :location -1}");
 }
 
@@ -71,8 +73,8 @@ TEST_CASE("a failed parse frees the tree it was given") {
   // 2. Parse into it, which fails.
   // 3. Confirm it is empty; the leak checker sees the rest.
   sq_tree_t t;
-  t.stmts.push_back(sq::make_node<sq_select_stmt_t>(t));
+  t.stmts.push_back(sq::make_node<sq_raw_stmt_t>(t));
   sq::dup_string(t, "text");
-  CHECK(sq_parse("SELECT 1;", nullptr, t) == -1);
+  CHECK(sq_parse("SELECT FROM WHERE", nullptr, t) == -1);
   CHECK(t.stmts.empty());
 }

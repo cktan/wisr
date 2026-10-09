@@ -14,6 +14,13 @@
 
 #include "sq.h"
 
+/* flex's entry point, which the parser's token filter calls. */
+namespace sq {
+union scan_value_t;
+struct parse_state_t;
+} // namespace sq
+int sq_core_yylex(sq::scan_value_t *value, int *location, void *yyscanner);
+
 namespace sq {
 
 /*
@@ -30,6 +37,9 @@ union scan_value_t {
 struct scan_extra_t {
   /* Where identifiers and literals are made. */
   sq_tree_t *tree = nullptr;
+
+  /* The parse this scan is part of, if it is part of one. */
+  parse_state_t *parse = nullptr;
 
   /* How to scan, and whom to tell of a notice. */
   sq_options_t options;
@@ -82,6 +92,9 @@ private:
   scan_extra_t m_extra;
   void *m_scanner = nullptr;
 };
+
+/* The state of the scan behind flex's handle. */
+scan_extra_t *scanner_extra(void *yyscanner);
 
 /* The position in characters, from 1, of byte offset location. */
 int scanner_errposition(int location, void *yyscanner);

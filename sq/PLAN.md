@@ -331,6 +331,68 @@ In each:
 - Verify, at the end of 5: for all 13,179 corpus statements,
   sq's text equals the oracle's.
 
+**Done, and not a family at a time.** The whole of `gram.y` was
+converted at once, by a script, and then made to compile by
+hand; a bison grammar does not come apart into families, and a
+conversion that is mechanical is the same work for one rule as
+for all. The families were how it was to be checked, and the
+check below covers them all.
+
+- **`src/gram.y` is sq's fork** of PostgreSQL's. The rules are
+  PostgreSQL's, untouched. Inside the actions every type, field
+  and helper has sq's name, and that renaming is all the script
+  did. It was run once and is not kept: the fork is the source
+  from here on.
+- **`sq_parse` parses.** `src/parser.cc` is PostgreSQL's
+  `parser.c`: the filter that looks one token ahead, and the
+  de-escaping of `U&` strings.
+- **Checked against PostgreSQL's parser three ways:**
+  - every statement of the corpus, 13,179 of them, prints the
+    tree the oracle prints (`test/trees.sh --corpus`);
+  - every piece of every one of the 233 regression scripts,
+    49,034 pieces, gets the same answer from both: the same
+    trees, or the same error with its position, detail and
+    hint (`test/trees.sh --chunks`). `test/chunks.py` cuts the
+    scripts at semicolons, cruder than a statement and enough to
+    compare by. This is where the SQL that is wrong on purpose
+    is, which the corpus cannot hold (step 0);
+  - the 25 files here, on every `make test`.
+- **A list in the grammar is a handle**, `list_ref_t`, where
+  PostgreSQL has a `List *`. Assigned to a node's field it is
+  copied into the field's vector. PostgreSQL's list functions
+  are kept, by its names, over it (`src/list.h`).
+- **The grammar's actions make nodes in "the current tree"**, a
+  per-thread pointer `sq_parse` sets for as long as it runs, as
+  PostgreSQL's allocate in its current memory context. Passing
+  the tree to each of 800 calls would have rewritten every
+  action.
+- **bison's stacks come from the parse** and are freed with it,
+  so that an error raised from an action leaks nothing.
+- **`sq_tree_t::stmts` holds `sq_raw_stmt_t`s**: each statement
+  with where it begins and how long it is, as PostgreSQL's
+  parser returns them.
+- `copy_node` and `equal_nodes`, PostgreSQL's `copyObject` and
+  `equal`, are generated with the printer: the grammar calls
+  each once.
+- PostgreSQL's constants for node fields, its `#define`s in
+  `parsenodes.h`, are generated into `sq_nodes.h` with `SQ_`
+  before them. The few from its catalog headers that the
+  grammar stores are in `src/pg_consts.h`, by hand.
+- Step 5's threads test is already here: eight threads parsing
+  at once, each reading its own error.
+
+Known, and accepted:
+
+- **A list assigned to a field is copied**, and the list it came
+  from stays in the tree, unused, until the tree is freed. A
+  tree therefore holds more memory than its nodes need. Moving
+  the list where it is not used again would fix it, a rule at a
+  time.
+- **A field's list and the handle it was copied from are
+  separate.** PostgreSQL's actions could append to a list after
+  assigning it and have the node see it. None was found to, and
+  49,034 comparisons agree, but the compiler cannot show it.
+
 ## 5. The surface
 
 - `sq.h` is settled and its comment states the conventions, as

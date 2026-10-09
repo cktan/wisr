@@ -33,6 +33,21 @@ char *dup_string(sq_tree_t &tree, std::string_view text) {
   return store.strings.back().get();
 }
 
+namespace {
+thread_local sq_tree_t *t_current_tree = nullptr;
+} // namespace
+
+/* The tree the calling thread is building, or NULL outside a parse. */
+sq_tree_t *current_tree() { return t_current_tree; }
+
+/* Remember what was current and make tree current. */
+current_tree_t::current_tree_t(sq_tree_t &tree) : m_previous(t_current_tree) {
+  t_current_tree = &tree;
+}
+
+/* Restore what was current. */
+current_tree_t::~current_tree_t() { t_current_tree = m_previous; }
+
 } // namespace sq
 
 /* An empty tree, with no store until something is made for it. */

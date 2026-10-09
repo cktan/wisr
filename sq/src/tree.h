@@ -52,6 +52,38 @@ template <typename T> T *make_node(sq_tree_t &tree) {
  */
 char *dup_string(sq_tree_t &tree, std::string_view text);
 
+/*
+ * The tree the calling thread is building. The grammar's actions make
+ * nodes far from anything that could hand them the tree, as
+ * PostgreSQL's allocate in its current memory context, so a parse
+ * names its tree here for as long as it runs.
+ */
+sq_tree_t *current_tree();
+
+/* Names a tree as the one being built, for as long as this lives. */
+class current_tree_t {
+public:
+  /* Make tree the calling thread's current tree. */
+  explicit current_tree_t(sq_tree_t &tree);
+
+  /* Put back whatever was current before. */
+  ~current_tree_t();
+
+  current_tree_t(const current_tree_t &) = delete;
+  current_tree_t &operator=(const current_tree_t &) = delete;
+
+private:
+  sq_tree_t *m_previous;
+};
+
+/* Make a node of type T in the tree being built. */
+template <typename T> T *make_node() { return make_node<T>(*current_tree()); }
+
+/* Copy text into the tree being built: PostgreSQL's pstrdup. */
+inline char *tree_strdup(std::string_view text) {
+  return dup_string(*current_tree(), text);
+}
+
 } // namespace sq
 
 #endif /* SQ_SRC_TREE_H */

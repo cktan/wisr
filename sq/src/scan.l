@@ -26,7 +26,7 @@
 #include "tree.h"
 #include "utf8.h"
 
-/* The grammar's tokens; its YYSTYPE and YYLTYPE are not used here. */
+/* The grammar's tokens; its value and location types are not used here. */
 #include "gram.hh"
 }
 
@@ -1082,6 +1082,13 @@ other			.
 #define yyleng	(((struct yyguts_t *) yyscanner)->yyleng_r)
 
 namespace sq {
+
+/* The state of the scan behind flex's handle. */
+scan_extra_t *
+scanner_extra(void *yyscanner)
+{
+	return yyextra;
+}
 
 /*
  * scanner_errposition

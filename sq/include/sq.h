@@ -45,8 +45,11 @@ struct tree_access_t;
  * destroying it destroys them all. The nodes are in sq_nodes.h.
  */
 struct sq_tree_t {
-    /* The statements, in the order written. */
-    std::vector<sq_node_t*> stmts;
+    /*
+     * The statements, in the order written. Each has the statement
+     * itself, and where in the text it begins and how long it is.
+     */
+    std::vector<sq_raw_stmt_t*> stmts;
 
     sq_tree_t();
     ~sq_tree_t();
