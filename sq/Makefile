@@ -1,7 +1,8 @@
 # sq -- the SQL front end, cut out of digres: text in, parse tree out.
 #
-#   make -j4         build build/sqparse
+#   make -j4         build build/oracle
 #   make test        build, and run the tests in test/
+#   make corpus      split PG_SQL's files into build/corpus
 #   make clean       remove build/
 #   make format      clang-format src/
 #
@@ -48,10 +49,10 @@ DG_SRCS := \
     $(SRC)/timezone/strftime.c
 
 DG_OBJS := $(patsubst $(SRC)/%.c,build/dg/%.o,$(DG_SRCS))
-OBJS    := build/sqparse.o build/host.o $(DG_OBJS)
+OBJS    := build/oracle.o build/host.o $(DG_OBJS)
 
-.PHONY: all test clean format gen
-all: build/sqparse
+.PHONY: all test corpus clean format gen
+all: build/oracle
 
 # The generated sources and headers are digres's to make.
 gen:
@@ -68,11 +69,17 @@ build/%.o: src/%.c | gen
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-build/sqparse: $(OBJS)
+build/oracle: $(OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
-test: build/sqparse
+test: build/oracle
 	test/run.sh
+	test/split.sh
+
+# PostgreSQL's regression SQL, one statement a file with its tree.
+PG_SQL ?= $(HOME)/p/postgres18/src/test/regress/sql
+corpus: build/oracle
+	test/corpus.sh $(PG_SQL)
 
 clean:
 	rm -rf build

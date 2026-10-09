@@ -1,5 +1,5 @@
 #!/bin/bash
-# run.sh -- run every test/*.sql through build/sqparse and compare
+# run.sh -- run every test/*.sql through build/oracle and compare
 # what it prints with test/expected/NAME.out.
 #
 #   test/run.sh            run the tests
@@ -11,7 +11,7 @@ mkdir -p build/test
 failed=0
 for sql in test/*.sql; do
   name=$(basename "$sql" .sql)
-  build/sqparse < "$sql" > "build/test/$name.out" 2>&1
+  build/oracle < "$sql" > "build/test/$name.out" 2>&1
   if [ "$1" = "--accept" ]; then
     cp "build/test/$name.out" "test/expected/$name.out"
     echo "$name: accepted"

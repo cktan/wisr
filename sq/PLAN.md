@@ -49,8 +49,30 @@ exposing only C++ vector, C++ string and C++ string-view.
   exactly. The struct is `sq_select_stmt_t` and it prints as
   `{SELECTSTMT`. This is for testing: it makes the old parser an
   oracle (step 0).
-- **Only the grammar digres runs is ported.** A statement digres
-  has cut parses to a "not supported" error, SQLSTATE `0A000`.
+- **sq is a library digres links**, `libsq.a`, and it is how
+  digres parses PostgreSQL's SQL. digres has no other parser
+  after step 7.
+- **The whole of PostgreSQL's grammar is ported.** Every
+  statement PostgreSQL accepts, sq accepts; every one it refuses
+  as a syntax error, sq refuses.
+- **A statement digres does not support parses to
+  `sq_unsupported_stmt_t`**, which names the statement:
+  `CREATE FUNCTION` is one. Its syntax is still checked in full.
+  It is a node, not an error from `sq_parse`: the other
+  statements in the same text still parse, and digres raises
+  "not supported", SQLSTATE `0A000`, when it reaches that one —
+  as PostgreSQL raises such errors a statement at a time. No
+  node struct, printer or converter is written for what is
+  under it.
+- **sq parses what a server is sent, and nothing else.**
+  - psql's backslash commands are psql's. It runs them itself
+    and splits its input into statements with its own scanner;
+    the server never sees one. Stock PostgreSQL 18 `psql` is
+    digres's client (`../dg/DGWORK.md` §1).
+  - `COPY t FROM stdin` is a statement, and sq parses it. The
+    rows that follow are not SQL: the client sends them as
+    protocol messages, and digres's `COPY` code reads them.
+    `\copy` is psql's.
 - **Node structs are written by hand to begin with.** Whether to
   generate them, and the printer, is decided in step 2 after the
   first dozen.
@@ -73,6 +95,11 @@ int sq_errpos(void);                 // character position, or 0
 std::string sq_to_string(const sq_node_t* node);
 ```
 
+`sq_parse` takes a list of statements. digres also parses a type
+name by itself (`parse_type.c`), so a second entry,
+`sq_parse_type_name`, is owed by step 5. PostgreSQL's parse
+modes for PL/pgSQL are not ported.
+
 - A function returning `int` returns 0 on success and -1 on
   error, as `sm.h`'s do.
 - No exception crosses it: `std::bad_alloc` becomes an
@@ -92,14 +119,33 @@ Measured on 2026-10-09.
 Before anything changes, today's `build/sqparse` is kept as the
 oracle: PostgreSQL's own parser printing PostgreSQL's own text.
 
-- It gains one option, to print each statement's source text
-  beside its tree, from `RawStmt`'s `stmt_location` and
-  `stmt_len`. That splits any SQL file into statements without a
-  second scanner.
-- The corpus is the eight tests here and the 233 files of
-  PostgreSQL's regression SQL, in `~/p/postgres18`.
+- It gains one option, `--split DIR`, to write each statement's
+  source text and its tree as a pair of files, from `RawStmt`'s
+  `stmt_location` and `stmt_len`. That splits a SQL file into
+  statements without a second scanner.
+- The corpus is the eight tests here and PostgreSQL's
+  regression SQL, in `~/p/postgres18`. `make corpus` builds it
+  in `build/corpus`.
 - Verify: the oracle builds as `build/oracle`; its output on the
   eight tests is the expected output, unchanged.
+
+**Done.** `src/sqparse.c` is `src/oracle.c`; `test/split.sh`
+tests the option.
+
+- **The corpus is 13,179 statements of 71 kinds, from 111 of
+  the 233 files.** The regression files are scripts for psql,
+  not text a server is sent. The other 122 hold backslash
+  commands, rows of `COPY` data, or a syntax error put there on
+  purpose, and PostgreSQL's parser returns nothing for a text
+  with an error in it.
+- **The 122 are not lost for good.** What a server is sent from
+  them is what psql makes of them. The way to get it is to run
+  them through psql against a stock PostgreSQL 18 with
+  `log_statement = all` and take the statements from its log.
+  Not built: no PostgreSQL server is installed here, and 111
+  files cover every statement family of step 4. To be done if
+  step 4 finds a family the corpus is thin on, or to bring the
+  deliberate syntax errors in.
 
 Every later step is checked against it: for a statement sq
 supports, the new parser's text equals the oracle's, byte for
@@ -153,10 +199,11 @@ The order, and each is its own cycle of port, test, commit:
 1. Expressions and `SELECT`.
 2. `INSERT`, `UPDATE`, `DELETE`, `MERGE`.
 3. Table and index DDL.
-4. Transactions, `SET`, `EXPLAIN`, and whatever else digres
-   runs. The list is drawn up at the start of this step from
-   what `../dg` has cut.
-5. Stub rules for the cut statements, raising "not supported".
+4. Transactions, `SET`, `EXPLAIN`, `COPY`, and whatever else
+   digres runs. The list is drawn up at the start of this step
+   from what `../dg` has cut.
+5. Every remaining statement, with its rules in full and its
+   actions building nothing, as `sq_unsupported_stmt_t`.
 
 In each:
 
@@ -168,6 +215,10 @@ In each:
   equals the oracle's; for every statement the oracle refuses,
   sq refuses with the same message and position; a failed parse
   leaks nothing.
+- Verify, at the end of 5: sq accepts all 13,179 corpus
+  statements; each parses to the oracle's text or to
+  `sq_unsupported_stmt_t`, and the list of which is in
+  `README.md`.
 
 ## 5. The surface
 

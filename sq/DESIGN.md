@@ -108,7 +108,7 @@ What each is for, as the parser uses it.
   list and its perfect hash, shared with whatever else has to
   quote an identifier.
 
-**What a caller must do first** is two calls, and `sqparse`'s
+**What a caller must do first** is two calls, and `oracle`'s
 `main` is the whole example:
 
 1. `MemoryContextInit()`, so that there is a context to allocate
@@ -164,7 +164,7 @@ Every source is compiled with one section a function
 
 The cost is that the boundary is drawn by reachability from one
 program. A second caller that reaches further — one that prints
-errors as JSON, say — will find names `sqparse` never needed.
+errors as JSON, say — will find names `oracle` never needed.
 That is the right answer: it has found a dependency that is
 real for it.
 
@@ -198,7 +198,7 @@ What each group becomes:
 
 ## 7. Testing
 
-`test/NAME.sql` is run through `build/sqparse` and what it
+`test/NAME.sql` is run through `build/oracle` and what it
 prints is compared with `test/expected/NAME.out`.
 
 - **The tree's text is the assertion.** Any change to what the

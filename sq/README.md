@@ -5,18 +5,19 @@ It is PostgreSQL 18.6's raw parser and the layers under it,
 built and tested with no server around them.
 
 ```
-make -j4         build build/sqparse
+make -j4         build build/oracle
 make test        build, and run the tests in test/
+make corpus      split PostgreSQL's regression SQL into build/corpus
 make clean       remove build/
 make format      clang-format src/
 ```
 
-`build/sqparse` reads SQL on standard input and prints one parse
+`build/oracle` reads SQL on standard input and prints one parse
 tree a statement, as PostgreSQL's `nodeToString()` writes it, or
 the error with its position:
 
 ```
-$ echo 'select 1 + 1;' | build/sqparse
+$ echo 'select 1 + 1;' | build/oracle
 {SELECTSTMT ... :val {A_EXPR :name ("+") :lexpr {A_CONST :val 1 ...
 ```
 
@@ -70,7 +71,7 @@ Linked with one section a function, so that only what the parser
 reaches is kept, the sources above need 51 names from the rest
 of the server. The ten files named above supply about half of
 them, and ask for a few more. `src/host.c` answers the 32 that
-are left for `sqparse`, as a process
+are left for `oracle`, as a process
 with no client, no transaction and no log file would. Each is a
 dependency to cut or to turn around:
 
@@ -87,7 +88,7 @@ that has to become per-thread for a threaded server
 
 ## Tests
 
-`test/*.sql` are run through `build/sqparse` and compared with
+`test/*.sql` are run through `build/oracle` and compared with
 `test/expected/*.out`. `test/run.sh --accept` rewrites the
 expected output from what is printed now; read the difference
 before committing it.

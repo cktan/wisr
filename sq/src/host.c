@@ -2,7 +2,7 @@
  * host.c -- what sq still needs from the server.
  *
  * The raw parser and the layers under it were written inside a server,
- * and reach up into it in these places. sqparse is not a server, so
+ * and reach up into it in these places. The oracle is not a server, so
  * each is answered here the way a process with no client, no
  * transaction and no log file would answer it.
  *
@@ -59,7 +59,7 @@ static uint32 local_wait_event_info;
 uint32 *my_wait_event_info = &local_wait_event_info;
 
 /* Name a backend type for a log line: there is one kind of process here. */
-const char *GetBackendTypeDesc(BackendType backendType) { return "sqparse"; }
+const char *GetBackendTypeDesc(BackendType backendType) { return "oracle"; }
 
 /* Return the process title for a log line: there is none. */
 const char *get_ps_display(int *displen) {
