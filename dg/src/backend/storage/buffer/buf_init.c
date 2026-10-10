@@ -21,7 +21,6 @@ thread_local /*SHARED*/ BufferDescPadded *BufferDescriptors;
 thread_local /*SHARED*/ char *BufferBlocks;
 thread_local /*SHARED*/ ConditionVariableMinimallyPadded *BufferIOCVArray;
 thread_local /*LOCAL*/ WritebackContext BackendWritebackContext;
-thread_local /*SHARED*/ CkptSortItem *CkptBufferIds;
 
 /*
  * Data Structures:
@@ -62,7 +61,7 @@ thread_local /*SHARED*/ CkptSortItem *CkptBufferIds;
  * postmaster, or in a standalone backend).
  */
 void BufferManagerShmemInit(void) {
-  bool foundBufs, foundDescs, foundIOCV, foundBufCkpt;
+  bool foundBufs, foundDescs, foundIOCV;
 
   /* Align descriptors to a cacheline boundary. */
   BufferDescriptors = (BufferDescPadded *)ShmemInitStruct(
@@ -79,19 +78,9 @@ void BufferManagerShmemInit(void) {
       "Buffer IO Condition Variables",
       NBuffers * sizeof(ConditionVariableMinimallyPadded), &foundIOCV);
 
-  /*
-   * The array used to sort to-be-checkpointed buffer ids is located in
-   * shared memory, to avoid having to allocate significant amounts of
-   * memory at runtime. As that'd be in the middle of a checkpoint, or when
-   * the checkpointer is restarted, memory allocation failures would be
-   * painful.
-   */
-  CkptBufferIds = (CkptSortItem *)ShmemInitStruct(
-      "Checkpoint BufferIds", NBuffers * sizeof(CkptSortItem), &foundBufCkpt);
-
-  if (foundDescs || foundBufs || foundIOCV || foundBufCkpt) {
+  if (foundDescs || foundBufs || foundIOCV) {
     /* should find all of these, or none of them */
-    Assert(foundDescs && foundBufs && foundIOCV && foundBufCkpt);
+    Assert(foundDescs && foundBufs && foundIOCV);
     /* note: this path is only taken in EXEC_BACKEND case */
   } else {
     int i;
@@ -158,9 +147,6 @@ Size BufferManagerShmemSize(void) {
                   mul_size(NBuffers, sizeof(ConditionVariableMinimallyPadded)));
   /* to allow aligning the above */
   size = add_size(size, PG_CACHE_LINE_SIZE);
-
-  /* size of checkpoint sort array in bufmgr.c */
-  size = add_size(size, mul_size(NBuffers, sizeof(CkptSortItem)));
 
   return size;
 }

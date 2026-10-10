@@ -232,8 +232,6 @@ thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 
 /* special child processes; NULL when not running */
 static thread_local /*SHARED*/ PMChild *StartupPMChild = NULL,
-                                       *BgWriterPMChild = NULL,
-                                       *CheckpointerPMChild = NULL,
                                        *WalReceiverPMChild = NULL,
                                        *WalSummarizerPMChild = NULL,
                                        *SysLoggerPMChild = NULL,
@@ -299,26 +297,21 @@ static thread_local /*SHARED*/ bool FatalError =
  * Notice that this state variable does not distinguish *why* we entered
  * states later than PM_RUN --- Shutdown and FatalError must be consulted
  * to find that out.  FatalError is never true in PM_RECOVERY, PM_HOT_STANDBY,
- * or PM_RUN states, nor in PM_WAIT_XLOG_SHUTDOWN states (because we don't
- * enter those states when trying to recover from a crash).  It can be true in
+ * or PM_RUN states (because we don't enter those states when trying to
+ * recover from a crash).  It can be true in
  * PM_STARTUP state, because we don't clear it until we've successfully
  * started WAL redo.
  */
 typedef enum {
-  PM_INIT,               /* postmaster starting */
-  PM_STARTUP,            /* waiting for startup subprocess */
-  PM_RECOVERY,           /* in archive recovery mode */
-  PM_HOT_STANDBY,        /* in hot standby mode */
-  PM_RUN,                /* normal "database is alive" state */
-  PM_STOP_BACKENDS,      /* need to stop remaining backends */
-  PM_WAIT_BACKENDS,      /* waiting for live backends to exit */
-  PM_WAIT_XLOG_SHUTDOWN, /* waiting for checkpointer to do shutdown
-                          * ckpt */
-  PM_WAIT_XLOG_ARCHIVAL, /* waiting for archiver and walsenders to
-                          * finish */
-  PM_WAIT_CHECKPOINTER,  /* waiting for checkpointer to shut down */
-  PM_WAIT_DEAD_END,      /* waiting for dead-end children to exit */
-  PM_NO_CHILDREN,        /* all important children have exited */
+  PM_INIT,          /* postmaster starting */
+  PM_STARTUP,       /* waiting for startup subprocess */
+  PM_RECOVERY,      /* in archive recovery mode */
+  PM_HOT_STANDBY,   /* in hot standby mode */
+  PM_RUN,           /* normal "database is alive" state */
+  PM_STOP_BACKENDS, /* need to stop remaining backends */
+  PM_WAIT_BACKENDS, /* waiting for live backends to exit */
+  PM_WAIT_DEAD_END, /* waiting for dead-end children to exit */
+  PM_NO_CHILDREN,   /* all important children have exited */
 } PMState;
 
 static thread_local /*SHARED*/ PMState pmState = PM_INIT;
@@ -1220,12 +1213,6 @@ void PostmasterMain(int argc, char *argv[]) {
 
   UpdatePMState(PM_STARTUP);
 
-  /* Start bgwriter and checkpointer so they can help with recovery */
-  if (CheckpointerPMChild == NULL)
-    CheckpointerPMChild = StartChildProcess(B_CHECKPOINTER);
-  if (BgWriterPMChild == NULL)
-    BgWriterPMChild = StartChildProcess(B_BG_WRITER);
-
   /*
    * We're ready to rock and roll...
    */
@@ -2047,49 +2034,6 @@ static void process_pm_child_exit(void) {
     }
 
     /*
-     * Was it the bgwriter?  Normal exit can be ignored; we'll start a new
-     * one at the next iteration of the postmaster's main loop, if
-     * necessary.  Any other exit condition is treated as a crash.
-     */
-    if (BgWriterPMChild && pid == BgWriterPMChild->pid) {
-      ReleasePostmasterChildSlot(BgWriterPMChild);
-      BgWriterPMChild = NULL;
-      if (!EXIT_STATUS_0(exitstatus))
-        HandleChildCrash(pid, exitstatus, _("background writer process"));
-      continue;
-    }
-
-    /*
-     * Was it the checkpointer?
-     */
-    if (CheckpointerPMChild && pid == CheckpointerPMChild->pid) {
-      ReleasePostmasterChildSlot(CheckpointerPMChild);
-      CheckpointerPMChild = NULL;
-      if (EXIT_STATUS_0(exitstatus) && pmState == PM_WAIT_CHECKPOINTER) {
-        /*
-         * OK, we saw normal exit of the checkpointer after it's been
-         * told to shut down.  We know checkpointer wrote a shutdown
-         * checkpoint, otherwise we'd still be in
-         * PM_WAIT_XLOG_SHUTDOWN state.
-         *
-         * At this point only dead-end children and logger should be
-         * left.
-         */
-        UpdatePMState(PM_WAIT_DEAD_END);
-        ConfigurePostmasterWaitSet(false);
-        SignalChildren(SIGTERM, btmask_all_except(B_LOGGER));
-      } else {
-        /*
-         * Any unexpected exit of the checkpointer (including FATAL
-         * exit) is treated as a crash.
-         */
-        HandleChildCrash(pid, exitstatus, _("checkpointer process"));
-      }
-
-      continue;
-    }
-
-    /*
      * Was it the wal receiver?  If exit status is zero (normal) or one
      * (FATAL exit), we assume everything is all right just like normal
      * backends.  (If we need a new wal receiver, we'll start one at the
@@ -2369,18 +2313,6 @@ static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
     /* there might be more backends to wait for */
     break;
 
-  case PM_WAIT_XLOG_SHUTDOWN:
-  case PM_WAIT_XLOG_ARCHIVAL:
-  case PM_WAIT_CHECKPOINTER:
-
-    /*
-     * NB: Similar code exists in PostmasterStateMachine()'s handling
-     * of FatalError in PM_STOP_BACKENDS/PM_WAIT_BACKENDS states.
-     */
-    ConfigurePostmasterWaitSet(false);
-    UpdatePMState(PM_WAIT_DEAD_END);
-    break;
-
   case PM_WAIT_DEAD_END:
   case PM_NO_CHILDREN:
     break;
@@ -2526,42 +2458,29 @@ static void PostmasterStateMachine(void) {
     targetMask = btmask_add(targetMask, B_BACKEND, B_BG_WORKER);
 
     /*
-     * No bgwriter, slot sync worker, or WAL summarizer either.
+     * No slot sync worker or WAL summarizer either.
      */
-    targetMask = btmask_add(targetMask, B_BG_WRITER, B_SLOTSYNC_WORKER,
-                            B_WAL_SUMMARIZER);
+    targetMask = btmask_add(targetMask, B_SLOTSYNC_WORKER, B_WAL_SUMMARIZER);
 
     /* If we're in recovery, also stop startup and walreceiver procs */
     targetMask = btmask_add(targetMask, B_STARTUP, B_WAL_RECEIVER);
 
-    /*
-     * If we are doing crash recovery or an immediate shutdown then we
-     * expect checkpointer and walsender to exit as well, otherwise not.
-     */
-    if (FatalError || Shutdown >= ImmediateShutdown)
-      targetMask = btmask_add(targetMask, B_CHECKPOINTER, B_WAL_SENDER);
+    /* Nor walsenders. */
+    targetMask = btmask_add(targetMask, B_WAL_SENDER);
 
-      /*
-       * Normally checkpointer and walsenders will
-       * continue running; they will be terminated later after writing the
-       * checkpoint record.  We also let dead-end children to keep running
-       * for now.  The syslogger process exits last.
-       *
-       * This assertion checks that we have covered all backend types,
-       * either by including them in targetMask, or by noting here that they
-       * are allowed to continue running.
-       */
+    /*
+     * We let dead-end children keep running for now.  The syslogger
+     * process exits last.
+     *
+     * This assertion checks that we have covered all backend types,
+     * either by including them in targetMask, or by noting here that they
+     * are allowed to continue running.
+     */
 #ifdef USE_ASSERT_CHECKING
     {
       BackendTypeMask remainMask = BTYPE_MASK_NONE;
 
       remainMask = btmask_add(remainMask, B_DEAD_END_BACKEND, B_LOGGER);
-
-      /*
-       * Checkpointer and walsender may or may not be in targetMask
-       * already.
-       */
-      remainMask = btmask_add(remainMask, B_CHECKPOINTER, B_WAL_SENDER);
 
       /* these are not real postmaster children */
       remainMask = btmask_add(remainMask, B_INVALID, B_STANDALONE_BACKEND);
@@ -2606,73 +2525,17 @@ static void PostmasterStateMachine(void) {
       } else {
         /*
          * If we get here, we are proceeding with normal shutdown. All
-         * the regular children are gone, and it's time to tell the
-         * checkpointer to do a shutdown checkpoint.
+         * the regular children are gone.  There is no shutdown checkpoint
+         * to write: sm keeps what is durable.  Stop any dead-end children.
          */
         Assert(Shutdown > NoShutdown);
-        /* Start the checkpointer if not running */
-        if (CheckpointerPMChild == NULL)
-          CheckpointerPMChild = StartChildProcess(B_CHECKPOINTER);
-        /* And tell it to write the shutdown checkpoint */
-        if (CheckpointerPMChild != NULL) {
-          signal_child(CheckpointerPMChild, SIGINT);
-          UpdatePMState(PM_WAIT_XLOG_SHUTDOWN);
-        } else {
-          /*
-           * If we failed to fork a checkpointer, just shut down.
-           * Any required cleanup will happen at next restart. We
-           * set FatalError so that an "abnormal shutdown" message
-           * gets logged when we exit.
-           *
-           * We don't consult send_abort_for_crash here, as it's
-           * unlikely that dumping cores would illuminate the reason
-           * for checkpointer fork failure.
-           *
-           * XXX: It may be worth to introduce a different PMQUIT
-           * value that signals that the cluster is in a bad state,
-           * without a process having crashed. But right now this
-           * path is very unlikely to be reached, so it isn't
-           * obviously worthwhile adding a distinct error message in
-           * quickdie().
-           */
-          HandleFatalError(PMQUIT_FOR_CRASH, false);
-        }
+        ShutdownXLOG(0, 0);
+        UpdatePMState(PM_WAIT_DEAD_END);
+        ConfigurePostmasterWaitSet(false);
+        SignalChildren(SIGTERM, btmask(B_DEAD_END_BACKEND));
       }
     }
   }
-
-  /*
-   * The state transition from PM_WAIT_XLOG_SHUTDOWN to
-   * PM_WAIT_XLOG_ARCHIVAL is in process_pm_pmsignal(), in response to
-   * PMSIGNAL_XLOG_IS_SHUTDOWN.
-   */
-
-  if (pmState == PM_WAIT_XLOG_ARCHIVAL) {
-    /*
-     * PM_WAIT_XLOG_ARCHIVAL state ends when there are no children other
-     * than checkpointer and dead-end children left. There shouldn't be any
-     * regular backends left by now anyway; what we're really waiting for
-     * is for walsenders and archiver to exit.
-     */
-    if (CountChildren(btmask_all_except(B_CHECKPOINTER, B_LOGGER,
-                                        B_DEAD_END_BACKEND)) == 0) {
-      UpdatePMState(PM_WAIT_CHECKPOINTER);
-
-      /*
-       * Now that the processes mentioned above are gone, tell
-       * checkpointer to shut down too. That allows checkpointer to
-       * perform some last bits of cleanup without other processes
-       * interfering.
-       */
-      if (CheckpointerPMChild != NULL)
-        signal_child(CheckpointerPMChild, SIGUSR2);
-    }
-  }
-
-  /*
-   * The state transition from PM_WAIT_CHECKPOINTER to PM_WAIT_DEAD_END is
-   * in process_pm_child_exit().
-   */
 
   if (pmState == PM_WAIT_DEAD_END) {
     /*
@@ -2693,8 +2556,6 @@ static void PostmasterStateMachine(void) {
       Assert(StartupPMChild == NULL);
       Assert(WalReceiverPMChild == NULL);
       Assert(WalSummarizerPMChild == NULL);
-      Assert(BgWriterPMChild == NULL);
-      Assert(CheckpointerPMChild == NULL);
       Assert(SlotSyncWorkerPMChild == NULL);
       /* syslogger is not considered here */
       UpdatePMState(PM_NO_CHILDREN);
@@ -2791,10 +2652,7 @@ static const char *pmstate_name(PMState state) {
     PM_TOSTR_CASE(PM_RUN);
     PM_TOSTR_CASE(PM_STOP_BACKENDS);
     PM_TOSTR_CASE(PM_WAIT_BACKENDS);
-    PM_TOSTR_CASE(PM_WAIT_XLOG_SHUTDOWN);
-    PM_TOSTR_CASE(PM_WAIT_XLOG_ARCHIVAL);
     PM_TOSTR_CASE(PM_WAIT_DEAD_END);
-    PM_TOSTR_CASE(PM_WAIT_CHECKPOINTER);
     PM_TOSTR_CASE(PM_NO_CHILDREN);
   }
 #undef PM_TOSTR_CASE
@@ -2825,23 +2683,6 @@ static void LaunchMissingBackgroundProcesses(void) {
   /* Syslogger is active in all states */
   if (SysLoggerPMChild == NULL && Logging_collector)
     StartSysLogger();
-
-  /*
-   * The checkpointer and the background writer are active from the start,
-   * until shutdown is initiated.
-   *
-   * (If the checkpointer is not running when we enter the
-   * PM_WAIT_XLOG_SHUTDOWN state, it is launched one more time to perform
-   * the shutdown checkpoint.  That's done in PostmasterStateMachine(), not
-   * here.)
-   */
-  if (pmState == PM_RUN || pmState == PM_RECOVERY ||
-      pmState == PM_HOT_STANDBY || pmState == PM_STARTUP) {
-    if (CheckpointerPMChild == NULL)
-      CheckpointerPMChild = StartChildProcess(B_CHECKPOINTER);
-    if (BgWriterPMChild == NULL)
-      BgWriterPMChild = StartChildProcess(B_BG_WRITER);
-  }
 
   /* Get other worker processes running, if needed */
   if (StartWorkerNeeded || HaveCrashedWorker)
@@ -3159,48 +3000,6 @@ static void process_pm_pmsignal(void) {
     WalReceiverRequested = true;
   }
 
-  if (CheckPostmasterSignal(PMSIGNAL_XLOG_IS_SHUTDOWN)) {
-    /* Checkpointer completed the shutdown checkpoint */
-    if (pmState == PM_WAIT_XLOG_SHUTDOWN) {
-      /*
-       * If we have walsender processes, tell them to send any remaining
-       * WAL and quit.
-       */
-      Assert(Shutdown > NoShutdown);
-
-      /*
-       * Waken walsenders for the last time. No regular backends should
-       * be around anymore.
-       */
-      SignalChildren(SIGUSR2, btmask(B_WAL_SENDER));
-
-      UpdatePMState(PM_WAIT_XLOG_ARCHIVAL);
-    } else if (!FatalError && Shutdown != ImmediateShutdown) {
-      /*
-       * Checkpointer only ought to perform the shutdown checkpoint
-       * during shutdown.  If somehow checkpointer did so in another
-       * situation, we have no choice but to crash-restart.
-       *
-       * It's possible however that we get PMSIGNAL_XLOG_IS_SHUTDOWN
-       * outside of PM_WAIT_XLOG_SHUTDOWN if an orderly shutdown was
-       * "interrupted" by a crash or an immediate shutdown.
-       */
-      ereport(LOG, (errmsg("WAL was shut down unexpectedly")));
-
-      /*
-       * Doesn't seem likely to help to take send_abort_for_crash into
-       * account here.
-       */
-      HandleFatalError(PMQUIT_FOR_CRASH, false);
-    }
-
-    /*
-     * Need to run PostmasterStateMachine() to check if we already can go
-     * to the next state.
-     */
-    request_state_update = true;
-  }
-
   /*
    * Try to advance postmaster's state machine, if a child requests it.
    */
@@ -3420,10 +3219,7 @@ static bool StartBackgroundWorker(RegisteredBgWorker *rw) {
 static bool bgworker_should_start_now(BgWorkerStartTime start_time) {
   switch (pmState) {
   case PM_NO_CHILDREN:
-  case PM_WAIT_CHECKPOINTER:
   case PM_WAIT_DEAD_END:
-  case PM_WAIT_XLOG_ARCHIVAL:
-  case PM_WAIT_XLOG_SHUTDOWN:
   case PM_WAIT_BACKENDS:
   case PM_STOP_BACKENDS:
     break;

@@ -28,26 +28,6 @@ thread_local /*LOCAL*/ volatile sig_atomic_t ConfigReloadPending = false;
 thread_local /*LOCAL*/ volatile sig_atomic_t ShutdownRequestPending = false;
 
 /*
- * Simple interrupt handler for main loops of background processes.
- */
-void ProcessMainLoopInterrupts(void) {
-  if (ProcSignalBarrierPending)
-    ProcessProcSignalBarrier();
-
-  if (ConfigReloadPending) {
-    ConfigReloadPending = false;
-    ProcessConfigFile(PGC_SIGHUP);
-  }
-
-  if (ShutdownRequestPending)
-    proc_exit(0);
-
-  /* Perform logging of memory contexts of this process */
-  if (LogMemoryContextPending)
-    ProcessLogMemoryContextInterrupt();
-}
-
-/*
  * Simple signal handler for triggering a configuration reload.
  *
  * Normally, this handler would be used for SIGHUP. The idea is that code
@@ -80,20 +60,4 @@ void SignalHandlerForCrashExit(SIGNAL_ARGS) {
    * being doubly sure.)
    */
   _exit(2);
-}
-
-/*
- * Simple signal handler for triggering a long-running background process to
- * shut down and exit.
- *
- * Typically, this handler would be used for SIGTERM, but some processes use
- * other signals. In particular, the checkpointer and parallel apply worker
- * exit on SIGUSR2, and the WAL writer exits on either SIGINT or SIGTERM.
- *
- * ShutdownRequestPending should be checked at a convenient place within the
- * main loop, or else the main loop should call ProcessMainLoopInterrupts.
- */
-void SignalHandlerForShutdownRequest(SIGNAL_ARGS) {
-  ShutdownRequestPending = true;
-  SetLatch(MyLatch);
 }

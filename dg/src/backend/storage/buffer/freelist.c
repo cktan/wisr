@@ -51,12 +51,6 @@ typedef struct {
    */
   uint32 completePasses;            /* Complete cycles of the clock sweep */
   pg_atomic_uint32 numBufferAllocs; /* Buffers allocated since last reset */
-
-  /*
-   * Bgworker process to be notified upon activity or -1 if none. See
-   * StrategyNotifyBgWriter.
-   */
-  int bgwprocno;
 } BufferStrategyControl;
 
 /* Pointers to shared state */
@@ -182,7 +176,6 @@ bool have_free_buffer(void) {
 BufferDesc *StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state,
                               bool *from_ring) {
   BufferDesc *buf;
-  int bgwprocno;
   int trycounter;
   uint32 local_buf_state; /* to avoid repeated (de-)referencing */
 
@@ -198,31 +191,6 @@ BufferDesc *StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state,
       *from_ring = true;
       return buf;
     }
-  }
-
-  /*
-   * If asked, we need to waken the bgwriter. Since we don't want to rely on
-   * a spinlock for this we force a read from shared memory once, and then
-   * set the latch based on that value. We need to go through that length
-   * because otherwise bgwprocno might be reset while/after we check because
-   * the compiler might just reread from memory.
-   *
-   * This can possibly set the latch of the wrong process if the bgwriter
-   * dies in the wrong moment. But since PGPROC->procLatch is never
-   * deallocated the worst consequence of that is that we set the latch of
-   * some arbitrary process.
-   */
-  bgwprocno = INT_ACCESS_ONCE(StrategyControl->bgwprocno);
-  if (bgwprocno != -1) {
-    /* reset bgwprocno first, before setting the latch */
-    StrategyControl->bgwprocno = -1;
-
-    /*
-     * Not acquiring ProcArrayLock here which is slightly icky. It's
-     * actually fine because procLatch isn't ever freed, so we just can
-     * potentially set the wrong process' (or no process') latch.
-     */
-    SetLatch(&ProcGlobal->allProcs[bgwprocno].procLatch);
   }
 
   /*
@@ -349,62 +317,6 @@ void StrategyFreeBuffer(BufferDesc *buf) {
 }
 
 /*
- * StrategySyncStart -- tell BgBufferSync where to start syncing
- *
- * The result is the buffer index of the best buffer to sync first.
- * BgBufferSync() will proceed circularly around the buffer array from there.
- *
- * In addition, we return the completed-pass count (which is effectively
- * the higher-order bits of nextVictimBuffer) and the count of recent buffer
- * allocs if non-NULL pointers are passed.  The alloc count is reset after
- * being read.
- */
-int StrategySyncStart(uint32 *complete_passes, uint32 *num_buf_alloc) {
-  uint32 nextVictimBuffer;
-  int result;
-
-  SpinLockAcquire(&StrategyControl->buffer_strategy_lock);
-  nextVictimBuffer = pg_atomic_read_u32(&StrategyControl->nextVictimBuffer);
-  result = nextVictimBuffer % NBuffers;
-
-  if (complete_passes) {
-    *complete_passes = StrategyControl->completePasses;
-
-    /*
-     * Additionally add the number of wraparounds that happened before
-     * completePasses could be incremented. C.f. ClockSweepTick().
-     */
-    *complete_passes += nextVictimBuffer / NBuffers;
-  }
-
-  if (num_buf_alloc) {
-    *num_buf_alloc =
-        pg_atomic_exchange_u32(&StrategyControl->numBufferAllocs, 0);
-  }
-  SpinLockRelease(&StrategyControl->buffer_strategy_lock);
-  return result;
-}
-
-/*
- * StrategyNotifyBgWriter -- set or clear allocation notification latch
- *
- * If bgwprocno isn't -1, the next invocation of StrategyGetBuffer will
- * set that latch.  Pass -1 to clear the pending notification before it
- * happens.  This feature is used by the bgwriter process to wake itself up
- * from hibernation, and is not meant for anybody else to use.
- */
-void StrategyNotifyBgWriter(int bgwprocno) {
-  /*
-   * We acquire buffer_strategy_lock just to ensure that the store appears
-   * atomic to StrategyGetBuffer.  The bgwriter should call this rather
-   * infrequently, so there's no performance penalty from being safe.
-   */
-  SpinLockAcquire(&StrategyControl->buffer_strategy_lock);
-  StrategyControl->bgwprocno = bgwprocno;
-  SpinLockRelease(&StrategyControl->buffer_strategy_lock);
-}
-
-/*
  * StrategyShmemSize
  *
  * estimate the size of shared memory used by the freelist-related structures.
@@ -474,8 +386,6 @@ void StrategyInitialize(bool init) {
     StrategyControl->completePasses = 0;
     pg_atomic_init_u32(&StrategyControl->numBufferAllocs, 0);
 
-    /* No pending notification */
-    StrategyControl->bgwprocno = -1;
   } else
     Assert(!init);
 }

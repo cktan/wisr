@@ -317,8 +317,6 @@ bool pgstat_tracks_io_bktype(BackendType bktype) {
 
   case B_BACKEND:
   case B_BG_WORKER:
-  case B_BG_WRITER:
-  case B_CHECKPOINTER:
   case B_SLOTSYNC_WORKER:
   case B_STANDALONE_BACKEND:
   case B_STARTUP:
@@ -371,8 +369,7 @@ bool pgstat_tracks_io_object(BackendType bktype, IOObject io_object,
    * have no such limitation, so track IO on IOOBJECT_TEMP_RELATION for
    * BackendType B_BG_WORKER.
    */
-  no_temp_rel = bktype == B_BG_WRITER || bktype == B_CHECKPOINTER ||
-                bktype == B_STANDALONE_BACKEND || bktype == B_STARTUP ||
+  no_temp_rel = bktype == B_STANDALONE_BACKEND || bktype == B_STARTUP ||
                 bktype == B_WAL_SUMMARIZER || bktype == B_WAL_RECEIVER;
 
   if (no_temp_rel && io_context == IOCONTEXT_NORMAL &&
@@ -385,16 +382,6 @@ bool pgstat_tracks_io_object(BackendType bktype, IOObject io_object,
    */
   if ((bktype == B_WAL_SUMMARIZER || bktype == B_WAL_RECEIVER) &&
       io_object != IOOBJECT_WAL)
-    return false;
-
-  /*
-   * Some BackendTypes do not currently perform any IO in certain
-   * IOContexts, and, while it may not be inherently incorrect for them to
-   * do so, excluding those rows from the view makes the view easier to use.
-   */
-  if ((bktype == B_CHECKPOINTER || bktype == B_BG_WRITER) &&
-      (io_context == IOCONTEXT_BULKREAD || io_context == IOCONTEXT_BULKWRITE ||
-       io_context == IOCONTEXT_VACUUM))
     return false;
 
   return true;
@@ -417,26 +404,10 @@ bool pgstat_tracks_io_op(BackendType bktype, IOObject io_object,
     return false;
 
   /*
-   * Some BackendTypes will not do certain IOOps.
-   */
-  if (bktype == B_BG_WRITER &&
-      (io_op == IOOP_READ || io_op == IOOP_EVICT || io_op == IOOP_HIT))
-    return false;
-
-  if (bktype == B_CHECKPOINTER &&
-      ((io_object != IOOBJECT_WAL && io_op == IOOP_READ) ||
-       (io_op == IOOP_EVICT || io_op == IOOP_HIT)))
-    return false;
-
-  if ((bktype == B_BG_WRITER || bktype == B_CHECKPOINTER) &&
-      io_op == IOOP_EXTEND)
-    return false;
-
-  /*
    * Some BackendTypes do not perform reads with IOOBJECT_WAL.
    */
   if (io_object == IOOBJECT_WAL && io_op == IOOP_READ &&
-      (bktype == B_WAL_RECEIVER || bktype == B_BG_WRITER))
+      bktype == B_WAL_RECEIVER)
     return false;
 
   /*

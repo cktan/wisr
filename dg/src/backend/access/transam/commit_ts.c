@@ -501,7 +501,7 @@ void CommitTsShmemInit(void) {
   CommitTsCtl->PagePrecedes = CommitTsPagePrecedes;
   SimpleLruInit(CommitTsCtl, "commit_timestamp", CommitTsShmemBuffers(),
                 "pg_commit_ts", LWTRANCHE_COMMITTS_BUFFER,
-                LWTRANCHE_COMMITTS_SLRU, SYNC_HANDLER_COMMIT_TS, false);
+                LWTRANCHE_COMMITTS_SLRU, false);
   SlruPagePrecedesUnitTests(CommitTsCtl, COMMIT_TS_XACTS_PER_PAGE);
 
   commitTsShared = (CommitTimestampShared *)ShmemInitStruct(
@@ -696,18 +696,6 @@ static void DeactivateCommitTs(void) {
 }
 
 /*
- * Perform a checkpoint --- either during shutdown, or on-the-fly
- */
-void CheckPointCommitTs(void) {
-  /*
-   * Write dirty CommitTs pages to disk.  This may result in sync requests
-   * queued for later handling by ProcessSyncRequests(), as part of the
-   * checkpoint.
-   */
-  SimpleLruWriteAll(CommitTsCtl, true);
-}
-
-/*
  * Make sure that CommitTs has room for a newly-allocated XID.
  *
  * NB: this is called while holding XidGenLock.  We want it to be very fast
@@ -784,11 +772,4 @@ static bool CommitTsPagePrecedes(int64 page1, int64 page2) {
 
   return (TransactionIdPrecedes(xid1, xid2) &&
           TransactionIdPrecedes(xid1, xid2 + COMMIT_TS_XACTS_PER_PAGE - 1));
-}
-
-/*
- * Entrypoint for sync.c to sync commit_ts files.
- */
-int committssyncfiletag(const FileTag *ftag, char *path) {
-  return SlruSyncFileTag(CommitTsCtl, ftag, path);
 }

@@ -34,8 +34,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int max_predicate_locks_per_page;
 extern void PredicateLockShmemInit(void);
 extern Size PredicateLockShmemSize(void);
 
-extern void CheckPointPredicate(void);
-
 /* predicate lock reporting */
 extern bool PageIsPredicateLocked(Relation relation, BlockNumber blkno);
 

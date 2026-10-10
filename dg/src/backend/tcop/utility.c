@@ -58,7 +58,6 @@
 #include "commands/view.h"
 #include "miscadmin.h"
 #include "parser/parse_utilcmd.h"
-#include "postmaster/bgwriter.h"
 #include "rewrite/rewriteDefine.h"
 #include "storage/fd.h"
 #include "tcop/utility.h"
@@ -846,8 +845,7 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
                          "execute this command.",
                          "pg_checkpoint")));
 
-    RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_WAIT |
-                      CHECKPOINT_FORCE);
+    /* Nothing to do: durability is sm's, as VACUUM's work is. */
     break;
 
     /*

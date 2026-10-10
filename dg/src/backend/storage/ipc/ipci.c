@@ -26,7 +26,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/bgworker_internals.h"
-#include "postmaster/bgwriter.h"
 #include "storage/bufmgr.h"
 #include "storage/dsm.h"
 #include "storage/dsm_registry.h"
@@ -118,7 +117,6 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, SharedInvalShmemSize());
   size = add_size(size, PMSignalShmemSize());
   size = add_size(size, ProcSignalShmemSize());
-  size = add_size(size, CheckpointerShmemSize());
   size = add_size(size, BTreeShmemSize());
   size = add_size(size, SyncScanShmemSize());
   size = add_size(size, AsyncShmemSize());
@@ -291,7 +289,6 @@ static void CreateOrAttachShmemStructs(void) {
    */
   PMSignalShmemInit();
   ProcSignalShmemInit();
-  CheckpointerShmemInit();
 
   /*
    * Set up other modules that need some shared memory space

@@ -48,7 +48,6 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/bgwriter.h"
 #include "storage/copydir.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
@@ -107,22 +106,10 @@ static void CreateDatabaseUsingFileCopy(Oid src_dboid, Oid dst_dboid,
   HeapTuple tuple;
 
   /*
-   * Force a checkpoint before starting the copy. This will force all dirty
-   * buffers, including those of unlogged tables, out to disk, to ensure
-   * source database is up-to-date on disk for the copy.
-   * FlushDatabaseBuffers() would suffice for that, but we also want to
-   * process any pending unlink requests. Otherwise, if a checkpoint
-   * happened while we're copying files, a file might be deleted just when
-   * we're about to copy it, causing the lstat() call in copydir() to fail
-   * with ENOENT.
-   *
-   * In binary upgrade mode, we can skip this checkpoint because pg_upgrade
-   * is careful to ensure that template0 is fully written to disk prior to
-   * any CREATE DATABASE commands.
+   * Write the source database's dirty buffers out before copying its files.
+   * There is no checkpoint to do it.
    */
-  if (!IsBinaryUpgrade)
-    RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE |
-                      CHECKPOINT_WAIT | CHECKPOINT_FLUSH_ALL);
+  FlushDatabaseBuffers(src_dboid);
 
   /*
    * Iterate through all tablespaces of the template database, and copy each
@@ -170,41 +157,6 @@ static void CreateDatabaseUsingFileCopy(Oid src_dboid, Oid dst_dboid,
   }
   table_endscan(scan);
   table_close(rel, AccessShareLock);
-
-  /*
-   * We force a checkpoint before committing.  This effectively means that
-   * committed XLOG_DBASE_CREATE_FILE_COPY operations will never need to be
-   * replayed (at least not in ordinary crash recovery; we still have to
-   * make the XLOG entry for the benefit of PITR operations). This avoids
-   * two nasty scenarios:
-   *
-   * #1: At wal_level=minimal, we don't XLOG the contents of newly created
-   * relfilenodes; therefore the drop-and-recreate-whole-directory behavior
-   * of DBASE_CREATE replay would lose such files created in the new
-   * database between our commit and the next checkpoint.
-   *
-   * #2: Since we have to recopy the source database during DBASE_CREATE
-   * replay, we run the risk of copying changes in it that were committed
-   * after the original CREATE DATABASE command but before the system crash
-   * that led to the replay.  This is at least unexpected and at worst could
-   * lead to inconsistencies, eg duplicate table names.
-   *
-   * (Both of these were real bugs in releases 8.0 through 8.0.3.)
-   *
-   * In PITR replay, the first of these isn't an issue, and the second is
-   * only a risk if the CREATE DATABASE and subsequent template database
-   * change both occur while a base backup is being taken. There doesn't
-   * seem to be much we can do about that except document it as a
-   * limitation.
-   *
-   * In binary upgrade mode, we can skip this checkpoint because neither of
-   * these problems applies: we don't ever replay the WAL generated during
-   * pg_upgrade, and we don't support taking base backups during pg_upgrade
-   * (not to mention that we don't concurrently modify template0, either).
-   */
-  if (!IsBinaryUpgrade)
-    RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE |
-                      CHECKPOINT_WAIT);
 }
 
 /*
@@ -1219,20 +1171,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
    */
   DropDatabaseBuffers(db_id);
 
-  /*
-   * Tell checkpointer to forget any pending fsync and unlink requests for
-   * files in the database; else the fsyncs will fail at next checkpoint, or
-   * worse, it will delete files that belong to a newly created database
-   * with the same OID.
-   */
-  ForgetDatabaseSyncRequests(db_id);
-
-  /*
-   * Force a checkpoint to make sure the checkpointer has received the
-   * message sent by ForgetDatabaseSyncRequests.
-   */
-  RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE | CHECKPOINT_WAIT);
-
   /* Close all smgr fds in all backends. */
   WaitForProcSignalBarrier(
       EmitProcSignalBarrier(PROCSIGNAL_BARRIER_SMGRRELEASE));
@@ -1447,18 +1385,10 @@ static void movedb(const char *dbname, const char *tblspcname) {
   dst_dbpath = GetDatabasePath(db_id, dst_tblspcoid);
 
   /*
-   * Force a checkpoint before proceeding. This will force all dirty
-   * buffers, including those of unlogged tables, out to disk, to ensure
-   * source database is up-to-date on disk for the copy.
-   * FlushDatabaseBuffers() would suffice for that, but we also want to
-   * process any pending unlink requests. Otherwise, the check for existing
-   * files in the target directory might fail unnecessarily, not to mention
-   * that the copy might fail due to source files getting deleted under it.
-   * On Windows, this also ensures that background procs don't hold any open
-   * files, which would cause rmdir() to fail.
+   * Write the database's dirty buffers out before copying its files.  There
+   * is no checkpoint to do it.
    */
-  RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE | CHECKPOINT_WAIT |
-                    CHECKPOINT_FLUSH_ALL);
+  FlushDatabaseBuffers(db_id);
 
   /* Close all smgr fds in all backends. */
   WaitForProcSignalBarrier(
@@ -1557,16 +1487,6 @@ static void movedb(const char *dbname, const char *tblspcname) {
     InvokeObjectPostAlterHook(DatabaseRelationId, db_id, 0);
 
     systable_endscan(sysscan);
-
-    /*
-     * Force another checkpoint here.  As in CREATE DATABASE, this is to
-     * ensure that we don't have to replay a committed
-     * XLOG_DBASE_CREATE_FILE_COPY operation, which would cause us to lose
-     * any unlogged operations done in the new DB tablespace before the
-     * next checkpoint.
-     */
-    RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE |
-                      CHECKPOINT_WAIT);
 
     /*
      * Close pg_database, but keep lock till commit.

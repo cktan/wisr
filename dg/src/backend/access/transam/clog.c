@@ -28,7 +28,6 @@
 #include "pg_trace.h"
 #include "pgstat.h"
 #include "storage/proc.h"
-#include "storage/sync.h"
 #include "utils/guc_hooks.h"
 
 /*
@@ -679,8 +678,7 @@ void CLOGShmemInit(void) {
 
   XactCtl->PagePrecedes = CLOGPagePrecedes;
   SimpleLruInit(XactCtl, "transaction", CLOGShmemBuffers(), "pg_xact",
-                LWTRANCHE_XACT_BUFFER, LWTRANCHE_XACT_SLRU, SYNC_HANDLER_CLOG,
-                false);
+                LWTRANCHE_XACT_BUFFER, LWTRANCHE_XACT_SLRU, false);
   SlruPagePrecedesUnitTests(XactCtl, CLOG_XACTS_PER_PAGE);
 }
 
@@ -750,20 +748,6 @@ void TrimCLOG(void) {
 }
 
 /*
- * Perform a checkpoint --- either during shutdown, or on-the-fly
- */
-void CheckPointCLOG(void) {
-  /*
-   * Write dirty CLOG pages to disk.  This may result in sync requests
-   * queued for later handling by ProcessSyncRequests(), as part of the
-   * checkpoint.
-   */
-  TRACE_POSTGRESQL_CLOG_CHECKPOINT_START(true);
-  SimpleLruWriteAll(XactCtl, true);
-  TRACE_POSTGRESQL_CLOG_CHECKPOINT_DONE(true);
-}
-
-/*
  * Make sure that CLOG has room for a newly-allocated XID.
  *
  * NB: this is called while holding XidGenLock.  We want it to be very fast
@@ -823,11 +807,4 @@ static bool CLOGPagePrecedes(int64 page1, int64 page2) {
 
   return (TransactionIdPrecedes(xid1, xid2) &&
           TransactionIdPrecedes(xid1, xid2 + CLOG_XACTS_PER_PAGE - 1));
-}
-
-/*
- * Entrypoint for sync.c to sync clog files.
- */
-int clogsyncfiletag(const FileTag *ftag, char *path) {
-  return SlruSyncFileTag(XactCtl, ftag, path);
 }

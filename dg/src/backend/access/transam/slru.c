@@ -139,18 +139,6 @@ typedef struct SlruWriteAllData *SlruWriteAll;
  */
 #define SlotGetBankNumber(slotno)	((slotno) >> SLRU_BANK_BITSHIFT)
 
-/*
- * Populate a file tag describing a segment file.  We only use the segment
- * number, since we can derive everything else we need by having separate
- * sync handler functions for clog, multixact etc.
- */
-#define INIT_SLRUFILETAG(a, xx_handler, xx_segno) \
-( \
-	memset(&(a), 0, sizeof(FileTag)), \
-	(a).handler = (xx_handler), \
-	(a).segno = (xx_segno) \
-)
-
 /* Saved info for SlruReportIOError */
 typedef enum {
   SLRU_OPEN_FAILED,
@@ -224,13 +212,11 @@ int SimpleLruAutotuneBuffers(int divisor, int max) {
  * subdir: PGDATA-relative subdirectory that will contain the files.
  * buffer_tranche_id: tranche ID to use for the SLRU's per-buffer LWLocks.
  * bank_tranche_id: tranche ID to use for the bank LWLocks.
- * sync_handler: which set of functions to use to handle sync requests
  * long_segment_names: use short or long segment names
  */
 void SimpleLruInit(SlruCtl ctl, const char *name, int nslots,
                    const char *subdir, int buffer_tranche_id,
-                   int bank_tranche_id, SyncRequestHandler sync_handler,
-                   bool long_segment_names) {
+                   int bank_tranche_id, bool long_segment_names) {
   SlruShared shared;
   bool found;
   int nbanks = nslots / SLRU_BANK_SIZE;
@@ -305,7 +291,6 @@ void SimpleLruInit(SlruCtl ctl, const char *name, int nslots,
    * assume caller set PagePrecedes.
    */
   ctl->shared = shared;
-  ctl->sync_handler = sync_handler;
   ctl->long_segment_names = long_segment_names;
   ctl->nbanks = nbanks;
   strlcpy(ctl->Dir, subdir, sizeof(ctl->Dir));
@@ -632,12 +617,6 @@ static void SlruInternalWritePage(SlruCtl ctl, int slotno, SlruWriteAll fdata) {
   /* Now it's okay to ereport if we failed */
   if (!ok)
     SlruReportIOError(ctl, pageno, InvalidTransactionId);
-
-  /* If part of a checkpoint, count this as a SLRU buffer written. */
-  if (fdata) {
-    CheckpointStats.ckpt_slru_written++;
-    PendingCheckpointerStats.slru_written++;
-  }
 }
 
 /*
@@ -839,25 +818,6 @@ static bool SlruPhysicalWritePage(SlruCtl ctl, int64 pageno, int slotno,
     return false;
   }
   pgstat_report_wait_end();
-
-  /* Queue up a sync request for the checkpointer. */
-  if (ctl->sync_handler != SYNC_HANDLER_NONE) {
-    FileTag tag;
-
-    INIT_SLRUFILETAG(tag, ctl->sync_handler, segno);
-    if (!RegisterSyncRequest(&tag, SYNC_REQUEST, false)) {
-      /* No space to enqueue sync request.  Do it synchronously. */
-      pgstat_report_wait_start(WAIT_EVENT_SLRU_SYNC);
-      if (pg_fsync(fd) != 0) {
-        pgstat_report_wait_end();
-        slru_errcause = SLRU_FSYNC_FAILED;
-        slru_errno = errno;
-        CloseTransientFile(fd);
-        return false;
-      }
-      pgstat_report_wait_end();
-    }
-  }
 
   /* Close file, unless part of flush request. */
   if (!fdata) {
@@ -1118,10 +1078,7 @@ static int SlruSelectLRUPage(SlruCtl ctl, int64 pageno) {
 }
 
 /*
- * Write dirty pages to disk during checkpoint or database shutdown.  Flushing
- * is deferred until the next call to ProcessSyncRequests(), though we do fsync
- * the containing directory here to make sure that newly created directory
- * entries are on disk.
+ * Write dirty pages to disk.  Durability is sm's, so they are not synced.
  */
 void SimpleLruWriteAll(SlruCtl ctl, bool allow_redirtied) {
   SlruShared shared = ctl->shared;
@@ -1185,10 +1142,6 @@ void SimpleLruWriteAll(SlruCtl ctl, bool allow_redirtied) {
   }
   if (!ok)
     SlruReportIOError(ctl, pageno, InvalidTransactionId);
-
-  /* Ensure that directory entries for new files are on disk. */
-  if (ctl->sync_handler != SYNC_HANDLER_NONE)
-    fsync_fname(ctl->Dir, true);
 }
 
 /*
@@ -1293,14 +1246,6 @@ restart:
  */
 static void SlruInternalDeleteSegment(SlruCtl ctl, int64 segno) {
   char path[MAXPGPATH];
-
-  /* Forget any fsync requests queued for this segment. */
-  if (ctl->sync_handler != SYNC_HANDLER_NONE) {
-    FileTag tag;
-
-    INIT_SLRUFILETAG(tag, ctl->sync_handler, segno);
-    RegisterSyncRequest(&tag, SYNC_FORGET_REQUEST, true);
-  }
 
   /* Unlink the file. */
   SlruFileName(ctl, path, segno);
@@ -1519,32 +1464,4 @@ bool SlruScanDirectory(SlruCtl ctl, SlruScanCallback callback, void *data) {
   FreeDir(cldir);
 
   return retval;
-}
-
-/*
- * Individual SLRUs (clog, ...) have to provide a sync.c handler function so
- * that they can provide the correct "SlruCtl" (otherwise we don't know how to
- * build the path), but they just forward to this common implementation that
- * performs the fsync.
- */
-int SlruSyncFileTag(SlruCtl ctl, const FileTag *ftag, char *path) {
-  int fd;
-  int save_errno;
-  int result;
-
-  SlruFileName(ctl, path, ftag->segno);
-
-  fd = OpenTransientFile(path, O_RDWR | PG_BINARY);
-  if (fd < 0)
-    return -1;
-
-  pgstat_report_wait_start(WAIT_EVENT_SLRU_FLUSH_SYNC);
-  result = pg_fsync(fd);
-  pgstat_report_wait_end();
-  save_errno = errno;
-
-  CloseTransientFile(fd);
-
-  errno = save_errno;
-  return result;
 }

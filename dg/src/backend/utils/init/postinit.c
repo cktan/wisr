@@ -47,7 +47,6 @@
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
 #include "storage/smgr.h"
-#include "storage/sync.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
@@ -371,7 +370,6 @@ void BaseInit(void) {
   pgstat_initialize();
 
   /* Do local initialization of storage and buffer managers */
-  InitSync();
   smgrinit();
   InitBufferManagerAccess();
 

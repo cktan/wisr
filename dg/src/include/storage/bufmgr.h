@@ -142,8 +142,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int NBuffers;
 
 /* in bufmgr.c */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool zero_damaged_pages;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int bgwriter_lru_maxpages;
-extern thread_local /*LOCAL*/ PGDLLIMPORT double bgwriter_lru_multiplier;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool track_io_timing;
 
 #define DEFAULT_EFFECTIVE_IO_CONCURRENCY 16
@@ -158,9 +156,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int
 extern thread_local /*LOCAL*/ PGDLLIMPORT int io_combine_limit_guc;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int io_max_combine_limit;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int checkpoint_flush_after;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int backend_flush_after;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int bgwriter_flush_after;
 
 /* in buf_init.c */
 extern thread_local /*SHARED*/ PGDLLIMPORT char *BufferBlocks;
@@ -235,7 +231,6 @@ extern void AtEOXact_Buffers(bool isCommit);
 extern void AssertBufferLocksPermitCatalogRead(void);
 #endif
 extern char *DebugPrintBufferRefcount(Buffer buffer);
-extern void CheckPointBuffers(int flags);
 extern BlockNumber BufferGetBlockNumber(Buffer buffer);
 extern BlockNumber RelationGetNumberOfBlocksInFork(Relation relation,
                                                    ForkNumber forkNum);
@@ -268,8 +263,6 @@ extern void LockBufferForCleanup(Buffer buffer);
 extern bool ConditionalLockBufferForCleanup(Buffer buffer);
 extern bool IsBufferCleanupOK(Buffer buffer);
 extern bool HoldingBufferPinThatDelaysRecovery(void);
-
-extern bool BgBufferSync(struct WritebackContext *wb_context);
 
 extern uint32 GetPinLimit(void);
 extern uint32 GetLocalPinLimit(void);

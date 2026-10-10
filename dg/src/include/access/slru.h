@@ -15,7 +15,6 @@
 
 #include "access/xlogdefs.h"
 #include "storage/lwlock.h"
-#include "storage/sync.h"
 
 /*
  * To avoid overflowing internal arithmetic and the size_t data type, the
@@ -125,12 +124,6 @@ typedef struct SlruCtlData {
   bool long_segment_names;
 
   /*
-   * Which sync handler function to use when handing sync requests over to
-   * the checkpointer.  SYNC_HANDLER_NONE to disable fsync (eg pg_notify).
-   */
-  SyncRequestHandler sync_handler;
-
-  /*
    * Decide whether a page is "older" for truncation and as a hint for
    * evicting pages in LRU order.  Return true if every entry of the first
    * argument is older than every entry of the second argument.  Note that
@@ -168,8 +161,7 @@ extern Size SimpleLruShmemSize(int nslots);
 extern int SimpleLruAutotuneBuffers(int divisor, int max);
 extern void SimpleLruInit(SlruCtl ctl, const char *name, int nslots,
                           const char *subdir, int buffer_tranche_id,
-                          int bank_tranche_id, SyncRequestHandler sync_handler,
-                          bool long_segment_names);
+                          int bank_tranche_id, bool long_segment_names);
 extern int SimpleLruZeroPage(SlruCtl ctl, int64 pageno);
 extern int SimpleLruReadPage(SlruCtl ctl, int64 pageno, bool write_ok,
                              TransactionId xid);
@@ -189,8 +181,6 @@ typedef bool (*SlruScanCallback)(SlruCtl ctl, char *filename, int64 segpage,
                                  void *data);
 extern bool SlruScanDirectory(SlruCtl ctl, SlruScanCallback callback,
                               void *data);
-
-extern int SlruSyncFileTag(SlruCtl ctl, const FileTag *ftag, char *path);
 
 /* SlruScanDirectory public callbacks */
 extern bool SlruScanDirCbReportPresence(SlruCtl ctl, char *filename,

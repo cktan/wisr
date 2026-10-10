@@ -58,7 +58,6 @@
 #include "parser/parser.h"
 #include "pgstat.h"
 #include "postmaster/bgworker_internals.h"
-#include "postmaster/bgwriter.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
@@ -563,12 +562,10 @@ const char *const config_group_names[] = {
     [RESOURCES_MEM] = gettext_noop("Resource Usage / Memory"),
     [RESOURCES_DISK] = gettext_noop("Resource Usage / Disk"),
     [RESOURCES_KERNEL] = gettext_noop("Resource Usage / Kernel Resources"),
-    [RESOURCES_BGWRITER] = gettext_noop("Resource Usage / Background Writer"),
     [RESOURCES_IO] = gettext_noop("Resource Usage / I/O"),
     [RESOURCES_WORKER_PROCESSES] =
         gettext_noop("Resource Usage / Worker Processes"),
     [WAL_SETTINGS] = gettext_noop("Write-Ahead Log / Settings"),
-    [WAL_CHECKPOINTS] = gettext_noop("Write-Ahead Log / Checkpoints"),
     [WAL_SUMMARIZATION] = gettext_noop("Write-Ahead Log / Summarization"),
     [REPLICATION_SENDING] = gettext_noop("Replication / Sending Servers"),
     [REPLICATION_PRIMARY] = gettext_noop("Replication / Primary Server"),
@@ -945,13 +942,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{"log_checkpoints", PGC_SIGHUP, LOGGING_WHAT,
-      gettext_noop("Logs each checkpoint."), NULL},
-     &log_checkpoints,
-     true,
-     NULL,
-     NULL,
-     NULL},
     {{"trace_connection_negotiation", PGC_POSTMASTER, DEVELOPER_OPTIONS,
       gettext_noop("Logs details of pre-authentication connection handshake."),
       NULL, GUC_NOT_IN_SAMPLE},
@@ -2292,29 +2282,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"checkpoint_timeout", PGC_SIGHUP, WAL_CHECKPOINTS,
-      gettext_noop("Sets the maximum time between automatic WAL checkpoints."),
-      NULL, GUC_UNIT_S},
-     &CheckPointTimeout,
-     300,
-     30,
-     86400,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"checkpoint_flush_after", PGC_SIGHUP, WAL_CHECKPOINTS,
-      gettext_noop("Number of pages after which previously performed writes "
-                   "are flushed to disk."),
-      gettext_noop("0 disables forced writeback."), GUC_UNIT_BLOCKS},
-     &checkpoint_flush_after,
-     DEFAULT_CHECKPOINT_FLUSH_AFTER,
-     0,
-     WRITEBACK_MAX_PENDING_FLUSHES,
-     NULL,
-     NULL,
-     NULL},
-
     {{"extra_float_digits", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop(
           "Sets the number of digits displayed for floating-point values."),
@@ -2379,41 +2346,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      -1,
      INT_MAX / 2,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"bgwriter_delay", PGC_SIGHUP, RESOURCES_BGWRITER,
-      gettext_noop("Background writer sleep time between rounds."), NULL,
-      GUC_UNIT_MS},
-     &BgWriterDelay,
-     200,
-     10,
-     10000,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"bgwriter_lru_maxpages", PGC_SIGHUP, RESOURCES_BGWRITER,
-      gettext_noop(
-          "Background writer maximum number of LRU pages to flush per round."),
-      gettext_noop("0 disables background writing.")},
-     &bgwriter_lru_maxpages,
-     100,
-     0,
-     INT_MAX / 2, /* Same upper limit as shared_buffers */
-     NULL,
-     NULL,
-     NULL},
-
-    {{"bgwriter_flush_after", PGC_SIGHUP, RESOURCES_BGWRITER,
-      gettext_noop("Number of pages after which previously performed writes "
-                   "are flushed to disk."),
-      gettext_noop("0 disables forced writeback."), GUC_UNIT_BLOCKS},
-     &bgwriter_flush_after,
-     DEFAULT_BGWRITER_FLUSH_AFTER,
-     0,
-     WRITEBACK_MAX_PENDING_FLUSHES,
      NULL,
      NULL,
      NULL},
@@ -2905,17 +2837,6 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
      NULL,
      NULL},
 
-    {{"bgwriter_lru_multiplier", PGC_SIGHUP, RESOURCES_BGWRITER,
-      gettext_noop("Multiple of the average buffer usage to free per round."),
-      NULL},
-     &bgwriter_lru_multiplier,
-     2.0,
-     0.0,
-     10.0,
-     NULL,
-     NULL,
-     NULL},
-
     {{"seed", PGC_USERSET, UNGROUPED,
       gettext_noop("Sets the seed for random-number generation."), NULL,
       GUC_NO_SHOW_ALL | GUC_NO_RESET | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE |
@@ -2934,18 +2855,6 @@ thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
      0,
      0,
      100,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"checkpoint_completion_target", PGC_SIGHUP, WAL_CHECKPOINTS,
-      gettext_noop("Time spent flushing dirty buffers during checkpoint, as "
-                   "fraction of checkpoint interval."),
-      NULL},
-     &CheckPointCompletionTarget,
-     0.9,
-     0.0,
-     1.0,
      NULL,
      NULL,
      NULL},

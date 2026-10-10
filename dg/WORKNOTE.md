@@ -640,3 +640,43 @@ headers.
 - No test reads a relation's pages today (the catalog is
   compiled in), so the new read path is built but not run.
   `make test` and `make tsan` pass as before.
+
+## Step 14: the checkpointer and the background writer are gone
+
+A checkpoint had done nothing since WAL went (step 12), and sm
+keeps what is durable: RocksDB syncs a commit to its own log and
+flushes in the background, which bounds its recovery. So the two
+processes went, with all that only they used.
+
+- **`CHECKPOINT` succeeds and does nothing**, as `VACUUM` does.
+  `test/server.sh` checks it.
+- **The sync request machinery is gone**: `storage/sync/`, the
+  queue the checkpointer absorbed and never processed, and the
+  fsync and forget requests md.c and slru.c registered. Without
+  a checkpointer a forget request would have retried forever.
+  md.c unlinks a dropped relation's files at once: the empty
+  first segment PostgreSQL kept until the next checkpoint only
+  guarded a relfilenumber against WAL replay. SLRU files are
+  not synced.
+- **CREATE DATABASE and ALTER DATABASE SET TABLESPACE** flush
+  the source database's buffers (`FlushDatabaseBuffers()`)
+  before copying its files; their checkpoint requests are gone.
+- **The postmaster's shutdown** goes from "backends gone" to
+  waiting for dead-end children: no shutdown checkpoint, and
+  the `PM_WAIT_XLOG_*`/`PM_WAIT_CHECKPOINTER` states and
+  `PMSIGNAL_XLOG_IS_SHUTDOWN` are gone. It logs "shutting down"
+  itself.
+- **Gone with them**: `BufferSync()`, `BgBufferSync()`,
+  `CheckPointBuffers()` and the other `CheckPoint*()` functions,
+  the checkpoint sort array in shared memory, the free list's
+  background writer wake-up; the settings `checkpoint_timeout`,
+  `checkpoint_completion_target`, `checkpoint_flush_after`,
+  `log_checkpoints` and the four `bgwriter_*`; the
+  `pg_stat_bgwriter` and `pg_stat_checkpointer` views, their 15
+  functions and two statistics kinds (the stats file format id
+  changed); their wait events and the `CheckpointerComm` lock.
+- **Left**: `PGPROC.delayChkptFlags`, which nothing reads, with
+  the WAL-era comments around it in heapam.c and storage.c.
+- The server has no child process now, but the startup process
+  at start (`test/server.sh` checks for none while 8 sessions
+  are open).

@@ -17,7 +17,6 @@
 #include "storage/block.h"
 #include "storage/relfilelocator.h"
 #include "storage/smgr.h"
-#include "storage/sync.h"
 
 /* md storage manager functionality */
 extern void mdinit(void);
@@ -47,12 +46,5 @@ extern void mdtruncate(SMgrRelation reln, ForkNumber forknum,
                        BlockNumber curnblk, BlockNumber nblocks);
 extern void mdimmedsync(SMgrRelation reln, ForkNumber forknum);
 extern void mdregistersync(SMgrRelation reln, ForkNumber forknum);
-
-extern void ForgetDatabaseSyncRequests(Oid dbid);
-
-/* md sync callbacks */
-extern int mdsyncfiletag(const FileTag *ftag, char *path);
-extern int mdunlinkfiletag(const FileTag *ftag, char *path);
-extern bool mdfiletagmatches(const FileTag *ftag, const FileTag *candidate);
 
 #endif /* MD_H */

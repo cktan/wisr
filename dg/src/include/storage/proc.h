@@ -416,7 +416,6 @@ typedef struct PROC_HDR {
    * of each of these running at a time.
    */
   ProcNumber walwriterProc;
-  ProcNumber checkpointerProc;
 
   /* Current shared estimate of appropriate spins_per_delay value */
   int spins_per_delay;

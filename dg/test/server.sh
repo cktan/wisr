@@ -108,6 +108,16 @@ local_psql -c 'vacuum' -c 'vacuum (full, analyze) no_such_table' \
 grep -q "ERROR" "$work/vacuum.out" && fail "vacuum reported an error"
 grep -qx 8 "$work/vacuum.out" || fail "statement after vacuum"
 
+# Verify that CHECKPOINT succeeds and does nothing, since sm keeps what is
+# durable.
+# 1. Run CHECKPOINT, then a statement after it.
+# 2. Confirm psql exited with success and reported no error.
+# 3. Confirm the statement after it answered.
+local_psql -c 'checkpoint' -c 'select 9 + 9' > "$work/checkpoint.out" 2>&1 ||
+  fail "checkpoint succeeds"
+grep -q "ERROR" "$work/checkpoint.out" && fail "checkpoint reported an error"
+grep -qx 18 "$work/checkpoint.out" || fail "statement after checkpoint"
+
 # Verify that PREPARE TRANSACTION is refused, since a prepared transaction's
 # state was kept in WAL and there is none.
 # 1. Prepare a transaction, roll back the block the refusal aborted, then
@@ -122,8 +132,7 @@ grep -qx 10 "$work/prepare.out" || fail "statement after prepare"
 # Verify that sessions run at once, each a thread of the one server process.
 # 1. Open 8 sessions, and run a statement in each while all are open.
 # 2. Confirm each answered.
-# 3. Confirm the server has a thread for each, and no child process but its
-#    checkpointer and background writer.
+# 3. Confirm the server has a thread for each, and no child process.
 # 4. Close them.
 for i in $(seq 8); do
   mkfifo "$work/many$i.in"
@@ -139,7 +148,7 @@ for i in $(seq 8); do
   grep -qx $((i * 100)) "$work/many$i.out" || fail "session $i of 8"
 done
 [ "$(ls /proc/$server/task | wc -l)" -gt 8 ] || fail "a thread a session"
-[ "$(pgrep -P $server | wc -l)" = 2 ] || fail "no backend process"
+[ "$(pgrep -P $server | wc -l)" = 0 ] || fail "no child process"
 for i in $(seq 8); do
   eval "exec $((10 + i))>&-"
 done

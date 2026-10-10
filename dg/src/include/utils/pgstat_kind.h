@@ -30,11 +30,9 @@
 #define PGSTAT_KIND_BACKEND	4  /* per-backend statistics */
 
 /* stats for fixed-numbered objects */
-#define PGSTAT_KIND_BGWRITER	5
-#define PGSTAT_KIND_CHECKPOINTER	6
-#define PGSTAT_KIND_IO	7
-#define PGSTAT_KIND_SLRU	8
-#define PGSTAT_KIND_WAL	9
+#define PGSTAT_KIND_IO	5
+#define PGSTAT_KIND_SLRU	6
+#define PGSTAT_KIND_WAL	7
 
 #define PGSTAT_KIND_BUILTIN_MIN PGSTAT_KIND_DATABASE
 #define PGSTAT_KIND_BUILTIN_MAX PGSTAT_KIND_WAL

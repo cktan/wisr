@@ -30,8 +30,6 @@ extern void RelationMapInvalidateAll(void);
 extern void AtCCI_RelationMap(void);
 extern void AtEOXact_RelationMap(bool isCommit);
 
-extern void CheckPointRelationMap(void);
-
 extern void RelationMapFinishBootstrap(void);
 
 extern void RelationMapInitialize(void);

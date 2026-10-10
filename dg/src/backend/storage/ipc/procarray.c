@@ -558,7 +558,6 @@ void ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid) {
     proc->xmin = InvalidTransactionId;
 
     /* be sure this is cleared in abort */
-    proc->delayChkptFlags = 0;
 
     proc->recoveryConflictPending = false;
 
@@ -598,7 +597,6 @@ static inline void ProcArrayEndTransactionInternal(PGPROC *proc,
   proc->xmin = InvalidTransactionId;
 
   /* be sure this is cleared in abort */
-  proc->delayChkptFlags = 0;
 
   proc->recoveryConflictPending = false;
 

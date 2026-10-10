@@ -342,22 +342,6 @@ static inline void UnlockBufHdr(BufferDesc *desc, uint32 buf_state) {
 
 /* in bufmgr.c */
 
-/*
- * Structure to sort buffers per file on checkpoints.
- *
- * This structure is allocated per buffer in shared memory, so it should be
- * kept as small as possible.
- */
-typedef struct CkptSortItem {
-  Oid tsId;
-  RelFileNumber relNumber;
-  ForkNumber forkNum;
-  BlockNumber blockNum;
-  int buf_id;
-} CkptSortItem;
-
-extern thread_local /*SHARED*/ PGDLLIMPORT CkptSortItem *CkptBufferIds;
-
 /* ResourceOwner callbacks to hold buffer I/Os and pins */
 extern PGDLLIMPORT const ResourceOwnerDesc buffer_io_resowner_desc;
 extern PGDLLIMPORT const ResourceOwnerDesc buffer_pin_resowner_desc;
@@ -401,9 +385,6 @@ extern IOContext IOContextForStrategy(BufferAccessStrategy strategy);
 extern BufferDesc *StrategyGetBuffer(BufferAccessStrategy strategy,
                                      uint32 *buf_state, bool *from_ring);
 extern void StrategyFreeBuffer(BufferDesc *buf);
-
-extern int StrategySyncStart(uint32 *complete_passes, uint32 *num_buf_alloc);
-extern void StrategyNotifyBgWriter(int bgwprocno);
 
 extern Size StrategyShmemSize(void);
 extern void StrategyInitialize(bool init);

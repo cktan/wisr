@@ -341,42 +341,6 @@ static constexpr auto pgstat_kind_builtin_infos = [] {
 
   /* stats for fixed-numbered (mostly 1) objects */
 
-  a[PGSTAT_KIND_BGWRITER].name = "bgwriter";
-
-  a[PGSTAT_KIND_BGWRITER].fixed_amount = true;
-  a[PGSTAT_KIND_BGWRITER].write_to_file = true;
-
-  a[PGSTAT_KIND_BGWRITER].snapshot_ctl_off =
-      offsetof(PgStat_Snapshot, bgwriter);
-  a[PGSTAT_KIND_BGWRITER].shared_ctl_off =
-      offsetof(PgStat_ShmemControl, bgwriter);
-  a[PGSTAT_KIND_BGWRITER].shared_data_off =
-      offsetof(PgStatShared_BgWriter, stats);
-  a[PGSTAT_KIND_BGWRITER].shared_data_len =
-      sizeof(((PgStatShared_BgWriter *)0)->stats);
-
-  a[PGSTAT_KIND_BGWRITER].init_shmem_cb = pgstat_bgwriter_init_shmem_cb;
-  a[PGSTAT_KIND_BGWRITER].reset_all_cb = pgstat_bgwriter_reset_all_cb;
-  a[PGSTAT_KIND_BGWRITER].snapshot_cb = pgstat_bgwriter_snapshot_cb;
-
-  a[PGSTAT_KIND_CHECKPOINTER].name = "checkpointer";
-
-  a[PGSTAT_KIND_CHECKPOINTER].fixed_amount = true;
-  a[PGSTAT_KIND_CHECKPOINTER].write_to_file = true;
-
-  a[PGSTAT_KIND_CHECKPOINTER].snapshot_ctl_off =
-      offsetof(PgStat_Snapshot, checkpointer);
-  a[PGSTAT_KIND_CHECKPOINTER].shared_ctl_off =
-      offsetof(PgStat_ShmemControl, checkpointer);
-  a[PGSTAT_KIND_CHECKPOINTER].shared_data_off =
-      offsetof(PgStatShared_Checkpointer, stats);
-  a[PGSTAT_KIND_CHECKPOINTER].shared_data_len =
-      sizeof(((PgStatShared_Checkpointer *)0)->stats);
-
-  a[PGSTAT_KIND_CHECKPOINTER].init_shmem_cb = pgstat_checkpointer_init_shmem_cb;
-  a[PGSTAT_KIND_CHECKPOINTER].reset_all_cb = pgstat_checkpointer_reset_all_cb;
-  a[PGSTAT_KIND_CHECKPOINTER].snapshot_cb = pgstat_checkpointer_snapshot_cb;
-
   a[PGSTAT_KIND_IO].name = "io";
 
   a[PGSTAT_KIND_IO].fixed_amount = true;
@@ -1419,8 +1383,8 @@ static void pgstat_write_statsfile(void) {
 
   pgstat_assert_is_up();
 
-  /* should be called only by the checkpointer or single user mode */
-  Assert(!IsUnderPostmaster || MyBackendType == B_CHECKPOINTER);
+  /* should be called only in single user mode */
+  Assert(!IsUnderPostmaster);
 
   /* we're shutting down, so it's ok to just override this */
   pgstat_fetch_consistency = PGSTAT_FETCH_CONSISTENCY_NONE;

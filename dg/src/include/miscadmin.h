@@ -378,8 +378,6 @@ typedef enum BackendType {
    * If you modify these, make sure to update NUM_AUXILIARY_PROCS and the
    * glossary in the docs.
    */
-  B_BG_WRITER,
-  B_CHECKPOINTER,
   B_STARTUP,
   B_WAL_RECEIVER,
   B_WAL_SUMMARIZER,
@@ -399,8 +397,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT BackendType MyBackendType;
 #define AmBackgroundWorkerProcess() (MyBackendType == B_BG_WORKER)
 #define AmWalSenderProcess()        (MyBackendType == B_WAL_SENDER)
 #define AmLogicalSlotSyncWorkerProcess() (MyBackendType == B_SLOTSYNC_WORKER)
-#define AmBackgroundWriterProcess() (MyBackendType == B_BG_WRITER)
-#define AmCheckpointerProcess()		(MyBackendType == B_CHECKPOINTER)
 #define AmStartupProcess()			(MyBackendType == B_STARTUP)
 #define AmWalReceiverProcess()		(MyBackendType == B_WAL_RECEIVER)
 #define AmWalSummarizerProcess()	(MyBackendType == B_WAL_SUMMARIZER)

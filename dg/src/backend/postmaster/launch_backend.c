@@ -36,7 +36,6 @@
 #include "libpq/libpq-be.h"
 #include "miscadmin.h"
 #include "postmaster/bgworker_internals.h"
-#include "postmaster/bgwriter.h"
 #include "postmaster/fork_process.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/startup.h"
@@ -185,8 +184,6 @@ static thread_local /*SHARED*/ child_process_kind child_process_kinds[] = {
 
     [B_STANDALONE_BACKEND] = {"standalone backend", NULL, false},
 
-    [B_BG_WRITER] = {"bgwriter", BackgroundWriterMain, true},
-    [B_CHECKPOINTER] = {"checkpointer", CheckpointerMain, true},
     [B_STARTUP] = {"startup", StartupProcessMain, true},
     [B_WAL_RECEIVER] = {"wal_receiver", NULL, true},
     [B_WAL_SUMMARIZER] = {"wal_summarizer", NULL, true},

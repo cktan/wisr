@@ -1660,15 +1660,15 @@ void MultiXactShmemInit(void) {
   MultiXactOffsetCtl->PagePrecedes = MultiXactOffsetPagePrecedes;
   MultiXactMemberCtl->PagePrecedes = MultiXactMemberPagePrecedes;
 
-  SimpleLruInit(
-      MultiXactOffsetCtl, "multixact_offset", multixact_offset_buffers,
-      "pg_multixact/offsets", LWTRANCHE_MULTIXACTOFFSET_BUFFER,
-      LWTRANCHE_MULTIXACTOFFSET_SLRU, SYNC_HANDLER_MULTIXACT_OFFSET, false);
+  SimpleLruInit(MultiXactOffsetCtl, "multixact_offset",
+                multixact_offset_buffers, "pg_multixact/offsets",
+                LWTRANCHE_MULTIXACTOFFSET_BUFFER,
+                LWTRANCHE_MULTIXACTOFFSET_SLRU, false);
   SlruPagePrecedesUnitTests(MultiXactOffsetCtl, MULTIXACT_OFFSETS_PER_PAGE);
-  SimpleLruInit(
-      MultiXactMemberCtl, "multixact_member", multixact_member_buffers,
-      "pg_multixact/members", LWTRANCHE_MULTIXACTMEMBER_BUFFER,
-      LWTRANCHE_MULTIXACTMEMBER_SLRU, SYNC_HANDLER_MULTIXACT_MEMBER, false);
+  SimpleLruInit(MultiXactMemberCtl, "multixact_member",
+                multixact_member_buffers, "pg_multixact/members",
+                LWTRANCHE_MULTIXACTMEMBER_BUFFER,
+                LWTRANCHE_MULTIXACTMEMBER_SLRU, false);
   /* doesn't call SimpleLruTruncate() or meet criteria for unit tests */
 
   /* Initialize our shared state struct */
@@ -1856,23 +1856,6 @@ void MultiXactGetCheckptMulti(bool is_shutdown, MultiXactId *nextMulti,
               "MultiXact: checkpoint is nextMulti %u, nextOffset %u, "
               "oldestMulti %u in DB %u",
               *nextMulti, *nextMultiOffset, *oldestMulti, *oldestMultiDB);
-}
-
-/*
- * Perform a checkpoint --- either during shutdown, or on-the-fly
- */
-void CheckPointMultiXact(void) {
-  TRACE_POSTGRESQL_MULTIXACT_CHECKPOINT_START(true);
-
-  /*
-   * Write dirty MultiXact pages to disk.  This may result in sync requests
-   * queued for later handling by ProcessSyncRequests(), as part of the
-   * checkpoint.
-   */
-  SimpleLruWriteAll(MultiXactOffsetCtl, true);
-  SimpleLruWriteAll(MultiXactMemberCtl, true);
-
-  TRACE_POSTGRESQL_MULTIXACT_CHECKPOINT_DONE(true);
 }
 
 /*
@@ -2418,18 +2401,4 @@ Datum pg_get_multixact_members(PG_FUNCTION_ARGS) {
   }
 
   SRF_RETURN_DONE(funccxt);
-}
-
-/*
- * Entrypoint for sync.c to sync offsets files.
- */
-int multixactoffsetssyncfiletag(const FileTag *ftag, char *path) {
-  return SlruSyncFileTag(MultiXactOffsetCtl, ftag, path);
-}
-
-/*
- * Entrypoint for sync.c to sync members files.
- */
-int multixactmemberssyncfiletag(const FileTag *ftag, char *path) {
-  return SlruSyncFileTag(MultiXactMemberCtl, ftag, path);
 }

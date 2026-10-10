@@ -35,6 +35,9 @@ records how, and what it left for step 3. Step 2 is done too;
   transactions still run a statement, and write nothing.
 - There is no asynchronous I/O and no I/O worker process
   (`WORKNOTE.md` step 13): a buffer is read with `smgrreadv()`.
+- There is no checkpointer and no background writer
+  (`WORKNOTE.md` step 14); `CHECKPOINT` succeeds and does
+  nothing.
 
 ## 2. The goal, and the order
 
@@ -339,19 +342,16 @@ step 4. `WIP_THREADS.md` on `wip-dg` has the detail.
 
 ## 6. Step 4: signals, then deletion
 
-- **Signals become flags.** A cancel or a terminate is
-  delivered to a backend today with `kill()`. With threads it
-  sets a flag in the session and wakes it. Latches wake by a
-  signal or a pipe and need a per-thread wake-up instead.
-  Timeouts (`utils/misc/timeout.c`) use `SIGALRM` and need a
-  timer of their own. The handlers have not been audited: do
-  that first and list them.
+- **Signals become flags.** Done in step 3 (§5.1): a signal to
+  a backend is a flag in its PGPROC, a latch wakes its thread,
+  and a timeout has a timer of its own.
 - **Then delete the process-only subsystems**: the postmaster
   state machine and crash restart, shared memory setup (the
   structures become ordinary allocations), `EXEC_BACKEND`, and
-  the auxiliary processes: startup, checkpointer and background
-  writer. Autovacuum, the WAL writer, the archiver and the I/O
-  workers are already gone (`WORKNOTE.md` steps 11 to 13).
+  the auxiliary processes: startup is what is left of them.
+  Autovacuum, the WAL writer, the archiver, the I/O workers, the
+  checkpointer and the background writer are already gone
+  (`WORKNOTE.md` steps 11 to 14).
 - **What step 9 stubbed goes with them**: what is left of
   `xlog.c` (the in-memory control record, and the start of the
   transaction counters), the hot standby states of the
@@ -399,6 +399,9 @@ Do not reopen these without the owner:
 - **No asynchronous I/O.** Disk I/O is to go through sm; the
   rest is the client socket, which waits on the latch. A buffer
   read is synchronous.
+- **No checkpoints.** sm keeps what is durable, and RocksDB
+  bounds its own recovery. `CHECKPOINT` succeeds and does
+  nothing, as `VACUUM` does.
 
 ## 8. Working in this tree
 

@@ -66,7 +66,6 @@
 #include "commands/tablespace.h"
 #include "common/file_perm.h"
 #include "miscadmin.h"
-#include "postmaster/bgwriter.h"
 #include "storage/fd.h"
 #include "storage/procsignal.h"
 #include "utils/acl.h"
@@ -432,18 +431,6 @@ void DropTableSpace(DropTableSpaceStmt *stmt) {
    * Try to remove the physical infrastructure.
    */
   if (!destroy_tablespace_directories(tablespaceoid, false)) {
-    /*
-     * Not all files deleted?  However, there can be lingering empty files
-     * in the directories, left behind by for example DROP TABLE, that
-     * have been scheduled for deletion at next checkpoint (see comments
-     * in mdunlink() for details).  We could just delete them immediately,
-     * but we can't tell them apart from important data files that we
-     * mustn't delete.  So instead, we force a checkpoint which will clean
-     * out any lingering files, and try again.
-     */
-    RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE |
-                      CHECKPOINT_WAIT);
-
     /*
      * On Windows, an unlinked file persists in the directory listing
      * until no process retains an open handle for the file.  The DDL

@@ -13,7 +13,6 @@
 
 #include "access/xlog.h"
 #include "datatype/timestamp.h"
-#include "storage/sync.h"
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool track_commit_timestamp;
 
@@ -30,9 +29,6 @@ extern Size CommitTsShmemSize(void);
 extern void CommitTsShmemInit(void);
 extern void StartupCommitTs(void);
 extern void CompleteCommitTsInitialization(void);
-extern void CheckPointCommitTs(void);
 extern void ExtendCommitTs(TransactionId newestXact);
-
-extern int committssyncfiletag(const FileTag *ftag, char *path);
 
 #endif /* COMMIT_TS_H */

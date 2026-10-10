@@ -11,7 +11,6 @@
 #ifndef CLOG_H
 #define CLOG_H
 
-#include "storage/sync.h"
 #include "lib/stringinfo.h"
 
 /*
@@ -36,9 +35,6 @@ extern XidStatus TransactionIdGetStatus(TransactionId xid);
 extern Size CLOGShmemSize(void);
 extern void CLOGShmemInit(void);
 extern void TrimCLOG(void);
-extern void CheckPointCLOG(void);
 extern void ExtendCLOG(TransactionId newestXact);
-
-extern int clogsyncfiletag(const FileTag *ftag, char *path);
 
 #endif /* CLOG_H */

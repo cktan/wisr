@@ -342,22 +342,6 @@ static const char *const slru_names[] = {
  * ----------
  */
 
-typedef struct PgStatShared_BgWriter {
-  /* lock protects ->reset_offset as well as stats->stat_reset_timestamp */
-  LWLock lock;
-  uint32 changecount;
-  PgStat_BgWriterStats stats;
-  PgStat_BgWriterStats reset_offset;
-} PgStatShared_BgWriter;
-
-typedef struct PgStatShared_Checkpointer {
-  /* lock protects ->reset_offset as well as stats->stat_reset_timestamp */
-  LWLock lock;
-  uint32 changecount;
-  PgStat_CheckpointerStats stats;
-  PgStat_CheckpointerStats reset_offset;
-} PgStatShared_Checkpointer;
-
 /* Shared-memory ready PgStat_IO */
 typedef struct PgStatShared_IO {
   /*
@@ -439,8 +423,6 @@ typedef struct PgStat_ShmemControl {
   /*
    * Stats data for fixed-numbered objects.
    */
-  PgStatShared_BgWriter bgwriter;
-  PgStatShared_Checkpointer checkpointer;
   PgStatShared_IO io;
   PgStatShared_SLRU slru;
   PgStatShared_Wal wal;
@@ -463,10 +445,6 @@ typedef struct PgStat_Snapshot {
   TimestampTz snapshot_timestamp;
 
   bool fixed_valid[PGSTAT_KIND_BUILTIN_SIZE];
-
-  PgStat_BgWriterStats bgwriter;
-
-  PgStat_CheckpointerStats checkpointer;
 
   PgStat_IO io;
 
@@ -558,22 +536,6 @@ extern bool pgstat_flush_backend(bool nowait, bits32 flags);
 extern bool pgstat_backend_flush_cb(bool nowait);
 extern void pgstat_backend_reset_timestamp_cb(PgStatShared_Common *header,
                                               TimestampTz ts);
-
-/*
- * Functions in pgstat_bgwriter.c
- */
-
-extern void pgstat_bgwriter_init_shmem_cb(void *stats);
-extern void pgstat_bgwriter_reset_all_cb(TimestampTz ts);
-extern void pgstat_bgwriter_snapshot_cb(void);
-
-/*
- * Functions in pgstat_checkpointer.c
- */
-
-extern void pgstat_checkpointer_init_shmem_cb(void *stats);
-extern void pgstat_checkpointer_reset_all_cb(TimestampTz ts);
-extern void pgstat_checkpointer_snapshot_cb(void);
 
 /*
  * Functions in pgstat_database.c

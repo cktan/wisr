@@ -222,7 +222,7 @@ void SUBTRANSShmemInit(void) {
   SubTransCtl->PagePrecedes = SubTransPagePrecedes;
   SimpleLruInit(SubTransCtl, "subtransaction", SUBTRANSShmemBuffers(),
                 "pg_subtrans", LWTRANCHE_SUBTRANS_BUFFER,
-                LWTRANCHE_SUBTRANS_SLRU, SYNC_HANDLER_NONE, false);
+                LWTRANCHE_SUBTRANS_SLRU, false);
   SlruPagePrecedesUnitTests(SubTransCtl, SUBTRANS_XACTS_PER_PAGE);
 }
 
@@ -289,22 +289,6 @@ void StartupSUBTRANS(TransactionId oldestActiveXID) {
   }
 
   LWLockRelease(lock);
-}
-
-/*
- * Perform a checkpoint --- either during shutdown, or on-the-fly
- */
-void CheckPointSUBTRANS(void) {
-  /*
-   * Write dirty SUBTRANS pages to disk
-   *
-   * This is not actually necessary from a correctness point of view. We do
-   * it merely to improve the odds that writing of dirty pages is done by
-   * the checkpoint process and not by backends.
-   */
-  TRACE_POSTGRESQL_SUBTRANS_CHECKPOINT_START(true);
-  SimpleLruWriteAll(SubTransCtl, true);
-  TRACE_POSTGRESQL_SUBTRANS_CHECKPOINT_DONE(true);
 }
 
 /*

@@ -12,7 +12,6 @@
 #define MULTIXACT_H
 
 #include "lib/stringinfo.h"
-#include "storage/sync.h"
 
 /*
  * The first two MultiXactId values are reserved to store the truncation Xid
@@ -72,9 +71,6 @@ extern int GetMultiXactIdMembers(MultiXactId multi, MultiXactMember **members,
 extern bool MultiXactIdPrecedes(MultiXactId multi1, MultiXactId multi2);
 extern bool MultiXactIdPrecedesOrEquals(MultiXactId multi1, MultiXactId multi2);
 
-extern int multixactoffsetssyncfiletag(const FileTag *ftag, char *path);
-extern int multixactmemberssyncfiletag(const FileTag *ftag, char *path);
-
 extern void AtEOXact_MultiXact(void);
 
 extern Size MultiXactShmemSize(void);
@@ -86,7 +82,6 @@ extern void MultiXactGetCheckptMulti(bool is_shutdown, MultiXactId *nextMulti,
                                      MultiXactOffset *nextMultiOffset,
                                      MultiXactId *oldestMulti,
                                      Oid *oldestMultiDB);
-extern void CheckPointMultiXact(void);
 extern MultiXactId GetOldestMultiXactId(void);
 
 extern char *mxid_to_string(MultiXactId multi, int nmembers,

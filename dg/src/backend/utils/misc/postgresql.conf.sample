@@ -192,13 +192,6 @@
 #max_files_per_process = 1000		# min 64
 					# (change requires restart)
 
-# - Background Writer -
-
-#bgwriter_delay = 200ms			# 10-10000ms between rounds
-#bgwriter_lru_maxpages = 100		# max buffers written/round, 0 disables
-#bgwriter_lru_multiplier = 2.0		# 0-10.0 multiplier on buffers scanned/round
-#bgwriter_flush_after = 0		# measured in pages, 0 disables
-
 # - I/O -
 
 #backend_flush_after = 0		# measured in pages, 0 disables
@@ -256,10 +249,6 @@
 
 # - Checkpoints -
 
-#checkpoint_timeout = 5min		# range 30s-1d
-#checkpoint_completion_target = 0.9	# checkpoint target duration, 0.0 - 1.0
-#checkpoint_flush_after = 0		# measured in pages, 0 disables
-#checkpoint_warning = 30s		# 0 disables
 #max_wal_size = 1GB
 #min_wal_size = 80MB
 
@@ -586,7 +575,6 @@
 					# their durations, > 0 logs only
 					# actions running at least this number
 					# of milliseconds.
-#log_checkpoints = on
 #log_connections = '' # log aspects of connection setup
           # options include receipt, authentication, authorization,
           # setup_durations, and all to log all of these aspects

@@ -189,44 +189,7 @@ typedef struct PgStat_TableXactStatus {
  * ------------------------------------------------------------
  */
 
-#define PGSTAT_FILE_FORMAT_ID	0x01A5BCBA
-
-/* ---------
- * PgStat_BgWriterStats			Background Writer statistics
- *
- * This struct should contain only actual event counters, because we make use
- * of pg_memory_is_all_zeros() to detect whether there are any stats updates
- * to apply.
- * ---------
- */
-typedef struct PgStat_BgWriterStats {
-  PgStat_Counter buf_written_clean;
-  PgStat_Counter maxwritten_clean;
-  PgStat_Counter buf_alloc;
-  TimestampTz stat_reset_timestamp;
-} PgStat_BgWriterStats;
-
-/* --------
- * PgStat_CheckpointerStats		Checkpoint statistics
- *
- * This struct should contain only actual event counters, because we make use
- * of pg_memory_is_all_zeros() to detect whether there are any stats updates to
- * apply.
- * ---------
- */
-typedef struct PgStat_CheckpointerStats {
-  PgStat_Counter num_timed;
-  PgStat_Counter num_requested;
-  PgStat_Counter num_performed;
-  PgStat_Counter restartpoints_timed;
-  PgStat_Counter restartpoints_requested;
-  PgStat_Counter restartpoints_performed;
-  PgStat_Counter write_time; /* times in milliseconds */
-  PgStat_Counter sync_time;
-  PgStat_Counter buffers_written;
-  PgStat_Counter slru_written;
-  TimestampTz stat_reset_timestamp;
-} PgStat_CheckpointerStats;
+#define PGSTAT_FILE_FORMAT_ID	0x01A5BCBB
 
 /*
  * Types related to counting IO operations
@@ -483,20 +446,6 @@ extern bool pgstat_tracks_backend_bktype(BackendType bktype);
 extern void pgstat_create_backend(ProcNumber procnum);
 
 /*
- * Functions in pgstat_bgwriter.c
- */
-
-extern void pgstat_report_bgwriter(void);
-extern PgStat_BgWriterStats *pgstat_fetch_stat_bgwriter(void);
-
-/*
- * Functions in pgstat_checkpointer.c
- */
-
-extern void pgstat_report_checkpointer(void);
-extern PgStat_CheckpointerStats *pgstat_fetch_stat_checkpointer(void);
-
-/*
  * Functions in pgstat_io.c
  */
 
@@ -661,7 +610,6 @@ extern int pgstat_get_transactional_drops(bool isCommit,
  * Functions in pgstat_wal.c
  */
 
-extern void pgstat_report_wal(bool force);
 extern PgStat_WalStats *pgstat_fetch_stat_wal(void);
 
 /*
@@ -672,25 +620,6 @@ extern PgStat_WalStats *pgstat_fetch_stat_wal(void);
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool pgstat_track_counts;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int pgstat_track_functions;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int pgstat_fetch_consistency;
-
-/*
- * Variables in pgstat_bgwriter.c
- */
-
-/* updated directly by bgwriter and bufmgr */
-extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_BgWriterStats
-    PendingBgWriterStats;
-
-/*
- * Variables in pgstat_checkpointer.c
- */
-
-/*
- * Checkpointer statistics counters are updated directly by checkpointer and
- * bufmgr.
- */
-extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_CheckpointerStats
-    PendingCheckpointerStats;
 
 /*
  * Variables in pgstat_database.c

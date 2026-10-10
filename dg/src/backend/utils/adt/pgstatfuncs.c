@@ -1108,68 +1108,6 @@ PG_STAT_GET_DBENTRY_FLOAT8_MS(idle_in_transaction_time)
 /* pg_stat_get_db_session_time */
 PG_STAT_GET_DBENTRY_FLOAT8_MS(session_time)
 
-Datum pg_stat_get_checkpointer_num_timed(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->num_timed);
-}
-
-Datum pg_stat_get_checkpointer_num_requested(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->num_requested);
-}
-
-Datum pg_stat_get_checkpointer_num_performed(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->num_performed);
-}
-
-Datum pg_stat_get_checkpointer_restartpoints_timed(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->restartpoints_timed);
-}
-
-Datum pg_stat_get_checkpointer_restartpoints_requested(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->restartpoints_requested);
-}
-
-Datum pg_stat_get_checkpointer_restartpoints_performed(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->restartpoints_performed);
-}
-
-Datum pg_stat_get_checkpointer_buffers_written(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->buffers_written);
-}
-
-Datum pg_stat_get_checkpointer_slru_written(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->slru_written);
-}
-
-Datum pg_stat_get_bgwriter_buf_written_clean(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_bgwriter()->buf_written_clean);
-}
-
-Datum pg_stat_get_bgwriter_maxwritten_clean(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_bgwriter()->maxwritten_clean);
-}
-
-Datum pg_stat_get_checkpointer_write_time(PG_FUNCTION_ARGS) {
-  /* time is already in msec, just convert to double for presentation */
-  PG_RETURN_FLOAT8((double)pgstat_fetch_stat_checkpointer()->write_time);
-}
-
-Datum pg_stat_get_checkpointer_sync_time(PG_FUNCTION_ARGS) {
-  /* time is already in msec, just convert to double for presentation */
-  PG_RETURN_FLOAT8((double)pgstat_fetch_stat_checkpointer()->sync_time);
-}
-
-Datum pg_stat_get_checkpointer_stat_reset_time(PG_FUNCTION_ARGS) {
-  PG_RETURN_TIMESTAMPTZ(pgstat_fetch_stat_checkpointer()->stat_reset_timestamp);
-}
-
-Datum pg_stat_get_bgwriter_stat_reset_time(PG_FUNCTION_ARGS) {
-  PG_RETURN_TIMESTAMPTZ(pgstat_fetch_stat_bgwriter()->stat_reset_timestamp);
-}
-
-Datum pg_stat_get_buf_alloc(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT64(pgstat_fetch_stat_bgwriter()->buf_alloc);
-}
-
 /*
  * When adding a new column to the pg_stat_io view and the
  * pg_stat_get_backend_io() function, add a new enum value here above
@@ -1686,8 +1624,6 @@ Datum pg_stat_reset_shared(PG_FUNCTION_ARGS) {
 
   if (PG_ARGISNULL(0)) {
     /* Reset all the statistics when nothing is specified */
-    pgstat_reset_of_kind(PGSTAT_KIND_BGWRITER);
-    pgstat_reset_of_kind(PGSTAT_KIND_CHECKPOINTER);
     pgstat_reset_of_kind(PGSTAT_KIND_IO);
     pgstat_reset_of_kind(PGSTAT_KIND_SLRU);
     pgstat_reset_of_kind(PGSTAT_KIND_WAL);
@@ -1697,11 +1633,7 @@ Datum pg_stat_reset_shared(PG_FUNCTION_ARGS) {
 
   target = text_to_cstring(PG_GETARG_TEXT_PP(0));
 
-  if (strcmp(target, "bgwriter") == 0)
-    pgstat_reset_of_kind(PGSTAT_KIND_BGWRITER);
-  else if (strcmp(target, "checkpointer") == 0)
-    pgstat_reset_of_kind(PGSTAT_KIND_CHECKPOINTER);
-  else if (strcmp(target, "io") == 0)
+  if (strcmp(target, "io") == 0)
     pgstat_reset_of_kind(PGSTAT_KIND_IO);
   else if (strcmp(target, "slru") == 0)
     pgstat_reset_of_kind(PGSTAT_KIND_SLRU);

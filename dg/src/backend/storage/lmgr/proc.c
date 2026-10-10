@@ -201,7 +201,6 @@ void InitProcGlobal(void) {
   dlist_init(&ProcGlobal->walsenderFreeProcs);
   ProcGlobal->startupBufferPinWaitBufId = -1;
   ProcGlobal->walwriterProc = INVALID_PROC_NUMBER;
-  ProcGlobal->checkpointerProc = INVALID_PROC_NUMBER;
   pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PROC_NUMBER);
   pg_atomic_init_u32(&ProcGlobal->clogGroupFirst, INVALID_PROC_NUMBER);
 
@@ -440,7 +439,6 @@ void InitProcess(void) {
   MyProc->roleId = InvalidOid;
   MyProc->tempNamespaceId = InvalidOid;
   MyProc->isRegularBackend = AmRegularBackendProcess();
-  MyProc->delayChkptFlags = 0;
   MyProc->statusFlags = 0;
   MyProc->lwWaiting = LW_WS_NOT_WAITING;
   MyProc->lwWaitMode = 0;
@@ -632,7 +630,6 @@ void InitAuxiliaryProcess(void) {
   MyProc->roleId = InvalidOid;
   MyProc->tempNamespaceId = InvalidOid;
   MyProc->isRegularBackend = false;
-  MyProc->delayChkptFlags = 0;
   MyProc->statusFlags = 0;
   MyProc->lwWaiting = LW_WS_NOT_WAITING;
   MyProc->lwWaitMode = 0;

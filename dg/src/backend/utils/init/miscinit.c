@@ -265,12 +265,6 @@ const char *GetBackendTypeDesc(BackendType backendType) {
   case B_BG_WORKER:
     backendDesc = gettext_noop("background worker");
     break;
-  case B_BG_WRITER:
-    backendDesc = gettext_noop("background writer");
-    break;
-  case B_CHECKPOINTER:
-    backendDesc = gettext_noop("checkpointer");
-    break;
   case B_LOGGER:
     backendDesc = gettext_noop("logger");
     break;

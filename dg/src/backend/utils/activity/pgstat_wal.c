@@ -29,33 +29,6 @@
 static thread_local /*LOCAL*/ WalUsage prevWalUsage;
 
 /*
- * Calculate how much WAL usage counters have increased and update
- * shared WAL and IO statistics.
- *
- * Must be called by processes that generate WAL, that do not call
- * pgstat_report_stat(), like walwriter.
- *
- * "force" set to true ensures that the statistics are flushed; note that
- * this needs to acquire the pgstat shmem LWLock, waiting on it.  When
- * set to false, the statistics may not be flushed if the lock could not
- * be acquired.
- */
-void pgstat_report_wal(bool force) {
-  bool nowait;
-
-  /* like in pgstat.c, don't wait for lock acquisition when !force */
-  nowait = !force;
-
-  /* flush wal stats */
-  (void)pgstat_wal_flush_cb(nowait);
-  pgstat_flush_backend(nowait, PGSTAT_BACKEND_FLUSH_WAL);
-
-  /* flush IO stats */
-  pgstat_flush_io(nowait);
-  (void)pgstat_flush_backend(nowait, PGSTAT_BACKEND_FLUSH_IO);
-}
-
-/*
  * Support function for the SQL-callable pgstat* functions. Returns
  * a pointer to the WAL statistics struct.
  */

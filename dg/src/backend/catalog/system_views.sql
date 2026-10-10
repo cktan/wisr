@@ -1147,27 +1147,6 @@ CREATE VIEW pg_stat_archiver AS
         s.stats_reset
     FROM pg_stat_get_archiver() s;
 
-CREATE VIEW pg_stat_bgwriter AS
-    SELECT
-        pg_stat_get_bgwriter_buf_written_clean() AS buffers_clean,
-        pg_stat_get_bgwriter_maxwritten_clean() AS maxwritten_clean,
-        pg_stat_get_buf_alloc() AS buffers_alloc,
-        pg_stat_get_bgwriter_stat_reset_time() AS stats_reset;
-
-CREATE VIEW pg_stat_checkpointer AS
-    SELECT
-        pg_stat_get_checkpointer_num_timed() AS num_timed,
-        pg_stat_get_checkpointer_num_requested() AS num_requested,
-        pg_stat_get_checkpointer_num_performed() AS num_done,
-        pg_stat_get_checkpointer_restartpoints_timed() AS restartpoints_timed,
-        pg_stat_get_checkpointer_restartpoints_requested() AS restartpoints_req,
-        pg_stat_get_checkpointer_restartpoints_performed() AS restartpoints_done,
-        pg_stat_get_checkpointer_write_time() AS write_time,
-        pg_stat_get_checkpointer_sync_time() AS sync_time,
-        pg_stat_get_checkpointer_buffers_written() AS buffers_written,
-        pg_stat_get_checkpointer_slru_written() AS slru_written,
-        pg_stat_get_checkpointer_stat_reset_time() AS stats_reset;
-
 CREATE VIEW pg_stat_io AS
 SELECT
        b.backend_type,

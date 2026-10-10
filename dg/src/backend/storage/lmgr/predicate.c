@@ -759,7 +759,7 @@ static void SerialInit(void) {
   SerialSlruCtl->PagePrecedes = SerialPagePrecedesLogically;
   SimpleLruInit(SerialSlruCtl, "serializable", serializable_buffers,
                 "pg_serial", LWTRANCHE_SERIAL_BUFFER, LWTRANCHE_SERIAL_SLRU,
-                SYNC_HANDLER_NONE, false);
+                false);
 #ifdef USE_ASSERT_CHECKING
   SerialPagePrecedesLogicallyUnitTests();
 #endif
@@ -937,96 +937,6 @@ static void SerialSetActiveSerXmin(TransactionId xid) {
   serialControl->tailXid = xid;
 
   LWLockRelease(SerialControlLock);
-}
-
-/*
- * Perform a checkpoint --- either during shutdown, or on-the-fly
- *
- * We don't have any data that needs to survive a restart, but this is a
- * convenient place to truncate the SLRU.
- */
-void CheckPointPredicate(void) {
-  int64 truncateCutoffPage;
-
-  LWLockAcquire(SerialControlLock, LW_EXCLUSIVE);
-
-  /* Exit quickly if the SLRU is currently not in use. */
-  if (serialControl->headPage < 0) {
-    LWLockRelease(SerialControlLock);
-    return;
-  }
-
-  if (TransactionIdIsValid(serialControl->tailXid)) {
-    int64 tailPage;
-
-    tailPage = SerialPage(serialControl->tailXid);
-
-    /*
-     * It is possible for the tailXid to be ahead of the headXid.  This
-     * occurs if we checkpoint while there are in-progress serializable
-     * transaction(s) advancing the tail but we are yet to summarize the
-     * transactions.  In this case, we cutoff up to the headPage and the
-     * next summary will advance the headXid.
-     */
-    if (SerialPagePrecedesLogically(tailPage, serialControl->headPage)) {
-      /* We can truncate the SLRU up to the page containing tailXid */
-      truncateCutoffPage = tailPage;
-    } else
-      truncateCutoffPage = serialControl->headPage;
-  } else {
-    /*----------
-     * The SLRU is no longer needed. Truncate to head before we set head
-     * invalid.
-     *
-     * XXX: It's possible that the SLRU is not needed again until XID
-     * wrap-around has happened, so that the segment containing headPage
-     * that we leave behind will appear to be new again. In that case it
-     * won't be removed until XID horizon advances enough to make it
-     * current again.
-     *
-     * XXX: This should happen in vac_truncate_clog(), not in checkpoints.
-     * Consider this scenario, starting from a system with no in-progress
-     * transactions and VACUUM FREEZE having maximized oldestXact:
-     * - Start a SERIALIZABLE transaction.
-     * - Start, finish, and summarize a SERIALIZABLE transaction, creating
-     *   one SLRU page.
-     * - Consume XIDs to reach xidStopLimit.
-     * - Finish all transactions.  Due to the long-running SERIALIZABLE
-     *   transaction, earlier checkpoints did not touch headPage.  The
-     *   next checkpoint will change it, but that checkpoint happens after
-     *   the end of the scenario.
-     * - VACUUM to advance XID limits.
-     * - Consume ~2M XIDs, crossing the former xidWrapLimit.
-     * - Start, finish, and summarize a SERIALIZABLE transaction.
-     *   SerialAdd() declines to create the targetPage, because headPage
-     *   is not regarded as in the past relative to that targetPage.  The
-     *   transaction instigating the summarize fails in
-     *   SimpleLruReadPage().
-     */
-    truncateCutoffPage = serialControl->headPage;
-    serialControl->headPage = -1;
-  }
-
-  LWLockRelease(SerialControlLock);
-
-  /*
-   * Truncate away pages that are no longer required.  Note that no
-   * additional locking is required, because this is only called as part of
-   * a checkpoint, and the validity limits have already been determined.
-   */
-  SimpleLruTruncate(SerialSlruCtl, truncateCutoffPage);
-
-  /*
-   * Write dirty SLRU pages to disk
-   *
-   * This is not actually necessary from a correctness point of view. We do
-   * it merely as a debugging aid.
-   *
-   * We're doing this after the truncation to avoid writing pages right
-   * before deleting the file in which they sit, which would be completely
-   * pointless.
-   */
-  SimpleLruWriteAll(SerialSlruCtl, true);
 }
 
 /*------------------------------------------------------------------------*/

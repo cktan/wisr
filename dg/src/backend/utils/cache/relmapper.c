@@ -444,22 +444,6 @@ void AtEOXact_RelationMap(bool isCommit) {
 }
 
 /*
- * CheckPointRelationMap
- *
- * This is called during a checkpoint.  It must ensure that any relation map
- * updates that were WAL-logged before the start of the checkpoint are
- * securely flushed to disk and will not need to be replayed later.  This
- * seems unlikely to be a performance-critical issue, so we use a simple
- * method: we just take and release the RelationMappingLock.  This ensures
- * that any already-logged map update is complete, because write_relmap_file
- * will fsync the map file before the lock is released.
- */
-void CheckPointRelationMap(void) {
-  LWLockAcquire(RelationMappingLock, LW_SHARED);
-  LWLockRelease(RelationMappingLock);
-}
-
-/*
  * RelationMapFinishBootstrap
  *
  * Write out the initial relation mapping files at the completion of
