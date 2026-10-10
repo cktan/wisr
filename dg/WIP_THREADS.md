@@ -56,6 +56,18 @@ and §5 first.
    that set the timeout. The authentication-timeout check in
    `test/server.sh` fails with the timer left unarmed.
 
+5. **Option B, piece 3, first step: a thread is given every
+   SHARED variable.** The build reads, from one link, each
+   `/*SHARED*/` variable's offset in the thread-local block
+   (`src/tools/shared_tls.py`: the source's marks, each object's
+   symbols, the linker map), compiles that table into a second
+   link, and checks a third reading finds it unchanged.
+   `session_thread_start()` copies those bytes from the parent's
+   block to the child's (197 variables today) before anything
+   else. A file's `__tls_guard` is not copied, so the child runs
+   its dynamic initialisers again: they are list heads that point
+   at themselves.
+
 ## Open: how a session thread is reached (issue 2)
 
 `BackendStartup()` starting a thread instead of a process is

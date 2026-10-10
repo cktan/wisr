@@ -67,9 +67,28 @@ build/digres: src $(LIBSQ) $(LIBSM)
 	# A session is to be a thread: no writable global may be left
 	# that is not thread_local (PLAN.md section 3).
 	python3 -B src/tools/cxx_thread_local.py --check src
-	$(CXX) -o $@ $$(find src -name '*.o' ! -name '*.tsan.o') $(LIBSQ) \
-	    $(LIBSM) $(LDLIBS)
+	$(call link_shared,$@,.o,$(OPT))
 	ln -sf digres build/initdb
+
+# Link $(1) from the objects under src/ named *$(2), compiling with
+# $(3). A new thread is given its parent's SHARED variables by a table
+# of where they are in the thread-local block (src/tools/shared_tls.py),
+# read from one link and compiled into the next; a third reading must
+# find the same table, or the layout moved under it.
+define link_shared
+	python3 -B src/tools/shared_tls.py --empty > $(1).shared.c
+	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
+	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
+	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
+	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LDLIBS)
+	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) > $(1).shared.c
+	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
+	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
+	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
+	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LDLIBS)
+	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) | \
+	    cmp -s - $(1).shared.c
+endef
 
 # The server again, each object compiled once more as NAME.tsan.o for
 # the thread sanitizer, and the statements in test/ run with it, alone
@@ -79,8 +98,7 @@ build/digres: src $(LIBSQ) $(LIBSM)
 tsan: gen $(LIBSQ) $(LIBSM)
 	$(MAKE) -C src OBJ=tsan.o
 	@mkdir -p build
-	$(CXX) -fsanitize=thread -o build/digres-tsan \
-	    $$(find src -name '*.tsan.o') $(LIBSQ) $(LIBSM) $(LDLIBS)
+	$(call link_shared,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
 	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
 
 # The parser is sq and a converter (src/backend/parser/parser.c). sq's

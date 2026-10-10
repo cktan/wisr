@@ -6,7 +6,8 @@
  * A new thread's thread_local variables hold what the source wrote, not
  * what its parent has set since (c.h). So the thread is given, as
  * PostgreSQL's EXEC_BACKEND child is given by its postmaster, what it
- * cannot work out for itself: the SHARED values the parent set, and the
+ * cannot work out for itself: a copy of every SHARED variable the parent
+ * has, found by the table src/tools/shared_tls.py writes, and the
  * settings that are not at their defaults. The rest it sets up itself,
  * memory contexts first; nothing of the parent's private memory is
  * copied.
@@ -36,21 +37,38 @@
 typedef struct session_start_t {
   void (*fn)(void *);
   void *arg;
-  const char *progname;
+  char *shared;   /* the SHARED variables, one after another */
   char *settings; /* the non-default settings, as GUC writes them */
   size_t settings_len;
 } session_start_t;
+
+/*
+ * This thread's thread-local block: where progname is, less its offset.
+ * Through an integer, so _FORTIFY_SOURCE does not take the block for
+ * progname alone.
+ */
+static char *tls_block(void) {
+  return (char *)((uintptr_t)&progname - shared_tls_anchor);
+}
 
 /* The new thread: set up as its parent was, then run the session. */
 static void *session_thread_main(void *p) {
   session_start_t start = *(session_start_t *)p;
 
   free(p);
+
+  /* The parent's SHARED variables, before anything reads one. */
+  for (int i = 0, at = 0; i < shared_tls_count; i++) {
+    memcpy(tls_block() + shared_tls_table[i].offset, start.shared + at,
+           shared_tls_table[i].size);
+    at += shared_tls_table[i].size;
+  }
+  free(start.shared);
+
   proc_exit_throws = true;
   MyProcPid = getpid();
   /* Errors and allocations need the memory contexts, so they come first. */
   MemoryContextInit();
-  progname = start.progname;
 
   /* The settings are built for this thread, then given the parent's. */
   InitializeGUCOptions();
@@ -73,6 +91,15 @@ static void *session_thread_main(void *p) {
   }
 }
 
+/* The bytes of all the SHARED variables together. */
+static size_t shared_len(void) {
+  size_t len = 0;
+
+  for (int i = 0; i < shared_tls_count; i++)
+    len += shared_tls_table[i].size;
+  return len;
+}
+
 /*
  * Start a thread that runs fn(arg) as a session, given what this thread
  * has set that it needs. fn must catch its own errors. Joined, the thread
@@ -88,7 +115,14 @@ pthread_t session_thread_start(void (*fn)(void *), void *arg) {
     elog(ERROR, "out of memory");
   start->fn = fn;
   start->arg = arg;
-  start->progname = progname;
+  start->shared = (char *)malloc(shared_len());
+  if (start->shared == NULL)
+    elog(ERROR, "out of memory");
+  for (int i = 0, at = 0; i < shared_tls_count; i++) {
+    memcpy(start->shared + at, tls_block() + shared_tls_table[i].offset,
+           shared_tls_table[i].size);
+    at += shared_tls_table[i].size;
+  }
   fp = open_memstream(&start->settings, &start->settings_len);
   if (fp == NULL)
     elog(ERROR, "could not write the settings: %m");
