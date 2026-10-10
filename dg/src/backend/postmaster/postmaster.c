@@ -99,7 +99,6 @@
 #include "pgstat.h"
 #include "port/pg_bswap.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/syslogger.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
@@ -230,7 +229,6 @@ thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 /* special child processes; NULL when not running */
 static thread_local /*SHARED*/ PMChild *WalReceiverPMChild = NULL,
                                        *WalSummarizerPMChild = NULL,
-                                       *SysLoggerPMChild = NULL,
                                        *SlotSyncWorkerPMChild = NULL;
 
 /* Startup/shutdown state */
@@ -302,9 +300,6 @@ static thread_local /*SHARED*/ bool ReachedNormalRunning =
 thread_local /*LOCAL*/ bool ClientAuthInProgress = false; /* T during new-client
                                                            * authentication */
 
-thread_local /*SHARED*/ bool redirection_done =
-    false; /* stderr redirected for syslogger? */
-
 /* received START_WALRECEIVER signal */
 static thread_local /*SHARED*/ bool WalReceiverRequested = false;
 
@@ -367,10 +362,7 @@ static void signal_child(PMChild *pmchild, int signal);
 static bool SignalChildren(int signal, BackendTypeMask targetMask);
 static void TerminateChildren(int signal);
 static int CountChildren(BackendTypeMask targetMask);
-static void LaunchMissingBackgroundProcesses(void);
 static bool CreateOptsFile(int argc, char *argv[], char *fullprogname);
-static PMChild *StartChildProcess(BackendType type);
-static void StartSysLogger(void);
 static void InitPostmasterDeathWatchHandle(void);
 
 #ifdef WIN32
@@ -456,7 +448,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * CAUTION: when changing this list, check for side-effects on the signal
    * handling setup of child processes.  See tcop/postgres.c,
    * bootstrap/bootstrap.c, postmaster/bgwriter.c, postmaster/walwriter.c,
-   * postmaster/pgarch.c and postmaster/syslogger.c.
+   * and postmaster/pgarch.c.
    */
   pqinitmask();
   sigprocmask(SIG_SETMASK, &BlockSig, NULL);
@@ -907,21 +899,6 @@ void PostmasterMain(int argc, char *argv[]) {
    */
   RemovePgTempFilesInDir(PG_TEMP_FILES_DIR, true, false);
 #endif
-
-  /* Remove the logrotate signal file */
-  RemoveLogrotateSignalFiles();
-
-  /* Remove any outdated file holding the current log filenames. */
-  if (unlink(LOG_METAINFO_DATAFILE) < 0 && errno != ENOENT)
-    ereport(LOG, (errcode_for_file_access(),
-                  errmsg("could not remove file \"%s\": %m",
-                         LOG_METAINFO_DATAFILE)));
-
-  /*
-   * If enabled, start up syslogger collection subprocess
-   */
-  if (Logging_collector)
-    StartSysLogger();
 
   /*
    * Reset whereToSendOutput from DestDebug (its starting state) to
@@ -1402,12 +1379,6 @@ static int ServerLoop(void) {
       }
     }
 
-    /*
-     * If we need to launch any background processes after changing state
-     * or because some exited, do so now.
-     */
-    LaunchMissingBackgroundProcesses();
-
 #ifdef HAVE_PTHREAD_IS_THREADED_NP
 
     /*
@@ -1514,11 +1485,8 @@ static CAC_state canAcceptConnections(BackendType backend_type) {
  * This is called during child process startup to release file descriptors
  * that are not needed by that child process.  The postmaster still has
  * them open, of course.
- *
- * Note: we pass am_syslogger as a boolean because we don't want to set
- * the global variable yet when this is called.
  */
-void ClosePostmasterPorts(bool am_syslogger) {
+void ClosePostmasterPorts(void) {
   /* Release resources held by the postmaster's WaitEventSet. */
   if (pm_wait_set) {
     FreeWaitEventSetAfterFork(pm_wait_set);
@@ -1559,22 +1527,6 @@ void ClosePostmasterPorts(bool am_syslogger) {
   NumListenSockets = 0;
   ListenSockets = NULL;
 #endif
-
-  /*
-   * If using syslogger, close the read side of the pipe.  We don't bother
-   * tracking this in fd.c, either.
-   */
-  if (!am_syslogger) {
-#ifndef WIN32
-    if (syslogPipe[0] >= 0)
-      close(syslogPipe[0]);
-    syslogPipe[0] = -1;
-#else
-    if (syslogPipe[0])
-      CloseHandle(syslogPipe[0]);
-    syslogPipe[0] = 0;
-#endif
-  }
 
 #ifdef USE_BONJOUR
   /* If using Bonjour, close the connection to the mDNS daemon */
@@ -1869,20 +1821,6 @@ static void process_pm_child_exit(void) {
       WalSummarizerPMChild = NULL;
       if (!EXIT_STATUS_0(exitstatus))
         HandleChildCrash(pid, exitstatus, _("WAL summarizer process"));
-      continue;
-    }
-
-    /* Was it the system logger?  If so, try to start a new one */
-    if (SysLoggerPMChild && pid == SysLoggerPMChild->pid) {
-      ReleasePostmasterChildSlot(SysLoggerPMChild);
-      SysLoggerPMChild = NULL;
-
-      /* for safety's sake, launch new logger *first* */
-      if (Logging_collector)
-        StartSysLogger();
-
-      if (!EXIT_STATUS_0(exitstatus))
-        LogChildExit(LOG, _("system logger process"), pid, exitstatus);
       continue;
     }
 
@@ -2222,8 +2160,7 @@ static void PostmasterStateMachine(void) {
     targetMask = btmask_add(targetMask, B_WAL_SENDER);
 
     /*
-     * We let dead-end children keep running for now.  The syslogger
-     * process exits last.
+     * We let dead-end children keep running for now.
      *
      * This assertion checks that we have covered all backend types,
      * either by including them in targetMask, or by noting here that they
@@ -2233,7 +2170,7 @@ static void PostmasterStateMachine(void) {
     {
       BackendTypeMask remainMask = BTYPE_MASK_NONE;
 
-      remainMask = btmask_add(remainMask, B_DEAD_END_BACKEND, B_LOGGER);
+      remainMask = btmask_add(remainMask, B_DEAD_END_BACKEND);
 
       /* these are not real postmaster children */
       remainMask = btmask_add(remainMask, B_INVALID, B_STANDALONE_BACKEND);
@@ -2297,12 +2234,11 @@ static void PostmasterStateMachine(void) {
      * conflicting subprocesses; this isn't an ironclad protection, but it
      * at least helps in the shutdown-and-immediately-restart scenario.
      */
-    if (CountChildren(btmask_all_except(B_LOGGER)) == 0) {
+    if (CountChildren(BTYPE_MASK_ALL) == 0) {
       /* These other guys should be dead already */
       Assert(WalReceiverPMChild == NULL);
       Assert(WalSummarizerPMChild == NULL);
       Assert(SlotSyncWorkerPMChild == NULL);
-      /* syslogger is not considered here */
       UpdatePMState(PM_NO_CHILDREN);
     }
   }
@@ -2314,10 +2250,6 @@ static void PostmasterStateMachine(void) {
    * crash before exiting, but that seems unwise if we are quitting because
    * we got SIGTERM from init --- there may well not be time for recovery
    * before init decides to SIGKILL us.)
-   *
-   * Note that the syslogger continues to run.  It will exit when it sees
-   * EOF on its input pipe, which happens when there are no more upstream
-   * processes.
    */
   if (Shutdown > NoShutdown && pmState == PM_NO_CHILDREN) {
     if (FatalError) {
@@ -2335,7 +2267,7 @@ static void PostmasterStateMachine(void) {
 
   /*
    * If the user does not want an automatic restart after backend crashes,
-   * wait for all non-syslogger children to exit, and then exit postmaster.
+   * wait for all children to exit, and then exit postmaster.
    */
   if (pmState == PM_NO_CHILDREN) {
     if (!restart_after_crash) {
@@ -2346,8 +2278,8 @@ static void PostmasterStateMachine(void) {
   }
 
   /*
-   * If we need to recover from a crash, wait for all non-syslogger children
-   * to exit, then reset shmem and start running again.
+   * If we need to recover from a crash, wait for all children to exit, then
+   * reset shmem and start running again.
    */
   if (FatalError && pmState == PM_NO_CHILDREN) {
     ereport(LOG, (errmsg("all server processes terminated; reinitializing")));
@@ -2392,20 +2324,6 @@ static void UpdatePMState(PMState newState) {
   elog(DEBUG1, "updating PMState from %s to %s", pmstate_name(pmState),
        pmstate_name(newState));
   pmState = newState;
-}
-
-/*
- * Launch background processes after state change, or relaunch after an
- * existing process has exited.
- *
- * Check the current pmState and the status of any background processes.  If
- * there are any background processes missing that should be running in the
- * current state, but are not, launch them.
- */
-static void LaunchMissingBackgroundProcesses(void) {
-  /* Syslogger is active in all states */
-  if (SysLoggerPMChild == NULL && Logging_collector)
-    StartSysLogger();
 }
 
 /*
@@ -2533,11 +2451,10 @@ static bool SignalChildren(int signal, BackendTypeMask targetMask) {
 }
 
 /*
- * Send a termination signal to children.  This considers all of our children
- * processes, except syslogger.
+ * Send a termination signal to all of our children.
  */
 static void TerminateChildren(int signal) {
-  SignalChildren(signal, btmask_all_except(B_LOGGER));
+  SignalChildren(signal, BTYPE_MASK_ALL);
 }
 
 /*
@@ -2687,16 +2604,6 @@ static void process_pm_pmsignal(void) {
 
   ereport(DEBUG2, (errmsg_internal("postmaster received pmsignal signal")));
 
-  /* Tell syslogger to rotate logfile if requested */
-  if (SysLoggerPMChild != NULL) {
-    if (CheckLogrotateSignal()) {
-      signal_child(SysLoggerPMChild, SIGUSR1);
-      RemoveLogrotateSignalFiles();
-    } else if (CheckPostmasterSignal(PMSIGNAL_ROTATE_LOGFILE)) {
-      signal_child(SysLoggerPMChild, SIGUSR1);
-    }
-  }
-
   if (CheckPostmasterSignal(PMSIGNAL_START_WALRECEIVER)) {
     /* Startup Process wants us to start the walreceiver process. */
     WalReceiverRequested = true;
@@ -2765,57 +2672,6 @@ static int CountChildren(BackendTypeMask targetMask) {
     cnt++;
   }
   return cnt;
-}
-
-/*
- * StartChildProcess -- start an auxiliary process for the postmaster
- *
- * "type" determines what kind of child will be started.  All child types
- * initially go to AuxiliaryProcessMain, which will handle common setup.
- *
- * Return value of StartChildProcess is subprocess' PMChild entry, or NULL on
- * failure.
- */
-static PMChild *StartChildProcess(BackendType type) {
-  PMChild *pmchild;
-  pid_t pid;
-
-  pmchild = AssignPostmasterChildSlot(type);
-  if (!pmchild) {
-    /* shouldn't happen because we allocate enough slots */
-    elog(LOG, "no postmaster child slot available for aux process");
-    return NULL;
-  }
-
-  pid = postmaster_child_launch(type, pmchild->child_slot, NULL, 0, NULL);
-  if (pid < 0) {
-    /* in parent, fork failed */
-    ReleasePostmasterChildSlot(pmchild);
-    ereport(LOG, (errmsg("could not fork \"%s\" process: %m",
-                         PostmasterChildName(type))));
-
-    return NULL;
-  }
-
-  /* in parent, successful fork */
-  pmchild->pid = pid;
-  return pmchild;
-}
-
-/*
- * StartSysLogger -- start the syslogger process
- */
-void StartSysLogger(void) {
-  Assert(SysLoggerPMChild == NULL);
-
-  SysLoggerPMChild = AssignPostmasterChildSlot(B_LOGGER);
-  if (!SysLoggerPMChild)
-    elog(PANIC, "no postmaster child slot available for syslogger");
-  SysLoggerPMChild->pid = SysLogger_Start(SysLoggerPMChild->child_slot);
-  if (SysLoggerPMChild->pid == 0) {
-    ReleasePostmasterChildSlot(SysLoggerPMChild);
-    SysLoggerPMChild = NULL;
-  }
 }
 
 /*

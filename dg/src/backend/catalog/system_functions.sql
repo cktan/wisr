@@ -673,13 +673,7 @@ REVOKE EXECUTE ON FUNCTION pg_wal_replay_pause() FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_wal_replay_resume() FROM public;
 
-REVOKE EXECUTE ON FUNCTION pg_rotate_logfile() FROM public;
-
 REVOKE EXECUTE ON FUNCTION pg_reload_conf() FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_current_logfile() FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_current_logfile(text) FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_promote(boolean, integer) FROM public;
 
@@ -706,8 +700,6 @@ REVOKE EXECUTE ON FUNCTION lo_import(text) FROM public;
 REVOKE EXECUTE ON FUNCTION lo_import(text, oid) FROM public;
 
 REVOKE EXECUTE ON FUNCTION lo_export(oid, text) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_ls_logdir() FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_ls_waldir() FROM public;
 
@@ -779,8 +771,6 @@ REVOKE EXECUTE ON FUNCTION pg_ls_replslotdir(text) FROM PUBLIC;
 -- We also set up some things as accessible to standard roles.
 --
 
-GRANT EXECUTE ON FUNCTION pg_ls_logdir() TO pg_monitor;
-
 GRANT EXECUTE ON FUNCTION pg_ls_waldir() TO pg_monitor;
 
 GRANT EXECUTE ON FUNCTION pg_ls_archive_statusdir() TO pg_monitor;
@@ -796,10 +786,6 @@ GRANT EXECUTE ON FUNCTION pg_ls_logicalsnapdir() TO pg_monitor;
 GRANT EXECUTE ON FUNCTION pg_ls_logicalmapdir() TO pg_monitor;
 
 GRANT EXECUTE ON FUNCTION pg_ls_replslotdir(text) TO pg_monitor;
-
-GRANT EXECUTE ON FUNCTION pg_current_logfile() TO pg_monitor;
-
-GRANT EXECUTE ON FUNCTION pg_current_logfile(text) TO pg_monitor;
 
 GRANT pg_read_all_settings TO pg_monitor;
 

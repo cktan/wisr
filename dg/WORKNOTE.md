@@ -787,3 +787,37 @@ callers get a dummy.
 - **Left**: `pg_xact_status()` and its `oldestClogXid`, which
   now answer from the dummy; the "transaction" row of
   `pg_stat_slru`, always 0.
+
+## Step 20: the syslogger is gone
+
+The syslogger was a process the postmaster forked when
+`logging_collector` was on. Every process's stderr was a pipe
+to it, written in chunks with a small header so that messages
+from different processes did not interleave, and it wrote them
+to log files it rotated. In a process of threads it was the
+last fork that ran server code rather than exec, which is
+unsafe once there are threads.
+
+- **Every message goes to stderr**, the plain, csv and json
+  forms alike, in one `write()` under one `std::mutex` in
+  `elog.c` (`write_console()`). A logger that writes files is
+  to come later.
+- **The mutex is one for the process**, not a thread's:
+  `src/tools/process_wide.txt` lists it, and
+  `cxx_thread_local.py --check` accepts what that file lists
+  and nothing else outside `thread_local`.
+- **Gone**: `syslogger.c` and `syslogger.h`, the `B_LOGGER`
+  process type, the pipe and its chunk protocol
+  (`write_pipe_chunks()`, `redirection_done`),
+  `PMSIGNAL_ROTATE_LOGFILE`, the `SYSLOGGER_MAIN` wait event;
+  the settings `logging_collector`, `log_directory`,
+  `log_filename`, `log_rotation_age`, `log_rotation_size`,
+  `log_truncate_on_rotation` and `log_file_mode`; the SQL
+  functions `pg_rotate_logfile()`, `pg_current_logfile()` and
+  `pg_ls_logdir()`.
+- **Gone with it**, having lost their last callers:
+  `postmaster_child_launch()` and `StartChildProcess()`.
+  `fork_process()` is left to the Windows-only `EXEC_BACKEND`
+  code, which has its own step.
+- Nothing forks now but `popen()`, for `COPY ... PROGRAM` and
+  `pg_import_system_collations()`, which execs at once.

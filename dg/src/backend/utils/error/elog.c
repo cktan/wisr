@@ -75,7 +75,6 @@
 #include "nodes/miscnodes.h"
 #include "pgstat.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/syslogger.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
@@ -83,6 +82,14 @@
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/varlena.h"
+
+#include <mutex>
+
+/*
+ * Serializes writes to stderr.  One for the process, not a thread's: it is
+ * listed in src/tools/process_wide.txt.
+ */
+static std::mutex stderr_mutex;
 
 /* In this module, access gettext() via err_gettext() */
 #undef _
@@ -177,7 +184,6 @@ static pg_noinline void set_backtrace(ErrorData *edata, int num_skip);
 static void set_errdata_field(MemoryContextData *cxt, char **ptr,
                               const char *str);
 static void FreeErrorDataContents(ErrorData *edata);
-static void write_console(const char *line, int len);
 static const char *process_log_prefix_padding(const char *p, int *ppadding);
 static void log_line_prefix(StringInfo buf, ErrorData *edata);
 static void send_message_to_server_log(ErrorData *edata);
@@ -2352,7 +2358,11 @@ static void write_eventlog(int level, const char *line, int len) {
 }
 #endif /* WIN32 */
 
-static void write_console(const char *line, int len) {
+/*
+ * Write one message to stderr.  Every thread of the process writes there,
+ * so the write is made under one process-wide mutex.
+ */
+void write_console(const char *line, int len) {
   int rc;
 
 #ifdef WIN32
@@ -2374,8 +2384,7 @@ static void write_console(const char *line, int len) {
    * through to writing unconverted if we have not yet set up
    * CurrentMemoryContext.
    */
-  if (!in_error_recursion_trouble() && !redirection_done &&
-      CurrentMemoryContext != NULL) {
+  if (!in_error_recursion_trouble() && CurrentMemoryContext != NULL) {
     WCHAR *utf16;
     int utf16len;
 
@@ -2412,7 +2421,11 @@ static void write_console(const char *line, int len) {
    * We ignore any error from write() here.  We have no useful way to report
    * it ... certainly whining on stderr isn't likely to be productive.
    */
-  rc = write(fileno(stderr), line, len);
+  {
+    /* One message at a time: the threads share stderr. */
+    std::lock_guard<std::mutex> guard(stderr_mutex);
+    rc = write(fileno(stderr), line, len);
+  }
   (void)rc;
 }
 
@@ -2904,7 +2917,6 @@ char *unpack_sql_state(int sql_state) {
  */
 static void send_message_to_server_log(ErrorData *edata) {
   StringInfoData buf;
-  bool fallback_to_stderr = false;
 
   initStringInfo(&buf);
 
@@ -3034,121 +3046,32 @@ static void send_message_to_server_log(ErrorData *edata) {
 
   /* Write to csvlog, if enabled */
   if (Log_destination & LOG_DESTINATION_CSVLOG) {
-    /*
-     * Send CSV data if it's safe to do so (syslogger doesn't need the
-     * pipe).  If this is not possible, fallback to an entry written to
-     * stderr.
-     */
-    if (redirection_done || MyBackendType == B_LOGGER)
-      write_csvlog(edata);
-    else
-      fallback_to_stderr = true;
+    write_csvlog(edata);
   }
 
   /* Write to JSON log, if enabled */
   if (Log_destination & LOG_DESTINATION_JSONLOG) {
-    /*
-     * Send JSON data if it's safe to do so (syslogger doesn't need the
-     * pipe).  If this is not possible, fallback to an entry written to
-     * stderr.
-     */
-    if (redirection_done || MyBackendType == B_LOGGER) {
-      write_jsonlog(edata);
-    } else
-      fallback_to_stderr = true;
+    write_jsonlog(edata);
   }
 
-  /*
-   * Write to stderr, if enabled or if required because of a previous
-   * limitation.
-   */
+  /* Write to stderr, if enabled */
   if ((Log_destination & LOG_DESTINATION_STDERR) ||
-      whereToSendOutput == DestDebug || fallback_to_stderr) {
-    /*
-     * Use the chunking protocol if we know the syslogger should be
-     * catching stderr output, and we are not ourselves the syslogger.
-     * Otherwise, just do a vanilla write to stderr.
-     */
-    if (redirection_done && MyBackendType != B_LOGGER)
-      write_pipe_chunks(buf.data, buf.len, LOG_DESTINATION_STDERR);
+      whereToSendOutput == DestDebug) {
 #ifdef WIN32
 
     /*
      * In a win32 service environment, there is no usable stderr. Capture
      * anything going there and write it to the eventlog instead.
-     *
-     * If stderr redirection is active, it was OK to write to stderr above
-     * because that's really a pipe to the syslogger process.
      */
-    else if (pgwin32_is_service())
+    if (pgwin32_is_service())
       write_eventlog(edata->elevel, buf.data, buf.len);
-#endif
     else
+#endif
       write_console(buf.data, buf.len);
   }
 
-  /* If in the syslogger process, try to write messages direct to file */
-  if (MyBackendType == B_LOGGER)
-    write_syslogger_file(buf.data, buf.len, LOG_DESTINATION_STDERR);
-
   /* No more need of the message formatted for stderr */
   pfree(buf.data);
-}
-
-/*
- * Send data to the syslogger using the chunked protocol
- *
- * Note: when there are multiple backends writing into the syslogger pipe,
- * it's critical that each write go into the pipe indivisibly, and not
- * get interleaved with data from other processes.  Fortunately, the POSIX
- * spec requires that writes to pipes be atomic so long as they are not
- * more than PIPE_BUF bytes long.  So we divide long messages into chunks
- * that are no more than that length, and send one chunk per write() call.
- * The collector process knows how to reassemble the chunks.
- *
- * Because of the atomic write requirement, there are only two possible
- * results from write() here: -1 for failure, or the requested number of
- * bytes.  There is not really anything we can do about a failure; retry would
- * probably be an infinite loop, and we can't even report the error usefully.
- * (There is noplace else we could send it!)  So we might as well just ignore
- * the result from write().  However, on some platforms you get a compiler
- * warning from ignoring write()'s result, so do a little dance with casting
- * rc to void to shut up the compiler.
- */
-void write_pipe_chunks(char *data, int len, int dest) {
-  PipeProtoChunk p;
-  int fd = fileno(stderr);
-  int rc;
-
-  Assert(len > 0);
-
-  p.proto.nuls[0] = p.proto.nuls[1] = '\0';
-  p.proto.pid = MyProcPid;
-  p.proto.flags = 0;
-  if (dest == LOG_DESTINATION_STDERR)
-    p.proto.flags |= PIPE_PROTO_DEST_STDERR;
-  else if (dest == LOG_DESTINATION_CSVLOG)
-    p.proto.flags |= PIPE_PROTO_DEST_CSVLOG;
-  else if (dest == LOG_DESTINATION_JSONLOG)
-    p.proto.flags |= PIPE_PROTO_DEST_JSONLOG;
-
-  /* write all but the last chunk */
-  while (len > PIPE_MAX_PAYLOAD) {
-    /* no need to set PIPE_PROTO_IS_LAST yet */
-    p.proto.len = PIPE_MAX_PAYLOAD;
-    memcpy(p.proto.data, data, PIPE_MAX_PAYLOAD);
-    rc = write(fd, &p, PIPE_HEADER_SIZE + PIPE_MAX_PAYLOAD);
-    (void)rc;
-    data += PIPE_MAX_PAYLOAD;
-    len -= PIPE_MAX_PAYLOAD;
-  }
-
-  /* write the last chunk */
-  p.proto.flags |= PIPE_PROTO_IS_LAST;
-  p.proto.len = len;
-  memcpy(p.proto.data, data, len);
-  rc = write(fd, &p, PIPE_HEADER_SIZE + len);
-  (void)rc;
 }
 
 /*

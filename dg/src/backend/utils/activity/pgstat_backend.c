@@ -342,7 +342,6 @@ bool pgstat_tracks_backend_bktype(BackendType bktype) {
   switch (bktype) {
   case B_INVALID:
   case B_DEAD_END_BACKEND:
-  case B_LOGGER:
     return false;
 
   case B_BACKEND:

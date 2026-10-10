@@ -37,7 +37,6 @@
 #include "miscadmin.h"
 #include "postmaster/fork_process.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/syslogger.h"
 #include "storage/dsm.h"
 #include "storage/pg_shmem.h"
 #include "tcop/backend_startup.h"
@@ -99,8 +98,6 @@ typedef struct {
   pid_t PostmasterPid;
   TimestampTz PgStartTime;
   TimestampTz PgReloadTime;
-  pg_time_t first_syslogger_file_time;
-  bool redirection_done;
   bool IsBinaryUpgrade;
   bool query_id_enabled;
   int max_safe_fds;
@@ -109,10 +106,8 @@ typedef struct {
 #ifdef WIN32
   HANDLE PostmasterHandle;
   HANDLE initial_signal_pipe;
-  HANDLE syslogPipe[2];
 #else
   int postmaster_alive_fds[2];
-  int syslogPipe[2];
 #endif
   char my_exec_path[MAXPGPATH];
   char pkglib_path[MAXPGPATH];
@@ -122,7 +117,7 @@ typedef struct {
   /*
    * These are only used by backend processes, but are here because passing
    * a socket needs some special handling on Windows. 'client_sock' is an
-   * explicit argument to postmaster_child_launch, but is stored in
+   * explicit argument to internal_forkexec, but is stored in
    * MyClientSocket in the child process.
    */
   ClientSocket client_sock;
@@ -183,88 +178,10 @@ static thread_local /*SHARED*/ child_process_kind child_process_kinds[] = {
 
     [B_WAL_RECEIVER] = {"wal_receiver", NULL, true},
     [B_WAL_SUMMARIZER] = {"wal_summarizer", NULL, true},
-
-    [B_LOGGER] = {"syslogger", SysLoggerMain, false},
 };
 
 const char *PostmasterChildName(BackendType child_type) {
   return child_process_kinds[child_type].name;
-}
-
-/*
- * Start a new postmaster child process.
- *
- * The child process will be restored to roughly the same state whether
- * EXEC_BACKEND is used or not: it will be attached to shared memory if
- * appropriate, and fds and other resources that we've inherited from
- * postmaster that are not needed in a child process have been closed.
- *
- * 'child_slot' is the PMChildFlags array index reserved for the child
- * process.  'startup_data' is an optional contiguous chunk of data that is
- * passed to the child process.
- */
-pid_t postmaster_child_launch(BackendType child_type, int child_slot,
-                              void *startup_data, size_t startup_data_len,
-                              ClientSocket *client_sock) {
-  pid_t pid;
-
-  Assert(IsPostmasterEnvironment && !IsUnderPostmaster);
-
-  /* Capture time Postmaster initiates process creation for logging */
-  if (IsExternalConnectionBackend(child_type))
-    ((BackendStartupData *)startup_data)->fork_started = GetCurrentTimestamp();
-
-#ifdef EXEC_BACKEND
-  pid = internal_forkexec(child_process_kinds[child_type].name, child_slot,
-                          startup_data, startup_data_len, client_sock);
-  /* the child process will arrive in SubPostmasterMain */
-#else  /* !EXEC_BACKEND */
-  pid = fork_process();
-  if (pid == 0) /* child */
-  {
-    /* Capture and transfer timings that may be needed for logging */
-    if (IsExternalConnectionBackend(child_type)) {
-      conn_timing.socket_create =
-          ((BackendStartupData *)startup_data)->socket_created;
-      conn_timing.fork_start =
-          ((BackendStartupData *)startup_data)->fork_started;
-      conn_timing.fork_end = GetCurrentTimestamp();
-    }
-
-    /* Close the postmaster's sockets */
-    ClosePostmasterPorts(child_type == B_LOGGER);
-
-    /* Detangle from postmaster */
-    InitPostmasterChild();
-
-    /* Detach shared memory if not needed. */
-    if (!child_process_kinds[child_type].shmem_attach) {
-      dsm_detach_all();
-      PGSharedMemoryDetach();
-    }
-
-    /*
-     * Enter the Main function with TopMemoryContext.  The startup data is
-     * allocated in PostmasterContext, so we cannot release it here yet.
-     * The Main function will do it after it's done handling the startup
-     * data.
-     */
-    MemoryContextSwitchTo(TopMemoryContext);
-
-    MyPMChildSlot = child_slot;
-    if (client_sock) {
-      MyClientSocket = (ClientSocket *)palloc(sizeof(ClientSocket));
-      memcpy(MyClientSocket, client_sock, sizeof(ClientSocket));
-    }
-
-    /*
-     * Run the appropriate Main function
-     */
-    child_process_kinds[child_type].main_fn(startup_data, startup_data_len);
-    pg_unreachable(); /* main_fn never returns */
-  }
-#endif /* EXEC_BACKEND */
-  return pid;
 }
 
 #ifdef EXEC_BACKEND
@@ -594,7 +511,7 @@ void SubPostmasterMain(int argc, char *argv[]) {
   read_backend_variables(argv[2], &startup_data, &startup_data_len);
 
   /* Close the postmaster's sockets (as soon as we know them) */
-  ClosePostmasterPorts(child_type == B_LOGGER);
+  ClosePostmasterPorts();
 
   /* Setup as postmaster child */
   InitPostmasterChild();
@@ -714,9 +631,6 @@ static bool save_backend_variables(BackendParameters *param, int child_slot,
   param->PostmasterPid = PostmasterPid;
   param->PgStartTime = PgStartTime;
   param->PgReloadTime = PgReloadTime;
-  param->first_syslogger_file_time = first_syslogger_file_time;
-
-  param->redirection_done = redirection_done;
   param->IsBinaryUpgrade = IsBinaryUpgrade;
   param->query_id_enabled = query_id_enabled;
   param->max_safe_fds = max_safe_fds;
@@ -734,8 +648,6 @@ static bool save_backend_variables(BackendParameters *param, int child_slot,
   memcpy(&param->postmaster_alive_fds, &postmaster_alive_fds,
          sizeof(postmaster_alive_fds));
 #endif
-
-  memcpy(&param->syslogPipe, &syslogPipe, sizeof(syslogPipe));
 
   strlcpy(param->my_exec_path, my_exec_path, MAXPGPATH);
 
@@ -943,9 +855,6 @@ static void restore_backend_variables(BackendParameters *param) {
   PostmasterPid = param->PostmasterPid;
   PgStartTime = param->PgStartTime;
   PgReloadTime = param->PgReloadTime;
-  first_syslogger_file_time = param->first_syslogger_file_time;
-
-  redirection_done = param->redirection_done;
   IsBinaryUpgrade = param->IsBinaryUpgrade;
   query_id_enabled = param->query_id_enabled;
   max_safe_fds = param->max_safe_fds;
@@ -960,8 +869,6 @@ static void restore_backend_variables(BackendParameters *param) {
   memcpy(&postmaster_alive_fds, &param->postmaster_alive_fds,
          sizeof(postmaster_alive_fds));
 #endif
-
-  memcpy(&syslogPipe, &param->syslogPipe, sizeof(syslogPipe));
 
   strlcpy(my_exec_path, param->my_exec_path, MAXPGPATH);
 

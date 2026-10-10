@@ -58,7 +58,6 @@
 #include "parser/parser.h"
 #include "pgstat.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/syslogger.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 #include "storage/copydir.h"
@@ -1327,24 +1326,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      check_default_with_oids,
      NULL,
      NULL},
-    {{"logging_collector", PGC_POSTMASTER, LOGGING_WHERE,
-      gettext_noop("Start a subprocess to capture stderr, csvlog and/or "
-                   "jsonlog into log files."),
-      NULL},
-     &Logging_collector,
-     false,
-     NULL,
-     NULL,
-     NULL},
-    {{"log_truncate_on_rotation", PGC_SIGHUP, LOGGING_WHERE,
-      gettext_noop(
-          "Truncate existing log files of same name during log rotation."),
-      NULL},
-     &Log_truncate_on_rotation,
-     false,
-     NULL,
-     NULL,
-     NULL},
 
     {{"trace_sort", PGC_USERSET, DEVELOPER_OPTIONS,
       gettext_noop("Emit information about resource usage in sorting."), NULL,
@@ -1879,21 +1860,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      show_unix_socket_permissions},
 
-    {{"log_file_mode", PGC_SIGHUP, LOGGING_WHERE,
-      gettext_noop("Sets the file permissions for log files."),
-      gettext_noop("The parameter value is expected "
-                   "to be a numeric mode specification in the form "
-                   "accepted by the chmod and umask system calls. "
-                   "(To use the customary octal format the number must "
-                   "start with a 0 (zero).)")},
-     &Log_file_mode,
-     0600,
-     0000,
-     0777,
-     NULL,
-     NULL,
-     show_log_file_mode},
-
     {{"data_directory_mode", PGC_INTERNAL, PRESET_OPTIONS,
       gettext_noop("Shows the mode of the data directory."),
       gettext_noop("The parameter value is a numeric mode specification "
@@ -2342,32 +2308,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      DEFAULT_BACKEND_FLUSH_AFTER,
      0,
      WRITEBACK_MAX_PENDING_FLUSHES,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"log_rotation_age", PGC_SIGHUP, LOGGING_WHERE,
-      gettext_noop("Sets the amount of time to wait before forcing "
-                   "log file rotation."),
-      gettext_noop("0 disables time-based creation of new log files."),
-      GUC_UNIT_MIN},
-     &Log_RotationAge,
-     HOURS_PER_DAY *MINS_PER_HOUR,
-     0,
-     INT_MAX / SECS_PER_MINUTE,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"log_rotation_size", PGC_SIGHUP, LOGGING_WHERE,
-      gettext_noop("Sets the maximum size a log file can reach before "
-                   "being rotated."),
-      gettext_noop("0 disables size-based creation of new log files."),
-      GUC_UNIT_KB},
-     &Log_RotationSize,
-     10 * 1024,
-     0,
-     INT_MAX,
      NULL,
      NULL,
      NULL},
@@ -3045,24 +2985,6 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
      "stderr",
      check_log_destination,
      assign_log_destination,
-     NULL},
-    {{"log_directory", PGC_SIGHUP, LOGGING_WHERE,
-      gettext_noop("Sets the destination directory for log files."),
-      gettext_noop("Can be specified as relative to the data directory "
-                   "or as absolute path."),
-      GUC_SUPERUSER_ONLY},
-     &Log_directory,
-     "log",
-     check_canonical_path,
-     NULL,
-     NULL},
-    {{"log_filename", PGC_SIGHUP, LOGGING_WHERE,
-      gettext_noop("Sets the file name pattern for log files."), NULL,
-      GUC_SUPERUSER_ONLY},
-     &Log_filename,
-     "postgresql-%Y-%m-%d_%H%M%S.log",
-     NULL,
-     NULL,
      NULL},
 
     {{"syslog_ident", PGC_SIGHUP, LOGGING_WHERE,

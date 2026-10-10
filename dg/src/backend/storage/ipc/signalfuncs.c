@@ -19,7 +19,6 @@
 #include "catalog/pg_authid.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/syslogger.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -243,23 +242,5 @@ Datum pg_reload_conf(PG_FUNCTION_ARGS) {
     PG_RETURN_BOOL(false);
   }
 
-  PG_RETURN_BOOL(true);
-}
-
-/*
- * Rotate log file
- *
- * Permission checking for this function is managed through the normal
- * GRANT system.
- */
-Datum pg_rotate_logfile(PG_FUNCTION_ARGS) {
-  if (!Logging_collector) {
-    ereport(
-        WARNING,
-        (errmsg("rotation not possible because log collection not active")));
-    PG_RETURN_BOOL(false);
-  }
-
-  SendPostmasterSignal(PMSIGNAL_ROTATE_LOGFILE);
   PG_RETURN_BOOL(true);
 }

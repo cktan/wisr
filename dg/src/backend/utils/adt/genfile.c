@@ -27,7 +27,6 @@
 #include "funcapi.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "postmaster/syslogger.h"
 #include "storage/fd.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -39,7 +38,7 @@
  * Convert a "text" filename argument to C string, and check it's allowable.
  *
  * Filename may be absolute or relative to the DataDir, but we only allow
- * absolute paths that match DataDir or Log_directory.
+ * absolute paths that match DataDir.
  *
  * This does a privilege check against the 'pg_read_server_files' role, so
  * this function is really only appropriate for callers who are only checking
@@ -66,13 +65,8 @@ static char *convert_and_check_filename(text *arg) {
    * allowable
    */
   if (is_absolute_path(filename)) {
-    /*
-     * Allow absolute paths if within DataDir or Log_directory, even
-     * though Log_directory might be outside DataDir.
-     */
-    if (!path_is_prefix_of_path(DataDir, filename) &&
-        (!is_absolute_path(Log_directory) ||
-         !path_is_prefix_of_path(Log_directory, filename)))
+    /* Allow absolute paths if within DataDir. */
+    if (!path_is_prefix_of_path(DataDir, filename))
       ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       errmsg("absolute path not allowed")));
   } else if (!path_is_relative_and_below_cwd(filename))
@@ -548,11 +542,6 @@ static Datum pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir,
 
   FreeDir(dirdesc);
   return (Datum)0;
-}
-
-/* Function to return the list of files in the log directory */
-Datum pg_ls_logdir(PG_FUNCTION_ARGS) {
-  return pg_ls_dir_files(fcinfo, Log_directory, false);
 }
 
 /*

@@ -1,0 +1,5 @@
+# Writable globals that are one for the process, not one a thread:
+# cxx_thread_local.py --check accepts these, and only these, outside
+# thread_local. Each line names the object, from src, and the variable
+# as objdump -C names it, with the reason after a '#'.
+backend/utils/error/elog.o stderr_mutex  # serializes every thread's writes to stderr

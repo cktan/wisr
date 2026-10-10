@@ -19,7 +19,6 @@
 #include "lib/stringinfo.h"
 #include "libpq/libpq-be.h"
 #include "miscadmin.h"
-#include "postmaster/syslogger.h"
 #include "storage/lock.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
@@ -238,11 +237,7 @@ void write_csvlog(ErrorData *edata) {
 
   appendStringInfoChar(&buf, '\n');
 
-  /* If in the syslogger process, try to write messages direct to file */
-  if (MyBackendType == B_LOGGER)
-    write_syslogger_file(buf.data, buf.len, LOG_DESTINATION_CSVLOG);
-  else
-    write_pipe_chunks(buf.data, buf.len, LOG_DESTINATION_CSVLOG);
+  write_console(buf.data, buf.len);
 
   pfree(buf.data);
 }

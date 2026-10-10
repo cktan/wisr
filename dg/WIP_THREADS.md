@@ -99,8 +99,8 @@ and a fast shutdown with an idle session open (`SignalProc`).
 - **Crash and immediate shutdown.** `SIGQUIT` reaches a thread
   as a flag, and `quickdie()` calls `_exit(2)`: the whole
   server ends. There is no crash restart for threads.
-- **No auxiliary process forks** (`WORKNOTE.md` step 17). The
-  syslogger still does, with `logging_collector`.
+- **Nothing forks but `popen()`** (`WORKNOTE.md` steps 17 and
+  20): `COPY ... PROGRAM` and the like, which exec at once.
 - **Untested**: cancel and terminate from SQL (a function call
   needs catalog tables), and a reload (`SIGHUP`) reaching a
   session.

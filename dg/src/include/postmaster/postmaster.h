@@ -85,11 +85,10 @@ extern thread_local /*SHARED*/ PGDLLIMPORT int postmaster_alive_fds[2];
 
 extern thread_local /*SHARED*/ PGDLLIMPORT const char *progname;
 
-extern thread_local /*SHARED*/ PGDLLIMPORT bool redirection_done;
 extern PGDLLIMPORT bool LoadedSSL;
 
 pg_noreturn extern void PostmasterMain(int argc, char *argv[]);
-extern void ClosePostmasterPorts(bool am_syslogger);
+extern void ClosePostmasterPorts(void);
 extern void InitProcessGlobals(void);
 
 extern int MaxLivePostmasterChildren(void);
@@ -103,10 +102,6 @@ extern void pgwin32_register_deadchild_callback(HANDLE procHandle,
 extern thread_local /*LOCAL*/ PGDLLIMPORT struct ClientSocket *MyClientSocket;
 
 /* prototypes for functions in launch_backend.c */
-extern pid_t postmaster_child_launch(BackendType child_type, int child_slot,
-                                     void *startup_data,
-                                     size_t startup_data_len,
-                                     struct ClientSocket *client_sock);
 const char *PostmasterChildName(BackendType child_type);
 #ifdef EXEC_BACKEND
 pg_noreturn extern void SubPostmasterMain(int argc, char *argv[]);

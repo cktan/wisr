@@ -18,7 +18,8 @@ is writable and not thread_local when it lies in .bss, .data,
         every extern declaration of it
     cxx_thread_local.py --check SRC
         fail if a writable variable is not thread_local, or if an object
-        has a static initialiser
+        has a static initialiser; the variables process_wide.txt lists,
+        beside this script, are one for the process by design
 
 LIST has one variable a line, the object named from SRC and the
 variable as objdump -C names it, a function's static as
@@ -93,9 +94,14 @@ def read_list(path):
 
 
 def check(src):
-    """Report each writable variable not thread_local, and each static
-    initialiser; 1 if there is any."""
+    """Report each writable variable not thread_local, but for those
+    process_wide.txt lists, and each static initialiser; 1 if there
+    is any."""
     found, init = writable(src, True)
+    # One for the process by design: process_wide.txt says why.
+    process_wide = read_list(os.path.join(os.path.dirname(
+        os.path.abspath(__file__)), "process_wide.txt"))
+    found = {k: v for k, v in found.items() if k not in process_wide}
     for key in sorted(found):
         print("not thread_local: %s %s" % key)
     for obj in sorted(init):

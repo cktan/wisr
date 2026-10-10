@@ -25,7 +25,6 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/syslogger.h"
 #include "storage/bufmgr.h"
 #include "utils/acl.h"
 #include "utils/backend_status.h"
@@ -960,16 +959,6 @@ const char *show_data_directory_mode(void) {
   static thread_local /*LOCAL*/ char buf[12];
 
   snprintf(buf, sizeof(buf), "%04o", data_directory_mode);
-  return buf;
-}
-
-/*
- * GUC show_hook for log_file_mode
- */
-const char *show_log_file_mode(void) {
-  static thread_local /*LOCAL*/ char buf[12];
-
-  snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
   return buf;
 }
 

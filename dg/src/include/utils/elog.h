@@ -571,7 +571,7 @@ extern char *get_formatted_log_time(void);
 extern const char *get_backend_type_for_log(void);
 extern bool check_log_of_query(ErrorData *edata);
 extern const char *error_severity(int elevel);
-extern void write_pipe_chunks(char *data, int len, int dest);
+extern void write_console(const char *line, int len);
 
 /* Destination-specific functions */
 extern void write_csvlog(ErrorData *edata);

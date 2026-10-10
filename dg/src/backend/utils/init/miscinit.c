@@ -102,12 +102,7 @@ void InitPostmasterChild(void) {
 
   InitProcessGlobals();
 
-  /*
-   * make sure stderr is in binary mode before anything can possibly be
-   * written to it, in case it's actually the syslogger pipe, so the pipe
-   * chunking protocol isn't disturbed. Non-logpipe data gets translated on
-   * redirection (e.g. via pg_ctl -l) anyway.
-   */
+  /* make sure stderr is in binary mode before anything is written to it */
 #ifdef WIN32
   _setmode(fileno(stderr), _O_BINARY);
 #endif
@@ -261,9 +256,6 @@ const char *GetBackendTypeDesc(BackendType backendType) {
     break;
   case B_DEAD_END_BACKEND:
     backendDesc = gettext_noop("dead-end client backend");
-    break;
-  case B_LOGGER:
-    backendDesc = gettext_noop("logger");
     break;
   case B_SLOTSYNC_WORKER:
     backendDesc = gettext_noop("slotsync worker");

@@ -377,15 +377,9 @@ typedef enum BackendType {
    */
   B_WAL_RECEIVER,
   B_WAL_SUMMARIZER,
-
-  /*
-   * Logger is not connected to shared memory and does not have a PGPROC
-   * entry.
-   */
-  B_LOGGER,
 } BackendType;
 
-#define BACKEND_NUM_TYPES (B_LOGGER + 1)
+#define BACKEND_NUM_TYPES (B_WAL_SUMMARIZER + 1)
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT BackendType MyBackendType;
 

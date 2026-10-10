@@ -31,8 +31,7 @@
  * only one notification of it.  This is okay for the present uses.
  */
 typedef enum {
-  PMSIGNAL_ROTATE_LOGFILE,    /* send SIGUSR1 to syslogger to rotate logfile */
-  PMSIGNAL_START_WALRECEIVER, /* start a walreceiver */
+  PMSIGNAL_START_WALRECEIVER,     /* start a walreceiver */
   PMSIGNAL_ADVANCE_STATE_MACHINE, /* advance postmaster's state machine */
 } PMSignalReason;
 

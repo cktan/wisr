@@ -107,8 +107,8 @@ static void backend_thread_main(void *arg) {
 }
 
 /*
- * Start a backend of child_type as a thread, as postmaster_child_launch()
- * forks one, and return its pid, which is its thread id.  *thread is its
+ * Start a backend of child_type as a thread, as the postmaster once forked
+ * one, and return its pid, which is its thread id.  *thread is its
  * launch record, for backend_thread_signal() and the postmaster's
  * bookkeeping.
  */

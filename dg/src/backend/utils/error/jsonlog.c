@@ -19,7 +19,6 @@
 #include "libpq/libpq-be.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
-#include "postmaster/syslogger.h"
 #include "storage/lock.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
@@ -272,11 +271,7 @@ void write_jsonlog(ErrorData *edata) {
   appendStringInfoChar(&buf, '}');
   appendStringInfoChar(&buf, '\n');
 
-  /* If in the syslogger process, try to write messages direct to file */
-  if (MyBackendType == B_LOGGER)
-    write_syslogger_file(buf.data, buf.len, LOG_DESTINATION_JSONLOG);
-  else
-    write_pipe_chunks(buf.data, buf.len, LOG_DESTINATION_JSONLOG);
+  write_console(buf.data, buf.len);
 
   pfree(buf.data);
 }

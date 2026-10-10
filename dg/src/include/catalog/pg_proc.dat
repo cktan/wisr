@@ -6349,16 +6349,6 @@
 { oid => '2621', descr => 'reload configuration files',
   proname => 'pg_reload_conf', provolatile => 'v', prorettype => 'bool',
   proargtypes => '', prosrc => 'pg_reload_conf' },
-{ oid => '2622', descr => 'rotate log file',
-  proname => 'pg_rotate_logfile', provolatile => 'v', prorettype => 'bool',
-  proargtypes => '', prosrc => 'pg_rotate_logfile' },
-{ oid => '3800', descr => 'current logging collector file location',
-  proname => 'pg_current_logfile', proisstrict => 'f', provolatile => 'v',
-  prorettype => 'text', proargtypes => '', prosrc => 'pg_current_logfile' },
-{ oid => '3801', descr => 'current logging collector file location',
-  proname => 'pg_current_logfile', proisstrict => 'f', provolatile => 'v',
-  prorettype => 'text', proargtypes => 'text',
-  prosrc => 'pg_current_logfile_1arg' },
 
 { oid => '2623', descr => 'get information about file',
   proname => 'pg_stat_file', provolatile => 'v', prorettype => 'record',
@@ -10641,11 +10631,6 @@
   prosrc => 'pg_database_collation_actual_version' },
 
 # system management/monitoring related functions
-{ oid => '3353', descr => 'list files in the log directory',
-  proname => 'pg_ls_logdir', procost => '10', prorows => '20', proretset => 't',
-  provolatile => 'v', prorettype => 'record', proargtypes => '',
-  proallargtypes => '{text,int8,timestamptz}', proargmodes => '{o,o,o}',
-  proargnames => '{name,size,modification}', prosrc => 'pg_ls_logdir' },
 { oid => '5029', descr => 'list files in the pgsql_tmp directory',
   proname => 'pg_ls_tmpdir', procost => '10', prorows => '20', proretset => 't',
   provolatile => 'v', prorettype => 'record', proargtypes => '',

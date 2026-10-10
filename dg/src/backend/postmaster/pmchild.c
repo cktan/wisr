@@ -72,9 +72,7 @@ int MaxLivePostmasterChildren(void) {
  * Initialize at postmaster startup
  *
  * Note: This is not called on crash restart.  We rely on PMChild entries to
- * remain valid through the restart process.  This is important because the
- * syslogger survives through the crash restart process, so we must not
- * invalidate its PMChild slot.
+ * remain valid through the restart process.
  */
 void InitPostmasterChildSlots(void) {
   int slotno;
@@ -98,7 +96,6 @@ void InitPostmasterChildSlots(void) {
   pmchild_pools[B_SLOTSYNC_WORKER].size = 1;
   pmchild_pools[B_WAL_RECEIVER].size = 1;
   pmchild_pools[B_WAL_SUMMARIZER].size = 1;
-  pmchild_pools[B_LOGGER].size = 1;
 
   /* The rest of the pmchild_pools are left at zero size */
 
