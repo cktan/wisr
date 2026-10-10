@@ -49,6 +49,13 @@ and §5 first.
    - No SQL can test cancel yet: a function call needs catalog
      tables, and nothing runs long without one.
 
+4. **Option B, piece 2: a timer a thread.** `timeout.c` arms
+   its own timer with `timer_create(SIGEV_THREAD_ID)`, made on
+   first use in each thread and deleted at its exit, instead of
+   the process's `setitimer()`; `SIGALRM` goes to the thread
+   that set the timeout. The authentication-timeout check in
+   `test/server.sh` fails with the timer left unarmed.
+
 ## Open: how a session thread is reached (issue 2)
 
 `BackendStartup()` starting a thread instead of a process is

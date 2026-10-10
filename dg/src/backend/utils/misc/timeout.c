@@ -14,9 +14,12 @@
  */
 #include "postgres.h"
 
-#include <sys/time.h>
+#include <signal.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "miscadmin.h"
+#include "storage/ipc.h"
 #include "storage/latch.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
@@ -76,6 +79,50 @@ static thread_local /*LOCAL*/ volatile sig_atomic_t alarm_enabled = false;
  */
 static thread_local /*LOCAL*/ volatile sig_atomic_t signal_pending = false;
 static thread_local /*LOCAL*/ volatile TimestampTz signal_due_at = 0;
+
+/*
+ * This thread's timer.  Each thread has its own, which sends SIGALRM to that
+ * thread alone, so a session's timeouts stay its own when sessions are
+ * threads; setitimer() has one timer a process.  It is made on first use:
+ * alarm_timer_tid is the thread that made it, as a forked child inherits
+ * the variables but not the timer.
+ */
+static thread_local /*LOCAL*/ timer_t alarm_timer;
+static thread_local /*LOCAL*/ pid_t alarm_timer_tid = 0;
+
+/* Delete this thread's timer as it ends: an on_proc_exit callback. */
+static void delete_alarm_timer(int code, Datum arg) {
+  if (alarm_timer_tid == gettid()) {
+    timer_delete(alarm_timer);
+    alarm_timer_tid = 0;
+  }
+}
+
+/*
+ * Arm this thread's timer to fire once, secs and usecs from now, making the
+ * timer first if this thread has none.  Returns 0, or -1 with errno set.
+ */
+static int set_alarm_timer(long secs, int usecs) {
+  struct itimerspec its;
+
+  if (alarm_timer_tid != gettid()) {
+    struct sigevent sev;
+
+    memset(&sev, 0, sizeof(sev));
+    sev.sigev_notify = SIGEV_THREAD_ID;
+    sev.sigev_signo = SIGALRM;
+    sev._sigev_un._tid = gettid(); /* sigev_notify_thread_id */
+    if (timer_create(CLOCK_MONOTONIC, &sev, &alarm_timer) != 0)
+      return -1;
+    alarm_timer_tid = gettid();
+    on_proc_exit(delete_alarm_timer, 0);
+  }
+
+  memset(&its, 0, sizeof(its));
+  its.it_value.tv_sec = secs;
+  its.it_value.tv_nsec = usecs * 1000L;
+  return timer_settime(alarm_timer, 0, &its, NULL);
+}
 
 /*****************************************************************************
  * Internal helper functions
@@ -196,12 +243,9 @@ static void enable_timeout(TimeoutId id, TimestampTz now, TimestampTz fin_time,
  */
 static void schedule_alarm(TimestampTz now) {
   if (num_active_timeouts > 0) {
-    struct itimerval timeval;
     TimestampTz nearest_timeout;
     long secs;
     int usecs;
-
-    MemSet(&timeval, 0, sizeof(struct itimerval));
 
     /*
      * If we think there's a signal pending, but current time is more than
@@ -210,7 +254,7 @@ static void schedule_alarm(TimestampTz now) {
      * the interrupt request below.  (10ms corresponds to the worst-case
      * timeout granularity on modern systems.)  It won't hurt us if the
      * interrupt does manage to fire between now and when we reach the
-     * setitimer() call.
+     * set_alarm_timer() call.
      */
     if (signal_pending && now > signal_due_at + 10 * 1000)
       signal_pending = false;
@@ -238,18 +282,15 @@ static void schedule_alarm(TimestampTz now) {
         usecs = 1;
     }
 
-    timeval.it_value.tv_sec = secs;
-    timeval.it_value.tv_usec = usecs;
-
     /*
-     * We must enable the signal handler before calling setitimer(); if we
+     * We must enable the signal handler before calling set_alarm_timer(); if we
      * did it in the other order, we'd have a race condition wherein the
      * interrupt could occur before we can set alarm_enabled, so that the
      * signal handler would fail to do anything.
      *
      * Because we didn't bother to disable the timer in disable_alarm(),
      * it's possible that a previously-set interrupt will fire between
-     * enable_alarm() and setitimer().  This is safe, however.  There are
+     * enable_alarm() and set_alarm_timer().  This is safe, however.  There are
      * two possible outcomes:
      *
      * 1. The signal handler finds nothing to do (because the nearest
@@ -281,16 +322,16 @@ static void schedule_alarm(TimestampTz now) {
      * interrupt is wasted work, but it's not terribly much work, and this
      * method has very significant advantages in the common use-case where
      * we repeatedly set a timeout that we don't expect to reach and then
-     * cancel it.  Instead of invoking setitimer() every time the timeout
+     * cancel it.  Instead of invoking set_alarm_timer() every time the timeout
      * is set or canceled, we perform one interrupt and a re-scheduling
-     * setitimer() call at intervals roughly equal to the timeout delay.
+     * set_alarm_timer() call at intervals roughly equal to the timeout delay.
      * For example, with statement_timeout = 1s and a throughput of
      * thousands of queries per second, this method requires an interrupt
-     * and setitimer() call roughly once a second, rather than thousands
-     * of setitimer() calls per second.
+     * and set_alarm_timer() call roughly once a second, rather than thousands
+     * of set_alarm_timer() calls per second.
      *
      * Because of the possible passage of time between when we obtained
-     * "now" and when we reach setitimer(), the kernel's opinion of when
+     * "now" and when we reach set_alarm_timer(), the kernel's opinion of when
      * to trigger the interrupt is likely to be a bit later than
      * signal_due_at.  That's fine, for the same reasons described above.
      */
@@ -299,17 +340,17 @@ static void schedule_alarm(TimestampTz now) {
 
     /*
      * As with calling enable_alarm(), we must set signal_pending *before*
-     * calling setitimer(); if we did it after, the signal handler could
+     * calling set_alarm_timer(); if we did it after, the signal handler could
      * trigger before we set it, leaving us with a false opinion that a
      * signal is still coming.
      *
      * Other race conditions involved with setting/checking signal_pending
      * are okay, for the reasons described above.  One additional point is
      * that the signal handler could fire after we set signal_due_at, but
-     * still before the setitimer() call.  Then the handler could
+     * still before the set_alarm_timer() call.  Then the handler could
      * overwrite signal_due_at with a value it computes, which will be the
      * same as or perhaps later than what we just computed.  After we
-     * perform setitimer(), the net effect would be that signal_due_at
+     * perform set_alarm_timer(), the net effect would be that signal_due_at
      * gives a time later than when the interrupt will really happen;
      * which is a safe situation.
      */
@@ -317,7 +358,7 @@ static void schedule_alarm(TimestampTz now) {
     signal_pending = true;
 
     /* Set the alarm timer */
-    if (setitimer(ITIMER_REAL, &timeval, NULL) != 0) {
+    if (set_alarm_timer(secs, usecs) != 0) {
       /*
        * Clearing signal_pending here is a bit pro forma, but not
        * entirely so, since something in the FATAL exit path could try
@@ -578,7 +619,7 @@ void enable_timeout_at(TimeoutId id, TimestampTz fin_time) {
  *
  * This works like calling enable_timeout_after() and/or enable_timeout_at()
  * multiple times.  Use this to reduce the number of GetCurrentTimestamp()
- * and setitimer() calls needed to establish multiple timeouts.
+ * and set_alarm_timer() calls needed to establish multiple timeouts.
  */
 void enable_timeouts(const EnableTimeoutParams *timeouts, int count) {
   TimestampTz now;
@@ -657,7 +698,7 @@ void disable_timeout(TimeoutId id, bool keep_indicator) {
  *
  * This works like calling disable_timeout() multiple times.
  * Use this to reduce the number of GetCurrentTimestamp()
- * and setitimer() calls needed to cancel multiple timeouts.
+ * and set_alarm_timer() calls needed to cancel multiple timeouts.
  */
 void disable_timeouts(const DisableTimeoutParams *timeouts, int count) {
   int i;
