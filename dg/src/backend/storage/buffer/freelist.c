@@ -317,26 +317,6 @@ void StrategyFreeBuffer(BufferDesc *buf) {
 }
 
 /*
- * StrategyShmemSize
- *
- * estimate the size of shared memory used by the freelist-related structures.
- *
- * Note: for somewhat historical reasons, the buffer lookup hashtable size
- * is also determined here.
- */
-Size StrategyShmemSize(void) {
-  Size size = 0;
-
-  /* size of lookup hash table ... see comment in StrategyInitialize */
-  size = add_size(size, BufTableShmemSize(NBuffers + NUM_BUFFER_PARTITIONS));
-
-  /* size of the shared replacement strategy control block */
-  size = add_size(size, MAXALIGN(sizeof(BufferStrategyControl)));
-
-  return size;
-}
-
-/*
  * StrategyInitialize -- initialize the buffer cache replacement
  *		strategy.
  *

@@ -214,20 +214,6 @@ static InjectionPointCacheEntry *injection_point_cache_get(const char *name) {
 #endif /* USE_INJECTION_POINTS */
 
 /*
- * Return the space for dynamic shared hash table.
- */
-Size InjectionPointShmemSize(void) {
-#ifdef USE_INJECTION_POINTS
-  Size sz = 0;
-
-  sz = add_size(sz, sizeof(InjectionPointsCtl));
-  return sz;
-#else
-  return 0;
-#endif
-}
-
-/*
  * Allocate shmem space for dynamic shared hash.
  */
 void InjectionPointShmemInit(void) {

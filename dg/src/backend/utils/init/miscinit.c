@@ -41,7 +41,6 @@
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
-#include "storage/pg_shmem.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"

@@ -61,9 +61,9 @@
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 #include "storage/copydir.h"
+#include "storage/dsm_impl.h"
 #include "storage/fd.h"
 #include "storage/large_object.h"
-#include "storage/pg_shmem.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procnumber.h"
@@ -438,7 +438,6 @@ static thread_local /*LOCAL*/ int max_index_keys;
 static thread_local /*LOCAL*/ int max_identifier_length;
 static thread_local /*LOCAL*/ int block_size;
 static thread_local /*LOCAL*/ int segment_size;
-static thread_local /*LOCAL*/ int shared_memory_size_mb;
 static thread_local /*LOCAL*/ int num_os_semaphores;
 static thread_local /*LOCAL*/ bool data_checksums;
 static thread_local /*LOCAL*/ bool integer_datetimes;
@@ -1654,20 +1653,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      MAX_BAS_VAC_RING_SIZE_KB,
      check_vacuum_buffer_usage_limit,
-     NULL,
-     NULL},
-
-    {{"shared_memory_size", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Shows the size of the server's main shared memory area "
-                   "(rounded up to the nearest MB)."),
-      NULL,
-      GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_UNIT_MB |
-          GUC_RUNTIME_COMPUTED},
-     &shared_memory_size_mb,
-     0,
-     0,
-     INT_MAX,
-     NULL,
      NULL,
      NULL},
 

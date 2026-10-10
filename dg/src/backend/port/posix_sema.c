@@ -195,11 +195,7 @@ void PGReserveSemaphores(int maxSemas) {
     elog(PANIC, "out of memory");
 #else
 
-  /*
-   * We must use ShmemAllocUnlocked(), since the spinlock protecting
-   * ShmemAlloc() won't be ready yet.
-   */
-  sharedSemas = (PGSemaphore)ShmemAllocUnlocked(PGSemaphoreShmemSize(maxSemas));
+  sharedSemas = (PGSemaphore)ShmemAlloc(PGSemaphoreShmemSize(maxSemas));
 #endif
 
   numSems = 0;

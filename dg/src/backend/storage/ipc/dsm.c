@@ -41,7 +41,6 @@
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
-#include "storage/pg_shmem.h"
 #include "storage/shmem.h"
 #include "utils/freepage.h"
 #include "utils/memutils.h"
@@ -165,7 +164,7 @@ static inline void ResourceOwnerForgetDSM(ResourceOwner owner,
  * This is called just once during each cluster lifetime, at postmaster
  * startup time.
  */
-void dsm_postmaster_startup(PGShmemHeader *shim) {
+void dsm_postmaster_startup(void) {
   void *dsm_control_address = NULL;
   uint32 maxitems;
   Size segsize;
@@ -173,10 +172,8 @@ void dsm_postmaster_startup(PGShmemHeader *shim) {
   Assert(!IsUnderPostmaster);
 
   /*
-   * If we're using the mmap implementations, clean up any leftovers.
-   * Cleanup isn't needed on Windows, and happens earlier in startup for
-   * POSIX and System V shared memory, via a direct call to
-   * dsm_cleanup_using_control_segment.
+   * If we're using the mmap implementations, clean up any leftovers.  No
+   * cleanup is made for POSIX and System V segments a previous server left.
    */
   if (dynamic_shared_memory_type == DSM_IMPL_MMAP)
     dsm_cleanup_for_mmap();
@@ -206,89 +203,14 @@ void dsm_postmaster_startup(PGShmemHeader *shim) {
       break;
   }
   dsm_control = (dsm_control_header *)dsm_control_address;
-  on_shmem_exit(dsm_postmaster_shutdown, PointerGetDatum(shim));
+  on_shmem_exit(dsm_postmaster_shutdown, (Datum)0);
   elog(DEBUG2, "created dynamic shared memory control segment %u (%zu bytes)",
        dsm_control_handle, segsize);
-  shim->dsm_control = dsm_control_handle;
 
   /* Initialize control segment. */
   dsm_control->magic = PG_DYNSHMEM_CONTROL_MAGIC;
   dsm_control->nitems = 0;
   dsm_control->maxitems = maxitems;
-}
-
-/*
- * Determine whether the control segment from the previous postmaster
- * invocation still exists.  If so, remove the dynamic shared memory
- * segments to which it refers, and then the control segment itself.
- */
-void dsm_cleanup_using_control_segment(dsm_handle old_control_handle) {
-  void *mapped_address = NULL;
-  void *junk_mapped_address = NULL;
-  void *impl_private = NULL;
-  void *junk_impl_private = NULL;
-  Size mapped_size = 0;
-  Size junk_mapped_size = 0;
-  uint32 nitems;
-  uint32 i;
-  dsm_control_header *old_control;
-
-  /*
-   * Try to attach the segment.  If this fails, it probably just means that
-   * the operating system has been rebooted and the segment no longer
-   * exists, or an unrelated process has used the same shm ID.  So just fall
-   * out quietly.
-   */
-  if (!dsm_impl_op(DSM_OP_ATTACH, old_control_handle, 0, &impl_private,
-                   &mapped_address, &mapped_size, DEBUG1))
-    return;
-
-  /*
-   * We've managed to reattach it, but the contents might not be sane. If
-   * they aren't, we disregard the segment after all.
-   */
-  old_control = (dsm_control_header *)mapped_address;
-  if (!dsm_control_segment_sane(old_control, mapped_size)) {
-    dsm_impl_op(DSM_OP_DETACH, old_control_handle, 0, &impl_private,
-                &mapped_address, &mapped_size, LOG);
-    return;
-  }
-
-  /*
-   * OK, the control segment looks basically valid, so we can use it to get
-   * a list of segments that need to be removed.
-   */
-  nitems = old_control->nitems;
-  for (i = 0; i < nitems; ++i) {
-    dsm_handle handle;
-    uint32 refcnt;
-
-    /* If the reference count is 0, the slot is actually unused. */
-    refcnt = old_control->item[i].refcnt;
-    if (refcnt == 0)
-      continue;
-
-    /* If it was using the main shmem area, there is nothing to do. */
-    handle = old_control->item[i].handle;
-    if (is_main_region_dsm_handle(handle))
-      continue;
-
-    /* Log debugging information. */
-    elog(DEBUG2,
-         "cleaning up orphaned dynamic shared memory with ID %u (reference "
-         "count %u)",
-         handle, refcnt);
-
-    /* Destroy the referenced segment. */
-    dsm_impl_op(DSM_OP_DESTROY, handle, 0, &junk_impl_private,
-                &junk_mapped_address, &junk_mapped_size, LOG);
-  }
-
-  /* Destroy the old control segment, too. */
-  elog(DEBUG2, "cleaning up dynamic shared memory control segment with ID %u",
-       old_control_handle);
-  dsm_impl_op(DSM_OP_DESTROY, old_control_handle, 0, &impl_private,
-              &mapped_address, &mapped_size, LOG);
 }
 
 /*
@@ -341,7 +263,6 @@ static void dsm_postmaster_shutdown(int code, Datum arg) {
   void *junk_mapped_address = NULL;
   void *junk_impl_private = NULL;
   Size junk_mapped_size = 0;
-  PGShmemHeader *shim = (PGShmemHeader *)DatumGetPointer(arg);
 
   /*
    * If some other backend exited uncleanly, it might have corrupted the
@@ -384,7 +305,6 @@ static void dsm_postmaster_shutdown(int code, Datum arg) {
   dsm_impl_op(DSM_OP_DESTROY, dsm_control_handle, 0, &dsm_control_impl_private,
               &dsm_control_address, &dsm_control_mapped_size, LOG);
   dsm_control = (dsm_control_header *)dsm_control_address;
-  shim->dsm_control = 0;
 }
 
 /*

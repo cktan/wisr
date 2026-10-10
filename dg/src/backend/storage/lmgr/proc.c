@@ -123,22 +123,6 @@ static Size FastPathLockShmemSize(void) {
 }
 
 /*
- * Report shared-memory space needed by InitProcGlobal.
- */
-Size ProcGlobalShmemSize(void) {
-  Size size = 0;
-
-  /* ProcGlobal */
-  size = add_size(size, sizeof(PROC_HDR));
-  size = add_size(size, sizeof(slock_t));
-
-  size = add_size(size, PGProcShmemSize());
-  size = add_size(size, FastPathLockShmemSize());
-
-  return size;
-}
-
-/*
  * Report number of semaphores needed by InitProcGlobal.
  */
 int ProcGlobalSemas(void) {

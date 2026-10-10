@@ -963,3 +963,38 @@ process, whose threads share all its memory.
 - **Left**: the semaphores (unnamed POSIX ones, which work
   between threads as between processes), and dynamic shared
   memory (`dsm.c`, `dsm_impl.c`), which the statistics use.
+
+## Step 26: there is no shared memory
+
+Step 25 kept PostgreSQL's one block, sized ahead of time and
+carved up by name, only as a private mapping. The block itself
+goes: each structure the threads share is an ordinary
+allocation.
+
+- **`ShmemAlloc()` is a heap allocation**: zeroed, cache-line
+  aligned, never freed. Large ones are committed only as
+  touched, since the allocator maps them afresh: with
+  `shared_buffers` at 128MB an idle server is 28MB resident.
+- **The index of names is in the pcb** (`pcb->shmem_index`, a
+  map and its mutex), made once by
+  `CreateSharedMemoryAndSemaphores()` before any thread starts.
+  `ShmemInitStruct()` and `ShmemInitHash()` keep their
+  contract: a session thread that asks for a structure by name
+  finds the postmaster's. The circular bootstrap of the old
+  index, a shared hash table found through the segment header,
+  went with it, and so did `ShmemIndexLock`.
+- **Nothing is sized ahead.** `CalculateShmemSize()` went, and
+  with it every `*ShmemSize()` function it alone called, and
+  `hash_estimate_size()`; those a module's initialization still
+  uses to size its structure stay. Also gone:
+  `RequestAddinShmemSpace()`, the `shared_memory_size`
+  setting, `PGShmemHeader` and `storage/pg_shmem.h`,
+  `port/private_shmem.c`, `ShmemAllocUnlocked()` (its callers
+  use `ShmemAlloc()`), `ShmemAddrIsValid()`, and the
+  `pg_shmem_allocations` and `pg_shmem_allocations_numa`
+  views with their functions.
+- **Dynamic shared memory no longer records its control
+  segment in a header**, and `dsm_cleanup_using_control_segment()`,
+  whose caller went in step 25, is gone.
+- The names `ShmemInitStruct()` and the like are kept: renaming
+  some ninety calls would change nothing they do.

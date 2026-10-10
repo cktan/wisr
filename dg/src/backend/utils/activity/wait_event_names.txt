@@ -231,7 +231,6 @@ ABI_compatibility:
 
 Section: ClassName - WaitEventLWLock
 
-ShmemIndex	"Waiting to find or allocate space in shared memory."
 OidGen	"Waiting to allocate a new OID."
 XidGen	"Waiting to allocate a new transaction ID."
 ProcArray	"Waiting to access the shared per-process data structures (typically, to get a snapshot or report a session's transaction ID)."

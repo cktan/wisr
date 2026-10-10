@@ -34,9 +34,16 @@ struct timeout_state_free_t {
 };
 extern timeout_state_t *timeout_state_new(void);
 
+/* shmem.c: the index of the structures the threads share, by name. */
+typedef struct shmem_index_t shmem_index_t;
+struct shmem_index_free_t {
+  void operator()(shmem_index_t *index) const;
+};
+
 /* The process control block: one for the process. */
 typedef struct pcb_t {
   std::mutex stderr_mutex; /* elog.c: one message at a time to stderr */
+  std::unique_ptr<shmem_index_t, shmem_index_free_t> shmem_index;
 } pcb_t;
 
 /* The thread control block: one for each thread that runs digres code. */

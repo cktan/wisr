@@ -1641,16 +1641,6 @@ static Size MultiXactSharedStateShmemSize(void) {
   return size;
 }
 
-Size MultiXactShmemSize(void) {
-  Size size;
-
-  size = MultiXactSharedStateShmemSize();
-  size = add_size(size, SimpleLruShmemSize(multixact_offset_buffers));
-  size = add_size(size, SimpleLruShmemSize(multixact_member_buffers));
-
-  return size;
-}
-
 void MultiXactShmemInit(void) {
   bool found;
 

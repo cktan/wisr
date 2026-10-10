@@ -86,7 +86,6 @@ extern void check_on_shmem_exit_lists_are_empty(void);
 extern thread_local /*SHARED*/ PGDLLIMPORT shmem_startup_hook_type
     shmem_startup_hook;
 
-extern Size CalculateShmemSize(int *num_semaphores);
 extern void CreateSharedMemoryAndSemaphores(void);
 extern void AttachSharedMemoryStructs(void);
 extern void InitializeShmemGUCs(void);

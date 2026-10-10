@@ -69,34 +69,6 @@ static void pgstat_read_current_status(void);
 static void pgstat_setup_backend_status_context(void);
 
 /*
- * Report shared-memory space needed by BackendStatusShmemInit.
- */
-Size BackendStatusShmemSize(void) {
-  Size size;
-
-  /* BackendStatusArray: */
-  size = mul_size(sizeof(PgBackendStatus), NumBackendStatSlots);
-  /* BackendAppnameBuffer: */
-  size = add_size(size, mul_size(NAMEDATALEN, NumBackendStatSlots));
-  /* BackendClientHostnameBuffer: */
-  size = add_size(size, mul_size(NAMEDATALEN, NumBackendStatSlots));
-  /* BackendActivityBuffer: */
-  size = add_size(
-      size, mul_size(pgstat_track_activity_query_size, NumBackendStatSlots));
-#ifdef USE_SSL
-  /* BackendSslStatusBuffer: */
-  size =
-      add_size(size, mul_size(sizeof(PgBackendSSLStatus), NumBackendStatSlots));
-#endif
-#ifdef ENABLE_GSS
-  /* BackendGssStatusBuffer: */
-  size =
-      add_size(size, mul_size(sizeof(PgBackendGSSStatus), NumBackendStatSlots));
-#endif
-  return size;
-}
-
-/*
  * Initialize the shared status array and several string buffers
  * during postmaster startup.
  */

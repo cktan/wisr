@@ -32,15 +32,6 @@ typedef struct {
 static thread_local /*LOCAL*/ HTAB *SharedBufHash;
 
 /*
- * Estimate space needed for mapping hashtable
- *		size is the desired hash table size (possibly more than
- *NBuffers)
- */
-Size BufTableShmemSize(int size) {
-  return hash_estimate_size(size, sizeof(BufferLookupEnt));
-}
-
-/*
  * Initialize shmem hash table for mapping buffers
  *		size is the desired hash table size (possibly more than
  *NBuffers)

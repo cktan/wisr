@@ -20,7 +20,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int max_notify_queue_pages;
 extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
     notifyInterruptPending;
 
-extern Size AsyncShmemSize(void);
 extern void AsyncShmemInit(void);
 
 extern void NotifyMyFrontEnd(const char *channel, const char *payload,

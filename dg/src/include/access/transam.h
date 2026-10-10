@@ -261,8 +261,6 @@ extern bool TransactionIdFollowsOrEquals(TransactionId id1, TransactionId id2);
 extern TransactionId TransactionIdLatest(TransactionId mainxid, int nxids,
                                          const TransactionId *xids);
 
-/* in transam/varsup.c */
-extern Size VarsupShmemSize(void);
 extern void VarsupShmemInit(void);
 extern FullTransactionId GetNewTransactionId(bool isSubXact);
 extern FullTransactionId ReadNextFullTransactionId(void);

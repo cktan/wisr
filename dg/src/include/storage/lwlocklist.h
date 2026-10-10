@@ -31,7 +31,7 @@
  */
 
 /* 0 is available; was formerly BufFreelistLock */
-PG_LWLOCK(1, ShmemIndex)
+/* 1 was ShmemIndexLock */
 PG_LWLOCK(2, OidGen)
 PG_LWLOCK(3, XidGen)
 PG_LWLOCK(4, ProcArray)

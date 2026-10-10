@@ -120,33 +120,3 @@ void BufferManagerShmemInit(void) {
   /* Initialize per-backend file flush context */
   WritebackContextInit(&BackendWritebackContext, &backend_flush_after);
 }
-
-/*
- * BufferManagerShmemSize
- *
- * compute the size of shared memory for the buffer pool including
- * data pages, buffer descriptors, hash tables, etc.
- */
-Size BufferManagerShmemSize(void) {
-  Size size = 0;
-
-  /* size of buffer descriptors */
-  size = add_size(size, mul_size(NBuffers, sizeof(BufferDescPadded)));
-  /* to allow aligning buffer descriptors */
-  size = add_size(size, PG_CACHE_LINE_SIZE);
-
-  /* size of data pages, plus alignment padding */
-  size = add_size(size, PG_IO_ALIGN_SIZE);
-  size = add_size(size, mul_size(NBuffers, BLCKSZ));
-
-  /* size of stuff controlled by freelist.c */
-  size = add_size(size, StrategyShmemSize());
-
-  /* size of I/O condition variables */
-  size = add_size(size,
-                  mul_size(NBuffers, sizeof(ConditionVariableMinimallyPadded)));
-  /* to allow aligning the above */
-  size = add_size(size, PG_CACHE_LINE_SIZE);
-
-  return size;
-}

@@ -118,6 +118,11 @@ digres is one process; each session is a thread of it.
 - **A thread that ends abnormally stops the server**: there is
   no crash restart. The postmaster reaps no child process; a
   session waits for its own `popen()` child.
+- **There is no shared memory.** A structure the threads share
+  is an ordinary allocation: `ShmemInitStruct()` and
+  `ShmemInitHash()` make it on the heap, zeroed, or find it by
+  name in `pcb->shmem_index`, and it is never freed. Nothing is
+  sized ahead of time; do not add a `*ShmemSize()` function.
 - **What a process's exit freed, a thread's end must free:**
   `session_thread_end()` does it, and the tcb's destructors
   do it for what a block owns.

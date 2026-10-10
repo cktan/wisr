@@ -458,21 +458,6 @@ static inline int64 asyncQueuePageDiff(int64 p, int64 q) { return p - q; }
 static inline bool asyncQueuePagePrecedes(int64 p, int64 q) { return p < q; }
 
 /*
- * Report space needed for our shared memory area
- */
-Size AsyncShmemSize(void) {
-  Size size;
-
-  /* This had better match AsyncShmemInit */
-  size = mul_size(MaxBackends, sizeof(QueueBackendStatus));
-  size = add_size(size, offsetof(AsyncQueueControl, backend));
-
-  size = add_size(size, SimpleLruShmemSize(notify_buffers));
-
-  return size;
-}
-
-/*
  * Initialize our shared memory area
  */
 void AsyncShmemInit(void) {

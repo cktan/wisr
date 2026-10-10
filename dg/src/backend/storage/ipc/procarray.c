@@ -291,27 +291,15 @@ static inline FullTransactionId FullXidRelativeTo(FullTransactionId rel,
                                                   TransactionId xid);
 static void GlobalVisUpdateApply(ComputeXidHorizonsResult *horizons);
 
-/*
- * Report shared-memory space needed by ProcArrayShmemInit
- */
-Size ProcArrayShmemSize(void) {
-  Size size;
-
-  /* Size of the ProcArray structure itself */
+/* Size of the ProcArray structure itself */
 #define PROCARRAY_MAXPROCS	(MaxBackends + max_prepared_xacts)
 
-  /*
-   * Snapshots are sized to hold every xid and cached subxid of every proc;
-   * see GetMaxSnapshotSubxidCount().
-   */
+/*
+ * Snapshots are sized to hold every xid and cached subxid of every proc;
+ * see GetMaxSnapshotSubxidCount().
+ */
 #define TOTAL_MAX_CACHED_SUBXIDS \
 	((PGPROC_MAX_CACHED_SUBXIDS + 1) * PROCARRAY_MAXPROCS)
-
-  size = offsetof(ProcArrayStruct, pgprocnos);
-  size = add_size(size, mul_size(sizeof(int), PROCARRAY_MAXPROCS));
-
-  return size;
-}
 
 /*
  * Initialize the shared PGPROC array during postmaster startup.

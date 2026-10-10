@@ -73,7 +73,6 @@ extern bool MultiXactIdPrecedesOrEquals(MultiXactId multi1, MultiXactId multi2);
 
 extern void AtEOXact_MultiXact(void);
 
-extern Size MultiXactShmemSize(void);
 extern void MultiXactShmemInit(void);
 extern void TrimMultiXact(void);
 extern void SetMultiXactIdLimit(MultiXactId oldest_datminmxid,

@@ -191,13 +191,6 @@ static int SUBTRANSShmemBuffers(void) {
   return Min(Max(16, subtransaction_buffers), SLRU_MAX_ALLOWED_BUFFERS);
 }
 
-/*
- * Initialization of shared memory for SUBTRANS
- */
-Size SUBTRANSShmemSize(void) {
-  return SimpleLruShmemSize(SUBTRANSShmemBuffers());
-}
-
 void SUBTRANSShmemInit(void) {
   /* If auto-tuning is requested, now is the time to do it */
   if (subtransaction_buffers == 0) {

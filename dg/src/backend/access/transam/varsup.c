@@ -26,14 +26,6 @@
 /* pointer to variables struct in shared memory */
 thread_local /*SHARED*/ TransamVariablesData *TransamVariables = NULL;
 
-/*
- * Initialization of shared memory for TransamVariables.  The counters get
- * their first values here, as a bootstrap would: there is no WAL to recover
- * them from.  PostgreSQL's transactions begin afresh each time the server
- * starts, and write nothing: sm's are to replace them.
- */
-Size VarsupShmemSize(void) { return sizeof(TransamVariablesData); }
-
 void VarsupShmemInit(void) {
   bool found;
 

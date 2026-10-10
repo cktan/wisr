@@ -286,11 +286,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int pgstat_track_activity_query_size;
  */
 extern thread_local /*LOCAL*/ PGDLLIMPORT PgBackendStatus *MyBEEntry;
 
-/* ----------
- * Functions called from postmaster
- * ----------
- */
-extern Size BackendStatusShmemSize(void);
 extern void BackendStatusShmemInit(void);
 
 /* ----------

@@ -8050,25 +8050,9 @@
   proparallel => 'r', prorettype => 'float8', proargtypes => '',
   prosrc => 'pg_notification_queue_usage' },
 
-# shared memory usage
-{ oid => '5052', descr => 'allocations from the main shared memory segment',
-  proname => 'pg_get_shmem_allocations', prorows => '50', proretset => 't',
-  provolatile => 'v', prorettype => 'record', proargtypes => '',
-  proallargtypes => '{text,int8,int8,int8}', proargmodes => '{o,o,o,o}',
-  proargnames => '{name,off,size,allocated_size}',
-  prosrc => 'pg_get_shmem_allocations' },
-
 { oid => '4099', descr => 'Is NUMA support available?',
   proname => 'pg_numa_available', provolatile => 's', prorettype => 'bool',
   proargtypes => '', prosrc => 'pg_numa_available' },
-
-# shared memory usage with NUMA info
-{ oid => '4100', descr => 'NUMA mappings for the main shared memory segment',
-  proname => 'pg_get_shmem_allocations_numa', prorows => '50', proretset => 't',
-  provolatile => 'v', prorettype => 'record', proargtypes => '',
-  proallargtypes => '{text,int4,int8}', proargmodes => '{o,o,o}',
-  proargnames => '{name,numa_node,size}',
-  prosrc => 'pg_get_shmem_allocations_numa' },
 
 # memory context of local backend
 { oid => '2282',

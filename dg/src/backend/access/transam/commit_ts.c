@@ -464,14 +464,6 @@ static int CommitTsShmemBuffers(void) {
 }
 
 /*
- * Shared memory sizing for CommitTs
- */
-Size CommitTsShmemSize(void) {
-  return SimpleLruShmemSize(CommitTsShmemBuffers()) +
-         sizeof(CommitTimestampShared);
-}
-
-/*
  * Initialize CommitTs at system startup (postmaster start or standalone
  * backend)
  */

@@ -94,21 +94,6 @@ static uint32 WaitEventCustomNew(uint32 classId, const char *wait_event_name);
 static const char *GetWaitEventCustomIdentifier(uint32 wait_event_info);
 
 /*
- *  Return the space for dynamic shared hash tables and dynamic allocation
- * counter.
- */
-Size WaitEventCustomShmemSize(void) {
-  Size sz;
-
-  sz = MAXALIGN(sizeof(WaitEventCustomCounterData));
-  sz = add_size(sz, hash_estimate_size(WAIT_EVENT_CUSTOM_HASH_MAX_SIZE,
-                                       sizeof(WaitEventCustomEntryByInfo)));
-  sz = add_size(sz, hash_estimate_size(WAIT_EVENT_CUSTOM_HASH_MAX_SIZE,
-                                       sizeof(WaitEventCustomEntryByName)));
-  return sz;
-}
-
-/*
  * Allocate shmem space for dynamic shared hash and dynamic allocation counter.
  */
 void WaitEventCustomShmemInit(void) {

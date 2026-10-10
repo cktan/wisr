@@ -346,8 +346,9 @@ and sm is attached once; no auxiliary process is left (step
   and a timeout has a timer of its own.
 - **Then delete the process-only subsystems**: crash restart
   and `EXEC_BACKEND` are gone (`WORKNOTE.md` steps 23 and 24),
-  and shared memory is a private mapping of the process (step
-  25). Dynamic shared memory and the semaphores are left.
+  and there is no shared memory: each structure the threads
+  share is an ordinary allocation (steps 25 and 26). Dynamic
+  shared memory and the semaphores are left.
   The auxiliary processes are gone: autovacuum, the WAL writer,
   the archiver, the I/O workers, the checkpointer, the
   background writer, background workers and the startup

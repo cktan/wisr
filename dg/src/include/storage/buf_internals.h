@@ -386,12 +386,9 @@ extern BufferDesc *StrategyGetBuffer(BufferAccessStrategy strategy,
                                      uint32 *buf_state, bool *from_ring);
 extern void StrategyFreeBuffer(BufferDesc *buf);
 
-extern Size StrategyShmemSize(void);
 extern void StrategyInitialize(bool init);
 extern bool have_free_buffer(void);
 
-/* buf_table.c */
-extern Size BufTableShmemSize(int size);
 extern void InitBufTable(int size);
 extern uint32 BufTableHashCode(BufferTag *tagPtr);
 extern int BufTableLookup(BufferTag *tagPtr, uint32 hashcode);
