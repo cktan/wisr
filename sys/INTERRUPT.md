@@ -70,7 +70,9 @@ The block holds:
 
 ```cpp
 void     sys_interrupt(const sys_thread_ref_t &t, uint32_t bits);
+void     sys_interrupt_self(uint32_t bits);  // signal-safe, own thread
 uint32_t sys_pending(void);           // the calling thread's bits
+const std::atomic<uint32_t> *sys_pending_word(void);
 uint32_t sys_take(uint32_t mask);     // claim: clear and return them
 ```
 
@@ -79,9 +81,21 @@ uint32_t sys_take(uint32_t mask);     // claim: clear and return them
   the thread is blocked in a wait whose mask includes any of
   them, and writes the eventfd if there is one. It never fails,
   and holds a lock only long enough to notify.
+- **`sys_interrupt_self()`** is for a signal handler that must
+  wake its own thread's poll loop, as digres's postmaster's
+  handlers do. It takes no lock and allocates nothing: a
+  `fetch_or` and a `write()` to the eventfd, with `errno` kept.
+  It wakes no `sys_wait()`; a handler that interrupted one
+  could not take its mutex anyway. A thread with no block yet
+  has nothing to raise into, and the call does nothing: make
+  the block first, with `sys_wake_fd()`. The eventfd is
+  unpublished before it is closed, as the thread ends, so a
+  handler never writes a closed one.
 - **`sys_pending()`** is a relaxed load: cheap enough for a
   check on every loop iteration, as digres's
-  `CHECK_FOR_INTERRUPTS` is.
+  `CHECK_FOR_INTERRUPTS` is. `sys_pending_word()` gives the
+  word itself, for a loop that would rather load it inline
+  than call: valid until the thread ends.
 - **`sys_take()`** clears the bits in `mask` with `fetch_and`
   (acquire) and returns those that were set. Only the owning
   thread claims its bits.
@@ -273,7 +287,8 @@ leaves no bit behind.
   `sys_timer_cancel()` may be called from any thread, as may a
   handle be copied or dropped; the rest act on the calling
   thread.
-- Nothing here uses signals.
+- Nothing here uses signals. `sys_interrupt_self()` may be
+  called from a signal handler; nothing else may.
 
 ## 8. How sm uses it
 
@@ -319,6 +334,9 @@ sanitizers by `make tsan` and `make asan`:
   whose deadline passes returns `SYS_WAIT_TIMED_OUT`;
 - the eventfd is readable after an interrupt, and not after it
   is drained;
+- a signal handler's `sys_interrupt_self()` raises the bit and
+  writes the eventfd, and does nothing in a thread with no
+  block;
 - a timer fires once, a periodic one again and again, a
   cancelled one never; a cancel racing an expiry is decided
   once, and a fired answer means the bit is there -- with the

@@ -7,6 +7,7 @@
 #include "sys.h"
 
 #include <poll.h>
+#include <signal.h>
 #include <stdint.h>
 
 #include <atomic>
@@ -198,6 +199,40 @@ TEST_CASE("the wake fd is readable after an interrupt, until drained") {
   sys_clear_wake_fd();
   CHECK_FALSE(readable(fd));
   CHECK(sys_take(B1) == B1);
+}
+
+TEST_CASE("a signal handler raises bits in its own thread and wakes it") {
+  // Verify sys_interrupt_self() from a handler lands and writes the fd.
+  // 1. In a new thread, make the wake fd and install a SIGUSR1 handler
+  //    that raises B2 with sys_interrupt_self().
+  // 2. Signal the thread itself: B2 is pending, readable through the
+  //    inline word too, and the wake fd is readable.
+  // 3. In a thread with no block, sys_interrupt_self() raises nothing.
+  bool pending = false, word = false, woke = false;
+  std::thread([&] {
+    REQUIRE(sys_wake_fd() >= 0);
+    struct sigaction act = {};
+    act.sa_handler = [](int) { sys_interrupt_self(B2); };
+    sigemptyset(&act.sa_mask);
+    REQUIRE(sigaction(SIGUSR1, &act, nullptr) == 0);
+    raise(SIGUSR1);
+    pending = sys_pending() == B2;
+    word = sys_pending_word()->load() == B2;
+    woke = readable(sys_wake_fd());
+    sys_clear_wake_fd();
+    sys_take(B2);
+  }).join();
+  signal(SIGUSR1, SIG_DFL);
+  CHECK(pending);
+  CHECK(word);
+  CHECK(woke);
+
+  uint32_t fresh = ~0u;
+  std::thread([&] {
+    sys_interrupt_self(B1);
+    fresh = sys_pending();
+  }).join();
+  CHECK(fresh == 0);
 }
 
 TEST_CASE("the wait mask is the thread's own, all bits by default") {

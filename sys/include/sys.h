@@ -23,6 +23,7 @@
 
 #include <stdint.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -59,8 +60,26 @@ sys_thread_ref_t sys_thread_self(void);
  */
 void sys_interrupt(const sys_thread_ref_t &t, uint32_t bits);
 
+/*
+ * Raise bits in the calling thread, and write its wake fd if it
+ * has one. Lock-free, so safe in a signal handler: for a handler
+ * that must wake its own thread's poll loop. It wakes no
+ * sys_wait(), which a handler could not have interrupted safely
+ * anyway. The thread must have a block already -- any earlier sys
+ * call on it, such as sys_wake_fd() -- or nothing is raised: a
+ * handler cannot make one.
+ */
+void sys_interrupt_self(uint32_t bits);
+
 /* The calling thread's pending bits: a relaxed load, cheap to poll. */
 uint32_t sys_pending(void);
+
+/*
+ * The calling thread's word of pending bits, for a hot loop that
+ * polls it inline rather than calling sys_pending(). Valid until
+ * the thread ends; only the owner reads it.
+ */
+const std::atomic<uint32_t> *sys_pending_word(void);
 
 /*
  * Claim the calling thread's bits in mask: clear them, and return

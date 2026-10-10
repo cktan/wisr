@@ -24,7 +24,7 @@ struct sys_thread_t {
   std::condition_variable *waiter_cv = nullptr; /* the wait under way */
   std::mutex *waiter_mu = nullptr;              /* its mutex */
   uint32_t waiter_mask = 0;                     /* the bits that end it */
-  int wake_fd = -1;                             /* eventfd, once asked */
+  std::atomic<int> wake_fd{-1}; /* eventfd, once asked; set under mu */
 
   uint32_t wait_mask = ~0u; /* the owner's alone: no lock */
 };
@@ -46,9 +46,11 @@ struct self_holder_t {
       return;
     // The fd goes under the block's lock: interrupt() writes it.
     std::lock_guard<std::mutex> guard(t->mu);
-    if (t->wake_fd >= 0) {
-      close(t->wake_fd);
-      t->wake_fd = -1;
+    // Unpublished before it is closed, for a signal handler that
+    // runs in between and writes it (sys_interrupt_self).
+    int fd = t->wake_fd.exchange(-1);
+    if (fd >= 0) {
+      close(fd);
     }
   }
 };
@@ -89,9 +91,10 @@ void sys_interrupt(const sys_thread_ref_t &t, uint32_t bits) {
     // The block's lock pins the waiter and the fd while we look.
     std::unique_lock<std::mutex> guard(t->mu);
 
-    if (t->wake_fd >= 0) {
+    int fd = t->wake_fd.load();
+    if (fd >= 0) {
       uint64_t one = 1;
-      ssize_t rc = write(t->wake_fd, &one, sizeof(one));
+      ssize_t rc = write(fd, &one, sizeof(one));
       (void)rc; /* full (EAGAIN) is still readable: fine */
     }
     if (t->waiter_cv == nullptr || (t->waiter_mask & bits) == 0)
@@ -107,6 +110,32 @@ void sys_interrupt(const sys_thread_ref_t &t, uint32_t bits) {
     guard.unlock();
     std::this_thread::yield();
   }
+}
+
+/*
+ * Raise bits in the calling thread, from a signal handler perhaps:
+ * an atomic or, and a write(), and no lock, no allocation.
+ */
+void sys_interrupt_self(uint32_t bits) {
+  sys_thread_t *t = self.t.get();
+
+  if (t == nullptr)
+    return;
+  t->pending.fetch_or(bits, std::memory_order_release);
+  int fd = t->wake_fd.load();
+  if (fd >= 0) {
+    // A handler leaves errno as it found it.
+    int saved = errno;
+    uint64_t one = 1;
+    ssize_t rc = write(fd, &one, sizeof(one));
+    (void)rc; /* full (EAGAIN) is still readable: fine */
+    errno = saved;
+  }
+}
+
+/* The calling thread's word of pending bits. */
+const std::atomic<uint32_t> *sys_pending_word(void) {
+  return &self_block()->pending;
 }
 
 /* The calling thread's pending bits. */
@@ -170,9 +199,9 @@ int sys_wake_fd(void) {
 
   // Made under the block's lock: interrupt() writes it.
   std::lock_guard<std::mutex> guard(t->mu);
-  if (t->wake_fd < 0)
+  if (t->wake_fd.load() < 0)
     t->wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-  return t->wake_fd;
+  return t->wake_fd.load();
 }
 
 /* Drain the calling thread's eventfd. */
