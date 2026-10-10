@@ -46,7 +46,6 @@
 #include "postmaster/auxprocess.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/interrupt.h"
-#include "storage/aio_subsys.h"
 #include "storage/bufmgr.h"
 #include "storage/condition_variable.h"
 #include "storage/fd.h"
@@ -265,7 +264,6 @@ void CheckpointerMain(const void *startup_data, size_t startup_data_len) {
     LWLockReleaseAll();
     ConditionVariableCancelSleep();
     pgstat_report_wait_end();
-    pgaio_error_cleanup();
     UnlockBuffers();
     ReleaseAuxProcessResources(false);
     AtEOXact_Buffers(false);

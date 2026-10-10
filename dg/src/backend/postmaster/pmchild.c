@@ -92,7 +92,6 @@ void InitPostmasterChildSlots(void) {
   pmchild_pools[B_BACKEND].size = 2 * MaxConnections;
 
   pmchild_pools[B_BG_WORKER].size = max_worker_processes;
-  pmchild_pools[B_IO_WORKER].size = MAX_IO_WORKERS;
 
   /*
    * There can be only one of each of these running at a time.  They each

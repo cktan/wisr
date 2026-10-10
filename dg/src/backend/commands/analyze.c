@@ -1099,9 +1099,9 @@ static int acquire_sample_rows(Relation onerel, int elevel, HeapTuple *rows,
    * It is safe to use batching, as block_sampling_read_stream_next never
    * blocks.
    */
-  stream = read_stream_begin_relation(
-      READ_STREAM_MAINTENANCE | READ_STREAM_USE_BATCHING, vac_strategy,
-      scan->rs_rd, MAIN_FORKNUM, block_sampling_read_stream_next, &bs, 0);
+  stream = read_stream_begin_relation(READ_STREAM_MAINTENANCE, vac_strategy,
+                                      scan->rs_rd, MAIN_FORKNUM,
+                                      block_sampling_read_stream_next, &bs, 0);
 
   /* Outer loop over blocks to sample */
   while (table_scan_analyze_next_block(scan, stream)) {

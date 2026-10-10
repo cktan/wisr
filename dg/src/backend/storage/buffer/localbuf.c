@@ -17,7 +17,6 @@
 
 #include "executor/instrument.h"
 #include "pgstat.h"
-#include "storage/aio.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
@@ -192,7 +191,7 @@ void FlushLocalBuffer(BufferDesc *bufHdr, SMgrRelation reln) {
                           io_start, 1, BLCKSZ);
 
   /* Mark not-dirty */
-  TerminateLocalBufferIO(bufHdr, true, 0, false);
+  TerminateLocalBufferIO(bufHdr, true, 0);
 
   pgBufferUsage.local_blks_written++;
 }
@@ -225,10 +224,7 @@ static Buffer GetLocalVictimBuffer(void) {
         pg_atomic_unlocked_write_u32(&bufHdr->state, buf_state);
         trycounter = NLocBuffer;
       } else if (BUF_STATE_GET_REFCOUNT(buf_state) > 0) {
-        /*
-         * This can be reached if the backend initiated AIO for this
-         * buffer and then errored out.
-         */
+        /* The buffer is pinned. */
       } else {
         /* Found a usable buffer */
         PinLocalBuffer(bufHdr, false);
@@ -475,22 +471,6 @@ void MarkLocalBufferDirty(Buffer buffer) {
 bool StartLocalBufferIO(BufferDesc *bufHdr, bool forInput, bool nowait) {
   uint32 buf_state;
 
-  /*
-   * With AIO the buffer could have IO in progress, e.g. when there are two
-   * scans of the same relation. Either wait for the other IO or return
-   * false.
-   */
-  if (pgaio_wref_valid(&bufHdr->io_wref)) {
-    PgAioWaitRef iow = bufHdr->io_wref;
-
-    if (nowait)
-      return false;
-
-    pgaio_wref_wait(&iow);
-  }
-
-  /* Once we get here, there is definitely no I/O active on this buffer */
-
   /* Check if someone else already did the I/O */
   buf_state = pg_atomic_read_u32(&bufHdr->state);
   if (forInput ? (buf_state & BM_VALID) : !(buf_state & BM_DIRTY)) {
@@ -508,7 +488,7 @@ bool StartLocalBufferIO(BufferDesc *bufHdr, bool forInput, bool nowait) {
  * Like TerminateBufferIO, but for local buffers
  */
 void TerminateLocalBufferIO(BufferDesc *bufHdr, bool clear_dirty,
-                            uint32 set_flag_bits, bool release_aio) {
+                            uint32 set_flag_bits) {
   /* Only need to adjust flags */
   uint32 buf_state = pg_atomic_read_u32(&bufHdr->state);
 
@@ -519,13 +499,6 @@ void TerminateLocalBufferIO(BufferDesc *bufHdr, bool clear_dirty,
 
   if (clear_dirty)
     buf_state &= ~BM_DIRTY;
-
-  if (release_aio) {
-    /* release pin held by IO subsystem, see also buffer_stage_common() */
-    Assert(BUF_STATE_GET_REFCOUNT(buf_state) > 0);
-    buf_state -= BUF_REFCOUNT_ONE;
-    pgaio_wref_clear(&bufHdr->io_wref);
-  }
 
   buf_state |= set_flag_bits;
   pg_atomic_unlocked_write_u32(&bufHdr->state, buf_state);
@@ -553,25 +526,9 @@ void InvalidateLocalBuffer(BufferDesc *bufHdr, bool check_unreferenced) {
   uint32 buf_state;
   LocalBufferLookupEnt *hresult;
 
-  /*
-   * It's possible that we started IO on this buffer before e.g. aborting
-   * the transaction that created a table. We need to wait for that IO to
-   * complete before removing / reusing the buffer.
-   */
-  if (pgaio_wref_valid(&bufHdr->io_wref)) {
-    PgAioWaitRef iow = bufHdr->io_wref;
-
-    pgaio_wref_wait(&iow);
-    Assert(!pgaio_wref_valid(&bufHdr->io_wref));
-  }
-
   buf_state = pg_atomic_read_u32(&bufHdr->state);
 
-  /*
-   * We need to test not just LocalRefCount[bufid] but also the BufferDesc
-   * itself, as the latter is used to represent a pin by the AIO subsystem.
-   * This can happen if AIO is initiated and then the query errors out.
-   */
+  /* A pin shows in LocalRefCount[bufid] and in the BufferDesc itself. */
   if (check_unreferenced &&
       (LocalRefCount[bufid] != 0 || BUF_STATE_GET_REFCOUNT(buf_state) != 0))
     elog(ERROR, "block %u of %s is still referenced (local %d)",
@@ -677,8 +634,6 @@ static void InitLocalBuffers(void) {
      * is -1.)
      */
     buf->buf_id = -i - 2;
-
-    pgaio_wref_clear(&buf->io_wref);
 
     /*
      * Intentionally do not initialize the buffer's atomic variable

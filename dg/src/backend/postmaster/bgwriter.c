@@ -38,7 +38,6 @@
 #include "postmaster/auxprocess.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/interrupt.h"
-#include "storage/aio_subsys.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
 #include "storage/condition_variable.h"
@@ -148,7 +147,6 @@ void BackgroundWriterMain(const void *startup_data, size_t startup_data_len) {
      */
     LWLockReleaseAll();
     ConditionVariableCancelSleep();
-    pgaio_error_cleanup();
     UnlockBuffers();
     ReleaseAuxProcessResources(false);
     AtEOXact_Buffers(false);

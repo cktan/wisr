@@ -33,6 +33,8 @@ records how, and what it left for step 3. Step 2 is done too;
 - There is no WAL, no recovery and no `pg_control`; the WAL
   code is gone (`WORKNOTE.md` step 12). PostgreSQL's
   transactions still run a statement, and write nothing.
+- There is no asynchronous I/O and no I/O worker process
+  (`WORKNOTE.md` step 13): a buffer is read with `smgrreadv()`.
 
 ## 2. The goal, and the order
 
@@ -295,8 +297,8 @@ process; and the three items above are gone.
   state machine and crash restart, shared memory setup (the
   structures become ordinary allocations), `EXEC_BACKEND`, and
   the auxiliary processes: startup, checkpointer and background
-  writer. Autovacuum, the WAL writer and the archiver are
-  already gone (`WORKNOTE.md` steps 11 and 12).
+  writer. Autovacuum, the WAL writer, the archiver and the I/O
+  workers are already gone (`WORKNOTE.md` steps 11 to 13).
 - **What step 9 stubbed goes with them**: what is left of
   `xlog.c` (the in-memory control record, and the start of the
   transaction counters), the hot standby states of the
@@ -338,6 +340,9 @@ Do not reopen these without the owner:
 - **No WAL.** sm keeps what is durable. There is no recovery,
   archiving or hot standby, and `PREPARE TRANSACTION` is
   refused.
+- **No asynchronous I/O.** Disk I/O is to go through sm; the
+  rest is the client socket, which waits on the latch. A buffer
+  read is synchronous.
 
 ## 8. Working in this tree
 

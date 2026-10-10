@@ -41,7 +41,6 @@
 #include "miscadmin.h"
 #include "pg_trace.h"
 #include "pgstat.h"
-#include "storage/aio_subsys.h"
 #include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
@@ -1549,8 +1548,6 @@ static void CommitTransaction(void) {
   ResourceOwnerRelease(TopTransactionResourceOwner,
                        RESOURCE_RELEASE_BEFORE_LOCKS, true, true);
 
-  AtEOXact_Aio(true);
-
   /* Check we've released all buffer pins */
   AtEOXact_Buffers(true);
 
@@ -1667,8 +1664,6 @@ static void AbortTransaction(void) {
   pgstat_report_wait_end();
   pgstat_progress_end_command();
 
-  pgaio_error_cleanup();
-
   /* Clean up buffer content locks, too */
   UnlockBuffers();
 
@@ -1762,7 +1757,6 @@ static void AbortTransaction(void) {
 
     ResourceOwnerRelease(TopTransactionResourceOwner,
                          RESOURCE_RELEASE_BEFORE_LOCKS, false, true);
-    AtEOXact_Aio(false);
     AtEOXact_Buffers(false);
     AtEOXact_RelationCache(false);
     AtEOXact_TypeCache();
@@ -3701,8 +3695,6 @@ static void AbortSubTransaction(void) {
   pgstat_report_wait_end();
   pgstat_progress_end_command();
 
-  pgaio_error_cleanup();
-
   UnlockBuffers();
 
   /* Cancel condition variable sleep */
@@ -3780,7 +3772,6 @@ static void AbortSubTransaction(void) {
     ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_BEFORE_LOCKS,
                          false, false);
 
-    AtEOXact_Aio(false);
     AtEOSubXact_RelationCache(false, s->subTransactionId,
                               s->parent->subTransactionId);
     AtEOSubXact_TypeCache();

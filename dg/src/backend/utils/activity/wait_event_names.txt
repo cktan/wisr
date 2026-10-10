@@ -55,7 +55,6 @@ BGWRITER_HIBERNATE	"Waiting in background writer process, hibernating."
 BGWRITER_MAIN	"Waiting in main loop of background writer process."
 CHECKPOINTER_MAIN	"Waiting in main loop of checkpointer process."
 CHECKPOINTER_SHUTDOWN	"Waiting for checkpointer process to be terminated."
-IO_WORKER_MAIN	"Waiting in main loop of IO Worker process."
 LOGICAL_APPLY_MAIN	"Waiting in main loop of logical replication apply process."
 LOGICAL_LAUNCHER_MAIN	"Waiting in main loop of logical replication launcher process."
 LOGICAL_PARALLEL_APPLY_MAIN	"Waiting in main loop of logical replication parallel apply process."
@@ -156,9 +155,6 @@ ABI_compatibility:
 
 Section: ClassName - WaitEventIO
 
-AIO_IO_COMPLETION	"Waiting for another process to complete IO."
-AIO_IO_URING_SUBMIT	"Waiting for IO submission via io_uring."
-AIO_IO_URING_EXECUTION	"Waiting for IO execution via io_uring."
 BASEBACKUP_READ	"Waiting for base backup to read from a file."
 BASEBACKUP_SYNC	"Waiting for data written by a base backup to reach durable storage."
 BASEBACKUP_WRITE	"Waiting for base backup to write to a file."
@@ -286,7 +282,6 @@ WALSummarizer	"Waiting to read or update WAL summarization state."
 DSMRegistry	"Waiting to read or update the dynamic shared memory registry."
 InjectionPoint	"Waiting to read or update information related to injection points."
 SerialControl	"Waiting to read or update shared <filename>pg_serial</filename> state."
-AioWorkerSubmissionQueue	"Waiting to access AIO worker submission queue."
 
 #
 # END OF PREDEFINED LWLOCKS (DO NOT CHANGE THIS LINE)
@@ -324,7 +319,6 @@ NotifySLRU	"Waiting to access the <command>NOTIFY</command> message SLRU cache."
 SerialSLRU	"Waiting to access the serializable transaction conflict SLRU cache."
 SubtransSLRU	"Waiting to access the sub-transaction SLRU cache."
 XactSLRU	"Waiting to access the transaction status SLRU cache."
-AioUringCompletion	"Waiting for another process to complete IO via io_uring."
 
 # No "ABI_compatibility" region here as WaitEventLWLock has its own C code.
 

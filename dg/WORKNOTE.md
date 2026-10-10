@@ -602,3 +602,41 @@ files went, and about 44,000 lines. sm keeps what is durable.
   calls; the postmaster's recovery states, for step 4.
 - `test/server.sh` checks that `PREPARE TRANSACTION` is refused
   and the session carries on. `make test` passes as before.
+
+## Step 13: asynchronous I/O is gone
+
+PostgreSQL 18 reads buffers through its asynchronous I/O
+subsystem, even with `io_method=sync`: a read takes a handle,
+is staged, and completes in callbacks. Nearly all of digres's
+disk I/O is to go through sm, and the rest is network I/O, so
+the subsystem went: `storage/aio/` (about 3,400 lines) and its
+headers.
+
+- **A buffer read is synchronous.** `WaitReadBuffers()` reads
+  each run of blocks with `smgrreadv()` (`ReadBuffersIO()` in
+  `bufmgr.c`), then checks each page and marks its buffer valid
+  (`ReadBufferComplete()`): a page that fails verification is
+  an ERROR, or is zeroed with a WARNING under
+  `zero_damaged_pages`, as before PostgreSQL 18.
+  `StartReadBuffers()` only pins and issues advice. A buffer
+  has no I/O handle, and `WaitIO()` waits on the buffer's
+  condition variable alone.
+- **`read_stream.c` stays**, moved to `storage/buffer/`: heap
+  scans, ANALYZE and b-tree vacuum read through it. It gives
+  read-ahead advice and combines reads; batch mode is gone.
+- **smgr, md and fd lost their asynchronous entry points**
+  (`smgrstartreadv()`, `mdstartreadv()`, `FileStartReadV()`)
+  and the raw descriptor lookup (`smgrfd()`, `mdfd()`).
+- **The I/O worker process type is gone**, with the
+  postmaster's `PM_WAIT_IO_WORKERS` state; the server runs a
+  checkpointer and a background writer and no I/O workers. 32
+  auxiliary process slots went with them.
+- **Gone too**: the settings `io_method`, `io_workers` and
+  `io_max_concurrency`; `pg_get_aios()` and the `pg_aios` view;
+  the AIO wait events and LWLocks; the resource owners' list of
+  I/O handles. The stats file format id changed.
+  `effective_io_concurrency`, `maintenance_io_concurrency` and
+  `io_combine_limit` stay: they size read-ahead.
+- No test reads a relation's pages today (the catalog is
+  compiled in), so the new read path is built but not run.
+  `make test` and `make tsan` pass as before.

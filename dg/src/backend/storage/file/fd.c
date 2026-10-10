@@ -86,7 +86,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/startup.h"
-#include "storage/aio.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "utils/guc.h"
@@ -1178,8 +1177,6 @@ static void LruDelete(File file) {
 
   vfdP = &VfdCache[file];
 
-  pgaio_closing_fd(vfdP->fd);
-
   /*
    * Close the file.  We aren't expecting this to fail; if it does, better
    * to leak the FD than to mess up our internal state.
@@ -1621,7 +1618,6 @@ void FileClose(File file) {
   vfdP = &VfdCache[file];
 
   if (!FileIsNotOpen(file)) {
-    pgaio_closing_fd(vfdP->fd);
 
     /* close the file */
     if (close(vfdP->fd) != 0) {
@@ -1827,27 +1823,6 @@ retry:
   }
 
   return returnCode;
-}
-
-int FileStartReadV(PgAioHandle *ioh, File file, int iovcnt, off_t offset,
-                   uint32 wait_event_info) {
-  int returnCode;
-  Vfd *vfdP;
-
-  Assert(FileIsValid(file));
-
-  DO_DB(elog(LOG, "FileStartReadV: %d (%s) " INT64_FORMAT " %d", file,
-             VfdCache[file].fileName, (int64)offset, iovcnt));
-
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
-    return returnCode;
-
-  vfdP = &VfdCache[file];
-
-  pgaio_io_start_readv(ioh, vfdP->fd, iovcnt, offset);
-
-  return 0;
 }
 
 ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt, off_t offset,
@@ -2368,7 +2343,6 @@ static int FreeDesc(AllocateDesc *desc) {
     result = closedir(desc->desc.dir);
     break;
   case AllocateDescRawFD:
-    pgaio_closing_fd(desc->desc.fd);
     result = close(desc->desc.fd);
     break;
   default:
@@ -2431,8 +2405,6 @@ int CloseTransientFile(int fd) {
   /* Only get here if someone passes us a file not in allocatedDescs */
   elog(WARNING, "fd passed to CloseTransientFile was not obtained from "
                 "OpenTransientFile");
-
-  pgaio_closing_fd(fd);
 
   return close(fd);
 }

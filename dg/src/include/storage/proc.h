@@ -436,8 +436,7 @@ extern thread_local /*SHARED*/ PGDLLIMPORT PGPROC *PreparedXactProcs;
  * 2 slots, but WAL writer is launched only after startup has exited, so we
  * only need 6 slots.
  */
-#define MAX_IO_WORKERS          32
-#define NUM_AUXILIARY_PROCS		(6 + MAX_IO_WORKERS)
+#define NUM_AUXILIARY_PROCS		6
 
 #define FIRST_PREPARED_XACT_PROC_NUMBER	(MaxBackends + NUM_AUXILIARY_PROCS)
 
