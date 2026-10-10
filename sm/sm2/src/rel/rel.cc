@@ -233,4 +233,22 @@ void rel_scanend(rel_scan_t *scan) {
   delete scan;
 }
 
+/* The bytes under relid, from sm1's estimate of its key range. */
+int relid_size(sm1::session_t *session, uint64_t storeid, uint16_t relid,
+               uint64_t &disk, uint64_t &mem) {
+  return catch_nomem([&] {
+    // Every key of the rel starts with its relid, so the range is
+    // [relid, relid + 1); the last relid's is open above.
+    std::string lo, hi;
+    put_be(relid, lo);
+    if (relid == UINT16_MAX) {
+      return sm1::approxsize(session, storeid, lo.data(), lo.size(), nullptr, 0,
+                             disk, mem);
+    }
+    put_be(static_cast<uint16_t>(relid + 1), hi);
+    return sm1::approxsize(session, storeid, lo.data(), lo.size(), hi.data(),
+                           hi.size(), disk, mem);
+  });
+}
+
 } // namespace sm2

@@ -364,6 +364,16 @@ int db_alloc_objid(db_t *db, uint64_t *out);
 int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
                 uint64_t *out);
 
+/*
+ * Set *out to the last value sequence seqid handed out, without
+ * handing one out or extending its lease. Before its first
+ * sm1::nextseq in this process that is the value below its
+ * persisted lease, an upper bound. Returns 0, 1 if it never
+ * handed one out, or -1.
+ */
+int db_last_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
+                uint64_t *out);
+
 /* Forget sequence seqid and delete its lease from CF:meta. */
 void db_forget_seq(db_t *db, uint64_t seqid);
 

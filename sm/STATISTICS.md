@@ -6,8 +6,8 @@ storage has always supplied. This file is the strategy for
 supplying the same, or near enough, from a stack that has no
 pages, no heap files and no vacuum.
 
-It is a strategy and not yet a design. `sm3/SM3_DESIGN.md` §6
-is where the design goes once §6 below has been measured.
+It is a strategy, and the design is `sm3/SM3_DESIGN.md` §6,
+which makes the choices left open here.
 
 **§6 has now been measured and §7 checked**, against RocksDB
 9.11.2 through sm1 and against PostgreSQL 17.11's source and a
@@ -830,9 +830,11 @@ make it on purpose.
    the design: what to report for a table whose rows are still
    unflushed (§6, experiment 2), and what run length to sample
    at (§6, experiment 4, and §3.3).
-2. `sm3/SM3_DESIGN.md` §6, from this file and what was
+2. ~~`sm3/SM3_DESIGN.md` §6, from this file and what was
    measured, with the format of §3.6 written out, and with
-   §7.1's choice made on purpose.
+   §7.1's choice made on purpose.~~ **Done**: the stack
+   analyzes (§6.1 there), and §6.9 there has steps 3 to 7
+   with what it settled.
 3. The sm1 primitives of §4, with sm2 and sm3 over them.
    → verify: a table's and an index's size follow the rows
    loaded; `N` is the sequence's last value.

@@ -250,6 +250,46 @@ TEST_CASE("two rels over one store, under two relids, never meet") {
   sm2::rel_close(r1);
 }
 
+TEST_CASE("relid_size charges each rel of a store its own bytes") {
+  // Verify a rel's size counts its relid's keys and no other's.
+  // 1. A rel under relid 1 inserts 20,000 rows; relids 2 and
+  //    0xFFFF have none.
+  // 2. Unflushed, relid 1 has memtable bytes and no file bytes.
+  // 3. Relid 2, the next range up, is 0 and 0.
+  // 4. 0xFFFF, whose range is open above, is 0 and 0 too.
+  // Only a large range and an empty one are checked: RocksDB's
+  // memtable estimate of a small range is too rough, measured as
+  // low as 0 and as high as a range two hundred times larger.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  sm2::rel_t *rel = open_rel(db, s, schema, 1);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  for (int i = 0; i < 20000; i++) {
+    row_t row = {le(int32_t{i})};
+    values_t d = datums_of(schema, row);
+    uint64_t rowno;
+    REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), rowno) == 0);
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+
+  // 2. The written rel, with no transaction.
+  uint64_t disk = 1, mem = 0;
+  REQUIRE(sm2::relid_size(s, db.store(), 1, disk, mem) == 0);
+  CHECK(disk == 0);
+  CHECK(mem > 0);
+
+  // 3. and 4. The empty relids, the last one open above.
+  for (uint16_t relid : {uint16_t{2}, uint16_t{UINT16_MAX}}) {
+    uint64_t d = 1, m = 1;
+    REQUIRE(sm2::relid_size(s, db.store(), relid, d, m) == 0);
+    CHECK(d == 0);
+    CHECK(m == 0);
+  }
+}
+
 TEST_CASE("sm1's SM_ERR_UPDATED passes through, and rel_read_latest "
           "answers it") {
   // Verify the READ COMMITTED path of SM2_DESIGN.md §5.

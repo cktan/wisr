@@ -1,0 +1,152 @@
+/*
+ * stats.cc -- what a store's LSM looks like now: sm1::approxsize
+ * and sm1::probes (sm3/SM3_DESIGN.md §6.2, §6.3 at the stack's
+ * root).
+ *
+ * Both read RocksDB's own estimates and properties of a store's
+ * column family. Neither reads a version, so neither needs a
+ * transaction, takes a lock, or sees a snapshot.
+ */
+
+#include "error.h"
+#include "oom.h"
+#include "session.h"
+#include "version.h"
+
+#include <string>
+
+#include <rocksdb/options.h>
+
+using namespace wisr;
+
+namespace {
+
+/*
+ * Check a session for a call that reads no transaction: it must
+ * exist and must not hold a prepared transaction. Returns 0 or -1.
+ */
+int check_session(sm1::session_t *s, const char *call) {
+  // Require a session.
+  if (!s) {
+    return set_error(sm1::SM_ERR_INVALID, "{}: session is NULL", call);
+  }
+  // A session holding a prepared transaction does nothing else.
+  if (!s->active && !s->prepared_gid.empty()) {
+    return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
+                     s->prepared_gid.c_str());
+  }
+  return 0;
+}
+
+/* The CF of storeid, or NULL with SM_ERR_NOTFOUND set. */
+rocksdb::ColumnFamilyHandle *find_cf(sm1::session_t *s, uint64_t storeid) {
+  // Look the store up by its CF, not its catalog row.
+  rocksdb::ColumnFamilyHandle *cf = db_store_cf(s->db, storeid);
+  if (!cf) {
+    set_error(sm1::SM_ERR_NOTFOUND, "store {} does not exist", storeid);
+  }
+  return cf;
+}
+
+/* sm1::approxsize, minus the out-of-memory guard. */
+int approxsize(sm1::session_t *s, uint64_t storeid, const char *lo,
+               size_t lolen, const char *hi, size_t hilen, uint64_t *disk,
+               uint64_t *mem) {
+  // Require a usable session and a store.
+  if (check_session(s, "sm1_approxsize") != 0) {
+    return -1;
+  }
+  rocksdb::ColumnFamilyHandle *cf = find_cf(s, storeid);
+  if (!cf) {
+    return -1;
+  }
+  // Bound by version keys: a tail of zeros sorts before every
+  // version of its userkey, so [lo, hi) holds every version of
+  // every userkey in it. No bound is the store's first or last
+  // possible key.
+  std::string top(sm1::max_keylen + 1, '\xff'); // above every userkey
+  std::string start =
+      version_bound(lo ? rocksdb::Slice(lo, lolen) : rocksdb::Slice(), '\x00');
+  std::string limit = version_bound(
+      hi ? rocksdb::Slice(hi, hilen) : rocksdb::Slice(top), '\x00');
+  rocksdb::Range range(start, limit);
+
+  // Sorted files only: the memtables are reported apart, since
+  // they hold versions uncompressed.
+  rocksdb::SizeApproximationOptions so;
+  so.include_memtables = false;
+  so.include_files = true;
+  uint64_t files = 0;
+  rocksdb::Status st =
+      s->db->rdb->GetApproximateSizes(so, cf, &range, 1, &files);
+  if (!st.ok()) {
+    return set_status_error(st, "approximate store size");
+  }
+  uint64_t count = 0, bytes = 0;
+  // The memtables' share of the range.
+  s->db->rdb->GetApproximateMemTableStats(cf, range, &count, &bytes);
+  *disk = files;
+  *mem = bytes;
+  return 0;
+}
+
+/* An integer property of cf, or 0 if RocksDB has none. */
+uint64_t int_property(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
+                      const std::string &name) {
+  uint64_t v = 0;
+  return s->db->rdb->GetIntProperty(cf, name, &v) ? v : 0;
+}
+
+/* sm1::probes, minus the out-of-memory guard. */
+int probes(sm1::session_t *s, uint64_t storeid, uint64_t *out) {
+  // Require a usable session and a store.
+  if (check_session(s, "sm1_probes") != 0) {
+    return -1;
+  }
+  rocksdb::ColumnFamilyHandle *cf = find_cf(s, storeid);
+  if (!cf) {
+    return -1;
+  }
+  uint64_t n = 0;
+  // The active memtable, when it holds anything.
+  if (int_property(s, cf, rocksdb::DB::Properties::kNumEntriesActiveMemTable) >
+      0) {
+    n += 1;
+  }
+  // Each immutable memtable not yet flushed.
+  n += int_property(s, cf, rocksdb::DB::Properties::kNumImmutableMemTable);
+  // Level 0's files overlap, so each is a probe; a lower level
+  // is one probe if it has any file.
+  int levels = s->db->rdb->NumberLevels(cf);
+  for (int l = 0; l < levels; l++) {
+    std::string v;
+    if (!s->db->rdb->GetProperty(
+            cf,
+            rocksdb::DB::Properties::kNumFilesAtLevelPrefix + std::to_string(l),
+            &v)) {
+      continue;
+    }
+    uint64_t files = std::stoull(v);
+    n += l == 0 ? files : (files > 0 ? 1 : 0);
+  }
+  *out = n;
+  return 0;
+}
+
+} // namespace
+
+/* Estimate the bytes of a key range, in files and in memtables. */
+int sm1::approxsize(sm1::session_t *session, uint64_t storeid, const char *lo,
+                    size_t lolen, const char *hi, size_t hilen, uint64_t &disk,
+                    uint64_t &mem) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  return ::approxsize(session, storeid, lo, lolen, hi, hilen, &disk, &mem);
+}
+
+/* Count the sorted runs a point lookup of a store may visit. */
+int sm1::probes(sm1::session_t *session, uint64_t storeid, uint64_t &out) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  return ::probes(session, storeid, &out);
+}
