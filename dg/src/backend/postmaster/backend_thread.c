@@ -24,7 +24,7 @@
  */
 #include "postgres.h"
 
-#include <pthread.h>
+#include <mutex>
 #include <signal.h>
 #include <unistd.h>
 
@@ -44,7 +44,7 @@
  * that wakes it for them.  Made by the first launch, never freed.
  */
 typedef struct exit_queue_t {
-  pthread_mutex_t mu;
+  std::mutex mu;
   backend_thread_t *head;
   Latch *latch;
 } exit_queue_t;
@@ -97,10 +97,13 @@ static void backend_thread_main(void *arg) {
     BackendMain(thread->startup_data, thread->startup_data_len);
   } catch (const proc_exit_t &e) {
     thread->exit_code = e.code;
-    pthread_mutex_lock(&queue->mu);
-    thread->next_exited = queue->head;
-    queue->head = thread;
-    pthread_mutex_unlock(&queue->mu);
+    {
+      /* The postmaster takes from the queue as threads add to it. */
+      std::lock_guard<std::mutex> guard(queue->mu);
+
+      thread->next_exited = queue->head;
+      queue->head = thread;
+    }
     SetLatch(queue->latch);
     throw;
   }
@@ -117,14 +120,10 @@ pid_t backend_thread_launch(BackendType child_type, int child_slot,
                             ClientSocket *client_sock,
                             backend_thread_t **thread) {
   backend_thread_t *t;
-  pthread_t pthread;
   pid_t tid;
 
   if (exit_queue == NULL) {
-    exit_queue = (exit_queue_t *)malloc(sizeof(exit_queue_t));
-    if (exit_queue == NULL)
-      elog(ERROR, "out of memory");
-    pthread_mutex_init(&exit_queue->mu, NULL);
+    exit_queue = new exit_queue_t();
     exit_queue->head = NULL;
     exit_queue->latch = MyLatch;
   }
@@ -145,8 +144,7 @@ pid_t backend_thread_launch(BackendType child_type, int child_slot,
   pg_atomic_init_u32(&t->signals, 0);
 
   /* Nobody joins it: the postmaster learns of its end from the queue. */
-  pthread = session_thread_start(backend_thread_main, t);
-  pthread_detach(pthread);
+  session_thread_start(backend_thread_main, t, NULL).detach();
 
   /* Its pid is its thread id: wait for the thread to say. */
   while ((tid = (pid_t)pg_atomic_read_u32(&t->tid)) == 0)
@@ -191,9 +189,12 @@ bool backend_thread_ended(void) {
 
   if (exit_queue == NULL)
     return false;
-  pthread_mutex_lock(&exit_queue->mu);
-  ended = exit_queue->head != NULL;
-  pthread_mutex_unlock(&exit_queue->mu);
+  {
+    /* Threads add to the queue as the postmaster looks. */
+    std::lock_guard<std::mutex> guard(exit_queue->mu);
+
+    ended = exit_queue->head != NULL;
+  }
   return ended;
 }
 
@@ -206,11 +207,14 @@ backend_thread_t *backend_thread_exited(int *exitstatus) {
 
   if (exit_queue == NULL)
     return NULL;
-  pthread_mutex_lock(&exit_queue->mu);
-  thread = exit_queue->head;
-  if (thread != NULL)
-    exit_queue->head = thread->next_exited;
-  pthread_mutex_unlock(&exit_queue->mu);
+  {
+    /* Threads add to the queue as the postmaster takes from it. */
+    std::lock_guard<std::mutex> guard(exit_queue->mu);
+
+    thread = exit_queue->head;
+    if (thread != NULL)
+      exit_queue->head = thread->next_exited;
+  }
   if (thread != NULL)
     *exitstatus = (thread->exit_code & 0xff) << 8;
   return thread;

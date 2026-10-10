@@ -37,6 +37,8 @@
  */
 #include "postgres.h"
 
+#include <vector>
+
 #include "access/printtup.h"
 #include "lib/stringinfo.h"
 #include "mb/pg_wchar.h"
@@ -179,21 +181,22 @@ static void run_session(void *arg) {
  */
 static int run_threads(const tool_session_t *proto, int n) {
   tool_session_t *s = (tool_session_t *)palloc0(n * sizeof(*s));
-  pthread_t *threads = (pthread_t *)palloc(n * sizeof(*threads));
+  std::vector<std::thread> threads;
+  std::vector<int> codes(n, 0);
   int status = 0;
 
   for (int i = 0; i < n; i++) {
     s[i] = *proto;
     s[i].out = open_memstream(&s[i].printed, &s[i].printed_len);
-    threads[i] = session_thread_start(run_session, &s[i]);
+    threads.push_back(session_thread_start(run_session, &s[i], &codes[i]));
   }
   for (int i = 0; i < n; i++) {
-    void *code;
+    /* Wait for the session to end. */
+    threads[i].join();
 
     /* A session that ended by FATAL gives its exit code, not a status. */
-    pthread_join(threads[i], &code);
-    if (code != NULL)
-      s[i].status = (int)(intptr_t)code;
+    if (codes[i] != 0)
+      s[i].status = codes[i];
     fclose(s[i].out);
   }
 

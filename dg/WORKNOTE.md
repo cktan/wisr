@@ -1088,3 +1088,22 @@ pointer works in every thread.
 - **Shutdown has one list of callbacks fewer**: `shmem_exit()`
   no longer runs the segments' detach callbacks.
 - The server makes nothing under `/dev/shm`.
+
+## Step 30: threads are std::thread
+
+Session threads were started with `pthread_create()`, and the
+postmaster's queue of ended threads was guarded by a
+`pthread_mutex_t`.
+
+- **`session_thread_start()` returns a `std::thread`**, which
+  the caller joins (`parse_tool.c`'s `--threads`) or detaches
+  (`backend_thread.c`). A `std::thread` has no result, so the
+  session's exit code goes where the caller asks
+  (`exit_code`), instead of being the thread's result.
+  `run.sh`'s FATAL check depends on it: with the code never
+  written, the process exits 0, not 1.
+- **The exit queue's lock is a `std::mutex`**, taken with
+  `std::lock_guard`, and the queue is made with `new`.
+- **`pthread_sigmask()` stays**, to set a thread's signal
+  mask, and so does `pthread_is_threaded_np()`, which only
+  macOS has and this build does not compile.

@@ -44,6 +44,7 @@
 typedef struct session_start_t {
   void (*fn)(void *);
   void *arg;
+  int *exit_code; /* where the session's exit code goes, or NULL */
   char *shared;   /* the SHARED variables, one after another */
   char *settings; /* the non-default settings, as GUC writes them */
   size_t settings_len;
@@ -85,8 +86,8 @@ static void session_thread_end(void) {
 }
 
 /* The new thread: set up as its parent was, then run the session. */
-static void *session_thread_main(void *p) {
-  session_start_t start = *(session_start_t *)p;
+static void session_thread_main(session_start_t *p) {
+  session_start_t start = *p;
 
   free(p);
 
@@ -143,7 +144,8 @@ static void *session_thread_main(void *p) {
     proc_exit(0);
   } catch (const proc_exit_t &e) {
     session_thread_end();
-    return (void *)(intptr_t)e.code;
+    if (start.exit_code != NULL)
+      *start.exit_code = e.code;
   }
 }
 
@@ -158,19 +160,20 @@ static size_t shared_len(void) {
 
 /*
  * Start a thread that runs fn(arg) as a session, given what this thread
- * has set that it needs. fn must catch its own errors. Joined, the thread
- * gives the session's exit code: 0 if fn returned.
+ * has set that it needs. fn must catch its own errors. As the session
+ * ends, its exit code goes to *exit_code unless that is NULL: 0 if fn
+ * returned. The caller joins or detaches the thread.
  */
-pthread_t session_thread_start(void (*fn)(void *), void *arg) {
+std::thread session_thread_start(void (*fn)(void *), void *arg,
+                                 int *exit_code) {
   session_start_t *start = (session_start_t *)malloc(sizeof(*start));
   FILE *fp;
-  pthread_t thread;
-  int rc;
 
   if (start == NULL)
     elog(ERROR, "out of memory");
   start->fn = fn;
   start->arg = arg;
+  start->exit_code = exit_code;
   start->shared = (char *)malloc(shared_len());
   if (start->shared == NULL)
     elog(ERROR, "out of memory");
@@ -185,8 +188,14 @@ pthread_t session_thread_start(void (*fn)(void *), void *arg) {
   write_nondefault_variables_to(fp);
   fclose(fp);
 
-  rc = pthread_create(&thread, NULL, session_thread_main, start);
-  if (rc != 0)
-    elog(ERROR, "could not start a thread: %s", strerror(rc));
-  return thread;
+  /* Start the session's thread: it frees start. */
+  try {
+    return std::thread(session_thread_main, start);
+  } catch (const std::system_error &e) {
+    free(start->shared);
+    free(start->settings);
+    free(start);
+    elog(ERROR, "could not start a thread: %s", e.what());
+  }
+  pg_unreachable();
 }

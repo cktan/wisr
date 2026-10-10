@@ -107,6 +107,9 @@ digres is one process; each session is a thread of it.
 - **Nothing forks** but `popen()`, which execs at once
   (`COPY ... PROGRAM`). Do not add a process: add a thread
   through `session_thread_start()`.
+- **Threads are `std::thread`, locks `std::mutex`**, not
+  pthreads. `pthread_sigmask()` stays: it sets the calling
+  thread's signal mask, which the standard library cannot.
 - **Signals between threads are flags.** `SignalProc()` sets a
   bit in the target's PGPROC and sets its latch; the handler
   runs at its next `CHECK_FOR_INTERRUPTS()` or wait. A session

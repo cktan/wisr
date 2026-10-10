@@ -10,9 +10,10 @@
 #ifndef SESSION_THREAD_H
 #define SESSION_THREAD_H
 
-#include <pthread.h>
+#include <thread>
 
-extern pthread_t session_thread_start(void (*fn)(void *), void *arg);
+extern std::thread session_thread_start(void (*fn)(void *), void *arg,
+                                        int *exit_code);
 
 /*
  * A SHARED variable's place in the thread-local block, and its size: the
