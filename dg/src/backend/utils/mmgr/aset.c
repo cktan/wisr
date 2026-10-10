@@ -1656,3 +1656,21 @@ void AllocSetCheck(MemoryContext context) {
 }
 
 #endif /* MEMORY_CONTEXT_CHECKING */
+
+/*
+ * Free the contexts this thread's freelists keep for reuse: a session
+ * thread, as it ends, whose freelists go with it.
+ */
+void AllocSetFreeFreeLists(void) {
+  for (int i = 0; i < lengthof(context_freelists); i++) {
+    AllocSetFreeList *freelist = &context_freelists[i];
+
+    while (freelist->first_free != NULL) {
+      AllocSetContext *set = freelist->first_free;
+
+      freelist->first_free = (AllocSetContext *)set->header.nextchild;
+      freelist->num_free--;
+      free(set);
+    }
+  }
+}

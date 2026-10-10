@@ -38,12 +38,13 @@
  * child_slot ids start from 1).
  */
 typedef struct {
-  pid_t pid;                     /* process id of backend */
-  int child_slot;                /* PMChildSlot for this backend, if any */
-  BackendType bkend_type;        /* child process flavor, see above */
-  struct RegisteredBgWorker *rw; /* bgworker info, if this is a bgworker */
-  bool bgworker_notify;          /* gets bgworker start/stop notifications */
-  dlist_node elem;               /* list link in ActiveChildList */
+  pid_t pid;                       /* process id of backend */
+  int child_slot;                  /* PMChildSlot for this backend, if any */
+  BackendType bkend_type;          /* child process flavor, see above */
+  struct RegisteredBgWorker *rw;   /* bgworker info, if this is a bgworker */
+  bool bgworker_notify;            /* gets bgworker start/stop notifications */
+  struct backend_thread_t *thread; /* a backend that is a thread, or NULL */
+  dlist_node elem;                 /* list link in ActiveChildList */
 } PMChild;
 
 #ifdef EXEC_BACKEND

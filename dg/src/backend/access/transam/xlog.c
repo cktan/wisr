@@ -99,7 +99,8 @@ void XLOGShmemInit(void) {
   ControlFile = (ControlFileData *)ShmemInitStruct(
       "Control File", sizeof(ControlFileData), &found);
   if (found) {
-    if (localControlFile)
+    /* A session thread's is its parent's (SHARED), not its own to free. */
+    if (localControlFile && !IsSessionThread)
       pfree(localControlFile);
     return;
   }

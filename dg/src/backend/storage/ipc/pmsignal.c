@@ -77,6 +77,16 @@ struct PMSignalData {
   sig_atomic_t PMChildFlags[FLEXIBLE_ARRAY_MEMBER];
 };
 
+/*
+ * A child sets its flag and the postmaster reads it, or the other way, with
+ * no lock: relaxed atomics, which a thread sanitizer sees for what they are.
+ */
+#define PM_FLAG_GET(slot) \
+	__atomic_load_n(&PMSignalState->PMChildFlags[slot], __ATOMIC_RELAXED)
+#define PM_FLAG_SET(slot, value) \
+	__atomic_store_n(&PMSignalState->PMChildFlags[slot], (value), \
+					 __ATOMIC_RELAXED)
+
 /* PMSignalState pointer is valid in both postmaster and child processes */
 thread_local /*SHARED*/ NON_EXEC_STATIC volatile PMSignalData *PMSignalState =
     NULL;
@@ -211,10 +221,10 @@ void MarkPostmasterChildSlotAssigned(int slot) {
   Assert(slot > 0 && slot <= num_child_flags);
   slot--;
 
-  if (PMSignalState->PMChildFlags[slot] != PM_CHILD_UNUSED)
+  if (PM_FLAG_GET(slot) != PM_CHILD_UNUSED)
     elog(FATAL, "postmaster child slot is already in use");
 
-  PMSignalState->PMChildFlags[slot] = PM_CHILD_ASSIGNED;
+  PM_FLAG_SET(slot, PM_CHILD_ASSIGNED);
 }
 
 /*
@@ -235,8 +245,8 @@ bool MarkPostmasterChildSlotUnassigned(int slot) {
    * postmaster.c is such that this might get called twice when a child
    * crashes.  So we don't try to Assert anything about the state.
    */
-  result = (PMSignalState->PMChildFlags[slot] == PM_CHILD_ASSIGNED);
-  PMSignalState->PMChildFlags[slot] = PM_CHILD_UNUSED;
+  result = (PM_FLAG_GET(slot) == PM_CHILD_ASSIGNED);
+  PM_FLAG_SET(slot, PM_CHILD_UNUSED);
   return result;
 }
 
@@ -248,7 +258,7 @@ bool IsPostmasterChildWalSender(int slot) {
   Assert(slot > 0 && slot <= num_child_flags);
   slot--;
 
-  if (PMSignalState->PMChildFlags[slot] == PM_CHILD_WALSENDER)
+  if (PM_FLAG_GET(slot) == PM_CHILD_WALSENDER)
     return true;
   else
     return false;
@@ -266,8 +276,8 @@ void RegisterPostmasterChildActive(void) {
 
   Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
   slot--;
-  Assert(PMSignalState->PMChildFlags[slot] == PM_CHILD_ASSIGNED);
-  PMSignalState->PMChildFlags[slot] = PM_CHILD_ACTIVE;
+  Assert(PM_FLAG_GET(slot) == PM_CHILD_ASSIGNED);
+  PM_FLAG_SET(slot, PM_CHILD_ACTIVE);
 
   /* Arrange to clean up at exit. */
   on_shmem_exit(MarkPostmasterChildInactive, 0);
@@ -285,8 +295,8 @@ void MarkPostmasterChildWalSender(void) {
 
   Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
   slot--;
-  Assert(PMSignalState->PMChildFlags[slot] == PM_CHILD_ACTIVE);
-  PMSignalState->PMChildFlags[slot] = PM_CHILD_WALSENDER;
+  Assert(PM_FLAG_GET(slot) == PM_CHILD_ACTIVE);
+  PM_FLAG_SET(slot, PM_CHILD_WALSENDER);
 }
 
 /*
@@ -298,9 +308,9 @@ static void MarkPostmasterChildInactive(int code, Datum arg) {
 
   Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
   slot--;
-  Assert(PMSignalState->PMChildFlags[slot] == PM_CHILD_ACTIVE ||
-         PMSignalState->PMChildFlags[slot] == PM_CHILD_WALSENDER);
-  PMSignalState->PMChildFlags[slot] = PM_CHILD_ASSIGNED;
+  Assert(PM_FLAG_GET(slot) == PM_CHILD_ACTIVE ||
+         PM_FLAG_GET(slot) == PM_CHILD_WALSENDER);
+  PM_FLAG_SET(slot, PM_CHILD_ASSIGNED);
 }
 
 /*

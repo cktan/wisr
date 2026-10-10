@@ -109,6 +109,14 @@
  * the public functions. It is defined here to allow embedding Latches as
  * part of bigger structs.
  */
+/*
+ * A latch's flags are read and written as relaxed atomics: the memory
+ * barriers around them order them, as they always did, and a thread
+ * sanitizer sees them for what they are.
+ */
+#define LATCH_GET(field) __atomic_load_n(&(field), __ATOMIC_RELAXED)
+#define LATCH_SET(field, value) __atomic_store_n(&(field), (value), __ATOMIC_RELAXED)
+
 typedef struct Latch {
   sig_atomic_t is_set;
   sig_atomic_t maybe_sleeping;
@@ -135,5 +143,6 @@ extern int WaitLatch(Latch *latch, int wakeEvents, long timeout,
 extern int WaitLatchOrSocket(Latch *latch, int wakeEvents, pgsocket sock,
                              long timeout, uint32 wait_event_info);
 extern void InitializeLatchWaitSet(void);
+extern void ShutdownLatchWaitSet(void);
 
 #endif /* LATCH_H */

@@ -202,7 +202,9 @@ typedef unsigned char slock_t;
  * available at:
  * http://software.intel.com/en-us/articles/implementing-scalable-atomic-locks-for-multi-core-intel-em64t-and-ia32-architectures
  */
-#define TAS_SPIN(lock)    (*(lock) ? 1 : TAS(lock))
+/* The test before the TAS is a relaxed atomic load: see the ARM64 one. */
+#define TAS_SPIN(lock) \
+	(__atomic_load_n((lock), __ATOMIC_RELAXED) ? 1 : TAS(lock))
 
 static __inline__ int tas(volatile slock_t *lock) {
   slock_t _res = 1;
@@ -251,9 +253,12 @@ static __inline__ int tas(volatile slock_t *lock) {
 
 /*
  * On ARM64, it's a win to use a non-locking test before the TAS proper.  It
- * may be a win on 32-bit ARM, too, but nobody's tested it yet.
+ * may be a win on 32-bit ARM, too, but nobody's tested it yet.  The test is
+ * a relaxed atomic load, which it always was in effect, so that a thread
+ * sanitizer sees it as one.
  */
-#define TAS_SPIN(lock)	(*(lock) ? 1 : TAS(lock))
+#define TAS_SPIN(lock) \
+	(__atomic_load_n((lock), __ATOMIC_RELAXED) ? 1 : TAS(lock))
 
 #define SPIN_DELAY() spin_delay()
 
@@ -372,7 +377,8 @@ typedef unsigned int slock_t;
 #define TAS(lock) tas(lock)
 
 /* On PPC, it's a win to use a non-locking test before the lwarx */
-#define TAS_SPIN(lock)	(*(lock) ? 1 : TAS(lock))
+#define TAS_SPIN(lock) \
+	(__atomic_load_n((lock), __ATOMIC_RELAXED) ? 1 : TAS(lock))
 
 /*
  * The second operand of addi can hold a constant zero or a register number,

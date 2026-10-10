@@ -41,8 +41,12 @@ typedef pg_atomic_uint32 pg_atomic_flag;
 
 #ifndef PG_HAVE_ATOMIC_READ_U32
 #define PG_HAVE_ATOMIC_READ_U32
+/*
+ * A relaxed atomic load: what the plain load did on every platform digres
+ * runs on, and what a thread sanitizer can see as one.
+ */
 static inline uint32 pg_atomic_read_u32_impl(volatile pg_atomic_uint32 *ptr) {
-  return ptr->value;
+  return __atomic_load_n(&ptr->value, __ATOMIC_RELAXED);
 }
 #endif
 
@@ -50,7 +54,7 @@ static inline uint32 pg_atomic_read_u32_impl(volatile pg_atomic_uint32 *ptr) {
 #define PG_HAVE_ATOMIC_WRITE_U32
 static inline void pg_atomic_write_u32_impl(volatile pg_atomic_uint32 *ptr,
                                             uint32 val) {
-  ptr->value = val;
+  __atomic_store_n(&ptr->value, val, __ATOMIC_RELAXED);
 }
 #endif
 
@@ -259,7 +263,7 @@ static inline void pg_atomic_write_u64_impl(volatile pg_atomic_uint64 *ptr,
    * required alignment.
    */
   AssertPointerAlignment(ptr, 8);
-  ptr->value = val;
+  __atomic_store_n(&ptr->value, val, __ATOMIC_RELAXED);
 }
 
 #else
@@ -288,7 +292,7 @@ static inline uint64 pg_atomic_read_u64_impl(volatile pg_atomic_uint64 *ptr) {
    * On this platform aligned 64-bit reads are guaranteed to be atomic.
    */
   AssertPointerAlignment(ptr, 8);
-  return ptr->value;
+  return __atomic_load_n(&ptr->value, __ATOMIC_RELAXED);
 }
 
 #else

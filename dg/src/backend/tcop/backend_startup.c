@@ -858,13 +858,30 @@ static void SendNegotiateProtocolVersion(List *unrecognized_protocol_options) {
  * to a client that has not yet completed authentication, or even sent us
  * a startup packet.
  */
-static void process_startup_packet_die(SIGNAL_ARGS) { _exit(1); }
+static void process_startup_packet_die(SIGNAL_ARGS) {
+  /*
+   * A session thread is here not in a signal handler but where its flags
+   * are delivered (DeliverPendingSignals()), and _exit() would end the
+   * server: it ends the thread.
+   */
+  if (IsSessionThread)
+    proc_exit(1);
+  _exit(1);
+}
 
 /*
  * Timeout while processing startup packet.
- * As for process_startup_packet_die(), we exit via _exit(1).
+ * As for process_startup_packet_die(), we exit via _exit(1).  A session
+ * thread is in its timer's signal handler, so it leaves itself a SIGTERM,
+ * which interrupts the wait it is in and ends it there.
  */
-static void StartupPacketTimeoutHandler(void) { _exit(1); }
+static void StartupPacketTimeoutHandler(void) {
+  if (IsSessionThread) {
+    SignalSelfLater(SIGTERM);
+    return;
+  }
+  _exit(1);
+}
 
 /*
  * Helper for the log_connections GUC check hook.

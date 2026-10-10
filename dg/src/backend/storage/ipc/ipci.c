@@ -135,14 +135,15 @@ Size CalculateShmemSize(int *num_semaphores) {
   return size;
 }
 
-#ifdef EXEC_BACKEND
 /*
  * AttachSharedMemoryStructs
  *		Initialize a postmaster child process's access to shared memory
  *      structures.
  *
- * In !EXEC_BACKEND mode, we inherit everything through the fork, and this
- * isn't needed.
+ * In !EXEC_BACKEND mode, a child process inherits everything through the
+ * fork, and this isn't needed.  A session thread is given its parent's
+ * SHARED variables, but some pointers into shared memory sit in LOCAL
+ * structures (pgStatLocal's, say): it needs this too.
  */
 void AttachSharedMemoryStructs(void) {
   /* InitProcess must've been called already */
@@ -163,7 +164,6 @@ void AttachSharedMemoryStructs(void) {
   if (shmem_startup_hook)
     shmem_startup_hook();
 }
-#endif
 
 /*
  * CreateSharedMemoryAndSemaphores

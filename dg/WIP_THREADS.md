@@ -1,139 +1,96 @@
 # Work in progress: step 3, connections as threads
 
-Where step 3 of `PLAN.md` (§5) stood when it was set aside for
-the removal of async I/O, on its own branch. Read `PLAN.md` §4
-and §5 first.
+Where step 3 of `PLAN.md` (§5) stands on `wip-dg`. `PLAN.md`
+§5.1 is the summary; this is the detail, and what is left.
 
-## Done on this branch
+## Done
 
-1. **A FATAL ends a session, not the process.** In a thread
-   started by `session_thread_start()`, `proc_exit()` runs the
-   thread's exit callbacks and throws `proc_exit_t`
-   (`storage/ipc/ipc.c`, `proc_exit_throws`); the thread's top
-   catches it, and the exit code is the thread's result. A
-   session that returns ends through `proc_exit(0)` too, so its
-   callbacks run. A session thread registers no `atexit`
-   handler.
-   - `digres --parse` takes `-c NAME=VALUE`. `test/run.sh` runs
-     `select_error.sql` with `exit_on_error=on` in 8 threads:
-     8 FATALs on stderr, the process lives to print, status 1.
-     That also tests the copy of settings to a thread.
-2. **A latch wakes its owning thread.** `Latch` has `owner_tid`
-   beside `owner_pid`; `SetLatch()` sends `SIGURG` to that
-   thread with `tgkill()` (`WakeupOtherProc(pid, tid)`), and
-   `WakeupMyProc()` to this thread. A thread's signalfd reads
-   only signals sent to it and to the process, so the wake-up
-   reaches the right thread, from this process or a forked one.
-   No test covers it yet: the tool's sessions never wait on a
-   latch.
-
-3. **Option B, piece 1: a signal to a backend is a flag.**
+1. **A FATAL ends a session thread, not the process.**
+   `proc_exit()` runs the thread's exit callbacks and throws
+   `proc_exit_t` (`IsSessionThread`); the thread's top catches
+   it. A session that returns ends through `proc_exit(0)`.
+2. **A latch wakes its owning thread.** `Latch` has
+   `owner_tid`; `SetLatch()` sends `SIGURG` with `tgkill()`.
+3. **A signal to a backend is a flag** (option B).
    `SignalProc(proc, sig)` sets bit `sig` in
    `proc->pendingSignals` and sets `proc->procLatch`; the owner
-   runs the handler it set with `pqsignal()` (which now records
-   every handler, `pqsignal_handler()`) from
-   `DeliverPendingSignals()`, called by `ProcessInterrupts()`
-   and at the end of `WaitEventSetWait()`.
-   `CHECK_FOR_INTERRUPTS()` also tests `*MyPendingSignals`.
-   `SignalSelf(sig)` runs this thread's own handler. Converted:
+   runs the handler `pqsignal()` recorded
+   (`pqsignal_handler()`) from `DeliverPendingSignals()`: in
+   `ProcessInterrupts()` and at the top of each pass of
+   `WaitEventSetWait()`'s loop. `CHECK_FOR_INTERRUPTS()` tests
+   `*MyPendingSignals`. `SignalSelf()` runs this thread's own
+   handler; `SignalSelfLater()` leaves it for the next wait.
    `SendProcSignal()`, barriers, the cancel request,
-   `pg_cancel_backend()`/`pg_terminate_backend()`, DROP
-   DATABASE's terminate, the statement and lock timeouts, and
-   the postmaster's `signal_child()` to a backend that has a
-   PGPROC (`PostmasterPidGetProc()`), except `SIGQUIT` and
-   `SIGKILL`. Process groups are no longer signalled.
-   - `test/server.sh` checks an authentication timeout
-     (`SignalSelf`) and a fast shutdown with an idle session
-     open (`SignalProc`); with `SignalProc()` made a no-op the
-     latter hangs, so it does test the new path.
-   - No SQL can test cancel yet: a function call needs catalog
-     tables, and nothing runs long without one.
+   `pg_cancel_backend()`, `pg_terminate_backend()`, DROP
+   DATABASE's terminate, the statement and lock timeouts and
+   the postmaster's `signal_child()` all use it.
+4. **A timer a thread.** `timeout.c` arms
+   `timer_create(SIGEV_THREAD_ID)`, made on first use and
+   deleted at the thread's exit.
+5. **A thread is given every SHARED variable.** The build reads
+   each `/*SHARED*/` variable's place in the thread-local block
+   from one link (`src/tools/shared_tls.py`), compiles the
+   table into a second, and checks a third reading.
+   `session_thread_start()` copies those bytes, 197 variables,
+   before anything else. A file's `__tls_guard` is not copied.
+6. **A connection is a thread** (`postmaster/backend_thread.c`).
+   - `BackendStartup()` calls `backend_thread_launch()`; the
+     thread's id is the child's pid. The postmaster does not
+     close the client socket; the thread does as it ends.
+   - The thread sets up as a forked child does
+     (`InitPostmasterChild()` stops before what belongs to a
+     process: `setsid()`, `SIGQUIT`, the parent-death signal),
+     then runs `BackendMain()`. `InitProcess()` runs
+     `AttachSharedMemoryStructs()` for it, as for an
+     EXEC_BACKEND child: some pointers into shared memory sit
+     in LOCAL structures (`pgStatLocal`). `InitShmemIndex()`
+     forgets the copied `ShmemIndex` first, and
+     `XLOGShmemInit()` does not free the copied `ControlFile`.
+   - A signal before the thread has a PGPROC goes to its launch
+     record, with `SIGURG` to the thread;
+     `AdoptPendingSignals()` moves it to the PGPROC.
+     `SIGKILL` to a thread is dropped.
+   - As it ends the thread queues itself with its exit code and
+     sets the postmaster's latch; `process_pm_child_exit()`
+     takes it from the queue.
+   - In a session thread `MyProcPid` is the thread id;
+     `CurrentProcPid()` replaces the `getpid()` checks. Signals
+     are blocked but `SIGALRM` and the faults, whose handler is
+     the process's wrapper running the thread's own.
+   - A thread's end frees what a process exit did: the socket,
+     the wait sets and signalfd, open files
+     (`ShutdownFileAccess()`), the static snapshots' arrays, the
+     memory contexts and the context freelists. 300 connections
+     leave descriptors and heap flat.
+   - `set_stack_base()` runs at each thread's start, and in
+     `main()` before `--parse` is dispatched (it was after).
+7. **TSan runs the server.** `make tsan` runs `test/server.sh`
+   on `build/digres-tsan`; it is clean. PostgreSQL's lock-free
+   handoffs became relaxed atomics: atomics' read and write,
+   latch flags and owner, the spinlock's test, the postmaster's
+   child flags, the `CHECK_FOR_INTERRUPTS()` test; `lwWaiting`
+   is a release store and an acquire load.
 
-4. **Option B, piece 2: a timer a thread.** `timeout.c` arms
-   its own timer with `timer_create(SIGEV_THREAD_ID)`, made on
-   first use in each thread and deleted at its exit, instead of
-   the process's `setitimer()`; `SIGALRM` goes to the thread
-   that set the timeout. The authentication-timeout check in
-   `test/server.sh` fails with the timer left unarmed.
+`test/server.sh` checks 8 sessions at once, each a thread with
+no backend process, an authentication timeout (`SignalSelf`),
+and a fast shutdown with an idle session open (`SignalProc`).
 
-5. **Option B, piece 3, first step: a thread is given every
-   SHARED variable.** The build reads, from one link, each
-   `/*SHARED*/` variable's offset in the thread-local block
-   (`src/tools/shared_tls.py`: the source's marks, each object's
-   symbols, the linker map), compiles that table into a second
-   link, and checks a third reading finds it unchanged.
-   `session_thread_start()` copies those bytes from the parent's
-   block to the child's (197 variables today) before anything
-   else. A file's `__tls_guard` is not copied, so the child runs
-   its dynamic initialisers again: they are list heads that point
-   at themselves.
+## Left
 
-## Open: how a session thread is reached (issue 2)
-
-`BackendStartup()` starting a thread instead of a process is
-blocked on signals:
-
-- A backend installs handlers with `pqsignal()` (`die`,
-  `StatementCancelHandler`, `procsignal_sigusr1_handler`, ...).
-  Handlers are the process's, so a thread would replace the
-  postmaster's.
-- The postmaster stops a backend with `kill(pid, SIGTERM)`;
-  cancel is `SIGINT`, ProcSignal is `SIGUSR1`, reload `SIGHUP`.
-  For a thread that pid is the postmaster's own.
-- The postmaster learns of a child's exit from `SIGCHLD` and
-  `waitpid()`; a thread's end gives neither.
-
-The options put to the owner, not yet chosen:
-
-- **A, minimal.** Threads keep every signal blocked and
-  `pqsignal()` does nothing in them; a thread's end is queued
-  for the postmaster, which is woken by its latch;
-  `signal_child()` skips threads. No cancel, terminate or
-  reload; a fast shutdown waits for sessions to disconnect.
-- **B, chosen.** "Signals become flags" (step 4) for
-  sessions now: a session's `pqsignal()` records its handler in
-  a per-thread table; `kill(pid, sig)` to a session sets a bit
-  in its `PGPROC` and wakes it; it runs the handler when it
-  wakes and in `CHECK_FOR_INTERRUPTS()`. `MyProcPid` becomes the
-  thread id, so `pg_backend_pid()` and cancel keys stay
-  distinct.
-
-Either way the thread must be given the postmaster's SHARED
-values (`ShmemBase`, `ProcGlobal`, `MaxBackends`, ...), from
-the list `save_backend_variables()` in `launch_backend.c`
-keeps; today it is given only `progname`.
-
-## Waking a session from every wait
-
-The rule settled: a request is kept as a flag in digres, and
-the session is woken from wherever it waits, RocksDB excepted.
-
-- **PostgreSQL's long waits** all go through `WaitEventSetWait`
-  (`epoll_wait`): the client socket (non-blocking, so never
-  asleep in `recv`/`send`), lock and condition-variable waits,
-  timeouts. `SetLatch()` reaches them, now per thread.
-  LWLocks (`sem_wait`), spinlock back-off and file I/O are short
-  or not interruptible in PostgreSQL either.
-- **sm's lock waits** sleep on `lock_cv`, a condition variable a
-  signal does not wake. `sm_cancel(session)` sets the session's
-  cancel and `notify_all()`s under `lock_mu`; both lock waits
-  (`lock_wait`, `lock_wait_xact`) check it every pass and fail
-  with `SM_ERR_CANCELLED`, and so does every later wait until
-  the next statement. So a request is: set the bit, `SetLatch()`,
-  and, for cancel, timeouts and terminate, `sm_cancel()`.
-- **Cancel is all sm need offer.** The one request that must wake
-  a wait without ending it is a ProcSignal barrier, and the only
-  barrier left, `PROCSIGNAL_BARRIER_SMGRRELEASE`, goes with smgr.
-  Not yet put to the owner as settled.
-- **sm waits `sm_cancel()` does not end**: `sm_cat_index_wait`
-  (`builder.cc:415`, takes the host's own cancel word, so digres
-  can pass its flag), `builder_detach` (`builder.cc:324`, from
-  `sm_rmdb`, `sm_detach(force)` and a failed `sm_opendb`; cannot
-  be cut short), and mutexes held across another thread's
-  RocksDB call (write latches, `alloc_mu`, `store_mu`, sm3's
-  catalog mutex, sm1's `env->mu`), which are RocksDB waits.
-
-## Next
-
-Choose A or B, then issue 2; then sm attached once and the
-fork workarounds in `utils/init/datadir.c` (`PLAN.md` §5).
+- **sm attached once**, and the fork workarounds in
+  `utils/init/datadir.c`: the child process that lists the
+  databases, the list fixed at start, the oid from a
+  database's place in that list (`PLAN.md` §5).
+- **Crash and immediate shutdown.** `SIGQUIT` reaches a thread
+  as a flag, and `quickdie()` calls `_exit(2)`: the whole
+  server ends. There is no crash restart for threads.
+- **The auxiliary processes still fork**, now from a process
+  with threads (step 4 removes them).
+- **Untested**: cancel and terminate from SQL (a function call
+  needs catalog tables), and a reload (`SIGHUP`) reaching a
+  session.
+- **A session thread has no `SIGFPE` handler**: the process's
+  disposition, the postmaster's, applies.
+- **fd.c's budget is per thread**: each thread thinks it has
+  `max_safe_fds`.
+- `syslog_ident` (9 bytes) is not freed at a thread's end.

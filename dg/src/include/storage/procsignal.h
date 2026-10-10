@@ -82,6 +82,8 @@ struct PGPROC;
 extern void SignalProc(struct PGPROC *proc, int sig);
 extern void SignalSelf(int sig);
 extern void DeliverPendingSignals(void);
+extern void AdoptPendingSignals(void);
+extern void SignalSelfLater(int sig);
 
 /* ProcSignalHeader is an opaque struct, details known only within procsignal.c
  */

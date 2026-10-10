@@ -111,6 +111,13 @@ int main(int argc, char *argv[]) {
   MemoryContextInit();
 
   /*
+   * Set reference point for stack-depth checking.  (There's no point in
+   * enabling this before error reporting works.)  Before "--parse" and
+   * initdb are dispatched, which recurse as deep as a server does.
+   */
+  (void)set_stack_base();
+
+  /*
    * "digres --parse" is not a server: it parses what it is given and
    * prints the trees. It needs nothing started but what is above.
    */
@@ -124,12 +131,6 @@ int main(int argc, char *argv[]) {
   if (strcmp(progname, "initdb") == 0 ||
       (argc > 1 && strcmp(argv[1], "--init") == 0))
     exit(initdb_main(argc, argv));
-
-  /*
-   * Set reference point for stack-depth checking.  (There's no point in
-   * enabling this before error reporting works.)
-   */
-  (void)set_stack_base();
 
   /*
    * Set up locale information

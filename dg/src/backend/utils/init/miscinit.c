@@ -126,11 +126,19 @@ void InitPostmasterChild(void) {
   InitializeLatchWaitSet();
 
   /*
-   * If possible, make this process a group leader, so that the postmaster
-   * can signal any child processes too. Not all processes will have
-   * children, but for consistency we make all postmaster child processes do
-   * this.
+   * A session thread is no process: its signal mask is set
+   * (session_thread.c), its SIGQUIT comes as a flag, and the rest below
+   * belongs to the process, which is the postmaster.
    */
+  if (IsSessionThread)
+    return;
+
+    /*
+     * If possible, make this process a group leader, so that the postmaster
+     * can signal any child processes too. Not all processes will have
+     * children, but for consistency we make all postmaster child processes do
+     * this.
+     */
 #ifdef HAVE_SETSID
   if (setsid() < 0)
     elog(FATAL, "setsid() failed: %m");
@@ -1576,3 +1584,10 @@ void pg_bindtextdomain(const char *domain) {
   }
 #endif
 }
+
+/*
+ * The id MyProcPid should hold now: the thread's in a session thread, the
+ * process's otherwise.  A process forked after MyProcPid was set, by
+ * system() say, gets an answer that differs from it.
+ */
+int CurrentProcPid(void) { return IsSessionThread ? gettid() : getpid(); }

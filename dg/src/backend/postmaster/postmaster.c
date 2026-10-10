@@ -104,6 +104,7 @@
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
+#include "postmaster/backend_thread.h"
 #include "storage/proc.h"
 #include "storage/procsignal.h"
 #include "tcop/backend_startup.h"
@@ -1482,7 +1483,7 @@ static int ServerLoop(void) {
         process_pm_shutdown_request();
       if (pending_pm_reload_request)
         process_pm_reload_request();
-      if (pending_pm_child_exit)
+      if (pending_pm_child_exit || backend_thread_ended())
         process_pm_child_exit();
       if (pending_pm_pmsignal)
         process_pm_pmsignal();
@@ -2163,6 +2164,24 @@ static void process_pm_child_exit(void) {
         LogChildExit(LOG, _("untracked child process"), pid, exitstatus);
     }
   } /* loop over pending child-death reports */
+
+  /* Backends that are threads: their ends are queued, not waited for. */
+  {
+    backend_thread_t *thread;
+
+    while ((thread = backend_thread_exited(&exitstatus)) != NULL) {
+      PMChild *pmchild;
+
+      pid = backend_thread_pid(thread);
+      backend_thread_free(thread);
+      pmchild = FindPostmasterChildByPid(pid);
+      if (pmchild) {
+        pmchild->thread = NULL;
+        CleanupBackend(pmchild, exitstatus);
+      } else
+        LogChildExit(LOG, _("untracked backend thread"), pid, exitstatus);
+    }
+  }
 
   /*
    * After cleaning out the SIGCHLD queue, see if we have any state changes
@@ -2883,6 +2902,12 @@ static void signal_child(PMChild *pmchild, int signal) {
                            GetBackendTypeDesc(pmchild->bkend_type),
                            (int)pmchild->pid)));
 
+  /* A backend that is a thread is sent a flag (backend_thread.c). */
+  if (pmchild->thread != NULL) {
+    backend_thread_signal(pmchild->thread, signal);
+    return;
+  }
+
   /*
    * A backend is sent a signal as a flag in its PGPROC, as a session that
    * is a thread will be (SignalProc()); one with no PGPROC yet, and a crash
@@ -3010,8 +3035,9 @@ static int BackendStartup(ClientSocket *client_sock) {
   /* Hasn't asked to be notified about any bgworkers yet */
   bn->bgworker_notify = false;
 
-  pid = postmaster_child_launch(bn->bkend_type, bn->child_slot, &startup_data,
-                                sizeof(startup_data), client_sock);
+  /* A connection's backend is a thread of this process. */
+  pid = backend_thread_launch(bn->bkend_type, bn->child_slot, &startup_data,
+                              sizeof(startup_data), client_sock, &bn->thread);
   if (pid < 0) {
     /* in parent, fork failed */
     int save_errno = errno;
@@ -3030,9 +3056,11 @@ static int BackendStartup(ClientSocket *client_sock) {
 
   /*
    * Everything's been successful, it's safe to add this backend to our list
-   * of backends.
+   * of backends.  The thread has the client socket now: ServerLoop must not
+   * close it.
    */
   bn->pid = pid;
+  client_sock->sock = PGINVALID_SOCKET;
   return STATUS_OK;
 }
 

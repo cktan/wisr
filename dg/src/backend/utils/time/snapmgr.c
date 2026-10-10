@@ -1576,3 +1576,19 @@ bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot) {
 static void ResOwnerReleaseSnapshot(Datum res) {
   UnregisterSnapshotNoOwner((Snapshot)DatumGetPointer(res));
 }
+
+/*
+ * Free the arrays GetSnapshotData() mallocs for the static snapshots: a
+ * session thread, as it ends, whose memory no process exit frees.
+ */
+void FreeStaticSnapshots(void) {
+  SnapshotData *snapshots[] = {&CurrentSnapshotData, &SecondarySnapshotData,
+                               &CatalogSnapshotData};
+
+  for (int i = 0; i < lengthof(snapshots); i++) {
+    free(snapshots[i]->xip);
+    free(snapshots[i]->subxip);
+    snapshots[i]->xip = NULL;
+    snapshots[i]->subxip = NULL;
+  }
+}

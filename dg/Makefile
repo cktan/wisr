@@ -92,7 +92,7 @@ endef
 
 # The server again, each object compiled once more as NAME.tsan.o for
 # the thread sanitizer, and the statements in test/ run with it, alone
-# and in threads. The sanitizer cannot map its memory with the address
+# and in threads, and test/server.sh run on it. The sanitizer cannot map its memory with the address
 # space randomised, hence setarch -R. sq and sm are not instrumented.
 .PHONY: tsan
 tsan: gen $(LIBSQ) $(LIBSM)
@@ -100,6 +100,7 @@ tsan: gen $(LIBSQ) $(LIBSM)
 	@mkdir -p build
 	$(call link_shared,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
 	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
+	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/server.sh
 
 # The parser is sq and a converter (src/backend/parser/parser.c). sq's
 # tests keep what PostgreSQL's parser printed for each of their files;

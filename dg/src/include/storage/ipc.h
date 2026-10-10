@@ -66,13 +66,12 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool proc_exit_inprogress;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool shmem_exit_inprogress;
 
 /*
- * What proc_exit() throws in a session's thread, when proc_exit_throws is
- * set: the session ends, and the thread with it, not the process.
+ * What proc_exit() throws in a session thread (IsSessionThread): the
+ * session ends, and the thread with it, not the process.
  */
 struct proc_exit_t {
   int code;
 };
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool proc_exit_throws;
 
 pg_noreturn extern void proc_exit(int code);
 extern void shmem_exit(int code);
@@ -89,9 +88,7 @@ extern thread_local /*SHARED*/ PGDLLIMPORT shmem_startup_hook_type
 
 extern Size CalculateShmemSize(int *num_semaphores);
 extern void CreateSharedMemoryAndSemaphores(void);
-#ifdef EXEC_BACKEND
 extern void AttachSharedMemoryStructs(void);
-#endif
 extern void InitializeShmemGUCs(void);
 
 #endif /* IPC_H */

@@ -752,13 +752,44 @@ void SignalSelf(int sig) {
     handler(sig);
 }
 
+/* MyPendingSignals as the atomic it is. */
+static pg_atomic_uint32 *pending_signals(void) {
+  Assert(MyPendingSignals != &NoPendingSignals);
+  return (pg_atomic_uint32 *)MyPendingSignals;
+}
+
+/*
+ * Leave sig pending for this thread, to run at its next wait or
+ * CHECK_FOR_INTERRUPTS(): for a signal handler whose work may not be done
+ * in a signal handler.
+ */
+void SignalSelfLater(int sig) {
+  pg_atomic_fetch_or_u32(pending_signals(), (uint32)1 << sig);
+}
+
+/*
+ * Take MyProc's word as this process's pending signals, with any sent
+ * before it had a PGPROC: to a session thread, that came to its launch
+ * record (postmaster/backend_thread.c).  MyProc->pid is set already, so a
+ * sender that finds no PGPROC and falls back to the old word looks again
+ * after, and finds this one.
+ */
+void AdoptPendingSignals(void) {
+  const volatile uint32 *old = MyPendingSignals;
+
+  MyPendingSignals = &MyProc->pendingSignals.value;
+  if (old != &NoPendingSignals)
+    pg_atomic_fetch_or_u32(&MyProc->pendingSignals,
+                           pg_atomic_exchange_u32((pg_atomic_uint32 *)old, 0));
+}
+
 /* Run the handler of each signal SignalProc() left for this process. */
 void DeliverPendingSignals(void) {
   uint32 pending;
 
-  if (*MyPendingSignals == 0)
+  if (__atomic_load_n(MyPendingSignals, __ATOMIC_RELAXED) == 0)
     return;
-  pending = pg_atomic_exchange_u32(&MyProc->pendingSignals, 0);
+  pending = pg_atomic_exchange_u32(pending_signals(), 0);
   while (pending != 0) {
     int sig = pg_rightmost_one_pos32(pending);
 

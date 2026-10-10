@@ -430,6 +430,8 @@ void InitProcess(void) {
   MyProc->fpLocalTransactionId = InvalidLocalTransactionId;
   MyProc->xid = InvalidTransactionId;
   MyProc->xmin = InvalidTransactionId;
+  /* Signals sent to this PGPROC's last owner are not ours. */
+  pg_atomic_write_u32(&MyProc->pendingSignals, 0);
   MyProc->pid = MyProcPid;
   MyProc->vxid.procNumber = MyProcNumber;
   MyProc->vxid.lxid = InvalidLocalTransactionId;
@@ -483,10 +485,7 @@ void InitProcess(void) {
    */
   OwnLatch(&MyProc->procLatch);
   SwitchToSharedLatch();
-
-  /* Signals sent to this PGPROC's last owner are not ours. */
-  pg_atomic_write_u32(&MyProc->pendingSignals, 0);
-  MyPendingSignals = &MyProc->pendingSignals.value;
+  AdoptPendingSignals();
 
   /* now that we have a proc, report wait events to shared memory */
   pgstat_set_wait_event_storage(&MyProc->wait_event_info);
@@ -510,13 +509,17 @@ void InitProcess(void) {
   InitLWLockAccess();
   InitDeadLockChecking();
 
-#ifdef EXEC_BACKEND
-
   /*
    * Initialize backend-local pointers to all the shared data structures.
-   * (We couldn't do this until now because it needs LWLocks.)
+   * (We couldn't do this until now because it needs LWLocks.)  A forked
+   * child inherited them; a session thread, like an EXEC_BACKEND child,
+   * did not, or not all.
    */
+#ifdef EXEC_BACKEND
   if (IsUnderPostmaster)
+    AttachSharedMemoryStructs();
+#else
+  if (IsSessionThread)
     AttachSharedMemoryStructs();
 #endif
 }
@@ -604,6 +607,8 @@ void InitAuxiliaryProcess(void) {
 
   /* Mark auxiliary proc as in use by me */
   /* use volatile pointer to prevent code rearrangement */
+  /* Signals sent to this PGPROC's last owner are not ours. */
+  pg_atomic_write_u32(&auxproc->pendingSignals, 0);
   ((volatile PGPROC *)auxproc)->pid = MyProcPid;
 
   SpinLockRelease(ProcStructLock);
@@ -651,10 +656,7 @@ void InitAuxiliaryProcess(void) {
    */
   OwnLatch(&MyProc->procLatch);
   SwitchToSharedLatch();
-
-  /* Signals sent to this PGPROC's last owner are not ours. */
-  pg_atomic_write_u32(&MyProc->pendingSignals, 0);
-  MyPendingSignals = &MyProc->pendingSignals.value;
+  AdoptPendingSignals();
 
   /* now that we have a proc, report wait events to shared memory */
   pgstat_set_wait_event_storage(&MyProc->wait_event_info);
@@ -682,13 +684,17 @@ void InitAuxiliaryProcess(void) {
    */
   InitLWLockAccess();
 
-#ifdef EXEC_BACKEND
-
   /*
    * Initialize backend-local pointers to all the shared data structures.
-   * (We couldn't do this until now because it needs LWLocks.)
+   * (We couldn't do this until now because it needs LWLocks.)  A forked
+   * child inherited them; a session thread, like an EXEC_BACKEND child,
+   * did not, or not all.
    */
+#ifdef EXEC_BACKEND
   if (IsUnderPostmaster)
+    AttachSharedMemoryStructs();
+#else
+  if (IsSessionThread)
     AttachSharedMemoryStructs();
 #endif
 }
@@ -842,7 +848,7 @@ static void ProcKill(int code, Datum arg) {
   Assert(MyProc != NULL);
 
   /* not safe if forked by system(), etc. */
-  if (MyProc->pid != (int)getpid())
+  if (MyProc->pid != CurrentProcPid())
     elog(PANIC, "ProcKill() called in child process");
 
 #ifdef USE_ASSERT_CHECKING
@@ -978,7 +984,7 @@ static void AuxiliaryProcKill(int code, Datum arg) {
   Assert(proctype >= 0 && proctype < NUM_AUXILIARY_PROCS);
 
   /* not safe if forked by system(), etc. */
-  if (MyProc->pid != (int)getpid())
+  if (MyProc->pid != CurrentProcPid())
     elog(PANIC, "AuxiliaryProcKill() called in child process");
 
   auxproc = &AuxiliaryProcs[proctype];

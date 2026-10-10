@@ -27,6 +27,14 @@
 /* A common WaitEventSet used to implement WaitLatch() */
 static thread_local /*LOCAL*/ WaitEventSet *LatchWaitSet;
 
+/* Free the WaitEventSet WaitLatch() uses: a session thread, as it ends. */
+void ShutdownLatchWaitSet(void) {
+  if (LatchWaitSet != NULL) {
+    FreeWaitEventSet(LatchWaitSet);
+    LatchWaitSet = NULL;
+  }
+}
+
 /* The positions of the latch and PM death events in LatchWaitSet */
 #define LatchWaitSetLatchPos 0
 #define LatchWaitSetPostmasterDeathPos 1
@@ -57,10 +65,10 @@ void InitializeLatchWaitSet(void) {
  * Initialize a process-local latch.
  */
 void InitLatch(Latch *latch) {
-  latch->is_set = false;
-  latch->maybe_sleeping = false;
-  latch->owner_pid = MyProcPid;
-  latch->owner_tid = gettid();
+  LATCH_SET(latch->is_set, false);
+  LATCH_SET(latch->maybe_sleeping, false);
+  LATCH_SET(latch->owner_pid, MyProcPid);
+  LATCH_SET(latch->owner_tid, gettid());
   latch->is_shared = false;
 
 #ifdef WIN32
@@ -101,10 +109,10 @@ void InitSharedLatch(Latch *latch) {
     elog(ERROR, "CreateEvent failed: error code %lu", GetLastError());
 #endif
 
-  latch->is_set = false;
-  latch->maybe_sleeping = false;
-  latch->owner_pid = 0;
-  latch->owner_tid = 0;
+  LATCH_SET(latch->is_set, false);
+  LATCH_SET(latch->maybe_sleeping, false);
+  LATCH_SET(latch->owner_pid, 0);
+  LATCH_SET(latch->owner_tid, 0);
   latch->is_shared = true;
 }
 
@@ -123,12 +131,12 @@ void OwnLatch(Latch *latch) {
   /* Sanity checks */
   Assert(latch->is_shared);
 
-  owner_pid = latch->owner_pid;
+  owner_pid = LATCH_GET(latch->owner_pid);
   if (owner_pid != 0)
     elog(PANIC, "latch already owned by PID %d", owner_pid);
 
-  latch->owner_pid = MyProcPid;
-  latch->owner_tid = gettid();
+  LATCH_SET(latch->owner_pid, MyProcPid);
+  LATCH_SET(latch->owner_tid, gettid());
 }
 
 /*
@@ -136,10 +144,10 @@ void OwnLatch(Latch *latch) {
  */
 void DisownLatch(Latch *latch) {
   Assert(latch->is_shared);
-  Assert(latch->owner_pid == MyProcPid);
+  Assert(LATCH_GET(latch->owner_pid) == MyProcPid);
 
-  latch->owner_pid = 0;
-  latch->owner_tid = 0;
+  LATCH_SET(latch->owner_pid, 0);
+  LATCH_SET(latch->owner_tid, 0);
 }
 
 /*
@@ -280,13 +288,13 @@ void SetLatch(Latch *latch) {
   pg_memory_barrier();
 
   /* Quick exit if already set */
-  if (latch->is_set)
+  if (LATCH_GET(latch->is_set))
     return;
 
-  latch->is_set = true;
+  LATCH_SET(latch->is_set, true);
 
   pg_memory_barrier();
-  if (!latch->maybe_sleeping)
+  if (!LATCH_GET(latch->maybe_sleeping))
     return;
 
 #ifndef WIN32
@@ -313,8 +321,8 @@ void SetLatch(Latch *latch) {
    * not the top, so that they'll correctly process latch-setting events
    * that happen before they enter the loop.
    */
-  owner_pid = latch->owner_pid;
-  owner_tid = latch->owner_tid;
+  owner_pid = LATCH_GET(latch->owner_pid);
+  owner_tid = LATCH_GET(latch->owner_tid);
   if (owner_pid == 0)
     return;
   else if (owner_pid == MyProcPid && owner_tid == gettid())
@@ -349,10 +357,10 @@ void SetLatch(Latch *latch) {
  */
 void ResetLatch(Latch *latch) {
   /* Only the owner should reset the latch */
-  Assert(latch->owner_pid == MyProcPid);
+  Assert(LATCH_GET(latch->owner_pid) == MyProcPid);
   Assert(latch->maybe_sleeping == false);
 
-  latch->is_set = false;
+  LATCH_SET(latch->is_set, false);
 
   /*
    * Ensure that the write to is_set gets flushed to main memory before we

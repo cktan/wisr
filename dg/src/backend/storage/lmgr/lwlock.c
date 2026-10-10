@@ -885,8 +885,8 @@ static void LWLockWakeup(LWLock *lock) {
      * proclist_delete(), rather than having to check if it has been
      * removed from the list.
      */
-    Assert(waiter->lwWaiting == LW_WS_WAITING);
-    waiter->lwWaiting = LW_WS_PENDING_WAKEUP;
+    Assert(LWWAITING_GET(waiter) == LW_WS_WAITING);
+    LWWAITING_SET(waiter, LW_WS_PENDING_WAKEUP);
 
     /*
      * Once we've woken up an exclusive lock, there's no point in waking
@@ -944,7 +944,7 @@ static void LWLockWakeup(LWLock *lock) {
      * another lock.
      */
     pg_write_barrier();
-    waiter->lwWaiting = LW_WS_NOT_WAITING;
+    LWWAITING_SET(waiter, LW_WS_NOT_WAITING);
     PGSemaphoreUnlock(waiter->sem);
   }
 }
@@ -963,7 +963,7 @@ static void LWLockQueueSelf(LWLock *lock, LWLockMode mode) {
   if (MyProc == NULL)
     elog(PANIC, "cannot wait without a PGPROC structure");
 
-  if (MyProc->lwWaiting != LW_WS_NOT_WAITING)
+  if (LWWAITING_GET(MyProc) != LW_WS_NOT_WAITING)
     elog(PANIC, "queueing for lock while waiting on another one");
 
   LWLockWaitListLock(lock);
@@ -971,7 +971,7 @@ static void LWLockQueueSelf(LWLock *lock, LWLockMode mode) {
   /* setting the flag is protected by the spinlock */
   pg_atomic_fetch_or_u32(&lock->state, LW_FLAG_HAS_WAITERS);
 
-  MyProc->lwWaiting = LW_WS_WAITING;
+  LWWAITING_SET(MyProc, LW_WS_WAITING);
   MyProc->lwWaitMode = mode;
 
   /* LW_WAIT_UNTIL_FREE waiters are always at the front of the queue */
@@ -1013,7 +1013,7 @@ static void LWLockDequeueSelf(LWLock *lock) {
    * The removal happens with the wait list lock held, so there's no race in
    * this check.
    */
-  on_waitlist = MyProc->lwWaiting == LW_WS_WAITING;
+  on_waitlist = LWWAITING_GET(MyProc) == LW_WS_WAITING;
   if (on_waitlist)
     proclist_delete(&lock->waiters, MyProcNumber, lwWaitLink);
 
@@ -1027,7 +1027,7 @@ static void LWLockDequeueSelf(LWLock *lock) {
 
   /* clear waiting state again, nice for debugging */
   if (on_waitlist)
-    MyProc->lwWaiting = LW_WS_NOT_WAITING;
+    LWWAITING_SET(MyProc, LW_WS_NOT_WAITING);
   else {
     int extraWaits = 0;
 
@@ -1049,7 +1049,7 @@ static void LWLockDequeueSelf(LWLock *lock) {
      */
     for (;;) {
       PGSemaphoreLock(MyProc->sem);
-      if (MyProc->lwWaiting == LW_WS_NOT_WAITING)
+      if (LWWAITING_GET(MyProc) == LW_WS_NOT_WAITING)
         break;
       extraWaits++;
     }
@@ -1195,7 +1195,7 @@ bool LWLockAcquire(LWLock *lock, LWLockMode mode) {
 
     for (;;) {
       PGSemaphoreLock(proc->sem);
-      if (proc->lwWaiting == LW_WS_NOT_WAITING)
+      if (LWWAITING_GET(proc) == LW_WS_NOT_WAITING)
         break;
       extraWaits++;
     }
@@ -1351,7 +1351,7 @@ bool LWLockAcquireOrWait(LWLock *lock, LWLockMode mode) {
 
       for (;;) {
         PGSemaphoreLock(proc->sem);
-        if (proc->lwWaiting == LW_WS_NOT_WAITING)
+        if (LWWAITING_GET(proc) == LW_WS_NOT_WAITING)
           break;
         extraWaits++;
       }
@@ -1553,7 +1553,7 @@ bool LWLockWaitForVar(LWLock *lock, pg_atomic_uint64 *valptr, uint64 oldval,
 
     for (;;) {
       PGSemaphoreLock(proc->sem);
-      if (proc->lwWaiting == LW_WS_NOT_WAITING)
+      if (LWWAITING_GET(proc) == LW_WS_NOT_WAITING)
         break;
       extraWaits++;
     }
@@ -1633,8 +1633,8 @@ void LWLockUpdateVar(LWLock *lock, pg_atomic_uint64 *valptr, uint64 val) {
     proclist_push_tail(&wakeup, iter.cur, lwWaitLink);
 
     /* see LWLockWakeup() */
-    Assert(waiter->lwWaiting == LW_WS_WAITING);
-    waiter->lwWaiting = LW_WS_PENDING_WAKEUP;
+    Assert(LWWAITING_GET(waiter) == LW_WS_WAITING);
+    LWWAITING_SET(waiter, LW_WS_PENDING_WAKEUP);
   }
 
   /* We are done updating shared state of the lock itself. */
@@ -1649,7 +1649,7 @@ void LWLockUpdateVar(LWLock *lock, pg_atomic_uint64 *valptr, uint64 val) {
     proclist_delete(&wakeup, iter.cur, lwWaitLink);
     /* check comment in LWLockWakeup() about this barrier */
     pg_write_barrier();
-    waiter->lwWaiting = LW_WS_NOT_WAITING;
+    LWWAITING_SET(waiter, LW_WS_NOT_WAITING);
     PGSemaphoreUnlock(waiter->sem);
   }
 }

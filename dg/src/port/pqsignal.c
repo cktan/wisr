@@ -97,14 +97,18 @@ static void wrapper_handler(SIGNAL_ARGS) {
   Assert(MyProcPid);
   Assert(MyProcPid != PostmasterPid || !IsUnderPostmaster);
 
-  if (unlikely(MyProcPid != (int)getpid())) {
+  if (unlikely(MyProcPid != CurrentProcPid())) {
     pqsignal(postgres_signal_arg, SIG_DFL);
     raise(postgres_signal_arg);
     return;
   }
 #endif
 
-  (*pqsignal_handlers[postgres_signal_arg])(postgres_signal_arg);
+  /* A thread that ignores the signal, where another installed a handler. */
+  if (pqsignal_handlers[postgres_signal_arg] != SIG_IGN &&
+      pqsignal_handlers[postgres_signal_arg] != SIG_DFL &&
+      pqsignal_handlers[postgres_signal_arg] != NULL)
+    (*pqsignal_handlers[postgres_signal_arg])(postgres_signal_arg);
 
   errno = save_errno;
 }
@@ -126,6 +130,20 @@ void pqsignal(int signo, pqsigfunc func) {
 
   /* Kept for pqsignal_handler(), SIG_IGN and SIG_DFL too. */
   pqsignal_handlers[signo] = func; /* assumed atomic */
+#ifndef FRONTEND
+
+  /*
+   * A session thread's handlers are its own: a signal for it is a flag
+   * (SignalProc()), and the process's handlers stay the postmaster's.  Only
+   * SIGALRM, from the thread's own timer, comes as a signal, to the wrapper,
+   * which runs whichever thread's handler it lands in.
+   */
+  if (IsSessionThread) {
+    if (signo != SIGALRM)
+      return;
+    func = wrapper_handler;
+  }
+#endif
   if (func != SIG_IGN && func != SIG_DFL)
     func = wrapper_handler;
 

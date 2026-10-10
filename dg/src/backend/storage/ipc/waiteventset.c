@@ -232,6 +232,20 @@ static inline void ResourceOwnerForgetWaitEventSet(ResourceOwner owner,
 }
 
 /*
+ * Close what InitializeWaitEventSupport() opened: a session thread, as it
+ * ends, which no process exit does for it.
+ */
+void ShutdownWaitEventSupport(void) {
+#ifdef WAIT_USE_SIGNALFD
+  if (signal_fd != -1) {
+    close(signal_fd);
+    signal_fd = -1;
+    ReleaseExternalFD();
+  }
+#endif
+}
+
+/*
  * Initialize the process-local wait event infrastructure.
  *
  * This must be called once during startup of any process that can wait on
@@ -551,7 +565,7 @@ int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,
   }
 
   if (latch) {
-    if (latch->owner_pid != MyProcPid)
+    if (LATCH_GET(latch->owner_pid) != MyProcPid)
       elog(ERROR, "cannot wait on a latch owned by another process");
     if (set->latch)
       elog(ERROR, "cannot wait on more than one latch");
@@ -659,7 +673,7 @@ void ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch) {
   event->events = events;
 
   if (events == WL_LATCH_SET) {
-    if (latch && latch->owner_pid != MyProcPid)
+    if (latch && LATCH_GET(latch->owner_pid) != MyProcPid)
       elog(ERROR, "cannot wait on a latch owned by another process");
     set->latch = latch;
 
@@ -980,6 +994,12 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
     int rc;
 
     /*
+     * A signal sent by SignalProc() woke us: run its handler, as the kernel
+     * would have, before looking at the latch the handler may set.
+     */
+    DeliverPendingSignals();
+
+    /*
      * Check if the latch is set already first.  If so, we either exit
      * immediately or ask the kernel for further events available right
      * now without waiting, depending on how many events the caller wants.
@@ -1006,14 +1026,14 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
      * ordering, so that we cannot miss seeing is_set if a notification
      * has already been queued.
      */
-    if (set->latch && !set->latch->is_set) {
+    if (set->latch && !LATCH_GET(set->latch->is_set)) {
       /* about to sleep on a latch */
-      set->latch->maybe_sleeping = true;
+      LATCH_SET(set->latch->maybe_sleeping, true);
       pg_memory_barrier();
       /* and recheck */
     }
 
-    if (set->latch && set->latch->is_set) {
+    if (set->latch && LATCH_GET(set->latch->is_set)) {
       occurred_events->fd = PGINVALID_SOCKET;
       occurred_events->pos = set->latch_pos;
       occurred_events->user_data = set->events[set->latch_pos].user_data;
@@ -1022,7 +1042,7 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
       returned_events++;
 
       /* could have been set above */
-      set->latch->maybe_sleeping = false;
+      LATCH_SET(set->latch->maybe_sleeping, false);
 
       if (returned_events == nevents)
         break; /* output buffer full already */
@@ -1044,8 +1064,8 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
     rc = WaitEventSetWaitBlock(set, cur_timeout, occurred_events,
                                nevents - returned_events);
 
-    if (set->latch && set->latch->maybe_sleeping)
-      set->latch->maybe_sleeping = false;
+    if (set->latch && LATCH_GET(set->latch->maybe_sleeping))
+      LATCH_SET(set->latch->maybe_sleeping, false);
 
     if (rc == -1)
       break; /* timeout occurred */
@@ -1066,10 +1086,6 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
 #endif
 
   pgstat_report_wait_end();
-
-  /* A signal sent by SignalProc() woke us: run its handler, as the kernel
-   * would have. */
-  DeliverPendingSignals();
 
   return returned_events;
 }
@@ -1131,7 +1147,8 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
       /* Drain the signalfd. */
       drain();
 
-      if (set->latch && set->latch->maybe_sleeping && set->latch->is_set) {
+      if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
+          LATCH_GET(set->latch->is_set)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
         occurred_events++;
@@ -1265,7 +1282,8 @@ static int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 
     if (cur_event->events == WL_LATCH_SET &&
         cur_kqueue_event->filter == EVFILT_SIGNAL) {
-      if (set->latch && set->latch->maybe_sleeping && set->latch->is_set) {
+      if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
+          LATCH_GET(set->latch->is_set)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
         occurred_events++;
@@ -1370,7 +1388,8 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
       /* There's data in the self-pipe, clear it. */
       drain();
 
-      if (set->latch && set->latch->maybe_sleeping && set->latch->is_set) {
+      if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
+          LATCH_GET(set->latch->is_set)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
         occurred_events++;
@@ -1564,7 +1583,8 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
       if (!ResetEvent(set->handles[cur_event->pos + 1]))
         elog(ERROR, "ResetEvent failed: error code %lu", GetLastError());
 
-      if (set->latch && set->latch->maybe_sleeping && set->latch->is_set) {
+      if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
+          LATCH_GET(set->latch->is_set)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
         occurred_events++;

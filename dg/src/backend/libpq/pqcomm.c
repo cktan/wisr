@@ -371,8 +371,11 @@ static void socket_close(int code, Datum arg) {
      * backend has exited.
      *
      * We do set sock to PGINVALID_SOCKET to prevent any further I/O,
-     * though.
+     * though.  A session thread's end is no process's, so it closes the
+     * socket itself, or the socket would stay open as long as the server.
      */
+    if (IsSessionThread)
+      closesocket(MyProcPort->sock);
     MyProcPort->sock = PGINVALID_SOCKET;
   }
 }

@@ -26,12 +26,18 @@
 
 #include <unistd.h>
 
+#include "libpq/pqsignal.h"
+#include "libpq/libpq.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
+#include "storage/fd.h"
 #include "storage/ipc.h"
+#include "storage/latch.h"
+#include "storage/waiteventset.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/session_thread.h"
+#include "utils/snapmgr.h"
 
 /* What a parent hands its new thread, in malloc'd memory the thread frees. */
 typedef struct session_start_t {
@@ -51,6 +57,29 @@ static char *tls_block(void) {
   return (char *)((uintptr_t)&progname - shared_tls_anchor);
 }
 
+/*
+ * Free what the session's exit left, which a process's exit would have
+ * freed: its wait sets and signalfd, its files, the snapshots' arrays, then
+ * all its memory contexts.
+ */
+static void session_thread_end(void) {
+  if (FeBeWaitSet != NULL) {
+    FreeWaitEventSet(FeBeWaitSet);
+    FeBeWaitSet = NULL;
+  }
+  ShutdownLatchWaitSet();
+  ShutdownWaitEventSupport();
+  ShutdownFileAccess();
+  FreeStaticSnapshots();
+
+  /* Nothing allocates from here on. */
+  MemoryContextSwitchTo(NULL);
+  MemoryContextDelete(TopMemoryContext);
+  TopMemoryContext = NULL;
+  ErrorContext = NULL;
+  AllocSetFreeFreeLists();
+}
+
 /* The new thread: set up as its parent was, then run the session. */
 static void *session_thread_main(void *p) {
   session_start_t start = *(session_start_t *)p;
@@ -65,8 +94,27 @@ static void *session_thread_main(void *p) {
   }
   free(start.shared);
 
-  proc_exit_throws = true;
-  MyProcPid = getpid();
+  IsSessionThread = true;
+  MyProcPid = gettid();
+
+  /* check_stack_depth() measures from here: this thread's stack is its own. */
+  (void)set_stack_base();
+
+  /*
+   * A session thread takes no signal but SIGALRM, from its own timer, and
+   * the faults it causes itself: the rest are the postmaster's, or come as
+   * flags (SignalProc()).  Every mask the backend sets is this one.
+   */
+  sigfillset(&BlockSig);
+  sigdelset(&BlockSig, SIGALRM);
+  sigdelset(&BlockSig, SIGSEGV);
+  sigdelset(&BlockSig, SIGBUS);
+  sigdelset(&BlockSig, SIGFPE);
+  sigdelset(&BlockSig, SIGILL);
+  sigdelset(&BlockSig, SIGABRT);
+  UnBlockSig = BlockSig;
+  StartupBlockSig = BlockSig;
+  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
   /* Errors and allocations need the memory contexts, so they come first. */
   MemoryContextInit();
 
@@ -87,6 +135,7 @@ static void *session_thread_main(void *p) {
     start.fn(start.arg);
     proc_exit(0);
   } catch (const proc_exit_t &e) {
+    session_thread_end();
     return (void *)(intptr_t)e.code;
   }
 }

@@ -6,7 +6,9 @@
 #
 # The server listens on 127.0.0.1 and on a socket in build/test/server,
 # at port DG_TEST_PORT, 54329 if that is not set. Its log and each
-# check's output are left in build/test/server/.
+# check's output are left in build/test/server/. DIGRES names the server
+# to run, build/digres if it is not set: "make tsan" sets it to the build
+# under the thread sanitizer, and then a report in the log fails.
 cd "$(dirname "$0")/.." || exit 1
 if ! command -v psql > /dev/null; then
   echo "server: SKIPPED (no psql to connect with)"
@@ -14,6 +16,7 @@ if ! command -v psql > /dev/null; then
 fi
 work=$PWD/build/test/server
 port=${DG_TEST_PORT:-54329}
+digres=${DIGRES:-build/digres}
 rm -rf "$work"
 mkdir -p "$work"
 failed=0
@@ -41,7 +44,7 @@ tcp_psql() {
 echo "sesame" > "$work/pw"
 build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   fail "initdb"
-build/digres -D "$work/data" -k "$work" -p "$port" \
+$digres -D "$work/data" -k "$work" -p "$port" \
   -c authentication_timeout=1 > "$work/log" 2>&1 &
 server=$!
 for _ in $(seq 100); do
@@ -116,6 +119,32 @@ grep -q "PREPARE TRANSACTION is not supported" "$work/prepare.out" ||
   fail "prepare refused"
 grep -qx 10 "$work/prepare.out" || fail "statement after prepare"
 
+# Verify that sessions run at once, each a thread of the one server process.
+# 1. Open 8 sessions, and run a statement in each while all are open.
+# 2. Confirm each answered.
+# 3. Confirm the server has a thread for each, and no child process but its
+#    checkpointer and background writer.
+# 4. Close them.
+for i in $(seq 8); do
+  mkfifo "$work/many$i.in"
+  local_psql < "$work/many$i.in" > "$work/many$i.out" 2>&1 &
+  eval "exec $((10 + i))> \"$work/many$i.in\""
+  echo "select $i * 100;" >&$((10 + i))
+done
+for i in $(seq 8); do
+  for _ in $(seq 50); do
+    grep -qx $((i * 100)) "$work/many$i.out" && break
+    sleep 0.1
+  done
+  grep -qx $((i * 100)) "$work/many$i.out" || fail "session $i of 8"
+done
+[ "$(ls /proc/$server/task | wc -l)" -gt 8 ] || fail "a thread a session"
+[ "$(pgrep -P $server | wc -l)" = 2 ] || fail "no backend process"
+for i in $(seq 8); do
+  eval "exec $((10 + i))>&-"
+done
+wait $(jobs -p | grep -v "^$server$")
+
 # Verify that a session that never answers the password request is ended
 # when authentication_timeout passes: the timeout signals its own session
 # (SignalSelf()).
@@ -160,6 +189,7 @@ grep -q "terminating connection due to administrator command" "$work/log" ||
 exec 3>&-
 wait $idle
 grep -q "terminated by signal" "$work/log" && fail "a process crashed"
+grep -q "ThreadSanitizer" "$work/log" && fail "a thread sanitizer report"
 
 [ $failed = 0 ] && echo "server: PASSED"
 exit $failed

@@ -178,6 +178,7 @@ extern void InitFileAccess(void);
 extern void InitTemporaryFileAccess(void);
 extern void set_max_safe_fds(void);
 extern void closeAllVfds(void);
+extern void ShutdownFileAccess(void);
 extern void SetTempTablespaces(Oid *tableSpaces, int numSpaces);
 extern bool TempTablespacesAreSet(void);
 extern Oid GetNextTempTableSpace(void);

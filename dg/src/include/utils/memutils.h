@@ -105,6 +105,7 @@ extern void ProcessLogMemoryContextInterrupt(void);
  */
 
 /* aset.c */
+extern void AllocSetFreeFreeLists(void);
 extern MemoryContext AllocSetContextCreateInternal(MemoryContext parent,
                                                    const char *name,
                                                    Size minContextSize,

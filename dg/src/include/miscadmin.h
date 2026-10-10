@@ -128,7 +128,8 @@ extern void ProcessInterrupts(void);
 /* Test whether an interrupt is pending */
 #ifndef WIN32
 #define INTERRUPTS_PENDING_CONDITION() \
-	(unlikely(InterruptPending) || unlikely(*MyPendingSignals != 0))
+	(unlikely(InterruptPending) || \
+	 unlikely(__atomic_load_n(MyPendingSignals, __ATOMIC_RELAXED) != 0))
 #else
 #define INTERRUPTS_PENDING_CONDITION() \
 	(unlikely(UNBLOCKED_SIGNAL_QUEUE()) ? \
@@ -183,6 +184,14 @@ do { \
 extern thread_local /*SHARED*/ PGDLLIMPORT pid_t PostmasterPid;
 extern thread_local /*SHARED*/ PGDLLIMPORT bool IsPostmasterEnvironment;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsUnderPostmaster;
+
+/*
+ * Set in a session that is a thread (utils/init/session_thread.c): its
+ * MyProcPid is its thread id, proc_exit() ends the thread and not the
+ * process, and its signals are flags (SignalProc()).
+ */
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsSessionThread;
+extern int CurrentProcPid(void);
 extern thread_local /*SHARED*/ PGDLLIMPORT bool IsBinaryUpgrade;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ExitOnAnyError;

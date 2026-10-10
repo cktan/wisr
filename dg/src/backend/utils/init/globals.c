@@ -28,6 +28,7 @@
 
 thread_local /*LOCAL*/ ProtocolVersion FrontendProtocol;
 
+thread_local /*LOCAL*/ bool IsSessionThread = false;
 thread_local /*LOCAL*/ volatile sig_atomic_t InterruptPending = false;
 const uint32 NoPendingSignals = 0;
 thread_local /*LOCAL*/ const volatile uint32 *MyPendingSignals =

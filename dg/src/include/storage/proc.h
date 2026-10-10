@@ -170,6 +170,15 @@ typedef enum {
  *
  * See PROC_HDR for details.
  */
+/*
+ * lwWaiting is handed from the process that wakes a waiter to the waiter
+ * without a lock: a release store and an acquire load, which order the wait
+ * list links around it, as the barriers did, for a thread sanitizer too.
+ */
+#define LWWAITING_GET(proc) __atomic_load_n(&(proc)->lwWaiting, __ATOMIC_ACQUIRE)
+#define LWWAITING_SET(proc, value) \
+	__atomic_store_n(&(proc)->lwWaiting, (value), __ATOMIC_RELEASE)
+
 struct PGPROC {
   dlist_node links;           /* list link if process is in a list */
   dlist_head *procgloballist; /* procglobal list that owns this PGPROC */
@@ -236,7 +245,7 @@ struct PGPROC {
   bool recoveryConflictPending;
 
   /* Info about LWLock the process is currently waiting for, if any. */
-  uint8 lwWaiting;          /* see LWLockWaitState */
+  uint8 lwWaiting;          /* see LWLockWaitState; LWWAITING_GET/SET */
   uint8 lwWaitMode;         /* lwlock mode being waited for */
   proclist_node lwWaitLink; /* position in LW lock wait list */
 

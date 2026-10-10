@@ -278,6 +278,12 @@ void InitShmemIndex(void) {
   info.keysize = SHMEM_INDEX_KEYSIZE;
   info.entrysize = sizeof(ShmemIndexEnt);
 
+  /*
+   * A session thread holds its parent's ShmemIndex (SHARED): forget it, so
+   * that ShmemInitStruct() attaches this thread to the index as it does a
+   * new process, instead of looking for the index in itself.
+   */
+  ShmemIndex = NULL;
   ShmemIndex = ShmemInitHash("ShmemIndex", SHMEM_INDEX_SIZE, SHMEM_INDEX_SIZE,
                              &info, HASH_ELEM | HASH_STRINGS);
 }

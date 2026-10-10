@@ -284,6 +284,47 @@ Success for this step: `test/server.sh` passes, with a check
 added that runs several sessions at once; the server has one
 process; and the three items above are gone.
 
+### 5.1 How far it got
+
+A connection is a thread of the postmaster's process; the
+auxiliary processes (checkpointer, background writer, startup)
+still fork, and sm is not yet attached once, so the datadir.c
+items stand. `WIP_THREADS.md` on `wip-dg` has the detail.
+
+- **Signals to a backend are flags**, chosen as "option B"
+  with the owner: `SignalProc()` sets a bit in its PGPROC and
+  sets its latch, and it runs the handler it set with
+  `pqsignal()` at its next `CHECK_FOR_INTERRUPTS()` or wait.
+  Every `kill()` aimed at a backend goes through it. A session
+  thread's `pqsignal()` only records the handler; it blocks
+  every signal but `SIGALRM` and the faults.
+- **A latch wakes its owning thread**: `SIGURG` by `tgkill()`
+  to `owner_tid`.
+- **A timer a thread**: `timeout.c` uses `timer_create()` with
+  `SIGEV_THREAD_ID`.
+- **A FATAL ends the thread**: `proc_exit()` throws to the
+  thread's top, which queues the exit code for the postmaster
+  and sets its latch; `process_pm_child_exit()` takes it as it
+  takes a child from `waitpid()`.
+- **The thread is given every SHARED variable** of the
+  postmaster, by a table the build writes from the marks and
+  the linker map (`src/tools/shared_tls.py`), and the settings
+  not at their defaults; it then runs
+  `AttachSharedMemoryStructs()`, as an EXEC_BACKEND child does,
+  for the pointers into shared memory that LOCAL structures
+  hold. `MyProcPid` is the thread id.
+- **What a process's exit freed, a thread's end frees**: the
+  client socket, the wait sets and signalfd, open files, the
+  static snapshots' arrays, the memory contexts and the
+  allocator's freelists. 300 connections leave the server's
+  descriptors and heap where they were.
+- **TSan runs the server** (`make tsan` runs
+  `test/server.sh` too). Its reports were all of PostgreSQL's
+  lock-free handoffs done with plain loads and barriers:
+  atomics' read and write, latch flags, `lwWaiting`, the
+  spinlock's test, the postmaster's child flags. They are
+  relaxed atomics now (release and acquire for `lwWaiting`).
+
 ## 6. Step 4: signals, then deletion
 
 - **Signals become flags.** A cancel or a terminate is

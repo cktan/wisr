@@ -2572,6 +2572,19 @@ int ClosePipeStream(FILE *file) {
 }
 
 /*
+ * Close every file and free the cache: a session thread, as it ends, whose
+ * files no process exit closes.
+ */
+void ShutdownFileAccess(void) {
+  closeAllVfds();
+  for (Size i = 1; i < SizeVfdCache; i++)
+    free(VfdCache[i].fileName);
+  free(VfdCache);
+  VfdCache = NULL;
+  SizeVfdCache = 0;
+}
+
+/*
  * closeAllVfds
  *
  * Force all VFDs into the physically-closed state, so that the fewest
