@@ -43,9 +43,15 @@ Where step 3 of `PLAN.md` (§5) stands on `wip-dg`. `PLAN.md`
      then runs `BackendMain()`. `InitProcess()` runs
      `AttachSharedMemoryStructs()` for it, as for an
      EXEC_BACKEND child: some pointers into shared memory sit
-     in LOCAL structures (`pgStatLocal`). `InitShmemIndex()`
-     forgets the copied `ShmemIndex` first, and
-     `XLOGShmemInit()` does not free the copied `ControlFile`.
+     in LOCAL structures (`pgStatLocal`). `XLOGShmemInit()`
+     does not free the copied `ControlFile`.
+   - A backend's `HTAB *` onto a shared hash table is a handle
+     it builds in its own memory, so it is LOCAL, not SHARED:
+     `ShmemIndex`, `SharedBufHash`, the lock and predicate-lock
+     tables, the custom wait events' two. The sweep had marked
+     them SHARED; a copied `ShmemIndex` made a thread create a
+     new, empty index. A pointer into shared memory is SHARED; a
+     handle onto it is LOCAL.
    - A signal before the thread has a PGPROC goes to its launch
      record, with `SIGURG` to the thread;
      `AdoptPendingSignals()` moves it to the PGPROC.

@@ -58,9 +58,9 @@ thread_local /*LOCAL*/ uint32 *my_wait_event_info = &local_my_wait_event_info;
  * unlikely that the number of entries will reach
  * WAIT_EVENT_CUSTOM_HASH_MAX_SIZE.
  */
-static thread_local /*SHARED*/ HTAB
+static thread_local /*LOCAL*/ HTAB
     *WaitEventCustomHashByInfo; /* find names from infos */
-static thread_local /*SHARED*/ HTAB
+static thread_local /*LOCAL*/ HTAB
     *WaitEventCustomHashByName; /* find infos from names */
 
 #define WAIT_EVENT_CUSTOM_HASH_INIT_SIZE	16

@@ -302,8 +302,8 @@ static thread_local /*SHARED*/ volatile FastPathStrongRelationLockData
  * The LockMethodLockHash and LockMethodProcLockHash hash tables are in
  * shared memory; LockMethodLocalHash is local to each backend.
  */
-static thread_local /*SHARED*/ HTAB *LockMethodLockHash;
-static thread_local /*SHARED*/ HTAB *LockMethodProcLockHash;
+static thread_local /*LOCAL*/ HTAB *LockMethodLockHash;
+static thread_local /*LOCAL*/ HTAB *LockMethodProcLockHash;
 static thread_local /*LOCAL*/ HTAB *LockMethodLocalHash;
 
 /* private state for error cleanup */

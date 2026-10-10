@@ -91,7 +91,7 @@ static thread_local /*SHARED*/ void
 thread_local /*SHARED*/ slock_t *ShmemLock; /* spinlock for shared memory and
                                              * LWLock allocation */
 
-static thread_local /*SHARED*/ HTAB *ShmemIndex =
+static thread_local /*LOCAL*/ HTAB *ShmemIndex =
     NULL; /* primary index hashtable for shmem */
 
 /* To get reliable results for NUMA inquiry we need to "touch pages" once */
@@ -278,12 +278,6 @@ void InitShmemIndex(void) {
   info.keysize = SHMEM_INDEX_KEYSIZE;
   info.entrysize = sizeof(ShmemIndexEnt);
 
-  /*
-   * A session thread holds its parent's ShmemIndex (SHARED): forget it, so
-   * that ShmemInitStruct() attaches this thread to the index as it does a
-   * new process, instead of looking for the index in itself.
-   */
-  ShmemIndex = NULL;
   ShmemIndex = ShmemInitHash("ShmemIndex", SHMEM_INDEX_SIZE, SHMEM_INDEX_SIZE,
                              &info, HASH_ELEM | HASH_STRINGS);
 }

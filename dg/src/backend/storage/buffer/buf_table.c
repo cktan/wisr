@@ -29,7 +29,7 @@ typedef struct {
   int id;        /* Associated buffer ID */
 } BufferLookupEnt;
 
-static thread_local /*SHARED*/ HTAB *SharedBufHash;
+static thread_local /*LOCAL*/ HTAB *SharedBufHash;
 
 /*
  * Estimate space needed for mapping hashtable

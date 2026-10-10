@@ -378,9 +378,9 @@ static thread_local /*SHARED*/ RWConflictPoolHeader RWConflictPool;
  * The predicate locking hash tables are in shared memory.
  * Each backend keeps pointers to them.
  */
-static thread_local /*SHARED*/ HTAB *SerializableXidHash;
-static thread_local /*SHARED*/ HTAB *PredicateLockTargetHash;
-static thread_local /*SHARED*/ HTAB *PredicateLockHash;
+static thread_local /*LOCAL*/ HTAB *SerializableXidHash;
+static thread_local /*LOCAL*/ HTAB *PredicateLockTargetHash;
+static thread_local /*LOCAL*/ HTAB *PredicateLockHash;
 static thread_local /*SHARED*/ dlist_head *FinishedSerializableTransactions;
 
 /*
