@@ -15,10 +15,10 @@ never includes a header of theirs.
 | Interrupts and timers | `include/sys.h` | `INTERRUPT.md` | built and tested |
 
 An interface is C in style: `sys_` names outside any namespace,
-opaque handles, plain integers for times and counts, and a
-function pointer with a `void *` where a callback is needed.
-What must be C++ -- a `std::mutex` a wait is made on, say -- is
-passed by pointer.
+plain integers for times and counts, and a function pointer with
+a `void *` where a callback is needed. What is C++ is what must
+be: a handle that owns its object is a `std::shared_ptr`, and a
+`std::mutex` a wait is made on is passed by pointer.
 
 sys has one header, `include/sys.h`, included as `"sys.h"`: a
 name no header of sm or dg has.

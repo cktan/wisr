@@ -11,12 +11,12 @@ bits at a deadline. sm makes its blocking waits interruptible
 with it; digres builds its query cancel, terminate and timeouts
 on it.
 
-The interface is `include/sys.h`, C in style: opaque
-handles with explicit reference counts, times as `int64_t`
-microseconds on the monotonic clock, a function pointer and a
-`void *` for a predicate, and `sys_` names outside any
-namespace. Only the mutex and condition variable a wait is made
-on are C++.
+The interface is `include/sys.h`, C in style: `sys_` names
+outside any namespace, times as `int64_t` microseconds on the
+monotonic clock, and a function pointer and a `void *` for a
+predicate. What is C++ is a thread's handle, a
+`std::shared_ptr`, and the mutex and condition variable a wait
+is made on.
 
 It is to replace sm1's present cancel protocol (`sm1::cancel`
 and the session's `cancel` flag), which ties a cancel to a
@@ -40,20 +40,23 @@ depends on it.
 
 ```cpp
 typedef struct sys_thread_t sys_thread_t;    // opaque, one per thread
+typedef std::shared_ptr<sys_thread_t> sys_thread_ref_t;
 
-sys_thread_t *sys_thread_self(void);         // made on first call
-sys_thread_t *sys_thread_ref(sys_thread_t *t);
-void          sys_thread_unref(sys_thread_t *t);
+sys_thread_ref_t sys_thread_self(void);      // made on first call
 ```
 
 Each thread that uses the facility has a control block, made
-the first time it calls `sys_thread_self()`. The block is
-reference counted: the thread holds one reference while it
-lives, and another thread that keeps the block takes one with
-`sys_thread_ref()`. So an interrupt or a timer that arrives
-after the thread ended is harmless, not a use after free. A
-thread hands its block to whoever must interrupt it; sys keeps
-no registry of threads.
+the first time it calls `sys_thread_self()`, and handed out as
+a `std::shared_ptr`. The thread holds a handle of its own until
+it ends; another thread that must interrupt it keeps a copy. The
+block lives as long as any handle, so an interrupt that arrives
+after the thread ended is harmless, not a use after free: the
+bits land where nobody reads them. A thread hands its handle to
+whoever must interrupt it; sys keeps no registry of threads.
+
+A handle kept in memory C++ did not construct -- a struct
+allocated with `malloc()` -- must be made there with placement
+new, and destroyed by hand, like any other C++ object.
 
 The block holds:
 
@@ -67,7 +70,7 @@ The block holds:
 ## 3. Raising and claiming
 
 ```cpp
-void     sys_interrupt(sys_thread_t *t, uint32_t bits);  // any thread
+void     sys_interrupt(const sys_thread_ref_t &t, uint32_t bits);
 uint32_t sys_pending(void);           // the calling thread's bits
 uint32_t sys_take(uint32_t mask);     // claim: clear and return them
 ```
@@ -199,8 +202,9 @@ optimisation.
 typedef uint64_t sys_timer_id_t;   // never 0
 
 int64_t        sys_now_us(void);
-sys_timer_id_t sys_timer_at(sys_thread_t *t, int64_t when_us,
-                            uint32_t bits, int64_t period_us);
+sys_timer_id_t sys_timer_at(const sys_thread_ref_t &t,
+                            int64_t when_us, uint32_t bits,
+                            int64_t period_us);
 bool           sys_timer_cancel(sys_timer_id_t id);
 ```
 
@@ -214,15 +218,17 @@ bool           sys_timer_cancel(sys_timer_id_t id);
   the raise.
 - **A periodic timer** (`period_us > 0`) is armed again at
   `when_us + period_us`.
-- **A timer holds a reference to its thread** until it is
-  cancelled or, one-shot, fires: one whose thread has ended
-  raises bits nobody reads, and is harmless. A periodic timer
-  lives until it is cancelled.
+- **A timer holds its thread weakly** (a `std::weak_ptr`): it
+  does not keep the block alive. One that comes due after every
+  handle on its thread is gone is dropped, not fired. While a
+  handle remains, it fires into the block even if the thread
+  has ended, and that is harmless.
 - **Cancel or fire, exactly one.** `sys_timer_cancel()` and
   expiry decide under the timer mutex. It returns true if it
   removed the timer while armed -- before a one-shot fired, or
   between a periodic one's firings -- false if a one-shot had
-  fired or the id was not there.
+  fired, the timer was dropped because its thread was gone, or
+  the id was not there.
 - **A fired answer means the bits landed.** The timer thread
   raises a timer's bits outside its lock, since raising may
   have to try a waiter's mutex again and again. So a cancel
@@ -264,9 +270,9 @@ leaves no bit behind.
 - Neither `sys_interrupt()` nor `sys_timer_cancel()` may be
   called while holding the mutex of a wait it may wake.
 - Bits stay pending until the owner takes them.
-- `sys_interrupt()`, `sys_thread_ref()`, `sys_thread_unref()`,
-  `sys_now_us()`, `sys_timer_at()` and `sys_timer_cancel()` may
-  be called from any thread; the rest act on the calling
+- `sys_interrupt()`, `sys_now_us()`, `sys_timer_at()` and
+  `sys_timer_cancel()` may be called from any thread, as may a
+  handle be copied or dropped; the rest act on the calling
   thread.
 - Nothing here uses signals.
 
@@ -274,9 +280,10 @@ leaves no bit behind.
 
 - It defines its bits: `CANCEL`, `DIE`, `RELOAD`, invalidation
   catch-up, `NOTIFY` and the rest.
-- It keeps a reference to each session's `sys_thread_t` where
-  another session or the postmaster can find it, and
-  `SignalProc()` becomes `sys_interrupt(t, bit)`.
+- It keeps each session's handle in its PGPROC, made there with
+  placement new when the session takes the slot and destroyed
+  when it frees it, and `SignalProc()` becomes
+  `sys_interrupt(proc->thread, bit)`.
 - `CHECK_FOR_INTERRUPTS` reads `sys_pending()`, and its epoll
   loop adds `sys_wake_fd()`, in place of SIGURG and its
   signalfd.

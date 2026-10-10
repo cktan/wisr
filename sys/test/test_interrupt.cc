@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <future>
 #include <mutex>
 #include <thread>
 
@@ -48,23 +49,15 @@ void sleep_ms(int ms) {
 }
 
 /*
- * Start a thread that publishes its block (a reference) in *out,
- * then runs body; returns the thread.
+ * Start a thread that hands its handle to *out, then runs body;
+ * returns the thread.
  */
 template <class F>
-std::thread start_publishing(std::atomic<sys_thread_t *> *out, F body) {
+std::thread start_publishing(std::promise<sys_thread_ref_t> *out, F body) {
   return std::thread([out, body] {
-    out->store(sys_thread_ref(sys_thread_self()));
+    out->set_value(sys_thread_self());
     body();
   });
-}
-
-/* Spin until a started thread has published its block. */
-sys_thread_t *published(std::atomic<sys_thread_t *> *out) {
-  sys_thread_t *t;
-  while ((t = out->load()) == nullptr)
-    std::this_thread::yield();
-  return t;
 }
 
 } // namespace
@@ -85,7 +78,7 @@ TEST_CASE("bits stay pending until taken, and take claims only its mask") {
   // 2. Confirm both are pending, and raising B1 again changes nothing.
   // 3. Take B1: it returns B1 and leaves B2 pending.
   // 4. Take B2, leaving nothing.
-  sys_thread_t *self = sys_thread_self();
+  sys_thread_ref_t self = sys_thread_self();
   sys_interrupt(self, B1 | B2);
   CHECK(sys_pending() == (B1 | B2));
   sys_interrupt(self, B1);
@@ -113,15 +106,14 @@ TEST_CASE("an interrupt from another thread wakes a wait under way") {
   // 2. Let it fall asleep, then raise B1 in it from here.
   // 3. Confirm its wait ended interrupted.
   box_t box;
-  std::atomic<sys_thread_t *> who{nullptr};
+  std::promise<sys_thread_ref_t> who;
   sys_wait_result_t result = SYS_WAIT_DONE;
   std::thread waiter =
       start_publishing(&who, [&] { result = wait_box(&box, B1, SYS_FOREVER); });
-  sys_thread_t *t = published(&who);
+  sys_thread_ref_t t = who.get_future().get();
   sleep_ms(50);
   sys_interrupt(t, B1);
   waiter.join();
-  sys_thread_unref(t);
   CHECK(result == SYS_WAIT_INTERRUPTED);
 }
 
@@ -166,18 +158,17 @@ TEST_CASE("a bit outside the mask does not end a wait") {
   // 2. Raise B2 in it while it waits.
   // 3. Confirm it timed out rather than being interrupted.
   box_t box;
-  std::atomic<sys_thread_t *> who{nullptr};
+  std::promise<sys_thread_ref_t> who;
   sys_wait_result_t result = SYS_WAIT_DONE;
   uint32_t left = 0;
   std::thread waiter = start_publishing(&who, [&] {
     result = wait_box(&box, B1, sys_now_us() + 100000);
     left = sys_take(B1 | B2);
   });
-  sys_thread_t *t = published(&who);
+  sys_thread_ref_t t = who.get_future().get();
   sleep_ms(20);
   sys_interrupt(t, B2);
   waiter.join();
-  sys_thread_unref(t);
   CHECK(result == SYS_WAIT_TIMED_OUT);
   CHECK(left == B2);
 }
@@ -186,12 +177,11 @@ TEST_CASE("an interrupt to a thread that has ended is harmless") {
   // Verify a held block outlives its thread.
   // 1. Start a thread that publishes its block and ends at once.
   // 2. Join it, then raise B1 in its block and release the reference.
-  std::atomic<sys_thread_t *> who{nullptr};
+  std::promise<sys_thread_ref_t> who;
   std::thread gone = start_publishing(&who, [] {});
-  sys_thread_t *t = published(&who);
+  sys_thread_ref_t t = who.get_future().get();
   gone.join();
   sys_interrupt(t, B1);
-  sys_thread_unref(t);
 }
 
 TEST_CASE("the wake fd is readable after an interrupt, until drained") {
@@ -304,16 +294,35 @@ TEST_CASE("cancel against expiry is decided once") {
   CHECK(removed + fired == 5000);
 }
 
-TEST_CASE("a timer on a thread that has ended is harmless") {
-  // Verify a timer's reference keeps its block.
-  // 1. Start a thread that publishes its block and ends at once.
-  // 2. Arm a timer on it, due now, and release our reference.
-  // 3. Sleep while it fires: nothing breaks.
-  std::atomic<sys_thread_t *> who{nullptr};
+TEST_CASE("a timer on a thread that is still held fires into its block") {
+  // Verify a timer reaches a thread that ended while a handle remains.
+  // 1. Start a thread that hands out its handle and ends at once.
+  // 2. Arm a timer on it, due now, keeping our handle.
+  // 3. Wait for it to fire: cancel then says it fired.
+  std::promise<sys_thread_ref_t> who;
   std::thread gone = start_publishing(&who, [] {});
-  sys_thread_t *t = published(&who);
+  sys_thread_ref_t t = who.get_future().get();
   gone.join();
-  sys_timer_at(t, sys_now_us(), B1, 0);
-  sys_thread_unref(t);
+  sys_timer_id_t id = sys_timer_at(t, sys_now_us(), B1, 0);
   sleep_ms(20);
+  CHECK_FALSE(sys_timer_cancel(id));
+}
+
+TEST_CASE("the last handle frees a block, and its timers are dropped") {
+  // Verify handles own the block, and timers do not.
+  // 1. Start a thread that hands out its handle and ends at once.
+  // 2. Arm a periodic timer on it, then drop our handle after the
+  //    thread has ended: the block is freed though the timer holds it.
+  // 3. Sleep past its deadline: the timer was dropped, not fired, so
+  //    cancelling it finds nothing.
+  std::promise<sys_thread_ref_t> who;
+  std::thread gone = start_publishing(&who, [] {});
+  sys_thread_ref_t t = who.get_future().get();
+  gone.join();
+  std::weak_ptr<sys_thread_t> watch = t;
+  sys_timer_id_t id = sys_timer_at(t, sys_now_us() + 20000, B1, 10000);
+  t.reset();
+  CHECK(watch.expired());
+  sleep_ms(50);
+  CHECK_FALSE(sys_timer_cancel(id));
 }

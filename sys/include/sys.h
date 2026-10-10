@@ -9,10 +9,11 @@
  * bit: the caller defines them, claims them, and decides what an
  * interrupt means. Nothing here uses signals.
  *
- * The interface is C in style: opaque handles with explicit
- * reference counts, times as int64_t microseconds on the monotonic
- * clock, and a function pointer with a void * for a predicate.
- * Only the mutex and condition variable a wait is made on are C++.
+ * The interface is C in style: sys_ functions, times as int64_t
+ * microseconds on the monotonic clock, and a function pointer with
+ * a void * for a predicate. What is C++ is a thread's handle, a
+ * std::shared_ptr to its control block, and the mutex and
+ * condition variable a wait is made on.
  *
  * Calls marked "any thread" may be made from any thread; the rest
  * act on the calling thread.
@@ -23,6 +24,7 @@
 #include <stdint.h>
 
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 
 /* ---- threads ---- */
@@ -31,17 +33,20 @@
 typedef struct sys_thread_t sys_thread_t;
 
 /*
- * The calling thread's control block, made on its first call.
- * Never NULL. It is valid while the thread lives; a thread that
- * hands it to another for longer takes a reference for it.
+ * A handle on a thread's control block, shared by whoever may
+ * interrupt the thread. The block lives as long as any handle,
+ * the thread's own included, so a handle kept after its thread
+ * ended is still safe to interrupt: the bits land where nobody
+ * reads them.
  */
-sys_thread_t *sys_thread_self(void);
+typedef std::shared_ptr<sys_thread_t> sys_thread_ref_t;
 
-/* Take a reference to t, which stays valid until released. Any thread. */
-sys_thread_t *sys_thread_ref(sys_thread_t *t);
-
-/* Release a reference taken by sys_thread_ref(). Any thread. */
-void sys_thread_unref(sys_thread_t *t);
+/*
+ * A handle on the calling thread's control block, made on its
+ * first call. Never empty. The thread holds one of its own until
+ * it ends.
+ */
+sys_thread_ref_t sys_thread_self(void);
 
 /* ---- raising and claiming ---- */
 
@@ -52,7 +57,7 @@ void sys_thread_unref(sys_thread_t *t);
  * holding the mutex of a wait this may wake: waking takes that
  * mutex, and would wait for it forever.
  */
-void sys_interrupt(sys_thread_t *t, uint32_t bits);
+void sys_interrupt(const sys_thread_ref_t &t, uint32_t bits);
 
 /* The calling thread's pending bits: a relaxed load, cheap to poll. */
 uint32_t sys_pending(void);
@@ -125,19 +130,20 @@ typedef uint64_t sys_timer_id_t;
 
 /*
  * Raise bits in t when the monotonic clock reaches when_us, and
- * then every period_us after if period_us > 0. The timer holds a
- * reference to t until it is cancelled or, one-shot, fires. One
- * process-wide thread runs the timers, started by the first call.
- * Returns the timer's id. Any thread.
+ * then every period_us after if period_us > 0. The timer holds t
+ * weakly: one due after every handle on t is gone is dropped, not
+ * fired. One process-wide thread runs the timers, started by the
+ * first call. Returns the timer's id. Any thread.
  */
-sys_timer_id_t sys_timer_at(sys_thread_t *t, int64_t when_us, uint32_t bits,
-                            int64_t period_us);
+sys_timer_id_t sys_timer_at(const sys_thread_ref_t &t, int64_t when_us,
+                            uint32_t bits, int64_t period_us);
 
 /*
  * Cancel a timer. Cancel and expiry are decided under one lock, so
  * exactly one happens: true if the timer was removed while armed
  * -- before a one-shot fired, or between a periodic one's firings
- * -- false if a one-shot had fired or the id was not there. A
+ * -- false if a one-shot had fired, a timer was dropped because
+ * its thread was gone, or the id was not there. A
  * firing under way is waited out first, so once this returns the
  * timer raises nothing more, and any bits it raised have landed.
  * To wait on the same bit again: cancel, then sys_take() the bit,

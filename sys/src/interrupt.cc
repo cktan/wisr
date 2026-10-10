@@ -19,7 +19,6 @@
 /* A thread's control block. */
 struct sys_thread_t {
   std::atomic<uint32_t> pending{0}; /* raised, not yet taken */
-  std::atomic<int> refs{1};         /* the thread's own, and others' */
 
   std::mutex mu;                                /* guards the four below */
   std::condition_variable *waiter_cv = nullptr; /* the wait under way */
@@ -33,37 +32,38 @@ struct sys_thread_t {
 namespace {
 
 /*
- * The calling thread's block. The holder drops the thread's own
- * reference as the thread ends, and closes its wake fd: nobody
- * polls it any more.
+ * The calling thread's handle on its block. The holder closes the
+ * wake fd as the thread ends -- nobody polls it any more -- and
+ * drops the thread's own handle; the block lives on while others
+ * hold one.
  */
 struct self_holder_t {
-  sys_thread_t *t = nullptr;
+  sys_thread_ref_t t;
 
-  /* Close the wake fd and drop the thread's reference. */
+  /* Close the wake fd; the handle goes with the holder. */
   ~self_holder_t() {
-    if (t == nullptr)
+    if (!t)
       return;
-    {
-      // The fd goes under the block's lock: interrupt() writes it.
-      std::lock_guard<std::mutex> guard(t->mu);
-      if (t->wake_fd >= 0) {
-        close(t->wake_fd);
-        t->wake_fd = -1;
-      }
+    // The fd goes under the block's lock: interrupt() writes it.
+    std::lock_guard<std::mutex> guard(t->mu);
+    if (t->wake_fd >= 0) {
+      close(t->wake_fd);
+      t->wake_fd = -1;
     }
-    sys_thread_unref(t);
   }
 };
 
 thread_local self_holder_t self;
 
-/* The calling thread's block, made on first use. */
-sys_thread_t *self_block() {
-  if (self.t == nullptr)
-    self.t = new sys_thread_t();
+/* The calling thread's handle, made on first use. */
+const sys_thread_ref_t &self_ref() {
+  if (!self.t)
+    self.t = std::make_shared<sys_thread_t>();
   return self.t;
 }
+
+/* The calling thread's block. */
+sys_thread_t *self_block() { return self_ref().get(); }
 
 /* A time on the monotonic clock, from microseconds. */
 std::chrono::steady_clock::time_point time_point_of(int64_t us) {
@@ -72,20 +72,8 @@ std::chrono::steady_clock::time_point time_point_of(int64_t us) {
 
 } // namespace
 
-/* The calling thread's control block, made on its first call. */
-sys_thread_t *sys_thread_self(void) { return self_block(); }
-
-/* Take a reference to t. */
-sys_thread_t *sys_thread_ref(sys_thread_t *t) {
-  t->refs.fetch_add(1, std::memory_order_relaxed);
-  return t;
-}
-
-/* Release a reference; the last one frees the block. */
-void sys_thread_unref(sys_thread_t *t) {
-  if (t->refs.fetch_sub(1, std::memory_order_acq_rel) == 1)
-    delete t;
-}
+/* A handle on the calling thread's control block. */
+sys_thread_ref_t sys_thread_self(void) { return self_ref(); }
 
 /*
  * Raise bits in t and wake it. The waiter's mutex is only tried,
@@ -94,7 +82,7 @@ void sys_thread_unref(sys_thread_t *t) {
  * means the waiter is not asleep, or another thread holds it for
  * a moment; let go and try again.
  */
-void sys_interrupt(sys_thread_t *t, uint32_t bits) {
+void sys_interrupt(const sys_thread_ref_t &t, uint32_t bits) {
   t->pending.fetch_or(bits, std::memory_order_release);
 
   for (;;) {
@@ -224,7 +212,7 @@ namespace {
 
 /* One timer. */
 struct timer_entry_t {
-  sys_thread_t *thread; /* a reference, held until it is dropped */
+  std::weak_ptr<sys_thread_t> thread; /* dropped once nobody holds it */
   uint32_t bits;
   int64_t period_us; /* 0: one-shot */
 };
@@ -249,6 +237,7 @@ std::once_flag service_once;
 /*
  * The timer thread: sleep until the earliest timer is due, raise
  * its bits outside the lock, and arm it again if it is periodic.
+ * A timer whose thread is gone is dropped.
  */
 void timer_main(timer_service_t *s) {
   std::unique_lock<std::mutex> lock(s->mu);
@@ -271,17 +260,19 @@ void timer_main(timer_service_t *s) {
     s->when_of.erase(id);
     s->firing = id;
 
-    // Raise outside the lock: it may yield on a busy waiter.
-    lock.unlock();
-    sys_interrupt(timer.thread, timer.bits);
-    lock.lock();
+    sys_thread_ref_t target = timer.thread.lock();
+    if (target) {
+      // Raise outside the lock: it may yield on a busy waiter.
+      lock.unlock();
+      sys_interrupt(target, timer.bits);
+      target.reset();
+      lock.lock();
 
-    if (timer.period_us > 0) {
-      int64_t next = when + timer.period_us;
-      s->by_when.emplace(std::make_pair(next, id), timer);
-      s->when_of.emplace(id, next);
-    } else {
-      sys_thread_unref(timer.thread);
+      if (timer.period_us > 0) {
+        int64_t next = when + timer.period_us;
+        s->by_when.emplace(std::make_pair(next, id), timer);
+        s->when_of.emplace(id, next);
+      }
     }
     s->firing = 0;
     s->fired_cv.notify_all();
@@ -301,8 +292,8 @@ timer_service_t *timers() {
 } // namespace
 
 /* Raise bits in t at when_us, and every period_us after if > 0. */
-sys_timer_id_t sys_timer_at(sys_thread_t *t, int64_t when_us, uint32_t bits,
-                            int64_t period_us) {
+sys_timer_id_t sys_timer_at(const sys_thread_ref_t &t, int64_t when_us,
+                            uint32_t bits, int64_t period_us) {
   timer_service_t *s = timers();
   sys_timer_id_t id;
 
@@ -311,7 +302,7 @@ sys_timer_id_t sys_timer_at(sys_thread_t *t, int64_t when_us, uint32_t bits,
     std::lock_guard<std::mutex> guard(s->mu);
     id = s->next_id++;
     s->by_when.emplace(std::make_pair(when_us, id),
-                       timer_entry_t{sys_thread_ref(t), bits, period_us});
+                       timer_entry_t{t, bits, period_us});
     s->when_of.emplace(id, when_us);
   }
   s->cv.notify_one();
@@ -325,21 +316,15 @@ sys_timer_id_t sys_timer_at(sys_thread_t *t, int64_t when_us, uint32_t bits,
  */
 bool sys_timer_cancel(sys_timer_id_t id) {
   timer_service_t *s = timers();
-  sys_thread_t *thread;
 
-  {
-    // Decide cancel or fire under the service's lock.
-    std::unique_lock<std::mutex> lock(s->mu);
-    s->fired_cv.wait(lock, [&] { return s->firing != id; });
+  // Decide cancel or fire under the service's lock.
+  std::unique_lock<std::mutex> lock(s->mu);
+  s->fired_cv.wait(lock, [&] { return s->firing != id; });
 
-    auto it = s->when_of.find(id);
-    if (it == s->when_of.end())
-      return false;
-    auto entry = s->by_when.find(std::make_pair(it->second, id));
-    thread = entry->second.thread;
-    s->by_when.erase(entry);
-    s->when_of.erase(it);
-  }
-  sys_thread_unref(thread);
+  auto it = s->when_of.find(id);
+  if (it == s->when_of.end())
+    return false;
+  s->by_when.erase(std::make_pair(it->second, id));
+  s->when_of.erase(it);
   return true;
 }
