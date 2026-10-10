@@ -675,7 +675,8 @@
 /* #undef USE_ARMV8_CRC32C */
 
 /* Define to 1 to use ARMv8 CRC Extension with a runtime check. */
-#define USE_ARMV8_CRC32C_WITH_RUNTIME_CHECK 1
+/* digres picks no processor's CRC: see USE_SLICING_BY_8_CRC32C. */
+/* #undef USE_ARMV8_CRC32C_WITH_RUNTIME_CHECK */
 
 /* Define to 1 to build with assertion checks. (--enable-cassert) */
 /* #undef USE_ASSERT_CHECKING */
@@ -739,7 +740,10 @@
 /* #undef USE_PAM */
 
 /* Define to 1 to use software CRC-32C implementation (slicing-by-8). */
-/* #undef USE_SLICING_BY_8_CRC32C */
+/* Plain C, so the build does not depend on the host's instruction
+   set. digres replaces WAL and the control file, which is what the
+   CRC was fast for (../sm/PART4.md section 10). */
+#define USE_SLICING_BY_8_CRC32C 1
 
 /* Define to 1 use Intel SSE 4.2 CRC instructions. */
 /* #undef USE_SSE42_CRC32C */
@@ -748,7 +752,8 @@
 /* #undef USE_SSE42_CRC32C_WITH_RUNTIME_CHECK */
 
 /* Define to 1 to use SVE popcount instructions with a runtime check. */
-#define USE_SVE_POPCNT_WITH_RUNTIME_CHECK 1
+/* Likewise: the portable pg_popcount() is used on every machine. */
+/* #undef USE_SVE_POPCNT_WITH_RUNTIME_CHECK */
 
 /* Define to build with systemd support. (--with-systemd) */
 /* #undef USE_SYSTEMD */
