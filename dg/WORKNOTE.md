@@ -998,3 +998,21 @@ allocation.
   whose caller went in step 25, is gone.
 - The names `ShmemInitStruct()` and the like are kept: renaming
   some ninety calls would change nothing they do.
+
+## Step 27: what was ShmemAlloc'd is malloc'd, its pointer in the pcb
+
+Three things called `ShmemAlloc()` directly, outside
+`ShmemInitStruct()`. Each is now `malloc()`'d by the postmaster
+or a standalone backend, never freed, its pointer a field of
+the pcb, which is never freed either:
+
+- **The main LWLock array**: `pcb->main_lwlock_array`.
+  `MainLWLockArray` is a macro for it, so the generated
+  `lwlocknames.h` and the headers that index it are unchanged.
+- **The tranche counter**, which sat in the same allocation
+  just before the first lock, is a value, `pcb->lwlock_counter`,
+  with its own mutex, `pcb->lwlock_counter_mutex`. It was
+  guarded by `ShmemLock`, a spinlock that `ShmemAlloc()` had
+  used too; it had no other user left, and is gone.
+- **The semaphores** (`posix_sema.c`): `pcb->shared_semas`.
+  `sysv_sema.c`, which this build skips, is unchanged.

@@ -17,7 +17,6 @@
 #include "utils/hsearch.h"
 
 /* shmem.c */
-extern thread_local /*SHARED*/ PGDLLIMPORT slock_t *ShmemLock;
 extern void InitShmemIndex(void);
 extern void *ShmemAlloc(Size size);
 extern void *ShmemAllocNoError(Size size);

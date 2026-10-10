@@ -21,6 +21,7 @@
 #include "port/atomics.h"
 #include "storage/lwlocknames.h"
 #include "storage/proclist_types.h"
+#include "utils/control_block.h"
 
 struct PGPROC;
 
@@ -68,7 +69,8 @@ typedef union LWLockPadded {
   char pad[LWLOCK_PADDED_SIZE];
 } LWLockPadded;
 
-extern thread_local /*SHARED*/ PGDLLIMPORT LWLockPadded *MainLWLockArray;
+/* The main LWLock array, made by CreateLWLocks() */
+#define MainLWLockArray (pcb->main_lwlock_array)
 
 /* struct for storing named tranche information */
 typedef struct NamedLWLockTranche {

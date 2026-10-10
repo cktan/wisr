@@ -33,7 +33,6 @@
 #include "miscadmin.h"
 #include "port/pg_numa.h"
 #include "storage/shmem.h"
-#include "storage/spin.h"
 #include "utils/control_block.h"
 
 /* One structure: where it is, and the size it was made with. */
@@ -53,18 +52,13 @@ void shmem_index_free_t::operator()(shmem_index_t *index) const {
   delete index;
 }
 
-/* spinlock for LWLock allocation (lwlock.c) */
-thread_local /*SHARED*/ slock_t *ShmemLock;
-
 /*
- * Make the index of shared structures, and ShmemLock.  The postmaster or a
- * standalone backend calls it once, before any thread starts.
+ * Make the index of shared structures.  The postmaster or a standalone
+ * backend calls it once, before any thread starts.
  */
 void InitShmemIndex(void) {
   Assert(!IsUnderPostmaster && !pcb->shmem_index);
   pcb->shmem_index.reset(new shmem_index_t());
-  ShmemLock = (slock_t *)ShmemAlloc(sizeof(slock_t));
-  SpinLockInit(ShmemLock);
 }
 
 /*

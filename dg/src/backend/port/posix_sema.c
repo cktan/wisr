@@ -35,6 +35,7 @@
 #include "storage/ipc.h"
 #include "storage/pg_sema.h"
 #include "storage/shmem.h"
+#include "utils/control_block.h"
 
 /* see file header comment */
 
@@ -55,8 +56,6 @@ typedef struct PGSemaphoreData {
 #ifdef USE_NAMED_POSIX_SEMAPHORES
 static sem_t **mySemPointers; /* keep track of created semaphores */
 #else
-static thread_local /*SHARED*/ PGSemaphore
-    sharedSemas; /* array of PGSemaphoreData in shared memory */
 #endif
 static thread_local /*SHARED*/ int
     numSems; /* number of semas acquired so far */
@@ -195,7 +194,10 @@ void PGReserveSemaphores(int maxSemas) {
     elog(PANIC, "out of memory");
 #else
 
-  sharedSemas = (PGSemaphore)ShmemAlloc(PGSemaphoreShmemSize(maxSemas));
+  /* The process keeps them for its whole life: never freed (pcb_t). */
+  pcb->shared_semas = (PGSemaphore)malloc(PGSemaphoreShmemSize(maxSemas));
+  if (pcb->shared_semas == NULL)
+    elog(PANIC, "out of memory");
 #endif
 
   numSems = 0;
@@ -221,7 +223,7 @@ static void ReleaseSemaphores(int status, Datum arg) {
 
 #ifdef USE_UNNAMED_POSIX_SEMAPHORES
   for (i = 0; i < numSems; i++)
-    PosixSemaphoreKill(PG_SEM_REF(sharedSemas + i));
+    PosixSemaphoreKill(PG_SEM_REF(pcb->shared_semas + i));
 #endif
 }
 
@@ -246,7 +248,7 @@ PGSemaphore PGSemaphoreCreate(void) {
   mySemPointers[numSems] = newsem;
   sema = (PGSemaphore)newsem;
 #else
-  sema = &sharedSemas[numSems];
+  sema = &pcb->shared_semas[numSems];
   newsem = PG_SEM_REF(sema);
   PosixSemaphoreCreate(newsem);
 #endif

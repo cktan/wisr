@@ -81,8 +81,11 @@ digres is one process; each session is a thread of it.
   thread has its own of.
   - A field is a value, or a `std::unique_ptr` to what the
     block owns. A non-owning raw pointer is fine, with a
-    comment naming its owner (a memory context, shared
-    memory, the pcb).
+    comment naming its owner (a memory context, the pcb).
+  - Memory the process keeps for its whole life is
+    `malloc()`'d, and its pointer is a plain `pcb_t` field:
+    the pcb is never freed. Do not call `ShmemAlloc()` for
+    it.
   - A module's state is a struct the header only declares;
     the module defines it, the function that makes it and its
     deleter.
@@ -119,10 +122,11 @@ digres is one process; each session is a thread of it.
   no crash restart. The postmaster reaps no child process; a
   session waits for its own `popen()` child.
 - **There is no shared memory.** A structure the threads share
-  is an ordinary allocation: `ShmemInitStruct()` and
-  `ShmemInitHash()` make it on the heap, zeroed, or find it by
-  name in `pcb->shmem_index`, and it is never freed. Nothing is
-  sized ahead of time; do not add a `*ShmemSize()` function.
+  is an ordinary allocation: `malloc()`'d, its pointer in the
+  pcb. `ShmemInitStruct()` and `ShmemInitHash()` still make
+  the older ones on the heap, zeroed, or find them by name in
+  `pcb->shmem_index`. Nothing is sized ahead of time; do not
+  add a `*ShmemSize()` function.
 - **What a process's exit freed, a thread's end must free:**
   `session_thread_end()` does it, and the tcb's destructors
   do it for what a block owns.

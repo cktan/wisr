@@ -175,13 +175,6 @@ static thread_local /*LOCAL*/ const char **LWLockTrancheNames = NULL;
 static thread_local /*LOCAL*/ int LWLockTrancheNamesAllocated = 0;
 
 /*
- * This points to the main array of LWLocks in shared memory.  Backends inherit
- * the pointer by fork from the postmaster (except in the EXEC_BACKEND case,
- * where we have special measures to pass it down).
- */
-thread_local /*SHARED*/ LWLockPadded *MainLWLockArray = NULL;
-
-/*
  * We use this structure to keep track of locked LWLocks for release
  * during error recovery.  Normally, only a few will be held at once, but
  * occasionally the number can be much higher; for example, the pg_buffercache
@@ -386,7 +379,7 @@ static int NumLWLocksForNamedTranches(void) {
 }
 
 /*
- * Compute shmem space needed for LWLocks and named tranches.
+ * Compute the space needed for LWLocks and named tranches.
  */
 Size LWLockShmemSize(void) {
   Size size;
@@ -399,8 +392,8 @@ Size LWLockShmemSize(void) {
   /* Space for the LWLock array. */
   size = mul_size(numLocks, sizeof(LWLockPadded));
 
-  /* Space for dynamic allocation counter, plus room for alignment. */
-  size = add_size(size, sizeof(int) + LWLOCK_PADDED_SIZE);
+  /* Room for alignment. */
+  size = add_size(size, LWLOCK_PADDED_SIZE);
 
   /* space for named tranches. */
   size = add_size(
@@ -415,32 +408,28 @@ Size LWLockShmemSize(void) {
 }
 
 /*
- * Allocate shmem space for the main LWLock array and all tranches and
- * initialize it.  We also register extension LWLock tranches here.
+ * Allocate the main LWLock array and all tranches and initialize it.  We
+ * also register extension LWLock tranches here.
  */
 void CreateLWLocks(void) {
   if (!IsUnderPostmaster) {
     Size spaceLocks = LWLockShmemSize();
-    int *LWLockCounter;
     char *ptr;
 
-    /* Allocate space */
-    ptr = (char *)ShmemAlloc(spaceLocks);
-
-    /* Leave room for dynamic allocation of tranches */
-    ptr += sizeof(int);
+    /* The process keeps it for its whole life: never freed (pcb_t). */
+    ptr = (char *)malloc(spaceLocks);
+    if (ptr == NULL)
+      ereport(FATAL,
+              (errcode(ERRCODE_OUT_OF_MEMORY),
+               errmsg("out of memory (%zu bytes requested)", spaceLocks)));
 
     /* Ensure desired alignment of LWLock array */
     ptr += LWLOCK_PADDED_SIZE - ((uintptr_t)ptr) % LWLOCK_PADDED_SIZE;
 
     MainLWLockArray = (LWLockPadded *)ptr;
 
-    /*
-     * Initialize the dynamic-allocation counter for tranches, which is
-     * stored just before the first LWLock.
-     */
-    LWLockCounter = (int *)((char *)MainLWLockArray - sizeof(int));
-    *LWLockCounter = LWTRANCHE_FIRST_USER_DEFINED;
+    /* The dynamic-allocation counter for tranches */
+    pcb->lwlock_counter = LWTRANCHE_FIRST_USER_DEFINED;
 
     /* Initialize all LWLocks */
     InitializeLWLocks();
@@ -562,16 +551,10 @@ LWLockPadded *GetNamedLWLockTranche(const char *tranche_name) {
  * Allocate a new tranche ID.
  */
 int LWLockNewTrancheId(void) {
-  int result;
-  int *LWLockCounter;
+  /* Any thread may ask: one takes the next ID at a time. */
+  std::lock_guard<std::mutex> guard(pcb->lwlock_counter_mutex);
 
-  LWLockCounter = (int *)((char *)MainLWLockArray - sizeof(int));
-  /* We use the ShmemLock spinlock to protect LWLockCounter */
-  SpinLockAcquire(ShmemLock);
-  result = (*LWLockCounter)++;
-  SpinLockRelease(ShmemLock);
-
-  return result;
+  return pcb->lwlock_counter++;
 }
 
 /*
