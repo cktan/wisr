@@ -111,9 +111,6 @@ void InitPostmasterChild(void) {
   on_exit_reset();
 
   /* In EXEC_BACKEND case we will not have inherited BlockSig etc values */
-#ifdef EXEC_BACKEND
-  pqinitmask();
-#endif
 
   /* Initialize process-local latch support */
   InitializeWaitEventSupport();

@@ -88,8 +88,7 @@ struct PMSignalData {
 					 __ATOMIC_RELAXED)
 
 /* PMSignalState pointer is valid in both postmaster and child processes */
-thread_local /*SHARED*/ NON_EXEC_STATIC volatile PMSignalData *PMSignalState =
-    NULL;
+static thread_local /*SHARED*/ volatile PMSignalData *PMSignalState = NULL;
 
 /*
  * Local copy of PMSignalState->num_child_flags, only valid in the

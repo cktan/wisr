@@ -392,42 +392,7 @@ static void dsm_postmaster_shutdown(int code, Datum arg) {
  * we must reread the state file and map the control segment; in other cases,
  * we'll have inherited the postmaster's mapping and global variables.
  */
-static void dsm_backend_startup(void) {
-#ifdef EXEC_BACKEND
-  if (IsUnderPostmaster) {
-    void *control_address = NULL;
-
-    /* Attach control segment. */
-    Assert(dsm_control_handle != 0);
-    dsm_impl_op(DSM_OP_ATTACH, dsm_control_handle, 0, &dsm_control_impl_private,
-                &control_address, &dsm_control_mapped_size, ERROR);
-    dsm_control = control_address;
-    /* If control segment doesn't look sane, something is badly wrong. */
-    if (!dsm_control_segment_sane(dsm_control, dsm_control_mapped_size)) {
-      dsm_impl_op(DSM_OP_DETACH, dsm_control_handle, 0,
-                  &dsm_control_impl_private, &control_address,
-                  &dsm_control_mapped_size, WARNING);
-      ereport(FATAL,
-              (errcode(ERRCODE_INTERNAL_ERROR),
-               errmsg("dynamic shared memory control segment is not valid")));
-    }
-  }
-#endif
-
-  dsm_init_done = true;
-}
-
-#ifdef EXEC_BACKEND
-/*
- * When running under EXEC_BACKEND, we get a callback here when the main
- * shared memory segment is re-attached, so that we can record the control
- * handle retrieved from it.
- */
-void dsm_set_control_handle(dsm_handle h) {
-  Assert(dsm_control_handle == 0 && h != 0);
-  dsm_control_handle = h;
-}
-#endif
+static void dsm_backend_startup(void) { dsm_init_done = true; }
 
 /*
  * Reserve some space in the main shared memory segment for DSM segments.

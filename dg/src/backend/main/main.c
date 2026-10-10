@@ -49,7 +49,6 @@ static thread_local /*SHARED*/ bool reached_main = false;
 static const char *const DispatchOptionNames[] = {
     [DISPATCH_CHECK] = "check",
     [DISPATCH_BOOT] = "boot",
-    [DISPATCH_FORKCHILD] = "forkchild",
     [DISPATCH_DESCRIBE_CONFIG] = "describe-config",
     [DISPATCH_SINGLE] = "single",
     /* DISPATCH_POSTMASTER has no name */
@@ -222,13 +221,6 @@ int main(int argc, char *argv[]) {
     write_stderr("%s: there is no bootstrap mode\n", progname);
     exit(1);
     break;
-  case DISPATCH_FORKCHILD:
-#ifdef EXEC_BACKEND
-    SubPostmasterMain(argc, argv);
-#else
-    Assert(false); /* should never happen */
-#endif
-    break;
   case DISPATCH_DESCRIBE_CONFIG:
     GucInfoMain();
     break;
@@ -250,21 +242,6 @@ int main(int argc, char *argv[]) {
  */
 DispatchOption parse_dispatch_option(const char *name) {
   for (int i = 0; i < lengthof(DispatchOptionNames); i++) {
-    /*
-     * Unlike the other dispatch options, "forkchild" takes an argument,
-     * so we just look for the prefix for that one.  For non-EXEC_BACKEND
-     * builds, we never want to return DISPATCH_FORKCHILD, so skip over it
-     * in that case.
-     */
-    if (i == DISPATCH_FORKCHILD) {
-#ifdef EXEC_BACKEND
-      if (strncmp(DispatchOptionNames[DISPATCH_FORKCHILD], name,
-                  strlen(DispatchOptionNames[DISPATCH_FORKCHILD])) == 0)
-        return DISPATCH_FORKCHILD;
-#endif
-      continue;
-    }
-
     if (strcmp(DispatchOptionNames[i], name) == 0)
       return (DispatchOption)i;
   }

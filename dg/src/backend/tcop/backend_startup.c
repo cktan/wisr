@@ -76,32 +76,6 @@ void BackendMain(const void *startup_data, size_t startup_data_len) {
   Assert(startup_data_len == sizeof(BackendStartupData));
   Assert(MyClientSocket != NULL);
 
-#ifdef EXEC_BACKEND
-
-  /*
-   * Need to reinitialize the SSL library in the backend, since the context
-   * structures contain function pointers and cannot be passed through the
-   * parameter file.
-   *
-   * If for some reason reload fails (maybe the user installed broken key
-   * files), soldier on without SSL; that's better than all connections
-   * becoming impossible.
-   *
-   * XXX should we do this in all child processes?  For the moment it's
-   * enough to do it in backend children.
-   */
-#ifdef USE_SSL
-  if (EnableSSL) {
-    if (secure_initialize(false) == 0)
-      LoadedSSL = true;
-    else
-      ereport(
-          LOG,
-          (errmsg("SSL configuration could not be loaded in child process")));
-  }
-#endif
-#endif
-
   /* Perform additional initialization and collect startup packet */
   BackendInitialize(MyClientSocket, bsdata->canAcceptConnections);
 

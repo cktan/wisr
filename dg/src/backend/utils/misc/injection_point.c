@@ -84,7 +84,7 @@ typedef struct InjectionPointsCtl {
   InjectionPointEntry entries[MAX_INJECTION_POINTS];
 } InjectionPointsCtl;
 
-NON_EXEC_STATIC InjectionPointsCtl *ActiveInjectionPoints;
+static InjectionPointsCtl *ActiveInjectionPoints;
 
 /*
  * Backend local cache of injection callbacks already loaded, stored in

@@ -45,10 +45,6 @@ typedef struct {
   dlist_node elem;                 /* list link in ActiveChildList */
 } PMChild;
 
-#ifdef EXEC_BACKEND
-extern PGDLLIMPORT int num_pmchild_slots;
-#endif
-
 /* GUC options */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool EnableSSL;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int SuperuserReservedConnections;
@@ -86,24 +82,15 @@ extern thread_local /*SHARED*/ PGDLLIMPORT const char *progname;
 extern PGDLLIMPORT bool LoadedSSL;
 
 pg_noreturn extern void PostmasterMain(int argc, char *argv[]);
-extern void ClosePostmasterPorts(void);
 extern void InitProcessGlobals(void);
 
 extern int MaxLivePostmasterChildren(void);
-
-#ifdef WIN32
-extern void pgwin32_register_deadchild_callback(HANDLE procHandle,
-                                                DWORD procId);
-#endif
 
 /* defined in globals.c */
 extern thread_local /*LOCAL*/ PGDLLIMPORT struct ClientSocket *MyClientSocket;
 
 /* prototypes for functions in launch_backend.c */
 const char *PostmasterChildName(BackendType child_type);
-#ifdef EXEC_BACKEND
-pg_noreturn extern void SubPostmasterMain(int argc, char *argv[]);
-#endif
 
 /* defined in pmchild.c */
 extern thread_local /*SHARED*/ PGDLLIMPORT dlist_head ActiveChildList;
@@ -122,7 +109,6 @@ extern PMChild *FindPostmasterChildByPid(int pid);
 typedef enum DispatchOption {
   DISPATCH_CHECK,
   DISPATCH_BOOT,
-  DISPATCH_FORKCHILD,
   DISPATCH_DESCRIBE_CONFIG,
   DISPATCH_SINGLE,
   DISPATCH_POSTMASTER, /* must be last */

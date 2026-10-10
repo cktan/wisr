@@ -54,11 +54,6 @@
 #define HBA_FILENAME	"pg_hba.conf"
 #define IDENT_FILENAME	"pg_ident.conf"
 
-#ifdef EXEC_BACKEND
-#define CONFIG_EXEC_PARAMS "global/config_exec_params"
-#define CONFIG_EXEC_PARAMS_NEW "global/config_exec_params.new"
-#endif
-
 /*
  * Precision with which REAL type guc values are to be printed for GUC
  * serialization.
@@ -4870,43 +4865,6 @@ void write_nondefault_variables_to(FILE *fp) {
   }
 }
 
-#ifdef EXEC_BACKEND
-void write_nondefault_variables(GucContext context) {
-  int elevel;
-  FILE *fp;
-
-  Assert(context == PGC_POSTMASTER || context == PGC_SIGHUP);
-
-  elevel = (context == PGC_SIGHUP) ? LOG : ERROR;
-
-  /*
-   * Open file
-   */
-  fp = AllocateFile(CONFIG_EXEC_PARAMS_NEW, "w");
-  if (!fp) {
-    ereport(elevel, (errcode_for_file_access(),
-                     errmsg("could not write to file \"%s\": %m",
-                            CONFIG_EXEC_PARAMS_NEW)));
-    return;
-  }
-
-  write_nondefault_variables_to(fp);
-
-  if (FreeFile(fp)) {
-    ereport(elevel, (errcode_for_file_access(),
-                     errmsg("could not write to file \"%s\": %m",
-                            CONFIG_EXEC_PARAMS_NEW)));
-    return;
-  }
-
-  /*
-   * Put new file in place.  This could delay on Win32, but we don't hold
-   * any exclusive locks.
-   */
-  rename(CONFIG_EXEC_PARAMS_NEW, CONFIG_EXEC_PARAMS);
-}
-#endif /* EXEC_BACKEND */
-
 /*
  *	Read string, including null byte from file
  *
@@ -4973,33 +4931,6 @@ void read_nondefault_variables_from(FILE *fp) {
     guc_free(varsourcefile);
   }
 }
-
-#ifdef EXEC_BACKEND
-/*
- *	This routine loads a previous postmaster dump of its non-default
- *	settings.
- */
-void read_nondefault_variables(void) {
-  FILE *fp;
-
-  /*
-   * Open file
-   */
-  fp = AllocateFile(CONFIG_EXEC_PARAMS, "r");
-  if (!fp) {
-    /* File not found is fine */
-    if (errno != ENOENT)
-      ereport(FATAL, (errcode_for_file_access(),
-                      errmsg("could not read from file \"%s\": %m",
-                             CONFIG_EXEC_PARAMS)));
-    return;
-  }
-
-  read_nondefault_variables_from(fp);
-
-  FreeFile(fp);
-}
-#endif /* EXEC_BACKEND */
 
 /*
  * A little "long argument" simulation, although not quite GNU

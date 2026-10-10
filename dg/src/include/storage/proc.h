@@ -440,11 +440,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int TransactionTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleSessionTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_lock_waits;
 
-#ifdef EXEC_BACKEND
-extern PGDLLIMPORT slock_t *ProcStructLock;
-extern PGDLLIMPORT PGPROC *AuxiliaryProcs;
-#endif
-
 /*
  * Function Prototypes
  */

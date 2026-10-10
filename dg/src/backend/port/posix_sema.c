@@ -37,9 +37,6 @@
 #include "storage/shmem.h"
 
 /* see file header comment */
-#if defined(USE_NAMED_POSIX_SEMAPHORES) && defined(EXEC_BACKEND)
-#error cannot use named POSIX semaphores with EXEC_BACKEND
-#endif
 
 typedef union SemTPadded {
   sem_t pgsem;

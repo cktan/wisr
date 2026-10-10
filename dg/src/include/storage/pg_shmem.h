@@ -70,17 +70,10 @@ extern PGDLLIMPORT void *ShmemProtectiveRegion;
 #endif
 extern thread_local /*SHARED*/ PGDLLIMPORT void *UsedShmemSegAddr;
 
-#if !defined(WIN32) && !defined(EXEC_BACKEND)
+#if !defined(WIN32)
 #define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_MMAP
-#elif !defined(WIN32)
-#define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_SYSV
 #else
 #define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_WINDOWS
-#endif
-
-#ifdef EXEC_BACKEND
-extern void PGSharedMemoryReAttach(void);
-extern void PGSharedMemoryNoReAttach(void);
 #endif
 
 extern PGShmemHeader *PGSharedMemoryCreate(Size size, PGShmemHeader **shim);

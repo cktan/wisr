@@ -912,3 +912,26 @@ process.
   (`NUM_AUXILIARY_PROCS`), sized with shared memory, and the
   Windows `waitpid()` emulation, which goes with
   `EXEC_BACKEND`.
+
+## Step 24: `EXEC_BACKEND` is gone
+
+`EXEC_BACKEND` was PostgreSQL's way to start a child where there
+is no `fork()`: `fork()` and `exec()`, or `CreateProcess()` on
+Windows, and code to hand the child the postmaster's state
+through a file. It was defined only on Windows, so it was never
+compiled here; with no child process left, nothing could use it.
+
+- **Every `#ifdef EXEC_BACKEND` is resolved** as not defined,
+  in 27 files: the branch for it is gone, the other kept.
+- **Gone**: `SubPostmasterMain()`, `internal_forkexec()`, the
+  saving and restoring of backend variables, the `forkchild`
+  dispatch option, `fork_process.c`, the `NON_EXEC_STATIC`
+  macro (its uses are `static`), and what lost its last caller:
+  `ClosePostmasterPorts()` and the Windows emulation of
+  `waitpid()` with its dead-child queue. `launch_backend.c`
+  keeps only the names of the kinds of backend.
+- **Left**: comments in code that stays still explain choices
+  by `EXEC_BACKEND`; `load_hba()` and `load_ident()`, whose
+  last caller was its reload of the configuration, go with
+  the rest of `hba.c` when authentication's files do;
+  `PGSharedMemoryDetach()`, which goes with shared memory.

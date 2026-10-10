@@ -114,11 +114,6 @@
 #include "utils/timestamp.h"
 #include "utils/varlena.h"
 
-#ifdef EXEC_BACKEND
-#include "common/file_utils.h"
-#include "storage/pg_shmem.h"
-#endif
-
 /*
  * CountChildren and SignalChildren take a bitmask argument to represent
  * BackendTypes to count or signal.  Define a separate type and functions to
@@ -354,22 +349,6 @@ static void TerminateChildren(int signal);
 static int CountChildren(BackendTypeMask targetMask);
 static bool CreateOptsFile(int argc, char *argv[], char *fullprogname);
 static void InitPostmasterDeathWatchHandle(void);
-
-#ifdef WIN32
-#define WNOHANG 0 /* ignored, so any integer value will do */
-
-static pid_t waitpid(pid_t pid, int *exitstatus, int options);
-static void WINAPI pgwin32_deadchild_callback(PVOID lpParameter,
-                                              BOOLEAN TimerOrWaitFired);
-
-static HANDLE win32ChildQueue;
-
-typedef struct {
-  HANDLE waitHandle;
-  HANDLE procHandle;
-  DWORD procId;
-} win32_deadchild_waitinfo;
-#endif /* WIN32 */
 
 /* Macros to check exit status of a child process */
 #define EXIT_STATUS_0(st)  ((st) == 0)
@@ -863,32 +842,6 @@ void PostmasterMain(int argc, char *argv[]) {
    */
   InitPostmasterDeathWatchHandle();
 
-#ifdef WIN32
-
-  /*
-   * Initialize I/O completion port used to deliver list of dead children.
-   */
-  win32ChildQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
-  if (win32ChildQueue == NULL)
-    ereport(FATAL,
-            (errmsg("could not create I/O completion port for child queue")));
-#endif
-
-#ifdef EXEC_BACKEND
-  /* Write out nondefault GUC settings for child processes to use */
-  write_nondefault_variables(PGC_POSTMASTER);
-
-  /*
-   * Clean out the temp directory used to transmit parameters to child
-   * processes (see internal_forkexec).  We must do this before launching
-   * any child processes, else we have a race condition: we could remove a
-   * parameter file before the child can read it.  It should be safe to do
-   * so now, because we verified earlier that there are no conflicting
-   * Postgres processes in this data directory.
-   */
-  RemovePgTempFilesInDir(PG_TEMP_FILES_DIR, true, false);
-#endif
-
   /*
    * Reset whereToSendOutput from DestDebug (its starting state) to
    * DestNone. This stops ereport from sending log messages to stderr unless
@@ -1191,14 +1144,6 @@ static void getInstallationPaths(const char *argv0) {
     ereport(FATAL,
             (errmsg("%s: could not locate my own executable path", argv0)));
 
-#ifdef EXEC_BACKEND
-  /* Locate executable backend before we change working directory */
-  if (find_other_exec(argv0, "postgres", PG_BACKEND_VERSIONSTR,
-                      postgres_exec_path) < 0)
-    ereport(FATAL, (errmsg("%s: could not locate matching postgres executable",
-                           argv0)));
-#endif
-
   /*
    * Locate the pkglib directory --- this has to be set early in case we try
    * to load any modules from it in response to postgresql.conf entries.
@@ -1465,62 +1410,6 @@ static CAC_state canAcceptConnections(BackendType backend_type) {
 }
 
 /*
- * ClosePostmasterPorts -- close all the postmaster's open sockets
- *
- * This is called during child process startup to release file descriptors
- * that are not needed by that child process.  The postmaster still has
- * them open, of course.
- */
-void ClosePostmasterPorts(void) {
-  /* Release resources held by the postmaster's WaitEventSet. */
-  if (pm_wait_set) {
-    FreeWaitEventSetAfterFork(pm_wait_set);
-    pm_wait_set = NULL;
-  }
-
-#ifndef WIN32
-
-  /*
-   * Close the write end of postmaster death watch pipe. It's important to
-   * do this as early as possible, so that if postmaster dies, others won't
-   * think that it's still running because we're holding the pipe open.
-   */
-  if (close(postmaster_alive_fds[POSTMASTER_FD_OWN]) != 0)
-    ereport(FATAL, (errcode_for_file_access(),
-                    errmsg_internal("could not close postmaster death "
-                                    "monitoring pipe in child process: %m")));
-  postmaster_alive_fds[POSTMASTER_FD_OWN] = -1;
-  /* Notify fd.c that we released one pipe FD. */
-  ReleaseExternalFD();
-#endif
-
-  /*
-   * Close the postmaster's listen sockets.  These aren't tracked by fd.c,
-   * so we don't call ReleaseExternalFD() here.
-   *
-   * The listen sockets are marked as FD_CLOEXEC, so this isn't needed in
-   * EXEC_BACKEND mode.
-   */
-#ifndef EXEC_BACKEND
-  if (ListenSockets) {
-    for (int i = 0; i < NumListenSockets; i++) {
-      if (closesocket(ListenSockets[i]) != 0)
-        elog(LOG, "could not close listen socket: %m");
-    }
-    pfree(ListenSockets);
-  }
-  NumListenSockets = 0;
-  ListenSockets = NULL;
-#endif
-
-#ifdef USE_BONJOUR
-  /* If using Bonjour, close the connection to the mDNS daemon */
-  if (bonjour_sdref)
-    close(DNSServiceRefSockFD(bonjour_sdref));
-#endif
-}
-
-/*
  * InitProcessGlobals -- set MyStartTime[stamp], random seeds
  *
  * Called early in the postmaster and every backend.
@@ -1601,11 +1490,6 @@ static void process_pm_reload_request(void) {
       secure_destroy();
       LoadedSSL = false;
     }
-#endif
-
-#ifdef EXEC_BACKEND
-    /* Update the starting-point file for future children */
-    write_nondefault_variables(PGC_SIGHUP);
 #endif
   }
 }
@@ -2568,105 +2452,6 @@ static bool CreateOptsFile(int argc, char *argv[], char *fullprogname) {
 
   return true;
 }
-
-#ifdef WIN32
-
-/*
- * Subset implementation of waitpid() for Windows.  We assume pid is -1
- * (that is, check all child processes) and options is WNOHANG (don't wait).
- */
-static pid_t waitpid(pid_t pid, int *exitstatus, int options) {
-  win32_deadchild_waitinfo *childinfo;
-  DWORD exitcode;
-  DWORD dwd;
-  ULONG_PTR key;
-  OVERLAPPED *ovl;
-
-  /* Try to consume one win32_deadchild_waitinfo from the queue. */
-  if (!GetQueuedCompletionStatus(win32ChildQueue, &dwd, &key, &ovl, 0)) {
-    errno = EAGAIN;
-    return -1;
-  }
-
-  childinfo = (win32_deadchild_waitinfo *)key;
-  pid = childinfo->procId;
-
-  /*
-   * Remove handle from wait - required even though it's set to wait only
-   * once
-   */
-  UnregisterWaitEx(childinfo->waitHandle, NULL);
-
-  if (!GetExitCodeProcess(childinfo->procHandle, &exitcode)) {
-    /*
-     * Should never happen. Inform user and set a fixed exitcode.
-     */
-    write_stderr("could not read exit code for process\n");
-    exitcode = 255;
-  }
-  *exitstatus = exitcode;
-
-  /*
-   * Close the process handle.  Only after this point can the PID can be
-   * recycled by the kernel.
-   */
-  CloseHandle(childinfo->procHandle);
-
-  /*
-   * Free struct that was allocated before the call to
-   * RegisterWaitForSingleObject()
-   */
-  pfree(childinfo);
-
-  return pid;
-}
-
-/*
- * Note! Code below executes on a thread pool! All operations must
- * be thread safe! Note that elog() and friends must *not* be used.
- */
-static void WINAPI pgwin32_deadchild_callback(PVOID lpParameter,
-                                              BOOLEAN TimerOrWaitFired) {
-  /* Should never happen, since we use INFINITE as timeout value. */
-  if (TimerOrWaitFired)
-    return;
-
-  /*
-   * Post the win32_deadchild_waitinfo object for waitpid() to deal with. If
-   * that fails, we leak the object, but we also leak a whole process and
-   * get into an unrecoverable state, so there's not much point in worrying
-   * about that.  We'd like to panic, but we can't use that infrastructure
-   * from this thread.
-   */
-  if (!PostQueuedCompletionStatus(win32ChildQueue, 0, (ULONG_PTR)lpParameter,
-                                  NULL))
-    write_stderr("could not post child completion status\n");
-
-  /* Queue SIGCHLD signal. */
-  pg_queue_signal(SIGCHLD);
-}
-
-/*
- * Queue a waiter to signal when this child dies.  The wait will be handled
- * automatically by an operating system thread pool.  The memory and the
- * process handle will be freed by a later call to waitpid().
- */
-void pgwin32_register_deadchild_callback(HANDLE procHandle, DWORD procId) {
-  win32_deadchild_waitinfo *childinfo;
-
-  childinfo = palloc(sizeof(win32_deadchild_waitinfo));
-  childinfo->procHandle = procHandle;
-  childinfo->procId = procId;
-
-  if (!RegisterWaitForSingleObject(
-          &childinfo->waitHandle, procHandle, pgwin32_deadchild_callback,
-          childinfo, INFINITE, WT_EXECUTEONLYONCE | WT_EXECUTEINWAITTHREAD))
-    ereport(FATAL, (errmsg_internal(
-                       "could not register process for wait: error code %lu",
-                       GetLastError())));
-}
-
-#endif /* WIN32 */
 
 /*
  * Initialize one and only handle for monitoring postmaster death.

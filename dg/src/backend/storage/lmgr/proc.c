@@ -67,11 +67,11 @@ thread_local /*LOCAL*/ PGPROC *MyProc = NULL;
  * relatively infrequently (only at backend startup or shutdown) and not for
  * very long, so a spinlock is okay.
  */
-thread_local /*SHARED*/ NON_EXEC_STATIC slock_t *ProcStructLock = NULL;
+static thread_local /*SHARED*/ slock_t *ProcStructLock = NULL;
 
 /* Pointers to shared-memory structures */
 thread_local /*SHARED*/ PROC_HDR *ProcGlobal = NULL;
-thread_local /*SHARED*/ NON_EXEC_STATIC PGPROC *AuxiliaryProcs = NULL;
+static thread_local /*SHARED*/ PGPROC *AuxiliaryProcs = NULL;
 thread_local /*SHARED*/ PGPROC *PreparedXactProcs = NULL;
 
 static thread_local /*LOCAL*/ DeadLockState deadlock_state = DS_NOT_YET_CHECKED;
@@ -491,13 +491,8 @@ void InitProcess(void) {
    * child inherited them; a session thread, like an EXEC_BACKEND child,
    * did not, or not all.
    */
-#ifdef EXEC_BACKEND
-  if (IsUnderPostmaster)
-    AttachSharedMemoryStructs();
-#else
   if (IsSessionThread)
     AttachSharedMemoryStructs();
-#endif
 }
 
 /*
@@ -665,13 +660,8 @@ void InitAuxiliaryProcess(void) {
    * child inherited them; a session thread, like an EXEC_BACKEND child,
    * did not, or not all.
    */
-#ifdef EXEC_BACKEND
-  if (IsUnderPostmaster)
-    AttachSharedMemoryStructs();
-#else
   if (IsSessionThread)
     AttachSharedMemoryStructs();
-#endif
 }
 
 /*

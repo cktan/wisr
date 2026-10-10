@@ -89,8 +89,4 @@ extern void SignalSelfLater(int sig);
  */
 typedef struct ProcSignalHeader ProcSignalHeader;
 
-#ifdef EXEC_BACKEND
-extern PGDLLIMPORT ProcSignalHeader *ProcSignal;
-#endif
-
 #endif /* PROCSIGNAL_H */

@@ -223,10 +223,6 @@ extern thread_local /*SHARED*/ PGDLLIMPORT char OutputFileName[];
 extern thread_local /*SHARED*/ PGDLLIMPORT char my_exec_path[];
 extern thread_local /*SHARED*/ PGDLLIMPORT char pkglib_path[];
 
-#ifdef EXEC_BACKEND
-extern PGDLLIMPORT char postgres_exec_path[];
-#endif
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT Oid MyDatabaseId;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT Oid MyDatabaseTableSpace;

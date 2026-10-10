@@ -126,23 +126,6 @@ static void *InternalIpcMemoryCreate(IpcMemoryKey memKey, Size size) {
    * interest for anything except debugging, we'd probably create a cleaner
    * and better-documented way to set it, such as a GUC.)
    */
-#ifdef EXEC_BACKEND
-  {
-    char *pg_shmem_addr = getenv("PG_SHMEM_ADDR");
-
-    if (pg_shmem_addr)
-      requestedAddress = (void *)strtoul(pg_shmem_addr, NULL, 0);
-    else {
-#if defined(__darwin__) && SIZEOF_VOID_P == 8
-      /*
-       * Provide a default value that is believed to avoid problems with
-       * ASLR on the current macOS release.
-       */
-      requestedAddress = (void *)0x80000000000;
-#endif
-    }
-  }
-#endif
 
   shmid = shmget(memKey, size, IPC_CREAT | IPC_EXCL | IPCProtection);
 
@@ -826,86 +809,6 @@ PGShmemHeader *PGSharedMemoryCreate(Size size, PGShmemHeader **shim) {
   return (PGShmemHeader *)AnonymousShmem;
 }
 
-#ifdef EXEC_BACKEND
-
-/*
- * PGSharedMemoryReAttach
- *
- * This is called during startup of a postmaster child process to re-attach to
- * an already existing shared memory segment.  This is needed only in the
- * EXEC_BACKEND case; otherwise postmaster children inherit the shared memory
- * segment attachment via fork().
- *
- * UsedShmemSegID and UsedShmemSegAddr are implicit parameters to this
- * routine.  The caller must have already restored them to the postmaster's
- * values.
- */
-void PGSharedMemoryReAttach(void) {
-  IpcMemoryId shmid;
-  PGShmemHeader *hdr;
-  IpcMemoryState state;
-  void *origUsedShmemSegAddr = UsedShmemSegAddr;
-
-  Assert(UsedShmemSegAddr != NULL);
-  Assert(IsUnderPostmaster);
-
-#ifdef __CYGWIN__
-  /* cygipc (currently) appears to not detach on exec. */
-  PGSharedMemoryDetach();
-  UsedShmemSegAddr = origUsedShmemSegAddr;
-#endif
-
-  elog(DEBUG3, "attaching to %p", UsedShmemSegAddr);
-  shmid = shmget(UsedShmemSegID, sizeof(PGShmemHeader), 0);
-  if (shmid < 0)
-    state = SHMSTATE_FOREIGN;
-  else
-    state = PGSharedMemoryAttach(shmid, UsedShmemSegAddr, &hdr);
-  if (state != SHMSTATE_ATTACHED)
-    elog(FATAL, "could not reattach to shared memory (key=%d, addr=%p): %m",
-         (int)UsedShmemSegID, UsedShmemSegAddr);
-  if (hdr != origUsedShmemSegAddr)
-    elog(FATAL,
-         "reattaching to shared memory returned unexpected address (got %p, "
-         "expected %p)",
-         hdr, origUsedShmemSegAddr);
-  dsm_set_control_handle(hdr->dsm_control);
-
-  UsedShmemSegAddr = hdr; /* probably redundant */
-}
-
-/*
- * PGSharedMemoryNoReAttach
- *
- * This is called during startup of a postmaster child process when we choose
- * *not* to re-attach to the existing shared memory segment.  We must clean up
- * to leave things in the appropriate state.  This is not used in the non
- * EXEC_BACKEND case, either.
- *
- * The child process startup logic might or might not call PGSharedMemoryDetach
- * after this; make sure that it will be a no-op if called.
- *
- * UsedShmemSegID and UsedShmemSegAddr are implicit parameters to this
- * routine.  The caller must have already restored them to the postmaster's
- * values.
- */
-void PGSharedMemoryNoReAttach(void) {
-  Assert(UsedShmemSegAddr != NULL);
-  Assert(IsUnderPostmaster);
-
-#ifdef __CYGWIN__
-  /* cygipc (currently) appears to not detach on exec. */
-  PGSharedMemoryDetach();
-#endif
-
-  /* For cleanliness, reset UsedShmemSegAddr to show we're not attached. */
-  UsedShmemSegAddr = NULL;
-  /* And the same for UsedShmemSegID. */
-  UsedShmemSegID = 0;
-}
-
-#endif /* EXEC_BACKEND */
-
 /*
  * PGSharedMemoryDetach
  *
@@ -920,12 +823,7 @@ void PGSharedMemoryNoReAttach(void) {
  */
 void PGSharedMemoryDetach(void) {
   if (UsedShmemSegAddr != NULL) {
-    if ((shmdt(UsedShmemSegAddr) < 0)
-#if defined(EXEC_BACKEND) && defined(__CYGWIN__)
-        /* Work-around for cygipc exec bug */
-        && shmdt(NULL) < 0
-#endif
-    )
+    if ((shmdt(UsedShmemSegAddr) < 0))
       elog(LOG, "shmdt(%p) failed: %m", UsedShmemSegAddr);
     UsedShmemSegAddr = NULL;
   }

@@ -44,8 +44,4 @@ extern void InjectionPointCached(const char *name, void *arg);
 extern bool IsInjectionPointAttached(const char *name);
 extern bool InjectionPointDetach(const char *name);
 
-#ifdef EXEC_BACKEND
-extern PGDLLIMPORT struct InjectionPointsCtl *ActiveInjectionPoints;
-#endif
-
 #endif /* INJECTION_POINT_H */

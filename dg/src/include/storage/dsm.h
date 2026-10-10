@@ -29,10 +29,6 @@ extern void dsm_detach_all(void);
 extern size_t dsm_estimate_size(void);
 extern void dsm_shmem_init(void);
 
-#ifdef EXEC_BACKEND
-extern void dsm_set_control_handle(dsm_handle h);
-#endif
-
 /* Functions that create or remove mappings. */
 extern dsm_segment *dsm_create(Size size, int flags);
 extern dsm_segment *dsm_attach(dsm_handle h);

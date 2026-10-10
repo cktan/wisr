@@ -48,7 +48,7 @@ typedef struct PMChildPool {
 } PMChildPool;
 
 static thread_local /*SHARED*/ PMChildPool pmchild_pools[BACKEND_NUM_TYPES];
-thread_local /*SHARED*/ NON_EXEC_STATIC int num_pmchild_slots = 0;
+static thread_local /*SHARED*/ int num_pmchild_slots = 0;
 
 /*
  * List of active child processes.  This includes dead-end children.

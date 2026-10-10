@@ -956,9 +956,7 @@ void PredicateLockShmemInit(void) {
   Size requestSize;
   bool found;
 
-#ifndef EXEC_BACKEND
   Assert(!IsUnderPostmaster);
-#endif
 
   /*
    * Compute size of predicate lock target hashtable. Note these

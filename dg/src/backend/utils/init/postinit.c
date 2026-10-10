@@ -94,36 +94,6 @@ static void PerformAuthentication(Port *port) {
    *
    * FIXME: [fork/exec] Ugh.  Is there a way around this overhead?
    */
-#ifdef EXEC_BACKEND
-
-  /*
-   * load_hba() and load_ident() want to work within the PostmasterContext,
-   * so create that if it doesn't exist (which it won't).  We'll delete it
-   * again later, in PostgresMain.
-   */
-  if (PostmasterContext == NULL)
-    PostmasterContext = AllocSetContextCreate(TopMemoryContext, "Postmaster",
-                                              ALLOCSET_DEFAULT_SIZES);
-
-  if (!load_hba()) {
-    /*
-     * It makes no sense to continue if we fail to load the HBA file,
-     * since there is no way to connect to the database in this case.
-     */
-    ereport(FATAL,
-            /* translator: %s is a configuration file */
-            (errmsg("could not load %s", HbaFileName)));
-  }
-
-  if (!load_ident()) {
-    /*
-     * It is ok to continue if we fail to load the IDENT file, although it
-     * means that you cannot log in using any of the authentication
-     * methods that need a user name mapping. load_ident() already logged
-     * the details of error to the log.
-     */
-  }
-#endif
 
   /* Capture authentication start time for logging */
   conn_timing.auth_start = GetCurrentTimestamp();

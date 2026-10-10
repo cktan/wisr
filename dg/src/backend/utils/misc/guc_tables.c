@@ -327,9 +327,7 @@ static const struct config_enum_entry shared_memory_options[] = {
 #ifndef WIN32
     {"sysv", SHMEM_TYPE_SYSV, false},
 #endif
-#ifndef EXEC_BACKEND
     {"mmap", SHMEM_TYPE_MMAP, false},
-#endif
 #ifdef WIN32
     {"windows", SHMEM_TYPE_WINDOWS, false},
 #endif
