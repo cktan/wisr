@@ -326,13 +326,6 @@ StaticAssertDecl(lengthof(ssl_protocol_versions_info) ==
                      (PG_TLS1_3_VERSION + 2),
                  "array length mismatch");
 
-static const struct config_enum_entry recovery_init_sync_method_options[] = {
-    {"fsync", DATA_DIR_SYNC_METHOD_FSYNC, false},
-#ifdef HAVE_SYNCFS
-    {"syncfs", DATA_DIR_SYNC_METHOD_SYNCFS, false},
-#endif
-    {NULL, 0, false}};
-
 static const struct config_enum_entry shared_memory_options[] = {
 #ifndef WIN32
     {"sysv", SHMEM_TYPE_SYSV, false},
@@ -487,7 +480,6 @@ static thread_local /*LOCAL*/ int block_size;
 static thread_local /*LOCAL*/ int segment_size;
 static thread_local /*LOCAL*/ int shared_memory_size_mb;
 static thread_local /*LOCAL*/ int shared_memory_size_in_huge_pages;
-static thread_local /*LOCAL*/ int wal_block_size;
 static thread_local /*LOCAL*/ int num_os_semaphores;
 static thread_local /*LOCAL*/ bool data_checksums;
 static thread_local /*LOCAL*/ bool integer_datetimes;
@@ -562,8 +554,6 @@ const char *const config_group_names[] = {
     [RESOURCES_WORKER_PROCESSES] =
         gettext_noop("Resource Usage / Worker Processes"),
     [REPLICATION_SENDING] = gettext_noop("Replication / Sending Servers"),
-    [REPLICATION_PRIMARY] = gettext_noop("Replication / Primary Server"),
-    [REPLICATION_SUBSCRIBERS] = gettext_noop("Replication / Subscribers"),
     [QUERY_TUNING_METHOD] =
         gettext_noop("Query Tuning / Planner Method Configuration"),
     [QUERY_TUNING_COST] = gettext_noop("Query Tuning / Planner Cost Constants"),
@@ -2467,17 +2457,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"wal_block_size", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Shows the block size in the write ahead log."), NULL,
-      GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE},
-     &wal_block_size,
-     XLOG_BLCKSZ,
-     XLOG_BLCKSZ,
-     XLOG_BLCKSZ,
-     NULL,
-     NULL,
-     NULL},
-
     {{"tcp_keepalives_idle", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("Time between issuing TCP keepalives."),
       gettext_noop("0 means use the system default."), GUC_UNIT_S},
@@ -3753,20 +3732,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      &ssl_max_protocol_version,
      PG_TLS_ANY,
      ssl_protocol_versions_info,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "recovery_init_sync_method",
-         PGC_SIGHUP,
-         ERROR_HANDLING_OPTIONS,
-         gettext_noop("Sets the method for synchronizing the data directory "
-                      "before crash recovery."),
-     },
-     &recovery_init_sync_method,
-     DATA_DIR_SYNC_METHOD_FSYNC,
-     recovery_init_sync_method_options,
      NULL,
      NULL,
      NULL},

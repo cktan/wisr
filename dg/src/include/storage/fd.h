@@ -67,7 +67,6 @@ enum FileExtendMethod {
 /* GUC parameter */
 extern thread_local /*LOCAL*/ PGDLLIMPORT int max_files_per_process;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool data_sync_retry;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int recovery_init_sync_method;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int io_direct_flags;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int file_extend_method;
 
@@ -202,7 +201,6 @@ extern int fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm,
                            int elevel);
 extern int durable_rename(const char *oldfile, const char *newfile, int elevel);
 extern int durable_unlink(const char *fname, int elevel);
-extern void SyncDataDirectory(void);
 extern int data_sync_elevel(int elevel);
 
 static inline ssize_t FileRead(File file, void *buffer, size_t amount,
