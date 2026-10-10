@@ -53,6 +53,8 @@ the wrapper through the `rel/` test suite.
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record
 - `sm1/API.md` — sm1's C++ API, call by call, in
   `namespace sm1`
+- `sm1/INTERRUPT.md` — a design, not built yet: interrupting
+  a `std::thread` by bits, interruptible waits, and timers
 - `sm1/MVCC.md` — a digest of sm1's MVCC: its timestamps, a
   version's bytes, the status table, and how a reader turns a
   writer's id into a commit timestamp
