@@ -52,7 +52,6 @@
 #include "pg_getopt.h"
 #include "pg_trace.h"
 #include "pgstat.h"
-#include "postmaster/bgworker.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "rewrite/rewriteHandler.h"
@@ -3013,11 +3012,6 @@ void ProcessInterrupts(void) {
     if (ClientAuthInProgress)
       ereport(FATAL, (errcode(ERRCODE_QUERY_CANCELED),
                       errmsg("canceling authentication due to timeout")));
-    else if (AmBackgroundWorkerProcess())
-      ereport(FATAL, (errcode(ERRCODE_ADMIN_SHUTDOWN),
-                      errmsg("terminating background worker \"%s\" due to "
-                             "administrator command",
-                             MyBgworkerEntry->bgw_type)));
     else
       ereport(FATAL,
               (errcode(ERRCODE_ADMIN_SHUTDOWN),

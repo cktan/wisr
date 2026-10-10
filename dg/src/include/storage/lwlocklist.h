@@ -63,7 +63,7 @@ PG_LWLOCK(29, SerializableFinishedList)
 PG_LWLOCK(30, SerializablePredicateList)
 /* 31 was SerialSLRULock */
 PG_LWLOCK(32, SyncRep)
-PG_LWLOCK(33, BackgroundWorker)
+/* 33 was BackgroundWorker */
 PG_LWLOCK(34, DynamicSharedMemoryControl)
 PG_LWLOCK(35, AutoFile)
 PG_LWLOCK(36, ReplicationSlotAllocation)

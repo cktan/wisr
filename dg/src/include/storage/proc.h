@@ -402,8 +402,6 @@ typedef struct PROC_HDR {
   dlist_head freeProcs;
   /* Head of list of special worker free PGPROC structures */
   dlist_head specialWorkerFreeProcs;
-  /* Head of list of bgworker free PGPROC structures */
-  dlist_head bgworkerFreeProcs;
   /* Head of list of walsender free PGPROC structures */
   dlist_head walsenderFreeProcs;
   /* First pgproc waiting for group XID clear */

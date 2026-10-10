@@ -57,7 +57,6 @@
 #include "parser/parse_expr.h"
 #include "parser/parser.h"
 #include "pgstat.h"
-#include "postmaster/bgworker_internals.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
@@ -2357,21 +2356,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      DEFAULT_BACKEND_FLUSH_AFTER,
      0,
      WRITEBACK_MAX_PENDING_FLUSHES,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "max_worker_processes",
-         PGC_POSTMASTER,
-         RESOURCES_WORKER_PROCESSES,
-         gettext_noop("Maximum number of concurrent worker processes."),
-         NULL,
-     },
-     &max_worker_processes,
-     8,
-     0,
-     MAX_BACKENDS,
      NULL,
      NULL,
      NULL},

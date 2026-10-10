@@ -150,7 +150,6 @@ thread_local /*LOCAL*/ int maintenance_work_mem = 65536;
  */
 thread_local /*LOCAL*/ int NBuffers = 16384;
 thread_local /*LOCAL*/ int MaxConnections = 100;
-thread_local /*LOCAL*/ int max_worker_processes = 8;
 thread_local /*SHARED*/ int MaxBackends = 0;
 
 /* GUC parameters for vacuum */

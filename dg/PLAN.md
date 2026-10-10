@@ -350,8 +350,8 @@ step 4. `WIP_THREADS.md` on `wip-dg` has the detail.
   structures become ordinary allocations), `EXEC_BACKEND`, and
   the auxiliary processes: startup is what is left of them.
   Autovacuum, the WAL writer, the archiver, the I/O workers, the
-  checkpointer and the background writer are already gone
-  (`WORKNOTE.md` steps 11 to 14).
+  checkpointer, the background writer and background workers
+  are already gone (`WORKNOTE.md` steps 11 to 16).
 - **What step 9 stubbed goes with them**: what is left of
   `xlog.c` (the in-memory control record, and the start of the
   transaction counters), the hot standby states of the

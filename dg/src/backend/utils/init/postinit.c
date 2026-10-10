@@ -297,17 +297,14 @@ void InitializeMaxBackends(void) {
   Assert(MaxBackends == 0);
 
   /* Note that this does not include "auxiliary" processes */
-  MaxBackends =
-      MaxConnections + max_worker_processes + NUM_SPECIAL_WORKER_PROCS;
+  MaxBackends = MaxConnections + NUM_SPECIAL_WORKER_PROCS;
 
   if (MaxBackends > MAX_BACKENDS)
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-             errmsg("too many server processes configured"),
-             errdetail("\"max_connections\" (%d) plus \"max_worker_processes\" "
-                       "(%d) must be less than %d.",
-                       MaxConnections, max_worker_processes,
-                       MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
+    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                    errmsg("too many server processes configured"),
+                    errdetail("\"max_connections\" (%d) must be less than %d.",
+                              MaxConnections,
+                              MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
 }
 
 /*
@@ -570,15 +567,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
            errmsg("no roles are defined in this database system"),
            errhint("You should immediately run CREATE USER \"%s\" SUPERUSER;.",
                    username != NULL ? username : "postgres")));
-  } else if (AmBackgroundWorkerProcess()) {
-    if (username == NULL && !OidIsValid(useroid)) {
-      InitializeSessionUserIdStandalone();
-      am_superuser = true;
-    } else {
-      InitializeSessionUserId(username, useroid,
-                              (flags & INIT_PG_OVERRIDE_ROLE_LOGIN) != 0);
-      am_superuser = superuser();
-    }
   } else {
     /* normal multiuser case */
     Assert(MyProcPort != NULL);

@@ -8,7 +8,7 @@
  * child process is allocated a PMChild struct from a fixed pool of structs.
  * The size of the pool is determined by various settings that configure how
  * many worker processes and backend connections are allowed, i.e.
- * max_worker_processes, max_wal_senders, and max_connections.
+ * max_wal_senders and max_connections.
  *
  * Dead-end backends are handled slightly differently.  There is no limit
  * on the number of dead-end backends, and they do not need unique IDs, so
@@ -91,8 +91,6 @@ void InitPostmasterChildSlots(void) {
    */
   pmchild_pools[B_BACKEND].size = 2 * MaxConnections;
 
-  pmchild_pools[B_BG_WORKER].size = max_worker_processes;
-
   /*
    * There can be only one of each of these running at a time.  They each
    * get their own pool of just one entry.
@@ -121,9 +119,7 @@ void InitPostmasterChildSlots(void) {
       slots[slotno].pid = 0;
       slots[slotno].child_slot = slotno + 1;
       slots[slotno].bkend_type = B_INVALID;
-      slots[slotno].rw = NULL;
       slots[slotno].thread = NULL;
-      slots[slotno].bgworker_notify = false;
       dlist_push_tail(&pmchild_pools[btype].freelist, &slots[slotno].elem);
       slotno++;
     }
@@ -156,9 +152,7 @@ PMChild *AssignPostmasterChildSlot(BackendType btype) {
   pmchild = dlist_container(PMChild, elem, dlist_pop_head_node(freelist));
   pmchild->pid = 0;
   pmchild->bkend_type = btype;
-  pmchild->rw = NULL;
   pmchild->thread = NULL;
-  pmchild->bgworker_notify = true;
 
   /*
    * pmchild->child_slot for each entry was initialized when the array of
@@ -197,9 +191,7 @@ PMChild *AllocDeadEndChild(void) {
     pmchild->pid = 0;
     pmchild->child_slot = 0;
     pmchild->bkend_type = B_DEAD_END_BACKEND;
-    pmchild->rw = NULL;
     pmchild->thread = NULL;
-    pmchild->bgworker_notify = false;
 
     dlist_push_head(&ActiveChildList, &pmchild->elem);
   }

@@ -35,7 +35,6 @@
 
 #include "libpq/libpq-be.h"
 #include "miscadmin.h"
-#include "postmaster/bgworker_internals.h"
 #include "postmaster/fork_process.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/startup.h"
@@ -172,7 +171,6 @@ static thread_local /*SHARED*/ child_process_kind child_process_kinds[] = {
 
     [B_BACKEND] = {"backend", BackendMain, true},
     [B_DEAD_END_BACKEND] = {"dead-end backend", BackendMain, true},
-    [B_BG_WORKER] = {"bgworker", BackgroundWorkerMain, true},
 
     /*
      * WAL senders start their life as regular backend processes, and change

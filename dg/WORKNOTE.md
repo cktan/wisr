@@ -701,3 +701,22 @@ scans are to be sm's.
   `trace_syncscan` and `TRACE_SYNCSCAN`, its shared memory, the
   `SyncScan` lock, and the comments that explained choices by
   it.
+
+## Step 16: background workers are gone
+
+A background worker is server code in a process of its own,
+forked by the postmaster: a static one an extension registers
+at start, a dynamic one a backend asks for. Nothing in digres
+registered one since parallel query and logical replication
+went (steps 10 and 12), and as forked processes attached to
+shared memory they stood in the way of making it private.
+
+- **Gone**: `postmaster/bgworker.c`, `bgworker.h` and
+  `bgworker_internals.h`; the `B_BG_WORKER` process type; the
+  postmaster's start, restart and notification of workers, and
+  `PMSIGNAL_BACKGROUND_WORKER_CHANGE`; their PGPROC free list
+  and shared memory; the `max_worker_processes` setting, which
+  no longer counts toward `MaxBackends`; the `BackgroundWorker`
+  lock and two wait events.
+- An extension that wants one can have it back as a thread, as
+  connections were made.

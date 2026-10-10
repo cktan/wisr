@@ -24,7 +24,6 @@
 #include "commands/async.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/bgworker_internals.h"
 #include "storage/bufmgr.h"
 #include "storage/dsm.h"
 #include "storage/dsm_registry.h"
@@ -108,7 +107,6 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, CommitTsShmemSize());
   size = add_size(size, SUBTRANSShmemSize());
   size = add_size(size, TwoPhaseShmemSize());
-  size = add_size(size, BackgroundWorkerShmemSize());
   size = add_size(size, MultiXactShmemSize());
   size = add_size(size, LWLockShmemSize());
   size = add_size(size, ProcArrayShmemSize());
@@ -275,7 +273,6 @@ static void CreateOrAttachShmemStructs(void) {
   ProcArrayShmemInit();
   BackendStatusShmemInit();
   TwoPhaseShmemInit();
-  BackgroundWorkerShmemInit();
 
   /*
    * Set up shared-inval messaging
