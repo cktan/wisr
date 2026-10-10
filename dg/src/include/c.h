@@ -1334,8 +1334,9 @@ extern int fdatasync(int fildes);
  * the source wrote.  src/tools/cxx_thread_local.py --check fails on any
  * writable variable not thread_local.
  *
- * A SHARED variable that a thread has to reset or redo after the copy is
- * not SHARED: mark it LOCAL instead, and let the thread start it afresh.
+ * A SHARED variable that a thread has to reset or redo after the copy was
+ * marked SHARED by mistake: mark it LOCAL instead, and let the thread
+ * start it afresh.
  */
 
 /*
