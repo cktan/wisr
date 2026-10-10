@@ -11,6 +11,9 @@ the design document of the level you are working in —
 `sm/sm2/SM2_DESIGN.md` for types and tuples,
 `sm/sm3/SM3_DESIGN.md` for schema and index maintenance.
 
+Before changing code in `dg/`, read `dg/CODE.md`: the rules and
+practices for coding there.
+
 Paths written inside the stack's documents are relative to
 `sm/`: `sm1/SM1_DESIGN.md` there means `sm/sm1/SM1_DESIGN.md`.
 Paths written inside a level's documents are relative to that
