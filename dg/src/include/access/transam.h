@@ -254,10 +254,6 @@ extern thread_local /*SHARED*/ PGDLLIMPORT TransamVariablesData
  */
 extern bool TransactionIdDidCommit(TransactionId transactionId);
 extern bool TransactionIdDidAbort(TransactionId transactionId);
-extern void TransactionIdCommitTree(TransactionId xid, int nxids,
-                                    TransactionId *xids);
-extern void TransactionIdAbortTree(TransactionId xid, int nxids,
-                                   TransactionId *xids);
 extern bool TransactionIdPrecedes(TransactionId id1, TransactionId id2);
 extern bool TransactionIdPrecedesOrEquals(TransactionId id1, TransactionId id2);
 extern bool TransactionIdFollows(TransactionId id1, TransactionId id2);

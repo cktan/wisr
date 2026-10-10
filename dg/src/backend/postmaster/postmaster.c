@@ -1265,7 +1265,6 @@ static void make_legacy_dirs(void) {
                                      "pg_tblspc",
                                      "pg_stat",
                                      "pg_stat_tmp",
-                                     "pg_xact",
                                      "pg_logical",
                                      "pg_logical/snapshots",
                                      "pg_logical/mappings"};

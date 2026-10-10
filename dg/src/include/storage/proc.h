@@ -14,7 +14,6 @@
 #ifndef _PROC_H_
 #define _PROC_H_
 
-#include "access/clog.h"
 #include "access/xlogdefs.h"
 #include "lib/ilist.h"
 #include "storage/latch.h"
@@ -293,15 +292,6 @@ struct PGPROC {
 
   uint32 wait_event_info; /* proc's wait information */
 
-  /* Support for group transaction status update. */
-  bool clogGroupMember;               /* true, if member of clog group */
-  pg_atomic_uint32 clogGroupNext;     /* next clog group member */
-  TransactionId clogGroupMemberXid;   /* transaction id of clog group member */
-  XidStatus clogGroupMemberXidStatus; /* transaction status of clog
-                                       * group member */
-  int64 clogGroupMemberPage;          /* clog page corresponding to
-                                       * transaction id of clog group member */
-
   /* Lock manager data, recording fast-path locks taken by this backend. */
   LWLock fpInfoLock;  /* protects per-backend fast-path state */
   uint64 *fpLockBits; /* lock modes held for each fast-path slot */
@@ -406,8 +396,6 @@ typedef struct PROC_HDR {
   dlist_head walsenderFreeProcs;
   /* First pgproc waiting for group XID clear */
   pg_atomic_uint32 procArrayGroupFirst;
-  /* First pgproc waiting for group transaction status update */
-  pg_atomic_uint32 clogGroupFirst;
 
   /*
    * Current slot numbers of some auxiliary processes. There can be only one

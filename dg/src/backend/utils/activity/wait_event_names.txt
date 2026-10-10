@@ -274,7 +274,6 @@ SerialControl	"Waiting to read or update shared <filename>pg_serial</filename> s
 # lwlocknames.h.  Other LWLocks must be listed in the section below.
 #
 
-XactBuffer	"Waiting for I/O on a transaction status SLRU buffer."
 CommitTsBuffer	"Waiting for I/O on a commit timestamp SLRU buffer."
 SubtransBuffer	"Waiting for I/O on a sub-transaction SLRU buffer."
 MultiXactOffsetBuffer	"Waiting for I/O on a multixact offset SLRU buffer."
@@ -301,7 +300,6 @@ MultiXactMemberSLRU	"Waiting to access the multixact member SLRU cache."
 NotifySLRU	"Waiting to access the <command>NOTIFY</command> message SLRU cache."
 SerialSLRU	"Waiting to access the serializable transaction conflict SLRU cache."
 SubtransSLRU	"Waiting to access the sub-transaction SLRU cache."
-XactSLRU	"Waiting to access the transaction status SLRU cache."
 
 # No "ABI_compatibility" region here as WaitEventLWLock has its own C code.
 

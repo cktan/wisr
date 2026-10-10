@@ -19,72 +19,7 @@
 
 #include "postgres.h"
 
-#include "access/clog.h"
-#include "access/subtrans.h"
 #include "access/transam.h"
-#include "utils/snapmgr.h"
-
-/*
- * Single-item cache for results of TransactionLogFetch.  It's worth having
- * such a cache because we frequently find ourselves repeatedly checking the
- * same XID, for example when scanning a table just after a bulk insert,
- * update, or delete.
- */
-static thread_local /*LOCAL*/ TransactionId cachedFetchXid =
-    InvalidTransactionId;
-static thread_local /*LOCAL*/ XidStatus cachedFetchXidStatus;
-
-/* Local functions */
-static XidStatus TransactionLogFetch(TransactionId transactionId);
-
-/* ----------------------------------------------------------------
- *		Postgres log access method interface
- *
- *		TransactionLogFetch
- * ----------------------------------------------------------------
- */
-
-/*
- * TransactionLogFetch --- fetch commit status of specified transaction id
- */
-static XidStatus TransactionLogFetch(TransactionId transactionId) {
-  XidStatus xidstatus;
-
-  /*
-   * Before going to the commit log manager, check our single item cache to
-   * see if we didn't just check the transaction status a moment ago.
-   */
-  if (TransactionIdEquals(transactionId, cachedFetchXid))
-    return cachedFetchXidStatus;
-
-  /*
-   * Also, check to see if the transaction ID is a permanent one.
-   */
-  if (!TransactionIdIsNormal(transactionId)) {
-    if (TransactionIdEquals(transactionId, BootstrapTransactionId))
-      return TRANSACTION_STATUS_COMMITTED;
-    if (TransactionIdEquals(transactionId, FrozenTransactionId))
-      return TRANSACTION_STATUS_COMMITTED;
-    return TRANSACTION_STATUS_ABORTED;
-  }
-
-  /*
-   * Get the transaction status.
-   */
-  xidstatus = TransactionIdGetStatus(transactionId);
-
-  /*
-   * Cache it, but DO NOT cache status for unfinished or sub-committed
-   * transactions!  We only cache status that is guaranteed not to change.
-   */
-  if (xidstatus != TRANSACTION_STATUS_IN_PROGRESS &&
-      xidstatus != TRANSACTION_STATUS_SUB_COMMITTED) {
-    cachedFetchXid = transactionId;
-    cachedFetchXidStatus = xidstatus;
-  }
-
-  return xidstatus;
-}
 
 /* ----------------------------------------------------------------
  *						Interface functions
@@ -95,151 +30,29 @@ static XidStatus TransactionLogFetch(TransactionId transactionId) {
  *		   these functions test the transaction status of
  *		   a specified transaction id.
  *
- *		TransactionIdCommitTree
- *		TransactionIdAsyncCommitTree
- *		TransactionIdAbortTree
- *		========
- *		   these functions set the transaction status of the specified
- *		   transaction tree.
- *
- * See also TransactionIdIsInProgress, which once was in this module
- * but now lives in procarray.c, as well as comments at the top of
- * heapam_visibility.c that explain how everything fits together.
+ * There is no commit log: sm1's status record is to replace it.  Until then
+ * every transaction that is no longer in progress is said to have
+ * committed, so an aborted transaction's changes are visible.  Callers check
+ * TransactionIdIsInProgress() first.
  * ----------------------------------------------------------------
  */
 
 /*
  * TransactionIdDidCommit
  *		True iff transaction associated with the identifier did commit.
- *
- * Note:
- *		Assumes transaction identifier is valid and exists in clog.
+ *		A dummy: true for every valid transaction id.
  */
-bool /* true if given transaction committed */
-TransactionIdDidCommit(TransactionId transactionId) {
-  XidStatus xidstatus;
-
-  xidstatus = TransactionLogFetch(transactionId);
-
-  /*
-   * If it's marked committed, it's committed.
-   */
-  if (xidstatus == TRANSACTION_STATUS_COMMITTED)
-    return true;
-
-  /*
-   * If it's marked subcommitted, we have to check the parent recursively.
-   * However, if it's older than TransactionXmin, we can't look at
-   * pg_subtrans; instead assume that the parent crashed without cleaning up
-   * its children.
-   *
-   * Originally we Assert'ed that the result of SubTransGetParent was not
-   * zero. However with the introduction of prepared transactions, there can
-   * be a window just after database startup where we do not have complete
-   * knowledge in pg_subtrans of the transactions after TransactionXmin.
-   * StartupSUBTRANS() has ensured that any missing information will be
-   * zeroed.  Since this case should not happen under normal conditions, it
-   * seems reasonable to emit a WARNING for it.
-   */
-  if (xidstatus == TRANSACTION_STATUS_SUB_COMMITTED) {
-    TransactionId parentXid;
-
-    if (TransactionIdPrecedes(transactionId, TransactionXmin))
-      return false;
-    parentXid = SubTransGetParent(transactionId);
-    if (!TransactionIdIsValid(parentXid)) {
-      elog(WARNING, "no pg_subtrans entry for subcommitted XID %u",
-           transactionId);
-      return false;
-    }
-    return TransactionIdDidCommit(parentXid);
-  }
-
-  /*
-   * It's not committed.
-   */
-  return false;
+bool TransactionIdDidCommit(TransactionId transactionId) {
+  return TransactionIdIsValid(transactionId);
 }
 
 /*
  * TransactionIdDidAbort
  *		True iff transaction associated with the identifier did abort.
- *
- * Note:
- *		Assumes transaction identifier is valid and exists in clog.
- *
- *		Returns true only for explicitly aborted transactions, as
- *transactions implicitly aborted due to a crash will commonly still appear to
- *be in-progress in the clog.  Most of the time TransactionIdDidCommit(), with a
- *preceding TransactionIdIsInProgress() check, should be used instead of
- *TransactionIdDidAbort().
+ *		A dummy: true only for the invalid transaction id.
  */
-bool /* true if given transaction aborted */
-TransactionIdDidAbort(TransactionId transactionId) {
-  XidStatus xidstatus;
-
-  xidstatus = TransactionLogFetch(transactionId);
-
-  /*
-   * If it's marked aborted, it's aborted.
-   */
-  if (xidstatus == TRANSACTION_STATUS_ABORTED)
-    return true;
-
-  /*
-   * If it's marked subcommitted, we have to check the parent recursively.
-   * However, if it's older than TransactionXmin, we can't look at
-   * pg_subtrans; instead assume that the parent crashed without cleaning up
-   * its children.
-   */
-  if (xidstatus == TRANSACTION_STATUS_SUB_COMMITTED) {
-    TransactionId parentXid;
-
-    if (TransactionIdPrecedes(transactionId, TransactionXmin))
-      return true;
-    parentXid = SubTransGetParent(transactionId);
-    if (!TransactionIdIsValid(parentXid)) {
-      /* see notes in TransactionIdDidCommit */
-      elog(WARNING, "no pg_subtrans entry for subcommitted XID %u",
-           transactionId);
-      return true;
-    }
-    return TransactionIdDidAbort(parentXid);
-  }
-
-  /*
-   * It's not aborted.
-   */
-  return false;
-}
-
-/*
- * TransactionIdCommitTree
- *		Marks the given transaction and children as committed
- *
- * "xid" is a toplevel transaction commit, and the xids array contains its
- * committed subtransactions.
- *
- * This commit operation is not guaranteed to be atomic, but if not, subxids
- * are correctly marked subcommit first.
- */
-void TransactionIdCommitTree(TransactionId xid, int nxids,
-                             TransactionId *xids) {
-  TransactionIdSetTreeStatus(xid, nxids, xids, TRANSACTION_STATUS_COMMITTED);
-}
-
-/*
- * TransactionIdAbortTree
- *		Marks the given transaction and children as aborted.
- *
- * "xid" is a toplevel transaction commit, and the xids array contains its
- * committed subtransactions.
- *
- * We don't need to worry about the non-atomic behavior, since any onlookers
- * will consider all the xacts as not-yet-committed anyway.
- */
-void TransactionIdAbortTree(TransactionId xid, int nxids, TransactionId *xids) {
-  TransactionIdSetTreeStatus(xid, nxids, xids, TRANSACTION_STATUS_ABORTED);
+bool TransactionIdDidAbort(TransactionId transactionId) {
+  return !TransactionIdDidCommit(transactionId);
 }
 
 /*

@@ -201,7 +201,6 @@ void InitProcGlobal(void) {
   ProcGlobal->startupBufferPinWaitBufId = -1;
   ProcGlobal->walwriterProc = INVALID_PROC_NUMBER;
   pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PROC_NUMBER);
-  pg_atomic_init_u32(&ProcGlobal->clogGroupFirst, INVALID_PROC_NUMBER);
 
   /*
    * Create and initialize all the PGPROC structures we'll need.  There are
@@ -323,7 +322,6 @@ void InitProcGlobal(void) {
      */
     pg_atomic_init_u32(&(proc->procArrayGroupNext), INVALID_PROC_NUMBER);
     pg_atomic_init_u32(&(proc->pendingSignals), 0);
-    pg_atomic_init_u32(&(proc->clogGroupNext), INVALID_PROC_NUMBER);
     pg_atomic_init_u64(&(proc->waitStart), 0);
   }
 
@@ -462,11 +460,6 @@ void InitProcess(void) {
   MyProc->wait_event_info = 0;
 
   /* Initialize fields for group transaction status update. */
-  MyProc->clogGroupMember = false;
-  MyProc->clogGroupMemberXid = InvalidTransactionId;
-  MyProc->clogGroupMemberXidStatus = TRANSACTION_STATUS_IN_PROGRESS;
-  MyProc->clogGroupMemberPage = -1;
-  Assert(pg_atomic_read_u32(&MyProc->clogGroupNext) == INVALID_PROC_NUMBER);
 
   /*
    * Acquire ownership of the PGPROC's latch, so that we can use WaitLatch

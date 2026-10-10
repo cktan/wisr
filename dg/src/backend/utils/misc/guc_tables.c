@@ -1841,19 +1841,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"transaction_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the dedicated buffer pool used for the "
-                   "transaction status cache."),
-      gettext_noop("0 means use a fraction of \"shared_buffers\"."),
-      GUC_UNIT_BLOCKS},
-     &transaction_buffers,
-     0,
-     0,
-     SLRU_MAX_ALLOWED_BUFFERS,
-     check_transaction_buffers,
-     NULL,
-     NULL},
-
     {{"temp_buffers", PGC_USERSET, RESOURCES_MEM,
       gettext_noop(
           "Sets the maximum number of temporary buffers used by each session."),

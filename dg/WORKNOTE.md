@@ -765,3 +765,25 @@ message at shutdown.
 - **Gone**: `access/transam/xlog.c`, `access/xlog.h`,
   `catalog/pg_control.h`, `LocalProcessControlFile()` and the
   control record's shared memory.
+
+## Step 19: the commit log is gone
+
+The commit log (`clog.c`, `pg_xact`) kept two bits per
+transaction, committed or aborted, in SLRU pages. sm1's status
+record is to replace it; until the heap moves to sm, its
+callers get a dummy.
+
+- **Every valid transaction id is said to have committed**:
+  `TransactionIdDidCommit()` is true for it, and
+  `TransactionIdDidAbort()` only for the invalid id. Callers
+  ask `TransactionIdIsInProgress()` first, so a running
+  transaction is still seen as running; but an aborted
+  transaction's changes are visible.
+- **Gone**: `clog.c` and `clog.h`; commit and abort no longer
+  mark anything (`TransactionIdCommitTree()`,
+  `TransactionIdAbortTree()`); the group update fields of
+  PGPROC; the `transaction_buffers` setting; the `XactBuffer`
+  and `XactSLRU` lock tranches; the `pg_xact` directory.
+- **Left**: `pg_xact_status()` and its `oldestClogXid`, which
+  now answer from the dummy; the "transaction" row of
+  `pg_stat_slru`, always 0.

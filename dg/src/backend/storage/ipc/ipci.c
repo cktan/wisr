@@ -14,7 +14,6 @@
  */
 #include "postgres.h"
 
-#include "access/clog.h"
 #include "access/commit_ts.h"
 #include "access/multixact.h"
 #include "access/nbtree.h"
@@ -102,7 +101,6 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, PredicateLockShmemSize());
   size = add_size(size, ProcGlobalShmemSize());
   size = add_size(size, VarsupShmemSize());
-  size = add_size(size, CLOGShmemSize());
   size = add_size(size, CommitTsShmemSize());
   size = add_size(size, SUBTRANSShmemSize());
   size = add_size(size, TwoPhaseShmemSize());
@@ -247,7 +245,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up xlog, clog, and buffers
    */
   VarsupShmemInit();
-  CLOGShmemInit();
   CommitTsShmemInit();
   SUBTRANSShmemInit();
   MultiXactShmemInit();

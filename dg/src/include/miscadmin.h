@@ -209,7 +209,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_offset_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int notify_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int serializable_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int subtransaction_buffers;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int transaction_buffers;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;
 extern thread_local /*LOCAL*/ PGDLLIMPORT pg_time_t MyStartTime;
