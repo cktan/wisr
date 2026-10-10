@@ -8,6 +8,10 @@
 #              beside them
 #   INCLUDES   more -I flags
 #
+# OBJ is the suffix of an object, "o"; "make tsan" at dg/ makes it
+# "tsan.o", so the thread sanitizer's objects, compiled for it, sit
+# beside the others.
+#
 # Every .c file is compiled as C++ (sm/PART4.md section 2), and
 # as strict C++: src/tools/cxx_keywords.py renamed the identifiers
 # that are C++ keywords, and src/tools/cxx_casts.py wrote the casts
@@ -15,12 +19,17 @@
 # through yet.
 
 CXX ?= g++
+OBJ ?= o
+ifeq ($(OBJ),tsan.o)
+OPT := -O1 -g -fsanitize=thread
+else
 OPT ?= -O0 -g
+endif
 STD := -x c++ -std=gnu++20 -w
 CPPFLAGS := -I$(top)/src/include $(INCLUDES) -D_GNU_SOURCE
 
 SRCS := $(filter-out $(SKIP),$(wildcard *.c))
-OBJS := $(SRCS:.c=.o)
+OBJS := $(SRCS:.c=.$(OBJ))
 
 .PHONY: all clean format $(SUBDIRS)
 
@@ -30,12 +39,12 @@ all: $(SUBDIRS) $(OBJS)
 $(SUBDIRS):
 	$(MAKE) -C $@ $(MAKECMDGOALS)
 
-%.o: %.c
+%.$(OBJ): %.c
 	$(CXX) $(STD) $(OPT) $(CPPFLAGS) -MMD -MP -c -o $@ $<
 
 # Not *.d: utils/probes.d is a source file.
 clean: $(SUBDIRS)
-	rm -f $(OBJS) $(OBJS:.o=.d)
+	rm -f $(SRCS:.c=.o) $(SRCS:.c=.d) $(SRCS:.c=.tsan.o) $(SRCS:.c=.tsan.d)
 
 # .clang-format-ignore at dg/ keeps the generators' headers as they are.
 format: $(SUBDIRS)

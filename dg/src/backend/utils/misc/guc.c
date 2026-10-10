@@ -4791,8 +4791,6 @@ char *ShowGUCOption(struct config_generic *record, bool use_units) {
   return pstrdup(val);
 }
 
-#ifdef EXEC_BACKEND
-
 /*
  *	These routines dump out all non-default GUC options into a binary
  *	file that is read by all exec'ed backends.  The format is:
@@ -4860,10 +4858,23 @@ static void write_one_nondefault_variable(FILE *fp,
   fwrite(&gconf->srole, 1, sizeof(gconf->srole), fp);
 }
 
+/* Write each setting not at its default to FP, in the form above. */
+void write_nondefault_variables_to(FILE *fp) {
+  dlist_iter iter;
+
+  /* We need only consider GUCs with source not PGC_S_DEFAULT */
+  dlist_foreach(iter, &guc_nondef_list) {
+    struct config_generic *gconf =
+        dlist_container(struct config_generic, nondef_link, iter.cur);
+
+    write_one_nondefault_variable(fp, gconf);
+  }
+}
+
+#ifdef EXEC_BACKEND
 void write_nondefault_variables(GucContext context) {
   int elevel;
   FILE *fp;
-  dlist_iter iter;
 
   Assert(context == PGC_POSTMASTER || context == PGC_SIGHUP);
 
@@ -4880,13 +4891,7 @@ void write_nondefault_variables(GucContext context) {
     return;
   }
 
-  /* We need only consider GUCs with source not PGC_S_DEFAULT */
-  dlist_foreach(iter, &guc_nondef_list) {
-    struct config_generic *gconf =
-        dlist_container(struct config_generic, nondef_link, iter.cur);
-
-    write_one_nondefault_variable(fp, gconf);
-  }
+  write_nondefault_variables_to(fp);
 
   if (FreeFile(fp)) {
     ereport(elevel, (errcode_for_file_access(),
@@ -4901,6 +4906,7 @@ void write_nondefault_variables(GucContext context) {
    */
   rename(CONFIG_EXEC_PARAMS_NEW, CONFIG_EXEC_PARAMS);
 }
+#endif /* EXEC_BACKEND */
 
 /*
  *	Read string, including null byte from file
@@ -4919,39 +4925,22 @@ static char *read_string_with_null(FILE *fp) {
         elog(FATAL, "invalid format of exec config params file");
     }
     if (i == 0)
-      str = guc_malloc(FATAL, maxlen);
+      str = (char *)guc_malloc(FATAL, maxlen);
     else if (i == maxlen)
-      str = guc_realloc(FATAL, str, maxlen *= 2);
+      str = (char *)guc_realloc(FATAL, str, maxlen *= 2);
     str[i++] = ch;
   } while (ch != 0);
 
   return str;
 }
 
-/*
- *	This routine loads a previous postmaster dump of its non-default
- *	settings.
- */
-void read_nondefault_variables(void) {
-  FILE *fp;
+/* Set each setting FP holds, as write_nondefault_variables_to() wrote it. */
+void read_nondefault_variables_from(FILE *fp) {
   char *varname, *varvalue, *varsourcefile;
   int varsourceline;
   GucSource varsource;
   GucContext varscontext;
   Oid varsrole;
-
-  /*
-   * Open file
-   */
-  fp = AllocateFile(CONFIG_EXEC_PARAMS, "r");
-  if (!fp) {
-    /* File not found is fine */
-    if (errno != ENOENT)
-      ereport(FATAL, (errcode_for_file_access(),
-                      errmsg("could not read from file \"%s\": %m",
-                             CONFIG_EXEC_PARAMS)));
-    return;
-  }
 
   for (;;) {
     if ((varname = read_string_with_null(fp)) == NULL)
@@ -4984,6 +4973,30 @@ void read_nondefault_variables(void) {
     guc_free(varvalue);
     guc_free(varsourcefile);
   }
+}
+
+#ifdef EXEC_BACKEND
+/*
+ *	This routine loads a previous postmaster dump of its non-default
+ *	settings.
+ */
+void read_nondefault_variables(void) {
+  FILE *fp;
+
+  /*
+   * Open file
+   */
+  fp = AllocateFile(CONFIG_EXEC_PARAMS, "r");
+  if (!fp) {
+    /* File not found is fine */
+    if (errno != ENOENT)
+      ereport(FATAL, (errcode_for_file_access(),
+                      errmsg("could not read from file \"%s\": %m",
+                             CONFIG_EXEC_PARAMS)));
+    return;
+  }
+
+  read_nondefault_variables_from(fp);
 
   FreeFile(fp);
 }

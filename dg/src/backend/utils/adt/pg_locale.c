@@ -400,15 +400,13 @@ bool check_locale_messages(char **newval, void **extra, GucSource source) {
 #endif
 }
 
-void assign_locale_messages(const char *newval, void *extra) {
-  /*
-   * LC_MESSAGES category does not exist everywhere, but accept it anyway.
-   * We ignore failure, as per comment above.
-   */
-#ifdef LC_MESSAGES
-  (void)pg_perm_setlocale(LC_MESSAGES, newval);
-#endif
-}
+/*
+ * The setting is kept, and the process's locale is left alone: it is
+ * every session's, and setlocale() is not safe in threads. With no NLS
+ * nothing is translated, so only strerror()'s text, in the language
+ * main() set, is not the session's.
+ */
+void assign_locale_messages(const char *newval, void *extra) {}
 
 /*
  * Frees the malloced content of a struct lconv.  (But not the struct

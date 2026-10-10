@@ -47,10 +47,12 @@ IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def objects(src):
-    """Every object under SRC, sorted, as paths."""
+    """Every object under SRC, sorted, as paths: not the thread
+    sanitizer's, which it gives static initialisers."""
     out = []
     for dirpath, _, files in os.walk(src):
-        out += [os.path.join(dirpath, f) for f in files if f.endswith(".o")]
+        out += [os.path.join(dirpath, f) for f in files
+                if f.endswith(".o") and not f.endswith(".tsan.o")]
     return sorted(out)
 
 

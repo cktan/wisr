@@ -7,6 +7,8 @@
 #   make test          check the parser, with sq's tests given this
 #                      server, run the statements in test/, and check
 #                      initdb and a server that psql connects to
+#   make tsan          build build/digres-tsan, under the thread
+#                      sanitizer, and run the statements in test/ with it
 #   make clean         remove objects and generated files
 #   make format        clang-format every .c and .h
 #
@@ -65,8 +67,21 @@ build/digres: src $(LIBSQ) $(LIBSM)
 	# A session is to be a thread: no writable global may be left
 	# that is not thread_local (PLAN.md section 3).
 	python3 -B src/tools/cxx_thread_local.py --check src
-	$(CXX) -o $@ $$(find src -name '*.o') $(LIBSQ) $(LIBSM) $(LDLIBS)
+	$(CXX) -o $@ $$(find src -name '*.o' ! -name '*.tsan.o') $(LIBSQ) \
+	    $(LIBSM) $(LDLIBS)
 	ln -sf digres build/initdb
+
+# The server again, each object compiled once more as NAME.tsan.o for
+# the thread sanitizer, and the statements in test/ run with it, alone
+# and in threads. The sanitizer cannot map its memory with the address
+# space randomised, hence setarch -R. sq and sm are not instrumented.
+.PHONY: tsan
+tsan: gen $(LIBSQ) $(LIBSM)
+	$(MAKE) -C src OBJ=tsan.o
+	@mkdir -p build
+	$(CXX) -fsanitize=thread -o build/digres-tsan \
+	    $$(find src -name '*.tsan.o') $(LIBSQ) $(LIBSM) $(LDLIBS)
+	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
 
 # The parser is sq and a converter (src/backend/parser/parser.c). sq's
 # tests keep what PostgreSQL's parser printed for each of their files;

@@ -8,8 +8,8 @@ the tree, `WORKNOTE.md` the decisions taken so far (steps 1 to
 
 Written on 2026-10-09, with `main` and `wip-dg` both at
 `edf7fad`. Step 1 is done since, in `43137f7` on `wip-dg`; §3
-records how, and what it left for step 3. Nothing after it has
-been started.
+records how, and what it left for step 3. Step 2 is done too;
+§4.1 records how.
 
 ## 1. Where digres stands
 
@@ -215,6 +215,37 @@ the sweep missed.
 Success for this step: N threads each run the statements in
 `test/*.sql` and print what one thread prints, and TSan
 reports nothing.
+
+### 4.1 How it was done
+
+- **A thread is started as an `EXEC_BACKEND` child is**
+  (`utils/init/session_thread.c`). Its `thread_local`s start
+  at what the source wrote, not at its parent's values. It is
+  given the SHARED values the parent set, only `progname` so
+  far, and the settings not at their defaults, as GUC writes
+  them for an exec'd child, through a memory stream
+  (`write_nondefault_variables_to()`). It makes its own memory
+  contexts and settings, and copies none of the parent's
+  memory. The list of SHARED values grows in step 3, from
+  `BackendParameters` in `launch_backend.c`.
+- **`digres --parse ... --threads N`** runs the input in N
+  sessions at once and prints what the first printed, and a
+  line for any that printed otherwise. DestDebug prints to
+  `debug_out`, a stream each thread sets. `test/run.sh` runs
+  each file alone and in 8 threads.
+- **`make tsan`** compiles every object again as
+  `NAME.tsan.o`, links `build/digres-tsan`, and runs
+  `test/run.sh` with it under `setarch -R`. sq and sm are not
+  instrumented.
+- **TSan found one race**: the `lc_messages` hook called
+  `setlocale()`, which is the process's. It now keeps the
+  value and does nothing: with no NLS, nothing is translated.
+- **Left for later**: `check_locale()`, the check hook of
+  `lc_monetary`, `lc_numeric`, `lc_time` and `lc_messages`,
+  sets and restores the process's locale, so two sessions
+  setting one at once would race. The tests do not, and TSan
+  did not see it. A thread's memory contexts and settings are
+  not freed when it ends.
 
 ## 5. Step 3: connections as threads
 

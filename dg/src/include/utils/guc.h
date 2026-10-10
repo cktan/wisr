@@ -422,6 +422,8 @@ extern void guc_free(void *ptr);
 extern void write_nondefault_variables(GucContext context);
 extern void read_nondefault_variables(void);
 #endif
+extern void write_nondefault_variables_to(FILE *fp);
+extern void read_nondefault_variables_from(FILE *fp);
 
 /* Functions exported by guc_funcs.c */
 extern void ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel);

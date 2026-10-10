@@ -8,6 +8,6 @@ endif
 include $(top)/dg.mk
 
 # The CRC instructions are an extension the compiler must be told of.
-pg_crc32c_armv8.o: OPT += -march=armv8-a+crc
-pg_crc32c_sse42.o: OPT += -msse4.2
+pg_crc32c_armv8.$(OBJ): OPT += -march=armv8-a+crc
+pg_crc32c_sse42.$(OBJ): OPT += -msse4.2
 
