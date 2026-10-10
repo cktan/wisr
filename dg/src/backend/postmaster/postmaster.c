@@ -228,22 +228,10 @@ thread_local /*LOCAL*/ bool send_abort_for_crash = false;
 thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 
 /* special child processes; NULL when not running */
-static thread_local /*SHARED*/ PMChild *StartupPMChild = NULL,
-                                       *WalReceiverPMChild = NULL,
+static thread_local /*SHARED*/ PMChild *WalReceiverPMChild = NULL,
                                        *WalSummarizerPMChild = NULL,
                                        *SysLoggerPMChild = NULL,
                                        *SlotSyncWorkerPMChild = NULL;
-
-/* Startup process's status */
-typedef enum {
-  STARTUP_NOT_RUNNING,
-  STARTUP_RUNNING,
-  STARTUP_SIGNALED, /* we sent it a SIGQUIT or SIGKILL */
-  STARTUP_CRASHED,
-} StartupStatusEnum;
-
-static thread_local /*SHARED*/ StartupStatusEnum StartupStatus =
-    STARTUP_NOT_RUNNING;
 
 /* Startup/shutdown state */
 #define NoShutdown		0
@@ -260,26 +248,12 @@ static thread_local /*SHARED*/ bool FatalError =
  * We use a simple state machine to control startup, shutdown, and
  * crash recovery (which is rather like shutdown followed by startup).
  *
- * After doing all the postmaster initialization work, we enter PM_STARTUP
- * state and the startup process is launched. The startup process begins by
- * reading the control file and other preliminary initialization steps.
- * In a normal startup, or after crash recovery, the startup process exits
- * with exit code 0 and we switch to PM_RUN state.  However, archive recovery
- * is handled specially since it takes much longer and we would like to support
- * hot standby during archive recovery.
+ * After doing all the postmaster initialization work, we enter PM_RUN
+ * state (StartRunning()).  There is no WAL to recover from, so there is no
+ * startup process and no archive recovery or hot standby.
  *
- * When the startup process is ready to start archive recovery, it signals the
- * postmaster, and we switch to PM_RECOVERY state. The background writer and
- * checkpointer are already running (as these are launched during PM_STARTUP),
- * and the startup process continues applying WAL.  If Hot Standby is enabled,
- * then, after reaching a consistent point in WAL redo, startup process
- * signals us again, and we switch to PM_HOT_STANDBY state and begin accepting
- * connections to perform read-only queries.  When archive recovery is
- * finished, the startup process exits with exit code 0 and we switch to
- * PM_RUN state.
- *
- * Normal child backends can only be launched when we are in PM_RUN or
- * PM_HOT_STANDBY state.  (connsAllowed can also restrict launching.)
+ * Normal child backends can only be launched when we are in PM_RUN state.
+ * (connsAllowed can also restrict launching.)
  * In other states we handle connection requests by launching "dead-end"
  * child processes, which will simply send the client an error message and
  * quit.  (We track these in the ActiveChildList so that we can know when they
@@ -293,17 +267,11 @@ static thread_local /*SHARED*/ bool FatalError =
  *
  * Notice that this state variable does not distinguish *why* we entered
  * states later than PM_RUN --- Shutdown and FatalError must be consulted
- * to find that out.  FatalError is never true in PM_RECOVERY, PM_HOT_STANDBY,
- * or PM_RUN states (because we don't enter those states when trying to
- * recover from a crash).  It can be true in
- * PM_STARTUP state, because we don't clear it until we've successfully
- * started WAL redo.
+ * to find that out.  FatalError is never true in PM_RUN state (because we
+ * don't enter it when trying to recover from a crash).
  */
 typedef enum {
   PM_INIT,          /* postmaster starting */
-  PM_STARTUP,       /* waiting for startup subprocess */
-  PM_RECOVERY,      /* in archive recovery mode */
-  PM_HOT_STANDBY,   /* in hot standby mode */
   PM_RUN,           /* normal "database is alive" state */
   PM_STOP_BACKENDS, /* need to stop remaining backends */
   PM_WAIT_BACKENDS, /* waiting for live backends to exit */
@@ -315,9 +283,9 @@ static thread_local /*SHARED*/ PMState pmState = PM_INIT;
 
 /*
  * While performing a "smart shutdown", we restrict new connections but stay
- * in PM_RUN or PM_HOT_STANDBY state until all the client backends are gone.
- * connsAllowed is a sub-state indicator showing the active restriction.
- * It is of no interest unless pmState is PM_RUN or PM_HOT_STANDBY.
+ * in PM_RUN state until all the client backends are gone.  connsAllowed is a
+ * sub-state indicator showing the active restriction.  It is of no interest
+ * unless pmState is PM_RUN.
  */
 static thread_local /*SHARED*/ bool connsAllowed = true;
 
@@ -390,6 +358,7 @@ static void UpdatePMState(PMState newState);
 
 pg_noreturn static void ExitPostmaster(int status);
 static int ServerLoop(void);
+static void StartRunning(void);
 static int BackendStartup(ClientSocket *client_sock);
 static void report_fork_failure_to_client(ClientSocket *client_sock,
                                           int errnum);
@@ -423,7 +392,6 @@ typedef struct {
 /* Macros to check exit status of a child process */
 #define EXIT_STATUS_0(st)  ((st) == 0)
 #define EXIT_STATUS_1(st)  (WIFEXITED(st) && WEXITSTATUS(st) == 1)
-#define EXIT_STATUS_3(st)  (WIFEXITED(st) && WEXITSTATUS(st) == 3)
 
 #ifndef WIN32
 /*
@@ -1203,14 +1171,8 @@ void PostmasterMain(int argc, char *argv[]) {
    */
   AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_STARTING);
 
-  UpdatePMState(PM_STARTUP);
-
-  /*
-   * We're ready to rock and roll...
-   */
-  StartupPMChild = StartChildProcess(B_STARTUP);
-  Assert(StartupPMChild != NULL);
-  StartupStatus = STARTUP_RUNNING;
+  /* We're ready to rock and roll... */
+  StartRunning();
 
   status = ServerLoop();
 
@@ -1370,6 +1332,30 @@ static void ConfigurePostmasterWaitSet(bool accept_connections) {
 }
 
 /*
+ * Open for connections, at first start and after a crash.  Shared memory is
+ * made, and with it the transaction counters (VarsupShmemInit()): there is
+ * no WAL to recover from, so this is what the startup process's clean exit
+ * used to do.
+ */
+static void StartRunning(void) {
+  FatalError = false;
+  /* crash recovery is over, reset SIGKILL flag */
+  AbortStartTime = 0;
+  ReachedNormalRunning = true;
+  UpdatePMState(PM_RUN);
+  connsAllowed = true;
+
+  /* at this point we are really open for business */
+  ereport(LOG, (errmsg("database system is ready to accept connections")));
+
+  /* Report status */
+  AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_READY);
+#ifdef USE_SYSTEMD
+  sd_notify(0, "READY=1");
+#endif
+}
+
+/*
  * Main idle loop of postmaster
  */
 static int ServerLoop(void) {
@@ -1514,17 +1500,10 @@ static CAC_state canAcceptConnections(BackendType backend_type) {
 
   Assert(backend_type == B_BACKEND);
 
-  /*
-   * Can't start backends when in startup/shutdown/inconsistent recovery
-   * state.
-   */
-  if (pmState != PM_RUN && pmState != PM_HOT_STANDBY) {
+  /* Can't start backends when shutting down or recovering from a crash. */
+  if (pmState != PM_RUN) {
     if (Shutdown > NoShutdown)
       return CAC_SHUTDOWN; /* shutdown is pending */
-    else if (!FatalError && pmState == PM_STARTUP)
-      return CAC_STARTUP; /* normal startup */
-    else if (!FatalError && pmState == PM_RECOVERY)
-      return CAC_NOTHOTSTANDBY; /* not yet ready for hot standby */
     else
       return CAC_RECOVERY; /* else must be crash recovery */
   }
@@ -1775,12 +1754,8 @@ static void process_pm_shutdown_request(void) {
      * client backends to exit.  If already in PM_STOP_BACKENDS or a
      * later state, do not change it.
      */
-    if (pmState == PM_RUN || pmState == PM_HOT_STANDBY)
+    if (pmState == PM_RUN)
       connsAllowed = false;
-    else if (pmState == PM_STARTUP || pmState == PM_RECOVERY) {
-      /* There should be no clients, so proceed to stop children */
-      UpdatePMState(PM_STOP_BACKENDS);
-    }
 
     /*
      * Now wait for online backup mode to end and backends to exit. If
@@ -1809,10 +1784,7 @@ static void process_pm_shutdown_request(void) {
     sd_notify(0, "STOPPING=1");
 #endif
 
-    if (pmState == PM_STARTUP || pmState == PM_RECOVERY) {
-      /* Just shut down background processes silently */
-      UpdatePMState(PM_STOP_BACKENDS);
-    } else if (pmState == PM_RUN || pmState == PM_HOT_STANDBY) {
+    if (pmState == PM_RUN) {
       /* Report that we're about to zap live client sessions */
       ereport(LOG, (errmsg("aborting any active transactions")));
       UpdatePMState(PM_STOP_BACKENDS);
@@ -1881,86 +1853,6 @@ static void process_pm_child_exit(void) {
 
   while ((pid = waitpid(-1, &exitstatus, WNOHANG)) > 0) {
     PMChild *pmchild;
-
-    /*
-     * Check if this child was a startup process.
-     */
-    if (StartupPMChild && pid == StartupPMChild->pid) {
-      ReleasePostmasterChildSlot(StartupPMChild);
-      StartupPMChild = NULL;
-
-      /*
-       * Startup process exited in response to a shutdown request (or it
-       * completed normally regardless of the shutdown request).
-       */
-      if (Shutdown > NoShutdown &&
-          (EXIT_STATUS_0(exitstatus) || EXIT_STATUS_1(exitstatus))) {
-        StartupStatus = STARTUP_NOT_RUNNING;
-        UpdatePMState(PM_WAIT_BACKENDS);
-        /* PostmasterStateMachine logic does the rest */
-        continue;
-      }
-
-      if (EXIT_STATUS_3(exitstatus)) {
-        ereport(LOG, (errmsg("shutdown at recovery target")));
-        StartupStatus = STARTUP_NOT_RUNNING;
-        Shutdown = Max(Shutdown, SmartShutdown);
-        TerminateChildren(SIGTERM);
-        UpdatePMState(PM_WAIT_BACKENDS);
-        /* PostmasterStateMachine logic does the rest */
-        continue;
-      }
-
-      /*
-       * Any unexpected exit (including FATAL exit) of the startup
-       * process is catastrophic, so kill other children, and set
-       * StartupStatus so we don't try to reinitialize after they're
-       * gone.  Exception: if StartupStatus is STARTUP_SIGNALED, then we
-       * previously sent the startup process a SIGQUIT; so that's
-       * probably the reason it died, and we do want to try to restart
-       * in that case.
-       *
-       * This stanza also handles the case where we sent a SIGQUIT
-       * during PM_STARTUP due to some dead-end child crashing: in that
-       * situation, if the startup process dies on the SIGQUIT, we need
-       * to transition to PM_WAIT_BACKENDS state which will allow
-       * PostmasterStateMachine to restart the startup process.  (On the
-       * other hand, the startup process might complete normally, if we
-       * were too late with the SIGQUIT.  In that case we'll fall
-       * through and commence normal operations.)
-       */
-      if (!EXIT_STATUS_0(exitstatus)) {
-        if (StartupStatus == STARTUP_SIGNALED) {
-          StartupStatus = STARTUP_NOT_RUNNING;
-          if (pmState == PM_STARTUP)
-            UpdatePMState(PM_WAIT_BACKENDS);
-        } else
-          StartupStatus = STARTUP_CRASHED;
-        HandleChildCrash(pid, exitstatus, _("startup process"));
-        continue;
-      }
-
-      /*
-       * Startup succeeded, commence normal operations
-       */
-      StartupStatus = STARTUP_NOT_RUNNING;
-      FatalError = false;
-      AbortStartTime = 0;
-      ReachedNormalRunning = true;
-      UpdatePMState(PM_RUN);
-      connsAllowed = true;
-
-      /* at this point we are really open for business */
-      ereport(LOG, (errmsg("database system is ready to accept connections")));
-
-      /* Report status */
-      AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_READY);
-#ifdef USE_SYSTEMD
-      sd_notify(0, "READY=1");
-#endif
-
-      continue;
-    }
 
     /*
      * Was it the wal receiver?  If exit status is zero (normal) or one
@@ -2175,9 +2067,6 @@ static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
     break;
 
     /* wait for children to die */
-  case PM_STARTUP:
-  case PM_RECOVERY:
-  case PM_HOT_STANDBY:
   case PM_RUN:
   case PM_STOP_BACKENDS:
     UpdatePMState(PM_WAIT_BACKENDS);
@@ -2301,7 +2190,7 @@ static void LogChildExit(int lev, const char *procname, int pid,
  */
 static void PostmasterStateMachine(void) {
   /* If we're doing a smart shutdown, try to advance that state. */
-  if (pmState == PM_RUN || pmState == PM_HOT_STANDBY) {
+  if (pmState == PM_RUN) {
     if (!connsAllowed) {
       /*
        * This state ends when we have no normal client backends running.
@@ -2335,8 +2224,8 @@ static void PostmasterStateMachine(void) {
      */
     targetMask = btmask_add(targetMask, B_SLOTSYNC_WORKER, B_WAL_SUMMARIZER);
 
-    /* If we're in recovery, also stop startup and walreceiver procs */
-    targetMask = btmask_add(targetMask, B_STARTUP, B_WAL_RECEIVER);
+    /* Nor walreceivers. */
+    targetMask = btmask_add(targetMask, B_WAL_RECEIVER);
 
     /* Nor walsenders. */
     targetMask = btmask_add(targetMask, B_WAL_SENDER);
@@ -2419,7 +2308,6 @@ static void PostmasterStateMachine(void) {
      */
     if (CountChildren(btmask_all_except(B_LOGGER)) == 0) {
       /* These other guys should be dead already */
-      Assert(StartupPMChild == NULL);
       Assert(WalReceiverPMChild == NULL);
       Assert(WalSummarizerPMChild == NULL);
       Assert(SlotSyncWorkerPMChild == NULL);
@@ -2455,17 +2343,10 @@ static void PostmasterStateMachine(void) {
   }
 
   /*
-   * If the startup process failed, or the user does not want an automatic
-   * restart after backend crashes, wait for all non-syslogger children to
-   * exit, and then exit postmaster.  We don't try to reinitialize when the
-   * startup process fails, because more than likely it will just fail again
-   * and we will keep trying forever.
+   * If the user does not want an automatic restart after backend crashes,
+   * wait for all non-syslogger children to exit, and then exit postmaster.
    */
   if (pmState == PM_NO_CHILDREN) {
-    if (StartupStatus == STARTUP_CRASHED) {
-      ereport(LOG, (errmsg("shutting down due to startup process failure")));
-      ExitPostmaster(1);
-    }
     if (!restart_after_crash) {
       ereport(LOG,
               (errmsg("shutting down because \"restart_after_crash\" is off")));
@@ -2475,7 +2356,7 @@ static void PostmasterStateMachine(void) {
 
   /*
    * If we need to recover from a crash, wait for all non-syslogger children
-   * to exit, then reset shmem and start the startup process.
+   * to exit, then reset shmem and start running again.
    */
   if (FatalError && pmState == PM_NO_CHILDREN) {
     ereport(LOG, (errmsg("all server processes terminated; reinitializing")));
@@ -2492,16 +2373,10 @@ static void PostmasterStateMachine(void) {
     /* re-create shared memory and semaphores */
     CreateSharedMemoryAndSemaphores();
 
-    UpdatePMState(PM_STARTUP);
-
-    StartupPMChild = StartChildProcess(B_STARTUP);
-    Assert(StartupPMChild != NULL);
-    StartupStatus = STARTUP_RUNNING;
-    /* crash recovery started, reset SIGKILL flag */
-    AbortStartTime = 0;
-
     /* start accepting server socket connection events again */
     ConfigurePostmasterWaitSet(true);
+
+    StartRunning();
   }
 }
 
@@ -2509,9 +2384,6 @@ static const char *pmstate_name(PMState state) {
 #define PM_TOSTR_CASE(sym) case sym: return #sym
   switch (state) {
     PM_TOSTR_CASE(PM_INIT);
-    PM_TOSTR_CASE(PM_STARTUP);
-    PM_TOSTR_CASE(PM_RECOVERY);
-    PM_TOSTR_CASE(PM_HOT_STANDBY);
     PM_TOSTR_CASE(PM_RUN);
     PM_TOSTR_CASE(PM_STOP_BACKENDS);
     PM_TOSTR_CASE(PM_WAIT_BACKENDS);
@@ -2678,10 +2550,6 @@ static bool SignalChildren(int signal, BackendTypeMask targetMask) {
  */
 static void TerminateChildren(int signal) {
   SignalChildren(signal, btmask_all_except(B_LOGGER));
-  if (StartupPMChild != NULL) {
-    if (signal == SIGQUIT || signal == SIGKILL || signal == SIGABRT)
-      StartupStatus = STARTUP_SIGNALED;
-  }
 }
 
 /*
@@ -2938,12 +2806,6 @@ static PMChild *StartChildProcess(BackendType type) {
     ereport(LOG, (errmsg("could not fork \"%s\" process: %m",
                          PostmasterChildName(type))));
 
-    /*
-     * fork failure is fatal during startup, but there's no need to choke
-     * immediately if starting other child types fails.
-     */
-    if (type == B_STARTUP)
-      ExitPostmaster(1);
     return NULL;
   }
 

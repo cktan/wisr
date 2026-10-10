@@ -287,15 +287,6 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
    */
   if (status == STATUS_OK) {
     switch (cac) {
-    case CAC_STARTUP:
-      ereport(FATAL, (errcode(ERRCODE_CANNOT_CONNECT_NOW),
-                      errmsg("the database system is starting up")));
-      break;
-    case CAC_NOTHOTSTANDBY:
-      ereport(FATAL,
-              (errcode(ERRCODE_CANNOT_CONNECT_NOW),
-               errmsg("the database system is not accepting connections")));
-      break;
     case CAC_SHUTDOWN:
       ereport(FATAL, (errcode(ERRCODE_CANNOT_CONNECT_NOW),
                       errmsg("the database system is shutting down")));

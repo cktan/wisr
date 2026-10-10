@@ -6,7 +6,7 @@
  * digres has no WAL and no pg_control: sm keeps what is durable and recovers
  * its own storage when its home directory is attached (sm/PART4.md).  What
  * is left here is the control record, made in memory for one run of the
- * server, and the startup and shutdown of the transaction counters.
+ * server, and the message at shutdown.
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -19,12 +19,10 @@
 
 #include "postgres.h"
 
-#include "access/transam.h"
 #include "access/xlog.h"
 #include "catalog/pg_control.h"
 #include "miscadmin.h"
 #include "storage/ipc.h"
-#include "storage/lwlock.h"
 #include "storage/shmem.h"
 
 /*
@@ -100,26 +98,6 @@ void XLOGShmemInit(void) {
     memcpy(ControlFile, localControlFile, sizeof(ControlFileData));
     pfree(localControlFile);
   }
-}
-
-/*
- * This must be called ONCE during postmaster or standalone-backend startup.
- *
- * There is no WAL to recover from.  What is left of startup is to give the
- * transaction counters their first values, as a bootstrap would.
- * PostgreSQL's transactions still run a statement here; they begin afresh
- * each time the server starts, and write nothing: sm's are to replace them.
- */
-void StartupXLOG(void) {
-  TransamVariables->nextXid = FirstNormalFullTransactionId;
-  TransamVariables->nextOid = FirstNormalObjectId;
-  SetTransactionIdLimit(FirstNormalTransactionId, InvalidOid);
-
-  /* Hold the lock so that no snapshot sees the counter half-set */
-  LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-  TransamVariables->latestCompletedXid = TransamVariables->nextXid;
-  FullTransactionIdRetreat(&TransamVariables->latestCompletedXid);
-  LWLockRelease(ProcArrayLock);
 }
 
 /*

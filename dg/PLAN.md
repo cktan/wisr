@@ -290,9 +290,8 @@ process; and the three items above are gone.
 ### 5.1 How far it got
 
 Done. A connection is a thread of the postmaster's process,
-and sm is attached once; the auxiliary processes
-(checkpointer, background writer, startup) still fork, until
-step 4. `WIP_THREADS.md` on `wip-dg` has the detail.
+and sm is attached once; no auxiliary process is left (step
+4). `WIP_THREADS.md` on `wip-dg` has the detail.
 
 - **Signals to a backend are flags**, chosen as "option B"
   with the owner: `SignalProc()` sets a bit in its PGPROC and
@@ -347,15 +346,14 @@ step 4. `WIP_THREADS.md` on `wip-dg` has the detail.
   and a timeout has a timer of its own.
 - **Then delete the process-only subsystems**: the postmaster
   state machine and crash restart, shared memory setup (the
-  structures become ordinary allocations), `EXEC_BACKEND`, and
-  the auxiliary processes: startup is what is left of them.
-  Autovacuum, the WAL writer, the archiver, the I/O workers, the
-  checkpointer, the background writer and background workers
-  are already gone (`WORKNOTE.md` steps 11 to 16).
+  structures become ordinary allocations) and `EXEC_BACKEND`.
+  The auxiliary processes are gone: autovacuum, the WAL writer,
+  the archiver, the I/O workers, the checkpointer, the
+  background writer, background workers and the startup
+  process (`WORKNOTE.md` steps 11 to 17).
 - **What step 9 stubbed goes with them**: what is left of
-  `xlog.c` (the in-memory control record, and the start of the
-  transaction counters), the hot standby states of the
-  postmaster, and `make_legacy_dirs()` in `postmaster.c`, whose
+  `xlog.c` (the in-memory control record, and the message at
+  shutdown), and `make_legacy_dirs()` in `postmaster.c`, whose
   list of directories shrinks as each subsystem is cut.
 
 Success for this step: no `kill()` between sessions, no

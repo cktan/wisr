@@ -720,3 +720,30 @@ shared memory they stood in the way of making it private.
   lock and two wait events.
 - An extension that wants one can have it back as a thread, as
   connections were made.
+
+## Step 17: the startup process is gone
+
+The postmaster forked the startup process to replay WAL before
+it let connections in. With no WAL (step 12), all it did was
+call `StartupXLOG()`, which gave the transaction counters their
+first values, and exit.
+
+- **The counters get their first values with shared memory**:
+  `VarsupShmemInit()` sets `nextXid`, `nextOid`,
+  `latestCompletedXid` and the wraparound limits when it makes
+  `TransamVariables`, as `StartupXLOG()` did. That covers the
+  postmaster, a standalone backend and bootstrap, and the
+  restart after a crash, which makes shared memory anew.
+- **The postmaster opens at once**: `StartRunning()` does what
+  the startup process's clean exit did (state `PM_RUN`, "ready
+  to accept connections", `postmaster.pid`).
+- **Gone**: `postmaster/startup.c` and `startup.h`, the
+  `B_STARTUP` process type, `StartupXLOG()`; the postmaster's
+  `PM_STARTUP`, `PM_RECOVERY` and `PM_HOT_STANDBY` states and
+  the startup child's status; the connection refusals "starting
+  up" and "not accepting connections"; the three recovery
+  postmaster signals; the `log_startup_progress_interval`
+  setting and its timeout; `storage/file/reinit.c`, which reset
+  unlogged relations after a crash and had no caller.
+- The postmaster forks nothing now but the syslogger, and that
+  only with `logging_collector`.

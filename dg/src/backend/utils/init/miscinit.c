@@ -271,9 +271,6 @@ const char *GetBackendTypeDesc(BackendType backendType) {
   case B_STANDALONE_BACKEND:
     backendDesc = gettext_noop("standalone backend");
     break;
-  case B_STARTUP:
-    backendDesc = gettext_noop("startup");
-    break;
   case B_WAL_RECEIVER:
     backendDesc = gettext_noop("walreceiver");
     break;

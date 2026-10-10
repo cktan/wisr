@@ -37,7 +37,6 @@
 #include "miscadmin.h"
 #include "postmaster/fork_process.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
 #include "storage/dsm.h"
 #include "storage/pg_shmem.h"
@@ -182,7 +181,6 @@ static thread_local /*SHARED*/ child_process_kind child_process_kinds[] = {
 
     [B_STANDALONE_BACKEND] = {"standalone backend", NULL, false},
 
-    [B_STARTUP] = {"startup", StartupProcessMain, true},
     [B_WAL_RECEIVER] = {"wal_receiver", NULL, true},
     [B_WAL_SUMMARIZER] = {"wal_summarizer", NULL, true},
 

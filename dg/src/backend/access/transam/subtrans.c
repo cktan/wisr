@@ -247,7 +247,7 @@ static int ZeroSUBTRANSPage(int64 pageno) {
 
 /*
  * This must be called ONCE during postmaster or standalone-backend startup,
- * after StartupXLOG has initialized TransamVariables->nextXid.
+ * after VarsupShmemInit has initialized TransamVariables->nextXid.
  *
  * oldestActiveXID is the oldest XID of any prepared transaction, or nextXid
  * if there are none.

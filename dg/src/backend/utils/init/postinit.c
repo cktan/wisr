@@ -473,25 +473,11 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   }
 
   /*
-   * If this is either a bootstrap process or a standalone backend, start up
-   * the XLOG machinery, and register to have it closed down at exit. In
-   * other cases, the startup process is responsible for starting up the
-   * XLOG machinery, and the checkpointer for closing it down.
+   * If this is either a bootstrap process or a standalone backend, register
+   * the shutdown of the server at exit.  The transaction counters got their
+   * first values when shared memory was made (VarsupShmemInit()).
    */
   if (!IsUnderPostmaster) {
-    /*
-     * We don't yet have an aux-process resource owner, but StartupXLOG
-     * and ShutdownXLOG will need one.  Hence, create said resource owner
-     * (and register a callback to clean it up after ShutdownXLOG runs).
-     */
-    CreateAuxProcessResourceOwner();
-
-    StartupXLOG();
-    /* Release (and warn about) any buffer pins leaked in StartupXLOG */
-    ReleaseAuxProcessResources(true);
-    /* Reset CurrentResourceOwner to nothing for the moment */
-    CurrentResourceOwner = NULL;
-
     /*
      * Use before_shmem_exit() so that ShutdownXLOG() can rely on DSM
      * segments etc to work (which in turn is required for pgstats).

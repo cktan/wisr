@@ -58,7 +58,6 @@
 #include "parser/parser.h"
 #include "pgstat.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
@@ -2610,23 +2609,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      INT_MAX,
      check_client_connection_check_interval,
-     NULL,
-     NULL},
-
-    {{
-         "log_startup_progress_interval",
-         PGC_SIGHUP,
-         LOGGING_WHEN,
-         gettext_noop("Time between progress updates for "
-                      "long-running startup operations."),
-         gettext_noop("0 disables progress updates."),
-         GUC_UNIT_MS,
-     },
-     &log_startup_progress_interval,
-     10000,
-     0,
-     INT_MAX,
-     NULL,
      NULL,
      NULL},
 

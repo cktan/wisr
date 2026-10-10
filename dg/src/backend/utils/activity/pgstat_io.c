@@ -318,7 +318,6 @@ bool pgstat_tracks_io_bktype(BackendType bktype) {
   case B_BACKEND:
   case B_SLOTSYNC_WORKER:
   case B_STANDALONE_BACKEND:
-  case B_STARTUP:
   case B_WAL_RECEIVER:
   case B_WAL_SENDER:
   case B_WAL_SUMMARIZER:
@@ -364,8 +363,8 @@ bool pgstat_tracks_io_object(BackendType bktype, IOObject io_object,
    * Only regular backends and WAL Sender processes executing queries will
    * use local buffers and operate on temporary relations.
    */
-  no_temp_rel = bktype == B_STANDALONE_BACKEND || bktype == B_STARTUP ||
-                bktype == B_WAL_SUMMARIZER || bktype == B_WAL_RECEIVER;
+  no_temp_rel = bktype == B_STANDALONE_BACKEND || bktype == B_WAL_SUMMARIZER ||
+                bktype == B_WAL_RECEIVER;
 
   if (no_temp_rel && io_context == IOCONTEXT_NORMAL &&
       io_object == IOOBJECT_TEMP_RELATION)

@@ -96,7 +96,6 @@ void InitPostmasterChildSlots(void) {
    * get their own pool of just one entry.
    */
   pmchild_pools[B_SLOTSYNC_WORKER].size = 1;
-  pmchild_pools[B_STARTUP].size = 1;
   pmchild_pools[B_WAL_RECEIVER].size = 1;
   pmchild_pools[B_WAL_SUMMARIZER].size = 1;
   pmchild_pools[B_LOGGER].size = 1;
