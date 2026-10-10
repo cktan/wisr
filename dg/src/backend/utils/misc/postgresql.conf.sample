@@ -465,8 +465,8 @@
 # - Where to Log -
 
 #log_destination = 'stderr'		# Valid values are combinations of
-					# stderr, csvlog, jsonlog, syslog, and
-					# eventlog, depending on platform.
+					# stderr, syslog, and eventlog,
+					# depending on platform.
 
 # These are relevant when logging to syslog:
 #syslog_facility = 'LOCAL0'

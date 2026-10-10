@@ -554,8 +554,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool syslog_split_messages;
 #define LOG_DESTINATION_STDERR	 1
 #define LOG_DESTINATION_SYSLOG	 2
 #define LOG_DESTINATION_EVENTLOG 4
-#define LOG_DESTINATION_CSVLOG	 8
-#define LOG_DESTINATION_JSONLOG	16
 
 /* Other exported functions */
 extern void log_status_format(StringInfo buf, const char *format,
@@ -572,10 +570,6 @@ extern const char *get_backend_type_for_log(void);
 extern bool check_log_of_query(ErrorData *edata);
 extern const char *error_severity(int elevel);
 extern void write_console(const char *line, int len);
-
-/* Destination-specific functions */
-extern void write_csvlog(ErrorData *edata);
-extern void write_jsonlog(ErrorData *edata);
 
 /*
  * Write errors to stderr (or by equal means when stderr is

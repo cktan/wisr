@@ -821,3 +821,17 @@ unsafe once there are threads.
   code, which has its own step.
 - Nothing forks now but `popen()`, for `COPY ... PROGRAM` and
   `pg_import_system_collations()`, which execs at once.
+
+## Step 21: csvlog and jsonlog are gone
+
+With the syslogger gone (step 20), the CSV and JSON forms of a
+log message only went to stderr beside the plain one. They are
+dropped: `log_destination` takes `stderr`, `syslog` and, on
+Windows, `eventlog`, and rejects `csvlog` and `jsonlog`.
+
+- **Gone**: `utils/error/csvlog.c` and `jsonlog.c`,
+  `write_csvlog()` and `write_jsonlog()`, and the
+  `LOG_DESTINATION_CSVLOG` and `LOG_DESTINATION_JSONLOG` bits.
+- The helpers they shared with the plain form
+  (`get_formatted_log_time()`, `check_log_of_query()` and the
+  rest) stay: `log_line_prefix` uses them.

@@ -2086,10 +2086,6 @@ bool check_log_destination(char **newval, void **extra, GucSource source) {
 
     if (pg_strcasecmp(tok, "stderr") == 0)
       newlogdest |= LOG_DESTINATION_STDERR;
-    else if (pg_strcasecmp(tok, "csvlog") == 0)
-      newlogdest |= LOG_DESTINATION_CSVLOG;
-    else if (pg_strcasecmp(tok, "jsonlog") == 0)
-      newlogdest |= LOG_DESTINATION_JSONLOG;
 #ifdef HAVE_SYSLOG
     else if (pg_strcasecmp(tok, "syslog") == 0)
       newlogdest |= LOG_DESTINATION_SYSLOG;
@@ -3043,16 +3039,6 @@ static void send_message_to_server_log(ErrorData *edata) {
     write_eventlog(edata->elevel, buf.data, buf.len);
   }
 #endif /* WIN32 */
-
-  /* Write to csvlog, if enabled */
-  if (Log_destination & LOG_DESTINATION_CSVLOG) {
-    write_csvlog(edata);
-  }
-
-  /* Write to JSON log, if enabled */
-  if (Log_destination & LOG_DESTINATION_JSONLOG) {
-    write_jsonlog(edata);
-  }
 
   /* Write to stderr, if enabled */
   if ((Log_destination & LOG_DESTINATION_STDERR) ||

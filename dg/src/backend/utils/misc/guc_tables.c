@@ -2978,8 +2978,8 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
     {{"log_destination", PGC_SIGHUP, LOGGING_WHERE,
       gettext_noop("Sets the destination for server log output."),
       gettext_noop("Valid values are combinations of \"stderr\", "
-                   "\"syslog\", \"csvlog\", \"jsonlog\", and \"eventlog\", "
-                   "depending on the platform."),
+                   "\"syslog\", and \"eventlog\", depending on the "
+                   "platform."),
       GUC_LIST_INPUT},
      &Log_destination_string,
      "stderr",
