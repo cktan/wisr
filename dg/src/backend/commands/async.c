@@ -284,7 +284,7 @@ typedef struct AsyncQueueControl {
   QueueBackendStatus backend[FLEXIBLE_ARRAY_MEMBER];
 } AsyncQueueControl;
 
-static PG_SHARED AsyncQueueControl *asyncQueueControl;
+static thread_local /*SHARED*/ AsyncQueueControl *asyncQueueControl;
 
 #define QUEUE_HEAD					(asyncQueueControl->head)
 #define QUEUE_TAIL					(asyncQueueControl->tail)
@@ -298,7 +298,7 @@ static PG_SHARED AsyncQueueControl *asyncQueueControl;
 /*
  * The SLRU buffer area through which we access the notification queue
  */
-static PG_SHARED SlruCtlData NotifyCtlData;
+static thread_local /*SHARED*/ SlruCtlData NotifyCtlData;
 
 #define NotifyCtl					(&NotifyCtlData)
 #define QUEUE_PAGESIZE				BLCKSZ
@@ -310,7 +310,8 @@ static PG_SHARED SlruCtlData NotifyCtlData;
  * (ie, have committed a LISTEN on).  It is a simple list of channel names,
  * allocated in TopMemoryContext.
  */
-static thread_local List *listenChannels = NIL; /* list of C strings */
+static thread_local /*LOCAL*/ List *listenChannels =
+    NIL; /* list of C strings */
 
 /*
  * State for pending LISTEN/UNLISTEN actions consists of an ordered list of
@@ -339,7 +340,7 @@ typedef struct ActionList {
   struct ActionList *upper; /* details for upper transaction levels */
 } ActionList;
 
-static thread_local ActionList *pendingActions = NULL;
+static thread_local /*LOCAL*/ ActionList *pendingActions = NULL;
 
 /*
  * State for outbound notifies consists of a list of all channels+payloads
@@ -388,7 +389,7 @@ struct NotificationHash {
   Notification *event; /* => the actual Notification struct */
 };
 
-static thread_local NotificationList *pendingNotifies = NULL;
+static thread_local /*LOCAL*/ NotificationList *pendingNotifies = NULL;
 
 /*
  * Inbound notifications are initially processed by HandleNotifyInterrupt(),
@@ -397,22 +398,22 @@ static thread_local NotificationList *pendingNotifies = NULL;
  * latch. ProcessNotifyInterrupt() will then be called whenever it's safe to
  * actually deal with the interrupt.
  */
-thread_local volatile sig_atomic_t notifyInterruptPending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t notifyInterruptPending = false;
 
 /* True if we've registered an on_shmem_exit cleanup */
-static thread_local bool unlistenExitRegistered = false;
+static thread_local /*LOCAL*/ bool unlistenExitRegistered = false;
 
 /* True if we're currently registered as a listener in asyncQueueControl */
-static thread_local bool amRegisteredListener = false;
+static thread_local /*LOCAL*/ bool amRegisteredListener = false;
 
 /* have we advanced to a page that's a multiple of QUEUE_CLEANUP_DELAY? */
-static thread_local bool tryAdvanceTail = false;
+static thread_local /*LOCAL*/ bool tryAdvanceTail = false;
 
 /* GUC parameters */
-thread_local bool Trace_notify = false;
+thread_local /*LOCAL*/ bool Trace_notify = false;
 
 /* For 8 KB pages this gives 8 GB of disk space */
-thread_local int max_notify_queue_pages = 1048576;
+thread_local /*LOCAL*/ int max_notify_queue_pages = 1048576;
 
 /* local function prototypes */
 static inline int64 asyncQueuePageDiff(int64 p, int64 q);

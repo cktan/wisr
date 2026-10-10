@@ -52,7 +52,7 @@
 #include "utils/timestamp.h"
 
 /* GUC variable, can't be changed after startup */
-thread_local int max_prepared_xacts = 0;
+thread_local /*LOCAL*/ int max_prepared_xacts = 0;
 
 /*
  * This struct describes one global transaction that is in prepared state
@@ -123,7 +123,7 @@ typedef struct TwoPhaseStateData {
   GlobalTransaction prepXacts[FLEXIBLE_ARRAY_MEMBER];
 } TwoPhaseStateData;
 
-static PG_SHARED TwoPhaseStateData *TwoPhaseState;
+static thread_local /*SHARED*/ TwoPhaseStateData *TwoPhaseState;
 
 /*
  * Global transaction entry currently locked by us, if any.  Note that any
@@ -131,7 +131,7 @@ static PG_SHARED TwoPhaseStateData *TwoPhaseState;
  * TwoPhaseStateLock, though obviously the pointer itself doesn't need to be
  * (since it's just local memory).
  */
-static thread_local GlobalTransaction MyLockedGxact = NULL;
+static thread_local /*LOCAL*/ GlobalTransaction MyLockedGxact = NULL;
 
 static void RemoveGXact(GlobalTransaction gxact);
 

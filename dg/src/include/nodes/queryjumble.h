@@ -84,13 +84,13 @@ enum ComputeQueryIdType {
 };
 
 /* GUC parameters */
-extern thread_local PGDLLIMPORT int compute_query_id;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int compute_query_id;
 
 extern const char *CleanQuerytext(const char *query, int *location, int *len);
 extern JumbleState *JumbleQuery(Query *query);
 extern void EnableQueryId(void);
 
-extern thread_local PGDLLIMPORT bool query_id_enabled;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool query_id_enabled;
 
 /*
  * Returns whether query identifier computation has been enabled, either

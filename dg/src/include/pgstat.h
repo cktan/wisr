@@ -669,16 +669,17 @@ extern PgStat_WalStats *pgstat_fetch_stat_wal(void);
  */
 
 /* GUC parameters */
-extern thread_local PGDLLIMPORT bool pgstat_track_counts;
-extern thread_local PGDLLIMPORT int pgstat_track_functions;
-extern thread_local PGDLLIMPORT int pgstat_fetch_consistency;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool pgstat_track_counts;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int pgstat_track_functions;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int pgstat_fetch_consistency;
 
 /*
  * Variables in pgstat_bgwriter.c
  */
 
 /* updated directly by bgwriter and bufmgr */
-extern thread_local PGDLLIMPORT PgStat_BgWriterStats PendingBgWriterStats;
+extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_BgWriterStats
+    PendingBgWriterStats;
 
 /*
  * Variables in pgstat_checkpointer.c
@@ -688,7 +689,7 @@ extern thread_local PGDLLIMPORT PgStat_BgWriterStats PendingBgWriterStats;
  * Checkpointer statistics counters are updated directly by checkpointer and
  * bufmgr.
  */
-extern thread_local PGDLLIMPORT PgStat_CheckpointerStats
+extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_CheckpointerStats
     PendingCheckpointerStats;
 
 /*
@@ -696,17 +697,18 @@ extern thread_local PGDLLIMPORT PgStat_CheckpointerStats
  */
 
 /* Updated by pgstat_count_buffer_*_time macros */
-extern thread_local PGDLLIMPORT PgStat_Counter pgStatBlockReadTime;
-extern thread_local PGDLLIMPORT PgStat_Counter pgStatBlockWriteTime;
+extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_Counter pgStatBlockReadTime;
+extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_Counter pgStatBlockWriteTime;
 
 /*
  * Updated by pgstat_count_conn_*_time macros, called by
  * pgstat_report_activity().
  */
-extern thread_local PGDLLIMPORT PgStat_Counter pgStatActiveTime;
-extern thread_local PGDLLIMPORT PgStat_Counter pgStatTransactionIdleTime;
+extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_Counter pgStatActiveTime;
+extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_Counter
+    pgStatTransactionIdleTime;
 
 /* updated by the traffic cop and in errfinish() */
-extern thread_local PGDLLIMPORT SessionEndType pgStatSessionEndCause;
+extern thread_local /*LOCAL*/ PGDLLIMPORT SessionEndType pgStatSessionEndCause;
 
 #endif /* PGSTAT_H */

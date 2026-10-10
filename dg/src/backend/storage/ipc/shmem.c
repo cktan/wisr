@@ -79,20 +79,23 @@ static void *ShmemAllocRaw(Size size, Size *allocated_size);
 
 /* shared memory global variables */
 
-static PG_SHARED PGShmemHeader *ShmemSegHdr; /* shared mem segment header */
+static thread_local /*SHARED*/ PGShmemHeader
+    *ShmemSegHdr; /* shared mem segment header */
 
-static PG_SHARED void *ShmemBase; /* start address of shared memory */
+static thread_local /*SHARED*/ void
+    *ShmemBase; /* start address of shared memory */
 
-static PG_SHARED void *ShmemEnd; /* end+1 address of shared memory */
+static thread_local /*SHARED*/ void
+    *ShmemEnd; /* end+1 address of shared memory */
 
-PG_SHARED slock_t *ShmemLock; /* spinlock for shared memory and LWLock
-                               * allocation */
+thread_local /*SHARED*/ slock_t *ShmemLock; /* spinlock for shared memory and
+                                             * LWLock allocation */
 
-static PG_SHARED HTAB *ShmemIndex =
+static thread_local /*SHARED*/ HTAB *ShmemIndex =
     NULL; /* primary index hashtable for shmem */
 
 /* To get reliable results for NUMA inquiry we need to "touch pages" once */
-static thread_local bool firstNumaTouch = true;
+static thread_local /*LOCAL*/ bool firstNumaTouch = true;
 
 Datum pg_numa_available(PG_FUNCTION_ARGS);
 

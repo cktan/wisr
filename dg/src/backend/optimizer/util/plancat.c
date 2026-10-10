@@ -55,10 +55,12 @@
 #include "utils/syscache.h"
 
 /* GUC parameter */
-thread_local int constraint_exclusion = CONSTRAINT_EXCLUSION_PARTITION;
+thread_local /*LOCAL*/ int constraint_exclusion =
+    CONSTRAINT_EXCLUSION_PARTITION;
 
 /* Hook for plugins to get control in get_relation_info() */
-PG_SHARED get_relation_info_hook_type get_relation_info_hook = NULL;
+thread_local /*SHARED*/ get_relation_info_hook_type get_relation_info_hook =
+    NULL;
 
 static void get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
                                       Relation relation, bool inhparent);

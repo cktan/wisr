@@ -244,13 +244,13 @@ static const datetkn deltatktbl[] = {
 
 static const int szdeltatktbl = sizeof deltatktbl / sizeof deltatktbl[0];
 
-static thread_local TimeZoneAbbrevTable *zoneabbrevtbl = NULL;
+static thread_local /*LOCAL*/ TimeZoneAbbrevTable *zoneabbrevtbl = NULL;
 
 /* Caches of recent lookup results in the above tables */
 
-static thread_local const datetkn *datecache[MAXDATEFIELDS] = {NULL};
+static thread_local /*LOCAL*/ const datetkn *datecache[MAXDATEFIELDS] = {NULL};
 
-static thread_local const datetkn *deltacache[MAXDATEFIELDS] = {NULL};
+static thread_local /*LOCAL*/ const datetkn *deltacache[MAXDATEFIELDS] = {NULL};
 
 /* Cache for results of timezone abbreviation lookups */
 
@@ -261,7 +261,7 @@ typedef struct TzAbbrevCache {
   pg_tz *tz;                  /* relevant zone, if variable-offset */
 } TzAbbrevCache;
 
-static thread_local TzAbbrevCache tzabbrevcache[MAXDATEFIELDS];
+static thread_local /*LOCAL*/ TzAbbrevCache tzabbrevcache[MAXDATEFIELDS];
 
 /*
  * Calendar time to Julian date conversions.
@@ -381,11 +381,11 @@ void GetCurrentTimeUsec(struct pg_tm *tm, fsec_t *fsec, int *tzp) {
    * however, it might need another look if we ever allow entries in that
    * hash to be recycled.
    */
-  static thread_local TimestampTz cache_ts = 0;
-  static thread_local pg_tz *cache_timezone = NULL;
-  static thread_local struct pg_tm cache_tm;
-  static thread_local fsec_t cache_fsec;
-  static thread_local int cache_tz;
+  static thread_local /*LOCAL*/ TimestampTz cache_ts = 0;
+  static thread_local /*LOCAL*/ pg_tz *cache_timezone = NULL;
+  static thread_local /*LOCAL*/ struct pg_tm cache_tm;
+  static thread_local /*LOCAL*/ fsec_t cache_fsec;
+  static thread_local /*LOCAL*/ int cache_tz;
 
   if (cur_ts != cache_ts || session_timezone != cache_timezone) {
     /*

@@ -41,10 +41,10 @@ typedef int ProcNumber;
 /*
  * Proc number of this backend (same as GetNumberFromPGProc(MyProc))
  */
-extern thread_local PGDLLIMPORT ProcNumber MyProcNumber;
+extern thread_local /*LOCAL*/ PGDLLIMPORT ProcNumber MyProcNumber;
 
 /* proc number of our parallel session leader, or INVALID_PROC_NUMBER if none */
-extern thread_local PGDLLIMPORT ProcNumber ParallelLeaderProcNumber;
+extern thread_local /*LOCAL*/ PGDLLIMPORT ProcNumber ParallelLeaderProcNumber;
 
 /*
  * The ProcNumber to use for our session's temp relations is normally our own,

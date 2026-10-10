@@ -36,18 +36,18 @@
  * so that an ereport() from an on_proc_exit routine cannot get us out
  * of the exit procedure.  We do NOT want to go back to the idle loop...
  */
-thread_local bool proc_exit_inprogress = false;
+thread_local /*LOCAL*/ bool proc_exit_inprogress = false;
 
 /*
  * Set when shmem_exit() is in progress.
  */
-thread_local bool shmem_exit_inprogress = false;
+thread_local /*LOCAL*/ bool shmem_exit_inprogress = false;
 
 /*
  * This flag tracks whether we've called atexit() in the current process
  * (or in the parent postmaster).
  */
-static thread_local bool atexit_callback_setup = false;
+static thread_local /*LOCAL*/ bool atexit_callback_setup = false;
 
 /* local functions */
 static void proc_exit_prepare(int code);
@@ -73,11 +73,12 @@ struct ONEXIT {
   Datum arg;
 };
 
-static thread_local struct ONEXIT on_proc_exit_list[MAX_ON_EXITS];
-static thread_local struct ONEXIT on_shmem_exit_list[MAX_ON_EXITS];
-static thread_local struct ONEXIT before_shmem_exit_list[MAX_ON_EXITS];
+static thread_local /*LOCAL*/ struct ONEXIT on_proc_exit_list[MAX_ON_EXITS];
+static thread_local /*LOCAL*/ struct ONEXIT on_shmem_exit_list[MAX_ON_EXITS];
+static thread_local /*LOCAL*/ struct ONEXIT
+    before_shmem_exit_list[MAX_ON_EXITS];
 
-static thread_local int on_proc_exit_index, on_shmem_exit_index,
+static thread_local /*LOCAL*/ int on_proc_exit_index, on_shmem_exit_index,
     before_shmem_exit_index;
 
 /* ----------------------------------------------------------------

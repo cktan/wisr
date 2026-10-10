@@ -62,8 +62,8 @@ typedef void (*shmem_startup_hook_type)(void);
 	} while (0)
 
 /* ipc.c */
-extern thread_local PGDLLIMPORT bool proc_exit_inprogress;
-extern thread_local PGDLLIMPORT bool shmem_exit_inprogress;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool proc_exit_inprogress;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool shmem_exit_inprogress;
 
 pg_noreturn extern void proc_exit(int code);
 extern void shmem_exit(int code);
@@ -75,7 +75,8 @@ extern void on_exit_reset(void);
 extern void check_on_shmem_exit_lists_are_empty(void);
 
 /* ipci.c */
-extern PG_SHARED PGDLLIMPORT shmem_startup_hook_type shmem_startup_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT shmem_startup_hook_type
+    shmem_startup_hook;
 
 extern Size CalculateShmemSize(int *num_semaphores);
 extern void CreateSharedMemoryAndSemaphores(void);

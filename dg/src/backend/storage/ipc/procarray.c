@@ -217,14 +217,14 @@ typedef enum GlobalVisHorizonKind {
   VISHORIZON_TEMP,
 } GlobalVisHorizonKind;
 
-static PG_SHARED ProcArrayStruct *procArray;
+static thread_local /*SHARED*/ ProcArrayStruct *procArray;
 
-static PG_SHARED PGPROC *allProcs;
+static thread_local /*SHARED*/ PGPROC *allProcs;
 
 /*
  * Cache to reduce overhead of repeated calls to TransactionIdIsInProgress()
  */
-static thread_local TransactionId cachedXidIsNotInProgress =
+static thread_local /*LOCAL*/ TransactionId cachedXidIsNotInProgress =
     InvalidTransactionId;
 
 /*
@@ -232,17 +232,17 @@ static thread_local TransactionId cachedXidIsNotInProgress =
  * GlobalVisState for details. As shared, catalog, normal and temporary
  * relations can have different horizons, one such state exists for each.
  */
-static thread_local GlobalVisState GlobalVisSharedRels;
-static thread_local GlobalVisState GlobalVisCatalogRels;
-static thread_local GlobalVisState GlobalVisDataRels;
-static thread_local GlobalVisState GlobalVisTempRels;
+static thread_local /*LOCAL*/ GlobalVisState GlobalVisSharedRels;
+static thread_local /*LOCAL*/ GlobalVisState GlobalVisCatalogRels;
+static thread_local /*LOCAL*/ GlobalVisState GlobalVisDataRels;
+static thread_local /*LOCAL*/ GlobalVisState GlobalVisTempRels;
 
 /*
  * This backend's RecentXmin at the last time the accurate xmin horizon was
  * recomputed, or InvalidTransactionId if it has not. Used to limit how many
  * times accurate horizons are recomputed. See GlobalVisTestShouldUpdate().
  */
-static thread_local TransactionId ComputeXidHorizonsResultLastXmin;
+static thread_local /*LOCAL*/ TransactionId ComputeXidHorizonsResultLastXmin;
 
 #ifdef XIDCACHE_DEBUG
 
@@ -786,8 +786,8 @@ static void MaintainLatestCompletedXid(TransactionId latestXid) {
  * ProcGlobal->xids[] again anyway; see GetNewTransactionId).
  */
 bool TransactionIdIsInProgress(TransactionId xid) {
-  static thread_local TransactionId *xids = NULL;
-  static thread_local TransactionId *other_xids;
+  static thread_local /*LOCAL*/ TransactionId *xids = NULL;
+  static thread_local /*LOCAL*/ TransactionId *other_xids;
   XidCacheStatus *other_subxidstates;
   int nxids = 0;
   ProcArrayStruct *arrayP = procArray;

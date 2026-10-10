@@ -49,16 +49,16 @@
 #include "utils/timestamp.h"
 
 /* GUC variables */
-thread_local int DeadlockTimeout = 1000;
-thread_local int StatementTimeout = 0;
-thread_local int LockTimeout = 0;
-thread_local int IdleInTransactionSessionTimeout = 0;
-thread_local int TransactionTimeout = 0;
-thread_local int IdleSessionTimeout = 0;
-thread_local bool log_lock_waits = false;
+thread_local /*LOCAL*/ int DeadlockTimeout = 1000;
+thread_local /*LOCAL*/ int StatementTimeout = 0;
+thread_local /*LOCAL*/ int LockTimeout = 0;
+thread_local /*LOCAL*/ int IdleInTransactionSessionTimeout = 0;
+thread_local /*LOCAL*/ int TransactionTimeout = 0;
+thread_local /*LOCAL*/ int IdleSessionTimeout = 0;
+thread_local /*LOCAL*/ bool log_lock_waits = false;
 
 /* Pointer to this process's PGPROC struct, if any */
-thread_local PGPROC *MyProc = NULL;
+thread_local /*LOCAL*/ PGPROC *MyProc = NULL;
 
 /*
  * This spinlock protects the freelist of recycled PGPROC structures.
@@ -67,17 +67,17 @@ thread_local PGPROC *MyProc = NULL;
  * relatively infrequently (only at backend startup or shutdown) and not for
  * very long, so a spinlock is okay.
  */
-PG_SHARED NON_EXEC_STATIC slock_t *ProcStructLock = NULL;
+thread_local /*SHARED*/ NON_EXEC_STATIC slock_t *ProcStructLock = NULL;
 
 /* Pointers to shared-memory structures */
-PG_SHARED PROC_HDR *ProcGlobal = NULL;
-PG_SHARED NON_EXEC_STATIC PGPROC *AuxiliaryProcs = NULL;
-PG_SHARED PGPROC *PreparedXactProcs = NULL;
+thread_local /*SHARED*/ PROC_HDR *ProcGlobal = NULL;
+thread_local /*SHARED*/ NON_EXEC_STATIC PGPROC *AuxiliaryProcs = NULL;
+thread_local /*SHARED*/ PGPROC *PreparedXactProcs = NULL;
 
-static thread_local DeadLockState deadlock_state = DS_NOT_YET_CHECKED;
+static thread_local /*LOCAL*/ DeadLockState deadlock_state = DS_NOT_YET_CHECKED;
 
 /* Is a deadlock check pending? */
-static thread_local volatile sig_atomic_t got_deadlock_timeout;
+static thread_local /*LOCAL*/ volatile sig_atomic_t got_deadlock_timeout;
 
 static void RemoveProcFromArray(int code, Datum arg);
 static void ProcKill(int code, Datum arg);

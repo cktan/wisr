@@ -58,12 +58,13 @@ typedef struct PGSemaphoreData {
 #ifdef USE_NAMED_POSIX_SEMAPHORES
 static sem_t **mySemPointers; /* keep track of created semaphores */
 #else
-static PG_SHARED PGSemaphore
+static thread_local /*SHARED*/ PGSemaphore
     sharedSemas; /* array of PGSemaphoreData in shared memory */
 #endif
-static PG_SHARED int numSems;    /* number of semas acquired so far */
-static PG_SHARED int maxSems;    /* allocated size of above arrays */
-static PG_SHARED int nextSemKey; /* next name to try */
+static thread_local /*SHARED*/ int
+    numSems; /* number of semas acquired so far */
+static thread_local /*SHARED*/ int maxSems; /* allocated size of above arrays */
+static thread_local /*SHARED*/ int nextSemKey; /* next name to try */
 
 static void ReleaseSemaphores(int status, Datum arg);
 

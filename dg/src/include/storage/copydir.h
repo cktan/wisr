@@ -19,7 +19,7 @@ typedef enum FileCopyMethod {
 } FileCopyMethod;
 
 /* GUC parameters */
-extern thread_local PGDLLIMPORT int file_copy_method;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int file_copy_method;
 
 extern void copydir(const char *fromdir, const char *todir, bool recurse);
 extern void copy_file(const char *fromfile, const char *tofile);

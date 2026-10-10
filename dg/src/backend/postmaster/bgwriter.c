@@ -54,7 +54,7 @@
 /*
  * GUC parameters
  */
-thread_local int BgWriterDelay = 200;
+thread_local /*LOCAL*/ int BgWriterDelay = 200;
 
 /*
  * Multiplier to apply to BgWriterDelay when we decide to hibernate.

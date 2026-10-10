@@ -171,16 +171,16 @@ static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
   return (mask.mask & (1 << t)) != 0;
 }
 
-thread_local BackgroundWorker *MyBgworkerEntry = NULL;
+thread_local /*LOCAL*/ BackgroundWorker *MyBgworkerEntry = NULL;
 
 /* The socket number we are listening for connections on */
-thread_local int PostPortNumber = DEF_PGPORT;
+thread_local /*LOCAL*/ int PostPortNumber = DEF_PGPORT;
 
 /* The directory names for Unix socket(s) */
-thread_local char *Unix_socket_directories;
+thread_local /*LOCAL*/ char *Unix_socket_directories;
 
 /* The TCP listen address(es) */
-thread_local char *ListenAddresses;
+thread_local /*LOCAL*/ char *ListenAddresses;
 
 /*
  * SuperuserReservedConnections is the number of backends reserved for
@@ -200,26 +200,26 @@ thread_local char *ListenAddresses;
  * connections.  Note that pre-existing superuser and
  * pg_use_reserved_connections connections don't count against the limits.
  */
-thread_local int SuperuserReservedConnections;
-thread_local int ReservedConnections;
+thread_local /*LOCAL*/ int SuperuserReservedConnections;
+thread_local /*LOCAL*/ int ReservedConnections;
 
 /* The socket(s) we're listening to. */
 #define MAXLISTEN	64
-static PG_SHARED int NumListenSockets = 0;
-static PG_SHARED pgsocket *ListenSockets = NULL;
+static thread_local /*SHARED*/ int NumListenSockets = 0;
+static thread_local /*SHARED*/ pgsocket *ListenSockets = NULL;
 
 /* still more option variables */
-thread_local bool EnableSSL = false;
+thread_local /*LOCAL*/ bool EnableSSL = false;
 
-thread_local int PreAuthDelay = 0;
-thread_local int AuthenticationTimeout = 60;
+thread_local /*LOCAL*/ int PreAuthDelay = 0;
+thread_local /*LOCAL*/ int AuthenticationTimeout = 60;
 
-thread_local bool log_hostname; /* for ps display and logging */
+thread_local /*LOCAL*/ bool log_hostname; /* for ps display and logging */
 
-thread_local bool enable_bonjour = false;
-thread_local char *bonjour_name;
-thread_local bool restart_after_crash = true;
-thread_local bool remove_temp_files_after_crash = true;
+thread_local /*LOCAL*/ bool enable_bonjour = false;
+thread_local /*LOCAL*/ char *bonjour_name;
+thread_local /*LOCAL*/ bool restart_after_crash = true;
+thread_local /*LOCAL*/ bool remove_temp_files_after_crash = true;
 
 /*
  * When terminating child processes after fatal errors, like a crash of a
@@ -227,15 +227,17 @@ thread_local bool remove_temp_files_after_crash = true;
  * file are written on the assumption that we do -- but developers might
  * prefer to use SIGABRT to collect per-child core dumps.
  */
-thread_local bool send_abort_for_crash = false;
-thread_local bool send_abort_for_kill = false;
+thread_local /*LOCAL*/ bool send_abort_for_crash = false;
+thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 
 /* special child processes; NULL when not running */
-static PG_SHARED PMChild *StartupPMChild = NULL, *BgWriterPMChild = NULL,
-                         *CheckpointerPMChild = NULL,
-                         *WalReceiverPMChild = NULL,
-                         *WalSummarizerPMChild = NULL, *SysLoggerPMChild = NULL,
-                         *SlotSyncWorkerPMChild = NULL;
+static thread_local /*SHARED*/ PMChild *StartupPMChild = NULL,
+                                       *BgWriterPMChild = NULL,
+                                       *CheckpointerPMChild = NULL,
+                                       *WalReceiverPMChild = NULL,
+                                       *WalSummarizerPMChild = NULL,
+                                       *SysLoggerPMChild = NULL,
+                                       *SlotSyncWorkerPMChild = NULL;
 
 /* Startup process's status */
 typedef enum {
@@ -245,7 +247,8 @@ typedef enum {
   STARTUP_CRASHED,
 } StartupStatusEnum;
 
-static PG_SHARED StartupStatusEnum StartupStatus = STARTUP_NOT_RUNNING;
+static thread_local /*SHARED*/ StartupStatusEnum StartupStatus =
+    STARTUP_NOT_RUNNING;
 
 /* Startup/shutdown state */
 #define NoShutdown		0
@@ -253,9 +256,9 @@ static PG_SHARED StartupStatusEnum StartupStatus = STARTUP_NOT_RUNNING;
 #define FastShutdown	2
 #define ImmediateShutdown	3
 
-static PG_SHARED int Shutdown = NoShutdown;
+static thread_local /*SHARED*/ int Shutdown = NoShutdown;
 
-static PG_SHARED bool FatalError =
+static thread_local /*SHARED*/ bool FatalError =
     false; /* T if recovering from backend crash */
 
 /*
@@ -319,7 +322,7 @@ typedef enum {
   PM_NO_CHILDREN,        /* all important children have exited */
 } PMState;
 
-static PG_SHARED PMState pmState = PM_INIT;
+static thread_local /*SHARED*/ PMState pmState = PM_INIT;
 
 /*
  * While performing a "smart shutdown", we restrict new connections but stay
@@ -327,40 +330,44 @@ static PG_SHARED PMState pmState = PM_INIT;
  * connsAllowed is a sub-state indicator showing the active restriction.
  * It is of no interest unless pmState is PM_RUN or PM_HOT_STANDBY.
  */
-static PG_SHARED bool connsAllowed = true;
+static thread_local /*SHARED*/ bool connsAllowed = true;
 
 /* Start time of SIGKILL timeout during immediate shutdown or child crash */
 /* Zero means timeout is not running */
-static PG_SHARED time_t AbortStartTime = 0;
+static thread_local /*SHARED*/ time_t AbortStartTime = 0;
 
 /* Length of said timeout */
 #define SIGKILL_CHILDREN_AFTER_SECS		5
 
-static PG_SHARED bool ReachedNormalRunning =
+static thread_local /*SHARED*/ bool ReachedNormalRunning =
     false; /* T if we've reached PM_RUN */
 
-thread_local bool ClientAuthInProgress = false; /* T during new-client
-                                                 * authentication */
+thread_local /*LOCAL*/ bool ClientAuthInProgress = false; /* T during new-client
+                                                           * authentication */
 
-PG_SHARED bool redirection_done = false; /* stderr redirected for syslogger? */
+thread_local /*SHARED*/ bool redirection_done =
+    false; /* stderr redirected for syslogger? */
 
 /* received START_WALRECEIVER signal */
-static PG_SHARED bool WalReceiverRequested = false;
+static thread_local /*SHARED*/ bool WalReceiverRequested = false;
 
 /* set when there's a worker that needs to be started up */
-static PG_SHARED bool StartWorkerNeeded = true;
-static PG_SHARED bool HaveCrashedWorker = false;
+static thread_local /*SHARED*/ bool StartWorkerNeeded = true;
+static thread_local /*SHARED*/ bool HaveCrashedWorker = false;
 
 /* set when signals arrive */
-static PG_SHARED volatile sig_atomic_t pending_pm_pmsignal;
-static PG_SHARED volatile sig_atomic_t pending_pm_child_exit;
-static PG_SHARED volatile sig_atomic_t pending_pm_reload_request;
-static PG_SHARED volatile sig_atomic_t pending_pm_shutdown_request;
-static PG_SHARED volatile sig_atomic_t pending_pm_fast_shutdown_request;
-static PG_SHARED volatile sig_atomic_t pending_pm_immediate_shutdown_request;
+static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_pmsignal;
+static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_child_exit;
+static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_reload_request;
+static thread_local /*SHARED*/ volatile sig_atomic_t
+    pending_pm_shutdown_request;
+static thread_local /*SHARED*/ volatile sig_atomic_t
+    pending_pm_fast_shutdown_request;
+static thread_local /*SHARED*/ volatile sig_atomic_t
+    pending_pm_immediate_shutdown_request;
 
 /* event multiplexing object */
-static PG_SHARED WaitEventSet *pm_wait_set;
+static thread_local /*SHARED*/ WaitEventSet *pm_wait_set;
 
 #ifdef USE_SSL
 /* Set when and if SSL has been initialized properly */
@@ -372,8 +379,8 @@ static DNSServiceRef bonjour_sdref = NULL;
 #endif
 
 /* State for IO worker management. */
-static PG_SHARED int io_worker_count = 0;
-static PG_SHARED PMChild *io_worker_children[MAX_IO_WORKERS];
+static thread_local /*SHARED*/ int io_worker_count = 0;
+static thread_local /*SHARED*/ PMChild *io_worker_children[MAX_IO_WORKERS];
 
 /*
  * postmaster.c - function prototypes
@@ -444,7 +451,7 @@ typedef struct {
  * File descriptors for pipe used to monitor if postmaster is alive.
  * First is POSTMASTER_FD_WATCH, second is POSTMASTER_FD_OWN.
  */
-PG_SHARED int postmaster_alive_fds[2] = {-1, -1};
+thread_local /*SHARED*/ int postmaster_alive_fds[2] = {-1, -1};
 #else
 /* Process handle of postmaster used for the same purpose on Windows */
 HANDLE PostmasterHandle;

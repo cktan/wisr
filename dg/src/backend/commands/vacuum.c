@@ -50,15 +50,15 @@
 /*
  * GUC parameters
  */
-thread_local bool track_cost_delay_timing;
+thread_local /*LOCAL*/ bool track_cost_delay_timing;
 
 /*
  * Variables for cost-based vacuum delay, set from the GUCs by vacuum().  They
  * are initialized here to the defaults for client backends executing
  * ANALYZE.
  */
-thread_local double vacuum_cost_delay = 0;
-thread_local int vacuum_cost_limit = 200;
+thread_local /*LOCAL*/ double vacuum_cost_delay = 0;
+thread_local /*LOCAL*/ int vacuum_cost_limit = 200;
 
 /* non-export function prototypes */
 static List *expand_vacuum_rel(VacuumRelation *vrel, MemoryContext vac_context,
@@ -206,7 +206,7 @@ void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
 void vacuum(List *relations, VacuumParams *params,
             BufferAccessStrategy bstrategy, MemoryContext vac_context,
             bool isTopLevel) {
-  static thread_local bool in_vacuum = false;
+  static thread_local /*LOCAL*/ bool in_vacuum = false;
 
   volatile bool in_outer_xact, use_own_xacts;
 

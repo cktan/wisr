@@ -40,15 +40,16 @@ typedef struct timeout_params {
 /*
  * List of possible timeout reasons in the order of enum TimeoutId.
  */
-static thread_local timeout_params all_timeouts[MAX_TIMEOUTS];
-static thread_local bool all_timeouts_initialized = false;
+static thread_local /*LOCAL*/ timeout_params all_timeouts[MAX_TIMEOUTS];
+static thread_local /*LOCAL*/ bool all_timeouts_initialized = false;
 
 /*
  * List of active timeouts ordered by their fin_time and priority.
  * This list is subject to change by the interrupt handler, so it's volatile.
  */
-static thread_local volatile int num_active_timeouts = 0;
-static thread_local timeout_params *volatile active_timeouts[MAX_TIMEOUTS];
+static thread_local /*LOCAL*/ volatile int num_active_timeouts = 0;
+static thread_local /*LOCAL*/ timeout_params
+    *volatile active_timeouts[MAX_TIMEOUTS];
 
 /*
  * Flag controlling whether the signal handler is allowed to do anything.
@@ -62,7 +63,7 @@ static thread_local timeout_params *volatile active_timeouts[MAX_TIMEOUTS];
  *
  * We leave this "false" when we're not expecting interrupts, just in case.
  */
-static thread_local volatile sig_atomic_t alarm_enabled = false;
+static thread_local /*LOCAL*/ volatile sig_atomic_t alarm_enabled = false;
 
 #define disable_alarm() (alarm_enabled = false)
 #define enable_alarm()	(alarm_enabled = true)
@@ -73,8 +74,8 @@ static thread_local volatile sig_atomic_t alarm_enabled = false;
  * Note that the signal handler will unconditionally reset signal_pending to
  * false, so that can change asynchronously even when alarm_enabled is false.
  */
-static thread_local volatile sig_atomic_t signal_pending = false;
-static thread_local volatile TimestampTz signal_due_at = 0;
+static thread_local /*LOCAL*/ volatile sig_atomic_t signal_pending = false;
+static thread_local /*LOCAL*/ volatile TimestampTz signal_due_at = 0;
 
 /*****************************************************************************
  * Internal helper functions

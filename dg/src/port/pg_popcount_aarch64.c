@@ -53,9 +53,9 @@ static uint64 pg_popcount_masked_sve(const char *buf, int bytes, bits8 mask);
  */
 static uint64 pg_popcount_choose(const char *buf, int bytes);
 static uint64 pg_popcount_masked_choose(const char *buf, int bytes, bits8 mask);
-PG_SHARED uint64 (*pg_popcount_optimized)(const char *buf,
-                                          int bytes) = pg_popcount_choose;
-PG_SHARED uint64 (*pg_popcount_masked_optimized)(
+thread_local /*SHARED*/ uint64 (*pg_popcount_optimized)(
+    const char *buf, int bytes) = pg_popcount_choose;
+thread_local /*SHARED*/ uint64 (*pg_popcount_masked_optimized)(
     const char *buf, int bytes, bits8 mask) = pg_popcount_masked_choose;
 
 static inline bool pg_popcount_sve_available(void) {

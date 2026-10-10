@@ -56,14 +56,14 @@
 
 #define DIRECTORY_LOCK_FILE		"postmaster.pid"
 
-thread_local ProcessingMode Mode = InitProcessing;
+thread_local /*LOCAL*/ ProcessingMode Mode = InitProcessing;
 
-thread_local BackendType MyBackendType;
+thread_local /*LOCAL*/ BackendType MyBackendType;
 
 /* List of lock files to be removed at proc exit */
-static PG_SHARED List *lock_files = NIL;
+static thread_local /*SHARED*/ List *lock_files = NIL;
 
-static thread_local Latch LocalLatchData;
+static thread_local /*LOCAL*/ Latch LocalLatchData;
 
 /* ----------------------------------------------------------------
  *		ignoring system indexes support stuff
@@ -75,7 +75,7 @@ static thread_local Latch LocalLatchData;
  * ----------------------------------------------------------------
  */
 
-thread_local bool IgnoreSystemIndexes = false;
+thread_local /*LOCAL*/ bool IgnoreSystemIndexes = false;
 
 /* ----------------------------------------------------------------
  *	common process startup code
@@ -450,19 +450,19 @@ void ChangeToDataDir(void) {
  * convenient way to do it.
  * ----------------------------------------------------------------
  */
-static thread_local Oid AuthenticatedUserId = InvalidOid;
-static thread_local Oid SessionUserId = InvalidOid;
-static thread_local Oid OuterUserId = InvalidOid;
-static thread_local Oid CurrentUserId = InvalidOid;
-static thread_local const char *SystemUser = NULL;
+static thread_local /*LOCAL*/ Oid AuthenticatedUserId = InvalidOid;
+static thread_local /*LOCAL*/ Oid SessionUserId = InvalidOid;
+static thread_local /*LOCAL*/ Oid OuterUserId = InvalidOid;
+static thread_local /*LOCAL*/ Oid CurrentUserId = InvalidOid;
+static thread_local /*LOCAL*/ const char *SystemUser = NULL;
 
 /* We also have to remember the superuser state of the session user */
-static thread_local bool SessionUserIsSuperuser = false;
+static thread_local /*LOCAL*/ bool SessionUserIsSuperuser = false;
 
-static thread_local int SecurityRestrictionContext = 0;
+static thread_local /*LOCAL*/ int SecurityRestrictionContext = 0;
 
 /* We also remember if a SET ROLE is currently active */
-static thread_local bool SetRoleIsActive = false;
+static thread_local /*LOCAL*/ bool SetRoleIsActive = false;
 
 /*
  * GetUserId - get the current effective user ID.
@@ -859,7 +859,7 @@ char *GetUserNameFromId(Oid roleid, bool noerr) {
  *-------------------------------------------------------------------------
  */
 
-thread_local ClientConnectionInfo MyClientConnectionInfo;
+thread_local /*LOCAL*/ ClientConnectionInfo MyClientConnectionInfo;
 
 /*
  * Intermediate representation of ClientConnectionInfo for easier
@@ -1477,16 +1477,17 @@ void ValidatePgVersion(const char *path) {
  * GUC variables: lists of library names to be preloaded at postmaster
  * start and at backend start
  */
-thread_local char *session_preload_libraries_string = NULL;
-thread_local char *shared_preload_libraries_string = NULL;
-thread_local char *local_preload_libraries_string = NULL;
+thread_local /*LOCAL*/ char *session_preload_libraries_string = NULL;
+thread_local /*LOCAL*/ char *shared_preload_libraries_string = NULL;
+thread_local /*LOCAL*/ char *local_preload_libraries_string = NULL;
 
 /* Flag telling that we are loading shared_preload_libraries */
-PG_SHARED bool process_shared_preload_libraries_in_progress = false;
-PG_SHARED bool process_shared_preload_libraries_done = false;
+thread_local /*SHARED*/ bool process_shared_preload_libraries_in_progress =
+    false;
+thread_local /*SHARED*/ bool process_shared_preload_libraries_done = false;
 
-PG_SHARED shmem_request_hook_type shmem_request_hook = NULL;
-thread_local bool process_shmem_requests_in_progress = false;
+thread_local /*SHARED*/ shmem_request_hook_type shmem_request_hook = NULL;
+thread_local /*LOCAL*/ bool process_shmem_requests_in_progress = false;
 
 /*
  * load the shared libraries listed in 'libraries'

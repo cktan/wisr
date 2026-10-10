@@ -26,14 +26,14 @@
  * GUC parameters
  * ----------
  */
-thread_local int pgstat_track_functions = TRACK_FUNC_OFF;
+thread_local /*LOCAL*/ int pgstat_track_functions = TRACK_FUNC_OFF;
 
 /*
  * Total time charged to functions so far in the current backend.
  * We use this to help separate "self" and "other" time charges.
  * (We assume this initializes to zero.)
  */
-static thread_local instr_time total_func_time;
+static thread_local /*LOCAL*/ instr_time total_func_time;
 
 /*
  * Ensure that stats are dropped if transaction aborts.

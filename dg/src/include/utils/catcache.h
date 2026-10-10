@@ -180,7 +180,7 @@ typedef struct catcacheheader {
 } CatCacheHeader;
 
 /* this extern duplicates utils/memutils.h... */
-extern thread_local PGDLLIMPORT MemoryContext CacheMemoryContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext CacheMemoryContext;
 
 extern void CreateCacheMemoryContext(void);
 

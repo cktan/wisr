@@ -18,7 +18,7 @@
 #include "parser/parse_node.h"
 
 /* GUC */
-extern thread_local PGDLLIMPORT char *Extension_control_path;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *Extension_control_path;
 
 /*
  * creating_extension is only true while running a CREATE EXTENSION or ALTER
@@ -29,8 +29,8 @@ extern thread_local PGDLLIMPORT char *Extension_control_path;
  * scripts can drop member objects without having to explicitly dissociate
  * them from the extension first.
  */
-extern thread_local PGDLLIMPORT bool creating_extension;
-extern thread_local PGDLLIMPORT Oid CurrentExtensionObject;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool creating_extension;
+extern thread_local /*LOCAL*/ PGDLLIMPORT Oid CurrentExtensionObject;
 
 extern ObjectAddress CreateExtension(ParseState *pstate,
                                      CreateExtensionStmt *stmt);

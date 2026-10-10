@@ -142,19 +142,19 @@ typedef struct relidcacheent {
   Relation reldesc;
 } RelIdCacheEnt;
 
-static thread_local HTAB *RelationIdCache;
+static thread_local /*LOCAL*/ HTAB *RelationIdCache;
 
 /*
  * This flag is false until we have prepared the critical relcache entries
  * that are needed to do indexscans on the tables read by relcache building.
  */
-thread_local bool criticalRelcachesBuilt = false;
+thread_local /*LOCAL*/ bool criticalRelcachesBuilt = false;
 
 /*
  * This flag is false until we have prepared the critical relcache entries
  * for shared catalogs (which are the tables needed for login).
  */
-thread_local bool criticalSharedRelcachesBuilt = false;
+thread_local /*LOCAL*/ bool criticalSharedRelcachesBuilt = false;
 
 /*
  * This counter counts relcache inval events received since backend startup
@@ -162,7 +162,7 @@ thread_local bool criticalSharedRelcachesBuilt = false;
  * to detect whether data about to be written by write_relcache_init_file()
  * might already be obsolete.
  */
-static thread_local long relcacheInvalsReceived = 0L;
+static thread_local /*LOCAL*/ long relcacheInvalsReceived = 0L;
 
 /*
  * in_progress_list is a stack of ongoing RelationBuildDesc() calls.  CREATE
@@ -177,9 +177,9 @@ typedef struct inprogressent {
   bool invalidated; /* whether an invalidation arrived for it */
 } InProgressEnt;
 
-static thread_local InProgressEnt *in_progress_list;
-static thread_local int in_progress_list_len;
-static thread_local int in_progress_list_maxlen;
+static thread_local /*LOCAL*/ InProgressEnt *in_progress_list;
+static thread_local /*LOCAL*/ int in_progress_list_len;
+static thread_local /*LOCAL*/ int in_progress_list_maxlen;
 
 /*
  * eoxact_list[] stores the OIDs of relations that (might) need AtEOXact
@@ -192,9 +192,9 @@ static thread_local int in_progress_list_maxlen;
  * cleanup processing must be idempotent.
  */
 #define MAX_EOXACT_LIST 32
-static thread_local Oid eoxact_list[MAX_EOXACT_LIST];
-static thread_local int eoxact_list_len = 0;
-static thread_local bool eoxact_list_overflowed = false;
+static thread_local /*LOCAL*/ Oid eoxact_list[MAX_EOXACT_LIST];
+static thread_local /*LOCAL*/ int eoxact_list_len = 0;
+static thread_local /*LOCAL*/ bool eoxact_list_overflowed = false;
 
 #define EOXactListAdd(rel) \
 	do { \
@@ -209,9 +209,9 @@ static thread_local bool eoxact_list_overflowed = false;
  * cleanup work.  The array expands as needed; there is no hashtable because
  * we don't need to access individual items except at EOXact.
  */
-static thread_local TupleDesc *EOXactTupleDescArray;
-static thread_local int NextEOXactTupleDescNum = 0;
-static thread_local int EOXactTupleDescArrayLen = 0;
+static thread_local /*LOCAL*/ TupleDesc *EOXactTupleDescArray;
+static thread_local /*LOCAL*/ int NextEOXactTupleDescNum = 0;
+static thread_local /*LOCAL*/ int EOXactTupleDescArrayLen = 0;
 
 /*
  *		macros to manipulate the lookup hashtable
@@ -276,7 +276,7 @@ typedef struct opclasscacheent {
   RegProcedure *supportProcs; /* OIDs of support procedures */
 } OpClassCacheEnt;
 
-static thread_local HTAB *OpClassCache = NULL;
+static thread_local /*LOCAL*/ HTAB *OpClassCache = NULL;
 
 /* non-export function prototypes */
 
@@ -4086,7 +4086,7 @@ static TupleDesc BuildHardcodedDescriptor(int natts,
 }
 
 static TupleDesc GetPgClassDescriptor(void) {
-  static thread_local TupleDesc pgclassdesc = NULL;
+  static thread_local /*LOCAL*/ TupleDesc pgclassdesc = NULL;
 
   /* Already done? */
   if (pgclassdesc == NULL)
@@ -4096,7 +4096,7 @@ static TupleDesc GetPgClassDescriptor(void) {
 }
 
 static TupleDesc GetPgIndexDescriptor(void) {
-  static thread_local TupleDesc pgindexdesc = NULL;
+  static thread_local /*LOCAL*/ TupleDesc pgindexdesc = NULL;
 
   /* Already done? */
   if (pgindexdesc == NULL)

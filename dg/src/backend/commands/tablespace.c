@@ -78,11 +78,11 @@
 #include "utils/varlena.h"
 
 /* GUC variables */
-thread_local char *default_tablespace = NULL;
-thread_local char *temp_tablespaces = NULL;
-thread_local bool allow_in_place_tablespaces = false;
+thread_local /*LOCAL*/ char *default_tablespace = NULL;
+thread_local /*LOCAL*/ char *temp_tablespaces = NULL;
+thread_local /*LOCAL*/ bool allow_in_place_tablespaces = false;
 
-thread_local Oid binary_upgrade_next_pg_tablespace_oid = InvalidOid;
+thread_local /*LOCAL*/ Oid binary_upgrade_next_pg_tablespace_oid = InvalidOid;
 
 static void create_tablespace_directories(const char *location,
                                           const Oid tablespaceoid);

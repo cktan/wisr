@@ -18,7 +18,7 @@
 #include "storage/relfilelocator.h"
 #include "utils/relcache.h"
 
-extern thread_local PGDLLIMPORT int debug_discard_caches;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int debug_discard_caches;
 
 typedef void (*SyscacheCallbackFunction)(Datum arg, int cacheid,
                                          uint32 hashvalue);

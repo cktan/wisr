@@ -38,7 +38,7 @@
 #include "utils/syscache.h"
 
 /* Potentially set by pg_upgrade_support functions */
-thread_local Oid binary_upgrade_next_pg_type_oid = InvalidOid;
+thread_local /*LOCAL*/ Oid binary_upgrade_next_pg_type_oid = InvalidOid;
 
 /* ----------------------------------------------------------------
  *		TypeShellMake

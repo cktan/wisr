@@ -178,58 +178,57 @@ struct JsonIncrementalState {
  * These productions are stored in reverse order right to left so that when
  * they are pushed on the stack what we expect next is at the top of the stack.
  */
-static PG_SHARED char JSON_PROD_EPSILON[] = {
-    0}; /* epsilon - an empty production */
+static const char JSON_PROD_EPSILON[] = {0}; /* epsilon - an empty production */
 
 /* JSON -> string */
-static PG_SHARED char JSON_PROD_SCALAR_STRING[] = {
+static const char JSON_PROD_SCALAR_STRING[] = {
     JSON_SEM_SCALAR_CALL, JSON_TOKEN_STRING, JSON_SEM_SCALAR_INIT, 0};
 
 /* JSON -> number */
-static PG_SHARED char JSON_PROD_SCALAR_NUMBER[] = {
+static const char JSON_PROD_SCALAR_NUMBER[] = {
     JSON_SEM_SCALAR_CALL, JSON_TOKEN_NUMBER, JSON_SEM_SCALAR_INIT, 0};
 
 /* JSON -> 'true' */
-static PG_SHARED char JSON_PROD_SCALAR_TRUE[] = {
+static const char JSON_PROD_SCALAR_TRUE[] = {
     JSON_SEM_SCALAR_CALL, JSON_TOKEN_TRUE, JSON_SEM_SCALAR_INIT, 0};
 
 /* JSON -> 'false' */
-static PG_SHARED char JSON_PROD_SCALAR_FALSE[] = {
+static const char JSON_PROD_SCALAR_FALSE[] = {
     JSON_SEM_SCALAR_CALL, JSON_TOKEN_FALSE, JSON_SEM_SCALAR_INIT, 0};
 
 /* JSON -> 'null' */
-static PG_SHARED char JSON_PROD_SCALAR_NULL[] = {
+static const char JSON_PROD_SCALAR_NULL[] = {
     JSON_SEM_SCALAR_CALL, JSON_TOKEN_NULL, JSON_SEM_SCALAR_INIT, 0};
 
 /* JSON -> '{' KEY_PAIRS '}' */
-static PG_SHARED char JSON_PROD_OBJECT[] = {
+static const char JSON_PROD_OBJECT[] = {
     JSON_SEM_OEND,           JSON_TOKEN_OBJECT_END, JSON_NT_KEY_PAIRS,
     JSON_TOKEN_OBJECT_START, JSON_SEM_OSTART,       0};
 
 /* JSON -> '[' ARRAY_ELEMENTS ']' */
-static PG_SHARED char JSON_PROD_ARRAY[] = {
+static const char JSON_PROD_ARRAY[] = {
     JSON_SEM_AEND,          JSON_TOKEN_ARRAY_END, JSON_NT_ARRAY_ELEMENTS,
     JSON_TOKEN_ARRAY_START, JSON_SEM_ASTART,      0};
 
 /* ARRAY_ELEMENTS -> JSON MORE_ARRAY_ELEMENTS */
-static PG_SHARED char JSON_PROD_ARRAY_ELEMENTS[] = {
+static const char JSON_PROD_ARRAY_ELEMENTS[] = {
     JSON_NT_MORE_ARRAY_ELEMENTS, JSON_SEM_AELEM_END, JSON_NT_JSON,
     JSON_SEM_AELEM_START, 0};
 
 /* MORE_ARRAY_ELEMENTS -> ',' JSON MORE_ARRAY_ELEMENTS */
-static PG_SHARED char JSON_PROD_MORE_ARRAY_ELEMENTS[] = {
+static const char JSON_PROD_MORE_ARRAY_ELEMENTS[] = {
     JSON_NT_MORE_ARRAY_ELEMENTS, JSON_SEM_AELEM_END, JSON_NT_JSON,
     JSON_SEM_AELEM_START,        JSON_TOKEN_COMMA,   0};
 
 /* KEY_PAIRS -> string ':' JSON MORE_KEY_PAIRS */
-static PG_SHARED char JSON_PROD_KEY_PAIRS[] = {
+static const char JSON_PROD_KEY_PAIRS[] = {
     JSON_NT_MORE_KEY_PAIRS, JSON_SEM_OFIELD_END,
     JSON_NT_JSON,           JSON_SEM_OFIELD_START,
     JSON_TOKEN_COLON,       JSON_TOKEN_STRING,
     JSON_SEM_OFIELD_INIT,   0};
 
 /* MORE_KEY_PAIRS -> ',' string ':'  JSON MORE_KEY_PAIRS */
-static PG_SHARED char JSON_PROD_MORE_KEY_PAIRS[] = {
+static const char JSON_PROD_MORE_KEY_PAIRS[] = {
     JSON_NT_MORE_KEY_PAIRS, JSON_SEM_OFIELD_END, JSON_NT_JSON,
     JSON_SEM_OFIELD_START,  JSON_TOKEN_COLON,    JSON_TOKEN_STRING,
     JSON_SEM_OFIELD_INIT,   JSON_TOKEN_COMMA,    0};
@@ -248,7 +247,7 @@ static PG_SHARED char JSON_PROD_MORE_KEY_PAIRS[] = {
 
 typedef struct {
   size_t len;
-  char *prod;
+  const char *prod;
 } td_entry;
 
 #define TD_ENTRY(PROD) { sizeof(PROD) - 1, (PROD) }
@@ -301,7 +300,7 @@ static constexpr auto td_parser_table = [] {
 
 /* the GOAL production. Not stored in the table, but will be the initial
  * contents of the prediction stack */
-static PG_SHARED char JSON_PROD_GOAL[] = {JSON_TOKEN_END, JSON_NT_JSON, 0};
+static const char JSON_PROD_GOAL[] = {JSON_TOKEN_END, JSON_NT_JSON, 0};
 
 static inline JsonParseErrorType json_lex_string(JsonLexContext *lex);
 static inline JsonParseErrorType json_lex_number(JsonLexContext *lex,
@@ -327,8 +326,8 @@ const JsonSemAction nullSemAction = {NULL, NULL, NULL, NULL, NULL,
                                      NULL, NULL, NULL, NULL, NULL};
 
 /* sentinels used for out-of-memory conditions */
-static thread_local JsonLexContext failed_oom;
-static thread_local JsonIncrementalState failed_inc_oom;
+static thread_local /*LOCAL*/ JsonLexContext failed_oom;
+static thread_local /*LOCAL*/ JsonIncrementalState failed_inc_oom;
 
 /* Parser support routines */
 

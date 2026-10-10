@@ -33,7 +33,7 @@
 #include "utils/syscache.h"
 
 /* Potentially set by pg_upgrade_support functions */
-thread_local Oid binary_upgrade_next_pg_enum_oid = InvalidOid;
+thread_local /*LOCAL*/ Oid binary_upgrade_next_pg_enum_oid = InvalidOid;
 
 /*
  * We keep two transaction-lifespan hash tables, one containing the OIDs
@@ -59,8 +59,8 @@ thread_local Oid binary_upgrade_next_pg_enum_oid = InvalidOid;
  * pg_dump.  We could track subtransaction nesting of the commands to
  * analyze things more precisely, but for now we don't bother.
  */
-static thread_local HTAB *uncommitted_enum_types = NULL;
-static thread_local HTAB *uncommitted_enum_values = NULL;
+static thread_local /*LOCAL*/ HTAB *uncommitted_enum_types = NULL;
+static thread_local /*LOCAL*/ HTAB *uncommitted_enum_values = NULL;
 
 static void init_uncommitted_enum_types(void);
 static void init_uncommitted_enum_values(void);

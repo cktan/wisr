@@ -63,7 +63,7 @@ all: build/digres
 build/digres: src $(LIBSQ) $(LIBSM)
 	@mkdir -p build
 	# A session is to be a thread: no writable global may be left
-	# neither thread_local nor PG_SHARED (PLAN.md section 3).
+	# that is not thread_local (PLAN.md section 3).
 	python3 -B src/tools/cxx_thread_local.py --check src
 	$(CXX) -o $@ $$(find src -name '*.o') $(LIBSQ) $(LIBSM) $(LDLIBS)
 	ln -sf digres build/initdb

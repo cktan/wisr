@@ -1324,13 +1324,14 @@ extern int fdatasync(int fildes);
 
 /*
  * A session is a thread, so every writable global and static is
- * thread_local, one copy a thread. PG_SHARED marks one that every
- * session shares instead: a pointer into shared memory, a table filled
- * once at startup, or what the postmaster sets and a session reads.
- * The section lets the build see the mark in the objects
- * (src/tools/cxx_thread_local.py --check).
+ * thread_local, one copy a thread, and a new thread is to start with a
+ * copy of its parent's, as a forked process does.  A comment after the
+ * keyword tells what the variable is: SHARED for one every session
+ * reads as its parent left it -- a pointer into shared memory, a table
+ * filled once at startup, or what the postmaster sets -- and LOCAL for
+ * one a session keeps for itself.  src/tools/cxx_thread_local.py
+ * --check fails on any writable variable not thread_local.
  */
-#define PG_SHARED __attribute__((section(".pg_shared")))
 
 /*
  * Use "extern PGDLLEXPORT ..." to declare functions that are defined in

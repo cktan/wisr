@@ -59,7 +59,7 @@ enum attribute_stats_argnum {
   NUM_ATTRIBUTE_STATS_ARGS
 };
 
-static thread_local struct StatsArgInfo attarginfo[] = {
+static thread_local /*LOCAL*/ struct StatsArgInfo attarginfo[] = {
     [ATTRELSCHEMA_ARG] = {"schemaname", TEXTOID},
     [ATTRELNAME_ARG] = {"relname", TEXTOID},
     [ATTNAME_ARG] = {"attname", TEXTOID},
@@ -88,7 +88,7 @@ enum clear_attribute_stats_argnum {
   C_NUM_ATTRIBUTE_STATS_ARGS
 };
 
-static thread_local struct StatsArgInfo cleararginfo[] = {
+static thread_local /*LOCAL*/ struct StatsArgInfo cleararginfo[] = {
     [C_ATTRELSCHEMA_ARG] = {"schemaname", TEXTOID},
     [C_ATTRELNAME_ARG] = {"relname", TEXTOID},
     [C_ATTNAME_ARG] = {"attname", TEXTOID},

@@ -93,33 +93,36 @@ static void PrintLockQueue(LOCK *lock, const char *info);
  */
 
 /* Workspace for FindLockCycle */
-static thread_local PGPROC **visitedProcs; /* Array of visited procs */
-static thread_local int nVisitedProcs;
+static thread_local /*LOCAL*/ PGPROC *
+    *visitedProcs; /* Array of visited procs */
+static thread_local /*LOCAL*/ int nVisitedProcs;
 
 /* Workspace for TopoSort */
-static thread_local PGPROC **topoProcs; /* Array of not-yet-output procs */
-static thread_local int
+static thread_local /*LOCAL*/ PGPROC *
+    *topoProcs; /* Array of not-yet-output procs */
+static thread_local /*LOCAL*/ int
     *beforeConstraints; /* Counts of remaining before-constraints */
-static thread_local int *afterConstraints; /* List head for after-constraints */
+static thread_local /*LOCAL*/ int
+    *afterConstraints; /* List head for after-constraints */
 
 /* Output area for ExpandConstraints */
-static thread_local WAIT_ORDER
+static thread_local /*LOCAL*/ WAIT_ORDER
     *waitOrders; /* Array of proposed queue rearrangements */
-static thread_local int nWaitOrders;
-static thread_local PGPROC *
+static thread_local /*LOCAL*/ int nWaitOrders;
+static thread_local /*LOCAL*/ PGPROC *
     *waitOrderProcs; /* Space for waitOrders queue contents */
 
 /* Current list of constraints being considered */
-static thread_local EDGE *curConstraints;
-static thread_local int nCurConstraints;
-static thread_local int maxCurConstraints;
+static thread_local /*LOCAL*/ EDGE *curConstraints;
+static thread_local /*LOCAL*/ int nCurConstraints;
+static thread_local /*LOCAL*/ int maxCurConstraints;
 
 /* Storage space for results from FindLockCycle */
-static thread_local EDGE *possibleConstraints;
-static thread_local int nPossibleConstraints;
-static thread_local int maxPossibleConstraints;
-static thread_local DEADLOCK_INFO *deadlockDetails;
-static thread_local int nDeadlockDetails;
+static thread_local /*LOCAL*/ EDGE *possibleConstraints;
+static thread_local /*LOCAL*/ int nPossibleConstraints;
+static thread_local /*LOCAL*/ int maxPossibleConstraints;
+static thread_local /*LOCAL*/ DEADLOCK_INFO *deadlockDetails;
+static thread_local /*LOCAL*/ int nDeadlockDetails;
 
 /*
  * InitDeadLockChecking -- initialize deadlock checker during backend startup

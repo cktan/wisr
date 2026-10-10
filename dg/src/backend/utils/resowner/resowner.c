@@ -169,10 +169,10 @@ struct ResourceOwnerData {
  **
  *****************************************************************************/
 
-thread_local ResourceOwner CurrentResourceOwner = NULL;
-thread_local ResourceOwner CurTransactionResourceOwner = NULL;
-thread_local ResourceOwner TopTransactionResourceOwner = NULL;
-thread_local ResourceOwner AuxProcessResourceOwner = NULL;
+thread_local /*LOCAL*/ ResourceOwner CurrentResourceOwner = NULL;
+thread_local /*LOCAL*/ ResourceOwner CurTransactionResourceOwner = NULL;
+thread_local /*LOCAL*/ ResourceOwner TopTransactionResourceOwner = NULL;
+thread_local /*LOCAL*/ ResourceOwner AuxProcessResourceOwner = NULL;
 
 /* #define RESOWNER_STATS */
 
@@ -190,8 +190,8 @@ typedef struct ResourceReleaseCallbackItem {
   void *arg;
 } ResourceReleaseCallbackItem;
 
-static thread_local ResourceReleaseCallbackItem *ResourceRelease_callbacks =
-    NULL;
+static thread_local /*LOCAL*/ ResourceReleaseCallbackItem
+    *ResourceRelease_callbacks = NULL;
 
 /* Internal routines */
 static inline uint32 hash_resource_elem(Datum value,

@@ -26,7 +26,7 @@
 typedef struct GlobalTransactionData *GlobalTransaction;
 
 /* GUC variable */
-extern thread_local PGDLLIMPORT int max_prepared_xacts;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_prepared_xacts;
 
 extern Size TwoPhaseShmemSize(void);
 extern void TwoPhaseShmemInit(void);

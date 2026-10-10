@@ -64,13 +64,14 @@
 #include "utils/snapmgr.h"
 
 /* Hooks for plugins to get control in ExecutorStart/Run/Finish/End */
-PG_SHARED ExecutorStart_hook_type ExecutorStart_hook = NULL;
-PG_SHARED ExecutorRun_hook_type ExecutorRun_hook = NULL;
-PG_SHARED ExecutorFinish_hook_type ExecutorFinish_hook = NULL;
-PG_SHARED ExecutorEnd_hook_type ExecutorEnd_hook = NULL;
+thread_local /*SHARED*/ ExecutorStart_hook_type ExecutorStart_hook = NULL;
+thread_local /*SHARED*/ ExecutorRun_hook_type ExecutorRun_hook = NULL;
+thread_local /*SHARED*/ ExecutorFinish_hook_type ExecutorFinish_hook = NULL;
+thread_local /*SHARED*/ ExecutorEnd_hook_type ExecutorEnd_hook = NULL;
 
 /* Hook for plugin to get control in ExecCheckPermissions() */
-PG_SHARED ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook = NULL;
+thread_local /*SHARED*/ ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook =
+    NULL;
 
 /* decls for local routines only used within this module */
 static void InitPlan(QueryDesc *queryDesc, int eflags);

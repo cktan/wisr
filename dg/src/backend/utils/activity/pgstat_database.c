@@ -23,15 +23,15 @@
 
 static bool pgstat_should_report_connstat(void);
 
-thread_local PgStat_Counter pgStatBlockReadTime = 0;
-thread_local PgStat_Counter pgStatBlockWriteTime = 0;
-thread_local PgStat_Counter pgStatActiveTime = 0;
-thread_local PgStat_Counter pgStatTransactionIdleTime = 0;
-thread_local SessionEndType pgStatSessionEndCause = DISCONNECT_NORMAL;
+thread_local /*LOCAL*/ PgStat_Counter pgStatBlockReadTime = 0;
+thread_local /*LOCAL*/ PgStat_Counter pgStatBlockWriteTime = 0;
+thread_local /*LOCAL*/ PgStat_Counter pgStatActiveTime = 0;
+thread_local /*LOCAL*/ PgStat_Counter pgStatTransactionIdleTime = 0;
+thread_local /*LOCAL*/ SessionEndType pgStatSessionEndCause = DISCONNECT_NORMAL;
 
-static thread_local int pgStatXactCommit = 0;
-static thread_local int pgStatXactRollback = 0;
-static thread_local PgStat_Counter pgLastSessionReportTime = 0;
+static thread_local /*LOCAL*/ int pgStatXactCommit = 0;
+static thread_local /*LOCAL*/ int pgStatXactRollback = 0;
+static thread_local /*LOCAL*/ PgStat_Counter pgLastSessionReportTime = 0;
 
 /*
  * Remove entry for the database being dropped.

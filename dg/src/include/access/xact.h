@@ -37,8 +37,8 @@
 #define XACT_REPEATABLE_READ	2
 #define XACT_SERIALIZABLE		3
 
-extern thread_local PGDLLIMPORT int DefaultXactIsoLevel;
-extern thread_local PGDLLIMPORT int XactIsoLevel;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int DefaultXactIsoLevel;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int XactIsoLevel;
 
 /*
  * We implement three isolation levels internally.
@@ -51,22 +51,22 @@ extern thread_local PGDLLIMPORT int XactIsoLevel;
 #define IsolationIsSerializable() (XactIsoLevel == XACT_SERIALIZABLE)
 
 /* Xact read-only state */
-extern thread_local PGDLLIMPORT bool DefaultXactReadOnly;
-extern thread_local PGDLLIMPORT bool XactReadOnly;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool DefaultXactReadOnly;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactReadOnly;
 
 /* flag for logging statements in this transaction */
-extern thread_local PGDLLIMPORT bool xact_is_sampled;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool xact_is_sampled;
 
 /*
  * Xact is deferrable -- only meaningful (currently) for read only
  * SERIALIZABLE transactions
  */
-extern thread_local PGDLLIMPORT bool DefaultXactDeferrable;
-extern thread_local PGDLLIMPORT bool XactDeferrable;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool DefaultXactDeferrable;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactDeferrable;
 
 /* used during logical streaming of a transaction */
-extern thread_local PGDLLIMPORT TransactionId CheckXidAlive;
-extern thread_local PGDLLIMPORT bool bsysscan;
+extern thread_local /*LOCAL*/ PGDLLIMPORT TransactionId CheckXidAlive;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool bsysscan;
 
 /*
  * Miscellaneous flag bits to record events which occur on the top level
@@ -75,7 +75,7 @@ extern thread_local PGDLLIMPORT bool bsysscan;
  * globally accessible, so can be set from anywhere in the code which requires
  * recording flags.
  */
-extern thread_local PGDLLIMPORT int MyXactFlags;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int MyXactFlags;
 
 /*
  * XACT_FLAGS_ACCESSEDTEMPNAMESPACE - set when a temporary object is accessed.

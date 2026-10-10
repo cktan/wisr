@@ -27,10 +27,10 @@
 #include "utils/relmapper.h"
 
 /* Hash table for information about each relfilenumber <-> oid pair */
-static thread_local HTAB *RelfilenumberMapHash = NULL;
+static thread_local /*LOCAL*/ HTAB *RelfilenumberMapHash = NULL;
 
 /* built first time through in InitializeRelfilenumberMap */
-static thread_local ScanKeyData relfilenumber_skey[2];
+static thread_local /*LOCAL*/ ScanKeyData relfilenumber_skey[2];
 
 typedef struct {
   Oid reltablespace;

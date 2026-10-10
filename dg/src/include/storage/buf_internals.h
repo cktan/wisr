@@ -294,12 +294,14 @@ typedef struct WritebackContext {
 } WritebackContext;
 
 /* in buf_init.c */
-extern PG_SHARED PGDLLIMPORT BufferDescPadded *BufferDescriptors;
-extern PG_SHARED PGDLLIMPORT ConditionVariableMinimallyPadded *BufferIOCVArray;
-extern thread_local PGDLLIMPORT WritebackContext BackendWritebackContext;
+extern thread_local /*SHARED*/ PGDLLIMPORT BufferDescPadded *BufferDescriptors;
+extern thread_local /*SHARED*/ PGDLLIMPORT ConditionVariableMinimallyPadded
+    *BufferIOCVArray;
+extern thread_local /*LOCAL*/ PGDLLIMPORT WritebackContext
+    BackendWritebackContext;
 
 /* in localbuf.c */
-extern thread_local PGDLLIMPORT BufferDesc *LocalBufferDescriptors;
+extern thread_local /*LOCAL*/ PGDLLIMPORT BufferDesc *LocalBufferDescriptors;
 
 static inline BufferDesc *GetBufferDescriptor(uint32 id) {
   return &(BufferDescriptors[id]).bufferdesc;
@@ -356,7 +358,7 @@ typedef struct CkptSortItem {
   int buf_id;
 } CkptSortItem;
 
-extern PG_SHARED PGDLLIMPORT CkptSortItem *CkptBufferIds;
+extern thread_local /*SHARED*/ PGDLLIMPORT CkptSortItem *CkptBufferIds;
 
 /* ResourceOwner callbacks to hold buffer I/Os and pins */
 extern PGDLLIMPORT const ResourceOwnerDesc buffer_io_resowner_desc;

@@ -39,20 +39,20 @@
 #define UNICODE_CASEMAP_BUFSZ	(UNICODE_CASEMAP_LEN * MAX_MULTIBYTE_CHAR_LEN)
 
 /* GUC settings */
-extern thread_local PGDLLIMPORT char *locale_messages;
-extern thread_local PGDLLIMPORT char *locale_monetary;
-extern thread_local PGDLLIMPORT char *locale_numeric;
-extern thread_local PGDLLIMPORT char *locale_time;
-extern thread_local PGDLLIMPORT int icu_validation_level;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *locale_messages;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *locale_monetary;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *locale_numeric;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *locale_time;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int icu_validation_level;
 
 /* lc_time localization cache */
-extern thread_local PGDLLIMPORT char *localized_abbrev_days[];
-extern thread_local PGDLLIMPORT char *localized_full_days[];
-extern thread_local PGDLLIMPORT char *localized_abbrev_months[];
-extern thread_local PGDLLIMPORT char *localized_full_months[];
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *localized_abbrev_days[];
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *localized_full_days[];
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *localized_abbrev_months[];
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *localized_full_months[];
 
 /* is the databases's LC_CTYPE the C locale? */
-extern thread_local PGDLLIMPORT bool database_ctype_is_c;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool database_ctype_is_c;
 
 extern bool check_locale(int category, const char *locale, char **canonname);
 extern char *pg_perm_setlocale(int category, const char *locale);

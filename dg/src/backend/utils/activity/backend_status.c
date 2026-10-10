@@ -37,17 +37,17 @@
  * GUC parameters
  * ----------
  */
-thread_local bool pgstat_track_activities = false;
-thread_local int pgstat_track_activity_query_size = 1024;
+thread_local /*LOCAL*/ bool pgstat_track_activities = false;
+thread_local /*LOCAL*/ int pgstat_track_activity_query_size = 1024;
 
 /* exposed so that backend_progress.c can access it */
-thread_local PgBackendStatus *MyBEEntry = NULL;
+thread_local /*LOCAL*/ PgBackendStatus *MyBEEntry = NULL;
 
-static PG_SHARED PgBackendStatus *BackendStatusArray = NULL;
-static PG_SHARED char *BackendAppnameBuffer = NULL;
-static PG_SHARED char *BackendClientHostnameBuffer = NULL;
-static PG_SHARED char *BackendActivityBuffer = NULL;
-static PG_SHARED Size BackendActivityBufferSize = 0;
+static thread_local /*SHARED*/ PgBackendStatus *BackendStatusArray = NULL;
+static thread_local /*SHARED*/ char *BackendAppnameBuffer = NULL;
+static thread_local /*SHARED*/ char *BackendClientHostnameBuffer = NULL;
+static thread_local /*SHARED*/ char *BackendActivityBuffer = NULL;
+static thread_local /*SHARED*/ Size BackendActivityBufferSize = 0;
 #ifdef USE_SSL
 static PgBackendSSLStatus *BackendSslStatusBuffer = NULL;
 #endif
@@ -56,12 +56,13 @@ static PgBackendGSSStatus *BackendGssStatusBuffer = NULL;
 #endif
 
 /* Status for backends including auxiliary */
-static thread_local LocalPgBackendStatus *localBackendStatusTable = NULL;
+static thread_local /*LOCAL*/ LocalPgBackendStatus *localBackendStatusTable =
+    NULL;
 
 /* Total number of backends including auxiliary */
-static thread_local int localNumBackends = 0;
+static thread_local /*LOCAL*/ int localNumBackends = 0;
 
-static thread_local MemoryContext backendStatusSnapContext;
+static thread_local /*LOCAL*/ MemoryContext backendStatusSnapContext;
 
 static void pgstat_beshutdown_hook(int code, Datum arg);
 static void pgstat_read_current_status(void);

@@ -195,21 +195,22 @@ static inline bool pgstat_is_kind_valid(PgStat_Kind kind);
  * ----------
  */
 
-thread_local bool pgstat_track_counts = false;
-thread_local int pgstat_fetch_consistency = PGSTAT_FETCH_CONSISTENCY_CACHE;
+thread_local /*LOCAL*/ bool pgstat_track_counts = false;
+thread_local /*LOCAL*/ int pgstat_fetch_consistency =
+    PGSTAT_FETCH_CONSISTENCY_CACHE;
 
 /* ----------
  * state shared with pgstat_*.c
  * ----------
  */
 
-thread_local PgStat_LocalState pgStatLocal;
+thread_local /*LOCAL*/ PgStat_LocalState pgStatLocal;
 
 /*
  * Track pending reports for fixed-numbered stats, used by
  * pgstat_report_stat().
  */
-thread_local bool pgstat_report_fixed = false;
+thread_local /*LOCAL*/ bool pgstat_report_fixed = false;
 
 /* ----------
  * Local data
@@ -225,7 +226,7 @@ thread_local bool pgstat_report_fixed = false;
  * easier to track / attribute memory usage.
  */
 
-static thread_local MemoryContext pgStatPendingContext = NULL;
+static thread_local /*LOCAL*/ MemoryContext pgStatPendingContext = NULL;
 
 /*
  * Backend local list of PgStat_EntryRef with unflushed pending stats.
@@ -233,19 +234,20 @@ static thread_local MemoryContext pgStatPendingContext = NULL;
  * Newly pending entries should only ever be added to the end of the list,
  * otherwise pgstat_flush_pending_entries() might not see them immediately.
  */
-static thread_local dlist_head pgStatPending = DLIST_STATIC_INIT(pgStatPending);
+static thread_local /*LOCAL*/ dlist_head pgStatPending =
+    DLIST_STATIC_INIT(pgStatPending);
 
 /*
  * Force the next stats flush to happen regardless of
  * PGSTAT_MIN_INTERVAL. Useful in test scripts.
  */
-static thread_local bool pgStatForceNextFlush = false;
+static thread_local /*LOCAL*/ bool pgStatForceNextFlush = false;
 
 /*
  * Force-clear existing snapshot before next use when stats_fetch_consistency
  * is changed.
  */
-static thread_local bool force_stats_snapshot_clear = false;
+static thread_local /*LOCAL*/ bool force_stats_snapshot_clear = false;
 
 /*
  * For assertions that check pgstat is not used before initialization / after
@@ -431,7 +433,8 @@ static constexpr auto pgstat_kind_builtin_infos = [] {
  *
  * Indexed by PGSTAT_KIND_CUSTOM_MIN, of size PGSTAT_KIND_CUSTOM_SIZE.
  */
-static PG_SHARED const PgStat_KindInfo **pgstat_kind_custom_infos = NULL;
+static thread_local /*SHARED*/ const PgStat_KindInfo *
+    *pgstat_kind_custom_infos = NULL;
 
 /* ------------------------------------------------------------
  * Functions managing the state of the stats system for all backends.
@@ -613,8 +616,8 @@ void pgstat_initialize(void) {
  * to use transaction stop time as an approximation of current time.
  */
 long pgstat_report_stat(bool force) {
-  static thread_local TimestampTz pending_since = 0;
-  static thread_local TimestampTz last_flush = 0;
+  static thread_local /*LOCAL*/ TimestampTz pending_since = 0;
+  static thread_local /*LOCAL*/ TimestampTz last_flush = 0;
   bool partial_flush;
   TimestampTz now;
   bool nowait;

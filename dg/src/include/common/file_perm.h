@@ -41,11 +41,11 @@
 #define PG_FILE_MODE_GROUP			(S_IRUSR | S_IWUSR | S_IRGRP)
 
 /* Modes for creating directories and files in the data directory */
-extern PG_SHARED PGDLLIMPORT int pg_dir_create_mode;
-extern PG_SHARED PGDLLIMPORT int pg_file_create_mode;
+extern thread_local /*SHARED*/ PGDLLIMPORT int pg_dir_create_mode;
+extern thread_local /*SHARED*/ PGDLLIMPORT int pg_file_create_mode;
 
 /* Mode mask to pass to umask() */
-extern PG_SHARED PGDLLIMPORT int pg_mode_mask;
+extern thread_local /*SHARED*/ PGDLLIMPORT int pg_mode_mask;
 
 /* Set permissions and mask based on the provided mode */
 extern void SetDataDirectoryCreatePerm(int dataDirMode);

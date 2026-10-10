@@ -85,26 +85,34 @@
 
 /* in globals.c */
 /* these are marked volatile because they are set by signal handlers: */
-extern thread_local PGDLLIMPORT volatile sig_atomic_t InterruptPending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t QueryCancelPending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t ProcDiePending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+    InterruptPending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+    QueryCancelPending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t ProcDiePending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
     IdleInTransactionSessionTimeoutPending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t TransactionTimeoutPending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t IdleSessionTimeoutPending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t ProcSignalBarrierPending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t LogMemoryContextPending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+    TransactionTimeoutPending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+    IdleSessionTimeoutPending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+    ProcSignalBarrierPending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+    LogMemoryContextPending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
     IdleStatsUpdateTimeoutPending;
 
-extern thread_local PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
     CheckClientConnectionPending;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t ClientConnectionLost;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+    ClientConnectionLost;
 
 /* these are marked volatile because they are examined by signal handlers: */
-extern thread_local PGDLLIMPORT volatile uint32 InterruptHoldoffCount;
-extern thread_local PGDLLIMPORT volatile uint32 QueryCancelHoldoffCount;
-extern thread_local PGDLLIMPORT volatile uint32 CritSectionCount;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32 InterruptHoldoffCount;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32
+    QueryCancelHoldoffCount;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32 CritSectionCount;
 
 /* in tcop/postgres.c */
 extern void ProcessInterrupts(void);
@@ -164,51 +172,51 @@ do { \
 /*
  * from utils/init/globals.c
  */
-extern PG_SHARED PGDLLIMPORT pid_t PostmasterPid;
-extern PG_SHARED PGDLLIMPORT bool IsPostmasterEnvironment;
-extern thread_local PGDLLIMPORT bool IsUnderPostmaster;
-extern PG_SHARED PGDLLIMPORT bool IsBinaryUpgrade;
+extern thread_local /*SHARED*/ PGDLLIMPORT pid_t PostmasterPid;
+extern thread_local /*SHARED*/ PGDLLIMPORT bool IsPostmasterEnvironment;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsUnderPostmaster;
+extern thread_local /*SHARED*/ PGDLLIMPORT bool IsBinaryUpgrade;
 
-extern thread_local PGDLLIMPORT bool ExitOnAnyError;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool ExitOnAnyError;
 
-extern PG_SHARED PGDLLIMPORT char *DataDir;
-extern PG_SHARED PGDLLIMPORT int data_directory_mode;
+extern thread_local /*SHARED*/ PGDLLIMPORT char *DataDir;
+extern thread_local /*SHARED*/ PGDLLIMPORT int data_directory_mode;
 
-extern thread_local PGDLLIMPORT int NBuffers;
-extern PG_SHARED PGDLLIMPORT int MaxBackends;
-extern thread_local PGDLLIMPORT int MaxConnections;
-extern thread_local PGDLLIMPORT int max_worker_processes;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int NBuffers;
+extern thread_local /*SHARED*/ PGDLLIMPORT int MaxBackends;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int MaxConnections;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_worker_processes;
 
-extern thread_local PGDLLIMPORT int commit_timestamp_buffers;
-extern thread_local PGDLLIMPORT int multixact_member_buffers;
-extern thread_local PGDLLIMPORT int multixact_offset_buffers;
-extern thread_local PGDLLIMPORT int notify_buffers;
-extern thread_local PGDLLIMPORT int serializable_buffers;
-extern thread_local PGDLLIMPORT int subtransaction_buffers;
-extern thread_local PGDLLIMPORT int transaction_buffers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int commit_timestamp_buffers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_member_buffers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_offset_buffers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int notify_buffers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int serializable_buffers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int subtransaction_buffers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int transaction_buffers;
 
-extern thread_local PGDLLIMPORT int MyProcPid;
-extern thread_local PGDLLIMPORT pg_time_t MyStartTime;
-extern thread_local PGDLLIMPORT TimestampTz MyStartTimestamp;
-extern thread_local PGDLLIMPORT struct Port *MyProcPort;
-extern thread_local PGDLLIMPORT struct Latch *MyLatch;
-extern thread_local PGDLLIMPORT uint8 MyCancelKey[];
-extern thread_local PGDLLIMPORT int MyCancelKeyLength;
-extern thread_local PGDLLIMPORT int MyPMChildSlot;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;
+extern thread_local /*LOCAL*/ PGDLLIMPORT pg_time_t MyStartTime;
+extern thread_local /*LOCAL*/ PGDLLIMPORT TimestampTz MyStartTimestamp;
+extern thread_local /*LOCAL*/ PGDLLIMPORT struct Port *MyProcPort;
+extern thread_local /*LOCAL*/ PGDLLIMPORT struct Latch *MyLatch;
+extern thread_local /*LOCAL*/ PGDLLIMPORT uint8 MyCancelKey[];
+extern thread_local /*LOCAL*/ PGDLLIMPORT int MyCancelKeyLength;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int MyPMChildSlot;
 
-extern PG_SHARED PGDLLIMPORT char OutputFileName[];
-extern PG_SHARED PGDLLIMPORT char my_exec_path[];
-extern PG_SHARED PGDLLIMPORT char pkglib_path[];
+extern thread_local /*SHARED*/ PGDLLIMPORT char OutputFileName[];
+extern thread_local /*SHARED*/ PGDLLIMPORT char my_exec_path[];
+extern thread_local /*SHARED*/ PGDLLIMPORT char pkglib_path[];
 
 #ifdef EXEC_BACKEND
 extern PGDLLIMPORT char postgres_exec_path[];
 #endif
 
-extern thread_local PGDLLIMPORT Oid MyDatabaseId;
+extern thread_local /*LOCAL*/ PGDLLIMPORT Oid MyDatabaseId;
 
-extern thread_local PGDLLIMPORT Oid MyDatabaseTableSpace;
+extern thread_local /*LOCAL*/ PGDLLIMPORT Oid MyDatabaseTableSpace;
 
-extern thread_local PGDLLIMPORT bool MyDatabaseHasLoginEventTriggers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool MyDatabaseHasLoginEventTriggers;
 
 /*
  * Date/Time Configuration
@@ -244,8 +252,8 @@ extern thread_local PGDLLIMPORT bool MyDatabaseHasLoginEventTriggers;
 #define DATEORDER_DMY			1
 #define DATEORDER_MDY			2
 
-extern thread_local PGDLLIMPORT int DateStyle;
-extern thread_local PGDLLIMPORT int DateOrder;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int DateStyle;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int DateOrder;
 
 /*
  * IntervalStyles
@@ -260,15 +268,15 @@ extern thread_local PGDLLIMPORT int DateOrder;
 #define INTSTYLE_SQL_STANDARD		2
 #define INTSTYLE_ISO_8601			3
 
-extern thread_local PGDLLIMPORT int IntervalStyle;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int IntervalStyle;
 
 #define MAXTZLEN		10 /* max TZ name len, not counting tr. null */
 
-extern thread_local PGDLLIMPORT bool enableFsync;
-extern thread_local PGDLLIMPORT bool allowSystemTableMods;
-extern thread_local PGDLLIMPORT int work_mem;
-extern thread_local PGDLLIMPORT double hash_mem_multiplier;
-extern thread_local PGDLLIMPORT int maintenance_work_mem;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool enableFsync;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool allowSystemTableMods;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int work_mem;
+extern thread_local /*LOCAL*/ PGDLLIMPORT double hash_mem_multiplier;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int maintenance_work_mem;
 
 /*
  * Upper and lower hard limits for the buffer access strategy ring size
@@ -278,19 +286,19 @@ extern thread_local PGDLLIMPORT int maintenance_work_mem;
 #define MIN_BAS_VAC_RING_SIZE_KB 128
 #define MAX_BAS_VAC_RING_SIZE_KB (16 * 1024 * 1024)
 
-extern thread_local PGDLLIMPORT int VacuumBufferUsageLimit;
-extern thread_local PGDLLIMPORT int VacuumCostPageHit;
-extern thread_local PGDLLIMPORT int VacuumCostPageMiss;
-extern thread_local PGDLLIMPORT int VacuumCostPageDirty;
-extern thread_local PGDLLIMPORT int VacuumCostLimit;
-extern thread_local PGDLLIMPORT double VacuumCostDelay;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumBufferUsageLimit;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostPageHit;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostPageMiss;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostPageDirty;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostLimit;
+extern thread_local /*LOCAL*/ PGDLLIMPORT double VacuumCostDelay;
 
-extern thread_local PGDLLIMPORT int VacuumCostBalance;
-extern thread_local PGDLLIMPORT bool VacuumCostActive;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int VacuumCostBalance;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool VacuumCostActive;
 
 /* in utils/misc/stack_depth.c */
 
-extern thread_local PGDLLIMPORT int max_stack_depth;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_stack_depth;
 
 /* Required daylight between max_stack_depth and the kernel limit, in bytes */
 #define STACK_DEPTH_SLOP (512 * 1024)
@@ -317,7 +325,7 @@ extern void PreventCommandDuringRecovery(const char *cmdname);
 #define SECURITY_RESTRICTED_OPERATION	0x0002
 #define SECURITY_NOFORCE_RLS			0x0004
 
-extern thread_local PGDLLIMPORT char *DatabasePath;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *DatabasePath;
 
 /* now in utils/init/miscinit.c */
 extern void InitPostmasterChild(void);
@@ -369,7 +377,7 @@ typedef enum BackendType {
 
 #define BACKEND_NUM_TYPES (B_LOGGER + 1)
 
-extern thread_local PGDLLIMPORT BackendType MyBackendType;
+extern thread_local /*LOCAL*/ PGDLLIMPORT BackendType MyBackendType;
 
 #define AmRegularBackendProcess()	(MyBackendType == B_BACKEND)
 #define AmBackgroundWorkerProcess() (MyBackendType == B_BG_WORKER)
@@ -456,7 +464,7 @@ typedef enum ProcessingMode {
   NormalProcessing,    /* normal processing */
 } ProcessingMode;
 
-extern thread_local PGDLLIMPORT ProcessingMode Mode;
+extern thread_local /*LOCAL*/ PGDLLIMPORT ProcessingMode Mode;
 
 #define IsBootstrapProcessingMode() (Mode == BootstrapProcessing)
 #define IsInitProcessingMode()		(Mode == InitProcessing)
@@ -490,13 +498,17 @@ extern void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 extern void BaseInit(void);
 
 /* in utils/init/miscinit.c */
-extern thread_local PGDLLIMPORT bool IgnoreSystemIndexes;
-extern PG_SHARED PGDLLIMPORT bool process_shared_preload_libraries_in_progress;
-extern PG_SHARED PGDLLIMPORT bool process_shared_preload_libraries_done;
-extern thread_local PGDLLIMPORT bool process_shmem_requests_in_progress;
-extern thread_local PGDLLIMPORT char *session_preload_libraries_string;
-extern thread_local PGDLLIMPORT char *shared_preload_libraries_string;
-extern thread_local PGDLLIMPORT char *local_preload_libraries_string;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool IgnoreSystemIndexes;
+extern thread_local /*SHARED*/ PGDLLIMPORT bool
+    process_shared_preload_libraries_in_progress;
+extern thread_local /*SHARED*/ PGDLLIMPORT bool
+    process_shared_preload_libraries_done;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
+    process_shmem_requests_in_progress;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char
+    *session_preload_libraries_string;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *shared_preload_libraries_string;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *local_preload_libraries_string;
 
 extern void CreateDataDirLockFile(bool amPostmaster);
 extern void CreateSocketLockFile(const char *socketfile, bool amPostmaster,
@@ -512,7 +524,8 @@ extern void pg_bindtextdomain(const char *domain);
 extern bool has_rolreplication(Oid roleid);
 
 typedef void (*shmem_request_hook_type)(void);
-extern PG_SHARED PGDLLIMPORT shmem_request_hook_type shmem_request_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT shmem_request_hook_type
+    shmem_request_hook;
 
 /* in executor/nodeHash.c */
 extern size_t get_hash_memory_limit(void);

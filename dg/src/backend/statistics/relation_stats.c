@@ -45,7 +45,7 @@ enum relation_stats_argnum {
   NUM_RELATION_STATS_ARGS
 };
 
-static thread_local struct StatsArgInfo relarginfo[] = {
+static thread_local /*LOCAL*/ struct StatsArgInfo relarginfo[] = {
     [RELSCHEMA_ARG] = {"schemaname", TEXTOID},
     [RELNAME_ARG] = {"relname", TEXTOID},
     [RELPAGES_ARG] = {"relpages", INT4OID},

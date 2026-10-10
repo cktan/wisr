@@ -19,7 +19,7 @@
 
 struct PlannedStmt; /* avoid including plannodes.h here */
 
-extern thread_local PGDLLIMPORT Portal ActivePortal;
+extern thread_local /*LOCAL*/ PGDLLIMPORT Portal ActivePortal;
 
 extern PortalStrategy ChoosePortalStrategy(List *stmts);
 

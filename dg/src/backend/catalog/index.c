@@ -80,9 +80,9 @@
 #include "utils/tuplesort.h"
 
 /* Potentially set by pg_upgrade_support functions */
-thread_local Oid binary_upgrade_next_index_pg_class_oid = InvalidOid;
-thread_local RelFileNumber binary_upgrade_next_index_pg_class_relfilenumber =
-    InvalidRelFileNumber;
+thread_local /*LOCAL*/ Oid binary_upgrade_next_index_pg_class_oid = InvalidOid;
+thread_local /*LOCAL*/ RelFileNumber
+    binary_upgrade_next_index_pg_class_relfilenumber = InvalidRelFileNumber;
 
 /* non-export function prototypes */
 static bool relationHasPrimaryKey(Relation rel);
@@ -3701,10 +3701,10 @@ bool reindex_relation(const ReindexStmt *stmt, Oid relid, int flags,
  * ----------------------------------------------------------------
  */
 
-static thread_local Oid currentlyReindexedHeap = InvalidOid;
-static thread_local Oid currentlyReindexedIndex = InvalidOid;
-static thread_local List *pendingReindexedIndexes = NIL;
-static thread_local int reindexingNestLevel = 0;
+static thread_local /*LOCAL*/ Oid currentlyReindexedHeap = InvalidOid;
+static thread_local /*LOCAL*/ Oid currentlyReindexedIndex = InvalidOid;
+static thread_local /*LOCAL*/ List *pendingReindexedIndexes = NIL;
+static thread_local /*LOCAL*/ int reindexingNestLevel = 0;
 
 /*
  * ReindexIsProcessingHeap

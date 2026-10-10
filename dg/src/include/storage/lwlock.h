@@ -68,7 +68,7 @@ typedef union LWLockPadded {
   char pad[LWLOCK_PADDED_SIZE];
 } LWLockPadded;
 
-extern PG_SHARED PGDLLIMPORT LWLockPadded *MainLWLockArray;
+extern thread_local /*SHARED*/ PGDLLIMPORT LWLockPadded *MainLWLockArray;
 
 /* struct for storing named tranche information */
 typedef struct NamedLWLockTranche {
@@ -76,8 +76,9 @@ typedef struct NamedLWLockTranche {
   char *trancheName;
 } NamedLWLockTranche;
 
-extern PG_SHARED PGDLLIMPORT NamedLWLockTranche *NamedLWLockTrancheArray;
-extern PG_SHARED PGDLLIMPORT int NamedLWLockTrancheRequests;
+extern thread_local /*SHARED*/ PGDLLIMPORT NamedLWLockTranche
+    *NamedLWLockTrancheArray;
+extern thread_local /*SHARED*/ PGDLLIMPORT int NamedLWLockTrancheRequests;
 
 /*
  * It's a bit odd to declare NUM_BUFFER_PARTITIONS and NUM_LOCK_PARTITIONS

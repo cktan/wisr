@@ -137,12 +137,13 @@ typedef bool (*get_relation_stats_hook_type)(PlannerInfo *root,
                                              RangeTblEntry *rte,
                                              AttrNumber attnum,
                                              VariableStatData *vardata);
-extern PG_SHARED PGDLLIMPORT get_relation_stats_hook_type
+extern thread_local /*SHARED*/ PGDLLIMPORT get_relation_stats_hook_type
     get_relation_stats_hook;
 typedef bool (*get_index_stats_hook_type)(PlannerInfo *root, Oid indexOid,
                                           AttrNumber indexattnum,
                                           VariableStatData *vardata);
-extern PG_SHARED PGDLLIMPORT get_index_stats_hook_type get_index_stats_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT get_index_stats_hook_type
+    get_index_stats_hook;
 
 /* Functions in selfuncs.c */
 

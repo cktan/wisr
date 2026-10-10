@@ -188,7 +188,8 @@ static uint8 *scram_mock_salt(const char *username,
 /*
  * The number of iterations to use when generating new secrets.
  */
-thread_local int scram_sha_256_iterations = SCRAM_SHA_256_DEFAULT_ITERATIONS;
+thread_local /*LOCAL*/ int scram_sha_256_iterations =
+    SCRAM_SHA_256_DEFAULT_ITERATIONS;
 
 /*
  * Get a list of SASL mechanisms that this module supports.
@@ -755,7 +756,7 @@ static bool is_scram_printable(char *p) {
  * The returned pointer points to a static buffer.
  */
 static char *sanitize_char(char c) {
-  static thread_local char buf[5];
+  static thread_local /*LOCAL*/ char buf[5];
 
   if (c >= 0x21 && c <= 0x7E)
     snprintf(buf, sizeof(buf), "'%c'", c);
@@ -773,7 +774,7 @@ static char *sanitize_char(char c) {
  * The returned pointer points to a static buffer.
  */
 static char *sanitize_str(const char *s) {
-  static thread_local char buf[30 + 1];
+  static thread_local /*LOCAL*/ char buf[30 + 1];
   int i;
 
   for (i = 0; i < sizeof(buf) - 1; i++) {
@@ -1394,7 +1395,7 @@ static char *build_server_final_message(scram_state *state) {
 static uint8 *scram_mock_salt(const char *username,
                               pg_cryptohash_type hash_type, int key_length) {
   pg_cryptohash_ctx *ctx;
-  static thread_local uint8 sha_digest[SCRAM_MAX_KEY_LEN];
+  static thread_local /*LOCAL*/ uint8 sha_digest[SCRAM_MAX_KEY_LEN];
   char *mock_auth_nonce = GetMockAuthenticationNonce();
 
   /*

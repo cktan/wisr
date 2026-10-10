@@ -42,7 +42,7 @@ StoreAttrDefault(Relation rel, AttrNumber attnum,
 	Relation	adrel;
 	HeapTuple	tuple;
 	Datum		values[Natts_pg_attrdef];
-	static thread_local bool nulls[Natts_pg_attrdef] = {false, false, false, false};
+	static thread_local /*LOCAL*/ bool nulls[Natts_pg_attrdef] = {false, false, false, false};
 	Relation	attrrel;
 	HeapTuple	atttup;
 	Form_pg_attribute attStruct;

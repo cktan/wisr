@@ -175,7 +175,7 @@ typedef struct InvalMessageArray {
   int maxmsgs;                     /* current allocated size of array */
 } InvalMessageArray;
 
-static thread_local InvalMessageArray InvalMessageArrays[2];
+static thread_local /*LOCAL*/ InvalMessageArray InvalMessageArrays[2];
 
 /* Control information for one logical group of messages */
 typedef struct InvalidationMsgsGroup {
@@ -245,12 +245,12 @@ typedef struct TransInvalidationInfo {
   int my_level;
 } TransInvalidationInfo;
 
-static thread_local TransInvalidationInfo *transInvalInfo = NULL;
+static thread_local /*LOCAL*/ TransInvalidationInfo *transInvalInfo = NULL;
 
-static thread_local InvalidationInfo *inplaceInvalInfo = NULL;
+static thread_local /*LOCAL*/ InvalidationInfo *inplaceInvalInfo = NULL;
 
 /* GUC storage */
-thread_local int debug_discard_caches = 0;
+thread_local /*LOCAL*/ int debug_discard_caches = 0;
 
 /*
  * Dynamically-registered callback functions.  Current implementation
@@ -266,30 +266,30 @@ thread_local int debug_discard_caches = 0;
 #define MAX_RELCACHE_CALLBACKS 10
 #define MAX_RELSYNC_CALLBACKS 10
 
-static thread_local struct SYSCACHECALLBACK {
+static thread_local /*LOCAL*/ struct SYSCACHECALLBACK {
   int16 id;   /* cache number */
   int16 link; /* next callback index+1 for same cache */
   SyscacheCallbackFunction function;
   Datum arg;
 } syscache_callback_list[MAX_SYSCACHE_CALLBACKS];
 
-static thread_local int16 syscache_callback_links[SysCacheSize];
+static thread_local /*LOCAL*/ int16 syscache_callback_links[SysCacheSize];
 
-static thread_local int syscache_callback_count = 0;
+static thread_local /*LOCAL*/ int syscache_callback_count = 0;
 
-static thread_local struct RELCACHECALLBACK {
+static thread_local /*LOCAL*/ struct RELCACHECALLBACK {
   RelcacheCallbackFunction function;
   Datum arg;
 } relcache_callback_list[MAX_RELCACHE_CALLBACKS];
 
-static thread_local int relcache_callback_count = 0;
+static thread_local /*LOCAL*/ int relcache_callback_count = 0;
 
-static thread_local struct RELSYNCCALLBACK {
+static thread_local /*LOCAL*/ struct RELSYNCCALLBACK {
   RelSyncCallbackFunction function;
   Datum arg;
 } relsync_callback_list[MAX_RELSYNC_CALLBACKS];
 
-static thread_local int relsync_callback_count = 0;
+static thread_local /*LOCAL*/ int relsync_callback_count = 0;
 
 /* ----------------------------------------------------------------
  *				Invalidation subgroup support functions

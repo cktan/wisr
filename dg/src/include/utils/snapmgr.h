@@ -18,15 +18,15 @@
 #include "utils/resowner.h"
 #include "utils/snapshot.h"
 
-extern thread_local PGDLLIMPORT bool FirstSnapshotSet;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool FirstSnapshotSet;
 
-extern thread_local PGDLLIMPORT TransactionId TransactionXmin;
-extern thread_local PGDLLIMPORT TransactionId RecentXmin;
+extern thread_local /*LOCAL*/ PGDLLIMPORT TransactionId TransactionXmin;
+extern thread_local /*LOCAL*/ PGDLLIMPORT TransactionId RecentXmin;
 
 /* Variables representing various special snapshot semantics */
-extern thread_local PGDLLIMPORT SnapshotData SnapshotSelfData;
-extern thread_local PGDLLIMPORT SnapshotData SnapshotAnyData;
-extern thread_local PGDLLIMPORT SnapshotData SnapshotToastData;
+extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotSelfData;
+extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotAnyData;
+extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotToastData;
 
 #define SnapshotSelf		(&SnapshotSelfData)
 #define SnapshotAny			(&SnapshotAnyData)

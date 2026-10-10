@@ -69,7 +69,7 @@ static uint32 local_my_wait_event_info;
 uint32 *my_wait_event_info = &local_my_wait_event_info;
 #endif
 
-static thread_local int spins_per_delay = DEFAULT_SPINS_PER_DELAY;
+static thread_local /*LOCAL*/ int spins_per_delay = DEFAULT_SPINS_PER_DELAY;
 
 /*
  * s_lock_stuck() - complain about a stuck spinlock

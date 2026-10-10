@@ -18,7 +18,7 @@
 #include "datatype/timestamp.h"
 
 /* these variables are GUC parameters related to XLOG */
-extern thread_local PGDLLIMPORT bool log_checkpoints;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_checkpoints;
 
 /*
  * OR-able request flag bits for checkpoints.  The "cause" bits are used only
@@ -57,7 +57,7 @@ typedef struct CheckpointStatsData {
                               * entire sync phase. */
 } CheckpointStatsData;
 
-extern thread_local PGDLLIMPORT CheckpointStatsData CheckpointStats;
+extern thread_local /*LOCAL*/ PGDLLIMPORT CheckpointStatsData CheckpointStats;
 
 extern char *GetMockAuthenticationNonce(void);
 extern bool DataChecksumsEnabled(void);

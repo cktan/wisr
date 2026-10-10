@@ -28,7 +28,7 @@
 #include "nodes/value.h"
 
 /* Static state for pg_strtok */
-static thread_local const char *pg_strtok_ptr = NULL;
+static thread_local /*LOCAL*/ const char *pg_strtok_ptr = NULL;
 
 /* State flag that determines how readfuncs.c should treat location fields */
 #ifdef DEBUG_NODE_TESTS_ENABLED

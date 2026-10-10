@@ -41,7 +41,7 @@
  * particularly bad happens: in the worst case they deadlock, causing one of
  * the transactions to abort.
  */
-static thread_local uint32 speculativeInsertionToken = 0;
+static thread_local /*LOCAL*/ uint32 speculativeInsertionToken = 0;
 
 /*
  * Struct to hold context info for transaction lock waits.

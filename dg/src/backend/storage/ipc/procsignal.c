@@ -99,8 +99,8 @@ struct ProcSignalHeader {
 #define BARRIER_CLEAR_BIT(flags, type) \
 	((flags) &= ~(((uint32) 1) << (uint32) (type)))
 
-PG_SHARED NON_EXEC_STATIC ProcSignalHeader *ProcSignal = NULL;
-static thread_local ProcSignalSlot *MyProcSignalSlot = NULL;
+thread_local /*SHARED*/ NON_EXEC_STATIC ProcSignalHeader *ProcSignal = NULL;
+static thread_local /*LOCAL*/ ProcSignalSlot *MyProcSignalSlot = NULL;
 
 static bool CheckProcSignal(ProcSignalReason reason);
 static void CleanupProcSignalState(int status, Datum arg);

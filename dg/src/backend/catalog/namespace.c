@@ -133,36 +133,36 @@
 
 /* These variables define the actually active state: */
 
-static thread_local List *activeSearchPath = NIL;
+static thread_local /*LOCAL*/ List *activeSearchPath = NIL;
 
 /* default place to create stuff; if InvalidOid, no default */
-static thread_local Oid activeCreationNamespace = InvalidOid;
+static thread_local /*LOCAL*/ Oid activeCreationNamespace = InvalidOid;
 
 /* if true, activeCreationNamespace is wrong, it should be temp namespace */
-static thread_local bool activeTempCreationPending = false;
+static thread_local /*LOCAL*/ bool activeTempCreationPending = false;
 
 /* current generation counter; make sure this is never zero */
-static thread_local uint64 activePathGeneration = 1;
+static thread_local /*LOCAL*/ uint64 activePathGeneration = 1;
 
 /* These variables are the values last derived from namespace_search_path: */
 
-static thread_local List *baseSearchPath = NIL;
+static thread_local /*LOCAL*/ List *baseSearchPath = NIL;
 
-static thread_local Oid baseCreationNamespace = InvalidOid;
+static thread_local /*LOCAL*/ Oid baseCreationNamespace = InvalidOid;
 
-static thread_local bool baseTempCreationPending = false;
+static thread_local /*LOCAL*/ bool baseTempCreationPending = false;
 
-static thread_local Oid namespaceUser = InvalidOid;
+static thread_local /*LOCAL*/ Oid namespaceUser = InvalidOid;
 
 /* The above four values are valid only if baseSearchPathValid */
-static thread_local bool baseSearchPathValid = true;
+static thread_local /*LOCAL*/ bool baseSearchPathValid = true;
 
 /*
  * Storage for search path cache.  Clear searchPathCacheValid as a simple
  * way to invalidate *all* the cache entries, not just the active one.
  */
-static thread_local bool searchPathCacheValid = false;
-static thread_local MemoryContext SearchPathCacheContext = NULL;
+static thread_local /*LOCAL*/ bool searchPathCacheValid = false;
+static thread_local /*LOCAL*/ MemoryContext SearchPathCacheContext = NULL;
 
 typedef struct SearchPathCacheKey {
   const char *searchPath;
@@ -196,18 +196,18 @@ typedef struct SearchPathCacheEntry {
  * we either haven't made the TEMP namespace yet, or have successfully
  * committed its creation, depending on whether myTempNamespace is valid.
  */
-static thread_local Oid myTempNamespace = InvalidOid;
+static thread_local /*LOCAL*/ Oid myTempNamespace = InvalidOid;
 
-static thread_local Oid myTempToastNamespace = InvalidOid;
+static thread_local /*LOCAL*/ Oid myTempToastNamespace = InvalidOid;
 
-static thread_local SubTransactionId myTempNamespaceSubID =
+static thread_local /*LOCAL*/ SubTransactionId myTempNamespaceSubID =
     InvalidSubTransactionId;
 
 /*
  * This is the user's textual search path specification --- it's the value
  * of the GUC variable 'search_path'.
  */
-thread_local char *namespace_search_path = NULL;
+thread_local /*LOCAL*/ char *namespace_search_path = NULL;
 
 /* Local functions */
 static bool RelationIsVisibleExt(Oid relid, bool *is_missing);
@@ -290,8 +290,9 @@ static inline bool spcachekey_equal(SearchPathCacheKey a,
  */
 #define SPCACHE_RESET_THRESHOLD		256
 
-static thread_local nsphash_hash *SearchPathCache = NULL;
-static thread_local SearchPathCacheEntry *LastSearchPathCacheEntry = NULL;
+static thread_local /*LOCAL*/ nsphash_hash *SearchPathCache = NULL;
+static thread_local /*LOCAL*/ SearchPathCacheEntry *LastSearchPathCacheEntry =
+    NULL;
 
 /*
  * Create or reset search_path cache as necessary.

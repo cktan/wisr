@@ -824,7 +824,7 @@ Expr *make_scalar_array_op(ParseState *pstate, List *opname, bool useOr,
  */
 
 /* The operator cache hashtable */
-static thread_local HTAB *OprCacheHash = NULL;
+static thread_local /*LOCAL*/ HTAB *OprCacheHash = NULL;
 
 /*
  * make_oper_cache_key

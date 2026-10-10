@@ -277,14 +277,14 @@ typedef struct LocalPgBackendStatus {
  * GUC parameters
  * ----------
  */
-extern thread_local PGDLLIMPORT bool pgstat_track_activities;
-extern thread_local PGDLLIMPORT int pgstat_track_activity_query_size;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool pgstat_track_activities;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int pgstat_track_activity_query_size;
 
 /* ----------
  * Other global variables
  * ----------
  */
-extern thread_local PGDLLIMPORT PgBackendStatus *MyBEEntry;
+extern thread_local /*LOCAL*/ PGDLLIMPORT PgBackendStatus *MyBEEntry;
 
 /* ----------
  * Functions called from postmaster

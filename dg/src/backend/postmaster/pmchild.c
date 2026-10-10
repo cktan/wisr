@@ -47,13 +47,13 @@ typedef struct PMChildPool {
   dlist_head freelist; /* currently unused PMChild entries */
 } PMChildPool;
 
-static PG_SHARED PMChildPool pmchild_pools[BACKEND_NUM_TYPES];
-PG_SHARED NON_EXEC_STATIC int num_pmchild_slots = 0;
+static thread_local /*SHARED*/ PMChildPool pmchild_pools[BACKEND_NUM_TYPES];
+thread_local /*SHARED*/ NON_EXEC_STATIC int num_pmchild_slots = 0;
 
 /*
  * List of active child processes.  This includes dead-end children.
  */
-PG_SHARED dlist_head ActiveChildList;
+thread_local /*SHARED*/ dlist_head ActiveChildList;
 
 /*
  * MaxLivePostmasterChildren

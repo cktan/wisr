@@ -40,7 +40,7 @@
 /*
  * GUC parameter
  */
-thread_local bool Array_nulls = true;
+thread_local /*LOCAL*/ bool Array_nulls = true;
 
 /*
  * Local definitions

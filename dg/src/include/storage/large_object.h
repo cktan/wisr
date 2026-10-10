@@ -75,7 +75,7 @@ typedef struct LargeObjectDesc {
 /*
  * GUC: backwards-compatibility flag to suppress LO permission checks
  */
-extern thread_local PGDLLIMPORT bool lo_compat_privileges;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool lo_compat_privileges;
 
 /*
  * Function definitions...

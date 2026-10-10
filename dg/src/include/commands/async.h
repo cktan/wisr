@@ -15,9 +15,10 @@
 
 #include <signal.h>
 
-extern thread_local PGDLLIMPORT bool Trace_notify;
-extern thread_local PGDLLIMPORT int max_notify_queue_pages;
-extern thread_local PGDLLIMPORT volatile sig_atomic_t notifyInterruptPending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool Trace_notify;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_notify_queue_pages;
+extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+    notifyInterruptPending;
 
 extern Size AsyncShmemSize(void);
 extern void AsyncShmemInit(void);

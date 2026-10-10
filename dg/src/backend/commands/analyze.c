@@ -65,11 +65,11 @@ typedef struct AnlIndexData {
 } AnlIndexData;
 
 /* Default statistics target (GUC parameter) */
-thread_local int default_statistics_target = 100;
+thread_local /*LOCAL*/ int default_statistics_target = 100;
 
 /* A few variables that don't seem worth passing around as parameters */
-static thread_local MemoryContext anl_context = NULL;
-static thread_local BufferAccessStrategy vac_strategy;
+static thread_local /*LOCAL*/ MemoryContext anl_context = NULL;
+static thread_local /*LOCAL*/ BufferAccessStrategy vac_strategy;
 
 static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
                            AcquireSampleRowsFunc acquirefunc,

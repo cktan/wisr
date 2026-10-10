@@ -105,8 +105,8 @@
 #include "utils/xml.h"
 
 /* GUC variables */
-thread_local int xmlbinary = XMLBINARY_BASE64;
-thread_local int xmloption = XMLOPTION_CONTENT;
+thread_local /*LOCAL*/ int xmlbinary = XMLBINARY_BASE64;
+thread_local /*LOCAL*/ int xmloption = XMLOPTION_CONTENT;
 
 #ifdef USE_LIBXML
 

@@ -3,21 +3,21 @@
 cxx_thread_local.py -- make every writable global thread_local.
 
 digres is to run each session in a thread of one process
-(PLAN.md section 3). A global or static that a session writes must
-then have one copy a thread, which is what thread_local gives. One
-that every session shares is marked PG_SHARED (c.h) instead, which
-puts it in a section of its own, .pg_shared.
+(PLAN.md section 3). Every writable global or static is then
+thread_local, one copy a thread, and a comment after the keyword
+tells what it is (c.h): /*SHARED*/ for one every session reads as
+its parent left it, /*LOCAL*/ for one a session keeps for itself.
 
 The objects are the truth, not a search of the source: a variable
-is writable and unmarked when it lies in .bss, .data, .data.rel or
-.data.rel.local. A thread_local one lies in .tbss or .tdata.
+is writable and not thread_local when it lies in .bss, .data,
+.data.rel or .data.rel.local. A thread_local one lies in .tbss or .tdata.
 
     cxx_thread_local.py --apply SRC LIST
-        mark each writable variable under SRC: PG_SHARED if LIST
-        names it, thread_local if not, on its definition and on
+        mark each writable variable under SRC thread_local, SHARED
+        if LIST names it, LOCAL if not, on its definition and on
         every extern declaration of it
     cxx_thread_local.py --check SRC
-        fail if a writable variable is unmarked, or if an object
+        fail if a writable variable is not thread_local, or if an object
         has a static initialiser
 
 LIST has one variable a line, the object named from SRC and the
@@ -31,11 +31,11 @@ after it. The line to write is found from nm -l, which names the
 line of each definition. A declaration of two variables marked
 differently is not written, and is listed.
 
-The second check is there because this is C++: a shared table whose
-initialiser holds the address of a thread_local, as the GUC tables
-do, compiles, and is filled once by a static initialiser, with the
-address of the first thread's copy. No object has a static
-initialiser today, so any is an error.
+The second check is there because this is C++: a table that is not
+thread_local, whose initialiser holds the address of a thread_local,
+as the GUC tables do, compiles, and is filled once by a static
+initialiser, with the address of the first thread's copy. No object
+has a static initialiser today, so any is an error.
 """
 import os
 import re
@@ -91,11 +91,11 @@ def read_list(path):
 
 
 def check(src):
-    """Report each writable variable left unmarked, and each static
+    """Report each writable variable not thread_local, and each static
     initialiser; 1 if there is any."""
     found, init = writable(src, True)
     for key in sorted(found):
-        print("neither thread_local nor PG_SHARED: %s %s" % key)
+        print("not thread_local: %s %s" % key)
     for obj in sorted(init):
         print("static initialiser: %s" % obj)
     return 1 if found or init else 0
@@ -263,7 +263,7 @@ def real_path(src, path):
 
 
 def apply(src, list_path):
-    """Mark every writable variable PG_SHARED or thread_local."""
+    """Mark every writable variable thread_local, SHARED or LOCAL."""
     shared = read_list(list_path)
     plain, _ = writable(src, False)
     names = demangle([sym for _, sym in plain])
@@ -285,8 +285,8 @@ def apply(src, list_path):
         return files[path]
 
     for obj, sym, pretty_name in todo:
-        mark = "PG_SHARED " if (obj, pretty_name) in shared \
-            else "thread_local "
+        mark = "thread_local /*SHARED*/ " if (obj, pretty_name) in shared \
+            else "thread_local /*LOCAL*/ "
         loc = where.get((obj, sym))
         path = loc and real_path(src, loc[0])
         if not path:

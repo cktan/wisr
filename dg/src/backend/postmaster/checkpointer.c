@@ -125,7 +125,7 @@ typedef struct {
   CheckpointerRequest requests[FLEXIBLE_ARRAY_MEMBER];
 } CheckpointerShmemStruct;
 
-static PG_SHARED CheckpointerShmemStruct *CheckpointerShmem;
+static thread_local /*SHARED*/ CheckpointerShmemStruct *CheckpointerShmem;
 
 /* interval for calling AbsorbSyncRequests in CheckpointWriteDelay */
 #define WRITES_PER_ABSORB		1000
@@ -136,20 +136,20 @@ static PG_SHARED CheckpointerShmemStruct *CheckpointerShmem;
 /*
  * GUC parameters
  */
-thread_local int CheckPointTimeout = 300;
-thread_local double CheckPointCompletionTarget = 0.9;
+thread_local /*LOCAL*/ int CheckPointTimeout = 300;
+thread_local /*LOCAL*/ double CheckPointCompletionTarget = 0.9;
 
 /*
  * Private state
  */
-static thread_local bool ckpt_active = false;
-static thread_local volatile sig_atomic_t ShutdownXLOGPending = false;
+static thread_local /*LOCAL*/ bool ckpt_active = false;
+static thread_local /*LOCAL*/ volatile sig_atomic_t ShutdownXLOGPending = false;
 
 /* these values are valid when ckpt_active is true: */
-static thread_local pg_time_t ckpt_start_time;
-static thread_local double ckpt_cached_elapsed;
+static thread_local /*LOCAL*/ pg_time_t ckpt_start_time;
+static thread_local /*LOCAL*/ double ckpt_cached_elapsed;
 
-static thread_local pg_time_t last_checkpoint_time;
+static thread_local /*LOCAL*/ pg_time_t last_checkpoint_time;
 
 /* Prototypes for private functions */
 
@@ -586,7 +586,7 @@ static bool ImmediateCheckpointRequested(void) {
  * fraction between 0.0 meaning none, and 1.0 meaning all done.
  */
 void CheckpointWriteDelay(int flags, double progress) {
-  static thread_local int absorb_counter = WRITES_PER_ABSORB;
+  static thread_local /*LOCAL*/ int absorb_counter = WRITES_PER_ABSORB;
 
   /* Do nothing if checkpoint is being executed by non-checkpointer process */
   if (!AmCheckpointerProcess())
@@ -1110,7 +1110,7 @@ static void UpdateSharedMemoryConfig(void) {
  * per checkpoint cycle by asynchronously checking for checkpoint completion.
  */
 bool FirstCallSinceLastCheckpoint(void) {
-  static thread_local int ckpt_done = 0;
+  static thread_local /*LOCAL*/ int ckpt_done = 0;
   int new_done;
   bool FirstCall = false;
 

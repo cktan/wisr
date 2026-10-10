@@ -382,12 +382,12 @@ extern const struct config_enum_entry dynamic_shared_memory_options[];
 /*
  * GUC option variables that are exported from this module
  */
-thread_local bool AllowAlterSystem = true;
-thread_local bool log_duration = false;
-thread_local bool Debug_print_plan = false;
-thread_local bool Debug_print_parse = false;
-thread_local bool Debug_print_rewritten = false;
-thread_local bool Debug_pretty_print = true;
+thread_local /*LOCAL*/ bool AllowAlterSystem = true;
+thread_local /*LOCAL*/ bool log_duration = false;
+thread_local /*LOCAL*/ bool Debug_print_plan = false;
+thread_local /*LOCAL*/ bool Debug_print_parse = false;
+thread_local /*LOCAL*/ bool Debug_print_rewritten = false;
+thread_local /*LOCAL*/ bool Debug_pretty_print = true;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
 bool Debug_copy_parse_plan_trees;
@@ -395,53 +395,54 @@ bool Debug_write_read_parse_plan_trees;
 bool Debug_raw_expression_coverage_test;
 #endif
 
-thread_local bool log_parser_stats = false;
-thread_local bool log_planner_stats = false;
-thread_local bool log_executor_stats = false;
-thread_local bool log_statement_stats = false; /* this is sort of all three
-                                                * above together */
-thread_local bool log_btree_build_stats = false;
-thread_local char *event_source;
+thread_local /*LOCAL*/ bool log_parser_stats = false;
+thread_local /*LOCAL*/ bool log_planner_stats = false;
+thread_local /*LOCAL*/ bool log_executor_stats = false;
+thread_local /*LOCAL*/ bool log_statement_stats =
+    false; /* this is sort of all three
+            * above together */
+thread_local /*LOCAL*/ bool log_btree_build_stats = false;
+thread_local /*LOCAL*/ char *event_source;
 
-thread_local bool row_security;
-thread_local bool check_function_bodies = true;
+thread_local /*LOCAL*/ bool row_security;
+thread_local /*LOCAL*/ bool check_function_bodies = true;
 
 /*
  * This GUC exists solely for backward compatibility, check its definition for
  * details.
  */
-static thread_local bool default_with_oids = false;
+static thread_local /*LOCAL*/ bool default_with_oids = false;
 
-thread_local bool current_role_is_superuser;
+thread_local /*LOCAL*/ bool current_role_is_superuser;
 
-thread_local int log_min_error_statement = ERROR;
-thread_local int log_min_messages = WARNING;
-thread_local int client_min_messages = NOTICE;
-thread_local int log_min_duration_sample = -1;
-thread_local int log_min_duration_statement = -1;
-thread_local int log_parameter_max_length = -1;
-thread_local int log_parameter_max_length_on_error = 0;
-thread_local int log_temp_files = -1;
-thread_local double log_statement_sample_rate = 1.0;
-thread_local double log_xact_sample_rate = 0;
-thread_local char *backtrace_functions;
+thread_local /*LOCAL*/ int log_min_error_statement = ERROR;
+thread_local /*LOCAL*/ int log_min_messages = WARNING;
+thread_local /*LOCAL*/ int client_min_messages = NOTICE;
+thread_local /*LOCAL*/ int log_min_duration_sample = -1;
+thread_local /*LOCAL*/ int log_min_duration_statement = -1;
+thread_local /*LOCAL*/ int log_parameter_max_length = -1;
+thread_local /*LOCAL*/ int log_parameter_max_length_on_error = 0;
+thread_local /*LOCAL*/ int log_temp_files = -1;
+thread_local /*LOCAL*/ double log_statement_sample_rate = 1.0;
+thread_local /*LOCAL*/ double log_xact_sample_rate = 0;
+thread_local /*LOCAL*/ char *backtrace_functions;
 
-thread_local int temp_file_limit = -1;
+thread_local /*LOCAL*/ int temp_file_limit = -1;
 
-thread_local int num_temp_buffers = 1024;
+thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 
-thread_local char *cluster_name = "";
-thread_local char *ConfigFileName;
-thread_local char *HbaFileName;
-thread_local char *IdentFileName;
-thread_local char *external_pid_file;
+thread_local /*LOCAL*/ char *cluster_name = "";
+thread_local /*LOCAL*/ char *ConfigFileName;
+thread_local /*LOCAL*/ char *HbaFileName;
+thread_local /*LOCAL*/ char *IdentFileName;
+thread_local /*LOCAL*/ char *external_pid_file;
 
-thread_local char *application_name;
+thread_local /*LOCAL*/ char *application_name;
 
-thread_local int tcp_keepalives_idle;
-thread_local int tcp_keepalives_interval;
-thread_local int tcp_keepalives_count;
-thread_local int tcp_user_timeout;
+thread_local /*LOCAL*/ int tcp_keepalives_idle;
+thread_local /*LOCAL*/ int tcp_keepalives_interval;
+thread_local /*LOCAL*/ int tcp_keepalives_count;
+thread_local /*LOCAL*/ int tcp_user_timeout;
 
 /*
  * SSL renegotiation was been removed in PostgreSQL 9.5, but we tolerate it
@@ -449,64 +450,64 @@ thread_local int tcp_user_timeout;
  * This avoids breaking compatibility with clients that have never supported
  * renegotiation and therefore always try to zero it.
  */
-static thread_local int ssl_renegotiation_limit;
+static thread_local /*LOCAL*/ int ssl_renegotiation_limit;
 
 /*
  * This really belongs in pg_shmem.c, but is defined here so that it doesn't
  * need to be duplicated in all the different implementations of pg_shmem.c.
  */
-thread_local int huge_pages = HUGE_PAGES_TRY;
-thread_local int huge_page_size;
-thread_local int huge_pages_status = HUGE_PAGES_UNKNOWN;
+thread_local /*LOCAL*/ int huge_pages = HUGE_PAGES_TRY;
+thread_local /*LOCAL*/ int huge_page_size;
+thread_local /*LOCAL*/ int huge_pages_status = HUGE_PAGES_UNKNOWN;
 
 /*
  * These variables are all dummies that don't do anything, except in some
  * cases provide the value for SHOW to display.  The real state is elsewhere
  * and is kept in sync by assign_hooks.
  */
-static thread_local char *syslog_ident_str;
-static thread_local double phony_random_seed;
-static thread_local char *client_encoding_string;
-static thread_local char *datestyle_string;
-static thread_local char *server_encoding_string;
-static thread_local char *server_version_string;
-static thread_local int server_version_num;
-static thread_local char *debug_io_direct_string;
-static thread_local char *restrict_nonsystem_relation_kind_string;
+static thread_local /*LOCAL*/ char *syslog_ident_str;
+static thread_local /*LOCAL*/ double phony_random_seed;
+static thread_local /*LOCAL*/ char *client_encoding_string;
+static thread_local /*LOCAL*/ char *datestyle_string;
+static thread_local /*LOCAL*/ char *server_encoding_string;
+static thread_local /*LOCAL*/ char *server_version_string;
+static thread_local /*LOCAL*/ int server_version_num;
+static thread_local /*LOCAL*/ char *debug_io_direct_string;
+static thread_local /*LOCAL*/ char *restrict_nonsystem_relation_kind_string;
 
 #ifdef HAVE_SYSLOG
 #define DEFAULT_SYSLOG_FACILITY LOG_LOCAL0
 #else
 #define DEFAULT_SYSLOG_FACILITY 0
 #endif
-static thread_local int syslog_facility = DEFAULT_SYSLOG_FACILITY;
+static thread_local /*LOCAL*/ int syslog_facility = DEFAULT_SYSLOG_FACILITY;
 
-static thread_local char *timezone_string;
-static thread_local char *log_timezone_string;
-static thread_local char *timezone_abbreviations_string;
-static thread_local char *data_directory;
-static thread_local char *session_authorization_string;
-static thread_local int max_function_args;
-static thread_local int max_index_keys;
-static thread_local int max_identifier_length;
-static thread_local int block_size;
-static thread_local int segment_size;
-static thread_local int shared_memory_size_mb;
-static thread_local int shared_memory_size_in_huge_pages;
-static thread_local int wal_block_size;
-static thread_local int num_os_semaphores;
-static thread_local bool data_checksums;
-static thread_local bool integer_datetimes;
+static thread_local /*LOCAL*/ char *timezone_string;
+static thread_local /*LOCAL*/ char *log_timezone_string;
+static thread_local /*LOCAL*/ char *timezone_abbreviations_string;
+static thread_local /*LOCAL*/ char *data_directory;
+static thread_local /*LOCAL*/ char *session_authorization_string;
+static thread_local /*LOCAL*/ int max_function_args;
+static thread_local /*LOCAL*/ int max_index_keys;
+static thread_local /*LOCAL*/ int max_identifier_length;
+static thread_local /*LOCAL*/ int block_size;
+static thread_local /*LOCAL*/ int segment_size;
+static thread_local /*LOCAL*/ int shared_memory_size_mb;
+static thread_local /*LOCAL*/ int shared_memory_size_in_huge_pages;
+static thread_local /*LOCAL*/ int wal_block_size;
+static thread_local /*LOCAL*/ int num_os_semaphores;
+static thread_local /*LOCAL*/ bool data_checksums;
+static thread_local /*LOCAL*/ bool integer_datetimes;
 
 #ifdef USE_ASSERT_CHECKING
 #define DEFAULT_ASSERT_ENABLED true
 #else
 #define DEFAULT_ASSERT_ENABLED false
 #endif
-static thread_local bool assert_enabled = DEFAULT_ASSERT_ENABLED;
+static thread_local /*LOCAL*/ bool assert_enabled = DEFAULT_ASSERT_ENABLED;
 
 /* should be static, but commands/variable.c needs to get at this */
-thread_local char *role_string;
+thread_local /*LOCAL*/ char *role_string;
 
 /*
  * Displayable names for context types (enum GucContext)
@@ -650,7 +651,7 @@ StaticAssertDecl(lengthof(config_type_names) == (PGC_ENUM + 1),
  *	  variable_is_guc_list_quote() in src/bin/pg_dump/dumputils.c.
  */
 
-thread_local struct config_bool ConfigureNamesBool[] = {
+thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
     {{"enable_seqscan", PGC_USERSET, QUERY_TUNING_METHOD,
       gettext_noop("Enables the planner's use of sequential-scan plans."), NULL,
       GUC_EXPLAIN},
@@ -1606,7 +1607,7 @@ thread_local struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL}};
 
-thread_local struct config_int ConfigureNamesInt[] = {
+thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
     {{"post_auth_delay", PGC_BACKEND, DEVELOPER_OPTIONS,
       gettext_noop("Sets the amount of time to wait after "
                    "authentication on connection startup."),
@@ -2825,7 +2826,7 @@ thread_local struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL}};
 
-thread_local struct config_real ConfigureNamesReal[] = {
+thread_local /*LOCAL*/ struct config_real ConfigureNamesReal[] = {
     {{"seq_page_cost", PGC_USERSET, QUERY_TUNING_COST,
       gettext_noop("Sets the planner's estimate of the cost of a "
                    "sequentially fetched disk page."),
@@ -3018,7 +3019,7 @@ thread_local struct config_real ConfigureNamesReal[] = {
      NULL,
      NULL}};
 
-thread_local struct config_string ConfigureNamesString[] = {
+thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
 
     {{"client_encoding", PGC_USERSET, CLIENT_CONN_LOCALE,
       gettext_noop("Sets the client's character set encoding."), NULL,
@@ -3601,7 +3602,7 @@ thread_local struct config_string ConfigureNamesString[] = {
      NULL,
      NULL}};
 
-thread_local struct config_enum ConfigureNamesEnum[] = {
+thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
     {{"backslash_quote", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
       gettext_noop("Sets whether \"\\'\" is allowed in string literals."),
       NULL},

@@ -65,12 +65,13 @@ typedef struct {
   bool canceled;      /* true if request has been canceled */
 } PendingUnlinkEntry;
 
-static thread_local HTAB *pendingOps = NULL;
-static thread_local List *pendingUnlinks = NIL;
-static thread_local MemoryContext pendingOpsCxt; /* context for the above  */
+static thread_local /*LOCAL*/ HTAB *pendingOps = NULL;
+static thread_local /*LOCAL*/ List *pendingUnlinks = NIL;
+static thread_local /*LOCAL*/ MemoryContext
+    pendingOpsCxt; /* context for the above  */
 
-static thread_local CycleCtr sync_cycle_ctr = 0;
-static thread_local CycleCtr checkpoint_cycle_ctr = 0;
+static thread_local /*LOCAL*/ CycleCtr sync_cycle_ctr = 0;
+static thread_local /*LOCAL*/ CycleCtr checkpoint_cycle_ctr = 0;
 
 /* Intervals for calling AbsorbSyncRequests */
 #define FSYNCS_PER_ABSORB		10
@@ -252,7 +253,7 @@ void SyncPostCheckpoint(void) {
  *	ProcessSyncRequests() -- Process queued fsync requests.
  */
 void ProcessSyncRequests(void) {
-  static thread_local bool sync_in_progress = false;
+  static thread_local /*LOCAL*/ bool sync_in_progress = false;
 
   HASH_SEQ_STATUS hstat;
   PendingFsyncEntry *entry;

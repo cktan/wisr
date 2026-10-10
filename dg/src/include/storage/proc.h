@@ -82,7 +82,7 @@ struct XidCache {
  * lock table.  This eases contention on the lock manager LWLocks.  See
  * storage/lmgr/README for additional details.
  */
-extern PG_SHARED PGDLLIMPORT int FastPathLockGroupsPerBackend;
+extern thread_local /*SHARED*/ PGDLLIMPORT int FastPathLockGroupsPerBackend;
 
 /*
  * Define the maximum number of fast-path locking groups per backend.
@@ -305,7 +305,7 @@ struct PGPROC {
 
 /* NOTE: "typedef struct PGPROC PGPROC" appears in storage/lock.h. */
 
-extern thread_local PGDLLIMPORT PGPROC *MyProc;
+extern thread_local /*LOCAL*/ PGDLLIMPORT PGPROC *MyProc;
 
 /*
  * There is one ProcGlobal struct for the whole database cluster.
@@ -408,9 +408,9 @@ typedef struct PROC_HDR {
   int startupBufferPinWaitBufId;
 } PROC_HDR;
 
-extern PG_SHARED PGDLLIMPORT PROC_HDR *ProcGlobal;
+extern thread_local /*SHARED*/ PGDLLIMPORT PROC_HDR *ProcGlobal;
 
-extern PG_SHARED PGDLLIMPORT PGPROC *PreparedXactProcs;
+extern thread_local /*SHARED*/ PGDLLIMPORT PGPROC *PreparedXactProcs;
 
 /*
  * Accessors for getting PGPROC given a ProcNumber and vice versa.
@@ -442,13 +442,13 @@ extern PG_SHARED PGDLLIMPORT PGPROC *PreparedXactProcs;
 #define FIRST_PREPARED_XACT_PROC_NUMBER	(MaxBackends + NUM_AUXILIARY_PROCS)
 
 /* configurable options */
-extern thread_local PGDLLIMPORT int DeadlockTimeout;
-extern thread_local PGDLLIMPORT int StatementTimeout;
-extern thread_local PGDLLIMPORT int LockTimeout;
-extern thread_local PGDLLIMPORT int IdleInTransactionSessionTimeout;
-extern thread_local PGDLLIMPORT int TransactionTimeout;
-extern thread_local PGDLLIMPORT int IdleSessionTimeout;
-extern thread_local PGDLLIMPORT bool log_lock_waits;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int DeadlockTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int StatementTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int LockTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleInTransactionSessionTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int TransactionTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleSessionTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_lock_waits;
 
 #ifdef EXEC_BACKEND
 extern PGDLLIMPORT slock_t *ProcStructLock;

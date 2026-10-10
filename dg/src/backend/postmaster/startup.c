@@ -32,19 +32,19 @@
 /*
  * Time at which the most recent startup operation started.
  */
-static thread_local TimestampTz startup_progress_phase_start_time;
+static thread_local /*LOCAL*/ TimestampTz startup_progress_phase_start_time;
 
 /*
  * Indicates whether the startup progress interval mentioned by the user is
  * elapsed or not. TRUE if timeout occurred, FALSE otherwise.
  */
-static thread_local volatile sig_atomic_t startup_progress_timer_expired =
-    false;
+static thread_local /*LOCAL*/ volatile sig_atomic_t
+    startup_progress_timer_expired = false;
 
 /*
  * Time between progress updates for long-running startup operations.
  */
-thread_local int log_startup_progress_interval = 10000; /* 10 sec */
+thread_local /*LOCAL*/ int log_startup_progress_interval = 10000; /* 10 sec */
 
 /* ----------------------------------
  *	Startup Process main entry point

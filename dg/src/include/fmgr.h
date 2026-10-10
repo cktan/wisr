@@ -755,7 +755,7 @@ extern bool CheckFunctionValidatorAccess(Oid validatorOid, Oid functionOid);
  */
 typedef struct DynamicFileList DynamicFileList; /* opaque outside dfmgr.c */
 
-extern thread_local PGDLLIMPORT char *Dynamic_library_path;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *Dynamic_library_path;
 
 extern char *substitute_path_macro(const char *str, const char *macro,
                                    const char *value);
@@ -813,8 +813,8 @@ typedef bool (*needs_fmgr_hook_type)(Oid fn_oid);
 typedef void (*fmgr_hook_type)(FmgrHookEventType event, FmgrInfo *flinfo,
                                Datum *arg);
 
-extern PG_SHARED PGDLLIMPORT needs_fmgr_hook_type needs_fmgr_hook;
-extern PG_SHARED PGDLLIMPORT fmgr_hook_type fmgr_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT needs_fmgr_hook_type needs_fmgr_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT fmgr_hook_type fmgr_hook;
 
 #define FmgrHookIsNeeded(fn_oid)							\
 	(!needs_fmgr_hook ? false : (*needs_fmgr_hook)(fn_oid))

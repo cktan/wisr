@@ -29,7 +29,7 @@ typedef struct EventTriggerData
 	CommandTag	tag;
 } EventTriggerData;
 
-extern thread_local PGDLLIMPORT bool event_triggers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool event_triggers;
 
 /*
  * Reasons for relation rewrites.

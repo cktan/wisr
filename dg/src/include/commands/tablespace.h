@@ -18,9 +18,9 @@
 #include "lib/stringinfo.h"
 #include "nodes/parsenodes.h"
 
-extern thread_local PGDLLIMPORT char *default_tablespace;
-extern thread_local PGDLLIMPORT char *temp_tablespaces;
-extern thread_local PGDLLIMPORT bool allow_in_place_tablespaces;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *default_tablespace;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *temp_tablespaces;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool allow_in_place_tablespaces;
 
 typedef struct TableSpaceOpts {
   int32 vl_len_; /* varlena header (do not touch directly!) */

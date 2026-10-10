@@ -307,7 +307,7 @@
 /*
  * The SLRU buffer area through which we access the old xids.
  */
-static PG_SHARED SlruCtlData SerialSlruCtlData;
+static thread_local /*SHARED*/ SlruCtlData SerialSlruCtlData;
 
 #define SerialSlruCtl			(&SerialSlruCtlData)
 
@@ -336,7 +336,7 @@ typedef struct SerialControlData {
 
 typedef struct SerialControlData *SerialControl;
 
-static PG_SHARED SerialControl serialControl;
+static thread_local /*SHARED*/ SerialControl serialControl;
 
 /*
  * When the oldest committed transaction on the "finished" list is moved to
@@ -344,7 +344,7 @@ static PG_SHARED SerialControl serialControl;
  * collapsing duplicate targets.  When a duplicate is found, the later
  * commitSeqNo is used.
  */
-static PG_SHARED SERIALIZABLEXACT *OldCommittedSxact;
+static thread_local /*SHARED*/ SERIALIZABLEXACT *OldCommittedSxact;
 
 /*
  * These configuration variables are used to set the predicate lock table size
@@ -352,9 +352,10 @@ static PG_SHARED SERIALIZABLEXACT *OldCommittedSxact;
  * attempt to degrade performance (mostly as false positive serialization
  * failure) gracefully in the face of memory pressure.
  */
-thread_local int max_predicate_locks_per_xact;     /* in guc_tables.c */
-thread_local int max_predicate_locks_per_relation; /* in guc_tables.c */
-thread_local int max_predicate_locks_per_page;     /* in guc_tables.c */
+thread_local /*LOCAL*/ int max_predicate_locks_per_xact; /* in guc_tables.c */
+thread_local /*LOCAL*/ int
+    max_predicate_locks_per_relation;                    /* in guc_tables.c */
+thread_local /*LOCAL*/ int max_predicate_locks_per_page; /* in guc_tables.c */
 
 /*
  * This provides a list of objects in order to track transactions
@@ -365,22 +366,22 @@ thread_local int max_predicate_locks_per_page;     /* in guc_tables.c */
  * number of entries in the list, and the size allowed for each entry is
  * fixed upon creation.
  */
-static PG_SHARED PredXactList PredXact;
+static thread_local /*SHARED*/ PredXactList PredXact;
 
 /*
  * This provides a pool of RWConflict data elements to use in conflict lists
  * between transactions.
  */
-static PG_SHARED RWConflictPoolHeader RWConflictPool;
+static thread_local /*SHARED*/ RWConflictPoolHeader RWConflictPool;
 
 /*
  * The predicate locking hash tables are in shared memory.
  * Each backend keeps pointers to them.
  */
-static PG_SHARED HTAB *SerializableXidHash;
-static PG_SHARED HTAB *PredicateLockTargetHash;
-static PG_SHARED HTAB *PredicateLockHash;
-static PG_SHARED dlist_head *FinishedSerializableTransactions;
+static thread_local /*SHARED*/ HTAB *SerializableXidHash;
+static thread_local /*SHARED*/ HTAB *PredicateLockTargetHash;
+static thread_local /*SHARED*/ HTAB *PredicateLockHash;
+static thread_local /*SHARED*/ dlist_head *FinishedSerializableTransactions;
 
 /*
  * Tag for a dummy entry in PredicateLockTargetHash. By temporarily removing
@@ -388,23 +389,23 @@ static PG_SHARED dlist_head *FinishedSerializableTransactions;
  * inserting one entry in the hash table. This is an otherwise-invalid tag.
  */
 static const PREDICATELOCKTARGETTAG ScratchTargetTag = {0, 0, 0, 0};
-static PG_SHARED uint32 ScratchTargetTagHash;
-static PG_SHARED LWLock *ScratchPartitionLock;
+static thread_local /*SHARED*/ uint32 ScratchTargetTagHash;
+static thread_local /*SHARED*/ LWLock *ScratchPartitionLock;
 
 /*
  * The local hash table used to determine when to combine multiple fine-
  * grained locks into a single courser-grained lock.
  */
-static thread_local HTAB *LocalPredicateLockHash = NULL;
+static thread_local /*LOCAL*/ HTAB *LocalPredicateLockHash = NULL;
 
 /*
  * Keep a pointer to the currently-running serializable transaction (if any)
  * for quick reference. Also, remember if we have written anything that could
  * cause a rw-conflict.
  */
-static thread_local SERIALIZABLEXACT *MySerializableXact =
+static thread_local /*LOCAL*/ SERIALIZABLEXACT *MySerializableXact =
     InvalidSerializableXact;
-static thread_local bool MyXactDidWrite = false;
+static thread_local /*LOCAL*/ bool MyXactDidWrite = false;
 
 /* local functions */
 

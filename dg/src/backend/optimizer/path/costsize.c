@@ -124,36 +124,37 @@
  */
 #define MAXIMUM_ROWCOUNT 1e100
 
-thread_local double seq_page_cost = DEFAULT_SEQ_PAGE_COST;
-thread_local double random_page_cost = DEFAULT_RANDOM_PAGE_COST;
-thread_local double cpu_tuple_cost = DEFAULT_CPU_TUPLE_COST;
-thread_local double cpu_index_tuple_cost = DEFAULT_CPU_INDEX_TUPLE_COST;
-thread_local double cpu_operator_cost = DEFAULT_CPU_OPERATOR_COST;
-thread_local double recursive_worktable_factor =
+thread_local /*LOCAL*/ double seq_page_cost = DEFAULT_SEQ_PAGE_COST;
+thread_local /*LOCAL*/ double random_page_cost = DEFAULT_RANDOM_PAGE_COST;
+thread_local /*LOCAL*/ double cpu_tuple_cost = DEFAULT_CPU_TUPLE_COST;
+thread_local /*LOCAL*/ double cpu_index_tuple_cost =
+    DEFAULT_CPU_INDEX_TUPLE_COST;
+thread_local /*LOCAL*/ double cpu_operator_cost = DEFAULT_CPU_OPERATOR_COST;
+thread_local /*LOCAL*/ double recursive_worktable_factor =
     DEFAULT_RECURSIVE_WORKTABLE_FACTOR;
 
-thread_local int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
+thread_local /*LOCAL*/ int effective_cache_size = DEFAULT_EFFECTIVE_CACHE_SIZE;
 
-thread_local Cost disable_cost = 1.0e10;
+thread_local /*LOCAL*/ Cost disable_cost = 1.0e10;
 
-thread_local bool enable_seqscan = true;
-thread_local bool enable_indexscan = true;
-thread_local bool enable_indexonlyscan = true;
-thread_local bool enable_bitmapscan = true;
-thread_local bool enable_tidscan = true;
-thread_local bool enable_sort = true;
-thread_local bool enable_incremental_sort = true;
-thread_local bool enable_hashagg = true;
-thread_local bool enable_nestloop = true;
-thread_local bool enable_material = true;
-thread_local bool enable_memoize = true;
-thread_local bool enable_mergejoin = true;
-thread_local bool enable_hashjoin = true;
-thread_local bool enable_partitionwise_join = false;
-thread_local bool enable_partitionwise_aggregate = false;
-thread_local bool enable_partition_pruning = true;
-thread_local bool enable_presorted_aggregate = true;
-thread_local bool enable_async_append = true;
+thread_local /*LOCAL*/ bool enable_seqscan = true;
+thread_local /*LOCAL*/ bool enable_indexscan = true;
+thread_local /*LOCAL*/ bool enable_indexonlyscan = true;
+thread_local /*LOCAL*/ bool enable_bitmapscan = true;
+thread_local /*LOCAL*/ bool enable_tidscan = true;
+thread_local /*LOCAL*/ bool enable_sort = true;
+thread_local /*LOCAL*/ bool enable_incremental_sort = true;
+thread_local /*LOCAL*/ bool enable_hashagg = true;
+thread_local /*LOCAL*/ bool enable_nestloop = true;
+thread_local /*LOCAL*/ bool enable_material = true;
+thread_local /*LOCAL*/ bool enable_memoize = true;
+thread_local /*LOCAL*/ bool enable_mergejoin = true;
+thread_local /*LOCAL*/ bool enable_hashjoin = true;
+thread_local /*LOCAL*/ bool enable_partitionwise_join = false;
+thread_local /*LOCAL*/ bool enable_partitionwise_aggregate = false;
+thread_local /*LOCAL*/ bool enable_partition_pruning = true;
+thread_local /*LOCAL*/ bool enable_presorted_aggregate = true;
+thread_local /*LOCAL*/ bool enable_async_append = true;
 
 typedef struct {
   PlannerInfo *root;

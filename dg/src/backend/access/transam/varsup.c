@@ -25,7 +25,7 @@
 #include "utils/syscache.h"
 
 /* pointer to variables struct in shared memory */
-PG_SHARED TransamVariablesData *TransamVariables = NULL;
+thread_local /*SHARED*/ TransamVariablesData *TransamVariables = NULL;
 
 /*
  * Initialization of shared memory for TransamVariables.

@@ -30,8 +30,9 @@
  * same XID, for example when scanning a table just after a bulk insert,
  * update, or delete.
  */
-static thread_local TransactionId cachedFetchXid = InvalidTransactionId;
-static thread_local XidStatus cachedFetchXidStatus;
+static thread_local /*LOCAL*/ TransactionId cachedFetchXid =
+    InvalidTransactionId;
+static thread_local /*LOCAL*/ XidStatus cachedFetchXidStatus;
 
 /* Local functions */
 static XidStatus TransactionLogFetch(TransactionId transactionId);

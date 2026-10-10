@@ -60,7 +60,7 @@ typedef struct {
  * currently need to be re-entrant, so avoiding this is not worth the extra
  * notational cruft that would be needed.
  */
-static thread_local ArrayAnalyzeExtraData *array_extra_data;
+static thread_local /*LOCAL*/ ArrayAnalyzeExtraData *array_extra_data;
 
 /* A hash table entry for the Lossy Counting algorithm */
 typedef struct {

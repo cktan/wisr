@@ -182,9 +182,9 @@ struct VacuumCutoffs {
 };
 
 /* GUC parameters */
-extern thread_local PGDLLIMPORT int
+extern thread_local /*LOCAL*/ PGDLLIMPORT int
     default_statistics_target; /* PGDLLIMPORT for PostGIS */
-extern thread_local PGDLLIMPORT bool track_cost_delay_timing;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool track_cost_delay_timing;
 
 /*
  * Maximum value for default_statistics_target and per-column statistics
@@ -193,8 +193,8 @@ extern thread_local PGDLLIMPORT bool track_cost_delay_timing;
  */
 #define MAX_STATISTICS_TARGET 10000
 
-extern thread_local PGDLLIMPORT double vacuum_cost_delay;
-extern thread_local PGDLLIMPORT int vacuum_cost_limit;
+extern thread_local /*LOCAL*/ PGDLLIMPORT double vacuum_cost_delay;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int vacuum_cost_limit;
 
 /* in commands/vacuum.c */
 extern void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt,

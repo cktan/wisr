@@ -78,20 +78,21 @@ struct PMSignalData {
 };
 
 /* PMSignalState pointer is valid in both postmaster and child processes */
-PG_SHARED NON_EXEC_STATIC volatile PMSignalData *PMSignalState = NULL;
+thread_local /*SHARED*/ NON_EXEC_STATIC volatile PMSignalData *PMSignalState =
+    NULL;
 
 /*
  * Local copy of PMSignalState->num_child_flags, only valid in the
  * postmaster.  Postmaster keeps a local copy so that it doesn't need to
  * trust the value in shared memory.
  */
-static PG_SHARED int num_child_flags;
+static thread_local /*SHARED*/ int num_child_flags;
 
 /*
  * Signal handler to be notified if postmaster dies.
  */
 #ifdef USE_POSTMASTER_DEATH_SIGNAL
-thread_local volatile sig_atomic_t postmaster_possibly_dead = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t postmaster_possibly_dead = false;
 
 static void postmaster_death_handler(SIGNAL_ARGS) {
   postmaster_possibly_dead = true;

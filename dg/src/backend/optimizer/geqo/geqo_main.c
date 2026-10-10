@@ -41,11 +41,11 @@
 /*
  * Configuration options
  */
-thread_local int Geqo_effort;
-thread_local int Geqo_pool_size;
-thread_local int Geqo_generations;
-thread_local double Geqo_selection_bias;
-thread_local double Geqo_seed;
+thread_local /*LOCAL*/ int Geqo_effort;
+thread_local /*LOCAL*/ int Geqo_pool_size;
+thread_local /*LOCAL*/ int Geqo_generations;
+thread_local /*LOCAL*/ double Geqo_selection_bias;
+thread_local /*LOCAL*/ double Geqo_seed;
 
 static int gimme_pool_size(int nr_rel);
 static int gimme_number_generations(int pool_size);

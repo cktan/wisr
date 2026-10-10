@@ -3241,7 +3241,7 @@ typedef struct BTVacInfo {
   BTOneVacInfo vacuums[FLEXIBLE_ARRAY_MEMBER];
 } BTVacInfo;
 
-static PG_SHARED BTVacInfo *btvacinfo;
+static thread_local /*SHARED*/ BTVacInfo *btvacinfo;
 
 /*
  * _bt_vacuum_cycleid --- get the active vacuum cycle ID for an index,

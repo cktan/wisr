@@ -40,14 +40,15 @@
  * interference between different SPI callers, we save and restore them
  * when entering/exiting a SPI nesting level.
  */
-thread_local uint64 SPI_processed = 0;
-thread_local SPITupleTable *SPI_tuptable = NULL;
-thread_local int SPI_result = 0;
+thread_local /*LOCAL*/ uint64 SPI_processed = 0;
+thread_local /*LOCAL*/ SPITupleTable *SPI_tuptable = NULL;
+thread_local /*LOCAL*/ int SPI_result = 0;
 
-static thread_local _SPI_connection *_SPI_stack = NULL;
-static thread_local _SPI_connection *_SPI_current = NULL;
-static thread_local int _SPI_stack_depth = 0; /* allocated size of _SPI_stack */
-static thread_local int _SPI_connected = -1;  /* current stack index */
+static thread_local /*LOCAL*/ _SPI_connection *_SPI_stack = NULL;
+static thread_local /*LOCAL*/ _SPI_connection *_SPI_current = NULL;
+static thread_local /*LOCAL*/ int _SPI_stack_depth =
+    0; /* allocated size of _SPI_stack */
+static thread_local /*LOCAL*/ int _SPI_connected = -1; /* current stack index */
 
 typedef struct SPICallbackArg {
   const char *query;
@@ -1731,7 +1732,7 @@ bool SPI_plan_is_valid(SPIPlanPtr plan) {
  * the success codes too.
  */
 const char *SPI_result_code_string(int code) {
-  static thread_local char buf[64];
+  static thread_local /*LOCAL*/ char buf[64];
 
   switch (code) {
   case SPI_ERROR_CONNECT:

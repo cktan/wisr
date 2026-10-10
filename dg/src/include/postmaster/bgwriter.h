@@ -21,9 +21,9 @@
 #include "storage/sync.h"
 
 /* GUC options */
-extern thread_local PGDLLIMPORT int BgWriterDelay;
-extern thread_local PGDLLIMPORT int CheckPointTimeout;
-extern thread_local PGDLLIMPORT double CheckPointCompletionTarget;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int BgWriterDelay;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int CheckPointTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT double CheckPointCompletionTarget;
 
 pg_noreturn extern void BackgroundWriterMain(const void *startup_data,
                                              size_t startup_data_len);

@@ -29,8 +29,8 @@
 #define DEFAULT_TABLE_ACCESS_METHOD	"heap"
 
 /* GUCs */
-extern thread_local PGDLLIMPORT char *default_table_access_method;
-extern thread_local PGDLLIMPORT bool synchronize_seqscans;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *default_table_access_method;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool synchronize_seqscans;
 
 
 struct BulkInsertStateData;

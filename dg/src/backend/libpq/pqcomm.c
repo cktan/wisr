@@ -103,11 +103,11 @@
 /*
  * Configuration options
  */
-thread_local int Unix_socket_permissions;
-thread_local char *Unix_socket_group;
+thread_local /*LOCAL*/ int Unix_socket_permissions;
+thread_local /*LOCAL*/ char *Unix_socket_group;
 
 /* Where the Unix socket files are (list of palloc'd strings) */
-static PG_SHARED List *sock_paths = NIL;
+static thread_local /*SHARED*/ List *sock_paths = NIL;
 
 /*
  * Buffers for low-level I/O.
@@ -119,24 +119,25 @@ static PG_SHARED List *sock_paths = NIL;
 #define PQ_SEND_BUFFER_SIZE 8192
 #define PQ_RECV_BUFFER_SIZE 8192
 
-static thread_local char *PqSendBuffer;
-static thread_local int PqSendBufferSize; /* Size send buffer */
-static thread_local size_t
+static thread_local /*LOCAL*/ char *PqSendBuffer;
+static thread_local /*LOCAL*/ int PqSendBufferSize; /* Size send buffer */
+static thread_local /*LOCAL*/ size_t
     PqSendPointer; /* Next index to store a byte in PqSendBuffer */
-static thread_local size_t
+static thread_local /*LOCAL*/ size_t
     PqSendStart; /* Next index to send a byte in PqSendBuffer */
 
-static thread_local char PqRecvBuffer[PQ_RECV_BUFFER_SIZE];
-static thread_local int
+static thread_local /*LOCAL*/ char PqRecvBuffer[PQ_RECV_BUFFER_SIZE];
+static thread_local /*LOCAL*/ int
     PqRecvPointer; /* Next index to read a byte from PqRecvBuffer */
-static thread_local int
+static thread_local /*LOCAL*/ int
     PqRecvLength; /* End of data available in PqRecvBuffer */
 
 /*
  * Message status
  */
-static thread_local bool PqCommBusy; /* busy sending data to the client */
-static thread_local bool
+static thread_local /*LOCAL*/ bool
+    PqCommBusy; /* busy sending data to the client */
+static thread_local /*LOCAL*/ bool
     PqCommReadingMsg; /* in the middle of reading a message */
 
 /* Internal functions */
@@ -164,9 +165,10 @@ static const PQcommMethods PqCommSocketMethods = {
     .putmessage = socket_putmessage,
     .putmessage_noblock = socket_putmessage_noblock};
 
-thread_local const PQcommMethods *PqCommMethods = &PqCommSocketMethods;
+thread_local /*LOCAL*/ const PQcommMethods *PqCommMethods =
+    &PqCommSocketMethods;
 
-thread_local WaitEventSet *FeBeWaitSet;
+thread_local /*LOCAL*/ WaitEventSet *FeBeWaitSet;
 
 /* --------------------------------
  *		pq_init - initialize libpq at backend startup
@@ -1221,7 +1223,7 @@ static inline int internal_flush(void) {
  */
 static pg_noinline int internal_flush_buffer(const char *buf, size_t *start,
                                              size_t *end) {
-  static thread_local int last_reported_send_errno = 0;
+  static thread_local /*LOCAL*/ int last_reported_send_errno = 0;
 
   const char *bufptr = buf + *start;
   const char *bufend = buf + *end;
@@ -1754,7 +1756,7 @@ void assign_tcp_keepalives_idle(int newval, void *extra) {
  */
 const char *show_tcp_keepalives_idle(void) {
   /* See comments in assign_tcp_keepalives_idle */
-  static thread_local char nbuf[16];
+  static thread_local /*LOCAL*/ char nbuf[16];
 
   snprintf(nbuf, sizeof(nbuf), "%d", pq_getkeepalivesidle(MyProcPort));
   return nbuf;
@@ -1773,7 +1775,7 @@ void assign_tcp_keepalives_interval(int newval, void *extra) {
  */
 const char *show_tcp_keepalives_interval(void) {
   /* See comments in assign_tcp_keepalives_idle */
-  static thread_local char nbuf[16];
+  static thread_local /*LOCAL*/ char nbuf[16];
 
   snprintf(nbuf, sizeof(nbuf), "%d", pq_getkeepalivesinterval(MyProcPort));
   return nbuf;
@@ -1792,7 +1794,7 @@ void assign_tcp_keepalives_count(int newval, void *extra) {
  */
 const char *show_tcp_keepalives_count(void) {
   /* See comments in assign_tcp_keepalives_idle */
-  static thread_local char nbuf[16];
+  static thread_local /*LOCAL*/ char nbuf[16];
 
   snprintf(nbuf, sizeof(nbuf), "%d", pq_getkeepalivescount(MyProcPort));
   return nbuf;
@@ -1811,7 +1813,7 @@ void assign_tcp_user_timeout(int newval, void *extra) {
  */
 const char *show_tcp_user_timeout(void) {
   /* See comments in assign_tcp_keepalives_idle */
-  static thread_local char nbuf[16];
+  static thread_local /*LOCAL*/ char nbuf[16];
 
   snprintf(nbuf, sizeof(nbuf), "%d", pq_gettcpusertimeout(MyProcPort));
   return nbuf;

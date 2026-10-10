@@ -51,29 +51,29 @@ extern PGDLLIMPORT int num_pmchild_slots;
 #endif
 
 /* GUC options */
-extern thread_local PGDLLIMPORT bool EnableSSL;
-extern thread_local PGDLLIMPORT int SuperuserReservedConnections;
-extern thread_local PGDLLIMPORT int ReservedConnections;
-extern thread_local PGDLLIMPORT int PostPortNumber;
-extern thread_local PGDLLIMPORT int Unix_socket_permissions;
-extern thread_local PGDLLIMPORT char *Unix_socket_group;
-extern thread_local PGDLLIMPORT char *Unix_socket_directories;
-extern thread_local PGDLLIMPORT char *ListenAddresses;
-extern thread_local PGDLLIMPORT bool ClientAuthInProgress;
-extern thread_local PGDLLIMPORT int PreAuthDelay;
-extern thread_local PGDLLIMPORT int AuthenticationTimeout;
-extern thread_local PGDLLIMPORT bool log_hostname;
-extern thread_local PGDLLIMPORT bool enable_bonjour;
-extern thread_local PGDLLIMPORT char *bonjour_name;
-extern thread_local PGDLLIMPORT bool restart_after_crash;
-extern thread_local PGDLLIMPORT bool remove_temp_files_after_crash;
-extern thread_local PGDLLIMPORT bool send_abort_for_crash;
-extern thread_local PGDLLIMPORT bool send_abort_for_kill;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool EnableSSL;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int SuperuserReservedConnections;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int ReservedConnections;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int PostPortNumber;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int Unix_socket_permissions;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *Unix_socket_group;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *Unix_socket_directories;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ListenAddresses;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool ClientAuthInProgress;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int PreAuthDelay;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int AuthenticationTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_hostname;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_bonjour;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *bonjour_name;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool restart_after_crash;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool remove_temp_files_after_crash;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 
 #ifdef WIN32
 extern PGDLLIMPORT HANDLE PostmasterHandle;
 #else
-extern PG_SHARED PGDLLIMPORT int postmaster_alive_fds[2];
+extern thread_local /*SHARED*/ PGDLLIMPORT int postmaster_alive_fds[2];
 
 /*
  * Constants that represent which of postmaster_alive_fds is held by
@@ -84,9 +84,9 @@ extern PG_SHARED PGDLLIMPORT int postmaster_alive_fds[2];
 #define POSTMASTER_FD_OWN		1 /* kept open by postmaster only */
 #endif
 
-extern PG_SHARED PGDLLIMPORT const char *progname;
+extern thread_local /*SHARED*/ PGDLLIMPORT const char *progname;
 
-extern PG_SHARED PGDLLIMPORT bool redirection_done;
+extern thread_local /*SHARED*/ PGDLLIMPORT bool redirection_done;
 extern PGDLLIMPORT bool LoadedSSL;
 
 pg_noreturn extern void PostmasterMain(int argc, char *argv[]);
@@ -103,7 +103,7 @@ extern void pgwin32_register_deadchild_callback(HANDLE procHandle,
 #endif
 
 /* defined in globals.c */
-extern thread_local PGDLLIMPORT struct ClientSocket *MyClientSocket;
+extern thread_local /*LOCAL*/ PGDLLIMPORT struct ClientSocket *MyClientSocket;
 
 /* prototypes for functions in launch_backend.c */
 extern pid_t postmaster_child_launch(BackendType child_type, int child_slot,
@@ -116,7 +116,7 @@ pg_noreturn extern void SubPostmasterMain(int argc, char *argv[]);
 #endif
 
 /* defined in pmchild.c */
-extern PG_SHARED PGDLLIMPORT dlist_head ActiveChildList;
+extern thread_local /*SHARED*/ PGDLLIMPORT dlist_head ActiveChildList;
 
 extern void InitPostmasterChildSlots(void);
 extern PMChild *AssignPostmasterChildSlot(BackendType btype);

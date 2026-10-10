@@ -58,7 +58,7 @@ struct RBTree {
  */
 #define RBTNIL (&sentinel)
 
-static thread_local RBTNode sentinel = {
+static thread_local /*LOCAL*/ RBTNode sentinel = {
     .color = RBTBLACK, .left = RBTNIL, .right = RBTNIL, .parent = NULL};
 
 /*

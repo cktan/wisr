@@ -18,9 +18,9 @@
 #include "utils/guc.h"
 
 /* GUCs */
-extern thread_local PGDLLIMPORT int
+extern thread_local /*LOCAL*/ PGDLLIMPORT int
     Password_encryption; /* values from enum PasswordType */
-extern thread_local PGDLLIMPORT char *createrole_self_grant;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *createrole_self_grant;
 
 /* Hook to check passwords in CreateRole() and AlterRole() */
 typedef void (*check_password_hook_type)(const char *username,
@@ -29,7 +29,8 @@ typedef void (*check_password_hook_type)(const char *username,
                                          Datum validuntil_time,
                                          bool validuntil_null);
 
-extern PG_SHARED PGDLLIMPORT check_password_hook_type check_password_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT check_password_hook_type
+    check_password_hook;
 
 extern Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt);
 extern Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt);

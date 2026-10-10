@@ -161,8 +161,8 @@ typedef enum {
   SLRU_CLOSE_FAILED,
 } SlruErrorCause;
 
-static thread_local SlruErrorCause slru_errcause;
-static thread_local int slru_errno;
+static thread_local /*LOCAL*/ SlruErrorCause slru_errcause;
+static thread_local /*LOCAL*/ int slru_errno;
 
 static void SimpleLruWaitIO(SlruCtl ctl, int slotno);
 static void SlruInternalWritePage(SlruCtl ctl, int slotno, SlruWriteAll fdata);

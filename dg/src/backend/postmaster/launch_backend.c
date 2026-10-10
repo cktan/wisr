@@ -169,7 +169,7 @@ typedef struct {
   bool shmem_attach;
 } child_process_kind;
 
-static PG_SHARED child_process_kind child_process_kinds[] = {
+static thread_local /*SHARED*/ child_process_kind child_process_kinds[] = {
     [B_INVALID] = {"invalid", NULL, false},
 
     [B_BACKEND] = {"backend", BackendMain, true},

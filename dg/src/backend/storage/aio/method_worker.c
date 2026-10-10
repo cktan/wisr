@@ -83,12 +83,13 @@ const IoMethodOps pgaio_worker_ops = {
 };
 
 /* GUCs */
-thread_local int io_workers = 3;
+thread_local /*LOCAL*/ int io_workers = 3;
 
-static thread_local int io_worker_queue_size = 64;
-static thread_local int MyIoWorkerId;
-static PG_SHARED PgAioWorkerSubmissionQueue *io_worker_submission_queue;
-static PG_SHARED PgAioWorkerControl *io_worker_control;
+static thread_local /*LOCAL*/ int io_worker_queue_size = 64;
+static thread_local /*LOCAL*/ int MyIoWorkerId;
+static thread_local /*SHARED*/ PgAioWorkerSubmissionQueue
+    *io_worker_submission_queue;
+static thread_local /*SHARED*/ PgAioWorkerControl *io_worker_control;
 
 static size_t pgaio_worker_queue_shmem_size(int *queue_size) {
   /* Round size up to next power of two so we can make a mask. */

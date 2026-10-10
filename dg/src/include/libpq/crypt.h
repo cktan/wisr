@@ -26,7 +26,7 @@
 #define MAX_ENCRYPTED_PASSWORD_LEN (512)
 
 /* Enables deprecation warnings for MD5 passwords. */
-extern thread_local PGDLLIMPORT bool md5_password_warnings;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool md5_password_warnings;
 
 /*
  * Types of password hashes or secrets.

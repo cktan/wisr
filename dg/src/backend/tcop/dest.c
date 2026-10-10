@@ -80,7 +80,8 @@ static const DestReceiver spi_printtupDR = {spi_printtup, spi_dest_startup,
  * It's ok to cast the constness away as any modification of the none receiver
  * would be a bug (which gets easier to catch this way).
  */
-PG_SHARED DestReceiver *None_Receiver = (DestReceiver *)&donothingDR;
+thread_local /*SHARED*/ DestReceiver *None_Receiver =
+    (DestReceiver *)&donothingDR;
 
 /* ----------------
  *		BeginCommand - initialize the destination at start of command

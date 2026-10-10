@@ -38,18 +38,18 @@ typedef struct {
 #define LocalBufHdrGetBlock(bufHdr) \
 	LocalBufferBlockPointers[-((bufHdr)->buf_id + 2)]
 
-thread_local int NLocBuffer = 0; /* until buffers are initialized */
+thread_local /*LOCAL*/ int NLocBuffer = 0; /* until buffers are initialized */
 
-thread_local BufferDesc *LocalBufferDescriptors = NULL;
-thread_local Block *LocalBufferBlockPointers = NULL;
-thread_local int32 *LocalRefCount = NULL;
+thread_local /*LOCAL*/ BufferDesc *LocalBufferDescriptors = NULL;
+thread_local /*LOCAL*/ Block *LocalBufferBlockPointers = NULL;
+thread_local /*LOCAL*/ int32 *LocalRefCount = NULL;
 
-static thread_local int nextFreeLocalBufId = 0;
+static thread_local /*LOCAL*/ int nextFreeLocalBufId = 0;
 
-static thread_local HTAB *LocalBufHash = NULL;
+static thread_local /*LOCAL*/ HTAB *LocalBufHash = NULL;
 
 /* number of local buffers pinned at least once */
-static thread_local int NLocalPinnedBuffers = 0;
+static thread_local /*LOCAL*/ int NLocalPinnedBuffers = 0;
 
 static void InitLocalBuffers(void);
 static Block GetLocalBufferStorage(void);
@@ -795,11 +795,11 @@ bool check_temp_buffers(int *newval, void **extra, GucSource source) {
  * managed chunks.
  */
 static Block GetLocalBufferStorage(void) {
-  static thread_local char *cur_block = NULL;
-  static thread_local int next_buf_in_block = 0;
-  static thread_local int num_bufs_in_block = 0;
-  static thread_local int total_bufs_allocated = 0;
-  static thread_local MemoryContext LocalBufferContext = NULL;
+  static thread_local /*LOCAL*/ char *cur_block = NULL;
+  static thread_local /*LOCAL*/ int next_buf_in_block = 0;
+  static thread_local /*LOCAL*/ int num_bufs_in_block = 0;
+  static thread_local /*LOCAL*/ int total_bufs_allocated = 0;
+  static thread_local /*LOCAL*/ MemoryContext LocalBufferContext = NULL;
 
   char *this_buf;
 

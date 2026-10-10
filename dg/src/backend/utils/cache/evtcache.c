@@ -41,10 +41,10 @@ typedef struct {
   List *triggerlist;
 } EventTriggerCacheEntry;
 
-static thread_local HTAB *EventTriggerCache;
-static thread_local MemoryContext EventTriggerCacheContext;
-static thread_local EventTriggerCacheStateType EventTriggerCacheState =
-    ETCS_NEEDS_REBUILD;
+static thread_local /*LOCAL*/ HTAB *EventTriggerCache;
+static thread_local /*LOCAL*/ MemoryContext EventTriggerCacheContext;
+static thread_local /*LOCAL*/ EventTriggerCacheStateType
+    EventTriggerCacheState = ETCS_NEEDS_REBUILD;
 
 static void BuildEventTriggerCache(void);
 static void InvalidateEventCacheCallback(Datum arg, int cacheid,

@@ -42,10 +42,10 @@ typedef struct PGShmemHeader /* standard header for all Postgres shmem */
 } PGShmemHeader;
 
 /* GUC variables */
-extern thread_local PGDLLIMPORT int shared_memory_type;
-extern thread_local PGDLLIMPORT int huge_pages;
-extern thread_local PGDLLIMPORT int huge_page_size;
-extern thread_local PGDLLIMPORT int huge_pages_status;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int shared_memory_type;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int huge_pages;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int huge_page_size;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int huge_pages_status;
 
 /* Possible values for huge_pages and huge_pages_status */
 typedef enum {
@@ -63,12 +63,12 @@ typedef enum {
 } PGShmemType;
 
 #ifndef WIN32
-extern PG_SHARED PGDLLIMPORT unsigned long UsedShmemSegID;
+extern thread_local /*SHARED*/ PGDLLIMPORT unsigned long UsedShmemSegID;
 #else
-extern PG_SHARED PGDLLIMPORT HANDLE UsedShmemSegID;
+extern thread_local /*SHARED*/ PGDLLIMPORT HANDLE UsedShmemSegID;
 extern PGDLLIMPORT void *ShmemProtectiveRegion;
 #endif
-extern PG_SHARED PGDLLIMPORT void *UsedShmemSegAddr;
+extern thread_local /*SHARED*/ PGDLLIMPORT void *UsedShmemSegAddr;
 
 #if !defined(WIN32) && !defined(EXEC_BACKEND)
 #define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_MMAP

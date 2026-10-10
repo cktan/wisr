@@ -78,8 +78,8 @@ extern size_t pg_strftime(char *s, size_t maxsize, const char *format,
 
 /* these functions and variables are in pgtz.c */
 
-extern thread_local PGDLLIMPORT pg_tz *session_timezone;
-extern thread_local PGDLLIMPORT pg_tz *log_timezone;
+extern thread_local /*LOCAL*/ PGDLLIMPORT pg_tz *session_timezone;
+extern thread_local /*LOCAL*/ PGDLLIMPORT pg_tz *log_timezone;
 
 extern void pg_timezone_initialize(void);
 extern pg_tz *pg_tzset(const char *tzname);

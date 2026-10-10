@@ -78,10 +78,10 @@ static inline uint64 TimestampDifferenceMicroseconds(TimestampTz start_time,
 }
 
 /* Set at postmaster start */
-extern PG_SHARED PGDLLIMPORT TimestampTz PgStartTime;
+extern thread_local /*SHARED*/ PGDLLIMPORT TimestampTz PgStartTime;
 
 /* Set at configuration reload */
-extern PG_SHARED PGDLLIMPORT TimestampTz PgReloadTime;
+extern thread_local /*SHARED*/ PGDLLIMPORT TimestampTz PgReloadTime;
 
 /* Internal routines (not fmgr-callable) */
 

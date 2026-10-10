@@ -53,8 +53,8 @@ struct DynamicFileList {
   char filename[FLEXIBLE_ARRAY_MEMBER]; /* Full pathname of file */
 };
 
-static PG_SHARED DynamicFileList *file_list = NULL;
-static PG_SHARED DynamicFileList *file_tail = NULL;
+static thread_local /*SHARED*/ DynamicFileList *file_list = NULL;
+static thread_local /*SHARED*/ DynamicFileList *file_tail = NULL;
 
 /* stat() call under Win32 returns an st_ino field, but it has no meaning */
 #ifndef WIN32
@@ -63,7 +63,7 @@ static PG_SHARED DynamicFileList *file_tail = NULL;
 #define SAME_INODE(A, B) false
 #endif
 
-thread_local char *Dynamic_library_path;
+thread_local /*LOCAL*/ char *Dynamic_library_path;
 
 static void *internal_load_library(const char *libname);
 pg_noreturn static void
@@ -594,7 +594,7 @@ char *find_in_path(const char *basename, const char *path,
  * on the variable name and the data it will point to.
  */
 void **find_rendezvous_variable(const char *varName) {
-  static thread_local HTAB *rendezvousHash = NULL;
+  static thread_local /*LOCAL*/ HTAB *rendezvousHash = NULL;
 
   rendezvousHashEntry *hentry;
   bool found;

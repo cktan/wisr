@@ -88,8 +88,8 @@ typedef struct Instrumentation {
   WalUsage walusage;    /* total WAL usage */
 } Instrumentation;
 
-extern thread_local PGDLLIMPORT BufferUsage pgBufferUsage;
-extern thread_local PGDLLIMPORT WalUsage pgWalUsage;
+extern thread_local /*LOCAL*/ PGDLLIMPORT BufferUsage pgBufferUsage;
+extern thread_local /*LOCAL*/ PGDLLIMPORT WalUsage pgWalUsage;
 
 extern Instrumentation *InstrAlloc(int n, int instrument_options,
                                    bool async_mode);

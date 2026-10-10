@@ -53,16 +53,16 @@
  * Only TopMemoryContext and ErrorContext are initialized by
  * MemoryContextInit() itself.
  */
-extern thread_local PGDLLIMPORT MemoryContext TopMemoryContext;
-extern thread_local PGDLLIMPORT MemoryContext ErrorContext;
-extern thread_local PGDLLIMPORT MemoryContext PostmasterContext;
-extern thread_local PGDLLIMPORT MemoryContext CacheMemoryContext;
-extern thread_local PGDLLIMPORT MemoryContext MessageContext;
-extern thread_local PGDLLIMPORT MemoryContext TopTransactionContext;
-extern thread_local PGDLLIMPORT MemoryContext CurTransactionContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext TopMemoryContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext ErrorContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext PostmasterContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext CacheMemoryContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext MessageContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext TopTransactionContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext CurTransactionContext;
 
 /* This is a transient link to the active portal's memory context: */
-extern thread_local PGDLLIMPORT MemoryContext PortalContext;
+extern thread_local /*LOCAL*/ PGDLLIMPORT MemoryContext PortalContext;
 
 /*
  * Memory-context-type-independent functions in mcxt.c

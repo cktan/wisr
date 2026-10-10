@@ -697,10 +697,10 @@ extern void pgstat_create_transactional(PgStat_Kind kind, Oid dboid,
  * Statistics callbacks should never reset this flag; pgstat_report_stat()
  * is in charge of doing that.
  */
-extern thread_local PGDLLIMPORT bool pgstat_report_fixed;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool pgstat_report_fixed;
 
 /* Backend-local stats state */
-extern thread_local PGDLLIMPORT PgStat_LocalState pgStatLocal;
+extern thread_local /*LOCAL*/ PGDLLIMPORT PgStat_LocalState pgStatLocal;
 
 /*
  * Implementation of inline functions declared above.

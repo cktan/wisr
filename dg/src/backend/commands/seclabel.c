@@ -30,7 +30,7 @@ typedef struct {
   check_object_relabel_type hook;
 } LabelProvider;
 
-static thread_local List *label_provider_list = NIL;
+static thread_local /*LOCAL*/ List *label_provider_list = NIL;
 
 static bool SecLabelSupportsObjectType(ObjectType objtype) {
   switch (objtype) {

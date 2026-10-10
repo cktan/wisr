@@ -19,8 +19,9 @@
  * Hook on object accesses.  This is intended as infrastructure for security
  * and logging plugins.
  */
-PG_SHARED object_access_hook_type object_access_hook = NULL;
-PG_SHARED object_access_hook_type_str object_access_hook_str = NULL;
+thread_local /*SHARED*/ object_access_hook_type object_access_hook = NULL;
+thread_local /*SHARED*/ object_access_hook_type_str object_access_hook_str =
+    NULL;
 
 /*
  * RunObjectPostCreateHook

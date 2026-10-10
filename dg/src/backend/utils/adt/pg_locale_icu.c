@@ -74,7 +74,7 @@ typedef int32_t (*ICU_Convert_Func)(UChar *dest, int32_t destCapacity,
  * in database encoding.  Since the database encoding doesn't change, we only
  * need one of these per session.
  */
-static thread_local UConverter *icu_converter = NULL;
+static thread_local /*LOCAL*/ UConverter *icu_converter = NULL;
 
 static UCollator *make_icu_collator(const char *iculocstr,
                                     const char *icurules);

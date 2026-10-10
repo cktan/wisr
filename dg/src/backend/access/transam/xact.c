@@ -65,14 +65,14 @@
 /*
  *	User-tweakable parameters
  */
-thread_local int DefaultXactIsoLevel = XACT_READ_COMMITTED;
-thread_local int XactIsoLevel = XACT_READ_COMMITTED;
+thread_local /*LOCAL*/ int DefaultXactIsoLevel = XACT_READ_COMMITTED;
+thread_local /*LOCAL*/ int XactIsoLevel = XACT_READ_COMMITTED;
 
-thread_local bool DefaultXactReadOnly = false;
-thread_local bool XactReadOnly;
+thread_local /*LOCAL*/ bool DefaultXactReadOnly = false;
+thread_local /*LOCAL*/ bool XactReadOnly;
 
-thread_local bool DefaultXactDeferrable = false;
-thread_local bool XactDeferrable;
+thread_local /*LOCAL*/ bool DefaultXactDeferrable = false;
+thread_local /*LOCAL*/ bool XactDeferrable;
 
 /*
  * CheckXidAlive is a xid value pointing to a possibly ongoing (sub)
@@ -84,14 +84,14 @@ thread_local bool XactDeferrable;
  * directly access the tableam or heap APIs because we are checking for the
  * concurrent aborts only in systable_* APIs.
  */
-thread_local TransactionId CheckXidAlive = InvalidTransactionId;
-thread_local bool bsysscan = false;
+thread_local /*LOCAL*/ TransactionId CheckXidAlive = InvalidTransactionId;
+thread_local /*LOCAL*/ bool bsysscan = false;
 
 /*
  * XactTopFullTransactionId stores the XID of our toplevel transaction, which
  * will be the same as TopTransactionStateData.fullTransactionId.
  */
-static thread_local FullTransactionId XactTopFullTransactionId = {
+static thread_local /*LOCAL*/ FullTransactionId XactTopFullTransactionId = {
     InvalidTransactionId};
 
 /*
@@ -101,7 +101,7 @@ static thread_local FullTransactionId XactTopFullTransactionId = {
  * globally accessible, so can be set from anywhere in the code that requires
  * recording flags.
  */
-thread_local int MyXactFlags;
+thread_local /*LOCAL*/ int MyXactFlags;
 
 /*
  *	transaction states - transaction state from server perspective
@@ -179,21 +179,21 @@ typedef TransactionStateData *TransactionState;
  * block.  It will point to TopTransactionStateData when not in a
  * transaction at all, or when in a top-level transaction.
  */
-static thread_local TransactionStateData TopTransactionStateData = {
+static thread_local /*LOCAL*/ TransactionStateData TopTransactionStateData = {
     .state = TRANS_DEFAULT,
     .blockState = TBLOCK_DEFAULT,
 };
 
-static thread_local TransactionState CurrentTransactionState =
+static thread_local /*LOCAL*/ TransactionState CurrentTransactionState =
     &TopTransactionStateData;
 
 /*
  * The subtransaction ID and command ID assignment counters are global
  * to a whole transaction, so we do not keep them in the state stack.
  */
-static thread_local SubTransactionId currentSubTransactionId;
-static thread_local CommandId currentCommandId;
-static thread_local bool currentCommandIdUsed;
+static thread_local /*LOCAL*/ SubTransactionId currentSubTransactionId;
+static thread_local /*LOCAL*/ CommandId currentCommandId;
+static thread_local /*LOCAL*/ bool currentCommandIdUsed;
 
 /*
  * xactStartTimestamp is the value of transaction_timestamp().
@@ -205,19 +205,19 @@ static thread_local bool currentCommandIdUsed;
  * These do not change as we enter and exit subtransactions, so we don't
  * keep them inside the TransactionState stack.
  */
-static thread_local TimestampTz xactStartTimestamp;
-static thread_local TimestampTz stmtStartTimestamp;
-static thread_local TimestampTz xactStopTimestamp;
+static thread_local /*LOCAL*/ TimestampTz xactStartTimestamp;
+static thread_local /*LOCAL*/ TimestampTz stmtStartTimestamp;
+static thread_local /*LOCAL*/ TimestampTz xactStopTimestamp;
 
 /* Flag for logging statements in a transaction. */
-thread_local bool xact_is_sampled = false;
+thread_local /*LOCAL*/ bool xact_is_sampled = false;
 
 /*
  * Private context for transaction-abort work --- we reserve space for this
  * at startup to ensure that AbortTransaction and AbortSubTransaction can work
  * when we've run out of memory.
  */
-static thread_local MemoryContext TransactionAbortContext = NULL;
+static thread_local /*LOCAL*/ MemoryContext TransactionAbortContext = NULL;
 
 /*
  * List of add-on start- and end-of-xact callbacks
@@ -228,7 +228,7 @@ typedef struct XactCallbackItem {
   void *arg;
 } XactCallbackItem;
 
-static thread_local XactCallbackItem *Xact_callbacks = NULL;
+static thread_local /*LOCAL*/ XactCallbackItem *Xact_callbacks = NULL;
 
 /*
  * List of add-on start- and end-of-subxact callbacks
@@ -239,7 +239,7 @@ typedef struct SubXactCallbackItem {
   void *arg;
 } SubXactCallbackItem;
 
-static thread_local SubXactCallbackItem *SubXact_callbacks = NULL;
+static thread_local /*LOCAL*/ SubXactCallbackItem *SubXact_callbacks = NULL;
 
 /* local function prototypes */
 static void AssignTransactionId(TransactionState s);
@@ -431,8 +431,9 @@ FullTransactionId GetCurrentFullTransactionIdIfAny(void) {
  * age(xid) function, but might be useful for other maintenance tasks as well.
  */
 TransactionId GetStableLatestTransactionId(void) {
-  static thread_local LocalTransactionId lxid = InvalidLocalTransactionId;
-  static thread_local TransactionId stablexid = InvalidTransactionId;
+  static thread_local /*LOCAL*/ LocalTransactionId lxid =
+      InvalidLocalTransactionId;
+  static thread_local /*LOCAL*/ TransactionId stablexid = InvalidTransactionId;
 
   if (lxid != MyProc->vxid.lxid) {
     lxid = MyProc->vxid.lxid;

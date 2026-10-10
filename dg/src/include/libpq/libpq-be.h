@@ -346,8 +346,9 @@ extern ssize_t be_gssapi_read(Port *port, void *ptr, size_t len);
 extern ssize_t be_gssapi_write(Port *port, const void *ptr, size_t len);
 #endif /* ENABLE_GSS */
 
-extern thread_local PGDLLIMPORT ProtocolVersion FrontendProtocol;
-extern thread_local PGDLLIMPORT ClientConnectionInfo MyClientConnectionInfo;
+extern thread_local /*LOCAL*/ PGDLLIMPORT ProtocolVersion FrontendProtocol;
+extern thread_local /*LOCAL*/ PGDLLIMPORT ClientConnectionInfo
+    MyClientConnectionInfo;
 
 /* TCP keepalives configuration. These are no-ops on an AF_UNIX socket. */
 

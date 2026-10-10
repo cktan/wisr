@@ -45,14 +45,15 @@
 #include "utils/xml.h"
 
 /* Hook for plugins to get control in ExplainOneQuery() */
-PG_SHARED ExplainOneQuery_hook_type ExplainOneQuery_hook = NULL;
+thread_local /*SHARED*/ ExplainOneQuery_hook_type ExplainOneQuery_hook = NULL;
 
 /* Hook for plugins to get control in explain_get_index_name() */
-PG_SHARED explain_get_index_name_hook_type explain_get_index_name_hook = NULL;
+thread_local /*SHARED*/ explain_get_index_name_hook_type
+    explain_get_index_name_hook = NULL;
 
 /* per-plan and per-node hooks for plugins to print additional info */
-PG_SHARED explain_per_plan_hook_type explain_per_plan_hook = NULL;
-PG_SHARED explain_per_node_hook_type explain_per_node_hook = NULL;
+thread_local /*SHARED*/ explain_per_plan_hook_type explain_per_plan_hook = NULL;
+thread_local /*SHARED*/ explain_per_node_hook_type explain_per_node_hook = NULL;
 
 /*
  * Various places within need to convert bytes to kilobytes.  Round these up

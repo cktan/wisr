@@ -74,8 +74,9 @@ static const dshash_parameters dsh_params = {
  * pgStatLocal.shmem->gc_request_count is incremented - which each backend
  * compares to their copy of pgStatSharedRefAge on a regular basis.
  */
-static thread_local pgstat_entry_ref_hash_hash *pgStatEntryRefHash = NULL;
-static thread_local int pgStatSharedRefAge =
+static thread_local /*LOCAL*/ pgstat_entry_ref_hash_hash *pgStatEntryRefHash =
+    NULL;
+static thread_local /*LOCAL*/ int pgStatSharedRefAge =
     0; /* cache age of pgStatLocal.shmem */
 
 /*
@@ -83,8 +84,8 @@ static thread_local int pgStatSharedRefAge =
  * pgStatSharedRef entries respectively. Kept separate to make it easier to
  * track / attribute memory usage.
  */
-static thread_local MemoryContext pgStatSharedRefContext = NULL;
-static thread_local MemoryContext pgStatEntryRefHashContext = NULL;
+static thread_local /*LOCAL*/ MemoryContext pgStatSharedRefContext = NULL;
+static thread_local /*LOCAL*/ MemoryContext pgStatEntryRefHashContext = NULL;
 
 /* ------------------------------------------------------------
  * Public functions called from postmaster follow

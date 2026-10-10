@@ -250,8 +250,8 @@ typedef struct AllocSetFreeList {
 } AllocSetFreeList;
 
 /* context_freelists[0] is for default params, [1] for small params */
-static thread_local AllocSetFreeList context_freelists[2] = {{0, NULL},
-                                                             {0, NULL}};
+static thread_local /*LOCAL*/ AllocSetFreeList context_freelists[2] = {
+    {0, NULL}, {0, NULL}};
 
 /* ----------
  * AllocSetFreeIndex -

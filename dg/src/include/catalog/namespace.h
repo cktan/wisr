@@ -172,7 +172,7 @@ extern void AtEOSubXact_Namespace(bool isCommit, SubTransactionId mySubid,
                                   SubTransactionId parentSubid);
 
 /* stuff for search_path GUC variable */
-extern thread_local PGDLLIMPORT char *namespace_search_path;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *namespace_search_path;
 
 extern List *fetch_search_path(bool includeImplicit);
 extern int fetch_search_path_array(Oid *sarray, int sarray_len);

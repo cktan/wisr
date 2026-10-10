@@ -2086,7 +2086,7 @@ bool is_objectclass_supported(Oid class_id) {
  * Find ObjectProperty structure by class_id.
  */
 static const ObjectPropertyType *get_object_property_data(Oid class_id) {
-  static thread_local const ObjectPropertyType *prop_last = NULL;
+  static thread_local /*LOCAL*/ const ObjectPropertyType *prop_last = NULL;
   int index;
 
   /*

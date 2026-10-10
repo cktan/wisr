@@ -958,7 +958,7 @@ void assign_io_combine_limit(int newval, void *extra) {
  * GUC show_hook for data_directory_mode
  */
 const char *show_data_directory_mode(void) {
-  static thread_local char buf[12];
+  static thread_local /*LOCAL*/ char buf[12];
 
   snprintf(buf, sizeof(buf), "%04o", data_directory_mode);
   return buf;
@@ -968,7 +968,7 @@ const char *show_data_directory_mode(void) {
  * GUC show_hook for log_file_mode
  */
 const char *show_log_file_mode(void) {
-  static thread_local char buf[12];
+  static thread_local /*LOCAL*/ char buf[12];
 
   snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
   return buf;
@@ -978,7 +978,7 @@ const char *show_log_file_mode(void) {
  * GUC show_hook for unix_socket_permissions
  */
 const char *show_unix_socket_permissions(void) {
-  static thread_local char buf[12];
+  static thread_local /*LOCAL*/ char buf[12];
 
   snprintf(buf, sizeof(buf), "%04o", Unix_socket_permissions);
   return buf;

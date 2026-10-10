@@ -22,9 +22,9 @@
 /*
  * GUC variables
  */
-extern thread_local PGDLLIMPORT int max_predicate_locks_per_xact;
-extern thread_local PGDLLIMPORT int max_predicate_locks_per_relation;
-extern thread_local PGDLLIMPORT int max_predicate_locks_per_page;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_predicate_locks_per_xact;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_predicate_locks_per_relation;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_predicate_locks_per_page;
 
 /*
  * function prototypes

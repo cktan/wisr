@@ -80,7 +80,7 @@ static inline int64 TransactionIdToPage(TransactionId xid) {
 /*
  * Link to shared-memory data structures for CLOG control
  */
-static PG_SHARED SlruCtlData XactCtlData;
+static thread_local /*SHARED*/ SlruCtlData XactCtlData;
 
 #define XactCtl (&XactCtlData)
 

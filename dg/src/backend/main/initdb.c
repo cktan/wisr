@@ -44,9 +44,9 @@
 #include "postmaster/initdb.h"
 
 /* The data directory, and what to undo if making it fails. */
-static thread_local const char *datadir = NULL;
-static thread_local bool made_datadir = false;
-static thread_local bool filled_datadir = false;
+static thread_local /*LOCAL*/ const char *datadir = NULL;
+static thread_local /*LOCAL*/ bool made_datadir = false;
+static thread_local /*LOCAL*/ bool filled_datadir = false;
 
 /* Remove what was made so far: a failed initdb leaves nothing behind. */
 static void cleanup(void) {
@@ -239,7 +239,7 @@ static char *build_secret(const char *password) {
 
 /* Run initdb: argv is initdb's own, or the server's with --init first. */
 int initdb_main(int argc, char **argv) {
-  static thread_local struct option long_options[] = {
+  static thread_local /*LOCAL*/ struct option long_options[] = {
       {"pgdata", required_argument, NULL, 'D'},
       {"username", required_argument, NULL, 'U'},
       {"pwprompt", no_argument, NULL, 'W'},

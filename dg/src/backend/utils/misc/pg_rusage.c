@@ -34,7 +34,7 @@ void pg_rusage_init(PGRUsage *ru0) {
  * threadable...
  */
 const char *pg_rusage_show(const PGRUsage *ru0) {
-  static thread_local char result[100];
+  static thread_local /*LOCAL*/ char result[100];
   PGRUsage ru1;
 
   pg_rusage_init(&ru1);

@@ -20,8 +20,8 @@
 #include "storage/bufmgr.h"
 #include "utils/pgstat_internal.h"
 
-static thread_local PgStat_PendingIO PendingIOStats;
-static thread_local bool have_iostats = false;
+static thread_local /*LOCAL*/ PgStat_PendingIO PendingIOStats;
+static thread_local /*LOCAL*/ bool have_iostats = false;
 
 /*
  * Check that stats have not been counted for any combination of IOObject,

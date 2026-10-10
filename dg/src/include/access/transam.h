@@ -246,7 +246,8 @@ typedef struct TransamVariablesData {
  */
 
 /* in transam/varsup.c */
-extern PG_SHARED PGDLLIMPORT TransamVariablesData *TransamVariables;
+extern thread_local /*SHARED*/ PGDLLIMPORT TransamVariablesData
+    *TransamVariables;
 
 /*
  * prototypes for functions in transam/transam.c

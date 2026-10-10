@@ -121,5 +121,5 @@ static pg_crc32c pg_comp_crc32c_choose(pg_crc32c crc, const void *data,
   return pg_comp_crc32c(crc, data, len);
 }
 
-PG_SHARED pg_crc32c (*pg_comp_crc32c)(pg_crc32c crc, const void *data,
-                                      size_t len) = pg_comp_crc32c_choose;
+thread_local /*SHARED*/ pg_crc32c (*pg_comp_crc32c)(
+    pg_crc32c crc, const void *data, size_t len) = pg_comp_crc32c_choose;

@@ -31,7 +31,7 @@ typedef struct RegisteredBgWorker {
   dlist_node rw_lnode; /* list link */
 } RegisteredBgWorker;
 
-extern PG_SHARED PGDLLIMPORT dlist_head BackgroundWorkerList;
+extern thread_local /*SHARED*/ PGDLLIMPORT dlist_head BackgroundWorkerList;
 
 extern Size BackgroundWorkerShmemSize(void);
 extern void BackgroundWorkerShmemInit(void);

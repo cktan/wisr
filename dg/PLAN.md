@@ -21,9 +21,9 @@ been started.
   auxiliary processes and a crash restart.
 - An error is a C++ exception (`WORKNOTE.md` step 7). That was
   the first step toward threads.
-- Every writable global and static is `thread_local` or marked
-  `PG_SHARED` (step 1, §3). The server still forks, so neither
-  mark changes anything yet.
+- Every writable global and static is `thread_local`, marked
+  `/*SHARED*/` or `/*LOCAL*/` by what it holds (step 1, §3). The
+  server still forks, so this changes nothing yet.
 - There is no parallel query, index build or vacuum
   (`WORKNOTE.md` step 10), and no VACUUM or autovacuum at all
   (step 11).
@@ -106,10 +106,8 @@ earlier sweeps were done.
   declaration of it. LIST names the variables to share, one a
   line with the reason. It was run once; the list was not
   committed, since nothing would keep it current.
-- A shared variable is marked `PG_SHARED` (`src/include/c.h`)
-  rather than listed in a file. It expands to
-  `__attribute__((section(".pg_shared")))`, which is how the
-  objects show the mark.
+- A shared variable was marked `PG_SHARED`, a section
+  attribute the objects showed. §3.6 made it `thread_local` too.
 - `--check SRC` runs before `build/digres` is linked. It fails
   if a writable variable is left in one of the four sections
   above, so a global added later is marked or the build fails.
@@ -128,7 +126,7 @@ wrote 353 files, and `make test` passes as before.
 
 ### 3.3 What is shared
 
-`grep -rn PG_SHARED src` lists them. The kinds:
+`grep -rn '/\*SHARED\*/' src` lists them. The kinds:
 
 - **Pointers into shared memory**, set once at startup:
   `ProcGlobal`, `XLogCtl`, `ShmemBase`, the SLRU control
@@ -161,8 +159,7 @@ rather than leave them shared until the GUC replacement.
   `SET` stays per session.
 - One exception: `data_directory_mode` is a GUC variable the
   postmaster assigns directly, not through GUC, so it is
-  `PG_SHARED`. A shared variable's address in a per-thread table
-  is a constant, so that is allowed.
+  marked `/*SHARED*/`.
 
 What this leaves for step 3 is in §5.
 
@@ -170,15 +167,31 @@ What this leaves for step 3 is in §5.
 
 - **A forked child inherits; a new thread does not.** A new
   thread starts with each `thread_local` at the value written in
-  the source. A variable the postmaster sets and a session reads
-  must be `PG_SHARED` or be set again in each thread. Steps 1 and
-  2 cannot show a mistake here, because the server still forks;
-  step 3 will, one variable at a time.
+  the source, until it is given a copy of its parent's (§3.6).
+  Steps 1 and 2 cannot show a mistake here, because the server
+  still forks; step 3 will, one variable at a time.
 - **The list of loaded libraries is shared but unlocked.** Two
   sessions running `LOAD` at once would race on it.
 - **No C++ object with a destructor lives in a global** today.
   Keep it so: `thread_local` objects with destructors run them
   at thread exit, in an order that is hard to reason about.
+
+### 3.6 Everything `thread_local`
+
+The owner decided that every writable global is `thread_local`,
+the shared ones too, and that a new thread is to start with a
+copy of its parent's. That is what a forked child gets, so it is
+correct by construction: what is truly shared lives in shared
+memory, and a copied pointer still points at it.
+
+- `PG_SHARED` is gone. Each variable it marked is
+  `thread_local /*SHARED*/`, and every other one is
+  `thread_local /*LOCAL*/`. The comment records what the
+  variable holds, for the code that copies them.
+- The 13 `JSON_PROD_*` tables in `common/jsonapi.c` could not be
+  `thread_local`: a `constexpr` table takes their addresses.
+  They are never written, so they are `const`.
+- `--check` fails on any writable variable not `thread_local`.
 
 ## 4. Step 2: N sessions under TSan
 
@@ -280,8 +293,9 @@ Do not reopen these without the owner:
   or a query that asks.
 - **Authentication is fixed**: peer on the local socket, SCRAM
   over TCP, no `pg_hba.conf`.
-- **Every writable global is `thread_local` or `PG_SHARED`**,
-  and the build fails otherwise (§3.2).
+- **Every writable global is `thread_local`**, marked
+  `/*SHARED*/` or `/*LOCAL*/`, and the build fails otherwise
+  (§3.2, §3.6).
 - **The GUC variables and tables are per thread** (§3.4). GUC
   is not otherwise to be touched until the thread model is
   done.

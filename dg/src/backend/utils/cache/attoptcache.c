@@ -25,7 +25,7 @@
 #include "varatt.h"
 
 /* Hash table for information about each attribute's options */
-static thread_local HTAB *AttoptCacheHash = NULL;
+static thread_local /*LOCAL*/ HTAB *AttoptCacheHash = NULL;
 
 /* attrelid and attnum form the lookup key, and must appear first */
 typedef struct {

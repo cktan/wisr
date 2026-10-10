@@ -35,7 +35,7 @@
 /*
  * Hash table for cached functions
  */
-static thread_local HTAB *cfunc_hashtable = NULL;
+static thread_local /*LOCAL*/ HTAB *cfunc_hashtable = NULL;
 
 typedef struct CachedFunctionHashEntry {
   CachedFunctionHashKey key; /* hash key, must be first */

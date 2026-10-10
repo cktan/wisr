@@ -64,22 +64,22 @@ typedef union {
 #define PIPE_PROTO_DEST_JSONLOG	0x40
 
 /* GUC options */
-extern thread_local PGDLLIMPORT bool Logging_collector;
-extern thread_local PGDLLIMPORT int Log_RotationAge;
-extern thread_local PGDLLIMPORT int Log_RotationSize;
-extern thread_local PGDLLIMPORT char *Log_directory;
-extern thread_local PGDLLIMPORT char *Log_filename;
-extern thread_local PGDLLIMPORT bool Log_truncate_on_rotation;
-extern thread_local PGDLLIMPORT int Log_file_mode;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool Logging_collector;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_RotationAge;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_RotationSize;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_directory;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *Log_filename;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool Log_truncate_on_rotation;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int Log_file_mode;
 
 #ifdef EXEC_BACKEND
 extern PGDLLIMPORT pg_time_t first_syslogger_file_time;
 #endif
 
 #ifndef WIN32
-extern PG_SHARED PGDLLIMPORT int syslogPipe[2];
+extern thread_local /*SHARED*/ PGDLLIMPORT int syslogPipe[2];
 #else
-extern PG_SHARED PGDLLIMPORT HANDLE syslogPipe[2];
+extern thread_local /*SHARED*/ PGDLLIMPORT HANDLE syslogPipe[2];
 #endif
 
 extern int SysLogger_Start(int child_slot);

@@ -23,7 +23,7 @@
 			ereport(LOG, errmsg(msg, secs, (usecs / 10000),  __VA_ARGS__ )); \
 	} while(0)
 
-extern thread_local PGDLLIMPORT int log_startup_progress_interval;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int log_startup_progress_interval;
 
 pg_noreturn extern void StartupProcessMain(const void *startup_data,
                                            size_t startup_data_len);

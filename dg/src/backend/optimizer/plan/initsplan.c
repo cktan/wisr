@@ -36,8 +36,8 @@
 #include "utils/typcache.h"
 
 /* These parameters are set by GUC */
-thread_local int from_collapse_limit;
-thread_local int join_collapse_limit;
+thread_local /*LOCAL*/ int from_collapse_limit;
+thread_local /*LOCAL*/ int join_collapse_limit;
 
 /*
  * deconstruct_jointree requires multiple passes over the join tree, because we

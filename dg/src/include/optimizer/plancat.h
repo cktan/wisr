@@ -21,7 +21,8 @@
 typedef void (*get_relation_info_hook_type)(PlannerInfo *root,
                                             Oid relationObjectId,
                                             bool inhparent, RelOptInfo *rel);
-extern PG_SHARED PGDLLIMPORT get_relation_info_hook_type get_relation_info_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT get_relation_info_hook_type
+    get_relation_info_hook;
 
 extern void get_relation_info(PlannerInfo *root, Oid relationObjectId,
                               bool inhparent, RelOptInfo *rel);

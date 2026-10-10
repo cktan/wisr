@@ -26,7 +26,7 @@
 #include "utils/timestamp.h"
 
 /* Enables deprecation warnings for MD5 passwords. */
-thread_local bool md5_password_warnings = true;
+thread_local /*LOCAL*/ bool md5_password_warnings = true;
 
 /*
  * Fetch stored password for a user, for authentication.

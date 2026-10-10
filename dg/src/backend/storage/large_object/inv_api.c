@@ -52,7 +52,7 @@
 /*
  * GUC: backwards-compatibility flag to suppress LO permission checks
  */
-thread_local bool lo_compat_privileges;
+thread_local /*LOCAL*/ bool lo_compat_privileges;
 
 /*
  * All accesses to pg_largeobject and its index make use of a single
@@ -61,8 +61,8 @@ thread_local bool lo_compat_privileges;
  * execute a slightly klugy maneuver to assign ownership of the
  * Relation reference to TopTransactionResourceOwner.
  */
-static thread_local Relation lo_heap_r = NULL;
-static thread_local Relation lo_index_r = NULL;
+static thread_local /*LOCAL*/ Relation lo_heap_r = NULL;
+static thread_local /*LOCAL*/ Relation lo_index_r = NULL;
 
 /*
  * Open pg_largeobject and its index, if not already done in current xact

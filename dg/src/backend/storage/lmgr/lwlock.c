@@ -174,15 +174,15 @@ static constexpr auto BuiltinTrancheNames = [] {
  * stores the names of all dynamically-created tranches known to the current
  * process.  Any unused entries in the array will contain NULL.
  */
-static thread_local const char **LWLockTrancheNames = NULL;
-static thread_local int LWLockTrancheNamesAllocated = 0;
+static thread_local /*LOCAL*/ const char **LWLockTrancheNames = NULL;
+static thread_local /*LOCAL*/ int LWLockTrancheNamesAllocated = 0;
 
 /*
  * This points to the main array of LWLocks in shared memory.  Backends inherit
  * the pointer by fork from the postmaster (except in the EXEC_BACKEND case,
  * where we have special measures to pass it down).
  */
-PG_SHARED LWLockPadded *MainLWLockArray = NULL;
+thread_local /*SHARED*/ LWLockPadded *MainLWLockArray = NULL;
 
 /*
  * We use this structure to keep track of locked LWLocks for release
@@ -198,8 +198,8 @@ typedef struct LWLockHandle {
   LWLockMode mode;
 } LWLockHandle;
 
-static thread_local int num_held_lwlocks = 0;
-static thread_local LWLockHandle held_lwlocks[MAX_SIMUL_LWLOCKS];
+static thread_local /*LOCAL*/ int num_held_lwlocks = 0;
+static thread_local /*LOCAL*/ LWLockHandle held_lwlocks[MAX_SIMUL_LWLOCKS];
 
 /* struct representing the LWLock tranche request for named tranche */
 typedef struct NamedLWLockTrancheRequest {
@@ -207,9 +207,9 @@ typedef struct NamedLWLockTrancheRequest {
   int num_lwlocks;
 } NamedLWLockTrancheRequest;
 
-static PG_SHARED NamedLWLockTrancheRequest *NamedLWLockTrancheRequestArray =
-    NULL;
-static PG_SHARED int NamedLWLockTrancheRequestsAllocated = 0;
+static thread_local /*SHARED*/ NamedLWLockTrancheRequest
+    *NamedLWLockTrancheRequestArray = NULL;
+static thread_local /*SHARED*/ int NamedLWLockTrancheRequestsAllocated = 0;
 
 /*
  * NamedLWLockTrancheRequests is both the valid length of the request array,
@@ -217,10 +217,10 @@ static PG_SHARED int NamedLWLockTrancheRequestsAllocated = 0;
  * This variable and NamedLWLockTrancheArray are non-static so that
  * postmaster.c can copy them to child processes in EXEC_BACKEND builds.
  */
-PG_SHARED int NamedLWLockTrancheRequests = 0;
+thread_local /*SHARED*/ int NamedLWLockTrancheRequests = 0;
 
 /* points to data in shared memory: */
-PG_SHARED NamedLWLockTranche *NamedLWLockTrancheArray = NULL;
+thread_local /*SHARED*/ NamedLWLockTranche *NamedLWLockTrancheArray = NULL;
 
 static void InitializeLWLocks(void);
 static inline void LWLockReportWaitStart(LWLock *lock);

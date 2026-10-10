@@ -87,11 +87,11 @@ typedef enum {
   SHMSTATE_UNATTACHED,       /* pertinent to DataDir, no attached PIDs */
 } IpcMemoryState;
 
-PG_SHARED unsigned long UsedShmemSegID = 0;
-PG_SHARED void *UsedShmemSegAddr = NULL;
+thread_local /*SHARED*/ unsigned long UsedShmemSegID = 0;
+thread_local /*SHARED*/ void *UsedShmemSegAddr = NULL;
 
-static PG_SHARED Size AnonymousShmemSize;
-static PG_SHARED void *AnonymousShmem = NULL;
+static thread_local /*SHARED*/ Size AnonymousShmemSize;
+static thread_local /*SHARED*/ void *AnonymousShmem = NULL;
 
 static void *InternalIpcMemoryCreate(IpcMemoryKey memKey, Size size);
 static void IpcMemoryDetach(int status, Datum shmaddr);

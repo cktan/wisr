@@ -65,16 +65,16 @@ enum FileExtendMethod {
 #define DEFAULT_FILE_EXTEND_METHOD 0
 
 /* GUC parameter */
-extern thread_local PGDLLIMPORT int max_files_per_process;
-extern thread_local PGDLLIMPORT bool data_sync_retry;
-extern thread_local PGDLLIMPORT int recovery_init_sync_method;
-extern thread_local PGDLLIMPORT int io_direct_flags;
-extern thread_local PGDLLIMPORT int file_extend_method;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_files_per_process;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool data_sync_retry;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int recovery_init_sync_method;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int io_direct_flags;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int file_extend_method;
 
 /*
  * This is private to fd.c, but exported for save/restore_backend_variables()
  */
-extern PG_SHARED PGDLLIMPORT int max_safe_fds;
+extern thread_local /*SHARED*/ PGDLLIMPORT int max_safe_fds;
 
 /*
  * On Windows, we have to interpret EACCES as possibly meaning the same as

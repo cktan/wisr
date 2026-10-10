@@ -32,7 +32,7 @@
  * ActivePortal is the currently executing Portal (the most closely nested,
  * if there are several).
  */
-thread_local Portal ActivePortal = NULL;
+thread_local /*LOCAL*/ Portal ActivePortal = NULL;
 
 static void ProcessQuery(PlannedStmt *plan, const char *sourceText,
                          ParamListInfo params, QueryEnvironment *queryEnv,

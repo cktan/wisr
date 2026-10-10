@@ -28,20 +28,20 @@
 #include "storage/shmem.h"
 
 /* GUC parameter */
-thread_local bool log_checkpoints = true;
+thread_local /*LOCAL*/ bool log_checkpoints = true;
 
 /*
  * Statistics for current checkpoint are collected in this global struct.
  * Because only the checkpointer or a stand-alone backend can perform
  * checkpoints, this will be unused in normal backends.
  */
-thread_local CheckpointStatsData CheckpointStats;
+thread_local /*LOCAL*/ CheckpointStatsData CheckpointStats;
 
 /*
  * The control record.  The postmaster makes it before shared memory exists,
  * and XLOGShmemInit() moves it there.
  */
-static PG_SHARED ControlFileData *ControlFile = NULL;
+static thread_local /*SHARED*/ ControlFileData *ControlFile = NULL;
 
 /*
  * Make the control record as PostgreSQL's bootstrap would have, with a

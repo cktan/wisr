@@ -167,12 +167,12 @@ struct WaitEventSet {
 
 #ifndef WIN32
 /* Are we currently in WaitLatch? The signal handler would like to know. */
-static thread_local volatile sig_atomic_t waiting = false;
+static thread_local /*LOCAL*/ volatile sig_atomic_t waiting = false;
 #endif
 
 #ifdef WAIT_USE_SIGNALFD
 /* On Linux, we'll receive SIGURG via a signalfd file descriptor. */
-static thread_local int signal_fd = -1;
+static thread_local /*LOCAL*/ int signal_fd = -1;
 #endif
 
 #ifdef WAIT_USE_SELF_PIPE

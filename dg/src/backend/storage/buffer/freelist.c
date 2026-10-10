@@ -60,7 +60,7 @@ typedef struct {
 } BufferStrategyControl;
 
 /* Pointers to shared state */
-static PG_SHARED BufferStrategyControl *StrategyControl = NULL;
+static thread_local /*SHARED*/ BufferStrategyControl *StrategyControl = NULL;
 
 /*
  * Private (non-shared) state for managing a ring of shared buffers to re-use.

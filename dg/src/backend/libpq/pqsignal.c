@@ -18,7 +18,7 @@
 #include "libpq/pqsignal.h"
 
 /* Global variables */
-PG_SHARED sigset_t UnBlockSig, BlockSig, StartupBlockSig;
+thread_local /*SHARED*/ sigset_t UnBlockSig, BlockSig, StartupBlockSig;
 
 /*
  * Initialize BlockSig, UnBlockSig, and StartupBlockSig.

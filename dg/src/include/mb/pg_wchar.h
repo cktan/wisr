@@ -363,7 +363,7 @@ extern PGDLLIMPORT const pg_enc2name pg_enc2name_tbl[];
 /*
  * Encoding names for gettext
  */
-extern PG_SHARED PGDLLIMPORT const char *pg_enc2gettext_tbl[];
+extern thread_local /*SHARED*/ PGDLLIMPORT const char *pg_enc2gettext_tbl[];
 
 /*
  * pg_wchar stuff

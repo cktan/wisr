@@ -46,8 +46,9 @@
 #include "utils/resowner.h"
 
 /* GUC variables */
-thread_local int max_locks_per_xact; /* used to set the lock table size */
-thread_local bool log_lock_failures = false;
+thread_local /*LOCAL*/ int
+    max_locks_per_xact; /* used to set the lock table size */
+thread_local /*LOCAL*/ bool log_lock_failures = false;
 
 #define NLOCKENTS() \
 	mul_size(max_locks_per_xact, add_size(MaxBackends, max_prepared_xacts))
@@ -155,7 +156,8 @@ typedef struct TwoPhaseLockRecord {
  * would have to initialize that, while for the static array that happens
  * automatically. Doesn't seem worth the extra complexity.
  */
-static thread_local int FastPathLocalUseCounts[FP_LOCK_GROUPS_PER_BACKEND_MAX];
+static thread_local /*LOCAL*/ int
+    FastPathLocalUseCounts[FP_LOCK_GROUPS_PER_BACKEND_MAX];
 
 /*
  * Flag to indicate if the relation extension lock is held by this backend.
@@ -170,8 +172,8 @@ static thread_local int FastPathLocalUseCounts[FP_LOCK_GROUPS_PER_BACKEND_MAX];
  * taken for a short duration to extend a particular relation and then
  * released.
  */
-static thread_local bool IsRelationExtensionLockHeld PG_USED_FOR_ASSERTS_ONLY =
-    false;
+static thread_local /*LOCAL*/ bool IsRelationExtensionLockHeld
+    PG_USED_FOR_ASSERTS_ONLY = false;
 
 /*
  * Number of fast-path locks per backend - size of the arrays in PGPROC.
@@ -182,7 +184,7 @@ static thread_local bool IsRelationExtensionLockHeld PG_USED_FOR_ASSERTS_ONLY =
  * the best information about expected number of locks per backend we have.
  * See InitializeFastPathLocks() for details.
  */
-PG_SHARED int FastPathLockGroupsPerBackend = 0;
+thread_local /*SHARED*/ int FastPathLockGroupsPerBackend = 0;
 
 /*
  * Macros to calculate the fast-path group and index for a relation.
@@ -291,7 +293,7 @@ typedef struct {
   uint32 count[FAST_PATH_STRONG_LOCK_HASH_PARTITIONS];
 } FastPathStrongRelationLockData;
 
-static PG_SHARED volatile FastPathStrongRelationLockData
+static thread_local /*SHARED*/ volatile FastPathStrongRelationLockData
     *FastPathStrongRelationLocks;
 
 /*
@@ -300,14 +302,14 @@ static PG_SHARED volatile FastPathStrongRelationLockData
  * The LockMethodLockHash and LockMethodProcLockHash hash tables are in
  * shared memory; LockMethodLocalHash is local to each backend.
  */
-static PG_SHARED HTAB *LockMethodLockHash;
-static PG_SHARED HTAB *LockMethodProcLockHash;
-static thread_local HTAB *LockMethodLocalHash;
+static thread_local /*SHARED*/ HTAB *LockMethodLockHash;
+static thread_local /*SHARED*/ HTAB *LockMethodProcLockHash;
+static thread_local /*LOCAL*/ HTAB *LockMethodLocalHash;
 
 /* private state for error cleanup */
-static thread_local LOCALLOCK *StrongLockInProgress;
-static thread_local LOCALLOCK *awaitedLock;
-static thread_local ResourceOwner awaitedOwner;
+static thread_local /*LOCAL*/ LOCALLOCK *StrongLockInProgress;
+static thread_local /*LOCAL*/ LOCALLOCK *awaitedLock;
+static thread_local /*LOCAL*/ ResourceOwner awaitedOwner;
 
 #ifdef LOCK_DEBUG
 
@@ -2590,7 +2592,7 @@ static bool FastPathTransferRelationLocks(LockMethod lockMethodTable,
  */
 VirtualTransactionId *GetLockConflicts(const LOCKTAG *locktag,
                                        LOCKMODE lockmode, int *countp) {
-  static thread_local VirtualTransactionId *vxids;
+  static thread_local /*LOCAL*/ VirtualTransactionId *vxids;
   LOCKMETHODID lockmethodid = locktag->locktag_lockmethodid;
   LockMethod lockMethodTable;
   LOCK *lock;

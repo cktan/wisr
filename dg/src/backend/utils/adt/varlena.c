@@ -44,7 +44,7 @@
 #include "utils/varlena.h"
 
 /* GUC variable */
-thread_local int bytea_output = BYTEA_OUTPUT_HEX;
+thread_local /*LOCAL*/ int bytea_output = BYTEA_OUTPUT_HEX;
 
 typedef struct varlena VarString;
 

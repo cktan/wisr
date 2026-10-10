@@ -50,9 +50,9 @@ typedef enum {
 } BackslashQuoteType;
 
 /* GUC variables in scan.l (every one of these is a bad idea :-() */
-extern thread_local PGDLLIMPORT int backslash_quote;
-extern thread_local PGDLLIMPORT bool escape_string_warning;
-extern thread_local PGDLLIMPORT bool standard_conforming_strings;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int backslash_quote;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool escape_string_warning;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool standard_conforming_strings;
 
 /* Primary entry point for the raw parsing functions */
 extern List *raw_parser(const char *str, RawParseMode mode);

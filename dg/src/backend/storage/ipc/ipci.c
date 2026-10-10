@@ -43,11 +43,11 @@
 #include "utils/injection_point.h"
 
 /* GUCs */
-thread_local int shared_memory_type = DEFAULT_SHARED_MEMORY_TYPE;
+thread_local /*LOCAL*/ int shared_memory_type = DEFAULT_SHARED_MEMORY_TYPE;
 
-PG_SHARED shmem_startup_hook_type shmem_startup_hook = NULL;
+thread_local /*SHARED*/ shmem_startup_hook_type shmem_startup_hook = NULL;
 
-static PG_SHARED Size total_addin_request = 0;
+static thread_local /*SHARED*/ Size total_addin_request = 0;
 
 static void CreateOrAttachShmemStructs(void);
 

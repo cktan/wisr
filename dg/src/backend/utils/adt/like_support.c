@@ -1388,8 +1388,8 @@ static Const *make_greater_string(const Const *str_const, FmgrInfo *ltproc,
       cmpstr = str_const->constvalue;
     else {
       /* If first time through, determine the suffix to use */
-      static thread_local char suffixchar = 0;
-      static thread_local Oid suffixcollation = 0;
+      static thread_local /*LOCAL*/ char suffixchar = 0;
+      static thread_local /*LOCAL*/ Oid suffixcollation = 0;
 
       if (!suffixchar || suffixcollation != collation) {
         char *best;

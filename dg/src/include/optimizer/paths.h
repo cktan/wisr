@@ -19,26 +19,29 @@
 /*
  * allpaths.c
  */
-extern thread_local PGDLLIMPORT bool enable_geqo;
-extern thread_local PGDLLIMPORT int geqo_threshold;
-extern thread_local PGDLLIMPORT bool enable_group_by_reordering;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_geqo;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int geqo_threshold;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_group_by_reordering;
 
 /* Hook for plugins to get control in set_rel_pathlist() */
 typedef void (*set_rel_pathlist_hook_type)(PlannerInfo *root, RelOptInfo *rel,
                                            Index rti, RangeTblEntry *rte);
-extern PG_SHARED PGDLLIMPORT set_rel_pathlist_hook_type set_rel_pathlist_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT set_rel_pathlist_hook_type
+    set_rel_pathlist_hook;
 
 /* Hook for plugins to get control in add_paths_to_joinrel() */
 typedef void (*set_join_pathlist_hook_type)(
     PlannerInfo *root, RelOptInfo *joinrel, RelOptInfo *outerrel,
     RelOptInfo *innerrel, JoinType jointype, JoinPathExtraData *extra);
-extern PG_SHARED PGDLLIMPORT set_join_pathlist_hook_type set_join_pathlist_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT set_join_pathlist_hook_type
+    set_join_pathlist_hook;
 
 /* Hook for plugins to replace standard_join_search() */
 typedef RelOptInfo *(*join_search_hook_type)(PlannerInfo *root,
                                              int levels_needed,
                                              List *initial_rels);
-extern PG_SHARED PGDLLIMPORT join_search_hook_type join_search_hook;
+extern thread_local /*SHARED*/ PGDLLIMPORT join_search_hook_type
+    join_search_hook;
 
 extern RelOptInfo *make_one_rel(PlannerInfo *root, List *joinlist);
 extern RelOptInfo *standard_join_search(PlannerInfo *root, int levels_needed,

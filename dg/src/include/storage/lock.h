@@ -29,8 +29,8 @@
 typedef struct PGPROC PGPROC;
 
 /* GUC variables */
-extern thread_local PGDLLIMPORT int max_locks_per_xact;
-extern thread_local PGDLLIMPORT bool log_lock_failures;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int max_locks_per_xact;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_lock_failures;
 
 #ifdef LOCK_DEBUG
 extern PGDLLIMPORT int Trace_lock_oidmin;

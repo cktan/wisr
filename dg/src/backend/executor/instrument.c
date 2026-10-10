@@ -17,8 +17,8 @@
 
 #include "executor/instrument.h"
 
-thread_local BufferUsage pgBufferUsage;
-thread_local WalUsage pgWalUsage;
+thread_local /*LOCAL*/ BufferUsage pgBufferUsage;
+thread_local /*LOCAL*/ WalUsage pgWalUsage;
 
 /* Allocate new instrumentation structure(s) */
 Instrumentation *InstrAlloc(int n, int instrument_options, bool async_mode) {

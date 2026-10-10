@@ -119,8 +119,9 @@ struct _DestReceiver {
   /* Private fields might appear beyond this point... */
 };
 
-extern PG_SHARED PGDLLIMPORT DestReceiver *None_Receiver; /* permanent receiver
-                                                           * for DestNone */
+extern thread_local /*SHARED*/ PGDLLIMPORT DestReceiver
+    *None_Receiver; /* permanent receiver
+                     * for DestNone */
 
 /* The primary destination management functions */
 

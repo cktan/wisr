@@ -26,32 +26,34 @@
 #include "storage/procnumber.h"
 #include "storage/procsignal.h"
 
-thread_local ProtocolVersion FrontendProtocol;
+thread_local /*LOCAL*/ ProtocolVersion FrontendProtocol;
 
-thread_local volatile sig_atomic_t InterruptPending = false;
-thread_local volatile sig_atomic_t QueryCancelPending = false;
-thread_local volatile sig_atomic_t ProcDiePending = false;
-thread_local volatile sig_atomic_t CheckClientConnectionPending = false;
-thread_local volatile sig_atomic_t ClientConnectionLost = false;
-thread_local volatile sig_atomic_t IdleInTransactionSessionTimeoutPending =
+thread_local /*LOCAL*/ volatile sig_atomic_t InterruptPending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t QueryCancelPending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t ProcDiePending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t CheckClientConnectionPending =
     false;
-thread_local volatile sig_atomic_t TransactionTimeoutPending = false;
-thread_local volatile sig_atomic_t IdleSessionTimeoutPending = false;
-thread_local volatile sig_atomic_t ProcSignalBarrierPending = false;
-thread_local volatile sig_atomic_t LogMemoryContextPending = false;
-thread_local volatile sig_atomic_t IdleStatsUpdateTimeoutPending = false;
-thread_local volatile uint32 InterruptHoldoffCount = 0;
-thread_local volatile uint32 QueryCancelHoldoffCount = 0;
-thread_local volatile uint32 CritSectionCount = 0;
+thread_local /*LOCAL*/ volatile sig_atomic_t ClientConnectionLost = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t
+    IdleInTransactionSessionTimeoutPending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t TransactionTimeoutPending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t IdleSessionTimeoutPending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t ProcSignalBarrierPending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t LogMemoryContextPending = false;
+thread_local /*LOCAL*/ volatile sig_atomic_t IdleStatsUpdateTimeoutPending =
+    false;
+thread_local /*LOCAL*/ volatile uint32 InterruptHoldoffCount = 0;
+thread_local /*LOCAL*/ volatile uint32 QueryCancelHoldoffCount = 0;
+thread_local /*LOCAL*/ volatile uint32 CritSectionCount = 0;
 
-thread_local int MyProcPid;
-thread_local pg_time_t MyStartTime;
-thread_local TimestampTz MyStartTimestamp;
-thread_local struct ClientSocket *MyClientSocket;
-thread_local struct Port *MyProcPort;
-thread_local uint8 MyCancelKey[MAX_CANCEL_KEY_LENGTH];
-thread_local int MyCancelKeyLength = 0;
-thread_local int MyPMChildSlot;
+thread_local /*LOCAL*/ int MyProcPid;
+thread_local /*LOCAL*/ pg_time_t MyStartTime;
+thread_local /*LOCAL*/ TimestampTz MyStartTimestamp;
+thread_local /*LOCAL*/ struct ClientSocket *MyClientSocket;
+thread_local /*LOCAL*/ struct Port *MyProcPort;
+thread_local /*LOCAL*/ uint8 MyCancelKey[MAX_CANCEL_KEY_LENGTH];
+thread_local /*LOCAL*/ int MyCancelKeyLength = 0;
+thread_local /*LOCAL*/ int MyPMChildSlot;
 
 /*
  * MyLatch points to the latch that should be used for signal handling by the
@@ -60,7 +62,7 @@ thread_local int MyPMChildSlot;
  * PGPROC->procLatch if it has. Thus it can always be used in signal handlers,
  * without checking for its existence.
  */
-thread_local struct Latch *MyLatch;
+thread_local /*LOCAL*/ struct Latch *MyLatch;
 
 /*
  * DataDir is the absolute path to the top level of the PGDATA directory tree.
@@ -68,18 +70,21 @@ thread_local struct Latch *MyLatch;
  * most code therefore can simply use relative paths and not reference DataDir
  * explicitly.
  */
-PG_SHARED char *DataDir = NULL;
+thread_local /*SHARED*/ char *DataDir = NULL;
 
 /*
  * Mode of the data directory.  The default is 0700 but it may be changed in
  * checkDataDir() to 0750 if the data directory actually has that mode.
  */
-PG_SHARED int data_directory_mode = PG_DIR_MODE_OWNER;
+thread_local /*SHARED*/ int data_directory_mode = PG_DIR_MODE_OWNER;
 
-PG_SHARED char OutputFileName[MAXPGPATH]; /* debugging output file */
+thread_local /*SHARED*/ char
+    OutputFileName[MAXPGPATH]; /* debugging output file */
 
-PG_SHARED char my_exec_path[MAXPGPATH]; /* full path to my executable */
-PG_SHARED char pkglib_path[MAXPGPATH];  /* full path to lib directory */
+thread_local /*SHARED*/ char
+    my_exec_path[MAXPGPATH]; /* full path to my executable */
+thread_local /*SHARED*/ char
+    pkglib_path[MAXPGPATH]; /* full path to lib directory */
 
 #ifdef EXEC_BACKEND
 char postgres_exec_path[MAXPGPATH]; /* full path to backend */
@@ -87,23 +92,24 @@ char postgres_exec_path[MAXPGPATH]; /* full path to backend */
 /* note: currently this is not valid in backend processes */
 #endif
 
-thread_local ProcNumber MyProcNumber = INVALID_PROC_NUMBER;
+thread_local /*LOCAL*/ ProcNumber MyProcNumber = INVALID_PROC_NUMBER;
 
-thread_local ProcNumber ParallelLeaderProcNumber = INVALID_PROC_NUMBER;
+thread_local /*LOCAL*/ ProcNumber ParallelLeaderProcNumber =
+    INVALID_PROC_NUMBER;
 
-thread_local Oid MyDatabaseId = InvalidOid;
+thread_local /*LOCAL*/ Oid MyDatabaseId = InvalidOid;
 
-thread_local Oid MyDatabaseTableSpace = InvalidOid;
+thread_local /*LOCAL*/ Oid MyDatabaseTableSpace = InvalidOid;
 
-thread_local bool MyDatabaseHasLoginEventTriggers = false;
+thread_local /*LOCAL*/ bool MyDatabaseHasLoginEventTriggers = false;
 
 /*
  * DatabasePath is the path (relative to DataDir) of my database's
  * primary directory, ie, its directory in the default tablespace.
  */
-thread_local char *DatabasePath = NULL;
+thread_local /*LOCAL*/ char *DatabasePath = NULL;
 
-PG_SHARED pid_t PostmasterPid = 0;
+thread_local /*SHARED*/ pid_t PostmasterPid = 0;
 
 /*
  * IsPostmasterEnvironment is true in a postmaster process and any postmaster
@@ -116,21 +122,21 @@ PG_SHARED pid_t PostmasterPid = 0;
  *
  * These are initialized for the bootstrap/standalone case.
  */
-PG_SHARED bool IsPostmasterEnvironment = false;
-thread_local bool IsUnderPostmaster = false;
-PG_SHARED bool IsBinaryUpgrade = false;
+thread_local /*SHARED*/ bool IsPostmasterEnvironment = false;
+thread_local /*LOCAL*/ bool IsUnderPostmaster = false;
+thread_local /*SHARED*/ bool IsBinaryUpgrade = false;
 
-thread_local bool ExitOnAnyError = false;
+thread_local /*LOCAL*/ bool ExitOnAnyError = false;
 
-thread_local int DateStyle = USE_ISO_DATES;
-thread_local int DateOrder = DATEORDER_MDY;
-thread_local int IntervalStyle = INTSTYLE_POSTGRES;
+thread_local /*LOCAL*/ int DateStyle = USE_ISO_DATES;
+thread_local /*LOCAL*/ int DateOrder = DATEORDER_MDY;
+thread_local /*LOCAL*/ int IntervalStyle = INTSTYLE_POSTGRES;
 
-thread_local bool enableFsync = true;
-thread_local bool allowSystemTableMods = false;
-thread_local int work_mem = 4096;
-thread_local double hash_mem_multiplier = 2.0;
-thread_local int maintenance_work_mem = 65536;
+thread_local /*LOCAL*/ bool enableFsync = true;
+thread_local /*LOCAL*/ bool allowSystemTableMods = false;
+thread_local /*LOCAL*/ int work_mem = 4096;
+thread_local /*LOCAL*/ double hash_mem_multiplier = 2.0;
+thread_local /*LOCAL*/ int maintenance_work_mem = 65536;
 
 /*
  * Primary determinants of sizes of shared-memory structures.
@@ -138,28 +144,28 @@ thread_local int maintenance_work_mem = 65536;
  * MaxBackends is computed by PostmasterMain after modules have had a chance to
  * register background workers.
  */
-thread_local int NBuffers = 16384;
-thread_local int MaxConnections = 100;
-thread_local int max_worker_processes = 8;
-PG_SHARED int MaxBackends = 0;
+thread_local /*LOCAL*/ int NBuffers = 16384;
+thread_local /*LOCAL*/ int MaxConnections = 100;
+thread_local /*LOCAL*/ int max_worker_processes = 8;
+thread_local /*SHARED*/ int MaxBackends = 0;
 
 /* GUC parameters for vacuum */
-thread_local int VacuumBufferUsageLimit = 2048;
+thread_local /*LOCAL*/ int VacuumBufferUsageLimit = 2048;
 
-thread_local int VacuumCostPageHit = 1;
-thread_local int VacuumCostPageMiss = 2;
-thread_local int VacuumCostPageDirty = 20;
-thread_local int VacuumCostLimit = 200;
-thread_local double VacuumCostDelay = 0;
+thread_local /*LOCAL*/ int VacuumCostPageHit = 1;
+thread_local /*LOCAL*/ int VacuumCostPageMiss = 2;
+thread_local /*LOCAL*/ int VacuumCostPageDirty = 20;
+thread_local /*LOCAL*/ int VacuumCostLimit = 200;
+thread_local /*LOCAL*/ double VacuumCostDelay = 0;
 
-thread_local int VacuumCostBalance = 0; /* working state for vacuum */
-thread_local bool VacuumCostActive = false;
+thread_local /*LOCAL*/ int VacuumCostBalance = 0; /* working state for vacuum */
+thread_local /*LOCAL*/ bool VacuumCostActive = false;
 
 /* configurable SLRU buffer sizes */
-thread_local int commit_timestamp_buffers = 0;
-thread_local int multixact_member_buffers = 32;
-thread_local int multixact_offset_buffers = 16;
-thread_local int notify_buffers = 16;
-thread_local int serializable_buffers = 32;
-thread_local int subtransaction_buffers = 0;
-thread_local int transaction_buffers = 0;
+thread_local /*LOCAL*/ int commit_timestamp_buffers = 0;
+thread_local /*LOCAL*/ int multixact_member_buffers = 32;
+thread_local /*LOCAL*/ int multixact_offset_buffers = 16;
+thread_local /*LOCAL*/ int notify_buffers = 16;
+thread_local /*LOCAL*/ int serializable_buffers = 32;
+thread_local /*LOCAL*/ int subtransaction_buffers = 0;
+thread_local /*LOCAL*/ int transaction_buffers = 0;

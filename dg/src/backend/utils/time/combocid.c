@@ -50,7 +50,7 @@
 #include "utils/memutils.h"
 
 /* Hash table to lookup combo CIDs by cmin and cmax */
-static thread_local HTAB *comboHash = NULL;
+static thread_local /*LOCAL*/ HTAB *comboHash = NULL;
 
 /* Key and entry structures for the hash table */
 typedef struct {
@@ -74,9 +74,11 @@ typedef ComboCidEntryData *ComboCidEntry;
  * An array of cmin,cmax pairs, indexed by combo command id.
  * To convert a combo CID to cmin and cmax, you do a simple array lookup.
  */
-static thread_local ComboCidKey comboCids = NULL;
-static thread_local int usedComboCids = 0; /* number of elements in comboCids */
-static thread_local int sizeComboCids = 0; /* allocated size of array */
+static thread_local /*LOCAL*/ ComboCidKey comboCids = NULL;
+static thread_local /*LOCAL*/ int usedComboCids =
+    0; /* number of elements in comboCids */
+static thread_local /*LOCAL*/ int sizeComboCids =
+    0; /* allocated size of array */
 
 /* Initial size of the array */
 #define CCID_ARRAY_SIZE			100

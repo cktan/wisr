@@ -123,7 +123,7 @@ typedef struct OnCommitItem {
   SubTransactionId deleting_subid;
 } OnCommitItem;
 
-static thread_local List *on_commits = NIL;
+static thread_local /*LOCAL*/ List *on_commits = NIL;
 
 /*
  * State information for ALTER TABLE
@@ -2366,7 +2366,7 @@ static List *MergeAttributes(List *columns, const List *supers,
   List *nnconstraints = NIL;
   bool have_bogus_defaults = false;
   int child_attno;
-  static thread_local Node bogus_marker = {
+  static thread_local /*LOCAL*/ Node bogus_marker = {
       (NodeTag)0}; /* marks conflicting defaults */
   List *saved_columns = NIL;
   ListCell *lc;

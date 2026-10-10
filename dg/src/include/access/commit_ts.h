@@ -15,7 +15,7 @@
 #include "datatype/timestamp.h"
 #include "storage/sync.h"
 
-extern thread_local PGDLLIMPORT bool track_commit_timestamp;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool track_commit_timestamp;
 
 extern void TransactionTreeSetCommitTsData(TransactionId xid, int nsubxids,
                                            TransactionId *subxids,

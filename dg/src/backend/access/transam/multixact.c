@@ -169,8 +169,8 @@ static inline int MXOffsetToMemberOffset(MultiXactOffset offset) {
 /*
  * Links to shared-memory data structures for MultiXact control
  */
-static PG_SHARED SlruCtlData MultiXactOffsetCtlData;
-static PG_SHARED SlruCtlData MultiXactMemberCtlData;
+static thread_local /*SHARED*/ SlruCtlData MultiXactOffsetCtlData;
+static thread_local /*SHARED*/ SlruCtlData MultiXactMemberCtlData;
 
 #define MultiXactOffsetCtl	(&MultiXactOffsetCtlData)
 #define MultiXactMemberCtl	(&MultiXactMemberCtlData)
@@ -274,9 +274,9 @@ typedef struct MultiXactStateData {
 #define NumVisibleSlots		MaxBackends
 
 /* Pointers to the state data in shared memory */
-static PG_SHARED MultiXactStateData *MultiXactState;
-static PG_SHARED MultiXactId *OldestMemberMXactId;
-static PG_SHARED MultiXactId *OldestVisibleMXactId;
+static thread_local /*SHARED*/ MultiXactStateData *MultiXactState;
+static thread_local /*SHARED*/ MultiXactId *OldestMemberMXactId;
+static thread_local /*SHARED*/ MultiXactId *OldestVisibleMXactId;
 
 static inline MultiXactId *MyOldestMemberMXactIdSlot(void) {
   /*
@@ -333,8 +333,9 @@ typedef struct mXactCacheEnt {
 } mXactCacheEnt;
 
 #define MAX_CACHE_ENTRIES	256
-static thread_local dclist_head MXactCache = DCLIST_STATIC_INIT(MXactCache);
-static thread_local MemoryContext MXactContext = NULL;
+static thread_local /*LOCAL*/ dclist_head MXactCache =
+    DCLIST_STATIC_INIT(MXactCache);
+static thread_local /*LOCAL*/ MemoryContext MXactContext = NULL;
 
 #ifdef MULTIXACT_DEBUG
 #define debug_elog2(a, b) elog(a,b)
@@ -1577,7 +1578,7 @@ static char *mxstatus_to_string(MultiXactStatus status) {
 
 char *mxid_to_string(MultiXactId multi, int nmembers,
                      MultiXactMember *members) {
-  static thread_local char *str = NULL;
+  static thread_local /*LOCAL*/ char *str = NULL;
   StringInfoData buf;
   int i;
 

@@ -31,7 +31,7 @@
 #include "storage/fd.h"
 
 /* GUCs */
-thread_local int file_copy_method = FILE_COPY_METHOD_COPY;
+thread_local /*LOCAL*/ int file_copy_method = FILE_COPY_METHOD_COPY;
 
 static void clone_file(const char *fromfile, const char *tofile);
 

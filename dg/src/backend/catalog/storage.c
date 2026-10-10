@@ -66,9 +66,9 @@ typedef struct PendingRelSync {
   RelFileLocator rlocator;
 } PendingRelSync;
 
-static thread_local PendingRelDelete *pendingDeletes =
+static thread_local /*LOCAL*/ PendingRelDelete *pendingDeletes =
     NULL; /* head of linked list */
-static thread_local HTAB *pendingSyncHash = NULL;
+static thread_local /*LOCAL*/ HTAB *pendingSyncHash = NULL;
 
 /*
  * AddPendingSync

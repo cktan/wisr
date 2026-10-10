@@ -82,7 +82,8 @@ typedef struct _MdfdVec {
   BlockNumber mdfd_segno; /* segment number, from 0 */
 } MdfdVec;
 
-static thread_local MemoryContext MdCxt; /* context for all MdfdVec objects */
+static thread_local /*LOCAL*/ MemoryContext
+    MdCxt; /* context for all MdfdVec objects */
 
 /* Populate a file tag describing an md.c segment file. */
 #define INIT_MD_FILETAG(a, xx_rlocator, xx_forknum, xx_segno) \

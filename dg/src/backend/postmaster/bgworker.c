@@ -34,7 +34,7 @@
 /*
  * The postmaster's list of registered background workers, in private memory.
  */
-PG_SHARED dlist_head BackgroundWorkerList =
+thread_local /*SHARED*/ dlist_head BackgroundWorkerList =
     DLIST_STATIC_INIT(BackgroundWorkerList);
 
 /*
@@ -87,7 +87,7 @@ struct BackgroundWorkerHandle {
   uint64 generation;
 };
 
-static PG_SHARED BackgroundWorkerArray *BackgroundWorkerData;
+static thread_local /*SHARED*/ BackgroundWorkerArray *BackgroundWorkerData;
 
 /* Private functions. */
 static bgworker_main_type
@@ -783,7 +783,7 @@ void BackgroundWorkerUnblockSignals(void) {
  */
 void RegisterBackgroundWorker(BackgroundWorker *worker) {
   RegisteredBgWorker *rw;
-  static PG_SHARED int numworkers = 0;
+  static thread_local /*SHARED*/ int numworkers = 0;
 
   /*
    * Static background workers can only be registered in the postmaster
@@ -1146,7 +1146,7 @@ LookupBackgroundWorkerFunction(const char *libraryname, const char *funcname) {
 const char *GetBackgroundWorkerTypeByPid(pid_t pid) {
   int slotno;
   bool found = false;
-  static thread_local char result[BGW_MAXLEN];
+  static thread_local /*LOCAL*/ char result[BGW_MAXLEN];
 
   LWLockAcquire(BackgroundWorkerLock, LW_SHARED);
 

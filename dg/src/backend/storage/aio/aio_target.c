@@ -25,7 +25,7 @@ static const PgAioTargetInfo aio_invalid_target_info = {
     .name = "invalid",
 };
 
-static thread_local const PgAioTargetInfo *pgaio_target_info[] = {
+static thread_local /*LOCAL*/ const PgAioTargetInfo *pgaio_target_info[] = {
     [PGAIO_TID_INVALID] = &aio_invalid_target_info,
     [PGAIO_TID_SMGR] = &aio_smgr_target_info,
 };

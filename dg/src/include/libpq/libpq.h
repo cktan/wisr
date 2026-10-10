@@ -38,7 +38,7 @@ typedef struct {
   void (*putmessage_noblock)(char msgtype, const char *s, size_t len);
 } PQcommMethods;
 
-extern thread_local const PGDLLIMPORT PQcommMethods *PqCommMethods;
+extern thread_local /*LOCAL*/ const PGDLLIMPORT PQcommMethods *PqCommMethods;
 
 #define pq_comm_reset() (PqCommMethods->comm_reset())
 #define pq_flush() (PqCommMethods->flush())
@@ -56,7 +56,7 @@ extern thread_local const PGDLLIMPORT PQcommMethods *PqCommMethods;
 /*
  * prototypes for functions in pqcomm.c
  */
-extern thread_local PGDLLIMPORT WaitEventSet *FeBeWaitSet;
+extern thread_local /*LOCAL*/ PGDLLIMPORT WaitEventSet *FeBeWaitSet;
 
 #define FeBeWaitSetSocketPos 0
 #define FeBeWaitSetLatchPos 1
@@ -98,21 +98,22 @@ extern ssize_t secure_raw_write(Port *port, const void *ptr, size_t len);
 /*
  * declarations for variables defined in be-secure.c
  */
-extern thread_local PGDLLIMPORT char *ssl_library;
-extern thread_local PGDLLIMPORT char *ssl_ca_file;
-extern thread_local PGDLLIMPORT char *ssl_cert_file;
-extern thread_local PGDLLIMPORT char *ssl_crl_file;
-extern thread_local PGDLLIMPORT char *ssl_crl_dir;
-extern thread_local PGDLLIMPORT char *ssl_key_file;
-extern thread_local PGDLLIMPORT int ssl_min_protocol_version;
-extern thread_local PGDLLIMPORT int ssl_max_protocol_version;
-extern thread_local PGDLLIMPORT char *ssl_passphrase_command;
-extern thread_local PGDLLIMPORT bool ssl_passphrase_command_supports_reload;
-extern thread_local PGDLLIMPORT char *ssl_dh_params_file;
-extern thread_local PGDLLIMPORT char *SSLCipherSuites;
-extern thread_local PGDLLIMPORT char *SSLCipherList;
-extern thread_local PGDLLIMPORT char *SSLECDHCurve;
-extern thread_local PGDLLIMPORT bool SSLPreferServerCiphers;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_library;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_ca_file;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_cert_file;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_crl_file;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_crl_dir;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_key_file;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int ssl_min_protocol_version;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int ssl_max_protocol_version;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_passphrase_command;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
+    ssl_passphrase_command_supports_reload;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *ssl_dh_params_file;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *SSLCipherSuites;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *SSLCipherList;
+extern thread_local /*LOCAL*/ PGDLLIMPORT char *SSLECDHCurve;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool SSLPreferServerCiphers;
 #ifdef USE_SSL
 extern PGDLLIMPORT bool ssl_loaded_verify_locations;
 #endif

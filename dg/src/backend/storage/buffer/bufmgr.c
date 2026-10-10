@@ -135,10 +135,10 @@ typedef struct SMgrSortArray {
 } SMgrSortArray;
 
 /* GUC variables */
-thread_local bool zero_damaged_pages = false;
-thread_local int bgwriter_lru_maxpages = 100;
-thread_local double bgwriter_lru_multiplier = 2.0;
-thread_local bool track_io_timing = false;
+thread_local /*LOCAL*/ bool zero_damaged_pages = false;
+thread_local /*LOCAL*/ int bgwriter_lru_maxpages = 100;
+thread_local /*LOCAL*/ double bgwriter_lru_multiplier = 2.0;
+thread_local /*LOCAL*/ bool track_io_timing = false;
 
 /*
  * How many buffers PrefetchBuffer callers should try to stay ahead of their
@@ -146,14 +146,15 @@ thread_local bool track_io_timing = false;
  * for buffers not belonging to tablespaces that have their
  * effective_io_concurrency parameter set.
  */
-thread_local int effective_io_concurrency = DEFAULT_EFFECTIVE_IO_CONCURRENCY;
+thread_local /*LOCAL*/ int effective_io_concurrency =
+    DEFAULT_EFFECTIVE_IO_CONCURRENCY;
 
 /*
  * Like effective_io_concurrency, but used by maintenance code paths that might
  * benefit from a higher setting because they work on behalf of many sessions.
  * Overridden by the tablespace setting of the same name.
  */
-thread_local int maintenance_io_concurrency =
+thread_local /*LOCAL*/ int maintenance_io_concurrency =
     DEFAULT_MAINTENANCE_IO_CONCURRENCY;
 
 /*
@@ -162,20 +163,21 @@ thread_local int maintenance_io_concurrency =
  * that call smgr APIs directly.  It is computed as the minimum of underlying
  * GUCs io_combine_limit_guc and io_max_combine_limit.
  */
-thread_local int io_combine_limit = DEFAULT_IO_COMBINE_LIMIT;
-thread_local int io_combine_limit_guc = DEFAULT_IO_COMBINE_LIMIT;
-thread_local int io_max_combine_limit = DEFAULT_IO_COMBINE_LIMIT;
+thread_local /*LOCAL*/ int io_combine_limit = DEFAULT_IO_COMBINE_LIMIT;
+thread_local /*LOCAL*/ int io_combine_limit_guc = DEFAULT_IO_COMBINE_LIMIT;
+thread_local /*LOCAL*/ int io_max_combine_limit = DEFAULT_IO_COMBINE_LIMIT;
 
 /*
  * GUC variables about triggering kernel writeback for buffers written; OS
  * dependent defaults are set via the GUC mechanism.
  */
-thread_local int checkpoint_flush_after = DEFAULT_CHECKPOINT_FLUSH_AFTER;
-thread_local int bgwriter_flush_after = DEFAULT_BGWRITER_FLUSH_AFTER;
-thread_local int backend_flush_after = DEFAULT_BACKEND_FLUSH_AFTER;
+thread_local /*LOCAL*/ int checkpoint_flush_after =
+    DEFAULT_CHECKPOINT_FLUSH_AFTER;
+thread_local /*LOCAL*/ int bgwriter_flush_after = DEFAULT_BGWRITER_FLUSH_AFTER;
+thread_local /*LOCAL*/ int backend_flush_after = DEFAULT_BACKEND_FLUSH_AFTER;
 
 /* local state for LockBufferForCleanup */
-static thread_local BufferDesc *PinCountWaitBuf = NULL;
+static thread_local /*LOCAL*/ BufferDesc *PinCountWaitBuf = NULL;
 
 /*
  * Backend-Private refcount management:
@@ -207,14 +209,15 @@ static thread_local BufferDesc *PinCountWaitBuf = NULL;
  * memory allocations in NewPrivateRefCountEntry() which can be important
  * because in some scenarios it's called with a spinlock held...
  */
-static thread_local struct PrivateRefCountEntry
+static thread_local /*LOCAL*/ struct PrivateRefCountEntry
     PrivateRefCountArray[REFCOUNT_ARRAY_ENTRIES];
-static thread_local HTAB *PrivateRefCountHash = NULL;
-static thread_local int32 PrivateRefCountOverflowed = 0;
-static thread_local uint32 PrivateRefCountClock = 0;
-static thread_local PrivateRefCountEntry *ReservedRefCountEntry = NULL;
+static thread_local /*LOCAL*/ HTAB *PrivateRefCountHash = NULL;
+static thread_local /*LOCAL*/ int32 PrivateRefCountOverflowed = 0;
+static thread_local /*LOCAL*/ uint32 PrivateRefCountClock = 0;
+static thread_local /*LOCAL*/ PrivateRefCountEntry *ReservedRefCountEntry =
+    NULL;
 
-static thread_local uint32 MaxProportionalPins;
+static thread_local /*LOCAL*/ uint32 MaxProportionalPins;
 
 static void ReservePrivateRefCountEntry(void);
 static PrivateRefCountEntry *NewPrivateRefCountEntry(Buffer buffer);
@@ -3338,15 +3341,15 @@ bool BgBufferSync(WritebackContext *wb_context) {
    * Information saved between calls so we can determine the strategy
    * point's advance rate and avoid scanning already-cleaned buffers.
    */
-  static thread_local bool saved_info_valid = false;
-  static thread_local int prev_strategy_buf_id;
-  static thread_local uint32 prev_strategy_passes;
-  static thread_local int next_to_clean;
-  static thread_local uint32 next_passes;
+  static thread_local /*LOCAL*/ bool saved_info_valid = false;
+  static thread_local /*LOCAL*/ int prev_strategy_buf_id;
+  static thread_local /*LOCAL*/ uint32 prev_strategy_passes;
+  static thread_local /*LOCAL*/ int next_to_clean;
+  static thread_local /*LOCAL*/ uint32 next_passes;
 
   /* Moving averages of allocation rate and clean-buffer density */
-  static thread_local float smoothed_alloc = 0;
-  static thread_local float smoothed_density = 10.0;
+  static thread_local /*LOCAL*/ float smoothed_alloc = 0;
+  static thread_local /*LOCAL*/ float smoothed_density = 10.0;
 
   /* Potentially these could be tunables, but for now, not */
   float smoothing_samples = 16;

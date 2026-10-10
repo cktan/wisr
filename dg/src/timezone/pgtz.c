@@ -24,10 +24,10 @@
 #include "utils/hsearch.h"
 
 /* Current session timezone (controlled by TimeZone GUC) */
-thread_local pg_tz *session_timezone = NULL;
+thread_local /*LOCAL*/ pg_tz *session_timezone = NULL;
 
 /* Current log timezone (controlled by log_timezone GUC) */
-thread_local pg_tz *log_timezone = NULL;
+thread_local /*LOCAL*/ pg_tz *log_timezone = NULL;
 
 static bool scan_directory_ci(const char *dirname, const char *fname,
                               int fnamelen, char *canonname, int canonnamelen);
@@ -177,7 +177,7 @@ typedef struct {
   pg_tz tz;
 } pg_tz_cache;
 
-static thread_local HTAB *timezone_cache = NULL;
+static thread_local /*LOCAL*/ HTAB *timezone_cache = NULL;
 
 static bool init_timezone_hashtable(void) {
   HASHCTL hash_ctl;

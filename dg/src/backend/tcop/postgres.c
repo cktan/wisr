@@ -82,24 +82,25 @@
  *		global variables
  * ----------------
  */
-thread_local const char *debug_query_string; /* client-supplied query string */
+thread_local /*LOCAL*/ const char
+    *debug_query_string; /* client-supplied query string */
 
 /* Note: whereToSendOutput is initialized for the bootstrap/standalone case */
-thread_local CommandDest whereToSendOutput = DestDebug;
+thread_local /*LOCAL*/ CommandDest whereToSendOutput = DestDebug;
 
 /* flag for logging end of session */
-thread_local bool Log_disconnections = false;
+thread_local /*LOCAL*/ bool Log_disconnections = false;
 
-thread_local int log_statement = LOGSTMT_NONE;
+thread_local /*LOCAL*/ int log_statement = LOGSTMT_NONE;
 
 /* wait N seconds to allow attach from a debugger */
-thread_local int PostAuthDelay = 0;
+thread_local /*LOCAL*/ int PostAuthDelay = 0;
 
 /* Time between checks that the client is still connected. */
-thread_local int client_connection_check_interval = 0;
+thread_local /*LOCAL*/ int client_connection_check_interval = 0;
 
 /* flags for non-system relation kinds to restrict use */
-thread_local int restrict_nonsystem_relation_kind;
+thread_local /*LOCAL*/ int restrict_nonsystem_relation_kind;
 
 /* ----------------
  *		private typedefs etc
@@ -122,42 +123,44 @@ typedef struct BindParamCbData {
  * Flag to keep track of whether we have started a transaction.
  * For extended query protocol this has to be remembered across messages.
  */
-static thread_local bool xact_started = false;
+static thread_local /*LOCAL*/ bool xact_started = false;
 
 /*
  * Flag to indicate that we are doing the outer loop's read-from-client,
  * as opposed to any random read from client that might happen within
  * commands like COPY FROM STDIN.
  */
-static thread_local bool DoingCommandRead = false;
+static thread_local /*LOCAL*/ bool DoingCommandRead = false;
 
 /*
  * Flags to implement skip-till-Sync-after-error behavior for messages of
  * the extended query protocol.
  */
-static thread_local bool doing_extended_query_message = false;
-static thread_local bool ignore_till_sync = false;
+static thread_local /*LOCAL*/ bool doing_extended_query_message = false;
+static thread_local /*LOCAL*/ bool ignore_till_sync = false;
 
 /*
  * If an unnamed prepared statement exists, it's stored here.
  * We keep it separate from the hashtable kept by commands/prepare.c
  * in order to reduce overhead for short-lived queries.
  */
-static thread_local CachedPlanSource *unnamed_stmt_psrc = NULL;
+static thread_local /*LOCAL*/ CachedPlanSource *unnamed_stmt_psrc = NULL;
 
 /* assorted command-line switches */
-static thread_local const char *userDoption = NULL;     /* -D switch */
-static thread_local bool EchoQuery = false;             /* -E switch */
-static thread_local bool UseSemiNewlineNewline = false; /* -j switch */
+static thread_local /*LOCAL*/ const char *userDoption = NULL; /* -D switch */
+static thread_local /*LOCAL*/ bool EchoQuery = false;         /* -E switch */
+static thread_local /*LOCAL*/ bool UseSemiNewlineNewline =
+    false; /* -j switch */
 
 /* whether or not, and why, we were canceled by conflict with recovery */
-static thread_local volatile sig_atomic_t RecoveryConflictPending = false;
-static thread_local volatile sig_atomic_t
+static thread_local /*LOCAL*/ volatile sig_atomic_t RecoveryConflictPending =
+    false;
+static thread_local /*LOCAL*/ volatile sig_atomic_t
     RecoveryConflictPendingReasons[NUM_PROCSIGNALS];
 
 /* reused buffer to pass to SendRowDescriptionMessage() */
-static thread_local MemoryContext row_description_context = NULL;
-static thread_local StringInfoData row_description_buf;
+static thread_local /*LOCAL*/ MemoryContext row_description_context = NULL;
+static thread_local /*LOCAL*/ StringInfoData row_description_buf;
 
 /* ----------------------------------------------------------------
  *		decls for routines only used in this file
@@ -4506,8 +4509,8 @@ void PostgresMain(const char *dbname, const char *username) {
   PG_ERROR_LOOP_END();
 }
 
-static thread_local struct rusage Save_r;
-static thread_local struct timeval Save_t;
+static thread_local /*LOCAL*/ struct rusage Save_r;
+static thread_local /*LOCAL*/ struct timeval Save_t;
 
 void ResetUsage(void) {
   getrusage(RUSAGE_SELF, &Save_r);

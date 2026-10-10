@@ -73,14 +73,15 @@ typedef enum pushdown_safe_type {
 } pushdown_safe_type;
 
 /* These parameters are set by GUC */
-thread_local bool enable_geqo = false; /* just in case GUC doesn't set it */
-thread_local int geqo_threshold;
+thread_local /*LOCAL*/ bool enable_geqo =
+    false; /* just in case GUC doesn't set it */
+thread_local /*LOCAL*/ int geqo_threshold;
 
 /* Hook for plugins to get control in set_rel_pathlist() */
-PG_SHARED set_rel_pathlist_hook_type set_rel_pathlist_hook = NULL;
+thread_local /*SHARED*/ set_rel_pathlist_hook_type set_rel_pathlist_hook = NULL;
 
 /* Hook for plugins to replace standard_join_search() */
-PG_SHARED join_search_hook_type join_search_hook = NULL;
+thread_local /*SHARED*/ join_search_hook_type join_search_hook = NULL;
 
 static void set_base_rel_consider_startup(PlannerInfo *root);
 static void set_base_rel_sizes(PlannerInfo *root);

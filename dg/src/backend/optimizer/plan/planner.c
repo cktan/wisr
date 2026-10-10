@@ -63,14 +63,16 @@
 #include "utils/selfuncs.h"
 
 /* GUC parameters */
-thread_local double cursor_tuple_fraction = DEFAULT_CURSOR_TUPLE_FRACTION;
-thread_local bool enable_distinct_reordering = true;
+thread_local /*LOCAL*/ double cursor_tuple_fraction =
+    DEFAULT_CURSOR_TUPLE_FRACTION;
+thread_local /*LOCAL*/ bool enable_distinct_reordering = true;
 
 /* Hook for plugins to get control in planner() */
-PG_SHARED planner_hook_type planner_hook = NULL;
+thread_local /*SHARED*/ planner_hook_type planner_hook = NULL;
 
 /* Hook for plugins to get control when grouping_planner() plans upper rels */
-PG_SHARED create_upper_paths_hook_type create_upper_paths_hook = NULL;
+thread_local /*SHARED*/ create_upper_paths_hook_type create_upper_paths_hook =
+    NULL;
 
 /* Expression kind codes for preprocess_expression */
 #define EXPRKIND_QUAL				0

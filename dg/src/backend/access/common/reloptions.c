@@ -80,7 +80,7 @@
  * plans to be introduced concurrently without interfering with users.
  */
 
-static thread_local relopt_bool boolRelOpts[] = {
+static thread_local /*LOCAL*/ relopt_bool boolRelOpts[] = {
     {{"user_catalog_table",
       "Declare a table as an additional catalog table, e.g. for the purpose of "
       "logical replication",
@@ -104,7 +104,7 @@ static thread_local relopt_bool boolRelOpts[] = {
     /* list terminator */
     {{NULL}}};
 
-static thread_local relopt_int intRelOpts[] = {
+static thread_local /*LOCAL*/ relopt_int intRelOpts[] = {
     {{
          "fillfactor", "Packs table pages only to this percentage",
          RELOPT_KIND_HEAP, ShareUpdateExclusiveLock /* since it applies only to
@@ -153,7 +153,7 @@ static thread_local relopt_int intRelOpts[] = {
     /* list terminator */
     {{NULL}}};
 
-static thread_local relopt_real realRelOpts[] = {
+static thread_local /*LOCAL*/ relopt_real realRelOpts[] = {
 
     {{"seq_page_cost",
       "Sets the planner's estimate of the cost of a sequentially fetched disk "
@@ -192,14 +192,14 @@ static thread_local relopt_real realRelOpts[] = {
     {{NULL}}};
 
 /* values from ViewOptCheckOption */
-static thread_local relopt_enum_elt_def viewCheckOptValues[] = {
+static thread_local /*LOCAL*/ relopt_enum_elt_def viewCheckOptValues[] = {
     /* no value for NOT_SET */
     {"local", VIEW_OPTION_CHECK_OPTION_LOCAL},
     {"cascaded", VIEW_OPTION_CHECK_OPTION_CASCADED},
     {(const char *)NULL} /* list terminator */
 };
 
-static thread_local relopt_enum enumRelOpts[] = {
+static thread_local /*LOCAL*/ relopt_enum enumRelOpts[] = {
     {{"check_option", "View has WITH CHECK OPTION defined (local or cascaded).",
       RELOPT_KIND_VIEW, AccessExclusiveLock},
      viewCheckOptValues,
@@ -208,16 +208,17 @@ static thread_local relopt_enum enumRelOpts[] = {
     /* list terminator */
     {{NULL}}};
 
-static thread_local relopt_string stringRelOpts[] = {
+static thread_local /*LOCAL*/ relopt_string stringRelOpts[] = {
     /* list terminator */
     {{NULL}}};
 
-static thread_local relopt_gen **relOpts = NULL;
-static thread_local bits32 last_assigned_kind = RELOPT_KIND_LAST_DEFAULT;
+static thread_local /*LOCAL*/ relopt_gen **relOpts = NULL;
+static thread_local /*LOCAL*/ bits32 last_assigned_kind =
+    RELOPT_KIND_LAST_DEFAULT;
 
-static thread_local int num_custom_options = 0;
-static thread_local relopt_gen **custom_options = NULL;
-static thread_local bool need_initialization = true;
+static thread_local /*LOCAL*/ int num_custom_options = 0;
+static thread_local /*LOCAL*/ relopt_gen **custom_options = NULL;
+static thread_local /*LOCAL*/ bool need_initialization = true;
 
 static void initialize_reloptions(void);
 static void parse_one_reloption(relopt_value *option, char *text_str,
@@ -344,7 +345,7 @@ relopt_kind add_reloption_kind(void) {
  *recompute the main parser table.
  */
 static void add_reloption(relopt_gen *newoption) {
-  static thread_local int max_custom_options = 0;
+  static thread_local /*LOCAL*/ int max_custom_options = 0;
 
   if (num_custom_options >= max_custom_options) {
     MemoryContext oldcxt;
