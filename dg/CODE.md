@@ -115,8 +115,10 @@ digres is one process; each session is a thread of it.
   runs at its next `CHECK_FOR_INTERRUPTS()` or wait. A session
   thread blocks every signal but SIGALRM, from its own timer,
   and the faults it causes itself.
-- **A latch wakes one thread** (`tgkill`), and a timeout has a
-  timer of its own per thread.
+- **A latch wakes one thread** through sys: it keeps its
+  owner's handle, and `SetLatch()` writes the owner's wake fd
+  (`sys_interrupt()`, or `sys_interrupt_self()` in a signal
+  handler). A timeout has a timer of its own per thread.
 - **Lock-free handoffs are atomics.** Where PostgreSQL read
   and wrote a flag shared between processes plainly, digres
   uses a relaxed atomic (or release and acquire where order

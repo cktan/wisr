@@ -61,7 +61,7 @@ static char *tls_block(void) {
 
 /*
  * Free what the session's exit left, which a process's exit would have
- * freed: its wait sets and signalfd, its files, the snapshots' arrays, all
+ * freed: its wait sets and local latch, its files, the snapshots' arrays, all
  * its memory contexts, then its control block.
  */
 static void session_thread_end(void) {
@@ -71,6 +71,7 @@ static void session_thread_end(void) {
   }
   ShutdownLatchWaitSet();
   ShutdownWaitEventSupport();
+  ShutdownProcessLocalLatch();
   ShutdownFileAccess();
   FreeStaticSnapshots();
 

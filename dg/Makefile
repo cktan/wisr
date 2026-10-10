@@ -33,6 +33,11 @@ LIBSM := $(SM)/build/libsm.a
 # The system services sm and digres build on (../sys).
 SYS := ../sys
 LIBSYS := $(SYS)/build/libsys.a
+# sys instrumented too: its atomics hand off what digres's threads share,
+# and a sanitizer that cannot see them reports races that are not.
+LIBSYS_TSAN := $(SYS)/build/tsan/libsys.a
+# The sys library a link takes: the tsan build overrides it.
+LINK_SYS = $(LIBSYS)
 # Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
@@ -83,12 +88,12 @@ define link_shared
 	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
 	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
 	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
-	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LIBSYS) $(LDLIBS)
+	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LINK_SYS) $(LDLIBS)
 	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) > $(1).shared.c
 	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
 	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
 	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
-	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LIBSYS) $(LDLIBS)
+	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LINK_SYS) $(LDLIBS)
 	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) | \
 	    cmp -s - $(1).shared.c
 endef
@@ -96,9 +101,11 @@ endef
 # The server again, each object compiled once more as NAME.tsan.o for
 # the thread sanitizer, and the statements in test/ run with it, alone
 # and in threads, and test/server.sh run on it. The sanitizer cannot map its memory with the address
-# space randomised, hence setarch -R. sq and sm are not instrumented.
+# space randomised, hence setarch -R. sq and sm are not instrumented;
+# sys is.
 .PHONY: tsan
-tsan: gen $(LIBSQ) $(LIBSM) $(LIBSYS)
+tsan: LINK_SYS = $(LIBSYS_TSAN)
+tsan: gen $(LIBSQ) $(LIBSM) $(LIBSYS_TSAN)
 	$(MAKE) -C src OBJ=tsan.o
 	@mkdir -p build
 	$(call link_shared,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
@@ -129,10 +136,13 @@ $(LIBSQ):
 $(LIBSM):
 	$(MAKE) -C $(SM)
 
-# And sys.
-.PHONY: $(LIBSYS)
+# And sys, plain and for the thread sanitizer.
+.PHONY: $(LIBSYS) $(LIBSYS_TSAN)
 $(LIBSYS):
 	$(MAKE) -C $(SYS) build/libsys.a
+$(LIBSYS_TSAN):
+	$(MAKE) -C $(SYS) BUILD=build/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
+	    build/tsan/libsys.a
 
 # The catalogs' #defines: pg_*_d.h and the syscache tables.
 $(I)/catalog/.stamp: $(CATALOG_HEADERS) $(wildcard $(I)/catalog/*.dat) \

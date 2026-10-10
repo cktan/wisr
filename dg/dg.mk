@@ -26,7 +26,8 @@ else
 OPT ?= -O0 -g
 endif
 STD := -x c++ -std=gnu++20 -w
-CPPFLAGS := -I$(top)/src/include $(INCLUDES) -D_GNU_SOURCE
+# Every directory may include sys.h: the services dg is built on.
+CPPFLAGS := -I$(top)/src/include -I$(top)/../sys/include $(INCLUDES) -D_GNU_SOURCE
 
 SRCS := $(filter-out $(SKIP),$(wildcard *.c))
 OBJS := $(SRCS:.c=.$(OBJ))

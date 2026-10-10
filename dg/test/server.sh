@@ -187,9 +187,10 @@ grep -q "canceling authentication due to timeout" "$work/log" ||
 
 # Verify that the server stops when asked, with no process lost on the way,
 # and ends a session left open: the postmaster's SIGTERM reaches it as a flag
-# in its PGPROC (SignalProc()).
+# in its PGPROC (SignalProc()). Each side wakes the other's latch from
+# another thread (sys_interrupt()), so a lost wake-up is a stall.
 # 1. Open a session, run a statement in it, and leave it idle.
-# 2. Interrupt the server, and wait for it.
+# 2. Interrupt the server, and confirm it stops within ten seconds.
 # 3. Confirm it exited with status 0, and ended the idle session.
 # 4. Confirm its log tells of no process ended by a signal.
 mkfifo "$work/idle.in"
@@ -203,6 +204,11 @@ for _ in $(seq 50); do
 done
 grep -qx 49 "$work/idle.out" || fail "idle session"
 kill -INT $server
+for _ in $(seq 100); do
+  kill -0 $server 2> /dev/null || break
+  sleep 0.1
+done
+kill -0 $server 2> /dev/null && fail "shutdown is prompt"
 wait $server || fail "shutdown status"
 grep -q "terminating connection due to administrator command" "$work/log" ||
   fail "idle session ended"

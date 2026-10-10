@@ -69,6 +69,9 @@ void InitLatch(Latch *latch) {
   LATCH_SET(latch->maybe_sleeping, false);
   LATCH_SET(latch->owner_pid, MyProcPid);
   LATCH_SET(latch->owner_tid, gettid());
+  /* Other threads set it too: the postmaster's, by its backends. */
+  latch->owner = new sys_thread_ref_t(sys_thread_self());
+  SpinLockInit(&latch->owner_lock);
   latch->is_shared = false;
 
 #ifdef WIN32
@@ -113,6 +116,8 @@ void InitSharedLatch(Latch *latch) {
   LATCH_SET(latch->maybe_sleeping, false);
   LATCH_SET(latch->owner_pid, 0);
   LATCH_SET(latch->owner_tid, 0);
+  latch->owner = NULL;
+  SpinLockInit(&latch->owner_lock);
   latch->is_shared = true;
 }
 
@@ -127,6 +132,7 @@ void InitSharedLatch(Latch *latch) {
  */
 void OwnLatch(Latch *latch) {
   int owner_pid;
+  sys_thread_ref_t *owner;
 
   /* Sanity checks */
   Assert(latch->is_shared);
@@ -134,6 +140,13 @@ void OwnLatch(Latch *latch) {
   owner_pid = LATCH_GET(latch->owner_pid);
   if (owner_pid != 0)
     elog(PANIC, "latch already owned by PID %d", owner_pid);
+
+  /* Made before the lock: a spinlock is held for a few instructions. */
+  owner = new sys_thread_ref_t(sys_thread_self());
+  /* Published under the lock that SetLatch() copies it under. */
+  SpinLockAcquire(&latch->owner_lock);
+  latch->owner = owner;
+  SpinLockRelease(&latch->owner_lock);
 
   LATCH_SET(latch->owner_pid, MyProcPid);
   LATCH_SET(latch->owner_tid, gettid());
@@ -143,11 +156,20 @@ void OwnLatch(Latch *latch) {
  * Disown a shared latch currently owned by the current process.
  */
 void DisownLatch(Latch *latch) {
+  sys_thread_ref_t *owner;
+
   Assert(latch->is_shared);
   Assert(LATCH_GET(latch->owner_pid) == MyProcPid);
 
   LATCH_SET(latch->owner_pid, 0);
   LATCH_SET(latch->owner_tid, 0);
+
+  /* Unpublished under the lock, so no SetLatch() is copying it. */
+  SpinLockAcquire(&latch->owner_lock);
+  owner = latch->owner;
+  latch->owner = NULL;
+  SpinLockRelease(&latch->owner_lock);
+  delete owner;
 }
 
 /*
@@ -301,9 +323,9 @@ void SetLatch(Latch *latch) {
 
   /*
    * See if anyone's waiting for the latch. It can be the current process if
-   * we're in a signal handler. We use the self-pipe or SIGURG to ourselves
+   * we're in a signal handler. We use the self-pipe or our wake fd (sys.h)
    * to wake up WaitEventSetWaitBlock() without races in that case. If it's
-   * another process, send a signal.
+   * another thread, interrupt it through sys.
    *
    * Fetch owner_pid only once, in case the latch is concurrently getting
    * owned or disowned. XXX: This assumes that pid_t is atomic, which isn't
@@ -327,8 +349,17 @@ void SetLatch(Latch *latch) {
     return;
   else if (owner_pid == MyProcPid && owner_tid == gettid())
     WakeupMyProc();
-  else
-    WakeupOtherProc(owner_pid, owner_tid);
+  else {
+    sys_thread_ref_t owner;
+
+    /* A copy of the handle: the owner may disown the latch meanwhile. */
+    SpinLockAcquire(&latch->owner_lock);
+    if (latch->owner != NULL)
+      owner = *latch->owner;
+    SpinLockRelease(&latch->owner_lock);
+    if (owner)
+      WakeupOtherProc(owner);
+  }
 
 #else
 

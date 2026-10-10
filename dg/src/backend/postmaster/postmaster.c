@@ -430,7 +430,7 @@ void PostmasterMain(int argc, char *argv[]) {
   pqsignal(SIGUSR1, handle_pm_pmsignal_signal);
   pqsignal(SIGUSR2, dummy_handler); /* unused, reserve for children */
 
-  /* This may configure SIGURG, depending on platform. */
+  /* The wake fd, which the signal handlers' SetLatch() writes. */
   InitializeWaitEventSupport();
   InitProcessLocalLatch();
 

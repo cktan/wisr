@@ -1107,3 +1107,39 @@ postmaster's queue of ended threads was guarded by a
 - **`pthread_sigmask()` stays**, to set a thread's signal
   mask, and so does `pthread_is_threaded_np()`, which only
   macOS has and this build does not compile.
+
+## Step 31: a latch wakes its thread through sys
+
+A latch's setter woke its owner with `tgkill(SIGURG)`, which
+the owner read from a `signalfd` in its epoll set: a signal to
+carry a wake-up from one thread of the process to another.
+sys (`../sys/INTERRUPT.md`) has one already: each thread's wake
+fd, an eventfd that `sys_interrupt()` writes.
+
+- **A latch keeps its owner's handle** (`sys_thread_ref_t`),
+  made by `OwnLatch()` or `InitLatch()`, dropped by
+  `DisownLatch()` or, for a thread's local latch, by
+  `ShutdownProcessLocalLatch()` as the thread ends. A
+  spinlock in the latch guards it; `SetLatch()` copies the
+  handle under it and wakes the copy, so an owner that lets
+  go meanwhile is no hazard.
+- **Another thread is woken with `sys_interrupt(owner, 0)`**:
+  no bit, a write to its wake fd. The latch is the news.
+- **The thread itself, from a signal handler, with
+  `sys_interrupt_self(0)`**, which takes no lock: the
+  postmaster's handlers set its latch.
+- **The epoll wait set waits on `sys_wake_fd()`**, made by
+  `InitializeWaitEventSupport()` before a handler may need it,
+  and drains it with `sys_clear_wake_fd()`. sys closes it as
+  the thread ends.
+- **Gone**: the `signalfd`, SIGURG and `tgkill()`. The
+  self-pipe, kqueue and Windows paths are untouched: no build
+  of digres compiles them.
+- **A backend's launch record keeps the thread's handle**, so
+  the postmaster can wake it before it has a PGPROC.
+- **`make tsan` links a sanitized libsys**: sys's atomics hand
+  a thread's handle from one thread to another, and the
+  sanitizer reported races in an uninstrumented copy.
+- **`server.sh`'s shutdown must take under ten seconds**: each
+  side wakes the other's latch, and a lost wake-up showed only
+  as a minute's stall, not a failure.

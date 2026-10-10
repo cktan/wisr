@@ -25,6 +25,7 @@
 #ifndef WAITEVENTSET_H
 #define WAITEVENTSET_H
 
+#include "sys.h"
 #include "utils/resowner.h"
 
 /*
@@ -93,7 +94,7 @@ extern bool WaitEventSetCanReportClosed(void);
 
 #ifndef WIN32
 extern void WakeupMyProc(void);
-extern void WakeupOtherProc(int pid, int tid);
+extern void WakeupOtherProc(const sys_thread_ref_t &thread);
 #endif
 
 #endif /* WAITEVENTSET_H */

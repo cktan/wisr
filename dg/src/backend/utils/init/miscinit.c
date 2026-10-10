@@ -221,6 +221,21 @@ void InitProcessLocalLatch(void) {
   InitLatch(MyLatch);
 }
 
+/*
+ * Let go of the thread's local latch's handle on the thread, as the thread
+ * ends: a process's exit took it with it.
+ */
+void ShutdownProcessLocalLatch(void) {
+  sys_thread_ref_t *owner;
+
+  /* Unpublished under the lock, so no SetLatch() is copying it. */
+  SpinLockAcquire(&LocalLatchData.owner_lock);
+  owner = LocalLatchData.owner;
+  LocalLatchData.owner = NULL;
+  SpinLockRelease(&LocalLatchData.owner_lock);
+  delete owner;
+}
+
 void SwitchBackToLocalLatch(void) {
   Assert(MyLatch != &LocalLatchData);
   Assert(MyProc != NULL && MyLatch == &MyProc->procLatch);

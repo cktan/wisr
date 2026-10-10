@@ -11,7 +11,8 @@
  *
  * The postmaster reaches it as it reaches a child process.  A signal is a
  * flag (SignalProc()): in its PGPROC once it has one, and before that in
- * its launch record, with SIGURG sent to the thread to interrupt its wait.
+ * its launch record, with the thread's wake fd written to interrupt its
+ * wait (sys.h).
  * The postmaster learns of its end as of a child's: the thread queues
  * itself, with its exit code, as it ends, and sets the postmaster's latch;
  * process_pm_child_exit() takes it from the queue as it takes a child from
@@ -24,6 +25,7 @@
  */
 #include "postgres.h"
 
+#include <atomic>
 #include <mutex>
 #include <signal.h>
 #include <unistd.h>
@@ -57,9 +59,10 @@ struct backend_thread_t {
   void *startup_data; /* a malloc'd copy */
   size_t startup_data_len;
   exit_queue_t *queue;
-  pg_atomic_uint32 tid;     /* the thread's id, once it runs */
-  pg_atomic_uint32 signals; /* sent before it had a PGPROC */
-  int exit_code;            /* set as it ends */
+  pg_atomic_uint32 tid;                 /* the thread's id, once it runs */
+  pg_atomic_uint32 signals;             /* sent before it had a PGPROC */
+  std::atomic<sys_thread_ref_t *> self; /* the thread, to wake */
+  int exit_code;                        /* set as it ends */
   backend_thread_t *next_exited;
 };
 
@@ -72,6 +75,9 @@ static void backend_thread_main(void *arg) {
 
   /* Signals sent before it has a PGPROC come to the launch record. */
   MyPendingSignals = &thread->signals.value;
+  /* Before the tid: the postmaster wakes the thread once it has that. */
+  thread->self.store(new sys_thread_ref_t(sys_thread_self()),
+                     std::memory_order_release);
   pg_atomic_write_u32(&thread->tid, MyProcPid);
 
   if (IsExternalConnectionBackend(thread->child_type)) {
@@ -176,7 +182,7 @@ void backend_thread_signal(backend_thread_t *thread, int sig) {
    * it, or not, so it goes there too if there is one now.
    */
   pg_atomic_fetch_or_u32(&thread->signals, (uint32)1 << sig);
-  WakeupOtherProc(MyProcPid, tid);
+  WakeupOtherProc(*thread->self.load(std::memory_order_acquire));
   proc = PostmasterPidGetProc(tid);
   if (proc != NULL)
     SignalProc(proc, sig);
@@ -222,6 +228,7 @@ backend_thread_t *backend_thread_exited(int *exitstatus) {
 
 /* Free a backend thread's launch record, once it has ended. */
 void backend_thread_free(backend_thread_t *thread) {
+  delete thread->self.load();
   free(thread->startup_data);
   free(thread);
 }

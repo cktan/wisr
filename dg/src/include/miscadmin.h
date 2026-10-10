@@ -340,6 +340,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *DatabasePath;
 extern void InitPostmasterChild(void);
 extern void InitStandaloneProcess(const char *argv0);
 extern void InitProcessLocalLatch(void);
+extern void ShutdownProcessLocalLatch(void);
 extern void SwitchToSharedLatch(void);
 extern void SwitchBackToLocalLatch(void);
 

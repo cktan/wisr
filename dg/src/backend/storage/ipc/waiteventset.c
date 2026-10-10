@@ -27,10 +27,10 @@
  * however reliably interrupts the sleep, and causes poll() to return
  * immediately even if the signal arrives before poll() begins.
  *
- * The epoll() implementation overcomes the race with a different technique: it
- * keeps SIGURG blocked and consumes from a signalfd() descriptor instead.  We
- * don't need to register a signal handler or create our own self-pipe.  We
- * assume that any system that has Linux epoll() also has Linux signalfd().
+ * The epoll() implementation overcomes the race with a different technique:
+ * it waits on the thread's wake fd from sys (sys.h), an eventfd that a
+ * latch's setter writes through sys_interrupt(), or a signal handler of the
+ * thread's own through sys_interrupt_self().  No signal is sent.
  *
  * The kqueue() implementation waits for SIGURG with EVFILT_SIGNAL.
  *
@@ -56,9 +56,6 @@
 #endif
 #ifdef HAVE_SYS_EVENT_H
 #include <sys/event.h>
-#endif
-#ifdef HAVE_SYS_SIGNALFD_H
-#include <sys/signalfd.h>
 #endif
 #ifdef HAVE_POLL_H
 #include <poll.h>
@@ -100,14 +97,14 @@
 #endif
 
 /*
- * By default, we use a self-pipe with poll() and a signalfd with epoll(), if
- * available.  For testing the choice can also be manually specified.
+ * By default, we use a self-pipe with poll() and sys's wake fd with epoll().
+ * For testing the choice can also be manually specified.
  */
 #if defined(WAIT_USE_POLL) || defined(WAIT_USE_EPOLL)
-#if defined(WAIT_USE_SELF_PIPE) || defined(WAIT_USE_SIGNALFD)
+#if defined(WAIT_USE_SELF_PIPE) || defined(WAIT_USE_SYS_FD)
 /* don't overwrite manual choice */
-#elif defined(WAIT_USE_EPOLL) && defined(HAVE_SYS_SIGNALFD_H)
-#define WAIT_USE_SIGNALFD
+#elif defined(WAIT_USE_EPOLL)
+#define WAIT_USE_SYS_FD
 #else
 #define WAIT_USE_SELF_PIPE
 #endif
@@ -170,9 +167,9 @@ struct WaitEventSet {
 static thread_local /*LOCAL*/ volatile sig_atomic_t waiting = false;
 #endif
 
-#ifdef WAIT_USE_SIGNALFD
-/* On Linux, we'll receive SIGURG via a signalfd file descriptor. */
-static thread_local /*LOCAL*/ int signal_fd = -1;
+#ifdef WAIT_USE_SYS_FD
+/* The thread's wake fd (sys.h): sys's, which closes it as the thread ends. */
+static thread_local /*LOCAL*/ int wake_fd = -1;
 #endif
 
 #ifdef WAIT_USE_SELF_PIPE
@@ -188,7 +185,7 @@ static void latch_sigurg_handler(SIGNAL_ARGS);
 static void sendSelfPipeByte(void);
 #endif
 
-#if defined(WAIT_USE_SELF_PIPE) || defined(WAIT_USE_SIGNALFD)
+#if defined(WAIT_USE_SELF_PIPE) || defined(WAIT_USE_SYS_FD)
 static void drain(void);
 #endif
 
@@ -235,10 +232,10 @@ static inline void ResourceOwnerForgetWaitEventSet(ResourceOwner owner,
  * ends, which no process exit does for it.
  */
 void ShutdownWaitEventSupport(void) {
-#ifdef WAIT_USE_SIGNALFD
-  if (signal_fd != -1) {
-    close(signal_fd);
-    signal_fd = -1;
+#ifdef WAIT_USE_SYS_FD
+  /* sys closes the fd itself; only fd.c's count of it goes. */
+  if (wake_fd != -1) {
+    wake_fd = -1;
     ReleaseExternalFD();
   }
 #endif
@@ -319,32 +316,14 @@ void InitializeWaitEventSupport(void) {
   pqsignal(SIGURG, latch_sigurg_handler);
 #endif
 
-#ifdef WAIT_USE_SIGNALFD
-  sigset_t signalfd_mask;
-
-  if (IsUnderPostmaster) {
-    /*
-     * It would probably be safe to re-use the inherited signalfd since
-     * signalfds only see the current process's pending signals, but it
-     * seems less surprising to close it and create our own.
-     */
-    if (signal_fd != -1) {
-      /* Release postmaster's signal FD; ignore any error */
-      (void)close(signal_fd);
-      signal_fd = -1;
-      ReleaseExternalFD();
-    }
-  }
-
-  /* Block SIGURG, because we'll receive it through a signalfd. */
-  sigaddset(&UnBlockSig, SIGURG);
-
-  /* Set up the signalfd to receive SIGURG notifications. */
-  sigemptyset(&signalfd_mask);
-  sigaddset(&signalfd_mask, SIGURG);
-  signal_fd = signalfd(-1, &signalfd_mask, SFD_NONBLOCK | SFD_CLOEXEC);
-  if (signal_fd < 0)
-    elog(FATAL, "signalfd() failed");
+#ifdef WAIT_USE_SYS_FD
+  /*
+   * The thread's wake fd, made now: before a signal handler of the thread's
+   * may want to write it (sys_interrupt_self() cannot make it).
+   */
+  wake_fd = sys_wake_fd();
+  if (wake_fd < 0)
+    elog(FATAL, "could not make the wake fd: %m");
   ReserveExternalFD();
 #endif
 
@@ -593,8 +572,8 @@ int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,
     set->latch_pos = event->pos;
 #if defined(WAIT_USE_SELF_PIPE)
     event->fd = selfpipe_readfd;
-#elif defined(WAIT_USE_SIGNALFD)
-    event->fd = signal_fd;
+#elif defined(WAIT_USE_SYS_FD)
+    event->fd = wake_fd;
 #else
     event->fd = PGINVALID_SOCKET;
 #ifdef WAIT_USE_EPOLL
@@ -1139,7 +1118,7 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 
     if (cur_event->events == WL_LATCH_SET &&
         cur_epoll_event->events & (EPOLLIN | EPOLLERR | EPOLLHUP)) {
-      /* Drain the signalfd. */
+      /* Drain the wake fd. */
       drain();
 
       if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
@@ -1750,10 +1729,17 @@ retry:
 
 #endif
 
-#if defined(WAIT_USE_SELF_PIPE) || defined(WAIT_USE_SIGNALFD)
+#if defined(WAIT_USE_SYS_FD)
+
+/* Read all that the thread's wake fd holds (sys.h). */
+static void drain(void) { sys_clear_wake_fd(); }
+
+#endif
+
+#if defined(WAIT_USE_SELF_PIPE)
 
 /*
- * Read all available data from self-pipe or signalfd.
+ * Read all available data from self-pipe.
  *
  * Note: this is only called when waiting = true.  If it fails and doesn't
  * return, it must reset that flag first (though ideally, this will never
@@ -1764,11 +1750,7 @@ static void drain(void) {
   int rc;
   int fd;
 
-#ifdef WAIT_USE_SELF_PIPE
   fd = selfpipe_readfd;
-#else
-  fd = signal_fd;
-#endif
 
   for (;;) {
     rc = read(fd, buf, sizeof(buf));
@@ -1779,19 +1761,11 @@ static void drain(void) {
         continue; /* retry */
       else {
         waiting = false;
-#ifdef WAIT_USE_SELF_PIPE
         elog(ERROR, "read() on self-pipe failed: %m");
-#else
-        elog(ERROR, "read() on signalfd failed: %m");
-#endif
       }
     } else if (rc == 0) {
       waiting = false;
-#ifdef WAIT_USE_SELF_PIPE
       elog(ERROR, "unexpected EOF on self-pipe");
-#else
-      elog(ERROR, "unexpected EOF on signalfd");
-#endif
     } else if (rc < sizeof(buf)) {
       /* we successfully drained the pipe; no need to read() again */
       break;
@@ -1828,16 +1802,17 @@ void WakeupMyProc(void) {
   if (waiting)
     sendSelfPipeByte();
 #else
-  /* To this thread: a signal to the process may wake another. */
+  /* No bit: a write to the wake fd, safe in a signal handler. */
   if (waiting)
-    tgkill(MyProcPid, gettid(), SIGURG);
+    sys_interrupt_self(0);
 #endif
 }
 
 /*
- * Similar to WakeupMyProc, but wake up another thread: of another process,
- * or of this one. A thread's signalfd reads only the signals sent to it and
- * those sent to its process, so the signal goes to the thread.
+ * Similar to WakeupMyProc, but wake up another thread, through its wake fd.
+ * No bit is raised: the latch is the news.  Not in a signal handler.
  */
-void WakeupOtherProc(int pid, int tid) { tgkill(pid, tid, SIGURG); }
+void WakeupOtherProc(const sys_thread_ref_t &thread) {
+  sys_interrupt(thread, 0);
+}
 #endif
