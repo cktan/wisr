@@ -26,8 +26,8 @@
 #include "error.h"
 #include "session.h"
 #include "sm1_codec.h"
+#include "sys.h"
 
-#include <chrono>
 #include <functional>
 #include <string_view>
 #include <unordered_set>
@@ -252,19 +252,43 @@ bool conflicting(db_t *db, sm1::session_t *s, const std::string &k,
 }
 
 /*
- * Sleep on lock_cv until woken or deadlock_ms after *deadline was
- * set, with lock_mu held in guard; on timeout, look for a cycle
- * through s and re-arm the timer.
+ * The condition of one sleep in sys_wait(): false before it
+ * sleeps, true once it wakes. The wait sleeps once, and the caller
+ * looks at the lock table again.
  */
-void wait_once(db_t *db, sm1::session_t *s, std::unique_lock<std::mutex> &guard,
-               std::chrono::steady_clock::time_point *deadline) {
-  if (db->lock_cv.wait_until(guard, *deadline) == std::cv_status::timeout) {
+bool woke(void *arg) {
+  bool *slept = static_cast<bool *>(arg);
+  bool was = *slept;
+  *slept = true;
+  return was;
+}
+
+/*
+ * Sleep on lock_cv, with lock_mu held in guard, until woken, until
+ * a bit in the thread's wait mask is raised (sys.h), or until
+ * *deadline_us; at the deadline, look for a cycle through s and
+ * re-arm it. Returns false if interrupted: the bit stays pending,
+ * for the caller's caller to take.
+ */
+bool wait_once(db_t *db, sm1::session_t *s, std::unique_lock<std::mutex> &guard,
+               int64_t *deadline_us) {
+  bool slept = false;
+
+  // An interrupt raised before this wait ends it at once.
+  switch (sys_wait(&guard, &db->lock_cv, woke, &slept, sys_wait_mask(),
+                   *deadline_us)) {
+  case SYS_WAIT_DONE:
+    return true;
+  case SYS_WAIT_INTERRUPTED:
+    return false;
+  case SYS_WAIT_TIMED_OUT:
     // Timed out: look for a cycle through us.
     check_deadlock(db, s);
     // Re-arm the timer for the next check.
-    *deadline = std::chrono::steady_clock::now() +
-                std::chrono::milliseconds(db->deadlock_ms);
+    *deadline_us = sys_now_us() + int64_t(db->deadlock_ms) * 1000;
+    return true;
   }
+  return true;
 }
 
 } // namespace
@@ -346,8 +370,7 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // Time the first deadlock check.
-  auto deadline = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(db->deadlock_ms);
+  int64_t deadline = sys_now_us() + int64_t(db->deadlock_ms) * 1000;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -366,13 +389,11 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
       s->waiting_for.clear();
       return 1;
     }
-    // Cancelled, before the wait or during it: stop waiting. The
-    // cancel stands until the next statement or transaction begins.
-    if (s->cancel) {
+    // Interrupted, before the wait or during it: stop waiting.
+    if (!wait_once(db, s, guard, &deadline)) {
       s->waiting_for.clear();
       return 2;
     }
-    wait_once(db, s, guard, &deadline);
   }
 }
 
@@ -383,8 +404,7 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // A rollback from now on may delete what we wait for.
   uint64_t epoch = db->rollback_epoch;
-  auto deadline = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(db->deadlock_ms);
+  int64_t deadline = sys_now_us() + int64_t(db->deadlock_ms) * 1000;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -412,40 +432,29 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
       s->waiting_for.clear();
       return 1;
     }
-    // Cancelled, before the wait or during it: stop waiting. The
-    // cancel stands until the next statement or transaction begins.
-    if (s->cancel) {
-      s->waiting_for.clear();
-      return 2;
-    }
     // Our edge in the waits-for graph: to the transaction itself.
     s->waiting_for.clear();
     if (owner && owner != s) {
       s->waiting_for.push_back(owner);
     }
-    wait_once(db, s, guard, &deadline);
+    // Interrupted, before the wait or during it: stop waiting.
+    if (!wait_once(db, s, guard, &deadline)) {
+      s->waiting_for.clear();
+      return 2;
+    }
   }
 }
 
 /* Fail the call for a wait that did not succeed; see session.h. */
 int lock_wait_error(sm1::session_t *s, int waited) {
   if (waited == 2) {
-    return set_error(sm1::SM_ERR_CANCELLED, "the wait was cancelled");
+    return set_error(sm1::SM_ERR_INTERRUPTED, "the wait was interrupted");
   }
   if (waited > 0) {
     return set_error(sm1::SM_ERR_BLOCKED, "the row is locked by another");
   }
   return xct_fail_retryable(s, sm1::SM_ERR_DEADLOCK,
                             "chosen as a deadlock victim");
-}
-
-/* Cut the session's wait short; see session.h. */
-void lock_cancel(sm1::session_t *s) {
-  s->cancel = true;
-  // Under lock_mu, so a waiter between its check and its sleep is
-  // not missed; every waiter wakes, and only this one stops.
-  std::lock_guard<std::mutex> guard(s->db->lock_mu);
-  s->db->lock_cv.notify_all();
 }
 
 /* Wake every waiter: a transaction ended, or rolled back. */

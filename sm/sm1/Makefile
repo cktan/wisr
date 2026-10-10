@@ -25,8 +25,13 @@ endif
 
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
-CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -I../include -Isrc -MMD -MP
-LDLIBS   += -lrocksdb -lpthread
+# sys, the system services sm builds on: its own library (../../sys).
+SYS      := ../../sys
+SYS_LIB  := $(SYS)/build/libsys.a
+
+CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -I../include -I$(SYS)/include \
+            -Isrc -MMD -MP
+LDLIBS   += $(SYS_LIB) -lrocksdb -lpthread
 
 BUILD := build
 
@@ -80,13 +85,17 @@ $(LIB): $(LIB_OBJS)
 	rm -f $@
 	$(AR) rcs $@ $^
 
-$(TEST_BIN): $(TEST_OBJS) $(LIB)
+# sys's Makefile decides whether its library is up to date.
+$(SYS_LIB):
+	$(MAKE) -C $(SYS) build/libsys.a
+
+$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(LDLIBS)
 
-$(MVCC_BIN): $(MVCC_OBJS) $(LIB)
+$(MVCC_BIN): $(MVCC_OBJS) $(LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(MVCC_OBJS) $(LIB) $(LDLIBS)
 
-$(DRIVER): $(DRV_OBJS) $(LIB)
+$(DRIVER): $(DRV_OBJS) $(LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(DRV_OBJS) $(LIB) $(LDLIBS)
 
 $(BUILD)/drvobj/%.o: mvcc/driver/%.cc $(FLAGS_FILE)
@@ -97,7 +106,7 @@ $(BUILD)/mvcc/%.o: mvcc/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Imvcc -c -o $@ $<
 
-$(BUILD)/example/%: $(BUILD)/example/%.o $(LIB)
+$(BUILD)/example/%: $(BUILD)/example/%.o $(LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB) $(LDLIBS)
 
 $(BUILD)/example/%.o: example/%.cc $(FLAGS_FILE)

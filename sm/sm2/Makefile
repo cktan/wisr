@@ -25,6 +25,9 @@ OPTFLAGS := -O3
 endif
 
 SM1 := ../sm1
+# sys, the system services sm builds on (../../sys).
+SYS := ../../sys
+SYS_LIB := $(SYS)/build/libsys.a
 
 CC       ?= gcc
 CFLAGS   ?= $(OPTFLAGS)
@@ -32,9 +35,9 @@ CFLAGS   += -std=c11 -Wall -DFRONTEND -Isrc/ryu -MMD -MP
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc/type -Isrc/ryu \
-            -I$(SM1)/include -I../include \
+            -I$(SM1)/include -I../include -I$(SYS)/include \
             -MMD -MP
-LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
+LDLIBS   += $(SYS_LIB) -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD := build
 
@@ -75,7 +78,11 @@ $(LIB): $(LIB_OBJS)
 $(SM1_LIB):
 	$(MAKE) -C $(SM1) build/libsm1.a
 
-$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM1_LIB)
+# sys's Makefile decides whether its library is up to date.
+$(SYS_LIB):
+	$(MAKE) -C $(SYS) build/libsys.a
+
+$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM1_LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM1_LIB) $(LDLIBS)
 
 $(BUILD)/src/%.o: src/%.cc $(FLAGS_FILE)

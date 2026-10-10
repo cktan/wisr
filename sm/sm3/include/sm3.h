@@ -880,8 +880,8 @@ int builder_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
  * and a worker building one of its indexes ends after the batch
  * it is in and closes its session. A build cut short leaves its
  * index pending, for the next builder_attach to queue. A worker
- * waiting on another transaction is cancelled, so the detach does
- * not wait for that transaction. It must be
+ * waiting on another transaction is interrupted (sys.h), so the
+ * detach does not wait for that transaction. It must be
  * called before cat_close, and before the database is closed
  * under the workers' sessions; a catalog not attached is a no-op.
  */
@@ -917,18 +917,15 @@ bool builder_building(const catalog_t* cat, uint64_t oid);
  * message, as the index's record keeps them -- SM_ERR_DUPKEY on
  * two rows with one key in a unique index, SM_ERR_KEYTOOLONG on a
  * key too long for one; SM_ERR_INVALID if the index is pending
- * and no build of it is queued or running; SM_ERR_CANCELLED if
- * cancelled says so; SM_ERR_INTRANS inside a transaction;
+ * and no build of it is queued or running; SM_ERR_INTERRUPTED if
+ * interrupted; SM_ERR_INTRANS inside a transaction;
  * SM_ERR_NOTFOUND if there is no such table or index.
  *
- * The wait is not for another transaction and not inside one, so
- * sm1::cancel, which cancels a statement, is not what ends it.
- * The caller says when to give up: cancelled, if given, is a flag
- * of the caller's, read every little while, that ends the wait
- * once it is not 0. It is only read; any thread may set it.
+ * An interrupt to the calling thread, a bit in its wait mask
+ * (sys.h), ends the wait; the bit stays pending, for the caller
+ * to take.
  */
-int builder_wait(session_t* session, uint64_t table, uint64_t oid,
-                 const std::atomic<int>* cancelled = nullptr);
+int builder_wait(session_t* session, uint64_t table, uint64_t oid);
 
 } // namespace sm3
 

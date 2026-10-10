@@ -1,11 +1,10 @@
 /*
  * sm.h -- wisr's API: the one entry into the stack, for
  * PostgreSQL to call (DESIGN.md sections 1 and 5). It is C in
- * style and compiled as C++: four C++ types may cross it and no
+ * style and compiled as C++: three C++ types may cross it and no
  * others (DESIGN.md section 5). std::string and std::vector
  * carry owned data. std::string_view is bytes that are someone
- * else's, read where they are. std::atomic is a value the host
- * owns and another thread may change while the stack reads it.
+ * else's, read where they are.
  *
  * Every call is the sm1, sm2 or sm3 call of the same name with
  * sm_ in front, given a C signature: sm_commit is sm3::commit,
@@ -54,7 +53,6 @@
 #ifndef SM_H
 #define SM_H
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -220,19 +218,6 @@ int sm_stmt_begin_inner(sm_session_t* session, sm_stmt_t** outer);
  * writes nor the inner one's. outer is freed either way.
  */
 int sm_stmt_end(sm_session_t* session, sm_stmt_t* outer);
-
-/*
- * Cancel the session's statement: the call that is waiting for
- * another transaction, on a lock or on a row another is writing,
- * fails with SM_ERR_CANCELLED, and so does every wait the session
- * makes after it, until it begins its next statement or
- * transaction. A cancelled statement stays cancelled. That is not
- * an abort: the transaction stays active and the caller decides.
- * It is what query cancel, statement_timeout and lock_timeout are
- * made of, and the one call another thread may make on a session
- * while its own thread is inside a call (sm1::cancel).
- */
-int sm_cancel(sm_session_t* session);
 
 /*
  * FOR QA ONLY (rel's scripts); not how NOWAIT or SKIP LOCKED is
@@ -614,16 +599,11 @@ int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
  * as the index keeps them; SM_ERR_INTRANS inside a transaction;
  * SM_ERR_NOTFOUND if there is no such table or index.
  *
- * It is not a wait for another transaction, so sm_cancel does not
- * end it. cancelled, if not NULL, is the host's own word on
- * whether its query was cancelled: a flag the host owns, read
- * every little while, that ends the wait with SM_ERR_CANCELLED
- * once it is not 0. Any thread may set it, or a signal handler.
- * It is only read, never cleared, and need live only as long as
- * the call.
+ * An interrupt to the calling thread, a bit in its wait mask
+ * (sys.h), ends the wait with SM_ERR_INTERRUPTED; the bit stays
+ * pending, for the caller to take.
  */
-int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index,
-                      const std::atomic<int>* cancelled = nullptr);
+int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index);
 
 /*
  * The host's evaluator of partial and expression indexes

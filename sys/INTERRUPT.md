@@ -18,10 +18,9 @@ predicate. What is C++ is a thread's handle, a
 `std::shared_ptr`, and the mutex and condition variable a wait
 is made on.
 
-It is to replace sm1's present cancel protocol (`sm1::cancel`
-and the session's `cancel` flag), which ties a cancel to a
-session; that protocol is to be reworked, and nothing here
-depends on it.
+It replaced sm1's cancel protocol (`sm1::cancel` and the
+session's `cancel` flag), which tied a cancel to a session
+rather than to the thread that blocks.
 
 ## 1. Goals
 
@@ -276,7 +275,22 @@ leaves no bit behind.
   thread.
 - Nothing here uses signals.
 
-## 8. How digres uses it
+## 8. How sm uses it
+
+- sm1's waits for another transaction, on a lock or an
+  uncommitted writer, are a `sys_wait()` on the lock table's
+  condition with `sys_wait_mask()`, and its deadline is the
+  next deadlock check. An interrupt fails the call with
+  `SM_ERR_INTERRUPTED`; sm takes no bit.
+- sm3's wait for an index build (`builder_wait`) is a
+  `sys_wait()` on the builder's condition, the same way.
+- sm3's builder workers are sm's own threads, with a bit of
+  sm's own: a detach raises it in each worker building one of
+  the catalog's indexes, so one waiting on a transaction does
+  not hold the detach up. The worker takes it as the build
+  ends.
+
+## 9. How digres uses it
 
 - It defines its bits: `CANCEL`, `DIE`, `RELOAD`, invalidation
   catch-up, `NOTIFY` and the rest.
@@ -293,7 +307,7 @@ leaves no bit behind.
 - `SM_ERR_INTERRUPTED` from an sm call goes to its usual cancel
   or terminate processing.
 
-## 9. Tests
+## 10. Tests
 
 sys unit tests (`test/test_interrupt.cc`), each with its
 synopsis and steps, run by `make test`, and under the
@@ -316,7 +330,7 @@ interrupted from another thread fails with
 `SM_ERR_INTERRUPTED`, its transaction intact -- a new scenario
 in `sm1/mvcc/`, added beside the others, none changed.
 
-## 10. Open questions
+## 11. Open questions
 
 1. **The eventfd.** Keep `sys_wake_fd()` in sys, or keep sys to
    condition variables and let a caller register a waker of its

@@ -683,24 +683,23 @@ with each call, and sm1 is to take one the same way, as a flag
 on the calls that can wait. `SM_ERR_BLOCKED` is the code those
 flags will return too.
 
-**Every wait can be cut short.** `sm1::cancel(session)`, from
-any thread, makes the session's wait fail with
-`SM_ERR_CANCELLED`: not an abort, the transaction left
-active, as after `SM_ERR_BLOCKED`. A session waits in one
+**Every wait can be cut short.** sm1 waits through sys
+(`../sys/INTERRUPT.md`): an interrupt to the waiting thread,
+a bit in its wait mask (`sys_wait_mask()`), makes the wait
+fail with `SM_ERR_INTERRUPTED`: not an abort, the transaction
+left active, as after `SM_ERR_BLOCKED`. A session waits in one
 place only, on the lock table's condition, for a lock and for
-an uncommitted writer alike, so one flag on the session and
-one `notify_all` under `lock_mu` reach every wait there is.
-The flag is set first and the wake sent under the mutex, so a
-waiter between its check and its sleep is not missed. **A
-cancelled statement stays cancelled**: the wait that fails
-does not clear the flag, so every later wait of the statement
-fails too, and only `sm1::stmt_begin` and `sm1::begin` clear
-it. A cancel is then never lost to a wait that began a moment
-late, nor to a caller that goes on after the error, and there
-is nothing to clear by hand.
+an uncommitted writer alike, and that wait is a `sys_wait()`
+on `lock_cv` under `lock_mu`, so every wait there is can be
+ended. The interrupt goes to a thread, not a session: it is
+the thread that blocks. sm1 takes no bit: **the bit stays
+pending until the host takes it**, so every later wait fails
+at once too. An interrupt is then never lost to a wait that
+began a moment late, nor to a caller that goes on after the
+error; when it is done with it is the host's to say.
 This is what a host builds query cancel, statement timeout
-and lock timeout from: the timer is the host's, and the call
-it makes is this one. The alternative was for the host to
+and lock timeout from: the bits and the timers are sys's, and
+their meaning the host's. The alternative was for the host to
 poll, with every wait a refused call it repeats; that loses
 the waits-for graph, and with it deadlock detection, which
 `set_qa_nowait` already shows.

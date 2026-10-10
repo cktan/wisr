@@ -16,9 +16,11 @@
 
 #include "session.h"
 #include "sm1.h"
+#include "sys.h"
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -589,17 +591,18 @@ TEST_CASE("sm1_lock rejects bad arguments and needs a transaction") {
   sm1::closedb(s);
 }
 
-TEST_CASE("a wait for another transaction can be cancelled") {
-  // Verify sm1::cancel cancels a statement and leaves the transaction.
+TEST_CASE("a wait for another transaction can be interrupted") {
+  // Verify an interrupt to the waiting thread ends its wait, and only that.
   // 1. A updates "x" and does not commit. B updates "x" in a thread:
-  //    it waits. A third thread cancels B: B's update fails with
-  //    SM_ERR_CANCELLED, which is not retryable.
+  //    it waits. The main thread interrupts that thread: B's update
+  //    fails with SM_ERR_INTERRUPTED, which is not retryable.
   // 2. B's transaction is still active: it writes "y", which waits
   //    for no one.
-  // 3. The statement stays cancelled: B's next wait, on a lock A
-  //    holds, fails at once, with no second cancel.
-  // 4. B begins its next statement, which is not cancelled: it
-  //    waits again, until A commits, and its update goes through.
+  // 3. The bit stays pending until taken: B's next wait, on a lock A
+  //    holds, fails at once, with no second interrupt.
+  // 4. In a thread whose wait mask leaves bit 2 out, B updates "x"
+  //    again; bit 2 raised in it does not end the wait, which lasts
+  //    until A commits.
   lock_fixture_t f;
   sm1::session_t *a = f.open();
   sm1::session_t *b = f.open();
@@ -610,36 +613,59 @@ TEST_CASE("a wait for another transaction can be cancelled") {
           0);
 
   std::atomic<bool> returned{false};
-  int rc = 0, err = 0, again = 0;
+  sys_thread_ref_t waiter;
+  std::mutex waiter_mu;
+  int rc = 0, err = 0, again = 0, rc_y = 0;
+  int rc_z[2] = {0, 0}, err_z[2] = {0, 0};
   std::thread tb([&] {
+    {
+      std::lock_guard<std::mutex> guard(waiter_mu);
+      waiter = sys_thread_self();
+    }
     rc = set(b, "x", "b");
     err = sm1::errnum();
     again = sm1::retryable();
     returned = true;
+    rc_y = set(b, "y", "b");
+    for (int i = 0; i < 2; i++) {
+      rc_z[i] =
+          sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH);
+      err_z[i] = sm1::errnum();
+    }
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   CHECK_FALSE(returned);
-  REQUIRE(sm1::cancel(b) == 0);
+  {
+    std::lock_guard<std::mutex> guard(waiter_mu);
+    sys_interrupt(waiter, 1);
+  }
   tb.join();
   CHECK(rc == -1);
-  CHECK(err == sm1::SM_ERR_CANCELLED);
+  CHECK(err == sm1::SM_ERR_INTERRUPTED);
   CHECK(again == 0);
-  REQUIRE(set(b, "y", "b") == 0);
-
+  CHECK(rc_y == 0);
   for (int i = 0; i < 2; i++) {
-    CHECK(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "z", sm1::SM_LOCKMODE_SH) ==
-          -1);
-    CHECK(sm1::errnum() == sm1::SM_ERR_CANCELLED);
-    CHECK(std::string(sm1::errname()) == "ERR_CANCELLED");
+    CHECK(rc_z[i] == -1);
+    CHECK(err_z[i] == sm1::SM_ERR_INTERRUPTED);
   }
 
   REQUIRE(sm1::stmt_begin(b) == 0);
   returned = false;
   std::thread tb2([&] {
+    sys_set_wait_mask(~2u);
+    {
+      std::lock_guard<std::mutex> guard(waiter_mu);
+      waiter = sys_thread_self();
+    }
     rc = set(b, "x", "b");
     err = sm1::errnum();
     returned = true;
   });
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  {
+    std::lock_guard<std::mutex> guard(waiter_mu);
+    sys_interrupt(waiter, 2);
+  }
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   CHECK_FALSE(returned);
   REQUIRE(sm1::commit(a) == 0);

@@ -30,6 +30,9 @@ LIBSQ := $(SQ)/build/libsq.a
 # The storage stack, a library of its own too (../sm).
 SM := ../sm
 LIBSM := $(SM)/build/libsm.a
+# The system services sm and digres build on (../sys).
+SYS := ../sys
+LIBSYS := $(SYS)/build/libsys.a
 # Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
@@ -62,7 +65,7 @@ src: gen
 # below and this one cannot tell which of them changed.
 all: build/digres
 .PHONY: build/digres
-build/digres: src $(LIBSQ) $(LIBSM)
+build/digres: src $(LIBSQ) $(LIBSM) $(LIBSYS)
 	@mkdir -p build
 	# A session is to be a thread: no writable global may be left
 	# that is not thread_local (PLAN.md section 3).
@@ -80,12 +83,12 @@ define link_shared
 	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
 	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
 	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
-	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LDLIBS)
+	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LIBSYS) $(LDLIBS)
 	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) > $(1).shared.c
 	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
 	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
 	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
-	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LDLIBS)
+	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LIBSYS) $(LDLIBS)
 	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) | \
 	    cmp -s - $(1).shared.c
 endef
@@ -95,7 +98,7 @@ endef
 # and in threads, and test/server.sh run on it. The sanitizer cannot map its memory with the address
 # space randomised, hence setarch -R. sq and sm are not instrumented.
 .PHONY: tsan
-tsan: gen $(LIBSQ) $(LIBSM)
+tsan: gen $(LIBSQ) $(LIBSM) $(LIBSYS)
 	$(MAKE) -C src OBJ=tsan.o
 	@mkdir -p build
 	$(call link_shared,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
@@ -125,6 +128,11 @@ $(LIBSQ):
 .PHONY: $(LIBSM)
 $(LIBSM):
 	$(MAKE) -C $(SM)
+
+# And sys.
+.PHONY: $(LIBSYS)
+$(LIBSYS):
+	$(MAKE) -C $(SYS) build/libsys.a
 
 # The catalogs' #defines: pg_*_d.h and the syscache tables.
 $(I)/catalog/.stamp: $(CATALOG_HEADERS) $(wildcard $(I)/catalog/*.dat) \

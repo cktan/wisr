@@ -113,17 +113,16 @@ What this changes above:
   memory and stays valid until the next `sm_` call on that
   session, so the executor can use it in place and copies
   only what it must keep longer.
-- **Every wait can be cancelled.** A backend thread waiting
+- **Every wait can be interrupted.** A backend thread waiting
   inside the stack never reaches PostgreSQL's interrupt
-  check, so the stack gives the fork a call for it:
-  `sm_cancel(session)`, from any thread, fails the wait with
-  `SM_ERR_CANCELLED` and leaves the transaction to the
-  caller. A cancelled statement stays cancelled, until the
-  session begins its next one. Query cancel,
-  `statement_timeout` and `lock_timeout` are that call
-  (`sm1/SM1_DESIGN.md` §5.1). The wait for an index build is
-  not a statement's wait for a transaction, and reads a flag
-  of the fork's own that says whether its query was cancelled.
+  check, so the stack waits through sys
+  (`../sys/INTERRUPT.md`): an interrupt to the thread, a bit
+  in its wait mask, fails the wait with `SM_ERR_INTERRUPTED`
+  and leaves the transaction to the caller. The bit stays
+  pending until the fork takes it. Query cancel,
+  `statement_timeout` and `lock_timeout` are bits and sys
+  timers (`sm1/SM1_DESIGN.md` §5.1); the wait for an index
+  build (`sm_cat_index_wait`) ends the same way.
 - **The fork has no `longjmp`.** PostgreSQL raises an error by
   jumping out of wherever it is. That goes with the rest of
   its error handling, so the stack does not have to defend
@@ -476,7 +475,7 @@ This is a reading, not a run. The spike is what tests it.
 | Row lock | `table_tuple_lock` in one of four modes, with a wait policy | `sm_tbl_lock` in two modes, always waiting | partly; gaps 3, 4 |
 | Statement boundary | `CommandCounterIncrement`, a snapshot a statement | `sm_stmt_begin` | fits |
 | Transaction | start, commit, abort; subtransactions; two-phase | `sm_begin`, `sm_commit`, `sm_abort`; `sm_savepoint`, `sm_rollback`, `sm_forget`; `sm_prepare` and the rest | fits |
-| Cancel | `CHECK_FOR_INTERRUPTS` | `sm_cancel`, and the flag `sm_cat_index_wait` reads | fits |
+| Cancel | `CHECK_FOR_INTERRUPTS` | `sys_interrupt` to the waiting thread; sm's waits end with `SM_ERR_INTERRUPTED` | fits |
 | Create and drop | `heap_create_with_catalog`, `index_create`, and their drops | `sm_cat_create_table`, `sm_cat_create_index`, `sm_cat_drop_table`, `sm_cat_drop_index`, `sm_tbl_truncate` | fits for these; gaps 7, 8 |
 | Sequence | `nextval`, `setval`, `currval` | `sm_mkseq`, `sm_nextseq`, `sm_rmseq` | `nextval` only; gap 9 |
 

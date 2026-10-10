@@ -630,17 +630,6 @@ int sm_abort(sm_session_t *session) {
   });
 }
 
-/*
- * Cut the session's wait short. Not through guard: another thread
- * calls this while the session's own is inside a call.
- */
-int sm_cancel(sm_session_t *session) {
-  if (!session) {
-    return null_arg("sm_cancel", "session");
-  }
-  return sm1::cancel(session->sm1);
-}
-
 /* Begin a statement. */
 int sm_stmt_begin(sm_session_t *session) {
   return guard(session, [&] { return sm3::stmt_begin(session->sm3); });
@@ -1011,13 +1000,12 @@ int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
 }
 
 /* Wait for an index's build to end. */
-int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index,
-                      const std::atomic<int> *cancelled) {
+int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index) {
   return guard(nullptr, [&] {
     if (!session) {
       return null_arg("sm_cat_index_wait", "session");
     }
-    return sm3::builder_wait(session->sm3, table, index, cancelled);
+    return sm3::builder_wait(session->sm3, table, index);
   });
 }
 

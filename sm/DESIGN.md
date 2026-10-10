@@ -267,7 +267,7 @@ design:
   never throw. The two callbacks, the log hook and the index
   evaluator, run where an error has nowhere to go, and are
   `noexcept` in their types: one that throws ends the
-  process. Four C++ types may cross
+  process. Three C++ types may cross
   it and no others.
   `std::string` and `std::vector`, of plain C types, of
   `sm_datum_t` or of strings, carry owned data only: a
@@ -275,15 +275,14 @@ design:
   out-parameter or a const reference, filled inside the
   wrapper's catch-all. `std::string_view` is bytes that are
   not the receiver's: read during the call, or pointing into
-  session memory for as long as the call says. `std::atomic`
-  is a value the host owns and the stack reads while another
-  thread may change it, such as a flag that says give up; it
-  is how the host is asked something without a callback into
-  it: `sm_cat_index_wait` takes one, where it took a function
-  to call. No call takes a `std::string_view` yet: a row or
-  an index entry on a scan is still a pointer and a length
-  into session memory. No `optional`, `function`
-  or `shared_ptr`, and no class of the stack's own: that line
+  session memory for as long as the call says. A wait the
+  host may want to end is ended by an interrupt to its
+  thread (`../sys/INTERRUPT.md`), not by a flag or a
+  callback into the host. No call takes a
+  `std::string_view` yet: a row or an index entry on a scan
+  is still a pointer and a length into session memory. No
+  `optional`, `function` or `shared_ptr`, and no class of the
+  stack's own: that line
   is what keeps the header from growing abstractions. A plain
   struct may hold the first two types, and a vector may hold
   such structs: a table's definition is one, of its columns and

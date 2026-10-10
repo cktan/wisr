@@ -8,12 +8,14 @@
 #include "db.h"
 #include "doctest.h"
 #include "sm3.h"
+#include "sys.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -1890,12 +1892,12 @@ TEST_CASE("a build that waits on a transaction holds no one else up") {
   // 2. The catalog is attached and the index queued: its build
   //    reaches the row and waits for A.
   // 3. The catalog is detached. The detach returns, though A has
-  //    not ended: it cancels the build's wait. The index is still
-  //    pending, not failed.
+  //    not ended: it interrupts the build's wait. The index is
+  //    still pending, not failed.
   // 4. Attached and queued again, the build waits for A again. B
-  //    waits for the build, in a thread, with a flag of its own
-  //    for giving up; when that is set the wait ends with
-  //    SM_ERR_CANCELLED, and the flag is left as it was set.
+  //    waits for the build, in a thread; an interrupt to that
+  //    thread ends the wait with SM_ERR_INTERRUPTED, and the bit
+  //    stays pending, for the thread to take.
   // 5. A commits: the build ends, and waiting for it returns 0.
   jobs_t f;
   start(f.a);
@@ -1925,21 +1927,31 @@ TEST_CASE("a build that waits on a transaction holds no one else up") {
 
   build_waits();
   std::atomic<bool> returned{false};
-  std::atomic<int> give_up{0};
+  sys_thread_ref_t waiter;
+  std::mutex waiter_mu;
   int rc = 0, err = 0;
+  uint32_t taken = 0;
   std::thread tb([&] {
-    rc = sm3::builder_wait(f.b, f.jobs, jobs_owner, &give_up);
+    {
+      std::lock_guard<std::mutex> guard(waiter_mu);
+      waiter = sys_thread_self();
+    }
+    rc = sm3::builder_wait(f.b, f.jobs, jobs_owner);
     err = sm1::errnum();
     returned = true;
+    taken = sys_take(1);
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   CHECK_FALSE(returned);
-  give_up = 1;
+  {
+    std::lock_guard<std::mutex> guard(waiter_mu);
+    sys_interrupt(waiter, 1);
+  }
   tb.join();
   CHECK(rc == -1);
-  CHECK(err == sm1::SM_ERR_CANCELLED);
-  // The flag is the caller's: the wait reads it and leaves it set.
-  CHECK(give_up.load() == 1);
+  CHECK(err == sm1::SM_ERR_INTERRUPTED);
+  // The bit is the caller's: the wait ends on it and leaves it set.
+  CHECK(taken == 1);
 
   REQUIRE(sm3::commit(f.a) == 0);
   REQUIRE_MESSAGE(sm3::builder_wait(f.b, f.jobs, jobs_owner) == 0,

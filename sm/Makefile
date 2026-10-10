@@ -26,6 +26,7 @@ CXX      ?= g++
 OPTFLAGS ?= -O1 -g
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Ism1/include -Ism2/include -Ism3/include \
+            -I../sys/include \
             -MMD -MP
 LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
@@ -33,7 +34,7 @@ BUILD     := build
 LIB       := $(BUILD)/libsm.a
 LEVEL_LIBS := sm1/build/libsm1.a sm2/build/libsm2.a sm3/build/libsm3.a
 
-.PHONY: all test clean format rel $(LEVELS)
+.PHONY: all test clean format rel sys $(LEVELS)
 
 all: $(LIB)
 
@@ -42,6 +43,14 @@ rel: $(LIB)
 
 $(LEVELS):
 	$(MAKE) -C $@
+
+# sys, the system services sm builds on, is a library of its own
+# (../sys); its Makefile decides whether it is up to date. Every
+# level links it, so it builds first.
+sys:
+	$(MAKE) -C ../sys build/libsys.a
+
+sm1: sys
 
 # Each level links the ones below it, so they build first.
 sm2: sm1

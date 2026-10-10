@@ -270,8 +270,6 @@ int stmt_begin(sm1::session_t *s) {
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // A cancel was for the statement before: this one is not.
-  s->cancel = false;
   // Turn statement snapshots on, and end any statement running.
   s->stmt_pinned = true;
   // The next read takes the new statement's snapshot (§6.2).
@@ -491,9 +489,8 @@ int begin(sm1::session_t *s, sm1::xctlevel_t level, bool read_only) {
   s->read_only = read_only;
   // Record begin order, for deadlock victim choice.
   s->begin_seq = ++s->db->begin_seq;
-  // A new transaction starts undoomed, and is not cancelled.
+  // A new transaction starts undoomed.
   s->doomed = 0;
-  s->cancel = false;
   // Take the snapshot: the current visible_ts (§4.1). Read
   // committed also counts in the watermark at this one, for
   // its whole life (§8.3).
@@ -1452,16 +1449,6 @@ int sm1::stmt_begin(sm1::session_t *session) {
   // Inside sm1: running out of memory is fatal.
   in_sm1_t in_sm1;
   return ::stmt_begin(session);
-}
-
-/* Cut the session's wait short; callable from any thread. */
-int sm1::cancel(sm1::session_t *session) {
-  if (!session) {
-    return set_error(sm1::SM_ERR_INVALID, "NULL session");
-  }
-  // Wake it, if it is waiting on the lock table's condition.
-  lock_cancel(session);
-  return 0;
 }
 
 /* QA only: make the session's lock requests fail where they would wait. */

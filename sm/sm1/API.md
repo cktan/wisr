@@ -93,11 +93,11 @@ typedef enum sm_errnum_t {
     /* sm1's: NOT an abort; nothing was written */
     SM_ERR_READONLY      = 27,  /* the transaction was declared read-only */
 
-    /* sm1's: NOT an abort; a wait sm1::cancel cut short */
-    SM_ERR_CANCELLED     = 28,  /* the wait was cancelled */
+    /* sm1's: NOT an abort; a wait an interrupt ended (sys.h) */
+    SM_ERR_INTERRUPTED   = 28,  /* the wait was interrupted */
 
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_CANCELLED
+    SM_ERR_LAST          = SM_ERR_INTERRUPTED
 } sm_errnum_t;
 
 /* sm1.h */
@@ -779,41 +779,32 @@ is not built.
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 `SM_ERR_INVALID` (no function).
 
-### int sm1::cancel(sm1::session_t* session)
+### Interrupting a wait
 
-Cut short the session's wait for another transaction. The
-call that is waiting — on a lock another holds, or on a row
-another is writing — fails with `SM_ERR_CANCELLED`. That is
-not an abort and not retryable: the transaction stays active
-and holds exactly what it held, and the caller decides
-whether to abort it. A host's query cancel, statement timeout
-and lock timeout are all this call, made by whatever thread
-decides the wait has gone on long enough.
+There is no call for it: a wait is ended through sys
+(`../sys/INTERRUPT.md`). A wait for another transaction — on
+a lock another holds, or on a row another is writing — is a
+`sys_wait()` on the waiting thread's wait mask
+(`sys_wait_mask()`), and an interrupt to that thread with a
+bit in the mask (`sys_interrupt()`) makes the call fail with
+`SM_ERR_INTERRUPTED`. That is not an abort and not retryable:
+the transaction stays active and holds exactly what it held,
+and the caller decides whether to abort it. A host's query
+cancel, statement timeout and lock timeout are all made this
+way, from any thread or a sys timer.
 
-It is the **one call on a session that another thread may
-make** while the session's own thread is inside a call
-(see "Threading"). The session must stay open until it
-returns.
-
-**A cancelled statement stays cancelled.** The cancel is not
-used up by the wait it ends. Every wait the session makes
-fails the same way, one begun later included, until the
-session begins its next statement (`sm1::stmt_begin`) or its
-next transaction (`sm1::begin`). So a cancel sent just before
-a wait begins is not lost, a caller that goes on after
-`SM_ERR_CANCELLED` cannot wait again by mistake, and nothing
-is cleared by hand. It is PostgreSQL's rule: a cancel ends
-the statement, not the connection, and the next statement
-runs as usual.
+**sm1 takes no bit.** It stays pending until the thread takes
+it (`sys_take()`), and until then every wait the thread makes
+fails the same way, one begun later included. So an interrupt
+raised just before a wait begins is not lost, a caller that
+goes on after `SM_ERR_INTERRUPTED` cannot wait again by
+mistake, and when the interrupt is spent is the host's
+choice: PostgreSQL's rule, a cancel ends the statement, is
+the host taking the bit as it handles it.
 
 Every wait a session can be put in for another transaction
 ends this way: sm1 waits in one place, the lock table's
-condition, for locks and for uncommitted writers alike. A
-wait that is not for a transaction, as sm3's wait for an
-index build, is not a statement's and takes the caller's own
-test of when to give up.
-
-Errors: `SM_ERR_INVALID` (no session).
+condition, for locks and for uncommitted writers alike.
 
 ### bool sm1::in_doubt(sm1::session_t* session)
 

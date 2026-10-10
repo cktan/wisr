@@ -90,13 +90,14 @@ typedef enum sm_errnum_t {
 
     /*
      * sm1's, and not an abort: a wait for another transaction that
-     * sm1::cancel cut short (SM1_DESIGN.md §5.1). The transaction
-     * stays active and holds what it held.
+     * an interrupt to the calling thread ended (sys.h, through its
+     * wait mask; SM1_DESIGN.md §5.1). The transaction stays active
+     * and holds what it held.
      */
-    SM_ERR_CANCELLED     = 28,  /* the wait was cancelled */
+    SM_ERR_INTERRUPTED   = 28,  /* the wait was interrupted */
 
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_CANCELLED
+    SM_ERR_LAST          = SM_ERR_INTERRUPTED
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */
