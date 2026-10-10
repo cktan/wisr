@@ -869,6 +869,10 @@ The pilot moves two things:
   `tcb` is NULL. Fifty sessions leave no timer behind; without
   the destructor's `timer_delete()` they leave a hundred.
 
-Settings are next: they are inherited, the parent's copied
-into the new thread, so they go into the tcb with an explicit
-copy at thread start.
+Nothing else is to move for its own sake: a global goes into a
+block when a change touches it, and new state goes into one
+from the start. `tcb` stays a pointer: a `thread_local tcb_t`
+object would call its init function on every access from
+another file, to register its destructor, and would be
+destroyed after `session_thread_end()`, with no NULL for a
+signal handler to see.
