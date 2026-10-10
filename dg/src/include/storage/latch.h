@@ -146,6 +146,7 @@ extern void InitSharedLatch(Latch *latch);
 extern void OwnLatch(Latch *latch);
 extern void DisownLatch(Latch *latch);
 extern void SetLatch(Latch *latch);
+extern sys_thread_ref_t LatchOwner(Latch *latch);
 extern void ResetLatch(Latch *latch);
 
 extern int WaitLatch(Latch *latch, int wakeEvents, long timeout,

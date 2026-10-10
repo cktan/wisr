@@ -128,7 +128,7 @@ void pqsignal(int signo, pqsigfunc func) {
   Assert(signo > 0);
   Assert(signo < PG_NSIG);
 
-  /* Kept for pqsignal_handler(), SIG_IGN and SIG_DFL too. */
+  /* Kept for SIG_IGN and SIG_DFL too. */
   pqsignal_handlers[signo] = func; /* assumed atomic */
 #ifndef FRONTEND
 
@@ -162,14 +162,4 @@ void pqsignal(int signo, pqsigfunc func) {
   if (signal(signo, func) == SIG_ERR)
     Assert(false); /* probably indicates coding error */
 #endif
-}
-
-/*
- * The handler this thread last set for signo with pqsignal(), or NULL if
- * it set none, or set SIG_IGN or SIG_DFL.
- */
-pqsigfunc pqsignal_handler(int signo) {
-  pqsigfunc func = pqsignal_handlers[signo];
-
-  return func == SIG_IGN || func == SIG_DFL ? NULL : func;
 }

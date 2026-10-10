@@ -76,14 +76,31 @@ extern uint64 EmitProcSignalBarrier(ProcSignalBarrierType type);
 extern void WaitForProcSignalBarrier(uint64 generation);
 extern void ProcessProcSignalBarrier(void);
 
-extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
+extern void procsignal_sigusr1_handler(void);
+
+/*
+ * A thread's interrupts: bits in its word of pending interrupts (sys.h),
+ * each with a handler of the thread's own, which runs at its next
+ * CHECK_FOR_INTERRUPTS() or wait.  They were signals.
+ */
+#define INTERRUPT_CANCEL (1u << 0)  /* cancel the query: was SIGINT */
+#define INTERRUPT_DIE (1u << 1)     /* end the session: was SIGTERM */
+#define INTERRUPT_QUIT (1u << 2)    /* end it at once: was SIGQUIT */
+#define INTERRUPT_RELOAD (1u << 3)  /* reread the settings: was SIGHUP */
+#define INTERRUPT_PROCSIG (1u << 4) /* see its ProcSignal: was SIGUSR1 */
+#define INTERRUPT_ALL                                                        \
+  (INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT | INTERRUPT_RELOAD |   \
+   INTERRUPT_PROCSIG)
+
+typedef void (*interrupt_handler_t)(void);
 
 struct PGPROC;
-extern void SignalProc(struct PGPROC *proc, int sig);
-extern void SignalSelf(int sig);
-extern void DeliverPendingSignals(void);
-extern void AdoptPendingSignals(void);
-extern void SignalSelfLater(int sig);
+extern void SetInterruptHandler(uint32 bit, interrupt_handler_t handler);
+extern void InterruptProc(struct PGPROC *proc, uint32 bits);
+extern void InterruptSelf(uint32 bits);
+extern void InterruptSelfLater(uint32 bits);
+extern void DeliverInterrupts(void);
+extern uint32 InterruptsOfSignal(int sig);
 
 /* ProcSignalHeader is an opaque struct, details known only within procsignal.c
  */

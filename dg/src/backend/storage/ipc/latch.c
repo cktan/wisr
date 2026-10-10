@@ -350,13 +350,8 @@ void SetLatch(Latch *latch) {
   else if (owner_pid == MyProcPid && owner_tid == gettid())
     WakeupMyProc();
   else {
-    sys_thread_ref_t owner;
+    sys_thread_ref_t owner = LatchOwner(latch);
 
-    /* A copy of the handle: the owner may disown the latch meanwhile. */
-    SpinLockAcquire(&latch->owner_lock);
-    if (latch->owner != NULL)
-      owner = *latch->owner;
-    SpinLockRelease(&latch->owner_lock);
     if (owner)
       WakeupOtherProc(owner);
   }
@@ -380,6 +375,22 @@ void SetLatch(Latch *latch) {
      */
   }
 #endif
+}
+
+/*
+ * A copy of the handle on the latch's owner, empty if no thread owns it:
+ * a copy, as the owner may disown the latch meanwhile.  Not in a signal
+ * handler.
+ */
+sys_thread_ref_t LatchOwner(Latch *latch) {
+  sys_thread_ref_t owner;
+
+  /* Copied under the lock that DisownLatch() deletes it under. */
+  SpinLockAcquire(&latch->owner_lock);
+  if (latch->owner != NULL)
+    owner = *latch->owner;
+  SpinLockRelease(&latch->owner_lock);
+  return owner;
 }
 
 /*

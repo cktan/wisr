@@ -1143,3 +1143,44 @@ fd, an eventfd that `sys_interrupt()` writes.
 - **`server.sh`'s shutdown must take under ten seconds**: each
   side wakes the other's latch, and a lost wake-up showed only
   as a minute's stall, not a failure.
+
+## Step 32: signals between threads are named interrupt bits
+
+A session thread took no real signal: `SignalProc()` set bit
+*n*, for signal *n*, in the target's PGPROC (or, before it had
+one, in its launch record), the thread found it through
+`MyPendingSignals`, and ran the handler it had set with
+`pqsignal()`. That was signals emulated over a word of bits;
+sys gives each thread such a word of its own.
+
+- **The bits are named** (`storage/procsignal.h`):
+  `INTERRUPT_CANCEL` (was SIGINT), `INTERRUPT_DIE` (SIGTERM),
+  `INTERRUPT_QUIT` (SIGQUIT), `INTERRUPT_RELOAD` (SIGHUP),
+  `INTERRUPT_PROCSIG` (SIGUSR1, with its reason in the
+  ProcSignal slot as before).
+- **They live in the thread's sys word**, not the PGPROC:
+  `InterruptProc(proc, bits)` raises them in the thread that
+  owns the PGPROC's latch, and the postmaster raises them in a
+  backend through the handle in its launch record, PGPROC or
+  not. Gone: `PGPROC.pendingSignals`, the launch record's
+  word, `MyPendingSignals`, `AdoptPendingSignals()`.
+- **A handler is set per bit** with `SetInterruptHandler()`,
+  a `void (void)` function: `StatementCancelHandler`, `die`,
+  `quickdie`, `SignalHandlerForConfigReload`,
+  `SignalHandlerForCrashExit`, `procsignal_sigusr1_handler`,
+  `process_startup_packet_die`. `pqsignal()` is left to the
+  postmaster's real signals and to faults (SIGFPE);
+  `pqsignal_handler()`, which `SignalSelf()` used, is gone.
+- **`DeliverInterrupts()`** takes the pending bits and runs
+  their handlers, from `ProcessInterrupts()` and the wait loop
+  as before; `InterruptSelf()` runs them at once (the
+  statement and lock timeouts), `InterruptSelfLater()` leaves
+  them for later (the startup packet's timeout).
+- **`CHECK_FOR_INTERRUPTS()` loads the word inline**, through
+  `MyInterrupts` (`sys_pending_word()`), set by
+  `InitPostmasterChild()` and `InitStandaloneProcess()`.
+- **Signal numbers are left at the edges**:
+  `InterruptsOfSignal()` maps the postmaster's `signal_child()`
+  and `pg_signal_backend()`'s signals to bits.
+- `server.sh`'s shutdown check kills a server that does not
+  stop, and fails, rather than hanging the test.

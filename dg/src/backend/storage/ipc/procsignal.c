@@ -285,7 +285,7 @@ int SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber) {
       slot->pss_signalFlags[reason] = true;
       SpinLockRelease(&slot->pss_mutex);
       /* Send signal */
-      SignalProc(GetPGProcByNumber(procNumber), SIGUSR1);
+      InterruptProc(GetPGProcByNumber(procNumber), INTERRUPT_PROCSIG);
       return 0;
     }
     SpinLockRelease(&slot->pss_mutex);
@@ -309,7 +309,7 @@ int SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber) {
           slot->pss_signalFlags[reason] = true;
           SpinLockRelease(&slot->pss_mutex);
           /* Send signal */
-          SignalProc(GetPGProcByNumber(i), SIGUSR1);
+          InterruptProc(GetPGProcByNumber(i), INTERRUPT_PROCSIG);
           return 0;
         }
         SpinLockRelease(&slot->pss_mutex);
@@ -384,7 +384,7 @@ uint64 EmitProcSignalBarrier(ProcSignalBarrierType type) {
         /* see SendProcSignal for details */
         slot->pss_signalFlags[PROCSIG_BARRIER] = true;
         SpinLockRelease(&slot->pss_mutex);
-        SignalProc(GetPGProcByNumber(i), SIGUSR1);
+        InterruptProc(GetPGProcByNumber(i), INTERRUPT_PROCSIG);
       } else
         SpinLockRelease(&slot->pss_mutex);
     }
@@ -626,9 +626,9 @@ static bool CheckProcSignal(ProcSignalReason reason) {
 }
 
 /*
- * procsignal_sigusr1_handler - handle SIGUSR1 signal.
+ * procsignal_sigusr1_handler - handle INTERRUPT_PROCSIG, once SIGUSR1.
  */
-void procsignal_sigusr1_handler(SIGNAL_ARGS) {
+void procsignal_sigusr1_handler(void) {
   if (CheckProcSignal(PROCSIG_CATCHUP_INTERRUPT))
     HandleCatchupInterrupt();
 
@@ -713,7 +713,7 @@ void SendCancelRequest(int backendPID, const uint8 *cancel_key,
                     "processing cancel request: sending SIGINT to process %d",
                     backendPID)));
 
-        SignalProc(GetPGProcByNumber(i), SIGINT);
+        InterruptProc(GetPGProcByNumber(i), INTERRUPT_CANCEL);
       } else {
         /* Right PID, wrong key: no way, Jose */
         ereport(LOG, (errmsg("wrong key in cancel request for process %d",
@@ -728,72 +728,71 @@ void SendCancelRequest(int backendPID, const uint8 *cancel_key,
                        backendPID)));
 }
 
-/*
- * Send sig to the process or session that owns proc.  The signal is a bit in
- * proc->pendingSignals, and the owner is woken by its latch, so it reaches a
- * session that is a thread as surely as one that is a process.  The owner
- * runs the handler it set with pqsignal() at its next CHECK_FOR_INTERRUPTS()
- * or wait.  Safe in a signal handler.
- */
-void SignalProc(PGPROC *proc, int sig) {
-  Assert(sig > 0 && sig < 32);
-  pg_atomic_fetch_or_u32(&proc->pendingSignals, (uint32)1 << sig);
-  SetLatch(&proc->procLatch);
+/* This thread's handler of each interrupt bit, NULL for none. */
+static thread_local /*LOCAL*/ interrupt_handler_t interrupt_handlers[32];
+
+/* Make handler the one this thread runs for bit. */
+void SetInterruptHandler(uint32 bit, interrupt_handler_t handler) {
+  Assert(bit != 0 && (bit & (bit - 1)) == 0);
+  interrupt_handlers[pg_rightmost_one_pos32(bit)] = handler;
 }
 
 /*
- * Send sig to this process or session: its handler runs now.  Safe in a
- * signal handler, as the handlers are.
+ * Interrupt the thread that owns proc, which runs the handlers of bits at
+ * its next CHECK_FOR_INTERRUPTS() or wait.  sys wakes it: a wait it is in
+ * returns, and runs them.  A proc that no thread owns is left alone.
  */
-void SignalSelf(int sig) {
-  pqsigfunc handler = pqsignal_handler(sig);
+void InterruptProc(PGPROC *proc, uint32 bits) {
+  sys_thread_ref_t owner = LatchOwner(&proc->procLatch);
 
-  if (handler != NULL)
-    handler(sig);
+  if (owner)
+    sys_interrupt(owner, bits);
 }
 
-/* MyPendingSignals as the atomic it is. */
-static pg_atomic_uint32 *pending_signals(void) {
-  Assert(MyPendingSignals != &NoPendingSignals);
-  return (pg_atomic_uint32 *)MyPendingSignals;
+/* Run this thread's handlers of bits now. */
+void InterruptSelf(uint32 bits) {
+  while (bits != 0) {
+    interrupt_handler_t handler =
+        interrupt_handlers[pg_rightmost_one_pos32(bits)];
+
+    bits &= bits - 1;
+    if (handler != NULL)
+      handler();
+  }
 }
 
 /*
- * Leave sig pending for this thread, to run at its next wait or
- * CHECK_FOR_INTERRUPTS(): for a signal handler whose work may not be done
- * in a signal handler.
+ * Leave bits pending for this thread, to run at its next wait or
+ * CHECK_FOR_INTERRUPTS(): for a handler whose work may not be done where
+ * it runs.
  */
-void SignalSelfLater(int sig) {
-  pg_atomic_fetch_or_u32(pending_signals(), (uint32)1 << sig);
-}
+void InterruptSelfLater(uint32 bits) { sys_interrupt(sys_thread_self(), bits); }
 
-/*
- * Take MyProc's word as this process's pending signals, with any sent
- * before it had a PGPROC: to a session thread, that came to its launch
- * record (postmaster/backend_thread.c).  MyProc->pid is set already, so a
- * sender that finds no PGPROC and falls back to the old word looks again
- * after, and finds this one.
- */
-void AdoptPendingSignals(void) {
-  const volatile uint32 *old = MyPendingSignals;
-
-  MyPendingSignals = &MyProc->pendingSignals.value;
-  if (old != &NoPendingSignals)
-    pg_atomic_fetch_or_u32(&MyProc->pendingSignals,
-                           pg_atomic_exchange_u32((pg_atomic_uint32 *)old, 0));
-}
-
-/* Run the handler of each signal SignalProc() left for this process. */
-void DeliverPendingSignals(void) {
-  uint32 pending;
-
-  if (__atomic_load_n(MyPendingSignals, __ATOMIC_RELAXED) == 0)
+/* Run the handler of each bit pending for this thread, taking them. */
+void DeliverInterrupts(void) {
+  if (MyInterrupts->load(std::memory_order_relaxed) == 0)
     return;
-  pending = pg_atomic_exchange_u32(pending_signals(), 0);
-  while (pending != 0) {
-    int sig = pg_rightmost_one_pos32(pending);
+  InterruptSelf(sys_take(INTERRUPT_ALL));
+}
 
-    pending &= pending - 1;
-    SignalSelf(sig);
+/*
+ * The interrupt bits of what a signal asked of a process, for the
+ * postmaster, which still speaks to its children in signals, and the SQL
+ * functions that send them.  0 for a signal that has no bit.
+ */
+uint32 InterruptsOfSignal(int sig) {
+  switch (sig) {
+  case SIGINT:
+    return INTERRUPT_CANCEL;
+  case SIGTERM:
+    return INTERRUPT_DIE;
+  case SIGQUIT:
+    return INTERRUPT_QUIT;
+  case SIGHUP:
+    return INTERRUPT_RELOAD;
+  case SIGUSR1:
+    return INTERRUPT_PROCSIG;
+  default:
+    return 0;
   }
 }

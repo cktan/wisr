@@ -2124,16 +2124,16 @@ static void signal_child(PMChild *pmchild, int signal) {
   }
 
   /*
-   * A backend is sent a signal as a flag in its PGPROC, as a session that
-   * is a thread will be (SignalProc()); one with no PGPROC yet, and a crash
-   * or kill, get a real one.
+   * A backend is sent a signal as interrupt bits, through its PGPROC
+   * (InterruptProc()); one with no PGPROC yet, and a crash or kill, get a
+   * real one.
    */
   if (pmchild->bkend_type == B_BACKEND && signal != SIGQUIT &&
       signal != SIGKILL) {
     PGPROC *proc = PostmasterPidGetProc(pid);
 
     if (proc != NULL) {
-      SignalProc(proc, signal);
+      InterruptProc(proc, InterruptsOfSignal(signal));
       return;
     }
   }

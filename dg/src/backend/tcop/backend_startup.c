@@ -60,7 +60,7 @@ static int ProcessSSLStartup(Port *port);
 static int ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done);
 static void ProcessCancelRequestPacket(Port *port, void *pkt, int pktlen);
 static void SendNegotiateProtocolVersion(List *unrecognized_protocol_options);
-static void process_startup_packet_die(SIGNAL_ARGS);
+static void process_startup_packet_die(void);
 static void StartupPacketTimeoutHandler(void);
 static bool validate_log_connections_options(List *elemlist, uint32 *flags);
 
@@ -161,7 +161,7 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
    * shared memory; therefore no outside-the-process state needs to get
    * cleaned up.
    */
-  pqsignal(SIGTERM, process_startup_packet_die);
+  SetInterruptHandler(INTERRUPT_DIE, process_startup_packet_die);
   /* SIGQUIT handler was already set up by InitPostmasterChild */
   InitializeTimeouts(); /* establishes SIGALRM handler */
   sigprocmask(SIG_SETMASK, &StartupBlockSig, NULL);
@@ -822,10 +822,10 @@ static void SendNegotiateProtocolVersion(List *unrecognized_protocol_options) {
  * to a client that has not yet completed authentication, or even sent us
  * a startup packet.
  */
-static void process_startup_packet_die(SIGNAL_ARGS) {
+static void process_startup_packet_die(void) {
   /*
    * A session thread is here not in a signal handler but where its flags
-   * are delivered (DeliverPendingSignals()), and _exit() would end the
+   * are delivered (DeliverInterrupts()), and _exit() would end the
    * server: it ends the thread.
    */
   if (IsSessionThread)
@@ -836,12 +836,12 @@ static void process_startup_packet_die(SIGNAL_ARGS) {
 /*
  * Timeout while processing startup packet.
  * As for process_startup_packet_die(), we exit via _exit(1).  A session
- * thread is in its timer's signal handler, so it leaves itself a SIGTERM,
+ * thread is in its timer's signal handler, so it leaves itself a DIE,
  * which interrupts the wait it is in and ends it there.
  */
 static void StartupPacketTimeoutHandler(void) {
   if (IsSessionThread) {
-    SignalSelfLater(SIGTERM);
+    InterruptSelfLater(INTERRUPT_DIE);
     return;
   }
   _exit(1);

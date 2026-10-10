@@ -307,15 +307,19 @@ leaves no bit behind.
 
 ## 9. How digres uses it
 
-- It defines its bits: `CANCEL`, `DIE`, `RELOAD`, invalidation
-  catch-up, `NOTIFY` and the rest.
-- It keeps each session's handle in its PGPROC, made there with
-  placement new when the session takes the slot and destroyed
-  when it frees it, and `SignalProc()` becomes
-  `sys_interrupt(proc->thread, bit)`.
-- `CHECK_FOR_INTERRUPTS` reads `sys_pending()`, and its epoll
-  loop adds `sys_wake_fd()`, in place of SIGURG and its
-  signalfd.
+- It defines its bits (`storage/procsignal.h`): `CANCEL`,
+  `DIE`, `QUIT`, `RELOAD`, and `PROCSIG`, which carries
+  invalidation catch-up, `NOTIFY` and the rest as reasons in
+  the target's ProcSignal slot.
+- A latch keeps its owner's handle, new'd when a thread owns
+  it and deleted when it lets go; `SetLatch()` on another
+  thread's latch is `sys_interrupt(owner, 0)`, a wake with no
+  bit, and from a signal handler of the owner's own,
+  `sys_interrupt_self(0)`. `InterruptProc(proc, bits)` raises
+  bits in the owner of the PGPROC's latch.
+- `CHECK_FOR_INTERRUPTS` loads `sys_pending_word()` inline, and
+  the epoll loop waits on `sys_wake_fd()`, in place of SIGURG
+  and its signalfd.
 - `statement_timeout` and the other timeouts are
   `sys_timer_at()`, a bit for each, in place of a timer of its
   own per thread and SIGALRM.

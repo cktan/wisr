@@ -970,10 +970,10 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
     int rc;
 
     /*
-     * A signal sent by SignalProc() woke us: run its handler, as the kernel
-     * would have, before looking at the latch the handler may set.
+     * An interrupt woke us: run its handler, before looking at the latch
+     * the handler may set.
      */
-    DeliverPendingSignals();
+    DeliverInterrupts();
 
     /*
      * Check if the latch is set already first.  If so, we either exit

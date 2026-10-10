@@ -9,10 +9,9 @@
  * does (InitPostmasterChild()), and runs BackendMain().  Its thread id is
  * its pid.
  *
- * The postmaster reaches it as it reaches a child process.  A signal is a
- * flag (SignalProc()): in its PGPROC once it has one, and before that in
- * its launch record, with the thread's wake fd written to interrupt its
- * wait (sys.h).
+ * The postmaster reaches it as it reaches a child process.  A signal is an
+ * interrupt bit (storage/procsignal.h), raised in the thread through the
+ * handle in its launch record (sys.h), from its first instruction on.
  * The postmaster learns of its end as of a child's: the thread queues
  * itself, with its exit code, as it ends, and sets the postmaster's latch;
  * process_pm_child_exit() takes it from the queue as it takes a child from
@@ -60,7 +59,6 @@ struct backend_thread_t {
   size_t startup_data_len;
   exit_queue_t *queue;
   pg_atomic_uint32 tid;                 /* the thread's id, once it runs */
-  pg_atomic_uint32 signals;             /* sent before it had a PGPROC */
   std::atomic<sys_thread_ref_t *> self; /* the thread, to wake */
   int exit_code;                        /* set as it ends */
   backend_thread_t *next_exited;
@@ -73,8 +71,6 @@ static void backend_thread_main(void *arg) {
   backend_thread_t *thread = (backend_thread_t *)arg;
   exit_queue_t *queue = thread->queue;
 
-  /* Signals sent before it has a PGPROC come to the launch record. */
-  MyPendingSignals = &thread->signals.value;
   /* Before the tid: the postmaster wakes the thread once it has that. */
   thread->self.store(new sys_thread_ref_t(sys_thread_self()),
                      std::memory_order_release);
@@ -147,7 +143,6 @@ pid_t backend_thread_launch(BackendType child_type, int child_slot,
   t->startup_data_len = startup_data_len;
   t->queue = exit_queue;
   pg_atomic_init_u32(&t->tid, 0);
-  pg_atomic_init_u32(&t->signals, 0);
 
   /* Nobody joins it: the postmaster learns of its end from the queue. */
   session_thread_start(backend_thread_main, t, NULL).detach();
@@ -161,31 +156,15 @@ pid_t backend_thread_launch(BackendType child_type, int child_slot,
 }
 
 /*
- * Send sig to a backend thread, as the postmaster kill()s a child.  SIGKILL
- * cannot end one thread, and is dropped.
+ * Send sig to a backend thread, as the postmaster kill()s a child: as its
+ * interrupt bits, raised in the thread itself, PGPROC or no.  A signal with
+ * no bit, SIGKILL among them, cannot end one thread, and is dropped.
  */
 void backend_thread_signal(backend_thread_t *thread, int sig) {
-  pid_t tid = backend_thread_pid(thread);
-  PGPROC *proc;
+  uint32 bits = InterruptsOfSignal(sig);
 
-  if (sig == SIGKILL)
-    return;
-  proc = PostmasterPidGetProc(tid);
-  if (proc != NULL) {
-    SignalProc(proc, sig);
-    return;
-  }
-
-  /*
-   * No PGPROC yet: leave the signal in the launch record, and interrupt the
-   * thread's wait.  It may have taken its PGPROC meanwhile, and the bit with
-   * it, or not, so it goes there too if there is one now.
-   */
-  pg_atomic_fetch_or_u32(&thread->signals, (uint32)1 << sig);
-  WakeupOtherProc(*thread->self.load(std::memory_order_acquire));
-  proc = PostmasterPidGetProc(tid);
-  if (proc != NULL)
-    SignalProc(proc, sig);
+  if (bits != 0)
+    sys_interrupt(*thread->self.load(std::memory_order_acquire), bits);
 }
 
 /* Whether a backend thread has ended that backend_thread_exited() has not

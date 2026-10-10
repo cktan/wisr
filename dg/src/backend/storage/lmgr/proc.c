@@ -300,7 +300,6 @@ void InitProcGlobal(void) {
      * access them for backends that aren't currently in use.
      */
     pg_atomic_init_u32(&(proc->procArrayGroupNext), INVALID_PROC_NUMBER);
-    pg_atomic_init_u32(&(proc->pendingSignals), 0);
     pg_atomic_init_u64(&(proc->waitStart), 0);
   }
 
@@ -396,8 +395,6 @@ void InitProcess(void) {
   MyProc->fpLocalTransactionId = InvalidLocalTransactionId;
   MyProc->xid = InvalidTransactionId;
   MyProc->xmin = InvalidTransactionId;
-  /* Signals sent to this PGPROC's last owner are not ours. */
-  pg_atomic_write_u32(&MyProc->pendingSignals, 0);
   MyProc->pid = MyProcPid;
   MyProc->vxid.procNumber = MyProcNumber;
   MyProc->vxid.lxid = InvalidLocalTransactionId;
@@ -442,7 +439,6 @@ void InitProcess(void) {
    */
   OwnLatch(&MyProc->procLatch);
   SwitchToSharedLatch();
-  AdoptPendingSignals();
 
   /*
    * We might be reusing a semaphore that belonged to a failed process. So
@@ -556,8 +552,6 @@ void InitAuxiliaryProcess(void) {
 
   /* Mark auxiliary proc as in use by me */
   /* use volatile pointer to prevent code rearrangement */
-  /* Signals sent to this PGPROC's last owner are not ours. */
-  pg_atomic_write_u32(&auxproc->pendingSignals, 0);
   ((volatile PGPROC *)auxproc)->pid = MyProcPid;
 
   SpinLockRelease(ProcStructLock);
@@ -604,7 +598,6 @@ void InitAuxiliaryProcess(void) {
    */
   OwnLatch(&MyProc->procLatch);
   SwitchToSharedLatch();
-  AdoptPendingSignals();
 
   /* Check that group locking fields are in a proper initial state. */
   Assert(MyProc->lockGroupLeader == NULL);
@@ -880,7 +873,6 @@ static void ProcKill(int code, Datum arg) {
 
   MyProc = NULL;
   MyProcNumber = INVALID_PROC_NUMBER;
-  MyPendingSignals = &NoPendingSignals;
 
   /* Mark the proc no longer in use */
   proc->pid = 0;
@@ -940,7 +932,6 @@ static void AuxiliaryProcKill(int code, Datum arg) {
   proc = MyProc;
   MyProc = NULL;
   MyProcNumber = INVALID_PROC_NUMBER;
-  MyPendingSignals = &NoPendingSignals;
   DisownLatch(&proc->procLatch);
 
   SpinLockAcquire(ProcStructLock);

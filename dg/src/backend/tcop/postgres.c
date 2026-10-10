@@ -2629,7 +2629,7 @@ static void drop_unnamed_stmt(void) {
  * Either some backend has bought the farm, or we've been told to shut down
  * "immediately"; so we need to stop what we're doing and exit.
  */
-void quickdie(SIGNAL_ARGS) {
+void quickdie(void) {
   sigaddset(&BlockSig, SIGQUIT); /* prevent nested calls */
   sigprocmask(SIG_SETMASK, &BlockSig, NULL);
 
@@ -2728,7 +2728,7 @@ void quickdie(SIGNAL_ARGS) {
  * Shutdown signal from postmaster: abort transaction and exit
  * at soonest convenient time
  */
-void die(SIGNAL_ARGS) {
+void die(void) {
   /* Don't joggle the elbow of proc_exit */
   if (!proc_exit_inprogress) {
     InterruptPending = true;
@@ -2752,7 +2752,7 @@ void die(SIGNAL_ARGS) {
  * Query-cancel signal from postmaster: abort current transaction
  * at soonest convenient time
  */
-void StatementCancelHandler(SIGNAL_ARGS) {
+void StatementCancelHandler(void) {
   /*
    * Don't joggle the elbow of proc_exit
    */
@@ -2973,8 +2973,8 @@ static void ProcessRecoveryConflictInterrupts(void) {
  * any pre-existing one will have been serviced.)
  */
 void ProcessInterrupts(void) {
-  /* Signals sent by SignalProc() set their flags first. */
-  DeliverPendingSignals();
+  /* Interrupts from other threads set their flags first. */
+  DeliverInterrupts();
 
   /* OK to accept any interrupts now? */
   if (InterruptHoldoffCount != 0 || CritSectionCount != 0)
@@ -3751,9 +3751,9 @@ void PostgresMain(const char *dbname, const char *username) {
    * SIGPIPE.)
    */
   {
-    pqsignal(SIGHUP, SignalHandlerForConfigReload);
-    pqsignal(SIGINT, StatementCancelHandler); /* cancel current query */
-    pqsignal(SIGTERM, die); /* cancel current query and exit */
+    SetInterruptHandler(INTERRUPT_RELOAD, SignalHandlerForConfigReload);
+    SetInterruptHandler(INTERRUPT_CANCEL, StatementCancelHandler);
+    SetInterruptHandler(INTERRUPT_DIE, die); /* cancel query and exit */
 
     /*
      * In a postmaster child backend, replace SignalHandlerForCrashExit
@@ -3764,10 +3764,10 @@ void PostgresMain(const char *dbname, const char *username) {
      * rather than quickdie().
      */
     if (IsUnderPostmaster)
-      pqsignal(SIGQUIT, quickdie); /* hard crash time */
+      SetInterruptHandler(INTERRUPT_QUIT, quickdie); /* hard crash time */
     else
-      pqsignal(SIGQUIT, die); /* cancel current query and exit */
-    InitializeTimeouts();     /* establishes SIGALRM handler */
+      SetInterruptHandler(INTERRUPT_QUIT, die); /* cancel query and exit */
+    InitializeTimeouts(); /* establishes SIGALRM handler */
 
     /*
      * Ignore failure to write to frontend. Note: if frontend closes
@@ -3776,7 +3776,7 @@ void PostgresMain(const char *dbname, const char *username) {
      * midst of output during who-knows-what operation...
      */
     pqsignal(SIGPIPE, SIG_IGN);
-    pqsignal(SIGUSR1, procsignal_sigusr1_handler);
+    SetInterruptHandler(INTERRUPT_PROCSIG, procsignal_sigusr1_handler);
     pqsignal(SIGUSR2, SIG_IGN);
     pqsignal(SIGFPE, FloatExceptionHandler);
 

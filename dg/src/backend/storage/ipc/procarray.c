@@ -2332,7 +2332,7 @@ void TerminateOtherDBBackends(Oid databaseId) {
       PGPROC *proc = BackendPidGetProc(pid);
 
       if (proc != NULL)
-        SignalProc(proc, SIGTERM);
+        InterruptProc(proc, INTERRUPT_DIE);
     }
   }
 }

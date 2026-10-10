@@ -34,7 +34,7 @@ thread_local /*LOCAL*/ volatile sig_atomic_t ShutdownRequestPending = false;
  * which uses it would arrange to check the ConfigReloadPending flag at
  * convenient places inside main loops, or else call ProcessMainLoopInterrupts.
  */
-void SignalHandlerForConfigReload(SIGNAL_ARGS) {
+void SignalHandlerForConfigReload(void) {
   ConfigReloadPending = true;
   SetLatch(MyLatch);
 }
@@ -44,7 +44,7 @@ void SignalHandlerForConfigReload(SIGNAL_ARGS) {
  *
  * Normally, this would be used for handling SIGQUIT.
  */
-void SignalHandlerForCrashExit(SIGNAL_ARGS) {
+void SignalHandlerForCrashExit(void) {
   /*
    * We DO NOT want to run proc_exit() or atexit() callbacks -- we're here
    * because shared memory may be corrupted, so we don't want to try to

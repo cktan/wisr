@@ -821,22 +821,22 @@ static void ShutdownPostgres(int code, Datum arg) {
  * STATEMENT_TIMEOUT handler: trigger a query-cancel interrupt.
  */
 static void StatementTimeoutHandler(void) {
-  int sig = SIGINT;
+  uint32 bit = INTERRUPT_CANCEL;
 
   /*
    * During authentication the timeout is used to deal with
    * authentication_timeout - we want to quit in response to such timeouts.
    */
   if (ClientAuthInProgress)
-    sig = SIGTERM;
+    bit = INTERRUPT_DIE;
 
-  SignalSelf(sig);
+  InterruptSelf(bit);
 }
 
 /*
  * LOCK_TIMEOUT handler: trigger a query-cancel interrupt.
  */
-static void LockTimeoutHandler(void) { SignalSelf(SIGINT); }
+static void LockTimeoutHandler(void) { InterruptSelf(INTERRUPT_CANCEL); }
 
 static void TransactionTimeoutHandler(void) {
   TransactionTimeoutPending = true;

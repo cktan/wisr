@@ -43,6 +43,7 @@
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "storage/procsignal.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"
 #include "utils/guc.h"
@@ -115,9 +116,12 @@ void InitPostmasterChild(void) {
   InitProcessLocalLatch();
   InitializeLatchWaitSet();
 
+  /* CHECK_FOR_INTERRUPTS() reads this thread's interrupts from here on. */
+  MyInterrupts = sys_pending_word();
+
   /*
    * A session thread is no process: its signal mask is set
-   * (session_thread.c), its SIGQUIT comes as a flag, and the rest below
+   * (session_thread.c), its SIGQUIT comes as a bit, and the rest below
    * belongs to the process, which is the postmaster.
    */
   if (IsSessionThread)
@@ -141,7 +145,7 @@ void InitPostmasterChild(void) {
    * processes may choose to replace this default choice of handler with
    * quickdie().)  All other blockable signals remain blocked for now.
    */
-  pqsignal(SIGQUIT, SignalHandlerForCrashExit);
+  SetInterruptHandler(INTERRUPT_QUIT, SignalHandlerForCrashExit);
 
   sigdelset(&BlockSig, SIGQUIT);
   sigprocmask(SIG_SETMASK, &BlockSig, NULL);
@@ -181,6 +185,9 @@ void InitStandaloneProcess(const char *argv0) {
   InitializeWaitEventSupport();
   InitProcessLocalLatch();
   InitializeLatchWaitSet();
+
+  /* CHECK_FOR_INTERRUPTS() reads this thread's interrupts from here on. */
+  MyInterrupts = sys_pending_word();
 
   /*
    * For consistency with InitPostmasterChild, initialize signal mask here.

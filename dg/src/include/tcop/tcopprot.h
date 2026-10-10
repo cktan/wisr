@@ -64,9 +64,9 @@ extern PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
 extern List *pg_plan_queries(List *querytrees, const char *query_string,
                              int cursorOptions, ParamListInfo boundParams);
 
-extern void die(SIGNAL_ARGS);
-pg_noreturn extern void quickdie(SIGNAL_ARGS);
-extern void StatementCancelHandler(SIGNAL_ARGS);
+extern void die(void);
+pg_noreturn extern void quickdie(void);
+extern void StatementCancelHandler(void);
 pg_noreturn extern void FloatExceptionHandler(SIGNAL_ARGS);
 extern void HandleRecoveryConflictInterrupt(ProcSignalReason reason);
 extern void ProcessClientReadInterrupt(bool blocked);

@@ -208,7 +208,10 @@ for _ in $(seq 100); do
   kill -0 $server 2> /dev/null || break
   sleep 0.1
 done
-kill -0 $server 2> /dev/null && fail "shutdown is prompt"
+if kill -0 $server 2> /dev/null; then
+  fail "shutdown is prompt"
+  kill -KILL $server
+fi
 wait $server || fail "shutdown status"
 grep -q "terminating connection due to administrator command" "$work/log" ||
   fail "idle session ended"

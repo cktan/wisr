@@ -112,7 +112,8 @@ static void session_thread_main(session_start_t *p) {
   /*
    * A session thread takes no signal but SIGALRM, from its own timer, and
    * the faults it causes itself: the rest are the postmaster's, or come as
-   * flags (SignalProc()).  Every mask the backend sets is this one.
+   * interrupt bits (InterruptProc()).  Every mask the backend sets is this
+   * one.
    */
   sigfillset(&BlockSig);
   sigdelset(&BlockSig, SIGALRM);

@@ -26,7 +26,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
 extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
     ShutdownRequestPending;
 
-extern void SignalHandlerForConfigReload(SIGNAL_ARGS);
-extern void SignalHandlerForCrashExit(SIGNAL_ARGS);
+extern void SignalHandlerForConfigReload(void);
+extern void SignalHandlerForCrashExit(void);
 
 #endif

@@ -94,7 +94,7 @@ static int pg_signal_backend(int pid, int sig) {
    * too unlikely to worry about.
    */
 
-  SignalProc(proc, sig);
+  InterruptProc(proc, InterruptsOfSignal(sig));
   return SIGNAL_BACKEND_SUCCESS;
 }
 

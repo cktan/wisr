@@ -23,6 +23,7 @@
 #ifndef MISCADMIN_H
 #define MISCADMIN_H
 
+#include <atomic>
 #include <signal.h>
 
 #include "datatype/timestamp.h" /* for TimestampTz */
@@ -113,12 +114,12 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32
 extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32 CritSectionCount;
 
 /*
- * The signals pending for this process or session (PGPROC's
- * pendingSignals), or NoPendingSignals while it has no PGPROC.
+ * The interrupts pending for this thread (sys_pending_word(); see
+ * storage/procsignal.h), or NoInterrupts in a thread that takes none.
  */
-extern thread_local /*LOCAL*/ PGDLLIMPORT const volatile uint32
-    *MyPendingSignals;
-extern PGDLLIMPORT const uint32 NoPendingSignals;
+extern thread_local /*LOCAL*/ PGDLLIMPORT const std::atomic<uint32_t>
+    *MyInterrupts;
+extern PGDLLIMPORT const std::atomic<uint32_t> NoInterrupts;
 
 /* in tcop/postgres.c */
 extern void ProcessInterrupts(void);
@@ -127,7 +128,7 @@ extern void ProcessInterrupts(void);
 #ifndef WIN32
 #define INTERRUPTS_PENDING_CONDITION() \
 	(unlikely(InterruptPending) || \
-	 unlikely(__atomic_load_n(MyPendingSignals, __ATOMIC_RELAXED) != 0))
+	 unlikely(MyInterrupts->load(std::memory_order_relaxed) != 0))
 #else
 #define INTERRUPTS_PENDING_CONDITION() \
 	(unlikely(UNBLOCKED_SIGNAL_QUEUE()) ? \
@@ -186,7 +187,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsUnderPostmaster;
 /*
  * Set in a session that is a thread (utils/init/session_thread.c): its
  * MyProcPid is its thread id, proc_exit() ends the thread and not the
- * process, and its signals are flags (SignalProc()).
+ * process, and its signals are interrupt bits (InterruptProc()).
  */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsSessionThread;
 extern int CurrentProcPid(void);
