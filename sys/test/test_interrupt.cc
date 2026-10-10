@@ -9,12 +9,16 @@
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <dirent.h>
+#include <fstream>
 #include <future>
 #include <mutex>
+#include <string>
 #include <thread>
 
 namespace {
@@ -282,6 +286,40 @@ TEST_CASE("a periodic timer interrupts again and again, until cancelled") {
   sys_take(B1);
   sleep_ms(40);
   CHECK(sys_pending() == 0);
+}
+
+TEST_CASE("the timer thread blocks every signal") {
+  // Verify a signal to the process cannot land in sys's timer thread.
+  // 1. Arm and cancel a timer, so the timer thread runs.
+  // 2. Confirm every thread of the process but this one blocks SIGTERM,
+  //    though this one does not.
+  sigset_t none, old;
+  sigemptyset(&none);
+  REQUIRE(pthread_sigmask(SIG_SETMASK, &none, &old) == 0);
+  sys_timer_cancel(sys_timer_at(sys_thread_self(), SYS_FOREVER, B1, 0));
+  std::string self = std::to_string(gettid());
+  int others = 0, unblocked = 0;
+  DIR *dir = opendir("/proc/self/task");
+  REQUIRE(dir != nullptr);
+  while (struct dirent *e = readdir(dir)) {
+    std::string tid = e->d_name;
+    if (tid == "." || tid == ".." || tid == self)
+      continue;
+    std::ifstream status("/proc/self/task/" + tid + "/status");
+    std::string line;
+    while (std::getline(status, line)) {
+      if (line.rfind("SigBlk:", 0) == 0) {
+        others++;
+        if ((std::stoull(line.substr(7), nullptr, 16) &
+             (1ull << (SIGTERM - 1))) == 0)
+          unblocked++;
+      }
+    }
+  }
+  closedir(dir);
+  pthread_sigmask(SIG_SETMASK, &old, nullptr);
+  CHECK(others >= 1);
+  CHECK(unblocked == 0);
 }
 
 TEST_CASE("a cancelled timer never fires") {

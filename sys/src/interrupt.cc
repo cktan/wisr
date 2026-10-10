@@ -5,6 +5,8 @@
 #include "sys.h"
 
 #include <errno.h>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
 
@@ -266,9 +268,15 @@ std::once_flag service_once;
 /*
  * The timer thread: sleep until the earliest timer is due, raise
  * its bits outside the lock, and arm it again if it is periodic.
- * A timer whose thread is gone is dropped.
+ * A timer whose thread is gone is dropped. It takes no signal.
  */
 void timer_main(timer_service_t *s) {
+  // A signal to the process is never this thread's to take, whichever
+  // thread started it: block them all.
+  sigset_t all;
+  sigfillset(&all);
+  pthread_sigmask(SIG_BLOCK, &all, nullptr);
+
   std::unique_lock<std::mutex> lock(s->mu);
 
   for (;;) {

@@ -288,7 +288,8 @@ leaves no bit behind.
   handle be copied or dropped; the rest act on the calling
   thread.
 - Nothing here uses signals. `sys_interrupt_self()` may be
-  called from a signal handler; nothing else may.
+  called from a signal handler; nothing else may. The timer
+  thread blocks every signal, whichever thread started it.
 
 ## 8. How sm uses it
 
