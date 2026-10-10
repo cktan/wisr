@@ -12,7 +12,7 @@ never includes a header of theirs.
 
 | Service | Interface | Design | State |
 | --- | --- | --- | --- |
-| Interrupts and timers | `include/sys/interrupt.h` | `INTERRUPT.md` | designed, not built |
+| Interrupts and timers | `include/sys/interrupt.h` | `INTERRUPT.md` | built and tested |
 
 An interface is C in style: `sys_` names outside any namespace,
 opaque handles, plain integers for times and counts, and a
@@ -29,6 +29,8 @@ sm or dg.
 ```
 make -j4          build/libsys.a, and the test binary
 make test         build, then run the tests
+make tsan         the tests under the thread sanitizer
+make asan         the tests under the address and UB sanitizers
 make format       clang-format src/ and test/ in place
 make clean        remove build/
 ```

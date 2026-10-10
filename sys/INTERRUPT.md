@@ -1,7 +1,8 @@
 # Interrupts and timers
 
 A design for interrupting threads, and for timers that
-interrupt them. It is not built yet. sys knows nothing of what
+interrupt them, built in `src/interrupt.cc`. sys knows nothing
+of what
 an interrupt means to its caller: it is grounded in
 `std::thread`, gives each thread a word of pending interrupt
 bits, lets any thread raise bits in any other, wakes a thread
@@ -124,6 +125,20 @@ set before the check, the check sees it; if after, the thread
 is asleep on its condition variable, or about to be with the
 mutex held, and the notify reaches it.
 
+The two locks are taken in opposite orders: the waiter holds
+its mutex when it registers under the block's, and the
+interrupter finds the waiter under the block's lock before it
+needs the waiter's mutex. So the interrupter only tries the
+waiter's mutex, never waits for it with the block's lock held:
+if it is busy -- the waiter is awake, or another thread holds it
+for a moment -- it lets go, yields, and tries again. The bit is
+set before any of this, so a waiter that is awake sees it at
+its next check.
+
+It follows that a thread must not call `sys_interrupt()` while
+it holds the mutex of a wait the call may wake: the try would
+never succeed.
+
 The wait never takes a bit. An interrupt that ends a wait is
 still pending when the wait returns, for the owner to claim.
 
@@ -205,8 +220,17 @@ bool           sys_timer_cancel(sys_timer_id_t id);
   lives until it is cancelled.
 - **Cancel or fire, exactly one.** `sys_timer_cancel()` and
   expiry decide under the timer mutex. It returns true if it
-  removed the timer before it fired, false if the timer had
-  fired (a one-shot) or was not there.
+  removed the timer while armed -- before a one-shot fired, or
+  between a periodic one's firings -- false if a one-shot had
+  fired or the id was not there.
+- **A fired answer means the bits landed.** The timer thread
+  raises a timer's bits outside its lock, since raising may
+  have to try a waiter's mutex again and again. So a cancel
+  waits out a firing under way before it answers: once it
+  returns, the timer raises nothing more. A thread must not
+  cancel while holding the mutex of a wait the timer may wake:
+  the firing would wait for that mutex, and the cancel for the
+  firing.
 - **The timer thread lives as long as the process.** It is
   detached, so no static destructor has to stop it at exit.
 
@@ -237,6 +261,8 @@ leaves no bit behind.
 
 - An interrupt raised before a wait begins ends that wait.
 - An interrupt never ends a wait whose mask excludes its bits.
+- Neither `sys_interrupt()` nor `sys_timer_cancel()` may be
+  called while holding the mutex of a wait it may wake.
 - Bits stay pending until the owner takes them.
 - `sys_interrupt()`, `sys_thread_ref()`, `sys_thread_unref()`,
   `sys_now_us()`, `sys_timer_at()` and `sys_timer_cancel()` may
@@ -262,7 +288,9 @@ leaves no bit behind.
 
 ## 9. Tests
 
-sys unit tests, each with its synopsis and steps:
+sys unit tests (`test/test_interrupt.cc`), each with its
+synopsis and steps, run by `make test`, and under the
+sanitizers by `make tsan` and `make asan`:
 
 - an interrupt raised before a wait, during one, and to a
   thread that has ended;
@@ -272,7 +300,9 @@ sys unit tests, each with its synopsis and steps:
   is drained;
 - a timer fires once, a periodic one again and again, a
   cancelled one never; a cancel racing an expiry is decided
-  once.
+  once, and a fired answer means the bit is there -- with the
+  timer thread kept busy, so that the race is met: without the
+  cancel's wait for a firing, the test fails most runs.
 
 And in sm, when its waits use sys: a row lock waiter
 interrupted from another thread fails with

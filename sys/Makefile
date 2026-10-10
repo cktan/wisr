@@ -2,6 +2,8 @@
 #
 #   make -j4          build/libsys.a, and the test binary
 #   make test         build, then run the tests
+#   make tsan         the tests under the thread sanitizer
+#   make asan         the tests under the address and UB sanitizers
 #   make format       clang-format src/ and test/ in place
 #   make clean        remove build/
 #
@@ -46,7 +48,7 @@ TEST_BIN := $(BUILD)/test_sys
 
 FORMAT_FILES := $(wildcard src/*.cc src/*.h test/test_*.cc)
 
-.PHONY: all test format clean
+.PHONY: all test tsan asan format clean
 
 all: $(LIB) $(TEST_BIN)
 
@@ -67,7 +69,18 @@ $(BUILD)/test/%.o: test/%.cc $(FLAGS_FILE)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 test: all
-	$(TEST_BIN)
+	$(RUN) $(TEST_BIN)
+
+# The tests again, built apart under a sanitizer. The thread
+# sanitizer cannot run with the address space randomised, hence
+# setarch -R.
+tsan:
+	$(MAKE) BUILD=$(BUILD)/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
+	    RUN="setarch $$(uname -m) -R" test
+
+asan:
+	$(MAKE) BUILD=$(BUILD)/asan \
+	    OPTFLAGS="-O1 -g -fsanitize=address,undefined" test
 
 format:
 	$(if $(FORMAT_FILES),clang-format -i $(FORMAT_FILES))

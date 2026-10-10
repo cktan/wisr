@@ -1,7 +1,6 @@
 /*
  * sys/interrupt.h -- interrupting a thread, interruptible waits,
- * and timers that interrupt (INTERRUPT.md). Not built yet: this is
- * the interface the design proposes.
+ * and timers that interrupt (INTERRUPT.md).
  *
  * Each thread has a word of pending interrupt bits. Any thread may
  * raise bits in any other; the owner checks and claims them. A
@@ -49,7 +48,9 @@ void sys_thread_unref(sys_thread_t *t);
 /*
  * Raise bits in t, then wake it if it waits on a mask that has any
  * of them, and write its wake fd if it has one. Bits already
- * pending stay as they are. Never fails. Any thread.
+ * pending stay as they are. Never fails. Any thread -- but not one
+ * holding the mutex of a wait this may wake: waking takes that
+ * mutex, and would wait for it forever.
  */
 void sys_interrupt(sys_thread_t *t, uint32_t bits);
 
@@ -134,11 +135,15 @@ sys_timer_id_t sys_timer_at(sys_thread_t *t, int64_t when_us, uint32_t bits,
 
 /*
  * Cancel a timer. Cancel and expiry are decided under one lock, so
- * exactly one happens: true if the timer was removed before it
- * fired, false if it fired (one-shot) or was not there. Once this
- * returns, the timer raises nothing more. To wait on the same bit
- * again: cancel, then sys_take() the bit, then arm the next timer.
- * Any thread.
+ * exactly one happens: true if the timer was removed while armed
+ * -- before a one-shot fired, or between a periodic one's firings
+ * -- false if a one-shot had fired or the id was not there. A
+ * firing under way is waited out first, so once this returns the
+ * timer raises nothing more, and any bits it raised have landed.
+ * To wait on the same bit again: cancel, then sys_take() the bit,
+ * then arm the next timer. Any thread -- but not one holding the
+ * mutex of a wait the timer may wake: a firing under way waits
+ * for that mutex, and the cancel waits for the firing.
  */
 bool sys_timer_cancel(sys_timer_id_t id);
 
