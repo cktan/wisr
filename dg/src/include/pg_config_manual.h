@@ -348,9 +348,3 @@
  * Enable debugging print statements for lock-related operations.
  */
 /* #define LOCK_DEBUG */
-
-/*
- * Enable debugging print statements for WAL-related operations; see
- * also the wal_debug GUC var.
- */
-/* #define WAL_DEBUG */

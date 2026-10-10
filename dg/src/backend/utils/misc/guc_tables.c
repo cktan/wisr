@@ -561,8 +561,6 @@ const char *const config_group_names[] = {
     [RESOURCES_IO] = gettext_noop("Resource Usage / I/O"),
     [RESOURCES_WORKER_PROCESSES] =
         gettext_noop("Resource Usage / Worker Processes"),
-    [WAL_SETTINGS] = gettext_noop("Write-Ahead Log / Settings"),
-    [WAL_SUMMARIZATION] = gettext_noop("Write-Ahead Log / Summarization"),
     [REPLICATION_SENDING] = gettext_noop("Replication / Sending Servers"),
     [REPLICATION_PRIMARY] = gettext_noop("Replication / Primary Server"),
     [REPLICATION_SUBSCRIBERS] = gettext_noop("Replication / Subscribers"),
@@ -892,7 +890,7 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL,
      NULL},
-    {{"fsync", PGC_SIGHUP, WAL_SETTINGS,
+    {{"fsync", PGC_SIGHUP, RESOURCES_IO,
       gettext_noop("Forces synchronization of updates to disk."),
       gettext_noop(
           "The server will use the fsync() system call in several places to "
@@ -1376,17 +1374,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       GUC_NOT_IN_SAMPLE | GUC_EXPLAIN},
      &optimize_bounded_sort,
      true,
-     NULL,
-     NULL,
-     NULL},
-#endif
-
-#ifdef WAL_DEBUG
-    {{"wal_debug", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Emit WAL-related debugging output."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &XLOG_DEBUG,
-     false,
      NULL,
      NULL,
      NULL},
