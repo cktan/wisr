@@ -1205,3 +1205,20 @@ context. sys has timers that raise a bit in a thread.
 - sys's timer thread starts with the signal mask of the thread
   that arms the first timer, a session thread's: every signal
   blocked.
+
+## Step 34: the postmaster ignores SIGUSR1
+
+SIGUSR1 told the postmaster two things: `pg_ctl logrotate`'s
+request, and a child's pmsignal, a reason flag in shared
+memory (`SendPostmasterSignal()`). There is no log to rotate
+yet, and nothing sends a pmsignal: its one reason,
+`PMSIGNAL_ADVANCE_STATE_MACHINE`, had no sender left.
+
+- **SIGUSR1 is `SIG_IGN` in the postmaster.**
+- **Gone**: `handle_pm_pmsignal_signal()`,
+  `process_pm_pmsignal()`, `SendPostmasterSignal()`,
+  `CheckPostmasterSignal()`, `PMSignalReason` and the flags it
+  indexed. pmsignal.c keeps the per-child flags and the reason
+  for SIGQUIT.
+- `server.sh` sends the server SIGUSR1 and confirms it still
+  runs a statement.

@@ -292,7 +292,6 @@ thread_local /*LOCAL*/ bool ClientAuthInProgress = false; /* T during new-client
 /* set when there's a worker that needs to be started up */
 
 /* set when signals arrive */
-static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_pmsignal;
 static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_reload_request;
 static thread_local /*SHARED*/ volatile sig_atomic_t
     pending_pm_shutdown_request;
@@ -320,10 +319,8 @@ static void CloseServerPorts(int status, Datum arg);
 static void unlink_external_pid_file(int status, Datum arg);
 static void getInstallationPaths(const char *argv0);
 static void make_legacy_dirs(void);
-static void handle_pm_pmsignal_signal(SIGNAL_ARGS);
 static void handle_pm_reload_request_signal(SIGNAL_ARGS);
 static void handle_pm_shutdown_request_signal(SIGNAL_ARGS);
-static void process_pm_pmsignal(void);
 static void process_pm_child_exit(void);
 static void process_pm_reload_request(void);
 static void process_pm_shutdown_request(void);
@@ -427,7 +424,7 @@ void PostmasterMain(int argc, char *argv[]) {
   pqsignal(SIGTERM, handle_pm_shutdown_request_signal);
   pqsignal(SIGALRM, SIG_IGN); /* ignored */
   pqsignal(SIGPIPE, SIG_IGN); /* ignored */
-  pqsignal(SIGUSR1, handle_pm_pmsignal_signal);
+  pqsignal(SIGUSR1, SIG_IGN); /* ignored: no log rotation, nor pmsignals */
   pqsignal(SIGUSR2, dummy_handler); /* unused, reserve for children */
 
   /* The wake fd, which the signal handlers' SetLatch() writes. */
@@ -1291,8 +1288,6 @@ static int ServerLoop(void) {
         process_pm_reload_request();
       if (backend_thread_ended())
         process_pm_child_exit();
-      if (pending_pm_pmsignal)
-        process_pm_pmsignal();
 
       if (events[i].events & WL_SOCKET_ACCEPT) {
         ClientSocket s;
@@ -1445,15 +1440,6 @@ void InitProcessGlobals(void) {
 #ifndef WIN32
   srandom(pg_prng_uint32(&pg_global_prng_state));
 #endif
-}
-
-/*
- * Child processes use SIGUSR1 to notify us of 'pmsignals'.  pg_ctl uses
- * SIGUSR1 to ask postmaster to check for the logrotate file.
- */
-static void handle_pm_pmsignal_signal(SIGNAL_ARGS) {
-  pending_pm_pmsignal = true;
-  SetLatch(MyLatch);
 }
 
 /*
@@ -1886,9 +1872,9 @@ static void LogChildExit(int lev, const char *procname, int pid,
 /*
  * Advance the postmaster's state machine and take actions as appropriate
  *
- * This is common code for process_pm_shutdown_request(),
- * process_pm_child_exit() and process_pm_pmsignal(), which process the signals
- * that might mean we need to change state.
+ * This is common code for process_pm_shutdown_request() and
+ * process_pm_child_exit(), which process the signals that might mean we need
+ * to change state.
  */
 static void PostmasterStateMachine(void) {
   /* If we're doing a smart shutdown, try to advance that state. */
@@ -2328,37 +2314,6 @@ static void ExitPostmaster(int status) {
    */
 
   proc_exit(status);
-}
-
-/*
- * Handle pmsignal conditions representing requests from backends,
- * and check for logrotate requests from pg_ctl.
- */
-static void process_pm_pmsignal(void) {
-  bool request_state_update = false;
-
-  pending_pm_pmsignal = false;
-
-  ereport(DEBUG2, (errmsg_internal("postmaster received pmsignal signal")));
-
-  /*
-   * Try to advance postmaster's state machine, if a child requests it.
-   */
-  if (CheckPostmasterSignal(PMSIGNAL_ADVANCE_STATE_MACHINE)) {
-    request_state_update = true;
-  }
-
-  /*
-   * Be careful about the order of this action relative to this function's
-   * other actions.  Generally, this should be after other actions, in case
-   * they have effects PostmasterStateMachine would need to know about.
-   * However, we should do it before the CheckPromoteSignal step, which
-   * cannot have any (immediate) effect on the state machine, but does
-   * depend on what state we're in now.
-   */
-  if (request_state_update) {
-    PostmasterStateMachine();
-  }
 }
 
 /*

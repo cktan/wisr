@@ -29,27 +29,22 @@
 #include "utils/memutils.h"
 
 /*
- * The postmaster is signaled by its children by sending SIGUSR1.  The
- * specific reason is communicated via flags in shared memory.  We keep
- * a boolean flag for each possible "reason", so that different reasons
- * can be signaled by different backends at the same time.  (However,
- * if the same reason is signaled more than once simultaneously, the
- * postmaster will observe it only once.)
+ * Children no longer signal the postmaster with SIGUSR1 and a reason: the
+ * postmaster ignores SIGUSR1.
  *
  * The flags are actually declared as "volatile sig_atomic_t" for maximum
  * portability.  This should ensure that loads and stores of the flag
  * values are atomic, allowing us to dispense with any explicit locking.
  *
- * In addition to the per-reason flags, we store a set of per-child-process
- * flags that are currently used only for detecting whether a backend has
- * exited without performing proper shutdown.  The per-child-process flags
- * have three possible states: UNUSED, ASSIGNED, ACTIVE.  An UNUSED slot is
- * available for assignment.  An ASSIGNED slot is associated with a postmaster
- * child process, but either the process has not touched shared memory yet, or
- * it has successfully cleaned up after itself.  An ACTIVE slot means the
- * process is actively using shared memory.  The slots are assigned to child
- * processes by postmaster, and pmchild.c is responsible for tracking which
- * one goes with which PID.
+ * We store a set of per-child-process flags that are currently used only for
+ * detecting whether a backend has exited without performing proper shutdown.
+ * The per-child-process flags have three possible states: UNUSED, ASSIGNED,
+ * ACTIVE.  An UNUSED slot is available for assignment.  An ASSIGNED slot is
+ * associated with a postmaster child process, but either the process has not
+ * touched shared memory yet, or it has successfully cleaned up after itself. An
+ * ACTIVE slot means the process is actively using shared memory.  The slots are
+ * assigned to child processes by postmaster, and pmchild.c is responsible for
+ * tracking which one goes with which PID.
  *
  * Actually there is a fourth state, WALSENDER.  This is just like ACTIVE,
  * but carries the extra information that the child is a WAL sender.
@@ -68,8 +63,6 @@
 
 /* "typedef struct PMSignalData PMSignalData" appears in pmsignal.h */
 struct PMSignalData {
-  /* per-reason flags for signaling the postmaster */
-  sig_atomic_t PMSignalFlags[NUM_PMSIGNALS];
   /* global flags for signals from postmaster to children */
   QuitSignalReason sigquit_reason; /* why SIGQUIT was sent */
   /* per-child-process flags */
@@ -156,33 +149,6 @@ void PMSignalShmemInit(void) {
     num_child_flags = MaxLivePostmasterChildren();
     PMSignalState->num_child_flags = num_child_flags;
   }
-}
-
-/*
- * SendPostmasterSignal - signal the postmaster from a child process
- */
-void SendPostmasterSignal(PMSignalReason reason) {
-  /* If called in a standalone backend, do nothing */
-  if (!IsUnderPostmaster)
-    return;
-  /* Atomically set the proper flag */
-  PMSignalState->PMSignalFlags[reason] = true;
-  /* Send signal to postmaster */
-  kill(PostmasterPid, SIGUSR1);
-}
-
-/*
- * CheckPostmasterSignal - check to see if a particular reason has been
- * signaled, and clear the signal flag.  Should be called by postmaster
- * after receiving SIGUSR1.
- */
-bool CheckPostmasterSignal(PMSignalReason reason) {
-  /* Careful here --- don't clear flag if we haven't seen it set */
-  if (PMSignalState->PMSignalFlags[reason]) {
-    PMSignalState->PMSignalFlags[reason] = false;
-    return true;
-  }
-  return false;
 }
 
 /*

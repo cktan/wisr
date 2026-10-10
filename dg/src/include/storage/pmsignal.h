@@ -25,18 +25,6 @@
 #endif
 
 /*
- * Reasons for signaling the postmaster.  We can cope with simultaneous
- * signals for different reasons.  If the same reason is signaled multiple
- * times in quick succession, however, the postmaster is likely to observe
- * only one notification of it.  This is okay for the present uses.
- */
-typedef enum {
-  PMSIGNAL_ADVANCE_STATE_MACHINE, /* advance postmaster's state machine */
-} PMSignalReason;
-
-#define NUM_PMSIGNALS (PMSIGNAL_ADVANCE_STATE_MACHINE+1)
-
-/*
  * Reasons why the postmaster would send SIGQUIT to its children.
  */
 typedef enum {
@@ -53,8 +41,6 @@ typedef struct PMSignalData PMSignalData;
  */
 extern Size PMSignalShmemSize(void);
 extern void PMSignalShmemInit(void);
-extern void SendPostmasterSignal(PMSignalReason reason);
-extern bool CheckPostmasterSignal(PMSignalReason reason);
 extern void SetQuitSignalReason(QuitSignalReason reason);
 extern QuitSignalReason GetQuitSignalReason(void);
 extern void MarkPostmasterChildSlotAssigned(int slot);
