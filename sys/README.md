@@ -12,7 +12,7 @@ never includes a header of theirs.
 
 | Service | Interface | Design | State |
 | --- | --- | --- | --- |
-| Interrupts and timers | `include/sys/interrupt.h` | `INTERRUPT.md` | built and tested |
+| Interrupts and timers | `include/sys.h` | `INTERRUPT.md` | built and tested |
 
 An interface is C in style: `sys_` names outside any namespace,
 opaque handles, plain integers for times and counts, and a
@@ -20,9 +20,8 @@ function pointer with a `void *` where a callback is needed.
 What must be C++ -- a `std::mutex` a wait is made on, say -- is
 passed by pointer.
 
-A header is included by its path under `include/`, as
-`"sys/interrupt.h"`, so its name cannot collide with a header of
-sm or dg.
+sys has one header, `include/sys.h`, included as `"sys.h"`: a
+name no header of sm or dg has.
 
 ## Building
 

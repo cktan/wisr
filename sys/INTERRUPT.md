@@ -11,7 +11,7 @@ bits at a deadline. sm makes its blocking waits interruptible
 with it; digres builds its query cancel, terminate and timeouts
 on it.
 
-The interface is `include/sys/interrupt.h`, C in style: opaque
+The interface is `include/sys.h`, C in style: opaque
 handles with explicit reference counts, times as `int64_t`
 microseconds on the monotonic clock, a function pointer and a
 `void *` for a predicate, and `sys_` names outside any

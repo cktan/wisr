@@ -1,10 +1,10 @@
 /*
- * test_interrupt.cc -- sys/interrupt.h: interrupts, interruptible
+ * test_interrupt.cc -- sys.h's interrupts, interruptible
  * waits, the wake fd, and timers (INTERRUPT.md).
  */
 #include "doctest.h"
 
-#include "sys/interrupt.h"
+#include "sys.h"
 
 #include <poll.h>
 #include <stdint.h>

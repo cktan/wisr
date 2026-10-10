@@ -1,8 +1,8 @@
 /*
  * interrupt.cc -- interrupting a thread, interruptible waits, and
- * timers that interrupt (INTERRUPT.md, include/sys/interrupt.h).
+ * timers that interrupt (INTERRUPT.md, include/sys.h).
  */
-#include "sys/interrupt.h"
+#include "sys.h"
 
 #include <errno.h>
 #include <sys/eventfd.h>

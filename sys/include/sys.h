@@ -1,5 +1,5 @@
 /*
- * sys/interrupt.h -- interrupting a thread, interruptible waits,
+ * sys.h -- interrupting a thread, interruptible waits,
  * and timers that interrupt (INTERRUPT.md).
  *
  * Each thread has a word of pending interrupt bits. Any thread may
@@ -17,8 +17,8 @@
  * Calls marked "any thread" may be made from any thread; the rest
  * act on the calling thread.
  */
-#ifndef SYS_INTERRUPT_H
-#define SYS_INTERRUPT_H
+#ifndef SYS_H
+#define SYS_H
 
 #include <stdint.h>
 
@@ -147,4 +147,4 @@ sys_timer_id_t sys_timer_at(sys_thread_t *t, int64_t when_us, uint32_t bits,
  */
 bool sys_timer_cancel(sys_timer_id_t id);
 
-#endif /* SYS_INTERRUPT_H */
+#endif /* SYS_H */
