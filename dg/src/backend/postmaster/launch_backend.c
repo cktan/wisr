@@ -172,12 +172,9 @@ static thread_local /*SHARED*/ child_process_kind child_process_kinds[] = {
      * here for PostmasterChildName() but cannot launch them directly.
      */
     [B_WAL_SENDER] = {"wal sender", NULL, true},
-    [B_SLOTSYNC_WORKER] = {"slot sync worker", NULL, true},
 
     [B_STANDALONE_BACKEND] = {"standalone backend", NULL, false},
 
-    [B_WAL_RECEIVER] = {"wal_receiver", NULL, true},
-    [B_WAL_SUMMARIZER] = {"wal_summarizer", NULL, true},
 };
 
 const char *PostmasterChildName(BackendType child_type) {

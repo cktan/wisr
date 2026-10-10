@@ -129,6 +129,17 @@ grep -q "PREPARE TRANSACTION is not supported" "$work/prepare.out" ||
   fail "prepare refused"
 grep -qx 10 "$work/prepare.out" || fail "statement after prepare"
 
+# Verify that a session waits for its own popen() child, which nothing else
+# in the process reaps first.
+# 1. Run COPY TO PROGRAM twenty times, each writing its number to a file.
+# 2. Confirm each succeeded and its program wrote what it was given.
+for i in $(seq 20); do
+  local_psql -c "copy (select $i) to program 'cat > $work/program.$i'" \
+    > "$work/program.out" 2>&1 || { fail "copy to program"; break; }
+  [ "$(cat "$work/program.$i" 2> /dev/null)" = "$i" ] ||
+    { fail "copy to program output"; break; }
+done
+
 # Verify that sessions run at once, each a thread of the one server process.
 # 1. Open 8 sessions, and run a statement in each while all are open.
 # 2. Confirm each answered.

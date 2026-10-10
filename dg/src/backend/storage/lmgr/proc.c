@@ -196,7 +196,6 @@ void InitProcGlobal(void) {
    */
   ProcGlobal->spins_per_delay = DEFAULT_SPINS_PER_DELAY;
   dlist_init(&ProcGlobal->freeProcs);
-  dlist_init(&ProcGlobal->specialWorkerFreeProcs);
   dlist_init(&ProcGlobal->walsenderFreeProcs);
   ProcGlobal->startupBufferPinWaitBufId = -1;
   ProcGlobal->walwriterProc = INVALID_PROC_NUMBER;
@@ -287,8 +286,8 @@ void InitProcGlobal(void) {
     }
 
     /*
-     * Newly created PGPROCs for normal backends, special workers and
-     * walsenders must be queued up on the
+     * Newly created PGPROCs for normal backends and walsenders must be
+     * queued up on the
      * appropriate free list.  Because there can only ever be a small,
      * fixed number of auxiliary processes, no free list is used in that
      * case; InitAuxiliaryProcess() instead uses a linear search.  PGPROCs
@@ -299,10 +298,6 @@ void InitProcGlobal(void) {
       /* PGPROC for normal backend, add to freeProcs list */
       dlist_push_tail(&ProcGlobal->freeProcs, &proc->links);
       proc->procgloballist = &ProcGlobal->freeProcs;
-    } else if (i < MaxConnections + NUM_SPECIAL_WORKER_PROCS) {
-      /* PGPROC for special worker, add to specialWorkerFreeProcs list */
-      dlist_push_tail(&ProcGlobal->specialWorkerFreeProcs, &proc->links);
-      proc->procgloballist = &ProcGlobal->specialWorkerFreeProcs;
     } else if (i < MaxBackends) {
       /* PGPROC for walsender, add to walsenderFreeProcs list */
       dlist_push_tail(&ProcGlobal->walsenderFreeProcs, &proc->links);
@@ -369,9 +364,7 @@ void InitProcess(void) {
    * Decide which list should supply our PGPROC.  This logic must match the
    * way the freelists were constructed in InitProcGlobal().
    */
-  if (AmSpecialWorkerProcess())
-    procgloballist = &ProcGlobal->specialWorkerFreeProcs;
-  else if (AmWalSenderProcess())
+  if (AmWalSenderProcess())
     procgloballist = &ProcGlobal->walsenderFreeProcs;
   else
     procgloballist = &ProcGlobal->freeProcs;

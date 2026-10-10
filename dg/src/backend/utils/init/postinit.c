@@ -297,14 +297,13 @@ void InitializeMaxBackends(void) {
   Assert(MaxBackends == 0);
 
   /* Note that this does not include "auxiliary" processes */
-  MaxBackends = MaxConnections + NUM_SPECIAL_WORKER_PROCS;
+  MaxBackends = MaxConnections;
 
   if (MaxBackends > MAX_BACKENDS)
     ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                     errmsg("too many server processes configured"),
                     errdetail("\"max_connections\" (%d) must be less than %d.",
-                              MaxConnections,
-                              MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
+                              MaxConnections, MAX_BACKENDS + 1)));
 }
 
 /*
@@ -537,10 +536,10 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    * Perform client authentication if necessary, then figure out our
    * postgres user ID, and see if we are a superuser.
    *
-   * In standalone mode and slot sync worker process, we use a fixed ID,
-   * otherwise we figure it out from the authenticated user name.
+   * In standalone mode we use a fixed ID, otherwise we figure it out from
+   * the authenticated user name.
    */
-  if (bootstrap || AmLogicalSlotSyncWorkerProcess()) {
+  if (bootstrap) {
     InitializeSessionUserIdStandalone();
     am_superuser = true;
   } else if (!IsUnderPostmaster) {

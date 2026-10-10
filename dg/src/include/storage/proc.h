@@ -390,8 +390,6 @@ typedef struct PROC_HDR {
   uint32 allProcCount;
   /* Head of list of free PGPROC structures */
   dlist_head freeProcs;
-  /* Head of list of special worker free PGPROC structures */
-  dlist_head specialWorkerFreeProcs;
   /* Head of list of walsender free PGPROC structures */
   dlist_head walsenderFreeProcs;
   /* First pgproc waiting for group XID clear */
@@ -418,14 +416,6 @@ extern thread_local /*SHARED*/ PGDLLIMPORT PGPROC *PreparedXactProcs;
  */
 #define GetPGProcByNumber(n) (&ProcGlobal->allProcs[(n)])
 #define GetNumberFromPGProc(proc) ((proc) - &ProcGlobal->allProcs[0])
-
-/*
- * We set aside some extra PGPROC structures for "special worker" processes,
- * which are full-fledged backends (they can run transactions)
- * but are unique animals that there's never more than one of.
- * Currently there is one such process: the slotsync worker.
- */
-#define NUM_SPECIAL_WORKER_PROCS	1
 
 /*
  * We set aside some extra PGPROC structures for auxiliary processes,

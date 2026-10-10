@@ -315,11 +315,8 @@ bool pgstat_tracks_io_bktype(BackendType bktype) {
     return false;
 
   case B_BACKEND:
-  case B_SLOTSYNC_WORKER:
   case B_STANDALONE_BACKEND:
-  case B_WAL_RECEIVER:
   case B_WAL_SENDER:
-  case B_WAL_SUMMARIZER:
     return true;
   }
 
@@ -362,19 +359,10 @@ bool pgstat_tracks_io_object(BackendType bktype, IOObject io_object,
    * Only regular backends and WAL Sender processes executing queries will
    * use local buffers and operate on temporary relations.
    */
-  no_temp_rel = bktype == B_STANDALONE_BACKEND || bktype == B_WAL_SUMMARIZER ||
-                bktype == B_WAL_RECEIVER;
+  no_temp_rel = bktype == B_STANDALONE_BACKEND;
 
   if (no_temp_rel && io_context == IOCONTEXT_NORMAL &&
       io_object == IOOBJECT_TEMP_RELATION)
-    return false;
-
-  /*
-   * Some BackendTypes only perform IO under IOOBJECT_WAL, hence exclude all
-   * rows for all the other objects for these.
-   */
-  if ((bktype == B_WAL_SUMMARIZER || bktype == B_WAL_RECEIVER) &&
-      io_object != IOOBJECT_WAL)
     return false;
 
   return true;
@@ -394,13 +382,6 @@ bool pgstat_tracks_io_op(BackendType bktype, IOObject io_object,
 
   /* if (io_context, io_object) will never collect stats, we're done */
   if (!pgstat_tracks_io_object(bktype, io_object, io_context))
-    return false;
-
-  /*
-   * Some BackendTypes do not perform reads with IOOBJECT_WAL.
-   */
-  if (io_object == IOOBJECT_WAL && io_op == IOOP_READ &&
-      bktype == B_WAL_RECEIVER)
     return false;
 
   /*

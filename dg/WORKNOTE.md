@@ -876,3 +876,39 @@ object would call its init function on every access from
 another file, to register its destructor, and would be
 destroyed after `session_thread_end()`, with no NULL for a
 signal handler to see.
+
+## Step 23: crash restart is gone
+
+When a child process crashed, PostgreSQL's postmaster told the
+others to quit, waited for them, made shared memory anew and
+started again. In digres a crash, a fault in any thread, ends
+the whole process, so what was left to reach that path was a
+thread ending with an unexpected exit code, or without
+releasing its slot cleanly. Restarting under such a thread
+would rebuild the state the threads share inside the running
+process.
+
+- **An abnormal thread end stops the server**: the postmaster
+  tells the other sessions to quit, waits for them, logs
+  "abnormal database system shutdown" and exits 1, as
+  PostgreSQL does with `restart_after_crash` off. The settings
+  `restart_after_crash` and `remove_temp_files_after_crash`
+  are gone.
+- **The postmaster reaps no child.** Its SIGCHLD handler and
+  its `waitpid(-1)` loop went: it has no child process, and the
+  loop took the child of a session's `popen()` before the
+  session's `pclose()` could, so `COPY ... TO PROGRAM` failed
+  half the time with "could not close pipe to external command:
+  No child processes". `test/server.sh` now runs it twenty
+  times; it failed before this step.
+- **Gone with them**: the walreceiver, WAL summarizer and slot
+  sync worker process types, which nothing started since WAL
+  and replication went (step 12), their slots,
+  `PMSIGNAL_START_WALRECEIVER`, and the PGPROC pool for
+  "special workers", so `MaxBackends` is `max_connections`;
+  and `postmaster/auxprocess.c`, which nothing called since the
+  startup process went (step 17).
+- **Left**: the auxiliary PGPROC slots
+  (`NUM_AUXILIARY_PROCS`), sized with shared memory, and the
+  Windows `waitpid()` emulation, which goes with
+  `EXEC_BACKEND`.

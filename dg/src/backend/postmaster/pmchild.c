@@ -93,9 +93,6 @@ void InitPostmasterChildSlots(void) {
    * There can be only one of each of these running at a time.  They each
    * get their own pool of just one entry.
    */
-  pmchild_pools[B_SLOTSYNC_WORKER].size = 1;
-  pmchild_pools[B_WAL_RECEIVER].size = 1;
-  pmchild_pools[B_WAL_SUMMARIZER].size = 1;
 
   /* The rest of the pmchild_pools are left at zero size */
 

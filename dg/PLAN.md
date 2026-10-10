@@ -344,9 +344,10 @@ and sm is attached once; no auxiliary process is left (step
 - **Signals become flags.** Done in step 3 (§5.1): a signal to
   a backend is a flag in its PGPROC, a latch wakes its thread,
   and a timeout has a timer of its own.
-- **Then delete the process-only subsystems**: the postmaster
-  state machine and crash restart, shared memory setup (the
-  structures become ordinary allocations) and `EXEC_BACKEND`.
+- **Then delete the process-only subsystems**: crash restart
+  is gone (`WORKNOTE.md` step 23); shared memory setup (the
+  structures become ordinary allocations) and `EXEC_BACKEND`
+  are next.
   The auxiliary processes are gone: autovacuum, the WAL writer,
   the archiver, the I/O workers, the checkpointer, the
   background writer, background workers and the startup

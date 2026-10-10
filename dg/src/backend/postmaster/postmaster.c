@@ -214,8 +214,6 @@ thread_local /*LOCAL*/ bool log_hostname; /* for ps display and logging */
 
 thread_local /*LOCAL*/ bool enable_bonjour = false;
 thread_local /*LOCAL*/ char *bonjour_name;
-thread_local /*LOCAL*/ bool restart_after_crash = true;
-thread_local /*LOCAL*/ bool remove_temp_files_after_crash = true;
 
 /*
  * When terminating child processes after fatal errors, like a crash of a
@@ -227,9 +225,6 @@ thread_local /*LOCAL*/ bool send_abort_for_crash = false;
 thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 
 /* special child processes; NULL when not running */
-static thread_local /*SHARED*/ PMChild *WalReceiverPMChild = NULL,
-                                       *WalSummarizerPMChild = NULL,
-                                       *SlotSyncWorkerPMChild = NULL;
 
 /* Startup/shutdown state */
 #define NoShutdown		0
@@ -300,14 +295,10 @@ static thread_local /*SHARED*/ bool ReachedNormalRunning =
 thread_local /*LOCAL*/ bool ClientAuthInProgress = false; /* T during new-client
                                                            * authentication */
 
-/* received START_WALRECEIVER signal */
-static thread_local /*SHARED*/ bool WalReceiverRequested = false;
-
 /* set when there's a worker that needs to be started up */
 
 /* set when signals arrive */
 static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_pmsignal;
-static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_child_exit;
 static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_reload_request;
 static thread_local /*SHARED*/ volatile sig_atomic_t
     pending_pm_shutdown_request;
@@ -336,7 +327,6 @@ static void unlink_external_pid_file(int status, Datum arg);
 static void getInstallationPaths(const char *argv0);
 static void make_legacy_dirs(void);
 static void handle_pm_pmsignal_signal(SIGNAL_ARGS);
-static void handle_pm_child_exit_signal(SIGNAL_ARGS);
 static void handle_pm_reload_request_signal(SIGNAL_ARGS);
 static void handle_pm_shutdown_request_signal(SIGNAL_ARGS);
 static void process_pm_pmsignal(void);
@@ -461,7 +451,6 @@ void PostmasterMain(int argc, char *argv[]) {
   pqsignal(SIGPIPE, SIG_IGN); /* ignored */
   pqsignal(SIGUSR1, handle_pm_pmsignal_signal);
   pqsignal(SIGUSR2, dummy_handler); /* unused, reserve for children */
-  pqsignal(SIGCHLD, handle_pm_child_exit_signal);
 
   /* This may configure SIGURG, depending on platform. */
   InitializeWaitEventSupport();
@@ -1300,15 +1289,11 @@ static void ConfigurePostmasterWaitSet(bool accept_connections) {
 }
 
 /*
- * Open for connections, at first start and after a crash.  Shared memory is
- * made, and with it the transaction counters (VarsupShmemInit()): there is
- * no WAL to recover from, so this is what the startup process's clean exit
- * used to do.
+ * Open for connections.  Shared memory is made, and with it the transaction
+ * counters (VarsupShmemInit()): there is no WAL to recover from, so this is
+ * what the startup process's clean exit used to do.
  */
 static void StartRunning(void) {
-  FatalError = false;
-  /* crash recovery is over, reset SIGKILL flag */
-  AbortStartTime = 0;
   ReachedNormalRunning = true;
   UpdatePMState(PM_RUN);
   connsAllowed = true;
@@ -1360,7 +1345,7 @@ static int ServerLoop(void) {
         process_pm_shutdown_request();
       if (pending_pm_reload_request)
         process_pm_reload_request();
-      if (pending_pm_child_exit || backend_thread_ended())
+      if (backend_thread_ended())
         process_pm_child_exit();
       if (pending_pm_pmsignal)
         process_pm_pmsignal();
@@ -1778,109 +1763,31 @@ static void process_pm_shutdown_request(void) {
   }
 }
 
-static void handle_pm_child_exit_signal(SIGNAL_ARGS) {
-  pending_pm_child_exit = true;
-  SetLatch(MyLatch);
-}
-
 /*
- * Cleanup after a child process dies.
+ * Clean up after the backend threads that have ended.  Their ends are
+ * queued, not waited for: the postmaster has no child process, and must not
+ * reap one, since a session's popen() child is its own to wait for.
  */
 static void process_pm_child_exit(void) {
-  int pid;        /* process id of dead child process */
-  int exitstatus; /* its exit status */
+  backend_thread_t *thread;
+  int exitstatus;
 
-  pending_pm_child_exit = false;
+  ereport(DEBUG4, (errmsg_internal("reaping ended backend threads")));
 
-  ereport(DEBUG4, (errmsg_internal("reaping dead processes")));
-
-  while ((pid = waitpid(-1, &exitstatus, WNOHANG)) > 0) {
+  while ((thread = backend_thread_exited(&exitstatus)) != NULL) {
+    pid_t pid = backend_thread_pid(thread);
     PMChild *pmchild;
 
-    /*
-     * Was it the wal receiver?  If exit status is zero (normal) or one
-     * (FATAL exit), we assume everything is all right just like normal
-     * backends.  (If we need a new wal receiver, we'll start one at the
-     * next iteration of the postmaster's main loop.)
-     */
-    if (WalReceiverPMChild && pid == WalReceiverPMChild->pid) {
-      ReleasePostmasterChildSlot(WalReceiverPMChild);
-      WalReceiverPMChild = NULL;
-      if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
-        HandleChildCrash(pid, exitstatus, _("WAL receiver process"));
-      continue;
-    }
-
-    /*
-     * Was it the wal summarizer? Normal exit can be ignored; we'll start
-     * a new one at the next iteration of the postmaster's main loop, if
-     * necessary.  Any other exit condition is treated as a crash.
-     */
-    if (WalSummarizerPMChild && pid == WalSummarizerPMChild->pid) {
-      ReleasePostmasterChildSlot(WalSummarizerPMChild);
-      WalSummarizerPMChild = NULL;
-      if (!EXIT_STATUS_0(exitstatus))
-        HandleChildCrash(pid, exitstatus, _("WAL summarizer process"));
-      continue;
-    }
-
-    /*
-     * Was it the slot sync worker? Normal exit or FATAL exit can be
-     * ignored (FATAL can be caused by libpqwalreceiver on receiving
-     * shutdown request by the startup process during promotion); we'll
-     * start a new one at the next iteration of the postmaster's main
-     * loop, if necessary. Any other exit condition is treated as a crash.
-     */
-    if (SlotSyncWorkerPMChild && pid == SlotSyncWorkerPMChild->pid) {
-      ReleasePostmasterChildSlot(SlotSyncWorkerPMChild);
-      SlotSyncWorkerPMChild = NULL;
-      if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
-        HandleChildCrash(pid, exitstatus, _("slot sync worker process"));
-      continue;
-    }
-
-    /*
-     * Was it a backend or a background worker?
-     */
+    backend_thread_free(thread);
     pmchild = FindPostmasterChildByPid(pid);
     if (pmchild) {
+      pmchild->thread = NULL;
       CleanupBackend(pmchild, exitstatus);
-    }
-
-    /*
-     * We don't know anything about this child process.  That's highly
-     * unexpected, as we do track all the child processes that we fork.
-     */
-    else {
-      if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
-        HandleChildCrash(pid, exitstatus, _("untracked child process"));
-      else
-        LogChildExit(LOG, _("untracked child process"), pid, exitstatus);
-    }
-  } /* loop over pending child-death reports */
-
-  /* Backends that are threads: their ends are queued, not waited for. */
-  {
-    backend_thread_t *thread;
-
-    while ((thread = backend_thread_exited(&exitstatus)) != NULL) {
-      PMChild *pmchild;
-
-      pid = backend_thread_pid(thread);
-      backend_thread_free(thread);
-      pmchild = FindPostmasterChildByPid(pid);
-      if (pmchild) {
-        pmchild->thread = NULL;
-        CleanupBackend(pmchild, exitstatus);
-      } else
-        LogChildExit(LOG, _("untracked backend thread"), pid, exitstatus);
-    }
+    } else
+      LogChildExit(LOG, _("untracked backend thread"), pid, exitstatus);
   }
 
-  /*
-   * After cleaning out the SIGCHLD queue, see if we have any state changes
-   * or actions to make.
-   */
+  /* See if we have any state changes or actions to make. */
   PostmasterStateMachine();
 }
 
@@ -2148,14 +2055,6 @@ static void PostmasterStateMachine(void) {
      */
     targetMask = btmask_add(targetMask, B_BACKEND);
 
-    /*
-     * No slot sync worker or WAL summarizer either.
-     */
-    targetMask = btmask_add(targetMask, B_SLOTSYNC_WORKER, B_WAL_SUMMARIZER);
-
-    /* Nor walreceivers. */
-    targetMask = btmask_add(targetMask, B_WAL_RECEIVER);
-
     /* Nor walsenders. */
     targetMask = btmask_add(targetMask, B_WAL_SENDER);
 
@@ -2235,10 +2134,6 @@ static void PostmasterStateMachine(void) {
      * at least helps in the shutdown-and-immediately-restart scenario.
      */
     if (CountChildren(BTYPE_MASK_ALL) == 0) {
-      /* These other guys should be dead already */
-      Assert(WalReceiverPMChild == NULL);
-      Assert(WalSummarizerPMChild == NULL);
-      Assert(SlotSyncWorkerPMChild == NULL);
       UpdatePMState(PM_NO_CHILDREN);
     }
   }
@@ -2266,37 +2161,13 @@ static void PostmasterStateMachine(void) {
   }
 
   /*
-   * If the user does not want an automatic restart after backend crashes,
-   * wait for all children to exit, and then exit postmaster.
-   */
-  if (pmState == PM_NO_CHILDREN) {
-    if (!restart_after_crash) {
-      ereport(LOG,
-              (errmsg("shutting down because \"restart_after_crash\" is off")));
-      ExitPostmaster(1);
-    }
-  }
-
-  /*
-   * If we need to recover from a crash, wait for all children to exit, then
-   * reset shmem and start running again.
+   * After a crash the server stops: there is no restart.  A thread that
+   * ended abnormally may have left the state all threads share half
+   * changed, and that state cannot be made anew under the running process.
    */
   if (FatalError && pmState == PM_NO_CHILDREN) {
-    ereport(LOG, (errmsg("all server processes terminated; reinitializing")));
-
-    /* remove leftover temporary files after a crash */
-    if (remove_temp_files_after_crash)
-      RemovePgTempFiles();
-
-    shmem_exit(1);
-
-    /* re-create shared memory and semaphores */
-    CreateSharedMemoryAndSemaphores();
-
-    /* start accepting server socket connection events again */
-    ConfigurePostmasterWaitSet(true);
-
-    StartRunning();
+    ereport(LOG, (errmsg("abnormal database system shutdown")));
+    ExitPostmaster(1);
   }
 }
 
@@ -2603,11 +2474,6 @@ static void process_pm_pmsignal(void) {
   pending_pm_pmsignal = false;
 
   ereport(DEBUG2, (errmsg_internal("postmaster received pmsignal signal")));
-
-  if (CheckPostmasterSignal(PMSIGNAL_START_WALRECEIVER)) {
-    /* Startup Process wants us to start the walreceiver process. */
-    WalReceiverRequested = true;
-  }
 
   /*
    * Try to advance postmaster's state machine, if a child requests it.

@@ -64,8 +64,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int AuthenticationTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_hostname;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool enable_bonjour;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *bonjour_name;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool restart_after_crash;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool remove_temp_files_after_crash;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 

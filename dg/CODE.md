@@ -115,6 +115,9 @@ digres is one process; each session is a thread of it.
   and wrote a flag shared between processes plainly, digres
   uses a relaxed atomic (or release and acquire where order
   matters), so the thread sanitizer stays quiet.
+- **A thread that ends abnormally stops the server**: there is
+  no crash restart. The postmaster reaps no child process; a
+  session waits for its own `popen()` child.
 - **What a process's exit freed, a thread's end must free:**
   `session_thread_end()` does it, and the tcb's destructors
   do it for what a block owns.

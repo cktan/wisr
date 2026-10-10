@@ -362,35 +362,16 @@ typedef enum BackendType {
   B_BACKEND,
   B_DEAD_END_BACKEND,
   B_WAL_SENDER,
-  B_SLOTSYNC_WORKER,
 
   B_STANDALONE_BACKEND,
-
-  /*
-   * Auxiliary processes. These have PGPROC entries, but they are not
-   * attached to any particular database, and cannot run transactions or
-   * even take heavyweight locks. There can be only one of each of these
-   * running at a time, except for IO workers.
-   *
-   * If you modify these, make sure to update NUM_AUXILIARY_PROCS and the
-   * glossary in the docs.
-   */
-  B_WAL_RECEIVER,
-  B_WAL_SUMMARIZER,
 } BackendType;
 
-#define BACKEND_NUM_TYPES (B_WAL_SUMMARIZER + 1)
+#define BACKEND_NUM_TYPES (B_STANDALONE_BACKEND + 1)
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT BackendType MyBackendType;
 
 #define AmRegularBackendProcess()	(MyBackendType == B_BACKEND)
 #define AmWalSenderProcess()        (MyBackendType == B_WAL_SENDER)
-#define AmLogicalSlotSyncWorkerProcess() (MyBackendType == B_SLOTSYNC_WORKER)
-#define AmWalReceiverProcess()		(MyBackendType == B_WAL_RECEIVER)
-#define AmWalSummarizerProcess()	(MyBackendType == B_WAL_SUMMARIZER)
-
-#define AmSpecialWorkerProcess() \
-	(AmLogicalSlotSyncWorkerProcess())
 
 /*
  * Backend types that are spawned by the postmaster to serve a client or
