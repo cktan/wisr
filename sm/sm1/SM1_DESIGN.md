@@ -359,7 +359,10 @@ life: `base`, `global`, the root db, and the `"version"`
 key in it. It takes no lock, because `mkdir` settles a race
 by itself — the loser sees `EEXIST`. `sm1::attach` then opens
 the root db and checks that version, and `sm1::detach` closes
-it. Nothing creates a home directory
+it. In between, `sm1::attach` recovers every database the
+root db names (§9.1) and closes it again, so no database
+waits for its first session to be recovered, and one that
+cannot be is found at attach. Nothing creates a home directory
 implicitly, so `sm1::attach` has no first-use branch and a
 mistyped path is an error rather than a new empty home.
 

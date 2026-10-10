@@ -139,8 +139,10 @@ TEST_CASE("recovery reports restored transactions and dropped orphans") {
   // Verify §9.1's recovery events reach the hook.
   // 1. Prepare "g-log"; create a store CF no catalog row
   //    names, as a crash inside sm1::mkstore would leave.
-  // 2. Restart: an INFO message names "g-log" as restored, and
-  //    one reports the orphaned CF dropped.
+  // 2. Restart: the attach's recovery logs an INFO message naming
+  //    "g-log" as restored, and one reporting the orphaned CF dropped.
+  // 3. Open a session: "g-log" is restored again, still in doubt;
+  //    the orphan is gone already.
   log_fixture_t f;
   sm1::session_t *s = f.open();
   uint64_t orphan = 0;
@@ -153,8 +155,12 @@ TEST_CASE("recovery reports restored transactions and dropped orphans") {
   log_capture_t cap;
   f.home().detach();
   f.home().attach();
-  sm1::session_t *v = f.open();
   CHECK_MESSAGE(cap.count(sm1::loglevel_t::info, "g-log") == 1, cap.all());
+  CHECK_MESSAGE(
+      cap.count(sm1::loglevel_t::info, "store." + std::to_string(orphan)) == 1,
+      cap.all());
+  sm1::session_t *v = f.open();
+  CHECK_MESSAGE(cap.count(sm1::loglevel_t::info, "g-log") == 2, cap.all());
   CHECK_MESSAGE(
       cap.count(sm1::loglevel_t::info, "store." + std::to_string(orphan)) == 1,
       cap.all());

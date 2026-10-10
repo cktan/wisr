@@ -12,6 +12,7 @@
  */
 
 #include "env.h"
+#include "db.h"
 
 #include "error.h"
 #include "log.h"
@@ -152,6 +153,42 @@ int sweep_base(sm1::env_t *env) {
 }
 
 /*
+ * Recover every database the root db names: open it, which
+ * replays its WAL and runs the rest of startup (SM1_DESIGN.md
+ * §9.1), then close it again. A prepared transaction stays in
+ * doubt, restored again by the next sm1::opendb. Returns 0, or
+ * -1 with the error set by the first database that fails.
+ */
+int recover_dbs(sm1::env_t *env) {
+  std::vector<std::pair<std::string, uint64_t>> dbs;
+  // Collect every database's name and dbid.
+  std::unique_ptr<rocksdb::Iterator> it(
+      env->root->NewIterator(rocksdb::ReadOptions()));
+  for (it->Seek(WISR_ROOT_DBNAME_PREFIX);
+       it->Valid() && it->key().starts_with(WISR_ROOT_DBNAME_PREFIX);
+       it->Next()) {
+    // sweep_base already rejected a malformed dbid.
+    dbs.emplace_back(it->key().ToString().substr(1),
+                     sm1::get_be64(it->value().data()));
+  }
+  // Fail if the root db scan failed.
+  if (!it->status().ok()) {
+    return set_status_error(it->status(), "scan root db");
+  }
+  for (const auto &[name, dbid] : dbs) {
+    // Open the database with the defaults: this is its recovery.
+    db_t *db = db_open(env_db_path(env, dbid), name.c_str(), nullptr);
+    // Fail the attach: a database that cannot recover.
+    if (!db) {
+      return -1;
+    }
+    // Close it: the first sm1::opendb opens it again, with its options.
+    delete db;
+  }
+  return 0;
+}
+
+/*
  * The new-handler sm1::attach installs: running out of memory
  * inside sm1 is fatal to the process, and outside it throws
  * std::bad_alloc, as operator new would with no handler, for the
@@ -235,6 +272,10 @@ sm1::env_t *attach(const char *homedir) {
 
   // Destroy database directories no name points at.
   if (sweep_base(env.get()) != 0) {
+    return nullptr;
+  }
+  // Recover every database, so none waits for its first session.
+  if (recover_dbs(env.get()) != 0) {
     return nullptr;
   }
   // Hand the environment to the caller.

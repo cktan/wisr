@@ -129,7 +129,7 @@ int sm_set_log(sm_log_fn fn, void* arg);
 /* Make homedir, which must exist, a wisr home directory. */
 int sm_init(const char* homedir);
 
-/* Attach the home directory homedir. */
+/* Attach the home directory homedir, recovering every database. */
 int sm_attach(const char* homedir, sm_env_t** out);
 
 /* Detach env; force != 0 closes its open sessions first. */

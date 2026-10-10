@@ -6,8 +6,10 @@
 #include "doctest.h"
 #include "util.h"
 
+#include "db.h"
 #include "env.h"
 #include "oom.h"
+#include "session.h"
 #include "sm1.h"
 #include "sm1_codec.h"
 
@@ -238,6 +240,28 @@ TEST_CASE("sm1_attach sweeps database directories no name points at") {
   CHECK_FALSE(std::filesystem::exists(base + "/7"));
   CHECK(std::filesystem::exists(base + "/notes"));
   CHECK(sm1::detach(env, 0) == 0);
+}
+
+TEST_CASE("sm1_attach recovers every database and fails on one it cannot") {
+  // Verify attach opens each database, not only the root db.
+  // 1. Initialize, attach, and make database "a".
+  // 2. Overwrite a's format version in CF:meta with 99, and detach.
+  // 3. Attach again and expect SM_ERR_VERSION, with no session opened.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "a", nullptr) == 0);
+  sm1::session_t *s = opendb(home.env(), "a", nullptr);
+  REQUIRE(s);
+  std::string v;
+  sm1::put_be64(v, 99);
+  REQUIRE(
+      s->db->rdb
+          ->Put(rocksdb::WriteOptions(), s->db->cf_meta, WISR_META_VERSION, v)
+          .ok());
+  REQUIRE(sm1::closedb(s) == 0);
+  home.detach();
+
+  CHECK(attach(home.path()) == nullptr);
+  CHECK(sm1::errnum() == sm1::SM_ERR_VERSION);
 }
 
 TEST_CASE("a successful call leaves the error state untouched") {

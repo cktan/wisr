@@ -242,7 +242,9 @@ int init(std::string_view homedir);
 
 /*
  * Create an environment on a home directory sm1::init() has
- * already prepared. Opens no database. The caller must ensure
+ * already prepared. Recovers every database (SM1_DESIGN.md
+ * §9.1), with the default options, and closes each again; one
+ * that cannot be recovered fails the attach. The caller must ensure
  * no other environment, in this process or another, has the
  * home directory attached (see "Processes" above).
  *

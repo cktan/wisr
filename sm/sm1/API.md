@@ -483,7 +483,8 @@ Errors: `SM_ERR_EXISTS` (already a wisr home directory),
 ### int sm1::attach(std::string_view homedir, sm1::env_t*& out)
 
 Create an environment on a home directory `sm1::init` has
-already prepared. No database is opened.
+already prepared. Every database is recovered, then closed
+again: none stays open.
 
 The caller must ensure that no other environment, in this
 process or another, has `homedir` attached; the library
@@ -492,7 +493,14 @@ takes no lock of its own (see "Threading").
 `sm1::attach` opens the root db, checks the recorded format
 version, and destroys any directory under `base` the root
 db does not name — what a crash during `sm1::mkdb` or
-`sm1::rmdb` leaves behind. It creates nothing: a `homedir`
+`sm1::rmdb` leaves behind. It then opens each database the
+root db names, with the default options, which recovers it
+(`SM1_DESIGN.md` §9.1): RocksDB replays its WAL, prepared
+transactions are restored and orphaned column families
+dropped. It closes each again, so a prepared transaction
+stays in doubt until the next `sm1::opendb` restores it. A
+database that cannot be recovered fails the attach, with its
+error. It creates nothing: a `homedir`
 that was never initialized is an error, not a new home
 directory, so a mistyped path fails instead of quietly
 becoming an empty one.
