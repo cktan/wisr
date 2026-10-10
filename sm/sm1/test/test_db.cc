@@ -56,6 +56,36 @@ TEST_CASE("databases are listed in bytewise order and survive reattach") {
   CHECK(home.base_entries() == std::set<std::string>{"1", "2", "3"});
 }
 
+TEST_CASE("a database's dbid is its own and is never given again") {
+  // Verify dbid reports the number mkdb gave, stable and not reused.
+  // 1. Create "a" and "b": their dbids are 1 and 2, their directories.
+  // 2. Drop "a" and create it again: it gets 3, not 1.
+  // 3. Reattach: the dbids are the same.
+  // 4. Ask for a database that does not exist: SM_ERR_NOTFOUND.
+  home_t home;
+  uint64_t id = 0;
+  REQUIRE(sm1::mkdb(home.env(), "a", nullptr) == 0);
+  REQUIRE(sm1::mkdb(home.env(), "b", nullptr) == 0);
+  REQUIRE(sm1::dbid(home.env(), "a", &id) == 0);
+  CHECK(id == 1);
+  REQUIRE(sm1::dbid(home.env(), "b", &id) == 0);
+  CHECK(id == 2);
+
+  REQUIRE(sm1::rmdb(home.env(), "a") == 0);
+  REQUIRE(sm1::mkdb(home.env(), "a", nullptr) == 0);
+  REQUIRE(sm1::dbid(home.env(), "a", &id) == 0);
+  CHECK(id == 3);
+
+  home.reattach();
+  REQUIRE(sm1::dbid(home.env(), "a", &id) == 0);
+  CHECK(id == 3);
+  REQUIRE(sm1::dbid(home.env(), "b", &id) == 0);
+  CHECK(id == 2);
+
+  CHECK(sm1::dbid(home.env(), "none", &id) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+}
+
 TEST_CASE("sm1_mkdb rejects a duplicate or badly sized name") {
   // Verify mkdb's name checks.
   // 1. Create "db"; creating it again fails with SM_ERR_EXISTS.

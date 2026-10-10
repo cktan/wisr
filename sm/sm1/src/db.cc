@@ -251,6 +251,39 @@ int lsdb(sm1::env_t *env, std::vector<std::string> &out) {
   return 0;
 }
 
+/* The dbid of dbname, from the root db, into *out. */
+int dbid(sm1::env_t *env, const char *dbname, uint64_t *out) {
+  // Reject a NULL environment or result.
+  if (!env || !out) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_dbid: env or out is NULL");
+  }
+  // Validate the database name.
+  if (check_name(dbname, sm1::max_dbname, "database") != 0) {
+    return -1;
+  }
+  // Hold the env mutex for the root db, as mkdb and rmdb do.
+  std::lock_guard<std::mutex> guard(env->mu);
+  // Look the name up in the root db.
+  std::string val;
+  rocksdb::Status s =
+      env->root->Get(rocksdb::ReadOptions(), dbname_key(dbname), &val);
+  // Report a name that does not exist.
+  if (s.IsNotFound()) {
+    return set_error(sm1::SM_ERR_NOTFOUND, "database {} does not exist",
+                     dbname);
+  }
+  // Fail on any other root db error.
+  if (!s.ok()) {
+    return set_status_error(s, "read root db");
+  }
+  // Reject a malformed dbid.
+  if (val.size() != 8) {
+    return set_error(sm1::SM_ERR_CORRUPT, "bad dbid for database {}", dbname);
+  }
+  *out = sm1::get_be64(val.data());
+  return 0;
+}
+
 } // namespace
 
 namespace wisr {
@@ -817,4 +850,16 @@ int sm1::lsdb(sm1::env_t *env, std::vector<std::string> &out) {
   // Inside sm1: running out of memory is fatal.
   in_sm1_t in_sm1;
   return ::lsdb(env, out);
+}
+
+/* The dbid sm1::mkdb gave the database dbname. */
+int sm1::dbid(sm1::env_t *env, std::string_view dbname_arg, uint64_t *out) {
+  // Inside sm1: running out of memory is fatal.
+  in_sm1_t in_sm1;
+  // Take the name as a C string, as the engine uses it.
+  std::string dbname_str;
+  if (copy_name(dbname_arg, "database", dbname_str) != 0) {
+    return -1;
+  }
+  return ::dbid(env, dbname_str.c_str(), out);
 }

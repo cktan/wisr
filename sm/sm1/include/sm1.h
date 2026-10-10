@@ -325,6 +325,18 @@ int rmdb(env_t* env, std::string_view dbname);
 int lsdb(env_t* env, std::vector<std::string>& out);
 
 /*
+ * The dbid of the database dbname into *out: the number sm1::mkdb
+ * gave it, which no other database in this home directory has had
+ * or will have (SM1_DESIGN.md §3.5). It is the name of the
+ * database's directory, and a caller may use it as the database's
+ * id for as long as the database exists.
+ *
+ * Errors: SM_ERR_NOTFOUND, SM_ERR_CORRUPT, SM_ERR_IO,
+ * SM_ERR_INVALID.
+ */
+int dbid(env_t* env, std::string_view dbname, uint64_t* out);
+
+/*
  * Open the database dbname and start a session on it. The
  * database must already exist; this never creates one.
  *

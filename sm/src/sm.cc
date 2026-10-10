@@ -531,6 +531,12 @@ int sm_lsdb(sm_env_t *env, std::vector<std::string> &names) {
   return guard(nullptr, [&] { return sm1::lsdb(env_of(env), names); });
 }
 
+/* The id sm_mkdb gave database dbname. */
+int sm_dbid(sm_env_t *env, const char *dbname, uint64_t *out) {
+  return guard(nullptr,
+               [&] { return sm1::dbid(env_of(env), name_of(dbname), out); });
+}
+
 /*
  * Open a session on dbname, over its catalog: the first session
  * on the database loads it, in a transaction of its own.

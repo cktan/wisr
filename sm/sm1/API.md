@@ -616,6 +616,18 @@ what is there.
 
 Errors: `SM_ERR_NOMEM`, `SM_ERR_IO`.
 
+### int sm1::dbid(sm1::env_t* env, std::string_view dbname, uint64_t* out)
+
+Set `*out` to the `dbid` of the database `dbname`: the number
+`sm1::mkdb` gave it, which no other database in `homedir` has
+had or will have (`SM1_DESIGN.md` §3.5). It names the
+database's directory, and a caller may use it as the
+database's id for as long as the database exists; a SQL
+layer's database oid, say.
+
+Errors: `SM_ERR_NOTFOUND`, `SM_ERR_CORRUPT`, `SM_ERR_IO`,
+`SM_ERR_INVALID`.
+
 ---
 
 ## Session API

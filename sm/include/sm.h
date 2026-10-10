@@ -148,6 +148,13 @@ int sm_rmdb(sm_env_t* env, const char* dbname);
 int sm_lsdb(sm_env_t* env, std::vector<std::string>& names);
 
 /*
+ * The id of database dbname into *out: the number sm_mkdb gave it,
+ * never given to another database of this home directory
+ * (sm1::dbid). A SQL layer can use it as the database's oid.
+ */
+int sm_dbid(sm_env_t* env, const char* dbname, uint64_t* out);
+
+/*
  * Open a session on dbname; opt NULL means the defaults. The
  * first session on a database loads its catalog (sm3::cat_open).
  */
