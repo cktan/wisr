@@ -44,7 +44,6 @@
 #include <unistd.h>
 
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/storage.h"
 #include "miscadmin.h"

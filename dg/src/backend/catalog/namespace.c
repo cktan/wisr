@@ -21,7 +21,6 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/cat_builtin.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"

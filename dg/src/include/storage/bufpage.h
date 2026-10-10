@@ -461,4 +461,7 @@ extern bool PageIndexTupleOverwrite(Page page, OffsetNumber offnum, Item newtup,
 extern char *PageSetChecksumCopy(Page page, BlockNumber blkno);
 extern void PageSetChecksumInplace(Page page, BlockNumber blkno);
 
+/* Are data pages protected by checksums?  Never: digres makes none. */
+static inline bool DataChecksumsEnabled(void) { return false; }
+
 #endif /* BUFPAGE_H */

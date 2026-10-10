@@ -57,7 +57,6 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "commands/dbcommands.h"
 #include "funcapi.h"
 #include "lib/ilist.h"

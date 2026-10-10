@@ -13,7 +13,6 @@
 
 #include "postgres.h"
 
-#include "access/clog.h"
 #include "access/commit_ts.h"
 #include "access/subtrans.h"
 #include "access/transam.h"
@@ -28,7 +27,10 @@
 thread_local /*SHARED*/ TransamVariablesData *TransamVariables = NULL;
 
 /*
- * Initialization of shared memory for TransamVariables.
+ * Initialization of shared memory for TransamVariables.  The counters get
+ * their first values here, as a bootstrap would: there is no WAL to recover
+ * them from.  PostgreSQL's transactions begin afresh each time the server
+ * starts, and write nothing: sm's are to replace them.
  */
 Size VarsupShmemSize(void) { return sizeof(TransamVariablesData); }
 
@@ -41,6 +43,11 @@ void VarsupShmemInit(void) {
   if (!IsUnderPostmaster) {
     Assert(!found);
     memset(TransamVariables, 0, sizeof(TransamVariablesData));
+    TransamVariables->nextXid = FirstNormalFullTransactionId;
+    TransamVariables->nextOid = FirstNormalObjectId;
+    TransamVariables->latestCompletedXid = TransamVariables->nextXid;
+    FullTransactionIdRetreat(&TransamVariables->latestCompletedXid);
+    SetTransactionIdLimit(FirstNormalTransactionId, InvalidOid);
   } else
     Assert(found);
 }
@@ -130,23 +137,18 @@ FullTransactionId GetNewTransactionId(bool isSubXact) {
   }
 
   /*
-   * If we are allocating the first XID of a new page of the commit log,
-   * zero out that commit-log page before returning. We must do this while
-   * holding XidGenLock, else another xact could acquire and commit a later
-   * XID before we zero the page.  Fortunately, a page of the commit log
-   * holds 32K or more transactions, so we don't have to do this very often.
-   *
-   * Extend pg_subtrans and pg_commit_ts too.
+   * If we are allocating the first XID of a new page of pg_subtrans or
+   * pg_commit_ts, zero out that page before returning. We must do this
+   * while holding XidGenLock, else another xact could acquire and commit a
+   * later XID before we zero the page.
    */
-  ExtendCLOG(xid);
   ExtendCommitTs(xid);
   ExtendSUBTRANS(xid);
 
   /*
    * Now advance the nextXid counter.  This must not happen until after we
-   * have successfully completed ExtendCLOG() --- if that routine fails, we
-   * want the next incoming transaction to try it again.  We cannot assign
-   * more XIDs until there is CLOG space for them.
+   * have successfully completed ExtendSUBTRANS() --- if that routine fails,
+   * we want the next incoming transaction to try it again.
    */
   FullTransactionIdAdvance(&TransamVariables->nextXid);
 

@@ -33,7 +33,6 @@
 
 #include "access/printtup.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/pg_type.h"
 #include "commands/async.h"
 #include "commands/event_trigger.h"
@@ -42,6 +41,7 @@
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
+#include "libpq/scram.h"
 #include "mb/pg_wchar.h"
 #include "mb/stringinfo_mb.h"
 #include "miscadmin.h"
@@ -52,7 +52,6 @@
 #include "pg_getopt.h"
 #include "pg_trace.h"
 #include "pgstat.h"
-#include "postmaster/bgworker.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "rewrite/rewriteHandler.h"
@@ -3013,11 +3012,6 @@ void ProcessInterrupts(void) {
     if (ClientAuthInProgress)
       ereport(FATAL, (errcode(ERRCODE_QUERY_CANCELED),
                       errmsg("canceling authentication due to timeout")));
-    else if (AmBackgroundWorkerProcess())
-      ereport(FATAL, (errcode(ERRCODE_ADMIN_SHUTDOWN),
-                      errmsg("terminating background worker \"%s\" due to "
-                             "administrator command",
-                             MyBgworkerEntry->bgw_type)));
     else
       ereport(FATAL,
               (errcode(ERRCODE_ADMIN_SHUTDOWN),
@@ -3685,8 +3679,8 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
    */
   CreateDataDirLockFile(false);
 
-  /* read control file (error checking and contains config ) */
-  LocalProcessControlFile(false);
+  /* Make the nonce for mock authentication */
+  scram_init_mock_nonce();
 
   /*
    * process any libraries that should be preloaded at postmaster start

@@ -33,5 +33,6 @@ extern bool parse_scram_secret(const char *secret, int *iterations,
 extern bool scram_verify_plain_password(const char *username,
                                         const char *password,
                                         const char *secret);
+extern void scram_init_mock_nonce(void);
 
 #endif /* PG_SCRAM_H */

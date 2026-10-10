@@ -18,7 +18,6 @@
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/transam.h"
-#include "access/xlog.h"
 #include "commands/vacuum.h"
 #include "executor/instrument.h"
 #include "miscadmin.h"

@@ -24,7 +24,6 @@
 #include "access/htup_details.h"
 #include "access/tableam.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
@@ -67,6 +66,7 @@ static void PerformAuthentication(Port *port);
 static void CheckMyDatabase(const char *name, bool am_superuser,
                             bool override_allow_connections);
 static void ShutdownPostgres(int code, Datum arg);
+static void log_shutdown(int code, Datum arg);
 static void StatementTimeoutHandler(void);
 static void LockTimeoutHandler(void);
 static void IdleInTransactionSessionTimeoutHandler(void);
@@ -297,17 +297,14 @@ void InitializeMaxBackends(void) {
   Assert(MaxBackends == 0);
 
   /* Note that this does not include "auxiliary" processes */
-  MaxBackends =
-      MaxConnections + max_worker_processes + NUM_SPECIAL_WORKER_PROCS;
+  MaxBackends = MaxConnections + NUM_SPECIAL_WORKER_PROCS;
 
   if (MaxBackends > MAX_BACKENDS)
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-             errmsg("too many server processes configured"),
-             errdetail("\"max_connections\" (%d) plus \"max_worker_processes\" "
-                       "(%d) must be less than %d.",
-                       MaxConnections, max_worker_processes,
-                       MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
+    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                    errmsg("too many server processes configured"),
+                    errdetail("\"max_connections\" (%d) must be less than %d.",
+                              MaxConnections,
+                              MAX_BACKENDS - (NUM_SPECIAL_WORKER_PROCS - 1))));
 }
 
 /*
@@ -476,31 +473,17 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   }
 
   /*
-   * If this is either a bootstrap process or a standalone backend, start up
-   * the XLOG machinery, and register to have it closed down at exit. In
-   * other cases, the startup process is responsible for starting up the
-   * XLOG machinery, and the checkpointer for closing it down.
+   * If this is either a bootstrap process or a standalone backend, register
+   * the shutdown of the server at exit.  The transaction counters got their
+   * first values when shared memory was made (VarsupShmemInit()).
    */
   if (!IsUnderPostmaster) {
     /*
-     * We don't yet have an aux-process resource owner, but StartupXLOG
-     * and ShutdownXLOG will need one.  Hence, create said resource owner
-     * (and register a callback to clean it up after ShutdownXLOG runs).
-     */
-    CreateAuxProcessResourceOwner();
-
-    StartupXLOG();
-    /* Release (and warn about) any buffer pins leaked in StartupXLOG */
-    ReleaseAuxProcessResources(true);
-    /* Reset CurrentResourceOwner to nothing for the moment */
-    CurrentResourceOwner = NULL;
-
-    /*
-     * Use before_shmem_exit() so that ShutdownXLOG() can rely on DSM
-     * segments etc to work (which in turn is required for pgstats).
+     * Use before_shmem_exit() so that pgstats can rely on DSM segments etc
+     * to work.
      */
     before_shmem_exit(pgstat_before_server_shutdown, 0);
-    before_shmem_exit(ShutdownXLOG, 0);
+    before_shmem_exit(log_shutdown, 0);
   }
 
   /*
@@ -570,15 +553,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
            errmsg("no roles are defined in this database system"),
            errhint("You should immediately run CREATE USER \"%s\" SUPERUSER;.",
                    username != NULL ? username : "postgres")));
-  } else if (AmBackgroundWorkerProcess()) {
-    if (username == NULL && !OidIsValid(useroid)) {
-      InitializeSessionUserIdStandalone();
-      am_superuser = true;
-    } else {
-      InitializeSessionUserId(username, useroid,
-                              (flags & INIT_PG_OVERRIDE_ROLE_LOGIN) != 0);
-      am_superuser = superuser();
-    }
   } else {
     /* normal multiuser case */
     Assert(MyProcPort != NULL);
@@ -866,6 +840,14 @@ static void process_startup_options(Port *port, bool am_superuser) {
 
     SetConfigOption(name, value, gucctx, PGC_S_CLIENT);
   }
+}
+
+/*
+ * Say that a standalone backend or bootstrap is shutting down.
+ */
+static void log_shutdown(int code, Datum arg) {
+  /* Don't be chatty in standalone mode */
+  ereport(NOTICE, (errmsg("shutting down")));
 }
 
 /*

@@ -57,9 +57,7 @@
 #include "parser/parse_expr.h"
 #include "parser/parser.h"
 #include "pgstat.h"
-#include "postmaster/bgworker_internals.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
@@ -1843,19 +1841,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"transaction_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the dedicated buffer pool used for the "
-                   "transaction status cache."),
-      gettext_noop("0 means use a fraction of \"shared_buffers\"."),
-      GUC_UNIT_BLOCKS},
-     &transaction_buffers,
-     0,
-     0,
-     SLRU_MAX_ALLOWED_BUFFERS,
-     check_transaction_buffers,
-     NULL,
-     NULL},
-
     {{"temp_buffers", PGC_USERSET, RESOURCES_MEM,
       gettext_noop(
           "Sets the maximum number of temporary buffers used by each session."),
@@ -2361,21 +2346,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{
-         "max_worker_processes",
-         PGC_POSTMASTER,
-         RESOURCES_WORKER_PROCESSES,
-         gettext_noop("Maximum number of concurrent worker processes."),
-         NULL,
-     },
-     &max_worker_processes,
-     8,
-     0,
-     MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-
     {{"log_rotation_age", PGC_SIGHUP, LOGGING_WHERE,
       gettext_noop("Sets the amount of time to wait before forcing "
                    "log file rotation."),
@@ -2626,23 +2596,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      INT_MAX,
      check_client_connection_check_interval,
-     NULL,
-     NULL},
-
-    {{
-         "log_startup_progress_interval",
-         PGC_SIGHUP,
-         LOGGING_WHEN,
-         gettext_noop("Time between progress updates for "
-                      "long-running startup operations."),
-         gettext_noop("0 disables progress updates."),
-         GUC_UNIT_MS,
-     },
-     &log_startup_progress_interval,
-     10000,
-     0,
-     INT_MAX,
-     NULL,
      NULL,
      NULL},
 

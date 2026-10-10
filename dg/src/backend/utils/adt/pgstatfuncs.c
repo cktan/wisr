@@ -15,7 +15,6 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
-#include "access/xlog.h"
 #include "catalog/catalog.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
@@ -23,7 +22,6 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/bgworker.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/acl.h"
@@ -529,17 +527,8 @@ Datum pg_stat_get_activity(PG_FUNCTION_ARGS) {
         }
       }
       /* Add backend type */
-      if (beentry->st_backendType == B_BG_WORKER) {
-        const char *bgw_type;
-
-        bgw_type = GetBackgroundWorkerTypeByPid(beentry->st_procpid);
-        if (bgw_type)
-          values[17] = CStringGetTextDatum(bgw_type);
-        else
-          nulls[17] = true;
-      } else
-        values[17] =
-            CStringGetTextDatum(GetBackendTypeDesc(beentry->st_backendType));
+      values[17] =
+          CStringGetTextDatum(GetBackendTypeDesc(beentry->st_backendType));
 
       /* SSL information */
       if (beentry->st_ssl) {

@@ -91,8 +91,6 @@
 
 #include <unistd.h>
 
-#include "access/xlog.h"
-#include "catalog/pg_control.h"
 #include "common/base64.h"
 #include "common/hmac.h"
 #include "common/saslprep.h"
@@ -184,6 +182,16 @@ static char *sanitize_char(char c);
 static char *sanitize_str(const char *s);
 static uint8 *scram_mock_salt(const char *username,
                               pg_cryptohash_type hash_type, int key_length);
+
+/* Nonce key length */
+#define MOCK_AUTH_NONCE_LEN 32
+
+/*
+ * Random nonce, used in authentication requests that need to proceed based
+ * on values that are server-unique, like a SASL exchange that failed at an
+ * early stage.  Made once per run of the server, before any session starts.
+ */
+static thread_local /*SHARED*/ char mock_auth_nonce[MOCK_AUTH_NONCE_LEN];
 
 /*
  * The number of iterations to use when generating new secrets.
@@ -1396,7 +1404,6 @@ static uint8 *scram_mock_salt(const char *username,
                               pg_cryptohash_type hash_type, int key_length) {
   pg_cryptohash_ctx *ctx;
   static thread_local /*LOCAL*/ uint8 sha_digest[SCRAM_MAX_KEY_LEN];
-  char *mock_auth_nonce = GetMockAuthenticationNonce();
 
   /*
    * Generate salt using a SHA256 hash of the username and the cluster's
@@ -1425,4 +1432,14 @@ static uint8 *scram_mock_salt(const char *username,
   pg_cryptohash_free(ctx);
 
   return sha_digest;
+}
+
+/*
+ * Make the mock authentication nonce.  Called once, by the postmaster or a
+ * standalone backend, before any session starts: sessions copy it.
+ */
+void scram_init_mock_nonce(void) {
+  if (!pg_strong_random(mock_auth_nonce, MOCK_AUTH_NONCE_LEN))
+    ereport(PANIC, (errcode(ERRCODE_INTERNAL_ERROR),
+                    errmsg("could not generate secret authorization token")));
 }

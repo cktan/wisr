@@ -162,7 +162,7 @@ int ProcGlobalSemas(void) {
  *	  running out when trying to start another backend is a common failure.
  *	  So, now we grab enough semaphores to support the desired max number
  *	  of backends immediately at initialization --- if the sysadmin has set
- *	  MaxConnections, max_worker_processes, or max_wal_senders
+ *	  MaxConnections or max_wal_senders
  *	  higher than his kernel will support, he'll
  *	  find out sooner rather than later.
  *
@@ -197,12 +197,10 @@ void InitProcGlobal(void) {
   ProcGlobal->spins_per_delay = DEFAULT_SPINS_PER_DELAY;
   dlist_init(&ProcGlobal->freeProcs);
   dlist_init(&ProcGlobal->specialWorkerFreeProcs);
-  dlist_init(&ProcGlobal->bgworkerFreeProcs);
   dlist_init(&ProcGlobal->walsenderFreeProcs);
   ProcGlobal->startupBufferPinWaitBufId = -1;
   ProcGlobal->walwriterProc = INVALID_PROC_NUMBER;
   pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PROC_NUMBER);
-  pg_atomic_init_u32(&ProcGlobal->clogGroupFirst, INVALID_PROC_NUMBER);
 
   /*
    * Create and initialize all the PGPROC structures we'll need.  There are
@@ -289,8 +287,8 @@ void InitProcGlobal(void) {
     }
 
     /*
-     * Newly created PGPROCs for normal backends, special workers,
-     * bgworkers, and walsenders must be queued up on the
+     * Newly created PGPROCs for normal backends, special workers and
+     * walsenders must be queued up on the
      * appropriate free list.  Because there can only ever be a small,
      * fixed number of auxiliary processes, no free list is used in that
      * case; InitAuxiliaryProcess() instead uses a linear search.  PGPROCs
@@ -305,11 +303,6 @@ void InitProcGlobal(void) {
       /* PGPROC for special worker, add to specialWorkerFreeProcs list */
       dlist_push_tail(&ProcGlobal->specialWorkerFreeProcs, &proc->links);
       proc->procgloballist = &ProcGlobal->specialWorkerFreeProcs;
-    } else if (i < MaxConnections + NUM_SPECIAL_WORKER_PROCS +
-                       max_worker_processes) {
-      /* PGPROC for bgworker, add to bgworkerFreeProcs list */
-      dlist_push_tail(&ProcGlobal->bgworkerFreeProcs, &proc->links);
-      proc->procgloballist = &ProcGlobal->bgworkerFreeProcs;
     } else if (i < MaxBackends) {
       /* PGPROC for walsender, add to walsenderFreeProcs list */
       dlist_push_tail(&ProcGlobal->walsenderFreeProcs, &proc->links);
@@ -329,7 +322,6 @@ void InitProcGlobal(void) {
      */
     pg_atomic_init_u32(&(proc->procArrayGroupNext), INVALID_PROC_NUMBER);
     pg_atomic_init_u32(&(proc->pendingSignals), 0);
-    pg_atomic_init_u32(&(proc->clogGroupNext), INVALID_PROC_NUMBER);
     pg_atomic_init_u64(&(proc->waitStart), 0);
   }
 
@@ -379,8 +371,6 @@ void InitProcess(void) {
    */
   if (AmSpecialWorkerProcess())
     procgloballist = &ProcGlobal->specialWorkerFreeProcs;
-  else if (AmBackgroundWorkerProcess())
-    procgloballist = &ProcGlobal->bgworkerFreeProcs;
   else if (AmWalSenderProcess())
     procgloballist = &ProcGlobal->walsenderFreeProcs;
   else
@@ -470,11 +460,6 @@ void InitProcess(void) {
   MyProc->wait_event_info = 0;
 
   /* Initialize fields for group transaction status update. */
-  MyProc->clogGroupMember = false;
-  MyProc->clogGroupMemberXid = InvalidTransactionId;
-  MyProc->clogGroupMemberXidStatus = TRANSACTION_STATUS_IN_PROGRESS;
-  MyProc->clogGroupMemberPage = -1;
-  Assert(pg_atomic_read_u32(&MyProc->clogGroupNext) == INVALID_PROC_NUMBER);
 
   /*
    * Acquire ownership of the PGPROC's latch, so that we can use WaitLatch

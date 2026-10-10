@@ -26,7 +26,6 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_enum.h"
@@ -851,8 +850,8 @@ static void AtSubStart_ResourceOwner(void) {
 /*
  *	RecordTransactionCommit
  *
- * Mark the transaction tree committed in pg_xact.  There is no commit
- * record to write: digres has no WAL.
+ * Record the commit timestamp.  There is no commit log to mark and no
+ * commit record to write: digres has no WAL.
  *
  * Returns latest XID among xact and its children, or InvalidTransactionId
  * if the xact has no XID.  (We compute that here just because it's easier.)
@@ -892,12 +891,11 @@ static TransactionId RecordTransactionCommit(void) {
     return InvalidTransactionId;
   }
 
-  /* Record commit timestamp and update the CLOG, without being interrupted */
+  /* Record commit timestamp, without being interrupted */
   START_CRIT_SECTION();
   TransactionTreeSetCommitTsData(xid, nchildren, children,
                                  GetCurrentTransactionStopTimestamp(),
                                  InvalidRepOriginId);
-  TransactionIdCommitTree(xid, nchildren, children);
   END_CRIT_SECTION();
 
   /* Compute latestXid while we have the child XIDs handy */
@@ -1069,8 +1067,8 @@ static void AtSubCommit_childXids(void) {
 /*
  *	RecordTransactionAbort
  *
- * Mark the transaction tree aborted in pg_xact.  There is no abort record
- * to write: digres has no WAL.
+ * There is no commit log to mark and no abort record to write: digres has
+ * no WAL.
  *
  * Returns latest XID among xact and its children, or InvalidTransactionId
  * if the xact has no XID.  (We compute that here just because it's easier.)
@@ -1097,16 +1095,6 @@ static TransactionId RecordTransactionAbort(bool isSubXact) {
     elog(PANIC, "cannot abort transaction %u, it was already committed", xid);
 
   nchildren = xactGetCommittedChildren(&children);
-
-  /*
-   * Mark the transaction aborted in clog.  This is not absolutely necessary
-   * but we may as well do it while we are here; also, in the subxact case
-   * it is helpful because XactLockTableWait makes use of it to avoid
-   * waiting for already-aborted subtransactions.
-   */
-  START_CRIT_SECTION();
-  TransactionIdAbortTree(xid, nchildren, children);
-  END_CRIT_SECTION();
 
   /* Compute latestXid while we have the child XIDs handy */
   latestXid = TransactionIdLatest(xid, nchildren, children);

@@ -262,9 +262,6 @@ const char *GetBackendTypeDesc(BackendType backendType) {
   case B_DEAD_END_BACKEND:
     backendDesc = gettext_noop("dead-end client backend");
     break;
-  case B_BG_WORKER:
-    backendDesc = gettext_noop("background worker");
-    break;
   case B_LOGGER:
     backendDesc = gettext_noop("logger");
     break;
@@ -273,9 +270,6 @@ const char *GetBackendTypeDesc(BackendType backendType) {
     break;
   case B_STANDALONE_BACKEND:
     backendDesc = gettext_noop("standalone backend");
-    break;
-  case B_STARTUP:
-    backendDesc = gettext_noop("startup");
     break;
   case B_WAL_RECEIVER:
     backendDesc = gettext_noop("walreceiver");
@@ -697,11 +691,10 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
  */
 void InitializeSessionUserIdStandalone(void) {
   /*
-   * This function should only be called in single-user mode, in slot sync
-   * worker and in background workers.
+   * This function should only be called in single-user mode and in slot
+   * sync worker.
    */
-  Assert(!IsUnderPostmaster || AmLogicalSlotSyncWorkerProcess() ||
-         AmBackgroundWorkerProcess());
+  Assert(!IsUnderPostmaster || AmLogicalSlotSyncWorkerProcess());
 
   /* call only once */
   Assert(!OidIsValid(AuthenticatedUserId));

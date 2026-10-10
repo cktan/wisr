@@ -202,7 +202,6 @@ extern thread_local /*SHARED*/ PGDLLIMPORT int data_directory_mode;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int NBuffers;
 extern thread_local /*SHARED*/ PGDLLIMPORT int MaxBackends;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MaxConnections;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int max_worker_processes;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int commit_timestamp_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_member_buffers;
@@ -210,7 +209,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_offset_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int notify_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int serializable_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int subtransaction_buffers;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int transaction_buffers;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;
 extern thread_local /*LOCAL*/ PGDLLIMPORT pg_time_t MyStartTime;
@@ -363,7 +361,6 @@ typedef enum BackendType {
   /* Backends and other backend-like processes */
   B_BACKEND,
   B_DEAD_END_BACKEND,
-  B_BG_WORKER,
   B_WAL_SENDER,
   B_SLOTSYNC_WORKER,
 
@@ -378,7 +375,6 @@ typedef enum BackendType {
    * If you modify these, make sure to update NUM_AUXILIARY_PROCS and the
    * glossary in the docs.
    */
-  B_STARTUP,
   B_WAL_RECEIVER,
   B_WAL_SUMMARIZER,
 
@@ -394,10 +390,8 @@ typedef enum BackendType {
 extern thread_local /*LOCAL*/ PGDLLIMPORT BackendType MyBackendType;
 
 #define AmRegularBackendProcess()	(MyBackendType == B_BACKEND)
-#define AmBackgroundWorkerProcess() (MyBackendType == B_BG_WORKER)
 #define AmWalSenderProcess()        (MyBackendType == B_WAL_SENDER)
 #define AmLogicalSlotSyncWorkerProcess() (MyBackendType == B_SLOTSYNC_WORKER)
-#define AmStartupProcess()			(MyBackendType == B_STARTUP)
 #define AmWalReceiverProcess()		(MyBackendType == B_WAL_RECEIVER)
 #define AmWalSummarizerProcess()	(MyBackendType == B_WAL_SUMMARIZER)
 

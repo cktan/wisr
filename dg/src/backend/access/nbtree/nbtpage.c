@@ -25,7 +25,6 @@
 #include "access/nbtree.h"
 #include "access/tableam.h"
 #include "access/transam.h"
-#include "access/xlog.h"
 #include "common/int.h"
 #include "miscadmin.h"
 #include "storage/indexfsm.h"

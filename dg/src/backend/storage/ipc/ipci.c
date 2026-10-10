@@ -14,7 +14,6 @@
  */
 #include "postgres.h"
 
-#include "access/clog.h"
 #include "access/commit_ts.h"
 #include "access/multixact.h"
 #include "access/nbtree.h"
@@ -24,7 +23,6 @@
 #include "commands/async.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "postmaster/bgworker_internals.h"
 #include "storage/bufmgr.h"
 #include "storage/dsm.h"
 #include "storage/dsm_registry.h"
@@ -103,12 +101,9 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, PredicateLockShmemSize());
   size = add_size(size, ProcGlobalShmemSize());
   size = add_size(size, VarsupShmemSize());
-  size = add_size(size, XLOGShmemSize());
-  size = add_size(size, CLOGShmemSize());
   size = add_size(size, CommitTsShmemSize());
   size = add_size(size, SUBTRANSShmemSize());
   size = add_size(size, TwoPhaseShmemSize());
-  size = add_size(size, BackgroundWorkerShmemSize());
   size = add_size(size, MultiXactShmemSize());
   size = add_size(size, LWLockShmemSize());
   size = add_size(size, ProcArrayShmemSize());
@@ -250,8 +245,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up xlog, clog, and buffers
    */
   VarsupShmemInit();
-  XLOGShmemInit();
-  CLOGShmemInit();
   CommitTsShmemInit();
   SUBTRANSShmemInit();
   MultiXactShmemInit();
@@ -275,7 +268,6 @@ static void CreateOrAttachShmemStructs(void) {
   ProcArrayShmemInit();
   BackendStatusShmemInit();
   TwoPhaseShmemInit();
-  BackgroundWorkerShmemInit();
 
   /*
    * Set up shared-inval messaging

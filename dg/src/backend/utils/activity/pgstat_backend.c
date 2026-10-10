@@ -24,7 +24,6 @@
 
 #include "postgres.h"
 
-#include "access/xlog.h"
 #include "executor/instrument.h"
 #include "storage/bufmgr.h"
 #include "storage/proc.h"
@@ -328,8 +327,6 @@ void pgstat_create_backend(ProcNumber procnum) {
  * The following BackendTypes do not participate in the backend stats
  * subsystem:
  * - The same and for the same reasons as in pgstat_tracks_io_bktype().
- * - B_BG_WRITER, B_CHECKPOINTER and B_STARTUP because their
- * I/O stats are already visible in pg_stat_io and there is only one of those.
  *
  * Function returns true if BackendType participates in the backend stats
  * subsystem and false if it does not.
@@ -346,11 +343,9 @@ bool pgstat_tracks_backend_bktype(BackendType bktype) {
   case B_INVALID:
   case B_DEAD_END_BACKEND:
   case B_LOGGER:
-  case B_STARTUP:
     return false;
 
   case B_BACKEND:
-  case B_BG_WORKER:
   case B_STANDALONE_BACKEND:
   case B_SLOTSYNC_WORKER:
   case B_WAL_RECEIVER:

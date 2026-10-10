@@ -89,16 +89,15 @@
 #include <pthread.h>
 #endif
 
-#include "access/xlog.h"
 #include "common/file_perm.h"
 #include "common/pg_prng.h"
 #include "lib/ilist.h"
 #include "libpq/libpq.h"
 #include "libpq/pqsignal.h"
+#include "libpq/scram.h"
 #include "pg_getopt.h"
 #include "pgstat.h"
 #include "port/pg_bswap.h"
-#include "postmaster/bgworker_internals.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/syslogger.h"
 #include "storage/fd.h"
@@ -171,8 +170,6 @@ static inline bool btmask_contains(BackendTypeMask mask, BackendType t) {
   return (mask.mask & (1 << t)) != 0;
 }
 
-thread_local /*LOCAL*/ BackgroundWorker *MyBgworkerEntry = NULL;
-
 /* The socket number we are listening for connections on */
 thread_local /*LOCAL*/ int PostPortNumber = DEF_PGPORT;
 
@@ -231,22 +228,10 @@ thread_local /*LOCAL*/ bool send_abort_for_crash = false;
 thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 
 /* special child processes; NULL when not running */
-static thread_local /*SHARED*/ PMChild *StartupPMChild = NULL,
-                                       *WalReceiverPMChild = NULL,
+static thread_local /*SHARED*/ PMChild *WalReceiverPMChild = NULL,
                                        *WalSummarizerPMChild = NULL,
                                        *SysLoggerPMChild = NULL,
                                        *SlotSyncWorkerPMChild = NULL;
-
-/* Startup process's status */
-typedef enum {
-  STARTUP_NOT_RUNNING,
-  STARTUP_RUNNING,
-  STARTUP_SIGNALED, /* we sent it a SIGQUIT or SIGKILL */
-  STARTUP_CRASHED,
-} StartupStatusEnum;
-
-static thread_local /*SHARED*/ StartupStatusEnum StartupStatus =
-    STARTUP_NOT_RUNNING;
 
 /* Startup/shutdown state */
 #define NoShutdown		0
@@ -263,26 +248,12 @@ static thread_local /*SHARED*/ bool FatalError =
  * We use a simple state machine to control startup, shutdown, and
  * crash recovery (which is rather like shutdown followed by startup).
  *
- * After doing all the postmaster initialization work, we enter PM_STARTUP
- * state and the startup process is launched. The startup process begins by
- * reading the control file and other preliminary initialization steps.
- * In a normal startup, or after crash recovery, the startup process exits
- * with exit code 0 and we switch to PM_RUN state.  However, archive recovery
- * is handled specially since it takes much longer and we would like to support
- * hot standby during archive recovery.
+ * After doing all the postmaster initialization work, we enter PM_RUN
+ * state (StartRunning()).  There is no WAL to recover from, so there is no
+ * startup process and no archive recovery or hot standby.
  *
- * When the startup process is ready to start archive recovery, it signals the
- * postmaster, and we switch to PM_RECOVERY state. The background writer and
- * checkpointer are already running (as these are launched during PM_STARTUP),
- * and the startup process continues applying WAL.  If Hot Standby is enabled,
- * then, after reaching a consistent point in WAL redo, startup process
- * signals us again, and we switch to PM_HOT_STANDBY state and begin accepting
- * connections to perform read-only queries.  When archive recovery is
- * finished, the startup process exits with exit code 0 and we switch to
- * PM_RUN state.
- *
- * Normal child backends can only be launched when we are in PM_RUN or
- * PM_HOT_STANDBY state.  (connsAllowed can also restrict launching.)
+ * Normal child backends can only be launched when we are in PM_RUN state.
+ * (connsAllowed can also restrict launching.)
  * In other states we handle connection requests by launching "dead-end"
  * child processes, which will simply send the client an error message and
  * quit.  (We track these in the ActiveChildList so that we can know when they
@@ -296,17 +267,11 @@ static thread_local /*SHARED*/ bool FatalError =
  *
  * Notice that this state variable does not distinguish *why* we entered
  * states later than PM_RUN --- Shutdown and FatalError must be consulted
- * to find that out.  FatalError is never true in PM_RECOVERY, PM_HOT_STANDBY,
- * or PM_RUN states (because we don't enter those states when trying to
- * recover from a crash).  It can be true in
- * PM_STARTUP state, because we don't clear it until we've successfully
- * started WAL redo.
+ * to find that out.  FatalError is never true in PM_RUN state (because we
+ * don't enter it when trying to recover from a crash).
  */
 typedef enum {
   PM_INIT,          /* postmaster starting */
-  PM_STARTUP,       /* waiting for startup subprocess */
-  PM_RECOVERY,      /* in archive recovery mode */
-  PM_HOT_STANDBY,   /* in hot standby mode */
   PM_RUN,           /* normal "database is alive" state */
   PM_STOP_BACKENDS, /* need to stop remaining backends */
   PM_WAIT_BACKENDS, /* waiting for live backends to exit */
@@ -318,9 +283,9 @@ static thread_local /*SHARED*/ PMState pmState = PM_INIT;
 
 /*
  * While performing a "smart shutdown", we restrict new connections but stay
- * in PM_RUN or PM_HOT_STANDBY state until all the client backends are gone.
- * connsAllowed is a sub-state indicator showing the active restriction.
- * It is of no interest unless pmState is PM_RUN or PM_HOT_STANDBY.
+ * in PM_RUN state until all the client backends are gone.  connsAllowed is a
+ * sub-state indicator showing the active restriction.  It is of no interest
+ * unless pmState is PM_RUN.
  */
 static thread_local /*SHARED*/ bool connsAllowed = true;
 
@@ -344,8 +309,6 @@ thread_local /*SHARED*/ bool redirection_done =
 static thread_local /*SHARED*/ bool WalReceiverRequested = false;
 
 /* set when there's a worker that needs to be started up */
-static thread_local /*SHARED*/ bool StartWorkerNeeded = true;
-static thread_local /*SHARED*/ bool HaveCrashedWorker = false;
 
 /* set when signals arrive */
 static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_pmsignal;
@@ -395,6 +358,7 @@ static void UpdatePMState(PMState newState);
 
 pg_noreturn static void ExitPostmaster(int status);
 static int ServerLoop(void);
+static void StartRunning(void);
 static int BackendStartup(ClientSocket *client_sock);
 static void report_fork_failure_to_client(ClientSocket *client_sock,
                                           int errnum);
@@ -404,11 +368,9 @@ static bool SignalChildren(int signal, BackendTypeMask targetMask);
 static void TerminateChildren(int signal);
 static int CountChildren(BackendTypeMask targetMask);
 static void LaunchMissingBackgroundProcesses(void);
-static void maybe_start_bgworkers(void);
 static bool CreateOptsFile(int argc, char *argv[], char *fullprogname);
 static PMChild *StartChildProcess(BackendType type);
 static void StartSysLogger(void);
-static bool StartBackgroundWorker(RegisteredBgWorker *rw);
 static void InitPostmasterDeathWatchHandle(void);
 
 #ifdef WIN32
@@ -430,7 +392,6 @@ typedef struct {
 /* Macros to check exit status of a child process */
 #define EXIT_STATUS_0(st)  ((st) == 0)
 #define EXIT_STATUS_1(st)  (WIFEXITED(st) && WEXITSTATUS(st) == 1)
-#define EXIT_STATUS_3(st)  (WIFEXITED(st) && WEXITSTATUS(st) == 3)
 
 #ifndef WIN32
 /*
@@ -495,8 +456,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * CAUTION: when changing this list, check for side-effects on the signal
    * handling setup of child processes.  See tcop/postgres.c,
    * bootstrap/bootstrap.c, postmaster/bgwriter.c, postmaster/walwriter.c,
-   * postmaster/pgarch.c, postmaster/syslogger.c,
-   * postmaster/bgworker.c and postmaster/checkpointer.c.
+   * postmaster/pgarch.c and postmaster/syslogger.c.
    */
   pqinitmask();
   sigprocmask(SIG_SETMASK, &BlockSig, NULL);
@@ -839,16 +799,8 @@ void PostmasterMain(int argc, char *argv[]) {
    */
   CreateDataDirLockFile(true);
 
-  /*
-   * Read the control file (for error checking and config info).
-   *
-   * Since we verify the control file's CRC, this has a useful side effect
-   * on machines where we need a run-time test for CRC support instructions.
-   * The postmaster will do the test once at startup, and then its child
-   * processes will inherit the correct function pointer and not need to
-   * repeat the test.
-   */
-  LocalProcessControlFile(false);
+  /* Make the nonce for mock authentication, which sessions copy */
+  scram_init_mock_nonce();
 
   /*
    * process any libraries that should be preloaded at postmaster start
@@ -1211,17 +1163,8 @@ void PostmasterMain(int argc, char *argv[]) {
    */
   AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_STARTING);
 
-  UpdatePMState(PM_STARTUP);
-
-  /*
-   * We're ready to rock and roll...
-   */
-  StartupPMChild = StartChildProcess(B_STARTUP);
-  Assert(StartupPMChild != NULL);
-  StartupStatus = STARTUP_RUNNING;
-
-  /* Some workers may be scheduled to start now */
-  maybe_start_bgworkers();
+  /* We're ready to rock and roll... */
+  StartRunning();
 
   status = ServerLoop();
 
@@ -1322,7 +1265,6 @@ static void make_legacy_dirs(void) {
                                      "pg_tblspc",
                                      "pg_stat",
                                      "pg_stat_tmp",
-                                     "pg_xact",
                                      "pg_logical",
                                      "pg_logical/snapshots",
                                      "pg_logical/mappings"};
@@ -1344,67 +1286,14 @@ static void make_legacy_dirs(void) {
  * cases are as shown in the code.
  */
 static int DetermineSleepTime(void) {
-  TimestampTz next_wakeup = 0;
+  if (AbortStartTime != 0) {
+    int seconds;
 
-  /*
-   * Normal case: either there are no background workers at all, or we're in
-   * a shutdown sequence (during which we ignore bgworkers altogether).
-   */
-  if (Shutdown > NoShutdown || (!StartWorkerNeeded && !HaveCrashedWorker)) {
-    if (AbortStartTime != 0) {
-      int seconds;
+    /* time left to abort; clamp to 0 in case it already expired */
+    seconds = SIGKILL_CHILDREN_AFTER_SECS - (time(NULL) - AbortStartTime);
 
-      /* time left to abort; clamp to 0 in case it already expired */
-      seconds = SIGKILL_CHILDREN_AFTER_SECS - (time(NULL) - AbortStartTime);
-
-      return Max(seconds * 1000, 0);
-    } else
-      return 60 * 1000;
+    return Max(seconds * 1000, 0);
   }
-
-  if (StartWorkerNeeded)
-    return 0;
-
-  if (HaveCrashedWorker) {
-    dlist_mutable_iter iter;
-
-    /*
-     * When there are crashed bgworkers, we sleep just long enough that
-     * they are restarted when they request to be.  Scan the list to
-     * determine the minimum of all wakeup times according to most recent
-     * crash time and requested restart interval.
-     */
-    dlist_foreach_modify(iter, &BackgroundWorkerList) {
-      RegisteredBgWorker *rw;
-      TimestampTz this_wakeup;
-
-      rw = dlist_container(RegisteredBgWorker, rw_lnode, iter.cur);
-
-      if (rw->rw_crashed_at == 0)
-        continue;
-
-      if (rw->rw_worker.bgw_restart_time == BGW_NEVER_RESTART ||
-          rw->rw_terminate) {
-        ForgetBackgroundWorker(rw);
-        continue;
-      }
-
-      this_wakeup = TimestampTzPlusMilliseconds(
-          rw->rw_crashed_at, 1000L * rw->rw_worker.bgw_restart_time);
-      if (next_wakeup == 0 || this_wakeup < next_wakeup)
-        next_wakeup = this_wakeup;
-    }
-  }
-
-  if (next_wakeup != 0) {
-    int ms;
-
-    /* result of TimestampDifferenceMilliseconds is in [0, INT_MAX] */
-    ms = (int)TimestampDifferenceMilliseconds(GetCurrentTimestamp(),
-                                              next_wakeup);
-    return Min(60 * 1000, ms);
-  }
-
   return 60 * 1000;
 }
 
@@ -1431,6 +1320,30 @@ static void ConfigurePostmasterWaitSet(bool accept_connections) {
       AddWaitEventToSet(pm_wait_set, WL_SOCKET_ACCEPT, ListenSockets[i], NULL,
                         NULL);
   }
+}
+
+/*
+ * Open for connections, at first start and after a crash.  Shared memory is
+ * made, and with it the transaction counters (VarsupShmemInit()): there is
+ * no WAL to recover from, so this is what the startup process's clean exit
+ * used to do.
+ */
+static void StartRunning(void) {
+  FatalError = false;
+  /* crash recovery is over, reset SIGKILL flag */
+  AbortStartTime = 0;
+  ReachedNormalRunning = true;
+  UpdatePMState(PM_RUN);
+  connsAllowed = true;
+
+  /* at this point we are really open for business */
+  ereport(LOG, (errmsg("database system is ready to accept connections")));
+
+  /* Report status */
+  AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_READY);
+#ifdef USE_SYSTEMD
+  sd_notify(0, "READY=1");
+#endif
 }
 
 /*
@@ -1578,17 +1491,10 @@ static CAC_state canAcceptConnections(BackendType backend_type) {
 
   Assert(backend_type == B_BACKEND);
 
-  /*
-   * Can't start backends when in startup/shutdown/inconsistent recovery
-   * state.
-   */
-  if (pmState != PM_RUN && pmState != PM_HOT_STANDBY) {
+  /* Can't start backends when shutting down or recovering from a crash. */
+  if (pmState != PM_RUN) {
     if (Shutdown > NoShutdown)
       return CAC_SHUTDOWN; /* shutdown is pending */
-    else if (!FatalError && pmState == PM_STARTUP)
-      return CAC_STARTUP; /* normal startup */
-    else if (!FatalError && pmState == PM_RECOVERY)
-      return CAC_NOTHOTSTANDBY; /* not yet ready for hot standby */
     else
       return CAC_RECOVERY; /* else must be crash recovery */
   }
@@ -1839,12 +1745,8 @@ static void process_pm_shutdown_request(void) {
      * client backends to exit.  If already in PM_STOP_BACKENDS or a
      * later state, do not change it.
      */
-    if (pmState == PM_RUN || pmState == PM_HOT_STANDBY)
+    if (pmState == PM_RUN)
       connsAllowed = false;
-    else if (pmState == PM_STARTUP || pmState == PM_RECOVERY) {
-      /* There should be no clients, so proceed to stop children */
-      UpdatePMState(PM_STOP_BACKENDS);
-    }
 
     /*
      * Now wait for online backup mode to end and backends to exit. If
@@ -1873,10 +1775,7 @@ static void process_pm_shutdown_request(void) {
     sd_notify(0, "STOPPING=1");
 #endif
 
-    if (pmState == PM_STARTUP || pmState == PM_RECOVERY) {
-      /* Just shut down background processes silently */
-      UpdatePMState(PM_STOP_BACKENDS);
-    } else if (pmState == PM_RUN || pmState == PM_HOT_STANDBY) {
+    if (pmState == PM_RUN) {
       /* Report that we're about to zap live client sessions */
       ereport(LOG, (errmsg("aborting any active transactions")));
       UpdatePMState(PM_STOP_BACKENDS);
@@ -1945,93 +1844,6 @@ static void process_pm_child_exit(void) {
 
   while ((pid = waitpid(-1, &exitstatus, WNOHANG)) > 0) {
     PMChild *pmchild;
-
-    /*
-     * Check if this child was a startup process.
-     */
-    if (StartupPMChild && pid == StartupPMChild->pid) {
-      ReleasePostmasterChildSlot(StartupPMChild);
-      StartupPMChild = NULL;
-
-      /*
-       * Startup process exited in response to a shutdown request (or it
-       * completed normally regardless of the shutdown request).
-       */
-      if (Shutdown > NoShutdown &&
-          (EXIT_STATUS_0(exitstatus) || EXIT_STATUS_1(exitstatus))) {
-        StartupStatus = STARTUP_NOT_RUNNING;
-        UpdatePMState(PM_WAIT_BACKENDS);
-        /* PostmasterStateMachine logic does the rest */
-        continue;
-      }
-
-      if (EXIT_STATUS_3(exitstatus)) {
-        ereport(LOG, (errmsg("shutdown at recovery target")));
-        StartupStatus = STARTUP_NOT_RUNNING;
-        Shutdown = Max(Shutdown, SmartShutdown);
-        TerminateChildren(SIGTERM);
-        UpdatePMState(PM_WAIT_BACKENDS);
-        /* PostmasterStateMachine logic does the rest */
-        continue;
-      }
-
-      /*
-       * Any unexpected exit (including FATAL exit) of the startup
-       * process is catastrophic, so kill other children, and set
-       * StartupStatus so we don't try to reinitialize after they're
-       * gone.  Exception: if StartupStatus is STARTUP_SIGNALED, then we
-       * previously sent the startup process a SIGQUIT; so that's
-       * probably the reason it died, and we do want to try to restart
-       * in that case.
-       *
-       * This stanza also handles the case where we sent a SIGQUIT
-       * during PM_STARTUP due to some dead-end child crashing: in that
-       * situation, if the startup process dies on the SIGQUIT, we need
-       * to transition to PM_WAIT_BACKENDS state which will allow
-       * PostmasterStateMachine to restart the startup process.  (On the
-       * other hand, the startup process might complete normally, if we
-       * were too late with the SIGQUIT.  In that case we'll fall
-       * through and commence normal operations.)
-       */
-      if (!EXIT_STATUS_0(exitstatus)) {
-        if (StartupStatus == STARTUP_SIGNALED) {
-          StartupStatus = STARTUP_NOT_RUNNING;
-          if (pmState == PM_STARTUP)
-            UpdatePMState(PM_WAIT_BACKENDS);
-        } else
-          StartupStatus = STARTUP_CRASHED;
-        HandleChildCrash(pid, exitstatus, _("startup process"));
-        continue;
-      }
-
-      /*
-       * Startup succeeded, commence normal operations
-       */
-      StartupStatus = STARTUP_NOT_RUNNING;
-      FatalError = false;
-      AbortStartTime = 0;
-      ReachedNormalRunning = true;
-      UpdatePMState(PM_RUN);
-      connsAllowed = true;
-
-      /*
-       * At the next iteration of the postmaster's main loop, we will
-       * crank up the background tasks like the autovacuum launcher and
-       * background workers that were not started earlier already.
-       */
-      StartWorkerNeeded = true;
-
-      /* at this point we are really open for business */
-      ereport(LOG, (errmsg("database system is ready to accept connections")));
-
-      /* Report status */
-      AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_READY);
-#ifdef USE_SYSTEMD
-      sd_notify(0, "READY=1");
-#endif
-
-      continue;
-    }
 
     /*
      * Was it the wal receiver?  If exit status is zero (normal) or one
@@ -2143,22 +1955,13 @@ static void process_pm_child_exit(void) {
 static void CleanupBackend(PMChild *bp,
                            int exitstatus) /* child's exit status. */
 {
-  char namebuf[MAXPGPATH];
   const char *procname;
   bool crashed = false;
   bool logged = false;
   pid_t bp_pid;
-  bool bp_bgworker_notify;
-  BackendType bp_bkend_type;
-  RegisteredBgWorker *rw;
 
   /* Construct a process name for the log message */
-  if (bp->bkend_type == B_BG_WORKER) {
-    snprintf(namebuf, MAXPGPATH, _("background worker \"%s\""),
-             bp->rw->rw_worker.bgw_type);
-    procname = namebuf;
-  } else
-    procname = _(GetBackendTypeDesc(bp->bkend_type));
+  procname = _(GetBackendTypeDesc(bp->bkend_type));
 
   /*
    * If a backend dies in an ugly way then we must signal all other backends
@@ -2192,9 +1995,6 @@ static void CleanupBackend(PMChild *bp,
    * detached cleanly.
    */
   bp_pid = bp->pid;
-  bp_bgworker_notify = bp->bgworker_notify;
-  bp_bkend_type = bp->bkend_type;
-  rw = bp->rw;
   if (!ReleasePostmasterChildSlot(bp)) {
     /*
      * Uh-oh, the child failed to clean itself up.  Treat as a crash after
@@ -2204,53 +2004,10 @@ static void CleanupBackend(PMChild *bp,
   }
   bp = NULL;
 
-  /*
-   * In a crash case, exit immediately without resetting background worker
-   * state. However, if restart_after_crash is enabled, the background
-   * worker state (e.g., rw_pid) still needs be reset so the worker can
-   * restart after crash recovery. This reset is handled in
-   * ResetBackgroundWorkerCrashTimes(), not here.
-   */
+  /* In a crash case, exit immediately. */
   if (crashed) {
     HandleChildCrash(bp_pid, exitstatus, procname);
     return;
-  }
-
-  /*
-   * This backend may have been slated to receive SIGUSR1 when some
-   * background worker started or stopped.  Cancel those notifications, as
-   * we don't want to signal PIDs that are not PostgreSQL backends.  This
-   * gets skipped in the (probably very common) case where the backend has
-   * never requested any such notifications.
-   */
-  if (bp_bgworker_notify)
-    BackgroundWorkerStopNotifications(bp_pid);
-
-  /*
-   * If it was a background worker, also update its RegisteredBgWorker
-   * entry.
-   */
-  if (bp_bkend_type == B_BG_WORKER) {
-    if (!EXIT_STATUS_0(exitstatus)) {
-      /* Record timestamp, so we know when to restart the worker. */
-      rw->rw_crashed_at = GetCurrentTimestamp();
-    } else {
-      /* Zero exit status means terminate */
-      rw->rw_crashed_at = 0;
-      rw->rw_terminate = true;
-    }
-
-    rw->rw_pid = 0;
-    ReportBackgroundWorkerExit(rw); /* report child death */
-
-    if (!logged) {
-      LogChildExit(EXIT_STATUS_0(exitstatus) ? DEBUG1 : LOG, procname, bp_pid,
-                   exitstatus);
-      logged = true;
-    }
-
-    /* have it be restarted */
-    HaveCrashedWorker = true;
   }
 
   if (!logged)
@@ -2301,9 +2058,6 @@ static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
     break;
 
     /* wait for children to die */
-  case PM_STARTUP:
-  case PM_RECOVERY:
-  case PM_HOT_STANDBY:
   case PM_RUN:
   case PM_STOP_BACKENDS:
     UpdatePMState(PM_WAIT_BACKENDS);
@@ -2427,7 +2181,7 @@ static void LogChildExit(int lev, const char *procname, int pid,
  */
 static void PostmasterStateMachine(void) {
   /* If we're doing a smart shutdown, try to advance that state. */
-  if (pmState == PM_RUN || pmState == PM_HOT_STANDBY) {
+  if (pmState == PM_RUN) {
     if (!connsAllowed) {
       /*
        * This state ends when we have no normal client backends running.
@@ -2452,18 +2206,17 @@ static void PostmasterStateMachine(void) {
     BackendTypeMask targetMask = BTYPE_MASK_NONE;
 
     /*
-     * PM_WAIT_BACKENDS state ends when we have no regular backends and no
-     * bgworkers (including unconnected ones).
+     * PM_WAIT_BACKENDS state ends when we have no regular backends.
      */
-    targetMask = btmask_add(targetMask, B_BACKEND, B_BG_WORKER);
+    targetMask = btmask_add(targetMask, B_BACKEND);
 
     /*
      * No slot sync worker or WAL summarizer either.
      */
     targetMask = btmask_add(targetMask, B_SLOTSYNC_WORKER, B_WAL_SUMMARIZER);
 
-    /* If we're in recovery, also stop startup and walreceiver procs */
-    targetMask = btmask_add(targetMask, B_STARTUP, B_WAL_RECEIVER);
+    /* Nor walreceivers. */
+    targetMask = btmask_add(targetMask, B_WAL_RECEIVER);
 
     /* Nor walsenders. */
     targetMask = btmask_add(targetMask, B_WAL_SENDER);
@@ -2492,13 +2245,6 @@ static void PostmasterStateMachine(void) {
 
     /* If we had not yet signaled the processes to exit, do so now */
     if (pmState == PM_STOP_BACKENDS) {
-      /*
-       * Forget any pending requests for background workers, since we're
-       * no longer willing to launch any new workers.  (If additional
-       * requests arrive, BackgroundWorkerStateChange will reject them.)
-       */
-      ForgetUnstartedBackgroundWorkers();
-
       SignalChildren(SIGTERM, targetMask);
 
       UpdatePMState(PM_WAIT_BACKENDS);
@@ -2529,7 +2275,7 @@ static void PostmasterStateMachine(void) {
          * to write: sm keeps what is durable.  Stop any dead-end children.
          */
         Assert(Shutdown > NoShutdown);
-        ShutdownXLOG(0, 0);
+        ereport(LOG, (errmsg("shutting down")));
         UpdatePMState(PM_WAIT_DEAD_END);
         ConfigurePostmasterWaitSet(false);
         SignalChildren(SIGTERM, btmask(B_DEAD_END_BACKEND));
@@ -2553,7 +2299,6 @@ static void PostmasterStateMachine(void) {
      */
     if (CountChildren(btmask_all_except(B_LOGGER)) == 0) {
       /* These other guys should be dead already */
-      Assert(StartupPMChild == NULL);
       Assert(WalReceiverPMChild == NULL);
       Assert(WalSummarizerPMChild == NULL);
       Assert(SlotSyncWorkerPMChild == NULL);
@@ -2589,17 +2334,10 @@ static void PostmasterStateMachine(void) {
   }
 
   /*
-   * If the startup process failed, or the user does not want an automatic
-   * restart after backend crashes, wait for all non-syslogger children to
-   * exit, and then exit postmaster.  We don't try to reinitialize when the
-   * startup process fails, because more than likely it will just fail again
-   * and we will keep trying forever.
+   * If the user does not want an automatic restart after backend crashes,
+   * wait for all non-syslogger children to exit, and then exit postmaster.
    */
   if (pmState == PM_NO_CHILDREN) {
-    if (StartupStatus == STARTUP_CRASHED) {
-      ereport(LOG, (errmsg("shutting down due to startup process failure")));
-      ExitPostmaster(1);
-    }
     if (!restart_after_crash) {
       ereport(LOG,
               (errmsg("shutting down because \"restart_after_crash\" is off")));
@@ -2609,7 +2347,7 @@ static void PostmasterStateMachine(void) {
 
   /*
    * If we need to recover from a crash, wait for all non-syslogger children
-   * to exit, then reset shmem and start the startup process.
+   * to exit, then reset shmem and start running again.
    */
   if (FatalError && pmState == PM_NO_CHILDREN) {
     ereport(LOG, (errmsg("all server processes terminated; reinitializing")));
@@ -2618,27 +2356,15 @@ static void PostmasterStateMachine(void) {
     if (remove_temp_files_after_crash)
       RemovePgTempFiles();
 
-    /* allow background workers to immediately restart */
-    ResetBackgroundWorkerCrashTimes();
-
     shmem_exit(1);
-
-    /* re-read control file into local memory */
-    LocalProcessControlFile(true);
 
     /* re-create shared memory and semaphores */
     CreateSharedMemoryAndSemaphores();
 
-    UpdatePMState(PM_STARTUP);
-
-    StartupPMChild = StartChildProcess(B_STARTUP);
-    Assert(StartupPMChild != NULL);
-    StartupStatus = STARTUP_RUNNING;
-    /* crash recovery started, reset SIGKILL flag */
-    AbortStartTime = 0;
-
     /* start accepting server socket connection events again */
     ConfigurePostmasterWaitSet(true);
+
+    StartRunning();
   }
 }
 
@@ -2646,9 +2372,6 @@ static const char *pmstate_name(PMState state) {
 #define PM_TOSTR_CASE(sym) case sym: return #sym
   switch (state) {
     PM_TOSTR_CASE(PM_INIT);
-    PM_TOSTR_CASE(PM_STARTUP);
-    PM_TOSTR_CASE(PM_RECOVERY);
-    PM_TOSTR_CASE(PM_HOT_STANDBY);
     PM_TOSTR_CASE(PM_RUN);
     PM_TOSTR_CASE(PM_STOP_BACKENDS);
     PM_TOSTR_CASE(PM_WAIT_BACKENDS);
@@ -2683,10 +2406,6 @@ static void LaunchMissingBackgroundProcesses(void) {
   /* Syslogger is active in all states */
   if (SysLoggerPMChild == NULL && Logging_collector)
     StartSysLogger();
-
-  /* Get other worker processes running, if needed */
-  if (StartWorkerNeeded || HaveCrashedWorker)
-    maybe_start_bgworkers();
 }
 
 /*
@@ -2819,18 +2538,12 @@ static bool SignalChildren(int signal, BackendTypeMask targetMask) {
  */
 static void TerminateChildren(int signal) {
   SignalChildren(signal, btmask_all_except(B_LOGGER));
-  if (StartupPMChild != NULL) {
-    if (signal == SIGQUIT || signal == SIGKILL || signal == SIGABRT)
-      StartupStatus = STARTUP_SIGNALED;
-  }
 }
 
 /*
  * BackendStartup -- start backend process
  *
  * returns: STATUS_ERROR if the fork failed, STATUS_OK otherwise.
- *
- * Note: if you change this code, also consider StartBackgroundWorker.
  */
 static int BackendStartup(ClientSocket *client_sock) {
   PMChild *bn = NULL;
@@ -2871,10 +2584,6 @@ static int BackendStartup(ClientSocket *client_sock) {
 
   /* Pass down canAcceptConnections state */
   startup_data.canAcceptConnections = cac;
-  bn->rw = NULL;
-
-  /* Hasn't asked to be notified about any bgworkers yet */
-  bn->bgworker_notify = false;
 
   /* A connection's backend is a thread of this process. */
   pid = backend_thread_launch(bn->bkend_type, bn->child_slot, &startup_data,
@@ -2977,13 +2686,6 @@ static void process_pm_pmsignal(void) {
   pending_pm_pmsignal = false;
 
   ereport(DEBUG2, (errmsg_internal("postmaster received pmsignal signal")));
-
-  /* Process background worker state changes. */
-  if (CheckPostmasterSignal(PMSIGNAL_BACKGROUND_WORKER_CHANGE)) {
-    /* Accept new worker requests only if not stopping. */
-    BackgroundWorkerStateChange(pmState < PM_STOP_BACKENDS);
-    StartWorkerNeeded = true;
-  }
 
   /* Tell syslogger to rotate logfile if requested */
   if (SysLoggerPMChild != NULL) {
@@ -3092,12 +2794,6 @@ static PMChild *StartChildProcess(BackendType type) {
     ereport(LOG, (errmsg("could not fork \"%s\" process: %m",
                          PostmasterChildName(type))));
 
-    /*
-     * fork failure is fatal during startup, but there's no need to choke
-     * immediately if starting other child types fails.
-     */
-    if (type == B_STARTUP)
-      ExitPostmaster(1);
     return NULL;
   }
 
@@ -3149,233 +2845,6 @@ static bool CreateOptsFile(int argc, char *argv[], char *fullprogname) {
   }
 
   return true;
-}
-
-/*
- * Start a new bgworker.
- * Starting time conditions must have been checked already.
- *
- * Returns true on success, false on failure.
- * In either case, update the RegisteredBgWorker's state appropriately.
- *
- * NB -- this code very roughly matches BackendStartup.
- */
-static bool StartBackgroundWorker(RegisteredBgWorker *rw) {
-  PMChild *bn;
-  pid_t worker_pid;
-
-  Assert(rw->rw_pid == 0);
-
-  /*
-   * Allocate and assign the child slot.  Note we must do this before
-   * forking, so that we can handle failures (out of memory or child-process
-   * slots) cleanly.
-   *
-   * Treat failure as though the worker had crashed.  That way, the
-   * postmaster will wait a bit before attempting to start it again; if we
-   * tried again right away, most likely we'd find ourselves hitting the
-   * same resource-exhaustion condition.
-   */
-  bn = AssignPostmasterChildSlot(B_BG_WORKER);
-  if (bn == NULL) {
-    ereport(LOG,
-            (errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
-             errmsg("no slot available for new background worker process")));
-    rw->rw_crashed_at = GetCurrentTimestamp();
-    return false;
-  }
-  bn->rw = rw;
-  bn->bkend_type = B_BG_WORKER;
-  bn->bgworker_notify = false;
-
-  ereport(DEBUG1, (errmsg_internal("starting background worker process \"%s\"",
-                                   rw->rw_worker.bgw_name)));
-
-  worker_pid =
-      postmaster_child_launch(B_BG_WORKER, bn->child_slot, &rw->rw_worker,
-                              sizeof(BackgroundWorker), NULL);
-  if (worker_pid == -1) {
-    /* in postmaster, fork failed ... */
-    ereport(LOG, (errmsg("could not fork background worker process: %m")));
-    /* undo what AssignPostmasterChildSlot did */
-    ReleasePostmasterChildSlot(bn);
-
-    /* mark entry as crashed, so we'll try again later */
-    rw->rw_crashed_at = GetCurrentTimestamp();
-    return false;
-  }
-
-  /* in postmaster, fork successful ... */
-  rw->rw_pid = worker_pid;
-  bn->pid = rw->rw_pid;
-  ReportBackgroundWorkerPID(rw);
-  return true;
-}
-
-/*
- * Does the current postmaster state require starting a worker with the
- * specified start_time?
- */
-static bool bgworker_should_start_now(BgWorkerStartTime start_time) {
-  switch (pmState) {
-  case PM_NO_CHILDREN:
-  case PM_WAIT_DEAD_END:
-  case PM_WAIT_BACKENDS:
-  case PM_STOP_BACKENDS:
-    break;
-
-  case PM_RUN:
-    if (start_time == BgWorkerStart_RecoveryFinished)
-      return true;
-    /* fall through */
-
-  case PM_HOT_STANDBY:
-    if (start_time == BgWorkerStart_ConsistentState)
-      return true;
-    /* fall through */
-
-  case PM_RECOVERY:
-  case PM_STARTUP:
-  case PM_INIT:
-    if (start_time == BgWorkerStart_PostmasterStart)
-      return true;
-    /* fall through */
-  }
-
-  return false;
-}
-
-/*
- * If the time is right, start background worker(s).
- *
- * As a side effect, the bgworker control variables are set or reset
- * depending on whether more workers may need to be started.
- *
- * We limit the number of workers started per call, to avoid consuming the
- * postmaster's attention for too long when many such requests are pending.
- * As long as StartWorkerNeeded is true, ServerLoop will not block and will
- * call this function again after dealing with any other issues.
- */
-static void maybe_start_bgworkers(void) {
-#define MAX_BGWORKERS_TO_LAUNCH 100
-  int num_launched = 0;
-  TimestampTz now = 0;
-  dlist_mutable_iter iter;
-
-  /*
-   * During crash recovery, we have no need to be called until the state
-   * transition out of recovery.
-   */
-  if (FatalError) {
-    StartWorkerNeeded = false;
-    HaveCrashedWorker = false;
-    return;
-  }
-
-  /* Don't need to be called again unless we find a reason for it below */
-  StartWorkerNeeded = false;
-  HaveCrashedWorker = false;
-
-  dlist_foreach_modify(iter, &BackgroundWorkerList) {
-    RegisteredBgWorker *rw;
-
-    rw = dlist_container(RegisteredBgWorker, rw_lnode, iter.cur);
-
-    /* ignore if already running */
-    if (rw->rw_pid != 0)
-      continue;
-
-    /* if marked for death, clean up and remove from list */
-    if (rw->rw_terminate) {
-      ForgetBackgroundWorker(rw);
-      continue;
-    }
-
-    /*
-     * If this worker has crashed previously, maybe it needs to be
-     * restarted (unless on registration it specified it doesn't want to
-     * be restarted at all).  Check how long ago did a crash last happen.
-     * If the last crash is too recent, don't start it right away; let it
-     * be restarted once enough time has passed.
-     */
-    if (rw->rw_crashed_at != 0) {
-      if (rw->rw_worker.bgw_restart_time == BGW_NEVER_RESTART) {
-        int notify_pid;
-
-        notify_pid = rw->rw_worker.bgw_notify_pid;
-
-        ForgetBackgroundWorker(rw);
-
-        /* Report worker is gone now. */
-        if (notify_pid != 0)
-          kill(notify_pid, SIGUSR1);
-
-        continue;
-      }
-
-      /* read system time only when needed */
-      if (now == 0)
-        now = GetCurrentTimestamp();
-
-      if (!TimestampDifferenceExceeds(rw->rw_crashed_at, now,
-                                      rw->rw_worker.bgw_restart_time * 1000)) {
-        /* Set flag to remember that we have workers to start later */
-        HaveCrashedWorker = true;
-        continue;
-      }
-    }
-
-    if (bgworker_should_start_now(rw->rw_worker.bgw_start_time)) {
-      /* reset crash time before trying to start worker */
-      rw->rw_crashed_at = 0;
-
-      /*
-       * Try to start the worker.
-       *
-       * On failure, give up processing workers for now, but set
-       * StartWorkerNeeded so we'll come back here on the next iteration
-       * of ServerLoop to try again.  (We don't want to wait, because
-       * there might be additional ready-to-run workers.)  We could set
-       * HaveCrashedWorker as well, since this worker is now marked
-       * crashed, but there's no need because the next run of this
-       * function will do that.
-       */
-      if (!StartBackgroundWorker(rw)) {
-        StartWorkerNeeded = true;
-        return;
-      }
-
-      /*
-       * If we've launched as many workers as allowed, quit, but have
-       * ServerLoop call us again to look for additional ready-to-run
-       * workers.  There might not be any, but we'll find out the next
-       * time we run.
-       */
-      if (++num_launched >= MAX_BGWORKERS_TO_LAUNCH) {
-        StartWorkerNeeded = true;
-        return;
-      }
-    }
-  }
-}
-
-/*
- * When a backend asks to be notified about worker state changes, we
- * set a flag in its backend entry.  The background worker machinery needs
- * to know when such backends exit.
- */
-bool PostmasterMarkPIDForWorkerNotify(int pid) {
-  dlist_iter iter;
-  PMChild *bp;
-
-  dlist_foreach(iter, &ActiveChildList) {
-    bp = dlist_container(PMChild, elem, iter.cur);
-    if (bp->pid == pid) {
-      bp->bgworker_notify = true;
-      return true;
-    }
-  }
-  return false;
 }
 
 #ifdef WIN32

@@ -35,10 +35,8 @@
 
 #include "libpq/libpq-be.h"
 #include "miscadmin.h"
-#include "postmaster/bgworker_internals.h"
 #include "postmaster/fork_process.h"
 #include "postmaster/postmaster.h"
-#include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
 #include "storage/dsm.h"
 #include "storage/pg_shmem.h"
@@ -172,7 +170,6 @@ static thread_local /*SHARED*/ child_process_kind child_process_kinds[] = {
 
     [B_BACKEND] = {"backend", BackendMain, true},
     [B_DEAD_END_BACKEND] = {"dead-end backend", BackendMain, true},
-    [B_BG_WORKER] = {"bgworker", BackgroundWorkerMain, true},
 
     /*
      * WAL senders start their life as regular backend processes, and change
@@ -184,7 +181,6 @@ static thread_local /*SHARED*/ child_process_kind child_process_kinds[] = {
 
     [B_STANDALONE_BACKEND] = {"standalone backend", NULL, false},
 
-    [B_STARTUP] = {"startup", StartupProcessMain, true},
     [B_WAL_RECEIVER] = {"wal_receiver", NULL, true},
     [B_WAL_SUMMARIZER] = {"wal_summarizer", NULL, true},
 
@@ -642,12 +638,6 @@ void SubPostmasterMain(int argc, char *argv[]) {
    * before we create any files or directories.
    */
   checkDataDir();
-
-  /*
-   * (re-)read control file, as it contains config. The postmaster will
-   * already have read this, but this process doesn't know about that.
-   */
-  LocalProcessControlFile(false);
 
   /*
    * Reload any libraries that were preloaded by the postmaster.  Since we

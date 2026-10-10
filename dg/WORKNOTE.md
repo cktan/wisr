@@ -701,3 +701,89 @@ scans are to be sm's.
   `trace_syncscan` and `TRACE_SYNCSCAN`, its shared memory, the
   `SyncScan` lock, and the comments that explained choices by
   it.
+
+## Step 16: background workers are gone
+
+A background worker is server code in a process of its own,
+forked by the postmaster: a static one an extension registers
+at start, a dynamic one a backend asks for. Nothing in digres
+registered one since parallel query and logical replication
+went (steps 10 and 12), and as forked processes attached to
+shared memory they stood in the way of making it private.
+
+- **Gone**: `postmaster/bgworker.c`, `bgworker.h` and
+  `bgworker_internals.h`; the `B_BG_WORKER` process type; the
+  postmaster's start, restart and notification of workers, and
+  `PMSIGNAL_BACKGROUND_WORKER_CHANGE`; their PGPROC free list
+  and shared memory; the `max_worker_processes` setting, which
+  no longer counts toward `MaxBackends`; the `BackgroundWorker`
+  lock and two wait events.
+- An extension that wants one can have it back as a thread, as
+  connections were made.
+
+## Step 17: the startup process is gone
+
+The postmaster forked the startup process to replay WAL before
+it let connections in. With no WAL (step 12), all it did was
+call `StartupXLOG()`, which gave the transaction counters their
+first values, and exit.
+
+- **The counters get their first values with shared memory**:
+  `VarsupShmemInit()` sets `nextXid`, `nextOid`,
+  `latestCompletedXid` and the wraparound limits when it makes
+  `TransamVariables`, as `StartupXLOG()` did. That covers the
+  postmaster, a standalone backend and bootstrap, and the
+  restart after a crash, which makes shared memory anew.
+- **The postmaster opens at once**: `StartRunning()` does what
+  the startup process's clean exit did (state `PM_RUN`, "ready
+  to accept connections", `postmaster.pid`).
+- **Gone**: `postmaster/startup.c` and `startup.h`, the
+  `B_STARTUP` process type, `StartupXLOG()`; the postmaster's
+  `PM_STARTUP`, `PM_RECOVERY` and `PM_HOT_STANDBY` states and
+  the startup child's status; the connection refusals "starting
+  up" and "not accepting connections"; the three recovery
+  postmaster signals; the `log_startup_progress_interval`
+  setting and its timeout; `storage/file/reinit.c`, which reset
+  unlogged relations after a crash and had no caller.
+- The postmaster forks nothing now but the syslogger, and that
+  only with `logging_collector`.
+
+## Step 18: xlog.c is gone
+
+What steps 9 and 17 left of the write-ahead log manager was
+the control record, made in memory for one run, and the
+message at shutdown.
+
+- **The mock authentication nonce is `auth-scram.c`'s**: the
+  postmaster, or a standalone backend, makes it once with
+  `scram_init_mock_nonce()` before any session starts, and a
+  session copies it (SHARED).
+- **`DataChecksumsEnabled()` is an inline `false`** in
+  `bufpage.h`: digres makes no data checksums.
+- **"shutting down"** is logged by the postmaster itself, and
+  by a callback in `postinit.c` for a standalone backend.
+- **Gone**: `access/transam/xlog.c`, `access/xlog.h`,
+  `catalog/pg_control.h`, `LocalProcessControlFile()` and the
+  control record's shared memory.
+
+## Step 19: the commit log is gone
+
+The commit log (`clog.c`, `pg_xact`) kept two bits per
+transaction, committed or aborted, in SLRU pages. sm1's status
+record is to replace it; until the heap moves to sm, its
+callers get a dummy.
+
+- **Every valid transaction id is said to have committed**:
+  `TransactionIdDidCommit()` is true for it, and
+  `TransactionIdDidAbort()` only for the invalid id. Callers
+  ask `TransactionIdIsInProgress()` first, so a running
+  transaction is still seen as running; but an aborted
+  transaction's changes are visible.
+- **Gone**: `clog.c` and `clog.h`; commit and abort no longer
+  mark anything (`TransactionIdCommitTree()`,
+  `TransactionIdAbortTree()`); the group update fields of
+  PGPROC; the `transaction_buffers` setting; the `XactBuffer`
+  and `XactSLRU` lock tranches; the `pg_xact` directory.
+- **Left**: `pg_xact_status()` and its `oldestClogXid`, which
+  now answer from the dummy; the "transaction" row of
+  `pg_stat_slru`, always 0.

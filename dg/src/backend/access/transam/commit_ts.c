@@ -543,7 +543,7 @@ static int ZeroCommitTsPage(int64 pageno) {
 
 /*
  * This must be called ONCE during postmaster or standalone-backend startup,
- * after StartupXLOG has initialized TransamVariables->nextXid.
+ * after VarsupShmemInit has initialized TransamVariables->nextXid.
  */
 void StartupCommitTs(void) { ActivateCommitTs(); }
 

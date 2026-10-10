@@ -98,8 +98,6 @@ Section: ClassName - WaitEventIPC
 APPEND_READY	"Waiting for subplan nodes of an <literal>Append</literal> plan node to be ready."
 BACKEND_TERMINATION	"Waiting for the termination of another backend."
 BACKUP_WAIT_WAL_ARCHIVE	"Waiting for WAL files required for a backup to be successfully archived."
-BGWORKER_SHUTDOWN	"Waiting for background worker to shut down."
-BGWORKER_STARTUP	"Waiting for background worker to start up."
 BUFFER_IO	"Waiting for buffer I/O to complete."
 LOGICAL_APPLY_SEND_DATA	"Waiting for a logical replication leader apply process to send data to a parallel apply process."
 LOGICAL_PARALLEL_APPLY_STATE_CHANGE	"Waiting for a logical replication parallel apply process to change state."
@@ -252,7 +250,6 @@ SerializableXactHash	"Waiting to read or update information about serializable t
 SerializableFinishedList	"Waiting to access the list of finished serializable transactions."
 SerializablePredicateList	"Waiting to access the list of predicate locks held by serializable transactions."
 SyncRep	"Waiting to read or update information about the state of synchronous replication."
-BackgroundWorker	"Waiting to read or update background worker state."
 DynamicSharedMemoryControl	"Waiting to read or update dynamic shared memory allocation information."
 AutoFile	"Waiting to update the <filename>postgresql.auto.conf</filename> file."
 ReplicationSlotAllocation	"Waiting to allocate or free a replication slot."
@@ -277,7 +274,6 @@ SerialControl	"Waiting to read or update shared <filename>pg_serial</filename> s
 # lwlocknames.h.  Other LWLocks must be listed in the section below.
 #
 
-XactBuffer	"Waiting for I/O on a transaction status SLRU buffer."
 CommitTsBuffer	"Waiting for I/O on a commit timestamp SLRU buffer."
 SubtransBuffer	"Waiting for I/O on a sub-transaction SLRU buffer."
 MultiXactOffsetBuffer	"Waiting for I/O on a multixact offset SLRU buffer."
@@ -304,7 +300,6 @@ MultiXactMemberSLRU	"Waiting to access the multixact member SLRU cache."
 NotifySLRU	"Waiting to access the <command>NOTIFY</command> message SLRU cache."
 SerialSLRU	"Waiting to access the serializable transaction conflict SLRU cache."
 SubtransSLRU	"Waiting to access the sub-transaction SLRU cache."
-XactSLRU	"Waiting to access the transaction status SLRU cache."
 
 # No "ABI_compatibility" region here as WaitEventLWLock has its own C code.
 

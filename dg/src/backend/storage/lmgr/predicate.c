@@ -191,7 +191,6 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "port/pg_lfind.h"

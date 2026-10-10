@@ -2307,10 +2307,6 @@ void TerminateOtherDBBackends(Oid databaseId) {
      * - Accept terminating autovacuum workers, since DROP DATABASE
      * without FORCE terminates them.
      *
-     * - Accept terminating bgworkers.  For bgworker authors, it's
-     * convenient to be able to recommend FORCE if a worker is blocking
-     * DROP DATABASE unexpectedly.
-     *
      * Unlike pg_terminate_backend, we don't raise some warnings - like
      * "PID %d is not a PostgreSQL server process", because for us already
      * finished session is not a problem.
