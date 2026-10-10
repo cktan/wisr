@@ -41,6 +41,27 @@ for sql in test/*.sql; do
     > "build/test/$name.threads.out" 2>&1
   check "$name" "$name.threads"
 done
+# Verify that a FATAL ends its session's thread, not the process.
+# 1. Run select_error.sql in 8 threads with exit_on_error set, which
+#    makes its ERROR a FATAL in every session.
+# 2. Confirm each session reported the FATAL, and nothing else was
+#    reported.
+# 3. Confirm the process lived to print what the sessions printed before
+#    it, all the same, and exited with their code, 1.
+if [ "$1" != "--accept" ]; then
+  $digres --parse --run -c exit_on_error=on --threads 8 \
+    < test/select_error.sql > build/test/fatal.out 2> build/test/fatal.err
+  code=$?
+  if [ $code != 1 ] ||
+      [ "$(grep -c 'FATAL:  division by zero' build/test/fatal.err)" != 8 ] ||
+      [ "$(grep -vc 'FATAL:  division by zero' build/test/fatal.err)" != 0 ] ||
+      ! grep -q '"42"' build/test/fatal.out ||
+      grep -q "printed otherwise" build/test/fatal.out; then
+    echo "fatal: FAILED (build/test/fatal.out, fatal.err)"
+    failed=1
+  fi
+fi
+
 if [ "$1" = "--accept" ]; then
   echo "run: accepted $count files as expected"
 elif [ $failed = 0 ]; then

@@ -92,7 +92,7 @@ extern bool WaitEventSetCanReportClosed(void);
 
 #ifndef WIN32
 extern void WakeupMyProc(void);
-extern void WakeupOtherProc(int pid);
+extern void WakeupOtherProc(int pid, int tid);
 #endif
 
 #endif /* WAITEVENTSET_H */

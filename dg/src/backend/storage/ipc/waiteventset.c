@@ -1808,11 +1808,16 @@ void WakeupMyProc(void) {
   if (waiting)
     sendSelfPipeByte();
 #else
+  /* To this thread: a signal to the process may wake another. */
   if (waiting)
-    kill(MyProcPid, SIGURG);
+    tgkill(MyProcPid, gettid(), SIGURG);
 #endif
 }
 
-/* Similar to WakeupMyProc, but wake up another process */
-void WakeupOtherProc(int pid) { kill(pid, SIGURG); }
+/*
+ * Similar to WakeupMyProc, but wake up another thread: of another process,
+ * or of this one. A thread's signalfd reads only the signals sent to it and
+ * those sent to its process, so the signal goes to the thread.
+ */
+void WakeupOtherProc(int pid, int tid) { tgkill(pid, tid, SIGURG); }
 #endif

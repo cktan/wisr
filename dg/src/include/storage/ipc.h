@@ -65,6 +65,15 @@ typedef void (*shmem_startup_hook_type)(void);
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool proc_exit_inprogress;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool shmem_exit_inprogress;
 
+/*
+ * What proc_exit() throws in a session's thread, when proc_exit_throws is
+ * set: the session ends, and the thread with it, not the process.
+ */
+struct proc_exit_t {
+  int code;
+};
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool proc_exit_throws;
+
 pg_noreturn extern void proc_exit(int code);
 extern void shmem_exit(int code);
 extern void on_proc_exit(pg_on_exit_callback function, Datum arg);

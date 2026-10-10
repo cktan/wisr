@@ -49,6 +49,9 @@ thread_local /*LOCAL*/ bool shmem_exit_inprogress = false;
  */
 static thread_local /*LOCAL*/ bool atexit_callback_setup = false;
 
+/* Set in a session's thread: proc_exit() throws, and does not exit. */
+thread_local /*LOCAL*/ bool proc_exit_throws = false;
+
 /* local functions */
 static void proc_exit_prepare(int code);
 
@@ -103,6 +106,10 @@ void proc_exit(int code) {
 
   /* Clean up everything that must be cleaned up */
   proc_exit_prepare(code);
+
+  /* A session's thread ends, not the process (session_thread.c). */
+  if (proc_exit_throws)
+    throw proc_exit_t{code};
 
 #ifdef PROFILE_PID_DIR
   {
@@ -305,7 +312,8 @@ void on_proc_exit(pg_on_exit_callback function, Datum arg) {
 
   ++on_proc_exit_index;
 
-  if (!atexit_callback_setup) {
+  /* A thread's callbacks are run when it ends, not at exit. */
+  if (!atexit_callback_setup && !proc_exit_throws) {
     atexit(atexit_callback);
     atexit_callback_setup = true;
   }
@@ -329,7 +337,8 @@ void before_shmem_exit(pg_on_exit_callback function, Datum arg) {
 
   ++before_shmem_exit_index;
 
-  if (!atexit_callback_setup) {
+  /* A thread's callbacks are run when it ends, not at exit. */
+  if (!atexit_callback_setup && !proc_exit_throws) {
     atexit(atexit_callback);
     atexit_callback_setup = true;
   }
@@ -353,7 +362,8 @@ void on_shmem_exit(pg_on_exit_callback function, Datum arg) {
 
   ++on_shmem_exit_index;
 
-  if (!atexit_callback_setup) {
+  /* A thread's callbacks are run when it ends, not at exit. */
+  if (!atexit_callback_setup && !proc_exit_throws) {
     atexit(atexit_callback);
     atexit_callback_setup = true;
   }

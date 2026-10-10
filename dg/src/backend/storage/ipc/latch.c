@@ -60,6 +60,7 @@ void InitLatch(Latch *latch) {
   latch->is_set = false;
   latch->maybe_sleeping = false;
   latch->owner_pid = MyProcPid;
+  latch->owner_tid = gettid();
   latch->is_shared = false;
 
 #ifdef WIN32
@@ -103,6 +104,7 @@ void InitSharedLatch(Latch *latch) {
   latch->is_set = false;
   latch->maybe_sleeping = false;
   latch->owner_pid = 0;
+  latch->owner_tid = 0;
   latch->is_shared = true;
 }
 
@@ -126,6 +128,7 @@ void OwnLatch(Latch *latch) {
     elog(PANIC, "latch already owned by PID %d", owner_pid);
 
   latch->owner_pid = MyProcPid;
+  latch->owner_tid = gettid();
 }
 
 /*
@@ -136,6 +139,7 @@ void DisownLatch(Latch *latch) {
   Assert(latch->owner_pid == MyProcPid);
 
   latch->owner_pid = 0;
+  latch->owner_tid = 0;
 }
 
 /*
@@ -263,6 +267,7 @@ int WaitLatchOrSocket(Latch *latch, int wakeEvents, pgsocket sock, long timeout,
 void SetLatch(Latch *latch) {
 #ifndef WIN32
   pid_t owner_pid;
+  pid_t owner_tid;
 #else
   HANDLE handle;
 #endif
@@ -309,12 +314,13 @@ void SetLatch(Latch *latch) {
    * that happen before they enter the loop.
    */
   owner_pid = latch->owner_pid;
+  owner_tid = latch->owner_tid;
   if (owner_pid == 0)
     return;
-  else if (owner_pid == MyProcPid)
+  else if (owner_pid == MyProcPid && owner_tid == gettid())
     WakeupMyProc();
   else
-    WakeupOtherProc(owner_pid);
+    WakeupOtherProc(owner_pid, owner_tid);
 
 #else
 

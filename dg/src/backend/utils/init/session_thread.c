@@ -11,6 +11,11 @@
  * memory contexts first; nothing of the parent's private memory is
  * copied.
  *
+ * A session ends where a process would exit: proc_exit() runs the
+ * thread's exit callbacks and throws, and the thread's top catches it.
+ * The thread's result is the exit code. A session that returns ends the
+ * same way, with code 0.
+ *
  * IDENTIFICATION
  *	  src/backend/utils/init/session_thread.c
  *
@@ -22,6 +27,7 @@
 
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
+#include "storage/ipc.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/session_thread.h"
@@ -40,6 +46,7 @@ static void *session_thread_main(void *p) {
   session_start_t start = *(session_start_t *)p;
 
   free(p);
+  proc_exit_throws = true;
   MyProcPid = getpid();
   /* Errors and allocations need the memory contexts, so they come first. */
   MemoryContextInit();
@@ -57,13 +64,19 @@ static void *session_thread_main(void *p) {
   }
   free(start.settings);
 
-  start.fn(start.arg);
-  return NULL;
+  /* A session that returns ends as one that exits: its callbacks run. */
+  try {
+    start.fn(start.arg);
+    proc_exit(0);
+  } catch (const proc_exit_t &e) {
+    return (void *)(intptr_t)e.code;
+  }
 }
 
 /*
  * Start a thread that runs fn(arg) as a session, given what this thread
- * has set that it needs. fn must catch its own errors.
+ * has set that it needs. fn must catch its own errors. Joined, the thread
+ * gives the session's exit code: 0 if fn returned.
  */
 pthread_t session_thread_start(void (*fn)(void *), void *arg) {
   session_start_t *start = (session_start_t *)malloc(sizeof(*start));

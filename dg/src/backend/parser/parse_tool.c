@@ -15,11 +15,14 @@
  *                                            PlannedStmt, or the error
  *   digres --parse --run < file.sql        each statement run, and its
  *                                            rows printed
+ *   digres --parse ... -c NAME=VALUE       the same with a setting set,
+ *                                            as the server's -c sets it
  *   digres --parse ... --threads N         the same in N threads at
  *                                            once, each a session; what
  *                                            the first printed, and a
  *                                            line for each that printed
- *                                            otherwise
+ *                                            otherwise; the status is a
+ *                                            session's that failed
  *
  * This runs raw_parser() with no server around it. A tree is printed
  * as nodeToString() writes it, and an error as its message, position,
@@ -185,7 +188,12 @@ static int run_threads(const tool_session_t *proto, int n) {
     threads[i] = session_thread_start(run_session, &s[i]);
   }
   for (int i = 0; i < n; i++) {
-    pthread_join(threads[i], NULL);
+    void *code;
+
+    /* A session that ended by FATAL gives its exit code, not a status. */
+    pthread_join(threads[i], &code);
+    if (code != NULL)
+      s[i].status = (int)(intptr_t)code;
     fclose(s[i].out);
   }
 
@@ -214,13 +222,22 @@ int parse_tool_main(int argc, char **argv) {
   s.analyze = argc > 2 && strcmp(argv[2], "--analyze") == 0;
   s.plan = argc > 2 && strcmp(argv[2], "--plan") == 0;
   s.run = argc > 2 && strcmp(argv[2], "--run") == 0;
-  for (int i = 2; i + 1 < argc; i++)
-    if (strcmp(argv[i], "--threads") == 0)
-      threads = atoi(argv[i + 1]);
-
   /* The settings come first: a session's user is one, and each thread
    * is given this thread's. */
   InitializeGUCOptions();
+
+  for (int i = 2; i + 1 < argc; i++) {
+    if (strcmp(argv[i], "--threads") == 0)
+      threads = atoi(argv[i + 1]);
+    else if (strcmp(argv[i], "-c") == 0) {
+      char *name, *value;
+
+      ParseLongOption(argv[i + 1], &name, &value);
+      if (value == NULL)
+        elog(FATAL, "-c %s: no value given", name);
+      SetConfigOption(name, value, PGC_POSTMASTER, PGC_S_ARGV);
+    }
+  }
 
   s.sql = read_stdin();
   if (threads > 0)

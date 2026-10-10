@@ -114,6 +114,7 @@ typedef struct Latch {
   sig_atomic_t maybe_sleeping;
   bool is_shared;
   int owner_pid;
+  int owner_tid; /* the owner's thread: one process has many sessions */
 #ifdef WIN32
   HANDLE event;
 #endif
