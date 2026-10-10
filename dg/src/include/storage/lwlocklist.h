@@ -54,7 +54,7 @@ PG_LWLOCK(20, BtreeVacuum)
 PG_LWLOCK(21, AddinShmemInit)
 /* 22 was AutovacuumLock */
 /* 23 was AutovacuumScheduleLock */
-PG_LWLOCK(24, SyncScan)
+/* 24 was SyncScan */
 PG_LWLOCK(25, RelationMapping)
 /* 26 was NotifySLRULock */
 PG_LWLOCK(27, NotifyQueue)

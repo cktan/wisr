@@ -4,9 +4,9 @@
  *	  support routines for BERNOULLI tablesample method
  *
  * To ensure repeatability of samples, it is necessary that selection of a
- * given tuple be history-independent; otherwise syncscanning would break
- * repeatability, to say nothing of logically-irrelevant maintenance such
- * as physical extension or shortening of the relation.
+ * given tuple be history-independent; otherwise logically-irrelevant
+ * maintenance such as physical extension or shortening of the relation
+ * would break repeatability.
  *
  * To achieve that, we proceed by hashing each candidate TID together with
  * the active seed, and then selecting it if the hash is less than the

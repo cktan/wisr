@@ -37,7 +37,6 @@
 #include "access/hio.h"
 #include "access/multixact.h"
 #include "access/subtrans.h"
-#include "access/syncscan.h"
 #include "access/valid.h"
 #include "access/visibilitymap.h"
 #include "catalog/pg_database.h"
@@ -284,7 +283,6 @@ static BlockNumber bitmapheap_stream_read_next(ReadStream *pgsr,
  */
 static void initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock) {
   bool allow_strat;
-  bool allow_sync;
 
   /*
    * Determine the number of blocks we have to scan.
@@ -301,19 +299,14 @@ static void initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock) {
 
   /*
    * If the table is large relative to NBuffers, use a bulk-read access
-   * strategy and enable synchronized scanning (see syncscan.c).  Although
-   * the thresholds for these features could be different, we make them the
-   * same so that there are only two behaviors to tune rather than four.
-   * (However, some callers need to be able to disable one or both of these
-   * behaviors, independently of the size of the table; also there is a GUC
-   * variable that can disable synchronized scanning.)
+   * strategy.  (However, some callers need to be able to disable it,
+   * independently of the size of the table.)
    */
   if (!RelationUsesLocalBuffers(scan->rs_base.rs_rd) &&
-      scan->rs_nblocks > NBuffers / 4) {
+      scan->rs_nblocks > NBuffers / 4)
     allow_strat = (scan->rs_base.rs_flags & SO_ALLOW_STRAT) != 0;
-    allow_sync = (scan->rs_base.rs_flags & SO_ALLOW_SYNC) != 0;
-  } else
-    allow_strat = allow_sync = false;
+  else
+    allow_strat = false;
 
   if (allow_strat) {
     /* During a rescan, keep the previous strategy object. */
@@ -325,24 +318,12 @@ static void initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock) {
     scan->rs_strategy = NULL;
   }
 
-  if (keep_startblock) {
-    /*
-     * When rescanning, we want to keep the previous startblock setting,
-     * so that rewinding a cursor doesn't generate surprising results.
-     * Reset the active syncscan setting, though.
-     */
-    if (allow_sync && synchronize_seqscans)
-      scan->rs_base.rs_flags |= SO_ALLOW_SYNC;
-    else
-      scan->rs_base.rs_flags &= ~SO_ALLOW_SYNC;
-  } else if (allow_sync && synchronize_seqscans) {
-    scan->rs_base.rs_flags |= SO_ALLOW_SYNC;
-    scan->rs_startblock =
-        ss_get_location(scan->rs_base.rs_rd, scan->rs_nblocks);
-  } else {
-    scan->rs_base.rs_flags &= ~SO_ALLOW_SYNC;
+  /*
+   * When rescanning, we want to keep the previous startblock setting, so
+   * that rewinding a cursor doesn't generate surprising results.
+   */
+  if (!keep_startblock)
     scan->rs_startblock = 0;
-  }
 
   scan->rs_numblocks = InvalidBlockNumber;
   scan->rs_inited = false;
@@ -389,9 +370,6 @@ void heap_setscanlimits(TableScanDesc sscan, BlockNumber startBlk,
   HeapScanDesc scan = (HeapScanDesc)sscan;
 
   Assert(!scan->rs_inited); /* else too late to change */
-  /* else rs_startblock is significant */
-  Assert(!(scan->rs_base.rs_flags & SO_ALLOW_SYNC));
-
   /* Check startBlk is valid (but allow case of zero blocks...) */
   Assert(startBlk == 0 || startBlk < scan->rs_nblocks);
 
@@ -589,14 +567,6 @@ static pg_noinline BlockNumber heapgettup_initial_block(HeapScanDesc scan,
     return scan->rs_startblock;
   } else {
     /*
-     * Disable reporting to syncscan logic in a backwards scan; it's not
-     * very likely anyone else is doing the same thing at the same time,
-     * and much more likely that we'll just bollix things for forward
-     * scanners.
-     */
-    scan->rs_base.rs_flags &= ~SO_ALLOW_SYNC;
-
-    /*
      * Start from last page of the scan.  Ensure we take into account
      * rs_numblocks if it's been adjusted by heap_setscanlimits().
      */
@@ -698,21 +668,6 @@ static inline BlockNumber heapgettup_advance_block(HeapScanDesc scan,
     /* wrap back to the start of the heap */
     if (block >= scan->rs_nblocks)
       block = 0;
-
-    /*
-     * Report our new scan position for synchronization purposes. We don't
-     * do that when moving backwards, however. That would just mess up any
-     * other forward-moving scanners.
-     *
-     * Note: we do this before checking for end of scan so that the final
-     * state of the position hint is back at the start of the rel.  That's
-     * not strictly necessary, but otherwise when you run the same query
-     * multiple times the starting position would shift a little bit
-     * backwards on every invocation, which is confusing. We don't
-     * guarantee any specific ordering in general, though.
-     */
-    if (scan->rs_base.rs_flags & SO_ALLOW_SYNC)
-      ss_report_location(scan->rs_base.rs_rd, block);
 
     /* we're done if we're back at where we started */
     if (block == scan->rs_startblock)
@@ -1041,11 +996,6 @@ TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
    */
   if (scan->rs_base.rs_flags & SO_TYPE_SEQSCAN ||
       scan->rs_base.rs_flags & SO_TYPE_TIDRANGESCAN) {
-    /* ---
-     * It is safe to use batchmode as the only lock taken by the
-     * callback, SyncScanLock, is never taken while waiting for IO.
-     * ---
-     */
     scan->rs_read_stream = read_stream_begin_relation(
         READ_STREAM_SEQUENTIAL, scan->rs_strategy, scan->rs_base.rs_rd,
         MAIN_FORKNUM, heap_scan_stream_read_next_serial, scan, 0);
@@ -1060,7 +1010,7 @@ TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
 }
 
 void heap_rescan(TableScanDesc sscan, ScanKey key, bool set_params,
-                 bool allow_strat, bool allow_sync, bool allow_pagemode) {
+                 bool allow_strat, bool allow_pagemode) {
   HeapScanDesc scan = (HeapScanDesc)sscan;
 
   if (set_params) {
@@ -1068,11 +1018,6 @@ void heap_rescan(TableScanDesc sscan, ScanKey key, bool set_params,
       scan->rs_base.rs_flags |= SO_ALLOW_STRAT;
     else
       scan->rs_base.rs_flags &= ~SO_ALLOW_STRAT;
-
-    if (allow_sync)
-      scan->rs_base.rs_flags |= SO_ALLOW_SYNC;
-    else
-      scan->rs_base.rs_flags &= ~SO_ALLOW_SYNC;
 
     if (allow_pagemode && scan->rs_base.rs_snapshot &&
         IsMVCCSnapshot(scan->rs_base.rs_snapshot))

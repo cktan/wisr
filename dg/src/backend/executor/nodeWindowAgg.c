@@ -2627,8 +2627,7 @@ static WindowStatePerAggData *initialize_peragg(WindowAggState *winstate,
    * We also don't risk using moving aggregates when there are subplans in
    * the arguments or FILTER clause.  This is partly because
    * contain_volatile_functions() doesn't look inside subplans; but there
-   * are other reasons why a subplan's output might be volatile.  For
-   * example, syncscan mode can render the results nonrepeatable.
+   * are other reasons why a subplan's output might be volatile.
    */
   if (!OidIsValid(aggform->aggminvtransfn))
     use_ma_code = false; /* sine qua non */

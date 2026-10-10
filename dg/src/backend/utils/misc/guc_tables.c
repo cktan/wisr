@@ -85,10 +85,6 @@
 #include "utils/rls.h"
 #include "utils/xml.h"
 
-#ifdef TRACE_SYNCSCAN
-#include "access/syncscan.h"
-#endif
-
 /* This value is normally passed in from the Makefile */
 #ifndef PG_KRB_SRVTAB
 #define PG_KRB_SRVTAB ""
@@ -1373,18 +1369,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-#ifdef TRACE_SYNCSCAN
-    /* this is undocumented because not exposed in a standard build */
-    {{"trace_syncscan", PGC_USERSET, DEVELOPER_OPTIONS,
-      gettext_noop("Generate debugging output for synchronized scanning."),
-      NULL, GUC_NOT_IN_SAMPLE},
-     &trace_syncscan,
-     false,
-     NULL,
-     NULL,
-     NULL},
-#endif
-
 #ifdef DEBUG_BOUNDED_SORT
     /* this is undocumented because not exposed in a standard build */
     {{"optimize_bounded_sort", PGC_USERSET, QUERY_TUNING_METHOD,
@@ -1450,14 +1434,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
       gettext_noop("Causes '...' strings to treat backslashes literally."),
       NULL, GUC_REPORT},
      &standard_conforming_strings,
-     true,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"synchronize_seqscans", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
-      gettext_noop("Enables synchronized sequential scans."), NULL},
-     &synchronize_seqscans,
      true,
      NULL,
      NULL,

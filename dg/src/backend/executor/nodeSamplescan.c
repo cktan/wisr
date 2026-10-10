@@ -205,7 +205,6 @@ static void tablesample_init(SampleScanState *scanstate) {
   Datum datum;
   bool isnull;
   uint32 seed;
-  bool allow_sync;
   int i;
   ListCell *arg;
 
@@ -255,18 +254,14 @@ static void tablesample_init(SampleScanState *scanstate) {
   /* Let tablesample method do its thing */
   tsm->BeginSampleScan(scanstate, params, list_length(scanstate->args), seed);
 
-  /* We'll use syncscan if there's no NextSampleBlock function */
-  allow_sync = (tsm->NextSampleBlock == NULL);
-
   /* Now we can create or reset the HeapScanDesc */
   if (scanstate->ss.ss_currentScanDesc == NULL) {
     scanstate->ss.ss_currentScanDesc = table_beginscan_sampling(
         scanstate->ss.ss_currentRelation, scanstate->ss.ps.state->es_snapshot,
-        0, NULL, scanstate->use_bulkread, allow_sync, scanstate->use_pagemode);
+        0, NULL, scanstate->use_bulkread, scanstate->use_pagemode);
   } else {
     table_rescan_set_params(scanstate->ss.ss_currentScanDesc, NULL,
-                            scanstate->use_bulkread, allow_sync,
-                            scanstate->use_pagemode);
+                            scanstate->use_bulkread, scanstate->use_pagemode);
   }
 
   pfree(params);

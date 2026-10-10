@@ -22,7 +22,6 @@
 
 #include <math.h>
 
-#include "access/syncscan.h"
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "optimizer/optimizer.h"
@@ -49,7 +48,6 @@
 /* GUC variables */
 thread_local /*LOCAL*/ char *default_table_access_method =
     DEFAULT_TABLE_ACCESS_METHOD;
-thread_local /*LOCAL*/ bool synchronize_seqscans = true;
 
 /* ----------------------------------------------------------------------------
  * Slot functions.
@@ -104,8 +102,8 @@ TupleTableSlot *table_slot_create(Relation relation, List **reglist) {
 
 TableScanDesc table_beginscan_catalog(Relation relation, int nkeys,
                                       struct ScanKeyData *key) {
-  uint32 flags = SO_TYPE_SEQSCAN | SO_ALLOW_STRAT | SO_ALLOW_SYNC |
-                 SO_ALLOW_PAGEMODE | SO_TEMP_SNAPSHOT;
+  uint32 flags =
+      SO_TYPE_SEQSCAN | SO_ALLOW_STRAT | SO_ALLOW_PAGEMODE | SO_TEMP_SNAPSHOT;
   Oid relid = RelationGetRelid(relation);
   Snapshot snapshot = RegisterSnapshot(GetCatalogSnapshot(relid));
 

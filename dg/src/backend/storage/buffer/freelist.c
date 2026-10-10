@@ -405,9 +405,6 @@ BufferAccessStrategy GetAccessStrategy(BufferAccessStrategyType btype) {
 
   /*
    * Select ring size to use.  See buffer/README for rationales.
-   *
-   * Note: if you change the ring size for BAS_BULKREAD, see also
-   * SYNC_SCAN_REPORT_INTERVAL in access/heap/syncscan.c.
    */
   switch (btype) {
   case BAS_NORMAL:
@@ -423,9 +420,6 @@ BufferAccessStrategy GetAccessStrategy(BufferAccessStrategyType btype) {
      * of the strategy and that buffer being reused. Otherwise the
      * user's pin will prevent reuse of the buffer, even without
      * concurrent activity.
-     *
-     * We also need to ensure the ring always is large enough for
-     * SYNC_SCAN_REPORT_INTERVAL, as noted above.
      *
      * Thus we start out a minimal size and increase the size
      * further if appropriate.

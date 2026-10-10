@@ -24,7 +24,6 @@
 #include "access/heaptoast.h"
 #include "access/multixact.h"
 #include "access/rewriteheap.h"
-#include "access/syncscan.h"
 #include "access/tableam.h"
 #include "access/tsmapi.h"
 #include "access/visibilitymap.h"
@@ -1058,7 +1057,7 @@ static bool heapam_scan_analyze_next_tuple(TableScanDesc scan,
 
 static double heapam_index_build_range_scan(
     Relation heapRelation, Relation indexRelation, IndexInfo *indexInfo,
-    bool allow_sync, bool anyvisible, bool progress, BlockNumber start_blockno,
+    bool anyvisible, bool progress, BlockNumber start_blockno,
     BlockNumber numblocks, IndexBuildCallback callback, void *callback_state) {
   TableScanDesc scan;
   HeapScanDesc hscan;
@@ -1138,8 +1137,7 @@ static double heapam_index_build_range_scan(
                                snapshot,     /* snapshot */
                                0,            /* number of keys */
                                NULL,         /* scan key */
-                               true,         /* buffer access strategy OK */
-                               allow_sync);  /* syncscan OK? */
+                               true);        /* buffer access strategy OK */
 
   hscan = (HeapScanDesc)scan;
 
@@ -1162,13 +1160,7 @@ static double heapam_index_build_range_scan(
   }
 
   /* set our scan endpoints */
-  if (!allow_sync)
-    heap_setscanlimits(scan, start_blockno, numblocks);
-  else {
-    /* syncscan can only be requested on whole relation */
-    Assert(start_blockno == 0);
-    Assert(numblocks == InvalidBlockNumber);
-  }
+  heap_setscanlimits(scan, start_blockno, numblocks);
 
   reltuples = 0;
 
@@ -1589,16 +1581,14 @@ static void heapam_index_validate_scan(Relation heapRelation,
 
   /*
    * Prepare for scan of the base relation.  We need just those tuples
-   * satisfying the passed-in reference snapshot.  We must disable syncscan
-   * here, because it's critical that we read from block zero forward to
-   * match the sorted TIDs.
+   * satisfying the passed-in reference snapshot.  It's critical that we read
+   * from block zero forward to match the sorted TIDs.
    */
   scan = table_beginscan_strat(heapRelation, /* relation */
                                snapshot,     /* snapshot */
                                0,            /* number of keys */
                                NULL,         /* scan key */
-                               true,         /* buffer access strategy OK */
-                               false);       /* syncscan not OK */
+                               true);        /* buffer access strategy OK */
   hscan = (HeapScanDesc)scan;
 
   pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_TOTAL, hscan->rs_nblocks);
@@ -1936,19 +1926,6 @@ static bool heapam_scan_sample_next_block(TableScanDesc scan,
         /* wrap to beginning of rel, might not have started at 0 */
         blockno = 0;
       }
-
-      /*
-       * Report our new scan position for synchronization purposes.
-       *
-       * Note: we do this before checking for end of scan so that the
-       * final state of the position hint is back at the start of the
-       * rel.  That's not strictly necessary, but otherwise when you run
-       * the same query multiple times the starting position would shift
-       * a little bit backwards on every invocation, which is confusing.
-       * We don't guarantee any specific ordering in general, though.
-       */
-      if (scan->rs_flags & SO_ALLOW_SYNC)
-        ss_report_location(scan->rs_rd, blockno);
 
       if (blockno == hscan->rs_startblock) {
         blockno = InvalidBlockNumber;

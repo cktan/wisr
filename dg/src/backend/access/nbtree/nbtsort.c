@@ -252,7 +252,7 @@ static double _bt_spools_heapscan(Relation heap, Relation index,
   }
 
   /* Fill spool by scanning the heap */
-  reltuples = table_index_build_scan(heap, index, indexInfo, true, true,
+  reltuples = table_index_build_scan(heap, index, indexInfo, true,
                                      _bt_build_callback, buildstate);
 
   /*

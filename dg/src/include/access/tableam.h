@@ -30,7 +30,6 @@
 
 /* GUCs */
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *default_table_access_method;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool synchronize_seqscans;
 
 
 struct BulkInsertStateData;
@@ -55,8 +54,6 @@ typedef enum ScanOptions
 	/* several of SO_ALLOW_* may be specified */
 	/* allow or disallow use of access strategy */
 	SO_ALLOW_STRAT = 1 << 6,
-	/* report location to syncscan logic? */
-	SO_ALLOW_SYNC = 1 << 7,
 	/* verify visibility page-at-a-time? */
 	SO_ALLOW_PAGEMODE = 1 << 8,
 
@@ -336,7 +333,7 @@ typedef struct TableAmRoutine
 	 */
 	void		(*scan_rescan) (TableScanDesc scan, struct ScanKeyData *key,
 								bool set_params, bool allow_strat,
-								bool allow_sync, bool allow_pagemode);
+								bool allow_pagemode);
 
 	/*
 	 * Return next tuple from `scan`, store in slot.
@@ -638,7 +635,6 @@ typedef struct TableAmRoutine
 	double		(*index_build_range_scan) (Relation table_rel,
 										   Relation index_rel,
 										   struct IndexInfo *index_info,
-										   bool allow_sync,
 										   bool anyvisible,
 										   bool progress,
 										   BlockNumber start_blockno,
@@ -822,7 +818,7 @@ table_beginscan(Relation rel, Snapshot snapshot,
 				int nkeys, struct ScanKeyData *key)
 {
 	uint32		flags = SO_TYPE_SEQSCAN |
-		SO_ALLOW_STRAT | SO_ALLOW_SYNC | SO_ALLOW_PAGEMODE;
+		SO_ALLOW_STRAT | SO_ALLOW_PAGEMODE;
 
 	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, flags);
 }
@@ -837,21 +833,17 @@ extern TableScanDesc table_beginscan_catalog(Relation relation, int nkeys,
 /*
  * Like table_beginscan(), but table_beginscan_strat() offers an extended API
  * that lets the caller control whether a nondefault buffer access strategy
- * can be used, and whether syncscan can be chosen (possibly resulting in the
- * scan not starting from block zero).  Both of these default to true with
- * plain table_beginscan.
+ * can be used.  It defaults to true with plain table_beginscan.
  */
 static inline TableScanDesc
 table_beginscan_strat(Relation rel, Snapshot snapshot,
 					  int nkeys, struct ScanKeyData *key,
-					  bool allow_strat, bool allow_sync)
+					  bool allow_strat)
 {
 	uint32		flags = SO_TYPE_SEQSCAN | SO_ALLOW_PAGEMODE;
 
 	if (allow_strat)
 		flags |= SO_ALLOW_STRAT;
-	if (allow_sync)
-		flags |= SO_ALLOW_SYNC;
 
 	return rel->rd_tableam->scan_begin(rel, snapshot, nkeys, key, flags);
 }
@@ -881,15 +873,13 @@ table_beginscan_bm(Relation rel, Snapshot snapshot,
 static inline TableScanDesc
 table_beginscan_sampling(Relation rel, Snapshot snapshot,
 						 int nkeys, struct ScanKeyData *key,
-						 bool allow_strat, bool allow_sync,
+						 bool allow_strat,
 						 bool allow_pagemode)
 {
 	uint32		flags = SO_TYPE_SAMPLESCAN;
 
 	if (allow_strat)
 		flags |= SO_ALLOW_STRAT;
-	if (allow_sync)
-		flags |= SO_ALLOW_SYNC;
 	if (allow_pagemode)
 		flags |= SO_ALLOW_PAGEMODE;
 
@@ -938,23 +928,21 @@ static inline void
 table_rescan(TableScanDesc scan,
 			 struct ScanKeyData *key)
 {
-	scan->rs_rd->rd_tableam->scan_rescan(scan, key, false, false, false, false);
+	scan->rs_rd->rd_tableam->scan_rescan(scan, key, false, false, false);
 }
 
 /*
  * Restart a relation scan after changing params.
  *
- * This call allows changing the buffer strategy, syncscan, and pagemode
- * options before starting a fresh scan.  Note that although the actual use of
- * syncscan might change (effectively, enabling or disabling reporting), the
- * previously selected startblock will be kept.
+ * This call allows changing the buffer strategy and pagemode options before
+ * starting a fresh scan.  The previously selected startblock will be kept.
  */
 static inline void
 table_rescan_set_params(TableScanDesc scan, struct ScanKeyData *key,
-						bool allow_strat, bool allow_sync, bool allow_pagemode)
+						bool allow_strat, bool allow_pagemode)
 {
 	scan->rs_rd->rd_tableam->scan_rescan(scan, key, true,
-										 allow_strat, allow_sync,
+										 allow_strat,
 										 allow_pagemode);
 }
 
@@ -1018,7 +1006,7 @@ table_rescan_tidrange(TableScanDesc sscan, ItemPointer mintid,
 	/* Ensure table_beginscan_tidrange() was used. */
 	Assert((sscan->rs_flags & SO_TYPE_TIDRANGESCAN) != 0);
 
-	sscan->rs_rd->rd_tableam->scan_rescan(sscan, NULL, false, false, false, false);
+	sscan->rs_rd->rd_tableam->scan_rescan(sscan, NULL, false, false, false);
 	sscan->rs_rd->rd_tableam->scan_set_tidrange(sscan, mintid, maxtid);
 }
 
@@ -1631,7 +1619,6 @@ static inline double
 table_index_build_scan(Relation table_rel,
 					   Relation index_rel,
 					   struct IndexInfo *index_info,
-					   bool allow_sync,
 					   bool progress,
 					   IndexBuildCallback callback,
 					   void *callback_state)
@@ -1639,7 +1626,6 @@ table_index_build_scan(Relation table_rel,
 	return table_rel->rd_tableam->index_build_range_scan(table_rel,
 														 index_rel,
 														 index_info,
-														 allow_sync,
 														 false,
 														 progress,
 														 0,
@@ -1651,8 +1637,7 @@ table_index_build_scan(Relation table_rel,
 /*
  * As table_index_build_scan(), except that instead of scanning the complete
  * table, only the given number of blocks are scanned.  Scan to end-of-rel can
- * be signaled by passing InvalidBlockNumber as numblocks.  Note that
- * restricting the range to scan cannot be done when requesting syncscan.
+ * be signaled by passing InvalidBlockNumber as numblocks.
  *
  * When "anyvisible" mode is requested, all tuples visible to any transaction
  * are indexed and counted as live, including those inserted or deleted by
@@ -1662,7 +1647,6 @@ static inline double
 table_index_build_range_scan(Relation table_rel,
 							 Relation index_rel,
 							 struct IndexInfo *index_info,
-							 bool allow_sync,
 							 bool anyvisible,
 							 bool progress,
 							 BlockNumber start_blockno,
@@ -1673,7 +1657,6 @@ table_index_build_range_scan(Relation table_rel,
 	return table_rel->rd_tableam->index_build_range_scan(table_rel,
 														 index_rel,
 														 index_info,
-														 allow_sync,
 														 anyvisible,
 														 progress,
 														 start_blockno,

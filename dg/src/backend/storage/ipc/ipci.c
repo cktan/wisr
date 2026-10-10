@@ -19,7 +19,6 @@
 #include "access/multixact.h"
 #include "access/nbtree.h"
 #include "access/subtrans.h"
-#include "access/syncscan.h"
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "commands/async.h"
@@ -118,7 +117,6 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, PMSignalShmemSize());
   size = add_size(size, ProcSignalShmemSize());
   size = add_size(size, BTreeShmemSize());
-  size = add_size(size, SyncScanShmemSize());
   size = add_size(size, AsyncShmemSize());
   size = add_size(size, StatsShmemSize());
   size = add_size(size, WaitEventCustomShmemSize());
@@ -294,7 +292,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up other modules that need some shared memory space
    */
   BTreeShmemInit();
-  SyncScanShmemInit();
   AsyncShmemInit();
   StatsShmemInit();
   WaitEventCustomShmemInit();

@@ -2899,8 +2899,7 @@ static void IndexCheckExclusion(Relation heapRelation, Relation indexRelation,
                                snapshot,     /* snapshot */
                                0,            /* number of keys */
                                NULL,         /* scan key */
-                               true,         /* buffer access strategy OK */
-                               true);        /* syncscan OK */
+                               true);        /* buffer access strategy OK */
 
   while (table_scan_getnextslot(scan, ForwardScanDirection, slot)) {
     CHECK_FOR_INTERRUPTS();

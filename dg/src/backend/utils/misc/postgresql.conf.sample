@@ -828,7 +828,6 @@
 #lo_compat_privileges = off
 #quote_all_identifiers = off
 #standard_conforming_strings = on
-#synchronize_seqscans = on
 
 # - Other Platforms and Clients -
 

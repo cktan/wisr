@@ -680,3 +680,24 @@ processes went, with all that only they used.
 - The server has no child process now, but the startup process
   at start (`test/server.sh` checks for none while 8 sessions
   are open).
+
+## Step 15: synchronized scans are gone
+
+A sequential scan of a large table started where another one on
+it was, and reported its place in shared memory as it went
+(`access/common/syncscan.c`). digres does not need it: heap
+scans are to be sm's.
+
+- **A heap scan starts at block zero**, unless
+  `heap_setscanlimits()` says otherwise, and reports nothing.
+- **The plumbing went too**: the `SO_ALLOW_SYNC` scan flag, and
+  the `allow_sync` argument of `table_beginscan_strat()`,
+  `table_beginscan_sampling()`, `table_rescan_set_params()`,
+  `heap_rescan()`, the `scan_rescan` and
+  `index_build_range_scan` callbacks, and
+  `table_index_build_scan()` and its range form, with their
+  callers.
+- **Gone with it**: the `synchronize_seqscans` setting,
+  `trace_syncscan` and `TRACE_SYNCSCAN`, its shared memory, the
+  `SyncScan` lock, and the comments that explained choices by
+  it.
