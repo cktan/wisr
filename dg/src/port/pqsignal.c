@@ -133,16 +133,12 @@ void pqsignal(int signo, pqsigfunc func) {
 #ifndef FRONTEND
 
   /*
-   * A session thread's handlers are its own: a signal for it is a flag
-   * (SignalProc()), and the process's handlers stay the postmaster's.  Only
-   * SIGALRM, from the thread's own timer, comes as a signal, to the wrapper,
-   * which runs whichever thread's handler it lands in.
+   * A session thread's handlers are its own, and no signal reaches them: it
+   * blocks every signal but its faults, and is interrupted by bits
+   * (InterruptProc()).  The process's handlers stay the postmaster's.
    */
-  if (IsSessionThread) {
-    if (signo != SIGALRM)
-      return;
-    func = wrapper_handler;
-  }
+  if (IsSessionThread)
+    return;
 #endif
   if (func != SIG_IGN && func != SIG_DFL)
     func = wrapper_handler;

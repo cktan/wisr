@@ -1222,3 +1222,22 @@ yet, and nothing sends a pmsignal: its one reason,
   for SIGQUIT.
 - `server.sh` sends the server SIGUSR1 and confirms it still
   runs a statement.
+
+## Step 35: signal leftovers
+
+- **SIGUSR2 is `SIG_IGN` in the postmaster**, not a dummy
+  handler that reserved it for children: there are no child
+  processes to reserve it for. `dummy_handler()` is gone.
+- **`pqsignal()` in a session thread sets no process handler
+  at all**: it kept one exception, SIGALRM from the thread's
+  own timer, and that timer is now sys's.
+- SIGALRM stays `SIG_IGN` in the postmaster: nothing sends it,
+  and a stray one should not end the server.
+- **Left on purpose**: SIGURG in `waiteventset.c`'s self-pipe
+  and kqueue paths, which only builds without epoll compile
+  (a platform choice, not a removed module); and the
+  backend's `pqsignal()` calls for SIGPIPE, SIGUSR2, SIGFPE and
+  SIGCHLD, which a standalone backend, the main thread, still
+  takes. In a session thread they set nothing, so a session's
+  SIGFPE has no handler: it ends the server.
+- `server.sh` sends SIGUSR2 too.

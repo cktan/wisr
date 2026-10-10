@@ -324,7 +324,6 @@ static void handle_pm_shutdown_request_signal(SIGNAL_ARGS);
 static void process_pm_child_exit(void);
 static void process_pm_reload_request(void);
 static void process_pm_shutdown_request(void);
-static void dummy_handler(SIGNAL_ARGS);
 static void CleanupBackend(PMChild *bp, int exitstatus);
 static void HandleChildCrash(int pid, int exitstatus, const char *procname);
 static void LogChildExit(int lev, const char *procname, int pid,
@@ -425,7 +424,7 @@ void PostmasterMain(int argc, char *argv[]) {
   pqsignal(SIGALRM, SIG_IGN); /* ignored */
   pqsignal(SIGPIPE, SIG_IGN); /* ignored */
   pqsignal(SIGUSR1, SIG_IGN); /* ignored: no log rotation, nor pmsignals */
-  pqsignal(SIGUSR2, dummy_handler); /* unused, reserve for children */
+  pqsignal(SIGUSR2, SIG_IGN); /* ignored */
 
   /* The wake fd, which the signal handlers' SetLatch() writes. */
   InitializeWaitEventSupport();
@@ -2315,17 +2314,6 @@ static void ExitPostmaster(int status) {
 
   proc_exit(status);
 }
-
-/*
- * Dummy signal handler
- *
- * We use this for signals that we don't actually use in the postmaster,
- * but we do use in backends.  If we were to SIG_IGN such signals in the
- * postmaster, then a newly started backend might drop a signal that arrives
- * before it's able to reconfigure its signal processing.  (See notes in
- * tcop/postgres.c.)
- */
-static void dummy_handler(SIGNAL_ARGS) {}
 
 /*
  * Count up number of child processes of specified types.

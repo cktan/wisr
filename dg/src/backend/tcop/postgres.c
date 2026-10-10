@@ -3736,19 +3736,11 @@ void PostgresMain(const char *dbname, const char *username) {
   Assert(GetProcessingMode() == InitProcessing);
 
   /*
-   * Set up signal handlers.  (InitPostmasterChild or InitStandaloneProcess
-   * has already set up BlockSig and made that the active signal mask.)
-   *
-   * Note that postmaster blocked all signals before forking child process,
-   * so there is no race condition whereby we might receive a signal before
-   * we have set up the handler.
-   *
-   * Also note: it's best not to use any signals that are SIG_IGNored in the
-   * postmaster.  If such a signal arrives before we are able to change the
-   * handler to non-SIG_IGN, it'll get dropped.  Instead, make a dummy
-   * handler in the postmaster to reserve the signal. (Of course, this isn't
-   * an issue for signals that are locally generated, such as SIGALRM and
-   * SIGPIPE.)
+   * Set up the handlers of the interrupt bits, and of the signals a
+   * standalone backend takes.  (InitPostmasterChild or InitStandaloneProcess
+   * has already set up BlockSig and made that the active signal mask.)  A
+   * session thread takes no signal: an interrupt delivered before its
+   * handler is set is dropped, as such a signal was.
    */
   {
     SetInterruptHandler(INTERRUPT_RELOAD, SignalHandlerForConfigReload);

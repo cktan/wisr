@@ -185,13 +185,15 @@ PY
 grep -q "canceling authentication due to timeout" "$work/log" ||
   fail "auth timeout message"
 
-# Verify that SIGUSR1 is ignored: there is no log rotation, nor pmsignal.
-# 1. Send the server SIGUSR1.
+# Verify that SIGUSR1 and SIGUSR2 are ignored: there is no log rotation, nor
+# pmsignal, and no child to reserve SIGUSR2 for.
+# 1. Send the server SIGUSR1 and SIGUSR2.
 # 2. Confirm it still runs a statement.
 kill -USR1 $server
+kill -USR2 $server
 sleep 0.2
 [ "$(local_psql -c 'select 2 + 2' 2> "$work/usr1.err")" = 4 ] ||
-  fail "SIGUSR1 ignored"
+  fail "SIGUSR1 and SIGUSR2 ignored"
 
 # Verify that the server stops when asked, with no process lost on the way,
 # and ends a session left open: the postmaster's SIGTERM reaches it as a flag
