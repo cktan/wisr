@@ -15,7 +15,6 @@
 #define BUFMGR_H
 
 #include "port/pg_iovec.h"
-#include "storage/aio_types.h"
 #include "storage/block.h"
 #include "storage/buf.h"
 #include "storage/bufpage.h"
@@ -109,8 +108,6 @@ typedef struct BufferManagerRelation {
 #define READ_BUFFERS_ISSUE_ADVICE (1 << 1)
 /* Don't treat page as invalid due to checksum failures. */
 #define READ_BUFFERS_IGNORE_CHECKSUM_FAILURES (1 << 2)
-/* IO will immediately be waited for */
-#define READ_BUFFERS_SYNCHRONOUSLY (1 << 3)
 
 struct ReadBuffersOperation {
   /* The following members should be set by the caller. */
@@ -130,8 +127,6 @@ struct ReadBuffersOperation {
   int flags;
   int16 nblocks;
   int16 nblocks_done;
-  PgAioWaitRef io_wref;
-  PgAioReturn io_return;
 };
 
 typedef struct ReadBuffersOperation ReadBuffersOperation;
@@ -166,9 +161,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int io_max_combine_limit;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int checkpoint_flush_after;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int backend_flush_after;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int bgwriter_flush_after;
-
-extern PGDLLIMPORT const PgAioHandleCallbacks aio_shared_buffer_readv_cb;
-extern PGDLLIMPORT const PgAioHandleCallbacks aio_local_buffer_readv_cb;
 
 /* in buf_init.c */
 extern thread_local /*SHARED*/ PGDLLIMPORT char *BufferBlocks;

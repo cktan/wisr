@@ -189,7 +189,7 @@ typedef struct PgStat_TableXactStatus {
  * ------------------------------------------------------------
  */
 
-#define PGSTAT_FILE_FORMAT_ID	0x01A5BCB9
+#define PGSTAT_FILE_FORMAT_ID	0x01A5BCBA
 
 /* ---------
  * PgStat_BgWriterStats			Background Writer statistics

@@ -3015,13 +3015,7 @@ void ProcessInterrupts(void) {
                       errmsg("terminating background worker \"%s\" due to "
                              "administrator command",
                              MyBgworkerEntry->bgw_type)));
-    else if (AmIoWorkerProcess()) {
-      ereport(DEBUG1,
-              (errmsg_internal(
-                  "io worker shutting down due to administrator command")));
-
-      proc_exit(0);
-    } else
+    else
       ereport(FATAL,
               (errcode(ERRCODE_ADMIN_SHUTDOWN),
                errmsg("terminating connection due to administrator command")));

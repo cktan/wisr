@@ -539,7 +539,7 @@ BufferAccessStrategy GetAccessStrategy(BufferAccessStrategyType btype) {
      * want to start up to effective_io_concurrency IOs.
      *
      * Note that effective_io_concurrency may be 0, which disables
-     * AIO.
+     * read-ahead.
      */
     ring_size_kb +=
         (BLCKSZ / 1024) * io_combine_limit * effective_io_concurrency;

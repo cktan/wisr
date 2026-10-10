@@ -27,7 +27,6 @@
 #include "pgstat.h"
 #include "postmaster/bgworker_internals.h"
 #include "postmaster/bgwriter.h"
-#include "storage/aio_subsys.h"
 #include "storage/bufmgr.h"
 #include "storage/dsm.h"
 #include "storage/dsm_registry.h"
@@ -126,7 +125,6 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, StatsShmemSize());
   size = add_size(size, WaitEventCustomShmemSize());
   size = add_size(size, InjectionPointShmemSize());
-  size = add_size(size, AioShmemSize());
 
   /* include additional requested shmem from preload libraries */
   size = add_size(size, total_addin_request);
@@ -304,7 +302,6 @@ static void CreateOrAttachShmemStructs(void) {
   StatsShmemInit();
   WaitEventCustomShmemInit();
   InjectionPointShmemInit();
-  AioShmemInit();
 }
 
 /*

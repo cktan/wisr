@@ -195,8 +195,7 @@ typedef struct SISeg {
 /*
  * We reserve a slot for each possible ProcNumber, plus one for each
  * possible auxiliary process type.  (This scheme assumes there is not
- * more than one of any auxiliary process type at a time, except for
- * IO workers.)
+ * more than one of any auxiliary process type at a time.)
  */
 #define NumProcStateSlots	(MaxBackends + NUM_AUXILIARY_PROCS)
 

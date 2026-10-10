@@ -165,7 +165,6 @@ static constexpr auto BuiltinTrancheNames = [] {
   a[LWTRANCHE_SERIAL_SLRU] = "SerialSLRU";
   a[LWTRANCHE_SUBTRANS_SLRU] = "SubtransSLRU";
   a[LWTRANCHE_XACT_SLRU] = "XactSLRU";
-  a[LWTRANCHE_AIO_URING_COMPLETION] = "AioUringCompletion";
   return a;
 }();
 

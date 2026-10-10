@@ -1047,13 +1047,12 @@ TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot, int nkeys,
      * ---
      */
     scan->rs_read_stream = read_stream_begin_relation(
-        READ_STREAM_SEQUENTIAL | READ_STREAM_USE_BATCHING, scan->rs_strategy,
-        scan->rs_base.rs_rd, MAIN_FORKNUM, heap_scan_stream_read_next_serial,
-        scan, 0);
+        READ_STREAM_SEQUENTIAL, scan->rs_strategy, scan->rs_base.rs_rd,
+        MAIN_FORKNUM, heap_scan_stream_read_next_serial, scan, 0);
   } else if (scan->rs_base.rs_flags & SO_TYPE_BITMAPSCAN) {
     scan->rs_read_stream = read_stream_begin_relation(
-        READ_STREAM_DEFAULT | READ_STREAM_USE_BATCHING, scan->rs_strategy,
-        scan->rs_base.rs_rd, MAIN_FORKNUM, bitmapheap_stream_read_next, scan,
+        READ_STREAM_DEFAULT, scan->rs_strategy, scan->rs_base.rs_rd,
+        MAIN_FORKNUM, bitmapheap_stream_read_next, scan,
         sizeof(TBMIterateResult));
   }
 

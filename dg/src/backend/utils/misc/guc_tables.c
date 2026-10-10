@@ -62,12 +62,10 @@
 #include "postmaster/postmaster.h"
 #include "postmaster/startup.h"
 #include "postmaster/syslogger.h"
-#include "storage/aio.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 #include "storage/copydir.h"
 #include "storage/fd.h"
-#include "storage/io_worker.h"
 #include "storage/large_object.h"
 #include "storage/pg_shmem.h"
 #include "storage/predicate.h"
@@ -2466,37 +2464,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      assign_io_combine_limit,
      NULL},
 
-    {{
-         "io_max_concurrency",
-         PGC_POSTMASTER,
-         RESOURCES_IO,
-         gettext_noop(
-             "Max number of IOs that one process can execute simultaneously."),
-         NULL,
-     },
-     &io_max_concurrency,
-     -1,
-     -1,
-     1024,
-     check_io_max_concurrency,
-     NULL,
-     NULL},
-
-    {{
-         "io_workers",
-         PGC_SIGHUP,
-         RESOURCES_IO,
-         gettext_noop("Number of IO worker processes, for io_method=worker."),
-         NULL,
-     },
-     &io_workers,
-     3,
-     1,
-     MAX_IO_WORKERS,
-     NULL,
-     NULL,
-     NULL},
-
     {{"backend_flush_after", PGC_USERSET, RESOURCES_IO,
       gettext_noop("Number of pages after which previously performed writes "
                    "are flushed to disk."),
@@ -3930,15 +3897,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      recovery_init_sync_method_options,
      NULL,
      NULL,
-     NULL},
-
-    {{"io_method", PGC_POSTMASTER, RESOURCES_IO,
-      gettext_noop("Selects the method for executing asynchronous I/O."), NULL},
-     &io_method,
-     DEFAULT_IO_METHOD,
-     io_method_options,
-     NULL,
-     assign_io_method,
      NULL},
 
     /* End-of-list marker */

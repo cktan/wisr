@@ -65,14 +65,13 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/backend/storage/aio/read_stream.c
+ *	  src/backend/storage/buffer/read_stream.c
  *
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
 
 #include "miscadmin.h"
-#include "storage/aio.h"
 #include "storage/fd.h"
 #include "storage/smgr.h"
 #include "storage/read_stream.h"
@@ -99,8 +98,6 @@ struct ReadStream {
   int16 distance;
   int16 initialized_buffers;
   int read_buffers_flags;
-  bool sync_mode;  /* using io_method=sync */
-  bool batch_mode; /* READ_STREAM_USE_BATCHING */
   bool advice_enabled;
   bool temporary;
 
@@ -404,15 +401,6 @@ static bool read_stream_start_pending_read(ReadStream *stream) {
 }
 
 static void read_stream_look_ahead(ReadStream *stream) {
-  /*
-   * Allow amortizing the cost of submitting IO over multiple IOs. This
-   * requires that we don't do any operations that could lead to a deadlock
-   * with staged-but-unsubmitted IO. The callback needs to opt-in to being
-   * careful.
-   */
-  if (stream->batch_mode)
-    pgaio_enter_batchmode();
-
   while (stream->ios_in_progress < stream->max_ios &&
          stream->pinned_buffers + stream->pending_read_nblocks <
              stream->distance) {
@@ -456,8 +444,6 @@ static void read_stream_look_ahead(ReadStream *stream) {
           stream->ios_in_progress == stream->max_ios) {
         /* We've hit the buffer or I/O limit.  Rewind and stop here. */
         read_stream_unget_block(stream, blocknum);
-        if (stream->batch_mode)
-          pgaio_exit_batchmode();
         return;
       }
     }
@@ -492,9 +478,6 @@ static void read_stream_look_ahead(ReadStream *stream) {
    * time.
    */
   Assert(stream->pinned_buffers > 0 || stream->distance == 0);
-
-  if (stream->batch_mode)
-    pgaio_exit_batchmode();
 }
 
 /*
@@ -625,31 +608,25 @@ static ReadStream *read_stream_begin_impl(
   if (per_buffer_data_size > 0)
     stream->per_buffer_data = (void *)MAXALIGN(&stream->ios[Max(1, max_ios)]);
 
-  stream->sync_mode = io_method == IOMETHOD_SYNC;
-  stream->batch_mode = flags & READ_STREAM_USE_BATCHING;
-
 #ifdef USE_PREFETCH
 
   /*
    * Read-ahead advice simulating asynchronous I/O with synchronous calls.
-   * Issue advice only if AIO is not used, direct I/O isn't enabled, the
-   * caller hasn't promised sequential access (overriding our detection
-   * heuristics), and max_ios hasn't been set to zero.
+   * Issue advice only if direct I/O isn't enabled, the caller hasn't
+   * promised sequential access (overriding our detection heuristics), and
+   * max_ios hasn't been set to zero.
    */
-  if (stream->sync_mode && (io_direct_flags & IO_DIRECT_DATA) == 0 &&
+  if ((io_direct_flags & IO_DIRECT_DATA) == 0 &&
       (flags & READ_STREAM_SEQUENTIAL) == 0 && max_ios > 0)
     stream->advice_enabled = true;
 #endif
 
   /*
-   * Setting max_ios to zero disables AIO and advice-based pseudo AIO, but
-   * we still need to allocate space to combine and run one I/O.  Bump it up
-   * to one, and remember to ask for synchronous I/O only.
+   * Setting max_ios to zero disables advice, but we still need to allocate
+   * space to combine and run one I/O.  Bump it up to one.
    */
-  if (max_ios == 0) {
+  if (max_ios == 0)
     max_ios = 1;
-    stream->read_buffers_flags = READ_BUFFERS_SYNCHRONOUSLY;
-  }
 
   /*
    * Capture stable values for these two GUC-derived numbers for the

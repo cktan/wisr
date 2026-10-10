@@ -37,7 +37,6 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/postmaster.h"
-#include "storage/aio_subsys.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
@@ -370,12 +369,6 @@ void BaseInit(void) {
    * can).
    */
   pgstat_initialize();
-
-  /*
-   * Initialize AIO before infrastructure that might need to actually
-   * execute AIO.
-   */
-  pgaio_init_backend();
 
   /* Do local initialization of storage and buffer managers */
   InitSync();

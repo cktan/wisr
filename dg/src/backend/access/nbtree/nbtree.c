@@ -674,8 +674,8 @@ static void btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
    * locks.
    */
   stream = read_stream_begin_relation(
-      READ_STREAM_MAINTENANCE | READ_STREAM_FULL | READ_STREAM_USE_BATCHING,
-      info->strategy, rel, MAIN_FORKNUM, block_range_read_stream_cb, &p, 0);
+      READ_STREAM_MAINTENANCE | READ_STREAM_FULL, info->strategy, rel,
+      MAIN_FORKNUM, block_range_read_stream_cb, &p, 0);
   for (;;) {
     /* Get the current relation length */
     if (needLock)

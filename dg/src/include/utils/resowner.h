@@ -164,11 +164,4 @@ extern void ResourceOwnerRememberLock(ResourceOwner owner,
 extern void ResourceOwnerForgetLock(ResourceOwner owner,
                                     struct LOCALLOCK *locallock);
 
-/* special support for AIO */
-struct dlist_node;
-extern void ResourceOwnerRememberAioHandle(ResourceOwner owner,
-                                           struct dlist_node *ioh_node);
-extern void ResourceOwnerForgetAioHandle(ResourceOwner owner,
-                                         struct dlist_node *ioh_node);
-
 #endif /* RESOWNER_H */
