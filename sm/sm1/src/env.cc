@@ -176,8 +176,12 @@ int recover_dbs(sm1::env_t *env) {
     return set_status_error(it->status(), "scan root db");
   }
   for (const auto &[name, dbid] : dbs) {
-    // Open the database with the defaults: this is its recovery.
-    db_t *db = db_open(env_db_path(env, dbid), name.c_str(), nullptr);
+    std::string path = env_db_path(env, dbid);
+    log_msg(sm1::loglevel_t::info, "recovering database {} in {}", name.c_str(),
+            path.c_str());
+    // Open the database with the defaults: this is its recovery,
+    // done when db_open returns (WAL replay, then §9.1 steps 2-6).
+    db_t *db = db_open(path, name.c_str(), nullptr);
     // Fail the attach: a database that cannot recover.
     if (!db) {
       return -1;

@@ -383,6 +383,7 @@ has them.
 | `warn` | a `CF:txn` sweep was abandoned rather than delete records still needed |
 | `warn` | one snapshot has held back garbage collection for over 60 seconds; once per snapshot |
 | `info` | `sm1::attach` destroyed an unnamed database directory |
+| `info` | `sm1::attach` is about to recover a database, naming it and its directory |
 | `info` | recovery restored a prepared transaction in doubt, or dropped an orphaned column family |
 | `info` | a `CF:txn` sweep deleted status records |
 

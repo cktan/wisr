@@ -8,6 +8,7 @@
 #include "util.h"
 
 #include "db.h"
+#include "env.h"
 #include "session.h"
 #include "sm1.h"
 #include "version.h"
@@ -40,6 +41,21 @@ public:
       n += m.first == level && m.second.find(needle) != std::string::npos;
     }
     return n;
+  }
+
+  /*
+   * The position of the first message at level containing needle,
+   * or SIZE_MAX if there is none.
+   */
+  size_t index_of(sm1::loglevel_t level, const std::string &needle) {
+    std::lock_guard<std::mutex> guard(m_mu);
+    for (size_t i = 0; i < m_msgs.size(); i++) {
+      if (m_msgs[i].first == level &&
+          m_msgs[i].second.find(needle) != std::string::npos) {
+        return i;
+      }
+    }
+    return SIZE_MAX;
   }
 
   /* Every message so far, for failure output. */
@@ -165,6 +181,36 @@ TEST_CASE("recovery reports restored transactions and dropped orphans") {
       cap.count(sm1::loglevel_t::info, "store." + std::to_string(orphan)) == 1,
       cap.all());
   REQUIRE(sm1::abort_prepared(v, "g-log") == 0);
+  sm1::closedb(v);
+}
+
+TEST_CASE("attach logs each database before recovering it") {
+  // Verify attach announces a database, then recovers it, then returns.
+  // 1. Prepare "g-order" in "db", and detach.
+  // 2. Attach: an INFO message names "db" as being recovered.
+  // 3. It precedes the recovery's own message restoring "g-order",
+  //    and both are logged by the time attach returns.
+  // 4. No database is left open: a session's opendb reopens it.
+  log_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, f.store(), "k", "v");
+  REQUIRE(sm1::prepare(s, "g-order") == 0);
+
+  log_capture_t cap;
+  f.home().detach();
+  f.home().attach();
+  size_t announced =
+      cap.index_of(sm1::loglevel_t::info, "recovering database db");
+  size_t restored = cap.index_of(sm1::loglevel_t::info, "g-order");
+  REQUIRE_MESSAGE(announced != SIZE_MAX, cap.all());
+  REQUIRE_MESSAGE(restored != SIZE_MAX, cap.all());
+  CHECK_MESSAGE(announced < restored, cap.all());
+  CHECK(f.home().env()->dbs.empty());
+
+  sm1::session_t *v = f.open();
+  CHECK(f.home().env()->dbs.size() == 1);
+  REQUIRE(sm1::abort_prepared(v, "g-order") == 0);
   sm1::closedb(v);
 }
 
