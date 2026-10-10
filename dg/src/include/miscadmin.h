@@ -100,8 +100,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
     ProcSignalBarrierPending;
 extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
     LogMemoryContextPending;
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
-    IdleStatsUpdateTimeoutPending;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
     CheckClientConnectionPending;

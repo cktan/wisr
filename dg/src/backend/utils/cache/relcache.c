@@ -72,7 +72,6 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
-#include "pgstat.h"
 #include "rewrite/rewriteDefine.h"
 #include "rewrite/rowsecurity.h"
 #include "storage/fd.h"
@@ -2237,8 +2236,6 @@ static void RelationDestroyRelation(Relation relation, bool remember_tupdesc) {
    */
   RelationCloseSmgr(relation);
 
-  /* break mutual link with stats entry */
-  pgstat_unlink_relation(relation);
 
   /*
    * Free all the subsidiary data structures of the relcache entry, then the
@@ -2532,9 +2529,6 @@ static void RelationRebuildRelation(Relation relation) {
       SWAPFIELD(RowSecurityDesc *, rd_rsdesc);
     /* toast OID override must be preserved */
     SWAPFIELD(Oid, rd_toastoid);
-    /* pgstat_info / enabled must be preserved */
-    SWAPFIELD(struct PgStat_TableStatus *, pgstat_info);
-    SWAPFIELD(bool, pgstat_enabled);
     /* preserve old partition key if we have one */
     if (keep_partkey) {
       SWAPFIELD(PartitionKey, rd_partkey);
@@ -5976,7 +5970,6 @@ static bool load_relcache_init_file(bool shared) {
     rel->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
     rel->rd_droppedSubid = InvalidSubTransactionId;
     rel->rd_amcache = NULL;
-    rel->pgstat_info = NULL;
 
     /*
      * Recompute lock and physical addressing info.  This is needed in

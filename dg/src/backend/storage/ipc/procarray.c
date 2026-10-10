@@ -40,7 +40,6 @@
 #include "catalog/pg_authid.h"
 #include "commands/dbcommands.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "port/pg_lfind.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -657,7 +656,6 @@ static void ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid) {
     int extraWaits = 0;
 
     /* Sleep until the leader clears our XID. */
-    pgstat_report_wait_start(WAIT_EVENT_PROCARRAY_GROUP_UPDATE);
     for (;;) {
       /* acts as a read barrier */
       PGSemaphoreLock(proc->sem);
@@ -665,7 +663,6 @@ static void ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid) {
         break;
       extraWaits++;
     }
-    pgstat_report_wait_end();
 
     Assert(pg_atomic_read_u32(&proc->procArrayGroupNext) ==
            INVALID_PROC_NUMBER);

@@ -60,8 +60,8 @@
 #include "executor/executor.h"
 #include "executor/nodeAppend.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/latch.h"
+#include "utils/wait_event.h"
 
 #define INVALID_SUBPLAN_INDEX		-1
 #define EVENT_BUFFER_SIZE			16

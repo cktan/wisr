@@ -99,9 +99,6 @@ typedef struct SlruSharedData {
    * the latest page.
    */
   pg_atomic_uint64 latest_page_number;
-
-  /* SLRU's index for statistics purposes (might not be unique) */
-  int slru_stats_idx;
 } SlruSharedData;
 
 typedef SlruSharedData *SlruShared;

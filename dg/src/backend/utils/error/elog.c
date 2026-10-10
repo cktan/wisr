@@ -73,7 +73,6 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "nodes/miscnodes.h"
-#include "pgstat.h"
 #include "postmaster/postmaster.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
@@ -526,13 +525,6 @@ void errfinish(const char *filename, int lineno, const char *funcname) {
      * in an on_proc_exit or on_shmem_exit callback instead.
      */
     fflush(NULL);
-
-    /*
-     * Let the cumulative stats system know. Only mark the session as
-     * terminated by fatal error if there is no other known cause.
-     */
-    if (pgStatSessionEndCause == DISCONNECT_NORMAL)
-      pgStatSessionEndCause = DISCONNECT_FATAL;
 
     /*
      * Do normal process-exit cleanup, then return exit code 1 to indicate
@@ -2870,12 +2862,6 @@ void log_status_format(StringInfo buf, const char *format, ErrorData *edata) {
                          unpack_sql_state(edata->sqlerrcode));
       else
         appendStringInfoString(buf, unpack_sql_state(edata->sqlerrcode));
-      break;
-    case 'Q':
-      if (padding != 0)
-        appendStringInfo(buf, "%*" PRId64, padding, pgstat_get_my_query_id());
-      else
-        appendStringInfo(buf, "%" PRId64, pgstat_get_my_query_id());
       break;
     default:
       /* format error - ignore it */

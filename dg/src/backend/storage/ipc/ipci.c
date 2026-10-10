@@ -22,7 +22,6 @@
 #include "access/twophase.h"
 #include "commands/async.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "storage/dsm.h"
 #include "storage/dsm_registry.h"
@@ -143,7 +142,6 @@ static void CreateOrAttachShmemStructs(void) {
   if (!IsUnderPostmaster)
     InitProcGlobal();
   ProcArrayShmemInit();
-  BackendStatusShmemInit();
   TwoPhaseShmemInit();
 
   /*
@@ -162,8 +160,6 @@ static void CreateOrAttachShmemStructs(void) {
    */
   BTreeShmemInit();
   AsyncShmemInit();
-  StatsShmemInit();
-  WaitEventCustomShmemInit();
   InjectionPointShmemInit();
 }
 

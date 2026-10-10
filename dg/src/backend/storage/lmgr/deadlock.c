@@ -27,7 +27,6 @@
 
 #include "miscadmin.h"
 #include "pg_trace.h"
-#include "pgstat.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/procnumber.h"
@@ -934,13 +933,11 @@ static void PrintLockQueue(LOCK *lock, const char *info) {
  * Report a detected deadlock, with available details.
  */
 void DeadLockReport(void) {
-  StringInfoData clientbuf; /* errdetail for client */
-  StringInfoData logbuf;    /* errdetail for server log */
+  StringInfoData clientbuf; /* errdetail */
   StringInfoData locktagbuf;
   int i;
 
   initStringInfo(&clientbuf);
-  initStringInfo(&logbuf);
   initStringInfo(&locktagbuf);
 
   /* Generate the "waits for" lines sent to the client */
@@ -969,26 +966,9 @@ void DeadLockReport(void) {
         locktagbuf.data, nextpid);
   }
 
-  /* Duplicate all the above for the server ... */
-  appendBinaryStringInfo(&logbuf, clientbuf.data, clientbuf.len);
-
-  /* ... and add info about query strings */
-  for (i = 0; i < nDeadlockDetails; i++) {
-    DEADLOCK_INFO *info = &deadlockDetails[i];
-
-    appendStringInfoChar(&logbuf, '\n');
-
-    appendStringInfo(&logbuf, _("Process %d: %s"), info->pid,
-                     pgstat_get_backend_current_activity(info->pid, false));
-  }
-
-  pgstat_report_deadlock();
-
   ereport(ERROR,
           (errcode(ERRCODE_T_R_DEADLOCK_DETECTED), errmsg("deadlock detected"),
-           errdetail_internal("%s", clientbuf.data),
-           errdetail_log("%s", logbuf.data),
-           errhint("See server log for query details.")));
+           errdetail_internal("%s", clientbuf.data)));
 }
 
 /*

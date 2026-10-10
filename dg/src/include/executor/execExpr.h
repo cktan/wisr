@@ -120,8 +120,6 @@ typedef enum ExprEvalOp {
   EEOP_FUNCEXPR_STRICT,
   EEOP_FUNCEXPR_STRICT_1,
   EEOP_FUNCEXPR_STRICT_2,
-  EEOP_FUNCEXPR_FUSAGE,
-  EEOP_FUNCEXPR_STRICT_FUSAGE,
 
   /*
    * Evaluate boolean AND expression, one step per subexpression. FIRST/LAST
@@ -792,10 +790,6 @@ extern void CheckExprStillValid(ExprState *state, ExprContext *econtext);
  * execExprInterp.c, because that allows them to be used by other methods of
  * expression evaluation, reducing code duplication.
  */
-extern void ExecEvalFuncExprFusage(ExprState *state, ExprEvalStep *op,
-                                   ExprContext *econtext);
-extern void ExecEvalFuncExprStrictFusage(ExprState *state, ExprEvalStep *op,
-                                         ExprContext *econtext);
 extern void ExecEvalParamExec(ExprState *state, ExprEvalStep *op,
                               ExprContext *econtext);
 extern void ExecEvalParamSet(ExprState *state, ExprEvalStep *op,

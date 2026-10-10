@@ -56,7 +56,6 @@
 #include "optimizer/planmain.h"
 #include "parser/parse_expr.h"
 #include "parser/parser.h"
-#include "pgstat.h"
 #include "postmaster/postmaster.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
@@ -198,25 +197,6 @@ static const struct config_enum_entry syslog_facility_options[] = {
     {"none", 0, false},
 #endif
     {NULL, 0}};
-
-static const struct config_enum_entry track_function_options[] = {
-    {"none", TRACK_FUNC_OFF, false},
-    {"pl", TRACK_FUNC_PL, false},
-    {"all", TRACK_FUNC_ALL, false},
-    {NULL, 0, false}};
-
-StaticAssertDecl(lengthof(track_function_options) == (TRACK_FUNC_ALL + 2),
-                 "array length mismatch");
-
-static const struct config_enum_entry stats_fetch_consistency[] = {
-    {"none", PGSTAT_FETCH_CONSISTENCY_NONE, false},
-    {"cache", PGSTAT_FETCH_CONSISTENCY_CACHE, false},
-    {"snapshot", PGSTAT_FETCH_CONSISTENCY_SNAPSHOT, false},
-    {NULL, 0, false}};
-
-StaticAssertDecl(lengthof(stats_fetch_consistency) ==
-                     (PGSTAT_FETCH_CONSISTENCY_SNAPSHOT + 2),
-                 "array length mismatch");
 
 static const struct config_enum_entry xmlbinary_options[] = {
     {"base64", XMLBINARY_BASE64, false},
@@ -1066,31 +1046,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL},
 #endif
 
-    {{"track_activities", PGC_SUSET, STATS_CUMULATIVE,
-      gettext_noop("Collects information about executing commands."),
-      gettext_noop("Enables the collection of information on the currently "
-                   "executing command of each session, along with "
-                   "the time at which that command began execution.")},
-     &pgstat_track_activities,
-     true,
-     NULL,
-     NULL,
-     NULL},
-    {{"track_counts", PGC_SUSET, STATS_CUMULATIVE,
-      gettext_noop("Collects statistics on database activity."), NULL},
-     &pgstat_track_counts,
-     true,
-     NULL,
-     NULL,
-     NULL},
-    {{"track_cost_delay_timing", PGC_SUSET, STATS_CUMULATIVE,
-      gettext_noop("Collects timing statistics for cost-based vacuum delay."),
-      NULL},
-     &track_cost_delay_timing,
-     false,
-     NULL,
-     NULL,
-     NULL},
     {{"track_io_timing", PGC_SUSET, STATS_CUMULATIVE,
       gettext_noop("Collects timing statistics for database I/O activity."),
       NULL},
@@ -2388,18 +2343,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"track_activity_query_size", PGC_POSTMASTER, STATS_CUMULATIVE,
-      gettext_noop(
-          "Sets the size reserved for pg_stat_activity.query, in bytes."),
-      NULL, GUC_UNIT_BYTE},
-     &pgstat_track_activity_query_size,
-     1024,
-     100,
-     1048576,
-     NULL,
-     NULL,
-     NULL},
-
     {{"tcp_user_timeout", PGC_USERSET, CONN_AUTH_TCP,
       gettext_noop("TCP user timeout."),
       gettext_noop("0 means use the system default."), GUC_UNIT_MS},
@@ -3373,26 +3316,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      session_replication_role_options,
      NULL,
      assign_session_replication_role,
-     NULL},
-
-    {{"track_functions", PGC_SUSET, STATS_CUMULATIVE,
-      gettext_noop("Collects function-level statistics on database activity."),
-      NULL},
-     &pgstat_track_functions,
-     TRACK_FUNC_OFF,
-     track_function_options,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"stats_fetch_consistency", PGC_USERSET, STATS_CUMULATIVE,
-      gettext_noop("Sets the consistency of accesses to statistics data."),
-      NULL},
-     &pgstat_fetch_consistency,
-     PGSTAT_FETCH_CONSISTENCY_CACHE,
-     stats_fetch_consistency,
-     NULL,
-     assign_stats_fetch_consistency,
      NULL},
 
     {{"dynamic_shared_memory_type", PGC_POSTMASTER, RESOURCES_MEM,

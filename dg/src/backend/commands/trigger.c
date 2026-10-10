@@ -42,7 +42,6 @@
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
 #include "partitioning/partdesc.h"
-#include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "storage/lmgr.h"
@@ -2060,7 +2059,6 @@ static HeapTuple ExecCallTriggerFunc(TriggerData *trigdata, int tgindx,
                                      FmgrInfo *finfo, Instrumentation *instr,
                                      MemoryContext per_tuple_context) {
   LOCAL_FCINFO(fcinfo, 0);
-  PgStat_FunctionCallUsage fcusage;
   Datum result;
   MemoryContext oldContext;
 
@@ -2107,16 +2105,12 @@ static HeapTuple ExecCallTriggerFunc(TriggerData *trigdata, int tgindx,
   InitFunctionCallInfoData(*fcinfo, finfo, 0, InvalidOid, (Node *)trigdata,
                            NULL);
 
-  pgstat_init_function_usage(fcinfo, &fcusage);
-
   MyTriggerDepth++;
   PG_TRY();
   { result = FunctionCallInvoke(fcinfo); }
   PG_FINALLY();
   { MyTriggerDepth--; }
   PG_END_TRY();
-
-  pgstat_end_function_usage(&fcusage, true);
 
   MemoryContextSwitchTo(oldContext);
 

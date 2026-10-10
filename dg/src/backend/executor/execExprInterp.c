@@ -65,7 +65,6 @@
 #include "miscadmin.h"
 #include "nodes/miscnodes.h"
 #include "nodes/nodeFuncs.h"
-#include "pgstat.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
@@ -466,8 +465,6 @@ static Datum ExecInterpExpr(ExprState *state, ExprContext *econtext,
       &&CASE_EEOP_FUNCEXPR_STRICT,
       &&CASE_EEOP_FUNCEXPR_STRICT_1,
       &&CASE_EEOP_FUNCEXPR_STRICT_2,
-      &&CASE_EEOP_FUNCEXPR_FUSAGE,
-      &&CASE_EEOP_FUNCEXPR_STRICT_FUSAGE,
       &&CASE_EEOP_BOOL_AND_STEP_FIRST,
       &&CASE_EEOP_BOOL_AND_STEP,
       &&CASE_EEOP_BOOL_AND_STEP_LAST,
@@ -937,20 +934,6 @@ static Datum ExecInterpExpr(ExprState *state, ExprContext *econtext,
         *op->resvalue = d;
         *op->resnull = fcinfo->isnull;
       }
-
-      EEO_NEXT();
-    }
-
-    EEO_CASE(EEOP_FUNCEXPR_FUSAGE) {
-      /* not common enough to inline */
-      ExecEvalFuncExprFusage(state, op, econtext);
-
-      EEO_NEXT();
-    }
-
-    EEO_CASE(EEOP_FUNCEXPR_STRICT_FUSAGE) {
-      /* not common enough to inline */
-      ExecEvalFuncExprStrictFusage(state, op, econtext);
 
       EEO_NEXT();
     }
@@ -2695,55 +2678,6 @@ ExprEvalOp ExecEvalStepOp(ExprState *state, ExprEvalStep *op) {
 /*
  * Out-of-line helper functions for complex instructions.
  */
-
-/*
- * Evaluate EEOP_FUNCEXPR_FUSAGE
- */
-void ExecEvalFuncExprFusage(ExprState *state, ExprEvalStep *op,
-                            ExprContext *econtext) {
-  FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
-  PgStat_FunctionCallUsage fcusage;
-  Datum d;
-
-  pgstat_init_function_usage(fcinfo, &fcusage);
-
-  fcinfo->isnull = false;
-  d = op->d.func.fn_addr(fcinfo);
-  *op->resvalue = d;
-  *op->resnull = fcinfo->isnull;
-
-  pgstat_end_function_usage(&fcusage, true);
-}
-
-/*
- * Evaluate EEOP_FUNCEXPR_STRICT_FUSAGE
- */
-void ExecEvalFuncExprStrictFusage(ExprState *state, ExprEvalStep *op,
-                                  ExprContext *econtext) {
-
-  FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
-  PgStat_FunctionCallUsage fcusage;
-  NullableDatum *args = fcinfo->args;
-  int nargs = op->d.func.nargs;
-  Datum d;
-
-  /* strict function, so check for NULL args */
-  for (int argno = 0; argno < nargs; argno++) {
-    if (args[argno].isnull) {
-      *op->resnull = true;
-      return;
-    }
-  }
-
-  pgstat_init_function_usage(fcinfo, &fcusage);
-
-  fcinfo->isnull = false;
-  d = op->d.func.fn_addr(fcinfo);
-  *op->resvalue = d;
-  *op->resnull = fcinfo->isnull;
-
-  pgstat_end_function_usage(&fcusage, true);
-}
 
 /*
  * Evaluate a PARAM_EXEC parameter.

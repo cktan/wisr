@@ -46,7 +46,6 @@
 #include "catalog/index.h"
 #include "catalog/pg_type.h"
 #include "nodes/execnodes.h"
-#include "pgstat.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
 #include "utils/ruleutils.h"
@@ -440,8 +439,6 @@ ItemPointer index_getnext_tid(IndexScanDesc scan, ScanDirection direction) {
   }
   Assert(ItemPointerIsValid(&scan->xs_heaptid));
 
-  pgstat_count_index_tuples(scan->indexRelation, 1);
-
   /* Return the TID of the tuple we found. */
   return &scan->xs_heaptid;
 }
@@ -471,9 +468,6 @@ bool index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot) {
   found = table_index_fetch_tuple(scan->xs_heapfetch, &scan->xs_heaptid,
                                   scan->xs_snapshot, slot,
                                   &scan->xs_heap_continue, &all_dead);
-
-  if (found)
-    pgstat_count_heap_fetch(scan->indexRelation);
 
   /*
    * If we scanned a whole HOT chain and found only dead tuples, tell index
@@ -555,8 +549,6 @@ int64 index_getbitmap(IndexScanDesc scan, TIDBitmap *bitmap) {
    * have the am's getbitmap proc do all the work.
    */
   ntids = scan->indexRelation->rd_indam->amgetbitmap(scan, bitmap);
-
-  pgstat_count_index_tuples(scan->indexRelation, ntids);
 
   return ntids;
 }

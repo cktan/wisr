@@ -78,7 +78,6 @@
 
 #include "miscadmin.h"
 #include "pg_trace.h"
-#include "pgstat.h"
 #include "port/pg_bitutils.h"
 #include "storage/proc.h"
 #include "storage/proclist.h"
@@ -213,8 +212,6 @@ thread_local /*SHARED*/ int NamedLWLockTrancheRequests = 0;
 thread_local /*SHARED*/ NamedLWLockTranche *NamedLWLockTrancheArray = NULL;
 
 static void InitializeLWLocks(void);
-static inline void LWLockReportWaitStart(LWLock *lock);
-static inline void LWLockReportWaitEnd(void);
 static const char *GetLWTrancheName(uint16 trancheId);
 
 #define T_NAME(lock) \
@@ -646,22 +643,6 @@ void LWLockInitialize(LWLock *lock, int tranche_id) {
   lock->tranche = tranche_id;
   proclist_init(&lock->waiters);
 }
-
-/*
- * Report start of wait event for light-weight locks.
- *
- * This function will be used by all the light-weight lock calls which
- * needs to wait to acquire the lock.  This function distinguishes wait
- * event based on tranche and lock id.
- */
-static inline void LWLockReportWaitStart(LWLock *lock) {
-  pgstat_report_wait_start(PG_WAIT_LWLOCK | lock->tranche);
-}
-
-/*
- * Report end of wait event for light-weight locks.
- */
-static inline void LWLockReportWaitEnd(void) { pgstat_report_wait_end(); }
 
 /*
  * Return the name of an LWLock tranche.
@@ -1170,7 +1151,6 @@ bool LWLockAcquire(LWLock *lock, LWLockMode mode) {
     lwstats->block_count++;
 #endif
 
-    LWLockReportWaitStart(lock);
     if (TRACE_POSTGRESQL_LWLOCK_WAIT_START_ENABLED())
       TRACE_POSTGRESQL_LWLOCK_WAIT_START(T_NAME(lock), mode);
 
@@ -1196,7 +1176,6 @@ bool LWLockAcquire(LWLock *lock, LWLockMode mode) {
 
     if (TRACE_POSTGRESQL_LWLOCK_WAIT_DONE_ENABLED())
       TRACE_POSTGRESQL_LWLOCK_WAIT_DONE(T_NAME(lock), mode);
-    LWLockReportWaitEnd();
 
     LOG_LWDEBUG("LWLockAcquire", lock, "awakened");
 
@@ -1326,7 +1305,6 @@ bool LWLockAcquireOrWait(LWLock *lock, LWLockMode mode) {
       lwstats->block_count++;
 #endif
 
-      LWLockReportWaitStart(lock);
       if (TRACE_POSTGRESQL_LWLOCK_WAIT_START_ENABLED())
         TRACE_POSTGRESQL_LWLOCK_WAIT_START(T_NAME(lock), mode);
 
@@ -1348,7 +1326,6 @@ bool LWLockAcquireOrWait(LWLock *lock, LWLockMode mode) {
 #endif
       if (TRACE_POSTGRESQL_LWLOCK_WAIT_DONE_ENABLED())
         TRACE_POSTGRESQL_LWLOCK_WAIT_DONE(T_NAME(lock), mode);
-      LWLockReportWaitEnd();
 
       LOG_LWDEBUG("LWLockAcquireOrWait", lock, "awakened");
     } else {
@@ -1528,7 +1505,6 @@ bool LWLockWaitForVar(LWLock *lock, pg_atomic_uint64 *valptr, uint64 oldval,
     lwstats->block_count++;
 #endif
 
-    LWLockReportWaitStart(lock);
     if (TRACE_POSTGRESQL_LWLOCK_WAIT_START_ENABLED())
       TRACE_POSTGRESQL_LWLOCK_WAIT_START(T_NAME(lock), LW_EXCLUSIVE);
 
@@ -1551,7 +1527,6 @@ bool LWLockWaitForVar(LWLock *lock, pg_atomic_uint64 *valptr, uint64 oldval,
 
     if (TRACE_POSTGRESQL_LWLOCK_WAIT_DONE_ENABLED())
       TRACE_POSTGRESQL_LWLOCK_WAIT_DONE(T_NAME(lock), LW_EXCLUSIVE);
-    LWLockReportWaitEnd();
 
     LOG_LWDEBUG("LWLockWaitForVar", lock, "awakened");
 

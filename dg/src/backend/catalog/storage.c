@@ -23,7 +23,6 @@
 #include "access/xact.h"
 #include "catalog/storage.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/bufpage.h"
 #include "storage/bulk_write.h"
 #include "storage/freespace.h"
@@ -386,12 +385,6 @@ void RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
     if (ignore_checksum_failure)
       piv_flags |= PIV_IGNORE_CHECKSUM_FAILURE;
     verified = PageIsVerified((Page)buf, blkno, piv_flags, &checksum_failure);
-    if (checksum_failure) {
-      RelFileLocatorBackend rloc = src->smgr_rlocator;
-
-      pgstat_prepare_report_checksum_failure(rloc.locator.dbOid);
-      pgstat_report_checksum_failures_in_db(rloc.locator.dbOid, 1);
-    }
 
     if (!verified) {
       /*

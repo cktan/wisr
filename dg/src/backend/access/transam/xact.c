@@ -39,7 +39,6 @@
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
-#include "pgstat.h"
 #include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
@@ -862,27 +861,22 @@ static TransactionId RecordTransactionCommit(void) {
   RelFileLocator *rels;
   int nchildren;
   TransactionId *children;
-  int ndroppedstats;
-  xl_xact_stats_item *droppedstats = NULL;
 
   nrels = smgrGetPendingDeletes(true, &rels);
   nchildren = xactGetCommittedChildren(&children);
-  ndroppedstats = pgstat_get_transactional_drops(true, &droppedstats);
   if (rels)
     pfree(rels);
-  if (ndroppedstats)
-    pfree(droppedstats);
 
   if (!TransactionIdIsValid(xid)) {
     /*
      * We expect that every RelationDropStorage is followed by a catalog
      * update, and hence XID assignment, so we shouldn't get here with any
-     * pending deletes. Same is true for dropping stats.
+     * pending deletes.
      *
      * Use a real test not just an Assert to check this, since it's a bit
      * fragile.
      */
-    if (nrels != 0 || ndroppedstats != 0)
+    if (nrels != 0)
       elog(ERROR,
            "cannot commit a transaction that deleted files but has no xid");
 
@@ -1375,7 +1369,6 @@ static void StartTransaction(void) {
     xactStartTimestamp = stmtStartTimestamp;
   else
     xactStartTimestamp = GetCurrentTimestamp();
-  pgstat_report_xact_timestamp(xactStartTimestamp);
   /* Mark xactStopTimestamp as unset. */
   xactStopTimestamp = 0;
 
@@ -1592,9 +1585,7 @@ static void CommitTransaction(void) {
   AtEOXact_Files(true);
   AtEOXact_ComboCid();
   AtEOXact_HashTables(true);
-  AtEOXact_PgStat(true);
   AtEOXact_Snapshot(true, false);
-  pgstat_report_xact_timestamp(0);
 
   ResourceOwnerDelete(TopTransactionResourceOwner);
   s->curTransactionOwner = NULL;
@@ -1647,10 +1638,6 @@ static void AbortTransaction(void) {
    * while cleaning up!
    */
   LWLockReleaseAll();
-
-  /* Clear wait information and command progress indicator */
-  pgstat_report_wait_end();
-  pgstat_progress_end_command();
 
   /* Clean up buffer content locks, too */
   UnlockBuffers();
@@ -1765,8 +1752,6 @@ static void AbortTransaction(void) {
     AtEOXact_Files(false);
     AtEOXact_ComboCid();
     AtEOXact_HashTables(false);
-    AtEOXact_PgStat(false);
-    pgstat_report_xact_timestamp(0);
   }
 
   /*
@@ -3634,7 +3619,6 @@ static void CommitSubTransaction(void) {
   AtEOSubXact_Namespace(true, s->subTransactionId, s->parent->subTransactionId);
   AtEOSubXact_Files(true, s->subTransactionId, s->parent->subTransactionId);
   AtEOSubXact_HashTables(true, s->nestingLevel);
-  AtEOSubXact_PgStat(true, s->nestingLevel);
   AtSubCommit_Snapshot(s->nestingLevel);
 
   /*
@@ -3679,9 +3663,6 @@ static void AbortSubTransaction(void) {
    * Buffer locks, for example?  I don't think so but I'm not sure.
    */
   LWLockReleaseAll();
-
-  pgstat_report_wait_end();
-  pgstat_progress_end_command();
 
   UnlockBuffers();
 
@@ -3778,7 +3759,6 @@ static void AbortSubTransaction(void) {
                           s->parent->subTransactionId);
     AtEOSubXact_Files(false, s->subTransactionId, s->parent->subTransactionId);
     AtEOSubXact_HashTables(false, s->nestingLevel);
-    AtEOSubXact_PgStat(false, s->nestingLevel);
     AtSubAbort_Snapshot(s->nestingLevel);
   }
 

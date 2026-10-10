@@ -36,7 +36,6 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
@@ -46,6 +45,7 @@
 #include "storage/procsignal.h"
 #include "storage/spin.h"
 #include "utils/timeout.h"
+#include "utils/wait_event.h"
 #include "utils/timestamp.h"
 
 /* GUC variables */
@@ -433,9 +433,6 @@ void InitProcess(void) {
   Assert(MyProc->lockGroupLeader == NULL);
   Assert(dlist_is_empty(&MyProc->lockGroupMembers));
 
-  /* Initialize wait event information. */
-  MyProc->wait_event_info = 0;
-
   /* Initialize fields for group transaction status update. */
 
   /*
@@ -446,9 +443,6 @@ void InitProcess(void) {
   OwnLatch(&MyProc->procLatch);
   SwitchToSharedLatch();
   AdoptPendingSignals();
-
-  /* now that we have a proc, report wait events to shared memory */
-  pgstat_set_wait_event_storage(&MyProc->wait_event_info);
 
   /*
    * We might be reusing a semaphore that belonged to a failed process. So
@@ -611,9 +605,6 @@ void InitAuxiliaryProcess(void) {
   OwnLatch(&MyProc->procLatch);
   SwitchToSharedLatch();
   AdoptPendingSignals();
-
-  /* now that we have a proc, report wait events to shared memory */
-  pgstat_set_wait_event_storage(&MyProc->wait_event_info);
 
   /* Check that group locking fields are in a proper initial state. */
   Assert(MyProc->lockGroupLeader == NULL);
@@ -887,9 +878,6 @@ static void ProcKill(int code, Datum arg) {
     LWLockRelease(leader_lwlock);
   }
 
-  /* See comment above, close to DisownLatch() */
-  pgstat_reset_wait_event_storage();
-
   MyProc = NULL;
   MyProcNumber = INVALID_PROC_NUMBER;
   MyPendingSignals = &NoPendingSignals;
@@ -948,7 +936,6 @@ static void AuxiliaryProcKill(int code, Datum arg) {
 
   /* look at the equivalent ProcKill() code for comments */
   SwitchBackToLocalLatch();
-  pgstat_reset_wait_event_storage();
 
   proc = MyProc;
   MyProc = NULL;

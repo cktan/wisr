@@ -19,7 +19,6 @@
 #include "access/relscan.h"
 #include "access/xact.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/predicate.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -867,7 +866,6 @@ bool _bt_first(IndexScanDesc scan, ScanDirection dir) {
    * Count an indexscan for stats, now that we know that we'll call
    * _bt_search/_bt_endpoint below
    */
-  pgstat_count_index_scan(rel);
   if (scan->instrument)
     scan->instrument->nsearches++;
 

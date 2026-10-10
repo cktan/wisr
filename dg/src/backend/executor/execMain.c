@@ -53,11 +53,9 @@
 #include "miscadmin.h"
 #include "nodes/queryjumble.h"
 #include "parser/parse_relation.h"
-#include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
-#include "utils/backend_status.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rls.h"
@@ -123,7 +121,6 @@ void ExecutorStart(QueryDesc *queryDesc, int eflags) {
    * call will be ignored if the top level query_id has already been
    * reported.
    */
-  pgstat_report_query_id(queryDesc->plannedstmt->queryId, false);
 
   if (ExecutorStart_hook)
     (*ExecutorStart_hook)(queryDesc, eflags);

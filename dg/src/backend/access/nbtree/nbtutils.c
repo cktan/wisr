@@ -19,7 +19,6 @@
 
 #include "access/nbtree.h"
 #include "access/reloptions.h"
-#include "commands/progress.h"
 #include "miscadmin.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
@@ -3439,16 +3438,6 @@ bool btproperty(Oid index_oid, int attno, IndexAMProperty prop,
  */
 char *btbuildphasename(int64 phasenum) {
   switch (phasenum) {
-  case PROGRESS_CREATEIDX_SUBPHASE_INITIALIZE:
-    return "initializing";
-  case PROGRESS_BTREE_PHASE_INDEXBUILD_TABLESCAN:
-    return "scanning table";
-  case PROGRESS_BTREE_PHASE_PERFORMSORT_1:
-    return "sorting live tuples";
-  case PROGRESS_BTREE_PHASE_PERFORMSORT_2:
-    return "sorting dead tuples";
-  case PROGRESS_BTREE_PHASE_LEAF_LOAD:
-    return "loading tuples in tree";
   default:
     return NULL;
   }

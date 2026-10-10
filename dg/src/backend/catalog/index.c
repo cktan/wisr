@@ -52,7 +52,6 @@
 #include "catalog/pg_type.h"
 #include "catalog/storage.h"
 #include "commands/event_trigger.h"
-#include "commands/progress.h"
 #include "commands/tablecmds.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
@@ -61,7 +60,6 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
 #include "parser/parser.h"
-#include "pgstat.h"
 #include "rewrite/rewriteManip.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
@@ -1609,9 +1607,6 @@ void index_concurrently_swap(Oid newIndexId, Oid oldIndexId,
   changeDependenciesOf(RelationRelationId, oldIndexId, newIndexId);
   changeDependenciesOn(RelationRelationId, oldIndexId, newIndexId);
 
-  /* copy over statistics from old to new index */
-  pgstat_copy_relation_stats(newClassRel, oldClassRel);
-
   /* Copy data of pg_statistic from the old index to the new one */
   CopyStatistics(oldIndexId, newIndexId);
 
@@ -2048,7 +2043,7 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
      * here, even though it will only be used when we're called by REINDEX
      * CONCURRENTLY and not when called by DROP INDEX CONCURRENTLY.
      */
-    WaitForLockers(heaplocktag, AccessExclusiveLock, true);
+    WaitForLockers(heaplocktag, AccessExclusiveLock);
 
     /*
      * Updating pg_index might involve TOAST table access, so ensure we
@@ -2072,7 +2067,7 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
      * Wait till every transaction that saw the old index state has
      * finished.  See above about progress reporting.
      */
-    WaitForLockers(heaplocktag, AccessExclusiveLock, true);
+    WaitForLockers(heaplocktag, AccessExclusiveLock);
 
     /*
      * Re-open relations to allow us to complete our actions.
@@ -2093,9 +2088,6 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
    */
   if (RELKIND_HAS_STORAGE(userIndexRelation->rd_rel->relkind))
     RelationDropStorage(userIndexRelation);
-
-  /* ensure that stats are dropped if transaction commits */
-  pgstat_drop_relation(userIndexRelation);
 
   /*
    * Close and flush the index's relcache entry, to ensure relcache doesn't
@@ -2734,20 +2726,7 @@ void index_build(Relation heapRelation, Relation indexRelation,
   RestrictSearchPath();
 
   /* Set up initial progress report status */
-  {
-    const int progress_index[] = {
-        PROGRESS_CREATEIDX_PHASE,       PROGRESS_CREATEIDX_SUBPHASE,
-        PROGRESS_CREATEIDX_TUPLES_DONE, PROGRESS_CREATEIDX_TUPLES_TOTAL,
-        PROGRESS_SCAN_BLOCKS_DONE,      PROGRESS_SCAN_BLOCKS_TOTAL};
-    const int64 progress_vals[] = {PROGRESS_CREATEIDX_PHASE_BUILD,
-                                   PROGRESS_CREATEIDX_SUBPHASE_INITIALIZE,
-                                   0,
-                                   0,
-                                   0,
-                                   0};
-
-    pgstat_progress_update_multi_param(6, progress_index, progress_vals);
-  }
+  {}
 
   /*
    * Call the access method's build procedure
@@ -3010,16 +2989,7 @@ void validate_index(Oid heapId, Oid indexId, Snapshot snapshot) {
   int save_sec_context;
   int save_nestlevel;
 
-  {
-    const int progress_index[] = {
-        PROGRESS_CREATEIDX_PHASE, PROGRESS_CREATEIDX_TUPLES_DONE,
-        PROGRESS_CREATEIDX_TUPLES_TOTAL, PROGRESS_SCAN_BLOCKS_DONE,
-        PROGRESS_SCAN_BLOCKS_TOTAL};
-    const int64 progress_vals[] = {PROGRESS_CREATEIDX_PHASE_VALIDATE_IDXSCAN, 0,
-                                   0, 0, 0};
-
-    pgstat_progress_update_multi_param(5, progress_index, progress_vals);
-  }
+  {}
 
   /* Open and lock the parent heap relation */
   heapRelation = table_open(heapId, ShareUpdateExclusiveLock);
@@ -3074,22 +3044,12 @@ void validate_index(Oid heapId, Oid indexId, Snapshot snapshot) {
   (void)index_bulk_delete(&ivinfo, NULL, validate_index_callback, &state);
 
   /* Execute the sort */
-  {
-    const int progress_index[] = {PROGRESS_CREATEIDX_PHASE,
-                                  PROGRESS_SCAN_BLOCKS_DONE,
-                                  PROGRESS_SCAN_BLOCKS_TOTAL};
-    const int64 progress_vals[] = {PROGRESS_CREATEIDX_PHASE_VALIDATE_SORT, 0,
-                                   0};
-
-    pgstat_progress_update_multi_param(3, progress_index, progress_vals);
-  }
+  {}
   tuplesort_performsort(state.tuplesort);
 
   /*
    * Now scan the heap and "merge" it with the index
    */
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-                               PROGRESS_CREATEIDX_PHASE_VALIDATE_TABLESCAN);
   table_index_validate_scan(heapRelation, indexRelation, indexInfo, snapshot,
                             &state);
 
@@ -3280,12 +3240,6 @@ void reindex_index(const ReindexStmt *stmt, Oid indexId,
   RestrictSearchPath();
 
   if (progress) {
-    const int progress_cols[] = {PROGRESS_CREATEIDX_COMMAND,
-                                 PROGRESS_CREATEIDX_INDEX_OID};
-    const int64 progress_vals[] = {PROGRESS_CREATEIDX_COMMAND_REINDEX, indexId};
-
-    pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX, heapId);
-    pgstat_progress_update_multi_param(2, progress_cols, progress_vals);
   }
 
   /*
@@ -3309,10 +3263,6 @@ void reindex_index(const ReindexStmt *stmt, Oid indexId,
     table_close(heapRelation, NoLock);
     return;
   }
-
-  if (progress)
-    pgstat_progress_update_param(PROGRESS_CREATEIDX_ACCESS_METHOD_OID,
-                                 iRel->rd_rel->relam);
 
   /*
    * If a statement is available, telling that this comes from a REINDEX
@@ -3508,9 +3458,6 @@ void reindex_index(const ReindexStmt *stmt, Oid indexId,
   /* Close rels, but keep locks */
   index_close(iRel, NoLock);
   table_close(heapRelation, NoLock);
-
-  if (progress)
-    pgstat_progress_end_command();
 }
 
 /*
@@ -3676,7 +3623,6 @@ bool reindex_relation(const ReindexStmt *stmt, Oid relid, int flags,
     Assert(!ReindexIsProcessingIndex(indexOid));
 
     /* Set index rebuild count */
-    pgstat_progress_update_param(PROGRESS_CLUSTER_INDEX_REBUILD_COUNT, i);
     i++;
   }
 

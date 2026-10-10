@@ -66,7 +66,6 @@
 #include "parser/parse_relation.h"
 #include "parser/parsetree.h"
 #include "partitioning/partdesc.h"
-#include "pgstat.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
 #include "utils/array.h"
@@ -361,9 +360,6 @@ Relation heap_create(const char *relname, Oid relnamespace, Oid reltablespace,
    */
   if (!create_storage && reltablespace != InvalidOid)
     recordDependencyOnTablespace(RelationRelationId, relid, reltablespace);
-
-  /* ensure that stats are dropped if transaction aborts */
-  pgstat_create_relation(rel);
 
   return rel;
 }
@@ -1757,9 +1753,6 @@ void heap_drop_with_catalog(Oid relid) {
    */
   if (RELKIND_HAS_STORAGE(rel->rd_rel->relkind))
     RelationDropStorage(rel);
-
-  /* ensure that stats are dropped if transaction commits */
-  pgstat_drop_relation(rel);
 
   /*
    * Close relcache entry, but *keep* AccessExclusiveLock on the relation

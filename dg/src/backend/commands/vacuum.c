@@ -31,11 +31,9 @@
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
 #include "commands/defrem.h"
-#include "commands/progress.h"
 #include "commands/vacuum.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
-#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/pmsignal.h"
@@ -50,7 +48,6 @@
 /*
  * GUC parameters
  */
-thread_local /*LOCAL*/ bool track_cost_delay_timing;
 
 /*
  * Variables for cost-based vacuum delay, set from the GUCs by vacuum().  They
@@ -861,33 +858,10 @@ void vacuum_delay_point(bool is_analyze) {
 
   /* Nap if appropriate */
   if (msec > 0) {
-    instr_time delay_start;
-
     if (msec > vacuum_cost_delay * 4)
       msec = vacuum_cost_delay * 4;
 
-    if (track_cost_delay_timing)
-      INSTR_TIME_SET_CURRENT(delay_start);
-
-    pgstat_report_wait_start(WAIT_EVENT_VACUUM_DELAY);
     pg_usleep(msec * 1000);
-    pgstat_report_wait_end();
-
-    if (track_cost_delay_timing) {
-      instr_time delay_end;
-      instr_time delay;
-
-      INSTR_TIME_SET_CURRENT(delay_end);
-      INSTR_TIME_SET_ZERO(delay);
-      INSTR_TIME_ACCUM_DIFF(delay, delay_end, delay_start);
-
-      if (is_analyze)
-        pgstat_progress_incr_param(PROGRESS_ANALYZE_DELAY_TIME,
-                                   INSTR_TIME_GET_NANOSEC(delay));
-      else
-        pgstat_progress_incr_param(PROGRESS_VACUUM_DELAY_TIME,
-                                   INSTR_TIME_GET_NANOSEC(delay));
-    }
 
     /*
      * We don't want to ignore postmaster death during very long vacuums

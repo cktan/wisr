@@ -23,7 +23,6 @@
 #include "access/relation.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
-#include "pgstat.h"
 #include "storage/lmgr.h"
 #include "utils/inval.h"
 #include "utils/syscache.h"
@@ -67,8 +66,6 @@ Relation relation_open(Oid relationId, LOCKMODE lockmode) {
   /* Make note that we've accessed a temporary relation */
   if (RelationUsesLocalBuffers(r))
     MyXactFlags |= XACT_FLAGS_ACCESSEDTEMPNAMESPACE;
-
-  pgstat_init_relation(r);
 
   return r;
 }
@@ -114,8 +111,6 @@ Relation try_relation_open(Oid relationId, LOCKMODE lockmode) {
   /* Make note that we've accessed a temporary relation */
   if (RelationUsesLocalBuffers(r))
     MyXactFlags |= XACT_FLAGS_ACCESSEDTEMPNAMESPACE;
-
-  pgstat_init_relation(r);
 
   return r;
 }

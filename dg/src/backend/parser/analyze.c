@@ -49,7 +49,6 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "parser/parsetree.h"
-#include "utils/backend_status.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/rel.h"
@@ -125,8 +124,6 @@ Query *parse_analyze_fixedparams(RawStmt *parseTree, const char *sourceText,
 
   free_parsestate(pstate);
 
-  pgstat_report_query_id(query->queryId, false);
-
   return query;
 }
 
@@ -165,8 +162,6 @@ Query *parse_analyze_varparams(RawStmt *parseTree, const char *sourceText,
 
   free_parsestate(pstate);
 
-  pgstat_report_query_id(query->queryId, false);
-
   return query;
 }
 
@@ -198,8 +193,6 @@ Query *parse_analyze_withcb(RawStmt *parseTree, const char *sourceText,
     (*post_parse_analyze_hook)(pstate, query, jstate);
 
   free_parsestate(pstate);
-
-  pgstat_report_query_id(query->queryId, false);
 
   return query;
 }

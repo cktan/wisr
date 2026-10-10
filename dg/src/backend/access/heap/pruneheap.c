@@ -21,7 +21,6 @@
 #include "commands/vacuum.h"
 #include "executor/instrument.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -266,9 +265,6 @@ void heap_page_prune_opt(Relation relation, Buffer buffer) {
        * tracks ndeleted, since it will set the same LP_DEAD items to
        * LP_UNUSED separately.
        */
-      if (presult.ndeleted > presult.nnewlpdead)
-        pgstat_update_heap_dead_tuples(relation,
-                                       presult.ndeleted - presult.nnewlpdead);
     }
 
     /* And release buffer lock */

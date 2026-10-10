@@ -20,7 +20,6 @@
 
 #include "access/tableam.h"
 #include "commands/copyapi.h"
-#include "commands/progress.h"
 #include "executor/execdesc.h"
 #include "executor/executor.h"
 #include "executor/tuptable.h"
@@ -28,7 +27,6 @@
 #include "libpq/pqformat.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/fd.h"
 #include "tcop/tcopprot.h"
 #include "utils/lsyscache.h"
@@ -92,7 +90,6 @@ typedef struct CopyToStateData {
 
   FmgrInfo *out_functions;  /* lookup info for output functions */
   MemoryContext rowcontext; /* per-row evaluation context */
-  uint64 bytes_processed;   /* number of bytes processed so far */
 } CopyToStateData;
 
 /* DestReceiver for COPY (query) TO */
@@ -436,11 +433,6 @@ static void CopySendEndOfRow(CopyToState cstate) {
     break;
   }
 
-  /* Update the progress */
-  cstate->bytes_processed += fe_msgbuf->len;
-  pgstat_progress_update_param(PROGRESS_COPY_BYTES_PROCESSED,
-                               cstate->bytes_processed);
-
   resetStringInfo(fe_msgbuf);
 }
 
@@ -526,8 +518,6 @@ static void EndCopy(CopyToState cstate) {
                errmsg("could not close file \"%s\": %m", cstate->filename)));
   }
 
-  pgstat_progress_end_command();
-
   MemoryContextDelete(cstate->copycontext);
   pfree(cstate);
 }
@@ -555,8 +545,6 @@ CopyToState BeginCopyTo(ParseState *pstate, Relation rel, RawStmt *raw_query,
   TupleDesc tupDesc;
   int num_phys_attrs;
   MemoryContext oldcontext;
-  const int progress_cols[] = {PROGRESS_COPY_COMMAND, PROGRESS_COPY_TYPE};
-  int64 progress_vals[] = {PROGRESS_COPY_COMMAND_TO, 0};
 
   if (rel != NULL && rel->rd_rel->relkind != RELKIND_RELATION) {
     if (rel->rd_rel->relkind == RELKIND_VIEW)
@@ -794,11 +782,9 @@ CopyToState BeginCopyTo(ParseState *pstate, Relation rel, RawStmt *raw_query,
   cstate->copy_dest = COPY_FILE; /* default */
 
   if (data_dest_cb) {
-    progress_vals[1] = PROGRESS_COPY_TYPE_CALLBACK;
     cstate->copy_dest = COPY_CALLBACK;
     cstate->data_dest_cb = data_dest_cb;
   } else if (pipe) {
-    progress_vals[1] = PROGRESS_COPY_TYPE_PIPE;
 
     Assert(!is_program); /* the grammar does not allow this */
     if (whereToSendOutput != DestRemote)
@@ -808,7 +794,6 @@ CopyToState BeginCopyTo(ParseState *pstate, Relation rel, RawStmt *raw_query,
     cstate->is_program = is_program;
 
     if (is_program) {
-      progress_vals[1] = PROGRESS_COPY_TYPE_PROGRAM;
       cstate->copy_file = OpenPipeStream(cstate->filename, PG_BINARY_W);
       if (cstate->copy_file == NULL)
         ereport(ERROR, (errcode_for_file_access(),
@@ -817,8 +802,6 @@ CopyToState BeginCopyTo(ParseState *pstate, Relation rel, RawStmt *raw_query,
     } else {
       mode_t oumask; /* Pre-existing umask value */
       struct stat st;
-
-      progress_vals[1] = PROGRESS_COPY_TYPE_FILE;
 
       /*
        * Prevent write to relative path ... too easy to shoot oneself in
@@ -859,14 +842,6 @@ CopyToState BeginCopyTo(ParseState *pstate, Relation rel, RawStmt *raw_query,
                         errmsg("\"%s\" is a directory", cstate->filename)));
     }
   }
-
-  /* initialize progress */
-  pgstat_progress_start_command(PROGRESS_COMMAND_COPY,
-                                cstate->rel ? RelationGetRelid(cstate->rel)
-                                            : InvalidOid);
-  pgstat_progress_update_multi_param(2, progress_cols, progress_vals);
-
-  cstate->bytes_processed = 0;
 
   MemoryContextSwitchTo(oldcontext);
 
@@ -953,11 +928,8 @@ uint64 DoCopyTo(CopyToState cstate) {
       /* Format and send the data */
       CopyOneRowTo(cstate, slot);
 
-      /*
-       * Increment the number of processed tuples, and report the
-       * progress.
-       */
-      pgstat_progress_update_param(PROGRESS_COPY_TUPLES_PROCESSED, ++processed);
+      /* Increment the number of processed tuples. */
+      ++processed;
     }
 
     ExecDropSingleTupleTableSlot(slot);
@@ -1233,9 +1205,8 @@ static bool copy_dest_receive(TupleTableSlot *slot, DestReceiver *self) {
   /* Send the data */
   CopyOneRowTo(cstate, slot);
 
-  /* Increment the number of processed tuples, and report the progress */
-  pgstat_progress_update_param(PROGRESS_COPY_TUPLES_PROCESSED,
-                               ++myState->processed);
+  /* Increment the number of processed tuples */
+  ++myState->processed;
 
   return true;
 }

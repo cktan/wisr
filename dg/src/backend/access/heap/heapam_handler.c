@@ -31,10 +31,8 @@
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/storage.h"
-#include "commands/progress.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 #include "storage/lmgr.h"
@@ -50,8 +48,6 @@ static void reform_and_rewrite_tuple(HeapTuple tuple, Relation OldHeap,
 
 static bool SampleHeapTupleVisible(TableScanDesc scan, Buffer buffer,
                                    HeapTuple tuple, OffsetNumber tupoffset);
-
-static BlockNumber heapam_scan_get_blocks_done(HeapScanDesc hscan);
 
 static bool BitmapHeapScanNextBlock(TableScanDesc scan, bool *recheck,
                                     uint64 *lossy_pages, uint64 *exact_pages);
@@ -655,31 +651,16 @@ static void heapam_relation_copy_for_cluster(
    * HeapTupleSatisfiesVacuum for the visibility test.
    */
   if (OldIndex != NULL && !use_sort) {
-    const int ci_index[] = {PROGRESS_CLUSTER_PHASE,
-                            PROGRESS_CLUSTER_INDEX_RELID};
-    int64 ci_val[2];
-
-    /* Set phase and OIDOldIndex to columns */
-    ci_val[0] = PROGRESS_CLUSTER_PHASE_INDEX_SCAN_HEAP;
-    ci_val[1] = RelationGetRelid(OldIndex);
-    pgstat_progress_update_multi_param(2, ci_index, ci_val);
 
     tableScan = NULL;
     heapScan = NULL;
     indexScan = index_beginscan(OldHeap, OldIndex, SnapshotAny, NULL, 0, 0);
     index_rescan(indexScan, NULL, 0, NULL, 0);
   } else {
-    /* In scan-and-sort mode and also VACUUM FULL, set phase */
-    pgstat_progress_update_param(PROGRESS_CLUSTER_PHASE,
-                                 PROGRESS_CLUSTER_PHASE_SEQ_SCAN_HEAP);
 
     tableScan = table_beginscan(OldHeap, SnapshotAny, 0, (ScanKey)NULL);
     heapScan = (HeapScanDesc)tableScan;
     indexScan = NULL;
-
-    /* Set total heap blocks */
-    pgstat_progress_update_param(PROGRESS_CLUSTER_TOTAL_HEAP_BLKS,
-                                 heapScan->rs_nblocks);
   }
 
   slot = table_slot_create(OldHeap, NULL);
@@ -715,8 +696,6 @@ static void heapam_relation_copy_for_cluster(
          * is manually updated to the correct value when the table
          * scan finishes.
          */
-        pgstat_progress_update_param(PROGRESS_CLUSTER_HEAP_BLKS_SCANNED,
-                                     heapScan->rs_nblocks);
         break;
       }
 
@@ -730,12 +709,6 @@ static void heapam_relation_copy_for_cluster(
        * user, we offset rs_cblock by rs_startblock (modulo rs_nblocks).
        */
       if (prev_cblock != heapScan->rs_cblock) {
-        pgstat_progress_update_param(PROGRESS_CLUSTER_HEAP_BLKS_SCANNED,
-                                     (heapScan->rs_cblock +
-                                      heapScan->rs_nblocks -
-                                      heapScan->rs_startblock) %
-                                             heapScan->rs_nblocks +
-                                         1);
         prev_cblock = heapScan->rs_cblock;
       }
     }
@@ -810,27 +783,10 @@ static void heapam_relation_copy_for_cluster(
     if (tuplesort != NULL) {
       tuplesort_putheaptuple(tuplesort, tuple);
 
-      /*
-       * In scan-and-sort mode, report increase in number of tuples
-       * scanned
-       */
-      pgstat_progress_update_param(PROGRESS_CLUSTER_HEAP_TUPLES_SCANNED,
-                                   *num_tuples);
     } else {
-      const int ct_index[] = {PROGRESS_CLUSTER_HEAP_TUPLES_SCANNED,
-                              PROGRESS_CLUSTER_HEAP_TUPLES_WRITTEN};
-      int64 ct_val[2];
 
       reform_and_rewrite_tuple(tuple, OldHeap, NewHeap, values, isnull,
                                rwstate);
-
-      /*
-       * In indexscan mode and also VACUUM FULL, report increase in
-       * number of tuples scanned and written
-       */
-      ct_val[0] = *num_tuples;
-      ct_val[1] = *num_tuples;
-      pgstat_progress_update_multi_param(2, ct_index, ct_val);
     }
   }
 
@@ -848,15 +804,7 @@ static void heapam_relation_copy_for_cluster(
   if (tuplesort != NULL) {
     double n_tuples = 0;
 
-    /* Report that we are now sorting tuples */
-    pgstat_progress_update_param(PROGRESS_CLUSTER_PHASE,
-                                 PROGRESS_CLUSTER_PHASE_SORT_TUPLES);
-
     tuplesort_performsort(tuplesort);
-
-    /* Report that we are now writing new heap */
-    pgstat_progress_update_param(PROGRESS_CLUSTER_PHASE,
-                                 PROGRESS_CLUSTER_PHASE_WRITE_NEW_HEAP);
 
     for (;;) {
       HeapTuple tuple;
@@ -870,9 +818,6 @@ static void heapam_relation_copy_for_cluster(
       n_tuples += 1;
       reform_and_rewrite_tuple(tuple, OldHeap, NewHeap, values, isnull,
                                rwstate);
-      /* Report n_tuples */
-      pgstat_progress_update_param(PROGRESS_CLUSTER_HEAP_TUPLES_WRITTEN,
-                                   n_tuples);
     }
 
     tuplesort_end(tuplesort);
@@ -1074,7 +1019,6 @@ static double heapam_index_build_range_scan(
   Snapshot snapshot;
   bool need_unregister_snapshot = false;
   TransactionId OldestXmin;
-  BlockNumber previous_blkno = InvalidBlockNumber;
   BlockNumber root_blkno = InvalidBlockNumber;
   OffsetNumber root_offsets[MaxHeapTuplesPerPage];
 
@@ -1150,15 +1094,6 @@ static double heapam_index_build_range_scan(
                                  : !TransactionIdIsValid(OldestXmin));
   Assert(snapshot == SnapshotAny || !anyvisible);
 
-  /* Publish number of blocks to scan */
-  if (progress) {
-    BlockNumber nblocks;
-
-    nblocks = hscan->rs_nblocks;
-
-    pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_TOTAL, nblocks);
-  }
-
   /* set our scan endpoints */
   heap_setscanlimits(scan, start_blockno, numblocks);
 
@@ -1171,16 +1106,6 @@ static double heapam_index_build_range_scan(
     bool tupleIsAlive;
 
     CHECK_FOR_INTERRUPTS();
-
-    /* Report scan progress, if asked to. */
-    if (progress) {
-      BlockNumber blocks_done = heapam_scan_get_blocks_done(hscan);
-
-      if (blocks_done != previous_blkno) {
-        pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, blocks_done);
-        previous_blkno = blocks_done;
-      }
-    }
 
     /*
      * When dealing with a HOT-chain of updated tuples, we want to index
@@ -1510,15 +1435,6 @@ static double heapam_index_build_range_scan(
     }
   }
 
-  /* Report scan progress one last time. */
-  if (progress) {
-    BlockNumber blks_done;
-
-    blks_done = hscan->rs_nblocks;
-
-    pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, blks_done);
-  }
-
   table_endscan(scan);
 
   /* we can now forget our snapshot, if set and registered by us */
@@ -1552,7 +1468,6 @@ static void heapam_index_validate_scan(Relation heapRelation,
   BlockNumber root_blkno = InvalidBlockNumber;
   OffsetNumber root_offsets[MaxHeapTuplesPerPage];
   bool in_index[MaxHeapTuplesPerPage];
-  BlockNumber previous_blkno = InvalidBlockNumber;
 
   /* state variables for the merge */
   ItemPointer indexcursor = NULL;
@@ -1591,8 +1506,6 @@ static void heapam_index_validate_scan(Relation heapRelation,
                                true);        /* buffer access strategy OK */
   hscan = (HeapScanDesc)scan;
 
-  pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_TOTAL, hscan->rs_nblocks);
-
   /*
    * Scan all tuples matching the snapshot.
    */
@@ -1604,12 +1517,6 @@ static void heapam_index_validate_scan(Relation heapRelation,
     CHECK_FOR_INTERRUPTS();
 
     state->htups += 1;
-
-    if ((previous_blkno == InvalidBlockNumber) ||
-        (hscan->rs_cblock != previous_blkno)) {
-      pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, hscan->rs_cblock);
-      previous_blkno = hscan->rs_cblock;
-    }
 
     /*
      * As commented in table_index_build_scan, we should index heap-only
@@ -1747,29 +1654,6 @@ static void heapam_index_validate_scan(Relation heapRelation,
   indexInfo->ii_PredicateState = NULL;
 }
 
-/*
- * Return the number of blocks that have been read by this scan since
- * starting.  This is meant for progress reporting.
- */
-static BlockNumber heapam_scan_get_blocks_done(HeapScanDesc hscan) {
-  BlockNumber startblock;
-  BlockNumber blocks_done;
-
-  startblock = hscan->rs_startblock;
-
-  /*
-   * Might have wrapped around the end of the relation, if startblock was
-   * not zero.
-   */
-  if (hscan->rs_cblock > startblock)
-    blocks_done = hscan->rs_cblock - startblock;
-  else {
-    blocks_done = hscan->rs_nblocks - startblock + hscan->rs_cblock;
-  }
-
-  return blocks_done;
-}
-
 /* ------------------------------------------------------------------------
  * Miscellaneous callbacks for the heap AM
  * ------------------------------------------------------------------------
@@ -1879,8 +1763,6 @@ static bool heapam_scan_bitmap_next_tuple(TableScanDesc scan,
   hscan->rs_ctup.t_len = ItemIdGetLength(lp);
   hscan->rs_ctup.t_tableOid = scan->rs_rd->rd_id;
   ItemPointerSet(&hscan->rs_ctup.t_self, hscan->rs_cblock, targoffset);
-
-  pgstat_count_heap_fetch(scan->rs_rd);
 
   /*
    * Set up the result slot to point to this tuple.  Note that the slot
@@ -2026,9 +1908,6 @@ static bool heapam_scan_sample_next_tuple(TableScanDesc scan,
         LockBuffer(hscan->rs_cbuf, BUFFER_LOCK_UNLOCK);
 
       ExecStoreBufferHeapTuple(tuple, slot, hscan->rs_cbuf);
-
-      /* Count successfully-fetched tuples as heap fetches */
-      pgstat_count_heap_getnext(scan->rs_rd);
 
       return true;
     } else {

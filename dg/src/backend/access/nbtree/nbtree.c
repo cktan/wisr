@@ -21,10 +21,8 @@
 #include "access/nbtree.h"
 #include "access/relscan.h"
 #include "access/stratnum.h"
-#include "commands/progress.h"
 #include "commands/vacuum.h"
 #include "nodes/execnodes.h"
-#include "pgstat.h"
 #include "storage/bulk_write.h"
 #include "storage/condition_variable.h"
 #include "storage/indexfsm.h"
@@ -684,9 +682,6 @@ static void btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
     if (needLock)
       UnlockRelationForExtension(rel, ExclusiveLock);
 
-    if (info->report_progress)
-      pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_TOTAL, num_pages);
-
     /* Quit if we've scanned the whole relation */
     if (p.current_blocknum >= num_pages)
       break;
@@ -695,7 +690,6 @@ static void btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 
     /* Iterate over pages, then loop back to recheck relation length */
     while (true) {
-      BlockNumber current_block;
       Buffer buf;
 
       /* call vacuum_delay_point while not holding any buffer lock */
@@ -706,10 +700,7 @@ static void btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
       if (!BufferIsValid(buf))
         break;
 
-      current_block = btvacuumpage(&vstate, buf);
-
-      if (info->report_progress)
-        pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_DONE, current_block);
+      btvacuumpage(&vstate, buf);
     }
 
     /*

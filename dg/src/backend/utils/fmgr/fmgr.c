@@ -24,7 +24,6 @@
 #include "nodes/makefuncs.h"
 #include "nodes/miscnodes.h"
 #include "nodes/nodeFuncs.h"
-#include "pgstat.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/fmgrtab.h"
@@ -157,7 +156,6 @@ static void fmgr_info_cxt_security(Oid functionId, FmgrInfo *finfo,
     finfo->fn_nargs = fbp->nargs;
     finfo->fn_strict = fbp->strict;
     finfo->fn_retset = fbp->retset;
-    finfo->fn_stats = TRACK_FUNC_ALL; /* ie, never track */
     finfo->fn_addr = fbp->func;
     finfo->fn_oid = functionId;
     return;
@@ -192,7 +190,6 @@ static void fmgr_info_cxt_security(Oid functionId, FmgrInfo *finfo,
        !heap_attisnull(procedureTuple, Anum_pg_proc_proconfig, NULL) ||
        FmgrHookIsNeeded(functionId))) {
     finfo->fn_addr = fmgr_security_definer;
-    finfo->fn_stats = TRACK_FUNC_ALL; /* ie, never track */
     finfo->fn_oid = functionId;
     ReleaseSysCache(procedureTuple);
     return;
@@ -224,17 +221,14 @@ static void fmgr_info_cxt_security(Oid functionId, FmgrInfo *finfo,
     /* Should we check that nargs, strict, retset match the table? */
     finfo->fn_addr = fbp->func;
     /* note this policy is also assumed in fast path above */
-    finfo->fn_stats = TRACK_FUNC_ALL; /* ie, never track */
     break;
 
   case ClanguageId:
     fmgr_info_C_lang(functionId, finfo, procedureTuple);
-    finfo->fn_stats = TRACK_FUNC_PL; /* ie, track if ALL */
     break;
 
   default:
     fmgr_info_other_lang(functionId, finfo, procedureTuple);
-    finfo->fn_stats = TRACK_FUNC_OFF; /* ie, track if not OFF */
     break;
   }
 
@@ -574,7 +568,6 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS) {
   int save_sec_context;
   ListCell *lc1, *lc2, *lc3;
   int save_nestlevel;
-  PgStat_FunctionCallUsage fcusage;
 
   if (!fcinfo->flinfo->fn_extra) {
     HeapTuple tuple;
@@ -665,20 +658,7 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS) {
   {
     fcinfo->flinfo = &fcache->flinfo;
 
-    /* See notes in fmgr_info_cxt_security */
-    pgstat_init_function_usage(fcinfo, &fcusage);
-
     result = FunctionCallInvoke(fcinfo);
-
-    /*
-     * We could be calling either a regular or a set-returning function,
-     * so we have to test to see what finalize flag to use.
-     */
-    pgstat_end_function_usage(
-        &fcusage,
-        (fcinfo->resultinfo == NULL ||
-         !IsA(fcinfo->resultinfo, ReturnSetInfo) ||
-         ((ReturnSetInfo *)fcinfo->resultinfo)->isDone != ExprMultipleResult));
   }
   PG_CATCH();
   {

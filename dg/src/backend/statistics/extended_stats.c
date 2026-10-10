@@ -24,13 +24,11 @@
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_statistic_ext_data.h"
 #include "commands/defrem.h"
-#include "commands/progress.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
 #include "parser/parsetree.h"
-#include "pgstat.h"
 #include "statistics/extended_stats_internal.h"
 #include "statistics/statistics.h"
 #include "utils/acl.h"
@@ -111,7 +109,6 @@ void BuildRelationExtStatistics(Relation onerel, bool inh, double totalrows,
   List *statslist;
   MemoryContext cxt;
   MemoryContext oldcxt;
-  int64 ext_cnt;
 
   /* Do nothing if there are no columns to analyze. */
   if (!natts)
@@ -129,16 +126,6 @@ void BuildRelationExtStatistics(Relation onerel, bool inh, double totalrows,
   oldcxt = MemoryContextSwitchTo(cxt);
 
   /* report this phase */
-  if (statslist != NIL) {
-    const int index[] = {PROGRESS_ANALYZE_PHASE,
-                         PROGRESS_ANALYZE_EXT_STATS_TOTAL};
-    const int64 val[] = {PROGRESS_ANALYZE_PHASE_COMPUTE_EXT_STATS,
-                         list_length(statslist)};
-
-    pgstat_progress_update_multi_param(2, index, val);
-  }
-
-  ext_cnt = 0;
   foreach (lc, statslist) {
     StatExtEntry *stat = (StatExtEntry *)lfirst(lc);
     MVNDistinct *ndistinct = NULL;
@@ -214,10 +201,6 @@ void BuildRelationExtStatistics(Relation onerel, bool inh, double totalrows,
     /* store the statistics in the catalog */
     statext_store(stat->statOid, inh, ndistinct, dependencies, mcv, exprstats,
                   stats);
-
-    /* for reporting progress */
-    pgstat_progress_update_param(PROGRESS_ANALYZE_EXT_STATS_COMPUTED,
-                                 ++ext_cnt);
 
     /* free the data used for building this statistics object */
     MemoryContextReset(cxt);

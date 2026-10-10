@@ -159,9 +159,7 @@ $(I)/storage/lwlocknames.h: $(I)/storage/lwlocklist.h \
 $(B)/utils/activity/.stamp: $(B)/utils/activity/wait_event_names.txt
 	$(PERL) $(B)/utils/activity/generate-wait_event_types.pl --code \
 	    --outdir $(B)/utils/activity $<
-	cp $(B)/utils/activity/wait_event_types.h \
-	    $(B)/utils/activity/pgstat_wait_event.c \
-	    $(B)/utils/activity/wait_event_funcs_data.c $(I)/utils/
+	cp $(B)/utils/activity/wait_event_types.h $(I)/utils/
 	touch $@
 
 # No DTrace: every probe is an empty macro.

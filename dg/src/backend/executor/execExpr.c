@@ -42,7 +42,6 @@
 #include "nodes/nodeFuncs.h"
 #include "nodes/subscripting.h"
 #include "optimizer/optimizer.h"
-#include "pgstat.h"
 #include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -2514,24 +2513,17 @@ static void ExecInitFunc(ExprEvalStep *scratch, Expr *node, List *args,
     argno++;
   }
 
-  /* Insert appropriate opcode depending on strictness and stats level */
-  if (pgstat_track_functions <= flinfo->fn_stats) {
-    if (flinfo->fn_strict && nargs > 0) {
-      /* Choose nargs optimized implementation if available. */
-      if (nargs == 1)
-        scratch->opcode = EEOP_FUNCEXPR_STRICT_1;
-      else if (nargs == 2)
-        scratch->opcode = EEOP_FUNCEXPR_STRICT_2;
-      else
-        scratch->opcode = EEOP_FUNCEXPR_STRICT;
-    } else
-      scratch->opcode = EEOP_FUNCEXPR;
-  } else {
-    if (flinfo->fn_strict && nargs > 0)
-      scratch->opcode = EEOP_FUNCEXPR_STRICT_FUSAGE;
+  /* Insert appropriate opcode depending on strictness */
+  if (flinfo->fn_strict && nargs > 0) {
+    /* Choose nargs optimized implementation if available. */
+    if (nargs == 1)
+      scratch->opcode = EEOP_FUNCEXPR_STRICT_1;
+    else if (nargs == 2)
+      scratch->opcode = EEOP_FUNCEXPR_STRICT_2;
     else
-      scratch->opcode = EEOP_FUNCEXPR_FUSAGE;
-  }
+      scratch->opcode = EEOP_FUNCEXPR_STRICT;
+  } else
+    scratch->opcode = EEOP_FUNCEXPR;
 }
 
 /*

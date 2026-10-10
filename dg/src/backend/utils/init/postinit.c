@@ -34,7 +34,6 @@
 #include "libpq/libpq-be.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "postmaster/postmaster.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
@@ -72,7 +71,6 @@ static void LockTimeoutHandler(void);
 static void IdleInTransactionSessionTimeoutHandler(void);
 static void TransactionTimeoutHandler(void);
 static void IdleSessionTimeoutHandler(void);
-static void IdleStatsUpdateTimeoutHandler(void);
 static void ClientCheckTimeoutHandler(void);
 static bool ThereIsAtLeastOneRole(void);
 static void process_startup_options(Port *port, bool am_superuser);
@@ -327,14 +325,6 @@ void BaseInit(void) {
    */
   InitFileAccess();
 
-  /*
-   * Initialize statistics reporting. This needs to happen early to ensure
-   * that pgstat's shutdown callback runs after the shutdown callbacks of
-   * all subsystems that can produce stats (like e.g. transaction commits
-   * can).
-   */
-  pgstat_initialize();
-
   /* Do local initialization of storage and buffer managers */
   smgrinit();
   InitBufferManagerAccess();
@@ -404,16 +394,12 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    */
   InitProcessPhase2();
 
-  /* Initialize status reporting */
-  pgstat_beinit();
-
   /*
    * And initialize an entry in the PgBackendStatus array.  That way, if
    * LWLocks or third-party authentication should happen to hang, it is
    * possible to retrieve some information about what is going on.
    */
   if (!bootstrap) {
-    pgstat_bestart_initial();
     INJECTION_POINT("init-pre-auth", NULL);
   }
 
@@ -438,7 +424,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
     RegisterTimeout(TRANSACTION_TIMEOUT, TransactionTimeoutHandler);
     RegisterTimeout(IDLE_SESSION_TIMEOUT, IdleSessionTimeoutHandler);
     RegisterTimeout(CLIENT_CONNECTION_CHECK_TIMEOUT, ClientCheckTimeoutHandler);
-    RegisterTimeout(IDLE_STATS_UPDATE_TIMEOUT, IdleStatsUpdateTimeoutHandler);
   }
 
   /*
@@ -451,7 +436,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
      * Use before_shmem_exit() so that pgstats can rely on DSM segments etc
      * to work.
      */
-    before_shmem_exit(pgstat_before_server_shutdown, 0);
     before_shmem_exit(log_shutdown, 0);
   }
 
@@ -537,8 +521,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   /* Report any SSL/GSS details for the session. */
   if (MyProcPort != NULL) {
     Assert(!bootstrap);
-
-    pgstat_bestart_security();
   }
 
   /*
@@ -602,7 +584,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
      * transaction we started before returning.
      */
     if (!bootstrap) {
-      pgstat_bestart_final();
       CommitTransactionCommand();
     }
     return;
@@ -743,10 +724,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   if ((flags & INIT_PG_LOAD_SESSION_LIBS) != 0)
     process_session_preload_libraries();
 
-  /* fill in the remainder of this entry in the PgBackendStatus array */
-  if (!bootstrap)
-    pgstat_bestart_final();
-
   /* close the transaction we started above */
   if (!bootstrap)
     CommitTransactionCommand();
@@ -875,12 +852,6 @@ static void IdleInTransactionSessionTimeoutHandler(void) {
 
 static void IdleSessionTimeoutHandler(void) {
   IdleSessionTimeoutPending = true;
-  InterruptPending = true;
-  SetLatch(MyLatch);
-}
-
-static void IdleStatsUpdateTimeoutHandler(void) {
-  IdleStatsUpdateTimeoutPending = true;
   InterruptPending = true;
   SetLatch(MyLatch);
 }

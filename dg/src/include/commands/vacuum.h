@@ -184,7 +184,6 @@ struct VacuumCutoffs {
 /* GUC parameters */
 extern thread_local /*LOCAL*/ PGDLLIMPORT int
     default_statistics_target; /* PGDLLIMPORT for PostGIS */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool track_cost_delay_timing;
 
 /*
  * Maximum value for default_statistics_target and per-column statistics

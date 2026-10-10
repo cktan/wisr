@@ -61,7 +61,6 @@
 #include "common/file_perm.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "portability/mem.h"
 #include "postmaster/postmaster.h"
 #include "storage/dsm_impl.h"
@@ -343,7 +342,6 @@ static int dsm_impl_posix_resize(int fd, off_t size) {
   if (IsUnderPostmaster)
     sigprocmask(SIG_SETMASK, &BlockSig, &save_sigmask);
 
-  pgstat_report_wait_start(WAIT_EVENT_DSM_ALLOCATE);
 #if defined(HAVE_POSIX_FALLOCATE) && defined(__linux__)
 
   /*
@@ -374,7 +372,6 @@ static int dsm_impl_posix_resize(int fd, off_t size) {
     rc = ftruncate(fd, size);
   } while (rc < 0 && errno == EINTR);
 #endif
-  pgstat_report_wait_end();
 
   if (IsUnderPostmaster) {
     save_errno = errno;
@@ -814,12 +811,10 @@ static bool dsm_impl_mmap(dsm_op op, dsm_handle handle, Size request_size,
 
       if (goal > ZBUFFER_SIZE)
         goal = ZBUFFER_SIZE;
-      pgstat_report_wait_start(WAIT_EVENT_DSM_FILL_ZERO_WRITE);
       if (write(fd, zbuffer, goal) == goal)
         remaining -= goal;
       else
         success = false;
-      pgstat_report_wait_end();
     }
 
     if (!success) {

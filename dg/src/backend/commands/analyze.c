@@ -30,7 +30,6 @@
 #include "catalog/indexing.h"
 #include "catalog/pg_inherits.h"
 #include "commands/dbcommands.h"
-#include "commands/progress.h"
 #include "commands/tablecmds.h"
 #include "commands/vacuum.h"
 #include "common/pg_prng.h"
@@ -40,7 +39,6 @@
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
-#include "pgstat.h"
 #include "statistics/extended_stats_internal.h"
 #include "statistics/statistics.h"
 #include "storage/bufmgr.h"
@@ -211,12 +209,6 @@ void analyze_rel(Oid relid, RangeVar *relation, VacuumParams *params,
   }
 
   /*
-   * OK, let's do it.  First, initialize progress reporting.
-   */
-  pgstat_progress_start_command(PROGRESS_COMMAND_ANALYZE,
-                                RelationGetRelid(onerel));
-
-  /*
    * Do the normal non-recursive ANALYZE.  We can skip this for partitioned
    * tables, which don't contain any rows.
    */
@@ -238,8 +230,6 @@ void analyze_rel(Oid relid, RangeVar *relation, VacuumParams *params,
    * expose us to concurrent-update failures in update_attstats.)
    */
   relation_close(onerel, NoLock);
-
-  pgstat_progress_end_command();
 }
 
 /*
@@ -271,8 +261,6 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
   WalUsage startwalusage = pgWalUsage;
   BufferUsage startbufferusage = pgBufferUsage;
   BufferUsage bufferusage;
-  PgStat_Counter startreadtime = 0;
-  PgStat_Counter startwritetime = 0;
 
   verbose = (params->options & VACOPT_VERBOSE) != 0;
   instrument = verbose;
@@ -306,16 +294,10 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
 
   /*
    * When verbose or autovacuum logging is used, initialize a resource usage
-   * snapshot and optionally track I/O timing.
+   * snapshot.
    */
-  if (instrument) {
-    if (track_io_timing) {
-      startreadtime = pgStatBlockReadTime;
-      startwritetime = pgStatBlockWriteTime;
-    }
-
+  if (instrument)
     pg_rusage_init(&ru0);
-  }
 
   /* Used for instrumentation and stats report */
   starttime = GetCurrentTimestamp();
@@ -464,10 +446,6 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
    * Acquire the sample rows
    */
   rows = (HeapTuple *)palloc(targrows * sizeof(HeapTuple));
-  pgstat_progress_update_param(
-      PROGRESS_ANALYZE_PHASE,
-      inh ? PROGRESS_ANALYZE_PHASE_ACQUIRE_SAMPLE_ROWS_INH
-          : PROGRESS_ANALYZE_PHASE_ACQUIRE_SAMPLE_ROWS);
   if (inh)
     numrows = acquire_inherited_sample_rows(onerel, elevel, rows, targrows,
                                             &totalrows, &totaldeadrows);
@@ -483,9 +461,6 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
    */
   if (numrows > 0) {
     MemoryContext col_context, old_context;
-
-    pgstat_progress_update_param(PROGRESS_ANALYZE_PHASE,
-                                 PROGRESS_ANALYZE_PHASE_COMPUTE_STATS);
 
     col_context = AllocSetContextCreate(anl_context, "Analyze Column",
                                         ALLOCSET_DEFAULT_SIZES);
@@ -541,9 +516,6 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
                                vacattrstats);
   }
 
-  pgstat_progress_update_param(PROGRESS_ANALYZE_PHASE,
-                               PROGRESS_ANALYZE_PHASE_FINALIZE_ANALYZE);
-
   /*
    * Update pages/tuples stats in pg_class ... but not if we're doing
    * inherited stats.
@@ -591,21 +563,6 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
                         InvalidTransactionId, InvalidMultiXactId, NULL, NULL,
                         in_outer_xact);
   }
-
-  /*
-   * Now report ANALYZE to the cumulative stats system.  For regular tables,
-   * we do it only if not doing inherited stats.  For partitioned tables, we
-   * only do it for inherited stats. (We're never called for not-inherited
-   * stats on partitioned tables anyway.)
-   *
-   * Reset the changes_since_analyze counter only if we analyzed all
-   * columns; otherwise, there is still work for auto-analyze to do.
-   */
-  if (!inh)
-    pgstat_report_analyze(onerel, totalrows, totaldeadrows, (va_cols == NIL),
-                          starttime);
-  else if (onerel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
-    pgstat_report_analyze(onerel, 0, 0, (va_cols == NIL), starttime);
 
   /*
    * Let index AMs do cleanup.
@@ -701,23 +658,6 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
     appendStringInfo(&buf, msgfmt, get_database_name(MyDatabaseId),
                      get_namespace_name(RelationGetNamespace(onerel)),
                      RelationGetRelationName(onerel));
-    if (track_cost_delay_timing) {
-      /*
-       * We bypass the changecount mechanism because this value is
-       * only updated by the calling process.
-       */
-      appendStringInfo(
-          &buf, _("delay time: %.3f ms\n"),
-          (double)MyBEEntry->st_progress_param[PROGRESS_ANALYZE_DELAY_TIME] /
-              1000000.0);
-    }
-    if (track_io_timing) {
-      double read_ms = (double)(pgStatBlockReadTime - startreadtime) / 1000;
-      double write_ms = (double)(pgStatBlockWriteTime - startwritetime) / 1000;
-
-      appendStringInfo(&buf, _("I/O timings: read: %.3f ms, write: %.3f ms\n"),
-                       read_ms, write_ms);
-    }
     appendStringInfo(&buf,
                      _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
                      read_rate, write_rate);
@@ -1071,8 +1011,6 @@ static int acquire_sample_rows(Relation onerel, int elevel, HeapTuple *rows,
   ReservoirStateData rstate;
   TupleTableSlot *slot;
   TableScanDesc scan;
-  BlockNumber nblocks;
-  BlockNumber blksdone = 0;
   ReadStream *stream;
 
   Assert(targrows > 0);
@@ -1084,10 +1022,7 @@ static int acquire_sample_rows(Relation onerel, int elevel, HeapTuple *rows,
 
   /* Prepare for sampling block numbers */
   randseed = pg_prng_uint32(&pg_global_prng_state);
-  nblocks = BlockSampler_Init(&bs, totalblocks, targrows, randseed);
-
-  /* Report sampling block numbers */
-  pgstat_progress_update_param(PROGRESS_ANALYZE_BLOCKS_TOTAL, nblocks);
+  BlockSampler_Init(&bs, totalblocks, targrows, randseed);
 
   /* Prepare for sampling rows */
   reservoir_init_selection_state(&rstate, targrows);
@@ -1149,8 +1084,6 @@ static int acquire_sample_rows(Relation onerel, int elevel, HeapTuple *rows,
 
       samplerows += 1;
     }
-
-    pgstat_progress_update_param(PROGRESS_ANALYZE_BLOCKS_DONE, ++blksdone);
   }
 
   read_stream_end(stream);
@@ -1363,7 +1296,6 @@ static int acquire_inherited_sample_rows(Relation onerel, int elevel,
    * rels have radically different free-space percentages, but it's not
    * clear that it's worth working harder.)
    */
-  pgstat_progress_update_param(PROGRESS_ANALYZE_CHILD_TABLES_TOTAL, nrels);
   numrows = 0;
   for (i = 0; i < nrels; i++) {
     Relation childrel = rels[i];
@@ -1375,18 +1307,7 @@ static int acquire_inherited_sample_rows(Relation onerel, int elevel,
      * done/total, but we need to reset them to 0 here, so that they don't
      * show an old value until that.
      */
-    {
-      const int progress_index[] = {PROGRESS_ANALYZE_CURRENT_CHILD_TABLE_RELID,
-                                    PROGRESS_ANALYZE_BLOCKS_DONE,
-                                    PROGRESS_ANALYZE_BLOCKS_TOTAL};
-      const int64 progress_vals[] = {
-          RelationGetRelid(childrel),
-          0,
-          0,
-      };
-
-      pgstat_progress_update_multi_param(3, progress_index, progress_vals);
-    }
+    {}
 
     if (childblocks > 0) {
       int childtargrows;
@@ -1435,7 +1356,6 @@ static int acquire_inherited_sample_rows(Relation onerel, int elevel,
      * pointers to their TOAST tables in the sampled rows.
      */
     table_close(childrel, NoLock);
-    pgstat_progress_update_param(PROGRESS_ANALYZE_CHILD_TABLES_DONE, i + 1);
   }
 
   return numrows;

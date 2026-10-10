@@ -19,7 +19,6 @@
 #include "libpq/be-gssapi-common.h"
 #include "libpq/libpq.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "port/pg_bswap.h"
 #include "utils/injection_point.h"
 #include "utils/memutils.h"

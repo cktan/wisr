@@ -78,10 +78,8 @@ extern bool ConditionalXactLockTableWait(TransactionId xid,
                                          bool logLockFailure);
 
 /* Lock VXIDs, specified by conflicting locktags */
-extern void WaitForLockers(LOCKTAG heaplocktag, LOCKMODE lockmode,
-                           bool progress);
-extern void WaitForLockersMultiple(List *locktags, LOCKMODE lockmode,
-                                   bool progress);
+extern void WaitForLockers(LOCKTAG heaplocktag, LOCKMODE lockmode);
+extern void WaitForLockersMultiple(List *locktags, LOCKMODE lockmode);
 
 /* Lock an XID for tuple insertion (used to wait for an insertion to finish) */
 extern uint32 SpeculativeInsertionLockAcquire(TransactionId xid);

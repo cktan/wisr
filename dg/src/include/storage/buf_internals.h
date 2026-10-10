@@ -15,7 +15,6 @@
 #ifndef BUFMGR_INTERNALS_H
 #define BUFMGR_INTERNALS_H
 
-#include "pgstat.h"
 #include "port/atomics.h"
 #include "storage/buf.h"
 #include "storage/bufmgr.h"
@@ -370,10 +369,9 @@ static inline void ResourceOwnerForgetBufferIO(ResourceOwner owner,
  */
 /* bufmgr.c */
 extern void WritebackContextInit(WritebackContext *context, int *max_pending);
-extern void IssuePendingWritebacks(WritebackContext *wb_context,
-                                   IOContext io_context);
+extern void IssuePendingWritebacks(WritebackContext *wb_context);
 extern void ScheduleBufferTagForWriteback(WritebackContext *wb_context,
-                                          IOContext io_context, BufferTag *tag);
+                                          BufferTag *tag);
 
 /* solely to make it easier to write tests */
 extern bool StartBufferIO(BufferDesc *buf, bool forInput, bool nowait);
@@ -381,7 +379,6 @@ extern void TerminateBufferIO(BufferDesc *buf, bool clear_dirty,
                               uint32 set_flag_bits, bool forget_owner);
 
 /* freelist.c */
-extern IOContext IOContextForStrategy(BufferAccessStrategy strategy);
 extern BufferDesc *StrategyGetBuffer(BufferAccessStrategy strategy,
                                      uint32 *buf_state, bool *from_ring);
 extern void StrategyFreeBuffer(BufferDesc *buf);

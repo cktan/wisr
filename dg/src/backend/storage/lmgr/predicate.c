@@ -192,7 +192,6 @@
 #include "access/twophase.h"
 #include "access/xact.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "port/pg_lfind.h"
 #include "storage/predicate.h"
 #include "storage/predicate_internals.h"
@@ -201,6 +200,7 @@
 #include "utils/guc_hooks.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "utils/wait_event.h"
 
 /* Uncomment the next line to test the graceful degradation code. */
 /* #define TEST_SUMMARIZE_SERIAL */

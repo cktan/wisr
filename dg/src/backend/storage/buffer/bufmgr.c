@@ -47,7 +47,6 @@
 #include "lib/binaryheap.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
-#include "pgstat.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
@@ -62,6 +61,7 @@
 #include "utils/rel.h"
 #include "utils/resowner.h"
 #include "utils/timestamp.h"
+#include "utils/wait_event.h"
 
 /* Note: these two macros only work on shared buffers, not local ones! */
 #define BufHdrGetBlock(bufHdr)	((Block) (BufferBlocks + ((Size) (bufHdr)->buf_id) * BLCKSZ))
@@ -458,14 +458,12 @@ static void local_buffer_write_error_callback(void *arg);
 static inline BufferDesc *BufferAlloc(SMgrRelation smgr, char relpersistence,
                                       ForkNumber forkNum, BlockNumber blockNum,
                                       BufferAccessStrategy strategy,
-                                      bool *foundPtr, IOContext io_context);
+                                      bool *foundPtr);
 static void ReadBuffersIO(ReadBuffersOperation *operation);
 static void CheckReadBuffersOperation(ReadBuffersOperation *operation,
                                       bool is_complete);
-static Buffer GetVictimBuffer(BufferAccessStrategy strategy,
-                              IOContext io_context);
-static void FlushBuffer(BufferDesc *buf, SMgrRelation reln, IOObject io_object,
-                        IOContext io_context);
+static Buffer GetVictimBuffer(BufferAccessStrategy strategy);
+static void FlushBuffer(BufferDesc *buf, SMgrRelation reln);
 static void FindAndDropRelationBuffers(RelFileLocator rlocator,
                                        ForkNumber forkNum,
                                        BlockNumber nForkBlock,
@@ -973,8 +971,6 @@ static pg_always_inline Buffer PinBufferForBlock(
     Relation rel, SMgrRelation smgr, char persistence, ForkNumber forkNum,
     BlockNumber blockNum, BufferAccessStrategy strategy, bool *foundPtr) {
   BufferDesc *bufHdr;
-  IOContext io_context;
-  IOObject io_object;
 
   Assert(blockNum != P_NEW);
 
@@ -982,14 +978,6 @@ static pg_always_inline Buffer PinBufferForBlock(
   Assert((persistence == RELPERSISTENCE_TEMP ||
           persistence == RELPERSISTENCE_PERMANENT ||
           persistence == RELPERSISTENCE_UNLOGGED));
-
-  if (persistence == RELPERSISTENCE_TEMP) {
-    io_context = IOCONTEXT_NORMAL;
-    io_object = IOOBJECT_TEMP_RELATION;
-  } else {
-    io_context = IOContextForStrategy(strategy);
-    io_object = IOOBJECT_RELATION;
-  }
 
   TRACE_POSTGRESQL_BUFFER_READ_START(
       forkNum, blockNum, smgr->smgr_rlocator.locator.spcOid,
@@ -1001,23 +989,14 @@ static pg_always_inline Buffer PinBufferForBlock(
     if (*foundPtr)
       pgBufferUsage.local_blks_hit++;
   } else {
-    bufHdr = BufferAlloc(smgr, persistence, forkNum, blockNum, strategy,
-                         foundPtr, io_context);
+    bufHdr =
+        BufferAlloc(smgr, persistence, forkNum, blockNum, strategy, foundPtr);
     if (*foundPtr)
       pgBufferUsage.shared_blks_hit++;
   }
   if (rel) {
-    /*
-     * While pgBufferUsage's "read" counter isn't bumped unless we reach
-     * WaitReadBuffers() (so, not for hits, and not for buffers that are
-     * zeroed instead), the per-relation stats always count them.
-     */
-    pgstat_count_buffer_read(rel);
-    if (*foundPtr)
-      pgstat_count_buffer_hit(rel);
   }
   if (*foundPtr) {
-    pgstat_count_io_op(io_object, io_context, IOOP_HIT, 1, 0);
     if (VacuumCostActive)
       VacuumCostBalance += VacuumCostPageHit;
 
@@ -1359,8 +1338,6 @@ static void ReadBufferComplete(Buffer buffer, int flags) {
   verified =
       PageIsVerified((Page)bufdata, tag.blockNum, piv_flags, &failed_checksum);
   if (failed_checksum) {
-    pgstat_prepare_report_checksum_failure(tag.dbOid);
-    pgstat_report_checksum_failures_in_db(tag.dbOid, 1);
   }
 
   if (!verified) {
@@ -1407,17 +1384,6 @@ static void ReadBuffersIO(ReadBuffersOperation *operation) {
   Buffer *io_buffers = &operation->buffers[nblocks_done];
   int io_buffers_len = 0;
   void *io_pages[MAX_IO_COMBINE_LIMIT];
-  IOContext io_context;
-  IOObject io_object;
-  instr_time io_start;
-
-  if (persistence == RELPERSISTENCE_TEMP) {
-    io_context = IOCONTEXT_NORMAL;
-    io_object = IOOBJECT_TEMP_RELATION;
-  } else {
-    io_context = IOContextForStrategy(operation->strategy);
-    io_object = IOOBJECT_RELATION;
-  }
 
   if (zero_damaged_pages)
     flags |= READ_BUFFERS_ZERO_ON_ERROR;
@@ -1451,11 +1417,6 @@ static void ReadBuffersIO(ReadBuffersOperation *operation) {
     else
       pgBufferUsage.shared_blks_hit += 1;
 
-    if (operation->rel)
-      pgstat_count_buffer_hit(operation->rel);
-
-    pgstat_count_io_op(io_object, io_context, IOOP_HIT, 1, 0);
-
     if (VacuumCostActive)
       VacuumCostBalance += VacuumCostPageHit;
     return;
@@ -1483,10 +1444,7 @@ static void ReadBuffersIO(ReadBuffersOperation *operation) {
     io_pages[io_buffers_len++] = BufferGetBlock(buffers[i]);
   }
 
-  io_start = pgstat_prepare_io_time(track_io_timing);
   smgrreadv(operation->smgr, forknum, blocknum, io_pages, io_buffers_len);
-  pgstat_count_io_op_time(io_object, io_context, IOOP_READ, io_start, 1,
-                          io_buffers_len * BLCKSZ);
 
   if (persistence == RELPERSISTENCE_TEMP)
     pgBufferUsage.local_blks_read += io_buffers_len;
@@ -1522,8 +1480,8 @@ static void ReadBuffersIO(ReadBuffersOperation *operation) {
  */
 static pg_always_inline BufferDesc *
 BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
-            BlockNumber blockNum, BufferAccessStrategy strategy, bool *foundPtr,
-            IOContext io_context) {
+            BlockNumber blockNum, BufferAccessStrategy strategy,
+            bool *foundPtr) {
   BufferTag newTag;         /* identity of requested block */
   uint32 newHash;           /* hash value for newTag */
   LWLock *newPartitionLock; /* buffer partition lock for it */
@@ -1587,7 +1545,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
    * don't hold any conflicting locks. If so we'll have to undo our work
    * later.
    */
-  victim_buffer = GetVictimBuffer(strategy, io_context);
+  victim_buffer = GetVictimBuffer(strategy);
   victim_buf_hdr = GetBufferDescriptor(victim_buffer - 1);
 
   /*
@@ -1853,8 +1811,7 @@ static bool InvalidateVictimBuffer(BufferDesc *buf_hdr) {
   return true;
 }
 
-static Buffer GetVictimBuffer(BufferAccessStrategy strategy,
-                              IOContext io_context) {
+static Buffer GetVictimBuffer(BufferAccessStrategy strategy) {
   BufferDesc *buf_hdr;
   Buffer buf;
   uint32 buf_state;
@@ -1925,32 +1882,13 @@ again:
     }
 
     /* OK, do the I/O */
-    FlushBuffer(buf_hdr, NULL, IOOBJECT_RELATION, io_context);
+    FlushBuffer(buf_hdr, NULL);
     LWLockRelease(content_lock);
 
-    ScheduleBufferTagForWriteback(&BackendWritebackContext, io_context,
-                                  &buf_hdr->tag);
+    ScheduleBufferTagForWriteback(&BackendWritebackContext, &buf_hdr->tag);
   }
 
   if (buf_state & BM_VALID) {
-    /*
-     * When a BufferAccessStrategy is in use, blocks evicted from shared
-     * buffers are counted as IOOP_EVICT in the corresponding context
-     * (e.g. IOCONTEXT_BULKWRITE). Shared buffers are evicted by a
-     * strategy in two cases: 1) while initially claiming buffers for the
-     * strategy ring 2) to replace an existing strategy ring buffer
-     * because it is pinned or in use and cannot be reused.
-     *
-     * Blocks evicted from buffers already in the strategy ring are
-     * counted as IOOP_REUSE in the corresponding strategy context.
-     *
-     * At this point, we can accurately count evictions and reuses,
-     * because we have successfully claimed the valid buffer. Previously,
-     * we may have been forced to release the buffer due to concurrent
-     * pinners or erroring out.
-     */
-    pgstat_count_io_op(IOOBJECT_RELATION, io_context,
-                       from_ring ? IOOP_REUSE : IOOP_EVICT, 1, 0);
   }
 
   /*
@@ -2082,8 +2020,6 @@ ExtendBufferedRelShared(BufferManagerRelation bmr, ForkNumber fork,
                         uint32 extend_by, BlockNumber extend_upto,
                         Buffer *buffers, uint32 *extended_by) {
   BlockNumber first_block;
-  IOContext io_context = IOContextForStrategy(strategy);
-  instr_time io_start;
 
   LimitAdditionalPins(&extend_by);
 
@@ -2100,7 +2036,7 @@ ExtendBufferedRelShared(BufferManagerRelation bmr, ForkNumber fork,
   for (uint32 i = 0; i < extend_by; i++) {
     Block buf_block;
 
-    buffers[i] = GetVictimBuffer(strategy, io_context);
+    buffers[i] = GetVictimBuffer(strategy);
     buf_block = BufHdrGetBlock(GetBufferDescriptor(buffers[i] - 1));
 
     /* new buffers are zero-filled */
@@ -2284,8 +2220,6 @@ ExtendBufferedRelShared(BufferManagerRelation bmr, ForkNumber fork,
     }
   }
 
-  io_start = pgstat_prepare_io_time(track_io_timing);
-
   /*
    * Note: if smgrzeroextend fails, we will end up with buffers that are
    * allocated but not marked BM_VALID.  The next relation extension will
@@ -2307,9 +2241,6 @@ ExtendBufferedRelShared(BufferManagerRelation bmr, ForkNumber fork,
    */
   if (!(flags & EB_SKIP_EXTENSION_LOCK))
     UnlockRelationForExtension(bmr.rel, ExclusiveLock);
-
-  pgstat_count_io_op_time(IOOBJECT_RELATION, io_context, IOOP_EXTEND, io_start,
-                          1, extend_by * BLCKSZ);
 
   /* Set BM_VALID, terminate IO, and wake up any waiters */
   for (uint32 i = 0; i < extend_by; i++) {
@@ -3003,10 +2934,8 @@ void BufferGetTag(Buffer buffer, RelFileLocator *rlocator, ForkNumber *forknum,
  * If the caller has an smgr reference for the buffer's relation, pass it
  * as the second parameter.  If not, pass NULL.
  */
-static void FlushBuffer(BufferDesc *buf, SMgrRelation reln, IOObject io_object,
-                        IOContext io_context) {
+static void FlushBuffer(BufferDesc *buf, SMgrRelation reln) {
   ErrorContextCallback errcallback;
-  instr_time io_start;
   Block bufBlock;
   char *bufToWrite;
   uint32 buf_state;
@@ -3054,8 +2983,6 @@ static void FlushBuffer(BufferDesc *buf, SMgrRelation reln, IOObject io_object,
    */
   bufToWrite = PageSetChecksumCopy((Page)bufBlock, buf->tag.blockNum);
 
-  io_start = pgstat_prepare_io_time(track_io_timing);
-
   /*
    * bufToWrite is either the shared buffer or a copy, as appropriate.
    */
@@ -3080,8 +3007,6 @@ static void FlushBuffer(BufferDesc *buf, SMgrRelation reln, IOObject io_object,
    * When a strategy is not in use, the write can only be a "regular" write
    * of a dirty shared buffer (IOCONTEXT_NORMAL IOOP_WRITE).
    */
-  pgstat_count_io_op_time(IOOBJECT_RELATION, io_context, IOOP_WRITE, io_start,
-                          1, BLCKSZ);
 
   pgBufferUsage.shared_blks_written++;
 
@@ -3628,7 +3553,7 @@ void FlushRelationBuffers(Relation rel) {
         (buf_state & (BM_VALID | BM_DIRTY)) == (BM_VALID | BM_DIRTY)) {
       PinBuffer_Locked(bufHdr);
       LWLockAcquire(BufferDescriptorGetContentLock(bufHdr), LW_SHARED);
-      FlushBuffer(bufHdr, srel, IOOBJECT_RELATION, IOCONTEXT_NORMAL);
+      FlushBuffer(bufHdr, srel);
       LWLockRelease(BufferDescriptorGetContentLock(bufHdr));
       UnpinBuffer(bufHdr);
     } else
@@ -3713,7 +3638,7 @@ void FlushRelationsAllBuffers(SMgrRelation *smgrs, int nrels) {
         (buf_state & (BM_VALID | BM_DIRTY)) == (BM_VALID | BM_DIRTY)) {
       PinBuffer_Locked(bufHdr);
       LWLockAcquire(BufferDescriptorGetContentLock(bufHdr), LW_SHARED);
-      FlushBuffer(bufHdr, srelent->srel, IOOBJECT_RELATION, IOCONTEXT_NORMAL);
+      FlushBuffer(bufHdr, srelent->srel);
       LWLockRelease(BufferDescriptorGetContentLock(bufHdr));
       UnpinBuffer(bufHdr);
     } else
@@ -3763,7 +3688,7 @@ void FlushDatabaseBuffers(Oid dbid) {
         (buf_state & (BM_VALID | BM_DIRTY)) == (BM_VALID | BM_DIRTY)) {
       PinBuffer_Locked(bufHdr);
       LWLockAcquire(BufferDescriptorGetContentLock(bufHdr), LW_SHARED);
-      FlushBuffer(bufHdr, NULL, IOOBJECT_RELATION, IOCONTEXT_NORMAL);
+      FlushBuffer(bufHdr, NULL);
       LWLockRelease(BufferDescriptorGetContentLock(bufHdr));
       UnpinBuffer(bufHdr);
     } else
@@ -3787,7 +3712,7 @@ void FlushOneBuffer(Buffer buffer) {
 
   Assert(LWLockHeldByMe(BufferDescriptorGetContentLock(bufHdr)));
 
-  FlushBuffer(bufHdr, NULL, IOOBJECT_RELATION, IOCONTEXT_NORMAL);
+  FlushBuffer(bufHdr, NULL);
 }
 
 /*
@@ -3853,7 +3778,6 @@ void IncrBufferRefCount(Buffer buffer) {
  */
 void MarkBufferDirtyHint(Buffer buffer, bool buffer_std) {
   BufferDesc *bufHdr;
-  Page page = BufferGetPage(buffer);
 
   if (!BufferIsValid(buffer))
     elog(ERROR, "bad buffer ID: %d", buffer);
@@ -4511,7 +4435,7 @@ void WritebackContextInit(WritebackContext *context, int *max_pending) {
  * Add buffer to list of pending writeback requests.
  */
 void ScheduleBufferTagForWriteback(WritebackContext *wb_context,
-                                   IOContext io_context, BufferTag *tag) {
+                                   BufferTag *tag) {
   PendingWriteback *pending;
 
   /*
@@ -4539,7 +4463,7 @@ void ScheduleBufferTagForWriteback(WritebackContext *wb_context,
    * is now disabled.
    */
   if (wb_context->nr_pending >= *wb_context->max_pending)
-    IssuePendingWritebacks(wb_context, io_context);
+    IssuePendingWritebacks(wb_context);
 }
 
 #define ST_SORT sort_pending_writebacks
@@ -4556,9 +4480,7 @@ void ScheduleBufferTagForWriteback(WritebackContext *wb_context,
  * Because this is only used to improve the OSs IO scheduling we try to never
  * error out - it's just a hint.
  */
-void IssuePendingWritebacks(WritebackContext *wb_context,
-                            IOContext io_context) {
-  instr_time io_start;
+void IssuePendingWritebacks(WritebackContext *wb_context) {
   int i;
 
   if (wb_context->nr_pending == 0)
@@ -4570,8 +4492,6 @@ void IssuePendingWritebacks(WritebackContext *wb_context,
    */
   sort_pending_writebacks(wb_context->pending_writebacks,
                           wb_context->nr_pending);
-
-  io_start = pgstat_prepare_io_time(track_io_timing);
 
   /*
    * Coalesce neighbouring writes, but nothing else. For that we iterate
@@ -4623,13 +4543,6 @@ void IssuePendingWritebacks(WritebackContext *wb_context,
     reln = smgropen(currlocator, INVALID_PROC_NUMBER);
     smgrwriteback(reln, BufTagGetForkNum(&tag), tag.blockNum, nblocks);
   }
-
-  /*
-   * Assume that writeback requests are only issued for buffers containing
-   * blocks of permanent relations.
-   */
-  pgstat_count_io_op_time(IOOBJECT_RELATION, io_context, IOOP_WRITEBACK,
-                          io_start, wb_context->nr_pending, 0);
 
   wb_context->nr_pending = 0;
 }
@@ -4695,7 +4608,7 @@ static bool EvictUnpinnedBufferInternal(BufferDesc *desc,
   /* If it was dirty, try to clean it once. */
   if (buf_state & BM_DIRTY) {
     LWLockAcquire(BufferDescriptorGetContentLock(desc), LW_SHARED);
-    FlushBuffer(desc, NULL, IOOBJECT_RELATION, IOCONTEXT_NORMAL);
+    FlushBuffer(desc, NULL);
     *buffer_flushed = true;
     LWLockRelease(BufferDescriptorGetContentLock(desc));
   }

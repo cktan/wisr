@@ -83,7 +83,6 @@
 #include "common/file_utils.h"
 #include "common/pg_prng.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "utils/guc.h"
@@ -1365,7 +1364,6 @@ static int FileAccess(File file) {
  * Called whenever a temporary file is deleted to report its size.
  */
 static void ReportTemporaryFileUsage(const char *path, off_t size) {
-  pgstat_report_tempfile(size);
 
   if (log_temp_files >= 0) {
     if ((size / 1024) >= log_temp_files)
@@ -1703,10 +1701,8 @@ int FilePrefetch(File file, off_t offset, off_t amount,
       return returnCode;
 
   retry:
-    pgstat_report_wait_start(wait_event_info);
     returnCode =
         posix_fadvise(VfdCache[file].fd, offset, amount, POSIX_FADV_WILLNEED);
-    pgstat_report_wait_end();
 
     if (returnCode == EINTR)
       goto retry;
@@ -1727,9 +1723,7 @@ int FilePrefetch(File file, off_t offset, off_t amount,
 
     ra.ra_offset = offset;
     ra.ra_count = amount;
-    pgstat_report_wait_start(wait_event_info);
     returnCode = fcntl(VfdCache[file].fd, F_RDADVISE, &ra);
-    pgstat_report_wait_end();
     if (returnCode != -1)
       return 0;
     else
@@ -1759,9 +1753,7 @@ void FileWriteback(File file, off_t offset, off_t nbytes,
   if (returnCode < 0)
     return;
 
-  pgstat_report_wait_start(wait_event_info);
   pg_flush_data(VfdCache[file].fd, offset, nbytes);
-  pgstat_report_wait_end();
 }
 
 ssize_t FileReadV(File file, const struct iovec *iov, int iovcnt, off_t offset,
@@ -1781,9 +1773,7 @@ ssize_t FileReadV(File file, const struct iovec *iov, int iovcnt, off_t offset,
   vfdP = &VfdCache[file];
 
 retry:
-  pgstat_report_wait_start(wait_event_info);
   returnCode = pg_preadv(vfdP->fd, iov, iovcnt, offset);
-  pgstat_report_wait_end();
 
   if (returnCode < 0) {
     /*
@@ -1858,9 +1848,7 @@ ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt, off_t offset,
   }
 
 retry:
-  pgstat_report_wait_start(wait_event_info);
   returnCode = pg_pwritev(vfdP->fd, iov, iovcnt, offset);
-  pgstat_report_wait_end();
 
   if (returnCode >= 0) {
     /*
@@ -1919,9 +1907,7 @@ int FileSync(File file, uint32 wait_event_info) {
   if (returnCode < 0)
     return returnCode;
 
-  pgstat_report_wait_start(wait_event_info);
   returnCode = pg_fsync(VfdCache[file].fd);
-  pgstat_report_wait_end();
 
   return returnCode;
 }
@@ -1945,9 +1931,7 @@ int FileZero(File file, off_t offset, off_t amount, uint32 wait_event_info) {
   if (returnCode < 0)
     return returnCode;
 
-  pgstat_report_wait_start(wait_event_info);
   written = pg_pwrite_zeros(VfdCache[file].fd, amount, offset);
-  pgstat_report_wait_end();
 
   if (written < 0)
     return -1;
@@ -1988,9 +1972,7 @@ int FileFallocate(File file, off_t offset, off_t amount,
     return -1;
 
 retry:
-  pgstat_report_wait_start(wait_event_info);
   returnCode = posix_fallocate(VfdCache[file].fd, offset, amount);
-  pgstat_report_wait_end();
 
   if (returnCode == 0)
     return 0;
@@ -2035,9 +2017,7 @@ int FileTruncate(File file, off_t offset, uint32 wait_event_info) {
   if (returnCode < 0)
     return returnCode;
 
-  pgstat_report_wait_start(wait_event_info);
   returnCode = pg_ftruncate(VfdCache[file].fd, offset);
-  pgstat_report_wait_end();
 
   if (returnCode == 0 && VfdCache[file].fileSize > offset) {
     /* adjust our state for truncation of a temp file */

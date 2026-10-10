@@ -1,5 +1,5 @@
 top := ../../../..
-# Generated, and not compiled alone: wait_event.c and
-# wait_event_funcs.c include them.
+# Generated beside wait_event_types.h, and not used: wait events are
+# not reported (WORKNOTE.md step 28).
 SKIP := pgstat_wait_event.c wait_event_funcs_data.c
 include $(top)/dg.mk

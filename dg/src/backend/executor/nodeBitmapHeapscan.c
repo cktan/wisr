@@ -43,7 +43,6 @@
 #include "executor/executor.h"
 #include "executor/nodeBitmapHeapscan.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "utils/rel.h"
 #include "utils/spccache.h"

@@ -29,13 +29,13 @@
 #include "common/file_utils.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
-#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "storage/md.h"
 #include "storage/relfilelocator.h"
 #include "storage/smgr.h"
 #include "utils/memutils.h"
+#include "utils/wait_event.h"
 
 /*
  * The magnetic disk storage manager keeps track of open file

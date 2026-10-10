@@ -39,7 +39,6 @@ Datum pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS) {
   int blocked_pid = PG_GETARG_INT32(0);
   ArrayType *interesting_pids_a = PG_GETARG_ARRAYTYPE_P(1);
   PGPROC *proc;
-  const char *wait_event_type;
   ArrayType *blocking_pids_a;
   int32 *interesting_pids;
   int32 *blocking_pids;
@@ -48,14 +47,9 @@ Datum pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS) {
   int dummy;
   int i, j;
 
-  /* Check if blocked_pid is in an injection point. */
   proc = BackendPidGetProc(blocked_pid);
   if (proc == NULL)
     PG_RETURN_BOOL(false); /* session gone: definitely unblocked */
-  wait_event_type =
-      pgstat_get_wait_event_type(UINT32_ACCESS_ONCE(proc->wait_event_info));
-  if (wait_event_type && strcmp("InjectionPoint", wait_event_type) == 0)
-    PG_RETURN_BOOL(true);
 
   /* Validate the passed-in array */
   Assert(ARR_ELEMTYPE(interesting_pids_a) == INT4OID);

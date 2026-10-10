@@ -16,7 +16,6 @@
 #include "postgres.h"
 
 #include "executor/instrument.h"
-#include "pgstat.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
@@ -162,7 +161,6 @@ BufferDesc *LocalBufferAlloc(SMgrRelation smgr, ForkNumber forkNum,
  * Like FlushBuffer(), just for local buffers.
  */
 void FlushLocalBuffer(BufferDesc *bufHdr, SMgrRelation reln) {
-  instr_time io_start;
   Page localpage = (char *)LocalBufHdrGetBlock(bufHdr);
 
   Assert(LocalRefCount[-BufferDescriptorGetBuffer(bufHdr) - 1] > 0);
@@ -180,15 +178,9 @@ void FlushLocalBuffer(BufferDesc *bufHdr, SMgrRelation reln) {
 
   PageSetChecksumInplace(localpage, bufHdr->tag.blockNum);
 
-  io_start = pgstat_prepare_io_time(track_io_timing);
-
   /* And write... */
   smgrwrite(reln, BufTagGetForkNum(&bufHdr->tag), bufHdr->tag.blockNum,
             localpage, false);
-
-  /* Temporary table I/O does not use Buffer Access Strategies */
-  pgstat_count_io_op_time(IOOBJECT_TEMP_RELATION, IOCONTEXT_NORMAL, IOOP_WRITE,
-                          io_start, 1, BLCKSZ);
 
   /* Mark not-dirty */
   TerminateLocalBufferIO(bufHdr, true, 0);
@@ -255,9 +247,6 @@ static Buffer GetLocalVictimBuffer(void) {
    */
   if (pg_atomic_read_u32(&bufHdr->state) & BM_TAG_VALID) {
     InvalidateLocalBuffer(bufHdr, false);
-
-    pgstat_count_io_op(IOOBJECT_TEMP_RELATION, IOCONTEXT_NORMAL, IOOP_EVICT, 1,
-                       0);
   }
 
   return BufferDescriptorGetBuffer(bufHdr);
@@ -310,7 +299,6 @@ BlockNumber ExtendBufferedRelLocal(BufferManagerRelation bmr, ForkNumber fork,
                                    BlockNumber extend_upto, Buffer *buffers,
                                    uint32 *extended_by) {
   BlockNumber first_block;
-  instr_time io_start;
 
   /* Initialize local buffers if first request in this session */
   if (LocalBufHash == NULL)
@@ -407,13 +395,8 @@ BlockNumber ExtendBufferedRelLocal(BufferManagerRelation bmr, ForkNumber fork,
     }
   }
 
-  io_start = pgstat_prepare_io_time(track_io_timing);
-
   /* actually extend relation */
   smgrzeroextend(bmr.smgr, fork, first_block, extend_by, false);
-
-  pgstat_count_io_op_time(IOOBJECT_TEMP_RELATION, IOCONTEXT_NORMAL, IOOP_EXTEND,
-                          io_start, 1, extend_by * BLCKSZ);
 
   for (uint32 i = 0; i < extend_by; i++) {
     Buffer buf = buffers[i];

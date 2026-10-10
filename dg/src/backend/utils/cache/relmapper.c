@@ -47,7 +47,6 @@
 #include "catalog/pg_tablespace.h"
 #include "catalog/storage.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "port/pg_crc32c.h"
 #include "storage/fd.h"
 #include "storage/lwlock.h"
@@ -584,7 +583,6 @@ static void read_relmap_file(RelMapFile *map, char *dbpath, bool lock_held,
                      errmsg("could not open file \"%s\": %m", mapfilename)));
 
   /* Now read the data. */
-  pgstat_report_wait_start(WAIT_EVENT_RELATION_MAP_READ);
   r = read(fd, map, sizeof(RelMapFile));
   if (r != sizeof(RelMapFile)) {
     if (r < 0)
@@ -595,7 +593,6 @@ static void read_relmap_file(RelMapFile *map, char *dbpath, bool lock_held,
                        errmsg("could not read file \"%s\": read %d of %zu",
                               mapfilename, r, sizeof(RelMapFile))));
   }
-  pgstat_report_wait_end();
 
   if (CloseTransientFile(fd) != 0)
     ereport(elevel, (errcode_for_file_access(),
@@ -688,7 +685,6 @@ static void write_relmap_file(RelMapFile *newmap, bool send_sinval,
                     errmsg("could not open file \"%s\": %m", maptempfilename)));
 
   /* Write new data to the file. */
-  pgstat_report_wait_start(WAIT_EVENT_RELATION_MAP_WRITE);
   if (write(fd, newmap, sizeof(RelMapFile)) != sizeof(RelMapFile)) {
     /* if write didn't set errno, assume problem is no disk space */
     if (errno == 0)
@@ -697,7 +693,6 @@ static void write_relmap_file(RelMapFile *newmap, bool send_sinval,
             (errcode_for_file_access(),
              errmsg("could not write file \"%s\": %m", maptempfilename)));
   }
-  pgstat_report_wait_end();
 
   /* And close the file. */
   if (CloseTransientFile(fd) != 0)
@@ -712,9 +707,7 @@ static void write_relmap_file(RelMapFile *newmap, bool send_sinval,
    * NB: Although we instruct durable_rename() to use ERROR, we will often
    * be in a critical section at this point; if so, ERROR will become PANIC.
    */
-  pgstat_report_wait_start(WAIT_EVENT_RELATION_MAP_REPLACE);
   durable_rename(maptempfilename, mapfilename, ERROR);
-  pgstat_report_wait_end();
 
   /*
    * Now that the file is safely on disk, send sinval message to let other

@@ -15,7 +15,6 @@
  */
 #include "postgres.h"
 
-#include "pgstat.h"
 #include "port/atomics.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
@@ -610,34 +609,4 @@ static BufferDesc *GetBufferFromRing(BufferAccessStrategy strategy,
  */
 static void AddBufferToRing(BufferAccessStrategy strategy, BufferDesc *buf) {
   strategy->buffers[strategy->current] = BufferDescriptorGetBuffer(buf);
-}
-
-/*
- * Utility function returning the IOContext of a given BufferAccessStrategy's
- * strategy ring.
- */
-IOContext IOContextForStrategy(BufferAccessStrategy strategy) {
-  if (!strategy)
-    return IOCONTEXT_NORMAL;
-
-  switch (strategy->btype) {
-  case BAS_NORMAL:
-
-    /*
-     * Currently, GetAccessStrategy() returns NULL for
-     * BufferAccessStrategyType BAS_NORMAL, so this case is
-     * unreachable.
-     */
-    pg_unreachable();
-    return IOCONTEXT_NORMAL;
-  case BAS_BULKREAD:
-    return IOCONTEXT_BULKREAD;
-  case BAS_BULKWRITE:
-    return IOCONTEXT_BULKWRITE;
-  case BAS_VACUUM:
-    return IOCONTEXT_VACUUM;
-  }
-
-  elog(ERROR, "unrecognized BufferAccessStrategyType: %d", strategy->btype);
-  pg_unreachable();
 }

@@ -47,7 +47,6 @@
 #include "common/file_perm.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/copydir.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
@@ -1134,11 +1133,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
    * Remove shared dependency references for the database.
    */
   dropDatabaseDependencies(db_id);
-
-  /*
-   * Tell the cumulative stats system to forget it immediately, too.
-   */
-  pgstat_drop_database(db_id);
 
   /*
    * Except for the deletion of the catalog row, subsequent actions are not

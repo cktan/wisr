@@ -64,13 +64,11 @@
 
 #include "commands/copyapi.h"
 #include "commands/copyfrom_internal.h"
-#include "commands/progress.h"
 #include "executor/executor.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "port/pg_bswap.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
@@ -578,10 +576,6 @@ static void CopyLoadRawBuf(CopyFromState cstate) {
   nbytes += inbytes;
   cstate->raw_buf[nbytes] = '\0';
   cstate->raw_buf_len = nbytes;
-
-  cstate->bytes_processed += inbytes;
-  pgstat_progress_update_param(PROGRESS_COPY_BYTES_PROCESSED,
-                               cstate->bytes_processed);
 
   if (inbytes == 0)
     cstate->raw_reached_eof = true;

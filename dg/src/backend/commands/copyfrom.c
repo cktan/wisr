@@ -30,7 +30,6 @@
 #include "catalog/namespace.h"
 #include "commands/copyapi.h"
 #include "commands/copyfrom_internal.h"
-#include "commands/progress.h"
 #include "commands/trigger.h"
 #include "executor/execPartition.h"
 #include "executor/executor.h"
@@ -41,7 +40,6 @@
 #include "miscadmin.h"
 #include "nodes/miscnodes.h"
 #include "optimizer/optimizer.h"
-#include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/fd.h"
 #include "tcop/tcopprot.h"
@@ -451,7 +449,6 @@ static inline void CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 
       /* Update the row counter and progress of the COPY command */
       *processed += inserted;
-      pgstat_progress_update_param(PROGRESS_COPY_TUPLES_PROCESSED, *processed);
     }
 
     for (i = 0; i < nused; i++)
@@ -517,7 +514,6 @@ static inline void CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 
     /* Update the row counter and progress of the COPY command */
     *processed += nused;
-    pgstat_progress_update_param(PROGRESS_COPY_TUPLES_PROCESSED, *processed);
 
     /* reset cur_lineno and line_buf_valid to what they were */
     cstate->line_buf_valid = line_buf_valid;
@@ -700,7 +696,6 @@ uint64 CopyFrom(CopyFromState cstate) {
   CopyInsertMethod insertMethod;
   CopyMultiInsertInfo multiInsertInfo = {0}; /* pacify compiler */
   int64 processed = 0;
-  int64 excluded = 0;
   bool has_before_insert_row_trig;
   bool has_instead_insert_row_trig;
   bool leafpart_use_multi_insert = false;
@@ -1041,10 +1036,6 @@ uint64 CopyFrom(CopyFromState cstate) {
        */
       cstate->escontext->error_occurred = false;
 
-      /* Report that this tuple was skipped by the ON_ERROR clause */
-      pgstat_progress_update_param(PROGRESS_COPY_TUPLES_SKIPPED,
-                                   cstate->num_errors);
-
       if (cstate->opts.reject_limit > 0 &&
           cstate->num_errors > cstate->opts.reject_limit)
         ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
@@ -1076,7 +1067,6 @@ uint64 CopyFrom(CopyFromState cstate) {
          * Report that this tuple was filtered out by the WHERE
          * clause.
          */
-        pgstat_progress_update_param(PROGRESS_COPY_TUPLES_EXCLUDED, ++excluded);
         continue;
       }
     }
@@ -1296,10 +1286,9 @@ uint64 CopyFrom(CopyFromState cstate) {
       /*
        * We count only tuples not suppressed by a BEFORE INSERT trigger
        * or FDW; this is the same definition used by nodeModifyTable.c
-       * for counting tuples inserted by an INSERT command.  Update
-       * progress of the COPY command as well.
+       * for counting tuples inserted by an INSERT command.
        */
-      pgstat_progress_update_param(PROGRESS_COPY_TUPLES_PROCESSED, ++processed);
+      ++processed;
     }
   }
 
@@ -1385,9 +1374,6 @@ CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *whereClause,
   ExprState **defexprs;
   MemoryContext oldcontext;
   bool volatile_defexprs;
-  const int progress_cols[] = {PROGRESS_COPY_COMMAND, PROGRESS_COPY_TYPE,
-                               PROGRESS_COPY_BYTES_TOTAL};
-  int64 progress_vals[] = {PROGRESS_COPY_COMMAND_FROM, 0, 0};
 
   /* Allocate workspace and zero all fields */
   cstate = (CopyFromStateData *)palloc0(sizeof(CopyFromStateData));
@@ -1639,12 +1625,6 @@ CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *whereClause,
 
   cstate->defaults = (bool *)palloc0(tupDesc->natts * sizeof(bool));
 
-  /* initialize progress */
-  pgstat_progress_start_command(PROGRESS_COMMAND_COPY,
-                                cstate->rel ? RelationGetRelid(cstate->rel)
-                                            : InvalidOid);
-  cstate->bytes_processed = 0;
-
   /* We keep those variables in cstate. */
   cstate->in_functions = in_functions;
   cstate->typioparams = typioparams;
@@ -1655,11 +1635,9 @@ CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *whereClause,
   cstate->is_program = is_program;
 
   if (data_source_cb) {
-    progress_vals[1] = PROGRESS_COPY_TYPE_CALLBACK;
     cstate->copy_src = COPY_CALLBACK;
     cstate->data_source_cb = data_source_cb;
   } else if (pipe) {
-    progress_vals[1] = PROGRESS_COPY_TYPE_PIPE;
     Assert(!is_program); /* the grammar does not allow this */
     if (whereToSendOutput == DestRemote)
       ReceiveCopyBegin(cstate);
@@ -1669,7 +1647,6 @@ CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *whereClause,
     cstate->filename = pstrdup(filename);
 
     if (cstate->is_program) {
-      progress_vals[1] = PROGRESS_COPY_TYPE_PROGRAM;
       cstate->copy_file = OpenPipeStream(cstate->filename, PG_BINARY_R);
       if (cstate->copy_file == NULL)
         ereport(ERROR, (errcode_for_file_access(),
@@ -1678,7 +1655,6 @@ CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *whereClause,
     } else {
       struct stat st;
 
-      progress_vals[1] = PROGRESS_COPY_TYPE_FILE;
       cstate->copy_file = AllocateFile(cstate->filename, PG_BINARY_R);
       if (cstate->copy_file == NULL) {
         /* copy errno because ereport subfunctions might change it */
@@ -1703,12 +1679,8 @@ CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *whereClause,
       if (S_ISDIR(st.st_mode))
         ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                         errmsg("\"%s\" is a directory", cstate->filename)));
-
-      progress_vals[2] = st.st_size;
     }
   }
-
-  pgstat_progress_update_multi_param(3, progress_cols, progress_vals);
 
   cstate->routine->CopyFromStart(cstate, tupDesc);
 
@@ -1733,8 +1705,6 @@ void EndCopyFrom(CopyFromState cstate) {
               (errcode_for_file_access(),
                errmsg("could not close file \"%s\": %m", cstate->filename)));
   }
-
-  pgstat_progress_end_command();
 
   MemoryContextDelete(cstate->copycontext);
   pfree(cstate);

@@ -79,7 +79,6 @@
 #include "parser/parser.h"
 #include "partitioning/partbounds.h"
 #include "partitioning/partdesc.h"
-#include "pgstat.h"
 #include "rewrite/rewriteDefine.h"
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
@@ -2125,8 +2124,6 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids,
       reindex_relation(NULL, heap_relid, REINDEX_REL_PROCESS_TOAST,
                        &reindex_params);
     }
-
-    pgstat_count_truncate(rel);
   }
 
   /* Now go through the hash table, and truncate foreign tables */
@@ -19309,7 +19306,7 @@ static ObjectAddress ATExecDetachPartition(List **wqueue, AlteredTableInfo *tab,
      * partition itself, since we will acquire AccessExclusiveLock below.
      */
     SET_LOCKTAG_RELATION(tag, MyDatabaseId, parentrelid);
-    WaitForLockersMultiple(list_make1(&tag), AccessExclusiveLock, false);
+    WaitForLockersMultiple(list_make1(&tag), AccessExclusiveLock);
 
     /*
      * Now acquire locks in both relations again.  Note they may have been
@@ -19675,7 +19672,7 @@ static ObjectAddress ATExecDetachPartitionFinalize(Relation rel,
    * all such queries are complete (otherwise we would present them with an
    * inconsistent view of catalogs).
    */
-  WaitForOlderSnapshots(snap->xmin, false);
+  WaitForOlderSnapshots(snap->xmin);
 
   DetachPartitionFinalize(rel, partRel, true, InvalidOid);
 

@@ -66,7 +66,6 @@
 
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "port/atomics.h"
 #include "portability/instr_time.h"
 #include "postmaster/postmaster.h"
@@ -982,8 +981,6 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
   } else
     INSTR_TIME_SET_ZERO(start_time);
 
-  pgstat_report_wait_start(wait_event_info);
-
 #ifndef WIN32
   waiting = true;
 #else
@@ -1084,8 +1081,6 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
 #ifndef WIN32
   waiting = false;
 #endif
-
-  pgstat_report_wait_end();
 
   return returned_events;
 }

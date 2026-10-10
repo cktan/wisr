@@ -19,7 +19,6 @@
 
 #include "commands/async.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "port/atomics.h"
 #include "port/pg_bitutils.h"
 #include "storage/condition_variable.h"
@@ -31,6 +30,7 @@
 #include "storage/smgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/memutils.h"
+#include "utils/wait_event.h"
 
 /*
  * The SIGUSR1 signal is multiplexed to support signaling multiple event

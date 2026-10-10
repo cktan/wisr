@@ -59,7 +59,6 @@
 #include "parser/parse_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_type.h"
-#include "pgstat.h"
 #include "tcop/pquery.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
@@ -1034,8 +1033,6 @@ void RemoveFunctionById(Oid funcOid) {
 
   table_close(relation, RowExclusiveLock);
 
-  pgstat_drop_function(funcOid);
-
   /*
    * If there's a pg_aggregate tuple, delete that too.
    */
@@ -1840,7 +1837,6 @@ void ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic,
   EState *estate;
   ExprContext *econtext;
   HeapTuple tp;
-  PgStat_FunctionCallUsage fcusage;
   Datum retval;
 
   fexpr = stmt->funcexpr;
@@ -1935,9 +1931,7 @@ void ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic,
     PopActiveSnapshot();
 
   /* Here we actually call the procedure */
-  pgstat_init_function_usage(fcinfo, &fcusage);
   retval = FunctionCallInvoke(fcinfo);
-  pgstat_end_function_usage(&fcusage, true);
 
   /* Handle the procedure's outputs */
   if (fexpr->funcresulttype == VOIDOID) {

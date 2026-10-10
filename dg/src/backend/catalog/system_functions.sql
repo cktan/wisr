@@ -29,7 +29,6 @@
  * string literal (including a function body!) or a multiline comment.
  */
 
-
 CREATE OR REPLACE FUNCTION lpad(text, integer)
  RETURNS text
  LANGUAGE sql
@@ -636,20 +635,6 @@ LANGUAGE internal
 STRICT IMMUTABLE PARALLEL SAFE
 AS 'unicode_is_normalized';
 
-CREATE OR REPLACE FUNCTION
-  pg_stat_reset_shared(target text DEFAULT NULL)
-RETURNS void
-LANGUAGE INTERNAL
-CALLED ON NULL INPUT VOLATILE PARALLEL SAFE
-AS 'pg_stat_reset_shared';
-
-CREATE OR REPLACE FUNCTION
-  pg_stat_reset_slru(target text DEFAULT NULL)
-RETURNS void
-LANGUAGE INTERNAL
-CALLED ON NULL INPUT VOLATILE PARALLEL SAFE
-AS 'pg_stat_reset_slru';
-
 --
 -- The default permissions for functions mean that anyone can execute them.
 -- A number of functions shouldn't be executable by just anyone, but rather
@@ -676,24 +661,6 @@ REVOKE EXECUTE ON FUNCTION pg_wal_replay_resume() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_reload_conf() FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_promote(boolean, integer) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_reset() FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_reset_shared(text) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_reset_slru(text) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_table_counters(oid) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_function_counters(oid) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_reset_backend_stats(integer) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_reset_replication_slot(text) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_have_stats(text, oid, int8) FROM public;
-
-REVOKE EXECUTE ON FUNCTION pg_stat_reset_subscription_stats(oid) FROM public;
 
 REVOKE EXECUTE ON FUNCTION lo_import(text) FROM public;
 

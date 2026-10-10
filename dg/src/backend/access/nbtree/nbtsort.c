@@ -46,10 +46,8 @@
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/index.h"
-#include "commands/progress.h"
 #include "executor/instrument.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/bulk_write.h"
 #include "tcop/tcopprot.h"
 #include "utils/rel.h"
@@ -219,10 +217,6 @@ static double _bt_spools_heapscan(Relation heap, Relation index,
   /* Save as primary spool */
   buildstate->spool = btspool;
 
-  /* Report table scan phase started */
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
-                               PROGRESS_BTREE_PHASE_INDEXBUILD_TABLESCAN);
-
   /* Begin tuplesort. */
   buildstate->spool->sortstate = tuplesort_begin_index_btree(
       heap, index, buildstate->isunique, buildstate->nulls_not_distinct,
@@ -259,14 +253,7 @@ static double _bt_spools_heapscan(Relation heap, Relation index,
    * Set the progress target for the next phase.  Reset the block number
    * values set by table_index_build_scan
    */
-  {
-    const int progress_index[] = {PROGRESS_CREATEIDX_TUPLES_TOTAL,
-                                  PROGRESS_SCAN_BLOCKS_TOTAL,
-                                  PROGRESS_SCAN_BLOCKS_DONE};
-    const int64 progress_vals[] = {buildstate->indtuples, 0, 0};
-
-    pgstat_progress_update_multi_param(3, progress_index, progress_vals);
-  }
+  {}
 
   /* okay, all heap tuples are spooled */
   if (buildstate->spool2 && !buildstate->havedead) {
@@ -310,12 +297,8 @@ static void _bt_leafbuild(BTSpool *btspool, BTSpool *btspool2) {
 #endif /* BTREE_BUILD_STATS */
 
   /* Execute the sort */
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
-                               PROGRESS_BTREE_PHASE_PERFORMSORT_1);
   tuplesort_performsort(btspool->sortstate);
   if (btspool2) {
-    pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
-                                 PROGRESS_BTREE_PHASE_PERFORMSORT_2);
     tuplesort_performsort(btspool2->sortstate);
   }
 
@@ -328,8 +311,6 @@ static void _bt_leafbuild(BTSpool *btspool, BTSpool *btspool2) {
   /* reserve the metapage */
   wstate.btws_pages_alloced = BTREE_METAPAGE + 1;
 
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
-                               PROGRESS_BTREE_PHASE_LEAF_LOAD);
   _bt_load(&wstate, btspool, btspool2);
 }
 
@@ -866,7 +847,6 @@ static void _bt_load(BTWriteState *wstate, BTSpool *btspool,
   TupleDesc tupdes = RelationGetDescr(wstate->index);
   int i, keysz = IndexRelationGetNumberOfKeyAttributes(wstate->index);
   SortSupport sortKeys;
-  int64 tuples_done = 0;
   bool deduplicate;
 
   wstate->bulkstate = smgr_bulk_start_rel(wstate->index, MAIN_FORKNUM);
@@ -958,10 +938,6 @@ static void _bt_load(BTWriteState *wstate, BTSpool *btspool,
         _bt_buildadd(wstate, state, itup2, 0);
         itup2 = tuplesort_getindextuple(btspool2->sortstate, true);
       }
-
-      /* Report progress */
-      pgstat_progress_update_param(PROGRESS_CREATEIDX_TUPLES_DONE,
-                                   ++tuples_done);
     }
     pfree(sortKeys);
   } else if (deduplicate) {
@@ -1029,10 +1005,6 @@ static void _bt_load(BTWriteState *wstate, BTSpool *btspool,
         _bt_dedup_start_pending(dstate, CopyIndexTuple(itup),
                                 InvalidOffsetNumber);
       }
-
-      /* Report progress */
-      pgstat_progress_update_param(PROGRESS_CREATEIDX_TUPLES_DONE,
-                                   ++tuples_done);
     }
 
     if (state) {
@@ -1054,10 +1026,6 @@ static void _bt_load(BTWriteState *wstate, BTSpool *btspool,
         state = _bt_pagestate(wstate, 0);
 
       _bt_buildadd(wstate, state, itup, 0);
-
-      /* Report progress */
-      pgstat_progress_update_param(PROGRESS_CREATEIDX_TUPLES_DONE,
-                                   ++tuples_done);
     }
   }
 

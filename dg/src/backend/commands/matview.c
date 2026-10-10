@@ -31,7 +31,6 @@
 #include "executor/executor.h"
 #include "executor/spi.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/lmgr.h"
 #include "tcop/tcopprot.h"
@@ -331,16 +330,6 @@ ObjectAddress RefreshMatViewByOid(Oid matviewOid, bool is_create, bool skipData,
     Assert(matview_maintenance_depth == old_depth);
   } else {
     refresh_by_heap_swap(matviewOid, OIDNewHeap, relpersistence);
-
-    /*
-     * Inform cumulative stats system about our activity: basically, we
-     * truncated the matview and inserted some new data.  (The concurrent
-     * code path above doesn't need to worry about this because the
-     * inserts and deletes it issues get counted by lower-level code.)
-     */
-    pgstat_count_truncate(matviewRel);
-    if (!skipData)
-      pgstat_count_heap_insert(matviewRel, processed);
   }
 
   table_close(matviewRel, NoLock);

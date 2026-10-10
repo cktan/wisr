@@ -34,7 +34,6 @@
 #include "nodes/miscnodes.h"
 #include "parser/parse_type.h"
 #include "parser/scansup.h"
-#include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/fd.h"
 #include "storage/latch.h"
@@ -45,6 +44,7 @@
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
+#include "utils/wait_event.h"
 
 /*
  * structure to cache metadata needed in pg_input_is_valid_common
@@ -887,3 +887,6 @@ Datum pg_get_replica_identity_index(PG_FUNCTION_ARGS) {
 Datum any_value_transfn(PG_FUNCTION_ARGS) {
   PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 }
+
+/* The current session's PID: its thread's id. */
+Datum pg_backend_pid(PG_FUNCTION_ARGS) { PG_RETURN_INT32(MyProcPid); }

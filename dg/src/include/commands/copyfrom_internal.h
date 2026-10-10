@@ -176,7 +176,7 @@ typedef struct CopyFromStateData {
   /* Shorthand for number of unconsumed bytes available in raw_buf */
 #define RAW_BUF_BYTES(cstate) ((cstate)->raw_buf_len - (cstate)->raw_buf_index)
 
-  uint64 bytes_processed; /* number of bytes processed so far */
+  /* number of bytes processed so far */
 } CopyFromStateData;
 
 extern void ReceiveCopyBegin(CopyFromState cstate);

@@ -40,7 +40,6 @@
 #include "commands/dbcommands.h"
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
-#include "commands/progress.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "mb/pg_wchar.h"
@@ -52,7 +51,6 @@
 #include "parser/parse_oper.h"
 #include "parser/parse_utilcmd.h"
 #include "partitioning/partdesc.h"
-#include "pgstat.h"
 #include "rewrite/rewriteManip.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
@@ -399,7 +397,7 @@ static bool CompareOpclassOptions(const Datum *opts1, const Datum *opts2,
  * GetCurrentVirtualXIDs.  If, during any iteration, a particular vxid
  * doesn't show up in the output, we know we can forget about it.
  */
-void WaitForOlderSnapshots(TransactionId limitXmin, bool progress) {
+void WaitForOlderSnapshots(TransactionId limitXmin) {
   int n_old_snapshots;
   int i;
   VirtualTransactionId *old_snapshots;
@@ -407,8 +405,6 @@ void WaitForOlderSnapshots(TransactionId limitXmin, bool progress) {
   old_snapshots = GetCurrentVirtualXIDs(
       limitXmin, true, false,
       PROC_IS_AUTOVACUUM | PROC_IN_VACUUM | PROC_IN_SAFE_IC, &n_old_snapshots);
-  if (progress)
-    pgstat_progress_update_param(PROGRESS_WAITFOR_TOTAL, n_old_snapshots);
 
   for (i = 0; i < n_old_snapshots; i++) {
     if (!VirtualTransactionIdIsValid(old_snapshots[i]))
@@ -438,20 +434,8 @@ void WaitForOlderSnapshots(TransactionId limitXmin, bool progress) {
       pfree(newer_snapshots);
     }
 
-    if (VirtualTransactionIdIsValid(old_snapshots[i])) {
-      /* If requested, publish who we're going to wait for. */
-      if (progress) {
-        PGPROC *holder = ProcNumberGetProc(old_snapshots[i].procNumber);
-
-        if (holder)
-          pgstat_progress_update_param(PROGRESS_WAITFOR_CURRENT_PID,
-                                       holder->pid);
-      }
+    if (VirtualTransactionIdIsValid(old_snapshots[i]))
       VirtualXactLock(old_snapshots[i], true);
-    }
-
-    if (progress)
-      pgstat_progress_update_param(PROGRESS_WAITFOR_DONE, i + 1);
   }
 }
 
@@ -569,17 +553,7 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * done.
    */
   if (!OidIsValid(parentIndexId)) {
-    pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX, tableId);
-    pgstat_progress_update_param(
-        PROGRESS_CREATEIDX_COMMAND,
-        concurrent ? PROGRESS_CREATEIDX_COMMAND_CREATE_CONCURRENTLY
-                   : PROGRESS_CREATEIDX_COMMAND_CREATE);
   }
-
-  /*
-   * No index OID to report yet
-   */
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_INDEX_OID, InvalidOid);
 
   /*
    * count key attributes in index
@@ -798,9 +772,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
   accessMethodForm = (Form_pg_am)GETSTRUCT(tuple);
   accessMethodId = accessMethodForm->oid;
   amRoutine = GetIndexAmRoutine(accessMethodForm->amhandler);
-
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_ACCESS_METHOD_OID,
-                               accessMethodId);
 
   if (stmt->unique && !stmt->iswithoutoverlaps && !amRoutine->amcanunique)
     ereport(ERROR,
@@ -1196,10 +1167,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
 
     table_close(rel, NoLock);
 
-    /* If this is the top-level index, we're done */
-    if (!OidIsValid(parentIndexId))
-      pgstat_progress_end_command();
-
     return address;
   }
 
@@ -1257,9 +1224,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
           total_parts = list_length(children) - 1;
           list_free(children);
         }
-
-        pgstat_progress_update_param(PROGRESS_CREATEIDX_PARTITIONS_TOTAL,
-                                     total_parts);
       }
 
       /* Make a local copy of partdesc->oids[], just for safety */
@@ -1379,17 +1343,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
 
             found = true;
 
-            /*
-             * Report this partition as processed.  Note that if
-             * the partition has children itself, we'd ideally
-             * count the children and update the progress report
-             * for all of them; but that seems unduly expensive.
-             * Instead, the progress report will act like all such
-             * indirect children were processed in zero time at
-             * the end of the command.
-             */
-            pgstat_progress_incr_param(PROGRESS_CREATEIDX_PARTITIONS_DONE, 1);
-
             /* keep lock till commit */
             index_close(cldidx, NoLock);
             break;
@@ -1480,12 +1433,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
     AtEOXact_GUC(false, root_save_nestlevel);
     SetUserIdAndSecContext(root_save_userid, root_save_sec_context);
     table_close(rel, NoLock);
-    if (!OidIsValid(parentIndexId))
-      pgstat_progress_end_command();
-    else {
-      /* Update progress for an intermediate partitioned index itself */
-      pgstat_progress_incr_param(PROGRESS_CREATEIDX_PARTITIONS_DONE, 1);
-    }
 
     return address;
   }
@@ -1496,15 +1443,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
   if (!concurrent) {
     /* Close the heap and we're done, in the non-concurrent case */
     table_close(rel, NoLock);
-
-    /*
-     * If this is the top-level index, the command is done overall;
-     * otherwise, increment progress to report one child index is done.
-     */
-    if (!OidIsValid(parentIndexId))
-      pgstat_progress_end_command();
-    else
-      pgstat_progress_incr_param(PROGRESS_CREATEIDX_PARTITIONS_DONE, 1);
 
     return address;
   }
@@ -1549,14 +1487,7 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * The index is now visible, so we can report the OID.  While on it,
    * include the report for the beginning of phase 2.
    */
-  {
-    const int progress_cols[] = {PROGRESS_CREATEIDX_INDEX_OID,
-                                 PROGRESS_CREATEIDX_PHASE};
-    const int64 progress_vals[] = {indexRelationId,
-                                   PROGRESS_CREATEIDX_PHASE_WAIT_1};
-
-    pgstat_progress_update_multi_param(2, progress_cols, progress_vals);
-  }
+  {}
 
   /*
    * Phase 2 of concurrent index build (see comments for validate_index()
@@ -1574,7 +1505,7 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * exclusive lock on our table.  The lock code will detect deadlock and
    * error out properly.
    */
-  WaitForLockers(heaplocktag, ShareLock, true);
+  WaitForLockers(heaplocktag, ShareLock);
 
   /*
    * At this moment we are sure that there are no transactions with the
@@ -1619,9 +1550,7 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * We once again wait until no transaction can have the table open with
    * the index marked as read-only for updates.
    */
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-                               PROGRESS_CREATEIDX_PHASE_WAIT_2);
-  WaitForLockers(heaplocktag, ShareLock, true);
+  WaitForLockers(heaplocktag, ShareLock);
 
   /*
    * Now take the "reference snapshot" that will be used by validate_index()
@@ -1682,9 +1611,7 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * before the reference snap was taken, we have to wait out any
    * transactions that might have older snapshots.
    */
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-                               PROGRESS_CREATEIDX_PHASE_WAIT_3);
-  WaitForOlderSnapshots(limitXmin, true);
+  WaitForOlderSnapshots(limitXmin);
 
   /*
    * Updating pg_index might involve TOAST table access, so ensure we have a
@@ -1713,8 +1640,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * Last thing to do is release the session-level lock on the parent table.
    */
   UnlockRelationIdForSession(&heaprelid, ShareUpdateExclusiveLock);
-
-  pgstat_progress_end_command();
 
   return address;
 }
@@ -3326,10 +3251,6 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
   char *relationName = NULL;
   char *relationNamespace = NULL;
   PGRUsage ru0;
-  const int progress_index[] = {
-      PROGRESS_CREATEIDX_COMMAND, PROGRESS_CREATEIDX_PHASE,
-      PROGRESS_CREATEIDX_INDEX_OID, PROGRESS_CREATEIDX_ACCESS_METHOD_OID};
-  int64 progress_vals[4];
 
   /*
    * Create a memory context that will survive forced transaction commits we
@@ -3644,13 +3565,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
     if (indexRel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
       elog(ERROR, "cannot reindex a temporary table concurrently");
 
-    pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX, idx->tableId);
-
-    progress_vals[0] = PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY;
-    progress_vals[1] = 0; /* initializing */
-    progress_vals[2] = idx->indexId;
-    progress_vals[3] = idx->amId;
-    pgstat_progress_update_multi_param(4, progress_index, progress_vals);
+    /* initializing */
 
     /* Choose a temporary relation name for the new index */
     concurrentName = ChooseRelationName(
@@ -3782,9 +3697,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
    * DefineIndex() for more details.
    */
 
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-                               PROGRESS_CREATEIDX_PHASE_WAIT_1);
-  WaitForLockersMultiple(lockTags, ShareLock, true);
+  WaitForLockersMultiple(lockTags, ShareLock);
   CommitTransactionCommand();
 
   foreach (lc, newIndexIds) {
@@ -3806,18 +3719,6 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
 
     /* Set ActiveSnapshot since functions in the indexes may need it */
     PushActiveSnapshot(GetTransactionSnapshot());
-
-    /*
-     * Update progress for the index to build, with the correct parent
-     * table involved.
-     */
-    pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX,
-                                  newidx->tableId);
-    progress_vals[0] = PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY;
-    progress_vals[1] = PROGRESS_CREATEIDX_PHASE_BUILD;
-    progress_vals[2] = newidx->indexId;
-    progress_vals[3] = newidx->amId;
-    pgstat_progress_update_multi_param(4, progress_index, progress_vals);
 
     /* Perform concurrent build of new index */
     index_concurrently_build(newidx->tableId, newidx->indexId);
@@ -3843,9 +3744,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
    * for more details.
    */
 
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-                               PROGRESS_CREATEIDX_PHASE_WAIT_2);
-  WaitForLockersMultiple(lockTags, ShareLock, true);
+  WaitForLockersMultiple(lockTags, ShareLock);
   CommitTransactionCommand();
 
   foreach (lc, newIndexIds) {
@@ -3872,18 +3771,6 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
      */
     snapshot = RegisterSnapshot(GetTransactionSnapshot());
     PushActiveSnapshot(snapshot);
-
-    /*
-     * Update progress for the index to build, with the correct parent
-     * table involved.
-     */
-    pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX,
-                                  newidx->tableId);
-    progress_vals[0] = PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY;
-    progress_vals[1] = PROGRESS_CREATEIDX_PHASE_VALIDATE_IDXSCAN;
-    progress_vals[2] = newidx->indexId;
-    progress_vals[3] = newidx->amId;
-    pgstat_progress_update_multi_param(4, progress_index, progress_vals);
 
     validate_index(newidx->tableId, newidx->indexId, snapshot);
 
@@ -3913,9 +3800,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
      * Because we don't take a snapshot or Xid in this transaction,
      * there's no need to set the PROC_IN_SAFE_IC flag here.
      */
-    pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-                                 PROGRESS_CREATEIDX_PHASE_WAIT_3);
-    WaitForOlderSnapshots(limitXmin, true);
+    WaitForOlderSnapshots(limitXmin);
 
     CommitTransactionCommand();
   }
@@ -4005,9 +3890,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
    * index_drop() for more details.
    */
 
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-                               PROGRESS_CREATEIDX_PHASE_WAIT_4);
-  WaitForLockersMultiple(lockTags, AccessExclusiveLock, true);
+  WaitForLockersMultiple(lockTags, AccessExclusiveLock);
 
   foreach (lc, indexIds) {
     ReindexIndexInfo *oldidx = (ReindexIndexInfo *)lfirst(lc);
@@ -4046,9 +3929,7 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
    * Drop the old indexes.
    */
 
-  pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-                               PROGRESS_CREATEIDX_PHASE_WAIT_5);
-  WaitForLockersMultiple(lockTags, AccessExclusiveLock, true);
+  WaitForLockersMultiple(lockTags, AccessExclusiveLock);
 
   PushActiveSnapshot(GetTransactionSnapshot());
 
@@ -4114,8 +3995,6 @@ static bool ReindexRelationConcurrently(const ReindexStmt *stmt,
   }
 
   MemoryContextDelete(private_context);
-
-  pgstat_progress_end_command();
 
   return true;
 }

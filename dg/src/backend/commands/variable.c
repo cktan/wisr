@@ -27,7 +27,6 @@
 #include "postmaster/postmaster.h"
 #include "storage/bufmgr.h"
 #include "utils/acl.h"
-#include "utils/backend_status.h"
 #include "utils/datetime.h"
 #include "utils/fmgrprotos.h"
 #include "utils/guc_hooks.h"
@@ -898,10 +897,7 @@ bool check_application_name(char **newval, void **extra, GucSource source) {
 /*
  * GUC assign_hook for application_name
  */
-void assign_application_name(const char *newval, void *extra) {
-  /* Update the pg_stat_activity view */
-  pgstat_report_appname(newval);
-}
+void assign_application_name(const char *newval, void *extra) {}
 
 /*
  * GUC check_hook for cluster_name

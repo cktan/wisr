@@ -1016,3 +1016,53 @@ the pcb, which is never freed either:
   used too; it had no other user left, and is gone.
 - **The semaphores** (`posix_sema.c`): `pcb->shared_semas`.
   `sysv_sema.c`, which this build skips, is unchanged.
+
+## Step 28: the statistics system is gone
+
+Everything named `pgstat_*` went: the cumulative statistics
+(per table, index, function, database, I/O, WAL and SLRU
+counters, kept in a dynamic shared memory hash table and written
+to `pg_stat/` at shutdown), the backend status behind
+`pg_stat_activity`, progress reporting for the
+`pg_stat_progress_*` views, and wait-event reporting. sm is to
+keep what statistics a table has; monitoring can come back on
+the pcb when it is wanted.
+
+- **Gone**: `utils/activity/pgstat*.c`, `backend_status.c`,
+  `backend_progress.c`, `wait_event.c` and
+  `wait_event_funcs.c`, `utils/adt/pgstatfuncs.c`, and the
+  headers `pgstat.h`, `utils/backend_status.h`,
+  `utils/backend_progress.h`, `commands/progress.h`,
+  `utils/pgstat_internal.h`, `utils/pgstat_kind.h`; their 108
+  SQL functions (`pg_stat_*`, `pg_get_wait_events`) and the
+  views over them in `system_views.sql`.
+- **Settings gone**: `track_activities`, `track_counts`,
+  `track_functions`, `track_activity_query_size`,
+  `track_cost_delay_timing` and `stats_fetch_consistency`.
+  `track_io_timing` stays: EXPLAIN, ANALYZE and temporary files
+  time their I/O with it.
+- **What fed only statistics went with it**: the `IOContext`
+  and `IOObject` arguments threaded through the buffer manager,
+  `IOContextForStrategy()`; function usage tracking, the
+  `fn_stats` field of `FmgrInfo` and the two
+  `EEOP_FUNCEXPR_*_FUSAGE` expression steps; the idle stats
+  timeout; the session end cause; `PGPROC.wait_event_info`;
+  `RelationData.pgstat_info`; the `progress` argument of
+  `WaitForLockers()`, `WaitForLockersMultiple()` and
+  `WaitForOlderSnapshots()`; COPY's `bytes_processed`; and the
+  query text in deadlock reports and in the postmaster's log of
+  a backend that ended abnormally.
+- **Kept**: `pg_backend_pid()`, which lived in
+  `pgstatfuncs.c`, is in `misc.c`. The wait-event ids
+  (`wait_event_types.h`, from `wait_event_names.txt`) are still
+  passed to `WaitLatch()` and the like, and go nowhere: removing
+  that argument is a later change. So is the `progress`
+  argument of the table AM's index build scan, and
+  `REINDEXOPT_REPORT_PROGRESS`, now inert. `%Q` in
+  `log_line_prefix` printed the query id from the backend
+  status, and is gone.
+- **Caught on the way**: removing a progress call dropped the
+  `++processed` inside its arguments, so COPY counted no rows;
+  the counts are back. A script that removed statements also
+  removed the block before each one in a few files, which
+  `test/server.sh`'s COPY TO PROGRAM check found.

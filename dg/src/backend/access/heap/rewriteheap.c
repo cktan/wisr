@@ -112,7 +112,6 @@
 #include "common/file_utils.h"
 #include "lib/ilist.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "storage/bulk_write.h"
 #include "storage/fd.h"

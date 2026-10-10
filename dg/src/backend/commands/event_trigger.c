@@ -43,7 +43,6 @@
 #include "lib/ilist.h"
 #include "miscadmin.h"
 #include "parser/parse_func.h"
-#include "pgstat.h"
 #include "storage/lmgr.h"
 #include "tcop/deparse_utility.h"
 #include "tcop/utility.h"
@@ -994,7 +993,6 @@ static void EventTriggerInvoke(List *fn_oid_list, EventTriggerData *trigdata) {
     LOCAL_FCINFO(fcinfo, 0);
     Oid fnoid = lfirst_oid(lc);
     FmgrInfo flinfo;
-    PgStat_FunctionCallUsage fcusage;
 
     elog(DEBUG1, "EventTriggerInvoke %u", fnoid);
 
@@ -1015,9 +1013,7 @@ static void EventTriggerInvoke(List *fn_oid_list, EventTriggerData *trigdata) {
     /* Call the function, passing no arguments but setting a context. */
     InitFunctionCallInfoData(*fcinfo, &flinfo, 0, InvalidOid, (Node *)trigdata,
                              NULL);
-    pgstat_init_function_usage(fcinfo, &fcusage);
     FunctionCallInvoke(fcinfo);
-    pgstat_end_function_usage(&fcusage, true);
 
     /* Reclaim memory. */
     MemoryContextReset(context);

@@ -18,13 +18,13 @@
 
 #include "catalog/pg_authid.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "utils/acl.h"
 #include "utils/fmgrprotos.h"
+#include "utils/wait_event.h"
 
 /*
  * Send a signal to another backend.

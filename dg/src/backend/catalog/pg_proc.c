@@ -31,7 +31,6 @@
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_coerce.h"
-#include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "tcop/pquery.h"
 #include "tcop/tcopprot.h"
@@ -637,10 +636,6 @@ ObjectAddress ProcedureCreate(
     if (set_items)
       AtEOXact_GUC(true, save_nestlevel);
   }
-
-  /* ensure that stats are dropped if transaction aborts */
-  if (!is_update)
-    pgstat_create_function(retval);
 
   return myself;
 }

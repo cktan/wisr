@@ -65,7 +65,6 @@
 #include "access/slru.h"
 #include "access/transam.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/fd.h"
 #include "storage/shmem.h"
 #include "utils/guc.h"
@@ -238,8 +237,6 @@ void SimpleLruInit(SlruCtl ctl, const char *name, int nslots,
 
     pg_atomic_init_u64(&shared->latest_page_number, 0);
 
-    shared->slru_stats_idx = pgstat_get_slru_index(name);
-
     ptr = (char *)shared;
     offset = MAXALIGN(sizeof(SlruSharedData));
     shared->page_buffer = (char **)(ptr + offset);
@@ -348,9 +345,6 @@ int SimpleLruZeroPage(SlruCtl ctl, int64 pageno) {
    */
   pg_atomic_write_u64(&shared->latest_page_number, pageno);
 
-  /* update the stats counter of zeroed pages */
-  pgstat_count_slru_page_zeroed(shared->slru_stats_idx);
-
   return slotno;
 }
 
@@ -447,9 +441,6 @@ int SimpleLruReadPage(SlruCtl ctl, int64 pageno, bool write_ok,
       /* Otherwise, it's ready to use */
       SlruRecentlyUsed(shared, slotno);
 
-      /* update the stats counter of pages found in the SLRU */
-      pgstat_count_slru_page_hit(shared->slru_stats_idx);
-
       return slotno;
     }
 
@@ -489,9 +480,6 @@ int SimpleLruReadPage(SlruCtl ctl, int64 pageno, bool write_ok,
 
     SlruRecentlyUsed(shared, slotno);
 
-    /* update the stats counter of pages not found in SLRU */
-    pgstat_count_slru_page_read(shared->slru_stats_idx);
-
     return slotno;
   }
 }
@@ -527,9 +515,6 @@ int SimpleLruReadPage_ReadOnly(SlruCtl ctl, int64 pageno, TransactionId xid) {
         shared->page_status[slotno] != SLRU_PAGE_READ_IN_PROGRESS) {
       /* See comments for SlruRecentlyUsed() */
       SlruRecentlyUsed(shared, slotno);
-
-      /* update the stats counter of pages found in the SLRU */
-      pgstat_count_slru_page_hit(shared->slru_stats_idx);
 
       return slotno;
     }
@@ -643,9 +628,6 @@ bool SimpleLruDoesPhysicalPageExist(SlruCtl ctl, int64 pageno) {
   bool result;
   off_t endpos;
 
-  /* update the stats counter of checked pages */
-  pgstat_count_slru_page_exists(ctl->shared->slru_stats_idx);
-
   SlruFileName(ctl, path, segno);
 
   fd = OpenTransientFile(path, O_RDONLY | PG_BINARY);
@@ -705,15 +687,12 @@ static bool SlruPhysicalReadPage(SlruCtl ctl, int64 pageno, int slotno) {
   }
 
   errno = 0;
-  pgstat_report_wait_start(WAIT_EVENT_SLRU_READ);
   if (pg_pread(fd, shared->page_buffer[slotno], BLCKSZ, offset) != BLCKSZ) {
-    pgstat_report_wait_end();
     slru_errcause = SLRU_READ_FAILED;
     slru_errno = errno;
     CloseTransientFile(fd);
     return false;
   }
-  pgstat_report_wait_end();
 
   if (CloseTransientFile(fd) != 0) {
     slru_errcause = SLRU_CLOSE_FAILED;
@@ -746,9 +725,6 @@ static bool SlruPhysicalWritePage(SlruCtl ctl, int64 pageno, int slotno,
   off_t offset = rpageno * BLCKSZ;
   char path[MAXPGPATH];
   int fd = -1;
-
-  /* update the stats counter of written pages */
-  pgstat_count_slru_page_written(shared->slru_stats_idx);
 
   /*
    * During a SimpleLruWriteAll, we may already have the desired file open.
@@ -804,9 +780,7 @@ static bool SlruPhysicalWritePage(SlruCtl ctl, int64 pageno, int slotno,
   }
 
   errno = 0;
-  pgstat_report_wait_start(WAIT_EVENT_SLRU_WRITE);
   if (pg_pwrite(fd, shared->page_buffer[slotno], BLCKSZ, offset) != BLCKSZ) {
-    pgstat_report_wait_end();
     /* if write didn't set errno, assume problem is no disk space */
     if (errno == 0)
       errno = ENOSPC;
@@ -816,7 +790,6 @@ static bool SlruPhysicalWritePage(SlruCtl ctl, int64 pageno, int slotno,
       CloseTransientFile(fd);
     return false;
   }
-  pgstat_report_wait_end();
 
   /* Close file, unless part of flush request. */
   if (!fdata) {
@@ -1086,9 +1059,6 @@ void SimpleLruWriteAll(SlruCtl ctl, bool allow_redirtied) {
   int prevbank = SlotGetBankNumber(0);
   bool ok;
 
-  /* update the stats counter of flushes */
-  pgstat_count_slru_flush(shared->slru_stats_idx);
-
   /*
    * Find and write dirty pages
    */
@@ -1157,9 +1127,6 @@ void SimpleLruWriteAll(SlruCtl ctl, bool allow_redirtied) {
 void SimpleLruTruncate(SlruCtl ctl, int64 cutoffPage) {
   SlruShared shared = ctl->shared;
   int prevbank;
-
-  /* update the stats counter of truncates */
-  pgstat_count_slru_truncate(shared->slru_stats_idx);
 
   /*
    * Scan shared memory and remove any pages preceding the cutoff page, to

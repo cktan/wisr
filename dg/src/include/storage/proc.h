@@ -290,8 +290,6 @@ struct PGPROC {
    */
   TransactionId procArrayGroupMemberXid;
 
-  uint32 wait_event_info; /* proc's wait information */
-
   /* Lock manager data, recording fast-path locks taken by this backend. */
   LWLock fpInfoLock;  /* protects per-backend fast-path state */
   uint64 *fpLockBits; /* lock modes held for each fast-path slot */

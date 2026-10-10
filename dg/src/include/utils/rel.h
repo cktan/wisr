@@ -248,10 +248,6 @@ typedef struct RelationData
 	 * causes toast_save_datum() to try to preserve toast value OIDs.
 	 */
 	Oid			rd_toastoid;	/* Real TOAST table's OID, or InvalidOid */
-
-	bool		pgstat_enabled; /* should relation stats be counted */
-	/* use "struct" here to avoid needing to include pgstat.h: */
-	struct PgStat_TableStatus *pgstat_info; /* statistics collection area */
 } RelationData;
 
 

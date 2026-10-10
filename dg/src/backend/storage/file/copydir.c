@@ -26,7 +26,6 @@
 
 #include "common/file_utils.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/copydir.h"
 #include "storage/fd.h"
 
@@ -176,16 +175,13 @@ void copy_file(const char *fromfile, const char *tofile) {
       flush_offset = offset;
     }
 
-    pgstat_report_wait_start(WAIT_EVENT_COPY_FILE_READ);
     nbytes = read(srcfd, buffer, COPY_BUF_SIZE);
-    pgstat_report_wait_end();
     if (nbytes < 0)
       ereport(ERROR, (errcode_for_file_access(),
                       errmsg("could not read file \"%s\": %m", fromfile)));
     if (nbytes == 0)
       break;
     errno = 0;
-    pgstat_report_wait_start(WAIT_EVENT_COPY_FILE_WRITE);
     if ((int)write(dstfd, buffer, nbytes) != nbytes) {
       /* if write didn't set errno, assume problem is no disk space */
       if (errno == 0)
@@ -193,7 +189,6 @@ void copy_file(const char *fromfile, const char *tofile) {
       ereport(ERROR, (errcode_for_file_access(),
                       errmsg("could not write to file \"%s\": %m", tofile)));
     }
-    pgstat_report_wait_end();
   }
 
   if (offset > flush_offset)
@@ -240,13 +235,11 @@ static void clone_file(const char *fromfile, const char *tofile) {
      * time to time if it falls back to a slow copy.
      */
     CHECK_FOR_INTERRUPTS();
-    pgstat_report_wait_start(WAIT_EVENT_COPY_FILE_COPY);
     nbytes = copy_file_range(srcfd, NULL, dstfd, NULL, 1024 * 1024, 0);
     if (nbytes < 0 && errno != EINTR)
       ereport(ERROR, (errcode_for_file_access(),
                       errmsg("could not clone file \"%s\" to \"%s\": %m",
                              fromfile, tofile)));
-    pgstat_report_wait_end();
   } while (nbytes != 0);
 
   if (CloseTransientFile(dstfd) != 0)

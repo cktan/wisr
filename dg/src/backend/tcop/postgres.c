@@ -51,7 +51,6 @@
 #include "parser/parser.h"
 #include "pg_getopt.h"
 #include "pg_trace.h"
-#include "pgstat.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "rewrite/rewriteHandler.h"
@@ -950,8 +949,6 @@ static void exec_simple_query(const char *query_string) {
    */
   debug_query_string = query_string;
 
-  pgstat_report_activity(STATE_RUNNING, query_string);
-
   TRACE_POSTGRESQL_QUERY_START(query_string);
 
   /*
@@ -1026,9 +1023,6 @@ static void exec_simple_query(const char *query_string) {
     int16 format;
     const char *cmdtagname;
     size_t cmdtaglen;
-
-    pgstat_report_query_id(0, true);
-    pgstat_report_plan_id(0, true);
 
     /*
      * Get the command name for use in status display (it also becomes the
@@ -1302,8 +1296,6 @@ exec_parse_message(const char *query_string, /* string to execute */
    */
   debug_query_string = query_string;
 
-  pgstat_report_activity(STATE_RUNNING, query_string);
-
   set_ps_display("PARSE");
 
   if (save_log_statement_stats)
@@ -1537,13 +1529,10 @@ static void exec_bind_message(StringInfo input_message) {
    */
   debug_query_string = psrc->query_string;
 
-  pgstat_report_activity(STATE_RUNNING, psrc->query_string);
-
   foreach (lc, psrc->query_list) {
     Query *query = lfirst_node(Query, lc);
 
     if (query->queryId != INT64CONST(0)) {
-      pgstat_report_query_id(query->queryId, false);
       break;
     }
   }
@@ -1867,7 +1856,6 @@ static void exec_bind_message(StringInfo input_message) {
     PlannedStmt *plan = lfirst_node(PlannedStmt, lc);
 
     if (plan->planId != INT64CONST(0)) {
-      pgstat_report_plan_id(plan->planId, false);
       break;
     }
   }
@@ -1988,13 +1976,10 @@ static void exec_execute_message(const char *portal_name, long max_rows) {
    */
   debug_query_string = sourceText;
 
-  pgstat_report_activity(STATE_RUNNING, sourceText);
-
   foreach (lc, portal->stmts) {
     PlannedStmt *stmt = lfirst_node(PlannedStmt, lc);
 
     if (stmt->queryId != INT64CONST(0)) {
-      pgstat_report_query_id(stmt->queryId, false);
       break;
     }
   }
@@ -2003,7 +1988,6 @@ static void exec_execute_message(const char *portal_name, long max_rows) {
     PlannedStmt *stmt = lfirst_node(PlannedStmt, lc);
 
     if (stmt->planId != INT64CONST(0)) {
-      pgstat_report_plan_id(stmt->planId, false);
       break;
     }
   }
@@ -2751,9 +2735,6 @@ void die(SIGNAL_ARGS) {
     ProcDiePending = true;
   }
 
-  /* for the cumulative stats system */
-  pgStatSessionEndCause = DISCONNECT_KILLED;
-
   /* If we're still here, waken anything waiting on the process latch */
   SetLatch(MyLatch);
 
@@ -2921,7 +2902,6 @@ static void ProcessRecoveryConflictInterrupt(ProcSignalReason reason) {
          * non-retryable.
          */
         LockErrorCleanup();
-        pgstat_report_recovery_conflict(reason);
         ereport(ERROR,
                 (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
                  errmsg("canceling statement due to conflict with recovery"),
@@ -2940,7 +2920,6 @@ static void ProcessRecoveryConflictInterrupt(ProcSignalReason reason) {
      * decided above that we couldn't resolve the conflict with an
      * ERROR and fell through.  Terminate the session.
      */
-    pgstat_report_recovery_conflict(reason);
     ereport(FATAL,
             (errcode(reason == PROCSIG_RECOVERY_CONFLICT_DATABASE
                          ? ERRCODE_DATABASE_DROPPED
@@ -3151,16 +3130,6 @@ void ProcessInterrupts(void) {
               (errcode(ERRCODE_IDLE_SESSION_TIMEOUT),
                errmsg("terminating connection due to idle-session timeout")));
     }
-  }
-
-  /*
-   * If there are pending stats updates and we currently are truly idle
-   * (matching the conditions in PostgresMain(), report stats now.
-   */
-  if (IdleStatsUpdateTimeoutPending && DoingCommandRead &&
-      !IsTransactionOrTransactionBlock()) {
-    IdleStatsUpdateTimeoutPending = false;
-    pgstat_report_stat(true);
   }
 
   if (ProcSignalBarrierPending)
@@ -3880,8 +3849,6 @@ void PostgresMain(const char *dbname, const char *username) {
   if (IsUnderPostmaster && Log_disconnections)
     on_proc_exit(log_disconnections, 0);
 
-  pgstat_report_connect(MyDatabaseId);
-
   /*
    * Send this backend's cancellation info to the frontend.
    */
@@ -4102,7 +4069,6 @@ void PostgresMain(const char *dbname, const char *username) {
     if (send_ready_for_query) {
       if (IsAbortedTransactionBlockState()) {
         set_ps_display("idle in transaction (aborted)");
-        pgstat_report_activity(STATE_IDLEINTRANSACTION_ABORTED, NULL);
 
         /* Start the idle-in-transaction timer */
         if (IdleInTransactionSessionTimeout > 0 &&
@@ -4114,7 +4080,6 @@ void PostgresMain(const char *dbname, const char *username) {
         }
       } else if (IsTransactionOrTransactionBlock()) {
         set_ps_display("idle in transaction");
-        pgstat_report_activity(STATE_IDLEINTRANSACTION, NULL);
 
         /* Start the idle-in-transaction timer */
         if (IdleInTransactionSessionTimeout > 0 &&
@@ -4125,8 +4090,6 @@ void PostgresMain(const char *dbname, const char *username) {
                                IdleInTransactionSessionTimeout);
         }
       } else {
-        long stats_timeout;
-
         /*
          * Process incoming notifies (including self-notifies), if
          * any, and send relevant messages to the client.  Doing it
@@ -4137,31 +4100,7 @@ void PostgresMain(const char *dbname, const char *username) {
         if (notifyInterruptPending)
           ProcessNotifyInterrupt(false);
 
-        /*
-         * Check if we need to report stats. If pgstat_report_stat()
-         * decides it's too soon to flush out pending stats / lock
-         * contention prevented reporting, it'll tell us when we
-         * should try to report stats again (so that stats updates
-         * aren't unduly delayed if the connection goes idle for a
-         * long time). We only enable the timeout if we don't already
-         * have a timeout in progress, because we don't disable the
-         * timeout below. enable_timeout_after() needs to determine
-         * the current timestamp, which can have a negative
-         * performance impact. That's OK because pgstat_report_stat()
-         * won't have us wake up sooner than a prior call.
-         */
-        stats_timeout = pgstat_report_stat(false);
-        if (stats_timeout > 0) {
-          if (!get_timeout_active(IDLE_STATS_UPDATE_TIMEOUT))
-            enable_timeout_after(IDLE_STATS_UPDATE_TIMEOUT, stats_timeout);
-        } else {
-          /* all stats flushed, no need for the timeout */
-          if (get_timeout_active(IDLE_STATS_UPDATE_TIMEOUT))
-            disable_timeout(IDLE_STATS_UPDATE_TIMEOUT, false);
-        }
-
         set_ps_display("idle");
-        pgstat_report_activity(STATE_IDLE, NULL);
 
         /* Start the idle-session timer */
         if (IdleSessionTimeout > 0) {
@@ -4338,7 +4277,6 @@ void PostgresMain(const char *dbname, const char *username) {
       SetCurrentStatementStartTimestamp();
 
       /* Report query to various monitoring facilities. */
-      pgstat_report_activity(STATE_FASTPATH, NULL);
       set_ps_display("<FASTPATH>");
 
       /* start an xact for this function invocation */
@@ -4457,9 +4395,6 @@ void PostgresMain(const char *dbname, const char *username) {
        * Either way, perform normal shutdown.
        */
     case EOF:
-
-      /* for the cumulative statistics system */
-      pgStatSessionEndCause = DISCONNECT_CLIENT_EOF;
 
       /* FALLTHROUGH */
 

@@ -36,12 +36,10 @@
 #include "catalog/toasting.h"
 #include "commands/cluster.h"
 #include "commands/defrem.h"
-#include "commands/progress.h"
 #include "commands/tablecmds.h"
 #include "commands/vacuum.h"
 #include "miscadmin.h"
 #include "optimizer/optimizer.h"
-#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
@@ -300,14 +298,6 @@ void cluster_rel(Relation OldHeap, Oid indexOid, ClusterParams *params) {
   /* Check for user-requested abort. */
   CHECK_FOR_INTERRUPTS();
 
-  pgstat_progress_start_command(PROGRESS_COMMAND_CLUSTER, tableOid);
-  if (OidIsValid(indexOid))
-    pgstat_progress_update_param(PROGRESS_CLUSTER_COMMAND,
-                                 PROGRESS_CLUSTER_COMMAND_CLUSTER);
-  else
-    pgstat_progress_update_param(PROGRESS_CLUSTER_COMMAND,
-                                 PROGRESS_CLUSTER_COMMAND_VACUUM_FULL);
-
   /*
    * Switch to the table owner's userid, so that any index functions are run
    * as that user.  Also lock down security-restricted operations and
@@ -444,8 +434,6 @@ out:
 
   /* Restore userid and security context */
   SetUserIdAndSecContext(save_userid, save_sec_context);
-
-  pgstat_progress_end_command();
 }
 
 /*
@@ -1319,10 +1307,6 @@ void finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap, bool is_system_catalog,
   ReindexParams reindex_params = {0};
   int i;
 
-  /* Report that we are now swapping relation files */
-  pgstat_progress_update_param(PROGRESS_CLUSTER_PHASE,
-                               PROGRESS_CLUSTER_PHASE_SWAP_REL_FILES);
-
   /* Zero out possible results from swapped_relation_files */
   memset(mapped_tables, 0, sizeof(mapped_tables));
 
@@ -1369,15 +1353,7 @@ void finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap, bool is_system_catalog,
   else if (newrelpersistence == RELPERSISTENCE_PERMANENT)
     reindex_flags |= REINDEX_REL_FORCE_INDEXES_PERMANENT;
 
-  /* Report that we are now reindexing relations */
-  pgstat_progress_update_param(PROGRESS_CLUSTER_PHASE,
-                               PROGRESS_CLUSTER_PHASE_REBUILD_INDEX);
-
   reindex_relation(NULL, OIDOldHeap, reindex_flags, &reindex_params);
-
-  /* Report that we are now doing clean up */
-  pgstat_progress_update_param(PROGRESS_CLUSTER_PHASE,
-                               PROGRESS_CLUSTER_PHASE_FINAL_CLEANUP);
 
   /*
    * If the relation being rebuilt is pg_class, swap_relation_files()
