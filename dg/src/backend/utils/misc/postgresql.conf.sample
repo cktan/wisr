@@ -142,14 +142,6 @@
 #autovacuum_work_mem = -1		# min 64kB, or -1 to use maintenance_work_mem
 #logical_decoding_work_mem = 64MB	# min 64kB
 #max_stack_depth = 2MB			# min 100kB
-#dynamic_shared_memory_type = posix	# the default is usually the first option
-					# supported by the operating system:
-					#   posix
-					#   sysv
-					#   windows
-					#   mmap
-					# (change requires restart)
-#min_dynamic_shared_memory = 0MB	# (change requires restart)
 #vacuum_buffer_usage_limit = 2MB	# size of vacuum and analyze buffer access strategy ring;
 					# 0 to disable vacuum buffer access strategy;
 					# range 128kB to 16GB

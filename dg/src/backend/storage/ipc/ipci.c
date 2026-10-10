@@ -23,8 +23,6 @@
 #include "commands/async.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
-#include "storage/dsm.h"
-#include "storage/dsm_registry.h"
 #include "storage/ipc.h"
 #include "storage/pg_sema.h"
 #include "storage/pmsignal.h"
@@ -91,9 +89,6 @@ void CreateSharedMemoryAndSemaphores(void) {
   /* Initialize subsystems */
   CreateOrAttachShmemStructs();
 
-  /* Initialize dynamic shared memory facilities. */
-  dsm_postmaster_startup();
-
   /*
    * Now give loadable modules a chance to set up their shared structures
    */
@@ -113,9 +108,6 @@ void CreateSharedMemoryAndSemaphores(void) {
 static void CreateOrAttachShmemStructs(void) {
   /* Now initialize LWLocks */
   CreateLWLocks();
-
-  dsm_shmem_init();
-  DSMRegistryShmemInit();
 
   /*
    * Set up xlog, clog, and buffers

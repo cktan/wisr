@@ -23,7 +23,6 @@
 #include "nodes/lockoptions.h"
 #include "nodes/primnodes.h"
 #include "storage/bufpage.h"
-#include "storage/dsm.h"
 #include "storage/lockdefs.h"
 #include "storage/read_stream.h"
 #include "utils/relcache.h"

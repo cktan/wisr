@@ -80,6 +80,6 @@ PG_LWLOCK(44, XactTruncation)
 PG_LWLOCK(47, NotifyQueueTail)
 PG_LWLOCK(48, WaitEventCustom)
 PG_LWLOCK(49, WALSummarizer)
-PG_LWLOCK(50, DSMRegistry)
+/* 50 was DSMRegistryLock */
 PG_LWLOCK(51, InjectionPoint)
 PG_LWLOCK(52, SerialControl)

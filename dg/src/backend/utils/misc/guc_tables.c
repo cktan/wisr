@@ -60,7 +60,6 @@
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 #include "storage/copydir.h"
-#include "storage/dsm_impl.h"
 #include "storage/fd.h"
 #include "storage/large_object.h"
 #include "storage/predicate.h"
@@ -311,7 +310,6 @@ static const struct config_enum_entry file_extend_method_options[] = {
 /*
  * Options for enum values stored in other modules
  */
-extern const struct config_enum_entry dynamic_shared_memory_options[];
 
 /*
  * GUC option variables that are exported from this module
@@ -1568,17 +1566,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      0,
      MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"min_dynamic_shared_memory", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Amount of dynamic shared memory reserved at startup."),
-      NULL, GUC_UNIT_MB},
-     &min_dynamic_shared_memory,
-     0,
-     0,
-     (int)Min((size_t)INT_MAX, SIZE_MAX / (1024 * 1024)),
      NULL,
      NULL,
      NULL},
@@ -3316,16 +3303,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      session_replication_role_options,
      NULL,
      assign_session_replication_role,
-     NULL},
-
-    {{"dynamic_shared_memory_type", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Selects the dynamic shared memory implementation used."),
-      NULL},
-     &dynamic_shared_memory_type,
-     DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE,
-     dynamic_shared_memory_options,
-     NULL,
-     NULL,
      NULL},
 
     {{"file_copy_method", PGC_USERSET, RESOURCES_DISK,

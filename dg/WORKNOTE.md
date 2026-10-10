@@ -1066,3 +1066,25 @@ the pcb when it is wanted.
   the counts are back. A script that removed statements also
   removed the block before each one in a few files, which
   `test/server.sh`'s COPY TO PROGRAM check found.
+
+## Step 29: dynamic shared memory is gone
+
+Dynamic shared memory let PostgreSQL's processes share memory
+made after startup: segments (`dsm.c`, `dsm_impl.c`, POSIX
+`shm_open` by default), an allocator across them (`dsa.c`) that
+hands out segment-relative pointers because each process maps a
+segment at its own address, a concurrent hash table on it
+(`dshash.c`), and named segments for extensions
+(`dsm_registry.c`). Parallel query and the statistics system
+were its users; both are gone, and in one process a plain
+pointer works in every thread.
+
+- **Gone**: those five files and their headers, and
+  `lib/radixtree.h`, which nothing included since VACUUM's TID
+  store went and which needed `dsa.h`; the settings
+  `dynamic_shared_memory_type` and `min_dynamic_shared_memory`;
+  `DSMRegistryLock`; the lock tranches of the DSM registry, the
+  statistics and the logical replication launcher.
+- **Shutdown has one list of callbacks fewer**: `shmem_exit()`
+  no longer runs the segments' detach callbacks.
+- The server makes nothing under `/dev/shm`.
