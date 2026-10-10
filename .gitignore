@@ -2,3 +2,4 @@
 build/
 books-home/
 sm/sm1/mvcc/out/
+.*.swp
