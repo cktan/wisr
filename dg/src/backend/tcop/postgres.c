@@ -33,7 +33,6 @@
 
 #include "access/printtup.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/pg_type.h"
 #include "commands/async.h"
 #include "commands/event_trigger.h"
@@ -42,6 +41,7 @@
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
+#include "libpq/scram.h"
 #include "mb/pg_wchar.h"
 #include "mb/stringinfo_mb.h"
 #include "miscadmin.h"
@@ -3679,8 +3679,8 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
    */
   CreateDataDirLockFile(false);
 
-  /* read control file (error checking and contains config ) */
-  LocalProcessControlFile(false);
+  /* Make the nonce for mock authentication */
+  scram_init_mock_nonce();
 
   /*
    * process any libraries that should be preloaded at postmaster start

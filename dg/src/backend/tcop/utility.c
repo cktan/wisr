@@ -19,7 +19,6 @@
 #include "access/reloptions.h"
 #include "access/twophase.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_inherits.h"

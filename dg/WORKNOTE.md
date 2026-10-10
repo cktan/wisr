@@ -747,3 +747,21 @@ first values, and exit.
   unlogged relations after a crash and had no caller.
 - The postmaster forks nothing now but the syslogger, and that
   only with `logging_collector`.
+
+## Step 18: xlog.c is gone
+
+What steps 9 and 17 left of the write-ahead log manager was
+the control record, made in memory for one run, and the
+message at shutdown.
+
+- **The mock authentication nonce is `auth-scram.c`'s**: the
+  postmaster, or a standalone backend, makes it once with
+  `scram_init_mock_nonce()` before any session starts, and a
+  session copies it (SHARED).
+- **`DataChecksumsEnabled()` is an inline `false`** in
+  `bufpage.h`: digres makes no data checksums.
+- **"shutting down"** is logged by the postmaster itself, and
+  by a callback in `postinit.c` for a standalone backend.
+- **Gone**: `access/transam/xlog.c`, `access/xlog.h`,
+  `catalog/pg_control.h`, `LocalProcessControlFile()` and the
+  control record's shared memory.

@@ -23,7 +23,6 @@
 #include "access/clog.h"
 #include "access/slru.h"
 #include "access/transam.h"
-#include "access/xlog.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
 #include "pgstat.h"

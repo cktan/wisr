@@ -30,7 +30,6 @@
 #include <unistd.h>
 
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_parameter_acl.h"

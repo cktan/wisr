@@ -908,7 +908,7 @@ void CreateAuxProcessResourceOwner(void) {
 
   /*
    * Register a shmem-exit callback for cleanup of aux-process resource
-   * owner.  (This needs to run after, e.g., ShutdownXLOG.)
+   * owner.  (This needs to run after, e.g., the shutdown of pgstats.)
    */
   on_shmem_exit(ReleaseAuxProcessResourcesCallback, 0);
 }

@@ -640,12 +640,6 @@ void SubPostmasterMain(int argc, char *argv[]) {
   checkDataDir();
 
   /*
-   * (re-)read control file, as it contains config. The postmaster will
-   * already have read this, but this process doesn't know about that.
-   */
-  LocalProcessControlFile(false);
-
-  /*
    * Reload any libraries that were preloaded by the postmaster.  Since we
    * exec'd this process, those libraries didn't come along with us; but we
    * should load them into all child processes to be consistent with the

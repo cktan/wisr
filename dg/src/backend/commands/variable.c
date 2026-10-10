@@ -20,7 +20,6 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/pg_authid.h"
 #include "common/string.h"
 #include "mb/pg_wchar.h"

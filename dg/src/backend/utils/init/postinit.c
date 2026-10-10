@@ -24,7 +24,6 @@
 #include "access/htup_details.h"
 #include "access/tableam.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
@@ -67,6 +66,7 @@ static void PerformAuthentication(Port *port);
 static void CheckMyDatabase(const char *name, bool am_superuser,
                             bool override_allow_connections);
 static void ShutdownPostgres(int code, Datum arg);
+static void log_shutdown(int code, Datum arg);
 static void StatementTimeoutHandler(void);
 static void LockTimeoutHandler(void);
 static void IdleInTransactionSessionTimeoutHandler(void);
@@ -479,11 +479,11 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    */
   if (!IsUnderPostmaster) {
     /*
-     * Use before_shmem_exit() so that ShutdownXLOG() can rely on DSM
-     * segments etc to work (which in turn is required for pgstats).
+     * Use before_shmem_exit() so that pgstats can rely on DSM segments etc
+     * to work.
      */
     before_shmem_exit(pgstat_before_server_shutdown, 0);
-    before_shmem_exit(ShutdownXLOG, 0);
+    before_shmem_exit(log_shutdown, 0);
   }
 
   /*
@@ -840,6 +840,14 @@ static void process_startup_options(Port *port, bool am_superuser) {
 
     SetConfigOption(name, value, gucctx, PGC_S_CLIENT);
   }
+}
+
+/*
+ * Say that a standalone backend or bootstrap is shutting down.
+ */
+static void log_shutdown(int code, Datum arg) {
+  /* Don't be chatty in standalone mode */
+  ereport(NOTICE, (errmsg("shutting down")));
 }
 
 /*

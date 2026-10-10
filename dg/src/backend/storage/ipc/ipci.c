@@ -102,7 +102,6 @@ Size CalculateShmemSize(int *num_semaphores) {
   size = add_size(size, PredicateLockShmemSize());
   size = add_size(size, ProcGlobalShmemSize());
   size = add_size(size, VarsupShmemSize());
-  size = add_size(size, XLOGShmemSize());
   size = add_size(size, CLOGShmemSize());
   size = add_size(size, CommitTsShmemSize());
   size = add_size(size, SUBTRANSShmemSize());
@@ -248,7 +247,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up xlog, clog, and buffers
    */
   VarsupShmemInit();
-  XLOGShmemInit();
   CLOGShmemInit();
   CommitTsShmemInit();
   SUBTRANSShmemInit();

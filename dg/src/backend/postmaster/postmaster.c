@@ -89,12 +89,12 @@
 #include <pthread.h>
 #endif
 
-#include "access/xlog.h"
 #include "common/file_perm.h"
 #include "common/pg_prng.h"
 #include "lib/ilist.h"
 #include "libpq/libpq.h"
 #include "libpq/pqsignal.h"
+#include "libpq/scram.h"
 #include "pg_getopt.h"
 #include "pgstat.h"
 #include "port/pg_bswap.h"
@@ -799,16 +799,8 @@ void PostmasterMain(int argc, char *argv[]) {
    */
   CreateDataDirLockFile(true);
 
-  /*
-   * Read the control file (for error checking and config info).
-   *
-   * Since we verify the control file's CRC, this has a useful side effect
-   * on machines where we need a run-time test for CRC support instructions.
-   * The postmaster will do the test once at startup, and then its child
-   * processes will inherit the correct function pointer and not need to
-   * repeat the test.
-   */
-  LocalProcessControlFile(false);
+  /* Make the nonce for mock authentication, which sessions copy */
+  scram_init_mock_nonce();
 
   /*
    * process any libraries that should be preloaded at postmaster start
@@ -2284,7 +2276,7 @@ static void PostmasterStateMachine(void) {
          * to write: sm keeps what is durable.  Stop any dead-end children.
          */
         Assert(Shutdown > NoShutdown);
-        ShutdownXLOG(0, 0);
+        ereport(LOG, (errmsg("shutting down")));
         UpdatePMState(PM_WAIT_DEAD_END);
         ConfigurePostmasterWaitSet(false);
         SignalChildren(SIGTERM, btmask(B_DEAD_END_BACKEND));
@@ -2366,9 +2358,6 @@ static void PostmasterStateMachine(void) {
       RemovePgTempFiles();
 
     shmem_exit(1);
-
-    /* re-read control file into local memory */
-    LocalProcessControlFile(true);
 
     /* re-create shared memory and semaphores */
     CreateSharedMemoryAndSemaphores();

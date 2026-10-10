@@ -11,7 +11,7 @@
 #ifndef COMMIT_TS_H
 #define COMMIT_TS_H
 
-#include "access/xlog.h"
+#include "access/xlogdefs.h"
 #include "datatype/timestamp.h"
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool track_commit_timestamp;

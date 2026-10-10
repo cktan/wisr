@@ -351,10 +351,10 @@ and sm is attached once; no auxiliary process is left (step
   the archiver, the I/O workers, the checkpointer, the
   background writer, background workers and the startup
   process (`WORKNOTE.md` steps 11 to 17).
-- **What step 9 stubbed goes with them**: what is left of
-  `xlog.c` (the in-memory control record, and the message at
-  shutdown), and `make_legacy_dirs()` in `postmaster.c`, whose
-  list of directories shrinks as each subsystem is cut.
+- **What step 9 stubbed goes with them**: `xlog.c` is gone
+  (`WORKNOTE.md` step 18); `make_legacy_dirs()` in
+  `postmaster.c` is left, and its list of directories shrinks
+  as each subsystem is cut.
 
 Success for this step: no `kill()` between sessions, no
 signal handler that touches session state, and the files above
