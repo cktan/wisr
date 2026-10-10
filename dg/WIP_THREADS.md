@@ -81,12 +81,21 @@ Where step 3 of `PLAN.md` (§5) stands on `wip-dg`. `PLAN.md`
 no backend process, an authentication timeout (`SignalSelf`),
 and a fast shutdown with an idle session open (`SignalProc`).
 
+8. **sm is attached once.** The postmaster attaches the home
+   directory at startup; the `sm_env_t *` is SHARED. A session
+   calls `sm_opendb()` for its database and `sm_closedb()` as
+   it ends; a database's oid is `FirstNormalObjectId` plus the
+   `dbid` sm gave it (`sm_dbid()`, new). `datadir.c` no longer
+   forks or keeps a list. A forked auxiliary process ends with
+   `_exit()`, so RocksDB's static destructors, which would join
+   the postmaster's thread-pool threads, do not run in it.
+
 ## Left
 
-- **sm attached once**, and the fork workarounds in
-  `utils/init/datadir.c`: the child process that lists the
-  databases, the list fixed at start, the oid from a
-  database's place in that list (`PLAN.md` §5).
+- **Step 3 is done** (`PLAN.md` §5). What follows is step 4
+  and these gaps.
+- **sm and RocksDB are not built for TSan**: a race inside
+  them would not show.
 - **Crash and immediate shutdown.** `SIGQUIT` reaches a thread
   as a flag, and `quickdie()` calls `_exit(2)`: the whole
   server ends. There is no crash restart for threads.

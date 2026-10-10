@@ -148,6 +148,17 @@ void proc_exit(int code) {
 
   elog(DEBUG3, "exit(%d)", code);
 
+  /*
+   * A process the postmaster forked shares its libraries' static state with
+   * the postmaster, sm's RocksDB thread pools among them, whose threads are
+   * the postmaster's: exit() would run their destructors, which join
+   * threads this process does not have.  Its exit callbacks have run, so it
+   * ends without them.
+   */
+  if (IsUnderPostmaster && !IsSessionThread) {
+    fflush(NULL);
+    _exit(code);
+  }
   exit(code);
 }
 

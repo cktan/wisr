@@ -8,11 +8,11 @@
  * role there is and holds the SCRAM secret of its password; and sm's home
  * directory, which knows the databases.
  *
- * The postmaster learns both once, before it forks a backend, and every
- * backend has them from it. sm keeps its state in the memory of the
- * process that attached the home directory (sm/PART4.md section 2), so a
- * backend cannot ask it: until connections are threads, the databases
- * are the ones there were when the server started.
+ * The postmaster reads the superuser file once, and attaches sm's home
+ * directory once: sm keeps its state in the memory of the process that
+ * attached it (sm/PART4.md section 2), and every session is a thread of
+ * that process, given both (SHARED). A session asks sm for its database,
+ * and opens an sm session on it for as long as it lasts.
  *
  * src/backend/utils/init/datadir.c
  *
@@ -22,19 +22,13 @@
  * before PostgreSQL's macros. */
 #include "sm.h"
 
-#include <string>
-#include <vector>
-
 #include "postgres.h"
-
-#include <sys/wait.h>
-#include <unistd.h>
 
 #include "access/transam.h"
 #include "common/string.h"
-#include "lib/stringinfo.h"
 #include "postmaster/initdb.h"
 #include "storage/fd.h"
+#include "storage/ipc.h"
 #include "utils/datadir.h"
 #include "utils/memutils.h"
 
@@ -42,9 +36,11 @@
 static thread_local /*SHARED*/ char *superuser_name = NULL;
 static thread_local /*SHARED*/ char *superuser_secret = NULL;
 
-/* The databases' names, in the order sm listed them. */
-static thread_local /*SHARED*/ char **database_names = NULL;
-static thread_local /*SHARED*/ int database_count = 0;
+/* sm's home directory, attached by the postmaster for every session. */
+static thread_local /*SHARED*/ sm_env_t *sm_env = NULL;
+
+/* This session's sm session on its database, or NULL. */
+static thread_local /*LOCAL*/ sm_session_t *sm_session = NULL;
 
 /* Read the superuser file of the data directory, which is the current one. */
 static void load_superuser(void) {
@@ -67,82 +63,28 @@ static void load_superuser(void) {
   FreeFile(file);
 }
 
-/*
- * In a child process: ask sm for the databases of the data directory, and
- * write their names to fd, each ended by a NUL. Never returns.
- */
-static void list_databases(int fd) {
-  sm_env_t *env = NULL;
-  std::vector<std::string> names;
+/* Detach sm's home directory as the postmaster exits. */
+static void detach_sm(int code, Datum arg) {
+  sm_detach(sm_env, 1);
+  sm_env = NULL;
+}
 
-  /* Attach, since the databases are listed through an attached home. */
-  if (sm_attach(".", &env) != 0 || sm_lsdb(env, names) != 0) {
-    write_stderr("could not list the databases: %s\n", sm_errmsg());
-    _exit(1);
-  }
-  for (const std::string &name : names)
-    if (write(fd, name.c_str(), name.size() + 1) != (ssize_t)name.size() + 1)
-      _exit(1);
-  /* Detach, which closes the store before the process ends. */
-  sm_detach(env, 0);
-  _exit(0);
+/* Close the session's sm session as it ends. */
+static void close_sm_session(int code, Datum arg) {
+  sm_closedb(sm_session);
+  sm_session = NULL;
 }
 
 /*
- * Learn the databases of the data directory. A child process asks sm and
- * the postmaster reads the answer from a pipe: attaching leaves RocksDB's
- * threads behind in the process that did it, and the postmaster must have
- * none when it forks a backend.
- */
-static void load_databases(void) {
-  int fds[2];
-  pid_t pid;
-  int status;
-  StringInfoData buf;
-  char chunk[1024];
-  ssize_t n;
-
-  if (pipe(fds) != 0)
-    ereport(FATAL, (errmsg("could not create pipe: %m")));
-  /* Fork the child that attaches sm in the postmaster's place. */
-  pid = fork();
-  if (pid < 0)
-    ereport(FATAL, (errmsg("could not fork: %m")));
-  if (pid == 0) {
-    close(fds[0]);
-    list_databases(fds[1]);
-  }
-  close(fds[1]);
-
-  initStringInfo(&buf);
-  while ((n = read(fds[0], chunk, sizeof(chunk))) > 0)
-    appendBinaryStringInfo(&buf, chunk, n);
-  close(fds[0]);
-  /* Wait for the child, to learn whether the list is whole. */
-  while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
-    ;
-  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-    ereport(FATAL, (errmsg("could not list the databases")));
-
-  for (int i = 0; i < buf.len; i++)
-    if (buf.data[i] == '\0')
-      database_count++;
-  database_names = (char **)MemoryContextAlloc(
-      TopMemoryContext, sizeof(char *) * (database_count + 1));
-  for (int i = 0, at = 0; i < database_count; i++) {
-    database_names[i] = MemoryContextStrdup(TopMemoryContext, buf.data + at);
-    at += strlen(buf.data + at) + 1;
-  }
-  pfree(buf.data);
-}
-
-/*
- * Read the superuser file and the list of databases. The postmaster calls
- * this once it is in the data directory.
+ * Read the superuser file and attach sm's home directory. The postmaster
+ * calls this once it is in the data directory.
  */
 void datadir_load(void) {
   load_superuser();
-  load_databases();
+  /* Once for the process: every session opens its database on it. */
+  if (sm_attach(".", &sm_env) != 0)
+    ereport(FATAL, (errmsg("could not attach storage: %s", sm_errmsg())));
+  on_proc_exit(detach_sm, 0);
 }
 
 /* The name of the superuser, the one role there is. */
@@ -152,13 +94,32 @@ const char *datadir_superuser(void) { return superuser_name; }
 const char *datadir_superuser_secret(void) { return superuser_secret; }
 
 /*
- * The oid of the database dbname, or InvalidOid if there is none. sm does
- * not hand out a database's oid, so it is the database's place in the
- * list, above the oids that are built in: good for one run of the server.
+ * The oid of the database dbname, or InvalidOid if there is none: the id sm
+ * gave it, which no other database has had (sm_dbid), above the oids that
+ * are built in.
  */
 Oid datadir_database_oid(const char *dbname) {
-  for (int i = 0; i < database_count; i++)
-    if (strcmp(database_names[i], dbname) == 0)
-      return FirstNormalObjectId + i;
-  return InvalidOid;
+  uint64_t dbid;
+
+  if (sm_dbid(sm_env, dbname, &dbid) != 0) {
+    if (sm_errnum() == SM_ERR_NOTFOUND)
+      return InvalidOid;
+    ereport(FATAL, (errmsg("could not look up database \"%s\": %s", dbname,
+                           sm_errmsg())));
+  }
+  if (dbid > PG_UINT32_MAX - FirstNormalObjectId)
+    ereport(FATAL, (errmsg("database \"%s\" has an id out of range: %llu",
+                           dbname, (unsigned long long)dbid)));
+  return FirstNormalObjectId + (Oid)dbid;
+}
+
+/*
+ * Open this session's sm session on the database dbname, for as long as
+ * the session lasts.  The first on a database loads its catalog.
+ */
+void datadir_open_session(const char *dbname) {
+  if (sm_opendb(sm_env, dbname, NULL, &sm_session) != 0)
+    ereport(FATAL, (errmsg("could not open database \"%s\": %s", dbname,
+                           sm_errmsg())));
+  on_proc_exit(close_sm_session, 0);
 }

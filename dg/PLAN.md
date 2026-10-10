@@ -286,10 +286,10 @@ process; and the three items above are gone.
 
 ### 5.1 How far it got
 
-A connection is a thread of the postmaster's process; the
-auxiliary processes (checkpointer, background writer, startup)
-still fork, and sm is not yet attached once, so the datadir.c
-items stand. `WIP_THREADS.md` on `wip-dg` has the detail.
+Done. A connection is a thread of the postmaster's process,
+and sm is attached once; the auxiliary processes
+(checkpointer, background writer, startup) still fork, until
+step 4. `WIP_THREADS.md` on `wip-dg` has the detail.
 
 - **Signals to a backend are flags**, chosen as "option B"
   with the owner: `SignalProc()` sets a bit in its PGPROC and
@@ -318,6 +318,18 @@ items stand. `WIP_THREADS.md` on `wip-dg` has the detail.
   static snapshots' arrays, the memory contexts and the
   allocator's freelists. 300 connections leave the server's
   descriptors and heap where they were.
+- **sm is attached once**, by the postmaster at startup
+  (`utils/init/datadir.c`); its environment is SHARED. A
+  session opens an sm session on its database
+  (`sm_opendb()`) and closes it as it ends. A database's oid
+  is the id sm gave it (`sm_dbid()`, sm1's never-reused
+  `dbid`) above `FirstNormalObjectId`. The child process that
+  listed the databases, the list fixed at start, and the oid
+  from a place in it are gone.
+- **A forked auxiliary process ends with `_exit()`** after its
+  exit callbacks: `exit()` would run RocksDB's static
+  destructors, which join thread-pool threads that are the
+  postmaster's.
 - **TSan runs the server** (`make tsan` runs
   `test/server.sh` too). Its reports were all of PostgreSQL's
   lock-free handoffs done with plain loads and barriers:

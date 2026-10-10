@@ -647,11 +647,12 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
     dboid = Template1DbOid;
     MyDatabaseTableSpace = DEFAULTTABLESPACE_OID;
   } else if (in_dbname != NULL) {
-    /* The databases are sm's, listed when the server started. */
+    /* The databases are sm's: its id is the oid, and a session opens it. */
     dboid = datadir_database_oid(in_dbname);
     if (!OidIsValid(dboid))
       ereport(FATAL, (errcode(ERRCODE_UNDEFINED_DATABASE),
                       errmsg("database \"%s\" does not exist", in_dbname)));
+    datadir_open_session(in_dbname);
   } else if (!OidIsValid(dboid)) {
     /*
      * If this is a background worker not bound to any particular
