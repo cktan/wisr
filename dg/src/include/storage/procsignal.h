@@ -88,9 +88,10 @@ extern void procsignal_sigusr1_handler(void);
 #define INTERRUPT_QUIT (1u << 2)    /* end it at once: was SIGQUIT */
 #define INTERRUPT_RELOAD (1u << 3)  /* reread the settings: was SIGHUP */
 #define INTERRUPT_PROCSIG (1u << 4) /* see its ProcSignal: was SIGUSR1 */
+#define INTERRUPT_ALARM (1u << 5)   /* a timeout is due: was SIGALRM */
 #define INTERRUPT_ALL                                                        \
   (INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT | INTERRUPT_RELOAD |   \
-   INTERRUPT_PROCSIG)
+   INTERRUPT_PROCSIG | INTERRUPT_ALARM)
 
 typedef void (*interrupt_handler_t)(void);
 

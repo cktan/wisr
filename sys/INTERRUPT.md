@@ -320,9 +320,10 @@ leaves no bit behind.
 - `CHECK_FOR_INTERRUPTS` loads `sys_pending_word()` inline, and
   the epoll loop waits on `sys_wake_fd()`, in place of SIGURG
   and its signalfd.
-- `statement_timeout` and the other timeouts are
-  `sys_timer_at()`, a bit for each, in place of a timer of its
-  own per thread and SIGALRM.
+- `statement_timeout` and the other timeouts share one
+  `sys_timer_at()` a thread, which raises `ALARM`; `timeout.c`
+  multiplexes them on it as it did on SIGALRM, in place of a
+  POSIX timer per thread.
 - `SM_ERR_INTERRUPTED` from an sm call goes to its usual cancel
   or terminate processing.
 

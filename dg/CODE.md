@@ -112,19 +112,22 @@ digres is one process; each session is a thread of it.
   thread's signal mask, which the standard library cannot.
 - **Signals between threads are interrupt bits** (sys.h), named
   in `storage/procsignal.h`: `INTERRUPT_CANCEL`, `_DIE`,
-  `_QUIT`, `_RELOAD`, `_PROCSIG`. `InterruptProc()` raises them
-  in the thread that owns a PGPROC; a thread sets a handler for
-  each with `SetInterruptHandler()`, not `pqsignal()`, and it
-  runs at its next `CHECK_FOR_INTERRUPTS()` or wait. Signal
+  `_QUIT`, `_RELOAD`, `_PROCSIG`, `_ALARM`. `InterruptProc()`
+  raises them in the thread that owns a PGPROC; a thread sets a
+  handler for each with `SetInterruptHandler()`, not
+  `pqsignal()`, and it runs at its next `CHECK_FOR_INTERRUPTS()`
+  or wait. Signal
   numbers are left only where the postmaster speaks to its
   children and in the SQL functions that send them
   (`InterruptsOfSignal()`). A session thread blocks every
-  signal but SIGALRM, from its own timer, and the faults it
-  causes itself.
+  signal but the faults it causes itself.
 - **A latch wakes one thread** through sys: it keeps its
   owner's handle, and `SetLatch()` writes the owner's wake fd
   (`sys_interrupt()`, or `sys_interrupt_self()` in a signal
-  handler). A timeout has a timer of its own per thread.
+  handler).
+- **A thread's timeouts are one sys timer** (`timeout.c`), which
+  raises `INTERRUPT_ALARM` in that thread alone; its handler
+  fires what is due and arms the timer for the next.
 - **Lock-free handoffs are atomics.** Where PostgreSQL read
   and wrote a flag shared between processes plainly, digres
   uses a relaxed atomic (or release and acquire where order

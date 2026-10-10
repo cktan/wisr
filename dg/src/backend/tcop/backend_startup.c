@@ -163,7 +163,7 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
    */
   SetInterruptHandler(INTERRUPT_DIE, process_startup_packet_die);
   /* SIGQUIT handler was already set up by InitPostmasterChild */
-  InitializeTimeouts(); /* establishes SIGALRM handler */
+  InitializeTimeouts(); /* establishes INTERRUPT_ALARM's handler */
   sigprocmask(SIG_SETMASK, &StartupBlockSig, NULL);
 
   /*

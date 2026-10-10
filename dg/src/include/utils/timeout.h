@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * timeout.h
- *	  Routines to multiplex SIGALRM interrupts for multiple timeout reasons.
+ *	  Routines to multiplex a thread's alarm for multiple timeout reasons.
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group

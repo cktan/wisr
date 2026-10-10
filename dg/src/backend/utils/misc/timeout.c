@@ -1,7 +1,8 @@
 /*-------------------------------------------------------------------------
  *
  * timeout.c
- *	  Routines to multiplex SIGALRM interrupts for multiple timeout reasons.
+ *	  Routines to multiplex a thread's alarm, a sys timer that raises
+ *	  INTERRUPT_ALARM, for multiple timeout reasons.
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -15,12 +16,12 @@
 #include "postgres.h"
 
 #include <signal.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "miscadmin.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
+#include "storage/procsignal.h"
 #include "utils/control_block.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
@@ -85,17 +86,16 @@ struct timeout_state_t {
   volatile TimestampTz signal_due_at = 0;
 
   /*
-   * This thread's timer.  Each thread has its own, which sends SIGALRM to
-   * that thread alone, so a session's timeouts stay its own; setitimer()
-   * has one timer a process.  It is made on first use.
+   * This thread's timer (sys.h), 0 if none is armed: it raises
+   * INTERRUPT_ALARM in this thread alone, so a session's timeouts stay its
+   * own.
    */
-  timer_t alarm_timer;
-  bool have_alarm_timer = false;
+  sys_timer_id_t alarm_timer = 0;
 
-  /* Delete the timer, if this thread made one. */
+  /* Cancel the timer, if this thread armed one. */
   ~timeout_state_t() {
-    if (have_alarm_timer)
-      timer_delete(alarm_timer);
+    if (alarm_timer != 0)
+      sys_timer_cancel(alarm_timer);
   }
 };
 
@@ -114,28 +114,17 @@ void timeout_state_free_t::operator()(timeout_state_t *state) const {
 #define enable_alarm()	(ts().alarm_enabled = true)
 
 /*
- * Arm this thread's timer to fire once, secs and usecs from now, making the
- * timer first if this thread has none.  Returns 0, or -1 with errno set.
+ * Arm this thread's timer to raise INTERRUPT_ALARM once, secs and usecs
+ * from now, in place of the one armed before.  Returns 0.
  */
 static int set_alarm_timer(long secs, int usecs) {
-  struct itimerspec its;
-
-  if (!ts().have_alarm_timer) {
-    struct sigevent sev;
-
-    memset(&sev, 0, sizeof(sev));
-    sev.sigev_notify = SIGEV_THREAD_ID;
-    sev.sigev_signo = SIGALRM;
-    sev._sigev_un._tid = gettid(); /* sigev_notify_thread_id */
-    if (timer_create(CLOCK_MONOTONIC, &sev, &ts().alarm_timer) != 0)
-      return -1;
-    ts().have_alarm_timer = true;
-  }
-
-  memset(&its, 0, sizeof(its));
-  its.it_value.tv_sec = secs;
-  its.it_value.tv_nsec = usecs * 1000L;
-  return timer_settime(ts().alarm_timer, 0, &its, NULL);
+  /* One timer at a time: the one armed before is not wanted. */
+  if (ts().alarm_timer != 0)
+    sys_timer_cancel(ts().alarm_timer);
+  ts().alarm_timer = sys_timer_at(
+      sys_thread_self(), sys_now_us() + (int64_t)secs * 1000000 + usecs,
+      INTERRUPT_ALARM, 0);
+  return 0;
 }
 
 /*****************************************************************************
@@ -379,7 +368,7 @@ static void schedule_alarm(TimestampTz now) {
        * to use timeout facilities.
        */
       ts().signal_pending = false;
-      elog(FATAL, "could not enable SIGALRM timer: %m");
+      elog(FATAL, "could not enable the alarm timer: %m");
     }
   }
 }
@@ -389,12 +378,14 @@ static void schedule_alarm(TimestampTz now) {
  *****************************************************************************/
 
 /*
- * Signal handler for SIGALRM
+ * Handler of INTERRUPT_ALARM, which the thread's timer raises: once
+ * SIGALRM's.  It runs where interrupts are delivered, not in a signal
+ * handler.
  *
  * Process any active timeout reasons and then reschedule the interrupt
  * as needed.
  */
-static void handle_sig_alarm(SIGNAL_ARGS) {
+static void handle_sig_alarm(void) {
   /* The thread is ending: its timeouts are gone (tcb_free()). */
   if (tcb == NULL)
     return;
@@ -515,8 +506,8 @@ void InitializeTimeouts(void) {
 
   ts().all_timeouts_initialized = true;
 
-  /* Now establish the signal handler */
-  pqsignal(SIGALRM, handle_sig_alarm);
+  /* Now establish the interrupt's handler */
+  SetInterruptHandler(INTERRUPT_ALARM, handle_sig_alarm);
 }
 
 /*

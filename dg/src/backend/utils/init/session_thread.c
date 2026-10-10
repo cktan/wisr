@@ -110,13 +110,11 @@ static void session_thread_main(session_start_t *p) {
   (void)set_stack_base();
 
   /*
-   * A session thread takes no signal but SIGALRM, from its own timer, and
-   * the faults it causes itself: the rest are the postmaster's, or come as
-   * interrupt bits (InterruptProc()).  Every mask the backend sets is this
-   * one.
+   * A session thread takes no signal but the faults it causes itself: the
+   * rest are the postmaster's, or come as interrupt bits (InterruptProc()),
+   * its timeouts among them.  Every mask the backend sets is this one.
    */
   sigfillset(&BlockSig);
-  sigdelset(&BlockSig, SIGALRM);
   sigdelset(&BlockSig, SIGSEGV);
   sigdelset(&BlockSig, SIGBUS);
   sigdelset(&BlockSig, SIGFPE);

@@ -1184,3 +1184,24 @@ sys gives each thread such a word of its own.
   and `pg_signal_backend()`'s signals to bits.
 - `server.sh`'s shutdown check kills a server that does not
   stop, and fails, rather than hanging the test.
+
+## Step 33: a thread's timeouts are a sys timer
+
+`timeout.c` multiplexed a thread's timeouts on one POSIX timer
+of its own (`timer_create()` with `SIGEV_THREAD_ID`), which
+sent SIGALRM to that thread; the handler ran in signal
+context. sys has timers that raise a bit in a thread.
+
+- **`set_alarm_timer()` arms a sys timer** for the nearest
+  timeout, raising `INTERRUPT_ALARM`, and cancels the one armed
+  before: one timer a thread, as before. The timeout state
+  cancels it as the thread ends.
+- **`handle_sig_alarm()` is the bit's handler**, run where
+  interrupts are delivered, not in a signal handler. The rest
+  of `timeout.c`, its bookkeeping of what is due and its
+  tolerance of an early or a spare alarm, is as it was.
+- **A session thread blocks SIGALRM too**: it takes no signal
+  but the faults it causes itself.
+- sys's timer thread starts with the signal mask of the thread
+  that arms the first timer, a session thread's: every signal
+  blocked.

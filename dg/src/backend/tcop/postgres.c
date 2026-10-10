@@ -3767,7 +3767,7 @@ void PostgresMain(const char *dbname, const char *username) {
       SetInterruptHandler(INTERRUPT_QUIT, quickdie); /* hard crash time */
     else
       SetInterruptHandler(INTERRUPT_QUIT, die); /* cancel query and exit */
-    InitializeTimeouts(); /* establishes SIGALRM handler */
+    InitializeTimeouts(); /* establishes INTERRUPT_ALARM's handler */
 
     /*
      * Ignore failure to write to frontend. Note: if frontend closes
