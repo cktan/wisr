@@ -1324,13 +1324,18 @@ extern int fdatasync(int fildes);
 
 /*
  * A session is a thread, so every writable global and static is
- * thread_local, one copy a thread, and a new thread is to start with a
- * copy of its parent's, as a forked process does.  A comment after the
- * keyword tells what the variable is: SHARED for one every session
- * reads as its parent left it -- a pointer into shared memory, a table
- * filled once at startup, or what the postmaster sets -- and LOCAL for
- * one a session keeps for itself.  src/tools/cxx_thread_local.py
- * --check fails on any writable variable not thread_local.
+ * thread_local, one copy a thread.  A comment after the keyword tells
+ * what the variable is: SHARED for one every session reads as its parent
+ * left it -- a pointer into shared memory, a table filled once at
+ * startup, or what the postmaster sets -- and LOCAL for one a session
+ * keeps for itself, or builds for itself, as a handle onto a shared hash
+ * table.  A new session thread is given a copy of its parent's SHARED
+ * variables (utils/init/session_thread.c); its LOCAL ones start at what
+ * the source wrote.  src/tools/cxx_thread_local.py --check fails on any
+ * writable variable not thread_local.
+ *
+ * A SHARED variable that a thread has to reset or redo after the copy is
+ * not SHARED: mark it LOCAL instead, and let the thread start it afresh.
  */
 
 /*

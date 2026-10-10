@@ -369,7 +369,10 @@ Do not reopen these without the owner:
   over TCP, no `pg_hba.conf`.
 - **Every writable global is `thread_local`**, marked
   `/*SHARED*/` or `/*LOCAL*/`, and the build fails otherwise
-  (§3.2, §3.6).
+  (§3.2, §3.6). A new thread is given its parent's SHARED
+  variables. A SHARED variable that a thread must reset or redo
+  after the copy is not SHARED: mark it LOCAL
+  (`src/include/c.h`).
 - **The GUC variables and tables are per thread** (§3.4). GUC
   is not otherwise to be touched until the thread model is
   done.
