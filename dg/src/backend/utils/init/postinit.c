@@ -903,23 +903,13 @@ static void StatementTimeoutHandler(void) {
   if (ClientAuthInProgress)
     sig = SIGTERM;
 
-#ifdef HAVE_SETSID
-  /* try to signal whole process group */
-  kill(-MyProcPid, sig);
-#endif
-  kill(MyProcPid, sig);
+  SignalSelf(sig);
 }
 
 /*
  * LOCK_TIMEOUT handler: trigger a query-cancel interrupt.
  */
-static void LockTimeoutHandler(void) {
-#ifdef HAVE_SETSID
-  /* try to signal whole process group */
-  kill(-MyProcPid, SIGINT);
-#endif
-  kill(MyProcPid, SIGINT);
-}
+static void LockTimeoutHandler(void) { SignalSelf(SIGINT); }
 
 static void TransactionTimeoutHandler(void) {
   TransactionTimeoutPending = true;

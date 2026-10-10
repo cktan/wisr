@@ -179,6 +179,13 @@ struct PGPROC {
 
   Latch procLatch; /* generic latch for process */
 
+  /*
+   * Signals sent to the process or session that owns this PGPROC, one bit a
+   * signal number (SignalProc()).  It runs their handlers at its next
+   * CHECK_FOR_INTERRUPTS() or wait.
+   */
+  pg_atomic_uint32 pendingSignals;
+
   TransactionId xid; /* id of top-level transaction currently being
                       * executed by this proc, if running and XID
                       * is assigned; else InvalidTransactionId.
@@ -485,5 +492,6 @@ extern void ProcWaitForSignal(uint32 wait_event_info);
 extern void ProcSendSignal(ProcNumber procNumber);
 
 extern PGPROC *AuxiliaryPidGetProc(int pid);
+extern PGPROC *PostmasterPidGetProc(int pid);
 
 #endif /* _PROC_H_ */

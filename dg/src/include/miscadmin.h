@@ -114,13 +114,21 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32
     QueryCancelHoldoffCount;
 extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32 CritSectionCount;
 
+/*
+ * The signals pending for this process or session (PGPROC's
+ * pendingSignals), or NoPendingSignals while it has no PGPROC.
+ */
+extern thread_local /*LOCAL*/ PGDLLIMPORT const volatile uint32
+    *MyPendingSignals;
+extern PGDLLIMPORT const uint32 NoPendingSignals;
+
 /* in tcop/postgres.c */
 extern void ProcessInterrupts(void);
 
 /* Test whether an interrupt is pending */
 #ifndef WIN32
 #define INTERRUPTS_PENDING_CONDITION() \
-	(unlikely(InterruptPending))
+	(unlikely(InterruptPending) || unlikely(*MyPendingSignals != 0))
 #else
 #define INTERRUPTS_PENDING_CONDITION() \
 	(unlikely(UNBLOCKED_SIGNAL_QUEUE()) ? \

@@ -41,7 +41,8 @@ tcp_psql() {
 echo "sesame" > "$work/pw"
 build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   fail "initdb"
-build/digres -D "$work/data" -k "$work" -p "$port" > "$work/log" 2>&1 &
+build/digres -D "$work/data" -k "$work" -p "$port" \
+  -c authentication_timeout=1 > "$work/log" 2>&1 &
 server=$!
 for _ in $(seq 100); do
   grep -q "ready to accept connections" "$work/log" && break
@@ -115,12 +116,49 @@ grep -q "PREPARE TRANSACTION is not supported" "$work/prepare.out" ||
   fail "prepare refused"
 grep -qx 10 "$work/prepare.out" || fail "statement after prepare"
 
-# Verify that the server stops when asked, with no process lost on the way.
-# 1. Interrupt the server, and wait for it.
-# 2. Confirm it exited with status 0.
-# 3. Confirm its log tells of no process ended by a signal.
+# Verify that a session that never answers the password request is ended
+# when authentication_timeout passes: the timeout signals its own session
+# (SignalSelf()).
+# 1. Open a TCP connection, send a startup packet, and say nothing more.
+# 2. Confirm the server closes it within a few seconds.
+# 3. Confirm the log tells why.
+python3 - "$port" > "$work/authtimeout.out" 2>&1 <<'PY' || fail "auth timeout"
+import socket, struct, sys, time
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])))
+body = struct.pack("!i", 196608) + b"user\0nobody\0database\0postgres\0\0"
+s.sendall(struct.pack("!i", len(body) + 4) + body)
+s.settimeout(10)
+start = time.time()
+while s.recv(4096):
+    pass
+sys.exit(0 if time.time() - start < 5 else 1)
+PY
+grep -q "canceling authentication due to timeout" "$work/log" ||
+  fail "auth timeout message"
+
+# Verify that the server stops when asked, with no process lost on the way,
+# and ends a session left open: the postmaster's SIGTERM reaches it as a flag
+# in its PGPROC (SignalProc()).
+# 1. Open a session, run a statement in it, and leave it idle.
+# 2. Interrupt the server, and wait for it.
+# 3. Confirm it exited with status 0, and ended the idle session.
+# 4. Confirm its log tells of no process ended by a signal.
+mkfifo "$work/idle.in"
+local_psql < "$work/idle.in" > "$work/idle.out" 2>&1 &
+idle=$!
+exec 3> "$work/idle.in"
+echo "select 7 * 7;" >&3
+for _ in $(seq 50); do
+  grep -qx 49 "$work/idle.out" && break
+  sleep 0.1
+done
+grep -qx 49 "$work/idle.out" || fail "idle session"
 kill -INT $server
 wait $server || fail "shutdown status"
+grep -q "terminating connection due to administrator command" "$work/log" ||
+  fail "idle session ended"
+exec 3>&-
+wait $idle
 grep -q "terminated by signal" "$work/log" && fail "a process crashed"
 
 [ $failed = 0 ] && echo "server: PASSED"

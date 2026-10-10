@@ -2995,6 +2995,9 @@ static void ProcessRecoveryConflictInterrupts(void) {
  * any pre-existing one will have been serviced.)
  */
 void ProcessInterrupts(void) {
+  /* Signals sent by SignalProc() set their flags first. */
+  DeliverPendingSignals();
+
   /* OK to accept any interrupts now? */
   if (InterruptHoldoffCount != 0 || CritSectionCount != 0)
     return;

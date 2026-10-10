@@ -73,6 +73,7 @@
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
+#include "storage/procsignal.h"
 #include "storage/latch.h"
 #include "storage/waiteventset.h"
 #include "utils/memutils.h"
@@ -1065,6 +1066,10 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
 #endif
 
   pgstat_report_wait_end();
+
+  /* A signal sent by SignalProc() woke us: run its handler, as the kernel
+   * would have. */
+  DeliverPendingSignals();
 
   return returned_events;
 }

@@ -105,6 +105,7 @@
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
+#include "storage/procsignal.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
 #include "utils/datadir.h"
@@ -2881,6 +2882,21 @@ static void signal_child(PMChild *pmchild, int signal) {
                            signal, pm_signame(signal),
                            GetBackendTypeDesc(pmchild->bkend_type),
                            (int)pmchild->pid)));
+
+  /*
+   * A backend is sent a signal as a flag in its PGPROC, as a session that
+   * is a thread will be (SignalProc()); one with no PGPROC yet, and a crash
+   * or kill, get a real one.
+   */
+  if (pmchild->bkend_type == B_BACKEND && signal != SIGQUIT &&
+      signal != SIGKILL) {
+    PGPROC *proc = PostmasterPidGetProc(pid);
+
+    if (proc != NULL) {
+      SignalProc(proc, signal);
+      return;
+    }
+  }
 
   if (kill(pid, signal) < 0)
     elog(DEBUG3, "kill(%ld,%d) failed: %m", (long)pid, signal);

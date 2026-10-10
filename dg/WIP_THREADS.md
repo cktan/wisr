@@ -27,6 +27,28 @@ and §5 first.
    No test covers it yet: the tool's sessions never wait on a
    latch.
 
+3. **Option B, piece 1: a signal to a backend is a flag.**
+   `SignalProc(proc, sig)` sets bit `sig` in
+   `proc->pendingSignals` and sets `proc->procLatch`; the owner
+   runs the handler it set with `pqsignal()` (which now records
+   every handler, `pqsignal_handler()`) from
+   `DeliverPendingSignals()`, called by `ProcessInterrupts()`
+   and at the end of `WaitEventSetWait()`.
+   `CHECK_FOR_INTERRUPTS()` also tests `*MyPendingSignals`.
+   `SignalSelf(sig)` runs this thread's own handler. Converted:
+   `SendProcSignal()`, barriers, the cancel request,
+   `pg_cancel_backend()`/`pg_terminate_backend()`, DROP
+   DATABASE's terminate, the statement and lock timeouts, and
+   the postmaster's `signal_child()` to a backend that has a
+   PGPROC (`PostmasterPidGetProc()`), except `SIGQUIT` and
+   `SIGKILL`. Process groups are no longer signalled.
+   - `test/server.sh` checks an authentication timeout
+     (`SignalSelf`) and a fast shutdown with an idle session
+     open (`SignalProc`); with `SignalProc()` made a no-op the
+     latter hangs, so it does test the new path.
+   - No SQL can test cancel yet: a function call needs catalog
+     tables, and nothing runs long without one.
+
 ## Open: how a session thread is reached (issue 2)
 
 `BackendStartup()` starting a thread instead of a process is
@@ -49,7 +71,7 @@ The options put to the owner, not yet chosen:
   for the postmaster, which is woken by its latch;
   `signal_child()` skips threads. No cancel, terminate or
   reload; a fast shutdown waits for sessions to disconnect.
-- **B, recommended.** "Signals become flags" (step 4) for
+- **B, chosen.** "Signals become flags" (step 4) for
   sessions now: a session's `pqsignal()` records its handler in
   a per-thread table; `kill(pid, sig)` to a session sets a bit
   in its `PGPROC` and wakes it; it runs the handler when it

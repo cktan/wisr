@@ -29,6 +29,9 @@
 thread_local /*LOCAL*/ ProtocolVersion FrontendProtocol;
 
 thread_local /*LOCAL*/ volatile sig_atomic_t InterruptPending = false;
+const uint32 NoPendingSignals = 0;
+thread_local /*LOCAL*/ const volatile uint32 *MyPendingSignals =
+    &NoPendingSignals;
 thread_local /*LOCAL*/ volatile sig_atomic_t QueryCancelPending = false;
 thread_local /*LOCAL*/ volatile sig_atomic_t ProcDiePending = false;
 thread_local /*LOCAL*/ volatile sig_atomic_t CheckClientConnectionPending =

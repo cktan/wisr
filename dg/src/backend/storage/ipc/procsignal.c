@@ -285,7 +285,8 @@ int SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber) {
       slot->pss_signalFlags[reason] = true;
       SpinLockRelease(&slot->pss_mutex);
       /* Send signal */
-      return kill(pid, SIGUSR1);
+      SignalProc(GetPGProcByNumber(procNumber), SIGUSR1);
+      return 0;
     }
     SpinLockRelease(&slot->pss_mutex);
   } else {
@@ -308,7 +309,8 @@ int SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber) {
           slot->pss_signalFlags[reason] = true;
           SpinLockRelease(&slot->pss_mutex);
           /* Send signal */
-          return kill(pid, SIGUSR1);
+          SignalProc(GetPGProcByNumber(i), SIGUSR1);
+          return 0;
         }
         SpinLockRelease(&slot->pss_mutex);
       }
@@ -382,7 +384,7 @@ uint64 EmitProcSignalBarrier(ProcSignalBarrierType type) {
         /* see SendProcSignal for details */
         slot->pss_signalFlags[PROCSIG_BARRIER] = true;
         SpinLockRelease(&slot->pss_mutex);
-        kill(pid, SIGUSR1);
+        SignalProc(GetPGProcByNumber(i), SIGUSR1);
       } else
         SpinLockRelease(&slot->pss_mutex);
     }
@@ -711,15 +713,7 @@ void SendCancelRequest(int backendPID, const uint8 *cancel_key,
                     "processing cancel request: sending SIGINT to process %d",
                     backendPID)));
 
-        /*
-         * If we have setsid(), signal the backend's whole process
-         * group
-         */
-#ifdef HAVE_SETSID
-        kill(-backendPID, SIGINT);
-#else
-        kill(backendPID, SIGINT);
-#endif
+        SignalProc(GetPGProcByNumber(i), SIGINT);
       } else {
         /* Right PID, wrong key: no way, Jose */
         ereport(LOG, (errmsg("wrong key in cancel request for process %d",
@@ -732,4 +726,43 @@ void SendCancelRequest(int backendPID, const uint8 *cancel_key,
   /* No matching backend */
   ereport(LOG, (errmsg("PID %d in cancel request did not match any process",
                        backendPID)));
+}
+
+/*
+ * Send sig to the process or session that owns proc.  The signal is a bit in
+ * proc->pendingSignals, and the owner is woken by its latch, so it reaches a
+ * session that is a thread as surely as one that is a process.  The owner
+ * runs the handler it set with pqsignal() at its next CHECK_FOR_INTERRUPTS()
+ * or wait.  Safe in a signal handler.
+ */
+void SignalProc(PGPROC *proc, int sig) {
+  Assert(sig > 0 && sig < 32);
+  pg_atomic_fetch_or_u32(&proc->pendingSignals, (uint32)1 << sig);
+  SetLatch(&proc->procLatch);
+}
+
+/*
+ * Send sig to this process or session: its handler runs now.  Safe in a
+ * signal handler, as the handlers are.
+ */
+void SignalSelf(int sig) {
+  pqsigfunc handler = pqsignal_handler(sig);
+
+  if (handler != NULL)
+    handler(sig);
+}
+
+/* Run the handler of each signal SignalProc() left for this process. */
+void DeliverPendingSignals(void) {
+  uint32 pending;
+
+  if (*MyPendingSignals == 0)
+    return;
+  pending = pg_atomic_exchange_u32(&MyProc->pendingSignals, 0);
+  while (pending != 0) {
+    int sig = pg_rightmost_one_pos32(pending);
+
+    pending &= pending - 1;
+    SignalSelf(sig);
+  }
 }

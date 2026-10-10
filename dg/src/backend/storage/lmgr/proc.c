@@ -329,6 +329,7 @@ void InitProcGlobal(void) {
      * access them for backends that aren't currently in use.
      */
     pg_atomic_init_u32(&(proc->procArrayGroupNext), INVALID_PROC_NUMBER);
+    pg_atomic_init_u32(&(proc->pendingSignals), 0);
     pg_atomic_init_u32(&(proc->clogGroupNext), INVALID_PROC_NUMBER);
     pg_atomic_init_u64(&(proc->waitStart), 0);
   }
@@ -482,6 +483,10 @@ void InitProcess(void) {
    */
   OwnLatch(&MyProc->procLatch);
   SwitchToSharedLatch();
+
+  /* Signals sent to this PGPROC's last owner are not ours. */
+  pg_atomic_write_u32(&MyProc->pendingSignals, 0);
+  MyPendingSignals = &MyProc->pendingSignals.value;
 
   /* now that we have a proc, report wait events to shared memory */
   pgstat_set_wait_event_storage(&MyProc->wait_event_info);
@@ -646,6 +651,10 @@ void InitAuxiliaryProcess(void) {
    */
   OwnLatch(&MyProc->procLatch);
   SwitchToSharedLatch();
+
+  /* Signals sent to this PGPROC's last owner are not ours. */
+  pg_atomic_write_u32(&MyProc->pendingSignals, 0);
+  MyPendingSignals = &MyProc->pendingSignals.value;
 
   /* now that we have a proc, report wait events to shared memory */
   pgstat_set_wait_event_storage(&MyProc->wait_event_info);
@@ -928,6 +937,7 @@ static void ProcKill(int code, Datum arg) {
 
   MyProc = NULL;
   MyProcNumber = INVALID_PROC_NUMBER;
+  MyPendingSignals = &NoPendingSignals;
 
   /* Mark the proc no longer in use */
   proc->pid = 0;
@@ -988,6 +998,7 @@ static void AuxiliaryProcKill(int code, Datum arg) {
   proc = MyProc;
   MyProc = NULL;
   MyProcNumber = INVALID_PROC_NUMBER;
+  MyPendingSignals = &NoPendingSignals;
   DisownLatch(&proc->procLatch);
 
   SpinLockAcquire(ProcStructLock);
@@ -1002,6 +1013,21 @@ static void AuxiliaryProcKill(int code, Datum arg) {
       update_spins_per_delay(ProcGlobal->spins_per_delay);
 
   SpinLockRelease(ProcStructLock);
+}
+
+/*
+ * The PGPROC of the backend whose pid is pid, or NULL if it has none yet.
+ * For the postmaster, which takes no lock: the scan reads each pid without
+ * one, so the answer may be stale, as a pid given to kill() may be.
+ */
+PGPROC *PostmasterPidGetProc(int pid) {
+  for (int i = 0; i < MaxBackends; i++) {
+    PGPROC *proc = GetPGProcByNumber(i);
+
+    if (proc->pid == pid)
+      return proc;
+  }
+  return NULL;
 }
 
 /*

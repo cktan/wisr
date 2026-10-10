@@ -78,6 +78,11 @@ extern void ProcessProcSignalBarrier(void);
 
 extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
 
+struct PGPROC;
+extern void SignalProc(struct PGPROC *proc, int sig);
+extern void SignalSelf(int sig);
+extern void DeliverPendingSignals(void);
+
 /* ProcSignalHeader is an opaque struct, details known only within procsignal.c
  */
 typedef struct ProcSignalHeader ProcSignalHeader;

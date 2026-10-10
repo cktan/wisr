@@ -23,6 +23,7 @@
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "storage/procsignal.h"
 #include "utils/acl.h"
 #include "utils/fmgrprotos.h"
 
@@ -85,26 +86,16 @@ static int pg_signal_backend(int pid, int sig) {
              !has_privs_of_role(GetUserId(), ROLE_PG_SIGNAL_BACKEND))
     return SIGNAL_BACKEND_NOPERMISSION;
 
-    /*
-     * Can the process we just validated above end, followed by the pid being
-     * recycled for a new process, before reaching here?  Then we'd be trying
-     * to kill the wrong thing.  Seems near impossible when sequential pid
-     * assignment and wraparound is used.  Perhaps it could happen on a system
-     * where pid re-use is randomized.  That race condition possibility seems
-     * too unlikely to worry about.
-     */
+  /*
+   * Can the process we just validated above end, followed by the pid being
+   * recycled for a new process, before reaching here?  Then we'd be trying
+   * to kill the wrong thing.  Seems near impossible when sequential pid
+   * assignment and wraparound is used.  Perhaps it could happen on a system
+   * where pid re-use is randomized.  That race condition possibility seems
+   * too unlikely to worry about.
+   */
 
-    /* If we have setsid(), signal the backend's whole process group */
-#ifdef HAVE_SETSID
-  if (kill(-pid, sig))
-#else
-  if (kill(pid, sig))
-#endif
-  {
-    /* Again, just a warning to allow loops */
-    ereport(WARNING, (errmsg("could not send signal to process %d: %m", pid)));
-    return SIGNAL_BACKEND_ERROR;
-  }
+  SignalProc(proc, sig);
   return SIGNAL_BACKEND_SUCCESS;
 }
 

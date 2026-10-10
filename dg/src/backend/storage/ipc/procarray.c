@@ -44,6 +44,7 @@
 #include "port/pg_lfind.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "storage/procsignal.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
@@ -2351,17 +2352,8 @@ void TerminateOtherDBBackends(Oid databaseId) {
       int pid = lfirst_int(lc);
       PGPROC *proc = BackendPidGetProc(pid);
 
-      if (proc != NULL) {
-        /*
-         * If we have setsid(), signal the backend's whole process
-         * group
-         */
-#ifdef HAVE_SETSID
-        (void)kill(-pid, SIGTERM);
-#else
-        (void)kill(pid, SIGTERM);
-#endif
-      }
+      if (proc != NULL)
+        SignalProc(proc, SIGTERM);
     }
   }
 }
