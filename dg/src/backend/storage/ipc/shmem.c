@@ -678,12 +678,6 @@ Size pg_get_shmem_pagesize(void) {
   os_page_size = sysconf(_SC_PAGESIZE);
 #endif
 
-  Assert(IsUnderPostmaster);
-  Assert(huge_pages_status != HUGE_PAGES_UNKNOWN);
-
-  if (huge_pages_status == HUGE_PAGES_ON)
-    GetHugePageSize(&os_page_size, NULL);
-
   return os_page_size;
 }
 

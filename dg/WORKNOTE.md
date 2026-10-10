@@ -935,3 +935,31 @@ compiled here; with no child process left, nothing could use it.
   last caller was its reload of the configuration, go with
   the rest of `hba.c` when authentication's files do;
   `PGSharedMemoryDetach()`, which goes with shared memory.
+
+## Step 25: shared memory is the process's own
+
+PostgreSQL's shared memory was a segment its processes attached:
+a small System V segment, whose key went into `postmaster.pid`
+so that a new postmaster could tell whether an old one's
+processes were still attached, and an anonymous shared mapping
+for the rest, with huge pages if asked for. digres is one
+process, whose threads share all its memory.
+
+- **The block is a private anonymous mapping**
+  (`port/private_shmem.c`): one `mmap`, page aligned, zero, its
+  pages committed as first touched, never unmapped. The
+  structures in it and the code that lays them out are as they
+  were.
+- **No segment, no interlock.** Line 7 of `postmaster.pid`,
+  which held the key, is left empty, so pg_ctl still finds the
+  lines after it. A postmaster that finds a stale
+  `postmaster.pid` no longer looks for orphaned processes
+  attached to a segment: a session is a thread, and ends with
+  its process. `postmaster.pid` and RocksDB's own locks still
+  keep a second server off the data directory.
+- **Gone**: `port/sysv_shmem.c`; the settings `huge_pages`,
+  `huge_page_size`, `shared_memory_type`, and the reported
+  `huge_pages_status` and `shared_memory_size_in_huge_pages`.
+- **Left**: the semaphores (unnamed POSIX ones, which work
+  between threads as between processes), and dynamic shared
+  memory (`dsm.c`, `dsm_impl.c`), which the statistics use.

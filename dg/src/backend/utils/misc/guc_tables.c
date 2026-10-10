@@ -283,23 +283,6 @@ static const struct config_enum_entry constraint_exclusion_options[] = {
     {"0", CONSTRAINT_EXCLUSION_OFF, true},
     {NULL, 0, false}};
 
-/*
- * Although only "on", "off", "try" are documented, we accept all the likely
- * variants of "on" and "off".
- */
-static const struct config_enum_entry huge_pages_options[] = {
-    {"off", HUGE_PAGES_OFF, false},  {"on", HUGE_PAGES_ON, false},
-    {"try", HUGE_PAGES_TRY, false},  {"true", HUGE_PAGES_ON, true},
-    {"false", HUGE_PAGES_OFF, true}, {"yes", HUGE_PAGES_ON, true},
-    {"no", HUGE_PAGES_OFF, true},    {"1", HUGE_PAGES_ON, true},
-    {"0", HUGE_PAGES_OFF, true},     {NULL, 0, false}};
-
-static const struct config_enum_entry huge_pages_status_options[] = {
-    {"off", HUGE_PAGES_OFF, false},
-    {"on", HUGE_PAGES_ON, false},
-    {"unknown", HUGE_PAGES_UNKNOWN, false},
-    {NULL, 0, false}};
-
 static const struct config_enum_entry plan_cache_mode_options[] = {
     {"auto", PLAN_CACHE_MODE_AUTO, false},
     {"force_generic_plan", PLAN_CACHE_MODE_FORCE_GENERIC_PLAN, false},
@@ -322,16 +305,6 @@ static const struct config_enum_entry ssl_protocol_versions_info[] = {
 StaticAssertDecl(lengthof(ssl_protocol_versions_info) ==
                      (PG_TLS1_3_VERSION + 2),
                  "array length mismatch");
-
-static const struct config_enum_entry shared_memory_options[] = {
-#ifndef WIN32
-    {"sysv", SHMEM_TYPE_SYSV, false},
-#endif
-    {"mmap", SHMEM_TYPE_MMAP, false},
-#ifdef WIN32
-    {"windows", SHMEM_TYPE_WINDOWS, false},
-#endif
-    {NULL, 0, false}};
 
 static const struct config_enum_entry default_toast_compression_options[] = {
     {"pglz", TOAST_PGLZ_COMPRESSION, false},
@@ -434,14 +407,6 @@ thread_local /*LOCAL*/ int tcp_user_timeout;
 static thread_local /*LOCAL*/ int ssl_renegotiation_limit;
 
 /*
- * This really belongs in pg_shmem.c, but is defined here so that it doesn't
- * need to be duplicated in all the different implementations of pg_shmem.c.
- */
-thread_local /*LOCAL*/ int huge_pages = HUGE_PAGES_TRY;
-thread_local /*LOCAL*/ int huge_page_size;
-thread_local /*LOCAL*/ int huge_pages_status = HUGE_PAGES_UNKNOWN;
-
-/*
  * These variables are all dummies that don't do anything, except in some
  * cases provide the value for SHOW to display.  The real state is elsewhere
  * and is kept in sync by assign_hooks.
@@ -474,7 +439,6 @@ static thread_local /*LOCAL*/ int max_identifier_length;
 static thread_local /*LOCAL*/ int block_size;
 static thread_local /*LOCAL*/ int segment_size;
 static thread_local /*LOCAL*/ int shared_memory_size_mb;
-static thread_local /*LOCAL*/ int shared_memory_size_in_huge_pages;
 static thread_local /*LOCAL*/ int num_os_semaphores;
 static thread_local /*LOCAL*/ bool data_checksums;
 static thread_local /*LOCAL*/ bool integer_datetimes;
@@ -1707,19 +1671,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"shared_memory_size_in_huge_pages", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Shows the number of huge pages needed for the main shared "
-                   "memory area."),
-      gettext_noop("-1 means huge pages are not supported."),
-      GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_RUNTIME_COMPUTED},
-     &shared_memory_size_in_huge_pages,
-     -1,
-     -1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
     {{"num_os_semaphores", PGC_INTERNAL, PRESET_OPTIONS,
       gettext_noop("Shows the number of semaphores required for the server."),
       NULL, GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_RUNTIME_COMPUTED},
@@ -2474,17 +2425,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      assign_tcp_user_timeout,
      show_tcp_user_timeout},
-
-    {{"huge_page_size", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("The size of huge page that should be requested."),
-      gettext_noop("0 means use the system default."), GUC_UNIT_KB},
-     &huge_page_size,
-     0,
-     0,
-     INT_MAX,
-     check_huge_page_size,
-     NULL,
-     NULL},
 
     {{"debug_discard_caches", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Aggressively flush system caches for debugging purposes."),
@@ -3480,17 +3420,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      NULL,
      NULL},
 
-    {{"shared_memory_type", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Selects the shared memory implementation used for the main "
-                   "shared memory region."),
-      NULL},
-     &shared_memory_type,
-     DEFAULT_SHARED_MEMORY_TYPE,
-     shared_memory_options,
-     NULL,
-     NULL,
-     NULL},
-
     {{"file_copy_method", PGC_USERSET, RESOURCES_DISK,
       gettext_noop("Selects the file copy method."), NULL},
      &file_copy_method,
@@ -3526,25 +3455,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      &xmloption,
      XMLOPTION_CONTENT,
      xmloption_options,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"huge_pages", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Use of huge pages on Linux or Windows."), NULL},
-     &huge_pages,
-     HUGE_PAGES_TRY,
-     huge_pages_options,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"huge_pages_status", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Indicates the status of huge pages."), NULL,
-      GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE},
-     &huge_pages_status,
-     HUGE_PAGES_UNKNOWN,
-     huge_pages_status_options,
      NULL,
      NULL,
      NULL},

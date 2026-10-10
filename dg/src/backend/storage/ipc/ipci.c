@@ -37,9 +37,6 @@
 #include "utils/guc.h"
 #include "utils/injection_point.h"
 
-/* GUCs */
-thread_local /*LOCAL*/ int shared_memory_type = DEFAULT_SHARED_MEMORY_TYPE;
-
 thread_local /*SHARED*/ shmem_startup_hook_type shmem_startup_hook = NULL;
 
 static thread_local /*SHARED*/ Size total_addin_request = 0;
@@ -177,13 +174,6 @@ void CreateSharedMemoryAndSemaphores(void) {
    */
   seghdr = PGSharedMemoryCreate(size, &shim);
 
-  /*
-   * Make sure that huge pages are never reported as "unknown" while the
-   * server is running.
-   */
-  Assert(strcmp("unknown",
-                GetConfigOption("huge_pages_status", false, false)) != 0);
-
   InitShmemAccess(seghdr);
 
   /*
@@ -300,7 +290,6 @@ void InitializeShmemGUCs(void) {
   char buf[64];
   Size size_b;
   Size size_mb;
-  Size hp_size;
   int num_semas;
 
   /*
@@ -311,19 +300,6 @@ void InitializeShmemGUCs(void) {
   sprintf(buf, "%zu", size_mb);
   SetConfigOption("shared_memory_size", buf, PGC_INTERNAL,
                   PGC_S_DYNAMIC_DEFAULT);
-
-  /*
-   * Calculate the number of huge pages required.
-   */
-  GetHugePageSize(&hp_size, NULL);
-  if (hp_size != 0) {
-    Size hp_required;
-
-    hp_required = add_size(size_b / hp_size, 1);
-    sprintf(buf, "%zu", hp_required);
-    SetConfigOption("shared_memory_size_in_huge_pages", buf, PGC_INTERNAL,
-                    PGC_S_DYNAMIC_DEFAULT);
-  }
 
   sprintf(buf, "%d", num_semas);
   SetConfigOption("num_os_semaphores", buf, PGC_INTERNAL,

@@ -38,7 +38,7 @@
 #define LOCK_FILE_LINE_PORT			4
 #define LOCK_FILE_LINE_SOCKET_DIR	5
 #define LOCK_FILE_LINE_LISTEN_ADDR	6
-#define LOCK_FILE_LINE_SHMEM_KEY	7
+#define LOCK_FILE_LINE_SHMEM_KEY	7 /* empty: there is no segment */
 #define LOCK_FILE_LINE_PM_STATUS	8
 
 /*

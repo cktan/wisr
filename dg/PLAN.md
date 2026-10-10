@@ -345,9 +345,9 @@ and sm is attached once; no auxiliary process is left (step
   a backend is a flag in its PGPROC, a latch wakes its thread,
   and a timeout has a timer of its own.
 - **Then delete the process-only subsystems**: crash restart
-  and `EXEC_BACKEND` are gone (`WORKNOTE.md` steps 23 and 24);
-  shared memory setup (the structures become ordinary
-  allocations) is next.
+  and `EXEC_BACKEND` are gone (`WORKNOTE.md` steps 23 and 24),
+  and shared memory is a private mapping of the process (step
+  25). Dynamic shared memory and the semaphores are left.
   The auxiliary processes are gone: autovacuum, the WAL writer,
   the archiver, the I/O workers, the checkpointer, the
   background writer, background workers and the startup

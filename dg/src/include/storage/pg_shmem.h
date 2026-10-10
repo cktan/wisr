@@ -41,44 +41,7 @@ typedef struct PGShmemHeader /* standard header for all Postgres shmem */
 #endif
 } PGShmemHeader;
 
-/* GUC variables */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int shared_memory_type;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int huge_pages;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int huge_page_size;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int huge_pages_status;
-
-/* Possible values for huge_pages and huge_pages_status */
-typedef enum {
-  HUGE_PAGES_OFF,
-  HUGE_PAGES_ON,
-  HUGE_PAGES_TRY,     /* only for huge_pages */
-  HUGE_PAGES_UNKNOWN, /* only for huge_pages_status */
-} HugePagesType;
-
-/* Possible values for shared_memory_type */
-typedef enum {
-  SHMEM_TYPE_WINDOWS,
-  SHMEM_TYPE_SYSV,
-  SHMEM_TYPE_MMAP,
-} PGShmemType;
-
-#ifndef WIN32
-extern thread_local /*SHARED*/ PGDLLIMPORT unsigned long UsedShmemSegID;
-#else
-extern thread_local /*SHARED*/ PGDLLIMPORT HANDLE UsedShmemSegID;
-extern PGDLLIMPORT void *ShmemProtectiveRegion;
-#endif
-extern thread_local /*SHARED*/ PGDLLIMPORT void *UsedShmemSegAddr;
-
-#if !defined(WIN32)
-#define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_MMAP
-#else
-#define DEFAULT_SHARED_MEMORY_TYPE SHMEM_TYPE_WINDOWS
-#endif
-
+/* The block, made once for the process (port/private_shmem.c) */
 extern PGShmemHeader *PGSharedMemoryCreate(Size size, PGShmemHeader **shim);
-extern bool PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2);
-extern void PGSharedMemoryDetach(void);
-extern void GetHugePageSize(Size *hugepagesize, int *mmap_flags);
 
 #endif /* PG_SHMEM_H */

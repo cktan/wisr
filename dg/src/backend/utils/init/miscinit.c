@@ -1045,38 +1045,9 @@ static void CreateLockFile(const char *filename, bool amPostmaster,
     }
 
     /*
-     * No, the creating process did not exist.  However, it could be that
-     * the postmaster crashed (or more likely was kill -9'd by a clueless
-     * admin) but has left orphan backends behind.  Check for this by
-     * looking to see if there is an associated shmem segment that is
-     * still in use.
-     *
-     * Note: because postmaster.pid is written in multiple steps, we might
-     * not find the shmem ID values in it; we can't treat that as an
-     * error.
+     * No, the creating process did not exist.  It left no orphan behind:
+     * sessions are its threads, so they ended with it.
      */
-    if (isDDLock) {
-      char *ptr = buffer;
-      unsigned long id1, id2;
-      int lineno;
-
-      for (lineno = 1; lineno < LOCK_FILE_LINE_SHMEM_KEY; lineno++) {
-        if ((ptr = strchr(ptr, '\n')) == NULL)
-          break;
-        ptr++;
-      }
-
-      if (ptr != NULL && sscanf(ptr, "%lu %lu", &id1, &id2) == 2) {
-        if (PGSharedMemoryIsInUse(id1, id2))
-          ereport(FATAL, (errcode(ERRCODE_LOCK_FILE_EXISTS),
-                          errmsg("pre-existing shared memory block (key %lu, "
-                                 "ID %lu) is still in use",
-                                 id1, id2),
-                          errhint("Terminate any old server processes "
-                                  "associated with data directory \"%s\".",
-                                  refName)));
-      }
-    }
 
     /*
      * Looks like nobody's home.  Unlink the file and try again to create
