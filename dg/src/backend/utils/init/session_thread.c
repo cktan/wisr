@@ -34,6 +34,7 @@
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/waiteventset.h"
+#include "utils/control_block.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/session_thread.h"
@@ -59,8 +60,8 @@ static char *tls_block(void) {
 
 /*
  * Free what the session's exit left, which a process's exit would have
- * freed: its wait sets and signalfd, its files, the snapshots' arrays, then
- * all its memory contexts.
+ * freed: its wait sets and signalfd, its files, the snapshots' arrays, all
+ * its memory contexts, then its control block.
  */
 static void session_thread_end(void) {
   if (FeBeWaitSet != NULL) {
@@ -78,6 +79,9 @@ static void session_thread_end(void) {
   TopMemoryContext = NULL;
   ErrorContext = NULL;
   AllocSetFreeFreeLists();
+
+  /* Last: what the thread owns goes with its control block. */
+  tcb_free();
 }
 
 /* The new thread: set up as its parent was, then run the session. */
@@ -96,6 +100,9 @@ static void *session_thread_main(void *p) {
 
   IsSessionThread = true;
   MyProcPid = gettid();
+
+  /* This thread's control block: what it has its own of. */
+  tcb_init();
 
   /* check_stack_depth() measures from here: this thread's stack is its own. */
   (void)set_stack_base();

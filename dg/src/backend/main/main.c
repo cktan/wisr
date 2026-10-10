@@ -36,6 +36,7 @@
 #include "postmaster/initdb.h"
 #include "postmaster/postmaster.h"
 #include "tcop/tcopprot.h"
+#include "utils/control_block.h"
 #include "utils/help_config.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
@@ -71,6 +72,10 @@ int main(int argc, char *argv[]) {
   DispatchOption dispatch_option = DISPATCH_POSTMASTER;
 
   reached_main = true;
+
+  /* The process's control block, and this thread's, before anything else. */
+  pcb_init();
+  tcb_init();
 
   /*
    * If supported on the current platform, set up a handler to be called if

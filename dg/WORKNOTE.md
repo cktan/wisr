@@ -835,3 +835,40 @@ Windows, `eventlog`, and rejects `csvlog` and `jsonlog`.
 - The helpers they shared with the plain form
   (`get_formatted_log_time()`, `check_log_of_query()` and the
   rest) stay: `log_line_prefix` uses them.
+
+## Step 22: the process and thread control blocks
+
+Every writable global is `thread_local`, marked SHARED or
+LOCAL, and a new thread is given a copy of its parent's SHARED
+ones. SHARED does not mean shared: each thread has its own
+copy, and what one sets after another starts the other never
+sees. The globals are to move into two blocks instead
+(`utils/control_block.h`):
+
+- **`pcb_t`, one for the process**, made by `main()` before
+  anything else, never freed. A field is set before the first
+  thread starts and only read after, or guards itself. `pcb`
+  is the one writable global outside `thread_local`:
+  `src/tools/process_wide.txt` lists it, and
+  `cxx_thread_local.py --check` accepts what that file lists.
+- **`tcb_t`, one for each thread** that runs digres code:
+  `main()` makes the first thread's, `session_thread_main()`
+  a session's, and `session_thread_end()` frees it last.
+- **A field is a value or a `std::unique_ptr`** to what the
+  block owns. A module's state is a struct the header only
+  declares; the module defines it, the function that makes it
+  and its deleter, so its layout stays its own.
+
+The pilot moves two things:
+
+- **`stderr_mutex` into the pcb** (`elog.c`).
+- **All of `timeout.c`'s globals into `timeout_state_t`**,
+  `tcb->timeout`. Its destructor deletes the thread's timer,
+  which an `on_proc_exit` callback did. `tcb_free()` clears
+  `tcb` before freeing it, and the SIGALRM handler returns when
+  `tcb` is NULL. Fifty sessions leave no timer behind; without
+  the destructor's `timer_delete()` they leave a hundred.
+
+Settings are next: they are inherited, the parent's copied
+into the new thread, so they go into the tcb with an explicit
+copy at thread start.

@@ -2,4 +2,4 @@
 # cxx_thread_local.py --check accepts these, and only these, outside
 # thread_local. Each line names the object, from src, and the variable
 # as objdump -C names it, with the reason after a '#'.
-backend/utils/error/elog.o stderr_mutex  # serializes every thread's writes to stderr
+backend/utils/init/control_block.o pcb  # the process control block (utils/control_block.h)

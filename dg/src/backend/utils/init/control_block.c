@@ -1,0 +1,50 @@
+/*-------------------------------------------------------------------------
+ *
+ * control_block.c
+ *	  The process control block and the thread control block.
+ *
+ * See utils/control_block.h.
+ *
+ * IDENTIFICATION
+ *	  src/backend/utils/init/control_block.c
+ *
+ *-------------------------------------------------------------------------
+ */
+#include "postgres.h"
+
+#include "utils/control_block.h"
+
+/* The process's control block: one for the process, never freed. */
+pcb_t *pcb = NULL;
+
+/* This thread's control block, or NULL if it runs no digres code. */
+thread_local /*LOCAL*/ tcb_t *tcb = NULL;
+
+/*
+ * Make the process control block.  main() calls it first, before any
+ * thread starts and before anything logs.
+ */
+void pcb_init(void) {
+  Assert(pcb == NULL);
+  pcb = new pcb_t();
+}
+
+/* Make this thread's control block, as the thread starts. */
+void tcb_init(void) {
+  Assert(tcb == NULL);
+  tcb = new tcb_t();
+  tcb->timeout.reset(timeout_state_new());
+}
+
+/*
+ * Free this thread's control block, and all it owns, as the thread ends.
+ * tcb is cleared first: a signal handler that runs meanwhile finds no
+ * block rather than one half freed.
+ */
+void tcb_free(void) {
+  tcb_t *block = tcb;
+
+  tcb = NULL;
+  std::atomic_signal_fence(std::memory_order_seq_cst);
+  delete block;
+}

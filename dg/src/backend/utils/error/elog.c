@@ -81,15 +81,8 @@
 #include "utils/guc_hooks.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
+#include "utils/control_block.h"
 #include "utils/varlena.h"
-
-#include <mutex>
-
-/*
- * Serializes writes to stderr.  One for the process, not a thread's: it is
- * listed in src/tools/process_wide.txt.
- */
-static std::mutex stderr_mutex;
 
 /* In this module, access gettext() via err_gettext() */
 #undef _
@@ -2419,7 +2412,7 @@ void write_console(const char *line, int len) {
    */
   {
     /* One message at a time: the threads share stderr. */
-    std::lock_guard<std::mutex> guard(stderr_mutex);
+    std::lock_guard<std::mutex> guard(pcb->stderr_mutex);
     rc = write(fileno(stderr), line, len);
   }
   (void)rc;
