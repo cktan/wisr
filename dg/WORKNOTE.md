@@ -1241,3 +1241,24 @@ yet, and nothing sends a pmsignal: its one reason,
   takes. In a session thread they set nothing, so a session's
   SIGFPE has no handler: it ends the server.
 - `server.sh` sends SIGUSR2 too.
+
+## Step 36: only the postmaster's thread takes a signal
+
+A signal sent to the process goes to any one thread that does
+not block it. Session threads blocked them, but RocksDB's
+threads and a thread of sm's, started while the postmaster
+attached sm with its signals unblocked, did not: a SIGHUP
+landing there would have run the postmaster's handler, which
+sets the latch of the thread it runs in, in a thread with none.
+
+- **`datadir_load()` blocks every signal around `sm_attach()`**,
+  so the threads sm and RocksDB start then inherit the mask.
+  Those started later are started by session threads, which
+  block every signal already.
+- **sys's timer thread blocks every signal itself**, whichever
+  thread arms the first timer.
+- `server.sh` reads each thread's mask from `/proc`, and fails
+  if a thread other than the postmaster's leaves SIGHUP,
+  SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2 or SIGALRM
+  unblocked; before the change, RocksDB's two threads and one
+  more did.

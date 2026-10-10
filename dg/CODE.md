@@ -121,6 +121,12 @@ digres is one process; each session is a thread of it.
   children and in the SQL functions that send them
   (`InterruptsOfSignal()`). A session thread blocks every
   signal but the faults it causes itself.
+- **Only the postmaster's thread takes a signal.** Every other
+  thread blocks them: sessions by their mask, sys's timer
+  thread by itself, and sm's and RocksDB's because
+  `datadir_load()` attaches sm with every signal blocked, which
+  the threads it starts inherit. Start no thread from the
+  postmaster with its signals unblocked.
 - **A latch wakes one thread** through sys: it keeps its
   owner's handle, and `SetLatch()` writes the owner's wake fd
   (`sys_interrupt()`, or `sys_interrupt_self()` in a signal

@@ -185,6 +185,33 @@ PY
 grep -q "canceling authentication due to timeout" "$work/log" ||
   fail "auth timeout message"
 
+# Verify that a signal sent to the server can land only in the postmaster's
+# thread: every other thread, sessions, sm's, RocksDB's and sys's, blocks the
+# signals the postmaster handles, whose handlers set the postmaster's latch.
+# 1. With a session idle (opened above), list the server's threads.
+# 2. Confirm each but the main one blocks SIGHUP, SIGINT, SIGQUIT, SIGTERM,
+#    SIGUSR1, SIGUSR2 and SIGALRM.
+python3 - "$server" > "$work/sigblk.out" 2>&1 <<'PY' || fail "only the postmaster takes signals"
+import os, sys
+pid = sys.argv[1]
+want = 0
+for sig in (1, 2, 3, 10, 12, 14, 15):
+    want |= 1 << (sig - 1)
+bad = []
+for tid in os.listdir(f"/proc/{pid}/task"):
+    if tid == pid:
+        continue
+    try:
+        with open(f"/proc/{pid}/task/{tid}/status") as f:
+            status = dict(l.split(":", 1) for l in f if ":" in l)
+    except FileNotFoundError:
+        continue
+    if int(status["SigBlk"], 16) & want != want:
+        bad.append(f"{tid} {status['Name'].strip()} {status['SigBlk'].strip()}")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+
 # Verify that SIGUSR1 and SIGUSR2 are ignored: there is no log rotation, nor
 # pmsignal, and no child to reserve SIGUSR2 for.
 # 1. Send the server SIGUSR1 and SIGUSR2.
