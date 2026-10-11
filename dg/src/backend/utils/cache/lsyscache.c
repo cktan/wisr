@@ -1958,18 +1958,12 @@ int get_relnatts(Oid relid) {
  * for anything except preparing error messages.
  */
 char *get_rel_name(Oid relid) {
-  HeapTuple tp;
+  FormData_pg_class form;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
-    char *result;
-
-    result = pstrdup(NameStr(reltup->relname));
-    ReleaseSysCache(tp);
-    return result;
-  } else
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     return NULL;
+  return pstrdup(NameStr(form.relname));
 }
 
 /*
@@ -1978,18 +1972,12 @@ char *get_rel_name(Oid relid) {
  *		Returns the pg_namespace OID associated with a given relation.
  */
 Oid get_rel_namespace(Oid relid) {
-  HeapTuple tp;
+  FormData_pg_class form;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
-    Oid result;
-
-    result = reltup->relnamespace;
-    ReleaseSysCache(tp);
-    return result;
-  } else
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     return InvalidOid;
+  return form.relnamespace;
 }
 
 /*
@@ -2001,18 +1989,12 @@ Oid get_rel_namespace(Oid relid) {
  * careful to check for InvalidOid result.
  */
 Oid get_rel_type_id(Oid relid) {
-  HeapTuple tp;
+  FormData_pg_class form;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
-    Oid result;
-
-    result = reltup->reltype;
-    ReleaseSysCache(tp);
-    return result;
-  } else
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     return InvalidOid;
+  return form.reltype;
 }
 
 /*
@@ -2021,18 +2003,12 @@ Oid get_rel_type_id(Oid relid) {
  *		Returns the relkind associated with a given relation.
  */
 char get_rel_relkind(Oid relid) {
-  HeapTuple tp;
+  FormData_pg_class form;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
-    char result;
-
-    result = reltup->relkind;
-    ReleaseSysCache(tp);
-    return result;
-  } else
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     return '\0';
+  return form.relkind;
 }
 
 /*
@@ -2042,18 +2018,12 @@ char get_rel_relkind(Oid relid) {
  *relation.
  */
 bool get_rel_relispartition(Oid relid) {
-  HeapTuple tp;
+  FormData_pg_class form;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
-    bool result;
-
-    result = reltup->relispartition;
-    ReleaseSysCache(tp);
-    return result;
-  } else
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     return false;
+  return form.relispartition;
 }
 
 /*
@@ -2065,18 +2035,12 @@ bool get_rel_relispartition(Oid relid) {
  * or that it is in the database's default tablespace.
  */
 Oid get_rel_tablespace(Oid relid) {
-  HeapTuple tp;
+  FormData_pg_class form;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
-    Oid result;
-
-    result = reltup->reltablespace;
-    ReleaseSysCache(tp);
-    return result;
-  } else
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     return InvalidOid;
+  return form.reltablespace;
 }
 
 /*
@@ -2085,18 +2049,12 @@ Oid get_rel_tablespace(Oid relid) {
  *		Returns the relpersistence associated with a given relation.
  */
 char get_rel_persistence(Oid relid) {
-  HeapTuple tp;
-  Form_pg_class reltup;
-  char result;
+  FormData_pg_class form;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (!HeapTupleIsValid(tp))
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     elog(ERROR, "cache lookup failed for relation %u", relid);
-  reltup = (Form_pg_class)GETSTRUCT(tp);
-  result = reltup->relpersistence;
-  ReleaseSysCache(tp);
-
-  return result;
+  return form.relpersistence;
 }
 
 /*

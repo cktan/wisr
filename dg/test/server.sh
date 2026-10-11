@@ -337,6 +337,45 @@ grep -q 'LISTEN is not supported' "$work/notify.out" &&
 [ "$(local_psql -c 'unlisten *' -c 'discard all' 2>&1 | tr '\n' ' ')" = \
   "UNLISTEN DISCARD ALL " ] || fail "unlisten and discard all"
 
+# Verify that LOCK TABLE takes sm's table lock: SHARE lets another session
+# read and keeps it from writing; ACCESS EXCLUSIVE keeps it from reading.
+# 1. In a session of its own, lock t2 in SHARE mode and hold it.
+# 2. From another, a scan of t2 answers; an insert with statement_timeout =
+#    500 times out.
+# 3. Commit, lock t2 in ACCESS EXCLUSIVE mode, and hold it: a scan times out.
+# 4. Confirm NOWAIT is refused, as sm cannot ask for it yet.
+mkfifo "$work/locker.in"
+local_psql < "$work/locker.in" > "$work/locker.out" 2>&1 &
+locker=$!
+exec 4> "$work/locker.in"
+echo "begin; lock table t2 in share mode; select 'locked';" >&4
+for _ in $(seq 50); do
+  grep -qx locked "$work/locker.out" && break
+  sleep 0.1
+done
+[ "$(local_psql -c 'select a from t2 where a = 1' 2>&1)" = 1 ] ||
+  fail "read under a share lock"
+timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'set statement_timeout = 500' -c 'insert into t2 values (100)' \
+  > "$work/locker2.out" 2>&1
+grep -q 'canceling statement due to statement timeout' "$work/locker2.out" ||
+  fail "write under a share lock"
+echo "commit; begin; lock table t2 in access exclusive mode; select 'excl';" >&4
+for _ in $(seq 50); do
+  grep -qx excl "$work/locker.out" && break
+  sleep 0.1
+done
+timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'set statement_timeout = 500' -c 'select * from t2' \
+  > "$work/locker3.out" 2>&1
+grep -q 'canceling statement due to statement timeout' "$work/locker3.out" ||
+  fail "read under an exclusive lock"
+echo "commit;" >&4
+exec 4>&-
+wait $locker
+local_psql -c 'begin' -c 'lock table t2 nowait' > "$work/locker4.out" 2>&1
+grep -q 'NOWAIT is not supported yet' "$work/locker4.out" || fail "nowait"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

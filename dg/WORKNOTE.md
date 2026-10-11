@@ -1600,3 +1600,30 @@ heap's.
   and `LOCK TABLE`, next.
 - No test sees the difference: no two sessions conflict on an
   object's lock that sm does not also take.
+
+## Step 49: LOCK TABLE is sm's
+
+- **`LockTableCommand()` locks a table in sm through
+  `smstore_lock_table()`**: sm's table lock, held until the
+  transaction ends, in the mode closest to PostgreSQL's. sm has
+  five modes to PostgreSQL's eight; each maps to the weakest
+  that conflicts with at least what PostgreSQL's does:
+  ACCESS SHARE and ROW SHARE to IS, ROW EXCLUSIVE to IX, SHARE
+  to S, SHARE UPDATE EXCLUSIVE and SHARE ROW EXCLUSIVE to SIX,
+  EXCLUSIVE and ACCESS EXCLUSIVE to X. SHARE UPDATE EXCLUSIVE
+  and EXCLUSIVE so conflict with more than PostgreSQL's do:
+  with ROW EXCLUSIVE, and with ACCESS SHARE.
+- **NOWAIT is refused**: sm is to take a wait policy as a flag
+  on the calls that can wait (`../sm/sm1/SM1_DESIGN.md` §5.1),
+  and has none yet.
+- **smstore keeps a table's handle by lock mode**: a handle
+  serves a later use its lock covers, and a stronger use opens
+  it again, so an insert after LOCK TABLE ... SHARE takes IX
+  beside S.
+- **`get_rel_name()`, `get_rel_relkind()` and the other
+  `get_rel_*` helpers read the relation's descriptor**
+  (`RelationGetClassForm()`), as `has_subclass()` does since
+  step 38: a user's relation has no pg_class row.
+- `server.sh` holds a SHARE lock and an ACCESS EXCLUSIVE one in
+  one session, and confirms another reads under the first, and
+  times out writing under it and reading under the second.

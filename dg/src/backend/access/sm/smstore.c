@@ -25,6 +25,7 @@
 #include "catalog/pg_type_d.h"
 #include "miscadmin.h"
 #include "parser/parse_type.h"
+#include "storage/lockdefs.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"
 #include "utils/inval.h"
@@ -43,7 +44,7 @@ static thread_local /*LOCAL*/ bool statement_pending = false;
 /* A table this transaction opened in sm, to read or to write. */
 typedef struct open_table_t {
   Oid oid;
-  bool write;
+  sm_lockmode_t mode;
   sm_tbl_t *tbl;
 } open_table_t;
 
@@ -378,11 +379,32 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
 }
 
 /*
- * The table oid, opened in this transaction to read, or to write, taking
- * the lock that goes with it until the transaction ends; NULL if there is
- * no such table.
+ * Whether a table held in mode held may be used as one opened in want: the
+ * lock held is at least as strong, and a handle to write with is one opened
+ * to write.
  */
-static sm_tbl_t *open_table(Oid oid, bool write) {
+static bool mode_covers(sm_lockmode_t held, sm_lockmode_t want) {
+  switch (held) {
+  case SM_LOCKMODE_EX:
+    return true;
+  case SM_LOCKMODE_SIX:
+    return want != SM_LOCKMODE_EX;
+  case SM_LOCKMODE_SH:
+    return want == SM_LOCKMODE_SH || want == SM_LOCKMODE_IS;
+  case SM_LOCKMODE_IX:
+    return want == SM_LOCKMODE_IX || want == SM_LOCKMODE_IS;
+  case SM_LOCKMODE_IS:
+    return want == SM_LOCKMODE_IS;
+  }
+  return false;
+}
+
+/*
+ * The table oid, opened in this transaction in mode, taking the lock that
+ * goes with it until the transaction ends: IS to read, IX to write, a
+ * stronger one for LOCK TABLE.  NULL if there is no such table.
+ */
+static sm_tbl_t *open_table(Oid oid, sm_lockmode_t mode) {
   sm_session_t *s = xact_session();
   open_table_t *ot;
   sm_tbl_t *tbl;
@@ -391,13 +413,10 @@ static sm_tbl_t *open_table(Oid oid, bool write) {
 
   foreach (l, open_tables) {
     ot = (open_table_t *)lfirst(l);
-    if (ot->oid == oid && (ot->write || !write))
+    if (ot->oid == oid && mode_covers(ot->mode, mode))
       return ot->tbl;
   }
-  if (waiting([&] {
-        return sm_tbl_open(s, oid, write ? SM_LOCKMODE_IX : SM_LOCKMODE_IS,
-                           &tbl);
-      }) != 0) {
+  if (waiting([&] { return sm_tbl_open(s, oid, mode, &tbl); }) != 0) {
     if (sm_errnum() == SM_ERR_NOTFOUND)
       return NULL;
     sm_error("open a table");
@@ -406,7 +425,7 @@ static sm_tbl_t *open_table(Oid oid, bool write) {
   old = MemoryContextSwitchTo(TopTransactionContext);
   ot = (open_table_t *)palloc(sizeof(open_table_t));
   ot->oid = oid;
-  ot->write = write;
+  ot->mode = mode;
   ot->tbl = tbl;
   open_tables = lappend(open_tables, ot);
   MemoryContextSwitchTo(old);
@@ -434,7 +453,7 @@ static Oid type_oid(uint8_t code) {
  * transaction.
  */
 smstore_table_t *smstore_table_desc(Oid oid) {
-  sm_tbl_t *tbl = open_table(oid, false);
+  sm_tbl_t *tbl = open_table(oid, SM_LOCKMODE_IS);
   const sm_table_def_t *def;
   smstore_table_t *desc;
 
@@ -485,7 +504,7 @@ uint64 smstore_tid_to_rowno(ItemPointer tid) {
 
 /* Insert the slot's row into rel, a table in sm; its tid is its rowno. */
 void smstore_insert(Relation rel, TupleTableSlot *slot) {
-  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), true);
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IX);
   uint64_t rowno;
 
   if (tbl == NULL)
@@ -509,7 +528,7 @@ struct smstore_scan_t {
 
 /* Begin a scan of every row of rel, a table in sm, in rowno order. */
 smstore_scan_t *smstore_beginscan(Relation rel) {
-  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), false);
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
   smstore_scan_t *scan;
 
   if (tbl == NULL)
@@ -591,4 +610,41 @@ void smstore_drop_tables(DropStmt *stmt) {
     if (waiting([&] { return sm_cat_drop_table(s, oid); }) != 0)
       sm_error("drop a table");
   }
+}
+
+/*
+ * sm's table lock for PostgreSQL's mode: the weakest that conflicts with at
+ * least what the mode does.  sm has five; where PostgreSQL's falls between
+ * two, the stronger is taken, and may conflict with more.
+ */
+static sm_lockmode_t table_lock_mode(LOCKMODE lockmode) {
+  switch (lockmode) {
+  case AccessShareLock:
+  case RowShareLock:
+    return SM_LOCKMODE_IS;
+  case RowExclusiveLock:
+    return SM_LOCKMODE_IX;
+  case ShareLock:
+    return SM_LOCKMODE_SH;
+  case ShareUpdateExclusiveLock:
+  case ShareRowExclusiveLock:
+    return SM_LOCKMODE_SIX;
+  default:
+    return SM_LOCKMODE_EX;
+  }
+}
+
+/*
+ * LOCK TABLE on rel, a table in sm: sm's table lock in the mode closest to
+ * lockmode, held until the transaction ends.  NOWAIT is refused: sm has no
+ * way to ask for it yet.
+ */
+void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait) {
+  if (nowait)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("LOCK TABLE ... NOWAIT is not supported yet")));
+  if (open_table(RelationGetRelid(rel), table_lock_mode(lockmode)) == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
 }

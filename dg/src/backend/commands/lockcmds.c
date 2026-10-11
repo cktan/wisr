@@ -14,6 +14,8 @@
  */
 #include "postgres.h"
 
+#include "access/relation.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
@@ -52,7 +54,13 @@ void LockTableCommand(LockStmt *lockstmt) {
         rv, lockstmt->mode, lockstmt->nowait ? RVR_NOWAIT : 0,
         RangeVarCallbackForLockTable, &lockstmt->mode);
 
-    if (get_rel_relkind(reloid) == RELKIND_VIEW)
+    /* A table in sm is locked by sm (access/smstore.h). */
+    if (reloid >= FirstNormalObjectId) {
+      Relation rel = relation_open(reloid, NoLock);
+
+      smstore_lock_table(rel, lockstmt->mode, lockstmt->nowait);
+      relation_close(rel, NoLock);
+    } else if (get_rel_relkind(reloid) == RELKIND_VIEW)
       LockViewRecurse(reloid, lockstmt->mode, lockstmt->nowait, NIL);
     else if (recurse)
       LockTableRecurse(reloid, lockstmt->mode, lockstmt->nowait);
