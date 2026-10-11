@@ -69,7 +69,7 @@ extern void SendCancelRequest(int backendPID, const uint8 *cancel_key,
 extern void procsignal_sigusr1_handler(void);
 
 /*
- * A thread's interrupts: bits in its word of pending interrupts (sys.h),
+ * A thread's interrupts: bits in its word of pending interrupts (sm_sys.h),
  * each with a handler of the thread's own, which runs at its next
  * CHECK_FOR_INTERRUPTS() or wait.  They were signals.
  */

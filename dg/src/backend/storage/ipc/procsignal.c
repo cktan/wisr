@@ -388,10 +388,10 @@ void SetInterruptHandler(uint32 bit, interrupt_handler_t handler) {
  * returns, and runs them.  A proc that no thread owns is left alone.
  */
 void InterruptProc(PGPROC *proc, uint32 bits) {
-  sys_thread_ref_t owner = LatchOwner(&proc->procLatch);
+  sm_thread_ref_t owner = LatchOwner(&proc->procLatch);
 
   if (owner)
-    sys_interrupt(owner, bits);
+    sm_interrupt(owner, bits);
 }
 
 /* Run this thread's handlers of bits now. */
@@ -411,13 +411,13 @@ void InterruptSelf(uint32 bits) {
  * CHECK_FOR_INTERRUPTS(): for a handler whose work may not be done where
  * it runs.
  */
-void InterruptSelfLater(uint32 bits) { sys_interrupt(sys_thread_self(), bits); }
+void InterruptSelfLater(uint32 bits) { sm_interrupt(sm_thread_self(), bits); }
 
 /* Run the handler of each bit pending for this thread, taking them. */
 void DeliverInterrupts(void) {
   if (MyInterrupts->load(std::memory_order_relaxed) == 0)
     return;
-  InterruptSelf(sys_take(INTERRUPT_ALL));
+  InterruptSelf(sm_take(INTERRUPT_ALL));
 }
 
 /*

@@ -243,7 +243,7 @@ int lock_write_check(sm1::session_t *session, uint64_t storeid,
  * transaction was doomed while waiting, the caller then failing
  * it with s->doomed; 1 at once for a qa_nowait session, the
  * caller reporting SM_ERR_BLOCKED; or 2 if an interrupt to the
- * calling thread ended it (sys.h), the caller reporting SM_ERR_INTERRUPTED
+ * calling thread ended it (sm_sys.h), the caller reporting SM_ERR_INTERRUPTED
  * (lock_wait_error).
  */
 int lock_wait(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,

@@ -104,7 +104,7 @@
 
 #include "storage/spin.h"
 #include "storage/waiteventset.h" /* for WL_* arguments to WaitLatch */
-#include "sys.h"
+#include "sm_sys.h"
 
 /*
  * Latch structure should be treated as opaque and only accessed through
@@ -126,12 +126,12 @@ typedef struct Latch {
   int owner_pid;
   int owner_tid; /* the owner's thread: one process has many sessions */
   /*
-   * The owner, to wake (sys.h): a handle new'd by OwnLatch() or InitLatch()
+   * The owner, to wake (sm_sys.h): a handle new'd by OwnLatch() or InitLatch()
    * and deleted by DisownLatch() or, for a thread's local latch, by
    * ShutdownProcessLocalLatch(), under owner_lock, which SetLatch() holds
    * to copy it.  NULL while not owned.
    */
-  sys_thread_ref_t *owner;
+  sm_thread_ref_t *owner;
   slock_t owner_lock;
 #ifdef WIN32
   HANDLE event;
@@ -146,7 +146,7 @@ extern void InitSharedLatch(Latch *latch);
 extern void OwnLatch(Latch *latch);
 extern void DisownLatch(Latch *latch);
 extern void SetLatch(Latch *latch);
-extern sys_thread_ref_t LatchOwner(Latch *latch);
+extern sm_thread_ref_t LatchOwner(Latch *latch);
 extern void ResetLatch(Latch *latch);
 
 extern int WaitLatch(Latch *latch, int wakeEvents, long timeout,

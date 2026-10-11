@@ -70,7 +70,7 @@ void InitLatch(Latch *latch) {
   LATCH_SET(latch->owner_pid, MyProcPid);
   LATCH_SET(latch->owner_tid, gettid());
   /* Other threads set it too: the postmaster's, by its backends. */
-  latch->owner = new sys_thread_ref_t(sys_thread_self());
+  latch->owner = new sm_thread_ref_t(sm_thread_self());
   SpinLockInit(&latch->owner_lock);
   latch->is_shared = false;
 
@@ -132,7 +132,7 @@ void InitSharedLatch(Latch *latch) {
  */
 void OwnLatch(Latch *latch) {
   int owner_pid;
-  sys_thread_ref_t *owner;
+  sm_thread_ref_t *owner;
 
   /* Sanity checks */
   Assert(latch->is_shared);
@@ -142,7 +142,7 @@ void OwnLatch(Latch *latch) {
     elog(PANIC, "latch already owned by PID %d", owner_pid);
 
   /* Made before the lock: a spinlock is held for a few instructions. */
-  owner = new sys_thread_ref_t(sys_thread_self());
+  owner = new sm_thread_ref_t(sm_thread_self());
   /* Published under the lock that SetLatch() copies it under. */
   SpinLockAcquire(&latch->owner_lock);
   latch->owner = owner;
@@ -156,7 +156,7 @@ void OwnLatch(Latch *latch) {
  * Disown a shared latch currently owned by the current process.
  */
 void DisownLatch(Latch *latch) {
-  sys_thread_ref_t *owner;
+  sm_thread_ref_t *owner;
 
   Assert(latch->is_shared);
   Assert(LATCH_GET(latch->owner_pid) == MyProcPid);
@@ -323,7 +323,7 @@ void SetLatch(Latch *latch) {
 
   /*
    * See if anyone's waiting for the latch. It can be the current process if
-   * we're in a signal handler. We use the self-pipe or our wake fd (sys.h)
+   * we're in a signal handler. We use the self-pipe or our wake fd (sm_sys.h)
    * to wake up WaitEventSetWaitBlock() without races in that case. If it's
    * another thread, interrupt it through sys.
    *
@@ -350,7 +350,7 @@ void SetLatch(Latch *latch) {
   else if (owner_pid == MyProcPid && owner_tid == gettid())
     WakeupMyProc();
   else {
-    sys_thread_ref_t owner = LatchOwner(latch);
+    sm_thread_ref_t owner = LatchOwner(latch);
 
     if (owner)
       WakeupOtherProc(owner);
@@ -382,8 +382,8 @@ void SetLatch(Latch *latch) {
  * a copy, as the owner may disown the latch meanwhile.  Not in a signal
  * handler.
  */
-sys_thread_ref_t LatchOwner(Latch *latch) {
-  sys_thread_ref_t owner;
+sm_thread_ref_t LatchOwner(Latch *latch) {
+  sm_thread_ref_t owner;
 
   /* Copied under the lock that DisownLatch() deletes it under. */
   SpinLockAcquire(&latch->owner_lock);

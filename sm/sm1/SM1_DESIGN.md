@@ -684,12 +684,12 @@ on the calls that can wait. `SM_ERR_BLOCKED` is the code those
 flags will return too.
 
 **Every wait can be cut short.** sm1 waits through sys
-(`../sys/INTERRUPT.md`): an interrupt to the waiting thread,
-a bit in its wait mask (`sys_wait_mask()`), makes the wait
+(`../sm0/INTERRUPT.md`): an interrupt to the waiting thread,
+a bit in its wait mask (`sm_wait_mask()`), makes the wait
 fail with `SM_ERR_INTERRUPTED`: not an abort, the transaction
 left active, as after `SM_ERR_BLOCKED`. A session waits in one
 place only, on the lock table's condition, for a lock and for
-an uncommitted writer alike, and that wait is a `sys_wait()`
+an uncommitted writer alike, and that wait is a `sm_wait()`
 on `lock_cv` under `lock_mu`, so every wait there is can be
 ended. The interrupt goes to a thread, not a session: it is
 the thread that blocks. sm1 takes no bit: **the bit stays

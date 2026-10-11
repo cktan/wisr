@@ -612,7 +612,7 @@ int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
  * SM_ERR_NOTFOUND if there is no such table or index.
  *
  * An interrupt to the calling thread, a bit in its wait mask
- * (sys.h), ends the wait with SM_ERR_INTERRUPTED; the bit stays
+ * (sm_sys.h), ends the wait with SM_ERR_INTERRUPTED; the bit stays
  * pending, for the caller to take.
  */
 int sm_cat_index_wait(sm_session_t* session, uint64_t table, uint64_t index);

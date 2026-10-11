@@ -1,10 +1,10 @@
 /*
- * sys.h -- interrupting a thread, interruptible waits,
+ * sm_sys.h -- interrupting a thread, interruptible waits,
  * and timers that interrupt (INTERRUPT.md).
  *
  * Each thread has a word of pending interrupt bits. Any thread may
  * raise bits in any other; the owner checks and claims them. A
- * thread blocked in sys_wait() or polling its wake fd is woken. A
+ * thread blocked in sm_wait() or polling its wake fd is woken. A
  * timer raises bits at a deadline. sys attaches no meaning to a
  * bit: the caller defines them, claims them, and decides what an
  * interrupt means. Nothing here uses signals.
@@ -18,8 +18,8 @@
  * Calls marked "any thread" may be made from any thread; the rest
  * act on the calling thread.
  */
-#ifndef SYS_H
-#define SYS_H
+#ifndef SM_SYS_H
+#define SM_SYS_H
 
 #include <stdint.h>
 
@@ -31,7 +31,7 @@
 /* ---- threads ---- */
 
 /* A thread's control block: its pending bits, its waiter, its fd. */
-typedef struct sys_thread_t sys_thread_t;
+typedef struct sm_thread_t sm_thread_t;
 
 /*
  * A handle on a thread's control block, shared by whoever may
@@ -40,14 +40,14 @@ typedef struct sys_thread_t sys_thread_t;
  * ended is still safe to interrupt: the bits land where nobody
  * reads them.
  */
-typedef std::shared_ptr<sys_thread_t> sys_thread_ref_t;
+typedef std::shared_ptr<sm_thread_t> sm_thread_ref_t;
 
 /*
  * A handle on the calling thread's control block, made on its
  * first call. Never empty. The thread holds one of its own until
  * it ends.
  */
-sys_thread_ref_t sys_thread_self(void);
+sm_thread_ref_t sm_thread_self(void);
 
 /* ---- raising and claiming ---- */
 
@@ -58,94 +58,96 @@ sys_thread_ref_t sys_thread_self(void);
  * holding the mutex of a wait this may wake: waking takes that
  * mutex, and would wait for it forever.
  */
-void sys_interrupt(const sys_thread_ref_t &t, uint32_t bits);
+void sm_interrupt(const sm_thread_ref_t &t, uint32_t bits);
 
 /*
  * Raise bits in the calling thread, and write its wake fd if it
  * has one. Lock-free, so safe in a signal handler: for a handler
  * that must wake its own thread's poll loop. It wakes no
- * sys_wait(), which a handler could not have interrupted safely
+ * sm_wait(), which a handler could not have interrupted safely
  * anyway. The thread must have a block already -- any earlier sys
- * call on it, such as sys_wake_fd() -- or nothing is raised: a
+ * call on it, such as sm_wake_fd() -- or nothing is raised: a
  * handler cannot make one.
  */
-void sys_interrupt_self(uint32_t bits);
+void sm_interrupt_self(uint32_t bits);
 
 /* The calling thread's pending bits: a relaxed load, cheap to poll. */
-uint32_t sys_pending(void);
+uint32_t sm_pending(void);
 
 /*
  * The calling thread's word of pending bits, for a hot loop that
- * polls it inline rather than calling sys_pending(). Valid until
+ * polls it inline rather than calling sm_pending(). Valid until
  * the thread ends; only the owner reads it.
  */
-const std::atomic<uint32_t> *sys_pending_word(void);
+const std::atomic<uint32_t> *sm_pending_word(void);
 
 /*
  * Claim the calling thread's bits in mask: clear them, and return
  * those that were set. Only the owner claims its bits.
  */
-uint32_t sys_take(uint32_t mask);
+uint32_t sm_take(uint32_t mask);
 
 /* ---- waiting ---- */
 
-/* How sys_wait() ended. */
-typedef enum sys_wait_result_t {
-  SYS_WAIT_DONE,        /* done(arg) was true */
-  SYS_WAIT_INTERRUPTED, /* a bit in the mask was pending */
-  SYS_WAIT_TIMED_OUT    /* the deadline passed */
-} sys_wait_result_t;
+/* How sm_wait() ended. */
+typedef enum sm_wait_result_t {
+  SM_WAIT_DONE,        /* done(arg) was true */
+  SM_WAIT_INTERRUPTED, /* a bit in the mask was pending */
+  SM_WAIT_TIMED_OUT    /* the deadline passed */
+} sm_wait_result_t;
 
 /* A wait's condition, read with the wait's mutex held. */
-typedef bool (*sys_wait_pred_t)(void *arg);
+typedef bool (*sm_wait_pred_t)(void *arg);
 
 /* A deadline that never comes. */
-#define SYS_FOREVER INT64_MAX
+#define SM_FOREVER INT64_MAX
 
 /*
  * Wait on cv until done(arg) is true, a bit in mask is pending, or
- * the monotonic clock reaches deadline_us (SYS_FOREVER for none).
+ * the monotonic clock reaches deadline_us (SM_FOREVER for none).
  * The caller holds lock, which guards what done() reads; it is
  * held again on return. The wait takes no bit: one that ends it
  * is still pending afterwards. A bit raised before the call ends
  * it at once.
  */
-sys_wait_result_t sys_wait(std::unique_lock<std::mutex> *lock,
-                           std::condition_variable *cv, sys_wait_pred_t done,
+sm_wait_result_t sm_wait(std::unique_lock<std::mutex> *lock,
+                           std::condition_variable *cv, sm_wait_pred_t done,
                            void *arg, uint32_t mask, int64_t deadline_us);
 
 /*
  * The calling thread's wake fd, an eventfd made on the first call:
  * readable once an interrupt has been raised since it was last
  * drained, whatever the bits. For a thread that waits in poll() or
- * epoll_wait(). Returns -1 with errno set if it cannot be made.
+ * epoll_wait(). Returns -1 if it cannot be made, with the
+ * thread's error set as every sm call sets it (sm0.h: errnum()
+ * and errmsg(), sm_errnum() and sm_errmsg() in C).
  */
-int sys_wake_fd(void);
+int sm_wake_fd(void);
 
-/* Drain the calling thread's wake fd; check sys_pending() after. */
-void sys_clear_wake_fd(void);
+/* Drain the calling thread's wake fd; check sm_pending() after. */
+void sm_clear_wake_fd(void);
 
 /*
  * The calling thread's wait mask: the bits that end the waits a
  * library makes on its behalf, inside calls the thread makes --
  * sm's row lock waits, say, which then fail with an error of
- * their own. Default: all bits. sys_wait() does not read it: its
- * caller passes sys_wait_mask() as the mask when it should.
+ * their own. Default: all bits. sm_wait() does not read it: its
+ * caller passes sm_wait_mask() as the mask when it should.
  */
-void sys_set_wait_mask(uint32_t bits);
+void sm_set_wait_mask(uint32_t bits);
 
 /* The calling thread's wait mask. */
-uint32_t sys_wait_mask(void);
+uint32_t sm_wait_mask(void);
 
 /* ---- time ---- */
 
 /* Now, in microseconds on the monotonic clock. Any thread. */
-int64_t sys_now_us(void);
+int64_t sm_now_us(void);
 
 /* ---- timers ---- */
 
 /* A timer's id; never 0. */
-typedef uint64_t sys_timer_id_t;
+typedef uint64_t sm_timer_id_t;
 
 /*
  * Raise bits in t when the monotonic clock reaches when_us, and
@@ -154,7 +156,7 @@ typedef uint64_t sys_timer_id_t;
  * fired. One process-wide thread runs the timers, started by the
  * first call. Returns the timer's id. Any thread.
  */
-sys_timer_id_t sys_timer_at(const sys_thread_ref_t &t, int64_t when_us,
+sm_timer_id_t sm_timer_at(const sm_thread_ref_t &t, int64_t when_us,
                             uint32_t bits, int64_t period_us);
 
 /*
@@ -165,11 +167,11 @@ sys_timer_id_t sys_timer_at(const sys_thread_ref_t &t, int64_t when_us,
  * its thread was gone, or the id was not there. A
  * firing under way is waited out first, so once this returns the
  * timer raises nothing more, and any bits it raised have landed.
- * To wait on the same bit again: cancel, then sys_take() the bit,
+ * To wait on the same bit again: cancel, then sm_take() the bit,
  * then arm the next timer. Any thread -- but not one holding the
  * mutex of a wait the timer may wake: a firing under way waits
  * for that mutex, and the cancel waits for the firing.
  */
-bool sys_timer_cancel(sys_timer_id_t id);
+bool sm_timer_cancel(sm_timer_id_t id);
 
-#endif /* SYS_H */
+#endif /* SM_SYS_H */

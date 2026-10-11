@@ -16,7 +16,7 @@
 
 #include "session.h"
 #include "sm1.h"
-#include "sys.h"
+#include "sm_sys.h"
 
 #include <atomic>
 #include <chrono>
@@ -613,14 +613,14 @@ TEST_CASE("a wait for another transaction can be interrupted") {
           0);
 
   std::atomic<bool> returned{false};
-  sys_thread_ref_t waiter;
+  sm_thread_ref_t waiter;
   std::mutex waiter_mu;
   int rc = 0, err = 0, again = 0, rc_y = 0;
   int rc_z[2] = {0, 0}, err_z[2] = {0, 0};
   std::thread tb([&] {
     {
       std::lock_guard<std::mutex> guard(waiter_mu);
-      waiter = sys_thread_self();
+      waiter = sm_thread_self();
     }
     rc = set(b, "x", "b");
     err = sm1::errnum();
@@ -637,7 +637,7 @@ TEST_CASE("a wait for another transaction can be interrupted") {
   CHECK_FALSE(returned);
   {
     std::lock_guard<std::mutex> guard(waiter_mu);
-    sys_interrupt(waiter, 1);
+    sm_interrupt(waiter, 1);
   }
   tb.join();
   CHECK(rc == -1);
@@ -652,10 +652,10 @@ TEST_CASE("a wait for another transaction can be interrupted") {
   REQUIRE(sm1::stmt_begin(b) == 0);
   returned = false;
   std::thread tb2([&] {
-    sys_set_wait_mask(~2u);
+    sm_set_wait_mask(~2u);
     {
       std::lock_guard<std::mutex> guard(waiter_mu);
-      waiter = sys_thread_self();
+      waiter = sm_thread_self();
     }
     rc = set(b, "x", "b");
     err = sm1::errnum();
@@ -664,7 +664,7 @@ TEST_CASE("a wait for another transaction can be interrupted") {
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   {
     std::lock_guard<std::mutex> guard(waiter_mu);
-    sys_interrupt(waiter, 2);
+    sm_interrupt(waiter, 2);
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   CHECK_FALSE(returned);

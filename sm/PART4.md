@@ -116,7 +116,7 @@ What this changes above:
 - **Every wait can be interrupted.** A backend thread waiting
   inside the stack never reaches PostgreSQL's interrupt
   check, so the stack waits through sys
-  (`../sys/INTERRUPT.md`): an interrupt to the thread, a bit
+  (`sm0/INTERRUPT.md`): an interrupt to the thread, a bit
   in its wait mask, fails the wait with `SM_ERR_INTERRUPTED`
   and leaves the transaction to the caller. The bit stays
   pending until the fork takes it. Query cancel,
@@ -475,7 +475,7 @@ This is a reading, not a run. The spike is what tests it.
 | Row lock | `table_tuple_lock` in one of four modes, with a wait policy | `sm_tbl_lock` in two modes, always waiting | partly; gaps 3, 4 |
 | Statement boundary | `CommandCounterIncrement`, a snapshot a statement | `sm_stmt_begin` | fits |
 | Transaction | start, commit, abort; subtransactions; two-phase | `sm_begin`, `sm_commit`, `sm_abort`; `sm_savepoint`, `sm_rollback`, `sm_forget`; `sm_prepare` and the rest | fits |
-| Cancel | `CHECK_FOR_INTERRUPTS` | `sys_interrupt` to the waiting thread; sm's waits end with `SM_ERR_INTERRUPTED` | fits |
+| Cancel | `CHECK_FOR_INTERRUPTS` | `sm_interrupt` to the waiting thread; sm's waits end with `SM_ERR_INTERRUPTED` | fits |
 | Create and drop | `heap_create_with_catalog`, `index_create`, and their drops | `sm_cat_create_table`, `sm_cat_create_index`, `sm_cat_drop_table`, `sm_cat_drop_index`, `sm_tbl_truncate` | fits for these; gaps 7, 8 |
 | Sequence | `nextval`, `setval`, `currval` | `sm_mkseq`, `sm_nextseq`, `sm_rmseq` | `nextval` only; gap 9 |
 

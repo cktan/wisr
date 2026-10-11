@@ -26,7 +26,7 @@
 #include "error.h"
 #include "session.h"
 #include "sm0_codec.h"
-#include "sys.h"
+#include "sm_sys.h"
 
 #include <functional>
 #include <string_view>
@@ -252,7 +252,7 @@ bool conflicting(db_t *db, sm1::session_t *s, const std::string &k,
 }
 
 /*
- * The condition of one sleep in sys_wait(): false before it
+ * The condition of one sleep in sm_wait(): false before it
  * sleeps, true once it wakes. The wait sleeps once, and the caller
  * looks at the lock table again.
  */
@@ -265,7 +265,7 @@ bool woke(void *arg) {
 
 /*
  * Sleep on lock_cv, with lock_mu held in guard, until woken, until
- * a bit in the thread's wait mask is raised (sys.h), or until
+ * a bit in the thread's wait mask is raised (sm_sys.h), or until
  * *deadline_us; at the deadline, look for a cycle through s and
  * re-arm it. Returns false if interrupted: the bit stays pending,
  * for the caller's caller to take.
@@ -275,17 +275,17 @@ bool wait_once(db_t *db, sm1::session_t *s, std::unique_lock<std::mutex> &guard,
   bool slept = false;
 
   // An interrupt raised before this wait ends it at once.
-  switch (sys_wait(&guard, &db->lock_cv, woke, &slept, sys_wait_mask(),
-                   *deadline_us)) {
-  case SYS_WAIT_DONE:
+  switch (sm_wait(&guard, &db->lock_cv, woke, &slept, sm_wait_mask(),
+                  *deadline_us)) {
+  case SM_WAIT_DONE:
     return true;
-  case SYS_WAIT_INTERRUPTED:
+  case SM_WAIT_INTERRUPTED:
     return false;
-  case SYS_WAIT_TIMED_OUT:
+  case SM_WAIT_TIMED_OUT:
     // Timed out: look for a cycle through us.
     check_deadlock(db, s);
     // Re-arm the timer for the next check.
-    *deadline_us = sys_now_us() + int64_t(db->deadlock_ms) * 1000;
+    *deadline_us = sm_now_us() + int64_t(db->deadlock_ms) * 1000;
     return true;
   }
   return true;
@@ -370,7 +370,7 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // Time the first deadlock check.
-  int64_t deadline = sys_now_us() + int64_t(db->deadlock_ms) * 1000;
+  int64_t deadline = sm_now_us() + int64_t(db->deadlock_ms) * 1000;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -404,7 +404,7 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // A rollback from now on may delete what we wait for.
   uint64_t epoch = db->rollback_epoch;
-  int64_t deadline = sys_now_us() + int64_t(db->deadlock_ms) * 1000;
+  int64_t deadline = sm_now_us() + int64_t(db->deadlock_ms) * 1000;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {

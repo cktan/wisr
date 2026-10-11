@@ -9,7 +9,7 @@
  */
 
 #include "../catalog/internal.h"
-#include "sys.h"
+#include "sm_sys.h"
 
 #include <condition_variable>
 #include <deque>
@@ -22,7 +22,7 @@ namespace {
 
 using sm3::catalog_t;
 
-/* The interrupt bit a detach raises in a worker (sys.h). */
+/* The interrupt bit a detach raises in a worker (sm_sys.h). */
 constexpr uint32_t stop_bit = 1;
 using sm3::index_state_t;
 using sm3::session_t;
@@ -59,7 +59,7 @@ struct builder_t {
   std::set<index_key_t> active;   /* queued or being built */
   std::set<index_key_t> building; /* being built */
   /* Each running build's worker, for a detach to interrupt. */
-  std::map<index_key_t, sys_thread_ref_t> workers;
+  std::map<index_key_t, sm_thread_ref_t> workers;
   size_t running = 0; /* workers alive */
   std::vector<std::thread> threads;
   std::vector<std::thread::id> finished; /* workers to join */
@@ -206,7 +206,7 @@ void work() {
       b.building.emplace(task.cat, task.index);
       // Known to a detach while the build runs, so that a wait on
       // another transaction does not hold the detach up.
-      b.workers[{task.cat, task.index}] = sys_thread_self();
+      b.workers[{task.cat, task.index}] = sm_thread_self();
       changed(b);
     }
     // Without a session the build is given up, and whoever waits
@@ -233,7 +233,7 @@ void work() {
     // Unknown to a detach from here, so a stop it raised is for
     // this build alone: take it, lest it end the next one's waits.
     b.workers.erase({task.cat, task.index});
-    sys_take(stop_bit);
+    sm_take(stop_bit);
     b.active.erase({task.cat, task.index});
     b.building.erase({task.cat, task.index});
     b.catalogs.at(task.cat).busy--;
@@ -320,7 +320,7 @@ void builder_detach(catalog_t *cat) {
     // never after the worker took it: no worker waits on mu.
     for (const auto &[key, t] : b.workers) {
       if (key.first == cat) {
-        sys_interrupt(t, stop_bit);
+        sm_interrupt(t, stop_bit);
       }
     }
     b.cv.wait(lock, [&] { return b.catalogs.at(cat).busy == 0; });
@@ -415,8 +415,8 @@ int builder_wait(session_t *session, uint64_t table, uint64_t oid) {
         auto *p = static_cast<std::pair<builder_t *, uint64_t> *>(arg);
         return p->first->gen != p->second;
       };
-      if (sys_wait(&lock, &b.cv, moved, &at, sys_wait_mask(), SYS_FOREVER) ==
-          SYS_WAIT_INTERRUPTED) {
+      if (sm_wait(&lock, &b.cv, moved, &at, sm_wait_mask(), SM_FOREVER) ==
+          SM_WAIT_INTERRUPTED) {
         return sm1::seterr(sm1::SM_ERR_INTERRUPTED,
                            "index wait: the wait was interrupted");
       }

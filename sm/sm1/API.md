@@ -93,7 +93,7 @@ typedef enum sm_errnum_t {
     /* sm1's: NOT an abort; nothing was written */
     SM_ERR_READONLY      = 27,  /* the transaction was declared read-only */
 
-    /* sm1's: NOT an abort; a wait an interrupt ended (sys.h) */
+    /* sm1's: NOT an abort; a wait an interrupt ended (sm_sys.h) */
     SM_ERR_INTERRUPTED   = 28,  /* the wait was interrupted */
 
     /* The highest code, for code that walks them all. */
@@ -790,11 +790,11 @@ Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 ### Interrupting a wait
 
 There is no call for it: a wait is ended through sys
-(`../sys/INTERRUPT.md`). A wait for another transaction — on
+(`../sm0/INTERRUPT.md`). A wait for another transaction — on
 a lock another holds, or on a row another is writing — is a
-`sys_wait()` on the waiting thread's wait mask
-(`sys_wait_mask()`), and an interrupt to that thread with a
-bit in the mask (`sys_interrupt()`) makes the call fail with
+`sm_wait()` on the waiting thread's wait mask
+(`sm_wait_mask()`), and an interrupt to that thread with a
+bit in the mask (`sm_interrupt()`) makes the call fail with
 `SM_ERR_INTERRUPTED`. That is not an abort and not retryable:
 the transaction stays active and holds exactly what it held,
 and the caller decides whether to abort it. A host's query
@@ -802,7 +802,7 @@ cancel, statement timeout and lock timeout are all made this
 way, from any thread or a sys timer.
 
 **sm1 takes no bit.** It stays pending until the thread takes
-it (`sys_take()`), and until then every wait the thread makes
+it (`sm_take()`), and until then every wait the thread makes
 fails the same way, one begun later included. So an interrupt
 raised just before a wait begins is not lost, a caller that
 goes on after `SM_ERR_INTERRUPTED` cannot wait again by

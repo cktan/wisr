@@ -61,9 +61,10 @@ The import itself is not built yet (`PLAN.md` §7).
 - **`make -j4 tsan`** builds `build/digres-tsan` under the
   thread sanitizer and runs the threaded tests and
   `server.sh` on it; a report fails it. Run it for any change
-  to threads, signals, latches, locks or shared state. RocksDB,
-  sm and sys are instrumented with it; the first run builds
-  RocksDB for it (`test/rocksdb_tsan.sh`), which takes a while.
+  to threads, signals, latches, locks or shared state. RocksDB
+  and sm, sm_sys.h's services with it, are instrumented with it;
+  the first run builds RocksDB for it
+  (`test/rocksdb_tsan.sh`), which takes a while.
 - **Run the full suite before every commit** that touches
   source. A commit of documents alone needs none.
 - **Save test output to a file** and read the file, rather
@@ -147,7 +148,7 @@ digres is one process; each session is a thread of it.
 - **Threads are `std::thread`, locks `std::mutex`**, not
   pthreads. `pthread_sigmask()` stays: it sets the calling
   thread's signal mask, which the standard library cannot.
-- **Signals between threads are interrupt bits** (sys.h), named
+- **Signals between threads are interrupt bits** (sm_sys.h), named
   in `storage/procsignal.h`: `INTERRUPT_CANCEL`, `_DIE`,
   `_QUIT`, `_RELOAD`, `_PROCSIG`, `_ALARM`. `InterruptProc()`
   raises them in the thread that owns a PGPROC; a thread sets a
@@ -166,7 +167,7 @@ digres is one process; each session is a thread of it.
   postmaster with its signals unblocked.
 - **A latch wakes one thread** through sys: it keeps its
   owner's handle, and `SetLatch()` writes the owner's wake fd
-  (`sys_interrupt()`, or `sys_interrupt_self()` in a signal
+  (`sm_interrupt()`, or `sm_interrupt_self()` in a signal
   handler).
 - **A thread's timeouts are one sys timer** (`timeout.c`), which
   raises `INTERRUPT_ALARM` in that thread alone; its handler

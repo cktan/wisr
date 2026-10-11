@@ -112,7 +112,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32
 extern thread_local /*LOCAL*/ PGDLLIMPORT volatile uint32 CritSectionCount;
 
 /*
- * The interrupts pending for this thread (sys_pending_word(); see
+ * The interrupts pending for this thread (sm_pending_word(); see
  * storage/procsignal.h), or NoInterrupts in a thread that takes none.
  */
 extern thread_local /*LOCAL*/ PGDLLIMPORT const std::atomic<uint32_t>

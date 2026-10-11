@@ -31,21 +31,17 @@ LDLIBS = $(LINK_ROCKSDB) -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
 # The parser, a library of its own (../sq).
 SQ := ../sq
 LIBSQ := $(SQ)/build/libsq.a
-# The storage stack, a library of its own too (../sm).
+# The storage stack, a library of its own too (../sm). Its level 0,
+# sm0, holds the system services digres builds on (sm_sys.h), so this
+# one library brings them.
 SM := ../sm
 LIBSM := $(SM)/build/libsm.a
-# sm instrumented too, for the same reason as sys below.
+# sm instrumented too: sm_sys.h's atomics hand off what digres's threads
+# share, and a sanitizer that cannot see them reports races that are
+# not.
 LIBSM_TSAN := $(SM)/build/tsan/libsm.a
 # The sm library a link takes: the tsan build overrides it.
 LINK_SM = $(LIBSM)
-# The system services sm and digres build on (../sys).
-SYS := ../sys
-LIBSYS := $(SYS)/build/libsys.a
-# sys instrumented too: its atomics hand off what digres's threads share,
-# and a sanitizer that cannot see them reports races that are not.
-LIBSYS_TSAN := $(SYS)/build/tsan/libsys.a
-# The sys library a link takes: the tsan build overrides it.
-LINK_SYS = $(LIBSYS)
 # Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
@@ -78,7 +74,7 @@ src: gen
 # below and this one cannot tell which of them changed.
 all: build/digres
 .PHONY: build/digres
-build/digres: src $(LIBSQ) $(LIBSM) $(LIBSYS)
+build/digres: src $(LIBSQ) $(LIBSM)
 	@mkdir -p build
 	# A session is to be a thread: no writable global may be left
 	# that is not thread_local (PLAN.md section 3).
@@ -96,12 +92,12 @@ define link_shared
 	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
 	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
 	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
-	    $(1).shared.o $(LIBSQ) $(LINK_SM) $(LINK_SYS) $(LDLIBS)
+	    $(1).shared.o $(LIBSQ) $(LINK_SM) $(LDLIBS)
 	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) > $(1).shared.c
 	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
 	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
 	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
-	    $(1).shared.o $(LIBSQ) $(LINK_SM) $(LINK_SYS) $(LDLIBS)
+	    $(1).shared.o $(LIBSQ) $(LINK_SM) $(LDLIBS)
 	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) | \
 	    cmp -s - $(1).shared.c
 endef
@@ -110,13 +106,12 @@ endef
 # the thread sanitizer, and the statements in test/ run with it, alone
 # and in threads, and test/server.sh run on it. The sanitizer cannot map its memory with the address
 # space randomised, hence setarch -R. Every library that runs threads
-# is instrumented: sm, sys, and RocksDB, built for it by
+# is instrumented: sm, sm_sys.h's services among it, and RocksDB, built by
 # test/rocksdb_tsan.sh. sq, the parser, is not.
 .PHONY: tsan
-tsan: LINK_SYS = $(LIBSYS_TSAN)
 tsan: LINK_SM = $(LIBSM_TSAN)
 tsan: LINK_ROCKSDB = $(ROCKSDB_TSAN) -lsnappy -llz4 -lzstd -lz -lbz2
-tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(LIBSYS_TSAN) $(ROCKSDB_TSAN)
+tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(ROCKSDB_TSAN)
 	$(MAKE) -C src OBJ=tsan.o
 	@mkdir -p build
 	$(call link_shared,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
@@ -153,14 +148,6 @@ $(LIBSM_TSAN):
 # RocksDB for the thread sanitizer, built once.
 $(ROCKSDB_TSAN):
 	test/rocksdb_tsan.sh
-
-# And sys, plain and for the thread sanitizer.
-.PHONY: $(LIBSYS) $(LIBSYS_TSAN)
-$(LIBSYS):
-	$(MAKE) -C $(SYS) build/libsys.a
-$(LIBSYS_TSAN):
-	$(MAKE) -C $(SYS) BUILD=build/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
-	    build/tsan/libsys.a
 
 # The catalogs' #defines: pg_*_d.h and the syscache tables.
 $(I)/catalog/.stamp: $(CATALOG_HEADERS) $(wildcard $(I)/catalog/*.dat) \

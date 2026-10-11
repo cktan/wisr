@@ -11,7 +11,7 @@
  *
  * The postmaster reaches it as it reaches a child process.  A signal is an
  * interrupt bit (storage/procsignal.h), raised in the thread through the
- * handle in its launch record (sys.h), from its first instruction on.
+ * handle in its launch record (sm_sys.h), from its first instruction on.
  * The postmaster learns of its end as of a child's: the thread queues
  * itself, with its exit code, as it ends, and sets the postmaster's latch;
  * process_pm_child_exit() takes it from the queue as it takes a child from
@@ -59,7 +59,7 @@ struct backend_thread_t {
   size_t startup_data_len;
   exit_queue_t *queue;
   pg_atomic_uint32 tid;                 /* the thread's id, once it runs */
-  std::atomic<sys_thread_ref_t *> self; /* the thread, to wake */
+  std::atomic<sm_thread_ref_t *> self; /* the thread, to wake */
   int exit_code;                        /* set as it ends */
   backend_thread_t *next_exited;
 };
@@ -72,7 +72,7 @@ static void backend_thread_main(void *arg) {
   exit_queue_t *queue = thread->queue;
 
   /* Before the tid: the postmaster wakes the thread once it has that. */
-  thread->self.store(new sys_thread_ref_t(sys_thread_self()),
+  thread->self.store(new sm_thread_ref_t(sm_thread_self()),
                      std::memory_order_release);
   pg_atomic_write_u32(&thread->tid, MyProcPid);
 
@@ -164,7 +164,7 @@ void backend_thread_signal(backend_thread_t *thread, int sig) {
   uint32 bits = InterruptsOfSignal(sig);
 
   if (bits != 0)
-    sys_interrupt(*thread->self.load(std::memory_order_acquire), bits);
+    sm_interrupt(*thread->self.load(std::memory_order_acquire), bits);
 }
 
 /* Whether a backend thread has ended that backend_thread_exited() has not

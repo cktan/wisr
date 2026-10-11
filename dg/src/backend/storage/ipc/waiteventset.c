@@ -28,9 +28,9 @@
  * immediately even if the signal arrives before poll() begins.
  *
  * The epoll() implementation overcomes the race with a different technique:
- * it waits on the thread's wake fd from sys (sys.h), an eventfd that a
- * latch's setter writes through sys_interrupt(), or a signal handler of the
- * thread's own through sys_interrupt_self().  No signal is sent.
+ * it waits on the thread's wake fd from sys (sm_sys.h), an eventfd that a
+ * latch's setter writes through sm_interrupt(), or a signal handler of the
+ * thread's own through sm_interrupt_self().  No signal is sent.
  *
  * The kqueue() implementation waits for SIGURG with EVFILT_SIGNAL.
  *
@@ -45,6 +45,10 @@
  *
  *-------------------------------------------------------------------------
  */
+/* sm's header first: it includes the C++ library, which must be read
+ * before PostgreSQL's macros. */
+#include "sm.h"
+
 #include "postgres.h"
 
 #include <fcntl.h>
@@ -168,7 +172,7 @@ static thread_local /*LOCAL*/ volatile sig_atomic_t waiting = false;
 #endif
 
 #ifdef WAIT_USE_SYS_FD
-/* The thread's wake fd (sys.h): sys's, which closes it as the thread ends. */
+/* The thread's wake fd (sm_sys.h), which sm0 closes as the thread ends. */
 static thread_local /*LOCAL*/ int wake_fd = -1;
 #endif
 
@@ -319,11 +323,11 @@ void InitializeWaitEventSupport(void) {
 #ifdef WAIT_USE_SYS_FD
   /*
    * The thread's wake fd, made now: before a signal handler of the thread's
-   * may want to write it (sys_interrupt_self() cannot make it).
+   * may want to write it (sm_interrupt_self() cannot make it).
    */
-  wake_fd = sys_wake_fd();
+  wake_fd = sm_wake_fd();
   if (wake_fd < 0)
-    elog(FATAL, "could not make the wake fd: %m");
+    elog(FATAL, "could not make the wake fd: %s", sm_errmsg());
   ReserveExternalFD();
 #endif
 
@@ -1731,8 +1735,8 @@ retry:
 
 #if defined(WAIT_USE_SYS_FD)
 
-/* Read all that the thread's wake fd holds (sys.h). */
-static void drain(void) { sys_clear_wake_fd(); }
+/* Read all that the thread's wake fd holds (sm_sys.h). */
+static void drain(void) { sm_clear_wake_fd(); }
 
 #endif
 
@@ -1804,7 +1808,7 @@ void WakeupMyProc(void) {
 #else
   /* No bit: a write to the wake fd, safe in a signal handler. */
   if (waiting)
-    sys_interrupt_self(0);
+    sm_interrupt_self(0);
 #endif
 }
 
@@ -1812,7 +1816,7 @@ void WakeupMyProc(void) {
  * Similar to WakeupMyProc, but wake up another thread, through its wake fd.
  * No bit is raised: the latch is the news.  Not in a signal handler.
  */
-void WakeupOtherProc(const sys_thread_ref_t &thread) {
-  sys_interrupt(thread, 0);
+void WakeupOtherProc(const sm_thread_ref_t &thread) {
+  sm_interrupt(thread, 0);
 }
 #endif

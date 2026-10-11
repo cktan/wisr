@@ -23,16 +23,13 @@ endif
 SM0 := ../sm0
 SM1 := ../sm1
 SM2 := ../sm2
-# sys, the system services sm builds on (../../sys).
-SYS := ../../sys
-SYS_LIB := $(SYS)/build/libsys.a
 
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc/catalog \
             -I$(SM2)/include -I$(SM1)/include -I$(SM0)/include -I../include \
-            -I$(SYS)/include -MMD -MP
-LDLIBS   += $(SYS_LIB) -lrocksdb -licui18n -licuuc -licudata -lpthread
+            -MMD -MP
+LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD := build
 
@@ -78,12 +75,7 @@ $(SM1_LIB):
 $(SM2_LIB):
 	$(MAKE) -C $(SM2) build/libsm2.a
 
-# sys's Makefile decides whether its library is up to date.
-$(SYS_LIB):
-	$(MAKE) -C $(SYS) build/libsys.a
-
-$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM2_LIB) $(SM1_LIB) $(SM0_LIB) \
-            $(SYS_LIB)
+$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM2_LIB) $(SM1_LIB) $(SM0_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM2_LIB) $(SM1_LIB) \
 	    $(SM0_LIB) $(LDLIBS)
 

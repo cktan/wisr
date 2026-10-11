@@ -90,7 +90,7 @@ typedef enum sm_errnum_t {
 
     /*
      * sm1's, and not an abort: a wait for another transaction that
-     * an interrupt to the calling thread ended (sys.h, through its
+     * an interrupt to the calling thread ended (sm_sys.h, through its
      * wait mask; SM1_DESIGN.md §5.1). The transaction stays active
      * and holds what it held.
      */

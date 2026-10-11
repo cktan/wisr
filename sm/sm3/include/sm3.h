@@ -880,7 +880,7 @@ int builder_attach(catalog_t* cat, std::function<sm1::session_t*()> open,
  * and a worker building one of its indexes ends after the batch
  * it is in and closes its session. A build cut short leaves its
  * index pending, for the next builder_attach to queue. A worker
- * waiting on another transaction is interrupted (sys.h), so the
+ * waiting on another transaction is interrupted (sm_sys.h), so the
  * detach does not wait for that transaction. It must be
  * called before cat_close, and before the database is closed
  * under the workers' sessions; a catalog not attached is a no-op.
@@ -922,7 +922,7 @@ bool builder_building(const catalog_t* cat, uint64_t oid);
  * SM_ERR_NOTFOUND if there is no such table or index.
  *
  * An interrupt to the calling thread, a bit in its wait mask
- * (sys.h), ends the wait; the bit stays pending, for the caller
+ * (sm_sys.h), ends the wait; the bit stays pending, for the caller
  * to take.
  */
 int builder_wait(session_t* session, uint64_t table, uint64_t oid);

@@ -1,8 +1,10 @@
 /*
  * interrupt.cc -- interrupting a thread, interruptible waits, and
- * timers that interrupt (INTERRUPT.md, include/sys.h).
+ * timers that interrupt (INTERRUPT.md, include/sm_sys.h).
  */
-#include "sys.h"
+#include "sm_sys.h"
+
+#include "sm0_error.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -19,7 +21,7 @@
 #include <utility>
 
 /* A thread's control block. */
-struct sys_thread_t {
+struct sm_thread_t {
   std::atomic<uint32_t> pending{0}; /* raised, not yet taken */
 
   std::mutex mu;                                /* guards the four below */
@@ -40,7 +42,7 @@ namespace {
  * hold one.
  */
 struct self_holder_t {
-  sys_thread_ref_t t;
+  sm_thread_ref_t t;
 
   /* Close the wake fd; the handle goes with the holder. */
   ~self_holder_t() {
@@ -49,7 +51,7 @@ struct self_holder_t {
     // The fd goes under the block's lock: interrupt() writes it.
     std::lock_guard<std::mutex> guard(t->mu);
     // Unpublished before it is closed, for a signal handler that
-    // runs in between and writes it (sys_interrupt_self).
+    // runs in between and writes it (sm_interrupt_self).
     int fd = t->wake_fd.exchange(-1);
     if (fd >= 0) {
       close(fd);
@@ -60,14 +62,14 @@ struct self_holder_t {
 thread_local self_holder_t self;
 
 /* The calling thread's handle, made on first use. */
-const sys_thread_ref_t &self_ref() {
+const sm_thread_ref_t &self_ref() {
   if (!self.t)
-    self.t = std::make_shared<sys_thread_t>();
+    self.t = std::make_shared<sm_thread_t>();
   return self.t;
 }
 
 /* The calling thread's block. */
-sys_thread_t *self_block() { return self_ref().get(); }
+sm_thread_t *self_block() { return self_ref().get(); }
 
 /* A time on the monotonic clock, from microseconds. */
 std::chrono::steady_clock::time_point time_point_of(int64_t us) {
@@ -77,7 +79,7 @@ std::chrono::steady_clock::time_point time_point_of(int64_t us) {
 } // namespace
 
 /* A handle on the calling thread's control block. */
-sys_thread_ref_t sys_thread_self(void) { return self_ref(); }
+sm_thread_ref_t sm_thread_self(void) { return self_ref(); }
 
 /*
  * Raise bits in t and wake it. The waiter's mutex is only tried,
@@ -86,7 +88,7 @@ sys_thread_ref_t sys_thread_self(void) { return self_ref(); }
  * means the waiter is not asleep, or another thread holds it for
  * a moment; let go and try again.
  */
-void sys_interrupt(const sys_thread_ref_t &t, uint32_t bits) {
+void sm_interrupt(const sm_thread_ref_t &t, uint32_t bits) {
   t->pending.fetch_or(bits, std::memory_order_release);
 
   for (;;) {
@@ -118,8 +120,8 @@ void sys_interrupt(const sys_thread_ref_t &t, uint32_t bits) {
  * Raise bits in the calling thread, from a signal handler perhaps:
  * an atomic or, and a write(), and no lock, no allocation.
  */
-void sys_interrupt_self(uint32_t bits) {
-  sys_thread_t *t = self.t.get();
+void sm_interrupt_self(uint32_t bits) {
+  sm_thread_t *t = self.t.get();
 
   if (t == nullptr)
     return;
@@ -136,27 +138,27 @@ void sys_interrupt_self(uint32_t bits) {
 }
 
 /* The calling thread's word of pending bits. */
-const std::atomic<uint32_t> *sys_pending_word(void) {
+const std::atomic<uint32_t> *sm_pending_word(void) {
   return &self_block()->pending;
 }
 
 /* The calling thread's pending bits. */
-uint32_t sys_pending(void) {
+uint32_t sm_pending(void) {
   return self_block()->pending.load(std::memory_order_relaxed);
 }
 
 /* Claim the calling thread's bits in mask. */
-uint32_t sys_take(uint32_t mask) {
+uint32_t sm_take(uint32_t mask) {
   return self_block()->pending.fetch_and(~mask, std::memory_order_acquire) &
          mask;
 }
 
 /* Wait on cv until done, an interrupt in mask, or the deadline. */
-sys_wait_result_t sys_wait(std::unique_lock<std::mutex> *lock,
-                           std::condition_variable *cv, sys_wait_pred_t done,
-                           void *arg, uint32_t mask, int64_t deadline_us) {
-  sys_thread_t *t = self_block();
-  sys_wait_result_t result;
+sm_wait_result_t sm_wait(std::unique_lock<std::mutex> *lock,
+                         std::condition_variable *cv, sm_wait_pred_t done,
+                         void *arg, uint32_t mask, int64_t deadline_us) {
+  sm_thread_t *t = self_block();
+  sm_wait_result_t result;
 
   {
     // Register, so an interrupt knows what to wake.
@@ -168,17 +170,17 @@ sys_wait_result_t sys_wait(std::unique_lock<std::mutex> *lock,
 
   for (;;) {
     if (done(arg)) {
-      result = SYS_WAIT_DONE;
+      result = SM_WAIT_DONE;
       break;
     }
     if (t->pending.load(std::memory_order_acquire) & mask) {
-      result = SYS_WAIT_INTERRUPTED;
+      result = SM_WAIT_INTERRUPTED;
       break;
     }
-    if (deadline_us == SYS_FOREVER) {
+    if (deadline_us == SM_FOREVER) {
       cv->wait(*lock);
-    } else if (sys_now_us() >= deadline_us) {
-      result = SYS_WAIT_TIMED_OUT;
+    } else if (sm_now_us() >= deadline_us) {
+      result = SM_WAIT_TIMED_OUT;
       break;
     } else {
       cv->wait_until(*lock, time_point_of(deadline_us));
@@ -196,19 +198,24 @@ sys_wait_result_t sys_wait(std::unique_lock<std::mutex> *lock,
 }
 
 /* The calling thread's eventfd, made on the first call. */
-int sys_wake_fd(void) {
-  sys_thread_t *t = self_block();
+int sm_wake_fd(void) {
+  sm_thread_t *t = self_block();
 
   // Made under the block's lock: interrupt() writes it.
   std::lock_guard<std::mutex> guard(t->mu);
-  if (t->wake_fd.load() < 0)
-    t->wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+  if (t->wake_fd.load() < 0) {
+    int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    // Report a failure as every sm call does: the thread's error.
+    if (fd < 0)
+      return sm0::set_errno_error(errno, "eventfd");
+    t->wake_fd = fd;
+  }
   return t->wake_fd.load();
 }
 
 /* Drain the calling thread's eventfd. */
-void sys_clear_wake_fd(void) {
-  sys_thread_t *t = self_block();
+void sm_clear_wake_fd(void) {
+  sm_thread_t *t = self_block();
   uint64_t count;
   int fd;
 
@@ -225,13 +232,13 @@ void sys_clear_wake_fd(void) {
 }
 
 /* Set the calling thread's wait mask. */
-void sys_set_wait_mask(uint32_t bits) { self_block()->wait_mask = bits; }
+void sm_set_wait_mask(uint32_t bits) { self_block()->wait_mask = bits; }
 
 /* The calling thread's wait mask. */
-uint32_t sys_wait_mask(void) { return self_block()->wait_mask; }
+uint32_t sm_wait_mask(void) { return self_block()->wait_mask; }
 
 /* Now, in microseconds on the monotonic clock. */
-int64_t sys_now_us(void) {
+int64_t sm_now_us(void) {
   return std::chrono::duration_cast<std::chrono::microseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
@@ -243,7 +250,7 @@ namespace {
 
 /* One timer. */
 struct timer_entry_t {
-  std::weak_ptr<sys_thread_t> thread; /* dropped once nobody holds it */
+  std::weak_ptr<sm_thread_t> thread; /* dropped once nobody holds it */
   uint32_t bits;
   int64_t period_us; /* 0: one-shot */
 };
@@ -256,10 +263,10 @@ struct timer_service_t {
   std::mutex mu;                    /* guards everything below */
   std::condition_variable cv;       /* the timer thread sleeps on it */
   std::condition_variable fired_cv; /* cancel waits out a firing on it */
-  std::map<std::pair<int64_t, sys_timer_id_t>, timer_entry_t> by_when;
-  std::unordered_map<sys_timer_id_t, int64_t> when_of;
-  sys_timer_id_t next_id = 1;
-  sys_timer_id_t firing = 0; /* the timer being raised, 0 if none */
+  std::map<std::pair<int64_t, sm_timer_id_t>, timer_entry_t> by_when;
+  std::unordered_map<sm_timer_id_t, int64_t> when_of;
+  sm_timer_id_t next_id = 1;
+  sm_timer_id_t firing = 0; /* the timer being raised, 0 if none */
 };
 
 timer_service_t *service = nullptr;
@@ -286,22 +293,22 @@ void timer_main(timer_service_t *s) {
     }
     auto first = s->by_when.begin();
     int64_t when = first->first.first;
-    if (sys_now_us() < when) {
+    if (sm_now_us() < when) {
       s->cv.wait_until(lock, time_point_of(when));
       continue;
     }
 
-    sys_timer_id_t id = first->first.second;
+    sm_timer_id_t id = first->first.second;
     timer_entry_t timer = first->second;
     s->by_when.erase(first);
     s->when_of.erase(id);
     s->firing = id;
 
-    sys_thread_ref_t target = timer.thread.lock();
+    sm_thread_ref_t target = timer.thread.lock();
     if (target) {
       // Raise outside the lock: it may yield on a busy waiter.
       lock.unlock();
-      sys_interrupt(target, timer.bits);
+      sm_interrupt(target, timer.bits);
       target.reset();
       lock.lock();
 
@@ -329,10 +336,10 @@ timer_service_t *timers() {
 } // namespace
 
 /* Raise bits in t at when_us, and every period_us after if > 0. */
-sys_timer_id_t sys_timer_at(const sys_thread_ref_t &t, int64_t when_us,
-                            uint32_t bits, int64_t period_us) {
+sm_timer_id_t sm_timer_at(const sm_thread_ref_t &t, int64_t when_us,
+                          uint32_t bits, int64_t period_us) {
   timer_service_t *s = timers();
-  sys_timer_id_t id;
+  sm_timer_id_t id;
 
   {
     // Arm under the service's lock; the timer thread reads it.
@@ -351,7 +358,7 @@ sys_timer_id_t sys_timer_at(const sys_thread_ref_t &t, int64_t when_us,
  * once this returns the timer raises nothing more, and a "fired"
  * answer means its bits have landed.
  */
-bool sys_timer_cancel(sys_timer_id_t id) {
+bool sm_timer_cancel(sm_timer_id_t id) {
   timer_service_t *s = timers();
 
   // Decide cancel or fire under the service's lock.

@@ -1,8 +1,8 @@
 # wisr -- a stack of storage levels over RocksDB.
 #
-# Level 0 is sm0/, the error state, the log hook and the helpers
-# every level uses; RocksDB is the store under the stack. Level 1
-# is sm1/, the MVCC storage manager.
+# Level 0 is sm0/, the error state, the log hook, the helpers
+# and the system services every level uses; RocksDB is the store
+# under the stack. Level 1 is sm1/, the MVCC storage manager.
 # Level 2 is sm2/, types and records, and level 3 is sm3/, schema
 # and index maintenance, being built.
 #
@@ -28,8 +28,7 @@ CXX      ?= g++
 OPTFLAGS ?= -O1 -g
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Ism0/include -Ism1/include \
-            -Ism2/include -Ism3/include -I../sys/include \
-            -MMD -MP
+            -Ism2/include -Ism3/include -MMD -MP
 LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD     := build
@@ -37,7 +36,7 @@ LIB       := $(BUILD)/libsm.a
 LEVEL_LIBS := sm0/$(BUILD)/libsm0.a sm1/$(BUILD)/libsm1.a \
               sm2/$(BUILD)/libsm2.a sm3/$(BUILD)/libsm3.a
 
-.PHONY: all test clean format rel sys $(LEVELS)
+.PHONY: all test clean format rel $(LEVELS)
 
 all: $(LIB)
 
@@ -46,14 +45,6 @@ rel: $(LIB)
 
 $(LEVELS):
 	$(MAKE) -C $@
-
-# sys, the system services sm builds on, is a library of its own
-# (../sys); its Makefile decides whether it is up to date. Every
-# level links it, so it builds first.
-sys:
-	$(MAKE) -C ../sys build/libsys.a
-
-sm1: sys
 
 # Each level links the ones below it, so they build first.
 sm1: sm0
@@ -74,7 +65,7 @@ $(LEVEL_LIBS): $(LEVELS) ;
 else
 sm0/$(BUILD)/libsm0.a:
 	$(MAKE) -C sm0 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm0.a
-sm1/$(BUILD)/libsm1.a: sys sm0/$(BUILD)/libsm0.a
+sm1/$(BUILD)/libsm1.a: sm0/$(BUILD)/libsm0.a
 	$(MAKE) -C sm1 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm1.a
 sm2/$(BUILD)/libsm2.a: sm1/$(BUILD)/libsm1.a
 	$(MAKE) -C sm2 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm2.a

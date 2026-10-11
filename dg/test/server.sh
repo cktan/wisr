@@ -870,7 +870,7 @@ sleep 0.2
 # Verify that the server stops when asked, with no process lost on the way,
 # and ends a session left open: the postmaster's SIGTERM reaches it as a flag
 # in its PGPROC (SignalProc()). Each side wakes the other's latch from
-# another thread (sys_interrupt()), so a lost wake-up is a stall.
+# another thread (sm_interrupt()), so a lost wake-up is a stall.
 # 1. Open a session, run a statement in it, and leave it idle.
 # 2. Interrupt the server, and confirm it stops within ten seconds.
 # 3. Confirm it exited with status 0, and ended the idle session.

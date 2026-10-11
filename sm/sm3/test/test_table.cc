@@ -8,7 +8,7 @@
 #include "db.h"
 #include "doctest.h"
 #include "sm3.h"
-#include "sys.h"
+#include "sm_sys.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1927,25 +1927,25 @@ TEST_CASE("a build that waits on a transaction holds no one else up") {
 
   build_waits();
   std::atomic<bool> returned{false};
-  sys_thread_ref_t waiter;
+  sm_thread_ref_t waiter;
   std::mutex waiter_mu;
   int rc = 0, err = 0;
   uint32_t taken = 0;
   std::thread tb([&] {
     {
       std::lock_guard<std::mutex> guard(waiter_mu);
-      waiter = sys_thread_self();
+      waiter = sm_thread_self();
     }
     rc = sm3::builder_wait(f.b, f.jobs, jobs_owner);
     err = sm1::errnum();
     returned = true;
-    taken = sys_take(1);
+    taken = sm_take(1);
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   CHECK_FALSE(returned);
   {
     std::lock_guard<std::mutex> guard(waiter_mu);
-    sys_interrupt(waiter, 1);
+    sm_interrupt(waiter, 1);
   }
   tb.join();
   CHECK(rc == -1);

@@ -4,7 +4,7 @@ CXX      ?= g++
 OPTFLAGS ?= -O1 -g
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -I../include -I/usr/local/include -Isrc -MMD -MP
-LDLIBS   += ../../sys/build/libsys.a -L/usr/local/lib -ljanet -lrocksdb -licui18n -licuuc -licudata -lpthread -ldl -lm
+LDLIBS   += -L/usr/local/lib -ljanet -lrocksdb -licui18n -licuuc -licudata -lpthread -ldl -lm
 
 BUILD    ?= ../build
 OBJDIR   := $(BUILD)/rel_obj

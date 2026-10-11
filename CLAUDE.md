@@ -1,15 +1,16 @@
 ## Before Starting Any Work
 
-The repository has four parts: `sm/`, the storage stack;
+The repository has three parts: `sm/`, the storage stack;
 `dg/`, digres, the fork of PostgreSQL that runs on it
-(`sm/PART4.md` §10); `sq/`, the SQL parser digres links,
-a library of its own (`sq/DESIGN.md`); and `sys/`, the system
-services sm and dg both build on (`sys/README.md`), which
-depends on nothing else in the repository.
+(`sm/PART4.md` §10); and `sq/`, the SQL parser digres links,
+a library of its own (`sq/DESIGN.md`). The system services sm
+and dg both build on, `sm_sys.h`, are in sm's level 0
+(`sm/sm0/README.md`), which depends on nothing else in the
+repository.
 
 Read `sm/README.md` for the layout of the stack's levels, then
 the design document of the level you are working in —
-`sm/sm0/README.md` for the error state and helpers,
+`sm/sm0/README.md` for the error state, helpers and sm_sys.h,
 `sm/sm1/SM1_DESIGN.md` for the MVCC storage manager,
 `sm/sm2/SM2_DESIGN.md` for types and tuples,
 `sm/sm3/SM3_DESIGN.md` for schema and index maintenance.

@@ -6,7 +6,7 @@ built on the level below it.
 | Level | Where | What it is |
 | --- | --- | --- |
 | — | — | RocksDB: an ordered, durable, crash-atomic key-value store, under the stack |
-| 0 | `sm0/` | the error state, the log hook, and general-purpose helpers that are about no storage |
+| 0 | `sm0/` | the error state, the log hook, general-purpose helpers that are about no storage, and the system services sm and dg build on, `sm_sys.h` |
 | 1 | `sm1/` | the MVCC storage manager: stores, transactions, isolation, locks, 2PC, recovery |
 | 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, heap and index relations |
 | 3 | `sm3/` | schema and index maintenance: a catalog, index maintenance and builds, scans, statistics |
@@ -51,7 +51,9 @@ the wrapper through the `rel/` test suite.
 - `NEXT.md` — what to build next and in what order, across
   levels, with the loose ends and the gaps that block nothing
 - `sm0/README.md` — level 0: the error state, the log hook,
-  and the helpers every level uses
+  the helpers every level uses, and the system services
+- `sm0/INTERRUPT.md` — interrupting a thread, interruptible
+  waits, and timers that interrupt: `sm_sys.h`
 - `sm1/SM1_OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record

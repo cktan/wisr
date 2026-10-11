@@ -117,12 +117,12 @@ void InitPostmasterChild(void) {
   InitializeLatchWaitSet();
 
   /* CHECK_FOR_INTERRUPTS() reads this thread's interrupts from here on. */
-  MyInterrupts = sys_pending_word();
+  MyInterrupts = sm_pending_word();
   /*
-   * What ends a wait in sm for another transaction (sys.h): what cancels or
+   * What ends a wait in sm for another transaction (sm_sys.h): what cancels or
    * ends the statement, and a timeout, which may.
    */
-  sys_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
+  sm_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
                     INTERRUPT_ALARM);
 
   /*
@@ -193,12 +193,12 @@ void InitStandaloneProcess(const char *argv0) {
   InitializeLatchWaitSet();
 
   /* CHECK_FOR_INTERRUPTS() reads this thread's interrupts from here on. */
-  MyInterrupts = sys_pending_word();
+  MyInterrupts = sm_pending_word();
   /*
-   * What ends a wait in sm for another transaction (sys.h): what cancels or
+   * What ends a wait in sm for another transaction (sm_sys.h): what cancels or
    * ends the statement, and a timeout, which may.
    */
-  sys_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
+  sm_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
                     INTERRUPT_ALARM);
 
   /*
@@ -245,7 +245,7 @@ void InitProcessLocalLatch(void) {
  * ends: a process's exit took it with it.
  */
 void ShutdownProcessLocalLatch(void) {
-  sys_thread_ref_t *owner;
+  sm_thread_ref_t *owner;
 
   /* Unpublished under the lock, so no SetLatch() is copying it. */
   SpinLockAcquire(&LocalLatchData.owner_lock);

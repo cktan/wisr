@@ -86,16 +86,16 @@ struct timeout_state_t {
   volatile TimestampTz signal_due_at = 0;
 
   /*
-   * This thread's timer (sys.h), 0 if none is armed: it raises
+   * This thread's timer (sm_sys.h), 0 if none is armed: it raises
    * INTERRUPT_ALARM in this thread alone, so a session's timeouts stay its
    * own.
    */
-  sys_timer_id_t alarm_timer = 0;
+  sm_timer_id_t alarm_timer = 0;
 
   /* Cancel the timer, if this thread armed one. */
   ~timeout_state_t() {
     if (alarm_timer != 0)
-      sys_timer_cancel(alarm_timer);
+      sm_timer_cancel(alarm_timer);
   }
 };
 
@@ -120,9 +120,9 @@ void timeout_state_free_t::operator()(timeout_state_t *state) const {
 static int set_alarm_timer(long secs, int usecs) {
   /* One timer at a time: the one armed before is not wanted. */
   if (ts().alarm_timer != 0)
-    sys_timer_cancel(ts().alarm_timer);
-  ts().alarm_timer = sys_timer_at(
-      sys_thread_self(), sys_now_us() + (int64_t)secs * 1000000 + usecs,
+    sm_timer_cancel(ts().alarm_timer);
+  ts().alarm_timer = sm_timer_at(
+      sm_thread_self(), sm_now_us() + (int64_t)secs * 1000000 + usecs,
       INTERRUPT_ALARM, 0);
   return 0;
 }
