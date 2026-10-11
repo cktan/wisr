@@ -336,7 +336,9 @@ ObjectAddress ExecRenameStmt(RenameStmt *stmt) {
     return RenameSchema(stmt->subname, stmt->newname);
 
   case OBJECT_TABLESPACE:
-    return RenameTableSpace(stmt->subname, stmt->newname);
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("tablespaces are not supported")));
+    return InvalidObjectAddress; /* not reached */
 
   case OBJECT_TABLE:
   case OBJECT_SEQUENCE:

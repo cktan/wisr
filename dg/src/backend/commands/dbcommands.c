@@ -75,6 +75,7 @@ typedef struct {
 } movedb_failure_params;
 
 /* non-export function prototypes */
+static bool directory_is_empty(const char *path);
 static void createdb_failure_callback(int code, Datum arg);
 static void movedb(const char *dbname, const char *tblspcname);
 static void movedb_failure_callback(int code, Datum arg);
@@ -2310,4 +2311,22 @@ bool database_is_invalid_oid(Oid dboid) {
   ReleaseSysCache(dbtup);
 
   return invalid;
+}
+
+/* Whether the directory path holds nothing but "." and "..". */
+static bool directory_is_empty(const char *path) {
+  DIR *dirdesc;
+  struct dirent *de;
+
+  dirdesc = AllocateDir(path);
+
+  while ((de = ReadDir(dirdesc, path)) != NULL) {
+    if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+      continue;
+    FreeDir(dirdesc);
+    return false;
+  }
+
+  FreeDir(dirdesc);
+  return true;
 }

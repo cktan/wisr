@@ -287,7 +287,7 @@ ObjectAddress RefreshMatViewByOid(Oid matviewOid, bool is_create, bool skipData,
 
   /* Concurrent refresh builds new data in temp tablespace, and does diff. */
   if (concurrent) {
-    tableSpace = GetDefaultTablespace(RELPERSISTENCE_TEMP, false);
+    tableSpace = InvalidOid; /* the database's: there are no others */
     relpersistence = RELPERSISTENCE_TEMP;
   } else {
     tableSpace = matviewRel->rd_rel->reltablespace;

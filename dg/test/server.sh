@@ -583,6 +583,33 @@ only_psql 'explain (costs off) select a, b, c from t8 where a >= 2' |
 [ "$(only_psql 'select d is null from t8 where d is null')" = t ] ||
   fail "index-only null key"
 
+# Verify that tablespaces are refused, their settings gone, and that a
+# sort too big for work_mem still spills to temporary files, which went
+# to the temporary tablespaces.
+# 1. Confirm CREATE, ALTER, rename and DROP TABLESPACE each fail.
+# 2. Confirm SET temp_tablespaces fails: there is no such setting.
+# 3. Fill t9 with a = 1..1000 and b = a % 10, four times over; with
+#    work_mem at 64kB, sort it by b: an external merge, in order.
+for sql in "create tablespace x location '/tmp'" "drop tablespace x" \
+  "alter tablespace pg_default set (seq_page_cost = 1)" \
+  "alter tablespace pg_default rename to y"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'tablespaces are not supported' ||
+    fail "tablespace refused: $sql"
+done
+local_psql -c "set temp_tablespaces = ''" 2>&1 |
+  grep -q 'unrecognized configuration parameter' || fail "temp_tablespaces"
+rows=$(seq 1000 | awk '{printf "%s(%d,%d)", (NR > 1 ? "," : ""), $1, $1 % 10}')
+local_psql -c 'create table t9 (a int4, b int4)' \
+  -c "insert into t9 values $rows" -c "insert into t9 values $rows" \
+  -c "insert into t9 values $rows" -c "insert into t9 values $rows" \
+  > "$work/sort.out" 2>&1
+local_psql -c "set work_mem = '64kB'" -c 'explain (analyze, costs off,
+  timing off, summary off) select a from t9 order by b, a' 2>&1 |
+  grep -q 'external merge' || fail "external sort plan"
+[ "$(local_psql -c "set work_mem = '64kB'" \
+  -c 'select a from t9 order by b, a limit 5' 2>&1 | grep -v '^SET$' |
+  tr '\n' ' ')" = "10 10 10 10 20 " ] || fail "external sort"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

@@ -780,12 +780,7 @@ static void tuplestore_puttuple_common(Tuplestorestate *state, void *tuple) {
     if (state->memtupcount < state->memtupsize && !LACKMEM(state))
       return;
 
-    /*
-     * Nope; time to switch to tape-based operation.  Make sure that
-     * the temp file(s) are created in suitable temp tablespaces.
-     */
-    PrepareTempTablespaces();
-
+    /* Nope; time to switch to tape-based operation. */
     /* associate the file with the store's resource owner */
     oldowner = CurrentResourceOwner;
     CurrentResourceOwner = state->resowner;

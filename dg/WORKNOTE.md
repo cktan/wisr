@@ -1929,3 +1929,24 @@ code goes now.
   already did.
 - The grammar, nodes and catalog headers stay; the headers lose
   their functions' prototypes.
+
+## Step 62: tablespaces are gone
+
+PLAN.md §7: storage and replication features are deleted.
+sm keeps its own files; a tablespace has nothing to place.
+
+- **Gone**: the commands of `tablespace.c`; the settings
+  `default_tablespace`, `temp_tablespaces` and
+  `allow_in_place_tablespaces`; the SQL functions
+  `pg_tablespace_location`, `pg_tablespace_size` and
+  `pg_tablespace_databases`; `fd.c`'s list of temporary
+  tablespaces, and preparing it before a sort, a hash join or
+  a tuplestore spills.
+- **What is left**: `tablespace.c` names the two built in,
+  `pg_default` and `pg_global`, by name and oid, which no
+  longer opens `pg_tablespace`. A relation's default
+  tablespace, and a temporary file's, is the database's.
+- **Refused**: CREATE, ALTER, rename and DROP TABLESPACE fail
+  with "tablespaces are not supported".
+- `server.sh` checks the refusals, the settings gone, and a
+  sort that spills to temporary files.

@@ -604,20 +604,10 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
     break;
 
   case T_CreateTableSpaceStmt:
-    /* no event triggers for global objects */
-    PreventInTransactionBlock(isTopLevel, "CREATE TABLESPACE");
-    CreateTableSpace((CreateTableSpaceStmt *)parsetree);
-    break;
-
   case T_DropTableSpaceStmt:
-    /* no event triggers for global objects */
-    PreventInTransactionBlock(isTopLevel, "DROP TABLESPACE");
-    DropTableSpace((DropTableSpaceStmt *)parsetree);
-    break;
-
   case T_AlterTableSpaceOptionsStmt:
-    /* no event triggers for global objects */
-    AlterTableSpaceOptions((AlterTableSpaceOptionsStmt *)parsetree);
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("tablespaces are not supported")));
     break;
 
   case T_TruncateStmt:

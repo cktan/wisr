@@ -264,16 +264,6 @@ static thread_local /*LOCAL*/ int numExternalFDs = 0;
  */
 static thread_local /*LOCAL*/ long tempFileCounter = 0;
 
-/*
- * Array of OIDs of temp tablespaces.  (Some entries may be InvalidOid,
- * indicating that the current database's default tablespace should be used.)
- * When numTempTableSpaces is -1, this has not been set in the current
- * transaction.
- */
-static thread_local /*LOCAL*/ Oid *tempTableSpaces = NULL;
-static thread_local /*LOCAL*/ int numTempTableSpaces = -1;
-static thread_local /*LOCAL*/ int nextTempTableSpace = 0;
-
 /*--------------------
  *
  * Private Routines
@@ -1495,30 +1485,13 @@ File OpenTemporaryFile(bool interXact) {
     ResourceOwnerEnlarge(CurrentResourceOwner);
 
   /*
-   * If some temp tablespace(s) have been given to us, try to use the next
-   * one.  If a given tablespace can't be found, we silently fall back to
-   * the database's default tablespace.
-   *
-   * BUT: if the temp file is slated to outlive the current transaction,
-   * force it into the database's default tablespace, so that it will not
-   * pose a threat to possible tablespace drop attempts.
+   * Create it in the database's default tablespace, there being no others.
+   * MyDatabaseTableSpace should normally be set before we get here, but
+   * just in case it isn't, fall back to pg_default tablespace.
    */
-  if (numTempTableSpaces > 0 && !interXact) {
-    Oid tblspcOid = GetNextTempTableSpace();
-
-    if (OidIsValid(tblspcOid))
-      file = OpenTemporaryFileInTablespace(tblspcOid, false);
-  }
-
-  /*
-   * If not, or if tablespace is bad, create in database's default
-   * tablespace.  MyDatabaseTableSpace should normally be set before we get
-   * here, but just in case it isn't, fall back to pg_default tablespace.
-   */
-  if (file <= 0)
-    file = OpenTemporaryFileInTablespace(
-        MyDatabaseTableSpace ? MyDatabaseTableSpace : DEFAULTTABLESPACE_OID,
-        true);
+  file = OpenTemporaryFileInTablespace(
+      MyDatabaseTableSpace ? MyDatabaseTableSpace : DEFAULTTABLESPACE_OID,
+      true);
 
   /* Mark it for deletion at close and temporary file size limit */
   VfdCache[file].fdstate |= FD_DELETE_AT_CLOSE | FD_TEMP_FILE_LIMIT;
@@ -2573,63 +2546,6 @@ void closeAllVfds(void) {
 }
 
 /*
- * SetTempTablespaces
- *
- * Define a list (actually an array) of OIDs of tablespaces to use for
- * temporary files.  This list will be used until end of transaction,
- * unless this function is called again before then.  It is caller's
- * responsibility that the passed-in array has adequate lifespan (typically
- * it'd be allocated in TopTransactionContext).
- *
- * Some entries of the array may be InvalidOid, indicating that the current
- * database's default tablespace should be used.
- */
-void SetTempTablespaces(Oid *tableSpaces, int numSpaces) {
-  Assert(numSpaces >= 0);
-  tempTableSpaces = tableSpaces;
-  numTempTableSpaces = numSpaces;
-
-  /*
-   * Select a random starting point in the list.  This is to minimize
-   * conflicts between backends that are most likely sharing the same list
-   * of temp tablespaces.  Note that if we create multiple temp files in the
-   * same transaction, we'll advance circularly through the list --- this
-   * ensures that large temporary sort files are nicely spread across all
-   * available tablespaces.
-   */
-  if (numSpaces > 1)
-    nextTempTableSpace =
-        pg_prng_uint64_range(&pg_global_prng_state, 0, numSpaces - 1);
-  else
-    nextTempTableSpace = 0;
-}
-
-/*
- * TempTablespacesAreSet
- *
- * Returns true if SetTempTablespaces has been called in current transaction.
- * (This is just so that tablespaces.c doesn't need its own per-transaction
- * state.)
- */
-bool TempTablespacesAreSet(void) { return (numTempTableSpaces >= 0); }
-
-/*
- * GetNextTempTableSpace
- *
- * Select the next temp tablespace to use.  A result of InvalidOid means
- * to use the current database's default tablespace.
- */
-Oid GetNextTempTableSpace(void) {
-  if (numTempTableSpaces > 0) {
-    /* Advance nextTempTableSpace counter with wraparound */
-    if (++nextTempTableSpace >= numTempTableSpaces)
-      nextTempTableSpace = 0;
-    return tempTableSpaces[nextTempTableSpace];
-  }
-  return InvalidOid;
-}
-
-/*
  * AtEOSubXact_Files
  *
  * Take care of subtransaction commit/abort.  At abort, we close temp files
@@ -2659,16 +2575,12 @@ void AtEOSubXact_Files(bool isCommit, SubTransactionId mySubid,
  * per-transaction temporary file VFDs are closed, which also causes the
  * underlying files to be deleted (although they should've been closed already
  * by the ResourceOwner cleanup). Furthermore, all "allocated" stdio files are
- * closed. We also forget any transaction-local temp tablespace list.
+ * closed.
  *
  * The isCommit flag is used only to decide whether to emit warnings about
  * unclosed files.
  */
-void AtEOXact_Files(bool isCommit) {
-  CleanupTempFiles(isCommit, false);
-  tempTableSpaces = NULL;
-  numTempTableSpaces = -1;
-}
+void AtEOXact_Files(bool isCommit) { CleanupTempFiles(isCommit, false); }
 
 /*
  * BeforeShmemExit_Files

@@ -173,18 +173,6 @@ void mdcreate(SMgrRelation reln, ForkNumber forknum, bool isRedo) {
 
   Assert(reln->md_num_open_segs[forknum] == 0);
 
-  /*
-   * We may be using the target table space for the first time in this
-   * database, so create a per-database subdirectory if needed.
-   *
-   * XXX this is a fairly ugly violation of module layering, but this seems
-   * to be the best place to put the check.  Maybe TablespaceCreateDbspace
-   * should be here and not in commands/tablespace.c?  But that would imply
-   * importing a lot of stuff that smgr.c oughtn't know, either.
-   */
-  TablespaceCreateDbspace(reln->smgr_rlocator.locator.spcOid,
-                          reln->smgr_rlocator.locator.dbOid, isRedo);
-
   path = relpath(reln->smgr_rlocator, forknum);
 
   fd = PathNameOpenFile(path.str, _mdfd_open_flags() | O_CREAT | O_EXCL);

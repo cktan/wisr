@@ -1294,16 +1294,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{"allow_in_place_tablespaces", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop(
-          "Allows tablespaces directly inside pg_tblspc, for testing."),
-      NULL, GUC_NOT_IN_SAMPLE},
-     &allow_in_place_tablespaces,
-     false,
-     NULL,
-     NULL,
-     NULL},
-
     {{
          "quote_all_identifiers",
          PGC_USERSET,
@@ -2516,30 +2506,6 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
      DEFAULT_TABLE_ACCESS_METHOD,
      check_default_table_access_method,
      NULL,
-     NULL},
-
-    {{"default_tablespace", PGC_USERSET, CLIENT_CONN_STATEMENT,
-      gettext_noop(
-          "Sets the default tablespace to create tables and indexes in."),
-      gettext_noop(
-          "An empty string means use the database's default tablespace."),
-      GUC_IS_NAME},
-     &default_tablespace,
-     "",
-     check_default_tablespace,
-     NULL,
-     NULL},
-
-    {{"temp_tablespaces", PGC_USERSET, CLIENT_CONN_STATEMENT,
-      gettext_noop(
-          "Sets the tablespace(s) to use for temporary tables and sort files."),
-      gettext_noop(
-          "An empty string means use the database's default tablespace."),
-      GUC_LIST_INPUT | GUC_LIST_QUOTE},
-     &temp_tablespaces,
-     "",
-     check_temp_tablespaces,
-     assign_temp_tablespaces,
      NULL},
 
     {{"createrole_self_grant", PGC_USERSET, CLIENT_CONN_STATEMENT,

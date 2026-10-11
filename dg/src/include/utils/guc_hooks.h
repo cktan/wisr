@@ -52,8 +52,6 @@ extern bool check_log_connections(char **newval, void **extra,
 extern void assign_log_connections(const char *newval, void *extra);
 extern bool check_default_table_access_method(char **newval, void **extra,
                                               GucSource source);
-extern bool check_default_tablespace(char **newval, void **extra,
-                                     GucSource source);
 extern bool check_default_text_search_config(char **newval, void **extra,
                                              GucSource source);
 extern void assign_default_text_search_config(const char *newval, void *extra);
@@ -115,9 +113,6 @@ extern const char *show_tcp_keepalives_interval(void);
 extern void assign_tcp_user_timeout(int newval, void *extra);
 extern const char *show_tcp_user_timeout(void);
 extern bool check_temp_buffers(int *newval, void **extra, GucSource source);
-extern bool check_temp_tablespaces(char **newval, void **extra,
-                                   GucSource source);
-extern void assign_temp_tablespaces(const char *newval, void *extra);
 extern bool check_timezone(char **newval, void **extra, GucSource source);
 extern void assign_timezone(const char *newval, void *extra);
 extern const char *show_timezone(void);

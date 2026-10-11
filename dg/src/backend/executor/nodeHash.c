@@ -337,9 +337,7 @@ HashJoinTable ExecHashTableCreate(HashState *state) {
 
     MemoryContextSwitchTo(oldctx);
 
-    /* The files will not be opened until needed... */
-    /* ... but make sure we have temp tablespaces established for them */
-    PrepareTempTablespaces();
+    /* The files will not be opened until needed. */
   }
 
   MemoryContextSwitchTo(oldcxt);
@@ -732,9 +730,6 @@ static void ExecHashIncreaseNumBatches(HashJoinTable hashtable) {
     hashtable->outerBatchFile = palloc0_array(BufFile *, nbatch);
 
     MemoryContextSwitchTo(oldcxt);
-
-    /* time to establish the temp tablespaces, too */
-    PrepareTempTablespaces();
   } else {
     /* enlarge arrays and zero out added entries */
     hashtable->innerBatchFile = repalloc0_array(hashtable->innerBatchFile,

@@ -700,9 +700,8 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
            errmsg(
                "cannot specify default tablespace for partitioned relations")));
   } else {
-    tablespaceId =
-        GetDefaultTablespace(rel->rd_rel->relpersistence, partitioned);
-    /* note InvalidOid is OK in this case */
+    /* The database's: there are no others. */
+    tablespaceId = InvalidOid;
   }
 
   /* Check tablespace permissions */

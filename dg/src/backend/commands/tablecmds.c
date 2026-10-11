@@ -903,11 +903,6 @@ ObjectAddress DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
   } else
     tablespaceId = InvalidOid;
 
-  /* still nothing? use the default */
-  if (!OidIsValid(tablespaceId))
-    tablespaceId =
-        GetDefaultTablespace(stmt->relation->relpersistence, partitioned);
-
   /* Check permissions except when using database's default */
   if (OidIsValid(tablespaceId) && tablespaceId != MyDatabaseTableSpace) {
     AclResult aclresult;

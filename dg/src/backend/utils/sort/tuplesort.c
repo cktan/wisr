@@ -1668,12 +1668,6 @@ static void inittapestate(Tuplesortstate *state, int maxTapes) {
 
   if (tapeSpace + GetMemoryChunkSpace(state->memtuples) < state->allowedMem)
     USEMEM(state, tapeSpace);
-
-  /*
-   * Make sure that the temp file(s) underlying the tape set are created in
-   * suitable temp tablespaces.
-   */
-  PrepareTempTablespaces();
 }
 
 /*
