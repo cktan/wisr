@@ -53,6 +53,8 @@ extern Oid smstore_namespace_oid(const char *name);
 extern Oid smstore_relation_oid(const char *name, Oid nspoid);
 extern ObjectAddress smstore_create_table(CreateStmt *stmt);
 extern void smstore_drop_tables(DropStmt *stmt);
+extern ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt);
+extern void smstore_drop_indexes(DropStmt *stmt);
 extern void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait);
 extern smstore_table_t *smstore_table_desc(Oid oid);
 extern void smstore_insert(Relation rel, TupleTableSlot *slot);

@@ -20,9 +20,11 @@
 #include "access/smstore.h"
 #include "access/xact.h"
 #include "access/relation.h"
+#include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class_d.h"
 #include "catalog/pg_type_d.h"
+#include "commands/defrem.h"
 #include "miscadmin.h"
 #include "parser/parse_type.h"
 #include "storage/lockdefs.h"
@@ -75,6 +77,10 @@ static sm_session_t *session(void) {
 /* The SQLSTATE of the error sm left. */
 static int sm_sqlstate(void) {
   switch (sm_errnum()) {
+  case SM_ERR_DUPKEY:
+    return ERRCODE_UNIQUE_VIOLATION;
+  case SM_ERR_NOTNULL:
+    return ERRCODE_NOT_NULL_VIOLATION;
   case SM_ERR_DEADLOCK:
     return ERRCODE_T_R_DEADLOCK_DETECTED;
   case SM_ERR_INTERRUPTED:
@@ -515,8 +521,15 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
   if (waiting([&] {
         return sm_tbl_insert(tbl, (const sm_datum_t *)slot->tts_values,
                              slot->tts_isnull, slot->tts_nvalid, &rowno);
-      }) != 0)
+      }) != 0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR,
+              (errcode(ERRCODE_UNIQUE_VIOLATION),
+               errmsg("duplicate key value violates a unique index on \"%s\"",
+                      RelationGetRelationName(rel)),
+               errdetail("%s", sm_errmsg())));
     sm_error("insert a row");
+  }
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
 }
 
@@ -647,4 +660,163 @@ void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait) {
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
+}
+
+/* Refuse what a CREATE INDEX asks that sm's indexes do not have yet. */
+static void check_create_index(const IndexStmt *stmt) {
+  ListCell *l;
+
+  if (strcmp(stmt->accessMethod, DEFAULT_INDEX_TYPE) != 0)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("access method \"%s\" is not supported",
+                           stmt->accessMethod)));
+  if (stmt->whereClause != NULL || stmt->excludeOpNames != NIL ||
+      stmt->options != NIL || stmt->tableSpace != NULL ||
+      stmt->nulls_not_distinct || stmt->deferrable)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("CREATE INDEX supports only columns, UNIQUE and "
+                           "INCLUDE yet")));
+  foreach (l, stmt->indexParams) {
+    IndexElem *elem = lfirst_node(IndexElem, l);
+
+    if (elem->name == NULL || elem->collation != NIL || elem->opclass != NIL)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("an index key is a column, with no collation "
+                             "or operator class, yet")));
+  }
+}
+
+/* The 0-based place of rel's column name, or an error if it has none. */
+static int32_t column_place(Relation rel, const char *name) {
+  TupleDesc desc = RelationGetDescr(rel);
+
+  for (int i = 0; i < desc->natts; i++) {
+    Form_pg_attribute att = TupleDescAttr(desc, i);
+
+    if (!att->attisdropped && strcmp(NameStr(att->attname), name) == 0)
+      return i;
+  }
+  ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                  errmsg("column \"%s\" does not exist", name)));
+  return -1; /* not reached */
+}
+
+/*
+ * Create the index a CREATE INDEX, after parse analysis, describes on relid,
+ * a table in sm, in this transaction: btree, on columns, UNIQUE or not, with
+ * INCLUDE columns.  On a table made in this transaction it is filled now; on
+ * any other, once the transaction commits, in the background.  Returns its
+ * address.
+ */
+ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
+  std::vector<sm_index_key_spec_t> keys;
+  std::vector<int32_t> includes;
+  Relation rel;
+  char *name;
+  uint64_t oid;
+  ObjectAddress address;
+  ListCell *l;
+
+  check_create_index(stmt);
+  rel = relation_open(relid, NoLock);
+  foreach (l, stmt->indexParams) {
+    IndexElem *elem = lfirst_node(IndexElem, l);
+    sm_index_key_spec_t key = {};
+    bool desc = elem->ordering == SORTBY_DESC;
+
+    key.attnum = column_place(rel, elem->name);
+    key.desc = desc;
+    /* PostgreSQL's default puts nulls last ascending, first descending. */
+    key.nulls_first = elem->nulls_ordering == SORTBY_NULLS_DEFAULT
+                          ? desc
+                          : elem->nulls_ordering == SORTBY_NULLS_FIRST;
+    keys.push_back(key);
+  }
+  foreach (l, stmt->indexIncludingParams)
+    includes.push_back(column_place(rel, lfirst_node(IndexElem, l)->name));
+  name = stmt->idxname != NULL
+             ? stmt->idxname
+             : ChooseIndexName(RelationGetRelationName(rel),
+                               RelationGetNamespace(rel),
+                               ChooseIndexColumnNames(stmt->indexParams), NIL,
+                               stmt->primary, stmt->isconstraint);
+  /* Every session's descriptor of the table relearns its indexes. */
+  CacheInvalidateRelcache(rel);
+  relation_close(rel, NoLock);
+
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] {
+        return sm_cat_create_index(s, relid, name, keys, includes, stmt->unique,
+                                   std::string(), {}, &oid);
+      }) != 0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR, (errcode(ERRCODE_UNIQUE_VIOLATION),
+                      errmsg("could not create unique index \"%s\"", name),
+                      errdetail("%s", sm_errmsg())));
+    sm_error("create an index");
+  }
+  ObjectAddressSet(address, RelationRelationId, (Oid)oid);
+  return address;
+}
+
+/*
+ * The index named rv, and its table, in rv's namespace or the first on the
+ * search path that has one: false if there is none.
+ */
+static bool find_index(const RangeVar *rv, uint64_t *table, uint64_t *index) {
+  List *path;
+  ListCell *l;
+
+  if (rv->schemaname != NULL)
+    path = list_make1_oid(get_namespace_oid(rv->schemaname, false));
+  else
+    path = fetch_search_path(false);
+  foreach (l, path) {
+    switch (
+        sm_cat_index_oid(session(), lfirst_oid(l), rv->relname, table, index)) {
+    case 0:
+      return true;
+    case 1:
+      break;
+    default:
+      sm_error("look up an index");
+    }
+  }
+  return false;
+}
+
+/*
+ * Drop the indexes a DROP INDEX names, from sm, in this transaction.  A
+ * table's descriptor forgets the index in every session at commit.
+ */
+void smstore_drop_indexes(DropStmt *stmt) {
+  ListCell *l;
+
+  if (stmt->concurrent)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("DROP INDEX CONCURRENTLY is not supported")));
+  foreach (l, stmt->objects) {
+    RangeVar *rv = makeRangeVarFromNameList((List *)lfirst(l));
+    uint64_t table, index;
+    Relation rel;
+
+    if (!find_index(rv, &table, &index)) {
+      if (!stmt->missing_ok)
+        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                        errmsg("index \"%s\" does not exist", rv->relname)));
+      ereport(NOTICE,
+              (errmsg("index \"%s\" does not exist, skipping", rv->relname)));
+      continue;
+    }
+    rel = relation_open((Oid)table, NoLock);
+    /* Every session's descriptor of the table relearns its indexes. */
+    CacheInvalidateRelcache(rel);
+    relation_close(rel, NoLock);
+
+    sm_session_t *s = xact_session();
+
+    if (waiting([&] { return sm_cat_drop_index(s, table, index); }) != 0)
+      sm_error("drop an index");
+  }
 }

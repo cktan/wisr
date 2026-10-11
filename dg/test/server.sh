@@ -376,6 +376,30 @@ wait $locker
 local_psql -c 'begin' -c 'lock table t2 nowait' > "$work/locker4.out" 2>&1
 grep -q 'NOWAIT is not supported yet' "$work/locker4.out" || fail "nowait"
 
+# Verify that CREATE INDEX and DROP INDEX are sm's: a unique index refuses a
+# duplicate, a dropped one no longer does, and names default as PostgreSQL's.
+# 1. Create t3, a row, a plain index with no name and a unique one.
+# 2. Confirm the second plain index gets the name t3_a_idx1, and a duplicate
+#    of the unique key is refused.
+# 3. Drop the unique index: the duplicate goes in; drop it again: it is gone.
+local_psql > /dev/null 2>&1 <<'SQL'
+create table t3 (a int4, b int8);
+insert into t3 values (1, 10);
+create index on t3 (a);
+create index on t3 (a);
+create unique index t3_b on t3 (b desc) include (a);
+SQL
+local_psql -c 'drop index t3_a_idx1' > "$work/index.out" 2>&1
+grep -qx 'DROP INDEX' "$work/index.out" || fail "index default name"
+local_psql -c 'insert into t3 values (2, 10)' > "$work/index.out" 2>&1
+grep -q 'duplicate key value violates a unique index on "t3"' \
+  "$work/index.out" || fail "unique index"
+local_psql -c 'drop index t3_b' -c 'insert into t3 values (2, 10)' \
+  -c 'drop index t3_b' > "$work/index.out" 2>&1
+grep -qx 'INSERT 0 1' "$work/index.out" &&
+  grep -q 'index "t3_b" does not exist' "$work/index.out" ||
+  fail "drop index"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

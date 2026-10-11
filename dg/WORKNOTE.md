@@ -1627,3 +1627,32 @@ heap's.
 - `server.sh` holds a SHARE lock and an ACCESS EXCLUSIVE one in
   one session, and confirms another reads under the first, and
   times out writing under it and reading under the second.
+
+## Step 50: CREATE INDEX and DROP INDEX are sm's
+
+The first step to the heap's removal (PLAN.md §7): before
+nbtree goes, an index is to be sm's. Here its DDL; the planner
+and the executor next.
+
+- **`ProcessUtilitySlow()` creates an index on a table in sm
+  with `smstore_create_index()`**, after parse analysis: btree,
+  on columns, ASC or DESC with either null order, UNIQUE or
+  not, with INCLUDE columns. The rest is refused: another
+  access method, expressions, a predicate, collations and
+  operator classes, options, tablespaces, NULLS NOT DISTINCT,
+  DEFERRABLE. On a table made in the same transaction sm fills
+  it at once; on any other, in the background once the
+  transaction commits (`sm_cat_index_wait` waits for it).
+- **DROP INDEX is `smstore_drop_indexes()`**, which looks the
+  name up in sm, on the search path, and drops it from its
+  table. DROP INDEX CONCURRENTLY is refused.
+- **An index's default name is PostgreSQL's**:
+  `ChooseIndexName()` and `ChooseIndexColumnNames()` are
+  exported, and `ChooseRelationName()` asks sm whether a name
+  is taken, not pg_class; a constraint's name is an index's.
+- **A duplicate key is SQLSTATE 23505**, and a NULL in a NOT
+  NULL column 23502, from any call into sm.
+- `RangeVarCallbackOwnsRelation()` reads the relation's
+  descriptor.
+- `server.sh` creates plain and unique indexes, checks a
+  default name, a duplicate refused, and DROP INDEX.

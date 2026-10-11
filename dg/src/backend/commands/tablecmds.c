@@ -17912,14 +17912,14 @@ static void RangeVarCallbackForTruncate(const RangeVar *relation, Oid relId,
  */
 void RangeVarCallbackOwnsRelation(const RangeVar *relation, Oid relId,
                                   Oid oldRelId, void *arg) {
-  HeapTuple tuple;
+  FormData_pg_class form;
 
   /* Nothing to do if the relation was not found. */
   if (!OidIsValid(relId))
     return;
 
-  tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relId));
-  if (!HeapTupleIsValid(tuple)) /* should not happen */
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relId, &form)) /* should not happen */
     elog(ERROR, "cache lookup failed for relation %u", relId);
 
   if (!object_ownercheck(RelationRelationId, relId, GetUserId()))
@@ -17927,13 +17927,10 @@ void RangeVarCallbackOwnsRelation(const RangeVar *relation, Oid relId,
                    get_relkind_objtype(get_rel_relkind(relId)),
                    relation->relname);
 
-  if (!allowSystemTableMods &&
-      IsSystemClass(relId, (Form_pg_class)GETSTRUCT(tuple)))
+  if (!allowSystemTableMods && IsSystemClass(relId, &form))
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("permission denied: \"%s\" is a system catalog",
                            relation->relname)));
-
-  ReleaseSysCache(tuple);
 }
 
 /*

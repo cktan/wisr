@@ -1195,6 +1195,15 @@ static void ProcessUtilitySlow(ParseState *pstate, PlannedStmt *pstmt,
       relid = RangeVarGetRelidExtended(stmt->relation, lockmode, 0,
                                        RangeVarCallbackOwnsRelation, NULL);
 
+      /* An index on a table in sm is sm's (access/smstore.h). */
+      if (relid >= FirstNormalObjectId) {
+        stmt = transformIndexStmt(relid, stmt, queryString);
+        address = smstore_create_index(relid, stmt);
+        EventTriggerCollectSimpleCommand(address, secondaryObject, parsetree);
+        commandCollected = true;
+        break;
+      }
+
       /*
        * CREATE INDEX on partitioned tables (but not regular
        * inherited tables) recurses to partitions, so we must
@@ -1680,10 +1689,9 @@ void ProcessUtilityForAlterTable(Node *stmt,
 static void ExecDropStmt(DropStmt *stmt, bool isTopLevel) {
   switch (stmt->removeType) {
   case OBJECT_INDEX:
-    if (stmt->concurrent)
-      PreventInTransactionBlock(isTopLevel, "DROP INDEX CONCURRENTLY");
-    /* fall through */
-
+    /* An index is sm's (access/smstore.h). */
+    smstore_drop_indexes(stmt);
+    break;
   case OBJECT_TABLE:
     /* A table is sm's (access/smstore.h). */
     smstore_drop_tables(stmt);
