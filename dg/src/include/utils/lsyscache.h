@@ -100,6 +100,8 @@ extern Oid get_atttype(Oid relid, AttrNumber attnum);
 extern void get_atttypetypmodcoll(Oid relid, AttrNumber attnum, Oid *typid,
                                   int32 *typmod, Oid *collid);
 extern Datum get_attoptions(Oid relid, int16 attnum);
+extern const struct cat_cast_t *get_builtin_cast(Oid sourcetypeid,
+                                                 Oid targettypeid);
 extern Oid get_cast_oid(Oid sourcetypeid, Oid targettypeid, bool missing_ok);
 extern char *get_collation_name(Oid colloid);
 extern bool get_collation_isdeterministic(Oid colloid);
@@ -188,6 +190,7 @@ extern const struct SubscriptRoutines *getSubscriptingRoutines(Oid typid,
 extern Oid getBaseType(Oid typid);
 extern Oid getBaseTypeAndTypmod(Oid typid, int32 *typmod);
 extern int32 get_typavgwidth(Oid typid, int32 typmod);
+extern HeapTuple get_statistic_tuple(Oid relid, AttrNumber attnum, bool inh);
 extern int32 get_attavgwidth(Oid relid, AttrNumber attnum);
 extern bool get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple,
                              int reqkind, Oid reqop, int flags);

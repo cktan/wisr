@@ -93,7 +93,6 @@ static void InitializeTableSpaceCache(void) {
  */
 static TableSpaceCacheEntry *get_tablespace(Oid spcid) {
   TableSpaceCacheEntry *spc;
-  HeapTuple tp;
   TableSpaceOpts *opts;
 
   /*
@@ -112,31 +111,10 @@ static TableSpaceCacheEntry *get_tablespace(Oid spcid) {
     return spc;
 
   /*
-   * Not found in TableSpace cache.  Check catcache.  If we don't find a
-   * valid HeapTuple, it must mean someone has managed to request tablespace
-   * details for a non-existent tablespace.  We'll just treat that case as
-   * if no options were specified.
+   * Not found in TableSpace cache.  No tablespace has options: digres has
+   * no pg_tablespace, nor ALTER TABLESPACE to set any.
    */
-  tp = SearchSysCache1(TABLESPACEOID, ObjectIdGetDatum(spcid));
-  if (!HeapTupleIsValid(tp))
-    opts = NULL;
-  else {
-    Datum datum;
-    bool isNull;
-
-    datum = SysCacheGetAttr(TABLESPACEOID, tp, Anum_pg_tablespace_spcoptions,
-                            &isNull);
-    if (isNull)
-      opts = NULL;
-    else {
-      bytea *bytea_opts = tablespace_reloptions(datum, false);
-
-      opts = (TableSpaceOpts *)MemoryContextAlloc(CacheMemoryContext,
-                                                  VARSIZE(bytea_opts));
-      memcpy(opts, bytea_opts, VARSIZE(bytea_opts));
-    }
-    ReleaseSysCache(tp);
-  }
+  opts = NULL;
 
   /*
    * Now create the cache entry.  It's important to do this only after

@@ -1103,17 +1103,31 @@ Datum get_attoptions(Oid relid, int16 attnum) {
  */
 
 /*
+ * get_builtin_cast - the cast from one type to another, or NULL: every
+ * cast is compiled in (catalog/cat_builtin.h), since there is no CREATE
+ * CAST.  A few hundred rows, searched in order.
+ */
+const cat_cast_t *get_builtin_cast(Oid sourcetypeid, Oid targettypeid) {
+  int count;
+  const cat_cast_t *rows = cat_casts(&count);
+
+  for (int i = 0; i < count; i++)
+    if (rows[i].castsource == sourcetypeid &&
+        rows[i].casttarget == targettypeid)
+      return &rows[i];
+  return NULL;
+}
+
+/*
  * get_cast_oid - given two type OIDs, look up a cast OID
  *
  * If missing_ok is false, throw an error if the cast is not found.  If
  * true, just return InvalidOid.
  */
 Oid get_cast_oid(Oid sourcetypeid, Oid targettypeid, bool missing_ok) {
-  Oid oid;
+  const cat_cast_t *cast = get_builtin_cast(sourcetypeid, targettypeid);
+  Oid oid = cast != NULL ? cast->oid : InvalidOid;
 
-  oid = GetSysCacheOid2(CASTSOURCETARGET, Anum_pg_cast_oid,
-                        ObjectIdGetDatum(sourcetypeid),
-                        ObjectIdGetDatum(targettypeid));
   if (!OidIsValid(oid) && !missing_ok)
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
                     errmsg("cast from type %s to type %s does not exist",
@@ -2931,6 +2945,16 @@ const struct SubscriptRoutines *getSubscriptingRoutines(Oid typid,
  */
 
 /*
+ * get_statistic_tuple
+ *		The pg_statistic row of a relation's column, to release with
+ *		ReleaseSysCache(), or NULL: always NULL, as nothing analyzes a
+ *table in sm yet, and pg_statistic has no rows.
+ */
+HeapTuple get_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
+  return NULL;
+}
+
+/*
  * get_attavgwidth
  *
  *	  Given the table and attribute number of a column, get the average
@@ -2952,8 +2976,7 @@ int32 get_attavgwidth(Oid relid, AttrNumber attnum) {
     if (stawidth > 0)
       return stawidth;
   }
-  tp = SearchSysCache3(STATRELATTINH, ObjectIdGetDatum(relid),
-                       Int16GetDatum(attnum), BoolGetDatum(false));
+  tp = get_statistic_tuple(relid, attnum, false);
   if (HeapTupleIsValid(tp)) {
     stawidth = ((Form_pg_statistic)GETSTRUCT(tp))->stawidth;
     ReleaseSysCache(tp);

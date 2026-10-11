@@ -17,7 +17,8 @@ For each catalog named in CATALOGS it writes
   - the rows, in oid order, and cat_NAME(oid) to find one;
   - where the catalog has a name column worth searching by, the rows
     again in name order, and cat_NAMEs_named(name, &count) to find
-    all of that name.
+    all of that name; where it has none, cat_NAMEs(&count), all the
+    rows, for a caller to search.
 
 A row is read-only and lives for ever: a caller keeps the pointer for
 as long as it likes, and there is nothing to release.
@@ -28,12 +29,14 @@ A catalog is added to CATALOGS when something first asks for it.
 import re
 import sys
 
-# catalog -> (name of its rows in C, the column to search by name)
+# catalog -> (name of its rows in C, the column to search by name, or
+# None for a catalog that has no name)
 CATALOGS = {
     "pg_namespace": ("namespace", "nspname"),
     "pg_type": ("type", "typname"),
     "pg_proc": ("proc", "proname"),
     "pg_operator": ("operator", "oprname"),
+    "pg_cast": ("cast", None),
 }
 
 # BKI column type -> (C type, how a value is written)
@@ -177,11 +180,26 @@ def write_header(catalogs, out):
         w(f"}} cat_{short}_t;\n\n")
         w(f"/* The {catalog} row with this oid, or NULL. */\n")
         w(f"extern const cat_{short}_t *cat_{short}(Oid oid);\n\n")
+        if name_col is None:
+            w(f"/* Every {catalog} row, in oid order, and how many in *count. */\n")
+            w(f"extern const cat_{short}_t *cat_{short}s(int *count);\n")
+            continue
         w(f"/*\n * The {catalog} rows whose {name_col} is name, in oid order, and how\n")
         w(" * many in *count; NULL and 0 if there are none.\n */\n")
         w(f"extern const cat_{short}_t *const *cat_{short}s_named(const char *name,\n")
         w(f"{' ' * (len(short) * 2 + 43)}int *count);\n")
     w("\n#endif /* CAT_BUILTIN_H */\n")
+
+
+def write_oid_lookup(catalog, short, w):
+    """Write cat_SHORT(oid), a binary search of the rows in oid order."""
+    w(f"/* Find the {catalog} row with this oid: a binary search. */\n")
+    w(f"const cat_{short}_t *cat_{short}(Oid oid) {{\n")
+    w(f"  int lo = 0, hi = lengthof({short}_rows) - 1;\n\n")
+    w("  while (lo <= hi) {\n    int mid = (lo + hi) / 2;\n\n")
+    w(f"    if ({short}_rows[mid].oid == oid)\n      return &{short}_rows[mid];\n")
+    w(f"    if ({short}_rows[mid].oid < oid)\n      lo = mid + 1;\n    else\n      hi = mid - 1;\n")
+    w("  }\n  return NULL;\n}\n\n")
 
 
 def write_source(catalogs, out):
@@ -194,7 +212,7 @@ def write_source(catalogs, out):
     for catalog, (short, name_col) in CATALOGS.items():
         cols, rows = catalogs[catalog]
         names = [c for c, _ in cols]
-        oid_at, name_at = names.index("oid"), names.index(name_col)
+        oid_at = names.index("oid")
         rows = sorted(rows, key=lambda r: int(r[oid_at][1]))
         body = []
         w(f"\n/* ---- {catalog} ---- */\n\n")
@@ -210,19 +228,19 @@ def write_source(catalogs, out):
         w(f"\nstatic const cat_{short}_t {short}_rows[] = {{\n")
         w("".join(body))
         w("};\n\n")
+        write_oid_lookup(catalog, short, w)
+        if name_col is None:
+            w(f"/* Every {catalog} row, in oid order. */\n")
+            w(f"const cat_{short}_t *cat_{short}s(int *count) {{\n")
+            w(f"  *count = lengthof({short}_rows);\n  return {short}_rows;\n}}\n")
+            continue
+        name_at = names.index(name_col)
         order = sorted(range(len(rows)), key=lambda i: (rows[i][name_at][1].encode(), i))
         w(f"/* The rows in order of {name_col}, and of oid within a name. */\n")
         w(f"static const cat_{short}_t *const {short}_by_name[] = {{\n")
         for i in order:
             w(f"    &{short}_rows[{i}],\n")
         w("};\n\n")
-        w(f"/* Find the {catalog} row with this oid: a binary search. */\n")
-        w(f"const cat_{short}_t *cat_{short}(Oid oid) {{\n")
-        w(f"  int lo = 0, hi = lengthof({short}_rows) - 1;\n\n")
-        w("  while (lo <= hi) {\n    int mid = (lo + hi) / 2;\n\n")
-        w(f"    if ({short}_rows[mid].oid == oid)\n      return &{short}_rows[mid];\n")
-        w(f"    if ({short}_rows[mid].oid < oid)\n      lo = mid + 1;\n    else\n      hi = mid - 1;\n")
-        w("  }\n  return NULL;\n}\n\n")
         w(f"/* Find the {catalog} rows named name: a binary search for the first. */\n")
         w(f"const cat_{short}_t *const *cat_{short}s_named(const char *name, int *count) {{\n")
         w(f"  int lo = 0, hi = lengthof({short}_by_name);\n  int n = 0;\n\n")

@@ -1311,3 +1311,55 @@ every session once it commits.
 - `server.sh` creates a table, and confirms another session
   sees it, that IF NOT EXISTS passes over it, and that a text
   column is refused.
+
+## Step 38: INSERT and a sequential scan go to sm
+
+The other two of `../sm/PART4.md` §9.5's statements: rows go
+into a table in sm, and a scan reads them back, under the
+transaction's isolation level.
+
+- **A user's relation is built from sm3's definition**
+  (`RelationBuildSmDesc()`): any oid from `FirstNormalObjectId`
+  up. It is a plain permanent table whose row type is a record,
+  with no options, rules, triggers, row security, indexes or
+  extended statistics; its columns and NOT NULL are sm's. It
+  keeps the heap's table AM routine, which the executor still
+  asks for some things, and its rows are read and written by
+  sm. `RelationIsSm()` tells such a relation.
+- **smstore opens a table once a transaction**, to read or to
+  write, and closes it as the transaction ends; the table's
+  lock is held until then.
+- **`ExecInsert()` calls `smstore_insert()`**, which writes the
+  row and every index; a row's tid carries its rowno, 65535
+  to a block. Anything else that writes, UPDATE, DELETE, MERGE,
+  ON CONFLICT, is refused at `ExecInitModifyTable()`, before a
+  heap that is not there is touched.
+- **A sequential scan of a table in sm is sm's**: forwards,
+  in rowno order, into a virtual slot.
+- **Each command begins a statement in sm** (`sm_stmt_begin`,
+  from `StartTransactionCommand()`): READ COMMITTED reads at a
+  snapshot a statement, and a statement does not see its own
+  rows.
+- **The planner reads what is compiled in, or nothing**:
+  `pg_cast` is compiled in (`gen_cat.py` takes a catalog with
+  no name column), with `get_builtin_cast()`; a coercion's and
+  a function's cost read `cat_proc()`. There are no statistics
+  (`get_statistic_tuple()` finds none) and no tablespace
+  options, and a table in sm is estimated as ten pages, as a
+  heap never analyzed is.
+- **RELOID lookups of a user's relation read its descriptor**
+  (`RelationGetClassForm()`): `has_subclass()`, row security.
+  Its permissions are the default of its owner, the one
+  superuser.
+- **An abort no longer checks the commit log**:
+  `TransactionIdDidCommit()` is a dummy since step 19, true for
+  every xid, so the check turned any error after an xid was
+  assigned into a PANIC that ended the server.
+- **Not yet**: `=` in a WHERE, which needs `pg_amop`; aggregates;
+  INSERT ... SELECT, which reads `pg_constraint`; savepoints.
+- `make tsan` suppresses races with a RocksDB frame in them
+  (`test/tsan.supp`): RocksDB is not built for the sanitizer.
+- `server.sh` inserts and scans, with and without a WHERE,
+  checks NOT NULL, a rollback, that UPDATE is refused, and that
+  a scan at READ COMMITTED sees another session's commit and
+  one at REPEATABLE READ does not.

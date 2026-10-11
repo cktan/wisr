@@ -102,15 +102,18 @@ endef
 # the thread sanitizer, and the statements in test/ run with it, alone
 # and in threads, and test/server.sh run on it. The sanitizer cannot map its memory with the address
 # space randomised, hence setarch -R. sq and sm are not instrumented;
-# sys is.
+# sys is. RocksDB is not either, and test/tsan.supp says why its
+# reports are left out.
 .PHONY: tsan
 tsan: LINK_SYS = $(LIBSYS_TSAN)
 tsan: gen $(LIBSQ) $(LIBSM) $(LIBSYS_TSAN)
 	$(MAKE) -C src OBJ=tsan.o
 	@mkdir -p build
 	$(call link_shared,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
-	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
-	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/server.sh
+	TSAN_OPTIONS="suppressions=$(CURDIR)/test/tsan.supp" \
+	    DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
+	TSAN_OPTIONS="suppressions=$(CURDIR)/test/tsan.supp" \
+	    DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/server.sh
 
 # The parser is sq and a converter (src/backend/parser/parser.c). sq's
 # tests keep what PostgreSQL's parser printed for each of their files;

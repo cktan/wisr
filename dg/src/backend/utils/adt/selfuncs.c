@@ -4898,9 +4898,8 @@ void examine_variable(PlannerInfo *root, Node *node, int varRelid,
                 elog(ERROR,
                      "no function provided to release variable stats with");
             } else if (index->indpred == NIL) {
-              vardata->statsTuple = SearchSysCache3(
-                  STATRELATTINH, ObjectIdGetDatum(index->indexoid),
-                  Int16GetDatum(pos + 1), BoolGetDatum(false));
+              vardata->statsTuple =
+                  get_statistic_tuple(index->indexoid, pos + 1, false);
               vardata->freefunc = ReleaseSysCache;
 
               if (HeapTupleIsValid(vardata->statsTuple)) {
@@ -5104,8 +5103,7 @@ static void examine_simple_variable(PlannerInfo *root, Var *var,
      * column in pg_statistic
      */
     vardata->statsTuple =
-        SearchSysCache3(STATRELATTINH, ObjectIdGetDatum(rte->relid),
-                        Int16GetDatum(var->varattno), BoolGetDatum(rte->inh));
+        get_statistic_tuple(rte->relid, var->varattno, rte->inh);
     vardata->freefunc = ReleaseSysCache;
 
     if (HeapTupleIsValid(vardata->statsTuple)) {
@@ -5537,9 +5535,7 @@ static void examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
       if (HeapTupleIsValid(vardata->statsTuple) && !vardata->freefunc)
         elog(ERROR, "no function provided to release variable stats with");
     } else {
-      vardata->statsTuple =
-          SearchSysCache3(STATRELATTINH, ObjectIdGetDatum(relid),
-                          Int16GetDatum(colnum), BoolGetDatum(rte->inh));
+      vardata->statsTuple = get_statistic_tuple(relid, colnum, rte->inh);
       vardata->freefunc = ReleaseSysCache;
     }
   } else {
@@ -5556,9 +5552,7 @@ static void examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
       if (HeapTupleIsValid(vardata->statsTuple) && !vardata->freefunc)
         elog(ERROR, "no function provided to release variable stats with");
     } else {
-      vardata->statsTuple =
-          SearchSysCache3(STATRELATTINH, ObjectIdGetDatum(relid),
-                          Int16GetDatum(colnum), BoolGetDatum(false));
+      vardata->statsTuple = get_statistic_tuple(relid, colnum, false);
       vardata->freefunc = ReleaseSysCache;
     }
   }

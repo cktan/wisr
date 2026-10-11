@@ -23,6 +23,7 @@
 #include "postgres.h"
 
 #include "access/relscan.h"
+#include "access/smstore.h"
 #include "access/tableam.h"
 #include "executor/execScan.h"
 #include "executor/executor.h"
@@ -55,6 +56,16 @@ static TupleTableSlot *SeqNext(SeqScanState *node) {
   estate = node->ss.ps.state;
   direction = estate->es_direction;
   slot = node->ss.ss_ScanTupleSlot;
+
+  /* A table in sm is read by sm, forwards. */
+  if (RelationIsSm(node->ss.ss_currentRelation)) {
+    if (!ScanDirectionIsForward(direction))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("a table scan runs forwards only")));
+    if (node->sm_scan == NULL)
+      node->sm_scan = smstore_beginscan(node->ss.ss_currentRelation);
+    return smstore_getnext(node->sm_scan, slot) ? slot : NULL;
+  }
 
   if (scandesc == NULL) {
     /*
@@ -199,9 +210,12 @@ SeqScanState *ExecInitSeqScan(SeqScan *node, EState *estate, int eflags) {
       ExecOpenScanRelation(estate, node->scan.scanrelid, eflags);
 
   /* and create slot with the appropriate rowtype */
-  ExecInitScanTupleSlot(estate, &scanstate->ss,
-                        RelationGetDescr(scanstate->ss.ss_currentRelation),
-                        table_slot_callbacks(scanstate->ss.ss_currentRelation));
+  ExecInitScanTupleSlot(
+      estate, &scanstate->ss,
+      RelationGetDescr(scanstate->ss.ss_currentRelation),
+      RelationIsSm(scanstate->ss.ss_currentRelation)
+          ? &TTSOpsVirtual
+          : table_slot_callbacks(scanstate->ss.ss_currentRelation));
 
   /*
    * Initialize result type and projection.
@@ -256,6 +270,8 @@ void ExecEndSeqScan(SeqScanState *node) {
    */
   if (scanDesc != NULL)
     table_endscan(scanDesc);
+  if (node->sm_scan != NULL)
+    smstore_endscan(node->sm_scan);
 }
 
 /* ----------------------------------------------------------------
@@ -277,6 +293,11 @@ void ExecReScanSeqScan(SeqScanState *node) {
   if (scan != NULL)
     table_rescan(scan,  /* scan desc */
                  NULL); /* new scan keys */
+  /* A scan of a table in sm begins again at the next row asked for. */
+  if (node->sm_scan != NULL) {
+    smstore_endscan(node->sm_scan);
+    node->sm_scan = NULL;
+  }
 
   ExecScanReScan((ScanState *)node);
 }

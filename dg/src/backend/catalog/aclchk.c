@@ -2976,6 +2976,17 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
   Oid ownerId;
 
   /*
+   * A user's relation is sm's: no pg_class row, and no ACL but the default
+   * one, of its owner, the one superuser there is.
+   */
+  if (table_oid >= FirstNormalObjectId) {
+    if (superuser_arg(roleid))
+      return mask;
+    acl = acldefault(OBJECT_TABLE, BOOTSTRAP_SUPERUSERID);
+    return aclmask(acl, roleid, BOOTSTRAP_SUPERUSERID, mask, how);
+  }
+
+  /*
    * Must get the relation's tuple from pg_class
    */
   tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(table_oid));

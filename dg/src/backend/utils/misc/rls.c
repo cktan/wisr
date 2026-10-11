@@ -23,6 +23,7 @@
 #include "utils/acl.h"
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
 #include "utils/rls.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
@@ -49,8 +50,7 @@
  */
 int check_enable_rls(Oid relid, Oid checkAsUser, bool noError) {
   Oid user_id = OidIsValid(checkAsUser) ? checkAsUser : GetUserId();
-  HeapTuple tuple;
-  Form_pg_class classform;
+  Relation rel;
   bool relrowsecurity;
   bool relforcerowsecurity;
   bool amowner;
@@ -59,16 +59,16 @@ int check_enable_rls(Oid relid, Oid checkAsUser, bool noError) {
   if (relid < (Oid)FirstNormalObjectId)
     return RLS_NONE;
 
-  /* Fetch relation's relrowsecurity and relforcerowsecurity flags */
-  tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (!HeapTupleIsValid(tuple))
+  /*
+   * Fetch relation's relrowsecurity and relforcerowsecurity flags, from its
+   * descriptor: a user's relation is sm's, with no pg_class row.
+   */
+  rel = RelationIdGetRelation(relid);
+  if (!RelationIsValid(rel))
     return RLS_NONE;
-  classform = (Form_pg_class)GETSTRUCT(tuple);
-
-  relrowsecurity = classform->relrowsecurity;
-  relforcerowsecurity = classform->relforcerowsecurity;
-
-  ReleaseSysCache(tuple);
+  relrowsecurity = rel->rd_rel->relrowsecurity;
+  relforcerowsecurity = rel->rd_rel->relforcerowsecurity;
+  RelationClose(rel);
 
   /* Nothing to do if the relation does not have RLS */
   if (!relrowsecurity)

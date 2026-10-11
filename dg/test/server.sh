@@ -202,6 +202,56 @@ local_psql -c 'create table t2 (a text)' >> "$work/table.out" 2>&1
 grep -q 'type text is not supported yet' "$work/table.out" ||
   fail "create table, a type not taken"
 
+# Verify that INSERT writes rows to sm and a scan reads them back, in the
+# transaction's isolation.
+# 1. Insert rows into t1, one statement of two, and confirm a scan with and
+#    without a WHERE returns them.
+# 2. Confirm a NULL in the NOT NULL column is refused, and a rolled back
+#    insert leaves nothing.
+# 3. Confirm UPDATE is refused, not done on a heap that is not there.
+# 4. In a session at READ COMMITTED, then at REPEATABLE READ, scan; insert
+#    from another session; scan again: the first sees the new row, the
+#    second does not.
+local_psql -c 'insert into t1 values (1, 10, 100)' > /dev/null 2>&1
+local_psql -c 'insert into t1 values (2, 20, 200), (3, 30, 300)' > /dev/null 2>&1
+[ "$(local_psql -c 'select * from t1' 2>&1 | tr '\n' ' ')" = \
+  "1|10|100 2|20|200 3|30|300 " ] || fail "insert and scan"
+[ "$(local_psql -c 'select a + b from t1 where c > 150' 2>&1 | tr '\n' ' ')" \
+  = "22 33 " ] || fail "scan with a WHERE"
+local_psql -c 'insert into t1 values (4, 40, null)' > "$work/rows.out" 2>&1
+grep -q 'violates not-null constraint' "$work/rows.out" || fail "not null"
+local_psql > /dev/null 2>&1 <<'SQL'
+begin;
+insert into t1 values (5, 50, 500);
+rollback;
+SQL
+[ "$(local_psql -c 'select a from t1 where a > 3' 2>&1)" = "" ] ||
+  fail "rollback"
+local_psql -c 'update t1 set a = 0' >> "$work/rows.out" 2>&1
+grep -q 'only a plain INSERT writes to table "t1" yet' "$work/rows.out" ||
+  fail "update refused"
+mkfifo "$work/iso.in"
+local_psql < "$work/iso.in" > "$work/iso.out" 2>&1 &
+iso=$!
+exec 4> "$work/iso.in"
+row=6
+for level in "read committed" "repeatable read"; do
+  echo "begin isolation level $level; select count_me from (select 1 as count_me) s;" >&4
+  echo "select a from t1 where a > 5;" >&4
+  for _ in $(seq 50); do
+    [ "$(grep -c '^1$' "$work/iso.out")" -ge $((row - 5)) ] && break
+    sleep 0.1
+  done
+  local_psql -c "insert into t1 values ($row, 0, 0)" > /dev/null 2>&1
+  echo "select 'after'; select a from t1 where a > 5; commit;" >&4
+  row=$((row + 1))
+done
+exec 4>&-
+wait $iso
+[ "$(tr '\n' ' ' < "$work/iso.out")" = \
+  "BEGIN 1 after 6 COMMIT BEGIN 1 6 after 6 COMMIT " ] ||
+  fail "isolation levels"
+
 # Verify that a signal sent to the server can land only in the postmaster's
 # thread: every other thread, sessions, sm's, RocksDB's and sys's, blocks the
 # signals the postmaster handles, whose handlers set the postmaster's latch.

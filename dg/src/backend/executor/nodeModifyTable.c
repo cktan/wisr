@@ -53,6 +53,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/smstore.h"
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "commands/trigger.h"
@@ -1121,14 +1122,11 @@ static TupleTableSlot *ExecInsert(ModifyTableContext *context,
 
       /* Since there was no insertion conflict, we're done */
     } else {
-      /* insert the tuple normally */
-      table_tuple_insert(resultRelationDesc, slot, estate->es_output_cid, 0,
-                         NULL);
-
-      /* insert index entries for tuple */
-      if (resultRelInfo->ri_NumIndices > 0)
-        recheckIndexes = ExecInsertIndexTuples(resultRelInfo, slot, estate,
-                                               false, false, NULL, NIL, false);
+      /*
+       * The row goes to sm, which writes every index of the table with it
+       * (access/smstore.h).
+       */
+      smstore_insert(resultRelationDesc, slot);
     }
   }
 
@@ -4465,6 +4463,15 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
      */
     CheckValidResultRel(resultRelInfo, operation, node->onConflictAction,
                         mergeActions);
+
+    /* sm's tables take an INSERT so far, and nothing else that writes. */
+    if (RelationIsSm(resultRelInfo->ri_RelationDesc) &&
+        (operation != CMD_INSERT || node->onConflictAction != ONCONFLICT_NONE))
+      ereport(
+          ERROR,
+          (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+           errmsg("only a plain INSERT writes to table \"%s\" yet",
+                  RelationGetRelationName(resultRelInfo->ri_RelationDesc))));
 
     resultRelInfo++;
     i++;

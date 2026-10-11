@@ -32,6 +32,7 @@
 #include <unistd.h>
 
 #include "access/htup_details.h"
+#include "access/smstore.h"
 #include "access/multixact.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
@@ -310,6 +311,8 @@ static Relation AllocateRelationDesc(Form_pg_class relp);
 static void RelationParseRelOptions(Relation relation, HeapTuple tuple);
 static void RelationBuildTupleDesc(Relation relation);
 static Relation RelationBuildDesc(Oid targetRelId, bool insertIt);
+static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt);
+static void InitTableAmRoutine(Relation relation);
 static void RelationInitPhysicalAddr(Relation relation);
 static void load_critical_index(Oid indexoid, Oid heapoid);
 static TupleDesc GetPgClassDescriptor(void);
@@ -1014,6 +1017,10 @@ static Relation RelationBuildDesc(Oid targetRelId, bool insertIt) {
   HeapTuple pg_class_tuple;
   Form_pg_class relp;
 
+  /* A relation a user made is sm's: no pg_class row describes it. */
+  if (targetRelId >= FirstNormalObjectId)
+    return RelationBuildSmDesc(targetRelId, insertIt);
+
   /*
    * This function and its subroutines can allocate a good deal of transient
    * data in CurrentMemoryContext.  Traditionally we've just leaked that
@@ -1262,6 +1269,119 @@ retry:
 #endif
 
   return relation;
+}
+
+/*
+ * Build the descriptor of a table in sm (access/smstore.h), from sm3's
+ * definition of it, in place of its pg_class and pg_attribute rows: a plain
+ * permanent table with no options, rules, triggers or row security, whose
+ * row type is a record.  NULL if there is no such table.
+ */
+static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
+  smstore_table_t *desc = smstore_table_desc(targetRelId);
+  FormData_pg_class form;
+  Relation relation;
+  MemoryContext oldcxt;
+  TupleConstr *constr;
+  bool has_not_null = false;
+
+  if (desc == NULL)
+    return NULL;
+
+  memset(&form, 0, sizeof(form));
+  form.oid = targetRelId;
+  namestrcpy(&form.relname, desc->name);
+  form.relnamespace = desc->nspoid;
+  form.relowner = BOOTSTRAP_SUPERUSERID;
+  form.relam = HEAP_TABLE_AM_OID;
+  form.relfilenode = targetRelId;
+  form.relkind = RELKIND_RELATION;
+  form.relpersistence = RELPERSISTENCE_PERMANENT;
+  form.relispopulated = true;
+  form.relnatts = desc->ncolumns;
+  form.relreplident = REPLICA_IDENTITY_NOTHING;
+  relation = AllocateRelationDesc(&form);
+  RelationGetRelid(relation) = targetRelId;
+  relation->rd_refcnt = 0;
+  relation->rd_isnailed = false;
+  relation->rd_createSubid = InvalidSubTransactionId;
+  relation->rd_newRelfilelocatorSubid = InvalidSubTransactionId;
+  relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
+  relation->rd_droppedSubid = InvalidSubTransactionId;
+  relation->rd_backend = INVALID_PROC_NUMBER;
+  relation->rd_islocaltemp = false;
+
+  /* The columns, in the cache's context, as AllocateRelationDesc's are. */
+  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+  relation->rd_att->tdtypeid = RECORDOID;
+  relation->rd_att->tdtypmod = -1;
+  for (int i = 0; i < desc->ncolumns; i++) {
+    smstore_column_t *col = &desc->columns[i];
+    Form_pg_attribute att = TupleDescAttr(relation->rd_att, i);
+
+    if (col->dropped) {
+      /* A dropped column keeps its place, as pg_attribute's does. */
+      TupleDescInitEntry(relation->rd_att, i + 1, col->name, INT4OID, -1, 0);
+      att->attisdropped = true;
+      att->atttypid = InvalidOid;
+    } else {
+      TupleDescInitEntry(relation->rd_att, i + 1, col->name, col->typid,
+                         col->typmod, 0);
+      att->attnotnull = col->not_null;
+      has_not_null |= col->not_null;
+    }
+    att->attrelid = targetRelId;
+    populate_compact_attribute(relation->rd_att, i);
+  }
+  constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
+  constr->has_not_null = has_not_null;
+  relation->rd_att->constr = constr;
+  MemoryContextSwitchTo(oldcxt);
+
+  relation->rd_fkeylist = NIL;
+  relation->rd_fkeyvalid = false;
+  /* No index yet, and no extended statistics: there is no CREATE STATISTICS. */
+  relation->rd_indexlist = NIL;
+  relation->rd_pkindex = InvalidOid;
+  relation->rd_replidindex = InvalidOid;
+  relation->rd_indexvalid = true;
+  relation->rd_statlist = NIL;
+  relation->rd_statvalid = true;
+  relation->rd_rules = NULL;
+  relation->rd_rulescxt = NULL;
+  relation->trigdesc = NULL;
+  relation->rd_rsdesc = NULL;
+
+  /*
+   * The heap's routine, as a plain table's: the executor still asks it for
+   * a slot's kind, and reads and writes the rows through sm itself.
+   */
+  relation->rd_amhandler = F_HEAP_TABLEAM_HANDLER;
+  InitTableAmRoutine(relation);
+
+  RelationInitLockInfo(relation);
+  RelationInitPhysicalAddr(relation);
+  relation->rd_smgr = NULL;
+
+  if (insertIt)
+    RelationCacheInsert(relation, true);
+  relation->rd_isvalid = true;
+  return relation;
+}
+
+/*
+ * Copy relid's pg_class form into *form, from its descriptor: for a caller
+ * that read it from pg_class's row, which a relation in sm has none of.
+ * Returns false if there is no such relation.
+ */
+bool RelationGetClassForm(Oid relid, FormData_pg_class *form) {
+  Relation rel = RelationIdGetRelation(relid);
+
+  if (!RelationIsValid(rel))
+    return false;
+  memcpy(form, rel->rd_rel, CLASS_TUPLE_SIZE);
+  RelationClose(rel);
+  return true;
 }
 
 /*

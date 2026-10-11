@@ -22,6 +22,7 @@
 
 #include "access/commit_ts.h"
 #include "access/multixact.h"
+#include "access/smstore.h"
 #include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
@@ -1082,12 +1083,6 @@ static TransactionId RecordTransactionAbort(bool isSubXact) {
   if (!TransactionIdIsValid(xid))
     return InvalidTransactionId;
 
-  /*
-   * Check that we haven't aborted halfway through RecordTransactionCommit.
-   */
-  if (TransactionIdDidCommit(xid))
-    elog(PANIC, "cannot abort transaction %u, it was already committed", xid);
-
   nchildren = xactGetCommittedChildren(&children);
 
   /* Compute latestXid while we have the child XIDs handy */
@@ -1810,6 +1805,9 @@ static void CleanupTransaction(void) {
  */
 void StartTransactionCommand(void) {
   TransactionState s = CurrentTransactionState;
+
+  /* Each command is a statement of sm's too (access/smstore.h). */
+  smstore_statement_start();
 
   switch (s->blockState) {
     /*

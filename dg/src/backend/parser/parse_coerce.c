@@ -755,13 +755,11 @@ static Node *build_coercion_expression(Node *node, CoercionPathType pathtype,
   int nargs = 0;
 
   if (OidIsValid(funcId)) {
-    HeapTuple tp;
-    Form_pg_proc procstruct;
+    const cat_proc_t *procstruct;
 
-    tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcId));
-    if (!HeapTupleIsValid(tp))
+    procstruct = cat_proc(funcId);
+    if (procstruct == NULL)
       elog(ERROR, "cache lookup failed for function %u", funcId);
-    procstruct = (Form_pg_proc)GETSTRUCT(tp);
 
     /*
      * These Asserts essentially check that function is a legal coercion
@@ -777,8 +775,6 @@ static Node *build_coercion_expression(Node *node, CoercionPathType pathtype,
     /* Assert(procstruct->proargtypes.values[0] == exprType(node)); */
     Assert(nargs < 2 || procstruct->proargtypes.values[1] == INT4OID);
     Assert(nargs < 3 || procstruct->proargtypes.values[2] == BOOLOID);
-
-    ReleaseSysCache(tp);
   }
 
   if (pathtype == COERCION_PATH_FUNC) {
@@ -2666,8 +2662,7 @@ bool IsBinaryCoercible(Oid srctype, Oid targettype) {
  * there is a hard-wired rule for it rather than a pg_cast entry.
  */
 bool IsBinaryCoercibleWithCast(Oid srctype, Oid targettype, Oid *castoid) {
-  HeapTuple tuple;
-  Form_pg_cast castForm;
+  const cat_cast_t *castForm;
   bool result;
 
   *castoid = InvalidOid;
@@ -2726,19 +2721,15 @@ bool IsBinaryCoercibleWithCast(Oid srctype, Oid targettype, Oid *castoid) {
       return true;
 
   /* Else look in pg_cast */
-  tuple = SearchSysCache2(CASTSOURCETARGET, ObjectIdGetDatum(srctype),
-                          ObjectIdGetDatum(targettype));
-  if (!HeapTupleIsValid(tuple))
+  castForm = get_builtin_cast(srctype, targettype);
+  if (castForm == NULL)
     return false; /* no cast */
-  castForm = (Form_pg_cast)GETSTRUCT(tuple);
 
   result = (castForm->castmethod == COERCION_METHOD_BINARY &&
             castForm->castcontext == COERCION_CODE_IMPLICIT);
 
   if (result)
     *castoid = castForm->oid;
-
-  ReleaseSysCache(tuple);
 
   return result;
 }
@@ -2772,7 +2763,6 @@ bool IsBinaryCoercibleWithCast(Oid srctype, Oid targettype, Oid *castoid) {
 CoercionPathType find_coercion_pathway(Oid targetTypeId, Oid sourceTypeId,
                                        CoercionContext ccontext, Oid *funcid) {
   CoercionPathType result = COERCION_PATH_NONE;
-  HeapTuple tuple;
 
   *funcid = InvalidOid;
 
@@ -2791,11 +2781,9 @@ CoercionPathType find_coercion_pathway(Oid targetTypeId, Oid sourceTypeId,
     return COERCION_PATH_NONE;
 
   /* Look in pg_cast */
-  tuple = SearchSysCache2(CASTSOURCETARGET, ObjectIdGetDatum(sourceTypeId),
-                          ObjectIdGetDatum(targetTypeId));
+  const cat_cast_t *castForm = get_builtin_cast(sourceTypeId, targetTypeId);
 
-  if (HeapTupleIsValid(tuple)) {
-    Form_pg_cast castForm = (Form_pg_cast)GETSTRUCT(tuple);
+  if (castForm != NULL) {
     CoercionContext castcontext;
 
     /* convert char value for castcontext to CoercionContext enum */
@@ -2833,8 +2821,6 @@ CoercionPathType find_coercion_pathway(Oid targetTypeId, Oid sourceTypeId,
         break;
       }
     }
-
-    ReleaseSysCache(tuple);
   } else {
     /*
      * If there's no pg_cast entry, perhaps we are dealing with a pair of
@@ -2920,7 +2906,6 @@ CoercionPathType find_typmod_coercion_function(Oid typeId, Oid *funcid) {
   CoercionPathType result;
   Type targetType;
   Type typeForm;
-  HeapTuple tuple;
 
   *funcid = InvalidOid;
   result = COERCION_PATH_FUNC;
@@ -2936,15 +2921,10 @@ CoercionPathType find_typmod_coercion_function(Oid typeId, Oid *funcid) {
   }
 
   /* Look in pg_cast */
-  tuple = SearchSysCache2(CASTSOURCETARGET, ObjectIdGetDatum(typeId),
-                          ObjectIdGetDatum(typeId));
+  const cat_cast_t *castForm = get_builtin_cast(typeId, typeId);
 
-  if (HeapTupleIsValid(tuple)) {
-    Form_pg_cast castForm = (Form_pg_cast)GETSTRUCT(tuple);
-
+  if (castForm != NULL)
     *funcid = castForm->castfunc;
-    ReleaseSysCache(tuple);
-  }
 
   if (!OidIsValid(*funcid))
     result = COERCION_PATH_NONE;

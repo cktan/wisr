@@ -1259,9 +1259,8 @@ static void ExecHashBuildSkewHash(HashState *hashstate, HashJoinTable hashtable,
   /*
    * Try to find the MCV statistics for the outer relation's join key.
    */
-  statsTuple = SearchSysCache3(STATRELATTINH, ObjectIdGetDatum(node->skewTable),
-                               Int16GetDatum(node->skewColumn),
-                               BoolGetDatum(node->skewInherit));
+  statsTuple =
+      get_statistic_tuple(node->skewTable, node->skewColumn, node->skewInherit);
   if (!HeapTupleIsValid(statsTuple))
     return;
 

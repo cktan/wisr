@@ -20,10 +20,12 @@
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/nbtree.h"
+#include "access/smstore.h"
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "access/tableam.h"
 #include "access/transam.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/catalog.h"
 #include "catalog/heap.h"
 #include "catalog/pg_am.h"
@@ -993,7 +995,18 @@ void estimate_rel_size(Relation rel, int32 *attr_widths, BlockNumber *pages,
   BlockNumber relallvisible;
   double density;
 
-  if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind)) {
+  if (RelationIsSm(rel)) {
+    /*
+     * sm keeps no page count and no statistics yet: estimate as for a heap
+     * never analyzed, ten full pages of rows of the columns' widths.
+     */
+    int32 tuple_width = get_rel_data_width(rel, attr_widths) +
+                        MAXALIGN(SizeofHeapTupleHeader) + sizeof(ItemIdData);
+
+    *pages = 10;
+    *tuples = rint(10.0 * ((BLCKSZ - SizeOfPageHeaderData) / tuple_width));
+    *allvisfrac = 0;
+  } else if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind)) {
     table_relation_estimate_size(rel, attr_widths, pages, tuples, allvisfrac);
   } else if (rel->rd_rel->relkind == RELKIND_INDEX) {
     /*
@@ -1922,13 +1935,12 @@ Selectivity function_selectivity(PlannerInfo *root, Oid funcid, List *args,
  */
 void add_function_cost(PlannerInfo *root, Oid funcid, Node *node,
                        QualCost *cost) {
-  HeapTuple proctup;
-  Form_pg_proc procform;
+  const cat_proc_t *procform;
 
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(proctup))
+  /* Every function is compiled in (catalog/cat_builtin.h). */
+  procform = cat_proc(funcid);
+  if (procform == NULL)
     elog(ERROR, "cache lookup failed for function %u", funcid);
-  procform = (Form_pg_proc)GETSTRUCT(proctup);
 
   if (OidIsValid(procform->prosupport)) {
     SupportRequestCost req;
@@ -1950,15 +1962,12 @@ void add_function_cost(PlannerInfo *root, Oid funcid, Node *node,
       /* Success, so accumulate support function's estimate into *cost */
       cost->startup += req.startup;
       cost->per_tuple += req.per_tuple;
-      ReleaseSysCache(proctup);
       return;
     }
   }
 
   /* No support function, or it failed, so rely on procost */
   cost->per_tuple += procform->procost * cpu_operator_cost;
-
-  ReleaseSysCache(proctup);
 }
 
 /*

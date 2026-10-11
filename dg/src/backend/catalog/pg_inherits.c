@@ -325,16 +325,12 @@ List *find_all_inheritors(Oid parentrelId, LOCKMODE lockmode,
  * to keep it here since it's normally used with the other routines here.
  */
 bool has_subclass(Oid relationId) {
-  HeapTuple tuple;
-  bool result;
+  FormData_pg_class form;
 
-  tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relationId));
-  if (!HeapTupleIsValid(tuple))
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relationId, &form))
     elog(ERROR, "cache lookup failed for relation %u", relationId);
-
-  result = ((Form_pg_class)GETSTRUCT(tuple))->relhassubclass;
-  ReleaseSysCache(tuple);
-  return result;
+  return form.relhassubclass;
 }
 
 /*
