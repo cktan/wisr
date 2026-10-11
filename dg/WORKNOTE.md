@@ -1262,3 +1262,52 @@ sets the latch of the thread it runs in, in a thread with none.
   SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2 or SIGALRM
   unblocked; before the change, RocksDB's two threads and one
   more did.
+
+## Step 37: CREATE TABLE makes a table in sm
+
+The first of `../sm/PART4.md` §9.5's three statements. A table
+of `int2`, `int4` and `int8` columns, some NOT NULL, is created
+in sm3's catalog, in the session's transaction, and seen by
+every session once it commits.
+
+- **`access/smstore.h` is digres's one way into sm.** Only
+  `smstore.c` includes `sm.h`; the rest of the backend asks it
+  in PostgreSQL's types. Its session is the one
+  `datadir_open_session()` opened (`datadir_sm_session()`).
+- **An sm transaction follows the PostgreSQL one.** It begins
+  at the first call that needs one, at the transaction's
+  isolation level and read-only flag; it commits at
+  `XACT_EVENT_PRE_COMMIT`, so a commit sm refuses fails the
+  transaction, and aborts at `XACT_EVENT_ABORT`. A transaction
+  that touches no table begins none. Not yet: savepoints, and a
+  READ COMMITTED transaction's new snapshot each statement
+  (`sm_stmt_begin`).
+- **sm's errors map to SQLSTATEs**: a deadlock to `40P01`, an
+  interrupted wait to `57014`, anything retryable to `40001`,
+  the rest to `XX000`.
+- **Names are sm's.** `get_namespace_oid()` and
+  `get_relname_relid()` ask sm3's catalog, which has
+  `pg_catalog` and `public` built in; a relation is a table or
+  an index. The search path's `"$user"` is the role's name from
+  `GetUserNameFromId()`, not a `pg_authid` row.
+- **A type is its compiled-in row.** The parser's `Type` is a
+  `const cat_type_t *`, as `Operator` became one in step 6:
+  nothing to release. The name lookup, `TypeIsVisible()` and
+  `format_type_extended()` read `cat_type()`.
+  `getTypeIOParam()` has an overload for a row, and
+  `check_of_type()` takes one. The ALTER TYPE paths look the
+  type up by oid in the syscache, as before, and fail there.
+- **`ProcessUtilitySlow()` creates the table with
+  `smstore_create_table()`**, not `DefineRelation()`: no heap,
+  and no TOAST table beside it. What sm's tables have no room
+  for yet is refused: inheritance, partitions, `OF`, CHECK,
+  defaults, collations, identity, generated columns, options,
+  tablespaces, temporary and unlogged tables, and any type but
+  the three integers. A PRIMARY KEY or UNIQUE becomes an index
+  statement, which still fails at the catalog.
+- **Event triggers find none**: `EventCacheLookup()` returns
+  an empty list, since `pg_event_trigger` does not exist. The
+  rest of event triggers is not removed yet.
+- `server.sh` creates a table, and confirms another session
+  sees it, that IF NOT EXISTS passes over it, and that a text
+  column is refused.

@@ -185,6 +185,23 @@ PY
 grep -q "canceling authentication due to timeout" "$work/log" ||
   fail "auth timeout message"
 
+# Verify that CREATE TABLE makes a table in sm, for good.
+# 1. Create a table of integer columns, one NOT NULL, in its own session.
+# 2. Confirm another session cannot create it again, and IF NOT EXISTS
+#    passes over it.
+# 3. Confirm a column type sm's tables do not take yet is refused.
+[ "$(local_psql -c 'create table t1 (a int2, b int4, c int8 not null)' \
+  2>&1)" = "CREATE TABLE" ] || fail "create table"
+local_psql -c 'create table t1 (a int4)' > "$work/table.out" 2>&1
+grep -q 'relation "t1" already exists' "$work/table.out" ||
+  fail "create table twice"
+local_psql -c 'create table if not exists t1 (a int4)' >> "$work/table.out" 2>&1
+grep -q 'relation "t1" already exists, skipping' "$work/table.out" ||
+  fail "create table if not exists"
+local_psql -c 'create table t2 (a text)' >> "$work/table.out" 2>&1
+grep -q 'type text is not supported yet' "$work/table.out" ||
+  fail "create table, a type not taken"
+
 # Verify that a signal sent to the server can land only in the postmaster's
 # thread: every other thread, sessions, sm's, RocksDB's and sys's, blocks the
 # signals the postmaster handles, whose handlers set the postmaster's latch.

@@ -1750,13 +1750,11 @@ static Oid FuncNameAsType(List *funcname) {
   if (typtup == NULL)
     return InvalidOid;
 
-  if (((Form_pg_type)GETSTRUCT(typtup))->typisdefined &&
-      !OidIsValid(typeTypeRelid(typtup)))
+  if (typtup->typisdefined && !OidIsValid(typeTypeRelid(typtup)))
     result = typeTypeId(typtup);
   else
     result = InvalidOid;
 
-  ReleaseSysCache(typtup);
   return result;
 }
 

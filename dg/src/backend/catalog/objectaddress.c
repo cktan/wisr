@@ -1092,13 +1092,11 @@ static ObjectAddress get_object_address_type(ObjectType objtype,
   address.objectId = typeTypeId(tup);
 
   if (objtype == OBJECT_DOMAIN) {
-    if (((Form_pg_type)GETSTRUCT(tup))->typtype != TYPTYPE_DOMAIN)
+    if (tup->typtype != TYPTYPE_DOMAIN)
       ereport(ERROR,
               (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                errmsg("\"%s\" is not a domain", TypeNameToString(typename_))));
   }
-
-  ReleaseSysCache(tup);
 
   return address;
 }
@@ -2193,7 +2191,6 @@ static bool getPublicationSchemaInfo(const ObjectAddress *object,
   pnform = (Form_pg_publication_namespace)GETSTRUCT(tup);
   *pubname = get_publication_name(pnform->pnpubid, missing_ok);
   if (!(*pubname)) {
-    ReleaseSysCache(tup);
     return false;
   }
 
@@ -2202,13 +2199,11 @@ static bool getPublicationSchemaInfo(const ObjectAddress *object,
     Oid schemaid = pnform->pnnspid;
 
     pfree(*pubname);
-    ReleaseSysCache(tup);
     if (!missing_ok)
       elog(ERROR, "cache lookup failed for schema %u", schemaid);
     return false;
   }
 
-  ReleaseSysCache(tup);
   return true;
 }
 
@@ -2484,7 +2479,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
 
     appendStringInfo(&buffer, _("access method %s"),
                      NameStr(((Form_pg_am)GETSTRUCT(tup))->amname));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -2752,7 +2746,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
     appendStringInfo(
         &buffer, _("text search parser %s"),
         quote_qualified_identifier(nspname, NameStr(prsForm->prsname)));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -2780,7 +2773,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
     appendStringInfo(
         &buffer, _("text search dictionary %s"),
         quote_qualified_identifier(nspname, NameStr(dictForm->dictname)));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -2808,7 +2800,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
     appendStringInfo(
         &buffer, _("text search template %s"),
         quote_qualified_identifier(nspname, NameStr(tmplForm->tmplname)));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -2836,7 +2827,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
     appendStringInfo(
         &buffer, _("text search configuration %s"),
         quote_qualified_identifier(nspname, NameStr(cfgForm->cfgname)));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -2947,8 +2937,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
     umform = (Form_pg_user_mapping)GETSTRUCT(tup);
     useid = umform->umuser;
     srv = GetForeignServer(umform->umserver);
-
-    ReleaseSysCache(tup);
 
     if (OidIsValid(useid))
       usename = GetUserNameFromId(useid, false);
@@ -3101,7 +3089,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
     }
     appendStringInfo(&buffer, _("event trigger %s"),
                      NameStr(((Form_pg_event_trigger)GETSTRUCT(tup))->evtname));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -3121,7 +3108,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
                                        Anum_pg_parameter_acl_parname);
     parname = TextDatumGetCString(nameDatum);
     appendStringInfo(&buffer, _("parameter %s"), parname);
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -3212,7 +3198,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
     appendStringInfo(&buffer, _("publication of %s in publication %s"),
                      rel.data, pubname);
     pfree(rel.data);
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -4442,7 +4427,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
         quote_qualified_identifier(schema, NameStr(formStatistic->stxname)));
     if (objname)
       *objname = list_make2(schema, pstrdup(NameStr(formStatistic->stxname)));
-    ReleaseSysCache(tup);
   } break;
 
   case TSParserRelationId: {
@@ -4463,7 +4447,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
                                         schema, NameStr(formParser->prsname)));
     if (objname)
       *objname = list_make2(schema, pstrdup(NameStr(formParser->prsname)));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -4485,7 +4468,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
                                         schema, NameStr(formDict->dictname)));
     if (objname)
       *objname = list_make2(schema, pstrdup(NameStr(formDict->dictname)));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -4507,7 +4489,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
                                         schema, NameStr(formTmpl->tmplname)));
     if (objname)
       *objname = list_make2(schema, pstrdup(NameStr(formTmpl->tmplname)));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -4529,7 +4510,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
         &buffer, quote_qualified_identifier(schema, NameStr(formCfg->cfgname)));
     if (objname)
       *objname = list_make2(schema, pstrdup(NameStr(formCfg->cfgname)));
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -4655,8 +4635,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
     useid = umform->umuser;
     srv = GetForeignServer(umform->umserver);
 
-    ReleaseSysCache(tup);
-
     if (OidIsValid(useid))
       usename = GetUserNameFromId(useid, false);
     else
@@ -4777,7 +4755,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
     appendStringInfoString(&buffer, quote_identifier(evtname));
     if (objname)
       *objname = list_make1(evtname);
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -4799,7 +4776,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
     appendStringInfoString(&buffer, parname);
     if (objname)
       *objname = list_make1(parname);
-    ReleaseSysCache(tup);
     break;
   }
 
@@ -4888,7 +4864,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
     if (objargs)
       *objargs = list_make1(pubname);
 
-    ReleaseSysCache(tup);
     break;
   }
 

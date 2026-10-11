@@ -91,13 +91,12 @@ static void compute_return_type(TypeName *returnType, Oid languageOid,
   typtup = LookupTypeName(NULL, returnType, NULL, false);
 
   if (typtup) {
-    if (!((Form_pg_type)GETSTRUCT(typtup))->typisdefined) {
+    if (!typtup->typisdefined) {
       ereport(NOTICE, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                        errmsg("return type %s is only a shell",
                               TypeNameToString(returnType))));
     }
     rettype = typeTypeId(typtup);
-    ReleaseSysCache(typtup);
   } else {
     char *typnam = TypeNameToString(returnType);
     Oid namespaceId;
@@ -205,7 +204,7 @@ void interpret_function_parameter_list(
 
     typtup = LookupTypeName(pstate, t, NULL, false);
     if (typtup) {
-      if (!((Form_pg_type)GETSTRUCT(typtup))->typisdefined) {
+      if (!typtup->typisdefined) {
         /* We don't allow creating aggregates on shell types */
         if (objtype == OBJECT_AGGREGATE)
           ereport(ERROR, (errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
@@ -219,7 +218,6 @@ void interpret_function_parameter_list(
                            parser_errposition(pstate, t->location)));
       }
       toid = typeTypeId(typtup);
-      ReleaseSysCache(typtup);
     } else {
       ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
                       errmsg("type %s does not exist", TypeNameToString(t)),

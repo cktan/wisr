@@ -138,3 +138,6 @@ void datadir_open_session(const char *dbname) {
                            sm_errmsg())));
   on_proc_exit(close_sm_session, 0);
 }
+
+/* This session's sm session, or NULL if it has opened none. */
+sm_session_t *datadir_sm_session(void) { return sm_session; }

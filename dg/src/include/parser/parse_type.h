@@ -14,9 +14,11 @@
 #define PARSE_TYPE_H
 
 #include "access/htup.h"
+#include "catalog/cat_builtin.h"
 #include "parser/parse_node.h"
 
-typedef HeapTuple Type;
+/* A type is its row in the compiled-in pg_type: nothing to release. */
+typedef const cat_type_t *Type;
 
 extern Type LookupTypeName(ParseState *pstate, const TypeName *typeName,
                            int32 *typmod_p, bool missing_ok);

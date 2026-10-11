@@ -17,6 +17,7 @@
 
 #include "access/hash.h"
 #include "access/htup_details.h"
+#include "access/smstore.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
@@ -1897,9 +1898,8 @@ RegProcedure get_func_support(Oid funcid) {
  * Returns InvalidOid if there is no such relation.
  */
 Oid get_relname_relid(const char *relname, Oid relnamespace) {
-  return GetSysCacheOid2(RELNAMENSP, Anum_pg_class_oid,
-                         PointerGetDatum(relname),
-                         ObjectIdGetDatum(relnamespace));
+  /* A relation is sm's: a table, or an index on one. */
+  return smstore_relation_oid(relname, relnamespace);
 }
 
 #ifdef NOT_USED
@@ -2239,10 +2239,10 @@ void get_typlenbyvalalign(Oid typid, int16 *typlen, bool *typbyval,
 }
 
 /*
- * type_io_param
- *		The same as getTypeIOParam, for a type's row in the catalog.
+ * getTypeIOParam
+ *		The same, for a type's row in the compiled-in catalog.
  */
-static Oid type_io_param(const cat_type_t *type) {
+Oid getTypeIOParam(const cat_type_t *type) {
   return OidIsValid(type->typelem) ? type->typelem : type->oid;
 }
 
@@ -2297,7 +2297,7 @@ void get_type_io_data(Oid typid, IOFuncSelector which_func, int16 *typlen,
   *typbyval = typeStruct->typbyval;
   *typalign = typeStruct->typalign;
   *typdelim = typeStruct->typdelim;
-  *typioparam = type_io_param(typeTuple);
+  *typioparam = getTypeIOParam(typeTuple);
   switch (which_func) {
   case IOFunc_input:
     *func = typeStruct->typinput;
@@ -2729,7 +2729,7 @@ void getTypeInputInfo(Oid type, Oid *typInput, Oid *typIOParam) {
                            format_type_be(type))));
 
   *typInput = pt->typinput;
-  *typIOParam = type_io_param(typeTuple);
+  *typIOParam = getTypeIOParam(typeTuple);
 }
 
 /*
@@ -2781,7 +2781,7 @@ void getTypeBinaryInputInfo(Oid type, Oid *typReceive, Oid *typIOParam) {
                            format_type_be(type))));
 
   *typReceive = pt->typreceive;
-  *typIOParam = type_io_param(typeTuple);
+  *typIOParam = getTypeIOParam(typeTuple);
 }
 
 /*

@@ -157,6 +157,7 @@ extern void get_typlenbyval(Oid typid, int16 *typlen, bool *typbyval);
 extern void get_typlenbyvalalign(Oid typid, int16 *typlen, bool *typbyval,
                                  char *typalign);
 extern Oid getTypeIOParam(HeapTuple typeTuple);
+extern Oid getTypeIOParam(const struct cat_type_t *type);
 extern void get_type_io_data(Oid typid, IOFuncSelector which_func,
                              int16 *typlen, bool *typbyval, char *typalign,
                              char *typdelim, Oid *typioparam, Oid *func);

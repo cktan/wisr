@@ -18,6 +18,7 @@
 #include <ctype.h>
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "mb/pg_wchar.h"
@@ -107,8 +108,7 @@ Datum format_type(PG_FUNCTION_ARGS) {
  * Returns a palloc'd string, or NULL.
  */
 char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
-  HeapTuple tuple;
-  Form_pg_type typeform;
+  const cat_type_t *typeform;
   Oid array_base_type;
   bool is_array;
   char *buf;
@@ -121,8 +121,9 @@ char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
       return pstrdup("-");
   }
 
-  tuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type_oid));
-  if (!HeapTupleIsValid(tuple)) {
+  /* Every type is compiled in (catalog/cat_builtin.h). */
+  typeform = cat_type(type_oid);
+  if (typeform == NULL) {
     if ((flags & FORMAT_TYPE_INVALID_AS_NULL) != 0)
       return NULL;
     else if ((flags & FORMAT_TYPE_ALLOW_INVALID) != 0)
@@ -130,7 +131,6 @@ char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
     else
       elog(ERROR, "cache lookup failed for type %u", type_oid);
   }
-  typeform = (Form_pg_type)GETSTRUCT(tuple);
 
   /*
    * Check if it's a "true" array type.  Pseudo-array types such as "name"
@@ -142,9 +142,8 @@ char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
 
   if (IsTrueArrayType(typeform) && typeform->typstorage != TYPSTORAGE_PLAIN) {
     /* Switch our attention to the array element type */
-    ReleaseSysCache(tuple);
-    tuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(array_base_type));
-    if (!HeapTupleIsValid(tuple)) {
+    typeform = cat_type(array_base_type);
+    if (typeform == NULL) {
       if ((flags & FORMAT_TYPE_INVALID_AS_NULL) != 0)
         return NULL;
       else if ((flags & FORMAT_TYPE_ALLOW_INVALID) != 0)
@@ -152,7 +151,6 @@ char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
       else
         elog(ERROR, "cache lookup failed for type %u", type_oid);
     }
-    typeform = (Form_pg_type)GETSTRUCT(tuple);
     type_oid = array_base_type;
     is_array = true;
   } else
@@ -300,7 +298,7 @@ char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
     else
       nspname = get_namespace_name_or_temp(typeform->typnamespace);
 
-    typname = NameStr(typeform->typname);
+    typname = pstrdup(typeform->typname);
 
     buf = quote_qualified_identifier(nspname, typname);
 
@@ -310,8 +308,6 @@ char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
 
   if (is_array)
     buf = psprintf("%s[]", buf);
-
-  ReleaseSysCache(tuple);
 
   return buf;
 }

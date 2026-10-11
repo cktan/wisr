@@ -49,9 +49,6 @@ LookupTypeName(ParseState *pstate, const TypeName *typeName,
  *		the typmod value represented in the TypeName struct is computed and
  *		stored into *typmod_p.
  *
- * NB: on success, the caller must ReleaseSysCache the type tuple when done
- * with it.
- *
  * NB: direct callers of this function MUST check typisdefined before assuming
  * that the type is fully valid.  Most code should go through typenameType
  * or typenameTypeId instead.
@@ -75,7 +72,7 @@ LookupTypeNameExtended(ParseState *pstate,
 					   bool temp_ok, bool missing_ok)
 {
 	Oid			typoid;
-	HeapTuple	tup;
+	Type		tup;
 	int32		typmod;
 
 	if (typeName->names == NIL)
@@ -204,16 +201,16 @@ LookupTypeNameExtended(ParseState *pstate,
 		return NULL;
 	}
 
-	tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typoid));
-	if (!HeapTupleIsValid(tup)) /* should not happen */
+	tup = cat_type(typoid);
+	if (tup == NULL) /* should not happen */
 		elog(ERROR, "cache lookup failed for type %u", typoid);
 
-	typmod = typenameTypeMod(pstate, typeName, (Type) tup);
+	typmod = typenameTypeMod(pstate, typeName, tup);
 
 	if (typmod_p)
 		*typmod_p = typmod;
 
-	return (Type) tup;
+	return tup;
 }
 
 /*
@@ -247,8 +244,7 @@ LookupTypeNameOid(ParseState *pstate, const TypeName *typeName, bool missing_ok)
 		return InvalidOid;
 	}
 
-	typoid = ((Form_pg_type) GETSTRUCT(tup))->oid;
-	ReleaseSysCache(tup);
+	typoid = tup->oid;
 
 	return typoid;
 }
@@ -272,7 +268,7 @@ typenameType(ParseState *pstate, const TypeName *typeName, int32 *typmod_p)
 				 errmsg("type \"%s\" does not exist",
 						TypeNameToString(typeName)),
 				 parser_errposition(pstate, typeName->location)));
-	if (!((Form_pg_type) GETSTRUCT(tup))->typisdefined)
+	if (!tup->typisdefined)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("type \"%s\" is only a shell",
@@ -294,8 +290,7 @@ typenameTypeId(ParseState *pstate, const TypeName *typeName)
 	Type		tup;
 
 	tup = typenameType(pstate, typeName, NULL);
-	typoid = ((Form_pg_type) GETSTRUCT(tup))->oid;
-	ReleaseSysCache(tup);
+	typoid = tup->oid;
 
 	return typoid;
 }
@@ -313,8 +308,7 @@ typenameTypeIdAndMod(ParseState *pstate, const TypeName *typeName,
 	Type		tup;
 
 	tup = typenameType(pstate, typeName, typmod_p);
-	*typeid_p = ((Form_pg_type) GETSTRUCT(tup))->oid;
-	ReleaseSysCache(tup);
+	*typeid_p = tup->oid;
 }
 
 /*
@@ -348,14 +342,14 @@ typenameTypeMod(ParseState *pstate, const TypeName *typeName, Type typ)
 	 * for the shell-type case, since a shell couldn't possibly have a
 	 * typmodin function.
 	 */
-	if (!((Form_pg_type) GETSTRUCT(typ))->typisdefined)
+	if (!typ->typisdefined)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("type modifier cannot be specified for shell type \"%s\"",
 						TypeNameToString(typeName)),
 				 parser_errposition(pstate, typeName->location)));
 
-	typmodin = ((Form_pg_type) GETSTRUCT(typ))->typmodin;
+	typmodin = typ->typmodin;
 
 	if (typmodin == InvalidOid)
 		ereport(ERROR,
@@ -573,16 +567,15 @@ GetColumnDefCollation(ParseState *pstate, const ColumnDef *coldef, Oid typeOid)
 }
 
 /* return a Type structure, given a type id */
-/* NB: caller must ReleaseSysCache the type tuple when done with it */
 Type
 typeidType(Oid id)
 {
-	HeapTuple	tup;
+	Type		tup;
 
-	tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(id));
-	if (!HeapTupleIsValid(tup))
+	tup = cat_type(id);
+	if (tup == NULL)
 		elog(ERROR, "cache lookup failed for type %u", id);
-	return (Type) tup;
+	return tup;
 }
 
 /* given type (as type struct), return the type OID */
@@ -591,58 +584,43 @@ typeTypeId(Type tp)
 {
 	if (tp == NULL)				/* probably useless */
 		elog(ERROR, "typeTypeId() called with NULL type struct");
-	return ((Form_pg_type) GETSTRUCT(tp))->oid;
+	return tp->oid;
 }
 
 /* given type (as type struct), return the length of type */
 int16
 typeLen(Type t)
 {
-	Form_pg_type typ;
-
-	typ = (Form_pg_type) GETSTRUCT(t);
-	return typ->typlen;
+	return t->typlen;
 }
 
 /* given type (as type struct), return its 'byval' attribute */
 bool
 typeByVal(Type t)
 {
-	Form_pg_type typ;
-
-	typ = (Form_pg_type) GETSTRUCT(t);
-	return typ->typbyval;
+	return t->typbyval;
 }
 
 /* given type (as type struct), return the type's name */
 char *
 typeTypeName(Type t)
 {
-	Form_pg_type typ;
-
-	typ = (Form_pg_type) GETSTRUCT(t);
-	/* pstrdup here because result may need to outlive the syscache entry */
-	return pstrdup(NameStr(typ->typname));
+	/* A copy: callers may change it, and the row is read-only. */
+	return pstrdup(t->typname);
 }
 
 /* given type (as type struct), return its 'typrelid' attribute */
 Oid
 typeTypeRelid(Type typ)
 {
-	Form_pg_type typtup;
-
-	typtup = (Form_pg_type) GETSTRUCT(typ);
-	return typtup->typrelid;
+	return typ->typrelid;
 }
 
 /* given type (as type struct), return its 'typcollation' attribute */
 Oid
 typeTypeCollation(Type typ)
 {
-	Form_pg_type typtup;
-
-	typtup = (Form_pg_type) GETSTRUCT(typ);
-	return typtup->typcollation;
+	return typ->typcollation;
 }
 
 /*
@@ -653,8 +631,7 @@ typeTypeCollation(Type typ)
 Datum
 stringTypeDatum(Type tp, char *string, int32 atttypmod)
 {
-	Form_pg_type typform = (Form_pg_type) GETSTRUCT(tp);
-	Oid			typinput = typform->typinput;
+	Oid			typinput = tp->typinput;
 	Oid			typioparam = getTypeIOParam(tp);
 
 	return OidInputFunctionCall(typinput, string, typioparam, atttypmod);
@@ -667,17 +644,12 @@ stringTypeDatum(Type tp, char *string, int32 atttypmod)
 Oid
 typeidTypeRelid(Oid type_id)
 {
-	HeapTuple	typeTuple;
-	Form_pg_type type;
-	Oid			result;
+	Type		type;
 
-	typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type_id));
-	if (!HeapTupleIsValid(typeTuple))
+	type = cat_type(type_id);
+	if (type == NULL)
 		elog(ERROR, "cache lookup failed for type %u", type_id);
-	type = (Form_pg_type) GETSTRUCT(typeTuple);
-	result = type->typrelid;
-	ReleaseSysCache(typeTuple);
-	return result;
+	return type->typrelid;
 }
 
 /*
@@ -688,16 +660,13 @@ typeidTypeRelid(Oid type_id)
 Oid
 typeOrDomainTypeRelid(Oid type_id)
 {
-	HeapTuple	typeTuple;
-	Form_pg_type type;
-	Oid			result;
+	Type		type;
 
 	for (;;)
 	{
-		typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type_id));
-		if (!HeapTupleIsValid(typeTuple))
+		type = cat_type(type_id);
+		if (type == NULL)
 			elog(ERROR, "cache lookup failed for type %u", type_id);
-		type = (Form_pg_type) GETSTRUCT(typeTuple);
 		if (type->typtype != TYPTYPE_DOMAIN)
 		{
 			/* Not a domain, so done looking through domains */
@@ -705,11 +674,8 @@ typeOrDomainTypeRelid(Oid type_id)
 		}
 		/* It is a domain, so examine the base type instead */
 		type_id = type->typbasetype;
-		ReleaseSysCache(typeTuple);
 	}
-	result = type->typrelid;
-	ReleaseSysCache(typeTuple);
-	return result;
+	return type->typrelid;
 }
 
 /*
@@ -803,18 +769,16 @@ parseTypeString(const char *str, Oid *typeid_p, int32 *typmod_p,
 	}
 	else
 	{
-		Form_pg_type typ = (Form_pg_type) GETSTRUCT(tup);
+		Type		typ = tup;
 
 		if (!typ->typisdefined)
 		{
-			ReleaseSysCache(tup);
 			ereturn(escontext, false,
 					(errcode(ERRCODE_UNDEFINED_OBJECT),
 					 errmsg("type \"%s\" is only a shell",
 							TypeNameToString(typeName))));
 		}
 		*typeid_p = typ->oid;
-		ReleaseSysCache(tup);
 	}
 
 	return true;

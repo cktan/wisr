@@ -13,4 +13,7 @@ extern const char *datadir_superuser_secret(void);
 extern Oid datadir_database_oid(const char *dbname);
 extern void datadir_open_session(const char *dbname);
 
+struct sm_session_t;
+extern struct sm_session_t *datadir_sm_session(void);
+
 #endif /* DATADIR_H */

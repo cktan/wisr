@@ -6619,8 +6619,7 @@ static List *find_typed_table_dependencies(Oid typeOid, const char *typeName,
  * (Also, allowing domain-over-composite would open up a can of worms about
  * whether and how the domain's constraints should apply to derived tables.)
  */
-void check_of_type(HeapTuple typetuple) {
-  Form_pg_type typ = (Form_pg_type)GETSTRUCT(typetuple);
+void check_of_type(const cat_type_t *typ) {
   bool typeOk = false;
 
   if (typ->typtype == TYPTYPE_COMPOSITE) {
@@ -13530,8 +13529,8 @@ static ObjectAddress ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
   HeapTuple heapTup;
   Form_pg_attribute attTup, attOldTup;
   AttrNumber attnum;
-  HeapTuple typeTuple;
-  Form_pg_type tform;
+  Type typeTuple;
+  Type tform;
   Oid targettype;
   int32 targettypmod;
   Oid targetcollid;
@@ -13578,7 +13577,7 @@ static ObjectAddress ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 
   /* Look up the target type (should not fail, since prep found it) */
   typeTuple = typenameType(NULL, typeName, &targettypmod);
-  tform = (Form_pg_type)GETSTRUCT(typeTuple);
+  tform = typeTuple;
   targettype = tform->oid;
   /* And the collation */
   targetcollid = GetColumnDefCollation(NULL, def, targettype);
@@ -13734,8 +13733,6 @@ static ObjectAddress ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
   attTup->attalign = tform->typalign;
   attTup->attstorage = tform->typstorage;
   attTup->attcompression = InvalidCompressionMethod;
-
-  ReleaseSysCache(typeTuple);
 
   CatalogTupleUpdate(attrelation, &heapTup->t_self, heapTup);
 
@@ -16717,7 +16714,7 @@ static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
                                  LOCKMODE lockmode) {
   Oid relid = RelationGetRelid(rel);
   Type typetuple;
-  Form_pg_type typeform;
+  Type typeform;
   Oid typeid_;
   Relation inheritsRelation, relationRelation;
   SysScanDesc scan;
@@ -16731,7 +16728,7 @@ static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
   /* Validate the type. */
   typetuple = typenameType(NULL, ofTypename, NULL);
   check_of_type(typetuple);
-  typeform = (Form_pg_type)GETSTRUCT(typetuple);
+  typeform = typetuple;
   typeid_ = typeform->oid;
 
   aclresult = object_aclcheck(TypeRelationId, typeid_, GetUserId(), ACL_USAGE);
@@ -16833,8 +16830,6 @@ static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
 
   heap_freetuple(classtuple);
   table_close(relationRelation, RowExclusiveLock);
-
-  ReleaseSysCache(typetuple);
 
   return typeobj;
 }

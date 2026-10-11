@@ -335,15 +335,14 @@ ObjectAddress DefineType(ParseState *pstate, List *names, List *parameters) {
    */
   if (likeTypeEl) {
     Type likeType;
-    Form_pg_type likeForm;
+    Type likeForm;
 
     likeType = typenameType(pstate, defGetTypeName(likeTypeEl), NULL);
-    likeForm = (Form_pg_type)GETSTRUCT(likeType);
+    likeForm = likeType;
     internalLength = likeForm->typlen;
     byValue = likeForm->typbyval;
     alignment = likeForm->typalign;
     storage = likeForm->typstorage;
-    ReleaseSysCache(likeType);
   }
   if (internalLengthEl)
     internalLength = defGetTypeLength(internalLengthEl);
@@ -699,14 +698,14 @@ ObjectAddress DefineDomain(ParseState *pstate, CreateDomainStmt *stmt) {
   bool typNotNull = false;
   bool nullDefined = false;
   int32 typNDims = list_length(stmt->typeName->arrayBounds);
-  HeapTuple typeTup;
+  Type typeTup;
   List *schema = stmt->constraints;
   ListCell *listptr;
   Oid basetypeoid;
   Oid old_type_oid;
   Oid domaincoll;
   Oid domainArrayOid;
-  Form_pg_type baseType;
+  Type baseType;
   int32 basetypeMod;
   Oid baseColl;
   ObjectAddress address;
@@ -739,7 +738,7 @@ ObjectAddress DefineDomain(ParseState *pstate, CreateDomainStmt *stmt) {
    * Look up the base type.
    */
   typeTup = typenameType(pstate, stmt->typeName, &basetypeMod);
-  baseType = (Form_pg_type)GETSTRUCT(typeTup);
+  baseType = typeTup;
   basetypeoid = baseType->oid;
 
   /*
@@ -822,15 +821,12 @@ ObjectAddress DefineDomain(ParseState *pstate, CreateDomainStmt *stmt) {
    */
 
   /* Inherited default value */
-  datum = SysCacheGetAttr(TYPEOID, typeTup, Anum_pg_type_typdefault, &isnull);
-  if (!isnull)
-    defaultValue = TextDatumGetCString(datum);
+  if (typeTup->typdefault != NULL)
+    defaultValue = pstrdup(typeTup->typdefault);
 
   /* Inherited default binary value */
-  datum =
-      SysCacheGetAttr(TYPEOID, typeTup, Anum_pg_type_typdefaultbin, &isnull);
-  if (!isnull)
-    defaultValueBin = TextDatumGetCString(datum);
+  if (typeTup->typdefaultbin != NULL)
+    defaultValueBin = pstrdup(typeTup->typdefaultbin);
 
   /*
    * Run through constraints manually to avoid the additional processing
@@ -1122,7 +1118,6 @@ ObjectAddress DefineDomain(ParseState *pstate, CreateDomainStmt *stmt) {
   /*
    * Now we can clean up.
    */
-  ReleaseSysCache(typeTup);
 
   return address;
 }
@@ -3552,13 +3547,11 @@ ObjectAddress AlterTypeOwner(List *names, Oid newOwnerId,
   /* Make a TypeName so we can use standard type lookup machinery */
   typename_ = makeTypeNameFromNameList(names);
 
-  /* Use LookupTypeName here so that shell types can be processed */
-  tup = LookupTypeName(NULL, typename_, NULL, false);
-  if (tup == NULL)
-    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                    errmsg("type \"%s\" does not exist",
-                           TypeNameToString(typename_))));
-  typeOid = typeTypeId(tup);
+  /* Use LookupTypeNameOid here so that shell types can be processed */
+  typeOid = LookupTypeNameOid(NULL, typename_, false);
+  tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typeOid));
+  if (!HeapTupleIsValid(tup))
+    elog(ERROR, "cache lookup failed for type %u", typeOid);
 
   /* Copy the syscache entry so we can scribble on it below */
   newtup = heap_copytuple(tup);
@@ -3999,9 +3992,10 @@ ObjectAddress AlterType(AlterTypeStmt *stmt) {
 
   /* Make a TypeName so we can use standard type lookup machinery */
   typename_ = makeTypeNameFromNameList(stmt->typeName);
-  tup = typenameType(NULL, typename_, NULL);
-
-  typeOid = typeTypeId(tup);
+  typeOid = typenameTypeId(NULL, typename_);
+  tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typeOid));
+  if (!HeapTupleIsValid(tup))
+    elog(ERROR, "cache lookup failed for type %u", typeOid);
   typForm = (Form_pg_type)GETSTRUCT(tup);
 
   /* Process options */

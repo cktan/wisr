@@ -20,6 +20,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/smstore.h"
 #include "access/xact.h"
 #include "catalog/cat_builtin.h"
 #include "catalog/dependency.h"
@@ -920,6 +921,20 @@ Oid TypenameGetTypid(const char *typname) {
 }
 
 /*
+ * The built-in type named typname in namespaceId, or InvalidOid: every type
+ * is compiled in (catalog/cat_builtin.h), since there is no CREATE TYPE.
+ */
+static Oid builtin_type_oid(const char *typname, Oid namespaceId) {
+  int count;
+  const cat_type_t *const *rows = cat_types_named(typname, &count);
+
+  for (int i = 0; i < count; i++)
+    if (rows[i]->typnamespace == namespaceId)
+      return rows[i]->oid;
+  return InvalidOid;
+}
+
+/*
  * TypenameGetTypidExtended
  *		Try to resolve an unqualified datatype name.
  *		Returns OID if type found in search path, else InvalidOid.
@@ -938,9 +953,7 @@ Oid TypenameGetTypidExtended(const char *typname, bool temp_ok) {
     if (!temp_ok && namespaceId == myTempNamespace)
       continue; /* do not look in temp namespace */
 
-    typid =
-        GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid, PointerGetDatum(typname),
-                        ObjectIdGetDatum(namespaceId));
+    typid = builtin_type_oid(typname, namespaceId);
     if (OidIsValid(typid))
       return typid;
   }
@@ -964,20 +977,18 @@ bool TypeIsVisible(Oid typid) { return TypeIsVisibleExt(typid, NULL); }
  *error.  (Caller must initialize *is_missing = false.)
  */
 static bool TypeIsVisibleExt(Oid typid, bool *is_missing) {
-  HeapTuple typtup;
-  Form_pg_type typform;
+  const cat_type_t *typform;
   Oid typnamespace;
   bool visible;
 
-  typtup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
-  if (!HeapTupleIsValid(typtup)) {
+  typform = cat_type(typid);
+  if (typform == NULL) {
     if (is_missing != NULL) {
       *is_missing = true;
       return false;
     }
     elog(ERROR, "cache lookup failed for type %u", typid);
   }
-  typform = (Form_pg_type)GETSTRUCT(typtup);
 
   recomputeNamespacePath();
 
@@ -996,7 +1007,7 @@ static bool TypeIsVisibleExt(Oid typid, bool *is_missing) {
      * hidden by another type of the same name earlier in the path. So we
      * must do a slow check for conflicting types.
      */
-    char *typname = NameStr(typform->typname);
+    const char *typname = typform->typname;
     ListCell *l;
 
     visible = false;
@@ -1008,15 +1019,12 @@ static bool TypeIsVisibleExt(Oid typid, bool *is_missing) {
         visible = true;
         break;
       }
-      if (SearchSysCacheExists2(TYPENAMENSP, PointerGetDatum(typname),
-                                ObjectIdGetDatum(namespaceId))) {
+      if (OidIsValid(builtin_type_oid(typname, namespaceId))) {
         /* Found something else first in path */
         break;
       }
     }
   }
-
-  ReleaseSysCache(typtup);
 
   return visible;
 }
@@ -3108,8 +3116,8 @@ Oid QualifiedNameGetCreationNamespace(const List *names, char **objname_p) {
 Oid get_namespace_oid(const char *nspname, bool missing_ok) {
   Oid oid;
 
-  oid = GetSysCacheOid1(NAMESPACENAME, Anum_pg_namespace_oid,
-                        CStringGetDatum(nspname));
+  /* Namespaces are sm's: the built-in ones too, under their own oids. */
+  oid = smstore_namespace_oid(nspname);
   if (!OidIsValid(oid) && !missing_ok)
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_SCHEMA),
                     errmsg("schema \"%s\" does not exist", nspname)));
@@ -3607,15 +3615,10 @@ static List *preprocessNamespacePath(const char *searchPath, Oid roleid,
 
     if (strcmp(curname, "$user") == 0) {
       /* $user --- substitute namespace matching user name, if any */
-      HeapTuple tuple;
+      char *rname = GetUserNameFromId(roleid, true);
 
-      tuple = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
-      if (HeapTupleIsValid(tuple)) {
-        char *rname;
-
-        rname = NameStr(((Form_pg_authid)GETSTRUCT(tuple))->rolname);
+      if (rname != NULL) {
         namespaceId = get_namespace_oid(rname, true);
-        ReleaseSysCache(tuple);
         if (OidIsValid(namespaceId) &&
             object_aclcheck(NamespaceRelationId, namespaceId, roleid,
                             ACL_USAGE) == ACLCHECK_OK)

@@ -780,8 +780,7 @@ static void transformColumnDefinition(CreateStmtContext *cxt,
                  errmsg("identity columns are not supported on partitions")));
 
       ctype = typenameType(cxt->pstate, column->typeName, NULL);
-      typeOid = ((Form_pg_type)GETSTRUCT(ctype))->oid;
-      ReleaseSysCache(ctype);
+      typeOid = ctype->oid;
 
       if (saw_identity)
         ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
@@ -1525,7 +1524,7 @@ List *expandTableLikeClause(RangeVar *heapRel,
 }
 
 static void transformOfType(CreateStmtContext *cxt, TypeName *ofTypename) {
-  HeapTuple tuple;
+  Type tuple;
   TupleDesc tupdesc;
   int i;
   Oid ofTypeId;
@@ -1534,7 +1533,7 @@ static void transformOfType(CreateStmtContext *cxt, TypeName *ofTypename) {
 
   tuple = typenameType(cxt->pstate, ofTypename, NULL);
   check_of_type(tuple);
-  ofTypeId = ((Form_pg_type)GETSTRUCT(tuple))->oid;
+  ofTypeId = tuple->oid;
   ofTypename->typeOid = ofTypeId; /* cached for later */
 
   tupdesc = lookup_rowtype_tupdesc(ofTypeId, -1);
@@ -1552,8 +1551,6 @@ static void transformOfType(CreateStmtContext *cxt, TypeName *ofTypename) {
     cxt->columns = lappend(cxt->columns, n);
   }
   ReleaseTupleDesc(tupdesc);
-
-  ReleaseSysCache(tuple);
 }
 
 /*
@@ -3739,7 +3736,7 @@ static void transformColumnType(CreateStmtContext *cxt, ColumnDef *column) {
   Type ctype = typenameType(cxt->pstate, column->typeName, NULL);
 
   if (column->collClause) {
-    Form_pg_type typtup = (Form_pg_type)GETSTRUCT(ctype);
+    Type typtup = ctype;
 
     LookupCollation(cxt->pstate, column->collClause->collname,
                     column->collClause->location);
@@ -3751,8 +3748,6 @@ static void transformColumnType(CreateStmtContext *cxt, ColumnDef *column) {
                       format_type_be(typtup->oid)),
                parser_errposition(cxt->pstate, column->collClause->location)));
   }
-
-  ReleaseSysCache(ctype);
 }
 
 /*

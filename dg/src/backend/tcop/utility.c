@@ -16,13 +16,12 @@
  */
 #include "postgres.h"
 
-#include "access/reloptions.h"
+#include "access/smstore.h"
 #include "access/twophase.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_inherits.h"
-#include "catalog/toasting.h"
 #include "commands/alter.h"
 #include "commands/async.h"
 #include "commands/cluster.h"
@@ -1013,32 +1012,13 @@ static void ProcessUtilitySlow(ParseState *pstate, PlannedStmt *pstmt,
 
         if (IsA(stmt, CreateStmt)) {
           CreateStmt *cstmt = (CreateStmt *)stmt;
-          Datum toast_options;
-          const char *const validnsps[] = HEAP_RELOPT_NAMESPACES;
 
           /* Remember transformed RangeVar for LIKE */
           table_rv = cstmt->relation;
 
-          /* Create the table itself */
-          address = DefineRelation(cstmt, RELKIND_RELATION, InvalidOid, NULL,
-                                   queryString);
+          /* The table is sm's: no heap, and no TOAST table beside it. */
+          address = smstore_create_table(cstmt);
           EventTriggerCollectSimpleCommand(address, secondaryObject, stmt);
-
-          /*
-           * Let NewRelationCreateToastTable decide if this
-           * one needs a secondary relation too.
-           */
-          CommandCounterIncrement();
-
-          /*
-           * parse and validate reloptions for the toast
-           * table
-           */
-          toast_options = transformRelOptions((Datum)0, cstmt->options, "toast",
-                                              validnsps, true, false);
-          (void)heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
-
-          NewRelationCreateToastTable(address.objectId, toast_options);
         } else if (IsA(stmt, CreateForeignTableStmt)) {
           CreateForeignTableStmt *cstmt = (CreateForeignTableStmt *)stmt;
 

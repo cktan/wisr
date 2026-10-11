@@ -331,8 +331,6 @@ Node *coerce_type(ParseState *pstate, Node *node, Oid inputTypeId,
       result = coerce_to_domain(result, baseTypeId, baseTypeMod, targetTypeId,
                                 ccontext, cformat, location, false);
 
-    ReleaseSysCache(baseType);
-
     return result;
   }
   if (IsA(node, Param) && pstate != NULL &&
@@ -2921,14 +2919,14 @@ CoercionPathType find_coercion_pathway(Oid targetTypeId, Oid sourceTypeId,
 CoercionPathType find_typmod_coercion_function(Oid typeId, Oid *funcid) {
   CoercionPathType result;
   Type targetType;
-  Form_pg_type typeForm;
+  Type typeForm;
   HeapTuple tuple;
 
   *funcid = InvalidOid;
   result = COERCION_PATH_FUNC;
 
   targetType = typeidType(typeId);
-  typeForm = (Form_pg_type)GETSTRUCT(targetType);
+  typeForm = targetType;
 
   /* Check for a "true" array type */
   if (IsTrueArrayType(typeForm)) {
@@ -2936,7 +2934,6 @@ CoercionPathType find_typmod_coercion_function(Oid typeId, Oid *funcid) {
     typeId = typeForm->typelem;
     result = COERCION_PATH_ARRAYCOERCE;
   }
-  ReleaseSysCache(targetType);
 
   /* Look in pg_cast */
   tuple = SearchSysCache2(CASTSOURCETARGET, ObjectIdGetDatum(typeId),
