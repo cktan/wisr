@@ -17,7 +17,7 @@
 #include "error.h"
 #include "oom.h"
 #include "session.h"
-#include "sm1_codec.h"
+#include "sm0_codec.h"
 
 #include <new>
 #include <string>
@@ -55,9 +55,9 @@ int seq_lookup(sm1::session_t *s, const view_t &view, const char *name,
                      name);
   }
   // Decode the definition.
-  def->seqid = sm1::get_be64(val.data());
-  def->start = sm1::get_be64(val.data() + 8);
-  def->increment = sm1::get_be64(val.data() + 16);
+  def->seqid = sm0::get_be64(val.data());
+  def->start = sm0::get_be64(val.data() + 8);
+  def->increment = sm0::get_be64(val.data() + 16);
   return 0;
 }
 
@@ -92,9 +92,9 @@ int mkseq(sm1::session_t *s, const char *name, uint64_t start,
 
   // Encode { seqid, start, increment } as the row's value.
   std::string val;
-  sm1::put_be64(val, def.seqid);
-  sm1::put_be64(val, start);
-  sm1::put_be64(val, increment);
+  sm0::put_be64(val, def.seqid);
+  sm0::put_be64(val, start);
+  sm0::put_be64(val, increment);
   // Insert the catalog row through the ordinary write path.
   if (access_write(s, 0, WRITE_INSERT, seq_key(name), val, nullptr) != 0) {
     // Report a concurrent same-name insert as SM_ERR_EXISTS.

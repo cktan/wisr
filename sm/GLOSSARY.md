@@ -165,7 +165,7 @@ host calls. Belongs to no level.
 
 **store** — sm1's unit of key space, named by a `storeid`.
 Every store *is* a RocksDB column family, `CF:store.<storeid>`,
-but nothing above level 0 calls it one.
+but nothing above sm1 calls it one.
 
 **store 0** — sm1's own catalog, an ordinary MVCC store
 holding a `"R"` row per store, a `"S"` row per sequence, and

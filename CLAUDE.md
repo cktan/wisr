@@ -9,6 +9,7 @@ depends on nothing else in the repository.
 
 Read `sm/README.md` for the layout of the stack's levels, then
 the design document of the level you are working in —
+`sm/sm0/README.md` for the error state and helpers,
 `sm/sm1/SM1_DESIGN.md` for the MVCC storage manager,
 `sm/sm2/SM2_DESIGN.md` for types and tuples,
 `sm/sm3/SM3_DESIGN.md` for schema and index maintenance.

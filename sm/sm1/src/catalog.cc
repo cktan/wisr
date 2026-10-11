@@ -21,8 +21,8 @@
 #include "error.h"
 #include "oom.h"
 #include "session.h"
-#include "sm1_codec.h"
-#include "sm1_defer.h"
+#include "sm0_codec.h"
+#include "sm0_defer.h"
 
 #include <new>
 #include <vector>
@@ -34,7 +34,7 @@ namespace {
 /* The catalog key of storeid: "R" | be64(storeid). */
 std::string catalog_key(uint64_t storeid) {
   std::string key("R");
-  sm1::put_be64(key, storeid);
+  sm0::put_be64(key, storeid);
   return key;
 }
 
@@ -137,7 +137,7 @@ int lsstore(sm1::session_t *s, std::vector<uint64_t> &out) {
       return set_error(sm1::SM_ERR_CORRUPT, "bad catalog key of {} bytes",
                        key.size());
     }
-    ids.push_back(sm1::get_be64(key.data() + 1));
+    ids.push_back(sm0::get_be64(key.data() + 1));
   }
   // Fail on a scan error.
   if (r < 0) {

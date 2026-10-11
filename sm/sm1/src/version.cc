@@ -5,7 +5,7 @@
 
 #include "version.h"
 
-#include "sm1_codec.h"
+#include "sm0_codec.h"
 
 namespace wisr {
 
@@ -77,9 +77,9 @@ std::string version_key(rocksdb::Slice userkey, uint64_t wts, uint32_t seq) {
   // Copy the userkey.
   k.append(userkey.data(), userkey.size());
   // Complement wts, so newer versions sort first.
-  sm1::put_be64(k, ~wts);
+  sm0::put_be64(k, ~wts);
   // Complement seq, so later writes of one wts sort first.
-  sm1::put_be32(k, ~seq);
+  sm0::put_be32(k, ~seq);
   return k;
 }
 
@@ -110,9 +110,9 @@ void version_decode_key(rocksdb::Slice key, version_t *v) {
   // Locate the tail after it.
   const char *tail = key.data() + v->userkey.size();
   // Undo the complement of wts.
-  v->wts = ~sm1::get_be64(tail);
+  v->wts = ~sm0::get_be64(tail);
   // Undo the complement of seq.
-  v->seq = ~sm1::get_be32(tail + 8);
+  v->seq = ~sm0::get_be32(tail + 8);
 }
 
 /* Build flags | xid | payload. */
@@ -123,7 +123,7 @@ std::string version_value(uint8_t flags, uint64_t xid, rocksdb::Slice payload) {
   // Write the flags byte.
   val.push_back(static_cast<char>(flags));
   // Write the writer's xid.
-  sm1::put_be64(val, xid);
+  sm0::put_be64(val, xid);
   // Append the payload.
   val.append(payload.data(), payload.size());
   return val;
@@ -147,9 +147,9 @@ bool version_decode_value(rocksdb::Slice value, version_t *v) {
   }
   // A stamped version carries its commit_ts, an unstamped one its xid.
   if (v->flags & version_stamped) {
-    v->commit_ts = sm1::get_be64(value.data());
+    v->commit_ts = sm0::get_be64(value.data());
   } else {
-    v->xid = sm1::get_be64(value.data());
+    v->xid = sm0::get_be64(value.data());
   }
   value.remove_prefix(8);
   // The rest is the payload.

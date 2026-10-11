@@ -1,5 +1,5 @@
 /*
- * sm1_codec.h -- fixed-width big-endian integers, the byte order
+ * sm0_codec.h -- fixed-width big-endian integers, the byte order
  * every persisted number uses so that memcmp orders them
  * numerically.
  *
@@ -11,8 +11,8 @@
  * std::byteswap replaces the builtins once the project moves
  * to C++23.
  */
-#ifndef SM1_CODEC_H
-#define SM1_CODEC_H
+#ifndef SM0_CODEC_H
+#define SM0_CODEC_H
 
 #include <stdint.h>
 #include <string.h>
@@ -20,7 +20,7 @@
 #include <bit>
 #include <string>
 
-namespace sm1 {
+namespace sm0 {
 
 static_assert(std::endian::native == std::endian::little ||
                   std::endian::native == std::endian::big,
@@ -74,6 +74,6 @@ inline uint64_t get_be64(const char *p) {
   return to_be64(be);
 }
 
-} // namespace sm1
+} // namespace sm0
 
-#endif /* SM1_CODEC_H */
+#endif /* SM0_CODEC_H */

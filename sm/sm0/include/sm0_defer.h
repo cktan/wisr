@@ -1,5 +1,5 @@
 /*
- * sm1_defer.h -- run a block when the enclosing scope exits.
+ * sm0_defer.h -- run a block when the enclosing scope exits.
  *
  *   defer { closedir(dir); };
  *
@@ -11,20 +11,20 @@
  * A cleanup that must happen on failure but not on success
  * uses a named guard and dismisses it once the work succeeds:
  *
- *   sm1::scope_guard_t undo([&] { remove_reservation(); });
+ *   sm0::scope_guard_t undo([&] { remove_reservation(); });
  *   ...
  *   undo.dismiss(); // success: keep what was done
  *
  * `defer` is a macro, so it replaces every identifier of that
  * name in a file that includes this header.
  */
-#ifndef SM1_DEFER_H
-#define SM1_DEFER_H
+#ifndef SM0_DEFER_H
+#define SM0_DEFER_H
 
 #include <type_traits>
 #include <utility>
 
-namespace sm1 {
+namespace sm0 {
 
 /* Runs a function when it goes out of scope, unless dismissed. */
 template <typename F> class scope_guard_t {
@@ -60,14 +60,14 @@ scope_guard_t<std::decay_t<F>> operator+(defer_tag_t, F &&f) {
   return scope_guard_t<std::decay_t<F>>(std::forward<F>(f));
 }
 
-} // namespace sm1
+} // namespace sm0
 
-#define SM1_DEFER_CAT2(a, b) a##b
-#define SM1_DEFER_CAT(a, b) SM1_DEFER_CAT2(a, b)
+#define SM0_DEFER_CAT2(a, b) a##b
+#define SM0_DEFER_CAT(a, b) SM0_DEFER_CAT2(a, b)
 
 /* defer { ... }; -- the block becomes a lambda run at scope exit. */
 #define defer                                                                  \
-  const auto SM1_DEFER_CAT(sm1_defer_, __COUNTER__) =                          \
-      ::sm1::defer_tag_t{} + [&]()
+  const auto SM0_DEFER_CAT(sm0_defer_, __COUNTER__) =                          \
+      ::sm0::defer_tag_t{} + [&]()
 
-#endif /* SM1_DEFER_H */
+#endif /* SM0_DEFER_H */

@@ -1,9 +1,9 @@
 /*
- * format.cc -- sm1::format_into: std::format into a fixed buffer
+ * format.cc -- sm0::format_into: std::format into a fixed buffer
  * through a bounded output iterator, so nothing is allocated.
  */
 
-#include "sm1_format.h"
+#include "sm0_format.h"
 
 #include <cstddef>
 
@@ -48,7 +48,7 @@ private:
 
 } // namespace
 
-namespace sm1 {
+namespace sm0 {
 
 /* Format into buf through a bounded iterator, then terminate it. */
 size_t format_into(char *buf, size_t size, std::string_view fmt,
@@ -62,4 +62,4 @@ size_t format_into(char *buf, size_t size, std::string_view fmt,
   return end - buf;
 }
 
-} // namespace sm1
+} // namespace sm0

@@ -5,7 +5,7 @@
 
 #include "doctest.h"
 
-#include "sm1_codec.h"
+#include "sm0_codec.h"
 #include "version.h"
 
 #include <algorithm>
@@ -51,7 +51,7 @@ TEST_CASE("version values round-trip, stamped or not") {
   CHECK(v.payload.empty());
 
   std::string stamped(1, static_cast<char>(version_stamped));
-  sm1::put_be64(stamped, 12345);
+  sm0::put_be64(stamped, 12345);
   stamped += "hi";
   REQUIRE(version_decode_value(stamped, &v));
   CHECK(v.flags == version_stamped);

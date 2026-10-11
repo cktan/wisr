@@ -10,7 +10,7 @@
 #include "error.h"
 #include "oom.h"
 #include "session.h"
-#include "sm1_defer.h"
+#include "sm0_defer.h"
 #include "version.h"
 
 #include <algorithm>

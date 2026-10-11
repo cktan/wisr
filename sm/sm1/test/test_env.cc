@@ -10,8 +10,8 @@
 #include "env.h"
 #include "oom.h"
 #include "session.h"
+#include "sm0_codec.h"
 #include "sm1.h"
-#include "sm1_codec.h"
 
 #include <signal.h>
 #include <string.h>
@@ -213,7 +213,7 @@ TEST_CASE("sm1_attach rejects an unknown format version") {
     std::string rootpath = std::string(tmp.path()) + "/global/root";
     REQUIRE(rocksdb::DB::Open(rocksdb::Options(), rootpath, &root).ok());
     std::string v;
-    sm1::put_be64(v, 99);
+    sm0::put_be64(v, 99);
     REQUIRE(root->Put(rocksdb::WriteOptions(), WISR_ROOT_VERSION, v).ok());
     delete root;
   }
@@ -252,7 +252,7 @@ TEST_CASE("sm1_attach recovers every database and fails on one it cannot") {
   sm1::session_t *s = opendb(home.env(), "a", nullptr);
   REQUIRE(s);
   std::string v;
-  sm1::put_be64(v, 99);
+  sm0::put_be64(v, 99);
   REQUIRE(
       s->db->rdb
           ->Put(rocksdb::WriteOptions(), s->db->cf_meta, WISR_META_VERSION, v)

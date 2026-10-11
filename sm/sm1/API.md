@@ -115,6 +115,11 @@ header the C wrapper shares, and `sm1.h` brings them into
 stable. New codes are appended, grouped by the level that
 produces them; existing values never change.
 
+The error state and the calls below are level 0's
+(`../sm0/include/sm0.h`); `sm1.h` brings each into
+`namespace sm1`, so they are called as `sm1::` names like the
+rest of this API.
+
 ```cpp
 errnum_t    errnum();
 const char* errmsg();
@@ -363,6 +368,9 @@ The hook is `noexcept`. It is called from wisr's own threads and
 with a library lock held, where an error has nowhere to go: a
 hook not declared `noexcept` does not compile as one, and one
 that throws ends the process.
+
+The hook, like the error state, is level 0's, brought into
+`namespace sm1` by `sm1.h`.
 
 wisr never writes a log of its own. `sm1::set_log` installs a
 process-wide hook, in the manner of SQLite's

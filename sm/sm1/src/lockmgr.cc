@@ -25,7 +25,7 @@
 
 #include "error.h"
 #include "session.h"
-#include "sm1_codec.h"
+#include "sm0_codec.h"
 #include "sys.h"
 
 #include <functional>
@@ -99,7 +99,7 @@ std::string lock_key(sm1::locktype_t type, uint64_t storeid,
   // Lead with the type, so no two namespaces share a lock.
   k.push_back(static_cast<char>(type));
   // Then the storeid, so equal keys in different stores differ.
-  sm1::put_be64(k, storeid);
+  sm0::put_be64(k, storeid);
   // Append the userkey.
   k.append(key.data(), key.size());
   return k;

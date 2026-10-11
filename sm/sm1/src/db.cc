@@ -11,8 +11,8 @@
 #include "log.h"
 #include "oom.h"
 #include "session.h"
-#include "sm1_codec.h"
-#include "sm1_defer.h"
+#include "sm0_codec.h"
+#include "sm0_defer.h"
 #include "version.h"
 
 #include <inttypes.h>
@@ -76,8 +76,8 @@ int create_db(const std::string &path, rocksdb::DBOptions dbo) {
   // persisted lease of 0 resumes both allocators at 1 (§4.2),
   // so storeid 0 stays the catalog's.
   std::string version, zero;
-  sm1::put_be64(version, WISR_DB_VERSION);
-  sm1::put_be64(zero, 0);
+  sm0::put_be64(version, WISR_DB_VERSION);
+  sm0::put_be64(zero, 0);
   rocksdb::WriteBatch batch;
   batch.Put(handles[2], WISR_META_VERSION, version);
   batch.Put(handles[2], WISR_META_NEXT_TS, zero);
@@ -133,10 +133,10 @@ int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
     return set_error(sm1::SM_ERR_CORRUPT, "root db has no next_dbid");
   }
   // Take the next dbid.
-  uint64_t dbid = sm1::get_be64(val.data());
+  uint64_t dbid = sm0::get_be64(val.data());
   // Advance next_dbid past it.
   std::string next;
-  sm1::put_be64(next, dbid + 1);
+  sm0::put_be64(next, dbid + 1);
   // Persist the advance synced.
   rocksdb::WriteOptions wo;
   wo.sync = true;
@@ -155,7 +155,7 @@ int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   // Name the database last: the mapping is the truth (§3.5).
   std::string dbid_val;
   // Encode the dbid as the name's value.
-  sm1::put_be64(dbid_val, dbid);
+  sm0::put_be64(dbid_val, dbid);
   // Write the name, synced.
   s = env->root->Put(wo, dkey, dbid_val);
   // Fail if the name did not persist.
@@ -200,7 +200,7 @@ int rmdb(sm1::env_t *env, const char *dbname) {
     return set_error(sm1::SM_ERR_CORRUPT, "bad dbid for database {}", dbname);
   }
   // Decode the dbid.
-  uint64_t dbid = sm1::get_be64(val.data());
+  uint64_t dbid = sm0::get_be64(val.data());
 
   // Drop the name first: the mapping is the truth (§3.5).
   rocksdb::WriteOptions wo;
@@ -280,7 +280,7 @@ int dbid(sm1::env_t *env, const char *dbname, uint64_t *out) {
   if (val.size() != 8) {
     return set_error(sm1::SM_ERR_CORRUPT, "bad dbid for database {}", dbname);
   }
-  *out = sm1::get_be64(val.data());
+  *out = sm0::get_be64(val.data());
   return 0;
 }
 
@@ -370,7 +370,7 @@ static bool read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
     return false;
   }
   // Decode the value.
-  *out = sm1::get_be64(val.data());
+  *out = sm0::get_be64(val.data());
   return true;
 }
 
@@ -529,7 +529,7 @@ db_t *db_open(const std::string &path, const char *dbname,
 static int persist_lease(db_t *db, const char *key, uint64_t new_limit) {
   // Encode it.
   std::string val;
-  sm1::put_be64(val, new_limit);
+  sm0::put_be64(val, new_limit);
   // The lease must be durable before any value under it.
   rocksdb::WriteOptions wo;
   wo.sync = true;
@@ -650,7 +650,7 @@ int db_alloc_objid(db_t *db, uint64_t *out) {
 /* The CF:meta key holding sequence seqid's lease. */
 static std::string seq_meta_key(uint64_t seqid) {
   std::string key(WISR_META_SEQ_PREFIX);
-  sm1::put_be64(key, seqid);
+  sm0::put_be64(key, seqid);
   return key;
 }
 
@@ -688,7 +688,7 @@ int db_next_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
       new_limit = UINT64_MAX;
     }
     std::string val;
-    sm1::put_be64(val, new_limit);
+    sm0::put_be64(val, new_limit);
     // The lease must be durable before any value under it.
     rocksdb::WriteOptions wo;
     wo.sync = true;

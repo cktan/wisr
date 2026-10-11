@@ -8,8 +8,8 @@
 
 #include "db.h"
 #include "session.h"
+#include "sm0_codec.h"
 #include "sm1.h"
-#include "sm1_codec.h"
 
 #include <string>
 
@@ -39,7 +39,7 @@ public:
     REQUIRE(sm1::begin(m_s, sm1::xctlevel_t::repeatable_read) == 0);
     for (int i = 0; i < n; i++) {
       std::string key(1, prefix);
-      sm1::put_be32(key, i);
+      sm0::put_be32(key, i);
       // Mostly repeated bytes, so the files compress.
       std::string val(width, 'v');
       memcpy(val.data(), key.data(), key.size());

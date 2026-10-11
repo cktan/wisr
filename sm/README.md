@@ -5,13 +5,15 @@ built on the level below it.
 
 | Level | Where | What it is |
 | --- | --- | --- |
-| 0 | — | RocksDB: an ordered, durable, crash-atomic key-value store |
+| — | — | RocksDB: an ordered, durable, crash-atomic key-value store, under the stack |
+| 0 | `sm0/` | the error state, the log hook, and general-purpose helpers that are about no storage |
 | 1 | `sm1/` | the MVCC storage manager: stores, transactions, isolation, locks, 2PC, recovery |
 | 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, heap and index relations |
 | 3 | `sm3/` | schema and index maintenance: a catalog, index maintenance and builds, scans, statistics |
 | top | `include/`, `src/` | the API over the stack, the only one, for PostgreSQL to call: C in style, compiled as C++ |
 
-Level 0 is used only as a place to put bytes. Every notion of
+RocksDB is used only as a place to put bytes, and level 0
+holds no notion of storage at all. Every notion of
 *row version*, *transaction*, *isolation* and *visibility* is
 implemented in level 1, every notion of *column*, *type*,
 *row* and *index entry* belongs to level 2, and every notion
@@ -23,7 +25,7 @@ level 3.
 ```
 make            build every level
 make test       build and test every level
-make -C sm1     build level 1 alone
+make -C sm1     build level 1 alone, and level 0 under it
 ```
 
 Each level has a Makefile of its own with the real targets; the
@@ -48,6 +50,8 @@ the wrapper through the `rel/` test suite.
   build, and the decisions that cross level boundaries
 - `NEXT.md` — what to build next and in what order, across
   levels, with the loose ends and the gaps that block nothing
+- `sm0/README.md` — level 0: the error state, the log hook,
+  and the helpers every level uses
 - `sm1/SM1_OBJECTIVE.md` — what level 1 is for, and the decisions
   that settled its design
 - `sm1/SM1_DESIGN.md` — how level 1 works; the design of record

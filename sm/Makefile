@@ -1,6 +1,8 @@
 # wisr -- a stack of storage levels over RocksDB.
 #
-# Level 0 is RocksDB. Level 1 is sm1/, the MVCC storage manager.
+# Level 0 is sm0/, the error state, the log hook and the helpers
+# every level uses; RocksDB is the store under the stack. Level 1
+# is sm1/, the MVCC storage manager.
 # Level 2 is sm2/, types and records, and level 3 is sm3/, schema
 # and index maintenance, being built.
 #
@@ -19,21 +21,21 @@
 #   make format       clang-format each level, rel, and src/
 #
 # LEVELS lists the levels that have a Makefile, in build order.
-LEVELS := sm1 sm2 sm3
+LEVELS := sm0 sm1 sm2 sm3
 
 CC       ?= gcc
 CXX      ?= g++
 OPTFLAGS ?= -O1 -g
 CXXFLAGS ?= $(OPTFLAGS)
-CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Ism1/include -Ism2/include -Ism3/include \
-            -I../sys/include \
+CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Ism0/include -Ism1/include \
+            -Ism2/include -Ism3/include -I../sys/include \
             -MMD -MP
 LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD     := build
 LIB       := $(BUILD)/libsm.a
-LEVEL_LIBS := sm1/$(BUILD)/libsm1.a sm2/$(BUILD)/libsm2.a \
-              sm3/$(BUILD)/libsm3.a
+LEVEL_LIBS := sm0/$(BUILD)/libsm0.a sm1/$(BUILD)/libsm1.a \
+              sm2/$(BUILD)/libsm2.a sm3/$(BUILD)/libsm3.a
 
 .PHONY: all test clean format rel sys $(LEVELS)
 
@@ -54,6 +56,7 @@ sys:
 sm1: sys
 
 # Each level links the ones below it, so they build first.
+sm1: sm0
 sm2: sm1
 sm3: sm2
 
@@ -69,7 +72,9 @@ sm3: sm2
 ifeq ($(BUILD),build)
 $(LEVEL_LIBS): $(LEVELS) ;
 else
-sm1/$(BUILD)/libsm1.a: sys
+sm0/$(BUILD)/libsm0.a:
+	$(MAKE) -C sm0 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm0.a
+sm1/$(BUILD)/libsm1.a: sys sm0/$(BUILD)/libsm0.a
 	$(MAKE) -C sm1 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm1.a
 sm2/$(BUILD)/libsm2.a: sm1/$(BUILD)/libsm1.a
 	$(MAKE) -C sm2 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm2.a
@@ -86,7 +91,7 @@ $(BUILD)/src/sm.o: src/sm.cc
 # ar script: ADDLIB keeps two levels' same-named objects apart.
 $(LIB): $(BUILD)/src/sm.o $(LEVEL_LIBS)
 	rm -f $@
-	printf 'CREATE $@\nADDLIB sm1/$(BUILD)/libsm1.a\nADDLIB sm2/$(BUILD)/libsm2.a\nADDLIB sm3/$(BUILD)/libsm3.a\nADDMOD $(BUILD)/src/sm.o\nSAVE\nEND\n' | ar -M
+	printf 'CREATE $@\nADDLIB sm0/$(BUILD)/libsm0.a\nADDLIB sm1/$(BUILD)/libsm1.a\nADDLIB sm2/$(BUILD)/libsm2.a\nADDLIB sm3/$(BUILD)/libsm3.a\nADDMOD $(BUILD)/src/sm.o\nSAVE\nEND\n' | ar -M
 
 # Each level's own target, in order, stopping at the first level
 # that fails; then the rel test driver.

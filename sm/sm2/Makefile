@@ -24,6 +24,7 @@ else
 OPTFLAGS := -O3
 endif
 
+SM0 := ../sm0
 SM1 := ../sm1
 # sys, the system services sm builds on (../../sys).
 SYS := ../../sys
@@ -35,7 +36,7 @@ CFLAGS   += -std=c11 -Wall -DFRONTEND -Isrc/ryu -MMD -MP
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc/type -Isrc/ryu \
-            -I$(SM1)/include -I../include -I$(SYS)/include \
+            -I$(SM1)/include -I$(SM0)/include -I../include -I$(SYS)/include \
             -MMD -MP
 LDLIBS   += $(SYS_LIB) -lrocksdb -licui18n -licuuc -licudata -lpthread
 
@@ -58,6 +59,7 @@ TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 
 LIB      := $(BUILD)/libsm2.a
+SM0_LIB  := $(SM0)/build/libsm0.a
 SM1_LIB  := $(SM1)/build/libsm1.a
 TEST_BIN := $(BUILD)/test_sm2
 
@@ -65,7 +67,7 @@ TEST_BIN := $(BUILD)/test_sm2
 FORMAT_FILES := $(filter-out test/pg_fixtures.h src/ryu/%, \
     $(wildcard src/*/*.cc src/*/*.h test/*.cc test/*.h))
 
-.PHONY: all test format clean $(SM1_LIB)
+.PHONY: all test format clean $(SM0_LIB) $(SM1_LIB)
 
 all: $(LIB) $(TEST_BIN)
 
@@ -73,6 +75,10 @@ all: $(LIB) $(TEST_BIN)
 $(LIB): $(LIB_OBJS)
 	rm -f $@
 	$(AR) rcs $@ $^
+
+# sm0's Makefile decides whether its library is up to date.
+$(SM0_LIB):
+	$(MAKE) -C $(SM0) build/libsm0.a
 
 # sm1's Makefile decides whether its library is up to date.
 $(SM1_LIB):
@@ -82,8 +88,9 @@ $(SM1_LIB):
 $(SYS_LIB):
 	$(MAKE) -C $(SYS) build/libsys.a
 
-$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM1_LIB) $(SYS_LIB)
-	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM1_LIB) $(LDLIBS)
+$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM1_LIB) $(SM0_LIB) $(SYS_LIB)
+	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM1_LIB) $(SM0_LIB) \
+	    $(LDLIBS)
 
 $(BUILD)/src/%.o: src/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)

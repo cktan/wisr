@@ -20,6 +20,7 @@ else
 OPTFLAGS := -O3
 endif
 
+SM0 := ../sm0
 SM1 := ../sm1
 SM2 := ../sm2
 # sys, the system services sm builds on (../../sys).
@@ -29,8 +30,8 @@ SYS_LIB := $(SYS)/build/libsys.a
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc/catalog \
-            -I$(SM2)/include -I$(SM1)/include -I../include -I$(SYS)/include \
-            -MMD -MP
+            -I$(SM2)/include -I$(SM1)/include -I$(SM0)/include -I../include \
+            -I$(SYS)/include -MMD -MP
 LDLIBS   += $(SYS_LIB) -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD := build
@@ -50,13 +51,14 @@ TEST_SRCS := $(wildcard test/*.cc)
 TEST_OBJS := $(TEST_SRCS:test/%.cc=$(BUILD)/test/%.o)
 
 LIB      := $(BUILD)/libsm3.a
+SM0_LIB  := $(SM0)/build/libsm0.a
 SM1_LIB  := $(SM1)/build/libsm1.a
 SM2_LIB  := $(SM2)/build/libsm2.a
 TEST_BIN := $(BUILD)/test_sm3
 
 FORMAT_FILES := $(wildcard src/*/*.cc src/*/*.h test/*.cc test/*.h)
 
-.PHONY: all test format clean $(SM1_LIB) $(SM2_LIB)
+.PHONY: all test format clean $(SM0_LIB) $(SM1_LIB) $(SM2_LIB)
 
 all: $(LIB) $(TEST_BIN)
 
@@ -67,6 +69,9 @@ $(LIB): $(LIB_OBJS)
 
 # The lower levels' Makefiles decide whether their libraries are
 # up to date.
+$(SM0_LIB):
+	$(MAKE) -C $(SM0) build/libsm0.a
+
 $(SM1_LIB):
 	$(MAKE) -C $(SM1) build/libsm1.a
 
@@ -77,9 +82,10 @@ $(SM2_LIB):
 $(SYS_LIB):
 	$(MAKE) -C $(SYS) build/libsys.a
 
-$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM2_LIB) $(SM1_LIB) $(SYS_LIB)
+$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM2_LIB) $(SM1_LIB) $(SM0_LIB) \
+            $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM2_LIB) $(SM1_LIB) \
-	    $(LDLIBS)
+	    $(SM0_LIB) $(LDLIBS)
 
 $(BUILD)/src/%.o: src/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)

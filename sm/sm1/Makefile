@@ -25,15 +25,17 @@ endif
 
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
+BUILD    := build
+# sm0, level 0: the error state, the log hook, and the helpers.
+SM0      := ../sm0
+SM0_LIB  := $(SM0)/$(BUILD)/libsm0.a
 # sys, the system services sm builds on: its own library (../../sys).
 SYS      := ../../sys
 SYS_LIB  := $(SYS)/build/libsys.a
 
-CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -I../include -I$(SYS)/include \
-            -Isrc -MMD -MP
-LDLIBS   += $(SYS_LIB) -lrocksdb -lpthread
-
-BUILD := build
+CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -I../include -I$(SM0)/include \
+            -I$(SYS)/include -Isrc -MMD -MP
+LDLIBS   += $(SM0_LIB) $(SYS_LIB) -lrocksdb -lpthread
 
 # The compiler and flags every object is built with. Rewriting
 # the file when they change makes it newer than the objects, so
@@ -73,7 +75,7 @@ FORMAT_FILES := $(wildcard src/*.cc src/*.h test/*.cc test/*.h mvcc/*.cc \
                           mvcc/*.h mvcc/driver/*.cc mvcc/driver/*.h \
                           example/*.cc include/sm1_*.h)
 
-.PHONY: all test scenarios accept format clean
+.PHONY: all test scenarios accept format clean $(SM0_LIB)
 
 # Keep the example objects: make deletes chained intermediates.
 .SECONDARY: $(EX_OBJS)
@@ -85,17 +87,21 @@ $(LIB): $(LIB_OBJS)
 	rm -f $@
 	$(AR) rcs $@ $^
 
+# sm0's Makefile decides whether its library is up to date.
+$(SM0_LIB):
+	$(MAKE) -C $(SM0) $(BUILD)/libsm0.a
+
 # sys's Makefile decides whether its library is up to date.
 $(SYS_LIB):
 	$(MAKE) -C $(SYS) build/libsys.a
 
-$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SYS_LIB)
+$(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM0_LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(LDLIBS)
 
-$(MVCC_BIN): $(MVCC_OBJS) $(LIB) $(SYS_LIB)
+$(MVCC_BIN): $(MVCC_OBJS) $(LIB) $(SM0_LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(MVCC_OBJS) $(LIB) $(LDLIBS)
 
-$(DRIVER): $(DRV_OBJS) $(LIB) $(SYS_LIB)
+$(DRIVER): $(DRV_OBJS) $(LIB) $(SM0_LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(DRV_OBJS) $(LIB) $(LDLIBS)
 
 $(BUILD)/drvobj/%.o: mvcc/driver/%.cc $(FLAGS_FILE)
@@ -106,7 +112,7 @@ $(BUILD)/mvcc/%.o: mvcc/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Imvcc -c -o $@ $<
 
-$(BUILD)/example/%: $(BUILD)/example/%.o $(LIB) $(SYS_LIB)
+$(BUILD)/example/%: $(BUILD)/example/%.o $(LIB) $(SM0_LIB) $(SYS_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB) $(LDLIBS)
 
 $(BUILD)/example/%.o: example/%.cc $(FLAGS_FILE)

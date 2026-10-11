@@ -1,10 +1,10 @@
 /*
- * test_defer.cc -- defer blocks and scope_guard_t (include/sm1_defer.h).
+ * test_defer.cc -- defer blocks and scope_guard_t (include/sm0_defer.h).
  */
 
 #include "doctest.h"
 
-#include "sm1_defer.h"
+#include "sm0_defer.h"
 
 #include <stdexcept>
 #include <string>
@@ -74,11 +74,11 @@ TEST_CASE("a dismissed scope_guard_t does not run") {
   // 2. A dismissed guard does not.
   int runs = 0;
   {
-    sm1::scope_guard_t g([&] { runs++; });
+    sm0::scope_guard_t g([&] { runs++; });
   }
   CHECK(runs == 1);
   {
-    sm1::scope_guard_t g([&] { runs++; });
+    sm0::scope_guard_t g([&] { runs++; });
     g.dismiss();
   }
   CHECK(runs == 1);

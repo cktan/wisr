@@ -19,7 +19,7 @@
 #include "log.h"
 #include "oom.h"
 #include "session.h"
-#include "sm1_codec.h"
+#include "sm0_codec.h"
 #include "version.h"
 
 #include <chrono>
@@ -124,7 +124,7 @@ public:
       // Set the stamped flag.
       new_value->push_back(static_cast<char>(v.flags | version_stamped));
       // Write the commit_ts after the flags.
-      sm1::put_be64(*new_value, commit_ts);
+      sm0::put_be64(*new_value, commit_ts);
       // Keep the payload as it was.
       new_value->append(v.payload.data(), v.payload.size());
       // Tell RocksDB the value changed.

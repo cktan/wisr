@@ -17,8 +17,8 @@
 #include "error.h"
 #include "log.h"
 #include "oom.h"
-#include "sm1_codec.h"
-#include "sm1_defer.h"
+#include "sm0_codec.h"
+#include "sm0_defer.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -113,7 +113,7 @@ int sweep_base(sm1::env_t *env) {
                        it->key().ToString().c_str() + 1);
     }
     // This dbid is live.
-    live.insert(sm1::get_be64(it->value().data()));
+    live.insert(sm0::get_be64(it->value().data()));
   }
   // Fail if the root db scan failed.
   if (!it->status().ok()) {
@@ -169,7 +169,7 @@ int recover_dbs(sm1::env_t *env) {
        it->Next()) {
     // sweep_base already rejected a malformed dbid.
     dbs.emplace_back(it->key().ToString().substr(1),
-                     sm1::get_be64(it->value().data()));
+                     sm0::get_be64(it->value().data()));
   }
   // Fail if the root db scan failed.
   if (!it->status().ok()) {
@@ -216,7 +216,7 @@ int recover_dbs(sm1::env_t *env) {
     throw std::bad_alloc();
   }
   char msg[256];
-  sm1::format_into(
+  sm0::format_into(
       msg, sizeof(msg),
       "*** FATAL *** out of memory: the process is aborting. Reopen "
       "the databases: WAL replay recovers every committed "
@@ -266,7 +266,7 @@ sm1::env_t *attach(const char *homedir) {
     set_error(sm1::SM_ERR_CORRUPT, "{}: no format version", rootpath.c_str());
     return nullptr;
   }
-  uint64_t v = sm1::get_be64(version.data());
+  uint64_t v = sm0::get_be64(version.data());
   // Reject a format this build does not understand.
   if (v != WISR_HOME_VERSION) {
     set_error(sm1::SM_ERR_VERSION, "{}: format version {}, expected {}",
@@ -376,8 +376,8 @@ int sm1::init(std::string_view homedir_arg) {
   };
   // Encode the format version and the first dbid.
   std::string version, next_dbid;
-  sm1::put_be64(version, WISR_HOME_VERSION);
-  sm1::put_be64(next_dbid, 1);
+  sm0::put_be64(version, WISR_HOME_VERSION);
+  sm0::put_be64(next_dbid, 1);
   // Record both in one synced batch.
   rocksdb::WriteBatch batch;
   batch.Put(WISR_ROOT_VERSION, version);

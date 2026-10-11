@@ -81,12 +81,23 @@ indexes itself; the row and entry calls keep their C signatures
 whichever level serves them. sm2 calls only sm1, and nothing
 calls upward.
 
+Under every level sits sm0, level 0, outside the diagram's
+chain of calls because every level uses it: the calling
+thread's error state, the log hook, and the general-purpose
+helpers that are about no storage — formatting into a fixed
+buffer, defer blocks, big-endian integers. It includes nothing
+of the levels and links no RocksDB. sm1 brings the error and
+log calls into namespace sm1, so the stack and its callers
+name them `sm1::errnum()`, `sm1::set_log()` and the rest
+(`sm0/README.md`).
+
 The root's `include/` also holds two C headers that belong to
 no level and that sm1 includes: `sm_error.h`, the stack's error
 codes, `sm_lock.h`, its lock modes, and `sm_options.h`, sm1's
 database options. They are
 shared definitions, not an upward call: sm1 and the wrapper
-must agree on them bytewise, and one C header is how.
+must agree on them bytewise, and one C header is how. sm0
+includes `sm_error.h` too.
 
 ---
 
@@ -130,6 +141,7 @@ rule is that nothing turns them off.
 
 | Level | Status |
 | --- | --- |
+| sm0 | built and tested: the error state, the log hook and the general-purpose helpers, with its C++ interface in `sm0/include/sm0.h`; `sm0/README.md` describes it |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built but for TOAST: its types, key encoding, tuple codec and heap and index relations, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
 | sm3 | being built: its catalog (`sm3/CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, partial and expression indexes among them, with its C++ interface in `sm3/include/sm3.h`; constraints are settled, `NOT NULL` built in sm3 and the rest the host's (§5); statistics has a strategy, `STATISTICS.md`, and no design; the order of work is in `sm3/SM3_DESIGN.md` §8, and what is left in `NEXT.md` |
