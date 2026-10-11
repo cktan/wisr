@@ -384,3 +384,88 @@ TEST_CASE("the CF:txn sweep keeps a temporary store's rows committed") {
   }
   commit_xct(s);
 }
+
+TEST_CASE("a temporary sequence counts in the session and writes nothing") {
+  // Verify a temporary sequence hands out values without the database.
+  // 1. In a read-only transaction, make a temporary sequence from 5 by 2.
+  // 2. Confirm it hands out 5, 7 and 9, that sm1::lastseq reports 9, and
+  //    that the database keeps no lease and no catalog row for it.
+  // 3. Confirm another session does not know the name.
+  temp_fixture_t f;
+  begin_xct(f.s, sm1::xctlevel_t::read_committed, 1);
+  REQUIRE_MESSAGE(sm1::mkseq(f.s, "q", 5, 2, true) == 0, sm1::errmsg());
+  uint64_t v = 0;
+  CHECK(sm1::lastseq(f.s, "q", v) == 1);
+  for (uint64_t want : {5, 7, 9}) {
+    REQUIRE_MESSAGE(sm1::nextseq(f.s, "q", v) == 0, sm1::errmsg());
+    CHECK(v == want);
+  }
+  CHECK(sm1::lastseq(f.s, "q", v) == 0);
+  CHECK(v == 9);
+  CHECK(f.s->db->seqs.empty());
+  CHECK(f.s->xid == 0);
+  commit_xct(f.s);
+
+  sm1::session_t *r = f.open();
+  CHECK(sm1::nextseq(r, "q", v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::closedb(r) == 0);
+  REQUIRE(sm1::nextseq(f.s, "q", v) == 0);
+  CHECK(v == 11);
+}
+
+TEST_CASE("making and dropping a temporary sequence follow the transaction") {
+  // Verify a temporary sequence's making and dropping can be undone.
+  // 1. Make one and abort: the name is unknown.
+  // 2. Make one under a savepoint and roll back: unknown again.
+  // 3. Make one and commit; drop it and abort: it goes on counting.
+  // 4. Drop it under a savepoint and roll back: it goes on counting.
+  // 5. Drop it: unknown to the transaction at once, and after commit;
+  //    making it again starts from its start.
+  temp_fixture_t f;
+  uint64_t v = 0;
+  begin_xct(f.s);
+  REQUIRE(sm1::mkseq(f.s, "q", 1, 1, true) == 0);
+  CHECK(sm1::mkseq(f.s, "q", 1, 1, true) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_EXISTS);
+  REQUIRE(sm1::abort(f.s) == 0);
+  CHECK(sm1::nextseq(f.s, "q", v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  begin_xct(f.s);
+  int depth = sm1::savepoint(f.s);
+  REQUIRE(sm1::mkseq(f.s, "q", 1, 1, true) == 0);
+  REQUIRE(sm1::rollback(f.s, depth) == 0);
+  CHECK(sm1::nextseq(f.s, "q", v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::mkseq(f.s, "q", 1, 1, true) == 0);
+  REQUIRE(sm1::nextseq(f.s, "q", v) == 0);
+  commit_xct(f.s);
+
+  begin_xct(f.s);
+  REQUIRE_MESSAGE(sm1::rmseq(f.s, "q") == 0, sm1::errmsg());
+  REQUIRE(sm1::abort(f.s) == 0);
+  REQUIRE(sm1::nextseq(f.s, "q", v) == 0);
+  CHECK(v == 2);
+
+  begin_xct(f.s);
+  depth = sm1::savepoint(f.s);
+  REQUIRE(sm1::rmseq(f.s, "q") == 0);
+  REQUIRE(sm1::rollback(f.s, depth) == 0);
+  REQUIRE(sm1::nextseq(f.s, "q", v) == 0);
+  CHECK(v == 3);
+  REQUIRE(sm1::rmseq(f.s, "q") == 0);
+  CHECK(sm1::nextseq(f.s, "q", v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  commit_xct(f.s);
+  CHECK(sm1::nextseq(f.s, "q", v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  begin_xct(f.s);
+  REQUIRE(sm1::mkseq(f.s, "q", 1, 1, true) == 0);
+  REQUIRE(sm1::nextseq(f.s, "q", v) == 0);
+  CHECK(v == 1);
+  CHECK(sm1::prepare(f.s, "g") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  commit_xct(f.s);
+}

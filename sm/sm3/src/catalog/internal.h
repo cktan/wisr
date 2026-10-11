@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -105,6 +106,7 @@ struct table_change_t {
   int depth;
   uint64_t oid;
   std::shared_ptr<const table_def_t> def; /* nullptr: dropped */
+  bool temp = false;                      /* a temporary table's */
 };
 struct name_change_t {
   int depth;
@@ -121,6 +123,7 @@ struct state_change_t {
   int depth;
   uint64_t index;
   std::optional<index_status_t> status; /* nullopt: none, the index gone */
+  bool temp = false;                    /* a temporary table's index */
 };
 struct nspace_change_t {
   int depth;
@@ -160,6 +163,16 @@ struct sm3::session_t {
   bool in_txn = false;      /* between begin and commit or abort */
   uint64_t snap_seq = 0;    /* cat->seq, noted before the snapshot */
   bool stmt_pinned = false; /* stmt_begin was called: statement snapshots */
+
+  /*
+   * The session's temporary catalog (TEMPTABLE.md §4): its committed
+   * temporary tables, their names in pg_temp, and their indexes'
+   * states. A commit moves the overlay's temporary changes here, and
+   * never into the shared catalog; nothing else reads or writes it.
+   */
+  std::unordered_map<uint64_t, std::shared_ptr<const table_def_t>> temp_tables;
+  std::unordered_map<std::string, uint64_t> temp_names;
+  std::unordered_map<uint64_t, index_status_t> temp_states;
 };
 
 namespace sm3 {
@@ -232,9 +245,20 @@ std::string sequence_counter(uint64_t oid);
 bool session_collation(const session_t *s, uint64_t oid,
                        const sm2::collation_t *&out);
 
-/* Record changes in session's overlay, at its current depth. */
+/*
+ * The temporary tables as session sees them, by oid: its committed
+ * ones with its transaction's changes over them.
+ */
+std::map<uint64_t, std::shared_ptr<const table_def_t>>
+temp_tables_of(const session_t *s);
+
+/*
+ * Record changes in session's overlay, at its current depth; temp
+ * marks one of a temporary table, which a commit keeps in the
+ * session.
+ */
 void overlay_table(session_t *s, uint64_t oid,
-                   std::shared_ptr<const table_def_t> def);
+                   std::shared_ptr<const table_def_t> def, bool temp = false);
 void overlay_name(session_t *s, uint64_t nspoid, std::string_view name,
                   std::optional<uint64_t> oid);
 void overlay_collation(session_t *s, uint64_t oid, uint64_t nspoid,
@@ -242,7 +266,7 @@ void overlay_collation(session_t *s, uint64_t oid, uint64_t nspoid,
 void overlay_nspace(session_t *s, uint64_t oid,
                     std::optional<std::string_view> name);
 void overlay_state(session_t *s, uint64_t index,
-                   std::optional<index_status_t> status);
+                   std::optional<index_status_t> status, bool temp = false);
 void overlay_sequence(session_t *s, uint64_t oid,
                       std::optional<uint64_t> nspoid);
 void overlay_stats(session_t *s, uint64_t oid,

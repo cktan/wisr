@@ -78,6 +78,12 @@ int taken(const std::string &name) {
  */
 int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
                std::string &name) {
+  // A temporary table never comes this way (put_temp_table), and
+  // nothing else is kept in the temporary namespace yet.
+  if (nspoid == sm3::nsp_pg_temp) {
+    return invalid("only a table can be made in the temporary namespace, "
+                   "and it cannot be dropped");
+  }
   // Held to the end of the transaction, as a table-oid lock is.
   if (sm3::lock_table(session->sm1, nspoid, mode) != 0) {
     return -1;
@@ -97,11 +103,18 @@ int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
  * snapshot may be older (CATALOG.md §5).
  */
 int latest_table(sm3::session_t *session, uint64_t oid, sm3::table_rec_t &rec) {
+  std::shared_ptr<const sm3::table_def_t> d = sm3::cat_get_table(session, oid);
+  // A temporary table is the session's alone: it has no users to
+  // wait out, and its record is the one the session sees.
+  if (d && d->nspoid == sm3::nsp_pg_temp) {
+    rec = d->rec;
+    return 0;
+  }
   // Held to the end of the transaction: DDL waits out its users.
   if (sm3::lock_table(session->sm1, oid, sm1::SM_LOCKMODE_EX) != 0) {
     return -1;
   }
-  std::shared_ptr<const sm3::table_def_t> d = sm3::cat_get_table(session, oid);
+  d = sm3::cat_get_table(session, oid);
   if (!d) {
     return sm1::seterr(sm1::SM_ERR_NOTFOUND,
                        "table " + std::to_string(oid) + " does not exist");
@@ -265,7 +278,8 @@ int stats_keys(uint64_t oid, const sm3::table_rec_t &rec,
  * Build the definition rec describes, as s sees its collations, and
  * record it in s's overlay as the table oid's.
  */
-int record_table(sm3::session_t *s, uint64_t oid, const sm3::table_rec_t &rec) {
+int record_table(sm3::session_t *s, uint64_t oid, const sm3::table_rec_t &rec,
+                 bool temp = false) {
   std::shared_ptr<const sm3::table_def_t> def;
   sm3::collation_lookup_t lookup = [s](uint64_t c,
                                        const sm2::collation_t *&out) {
@@ -274,7 +288,68 @@ int record_table(sm3::session_t *s, uint64_t oid, const sm3::table_rec_t &rec) {
   if (sm3::build_table(lookup, oid, rec, def) != 0) {
     return -1;
   }
-  sm3::overlay_table(s, oid, std::move(def));
+  sm3::overlay_table(s, oid, std::move(def), temp);
+  return 0;
+}
+
+/*
+ * cat_put_table for a temporary table (TEMPTABLE.md §4): the same
+ * checks, made against the session's own temporary tables, and the
+ * record kept in its overlay alone. Nothing is written to the
+ * catalog's store and nothing is locked. names is what rec takes.
+ */
+int put_temp_table(sm3::session_t *session, uint64_t oid,
+                   const sm3::table_rec_t &rec,
+                   const std::map<std::string, sm3::name_rec_t> &names) {
+  std::map<uint64_t, std::shared_ptr<const sm3::table_def_t>> mine =
+      sm3::temp_tables_of(session);
+  // A name is taken once among the session's temporary tables and
+  // their indexes; the table's own are its to keep or change.
+  for (const auto &[t, def] : mine) {
+    if (t == oid) {
+      continue;
+    }
+    if (names.count(def->name)) {
+      return taken(def->name);
+    }
+    for (const sm3::index_def_t &x : def->indexes) {
+      if (names.count(x.name)) {
+        return taken(x.name);
+      }
+    }
+  }
+  std::shared_ptr<const sm3::table_def_t> old =
+      sm3::cat_get_table(session, oid);
+  if (!old) {
+    if (record_table(session, oid, rec, true) != 0) {
+      return -1;
+    }
+    sm3::overlay_name(session, rec.nspoid, rec.name, oid);
+    return 0;
+  }
+  if (rec.columns.size() < old->rec.columns.size()) {
+    return invalid("put table: a column keeps its place, dropped or not");
+  }
+  if (old->nspoid != rec.nspoid) {
+    return invalid("put table: a table does not change its namespace");
+  }
+  // An index no longer in the record goes, and its state with it.
+  for (const sm3::index_def_t &x : old->indexes) {
+    bool kept = false;
+    for (const sm3::index_rec_t &i : rec.indexes) {
+      kept |= i.oid == x.oid;
+    }
+    if (!kept) {
+      sm3::overlay_state(session, x.oid, std::nullopt, true);
+    }
+  }
+  if (record_table(session, oid, rec, true) != 0) {
+    return -1;
+  }
+  if (old->name != rec.name) {
+    sm3::overlay_name(session, rec.nspoid, old->name, std::nullopt);
+    sm3::overlay_name(session, rec.nspoid, rec.name, oid);
+  }
   return 0;
 }
 
@@ -330,6 +405,10 @@ int cat_new_oid(session_t *session, uint64_t &oid) {
 
 /* Store a new namespace; see sm3.h. */
 int cat_put_namespace(session_t *session, uint64_t oid, std::string_view name) {
+  // The temporary namespace's name is taken, in no store.
+  if (name == nsp_pg_temp_name) {
+    return taken(std::string(name));
+  }
   kv_ptr kv(nullptr, &sm2::catkv_close);
   std::string blob;
   // The name first, so a taken one fails before the namespace
@@ -347,7 +426,7 @@ int cat_put_namespace(session_t *session, uint64_t oid, std::string_view name) {
 
 /* Erase a namespace; see sm3.h. */
 int cat_del_namespace(session_t *session, uint64_t oid) {
-  if (oid == nsp_pg_catalog || oid == nsp_public) {
+  if (oid == nsp_pg_catalog || oid == nsp_public || oid == nsp_pg_temp) {
     return invalid("drop namespace: a built-in namespace cannot be dropped");
   }
   kv_ptr kv(nullptr, &sm2::catkv_close);
@@ -408,6 +487,10 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
     if (!names.emplace(x.name, name_rec_t{kind_t::index, x.oid, oid}).second) {
       return taken(x.name);
     }
+  }
+  // A temporary table is kept in the session, not in the store.
+  if (rec.nspoid == nsp_pg_temp) {
+    return put_temp_table(session, oid, rec, names);
   }
   if (!cat_get_table(session, oid)) {
     // A new table. Its namespace must be there, and is held
@@ -573,6 +656,11 @@ int cat_put_index_state(session_t *session, uint64_t table_oid,
     st.error = status.error;
     st.reason = status.reason;
   }
+  // A temporary table's index: its state is the session's to keep.
+  if (d->nspoid == nsp_pg_temp) {
+    overlay_state(session, index_oid, std::move(st), true);
+    return 0;
+  }
   kv_ptr kv(nullptr, &sm2::catkv_close);
   std::string key, blob;
   if (open_kv(session->sm1, kv) != 0 ||
@@ -606,6 +694,16 @@ int cat_del_table(session_t *session, uint64_t oid) {
   std::string key;
   if (open_kv(session->sm1, kv) != 0 || latest_table(session, oid, rec) != 0) {
     return -1;
+  }
+  // A temporary table has no entry in the store: it goes from the
+  // session's view, with its name and its indexes' states.
+  if (rec.nspoid == nsp_pg_temp) {
+    for (const index_rec_t &x : rec.indexes) {
+      overlay_state(session, x.oid, std::nullopt, true);
+    }
+    overlay_table(session, oid, nullptr, true);
+    overlay_name(session, rec.nspoid, rec.name, std::nullopt);
+    return 0;
   }
   // Its names, then its record: each column, each index, and
   // its own fields.
@@ -677,12 +775,16 @@ int cat_put_collation(session_t *session, uint64_t oid, uint64_t nspoid,
 
 /* Record a table's statistics; see sm3.h. */
 int cat_put_stats(session_t *session, uint64_t oid, const stats_t &stats) {
+  std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
+  if (def && def->nspoid == nsp_pg_temp) {
+    return invalid("statistics are not kept for a temporary table yet");
+  }
   // A reader's table-oid lock, so a drop of the table waits for this
   // transaction, and this sees its definition as it stays.
   if (lock_table(session->sm1, oid, sm1::SM_LOCKMODE_IS) != 0) {
     return -1;
   }
-  std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
+  def = cat_get_table(session, oid);
   if (!def) {
     return sm1::seterr(sm1::SM_ERR_NOTFOUND,
                        "table " + std::to_string(oid) + " does not exist");
@@ -726,6 +828,10 @@ int cat_put_stats(session_t *session, uint64_t oid, const stats_t &stats) {
 
 /* Lock a table's STATS entry; see internal.h. */
 int cat_lock_stats(session_t *session, uint64_t oid) {
+  std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
+  if (def && def->nspoid == nsp_pg_temp) {
+    return invalid("statistics are not kept for a temporary table yet");
+  }
   kv_ptr kv(nullptr, &sm2::catkv_close);
   std::string key;
   if (open_kv(session->sm1, kv) != 0 || stats_key(oid, 0, 0, key) != 0) {
@@ -757,6 +863,11 @@ int cat_get_stats(session_t *session, uint64_t oid,
   // sees, in a READ COMMITTED transaction of the catalog's own, so
   // the caller's takes no lock and records no read.
   std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
+  // A temporary table has none, and the store nothing to load.
+  if (def && def->nspoid == nsp_pg_temp) {
+    out = nullptr;
+    return 0;
+  }
   if (!def) {
     out = nullptr;
     return 0;

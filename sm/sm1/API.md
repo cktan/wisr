@@ -1299,7 +1299,8 @@ unique across restarts.
 
 ```cpp
 int mkseq(session_t* session, std::string_view name,
-          uint64_t start, uint64_t increment);
+          uint64_t start, uint64_t increment,
+          bool temporary = false);
 int rmseq(session_t* session, std::string_view name);
 int nextseq(session_t* session, std::string_view name,
             uint64_t& out);
@@ -1326,6 +1327,16 @@ snapshot, so a sequence it created itself is usable before
 it commits. When the next value would pass `UINT64_MAX`, the
 sequence is exhausted and every further call fails with
 `SM_ERR_INVALID`.
+
+With `temporary`, `sm1::mkseq` makes a **temporary
+sequence** (`TEMPTABLE.md` at the top level). It is kept in
+the session's memory: it writes nothing to the database, no
+other session knows its name, and it is gone when the
+session closes. To its session the name means the temporary
+sequence, whatever else has it. A transaction declared
+read-only may make and drop one, and one that has cannot
+`sm1::prepare`. A name the transaction dropped is free again
+once it commits.
 
 Errors for `sm1::mkseq`: `SM_ERR_EXISTS`, `SM_ERR_NOTRANS`,
 `SM_ERR_CONFLICT` (retryable), `SM_ERR_INVALID`,

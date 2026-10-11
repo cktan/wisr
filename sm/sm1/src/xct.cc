@@ -216,6 +216,8 @@ void reset(sm1::session_t *s) {
   s->dropped.clear();
   s->dropped_seqs.clear();
   s->temp_touched = false;
+  s->temp_seqs_made.clear();
+  s->temp_seqs_dropped.clear();
   s->undo.clear();
   s->undo_bytes = 0;
   // Its on_commit functions go with it, run or not.
@@ -248,13 +250,28 @@ void drop_created(sm1::session_t *s) {
 /*
  * Drop the temporary stores the committing transaction dropped
  * (TEMPTABLE.md §3.2): its cursors are closed, and no other session
- * could read them.
+ * could read them. Its dropped temporary sequences go with them.
  */
 void drop_temp_dropped(sm1::session_t *s) noexcept {
   for (uint64_t storeid : s->dropped) {
     if (s->temp_stores.erase(storeid)) {
       db_drop_store_cf(s->db, storeid);
     }
+  }
+  for (const std::string &name : s->temp_seqs_dropped) {
+    s->temp_seqs.erase(name);
+  }
+}
+
+/*
+ * Take out the temporary sequences the transaction made from the
+ * from'th on, newest first, as it ends without committing or rolls
+ * back past them.
+ */
+void drop_temp_seqs_made(sm1::session_t *s, size_t from) {
+  while (s->temp_seqs_made.size() > from) {
+    s->temp_seqs.erase(s->temp_seqs_made.back());
+    s->temp_seqs_made.pop_back();
   }
 }
 
@@ -272,8 +289,9 @@ void discard(sm1::session_t *s) {
   if (s->xid != 0) {
     leave_active(s->db, s->xid);
   }
-  // Drop the stores it created.
+  // Drop the stores it created, and its temporary sequences.
   drop_created(s);
+  drop_temp_seqs_made(s, 0);
   // Release its locks.
   lock_release_all(s);
   // Forget the transaction.
@@ -335,6 +353,8 @@ int savepoint(sm1::session_t *s) {
   m.created = s->created.size();
   m.dropped = s->dropped.size();
   m.dropped_seqs = s->dropped_seqs.size();
+  m.temp_seqs_made = s->temp_seqs_made.size();
+  m.temp_seqs_dropped = s->temp_seqs_dropped.size();
   m.scan_id = s->next_scan_id;
   m.on_commit = s->on_commit.size();
   {
@@ -451,6 +471,9 @@ int rollback(sm1::session_t *s, int depth) {
   s->created.resize(m.created);
   s->dropped.resize(m.dropped);           // the undo restored their rows
   s->dropped_seqs.resize(m.dropped_seqs); // and their sequences
+  // Temporary sequences made after the mark go; dropped ones stay.
+  drop_temp_seqs_made(s, m.temp_seqs_made);
+  s->temp_seqs_dropped.resize(m.temp_seqs_dropped);
   // Drop the on_commit functions added after the mark.
   s->on_commit.resize(m.on_commit);
 

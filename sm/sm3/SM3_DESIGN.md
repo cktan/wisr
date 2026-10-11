@@ -172,6 +172,8 @@ the others, not built yet:
   `sm1/SM1_DESIGN.md` §11.3). Its definition is the one the
   catalog holds in the session's memory only, never written
   through to sm2, and visible to no other session.
+  `TEMPTABLE.md` at the top level is the design, and it is
+  built: a table made in the namespace `pg_temp`.
 
 Settled for the layout, whatever its shape:
 

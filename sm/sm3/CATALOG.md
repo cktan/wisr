@@ -238,6 +238,18 @@ SEQUENCE value    = sequence
   catalog's mutex, so the map and the store never differ.
 - The builder's queue and workers are not here: they are the
   process's, not a catalog's (`SM3_DESIGN.md` §3).
+- **A session's temporary catalog** (`TEMPTABLE.md` at the top
+  level, §4): the definitions of its temporary tables, their
+  names in the namespace `pg_temp`, and their indexes'
+  states. A change to a temporary table is made in the
+  overlay like any other, marked as one; `commit` moves it
+  here and not into the shared catalog, and takes the
+  catalog's mutex only if something else is to be published.
+  A lookup through the session finds the overlay first, then
+  this, then the shared catalog. `cat_put_table`,
+  `cat_del_table` and `cat_put_index_state` write nothing to
+  the store for one and take no lock, and `cat_lock_table`
+  takes none.
 
 ---
 
@@ -533,13 +545,6 @@ catalog of its own.
 ---
 
 ## 7. Not built yet
-
-Settled, and next:
-
-- **Temporary tables.** A temporary table is a temporary store
-  (`DESIGN.md` §5, `sm1/SM1_DESIGN.md` §11.3); its definition
-  lives only in the session's own temporary catalog, in the
-  session's temporary namespace, never written to store 0.
 
 Open: `DROP SCHEMA … CASCADE`, which waits for the
 dependencies (search paths are the SQL layer's);

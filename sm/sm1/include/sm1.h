@@ -289,12 +289,21 @@ int opendb(env_t* env, std::string_view dbname, session_t*& out,
  * again: the new sequence starts at its own start, keeping
  * nothing from the old one.
  *
+ * A TEMPORARY SEQUENCE, asked for with temporary, is the
+ * session's alone and is kept in its memory: it writes nothing
+ * to the database, no other session knows its name, and it is
+ * gone when the session closes. To its session the name means
+ * the temporary sequence, whatever else has it. A transaction
+ * declared read-only may make and drop one, and one that has
+ * cannot sm1::prepare(). A name the transaction dropped is free
+ * again once it commits.
+ *
  * Errors: SM_ERR_EXISTS, SM_ERR_NOTRANS, SM_ERR_CONFLICT
  * (retryable -- concurrently created), SM_ERR_INVALID,
  * SM_ERR_PREPARED, SM_ERR_DISKFULL, SM_ERR_IO.
  */
 int mkseq(session_t* session, std::string_view name,
-          uint64_t start, uint64_t increment);
+          uint64_t start, uint64_t increment, bool temporary = false);
 
 /*
  * Drop a sequence. Transactional, as sm1::mkseq().

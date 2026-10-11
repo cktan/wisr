@@ -38,6 +38,18 @@ constexpr uint64_t nsp_public = 2200;
 constexpr uint64_t first_oid = 16384;
 
 /*
+ * The temporary namespace, pg_temp (TEMPTABLE.md §4): built in, at
+ * an oid PostgreSQL gives no namespace, and the same in every
+ * session and database. A table made in it is a temporary table.
+ * Its store is a temporary store and its definition is kept in the
+ * session's memory alone, so each session finds only its own there:
+ * no other session sees the table, and it ends with its session.
+ * The namespace is not listed and cannot be dropped.
+ */
+constexpr uint64_t nsp_pg_temp = 12;
+constexpr char nsp_pg_temp_name[] = "pg_temp";
+
+/*
  * The relids of a table's rels in its store (SM3_DESIGN.md §4):
  * the heap takes 1 and its indexes the ones above, 0xFFFF being
  * TOAST's. 0 is left unused, so an unset relid is never a live

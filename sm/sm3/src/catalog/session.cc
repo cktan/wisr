@@ -47,6 +47,65 @@ bool made_ddl(const sm3::session_t *s) {
          !s->stats.empty();
 }
 
+/* Whether a name change is of a temporary table's name. */
+bool temp_name(const sm3::name_change_t &c) {
+  return c.name.first == sm3::nsp_pg_temp;
+}
+
+/*
+ * Whether s's transaction has made DDL the shared catalog is to
+ * learn of: any but a temporary table's.
+ */
+bool made_shared_ddl(const sm3::session_t *s) {
+  auto shared = [](const auto &c) { return !c.temp; };
+  return std::any_of(s->tables.begin(), s->tables.end(), shared) ||
+         !std::all_of(s->names.begin(), s->names.end(), temp_name) ||
+         std::any_of(s->states.begin(), s->states.end(), shared) ||
+         !s->collations.empty() || !s->nspaces.empty() ||
+         !s->sequences.empty() || !s->stats.empty();
+}
+
+/*
+ * Move s's changes to temporary tables into its temporary catalog,
+ * in the order they were made, and take them out of the overlay:
+ * the shared catalog never learns of them (TEMPTABLE.md §4).
+ */
+void publish_temp(sm3::session_t *s) {
+  for (const sm3::state_change_t &c : s->states) {
+    if (!c.temp) {
+      continue;
+    }
+    if (c.status) {
+      s->temp_states[c.index] = *c.status;
+    } else {
+      s->temp_states.erase(c.index);
+    }
+  }
+  std::erase_if(s->states, [](const auto &c) { return c.temp; });
+  for (sm3::table_change_t &t : s->tables) {
+    if (!t.temp) {
+      continue;
+    }
+    if (t.def) {
+      s->temp_tables[t.oid] = std::move(t.def);
+    } else {
+      s->temp_tables.erase(t.oid);
+    }
+  }
+  std::erase_if(s->tables, [](const auto &c) { return c.temp; });
+  for (const sm3::name_change_t &n : s->names) {
+    if (!temp_name(n)) {
+      continue;
+    }
+    if (n.oid) {
+      s->temp_names[n.name.second] = *n.oid;
+    } else {
+      s->temp_names.erase(n.name.second);
+    }
+  }
+  std::erase_if(s->names, temp_name);
+}
+
 /*
  * Move every change of s into the shared catalog, then clear them.
  * The caller holds the catalog's mutex exclusive.
@@ -130,8 +189,10 @@ int session_open(catalog_t *cat, sm1::session_t *s, session_t *&out) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "session_open: no catalog or no sm1 session");
   }
-  out = new session_t{
-      s, cat, sm1::xctlevel_t::read_committed, 0, {}, {}, {}, {}, {}, {}, {}};
+  out = new session_t{};
+  out->sm1 = s;
+  out->cat = cat;
+  out->level = sm1::xctlevel_t::read_committed;
   return 0;
 }
 
@@ -304,8 +365,14 @@ int forget(session_t *s, int depth) {
 int commit(session_t *s) {
   // Committed or not, the transaction is over.
   s->in_txn = false;
-  if (!made_ddl(s)) {
-    return sm1::commit(s->sm1);
+  if (!made_shared_ddl(s)) {
+    // Nothing for the shared catalog: what there is, is the session's.
+    if (sm1::commit(s->sm1) != 0) {
+      drop_from(s, 0);
+      return -1;
+    }
+    publish_temp(s);
+    return 0;
   }
   // Readers of the catalog wait from here until the change is in.
   std::unique_lock lock(s->cat->mu);
@@ -313,6 +380,7 @@ int commit(session_t *s) {
     drop_from(s, 0);
     return -1;
   }
+  publish_temp(s);
   publish(s);
   return 0;
 }
@@ -341,8 +409,8 @@ int abort(session_t *s) {
 
 /* Record a table's new definition, or its drop. */
 void overlay_table(session_t *s, uint64_t oid,
-                   std::shared_ptr<const table_def_t> def) {
-  s->tables.push_back({s->depth, oid, std::move(def)});
+                   std::shared_ptr<const table_def_t> def, bool temp) {
+  s->tables.push_back({s->depth, oid, std::move(def), temp});
 }
 
 /* Record a table name taken, or freed. */
@@ -371,8 +439,8 @@ void overlay_sequence(session_t *s, uint64_t oid,
 
 /* Record an index's state set, or its going with its index. */
 void overlay_state(session_t *s, uint64_t index,
-                   std::optional<index_status_t> status) {
-  s->states.push_back({s->depth, index, std::move(status)});
+                   std::optional<index_status_t> status, bool temp) {
+  s->states.push_back({s->depth, index, std::move(status), temp});
 }
 
 /* An index's committed state; see sm3.h. */
@@ -388,6 +456,11 @@ index_status_t cat_get_index_state(const session_t *s, uint64_t index_oid) {
     if (it->index == index_oid) {
       return it->status ? *it->status : index_status_t{};
     }
+  }
+  // Its own temporary table's index, which the catalog never has.
+  auto own = s->temp_states.find(index_oid);
+  if (own != s->temp_states.end()) {
+    return own->second;
   }
   return cat_get_index_state(s->cat, index_oid);
 }
@@ -417,6 +490,26 @@ static std::map<uint64_t, std::string> nspaces_of(const session_t *s) {
       out.erase(c.oid);
     }
   }
+  // Built in, and in no store: every session has its own.
+  out[nsp_pg_temp] = nsp_pg_temp_name;
+  return out;
+}
+
+/* The temporary tables as s sees them; see internal.h. */
+std::map<uint64_t, std::shared_ptr<const table_def_t>>
+temp_tables_of(const session_t *s) {
+  std::map<uint64_t, std::shared_ptr<const table_def_t>> out(
+      s->temp_tables.begin(), s->temp_tables.end());
+  for (const table_change_t &c : s->tables) {
+    if (!c.temp) {
+      continue;
+    }
+    if (c.def) {
+      out[c.oid] = c.def;
+    } else {
+      out.erase(c.oid);
+    }
+  }
   return out;
 }
 
@@ -437,7 +530,10 @@ bool cat_get_namespace(const session_t *s, std::string_view name,
 std::vector<std::string> cat_list_namespaces(const session_t *s) {
   std::vector<std::string> out;
   for (const auto &[oid, name] : nspaces_of(s)) {
-    out.push_back(name);
+    // The temporary namespace is not one to list.
+    if (oid != nsp_pg_temp) {
+      out.push_back(name);
+    }
   }
   std::sort(out.begin(), out.end());
   return out;
@@ -525,12 +621,22 @@ std::shared_ptr<const table_def_t> cat_get_table(const session_t *s,
       return it->def;
     }
   }
+  // Its own temporary table, which the catalog never has.
+  auto own = s->temp_tables.find(oid);
+  if (own != s->temp_tables.end()) {
+    return own->second;
+  }
   return cat_get_table(s->cat, oid);
 }
 
 /* Lock a table's schema, then read its definition; see sm3.h. */
 int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
                    std::shared_ptr<const table_def_t> &out) {
+  // A temporary table is the session's alone: no one to lock out.
+  out = cat_get_table(s, oid);
+  if (out && out->nspoid == nsp_pg_temp) {
+    return 0;
+  }
   if (lock_table(s->sm1, oid, mode) != 0) {
     return -1;
   }
@@ -550,7 +656,12 @@ std::vector<std::string> cat_list_tables(const session_t *s, uint64_t nspoid) {
       seen[c.name.second] = c.oid.has_value();
     }
   }
-  {
+  if (nspoid == nsp_pg_temp) {
+    // Its own temporary tables: the catalog has none.
+    for (const auto &[name, oid] : s->temp_names) {
+      seen.emplace(name, true);
+    }
+  } else {
     std::shared_lock lock(s->cat->mu);
     for (const auto &[name, oid] : s->cat->table_names) {
       if (name.first == nspoid) {
@@ -574,6 +685,10 @@ bool cat_get_index(const session_t *s, uint64_t nspoid, std::string_view name,
   std::map<uint64_t, std::shared_ptr<const table_def_t>> seen;
   for (const table_change_t &c : s->tables) {
     seen[c.oid] = c.def;
+  }
+  // Its own temporary tables, then the shared ones.
+  for (const auto &[oid, def] : s->temp_tables) {
+    seen.emplace(oid, def);
   }
   {
     std::shared_lock lock(s->cat->mu);
@@ -605,7 +720,14 @@ cat_get_table(const session_t *s, uint64_t nspoid, std::string_view name) {
     }
   }
   uint64_t oid;
-  {
+  if (nspoid == nsp_pg_temp) {
+    // Its own temporary tables: the catalog has none.
+    auto it = s->temp_names.find(std::string(name));
+    if (it == s->temp_names.end()) {
+      return nullptr;
+    }
+    oid = it->second;
+  } else {
     std::shared_lock lock(s->cat->mu);
     auto it = s->cat->table_names.find({nspoid, std::string(name)});
     if (it == s->cat->table_names.end()) {

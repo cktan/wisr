@@ -18,6 +18,7 @@
 #include "session.h"
 #include "sm0_codec.h"
 
+#include <algorithm>
 #include <new>
 #include <string>
 
@@ -60,9 +61,39 @@ int seq_lookup(sm1::session_t *s, const view_t &view, const char *name,
   return 0;
 }
 
+/*
+ * The session's temporary sequence name, or NULL if it has none, or
+ * its transaction has dropped it.
+ */
+sm1::session_t::temp_seq_t *temp_seq(sm1::session_t *s, const char *name) {
+  auto it = s->temp_seqs.find(name);
+  if (it == s->temp_seqs.end() ||
+      std::find(s->temp_seqs_dropped.begin(), s->temp_seqs_dropped.end(),
+                name) != s->temp_seqs_dropped.end()) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
+/* Hand out temporary sequence q's next value, as db_next_seq does. */
+int temp_seq_next(sm1::session_t::temp_seq_t *q, uint64_t *out) {
+  // Refuse a sequence whose last value is already handed out.
+  if (q->exhausted) {
+    return set_error(sm1::SM_ERR_INVALID, "sequence is exhausted");
+  }
+  *out = q->next;
+  // Stop here if another step would wrap.
+  if (q->next > UINT64_MAX - q->increment) {
+    q->exhausted = true;
+  } else {
+    q->next += q->increment;
+  }
+  return 0;
+}
+
 /* sm1::mkseq, minus the out-of-memory guard. */
 int mkseq(sm1::session_t *s, const char *name, uint64_t start,
-          uint64_t increment) {
+          uint64_t increment, bool temporary) {
   // Require an active, non-prepared transaction and a valid name.
   if (xct_check_active(s) != 0 ||
       check_name(name, sm1::max_seqname, "sequence") != 0) {
@@ -71,6 +102,18 @@ int mkseq(sm1::session_t *s, const char *name, uint64_t start,
   // A sequence that never advances is a mistake, not a feature.
   if (increment == 0) {
     return set_error(sm1::SM_ERR_INVALID, "sequence increment is 0");
+  }
+  // A temporary sequence is an entry in the session, and no more.
+  if (temporary) {
+    // One the transaction dropped still holds its name until commit.
+    if (s->temp_seqs.count(name)) {
+      return set_error(sm1::SM_ERR_EXISTS, "sequence {} already exists", name);
+    }
+    s->temp_seqs[name] = {start, increment, start, false};
+    // Remember it, so abort or rollback takes it out again.
+    s->temp_seqs_made.push_back(name);
+    s->temp_touched = true;
+    return 0;
   }
   seqdef_t def;
   // Resolve the name at the transaction's view.
@@ -112,6 +155,13 @@ int rmseq(sm1::session_t *s, const char *name) {
       check_name(name, sm1::max_seqname, "sequence") != 0) {
     return -1;
   }
+  // A temporary sequence goes at commit; until then it is only
+  // hidden from the transaction.
+  if (temp_seq(s, name)) {
+    s->temp_seqs_dropped.push_back(name);
+    s->temp_touched = true;
+    return 0;
+  }
   seqdef_t def;
   // Resolve the name at the transaction's view.
   int r = seq_lookup(s, xct_view(s), name, &def);
@@ -147,6 +197,10 @@ int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
     return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
                      s->prepared_gid.c_str());
   }
+  // The session's temporary sequence, if the name is one's.
+  if (sm1::session_t::temp_seq_t *q = temp_seq(s, name)) {
+    return temp_seq_next(q, out);
+  }
   // A stopped database persists nothing, leases included.
   if (xct_check_writable(s->db) != 0) {
     return -1;
@@ -181,6 +235,15 @@ int lastseq(sm1::session_t *s, const char *name, uint64_t *out) {
     return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
                      s->prepared_gid.c_str());
   }
+  // The session's temporary sequence, if the name is one's.
+  if (sm1::session_t::temp_seq_t *q = temp_seq(s, name)) {
+    // Still at its start, and not because it is used up: none drawn.
+    if (q->next == q->start && !q->exhausted) {
+      return 1;
+    }
+    *out = q->exhausted ? q->next : q->next - q->increment;
+    return 0;
+  }
   // Read the definition as sm1::nextseq does.
   view_t view =
       s->active ? xct_view(s) : view_t{s->db->visible_ts.load(), 0, 0};
@@ -202,7 +265,7 @@ int lastseq(sm1::session_t *s, const char *name, uint64_t *out) {
 
 /* Create a sequence. */
 int sm1::mkseq(sm1::session_t *session, std::string_view name_arg,
-               uint64_t start, uint64_t increment) {
+               uint64_t start, uint64_t increment, bool temporary) {
   // Take the name as a C string, as the engine uses it.
   std::string name_str;
   if (copy_name(name_arg, "sequence", name_str) != 0) {
@@ -213,7 +276,7 @@ int sm1::mkseq(sm1::session_t *session, std::string_view name_arg,
   if (!session) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_mkseq: session is NULL");
   }
-  return ::mkseq(session, name, start, increment);
+  return ::mkseq(session, name, start, increment, temporary);
 }
 
 /* Drop a sequence. */

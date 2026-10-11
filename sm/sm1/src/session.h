@@ -46,6 +46,20 @@ struct sm1::session_t {
    */
   std::unordered_set<uint64_t> temp_stores;
   bool temp_touched = false;
+  /*
+   * The session's temporary sequences, by name (sm1.h, mkseq), with
+   * those the transaction made and those it dropped: an abort takes
+   * the first out again, a commit the second.
+   */
+  struct temp_seq_t {
+    uint64_t start = 0;
+    uint64_t increment = 1;
+    uint64_t next = 0;      /* next value to hand out */
+    bool exhausted = false; /* the last value is handed out */
+  };
+  std::unordered_map<std::string, temp_seq_t> temp_seqs;
+  std::vector<std::string> temp_seqs_made;
+  std::vector<std::string> temp_seqs_dropped;
   bool snapshot_registered = false; /* counted in gc_watermark */
   uint64_t begin_seq = 0;           /* begin order; larger is younger */
 
@@ -88,14 +102,16 @@ struct sm1::session_t {
    * push order, so savepoints[d - 1] is the mark at depth d.
    */
   struct mark_t {
-    size_t undo = 0;         /* undo.size() at the mark */
-    uint32_t seq_hwm = 0;    /* seq_hwm at the mark */
-    size_t locks = 0;        /* locks.size() at the mark */
-    size_t created = 0;      /* created.size() at the mark */
-    size_t dropped = 0;      /* dropped.size() at the mark */
-    size_t dropped_seqs = 0; /* dropped_seqs.size() at the mark */
-    uint64_t scan_id = 0;    /* cursors with a larger id came later */
-    size_t on_commit = 0;    /* on_commit.size() at the mark */
+    size_t undo = 0;              /* undo.size() at the mark */
+    uint32_t seq_hwm = 0;         /* seq_hwm at the mark */
+    size_t locks = 0;             /* locks.size() at the mark */
+    size_t created = 0;           /* created.size() at the mark */
+    size_t dropped = 0;           /* dropped.size() at the mark */
+    size_t dropped_seqs = 0;      /* dropped_seqs.size() at the mark */
+    size_t temp_seqs_made = 0;    /* temp_seqs_made.size() at the mark */
+    size_t temp_seqs_dropped = 0; /* temp_seqs_dropped.size() at the mark */
+    uint64_t scan_id = 0;         /* cursors with a larger id came later */
+    size_t on_commit = 0;         /* on_commit.size() at the mark */
   };
   std::vector<mark_t> savepoints;
   /*

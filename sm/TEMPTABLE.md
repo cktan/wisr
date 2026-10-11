@@ -197,6 +197,13 @@ transaction at a time. So, for a temporary store:
   or wrote a temporary store, with `SM_ERR_INVALID`: the
   transaction would outlive the session, and the store would
   not.
+- **A temporary sequence** is asked of `sm1::mkseq` by the
+  same flag. It is an entry in the session's memory: no row
+  in store 0, no lease in `CF:meta`, nothing written at all.
+  Making and dropping one follow the transaction; its values
+  do not, as with any sequence. To its session the name
+  means the temporary sequence, whatever else has it. A
+  temporary table counts its rownos with one (§4).
 - **A temporary-only transaction still writes to its
   database**: its commit record. That record need not be
   synced, since nothing it commits survives a crash; the sync
@@ -217,26 +224,38 @@ transaction at a time. So, for a temporary store:
   transaction's overlay, tagged with its savepoint depth, as
   now. At commit it moves into the temporary catalog instead
   of the shared one; an abort or a rollback drops it.
-- **One temporary namespace**, at a fixed oid, the same in
-  every session and database. A session's lookup in it finds
-  its own tables and no one else's, so no namespace per
-  session is needed. Creating a table in it is what asks for
-  a temporary table: the calls take no new flag.
+- **One temporary namespace**, `pg_temp`, at a fixed oid
+  (`sm3::nsp_pg_temp`, 12), the same in every session and
+  database. A session's lookup in it finds its own tables and
+  no one else's, so no namespace per session is needed.
+  Creating a table in it is what asks for a temporary table:
+  the calls take no new flag. It is built in and in no store:
+  it is found by name, not listed, and cannot be dropped, and
+  no namespace may take its name.
+- **Names** of a session's temporary tables and their indexes
+  are one name space, checked in memory, since no key in
+  store 0 holds them. A name in `pg_temp` and the same name in
+  another namespace do not meet.
 - **A table's oid** comes from the database's `sm3.oid`
   sequence, as any table's does.
-- **A table's rowno counter** is in the session's memory, not
-  an sm1 sequence, whose definition is a row in store 0.
+- **A table's rowno counter** is a temporary sequence of sm1
+  (§3.5), in the session's memory: an ordinary one is a row
+  in store 0 and a lease in `CF:meta`. sm2 draws from it by
+  name, as it does for any table.
 - **No table-oid lock.** `cat_lock_table` on a temporary
   table returns its definition and takes nothing.
 - **Indexes are built in the session**, at once, whenever
   they are made. The builder works in sessions of its own,
-  which cannot reach the store or the definition.
-  `sm_cat_index_wait` on one returns at once.
+  which cannot reach the store or the definition. This is
+  the path a table made by its own transaction already took:
+  it is chosen by the table's absence from the shared
+  catalog, and a temporary table is never in it.
 - **TRUNCATE** is a new temporary store and a drop of the
   old, as for a table (`sm3/SM3_DESIGN.md` §4).
-- **Not allowed across the line.** An index, a foreign key or
-  a partition that joins a temporary table to one that is not
-  is refused.
+- **Not kept yet, and refused**: statistics of a temporary
+  table (`tbl_analyze` fails, and `cat_get_stats` gives
+  none), and a sequence or a collation in `pg_temp`.
+- **A prepare is refused** after any of it, as after any DDL.
 
 ---
 
@@ -326,8 +345,11 @@ that no longer exist, and are swept with the rest.
 
 - **Skipping the sync** of a commit record whose transaction
   wrote only temporary stores.
-- **Statistics** of a temporary table, with the rest of
-  `STATISTICS.md`.
+- **Statistics** of a temporary table: `ANALYZE` of one is
+  refused.
+- **`CREATE TEMPORARY SEQUENCE`**: sm1 has the counter (§3.5),
+  and sm3's sequence catalog is not yet routed to the
+  session.
 - **Bulk load** into one (`BULKLOAD.md`).
 
 ---
@@ -357,8 +379,9 @@ Each step lands on its own, with its tests.
    `sm1::detach` closes it. Built.
 2. **A store names its instance** (§3.1), with every store
    still in the database's. No behaviour changes. Built.
-3. **Temporary stores in sm1** (§3.2 to §3.5). Built.
-4. **The temporary catalog in sm3** (§4).
+3. **Temporary stores in sm1** (§3.2 to §3.5). Built, and
+   temporary sequences with them.
+4. **The temporary catalog in sm3** (§4). Built.
 5. **The wrapper, and `rel`** (§5).
 6. **digres**: `CREATE TEMPORARY TABLE`, `ON COMMIT`, and
    the temporary namespace in the search path.

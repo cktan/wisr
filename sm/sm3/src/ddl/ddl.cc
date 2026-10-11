@@ -129,11 +129,14 @@ int create_table(session_t *session, uint64_t nspoid, std::string_view name,
     rec.columns.push_back({c.name, c.type_code, c.typmod, c.not_null, false,
                            std::nullopt, std::nullopt});
   }
-  // The table's store and its rowno sequence (DESIGN.md §5).
-  if (sm1::mkstore(session->sm1, rec.storeid) != 0) {
+  // The table's store and its rowno sequence (DESIGN.md §5): for a
+  // temporary table, both temporary, and so the session's alone
+  // (TEMPTABLE.md §4).
+  const bool temp = nspoid == nsp_pg_temp;
+  if (sm1::mkstore(session->sm1, rec.storeid, temp) != 0) {
     return -1;
   }
-  if (sm1::mkseq(session->sm1, rec.rowno_seq, 1, 1) == 0 &&
+  if (sm1::mkseq(session->sm1, rec.rowno_seq, 1, 1, temp) == 0 &&
       cat_put_table(session, t, rec) == 0) {
     oid = t;
     return 0;
@@ -174,9 +177,10 @@ int truncate_table(session_t *session, uint64_t oid) {
     return -1;
   }
   const uint64_t old_store = rec.storeid;
-  // A new, empty store for the rows and index entries; the
-  // index relids and the rowno sequence carry over.
-  if (sm1::mkstore(session->sm1, rec.storeid) != 0 ||
+  // A new, empty store for the rows and index entries, temporary
+  // if the table is; the index relids and the rowno sequence carry
+  // over.
+  if (sm1::mkstore(session->sm1, rec.storeid, rec.nspoid == nsp_pg_temp) != 0 ||
       cat_put_table(session, oid, rec) != 0) {
     return -1;
   }
