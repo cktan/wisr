@@ -102,29 +102,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int MyXactFlags;
  */
 #define XACT_FLAGS_PIPELINING					(1U << 3)
 
-/*
- *	start- and end-of-transaction callbacks for dynamically loaded modules
- */
-typedef enum {
-  XACT_EVENT_COMMIT,
-  XACT_EVENT_ABORT,
-  XACT_EVENT_PREPARE,
-  XACT_EVENT_PRE_COMMIT,
-  XACT_EVENT_PRE_PREPARE,
-} XactEvent;
-
-typedef void (*XactCallback)(XactEvent event, void *arg);
-
-typedef enum {
-  SUBXACT_EVENT_START_SUB,
-  SUBXACT_EVENT_COMMIT_SUB,
-  SUBXACT_EVENT_ABORT_SUB,
-  SUBXACT_EVENT_PRE_COMMIT_SUB,
-} SubXactEvent;
-
-typedef void (*SubXactCallback)(SubXactEvent event, SubTransactionId mySubid,
-                                SubTransactionId parentSubid, void *arg);
-
 /* Data structure for Save/RestoreTransactionCharacteristics */
 typedef struct SavedTransactionCharacteristics {
   int save_XactIsoLevel;
@@ -196,10 +173,6 @@ extern void PreventInTransactionBlock(bool isTopLevel, const char *stmtType);
 extern void RequireTransactionBlock(bool isTopLevel, const char *stmtType);
 extern void WarnNoTransactionBlock(bool isTopLevel, const char *stmtType);
 extern bool IsInTransactionBlock(bool isTopLevel);
-extern void RegisterXactCallback(XactCallback callback, void *arg);
-extern void UnregisterXactCallback(XactCallback callback, void *arg);
-extern void RegisterSubXactCallback(SubXactCallback callback, void *arg);
-extern void UnregisterSubXactCallback(SubXactCallback callback, void *arg);
 
 extern int xactGetCommittedChildren(TransactionId **ptr);
 

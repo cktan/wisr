@@ -1487,3 +1487,24 @@ transaction's xid, and every listener reads it at commit.
   both.
 - The grammar and nodes stay: sq parses the statements, and
   digres refuses them.
+
+## Step 44: xact.c calls sm, and has no callbacks
+
+The first of PLAN.md §7's steps toward sm's transactions
+replacing `xact.c`: the transaction's ends are sm's, said in
+`xact.c` itself, not through a callback.
+
+- **`CommitTransaction()` calls `smstore_commit()`** where the
+  pre-commit callbacks ran, so a commit sm refuses still fails
+  the transaction; **`AbortTransaction()` calls
+  `smstore_abort()`**, before the resource owner's release and
+  whether or not one was made. A subtransaction's commit and
+  abort call `smstore_subcommit()` and `smstore_subabort()`:
+  its savepoint is forgotten, or rolled back and forgotten.
+- **The transaction callbacks are gone**:
+  `Register`/`UnregisterXactCallback()`, their subtransaction
+  pair, the lists and the event types. smstore was their only
+  user; digres loads no module that would register one.
+- The begin is still lazy, at the first call into sm, so that
+  `SET TRANSACTION ISOLATION LEVEL` after BEGIN still sets
+  sm's level.

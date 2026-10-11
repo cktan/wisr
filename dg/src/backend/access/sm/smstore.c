@@ -40,9 +40,6 @@ static thread_local /*LOCAL*/ bool sm_xact_open = false;
  */
 static thread_local /*LOCAL*/ bool statement_pending = false;
 
-/* Whether this thread has registered xact_callback(). */
-static thread_local /*LOCAL*/ bool xact_callback_registered = false;
-
 /* A table this transaction opened in sm, to read or to write. */
 typedef struct open_table_t {
   Oid oid;
@@ -112,62 +109,75 @@ template <class F> static int waiting(F f) {
   }
 }
 
-/*
- * End the sm transaction with the PostgreSQL one: commit it before
- * PostgreSQL commits, so that a commit sm refuses fails the transaction;
- * abort it as PostgreSQL aborts.
- */
-static void xact_callback(XactEvent event, void *arg) {
+/* Close the tables this transaction opened: a handle is good for it only. */
+static void close_tables(void) {
   ListCell *l;
 
-  if (!sm_xact_open)
-    return;
-  if (event == XACT_EVENT_PRE_COMMIT || event == XACT_EVENT_ABORT) {
-    /* A handle is good for its transaction only. */
-    foreach (l, open_tables)
-      sm_tbl_close(((open_table_t *)lfirst(l))->tbl);
-    open_tables = NIL;
-    savepoints = NIL;
-  }
-  switch (event) {
-  case XACT_EVENT_PRE_COMMIT:
-    sm_xact_open = false;
-    if (sm_commit(session()) != 0)
-      sm_error("commit");
-    break;
-  case XACT_EVENT_ABORT:
-    sm_xact_open = false;
-    /* An abort that fails here has nowhere to go: sm ends it anyway. */
-    (void)sm_abort(session());
-    break;
-  default:
-    break;
-  }
+  foreach (l, open_tables)
+    sm_tbl_close(((open_table_t *)lfirst(l))->tbl);
+  open_tables = NIL;
+  savepoints = NIL;
 }
 
 /*
- * End a subtransaction's savepoint in sm with the subtransaction: forget it
- * as it commits, its writes kept; undo its writes as it aborts, and forget
- * it.  A subtransaction with no savepoint made no call into sm.
+ * Commit the sm transaction, if one has begun: before the PostgreSQL one
+ * commits, so that a commit sm refuses fails the transaction.
  */
-static void subxact_callback(SubXactEvent event, SubTransactionId mySubid,
-                             SubTransactionId parentSubid, void *arg) {
+void smstore_commit(void) {
+  if (!sm_xact_open)
+    return;
+  close_tables();
+  sm_xact_open = false;
+  if (sm_commit(session()) != 0)
+    sm_error("commit");
+}
+
+/* Abort the sm transaction, if one has begun, as the PostgreSQL one does. */
+void smstore_abort(void) {
+  if (!sm_xact_open)
+    return;
+  close_tables();
+  sm_xact_open = false;
+  /* An abort that fails here has nowhere to go: sm ends it anyway. */
+  (void)sm_abort(session());
+}
+
+/*
+ * The savepoint of the subtransaction ending, taken off the list, or 0 if it
+ * made no call into sm and has none.
+ */
+static int subxact_savepoint(void) {
   int level = GetCurrentTransactionNestLevel();
   int depth;
 
   if (!sm_xact_open || list_length(savepoints) < level - 1)
-    return;
-  if (event != SUBXACT_EVENT_COMMIT_SUB && event != SUBXACT_EVENT_ABORT_SUB)
-    return;
+    return 0;
   depth = list_nth_int(savepoints, level - 2);
   savepoints = list_truncate(savepoints, level - 2);
+  return depth;
+}
+
+/* The subtransaction commits: its savepoint goes, its writes stay. */
+void smstore_subcommit(void) {
+  int depth = subxact_savepoint();
+
+  /* A savepoint sm cannot forget is a transaction it ended: next call says. */
+  if (depth > 0)
+    (void)sm_forget(session(), depth);
+}
+
+/* The subtransaction aborts: its writes are undone, and its savepoint goes. */
+void smstore_subabort(void) {
+  int depth = subxact_savepoint();
+
   /*
    * In an abort there is nowhere for an error to go: a savepoint sm cannot
    * undo is a transaction sm has ended, and the next call says so.
    */
-  if (event == SUBXACT_EVENT_ABORT_SUB)
+  if (depth > 0) {
     (void)sm_rollback(session(), depth);
-  (void)sm_forget(session(), depth);
+    (void)sm_forget(session(), depth);
+  }
 }
 
 /*
@@ -184,7 +194,7 @@ static void savepoints_begin(sm_session_t *s) {
 
     if (depth < 0)
       sm_error("set a savepoint");
-    /* As long as the transaction: subxact_callback() lets it go. */
+    /* As long as the transaction: the subtransaction's end lets it go. */
     old = MemoryContextSwitchTo(TopTransactionContext);
     savepoints = lappend_int(savepoints, depth);
     MemoryContextSwitchTo(old);
@@ -215,7 +225,7 @@ static void statement_begin(sm_session_t *s) {
 /*
  * This session's sm session, in an sm transaction: begun at the first call
  * that needs one in the PostgreSQL transaction, at its isolation level, and
- * ended with it (xact_callback()).
+ * ended with it (smstore_commit(), smstore_abort()).
  */
 static sm_session_t *xact_session(void) {
   sm_session_t *s = session();
@@ -224,12 +234,6 @@ static sm_session_t *xact_session(void) {
     statement_begin(s);
     savepoints_begin(s);
     return s;
-  }
-  if (!xact_callback_registered) {
-    /* Once a thread: they last as long as the session. */
-    RegisterXactCallback(xact_callback, NULL);
-    RegisterSubXactCallback(subxact_callback, NULL);
-    xact_callback_registered = true;
   }
   if (sm_begin(s, xact_level(), XactReadOnly) != 0)
     sm_error("begin a transaction");

@@ -216,28 +216,6 @@ thread_local /*LOCAL*/ bool xact_is_sampled = false;
  */
 static thread_local /*LOCAL*/ MemoryContext TransactionAbortContext = NULL;
 
-/*
- * List of add-on start- and end-of-xact callbacks
- */
-typedef struct XactCallbackItem {
-  struct XactCallbackItem *next;
-  XactCallback callback;
-  void *arg;
-} XactCallbackItem;
-
-static thread_local /*LOCAL*/ XactCallbackItem *Xact_callbacks = NULL;
-
-/*
- * List of add-on start- and end-of-subxact callbacks
- */
-typedef struct SubXactCallbackItem {
-  struct SubXactCallbackItem *next;
-  SubXactCallback callback;
-  void *arg;
-} SubXactCallbackItem;
-
-static thread_local /*LOCAL*/ SubXactCallbackItem *SubXact_callbacks = NULL;
-
 /* local function prototypes */
 static void AssignTransactionId(TransactionState s);
 static void AbortTransaction(void);
@@ -249,9 +227,6 @@ static void AtCommit_Memory(void);
 static void AtStart_Cache(void);
 static void AtStart_Memory(void);
 static void AtStart_ResourceOwner(void);
-static void CallXactCallbacks(XactEvent event);
-static void CallSubXactCallbacks(SubXactEvent event, SubTransactionId mySubid,
-                                 SubTransactionId parentSubid);
 static void CleanupTransaction(void);
 static void CheckTransactionBlock(bool isTopLevel, bool throwError,
                                   const char *stmtType);
@@ -1434,7 +1409,8 @@ static void CommitTransaction(void) {
    * the transaction-abort path.
    */
 
-  CallXactCallbacks(XACT_EVENT_PRE_COMMIT);
+  /* sm's transaction commits first: one sm refuses fails this one. */
+  smstore_commit();
 
   /* Shut down the deferred-trigger manager */
   AfterTriggerEndXact(true);
@@ -1515,8 +1491,6 @@ static void CommitTransaction(void) {
    * the ResourceOwner mechanism.  The other calls here are for backend-wide
    * state.
    */
-
-  CallXactCallbacks(XACT_EVENT_COMMIT);
 
   CurrentResourceOwner = NULL;
   ResourceOwnerRelease(TopTransactionResourceOwner,
@@ -1718,9 +1692,9 @@ static void AbortTransaction(void) {
    * ordering.  We can skip all of it if the transaction failed before
    * creating a resource owner.
    */
+  /* sm's transaction aborts with this one. */
+  smstore_abort();
   if (TopTransactionResourceOwner != NULL) {
-    CallXactCallbacks(XACT_EVENT_ABORT);
-
     ResourceOwnerRelease(TopTransactionResourceOwner,
                          RESOURCE_RELEASE_BEFORE_LOCKS, false, true);
     AtEOXact_Buffers(false);
@@ -2455,107 +2429,6 @@ bool IsInTransactionBlock(bool isTopLevel) {
     return true;
 
   return false;
-}
-
-/*
- * Register or deregister callback functions for start- and end-of-xact
- * operations.
- *
- * These functions are intended for use by dynamically loaded modules.
- * For built-in modules we generally just hardwire the appropriate calls
- * (mainly because it's easier to control the order that way, where needed).
- *
- * At transaction end, the callback occurs post-commit or post-abort, so the
- * callback functions can only do noncritical cleanup.
- */
-void RegisterXactCallback(XactCallback callback, void *arg) {
-  XactCallbackItem *item;
-
-  item = (XactCallbackItem *)MemoryContextAlloc(TopMemoryContext,
-                                                sizeof(XactCallbackItem));
-  item->callback = callback;
-  item->arg = arg;
-  item->next = Xact_callbacks;
-  Xact_callbacks = item;
-}
-
-void UnregisterXactCallback(XactCallback callback, void *arg) {
-  XactCallbackItem *item;
-  XactCallbackItem *prev;
-
-  prev = NULL;
-  for (item = Xact_callbacks; item; prev = item, item = item->next) {
-    if (item->callback == callback && item->arg == arg) {
-      if (prev)
-        prev->next = item->next;
-      else
-        Xact_callbacks = item->next;
-      pfree(item);
-      break;
-    }
-  }
-}
-
-static void CallXactCallbacks(XactEvent event) {
-  XactCallbackItem *item;
-  XactCallbackItem *next;
-
-  for (item = Xact_callbacks; item; item = next) {
-    /* allow callbacks to unregister themselves when called */
-    next = item->next;
-    item->callback(event, item->arg);
-  }
-}
-
-/*
- * Register or deregister callback functions for start- and end-of-subxact
- * operations.
- *
- * Pretty much same as above, but for subtransaction events.
- *
- * At subtransaction end, the callback occurs post-subcommit or post-subabort,
- * so the callback functions can only do noncritical cleanup.  At
- * subtransaction start, the callback is called when the subtransaction has
- * finished initializing.
- */
-void RegisterSubXactCallback(SubXactCallback callback, void *arg) {
-  SubXactCallbackItem *item;
-
-  item = (SubXactCallbackItem *)MemoryContextAlloc(TopMemoryContext,
-                                                   sizeof(SubXactCallbackItem));
-  item->callback = callback;
-  item->arg = arg;
-  item->next = SubXact_callbacks;
-  SubXact_callbacks = item;
-}
-
-void UnregisterSubXactCallback(SubXactCallback callback, void *arg) {
-  SubXactCallbackItem *item;
-  SubXactCallbackItem *prev;
-
-  prev = NULL;
-  for (item = SubXact_callbacks; item; prev = item, item = item->next) {
-    if (item->callback == callback && item->arg == arg) {
-      if (prev)
-        prev->next = item->next;
-      else
-        SubXact_callbacks = item->next;
-      pfree(item);
-      break;
-    }
-  }
-}
-
-static void CallSubXactCallbacks(SubXactEvent event, SubTransactionId mySubid,
-                                 SubTransactionId parentSubid) {
-  SubXactCallbackItem *item;
-  SubXactCallbackItem *next;
-
-  for (item = SubXact_callbacks; item; item = next) {
-    /* allow callbacks to unregister themselves when called */
-    next = item->next;
-    item->callback(event, mySubid, parentSubid, item->arg);
-  }
 }
 
 /* ----------------------------------------------------------------
@@ -3529,12 +3402,6 @@ static void StartSubTransaction(void) {
 
   s->state = TRANS_INPROGRESS;
 
-  /*
-   * Call start-of-subxact callbacks
-   */
-  CallSubXactCallbacks(SUBXACT_EVENT_START_SUB, s->subTransactionId,
-                       s->parent->subTransactionId);
-
   ShowTransactionState("StartSubTransaction");
 }
 
@@ -3552,11 +3419,6 @@ static void CommitSubTransaction(void) {
   if (s->state != TRANS_INPROGRESS)
     elog(WARNING, "CommitSubTransaction while in %s state",
          TransStateAsString(s->state));
-
-  /* Pre-commit processing goes here */
-
-  CallSubXactCallbacks(SUBXACT_EVENT_PRE_COMMIT_SUB, s->subTransactionId,
-                       s->parent->subTransactionId);
 
   /* Do the actual "commit", such as it is */
   s->state = TRANS_COMMIT;
@@ -3579,8 +3441,8 @@ static void CommitSubTransaction(void) {
   AtEOSubXact_LargeObject(true, s->subTransactionId,
                           s->parent->subTransactionId);
 
-  CallSubXactCallbacks(SUBXACT_EVENT_COMMIT_SUB, s->subTransactionId,
-                       s->parent->subTransactionId);
+  /* sm keeps the subtransaction's writes. */
+  smstore_subcommit();
 
   ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_BEFORE_LOCKS,
                        true, false);
@@ -3727,8 +3589,8 @@ static void AbortSubTransaction(void) {
     if (FullTransactionIdIsValid(s->fullTransactionId))
       AtSubAbort_childXids();
 
-    CallSubXactCallbacks(SUBXACT_EVENT_ABORT_SUB, s->subTransactionId,
-                         s->parent->subTransactionId);
+    /* sm undoes the subtransaction's writes. */
+    smstore_subabort();
 
     ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_BEFORE_LOCKS,
                          false, false);

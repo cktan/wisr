@@ -44,6 +44,10 @@ typedef struct smstore_table_t {
 } smstore_table_t;
 
 extern void smstore_statement_start(void);
+extern void smstore_commit(void);
+extern void smstore_abort(void);
+extern void smstore_subcommit(void);
+extern void smstore_subabort(void);
 extern Oid smstore_namespace_oid(const char *name);
 extern Oid smstore_relation_oid(const char *name, Oid nspoid);
 extern ObjectAddress smstore_create_table(CreateStmt *stmt);
