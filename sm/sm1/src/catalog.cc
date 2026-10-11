@@ -23,6 +23,7 @@
 #include "sm0_codec.h"
 #include "sm0_defer.h"
 
+#include <algorithm>
 #include <new>
 #include <vector>
 
@@ -38,7 +39,7 @@ std::string catalog_key(uint64_t storeid) {
 }
 
 /* sm1::mkstore, minus the out-of-memory guard. */
-int mkstore(sm1::session_t *s, uint64_t *out) {
+int mkstore(sm1::session_t *s, uint64_t *out, bool temporary) {
   // Require the out-parameter.
   if (!out) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_mkstore: storeid is NULL");
@@ -49,19 +50,29 @@ int mkstore(sm1::session_t *s, uint64_t *out) {
   }
   uint64_t storeid;
   // Refuse writes after fail-stop or in a read-only transaction,
-  // then allocate the storeid: before the CF is created.
-  if (xct_check_writable(s->db) != 0 || xct_check_readonly(s) != 0 ||
+  // which may still make a temporary store, then allocate the
+  // storeid: before the CF is created.
+  if (xct_check_writable(s->db) != 0 ||
+      (!temporary && xct_check_readonly(s) != 0) ||
       db_alloc_objid(s->db, &storeid) != 0) {
     return -1;
   }
 
   // Create the column family eagerly, before the catalog row,
   // so this transaction can write into it at once (§11).
-  if (db_create_store_cf(s->db, storeid) != 0) {
+  if (db_create_store_cf(s->db, storeid, temporary ? s : nullptr) != 0) {
     return -1;
   }
   // Remember the CF, so abort or rollback drops it.
   s->created.push_back(storeid);
+  // A temporary store is the session's, and has no catalog row
+  // (TEMPTABLE.md §3.2).
+  if (temporary) {
+    s->temp_stores.insert(storeid);
+    s->temp_touched = true;
+    *out = storeid;
+    return 0;
+  }
 
   // Insert the catalog row through the ordinary write path. The
   // storeid is fresh, so no other transaction can be writing it.
@@ -99,6 +110,12 @@ int rmstore(sm1::session_t *s, uint64_t storeid) {
   // Refuse a storeid that is not live.
   if (r == 1) {
     return set_error(sm1::SM_ERR_NOTFOUND, "store {} does not exist", storeid);
+  }
+  // A temporary store has no catalog row: it goes at commit.
+  if (s->temp_stores.count(storeid)) {
+    s->dropped.push_back(storeid);
+    s->temp_touched = true;
+    return 0;
   }
   // Delete the catalog row; the column family stays until no
   // snapshot can still read the store (§8.3).
@@ -151,8 +168,18 @@ int lsstore(sm1::session_t *s, std::vector<uint64_t> &out) {
 
 namespace wisr {
 
-/* A point read of the catalog row at view. */
+/*
+ * A point read of the catalog row at view. A temporary store has
+ * none: it is live to the session that holds it, until that session
+ * drops it.
+ */
 int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
+  if (db_store(s->db, storeid).owner) {
+    bool live = s->temp_stores.count(storeid) &&
+                std::find(s->dropped.begin(), s->dropped.end(), storeid) ==
+                    s->dropped.end();
+    return live ? 0 : 1;
+  }
   std::string val;
   // Read the catalog row at view: 0 if the store is live.
   return access_read(s, 0, view, catalog_key(storeid), &val);
@@ -161,8 +188,8 @@ int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
 } // namespace wisr
 
 /* Create a store and hand out its storeid. */
-int sm1::mkstore(sm1::session_t *session, uint64_t &storeid) {
-  return ::mkstore(session, &storeid);
+int sm1::mkstore(sm1::session_t *session, uint64_t &storeid, bool temporary) {
+  return ::mkstore(session, &storeid, temporary);
 }
 
 /* Drop a store and all of its rows. */

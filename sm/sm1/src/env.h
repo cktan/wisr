@@ -33,7 +33,12 @@ struct db_t;
 struct sm1::env_t {
   std::string homedir;
   rocksdb::DB *root = nullptr; /* {homedir}/global/root */
-  std::mutex mu;               /* guards the root db and the two sets below */
+  /*
+   * The temporary instance, {homedir}/base/pgsql_tmp/sm
+   * (TEMPTABLE.md §2): made empty by each attach, and never logged.
+   */
+  rocksdb::DB *tmp = nullptr;
+  std::mutex mu; /* guards the root db and the two sets below */
 
   /* Open databases by name, shared by their sessions. */
   std::unordered_map<std::string, wisr::db_t *> dbs;
@@ -51,7 +56,7 @@ struct sm1::env_t {
   std::condition_variable idle_cv;
   bool stopping = false;
 
-  /* Close the root db. */
+  /* Close the root db and the temporary instance. */
   ~env_t();
 };
 

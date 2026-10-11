@@ -806,11 +806,22 @@ int abort_prepared(session_t* session, std::string_view gid);
  * undone by abort or by a rollback that spans it. A storeid from
  * a transaction that aborts is simply never used.
  *
+ * A TEMPORARY STORE, asked for with temporary, is the session's
+ * alone: to every other session its storeid names nothing
+ * (SM_ERR_NOTFOUND), and sm1::lsstore() does not list it. It is
+ * dropped when the session closes, and nothing of it survives a
+ * restart. Its rows are not logged. They commit, abort and roll
+ * back with the transaction as any row does, but take no lock,
+ * meet no conflict, and are tracked by no SERIALIZABLE check;
+ * sm1::lock() on one succeeds and holds nothing. A transaction
+ * declared read-only may make, write and drop one. A transaction
+ * that has done any of the three cannot sm1::prepare().
+ *
  * Errors: SM_ERR_NOTRANS, SM_ERR_CONFLICT (retryable),
  * SM_ERR_INVALID, SM_ERR_PREPARED, SM_ERR_DISKFULL,
  * SM_ERR_IO.
  */
-int mkstore(session_t* session, uint64_t& storeid);
+int mkstore(session_t* session, uint64_t& storeid, bool temporary = false);
 
 /*
  * Drop a store and all of its rows. Transactional, as

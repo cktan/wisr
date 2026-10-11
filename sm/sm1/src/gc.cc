@@ -183,16 +183,16 @@ private:
  */
 void purge_one(db_t *db, const db_t::purge_t &p) {
   // Find the store's CF.
-  rocksdb::ColumnFamilyHandle *cf = db_store_cf(db, p.storeid);
+  store_t st = db_store(db, p.storeid);
   // Skip a store already dropped.
-  if (!cf) {
+  if (!st.cf) {
     return; // the store's CF is already gone
   }
   // End the range just past the key's oldest version.
   std::string end = version_bound(version_userkey(p.key), '\xff');
   // Delete the tombstone and every older version of the key.
   rocksdb::Status s =
-      db->rdb->DeleteRange(rocksdb::WriteOptions(), cf, p.key, end);
+      st.rdb->DeleteRange(store_write_options(st), st.cf, p.key, end);
   // Done: RocksDB flushes the memtable once range tombstones
   // pile up in it (store_max_range_deletions).
   if (s.ok()) {
@@ -225,7 +225,7 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
     // Remember the filter's error count before the pass.
     uint64_t errors = db->gc_filter_errors.load();
     // Collect every store CF.
-    std::vector<rocksdb::ColumnFamilyHandle *> cfs;
+    std::vector<store_t> cfs;
     {
       // Hold store_mu while reading the CF map.
       std::shared_lock<std::shared_mutex> guard(db->store_mu);
@@ -243,9 +243,9 @@ int64_t sweep_txn_locked(db_t *db, bool start) {
     // Keep automatic compactions from running alongside.
     opt.exclusive_manual_compaction = true;
     // Run every store through the filter.
-    for (rocksdb::ColumnFamilyHandle *cf : cfs) {
+    for (const store_t &st : cfs) {
       // Compact the whole store, memtable first.
-      rocksdb::Status s = db->rdb->CompactRange(opt, cf, nullptr, nullptr);
+      rocksdb::Status s = st.rdb->CompactRange(opt, st.cf, nullptr, nullptr);
       // A failed compaction leaves versions unstamped.
       if (!s.ok()) {
         log_msg(sm1::loglevel_t::error,

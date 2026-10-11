@@ -258,7 +258,7 @@ TEST_CASE("versions the filter cannot judge are reported per compaction") {
   log_fixture_t f;
   sm1::session_t *s = f.open();
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  rocksdb::ColumnFamilyHandle *cf = wisr::db_store_cf(s->db, f.store());
+  rocksdb::ColumnFamilyHandle *cf = wisr::db_store(s->db, f.store()).cf;
   REQUIRE(s->db->rdb
               ->Put(rocksdb::WriteOptions(), cf, wisr::version_key("bad", 1, 1),
                     rocksdb::Slice())

@@ -584,7 +584,7 @@ TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   f.restart();
 
   sm1::session_t *v = f.open();
-  CHECK(wisr::db_store_cf(v->db, storeid) != nullptr);
+  CHECK(wisr::db_store(v->db, storeid).cf != nullptr);
   REQUIRE(sm1::commit_prepared(v, "gd") == 0);
   REQUIRE(sm1::begin(v, sm1::xctlevel_t::repeatable_read) == 0);
   std::string_view d;
@@ -592,7 +592,7 @@ TEST_CASE("a prepared drop commits after a restart and its CF goes") {
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(v) == 0);
   wisr::gc_run_once(v->db);
-  CHECK(wisr::db_store_cf(v->db, storeid) == nullptr);
+  CHECK(wisr::db_store(v->db, storeid).cf == nullptr);
   sm1::closedb(v);
 }
 

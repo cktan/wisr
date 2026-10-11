@@ -88,7 +88,7 @@ int live_storeids(db_t *db, std::unordered_set<uint64_t> *live) {
   rocksdb::ReadOptions ro;
   ro.total_order_seek = true;
   std::unique_ptr<rocksdb::Iterator> it(
-      db->rdb->NewIterator(ro, db->stores.at(0)));
+      db->rdb->NewIterator(ro, db->stores.at(0).cf));
   // Track the key whose newest committed version is decided.
   std::string decided; // userkey whose newest committed version was seen
   bool have = false;

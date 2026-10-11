@@ -72,7 +72,7 @@ public:
         rocksdb::BottommostLevelCompaction::kForce;
     REQUIRE(
         db()->rdb
-            ->CompactRange(opt, db_store_cf(db(), storeid), nullptr, nullptr)
+            ->CompactRange(opt, db_store(db(), storeid).cf, nullptr, nullptr)
             .ok());
   }
 
@@ -101,7 +101,7 @@ public:
     rocksdb::ReadOptions ro;
     ro.total_order_seek = true;
     std::unique_ptr<rocksdb::Iterator> it(
-        db()->rdb->NewIterator(ro, db_store_cf(db(), storeid)));
+        db()->rdb->NewIterator(ro, db_store(db(), storeid).cf));
     std::vector<raw_t> out;
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
       version_t v;
@@ -367,7 +367,7 @@ void queue_purges(gc_fixture_t &f, int n) {
 /* The number of level-0 SST files in the store's CF. */
 uint64_t l0_files(gc_fixture_t &f) {
   std::string v;
-  REQUIRE(f.db()->rdb->GetProperty(db_store_cf(f.db(), g_store),
+  REQUIRE(f.db()->rdb->GetProperty(db_store(f.db(), g_store).cf,
                                    "rocksdb.num-files-at-level0", &v));
   return std::stoull(v);
 }
@@ -452,11 +452,11 @@ TEST_CASE("a dropped store's column family goes once no snapshot sees it") {
   REQUIRE(sm1::rmstore(s, g_store) == 0);
   REQUIRE(sm1::commit(s) == 0);
   gc_run_once(f.db());
-  CHECK(db_store_cf(f.db(), storeid) != nullptr);
+  CHECK(db_store(f.db(), storeid).cf != nullptr);
   CHECK(get(r, g_store, "k") == "v");
   REQUIRE(sm1::commit(r) == 0);
   gc_run_once(f.db());
-  CHECK(db_store_cf(f.db(), storeid) == nullptr);
+  CHECK(db_store(f.db(), storeid).cf == nullptr);
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t ustoreid = mkstore(s);
@@ -467,7 +467,7 @@ TEST_CASE("a dropped store's column family goes once no snapshot sees it") {
   REQUIRE(sm1::rollback(s, 1) == 0);
   REQUIRE(sm1::commit(s) == 0);
   gc_run_once(f.db());
-  CHECK(db_store_cf(f.db(), ustoreid) != nullptr);
+  CHECK(db_store(f.db(), ustoreid).cf != nullptr);
   sm1::closedb(s);
   sm1::closedb(r);
 }

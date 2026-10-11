@@ -52,6 +52,16 @@ std::string root_path(const std::string &homedir) {
   return global_dir(homedir) + "/root";
 }
 
+/* {homedir}/base/pgsql_tmp: temporary files, the host's and sm's. */
+std::string tmp_dir(const std::string &homedir) {
+  return base_dir(homedir) + "/pgsql_tmp";
+}
+
+/* {homedir}/base/pgsql_tmp/sm */
+std::string tmp_path(const std::string &homedir) {
+  return tmp_dir(homedir) + "/sm";
+}
+
 /* Check that homedir names an existing directory. */
 int check_homedir(const char *homedir) {
   // Reject a NULL or empty path.
@@ -221,6 +231,33 @@ int recover_dbs(sm1::env_t *env) {
   abort();
 }
 
+/*
+ * Make env's temporary instance anew: destroy what an earlier
+ * attach left at its path, and open an empty one (TEMPTABLE.md §2).
+ * Returns 0 or -1 with the error set.
+ */
+int open_tmp(sm1::env_t *env) {
+  std::string dir = tmp_dir(env->homedir);
+  // The host may have made its directory of temporary files already.
+  if (mkdir(dir.c_str(), 0700) != 0 && errno != EEXIST) {
+    return set_errno_error(errno, dir.c_str());
+  }
+  std::string path = tmp_path(env->homedir);
+  // Nothing in it is read after a restart: remove it whole.
+  if (env_destroy_db_dir(path) != 0) {
+    return -1;
+  }
+  rocksdb::Options opt;
+  opt.create_if_missing = true;
+  opt.error_if_exists = true;
+  // Open the empty instance every temporary store will live in.
+  rocksdb::Status s = rocksdb::DB::Open(opt, path, &env->tmp);
+  if (!s.ok()) {
+    return set_status_error(s, path.c_str());
+  }
+  return 0;
+}
+
 /* sm1::attach, minus the out-of-memory guard. */
 sm1::env_t *attach(const char *homedir) {
   // Validate the home directory path.
@@ -268,6 +305,10 @@ sm1::env_t *attach(const char *homedir) {
   if (sweep_base(env.get()) != 0) {
     return nullptr;
   }
+  // Make the temporary instance, before any database is opened.
+  if (open_tmp(env.get()) != 0) {
+    return nullptr;
+  }
   // Recover every database, so none waits for its first session.
   if (recover_dbs(env.get()) != 0) {
     return nullptr;
@@ -280,8 +321,13 @@ sm1::env_t *attach(const char *homedir) {
 
 } // namespace
 
-/* Close the root db. */
+/* Close the root db and the temporary instance. */
 sm1::env_t::~env_t() {
+  // Close the temporary instance, if it was opened.
+  if (tmp) {
+    tmp->Close();
+    delete tmp;
+  }
   // Close the root db, if it was opened.
   if (root) {
     root->Close();

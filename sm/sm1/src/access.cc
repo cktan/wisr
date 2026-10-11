@@ -96,16 +96,16 @@ int skip_version(sm1::session_t *s, const version_t &v, const view_t &view) {
   return 0;
 }
 
-/* The CF of storeid; its absence after a catalog hit is corruption. */
-rocksdb::ColumnFamilyHandle *store_cf(db_t *db, uint64_t storeid) {
-  // Look up the store's CF.
-  rocksdb::ColumnFamilyHandle *cf = db_store_cf(db, storeid);
+/* The store storeid; its absence after a catalog hit is corruption. */
+store_t store_of(db_t *db, uint64_t storeid) {
+  // Look up the store's instance and CF.
+  store_t st = db_store(db, storeid);
   // The catalog named it, so a missing CF is corruption.
-  if (!cf) {
+  if (!st.cf) {
     set_error(sm1::SM_ERR_CORRUPT, "column family store.{} is missing",
               storeid);
   }
-  return cf;
+  return st;
 }
 
 /*
@@ -121,10 +121,9 @@ rocksdb::ColumnFamilyHandle *store_cf(db_t *db, uint64_t storeid) {
  * 0 otherwise. Without it such a version is skipped. Returns 0 or
  * -1.
  */
-int latest_version(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
-                   rocksdb::Slice key, bool *live, uint64_t *commit_ts,
-                   std::string *value, uint32_t *own_seq = nullptr,
-                   uint64_t *inflight = nullptr) {
+int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
+                   bool *live, uint64_t *commit_ts, std::string *value,
+                   uint32_t *own_seq = nullptr, uint64_t *inflight = nullptr) {
   // Assume no version until one is found.
   *live = false;
   *commit_ts = 0;
@@ -146,7 +145,7 @@ int latest_version(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
   rocksdb::ReadOptions ro;
   ro.prefix_same_as_start = true;
   // Open an iterator on the store.
-  std::unique_ptr<rocksdb::Iterator> it(s->db->rdb->NewIterator(ro, cf));
+  std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
   // Walk every version of the key, newest first.
   for (it->Seek(version_bound(key, '\x00')); it->Valid(); it->Next()) {
     version_t v;
@@ -348,9 +347,14 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   }
   rocksdb::Slice k(key ? key : "", klen);
   // Find the store's CF.
-  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
-  if (!cf) {
+  store_t st = store_of(s->db, storeid);
+  if (!st.cf) {
     return -1;
+  }
+  // A temporary store is the session's alone: there is no one to
+  // lock a row against (TEMPTABLE.md §3.4).
+  if (st.owner) {
+    return 0;
   }
   for (;;) {
     uint64_t inflight;
@@ -360,7 +364,7 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
       std::lock_guard<std::mutex> latch(lock_latch(s->db, storeid, k));
       bool live;
       uint64_t commit_ts;
-      if (latest_version(s, cf, k, &live, &commit_ts, nullptr, nullptr,
+      if (latest_version(s, st, k, &live, &commit_ts, nullptr, nullptr,
                          &inflight) != 0) {
         return -1;
       }
@@ -448,15 +452,15 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   }
   rocksdb::Slice k(key ? key : "", klen);
   // Find the store's CF.
-  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
-  if (!cf) {
+  store_t st = store_of(s->db, storeid);
+  if (!st.cf) {
     return -1;
   }
   bool live;
   uint64_t commit_ts;
   uint32_t own_seq;
   // Read the newest version, ignoring the snapshot.
-  if (latest_version(s, cf, k, &live, &commit_ts, &s->readbuf, &own_seq) != 0) {
+  if (latest_version(s, st, k, &live, &commit_ts, &s->readbuf, &own_seq) != 0) {
     return -1;
   }
   // Something must keep the newest version from changing: a lock
@@ -465,7 +469,7 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   // waits for (WRITELOCK.md §3.2).
   sm1::lockmode_t mode;
   bool held = lock_held(s, storeid, k, &mode);
-  if (!held && own_seq == 0) {
+  if (!held && own_seq == 0 && !st.owner) {
     return set_error(sm1::SM_ERR_INVALID,
                      "sm1_read_latest requires a lock held on the key, or "
                      "a write of it by this transaction");
@@ -531,8 +535,8 @@ sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
                          int skey_inclusive, const char *ekey, size_t eklen,
                          int ekey_inclusive) {
   // Find the column family.
-  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
-  if (!cf) {
+  store_t st = store_of(s->db, storeid);
+  if (!st.cf) {
     return nullptr;
   }
 
@@ -548,13 +552,16 @@ sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
   c->seq_hwm = view.seq_hwm;
   // Under SERIALIZABLE, register the requested range before
   // the snapshot, so a write into it after the snapshot finds
-  // the SIREAD entry (§10.2).
-  ssi_range_open(c.get(), storeid, skey, sklen, skey_inclusive, ekey, eklen,
-                 ekey_inclusive);
+  // the SIREAD entry (§10.2). A temporary store takes none.
+  if (!st.owner) {
+    ssi_range_open(c.get(), storeid, skey, sklen, skey_inclusive, ekey, eklen,
+                   ekey_inclusive);
+  }
   // Count the cursor as a reader for its whole life (§8.3),
   // then take the RocksDB snapshot: its physical view (§10.2).
   c->epoch = db_read_enter(s->db);
-  c->snap = s->db->rdb->GetSnapshot();
+  c->rdb = st.rdb;
+  c->snap = st.rdb->GetSnapshot();
 
   // Read at the cursor's snapshot.
   rocksdb::ReadOptions ro;
@@ -571,7 +578,7 @@ sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
     ro.iterate_upper_bound = &c->upper_slice;
   }
   // Open the iterator.
-  c->it.reset(s->db->rdb->NewIterator(ro, cf));
+  c->it.reset(st.rdb->NewIterator(ro, st.cf));
   // Position at skey, or at the start.
   if (skey) {
     // Build the start bound; sm1::scan_seek compares against it.
@@ -735,14 +742,16 @@ namespace wisr {
 int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
                 rocksdb::Slice key, std::string *out) {
   // Find the store's CF.
-  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
-  if (!cf) {
+  store_t st = store_of(s->db, storeid);
+  if (!st.cf) {
     return -1;
   }
   // Under SERIALIZABLE, take the SIREAD entry before the
   // iterator exists, so a write landing in between still finds
-  // it (§10.1).
-  ssi_on_read(s, storeid, key);
+  // it (§10.1). A temporary store takes none.
+  if (!st.owner) {
+    ssi_on_read(s, storeid, key);
+  }
   // Hold a read epoch from before the iterator exists until we are
   // done resolving what it read: the CF:txn sweep waits for it.
   uint64_t epoch = db_read_enter(s->db);
@@ -751,7 +760,7 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
   rocksdb::ReadOptions ro;
   ro.prefix_same_as_start = true;
   // Open an iterator on the store.
-  std::unique_ptr<rocksdb::Iterator> it(s->db->rdb->NewIterator(ro, cf));
+  std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
   // Seek to the newest version the reader could see; ~seq of 0
   // lands before every own version of the key. Under SSI, start
   // before every version instead: the newer ones are exactly
@@ -804,12 +813,14 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
 int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, std::string *old) {
   // Find the store's CF.
-  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
-  if (!cf) {
+  store_t st = store_of(s->db, storeid);
+  if (!st.cf) {
     return -1;
   }
-  // Refuse writes after fail-stop, or in a read-only transaction.
-  if (xct_check_writable(s->db) != 0 || xct_check_readonly(s) != 0) {
+  // Refuse writes after fail-stop, or in a read-only transaction,
+  // which may still write a temporary store.
+  if (xct_check_writable(s->db) != 0 ||
+      (!st.owner && xct_check_readonly(s) != 0)) {
     return -1;
   }
   // Check the key and put the version under its latch, so no
@@ -822,7 +833,8 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     int waited = 0;
     // Another transaction's explicit lock that a write conflicts
     // with: wait for it, without the latch.
-    if (lock_write_check(s, storeid, key) != 0) {
+    // No one else reaches a temporary store, so it has none.
+    if (!st.owner && lock_write_check(s, storeid, key) != 0) {
       latch.unlock();
       waited =
           lock_wait(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
@@ -830,7 +842,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       uint64_t inflight;
       // Find the version this write checks against, keeping its
       // value when the caller asked for the old image.
-      if (latest_version(s, cf, key, &live, &commit_ts, old, &own_seq,
+      if (latest_version(s, st, key, &live, &commit_ts, old, &own_seq,
                          &inflight) != 0) {
         return -1;
       }
@@ -908,13 +920,13 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   // The previous writer took its commit_ts before it ended.
   assert(commit_ts < wts);
   // Put the version eagerly; it is not synced (§5 step 5).
-  rocksdb::Status st = s->db->rdb->Put(
-      rocksdb::WriteOptions(), cf, version_key(key, wts, seq),
-      version_value(flags, s->xid,
-                    op == WRITE_DELETE ? rocksdb::Slice() : data));
+  rocksdb::Status status =
+      st.rdb->Put(store_write_options(st), st.cf, version_key(key, wts, seq),
+                  version_value(flags, s->xid,
+                                op == WRITE_DELETE ? rocksdb::Slice() : data));
   // Fail if the put failed.
-  if (!st.ok()) {
-    return set_status_error(st, "write version");
+  if (!status.ok()) {
+    return set_status_error(status, "write version");
   }
   // Advance seq, and make the write visible to ourselves.
   s->seq = seq;
@@ -934,6 +946,11 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       xct_undo_overflow(s);
     }
   }
+  // A temporary store has no other reader, and bars a prepare.
+  if (st.owner) {
+    s->temp_touched = true;
+    return 0;
+  }
   // After the put, look for readers the write invalidates; a
   // reader arriving later steps past the version instead (§7.2).
   ssi_on_write(s, storeid, key);
@@ -948,14 +965,14 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
 int access_check_current(sm1::session_t *s, uint64_t storeid,
                          rocksdb::Slice key) {
   // Find the store's CF.
-  rocksdb::ColumnFamilyHandle *cf = store_cf(s->db, storeid);
-  if (!cf) {
+  store_t st = store_of(s->db, storeid);
+  if (!st.cf) {
     return -1;
   }
   bool live;
   uint64_t commit_ts;
   // Find the newest committed version of the key.
-  if (latest_version(s, cf, key, &live, &commit_ts, nullptr) != 0) {
+  if (latest_version(s, st, key, &live, &commit_ts, nullptr) != 0) {
     return -1;
   }
   // Committed after we began: what we would read is stale.
@@ -1081,7 +1098,7 @@ void sm1::scanend(sm1::scan_t *scan) {
   // Destroy the iterator before its snapshot and bound.
   scan->it.reset();
   // Release the RocksDB snapshot.
-  db->rdb->ReleaseSnapshot(scan->snap);
+  scan->rdb->ReleaseSnapshot(scan->snap);
   // Stop holding back the CF:txn sweep.
   db_read_leave(db, scan->epoch);
   // Free the cursor.

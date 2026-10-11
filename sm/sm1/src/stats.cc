@@ -37,14 +37,16 @@ int check_session(sm1::session_t *s, const char *call) {
   return 0;
 }
 
-/* The CF of storeid, or NULL with SM_ERR_NOTFOUND set. */
-rocksdb::ColumnFamilyHandle *find_cf(sm1::session_t *s, uint64_t storeid) {
+/* The store storeid, its cf NULL with SM_ERR_NOTFOUND set. */
+store_t find_store(sm1::session_t *s, uint64_t storeid) {
   // Look the store up by its CF, not its catalog row.
-  rocksdb::ColumnFamilyHandle *cf = db_store_cf(s->db, storeid);
-  if (!cf) {
+  store_t st = db_store(s->db, storeid);
+  // Another session's temporary store is not there to this one.
+  if (!st.cf || (st.owner && st.owner != s)) {
     set_error(sm1::SM_ERR_NOTFOUND, "store {} does not exist", storeid);
+    return store_t{};
   }
-  return cf;
+  return st;
 }
 
 /* sm1::approxsize, minus the out-of-memory guard. */
@@ -55,8 +57,8 @@ int approxsize(sm1::session_t *s, uint64_t storeid, const char *lo,
   if (check_session(s, "sm1_approxsize") != 0) {
     return -1;
   }
-  rocksdb::ColumnFamilyHandle *cf = find_cf(s, storeid);
-  if (!cf) {
+  store_t store = find_store(s, storeid);
+  if (!store.cf) {
     return -1;
   }
   // Bound by version keys: a tail of zeros sorts before every
@@ -77,23 +79,22 @@ int approxsize(sm1::session_t *s, uint64_t storeid, const char *lo,
   so.include_files = true;
   uint64_t files = 0;
   rocksdb::Status st =
-      s->db->rdb->GetApproximateSizes(so, cf, &range, 1, &files);
+      store.rdb->GetApproximateSizes(so, store.cf, &range, 1, &files);
   if (!st.ok()) {
     return set_status_error(st, "approximate store size");
   }
   uint64_t count = 0, bytes = 0;
   // The memtables' share of the range.
-  s->db->rdb->GetApproximateMemTableStats(cf, range, &count, &bytes);
+  store.rdb->GetApproximateMemTableStats(store.cf, range, &count, &bytes);
   *disk = files;
   *mem = bytes;
   return 0;
 }
 
-/* An integer property of cf, or 0 if RocksDB has none. */
-uint64_t int_property(sm1::session_t *s, rocksdb::ColumnFamilyHandle *cf,
-                      const std::string &name) {
+/* An integer property of store, or 0 if RocksDB has none. */
+uint64_t int_property(const store_t &store, const std::string &name) {
   uint64_t v = 0;
-  return s->db->rdb->GetIntProperty(cf, name, &v) ? v : 0;
+  return store.rdb->GetIntProperty(store.cf, name, &v) ? v : 0;
 }
 
 /* sm1::probes, minus the out-of-memory guard. */
@@ -102,25 +103,25 @@ int probes(sm1::session_t *s, uint64_t storeid, uint64_t *out) {
   if (check_session(s, "sm1_probes") != 0) {
     return -1;
   }
-  rocksdb::ColumnFamilyHandle *cf = find_cf(s, storeid);
-  if (!cf) {
+  store_t store = find_store(s, storeid);
+  if (!store.cf) {
     return -1;
   }
   uint64_t n = 0;
   // The active memtable, when it holds anything.
-  if (int_property(s, cf, rocksdb::DB::Properties::kNumEntriesActiveMemTable) >
+  if (int_property(store, rocksdb::DB::Properties::kNumEntriesActiveMemTable) >
       0) {
     n += 1;
   }
   // Each immutable memtable not yet flushed.
-  n += int_property(s, cf, rocksdb::DB::Properties::kNumImmutableMemTable);
+  n += int_property(store, rocksdb::DB::Properties::kNumImmutableMemTable);
   // Level 0's files overlap, so each is a probe; a lower level
   // is one probe if it has any file.
-  int levels = s->db->rdb->NumberLevels(cf);
+  int levels = store.rdb->NumberLevels(store.cf);
   for (int l = 0; l < levels; l++) {
     std::string v;
-    if (!s->db->rdb->GetProperty(
-            cf,
+    if (!store.rdb->GetProperty(
+            store.cf,
             rocksdb::DB::Properties::kNumFilesAtLevelPrefix + std::to_string(l),
             &v)) {
       continue;

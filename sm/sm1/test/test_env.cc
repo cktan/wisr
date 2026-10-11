@@ -222,6 +222,43 @@ TEST_CASE("sm1_attach sweeps database directories no name points at") {
   CHECK(sm1::detach(env, 0) == 0);
 }
 
+TEST_CASE("sm1_attach makes the temporary instance anew each time") {
+  // Verify attach leaves nothing of an earlier temporary instance.
+  // 1. Initialize and attach: the instance is open, and holds a key
+  //    written to it.
+  // 2. Detach, and plant a file in the instance's directory and one
+  //    beside it, as the host's temporary files are.
+  // 3. Attach again: the key and the planted file are gone, and the
+  //    file beside the instance is untouched.
+  tmpdir_t tmp;
+  REQUIRE(sm1::init(tmp.path()) == 0);
+  std::string tmpdir = std::string(tmp.path()) + "/base/pgsql_tmp";
+
+  sm1::env_t *env = attach(tmp.path());
+  REQUIRE(env);
+  REQUIRE(env->tmp);
+  rocksdb::WriteOptions wo;
+  wo.disableWAL = true;
+  REQUIRE(env->tmp->Put(wo, "k", "v").ok());
+  REQUIRE(env->tmp->Flush(rocksdb::FlushOptions()).ok());
+  CHECK(sm1::detach(env, 0) == 0);
+
+  for (const char *name : {"/sm/junk", "/pgsql_tmp1.0"}) {
+    FILE *f = fopen((tmpdir + name).c_str(), "w");
+    REQUIRE(f);
+    fclose(f);
+  }
+
+  env = attach(tmp.path());
+  REQUIRE(env);
+  REQUIRE(env->tmp);
+  std::string v;
+  CHECK(env->tmp->Get(rocksdb::ReadOptions(), "k", &v).IsNotFound());
+  CHECK_FALSE(std::filesystem::exists(tmpdir + "/sm/junk"));
+  CHECK(std::filesystem::exists(tmpdir + "/pgsql_tmp1.0"));
+  CHECK(sm1::detach(env, 0) == 0);
+}
+
 TEST_CASE("sm1_attach recovers every database and fails on one it cannot") {
   // Verify attach opens each database, not only the root db.
   // 1. Initialize, attach, and make database "a".

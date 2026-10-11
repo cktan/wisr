@@ -57,6 +57,28 @@ namespace wisr {
 struct ssi_range_t;
 
 /*
+ * A store as the engine reaches it: the RocksDB instance that holds
+ * it, and its column family there (TEMPTABLE.md §3.1). cf is NULL
+ * where there is no store.
+ */
+struct store_t {
+  rocksdb::DB *rdb = nullptr;
+  rocksdb::ColumnFamilyHandle *cf = nullptr;
+  /* The session a temporary store belongs to; NULL for any other. */
+  sm1::session_t *owner = nullptr;
+};
+
+/*
+ * The options of a write to store: a temporary store's writes are
+ * never logged (TEMPTABLE.md §2).
+ */
+inline rocksdb::WriteOptions store_write_options(const store_t &store) {
+  rocksdb::WriteOptions wo;
+  wo.disableWAL = store.owner != nullptr;
+  return wo;
+}
+
+/*
  * A SERIALIZABLE transaction in the SSI tracker (§7, Cahill et
  * al. 2008). It outlives its transaction's commit, as its SIREAD
  * entries must, and is freed once nothing concurrent remains.
@@ -102,6 +124,16 @@ struct ssi_range_t {
 struct db_t {
   std::string name;
   rocksdb::DB *rdb = nullptr;
+  /*
+   * The environment's temporary instance and this database's dbid,
+   * which names its stores there (TEMPTABLE.md §2). Set once a
+   * session opens the database; a database opened only to be
+   * recovered has neither.
+   */
+  rocksdb::DB *tmp = nullptr;
+  uint64_t dbid = 0;
+  /* Whether a temporary store was ever made; guarded by store_mu. */
+  bool had_temp = false;
   rocksdb::ColumnFamilyHandle *cf_default = nullptr;
   rocksdb::ColumnFamilyHandle *cf_txn = nullptr;
   rocksdb::ColumnFamilyHandle *cf_meta = nullptr;
@@ -120,9 +152,9 @@ struct db_t {
   sm1::options_t opts;
   std::string rocksdb_options;
 
-  /* storeid -> column family handle, for every live store CF. */
+  /* storeid -> its instance and CF handle, for every live store CF. */
   std::shared_mutex store_mu;
-  std::unordered_map<uint64_t, rocksdb::ColumnFamilyHandle *> stores;
+  std::unordered_map<uint64_t, store_t> stores;
 
   /* The ts and object-id allocators and their leases (§4.2). */
   std::mutex alloc_mu;
@@ -389,11 +421,24 @@ int db_last_seq(db_t *db, uint64_t seqid, uint64_t start, uint64_t increment,
 /* Forget sequence seqid and delete its lease from CF:meta. */
 void db_forget_seq(db_t *db, uint64_t seqid);
 
-/* The CF handle of storeid, or NULL if it has none. */
-rocksdb::ColumnFamilyHandle *db_store_cf(db_t *db, uint64_t storeid);
+/* The store storeid, its cf NULL if there is none. */
+store_t db_store(db_t *db, uint64_t storeid);
 
-/* Create the CF for storeid and register it. Returns 0 or -1. */
-int db_create_store_cf(db_t *db, uint64_t storeid);
+/*
+ * The CF handle of storeid alone, or NULL: for the isolation
+ * scenarios in mvcc/, which are not edited to follow a rename.
+ */
+inline rocksdb::ColumnFamilyHandle *db_store_cf(db_t *db, uint64_t storeid) {
+  return db_store(db, storeid).cf;
+}
+
+/*
+ * Create the CF for storeid and register it: in the database's
+ * instance, or with owner given, a temporary store's in the
+ * temporary instance. Returns 0 or -1.
+ */
+int db_create_store_cf(db_t *db, uint64_t storeid,
+                       sm1::session_t *owner = nullptr);
 
 /* Drop storeid's CF and unregister it. Returns 0 or -1. */
 int db_drop_store_cf(db_t *db, uint64_t storeid);

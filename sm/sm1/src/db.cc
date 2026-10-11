@@ -471,7 +471,7 @@ db_t *db_open(const std::string &path, const char *dbname,
       db->cf_meta = handles[i];
       // A store's CF.
     } else if (parse_store_cf_name(name, &storeid)) {
-      db->stores[storeid] = handles[i];
+      db->stores[storeid] = store_t{db->rdb, handles[i]};
     } else {
       // Unknown CF: release its handle and fail the open.
       db->rdb->DestroyColumnFamilyHandle(handles[i]);
@@ -772,29 +772,39 @@ void db_forget_seq(db_t *db, uint64_t seqid) {
   }
 }
 
-/* Look up storeid's CF handle under the shared lock. */
-rocksdb::ColumnFamilyHandle *db_store_cf(db_t *db, uint64_t storeid) {
+/* Look up store storeid under the shared lock. */
+store_t db_store(db_t *db, uint64_t storeid) {
   // Hold store_mu shared while reading the map.
   std::shared_lock<std::shared_mutex> guard(db->store_mu);
-  // Look up storeid's handle.
+  // Look up storeid's instance and handle.
   auto it = db->stores.find(storeid);
-  return it == db->stores.end() ? nullptr : it->second;
+  return it == db->stores.end() ? store_t{} : it->second;
 }
 
-/* Create store.<storeid> and register its handle. */
-int db_create_store_cf(db_t *db, uint64_t storeid) {
+/*
+ * Create store.<storeid>, or a temporary store's <dbid>.<storeid> in
+ * the temporary instance, and register its handle.
+ */
+int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner) {
   rocksdb::ColumnFamilyHandle *h = nullptr;
+  // A temporary store is named by its database too: two databases
+  // hand out the same storeids.
+  rocksdb::DB *rdb = owner ? db->tmp : db->rdb;
+  std::string name =
+      owner ? std::to_string(db->dbid) + "." + std::to_string(storeid)
+            : store_cf_name(storeid);
   // Create the store's column family; this is not transactional.
-  rocksdb::Status s = db->rdb->CreateColumnFamily(store_cf_options(db, storeid),
-                                                  store_cf_name(storeid), &h);
+  rocksdb::Status s =
+      rdb->CreateColumnFamily(store_cf_options(db, storeid), name, &h);
   // Fail if RocksDB could not create it.
   if (!s.ok()) {
     return set_status_error(s, "create column family");
   }
   // Hold store_mu exclusively while registering it.
   std::unique_lock<std::shared_mutex> guard(db->store_mu);
-  // Register the handle.
-  db->stores[storeid] = h;
+  // Register the handle, with the instance it is in.
+  db->stores[storeid] = store_t{rdb, h, owner};
+  db->had_temp = db->had_temp || owner;
   return 0;
 }
 
@@ -809,9 +819,10 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
     return 0;
   }
   // Drop the store's column family.
-  rocksdb::Status s = db->rdb->DropColumnFamily(it->second);
+  store_t st = it->second;
+  rocksdb::Status s = st.rdb->DropColumnFamily(st.cf);
   // Release the handle either way.
-  db->rdb->DestroyColumnFamilyHandle(it->second);
+  st.rdb->DestroyColumnFamilyHandle(st.cf);
   // Unregister it.
   db->stores.erase(it);
   // Report a failed drop; most callers cannot act on it, so log it.
@@ -886,9 +897,20 @@ wisr::db_t::~db_t() {
   keep_seq_positions(this);
   // Wait out running compactions, whose filters read the handles.
   rocksdb::CancelAllBackgroundWork(rdb, true);
-  // Destroy every store CF handle.
+  // Destroy every store CF handle; a temporary store a session
+  // left behind is dropped first, as it is no use to anyone.
   for (auto &kv : stores) {
-    rdb->DestroyColumnFamilyHandle(kv.second);
+    if (kv.second.owner) {
+      kv.second.rdb->DropColumnFamily(kv.second.cf);
+    }
+    kv.second.rdb->DestroyColumnFamilyHandle(kv.second.cf);
+  }
+  // A compaction of the temporary instance may still be running a
+  // filter that reads this database, on a store just dropped. Wait
+  // it out: with the stores gone, no other can start.
+  if (had_temp) {
+    tmp->PauseBackgroundWork();
+    tmp->ContinueBackgroundWork();
   }
   // Destroy the fixed CF handles.
   for (rocksdb::ColumnFamilyHandle *h : {cf_default, cf_txn, cf_meta}) {

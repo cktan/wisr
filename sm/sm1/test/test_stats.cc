@@ -79,7 +79,7 @@ public:
 private:
   /* The store's column family. */
   rocksdb::ColumnFamilyHandle *cf() const {
-    return wisr::db_store_cf(m_s->db, m_store);
+    return wisr::db_store(m_s->db, m_store).cf;
   }
 
   home_t m_home;

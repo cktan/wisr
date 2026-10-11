@@ -84,9 +84,9 @@ database: a store is in the database's instance or in X (§3).
 
 - **Where.** `{homedir}/base/pgsql_tmp/sm`. `base/pgsql_tmp`
   is the host's directory of temporary files, shared by every
-  database; `sm1::init` makes it, and X is the one name in it
-  that is sm's. The sweep of `base` at attach already leaves
-  alone an entry that is not a number
+  database; `sm1::attach` makes it if the host has not, and X
+  is the one name in it that is sm's. The sweep of `base` at
+  attach already leaves alone an entry that is not a number
   (`sm1/SM1_DESIGN.md` §3.5).
 - **Whose.** The environment's: `sm1::attach` opens it and
   `sm1::detach` closes it. It is shared between databases,
@@ -180,8 +180,10 @@ transaction at a time. So, for a temporary store:
   lock held by another.
 - **No wait and no conflict.** The newest version of a key is
   never another transaction's in flight, and never committed
-  after the writer's snapshot by another. The write does not
-  look.
+  after the writer's snapshot by another. A write does not
+  consult the lock table. It still takes the key's latch and
+  reads the newest version, as it must to know whether the
+  key exists, and the checks that follow cannot fire.
 - **No SSI.** No SIREAD entry and no rw-edge is made for a
   read or a write of it.
 - **No log.** §2.
@@ -277,14 +279,16 @@ that no longer exist, and are swept with the rest.
   with its `commit_ts` (`sm1/SM1_DESIGN.md` §8.3). The pass
   that stamps them walks the database's stores. If it skipped
   the database's stores in X, a temporary version would lose
-  its record and read as aborted. The pass is to walk a
-  database's temporary stores too, under the same read
-  epochs.
+  its record and read as aborted. It does not skip them: a
+  database's map of stores holds its temporary ones, and the
+  pass walks the map.
 - **A compaction filter in X belongs to a database.** It
   reads that database's watermark and commit cache. Every
   temporary store of a database is dropped before its last
-  session closes, so no filter outlives the database it
-  reads; this is to be held by a check, not by trust.
+  session closes, but a compaction of one may still be
+  running. A database that ever had a temporary store
+  pauses X's background work as it closes, which waits for
+  what is running, and lets it go on at once.
 - **Many column families.** A session with a hundred
   temporary tables is a hundred column families of X, each
   with a memtable. X gets one write buffer budget for all of
@@ -349,11 +353,11 @@ that no longer exist, and are swept with the rest.
 
 Each step lands on its own, with its tests.
 
-1. **X**: `sm1::init` makes `base/pgsql_tmp`; `sm1::attach`
-   destroys and opens X; `sm1::detach` closes it.
+1. **X**: `sm1::attach` destroys and opens it, and
+   `sm1::detach` closes it. Built.
 2. **A store names its instance** (§3.1), with every store
-   still in the database's. No behaviour changes.
-3. **Temporary stores in sm1** (§3.2 to §3.5).
+   still in the database's. No behaviour changes. Built.
+3. **Temporary stores in sm1** (§3.2 to §3.5). Built.
 4. **The temporary catalog in sm3** (§4).
 5. **The wrapper, and `rel`** (§5).
 6. **digres**: `CREATE TEMPORARY TABLE`, `ON COMMIT`, and

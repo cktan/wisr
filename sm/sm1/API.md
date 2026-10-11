@@ -1179,7 +1179,7 @@ that stay inside it — a start key under it, and an end key
 under it or `"V"`, exclusive. Any other key in store 0 fails
 with `SM_ERR_INVALID`, so sm1's own rows stay its own.
 
-### int sm1::mkstore(sm1::session_t* session, uint64_t& storeid)
+### int sm1::mkstore(sm1::session_t* session, uint64_t& storeid, bool temporary = false)
 
 Create a store and hand out its storeid in `storeid`.
 Transactional: visible to others only at commit, and undone
@@ -1192,6 +1192,19 @@ in creation order, so the lowest one `sm1::lsstore` lists is the
 first store the database ever had. A layer above that needs a
 catalog of its own keeps it in store 0 under
 `sm1::upper_prefix`, which needs no finding.
+
+With `temporary`, the store is a **temporary store**
+(`TEMPTABLE.md` at the top level). It is the session's alone:
+to every other session its storeid names nothing, and
+`sm1::lsstore` does not list it. It is dropped when the session
+closes, and nothing of it survives a restart. Its rows are
+not logged. They commit, abort and roll back with the
+transaction as any row does, but take no lock, meet no
+conflict and are tracked by no SERIALIZABLE check;
+`sm1::lock` on one succeeds and holds nothing, and
+`sm1::read_latest` on one needs no lock. A transaction declared
+read-only may make, write and drop one. A transaction that
+has done any of the three cannot `sm1::prepare`.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_CONFLICT` (retryable),
 `SM_ERR_INVALID`, `SM_ERR_PREPARED`,

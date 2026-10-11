@@ -39,8 +39,15 @@ struct sm1::session_t {
   std::vector<uint64_t> created; /* storeids made by sm1::mkstore */
   std::vector<uint64_t> dropped; /* storeids removed by sm1::rmstore */
   std::vector<uint64_t> dropped_seqs; /* seqids removed by sm1::rmseq */
-  bool snapshot_registered = false;   /* counted in gc_watermark */
-  uint64_t begin_seq = 0;             /* begin order; larger is younger */
+  /*
+   * The temporary stores the session holds, from sm1::mkstore to the
+   * commit of an sm1::rmstore or the session's close, and whether
+   * the transaction made, dropped or wrote one (TEMPTABLE.md §3).
+   */
+  std::unordered_set<uint64_t> temp_stores;
+  bool temp_touched = false;
+  bool snapshot_registered = false; /* counted in gc_watermark */
+  uint64_t begin_seq = 0;           /* begin order; larger is younger */
 
   /*
    * The statement snapshot under read committed (§6.2). Off
@@ -142,9 +149,10 @@ struct sm1::session_t {
 
 struct sm1::scan_t {
   sm1::session_t *session = nullptr;
-  uint64_t id = 0;    /* opening order within the session */
-  uint64_t epoch = 0; /* read epoch held for the cursor's life */
-  const rocksdb::Snapshot *snap = nullptr; /* the physical view */
+  uint64_t id = 0;            /* opening order within the session */
+  uint64_t epoch = 0;         /* read epoch held for the cursor's life */
+  rocksdb::DB *rdb = nullptr; /* its store's instance */
+  const rocksdb::Snapshot *snap = nullptr; /* the physical view, of rdb */
   std::unique_ptr<rocksdb::Iterator> it;
   std::string upper; /* owns iterate_upper_bound's bytes */
   rocksdb::Slice upper_slice;

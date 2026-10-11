@@ -329,7 +329,14 @@ concept:
 ```
 {homedir}/global/root      the root db              (global/pg_database)
 {homedir}/base/{dbid}/     one per database         (base/{oid})
+{homedir}/base/pgsql_tmp/  temporary files          (base/pgsql_tmp)
 ```
+
+`base/pgsql_tmp` is no database: it holds what does not
+outlive a session, the host's temporary files and, in `sm`,
+the instance that keeps the rows of temporary tables
+(`TEMPTABLE.md` at the top level). `sm1::attach` makes that
+instance anew, and `sm1::detach` closes it.
 
 A `dbname` is a caller's string, not a path component
 (`API.md`). The mapping from it to storage lives in the
@@ -349,7 +356,7 @@ key = "M" | "version"     →  home directory format version
 ```
 
 A database directory is named by its `dbid` in decimal, so
-`base` holds nothing else and there is no name space to
+`base` holds no other number and there is no name space to
 share: whatever a caller names a database, the name never
 reaches the filesystem, and `base` cannot collide with
 `global`.
@@ -2480,12 +2487,15 @@ store (`DESIGN.md` §5), so a temporary table and all its
 indexes are one temporary store, and no per-row or per-key
 marking exists at any level.
 
-**Status: not built, and replaced.** `TEMPTABLE.md` at the top
-level is the design: a temporary store is a column family of
-one unlogged RocksDB instance kept apart from every database,
-not of the database's own. What follows is the mechanism
-proposed before it, checked against RocksDB 8.9.1, and kept
-for its account of what RocksDB offers.
+**Status: built, by another mechanism.** `TEMPTABLE.md` at the
+top level is the design of record: a temporary store is a
+column family of one unlogged RocksDB instance kept apart
+from every database, not of the database's own.
+`sm1::mkstore` makes one when asked, with no row in store 0;
+it is its session's alone, and is dropped when the session
+closes. What follows is the mechanism proposed before it,
+checked against RocksDB 8.9.1, and kept for its account of
+what RocksDB offers.
 
 RocksDB has no temporary column family: no option marks one
 so. It has the parts to build one from, and sm1's write path

@@ -104,12 +104,18 @@ public:
   /* The home directory's path. */
   const char *path() const { return m_tmp.path(); }
 
-  /* The names of the entries under base/. */
+  /*
+   * The names of the entries under base/, but for pgsql_tmp, which
+   * every attached home directory has and is no database.
+   */
   std::set<std::string> base_entries() const {
     std::set<std::string> out;
     for (const auto &e : std::filesystem::directory_iterator(
              std::string(m_tmp.path()) + "/base")) {
-      out.insert(e.path().filename().string());
+      std::string name = e.path().filename().string();
+      if (name != "pgsql_tmp") {
+        out.insert(name);
+      }
     }
     return out;
   }

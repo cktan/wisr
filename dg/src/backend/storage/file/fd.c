@@ -2741,6 +2741,13 @@ void RemovePgTempFilesInDir(const char *tmpdirname, bool missing_ok,
     if (strcmp(temp_de->d_name, ".") == 0 || strcmp(temp_de->d_name, "..") == 0)
       continue;
 
+    /*
+     * sm keeps the rows of temporary tables here, in an instance it makes
+     * anew at each attach (sm/TEMPTABLE.md section 2): it is sm's to remove.
+     */
+    if (!unlink_all && strcmp(temp_de->d_name, "sm") == 0)
+      continue;
+
     snprintf(rm_path, sizeof(rm_path), "%s/%s", tmpdirname, temp_de->d_name);
 
     if (unlink_all || strncmp(temp_de->d_name, PG_TEMP_FILE_PREFIX,

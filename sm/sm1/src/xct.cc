@@ -31,6 +31,7 @@
 #include <time.h>
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -214,6 +215,7 @@ void reset(sm1::session_t *s) {
   s->created.clear();
   s->dropped.clear();
   s->dropped_seqs.clear();
+  s->temp_touched = false;
   s->undo.clear();
   s->undo_bytes = 0;
   // Its on_commit functions go with it, run or not.
@@ -238,6 +240,21 @@ void drop_created(sm1::session_t *s) {
   // Drop each created CF, newest first.
   for (auto it = s->created.rbegin(); it != s->created.rend(); ++it) {
     db_drop_store_cf(s->db, *it);
+    // A temporary one is the session's no longer.
+    s->temp_stores.erase(*it);
+  }
+}
+
+/*
+ * Drop the temporary stores the committing transaction dropped
+ * (TEMPTABLE.md §3.2): its cursors are closed, and no other session
+ * could read them.
+ */
+void drop_temp_dropped(sm1::session_t *s) noexcept {
+  for (uint64_t storeid : s->dropped) {
+    if (s->temp_stores.erase(storeid)) {
+      db_drop_store_cf(s->db, storeid);
+    }
   }
 }
 
@@ -379,25 +396,30 @@ int rollback(sm1::session_t *s, int depth) {
   db_t *db = s->db;
 
   // Delete exactly the versions written since the mark, in one
-  // batch: if it fails, nothing changed and the transaction
-  // stays as it was.
-  rocksdb::WriteBatch batch;
+  // batch for each instance that holds some (TEMPTABLE.md §3.1). If
+  // one fails the marks and the undo list stay as they were, so the
+  // rollback can be asked for again: deleting a version twice is
+  // harmless.
+  std::map<rocksdb::DB *, rocksdb::WriteBatch> batches;
   // Queue a delete for each version written after the mark.
   for (size_t i = s->undo.size(); i-- > m.undo;) {
     // The next undo entry, newest first.
     const sm1::session_t::undo_t &u = s->undo[i];
-    // Find its store's CF.
-    rocksdb::ColumnFamilyHandle *cf = db_store_cf(db, u.storeid);
+    // Find its store.
+    store_t store = db_store(db, u.storeid);
     // Skip a CF already dropped.
-    if (cf) {
+    if (store.cf) {
       // Delete the exact version: key, its wts, its seq.
-      batch.Delete(cf, version_key(u.key, u.wts, u.seq));
+      batches[store.rdb].Delete(store.cf, version_key(u.key, u.wts, u.seq));
     }
   }
-  // Apply the deletes, if any, in one write.
-  if (batch.Count() > 0) {
-    rocksdb::Status st = db->rdb->Write(rocksdb::WriteOptions(), &batch);
-    // Fail with the transaction unchanged.
+  // Apply each instance's deletes in one write.
+  for (auto &kv : batches) {
+    // The temporary instance is never logged.
+    rocksdb::WriteOptions wo;
+    wo.disableWAL = kv.first == db->tmp;
+    rocksdb::Status st = kv.first->Write(wo, &kv.second);
+    // Fail with the marks and the undo list unchanged.
     if (!st.ok()) {
       return set_status_error(st, "roll back to savepoint");
     }
@@ -422,6 +444,8 @@ int rollback(sm1::session_t *s, int depth) {
   for (size_t i = s->created.size(); i-- > m.created;) {
     // Drop the CF.
     db_drop_store_cf(db, s->created[i]);
+    // A temporary one is the session's no longer.
+    s->temp_stores.erase(s->created[i]);
   }
   // Forget those stores.
   s->created.resize(m.created);
@@ -535,6 +559,8 @@ int commit(sm1::session_t *s) {
     lock_release_all(s);
     // Keep its on_commit functions for the entry point to run.
     committed_fns.swap(s->on_commit);
+    // It may have dropped a temporary store, which writes nothing.
+    drop_temp_dropped(s);
     // Forget the transaction.
     reset(s);
     return 0;
@@ -643,6 +669,8 @@ void publish_commit(sm1::session_t *s, uint64_t xid,
   // queue dropped stores for removal once no snapshot can
   // see them (§8.3).
   lock_release_all(s);
+  // Drop its dropped temporary stores now; the queue finds them gone.
+  drop_temp_dropped(s);
   // Queue its dropped stores for GC.
   gc_queue_drops(db, commit_ts, s->dropped);
   // Drop each dropped sequence's lease; nothing reads it now
@@ -805,6 +833,13 @@ int prepare(sm1::session_t *s, const char *gid) {
   // Refuse after fail-stop.
   if (xct_check_writable(db) != 0) {
     return -1;
+  }
+  // A prepared transaction outlives the session; its temporary
+  // stores would not (TEMPTABLE.md §3.5).
+  if (s->temp_touched) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "a transaction that made, dropped or wrote a "
+                     "temporary store cannot be prepared");
   }
   // Own the gid before reserving it: releasing the reservation,
   // and everything after the record is written, must not

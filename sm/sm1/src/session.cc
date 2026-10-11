@@ -73,9 +73,13 @@ db_t *find_or_open(sm1::env_t *env, const char *dbname,
     return nullptr;
   }
   // Open the database: its first session in this process.
-  db_t *db = db_open(env_db_path(env, sm0::get_be64(val.data())), dbname, opt);
+  uint64_t dbid = sm0::get_be64(val.data());
+  db_t *db = db_open(env_db_path(env, dbid), dbname, opt);
   // Register the newly opened database.
   if (db) {
+    // Its temporary stores go in the environment's instance.
+    db->tmp = env->tmp;
+    db->dbid = dbid;
     env->dbs[dbname] = db;
   }
   return db;
@@ -149,6 +153,11 @@ int sm1::closedb(sm1::session_t *session) {
   if (session->active) {
     sm1::abort(session);
   }
+  // Drop the temporary stores it still holds: they are no one else's.
+  for (uint64_t storeid : session->temp_stores) {
+    db_drop_store_cf(session->db, storeid);
+  }
+  session->temp_stores.clear();
   // Keep what is needed after the session is freed.
   sm1::env_t *env = session->env;
   db_t *db = session->db;
