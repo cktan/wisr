@@ -1579,3 +1579,24 @@ two-phase commit comes back it is to be sm's (`sm_prepare`).
 - **COMMIT PREPARED and ROLLBACK PREPARED** fail as for a gid
   that does not exist, which every gid is. `server.sh` checks
   it.
+
+## Step 48: object locks are sm's, or not needed
+
+PLAN.md §7: sm's lock manager is to be the only one. Step 41
+moved a table's locks; this moves the rest that are not the
+heap's.
+
+- **Object locks are no-ops** (`lmgr.c`):
+  `LockDatabaseObject()`, `LockSharedObject()`, their
+  conditional, unlock and session forms. A built-in is compiled
+  in and never changes; every other object, a namespace, a
+  table, the database a session opens, is sm's, which locks it
+  itself. A lock request still takes the invalidation messages
+  waiting.
+- **Left in PostgreSQL's lock manager**: the heap's and the
+  indexes' own locks (tuple, page, relation extension, waits
+  for a transaction, speculative insertion), which go with the
+  heap; advisory locks, which need sm to lock for a session;
+  and `LOCK TABLE`, next.
+- No test sees the difference: no two sessions conflict on an
+  object's lock that sm does not also take.

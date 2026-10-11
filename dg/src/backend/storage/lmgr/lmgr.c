@@ -798,6 +798,13 @@ void WaitForLockers(LOCKTAG heaplocktag, LOCKMODE lockmode) {
 }
 
 /*
+ * Object locks, of a database's objects and of shared ones, are no-ops: no
+ * object in digres needs one here.  A built-in is compiled in and never
+ * changes, and every other object -- a namespace, a table, the database a
+ * session opens -- is sm's, which locks it itself (PLAN.md section 7).
+ */
+
+/*
  *		LockDatabaseObject
  *
  * Obtain a lock on a general object of the current database.  Don't use
@@ -807,13 +814,7 @@ void WaitForLockers(LOCKTAG heaplocktag, LOCKMODE lockmode) {
  */
 void LockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
                         LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_OBJECT(tag, MyDatabaseId, classid, objid, objsubid);
-
-  (void)LockAcquire(&tag, lockmode, false, false);
-
-  /* Make sure syscaches are up-to-date with any changes we waited for */
+  /* Taking a lock still takes the invalidation messages waiting. */
   AcceptInvalidationMessages();
 }
 
@@ -821,13 +822,7 @@ void LockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
  *		UnlockDatabaseObject
  */
 void UnlockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
-                          LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_OBJECT(tag, MyDatabaseId, classid, objid, objsubid);
-
-  LockRelease(&tag, lockmode, false);
-}
+                          LOCKMODE lockmode) {}
 
 /*
  *		LockSharedObject
@@ -836,13 +831,7 @@ void UnlockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
  */
 void LockSharedObject(Oid classid, Oid objid, uint16 objsubid,
                       LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_OBJECT(tag, InvalidOid, classid, objid, objsubid);
-
-  (void)LockAcquire(&tag, lockmode, false, false);
-
-  /* Make sure syscaches are up-to-date with any changes we waited for */
+  /* Taking a lock still takes the invalidation messages waiting. */
   AcceptInvalidationMessages();
 }
 
@@ -854,27 +843,8 @@ void LockSharedObject(Oid classid, Oid objid, uint16 objsubid,
  */
 bool ConditionalLockSharedObject(Oid classid, Oid objid, uint16 objsubid,
                                  LOCKMODE lockmode) {
-  LOCKTAG tag;
-  LOCALLOCK *locallock;
-  LockAcquireResult res;
-
-  SET_LOCKTAG_OBJECT(tag, InvalidOid, classid, objid, objsubid);
-
-  res =
-      LockAcquireExtended(&tag, lockmode, false, true, true, &locallock, false);
-
-  if (res == LOCKACQUIRE_NOT_AVAIL)
-    return false;
-
-  /*
-   * Now that we have the lock, check for invalidation messages; see notes
-   * in LockRelationOid.
-   */
-  if (res != LOCKACQUIRE_ALREADY_CLEAR) {
-    AcceptInvalidationMessages();
-    MarkLockClear(locallock);
-  }
-
+  /* Taking a lock still takes the invalidation messages waiting. */
+  AcceptInvalidationMessages();
   return true;
 }
 
@@ -882,13 +852,7 @@ bool ConditionalLockSharedObject(Oid classid, Oid objid, uint16 objsubid,
  *		UnlockSharedObject
  */
 void UnlockSharedObject(Oid classid, Oid objid, uint16 objsubid,
-                        LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_OBJECT(tag, InvalidOid, classid, objid, objsubid);
-
-  LockRelease(&tag, lockmode, false);
-}
+                        LOCKMODE lockmode) {}
 
 /*
  *		LockSharedObjectForSession
@@ -897,25 +861,13 @@ void UnlockSharedObject(Oid classid, Oid objid, uint16 objsubid,
  * See LockRelationIdForSession for notes about session-level locks.
  */
 void LockSharedObjectForSession(Oid classid, Oid objid, uint16 objsubid,
-                                LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_OBJECT(tag, InvalidOid, classid, objid, objsubid);
-
-  (void)LockAcquire(&tag, lockmode, true, false);
-}
+                                LOCKMODE lockmode) {}
 
 /*
  *		UnlockSharedObjectForSession
  */
 void UnlockSharedObjectForSession(Oid classid, Oid objid, uint16 objsubid,
-                                  LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_OBJECT(tag, InvalidOid, classid, objid, objsubid);
-
-  LockRelease(&tag, lockmode, true);
-}
+                                  LOCKMODE lockmode) {}
 
 /*
  *		LockApplyTransactionForSession
