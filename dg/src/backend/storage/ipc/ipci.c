@@ -143,7 +143,6 @@ static void CreateOrAttachShmemStructs(void) {
   /*
    * Set up other modules that need some shared memory space
    */
-  BTreeShmemInit();
   InjectionPointShmemInit();
 }
 

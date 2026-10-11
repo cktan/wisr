@@ -21,6 +21,8 @@
 #include "access/amapi.h"
 #include "access/nbtree.h"
 #include "access/smindex.h"
+#include "fmgr.h"
+#include "utils/fmgrprotos.h"
 #include "utils/index_selfuncs.h"
 
 /*
@@ -48,6 +50,44 @@ static int64 smindex_getbitmap(IndexScanDesc scan, TIDBitmap *tbm) {
  * where the key does not give its columns back.
  */
 static bool smindex_canreturn(Relation index, int attno) { return true; }
+
+/* The comparison a btree strategy number stands for. */
+static CompareType smindex_translatestrategy(StrategyNumber strategy,
+                                             Oid opfamily) {
+  switch (strategy) {
+  case BTLessStrategyNumber:
+    return COMPARE_LT;
+  case BTLessEqualStrategyNumber:
+    return COMPARE_LE;
+  case BTEqualStrategyNumber:
+    return COMPARE_EQ;
+  case BTGreaterEqualStrategyNumber:
+    return COMPARE_GE;
+  case BTGreaterStrategyNumber:
+    return COMPARE_GT;
+  default:
+    return COMPARE_INVALID;
+  }
+}
+
+/* The btree strategy number of a comparison. */
+static StrategyNumber smindex_translatecmptype(CompareType cmptype,
+                                               Oid opfamily) {
+  switch (cmptype) {
+  case COMPARE_LT:
+    return BTLessStrategyNumber;
+  case COMPARE_LE:
+    return BTLessEqualStrategyNumber;
+  case COMPARE_EQ:
+    return BTEqualStrategyNumber;
+  case COMPARE_GE:
+    return BTGreaterEqualStrategyNumber;
+  case COMPARE_GT:
+    return BTGreaterStrategyNumber;
+  default:
+    return InvalidStrategy;
+  }
+}
 
 /* The access method of an index in sm, palloc'd as a handler's is. */
 IndexAmRoutine *smindex_routine(void) {
@@ -81,8 +121,14 @@ IndexAmRoutine *smindex_routine(void) {
   amroutine->amcanreturn = smindex_canreturn;
   amroutine->amgettuple = smindex_gettuple;
   amroutine->amgetbitmap = smindex_getbitmap;
-  amroutine->amtranslatestrategy = bttranslatestrategy;
-  amroutine->amtranslatecmptype = bttranslatecmptype;
+  amroutine->amtranslatestrategy = smindex_translatestrategy;
+  amroutine->amtranslatecmptype = smindex_translatecmptype;
 
   return amroutine;
 }
+
+/*
+ * The handler of pg_am's btree, the one index access method there is: an
+ * index made USING btree is an index in sm.
+ */
+Datum bthandler(PG_FUNCTION_ARGS) { PG_RETURN_POINTER(smindex_routine()); }

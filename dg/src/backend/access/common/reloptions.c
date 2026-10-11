@@ -20,7 +20,6 @@
 #include "access/hash.h"
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
-#include "access/nbtree.h"
 #include "access/reloptions.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -94,13 +93,6 @@ static thread_local /*LOCAL*/ relopt_bool boolRelOpts[] = {
       "not the view owner",
       RELOPT_KIND_VIEW, AccessExclusiveLock},
      false},
-    {{
-         "deduplicate_items",
-         "Enables \"deduplicate items\" feature for this btree index",
-         RELOPT_KIND_BTREE, ShareUpdateExclusiveLock /* since it applies only to
-                                                      * later inserts */
-     },
-     true},
     /* list terminator */
     {{NULL}}};
 
@@ -112,14 +104,6 @@ static thread_local /*LOCAL*/ relopt_int intRelOpts[] = {
      },
      HEAP_DEFAULT_FILLFACTOR,
      HEAP_MIN_FILLFACTOR,
-     100},
-    {{
-         "fillfactor", "Packs btree index pages only to this percentage",
-         RELOPT_KIND_BTREE, ShareUpdateExclusiveLock /* since it applies only to
-                                                      * later inserts */
-     },
-     BTREE_DEFAULT_FILLFACTOR,
-     BTREE_MIN_FILLFACTOR,
      100},
     {{
          "fillfactor", "Packs hash index pages only to this percentage",
@@ -183,11 +167,6 @@ static thread_local /*LOCAL*/ relopt_real realRelOpts[] = {
      0,
      -1.0,
      DBL_MAX},
-    {{"vacuum_cleanup_index_scale_factor", "Deprecated B-Tree parameter.",
-      RELOPT_KIND_BTREE, ShareUpdateExclusiveLock},
-     -1,
-     0.0,
-     1e10},
     /* list terminator */
     {{NULL}}};
 

@@ -86,6 +86,7 @@
  */
 #include "postgres.h"
 
+#include "access/amapi.h"
 #include "access/nbtree.h"
 #include "executor/execdebug.h"
 #include "executor/nodeMergejoin.h"

@@ -293,31 +293,17 @@ extern Tuplesortstate *
 tuplesort_begin_heap(TupleDesc tupDesc, int nkeys, AttrNumber *attNums,
                      Oid *sortOperators, Oid *sortCollations,
                      bool *nullsFirstFlags, int workMem, int sortopt);
-extern Tuplesortstate *tuplesort_begin_cluster(TupleDesc tupDesc,
-                                               Relation indexRel, int workMem,
-                                               int sortopt);
-extern Tuplesortstate *tuplesort_begin_index_btree(Relation heapRel,
-                                                   Relation indexRel,
-                                                   bool enforceUnique,
-                                                   bool uniqueNullsNotDistinct,
-                                                   int workMem, int sortopt);
 extern Tuplesortstate *tuplesort_begin_datum(Oid datumType, Oid sortOperator,
                                              Oid sortCollation,
                                              bool nullsFirstFlag, int workMem,
                                              int sortopt);
 
 extern void tuplesort_puttupleslot(Tuplesortstate *state, TupleTableSlot *slot);
-extern void tuplesort_putheaptuple(Tuplesortstate *state, HeapTuple tup);
-extern void tuplesort_putindextuplevalues(Tuplesortstate *state, Relation rel,
-                                          ItemPointer self, const Datum *values,
-                                          const bool *isnull);
 extern void tuplesort_putdatum(Tuplesortstate *state, Datum val, bool isNull);
 
 extern bool tuplesort_gettupleslot(Tuplesortstate *state, bool forward,
                                    bool copy, TupleTableSlot *slot,
                                    Datum *abbrev);
-extern HeapTuple tuplesort_getheaptuple(Tuplesortstate *state, bool forward);
-extern IndexTuple tuplesort_getindextuple(Tuplesortstate *state, bool forward);
 extern bool tuplesort_getdatum(Tuplesortstate *state, bool forward, bool copy,
                                Datum *val, bool *isNull, Datum *abbrev);
 

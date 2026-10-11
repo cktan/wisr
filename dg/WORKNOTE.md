@@ -1834,3 +1834,22 @@ could name the GC thread's side.
   null key. A key that keeps no datum needs a text key, which
   a table in sm does not have yet: that path, reading the row,
   is not reached by a test.
+
+## Step 58: nbtree is gone
+
+- **The btree access method is deleted**: nbtree.c and its
+  insert, page, search, sort, split, dedup, key preprocessing,
+  utility and validation files, about 18,000 lines. An index is
+  sm's, and nothing called them.
+- **pg_am's btree is sm's**: `bthandler` is in `smindex.c` and
+  returns `smindex_routine()`, which translates strategies
+  itself. `CREATE INDEX ... USING btree` still names it.
+- **What stays**: `nbtcompare.c`, the operator classes'
+  comparison functions; and `nbtree.h`, cut to the strategy and
+  support function numbers and the scan key flags for DESC and
+  NULLS FIRST.
+- **Gone with it**: the btree index build and CLUSTER sorts in
+  `tuplesortvariants.c`, btree's shared memory, and its
+  reloptions (`fillfactor`, `deduplicate_items`,
+  `vacuum_cleanup_index_scale_factor`). The heap's CLUSTER
+  rewrite refuses a sort until the heap goes too.

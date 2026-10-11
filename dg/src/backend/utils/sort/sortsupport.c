@@ -15,6 +15,7 @@
 
 #include "postgres.h"
 
+#include "access/amapi.h"
 #include "access/nbtree.h"
 #include "fmgr.h"
 #include "utils/lsyscache.h"

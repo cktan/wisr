@@ -610,7 +610,6 @@ static void heapam_relation_copy_for_cluster(
   TableScanDesc tableScan;
   HeapScanDesc heapScan;
   bool is_system_catalog;
-  Tuplesortstate *tuplesort;
   TupleDesc oldTupDesc = RelationGetDescr(OldHeap);
   TupleDesc newTupDesc = RelationGetDescr(NewHeap);
   TupleTableSlot *slot;
@@ -638,12 +637,10 @@ static void heapam_relation_copy_for_cluster(
   rwstate = begin_heap_rewrite(OldHeap, NewHeap, OldestXmin, *xid_cutoff,
                                *multi_cutoff);
 
-  /* Set up sorting if wanted */
+  /* CLUSTER's sort went with nbtree; the heap goes next. */
   if (use_sort)
-    tuplesort = tuplesort_begin_cluster(oldTupDesc, OldIndex,
-                                        maintenance_work_mem, TUPLESORT_NONE);
-  else
-    tuplesort = NULL;
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("CLUSTER is not supported")));
 
   /*
    * Prepare to scan the OldHeap.  To ensure we see recently-dead tuples
@@ -780,14 +777,7 @@ static void heapam_relation_copy_for_cluster(
     }
 
     *num_tuples += 1;
-    if (tuplesort != NULL) {
-      tuplesort_putheaptuple(tuplesort, tuple);
-
-    } else {
-
-      reform_and_rewrite_tuple(tuple, OldHeap, NewHeap, values, isnull,
-                               rwstate);
-    }
+    reform_and_rewrite_tuple(tuple, OldHeap, NewHeap, values, isnull, rwstate);
   }
 
   if (indexScan != NULL)
@@ -796,32 +786,6 @@ static void heapam_relation_copy_for_cluster(
     table_endscan(tableScan);
   if (slot)
     ExecDropSingleTupleTableSlot(slot);
-
-  /*
-   * In scan-and-sort mode, complete the sort, then read out all live tuples
-   * from the tuplestore and write them to the new relation.
-   */
-  if (tuplesort != NULL) {
-    double n_tuples = 0;
-
-    tuplesort_performsort(tuplesort);
-
-    for (;;) {
-      HeapTuple tuple;
-
-      CHECK_FOR_INTERRUPTS();
-
-      tuple = tuplesort_getheaptuple(tuplesort, true);
-      if (tuple == NULL)
-        break;
-
-      n_tuples += 1;
-      reform_and_rewrite_tuple(tuple, OldHeap, NewHeap, values, isnull,
-                               rwstate);
-    }
-
-    tuplesort_end(tuplesort);
-  }
 
   /* Write out any remaining tuples, and fsync if needed */
   end_heap_rewrite(rwstate);

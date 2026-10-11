@@ -19,6 +19,7 @@
 
 #include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/amapi.h"
 #include "access/nbtree.h"
 #include "access/smstore.h"
 #include "access/sysattr.h"

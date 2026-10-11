@@ -25,6 +25,7 @@
  */
 #include "postgres.h"
 
+#include "access/amapi.h"
 #include "access/nbtree.h"
 #include "access/relscan.h"
 #include "access/smstore.h"
