@@ -299,6 +299,28 @@ wait $holder
 [ "$(local_psql -c 'select a from t1 where a = 1' 2>&1)" = 1 ] ||
   fail "drop rolled back"
 
+# Verify that a savepoint rolled back undoes its rows in sm, and one
+# released keeps them.
+# 1. In t2, insert, set a savepoint, insert, roll back to it, insert, and
+#    commit: the middle row is gone.
+# 2. Roll back a savepoint set before any row, and one whose insert failed.
+# 3. Release an inner savepoint, roll back the outer: neither's rows stay;
+#    roll back an inner one, release the outer: the outer's row stays.
+local_psql > /dev/null 2>&1 <<'SQL'
+create table t2 (a int4 not null);
+begin; insert into t2 values (1); savepoint s; insert into t2 values (2);
+rollback to s; insert into t2 values (3); commit;
+begin; savepoint s; insert into t2 values (4); rollback to s; commit;
+begin; insert into t2 values (5); savepoint s; insert into t2 values (null);
+rollback to s; insert into t2 values (6); commit;
+begin; savepoint a; insert into t2 values (7); savepoint b;
+insert into t2 values (8); release b; rollback to a; commit;
+begin; savepoint a; insert into t2 values (9); savepoint b;
+insert into t2 values (10); rollback to b; release a; commit;
+SQL
+[ "$(local_psql -c 'select a from t2' 2>&1 | tr '\n' ' ')" = "1 3 5 6 9 " ] ||
+  fail "savepoints"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

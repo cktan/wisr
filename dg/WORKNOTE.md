@@ -1440,3 +1440,27 @@ own, and only a special operation asks sm for a lock.
 - One deadlock detector for tables in sm. The lock manager
   keeps every other tag: advisory locks, transaction ids,
   objects.
+
+## Step 42: a savepoint rolls back its rows in sm
+
+A subtransaction that aborted left its writes in sm: ROLLBACK
+TO SAVEPOINT undid nothing there. Until sm's transactions
+replace `xact.c` (PLAN.md §7), sm's follow PostgreSQL's
+subtransactions as they follow its transactions.
+
+- **Each subtransaction gets an sm savepoint at its first call
+  into sm** (`savepoints_begin()`), and every open one below
+  it that has none: one that has made no call has nothing to
+  undo. Their depths are kept by nesting level.
+- **A subtransaction's end ends its savepoint**
+  (`subxact_callback()`): as it commits, `sm_forget()` keeps
+  its writes; as it aborts, `sm_rollback()` undoes them and
+  `sm_forget()` lets it go. ROLLBACK TO SAVEPOINT is an abort
+  and a new subtransaction, which gets a savepoint of its own
+  when it next writes. An error raised in a subtransaction
+  aborts it the same way.
+- An abort cannot raise an error; a savepoint sm cannot undo
+  belongs to a transaction sm has already ended, and the next
+  call into sm says so.
+- `server.sh` rolls back, releases and nests savepoints, with
+  one set before any row and one whose insert failed.

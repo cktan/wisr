@@ -56,6 +56,14 @@ typedef struct open_table_t {
  */
 static thread_local /*LOCAL*/ List *open_tables = NIL;
 
+/*
+ * The depth of sm's savepoint for each subtransaction open, the one at
+ * nesting level 2 first, in TopTransactionContext.  A subtransaction has one
+ * from its first call into sm on: one that has made none has nothing to
+ * undo, and gets its savepoint when it makes one (savepoints_begin()).
+ */
+static thread_local /*LOCAL*/ List *savepoints = NIL;
+
 /* This session's sm session, or an error if it has none. */
 static sm_session_t *session(void) {
   sm_session_t *s = datadir_sm_session();
@@ -119,6 +127,7 @@ static void xact_callback(XactEvent event, void *arg) {
     foreach (l, open_tables)
       sm_tbl_close(((open_table_t *)lfirst(l))->tbl);
     open_tables = NIL;
+    savepoints = NIL;
   }
   switch (event) {
   case XACT_EVENT_PRE_COMMIT:
@@ -133,6 +142,52 @@ static void xact_callback(XactEvent event, void *arg) {
     break;
   default:
     break;
+  }
+}
+
+/*
+ * End a subtransaction's savepoint in sm with the subtransaction: forget it
+ * as it commits, its writes kept; undo its writes as it aborts, and forget
+ * it.  A subtransaction with no savepoint made no call into sm.
+ */
+static void subxact_callback(SubXactEvent event, SubTransactionId mySubid,
+                             SubTransactionId parentSubid, void *arg) {
+  int level = GetCurrentTransactionNestLevel();
+  int depth;
+
+  if (!sm_xact_open || list_length(savepoints) < level - 1)
+    return;
+  if (event != SUBXACT_EVENT_COMMIT_SUB && event != SUBXACT_EVENT_ABORT_SUB)
+    return;
+  depth = list_nth_int(savepoints, level - 2);
+  savepoints = list_truncate(savepoints, level - 2);
+  /*
+   * In an abort there is nowhere for an error to go: a savepoint sm cannot
+   * undo is a transaction sm has ended, and the next call says so.
+   */
+  if (event == SUBXACT_EVENT_ABORT_SUB)
+    (void)sm_rollback(session(), depth);
+  (void)sm_forget(session(), depth);
+}
+
+/*
+ * Give each subtransaction open a savepoint in sm, if it has none: it is
+ * about to make its first call into sm, and nothing before it has anything
+ * of its to undo.
+ */
+static void savepoints_begin(sm_session_t *s) {
+  int level = GetCurrentTransactionNestLevel();
+  MemoryContext old;
+
+  while (list_length(savepoints) < level - 1) {
+    int depth = sm_savepoint(s);
+
+    if (depth < 0)
+      sm_error("set a savepoint");
+    /* As long as the transaction: subxact_callback() lets it go. */
+    old = MemoryContextSwitchTo(TopTransactionContext);
+    savepoints = lappend_int(savepoints, depth);
+    MemoryContextSwitchTo(old);
   }
 }
 
@@ -167,11 +222,13 @@ static sm_session_t *xact_session(void) {
 
   if (sm_xact_open) {
     statement_begin(s);
+    savepoints_begin(s);
     return s;
   }
   if (!xact_callback_registered) {
-    /* Once a thread: it lasts as long as the session. */
+    /* Once a thread: they last as long as the session. */
     RegisterXactCallback(xact_callback, NULL);
+    RegisterSubXactCallback(subxact_callback, NULL);
     xact_callback_registered = true;
   }
   if (sm_begin(s, xact_level(), XactReadOnly) != 0)
@@ -179,6 +236,7 @@ static sm_session_t *xact_session(void) {
   sm_xact_open = true;
   statement_pending = true;
   statement_begin(s);
+  savepoints_begin(s);
   return s;
 }
 
