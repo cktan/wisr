@@ -28,7 +28,6 @@
  */
 typedef enum {
   PROCSIG_CATCHUP_INTERRUPT,  /* sinval catchup interrupt */
-  PROCSIG_BARRIER,            /* global barrier interrupt  */
   PROCSIG_LOG_MEMORY_CONTEXT, /* ask backend to log the memory contexts */
 
   /* Recovery conflict reasons */
@@ -44,8 +43,6 @@ typedef enum {
 } ProcSignalReason;
 
 #define NUM_PROCSIGNALS (PROCSIG_RECOVERY_CONFLICT_LAST + 1)
-
-typedef enum {} ProcSignalBarrierType;
 
 /*
  * Length of query cancel keys generated.
@@ -68,10 +65,6 @@ extern int SendProcSignal(pid_t pid, ProcSignalReason reason,
                           ProcNumber procNumber);
 extern void SendCancelRequest(int backendPID, const uint8 *cancel_key,
                               int cancel_key_len);
-
-extern uint64 EmitProcSignalBarrier(ProcSignalBarrierType type);
-extern void WaitForProcSignalBarrier(uint64 generation);
-extern void ProcessProcSignalBarrier(void);
 
 extern void procsignal_sigusr1_handler(void);
 
@@ -99,9 +92,5 @@ extern void InterruptSelf(uint32 bits);
 extern void InterruptSelfLater(uint32 bits);
 extern void DeliverInterrupts(void);
 extern uint32 InterruptsOfSignal(int sig);
-
-/* ProcSignalHeader is an opaque struct, details known only within procsignal.c
- */
-typedef struct ProcSignalHeader ProcSignalHeader;
 
 #endif /* PROCSIGNAL_H */

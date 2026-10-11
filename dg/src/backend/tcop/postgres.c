@@ -3121,9 +3121,6 @@ void ProcessInterrupts(void) {
     }
   }
 
-  if (ProcSignalBarrierPending)
-    ProcessProcSignalBarrier();
-
   if (LogMemoryContextPending)
     ProcessLogMemoryContextInterrupt();
 }

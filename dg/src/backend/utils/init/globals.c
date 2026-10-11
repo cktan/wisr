@@ -42,7 +42,6 @@ thread_local /*LOCAL*/ volatile sig_atomic_t
     IdleInTransactionSessionTimeoutPending = false;
 thread_local /*LOCAL*/ volatile sig_atomic_t TransactionTimeoutPending = false;
 thread_local /*LOCAL*/ volatile sig_atomic_t IdleSessionTimeoutPending = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t ProcSignalBarrierPending = false;
 thread_local /*LOCAL*/ volatile sig_atomic_t LogMemoryContextPending = false;
 thread_local /*LOCAL*/ volatile uint32 InterruptHoldoffCount = 0;
 thread_local /*LOCAL*/ volatile uint32 QueryCancelHoldoffCount = 0;

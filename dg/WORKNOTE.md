@@ -2037,3 +2037,17 @@ with storage is sm's.
 - The proc signal barrier has no type left; its machinery is
   next to go.
 - `server.sh` checks sequences refused and the settings gone.
+
+## Step 66: proc signal barriers are gone
+
+Nothing emits a barrier any more: DROP DATABASE and the
+tablespace commands were the last, and smgr's release was the
+last kind of barrier.
+
+- **Gone**: `EmitProcSignalBarrier()`,
+  `WaitForProcSignalBarrier()` and
+  `ProcessProcSignalBarrier()`, the barrier generation and
+  check mask in each slot and the header, `PROCSIG_BARRIER`,
+  `ProcSignalBarrierPending` and the `ProcSignalBarrier` wait
+  event.
+- **The ProcSignal array** is the slots alone, with no header.

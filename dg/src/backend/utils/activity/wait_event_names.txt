@@ -104,7 +104,6 @@ LOGICAL_SYNC_DATA	"Waiting for a logical replication remote server to send data 
 LOGICAL_SYNC_STATE_CHANGE	"Waiting for a logical replication remote server to change state."
 MULTIXACT_CREATION	"Waiting for a multixact creation to complete."
 PROCARRAY_GROUP_UPDATE	"Waiting for the group leader to clear the transaction ID at transaction end."
-PROC_SIGNAL_BARRIER	"Waiting for a barrier event to be processed by all backends."
 RECOVERY_END_COMMAND	"Waiting for <xref linkend="guc-recovery-end-command"/> to complete."
 REPLICATION_ORIGIN_DROP	"Waiting for a replication origin to become inactive so it can be dropped."
 REPLICATION_SLOT_DROP	"Waiting for a replication slot to become inactive so it can be dropped."
